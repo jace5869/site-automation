@@ -8,6 +8,9 @@ how available it was over a day, a week and a month. Read-only, from the AAP sid
 | **STIG Manager - availability** | `playbooks/stigman_availability.yml` | `/op/state` of the address people use and of each node (the API, its database and Keycloak connections all up: `available`), and Keycloak's realm - no login ([STIGMAN_HEALTH.md](STIGMAN_HEALTH.md)) |
 | **ServiceNow - availability** | `playbooks/servicenow_availability.yml` | the REST API (one record of `servicenow_table`, with the ServiceNow API credential) and the login page `/login.do` |
 
+Both run on the AAP side only. A Limit is not needed, and a Limit of hosts needs no `localhost`: the job then runs
+once on the Limit's first host standing in for it (connection local - nothing runs on that host).
+
 The full checks are other jobs: *STIG Manager - health*, *ServiceNow health* (the MID Servers).
 
 ## How a run decides

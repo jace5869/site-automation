@@ -91,6 +91,7 @@ File: `roles/aap_health/defaults/main.yml`
 | `aap_health_time_fail_s` | `5.0` | at or above (or not synchronised): FAIL |
 | `aap_health_selinux_users_ok` | `[unconfined_u, staff_u, sysadm_u]` | SELinux users rootless podman works as |
 | `aap_health_dnf_recent_days` | `7` | a dnf transaction this recent, and fapolicyd denials today: WARN |
+| `aap_health_fapolicyd_required` | `false` | fapolicyd not running: INFO; true (a site that must run it) = FAIL |
 | `aap_health_fqdn` | (empty) | the host's name to resolve; empty = hostname -f |
 | `aap_health_container_mem_warn_mb` | `4096` | Containers one container using more: WARN |
 | `aap_health_container_mem_fail_mb` | `8192` | one container using more: FAIL |
@@ -104,14 +105,18 @@ File: `roles/aap_health/defaults/main.yml`
 | `aap_health_slow_ms` | `5000` | a proxied request slower than this (upstream time): listed |
 | `aap_health_slow_max` | `15` | slowest requests listed |
 | `aap_health_5xx_fail` | `20` | 5xx responses in the window at or above: FAIL (any: WARN) |
-| `aap_health_log_web_patterns` | `HARAKIRI: HARAKIRI worker killed: worker [0-9]+ killed\|killed.*worker\|SIGKILL Traceback:…` | controller-web: name -> regex (case counts; awk-compatible) |
-| `aap_health_log_web_fail` | `[HARAKIRI, worker killed]` | any of these: FAIL (others: WARN) |
+| `aap_health_log_web_patterns` | `HARAKIRI: HARAKIRI worker killed: worker [0-9]+ killed\|killed.*worker\|SIGKILL\|signal 9 Tr…` | controller-web: name -> regex (case counts; awk-compatible) |
+| `aap_health_log_web_fail` | `[HARAKIRI, worker killed]` | any of these: FAIL (others: WARN; a worker uWSGI only recycled: INFO) |
 | `aap_health_log_task_patterns` | `dispatcher error: "(ERROR\|Exception).*dispatch\|dispatch.*(ERROR\|Exception)" callback rece…` | controller-task: name -> regex (all: WARN) |
 | `aap_health_log_other_patterns` | `Traceback: Traceback ERROR: '\[ERROR\]\| ERROR \|^ERROR\|level=error'` | the gateway, hub and EDA containers: lines logged at level ERROR, Tracebacks |
 | `aap_health_proxy_match` | `gateway-proxy` | container names (regex) of the gateway proxy, controller web and task |
 | `aap_health_web_match` | `controller-web` | the controller web container |
 | `aap_health_task_match` | `controller-task` | the controller task container |
 | `aap_health_other_log_match` | `'^automation-(gateway\|hub\|eda)'` | the containers whose Tracebacks and ERRORs are counted |
+| `aap_health_log_context_lines` | `5` | lines kept after each matching line (an ERROR's message is often on the next lines) |
+| `aap_health_log_error_groups` | `5` | the containers' ERRORs grouped by message: this many listed, with counts |
+| `aap_health_log_oom_journal` | `true` | as root (become; quietly skipped without it): the kernel's OOM kills in the last 2 h |
+| `aap_health_log_oom_match` | `uwsgi` | an OOM-killed process matching this (regex) makes controller-web FAIL |
 | `aap_health_pg_container` | (empty) | Database (podman exec into the postgres container; peer login, else the installer inventory's controller_pg_password) empty = the container whose name matches aap_health_pg_match |
 | `aap_health_pg_match` | `postgres` | the postgres container's name (regex) |
 | `aap_health_pg_data_dest` | `/var/lib/pgsql/data` | the data folder inside the container (its host folder is found from the mount) |

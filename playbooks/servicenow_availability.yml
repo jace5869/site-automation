@@ -6,9 +6,17 @@
 # week and a month. The MID Servers and the rest: servicenow_health.yml. docs/AVAILABILITY.md
 #   ansible-playbook playbooks/servicenow_availability.yml
 - name: ServiceNow availability
-  hosts: localhost
-  connection: local
+  # on the AAP side: localhost - or, when the job's Limit leaves localhost out, the Limit's first host standing in
+  # for it (connection local: nothing runs on it). A Limit of hosts needs no localhost.
+  hosts: >-
+    {{ 'localhost' if ansible_limit | default('', true) | length == 0
+       or 'localhost' in query('ansible.builtin.inventory_hostnames', ansible_limit)
+       else query('ansible.builtin.inventory_hostnames', ansible_limit) | first | default('localhost') }}
   gather_facts: false
+  become: false
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
   tasks:
     - name: Ask ServiceNow
       ansible.builtin.include_role:

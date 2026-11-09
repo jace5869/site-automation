@@ -173,6 +173,9 @@ class Parsers(unittest.TestCase):
                        {"now": NOW, "warn_days": 30, "fail_days": 7, "cas": [], "named": ["/var/tmp/x.pem"]})
         self.assertEqual(rows[0]["check"], "gateway_tls_cert")
         self.assertIn("names /var/tmp/x.pem, and it is not there", rows[0]["detail"])
+        self.assertEqual(rows[0]["status"], "WARN")
+        self.assertEqual(rows[0]["hint"], "Harmless until the next installer run: update gateway_tls_cert in the installer "
+                                          "inventory to where the cert lives now, or stage the file again.")
 
 
 class Formatting(unittest.TestCase):
@@ -250,6 +253,143 @@ class Formatting(unittest.TestCase):
         self.assertIn("1 not checked", secs[5]["text"])
         self.assertEqual(f.counts(rows)["SKIP"], 1)
         self.assertEqual(f.problem_lines(rows), ["WARN logs / automation-eda-api: in 2h: Traceback 0, ERROR 20"])
+
+
+class LogsAndInfo(unittest.TestCase):
+    """0.98.0: uWSGI's recycles are INFO, not kills; the containers' ERRORs grouped by message; fapolicyd not running
+    is INFO (FAIL where it is required)."""
+    PATS = {"HARAKIRI": "HARAKIRI", "worker killed": "worker [0-9]+ killed|killed.*worker|SIGKILL|signal 9",
+            "Traceback": "Traceback", "timeout": "[Tt]imeout|timed out"}
+    CFG = {"since": "2h", "user": "aap", "proxy": "p", "web": "automation-controller-web", "task": "t", "slow_ms": 5000,
+           "slow_max": 15, "fivexx_fail": 10, "web_patterns": PATS, "web_fail": ["HARAKIRI", "worker killed"],
+           "task_patterns": {}, "other_patterns": {"Traceback": "Traceback", "ERROR": r"\[ERROR\]| ERROR |^ERROR|level=error"},
+           "error_groups": 5, "top": 10}
+
+    def web(self, lines, **cfg):
+        c = dict(self.CFG, **cfg)
+        rows = f.logs("@@@ web\n%s\n@@@ task\n" % "\n".join(lines), c)
+        return [r for r in rows if r["check"] == "controller-web"][0]
+
+    def test_recycle_is_info(self):
+        recycle = ["worker 13 killed successfully (pid: 4100)", "worker 14 killed successfully (pid: 4101)"]
+        r = self.web(recycle)
+        self.assertEqual(r["status"], "INFO")
+        self.assertEqual(r["detail"], "in 2h: 2 worker(s) recycled (uWSGI max-requests or reload-on-rss)")
+        self.assertIn("not a crash", r["hint"])
+        self.assertEqual(f.problem_lines([r]), [])                       # not in the FAIL and WARN lines
+        r = self.web(recycle, mem_over="True")
+        self.assertIn("recycling because of memory, see memory per container", r["detail"])
+        self.assertEqual(self.web(recycle, mem_over=False)["detail"].count("memory"), 0)
+
+    def test_kill_is_fail(self):
+        harakiri = ["*** HARAKIRI ON WORKER 3 (pid: 812, try: 1) ***", "worker 3 killed successfully (pid: 812)"]
+        r = self.web(harakiri)
+        self.assertEqual(r["status"], "FAIL")
+        self.assertIn("HARAKIRI 1, worker killed 1", r["detail"])
+        self.assertNotIn("recycled", r["detail"])
+        r = self.web(["DAMN ! worker 5 (pid: 900) died, killed by signal 9 :( trying respawn ...", "worker 6 killed successfully (pid: 901)"])
+        self.assertEqual(r["status"], "FAIL")                            # signal 9 near: the next one is not a recycle either
+        self.assertIn("worker killed 2", r["detail"])
+        # a recycle long before a HARAKIRI stays a recycle
+        r = self.web(["worker 1 killed successfully (pid: 1)"] + ["Traceback x"] * 6 + harakiri)
+        self.assertIn("worker killed 1", r["detail"])
+        self.assertIn("1 worker(s) recycled", r["detail"])
+
+    def test_oom_kill_is_fail(self):
+        oom = ("Nov 05 10:00:00 aap01 kernel: Out of memory: Killed process 4100 (uwsgi) total-vm:1kB\n"
+               "Nov 05 10:01:00 aap01 kernel: Out of memory: Killed process 4200 (dnf) total-vm:1kB")
+        r = self.web(["worker 13 killed successfully (pid: 4100)"], oom=oom)
+        self.assertEqual(r["status"], "FAIL")
+        self.assertIn("OOM kills in the last 2 h: uwsgi x1", r["detail"])
+        self.assertNotIn("dnf", r["detail"])                             # the os row names the others
+        self.assertIn("journalctl -k --since -2h", r["hint"])
+        self.assertEqual(self.web([], oom=oom.splitlines()[1])["status"], "PASS")
+
+    def test_error_grouping(self):
+        out = ("2026-11-05 10:03:01,123 ERROR [rid:5f1c2a9e-1111-4c2b-9d3e-0a1b2c3d4e5f] aap_eda.api.exceptions "
+               "/usr/lib/python3.12/site-packages/rest_framework/views.py:497 dispatch\n"
+               "@@+ Activation 412 could not be started: the image could not be pulled\n"
+               "2026-11-05 10:04:01,456 ERROR [rid:7a2b0000-1111-4c2b-9d3e-0a1b2c3d4e5f] aap_eda.api.exceptions "
+               "/usr/lib/python3.12/site-packages/rest_framework/views.py:497 dispatch\n"
+               "@@+ Activation 412 could not be started: the image could not be pulled\n"
+               "2026-11-05 10:05:00,000 ERROR [rid:0c0c] aap_eda.api.exceptions /usr/lib/python3.12/site-packages/rest_framework/views.py:497 dispatch\n"
+               "Traceback (most recent call last):\n"
+               '@@+   File "/usr/lib/python3.12/site-packages/rest_framework/views.py", line 497, in dispatch\n'
+               "@@+ django.db.utils.OperationalError: connection to server (pid 4242) failed\n"
+               "2026-11-05 10:06:00,000 ERROR [rid:0d0d] aap_eda.api.exceptions /usr/lib/python3.12/site-packages/rest_framework/views.py:497 dispatch\n"
+               "Traceback (most recent call last):\n"
+               "@@+ django.db.utils.OperationalError: connection to server (pid 4251) failed\n"
+               "2026-11-05 10:07:00,000 ERROR [rid:0e0e] aap_eda.api.exceptions /usr/lib/python3.12/site-packages/rest_framework/views.py:497 dispatch\n"
+               "@@+ Activation 412 could not be started: the image could not be pulled")
+        groups = f.error_groups(f.blocks(out))
+        self.assertEqual([(k, n) for k, n, _ in groups], [
+            ("aap_eda.api.exceptions: Activation 412 could not be started: the image could not be pulled", 3),
+            ("aap_eda.api.exceptions: django.db.utils.OperationalError: connection to server (pid N) failed", 2)])
+        self.assertTrue(groups[0][2][0].startswith("2026-11-05 10:07:00,000 ERROR [rid:0e0e]"))   # the last one, in full
+        # the context ends at the next log record (a line with a time of its own)
+        self.assertEqual(f.blocks("2026-11-05 10:00:00,000 ERROR boom\n@@+ detail one\n@@+ 2026-11-05 10:00:01,000 INFO next\n@@+ late"),
+                         [("2026-11-05 10:00:00,000 ERROR boom", ["detail one"])])
+        self.assertEqual(f.error_key("x 2026-11-05T10:00:00Z [rid:abc] pid: 99 job 123456 /api/v2/jobs/77/ ok"),
+                         f.error_key("x 2026-11-06T11:00:00Z [rid:def] pid: 12 job 654321 /api/v2/jobs/78/ ok"))
+        rows = f.logs("@@@ other:automation-eda-api\n%s\n" % out, self.CFG)
+        r = [x for x in rows if x["check"] == "automation-eda-api"][0]
+        self.assertEqual(r["status"], "WARN")
+        self.assertEqual(r["detail"], "in 2h: Traceback 2, ERROR 5; 2 different message(s)")
+        self.assertEqual(r["items"]["columns"], ["Message", "Count"])
+        self.assertEqual(r["items"]["rows"][0][1], "3")
+        self.assertNotIn("rid:", json.dumps(r["items"]["rows"]))
+        many = "\n".join("2026-11-05 10:00:00,000 ERROR m%d failed" % i for i in range(8))
+        r = [x for x in f.logs("@@@ other:automation-gateway\n%s\n" % many, self.CFG) if x["check"] == "automation-gateway"][0]
+        self.assertEqual(len(r["items"]["rows"]), 8)                     # the JSON keeps all
+        self.assertEqual(len(f.extra(r, 10)["rows"]), 5)                 # aap_health_log_error_groups shown
+        card = f.how_to_look([r])[0]
+        self.assertIn("# The most frequent message, in full:\n# 2026-11-05 10:00:00,000 ERROR m", card["code"])
+        self.assertTrue(card["code"].startswith("# As aap:"))
+        _, prose, cmds = f.hint_parts(r["hint"])
+        self.assertEqual(words(prose + " " + " ".join(cmds)), words(r["hint"]))
+
+    def os_rows(self, fapolicyd, fanotify="<no matches>\n@@@rc 1", **cfg):
+        root = "@@@ fanotify\n%s\n@@@ fapolicyd\n%s\n" % (fanotify, fapolicyd)
+        c = dict(user="aap", now=NOW, top=5, mem_warn_mb=1, mem_fail_mb=1, swap_warn_pct=25, swap_fail_pct=75, load_warn=1,
+                 load_fail=2, disk_warn_pct=80, disk_fail_pct=90, disk_labels={}, time_warn_s=1, time_fail_s=5,
+                 selinux_users_ok=[], dnf_recent_days=7, **cfg)
+        return [r for r in f.os_checks("@@@ nproc\n4\n", root, c) if r["check"] == "fapolicyd denials (today)"][0]
+
+    def test_fapolicyd_states(self):
+        self.assertEqual(self.os_rows("active")["status"], "PASS")
+        r = self.os_rows("inactive")
+        self.assertEqual((r["status"], r["detail"]), ("INFO", "fapolicyd inactive; no denials"))
+        self.assertIn("aap_health_fapolicyd_required: true", r["hint"])
+        self.assertEqual(self.os_rows("inactive", fapolicyd_required=False)["status"], "INFO")
+        r = self.os_rows("inactive", fapolicyd_required="True")
+        self.assertEqual(r["status"], "FAIL")
+        self.assertIn("sudo systemctl status fapolicyd", r["hint"])
+        self.assertEqual(self.os_rows("active", fapolicyd_required=True)["status"], "PASS")
+        den = "type=FANOTIFY msg=audit(1): resp=2 exe=/usr/bin/python3 name=/tmp/x.py\n@@@rc 0"
+        self.assertEqual(self.os_rows("active", den)["status"], "WARN")
+        self.assertEqual(self.os_rows("inactive", den)["status"], "WARN")
+
+    def test_info_status(self):
+        rows = [f.row("os", "fapolicyd denials (today)", "INFO", "fapolicyd inactive; no denials", "h"),
+                f.row("os", "disk /", "PASS", "fine"), f.row("os", "swap", "WARN", "high", "h")]
+        self.assertEqual(f.counts(rows)["INFO"], 1)
+        self.assertEqual([r["status"] for _, rs in f.by_area(rows, ["os"]) for r in rs], ["WARN", "INFO", "PASS"])
+        secs = f.email_sections(rows, ["os"])
+        self.assertIn("1 info", secs[1]["text"])
+        self.assertEqual(secs[1]["row_status"], ["warning", "info", "ok"])
+        self.assertEqual([c["title"] for c in f.how_to_look(rows)], ["swap"])     # how to look: FAIL and WARN only
+        self.assertEqual(f.worst("PASS", "INFO"), "INFO")
+        self.assertEqual(f.worst("INFO", "WARN"), "WARN")
+
+    def test_memory_hint_names_the_causes(self):
+        r = [x for x in f.containers(Formatting().stats(), [{"container": "automation-controller-web",
+                                                              "unit": "automation-controller-web.service"}], Formatting.CFG)
+             if x["check"] == "memory per container"][0]
+        for want in ("db, host variables", "api, hosts page", "api, cleanup: job details", "quiet window",
+                     "a person's decision", "As aap: systemctl --user restart automation-controller-web.service"):
+            self.assertIn(want, r["hint"])
+        _, prose, cmds = f.hint_parts(r["hint"])
+        self.assertEqual(cmds, ["# As aap:", "systemctl --user restart automation-controller-web.service"])
 
 
 class Api(BaseHTTPRequestHandler):
@@ -380,7 +520,7 @@ class Playbook(unittest.TestCase):
         for r in rows:
             self.assertLessEqual({"area", "check", "status", "detail", "hint"}, set(r))
             self.assertLessEqual(set(r), {"area", "check", "status", "detail", "hint", "items"})
-            self.assertIn(r["status"], ("PASS", "WARN", "FAIL", "SKIP"))
+            self.assertIn(r["status"], ("PASS", "WARN", "FAIL", "INFO", "SKIP"))
             self.assertTrue(r["status"] == "PASS" or r["hint"], r)
             _, prose, cmds = f.hint_parts(r["hint"])
             self.assertEqual(words(prose + " " + " ".join(cmds)), words(r["hint"]), r["hint"])   # "How to look" keeps every word
@@ -412,19 +552,27 @@ class Playbook(unittest.TestCase):
         self.assertNotIn("websocket", json.dumps(slow["items"]))
         web = [r for r in rows if r["check"] == "controller-web"][0]
         self.assertEqual(web["status"], "FAIL")
-        self.assertIn("HARAKIRI 3, worker killed 1, Traceback 1, OperationalError 1", web["detail"])
+        self.assertIn("HARAKIRI 3, worker killed 1, Traceback 1, OperationalError 1", web["detail"])   # not the 2 recycles
         self.assertIn("2 request(s) killed (HARAKIRI)", web["detail"])
+        self.assertIn("; 2 worker(s) recycled (uWSGI max-requests or reload-on-rss); memory per container is over its limit "
+                      "too: recycling because of memory, see memory per container", web["detail"])
         self.assertEqual(web["items"]["lines"][:3], ["requests killed (HARAKIRI), by path:", "    1  /api/controller/v2/inventories/8/hosts/",
                                                      "    1  /api/v2/inventories/8/hosts/"])
         self.assertEqual(st(rows, "logs", "controller-task"), "WARN")
         self.assertEqual(st(rows, "logs", "automation-gateway"), "WARN")
         gwl = [r for r in rows if r["area"] == "logs" and r["check"] == "automation-gateway"][0]
-        self.assertTrue(gwl["detail"].endswith("ERROR 1"), gwl)                       # not the INFO or ALWAYS lines
-        self.assertEqual(len(gwl["items"]["lines"]), 1)
-        self.assertTrue(gwl["items"]["lines"][0].startswith("last: 2026-11-05 10:02:00,000 ERROR django.request"))
+        self.assertTrue(gwl["detail"].endswith("ERROR 1; 1 different message(s)"), gwl)   # not the INFO or ALWAYS lines
+        self.assertEqual(gwl["items"]["rows"], [["django.request Internal Server Error: /api/gateway/v1/status/", "1"]])
+        self.assertEqual(gwl["items"]["example"], ["2026-11-05 10:02:00,000 ERROR django.request Internal Server Error: /api/gateway/v1/status/"])
         self.assertIn("dispatcher error 1,", [r for r in rows if r["check"] == "controller-task"][0]["detail"])
         self.assertEqual(st(rows, "logs", "automation-hub-api"), "PASS")
-        self.assertEqual(st(rows, "logs", "automation-eda-api"), "PASS")          # an INFO line is not an ERROR
+        eda = [r for r in rows if r["area"] == "logs" and r["check"] == "automation-eda-api"][0]          # the INFO line is not an ERROR
+        self.assertEqual(eda["status"], "WARN", eda)
+        self.assertEqual(eda["detail"], "in 2h: Traceback 1, ERROR 3; 2 different message(s)")
+        self.assertEqual(eda["items"]["rows"], [
+            ["aap_eda.api.exceptions: Activation 412 could not be started: the decision environment image could not be pulled", "2"],
+            ["aap_eda.api.exceptions: django.db.utils.OperationalError: connection to server at \"postgresql\" (pid N) failed", "1"]])
+        self.assertIn("The most frequent message, in full:", html)
         # db
         inv8 = [r for r in rows if r["check"] == "host variables: AD hosts (ID 8)"][0]
         self.assertEqual(inv8["status"], "FAIL")

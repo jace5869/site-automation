@@ -21,9 +21,13 @@
 
 - name: STIG Manager | {{ _smh.keycloak | stigman_health_line(_smh.targets) }}
   ansible.builtin.set_fact:
+    # the groups' hosts; with no groups in the inventory, the Limit's (one node that runs everything)
     _smh_hosts: >-
-      {{ (groups[stigman_health_nodes_group] | default([]) + groups[stigman_health_db_group] | default([])) | unique
-         if stigman_health_hosts | bool else [] }}
+      {%- set g = (groups[stigman_health_nodes_group] | default([]) + groups[stigman_health_db_group] | default([])) | unique | list -%}
+      {%- if g | length == 0 and ansible_limit | default('', true) | length > 0 -%}
+      {%-   set g = query('ansible.builtin.inventory_hostnames', ansible_limit) | reject('equalto', 'localhost') | list -%}
+      {%- endif -%}
+      {{ g if stigman_health_hosts | bool else [] }}
     _smh_opts: >-
       {{ {'slow_ms': stigman_health_slow_ms | int, 'node_down': stigman_health_node_down,
           'conn_warn_pct': stigman_health_conn_warn_pct | float, 'conn_crit_pct': stigman_health_conn_crit_pct | float,

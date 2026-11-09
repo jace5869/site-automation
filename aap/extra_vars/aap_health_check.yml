@@ -127,6 +127,9 @@
 ## a dnf transaction this recent, and fapolicyd denials today: WARN
 # aap_health_dnf_recent_days: 7
 
+## fapolicyd not running: INFO; true (a site that must run it) = FAIL
+# aap_health_fapolicyd_required: false
+
 ## the host's name to resolve; empty = hostname -f
 # aap_health_fqdn: ""
 
@@ -169,12 +172,12 @@
 ## controller-web: name -> regex (case counts; awk-compatible)
 # aap_health_log_web_patterns:
 #   HARAKIRI: HARAKIRI
-#   worker killed: worker [0-9]+ killed|killed.*worker|SIGKILL
+#   worker killed: worker [0-9]+ killed|killed.*worker|SIGKILL|signal 9
 #   Traceback: Traceback
 #   OperationalError: OperationalError
 #   timeout: "[Tt]imeout|timed out"
 
-## any of these: FAIL (others: WARN)
+## any of these: FAIL (others: WARN; a worker uWSGI only recycled: INFO)
 # aap_health_log_web_fail: [HARAKIRI, worker killed]
 
 ## controller-task: name -> regex (all: WARN)
@@ -199,6 +202,18 @@
 
 ## the containers whose Tracebacks and ERRORs are counted
 # aap_health_other_log_match: '^automation-(gateway|hub|eda)'
+
+## lines kept after each matching line (an ERROR's message is often on the next lines)
+# aap_health_log_context_lines: 5
+
+## the containers' ERRORs grouped by message: this many listed, with counts
+# aap_health_log_error_groups: 5
+
+## as root (become; quietly skipped without it): the kernel's OOM kills in the last 2 h
+# aap_health_log_oom_journal: true
+
+## an OOM-killed process matching this (regex) makes controller-web FAIL
+# aap_health_log_oom_match: uwsgi
 
 ## Database (podman exec into the postgres container; peer login, else the installer inventory's
 ## controller_pg_password) empty = the container whose name matches aap_health_pg_match

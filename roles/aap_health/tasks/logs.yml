@@ -12,21 +12,25 @@
         cmd: |
           T={{ aap_health_cmd_timeout | int }}
           W={{ aap_health_log_since | quote }}
-          # the last M lines (matching pat; "" = all), after "@@@count N" = how many matched
+          # the last M lines (matching pat; "" = all), after "@@@count N" = how many matched; each with up to C lines
+          # after it as "@@+ line" (an ERROR's message is often on the next lines)
           # (the pattern through the environment: awk -v would turn its \[ into [)
-          grab() { PAT="$2" awk -v m="$1" 'BEGIN { pat = ENVIRON["PAT"] } (pat == "" || $0 ~ pat) { n++; a[n % m] = $0 }
+          C={{ aap_health_log_context_lines | int }}
+          grab() { PAT="$2" awk -v m="$1" -v c="${3:-0}" 'BEGIN { pat = ENVIRON["PAT"] }
+            (pat == "" || $0 ~ pat) { n++; a[n % m] = $0; k = c; next }
+            (k > 0 && n > 0) { a[n % m] = a[n % m] "\n@@+ " substr($0, 1, 400); k-- }
             END { print "@@@count " n + 0; s = (n > m) ? n - m + 1 : 1; for (i = s; i <= n; i++) print a[i % m] }'; }
           {% if _aaph.proxy_container %}
           echo "@@@ proxy"; timeout "$T" podman logs --since "$W" {{ _aaph.proxy_container | quote }} 2>&1 | grab {{ aap_health_log_proxy_max_lines | int }} ""; echo "@@@rc ${PIPESTATUS[0]}"
           {% endif %}
           {% if _aaph.web_container %}
-          echo "@@@ web"; timeout "$T" podman logs --since "$W" {{ _aaph.web_container | quote }} 2>&1 | grab {{ aap_health_log_match_max | int }} {{ _aaph_web_grep | quote }}; echo "@@@rc ${PIPESTATUS[0]}"
+          echo "@@@ web"; timeout "$T" podman logs --since "$W" {{ _aaph.web_container | quote }} 2>&1 | grab {{ aap_health_log_match_max | int }} {{ _aaph_web_grep | quote }} "$C"; echo "@@@rc ${PIPESTATUS[0]}"
           {% endif %}
           {% if _aaph.task_container %}
-          echo "@@@ task"; timeout "$T" podman logs --since "$W" {{ _aaph.task_container | quote }} 2>&1 | grab {{ aap_health_log_match_max | int }} {{ _aaph_task_grep | quote }}; echo "@@@rc ${PIPESTATUS[0]}"
+          echo "@@@ task"; timeout "$T" podman logs --since "$W" {{ _aaph.task_container | quote }} 2>&1 | grab {{ aap_health_log_match_max | int }} {{ _aaph_task_grep | quote }} "$C"; echo "@@@rc ${PIPESTATUS[0]}"
           {% endif %}
           {% for c in _aaph.other_log_containers %}
-          echo "@@@ other:{{ c }}"; timeout "$T" podman logs --since "$W" {{ c | quote }} 2>&1 | grab {{ aap_health_log_match_max | int }} {{ _aaph_other_grep | quote }}; echo "@@@rc ${PIPESTATUS[0]}"
+          echo "@@@ other:{{ c }}"; timeout "$T" podman logs --since "$W" {{ c | quote }} 2>&1 | grab {{ aap_health_log_match_max | int }} {{ _aaph_other_grep | quote }} "$C"; echo "@@@rc ${PIPESTATUS[0]}"
           {% endfor %}
           exit 0
         executable: /bin/bash
@@ -37,6 +41,27 @@
       environment: "{{ _aaph_env }}"
       no_log: true                     # thousands of log lines: kept out of the job's events (the results below show them)
       register: _aaph_logs
+
+    - name: AAP health | logs - the kernel's OOM kills in the last 2 h (as root; read-only, skipped quietly without root)
+      # not tried again when the OS check's root reads were refused (one refusal in the output, not two)
+      when: aap_health_log_oom_journal | bool and (_aaph_os_root is not defined or _aaph_os_root.rc | default(1) == 0)
+      block:
+        - name: AAP health | logs - journalctl -k --since -2h (OOM kills)
+          ansible.builtin.shell:
+            cmd: |
+              timeout {{ aap_health_cmd_timeout | int }} journalctl -k --since=-2h --no-pager -q 2>/dev/null |
+                grep -Ei 'out of memory|oom-kill|killed process' | tail -n 200
+              exit 0
+            executable: /bin/bash
+          changed_when: false
+          check_mode: false
+          become: true
+          register: _aaph_oom2
+          failed_when: false
+      rescue:
+        - name: AAP health | logs - no root for the journal (skipped)
+          ansible.builtin.set_fact:
+            _aaph_oom2: {rc: 1, stdout: ""}
 
     - name: AAP health | logs - results
       ansible.builtin.set_fact:
@@ -58,6 +83,10 @@
           web_fail: "{{ aap_health_log_web_fail }}"
           task_patterns: "{{ aap_health_log_task_patterns }}"
           other_patterns: "{{ aap_health_log_other_patterns }}"
+          error_groups: "{{ aap_health_log_error_groups | int }}"
+          oom: "{{ _aaph_oom2.stdout | default('') if _aaph_oom2.rc | default(1) == 0 else '' }}"
+          oom_match: "{{ aap_health_log_oom_match }}"
+          mem_over: "{{ _aaph_rows | selectattr('check', 'equalto', 'memory per container') | selectattr('status', 'in', ['WARN', 'FAIL']) | list | length > 0 }}"
   rescue:
     - name: AAP health | logs - the check could not run
       ansible.builtin.set_fact:

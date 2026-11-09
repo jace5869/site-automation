@@ -177,5 +177,83 @@ echo "ok   - health with a node host reached (exit $?)"
 expect "the host's checks ran and were added" 'Checks run: stigman, containers, disk'
 deny "the host was read" 'node-local: its host was not read'
 
+# ---- a Limit of hosts needs no localhost (the user's first run: one node, no groups, a Limit - nothing ran) ----
+PY="$(command -v python3)"
+# runsm NAME EXPECT_RC INVENTORY PLAYBOOK [args...]   (EXPECT_RC any: this machine's own containers and disk decide)
+runsm() {
+    local name="$1" want_rc="$2" inv="$3" pb="$4"; shift 4
+    (cd "$repo" && STIGMAN_TOKEN_URL="http://127.0.0.1:$K/realms/stigman/protocol/openid-connect/token" \
+        STIGMAN_CLIENT_ID=healthcheck STIGMAN_CLIENT_SECRET=s3cret ANSIBLE_STDOUT_CALLBACK=default ANSIBLE_NOCOLOR=1 \
+        ANSIBLE_HOST_KEY_CHECKING=False ANSIBLE_TIMEOUT=5 \
+        "$ap" -i "$inv" "playbooks/$pb" -e "@$work/sm.yml" "$@") > "$work/out.txt" 2>&1
+    local rc=$?
+    if [ "$want_rc" != any ] && [ "$rc" -ne "$want_rc" ]; then
+        echo "FAIL - $name: exit $rc, expected $want_rc"; tail -25 "$work/out.txt"; fails=$((fails + 1)); return
+    fi
+    echo "ok   - $name (exit $rc)"
+}
+DISKOK='{"check_disk_warn_pct": 101, "check_disk_crit_pct": 101, "check_disk_inode_warn_pct": 101, "check_disk_inode_crit_pct": 101, "check_disk_lvm": false}'
+# no groups at all; one node (reached locally) and a host that cannot be reached
+cat > "$work/inv3.yml" <<EOF
+all:
+  hosts:
+    node-one: {ansible_connection: local, ansible_become: false, ansible_python_interpreter: "$PY"}
+    gone01.example.mil: {ansible_host: 127.0.0.1, ansible_port: 1}
+EOF
+runsm "no groups, no Limit: the API checked, on localhost" 0 "$work/inv3.yml" stigman_health.yml -e stigman_health_hosts=true
+expect "the API" 'token OK'
+expect "healthy" 'HEALTHY'
+deny "no host contacted" 'UNREACHABLE'
+expect "the API play ran on localhost" 'localhost                  : ok='
+
+runsm "no groups, a Limit of one host: its host read, the API from it (connection local)" any "$work/inv3.yml" stigman_health.yml \
+    -l node-one -e stigman_health_hosts=true -e "$DISKOK" -e check_mariadb_enabled=false
+expect "the host's checks ran and were added" 'Checks run: stigman, containers, disk'
+expect "the API" 'token OK'
+deny "no play skipped" 'skipping: no hosts matched'
+deny "the host was read" 'its host was not read'
+
+runsm "stigman_health_hosts false and a Limit of a host it cannot reach: no SSH, the API checked" 0 "$work/inv3.yml" stigman_health.yml \
+    -l gone01.example.mil -e stigman_health_hosts=false
+deny "not contacted" 'UNREACHABLE'
+expect "the API" 'token OK'
+deny "no play skipped" 'skipping: no hosts matched'
+
+runsm "availability with a Limit of a host it cannot reach: asked from the AAP side" 0 "$work/inv3.yml" stigman_availability.yml \
+    -l gone01.example.mil
+deny "not contacted" 'UNREACHABLE'
+deny "no play skipped" 'skipping: no hosts matched'
+expect "up" 'STIG Manager UP'
+
+(cd "$repo" && SN_HOST="http://127.0.0.1:$S" SN_USERNAME=api SN_PASSWORD=pw ANSIBLE_STDOUT_CALLBACK=default ANSIBLE_NOCOLOR=1 \
+    ANSIBLE_HOST_KEY_CHECKING=False ANSIBLE_TIMEOUT=5 \
+    "$ap" -i "$work/inv3.yml" playbooks/servicenow_availability.yml -e "@$work/sm.yml" -l gone01.example.mil) > "$work/out.txt" 2>&1
+[ $? -eq 0 ] && echo "ok   - ServiceNow availability with a Limit of a host it cannot reach (exit 0)" \
+    || { echo "FAIL - ServiceNow availability with that Limit"; tail -25 "$work/out.txt"; fails=$((fails + 1)); }
+deny "not contacted" 'UNREACHABLE'
+deny "no play skipped" 'skipping: no hosts matched'
+expect "up" 'ServiceNow UP'
+
+# one host in both groups (the node that runs everything), the node from the group, the API not set: the node alone
+cat > "$work/inv4.yml" <<EOF
+all:
+  children:
+    stigman:
+      hosts:
+        node-one: {ansible_connection: local, ansible_become: false, ansible_python_interpreter: "$PY",
+                   stigman_health_node_url: "http://127.0.0.1:$A/api"}
+    stigman_db:
+      hosts:
+        node-one: {}
+EOF
+runsm "one host in both groups, a Limit of it: read once, its database checked too" 2 "$work/inv4.yml" stigman_health.yml \
+    -l node-one -e '{"stigman_health_hosts": true, "stigman_health_nodes": [], "stigman_health_api": ""}' -e "$DISKOK"
+expect "the node from the group" 'node-one available'
+expect "containers, disk and the database's check" 'Checks run: stigman, containers, disk, mariadb'
+deny "the host was read" 'its host was not read'
+deny "no play skipped" 'skipping: no hosts matched'
+[ "$(grep -c 'TASK \[Containers, disk, and the database on its host\]' "$work/out.txt")" -eq 1 ] \
+    && echo "ok   -   read once" || { echo "FAIL -   read once"; fails=$((fails + 1)); }
+
 echo
 [ "$fails" -eq 0 ] && echo "all availability and STIG Manager health scenarios passed" || { echo "$fails check(s) failed"; exit 1; }

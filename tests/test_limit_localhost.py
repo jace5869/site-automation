@@ -9,7 +9,10 @@ runs on hosts has a localhost play, except the few that work on the AAP side (GU
 - the check itself (the implicit localhost, and a localhost in the inventory): no Limit, a Limit with localhost and a
   group that has localhost in it pass; a Limit without it fails, with what to do;
 - a converted playbook with a Limit of one host: every play has that host (none is skipped); a GUARDED one with a
-  Limit of one host that cannot be reached: refused, and no host contacted.
+  Limit of one host that cannot be reached: refused, and no host contacted;
+- STAND_IN: the AAP-side play's hosts are localhost, or - when the Limit leaves localhost out - the Limit's first
+  host standing in for it (connection local): with a Limit of one host every play has it, without a Limit the last
+  play is localhost's, and no task of that play logs in to the host.
 Needs ansible-core: python3 tests/test_limit_localhost.py   (ANSIBLE_PLAYBOOK=... for another ansible-core)"""
 import glob
 import os
@@ -29,11 +32,13 @@ GUARDS = {("site_findings", "limit_check.yml"), ("net_config", "limit_check.yml"
 # report): a Limit must take localhost in
 GUARDED = {"mail_relay_approved.yml", "mail_relay_format.yml", "mail_relay_plan.yml", "mail_relay_unused.yml",
            "net_cert_renew.yml", "net_config_backup.yml",
-           "net_config_load.yml", "servicenow_health.yml", "stigman_health.yml"}
+           "net_config_load.yml", "servicenow_health.yml"}
 # their report part runs on the hosts, once, on the AAP side (0.32.0): a Limit of hosts needs no localhost
 AAP_SIDE = {"ad_health_report.yml", "ad_lockout.yml", "cert_install_approved.yml", "cert_install_check.yml",
             "cert_renew_csr.yml", "fapolicyd.yml", "fapolicyd_denials.yml", "horizon_image_check.yml", "log_analysis.yml", "win_cert_install_approved.yml", "win_cert_install_check.yml",
             "win_cert_renew_csr.yml"}
+# the AAP-side play runs on localhost or, under a Limit without it, on the Limit's first host (connection local) (0.98.0)
+STAND_IN = {"servicenow_availability.yml", "stigman_health.yml", "stigman_availability.yml"}
 # groups filled while the job runs (add_host): empty when the hosts are listed
 RUNTIME_GROUPS = {"adl_sources"}
 ENV = dict(os.environ, ANSIBLE_NOCOLOR="1", ANSIBLE_LOCALHOST_WARNING="False", ANSIBLE_INVENTORY_UNPARSED_WARNING="False",
@@ -222,6 +227,25 @@ class ThePlaybooks(unittest.TestCase):
                     if any("pattern: ['%s']" % g in p for g in RUNTIME_GROUPS):
                         continue
                     self.assertIn("gone01.example.mil", p, "%s: a play without the host of the Limit:\n%s" % (name, p))
+
+    def test_stand_in(self):
+        """A Limit of one host: every play has it; no Limit: the last play is localhost's; that play is local."""
+        for name in sorted(STAND_IN):
+            with self.subTest(playbook=name):
+                plays = plays_of(os.path.join(REPO, "playbooks", name))
+                last = plays[-1]
+                self.assertIn("ansible_limit", hosts_of(last))
+                self.assertEqual((last.get("vars") or {}).get("ansible_connection"), "local", name)
+                self.assertIs(last.get("become"), False, name)
+                out = run(os.path.join("playbooks", name), self.inv, "--list-hosts", "-l", "gone01.example.mil")
+                text = out.stdout + out.stderr
+                self.assertEqual(out.returncode, 0, text[-2000:])
+                listed = re.split(r"\n  play #\d+ ", out.stdout)[1:]
+                self.assertEqual(len(listed), len(plays), text[-2000:])
+                for p in listed:
+                    self.assertIn("gone01.example.mil", p, "%s: a play without the host of the Limit:\n%s" % (name, p))
+                out = run(os.path.join("playbooks", name), self.inv, "--list-hosts")
+                self.assertIn("localhost", re.split(r"\n  play #\d+ ", out.stdout)[-1], out.stdout[-2000:])
 
     def test_guarded_refused_before_any_host(self):
         """A GUARDED playbook with a Limit of one host it cannot reach: the check stops it before any host is contacted."""

@@ -111,11 +111,12 @@
           title: "AAP health check: {{ _aaph_counts.FAIL }} FAIL, {{ _aaph_counts.WARN }} WARN - {{ inventory_hostname }}"
           subtitle: "read-only checks of the AAP host; nothing was changed"
           status: "{{ 'critical' if _aaph_counts.FAIL else 'warning' if _aaph_counts.WARN else 'ok' }}"
-          # "Not checked" only when a check could not run here
+          # "Info" and "Not checked" only when there are any
           summary: >-
             {{ [{'label': 'FAIL', 'value': _aaph_counts.FAIL, 'status': 'critical' if _aaph_counts.FAIL else 'ok'},
                 {'label': 'WARN', 'value': _aaph_counts.WARN, 'status': 'warning' if _aaph_counts.WARN else 'ok'},
                 {'label': 'PASS', 'value': _aaph_counts.PASS}]
+               + ([{'label': 'Info', 'value': _aaph_counts.INFO, 'status': 'info'}] if _aaph_counts.INFO else [])
                + ([{'label': 'Not checked', 'value': _aaph_counts.SKIP}] if _aaph_counts.SKIP else []) }}
           # FAIL and WARN first, then every area's table (one line per check), each FAIL or WARN list under its area
           sections: "{{ _aaph_rows | aap_health_email_sections(_aaph_areas, aap_health_top | int) }}"

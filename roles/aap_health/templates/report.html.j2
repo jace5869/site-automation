@@ -10,11 +10,11 @@
 <style>
 :root { --bg: #f6f7f9; --card: #fff; --ink: #1d2330; --muted: #5b6475; --line: #dde1e8;
         --pass: #1f7a3d; --pass-bg: #e6f4ea; --warn: #8a5a00; --warn-bg: #fff4d6; --fail: #b3261e; --fail-bg: #fde7e6;
-        --skip: #4b5563; --skip-bg: #eceef2; }
+        --skip: #4b5563; --skip-bg: #eceef2; --info: #1d4ed8; --info-bg: #e3ecfd; }
 @media (prefers-color-scheme: dark) {
   :root { --bg: #14171c; --card: #1c2027; --ink: #e6e9ef; --muted: #a0a8b8; --line: #2e3440;
           --pass: #7fd69a; --pass-bg: #18301f; --warn: #f2c66d; --warn-bg: #352a10; --fail: #ff8f86; --fail-bg: #3a1a18;
-          --skip: #b4bccb; --skip-bg: #272c35; }
+          --skip: #b4bccb; --skip-bg: #272c35; --info: #9dbcff; --info-bg: #1b2740; }
 }
 * { box-sizing: border-box; }
 body { margin: 0; padding: 24px 16px; background: var(--bg); color: var(--ink);
@@ -25,7 +25,7 @@ h1 { font-size: 22px; margin: 0 0 4px; }
 .tiles { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 18px; }
 .tile { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px 18px; min-width: 120px; }
 .tile b { display: block; font-size: 26px; }
-.tile.FAIL b { color: var(--fail); } .tile.WARN b { color: var(--warn); } .tile.PASS b { color: var(--pass); } .tile.SKIP b { color: var(--skip); }
+.tile.FAIL b { color: var(--fail); } .tile.WARN b { color: var(--warn); } .tile.PASS b { color: var(--pass); } .tile.SKIP b { color: var(--skip); } .tile.INFO b { color: var(--info); }
 .bar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; align-items: center; }
 button { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 6px;
          padding: 5px 12px; cursor: pointer; }
@@ -56,6 +56,8 @@ details.more { border: 0; background: none; margin: 0; }
 .badge.WARN { color: var(--warn); background: var(--warn-bg); }
 .badge.FAIL { color: var(--fail); background: var(--fail-bg); }
 .badge.SKIP { color: var(--skip); background: var(--skip-bg); }
+.badge.INFO { color: var(--info); background: var(--info-bg); }
+.ex { margin-top: 6px; font-size: 12px; color: var(--muted); }
 tr.hide { display: none; }
 footer { color: var(--muted); font-size: 12px; margin-top: 18px; }
 </style>
@@ -68,7 +70,8 @@ footer { color: var(--muted); font-size: 12px; margin-top: 18px; }
   <div class="tile FAIL"><b>{{ counts.FAIL }}</b>FAIL</div>
   <div class="tile WARN"><b>{{ counts.WARN }}</b>WARN</div>
   <div class="tile PASS"><b>{{ counts.PASS }}</b>PASS</div>
-{% if counts.SKIP %}  <div class="tile SKIP"><b>{{ counts.SKIP }}</b>not checked</div>
+{% if counts.INFO %}  <div class="tile INFO"><b>{{ counts.INFO }}</b>info</div>
+{% endif %}{% if counts.SKIP %}  <div class="tile SKIP"><b>{{ counts.SKIP }}</b>not checked</div>
 {% endif %}</div>
 <div class="bar">
   <button type="button" data-show="all" aria-pressed="true">All</button>
@@ -80,7 +83,7 @@ footer { color: var(--muted); font-size: 12px; margin-top: 18px; }
 {% set c = rows | aap_health_counts %}
 <details {{ 'open' if c.FAIL or c.WARN else '' }}>
   <summary><span class="badge {{ 'FAIL' if c.FAIL else 'WARN' if c.WARN else 'PASS' }}">{{ 'FAIL' if c.FAIL else 'WARN' if c.WARN else 'PASS' }}</span>
-    {{ area | e }} <span class="n">{{ c.FAIL }} fail, {{ c.WARN }} warn, {{ c.PASS }} pass{{ (', ' ~ c.SKIP ~ ' not checked') if c.SKIP else '' }}</span></summary>
+    {{ area | e }} <span class="n">{{ c.FAIL }} fail, {{ c.WARN }} warn, {{ c.PASS }} pass{{ (', ' ~ c.INFO ~ ' info') if c.INFO else '' }}{{ (', ' ~ c.SKIP ~ ' not checked') if c.SKIP else '' }}</span></summary>
 {% if area in ('db', 'api') and rows | selectattr('check', 'search', '\\(ID ') | list %}
   <div class="note">Inventories are named with their ID: the number in the inventory's address in AAP (&hellip;/inventories/inventory/<b>ID</b>/&hellip;). aap_health_focus_inventories and aap_health_api_time_inventories take these IDs.</div>
 {% endif %}
@@ -89,19 +92,20 @@ footer { color: var(--muted); font-size: 12px; margin-top: 18px; }
     <thead><tr><th>Status</th><th>Check</th><th>Detail</th><th>Hint</th></tr></thead>
     <tbody>
 {% for r in rows %}
-      <tr class="{{ r.status }}"><td data-k="{{ {'FAIL': 0, 'WARN': 1, 'PASS': 2, 'SKIP': 3}[r.status] | default(1) }}"><span class="badge {{ r.status }}">{{ r.status }}</span></td>
+      <tr class="{{ r.status }}"><td data-k="{{ {'FAIL': 0, 'WARN': 1, 'INFO': 2, 'PASS': 3, 'SKIP': 4}[r.status] | default(1) }}"><span class="badge {{ r.status }}">{{ r.status }}</span></td>
         <td>{{ r.check | e }}</td><td class="detail">{% set dl = (r.detail | default('')).split('\n') %}<div class="sum">{{ dl[0] | e }}</div>
 {%- if dl | length > 1 %}<div class="lines">{{ dl[1:] | join('\n') | e }}</div>{% endif %}
 {%- set it = r['items'] | default({}) %}
 {%- if it.columns is defined %}
 {%-   set rs = it.row_status | default([]) %}
-{%-   set n = [aap_health_top | int, rs | select('in', ['FAIL', 'WARN']) | list | length] | max %}
+{%-   set n = [it.top | default(aap_health_top) | int, rs | select('in', ['FAIL', 'WARN']) | list | length] | max %}
 <table class="items"><thead><tr>{% for c in it.columns %}<th>{{ c | e }}</th>{% endfor %}</tr></thead><tbody>
 {%- for x in it.rows[:n] %}<tr class="{{ rs[loop.index0] | default('') }}">{% for c in x %}<td>{{ c | e }}</td>{% endfor %}</tr>{% endfor %}</tbody></table>
 {%-   if it.rows | length > n %}
 <details class="more"><summary>+{{ it.rows | length - n }} more</summary><table class="items"><tbody>
 {%- for x in it.rows[n:] %}<tr class="{{ rs[n + loop.index0] | default('') }}">{% for c in x %}<td>{{ c | e }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></details>
 {%-   endif %}
+{%-   if it.example is defined %}<div class="ex">The most frequent message, in full:</div><div class="lines">{{ it.example | join('\n') | e }}</div>{% endif %}
 {%- elif it.lines is defined %}
 <div class="lines">{{ it.lines | join('\n') | e }}</div>
 {%- endif %}</td><td class="hint">{{ r.hint | e }}</td></tr>
@@ -128,7 +132,7 @@ footer { color: var(--muted); font-size: 12px; margin-top: 18px; }
     b.addEventListener("click", function () {
       var bad = b.dataset.show === "bad";
       document.querySelectorAll("button[data-show]").forEach(function (o) { o.setAttribute("aria-pressed", o === b ? "true" : "false"); });
-      document.querySelectorAll("tbody tr.PASS, tbody tr.SKIP").forEach(function (tr) { if (!tr.closest("table.items")) tr.classList.toggle("hide", bad); });
+      document.querySelectorAll("tbody tr.PASS, tbody tr.INFO, tbody tr.SKIP").forEach(function (tr) { if (!tr.closest("table.items")) tr.classList.toggle("hide", bad); });
     });
   });
   document.querySelectorAll("button[data-open]").forEach(function (b) {

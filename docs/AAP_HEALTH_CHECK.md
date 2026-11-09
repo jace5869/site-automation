@@ -3,7 +3,8 @@
 *AAP - health check* (`playbooks/aap_health_check.yml`, role `roles/aap_health`) looks over a **containerized AAP 2.5
 or later** host - all components on one host, rootless podman, systemd `--user` units - and gives every check a
 **PASS, WARN or FAIL**, a detail and a hint (**SKIP**: a check this host could not run - not a problem of AAP's, e.g.
-no `receptorctl` anywhere; grey, never red or amber). It writes an HTML report and the same results as JSON on the AAP
+no `receptorctl` anywhere; grey, never red or amber; **INFO**: worth knowing, nothing wrong - uWSGI recycling its
+workers, fapolicyd not running; blue, never in the FAIL and WARN lines). It writes an HTML report and the same results as JSON on the AAP
 host, and prints the FAIL and WARN lines. In the report a check is one line; a list - the containers by memory, the slow
 paths, the last log lines - is a small table or a box under it, the first `aap_health_top` (10) shown and the rest
 folded (all of them in the JSON). The report website and the email show each FAIL or WARN list as its own section
@@ -20,9 +21,9 @@ are the two reports. It runs two ways:
 
 | Area (tag) | Checks |
 |---|---|
-| `os` | free memory, swap, load per CPU; OOM kills in the last 24 h; space and inodes of `/`, `/home`, `/var`, `/tmp`, the podman storage and the postgres data folder (WARN 80 %, FAIL 90 %); chrony (as root: a STIG `chrony.conf` has `cmdport 0`), else `timedatectl`; the host's name in DNS; the rootless prerequisites (linger, `user.max_user_namespaces`, `/etc/subuid` and `/etc/subgid`, the SELinux login mapping); SELinux AVC and fapolicyd denials today, with the top offenders; the last dnf transactions |
+| `os` | free memory, swap, load per CPU; OOM kills in the last 24 h; space and inodes of `/`, `/home`, `/var`, `/tmp`, the podman storage and the postgres data folder (WARN 80 %, FAIL 90 %); chrony (as root: a STIG `chrony.conf` has `cmdport 0`), else `timedatectl`; the host's name in DNS; the rootless prerequisites (linger, `user.max_user_namespaces`, `/etc/subuid` and `/etc/subgid`, the SELinux login mapping); SELinux AVC and fapolicyd denials today, with the top offenders (fapolicyd not running: INFO, or FAIL with `aap_health_fapolicyd_required: true`); the last dnf transactions |
 | `containers` | every AAP systemd user unit and its container: up, exited, restarting, missing; started less than 10 minutes ago; restart counts; memory per container (`podman stats`); dangling images and volumes, image size |
-| `logs` | over `aap_health_log_since` (2 h): the gateway proxy's (Envoy) 5xx responses by path and its slowest requests (over 5 s); controller-web's HARAKIRI, killed workers, Tracebacks, OperationalError, timeouts (the last 10); controller-task's dispatcher and callback receiver errors; Tracebacks and ERRORs of the gateway, hub and EDA containers |
+| `logs` | over `aap_health_log_since` (2 h): the gateway proxy's (Envoy) 5xx responses by path and its slowest requests (over 5 s); controller-web's HARAKIRI, killed workers, Tracebacks, OperationalError, timeouts (the last 10) - a worker uWSGI recycles (`worker N killed successfully` with no HARAKIRI, SIGKILL or signal 9 near it: max-requests or reload-on-rss) is counted apart, INFO alone; as root, the kernel's OOM kills of `uwsgi` in the last 2 h (FAIL); controller-task's dispatcher and callback receiver errors; Tracebacks and ERRORs of the gateway, hub and EDA containers, each with the 5 lines after it, grouped by message (times, request IDs and process IDs taken out): the top 5 with counts, the most frequent in full under *How to look* |
 | `db` | per inventory: hosts, total / average / largest `variables` and `ansible_facts` (average over 10 KB or a host over 100 KB: WARN); database size and largest tables; connections against `max_connections`; queries running over 30 s; sessions idle in a transaction; job events and jobs kept (is the cleanup running?) |
 | `api` | the controller's ping and instances (state, capacity, health check errors, last seen); jobs pending or waiting over 15 minutes, running over 4 hours; inventory sources and projects whose last update failed; the two cleanup system jobs - there, scheduled, run lately; **each inventory's `hosts/?page_size=100` timed against `hosts/?page_size=1`** (over 5 s or not 200: FAIL); the gateway's ping and its service clusters |
 | `receptor` | `receptorctl status` - in the receptor container, else in the controller's, which reach its socket; without the `receptorctl` command, receptor's Python library in a controller container (AAP's own way to receptor), status only: nodes, routes, work types. Neither: SKIP |
@@ -52,7 +53,9 @@ uwsgi kills the worker (HARAKIRI) and the gateway answers 503 - whatever memory 
 2. **db / host variables: inventory N** - the hosts' variables (average, largest), their **job host summaries**
    (all, and the most on one host) and their **groups** (how many, and the most one host is in). Jobs run often against an inventory's hosts pile up summaries; the Hosts list
    reads each host's recent ones. Few KB of variables per host is not a size problem.
-3. **logs / controller-web** - HARAKIRI, and the paths of the requests it killed.
+3. **logs / controller-web** - HARAKIRI, and the paths of the requests it killed. Workers *recycled* (uWSGI's
+   max-requests or reload-on-rss: the worker finishes its request first) are not kills; with memory per container over
+   its limit at the same time, they recycle because of memory.
 4. **logs / gateway proxy slow requests** - the slow requests by path: one path, or many. A websocket (HTTP 101: the
    UI's live updates) stays open for as long as the page is, so it is never counted as slow.
 5. **api / cleanup: job details** - is *Cleanup Job Details* scheduled and running (it removes old summaries).
@@ -152,6 +155,10 @@ The main ones; every setting with its default: [VARIABLES_REFERENCE.md](VARIABLE
 | `aap_health_log_since` | `2h` | the logs' window (`podman logs --since`) |
 | `aap_health_slow_ms` | `5000` | a proxied request slower than this is listed |
 | `aap_health_container_mem_warn_mb` | `4096` | one container using more memory: WARN |
+| `aap_health_log_context_lines` | `5` | lines kept after each matching log line (an ERROR's message is often on the next lines) |
+| `aap_health_log_error_groups` | `5` | the containers' ERRORs grouped by message: this many listed, with counts |
+| `aap_health_log_oom_journal` | `true` | as root (`journalctl -k`, read-only): the OOM kills of the last 2 h; without root it is skipped quietly |
+| `aap_health_fapolicyd_required` | `false` | fapolicyd not running: INFO; `true` (the site must run it): FAIL |
 | `aap_health_disk_warn_pct`, `_fail_pct` | `80`, `90` | space and inodes |
 | `aap_health_cert_warn_days`, `_fail_days` | `30`, `7` | certificate expiry |
 | `aap_health_trust_cas` | DoD Root CA 3 to 6 | the CA labels the trust store must have; `[]` = not checked |

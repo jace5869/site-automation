@@ -47,6 +47,23 @@ Keycloak connections, version, schema, answer times, login, memory), *The databa
        stigdb01.yoursite.mil:
    ```
 
+   **One node that runs everything** (the API, the web, Keycloak and MariaDB in containers on one host): put that
+   host in **both** groups. It is read once - its containers, its disk and the database:
+
+   ```yaml
+   stigman:
+     hosts:
+       stig01.yoursite.mil:
+   stigman_db:
+     hosts:
+       stig01.yoursite.mil:
+   ```
+
+   With no `stigman` or `stigman_db` group in the inventory at all, the job's **Limit** names the host(s): a Limit of
+   `stig01.yoursite.mil` reads that host as the node and its database. No groups and no Limit: the API only. With
+   `stigman_health_api` set and no nodes (an empty `stigman` group, no `stigman_health_nodes`), the address people
+   use is checked alone. `stigman_health_hosts: false`: no SSH at all, whatever the Limit.
+
 2. **The addresses** (in `all.yml`: both jobs read them):
 
    ```yaml
@@ -67,10 +84,12 @@ Keycloak connections, version, schema, answer times, login, memory), *The databa
 4. **STIG Manager - health**: playbook `playbooks/stigman_health.yml`, the inventory with those groups, the
    credentials **Machine** (sudo), **STIG Manager API** and **MariaDB monitor** (the database in its container gives
    root a password: [MARIADB.md](MARIADB.md)); paste `aap/extra_vars/stigman_health.yml` into Variables and set
-   `report_email_to`. No Limit (or one that keeps `localhost`). Schedule it every day (06:15).
+   `report_email_to`. A Limit is not needed; a Limit of hosts needs no `localhost` - the API part runs once on the AAP
+   side (on `localhost`, or on the Limit's first host standing in for it, connection local: nothing of it runs on
+   that host). Schedule it every day (06:15).
 
 5. **STIG Manager - availability**: playbook `playbooks/stigman_availability.yml`, any inventory (it runs on the AAP
-   side only), the credentials **Red Hat Ansible Automation Platform** (for the percentages; Organization Auditor)
+   side only - a Limit, if any, needs no `localhost`), the credentials **Red Hat Ansible Automation Platform** (for the percentages; Organization Auditor)
    and **STIG Manager API** (only to know Keycloak's address - it never logs in). Paste
    `aap/extra_vars/stigman_availability.yml`; schedule it every 5 to 15 minutes, **Concurrent jobs** off - or as
    workflow 43 with the ServiceNow tickets step
@@ -86,7 +105,7 @@ login in well under a second.
 | `stigman_health_api` | (empty) | the address people use; empty = the nodes only |
 | `stigman_health_nodes` | `[]` | each node `{name, url}`; `[]` = the hosts of `stigman_health_nodes_group` at `stigman_health_node_url` |
 | `stigman_health_nodes_group` / `stigman_health_db_group` | `stigman` / `stigman_db` | the inventory groups |
-| `stigman_health_hosts` | `true` | `false` = the API only (no SSH) |
+| `stigman_health_hosts` | `true` | `false` = the API only (no SSH, whatever the Limit) |
 | `stigman_health_appinfo` | `true` | ask `/op/appinfo` (an admin client) |
 | `stigman_health_slow_ms` | `2000` | slower answers: warning |
 | `stigman_health_node_down` | `critical` | a node down or not `available`; `warning` = only the address counts |

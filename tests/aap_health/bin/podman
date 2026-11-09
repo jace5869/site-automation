@@ -28,7 +28,11 @@ PROXY = """[2026-11-05T10:00:00.000Z] "GET /api/controller/v2/ping/ HTTP/1.1" 20
 [2026-11-05T10:00:03.500Z] "GET /api/controller/v2/websocket/ HTTP/1.1" 101 - 0 9000 426900 426898 "-" "Mozilla/5.0" "id5" "aap" "127.0.0.1:8052"
 {"start_time":"2026-11-05T10:00:04.000Z","method":"GET","path":"/api/gateway/v1/me/","response_code":502,"duration":40,"upstream_service_time":"-"}
 [2026-11-05 10:00:05.000][1][info][main] starting main dispatch loop"""
-WEB = """2026-11-05 10:00:14,000 WARNING [-] awx.api.generics request took too long
+WEB = """...The work of process 900 is done (max requests reached (1000 >= 1000)). Seeya!
+worker 13 killed successfully (pid: 900)
+Respawned uWSGI worker 13 (new pid: 950)
+worker 14 killed successfully (pid: 901)
+2026-11-05 10:00:14,000 WARNING [-] awx.api.generics request took too long
 *** HARAKIRI ON WORKER 3 (pid: 812, try: 1) ***
 HARAKIRI: --- uWSGI worker 3 (pid: 812) WAS managing request /api/v2/inventories/8/hosts/?page_size=100 since Thu Nov  5 10:00:01 2026
 worker 3 killed successfully (pid: 812)
@@ -38,6 +42,17 @@ django.db.utils.OperationalError: server closed the connection unexpectedly"""
 TASK = """2026-11-05 10:00:59,000 INFO [-] awx.main.dispatch task 1 ok, errors: 0
 2026-11-05 10:01:00,000 ERROR [-] awx.main.dispatch worker pid 99 is gone - reaping it
 2026-11-05 10:01:01,000 ERROR [-] awx.main.commands.run_callback_receiver callback receiver failed to save event"""
+# EDA's ERROR line says only where (rest_framework's dispatch); the message is on the lines after it
+EDA = """2026-11-05 10:03:00,000 INFO dispatcherd.service.main Control action alive [x] ROE
+2026-11-05 10:03:01,123 ERROR [rid:5f1c2a9e-1111-4c2b-9d3e-0a1b2c3d4e5f] aap_eda.api.exceptions /usr/lib/python3.12/site-packages/rest_framework/views.py:497 dispatch
+Activation 412 could not be started: the decision environment image could not be pulled
+2026-11-05 10:04:01,456 ERROR [rid:7a2b0000-1111-4c2b-9d3e-0a1b2c3d4e5f] aap_eda.api.exceptions /usr/lib/python3.12/site-packages/rest_framework/views.py:497 dispatch
+Activation 412 could not be started: the decision environment image could not be pulled
+2026-11-05 10:05:00,000 ERROR [rid:0c0c0000-1111-4c2b-9d3e-0a1b2c3d4e5f] aap_eda.api.exceptions /usr/lib/python3.12/site-packages/rest_framework/views.py:497 dispatch
+Traceback (most recent call last):
+  File "/usr/lib/python3.12/site-packages/rest_framework/views.py", line 497, in dispatch
+    response = handler(request, *args, **kwargs)
+django.db.utils.OperationalError: connection to server at "postgresql" (pid 4242) failed"""
 GW = """2026-11-05 10:02:00,000 ERROR django.request Internal Server Error: /api/gateway/v1/status/
 2026-11-05 10:02:01,000 INFO aap.gateway.authentication.basic_auth User x performed a GET to /api/x/?errors=1
 2026-11-05 10:02:02,000 ALWAYS aap.dispatcherd ANSIBLE_RULEBOOK_LOG_LEVEL: error"""
@@ -103,7 +118,7 @@ def main(a):
         name = a[-1]
         out({"automation-gateway-proxy": PROXY, "automation-controller-web": WEB, "automation-controller-task": TASK,
              "automation-gateway": GW,
-             "automation-eda-api": "2026-11-05 10:03:00,000 INFO dispatcherd.service.main Control action alive [x] ROE"}.get(name, "all quiet"))
+             "automation-eda-api": EDA}.get(name, "all quiet"))
     elif cmd == "exec":
         rest = [x for x in a[1:] if x != "-i"]
         name, prog = rest[0], rest[1:]

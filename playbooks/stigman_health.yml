@@ -11,31 +11,43 @@
 # Fails when it finds something (site_fail_on), for a workflow's ticket step. docs/STIGMAN_HEALTH.md
 #   ansible-playbook -i inventories/site playbooks/stigman_health.yml
 #   ansible-playbook playbooks/stigman_health.yml -e stigman_health_hosts=false   # the API only
+# A Limit of hosts needs no localhost: the hosts' part runs on the groups' hosts in the Limit (with no stigman /
+# stigman_db groups in the inventory, on the Limit's hosts: one node that runs everything), the API part once on the
+# AAP side - on localhost, or on one host of the Limit standing in for it (connection local). One node that runs the
+# API, the web, Keycloak and MariaDB can be in both groups.
 - name: STIG Manager health - the nodes' and the database's hosts
-  hosts: "{{ stigman_health_nodes_group | default('stigman') }}:{{ stigman_health_db_group | default('stigman_db') }}"
+  # the groups' hosts, and the Limit's (so a Limit of a host outside the groups still reaches the play)
+  hosts: >-
+    {{ ([stigman_health_nodes_group | default('stigman'), stigman_health_db_group | default('stigman_db')]
+        + ([ansible_limit] if ansible_limit | default('', true) | length > 0 else [])) | join(',') }}
   become: true
   gather_facts: false
   vars:
-    # the database check runs on the database host(s) only
-    check_mariadb_enabled: "{{ inventory_hostname in groups[stigman_health_db_group | default('stigman_db')] | default([]) }}"
+    _smh_grouped: >-
+      {{ (groups[stigman_health_nodes_group | default('stigman')] | default([])
+          + groups[stigman_health_db_group | default('stigman_db')] | default([])) | unique | list }}
+    # a host of the groups; with no groups in the inventory, a host of the Limit (the node that runs everything)
+    _smh_ssh: >-
+      {{ stigman_health_hosts | default(true) | bool and inventory_hostname != 'localhost'
+         and (inventory_hostname in _smh_grouped or _smh_grouped | length == 0) }}
+    # the database check runs on the database host(s) only - with no groups, on the Limit's host(s)
+    check_mariadb_enabled: >-
+      {{ inventory_hostname in groups[stigman_health_db_group | default('stigman_db')] | default([]) or _smh_grouped | length == 0 }}
   pre_tasks:
-    - name: The job's Limit includes localhost (the API part runs there)
-      ansible.builtin.include_role:
-        name: site_findings
-        tasks_from: limit_check.yml
+    - name: Not read over SSH here (stigman_health_hosts false, localhost, or a host of the Limit outside the groups)
+      ansible.builtin.meta: end_host
+      when: not _smh_ssh | bool
 
     - name: A host that cannot be reached is listed in the report and left out here (site_unreachable_fails)
       ansible.builtin.include_role:
         name: site_findings
         tasks_from: reach.yml
-      when: stigman_health_hosts | default(true) | bool
   tasks:
     - name: Start
       ansible.builtin.set_fact:
         site_findings: []
         site_checks_run: []
         site_checks_failed: []
-      when: stigman_health_hosts | default(true) | bool
 
     - name: Containers, disk, and the database on its host
       ansible.builtin.include_role:
@@ -44,12 +56,19 @@
       vars:
         _site_check: "{{ item }}"
       loop: "{{ ['containers', 'disk'] + (['mariadb'] if check_mariadb_enabled | bool else []) }}"
-      when: stigman_health_hosts | default(true) | bool
 
 - name: STIG Manager health
-  hosts: localhost
-  connection: local
+  # once, on the AAP side: localhost - or, when the Limit leaves localhost out, the Limit's first host standing in
+  # for it (connection local: nothing runs on it)
+  hosts: >-
+    {{ 'localhost' if ansible_limit | default('', true) | length == 0
+       or 'localhost' in query('ansible.builtin.inventory_hostnames', ansible_limit)
+       else query('ansible.builtin.inventory_hostnames', ansible_limit) | first | default('localhost') }}
   gather_facts: false
+  become: false
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
   tasks:
     - name: The API, each node and Keycloak; the hosts' findings added
       ansible.builtin.include_role:

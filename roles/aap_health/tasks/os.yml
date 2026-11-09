@@ -83,6 +83,7 @@
           time_fail_s: "{{ aap_health_time_fail_s | float }}"
           selinux_users_ok: "{{ aap_health_selinux_users_ok }}"
           dnf_recent_days: "{{ aap_health_dnf_recent_days | float }}"
+          fapolicyd_required: "{{ aap_health_fapolicyd_required | bool }}"
   rescue:
     - name: AAP health | OS - the check could not run
       ansible.builtin.set_fact:

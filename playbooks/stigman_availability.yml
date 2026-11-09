@@ -7,9 +7,17 @@
 # runs give the availability over a day, a week and a month. docs/STIGMAN_HEALTH.md
 #   ansible-playbook playbooks/stigman_availability.yml -e stigman_health_api=https://stigman.example.mil/api
 - name: STIG Manager availability
-  hosts: localhost
-  connection: local
+  # on the AAP side: localhost - or, when the job's Limit leaves localhost out, the Limit's first host standing in
+  # for it (connection local: nothing runs on it). A Limit of hosts needs no localhost.
+  hosts: >-
+    {{ 'localhost' if ansible_limit | default('', true) | length == 0
+       or 'localhost' in query('ansible.builtin.inventory_hostnames', ansible_limit)
+       else query('ansible.builtin.inventory_hostnames', ansible_limit) | first | default('localhost') }}
   gather_facts: false
+  become: false
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
   tasks:
     - name: Ask STIG Manager
       ansible.builtin.include_role:

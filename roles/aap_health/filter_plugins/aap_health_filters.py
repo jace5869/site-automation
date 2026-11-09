@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """AAP health check (roles/aap_health): read what the shell tasks printed on the AAP host and turn it into
-results - one dict per check, {area, check, status, detail, hint}, status PASS, WARN, FAIL or SKIP (a check that
-could not run here: not a problem of AAP's), and for a list (containers by memory, slow paths, log lines) "items": a
+results - one dict per check, {area, check, status, detail, hint}, status PASS, WARN, FAIL, INFO (worth knowing,
+nothing wrong: uWSGI recycling its workers, fapolicyd not run here) or SKIP (a check that could not run here: not a
+problem of AAP's), and for a list (containers by memory, slow paths, log lines) "items": a
 small table {columns, rows, row_status, more} or {lines} - the detail is then its one-line summary.
 
 The tasks only collect (read-only commands, each section headed by "@@@ name"); every threshold and every
@@ -48,6 +49,11 @@ def _num(cfg):
             v = float(v) if "." in v else int(v)
         out[k] = v
     return out
+
+
+def _bool(v):
+    """A setting that may arrive from Jinja as text ("True", "false", "yes")."""
+    return v if isinstance(v, bool) else str(v).strip().lower() in ("true", "yes", "on", "1")
 
 
 def guarded(area):
@@ -162,7 +168,7 @@ def ago(seconds):
 
 
 def worst(*statuses):
-    order = {"PASS": 0, "WARN": 1, "FAIL": 2}
+    order = {"PASS": 0, "SKIP": 0, "INFO": 0.5, "WARN": 1, "FAIL": 2}
     return max(statuses or ["PASS"], key=lambda x: order.get(x, 0))
 
 
@@ -534,13 +540,27 @@ def os_checks(user_text, root_text, cfg):
                             "sudo ausearch -m FANOTIFY -ts today -i"))
         else:
             total, offenders = _fanotify(fa["out"], n)
-            st = "WARN" if total or (fs and fs != "active") else "PASS"
+            # not running: worth knowing (INFO), unless the site must run it (aap_health_fapolicyd_required: FAIL)
+            off = bool(fs) and fs != "active"
+            required = _bool(cfg.get("fapolicyd_required", False))
+            st = ("FAIL" if required else "INFO") if off else "PASS"
+            if total:
+                st = worst(st, "WARN")
+            hint = ""
+            if total:
+                hint = ("sudo ausearch -m FANOTIFY -ts today -i; sudo fapolicyd-cli --check-trustdb (reads "
+                        "only; slow). After patching, a person runs fapolicyd-cli --update if the trust database is stale. "
+                        "The repo's 'fapolicyd denials' job (playbooks/fapolicyd_denials.yml) lists them by rule.")
+            elif off and required:
+                hint = ("This site requires fapolicyd (aap_health_fapolicyd_required): sudo systemctl status fapolicyd --no-pager -l. "
+                        "Starting it is a person's decision; this job only reads.")
+            elif off:
+                hint = ("fapolicyd is not running here, so it denies nothing. Where the site's STIG requires it, set "
+                        "aap_health_fapolicyd_required: true and this is a FAIL.")
             rows.append(row("os", "fapolicyd denials (today)", st,
                             "fapolicyd %s; %s" % (fs or "?", ("%d denial(s); top (program -> file):\n%s"
                                                              % (total, "\n".join("%5d  %s" % (c, k) for k, c in offenders))) if total else "no denials"),
-                            "" if st == "PASS" else "sudo ausearch -m FANOTIFY -ts today -i; sudo fapolicyd-cli --check-trustdb (reads "
-                            "only; slow). After patching, a person runs fapolicyd-cli --update if the trust database is stale. "
-                            "The repo's 'fapolicyd denials' job (playbooks/fapolicyd_denials.yml) lists them by rule."))
+                            hint))
         dn = _sec(r, "dnf")
         dates = re.findall(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2})", dn["out"])
         if dates:
@@ -578,6 +598,17 @@ def _units_show(text):
         k, _, v = line.partition("=")
         cur[k] = v
     return out
+
+
+def mem_hint(units, cfg):
+    """memory per container's hint: where the cause shows (other rows of this report) and what frees the memory."""
+    web = [u["unit"] for u in units or [] if "controller-web" in u.get("container", "")]
+    return ("controller-web grows with large API answers (inventory hosts with big variables); controller-task with "
+            "concurrent jobs. The cause shows in other rows: db, host variables (the inventories whose hosts carry big "
+            "variables); api, hosts page (how long the Hosts list of those inventories takes); api, cleanup: job details "
+            "(Cleanup Job Details keeps the job history small). A restart of controller-web in a quiet window frees the "
+            "memory; it is a person's decision, this job only reads. As %s: systemctl --user restart %s" % (
+                cfg.get("user", "the AAP user"), web[0] if web else "automation-controller-web"))
 
 
 @guarded("containers")
@@ -648,8 +679,7 @@ def containers(text, units, cfg):
                    if big else "%d container(s), all under %d MB; the largest %s %.0f MB" % (len(lines), cfg["mem_warn_mb"], lines[0][1], lines[0][0])
                    if lines else "no container answered")
         rows.append(row("containers", "memory per container", st, summary,
-                        "" if st == "PASS" else "controller-web grows with large API answers (inventory hosts with big variables); "
-                        "controller-task with concurrent jobs.",
+                        "" if st == "PASS" else mem_hint(units, cfg),
                         {"columns": ["Container", "Memory", "Memory %", "CPU %"],
                          "rows": [[nm, "%.0f MB" % mb, pct, cpu] for mb, nm, pct, cpu in shown],
                          "row_status": [over(mb) for mb, _, _, _ in shown]}))
@@ -713,6 +743,97 @@ def _classify(lines, patterns):
             if re.search(rx, line):
                 c[name] += 1
     return c
+
+
+def blocks(out):
+    """A logs section as [(line, [the lines after it])]: grab's "@@+ " lines (the context) belong to the line before,
+    up to the next line with a time of its own (another log record, not this one's message)."""
+    res, more = [], False
+    for x in (out or "").splitlines():
+        if x.startswith("@@+ "):
+            if res and more and not RECORD.match(x[4:]):
+                res[-1][1].append(x[4:])
+            else:
+                more = False
+        elif x.strip():
+            res.append((x, []))
+            more = True
+    return res
+
+
+RECORD = re.compile(r"^\s*\[?\d{4}-\d\d-\d\d[ T]\d\d:\d\d")      # a line that starts a log record of its own
+
+
+RECYCLE = re.compile(r"worker \d+ killed successfully")
+HARD_KILL = re.compile(r"HARAKIRI|SIGKILL|signal 9")
+
+
+def recycled(lines, near=5):
+    """The indexes of uWSGI's graceful recycles among the matching lines: "worker N killed successfully" with no
+    HARAKIRI, SIGKILL or signal 9 in it or in the `near` matching lines before it (max-requests, reload-on-rss). After
+    a HARAKIRI uWSGI also says "killed successfully" - that one is a kill."""
+    return set(i for i, x in enumerate(lines)
+               if RECYCLE.search(x) and not any(HARD_KILL.search(y) for y in lines[max(0, i - near):i + 1]))
+
+
+TS = re.compile(r"\[?\d{4}-\d\d-\d\d[ T]\d\d:\d\d:\d\d(?:[.,]\d+)?(?:Z|[+-]\d\d:?\d\d)?\]?|"
+                r"\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) \w{3} +\d+ \d\d:\d\d:\d\d(?: \d{4})?|\b\d\d:\d\d:\d\d(?:[.,]\d+)?\b")
+RID = re.compile(r"\[?\b(?:rid|request_id|req_id|trace_id)[:=]\s*[^\]\s]*\]?", re.I)
+LEVEL = re.compile(r"^\s*(?:\[?(?:ERROR|CRITICAL|FATAL)\]?:?|level=error)\s+", re.I)
+WHERE = re.compile(r"^(?:(\S+)\s+)?\S+\.py:\d+\s+\w+$")      # "aap_eda.api.exceptions /usr/.../views.py:497 dispatch"
+EXC = re.compile(r"^[\w.]*(?:Error|Exception|Exit|Denied|Refused|Fault|NotFound|DoesNotExist)\b")
+SCAFFOLD = re.compile(r"^(?:Traceback \(most recent call last\)|File \"|\^+$|-+$|During handling|The above exception)")
+
+
+def error_message(line, after):
+    """What an ERROR line says, the same for every time it is logged: its message without the time, the level and the
+    request ID; when the line only says where (a logger and file.py:497 function) or opens a Traceback, the message on
+    the lines after it (an exception line first)."""
+    m = RID.sub("", TS.sub("", line)).strip(" -|")
+    m = LEVEL.sub("", m).strip()
+    w = WHERE.match(m)
+    if not m or w or m.startswith("Traceback"):
+        cand = [x.strip() for x in after if x.strip() and not SCAFFOLD.match(x.strip()) and not x.startswith((" ", "\t"))]
+        exc = [x for x in cand if EXC.match(x)]
+        msg = (exc or cand or [m])[0]
+        msg = RID.sub("", TS.sub("", msg)).strip(" -|")
+        msg = LEVEL.sub("", msg).strip()
+        m = ("%s: %s" % (w.group(1), msg)) if w and w.group(1) and msg != m else msg
+    return m
+
+
+def error_key(msg):
+    """A message with what changes every time taken out: times, request IDs, process IDs, UUIDs, long hex and
+    numbers, path IDs."""
+    k = RID.sub("", TS.sub("", msg))
+    k = re.sub(r"\b(pid[:=]?\s*)\d+", r"\1N", k, flags=re.I)
+    k = re.sub(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", "<id>", k, flags=re.I)
+    k = re.sub(r"\b0x[0-9a-f]+\b|\b[0-9a-f]{16,}\b", "<hex>", k, flags=re.I)
+    k = re.sub(r"(?<=/)\d+(?=/|$|\s|\?)", "N", k)
+    k = re.sub(r"\b\d{4,}\b", "N", k)
+    return re.sub(r"\s+", " ", k).strip()
+
+
+def error_groups(blks):
+    """[(message, count, example)] most frequent first: the ERRORs grouped by their message (error_key); the example
+    is the last one in full (the line and the lines after it)."""
+    from collections import OrderedDict
+    g = OrderedDict()
+    blks, i = list(blks), 0
+    while i < len(blks):
+        line, after = blks[i]
+        i += 1
+        # "ERROR ... views.py:497 dispatch" and the Traceback logged right after it: one error (its message in the
+        # Traceback), not two
+        nxt = blks[i][0] if i < len(blks) else ""
+        if not after and RID.sub("", TS.sub("", nxt)).strip(" -|").startswith("Traceback") \
+                and WHERE.match(LEVEL.sub("", RID.sub("", TS.sub("", line)).strip(" -|")).strip()):
+            after = [nxt] + blks[i][1]
+            i += 1
+        k = error_key(error_message(line, after))
+        n, _ = g.get(k, (0, None))
+        g[k] = (n + 1, [line] + after)
+    return sorted(((k, n, ex) for k, (n, ex) in g.items()), key=lambda t: -t[1])
 
 
 @guarded("logs")
@@ -780,9 +901,16 @@ def logs(text, cfg):
         if sec is None:
             rows.append(row("logs", label, "WARN", "no %s container found" % label, ""))
             continue
-        lines = [x for x in sec["out"].splitlines() if x.strip()]
-        c = _classify(lines, pats)
-        st = "FAIL" if any(c.get(k) for k in fail_on) else "WARN" if lines else "PASS"
+        lines = [x for x, _ in blocks(sec["out"])]
+        # uWSGI recycling a worker (max-requests, reload-on-rss) is not a crash: counted apart, INFO alone
+        rec = recycled(lines) if key == "web" else set()
+        real = [x for i, x in enumerate(lines) if i not in rec]
+        c = _classify(real, pats)
+        oom = Counter()
+        if key == "web" and cfg.get("oom"):
+            oom = Counter(x for x in re.findall(r"Killed process \d+ \(([^)]+)\)", cfg["oom"])
+                          if re.search(cfg.get("oom_match") or "uwsgi", x))
+        st = "FAIL" if any(c.get(k) for k in fail_on) or oom else "WARN" if real else "INFO" if rec else "PASS"
         if sec["rc"] == 124:
             st = worst(st, "WARN")
             since_ = since + " (podman logs stopped after %s s: partial)" % cfg.get("timeout", "?")
@@ -791,26 +919,54 @@ def logs(text, cfg):
         # uwsgi's "... WAS managing request /path", or AAP's "HARAKIRI [core 0] <client> - GET /path since ..."
         killed = Counter((m.group(1) or m.group(2)).split("?")[0] for m in (
             re.search(r"managing request (\S+)|HARAKIRI \[core \d+\] \S+ - [A-Z]+ (\S+)", x) for x in lines) if m)
-        rows.append(row("logs", label, st,
-                        ("in %s: %s%s" % (since_, ", ".join("%s %d" % (k, c.get(k, 0)) for k in pats),
-                                          ("; %d request(s) killed (HARAKIRI)" % sum(killed.values())) if killed else ""))
-                        if lines else "nothing matching %s in %s" % (", ".join(pats), since_),
-                        "" if st == "PASS" else "As %s: podman logs --since %s %s 2>&1 | grep -E '%s'. HARAKIRI / worker killed = "
-                        "a request ran longer than uwsgi allows and the worker was killed (the 503s): find its path in the gateway "
-                        "proxy rows." % (cfg["user"], since, cfg[key], "|".join(pats.values())[:120]),
+        recs = ("%d worker(s) recycled (uWSGI max-requests or reload-on-rss)" % len(rec)
+                + ("; memory per container is over its limit too: recycling because of memory, see memory per container"
+                   if _bool(cfg.get("mem_over", False)) else "")) if rec else ""
+        ooms = ("OOM kills in the last 2 h: %s" % ", ".join("%s x%d" % kv for kv in top(oom, n))) if oom else ""
+        if real:
+            detail = "in %s: %s%s" % (since_, ", ".join("%s %d" % (k, c.get(k, 0)) for k in pats),
+                                      ("; %d request(s) killed (HARAKIRI)" % sum(killed.values())) if killed else "")
+        elif lines:
+            detail = "in %s: %s" % (since_, recs)
+            recs = ""
+        else:
+            detail = "nothing matching %s in %s" % (", ".join(pats), since_)
+        detail += "".join("; " + x for x in (recs, ooms) if x)
+        if st == "INFO":
+            hint = ("uWSGI recycles a worker after its max-requests or when it grows past reload-on-rss: the worker finishes "
+                    "its request and a new one starts - not a crash, and no request is lost. Many an hour, with memory per "
+                    "container over its limit: the memory per container row says why.")
+        elif st == "PASS":
+            hint = ""
+        else:
+            hint = ("As %s: podman logs --since %s %s 2>&1 | grep -E '%s'. HARAKIRI / worker killed = "
+                    "a request ran longer than uwsgi allows and the worker was killed (the 503s): find its path in the gateway "
+                    "proxy rows." % (cfg["user"], since, cfg[key], "|".join(pats.values())[:120]))
+            if oom:
+                hint += (" An OOM kill = the kernel ended a worker for want of memory: sudo journalctl -k --since -2h --no-pager "
+                         "| grep -i 'killed process'; then the memory per container row.")
+        # killed by path: only the requests uWSGI killed (HARAKIRI), never the recycled workers
+        rows.append(row("logs", label, st, detail, hint,
                         {"lines": (["requests killed (HARAKIRI), by path:"] + ["%5d  %s" % (v, k) for k, v in top(killed, n)]
                                    if killed else []) + ["last %d:" % min(10, len(lines))] + [x[:300] for x in lines[-10:]], "mono": True}
                         if lines else None))
     for name, sec in sorted((k[6:], v) for k, v in s.items() if k.startswith("other:")):
-        lines = [x for x in sec["out"].splitlines() if x.strip()]
+        blks = blocks(sec["out"])
+        lines = [x for x, _ in blks]
         c = _classify(lines, cfg["other_patterns"])
         st = "WARN" if lines else "PASS"
+        # each ERROR with the lines after it, grouped by its message: the top ones with counts, the most frequent in full
+        groups = error_groups(blks)
         rows.append(row("logs", name, st,
-                        ("in %s: %s" % (since, ", ".join("%s %d" % (k, c.get(k, 0)) for k in cfg["other_patterns"])))
+                        ("in %s: %s; %d different message(s)" % (since, ", ".join("%s %d" % (k, c.get(k, 0)) for k in cfg["other_patterns"]),
+                                                                len(groups)))
                         if lines else "no %s in %s" % (" / ".join(cfg["other_patterns"]), since),
-                        "" if st == "PASS" else "As %s: podman logs --since %s %s 2>&1 | grep -E -A5 'Traceback| ERROR |\\[ERROR\\]'" % (
-                            cfg["user"], since, name),
-                        {"lines": ["last: " + lines[-1][:240] + ("\u2026" if len(lines[-1]) > 240 else "")], "mono": True} if lines else None))
+                        "" if st == "PASS" else "The messages are grouped with their times, request IDs and process IDs taken out; "
+                        "the most frequent one, in full, is under How to look. As %s: podman logs --since %s %s 2>&1 | grep -E -A5 "
+                        "'Traceback| ERROR |\\[ERROR\\]'" % (cfg["user"], since, name),
+                        {"columns": ["Message", "Count"], "rows": [[cut(k, 240, 90), str(v)] for k, v, _ in groups],
+                         "top": cfg.get("error_groups", 5),
+                         "example": [x[:300] for x in groups[0][2]]} if lines else None))
     return rows
 
 
@@ -1197,8 +1353,8 @@ def certs(text, labels, cfg):
             if path in cfg.get("named", []) and re.search(r"No such file|Could not open", body):
                 rows.append(row("certs", labels.get(path) or path, "WARN",
                                 "the installer inventory names %s, and it is not there" % path,
-                                "The installer copied it into its own folders when it ran (those copies are checked here); "
-                                "the file is needed again only for the next installer run - fix the path before then."))
+                                "Harmless until the next installer run: update %s in the installer inventory to where the "
+                                "cert lives now, or stage the file again." % (labels.get(path) or "the path")))
             elif path in cfg.get("named", []):
                 rows.append(row("certs", path, "WARN", "not a certificate openssl can read: %s" % body[:200], "openssl x509 -noout -enddate -in %s" % path))
             continue
@@ -1251,8 +1407,8 @@ def certs(text, labels, cfg):
 # ---------------------------------------------------------------------------------------------------------------
 # the report
 
-RANK = {"FAIL": 0, "WARN": 1, "PASS": 2, "SKIP": 3}
-EMAIL_STATUS = {"FAIL": "critical", "WARN": "warning", "PASS": "ok", "SKIP": ""}
+RANK = {"FAIL": 0, "WARN": 1, "INFO": 2, "PASS": 3, "SKIP": 4}
+EMAIL_STATUS = {"FAIL": "critical", "WARN": "warning", "INFO": "info", "PASS": "ok", "SKIP": ""}
 AREA_NOTE = {"db": "Inventories are named with their ID - the number in the inventory's address in AAP (.../inventories/"
                    "inventory/<ID>/...); aap_health_focus_inventories and aap_health_api_time_inventories take those IDs.",
              "api": "Inventories are named with their ID - the number in the inventory's address in AAP (.../inventories/"
@@ -1260,7 +1416,7 @@ AREA_NOTE = {"db": "Inventories are named with their ID - the number in the inve
 
 
 def counts(rows):
-    c = {"PASS": 0, "WARN": 0, "FAIL": 0, "SKIP": 0}
+    c = {"PASS": 0, "WARN": 0, "FAIL": 0, "INFO": 0, "SKIP": 0}
     for r in rows or []:
         c[r.get("status", "WARN")] = c.get(r.get("status", "WARN"), 0) + 1
     return c
@@ -1276,7 +1432,7 @@ def problem_lines(rows):
 
 
 def by_area(rows, order):
-    """[(area, [rows])] in the areas' order, FAIL first inside each (SKIP last)."""
+    """[(area, [rows])] in the areas' order, FAIL first inside each (INFO after WARN, SKIP last)."""
     areas = list(order) + sorted(set(r["area"] for r in rows or []) - set(order))
     return [(a, sorted([r for r in rows if r["area"] == a], key=lambda r: RANK.get(r["status"], 1)))
             for a in areas if any(r["area"] == a for r in rows)]
@@ -1347,7 +1503,7 @@ def extra(r, top=10):
     if it.get("columns"):
         rs = it.get("rows") or []
         flagged = [x for x in it.get("row_status") or [] if x in ("FAIL", "WARN")]
-        n = max(top, len(flagged))
+        n = max(it.get("top") or top, len(flagged))
         sec = {"title": title, "columns": it["columns"], "rows": [[cut(c, 120) for c in x] for x in rs[:n]]}
         if it.get("row_status"):
             sec["row_status"] = [EMAIL_STATUS.get(x, "") if x in ("FAIL", "WARN") else "" for x in it["row_status"][:n]]
@@ -1390,6 +1546,9 @@ def how_to_look(rows):
                 "subject": cut((r.get("detail") or "").splitlines()[0] if r.get("detail") else "", 160), "next": prose}
         if cmds:
             card["code"] = "\n".join(cmds)
+        ex = (r.get("items") or {}).get("example")
+        if ex:   # the most frequent message in full, as comments: a Copy of the card stays safe to paste
+            card["code"] = (card.get("code", "") + "\n\n# The most frequent message, in full:\n" + "\n".join("# " + x for x in ex)).lstrip("\n")
         cards.append(card)
     return cards
 
@@ -1411,7 +1570,8 @@ def email_sections(rows, order, top=10):
                     "row_status": [EMAIL_STATUS[r["status"]] for r in bad]})
     for area, rs in by_area(rows, order):
         c = counts(rs)
-        text = "%d fail, %d warn, %d pass%s" % (c["FAIL"], c["WARN"], c["PASS"], (", %d not checked" % c["SKIP"]) if c["SKIP"] else "")
+        text = "%d fail, %d warn, %d pass%s%s" % (c["FAIL"], c["WARN"], c["PASS"], (", %d info" % c["INFO"]) if c["INFO"] else "",
+                                                  (", %d not checked" % c["SKIP"]) if c["SKIP"] else "")
         if area in AREA_NOTE and any("(ID " in r.get("check", "") for r in rs):
             text += ". " + AREA_NOTE[area]
         out.append({"title": area, "text": text, "status": "critical" if c["FAIL"] else "warning" if c["WARN"] else "ok",
