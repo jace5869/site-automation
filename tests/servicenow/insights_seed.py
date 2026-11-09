@@ -4,7 +4,8 @@ made-up site's ServiceNow - incidents of a dozen issues across five teams (names
 in their text, close notes good, thin and bare), requested items, catalog tasks, changes (some failed, followed by
 incidents), problems, the assignment history (sys_audit) of incidents passed between groups, and work notes (sys_journal_field,
 0.96.0: what was tried - the printers' restart a workaround used again and again; an address, a host and a phone number in
-them that appear nowhere else). Deterministic.
+them that appear nowhere else), change tasks (1.2.0: one to four per change, the network team's often closed last and late,
+some without a planned end, a few changes still open with open tasks past their planned end). Deterministic.
     insights_seed.py OUT.json [SCALE] [--sites]      (SCALE 1 = about 1,500 incidents in the 6-month window)
 --sites (0.97.0): the same records with the groups named as three made-up sites with their directorates - SITEA's staff
 codes J6 and j63, SITEB's NOVA (the suffix) and an Other, SITE-C (a hyphen in it) with the named directorate CODEX."""
@@ -96,7 +97,7 @@ def main():
     out_path = args[0]
     scale = float(args[1]) if len(args) > 1 else 1.0
     recs, n = [], [0]
-    seq = {"INC": 40000, "RITM": 50000, "SCTASK": 60000, "CHG": 31000, "PRB": 4400}
+    seq = {"INC": 40000, "RITM": 50000, "SCTASK": 60000, "CHG": 31000, "PRB": 4400, "CTASK": 70000}
 
     def num(p):
         seq[p] += 1
@@ -177,7 +178,8 @@ def main():
         grp = R.choice([WIN, VDI, LNX, NET])
         recs.append({"_table": "change_request", "number": num("CHG"), "short_description": "Routine change %d" % i, "assignment_group": grp,
                      "type": "emergency" if R.random() < .1 else "normal", "state": "3", "opened_at": t(d - datetime.timedelta(days=4)),
-                     "work_end": t(d), "closed_at": t(d + datetime.timedelta(hours=4)), "close_code": "successful", "cmdb_ci": ""})
+                     "work_start": t(d - datetime.timedelta(hours=3)), "work_end": t(d), "closed_at": t(d + datetime.timedelta(hours=4)),
+                     "close_code": "successful", "cmdb_ci": ""})
     # problems: the Horizon pool's (open), the CAC one (resolved, the incidents go on)
     prb_h = {"_table": "problem", "number": num("PRB"), "short_description": "Horizon sessions fail on vdi-pool-ops", "assignment_group": VDI,
              "cmdb_ci": "vdi-pool-ops", "state": "2", "opened_at": t(datetime.datetime(2026, 7, 1, 9)), "closed_at": "", "resolved_at": ""}
@@ -249,6 +251,37 @@ def main():
         for k, line in enumerate(lines[:R2.randint(1, len(lines))]):
             recs.append({"_table": "sys_journal_field", "element": "work_notes", "name": "incident", "_doc": rec["number"],
                          "value": line.format(**ctx), "sys_created_on": t(o + datetime.timedelta(minutes=20 * (k + 1)))})
+    # change tasks (1.2.0): their own random numbers (R3) - one to four per change, planned for the change's work window; the
+    # network team's closed last and late (Held up by); one in seven without a planned end; four changes still open (their
+    # tasks too, some past the planned end)
+    R3 = random.Random(13)
+    late = {NET: (20, 70), VDI: (2, 10)}
+    for c in [x for x in recs if x.get("_table") == "change_request"]:
+        ws = datetime.datetime.strptime(c.get("work_start") or c["work_end"], "%Y-%m-%d %H:%M:%S")
+        we = datetime.datetime.strptime(c["work_end"], "%Y-%m-%d %H:%M:%S")
+        k = R3.choice([0, 1, 1, 2, 2, 3, 4])
+        for j in range(k):
+            grp = c["assignment_group"] if j == 0 else R3.choice([WIN, LNX, NET, NET, VDI, SD])
+            hours = R3.uniform(.5, 3) + (R3.uniform(*late[grp]) if grp in late and R3.random() < .6 else 0)
+            done = ws + datetime.timedelta(hours=hours)
+            who = R3.choice(PEOPLE[grp])
+            recs.append({"_table": "change_task", "number": num("CTASK"), "change_request": c["number"],
+                         "short_description": ["Pre-checks", "Implement", "Post-checks and monitoring", "Firewall and switch ports"][j % 4] + " - " + c["short_description"],
+                         "assignment_group": grp, "assigned_to": who, "opened_at": c["opened_at"], "state": "3",
+                         "planned_start_date": t(ws), "planned_end_date": "" if R3.random() < .15 else t(we + datetime.timedelta(hours=2)),
+                         "closed_at": t(done), "closed_by": who, "close_code": "successful",
+                         "close_notes": R3.choice(["Done", "Completed", "Checked the service after the change; all green.",
+                                                   "Opened the ports on the switch and the firewall; tested from the client subnet."])})
+    for i in range(4):
+        d = END - datetime.timedelta(days=[3, 9, 26, 45][i])
+        c = {"_table": "change_request", "number": num("CHG"), "short_description": "Planned change %d" % i, "assignment_group": [WIN, LNX, NET, VDI][i],
+             "type": "normal", "state": "-1", "opened_at": t(d - datetime.timedelta(days=5)), "work_start": t(d), "work_end": t(d + datetime.timedelta(hours=4)),
+             "closed_at": "", "close_code": "", "cmdb_ci": ""}
+        recs.append(c)
+        for j, grp in enumerate([c["assignment_group"], NET]):
+            recs.append({"_table": "change_task", "number": num("CTASK"), "change_request": c["number"], "short_description": "Task %d - %s" % (j + 1, c["short_description"]),
+                         "assignment_group": grp, "assigned_to": PEOPLE[grp][j % len(PEOPLE[grp])], "opened_at": c["opened_at"], "state": "2" if j else "1",
+                         "planned_start_date": t(d), "planned_end_date": t(d + datetime.timedelta(hours=6)), "closed_at": "", "closed_by": "", "close_notes": ""})
     for rec in incs:
         rec.pop("_issue", None)
     # the groups' members (sys_user_grmember): the people, and the quiet members

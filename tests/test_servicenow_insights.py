@@ -387,7 +387,7 @@ class Model(unittest.TestCase):
         self.assertEqual(sorted(names), ["Alex Morgan", "Jordan Kim", "Riley Chen", "Sam Patel"])
         self.assertEqual(next(p for p in st["people"] if p["name"] == "Riley Chen")["resolved"], 0)
         self.assertNotIn("Dana Whitfield", names)
-        self.assertEqual(st["awards"][0]["what"], "Most resolved")
+        self.assertEqual(st["awards"][0]["what"], "Most closed")                 # the change tasks read (1.2.0): closed
         self.assertEqual(st["total"]["resolved"], sum(p["resolved"] for p in st["people"]) + st["outside"]["count"])
         self.assertEqual(st["outside"]["count"], 0)                 # every ticket of the team was assigned to a member
         op = st["openers"]
@@ -792,6 +792,190 @@ class SlaTargets(unittest.TestCase):
         d = yaml.safe_load(open(os.path.join(HERE, "..", "roles", "servicenow_insights", "defaults", "main.yml")))
         self.assertEqual(d["servicenow_insights_sla_targets"]["incident"]["1"], 8)
         self.assertEqual(set(d["servicenow_insights_sla_targets"]), {"incident", "sc_req_item"})
+
+
+class ChangeTasks(unittest.TestCase):
+    """1.2.0: change_task read (GET), each team's change tasks - opened, closed by the planned end or after it, open now and
+    how old, the time to close - rolled up at every level; counted in the leaderboards (Closed, their own column) and the
+    side by side, never in the backlog or the SLAs; the changes' tasks per change and the team a change waited on last."""
+    WIN, NWK, LNX = "Ops - Windows", "Ops - Network", "Ops - Linux"
+
+    def r(self, tasks=True, refused=False):
+        vd = lambda v: {"value": v, "display_value": v}          # noqa: E731
+
+        def rec(table, **f):
+            f.setdefault("sys_id", "s-" + f["number"])
+            f.setdefault("active", "false" if f.get("closed_at") else "true")
+            return rd.normalize(dict((k, vd(v)) for k, v in f.items()), table)
+        chg = [rec("change_request", number="CHG1", assignment_group=self.WIN, opened_at="2026-05-28 09:00:00", work_start="2026-06-01 10:00:00",
+                   closed_at="2026-06-03 12:00:00", close_code="successful"),
+               rec("change_request", number="CHG2", assignment_group=self.WIN, opened_at="2026-06-05 09:00:00", work_start="2026-06-10 08:00:00",
+                   closed_at="2026-06-10 20:00:00", close_code="successful"),
+               rec("change_request", number="CHG3", assignment_group=self.LNX, opened_at="2026-07-01 09:00:00", closed_at="2026-07-02 09:00:00",
+                   close_code="successful")]
+        ct = [rec("change_task", number="CTASK1", change_request="CHG1", assignment_group=self.WIN, assigned_to="Sam Patel", closed_by="Sam Patel",
+                  opened_at="2026-05-28 09:00:00", planned_end_date="2026-06-01 14:00:00", closed_at="2026-06-01 12:00:00", close_notes="Done"),
+              rec("change_task", number="CTASK2", change_request="CHG1", assignment_group=self.LNX, assigned_to="Avery Stone", closed_by="Avery Stone",
+                  opened_at="2026-05-28 09:00:00", planned_end_date="2026-06-01 14:00:00", closed_at="2026-06-01 15:00:00", close_notes="Done"),
+              rec("change_task", number="CTASK3", change_request="CHG1", assignment_group=self.NWK, assigned_to="Taylor Grant", closed_by="Taylor Grant",
+                  opened_at="2026-05-28 09:00:00", planned_end_date="", closed_at="2026-06-02 15:00:00", close_code="successful",
+                  close_notes="Opened the ports on the switch and the firewall; tested from the client subnet."),
+              rec("change_task", number="CTASK4", change_request="CHG2", assignment_group=self.NWK, assigned_to="Taylor Grant", closed_by="Taylor Grant",
+                  opened_at="2026-06-05 09:00:00", planned_end_date="2026-06-10 20:00:00", closed_at="2026-06-10 18:00:00", close_notes="Done"),
+              rec("change_task", number="CTASK5", change_request="CHG4", assignment_group=self.NWK, assigned_to="Robin Shah",
+                  opened_at="2026-09-01 09:00:00", planned_end_date="2026-09-02 09:00:00", state="2")]
+        inc = [rec("incident", number="INC1", assignment_group=self.NWK, assigned_to="Taylor Grant", resolved_by="Taylor Grant",
+                   opened_at="2026-06-20 10:00:00", resolved_at="2026-06-20 12:00:00", closed_at="2026-06-23 12:00:00", made_sla="true",
+                   close_notes="Replaced the patch cable and re-enabled the port.")]
+        win = rd.window(6, 0, "2026-10-31", True, "", NOW)
+        tables = [{"table": t, "read": 1, "kept": 1, "more": False, "error": ""} for t in ("incident", "change_request")]
+        tables.append({"table": "change_task", "read": 0, "kept": 0, "more": False,
+                       "error": "GET api/now/table/change_task: HTTP 403: Operation Failed: ACL Exception" if refused else ""})
+        return {"ok": True, "window": win, "items": inc + chg + (ct if tasks and not refused else []), "audit": {}, "groups": [],
+                "members": {self.WIN: ["Sam Patel"], self.NWK: ["Taylor Grant", "Robin Shah"], self.LNX: ["Avery Stone"]},
+                "url": "https://sn.example.mil", "group_tree": {}, "tables": tables}
+
+    def model(self, r, **o):
+        return F.servicenow_insights_model(r, None, {"pairs": [], "counts": {}}, dict(OPTS, groups=[self.WIN, self.NWK, self.LNX], **o))
+
+    def test_read_get_only(self):
+        self.assertIn("change_task", rd.TABLE_FIELDS)
+        self.assertEqual(rd.TABLE_FIELDS["change_task"], ["change_request", "planned_start_date", "planned_end_date", "close_code"])
+        it = rd.normalize({"sys_id": {"value": "c1", "display_value": "c1"}, "number": {"value": "CTASK9", "display_value": "CTASK9"},
+                           "change_request": {"value": "9f1e", "display_value": "CHG0031001"}, "assignment_group": {"value": "g7", "display_value": self.NWK},
+                           "planned_end_date": {"value": "2026-06-01 14:00:00", "display_value": "06/01/2026 10:00:00"},
+                           "opened_at": {"value": "2026-05-28 09:00:00", "display_value": ""}, "closed_at": {"value": "2026-06-01 15:00:00", "display_value": ""}},
+                          "change_task")
+        self.assertEqual((it["parent"], it["parent_id"], it["planned_end"], it["done_at"], it["group"]),
+                         ("CHG0031001", "9f1e", "2026-06-01 14:00:00", "2026-06-01 15:00:00", self.NWK))
+        self.assertTrue(rd.table_query("change_task", ["g7"], [], NOW, NOW).startswith("assignment_groupINg7^opened_at>="))
+        import yaml
+        with open(os.path.join(HERE, "..", "roles", "servicenow_insights", "defaults", "main.yml")) as fh:
+            self.assertIn("change_task", yaml.safe_load(fh)["servicenow_insights_tables"])
+        with open(os.path.join(HERE, "..", "roles", "servicenow_insights", "library", "site_servicenow_insights.py")) as fh:
+            src = fh.read()
+        self.assertIn('"change_request", "change_task", "problem"]', src)
+        self.assertNotIn('method="POST"', src)
+        self.assertNotIn('method="PATCH"', src)
+
+    def test_the_figures(self):
+        m = self.model(self.r())
+        a = m["scopes"]["all"]
+        self.assertEqual(a["ctasks"], {"opened": 5, "closed": 4, "closed_prev": 0, "open": 1, "age": [0, 0, 0, 1], "on_time": 2, "overdue": 1,
+                                       "no_end": 1, "late_open": 1, "median_h": 114.0})
+        ch = a["changes"]
+        self.assertEqual((ch["count"], ch["tasks"], ch["with_tasks"], ch["per_change"], ch["most"], ch["held_n"]), (3, 4, 2, 2.0, ["CHG1", 3], 2))
+        # CHG1: its other tasks closed at 15:00 on 1 June, Network's at 15:00 on 2 June (24 h); CHG2's one task: from the
+        # change's work start, 08:00, to 18:00 (10 h)
+        self.assertEqual(ch["held_by"], [{"group": self.NWK, "count": 2, "median_h": 17.0}])
+        net = m["scopes"][self.NWK]
+        self.assertEqual((net["ctasks"]["closed"], net["ctasks"]["open"], net["ctasks"]["no_end"]), (2, 1, 1))
+        self.assertEqual(m["scopes"][self.WIN]["ctasks"]["closed"] + m["scopes"][self.LNX]["ctasks"]["closed"] + net["ctasks"]["closed"], 4)
+        # their own figures: the backlog, the weeks and the SLAs are the incidents' and requests' as before
+        no = self.model(self.r(tasks=False))
+        for k in ("backlog", "weeks", "sla", "age", "median_h", "counts"):
+            self.assertEqual(a[k], no["scopes"]["all"][k], k)
+        row = dict((t["team"], t) for t in a["teams"])[self.NWK]
+        self.assertEqual((row["ct_closed"], row["ct_open"]), (2, 1))
+
+    def test_the_leaderboards(self):
+        st = self.model(self.r())["scopes"][self.NWK]["stars"]
+        tg = next(p for p in st["people"] if p["name"] == "Taylor Grant")
+        self.assertEqual((tg["resolved"], tg["ctask"], tg["median_h"]), (3, 2, 2.0))      # the median: the incident only
+        self.assertEqual((st["total"]["resolved"], st["total"]["ctask"], st["ctasks"]), (3, 2, True))
+        self.assertEqual((st["awards"][0]["what"], st["awards"][0]["stat"]), ("Most closed", "3 tickets closed"))
+        h = P.servicenow_insights_page(self.model(self.r()), self.NWK, {})
+        self.assertIn("<th", h)
+        self.assertRegex(h, r'>Closed<.*?>Change tasks<.*?>Median to resolve<')
+        self.assertIn("Change tasks = how many of them were change tasks", h)
+
+    def test_rolled_up_at_every_level(self):
+        """Each change task once at every level, however many levels the tree has: a scope's children add up to it."""
+        x = site(sites=True)
+        m = x["model"]
+        sc = m["scopes"]
+        self.assertGreater(sc["all"]["ctasks"]["closed"], 0)
+
+        def children(k):
+            if k == "all":
+                return [n["key"] for n in m["tree"]]
+            for n in m["tree"]:
+                if n["key"] == k:
+                    return [d["key"] for d in n["dirs"]]
+            return []
+        checked = 0
+        for k in [k for k in sc if children(k)]:
+            for f in ("opened", "closed", "open", "on_time", "overdue", "no_end", "late_open"):
+                self.assertEqual(sum(sc[c]["ctasks"][f] for c in children(k)), sc[k]["ctasks"][f], (k, f))
+            checked += 1
+        self.assertGreater(checked, 2)
+
+    def test_split(self):
+        x = site(sites=True)
+        m = F.servicenow_insights_model(x["r"], None, x["mask"], dict(PARENTS_OPTS, split_label="BLUE", split_pattern="*- nova"))
+        for k in ("all", "site:SITEB", "site:SITEA"):
+            for f in ("closed", "open", "overdue"):
+                self.assertEqual(m["variants"]["in"][k]["ctasks"][f] + m["variants"]["out"][k]["ctasks"][f], m["scopes"][k]["ctasks"][f], (k, f))
+        self.assertEqual(m["variants"]["in"]["site:SITEA"]["ctasks"]["closed"], 0)
+        self.assertGreater(m["variants"]["in"]["all"]["ctasks"]["closed"], 0)
+        xl = F.servicenow_insights_xlsx(m, x["r"], None, x["mask"], PARENTS_OPTS)
+        sh = next(s_ for s_ in xl if s_["name"] == "Change tasks")
+        col = sh["columns"].index("BLUE")
+        self.assertEqual(sorted(set(r_[col] for r_ in sh["rows"])), ["no", "yes"])
+
+    def test_email_page_workbook(self):
+        r = self.r()
+        m = self.model(r)
+        doc = F.servicenow_insights_doc(m, "all", OPTS)
+        sec = dict((s_["title"], s_) for s_ in doc["sections"])
+        self.assertEqual(sec["Teams side by side"]["columns"][8:10], ["Change tasks closed", "Change tasks open"])
+        ct = sec["Change tasks"]
+        self.assertIn("Closed: 4 (the window before: 0), median 4.8 days to close; 2 by the planned end, 1 after it, 1 with no planned end", ct["lines"][0])
+        self.assertEqual(ct["rows"], [[self.NWK, 2, "17.0 h"]])
+        h = P.servicenow_insights_page(m, "all", {"links": page_links(m)})
+        for t in ("Change tasks closed", "Change tasks open", "Held up by", "Tasks per change", "Open change tasks by age", 'class="subh"'):
+            self.assertIn(t, h)
+        wb = F.servicenow_insights_xlsx(m, r, None, {"pairs": [], "counts": {}}, OPTS)
+        sh = next(s_ for s_ in wb if s_["name"] == "Change tasks")
+        self.assertEqual([x[0] for x in sh["rows"]], ["CTASK1", "CTASK2", "CTASK3", "CTASK4", "CTASK5"])
+        by = dict((x[0], x[sh["columns"].index("By the planned end")]) for x in sh["rows"])
+        self.assertEqual(by, {"CTASK1": "yes", "CTASK2": "no", "CTASK3": "no planned end", "CTASK4": "yes", "CTASK5": "open, past the planned end"})
+        self.assertEqual(sh["rows"][2][1], "CHG1")
+        self.assertIn("Of them change tasks", next(s_ for s_ in wb if s_["name"] == "People")["columns"])
+        self.assertIsNotNone(F.servicenow_insights_artifact(m)["scopes"]["all"]["change_tasks"])
+
+    def test_tables_fit(self):
+        """1.2.0: no table scrolls sideways - the headers and long text wrap (no ellipsis, nothing cut), the numbers tight;
+        on a phone each row a card, each cell under its column's name."""
+        m = self.model(self.r())
+        h = P.servicenow_insights_page(m, "all", {"links": page_links(m)})
+        th_rule = re.search(r"\nth\{[^}]*\}", P.CSS).group(0)
+        self.assertNotIn("nowrap", th_rule)
+        self.assertNotIn("text-overflow", re.search(r'<section class="card" id="teams">.*?</section>', h, re.S).group(0))
+        self.assertIn("td.wrap{white-space:normal;overflow-wrap:anywhere", P.CSS)
+        self.assertIn('.tw thead{display:none}', P.CSS)
+        self.assertIn('<td data-l="Top issue" class="wrap">', h)
+        self.assertIn('<td data-l="Change tasks closed" class="n" data-v="2">2</td>', h)
+        self.assertNotIn('<td data-l="" ', h)
+
+    def test_refused(self):
+        """change_task refused (403): said in Not read, the rest of the report whole, no change task anywhere."""
+        m = self.model(self.r(refused=True))
+        self.assertIsNone(m["scopes"]["all"]["ctasks"])
+        self.assertNotIn("tasks", m["scopes"]["all"]["changes"])
+        self.assertIn("change_task: GET api/now/table/change_task: HTTP 403: Operation Failed: ACL Exception - the change tasks are left out",
+                      "\n".join(F.not_read_lines(m)))
+        doc = F.servicenow_insights_doc(m, "all", OPTS)
+        titles = [s_["title"] for s_ in doc["sections"]]
+        self.assertNotIn("Change tasks", titles)
+        self.assertNotIn("Change tasks closed", next(s_ for s_ in doc["sections"] if s_["title"] == "Teams side by side")["columns"])
+        h = P.servicenow_insights_page(m, "all", {"links": page_links(m)})
+        self.assertNotIn("Change tasks", h)
+        self.assertNotIn("Change tasks", [s_["name"] for s_ in F.servicenow_insights_xlsx(m, self.r(refused=True), None, {"pairs": [], "counts": {}}, OPTS)])
+        self.assertEqual((m["scopes"][self.NWK]["stars"]["awards"][0]["what"], m["scopes"][self.NWK]["stars"]["awards"][0]["stat"]),
+                         ("Most resolved", "1 tickets resolved"))
+        self.assertEqual(self.model(self.r(refused=True))["scopes"]["all"]["counts"], self.model(self.r(tasks=False))["scopes"]["all"]["counts"])
+
 
 if __name__ == "__main__":
     unittest.main()

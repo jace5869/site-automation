@@ -1162,6 +1162,26 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
         if it.get("caused_by"):
             caused.setdefault(it["caused_by"], []).append(it)
     chg_win = [c for c in by_table.get("change_request", []) if _in(_t(c.get("closed_at") or c.get("done_at")), since, until)]
+    # change tasks (1.2.0): each change's tasks, by its number (the reference as shown) or its sys_id; held up by = the
+    # group of the task closed last, the wait from when every other task was closed (one task: from the change's work
+    # start) to that close
+    ct_all = by_table.get("change_task", [])
+    ct_read = bool(ct_all) or any(t.get("table") == "change_task" and not t.get("error") for t in r.get("tables") or [])
+    tasks_of = {}
+    for x in ct_all:
+        for k_ in set([x.get("parent"), x.get("parent_id")]):
+            if k_:
+                tasks_of.setdefault(k_, []).append(x)
+    for c in chg_win:
+        tl = tasks_of.get(c.get("number")) or tasks_of.get(c.get("sys_id")) or []
+        c["_tasks"] = len(tl)
+        done_ = sorted([x for x in tl if _t(x.get("done_at"))], key=lambda x: _t(x["done_at"]))
+        c["_held"] = None
+        if done_:
+            last = _t(done_[-1]["done_at"])
+            start = _t(done_[-2]["done_at"]) if len(done_) > 1 else _t(c.get("start_date"))
+            if start and last >= start:
+                c["_held"] = [done_[-1].get("group") or "(no group)", (last - start).total_seconds() / 3600.0]
     for c in chg_win:
         code = str(c.get("close_code") or "").strip().lower()
         text = (code + " " + str(c.get("close_notes") or "")).lower()
@@ -1344,6 +1364,38 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
                    "failed": sum(1 for c in chg if c["_outcome"] == "Failed"), "backed_out": sum(1 for c in chg if c["_outcome"] == "Backed out"),
                    "followed": sum(1 for c in chg if c["_followed"]), "emergency": sum(1 for c in chg if c["_emergency"]),
                    "rows": failed_rows, "by_group": em_rows}
+        if ct_read:
+            with_t = [c for c in chg if c["_tasks"]]
+            held = {}
+            for c in chg:
+                if c["_held"]:
+                    held.setdefault(c["_held"][0], []).append(c["_held"][1])
+            most = max(with_t, key=lambda c: (c["_tasks"], c.get("number") or "")) if with_t else None
+            changes.update({"tasks": sum(c["_tasks"] for c in chg), "with_tasks": len(with_t),
+                            "per_change": _r1(1.0 * sum(c["_tasks"] for c in with_t) / len(with_t)) if with_t else None,
+                            "most": [most.get("number"), most["_tasks"]] if most else None,
+                            "held_n": sum(len(v) for v in held.values()),
+                            "held_by": sorted([{"group": g, "count": len(v), "median_h": _r1(_median(v))} for g, v in held.items()],
+                                              key=lambda e: (-e["count"], -(e["median_h"] or 0), e["group"]))[:5]})
+
+        # change tasks (1.2.0): opened, closed (by the planned end or after it), open now and how old, the time to close -
+        # their own figures, not in the backlog, the weeks or the SLAs
+        ctasks = None
+        if ct_read:
+            ct = [x for x in ct_all if mine(x)]
+            ct_done = [x for x in ct if _in(_t(x.get("done_at")), since, until)]
+            ct_open = [x for x in ct if _t(x.get("opened_at")) and _t(x["opened_at"]) <= until and (not _t(x.get("done_at")) or _t(x["done_at"]) > until)]
+            ct_ages = [(until - _t(x["opened_at"])).total_seconds() / 86400.0 for x in ct_open]
+            ended = [x for x in ct_done if _t(x.get("planned_end"))]
+            ctasks = {"opened": sum(1 for x in ct if _in(_t(x.get("opened_at")), since, until)), "closed": len(ct_done),
+                      "closed_prev": sum(1 for x in ct if _in(_t(x.get("done_at")), prev, since)), "open": len(ct_open),
+                      "age": [sum(1 for a in ct_ages if a <= 5), sum(1 for a in ct_ages if 5 < a <= 15),
+                              sum(1 for a in ct_ages if 15 < a <= old_days), sum(1 for a in ct_ages if a > old_days)],
+                      "on_time": sum(1 for x in ended if _t(x["done_at"]) <= _t(x["planned_end"])),
+                      "overdue": sum(1 for x in ended if _t(x["done_at"]) > _t(x["planned_end"])),
+                      "no_end": len(ct_done) - len(ended),
+                      "late_open": sum(1 for x in ct_open if _t(x.get("planned_end")) and _t(x["planned_end"]) < until),
+                      "median_h": _r1(_median([_hours(x) for x in ct_done]))}
 
         # close notes by group, the bare ones word for word
         bygrp = {}
@@ -1390,7 +1442,7 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
               "backlog": [bl_now, bl_start], "age": age, "weeks": wk, "heat": heat,
               "prio": prio_rows, "majors": major_rows, "issues": issue_rows, "issue_total": len(cur), "misfiled": misfiled[:5],
               "requests": req_rows, "changes": changes, "notes_by_group": q_groups, "bare": bare_rows,
-              "handoffs": handoffs, "problems": pc[:15], "resolved_n": len(rep_now)}
+              "handoffs": handoffs, "problems": pc[:15], "resolved_n": len(rep_now), "ctasks": ctasks}
         if lvl == "team":
             sc["stars"] = stars(team)
         share = {"all": 1, "site": 0.6, "dir": 0.4}.get(lvl, 0.2)         # a draft's incidents, of kb_min, at this level
@@ -1405,7 +1457,7 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
         if members_known:
             return set(members.get(team) or []), True
         names = set()
-        for x in inc_all + by_table.get("sc_task", []) + by_table.get("sc_req_item", []):
+        for x in inc_all + by_table.get("sc_task", []) + by_table.get("sc_req_item", []) + ct_all:
             if (x.get("group") or "") == team and (_in(_t(x.get("opened_at")), since, until) or _in(_t(x.get("done_at")), since, until)):
                 for k in ("assigned_to", "resolved_by", "closed_by"):
                     if x.get(k):
@@ -1434,10 +1486,12 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
 
     def stars(team):
         weight = float(_o(o, "bare_weight", 0.5))
-        done = [x for x in inc_all + by_table.get("sc_task", []) if (x.get("group") or "") == team and _in(_t(x.get("done_at")), since, until)]
+        # closed: incidents resolved, catalog tasks and change tasks (1.2.0) closed; the median to resolve without the
+        # change tasks (their time is the change's plan)
+        done = [x for x in inc_all + by_table.get("sc_task", []) + ct_all if (x.get("group") or "") == team and _in(_t(x.get("done_at")), since, until)]
         roster, known = roster_of(team)
-        people = dict((who, {"name": who, "resolved": 0, "score": 0.0, "hours": [], "notes": [], "reopen": 0, "came_back": 0, "inc": 0, "opened": 0})
-                      for who in roster)
+        people = dict((who, {"name": who, "resolved": 0, "score": 0.0, "hours": [], "notes": [], "reopen": 0, "came_back": 0, "inc": 0, "opened": 0,
+                             "ctask": 0}) for who in roster)
         outside = {}                 # resolved by someone outside the team, and not assigned to a member: counted, not ranked
         for x in done:
             who = (x.get("resolved_by") if x.get("table") == "incident" else x.get("closed_by")) or x.get("assigned_to") or ""
@@ -1452,7 +1506,10 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
             p["resolved"] += 1
             g = grade(x.get("close_notes"), o)
             p["score"] += weight if g == "bare" else 1.0
-            p["hours"].append(_hours(x))
+            if x.get("table") == "change_task":
+                p["ctask"] += 1
+            else:
+                p["hours"].append(_hours(x))
             p["notes"].append(x.get("close_notes"))
             if x.get("table") == "incident":
                 p["inc"] += 1
@@ -1466,13 +1523,14 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
             q, _ = _quality(p["notes"], o)
             rep = p["reopen"] if reopen_used else p["came_back"]
             rows.append({"name": p["name"], "resolved": p["resolved"], "score": round(p["score"], 1), "median_h": _r1(_median(p["hours"])),
-                         "quality": q, "repeat": _r1(_pct(rep, p["inc"])) if p["inc"] else None, "opened": p["opened"]})
+                         "quality": q, "repeat": _r1(_pct(rep, p["inc"])) if p["inc"] else None, "opened": p["opened"], "ctask": p["ctask"]})
         rows.sort(key=lambda p: (-p["score"], -p["resolved"], p["name"]))
         elig = [p for p in rows if p["resolved"] >= int(_o(o, "star_min", 25))]
         awards = []
         if rows and max(p["resolved"] for p in rows) > 0:
             m = max(rows, key=lambda p: (p["resolved"], p["name"]))
-            awards.append({"icon": "trophy", "what": "Most resolved", "name": m["name"], "stat": "%d tickets resolved" % m["resolved"]})
+            awards.append({"icon": "trophy", "what": "Most closed" if ct_read else "Most resolved", "name": m["name"],
+                           "stat": "%d tickets %s" % (m["resolved"], "closed" if ct_read else "resolved")})
         if elig:
             b = max(elig, key=lambda p: (p["quality"][0], p["resolved"]))
             awards.append({"icon": "pen", "what": "Best close notes", "name": b["name"], "stat": "%d%% good notes" % b["quality"][0]})
@@ -1487,10 +1545,10 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
         team_q = [round(sum(p["quality"][k] * p["resolved"] for p in rows) / tr) if tr else 0 for k in range(3)]
         reps = [p for p in rows if p["repeat"] is not None]
         return {"people": rows[:25], "awards": awards,
-                "total": {"resolved": tr + sum(outside.values()), "quality": team_q,
+                "total": {"resolved": tr + sum(outside.values()), "quality": team_q, "ctask": sum(p["ctask"] for p in rows),
                           "repeat": _r1(sum(p["repeat"] for p in reps) / len(reps)) if reps else None},
                 "members_known": known, "members": len(roster), "outside": {"count": sum(outside.values()), "names": _top(outside, 3)},
-                "openers": senders(team, roster), "more": max(0, len(rows) - 25)}
+                "openers": senders(team, roster), "more": max(0, len(rows) - 25), "ctasks": ct_read}
 
     # sites, directorates and teams (0.97.0): every group with tickets has its place; a site or directorate with tickets
     # has a page, a team when it is one of the teams (team_min, teams_max, or named)
@@ -1566,7 +1624,8 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
         return {"key": k, "team": s["name"], "label": s["label"], "slug": s["slug"], "backlog": s["backlog"],
                 "series": [w["backlog"] for w in s["weeks"]], "old": s["age"][3], "median_h": s["median_h"][0], "sla": s["sla"][0],
                 "quality": s["quality"], "top": [s["issues"][0]["name"], s["issues"][0]["count"]] if s["issues"] else ["", 0],
-                "incidents": s["counts"]["incidents"]}
+                "incidents": s["counts"]["incidents"],
+                "ct_closed": (s.get("ctasks") or {}).get("closed"), "ct_open": (s.get("ctasks") or {}).get("open")}
     # side by side: the All page its sites (or, with one site, its directorates; with one of those, its teams), a site its
     # directorates, a directorate its teams
     for snode in tree:
@@ -1781,11 +1840,13 @@ def servicenow_insights_doc(model, key="all", opts=None):
     side = (s.get("side") or {}).get("rows") or (s.get("teams") if key in (None, "all") else None)
     if side:
         kind = (s.get("side") or {}).get("kind") or "Teams"
+        ctc = s.get("ctasks") is not None                 # change_task read (1.2.0): its two columns
         secs.append({"title": "%s side by side" % kind, "columns": [kind[:-1] if kind != "Directorates" else "Directorate", "Incidents", "Open now", "Was", "Over %d days" % int(_o(o, "old_days", 30)),
-                                                               "Median fix", "SLA met", "Bare notes", "Top issue"],
+                                                               "Median fix", "SLA met", "Bare notes"] + (["Change tasks closed", "Change tasks open"] if ctc else []) + ["Top issue"],
                      "rows": [[t.get("label") or t["team"], t["incidents"], t["backlog"][0], t["backlog"][1], t["old"], fmt_hours(t["median_h"]),
-                               ("%.1f%%" % t["sla"]) if t["sla"] is not None else "—", "%d%%" % t["quality"][2],
-                               ("%s (%d)" % (t["top"][0], t["top"][1])) if t["top"][0] else ""] for t in side],
+                               ("%.1f%%" % t["sla"]) if t["sla"] is not None else "—", "%d%%" % t["quality"][2]] +
+                              ([t.get("ct_closed") or 0, t.get("ct_open") or 0] if ctc else []) +
+                              [("%s (%d)" % (t["top"][0], t["top"][1])) if t["top"][0] else ""] for t in side],
                      "row_status": ["warning" if t["backlog"][0] > t["backlog"][1] * 1.05 and t["backlog"][0] - t["backlog"][1] >= 5 else ""
                                     for t in side]})
     src = {"tix": "from the tickets", "mix": "partly from tickets", "ai": "suggested by ACT", "none": "no fix in the notes"}
@@ -1815,6 +1876,22 @@ def servicenow_insights_doc(model, key="all", opts=None):
                      "rows": [[x["number"], x["closed"], x["what"], x["group"], x["outcome"],
                                ", ".join("%s (%s)" % (f[0], "caused by" if f[1] == "link" else "same CI") for f in x["followed"]) or "none"]
                               for x in s["changes"]["rows"][:20]]})
+    ct = s.get("ctasks")
+    if ct and (ct["closed"] or ct["open"]):
+        ch = s["changes"]
+        lines = ["Closed: %d (the window before: %d), median %s to close; %d by the planned end, %d after it, %d with no planned end" % (
+                     ct["closed"], ct["closed_prev"], fmt_hours(ct["median_h"]), ct["on_time"], ct["overdue"], ct["no_end"]),
+                 "Open now: %d, %d past the planned end, %d older than %d days" % (ct["open"], ct["late_open"], ct["age"][3], int(_o(o, "old_days", 30)))]
+        if ch.get("with_tasks"):
+            lines.append("Changes closed with tasks: %d of %d, %s tasks each on average (most: %s, %d)" % (
+                ch["with_tasks"], ch["count"], ch["per_change"], ch["most"][0], ch["most"][1]))
+        sec = {"title": "Change tasks", "lines": lines}
+        if ch.get("held_by"):
+            sec.update(text="Held up by: the team whose task a change waited on last - from when its other tasks were closed (one task: "
+                            "from the change's work start) to that task's close.",
+                       columns=["Team", "Changes held up", "Median wait"],
+                       rows=[[x["group"], x["count"], fmt_hours(x["median_h"])] for x in ch["held_by"]])
+        secs.append(sec)
     nr = not_read_lines(model)
     if nr:
         secs.append({"title": "Not read", "status": "warning", "lines": nr})
@@ -1841,7 +1918,8 @@ def not_read_lines(model):
     out = []
     for t in model.get("tables") or []:
         if t.get("error"):
-            out.append("%s: %s" % (t["table"], t["error"]))
+            out.append("%s: %s%s" % (t["table"], t["error"], " - the change tasks are left out (their columns, Held up by, the workbook's sheet)"
+                                     if t["table"] == "change_task" else ""))
         elif t.get("more"):
             out.append("%s: more than the first %d records - raise servicenow_insights_max_records, or shorten the window" % (t["table"], t["read"]))
     for g in model.get("groups") or []:
@@ -1919,6 +1997,27 @@ def servicenow_insights_xlsx(model, r=None, state=None, mask=None, opts=None):
     sheets.append({"name": "Changes failed", "columns": ["Change", "Closed", "What", "Group", "Outcome", "Followed by"],
                    "rows": [[x["number"], x["closed"], x["what"], x["group"], x["outcome"], ", ".join(f[0] + (" (caused by)" if f[1] == "link" else " (same CI)") for f in x["followed"])]
                             for x in s["changes"]["rows"]]})
+    if s.get("ctasks") is not None:
+        # every change task opened, closed or open in the window (1.2.0)
+        def ontime(x):
+            d, pe = _t(x.get("done_at")), _t(x.get("planned_end"))
+            if not pe:
+                return "no planned end"
+            if d:
+                return "yes" if d <= pe else "no"
+            return "open, past the planned end" if pe < until else "open"
+        cts = [x for x in r.get("items") or [] if x.get("table") == "change_task" and (
+            _in(_t(x.get("opened_at")), since, until) or _in(_t(x.get("done_at")), since, until) or
+            (_t(x.get("opened_at")) and _t(x["opened_at"]) <= until and (not _t(x.get("done_at")) or _t(x["done_at"]) > until)))]
+        sheets.append({"name": "Change tasks", "columns": ["Number", "Change", "Short description", "State", "Site", "Directorate"] +
+                       ([split_col] if split_groups is not None else []) + ["Assignment group", "Assigned to", "Closed by", "Opened",
+                                                                            "Planned start", "Planned end", "Closed", "Hours to close",
+                                                                            "By the planned end", "Close code", "Close notes"],
+                       "rows": [[x.get("number"), x.get("parent"), x.get("short_description"), x.get("state"), place(x.get("group"), "site"),
+                                 place(x.get("group"), "dir")] + ([("yes" if x.get("group") in split_groups else "no")] if split_groups is not None else []) +
+                                [x.get("group"), x.get("assigned_to"), x.get("closed_by"), when(x.get("opened_at")), when(x.get("planned_start")),
+                                 when(x.get("planned_end")), when(x.get("done_at")), _r1(_hours(x)), ontime(x), x.get("close_code"), x.get("close_notes")]
+                                for x in sorted(cts, key=lambda x: x.get("opened_at") or "")]})
     sheets.append({"name": "Problem candidates", "columns": ["Issue", "CI", "Last days", "In period", "Group", "Problem", "State", "Incidents continue"],
                    "rows": [[p["issue"], p["ci"], p["last"], p["count"], p["group"], p["problem"], p["problem_state"], "yes" if p["continues"] else ""]
                             for p in s["problems"]]})
@@ -1926,24 +2025,26 @@ def servicenow_insights_xlsx(model, r=None, state=None, mask=None, opts=None):
     for t in model.get("teams") or []:
         st = model["scopes"][t].get("stars") or {}
         for p in st.get("people") or []:
-            people.append([t, p["name"], "member" if st.get("members_known") else "worked its tickets", p["resolved"], p["score"], p["median_h"],
+            people.append([t, p["name"], "member" if st.get("members_known") else "worked its tickets", p["resolved"], p.get("ctask") or 0, p["score"], p["median_h"],
                            p["quality"][0], p["quality"][2], p["repeat"], p["opened"]])
         if (st.get("outside") or {}).get("count"):
-            people.append([t, "(resolved by people outside the team: %s)" % ", ".join(st["outside"]["names"]), "outside", st["outside"]["count"],
-                           "", "", "", "", "", ""])
-    sheets.append({"name": "People", "columns": ["Team", "Person", "In the team", "Resolved", "Score", "Median hours", "Good notes %", "Bare notes %",
-                                                 "Reopened %" if model.get("reopen_used") else "Came back %", "Opened"], "rows": people})
+            people.append([t, "(closed by people outside the team: %s)" % ", ".join(st["outside"]["names"]), "outside", st["outside"]["count"],
+                           "", "", "", "", "", "", ""])
+    sheets.append({"name": "People", "columns": ["Team", "Person", "In the team", "Closed", "Of them change tasks", "Score", "Median hours", "Good notes %",
+                                                 "Bare notes %", "Reopened %" if model.get("reopen_used") else "Came back %", "Opened"], "rows": people})
     sheets.append({"name": "Teams", "columns": ["Site", "Directorate", "Team", "Incidents", "Open now", "Open at the start", "Over old days", "Median hours", "SLA met %",
-                                                "Bare notes %", "Top issue"],
+                                                "Bare notes %", "Change tasks closed", "Change tasks open", "Top issue"],
                    "rows": [[place(t["team"], "site"), place(t["team"], "dir"), t["team"], t["incidents"], t["backlog"][0], t["backlog"][1], t["old"],
-                             t["median_h"], t["sla"], t["quality"][2], t["top"][0]] for t in s.get("teams") or []]})
+                             t["median_h"], t["sla"], t["quality"][2], t.get("ct_closed"), t.get("ct_open"), t["top"][0]] for t in s.get("teams") or []]})
     sc = model.get("scopes") or {}
     lv = [(k, v) for k, v in sc.items() if v.get("level") in ("site", "dir")]
     if lv:
         sheets.append({"name": "Sites and directorates", "columns": ["Site", "Directorate", "Incidents", "Requests", "Open now", "Open at the start",
-                                                                      "Over old days", "Median hours", "SLA met %", "Bare notes %", "Top issue"],
+                                                                      "Over old days", "Median hours", "SLA met %", "Bare notes %",
+                                                                      "Change tasks closed", "Change tasks open", "Top issue"],
                        "rows": [[v["site"], v.get("dir") or "", v["counts"]["incidents"], v["counts"]["requests"], v["backlog"][0], v["backlog"][1],
-                                 v["age"][3], v["median_h"][0], v["sla"][0], v["quality"][2], v["issues"][0]["name"] if v["issues"] else ""]
+                                 v["age"][3], v["median_h"][0], v["sla"][0], v["quality"][2], (v.get("ctasks") or {}).get("closed"),
+                                 (v.get("ctasks") or {}).get("open"), v["issues"][0]["name"] if v["issues"] else ""]
                                 for k, v in sorted(lv, key=lambda kv: (_level_key(kv[1]["site"]), kv[1]["level"] != "site", _level_key(kv[1].get("dir") or "")))]})
     sheets.append({"name": "Hand-off paths", "columns": ["Path", "Incidents", "Most common issue", "Days added", "Examples"],
                    "rows": [[" > ".join(e["path"]), e["count"], e["issue"], e["added_days"], ", ".join(e["items"][:5])] for e in s["handoffs"]["paths"]]})
@@ -1956,7 +2057,8 @@ def servicenow_insights_artifact(model):
     for k, s in (model.get("scopes") or {}).items():
         out["scopes"][k] = {"counts": s["counts"], "backlog": s["backlog"], "median_h": s["median_h"], "sla": s["sla"],
                             "quality": s["quality"], "issues": [[i["name"], i["count"]] for i in s["issues"][:10]],
-                            "requests": [[q["name"], q["count"]] for q in s["requests"][:10]], "summary": s["summary"]}
+                            "requests": [[q["name"], q["count"]] for q in s["requests"][:10]], "summary": s["summary"],
+                            "change_tasks": dict((k, v) for k, v in (s.get("ctasks") or {}).items() if k != "age") or None}
     return out
 
 

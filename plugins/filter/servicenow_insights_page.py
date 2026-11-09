@@ -139,6 +139,7 @@ section.card{background:var(--surface);border:1px solid var(--line);border-radiu
 .fig{min-width:0}
 .fig h3{font-size:13.5px;margin:0 0 2px}
 .fig .cap{font-size:12px;color:var(--muted);margin-bottom:6px}
+.subh{font-size:15px;margin:22px 0 10px;padding-top:16px;border-top:1px solid var(--line)}
 .legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--fg-2);margin:4px 0}
 .legend i{display:inline-block;width:14px;height:3px;border-radius:2px;vertical-align:middle;margin-right:6px}
 .legend i.sq{width:10px;height:10px;border-radius:3px}
@@ -184,13 +185,14 @@ details[open]>summary .caret{transform:rotate(90deg)}
 
 .tw{overflow-x:auto;border:1px solid var(--line-2);border-radius:10px}
 table{border-collapse:collapse;width:100%;font-size:13px}
-th{text-align:left;font-size:11px;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);font-weight:700;padding:9px 12px;background:var(--surface-2);border-bottom:1px solid var(--line);white-space:nowrap}
+th{text-align:left;font-size:11px;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);font-weight:700;padding:9px 12px;background:var(--surface-2);border-bottom:1px solid var(--line)}
 th[data-sort]{cursor:pointer;user-select:none}
+th.n{min-width:56px}
 th[data-sort]:hover{color:var(--accent)}
 th .ar{opacity:.5;font-size:10px}
 td{padding:8px 12px;border-bottom:1px solid var(--line-2);vertical-align:middle}
 tr:last-child td{border-bottom:0}
-td.n,th.n{text-align:right}
+td.n,th.n{text-align:right;padding-left:8px;padding-right:8px}
 td .ib{display:inline-block;height:8px;border-radius:0 4px 4px 0;background:var(--s2);vertical-align:middle}
 td .ib.b{background:var(--s1)}
 td.wrapc{min-width:220px}
@@ -245,6 +247,13 @@ code{font-family:var(--mono);font-size:12.5px;background:var(--surface-2);border
 .logoimg+.logo{display:none}
 .mut{color:var(--muted)} .sm{font-size:12px} .nw{white-space:nowrap} .b{font-weight:700} .lh{line-height:1.9}
 td.wide{min-width:200px} td.barc{width:20%;min-width:90px}
+td.wrap{white-space:normal;overflow-wrap:anywhere;min-width:110px}
+/* 1.2.0: a table fits its box - the headers and long text wrap; on a phone each row is a card, each cell under its column's name */
+@media (max-width:640px){.tw{overflow:visible;border:0;border-radius:0}.tw table,.tw tbody,.tw tr,.tw td{display:block;width:auto}
+.tw thead{display:none}.tw tr{border:1px solid var(--line-2);border-radius:10px;margin:0 0 8px;padding:6px 0}
+.tw td,.tw td.n{border:0;padding:3px 12px;text-align:left;min-width:0;max-width:none;white-space:normal;overflow-wrap:anywhere}
+.tw td[data-l]::before{content:attr(data-l);display:inline-block;min-width:40%;margin-right:8px;color:var(--muted);font-size:11px;letter-spacing:.6px;text-transform:uppercase;font-weight:700}
+.tw td:empty{display:none}}
 .c-crit{color:var(--crit)} .c-warn{color:var(--warn)} .c-good{color:var(--good)}
 .inl{display:inline-flex;align-items:center;gap:8px}
 .acth{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}
@@ -681,7 +690,9 @@ def table(head, rows, tid="", empty="Nothing here.", sortable=False):
     out.append("</tr></thead><tbody>")
     if not rows:
         out.append('<tr><td colspan="%d" class="empty">%s</td></tr>' % (len(head), e(empty)))
+    labels = [e(re.sub(r"<[^>]+>", " ", h[0]).strip()) for h in head]
     for attrs, cells in rows:
+        cells = [('<td data-l="%s"' % labels[i] + c[3:]) if i < len(labels) and labels[i] and c.startswith("<td") else c for i, c in enumerate(cells)]
         out.append("<tr%s>%s</tr>" % (attrs, "".join(cells)))
     out.append("</tbody></table></div>")
     return "".join(out)
@@ -879,6 +890,7 @@ def servicenow_insights_page(model, key="all", opts=None):
     if side.get("rows"):
         rows = []
         kind = side["kind"]
+        ctc = s.get("ctasks") is not None                 # change_task read (1.2.0)
         for t in sorted(side["rows"], key=lambda t: (t.get("label") == "Other", natural_key(t.get("label") or t["team"]))):   # A to Z, Other last
             up = t["backlog"][0] > t["backlog"][1] * 1.05 and t["backlog"][0] - t["backlog"][1] >= 5
             k_ = t.get("key") or t["team"]
@@ -889,13 +901,16 @@ def servicenow_insights_page(model, key="all", opts=None):
                                                                                          "warn" if up else "good", "Falling behind" if up else "Keeping up")),
                 td("<b>%s</b> %s" % (n(t["backlog"][0]), delta(t["backlog"][0], t["backlog"][1])), "n nw", t["backlog"][0]),
                 td(n(t["old"]), "n" + (" c-warn b" if t["old"] >= 20 else ""), t["old"]), td(fh(t["median_h"]), "n", t["median_h"] or 0),
-                sla_cell(t["sla"]), td('<span class="score">%s<span class="sm mut">%d%% good</span></span>' % (qbar(t["quality"]), t["quality"][0])),
-                td('%s <span class="mut num">%s</span>' % (e(t["top"][0]), n(t["top"][1])), "wide")]))
+                sla_cell(t["sla"]), td('<span class="score">%s<span class="sm mut">%d%% good</span></span>' % (qbar(t["quality"]), t["quality"][0]))] +
+                ([td(n(t.get("ct_closed") or 0), "n", t.get("ct_closed") or 0), td(n(t.get("ct_open") or 0), "n", t.get("ct_open") or 0)] if ctc else []) +
+                [td('%s <span class="mut num">%s</span>' % (e(t["top"][0]), n(t["top"][1])), "wrap")]))
         one = {"Sites": "Site", "Directorates": "Directorate"}.get(kind, "Team")
         body.append(section("teams", "%s side by side" % kind, "each %s has its own page with every section of this report" % one.lower(),
                             table([(one, "", "name"), ("Backlog over the period", "", ""), ("Open now", "n", "open"), ("Over %d days" % old_days, "n", "old"),
-                                   ("Median fix", "n", "fix"), ("SLA met", "n", "sla"), ("Close notes", "", ""), ("Top issue", "", "")], rows, sortable=True) +
-                            '<div class="fair">Click a %s for its page, a column\'s name to sort by it. The backlog lines show each one\'s shape on its own scale; compare Open now for size.</div>' % one.lower()))
+                                   ("Median fix", "n", "fix"), ("SLA met", "n", "sla"), ("Close notes", "", "")] +
+                                  ([("Change tasks closed", "n", "ctc"), ("Change tasks open", "n", "cto")] if ctc else []) + [("Top issue", "", "")], rows, sortable=True) +
+                            '<div class="fair">Click a %s for its page, a column\'s name to sort by it. The backlog lines show each one\'s shape on its own scale; compare Open now for size.%s</div>' % (
+                                one.lower(), " The change tasks are counted on their own: not in the backlog, Open now or the SLAs." if ctc else "")))
 
     # ---- keeping up
     wk = s["weeks"]
@@ -1076,19 +1091,49 @@ def servicenow_insights_page(model, key="all", opts=None):
         if len(x["followed"]) > 6:
             fol += '<br><span class="mut">and %d more</span>' % (len(x["followed"]) - 6)
         crow.append((search_attr(x["number"], x["what"], " ".join(f[0] for f in x["followed"])), [
-            td(tk(x["number"], url)), td(e(x["closed"]), "num nw"), td(e(x["what"]), "wide"), td(glink(x["group"]), "nw"),
-            td('<span class="chip %s">%s</span>' % ("crit" if x["outcome"] == "Failed" else "warn", e(x["outcome"]))), td(fol or '<span class="mut">none</span>', "nw lh")]))
+            td(tk(x["number"], url)), td(e(x["closed"]), "num nw"), td(e(x["what"]), "wrap"), td(glink(x["group"])),
+            td('<span class="chip %s">%s</span>' % ("crit" if x["outcome"] == "Failed" else "warn", e(x["outcome"]))), td(fol or '<span class="mut">none</span>', "lh")]))
     em = ch["by_group"]
     emerg = hbars([(sh(g["group"]), g["pct"] or 0, "%s<br><b>%d</b> of %d changes" % (e(g["group"]), g["emergency"], g["changes"])) for g in em],
                   "Emergency change share by group", W=420, lw=110, fmt=lambda v: "%.1f%%" % v,
                   dim=[(not is_all and g["group"] != s["team"]) for g in em], hrefs=[links.get(g["group"]) for g in em]) if em else '<div class="empty">No changes in the period.</div>'
-    body.append(section("changes", "Changes", "closed in the period · the outcome from the change's close code",
+    ct = s.get("ctasks")
+    ct_html = ""
+    if ct is not None:
+        ctt = [{"label": "Change tasks closed", "value": n(ct["closed"]),
+                "delta": delta(ct["closed"], ct["closed_prev"], False) if win.get("compare") and ct["closed_prev"] else "",
+                "note": ("median %s to close" % fh(ct["median_h"]) if ct["closed"] else "none closed in the period") +
+                (" · was %s" % n(ct["closed_prev"]) if win.get("compare") else "")},
+               {"label": "Closed by the planned end", "value": pct(_p(ct["on_time"], ct["on_time"] + ct["overdue"])) if ct["on_time"] + ct["overdue"] else "—",
+                "note": "%s on time · %s after it · %s with no planned end" % (n(ct["on_time"]), n(ct["overdue"]), n(ct["no_end"])),
+                "flag": ct["overdue"] > ct["on_time"]},
+               {"label": "Change tasks open now", "value": n(ct["open"]), "note": "%s past the planned end · %s older than %d days" % (
+                   n(ct["late_open"]), n(ct["age"][3]), old_days), "flag": ct["late_open"] > 0},
+               {"label": "Tasks per change", "value": ("%.1f" % ch["per_change"]) if ch.get("per_change") is not None else "—",
+                "note": ("%s of %s changes had tasks · most %s (%s)" % (n(ch["with_tasks"]), n(ch["count"]), n(ch["most"][1]), e(ch["most"][0])))
+                if ch.get("with_tasks") else "no change closed in the period had tasks"}]
+        hrow = [(search_attr(x["group"]), [td(glink(x["group"]), "nw"), td("<b>%s</b>" % n(x["count"]), "n", x["count"]),
+                                           td(fh(x["median_h"]), "n", x["median_h"] or 0)]) for x in ch.get("held_by") or []]
+        ages = ct["age"]
+        ct_html = ('<h3 class="subh">Change tasks</h3>' + tiles(ctt, "tiles mini") +
+                   '<div class="two"><div class="fig"><h3>Held up by</h3><div class="cap">The team whose task a change waited on last, of the %s '
+                   'changes closed with their tasks: the wait runs from when the change\'s other tasks were closed (one task: from the change\'s '
+                   'work start) to that task\'s close. The top 5.</div>%s</div><div class="fig"><h3>How old the open ones are</h3><div class="cap">Days since opened, at the end of the window.</div>%s</div></div>' % (
+                       n(ch.get("held_n") or 0),
+                       table([("Team", "", ""), ("Changes held up", "n", ""), ("Median wait", "n", "")], hrow,
+                             empty="No change closed in the period with its tasks closed."),
+                       hbars([("0–5 days", ages[0], "0–5 days<br><b>%s</b> open" % n(ages[0])), ("6–15 days", ages[1], "6–15 days<br><b>%s</b> open" % n(ages[1])),
+                              ("16–%d days" % old_days, ages[2], "16–%d days<br><b>%s</b> open" % (old_days, n(ages[2]))),
+                              ("Over %d days" % old_days, ages[3], "Over %d days<br><b>%s</b> open" % (old_days, n(ages[3])))],
+                             "Open change tasks by age", W=420, colors=["var(--o1)", "var(--o2)", "var(--o3)", "var(--o4)"], lw=110)
+                       if ct["open"] else '<div class="empty">No change task open.</div>'))
+    body.append(section("changes", "Changes", "closed in the period · the outcome from the change's close code" + (" · their tasks" if ct is not None else ""),
                         tiles(cht, "tiles mini") + '<div class="two"><div class="fig"><h3>Failed or backed out, and what followed</h3>%s'
                         '<div class="legend"><span><span class="chip info">Caused by</span> linked in ServiceNow</span><span><span class="chip">Same CI</span> on the change\'s CI '
                         'within %dh, not linked</span></div></div><div class="fig"><h3>Emergency changes by group</h3><div class="cap">Share of each group\'s changes that were '
                         'emergency changes.</div>%s</div></div>' % (
                             table([("Change", "", ""), ("Closed", "", ""), ("What", "", ""), ("Group", "", ""), ("Outcome", "", ""), ("Incidents that followed", "", "")],
-                                  crow, empty="No change failed or was backed out."), int(o.get("change_follow_hours") or 72), emerg)))
+                                  crow, empty="No change failed or was backed out."), int(o.get("change_follow_hours") or 72), emerg) + ct_html))
 
     # ---- close notes (after the All-stars; the breakdown folded: one line says it, the rest opens)
     qrows = "".join('<div class="qrow%s"><span>%s</span>%s<span class="p mut">%d%% good</span></div>' % (
@@ -1122,16 +1167,19 @@ def servicenow_insights_page(model, key="all", opts=None):
             '<button class="tab" type="button" role="tab" data-tab="p%d" aria-selected="%s">%s</button>' % (k, "true" if k == 0 else "false", e(t))
             for k, t in enumerate(star_teams))
     w = o.get("bare_weight")
-    fair = ('<div class="fair">Ranks are by tickets resolved, with a close-note factor: a ticket with a bare close note counts %s. A ticket counts '
+    ct_star = any(((m["scopes"].get(t) or {}).get("stars") or {}).get("ctasks") for t in star_teams)
+    fair = ('<div class="fair">Ranks are by tickets closed, with a close-note factor: a ticket with a bare close note counts %s. A ticket counts '
             'for the team member who resolved it, not for everyone it passed through; one resolved by someone outside the team counts for the member '
-            'it was assigned to. %s Awards need at least %d tickets resolved. %s</div>' % (
+            'it was assigned to. %s Awards need at least %d tickets closed. %s%s</div>' % (
                 ("%g of one" % float(w)) if w is not None and float(w) != 0.5 else "half",
                 "The members are ServiceNow's group membership." if m.get("members_read") else
                 "The group membership could not be read: each leaderboard lists everyone the team's tickets were assigned to or resolved by.",
                 int(o.get("star_min") or 25),
                 ("Reopened = reopened within %d days." % int(o.get("repeat_days") or 14)) if reopen_used else
-                ("Came back = a new incident from the same person on the same issue within %d days (this site does not reopen tickets)." % int(o.get("repeat_days") or 14))))
-    body.append(section("allstars", "All-stars", "per team · resolved and closed work in the period",
+                ("Came back = a new incident from the same person on the same issue within %d days (this site does not reopen tickets)." % int(o.get("repeat_days") or 14)),
+                (" Closed = incidents resolved, and catalog tasks and change tasks closed; Change tasks = how many of them were change tasks. "
+                 "Median to resolve leaves the change tasks out: their time is the change's plan.") if ct_star else ""))
+    body.append(section("allstars", "All-stars", "per team · resolved and closed work in the period" + (", change tasks too" if ct_star else ""),
                         ((tabs + "".join(panels)) if star_teams else '<div class="empty">No team to show.</div>') + fair))
     body.append(notes_section)
 
@@ -1229,19 +1277,23 @@ def stars_panel(team, st, reopen_used, idx, titled):
                  'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">%s</svg></div><div><div class="what">%s</div><div class="who">%s</div>'
                  '<div class="stat">%s</div></div></div>' % (ICON.get(x["icon"], ""), e(x["what"]), e(x["name"]), e(x["stat"])) for x in st.get("awards") or [])
     rows = []
+    ctc = bool(st.get("ctasks"))                       # change_task read (1.2.0): Closed counts them, their own column
     for k, p in enumerate(people):
         ini = "".join(w[0] for w in p["name"].replace(",", " ").split()[:2]).upper()
         rows.append(("" if k or not p["resolved"] else ' class="top1"', [
             td(str(k + 1) if p["resolved"] else "", "n pos"), td('<span class="av">%s</span>%s' % (e(ini), e(p["name"])), "nw"),
-            td(("<b>%s</b>" % n(p["resolved"])) if p["resolved"] else '<span class="mut">0</span>', "n"), td(fh(p["median_h"]) if p["resolved"] else "", "n"),
-            td(('<span class="score">%s<span class="sm mut">%d%% good</span></span>' % (qbar(p["quality"]), p["quality"][0])) if p["resolved"] else ""),
-            td(pct(p["repeat"]), "n")]))
+            td(("<b>%s</b>" % n(p["resolved"])) if p["resolved"] else '<span class="mut">0</span>', "n")] +
+            ([td(n(p.get("ctask") or 0) if p.get("ctask") else '<span class="mut">0</span>', "n")] if ctc else []) +
+            [td(fh(p["median_h"]) if p["resolved"] else "", "n"),
+             td(('<span class="score">%s<span class="sm mut">%d%% good</span></span>' % (qbar(p["quality"]), p["quality"][0])) if p["resolved"] else ""),
+             td(pct(p["repeat"]), "n")]))
     tot = st.get("total") or {}
     if people:
-        rows.append((' class="team"', [td(""), td("Team total"), td(n(tot.get("resolved")), "n"), td(""), td('<span class="score">%s<span class="sm mut">%d%% good</span></span>' % (
-            qbar(tot.get("quality")), (tot.get("quality") or [0, 0, 0])[0])), td(pct(tot.get("repeat")), "n")]))
+        rows.append((' class="team"', [td(""), td("Team total"), td(n(tot.get("resolved")), "n")] + ([td(n(tot.get("ctask") or 0), "n")] if ctc else []) +
+                     [td(""), td('<span class="score">%s<span class="sm mut">%d%% good</span></span>' % (
+                         qbar(tot.get("quality")), (tot.get("quality") or [0, 0, 0])[0])), td(pct(tot.get("repeat")), "n")]))
     if st.get("more"):
-        rows.append(("", [td(""), td('<span class="mut">and %d more (the workbook has them)</span>' % st["more"]), td(""), td(""), td(""), td("")]))
+        rows.append(("", [td(""), td('<span class="mut">and %d more (the workbook has them)</span>' % st["more"])] + [td("")] * (5 if ctc else 4)))
     out_ = st.get("outside") or {}
     who_note = ('<div class="cap">The team\'s %d members, from ServiceNow\'s group membership.%s</div>' % (
         st.get("members") or 0, (" <b>%s</b> tickets of this team were resolved by people outside it (%s) and not assigned to a member: "
@@ -1262,8 +1314,9 @@ def stars_panel(team, st, reopen_used, idx, titled):
             '<div class="fig"><h3>Who sends this team its tickets</h3><div class="cap">Opened by, on the tickets assigned to this team in the period. '
             'From = the group that person works tickets in; an end user opens their own.</div>%s</div></div></div>') % (
         " on" if idx == 0 else "", idx, e(team), ('<h3 class="ptitle">%s</h3>' % e(team)) if titled else "", aw,
-        table([("#", "n", ""), ("Person", "", ""), ("Resolved", "n", ""), ("Median to resolve", "n", ""), ("Close notes", "", ""),
-               ("Reopened" if reopen_used else "Came back", "n", "")], rows, empty="Nobody resolved a ticket in this team's queue in the period."),
+        table([("#", "n", ""), ("Person", "", ""), ("Closed" if ctc else "Resolved", "n", "")] + ([("Change tasks", "n", "")] if ctc else []) +
+              [("Median to resolve", "n", ""), ("Close notes", "", ""), ("Reopened" if reopen_used else "Came back", "n", "")], rows,
+              empty="Nobody closed a ticket in this team's queue in the period." if ctc else "Nobody resolved a ticket in this team's queue in the period."),
         who_note, opener)
 
 

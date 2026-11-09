@@ -16,18 +16,44 @@ and simpler: the tiles and the main tables, a link to the page, and an Excel wor
 | Section | What it shows |
 |---|---|
 | **At a glance** | the tickets read, open now (and at the start), the median time to resolve an incident, SLAs met, reopened (or *came back*, below), bare close notes, changes successful, incidents reassigned 3+ times - each against the window before; then **What the period says**: three or four sentences, written by ACT from the tables (or made from the numbers without it) |
-| **Teams side by side** (the site's page) | one row per team: its backlog over the period (Keeping up / Falling behind), open now, open over 30 days, median fix, SLA met, its close notes, its top issue - the team's name opens its own page |
+| **Teams side by side** (the site's page) | one row per team: its backlog over the period (Keeping up / Falling behind), open now, open over 30 days, median fix, SLA met, its close notes, its change tasks closed and open (1.2.0), its top issue - the team's name opens its own page |
 | **Keeping up** | opened and resolved per week, the backlog at the end of each week, the age of what is open now (0-5, 6-15, 16-30, over 30 days), a heatmap of when incidents are opened (weekday by hour), the weeks as a table |
 | **Severity** | incidents per priority (count, median to resolve, SLA met), then every P1 and P2: when, what, the group, the change that caused it, its problem record |
 | **Top incident issues** | the issues ranked, with their rank against the window before (▲ ▼ New), their share and the cumulative share, a weekly trend, the median time to fix; open one for its **fix action** (with a Copy button), where the fix comes from - **From the tickets**, **Partly from tickets** or **Suggested by ACT** (not verified) -, the CIs it was seen on, example tickets (links into ServiceNow), its close-note quality, and the flags *KB candidate*, *Self-service candidate*, *Problem candidate*; a fix the close notes disagree on is said |
 | **Problem candidates** | 3 or more incidents of one issue on one CI within 30 days: the counts, the group, the problem record - or *No problem record*, or *Resolved, incidents continue* |
 | **Passed between groups** | incidents reassigned 3 or more times, the paths they took (a group the ticket came back to in amber), the most common issue on each path and the time it added. The groups are shown by their short names - the name without the parts every group shares, such as a site prefix or a contract suffix; rest on one for the full name |
 | **Most requested services** | the catalog items ranked (▲ ▼ against the window before), the median time to fulfil, SLA met, the trend; and **requests opened as incidents** (an install, an account, access - things the catalog offers), when ACT ran |
-| **Changes** | success rate, failed or backed out, followed by an incident, emergency share; each failed or backed-out change with the incidents that followed it - **Caused by** (linked in ServiceNow) or **Same CI** (on its CI within 72 hours, not linked) - and the emergency changes by group |
-| **All-stars** | each team: the awards (Most resolved, Best close notes, Fastest to resolve, Fixed for good), the leaderboard - the team's members (ServiceNow's group membership), each with resolved, median to resolve, close notes, reopened or came back; a member with nothing resolved is listed too -, the team's total, and **who sends this team its tickets**: Opened by on the tickets assigned to it, with the group each opener works tickets in (or *end user*) |
+| **Changes** | success rate, failed or backed out, followed by an incident, emergency share; each failed or backed-out change with the incidents that followed it - **Caused by** (linked in ServiceNow) or **Same CI** (on its CI within 72 hours, not linked) - and the emergency changes by group; then **Change tasks** (1.2.0, below) |
+| **All-stars** | each team: the awards (Most resolved - *Most closed* when the change tasks are read -, Best close notes, Fastest to resolve, Fixed for good), the leaderboard - the team's members (ServiceNow's group membership), each with closed (incidents resolved, catalog tasks and change tasks closed), change tasks (how many of them were change tasks, 1.2.0), median to resolve (without the change tasks), close notes, reopened or came back; a member with nothing closed is listed too -, the team's total, and **who sends this team its tickets**: Opened by on the tickets assigned to it, with the group each opener works tickets in (or *end user*) |
 | **Close notes** (after the All-stars) | one line: how many close notes say what was done, are vague, or are a stock phrase or empty; open it for Good / Thin / Bare per group and the most common bare notes word for word |
 | **Knowledge article drafts** | for the issues with enough incidents and a fix the close notes agree on: symptoms, cause, resolution, with a Copy button - drafts to review, never written to ServiceNow |
 | **How this was made** | what was read, the window, what was replaced before GenAI, how ACT did |
+
+### Change tasks (1.2.0)
+
+The changes' tasks (`change_task`, read with GET like the rest) have figures of their own - they are not in the backlog,
+*Open now*, the weeks or the SLAs, which stay the incidents' and requested items':
+
+- **each team's** (and each directorate's, site's and All - a task counts once at every level, in the group it is
+  assigned to): change tasks opened and closed in the window, the **median time to close** (opened to closed), closed
+  **by the planned end** or **after it** (*planned end date*), and closed with **no planned end** apart; **open now**,
+  how many are **past their planned end**, and how old they are (0-5, 6-15, 16-30, over 30 days);
+- **tasks per change**: of the changes closed in the window, how many had tasks, the average, and the change with the
+  most;
+- **held up by**: for each change closed in the window with its tasks closed, the team whose task was closed last and
+  the **wait** - from when the change's other tasks were all closed (a change with one task: from the change's *actual
+  start*, else its *planned start*) to that last task's close. The 5 teams that held up the most changes, how often, and
+  their median wait;
+- the **Teams side by side** table and the email have *Change tasks closed* and *Change tasks open*; the **All-stars**
+  count them in *Closed*, with a *Change tasks* column (their time is the change's plan, so *Median to resolve* leaves
+  them out);
+- the workbook has a **Change tasks** sheet: every change task opened, closed or open in the window, its change, group,
+  planned start and end, when it was closed, and whether by the planned end; the *People*, *Teams* and *Sites and
+  directorates* sheets have the counts.
+
+The split (`servicenow_insights_split_label`) splits the change tasks by their own group, like every other ticket. The
+account needs read on `change_task` (`itil`); refused (403), the report says so under *Not read* and leaves the change
+tasks out, the rest whole. Take `change_task` out of `servicenow_insights_tables` to leave them out on purpose.
 
 **Each team's page** has every section for that team alone (its incidents, requests, changes, problem candidates, the
 paths that went through it, its All-stars, its drafts). A team is a group named in `servicenow_insights_groups`, else
@@ -238,7 +264,7 @@ The **ServiceNow API** credential you already have works ([SERVICENOW_SETUP.md](
 
 | Table | What | The role that reads it |
 |---|---|---|
-| `incident`, `sc_req_item`, `sc_task`, `change_request`, `problem` | the tickets | `itil` |
+| `incident`, `sc_req_item`, `sc_task`, `change_request`, `change_task` (1.2.0), `problem` | the tickets | `itil`; `change_task` refused (403): said under *Not read*, the change tasks left out |
 | `sys_user_group` | the groups named in `servicenow_insights_groups`; since 0.97.0 the tickets' groups and their parents (sites and directorates) | `itil`; refused, the sites come from the names (or `servicenow_insights_use_group_parents: false`) |
 | `sys_audit` | the assignment history of incidents passed between groups (the paths) | `itil` on most instances; refused, the paths come from `metric_instance` (below) |
 | `metric_instance` | the same history from the out-of-box incident metric *Assignment Group* (0.97.0), when `sys_audit` is refused or `servicenow_insights_handoff_source: metric` | read on `metric_instance` (`itil` on most instances); both refused, the report shows the counts without the paths and says which table it could not read |

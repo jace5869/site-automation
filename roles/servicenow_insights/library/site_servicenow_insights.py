@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 """Ticket insights (roles/servicenow_insights): months of ServiceNow records read for the report - incidents, requested
-items, catalog tasks, changes, problems - in the window and the window before it, and anything still open; and the
+items, catalog tasks, changes, change tasks, problems - in the window and the window before it, and anything still open; and the
 assignment history of the incidents passed between groups (sys_audit). Read-only. Standard library only."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
@@ -29,7 +29,7 @@ options:
   ca_path: {description: A CA file for the instance., type: path}
   timeout: {description: Seconds per request., type: int, default: 30}
   groups: {description: "The assignment groups (exact names); [] = every group.", type: list, elements: str, default: []}
-  tables: {description: The tables read., type: list, elements: str, default: [incident, sc_req_item, sc_task, change_request, problem]}
+  tables: {description: The tables read., type: list, elements: str, default: [incident, sc_req_item, sc_task, change_request, change_task, problem]}
   months: {description: The window - this many months up to until., type: int, default: 6}
   days: {description: "The window in days (> 0 wins over months).", type: float, default: 0}
   until: {description: "The window's last day (through its end); '' = now.", type: str, default: ''}
@@ -93,6 +93,8 @@ TABLE_FIELDS = {
     "sc_req_item": ["cat_item", "requested_for"],
     "sc_task": ["request_item"],
     "change_request": ["type", "close_code", "start_date", "end_date", "work_start", "work_end", "category"],
+    # 1.2.0: a change's tasks - close_code where the instance has it (a field it does not have comes back empty)
+    "change_task": ["change_request", "planned_start_date", "planned_end_date", "close_code"],
     "problem": ["resolved_at", "category"],
 }
 # the tables whose records have a resolved_at besides closed_at
@@ -258,6 +260,9 @@ def normalize(rec, table):
     elif table == "change_request":
         it.update({"change_type": d("type"), "change_type_value": v("type").lower(), "close_code": d("close_code"),
                    "start_date": v("work_start") or v("start_date"), "end_date": v("work_end") or v("end_date"), "category": d("category")})
+    elif table == "change_task":
+        it.update({"parent": d("change_request"), "parent_id": v("change_request"), "close_code": d("close_code"),
+                   "planned_start": v("planned_start_date"), "planned_end": v("planned_end_date")})
     elif table == "problem":
         it["category"] = d("category")
     # when the work was done: resolved (incidents, problems), else closed
@@ -554,7 +559,7 @@ def main():
             url=dict(type="str", required=True), username=dict(type="str", required=True), password=dict(type="str", required=True, no_log=True),
             validate_certs=dict(type="bool", default=True), ca_path=dict(type="path"), timeout=dict(type="int", default=30),
             groups=dict(type="list", elements="str", default=[]),
-            tables=dict(type="list", elements="str", default=["incident", "sc_req_item", "sc_task", "change_request", "problem"]),
+            tables=dict(type="list", elements="str", default=["incident", "sc_req_item", "sc_task", "change_request", "change_task", "problem"]),
             months=dict(type="int", default=6), days=dict(type="float", default=0), until=dict(type="str", default=""),
             compare=dict(type="bool", default=True), time_zone=dict(type="str", default=""),
             max_records=dict(type="int", default=20000), audit=dict(type="bool", default=True), handoff_min=dict(type="int", default=3),

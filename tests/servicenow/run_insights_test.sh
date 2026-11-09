@@ -7,7 +7,8 @@
 # report website, linked to each other; one group named; a group not there; sys_audit or a table unreadable (said, green);
 # Check; no credential; emailed with the workbook. 0.96.0: the team picker and the side bar's filter; ACT reads the top issues'
 # work notes (sys_journal_field, GET only, masked - what only they hold too), the page says what each fix was read from; the
-# work notes refused (403): said, the fixes from the close notes; off: not read.
+# work notes refused (403): said, the fixes from the close notes; off: not read. 1.2.0: the change tasks (change_task, GET
+# only) - the teams' columns, Held up by, the leaderboards' own column; refused (403): said, the rest whole, green.
 #   bash tests/servicenow/run_insights_test.sh            (ANSIBLE_PLAYBOOK=... to pick one)
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -95,16 +96,27 @@ run "six months against the six before, without ACT: by category, the most commo
     "{$NOW, $NOACT, \"report_web_dest\": \"$work/site\"}" \
     'Ticket insights for All assignment groups:' 'Window: 2026-05-01 to 2026-10-31, compared with 2025-11-01 to 2026-04-30 (UTC)' \
     'Teams side by side' 'Ops - Service Desk' 'Top incident issues' 'Account / Password' 'Most requested services' \
-    'Problem candidates' 'Changes failed or backed out' 'ACT: off (servicenow_insights_act)' 'Published: ' '"servicenow_insights":'
+    'Problem candidates' 'Changes failed or backed out' 'ACT: off (servicenow_insights_act)' 'Published: ' '"servicenow_insights":' \
+    'Change tasks closed' 'Held up by: the team whose task a change waited on last' 'Changes closed with tasks: '
 top="$work/site/servicenow-ticket-insights"
+"$py" - "$work/log.jsonl" <<'PYJ' && echo "ok   -   ... change_task read with GET only" || { echo "FAIL - the change tasks' requests"; fails=$((fails + 1)); }
+import json, sys
+rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
+c = [r for r in rows if "/change_task" in json.dumps(r)]
+assert c and all((r.get("method") or "GET") == "GET" for r in c), c[:2]
+assert all("planned_end_date" in json.dumps(r) for r in c), c[:1]
+PYJ
+check "the change tasks on the site's page: the teams' columns, Held up by, the leaderboards' column" "$top/latest.html" \
+    'Change tasks closed' 'Change tasks open' '<h3 class="subh">Change tasks</h3>' 'Held up by' 'Tasks per change' 'Open change tasks by age' \
+    'Change tasks = how many of them were change tasks' '<th class="n">Closed</th><th class="n">Change tasks</th>'
 check "the site's page: every section, links to the teams, ticket links into ServiceNow" "$top/latest.html" \
     'ServiceNow ticket insights' 'id="teams"' 'id="keepingup"' 'id="severity"' 'id="issues"' 'id="problems"' 'id="handoffs"' \
     'id="requests"' 'id="changes"' 'id="notes"' 'id="allstars"' 'id="kb"' 'id="method"' 'href="ops/other/windows/latest.html"' 'Teams side by side' \
     "http://127.0.0.1:$port/incident.do?sysparm_query=number=INC" 'grouped by their category' 'From the numbers' \
     'Reopen not used here' 'Came back' 'SLA target' 'your targets' 'data-tab="p1"' 'No drafts: ACT (GenAI) writes them' '!cid:' '!<!--site-report-logo-->'
 check "a team's page: that team, linked back to the site's" "$top/ops/other/windows/latest.html" \
-    'Ops - Windows ·' '!id="teams"' 'href="../../../latest.html"' 'All-stars' 'Most resolved' 2>/dev/null || \
-check "a team's page: that team, linked back to the site's" "$top/ops/other/windows/latest.html" 'href="../../../latest.html"' 'Most resolved' '!id="teams"'
+    'Ops - Windows ·' '!id="teams"' 'href="../../../latest.html"' 'All-stars' 'Most closed' 2>/dev/null || \
+check "a team's page: that team, linked back to the site's" "$top/ops/other/windows/latest.html" 'href="../../../latest.html"' 'Most closed' '!id="teams"'
 # 0.88.0: the page's script as a file beside the index (a web server that blocks inline scripts runs it), the teams as plain links,
 # the leaderboard = the group's members (a quiet member on it, the desk's closer not), who sends the team its tickets, short group names
 check "the script loaded from site-insights.js, relative to each page; the pages as links without it" "$top/ops/other/windows/latest.html" \
@@ -261,6 +273,13 @@ mock SNMOCK_NO_TABLES=sys_audit,problem,sys_user_grmember
 run "sys_audit, problem and sys_user_grmember unreadable: said under Not read, the paths from the metric, green" ok "{$NOW, $NOACT}" \
     'the hand-off paths: sys_audit: GET api/now/table/sys_audit: HTTP 403' 'the paths from metric_instance instead' 'problem: GET api/now/table/problem: HTTP 403' 'Top incident issues' \
     "sys_user_grmember (the teams' members): GET api/now/table/sys_user_grmember: HTTP 403" 'each leaderboard lists everyone the team'
+mock SNMOCK_NO_TABLES=change_task
+mkdir -p "$work/site6"
+run "change_task unreadable (403): said under Not read, the rest of the report whole, green" ok "{$NOW, $NOACT, \"report_web_dest\": \"$work/site6\"}" \
+    'change_task: GET api/now/table/change_task: HTTP 403' 'the change tasks are left out (their columns, Held up by' 'Top incident issues' \
+    'Changes failed or backed out' '!Held up by: the team' '!Change tasks closed'
+check "  ... the page without them" "$work/site6/servicenow-ticket-insights/latest.html" '!<h3>Held up by</h3>' '!Change tasks closed' 'id="changes"' \
+    '<th class="n">Resolved</th>' 'the change tasks are left out'
 mock SNMOCK_NO_TABLES=sys_audit,metric_instance
 run "  ... sys_audit and metric_instance unreadable: the counts, no paths, said which" ok "{$NOW, $NOACT}" \
     'sys_audit and metric_instance (the hand-off paths): sys_audit: GET api/now/table/sys_audit: HTTP 403' 'metric_instance: GET api/now/table/metric_instance: HTTP 403'

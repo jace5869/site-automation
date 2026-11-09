@@ -64,9 +64,10 @@ servicenow_insights_sla_items: {}
 servicenow_insights_team_email_to: {}
 
 # The tables read: incident, sc_req_item (requested items: the most requested services), sc_task (catalog tasks: the
-# All-stars count their closures), change_request, problem. Take one out to leave its sections out. A table the account
-# cannot read is said in the report.
-servicenow_insights_tables: [incident, sc_req_item, sc_task, change_request, problem]
+# All-stars count their closures), change_request, change_task (1.2.0: the changes' tasks - each team's, and which team a
+# change waited on last), problem. Take one out to leave its sections out. A table the account cannot read is said in the
+# report ("Not read"), the rest still read.
+servicenow_insights_tables: [incident, sc_req_item, sc_task, change_request, change_task, problem]
 servicenow_insights_max_records: 20000  # at most this many records per table (the rest are said: shorten the window)
 # The assignment history of incidents passed around: the paths of Passed between groups. From sys_audit, else (0.97.0)
 # the out-of-box incident metric "Assignment Group" (metric_instance) - both read only; the account needs read on one of
