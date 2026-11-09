@@ -3,7 +3,8 @@
 # (playbooks/patch_hosts.yml includes it run_once, delegated to localhost): each host to patch and its VM in vCenter,
 # and the snapshots named patch_snapshot_name those VMs still have. The job stops here - nothing patched yet - when a
 # host's VM is not found and a vCenter was not read (or patch_snapshot_required), a host matches two VMs, or an old snapshot is still there
-# (patch_snapshot_replace false). Output: _patch_snap on localhost, read by vmware_vm patch_snapshot.yml in each batch.
+# (patch_snapshot_replace false). A snapshot of that name younger than patch_snapshot_reuse_hours is a run of a moment
+# ago (the job run again): kept and reused - no second one, nothing stopped. Output: _patch_snap on localhost, read by vmware_vm patch_snapshot.yml in each batch.
 - name: Patch | the hosts to patch (the protected ones are never patched, so get no snapshot either)
   ansible.builtin.set_fact:
     _patch_snap_hosts: >-
@@ -37,6 +38,22 @@
       {%- endfor -%}
       {{ _patch_snap | combine(keep, {'protected': skip}) }}
 
+# the job run again within patch_snapshot_reuse_hours (0 = never): its newest "patching" is this patching's, kept
+- name: Patch | a snapshot from a run of a moment ago, reused (patch_snapshot_reuse_hours)
+  ansible.builtin.set_fact:
+    _patch_snap: >-
+      {%- set reuse = {} -%}
+      {%- set old = {} -%}
+      {%- for h, snaps in _patch_snap.old.items() -%}
+      {%-   set newest = snaps | sort(attribute='age_days_exact') | first -%}
+      {%-   if patch_snapshot_reuse_hours | float > 0 and newest.age_days_exact | float * 24 <= patch_snapshot_reuse_hours | float -%}
+      {%-     set _ = reuse.update({h: newest}) -%}
+      {%-   else -%}
+      {%-     set _ = old.update({h: snaps}) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ _patch_snap | combine({'old': old, 'reuse': reuse}) }}
+
 - name: Patch | the snapshot before patching, for each host
   ansible.builtin.debug:
     msg: >-
@@ -47,7 +64,10 @@
       {%-   elif h in _patch_snap.vms -%}
       {%-     set v = _patch_snap.vms[h] -%}
       {%-     set _ = out.append(h ~ ': VM ' ~ v.name ~ ' (by ' ~ v.how ~ (', ' ~ v.vcenter | vc_short if _patch_snap.multi else '') ~ ')'
-                               ~ (' - its old snapshot "' ~ patch_snapshot_name ~ '" is deleted first' if h in _patch_snap.old and patch_snapshot_replace | bool else '')) -%}
+                               ~ (' - its old snapshot "' ~ patch_snapshot_name ~ '" is deleted first' if h in _patch_snap.old and patch_snapshot_replace | bool else '')
+                               ~ (' - reusing the snapshot "' ~ patch_snapshot_name ~ '" from ' ~ _patch_snap.reuse[h].created | replace('T', ' ') | replace('Z', ' UTC')
+                                  ~ ' (' ~ (_patch_snap.reuse[h].age_days_exact | float * 24) | round(1) ~ ' h ago; patch_snapshot_reuse_hours '
+                                  ~ patch_snapshot_reuse_hours ~ ')' if h in _patch_snap.reuse else '')) -%}
       {%-   elif h in _patch_snap.twice -%}
       {%-     set _ = out.append(h ~ ': TWO VMs or more - ' ~ _patch_snap.twice[h] | join(', ')) -%}
       {%-   else -%}

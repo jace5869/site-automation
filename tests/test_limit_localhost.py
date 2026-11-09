@@ -258,5 +258,47 @@ class ThePlaybooks(unittest.TestCase):
                 self.assertNotIn("UNREACHABLE", text, "%s contacted a host before checking the Limit" % name)
 
 
+class TheDcGroup(unittest.TestCase):
+    """1.1.0: the AD jobs with no target read win_dc when the inventory has it, else domain_controllers."""
+    PLAYBOOKS = ("ad_health_report.yml", "ad_lockout.yml")
+
+    def inv(self, groups):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = os.path.join(tmp.name, "inv.yml")
+        with open(path, "w") as fh:
+            fh.write("all:\n  children:\n" + "".join("    %s:\n      hosts:\n        %s:\n" % (g, h) for g, h in groups))
+        return path
+
+    def hosts(self, name, inventory, group, *args):
+        """{the DC plays' patterns: their hosts} - the plays whose pattern is the group the job picked."""
+        out = run(os.path.join("playbooks", name), inventory, "--list-hosts", *args)
+        self.assertEqual(out.returncode, 0, (out.stdout + out.stderr)[-2000:])
+        got = {}
+        for p in re.split(r"\n  play #\d+ ", out.stdout)[1:]:
+            pat = re.search(r"pattern: \[(.*?)\]", p).group(1)
+            if pat not in ["'all'", "'localhost'"] + ["'%s'" % g for g in RUNTIME_GROUPS]:
+                got.setdefault(pat, set()).update(re.findall(r"\b(dc\d+\.example\.mil)\b", p.split("hosts (", 1)[-1]))
+        return {k: sorted(v) for k, v in got.items()}
+
+    def test_domain_controllers(self):
+        inv = self.inv([("domain_controllers", "dc01.example.mil"), ("web", "dc09.example.mil")])
+        for name in self.PLAYBOOKS:
+            with self.subTest(playbook=name):
+                self.assertEqual(self.hosts(name, inv, "domain_controllers"), {"'domain_controllers'": ["dc01.example.mil"]})
+
+    def test_win_dc_first(self):
+        inv = self.inv([("win_dc", "dc02.example.mil"), ("domain_controllers", "dc01.example.mil")])
+        for name in self.PLAYBOOKS:
+            with self.subTest(playbook=name):
+                self.assertEqual(self.hosts(name, inv, "win_dc"), {"'win_dc'": ["dc02.example.mil"]})
+
+    def test_target_wins(self):
+        inv = self.inv([("win_dc", "dc02.example.mil"), ("mydcs", "dc03.example.mil")])
+        for name in self.PLAYBOOKS:
+            with self.subTest(playbook=name):
+                self.assertEqual(self.hosts(name, inv, "mydcs", "-e", "target=mydcs"), {"'mydcs'": ["dc03.example.mil"]})
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

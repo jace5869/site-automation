@@ -66,6 +66,9 @@ The job's artifacts (`ad_health`) have every finding, for a workflow or ServiceN
 The DCs go in the group `win_dc` of your Windows inventory (the example has it:
 `inventories/example-windows/hosts.yml`). WinRM is set up as for every Windows server
 ([WINDOWS.md](WINDOWS.md), steps 1 to 5). Test it with *Windows connection test* and Limit `win_dc`.
+An inventory whose DCs are in a group named **`domain_controllers`** instead (and no `win_dc`) works as it is
+(1.1.0): with no `target`, both jobs read `win_dc` when the inventory has that group, else `domain_controllers`.
+Another name: `target: <your group>` on the templates.
 
 Put **every** DC in the group if you can. A DC that is not there is still covered by the
 domain-wide sections (replication from every DC, SRV records, FSMO, the changes), but its own
@@ -108,7 +111,7 @@ with less, that part is listed under *Not read* and the rest of the report is co
      ```yaml
      report_email_to: ad-team@yoursite.mil
      ```
-   - Leave Limit empty (with no `target`, it reads the group `win_dc`). Save.
+   - Leave Limit empty (with no `target`, it reads the group `win_dc`, else `domain_controllers`). Save.
 2. **First run: one DC.** Launch with Variables `target: dc01.yoursite.mil`. The domain-wide part
    is read on that DC too. Read the report in the job's output; anything under *Not read* says what
    that DC or account could not read (see Troubleshooting).
@@ -186,7 +189,7 @@ Ready to paste, with every setting switched off: [aap/extra_vars/ad_health_repor
 what keeps locking it out?* Give it the account (`jdoe`, `CORP\jdoe` or `jdoe@corp.example.mil`);
 leave it empty and it lists **every account locked out now**, each with its source.
 
-**How it works.** Every DC of the job (the group `win_dc`, or `target`) runs a PowerShell script
+**How it works.** Every DC of the job (the group `win_dc` - else `domain_controllers` - or `target`) runs a PowerShell script
 over WinRM that asks only itself, as the health report does:
 
 1. The **PDC emulator** finds the account (or every account locked out now) and the lockout policy
@@ -269,7 +272,7 @@ domain (it stops before reading the Security logs), or an unlock was refused.
      ```yaml
      ad_lockout_exchange_servers: [EXCH01, EXCH02]   # your mail servers, if any
      ```
-   - Leave Limit empty (with no `target` it reads the group `win_dc`). Save.
+   - Leave Limit empty (with no `target` it reads the group `win_dc`, else `domain_controllers`). Save.
 2. **Survey** (template > *Survey* > *Add*), then switch the survey **on**:
    - *Account (jdoe, CORP\jdoe or a UPN; empty = every account locked out now)* - answer variable
      `ad_lockout_user`, **Text**, **not required**.

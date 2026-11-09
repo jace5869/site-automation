@@ -16,6 +16,8 @@
   ansible.builtin.set_fact:
     _patch_vm: "{{ hostvars['localhost']._patch_snap.vms[inventory_hostname] | default({}) }}"
     _patch_vm_old: "{{ hostvars['localhost']._patch_snap.old[inventory_hostname] | default([]) if patch_snapshot_replace | bool else [] }}"
+    # the job run again within patch_snapshot_reuse_hours: the snapshot it took is kept, no second one (roles/patch/tasks/snapshot_vms.yml)
+    _patch_vm_reuse: "{{ hostvars['localhost']._patch_snap.reuse[inventory_hostname] | default({}) }}"
 
 - name: VMware | no VM for this host (a physical server) - patched without a snapshot
   ansible.builtin.debug:
@@ -38,7 +40,15 @@
   loop: "{{ _patch_vm_old }}"
   loop_control:
     label: "{{ item.vm }}: {{ item.name }} ({{ item.age_days | default('?') }} days)"
-  when: _patch_vm | length > 0
+  when: _patch_vm | length > 0 and _patch_vm_reuse | length == 0
+
+- name: VMware | reusing the snapshot "{{ patch_snapshot_name }}" of {{ _patch_vm.name | default('-') }} from a run of a moment ago
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: reusing the snapshot "{{ patch_snapshot_name }}" of VM {{ _patch_vm.name }} from
+      {{ _patch_vm_reuse.created | replace('T', ' ') | replace('Z', ' UTC') }} (taken within patch_snapshot_reuse_hours,
+      {{ patch_snapshot_reuse_hours }}): no second snapshot.
+  when: _patch_vm | length > 0 and _patch_vm_reuse | length > 0
 
 - name: VMware | snapshot "{{ patch_snapshot_name }}" of {{ _patch_vm.name | default('-') }} (no memory)
   vmware.vmware.vm_snapshot:
@@ -56,7 +66,7 @@
     memory_dump: false
     quiesce: "{{ patch_snapshot_quiesce | bool }}"
   register: _patch_vm_snap
-  when: _patch_vm | length > 0
+  when: _patch_vm | length > 0 and _patch_vm_reuse | length == 0
 
 # vm_snapshot takes no second snapshot of that name: it rewrites the old one's description and says "changed" all
 # the same. Only a vCenter task (result) means a snapshot was taken - an old one must not pass for the new one.
@@ -71,7 +81,10 @@
 - name: VMware | what was done
   ansible.builtin.set_fact:
     _patch_snapshot: >-
-      {{ ('none: ' ~ hostvars['localhost']._patch_snap.missing[inventory_hostname] | default('its VM was not found'))
+      {{ ('none - physical (' ~ hostvars['localhost']._patch_snap.missing[inventory_hostname] | default('its VM was not found') ~ ')')
          if _patch_vm | length == 0 else
+         (('would reuse' if ansible_check_mode else 'reused') ~ ' "' ~ patch_snapshot_name ~ '" from '
+          ~ _patch_vm_reuse.created | replace('T', ' ') | replace('Z', ' UTC') ~ ' of VM ' ~ _patch_vm.name)
+         if _patch_vm_reuse | length > 0 else
          (('would take' if ansible_check_mode else 'took') ~ ' "' ~ patch_snapshot_name ~ '" of VM ' ~ _patch_vm.name
           ~ (' (the old one ' ~ ('would be' if ansible_check_mode else 'was') ~ ' deleted first)' if _patch_vm_old | length > 0 else '')) }}

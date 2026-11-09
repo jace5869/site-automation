@@ -1,6 +1,6 @@
 ---
 # ACCOUNT LOCKOUT. Is an account locked out, and WHAT is locking it out: every domain controller of the
-# Windows inventory (group win_dc, or target) reads its own count of the account's bad passwords and its
+# Windows inventory (group win_dc - else domain_controllers - or target) reads its own count of the account's bad passwords and its
 # Security log - 4740 locked out (the caller computer), 4767 unlocked (by whom), 4771 / 4768 Kerberos
 # failures (the client's address, resolved to a name), 4776 NTLM failures (the workstation), 4625
 # failed logons to the DC - and the report ranks the computers the failed sign-ins came from, with what
@@ -24,7 +24,7 @@
         name: site_findings
         tasks_from: target_check.yml
       vars:
-        _target_pattern: "{{ target | default('win_dc') }}"
+        _target_pattern: "{{ target | default('win_dc' if 'win_dc' in groups else 'domain_controllers') }}"
 
     - name: The accounts asked for
       ansible.builtin.include_role:
@@ -32,7 +32,7 @@
         tasks_from: input.yml
 
 - name: Account lockout - read the domain controllers
-  hosts: "{{ target | default('win_dc') }}"
+  hosts: "{{ target | default('win_dc' if 'win_dc' in groups else 'domain_controllers') }}"
   gather_facts: false
   vars:
     site_os: windows
@@ -49,7 +49,7 @@
 
 - name: Account lockout - the source computers to look on
   # on the hosts, once on the AAP side (run_once, delegated to localhost): a Limit of hosts needs no localhost
-  hosts: "{{ target | default('win_dc') }}"
+  hosts: "{{ target | default('win_dc' if 'win_dc' in groups else 'domain_controllers') }}"
   gather_facts: false
   tasks:
     - name: The source computers of this inventory (ad_lockout_check_sources)
@@ -97,7 +97,7 @@
 
 - name: Account lockout report
   # on the hosts, once on the AAP side (run_once, delegated to localhost): a Limit of hosts needs no localhost
-  hosts: "{{ target | default('win_dc') }}"
+  hosts: "{{ target | default('win_dc' if 'win_dc' in groups else 'domain_controllers') }}"
   gather_facts: false
   tasks:
     - name: The report

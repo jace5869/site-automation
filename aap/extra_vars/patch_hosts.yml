@@ -71,6 +71,13 @@
 ## free space needed in /var before starting
 # patch_min_free_mb: 1024
 
+## Each host is asked first which updates it has (dnf check-update, yum on RHEL 7 - read-only, in
+## Check mode too, with patch_security_only, patch_exclude and patch_packages): true = one with none
+## is listed as UP TO DATE and left out - no snapshot, not patched, the job not failed for it. A
+## check that does not answer (a repository not reached) leaves the host in, as before 1.1.0. false
+## = no check: every host gets its snapshot and its update run.
+# patch_update_check: true
+
 ## seconds to wait for services to come back after a reboot
 # patch_service_wait: 120
 
@@ -101,6 +108,12 @@
 ## stops the job before anything is patched, and the job names them. true = delete that old
 ## snapshot, then take the new one.
 # patch_snapshot_replace: false
+
+## The job run again soon after (it stopped at a host, or was run twice): a snapshot named
+## patch_snapshot_name younger than this many hours is that patching's - kept and reused, no second
+## one, nothing stopped. Older: as above (stop, or patch_snapshot_replace). 0 = never reused (as
+## before 1.1.0).
+# patch_snapshot_reuse_hours: 24
 
 ## ---- Protected VMs ---- A host on the VMware protected lists is not patched: one of its groups is
 ## in vmware_protected_groups, or its name, short name, vmware_vm_name or VM in vCenter matches

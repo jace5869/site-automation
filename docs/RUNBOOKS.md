@@ -964,6 +964,13 @@ Installs updates with dnf - on RHEL 7 and its clones with yum (0.89.0: `yum chec
 `yum -y update`; any ansible-core) - (`patch_security_only` for security fixes only, `--security` on
 yum; `patch_exclude` for packages never updated here). Then:
 
+0. **The updates each host has, first** (1.1.0): before any snapshot, each host is asked which updates it has -
+   `dnf check-update` (`yum check-update` on RHEL 7), read-only, in Check mode too, with the same
+   `patch_security_only`, `patch_exclude` and `patch_packages` as the update. A host with none is listed as
+   `UP TO DATE - nothing to patch` and left out - **no snapshot, not patched** - the job not failed for it; the
+   last lines list them: `2 host(s) up to date, nothing to patch: ...`. A check that does not answer (a
+   repository not reached) leaves the host in, as before, and the update itself says what is wrong.
+   `patch_update_check: false`: no check - every host gets its snapshot and its update run.
 1. **One host at a time** by default. For batches, set `patch_serial` in the template's Variables
    or the survey (`patch_serial: 10`; in `all.yml` it does nothing). The rollout **stops at the
    first host that fails**: with batches, the rest of that batch finishes and no later batch starts.
@@ -1014,6 +1021,11 @@ yum; `patch_exclude` for packages never updated here). Then:
 Run it as **Job type: Check** first: it lists what would be updated and changes nothing
 ([DRY_RUNS.md](DRY_RUNS.md)).
 
+**The last lines** (1.1.0) are a table of every host: its updates (`3 pending`, `up to date`, or why it was left
+out: `NOT REACHED`, `NOT READY`, `NO DNF OR YUM`) and its snapshot (`took "patching" of VM web01`,
+`reused "patching" from 2026-11-09 08:12 UTC of VM web01`, `none - physical (...)`, `not needed - up to date`,
+`none (patch_snapshot is false)`; in a dry run: `would take`, `would reuse`).
+
 ### Snapshot before patching
 
 With `patch_snapshot: true`, vCenter takes a snapshot named **`patching`** of each host's VM
@@ -1048,8 +1060,14 @@ The job then **stops before any host is patched** when:
 | `web01...: no VM by its name, ...` and `A vCenter was not read, so these may be VMs there` | fix that vCenter or its credential (`vmware_vcenters`), or leave the host out of the run (Limit) |
 | `web01...: no VM by its name, ...` and `No vCenter has them (physical servers?)` | only with `patch_snapshot_required: true`. A VM: set `vmware_vm_name` for it (in the inventory, on the host). A physical server: leave it out of the run, or set `patch_snapshot_required: false` |
 | `web01 matches more than one VM (...)` | set `vmware_vm_name` for it |
-| `... still has the snapshot "patching" from ...` | the last patching's snapshot is still there. Delete it once that patching is proven, or run with `patch_snapshot_replace: true` (the old one is deleted, a new one taken) |
+| `... still has the snapshot "patching" from ...` | the last patching's snapshot is still there, older than `patch_snapshot_reuse_hours`. Delete it once that patching is proven, or run with `patch_snapshot_replace: true` (the old one is deleted, a new one taken) |
 | `attach a credential of type "VMware vCenter"` | the template has no vCenter credential |
+
+**Run again soon after** (1.1.0) - the job stopped at a host, or was run twice: a snapshot `patching` younger than
+`patch_snapshot_reuse_hours` (24) is that patching's own. It is **reused**: no second snapshot, nothing stopped,
+and the plan says `reusing the snapshot "patching" from <time> (N h ago)`. A host patched in full by the first run
+is up to date now, so it gets neither (rule 0). Older than that: the job stops as above (or
+`patch_snapshot_replace`). `patch_snapshot_reuse_hours: 0` = never reused, as before 1.1.0.
 
 A snapshot that fails stops that host: it is **not** patched, and the rollout stops after its
 batch. The AAP hosts and the other protected groups are never patched, so they get no snapshot

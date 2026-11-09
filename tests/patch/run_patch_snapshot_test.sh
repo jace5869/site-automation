@@ -8,9 +8,15 @@
 # takes none; an old "patching" stops the next run, patch_snapshot_replace replaces it; a host in no vCenter is a
 # physical server, patched without a snapshot; no vCenter credential; patch_snapshot false needs no vCenter; a host on the VMware
 # protected lists is not patched, unless patch_protected_with_snapshot names it (then after its own snapshot); RHEL 7 is
-# patched with yum, and a host with neither dnf nor yum is left out.
+# patched with yum, and a host with neither dnf nor yum is left out. The update check first (1.1.0): a host with nothing to
+# update is UP TO DATE - no snapshot, not patched; a run again within patch_snapshot_reuse_hours reuses the snapshot the
+# first took (no second one), an older one stops it as before, reuse_hours 0 = never reused; a dry run checks and
+# says it would reuse - its packages the test's own (sa-patch-pending: one update; sa-patch-current: none), so the
+# answer is the same whatever the image's age. (The cases before those patch only tzdata and take a snapshot each run:
+# patch_update_check false and patch_snapshot_reuse_hours 0 there, the ways before 1.1.0.)
 #   bash tests/patch/run_patch_snapshot_test.sh
 # Needs: podman; registry.access.redhat.com/ubi9/ubi-init (pulled when missing) and its UBI repositories (internet);
+# quay.io/centos/centos:stream9 and its repositories to build the test packages (PATCH_TEST_BUILDER);
 # a python with pyVmomi for the vcsim helpers (VMWARE_TEST_PYTHON); pyVmomi and requests in ansible-playbook's own
 # python too (the snapshot tasks run there, as in AAP's execution environment); the vmware.vmware collection
 # (VMWARE_COLLECTIONS, default ~/.ansible/collections); the containers.podman collection (installed into a temporary
@@ -25,6 +31,7 @@ engine="$(command -v podman)" || { echo "ABORT - podman is needed (the podman co
 port="${VCSIM_PORT:-18999}"
 image="docker.io/vmware/vcsim:v0.52.0"
 host_image="${PATCH_TEST_IMAGE:-registry.access.redhat.com/ubi9/ubi-init:latest}"
+builder_image="${PATCH_TEST_BUILDER:-quay.io/centos/centos:stream9}"
 name="vcsim-patch-test-$$"
 hosts=("sa-patch-a-$$" "sa-patch-b-$$" "sa-patch-c-$$" "sa-patch-d-$$" "sa-patch-e-$$")
 work="$(mktemp -d)"
@@ -45,6 +52,27 @@ for h in "${hosts[@]}"; do
 done
 for h in "${hosts[@]}"; do  # systemd up (the patch compares the running services before and after)
     for _ in $(seq 60); do "$engine" exec "$h" systemctl is-system-running 2>/dev/null | grep -qE 'running|degraded' && break; sleep 1; done
+done
+
+# The update check's packages, the test's own, so the answer never depends on the UBI image's age: sa-patch-pending 1.0
+# installed and 1.1 in a file:// repository (one update, always), sa-patch-current 1.0 in both (up to date, always).
+# Built once with rpm-build in a throwaway CentOS Stream 9 container (UBI has no rpm-build), noarch, one small file each.
+mkdir -p "$work/rpms"
+"$engine" run --rm -v "$work/rpms:/out:Z" "$builder_image" sh -c '
+    dnf -q install -y rpm-build createrepo_c >/dev/null 2>&1 || exit 1
+    for p in pending:1.0 pending:1.1 current:1.0; do n=sa-patch-${p%%:*}; v=${p#*:}
+        printf "%s\n" "Name: $n" "Version: $v" "Release: 1" "Summary: site-automation patch test package" "License: MIT" \
+            "BuildArch: noarch" "%description" "For tests/patch/run_patch_snapshot_test.sh." "%install" \
+            "mkdir -p %{buildroot}/usr/share/$n" "echo $v > %{buildroot}/usr/share/$n/version" "%files" "/usr/share/$n/version" > /tmp/$n.spec
+        rpmbuild -bb --quiet --define "_rpmdir /tmp/rpm-$v" /tmp/$n.spec >/dev/null 2>&1 || exit 1
+    done
+    mkdir -p /out/installed /out/repo
+    cp /tmp/rpm-1.0/noarch/*.rpm /out/installed/; cp /tmp/rpm-1.1/noarch/*.rpm /tmp/rpm-1.0/noarch/sa-patch-current-*.rpm /out/repo/
+    createrepo_c -q /out/repo' || { echo "ABORT - could not build the test packages in $builder_image"; exit 1; }
+for h in "${hosts[@]:0:3}"; do
+    "$engine" cp "$work/rpms" "$h:/opt/sa-patch-rpms" && "$engine" exec "$h" sh -c 'rpm -i /opt/sa-patch-rpms/installed/*.rpm &&
+        printf "%s\n" "[sa-patch-test]" "name=sa-patch-test" "baseurl=file:///opt/sa-patch-rpms/repo" "gpgcheck=0" "enabled=1" \
+        > /etc/yum.repos.d/sa-patch-test.repo' || { echo "ABORT - could not install the test packages in $h"; exit 1; }
 done
 
 # old01: RHEL 7 - its dnf taken away and 7.9 written in its release files, so yum only (UBI's yum is dnf underneath).
@@ -105,7 +133,7 @@ run() {
         ANSIBLE_COLLECTIONS_PATH="$cols" ANSIBLE_STDOUT_CALLBACK=default ANSIBLE_NOCOLOR=1 ANSIBLE_LOCALHOST_WARNING=False \
         ANSIBLE_DEPRECATION_WARNINGS=False ANSIBLE_HOST_KEY_CHECKING=False \
         ${NOVC:+env -u VMWARE_HOST} "$ap" -i "$work/inv.yml" playbooks/patch_hosts.yml -e vmware_validate_certs=false \
-        -e '{"awx_job_id": 4711, "awx_user_name": "operator1", "patch_packages": ["tzdata"]}' "${args[@]}") > "$work/out.txt" 2>&1
+        -e '{"awx_job_id": 4711, "awx_user_name": "operator1", "patch_packages": ["tzdata"], "patch_update_check": false, "patch_snapshot_reuse_hours": 0}' "${args[@]}") > "$work/out.txt" 2>&1
     local rc=$?
     if { [ "$want" = ok ] && [ $rc -ne 0 ]; } || { [ "$want" = fail ] && [ $rc -eq 0 ]; }; then
         keep "$tname"; echo "FAIL - $tname: exit $rc (wanted $want)"; grep -E '"msg"|ERROR|fatal' "$work/out.txt" | head -8 | cut -c1-400; fails=$((fails + 1)); return 1
@@ -226,5 +254,36 @@ run "protected, named by patch_protected_with_snapshot, but no VM: never patched
     -e '{"vmware_protected_vms": "phys*", "patch_protected_with_snapshot": true}' \
     -- 'phys01.example.mil is protected (phys01.example.mil matches vmware_protected_vms (phys*)): not patched' \
        'Its VM was not found in vCenter' "!$installs" '!Patched without a snapshot'
+
+# ---- the update check first, then the snapshot; a run again reuses it (1.1.0) ----
+# sa-patch-current has no update (up to date), sa-patch-pending has one - in any UBI image, old or new.
+uc='{"patch_update_check": true, "patch_snapshot_reuse_hours": 24, "patch_packages": ["sa-patch-current"]}'
+pending='{"patch_update_check": true, "patch_snapshot_reuse_hours": 24, "patch_packages": ["sa-patch-pending"]}'
+before="$(ID=1 snaps DC0_H0_VM1)"
+run "up to date: listed, no snapshot, not patched - the job green" ok -e target=web01.example.mil -e patch_snapshot=true -e "$uc" \
+    -- 'web01.example.mil: UP TO DATE - nothing to patch' '1 host(s) up to date, nothing to patch: web01.example.mil' \
+       "!$installs" '!VMware | read every VM'
+check "  ...no snapshot taken" "$(ID=1 snaps DC0_H0_VM1)" "$before"
+check "  ...the summary: up to date, not needed" "$(grep -oE 'web01.example.mil +up to date +not needed - up to date' "$work/out.txt" | head -1 | tr -s ' ')" \
+    "web01.example.mil up to date not needed - up to date"
+
+before="$(ID=1 snaps DC0_C0_RP0_VM0)"
+run "a dry run: the update check runs, the snapshot of a moment ago would be reused" ok --check -e target=web02.example.mil \
+    -e patch_snapshot=true -e "$pending" -- 'reusing the snapshot \"patching\" from' 'would reuse \"patching\" from' '!web02.example.mil: UP TO DATE'
+check "  ...the summary: 1 pending" "$(grep -oE 'web02.example.mil +1 pending' "$work/out.txt" | head -1 | tr -s ' ')" "web02.example.mil 1 pending"
+check "  ...nothing taken" "$(ID=1 snaps DC0_C0_RP0_VM0)" "$before"
+
+run "a snapshot older than patch_snapshot_reuse_hours: stops the job as before" fail -e target=DC0_C0_RP0_VM1 -e patch_snapshot=true \
+    -e "$pending" -e patch_snapshot_reuse_hours=0.001 -- 'DC0_C0_RP0_VM1 (DC0_C0_RP0_VM1) still has the snapshot \"patching\" from' "!$installs"
+run "patch_snapshot_reuse_hours 0: never reused - stops as before 1.1.0" fail -e target=DC0_C0_RP0_VM1 -e patch_snapshot=true \
+    -e "$pending" -e patch_snapshot_reuse_hours=0 -- 'still has the snapshot \"patching\"' '!reusing the snapshot' "!$installs"
+
+before="$(ID=1 snaps DC0_H0_VM1)"
+run "run again within 24 h, updates left: the snapshot reused, no second one, patched" ok -e target=web01.example.mil \
+    -e patch_snapshot=true -e "$pending" -- 'reusing the snapshot \"patching\" from' 'reused \"patching\" from' "$installs" \
+    '!took \"patching\"'
+check "  ...the same snapshot, no second one" "$(ID=1 snaps DC0_H0_VM1)" "$before"
+check "  ...the summary: 1 pending, reused" "$(grep -oE 'web01.example.mil +1 pending +reused' "$work/out.txt" | head -1 | tr -s ' ')" \
+    "web01.example.mil 1 pending reused"
 
 if [ "$fails" -eq 0 ]; then echo "all patch snapshot tests passed"; else echo "$fails patch snapshot test(s) FAILED"; exit 1; fi

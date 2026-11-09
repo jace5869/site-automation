@@ -18,8 +18,12 @@
 # - Hosts on the VMware protected lists (vmware_protected_groups, vmware_protected_vms, vm_snapshot_cleanup_exclude_vms)
 #   are skipped too; patch_protected_with_snapshot patches them, each right after its own snapshot.
 # - Check mode (a dry run) lists what would be updated and changes nothing: run it that way first.
+# - Each host is asked first which updates it has (dnf / yum check-update, read-only, the same filters as the update):
+#   one with none is listed (UP TO DATE - nothing to patch) and left out - no snapshot, not patched (patch_update_check).
 # - patch_snapshot: true = a VMware snapshot of each VM (named patching) right before it is patched; every host's
-#   VM is found first, before any host is patched. Attach a "VMware vCenter" credential too. docs/RUNBOOKS.md
+#   VM is found first, before any host is patched. Attach a "VMware vCenter" credential too. A run again within
+#   patch_snapshot_reuse_hours (24) keeps the snapshot the first run took instead of a second one. docs/RUNBOOKS.md
+# - The last lines: each host with its updates and its snapshot.
 #
 #   ansible-playbook playbooks/patch_hosts.yml --check -l web01.example.mil
 #   ansible-playbook playbooks/patch_hosts.yml -l web01.example.mil -e patch_security_only=true
@@ -147,6 +151,61 @@
       ansible.builtin.meta: end_host
       when: patch_not_ready is defined
 
+    # the updates it has, before any snapshot: dnf check-update (yum on RHEL 7) with the same filters as the update
+    # (patch_security_only, patch_exclude, patch_packages) - read-only, in Check mode too. 100 = updates, 0 = none: UP TO
+    # DATE, left out (no snapshot, not patched), the job green. Another answer (a repository not reached) does not tell:
+    # the host goes on as before 1.1.0, and the update itself says what is wrong.
+    - name: The updates it has (patch_update_check)
+      ansible.builtin.command:
+        argv: >-
+          {{ [('yum' if _patch_pkg.ansible_facts.ansible_pkg_mgr | default('dnf') not in ['dnf', 'dnf5'] else 'dnf'), '-q', 'check-update']
+             + (['--security'] if patch_security_only | default(false) | bool else [])
+             + (patch_exclude | default([]) | map('regex_replace', '^', '--exclude=') | list)
+             + ([] if patch_packages | default(['*']) | list == ['*'] else patch_packages | list) }}
+      become: true
+      ignore_unreachable: true
+      failed_when: false
+      changed_when: false
+      check_mode: false
+      register: _patch_check
+      when:
+        - patch_update_check | default(true) | bool
+        - site_host_unreached | length == 0
+        - group_names | intersect((patch_never_patch_groups | default(['no_patch', 'aap', 'aap_hosts', 'sat', 'netapp', 'netapp_console_hosts'])) + ['aap', 'aap_hosts']) | length == 0
+
+    - name: How many
+      ansible.builtin.set_fact:
+        # the package lines only ("name.arch  version  repository"), each name once; not the "Obsoleting Packages" part
+        patch_updates: >-
+          {{ (_patch_check.stdout | default('')).split('Obsoleting Packages')[0].splitlines() | map('trim')
+             | select('match', '^\S+\.\S+\s+\S+\s+\S+$') | map('split') | map('first') | unique | list | length
+             if _patch_check.rc | default(-1) == 100 else 0 }}
+      when: _patch_check.rc | default(-1) in [0, 100]
+
+    - name: The update check did not answer - the host goes on, the update says why
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: the update check did not answer (rc {{ _patch_check.rc | default('?') }}:
+          {{ ((_patch_check.stderr | default('')).splitlines() | last | default(_patch_check.msg | default('')) | string) | truncate(200) }}) -
+          it goes on as if it had updates.
+      when: _patch_check is not skipped and _patch_check.rc | default(-1) not in [0, 100]
+
+    - name: Up to date - nothing to patch
+      ansible.builtin.set_fact:
+        patch_up_to_date: true
+      when: _patch_check.rc | default(-1) == 0
+
+    - name: Up to date - the job goes on without it
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: UP TO DATE - nothing to patch{{ ' (security updates only)' if patch_security_only | default(false) | bool else '' }}.
+          No snapshot, not patched; the job is not failed for it.
+      when: patch_up_to_date is defined
+
+    - name: Leave it out (up to date)
+      ansible.builtin.meta: end_host
+      when: patch_up_to_date is defined
+
     - name: The hosts that go on
       ansible.builtin.group_by:
         key: patch_reached
@@ -200,6 +259,40 @@
   hosts: "{{ target | default('patch_hosts') }}"
   gather_facts: false
   tasks:
+    # each host: its updates (from the check before the snapshots) and its snapshot (taken, reused, none)
+    - name: Patch hosts | each host - its updates and its snapshot
+      ansible.builtin.debug:
+        msg: "{{ _rows }}"
+      vars:
+        _rows: >-
+          {%- set out = [] -%}
+          {%- set w = [ansible_play_hosts_all | map('length') | max | default(4), 4] | max -%}
+          {%- set _ = out.append('%-*s  %-22s  %s' | format(w, 'Host', 'Updates', 'Snapshot')) -%}
+          {%- for h in ansible_play_hosts_all | sort -%}
+          {%-   set v = hostvars[h] -%}
+          {%-   set upd = 'up to date' if v.patch_up_to_date is defined else
+                          ((v.patch_updates ~ ' pending') if v.patch_updates | default(0) | int > 0 else
+                           'not checked' if v.patch_updates is not defined else 'none pending') -%}
+          {%-   if v.site_host_unreached | default('') -%}{%- set upd = 'NOT REACHED' -%}
+          {%-   elif v.patch_not_ready is defined -%}{%- set upd = 'NOT READY' -%}
+          {%-   elif v.patch_unsupported is defined -%}{%- set upd = 'NO DNF OR YUM' -%}{%- endif -%}
+          {%-   set snap = 'not needed - up to date' if v.patch_up_to_date is defined else
+                           v._patch_snapshot | default('none (patch_snapshot is false)' if not patch_snapshot | default(false) | bool else 'none') -%}
+          {%-   set _ = out.append('%-*s  %-22s  %s' | format(w, h, upd, snap)) -%}
+          {%- endfor -%}
+          {{ out }}
+      run_once: true
+
+    - name: Patch hosts | UP TO DATE - nothing to patch (no snapshot, not patched)
+      ansible.builtin.debug:
+        msg: "{{ _current | length }} host(s) up to date, nothing to patch: {{ _current | join(', ') }}"
+      vars:
+        _current: >-
+          {{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('patch_up_to_date', 'defined')
+             | map(attribute='inventory_hostname') | list }}
+      run_once: true
+      when: _current | length > 0
+
     - name: Patch hosts | NOT REACHED - not patched (fix the network or firewall, then run again for these)
       ansible.builtin.debug:
         msg: >-

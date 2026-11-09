@@ -1,6 +1,6 @@
 ---
 # ACTIVE DIRECTORY HEALTH REPORT. Read-only: every domain controller of the Windows inventory
-# (group win_dc, or target) runs a PowerShell script over WinRM that reads what it says about itself
+# (group win_dc - else domain_controllers - or target) runs a PowerShell script over WinRM that reads what it says about itself
 # - LDAP and global catalog answering, the DC services, dcdiag (the tests that only read), inbound
 # replication (repadmin /showrepl) and its queue, SYSVOL (shares, DFSR), time against the PDC
 # emulator, the event logs that matter on a DC, clients in no site, the disks of its database, the
@@ -25,10 +25,10 @@
         name: site_findings
         tasks_from: target_check.yml
       vars:
-        _target_pattern: "{{ target | default('win_dc') }}"
+        _target_pattern: "{{ target | default('win_dc' if 'win_dc' in groups else 'domain_controllers') }}"
 
 - name: Active Directory - read the domain controllers
-  hosts: "{{ target | default('win_dc') }}"
+  hosts: "{{ target | default('win_dc' if 'win_dc' in groups else 'domain_controllers') }}"
   gather_facts: false
   vars:
     site_os: windows
@@ -45,7 +45,7 @@
 
 - name: Active Directory health report
   # on the hosts, once on the AAP side (run_once, delegated to localhost): a Limit of hosts needs no localhost
-  hosts: "{{ target | default('win_dc') }}"
+  hosts: "{{ target | default('win_dc' if 'win_dc' in groups else 'domain_controllers') }}"
   gather_facts: false
   tasks:
     - name: Active Directory health report
