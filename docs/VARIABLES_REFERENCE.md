@@ -1513,6 +1513,9 @@ File: `roles/site_email/defaults/main.yml`
 | `report_web_smb_encrypt` | `false` | true = encrypt (SMB 3) even when the share does not require it; one that requires it is always |
 | `report_web_smb_port` | `445` | the share's port |
 | `report_web_ca_path` | (empty) | a CA file for an https:// report_web_dest, or report_web_host's WinRM certificate ("" = what the EE trusts) |
+| `report_web_retries` | `3` | A share, an upload address or a folder that fails for a reason that passes (Kerberos "Message stream modified" while a file server's machine password changes, no KDC reached, a connection reset, a session gone, HTTP 503): tried again from a new login. A real error (password, access, no such share or folder) is not. Tr… (all of it: the role file) |
+| `report_web_retry_delay` | `30` | seconds between two tries |
+| `report_web_required` | `false` | false = still not published after the retries: a warning, the email says so at the top, the job goes on; true = the job fails |
 | `report_web_host` | (empty) | Or on a Windows server (a file server, or the IIS server itself): report_web_host is that server, report_web_dest the folder on it (D:\reports, there already). The pages are made on the AAP side and written there over WinRM, in one PowerShell script per run (Constrained Language Mode too): nothing to mount, no WebDAV.… (all of it: the role file) |
 | `report_web_host_connection` | `winrm` | winrm or psrp |
 | `report_web_host_port` | `5986` | WinRM: 5986 (https), 5985 (http) |

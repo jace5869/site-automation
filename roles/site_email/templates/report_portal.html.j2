@@ -7,7 +7,9 @@
     email (cid:), no scripts. Input: _report (see roles/site_email/tasks/main.yml), _email_footer,
     _email_logo_cid ('' = no logo) and _email_logo_size ([width, height]), _email_runs (report_runs; [] = no
     strip). Every value is escaped. -#}
-{%- set r = _report -%}
+{#- the report website copy failed (report_web_required false): said first, as plugins/filter/site_filters.py report_notice #}
+{%- set r = dict(_report, sections=[{'title': 'Report website', 'status': 'warning', 'text': _email_notice}] + (_report.sections | default([])))
+             if _email_notice | default('') else _report -%}
 {#- the web copy (report_web_dest) passes its own _page_logo_cid, _page_logo_size and _page_runs; an email links its web copy (_email_web_url) -#}
 {%- set logo_cid = _page_logo_cid | default(_email_logo_cid | default('')) -%}
 {%- set logo_size = _page_logo_size | default(_email_logo_size | default([0, 0])) -%}

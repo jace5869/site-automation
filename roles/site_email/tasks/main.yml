@@ -65,6 +65,9 @@
          {'title': _report_subject | default('Report'), 'status': 'info',
           'sections': [{'title': 'Report', 'lines': (_report_body | default('')).splitlines()}]} }}
     _email_any: "{{ _email_to | length > 0 or (report_web_dest | default('') | string | trim | length > 0 and not _report_web_skip | default(false) | bool) }}"
+    # set below when the website copy still failed (report_web_required: false); '' again for each report of a play
+    _web_failed: ""
+    _email_notice: ""
 
 - name: Email | the mail settings are complete
   ansible.builtin.assert:
@@ -262,6 +265,9 @@
     smb_auth: "{{ report_web_smb_auth | default('negotiate') }}"
     smb_encrypt: "{{ report_web_smb_encrypt | default(false) | bool }}"
     smb_port: "{{ report_web_smb_port | default(445) | int }}"
+    retries: "{{ report_web_retries | default(3) | int }}"
+    retry_delay: "{{ report_web_retry_delay | default(30) | int }}"
+    required: "{{ report_web_required | default(false) | bool }}"
     windows_host: "{{ report_web_host | default('') | trim if _web_win | bool or _web_copy | bool else '' }}"
     index_text: "{{ _web_win_read.index | default('', true) if _web_win | bool and not ansible_check_mode else '' }}"
   vars:
@@ -273,6 +279,18 @@
     _page_runs: "{{ _web_runs | default([]) }}"
   register: _web_out
   when: _web_on | bool
+
+# report_web_required false: still not published after the retries - said here and at the top of the email; the job goes on
+- name: Email | the report website - not published
+  ansible.builtin.set_fact:
+    _web_failed: "{{ _web_out.error | default('', true) or 'failed' }}"
+    _email_notice: "The report website copy failed: {{ (_web_out.error | default('', true) or 'failed') | truncate(400) }}; the email is the full report."
+  when: _web_on | bool and not _web_out.published | default(true)
+
+- name: Email | the report website - not published (WARNING; report_web_required true fails the job instead)
+  ansible.builtin.debug:
+    msg: "WARNING - {{ _email_notice }}{{ (' Tried ' ~ (_web_out.retried | length + 1) ~ ' times.') if _web_out.retried | default([]) else '' }}"
+  when: _web_failed | length > 0
 
 - name: Email | report_web_host - this run's pages written there
   when: _web_win | bool and not ansible_check_mode
@@ -336,20 +354,21 @@
     _web_old: >-
       {{ (' (older runs deleted: ' ~ (_web_out.deleted | select('match', '.*[.]html$') | join(', ')) ~ ')')
          if _web_out.deleted | default([]) | select('match', '.*[.]html$') | list | length > 0 else '' }}
-  when: _web_on | bool
+  when: _web_on | bool and _web_failed | length == 0
 
 - name: Email | the report's address, for the next step (job artifact site_report_url)
   ansible.builtin.set_stats:
     data:
       site_report_url: "{{ _web_out.url }}"
   when: >-
-    _web_on | bool and _web_out.url | default('') | length > 0 and not ansible_check_mode
+    _web_on | bool and _web_out.url | default('') | length > 0 and not ansible_check_mode and _web_failed | length == 0
     and (not _web_copy | bool or _web_out.packed | default('') | length > 0)
 
 - name: Email | the email links its web copy
   ansible.builtin.set_fact:
     _email_web_url: >-
-      {{ _web_out.url if _web_on | bool and not ansible_check_mode and (not _web_copy | bool or _web_out.packed | default('') | length > 0)
+      {{ _web_out.url if _web_on | bool and not ansible_check_mode and _web_failed | length == 0
+         and (not _web_copy | bool or _web_out.packed | default('') | length > 0)
          else '' }}
   when: _email_to | length > 0
 
@@ -371,7 +390,10 @@
         to: "{{ _email_to }}"
         cc: "{{ _email_cc }}"
         subject: "{{ _email_subject }}"
-        body: "{{ _report | report_text(_email_footer ~ _email_web_line, _email_runs | default([])) if _report is defined else _report_body ~ '\n\n--\n' ~ _email_footer ~ _email_web_line }}"
+        body: >-
+          {{ _report | report_notice(_email_notice) | report_text(_email_footer ~ _email_web_line, _email_runs | default([]))
+             if _report is defined else
+             ((_email_notice ~ '\n\n') if _email_notice else '') ~ _report_body ~ '\n\n--\n' ~ _email_footer ~ _email_web_line }}
         html: "{{ lookup('ansible.builtin.template', _email_template) if _email_html | bool else omit }}"
         images: "{{ [{'cid': _email_logo_cid, 'path': _email_logo_file}] if _email_html | bool and _email_logo_cid else [] }}"
         # the workbook, and the files the job hands over (_report_attachments: [{path, filename}] - the outage AAR's Word documents)

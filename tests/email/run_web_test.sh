@@ -160,9 +160,12 @@ run "a name that does not exist: says which there are" fail "{\"report_web_dest\
     "report_web_page '{site}/{job}.html': there is no {site}"
 run "a name that leaves the folder: refused" fail "{\"report_web_dest\": \"$work/reports\", \"report_web_page\": \"../{job}.html\"}" \
     "a path inside the report folder"
-run "a folder that is not there (a share not mounted): fails, never makes it" fail "{\"report_web_dest\": \"$work/nomount/reports\"}" \
-    "is not there - is the share mounted"
+run "a folder that is not there (a share not mounted), report_web_required: fails, never makes it" fail \
+    "{\"report_web_dest\": \"$work/nomount/reports\", \"report_web_required\": true}" "is not there - is the share mounted"
 check "nothing made" test ! -e "$work/nomount"
+run "the same by default (report_web_required false): a warning, the job goes on, not tried again" ok "{\"report_web_dest\": \"$work/nomount/reports\"}" \
+    "WARNING - The report website copy failed: the folder $work/nomount/reports is not there - is the share mounted"
+check "no retry (a real error)" bash -c "! grep -q 'try 1 of' '$work/out.txt'"
 run "an unknown look: says which there are" fail "{\"report_web_dest\": \"$work/reports\", \"report_web_theme\": \"fancy\"}" \
     "report_web_theme must be atlas, brief, standard, command, portal or glass"
 run "atlas for an email: refused, said why" fail "{\"report_email_to\": [\"ops@example.mil\"], \"report_email_smtp_host\": \"localhost\", \"report_email_smtp_port\": $port, \"report_email_from\": \"aap@example.mil\", \"report_email_security\": \"none\", \"report_email_theme\": \"atlas\"}" \
@@ -206,10 +209,10 @@ REPORT_WEB_TOKEN=t0ken run "an upload again with report_web_history 1: the older
 check "DELETE of its page and JSON, both gone" bash -c "grep -qE '^DELETE /reports/linux-certificate-trust-report/[^ ]*_job-907.html 204' '$work/web.log' \
     && grep -qE '^DELETE /reports/linux-certificate-trust-report/[^ ]*_job-907.json 204' '$work/web.log' \
     && ! ls '$work'/site/reports/linux-certificate-trust-report/*_job-907.* 2>/dev/null && ls '$work'/site/reports/linux-certificate-trust-report/*_job-908.html >/dev/null"
-REPORT_WEB_TOKEN=t0ken run "the report folder not on the website: fails, never makes it" fail "{\"report_web_dest\": \"http://127.0.0.1:$wport/gone\"}" \
+REPORT_WEB_TOKEN=t0ken run "the report folder not on the website: fails, never makes it (report_web_required)" fail "{\"report_web_dest\": \"http://127.0.0.1:$wport/gone\", \"report_web_required\": true}" \
     "the folder http://127.0.0.1:$wport/gone is not there on the website"
 check "nothing made" test ! -e "$work/site/gone"
-REPORT_WEB_TOKEN=wrong run "a wrong token: fails, names the credential" fail "{\"report_web_dest\": \"http://127.0.0.1:$wport/reports\"}" \
+REPORT_WEB_TOKEN=wrong run "a wrong token: fails, names the credential (report_web_required)" fail "{\"report_web_dest\": \"http://127.0.0.1:$wport/reports\", \"report_web_required\": true}" \
     "HTTP 401" "the \\\"Report website\\\" credential"
 grep -q 'wrong' "$work/out.txt" && { echo "FAIL -   ...the token appears in the job output"; fails=$((fails + 1)); } || echo "ok   -   ...no token in the job output"
 web FAKE_WEB_BASIC='up:l0ad pw'
@@ -270,6 +273,62 @@ winmsg="report_web_host 127.0.0.1 (winrm, port 9)"
 run "a Windows server that cannot be reached: says which, and what to check" fail \
     "{\"report_web_host\": \"127.0.0.1\", \"report_web_host_port\": 9, \"report_web_host_scheme\": \"http\", \"report_web_dest\": \"D:\\\\reports\"}" \
     "$winmsg"
+
+# ---- a failure that passes, tried again; a website copy that still fails does not fail the job ------------------
+# The share: tests/email/fake_smb (a stand-in smbclient on PYTHONPATH) - \\fakesrv\its\reports is $work/smb/its/reports;
+# FAKE_SMB_FAIL: the next N logins fail with that error. Kerberos's "Message stream modified" (KRB_AP_ERR_MODIFIED: a
+# file server's machine password changed, AD not replicated yet) is the user's real one.
+mkdir -p "$work/smb/its/reports"
+stream='Failed to authenticate with server: SpnegoError (4294967295): Major (851968): Unspecified GSS failure.  Minor code may provide more information, Minor (2529638953): Message stream modified, Context: Processing security token'
+smbrun() {  # smbrun NAME EXPECT VARS_JSON FAILS [TEXT...]: a run against the stand-in share, FAILS = "N|error"
+    local name="$1" want="$2" vars="$3"; shift 3
+    printf '%s' "$1" > "$work/smb.fail"; shift
+    : > "$work/smb.log"
+    PYTHONPATH="$here/fake_smb" FAKE_SMB_ROOT="$work/smb" FAKE_SMB_LOG="$work/smb.log" FAKE_SMB_FAIL="$work/smb.fail" \
+        REPORT_WEB_USERNAME=svc_reports@EXAMPLE.MIL REPORT_WEB_PASSWORD='Pa55-word' \
+        run "$name" "$want" "{\"report_web_dest\": \"smb://fakesrv/its/reports\", \"report_web_retry_delay\": 1, $aapjob, $vars}" "$@"
+}
+logins() { grep -c '^login ' "$work/smb.log"; }
+relay
+smbrun "the share: Message stream modified twice, then published (a new login, a fresh ticket each try)" ok '"report_email_to": []' "2|$stream" \
+    "try 1 of 4 failed (message stream modified)" "try 2 of 4 failed (message stream modified)" "Published (after 3 tries): " "fakesrv"
+check "3 logins" test "$(logins)" = 3
+check "each try its own Kerberos cache (MEMORY:...-2, -3), the connections dropped in between" bash -c "
+    grep -q 'cache MEMORY:site-report-web-[0-9]*-2\$' '$work/smb.log' && grep -q 'cache MEMORY:site-report-web-[0-9]*-3\$' '$work/smb.log' \
+    && [ \$(grep -c '^reset' '$work/smb.log') -ge 3 ]"
+check "the page and the index on the share" bash -c "ls '$work'/smb/its/reports/linux-certificate-trust-report/*_job-907.html >/dev/null && test -f '$work/smb/its/reports/index.html'"
+relay
+smbrun "the share fails every time: the job goes on, green; the email says so at the top" ok \
+    '"report_email_to": ["ops@example.mil"], "report_email_theme": "portal"' "always|$stream" \
+    "try 3 of 4 failed (message stream modified)" "WARNING - The report website copy failed: " "the email is the full report. Tried 4 times."
+check "4 logins (report_web_retries 3)" test "$(logins)" = 4
+check "one email" test "$(mails)" = 1
+part html "$work/mail/1.eml" > "$work/html.txt"; part plain "$work/mail/1.eml" > "$work/plain.txt"
+check "HTML: the notice, before the report's own sections" "$py" -c 'import sys
+t = open(sys.argv[1]).read()
+i, j = t.find("The report website copy failed: "), t.find("Fix: convert the guest to EFI")
+assert 0 < i < j and "Message stream modified" in t[i:j] and "the email is the full report." in t[i:j], (i, j)' "$work/html.txt"
+check "text: the notice, before the report's own sections" "$py" -c 'import sys
+t = open(sys.argv[1]).read()
+i, j = t.find("The report website copy failed: "), t.find("Fix: convert the guest to EFI")
+assert 0 < i < j, (i, j)' "$work/plain.txt"
+check "no link to a page that is not there" bash -c "! grep -q 'In a browser:' '$work/plain.txt'"
+check "no address artifact (site_report_url), the run's artifact there" "$py" -c 'import json, sys
+run = [x for x in open(sys.argv[1]).read().splitlines() if x.startswith("\tRUN: ")]
+a = json.loads(run[-1][6:])
+assert "site_report_run" in a and "site_report_url" not in a, a' "$work/out.txt"
+check "the recap: no failure" grep -qE 'localhost +: ok=[0-9]+ +changed=[0-9]+ +unreachable=0 +failed=0' "$work/out.txt"
+smbrun "report_web_required true: the same fails the job, after the retries" fail '"report_web_required": true' "always|$stream" \
+    "The report website: logging in to fakesrv" "(tried 4 times: message stream modified; message stream modified; message stream modified; message stream modified)"
+smbrun "a real error (the password): not tried again, the job goes on" ok '"report_email_to": []' \
+    "always|[Error 3221225581] STATUS_LOGON_FAILURE: The attempted logon is invalid" \
+    "WARNING - The report website copy failed: logging in to fakesrv as svc_reports@EXAMPLE.MIL: [Error 3221225581] STATUS_LOGON_FAILURE"
+check "1 login" test "$(logins)" = 1
+check "no retry said" bash -c "! grep -q 'try 1 of' '$work/out.txt'"
+web FAKE_WEB_503=2
+run "an upload: HTTP 503 twice, then published" ok \
+    "{\"report_web_dest\": \"http://127.0.0.1:$wport/reports\", \"report_web_retry_delay\": 1, $aapjob}" \
+    "try 1 of 4 failed (http 503)" "try 2 of 4 failed (http 503)" "Report: http://127.0.0.1:$wport/reports/linux-certificate-trust-report/"
 
 # ---- the copy job (report_web_copy) -------------------------------------------------------------------------
 # artifact KEY: the last run's job artifact KEY (its CUSTOM STATS line "RUN: {...}", what AAP keeps), as JSON

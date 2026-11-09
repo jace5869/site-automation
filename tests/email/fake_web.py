@@ -2,6 +2,7 @@
 """Fake report website for tests/email/run_web_test.sh: GET, PUT, DELETE and MKCOL (WebDAV) into a folder, like
 nginx with dav_methods PUT DELETE MKCOL. A PUT into a folder that is not there answers 409 (make it with MKCOL first).
 Login: FAKE_WEB_TOKEN (Authorization: Bearer ...) or FAKE_WEB_BASIC (user:password); neither = no login.
+FAKE_WEB_503=N: the first N PUTs answer 503 (a server busy a moment - the report website's retries).
 Each request appended to FOLDER/../web.log as "METHOD path status".
 Usage: fake_web.py PORT FOLDER"""
 import base64
@@ -14,6 +15,7 @@ ROOT = os.path.abspath(sys.argv[2])
 LOG = os.path.join(os.path.dirname(ROOT), "web.log")
 TOKEN = os.environ.get("FAKE_WEB_TOKEN", "")
 BASIC = os.environ.get("FAKE_WEB_BASIC", "")
+BUSY = [int(os.environ.get("FAKE_WEB_503", "0") or 0)]
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -52,6 +54,9 @@ class Handler(BaseHTTPRequestHandler):
         body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
         if not self._allowed():
             return self._answer(401)
+        if BUSY[0] > 0:
+            BUSY[0] -= 1
+            return self._answer(503)
         path = self._path()
         if path is None:
             return self._answer(403)

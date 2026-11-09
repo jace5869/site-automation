@@ -1526,6 +1526,16 @@ def report_cards_text(cards):
     return out
 
 
+def report_notice(report, notice=""):
+    """The report with a notice as its first section (a warning: the report website copy failed - roles/site_email);
+    the report as it is without one. Every email look draws it at the top, before the other sections."""
+    if not notice:
+        return report
+    r = dict(report or {})
+    r["sections"] = [{"title": "Report website", "status": "warning", "text": str(notice)}] + list(r.get("sections") or [])
+    return r
+
+
 def report_text(report, footer="", runs=None):
     """A report (roles/site_email: title, subtitle, summary, sections with columns/rows or lines,
     footer) as plain text, tables in aligned columns. runs: the strip of past runs (report_runs), as one line."""
@@ -1967,7 +1977,7 @@ class FilterModule(object):
                 "vm_pick_reboot_plan": vm_pick_reboot_plan, "vm_snap_row": vm_snap_row, "vm_snap_vm_key": vm_snap_vm_key, "patch_vm_match": patch_vm_match, "patch_protected": patch_protected, "cert_report_section": cert_report_section,
                 "site_correlation_id": site_correlation_id,
                 "human_size": human_size, "name_matches": name_matches, "name_list": name_list,
-                "report_text": report_text, "report_cards_html": report_cards_html, "findings_report": findings_report,
+                "report_text": report_text, "report_notice": report_notice, "report_cards_html": report_cards_html, "findings_report": findings_report,
                 "report_headline": report_headline, "report_runs": report_runs,
                 "image_size": image_size, "email_recipients": email_recipients, "email_also_refused": email_also_refused,
                 "report_web_files": report_web_files, "site_web_win_error": site_web_win_error,

@@ -293,6 +293,19 @@
 ## EE trusts)
 # report_web_ca_path: ""
 
+## A share, an upload address or a folder that fails for a reason that passes (Kerberos "Message
+## stream modified" while a file server's machine password changes, no KDC reached, a connection
+## reset, a session gone, HTTP 503): tried again from a new login. A real error (password, access,
+## no such share or folder) is not. Tries again this many times; 0 = none
+# report_web_retries: 3
+
+## seconds between two tries
+# report_web_retry_delay: 30
+
+## false = still not published after the retries: a warning, the email says so at the top, the job
+## goes on; true = the job fails
+# report_web_required: false
+
 ## Or on a Windows server (a file server, or the IIS server itself): report_web_host is that server,
 ## report_web_dest the folder on it (D:\reports, there already). The pages are made on the AAP side
 ## and written there over WinRM, in one PowerShell script per run (Constrained Language Mode too):

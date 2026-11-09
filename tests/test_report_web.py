@@ -839,5 +839,49 @@ class BriefIndex(unittest.TestCase):
         self.assertNotIn("first-of-type", page)                                  # a web page already: nothing added
 
 
+class Retries(unittest.TestCase):
+    """0.98.1: a failure that passes is tried again from a new login (site_report_web.passing); a real one is not; a
+    website copy that still fails is said at the top of the email (report_notice)."""
+    USER = ("Failed to authenticate with server: SpnegoError (4294967295): Major (851968): Unspecified GSS failure.  "
+            "Minor code may provide more information, Minor (2529638953): Message stream modified, Context: Processing security token")
+
+    def test_passing(self):
+        for why, word in ((self.USER, "message stream modified"),
+                          ("Cannot contact any KDC for realm 'EXAMPLE.MIL'", "cannot contact any kdc"),
+                          ("[Errno 104] Connection reset by peer", "connection reset"),
+                          ("[Errno 111] Connection refused", "connection refused"),
+                          ("timed out", "timed out"),
+                          ("Received unexpected status from the server: STATUS_NETWORK_NAME_DELETED (0xc00000c9)", "network_name_deleted"),
+                          ("STATUS_USER_SESSION_DELETED: 0xc0000203", "user_session_deleted"),
+                          ("STATUS_NETWORK_SESSION_EXPIRED", "network_session_expired"),
+                          ("uploading https://web/r/x.html: HTTP 503 Service Unavailable", "http 503"),
+                          ("writing /mnt/reports/x.html: Stale file handle", "stale file handle")):
+            with self.subTest(why=why):
+                self.assertEqual(rw.passing(rw.Fail("logging in to fs01: " + why)), word)
+
+    def test_not_passing(self):
+        for why in ("[Error 3221225581] STATUS_LOGON_FAILURE: The attempted logon is invalid",
+                    "STATUS_ACCESS_DENIED", "STATUS_BAD_NETWORK_NAME", "Configuration file does not specify default realm",
+                    "Unspecified GSS failure.  Minor (2529638918): Server not found in Kerberos database",
+                    "Unspecified GSS failure.  Minor (2529638936): Preauthentication failed",
+                    "Unspecified GSS failure.  Minor (2529638949): Clock skew too great",
+                    "Cannot find KDC for realm \"EXAMPLE.MIL\"",
+                    "the folder /mnt/reports is not there - is the share mounted",
+                    "uploading https://web/r/x.html: HTTP 401 Unauthorized", "HTTP 403 Forbidden", "HTTP 404 Not Found",
+                    "unsupported hash type md4"):
+            with self.subTest(why=why):
+                self.assertIsNone(rw.passing(rw.Fail(why)))
+
+    def test_notice(self):
+        r = {"title": "T", "sections": [{"title": "A", "lines": ["x"]}]}
+        self.assertIs(sf.report_notice(r, ""), r)
+        n = sf.report_notice(r, "The report website copy failed: x; the email is the full report.")
+        self.assertEqual([s["title"] for s in n["sections"]], ["Report website", "A"])
+        self.assertEqual(n["sections"][0]["status"], "warning")
+        self.assertEqual(len(r["sections"]), 1)                        # the report itself unchanged
+        self.assertIn("The report website copy failed: x", sf.report_text(n))
+        self.assertLess(sf.report_text(n).index("copy failed"), sf.report_text(n).index("\nA\n"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

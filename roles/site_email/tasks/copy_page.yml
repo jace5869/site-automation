@@ -26,6 +26,8 @@
     smb_auth: "{{ report_web_smb_auth | default('negotiate') }}"
     smb_encrypt: "{{ report_web_smb_encrypt | default(false) | bool }}"
     smb_port: "{{ report_web_smb_port | default(445) | int }}"
+    retries: "{{ report_web_retries | default(3) | int }}"          # the copy job's own failure stays a failure (required)
+    retry_delay: "{{ report_web_retry_delay | default(30) | int }}"
     windows_host: "{{ report_web_host | trim if _web_win | bool else '' }}"
     index_text: "{{ _copy_index | default('') if _web_win | bool else '' }}"
   vars:

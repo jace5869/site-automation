@@ -40,6 +40,13 @@ description:
     are returned packed (packed, at most max_kb) for the copy job; a report too big even with its longest tables cut
     returns packed empty, and msg says so.
   - In check mode nothing is written; the address is returned.
+  - A login or publish that fails for a reason that passes (Kerberos "Message stream modified" while a server's machine
+    password changes and AD replicates, no KDC reachable, a connection reset or timed out, an SMB session deleted or
+    expired, HTTP 502/503/504, a stale mount) is tried again from the start - a new login, a new SMB session, a fresh
+    Kerberos ticket - up to retries times, retry_delay seconds apart, each retry said in one warning. A real error (a
+    wrong password, access denied, no such share or folder, the realm) is not retried.
+  - With required false, a publish that still fails is not a failure - published false and error (why) are returned,
+    with a warning; the role then says it in the email.
   - A page in the atlas or brief look carries its script (roles/site_email/templates/site_report.js); it is written beside the
     folder's top as site-report.js too (when it changed), and the page and the index load it from there - a web server
     whose Content-Security-Policy allows no inline script (script-src 'self') runs that one.
@@ -71,6 +78,9 @@ options:
   smb_port: {description: The share's port., type: int, default: 445}
   footer: {description: With keep - the email's footer line (the AAP job, who started it, when) for the copied page., type: str, default: ''}
   theme: {description: "The website's look (report_web_theme) - atlas and brief draw the index page in it too; the others, in the portal look.", type: str, default: portal}
+  retries: {description: "Tries again after a failure that passes (report_web_retries); 0 = none.", type: int, default: 3}
+  retry_delay: {description: Seconds between two tries (report_web_retry_delay)., type: int, default: 30}
+  required: {description: "false = a publish that still fails after the retries returns published false and error, not a failure (report_web_required).", type: bool, default: true}
 author: site automation
 '''
 
@@ -89,6 +99,9 @@ newest: {description: This run is at least as new as the template's line in the 
 packed: {description: "With keep - the report packed for the copy job ('' = too big, see msg)", type: str}
 note: {description: "With keep - what was kept, its size (and the tables cut to fit).", type: str}
 cut: {description: "With keep - the tables cut to fit max_kb: [[section, rows kept, rows]]", type: list}
+published: {description: "The report is on the website (false only with required false, when it still failed).", type: bool}
+error: {description: "Why it was not published (with published false).", type: str}
+retried: {description: "The tries that failed and were tried again: [why, ...].", type: list}
 '''
 
 import base64
@@ -430,6 +443,32 @@ def _smb_in_use(e):
     low = str(e).lower()
     return any(w in low for w in ('sharing_violation', 'sharing violation', '0xc0000043', 'access_denied', 'access is denied',
                                   '0xc0000022', 'delete_pending', '0xc0000056', 'being used by another'))
+
+
+# A failure that passes (tried again from a new login) and one that does not (said at once): the words of the error.
+# The ones that do not pass are looked at first - "Unspecified GSS failure" also comes with a wrong password.
+NOT_PASSING = ('logon_failure', 'logon failure', 'status_logon', 'invalid credentials', 'preauthentication failed',
+               'password has expired', 'password_expired', 'account_disabled', 'account_locked', 'account_restriction',
+               'access_denied', 'access is denied', 'bad_network_name', '0xc00000cc', 'no such share', 'default realm',
+               'server not found in kerberos database', 'cannot find kdc', 'clock skew', 'skew too great', 'md4',
+               'unsupported hash', 'invalid token was supplied', 'revoked', 'is not there', 'must be', 'no login for',
+               'no smbprotocol', 'certificate verify failed', 'http 400', 'http 401', 'http 403', 'http 404', 'http 405',
+               'http 409', 'http 413')
+PASSING = ('message stream modified', 'cannot contact any kdc', 'unable to reach any kdc', 'kdc unreachable',
+           'unspecified gss failure', 'connection reset', 'connection refused', 'connection aborted', 'broken pipe',
+           'timed out', 'timeout', 'network_name_deleted', '0xc00000c9', 'user_session_deleted', '0xc0000203',
+           'network_session_expired', '0xc000035c', 'session expired', 'connection_disconnected', '0xc000020c',
+           'io_timeout', '0xc00000b5', 'remote end closed', 'eof occurred', 'stale file handle', 'input/output error',
+           'host is down', 'transport endpoint is not connected', 'no route to host', 'network is unreachable',
+           'temporarily unavailable', 'try again', 'http 502', 'http 503', 'http 504')
+
+
+def passing(why):
+    """A failure that a moment later may not be there (tried again from the start), or None; else a real error."""
+    low = str(why).lower()
+    if any(w in low for w in NOT_PASSING):
+        return None
+    return next((w for w in PASSING if w in low), None)
 
 
 class Staged(object):
@@ -1284,6 +1323,9 @@ def main():
             prune=dict(type='bool', default=True),
             drop=dict(type='list', elements='str', default=[]),
             sub_pages=dict(type='list', elements='str', default=[]),
+            retries=dict(type='int', default=3),
+            retry_delay=dict(type='int', default=30),
+            required=dict(type='bool', default=True),
         ),
         supports_check_mode=True,
     )
@@ -1306,8 +1348,9 @@ def main():
     if module.check_mode and not smb:
         module.exit_json(changed=False, written=[], msg='Dry run (Check): the report would be published at %s'
                          % (urls['url'] or _place(where, page, bs)), **urls)
-    target = None
-    try:
+    box = {}
+
+    def publish():
         if win:
             target = Staged(_json_name(index) if index else '', p['index_text'])
         elif smb:
@@ -1317,6 +1360,7 @@ def main():
                                  'would be published at %s' % (target.server, target.root, urls['url'] or _place(where, page, True)), **urls)
         else:
             target = Target(dest, p['ca_path'], p['timeout'])
+        box['target'] = target
         html = web_page(p['html'], p['images'], p['theme'])
         js = page_script(html)
         js_name = page_script_name(html)                 # site-report.js, or the page's own file (data-file)
@@ -1419,21 +1463,56 @@ def main():
         for rel, why in busy:
             module.warn('The report website: %s was not written - it stayed open somewhere (a browser, an editor) for the '
                         '10 seconds the job tried; the next run writes it (%s)' % (rel, why))
-    except Fail as e:
-        module.fail_json(msg='The report website: %s' % e, **urls)
-    finally:
-        if isinstance(target, SmbTarget):
-            target.close()
+        return dict(target=target, written=written, index_text=index_text, is_newest=is_newest, gone=gone,
+                    deleted=deleted, not_deleted=not_deleted, busy=busy, js_name=js_name)
+
+    # a failure that passes (Kerberos "Message stream modified", a KDC or the server not reached, a session gone) is
+    # tried again from the start: a new login, a new SMB session, a fresh Kerberos ticket (report_web_retries)
+    retried, tries = [], max(0, p['retries']) + 1
+    fresh_ticket = bool(smb and os.environ.get('REPORT_WEB_USERNAME') and os.environ.get('REPORT_WEB_PASSWORD'))
+    for n in range(1, tries + 1):
+        if fresh_ticket and n > 1:                       # the password's own ticket, never one cached before
+            os.environ['KRB5CCNAME'] = 'MEMORY:site-report-web-%d-%d' % (os.getpid(), n)
+        try:
+            done = publish()
+            break
+        except Fail as e:
+            why = passing(e)
+            if n == tries or not why or win:
+                if p['required']:
+                    module.fail_json(msg='The report website: %s%s' % (e, (' (tried %d times: %s)' % (n, '; '.join(retried + [why or str(e)])))
+                                                                      if retried else ''), retried=retried, **urls)
+                module.warn('The report website: not published (%s)%s - the job goes on (report_web_required: false)' % (
+                    e, (' after %d tries' % n) if retried else ''))
+                module.exit_json(changed=False, published=False, error=str(e), retried=retried, written=[], **urls)
+            retried.append(why)
+            module.warn('The report website: try %d of %d failed (%s): %s - trying again in %d s, a new login' % (
+                n, tries, why, str(e)[:300], p['retry_delay']))
+        finally:
+            target = box.pop('target', None)
+            if isinstance(target, SmbTarget):
+                target.close()
+            elif smb:                                    # a login that failed half-way: its connection dropped too
+                try:
+                    import smbclient
+                    smbclient.reset_connection_cache()
+                except Exception:                       # noqa: BLE001
+                    pass
+        time.sleep(max(0, p['retry_delay']))
+    target, written, index_text, is_newest = done['target'], done['written'], done['index_text'], done['is_newest']
+    gone, deleted, not_deleted, busy, js_name = done['gone'], done['deleted'], done['not_deleted'], done['busy'], done['js_name']
     if win:
         fd, script = tempfile.mkstemp(prefix='site_report_web_', suffix='.ps1')
         with os.fdopen(fd, 'wb') as f:
             f.write(windows_script(dest, target.files, target.removed, [latest, _json_name(latest) if latest else '', index, SCRIPT, js_name]).encode('utf-8-sig'))   # PowerShell 5.1 reads it as UTF-8
         module.exit_json(changed=False, written=written, script=script, place=_place(where, page, bs), index_text=index_text,
                          unlisted=[r.get('key') for r in gone],
-                         newest=is_newest, deleted=deleted, not_deleted=not_deleted, not_written=busy, msg='Made, for %s: %s' % (win, ', '.join(written)), **urls)
+                         newest=is_newest, deleted=deleted, not_deleted=not_deleted, not_written=busy, published=True, retried=retried,
+                         msg='Made, for %s: %s' % (win, ', '.join(written)), **urls)
     module.exit_json(changed=True, written=written, place=_place(where, page, bs), index_text=index_text, newest=is_newest,
                      unlisted=[r.get('key') for r in gone],
-                     deleted=deleted, not_deleted=not_deleted, not_written=busy, msg='Published: %s%s' % (
+                     deleted=deleted, not_deleted=not_deleted, not_written=busy, published=True, retried=retried,
+                     msg='Published%s: %s%s' % (' (after %d tries)' % (len(retried) + 1) if retried else '',
                          urls['url'] or _place(where, page, bs),
                          ' (older runs deleted: %s)' % ', '.join(d for d in deleted if d.endswith('.html')) if deleted else ''), **urls)
 

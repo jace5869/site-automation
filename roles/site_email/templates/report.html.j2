@@ -3,7 +3,9 @@
     (cid:). Input: _report (see roles/site_email/tasks/main.yml), the footer line _email_footer, and
     _email_logo_cid ('' = no logo) with _email_logo_size ([width, height]). Every value is escaped
     (| e). Your own look: copy this file and point report_email_html_template at the copy. -#}
-{%- set r = _report -%}
+{#- the report website copy failed (report_web_required false): said first, as plugins/filter/site_filters.py report_notice #}
+{%- set r = dict(_report, sections=[{'title': 'Report website', 'status': 'warning', 'text': _email_notice}] + (_report.sections | default([])))
+             if _email_notice | default('') else _report -%}
 {#- the web copy (report_web_dest) passes its own _page_logo_cid, _page_logo_size and _page_runs; an email links its web copy (_email_web_url) -#}
 {%- set logo_cid = _page_logo_cid | default(_email_logo_cid | default('')) -%}
 {%- set logo_size = _page_logo_size | default(_email_logo_size | default([0, 0])) -%}

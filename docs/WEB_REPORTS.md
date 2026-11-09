@@ -480,6 +480,9 @@ the page is written by the AAP side of the job, which never gets a group's varia
 | `report_web_delete_old` | `true` | `false` = older runs' pages stay in the folder (the index lists only the last `report_web_history`) |
 | `report_web_tabs` | the guide's areas | the index's tabs: `[{tab, match: [names]}]`, in `all.yml` ("The index page") |
 | `report_web_ca_path` | `""` | a CA file for an `https://` upload address, or for `report_web_host`'s WinRM certificate |
+| `report_web_retries` | `3` | a failure that passes (Kerberos `Message stream modified`, no KDC reached, a connection reset or timed out, an SMB session gone, HTTP 502/503/504, a stale mount) is tried again from the start - a new login, a new SMB session, a fresh Kerberos ticket - this many times; a real error (password, access, no such share or folder) is not. Each retry is one warning line. Not `report_web_host` (WinRM) |
+| `report_web_retry_delay` | `30` | seconds between two tries |
+| `report_web_required` | `false` | `false` = still not published after the retries: a warning in the job output, the email says it at the top ("The report website copy failed: ...; the email is the full report"), the job goes on (green). `true` = the job fails, as before 0.98.1 |
 | `report_web_page`, `_latest`, `_index`, `_names` | see "Changing the names" | |
 
 A dry run (Check) writes nothing and prints the address it would have used.
@@ -589,6 +592,8 @@ variable (`{{ site_report_url }}`) - for a Teams post or a ServiceNow work note.
 | `[WARNING]: The report website: an older run's ... could not be deleted` | The account may write but not delete there: Modify on the folder, `DELETE` on an upload address - or `report_web_delete_old: false` |
 | `[WARNING]: The report website: index.html was not written - it stayed open somewhere` | The index (or a `latest.html`) was open in a browser - Edge, from the share - the whole time; the next run writes it. Close that tab; a file open for longer: an editor, or a backup holding it |
 | `uploading ...: HTTP 413` | The page is bigger than the server allows (nginx: `client_max_body_size`) |
+| `Message stream modified` on a share, now and then | Kerberos's KRB_AP_ERR_MODIFIED - most often a file server's machine password that just changed (a NetApp SVM rotates it) while AD replicates: tried again by itself (`report_web_retries`). Every time: an alias or address in `report_web_dest`, or a duplicate SPN - [REPORT_SHARE.md](REPORT_SHARE.md#when-something-fails) |
+| `WARNING - The report website copy failed: ...` (the job green) | Not published after the retries, or a real error: the email carries the same line at the top. The reason's own row here; `report_web_required: true` makes it fail the job |
 | `certificate verify failed` | Set `report_web_ca_path` to the CA that signed the server's certificate |
 | `could not reach report_web_host web01... (winrm, port 5986): ...` - `the specified credentials were rejected` | The login: the Report website credential (`DOMAIN\user`), or the account is locked; without that credential, the template's Machine credential is used |
 | `could not reach report_web_host ...: ... certificate verify failed` | `report_web_ca_path` (the CA of the server's WinRM certificate), or `report_web_host_cert_validation: ignore` to try it |

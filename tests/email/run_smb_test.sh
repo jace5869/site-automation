@@ -125,12 +125,15 @@ run "index.html open in a browser while the job writes it: written a moment late
 wait "$holder"
 check "  ...index.html has job 506" 'grep -q "_job-506.html" /srv/its/aap/reports/index.html'
 grep -q contended "$work/held" && echo "ok   -   ...it was open when the job first tried" || { echo "FAIL -   ...index.html was not open when the job wrote it"; fails=$((fails + 1)); }
-SMB_PW=wrong run "a wrong password: said in words" fail -e "$smb" -- "the user name or password is wrong"
-SMB_USER= SMB_PW= run "no credential: says which one to attach" fail -e "$smb" -- 'attach the \"Report website\" credential'
-run "a folder that is not there: never made" fail -e "{\"report_web_dest\": \"\\\\\\\\127.0.0.1\\\\its\\\\nope\", \"report_web_smb_port\": $port, \"report_web_smb_auth\": \"ntlm\"}" \
+SMB_PW=wrong run "a wrong password (report_web_required): said in words" fail -e "$smb" -e '{"report_web_required": true}' -- "the user name or password is wrong"
+SMB_PW=wrong run "a wrong password by default: a warning, the job goes on, not tried again" ok -e "$smb" -- \
+    "WARNING - The report website copy failed: logging in to 127.0.0.1 as svc_reports" "the user name or password is wrong"
+grep -q 'try 1 of' "$work/out.txt" && { echo "FAIL -   ...a wrong password was tried again"; fails=$((fails + 1)); } || echo "ok   -   ...not tried again"
+SMB_USER= SMB_PW= run "no credential: says which one to attach" fail -e "$smb" -e '{"report_web_required": true}' -- 'attach the \"Report website\" credential'
+run "a folder that is not there: never made" fail -e '{"report_web_required": true}' -e "{\"report_web_dest\": \"\\\\\\\\127.0.0.1\\\\its\\\\nope\", \"report_web_smb_port\": $port, \"report_web_smb_auth\": \"ntlm\"}" \
     -- 'is not there - make it once by hand'
 check "  ...and it was not made" '[ ! -e /srv/its/nope ]'
-run "a share that is not there: said" fail -e "{\"report_web_dest\": \"\\\\\\\\127.0.0.1\\\\nosuch\\\\x\", \"report_web_smb_port\": $port, \"report_web_smb_auth\": \"ntlm\"}" \
+run "a share that is not there: said" fail -e '{"report_web_required": true}' -e "{\"report_web_dest\": \"\\\\\\\\127.0.0.1\\\\nosuch\\\\x\", \"report_web_smb_port\": $port, \"report_web_smb_auth\": \"ntlm\"}" \
     -- "no such share on that server"
 INV="$work/inv-hosts.yml" PB="$here/send_report_delegated.yml" run "a play on the hosts (a Limit, no localhost): the report written once, from the AAP side" ok \
     -l lin01.example.mil,lin02.example.mil -e "$smb" -e '{"awx_job_template_name": "Log analysis", "awx_job_id": 504}' \
