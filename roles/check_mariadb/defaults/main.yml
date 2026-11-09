@@ -84,3 +84,10 @@ check_mariadb_open_files_warn_pct: 85        # files open, % of open_files_limit
 check_mariadb_lock_wait_seconds: 30          # a session waiting this long for a lock, right now
 check_mariadb_long_trx_seconds: 600          # an InnoDB transaction open this long, right now
 check_mariadb_history_length_warn: 1000000   # InnoDB history list length (old row versions not yet purged)
+
+# ---- SIZES (off by default) ---------------------------------------------------------------------
+# true = also read each schema's data and index bytes and the largest tables from information_schema (names and numbers
+# only) and keep them as the fact check_mariadb_sizes_result for the job that asked (the ServiceNow health job's database
+# host). No finding of its own. The account sees only the schemas it may read; [] when it sees none.
+check_mariadb_sizes: false
+check_mariadb_sizes_tables: 10           # the largest tables listed

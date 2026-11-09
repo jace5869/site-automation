@@ -1,0 +1,47 @@
+---
+# On each self-hosted ServiceNow front-end node (playbooks/servicenow_health.yml, the hosts of servicenow_nodes_group),
+# over SSH with sudo. Read-only: library/site_servicenow_node.py reads the node units (snc_*.service), the stats page on
+# 127.0.0.1, the node's localhost log, fapolicyd, the disk and the memory. Its answer is kept as the fact
+# servicenow_node_result {host, hostname, reachable, error, units, missing, looked_for, fapolicyd, disk, memory} for the
+# instance's check on the AAP side, which judges it (plugins/filter/servicenow_node_filters.py). The play has reached
+# the host before this.
+- name: ServiceNow node | the node units, stats page, log, disk and memory (read-only)
+  block:
+    - name: ServiceNow node | read
+      site_servicenow_node:
+        units: "{{ servicenow_node_units | name_list }}"
+        home: "{{ servicenow_node_home }}"
+        port: "{{ servicenow_node_port }}"
+        stats: "{{ servicenow_node_stats | bool }}"
+        samples: "{{ servicenow_node_stats_samples | int }}"
+        interval: "{{ servicenow_node_stats_interval | float }}"
+        log_hours: "{{ servicenow_node_log_hours | float }}"
+        log_glob: "{{ servicenow_node_log_glob }}"
+        log_groups: "{{ servicenow_node_log_groups | int }}"
+        timeout: "{{ servicenow_node_stats_timeout | int }}"
+        fapolicyd: "{{ servicenow_fapolicyd | bool }}"
+        fapolicyd_since: "{{ servicenow_fapolicyd_since }}"
+        fapolicyd_critical: "{{ servicenow_node_fapolicyd_critical | name_list }}"
+        host_name: "{{ inventory_hostname }}"
+        stats_url: "{{ servicenow_node_stats_url }}"
+        stats_auth: "{{ servicenow_node_stats_auth }}"
+        # the ServiceNow API credential's login, for a stats page that asks for one (never in the result)
+        stats_user: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') if servicenow_node_stats_auth != 'none' else '' }}"
+        stats_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') if servicenow_node_stats_auth != 'none' else '' }}"
+        sem_wait_ms: "{{ servicenow_node_semaphore_wait_ms | int }}"
+      register: _snn
+      check_mode: false                  # it only reads: a dry run (Check) shows the real result
+
+    - name: ServiceNow node | what it said
+      ansible.builtin.set_fact:
+        servicenow_node_result: >-
+          {{ {'host': inventory_hostname, 'hostname': _snn.hostname | default(''), 'reachable': true, 'error': '',
+              'units': _snn.units | default([]), 'missing': _snn.missing | default([]), 'looked_for': _snn.looked_for | default([]),
+              'fapolicyd': _snn.fapolicyd | default({}), 'disk': _snn.disk | default([]), 'memory': _snn.memory | default({})} }}
+  rescue:
+    - name: ServiceNow node | it could not be read (sudo refused, no Python) - a finding on the AAP side
+      ansible.builtin.set_fact:
+        servicenow_node_result: >-
+          {{ {'host': inventory_hostname, 'hostname': '', 'reachable': true, 'units': [], 'missing': [], 'disk': [], 'memory': {},
+              'error': ((ansible_failed_result.msg | default('', true) | string ~ ' ' ~ ansible_failed_result.module_stderr | default('') | string)
+                        | trim | replace('\n', ' ') or 'the check gave no answer') | truncate(300)} }}

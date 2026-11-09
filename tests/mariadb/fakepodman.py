@@ -6,7 +6,8 @@ mariadb | mysql8 | mysql84 | mysql57). It accepts only the replication statement
 (SHOW ALL SLAVES STATUS / SHOW REPLICA STATUS / SHOW SLAVE STATUS), so a wrong choice shows as a finding.
 $FAKE_REPL = none | ok | broken | lag; $FAKE_GROUP = none | ok | bad; $FAKE_DENY=1 refuses the login;
 $FAKE_REPL_DENY=1 refuses the replication query; $FAKE_PERF = busy | quiet | deny (a server with performance
-problems, one without, one whose account may not read INNODB_TRX). Not a podman: only what the check needs."""
+problems, one without, one whose account may not read INNODB_TRX); $FAKE_DATADIR its data dir; $FAKE_SIZES = full | small | none
+(the information_schema sizes, a hundredth of them, or an account that sees no tables). Not a podman: only what the check needs."""
 import os
 import sys
 
@@ -35,7 +36,8 @@ def client(c, joined):
         ver = {"mariadb": "10.11.6-MariaDB", "mysql8": "8.0.36", "mysql84": "8.4.0", "mysql57": "5.7.44-log"}[eng]
         com = "mariadb.org binary distribution" if eng == "mariadb" else "MySQL Community Server - GPL"
         rows = ["Uptime\t500000", "Threads_connected\t5", "Threads_running\t1", "max_connections\t151",
-                "datadir\t/var/lib/mysql/", "log_error\tstderr", "version\t" + ver, "version_comment\t" + com]
+                "datadir\t" + os.environ.get("FAKE_DATADIR", "/var/lib/mysql/"), "log_error\tstderr", "version\t" + ver,
+                "version_comment\t" + com]
         rows.append("wsrep_on\tOFF" if eng == "mariadb" else "")
         if os.environ.get("FAKE_GROUP", "none") != "none" and eng != "mariadb":
             rows.append("group_replication_group_name\taaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
@@ -52,6 +54,15 @@ def client(c, joined):
             rows += ["Questions\t5000000", "Slow_queries\t3", "Created_tmp_tables\t100000", "Created_tmp_disk_tables\t100",
                      "Open_files\t40", "open_files_limit\t32768", "Innodb_row_lock_waits\t2", "Innodb_row_lock_time\t20"]
         print("\n".join(r for r in rows if r))
+        return 0
+    if "information_schema.TABLES" in joined:
+        # check_mariadb_sizes: $FAKE_SIZES = full (a ServiceNow-like schema) | small | none (an account that sees no tables)
+        if os.environ.get("FAKE_SIZES", "full") == "full":
+            print("S\tsnprod\t48318382080\t5120\nS\tsnaudit\t2147483648\t12")
+            print("T\tsnprod.sys_audit\t9663676416\nT\tsnprod.syslog\t6442450944\nT\tsnprod.sys_attachment_doc\t5368709120")
+        elif os.environ.get("FAKE_SIZES") == "small":          # a hundredth of it (a small test disk)
+            print("S\tsnprod\t483183820\t5120\nS\tsnaudit\t21474836\t12")
+            print("T\tsnprod.sys_audit\t96636764\nT\tsnprod.syslog\t64424509\nT\tsnprod.sys_attachment_doc\t53687091")
         return 0
     if "INNODB_TRX" in joined:
         perf = os.environ.get("FAKE_PERF", "")

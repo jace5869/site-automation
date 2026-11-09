@@ -1,0 +1,45 @@
+#!/usr/bin/env python3
+"""A fake systemctl for the ServiceNow node check: SNNODE_UNITS = "snc_prod:active:enabled,snc_test:active:disabled"
+(unit:ActiveState:UnitFileState; "" = none installed), SNNODE_HOME = the fake install folder, SNNODE_FAPOLICYD = active |
+inactive (is-active / is-enabled fapolicyd). Reads only, like the check."""
+import os
+import sys
+
+home = os.environ.get("SNNODE_HOME", "/glide")
+units = {}
+for part in os.environ.get("SNNODE_UNITS", "snc_prod:active:enabled").split(","):
+    if part:
+        n, a, e = (part.split(":") + ["", "", ""])[:3]
+        units[n + ".service"] = (a, e)
+port = {"snc_prod.service": "prod_16000", "snc_test.service": "test_16001"}
+args = [a for a in sys.argv[1:] if not a.startswith("--")]
+if not args:
+    sys.exit(1)
+if args[0] in ("is-active", "is-enabled") and args[-1] in ("fapolicyd", "fapolicyd.service"):
+    st = os.environ.get("SNNODE_FAPOLICYD", "active")
+    print(st if args[0] == "is-active" else ("enabled" if st == "active" else "disabled"))
+    sys.exit(0 if st == "active" else 3)
+if args[0] in ("list-units", "list-unit-files"):
+    for u, (a, e) in sorted(units.items()):
+        if args[0] == "list-units":
+            print("%s loaded %s %s ServiceNow node" % (u, a, "running" if a == "active" else "dead"))
+        else:
+            print("%s %s %s" % (u, e, "disabled"))
+    print("snc_mid_old.service loaded inactive dead not a node" if args[0] == "list-units" else "snc_mid_old.service disabled disabled")
+    sys.exit(0)
+if args[0] == "show":
+    u = args[-1]
+    if u not in units:
+        print("ActiveState=inactive\nSubState=dead\nUnitFileState=\nExecStart=\nWorkingDirectory=\nEnvironment=")
+        sys.exit(0)
+    a, e = units[u]
+    d = os.path.join(home, "nodes", port.get(u, u[4:-8]))
+    print("ActiveState=%s" % a)
+    print("SubState=%s" % ("running" if a == "active" else "dead"))
+    print("UnitFileState=%s" % e)
+    print("ExecStart={ path=%s/startup.sh ; argv[]=%s/startup.sh run ; ignore_errors=no }" % (d, d))
+    print("WorkingDirectory=")
+    print("Environment=JAVA_HOME=/usr/lib/jvm/jre")
+    print("ActiveEnterTimestamp=Sun 2026-11-08 06:00:00 UTC")
+    sys.exit(0)
+sys.exit(1)

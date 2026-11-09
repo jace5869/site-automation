@@ -1,7 +1,7 @@
 # ==================================================================================================
 # Variables for the job template "ServiceNow health"
 #   playbook:    playbooks/servicenow_health.yml
-#   credentials: ServiceNow API (Machine (Windows) for the MID Server hosts)
+#   credentials: ServiceNow API (Machine (Windows) for the MID Server hosts; Machine and MariaDB monitor for a self-hosted instance's nodes and database host)
 #
 # HOW TO USE: copy this file into the template's Variables box (YAML selected).
 #   - A setting starting with "# " is switched off. To use it, delete the "# " in front of its
@@ -16,6 +16,10 @@
 ---
 ## The MID Server hosts: a group servicenow_mid_hosts in the Windows inventory this template runs with
 # servicenow_mid_expected: [MID01, MID02]          # these must be in the instance's MID Server list
+## A self-hosted instance: the groups servicenow_nodes and servicenow_db_hosts in the Linux inventory. AAP gives a template
+## one inventory and one Machine credential: two templates - this one with the Windows inventory and mids, a second
+## ("ServiceNow health - nodes") with the Linux inventory, its Machine credential, MariaDB monitor and nodes
+# servicenow_health_part: mids                     # all (default: both, one inventory with both), mids, nodes
 
 # ---- servicenow ----------------------------------------------------------------------------------
 ## the table tickets are opened in (incident)
@@ -105,6 +109,181 @@
 
 ## config.xml's instance URL not this instance (a clone, a moved MID) -> critical
 # servicenow_mid_url_check: true
+
+## false = neither the nodes nor the database host is read
+# servicenow_check_nodes: true
+
+## the inventory group of the front-end nodes
+# servicenow_nodes_group: servicenow_nodes
+
+## the inventory group of the database host(s) (a child of mariadb_hosts)
+# servicenow_db_group: servicenow_db_hosts
+
+## read the database host(s): auto = when the inventory has front-end nodes
+# servicenow_check_db: auto
+
+## the checks on the database host (roles/check_<name>; e.g. add services)
+# servicenow_db_checks: [mariadb]
+
+## the database's folders: their filesystems reported, the data dir expected under one
+# servicenow_db_paths: [/database]
+
+## the data dir on the host ("" = @@datadir as the server says; a container's: its path here)
+# servicenow_db_datadir: ""
+
+## the largest schemas listed
+# servicenow_db_top_schemas: 5
+
+## the largest tables listed
+# servicenow_db_top_tables: 10
+
+## The database's size is kept on the database host, for its growth (change since the last run, per
+## day, and when the disk fills): the one thing this job writes - a small JSON file, not in Check
+## mode. false = no history, no growth.
+# servicenow_db_history: true
+
+## on the database host, written by the job
+# servicenow_db_history_file: /var/lib/site-health/servicenow-db-history.json
+
+## sizes older than this many days are dropped from the history
+# servicenow_db_history_keep_days: 60
+
+## at the database's growth, its filesystem full in fewer days -> warning
+# servicenow_db_fill_warn_days: 30
+
+## ... -> critical
+# servicenow_db_fill_critical_days: 7
+
+## The node units looked for: those installed are judged (a box runs one of them), those not
+## installed are no finding; none of them on a host of the group -> critical. [] = every
+## snc_*.service on the host. * and ? work.
+# servicenow_node_units: [snc_prod, snc_test, snc_dev]
+
+## the install folder (nodes, logs, glide.properties)
+# servicenow_node_home: /glide
+
+## the stats page's port: 0 = glide.servlet.port in the node's glide.properties,
+# servicenow_node_port: 0
+
+## read each node's stats page
+# servicenow_node_stats: true
+
+## Where: tried in turn until one answers with the numbers - https://<the node's name>:<port>,
+## http:// on it, then 127.0.0.1 (http, https), then 127.0.0.1 with the node's name as the Host
+## header; each /xmlstats.do then /stats.do. Or force one: "https://{fqdn}:{port}/stats.do" ({fqdn}:
+## the node's full name, {host}: its inventory name, {port}).
+# servicenow_node_stats_url: ""
+
+## A stats page that asks for a login (401 / 403, a login page): auto = asked again with the
+## ServiceNow API credential's login (basic auth) - sent only over HTTPS to the node's own name, or
+## to 127.0.0.1, never shown; basic = with it from the start; none = never.
+# servicenow_node_stats_auth: auto
+
+## reads of the stats page ...
+# servicenow_node_stats_samples: 3
+
+## ... this many seconds apart
+# servicenow_node_stats_interval: 5
+
+## seconds per read
+# servicenow_node_stats_timeout: 10
+
+## JVM memory used of its max -> warning
+# servicenow_node_mem_warn_pct: 85
+
+## ... -> critical
+# servicenow_node_mem_critical_pct: 95
+
+## transactions queued for a semaphore in every read: warning; this many -> critical
+# servicenow_node_semaphore_queue_critical: 10
+
+## scheduled jobs waiting for a worker -> warning above this
+# servicenow_node_scheduler_queue_warn: 50
+
+## a slow transaction that waited this long for its semaphore is a semaphore problem
+# servicenow_node_semaphore_wait_ms: 1000
+
+## slow transactions ("waited excessive time to run") in the log's hours -> warning
+# servicenow_node_slow_tx_warn: 200
+
+## how far back the node's localhost log is read
+# servicenow_node_log_hours: 24
+
+## the log files in the node's logs folder
+# servicenow_node_log_glob: "localhost_log*"
+
+## the most frequent log messages listed
+# servicenow_node_log_groups: 10
+
+## this many SEVERE lines in servicenow_node_log_hours -> warning
+# servicenow_node_severe_warn: 100
+
+## the install folder's or /'s filesystem used -> warning
+# servicenow_node_disk_warn_pct: 85
+
+## ... -> critical
+# servicenow_node_disk_critical_pct: 95
+
+## swap used -> warning
+# servicenow_node_swap_warn_pct: 50
+
+## fapolicyd on the nodes and the database host: active? (inactive: said, info - no finding), its
+## denials since servicenow_fapolicyd_since by program and path (warning; a denial of the node's
+## java or install folder, or of the database server or its data, critical)
+# servicenow_fapolicyd: true
+
+## ausearch -ts
+# servicenow_fapolicyd_since: today
+
+## programs (names) or folders
+# servicenow_node_fapolicyd_critical: [java, "{{ servicenow_node_home }}"]
+
+## + the data dir
+# servicenow_db_fapolicyd_critical: [mariadbd, mysqld, "{{ servicenow_db_paths | first | default('/database') }}"]
+
+## sys_cluster_state: auto = when the inventory has front-end nodes; true; false
+# servicenow_cluster_check: auto
+
+## a node online but its last heartbeat older than this -> critical
+# servicenow_cluster_stale_minutes: 10
+
+# ---- check_mariadb -------------------------------------------------------------------------------
+## Which hosts: members of any of the inventory groups mariadb_hosts, mysql_hosts, database_hosts,
+## mariadb or mysql, or any host that names a container below (or turns discovery on). Set this
+## true/false to override for a host or group.
+# check_mariadb_enabled: >-
+#   {{ (group_names | intersect(['mariadb_hosts', 'mysql_hosts', 'database_hosts', 'mariadb', 'mysql']) | length > 0)
+#      or (check_mariadb_container | length > 0) or (check_mariadb_containers | length > 0)
+#      or ((check_mariadb_container_discover | string | lower) in ['true', 'yes', '1', 'on']) }}
+
+## MariaDB or MySQL in podman containers (e.g. the ServiceNow database). The client inside each
+## container is used (podman exec). Name them in one of these ways; all are checked, each as its own
+## instance: check_mariadb_container: mariadb one container check_mariadb_containers: [mariadb,
+## snow-db] several containers on the same host check_mariadb_container_discover: true find them:
+## every container (running or not) whose image matches check_mariadb_container_image_regex With
+## none of them, `auto` (the default) decides by itself: a database SERVER installed on the host
+## (one of check_mariadb_server_paths) -> the host's own database (its systemd unit); no server on
+## the host but podman -> the containers are found as with discovery. So a unit that only starts
+## podman containers (and is then inactive) is not mistaken for the database. false = always the
+## host's own.
+# check_mariadb_container: ""
+
+## several containers on one host, e.g. [mariadb, snow-db] (see above)
+# check_mariadb_containers: []
+
+## auto, true or false: find database containers by their image (see above)
+# check_mariadb_container_discover: auto
+
+## ---- SIZES (off by default) ---------------------------------------------------------------------
+## true = also read each schema's data and index bytes and the largest tables from
+## information_schema (names and numbers only) and keep them as the fact check_mariadb_sizes_result
+## for the job that asked (the ServiceNow health job's database host). No finding of its own. The
+## account sees only the schemas it may read; [] when it sees none.
+# check_mariadb_sizes: false
+
+# ---- fapolicyd -----------------------------------------------------------------------------------
+## blocks since (ausearch -ts): recent (10 minutes), today, yesterday, this-week, boot
+# fapolicyd_since: today
 
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no
@@ -358,3 +537,6 @@
 ## Linux playbooks run the roles check_<name>, the Windows ones (win_*.yml) the roles
 ## win_check_<name>.
 # site_os: linux
+
+## check_ (Linux) or win_check_ (Windows): set by the playbook from site_os
+# site_check_role_prefix: "{{ 'win_check_' if site_os == 'windows' else 'check_' }}"

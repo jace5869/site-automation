@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A made-up xmlstats.do answer, shaped like a node's: the check finds its numbers by their names. -->
+<xmlstats>
+  <servlet.started>2026-11-08 06:00:12</servlet.started>
+  <servlet.uptime>1 Days 4 Hours 2 Minutes</servlet.uptime>
+  <servlet.hostname>node01</servlet.hostname>
+  <system.id>node01:prod_16000</system.id>
+  <servlet.transactions>184220</servlet.transactions>
+  <servlet.active.transactions>@ACTIVE@</servlet.active.transactions>
+  <system.memory.max>4096.0</system.memory.max>
+  <system.memory.total>3800.0</system.memory.total>
+  <system.memory.in.use>@MEMUSED@</system.memory.in.use>
+  <semaphores>
+    <semaphore name="Default" available="@SEMAVAIL@" in_use="@SEMUSE@" queue_depth="@SEMQ@" max_queue_depth="46"/>
+    <semaphore name="AMB_SEND" available="4" in_use="0" queue_depth="0" max_queue_depth="2"/>
+  </semaphores>
+  <scheduler.workers>8</scheduler.workers>
+  <scheduler.queue.length>@SCHEDQ@</scheduler.queue.length>
+</xmlstats>

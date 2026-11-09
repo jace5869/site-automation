@@ -1,0 +1,13 @@
+----
+type=PROCTITLE msg=audit(11/09/2026 09:12:01.101:4410) : proctitle=/usr/lib/jvm/jre/bin/java -Xmx4g
+type=PATH msg=audit(11/09/2026 09:12:01.101:4410) : item=0 name=/glide/nodes/prod_16000/lib/glide-extra.jar inode=4096 dev=fd:00 mode=file,644
+type=SYSCALL msg=audit(11/09/2026 09:12:01.101:4410) : arch=x86_64 syscall=openat success=no exit=EPERM(Operation not permitted) comm=java exe=/usr/lib/jvm/java-17-openjdk/bin/java
+type=FANOTIFY msg=audit(11/09/2026 09:12:01.101:4410) : resp=deny
+----
+type=PATH msg=audit(11/09/2026 09:30:44.220:4415) : item=0 name=/home/admin/tools/collect.sh inode=77 dev=fd:00 mode=file,755
+type=SYSCALL msg=audit(11/09/2026 09:30:44.220:4415) : arch=x86_64 syscall=execve success=no exit=EPERM(Operation not permitted) comm=bash exe=/usr/bin/bash
+type=FANOTIFY msg=audit(11/09/2026 09:30:44.220:4415) : resp=deny
+----
+type=PATH msg=audit(11/09/2026 09:31:02.400:4416) : item=0 name=/home/admin/tools/collect.sh inode=77 dev=fd:00 mode=file,755
+type=SYSCALL msg=audit(11/09/2026 09:31:02.400:4416) : arch=x86_64 syscall=execve success=no exit=EPERM(Operation not permitted) comm=bash exe=/usr/bin/bash
+type=FANOTIFY msg=audit(11/09/2026 09:31:02.400:4416) : resp=deny

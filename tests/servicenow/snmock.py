@@ -38,7 +38,8 @@ cmn_location: Building 100 (loc1); sys_user also has jdoe (u2, "Jane Doe").
 MID Servers (the ServiceNow health check): SNMOCK_MID=<file.json> {"agents": [ecc_agent rows], "queue": {name: stuck count},
 "issues": [ecc_agent_issue rows]}; without it ecc_agent is empty. GET /api/now/stats/ecc_queue (grouped by agent) answers
 the queue counts; SNMOCK_MID_NO_QUEUE=1: 403 (an account that cannot read ecc_queue); SNMOCK_MID_NO_ISSUES=1: ecc_agent_issue
-is an unknown table (400, a release without it).
+is an unknown table (400, a release without it). The same file's "cluster": [sys_cluster_state rows] (a self-hosted
+instance's nodes; SNMOCK_NO_TABLES=sys_cluster_state: 403).
 The weekly activity report: SNMOCK_SEED=<file.json> (records to start with, each with its _table and dates), problem_task and
 problem tables, sysparm_display_value=all ({"value", "display_value"} per field), sysparm_offset, the query operators <=, <, >,
 ISEMPTY, ISNOTEMPTY, !=, aINb,c on a reference (by name or sys_id) and ^OR (joins the condition before it); sys_user_group
@@ -383,6 +384,8 @@ class H(BaseHTTPRequestHandler):
             return 200, {"result": mid_data().get("issues", [])}
         if table in os.environ.get("SNMOCK_NO_TABLES", "").split(",") and method == "GET":
             return fail("Operation Failed", "ACL Exception: no read access to " + table, 403)
+        if table == "sys_cluster_state" and method == "GET":
+            return 200, {"result": mid_data().get("cluster", [])}
         if table == "task_sla" and method == "GET" and not sys_id:
             rows = [i for i in INCIDENTS.values() if i.get("_table") == "task_sla" and matches(i, q.get("sysparm_query", ""))]
             num = dict((i["sys_id"], i.get("number", "")) for i in INCIDENTS.values())

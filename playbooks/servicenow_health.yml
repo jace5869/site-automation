@@ -1,6 +1,6 @@
 ---
 # SERVICENOW HEALTH - does the instance answer its API (and how fast), and are its MID Servers well?
-# Read-only. Every MID Server problem is in this one job and its one report:
+# Read-only (but for the database's size history, below). Every MID Server problem is in this one job and its one report:
 #   - what the instance says (on the controller): each MID Server Up and validated, its heartbeat recent,
 #     the versions alike, the expected ones there (servicenow_mid_expected), its output queue moving
 #     (ecc_queue), its open MID Server Issues (ecc_agent_issue)
@@ -8,32 +8,160 @@
 #     (servicenow_mid_hosts_group) of the job's inventory - each MID service running and starting by
 #     itself, its agent log written lately, SEVERE lines, JVM restarts, the drive's free space, config.xml
 #     pointing at this instance. No such group: the instance's view only.
+# A SELF-HOSTED instance, in the same report (no such groups: as before):
+#   - the front-end nodes (RHEL, over SSH with sudo): the hosts of servicenow_nodes (servicenow_nodes_group) - each
+#     node unit (snc_<env>.service) running and starting at boot, its stats page on 127.0.0.1 (JVM memory,
+#     semaphores, the scheduler, transactions, uptime), its localhost log (SEVERE, OutOfMemory, semaphore errors), the
+#     install folder's disk (/glide) and /'s, memory and swap; the instance's cluster view (sys_cluster_state)
+#   - the database host: the hosts of servicenow_db_hosts (servicenow_db_group) - MariaDB on its host
+#     (roles/check_mariadb, the "MariaDB monitor" credential), /database and the data dir's disk, the database's size
+#     against it, its largest schemas and tables, its growth; only with front-end nodes (servicenow_check_db auto), so an
+#     inventory that has that group for its Health check is not read here before
+#   - fapolicyd on every node and the database host: active? today's denials, by program and path
+# It writes ONE thing: the database's size, kept for its growth in a small JSON file on the database host
+# (servicenow_db_history_file, under /var/lib/site-health; not in Check mode; servicenow_db_history: false = none).
 #
 # Credentials: "ServiceNow API" - the account needs read on incident, ecc_agent, ecc_queue and
-# ecc_agent_issue (e.g. itil + mid_server); with MID hosts, also the Windows inventory's Machine
-# (Windows) credential. docs/SERVICENOW_SETUP.md, "MID Servers".
+# ecc_agent_issue (e.g. itil + mid_server), and sys_cluster_state for the cluster; with MID hosts, also the Windows
+# inventory's Machine (Windows) credential; with nodes or a database host, the Linux Machine credential (sudo) and
+# "MariaDB monitor". docs/SERVICENOW_SETUP.md, "MID Servers" and "Self-hosted instance".
 #   ansible-playbook -i inventories/example-windows playbooks/servicenow_health.yml
+#   ansible-playbook -i inventories/site playbooks/servicenow_health.yml -l node01.yoursite.mil   # one node
+# Two templates (AAP: one inventory and one Machine credential each) - the Windows inventory with
+# servicenow_health_part: mids, the Linux one with servicenow_health_part: nodes; or one (all, the default) whose inventory
+# has both. docs/SERVICENOW_SETUP.md, "Self-hosted instance".
+# A Limit of hosts needs no localhost: the AAP-side play runs on localhost, or on the Limit's first host standing in
+# for it (connection local). Hosts of the groups outside the Limit are not read and not judged. With no group
+# servicenow_nodes in the inventory, the Limit's hosts are the front-end nodes (-l node01,node03). A group named that
+# is not in the inventory, or no front-end node with servicenow_health_part nodes, fails at the start (tasks/hosts_check.yml).
+- name: ServiceNow health - the groups and the Limit name hosts to read
+  # once, on the AAP side, before any host is read (the same hosts as the last play): a group named that is not in
+  # this inventory, or no front-end node with servicenow_health_part nodes, fails here - never a green run that read
+  # nothing
+  hosts: >-
+    {{ 'localhost' if ansible_limit | default('', true) | length == 0
+       or 'localhost' in query('ansible.builtin.inventory_hostnames', ansible_limit)
+       else query('ansible.builtin.inventory_hostnames', ansible_limit) | first | default('localhost') }}
+  gather_facts: false
+  become: false
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: The groups are in this inventory, and there are hosts to read
+      ansible.builtin.include_role:
+        name: servicenow
+        tasks_from: hosts_check.yml
+
 - name: ServiceNow health - the MID Server hosts (Windows)
   hosts: "{{ servicenow_mid_hosts_group | default('servicenow_mid_hosts') }}"
   gather_facts: false
   tasks:
-    - name: The job's Limit includes localhost (the last part runs there)
-      ansible.builtin.include_role:
-        name: site_findings
-        tasks_from: limit_check.yml
-
     - name: Read each MID Server host (read-only)
       ansible.builtin.include_role:
         name: servicenow
         tasks_from: mid_host.yml
-      when: servicenow_check_mid_hosts | default(true) | bool
+      when: servicenow_check_mid_hosts | default(true) | bool and (servicenow_health_part | default('all') | string | lower) != 'nodes'
+
+- name: ServiceNow health - the front-end nodes and the database host (RHEL)
+  # the groups' hosts - and, with no front-end node group in this inventory, the Limit's (its hosts are the nodes then)
+  hosts: >-
+    {{ ([servicenow_nodes_group | default('servicenow_nodes'), servicenow_db_group | default('servicenow_db_hosts')]
+        + ([ansible_limit] if ansible_limit | default('', true) | length > 0
+           and groups[servicenow_nodes_group | default('servicenow_nodes')] | default([]) | length == 0 else [])) | join(',') }}
+  become: true
+  gather_facts: false
+  vars:
+    # the front-end nodes: as _servicenow_node_hosts in roles/servicenow/defaults (the group; with none, the Limit's
+    # hosts but localhost and the MID Server and database hosts)
+    _snh_nodes: >-
+      {{ groups[servicenow_nodes_group | default('servicenow_nodes')] | default([])
+         if groups[servicenow_nodes_group | default('servicenow_nodes')] | default([]) | length > 0
+         or (servicenow_health_part | default('all') | string | lower) == 'mids'
+         else ((query('ansible.builtin.inventory_hostnames', ansible_limit) | reject('equalto', 'localhost')
+                | reject('in', groups[servicenow_mid_hosts_group | default('servicenow_mid_hosts')] | default([]))
+                | reject('in', groups[servicenow_db_group | default('servicenow_db_hosts')] | default([])) | list)
+               if ansible_limit | default('', true) | length > 0 else []) }}
+    _snh_node: "{{ inventory_hostname in _snh_nodes }}"
+    # the database host only for a self-hosted instance (auto: the inventory has front-end nodes) - an inventory that had
+    # servicenow_db_hosts before (its Health check) is not read by this job until then
+    _snh_db: >-
+      {{ inventory_hostname in groups[servicenow_db_group | default('servicenow_db_hosts')] | default([])
+         and ((servicenow_check_db | default('auto') | string | lower) in ['true', 'yes', '1', 'on']
+              or ((servicenow_check_db | default('auto') | string | lower) == 'auto'
+                  and _snh_nodes | length > 0)) }}
+    # the database check runs on the database host(s) only
+    check_mariadb_enabled: "{{ _snh_db | bool }}"
+  pre_tasks:
+    - name: Not read here (servicenow_check_nodes false, servicenow_health_part mids; a database host with servicenow_check_db off)
+      ansible.builtin.meta: end_host
+      when: >-
+        not servicenow_check_nodes | default(true) | bool or (servicenow_health_part | default('all') | string | lower) == 'mids'
+        or inventory_hostname == 'localhost' or not (_snh_node | bool or _snh_db | bool)
+
+    - name: Reach the host
+      ansible.builtin.raw: echo reached
+      become: false
+      changed_when: false
+      failed_when: false                 # a refused login, no ssh client: said in the report like an unreachable host
+      ignore_errors: true                # (a missing ssh client is an error failed_when does not catch)
+      check_mode: false
+      ignore_unreachable: true
+      register: _snh_reach
+
+    - name: Not reached - said in the report, the job goes on without it
+      ansible.builtin.set_fact:
+        servicenow_host_unreached: "{{ ((_snh_reach.msg | default('', true) | string | trim | replace('\n', ' ')) or 'unreachable') | truncate(300) }}"
+        servicenow_node_result: >-
+          {{ {'host': inventory_hostname, 'hostname': '', 'reachable': false, 'units': [], 'missing': [], 'disk': [], 'memory': {},
+              'error': ((_snh_reach.msg | default('', true) | string | trim | replace('\n', ' ')) or 'unreachable') | truncate(300)} }}
+      when: _snh_reach.unreachable | default(false) or 'reached' not in _snh_reach.stdout | default('')
+
+    - name: Leave it out
+      ansible.builtin.meta: end_host
+      when: _snh_reach.unreachable | default(false) or 'reached' not in _snh_reach.stdout | default('')
+  tasks:
+    - name: Start
+      ansible.builtin.set_fact:
+        site_findings: []
+        site_checks_run: []
+        site_checks_failed: []
+
+    - name: The node units, stats page, log, disk and memory (read-only)
+      ansible.builtin.include_role:
+        name: servicenow
+        tasks_from: node_host.yml
+      when: _snh_node | bool
+
+    - name: The database host - MariaDB on it (with its data dir and sizes)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: run_check.yml
+      vars:
+        _site_check: "{{ item }}"
+        check_mariadb_sizes: true
+      loop: "{{ (servicenow_db_checks | default(['mariadb'])) if _snh_db | bool else [] }}"
+
+    - name: The database host - /database and the data dir's disk, the database's size and growth, fapolicyd
+      ansible.builtin.include_role:
+        name: servicenow
+        tasks_from: db_host.yml
+      when: _snh_db | bool
 
 - name: ServiceNow health
-  hosts: localhost
-  connection: local
+  # once, on the AAP side: localhost - or, when the Limit leaves localhost out, the Limit's first host standing in
+  # for it (connection local: nothing runs on it)
+  hosts: >-
+    {{ 'localhost' if ansible_limit | default('', true) | length == 0
+       or 'localhost' in query('ansible.builtin.inventory_hostnames', ansible_limit)
+       else query('ansible.builtin.inventory_hostnames', ansible_limit) | first | default('localhost') }}
   gather_facts: false
+  become: false
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
   tasks:
-    - name: Check the instance and its MID Servers (and what their hosts said)
+    - name: Check the instance and its MID Servers (and what their hosts said), the nodes and the database host
       ansible.builtin.include_role:
         name: servicenow
         tasks_from: health.yml

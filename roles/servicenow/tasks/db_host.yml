@@ -1,0 +1,44 @@
+---
+# On each self-hosted ServiceNow database host (playbooks/servicenow_health.yml, the hosts of servicenow_db_group), over
+# SSH with sudo, after the MariaDB check (roles/check_mariadb with check_mariadb_sizes: its data dir and the largest
+# schemas and tables, check_mariadb_sizes_result). library/site_servicenow_node.py (kind db) reads the disk of
+# servicenow_db_paths (/database) and of the data dir, the database's size against it (information_schema's numbers,
+# else the data dir's files - one level, stat only - plus InnoDB's system, undo and redo files), fapolicyd, the
+# memory; and keeps the size in servicenow_db_history_file for the growth - the ONE thing this job writes (a small JSON
+# under /var/lib/site-health; not in Check mode; servicenow_db_history: false = none). Kept as the fact
+# servicenow_db_result for the AAP side (plugins/filter/servicenow_node_filters.py).
+- name: ServiceNow database host | disk, size, growth, fapolicyd
+  block:
+    - name: ServiceNow database host | read
+      site_servicenow_node:
+        kind: db
+        paths: "{{ servicenow_db_paths | name_list }}"
+        db_datadir: "{{ servicenow_db_datadir or _sndb_sizes.datadir | default('') }}"
+        db_sizes: "{{ _sndb_sizes if _sndb_sizes.read | default(false) else {} }}"
+        db_top_schemas: "{{ servicenow_db_top_schemas | int }}"
+        db_top_tables: "{{ servicenow_db_top_tables | int }}"
+        db_history_file: "{{ servicenow_db_history_file if servicenow_db_history | bool else '' }}"
+        db_history_keep_days: "{{ servicenow_db_history_keep_days | int }}"
+        fapolicyd: "{{ servicenow_fapolicyd | bool }}"
+        fapolicyd_since: "{{ servicenow_fapolicyd_since }}"
+        fapolicyd_critical: >-
+          {{ servicenow_db_fapolicyd_critical | name_list
+             + ([servicenow_db_datadir or _sndb_sizes.datadir] if servicenow_db_datadir or _sndb_sizes.datadir | default('') else []) }}
+      vars:
+        # the first instance the MariaDB check read (a ServiceNow database host runs one)
+        _sndb_sizes: "{{ check_mariadb_sizes_result | default([]) | first | default({}) }}"
+      register: _sndb
+
+    - name: ServiceNow database host | what it said
+      ansible.builtin.set_fact:
+        servicenow_db_result: >-
+          {{ {'host': inventory_hostname, 'reachable': true, 'error': '', 'db': _sndb.db | default({}),
+              'sizes_why': (check_mariadb_sizes_result | default([]) | first | default({})).why | default(''),
+              'fapolicyd': _sndb.fapolicyd | default({}), 'disk': _sndb.disk | default([]), 'memory': _sndb.memory | default({})} }}
+  rescue:
+    - name: ServiceNow database host | it could not be read - a finding on the AAP side
+      ansible.builtin.set_fact:
+        servicenow_db_result: >-
+          {{ {'host': inventory_hostname, 'reachable': true, 'db': {}, 'fapolicyd': {}, 'disk': [], 'memory': {},
+              'error': ((ansible_failed_result.msg | default('', true) | string ~ ' ' ~ ansible_failed_result.module_stderr | default('') | string)
+                        | trim | replace('\n', ' ') or 'the check gave no answer') | truncate(300)} }}

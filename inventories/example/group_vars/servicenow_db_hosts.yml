@@ -6,3 +6,7 @@ check_mariadb_long_query_seconds: 300
 # In a container, attach the "MariaDB monitor" AAP credential to the Health check template: the
 # official MariaDB images give root a password, so the root socket login is refused. The DBA
 # creates the account INSIDE this database with host 'localhost' (docs/MARIADB.md section 4 has the GRANT).
+# A self-hosted ServiceNow's database host is also read by the ServiceNow health job (servicenow_health_part: nodes):
+# its data folders' disk, the database's size and growth, fapolicyd - docs/SERVICENOW_SETUP.md, "Self-hosted instance".
+# servicenow_db_paths: [/database]                # the folders the database lives in (the data dir expected under one)
+# servicenow_db_datadir: /srv/servicenow-mariadb  # in a container: its data dir's path on this host

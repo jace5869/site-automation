@@ -1,6 +1,6 @@
 ---
-# For a playbook that does its work on localhost - on the AAP side - after reading hosts (servicenow_health.yml:
-# the instance, after its MID Server hosts): a Limit that leaves localhost out makes Ansible skip that play
+# For a playbook that does its work on localhost - on the AAP side - after reading hosts (mail_relay_plan.yml: the
+# plan, after the relay servers' lists): a Limit that leaves localhost out makes Ansible skip that play
 # ("skipping: no hosts matched") and the job would end GREEN having checked nothing. Include it as the FIRST task
 # of the playbook's first play on hosts, so the job stops before any host is touched. A playbook whose last part
 # is a report of its hosts runs that part on the hosts instead, once, on the AAP side (include_role with apply:

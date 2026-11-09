@@ -189,6 +189,7 @@ credential ([TENABLE.md](TENABLE.md#step-3-the-job-template)).
 | ServiceNow - catalog test | `playbooks/servicenow_catalog_test.yml` | Setup or test | [CERT_RENEWAL_CATALOG.md](CERT_RENEWAL_CATALOG.md#step-3---the-catalog-test) |
 | ServiceNow tickets | `playbooks/servicenow_tickets.yml` | Workflow step | [SETUP_AAP.md](SETUP_AAP.md#servicenow-tickets), [RUNBOOKS.md](RUNBOOKS.md#servicenow-tickets-playbooksservicenow_ticketsyml) |
 | ServiceNow health | `playbooks/servicenow_health.yml` | Watch | [SETUP_AAP.md](SETUP_AAP.md#servicenow-health) |
+| ServiceNow health - nodes | `playbooks/servicenow_health.yml` (`servicenow_health_part: nodes`; a self-hosted instance) | Watch | [SETUP_AAP.md](SETUP_AAP.md#servicenow-health---nodes) |
 | ServiceNow - availability | `playbooks/servicenow_availability.yml` | Watch (every 5 to 15 minutes) | [AVAILABILITY.md](AVAILABILITY.md#set-it-up) |
 | ServiceNow - weekly activity report | `playbooks/servicenow_war.yml` | Report | [SERVICENOW_WAR.md](SERVICENOW_WAR.md#step-2-the-job-template) |
 | ServiceNow - ticket insights | `playbooks/servicenow_insights.yml` | Report | [SERVICENOW_INSIGHTS.md](SERVICENOW_INSIGHTS.md#step-2-the-job-template) |

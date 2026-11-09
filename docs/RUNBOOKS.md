@@ -947,6 +947,15 @@ written lately, SEVERE lines, JVM restarts, the drive, the instance URL - all in
 report ([SERVICENOW_SETUP.md](SERVICENOW_SETUP.md#mid-servers)). Hourly is a good schedule. Alert with
 an AAP **notification** (email) on failure when the API is down: a broken ServiceNow cannot take tickets.
 
+A **self-hosted** instance: its front-end nodes (group `servicenow_nodes`, over SSH: each `snc_<env>.service`
+running and starting at boot, the node's stats page on 127.0.0.1 - JVM memory, semaphores, the scheduler,
+transactions -, its localhost log, `/glide` and `/`, memory and swap, fapolicyd's denials), its database host
+(`servicenow_db_hosts`: MariaDB, `/database` and the data dir's disk, the database's size against it, its largest
+schemas and tables, its growth and when the disk fills - the size kept in a small JSON file there, the job's one
+write -, fapolicyd) and the cluster (`sys_cluster_state`) - in the same report, usually from a second template,
+*ServiceNow health - nodes* (`servicenow_health_part: nodes`, the Linux inventory)
+([SERVICENOW_SETUP.md](SERVICENOW_SETUP.md#self-hosted-instance)).
+
 **All settings** of this job, with their defaults: [servicenow](VARIABLES_REFERENCE.md#servicenow).
 
 ## Patch hosts (`playbooks/patch_hosts.yml`)

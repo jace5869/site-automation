@@ -53,7 +53,8 @@ expect "good: the group and caller were checked" 'assignment group \"Linux Opera
 expect "good: a link to the ticket" 'nav_to.do?uri=incident.do?sys_id='
 expect "good: read back shows the group" 'assignment group Linux Operations, caller svc_aap'
 
-scenario "wrong password" 2 "$port" api wrong -e "$group"
+# a password that is no word of the message: a newer ansible-core (2.22) masks the password wherever it shows ("is $REDACTED$")
+scenario "wrong password" 2 "$port" api Wr0ngPw9 -e "$group"
 expect "wrong password: explained" 'FAIL 1 connection: HTTP 401'
 expect "wrong password: the likely causes" 'the user name or password is wrong'
 
@@ -307,6 +308,201 @@ expect "health hosts: the line" 'MID Servers: mid01 Up, mid02 Up; hosts checked:
 PLAYBOOK=playbooks/servicenow_health.yml scenario "health with servicenow_check_mid_hosts: false - the instance's view only" 0 \
     $((port + 20)) api goodpw -i "$work/mid-inv.yml" -e servicenow_check_mid_hosts=false
 expect "health no hosts: the line" 'MID Servers: mid01 Up, mid02 Up'
+deny "health without nodes: as before" 'Nodes: '
+
+# ---- ServiceNow health, a self-hosted instance: the front-end nodes (a fake systemctl, rpm and ausearch, fake stats
+# pages, fake localhost logs under a fake /glide), the cluster (sys_cluster_state) and the database host (tests/mariadb's
+# fake podman, a fake /database). Each host's own fakes come from its interpreter: a small wrapper that sets them ----
+nd="$here/node"
+PY="$(command -v python3)"
+start_stats() {   # start_stats PORT KIND [key=value ...]
+    local p="$1"; shift
+    python3 "$nd/statsmock.py" "$p" "$@" >/dev/null 2>&1 &
+    pids+=("$!")
+    for _ in $(seq 1 50); do
+        python3 -c "import socket,sys; s=socket.socket(); sys.exit(s.connect_ex(('127.0.0.1',$p)))" && return 0
+        sleep 0.1
+    done
+    echo "fake stats page did not start on $p"; exit 1
+}
+make_home() {   # make_home DIR NODE_DIR PORT LOGKIND
+    mkdir -p "$1/nodes/$2/conf"
+    printf '# the node\nglide.servlet.port = %s\nglide.db.name=prod\n' "$3" > "$1/nodes/$2/conf/glide.properties"
+    python3 "$nd/make_logs.py" "$1/nodes/$2/logs" "$4"
+}
+mkpy() {   # mkpy NAME [VAR=VALUE ...]: an interpreter that sets this host's fakes
+    local f="$work/py-$1"; shift
+    { echo '#!/bin/sh'; for kv in "$@"; do echo "export $kv"; done; echo "exec $PY \"\$@\""; } > "$f"
+    chmod +x "$f"
+}
+start_stats $((port + 30)) xml
+start_stats $((port + 31)) html
+start_stats $((port + 32)) xml MEMUSED=3990 SEMQ=3 SCHEDQ=70 ACTIVE=40
+start_stats $((port + 33)) 403
+make_home "$work/glide01" prod_16000 $((port + 30)) well
+make_home "$work/glide12" test_16001 $((port + 31)) well
+make_home "$work/glide-bad" prod_16000 $((port + 32)) bad
+make_home "$work/glide-403" prod_16000 $((port + 33)) well
+mkdir -p "$work/glide03"
+# the database host's data: /database/data (MariaDB's files, one level), InnoDB's system, undo and redo files
+dd="$work/database/data"
+mkdir -p "$dd/snprod" "$dd/snaudit"
+head -c 4096 /dev/zero > "$dd/ibdata1"; head -c 2048 /dev/zero > "$dd/undo001"; head -c 1024 /dev/zero > "$dd/ib_logfile0"
+head -c 30000 /dev/zero > "$dd/snprod/sys_audit.ibd"; head -c 20000 /dev/zero > "$dd/snprod/syslog.ibd"
+head -c 5000 /dev/zero > "$dd/snaudit/old.ibd"
+sed "s#/glide/nodes/prod_16000#$work/glide-bad/nodes/prod_16000#" "$nd/denials-node.txt" > "$work/denials-node.txt"
+printf -- '----\ntype=PATH msg=audit(1) : item=0 name=%s/ibtmp1 inode=9\ntype=SYSCALL msg=audit(1) : arch=x86_64 syscall=openat success=no exe=/usr/sbin/mariadbd\ntype=FANOTIFY msg=audit(1) : resp=deny\n' "$dd" > "$work/denials-db.txt"
+mkpy node01 SNNODE_HOME="$work/glide01" SNNODE_UNITS=snc_prod:active:enabled SNNODE_FAPOLICYD=active
+mkpy node12 SNNODE_HOME="$work/glide12" SNNODE_UNITS=snc_test:active:enabled SNNODE_FAPOLICYD=none
+mkpy node01bad SNNODE_HOME="$work/glide-bad" SNNODE_UNITS=snc_prod:active:enabled SNNODE_FAPOLICYD=active SNNODE_DENIALS="$work/denials-node.txt"
+mkpy node03 SNNODE_HOME="$work/glide03" SNNODE_UNITS= SNNODE_FAPOLICYD=active
+mkpy node01x SNNODE_HOME="$work/glide-403" SNNODE_UNITS=snc_prod:active:enabled SNNODE_FAPOLICYD=active
+mkpy db SNNODE_FAPOLICYD=inactive FAKE_DATADIR="$dd/"
+mkpy dbbad SNNODE_FAPOLICYD=active SNNODE_DENIALS="$work/denials-db.txt" FAKE_DATADIR="$dd/" FAKE_DENY=1
+python3 - "$work" <<'EOP'
+import datetime, json, os, sys, time
+w = sys.argv[1]
+now = datetime.datetime.now(datetime.timezone.utc)
+t = lambda m: (now - datetime.timedelta(minutes=m)).strftime("%Y-%m-%d %H:%M:%S")
+row = lambda sid, st, m: {"system_id": sid, "node_id": sid.replace(":", "_") + "_id", "status": st, "most_recent_message": t(m), "schedulers": "any"}
+two = [row("node01:prod_16000", "online", 1), row("node12:test_16001", "online", 1)]
+bad = [row("node01:prod_16000", "online", 30), row("node03:prod_16000", "offline", 600), row("node12:test_16001", "online", 1),
+       row("node09:prod_16000", "offline", 9000)]
+json.dump({"cluster": two}, open(w + "/cluster-ok.json", "w"))
+json.dump({"cluster": two[:1]}, open(w + "/cluster-one.json", "w"))
+json.dump({"cluster": bad}, open(w + "/cluster-bad.json", "w"))
+# the database's size history: 2 days ago 2 MiB smaller (well: +1 MB a day); bad: as if it grew by all the free space in 3 days
+st = os.statvfs(w)
+free = st.f_bavail * st.f_frsize
+total = 48318382080 + 2147483648 + 4096 + 2048 + 1024
+json.dump([{"t": int(time.time()) - 2 * 86400, "b": total - 2097152}], open(w + "/dbhist-well.json", "w"))
+json.dump([{"t": int(time.time()) - 3 * 86400, "b": -free}], open(w + "/dbhist-bad.json", "w"))
+EOP
+start_mock $((port + 40)) SNMOCK_MID="$work/cluster-ok.json"
+start_mock $((port + 41)) SNMOCK_MID="$work/cluster-bad.json"
+start_mock $((port + 42)) SNMOCK_MID="$work/cluster-one.json" SNMOCK_NO_TABLES=sys_cluster_state
+start_mock $((port + 43)) SNMOCK_MID="$work/cluster-one.json"
+hostline() {   # hostline NAME PY_NAME [more vars]
+    echo "        $1.yoursite.mil: {ansible_connection: local, ansible_become: false, ansible_python_interpreter: $work/py-$2${3:+, $3}}"
+}
+nodeinv() {   # nodeinv FILE "node lines" "db lines"
+    { echo "all:"; echo "  hosts:"; echo "    localhost: {ansible_connection: local, ansible_python_interpreter: $PY}"
+      echo "  children:"; echo "    servicenow_nodes:"; echo "      hosts:"; printf '%s\n' "$2"
+      if [ -n "$3" ]; then echo "    servicenow_db_hosts:"; echo "      hosts:"; printf '%s\n' "$3"; fi; } > "$1"
+}
+GONE12='        node12.yoursite.mil: {ansible_host: 127.0.0.1, ansible_port: 1, ansible_connection: ssh, ansible_ssh_timeout: 3}'
+nodeinv "$work/inv-well.yml" "$(hostline node01 node01 "servicenow_node_home: $work/glide01")
+$(hostline node12 node12 "servicenow_node_home: $work/glide12")" "$(hostline snowdb01 db 'check_mariadb_container: snowdb')"
+nodeinv "$work/inv-bad.yml" "$(hostline node01 node01bad "servicenow_node_home: $work/glide-bad")
+$(hostline node03 node03 "servicenow_node_home: $work/glide03")" "$(hostline snowdb01 dbbad 'check_mariadb_container: snowdb')"
+nodeinv "$work/inv-403.yml" "$(hostline node01 node01x "servicenow_node_home: $work/glide-403")" ""
+nodeinv "$work/inv-two.yml" "$(hostline node01 node01 "servicenow_node_home: $work/glide01")
+$GONE12" "$(hostline snowdb01 db 'check_mariadb_container: snowdb')"
+nodeinv "$work/inv-one.yml" "$(hostline node01 node01 "servicenow_node_home: $work/glide01")" ""
+# no group at all: node01 and node12 are just hosts of the inventory (the Limit names them)
+{ echo "all:"; echo "  hosts:"; echo "    localhost: {ansible_connection: local, ansible_python_interpreter: $PY}"
+  hostline node01 node01 "servicenow_node_home: $work/glide01" | sed 's/^        /    /'
+  hostline node12 node12 "servicenow_node_home: $work/glide12" | sed 's/^        /    /'; } > "$work/inv-nogroup.yml"
+# the database: MariaDB in a container on the database host, through tests/mariadb's fake podman
+mkdir -p "$work/dbbin"; cp "$here/../mariadb/fakepodman.py" "$work/dbbin/podman"; chmod +x "$work/dbbin/podman"
+printf 'snowdb mariadb:11 running healthy\n' > "$work/containers.txt"
+export FAKE_CONTAINERS="$work/containers.txt" FAKE_LOG="$work/podman.log" MARIADB_MONITOR_USER=monitor MARIADB_MONITOR_PASSWORD=monpw
+export PATH="$nd/bin:$work/dbbin:$PATH"
+# this machine's own disk and swap must not decide the result
+HOSTOK="{\"servicenow_node_disk_warn_pct\": 101, \"servicenow_node_disk_critical_pct\": 101, \"servicenow_node_swap_warn_pct\": 101,
+         \"servicenow_node_stats_interval\": 0.2, \"servicenow_check_mid\": false, \"servicenow_db_paths\": [\"$work/database\"],
+         \"servicenow_db_history_file\": \"$work/dbhist-well.json\"}"
+cp "$work/dbhist-well.json" "$work/dbhist-well.orig"
+PLAYBOOK=playbooks/servicenow_health.yml scenario "self-hosted: two nodes (snc_prod here, snc_test there), the cluster, the database host" 0 \
+    $((port + 40)) api goodpw -i "$work/inv-well.yml" -e "$HOSTOK" --check
+expect "self-hosted well (Check): the nodes' line" 'Nodes: node01 snc_prod running, node12 snc_test running; hosts read: 2 of 2; cluster: 2 of 2 online'
+expect "self-hosted well (Check): the database, from information_schema" 'Database: snowdb01.yoursite.mil 47.0 GB (information_schema), '
+expect "self-hosted well (Check): its growth" '+1 MB/day'
+deny "self-hosted well: a unit not installed is no finding" 'no ServiceNow node unit found'
+deny "self-hosted well: ...nor stopped" 'inactive (dead)'
+deny "self-hosted well: an old log file is not read" 'in a file the check must not read'
+if cmp -s "$work/dbhist-well.json" "$work/dbhist-well.orig"; then echo "ok   - self-hosted well: Check mode writes no history"
+else echo "FAIL - self-hosted well: Check mode wrote the history"; fails=$((fails + 1)); fi
+PLAYBOOK=playbooks/servicenow_health.yml scenario "self-hosted: the same for real - the history written" 0 \
+    $((port + 40)) api goodpw -i "$work/inv-well.yml" -e "$HOSTOK"
+if [ "$(python3 -c "import json; print(len(json.load(open('$work/dbhist-well.json'))))")" = 2 ]; then echo "ok   - self-hosted well: the history has this run"
+else echo "FAIL - self-hosted well: the history was not written"; fails=$((fails + 1)); fi
+PLAYBOOK=playbooks/servicenow_health.yml scenario "self-hosted: memory, semaphores, the scheduler, the log, no unit, fapolicyd, the cluster, the database full soon" 2 \
+    $((port + 41)) api goodpw -i "$work/inv-bad.yml" -e "$HOSTOK" \
+    -e "{\"servicenow_db_history_file\": \"$work/dbhist-bad.json\", \"servicenow_db_datadir\": \"$dd\"}"
+expect "self-hosted bad: no unit of the three" 'no ServiceNow node unit found on node03.yoursite.mil (looked for snc_prod, snc_test, snc_dev)'
+expect "self-hosted bad: JVM memory" 'uses 97.4% of its JVM memory (3990 of 4096 MB'
+expect "self-hosted bad: semaphores queued in every read" 'has transactions waiting for a semaphore in every read (3, 3, 3; 2 in use)'
+expect "self-hosted bad: the scheduler" 'has 70 scheduled job(s) waiting for its 8 worker(s)'
+expect "self-hosted bad: OutOfMemory" 'ran out of memory 1 time(s) in the last 24 h'
+expect "self-hosted bad: ...its line in the hint" '# java.lang.OutOfMemoryError: Java heap space'
+expect "self-hosted bad: semaphore problems" 'logged 4 semaphore problem(s) in the last 24 h'
+expect "self-hosted bad: SEVERE lines grouped" 'logged 144 SEVERE line(s) in the last 24 h (the most frequent 140 times)'
+expect "self-hosted bad: ...the line in the hint, without who" '# Transaction cancelled: maximum execution time exceeded for /api/now/table/incident (user …)'
+expect "self-hosted bad: fapolicyd denied the node's java" "[CRITICAL] servicenow_node: fapolicyd denied the ServiceNow node's java or install folder on node01.yoursite.mil 1 time(s) today"
+expect "self-hosted bad: fapolicyd's other denials, grouped" '[WARNING] servicenow_node: fapolicyd denied 1 program(s) or file(s) on node01.yoursite.mil 2 time(s) today; the most: /usr/bin/bash -> /home/admin/tools/collect.sh (2x)'
+expect "self-hosted bad: fapolicyd denied the database server" '[CRITICAL] servicenow_node: fapolicyd denied the database server or its data on snowdb01.yoursite.mil 1 time(s) today'
+expect "self-hosted bad: the database's filesystem full soon" "[CRITICAL] servicenow_node: snowdb01.yoursite.mil: at the database's growth"
+expect "self-hosted bad: the sizes from the data dir's files when the login is refused" "Database: snowdb01.yoursite.mil "
+expect "self-hosted bad: ...said so" "(the data dir's files)"
+expect "self-hosted bad: the database host's own check, in the same report" 'mariadb: snowdb01.yoursite.mil: MariaDB is running but the status query failed'
+expect "self-hosted bad: a stale heartbeat" 'the cluster node node01:prod_16000 says online, but its last heartbeat was 30 minutes ago'
+expect "self-hosted bad: a node of the inventory offline" '[CRITICAL] servicenow_node: the cluster node node03:prod_16000 is offline'
+expect "self-hosted bad: a retired node" 'the cluster node node09:prod_16000 is offline (last heartbeat'
+expect "self-hosted bad: ...said as one" 'and it is not in the inventory group: a retired node'
+PLAYBOOK=playbooks/servicenow_health.yml scenario "self-hosted: the stats page refused, sys_cluster_state refused - said" 2 \
+    $((port + 42)) api goodpw -i "$work/inv-403.yml" -e "$HOSTOK"
+expect "self-hosted refused: the stats page" 'the stats page of snc_prod.service on node01.yoursite.mil was not read (port '
+expect "self-hosted refused: ...the last answer" 'the last answer: HTTP 403)'
+expect "self-hosted refused: ...what was tried, in the hint" '# tried: http://127.0.0.1:'
+expect "self-hosted refused: ...asked again with the login (refused: 403)" '(with the login) -> 403'
+deny "self-hosted refused: the login's password is never shown" 'goodpw'
+PLAYBOOK=playbooks/servicenow_health.yml scenario "self-hosted: -vvv - the login sent to the stats page is never printed" 2 \
+    $((port + 42)) api goodpw -i "$work/inv-403.yml" -e "$HOSTOK" -vvv
+deny "self-hosted -vvv: no password" 'goodpw'
+expect "self-hosted refused: sys_cluster_state" 'sys_cluster_state (the cluster nodes): HTTP 403'
+PLAYBOOK=playbooks/servicenow_health.yml scenario "self-hosted: a node host not reached - in the same report" 2 \
+    $((port + 40)) api goodpw -i "$work/inv-two.yml" -e "$HOSTOK"
+expect "self-hosted unreached: said" 'ServiceNow node host node12.yoursite.mil could not be reached'
+expect "self-hosted unreached: the line" 'hosts read: 1 of 2'
+PLAYBOOK=playbooks/servicenow_health.yml scenario "self-hosted: a Limit of one node - no localhost, the others not contacted" 0 \
+    $((port + 40)) api goodpw -i "$work/inv-two.yml" -e "$HOSTOK" -l node01.yoursite.mil
+expect "self-hosted Limit: the node read, the AAP side on it" 'Nodes: node01 snc_prod running; hosts read: 1 of 1'
+expect "self-hosted Limit: the others said" "not in this run's Limit: node12.yoursite.mil, snowdb01.yoursite.mil"
+deny "self-hosted Limit: node12 not contacted" 'node12.yoursite.mil could not be reached'
+PLAYBOOK=playbooks/servicenow_health.yml scenario "self-hosted: servicenow_check_nodes false - the instance's view only" 0 \
+    $((port + 43)) api goodpw -i "$work/inv-two.yml" -e "$HOSTOK" -e servicenow_check_nodes=false
+deny "self-hosted off: no nodes line" 'Nodes: '
+deny "self-hosted off: the cluster not read" 'cluster:'
+PLAYBOOK=playbooks/servicenow_health.yml scenario "self-hosted: servicenow_health_part nodes - no MID Server read, under servicenow_node only" 0 \
+    $((port + 43)) api goodpw -i "$work/inv-one.yml" -e "$HOSTOK" -e '{"servicenow_check_mid": true, "servicenow_health_part": "nodes"}'
+expect "part nodes: the MID Servers not read" 'MID Servers: not read here (servicenow_health_part nodes)'
+expect "part nodes: the checks run" 'HEALTHY. Checks run: servicenow_node"'
+PLAYBOOK=playbooks/servicenow_health.yml scenario "self-hosted: servicenow_health_part mids - as before, no node read" 0 \
+    $((port + 43)) api goodpw -i "$work/inv-two.yml" -e "$HOSTOK" -e servicenow_health_part=mids -e servicenow_check_mid_hosts=false
+deny "part mids: no nodes line" 'Nodes: '
+deny "part mids: node12 not contacted" 'node12.yoursite.mil could not be reached'
+expect "part mids: the checks run" 'HEALTHY. Checks run: servicenow"'
+PLAYBOOK=playbooks/servicenow_health.yml scenario "self-hosted: no group servicenow_nodes - the Limit's two hosts are the nodes" 0 \
+    $((port + 40)) api goodpw -i "$work/inv-nogroup.yml" -e "$HOSTOK" -e servicenow_health_part=nodes -l node01.yoursite.mil,node12.yoursite.mil
+expect "no group, a Limit: said where the nodes come from" '2 front-end node(s) (the Limit: no group servicenow_nodes in this inventory): node01.yoursite.mil, node12.yoursite.mil'
+expect "no group, a Limit: both read" 'Nodes: node01 snc_prod running, node12 snc_test running; hosts read: 2 of 2; cluster: 2 of 2 online'
+PLAYBOOK=playbooks/servicenow_health.yml scenario "self-hosted: no group and no Limit with part nodes - a clear failure, nothing read" 2 \
+    $((port + 40)) api goodpw -i "$work/inv-nogroup.yml" -e "$HOSTOK" -e servicenow_health_part=nodes
+expect "no group, no Limit: why" "servicenow_nodes_group 'servicenow_nodes' is not a group in this job's inventory, and there is no Limit naming the nodes: no front-end nodes, so the job would read nothing"
+expect "no group, no Limit: the fix" 'Fix: add the group servicenow_nodes, set servicenow_nodes_group to one of those groups, or put the nodes in the Limit'
+deny "no group, no Limit: no host read" 'Nodes: '
+PLAYBOOK=playbooks/servicenow_health.yml scenario "self-hosted: servicenow_nodes_group naming a group not in the inventory - a clear failure" 2 \
+    $((port + 40)) api goodpw -i "$work/inv-well.yml" -e "$HOSTOK" -e servicenow_health_part=nodes -e servicenow_nodes_group=snow_app
+expect "group not there: named" "servicenow_nodes_group 'snow_app' is not a group in this job's inventory"
+expect "group not there: the groups listed" 'Groups in this inventory: servicenow_db_hosts, servicenow_nodes.'
+PLAYBOOK=playbooks/servicenow_health.yml scenario "self-hosted: servicenow_check_db true and no database group - a clear failure" 2 \
+    $((port + 40)) api goodpw -i "$work/inv-nogroup.yml" -e "$HOSTOK" -e servicenow_health_part=nodes -e servicenow_check_db=true \
+    -l node01.yoursite.mil,node12.yoursite.mil
+expect "no database group: named" "servicenow_db_group 'servicenow_db_hosts' is not a group in this job's inventory, and servicenow_check_db is true"
+PLAYBOOK=playbooks/servicenow_health.yml scenario "self-hosted: servicenow_health_part mids and no MID Server hosts' group - a clear failure" 2 \
+    $((port + 40)) api goodpw -i "$work/inv-well.yml" -e "$HOSTOK" -e servicenow_health_part=mids
+expect "no MID group: named" "servicenow_mid_hosts_group 'servicenow_mid_hosts' is not a group in this job's inventory, and servicenow_health_part is mids"
 
 if [ "$fails" -gt 0 ]; then echo "$fails check(s) failed"; exit 1; fi
-echo "all ServiceNow test-ticket, tickets, VM request pickup and ServiceNow health checks passed"
+echo "all ServiceNow test-ticket, tickets, VM request pickup and ServiceNow health checks (MID Servers, self-hosted nodes) passed"

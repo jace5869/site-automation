@@ -251,11 +251,12 @@ Create each the same way as step 6: **Inventory** `Linux servers`, **Project** `
 and leave **Limit** empty with **Prompt on launch** ticked. Only the differences are listed. A
 survey question is *Multiple Choice (single select)* unless it says otherwise.
 
-> **Three templates run on the controller, not on hosts:** POA&M status, ServiceNow tickets and
-> ServiceNow health. For these, do **not** tick Prompt on launch for Limit. A workflow's Limit
-> (for example `patch_hosts`) is passed to every step that prompts for one. These playbooks run on
-> `localhost`, so the Limit would match nothing and the step would silently do nothing, and still
-> show green.
+> **Two templates run on the controller, not on hosts:** POA&M status and ServiceNow tickets. For
+> these, do **not** tick Prompt on launch for Limit. A workflow's Limit (for example `patch_hosts`) is
+> passed to every step that prompts for one. These playbooks run on `localhost`, so the Limit would
+> match nothing and the step would silently do nothing, and still show green. **ServiceNow health**
+> needs no `localhost` in a Limit (1.0.0: a host of the Limit stands in for it), but leave its Limit
+> unprompted too: a workflow's Limit would leave its MID Server hosts and nodes unread.
 
 ### Troubleshoot
 
@@ -559,6 +560,22 @@ Hourly. The instance's view runs on the controller; the MID Server hosts are rea
 | Privilege escalation | not needed |
 | Limit | empty, and **no** Prompt on launch (it runs on the controller) |
 | Survey | none |
+| Variables | `servicenow_health_part: mids` when a second template reads a self-hosted instance's nodes (below) |
+
+### ServiceNow health - nodes
+
+Only for a self-hosted instance: its front-end nodes, its database host and the cluster, hourly, in the
+same report as the MID Servers' template's ([SERVICENOW_SETUP.md](SERVICENOW_SETUP.md#self-hosted-instance)).
+
+| Field | Value |
+|---|---|
+| Playbook | `playbooks/servicenow_health.yml` |
+| Inventory | your **Linux** inventory, with the groups `servicenow_nodes` and `servicenow_db_hosts` (no `servicenow_nodes` group: the nodes in the Limit) |
+| Credentials | `ServiceNow API`, `Linux ssh (sudo)`, `MariaDB monitor` |
+| Privilege escalation | ticked |
+| Limit | empty (one node: its name - nothing else is contacted; with no `servicenow_nodes` group: the nodes, `node01,node03`) |
+| Variables | `servicenow_health_part: nodes` |
+| Survey | none |
 
 ### Patch hosts
 
@@ -759,7 +776,7 @@ For example, give the help desk **Execute** on *Troubleshoot*, and only the serv
 | Findings you do not care about | defaults do not fit that host | step 8: change the setting for its group or host |
 | `NOT CONNECTED - what would be opened` | the tickets template has no ServiceNow API credential | attach it (step 10) |
 | Tickets step fails: `No check results reached this job` | the check step before it failed before checking any host, or it was launched on its own | read the first red job in the workflow; run the tickets step only inside a workflow |
-| `The job's Limit (...) leaves out localhost` | the job does its work on the AAP side (`localhost`) - *ServiceNow health* (the instance, after its MID Server hosts), and the network config and network certificate jobs: a Limit without `localhost` would skip it and end green. The other jobs need no `localhost` in a Limit | add `,localhost` to the Limit (`mid01,localhost`), or clear the Limit (the network jobs: `net_config_only`, `net_cert_only`) |
-| A controller step (tickets, POA&M, ServiceNow health) shows `skipping: no hosts matched` | its template prompts for a Limit and the workflow passed one | untick Prompt on launch for Limit on that template (step 9) |
+| `The job's Limit (...) leaves out localhost` | the job does its work on the AAP side (`localhost`) - the network config and network certificate jobs and the mail relay jobs: a Limit without `localhost` would skip it and end green. The other jobs need no `localhost` in a Limit (*ServiceNow health* since 1.0.0) | add `,localhost` to the Limit (`sw01,localhost`), or clear the Limit (the network jobs: `net_config_only`, `net_cert_only`) |
+| A controller step (tickets, POA&M) shows `skipping: no hosts matched` | its template prompts for a Limit and the workflow passed one | untick Prompt on launch for Limit on that template (step 9) |
 | A VMware job or report fails | see the troubleshooting tables | [VMWARE.md](VMWARE.md), "Troubleshooting" |
 | No email, or an email error | see the troubleshooting table | [EMAIL_REPORTS.md](EMAIL_REPORTS.md), "Troubleshooting" |

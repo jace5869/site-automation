@@ -1,0 +1,72 @@
+---
+# Before playbooks/servicenow_health.yml reads any host: the groups it was told to read are in this inventory, and with
+# servicenow_health_part nodes there are front-end nodes to read - else it fails here, clearly, instead of skipping
+# every host ("skipping: no hosts matched") and ending GREEN having read nothing (the way site_findings target_check.yml
+# does for target). The front-end nodes: the hosts of servicenow_nodes_group; with that group missing or empty, the
+# Limit's hosts (not localhost, not a MID Server or database host). Runs once, on the AAP side (set_fact and assert
+# never log in to a host).
+- name: ServiceNow health | which hosts the groups and the Limit name
+  ansible.builtin.set_fact:
+    _snc_part: "{{ servicenow_health_part | string | lower }}"
+    _snc_groups: "{{ groups.keys() | difference(['all', 'ungrouped']) | sort | join(', ') or '(none - every host is ungrouped)' }}"
+    _snc_in_limit: >-
+      {{ (query('ansible.builtin.inventory_hostnames', ansible_limit) | reject('equalto', 'localhost') | list)
+         if ansible_limit | default('', true) | length > 0 else [] }}
+    _snc_nodes: "{{ _servicenow_node_hosts }}"
+  run_once: true
+
+- name: ServiceNow health | servicenow_health_part is all, mids or nodes
+  ansible.builtin.assert:
+    that: _snc_part in ['all', 'mids', 'nodes']
+    fail_msg: "servicenow_health_part is {{ servicenow_health_part }}: all, mids or nodes"
+    quiet: true
+  run_once: true
+
+- name: ServiceNow health | front-end nodes to read (servicenow_health_part nodes)
+  ansible.builtin.assert:
+    that: _snc_nodes | length > 0
+    fail_msg: >-
+      servicenow_nodes_group '{{ servicenow_nodes_group }}'
+      {{ 'is not a group' if servicenow_nodes_group not in groups else 'has no hosts' }} in this job's inventory, and
+      {{ ("the Limit '" ~ ansible_limit ~ "' names no front-end node (only MID Server or database hosts)")
+         if _snc_in_limit | length > 0 else 'there is no Limit naming the nodes' }}: no front-end nodes, so the job would read nothing. Groups in this inventory: {{ _snc_groups }}.
+      Hosts: {{ groups['all'] | sort | join(', ') | truncate(400) }}. Fix: add the group servicenow_nodes, set
+      servicenow_nodes_group to one of those groups, or put the nodes in the Limit (node01,node03).
+    quiet: true
+  when: servicenow_check_nodes | bool and _snc_part == 'nodes'
+  run_once: true
+
+- name: ServiceNow health | the database hosts' group (servicenow_check_db true)
+  ansible.builtin.assert:
+    that: groups[servicenow_db_group] | default([]) | length > 0
+    fail_msg: >-
+      servicenow_db_group '{{ servicenow_db_group }}' is {{ 'not a group' if servicenow_db_group not in groups else 'a group with no hosts' }}
+      in this job's inventory, and servicenow_check_db is true: the database host would not be read. Groups in this
+      inventory: {{ _snc_groups }}. Fix: set servicenow_db_group to one of those, add the database host to it, or
+      servicenow_check_db: auto.
+    quiet: true
+  when:
+    - servicenow_check_nodes | bool and _snc_part != 'mids'
+    - (servicenow_check_db | string | lower) in ['true', 'yes', '1', 'on']
+  run_once: true
+
+- name: ServiceNow health | the MID Server hosts' group (servicenow_health_part mids)
+  ansible.builtin.assert:
+    that: groups[servicenow_mid_hosts_group] | default([]) | length > 0
+    fail_msg: >-
+      servicenow_mid_hosts_group '{{ servicenow_mid_hosts_group }}' is {{ 'not a group' if servicenow_mid_hosts_group not in groups
+      else 'a group with no hosts' }} in this job's inventory, and servicenow_health_part is mids: no MID Server host would be
+      read. Groups in this inventory: {{ _snc_groups }}. Fix: run the template with the Windows inventory that has the MID
+      Server hosts, set servicenow_mid_hosts_group to one of those groups, or servicenow_check_mid_hosts: false (the
+      instance's view only).
+    quiet: true
+  when: _snc_part == 'mids' and servicenow_check_mid_hosts | bool
+  run_once: true
+
+- name: ServiceNow health | the front-end nodes
+  ansible.builtin.debug:
+    msg: >-
+      {{ (_snc_nodes | length) ~ ' front-end node(s) ' ~ ('(the group ' ~ servicenow_nodes_group ~ ')' if groups[servicenow_nodes_group] | default([]) | length > 0
+         else '(the Limit: no group ' ~ servicenow_nodes_group ~ ' in this inventory)') ~ ': ' ~ (_snc_nodes | sort | join(', ') | truncate(400)) }}
+  when: _snc_part != 'mids' and servicenow_check_nodes | bool and _snc_nodes | length > 0
+  run_once: true

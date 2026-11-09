@@ -473,6 +473,8 @@ File: `roles/check_mariadb/defaults/main.yml`
 | `check_mariadb_lock_wait_seconds` | `30` | a session waiting this long for a lock, right now |
 | `check_mariadb_long_trx_seconds` | `600` | an InnoDB transaction open this long, right now |
 | `check_mariadb_history_length_warn` | `1000000` | InnoDB history list length (old row versions not yet purged) |
+| `check_mariadb_sizes` | `false` | ---- SIZES (off by default) --------------------------------------------------------------------- true = also read each schema's data and index bytes and the largest tables from information_schema (names and numbers only) and keep them as the fact check_mariadb_sizes_result for the job that asked (the ServiceNow healt… (all of it: the role file) |
+| `check_mariadb_sizes_tables` | `10` | the largest tables listed |
 
 ## check_mounts
 
@@ -1339,6 +1341,49 @@ File: `roles/servicenow/defaults/main.yml`
 | `servicenow_mid_disk_warn_pct` | `10` | free space of the agent's drive under this % -> warning |
 | `servicenow_mid_disk_critical_pct` | `5` | ... under this % -> critical |
 | `servicenow_mid_url_check` | `true` | config.xml's instance URL not this instance (a clone, a moved MID) -> critical |
+| `servicenow_health_part` | `all` | ---- servicenow_health.yml: a self-hosted instance ---------------------------------------------- The front-end (application) nodes, RHEL, over SSH with sudo (the Linux Machine credential): the hosts of this group. Read-only, on each: every node unit (snc_<env>.service) running and starting at boot; its stats page rea… (all of it: the role file) |
+| `servicenow_check_nodes` | `true` | false = neither the nodes nor the database host is read |
+| `servicenow_nodes_group` | `servicenow_nodes` | the inventory group of the front-end nodes |
+| `servicenow_db_group` | `servicenow_db_hosts` | the inventory group of the database host(s) (a child of mariadb_hosts) |
+| `servicenow_check_db` | `auto` | read the database host(s): auto = when the inventory has front-end nodes |
+| `servicenow_db_checks` | `[mariadb]` | the checks on the database host (roles/check_<name>; e.g. add services) |
+| `servicenow_db_paths` | `[/database]` | the database's folders: their filesystems reported, the data dir expected under one |
+| `servicenow_db_datadir` | (empty) | the data dir on the host ("" = @@datadir as the server says; a container's: its path here) |
+| `servicenow_db_top_schemas` | `5` | the largest schemas listed |
+| `servicenow_db_top_tables` | `10` | the largest tables listed |
+| `servicenow_db_history` | `true` | The database's size is kept on the database host, for its growth (change since the last run, per day, and when the disk fills): the one thing this job writes - a small JSON file, not in Check mode. false = no history, no growth. |
+| `servicenow_db_history_file` | `/var/lib/site-health/servicenow-db-history.json` | on the database host, written by the job |
+| `servicenow_db_history_keep_days` | `60` | sizes older than this many days are dropped from the history |
+| `servicenow_db_fill_warn_days` | `30` | at the database's growth, its filesystem full in fewer days -> warning |
+| `servicenow_db_fill_critical_days` | `7` | ... -> critical |
+| `servicenow_node_units` | `[snc_prod, snc_test, snc_dev]` | The node units looked for: those installed are judged (a box runs one of them), those not installed are no finding; none of them on a host of the group -> critical. [] = every snc_*.service on the host. * and ? work. |
+| `servicenow_node_home` | `/glide` | the install folder (nodes, logs, glide.properties) |
+| `servicenow_node_port` | `0` | the stats page's port: 0 = glide.servlet.port in the node's glide.properties, |
+| `servicenow_node_stats` | `true` | read each node's stats page |
+| `servicenow_node_stats_url` | (empty) | Where: tried in turn until one answers with the numbers - https://<the node's name>:<port>, http:// on it, then 127.0.0.1 (http, https), then 127.0.0.1 with the node's name as the Host header; each /xmlstats.do then /stats.do. Or force one: "https://{fqdn}:{port}/stats.do" ({fqdn}: the node's full name, {host}: its in… (all of it: the role file) |
+| `servicenow_node_stats_auth` | `auto` | A stats page that asks for a login (401 / 403, a login page): auto = asked again with the ServiceNow API credential's login (basic auth) - sent only over HTTPS to the node's own name, or to 127.0.0.1, never shown; basic = with it from the start; none = never. |
+| `servicenow_node_stats_samples` | `3` | reads of the stats page ... |
+| `servicenow_node_stats_interval` | `5` | ... this many seconds apart |
+| `servicenow_node_stats_timeout` | `10` | seconds per read |
+| `servicenow_node_mem_warn_pct` | `85` | JVM memory used of its max -> warning |
+| `servicenow_node_mem_critical_pct` | `95` | ... -> critical |
+| `servicenow_node_semaphore_queue_critical` | `10` | transactions queued for a semaphore in every read: warning; this many -> critical |
+| `servicenow_node_scheduler_queue_warn` | `50` | scheduled jobs waiting for a worker -> warning above this |
+| `servicenow_node_semaphore_wait_ms` | `1000` | a slow transaction that waited this long for its semaphore is a semaphore problem |
+| `servicenow_node_slow_tx_warn` | `200` | slow transactions ("waited excessive time to run") in the log's hours -> warning |
+| `servicenow_node_log_hours` | `24` | how far back the node's localhost log is read |
+| `servicenow_node_log_glob` | `"localhost_log*"` | the log files in the node's logs folder |
+| `servicenow_node_log_groups` | `10` | the most frequent log messages listed |
+| `servicenow_node_severe_warn` | `100` | this many SEVERE lines in servicenow_node_log_hours -> warning |
+| `servicenow_node_disk_warn_pct` | `85` | the install folder's or /'s filesystem used -> warning |
+| `servicenow_node_disk_critical_pct` | `95` | ... -> critical |
+| `servicenow_node_swap_warn_pct` | `50` | swap used -> warning |
+| `servicenow_fapolicyd` | `true` | fapolicyd on the nodes and the database host: active? (inactive: said, info - no finding), its denials since servicenow_fapolicyd_since by program and path (warning; a denial of the node's java or install folder, or of the database server or its data, critical) |
+| `servicenow_fapolicyd_since` | `today` | ausearch -ts |
+| `servicenow_node_fapolicyd_critical` | `[java, "{{ servicenow_node_home }}"]` | programs (names) or folders |
+| `servicenow_db_fapolicyd_critical` | `[mariadbd, mysqld, "{{ servicenow_db_paths \| first \| default('/database') }}"]` | + the data dir |
+| `servicenow_cluster_check` | `auto` | sys_cluster_state: auto = when the inventory has front-end nodes; true; false |
+| `servicenow_cluster_stale_minutes` | `10` | a node online but its last heartbeat older than this -> critical |
 | `servicenow_test_resolve` | `true` | servicenow_test_ticket.yml: resolve the test incident at the end (false = leave it open to look at) |
 | `cert_renew_servicenow` | `incident` | How the CSRs the certificate renewals make (Linux, Windows, VMware, network devices) go to the PKI. incident: each one is attached to its certificate's incident, with a work note saying what to do next - a person submits it to the PKI. catalog: each one is ordered from your PKI's catalog item (cert_renew_catalog_item)… (all of it: the role file) |
 | `cert_renew_csr_memory_days` | `90` | incident: a CSR on an incident of the certificate made in the last this-many days counts as made - also when that incident was resolved or closed since (the PKI may still be signing it): vCenter, ESXi and Cisco keep one pending key, and a second CSR would replace it. Older: a new CSR (the certificate is due again). |

@@ -1,0 +1,892 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+"""A self-hosted ServiceNow host, read on the host itself as root, read-only.
+kind node - a front-end (application) node: its node units (snc_<env>.service - running, starting at boot; only those
+installed), the install folder's disk and /'s, the memory and swap, the node's localhost log (SEVERE, OutOfMemory and
+semaphore lines in the last hours, grouped by message) and the node's own stats page on 127.0.0.1 (xmlstats.do, else
+stats.do: JVM memory, semaphores, scheduler workers and queue, active transactions, uptime), read a few times apart so
+a semaphore queue that stays is told from one that passes.
+kind db - the database host: the disk of its data paths (/database) and of the database's data dir, the database's
+size (data and indexes from information_schema as the MariaDB check read them, else the data dir's files - one level,
+stat only, never a recursive du - plus InnoDB's system, undo and redo files), the largest schemas and tables, and the
+size kept in a small history file on the host (the only thing written; not in check mode) for the growth.
+Both: fapolicyd - active? its denials today (ausearch -m FANOTIFY), grouped by program and path.
+Standard library only (RHEL's platform Python is enough)."""
+from __future__ import absolute_import, division, print_function
+__metaclass__ = type
+
+DOCUMENTATION = r'''
+module: site_servicenow_node
+short_description: A self-hosted ServiceNow node's units, stats page, logs, disk and memory, read-only
+description:
+  - Never fails: what could not be read says why (a field of the stats page it cannot find is left out).
+options:
+  units: {description: "The node units (snc_prod, snc_prod.service; * and ?). [] = every snc_*.service on the host.", type: list, elements: str, default: []}
+  home: {description: The install folder (its nodes, logs and glide.properties)., type: str, default: /glide}
+  port: {description: "The stats page's port: a number for every unit, {unit or env: port}, or 0 = from glide.properties (glide.servlet.port) or the unit.", type: raw, default: 0}
+  stats: {description: Read the stats page., type: bool, default: true}
+  stats_pages: {description: "The pages to try, in order.", type: list, elements: str, default: [/xmlstats.do, /stats.do]}
+  samples: {description: How many times the stats page is read (a semaphore queue in every one is sustained)., type: int, default: 3}
+  interval: {description: Seconds between the reads., type: float, default: 5}
+  log_hours: {description: How far back the log is read., type: float, default: 24}
+  log_glob: {description: The node's log files in its logs folder., type: str, default: "localhost_log*"}
+  log_max_mb: {description: At most this much of the end of each log file is read., type: int, default: 200}
+  log_groups: {description: The most frequent messages kept., type: int, default: 10}
+  timeout: {description: Seconds per request to the stats page., type: int, default: 10}
+  host_name: {description: "The node's name in the inventory: a Host header and an address to try for the stats page.", type: str, default: ''}
+  stats_url: {description: "The stats page's address, forced ({port} and {host} filled in; '' = try the ways in turn).", type: str, default: ''}
+  sem_wait_ms: {description: "A slow transaction's semaphore wait from this many ms is a semaphore problem.", type: int, default: 1000}
+  stats_auth: {description: "auto - the ServiceNow API login when every way without it is refused (401/403, a login page); none; basic - from the start. Sent only over HTTPS to the node's own name, or to 127.0.0.1.", type: str, default: auto}
+  stats_user: {description: The ServiceNow API account (SN_USERNAME)., type: str, default: ''}
+  stats_password: {description: Its password (SN_PASSWORD); never in the result., type: str, default: '', no_log: true}
+  kind: {description: "node (a front-end node) or db (the database host).", type: str, default: node}
+  paths: {description: "More paths whose filesystems are reported (the database's: /database).", type: list, elements: str, default: []}
+  fapolicyd: {description: Read fapolicyd's state and today's denials., type: bool, default: true}
+  fapolicyd_since: {description: "ausearch -ts: from when the denials are read.", type: str, default: today}
+  fapolicyd_critical: {description: "Programs or paths (prefixes, * and ?) whose denial is critical.", type: list, elements: str, default: []}
+  db_datadir: {description: "db: the data dir on this host ('' = unknown).", type: str, default: ''}
+  db_sizes: {description: "db: {schemas: [[name, bytes, tables]], tables: [[schema.table, bytes]]} as the MariaDB check read them.", type: dict, default: {}}
+  db_top_schemas: {description: db - the largest schemas kept., type: int, default: 5}
+  db_top_tables: {description: db - the largest tables kept., type: int, default: 10}
+  db_history_file: {description: "db: the size history ('' = none).", type: str, default: ''}
+  db_history_keep_days: {description: db - samples older than this are dropped., type: int, default: 60}
+author: site automation
+'''
+
+RETURN = r'''
+hostname: {description: The node's own name., type: str}
+units:
+  description: "[{unit, env, active, sub, enabled, since, node_dir, port, port_from, stats: {status, page, why, up, node_id,
+                 uptime, started, mem_used, mem_max, mem_pct, sem_in_use, sem_available, sem_queued, sem_queued_samples,
+                 sem_sets, sched_workers, sched_queue, transactions, found}, log: {files, hours, severe, oom, semaphore,
+                 groups: [{message, count, kinds, last}], why}}]"
+  type: list
+disk: {description: "[{path, size_gb, used_pct, free_gb}] - the install folder's filesystem and /'s (once when the same).", type: list}
+memory: {description: "{total_mb, available_mb, available_pct, swap_total_mb, swap_used_pct}", type: dict}
+missing: {description: "The units asked for that are not installed here (not judged: a box runs one of them).", type: list}
+looked_for: {description: The units looked for ([] = every snc_*.service)., type: list}
+fapolicyd: {description: "{installed, active, enabled, since, denials, groups: [{exe, path, count, critical}], why}", type: dict}
+db: {description: "kind db: {datadir, datadir_fs, datadir_under, source, total_bytes, data_bytes, system_bytes, system_read,
+                   schemas: [[name, bytes, tables]], tables: [[name, bytes]], history: {samples, last_bytes, last_time, change_bytes,
+                   per_day_bytes, days}, why}"
+     type: dict}
+'''
+
+import base64
+import fnmatch
+import glob
+import json
+import os
+import re
+import socket
+import ssl
+import subprocess
+import time
+import xml.etree.ElementTree as ET
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+from ansible.module_utils.basic import AnsibleModule
+
+TS = re.compile(r"^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})")
+# "2026-11-09 10:00:01 (123) glide.scheduler.worker.2 7F3A... SEVERE *** ERROR *** the message"
+PREFIX = re.compile(r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?\s+(?:\(\d+\)\s+)?(?:\S+\s+)??(?:[0-9A-Fa-f]{32}\s+)?"
+                    r"(?:SEVERE|WARNING|INFO|DEBUG|FINE\w*|CONFIG)\b\s*")
+LEVEL = re.compile(r"\b(SEVERE|WARNING)\b")
+SEVERE = re.compile(r"\bSEVERE\b")
+OOM = re.compile(r"OutOfMemory")
+SEMAPHORE = re.compile(r"semaphore", re.I)
+# a semaphore problem: a queue, a limit exceeded, a wait timed out - not a line that only mentions one
+SEM_ERR = re.compile(r"semaphore.*\b(queue|exceeded|timed out|timeout|rejected|exhausted|no available)|"
+                     r"\b(queue|exceeded|timed out|rejected)\b.*semaphore", re.I)
+# "GlideServlet:Transaction waited excessive time to run: 3295ms, semaphore wait: 0ms, session ..." - a slow transaction
+SLOW = re.compile(r"Transaction waited excessive time to run:?\s*(\d+)\s*ms", re.I)
+SEM_WAIT = re.compile(r"semaphore wait:?\s*(\d+)\s*ms", re.I)
+SESSION_WAIT = re.compile(r"session wait:?\s*(\d+)\s*ms", re.I)
+# who did it: not needed, and not shown (the node's log is people's activity)
+USER = re.compile(r"\buser\s*[:=]\s*[^,;)\]\n]+|\(user [^)]+\)", re.I)
+
+
+def no_user(text):
+    """A log message without the user name in it: "user: …"."""
+    return USER.sub(lambda m: "(user …)" if m.group(0).startswith("(") else "user: …", text)
+NUM = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
+
+
+def run(argv):
+    try:
+        p = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=60)
+        return p.returncode, p.stdout, p.stderr
+    except (OSError, subprocess.SubprocessError) as e:
+        return 127, "", str(e)
+
+
+# ---- the units ------------------------------------------------------------------------------------------------
+
+def unit_name(u):
+    u = str(u).strip()
+    return u if u.endswith(".service") or "*" in u or "?" in u else u + ".service"
+
+
+def find_units(wanted):
+    """The snc_*.service units the host has (loaded or only installed), and those of `wanted` it has not."""
+    names = set()
+    for argv in (["systemctl", "list-units", "--all", "--type=service", "--no-legend", "--plain", "--no-pager", "snc_*"],
+                 ["systemctl", "list-unit-files", "--type=service", "--no-legend", "--no-pager", "snc_*"]):
+        rc, out, _ = run(argv)
+        for line in out.splitlines():
+            w = line.split()
+            if w and w[0].startswith("snc_") and w[0].endswith(".service") and not w[0].startswith("snc_mid"):
+                names.add(w[0])
+    if not wanted:
+        return sorted(names), []
+    got, missing = [], []
+    for u in wanted:
+        pat = unit_name(u)
+        hit = sorted(n for n in names if fnmatch.fnmatchcase(n, pat))
+        if hit:
+            got += [h for h in hit if h not in got]
+        else:
+            missing.append(pat)
+    return got, missing
+
+
+def unit_show(u):
+    rc, out, _ = run(["systemctl", "show", "--no-pager", "-p", "ActiveState", "-p", "SubState", "-p", "UnitFileState",
+                      "-p", "ExecStart", "-p", "WorkingDirectory", "-p", "Environment", "-p", "ActiveEnterTimestamp", "-p", "MainPID", u])
+    d = {}
+    for line in out.splitlines():
+        if "=" in line:
+            k, v = line.split("=", 1)
+            d[k] = v
+    return d
+
+
+def node_dir(home, env, show):
+    """The node's folder: a path under the install folder the unit names (ExecStart, WorkingDirectory, Environment)
+    that holds conf/ or logs/, else <home>/nodes/<env>*, <home>/<env>*, else the install folder itself."""
+    home = home.rstrip("/") or "/"
+    text = " ".join(show.get(k, "") for k in ("ExecStart", "WorkingDirectory", "Environment"))
+    for p in re.findall(r"(/[^\s;'\"=]+)", text):
+        if not p.startswith(home + "/"):
+            continue
+        d = p
+        while d.startswith(home + "/") and len(d) > len(home):
+            if os.path.isdir(os.path.join(d, "conf")) or os.path.isdir(os.path.join(d, "logs")):
+                return d
+            d = os.path.dirname(d)
+    for pat in (os.path.join(home, "nodes", env + "*"), os.path.join(home, env + "*")):
+        hits = sorted(h for h in glob.glob(pat) if os.path.isdir(h))
+        if hits:
+            return hits[0]
+    return home
+
+
+def properties(path):
+    d = {}
+    try:
+        with open(path, errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith(("#", "!")) and "=" in line:
+                    k, v = line.split("=", 1)
+                    d[k.strip()] = v.strip()
+    except OSError:
+        pass
+    return d
+
+
+def port_for(unit, env, cfg, ndir, home, show):
+    """(port, where it came from)."""
+    if isinstance(cfg, dict):
+        for k in (unit, unit[:-len(".service")], env):
+            if cfg.get(k):
+                return int(cfg[k]), "servicenow_node_port"
+    elif str(cfg or "0").strip() not in ("", "0"):
+        return int(cfg), "servicenow_node_port"
+    for p in (os.path.join(ndir, "conf", "glide.properties"), os.path.join(home, "conf", "glide.properties"),
+              os.path.join(ndir, "glide.properties")):
+        v = properties(p).get("glide.servlet.port", "")
+        if v.isdigit():
+            return int(v), p
+    text = " ".join(show.get(k, "") for k in ("ExecStart", "Environment"))
+    m = (re.search(r"glide\.servlet\.port[= ](\d{2,5})\b", text)
+         or re.search(r"(?:^|\s)--?port[= ](\d{2,5})\b", text) or re.search(r"_(\d{4,5})(?:\.service)?$", unit))
+    if m:
+        return int(m.group(1)), "the unit"
+    p = listening_port(show.get("MainPID", ""))
+    if p:
+        return p, "the unit's java, listening"
+    return 0, ""
+
+
+def listening_port(pid):
+    """The TCP port the unit's main process listens on (ss -ltnp), one in 16000-16999 first (ServiceNow's usual)."""
+    if not str(pid).isdigit() or int(pid) == 0:
+        return 0
+    rc, out, _ = run(["ss", "-H", "-ltnp"])
+    ports = []
+    for line in out.splitlines():
+        w = line.split()
+        # LISTEN 0 100 *:16000 *:* users:(("java",pid=1234,fd=50))
+        m = re.search(r":(\d{2,5})$", w[3]) if len(w) > 4 and "pid=%s," % pid in line else None
+        if m:
+            ports.append(int(m.group(1)))
+    ports = sorted(set(ports), key=lambda x: (not 16000 <= x <= 16999, x))
+    return ports[0] if ports else 0
+
+
+# ---- the stats page -------------------------------------------------------------------------------------------
+
+def _num(v):
+    m = NUM.search(str(v or ""))
+    if not m:
+        return None
+    n = float(m.group(0).replace(",", ""))
+    u = str(v).lower()
+    if re.search(r"\bgb\b|\bg\b", u):
+        n *= 1024
+    elif re.search(r"\bkb\b|\bk\b", u):
+        n /= 1024.0
+    elif re.search(r"\bbytes?\b", u):
+        n /= 1048576.0
+    return n
+
+
+def _norm(s):
+    return " ".join(re.sub(r"[._:/\-]+", " ", str(s)).split()).lower()
+
+
+def stat_lines(text):
+    """[(section, label, value)] from xmlstats.do (each element and attribute) or stats.do (its 'Label: value'
+    lines under their headings)."""
+    t = text.lstrip()
+    out = []
+    if t.startswith("<?xml") or t.startswith("<xmlstats") or (t.startswith("<") and not re.match(r"<(!doctype|html)", t, re.I)):
+        try:
+            root = ET.fromstring(t)
+        except ET.ParseError:
+            root = None
+        if root is not None:
+            def walk(e, path):
+                name = e.attrib.get("name")
+                here = path + [e.tag + (":" + name if name else "")]
+                sec = " ".join(here[:-1])
+                if e.text and e.text.strip() and len(e) == 0:
+                    out.append((sec, e.tag, e.text.strip()))
+                for k, v in e.attrib.items():
+                    if k != "name":
+                        out.append((" ".join(here), k, v))
+                for c in e:
+                    walk(c, here)
+            walk(root, [])
+            return out
+    h = re.sub(r"(?is)<(script|style)\b.*?</\1>", " ", text)
+    h = re.sub(r"(?i)<br\s*/?>|</(p|div|tr|li|h\d|table|th)>", "\n", h)
+    h = re.sub(r"(?i)</td>\s*<td[^>]*>", ": ", h)
+    h = re.sub(r"<[^>]+>", " ", h)
+    h = h.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+    sec, sub = "", ""
+    for raw in h.splitlines():
+        line = " ".join(raw.split())
+        if not line:
+            continue
+        if ":" in line:
+            k, v = line.split(":", 1)
+            if k.strip() and len(k) <= 60:
+                out.append(((sec + " " + sub).strip(), k.strip(), v.strip()))
+                continue
+        if len(line) <= 60:
+            # a heading: a big one (with a known word) starts a section, any other a part of it (a semaphore set)
+            if re.search(r"semaphore|scheduler|memory|servlet|statistics|transaction|cluster|database", line, re.I):
+                sec, sub = line, ""
+            else:
+                sub = line
+    return out
+
+
+def parse_stats(text):
+    """The numbers this check needs, found by their names (whatever the page's release calls them)."""
+    r = {"node_id": "", "uptime": "", "started": "", "mem_used": None, "mem_max": None, "sem_in_use": None,
+         "sem_available": None, "sem_queued": None, "sem_sets": [], "sched_workers": None, "sched_queue": None,
+         "transactions": None}
+    sets = {}
+    for sec, label, val in stat_lines(text):
+        full, lab = _norm(sec + " " + label), _norm(label)
+        if "semaphore" in full:
+            name = re.sub(r"(?i)^.*semaphores?(?: sets?)?\s*", "", sec).strip() or "Default"
+            name = name.split(":")[-1].strip() or "Default"
+            s = sets.setdefault(name, {"name": name, "in_use": None, "available": None, "queued": None})
+            if re.search(r"\bin ?use\b", lab) and s["in_use"] is None:
+                s["in_use"] = _num(val)
+            elif re.search(r"\bavailable\b", lab) and s["available"] is None:
+                s["available"] = _num(val)
+            elif re.search(r"^(queue (depth|length|size)|queued?|queue)$", lab) and s["queued"] is None:
+                s["queued"] = _num(val)
+            continue
+        if "scheduler" in full or "worker" in lab:
+            if re.search(r"queue", lab) and r["sched_queue"] is None:
+                r["sched_queue"] = _num(val)
+            elif re.search(r"worker", lab) and r["sched_workers"] is None:
+                r["sched_workers"] = _num(val)
+            continue
+        if "memory" in full:
+            if re.search(r"\bmax", lab) and r["mem_max"] is None:
+                r["mem_max"] = _num(val)
+            elif re.search(r"\bin ?use\b|\bused\b", lab) and r["mem_used"] is None:
+                r["mem_used"] = _num(val)
+            continue
+        if re.search(r"active|concurrent", full) and "transaction" in full and r["transactions"] is None:
+            r["transactions"] = _num(val)
+        elif re.search(r"uptime", lab) and not r["uptime"]:
+            r["uptime"] = val
+        elif re.search(r"started", lab) and not r["started"]:
+            r["started"] = val
+        elif re.search(r"cluster node|node id|node name|system id", full) and not r["node_id"]:
+            r["node_id"] = val
+    r["sem_sets"] = [s for s in sets.values() if any(s[k] is not None for k in ("in_use", "available", "queued"))]
+    for k in ("in_use", "available", "queued"):
+        vals = [s[k] for s in r["sem_sets"] if s[k] is not None]
+        r["sem_" + k] = sum(vals) if vals else None
+    if r["mem_used"] is not None and r["mem_max"]:
+        r["mem_pct"] = round(100.0 * r["mem_used"] / r["mem_max"], 1)
+    else:
+        r["mem_pct"] = None
+    r["found"] = [k for k in ("node_id", "uptime", "mem_used", "mem_max", "sem_in_use", "sem_queued", "sched_workers",
+                              "sched_queue", "transactions") if r[k] not in (None, "")]
+    return r
+
+
+LOGIN = re.compile(r"login\.do|j_security_check|name=[\"']user_name[\"']|<title>\s*Log ?in", re.I)
+
+
+def stats_bases(port, names, forced=""):
+    """The ways to ask the node, in order: [(url_base, Host header or '')]. The node's own name first (https, then
+    http: the stats page may answer only there), then 127.0.0.1 (http, https - a TLS connector answers plain HTTP with
+    400), then 127.0.0.1 with the name as the Host header. forced (servicenow_node_stats_url: {fqdn}, {host}, {port}):
+    that one only."""
+    names = [n for n in dict.fromkeys(names or []) if n and n not in ("localhost", "127.0.0.1")]
+    fqdn = next((n for n in names if "." in n), names[0] if names else "127.0.0.1")
+    if forced:
+        return [(forced.replace("{port}", str(port)).replace("{fqdn}", fqdn).replace("{host}", names[0] if names else fqdn), "")]
+    out = []
+    for n in names:
+        out += [("https://%s:%d" % (n, port), ""), ("http://%s:%d" % (n, port), "")]
+    out += [("http://127.0.0.1:%d" % port, ""), ("https://127.0.0.1:%d" % port, "")]
+    for n in names:
+        out += [("http://127.0.0.1:%d" % port, n), ("https://127.0.0.1:%d" % port, n)]
+    return out
+
+
+def may_send_login(url, names):
+    """The ServiceNow login goes only to this node: over HTTPS to its own name, or to 127.0.0.1."""
+    rest = re.sub(r"^[a-z]+://", "", url).split("/")[0]
+    host = rest.rsplit(":", 1)[0] if ":" in rest else rest
+    return host == "127.0.0.1" or (url.startswith("https://") and host in (names or []))
+
+
+def fetch(url, host, timeout, login=None):
+    """GET url (a Host header if given; basic auth with login (user, password); https without checking the
+    certificate: the node itself, read-only) -> (status, body): status -1 when there was no answer."""
+    headers = {"Host": host} if host else {}
+    if login:
+        headers["Authorization"] = "Basic " + base64.b64encode(("%s:%s" % login).encode("utf-8")).decode("ascii")
+    req = Request(url, headers=headers)
+    ctx = ssl._create_unverified_context() if url.startswith("https") else None
+    try:
+        resp = urlopen(req, timeout=timeout, context=ctx) if ctx else urlopen(req, timeout=timeout)
+        return resp.getcode() or 200, resp.read(4 * 1048576).decode("utf-8", "replace")
+    except HTTPError as e:
+        try:
+            body = e.read(4096).decode("utf-8", "replace")
+        except Exception:                   # noqa: BLE001 - the body of an error is only for the message
+            body = ""
+        return e.code, body
+    except (URLError, socket.timeout, OSError, ValueError, ssl.SSLError) as e:
+        return -1, str(getattr(e, "reason", e))
+
+
+def read_stats(port, pages, samples, interval, timeout, host_names=None, forced="", auth="auto", login=None):
+    """The stats page, read samples times: the first way (stats_bases) and page that answers 200 with numbers on it is
+    used for every read. auth auto: when none answered with numbers and one asked for a login (401 / 403, a login
+    page), the ways are asked again with the ServiceNow API login (basic; only where may_send_login); basic: with it
+    from the start; none: never. Not read: what was tried (never the login), the last status and the start of the
+    last answer."""
+    st = {"status": 0, "page": "", "url": "", "why": "", "up": False, "sem_queued_samples": [], "tried": [], "body": "",
+          "login": False}
+    if not port and not forced:
+        st["why"] = "no port: set servicenow_node_port, or glide.servlet.port in the node's glide.properties"
+        return st
+    names = [n for n in host_names or [] if n]
+    ways = [(b, h, pg) for b, h in stats_bases(port, names, forced) for pg in ([""] if forced else pages)]
+    login = login if login and login[0] and login[1] else None
+
+    def attempt(base, host, page, use_login):
+        url = base + page
+        lg = login if use_login and may_send_login(url, names) else None
+        if use_login and not lg:
+            return None
+        code, body = fetch(url, host, timeout, lg)
+        st["tried"].append("%s%s%s -> %s" % (url, (" (Host: %s)" % host) if host else "", " (with the login)" if lg else "",
+                                            code if code != -1 else body[:80]))
+        return code, body
+
+    chosen, last_http, needs_login = None, None, False
+    rounds = ([True] if auth == "basic" and login else [False] + ([True] if auth == "auto" and login else []))
+    for i in range(max(1, samples)):
+        if i:
+            time.sleep(max(0.0, interval))
+        got = None
+        for use_login in ([chosen[3]] if chosen else rounds):
+            if use_login and not chosen and not needs_login and auth == "auto":
+                break                          # no way asked for a login: none is sent
+            for base, host, page in ([chosen[:3]] if chosen else ways):
+                r = attempt(base, host, page, use_login)
+                if r is None:
+                    continue
+                code, body = r
+                if code != -1:
+                    last_http = code
+                if code == 200 and parse_stats(body)["found"]:
+                    got, chosen = parse_stats(body), (base, host, page, use_login)
+                    break
+                if code in (401, 403) or (code == 200 and LOGIN.search(body)):
+                    needs_login = True
+                st["status"] = code
+                st["why"] = ("%s%s: %s" % (base + page, (" (Host: %s)" % host) if host else "",
+                                           ("HTTP %s" % code) if code != -1 else body[:200])
+                             if not (code == 200) else "%s answered, but nothing on it was recognised" % (base + page))
+                st["body"] = re.sub(r"\s+", " ", body or "")[:200] if code != -1 else ""
+            if got:
+                break
+        if got is None:
+            st["status"] = last_http if last_http else -1       # -1: nothing answered at all (the node is down)
+            break
+        st.update(got)
+        st.update({"page": chosen[2], "url": chosen[0] + chosen[2], "host_header": chosen[1], "login": chosen[3],
+                   "why": "", "up": True, "status": 200, "body": ""})
+        st["sem_queued_samples"].append(got["sem_queued"])
+    return st
+
+
+# ---- the log --------------------------------------------------------------------------------------------------
+
+def message_of(line):
+    """What a log record says: after its "*** WARNING ***" / "*** ERROR ***" marker, else after the time, thread,
+    transaction ID and level."""
+    parts = re.split(r"\*\*\* ?(?:ERROR|WARNING|SEVERE) ?\*\*\*\s*", line, maxsplit=1)
+    if len(parts) == 2 and parts[1].strip():
+        return parts[1].strip()
+    m = PREFIX.sub("", line, count=1).strip()
+    return m or line.strip()
+
+
+def key_of(msg):
+    """A message with what changes every time taken out: times, "(nnn)", thread numbers, txid, user names, IDs (in paths
+    too: /api/now/ui/page_timing/<id> is /api/now/ui/page_timing), every number."""
+    k = USER.sub("", msg)
+    k = re.sub(r"^\s*\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?\s*(?:\(\d+\)\s*)?", "", k)
+    k = re.sub(r"\btxid=\S+", "", k)
+    k = re.sub(r"(-thread)-\d+\b", r"\1", k)
+    k = re.sub(r"/(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\d+)(?=[/?\s,]|$)", "", k, flags=re.I)
+    k = re.sub(r"\b\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?\b|\b\d\d:\d\d:\d\d(?:[.,]\d+)?\b", "", k)
+    k = re.sub(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", "<id>", k, flags=re.I)
+    k = re.sub(r"\b0x[0-9a-f]+\b|\b[0-9a-f]{16,}\b", "<hex>", k, flags=re.I)
+    k = re.sub(r"\b\d{1,3}(?:\.\d{1,3}){3}\b", "<ip>", k)
+    k = re.sub(r"(?<=/)\d+(?=/|$|\s|\?)", "N", k)
+    k = re.sub(r"\d+", "N", k)            # counts, users, ports: the same message whatever its numbers
+    return re.sub(r"\s+", " ", k).strip()
+
+
+def tail_lines(path, max_bytes):
+    with open(path, "rb") as f:
+        f.seek(0, 2)
+        size = f.tell()
+        f.seek(max(0, size - max_bytes))
+        if size > max_bytes:
+            f.readline()                     # a partial line
+        for raw in f:
+            yield raw.decode("utf-8", "replace").rstrip("\r\n")
+
+
+def read_log(logdir, pattern, hours, max_mb, top, now=None, sem_wait_ms=1000):
+    """The node's log in the last hours: OutOfMemory, semaphore problems (a semaphore queue, exceeded, timed out; a
+    slow transaction that waited sem_wait_ms or more for its semaphore), SEVERE lines, and slow transactions ("waited
+    excessive time to run" - their own kind, with the longest run), grouped by message."""
+    now = now or time.time()
+    since = now - hours * 3600.0
+    since_s = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(since))
+    lg = {"dir": logdir, "files": [], "hours": hours, "severe": 0, "oom": 0, "semaphore": 0, "slow": 0, "slow_max_ms": 0,
+          "slow_sem": 0, "sem_wait_ms": sem_wait_ms, "groups": [], "why": ""}
+    files = sorted((p for p in glob.glob(os.path.join(logdir, pattern)) if os.path.isfile(p)), key=os.path.getmtime)
+    files = [p for p in files if os.path.getmtime(p) >= since]
+    if not os.path.isdir(logdir):
+        lg["why"] = "no logs folder at %s" % logdir
+        return lg
+    if not files:
+        lg["why"] = "no %s in %s written in the last %s h" % (pattern, logdir, hours)
+        return lg
+    groups = {}
+
+    def close(rec):
+        if not rec:
+            return
+        first, cont = rec[0], rec[1:6]
+        kinds = []
+        text = "\n".join([first] + cont)
+        run_ms = session_ms = 0
+        if OOM.search(text):
+            kinds.append("OutOfMemory")
+        slow = SLOW.search(first)
+        if slow:
+            # a slow transaction: waiting for a semaphore (the node's limit - a semaphore problem), waiting for the
+            # session (one user's own requests queued behind each other: the session synchronizer), or slow itself
+            run_ms = int(slow.group(1))
+            sem = int((SEM_WAIT.search(first) or [0, 0])[1])
+            session_ms = int((SESSION_WAIT.search(first) or [0, 0])[1])
+            if sem >= sem_wait_ms:
+                kinds.append("slow transaction (semaphore wait)")
+                lg["slow_sem"] += 1
+            elif run_ms and session_ms >= 0.8 * run_ms:
+                kinds.append("slow transaction (session wait)")
+            else:
+                kinds.append("slow transaction")
+            lg["slow"] += 1
+            lg["slow_max_ms"] = max(lg["slow_max_ms"], run_ms)
+        elif SEM_ERR.search(first) and LEVEL.search(first):
+            kinds.append("semaphore")
+        if SEVERE.search(first):
+            kinds.append("SEVERE")
+        if not kinds:
+            return
+        lg["oom"] += "OutOfMemory" in kinds
+        lg["semaphore"] += "semaphore" in kinds or "slow transaction (semaphore wait)" in kinds
+        lg["severe"] += "SEVERE" in kinds
+        msg = message_of(first)
+        if "OutOfMemory" in kinds and not OOM.search(first):
+            msg = next((c.strip() for c in cont if OOM.search(c)), msg)
+        msg = no_user(msg)
+        k = "|".join(kinds) + "|" + key_of(msg)
+        g = groups.setdefault(k, {"message": msg[:400], "count": 0, "kinds": [], "last": "", "max_ms": 0, "max_session_ms": 0})
+        g["count"] += 1
+        g["max_ms"] = max(g["max_ms"], run_ms)
+        g["max_session_ms"] = max(g["max_session_ms"], session_ms)
+        g["message"] = msg[:400]
+        g["last"] = TS.match(first).group(0) if TS.match(first) else ""
+        g["kinds"] = sorted(set(g["kinds"]) | set(kinds))
+
+    for p in files:
+        lg["files"].append(os.path.basename(p))
+        rec = []
+        try:
+            for line in tail_lines(p, max_mb * 1048576):
+                m = TS.match(line)
+                if m:
+                    close(rec)
+                    rec = [line] if "%s %s" % (m.group(1), m.group(2)) >= since_s else []
+                elif rec:
+                    rec.append(line)
+            close(rec)
+        except OSError as e:
+            lg["why"] = "%s: %s" % (p, e)
+    order = {"OutOfMemory": 0, "semaphore": 1, "slow transaction (semaphore wait)": 1, "SEVERE": 2, "slow transaction": 3,
+             "slow transaction (session wait)": 3}
+    lg["groups"] = sorted(groups.values(), key=lambda g: (min(order[k] for k in g["kinds"]), -g["count"]))[:max(1, top)]
+    return lg
+
+
+# ---- the host -------------------------------------------------------------------------------------------------
+
+def disks(paths):
+    """[{path, size_gb, free_gb, used_pct}] - each path's filesystem, once."""
+    out, seen = [], set()
+    for p in paths:
+        if not os.path.exists(p):
+            continue
+        try:
+            st = os.statvfs(p)
+            dev = os.stat(p).st_dev
+        except OSError:
+            continue
+        if dev in seen:
+            continue
+        seen.add(dev)
+        size = st.f_blocks * st.f_frsize
+        free = st.f_bavail * st.f_frsize
+        used = size - st.f_bfree * st.f_frsize
+        out.append({"path": p, "size_gb": round(size / 1073741824.0, 1), "free_gb": round(free / 1073741824.0, 1),
+                    "used_pct": round(100.0 * used / (used + free), 1) if used + free else 0.0})
+    return out
+
+
+def memory():
+    m = {}
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                k, v = line.split(":", 1)
+                m[k] = int(v.split()[0]) / 1024.0
+    except (OSError, ValueError, IndexError):
+        return {}
+    tot, av = m.get("MemTotal", 0), m.get("MemAvailable", m.get("MemFree", 0))
+    st, sf = m.get("SwapTotal", 0), m.get("SwapFree", 0)
+    return {"total_mb": int(tot), "available_mb": int(av), "available_pct": round(100.0 * av / tot, 1) if tot else None,
+            "swap_total_mb": int(st), "swap_used_pct": round(100.0 * (st - sf) / st, 1) if st else 0.0}
+
+
+# ---- fapolicyd -----------------------------------------------------------------------------------------------
+
+def matches(x, p):
+    """A program or path x is p: * and ? patterns; a folder (x under it); a bare name (java: the program's name)."""
+    if "*" in p or "?" in p:
+        return fnmatch.fnmatchcase(x, p)
+    if "/" not in p:
+        return os.path.basename(x) == p or os.path.basename(x).startswith(p + "-")
+    return x == p or x.startswith(p.rstrip("/") + "/")
+
+
+def fapolicyd_groups(text, critical=None):
+    """ausearch -i output -> [{exe, path, count, critical}] most frequent first: one per program and path denied."""
+    pats = [str(p) for p in critical or [] if str(p).strip()]
+    groups, exe, path = {}, "", ""
+
+    def close():
+        if exe or path:
+            g = groups.setdefault((exe, path), {"exe": exe or "?", "path": path or "?", "count": 0, "critical": False})
+            g["count"] += 1
+            g["critical"] = g["critical"] or any(matches(x, p) for p in pats for x in (exe, path) if x)
+    for line in text.splitlines():
+        if line.startswith("----"):
+            close()
+            exe, path = "", ""
+            continue
+        if "type=SYSCALL" in line:
+            m = re.search(r"\bexe=(\S+)", line)
+            exe = m.group(1).strip('"') if m else exe
+        elif "type=PATH" in line and not path:
+            m = re.search(r"\bname=(\S+)", line)
+            path = m.group(1).strip('"') if m else path
+    close()
+    return sorted(groups.values(), key=lambda g: (not g["critical"], -g["count"], g["exe"], g["path"]))
+
+
+def fapolicyd(since, critical):
+    fa = {"installed": False, "active": "", "enabled": "", "since": since, "denials": 0, "groups": [], "why": ""}
+    rc, out, _ = run(["rpm", "-q", "fapolicyd"])
+    fa["installed"] = rc == 0
+    if not fa["installed"]:
+        return fa
+    fa["active"] = run(["systemctl", "is-active", "fapolicyd"])[1].strip() or "unknown"
+    fa["enabled"] = run(["systemctl", "is-enabled", "fapolicyd"])[1].strip() or "unknown"
+    rc, out, err = run(["ausearch", "-m", "FANOTIFY", "-ts", since, "-i"])
+    if rc not in (0, 1):                 # 1: no matches
+        fa["why"] = "ausearch: " + (err.strip().splitlines() or ["exit %d" % rc])[-1][:200]
+    fa["groups"] = fapolicyd_groups(out, critical)
+    fa["denials"] = sum(g["count"] for g in fa["groups"])
+    return fa
+
+
+# ---- the database host ----------------------------------------------------------------------------------------
+
+SYSTEM_FILES = ("ibdata*", "undo*", "ib_logfile*", "#innodb_redo/*", "ibtmp*", "#innodb_temp/*", "aria_log*")
+
+
+def fs_of(path):
+    """The filesystem holding path: {path, mount, size_gb, used_gb, free_gb, used_pct, size_b, used_b, free_b}, or None."""
+    if not path or not os.path.exists(path):
+        return None
+    try:
+        st = os.statvfs(path)
+    except OSError:
+        return None
+    m = os.path.realpath(path)
+    while not os.path.ismount(m):
+        m = os.path.dirname(m)
+    size, free, used = st.f_blocks * st.f_frsize, st.f_bavail * st.f_frsize, (st.f_blocks - st.f_bfree) * st.f_frsize
+    g = 1073741824.0
+    return {"path": path, "mount": m, "size_b": size, "used_b": used, "free_b": free, "size_gb": round(size / g, 1),
+            "used_gb": round(used / g, 1), "free_gb": round(free / g, 1), "used_pct": round(100.0 * used / (used + free), 1) if used + free else 0.0}
+
+
+def files_sizes(datadir, top_schemas, top_tables):
+    """The data dir's own files, one level down, stat only: (schemas [[name, bytes, files]], tables [[schema.table, bytes]],
+    system bytes). A schema is a folder; its .ibd / .MYD / .MYI / .MAD / .MAI files are its tables."""
+    schemas, tables, system = [], [], 0
+    try:
+        entries = list(os.scandir(datadir))
+    except OSError:
+        return [], [], 0
+    for e in entries:
+        if e.is_dir(follow_symlinks=False) and not e.name.startswith("#") and e.name not in ("mysql", "performance_schema", "sys"):
+            total, n = 0, 0
+            try:
+                for f in os.scandir(e.path):
+                    if f.is_file(follow_symlinks=False):
+                        sz = f.stat(follow_symlinks=False).st_size
+                        total += sz
+                        base, ext = os.path.splitext(f.name)
+                        if ext.lower() in (".ibd", ".myd", ".myi", ".mad", ".mai"):
+                            n += 1
+                            tables.append(["%s.%s" % (e.name, base), sz])
+            except OSError:
+                continue
+            schemas.append([e.name, total, n])
+    for pat in SYSTEM_FILES:
+        for f in glob.glob(os.path.join(datadir, pat)):
+            try:
+                if os.path.isfile(f):
+                    system += os.path.getsize(f)
+            except OSError:
+                pass
+    merged = {}
+    for name, size in tables:                      # .MYD and .MYI of one table: one table
+        merged[name] = merged.get(name, 0) + size
+    schemas.sort(key=lambda r: -r[1])
+    return schemas[:top_schemas], sorted(([k, v] for k, v in merged.items()), key=lambda r: -r[1])[:top_tables], system
+
+
+def system_bytes(datadir):
+    total, read = 0, False
+    for pat in SYSTEM_FILES:
+        for f in glob.glob(os.path.join(datadir, pat)):
+            try:
+                if os.path.isfile(f):
+                    total += os.path.getsize(f)
+                    read = True
+            except OSError:
+                pass
+    return total, read
+
+
+def history(path, total, fs_used, keep_days, write, now=None):
+    """The size history: read it, add this run (unless write is false), keep keep_days -> {samples, last_bytes, last_time,
+    change_bytes, per_day_bytes, days}."""
+    now = now or time.time()
+    h = {"samples": 0, "last_bytes": None, "last_time": "", "change_bytes": None, "per_day_bytes": None, "days": None, "why": ""}
+    if not path:
+        return h
+    data = []
+    try:
+        with open(path) as f:
+            data = [x for x in json.load(f) if isinstance(x, dict) and "t" in x and "b" in x]
+    except (OSError, ValueError):
+        data = []
+    data = [x for x in data if now - float(x["t"]) <= keep_days * 86400.0 and float(x["t"]) < now]
+    if data:
+        last = data[-1]
+        h["last_bytes"], h["last_time"] = int(last["b"]), time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(float(last["t"])))
+        h["change_bytes"] = int(total) - int(last["b"])
+        first = data[0]
+        days = (now - float(first["t"])) / 86400.0
+        if days >= 1.0:
+            h["days"] = round(days, 1)
+            h["per_day_bytes"] = int((int(total) - int(first["b"])) / days)
+    h["samples"] = len(data) + 1
+    if write:
+        data.append({"t": int(now), "b": int(total), "fs_used": int(fs_used or 0)})
+        try:
+            d = os.path.dirname(path)
+            if d and not os.path.isdir(d):
+                os.makedirs(d, 0o755)
+            tmp = path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(data, f)
+            os.replace(tmp, path)
+        except OSError as e:
+            h["why"] = "the history could not be written: %s" % e
+    return h
+
+
+def database(p, check_mode):
+    datadir = (p["db_datadir"] or "").rstrip("/") or ""
+    db = {"datadir": datadir, "datadir_fs": None, "datadir_under": None, "source": "", "total_bytes": None, "data_bytes": None,
+          "system_bytes": None, "system_read": False, "schemas": [], "tables": [], "history": {}, "why": ""}
+    if datadir and os.path.isdir(datadir):
+        db["datadir_fs"] = fs_of(datadir)
+        roots = [x.rstrip("/") for x in p["paths"] if str(x).strip()]
+        db["datadir_under"] = any(datadir == r or datadir.startswith(r + "/") for r in roots) if roots else None
+    elif datadir:
+        db["why"] = "the data dir %s is not on this host (a container's? set servicenow_db_datadir to its path here)" % datadir
+    sizes = p["db_sizes"] or {}
+    schemas = [[str(r[0]), int(float(r[1] or 0)), int(float(r[2] if len(r) > 2 else 0))] for r in sizes.get("schemas") or [] if len(r) >= 2]
+    tables = [[str(r[0]), int(float(r[1] or 0))] for r in sizes.get("tables") or [] if len(r) >= 2]
+    if schemas:
+        db["source"] = "information_schema"
+        db["data_bytes"] = sum(r[1] for r in schemas)
+        db["schemas"] = sorted(schemas, key=lambda r: -r[1])[:p["db_top_schemas"]]
+        db["tables"] = sorted(tables, key=lambda r: -r[1])[:p["db_top_tables"]]
+    elif db["datadir_fs"]:
+        sc, tb, _ = files_sizes(datadir, 10 ** 6, p["db_top_tables"])
+        if sc:
+            db["source"] = "the data dir's files"
+            db["data_bytes"] = sum(r[1] for r in sc)
+            db["schemas"], db["tables"] = sc[:p["db_top_schemas"]], tb
+    if db["datadir_fs"]:
+        db["system_bytes"], db["system_read"] = system_bytes(datadir)
+    if db["data_bytes"] is not None:
+        db["total_bytes"] = db["data_bytes"] + (db["system_bytes"] or 0)
+        fs = db["datadir_fs"] or {}
+        db["history"] = history(p["db_history_file"], db["total_bytes"], fs.get("used_b"), p["db_history_keep_days"], not check_mode)
+    elif not db["why"]:
+        db["why"] = "the database's size was not read (no data dir, and the MariaDB check read no sizes)"
+    return db
+
+
+def main():
+    module = AnsibleModule(argument_spec=dict(
+        units=dict(type="list", elements="str", default=[]), home=dict(type="str", default="/glide"),
+        port=dict(type="raw", default=0), stats=dict(type="bool", default=True),
+        stats_pages=dict(type="list", elements="str", default=["/xmlstats.do", "/stats.do"]),
+        samples=dict(type="int", default=3), interval=dict(type="float", default=5),
+        log_hours=dict(type="float", default=24), log_glob=dict(type="str", default="localhost_log*"),
+        log_max_mb=dict(type="int", default=200), log_groups=dict(type="int", default=10),
+        timeout=dict(type="int", default=10), kind=dict(type="str", default="node", choices=["node", "db"]),
+        host_name=dict(type="str", default=""), stats_url=dict(type="str", default=""),
+        stats_auth=dict(type="str", default="auto", choices=["auto", "none", "basic"]),
+        stats_user=dict(type="str", default=""), stats_password=dict(type="str", default="", no_log=True),
+        sem_wait_ms=dict(type="int", default=1000),
+        paths=dict(type="list", elements="str", default=[]), fapolicyd=dict(type="bool", default=True),
+        fapolicyd_since=dict(type="str", default="today"), fapolicyd_critical=dict(type="list", elements="str", default=[]),
+        db_datadir=dict(type="str", default=""), db_sizes=dict(type="dict", default={}),
+        db_top_schemas=dict(type="int", default=5), db_top_tables=dict(type="int", default=10),
+        db_history_file=dict(type="str", default=""), db_history_keep_days=dict(type="int", default=60)),
+        supports_check_mode=True)
+    p = module.params
+    home = p["home"].rstrip("/") or "/"
+    fa = fapolicyd(p["fapolicyd_since"], p["fapolicyd_critical"]) if p["fapolicyd"] else {}
+    if p["kind"] == "db":
+        db = database(p, module.check_mode)
+        paths = [x for x in p["paths"] if str(x).strip()] + ([db["datadir"]] if db["datadir_fs"] else []) + ["/"]
+        module.exit_json(changed=False, hostname=socket.gethostname(), units=[], missing=[], looked_for=[], fapolicyd=fa, db=db,
+                         disk=disks(paths), memory=memory(),
+                         msg="database %s; fapolicyd %s" % (("%d bytes (%s)" % (db["total_bytes"], db["source"])) if db["total_bytes"]
+                                                            is not None else "size not read", fa.get("active") or "not installed"))
+    wanted = [u for u in p["units"] if str(u).strip()]
+    names, missing = find_units(wanted)
+    units = []
+    for u in names:
+        show = unit_show(u)
+        env = re.sub(r"\.service$", "", u)[len("snc_"):]
+        ndir = node_dir(home, env, show)
+        port, port_from = port_for(u, env, p["port"], ndir, home, show)
+        active = show.get("ActiveState", "") == "active"
+        uri = properties(os.path.join(ndir, "conf", "glide.properties")).get("glide.servlet.uri", "")
+        names = [p["host_name"], socket.getfqdn(), re.sub(r"^[a-z]+://", "", uri).split("/")[0].split(":")[0]]
+        st = read_stats(port, p["stats_pages"], p["samples"], p["interval"], p["timeout"], names, p["stats_url"],
+                        p["stats_auth"], (p["stats_user"], p["stats_password"])) if p["stats"] and active else \
+            {"status": 0, "why": "not read: the unit is not running" if p["stats"] else "not read (servicenow_node_stats false)",
+             "up": False, "sem_queued_samples": []}
+        units.append({"unit": u, "env": env, "active": show.get("ActiveState", "unknown"), "sub": show.get("SubState", ""),
+                      "enabled": show.get("UnitFileState", "unknown"), "since": show.get("ActiveEnterTimestamp", ""),
+                      "node_dir": ndir, "port": port, "port_from": port_from, "stats": st,
+                      "log": read_log(os.path.join(ndir, "logs"), p["log_glob"], p["log_hours"], p["log_max_mb"], p["log_groups"],
+                                      sem_wait_ms=p["sem_wait_ms"])})
+    module.exit_json(changed=False, hostname=socket.gethostname(), units=units, missing=missing,
+                     looked_for=[unit_name(u) for u in wanted], fapolicyd=fa,
+                     disk=disks([home] + [x for x in p["paths"] if str(x).strip()] + ["/"]), memory=memory(),
+                     msg="; ".join("%s %s%s" % (x["unit"], x["active"], (", stats " + ("up" if x["stats"]["up"] else "not read"))
+                                                if p["stats"] else "") for x in units) or "no snc_*.service unit")
+
+
+if __name__ == "__main__":
+    main()

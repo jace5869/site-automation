@@ -360,9 +360,165 @@ works. A group named otherwise: `servicenow_mid_hosts_group`; the instance's vie
 Server problem (on the host "servicenow"). Hourly is a good schedule. When the API itself is down, an
 AAP notification on the template's failure is the alert: a broken ServiceNow cannot take tickets.
 
+## Self-hosted instance
+
+An instance you run yourself - front-end (application) nodes on RHEL, MariaDB on its own RHEL host, the MID
+Servers on Windows (above) - gets the rest of its health in the same **ServiceNow health** report: the nodes,
+the database host and the instance's cluster view. Nothing is started, stopped or changed. The one thing the job
+writes is the database's size, kept for its growth: a small JSON file on the database host
+(`servicenow_db_history_file`, `/var/lib/site-health/servicenow-db-history.json`), never in Check mode;
+`servicenow_db_history: false` turns it off (and the growth with it). Without these groups in the inventory
+the job is as before.
+
+**The groups** (your Linux inventory, `inventories/example/hosts.yml` shows them):
+
+```yaml
+servicenow_nodes:            # the front-end nodes (servicenow_nodes_group)
+  hosts:
+    node01.yoursite.mil:
+    node03.yoursite.mil:
+servicenow_db_hosts:         # the database host (servicenow_db_group) - already a child of mariadb_hosts
+  hosts:
+    snowdb01.yoursite.mil:
+```
+
+**The nodes**, over SSH with sudo (the Linux **Machine** credential; root reads the node's logs):
+
+- **The units.** Each node runs as a systemd unit `snc_<env>.service`; a box normally runs one of them.
+  `servicenow_node_units: [snc_prod, snc_test, snc_dev]` (the default) is what is looked for: the units
+  installed on the host are judged, those not installed are no finding, and a host of the group with none of
+  them is critical ("no ServiceNow node unit found"). `servicenow_node_units: []` finds every `snc_*.service`.
+- **The install folder**, `servicenow_node_home: /glide`. A node's own folder is the one its unit starts
+  from (`/glide/nodes/prod_16000`), else `/glide/nodes/<env>*`; its logs are the `localhost_log*` files
+  in its `logs` folder, its port `glide.servlet.port` in its `conf/glide.properties`.
+- **The stats page**, read from the node itself. The port: `servicenow_node_port` (a number, or per unit
+  `{snc_prod: 16000, snc_test: 16001}`), else `glide.servlet.port` in the node's `conf/glide.properties` (that key
+  only), else the unit's command line (`-Dglide.servlet.port`), else the port the unit's java listens on. It is
+  asked for in turn - `https://<the node's name>:<port>`, `http://` on it, `http://127.0.0.1`, `https://127.0.0.1`
+  (a TLS connector answers plain HTTP with 400), then 127.0.0.1 with the node's name as the Host header; each
+  `/xmlstats.do`, then `/stats.do` - until one answers with the numbers. Or force one:
+  `servicenow_node_stats_url: "https://{fqdn}:{port}/stats.do"`. A page that asks for a login (401, 403, a login page)
+  is asked again with the ServiceNow API credential's login (basic auth; `servicenow_node_stats_auth: auto`, or
+  `basic` from the start, `none` never) - sent only over HTTPS to the node's own name or to 127.0.0.1, and never
+  shown. Not read: the finding says the port and the last answer, and lists what was tried and how the answer began. The numbers are found by their names on the page (memory max and in use, the
+  semaphore sets' in use and queue depth, the scheduler's workers and queue, active transactions,
+  uptime, the node's ID). A page that answers but holds none of them is said, and a field it
+  cannot find is shown as `-`. The page is read 3 times, 5 seconds apart
+  (`servicenow_node_stats_samples`, `_interval`): a semaphore queue counts only when it is there
+  in every read.
+
+| Finding | Severity | Setting |
+|---|---|---|
+| a node host not reached; none of `servicenow_node_units` installed on it | critical | `servicenow_node_units` |
+| a node unit not running | critical | |
+| a node unit that does not start at boot | warning | |
+| its stats page not answering while the unit runs | critical | |
+| the stats page refused (HTTP 401/403), no port found, nothing on it recognised | warning | `servicenow_node_port` |
+| JVM memory in use 85 % of its max (95 %: critical) | warning | `servicenow_node_mem_warn_pct`, `_critical_pct` |
+| transactions queued for a semaphore in every read (10 or more: critical) | warning | `servicenow_node_semaphore_queue_critical` |
+| more than 50 scheduled jobs waiting for a worker | warning | `servicenow_node_scheduler_queue_warn` |
+| OutOfMemory in the node's log in the last 24 hours | critical | `servicenow_node_log_hours` |
+| semaphore problems: a semaphore queue, a limit exceeded or a wait timed out, or a slow transaction that waited 1000 ms or more for its semaphore | warning | `servicenow_node_semaphore_wait_ms` |
+| 200 or more slow transactions ("waited excessive time to run") | warning | `servicenow_node_slow_tx_warn` |
+| 100 or more SEVERE lines (the most frequent message shown) | warning | `servicenow_node_severe_warn` |
+| the install folder's or `/`'s filesystem 85 % used (95 %: critical) | warning | `servicenow_node_disk_warn_pct`, `_critical_pct` |
+| swap 50 % used | warning | `servicenow_node_swap_warn_pct` |
+| fapolicyd denials today (by program and path) | warning | `servicenow_fapolicyd_since` |
+| a fapolicyd denial of the node's java or its install folder | critical | `servicenow_node_fapolicyd_critical` |
+
+The log lines are grouped by their message, as the AAP health check groups its containers' errors (times, thread
+numbers, transaction and session IDs, IDs in paths, numbers taken out): the report's **Node log errors** table lists
+the most frequent (`servicenow_node_log_groups`, 10). A slow transaction is one of three kinds: *semaphore wait* (it
+waited for one of the node's semaphores - the only kind that is a semaphore problem), *session wait* (its session
+wait about its whole run: one user's own requests queued behind each other) or *slow transaction*; the table gives
+each group's longest run and session wait. Who did it is never shown: a user name in a log line becomes `user: …` in
+the report and the email.
+
+**The cluster**, from the API (GET `sys_cluster_state`: `system_id`, `node_id`, `status`,
+`most_recent_message`, `schedulers`; the API account needs read on that table - admin, or an ACL). Read
+when the inventory has front-end nodes (`servicenow_cluster_check: auto`; `true` / `false`):
+
+| Finding | Severity | Setting |
+|---|---|---|
+| a node of the inventory offline in the cluster | critical | |
+| a node online, but its last heartbeat older than 10 minutes (hung) | critical | `servicenow_cluster_stale_minutes` |
+| an online node whose host is not in `servicenow_nodes` (not checked) | warning | |
+| an offline node not in the inventory (a retired node's record, which can be deleted) | warning | |
+| a host of `servicenow_nodes` not in the cluster | warning | |
+
+A table the account cannot read is said in the job's output, not counted as a problem.
+
+**fapolicyd**, on every node and the database host (as root, read-only): is it active, and what did it deny
+today (`ausearch -m FANOTIFY -ts today`), grouped by the program and the path denied - a table in the report.
+fapolicyd inactive is said, as info, and is no finding; denials while it runs are a warning, and a denial of
+what the host runs is critical: the node's `java` or its install folder (`servicenow_node_fapolicyd_critical`),
+the database server (`mariadbd`, `mysqld`), `/database` or its data dir (`servicenow_db_fapolicyd_critical`).
+`servicenow_fapolicyd: false`: not read.
+
+**The database host**, over SSH with sudo:
+
+- **The database** - the MariaDB check ([MARIADB.md](MARIADB.md): up, connections, slow queries, the error log,
+  replication if any). Attach the **MariaDB monitor** credential - the same one as STIG Manager's
+  (`aap/credential_types/mariadb_monitor.yml`; [MARIADB.md](MARIADB.md) section 4 has the GRANT). What it runs:
+  `servicenow_db_checks: [mariadb]`.
+- **Its disk**: the filesystems of `servicenow_db_paths` (`[/database]`), of the data dir and of `/`. The data dir
+  is what the server says (`@@datadir`); one that is not under `servicenow_db_paths` is a warning (the disk watched
+  is not the one it fills). A database in a container: `servicenow_db_datadir` is its data dir's path on the host.
+- **Its size against that disk** (the report's *Database size*, *Largest schemas* and *Largest tables*): data and
+  indexes per schema from `information_schema` (names and numbers only), plus InnoDB's system, undo and redo
+  files; the filesystem holding the data dir, used and free; the database's share of it; the 5 largest schemas
+  and the 10 largest tables (`servicenow_db_top_schemas`, `_tables`). The monitor account sees in
+  `information_schema` only the schemas it may read; when it sees none, the sizes are read from the data dir's
+  own files instead - one level down, the size of each file, never a recursive `du` of the database.
+- **Its growth**: each run's size is kept in `servicenow_db_history_file` (60 days); from the second run the
+  change since the last one, from a day on the growth per day, and when the data dir's filesystem is full at
+  that growth.
+
+| Finding | Severity | Setting |
+|---|---|---|
+| the database host not read | critical | |
+| `/database`, the data dir's or `/`'s filesystem 85 % used (95 %: critical) | warning | `servicenow_node_disk_warn_pct`, `_critical_pct` |
+| at the database's growth, its filesystem full in under 30 days (7: critical) | warning | `servicenow_db_fill_warn_days`, `_critical_days` |
+| the data dir not under `servicenow_db_paths` | warning | `servicenow_db_paths`, `servicenow_db_datadir` |
+| fapolicyd denials (the database server or its data: critical) | warning | `servicenow_db_fapolicyd_critical` |
+| what the MariaDB check finds | its own | [MARIADB.md](MARIADB.md) |
+
+Another group name: `servicenow_db_group`. Read only when the inventory has front-end nodes
+(`servicenow_check_db: auto`), so an inventory that has `servicenow_db_hosts` for its Health check is not read
+by this job before then; `true` / `false` to force it.
+
+**Two templates, or one.** AAP gives a job template one inventory and one Machine credential, and the
+MID Server hosts (Windows, WinRM) and the nodes (Linux, SSH) need one each:
+
+- **Two templates** (recommended): *ServiceNow health* as before - the Windows inventory,
+  `servicenow_health_part: mids` - and **ServiceNow health - nodes**: the same playbook, the Linux
+  inventory, its Machine credential, ServiceNow API, MariaDB monitor, and `servicenow_health_part: nodes`.
+  The nodes part reads the API it needs (the answer, the cluster) and no MID Server. Its findings carry
+  the check `servicenow_node`, never `servicenow`, so the two templates never resolve each other's tickets.
+- **One template** (`servicenow_health_part: all`, the default): its inventory holds both - an AAP
+  constructed inventory of the Windows and Linux ones - with the Linux Machine credential and the MID
+  Server hosts' WinRM login in their group's variables (`ansible_user`, `ansible_password` from a
+  vaulted value).
+
+A **Limit** works: `-l node01.yoursite.mil` reads that node alone (with the API, on the AAP side - the
+node stands in for localhost with a local connection); the hosts of the groups outside the Limit are
+not contacted and not judged, and the job's line names them. **No group `servicenow_nodes`** in the inventory: the
+Limit's hosts are the front-end nodes (`-l node01.yoursite.mil,node03.yoursite.mil`; not localhost, not a MID Server
+or database host), and the job says so. `servicenow_check_nodes: false`: no node and no database host is read.
+
+The job **never ends green having read nothing**: before it reads any host it fails, saying why and listing the
+groups the inventory has, when `servicenow_health_part: nodes` finds no front-end node (no group
+`servicenow_nodes_group` - or one with no hosts - and no Limit naming them), when `servicenow_check_db: true` names a
+database group that is not there, or when `servicenow_health_part: mids` finds no MID Server hosts' group (`servicenow_check_mid_hosts:
+false` for the instance's view only). With `all` (the default) a missing group means that part is not read, as before.
+
+**In a workflow:** `[ServiceNow health - nodes] --Always--> [ServiceNow tickets]`, hourly, like the MID
+Servers' template. A problem opens one incident on the host "servicenow" (check `servicenow_node`).
+
 ## Next
 
-- **ServiceNow health** (hourly): the instance's API and the MID Servers (above).
+- **ServiceNow health** (hourly): the instance's API and the MID Servers (above); a self-hosted instance's
+  nodes, database host and cluster with **ServiceNow health - nodes** (above).
 - **The tickets step** in the *Daily health* workflow ([WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md)):
   one incident per problem, updated on later runs, noted or resolved when it clears.
 - Keep **ServiceNow - test ticket**. Run it again after a password change, a new certificate,

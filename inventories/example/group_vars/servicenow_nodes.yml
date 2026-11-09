@@ -1,0 +1,6 @@
+# A self-hosted ServiceNow's front-end nodes, read by the ServiceNow health job (servicenow_health_part: nodes) over SSH
+# with sudo. Read-only. docs/SERVICENOW_SETUP.md, "Self-hosted instance". The defaults find everything; set only what
+# differs here:
+# servicenow_node_units: [snc_prod, snc_test, snc_dev]   # those installed are judged; none of them = critical; [] = snc_*
+# servicenow_node_home: /glide                     # the install folder
+# servicenow_node_port: {snc_prod: 16000, snc_test: 16001}   # else glide.servlet.port in the node's glide.properties

@@ -242,9 +242,14 @@ stigman_health_api: https://stigman.yoursite.mil/api
 cert_renew_catalog_item: YOUR PKI ITEM           # its name exactly as the catalog shows it, or its sys_id
 # servicenow_catalog_test_order: false           # true = also order it once, with a test CSR (the PKI gets a request)
 """),
-    "servicenow_health.yml": ("ServiceNow health", "ServiceNow API (Machine (Windows) for the MID Server hosts)", "", """\
+    "servicenow_health.yml": ("ServiceNow health", "ServiceNow API (Machine (Windows) for the MID Server hosts; Machine and "
+                              "MariaDB monitor for a self-hosted instance's nodes and database host)", "", """\
 ## The MID Server hosts: a group servicenow_mid_hosts in the Windows inventory this template runs with
 # servicenow_mid_expected: [MID01, MID02]          # these must be in the instance's MID Server list
+## A self-hosted instance: the groups servicenow_nodes and servicenow_db_hosts in the Linux inventory. AAP gives a template
+## one inventory and one Machine credential: two templates - this one with the Windows inventory and mids, a second
+## ("ServiceNow health - nodes") with the Linux inventory, its Machine credential, MariaDB monitor and nodes
+# servicenow_health_part: mids                     # all (default: both, one inventory with both), mids, nodes
 """),
     "servicenow_availability.yml": ("ServiceNow - availability", "ServiceNow API, Red Hat Ansible Automation Platform (optional)", "", """\
 ## Every 5 to 15 minutes (Concurrent jobs off); quiet when up, red when down. With the AAP credential the report also

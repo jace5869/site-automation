@@ -1,0 +1,19 @@
+#!/usr/bin/env python3
+"""A fake rpm for the ServiceNow node check: "rpm -q fapolicyd" answers by SNNODE_FAPOLICYD (none = not installed);
+anything else goes to the real rpm, if there is one."""
+import os
+import shutil
+import sys
+
+if sys.argv[1:] == ["-q", "fapolicyd"]:
+    if os.environ.get("SNNODE_FAPOLICYD", "active") == "none":
+        print("package fapolicyd is not installed")
+        sys.exit(1)
+    print("fapolicyd-1.3.3-1.el9.x86_64")
+    sys.exit(0)
+here = os.path.dirname(os.path.abspath(__file__))
+path = os.pathsep.join(p for p in os.environ.get("PATH", "").split(os.pathsep) if os.path.abspath(p) != here)
+real = shutil.which("rpm", path=path)
+if not real:
+    sys.exit(1)
+os.execv(real, [real] + sys.argv[1:])

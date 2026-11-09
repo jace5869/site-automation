@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+"""A fake ausearch for the ServiceNow node check: -m FANOTIFY prints SNNODE_DENIALS (a file of ausearch -i records), or
+"<no matches>" (exit 1) without it. Reads only."""
+import os
+import sys
+
+f = os.environ.get("SNNODE_DENIALS", "")
+if "FANOTIFY" in sys.argv and f and os.path.exists(f):
+    with open(f) as fh:
+        sys.stdout.write(fh.read())
+    sys.exit(0)
+sys.stderr.write("<no matches>\n")
+sys.exit(1)

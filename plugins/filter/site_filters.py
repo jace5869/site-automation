@@ -1762,7 +1762,7 @@ CHECK_KIND = {"certs": "Certificate", "net_certs": "Certificate", "vmware_certs"
               "mounts": "Mounts", "services": "Service", "containers": "Containers", "mariadb": "Database", "auditd": "Audit",
               "fapolicyd": "fapolicyd", "performance": "Performance", "selinux": "SELinux", "accounts": "Accounts", "time": "Time",
               "patching": "Patching", "network": "Network", "netperf": "Network", "logging": "Logging", "stig": "STIG",
-              "poam": "POA&M", "reachability": "Reachability", "servicenow": "ServiceNow", "sso": "SSO", "config": "Configuration"}
+              "poam": "POA&M", "reachability": "Reachability", "servicenow": "ServiceNow", "servicenow_node": "ServiceNow node", "sso": "SSO", "config": "Configuration"}
 
 
 def findings_cards(by_host, missing=None, max_cards=6):
@@ -1778,7 +1778,9 @@ def findings_cards(by_host, missing=None, max_cards=6):
         sev = "critical" if str(f.get("severity")) == "critical" else "warning"
         nxt = str(f.get("note") or "") or ("Look further:" if f.get("hint") else "")
         cards.append({"status": sev, "meta": CHECK_KIND.get(str(f.get("check")), str(f.get("check") or "")),
-                      "title": str(f.get("summary") or f.get("check") or ""), "subject": h, "next": nxt, "code": str(f.get("hint") or "")})
+                      # a finding's own subject (a report made on the AAP side about other hosts: the host it is about), else its host
+                      "title": str(f.get("summary") or f.get("check") or ""), "subject": str(f.get("subject") or h), "next": nxt,
+                      "code": str(f.get("hint") or "")})
     missing = sorted(missing or [])
     if missing:
         cards.append({"status": "warning", "chip": "Not checked", "meta": "Coverage",

@@ -460,6 +460,16 @@
 ## InnoDB history list length (old row versions not yet purged)
 # check_mariadb_history_length_warn: 1000000
 
+## ---- SIZES (off by default) ---------------------------------------------------------------------
+## true = also read each schema's data and index bytes and the largest tables from
+## information_schema (names and numbers only) and keep them as the fact check_mariadb_sizes_result
+## for the job that asked (the ServiceNow health job's database host). No finding of its own. The
+## account sees only the schemas it may read; [] when it sees none.
+# check_mariadb_sizes: false
+
+## the largest tables listed
+# check_mariadb_sizes_tables: 10
+
 # ---- check_mounts --------------------------------------------------------------------------------
 ## filesystem types counted as network mounts (checked for hangs and fullness)
 # check_mounts_network_types: [nfs, nfs4, cifs, smb3]

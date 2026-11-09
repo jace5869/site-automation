@@ -271,6 +271,47 @@
   check_mode: false
   when: _mdb_running | bool and _mdb_q.rc | default(1) == 0
 
+# SIZES (check_mariadb_sizes, off by default; the ServiceNow health job's database host turns it on): the data and
+# index bytes of each schema and the largest tables, from information_schema - names and numbers only. An account that
+# may not see a schema's tables sees none of its rows: the sizes are then read from the data dir's files by the caller.
+- name: MariaDB | sizes - the largest schemas and tables (check_mariadb_sizes)
+  ansible.builtin.command:
+    argv: "{{ _mdb_cmd + ['-N', '-B', '-e', _mdb_size_sql] }}"
+    stdin: "{{ lookup('ansible.builtin.env', 'MARIADB_MONITOR_PASSWORD') if _mdb_pw_set | bool else omit }}"
+    chdir: /
+  vars:
+    _mdb_size_sql: >-
+      SELECT 'S', TABLE_SCHEMA, SUM(IFNULL(DATA_LENGTH, 0) + IFNULL(INDEX_LENGTH, 0)), COUNT(*) FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA NOT IN ('mysql', 'information_schema', 'performance_schema', 'sys') GROUP BY TABLE_SCHEMA
+      ORDER BY 3 DESC LIMIT 50;
+      SELECT 'T', CONCAT(TABLE_SCHEMA, '.', TABLE_NAME), IFNULL(DATA_LENGTH, 0) + IFNULL(INDEX_LENGTH, 0) FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA NOT IN ('mysql', 'information_schema', 'performance_schema', 'sys') ORDER BY 3 DESC
+      LIMIT {{ check_mariadb_sizes_tables | int }}
+  environment: "{{ _mdb_podman_env }}"
+  no_log: true                # stdin carries the password (the registered result is still used below)
+  become: "{{ true if _mdb_run_as | default('') else omit }}"
+  become_user: "{{ _mdb_run_as | default(omit, true) }}"
+  register: _mdb_sz
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: check_mariadb_sizes | bool and _mdb_running | bool
+
+- name: MariaDB | sizes - kept for the caller (check_mariadb_sizes_result, one per instance)
+  ansible.builtin.set_fact:
+    check_mariadb_sizes_result: >-
+      {%- set r = {'instance': _mdb_c or 'host', 'datadir': _mdb.V.DATADIR | default(''), 'schemas': [], 'tables': [],
+                   'read': (_mdb_sz.rc | default(1)) == 0,
+                   'why': (_mdb_sz.stderr | default('') | trim | replace('\n', ' ') | truncate(200)) if (_mdb_sz.rc | default(1)) != 0 else ''} -%}
+      {%- for line in _mdb_sz.stdout_lines | default([]) -%}
+      {%-   set c = line.split('\t') -%}
+      {%-   if c | length == 4 and c[0] == 'S' -%}{%- set _ = r.schemas.append([c[1], c[2] | int, c[3] | int]) -%}
+      {%-   elif c | length == 3 and c[0] == 'T' -%}{%- set _ = r.tables.append([c[1], c[2] | int]) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ check_mariadb_sizes_result | default([]) + [r] }}
+  when: check_mariadb_sizes | bool
+
 - name: MariaDB | findings
   ansible.builtin.set_fact:
     _mdb_findings: >-
