@@ -243,6 +243,7 @@
     prune: "{{ report_web_index_prune | bool }}"
     # a report's own lines to leave out of the index (the ticket insights: its team pages, listed there before 0.88.0)
     drop: "{{ _web_index_drop | default([]) }}"
+    sub_pages: "{{ _web_sub_pages | default([]) }}"
     data:
       report: "{{ _web_report }}"
       job: "{{ awx_job_id | default(tower_job_id | default('local')) }}"

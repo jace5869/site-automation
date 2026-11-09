@@ -201,6 +201,14 @@ class Module(unittest.TestCase):
         for bad in ("relative/path", os.path.join(self.tmp, "not-mounted")):
             with self.assertRaises(rw.Fail):
                 rw.Target(bad, "", 5)
+        # the same page again is not written (0.97.0: hundreds of pages a run onto a share); a changed one is
+        path = os.path.join(self.tmp, "a", "b", "page.html")
+        os.utime(path, (1000000000, 1000000000))
+        t.write("a/b/page.html", "<p>é</p>", "text/html")
+        self.assertEqual(os.path.getmtime(path), 1000000000)
+        t.write("a/b/page.html", "<p>è</p>", "text/html")
+        self.assertNotEqual(os.path.getmtime(path), 1000000000)
+        self.assertEqual(t.read("a/b/page.html"), "<p>è</p>")
 
     def test_smb_path(self):
         self.assertEqual(rw.smb_path('\\\\fileserver\\its\\aap\\reports\\'), ('fileserver', '\\\\fileserver\\its\\aap\\reports'))

@@ -17,6 +17,8 @@ description:
   - With members, reads sys_user_grmember for the members of every assignment group the records name (the teams'
     leaderboards list the members; a ticket resolved by someone outside the team counts for the member it was assigned to).
   - A table (or sys_audit, sys_user_grmember) the account cannot read is returned with its error; the others are still read.
+  - With group_parents (0.97.0), reads sys_user_group for the groups the records name and their parents up the chain
+    (sys_id, name, parent, active, type - never a person's field): the sites and directorates ServiceNow itself knows.
   - With work_notes_for (0.96.0), reads only the work notes of those incidents (sys_journal_field, element work_notes,
     newest first, GET only) for ACT's fixes - nothing else; refused (403) is returned as work_notes_error.
 options:
@@ -36,7 +38,9 @@ options:
   max_records: {description: At most this many records per table., type: int, default: 20000}
   audit: {description: Read the assignment history (sys_audit) of the incidents passed around., type: bool, default: true}
   handoff_min: {description: The reassignments that make an incident passed around., type: int, default: 3}
+  handoff_source: {description: "Where the hand-off paths come from (0.97.0): auto (sys_audit, else metric_instance), audit, metric (never sys_audit), none.", type: str, default: auto}
   members: {description: Read the groups' members (sys_user_grmember) for the leaderboards., type: bool, default: true}
+  group_parents: {description: "Read the groups' parents and active flag (sys_user_group) for the sites and directorates.", type: bool, default: true}
   now: {description: "The clock (tests): YYYY-MM-DDTHH:MM:SS UTC.", type: str, default: ''}
   work_notes_for: {description: "Incident sys_ids: read only their work notes (sys_journal_field), nothing else.", type: list, elements: str, default: []}
   work_notes_max: {description: The newest work notes kept per incident., type: int, default: 20}
@@ -52,9 +56,13 @@ groups: {description: "[{name, sys_id, found}] - the groups named.", type: list}
 tables: {description: "[{table, read, kept, more, error}]", type: list}
 items: {description: "The records: table, number, sys_id, short_description, state, priority, people, group, dates, close notes ...", type: list}
 audit: {description: "{incident sys_id: [[when, old group, new group], ...]} (group names), oldest first.", type: dict}
-audit_error: {description: "Why sys_audit was not read ('' = read, or not needed).", type: str}
+audit_error: {description: "Why the hand-off paths were not read ('' = read, or not needed) - each table tried.", type: str}
+audit_source: {description: "Where the paths came from: sys_audit, metric_instance, or '' (counts only).", type: str}
+audit_note: {description: "sys_audit refused but metric_instance read: why (for the report's Not read).", type: str}
 members: {description: "{group name: [the members' names]} for every group the records name (sys_user_grmember).", type: dict}
 members_error: {description: "Why sys_user_grmember was not read ('' = read, or not asked).", type: str}
+group_tree: {description: "{sys_id: {name, parent (sys_id), active, type}} - the groups the records name and their parents.", type: dict}
+group_tree_error: {description: "Why sys_user_group was not read ('' = read, or not asked).", type: str}
 url: {description: The instance's address., type: str}
 work_notes: {description: "With work_notes_for: {incident sys_id: [[when (UTC text), text], ...]}, newest first.", type: dict}
 work_notes_error: {description: "Why sys_journal_field was not read ('' = read).", type: str}
@@ -335,6 +343,51 @@ def read_audit(api, ids, names, chunk=100):
     return out, ""
 
 
+def read_metric(api, ids, names, chunk=100):
+    """The assignment group sequence of these incidents from the out-of-box metric "Assignment Group" (metric_instance,
+    GET only: id, value, start, end) -> ({sys_id: [[when, old, new]]} as read_audit gives it, error)."""
+    rows = {}
+    for i in range(0, len(ids), chunk):
+        part = ids[i:i + chunk]
+        try:
+            r = api.get("api/now/table/metric_instance", {"sysparm_query": "definition.name=Assignment Group^table=incident^idIN" + ",".join(part)
+                                                          + "^ORDERBYstart", "sysparm_fields": "id,value,start,end",
+                                                          "sysparm_limit": 30 * len(part)})
+        except SnError as e:
+            return {}, str(e)
+        for x in (r.get("result") if isinstance(r, dict) else None) or []:
+            k = str(_vd(x, "id")[0] or "")
+            v = str(_vd(x, "value")[1] or _vd(x, "value")[0] or "").strip()
+            if k and v:
+                rows.setdefault(k, []).append([str(_vd(x, "start")[0] or ""), names.get(v, v)])
+    out = {}
+    for k, seq in rows.items():
+        seq.sort(key=lambda e: e[0])
+        out[k] = [[w, seq[j - 1][1] if j else "", g] for j, (w, g) in enumerate(seq)]
+    return out, ""
+
+
+def read_paths(api, ids, names, source="auto"):
+    """The hand-off paths (0.97.0): sys_audit, else metric_instance (auto); one of them (audit, metric); none ->
+    (paths, source, error, note)."""
+    src = str(source or "auto").strip().lower()
+    if src == "none" or not ids:
+        return {}, "", "", ""
+    errs = []
+    if src in ("auto", "audit"):
+        got, err = read_audit(api, ids, names)
+        if not err:
+            return got, "sys_audit", "", ""
+        errs.append("sys_audit: " + err)
+        if src == "audit":
+            return {}, "", "; ".join(errs), ""
+    got, err = read_metric(api, ids, names)
+    if not err:
+        return got, "metric_instance", "", ("; ".join(errs) + " - the paths from metric_instance instead") if errs else ""
+    errs.append("metric_instance: " + err)
+    return {}, "", "; ".join(errs), ""
+
+
 def read_members(api, groups, chunk=50):
     """The members of these groups (sys_user_grmember; groups: {sys_id: name}, or {name: name} when the ids are not
     known) -> ({group name: [names]}, error). Read with display values: a member is the name the records show."""
@@ -395,6 +448,33 @@ def read_work_notes(api, ids, per_id=20, chars=1500, chunk=100):
     return out, ""
 
 
+def read_group_tree(api, ids, depth=6, chunk=100):
+    """The groups (sys_user_group, GET only) and their parents up the chain, at most depth levels, each read once (a
+    cycle stops) -> ({sys_id: {name, parent, active, type}}, error). Only those fields: never a manager or a person."""
+    out, want, level = {}, [str(x) for x in ids if str(x or "").strip()], 0
+    while want and level < int(depth):
+        level += 1
+        nxt = []
+        for i in range(0, len(want), chunk):
+            part = want[i:i + chunk]
+            try:
+                r = api.get("api/now/table/sys_user_group", {"sysparm_query": "sys_idIN" + ",".join(part), "sysparm_fields": "sys_id,name,parent,active,type",
+                                                             "sysparm_display_value": "all", "sysparm_exclude_reference_link": "true", "sysparm_limit": len(part) + 10})
+            except SnError as e:
+                return out, str(e)
+            for x in (r.get("result") if isinstance(r, dict) else None) or []:
+                k = str(_vd(x, "sys_id")[0] or "")
+                if not k or k in out:
+                    continue
+                par = str(_vd(x, "parent")[0] or "")
+                out[k] = {"name": " ".join(str(_vd(x, "name")[1] or "").split()), "parent": par, "active": _flag(_vd(x, "active")[0]) is not False,
+                          "type": str(_vd(x, "type")[1] or "")}
+                if par and par not in out and par not in nxt:
+                    nxt.append(par)
+        want = [k for k in nxt if k not in out]
+    return out, ""
+
+
 def sn_time(text):
     t = str(text or "").strip()
     if not t:
@@ -413,10 +493,11 @@ def keep(it, since, until):
     return d is None or d >= since
 
 
-def read_all(api, groups, tables, win, max_records=20000, audit=True, handoff_min=3, members=True):
+def read_all(api, groups, tables, win, max_records=20000, audit=True, handoff_min=3, members=True, group_parents=True, handoff_source="auto"):
     since, until = sn_time(win["prev_since"]), sn_time(win["until"])
     res = {"ok": False, "error": "", "window": win, "groups": [], "tables": [], "items": [], "audit": {}, "audit_error": "",
-           "members": {}, "members_error": "", "lookup_note": "", "url": api.url}
+           "members": {}, "members_error": "", "lookup_note": "", "url": api.url, "group_tree": {}, "group_tree_error": "",
+           "audit_source": "", "audit_note": ""}
     g, gerr = lookup_groups(api, groups)
     res["groups"] = g
     gids = [x["sys_id"] for x in g if x.get("sys_id")]
@@ -458,9 +539,12 @@ def read_all(api, groups, tables, win, max_records=20000, audit=True, handoff_mi
     if audit:
         ids = [it["sys_id"] for it in items if it["table"] == "incident" and it.get("reassignment_count", 0) >= int(handoff_min)]
         if ids:
-            res["audit"], res["audit_error"] = read_audit(api, ids, names)
+            res["audit"], res["audit_source"], res["audit_error"], res["audit_note"] = read_paths(api, ids, names, handoff_source)
     if members and names:
         res["members"], res["members_error"] = read_members(api, names)
+    gids = sorted(set(it.get("group_id") for it in items if it.get("group_id") and re.match(r"^[\w-]{1,64}$", str(it["group_id"]))))
+    if group_parents and gids:
+        res["group_tree"], res["group_tree_error"] = read_group_tree(api, gids)
     return res
 
 
@@ -474,7 +558,8 @@ def main():
             months=dict(type="int", default=6), days=dict(type="float", default=0), until=dict(type="str", default=""),
             compare=dict(type="bool", default=True), time_zone=dict(type="str", default=""),
             max_records=dict(type="int", default=20000), audit=dict(type="bool", default=True), handoff_min=dict(type="int", default=3),
-            members=dict(type="bool", default=True), now=dict(type="str", default=""),
+            members=dict(type="bool", default=True), now=dict(type="str", default=""), group_parents=dict(type="bool", default=True),
+            handoff_source=dict(type="str", default="auto", choices=["auto", "audit", "metric", "none"]),
             work_notes_for=dict(type="list", elements="str", default=[]), work_notes_max=dict(type="int", default=20),
             work_note_chars=dict(type="int", default=1500),
         ),
@@ -502,7 +587,7 @@ def main():
         url = "https://" + url
     api = Api(url, p["username"], p["password"], p["validate_certs"], p["ca_path"], p["timeout"])
     try:
-        res = read_all(api, p["groups"], p["tables"], win, p["max_records"], p["audit"], p["handoff_min"], p["members"])
+        res = read_all(api, p["groups"], p["tables"], win, p["max_records"], p["audit"], p["handoff_min"], p["members"], p["group_parents"], p["handoff_source"])
     except SnError as e:
         res = {"ok": False, "error": str(e), "window": win, "groups": [], "tables": [], "items": [], "audit": {}, "audit_error": "",
                "members": {}, "members_error": "", "lookup_note": "", "url": url}

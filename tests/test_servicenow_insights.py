@@ -23,23 +23,34 @@ import site_servicenow_insights as rd  # noqa: E402
 
 NOW = datetime.datetime(2026, 11, 1, 6, 0, tzinfo=rd.UTC)
 OPTS = {"bare_chars": 20, "bare_phrases": ["fixed", "done", "resolved", "resolved per user", "see work notes", "rebooted", "n/a",
-                                            "user confirmed", "completed"], "act": False, "kb_min": 50}
+                                            "user confirmed", "completed"], "act": False, "kb_min": 50, "hierarchy_source": "names"}
 _SITE = {}
+_SITES = {}
+HIER_OPTS = dict(OPTS, directorates=["CODEX"], suffix_directorates=["NOVA"])                      # the names (OPTS: hierarchy_source names)
+PARENTS_OPTS = dict(OPTS, hierarchy_source="parents")
 
 
-def site():
-    """The made-up site (insights_seed.py), read as the module reads it - once."""
+def site(sites=False):
+    """The made-up site (insights_seed.py), read as the module reads it - once. sites: its groups named as three sites with
+    directorates (--sites, 0.97.0)."""
+    _SITE = _SITES if sites else globals()["_SITE"]
     if not _SITE:
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "seed.json")
-            subprocess.check_call([sys.executable, os.path.join(HERE, "servicenow", "insights_seed.py"), path, "0.4"], stdout=subprocess.DEVNULL)
+            subprocess.check_call([sys.executable, os.path.join(HERE, "servicenow", "insights_seed.py"), path, "0.4"] + (["--sites"] if sites else []),
+                                  stdout=subprocess.DEVNULL)
             with open(path) as fh:
                 seed = json.load(fh)
         win = rd.window(6, 0, "2026-10-31", True, "", NOW)
         since, until = rd.sn_time(win["prev_since"]), rd.sn_time(win["until"])
-        items, audit, members, notes = [], {}, {}, {}
+        items, audit, members, notes, gtree = [], {}, {}, {}, {}
         for r in seed:
             t = r.get("_table")
+            if t == "metric_instance":
+                continue
+            if t == "sys_user_group":
+                gtree[r["sys_id"]] = {"name": r["name"], "parent": r["parent"], "active": r["active"] != "false", "type": r["type"]}
+                continue
             if t == "sys_journal_field":
                 notes.setdefault(r["element_id"], []).append([r["sys_created_on"], r["value"]])
                 continue
@@ -54,11 +65,19 @@ def site():
             if rd.keep(it, since, until):
                 items.append(it)
         _SITE["r"] = {"ok": True, "window": win, "items": items, "audit": audit, "members": members, "groups": [], "url": "https://sn.example.mil",
+                      "group_tree": gtree,
                       "tables": [{"table": "incident", "read": 10, "kept": 10, "more": False, "error": ""}]}
         _SITE["mask"] = F.servicenow_insights_mask(_SITE["r"], OPTS)
         _SITE["work_notes"] = {"work_notes": dict((k, sorted(v, reverse=True)) for k, v in notes.items()), "work_notes_error": ""}
-        _SITE["model"] = F.servicenow_insights_model(_SITE["r"], None, _SITE["mask"], OPTS)
+        _SITE["model"] = F.servicenow_insights_model(_SITE["r"], None, _SITE["mask"], HIER_OPTS if sites else OPTS)
     return _SITE
+
+
+def page_links(m, rel=""):
+    """Every page's link as the role makes them (web_links): the All page, each site's, directorate's and team's."""
+    links = dict((p["key"], rel + "/".join(p["path"]) + "/latest.html") for p in m["pages"])
+    links["all"] = rel + "latest.html"
+    return links
 
 
 class Window(unittest.TestCase):
@@ -287,6 +306,52 @@ class WorkNotes(unittest.TestCase):
         self.assertIn("sys_journal_field (the incidents&#x27; work notes, for ACT&#x27;s fixes): GET x: HTTP 403", h2)
 
 
+class HandoffPaths(unittest.TestCase):
+    """0.97.0: the hand-off paths from sys_audit, else the "Assignment Group" metric (metric_instance) - GET only."""
+
+    class Api(object):
+        url = "https://sn.example.mil"
+
+        def __init__(self, deny=()):
+            self.calls, self.deny = [], deny
+
+        def get(self, path, params):
+            self.calls.append((path, params))
+            table = path.rsplit("/", 1)[1]
+            if table in self.deny:
+                raise rd.SnError("GET %s: HTTP 403: Operation Failed: ACL Exception: no read access to %s" % (path, table))
+            if table == "sys_audit":
+                return {"result": [{"documentkey": "a", "oldvalue": "g1", "newvalue": "g2", "sys_created_on": "2026-10-01 10:00:00"}]}
+            return {"result": [{"id": "a", "value": "Desk", "start": "2026-10-01 09:00:00"}, {"id": "a", "value": "g2", "start": "2026-10-01 10:00:00"},
+                               {"id": "a", "value": "Desk", "start": "2026-10-01 12:00:00"}]}
+
+    def test_sources(self):
+        names = {"g1": "Desk", "g2": "Windows"}
+        api = self.Api()
+        self.assertEqual(rd.read_paths(api, ["a"], names), ({"a": [["2026-10-01 10:00:00", "Desk", "Windows"]]}, "sys_audit", "", ""))
+        api = self.Api(deny=("sys_audit",))
+        paths, src, err, note = rd.read_paths(api, ["a"], names)
+        self.assertEqual((src, err), ("metric_instance", ""))
+        self.assertEqual(paths["a"], [["2026-10-01 09:00:00", "", "Desk"], ["2026-10-01 10:00:00", "Desk", "Windows"], ["2026-10-01 12:00:00", "Windows", "Desk"]])
+        self.assertIn("sys_audit: GET api/now/table/sys_audit: HTTP 403", note)
+        q = api.calls[-1][1]
+        self.assertEqual(q["sysparm_query"], "definition.name=Assignment Group^table=incident^idINa^ORDERBYstart")
+        self.assertEqual(q["sysparm_fields"], "id,value,start,end")
+        paths, src, err, note = rd.read_paths(self.Api(deny=("sys_audit", "metric_instance")), ["a"], names)
+        self.assertEqual((paths, src), ({}, ""))
+        self.assertIn("sys_audit: ", err)
+        self.assertIn("metric_instance: ", err)
+        api = self.Api()
+        self.assertEqual(rd.read_paths(api, ["a"], names, "metric")[1], "metric_instance")
+        self.assertEqual([c[0] for c in api.calls], ["api/now/table/metric_instance"])                # metric: sys_audit never asked
+        self.assertEqual(rd.read_paths(self.Api(deny=("sys_audit",)), ["a"], names, "audit")[1:3][0], "")
+        self.assertEqual(rd.read_paths(self.Api(), ["a"], names, "none"), ({}, "", "", ""))
+        m = {"audit_error": "sys_audit: GET x: HTTP 403; metric_instance: GET y: HTTP 403", "audit_note": ""}
+        self.assertIn("sys_audit and metric_instance (the hand-off paths): sys_audit: GET x: HTTP 403; metric_instance", "\n".join(F.not_read_lines(m)))
+        self.assertIn("the hand-off paths: sys_audit: x - the paths from metric_instance instead",
+                      "\n".join(F.not_read_lines({"audit_note": "sys_audit: x - the paths from metric_instance instead"})))
+
+
 class Model(unittest.TestCase):
     def test_the_site(self):
         m = site()["model"]
@@ -384,12 +449,11 @@ class Model(unittest.TestCase):
 class Page(unittest.TestCase):
     def test_site_page(self):
         m = site()["model"]
-        links = dict((t, F._slug(t) + "/latest.html") for t in m["teams"])
-        links["all"] = "latest.html"
+        links = page_links(m)
         h = P.servicenow_insights_page(m, "all", {"links": links, "generated": "2026-11-01 06:05 UTC", "job": "7"})
         for sid in ("glance", "teams", "keepingup", "severity", "issues", "problems", "handoffs", "requests", "changes", "notes", "allstars", "kb", "method"):
             self.assertIn('id="%s"' % sid, h)
-        self.assertIn('href="ops-windows/latest.html"', h)
+        self.assertIn('href="ops/other/windows/latest.html"', h)
         self.assertIn("https://sn.example.mil/incident.do?sysparm_query=number=INC", h)
         self.assertIn("<!--site-report-logo-->", h)
         self.assertIn("AAP job 7", h)
@@ -399,21 +463,17 @@ class Page(unittest.TestCase):
         # the script: loaded from the website's site-insights.js and carried in the page (site_report_web writes the file)
         self.assertIn('<script src="site-insights.js"></script><script id="site-report-js" data-file="site-insights.js">', h)
         self.assertIn("if(window.siteInsights)return;", h)
-        # without any script: the teams are links - the picker in the bar (a details menu) and the side bar - short names,
-        # the whole one as the title; the charts' values are <title>s
-        self.assertIn('<details class="picker" id="picker"><summary title="Switch team (t)"', h)
-        self.assertIn('<span class="pk-l">Team</span><span class="pk-v">All assignment groups</span>', h)
-        self.assertIn('<li class="all"><a href="latest.html" data-n="all assignment groups all assignment groups" data-g="" title="All assignment groups" '
-                      'aria-current="page"><span>All assignment groups</span></a></li>', h)
-        self.assertIn('<li><a href="ops-windows/latest.html" data-n="ops - windows windows" data-g="" title="Ops - Windows"><span>Windows</span></a></li>', h)
-        self.assertIn('<a class="team" href="ops-windows/latest.html" data-n="ops - windows windows" data-g="" title="Ops - Windows">Windows</a>', h)
-        # A to Z everywhere (0.96.0): the picker, the side bar, Teams side by side - not the busiest first
-        for where in (h.split('id="picklist"')[1].split("</ul>")[0], h.split('<nav class="toc"')[1].split("</nav>")[0],
-                      h.split('id="teams"')[1].split("</table>")[0]):
-            got = re.findall(r'href="(ops-[a-z-]+)/latest.html"', where)
-            self.assertEqual(got, sorted(got), where[:200])
-            self.assertEqual(len(got), 5)
+        # without any script: every page is a link - the menu in the bar (a details menu) and the side bar's tree; the charts'
+        # values are <title>s (0.97.0: sites, directorates, teams)
+        self.assertIn('<details class="picker" id="picker"><summary title="Go to a site, directorate or team (t)"', h)
+        self.assertIn('<span class="pk-l">View</span><span class="pk-v">All assignment groups</span>', h)
+        self.assertIn('<li class="lv0 all"><a href="latest.html" data-n="all assignment groups all assignment groups" data-c="" '
+                      'title="All assignment groups" aria-current="page">All assignment groups</a></li>', h)
+        self.assertIn('<li class="lv3"><a href="ops/other/windows/latest.html" data-n="ops - windows windows" data-c="ops other" title="Ops - Windows">Windows</a></li>', h)
+        self.assertIn('<details class="tn lv1" open><summary><a class="team lv1" href="ops/latest.html"', h)
+        self.assertIn('<a class="team lv3" href="ops/other/windows/latest.html" data-n="ops - windows windows" data-c="ops other" title="Ops - Windows">Windows</a>', h)
         self.assertIn('<input class="tf js" id="teamq" type="search"', h)
+        self.assertIn('<nav class="crumbs" aria-label="Where this page is"><b>All</b></nav>', h)
         self.assertNotIn('class="teamnav"', h)
         self.assertNotIn('id="grp"', h)
         self.assertRegex(h, r'<rect class="hit"[^>]*data-t="[^"]*"><title>Week of ')
@@ -423,9 +483,9 @@ class Page(unittest.TestCase):
         self.assertIn('<details class="notes"><summary>', h)
         self.assertIn("Click an issue to open its fix action", h)
         self.assertIn('<span class="hint">Fix <span class="caret">›</span></span>', h)
-        self.assertIn('<a class="hop glink" href="ops-service-desk/latest.html" title="Ops - Service Desk">Service Desk</a>', h)   # a group: its page
-        self.assertRegex(h, r'<a class="glink" href="ops-[a-z-]+/latest.html"><text [^>]*class="lbl">')         # ... in a chart's bars too
-        self.assertIn('mostly <a class="glink" href="ops-', h)                                                  # ... and an issue's main group
+        self.assertIn('<a class="hop glink" href="ops/other/service-desk/latest.html" title="Ops - Service Desk">Service Desk</a>', h)   # a group: its page
+        self.assertRegex(h, r'<a class="glink" href="ops/other/[a-z-]+/latest.html"><text [^>]*class="lbl">')         # ... in a chart's bars too
+        self.assertIn('mostly <a class="glink" href="ops/other/', h)                                                  # ... and an issue's main group
         self.assertIn("Who sends this team its tickets", h)
         self.assertIn('<span class="chip">end user</span>', h)
 
@@ -439,9 +499,10 @@ class Page(unittest.TestCase):
         self.assertNotIn('id="teams"', h)
         self.assertIn('href="../latest.html"', h)
         self.assertEqual(h.count("<script"), 2)                  # the file's tag and the page's own copy, nothing else
-        self.assertIn('<a class="team" href="../latest.html" data-n="all assignment groups all assignment groups" data-g="" title="All assignment groups">'
+        self.assertIn('<a class="team lv0" href="../latest.html" data-n="all assignment groups all assignment groups" data-c="" title="All assignment groups">'
                       'All assignment groups</a>', h)                     # the site's page, from a team's: a plain link
-        self.assertIn('<span class="pk-v">VDI</span>', h)                                    # the picker says which team
+        self.assertIn('<span class="pk-v">Other · VDI</span>', h)                             # the picker says where
+        self.assertIn('<nav class="crumbs" aria-label="Where this page is"><a href="../latest.html">All</a>', h)
 
     def test_empty_site(self):
         win = rd.window(1, 0, "2026-10-31", True, "", NOW)
@@ -467,51 +528,203 @@ class TeamOrder(unittest.TestCase):
         self.assertEqual(sorted(names, key=P.natural_key), ["net - core", "Net - Edge 2", " Net - Edge 10", "Ops - linux", "ops - Windows"])
         self.assertEqual(sorted(["Team 10", "team 2", "Team 1"], key=P.natural_key), ["Team 1", "team 2", "Team 10"])
 
-    def test_groups_only_when_clean(self):
-        self.assertEqual(P.team_groups(["Ops - Windows", "ops - Linux", "Net - Core", "Net - Edge"]),
-                         [("Net", ["Net - Core", "Net - Edge"]), ("ops", ["ops - Linux", "Ops - Windows"])])
-        self.assertEqual(P.team_groups(["Ops - Windows", "Ops - Linux", "Service Desk"]), [("", ["Ops - Linux", "Ops - Windows", "Service Desk"])])
-        self.assertEqual(P.team_groups(["Ops - Windows", "Ops - Linux"]), [("", ["Ops - Linux", "Ops - Windows"])])      # one prefix: none
-        self.assertEqual(P.team_groups(["A - x", "B - y"]), [("", ["A - x", "B - y"])])                                  # none holds two
 
-    def test_grouped_page(self):
-        m = json.loads(json.dumps(site()["model"]))
-        m["teams"] = ["Net - Core", "Ops - Windows", "Net - Edge", "Ops - Linux"]
-        links = dict((t, F._slug(t) + "/latest.html") for t in m["teams"])
-        links["all"] = "latest.html"
+
+class Hierarchy(unittest.TestCase):
+    """0.97.0: every group's site, directorate and team from its name (made-up names), the pages rolled up at each level,
+    the tree, the breadcrumbs."""
+
+    def test_rules(self):
+        o = {"directorates": ["CODEX"], "hierarchy_map": {"SITEB -  odd one": {"site": "SITEA", "directorate": "J6", "team": "Odd"}},
+             "directorate_alias": {"j602": "J60"}, "hierarchy_source": "names", "suffix_directorates": ["NOVA"]}
+        got = dict((n, F.hier_place(n, o)) for n in [
+            "SITEA - Ops - Platforms - NOVA", "SITE-C - Ops - Platforms - nOvA", "SITEA - J63 - Platforms - NOVA", "SITEA - j63 - Windows",
+            "SITEA - J602 - Help", "SITE-C - codex - Linux", "SITEB - Network", "SITEB - Odd One", "Change management", "SITEA - A6",
+            "SITE-C - Post-Desk - Tier 2"])
+        self.assertEqual(got["SITEA - Ops - Platforms - NOVA"], {"site": "SITEA", "dir": "NOVA", "team": "Ops - Platforms", "rule": "suffix", "under": ""})
+        self.assertEqual(got["SITE-C - Ops - Platforms - nOvA"]["site"], "SITE-C")             # a hyphen is not a split
+        self.assertEqual(got["SITE-C - Ops - Platforms - nOvA"]["dir"], "NOVA")               # any case
+        self.assertEqual(got["SITEA - J63 - Platforms - NOVA"]["dir"], "NOVA")                # a suffix wins over a staff code
+        self.assertEqual(F.hier_place("SITEA - Ops - Platforms - NOVA", dict(o, suffix_directorates=[]))["dir"], "Other")   # only when set
+        self.assertEqual(got["SITEA - j63 - Windows"], {"site": "SITEA", "dir": "J63", "team": "Windows", "rule": "code", "under": ""})
+        self.assertEqual(got["SITEA - J602 - Help"]["dir"], "J60")                              # an alias merges it
+        self.assertEqual(got["SITE-C - codex - Linux"], {"site": "SITE-C", "dir": "CODEX", "team": "Linux", "rule": "named", "under": ""})
+        self.assertEqual(got["SITEB - Network"], {"site": "SITEB", "dir": "Other", "team": "Network", "rule": "other", "under": ""})
+        self.assertEqual(got["SITEB - Odd One"], {"site": "SITEA", "dir": "J6", "team": "Odd", "rule": "map", "under": ""})   # the map wins
+        self.assertEqual(got["Change management"], {"site": "Other", "dir": "Other", "team": "Change management", "rule": "other", "under": ""})
+        self.assertEqual(got["SITEA - A6"], {"site": "SITEA", "dir": "A6", "team": "A6", "rule": "code", "under": ""})
+        self.assertEqual(got["SITE-C - Post-Desk - Tier 2"]["dir"], "Other")
+
+    def test_parents_tags_unknown(self):
+        o = {"directorates": ["CODEX"], "directorate_tags": {"COMPONENTX": "N6"}, "hierarchy_source": "names", "suffix_directorates": ["NOVA"]}
+        place = F.hier_place
+        self.assertEqual(place("SITEA - Ops - Mobility", o, ["SITEA - Mobile Wing - NOVA", "SITEA"])["dir"], "NOVA")   # a parent's NOVA
+        self.assertEqual(place("SITEA - Ops - Mobility", o, ["SITEA - Mobile Wing - NOVA", "SITEA"])["rule"], "parent-suffix")
+        self.assertEqual(place("SITEA - COMPONENTX Help Desk", o)["dir"], "N6")                     # a tag: a whole word
+        self.assertEqual(place("SITEA - COMPONENTXY Help", o)["dir"], "Other")
+        self.assertEqual(place("SITEA - Field Desk", o, ["SITEA - J633 Network Ops", "SITEA"])["dir"], "J633")   # the nearest parent's code
+        self.assertEqual(place("SITEA - J633 Field Desk", o)["dir"], "J633")                         # a code in the name's words
+        self.assertEqual(place("SITEB - IPv6 lab", o)["dir"], "Other")                               # not a staff code
+        self.assertEqual(place("SITEB - Desk", o, ["SITEB - Client Support", "SITEB"]),
+                         {"site": "SITEB", "dir": "Client Support", "team": "Desk", "rule": "parent", "under": ""})
+        self.assertEqual(place("Field Desk", o, ["SITEB - Operations", "SITEB Root"])["site"], "SITEB Root")   # the site: the root's first part
+        self.assertEqual(place("SITEA - Lone", o, ["SITEA"])["dir"], "Other")                           # the root is not a directorate
+        self.assertEqual(F.group_chain("a", {"1": {"name": "a", "parent": "2"}, "2": {"name": "b", "parent": "3"}, "3": {"name": "c", "parent": "2"}}), ["b", "c"])
+        known = {"known_groups_only": True, "hierarchy_map": {"SITEA - Desk": {"site": "SITEA", "directorate": "J6"}}, "hierarchy_source": "names"}
+        self.assertEqual(place("SITEA - Desk", known)["dir"], "J6")
+        self.assertEqual((place("SITEA - New Desk", known)["site"], place("SITEA - New Desk", known)["dir"]), ("SITEA", "Unknown"))
+        self.assertEqual((place("SITEZ - New Desk", known)["site"], place("SITEZ - New Desk", known)["dir"]), ("Unknown", "Unknown"))
+
+    def test_parents(self):
+        """hierarchy_source parents (the default): ServiceNow's group tree - the root the site, the parent below it the
+        directorate, a team under a team "under" it; no way up to a root: Unknown; the tree not read: the names' sites."""
+        place = F.hier_place
+        roots = {"SITEA - J6", "SITEB"}
+        self.assertEqual(place("SITEA - J6 - Field Ops", {}, ["SITEA - J633 Network", "SITEA - J6"], roots),
+                         {"site": "SITEA", "dir": "J633 Network", "team": "J6 - Field Ops", "rule": "parent", "under": ""})
+        self.assertEqual(place("SITEA - Radio Shop", {}, ["SITEA - Field Ops", "SITEA - J633 Network", "SITEA - J6"], roots)["under"], "Field Ops")
+        self.assertEqual(place("SITEA - Radio Shop", {}, ["SITEA - Field Ops", "SITEA - J633 Network", "SITEA - J6"], roots)["dir"], "J633 Network")
+        self.assertEqual(place("SITEA - Front Desk", {}, ["SITEA - J6"], roots)["dir"], "J6")             # right under the root: the root
+        self.assertEqual(place("SITEB - Front Desk", {}, ["SITEB"], roots)["dir"], "(site direct)")
+        self.assertEqual(place("SITEB - Lost", {}, [], roots)["site"], "SITEB")                          # no parent: Unknown, its site by name
+        self.assertEqual(place("SITEB - Lost", {}, [], roots)["dir"], "Unknown")
+        self.assertEqual(place("SITEZ - Lost", {}, ["SITEZ - Loop"], roots)["site"], "Unknown")          # a chain that stops short
+        self.assertEqual(place("SITEA - x", {"site_roots": ["SITEA - J633 Network"]}, ["SITEA - Field Ops", "SITEA - J633 Network", "SITEA - J6"], roots)["dir"],
+                         "Field Ops")                                                                     # site_roots: the root named
+        self.assertEqual(place("SITEA - x", {}, None, roots, tree_ok=False), {"site": "SITEA", "dir": "(unknown)", "team": "x", "rule": "names-fallback", "under": ""})
+        self.assertEqual(place("SITEA - x", {"hierarchy_map": {"SITEA - x": {"site": "S", "directorate": "D"}}}, [], roots)["dir"], "D")   # the map: both modes
+        x = site(sites=True)
+        m = F.servicenow_insights_model(x["r"], None, x["mask"], PARENTS_OPTS)
+        self.assertEqual([n["label"] for n in m["tree"]], ["SITEA", "SITEB", "Unknown"])
+        self.assertEqual([[d["label"] for d in n["dirs"]] for n in m["tree"]], [["(site direct)", "J6 Staff Division"], ["(site direct)", "Client Support"], ["Unknown"]])
+        self.assertEqual(m["hier"]["SITE-C - CODEX - Linux"]["rule"], "unknown")                          # its parents loop: no root
+        self.assertEqual(m["hier"]["SITEA - J6 - Service Desk"]["team"], "J6 - Service Desk")
+        self.assertEqual(m["hier_unknown"][0][0], "SITE-C - CODEX - Linux")
+        self.assertEqual(sum(m["scopes"]["site:" + n["label"]]["counts"]["incidents"] for n in m["tree"]), m["scopes"]["all"]["counts"]["incidents"])
+        m4 = F.servicenow_insights_model(dict(x["r"], group_tree={}, group_tree_error="GET x: HTTP 403"), None, x["mask"], PARENTS_OPTS)
+        self.assertEqual(set(h["dir"] for h in m4["hier"].values()), {"(unknown)"})
+        self.assertEqual(m4["tree"][0]["label"], "SITE-C")
+
+    def test_split(self):
+        """The split (servicenow_insights_split_label / _pattern): every page's figures for the matching groups and for the
+        rest, worked out at build time; the switch links the three pages (a made-up label)."""
+        x = site(sites=True)
+        o = dict(PARENTS_OPTS, split_label="BLUE", split_pattern="*- nova")
+        m = F.servicenow_insights_model(x["r"], None, x["mask"], o)
+        self.assertEqual(m["split"], {"label": "BLUE", "groups": ["SITEB - Ops - VDI - nova"]})
+        for k in ("all", "site:SITEB", "dir:SITEB/(site direct)", "site:SITEA"):
+            for c_ in ("incidents", "requests", "resolved"):
+                self.assertEqual(m["variants"]["in"][k]["counts"][c_] + m["variants"]["out"][k]["counts"][c_], m["scopes"][k]["counts"][c_], (k, c_))
+        self.assertEqual(m["variants"]["in"]["site:SITEA"]["counts"]["incidents"], 0)
+        self.assertEqual(sorted(m["variants"]["in"]), sorted(m["scopes"]))                    # the same pages, the same tree
+        links = page_links(m)
+        vl = {"": "latest.html", "in": "latest-blue.html", "out": "latest-non-blue.html"}
+        h = P.servicenow_insights_page(m, "all", {"links": links, "variant": "in", "variant_links": vl})
+        self.assertIn('<nav class="split" aria-label="Which groups"><a href="latest.html">All</a><a href="latest-blue.html" aria-current="page">BLUE</a>'
+                      '<a href="latest-non-blue.html">non-BLUE</a></nav>', h)
+        n_in = m["variants"]["in"]["all"]["counts"]["incidents"] + m["variants"]["in"]["all"]["counts"]["requests"]
+        self.assertIn('<span class="eyebrow">Tickets</span><span class="v">%s' % "{:,}".format(n_in), h)
+        self.assertNotIn('class="split"', P.servicenow_insights_page(m, "all", {"links": links}))      # no links given: no switch
+        xl = F.servicenow_insights_xlsx(m, x["r"], None, x["mask"], o)
+        self.assertEqual(xl[0]["columns"][10], "BLUE")
+        self.assertEqual(sorted(set(r_[10] for r_ in xl[0]["rows"])), ["no", "yes"])
+        w = {"all": {"page": "t/2026_job-1.html", "latest": "t/latest.html"}, "pages": {"site:SITEA": {"page": "t/sitea/latest.html"}},
+             "variants": {"in": {"all": {"page": "t/latest-blue.html"}, "site:SITEA": {"page": "t/sitea/latest-blue.html"}},
+                          "out": {"all": {"page": "t/latest-non-blue.html"}, "site:SITEA": {"page": "t/sitea/latest-non-blue.html"}}}}
+        self.assertEqual(F.variant_links(w, "site:SITEA", "t/sitea/latest-blue.html"), {"": "latest.html", "in": "latest-blue.html", "out": "latest-non-blue.html"})
+        self.assertEqual(F.web_links(w, "t/sitea/latest-blue.html", "in"), {"site:SITEA": "latest-blue.html", "all": "../latest-blue.html"})
+
+    def test_folded_groups(self):
+        """Excluded, inactive or of a type that is not a team: no page, the tickets still at every level."""
+        x = site(sites=True)
+        r = json.loads(json.dumps(x["r"]))
+        for v in r["group_tree"].values():
+            if v["name"] == "SITEA - j63 - Windows":
+                v["type"] = "Approvers, IDEA"
+        o = dict(HIER_OPTS, exclude_groups=["*linux*"], skip_group_types=["approver"], known_groups_only=False)
+        m = F.servicenow_insights_model(r, None, x["mask"], o)
+        self.assertNotIn("SITEA - j63 - Windows", m["teams"])
+        self.assertNotIn("SITE-C - CODEX - Linux", m["teams"])
+        why = dict((g, w) for g, w, _ in m["hier_folded"])
+        self.assertEqual(why["SITEA - j63 - Windows"], "group type Approvers, IDEA")
+        self.assertEqual(why["SITE-C - CODEX - Linux"], "excluded (servicenow_insights_exclude_groups)")
+        self.assertEqual(m["scopes"]["all"]["counts"], x["model"]["scopes"]["all"]["counts"])              # every ticket still counts
+        self.assertEqual(m["scopes"]["dir:SITEA/J63"]["counts"], x["model"]["scopes"]["dir:SITEA/J63"]["counts"])
+        m2 = F.servicenow_insights_model(r, None, x["mask"], dict(o, inactive_teams=True, exclude_groups=[], skip_group_types=[]))
+        self.assertIn("SITEB - Network", m2["teams"])
+        m3 = F.servicenow_insights_model(r, None, x["mask"], dict(HIER_OPTS, known_groups_only=True,
+                                                                  hierarchy_map={"SITEA - J6 - Service Desk": {"site": "SITEA", "directorate": "J6"}}))
+        self.assertEqual([g for g, _ in m3["hier_unknown"]][:2], ["SITE-C - CODEX - Linux", "SITEA - j63 - Windows"])
+        self.assertTrue(all(c_ > 0 for _, c_ in m3["hier_unknown"]))
+        self.assertIn("dir:SITEA/Unknown", m3["scopes"])
+        m4 = F.servicenow_insights_model(dict(r, group_tree={}, group_tree_error="GET x: HTTP 403"), None, x["mask"], HIER_OPTS)
+        self.assertEqual(m4["hier"]["SITEB - Network"]["dir"], "Other")                                   # refused: the names
+        self.assertIn("sys_user_group (the groups' parents, for the sites and directorates): GET x: HTTP 403", "\n".join(F.not_read_lines(m4)))
+
+    def test_rolled_up_once_each(self):
+        x = site(sites=True)
+        m = x["model"]
+        sc = m["scopes"]
+        self.assertEqual([n["label"] for n in m["tree"]], ["SITE-C", "SITEA", "SITEB"])
+        self.assertEqual([[d["label"] for d in n["dirs"]] for n in m["tree"]], [["CODEX"], ["J6", "J63"], ["Client Support", "NOVA"]])
+        self.assertEqual([t["label"] for t in m["tree"][2]["dirs"][1]["teams"]], ["Ops - VDI"])
+        self.assertEqual(m["tree"][2]["dirs"][0]["teams"], [])               # its one team inactive: no page, its tickets in Client Support
+        self.assertIn(["SITEB - Network", "inactive in ServiceNow", "SITEB / Client Support"], m["hier_folded"])
+        self.assertGreater(sc["dir:SITEB/Client Support"]["counts"]["incidents"], 0)
+        self.assertEqual(m["hier"]["SITEB - Network"]["by"], "ServiceNow parent")
+        self.assertEqual(m["hier"]["SITE-C - CODEX - Linux"]["dir"], "CODEX")          # its parents loop back: stopped, then the name
+        self.assertEqual(m["placed_by"], {"ServiceNow parent": 1, "name rule": 4})
+        # every ticket once at every level: the sites add up to All, a site's directorates to the site, a directorate's teams to it
+        for k in ("incidents", "requests", "resolved"):
+            self.assertEqual(sum(sc["site:" + n["label"]]["counts"][k] for n in m["tree"]), sc["all"]["counts"][k], k)
+            self.assertEqual(sum(sc[d["key"]]["counts"][k] for d in m["tree"][1]["dirs"]), sc["site:SITEA"]["counts"][k], k)
+            self.assertEqual(sum(sc[t["key"]]["counts"][k] for t in m["tree"][1]["dirs"][0]["teams"]), sc["dir:SITEA/J6"]["counts"][k], k)
+        self.assertEqual(sum(sc["site:" + n["label"]]["backlog"][0] for n in m["tree"]), sc["all"]["backlog"][0])
+        # a ticket passed between groups counts where it ended: the hand-off paths of a site name its groups
+        self.assertTrue(all(any(g.startswith("SITEA") for g in e["path"]) for e in sc["site:SITEA"]["handoffs"]["paths"]))
+        self.assertEqual(sc["all"]["side"]["kind"], "Sites")
+        self.assertEqual(sc["site:SITEA"]["side"]["kind"], "Directorates")
+        self.assertEqual(sc["dir:SITEA/J6"]["side"]["kind"], "Teams")
+        self.assertEqual([p["path"] for p in m["pages"] if p["key"] == "SITEB - Ops - VDI - nova"], [["siteb", "nova", "ops-vdi"]])
+        self.assertEqual(m["hier_other"], [])
+        ids = m["scope_ids"]
+        self.assertEqual((ids["all"], ids["site:SITE-C"], ids["dir:SITE-C/CODEX"]), ("all", "S1", "D1"))
+        ev = F.servicenow_insights_summary_evidence(m)
+        self.assertIn("SCOPE S2: site SITEA", ev)
+        self.assertIn("SCOPE D2: directorate J6", ev)
+        merged = F.servicenow_insights_summary_merge(m, {"items": [{"id": "D2", "lines": ["J6 point."]}]})
+        self.assertEqual(merged["scopes"]["dir:SITEA/J6"]["summary"], ["J6 point."])
+        xl = F.servicenow_insights_xlsx(m, x["r"], None, x["mask"], HIER_OPTS)
+        inc = xl[0]
+        self.assertEqual(inc["columns"][7:11], ["Site", "Directorate", "Placed by", "Assignment group"])
+        self.assertIn(["SITEB", "NOVA", "name rule", "SITEB - Ops - VDI - nova"], [r_[7:11] for r_ in inc["rows"]])
+        self.assertIn("Sites and directorates", [sh["name"] for sh in xl])
+
+    def test_the_pages(self):
+        m = site(sites=True)["model"]
+        links = page_links(m)
         h = P.servicenow_insights_page(m, "all", {"links": links})
+        self.assertIn("Sites side by side", h)
+        self.assertIn('<a class="teamlink" href="site-c/latest.html" title="SITE-C">SITE-C</a>', h)
         pick = h.split('id="picklist"')[1].split("</ul>")[0]
-        self.assertTrue(pick.split('>', 1)[1].startswith('<li class="all">'))                               # All assignment groups first
-        self.assertEqual(re.findall(r'<li class="tg" aria-hidden="true">([^<]+)</li>', pick), ["Net", "Ops"])
-        self.assertEqual(re.findall(r'title="([^"]+)"><span>', pick), ["Net - Core", "Net - Edge", "Ops - Linux", "Ops - Windows"])
-        self.assertIn('data-g="Net" title="Net - Core"><span>Core</span>', pick)              # under its prefix: the rest of the name
-        self.assertIn('<div class="tg" aria-hidden="true">Ops</div><a class="team" href="ops-linux/latest.html"', h)
-
-
-    def test_site_dept_team_suffix_shape(self):
-        """Names shaped "<SITE> - <Dept> - <Team> - <SUFFIX>" (made up): grouped by the site, the shared suffix dropped from
-        what is shown, the same team name under two sites told apart by its heading (and the picker's label)."""
-        names = ["HQX - Ops - Mobility - CORE", "HQX - Ops - ASD - CORE", "HQY - Service Desk - CORE", "HQY - RITM Staging",
-                 "HQX - RITM Staging", "HQY - Ops - Mobility - CORE", "HQX - Network - CORE"]
-        self.assertEqual([g for g, _ in P.team_groups(names)], ["HQX", "HQY"])
-        self.assertEqual(P.shared_suffix(names), "core")
-        self.assertEqual(P.shared_suffix(["A - x - CORE", "A - y", "B - z"]), "")                    # one name: not shared
-        m = json.loads(json.dumps(site()["model"]))
-        m["teams"] = names
-        team = "HQY - Ops - Mobility - CORE"
-        m["scopes"][team] = dict(m["scopes"]["Ops - VDI"], team=team, name=team)
-        links = dict((t, F._slug(t) + "/latest.html") for t in names)
-        links["all"] = "../latest.html"
-        h = P.servicenow_insights_page(m, team, {"links": links})
-        pick = h.split('id="picklist"')[1].split("</ul>")[0]
-        got = re.findall(r'<li class="tg" aria-hidden="true">([^<]+)</li>|title="([^"]+)"(?: aria-current="page")?><span>([^<]+)</span>', pick)
-        self.assertEqual([x[0] or "%s=%s" % (x[1], x[2]) for x in got], [
-            "All assignment groups=All assignment groups", "HQX", "HQX - Network - CORE=Network", "HQX - Ops - ASD - CORE=Ops - ASD",
-            "HQX - Ops - Mobility - CORE=Ops - Mobility", "HQX - RITM Staging=RITM Staging", "HQY", "HQY - Ops - Mobility - CORE=Ops - Mobility",
-            "HQY - RITM Staging=RITM Staging", "HQY - Service Desk - CORE=Service Desk"])
-        self.assertIn('<span class="pk-v">HQY · Ops - Mobility</span>', h)                          # which site's, in the bar
-        self.assertIn('data-n="hqy - ops - mobility - core ops - mobility" data-g="HQY"', h)          # the filter finds it by either
-        self.assertNotIn(">CORE<", h)
+        self.assertEqual(re.findall(r'<li class="lv(\d)[^"]*"><a [^>]*title="([^"]+)"', pick)[:7], [
+            ("0", "All assignment groups"), ("1", "SITE-C"), ("2", "SITE-C - CODEX"), ("3", "SITE-C - CODEX - Linux"), ("1", "SITEA"),
+            ("2", "SITEA - J6"), ("3", "SITEA - J6 - Service Desk")])
+        self.assertIn('data-n="siteb - nova nova" data-c="siteb ops - vdi siteb - ops - vdi - nova"', pick)   # a directorate's branch: found by a team
+        # a directorate's page, from its folder: the breadcrumbs, its teams side by side, the menu says where
+        rel = dict((k, "../../" + v) for k, v in links.items())
+        d = P.servicenow_insights_page(m, "dir:SITEA/J63", {"links": rel})
+        self.assertIn('<nav class="crumbs" aria-label="Where this page is"><a href="../../latest.html">All</a><span class="sep" aria-hidden="true">›</span>'
+                      '<a href="../../sitea/latest.html">SITEA</a><span class="sep" aria-hidden="true">›</span><b>J63</b></nav>', d)
+        self.assertIn("Teams side by side", d)
+        self.assertIn('<span class="pk-v">SITEA · J63</span>', d)
+        self.assertIn('aria-current="page">J63</a>', d)
+        s_ = P.servicenow_insights_page(m, "site:SITEB", {"links": links})
+        self.assertIn("Directorates side by side", s_)
+        self.assertLess(s_.index('title="Client Support">Client Support</a>'), s_.index('title="NOVA">NOVA</a>'))   # A to Z
+        t = P.servicenow_insights_page(m, "SITEB - Ops - VDI - nova", {"links": links})
+        self.assertIn('<b>Ops - VDI</b></nav>', t)
+        self.assertNotIn("side by side</h2>", t)
 
 
 class BriefPage(unittest.TestCase):

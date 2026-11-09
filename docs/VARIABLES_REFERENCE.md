@@ -1348,12 +1348,28 @@ File: `roles/servicenow_insights/defaults/main.yml`
 | `servicenow_insights_team_pages` | `true` | Each team's own page (every section of the report for that team) on the report website, and the Teams side by side table on the site's page. The teams are the groups named above, else the groups with at least servicenow_insights_team_min tickets in the window, the busiest first, at most servicenow_insights_teams_max. |
 | `servicenow_insights_teams_max` | `60` | at most this many teams with their own page |
 | `servicenow_insights_team_min` | `10` | a group with at least this many tickets in the window is a team (no groups named) |
+| `servicenow_insights_hierarchy_source` | `parents` | SITES, DIRECTORATES AND TEAMS (0.97.0): a page for each site and directorate with tickets, under All; teams as above. parents (the default): ServiceNow's group tree (sys_user_group, read only) - the site is the root group (its name's first " - " part), the directorate the group one below the root, the team the group (… (all of it: the role file) |
+| `servicenow_insights_site_roots` | `[]` | parents: the sites' root groups (exact names); [] = parentless groups with children |
+| `servicenow_insights_hierarchy_map` | `{}` | {"<exact group name>": {site: X, directorate: Y, team: Z}}: wins over either |
+| `servicenow_insights_suffix_directorates` | `[]` | names: [NOVA] - a group whose name ends in "- NOVA" is in NOVA |
+| `servicenow_insights_directorates` | `[]` | names: second parts that name a directorate (e.g. [CODEX]) |
+| `servicenow_insights_directorate_tags` | `{}` | names: {COMPONENTX: N6} - a whole word in a group's name puts it there |
+| `servicenow_insights_directorate_alias` | `{}` | names: {J602: J60} - rename or merge directorates |
+| `servicenow_insights_use_group_parents` | `true` | read the groups' parents in ServiceNow (sys_user_group); refused: by the names |
+| `servicenow_insights_known_groups_only` | `false` | true: a group not in the map goes in Unknown (to find and map later) |
+| `servicenow_insights_exclude_groups` | `[]` | no team page for these (names or patterns, e.g. ["* - Legacy*"]); tickets still count |
+| `servicenow_insights_inactive_teams` | `false` | a group inactive in ServiceNow gets no team page; its tickets still count |
+| `servicenow_insights_skip_group_types` | `[approver, permission, survey, system, idea, legacy]` | no team page for these group types |
+| `servicenow_insights_split_label` | (empty) | THE SPLIT: with both set, every page has All \| LABEL \| non-LABEL - its figures for the groups whose name, or a parent team's below the root, matches the pattern (* and ?, any case), and for the rest. E.g. label NOVA, pattern "*- NOVA". the switch's label (e.g. NOVA); "" = no switch |
+| `servicenow_insights_split_pattern` | (empty) | the groups it picks: e.g. "*- NOVA" (* and ?, any case) |
+| `servicenow_insights_split_teams` | `true` | false: the switch on All, the sites and directorates only (fewer files) |
 | `servicenow_insights_sla_targets` | `incident: {"1": 8, "2": 16, "3": 144, "4": 240, "5": 480} # P1 8 h, P2 16 h, P3 6 days, P…` | SLA TARGETS, in calendar hours from when a ticket was opened to when it was resolved (incidents) or closed (requested items): a ticket met its SLA when it was done within its target. By table, then by priority ("1" to "5", or "P1"; "*" = every other priority). Only tickets done in the window count. These are twice com… (all of it: the role file) |
 | `servicenow_insights_sla_items` | `{}` | A catalog item's own target in hours, beating its priority's: {"New account / onboarding": 48, "Software install": 120} |
 | `servicenow_insights_team_email_to` | `{}` | Also email a team's own report to these people (the team's page, the same look): {"Ops - Windows": [lead@yoursite.mil]}. |
 | `servicenow_insights_tables` | `[incident, sc_req_item, sc_task, change_request, problem]` | The tables read: incident, sc_req_item (requested items: the most requested services), sc_task (catalog tasks: the All-stars count their closures), change_request, problem. Take one out to leave its sections out. A table the account cannot read is said in the report. |
 | `servicenow_insights_max_records` | `20000` | at most this many records per table (the rest are said: shorten the window) |
-| `servicenow_insights_audit` | `true` | The assignment history of incidents passed around (sys_audit): the paths of Passed between groups. The account needs read on sys_audit; without it the counts are still there and the report says so. false: not read. |
+| `servicenow_insights_audit` | `true` | The assignment history of incidents passed around: the paths of Passed between groups. From sys_audit, else (0.97.0) the out-of-box incident metric "Assignment Group" (metric_instance) - both read only; the account needs read on one of them; without either the counts are still there and the report says which it could… (all of it: the role file) |
+| `servicenow_insights_handoff_source` | `auto` | auto (sys_audit, else the metric), audit, metric (sys_audit never asked), none |
 | `servicenow_insights_members` | `true` | The groups' members (sys_user_grmember): each team's leaderboard lists its members, and a ticket resolved by someone outside the team counts for the member it was assigned to. The account needs read on sys_user_grmember (itil has it on most instances); without it the leaderboard lists everyone the team's tickets were… (all of it: the role file) |
 | `servicenow_insights_top_issues` | `10` | WHAT THE REPORT SHOWS incident issues listed (the workbook has every one) |
 | `servicenow_insights_top_requests` | `10` | catalog items listed |

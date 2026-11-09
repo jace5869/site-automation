@@ -37,7 +37,9 @@
     max_records: "{{ servicenow_insights_max_records | int }}"
     audit: "{{ servicenow_insights_audit | bool }}"
     handoff_min: "{{ servicenow_insights_handoff_min | int }}"
+    handoff_source: "{{ servicenow_insights_handoff_source | default('auto') | string | trim | lower }}"
     members: "{{ servicenow_insights_members | default(true) | bool }}"
+    group_parents: "{{ servicenow_insights_use_group_parents | default(true) | bool }}"
     now: "{{ servicenow_insights_now | default(omit, true) }}"
   register: _sni
   check_mode: false             # only reads
@@ -46,6 +48,20 @@
   ansible.builtin.set_fact:
     _sni_opts:
       groups: "{{ _sni_groups }}"
+      hierarchy_source: "{{ servicenow_insights_hierarchy_source | string | trim | lower }}"
+      site_roots: "{{ servicenow_insights_site_roots | servicenow_insights_name_list }}"
+      split_label: "{{ servicenow_insights_split_label | default('', true) | string | trim }}"
+      split_pattern: "{{ servicenow_insights_split_pattern | default('', true) | string | trim }}"
+      directorates: "{{ servicenow_insights_directorates | servicenow_insights_name_list }}"
+      suffix_directorates: "{{ servicenow_insights_suffix_directorates | servicenow_insights_name_list }}"
+      hierarchy_map: "{{ servicenow_insights_hierarchy_map | default({}, true) }}"
+      directorate_alias: "{{ servicenow_insights_directorate_alias | default({}, true) }}"
+      directorate_tags: "{{ servicenow_insights_directorate_tags | default({}, true) }}"
+      use_group_parents: "{{ servicenow_insights_use_group_parents | bool }}"
+      known_groups_only: "{{ servicenow_insights_known_groups_only | bool }}"
+      exclude_groups: "{{ servicenow_insights_exclude_groups | servicenow_insights_name_list }}"
+      inactive_teams: "{{ servicenow_insights_inactive_teams | bool }}"
+      skip_group_types: "{{ servicenow_insights_skip_group_types | servicenow_insights_name_list }}"
       # the website's look: brief draws the page in its palette, with the verdict at the top (0.92.0)
       look: "{{ report_web_theme | default('atlas') | string | trim | lower }}"
       team_min: "{{ servicenow_insights_team_min | int }}"
@@ -190,10 +206,11 @@
       servicenow_insights: "{{ _sni_model | servicenow_insights_artifact }}"
   when: _sni.ok | default(false) | bool
 
-# Each team's page is one file, written over each run ({template}/{team}/latest.html), linked from the site's page and
-# kept off the website's index: the index has one line, the site's page. The team lines an older run put there are
-# taken off it (_web_index_drop).
-- name: Insights | the website's file names, the same for the site's page and each team's ({template}/{team}/...)
+# Each site's, directorate's and team's page is one file, written over each run ({template}/{site}/latest.html,
+# {template}/{site}/{dir}/latest.html, {template}/{site}/{dir}/{team}/latest.html - 0.97.0), linked from the others and
+# kept off the website's index: the index has one line, the All page. The lines an older run put there are taken off it
+# (_web_index_drop).
+- name: Insights | the website's file names - the All page, each site's, directorate's and team's ({template}/{site}/{dir}/{team}/...)
   ansible.builtin.set_fact:
     _sni_web: >-
       {%- set t = now(utc=true) -%}
@@ -204,39 +221,67 @@
                       'template_id': awx_job_template_id | default(tower_job_template_id | default('local')),
                       'job': awx_job_id | default(tower_job_id | default('local')), 'status': 'info',
                       'year': t.strftime('%Y'), 'month': t.strftime('%m'), 'day': t.strftime('%d')} -%}
+      {%- set level = {'site': '{template}/{site}', 'dir': '{template}/{site}/{dir}', 'team': '{template}/{site}/{dir}/{team}'} -%}
       {%- set out = {'names': names, 'page': page, 'latest': latest,
-                     'team_page': (latest or page) | replace('{template}', '{template}/{team}'),
-                     'all': {'page': page, 'latest': latest, 'index': ''} | report_web_files(base | combine(names) | combine({'team': 'all'}))} -%}
-      {%- set teams = {} -%}
-      {%- for team in (_sni_model.teams | default([]) if servicenow_insights_team_pages | bool else []) -%}
-      {%-   set _ = teams.update({team: {'page': out.team_page, 'latest': '', 'index': ''}
-                                         | report_web_files(base | combine(names) | combine({'team': team | servicenow_insights_slug}))}) -%}
+                     'all': {'page': page, 'latest': latest, 'index': ''}
+                            | report_web_files(base | combine(names) | combine({'team': 'all', 'site': 'all', 'dir': 'all'}))} -%}
+      {%- set pages = {} -%}
+      {%- for p in _sni_model.pages | default([]) -%}
+      {%-   set where = {'site': p.path[0], 'dir': p.path[1] | default(''), 'team': p.path[2] | default('')} -%}
+      {%-   set files = {'page': (latest or page) | replace('{template}', level[p.level]), 'latest': '', 'index': ''}
+                        | report_web_files(base | combine(names) | combine(where)) -%}
+      {%-   set _ = pages.update({p.key: files | combine({'level': p.level, 'names': where})}) -%}
       {%- endfor -%}
-      {{ out | combine({'teams': teams, 'on': (report_web_dest | default('', true) | string | trim | length > 0) and _sni.ok | default(false) | bool}) }}
+      {#- the split (0.97.0): every page again for the groups that match and for the rest, beside it (latest-LABEL.html,
+          latest-non-LABEL.html) - the switch on each page links them -#}
+      {%- set sp = _sni_model.split | default({}) -%}
+      {%- set variants = {} -%}
+      {%- if sp.label | default('') | length > 0 -%}
+      {%-   set sfx = {'in': '-' ~ (sp.label | servicenow_insights_slug), 'out': '-non-' ~ (sp.label | servicenow_insights_slug)} -%}
+      {%-   for v in ['in', 'out'] -%}
+      {%-     set vp = {'all': {'page': (out.all.latest or out.all.page) | regex_replace('\.html$', sfx[v] ~ '.html'), 'level': 'all',
+                                'names': {'site': 'all', 'dir': 'all', 'team': 'all'}}} -%}
+      {%-     for k, f in pages.items() if f.level != 'team' or servicenow_insights_split_teams | bool -%}
+      {%-       set _ = vp.update({k: f | combine({'page': f.page | regex_replace('\.html$', sfx[v] ~ '.html')})}) -%}
+      {%-     endfor -%}
+      {%-     set _ = variants.update({v: vp}) -%}
+      {%-   endfor -%}
+      {%- endif -%}
+      {%- set jobs = [] -%}
+      {%- for k in pages -%}{%- set _ = jobs.append({'key': k, 'v': ''}) -%}{%- endfor -%}
+      {%- for v in variants -%}{%- for k in variants[v] -%}{%- set _ = jobs.append({'key': k, 'v': v}) -%}{%- endfor -%}{%- endfor -%}
+      {%- set files = pages.values() | map(attribute='page') | list -%}
+      {%- for v in variants -%}{%- set _ = files.extend(variants[v].values() | map(attribute='page') | list) -%}{%- endfor -%}
+      {{ out | combine({'pages': pages, 'teams': pages, 'variants': variants, 'jobs': jobs, 'files': files,
+                        'on': (report_web_dest | default('', true) | string | trim | length > 0) and _sni.ok | default(false) | bool}) }}
 
-- name: Insights | each team's own page on the report website (and the email to its lead, servicenow_insights_team_email_to)
+- name: Insights | each site's, directorate's and team's page on the report website (and a team's email to its lead, servicenow_insights_team_email_to)
   ansible.builtin.include_role:
     name: site_email
   vars:
-    _report: "{{ _sni_model | servicenow_insights_doc(_sni_team, _sni_opts) }}"
+    _sni_team: "{{ _sni_job.key }}"
+    _sni_file: "{{ _sni_web.variants[_sni_job.v][_sni_job.key] if _sni_job.v else _sni_web.pages[_sni_job.key] }}"
+    _report: "{{ _sni_model | servicenow_insights_variant(_sni_job.v) | servicenow_insights_doc(_sni_team, _sni_opts) }}"
     _report_html: "{{ _sni_model | servicenow_insights_page(_sni_team, _sni_page_opts) }}"
     _report_xlsx: []
-    _report_email_skip: "{{ (servicenow_insights_team_email_to[_sni_team] | default([])) | length == 0 }}"
-    report_email_to: "{{ servicenow_insights_team_email_to[_sni_team] | default([]) }}"
+    _report_email_skip: "{{ _sni_job.v | length > 0 or (servicenow_insights_team_email_to[_sni_team] | default([])) | length == 0 }}"
+    report_email_to: "{{ [] if _sni_job.v else servicenow_insights_team_email_to[_sni_team] | default([]) }}"
     report_email_also: []
-    report_web_names: "{{ _sni_web.names | combine({'team': _sni_team | servicenow_insights_slug}) }}"
-    report_web_page: "{{ _sni_web.team_page }}"
+    report_web_names: "{{ _sni_web.names | combine(_sni_file.names) }}"
+    report_web_page: "{{ _sni_file.page }}"
     report_web_latest: ""
     report_web_index: ""
     _sni_page_opts: >-
-      {{ _sni_opts | combine({'links': _sni_web | servicenow_insights_links(_sni_web.teams[_sni_team].page),
+      {{ _sni_opts | combine({'links': _sni_web | servicenow_insights_links(_sni_file.page, _sni_job.v), 'variant': _sni_job.v,
+                              'variant_links': _sni_web | servicenow_insights_variant_links(_sni_team, _sni_file.page),
                               'generated': now(fmt='%Y-%m-%d %H:%M %Z') | trim, 'job': awx_job_id | default(tower_job_id | default('local')),
                               'footer': 'AAP job ' ~ awx_job_id | default(tower_job_id | default('(command line)')) ~ ' - ServiceNow ' ~ _sni_url,
                               'header_text': report_email_header_text | default('Site automation report'),
                               'not_read': _sni_model | servicenow_insights_not_read}) }}
-  loop: "{{ _sni_web.teams | list if _sni_web.on | bool or servicenow_insights_team_email_to | length > 0 else [] }}"
+  loop: "{{ _sni_web.jobs if _sni_web.on | bool or servicenow_insights_team_email_to | length > 0 else [] }}"
   loop_control:
-    loop_var: _sni_team
+    loop_var: _sni_job
+    label: "{{ _sni_job.key }}{{ (' (' ~ _sni_job.v ~ ')') if _sni_job.v else '' }}"
 
 - name: Insights | the site's page on the report website (report_web_dest), the email with the workbook (report_email_to)
   ansible.builtin.include_role:
@@ -246,12 +291,14 @@
     _report_html: "{{ _sni_model | servicenow_insights_page('all', _sni_page_opts) }}"
     _report_xlsx: "{{ _sni_model | servicenow_insights_xlsx(_sni, _sni_state, _sni_mask, _sni_opts) if servicenow_insights_xlsx | bool else [] }}"
     _report_xlsx_name: "{{ awx_job_template_name | default(tower_job_template_name | default('ticket-insights')) }}"
-    report_web_names: "{{ _sni_web.names | combine({'team': 'all'}) }}"
+    report_web_names: "{{ _sni_web.names | combine({'team': 'all', 'site': 'all', 'dir': 'all'}) }}"
+    _web_sub_pages: "{{ _sni_web.files }}"        # the other pages: those an older run wrote and this one did not are deleted
     _web_index_drop: >-
       {{ [(_sni_web.all.latest | dirname) ~ '/*/' ~ (_sni_web.all.latest | basename)]
          if _sni_web.all.latest and '/' in _sni_web.all.latest else [] }}
     _sni_page_opts: >-
       {{ _sni_opts | combine({'links': _sni_web | servicenow_insights_links(_sni_web.all.page),
+                              'variant_links': _sni_web | servicenow_insights_variant_links('all', _sni_web.all.page),
                               'generated': now(fmt='%Y-%m-%d %H:%M %Z') | trim, 'job': awx_job_id | default(tower_job_id | default('local')),
                               'footer': 'AAP job ' ~ awx_job_id | default(tower_job_id | default('(command line)')) ~ ' - ServiceNow ' ~ _sni_url,
                               'header_text': report_email_header_text | default('Site automation report'),

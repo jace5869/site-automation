@@ -45,6 +45,62 @@ servicenow_insights_months: 6
 ## a group with at least this many tickets in the window is a team (no groups named)
 # servicenow_insights_team_min: 10
 
+## SITES, DIRECTORATES AND TEAMS (0.97.0): a page for each site and directorate with tickets, under
+## All; teams as above. parents (the default): ServiceNow's group tree (sys_user_group, read only) -
+## the site is the root group (its name's first " - " part), the directorate the group one below the
+## root, the team the group (a team under a team stays a team of that directorate); a group with no
+## way up to a root is Unknown. names: the site is the name's first " - " part; the directorate a
+## word of servicenow_insights_suffix_directorates the name (or a parent below the root) ends in,
+## else a word of the name in servicenow_insights_directorate_tags, else a staff code (J633, A6) in
+## the name or the nearest parent's, else a second part in servicenow_insights_directorates, else
+## the parent below the root, else Other. docs/SERVICENOW_INSIGHTS.md, "Sites, directorates and
+## teams". parents or names
+# servicenow_insights_hierarchy_source: parents
+
+## parents: the sites' root groups (exact names); [] = parentless groups with children
+# servicenow_insights_site_roots: []
+
+## {"<exact group name>": {site: X, directorate: Y, team: Z}}: wins over either
+# servicenow_insights_hierarchy_map: {}
+
+## names: [NOVA] - a group whose name ends in "- NOVA" is in NOVA
+# servicenow_insights_suffix_directorates: []
+
+## names: second parts that name a directorate (e.g. [CODEX])
+# servicenow_insights_directorates: []
+
+## names: {COMPONENTX: N6} - a whole word in a group's name puts it there
+# servicenow_insights_directorate_tags: {}
+
+## names: {J602: J60} - rename or merge directorates
+# servicenow_insights_directorate_alias: {}
+
+## read the groups' parents in ServiceNow (sys_user_group); refused: by the names
+# servicenow_insights_use_group_parents: true
+
+## true: a group not in the map goes in Unknown (to find and map later)
+# servicenow_insights_known_groups_only: false
+
+## no team page for these (names or patterns, e.g. ["* - Legacy*"]); tickets still count
+# servicenow_insights_exclude_groups: []
+
+## a group inactive in ServiceNow gets no team page; its tickets still count
+# servicenow_insights_inactive_teams: false
+
+## no team page for these group types
+# servicenow_insights_skip_group_types: [approver, permission, survey, system, idea, legacy]
+
+## THE SPLIT: with both set, every page has All | LABEL | non-LABEL - its figures for the groups
+## whose name, or a parent team's below the root, matches the pattern (* and ?, any case), and for
+## the rest. E.g. label NOVA, pattern "*- NOVA". the switch's label (e.g. NOVA); "" = no switch
+# servicenow_insights_split_label: ""
+
+## the groups it picks: e.g. "*- NOVA" (* and ?, any case)
+# servicenow_insights_split_pattern: ""
+
+## false: the switch on All, the sites and directorates only (fewer files)
+# servicenow_insights_split_teams: true
+
 ## A catalog item's own target in hours, beating its priority's: {"New account / onboarding": 48,
 ## "Software install": 120}
 # servicenow_insights_sla_items: {}
@@ -61,10 +117,14 @@ servicenow_insights_months: 6
 ## at most this many records per table (the rest are said: shorten the window)
 # servicenow_insights_max_records: 20000
 
-## The assignment history of incidents passed around (sys_audit): the paths of Passed between
-## groups. The account needs read on sys_audit; without it the counts are still there and the report
-## says so. false: not read.
+## The assignment history of incidents passed around: the paths of Passed between groups. From
+## sys_audit, else (0.97.0) the out-of-box incident metric "Assignment Group" (metric_instance) -
+## both read only; the account needs read on one of them; without either the counts are still there
+## and the report says which it could not read. false: not read.
 # servicenow_insights_audit: true
+
+## auto (sys_audit, else the metric), audit, metric (sys_audit never asked), none
+# servicenow_insights_handoff_source: auto
 
 ## The groups' members (sys_user_grmember): each team's leaderboard lists its members, and a ticket
 ## resolved by someone outside the team counts for the member it was assigned to. The account needs

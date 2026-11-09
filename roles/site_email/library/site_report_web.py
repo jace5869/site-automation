@@ -54,6 +54,7 @@ options:
   entry: {description: "This template's line of the index: key (one per template), name, title, status, when, job (and step, the first Start here card of data's report - the brief index shows it).", type: dict, required: true}
   prune: {description: "Leave out of the index the lines whose latest page is no longer there (deleted by hand). Not with windows_host (the server's folder is not read here).", type: bool, default: true}
   drop: {description: "Leave out of the index the lines whose key matches one of these patterns (* and ?) - e.g. pages a report once listed there.", type: list, elements: str, default: []}
+  sub_pages: {description: "The report's other pages this run wrote (ticket insights - a site's, directorate's, team's), kept on its index line; with delete_old, those an older run wrote and this one did not are deleted.", type: list, elements: str, default: []}
   json: {description: Write the JSON files., type: bool, default: true}
   history: {description: "The runs each template's line of the index keeps (report_web_history), at least 1.", type: int, default: 5}
   delete_old: {description: "Delete the pages of the runs older than those (report_web_delete_old).", type: bool, default: true}
@@ -208,6 +209,13 @@ class Target(object):
         if not self.http:
             path = os.path.join(self.dest, *rel.split('/'))
             folder = os.path.dirname(path)
+            try:
+                if os.path.getsize(path) == len(body):
+                    with open(path, 'rb') as f:
+                        if f.read() == body:         # the same page as there: not written again (0.97.0)
+                            return
+            except OSError:
+                pass
             try:
                 if not os.path.isdir(folder):
                     os.makedirs(folder)
@@ -377,6 +385,14 @@ class SmbTarget(object):
     def write(self, rel, text, ctype):
         path = self._path(rel)
         folder = path.rsplit('\\', 1)[0]
+        body = text.encode('utf-8')
+        try:
+            if self.smb.stat(path, **self.kw).st_size == len(body):
+                with self.smb.open_file(path, mode='rb', **self.kw) as f:
+                    if f.read() == body:                 # the same page as there: not written again (0.97.0)
+                        return
+        except Exception:                               # noqa: BLE001 - not there, or not read: written
+            pass
         tmp = '%s\\.%s.%s.tmp' % (folder, path.rsplit('\\', 1)[1], os.getpid())
         try:
             if folder != self.root:
@@ -1267,6 +1283,7 @@ def main():
             smb_port=dict(type='int', default=445),
             prune=dict(type='bool', default=True),
             drop=dict(type='list', elements='str', default=[]),
+            sub_pages=dict(type='list', elements='str', default=[]),
         ),
         supports_check_mode=True,
     )
@@ -1306,6 +1323,8 @@ def main():
         js_tag = '<script src="%s"></script>' % js_name
         written = []
         entry = dict(p['entry'], page=page, latest=latest)
+        if p['sub_pages']:
+            entry['sub'] = sorted(set(str(x) for x in p['sub_pages'] if x))
         step = first_step((p['data'] or {}).get('report'))     # the brief index's first step for this report (0.92.0)
         if step:
             entry['step'] = step
@@ -1375,6 +1394,16 @@ def main():
                         kept.update([rel, _json_name(rel)])
             # only with a latest page: the line is then one template's (report_web_latest is per template - without it,
             # templates whose pages start with the same folder, {site}/{template}/..., would share a line)
+            kept.update(entry.get('sub') or [])
+            # the other pages an older run wrote and this one did not (a team gone, the split switched off) - 0.97.0
+            gone_sub = sorted(set((old or {}).get('sub') or []) - set(entry.get('sub') or [])) if p['sub_pages'] else []
+            for rel in (gone_sub if p['delete_old'] and latest else []):
+                if deletable(rel, kept):
+                    try:
+                        target.remove(rel)
+                        deleted.append(rel)
+                    except Fail as e:
+                        not_deleted.append([rel, str(e)])
             for x in (dropped if p['delete_old'] and latest else []):
                 for rel in (x['page'], _json_name(x['page'])):
                     if not deletable(rel, kept):

@@ -5,7 +5,9 @@ in their text, close notes good, thin and bare), requested items, catalog tasks,
 incidents), problems, the assignment history (sys_audit) of incidents passed between groups, and work notes (sys_journal_field,
 0.96.0: what was tried - the printers' restart a workaround used again and again; an address, a host and a phone number in
 them that appear nowhere else). Deterministic.
-    insights_seed.py OUT.json [SCALE]      (SCALE 1 = about 1,500 incidents in the 6-month window)"""
+    insights_seed.py OUT.json [SCALE] [--sites]      (SCALE 1 = about 1,500 incidents in the 6-month window)
+--sites (0.97.0): the same records with the groups named as three made-up sites with their directorates - SITEA's staff
+codes J6 and j63, SITEB's NOVA (the suffix) and an Other, SITE-C (a hyphen in it) with the named directorate CODEX."""
 import datetime
 import json
 import random
@@ -85,9 +87,14 @@ def when(day_frac):
     return d.replace(hour=h, minute=R.randint(0, 59), second=0)
 
 
+SITES = {SD: "SITEA - J6 - Service Desk", WIN: "SITEA - j63 - Windows", VDI: "SITEB - Ops - VDI - nova", LNX: "SITE-C - CODEX - Linux",
+         NET: "SITEB - Network"}
+
+
 def main():
-    out_path = sys.argv[1]
-    scale = float(sys.argv[2]) if len(sys.argv) > 2 else 1.0
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    out_path = args[0]
+    scale = float(args[1]) if len(args) > 1 else 1.0
     recs, n = [], [0]
     seq = {"INC": 40000, "RITM": 50000, "SCTASK": 60000, "CHG": 31000, "PRB": 4400}
 
@@ -196,6 +203,10 @@ def main():
         for k in range(1, len(path)):
             recs.append({"_table": "sys_audit", "tablename": "incident", "fieldname": "assignment_group", "documentkey": "",
                          "_doc": rec["number"], "oldvalue": path[k - 1], "newvalue": path[k], "sys_created_on": t(o + datetime.timedelta(hours=k * 5))})
+        # the same path as the out-of-box incident metric "Assignment Group" (metric_instance, 0.97.0)
+        for k, g in enumerate(path):
+            recs.append({"_table": "metric_instance", "definition": "Assignment Group", "table": "incident", "_doc": rec["number"], "value": g,
+                         "start": t(o + datetime.timedelta(hours=k * 5)), "end": t(o + datetime.timedelta(hours=(k + 1) * 5)) if k + 1 < len(path) else ""})
         rec["reassignment_count"] = str(len(path) - 1)
         if rec.get("resolved_at"):
             rd = datetime.datetime.strptime(rec["resolved_at"], "%Y-%m-%d %H:%M:%S") + datetime.timedelta(days=2)
@@ -250,10 +261,25 @@ def main():
             x["documentkey"] = "s-" + x.pop("_doc")
         if x.get("_table") == "sys_journal_field":
             x["element_id"] = "s-" + x.pop("_doc")
+        if x.get("_table") == "metric_instance":
+            x["id"] = "s-" + x.pop("_doc")
     for x in recs:
-        if x.get("_table") != "sys_audit" and x.get("number"):
+        if x.get("_table") not in ("sys_audit", "sys_user_group", "metric_instance") and x.get("number"):
             x["sys_id"] = "s-" + x["number"]
     recs.sort(key=lambda x: x.get("opened_at") or x.get("sys_created_on") or "")
+    if "--sites" in sys.argv:              # the groups renamed only: every record as it was otherwise
+        for x in recs:
+            for k in ("assignment_group", "group", "oldvalue", "newvalue", "value"):
+                if x.get(k) in SITES:
+                    x[k] = SITES[x[k]]
+        # the groups in ServiceNow (sys_user_group): the sites' roots, a staff division, a functional parent, a cycle,
+        # an inactive group - for the parents (0.97.0)
+        tree = [("gsa", "SITEA", "", "true", ""), ("gsb", "SITEB", "", "true", ""), ("gsc", "SITE-C", "", "true", ""),
+                ("gsa6", "SITEA - J6 Staff Division", "gsa", "true", ""), ("gbcs", "SITEB - Client Support", "gsb", "true", ""),
+                ("gcl", "SITE-C - Loop", "g-lnx", "true", ""),
+                ("g-sd", SITES[SD], "gsa6", "true", ""), ("g-win", SITES[WIN], "gsa", "true", ""), ("g-vdi", SITES[VDI], "gsb", "true", ""),
+                ("g-net", SITES[NET], "gbcs", "false", ""), ("g-lnx", SITES[LNX], "gcl", "true", "")]
+        recs += [{"_table": "sys_user_group", "sys_id": k, "name": n, "parent": p, "active": a, "type": ty} for k, n, p, a, ty in tree]
     with open(out_path, "w") as fh:
         json.dump(recs, fh)
     print("%d records (%d incidents) -> %s" % (len(recs), sum(1 for x in recs if x.get("_table") == "incident"), out_path))

@@ -30,7 +30,7 @@ all:
     localhost: {ansible_connection: local, ansible_python_interpreter: $py}
 INV
 "$py" "$here/insights_seed.py" "$work/seed.json" 0.5 >/dev/null
-NOW='"servicenow_insights_now": "2026-11-01T06:00:00", "servicenow_insights_until": "2026-10-31"'
+NOW='"servicenow_insights_now": "2026-11-01T06:00:00", "servicenow_insights_until": "2026-10-31", "servicenow_insights_hierarchy_source": "names"'
 NOACT='"servicenow_insights_act": false'
 ACT="\"site_act_url\": \"http://127.0.0.1:$mport/v1/chat/completions\", \"site_act_env\": {\"ACT_STREAM\": \"0\"}, \"servicenow_insights_kb_min\": 40"
 
@@ -99,30 +99,30 @@ run "six months against the six before, without ACT: by category, the most commo
 top="$work/site/servicenow-ticket-insights"
 check "the site's page: every section, links to the teams, ticket links into ServiceNow" "$top/latest.html" \
     'ServiceNow ticket insights' 'id="teams"' 'id="keepingup"' 'id="severity"' 'id="issues"' 'id="problems"' 'id="handoffs"' \
-    'id="requests"' 'id="changes"' 'id="notes"' 'id="allstars"' 'id="kb"' 'id="method"' 'href="ops-windows/latest.html"' \
+    'id="requests"' 'id="changes"' 'id="notes"' 'id="allstars"' 'id="kb"' 'id="method"' 'href="ops/other/windows/latest.html"' 'Teams side by side' \
     "http://127.0.0.1:$port/incident.do?sysparm_query=number=INC" 'grouped by their category' 'From the numbers' \
     'Reopen not used here' 'Came back' 'SLA target' 'your targets' 'data-tab="p1"' 'No drafts: ACT (GenAI) writes them' '!cid:' '!<!--site-report-logo-->'
-check "a team's page: that team, linked back to the site's" "$top/ops-windows/latest.html" \
-    'Ops - Windows ·' '!id="teams"' 'href="../latest.html"' 'All-stars' 'Most resolved' 2>/dev/null || \
-check "a team's page: that team, linked back to the site's" "$top/ops-windows/latest.html" 'href="../latest.html"' 'Most resolved' '!id="teams"'
+check "a team's page: that team, linked back to the site's" "$top/ops/other/windows/latest.html" \
+    'Ops - Windows ·' '!id="teams"' 'href="../../../latest.html"' 'All-stars' 'Most resolved' 2>/dev/null || \
+check "a team's page: that team, linked back to the site's" "$top/ops/other/windows/latest.html" 'href="../../../latest.html"' 'Most resolved' '!id="teams"'
 # 0.88.0: the page's script as a file beside the index (a web server that blocks inline scripts runs it), the teams as plain links,
 # the leaderboard = the group's members (a quiet member on it, the desk's closer not), who sends the team its tickets, short group names
-check "the script loaded from site-insights.js, relative to each page; the teams as links without it" "$top/ops-windows/latest.html" \
-    '<script src="../../site-insights.js?v=' 'data-file="site-insights.js"' '<details class="picker" id="picker">' \
-    '<a class="team" href="../ops-linux/latest.html" data-n="ops - linux linux" data-g="" title="Ops - Linux">Linux</a>' '<input class="tf js" id="teamq"' \
-    '<span class="pk-v">Windows</span>' '!class="teamnav"' \
+check "the script loaded from site-insights.js, relative to each page; the pages as links without it" "$top/ops/other/windows/latest.html" \
+    '<script src="../../../../site-insights.js?v=' 'data-file="site-insights.js"' '<details class="picker" id="picker">' \
+    '<a class="team lv3" href="../linux/latest.html" data-n="ops - linux linux" data-c="ops other" title="Ops - Linux">Linux</a>' '<input class="tf js" id="teamq"' \
+    '<span class="pk-v">Other · Windows</span>' '!class="teamnav"' '<nav class="crumbs" aria-label="Where this page is"><a href="../../../latest.html">All</a>' \
     'Riley Chen' '!Dana Whitfield</td><td><b>' 'Who sends this team its tickets' "members, from ServiceNow's group membership" \
-    '<a class="hop glink" href="../ops-service-desk/latest.html" title="Ops - Service Desk">Service Desk</a>' '<title>Week of '
+    '<a class="hop glink" href="../service-desk/latest.html" title="Ops - Service Desk">Service Desk</a>' '<title>Week of '
 [ -s "$work/site/site-insights.js" ] && grep -q 'window.siteInsights' "$work/site/site-insights.js" && ! grep -q 'site-insights.js' "$work/site/index.html" \
     && echo "ok   -   ... site-insights.js at the top of the website, the index does not load it" \
     || { echo "FAIL - site-insights.js not written at the top (or the index loads it)"; fails=$((fails + 1)); }
 n=$(find "$top" -name latest.html | wc -l)
-[ "$n" = 6 ] && echo "ok   -   ... six latest pages (the site and five teams)" || { echo "FAIL - $n latest pages"; fails=$((fails + 1)); }
+[ "$n" = 8 ] && echo "ok   -   ... eight latest pages (All, the site Ops, its directorate Other, five teams)" || { echo "FAIL - $n latest pages"; fails=$((fails + 1)); }
 grep -q 'servicenow-ticket-insights/latest.html' "$work/site/index.json" && echo "ok   -   ... on the website's index" \
     || { echo "FAIL - not on the index"; fails=$((fails + 1)); }
 check "the page loads its script from the website (a CSP that blocks inline script runs it); hover text without it" "$top/latest.html" \
     'src="../site-insights.js?v=' 'id="site-report-js" data-file="site-insights.js"' '<title>Week of' 'Busiest week: week of'
-check "  ... a team's page too" "$top/ops-windows/latest.html" 'src="../../site-insights.js?v='
+check "  ... a team's page too" "$top/ops/other/windows/latest.html" 'src="../../../../site-insights.js?v='
 [ -s "$work/site/site-insights.js" ] && grep -q 'siteInsights' "$work/site/site-insights.js" && ! LC_ALL=C grep -qP '[^\x00-\x7f]' "$work/site/site-insights.js" \
     && echo "ok   -   ... site-insights.js beside the index (ASCII)" || { echo "FAIL - site-insights.js"; fails=$((fails + 1)); }
 keys=$("$py" -c "import json,sys; print(' '.join(sorted(r['key'] for r in json.load(open(sys.argv[1]))['reports'])))" "$work/site/index.json")
@@ -184,6 +184,72 @@ grep -q 'sys_journal_field' "$work/log.jsonl" && { echo "FAIL - the work notes r
 run "ACT on, no model key: said, the report by category" ok "{$NOW, \"report_web_dest\": \"\"}" \
     'ACT: did not run (This job has no API key for provider genai' 'Account / Password'
 
+# ---- sites, directorates and teams (0.97.0): the same records, the groups named as three made-up sites ----------------
+"$py" "$here/insights_seed.py" "$work/seed3.json" 0.5 --sites >/dev/null
+mock SNMOCK_SEED="$work/seed3.json"
+mkdir -p "$work/site5"
+run "three sites from ServiceNow's group tree (parents): a page for each site, directorate and team, and a split" ok \
+    "{$NOW, $NOACT, \"servicenow_insights_hierarchy_source\": \"parents\", \"report_web_dest\": \"$work/site5\", \"servicenow_insights_team_min\": 5,
+      \"servicenow_insights_split_label\": \"BLUE\", \"servicenow_insights_split_pattern\": \"*- nova\"}" \
+    'Sites side by side' 'SITEA' 'SITEB'
+t5="$work/site5/servicenow-ticket-insights"
+for f in latest.html sitea/latest.html sitea/j6-staff-division/latest.html sitea/j6-staff-division/j6-service-desk/latest.html \
+         sitea/site-direct/j63-windows/latest.html siteb/site-direct/ops-vdi-nova/latest.html siteb/client-support/latest.html \
+         unknown/unknown/site-c-codex-linux/latest.html latest-blue.html latest-non-blue.html sitea/latest-non-blue.html \
+         siteb/site-direct/ops-vdi-nova/latest-blue.html; do
+    [ -s "$t5/$f" ] || { echo "FAIL - no $f"; fails=$((fails + 1)); }
+done
+n=$(find "$t5" -name latest.html | wc -l)
+[ "$n" = 13 ] && echo "ok   -   ... 13 pages: All, 3 sites (Unknown one), 5 directorates, 4 teams (the inactive group none)" \
+    || { echo "FAIL - $n pages"; fails=$((fails + 1)); }
+n=$(find "$t5" -name 'latest-*blue.html' | wc -l)
+[ "$n" = 26 ] && echo "ok   -   ... each page twice more: BLUE and non-BLUE (26)" || { echo "FAIL - $n split pages"; fails=$((fails + 1)); }
+[ ! -e "$t5/siteb/client-support/network/latest.html" ] && echo "ok   -   ... no page for the inactive group" || { echo "FAIL - an inactive group's page"; fails=$((fails + 1)); }
+check "  ... All: the sites side by side, the tree, the switch" "$t5/latest.html" 'Sites side by side' '<a class="teamlink" href="sitea/latest.html" title="SITEA">SITEA</a>' \
+    '<li class="lv1"><a href="sitea/latest.html"' '<li class="lv2"><a href="siteb/client-support/latest.html"' \
+    '<nav class="split" aria-label="Which groups"><a href="latest.html" aria-current="page">All</a><a href="latest-blue.html">BLUE</a><a href="latest-non-blue.html">non-BLUE</a></nav>' \
+    '<b>Sites, directorates and teams</b>' 'ServiceNow parent' 'SITEB - Network - inactive in ServiceNow, its tickets in SITEB / Client Support' \
+    '<dt>Unknown</dt><dd>SITE-C - CODEX - Linux ('
+check "  ... a directorate: its breadcrumbs and teams" "$t5/sitea/j6-staff-division/latest.html" 'Teams side by side' \
+    '<nav class="crumbs" aria-label="Where this page is"><a href="../../latest.html">All</a><span class="sep" aria-hidden="true">›</span><a href="../latest.html">SITEA</a>' \
+    '<span class="pk-v">SITEA · J6 Staff Division</span>' 'href="j6-service-desk/latest.html"'
+check "  ... a BLUE page links BLUE pages" "$t5/sitea/latest-blue.html" 'href="../latest-blue.html">All</a>' 'aria-current="page">BLUE</a>' \
+    'href="j6-staff-division/latest-blue.html"'
+"$py" - "$t5" <<'PYJ' && echo "ok   -   ... the rollup: each site adds up to All, BLUE and non-BLUE to the whole (a ticket once at every level)" || { echo "FAIL - the rollup"; fails=$((fails + 1)); }
+import re, sys
+def inc(f):
+    return int(re.search(r'<span class="eyebrow">Tickets</span><span class="v">([\d,]+)', open(sys.argv[1] + "/" + f).read()).group(1).replace(",", ""))
+assert inc("latest.html") == inc("sitea/latest.html") + inc("siteb/latest.html") + inc("unknown/latest.html")
+assert inc("sitea/latest.html") == inc("sitea/j6-staff-division/latest.html") + inc("sitea/site-direct/latest.html")
+assert inc("latest.html") == inc("latest-blue.html") + inc("latest-non-blue.html")
+assert inc("siteb/latest.html") == inc("siteb/latest-blue.html") + inc("siteb/latest-non-blue.html")
+PYJ
+keys=$("$py" -c "import json,sys; print(' '.join(sorted(r['key'] for r in json.load(open(sys.argv[1]))['reports'])))" "$work/site5/index.json")
+[ "$keys" = "servicenow-ticket-insights/latest.html" ] && echo "ok   -   ... one line on the index" || { echo "FAIL - the index: $keys"; fails=$((fails + 1)); }
+"$py" - "$work/log.jsonl" <<'PYJ' && echo "ok   -   ... sys_user_group read with GET only, no person's field" || { echo "FAIL - the groups' requests"; fails=$((fails + 1)); }
+import json, sys
+rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
+g = [r for r in rows if r["path"].endswith("/sys_user_group") and r["query"].get("sysparm_query", "").startswith("sys_idIN")]
+assert g and all(r["method"] == "GET" for r in g)
+assert all(r["query"]["sysparm_fields"] == "sys_id,name,parent,active,type" for r in g), g[0]["query"]
+PYJ
+run "  ... again with servicenow_insights_split_teams false: the teams' split pages gone, the rest kept" ok \
+    "{$NOW, $NOACT, \"servicenow_insights_hierarchy_source\": \"parents\", \"report_web_dest\": \"$work/site5\", \"servicenow_insights_team_min\": 5,
+      \"servicenow_insights_split_label\": \"BLUE\", \"servicenow_insights_split_pattern\": \"*- nova\", \"servicenow_insights_split_teams\": false}" 'Sites side by side'
+n=$(find "$t5" -name 'latest-*blue.html' | wc -l)
+[ "$n" = 18 ] && [ ! -e "$t5/siteb/site-direct/ops-vdi-nova/latest-blue.html" ] && [ -s "$t5/siteb/latest-blue.html" ] \
+    && echo "ok   -   ... 18 split pages: All, the sites, the directorates - the teams' 8 deleted" || { echo "FAIL - $n split pages after split_teams false"; fails=$((fails + 1)); }
+check "  ... a team page: no switch" "$t5/siteb/site-direct/ops-vdi-nova/latest.html" '!class="split"'
+check "  ... a directorate's BLUE page links its teams' own pages" "$t5/siteb/site-direct/latest-blue.html" 'href="ops-vdi-nova/latest.html"'
+run "  ... by the names (hierarchy_source names): NOVA, the staff codes, a named directorate" ok \
+    "{$NOW, $NOACT, \"report_web_dest\": \"\", \"servicenow_insights_directorates\": [\"CODEX\"], \"servicenow_insights_suffix_directorates\": [\"NOVA\"],
+      \"servicenow_insights_team_min\": 5}" 'Sites side by side' 'SITE-C' 'J63' 'NOVA' 'CODEX'
+mock SNMOCK_SEED="$work/seed3.json" SNMOCK_NO_GROUPS=1
+run "  ... sys_user_group refused (403): said, the sites by the names, green" ok \
+    "{$NOW, $NOACT, \"servicenow_insights_hierarchy_source\": \"parents\", \"report_web_dest\": \"\", \"servicenow_insights_team_min\": 5}" \
+    "sys_user_group (the groups' parents, for the sites and directorates): GET api/now/table/sys_user_group: HTTP 403" '(unknown)'
+mock
+
 # ---- groups, what cannot be read, Check, no credential ---------------------------------------------------------------
 run "one group named: its tickets only, its page" ok "{$NOW, $NOACT, \"servicenow_insights_groups\": \"Ops - Linux\"}" \
     'Ticket insights for All assignment groups' 'Ops - Linux' '!Ops - Service Desk  '
@@ -192,10 +258,17 @@ run "a group that is not there: said, the job fails" fail "{$NOW, $NOACT, \"serv
 run "  ... servicenow_insights_fail false: a report only" ok "{$NOW, $NOACT, \"servicenow_insights_groups\": [\"Linux Ops\"], \"servicenow_insights_fail\": false}" \
     'none of the assignment groups is in ServiceNow: Linux Ops'
 mock SNMOCK_NO_TABLES=sys_audit,problem,sys_user_grmember
-run "sys_audit, problem and sys_user_grmember unreadable: said under Not read, the rest reported, green" ok "{$NOW, $NOACT}" \
-    'sys_audit (the hand-off paths): GET api/now/table/sys_audit: HTTP 403' 'problem: GET api/now/table/problem: HTTP 403' 'Top incident issues' \
+run "sys_audit, problem and sys_user_grmember unreadable: said under Not read, the paths from the metric, green" ok "{$NOW, $NOACT}" \
+    'the hand-off paths: sys_audit: GET api/now/table/sys_audit: HTTP 403' 'the paths from metric_instance instead' 'problem: GET api/now/table/problem: HTTP 403' 'Top incident issues' \
     "sys_user_grmember (the teams' members): GET api/now/table/sys_user_grmember: HTTP 403" 'each leaderboard lists everyone the team'
+mock SNMOCK_NO_TABLES=sys_audit,metric_instance
+run "  ... sys_audit and metric_instance unreadable: the counts, no paths, said which" ok "{$NOW, $NOACT}" \
+    'sys_audit and metric_instance (the hand-off paths): sys_audit: GET api/now/table/sys_audit: HTTP 403' 'metric_instance: GET api/now/table/metric_instance: HTTP 403'
 mock
+run "  ... servicenow_insights_handoff_source metric: sys_audit never asked" ok "{$NOW, $NOACT, \"servicenow_insights_handoff_source\": \"metric\"}" \
+    '!sys_audit (the hand-off paths)' '!the hand-off paths: sys_audit'
+grep -q '/sys_audit' "$work/log.jsonl" && { echo "FAIL - sys_audit asked though handoff_source is metric"; fails=$((fails + 1)); } \
+    || { grep -q '/metric_instance' "$work/log.jsonl" && echo "ok   -   ... only metric_instance asked" || { echo "FAIL - metric_instance not asked"; fails=$((fails + 1)); }; }
 CHECK=1 run "Check: read and printed, nothing written" ok "{$NOW, $NOACT, \"report_web_dest\": \"$work/site3\"}" 'Ticket insights for All assignment groups'
 [ ! -e "$work/site3" ] && echo "ok   -   ... nothing written in Check" || { echo "FAIL - Check wrote $work/site3"; fails=$((fails + 1)); }
 INS_ENV="SN_HOST=" run "no credential" fail "{$NOW}" 'it sets SN_HOST, SN_USERNAME, SN_PASSWORD'

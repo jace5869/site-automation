@@ -319,6 +319,24 @@ kbd{font:600 11px var(--mono);border:1px solid var(--line);border-bottom-width:2
 .toc a.team[aria-current]{background:var(--accent-soft);color:var(--accent);font-weight:700}
 .toc .tg,.pickpop .tg{font-size:10.5px;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);font-weight:700;padding:8px 10px 2px}
 .toc .tnone{padding:4px 10px;color:var(--muted);font-size:12px}
+/* the tree (0.97.0): sites, their directorates, their teams - indented, each site and directorate folding in the side bar */
+.toc details.tn>summary{list-style:none;display:flex;align-items:center;cursor:pointer}
+.toc details.tn>summary::-webkit-details-marker{display:none}
+.toc details.tn>summary:before{content:"\25b8";color:var(--muted);font-size:10px;width:12px;flex:none;transition:transform .15s}
+.toc details.tn[open]>summary:before{transform:rotate(90deg)}
+.toc details.tn>summary a.team{flex:1;min-width:0}
+.toc a.lv1{font-weight:700;color:var(--fg)}.toc a.lv2{padding-left:16px;font-weight:600}.toc a.lv3{padding-left:30px}
+.toc details.lv2>summary{padding-left:6px}
+.toc details.tn.lv1>a.lv2{padding-left:28px}
+.pickpop li.lv1 a{font-weight:700;color:var(--fg)}.pickpop li.lv2 a{padding-left:22px;font-weight:600}.pickpop li.lv3 a{padding-left:38px}
+.pickpop li.lv1:not(:first-child){border-top:1px solid var(--line-2);margin-top:4px;padding-top:4px}
+.crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:13px;color:var(--muted);margin:0 0 14px}
+.crumbs a{color:var(--fg-2);text-decoration:none;border-bottom:1px solid var(--line)}.crumbs a:hover{color:var(--accent);border-color:currentColor}
+.crumbs .sep{color:var(--muted)}.crumbs b{color:var(--fg)}
+.where{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px;margin:0 0 14px}.where .crumbs{margin:0}
+.split{display:inline-flex;border:1px solid var(--line);border-radius:9px;padding:2px;gap:2px;background:var(--surface-2)}
+.split a{font-size:12.5px;font-weight:650;color:var(--muted);text-decoration:none;padding:4px 11px;border-radius:7px}
+.split a:hover{color:var(--fg)}.split a[aria-current]{background:var(--surface);color:var(--accent);box-shadow:inset 0 0 0 1px var(--line)}
 /* what ACT read for a fix, a draft's tickets (0.96.0) */
 .fix .from{color:var(--muted);font-size:12px;padding:0 14px 12px}
 .kb .worked{margin-top:12px!important;color:var(--muted);font-size:12.5px}
@@ -376,6 +394,7 @@ section.card{border-radius:16px;background:var(--glass);box-shadow:none}
 .logoimg{height:52px}
 .brief-hero{padding:clamp(14px,2vw,28px) 2px 6px}
 .brief-hero .eyebrow{color:var(--accent)}
+.where+.brief-hero,.crumbs+.brief-hero{padding-top:6px}
 .brief-hero .verdict{display:inline-flex;align-items:center;gap:7px;margin-top:10px;padding:3px 12px 3px 9px;border:1px solid;border-radius:999px;
   font-size:13.5px;font-weight:700;line-height:1.35}
 .brief-hero .verdict.c-warn{background:var(--warn-bg)}.brief-hero .verdict.c-good{background:var(--good-bg)}
@@ -415,8 +434,9 @@ D.querySelectorAll(".tab").forEach(function(b){b.addEventListener("click",functi
 var pk=D.getElementById("picker"),pq=D.getElementById("pickq"),pl=pk?[].slice.call(pk.querySelectorAll(".pickpop a")):[],ai=-1;
 function shown(){return pl.filter(function(a){return !a.parentNode.hidden})}
 function mark(i){var v=shown();pl.forEach(function(a){a.classList.remove("act")});if(!v.length){ai=-1;return}ai=(i+v.length)%v.length;v[ai].classList.add("act");v[ai].scrollIntoView({block:"nearest"})}
+function hit(a,t){return !t||(a.getAttribute("data-n")||"").indexOf(t)>=0||(a.getAttribute("data-c")||"").indexOf(t)>=0}
 function heads(box,sel,vis){box.querySelectorAll(".tg").forEach(function(h){var g=h.textContent,any=[].slice.call(box.querySelectorAll(sel)).some(function(a){return a.getAttribute("data-g")===g&&vis(a)});h.hidden=!any})}
-function pfilter(){var t=pq.value.trim().toLowerCase(),k=0;pl.forEach(function(a){var m=!t||(a.getAttribute("data-n")||"").indexOf(t)>=0;a.parentNode.hidden=!m;if(m)k++});pk.querySelector(".pickpop .none").hidden=k>0;
+function pfilter(){var t=pq.value.trim().toLowerCase(),k=0;pl.forEach(function(a){var m=hit(a,t);a.parentNode.hidden=!m;if(m)k++});pk.querySelector(".pickpop .none").hidden=k>0;
  heads(pk,".pickpop a",function(a){return !a.parentNode.hidden});mark(0)}
 if(pk&&pq){pk.addEventListener("toggle",function(){if(!pk.open)return;pq.value="";pfilter();var c=shown().map(function(a){return a.hasAttribute("aria-current")}).indexOf(true);mark(c<0?0:c);setTimeout(function(){pq.focus()},0)});
  pq.addEventListener("input",pfilter);
@@ -424,8 +444,8 @@ if(pk&&pq){pk.addEventListener("toggle",function(){if(!pk.open)return;pq.value="
   else if(ev.key==="Enter"){var v=shown();if(v[ai]){ev.preventDefault();location.href=v[ai].href}}else if(ev.key==="Escape"){ev.preventDefault();pk.open=false;pk.querySelector("summary").focus()}});
  D.addEventListener("click",function(ev){if(pk.open&&!pk.contains(ev.target))pk.open=false})}
 var tf=D.getElementById("teamq"),tl=[].slice.call(D.querySelectorAll(".toc a.team")),toc=D.querySelector(".toc");
-if(tf){tf.addEventListener("input",function(){var t=tf.value.trim().toLowerCase(),k=0;tl.forEach(function(a){a.hidden=!!t&&(a.getAttribute("data-n")||"").indexOf(t)<0;if(!a.hidden)k++});D.querySelector(".toc .tnone").hidden=k>0;
- heads(toc,"a.team",function(a){return !a.hidden})});
+if(tf){tf.addEventListener("input",function(){var t=tf.value.trim().toLowerCase(),k=0;tl.forEach(function(a){a.hidden=!hit(a,t);if(!a.hidden)k++});D.querySelector(".toc .tnone").hidden=k>0;
+ toc.querySelectorAll("details.tn").forEach(function(d){var a=d.querySelector("summary a");d.hidden=!!(a&&a.hidden);if(t)d.open=true})});
  tf.addEventListener("keydown",function(ev){if(ev.key==="Escape"){tf.value="";tf.dispatchEvent(new Event("input"));tf.blur()}else if(ev.key==="Enter"){var f=tl.filter(function(a){return !a.hidden})[0];if(f){ev.preventDefault();location.href=f.href}}})}
 var cur=D.querySelector(".toc a.team[aria-current]");if(cur&&toc&&toc.scrollHeight>toc.clientHeight)toc.scrollTop=Math.max(0,cur.offsetTop-toc.clientHeight/2);
 D.addEventListener("keydown",function(ev){var tg=ev.target,typing=/^(INPUT|TEXTAREA|SELECT)$/.test(tg.tagName)||tg.isContentEditable;
@@ -691,8 +711,13 @@ def search_attr(*parts):
 def servicenow_insights_page(model, key="all", opts=None):
     o = opts or {}
     m = model or {}
+    variant = str(o.get("variant") or "")                                  # the split's half this page shows (0.97.0)
+    if variant and (m.get("variants") or {}).get(variant):
+        m = dict(m, scopes=m["variants"][variant])
     s = (m.get("scopes") or {}).get(key or "all") or m["scopes"]["all"]
-    is_all = s["team"] is None
+    lvl = s.get("level") or ("all" if s["team"] is None else "team")      # all, site, dir, team (0.97.0)
+    is_all = lvl == "all"
+    multi = lvl != "team"                                                   # more than one group's tickets
     win = m.get("window") or {}
     url = m.get("url") or ""
     old_days = int(o.get("old_days") or 30)
@@ -726,48 +751,46 @@ def servicenow_insights_page(model, key="all", opts=None):
     # the site's logo (report_logo_file) goes in place of the comment when the page is published; else the initials
     logo = '<!--site-report-logo--><div class="logo" aria-hidden="true">%s</div>' % e(
         "".join(w[0] for w in str(o.get("header_text") or "Site automation").split()[:2]).upper() or "SA")
-    # the teams (0.96.0): a picker in the bar and a list in the side bar, both plain links (no script needed); the script
-    # adds the filters and the keys. Short names (without the parts every group shares), the whole name on hover.
-    groups = team_groups([t for t in teams if links.get(t)])                 # A to Z, under their prefix where that is clean
-    grouped = len(groups) > 1
-    team_links = ([("All assignment groups", links.get("all", ""), is_all, "")] if links.get("all") else []) + \
-        [(t, links.get(t, ""), t == s["team"], g) for g, ts in groups for t in ts]
-    show_teams = len(team_links) > 1 or (team_links and not is_all)       # a team's page always links back to the site's
+    # where to go (0.97.0): every page - All, each site, each directorate, each team - as a tree, A to Z in each level and
+    # Other last: a menu in the bar (t) and the side bar's list (each site and directorate folds), both plain links (no
+    # script needed); the script adds the filters (a match at any level shows its branch) and the keys
+    tree = m.get("tree") or [{"key": "", "label": "", "dirs": [{"key": "", "label": "", "teams": [{"key": t, "label": sh(t)} for t in sorted(teams, key=natural_key)]}]}]
+    nodes = [{"key": "all", "label": "All assignment groups", "lv": 0, "full": "All assignment groups", "ctx": ""}]
+    for sn in tree:
+        dirs = sn.get("dirs") or []
+        tnames = [t["label"] for d in dirs for t in d["teams"]]
+        if sn["key"]:
+            nodes.append({"key": sn["key"], "label": sn["label"], "lv": 1, "full": sn["label"],
+                          "ctx": " ".join([d["label"] for d in dirs] + tnames + [t["key"] for d in dirs for t in d["teams"]])})
+        for d in dirs:
+            if d["key"]:
+                nodes.append({"key": d["key"], "label": d["label"], "lv": 2, "full": "%s - %s" % (sn["label"], d["label"]),
+                              "ctx": " ".join([sn["label"]] + [t["label"] for t in d["teams"]] + [t["key"] for t in d["teams"]])})
+            for t in d["teams"]:
+                nodes.append({"key": t["key"], "label": t["label"], "lv": 3 if d["key"] else 1, "full": t["key"],
+                              "ctx": " ".join([sn["label"], d["label"]])})
+    nodes = [x for x in nodes if links.get(x["key"])]
+    show_teams = len(nodes) > 1 or (nodes and not is_all)                   # a page always links back to the site's
 
-    suffix = shared_suffix([t for t in teams if links.get(t)]) if grouped else ""
+    def ndata(x):
+        return 'data-n="%s" data-c="%s"' % (e(" ".join([x["full"].lower(), x["label"].lower()])), e(x["ctx"].lower()))
 
-    def tlabel(label):
-        """A team's name in the lists: under its prefix, the rest of it without the suffix most names share (the whole
-        name is the title); else its short name."""
-        if label == "All assignment groups":
-            return label
-        if not grouped:
-            return sh(label)
-        rest = [" ".join(p.split()) for p in label.split(" - ")[1:]]
-        if suffix and len(rest) > 1 and rest[-1].lower() == suffix:
-            rest = rest[:-1]
-        return " - ".join(rest)
-
-    def theads(g, prev, tag):
-        """A prefix's subheading where a new one starts."""
-        return ('<%s class="tg" aria-hidden="true">%s</%s>' % (tag, e(g), tag)) if grouped and g and g != prev else ""
-
-    def tdata(label):
-        return e(" ".join([label.lower(), tlabel(label).lower()]))
+    def nlink(x, cls=""):
+        return '<a class="%s" href="%s" %s title="%s"%s>%s</a>' % (
+            (cls + " lv%d" % x["lv"]).strip(), e(links[x["key"]]), ndata(x), e(x["full"]), ' aria-current="page"' if x["key"] == s["key"] else "",
+            e(x["label"]))
+    here = " · ".join(c_[1] for c_ in (s.get("crumbs") or [])[1:][-2:]) or (s["name"] if not is_all else "All assignment groups")
     menu = ""
     if show_teams:
-        menu = ('<details class="picker" id="picker"><summary title="Switch team (t)" aria-label="Team: %s - switch team">'
-                '<span class="pk-l">Team</span><span class="pk-v">%s</span><span class="pk-c">%d ▾</span></summary>'
-                '<div class="pickpop"><input class="js" id="pickq" type="search" placeholder="Filter teams…" aria-label="Filter teams" '
-                'autocomplete="off" spellcheck="false"><ul id="picklist" aria-label="Teams">%s</ul><div class="none" hidden>No team matches.</div>'
-                '<div class="pkhint js"><span><kbd>t</kbd> teams</span><span><kbd>/</kbd> search</span><span><kbd>↑</kbd><kbd>↓</kbd> '
+        menu = ('<details class="picker" id="picker"><summary title="Go to a site, directorate or team (t)" aria-label="This page: %s - go to another">'
+                '<span class="pk-l">View</span><span class="pk-v">%s</span><span class="pk-c">%d ▾</span></summary>'
+                '<div class="pickpop"><input class="js" id="pickq" type="search" placeholder="Filter sites, directorates, teams…" aria-label="Filter" '
+                'autocomplete="off" spellcheck="false"><ul id="picklist" aria-label="Sites, directorates and teams">%s</ul><div class="none" hidden>Nothing matches.</div>'
+                '<div class="pkhint js"><span><kbd>t</kbd> open</span><span><kbd>/</kbd> search</span><span><kbd>↑</kbd><kbd>↓</kbd> '
                 '<kbd>Enter</kbd> go</span><span><kbd>Esc</kbd> close</span></div></div></details>') % (
-            e(s["name"]), e("All assignment groups" if is_all else ("%s · %s" % (next((g for t_, _, _, g in team_links if t_ == s["name"]), ""), tlabel(s["name"]))
-                                                                  if grouped else sh(s["name"]))),
-            len(team_links) - (1 if links.get("all") else 0),
-            "".join(theads(g, team_links[k - 1][3] if k else "", "li") + '<li%s><a href="%s" data-n="%s" data-g="%s" title="%s"%s><span>%s</span></a></li>' % (
-                ' class="all"' if label == "All assignment groups" else "", e(href), tdata(label), e(g), e(label), ' aria-current="page"' if on else "",
-                e(tlabel(label))) for k, (label, href, on, g) in enumerate(team_links)))
+            e(s["name"]), e(here), len(nodes) - 1,
+            "".join('<li class="lv%d%s">%s</li>' % (x["lv"], " all" if x["lv"] == 0 else "", nlink(x).replace('<a class="lv%d"' % x["lv"], "<a", 1))
+                    for x in nodes))
     teamnav = ""
     head.append(
         '<header class="bar gut"><div class="wrap"><div class="brand">%s<div style="min-width:0"><h1>ServiceNow ticket insights</h1>'
@@ -779,9 +802,10 @@ def servicenow_insights_page(model, key="all", opts=None):
             logo, e(s["name"]), e(win.get("label") or ""), e(span), e(o.get("generated") or ""),
             (" · AAP job %s" % e(o["job"])) if o.get("job") and str(o["job"]) != "local" else "", menu))
 
+    side = s.get("side") or ({"kind": "Teams", "rows": s.get("teams") or []} if is_all else {})
     toc = [("glance", "At a glance", "")]
-    if is_all and s.get("teams"):
-        toc.append(("teams", "Teams side by side", len(s["teams"])))
+    if side.get("rows"):
+        toc.append(("teams", "%s side by side" % side["kind"], len(side["rows"])))
     toc += [("keepingup", "Keeping up", ""), ("severity", "Severity", len(s["majors"]) or ""), ("issues", "Top issues", min(len(s["issues"]), int(o.get("top_issues") or 10))),
             ("problems", "Problem candidates", len(s["problems"]) or ""), ("handoffs", "Passed between groups", s["handoffs"]["count"] or ""),
             ("requests", "Most requested", min(len(s["requests"]), int(o.get("top_requests") or 10))), ("changes", "Changes", len(s["changes"]["rows"]) or ""),
@@ -790,11 +814,20 @@ def servicenow_insights_page(model, key="all", opts=None):
     for sid, label, cnt in toc:
         nav.append('<a href="#%s">%s <span class="c">%s</span></a>' % (sid, e(label), e(cnt)))
     if show_teams:
-        nav.append('<div class="lbl">Teams</div><input class="tf js" id="teamq" type="search" placeholder="Filter teams" aria-label="Filter teams" '
-                   'autocomplete="off" spellcheck="false">' + "".join(
-                       theads(g, team_links[k - 1][3] if k else "", "div") + '<a class="team" href="%s" data-n="%s" data-g="%s" title="%s"%s>%s</a>' % (
-                           e(href), tdata(label), e(g), e(label), ' aria-current="page"' if on else "", e(tlabel(label)))
-                       for k, (label, href, on, g) in enumerate(team_links)) + '<div class="tnone" hidden>No team matches.</div>')
+        tr = ['<div class="lbl">Sites, directorates, teams</div><input class="tf js" id="teamq" type="search" placeholder="Filter" '
+              'aria-label="Filter sites, directorates and teams" autocomplete="off" spellcheck="false">']
+        open_lv = []
+        for x in nodes:
+            while open_lv and open_lv[-1] >= x["lv"]:
+                tr.append("</details>")
+                open_lv.pop()
+            if x["lv"] in (1, 2) and any(y["lv"] > x["lv"] for y in nodes[nodes.index(x) + 1:nodes.index(x) + 2]):
+                tr.append('<details class="tn lv%d" open><summary>%s</summary>' % (x["lv"], nlink(x, "team")))
+                open_lv.append(x["lv"])
+            else:
+                tr.append(nlink(x, "team"))
+        tr += ["</details>"] * len(open_lv)
+        nav.append("".join(tr) + '<div class="tnone" hidden>Nothing matches.</div>')
     nav.append("</nav>")
 
     body = []
@@ -842,12 +875,15 @@ def servicenow_insights_page(model, key="all", opts=None):
     body.append(section("glance", "At a glance", "%s, compared with the %s before (%s)" % (e(win.get("label")), e(span), e(win.get("prev_label") or "")) if win.get("compare") else e(win.get("label")),
                         tiles(tl) + summ))
 
-    # ---- teams side by side
-    if is_all and s.get("teams"):
+    # ---- side by side: the sites (the All page), a site's directorates, a directorate's teams (0.97.0)
+    if side.get("rows"):
         rows = []
-        for t in sorted(s["teams"], key=lambda t: natural_key(t["team"])):          # A to Z (0.96.0); click a column to sort
+        kind = side["kind"]
+        for t in sorted(side["rows"], key=lambda t: (t.get("label") == "Other", natural_key(t.get("label") or t["team"]))):   # A to Z, Other last
             up = t["backlog"][0] > t["backlog"][1] * 1.05 and t["backlog"][0] - t["backlog"][1] >= 5
-            name = ('<a class="teamlink" href="%s">%s</a>' % (e(links[t["team"]]), e(t["team"]))) if links.get(t["team"]) else "<b>%s</b>" % e(t["team"])
+            k_ = t.get("key") or t["team"]
+            lab = t.get("label") or t["team"]
+            name = ('<a class="teamlink" href="%s" title="%s">%s</a>' % (e(links[k_]), e(t["team"]), e(lab))) if links.get(k_) else "<b>%s</b>" % e(lab)
             rows.append((search_attr(t["team"], t["top"][0]), [
                 td(name), td('<span class="inl">%s<span class="chip %s">%s</span></span>' % (spark(t["series"], "var(--warn)" if up else "var(--s1)", 84, 26),
                                                                                          "warn" if up else "good", "Falling behind" if up else "Keeping up")),
@@ -855,10 +891,11 @@ def servicenow_insights_page(model, key="all", opts=None):
                 td(n(t["old"]), "n" + (" c-warn b" if t["old"] >= 20 else ""), t["old"]), td(fh(t["median_h"]), "n", t["median_h"] or 0),
                 sla_cell(t["sla"]), td('<span class="score">%s<span class="sm mut">%d%% good</span></span>' % (qbar(t["quality"]), t["quality"][0])),
                 td('%s <span class="mut num">%s</span>' % (e(t["top"][0]), n(t["top"][1])), "wide")]))
-        body.append(section("teams", "Teams side by side", "each team has its own page with every section of this report",
-                            table([("Team", "", "name"), ("Backlog over the period", "", ""), ("Open now", "n", "open"), ("Over %d days" % old_days, "n", "old"),
+        one = {"Sites": "Site", "Directorates": "Directorate"}.get(kind, "Team")
+        body.append(section("teams", "%s side by side" % kind, "each %s has its own page with every section of this report" % one.lower(),
+                            table([(one, "", "name"), ("Backlog over the period", "", ""), ("Open now", "n", "open"), ("Over %d days" % old_days, "n", "old"),
                                    ("Median fix", "n", "fix"), ("SLA met", "n", "sla"), ("Close notes", "", ""), ("Top issue", "", "")], rows, sortable=True) +
-                            '<div class="fair">Click a team for its page, a column\'s name to sort by it. The backlog lines show each team\'s shape on its own scale; compare Open now for size.</div>'))
+                            '<div class="fair">Click a %s for its page, a column\'s name to sort by it. The backlog lines show each one\'s shape on its own scale; compare Open now for size.</div>' % one.lower()))
 
     # ---- keeping up
     wk = s["weeks"]
@@ -936,7 +973,7 @@ def servicenow_insights_page(model, key="all", opts=None):
                 n(rd.get("close", 0)), "" if rd.get("close") == 1 else "s", n(rd.get("work", 0)), "" if rd.get("work") == 1 else "s",
                 (" of %s ticket%s" % (n(rd["work_tickets"]), "" if rd["work_tickets"] == 1 else "s")) if rd.get("work_tickets") else "",
                 (" · worked on %s ticket%s" % (n(i["fix"]["tickets"]), "" if i["fix"]["tickets"] == 1 else "s")) if i["fix"].get("tickets") else "")
-        main = (" · mostly %s (%d%%)" % (glink(i["main_group"]), i["main_share"])) if is_all and i["main_group"] else ""
+        main = (" · mostly %s (%d%%)" % (glink(i["main_group"]), i["main_share"])) if multi and i["main_group"] else ""
         rows.append(
             '<details class="row"%s><summary><span class="rk">%d</span><span class="rname"><span class="t">%s</span><span class="m">%s<span class="src %s">%s</span>%s'
             '<span>%s%% of incidents · %d%% cumulative%s</span></span><span class="hbar"><span style="width:%.1f%%"></span></span></span>'
@@ -1072,13 +1109,15 @@ def servicenow_insights_page(model, key="all", opts=None):
                                 int(o.get("bare_chars") or 20)))
 
     # ---- all-stars
-    star_teams = teams if is_all else [s["team"]]
+    under = [t["key"] for sn in (m.get("tree") or []) for d in sn.get("dirs") or [] for t in d["teams"]
+             if (lvl == "site" and sn["key"] == s["key"]) or (lvl == "dir" and d["key"] == s["key"])]
+    star_teams = teams if is_all else (under if multi else [s["team"]])
     panels = []
     for k, t in enumerate(star_teams):
         st = (m["scopes"].get(t) or {}).get("stars") or {}
-        panels.append(stars_panel(t, st, reopen_used, k, is_all and len(star_teams) > 1))
+        panels.append(stars_panel(t, st, reopen_used, k, multi and len(star_teams) > 1))
     tabs = ""
-    if is_all and len(star_teams) > 1:
+    if multi and len(star_teams) > 1:
         tabs = '<div class="tabs js" role="tablist">%s</div>' % "".join(
             '<button class="tab" type="button" role="tab" data-tab="p%d" aria-selected="%s">%s</button>' % (k, "true" if k == 0 else "false", e(t))
             for k, t in enumerate(star_teams))
@@ -1123,6 +1162,16 @@ def servicenow_insights_page(model, key="all", opts=None):
     read = "".join("<dt>%s</dt><dd class=\"num\">%s%s</dd>" % (e(t["table"]), n(t["kept"]) if not t.get("error") else '<span class="c-warn">not read</span>',
                                                                (" (cut at %s)" % n(t["read"])) if t.get("more") else "") for t in m.get("tables") or [])
     nr = o.get("not_read") or []
+    # how each group was placed (0.97.0): by the map, its ServiceNow parents, its name, or not at all (Other, Unknown)
+    pb = m.get("placed_by") or {}
+    place_html = ""
+    if pb:
+        lst = lambda gs: ", ".join(e(g) for g in gs) or "none"            # noqa: E731
+        place_html = ('<details class="notes"><summary><b>Sites, directorates and teams</b> <span class="mut">%s</span></summary><dl class="kv">%s%s%s</dl></details>' % (
+            e(" · ".join("%s %s" % (n(v), k_) for k_, v in sorted(pb.items()))),
+            ('<dt>In Other</dt><dd>%s <span class="mut">- no rule placed them: add them to servicenow_insights_hierarchy_map</span></dd>' % lst(m.get("hier_other") or [])),
+            ('<dt>Unknown</dt><dd>%s</dd>' % ", ".join("%s (%s)" % (e(g), n(c_)) for g, c_ in m["hier_unknown"])) if m.get("hier_unknown") else "",
+            "".join('<dt>No page</dt><dd>%s - %s, its tickets in %s</dd>' % (e(g), e(why), e(where)) for g, why, where in m.get("hier_folded") or [])))
     body.append(section("method", "How this was made", "", '<div class="method"><div><div class="eyebrow">Read from ServiceNow (read only)</div><dl class="kv">%s'
                         '<dt>Window</dt><dd>%s (%s)</dd><dt>Compared with</dt><dd>%s</dd><dt>Reopen</dt><dd>%s</dd></dl></div>'
                         '<div><div class="eyebrow">Replaced before GenAI, put back after</div><dl class="kv">%s</dl></div>'
@@ -1138,11 +1187,20 @@ def servicenow_insights_page(model, key="all", opts=None):
                             e(("%d, grouped by ACT" % a.get("issues", 0)) if a.get("ran") else "the incidents' category / subcategory"),
                             e(str(a.get("fixes", 0)) if a.get("ran") else "none: the most common close notes are shown"),
                             e("by ACT" if s.get("summary_by") == "act" else "from the numbers"),
-                            ('<div class="callout"><b>Not read.</b> %s</div>' % e("; ".join(nr))) if nr else "")))
+                            (('<div class="callout"><b>Not read.</b> %s</div>' % e("; ".join(nr))) if nr else "") + place_html)))
 
     # the script: loaded from the website (site-insights.js beside the index, written by site_report_web, the address made relative to
     # this page there) and carried in the page too; whichever runs first does the work
-    out = head + ['<div class="gut"><div class="wrap layout">'] + nav + ["<main>", teamnav] + body + [
+    crumbs = s.get("crumbs") or [["all", "All"]]
+    bc = '<nav class="crumbs" aria-label="Where this page is">%s</nav>' % '<span class="sep" aria-hidden="true">›</span>'.join(
+        ('<a href="%s">%s</a>' % (e(links[k_]), e(lab)) if links.get(k_) and k_ != s["key"] else "<b>%s</b>" % e(lab)) for k_, lab in crumbs)
+    sp = m.get("split") or {}
+    vl = o.get("variant_links") or {}
+    if sp.get("label") and vl:              # All | LABEL | non-LABEL: the same page for those groups' tickets, worked out at build time
+        bc = '<div class="where">%s<nav class="split" aria-label="Which groups">%s</nav></div>' % (bc, "".join(
+            '<a href="%s"%s>%s</a>' % (e(vl.get(v_, "")), ' aria-current="page"' if v_ == variant else "", e(lab))
+            for v_, lab in (("", "All"), ("in", sp["label"]), ("out", "non-" + sp["label"])) if vl.get(v_) is not None))
+    out = head + ['<div class="gut"><div class="wrap layout">'] + nav + ["<main>", teamnav, bc] + body + [
         '</main></div></div><footer class="gut foot"><div class="wrap">%s</div></footer><div class="tip" id="tip" hidden></div>'
         '<script src="%s"></script><script id="site-report-js" data-file="%s">\n%s\n</script></body></html>' % (
             e(o.get("footer") or ""), SCRIPT_FILE, SCRIPT_FILE, SCRIPT)]
@@ -1156,31 +1214,6 @@ def _p(a, b):
 def natural_key(name):
     """A team's name in A to Z order: case and spaces ignored, numbers as numbers (Team 2 before Team 10) - 0.96.0."""
     return [(0, int(p), "") if p.isdigit() else (1, 0, p) for p in re.split(r"(\d+)", " ".join(str(name or "").split()).lower()) if p]
-
-
-def team_groups(teams):
-    """The teams under their prefix (the part before " - "), when that is clean: every name has one, 2 to 8 prefixes, and
-    one of them holds 2 teams or more -> [(prefix, [team])] A to Z; else [("", teams A to Z)]."""
-    ts = sorted(teams, key=natural_key)
-    pre, shown = {}, {}
-    for t in ts:
-        head, _, rest = t.partition(" - ")
-        if rest.strip() and head.strip():
-            k = " ".join(head.split()).lower()                   # Ops and ops: one prefix, shown as first met
-            pre[t] = k
-            shown.setdefault(k, " ".join(head.split()))
-    kinds = sorted(set(pre.values()), key=natural_key)
-    if len(pre) != len(ts) or not 2 <= len(kinds) <= 8 or max(list(pre.values()).count(k) for k in kinds) < 2:
-        return [("", ts)]
-    return [(shown[k], [t for t in ts if pre[t] == k]) for k in kinds]
-
-
-def shared_suffix(teams):
-    """The last part most of the teams' names end with (" - CORE"), dropped where the teams are listed under their prefix;
-    '' when no part ends more than half of them (0.96.0)."""
-    lasts = [t.split(" - ")[-1].strip().lower() for t in teams if len(t.split(" - ")) >= 3]
-    best = max(set(lasts), key=lasts.count) if lasts else ""
-    return best if best and lasts.count(best) >= 2 and lasts.count(best) * 2 > len(teams) else ""
 
 
 def _short(group):

@@ -58,17 +58,16 @@ other reports do with `site-report.js`: [WEB_REPORTS.md](WEB_REPORTS.md)). Where
 works: the teams are links in the side bar and in the Team menu, resting on a chart shows its values, and the issues
 open and close.
 
-**Moving between teams (0.96.0).** The bar at the top has a **Team** menu on every page, a phone's too (full width):
-*All assignment groups* first, then every team A to Z - case and spaces ignored, numbers as numbers (*Edge 2* before
-*Edge 10*) - the current one checked. Type to narrow it, ↑ ↓ and Enter to go, Esc to close; **t** opens it from anywhere
-on the page and **/** goes to the search. The side bar's team list (wide screens) has a filter box above it, one line per
-team (the whole name on hover) and the current team marked. Where the teams' names share prefixes (*Apps - ...*,
-*Net - ...*: every name has one, 2 to 8 of them, one with two teams or more) both lists show them as small headings
-with the rest of the name under them, without a last part most names end with (*... - CORE*); the whole name is the
-hover text, and the menu's button says which heading the current team is under (*HQY · Ops - Mobility*). *Teams side by side* is A to Z too; click a column's name to sort by it. On the
-site's page a group's name in a chart or a table (*Emergency changes by group*, the hand-off paths, an issue's *mostly*
-group, the close notes by group) opens that team's page. The menu and the lists are plain links: without the script
-they still work, the filters and the keys are what the script adds.
+**Moving between pages (0.96.0, a tree since 0.97.0).** The bar at the top has a **View** menu on every page, a
+phone's too (full width): *All assignment groups* first, then every site, under it its directorates, under each its
+teams - A to Z at each level (case and spaces ignored, numbers as numbers), Other and Unknown last - the current page
+checked. Type to narrow it (a match at any level shows its branch: a team's site and directorate, a site's
+directorates and teams), ↑ ↓ and Enter to go, Esc to close; **t** opens it from anywhere on the page and **/** goes to
+the search. The side bar has the same tree (wide screens), each site and directorate folding, with a filter box above
+it. Every page has breadcrumbs (*All › SITEA › J6 › Service Desk*). On a page of more than one group a group's name in
+a chart or a table (*Emergency changes by group*, the hand-off paths, an issue's *mostly* group, the close notes by
+group) opens that team's page. The menu and the lists are plain links: without the script they still work, the
+filters and the keys are what the script adds.
 
 **In the website's brief look** (`report_web_theme: brief`, 0.92.0 - [WEB_REPORTS.md](WEB_REPORTS.md), "The brief
 look"): the same page in the brief colours and type (translucent sections, soft greys in dark since 0.94.0), its
@@ -89,6 +88,82 @@ action word; **good** = says what was done (restarted, replaced, unlocked, added
 **What is not a hand-off.** *Passed between groups* reads incidents only. A change whose tasks go to different teams, or
 a requested item whose catalog tasks do, is work split up by design: those are separate records, each assigned to its
 team from the start, and nothing is counted.
+
+## Sites, directorates and teams (0.97.0)
+
+The report has a page for **All**, for **each site**, for **each directorate** of a site and for **each team** (the
+teams as before: `servicenow_insights_team_min`, `_teams_max`, or the groups named). Every page has every section,
+worked out from the tickets of its groups: a ticket is one record, counted in the group it is assigned to now (where it
+ended), so it counts once at each level however often it moved. The All page shows *Sites side by side*, a site's page
+*Directorates side by side*, a directorate's *Teams side by side*. On the website the pages are
+`{template}/latest.html`, `{template}/<site>/latest.html`, `{template}/<site>/<directorate>/latest.html` and
+`{template}/<site>/<directorate>/<team>/latest.html`; the website's index keeps one line, the All page. (The team pages
+of 0.88.0 to 0.96.0, `{template}/<team>/latest.html`, are no longer written or linked: delete those folders by hand.)
+
+Where each assignment group belongs comes from `servicenow_insights_hierarchy_source`:
+
+**parents** (the default): ServiceNow's own group tree - the job reads `sys_user_group` (GET only: `sys_id`, `name`,
+`parent`, `active`, `type` of the groups the tickets name and their parents, never a manager or a person). The **site**
+is the root group at the top (shown by its name's first ` - ` part: a root *SITEA - J6* shows as SITEA); the
+**directorate** is the group one below the root (a group right under the root has the root as its directorate - *J6*,
+or *(site direct)* when the root is just the site's name); the **team** is the group (a team under a team is still a
+team of that directorate, shown *under* its parent team). The roots are the parentless groups that have groups under
+them, or those you name:
+
+```yaml
+servicenow_insights_site_roots: ["SITEA - J6", "SITEB", "SITE-C"]
+```
+
+A group with tickets but no way up to a root (no parent, a loop) goes in **Unknown** (under its site when its name
+starts with a root's site name). An account that may not read `sys_user_group`: the sites come from the names' first
+` - ` part, every directorate is *(unknown)*, and the page says so.
+
+**names**: from the group's name, split at ` - ` (a space each side: *SITE-C* is one site). The site is the first part.
+The directorate, the first that applies: a **suffix** - the name, or a parent group below the root, ends in `- WORD`
+(any case) for a word of `servicenow_insights_suffix_directorates`: that directorate; a whole word of the name in `servicenow_insights_directorate_tags`; a **staff code** in the name after the
+site (one or two letters then digits: J633, A6, G6 - not IPv6 or Win10), else a second part named in
+`servicenow_insights_directorates`, else the nearest parent's staff code; the parent group below the root; else
+**Other**. `servicenow_insights_directorate_alias` renames or merges directorates last.
+
+```yaml
+servicenow_insights_hierarchy_source: names
+servicenow_insights_suffix_directorates: [NOVA]     # "SITEB - Ops - VDI - NOVA" is in NOVA
+servicenow_insights_directorates: [CODEX]           # a second part that names a directorate
+servicenow_insights_directorate_tags: {COMPONENTX: N6}
+servicenow_insights_directorate_alias: {J602: J60}
+```
+
+**Both:** `servicenow_insights_hierarchy_map` places a group by its exact name and wins over either -
+`{"SITEB - Odd One": {site: SITEA, directorate: J6, team: Odd}}`. With `servicenow_insights_known_groups_only: true`
+every group not in the map goes in **Unknown** (its site's when its name starts with a known site) - to find the new
+ones and map them.
+
+**Groups with no team page; their tickets still count** in All, their site and their directorate:
+`servicenow_insights_exclude_groups` (exact names or patterns: `["* - Legacy*", "Old Approvals"]` - for groups being
+retired whose old tickets still name them); groups inactive in ServiceNow (`servicenow_insights_inactive_teams: true`
+gives them a page again); groups whose type is one of `servicenow_insights_skip_group_types` (approver, permission,
+survey, system, idea, legacy).
+
+**Checking the result.** *How this was made* has *Sites, directorates and teams*: how many groups each source placed
+(map, ServiceNow parent, name rule, Other, Unknown), the groups in **Other** (no rule placed them: map them), the
+**Unknown** groups with their ticket counts, and each group without a page and why. The workbook's Incidents sheet has
+Site, Directorate and Placed by columns and a *Sites and directorates* sheet.
+
+**The split.** With `servicenow_insights_split_label` and `servicenow_insights_split_pattern` set, every page has a
+switch - *All | LABEL | non-LABEL* - that shows the same page for the tickets of the groups that match (the group's name,
+or a parent team's below the root; `*` and `?`, any case) and for the rest:
+
+```yaml
+servicenow_insights_split_label: NOVA
+servicenow_insights_split_pattern: "*- NOVA"
+```
+
+Each is its own file beside the page (`latest-nova.html`, `latest-non-nova.html`), worked out when the job runs: the
+switch is a link, every link on a LABEL page goes to LABEL pages, and nothing is counted in the browser. A site of
+130 teams has some 450 pages with the split; `servicenow_insights_split_teams: false` keeps the switch on All, the
+sites and the directorates only. A page the same as the one already there is not written again, and the pages an older
+run wrote that this one did not (a team gone, the split switched off) are deleted (`report_web_delete_old`; the job
+writes its own pages - not with the copy job).
 
 ## ACT (GenAI), and what never reaches it
 
@@ -137,6 +212,25 @@ made from the numbers, and there are no knowledge drafts. The report says why AC
 batch: 2,000 descriptions in batches of 100 are 20 questions, plus 5 for the fixes and one for the summaries - each the
 model's time (`servicenow_insights_act_model_timeout`). Schedule it monthly, overnight.
 
+## The hand-off paths (0.97.0)
+
+*Passed between groups* counts the incidents reassigned `servicenow_insights_handoff_min` times or more from the
+incidents themselves; the **paths** (Service Desk → Windows → Service Desk ...) need each incident's history of
+assignment groups, which the incident does not hold. The job reads it, GET only, for those incidents alone:
+
+- `sys_audit` - every change of the field `assignment_group` (the default first);
+- `metric_instance` - the out-of-box incident metric *Assignment Group* (`definition.name=Assignment Group`,
+  `table=incident`, the incidents' sys_ids; `id`, `value`, `start`, `end` in order of `start`): one row per group the
+  incident was with.
+
+`servicenow_insights_handoff_source`: `auto` (sys_audit, else the metric), `audit`, `metric` (sys_audit is never
+asked - for an account that may not read it), `none`. *Not read* says where the paths came from when sys_audit was
+refused, or which table the account needs when neither was read.
+
+```yaml
+servicenow_insights_handoff_source: metric
+```
+
 ## Step 1. The account
 
 The **ServiceNow API** credential you already have works ([SERVICENOW_SETUP.md](SERVICENOW_SETUP.md)). Its account needs
@@ -145,8 +239,9 @@ The **ServiceNow API** credential you already have works ([SERVICENOW_SETUP.md](
 | Table | What | The role that reads it |
 |---|---|---|
 | `incident`, `sc_req_item`, `sc_task`, `change_request`, `problem` | the tickets | `itil` |
-| `sys_user_group` | the groups named in `servicenow_insights_groups` | `itil` |
-| `sys_audit` | the assignment history of incidents passed between groups (the paths) | `itil` on most instances; else the report says so and shows the counts without the paths (or `servicenow_insights_audit: false`) |
+| `sys_user_group` | the groups named in `servicenow_insights_groups`; since 0.97.0 the tickets' groups and their parents (sites and directorates) | `itil`; refused, the sites come from the names (or `servicenow_insights_use_group_parents: false`) |
+| `sys_audit` | the assignment history of incidents passed between groups (the paths) | `itil` on most instances; refused, the paths come from `metric_instance` (below) |
+| `metric_instance` | the same history from the out-of-box incident metric *Assignment Group* (0.97.0), when `sys_audit` is refused or `servicenow_insights_handoff_source: metric` | read on `metric_instance` (`itil` on most instances); both refused, the report shows the counts without the paths and says which table it could not read |
 | `sys_user_grmember` | the members of the groups the tickets name (the teams' leaderboards) | `itil` on most instances; else the report says so and each leaderboard lists everyone the team's tickets were assigned to or resolved by (or `servicenow_insights_members: false`) |
 | `sys_journal_field` | the work notes of the top issues' incidents, for ACT's fixes (0.96.0; only with ACT) | read on `sys_journal_field` - `itil` reads the work notes of the incidents it can read on most instances; where an ACL on `sys_journal_field` refuses it (403), ask the ServiceNow admin for a read ACL on `sys_journal_field` for the account's role (the work notes of incidents only is enough), or set `servicenow_insights_act_work_notes: false`; refused, the report says so and the fixes come from the close notes |
 

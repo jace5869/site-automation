@@ -48,6 +48,8 @@ stage, has_breached, business_percentage, planned_end_time ...), read with taskI
 The ticket insights: the seed may hold sc_req_item, problem, sys_user_grmember (user, group: names) and sys_audit records (tablename, fieldname, documentkey =
 the incident's sys_id, oldvalue, newvalue, sys_created_on), read with documentkeyINa,b like any table; and sys_journal_field
 (element work_notes, name incident, element_id, value, sys_created_on) for the work notes, read with element_idINa,b.
+metric_instance (definition, table, id = the incident's sys_id, value = a group, start, end): the hand-off paths' second
+source, read with definition.name=Assignment Group^table=incident^idINa,b.
 Usage: snmock.py PORT   (requests appended to $SNMOCK_LOG as JSON lines)
 """
 import base64
@@ -102,7 +104,7 @@ TASK_LABEL = {"1": "Open", "2": "Work in Progress", "3": "Closed Complete", "4":
               "-5": "New", "-4": "Assess", "-3": "Authorize", "-2": "Scheduled", "-1": "Implement", "0": "Review"}
 PREFIX = {"incident": "INC", "sc_task": "SCTASK", "change_request": "CHG", "change_task": "CTASK", "sc_request": "REQ",
           "sc_req_item": "RITM", "problem_task": "PTASK", "problem": "PRB", "sys_audit": "AUD", "sys_user_grmember": "GRM",
-          "sys_journal_field": "JRN"}
+          "sys_journal_field": "JRN", "metric_instance": "MET"}
 
 
 def seed():
@@ -114,6 +116,9 @@ def seed():
     with open(path) as fh:
         for rec in json.load(fh):
             rec = dict(rec)
+            if rec.get("_table") == "sys_user_group":     # the seed's groups (sys_id, name, parent, active, type)
+                GROUPS.append(dict((k, v) for k, v in rec.items() if not k.startswith("_")))
+                continue
             rec.setdefault("_table", "incident")
             rec.setdefault("sys_id", uuid.uuid4().hex)
             rec.setdefault("state", "1")
@@ -349,6 +354,9 @@ class H(BaseHTTPRequestHandler):
             if os.environ.get("SNMOCK_NO_GROUPS") == "1":
                 return fail("Operation Failed", "ACL Exception: no read access to sys_user_group", 403)
             query = q.get("sysparm_query", "")
+            if query.startswith("sys_idIN"):             # sys_idINa,b (the ticket insights' group parents)
+                want = query[8:].split("^")[0].split(",")
+                return 200, {"result": [dict({"parent": "", "type": ""}, **g) for g in GROUPS if g["sys_id"] in want]}
             if query.startswith("nameIN"):               # nameINa,b (the weekly activity report)
                 want = query[6:].split(",")
                 return 200, {"result": [g for g in GROUPS if g["name"] in want]}
