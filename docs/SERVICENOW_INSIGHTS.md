@@ -59,8 +59,9 @@ works: the teams are links in the side bar and under the header, resting on a ch
 open and close.
 
 **In the website's brief look** (`report_web_theme: brief`, 0.92.0 - [WEB_REPORTS.md](WEB_REPORTS.md), "The brief
-look"): the same page in the brief colours and type, its figures as one ruled strip, and *Keeping up* or *Falling
-behind* in one large line at the top, with what was resolved of what was opened, the backlog and the SLAs met. The page
+look"): the same page in the brief colours and type (translucent sections, soft greys in dark since 0.94.0), its
+figures as one strip, and *Keeping up* or *Falling behind* as a chip at the top, with what was resolved of what was
+opened, the backlog and the SLAs met. The page
 also takes the light or dark choice the reader made on the website's other pages (all looks).
 
 **Reopened, or came back.** When almost no incident in the window was ever reopened (fewer than

@@ -291,46 +291,58 @@ details.notes[open]>summary{margin-bottom:12px}
 # up or Falling behind, in one large line, with the period's numbers under it.
 BRIEF_CSS = r"""
 :root{
-  --bg:#f4f8f6; --surface:#fcfdfc; --surface-2:#f0f5f5; --line:#d4dadd; --line-2:#e2e7e9;
-  --fg:#182027; --fg-2:#363e45; --muted:#545c63; --accent:#00704e; --accent-soft:#dbf4e8; --on-accent:#f7fbf9;
-  --good:#106c3e; --good-bg:#daf7e3; --warn:#8f520d; --warn-bg:#fff0d1; --crit:#b02b27; --crit-bg:#ffe9e7; --info:#2b58b1; --info-bg:#e7f1ff;
+  --bg:#f4f8f6; --surface:#fbfdfc; --surface-2:#f3f5f5; --line:rgba(24,32,39,.08); --line-2:rgba(24,32,39,.05);
+  --glass:rgba(255,255,255,.65); --glow:rgba(0,112,78,.06);
+  --fg:#182027; --fg-2:#363e45; --muted:#545c63; --accent:#00704e; --accent-soft:rgba(0,112,78,.11); --on-accent:#f7fbf9;
+  --good:#0e6538; --good-bg:rgba(14,101,56,.1); --warn:#844b0b; --warn-bg:rgba(132,75,11,.1); --crit:#a82823; --crit-bg:rgba(168,40,35,.1);
+  --info:#2b58b1; --info-bg:rgba(43,88,177,.1);
   --shadow:none;
   --sans:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",Arial,sans-serif;
   --display:"Segoe UI Variable Display","Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",Arial,sans-serif;
   --mono:ui-monospace,"Cascadia Mono","Cascadia Code",Consolas,"SF Mono",Menlo,"DejaVu Sans Mono",monospace}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
-  --bg:#0a0f13; --surface:#10161b; --surface-2:#171d22; --line:#2a3339; --line-2:#1e262b;
-  --fg:#e2e9eb; --fg-2:#c0c9ce; --muted:#9faaaf; --accent:#73d4ac; --accent-soft:#123226; --on-accent:#071a13;
-  --good:#72d699; --good-bg:#1e312d; --warn:#f2bd68; --warn-bg:#302d26; --crit:#fa8880; --crit-bg:#312629; --info:#92bdfb; --info-bg:#222d3a}}
+  --bg:#121212; --surface:#1e1e1e; --surface-2:#2c2c2c; --line:rgba(255,255,255,.08); --line-2:rgba(255,255,255,.05);
+  --glass:rgba(255,255,255,.05); --glow:rgba(127,203,172,.05);
+  --fg:#e0e0e0; --fg-2:#bdbdbd; --muted:#a3a3a3; --accent:#7fcbac; --accent-soft:rgba(127,203,172,.11); --on-accent:#0f1f19;
+  --good:#87c79c; --good-bg:rgba(135,199,156,.12); --warn:#dcb671; --warn-bg:rgba(220,182,113,.12); --crit:#f0968f; --crit-bg:rgba(240,150,143,.12);
+  --info:#8fb3ec; --info-bg:rgba(143,179,236,.12);
+  --q-good:#6fb88a; --q-thin:#c9a45e; --q-bare:#d9837c; --s1:#7aa5e0; --s2:#d98a66; --heat:#7aa5e0}}
 :root[data-theme="dark"]{
-  --bg:#0a0f13; --surface:#10161b; --surface-2:#171d22; --line:#2a3339; --line-2:#1e262b;
-  --fg:#e2e9eb; --fg-2:#c0c9ce; --muted:#9faaaf; --accent:#73d4ac; --accent-soft:#123226; --on-accent:#071a13;
-  --good:#72d699; --good-bg:#1e312d; --warn:#f2bd68; --warn-bg:#302d26; --crit:#fa8880; --crit-bg:#312629; --info:#92bdfb; --info-bg:#222d3a}
-body{font-size:14.5px;letter-spacing:-.003em;-webkit-font-smoothing:antialiased}
+  --bg:#121212; --surface:#1e1e1e; --surface-2:#2c2c2c; --line:rgba(255,255,255,.08); --line-2:rgba(255,255,255,.05);
+  --glass:rgba(255,255,255,.05); --glow:rgba(127,203,172,.05);
+  --fg:#e0e0e0; --fg-2:#bdbdbd; --muted:#a3a3a3; --accent:#7fcbac; --accent-soft:rgba(127,203,172,.11); --on-accent:#0f1f19;
+  --good:#87c79c; --good-bg:rgba(135,199,156,.12); --warn:#dcb671; --warn-bg:rgba(220,182,113,.12); --crit:#f0968f; --crit-bg:rgba(240,150,143,.12);
+  --info:#8fb3ec; --info-bg:rgba(143,179,236,.12);
+  --q-good:#6fb88a; --q-thin:#c9a45e; --q-bare:#d9837c; --s1:#7aa5e0; --s2:#d98a66; --heat:#7aa5e0}
+body{font-size:14.5px;letter-spacing:-.003em;-webkit-font-smoothing:antialiased;background:radial-gradient(1100px 560px at 12% -10%,var(--glow),transparent 70%) no-repeat,var(--bg)}
 .bar{background:color-mix(in srgb,var(--bg) 86%,transparent);-webkit-backdrop-filter:saturate(150%) blur(12px);backdrop-filter:saturate(150%) blur(12px)}
 .brand h1{font-size:15px;font-weight:700}
 .logo{border-radius:7px}
-section.card{border-radius:16px}
+section.card{border-radius:16px;background:var(--glass);box-shadow:none}
+@supports (backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px)){section.card{-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}}
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){section.card{background:var(--surface)}}
 .sh{padding:18px 22px 4px}
 .sh h2{font-family:var(--display);font-size:clamp(18px,1.5vw,22px);font-weight:650;letter-spacing:-.015em}
 .sb{padding:12px 22px 22px}
-.tiles{gap:0;border-top:2px solid var(--fg);border-bottom:1px solid var(--line)}
+.tiles{gap:0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
 .tile{background:none;border:0;border-left:1px solid var(--line-2);border-radius:0;padding:12px 16px 14px;position:relative}
 .tile:first-child{border-left:0}
-.tile .v{font-family:var(--display);font-size:clamp(24px,2.4vw,36px);font-weight:700;letter-spacing:-.03em;line-height:1.05;margin-top:4px}
+.tile .v{font-family:var(--display);font-size:clamp(20px,1.1rem + .7vw,28px);font-weight:650;letter-spacing:-.02em;line-height:1.1;margin-top:4px}
 .tile.flag{background:none;border-color:var(--line-2)}
 .tile.flag:before{content:"";position:absolute;left:0;right:0;top:-2px;height:2px;background:var(--warn)}
 .mini .tile .v{font-size:clamp(19px,1.7vw,24px)}
-.brief-hero{padding:clamp(16px,3vw,44px) 2px clamp(4px,1vw,10px)}
+.logoimg{height:52px}
+.brief-hero{padding:clamp(14px,2vw,28px) 2px 6px}
 .brief-hero .eyebrow{color:var(--accent)}
-.brief-hero .verdict{display:flex;align-items:center;gap:.18em;margin-top:clamp(8px,1vw,14px);font-family:var(--display);font-weight:700;
-  font-size:clamp(2.4rem,5.6vw,5.4rem);line-height:.95;letter-spacing:-.035em}
-.brief-hero .verdict svg{width:.6em;height:.6em;flex:none}
-.brief-hero .say{margin:14px 0 0;color:var(--fg-2);font-size:clamp(15px,1.2vw,18px);max-width:80ch}
+.brief-hero .verdict{display:inline-flex;align-items:center;gap:7px;margin-top:10px;padding:3px 12px 3px 9px;border:1px solid;border-radius:999px;
+  font-size:13.5px;font-weight:700;line-height:1.35}
+.brief-hero .verdict.c-warn{background:var(--warn-bg)}.brief-hero .verdict.c-good{background:var(--good-bg)}
+.brief-hero .verdict svg{width:15px;height:15px;flex:none}
+.brief-hero .say{margin:10px 0 0;color:var(--fg-2);font-size:15px;max-width:80ch}
 .brief-hero .say b{color:var(--fg);font-variant-numeric:tabular-nums}
-@keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
-@media (prefers-reduced-motion:no-preference){.brief-hero>*{animation:rise .7s cubic-bezier(.16,1,.3,1) both}.brief-hero>:nth-child(2){animation-delay:.06s}.brief-hero>:nth-child(3){animation-delay:.12s}}
-@media print{*{animation:none!important}.brief-hero .verdict{font-size:40px}}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:no-preference){.brief-hero>*{animation:rise .5s cubic-bezier(.16,1,.3,1) both}.brief-hero>:nth-child(2){animation-delay:.06s}.brief-hero>:nth-child(3){animation-delay:.12s}}
+@media print{*{animation:none!important}}
 """
 
 SCRIPT_FILE = "site-insights.js"           # written beside the website's index by site_report_web; the page loads it from there

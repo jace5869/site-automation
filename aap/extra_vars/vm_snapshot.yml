@@ -155,9 +155,10 @@
 ## / Comfortable rows, Light / Auto / Dark - the reader's own setting on Auto -, Print), status
 ## chips with icons (a check mark for OK), Start here cards with a Copy button, tables that sort and
 ## filter, rows as cards on a phone; the index page too. brief (0.92.0) = the same page read like a
-## morning brief: what it found in one large word, the key figures as one ruled strip, Start here as
-## numbered steps, percentages as bars; its index leads with how many reports need action and each
-## one's first step. Or one of the email looks: standard, command, portal or glass (as
+## morning brief, calm and soft (0.94.0): what it found as a chip, the key figures as one strip,
+## Start here as numbered steps, percentages as bars, soft greys in dark, translucent cards; its
+## index is the list of reports (one line and the counts as chips), a report's first step under its
+## line, the logo larger. Or one of the email looks: standard, command, portal or glass (as
 ## report_email_theme - the index page is then in the portal look).
 # report_web_theme: atlas
 

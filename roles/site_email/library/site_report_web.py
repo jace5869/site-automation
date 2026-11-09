@@ -940,18 +940,25 @@ def index_atlas(reports, index, header_text, logo, generated, tabs=(), js=''):
 # step its report gives (its first Start here card) and its last runs; then every report, grouped by area, its last
 # runs as small squares. The same palette as roles/site_email/templates/report_brief.html.j2 (tests/test_report_web.py
 # checks they match); light and dark; the switch and the area tabs are radio buttons (no script needed).
-BRIEF_LIGHT = """--ink:#182027;--muted:#545c63;--label:#363e45;--accent:#00704e;--accent-ink:#f7fbf9;--accent-soft:#dbf4e8;
---bg:#f4f8f6;--bg2:#eef2f0;--card:#fcfdfc;--card-solid:#fcfdfc;--card-strong:#f0f5f5;--edge:#d4dadd;--line:#e2e7e9;
---zebra:#f7faf8;--hover:#e3f5ec;--code:#edf2f4;--bar:rgba(244,248,246,.86);
---ok:#106c3e;--ok-bg:#daf7e3;--ok-bd:#94cda7;--warning:#8f520d;--warning-bg:#fff0d1;--warning-bd:#eebe7c;
---critical:#b02b27;--critical-bg:#ffe9e7;--critical-bd:#f2a7a1;--info:#2b58b1;--info-bg:#e7f1ff;--info-bd:#a5bfec;
---unknown:#545c63;--unknown-bg:#eceff2;--unknown-bd:#c2c8cd;--critical-row:#fff6f5;--warning-row:#fff9ef;color-scheme:light;"""
-BRIEF_DARK = """--ink:#e2e9eb;--muted:#9faaaf;--label:#c0c9ce;--accent:#73d4ac;--accent-ink:#071a13;--accent-soft:#123226;
---bg:#0a0f13;--bg2:#070b0f;--card:#10161b;--card-solid:#10161b;--card-strong:#171d22;--edge:#2a3339;--line:#1e262b;
---zebra:#13191d;--hover:#14271f;--code:#0b1115;--bar:rgba(10,15,19,.86);
---ok:#72d699;--ok-bg:#1e312d;--ok-bd:#396750;--warning:#f2bd68;--warning-bg:#302d26;--warning-bd:#6f5c3b;
---critical:#fa8880;--critical-bg:#312629;--critical-bd:#724645;--info:#92bdfb;--info-bg:#222d3a;--info-bd:#475c79;
---unknown:#a7b0b4;--unknown-bg:#252c30;--unknown-bd:#4f575b;--critical-row:#201e22;--warning-row:#1e2020;color-scheme:dark;"""
+BRIEF_LIGHT = """--ink:#182027;--muted:#545c63;--label:#363e45;--accent:#00704e;--accent-ink:#f7fbf9;--accent-soft:rgba(0,112,78,.11);
+--bg:#f4f8f6;--bg2:#eef2f0;--glow:rgba(0,112,78,.06);--card:rgba(255,255,255,.65);--card-solid:#fbfdfc;
+--card-strong:rgba(24,32,39,.035);--th:#f3f5f5;--edge:rgba(24,32,39,.08);--line:rgba(24,32,39,.05);
+--zebra:rgba(24,32,39,.02);--hover:rgba(0,112,78,.06);--code:rgba(24,32,39,.04);--bar:rgba(244,248,246,.8);
+--ok:#0e6538;--ok-bg:rgba(14,101,56,0.1);--ok-bd:rgba(14,101,56,0.2);--warning:#844b0b;
+--warning-bg:rgba(132,75,11,0.1);--warning-bd:rgba(132,75,11,0.2);--critical:#a82823;
+--critical-bg:rgba(168,40,35,0.1);--critical-bd:rgba(168,40,35,0.2);--info:#2b58b1;--info-bg:rgba(43,88,177,0.1);
+--info-bd:rgba(43,88,177,0.2);--unknown:#545c63;--unknown-bg:rgba(84,92,99,0.1);--unknown-bd:rgba(84,92,99,0.2);
+--critical-row:rgba(168,40,35,0.04);--warning-row:rgba(132,75,11,0.045);color-scheme:light;"""
+BRIEF_DARK = """--ink:#e0e0e0;--muted:#a3a3a3;--label:#bdbdbd;--accent:#7fcbac;--accent-ink:#0f1f19;
+--accent-soft:rgba(127,203,172,.11);--bg:#121212;--bg2:#161616;--glow:rgba(127,203,172,.05);
+--card:rgba(255,255,255,.05);--card-solid:#1e1e1e;--card-strong:rgba(255,255,255,.06);--th:#2c2c2c;
+--edge:rgba(255,255,255,.08);--line:rgba(255,255,255,.05);--zebra:rgba(255,255,255,.02);--hover:rgba(127,203,172,.07);
+--code:rgba(0,0,0,.22);--bar:rgba(18,18,18,.82);--ok:#87c79c;--ok-bg:rgba(135,199,156,0.12);
+--ok-bd:rgba(135,199,156,0.22);--warning:#dcb671;--warning-bg:rgba(220,182,113,0.12);
+--warning-bd:rgba(220,182,113,0.22);--critical:#f0968f;--critical-bg:rgba(240,150,143,0.12);
+--critical-bd:rgba(240,150,143,0.22);--info:#8fb3ec;--info-bg:rgba(143,179,236,0.12);--info-bd:rgba(143,179,236,0.22);
+--unknown:#b0b0b0;--unknown-bg:rgba(176,176,176,0.12);--unknown-bd:rgba(176,176,176,0.22);
+--critical-row:rgba(240,150,143,0.05);--warning-row:rgba(220,182,113,0.05);color-scheme:dark;"""
 # the style, its tokens and tab rules put in with replace (no % or {} to escape)
 BRIEF_STYLE = """:root{@LIGHT@}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){@DARK@}}
@@ -964,7 +971,7 @@ BRIEF_STYLE = """:root{@LIGHT@}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
 html{background:var(--bg)}
-body{margin:0;color:var(--ink);background:var(--bg);font:15px/1.55 var(--sans);letter-spacing:-.003em;min-height:100vh;-webkit-font-smoothing:antialiased}
+body{margin:0;color:var(--ink);background:radial-gradient(1100px 560px at 12% -10%,var(--glow),transparent 70%) no-repeat,var(--bg);font:15px/1.55 var(--sans);letter-spacing:-.003em;min-height:100vh;-webkit-font-smoothing:antialiased}
 a{color:var(--accent);text-underline-offset:2px}
 .wrap{max-width:1500px;margin:0 auto;padding:0 clamp(16px,3vw,48px) 56px}
 .ic{width:15px;height:15px;flex:none;display:block}
@@ -976,10 +983,10 @@ a{color:var(--accent);text-underline-offset:2px}
 .s-info{color:var(--info);background:var(--info-bg);border-color:var(--info-bd)}
 .s-unknown{color:var(--unknown);background:var(--unknown-bg);border-color:var(--unknown-bd)}
 .c-ok{color:var(--ok)}.c-warning{color:var(--warning)}.c-critical{color:var(--critical)}.c-info{color:var(--info)}.c-unknown{color:var(--unknown)}
-/* the top: the site, the switch */
-.top{display:flex;align-items:center;gap:14px;padding:14px 0;border-bottom:1px solid var(--edge)}
-.logo{display:block;border-radius:7px}
-.brand{flex:1;min-width:0;font-weight:700;font-size:14px}
+/* the top: the site's logo and name, the switch */
+.top{display:flex;align-items:center;gap:16px;padding:16px 0;border-bottom:1px solid var(--edge)}
+.logo{display:block;border-radius:9px;height:auto;max-height:60px;width:auto}
+.brand{flex:1;min-width:0;font-weight:700;font-size:16px}
 .brand span{display:block;color:var(--muted);font-weight:400;font-size:13px}
 .seg{display:inline-flex;position:relative;background:var(--card-strong);border:1px solid var(--edge);border-radius:9px;padding:2px;gap:2px}
 .seg input{position:absolute;opacity:0;width:1px;height:1px;margin:0;pointer-events:none}
@@ -987,46 +994,28 @@ a{color:var(--accent);text-underline-offset:2px}
 .seg label:hover{color:var(--ink)}
 .seg input:checked+label{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12),inset 0 0 0 1px var(--edge)}
 .seg input:focus-visible+label,.bar label:focus-visible,.r>summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-/* the headline */
-.hero{padding:clamp(32px,5.5vw,84px) 0 clamp(20px,2.4vw,32px)}
-.hero h1{margin:0;font-family:var(--display);font-weight:700;font-size:clamp(2.6rem,7vw,7.25rem);line-height:.95;letter-spacing:-.04em;max-width:15ch;text-wrap:balance}
-.hero .say{margin-top:18px;color:var(--muted);font-size:clamp(16px,1.25vw,19px);max-width:70ch;text-wrap:pretty}
-/* the counts: one ruled strip */
-.counts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-top:2px solid var(--ink);border-bottom:1px solid var(--edge)}
-.count{padding:14px 20px 16px;border-left:1px solid var(--line);position:relative}
-.count:first-child{border-left:0}
-.count .lbl{display:flex;align-items:center;gap:7px}
-.count .v{font-family:var(--display);font-weight:700;font-size:clamp(30px,3.4vw,48px);line-height:1.02;letter-spacing:-.03em;margin-top:10px;font-variant-numeric:tabular-nums}
-.count.hot:before{content:"";position:absolute;left:0;right:0;top:-2px;height:2px;background:currentColor}
-/* the section headings */
-.sh{display:flex;align-items:baseline;gap:12px;margin:clamp(36px,4vw,60px) 0 16px}
-.sh h2{margin:0;font-family:var(--display);font-size:clamp(20px,1.7vw,26px);font-weight:650;letter-spacing:-.015em}
-.sh .n{font-family:var(--mono);font-size:13px;color:var(--muted)}
-/* the reports that need action: a bento of cards, the worst first (the first critical one wider) */
-.bento{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));gap:12px}
-.nb{color:var(--ink);background:var(--card);border:1px solid var(--edge);border-radius:16px;padding:18px 20px 16px 22px;position:relative;overflow:hidden;display:flex;flex-direction:column;gap:6px;min-width:0}
-.nb:before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--unknown)}
-.nb.c-critical:before{background:var(--critical)}.nb.c-warning:before{background:var(--warning)}
-.nb .row1{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.nb .area{margin-left:auto;color:var(--muted);font-size:12px;font-weight:650;letter-spacing:.07em;text-transform:uppercase}
-.nb h3{margin:6px 0 0;font-family:var(--display);font-size:clamp(18px,1.45vw,22px);font-weight:650;letter-spacing:-.015em;line-height:1.25;color:var(--ink)}
-.nb h3 a{color:inherit;text-decoration:none}.nb h3 a:hover{color:var(--accent);text-decoration:underline}
-.nb .t{color:var(--muted);font-size:14px;margin:0;text-wrap:pretty}
-.nb .step{margin-top:8px;padding-top:12px;border-top:1px solid var(--line);font-size:14px}
-.nb .step .lbl{display:block;color:var(--accent);margin-bottom:4px}
+/* the heading: a title and one plain line - the list below is the page; colour only on the small chips */
+.hero{padding:clamp(22px,3vw,40px) 0 18px}
+.hero h1{margin:0;font-family:var(--display);font-weight:650;font-size:clamp(1.5rem,1.1rem + 1.2vw,2.1rem);line-height:1.2;letter-spacing:-.02em}
+.hero .say{margin:6px 0 0;color:var(--muted);font-size:15px;font-variant-numeric:tabular-nums}
+.tally{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+.tally .chip b{font-variant-numeric:tabular-nums}
+/* a report's first step, under its line when opened */
+.step{padding:4px 0 12px;font-size:14px;max-width:110ch}
+.step .lbl{display:block;color:var(--accent);margin-bottom:4px}
+.step .stt{margin:0;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.step .code pre{white-space:pre;overflow-x:auto;overflow-wrap:normal;max-height:calc(3 * 1.5em + 18px);overflow-y:hidden}
+.step .open{display:inline-block;margin-top:8px;font-size:13.5px;font-weight:600}
 .code{display:flex;align-items:flex-start;gap:8px;margin-top:8px}
 .code pre{margin:0;flex:1;white-space:pre-wrap;overflow-wrap:anywhere;font:12.8px/1.5 var(--mono);background:var(--code);border:1px solid var(--line);border-radius:9px;padding:8px 11px}
 .copy{font:inherit;font-size:12px;font-weight:650;color:var(--ink);background:var(--card);border:1px solid var(--edge);border-radius:8px;padding:4px 10px;cursor:pointer;margin-top:3px}
 .copy:hover{border-color:var(--accent)}.copy.done{color:var(--ok);border-color:var(--ok-bd)}
 :root:not(.js) .code pre{-webkit-user-select:all;user-select:all}
-.nb .foot{display:flex;align-items:center;gap:12px;margin-top:auto;padding-top:10px;color:var(--muted);font-size:13px;font-variant-numeric:tabular-nums}
-.more{margin:12px 0 0;color:var(--muted);font-size:14px}
-@media (min-width:760px){.nb.wide{grid-column:span 2}}
 /* the last runs as small squares, oldest to newest */
 .sqs{display:inline-flex;gap:4px;align-items:center}
-.sq{width:11px;height:11px;border-radius:3px;background:currentColor;display:inline-block;opacity:.8}
+.sq{width:11px;height:11px;border-radius:3px;background:currentColor;display:inline-block;opacity:.75;filter:saturate(.7)}
 .sq:hover{opacity:1}
-.sq.now{opacity:1;box-shadow:0 0 0 2px var(--card),0 0 0 3.5px currentColor}
+.sq.now{opacity:1;filter:saturate(.85);box-shadow:0 0 0 2px var(--card-solid),0 0 0 3.5px currentColor}
 /* every report, by area */
 .tab{position:absolute;opacity:0;pointer-events:none}
 .bar{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 12px}
@@ -1035,6 +1024,8 @@ a{color:var(--accent);text-underline-offset:2px}
 .bar label .n{font-weight:500;font-family:var(--mono);font-size:12px;font-variant-numeric:tabular-nums}
 .dot{width:8px;height:8px;border-radius:50%;background:currentColor;flex:none;display:inline-block}
 .list{background:var(--card);border:1px solid var(--edge);border-radius:16px;padding:4px 0;overflow:hidden}
+@supports (backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px)){.list{-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}}
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){.list{background:var(--card-solid)}}
 .grp{display:flex;align-items:baseline;gap:10px;padding:16px 20px 8px;border-top:1px solid var(--edge)}
 .grp:first-child{border-top:0}
 .grp b{font-family:var(--display);font-size:15px;font-weight:650;letter-spacing:-.01em}
@@ -1059,34 +1050,33 @@ a{color:var(--accent);text-underline-offset:2px}
 .runs .when{white-space:nowrap;font-variant-numeric:tabular-nums}.runs .job{white-space:nowrap;color:var(--muted)}.runs .tt{color:var(--muted);min-width:220px}
 .none{padding:16px 20px;color:var(--muted)}
 footer{margin-top:44px;padding-top:16px;border-top:1px solid var(--edge);color:var(--muted);font-size:13px}
-@keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
-@media (prefers-reduced-motion:no-preference){.hero>*,.count,.nb{animation:rise .7s var(--ease) both}.hero>:nth-child(2){animation-delay:.06s}
-.count{animation-delay:.12s}.count:nth-child(2){animation-delay:.17s}.count:nth-child(3){animation-delay:.22s}.count:nth-child(4){animation-delay:.27s}
-.nb{animation-delay:.3s}.nb:nth-child(2){animation-delay:.36s}.nb:nth-child(n+3){animation-delay:.42s}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 @media (max-width:760px){
-.wrap{padding:0 16px 36px}.top{flex-wrap:wrap}.brand{flex:1 1 calc(100% - 70px)}.tools{width:100%;display:flex;justify-content:flex-end}
+.wrap{padding:0 16px 36px}.top{gap:12px}.logo{max-height:44px}.brand{flex:1 1 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.tools{flex:none}
 .seg label span{display:none}.seg label{padding:6px 9px}
-.counts{grid-template-columns:repeat(2,minmax(0,1fr))}.count{padding:12px 12px 14px}.count:nth-child(odd){border-left:0}.count:nth-child(n+3){border-top:1px solid var(--line)}
 .r>summary{grid-template-columns:16px minmax(0,1fr) auto;padding:12px 14px}
 .r>summary .st{grid-column:2}.r>summary .sqs{grid-column:3;grid-row:1}.r>summary .nm{grid-column:1 / span 3}.r>summary .lr{grid-column:1 / span 3;text-align:left;white-space:normal}
 .runs{padding:0 14px 12px}.runs table,.runs tbody{display:block}
 .runs tr{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:8px 0;border-top:1px solid var(--line)}
 .runs tr:first-child{border-top:0}.runs td{border:0;padding:0}.runs .tt{min-width:0;flex-basis:100%}
 .grp{padding:14px 14px 6px}}
-@media print{*{animation:none!important}html,body{background:#fff!important}.list,.nb{background:#fff!important;border-color:#bbb!important}
-.tools,.bar,.tab,.copy{display:none!important}.chip,.sq,.nb:before,.count.hot:before{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+@media print{*{animation:none!important}html,body{background:#fff!important}.list{background:#fff!important;border-color:#bbb!important}
+.tools,.bar,.tab,.copy{display:none!important}.chip,.sq{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
 @TABS@"""
 
 
 def first_step(report):
-    """The first step a report gives (its first Start here card: title, command, status), for its line of the index;
-    None when it gives none."""
+    """The first step a report gives (its first Start here card), short, for its line of the index: the title on one
+    line (at most 200 characters), the command only when it is short (3 lines and 300 characters at most - a long one,
+    a STIG rule's whole check say, stays on the report's page: more is then true); None when it gives none."""
     for s in (report or {}).get('sections') or [] if isinstance(report, dict) else []:
         for c in (s.get('cards') or []) if isinstance(s, dict) else []:
             if isinstance(c, dict) and (c.get('title') or c.get('code')):
-                return {'title': str(c.get('title') or '')[:300], 'code': str(c.get('code') or '')[:800],
-                        'status': str(c.get('status') or '')}
+                title = ' '.join(str(c.get('title') or '').split())
+                code = str(c.get('code') or '').strip('\n')
+                short = len(code.splitlines()) <= 3 and len(code) <= 300
+                return {'title': title if len(title) <= 200 else title[:199].rstrip() + '\u2026',
+                        'code': code if short else '', 'more': bool(code) and not short, 'status': str(c.get('status') or '')}
     return None
 
 
@@ -1107,60 +1097,23 @@ def _plural(n, one, many):
 
 
 def index_brief(reports, index, header_text, logo, generated, tabs=(), js=''):
-    """The index page in the brief look: how many reports need action (the headline), the counts, a card for each
-    report that needs action (its first step and command, its last runs), then every report by area (a tab per area,
-    radio buttons - no script), each line opening to its last runs."""
+    """The index page in the brief look: a plain title and one line (how many reports, the last run, the counts as
+    small chips), then every report by area (a tab per area, radio buttons - no script), each line opening to its
+    first step (a report that needs action) and its last runs. Calm on purpose: the list is the page."""
     e = htmllib.escape
     counts = dict((k, 0) for k in PAL)
     for r in reports:
         counts[r.get('status') if r.get('status') in PAL else 'unknown'] += 1
-    act = [r for r in reports if r.get('status') in ('critical', 'warning')]      # worst first, as the index is sorted
-    if act:
-        worst = 'critical' if counts['critical'] else 'warning'
-        head = '%s need%s action' % (_plural(len(act), 'report', 'reports'), 's' if len(act) == 1 else '')
-        what = ' and '.join(x for x in (_plural(counts['critical'], 'critical', 'critical'), _plural(counts['warning'], 'warning', 'warnings'))
-                            if not x.startswith('0 '))
-        rest = len(reports) - len(act)
-        say = '%s, the worst first below. %s' % (what[0].upper() + what[1:], (
-            'The other %s fine or for information.' % _plural(rest, 'is', 'are').replace('1 is', 'one is')) if rest else 'Every report here needs a look.')
-    elif reports:
-        worst = 'ok'
-        head = 'Nothing needs action'
-        say = 'Every one of the %s is fine or for information.' % _plural(len(reports), 'report', 'reports') if len(reports) > 1 else \
-            'The one report here is fine or for information.'
-    else:
-        worst, head, say = 'unknown', 'No reports yet', 'A report job writes its page here when it runs.'
-    strip = ''.join(
-        '<div class="count%s%s"><div class="lbl"><span class="c-%s">%s</span>%s</div><div class="v%s">%d</div></div>'
-        % (' hot' if counts[k] and k in ('critical', 'warning') else '', (' c-' + k) if counts[k] and k in ('critical', 'warning') else '',
-           k, ATLAS_ICON[k], label, (' c-' + k) if counts[k] and k in ('critical', 'warning') else '', counts[k])
-        for k, label in (('critical', 'Critical'), ('warning', 'Warning'), ('ok', 'Successful'), ('info', 'Info')))
+    last = max([str(r.get('when') or '') for r in reports] or [''])
+    say = ('%s &middot; last run %s' % (_plural(len(reports), 'report', 'reports'), e(last)) if last else _plural(len(reports), 'report', 'reports')) \
+        if reports else 'No reports yet. A report job writes its page here when it runs.'
+    tally = ''.join('<span class="chip s-%s">%s<b>%d</b> %s</span>' % (k, ATLAS_ICON.get(k, ''), counts[k], label)
+                    for k, label in (('critical', 'Critical'), ('warning', 'Warning'), ('ok', 'Successful'), ('info', 'Info'), ('unknown', 'Unknown'))
+                    if counts[k])
     of = [area(r.get('name') or r.get('key'), tabs) for r in reports]
     order = [str(t.get('tab')) for t in tabs or []]               # report_web_tabs' order, then A to Z, Other last
     areas = sorted(set(of), key=lambda a: (a == 'Other', order.index(a) if a in order else len(order), a.lower()))
     tab = dict((a, i + 1) for i, a in enumerate(areas))
-    # the cards: the reports that need action (six at most - the rest are in the list)
-    cards = []
-    for i, r in enumerate(act[:6]):
-        st = r.get('status')
-        latest = r.get('latest') or r.get('page') or ''
-        name = ('<a href="%s">%s</a>' % (_href(index, latest), e(r.get('name') or r.get('key') or ''))) if latest else e(r.get('name') or '')
-        step = r.get('step') if isinstance(r.get('step'), dict) else None
-        step_html = ''
-        if step and (step.get('title') or step.get('code')):
-            step_html = '<div class="step"><span class="lbl">Start here</span>%s%s</div>' % (
-                e(step.get('title') or ''), ('<div class="code"><pre>%s</pre><button class="copy" type="button" hidden>Copy</button></div>'
-                                             % e(step['code'])) if step.get('code') else '')
-        cards.append(
-            '<article class="nb c-%s%s"><div class="row1">%s<span class="area">%s</span></div><h3>%s</h3>%s%s'
-            '<div class="foot">%s<span>%s%s</span></div></article>'
-            % (st, ' wide' if not i and st == 'critical' and len(act) > 2 else '', _chip(st), e(area(r.get('name') or r.get('key'), tabs)),
-               name, ('<p class="t">%s</p>' % e(r.get('title'))) if r.get('title') else '', step_html, _squares(index, r),
-               e(r.get('when') or ''), (' &middot; ' + _job(r.get('job'))) if _job(r.get('job')) else ''))
-    bento = ''
-    if cards:
-        bento = ('<div class="sh"><h2>Needs action</h2><span class="n">%d</span></div><div class="bento">%s</div>%s' % (
-            len(act), ''.join(cards), ('<p class="more">And %d more in the list below.</p>' % (len(act) - 6)) if len(act) > 6 else ''))
     caret = ('<svg class="caret" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" '
              'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>')
     # every report, by area (report_web_tabs' order), the worst first in each
@@ -1175,15 +1128,25 @@ def index_brief(reports, index, header_text, logo, generated, tabs=(), js=''):
             if r.get('page'):
                 run = '<a href="%s">%s</a>' % (_href(index, r['page']), run or 'this run')
             runs = _runs(r)
+            step = r.get('step') if isinstance(r.get('step'), dict) and r.get('status') in ('critical', 'warning') else None
+            if step and not step.get('more'):          # shortened again: a line 0.92.0 wrote kept a long command
+                step = first_step({'sections': [{'cards': [step]}]})
+            step_html = ''
+            if step and (step.get('title') or step.get('code') or step.get('more')):
+                step_html = '<div class="step"><span class="lbl">Start here</span><p class="stt">%s</p>%s%s</div>' % (
+                    e(step.get('title') or ''), ('<div class="code"><pre>%s</pre><button class="copy" type="button" hidden>Copy</button></div>'
+                                                 % e(step['code'])) if step.get('code') else '',
+                    ('<a class="open" href="%s">%s &rarr;</a>' % (_href(index, latest), 'The command and the rest in the report' if step.get('more')
+                                                                  else 'Open the report')) if latest else '')
             lines = ''.join(
                 '<tr><td>%s</td><td class="when"><a href="%s">%s</a>%s</td><td class="job">%s</td><td class="tt">%s</td></tr>'
                 % (_chip(x.get('status')), _href(index, x['page']), e(x.get('when') or 'this run'), ' (newest)' if not i else '',
                    _job(x.get('job')), e(x.get('title') or '')) for i, x in enumerate(runs))
             rows.append(
                 '<details class="r a%d"><summary>%s<span class="st">%s</span><span class="nm">%s<div class="t">%s</div></span>%s'
-                '<span class="lr">%s%s &middot; %d run%s</span></summary><div class="runs"><table>%s</table></div></details>'
+                '<span class="lr">%s%s &middot; %d run%s</span></summary><div class="runs">%s<table>%s</table></div></details>'
                 % (tab[a], caret, _chip(r.get('status')), name, e(r.get('title') or ''), _squares(index, r), run,
-                   (' &middot; ' + _job(r.get('job'))) if _job(r.get('job')) else '', len(runs), '' if len(runs) == 1 else 's',
+                   (' &middot; ' + _job(r.get('job'))) if _job(r.get('job')) else '', len(runs), '' if len(runs) == 1 else 's', step_html,
                    lines or '<tr><td>No page of its runs listed.</td></tr>'))
     # All, then the areas; a dot on an area with a Critical or a Warning
     inputs, labels, rules = [], [], []
@@ -1199,17 +1162,16 @@ def index_brief(reports, index, header_text, logo, generated, tabs=(), js=''):
             rules.append('#t%d:checked~.list>:not(.a%d){display:none}\n' % (i, i))
     logo_img = ('<img class="logo" src="%s" width="%d" height="%d" alt="">' % (logo[0], logo[1], logo[2])) if logo else ''
     style = BRIEF_STYLE.replace('@LIGHT@', BRIEF_LIGHT).replace('@DARK@', BRIEF_DARK).replace('@TABS@', ''.join(rules))
-    every = ('<div class="sh"><h2>Every report</h2><span class="n">%d</span></div>%s<div class="bar">%s</div>\n<div class="list">\n%s\n</div>' % (
-        len(reports), ''.join(inputs), ''.join(labels), '\n'.join(rows))) if reports else ''
+    every = ('%s<div class="bar" role="group" aria-label="Areas">%s</div>\n<div class="list">\n%s\n</div>' % (
+        ''.join(inputs), ''.join(labels), '\n'.join(rows))) if reports else ''
     return ('<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
             '<meta name="viewport" content="width=device-width, initial-scale=1">\n<meta name="color-scheme" content="light dark">\n'
             '<title>' + e(header_text) + ' - reports</title>\n' + ATLAS_EARLY + ('\n' + script_tag(index, js) if js else '') +
             '\n<style>\n' + style + '</style>\n</head>\n<body>\n<div class="wrap">\n'
-            '<header class="top">' + logo_img + '<div class="brand">' + e(header_text) + '<span>' + _plural(len(reports), 'report', 'reports') +
-            ' &middot; updated ' + e(generated) + '</span></div><div class="tools">' + ATLAS_SWITCH + '</div></header>\n'
-            '<section class="hero"><h1 class="c-' + worst + '">' + e(head) + '</h1><p class="say">' + e(say) + '</p></section>\n'
-            '<div class="counts">' + strip + '</div>\n' + bento + '\n' + every +
-            ('' if reports else '<div class="none">No reports yet.</div>') +
+            '<header class="top">' + logo_img + '<div class="brand">' + e(header_text) + '<span>updated ' + e(generated) +
+            '</span></div><div class="tools">' + ATLAS_SWITCH + '</div></header>\n'
+            '<section class="hero"><h1>Reports</h1><p class="say">' + say + '</p>' +
+            ('<div class="tally">' + tally + '</div>' if tally else '') + '</section>\n' + every +
             '\n<footer>Every report&#39;s last runs. Light, dark and the area tabs work without the page&#39;s script.</footer>\n</div>\n' +
             ATLAS_SCRIPT + '\n</body>\n</html>\n')
 

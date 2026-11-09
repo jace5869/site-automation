@@ -5,6 +5,7 @@ in this process - the logo's size (image_size), and the command, portal and atla
     python3 tests/test_report_history.py"""
 import importlib.util
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -590,8 +591,19 @@ class BriefLook(unittest.TestCase):
         self.assertNotRegex(h, r'<link|src="https?:|@import|url\(https?:')        # nothing from elsewhere: it opens from a share
         self.assertNotIn("oklch(", h.split("<style>")[1].split("</style>")[0].replace("oklch(0.", ""))   # hex only (the oklch in a comment)
 
+    def test_no_poster_type(self):
+        """0.94.0: the verdict a chip and the title a heading - nothing set larger than 34 px (the user: "crazy big")."""
+        style = self.render().split("<style>")[1].split("</style>")[0]
+        self.assertIn(".verdict{display:inline-flex;", style)
+        sizes = re.findall(r"font-size:clamp\([^;]*?,\s*([\d.]+)(rem|px)\)", style) + re.findall(r"font-size:([\d.]+)(rem|px)", style)
+        self.assertTrue(sizes)
+        for v, unit in sizes:
+            self.assertLessEqual(float(v) * (16 if unit == "rem" else 1), 34, (v, unit))
+        self.assertIn(".logo{display:block;border-radius:8px;height:auto;max-height:52px;width:auto}", style)   # the logo larger
+
     def test_the_verdict_first(self):
-        """A report with a verdict leads with it in one large word (and its icon); one that only informs, with its title."""
+        """A report with a verdict leads with it (its icon and word - a chip since 0.94.0), then its title; one that only
+        informs, with its title."""
         h = self.render()
         self.assertIn('<div class="verdict c-critical"><svg class="ic"', h)
         self.assertIn("<span>Action required</span></div>\n<h1>", h)
@@ -629,11 +641,53 @@ class BriefLook(unittest.TestCase):
             self.assertIn(part, h, part)
         self.assertIn("if(window.siteReport)return;", h)
 
+    def test_soft_and_readable(self):
+        """0.94.0: soft and translucent (the user: "a bit too much contrasty", "even a bit more softer") - dark in neutral
+        greys (page #121212, text #e0e0e0), cards and chips translucent over the page's faint glow - and every text colour
+        still 4.5:1 or better on every surface it is drawn on, the translucent layers composited as the browser does."""
+        h = self.render()
+
+        def tokens(block):
+            return dict(re.findall(r"--([a-z-]+):(#[0-9a-f]{6}|rgba\([^)]*\));", block.replace("\n", "").replace(" ", "")))
+        light = tokens(h.split(":root{")[1].split("}")[0])
+        dark = tokens(h.split(':root[data-theme="dark"]{')[1].split("}")[0])
+        self.assertEqual((dark["bg"], dark["card"], dark["ink"]), ("#121212", "rgba(255,255,255,.05)", "#e0e0e0"))
+
+        def rgba(v):
+            if v.startswith("#"):
+                return [int(v[i:i + 2], 16) for i in (1, 3, 5)] + [1.0]
+            return [float(x) for x in v[5:-1].split(",")]
+
+        def over(top, under):
+            return [top[i] * top[3] + under[i] * (1 - top[3]) for i in range(3)] + [1.0]
+
+        def lum(c):
+            r, g, b = [v / 255 / 12.92 if v / 255 <= 0.04045 else ((v / 255 + 0.055) / 1.055) ** 2.4 for v in c[:3]]
+            return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+        def ratio(a, b):
+            hi, lo = sorted((lum(a), lum(b)), reverse=True)
+            return (hi + 0.05) / (lo + 0.05)
+        for name, t in (("light", light), ("dark", dark)):
+            surfaces, tinted = [], []
+            for page in (rgba(t["bg"]), over(rgba(t["glow"]), rgba(t["bg"]))):
+                card = over(rgba(t["card"]), page)
+                band = over(rgba(t["card-strong"]), page)                  # Start here's band, and a card on it
+                surfaces += [page, card, band, over(rgba(t["card"]), band), rgba(t["th"]), rgba(t["card-solid"])]
+                surfaces += [over(rgba(t[k]), card) for k in ("card-strong", "zebra", "hover", "code", "critical-row", "warning-row")]
+                tinted.append(over(rgba(t["accent-soft"]), card))             # a chosen tab: text on it, never a chip
+            for fg in ("ink", "muted", "label", "accent", "ok", "warning", "critical", "info", "unknown"):
+                for bg in surfaces + tinted:
+                    self.assertGreaterEqual(ratio(rgba(t[fg]), bg), 4.5, (name, fg, bg))
+            for k in ("ok", "warning", "critical", "info", "unknown"):
+                for bg in surfaces:
+                    self.assertGreaterEqual(ratio(rgba(t[k]), over(rgba(t[k + "-bg"]), bg)), 4.5, (name, k, "chip", bg))
+
     def test_light_dark_print_motion(self):
         h = self.render()
         flat = h.replace("\n", "").replace(" ", "")
         self.assertIn(":root:has(#theme-light:checked){--ink:#182027;", flat)
-        self.assertIn(":root:has(#theme-dark:checked){--ink:#e2e9eb;", flat)
+        self.assertIn(":root:has(#theme-dark:checked){--ink:#e0e0e0;", flat)
         self.assertIn('@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){', h)
         self.assertIn("@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}", h)
         self.assertIn("@media print{", h)

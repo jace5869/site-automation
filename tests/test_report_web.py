@@ -15,6 +15,7 @@ import importlib.util
 import json
 import os
 import random
+import re
 import shutil
 import subprocess
 import sys
@@ -717,8 +718,9 @@ class Windows(unittest.TestCase):
 
 
 class BriefIndex(unittest.TestCase):
-    """0.92.0: the index page in the brief look - how many reports need action, the counts, a card for each that does
-    (its first step), every report by area; and the first step each report's line carries (entry.step)."""
+    """0.92.0: the index page in the brief look - every report by area, and the first step each report's line carries
+    (entry.step). 0.94.0: calm - a plain title and one line (how many, the last run, the counts as small chips), no
+    alarm headline and no cards: the list is the page, a report's first step under its line."""
 
     def reports(self):
         runs = [_run(9, "2026-10-09 06:00 UTC", "critical"), _run(8, "2026-10-08 06:00 UTC", "warning")]
@@ -731,20 +733,29 @@ class BriefIndex(unittest.TestCase):
                  "page": "c/b.html", "latest": "c/latest.html", "title": "none expire"}]
 
     def test_the_brief(self):
-        html = rw.index_html(self.reports(), "site/index.html", "HQ & ops", ("data:image/png;base64,AA", 24, 32), "now", (), "brief")
-        self.assertIn('<h1 class="c-critical">2 reports need action</h1>', html)
-        self.assertIn("1 critical and 1 warning, the worst first below. The other 1 is fine", html.replace("one is", "1 is"))
-        self.assertIn('<div class="count hot c-critical">', html)
-        self.assertIn('<article class="nb c-critical">', html)                          # two need action: none wider
-        self.assertIn('<article class="nb c-warning">', html)
-        self.assertNotIn('<article class="nb c-ok">', html)
-        self.assertIn('<span class="lbl">Start here</span>/var is &lt;95%&gt;<div class="code"><pre>du -xh &lt;/var&gt;</pre>'
-                      '<button class="copy" type="button" hidden>Copy</button></div>', html)
+        html = rw.index_html(self.reports(), "site/index.html", "HQ & ops", ("data:image/png;base64,AA", 48, 64), "now", (), "brief")
+        self.assertIn('<section class="hero"><h1>Reports</h1><p class="say">3 reports &middot; last run 2026-10-09 06:00 UTC</p>', html)
+        self.assertIn('<div class="tally"><span class="chip s-critical"><svg', html)                  # the counts as small chips
+        self.assertIn('<b>1</b> Critical</span><span class="chip s-warning">', html)
+        self.assertNotIn(" Info</span>", html)                                      # none for information: no chip
+        self.assertNotRegex(html, r'need(s)? action|class="(nb|bento|counts?)[ "]')    # no alarm headline, no cards
+        self.assertIn('<div class="runs"><div class="step"><span class="lbl">Start here</span><p class="stt">/var is &lt;95%&gt;</p>'
+                      '<div class="code"><pre>du -xh &lt;/var&gt;</pre><button class="copy" type="button" hidden>Copy</button></div>'
+                      '<a class="open" href="../d/latest.html">Open the report &rarr;</a></div><table>', html)
+        self.assertEqual(html.count('class="step"'), 1)                             # only a report that gives one
         self.assertIn("Linux - Disk &lt;space&gt;", html)
-        self.assertIn('<img class="logo" src="data:image/png;base64,AA" width="24" height="32"', html)
+        self.assertIn('<img class="logo" src="data:image/png;base64,AA" width="48" height="64"', html)
+        self.assertIn(".logo{display:block;border-radius:9px;height:auto;max-height:60px;width:auto}", html)
         self.assertNotRegex(html, r'<link|src="https?:|@import')
         self.assertNotIn("<space>", html)
         self.assertNotIn("job local", html)
+
+    def test_no_poster_type(self):
+        """Nothing on the index set larger than a heading (the user: some text was "crazy big")."""
+        html = rw.index_html(self.reports(), "index.html", "x", None, "now", (), "brief")
+        style = html.split("<style>")[1].split("</style>")[0]
+        for size in re.findall(r"font-size:clamp\([^,]+,[^,]+,\s*([\d.]+)(rem|px)\)", style):
+            self.assertLessEqual(float(size[0]) * (16 if size[1] == "rem" else 1), 34, size)
 
     def test_every_report_by_area(self):
         html = rw.index_html(self.reports(), "site/index.html", "HQ", None, "now", (), "brief")
@@ -760,11 +771,12 @@ class BriefIndex(unittest.TestCase):
     def test_nothing_to_do_and_none_yet(self):
         ok = [dict(r, status="ok") for r in self.reports()]
         html = rw.index_html(ok, "index.html", "x", None, "now", (), "brief")
-        self.assertIn('<h1 class="c-ok">Nothing needs action</h1>', html)
-        self.assertNotIn('class="bento"', html)
+        self.assertIn('<div class="tally"><span class="chip s-ok"><svg', html)
+        self.assertNotIn('class="step"', html)                                      # a fine report's step: not shown
         empty = rw.index_html([], "index.html", "x", None, "now", (), "brief")
         self.assertIn("No reports yet", empty)
         self.assertNotIn('class="tab"', empty)
+        self.assertNotIn('class="tally"', empty)
 
     def test_colours_as_the_page(self):
         """The index page's colours are the brief report page's (roles/site_email/templates/report_brief.html.j2)."""
@@ -782,16 +794,37 @@ class BriefIndex(unittest.TestCase):
     def test_switch_without_the_script(self):
         html = rw.index_html([], "index.html", "x", None, "now", (), "brief")
         self.assertIn('<div class="seg" id="theme" role="radiogroup" aria-label="Light or dark">', html)
-        self.assertIn(":root:has(#theme-dark:checked){--ink:#e2e9eb;", html)
+        self.assertIn(":root:has(#theme-dark:checked){--ink:#e0e0e0;", html)
         self.assertIn('<script src="site-report.js?v=', rw.index_html([], "index.html", "x", None, "now", (), "brief", "var a;\n"))
 
     def test_first_step(self):
         self.assertEqual(rw.first_step({"sections": [{"title": "a", "lines": ["x"]}, {"cards": [{"title": "t", "code": "c", "status": "warning"}]}]}),
-                         {"title": "t", "code": "c", "status": "warning"})
+                         {"title": "t", "code": "c", "more": False, "status": "warning"})
         self.assertIsNone(rw.first_step({"sections": [{"cards": [{"meta": "nothing to do"}]}]}))
         self.assertIsNone(rw.first_step(None))
         self.assertIsNone(rw.first_step({"sections": "not a list of sections"[:0]}))
-        self.assertEqual(len(rw.first_step({"sections": [{"cards": [{"code": "x" * 5000}]}]})["code"]), 800)
+        self.assertEqual(rw.first_step({"sections": [{"cards": [{"code": "x" * 5000}]}]})["code"], "")      # long: on the page
+        self.assertTrue(rw.first_step({"sections": [{"cards": [{"code": "x" * 5000}]}]})["more"])
+
+    def test_a_long_step_stays_short(self):
+        """0.94.0: a STIG rule's whole check (a 20-line policy line, say) never lands on the index - the title on one
+        line, the command only when it is short, a link to the report for the rest."""
+        check = "\n".join("CRYPTO_POLICY='-oCiphers=aes256-gcm@example.mil,aes%d-ctr -oMACs=hmac-sha2-512'" % i for i in range(20))
+        step = rw.first_step({"sections": [{"cards": [{"status": "critical", "title": "The system must use   approved ciphers.\n" + "y" * 400,
+                                                      "code": check}]}]})
+        self.assertEqual(step["code"], "")
+        self.assertTrue(step["more"])
+        self.assertLessEqual(len(step["title"]), 200)
+        self.assertTrue(step["title"].startswith("The system must use approved ciphers. yyy"))
+        self.assertTrue(step["title"].endswith("\u2026"))
+        self.assertEqual(rw.first_step({"sections": [{"cards": [{"title": "t", "code": "a\nb\nc"}]}]})["code"], "a\nb\nc")
+        r = dict(BriefIndex.reports(self)[0], step=step)
+        html = rw.index_html([r], "site/index.html", "x", None, "now", (), "brief")
+        self.assertNotIn("CRYPTO_POLICY", html)
+        self.assertIn('<a class="open" href="../d/latest.html">The command and the rest in the report &rarr;</a>', html)
+        self.assertIn("-webkit-line-clamp:2", html)                                 # the title at most 2 lines
+        old = dict(r, step={"title": "t", "code": check, "status": "critical"})            # a line 0.92.0 wrote
+        self.assertNotIn("CRYPTO_POLICY", rw.index_html([old], "site/index.html", "x", None, "now", (), "brief"))
 
     def test_web_page_brief(self):
         page = rw.web_page('<html><head><title>t</title></head><body></body></html>', [], "brief")

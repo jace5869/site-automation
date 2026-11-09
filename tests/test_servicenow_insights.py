@@ -349,6 +349,13 @@ class BriefPage(unittest.TestCase):
         self.assertLess(h.index('class="brief-hero"'), h.index('id="glance"'))
         self.assertEqual(h.count("<section"), h.count("</section>"))
 
+    def test_calm_sizes(self):
+        """0.94.0: Keeping up / Falling behind a chip, not a poster word; the figures at a reading size; the logo larger."""
+        self.assertIn(".brief-hero .verdict{display:inline-flex;", P.BRIEF_CSS)
+        for v, unit in re.findall(r"font-size:(?:clamp\([^;]*?,\s*)?([\d.]+)(rem|px)", P.BRIEF_CSS):
+            self.assertLessEqual(float(v) * (16 if unit == "rem" else 1), 34, (v, unit))
+        self.assertIn(".logoimg{height:52px}", P.BRIEF_CSS)
+
     def test_other_looks_unchanged(self):
         m = site()["model"]
         for look in (None, "atlas", "portal"):

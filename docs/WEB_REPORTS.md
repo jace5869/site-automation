@@ -135,15 +135,16 @@ On Windows: F12 > Network > the page > Response Headers > `Content-Security-Poli
 Everything it uses works in Microsoft Edge and Chrome 2024 or later. An older Edge draws the page the same, without
 the balanced headings.
 
-### The brief look (0.92.0)
+### The brief look (0.92.0; calm and soft since 0.94.0)
 
 `report_web_theme: brief` draws the same pages read like a morning brief. Everything above stays - the bar, the rail,
 search, Columns, CSV, Copy, the switches, Print, the cards on a phone, `site-report.js` (both looks share it) - and
-the page is laid out to answer *what is wrong and what do I run* first:
+the page is laid out to answer *what is wrong and what do I run* first, calmly - type at a reading size, nothing
+poster-sized:
 
-- **The verdict in one large word** at the top, with its icon: *All good*, *Needs attention* or *Action required*,
-  then the report's title. A report that only informs (an inventory, status *For information*) leads with its title
-  instead - a large *For information* would say nothing.
+- **The verdict as a chip** at the top, with its icon: *All good*, *Needs attention* or *Action required*, then the
+  report's title as the page's heading. A report that only informs (an inventory, status *For information*) leads
+  with its title and its status chip.
 - **The key figures as one ruled strip** of numbers, not a row of boxes; a figure that needs a look has its colour,
   its icon and a coloured rule above it.
 - **Start here as numbered steps** (01, 02, ...) on a tinted band, each with its command and Copy.
@@ -151,17 +152,25 @@ the page is laid out to answer *what is wrong and what do I run* first:
 - **Percentages as bars.** A column whose every value is a percentage (`87%`) gets a small bar beside each number;
   where the report marks that cell (the disk report's *Used* past 85 or 90%, say) the bar and the number take its
   colour and icon, never colour alone. Sorting, CSV and Copy use the number.
-- **The index leads with how many reports need action** - *3 reports need action*, in one large line - then the
-  counts, then a card for each report that needs action, worst first: its area, its title, **the first step its
-  report gives** (its first Start here card, with the command and Copy) and its last five runs as small squares.
-  Then every report, grouped by area (the tabs as before), each line with its last runs as squares.
+- **The index is the list of reports, not an alarm** (0.94.0): a plain *Reports* title, one line - *9 reports ·
+  last run 2026-11-09 06:00 UTC* - and the counts as small chips (*2 Critical*, *1 Warning*, ...). Then every report,
+  grouped by area (the tabs as before), each line with its status chip, its title and its last runs as small
+  squares. Open a report that needs action and **the first step its report gives** is there (its first Start here
+  card), above its last runs - kept short: its title in two lines at most, its command only when it is short (three
+  lines at most, with Copy), and a link to the report for the rest (a STIG rule's whole check stays on its page).
+- **The logo larger:** the site's logo (`report_logo_file`) up to 60 px tall on the index, 52 px on the report pages
+  and ticket insights, 44 px on a phone - drawn from your own file, sized by the page.
 - **The ticket insights pages** (they draw their own page) take the brief colours and type, their figures as one
-  ruled strip, and *Keeping up* or *Falling behind* in one large line at the top with the period's numbers.
-- **Colour and type.** One palette for light and dark, designed in oklch and written as hex so every browser draws
-  it; never pure black or white; every text colour 5.4:1 or better on every surface. The system's own fonts: Segoe UI
-  Variable (Display for the large words, Text for the rest) and Cascadia Mono on Windows - nothing loaded from
-  elsewhere.
-- **Motion only to say where to look:** the verdict and the figures rise in once when the page opens. Never with the
+  strip, and *Keeping up* or *Falling behind* as a chip at the top with the period's numbers.
+- **Colour and type.** Light: a paper white with an ink near-black. Dark (0.94.0): soft neutral greys - the page
+  #121212, cards a step lighter, text #e0e0e0 and #a3a3a3 - with the status colours desaturated so nothing glows.
+  Both soft (0.94.0): the cards and lists translucent over a faint glow (a light blur behind them where the browser
+  has it, solid where it does not), hairline borders, chips tinted with their colour, the run squares and bars
+  quieter; the table headers and the tables stay solid. Never pure black or white; every text colour 4.5:1 or better
+  on every surface it is drawn on, the translucent layers counted (tests/test_report_history.py checks it). The
+  system's own fonts: Segoe UI Variable (Display for the headings, Text for the rest) and Cascadia Mono on Windows -
+  nothing loaded from elsewhere.
+- **Motion only to say where to look:** the header and the figures fade in once when the page opens. Never with the
   reader's *reduce motion* setting, never in print.
 
 A page drawn before 0.92.0 keeps its look; the next run of each report draws its page in the new one (the index on the
