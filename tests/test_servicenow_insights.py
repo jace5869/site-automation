@@ -335,6 +335,32 @@ class Page(unittest.TestCase):
 
 
 
+class BriefPage(unittest.TestCase):
+    """0.92.0: the website's brief look (report_web_theme: brief - opts look) - the brief palette, the ruled figures and
+    the verdict at the top; any other look leaves the page as it was."""
+
+    def test_brief(self):
+        m = site()["model"]
+        h = P.servicenow_insights_page(m, "all", {"look": "brief", "generated": "now", "job": "7"})
+        self.assertIn(P.BRIEF_CSS, h)
+        self.assertRegex(h, r'<div class="brief-hero"><div class="eyebrow">Ticket insights &middot; All assignment groups</div>'
+                            r'<div class="verdict c-(warn|good)"><svg viewBox')
+        self.assertRegex(h, r"<span>(Falling behind|Keeping up)</span></div><p class=\"say\">Resolved <b>[\d,]+</b> of <b>[\d,]+</b> opened")
+        self.assertLess(h.index('class="brief-hero"'), h.index('id="glance"'))
+        self.assertEqual(h.count("<section"), h.count("</section>"))
+
+    def test_other_looks_unchanged(self):
+        m = site()["model"]
+        for look in (None, "atlas", "portal"):
+            h = P.servicenow_insights_page(m, "all", {"look": look, "generated": "now", "job": "7"} if look else {"generated": "now", "job": "7"})
+            self.assertNotIn("brief-hero", h)
+            self.assertNotIn("Segoe UI Variable Display", h)
+
+    def test_the_readers_light_or_dark(self):
+        """The page takes the light / dark choice made on the website's other pages (the same key)."""
+        self.assertIn('localStorage.getItem("site-report-theme")', P.SCRIPT)
+
+
 class SlaTargets(unittest.TestCase):
     O = {"sla_targets": {"incident": {"1": 4, "P2": 8, "*": 72}, "sc_req_item": {"*": 120}},
          "sla_items": {"New account": 48}}

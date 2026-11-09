@@ -165,8 +165,11 @@
 ## short values whole, paths broken at / and \), a bar at the top that stays (the sections, Compact
 ## / Comfortable rows, Light / Auto / Dark - the reader's own setting on Auto -, Print), status
 ## chips with icons (a check mark for OK), Start here cards with a Copy button, tables that sort and
-## filter, rows as cards on a phone; the index page too. Or one of the email looks: standard,
-## command, portal or glass (as report_email_theme - the index page is then in the portal look).
+## filter, rows as cards on a phone; the index page too. brief (0.92.0) = the same page read like a
+## morning brief: what it found in one large word, the key figures as one ruled strip, Start here as
+## numbered steps, percentages as bars; its index leads with how many reports need action and each
+## one's first step. Or one of the email looks: standard, command, portal or glass (as
+## report_email_theme - the index page is then in the portal look).
 # report_web_theme: atlas
 
 ## The names inside the folder, with {names} filled in: {template} (the AAP template's name, lower

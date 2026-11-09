@@ -286,9 +286,57 @@ details.notes>summary .caret{margin-right:6px}
 details.notes[open]>summary{margin-bottom:12px}
 @media print{.bar{position:static}.toc,.tools,.teamnav{display:none}.layout{grid-template-columns:1fr}section.card{box-shadow:none;break-inside:avoid-page}}"""
 
+# 0.92.0: the website's brief look (report_web_theme: brief - opts look): the same page in the brief palette and type
+# (roles/site_email/templates/report_brief.html.j2), its figures as one ruled strip, and a verdict at the top - Keeping
+# up or Falling behind, in one large line, with the period's numbers under it.
+BRIEF_CSS = r"""
+:root{
+  --bg:#f4f8f6; --surface:#fcfdfc; --surface-2:#f0f5f5; --line:#d4dadd; --line-2:#e2e7e9;
+  --fg:#182027; --fg-2:#363e45; --muted:#545c63; --accent:#00704e; --accent-soft:#dbf4e8; --on-accent:#f7fbf9;
+  --good:#106c3e; --good-bg:#daf7e3; --warn:#8f520d; --warn-bg:#fff0d1; --crit:#b02b27; --crit-bg:#ffe9e7; --info:#2b58b1; --info-bg:#e7f1ff;
+  --shadow:none;
+  --sans:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",Arial,sans-serif;
+  --display:"Segoe UI Variable Display","Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,"Cascadia Mono","Cascadia Code",Consolas,"SF Mono",Menlo,"DejaVu Sans Mono",monospace}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0a0f13; --surface:#10161b; --surface-2:#171d22; --line:#2a3339; --line-2:#1e262b;
+  --fg:#e2e9eb; --fg-2:#c0c9ce; --muted:#9faaaf; --accent:#73d4ac; --accent-soft:#123226; --on-accent:#071a13;
+  --good:#72d699; --good-bg:#1e312d; --warn:#f2bd68; --warn-bg:#302d26; --crit:#fa8880; --crit-bg:#312629; --info:#92bdfb; --info-bg:#222d3a}}
+:root[data-theme="dark"]{
+  --bg:#0a0f13; --surface:#10161b; --surface-2:#171d22; --line:#2a3339; --line-2:#1e262b;
+  --fg:#e2e9eb; --fg-2:#c0c9ce; --muted:#9faaaf; --accent:#73d4ac; --accent-soft:#123226; --on-accent:#071a13;
+  --good:#72d699; --good-bg:#1e312d; --warn:#f2bd68; --warn-bg:#302d26; --crit:#fa8880; --crit-bg:#312629; --info:#92bdfb; --info-bg:#222d3a}
+body{font-size:14.5px;letter-spacing:-.003em;-webkit-font-smoothing:antialiased}
+.bar{background:color-mix(in srgb,var(--bg) 86%,transparent);-webkit-backdrop-filter:saturate(150%) blur(12px);backdrop-filter:saturate(150%) blur(12px)}
+.brand h1{font-size:15px;font-weight:700}
+.logo{border-radius:7px}
+section.card{border-radius:16px}
+.sh{padding:18px 22px 4px}
+.sh h2{font-family:var(--display);font-size:clamp(18px,1.5vw,22px);font-weight:650;letter-spacing:-.015em}
+.sb{padding:12px 22px 22px}
+.tiles{gap:0;border-top:2px solid var(--fg);border-bottom:1px solid var(--line)}
+.tile{background:none;border:0;border-left:1px solid var(--line-2);border-radius:0;padding:12px 16px 14px;position:relative}
+.tile:first-child{border-left:0}
+.tile .v{font-family:var(--display);font-size:clamp(24px,2.4vw,36px);font-weight:700;letter-spacing:-.03em;line-height:1.05;margin-top:4px}
+.tile.flag{background:none;border-color:var(--line-2)}
+.tile.flag:before{content:"";position:absolute;left:0;right:0;top:-2px;height:2px;background:var(--warn)}
+.mini .tile .v{font-size:clamp(19px,1.7vw,24px)}
+.brief-hero{padding:clamp(16px,3vw,44px) 2px clamp(4px,1vw,10px)}
+.brief-hero .eyebrow{color:var(--accent)}
+.brief-hero .verdict{display:flex;align-items:center;gap:.18em;margin-top:clamp(8px,1vw,14px);font-family:var(--display);font-weight:700;
+  font-size:clamp(2.4rem,5.6vw,5.4rem);line-height:.95;letter-spacing:-.035em}
+.brief-hero .verdict svg{width:.6em;height:.6em;flex:none}
+.brief-hero .say{margin:14px 0 0;color:var(--fg-2);font-size:clamp(15px,1.2vw,18px);max-width:80ch}
+.brief-hero .say b{color:var(--fg);font-variant-numeric:tabular-nums}
+@keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:no-preference){.brief-hero>*{animation:rise .7s cubic-bezier(.16,1,.3,1) both}.brief-hero>:nth-child(2){animation-delay:.06s}.brief-hero>:nth-child(3){animation-delay:.12s}}
+@media print{*{animation:none!important}.brief-hero .verdict{font-size:40px}}
+"""
+
 SCRIPT_FILE = "site-insights.js"           # written beside the website's index by site_report_web; the page loads it from there
 SCRIPT = r"""(function(){"use strict";
 if(window.siteInsights)return;window.siteInsights=1;   /* the page's copy and site-insights.js: whichever runs first */
+try{var th=localStorage.getItem("site-report-theme");if(th==="light"||th==="dark")document.documentElement.setAttribute("data-theme",th)}catch(e){}   /* the website's light / dark choice */
 function init(){
 var D=document;D.documentElement.classList.add("js-on");
 D.querySelectorAll("[data-t]>title").forEach(function(t){t.remove()});
@@ -578,6 +626,7 @@ def servicenow_insights_page(model, key="all", opts=None):
     span = ("%d months" % months) if months else ("%s days" % int(win.get("days") or 0))
     c = s["counts"]
     short = m.get("short") or {}
+    brief = str(o.get("look") or "").strip().lower() == "brief"     # the website's brief look (0.92.0)
 
     def sh(g):
         """A group's short name (the paths, the bars): without the parts every group shares."""
@@ -587,8 +636,8 @@ def servicenow_insights_page(model, key="all", opts=None):
         return '<span class="hop%s" title="%s">%s</span>' % (" back" if back else "", e(g), e(sh(g)))
 
     head = ['<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
-            '<meta name="generator" content="site-automation ticket insights"><title>%s</title><style>%s</style></head><body>' % (
-                e("Ticket insights – " + s["name"]), CSS)]
+            '<meta name="generator" content="site-automation ticket insights"><title>%s</title><style>%s%s</style></head><body>' % (
+                e("Ticket insights – " + s["name"]), CSS, BRIEF_CSS if brief else "")]
     # the site's logo (report_logo_file) goes in place of the comment when the page is published; else the initials
     logo = '<!--site-report-logo--><div class="logo" aria-hidden="true">%s</div>' % e(
         "".join(w[0] for w in str(o.get("header_text") or "Site automation").split()[:2]).upper() or "SA")
@@ -655,6 +704,20 @@ def servicenow_insights_page(model, key="all", opts=None):
     by = s.get("summary_by") == "act"
     summ = ('<div class="act"><div class="acth"><span class="eyebrow">What the period says</span><span class="src %s">%s</span></div><ul>%s</ul></div>' % (
         "ai" if by else "none", "Written by ACT from the tables" if by else "From the numbers", "".join("<li>%s</li>" % e(x) for x in s["summary"])))
+    if brief:
+        so_, sr_ = sum(w["opened"] for w in s["weeks"]), sum(w["resolved"] for w in s["weeks"])
+        body.append(
+            '<div class="brief-hero"><div class="eyebrow">Ticket insights &middot; %s</div><div class="verdict %s">%s<span>%s</span></div>'
+            '<p class="say">Resolved <b>%s</b> of <b>%s</b> opened (%s) in %s. The backlog went from <b>%s</b> to <b>%s</b>; '
+            '<b>%s</b> of incidents and requests met their SLA.</p></div>' % (
+                e(s["name"]), "c-warn" if behind else "c-good",
+                ('<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.6l6.6 11.6H1.4z" fill="currentColor" opacity=".2" stroke="currentColor" '
+                 'stroke-width="1.3" stroke-linejoin="round"/><path d="M8 6v3.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>'
+                 '<circle cx="8" cy="11.4" r=".95" fill="currentColor"/></svg>') if behind else
+                ('<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.3" fill="currentColor" opacity=".2"/><path d="M4.7 8.4l2.1 2.1 4.5-4.7" '
+                 'fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>'),
+                "Falling behind" if behind else "Keeping up", n(sr_), n(so_), pct(_p(sr_, so_)), e(win.get("label") or span),
+                n(b[1]), n(b[0]), pct(s["sla"][0])))
     body.append(section("glance", "At a glance", "%s, compared with the %s before (%s)" % (e(win.get("label")), e(span), e(win.get("prev_label") or "")) if win.get("compare") else e(win.get("label")),
                         tiles(tl) + summ))
 

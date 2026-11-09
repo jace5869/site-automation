@@ -31,10 +31,10 @@
          if _copy_inv | bool else (report_web_host_connection ~ ', port ' ~ report_web_host_port) }})
   when: _web_win | bool
 
-- name: Copy | report_web_theme is atlas, standard, command, portal or glass
+- name: Copy | report_web_theme is atlas, brief, standard, command, portal or glass
   ansible.builtin.assert:
-    that: _web_theme in ['atlas', 'standard', 'command', 'portal', 'glass']
-    fail_msg: "report_web_theme must be atlas, standard, command, portal or glass, not '{{ report_web_theme }}' (docs/WEB_REPORTS.md)."
+    that: _web_theme in ['atlas', 'brief', 'standard', 'command', 'portal', 'glass']
+    fail_msg: "report_web_theme must be atlas, brief, standard, command, portal or glass, not '{{ report_web_theme }}' (docs/WEB_REPORTS.md)."
     quiet: true
 
 - name: Copy | report_web_dest is a folder on report_web_host

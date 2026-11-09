@@ -716,5 +716,87 @@ class Windows(unittest.TestCase):
         self.assertFalse(os.path.exists(dest))                                      # never made
 
 
+class BriefIndex(unittest.TestCase):
+    """0.92.0: the index page in the brief look - how many reports need action, the counts, a card for each that does
+    (its first step), every report by area; and the first step each report's line carries (entry.step)."""
+
+    def reports(self):
+        runs = [_run(9, "2026-10-09 06:00 UTC", "critical"), _run(8, "2026-10-08 06:00 UTC", "warning")]
+        return [{"key": "d/latest.html", "name": "Linux - Disk <space>", "status": "critical", "when": runs[0]["when"], "job": 9,
+                 "page": runs[0]["page"], "latest": "d/latest.html", "title": "4 <full>", "runs": runs,
+                 "step": {"title": "/var is <95%>", "code": "du -xh </var>", "status": "critical"}},
+                {"key": "v/latest.html", "name": "VMware - VM health", "status": "warning", "when": "2026-10-09 05:00 UTC", "job": "local",
+                 "page": "v/b.html", "latest": "v/latest.html", "title": "3 snapshots"},
+                {"key": "c/latest.html", "name": "Linux - Certificates", "status": "ok", "when": "2026-10-09 04:00 UTC", "job": 7,
+                 "page": "c/b.html", "latest": "c/latest.html", "title": "none expire"}]
+
+    def test_the_brief(self):
+        html = rw.index_html(self.reports(), "site/index.html", "HQ & ops", ("data:image/png;base64,AA", 24, 32), "now", (), "brief")
+        self.assertIn('<h1 class="c-critical">2 reports need action</h1>', html)
+        self.assertIn("1 critical and 1 warning, the worst first below. The other 1 is fine", html.replace("one is", "1 is"))
+        self.assertIn('<div class="count hot c-critical">', html)
+        self.assertIn('<article class="nb c-critical">', html)                          # two need action: none wider
+        self.assertIn('<article class="nb c-warning">', html)
+        self.assertNotIn('<article class="nb c-ok">', html)
+        self.assertIn('<span class="lbl">Start here</span>/var is &lt;95%&gt;<div class="code"><pre>du -xh &lt;/var&gt;</pre>'
+                      '<button class="copy" type="button" hidden>Copy</button></div>', html)
+        self.assertIn("Linux - Disk &lt;space&gt;", html)
+        self.assertIn('<img class="logo" src="data:image/png;base64,AA" width="24" height="32"', html)
+        self.assertNotRegex(html, r'<link|src="https?:|@import')
+        self.assertNotIn("<space>", html)
+        self.assertNotIn("job local", html)
+
+    def test_every_report_by_area(self):
+        html = rw.index_html(self.reports(), "site/index.html", "HQ", None, "now", (), "brief")
+        self.assertIn('<div class="grp a1"><b>Linux</b><span class="n">2</span></div>', html)
+        self.assertIn('<div class="grp a2"><b>VMware</b><span class="n">1</span></div>', html)
+        self.assertLess(html.index('<div class="grp a1">'), html.index('<div class="grp a2">'))
+        self.assertIn("#t1:checked~.list>:not(.a1){display:none}", html)           # an area's tab: its heading and lines
+        self.assertIn('<label for="t1"><span class="dot c-critical"></span>Linux <span class="n">2</span></label>', html)
+        # the last runs as squares, oldest to newest, the newest ringed, each a link to its page
+        self.assertIn('<span class="sqs" aria-label="The last 2 runs"><a class="sq c-warning" href="../', html)
+        self.assertRegex(html, r'<a class="sq c-critical now" href="\.\./[^"]+" title="2026-10-09 06:00 UTC - Critical')
+
+    def test_nothing_to_do_and_none_yet(self):
+        ok = [dict(r, status="ok") for r in self.reports()]
+        html = rw.index_html(ok, "index.html", "x", None, "now", (), "brief")
+        self.assertIn('<h1 class="c-ok">Nothing needs action</h1>', html)
+        self.assertNotIn('class="bento"', html)
+        empty = rw.index_html([], "index.html", "x", None, "now", (), "brief")
+        self.assertIn("No reports yet", empty)
+        self.assertNotIn('class="tab"', empty)
+
+    def test_colours_as_the_page(self):
+        """The index page's colours are the brief report page's (roles/site_email/templates/report_brief.html.j2)."""
+        import re
+        with open(os.path.join(REPO, "roles", "site_email", "templates", "report_brief.html.j2")) as f:
+            tpl = f.read()
+        light = tpl[tpl.index("{%- set light %}"):tpl.index("{%- set dark %}")]
+        dark = tpl[tpl.index("{%- set dark %}"):tpl.index("{%- endset %}", tpl.index("{%- set dark %}"))]
+        for mine, theirs in ((rw.BRIEF_LIGHT, light), (rw.BRIEF_DARK, dark)):
+            tokens = dict(re.findall(r"(--[\w-]+):([^;]+);", mine))
+            self.assertGreater(len(tokens), 30)
+            for k, v in tokens.items():
+                self.assertIn("%s:%s;" % (k, v), theirs, k)
+
+    def test_switch_without_the_script(self):
+        html = rw.index_html([], "index.html", "x", None, "now", (), "brief")
+        self.assertIn('<div class="seg" id="theme" role="radiogroup" aria-label="Light or dark">', html)
+        self.assertIn(":root:has(#theme-dark:checked){--ink:#e2e9eb;", html)
+        self.assertIn('<script src="site-report.js?v=', rw.index_html([], "index.html", "x", None, "now", (), "brief", "var a;\n"))
+
+    def test_first_step(self):
+        self.assertEqual(rw.first_step({"sections": [{"title": "a", "lines": ["x"]}, {"cards": [{"title": "t", "code": "c", "status": "warning"}]}]}),
+                         {"title": "t", "code": "c", "status": "warning"})
+        self.assertIsNone(rw.first_step({"sections": [{"cards": [{"meta": "nothing to do"}]}]}))
+        self.assertIsNone(rw.first_step(None))
+        self.assertIsNone(rw.first_step({"sections": "not a list of sections"[:0]}))
+        self.assertEqual(len(rw.first_step({"sections": [{"cards": [{"code": "x" * 5000}]}]})["code"]), 800)
+
+    def test_web_page_brief(self):
+        page = rw.web_page('<html><head><title>t</title></head><body></body></html>', [], "brief")
+        self.assertNotIn("first-of-type", page)                                  # a web page already: nothing added
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

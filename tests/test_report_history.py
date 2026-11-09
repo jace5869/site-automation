@@ -559,5 +559,87 @@ class AtlasLook(unittest.TestCase):
                                  capture_output=True, text=True)
             self.assertEqual(out.returncode, 0, out.stderr)
 
+class BriefLook(unittest.TestCase):
+    """roles/site_email/templates/report_brief.html.j2 (0.92.0: the report website's brief look), rendered with plain Jinja."""
+
+    def render(self, **v):
+        import jinja2
+        env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(REPO, "roles", "site_email", "templates")),
+                                 autoescape=False)
+        base = {"_report": dict(REPORT, status="critical", subtitle="<b>sub</b>", summary=[{"label": "Past <90%>", "value": 2, "status": "critical"},
+                                                                                         {"label": "Hosts", "value": 12, "note": "read"}],
+                                sections=[
+                    {"title": "Start here", "status": "critical", "cards": [
+                        {"status": "critical", "chip": "Critical", "meta": "Filesystem", "title": "<t>", "subject": "web01",
+                         "next": "Look further:", "code": "du -xh </x>"},
+                        {"status": "warning", "title": "two"}]},
+                    {"title": "Filesystems", "status": "critical", "columns": ["Host", "Used", "Inodes", "Status"],
+                     "rows": [["<h>", "95%", "1%", "late"], ["db01", "86.5%", "91%", "FAIL"]],
+                     "row_status": ["critical", "warning"], "cell_status": [["", "critical", "", ""], ["", "warning", "critical", ""]]},
+                    {"title": "Healthy (2)", "text": "a, b", "passed": ["web<1>", "web2"], "passed_checks": ["disk"]},
+                    {"title": "Notes", "lines": ["one <line>"]}]),
+                "_email_footer": "AAP job 9", "_page_logo_cid": "", "_page_runs": [], "_page_template": "Linux - Disk <space>",
+                "report_email_header_text": "Site <automation> report"}
+        base.update(v)
+        return env.get_template("report_brief.html.j2").render(**base)
+
+    def test_escaped_and_self_contained(self):
+        h = self.render()
+        for raw in ("<b>sub</b>", "<h>", "<line>", "<automation>", "<t>", "</x>", "web<1>", "<90%>", "<space>"):
+            self.assertNotIn(raw, h)
+        self.assertNotRegex(h, r'<link|src="https?:|@import|url\(https?:')        # nothing from elsewhere: it opens from a share
+        self.assertNotIn("oklch(", h.split("<style>")[1].split("</style>")[0].replace("oklch(0.", ""))   # hex only (the oklch in a comment)
+
+    def test_the_verdict_first(self):
+        """A report with a verdict leads with it in one large word (and its icon); one that only informs, with its title."""
+        h = self.render()
+        self.assertIn('<div class="verdict c-critical"><svg class="ic"', h)
+        self.assertIn("<span>Action required</span></div>\n<h1>", h)
+        self.assertIn('<span class="eyebrow">Linux - Disk &lt;space&gt;</span>', h)
+        i = self.render(_report=dict(REPORT, status="info", sections=[]))
+        self.assertNotIn('class="verdict', i)
+        self.assertIn('<h1 class="big">Snapshot cleanup: deleted 4</h1>', i)
+        self.assertIn('<span class="chip s-info">', i)                            # the status still said: icon and word
+        self.assertIn('<div class="verdict c-ok">', self.render(_report=dict(REPORT, status="ok", sections=[])))
+
+    def test_figures_steps_and_bars(self):
+        h = self.render()
+        self.assertIn('<div class="tiles">', h)
+        self.assertIn('<div class="tile hot-critical">', h)
+        self.assertEqual(h.count('<button class="tcopy" type="button" hidden'), 2)
+        self.assertIn('<details class="sec band" id="s1" open>', h)                # Start here on its band
+        self.assertIn('<details class="sec" id="s2" open>', h)
+        self.assertEqual(h.count('<span class="num" aria-hidden="true"></span>'), 2)   # numbered by the CSS
+        self.assertIn("counter(step,decimal-leading-zero)", h)
+        self.assertIn('<pre>du -xh &lt;/x&gt;</pre><button class="copy" type="button" hidden>Copy</button>', h)
+        # a column of percentages: a bar, in its cell's status (with the icon) - never its row's alone
+        self.assertIn('<th class="k-num" scope="col"><button type="button">Used', h)
+        self.assertIn('data-v="95%"><span class="pct"><span class="meter m-critical"><i style="width:95.0%"></i></span><span class="pv c-critical"><svg', h)
+        self.assertIn('<span class="meter"><i style="width:1.0%"></i></span><span class="pv">1%</span>', h)
+        self.assertIn('<span class="meter m-critical"><i style="width:91.0%"></i>', h)
+        self.assertIn("<span>Fail</span>", h)                                      # a Status column: the row's status as its chip
+        self.assertIn("<span>late</span>", h)                                     # ... the row's status as its chip
+
+    def test_what_the_script_works_on(self):
+        """The parts site_report.js looks for are atlas's: the one script serves both looks."""
+        h = self.render()
+        for part in ('id="theme"', 'id="density"', 'id="print"', 'id="find"', 'id="rail-hide"', 'class="nav railed"', 'class="card rail"',
+                     'class="copy scopy"', 'class="btn csv"', '<details class="cols">', 'class="tw"', 'class="todo c-critical"', 'class="row1"',
+                     '<div class="body">', '<summary><h2>', '<script id="site-report-js">', '<script src="site-report.js"></script>'):
+            self.assertIn(part, h, part)
+        self.assertIn("if(window.siteReport)return;", h)
+
+    def test_light_dark_print_motion(self):
+        h = self.render()
+        flat = h.replace("\n", "").replace(" ", "")
+        self.assertIn(":root:has(#theme-light:checked){--ink:#182027;", flat)
+        self.assertIn(":root:has(#theme-dark:checked){--ink:#e2e9eb;", flat)
+        self.assertIn('@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){', h)
+        self.assertIn("@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}", h)
+        self.assertIn("@media print{", h)
+        palette = h[h.index("<style>"):h.index("/* one family")]
+        self.assertNotRegex(palette, r"#000\b|#000000|#fff\b|#ffffff")         # the palette: never pure black or white
+
+
 if __name__ == "__main__":
     unittest.main()

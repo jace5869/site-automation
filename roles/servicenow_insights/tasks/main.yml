@@ -46,6 +46,8 @@
   ansible.builtin.set_fact:
     _sni_opts:
       groups: "{{ _sni_groups }}"
+      # the website's look: brief draws the page in its palette, with the verdict at the top (0.92.0)
+      look: "{{ report_web_theme | default('atlas') | string | trim | lower }}"
       team_min: "{{ servicenow_insights_team_min | int }}"
       teams_max: "{{ servicenow_insights_teams_max | int if servicenow_insights_team_pages | bool else 0 }}"
       top_issues: "{{ servicenow_insights_top_issues | int }}"

@@ -164,9 +164,20 @@ run "a folder that is not there (a share not mounted): fails, never makes it" fa
     "is not there - is the share mounted"
 check "nothing made" test ! -e "$work/nomount"
 run "an unknown look: says which there are" fail "{\"report_web_dest\": \"$work/reports\", \"report_web_theme\": \"fancy\"}" \
-    "report_web_theme must be atlas, standard, command, portal or glass"
+    "report_web_theme must be atlas, brief, standard, command, portal or glass"
 run "atlas for an email: refused, said why" fail "{\"report_email_to\": [\"ops@example.mil\"], \"report_email_smtp_host\": \"localhost\", \"report_email_smtp_port\": $port, \"report_email_from\": \"aap@example.mil\", \"report_email_security\": \"none\", \"report_email_theme\": \"atlas\"}" \
-    "atlas is the look of the report website only (report_web_theme)"
+    "atlas is a look of the report website only (report_web_theme)"
+run "brief for an email: refused, said why" fail "{\"report_email_to\": [\"ops@example.mil\"], \"report_email_smtp_host\": \"localhost\", \"report_email_smtp_port\": $port, \"report_email_from\": \"aap@example.mil\", \"report_email_security\": \"none\", \"report_email_theme\": \"brief\"}" \
+    "brief is a look of the report website only (report_web_theme)"
+mkdir -p "$work/brief"
+run "the brief look (0.92.0): the page and the index as a morning brief" ok "{\"report_web_dest\": \"$work/brief\", \"report_web_theme\": \"brief\", $aapjob}"
+check "the page: the verdict in one large word, the ruled figures, the logo inside it (at most 32 px tall), the script beside it, no cid:" bash -c "p=\"\$(ls '$work'/brief/linux-certificate-trust-report/*_job-907.html)\" \
+    && grep -q '<div class=\"verdict c-warning\">' \"\$p\" && grep -q '<span>Needs attention</span>' \"\$p\" && grep -q '<div class=\"tiles\">' \"\$p\" \
+    && grep -q 'width=\"24\" height=\"32\"' \"\$p\" && grep -q 'src=\"data:image/png;base64,' \"\$p\" && ! grep -q 'cid:' \"\$p\" \
+    && grep -q 'script src=\"../site-report.js?v=' \"\$p\" && test -s '$work/brief/site-report.js'"
+check "index.html: the brief look - how many need action, the card of the one that does, its area tab" bash -c "i='$work/brief/index.html' \
+    && grep -q '<h1 class=\"c-warning\">1 report needs action</h1>' \"\$i\" && grep -q '<article class=\"nb c-warning\">' \"\$i\" \
+    && grep -q '<div class=\"grp a1\"><b>Certificates</b>' \"\$i\" && grep -q 'class=\"seg\" id=\"theme\"' \"\$i\" && ! grep -Eq '<link|src=\"https?:|@import' \"\$i\""
 mkdir -p "$work/glass"
 run "the glass look: the page gets the blur, icons and a plain print" ok "{\"report_web_dest\": \"$work/glass\", \"report_web_theme\": \"glass\", $aapjob}"
 check "the logo inside it (at most 80 px tall), the blur, line icons, print, phone rules, no cid:" bash -c "p=\"\$(ls '$work'/glass/linux-certificate-trust-report/*_job-907.html)\" \

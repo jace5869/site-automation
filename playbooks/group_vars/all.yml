@@ -68,8 +68,8 @@
 # The look of every report email: standard | command | portal | glass (your logo, the job's last runs from AAP - "The look")
 # report_email_theme: command                      # or portal, glass
 # The look of the report website (docs/WEB_REPORTS.md): atlas (the default: light and dark, made for a browser - never
-# an email), or an email look: standard | command | portal | glass
-# report_web_theme: atlas
+# an email), brief (the same, read like a morning brief - 0.92.0), or an email look: standard | command | portal | glass
+# report_web_theme: atlas                          # or brief
 # report_logo_file: files/report_logo.png          # = playbooks/files/report_logo.png, in your repository
 # Every report also as a web page (docs/WEB_REPORTS.md) - with or without the email:
 # report_web_dest: https://CHANGE-ME.yoursite.mil/upload   # an upload address (PUT), or a mounted folder: /mnt/reports

@@ -1,0 +1,618 @@
+{#- The "brief" look - the report website only (report_web_theme: brief), never an email (mail programs draw none of
+    this). 0.92.0: the report read like a morning brief - what it found first, in one large word (All good, Needs
+    attention, Action required; a report that only informs: its title instead), then its key figures as one ruled strip
+    of numbers, then Start here as numbered steps on a tinted band, then the sections, each under a rule rather than in
+    a box. Tables as in atlas (columns sized by what they hold, headings that stay, sort, filter, Columns, CSV, Copy on
+    each command), and a column of percentages (87%) drawn as bars beside its numbers. Light and dark from one palette
+    (designed in oklch, written in hex so every browser draws it - docs/WEB_REPORTS.md, "The brief look"), the system's
+    own fonts (Segoe UI Variable on Windows; nothing loaded from elsewhere), status always an icon and a word, text at
+    4.5:1 or better on every surface. Motion only to say where to look: the verdict and the figures rise in once, never
+    with reduced motion or in print. The parts the script works on are atlas's (the same class names and ids), so
+    site_report.js serves both looks; without the script it reads the same. Input as report_atlas.html.j2: _report,
+    _page_logo_cid/_page_logo_size, _page_runs, _page_job/_page_template, _email_footer. Every value is escaped. -#}
+{%- set r = _report -%}
+{%- set logo_cid = _page_logo_cid | default(_email_logo_cid | default('')) -%}
+{%- set logo_size = _page_logo_size | default(_email_logo_size | default([0, 0])) -%}
+{%- set runs = _page_runs | default(_email_runs | default([])) -%}
+{%- set job_id = _page_job | default(awx_job_id | default(tower_job_id | default(''))) | string -%}
+{%- set job_name = _page_template | default(awx_job_template_name | default(tower_job_template_name | default(''))) | string -%}
+{%- set words = {'ok': 'All good', 'warning': 'Needs attention', 'critical': 'Action required', 'info': 'For information', 'unknown': 'Unknown'} -%}
+{%- set chipword = {'ok': 'OK', 'warning': 'Warning', 'critical': 'Critical', 'info': 'Info', 'unknown': 'Unknown'} -%}
+{#- a cell whose whole text is one of these words gets its chip (and icon) even without a cell_status -#}
+{%- set cellword = {'ok': 'ok', 'passed': 'ok', 'pass': 'ok', 'success': 'ok', 'successful': 'ok', 'healthy': 'ok', 'compliant': 'ok',
+                    'valid': 'ok', 'up': 'ok', 'connected': 'ok',
+                    'warning': 'warning', 'warn': 'warning', 'at risk': 'warning', 'expiring': 'warning', 'degraded': 'warning',
+                    'critical': 'critical', 'failed': 'critical', 'fail': 'critical', 'error': 'critical', 'breached': 'critical',
+                    'expired': 'critical', 'down': 'critical', 'unreachable': 'critical', 'not compliant': 'critical',
+                    'info': 'info', 'unknown': 'unknown'} -%}
+{%- set st = r.status | default('info') if r.status | default('info') in words else 'info' -%}
+{#- a verdict only where there is one to give: a report that only informs leads with its title -#}
+{%- set verdict = st in ['ok', 'warning', 'critical'] -%}
+{%- macro icon(k) -%}
+{%- if k == 'ok' -%}
+<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.3" fill="currentColor" opacity=".2"/><path d="M4.7 8.4l2.1 2.1 4.5-4.7" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+{%- elif k == 'warning' -%}
+<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.6l6.6 11.6H1.4z" fill="currentColor" opacity=".2" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 6v3.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="8" cy="11.4" r=".95" fill="currentColor"/></svg>
+{%- elif k == 'critical' -%}
+<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.3" fill="currentColor" opacity=".2"/><path d="M5.5 5.5l5 5M10.5 5.5l-5 5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+{%- elif k == 'info' -%}
+<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.3" fill="currentColor" opacity=".2"/><path d="M8 7.2v4.2" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><circle cx="8" cy="4.8" r="1" fill="currentColor"/></svg>
+{%- else -%}
+<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.3" fill="currentColor" opacity=".2"/><path d="M6.2 6.2a1.9 1.9 0 113 1.5c-.8.5-1.2.9-1.2 1.7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="8" cy="11.6" r=".95" fill="currentColor"/></svg>
+{%- endif -%}
+{%- endmacro -%}
+{%- macro copyicons() -%}
+<svg class="ic i1" viewBox="0 0 16 16" aria-hidden="true"><rect x="5.2" y="5.2" width="8.6" height="8.6" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10.8 3.2V3a1.6 1.6 0 00-1.6-1.6H3.4A1.6 1.6 0 001.8 3v5.8a1.6 1.6 0 001.6 1.6h.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><svg class="ic i2" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.4 8.6l3 3 6.2-6.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+{%- endmacro -%}
+{%- macro chip(k, text) -%}
+<span class="chip s-{{ k }}">{{ icon(k) }}<span>{{ text | e }}</span></span>
+{%- endmacro -%}
+{#- a path, address or hash: escaped, with a place to break after each / and \ (no hyphen is added) -#}
+{%- macro breakable(text) -%}
+{{ text | e | replace('/', '/<wbr>') | replace('\\', '\\<wbr>') }}
+{%- endmacro -%}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>{{ r.title | e }}</title>
+<script>try{var t=localStorage.getItem('site-report-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);
+var d=localStorage.getItem('site-report-density');if(d==='compact')document.documentElement.setAttribute('data-density',d)}catch(e){}</script>
+<script src="site-report.js"></script>
+<style>
+{#- the palette (roles/site_email/library/site_report_web.py has the same, for the index - tests/test_report_web.py
+    checks they match): designed in oklch - light: paper oklch(0.975 0.004 165), ink oklch(0.24 0.018 245), the teal
+    green oklch(0.48 0.105 165); dark: oklch(0.165 0.012 240), ink oklch(0.93 0.008 220), teal oklch(0.80 0.11 165) -
+    and written in hex (a browser before 2023 draws no oklch). Every text colour 5.4:1 or better on every surface. #}
+{%- set light %}
+  --ink:#182027;--muted:#545c63;--label:#363e45;--accent:#00704e;--accent-ink:#f7fbf9;--accent-soft:#dbf4e8;
+  --bg:#f4f8f6;--bg2:#eef2f0;--card:#fcfdfc;--card-solid:#fcfdfc;--card-strong:#f0f5f5;--edge:#d4dadd;--line:#e2e7e9;
+  --zebra:#f7faf8;--hover:#e3f5ec;--code:#edf2f4;--bar:rgba(244,248,246,.86);
+  --shadow:0 1px 2px rgba(24,32,39,.05),0 4px 14px rgba(24,32,39,.05);
+  --ok:#106c3e;--ok-bg:#daf7e3;--ok-bd:#94cda7;
+  --warning:#8f520d;--warning-bg:#fff0d1;--warning-bd:#eebe7c;
+  --critical:#b02b27;--critical-bg:#ffe9e7;--critical-bd:#f2a7a1;
+  --info:#2b58b1;--info-bg:#e7f1ff;--info-bd:#a5bfec;
+  --unknown:#545c63;--unknown-bg:#eceff2;--unknown-bd:#c2c8cd;
+  --critical-row:#fff6f5;--warning-row:#fff9ef;
+  color-scheme:light;
+{%- endset %}
+{%- set dark %}
+  --ink:#e2e9eb;--muted:#9faaaf;--label:#c0c9ce;--accent:#73d4ac;--accent-ink:#071a13;--accent-soft:#123226;
+  --bg:#0a0f13;--bg2:#070b0f;--card:#10161b;--card-solid:#10161b;--card-strong:#171d22;--edge:#2a3339;--line:#1e262b;
+  --zebra:#13191d;--hover:#14271f;--code:#0b1115;--bar:rgba(10,15,19,.86);
+  --shadow:0 1px 2px rgba(0,0,0,.45),0 8px 24px rgba(0,0,0,.28);
+  --ok:#72d699;--ok-bg:#1e312d;--ok-bd:#396750;
+  --warning:#f2bd68;--warning-bg:#302d26;--warning-bd:#6f5c3b;
+  --critical:#fa8880;--critical-bg:#312629;--critical-bd:#724645;
+  --info:#92bdfb;--info-bg:#222d3a;--info-bd:#475c79;
+  --unknown:#a7b0b4;--unknown-bg:#252c30;--unknown-bd:#4f575b;
+  --critical-row:#201e22;--warning-row:#1e2020;
+  color-scheme:dark;
+{%- endset %}
+:root{ {{- light -}} }
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){ {{- dark -}} }}
+:root[data-theme="dark"]{ {{- dark -}} }
+/* the switches work without the page's script too (a web server's Content-Security-Policy can block it): radio buttons */
+:root:has(#theme-light:checked){ {{- light -}} }
+:root:has(#theme-dark:checked){ {{- dark -}} }
+/* one family, two optical sizes (Segoe UI Variable's Display for the large words, Text for the rest), and a mono */
+:root{--sans:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",Arial,sans-serif;
+  --display:"Segoe UI Variable Display","Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,"Cascadia Mono","Cascadia Code",Consolas,"SF Mono",Menlo,"DejaVu Sans Mono",monospace;
+  --ease:cubic-bezier(.16,1,.3,1);--cy:10px;--cx:14px;--fs:14px;--appbar:56px}
+:root[data-density="compact"]{--cy:5px;--cx:10px;--fs:13.5px}
+:root:has(#density-compact:checked){--cy:5px;--cx:10px;--fs:13.5px}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{background:var(--bg);scroll-padding-top:calc(var(--appbar) + 16px)}
+body{margin:0;color:var(--ink);background:var(--bg);font:15px/1.55 var(--sans);letter-spacing:-.003em;min-height:100vh;-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-underline-offset:2px}
+.mono,code,pre,td.lk,td.k-path{font-family:var(--mono)}
+.ic{width:15px;height:15px;flex:none;display:block}
+.c-ok{color:var(--ok)}.c-warning{color:var(--warning)}.c-critical{color:var(--critical)}.c-info{color:var(--info)}.c-unknown{color:var(--unknown)}
+.chip{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:2px 10px 2px 6px;font-size:12.5px;font-weight:650;line-height:1.5;white-space:nowrap;border:1px solid}
+.s-ok{color:var(--ok);background:var(--ok-bg);border-color:var(--ok-bd)}
+.s-warning{color:var(--warning);background:var(--warning-bg);border-color:var(--warning-bd)}
+.s-critical{color:var(--critical);background:var(--critical-bg);border-color:var(--critical-bd)}
+.s-info{color:var(--info);background:var(--info-bg);border-color:var(--info-bd)}
+.s-unknown{color:var(--unknown);background:var(--unknown-bg);border-color:var(--unknown-bd)}
+.card{background:var(--card);border:1px solid var(--edge);border-radius:14px}
+.wrap{max-width:1760px;margin:0 auto;padding:8px clamp(16px,3vw,48px) 56px}
+.lbl,.eyebrow{font-size:11.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--label)}
+/* the bar at the top: the report, its sections, the switches */
+.appbar{position:sticky;top:0;z-index:20;background:var(--bar);border-bottom:1px solid var(--edge);
+  -webkit-backdrop-filter:saturate(150%) blur(12px);backdrop-filter:saturate(150%) blur(12px)}
+.appbar-in{max-width:1760px;margin:0 auto;padding:0 clamp(16px,3vw,48px);min-height:var(--appbar);display:flex;align-items:center;gap:16px}
+.brand{display:flex;align-items:center;gap:10px;min-width:0;flex:none;max-width:34%}
+.logo{display:block;border-radius:7px;height:auto;max-height:32px;width:auto}
+.brand b{font-size:13.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:0}
+.nav{flex:1;min-width:0;display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;padding:10px 0;mask-image:linear-gradient(90deg,#000 94%,transparent)}
+.nav::-webkit-scrollbar{display:none}
+.nav a{flex:none;display:inline-flex;align-items:center;gap:7px;text-decoration:none;color:var(--muted);font-size:13px;font-weight:600;
+  border-radius:8px;padding:5px 10px;white-space:nowrap}
+.nav a:hover{color:var(--ink);background:var(--card-strong)}
+.nav a.on{color:var(--ink);background:var(--accent-soft)}
+.nav .n{font-weight:500;color:var(--muted);font-variant-numeric:tabular-nums}
+.dot{width:8px;height:8px;border-radius:50%;background:currentColor;flex:none}
+.tools{display:flex;gap:8px;align-items:center;flex:none;margin-left:auto}
+.btn{font:inherit;font-size:13px;font-weight:600;color:var(--ink);background:var(--card);border:1px solid var(--edge);border-radius:9px;padding:6px 11px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:border-color .15s}
+.btn:hover{border-color:var(--accent)}
+.seg{display:inline-flex;position:relative;background:var(--card-strong);border:1px solid var(--edge);border-radius:9px;padding:2px;gap:2px}
+.seg input{position:absolute;opacity:0;width:1px;height:1px;margin:0;pointer-events:none}
+.seg label{font-size:12.5px;font-weight:600;color:var(--muted);border-radius:7px;padding:5px 10px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;user-select:none}
+.seg label:hover{color:var(--ink)}
+.seg input:checked+label{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12),inset 0 0 0 1px var(--edge)}
+.seg input:focus-visible+label,.btn:focus-visible,summary:focus-visible,th button:focus-visible,.nav a:focus-visible,.rail a:focus-visible,.filter:focus-visible,
+.find input:focus-visible,.cols input:focus-visible,.ccopy:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+/* the header: what the report found, in one large word, then its title */
+.hero{padding:clamp(28px,4.5vw,64px) 0 clamp(20px,2.4vw,30px);position:relative}
+.crumb{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 14px;color:var(--muted);font-size:13px}
+.crumb .eyebrow{color:var(--accent)}
+.verdict{display:flex;align-items:center;gap:.18em;margin:clamp(10px,1.4vw,18px) 0 0;font-family:var(--display);font-weight:700;
+  font-size:clamp(2.5rem,6.4vw,6.25rem);line-height:.95;letter-spacing:-.035em;text-wrap:balance}
+.verdict .ic{width:.62em;height:.62em;margin-right:.08em}
+h1{margin:clamp(12px,1.4vw,18px) 0 0;font-family:var(--display);font-size:clamp(1.3rem,1.9vw,1.9rem);line-height:1.22;letter-spacing:-.018em;font-weight:600;max-width:58ch;text-wrap:balance}
+h1.big{font-size:clamp(2rem,4.2vw,4rem);line-height:1.02;letter-spacing:-.03em;font-weight:700;max-width:24ch}
+.sub{color:var(--muted);margin-top:10px;font-size:15.5px;max-width:88ch;text-wrap:pretty}
+.state{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px 18px;margin-top:22px}
+.meta{color:var(--muted);font-size:13px;display:flex;flex-wrap:wrap;gap:4px 14px}
+.runs{margin-left:auto;display:flex;align-items:flex-end;gap:3px;height:40px}
+.runs .lbl{font-size:11px;margin-right:8px;align-self:center}
+.bar{width:9px;border-radius:2px 2px 1px 1px;background:currentColor;opacity:.75;position:relative}
+.bar.now{opacity:1;box-shadow:0 0 0 2px var(--bg),0 0 0 3.5px var(--ink)}
+.bar:hover{opacity:1}
+.bar[data-tip]:hover:after{content:attr(data-tip);position:absolute;bottom:calc(100% + 8px);right:-6px;white-space:nowrap;background:var(--card-solid);color:var(--ink);
+  border:1px solid var(--edge);border-radius:8px;padding:4px 8px;font-size:12px;box-shadow:var(--shadow);z-index:5}
+/* the key figures: one ruled strip of numbers, not a row of boxes */
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));border-top:2px solid var(--ink);border-bottom:1px solid var(--edge);margin:4px 0 0}
+.tile{padding:14px 20px 16px;position:relative;border-left:1px solid var(--line);min-width:0}
+.tile:first-child{border-left:0}
+.tile .k{font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--label);display:flex;align-items:center;gap:7px;padding-right:28px}
+.tile .v{font-family:var(--display);font-size:clamp(30px,3.2vw,46px);font-weight:700;line-height:1.02;margin-top:10px;font-variant-numeric:tabular-nums;letter-spacing:-.03em;overflow-wrap:anywhere}
+.tile .v.long{font-size:clamp(18px,1.5vw,22px);letter-spacing:-.01em;line-height:1.25}
+.tile .n{color:var(--muted);font-size:13px;margin-top:6px}
+.tile.hot-critical:before,.tile.hot-warning:before{content:"";position:absolute;left:0;right:0;top:-2px;height:2px;background:var(--critical)}
+.tile.hot-warning:before{background:var(--warning)}
+/* the sections: each under a rule; Start here on a tinted band, its steps numbered */
+.sec{margin-top:clamp(28px,3vw,44px);border-top:1px solid var(--edge)}
+.sec>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:10px;padding:18px 0 14px}
+.sec>summary::-webkit-details-marker{display:none}
+.sec>summary h2{margin:0;font-family:var(--display);font-size:clamp(19px,1.55vw,24px);font-weight:650;letter-spacing:-.015em;flex:1;min-width:0;line-height:1.25;text-wrap:balance}
+.sec>summary .count{display:inline-block;font-family:var(--mono);font-size:13px;font-weight:500;color:var(--muted);margin-left:10px;vertical-align:2px;letter-spacing:0;font-variant-numeric:tabular-nums}
+.sec>summary:hover h2{color:var(--accent)}
+.caret{width:18px;height:18px;flex:none;color:var(--muted);transition:transform .25s var(--ease)}
+.sec:not([open]) .caret{transform:rotate(-90deg)}
+.body{padding:2px 0 6px}
+.body>p{margin:0 0 14px;color:var(--muted);max-width:86ch;text-wrap:pretty}
+.sec.band{border-top:0;background:var(--card-strong);border-radius:18px;padding:0 clamp(16px,2vw,28px) clamp(14px,1.6vw,22px)}
+ul.lines{margin:2px 0 0;padding:0;list-style:none;max-width:140ch}
+ul.lines li{position:relative;padding:8px 0 8px 22px;border-top:1px solid var(--line);overflow-wrap:anywhere;white-space:pre-line}
+ul.lines li:first-child{border-top:0}
+ul.lines li:before{content:"";position:absolute;left:4px;top:17px;width:8px;height:2px;border-radius:2px;background:var(--accent)}
+.passed-checks{display:flex;flex-wrap:wrap;align-items:center;gap:6px;color:var(--muted);font-size:14px;margin-bottom:12px}
+.passed-checks .chip{font-size:12px}
+ul.passed{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:6px}
+ul.passed li{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:7px 12px;font-size:13.5px;min-width:0}
+ul.passed li .mono{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ul.passed .ic{width:16px;height:16px}
+/* Start here: numbered steps */
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,380px),1fr));gap:12px;counter-reset:step}
+.todo{background:var(--card);border:1px solid var(--edge);border-radius:14px;padding:16px 18px 16px 20px;position:relative;overflow:hidden;color:var(--ink);display:flex;flex-direction:column;counter-increment:step}
+.todo:before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--unknown)}
+.todo.c-ok:before{background:var(--ok)}.todo.c-warning:before{background:var(--warning)}.todo.c-critical:before{background:var(--critical)}.todo.c-info:before{background:var(--info)}
+.todo .row1{display:flex;align-items:center;gap:10px}
+.todo .num:before{content:counter(step,decimal-leading-zero);font-family:var(--display);font-size:22px;font-weight:700;letter-spacing:-.02em;color:var(--muted);font-variant-numeric:tabular-nums}
+.todo .meta{color:var(--muted);font-size:12px;margin-left:auto;text-align:right;font-weight:650;text-transform:uppercase;letter-spacing:.07em}
+.todo h3{margin:12px 0 0;font-size:16px;font-weight:650;line-height:1.38;text-wrap:balance}
+.todo .subj{color:var(--muted);font-size:13px;margin-top:6px;overflow-wrap:anywhere}
+.todo .next{margin-top:10px;font-size:14px;overflow-wrap:anywhere}
+.todo .next b{color:var(--accent)}
+.code{display:flex;align-items:flex-start;gap:8px;margin-top:auto;padding-top:12px}
+.code pre{margin:0;flex:1;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12.8px;line-height:1.5;background:var(--code);border:1px solid var(--line);border-radius:9px;padding:9px 12px}
+.copy{font:inherit;font-size:12px;font-weight:650;color:var(--ink);background:var(--card);border:1px solid var(--edge);border-radius:8px;padding:4px 10px;cursor:pointer;margin-top:4px}
+.copy:hover{border-color:var(--accent)}
+/* Copy on a tile (its line) and on a section (all of it: a table as rows, the lines as a list) */
+.scopy{flex:none;display:inline-flex;align-items:center;gap:5px;margin-top:0}
+.scopy .ic{width:14px;height:14px}
+.tcopy{position:absolute;top:10px;right:10px;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;
+  color:var(--muted);background:none;border:1px solid transparent;border-radius:8px;cursor:pointer;opacity:.45}
+.tcopy .ic{width:15px;height:15px}
+.tile:hover .tcopy,.tcopy:focus-visible{opacity:1}
+.tcopy:hover{color:var(--ink);background:var(--card-strong);border-color:var(--edge)}
+.copy.done,.tcopy.done{color:var(--ok);border-color:var(--ok-bd);opacity:1}
+.tcopy .i2,.scopy .i2,.ccopy .i2,.done .i1{display:none}.done .i2{display:block}
+.copy[hidden],.tcopy[hidden],.btn[hidden]{display:none}
+@media (hover:none){.tcopy{opacity:.8}}
+/* a command in a table: its Copy button; without the script, a click on it takes all of it (then Ctrl+C) */
+.ccopy{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;padding:0;margin-left:6px;vertical-align:-4px;
+  color:var(--muted);background:var(--card);border:1px solid var(--edge);border-radius:7px;cursor:pointer}
+.ccopy .ic{width:13px;height:13px}
+.ccopy:hover{color:var(--ink);border-color:var(--accent)}
+.ccopy.done{color:var(--ok);border-color:var(--ok-bd)}
+:root:not(.js) td.lk .cmd,:root:not(.js) .code pre{-webkit-user-select:all;user-select:all}
+/* the search in the bar (the script's) and its matches */
+.find{flex:0 1 320px;min-width:160px;margin-left:auto;position:relative;display:flex;align-items:center;gap:8px}
+.find>.ic{position:absolute;left:10px;top:50%;margin-top:-7.5px;color:var(--muted);pointer-events:none}
+.find input{font:inherit;font-size:13.5px;color:var(--ink);background:var(--card);border:1px solid var(--edge);border-radius:9px;padding:6px 10px 6px 32px;width:100%;min-width:0}
+.find.none-found input{border-color:var(--critical-bd)}
+.found{flex:none;font-size:12.5px;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+::highlight(site-find){background-color:#ffd54a;color:#182027}
+/* the rail of the sections: beside the report on a wide screen (the bar's list of them on a narrower one) */
+.rail{display:none}
+.rail .lbl{font-size:11px;padding:4px 10px 8px}
+.rail a{display:flex;align-items:flex-start;gap:8px;padding:6px 10px;border-radius:8px;color:var(--muted);text-decoration:none;font-size:13.5px;font-weight:600;line-height:1.35;position:relative}
+.rail a .dot{margin-top:5px}
+.rail a .t{flex:1;min-width:0;overflow-wrap:anywhere}
+.rail a .n,.rail a .m{flex:none;font-size:12px;font-weight:500;font-family:var(--mono);font-variant-numeric:tabular-nums}
+.rail a .m:not(:empty){color:var(--accent-ink);background:var(--accent);border-radius:999px;padding:0 7px}
+.rail a .m:not(:empty)~.n{display:none}
+.rail a:hover{color:var(--ink);background:var(--card-strong)}
+.rail a.on{color:var(--ink);background:var(--accent-soft)}
+.rail a.on:before{content:"";position:absolute;left:0;top:7px;bottom:7px;width:3px;border-radius:3px;background:var(--accent)}
+.rail a.off{opacity:.45}
+.rail a.up{font-weight:500;margin-bottom:4px}
+@media (min-width:1200px){
+  .wrap.has-rail{display:grid;grid-template-columns:clamp(200px,14vw,250px) minmax(0,1fr);gap:0 clamp(24px,2.6vw,44px);align-items:start}
+  .has-rail>.rail{display:block;position:sticky;top:calc(var(--appbar) + 24px);margin-top:28px;max-height:calc(100vh - var(--appbar) - 48px);overflow:auto;
+    padding:12px 8px;scrollbar-width:thin;background:none;border:0;border-right:1px solid var(--line);border-radius:0}
+  .nav.railed{display:none}
+}
+/* the rail put away: its button is a check box the CSS acts on (no script needed; the script keeps the choice) */
+.rail .top{display:flex;align-items:flex-start;justify-content:space-between;gap:4px}
+#rail-hide{position:absolute;opacity:0;width:1px;height:1px;margin:0;pointer-events:none}
+.railx{flex:none;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;margin:-2px 2px 0 0;border-radius:8px;
+  color:var(--muted);border:1px solid transparent;cursor:pointer}
+.railx:hover{color:var(--ink);background:var(--card-strong);border-color:var(--edge)}
+#rail-hide:focus-visible+.railx{outline:2px solid var(--accent);outline-offset:2px}
+.railx .ic-show{display:none}
+@media (min-width:1200px){
+  :is(:root:has(#rail-hide:checked),:root[data-rail="hidden"]) .wrap.has-rail{grid-template-columns:44px minmax(0,1fr)}
+  :is(:root:has(#rail-hide:checked),:root[data-rail="hidden"]) .has-rail>.rail{padding:8px 3px;overflow:visible}
+  :is(:root:has(#rail-hide:checked),:root[data-rail="hidden"]) .rail>:not(.top),
+  :is(:root:has(#rail-hide:checked),:root[data-rail="hidden"]) .rail .lbl,
+  :is(:root:has(#rail-hide:checked),:root[data-rail="hidden"]) .railx .ic-hide{display:none}
+  :is(:root:has(#rail-hide:checked),:root[data-rail="hidden"]) .railx .ic-show{display:block}
+  :is(:root:has(#rail-hide:checked),:root[data-rail="hidden"]) .railx{margin:0 auto}
+  :is(:root:has(#rail-hide:checked),:root[data-rail="hidden"]) .nav.railed{display:flex}
+}
+/* above a table: its filter (the script's), Columns (check boxes the CSS acts on) and CSV (the script's) */
+.tools2{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin:0 0 10px}
+.tools2 .sp{flex:1}
+.tools2:not(:has(>:not([hidden]):not(.sp))){display:none}
+.cols{position:relative}
+@supports not selector(:has(a)){details.cols{display:none}}
+.cols>summary{list-style:none}.cols>summary::-webkit-details-marker{display:none}
+.cols[open]>summary{border-color:var(--accent)}
+.cols .menu{position:absolute;right:0;top:calc(100% + 6px);z-index:15;min-width:220px;max-width:min(360px,80vw);max-height:min(60vh,420px);overflow:auto;
+  background:var(--card-solid);border:1px solid var(--edge);border-radius:12px;box-shadow:var(--shadow);padding:6px}
+.cols label{display:flex;align-items:center;gap:9px;padding:5px 8px;border-radius:8px;font-size:13.5px;cursor:pointer}
+.cols label:hover{background:var(--card-strong)}
+.cols input{accent-color:var(--accent);width:15px;height:15px;margin:0;flex:none}
+.cols .call{font:inherit;font-size:12.5px;font-weight:600;color:var(--accent);background:none;border:0;border-top:1px solid var(--line);width:100%;text-align:left;padding:7px 8px 3px;margin-top:4px;cursor:pointer}
+/* tables: the columns sized by what they hold (k-num, k-nw, k-mid, k-long, k-path; k-pct a bar); the headings stay at the top */
+.filter{font:inherit;font-size:14px;color:var(--ink);background:var(--card);border:1px solid var(--edge);border-radius:9px;padding:7px 12px;width:min(340px,100%)}
+.shown{color:var(--muted);font-size:13px}
+.tw{border:1px solid var(--edge);border-radius:12px;background:var(--card)}
+.tw.scroll{overflow-x:auto;background:linear-gradient(90deg,var(--card) 30%,transparent) left/40px 100% no-repeat local,
+  linear-gradient(270deg,var(--card) 30%,transparent) right/40px 100% no-repeat local,
+  radial-gradient(farthest-side at 0 50%,rgba(0,0,0,.18),transparent) left/12px 100% no-repeat scroll,
+  radial-gradient(farthest-side at 100% 50%,rgba(0,0,0,.18),transparent) right/12px 100% no-repeat scroll,var(--card)}
+table{border-collapse:separate;border-spacing:0;width:100%;font-size:var(--fs)}
+th{position:sticky;top:var(--appbar);z-index:2;background:var(--card-strong);text-align:left;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--label);
+  border-bottom:1px solid var(--edge);padding:0;vertical-align:bottom}
+.tw.scroll th{position:static}
+th:first-child{border-top-left-radius:11px}th:last-child{border-top-right-radius:11px}
+th button{all:unset;display:flex;align-items:center;gap:6px;padding:10px var(--cx);cursor:pointer;width:100%;box-sizing:border-box;text-wrap:balance}
+th.k-num button{justify-content:flex-end}
+th.k-num,th.k-nw{white-space:nowrap}
+th .sort{opacity:.35;font-size:10px}
+th[aria-sort] .sort{opacity:1;color:var(--accent)}
+td{padding:var(--cy) var(--cx);border-top:1px solid var(--line);vertical-align:top;white-space:pre-line;line-height:1.5}
+tbody tr:first-child td{border-top:0}
+tbody tr:nth-child(even) td{background:var(--zebra)}
+tbody tr:hover td{background:var(--hover)}
+tbody tr:last-child td:first-child{border-bottom-left-radius:11px}tbody tr:last-child td:last-child{border-bottom-right-radius:11px}
+td.k-num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+td.k-nw,td.nw{white-space:nowrap}
+td.k-mid{min-width:16ch}td.k-mid .w{white-space:nowrap}
+td.k-long{min-width:28ch;text-wrap:pretty}
+td.k-path,td.lk{font-size:.92em;min-width:30ch;overflow-wrap:anywhere;color:var(--ink)}
+td.lk{color:var(--muted)}
+td .chip{white-space:normal;border-radius:9px}td.nw .chip{white-space:nowrap}
+/* a column of percentages: a bar beside each number (its row's or cell's status colour, else the teal) */
+.pct{display:inline-flex;align-items:center;gap:8px;justify-content:flex-end}
+.meter{display:block;width:clamp(36px,3.4vw,68px);height:6px;border-radius:3px;background:var(--line);overflow:hidden;flex:none}
+.meter i{display:block;height:100%;border-radius:3px;background:var(--accent)}
+.pv{display:inline-flex;align-items:center;gap:4px;font-weight:600}.pv:not([class*=" c-"]){font-weight:400}.pv .ic{width:13px;height:13px}
+.meter.m-critical i{background:var(--critical)}.meter.m-warning i{background:var(--warning)}.meter.m-ok i{background:var(--ok)}.meter.m-info i{background:var(--info)}
+tr.r-critical td{background:var(--critical-row)}tr.r-critical td:first-child{box-shadow:inset 3px 0 0 var(--critical)}
+tr.r-warning td{background:var(--warning-row)}tr.r-warning td:first-child{box-shadow:inset 3px 0 0 var(--warning)}
+tr.r-ok td:first-child{box-shadow:inset 3px 0 0 var(--ok)}
+tr.r-info td:first-child{box-shadow:inset 3px 0 0 var(--info)}
+tr.r-critical:hover td,tr.r-warning:hover td{background:var(--hover)}
+.none{color:var(--muted);padding:4px 0}
+footer{margin-top:48px;padding-top:18px;border-top:1px solid var(--edge);color:var(--muted);font-size:13px;line-height:1.7}
+/* Columns: a column whose box is not checked, not shown (a rule per place, 1 to the most columns of a table here) */
+{%- set ncol = namespace(n=0) %}
+{%- for s in r.sections | default([]) if s.columns is defined and s.columns | length > ncol.n %}{% set ncol.n = s.columns | length %}{% endfor %}
+{%- for i in range(1, ncol.n + 1) %}
+.body:has(.cols .c{{ i }}:not(:checked)) .tw :is(th,td):nth-child({{ i }}){display:none!important}
+{%- endfor %}
+/* narrower than the rail: the bar's list of sections keeps room beside the search */
+@media (max-width:1199.98px){.nav{flex:1 1 180px}.find{flex:0 1 220px;min-width:140px}
+  .seg label span,.tools .btn span{display:none}.seg label{padding:6px 8px}}
+@media (max-width:1000px){.brand{max-width:none}.brand b{display:none}}
+@media (max-width:640px){
+  :root{--appbar:0px}
+  .appbar{position:static}.appbar-in{flex-wrap:wrap;gap:8px;padding:8px 16px}.nav{order:3;flex-basis:100%;padding:0 0 4px}
+  .find{order:4;flex-basis:100%;margin-left:0}
+  .wrap{padding:4px 16px 36px}.runs{margin-left:0;width:100%}
+  .tiles{grid-template-columns:repeat(2,minmax(0,1fr))}.tile{padding:12px 12px 14px}.tile:nth-child(odd){border-left:0}
+  .tile:nth-child(n+3){border-top:1px solid var(--line)}
+  .seg label span,.tools .btn span{display:none}.seg label{padding:6px 8px}
+  .sec.band{margin-left:-8px;margin-right:-8px;padding:0 12px 12px}
+  /* a table's rows as small cards, each value under its column's name */
+  .tw,.tw.scroll{border:0;background:none;overflow:visible}
+  .tw table,.tw tbody,.tw tr,.tw td{display:block;width:100%}
+  .tw thead{display:none}
+  .tw tbody tr{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:6px 0;margin-bottom:8px}
+  .tw td,.tw td.k-nw,.tw td.nw,.tw td.k-num{white-space:normal;text-align:left;min-width:0}
+  .tw td{border:0;padding:4px 14px;display:grid;grid-template-columns:minmax(90px,34%) 1fr;gap:10px;align-items:start;background:none!important}
+  .tw td:before{content:attr(data-l);font-family:var(--sans);font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--label);padding-top:3px}
+  .tw td .chip,.tw td .pct{justify-self:start}
+  tr.r-critical td:first-child,tr.r-warning td:first-child,tr.r-ok td:first-child,tr.r-info td:first-child{box-shadow:none}
+  tr.r-critical{box-shadow:inset 4px 0 0 var(--critical)}tr.r-warning{box-shadow:inset 4px 0 0 var(--warning)}
+}
+/* motion, only to say where to look: the verdict, then the figures, rise in once */
+@keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}
+  .hero>*{animation:rise .7s var(--ease) both}.hero>:nth-child(2){animation-delay:.05s}.hero>:nth-child(3){animation-delay:.1s}.hero>:nth-child(n+4){animation-delay:.14s}
+  .tile{animation:rise .7s var(--ease) both;animation-delay:.18s}.tile:nth-child(2){animation-delay:.24s}.tile:nth-child(3){animation-delay:.3s}.tile:nth-child(n+4){animation-delay:.36s}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}html{scroll-behavior:auto}}
+@page{size:landscape;margin:12mm}
+@media print{
+  :root{--appbar:0px}
+  *{animation:none!important}
+  html,body{background:#fff!important;color:#000}.card,.todo,.tw,.sec.band{background:#fff!important;box-shadow:none!important;border-color:#bbb!important}
+  .appbar,.tools2,.copy,.tcopy{display:none!important}.rail,.ccopy{display:none!important}.wrap.has-rail{display:block}.sec{break-inside:auto}th{position:static}thead{display:table-header-group}
+  .hero{padding-top:0}.verdict{font-size:40px}
+  tr,.todo,.tile{break-inside:avoid}.tw.scroll{overflow:visible}.chip,.verdict,.todo:before,.tile:before,.meter{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
+</style>
+</head>
+<body>
+{%- set secs = r.sections | default([]) %}
+<div class="appbar"><div class="appbar-in">
+<div class="brand">
+{%- if logo_cid %}
+<img class="logo" src="cid:{{ logo_cid }}" width="{{ logo_size[0] }}" height="{{ logo_size[1] }}" alt="">
+{%- endif %}
+<b>{{ report_email_header_text | default('Site automation report') | e }}</b></div>
+{%- if secs | length > 2 %}
+<nav class="nav railed" aria-label="Sections">
+{%- for s in secs %}
+{%- set ss = s.status | default('') %}
+<a href="#s{{ loop.index }}">{% if ss in words %}<span class="dot c-{{ ss }}"></span>{% endif %}{{ s.title | e }}{% if s.rows is defined and s.rows %} <span class="n">{{ s.rows | length }}</span>{% endif %}</a>
+{%- endfor %}
+</nav>
+{%- endif %}
+<div class="find" role="search" hidden><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10.4 10.4L14 14" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg><input id="find" type="search" placeholder="Search this report" aria-label="Search this report" autocomplete="off" spellcheck="false"><span class="found" aria-live="polite"></span></div>
+<div class="tools">
+<div class="seg" id="density" role="radiogroup" aria-label="Row height">
+<input type="radio" name="site-report-density" id="density-compact" value="compact"><label for="density-compact" title="Compact rows"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3.5h12M2 6.5h12M2 9.5h12M2 12.5h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>Compact</span></label>
+<input type="radio" name="site-report-density" id="density-comfortable" value="comfortable" checked><label for="density-comfortable" title="Comfortable rows"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>Comfortable</span></label>
+</div>
+<div class="seg" id="theme" role="radiogroup" aria-label="Light or dark">
+<input type="radio" name="site-report-theme" id="theme-light" value="light"><label for="theme-light" title="Light"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3.2" fill="currentColor"/><path d="M8 1v1.8M8 13.2V15M1 8h1.8M13.2 8H15M3 3l1.3 1.3M11.7 11.7L13 13M3 13l1.3-1.3M11.7 4.3L13 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>Light</span></label>
+<input type="radio" name="site-report-theme" id="theme-auto" value="auto" checked><label for="theme-auto" title="As this device is set"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.6a6.4 6.4 0 010 12.8z" fill="currentColor"/></svg><span>Auto</span></label>
+<input type="radio" name="site-report-theme" id="theme-dark" value="dark"><label for="theme-dark" title="Dark"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.6 10.2A6 6 0 015.8 2.4a6 6 0 107.8 7.8z" fill="currentColor"/></svg><span>Dark</span></label>
+</div>
+<button class="btn" type="button" id="print" hidden><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6V1.8h8V6M4 11.5H2.4V6h11.2v5.5H12M4.2 9.2h7.6v5H4.2z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg><span>Print</span></button>
+</div>
+</div></div>
+<div class="wrap{{ ' has-rail' if secs | length > 2 else '' }}">
+{%- if secs | length > 2 %}
+<nav class="card rail" aria-label="Sections of this report">
+<div class="top"><div class="lbl">Sections</div><input type="checkbox" id="rail-hide" aria-label="Put the sections away (wider tables)"><label class="railx" for="rail-hide" title="Put the sections away - the tables get the width; again to bring them back"><svg class="ic ic-hide" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 3.5L5 8l4.5 4.5M13 3.5L8.5 8l4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><svg class="ic ic-show" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3.5L11 8l-4.5 4.5M3 3.5L7.5 8 3 12.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></label></div>
+<a class="up" href="#top"><span class="t">&uarr; Top</span></a>
+{%- for s in secs %}
+{%- set ss = s.status | default('') %}
+<a href="#s{{ loop.index }}">{% if ss in words %}<span class="dot c-{{ ss }}"></span>{% endif %}<span class="t">{{ s.title | e }}</span><span class="m"></span>{% if s.rows is defined and s.rows %}<span class="n">{{ s.rows | length }}</span>{% endif %}</a>
+{%- endfor %}
+</nav>
+{%- endif %}
+<main class="main" id="top">
+<header class="hero h-{{ st }}">
+<div class="crumb">
+{%- if job_name %}<span class="eyebrow">{{ job_name | e }}</span>{% endif %}
+{%- if job_id %}<span>AAP job {{ job_id | e }}</span>{% endif %}
+{%- if awx_user_name | default('') %}<span>run by {{ awx_user_name | e }}</span>{% endif %}</div>
+{%- if verdict %}
+<div class="verdict c-{{ st }}">{{ icon(st) }}<span>{{ words[st] }}</span></div>
+<h1>{{ r.title | e }}</h1>
+{%- else %}
+<h1 class="big">{{ r.title | e }}</h1>
+{%- endif %}
+{%- if r.subtitle | default('') %}
+<div class="sub">{{ r.subtitle | e }}</div>
+{%- endif %}
+{%- if runs or not verdict %}
+<div class="state">
+{%- if not verdict %}
+{{ chip(st, words[st]) }}
+{%- endif %}
+{%- if runs %}
+<div class="runs" role="img" aria-label="The last {{ runs | length }} runs">
+<span class="lbl">Last {{ runs | length }} run{{ 's' if runs | length != 1 else '' }}</span>
+{%- for b in runs %}
+<span class="bar c-{{ b.status if b.status in words else 'unknown' }}{{ ' now' if b.current else '' }}" style="height:{{ [b.height | default(18) | int, 4] | max }}px" data-tip="{{ b.text | default('') | e }}{{ (' (' ~ b.ago ~ ' ago)') if b.ago | default('') else '' }}" title="{{ b.text | default('') | e }}"></span>
+{%- endfor %}
+</div>
+{%- endif %}
+</div>
+{%- endif %}
+</header>
+{%- if r.summary | default([]) %}
+<div class="tiles">
+{%- for t in r.summary %}
+{%- set ts = t.status | default('') %}
+{%- set v = ('' if t.value is none else t.value) | string %}
+<div class="tile{{ ' hot-' ~ ts if ts in ['critical', 'warning'] and v not in ['0', ''] else '' }}">
+<button class="tcopy" type="button" hidden title="Copy" aria-label="Copy {{ t.label | e }}" data-copy="{{ t.label | e }}: {{ v | e }}{{ (' (' ~ t.note ~ ')') | e if t.note | default('') else '' }}">{{ copyicons() }}</button>
+<div class="k">{% if ts in words %}<span class="c-{{ ts }}">{{ icon(ts) }}</span>{% endif %}{{ t.label | e }}</div>
+<div class="v{{ ' long' if v | length > 9 else '' }}{{ (' c-' ~ ts) if ts in ['critical', 'warning'] and v not in ['0', ''] else '' }}">{{ v | e }}</div>
+{%- if t.note | default('') %}
+<div class="n">{{ t.note | e }}</div>
+{%- endif %}
+</div>
+{%- endfor %}
+</div>
+{%- endif %}
+{%- for s in secs %}
+{%- set ss = s.status | default('') %}
+{%- set si = loop.index %}
+<details class="sec{{ ' band' if s.cards | default([]) and s.columns is not defined else '' }}" id="s{{ si }}" open>
+<summary><h2>{{ s.title | e }}{% if s.rows is defined %}<span class="count">{{ s.rows | length }}</span>{% endif %}</h2>
+{%- if ss in words %}{{ chip(ss, chipword[ss]) }}{% endif %}
+<button class="copy scopy" type="button" hidden title="Copy this section" aria-label="Copy {{ s.title | e }}">{{ copyicons() }}<span class="t">Copy</span></button>
+<svg class="caret" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
+<div class="body">
+{%- if s.passed | default([]) %}
+{%- if s.passed_checks | default([]) %}
+<div class="passed-checks">Every check passed: {% for c in s.passed_checks %}{{ chip('ok', c) }} {% endfor %}</div>
+{%- endif %}
+<ul class="passed">
+{%- for h in s.passed %}
+<li><span class="c-ok">{{ icon('ok') }}</span><span class="mono">{{ h | e }}</span></li>
+{%- endfor %}
+</ul>
+{%- elif s.text | default('') %}
+<p>{{ s.text | e }}</p>
+{%- endif %}
+{%- if s.cards | default([]) %}
+<div class="cards">
+{%- for c in s.cards %}
+{%- set cst = c.status if c.status in words else 'info' %}
+<article class="todo c-{{ cst }}">
+<div class="row1"><span class="num" aria-hidden="true"></span>{{ chip(cst, c.chip | default(chipword[cst], true)) }}{% if c.meta | default('') %}<span class="meta">{{ c.meta | e }}</span>{% endif %}</div>
+<h3>{{ c.title | default('') | e }}</h3>
+{%- if c.subject | default('') %}
+<div class="subj mono">{{ c.subject | e }}</div>
+{%- endif %}
+{%- if c.next | default('') %}
+<div class="next"><b>Next &rarr;</b> {{ c.next | e }}</div>
+{%- endif %}
+{%- if c.code | default('') %}
+<div class="code"><pre>{{ c.code | e }}</pre><button class="copy" type="button" hidden>Copy</button></div>
+{%- endif %}
+</article>
+{%- endfor %}
+</div>
+{%- endif %}
+{%- if s.columns is defined %}
+{%- if s.rows | default([]) %}
+{#- each column's kind, from what it holds (its first 300 rows): pct - every value a percentage up to 100 (drawn as a
+    bar); num - every value a number; path - mostly paths, addresses or one long token; nw - nothing longer than 24
+    characters (ids, dates, hosts, words); long - prose over 70; mid - the rest -#}
+{%- set kinds = [] %}
+{%- for c in s.columns %}
+{%- set j = loop.index0 %}
+{%- set ns = namespace(n=0, mx=0, num=0, path=0, pct=0) %}
+{%- for row in s.rows[:300] %}
+{%- set v = row[j] if row | length > j else none %}
+{%- set t = ('' if v is none else v) | string | trim %}
+{%- if t %}
+{%- set ns.n = ns.n + 1 %}
+{%- if t | length > ns.mx %}{% set ns.mx = t | length %}{% endif %}
+{%- if t.replace(',', '').replace('%', '').strip().lstrip('-').replace('.', '', 1).isdigit() %}{% set ns.num = ns.num + 1 %}{% endif %}
+{%- if t.endswith('%') and t[:-1].strip().replace('.', '', 1).isdigit() and t[:-1].strip() | float <= 100 %}{% set ns.pct = ns.pct + 1 %}{% endif %}
+{%- if t.startswith('/') or t[1:3] == ':\\' or t.startswith('\\\\') or t.startswith('http') or (' ' not in t and t | length > 30) %}{% set ns.path = ns.path + 1 %}{% endif %}
+{%- endif %}
+{%- endfor %}
+{%- set _ = kinds.append('pct' if ns.n and ns.pct == ns.n else ('num' if ns.n and ns.num == ns.n else ('path' if ns.n and ns.path * 2 >= ns.n else ('nw' if ns.mx <= 24 else ('long' if ns.mx > 70 else 'mid'))))) %}
+{%- endfor %}
+<div class="tools2">
+{%- if s.rows | length > 8 %}
+<input class="filter" type="search" hidden placeholder="Filter these {{ s.rows | length }} rows" aria-label="Filter the rows of {{ s.title | e }}"><span class="shown"></span>
+{%- endif %}
+<span class="sp"></span>
+{%- if s.columns | length > 1 %}
+<details class="cols"><summary class="btn" title="Show or hide columns"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8" y="2.5" width="12.4" height="11" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6 2.8v10.4M10 2.8v10.4" stroke="currentColor" stroke-width="1.4"/></svg><span>Columns</span></summary>
+<div class="menu" role="group" aria-label="The columns of {{ s.title | e }}">
+{%- for c in s.columns %}
+<label><input type="checkbox" class="c{{ loop.index }}" checked>{{ c | e }}</label>
+{%- endfor %}
+<button class="call" type="button" hidden>Show all</button></div></details>
+{%- endif %}
+<button class="btn csv" type="button" hidden title="Download the rows shown as a CSV file (opens in Excel)"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v8M4.8 7l3.2 3.2L11.2 7M2.5 12.2v1.3h11v-1.3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>CSV</span></button>
+</div>
+<div class="tw"><table>
+<thead><tr>
+{%- for c in s.columns %}
+<th class="k-{{ 'num' if kinds[loop.index0] == 'pct' else kinds[loop.index0] }}" scope="col"><button type="button">{{ c | e }}<span class="sort" aria-hidden="true">&#8597;</span></button></th>
+{%- endfor %}
+</tr></thead>
+<tbody>
+{%- for row in s.rows %}
+{%- set rs = (s.row_status[loop.index0] if s.row_status is defined and s.row_status | length > loop.index0 else '') | default('', true) %}
+{%- set cs = (s.cell_status[loop.index0] if s.cell_status is defined and s.cell_status | length > loop.index0 else []) | default([], true) %}
+<tr{% if rs in words %} class="r-{{ rs }}"{% endif %}>
+{%- for cell in row %}
+{%- set text = ('' if cell is none else cell) | string %}
+{%- set lbl = s.columns[loop.index0] | default('') | string %}
+{%- set kd = kinds[loop.index0] | default('mid') %}
+{%- set cst = (cs[loop.index0] if cs | length > loop.index0 else '') | default('', true) %}
+{%- if kd == 'pct' and text | trim %}
+{#- a percentage: its bar, in its cell's status colour (with the status's icon - never colour alone), else the teal #}
+{%- set mst = cst if cst in words else '' %}
+<td class="k-num k-pct" data-l="{{ lbl | e }}" data-v="{{ text | trim | e }}"><span class="pct"><span class="meter{{ ' m-' ~ mst if mst else '' }}"><i style="width:{{ [[text | trim | replace('%', '') | float, 0] | max, 100] | min }}%"></i></span><span class="pv{{ ' c-' ~ mst if mst else '' }}">{% if mst %}{{ icon(mst) }}{% endif %}{{ text | trim | e }}</span></span></td>
+{%- else %}
+{%- set cst = cst if cst in words else cellword.get(text | trim | lower, '') %}
+{#- a Status or Severity column of a row with its status: that status's chip (upper case - FAIL - as Fail; a STIG CAT I stays) #}
+{%- set cst = cst or (rs if rs in words and lbl | lower in ['status', 'severity', 'result'] and text | trim else '') %}
+{%- if cst %}
+<td data-l="{{ lbl | e }}" data-v="{{ text | e }}"{% if text | length <= 32 %} class="nw"{% else %} class="k-mid"{% endif %}>{{ chip(cst, text | capitalize if text.isupper() and not text.startswith('CAT ') else text) }}</td>
+{%- elif lbl | lower in ['look further', 'command', 'hint', 'next step'] %}
+<td class="lk" data-l="{{ lbl | e }}" data-v="{{ text | e }}">{% if text | trim %}<span class="cv"><span class="cmd">{{ breakable(text) }}</span><button class="ccopy" type="button" hidden title="Copy" aria-label="Copy the command">{{ copyicons() }}</button></span>{% endif %}</td>
+{%- elif kd == 'path' %}
+<td class="k-path" data-l="{{ lbl | e }}" data-v="{{ text | e }}">{{ breakable(text) }}</td>
+{%- elif kd == 'mid' %}
+{#- each word kept whole: a line breaks at a space, never at a hyphen inside an id (RHEL-09-412035) #}
+<td class="k-mid" data-l="{{ lbl | e }}"><span class="cv">{% for w in text.split(' ') %}{{ ' ' if not loop.first else '' }}{% if w | length <= 24 %}<span class="w">{{ w | e }}</span>{% else %}{{ w | e }}{% endif %}{% endfor %}</span></td>
+{%- else %}
+<td class="k-{{ 'num' if kd == 'pct' else kd }}" data-l="{{ lbl | e }}">{{ text | e }}</td>
+{%- endif %}
+{%- endif %}
+{%- endfor %}
+</tr>
+{%- endfor %}
+</tbody>
+</table></div>
+{%- else %}
+<div class="none">None.</div>
+{%- endif %}
+{%- endif %}
+{%- if s.lines | default([]) %}
+<ul class="lines">
+{%- for l in s.lines if l | trim %}
+<li>{{ l | e }}</li>
+{%- endfor %}
+</ul>
+{%- endif %}
+</div>
+</details>
+{%- endfor %}
+<footer>
+{%- if r.footer | default('') %}{{ r.footer | e }}<br>{% endif %}
+{{ _email_footer | default('') | e }}
+</footer>
+</main>
+</div>
+<script id="site-report-js">
+{% include 'site_report.js' %}
+</script>
+</body>
+</html>

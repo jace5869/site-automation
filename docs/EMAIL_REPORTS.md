@@ -207,13 +207,15 @@ the hosts that did not report. The ServiceNow weekly activity report has none: i
   the cards, line icons, and a plain print.
 
 The report website has a look of its own, **atlas** - its default since 0.43.0: light and dark with a switch,
-status chips with check marks, tables that sort and filter ([WEB_REPORTS.md](WEB_REPORTS.md), "The look"). It is
-never an email's: `report_email_theme: atlas` stops the job and says so.
+status chips with check marks, tables that sort and filter ([WEB_REPORTS.md](WEB_REPORTS.md), "The look") - or,
+since 0.92.0, **brief** (the same page read like a morning brief: "The brief look" there). Neither is ever an email's:
+`report_email_theme: atlas` (or `brief`) stops the job and says so. The emails keep their own look whichever the
+website has.
 
 ```yaml
 # playbooks/group_vars/all.yml
 report_email_theme: command                  # or portal, or glass
-report_web_theme: atlas                      # the report website's look (the default; docs/WEB_REPORTS.md)
+report_web_theme: atlas                      # the report website's look (the default, or brief; docs/WEB_REPORTS.md)
 report_logo_file: files/report_logo.png      # = playbooks/files/report_logo.png
 ```
 

@@ -25,9 +25,9 @@ ok: [localhost] => {
 
 ## The look
 
-The website has its own look, **atlas** (`report_web_theme: atlas`, the default); the emails keep theirs
-(`report_email_theme`: standard, command, portal or glass - [EMAIL_REPORTS.md](EMAIL_REPORTS.md), "The look"). Atlas
-uses what a browser draws and a mail program does not, so it is never an email's look:
+The website has its own look, **atlas** (`report_web_theme: atlas`, the default) - or **brief** (0.92.0, below); the
+emails keep theirs (`report_email_theme`: standard, command, portal or glass - [EMAIL_REPORTS.md](EMAIL_REPORTS.md),
+"The look"). Atlas and brief use what a browser draws and a mail program does not, so neither is ever an email's look:
 
 Since 0.53.0:
 
@@ -135,13 +135,45 @@ On Windows: F12 > Network > the page > Response Headers > `Content-Security-Poli
 Everything it uses works in Microsoft Edge and Chrome 2024 or later. An older Edge draws the page the same, without
 the balanced headings.
 
+### The brief look (0.92.0)
+
+`report_web_theme: brief` draws the same pages read like a morning brief. Everything above stays - the bar, the rail,
+search, Columns, CSV, Copy, the switches, Print, the cards on a phone, `site-report.js` (both looks share it) - and
+the page is laid out to answer *what is wrong and what do I run* first:
+
+- **The verdict in one large word** at the top, with its icon: *All good*, *Needs attention* or *Action required*,
+  then the report's title. A report that only informs (an inventory, status *For information*) leads with its title
+  instead - a large *For information* would say nothing.
+- **The key figures as one ruled strip** of numbers, not a row of boxes; a figure that needs a look has its colour,
+  its icon and a coloured rule above it.
+- **Start here as numbered steps** (01, 02, ...) on a tinted band, each with its command and Copy.
+- **The sections under a rule** rather than in a box, so the tables get the width.
+- **Percentages as bars.** A column whose every value is a percentage (`87%`) gets a small bar beside each number;
+  where the report marks that cell (the disk report's *Used* past 85 or 90%, say) the bar and the number take its
+  colour and icon, never colour alone. Sorting, CSV and Copy use the number.
+- **The index leads with how many reports need action** - *3 reports need action*, in one large line - then the
+  counts, then a card for each report that needs action, worst first: its area, its title, **the first step its
+  report gives** (its first Start here card, with the command and Copy) and its last five runs as small squares.
+  Then every report, grouped by area (the tabs as before), each line with its last runs as squares.
+- **The ticket insights pages** (they draw their own page) take the brief colours and type, their figures as one
+  ruled strip, and *Keeping up* or *Falling behind* in one large line at the top with the period's numbers.
+- **Colour and type.** One palette for light and dark, designed in oklch and written as hex so every browser draws
+  it; never pure black or white; every text colour 5.4:1 or better on every surface. The system's own fonts: Segoe UI
+  Variable (Display for the large words, Text for the rest) and Cascadia Mono on Windows - nothing loaded from
+  elsewhere.
+- **Motion only to say where to look:** the verdict and the figures rise in once when the page opens. Never with the
+  reader's *reduce motion* setting, never in print.
+
+A page drawn before 0.92.0 keeps its look; the next run of each report draws its page in the new one (the index on the
+next run of any report, the cards' first step as each report runs again). `report_web_theme: atlas` goes back.
+
 `report_web_theme: portal` (or standard, command, glass) gives the website an email's look again, as before 0.43.0;
 the index page is then in the portal look.
 
 ```yaml
 # playbooks/group_vars/all.yml
 report_email_theme: command                  # the emails: standard, command, portal or glass
-report_web_theme: atlas                      # the website (the default; or an email look)
+report_web_theme: atlas                      # the website (the default; brief, or an email look)
 report_logo_file: files/report_logo.png      # both
 ```
 
@@ -433,7 +465,7 @@ the page is written by the AAP side of the job, which never gets a group's varia
 | `report_web_dest` | `""` (off) | the folder on `report_web_host` (`D:\reports`), the upload address (`https://...`) or the folder (`/mnt/...`) |
 | `report_web_host` | `""` | a Windows server to write the pages on, over WinRM; `report_web_host_*` for the connection ("A Windows server") |
 | `report_web_url` | `""` | the address people open; `""` = `report_web_dest` when it is `https://` (else the job prints where the page is: `web01:D:\reports\...`) |
-| `report_web_theme` | `atlas` | the website's look ("The look"): `atlas`, or an email look - `standard`, `command`, `portal` or `glass` (`glass` with the blur behind the cards, icons and a plain print) |
+| `report_web_theme` | `atlas` | the website's look ("The look"): `atlas`, `brief` (0.92.0, "The brief look"), or an email look - `standard`, `command`, `portal` or `glass` (`glass` with the blur behind the cards, icons and a plain print) |
 | `report_web_json` | `true` | the JSON beside each page |
 | `report_web_history` | `5` | the runs each report keeps: listed under its line of the index, older runs' pages deleted |
 | `report_web_delete_old` | `true` | `false` = older runs' pages stay in the folder (the index lists only the last `report_web_history`) |

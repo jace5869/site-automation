@@ -93,15 +93,15 @@
     that: _email_theme in ['standard', 'command', 'portal', 'glass']
     fail_msg: >-
       report_email_theme must be standard, command, portal or glass, not '{{ report_email_theme }}'
-      {{- ' - atlas is the look of the report website only (report_web_theme): mail programs do not draw it' if _email_theme == 'atlas' else '' }}
+      {{- ' - ' ~ _email_theme ~ ' is a look of the report website only (report_web_theme): mail programs do not draw it' if _email_theme in ['atlas', 'brief'] else '' }}
       (docs/EMAIL_REPORTS.md, "The look").
     quiet: true
   when: _email_to | length > 0 and _email_html | bool
 
-- name: Email | report_web_theme is atlas, standard, command, portal or glass
+- name: Email | report_web_theme is atlas, brief, standard, command, portal or glass
   ansible.builtin.assert:
-    that: _web_theme in ['atlas', 'standard', 'command', 'portal', 'glass']
-    fail_msg: "report_web_theme must be atlas, standard, command, portal or glass, not '{{ report_web_theme }}' (docs/WEB_REPORTS.md)."
+    that: _web_theme in ['atlas', 'brief', 'standard', 'command', 'portal', 'glass']
+    fail_msg: "report_web_theme must be atlas, brief, standard, command, portal or glass, not '{{ report_web_theme }}' (docs/WEB_REPORTS.md)."
     quiet: true
   when: _web_on | bool
 
