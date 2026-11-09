@@ -1,0 +1,19 @@
+---
+# STIG MANAGER - AVAILABILITY, every 5 to 15 minutes. Read-only, no login: /op/state of the address people use
+# (stigman_health_api) and of each node (stigman_health_nodes, or the hosts of the group stigman) - the API, its
+# database and Keycloak all up ("available") - and Keycloak's realm; each asked a few times and timed
+# (roles/api_availability). Quiet when up: one line, no email. Fails when STIG Manager is down (availability_fail_on),
+# for a workflow's notification or ticket step; with the "Red Hat Ansible Automation Platform" credential its own past
+# runs give the availability over a day, a week and a month. docs/STIGMAN_HEALTH.md
+#   ansible-playbook playbooks/stigman_availability.yml -e stigman_health_api=https://stigman.example.mil/api
+- name: STIG Manager availability
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Ask STIG Manager
+      ansible.builtin.include_role:
+        name: stigman_health
+        tasks_from: availability.yml
+      vars:
+        site_report_title: STIG Manager availability

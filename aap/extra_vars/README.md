@@ -74,6 +74,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | Report website - copy | `playbooks/report_web_copy.yml` | [report_web_copy.yml](report_web_copy.yml) |
 | Service watch - apply approved fix | `playbooks/service_fix_approved.yml` | [service_fix_approved.yml](service_fix_approved.yml) |
 | Service watch - check | `playbooks/service_watch.yml` | [service_watch.yml](service_watch.yml) |
+| ServiceNow - availability | `playbooks/servicenow_availability.yml` | [servicenow_availability.yml](servicenow_availability.yml) |
 | ServiceNow - catalog test | `playbooks/servicenow_catalog_test.yml` | [servicenow_catalog_test.yml](servicenow_catalog_test.yml) |
 | ServiceNow - test ticket | `playbooks/servicenow_test_ticket.yml` | [servicenow_test_ticket.yml](servicenow_test_ticket.yml) |
 | ServiceNow - ticket insights | `playbooks/servicenow_insights.yml` | [servicenow_insights.yml](servicenow_insights.yml) |
@@ -82,7 +83,9 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | ServiceNow tickets | `playbooks/servicenow_tickets.yml` | [servicenow_tickets.yml](servicenow_tickets.yml) |
 | SOP - Word document | `playbooks/incident_sop.yml` | [incident_sop.yml](incident_sop.yml) |
 | STIG drift report | `playbooks/stig_drift_report.yml` | [stig_drift_report.yml](stig_drift_report.yml) |
+| STIG Manager - availability | `playbooks/stigman_availability.yml` | [stigman_availability.yml](stigman_availability.yml) |
 | STIG Manager - deploy | `playbooks/stigman_deploy.yml` | [stigman_deploy.yml](stigman_deploy.yml) |
+| STIG Manager - health | `playbooks/stigman_health.yml` | [stigman_health.yml](stigman_health.yml) |
 | STIG Manager - import checklists | `playbooks/stigman_ckl_import.yml` | [stigman_ckl_import.yml](stigman_ckl_import.yml) |
 | STIG Manager - update | `playbooks/stigman_update.yml` | [stigman_update.yml](stigman_update.yml) |
 | STIG recheck | `playbooks/stig_recheck.yml` | [stig_recheck.yml](stig_recheck.yml) |

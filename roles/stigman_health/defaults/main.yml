@@ -1,0 +1,38 @@
+---
+# STIG MANAGER - HEALTH and AVAILABILITY (playbooks/stigman_health.yml, playbooks/stigman_availability.yml), read-only,
+# through STIG Manager's API from the AAP side. docs/STIGMAN_HEALTH.md
+
+# The address people use, e.g. https://stigman.example.mil/api (the load balancer's, or the one name the nodes share);
+# empty = the nodes only.
+stigman_health_api: ""
+# Each node (an API server of STIG Manager) on its own: [{name: stig01, url: "https://stig01.example.mil/api"}].
+# [] = each host of the inventory group stigman_health_nodes_group, at stigman_health_node_url ({host} = its inventory
+# name; a host's own stigman_health_node_url in host_vars wins).
+stigman_health_nodes: []
+stigman_health_nodes_group: stigman         # the inventory group of the nodes
+stigman_health_node_url: "https://{host}/api"   # each node's API ({host} = its inventory name)
+# The database host(s): the inventory group whose hosts the health check also reads over SSH (the MariaDB container,
+# its disk) - with the nodes' hosts (their containers, their disk). stigman_health_hosts: false = the API only.
+stigman_health_db_group: stigman_db         # the inventory group of the database host(s)
+stigman_health_hosts: true               # false = the API only, no SSH to the hosts
+# The health check logs in as a Keycloak client (client credentials) - from the "STIG Manager API" credential
+# (STIGMAN_TOKEN_URL, STIGMAN_CLIENT_ID, STIGMAN_CLIENT_SECRET), or these; no client = the checks without a login only.
+stigman_health_token_url: ""            # Keycloak's token endpoint; empty = the credential's
+stigman_health_client_id: ""            # the client; empty = the credential's
+stigman_health_client_secret: ""         # vault it
+stigman_health_scope: ""                 # e.g. "stig-manager:user:read stig-manager:collection:read stig-manager:op:read"; empty = the client's default scopes
+# The deployment's own numbers (/op/appinfo?elevate=true: the database's connections and uptime, each node's memory and
+# uptime): the client needs the scope stig-manager:op:read and admin in STIG Manager. false = not asked.
+stigman_health_appinfo: true
+stigman_health_validate_certs: true      # check the HTTPS certificates of STIG Manager and Keycloak
+stigman_health_ca_path: ""               # a CA bundle on the AAP side to check them with (the DoD roots); empty = the execution environment's
+stigman_health_timeout: 20               # seconds per request
+stigman_health_slow_ms: 2000             # an answer slower than this, in milliseconds -> warning
+stigman_health_node_down: critical       # a node that does not answer, or is not "available" (warning = only the address counts)
+stigman_health_conn_warn_pct: 80         # the database's connections in use, % of max_connections -> warning
+stigman_health_conn_crit_pct: 95         # -> critical
+stigman_health_restart_minutes: 60       # a node or the database restarted less than this ago -> warning
+stigman_health_version: ""               # the STIG Manager version every node must run, e.g. 1.6.18; empty = only that they are alike
+# The availability check (every 5 to 15 minutes) asks /op/state of the address and of each node: the API, its database
+# and Keycloak all up. false = the address only (the nodes are then not asked).
+stigman_availability_nodes: true

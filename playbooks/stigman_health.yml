@@ -1,0 +1,66 @@
+---
+# STIG MANAGER - HEALTH. Read-only. One report, named stigman:
+#   - through the API, from the AAP side (roles/stigman_health, site_stigman_health): the address people use
+#     (stigman_health_api) and each node on its own (stigman_health_nodes, or the hosts of the group stigman) - the
+#     API's state and its database and Keycloak connections (/op/state), the version and database schema alike on
+#     every node, a login with the "STIG Manager API" credential's client and a call that reads the database (/user),
+#     the deployment's own numbers with an admin client (/op/appinfo: the database's connections and uptime, each
+#     node's memory and uptime - one database for all nodes); Keycloak's realm and its token
+#   - over SSH, the hosts: each node's and the database host's (group stigman_db) containers and disk, and the
+#     database itself on its host (roles/check_mariadb - the "MariaDB monitor" credential for a container's database)
+# Fails when it finds something (site_fail_on), for a workflow's ticket step. docs/STIGMAN_HEALTH.md
+#   ansible-playbook -i inventories/site playbooks/stigman_health.yml
+#   ansible-playbook playbooks/stigman_health.yml -e stigman_health_hosts=false   # the API only
+- name: STIG Manager health - the nodes' and the database's hosts
+  hosts: "{{ stigman_health_nodes_group | default('stigman') }}:{{ stigman_health_db_group | default('stigman_db') }}"
+  become: true
+  gather_facts: false
+  vars:
+    # the database check runs on the database host(s) only
+    check_mariadb_enabled: "{{ inventory_hostname in groups[stigman_health_db_group | default('stigman_db')] | default([]) }}"
+  pre_tasks:
+    - name: The job's Limit includes localhost (the API part runs there)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: limit_check.yml
+
+    - name: A host that cannot be reached is listed in the report and left out here (site_unreachable_fails)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: reach.yml
+      when: stigman_health_hosts | default(true) | bool
+  tasks:
+    - name: Start
+      ansible.builtin.set_fact:
+        site_findings: []
+        site_checks_run: []
+        site_checks_failed: []
+      when: stigman_health_hosts | default(true) | bool
+
+    - name: Containers, disk, and the database on its host
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: run_check.yml
+      vars:
+        _site_check: "{{ item }}"
+      loop: "{{ ['containers', 'disk'] + (['mariadb'] if check_mariadb_enabled | bool else []) }}"
+      when: stigman_health_hosts | default(true) | bool
+
+- name: STIG Manager health
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: The API, each node and Keycloak; the hosts' findings added
+      ansible.builtin.include_role:
+        name: stigman_health
+        tasks_from: api.yml
+
+    - name: Report (fails when something is wrong)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: report.yml
+      vars:
+        site_syslog: false
+        site_report_name: stigman            # the name its findings (and tickets) carry
+        site_report_title: STIG Manager health

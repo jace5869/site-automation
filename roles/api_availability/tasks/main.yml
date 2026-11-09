@@ -1,0 +1,78 @@
+---
+# One availability run on the AAP side (localhost), read-only. Input: _avail_service (its name in the summaries),
+# _avail_check (the findings' check, e.g. stigman-availability), _avail_probes (site_http_probe's probes), _avail_hints
+# ({probe name: a command to look with}); validate_certs and ca_path: _avail_validate_certs, _avail_ca_path.
+- name: Availability | ask each address of {{ _avail_service }}
+  site_http_probe:
+    probes: "{{ _avail_probes }}"
+    attempts: "{{ availability_attempts | int }}"
+    pause: "{{ availability_pause_seconds | float }}"
+    timeout: "{{ availability_timeout | int }}"
+    validate_certs: "{{ _avail_validate_certs | default(true) | bool }}"
+    ca_path: "{{ _avail_ca_path | default('', true) }}"
+  register: _avail_probe
+  check_mode: false                      # only reads
+
+- name: Availability | this template's earlier runs in AAP (the availability over a day, a week, a month)
+  site_availability_history:
+    job_id: "{{ awx_job_id | default(tower_job_id) | int }}"
+    template_id: "{{ awx_job_template_id | default(tower_job_template_id) | int }}"
+    hours: "{{ availability_history_hours | map('int') | list }}"
+    ca_path: "{{ report_history_aap_ca_path | default('') }}"
+  register: _avail_hist
+  check_mode: false                      # only reads
+  when: availability_history | bool and (awx_job_id | default(tower_job_id | default(''))) | string | length > 0
+
+- name: Availability | judged
+  ansible.builtin.set_fact:
+    _avail: "{{ _avail_probe.probes | availability_judge(_avail_opts) }}"
+    _avail_h: "{{ _avail_hist if _avail_hist.ok is defined else {} }}"
+  vars:
+    _avail_opts: >-
+      {{ {'service': _avail_service, 'check': _avail_check, 'slow_ms': availability_slow_ms | int,
+          'node_down': availability_node_down, 'hint': _avail_hints | default({})} }}
+
+- name: Availability | {{ _avail_probe.probes | availability_line(_avail, _avail_h, _avail_service) }}
+  ansible.builtin.set_fact:
+    site_findings: "{{ _avail.findings }}"
+    site_checks_run: ["{{ _avail_check }}"]
+    site_checks_failed: []
+    availability_status: "{{ _avail.status }}"
+    site_report_sections: >-
+      {{ _avail_probe.probes | availability_sections(_avail_h, {'slow_ms': availability_slow_ms | int,
+                                                                 'node_down': availability_node_down}) }}
+    _avail_recovered: >-
+      {{ availability_report_recovery | bool and _avail.status != 'down'
+         and (_avail_h.previous | default({}, true)).status | default('') == 'failed' }}
+
+# every run, clean or not: a workflow's ServiceNow tickets step after it opens, updates and resolves (Run always)
+- name: Availability | publish the result for later workflow steps (set_stats)
+  ansible.builtin.set_stats:
+    data:
+      availability: "{{ {_avail_check: {'status': _avail.status, 'findings': _avail.findings | length}} }}"
+      site_health: >-
+        {{ {_avail_check: {'status': 'healthy' if _avail.findings | length == 0 else 'findings', 'checks': [_avail_check],
+                           'checks_failed': [], 'findings': _avail.findings, 'act': {},
+                           'time': now(utc=true).strftime('%Y-%m-%dT%H:%M:%SZ'), 'job': awx_job_id | default('') | string}} }}
+      site_health_targets: []
+    per_host: false
+
+- name: Availability | report (an email and the web page) - only for {{ availability_report_on | join(', ') or 'nothing' }}, or when it is back
+  ansible.builtin.include_role:
+    name: site_findings
+    tasks_from: report.yml
+  vars:
+    site_syslog: false
+    site_report_name: "{{ _avail_check }}"
+    site_fail_on: "{{ availability_fail_on }}"
+    site_report_no_findings: "{{ 'UP AGAIN' if _avail_recovered | bool else 'UP' }}"
+  when: >-
+    _avail.findings | selectattr('severity', 'in', availability_report_on) | list | length > 0
+    or _avail_recovered | bool
+
+- name: Availability | FAIL - {{ _avail_service }} is {{ _avail.status }} (availability_fail_on; not reported, availability_report_on)
+  ansible.builtin.fail:
+    msg: "{{ _avail.findings | selectattr('severity', 'in', availability_fail_on) | map(attribute='summary') | join('; ') }}"
+  when:
+    - _avail.findings | selectattr('severity', 'in', availability_report_on) | list | length == 0
+    - _avail.findings | selectattr('severity', 'in', availability_fail_on) | list | length > 0

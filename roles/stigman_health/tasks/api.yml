@@ -1,0 +1,62 @@
+---
+# STIG Manager's health through its API (localhost), then the findings of the nodes' and the database's hosts (read
+# by the play before, hostvars) added - one report, named stigman.
+- name: STIG Manager | the nodes
+  ansible.builtin.include_tasks: nodes.yml
+
+- name: STIG Manager | the API, each node and Keycloak (read-only)
+  site_stigman_health:
+    api: "{{ stigman_health_api }}"
+    nodes: "{{ _smh_nodes }}"
+    token_url: "{{ stigman_health_token_url or lookup('ansible.builtin.env', 'STIGMAN_TOKEN_URL') }}"
+    client_id: "{{ stigman_health_client_id or lookup('ansible.builtin.env', 'STIGMAN_CLIENT_ID') }}"
+    client_secret: "{{ stigman_health_client_secret or lookup('ansible.builtin.env', 'STIGMAN_CLIENT_SECRET') }}"
+    scope: "{{ stigman_health_scope }}"
+    appinfo: "{{ stigman_health_appinfo | bool }}"
+    validate_certs: "{{ stigman_health_validate_certs | bool }}"
+    ca_path: "{{ stigman_health_ca_path }}"
+    timeout: "{{ stigman_health_timeout | int }}"
+  register: _smh
+  check_mode: false                      # only reads
+
+- name: STIG Manager | {{ _smh.keycloak | stigman_health_line(_smh.targets) }}
+  ansible.builtin.set_fact:
+    _smh_hosts: >-
+      {{ (groups[stigman_health_nodes_group] | default([]) + groups[stigman_health_db_group] | default([])) | unique
+         if stigman_health_hosts | bool else [] }}
+    _smh_opts: >-
+      {{ {'slow_ms': stigman_health_slow_ms | int, 'node_down': stigman_health_node_down,
+          'conn_warn_pct': stigman_health_conn_warn_pct | float, 'conn_crit_pct': stigman_health_conn_crit_pct | float,
+          'restart_minutes': stigman_health_restart_minutes | int, 'version': stigman_health_version | string} }}
+
+# a host's own findings carry its name; a host that did not report (unreachable, sudo) is a finding too
+- name: STIG Manager | findings (the API's, and the hosts')
+  ansible.builtin.set_fact:
+    site_findings: >-
+      {%- set f = _smh.keycloak | stigman_health_findings(_smh.targets, _smh_opts) -%}
+      {%- for h in _smh_hosts -%}
+      {%-   if hostvars[h].site_checks_run is defined -%}
+      {%-     for x in hostvars[h].site_findings | default([]) -%}
+      {%-       set _ = f.append(x | combine({'id': h ~ ':' ~ x.id, 'summary': h ~ ': ' ~ x.summary})) -%}
+      {%-     endfor -%}
+      {%-   else -%}
+      {%-     set _ = f.append({'check': 'stigman', 'id': 'stigman:host:' ~ h, 'severity': 'warning',
+                                'summary': h ~ ': its host was not read (not reached, sudo refused, or not in this run\'s Limit) - its containers, disk and database are not checked',
+                                'hint': 'ansible ' ~ h ~ ' -m ping'}) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ f }}
+    site_checks_run: >-
+      {{ (['stigman'] + (_smh_hosts | map('extract', hostvars) | map(attribute='site_checks_run', default=[]) | flatten)) | unique | list }}
+    site_checks_failed: >-
+      {{ _smh_hosts | map('extract', hostvars) | map(attribute='site_checks_failed', default=[]) | flatten | unique | list }}
+    site_report_sections: "{{ _smh.keycloak | stigman_health_sections(_smh.targets, _smh_opts) }}"
+
+- name: STIG Manager | what could not be read
+  ansible.builtin.debug:
+    msg: >-
+      {{ _smh.targets | selectattr('appinfo.status', 'defined') | rejectattr('appinfo.status', 'in', [0, 200])
+         | map(attribute='name') | map('regex_replace', '$', ': /op/appinfo') | zip(_smh.targets
+         | selectattr('appinfo.status', 'defined') | rejectattr('appinfo.status', 'in', [0, 200])
+         | map(attribute='appinfo.why')) | map('join', ' - Not read: ') | list }}
+  when: _smh.targets | selectattr('appinfo.status', 'defined') | rejectattr('appinfo.status', 'in', [0, 200]) | list | length > 0

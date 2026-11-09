@@ -707,6 +707,22 @@ email's last table is what the cleanup deletes after the approval - the old file
 every day 06:30, the workflow (or only the report, without the cleanup). Click by click:
 [DISK_SPACE.md](DISK_SPACE.md#set-it-up).
 
+### 43. STIG Manager availability, with tickets
+
+```workflow
+[STIG Manager - availability]
+   |  Run always
+   v
+[ServiceNow tickets]
+```
+
+Every 5 to 15 minutes (**Concurrent jobs** off). The availability check is quiet while STIG Manager answers and fails
+when it does not; *Run always*, so a run that finds it back reaches the tickets job too and the incident is resolved.
+Add *STIG Manager - health* as a daily template of its own (or the same workflow's first node, every morning). For
+ServiceNow's own availability no ticket (it is ServiceNow that is down): give *ServiceNow - availability* an email
+**notification on failure** instead. Click by click: [STIGMAN_HEALTH.md](STIGMAN_HEALTH.md#set-it-up),
+[AVAILABILITY.md](AVAILABILITY.md#set-it-up).
+
 ## Windows workflows
 
 Build them the same way, with the Windows templates ([WINDOWS.md](WINDOWS.md)). The ServiceNow
@@ -1071,6 +1087,9 @@ night 02:00, after a first run as Check).
 | Certificate watch | every day 06:30 | workflow 7 |
 | Database watch | hourly | workflow 8 |
 | ServiceNow health | hourly | template *ServiceNow health*, with an email **notification on failure** |
+| ServiceNow - availability | every 5 to 15 minutes (**Concurrent jobs** off) | template *ServiceNow - availability*, with an email **notification on failure** |
+| STIG Manager - availability | every 5 to 15 minutes (**Concurrent jobs** off) | workflow 43 |
+| STIG Manager - health | every day 06:15 | template *STIG Manager - health* |
 | ServiceNow - weekly activity report | weekly: Friday 15:00 (the last 7 days), or Monday 07:00 with `servicenow_war_period: last-week` | template *ServiceNow - weekly activity report* ([SERVICENOW_WAR.md](SERVICENOW_WAR.md)) |
 | ServiceNow - ticket insights | monthly: the 1st, 02:00 (the last 6 months), or quarterly with `servicenow_insights_months: 3` | template *ServiceNow - ticket insights* ([SERVICENOW_INSIGHTS.md](SERVICENOW_INSIGHTS.md)) |
 | Weekly compliance | Monday 07:00 | workflow 2 |

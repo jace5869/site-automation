@@ -1,0 +1,18 @@
+---
+# SERVICENOW - AVAILABILITY, every 5 to 15 minutes. Read-only: the instance's REST API (one record of servicenow_table,
+# with the "ServiceNow API" credential) and its login page, each asked a few times and timed (roles/api_availability).
+# Quiet when up: one line, no email. Fails when ServiceNow is down (availability_fail_on), for a workflow's notification
+# step; with the "Red Hat Ansible Automation Platform" credential its own past runs give the availability over a day, a
+# week and a month. The MID Servers and the rest: servicenow_health.yml. docs/AVAILABILITY.md
+#   ansible-playbook playbooks/servicenow_availability.yml
+- name: ServiceNow availability
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Ask ServiceNow
+      ansible.builtin.include_role:
+        name: servicenow
+        tasks_from: availability.yml
+      vars:
+        site_report_title: ServiceNow availability

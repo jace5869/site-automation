@@ -221,6 +221,16 @@ ucs_domains: [ucs01.yoursite.mil]
 ## report_web_host, report_web_dest and report_web_url belong in all.yml - the report jobs read them too
 # report_web_copy_jobs: [907, 908]               # these AAP jobs' pages again (job IDs), whatever was copied before
 """),
+    "stigman_health.yml": ("STIG Manager - health", "Machine, STIG Manager API, MariaDB monitor (for the database container)", "", """\
+## The address people use and the nodes (or the inventory groups stigman and stigman_db); put them in all.yml
+stigman_health_api: https://stigman.yoursite.mil/api
+# stigman_health_nodes: [{name: stig01, url: "https://stig01.yoursite.mil/api"}, {name: stig02, url: "https://stig02.yoursite.mil/api"}]
+"""),
+    "stigman_availability.yml": ("STIG Manager - availability", "Red Hat Ansible Automation Platform (optional); STIG Manager API (only for Keycloak's address)", "", """\
+## Every 5 to 15 minutes (Concurrent jobs off); quiet when up, red when down. stigman_health_api and the nodes as for
+## STIG Manager - health (all.yml)
+# availability_report_on: [critical, warning]    # also email when slow, flaky or one node is down (default: only when down)
+"""),
     "service_fix_approved.yml": ("Service watch - apply approved fix", "Machine", "", ""),
     "service_watch.yml": ("Service watch - check", "Machine (ACT model key: optional)", "", ""),
     "servicenow_catalog_test.yml": ("ServiceNow - catalog test", "ServiceNow API", "", """\
@@ -230,6 +240,11 @@ cert_renew_catalog_item: YOUR PKI ITEM           # its name exactly as the catal
     "servicenow_health.yml": ("ServiceNow health", "ServiceNow API (Machine (Windows) for the MID Server hosts)", "", """\
 ## The MID Server hosts: a group servicenow_mid_hosts in the Windows inventory this template runs with
 # servicenow_mid_expected: [MID01, MID02]          # these must be in the instance's MID Server list
+"""),
+    "servicenow_availability.yml": ("ServiceNow - availability", "ServiceNow API, Red Hat Ansible Automation Platform (optional)", "", """\
+## Every 5 to 15 minutes (Concurrent jobs off); quiet when up, red when down. With the AAP credential the report also
+## gives the availability over a day, a week and a month (from this template's own runs)
+# availability_report_on: [critical, warning]    # also email when slow or flaky (default: only when down)
 """),
     "servicenow_war.yml": ("ServiceNow - weekly activity report", "ServiceNow API (ACT model key: optional)", "", """\
 ## The assignment group(s), exactly as ServiceNow names them; the week: the last 7 days (a Friday run), or last-week (a Monday run)

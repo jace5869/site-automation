@@ -1,0 +1,37 @@
+---
+# The availability check's addresses: /op/state of the address people use and of each node (the API, its database and
+# Keycloak all up: currentState available), and Keycloak's realm (its OpenID configuration) - no login needed.
+- name: STIG Manager | the nodes
+  ansible.builtin.include_tasks: nodes.yml
+  when: stigman_availability_nodes | bool or stigman_health_api | length == 0
+
+- name: STIG Manager | the addresses to ask
+  ansible.builtin.set_fact:
+    _smh_probes: >-
+      {%- set out = [] -%}
+      {%- if stigman_health_api | length > 0 -%}
+      {%-   set _ = out.append({'name': 'API', 'url': stigman_health_api | regex_replace('/+$', '') ~ '/op/state', 'group': 'service',
+                                'expect': [200], 'json_key': 'currentState', 'json_expect': ['available']}) -%}
+      {%- endif -%}
+      {%- for n in _smh_nodes | default([]) if stigman_availability_nodes | bool or stigman_health_api | length == 0 -%}
+      {%-   set _ = out.append({'name': n.name, 'url': n.url | regex_replace('/+$', '') ~ '/op/state', 'group': 'node',
+                                'expect': [200], 'json_key': 'currentState', 'json_expect': ['available']}) -%}
+      {%- endfor -%}
+      {%- set tok = stigman_health_token_url or lookup('ansible.builtin.env', 'STIGMAN_TOKEN_URL') -%}
+      {%- if '/protocol/openid-connect/' in tok -%}
+      {%-   set _ = out.append({'name': 'Keycloak', 'url': tok.split('/protocol/openid-connect/')[0] ~ '/.well-known/openid-configuration',
+                                'group': 'dependency', 'expect': [200]}) -%}
+      {%- endif -%}
+      {{ out }}
+
+- name: STIG Manager | availability
+  ansible.builtin.include_role:
+    name: api_availability
+  vars:
+    _avail_service: STIG Manager
+    _avail_check: stigman-availability
+    _avail_probes: "{{ _smh_probes }}"
+    _avail_validate_certs: "{{ stigman_health_validate_certs }}"
+    _avail_ca_path: "{{ stigman_health_ca_path }}"
+    _avail_hints: >-
+      {{ dict(_smh_probes | map(attribute='name') | zip(_smh_probes | map(attribute='url') | map('regex_replace', '^', 'curl -sS '))) }}

@@ -11,7 +11,7 @@ never out of date. Where to put a setting, and which place wins when it is in tw
 A setting that is a list (`[a, b]`) **replaces** the default list when you set it; it does not add
 to it. Repeat the entries you want to keep.
 
-**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [aap_health](#aap_health), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [evaluate_stig_update](#evaluate_stig_update), [fapolicyd](#fapolicyd), [fapolicyd_fix](#fapolicyd_fix), [fapolicyd_rules](#fapolicyd_rules), [horizon](#horizon), [incident_docs](#incident_docs), [log_analysis](#log_analysis), [mail_relay](#mail_relay), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [pki_bundle](#pki_bundle), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [servicenow_insights](#servicenow_insights), [servicenow_war](#servicenow_war), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_ckl_import](#stigman_ckl_import), [stigman_stack](#stigman_stack), [stigman_update](#stigman_update), [tenable_scan](#tenable_scan), [tmp_cleanup](#tmp_cleanup), [troubleshoot](#troubleshoot), [ucs_report](#ucs_report), [vmware_ask_stack](#vmware_ask_stack), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_stig](#win_check_stig), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
+**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [aap_health](#aap_health), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [api_availability](#api_availability), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [evaluate_stig_update](#evaluate_stig_update), [fapolicyd](#fapolicyd), [fapolicyd_fix](#fapolicyd_fix), [fapolicyd_rules](#fapolicyd_rules), [horizon](#horizon), [incident_docs](#incident_docs), [log_analysis](#log_analysis), [mail_relay](#mail_relay), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [pki_bundle](#pki_bundle), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [servicenow_insights](#servicenow_insights), [servicenow_war](#servicenow_war), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_ckl_import](#stigman_ckl_import), [stigman_health](#stigman_health), [stigman_stack](#stigman_stack), [stigman_update](#stigman_update), [tenable_scan](#tenable_scan), [tmp_cleanup](#tmp_cleanup), [troubleshoot](#troubleshoot), [ucs_report](#ucs_report), [vmware_ask_stack](#vmware_ask_stack), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_stig](#win_check_stig), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
 
 ## aap_ee
 
@@ -204,6 +204,25 @@ File: `roles/ad_report/defaults/main.yml`
 | `ad_no_client_site_warn` | `1` | this many client addresses in no AD subnet -> amber (fewer: blue) |
 | `ad_report_max_rows` | `50` | rows per table (problems first); the job's artifacts have all |
 | `ad_report_fail` | `false` | The job stays green when it finds problems: the report and email say what. true = mark it FAILED when there is a critical finding or a DC could not be read, for workflows. |
+
+## api_availability
+
+File: `roles/api_availability/defaults/main.yml`
+
+> AVAILABILITY CHECKS (playbooks/stigman_availability.yml, playbooks/servicenow_availability.yml): every 5 to 15 minutes, each address of the service asked a few times, read-only. A clean run is one line - no email. The job FAILS when the service is down (availability_fail_on), for a workflow's notification or ServiceNow ticket step; its own runs in AAP then give the availability over a day, a week and a month. docs/AVAILABILITY.md
+
+| Setting | Default | What it does |
+|---|---|---|
+| `availability_attempts` | `3` | times each address is asked in one run |
+| `availability_pause_seconds` | `2` | seconds between two tries of one address |
+| `availability_timeout` | `10` | seconds a try may take; no answer by then = a bad try |
+| `availability_slow_ms` | `3000` | an answer slower than this (median of the tries), in milliseconds -> warning |
+| `availability_node_down` | `warning` | One node (one server behind the service's address) that does not answer while the address still does: warning, or critical to fail the job for it too. Every node down with no service address set: critical. |
+| `availability_fail_on` | `[critical]` | The job shows FAILED (a workflow's "On failure" path) when a run finds a condition of these severities. |
+| `availability_report_on` | `[critical]` | The report is emailed (report_email_to) and published (report_web_dest) only when a run finds a condition of these severities - [critical, warning] also for slow, flaky or one node down; a clean run is one line in the job output. |
+| `availability_report_recovery` | `true` | also a report when the service answers again after a failed run ("UP again") |
+| `availability_history` | `true` | The availability over these periods (hours), from this template's own runs in AAP: a run that ended well = up, a failed one = down. Needs a "Red Hat Ansible Automation Platform" credential on the template (Organization Auditor); without one the check still runs, without the percentages. |
+| `availability_history_hours` | `[24, 168, 720]` | the periods: a day, a week, a month |
 
 ## cert_inventory
 
@@ -1275,6 +1294,7 @@ File: `roles/servicenow/defaults/main.yml`
 | `servicenow_fail_when_findings` | `true` | Fail the job when it opened/updated tickets, so the workflow shows red while problems exist. |
 | `servicenow_check_mid` | `true` | servicenow_health.yml: also check the MID Servers (needs read access to the ecc_agent table) |
 | `servicenow_slow_seconds` | `5` | the API answering slower than this -> warning |
+| `servicenow_availability_ui` | `true` | ---- servicenow_availability.yml: is the instance there (every 5 to 15 minutes; roles/api_availability) ---- Asked each run: the REST API (a read of servicenow_table with the "ServiceNow API" credential) and - with this - the login page (/login.do, no login: the instance's UI, or the single sign-on page it sends to).… (all of it: the role file) |
 | `servicenow_mid_names` | `[]` | ---- servicenow_health.yml: the MID Servers -------------------------------------------------- What the instance says about each MID Server (ecc_agent): Up and validated, its heartbeat (last_refreshed) no older than servicenow_mid_stale_minutes, the same version on every MID Server, the ones you expect all there; its… (all of it: the role file) |
 | `servicenow_mid_expected` | `[]` | these must exist (names): one missing -> critical |
 | `servicenow_mid_stale_minutes` | `15` | Up, but its heartbeat older than this -> critical (it reports every few minutes) |
@@ -1531,6 +1551,36 @@ File: `roles/stigman_ckl_import/defaults/main.yml`
 | `stigman_ckl_import_auto` | `none` | Written at once, no approval (0.76.0): none (everything waits for workflow 40's approval), existing (the reviews of assets that are there are written by this job; a new asset and its reviews wait for the approval) or all (the new assets too). The same rules as the approval's write: never over Accepted, never with atta… (all of it: the role file) |
 | `stigman_ckl_import_move` | `false` | Move each file done with - all of it in STIG Manager: written, the same already, or left for good (Accepted, not in the STIG, another revision) - to <stigman_ckl_import_move_to>/<date>/ under stigman_ckl_import_src, if not written again since it was read (the share's account then needs Modify). One that waits for the… (all of it: the role file) |
 | `stigman_ckl_import_move_to` | `imported` | the folder under stigman_ckl_import_src (never read) |
+
+## stigman_health
+
+File: `roles/stigman_health/defaults/main.yml`
+
+> STIG MANAGER - HEALTH and AVAILABILITY (playbooks/stigman_health.yml, playbooks/stigman_availability.yml), read-only, through STIG Manager's API from the AAP side. docs/STIGMAN_HEALTH.md
+
+| Setting | Default | What it does |
+|---|---|---|
+| `stigman_health_api` | (empty) | The address people use, e.g. https://stigman.example.mil/api (the load balancer's, or the one name the nodes share); empty = the nodes only. |
+| `stigman_health_nodes` | `[]` | Each node (an API server of STIG Manager) on its own: [{name: stig01, url: "https://stig01.example.mil/api"}]. [] = each host of the inventory group stigman_health_nodes_group, at stigman_health_node_url ({host} = its inventory name; a host's own stigman_health_node_url in host_vars wins). |
+| `stigman_health_nodes_group` | `stigman` | the inventory group of the nodes |
+| `stigman_health_node_url` | `"https://{host}/api"` | each node's API ({host} = its inventory name) |
+| `stigman_health_db_group` | `stigman_db` | The database host(s): the inventory group whose hosts the health check also reads over SSH (the MariaDB container, its disk) - with the nodes' hosts (their containers, their disk). stigman_health_hosts: false = the API only. the inventory group of the database host(s) |
+| `stigman_health_hosts` | `true` | false = the API only, no SSH to the hosts |
+| `stigman_health_token_url` | (empty) | The health check logs in as a Keycloak client (client credentials) - from the "STIG Manager API" credential (STIGMAN_TOKEN_URL, STIGMAN_CLIENT_ID, STIGMAN_CLIENT_SECRET), or these; no client = the checks without a login only. Keycloak's token endpoint; empty = the credential's |
+| `stigman_health_client_id` | (empty) | the client; empty = the credential's |
+| `stigman_health_client_secret` | (empty) | vault it |
+| `stigman_health_scope` | (empty) | e.g. "stig-manager:user:read stig-manager:collection:read stig-manager:op:read"; empty = the client's default scopes |
+| `stigman_health_appinfo` | `true` | The deployment's own numbers (/op/appinfo?elevate=true: the database's connections and uptime, each node's memory and uptime): the client needs the scope stig-manager:op:read and admin in STIG Manager. false = not asked. |
+| `stigman_health_validate_certs` | `true` | check the HTTPS certificates of STIG Manager and Keycloak |
+| `stigman_health_ca_path` | (empty) | a CA bundle on the AAP side to check them with (the DoD roots); empty = the execution environment's |
+| `stigman_health_timeout` | `20` | seconds per request |
+| `stigman_health_slow_ms` | `2000` | an answer slower than this, in milliseconds -> warning |
+| `stigman_health_node_down` | `critical` | a node that does not answer, or is not "available" (warning = only the address counts) |
+| `stigman_health_conn_warn_pct` | `80` | the database's connections in use, % of max_connections -> warning |
+| `stigman_health_conn_crit_pct` | `95` | -> critical |
+| `stigman_health_restart_minutes` | `60` | a node or the database restarted less than this ago -> warning |
+| `stigman_health_version` | (empty) | the STIG Manager version every node must run, e.g. 1.6.18; empty = only that they are alike |
+| `stigman_availability_nodes` | `true` | The availability check (every 5 to 15 minutes) asks /op/state of the address and of each node: the API, its database and Keycloak all up. false = the address only (the nodes are then not asked). |
 
 ## stigman_stack
 

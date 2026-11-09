@@ -1,0 +1,22 @@
+---
+# The nodes: stigman_health_nodes, else the hosts of stigman_health_nodes_group at stigman_health_node_url.
+- name: STIG Manager | the nodes
+  ansible.builtin.set_fact:
+    _smh_nodes: >-
+      {%- set out = [] -%}
+      {%- if stigman_health_nodes | length > 0 -%}
+      {%-   for n in stigman_health_nodes -%}{%- set _ = out.append({'name': n.name | default(n.url), 'url': n.url}) -%}{%- endfor -%}
+      {%- else -%}
+      {%-   for h in groups[stigman_health_nodes_group] | default([]) -%}
+      {%-     set _ = out.append({'name': h, 'url': (hostvars[h].stigman_health_node_url | default(stigman_health_node_url)) | replace('{host}', h)}) -%}
+      {%-   endfor -%}
+      {%- endif -%}
+      {{ out }}
+
+- name: STIG Manager | something to check
+  ansible.builtin.assert:
+    that: stigman_health_api | length > 0 or _smh_nodes | length > 0
+    fail_msg: >-
+      Nothing to check: set stigman_health_api (the address people use, https://stigman.example.mil/api) or
+      stigman_health_nodes, or put the nodes in the inventory group {{ stigman_health_nodes_group }}.
+    quiet: true

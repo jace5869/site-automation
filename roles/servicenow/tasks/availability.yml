@@ -1,0 +1,34 @@
+---
+# Is the instance there, right now (playbooks/servicenow_availability.yml): the REST API - a read of one record of
+# servicenow_table with the "ServiceNow API" credential - and the login page; each asked a few times and timed
+# (roles/api_availability). Read-only.
+- name: ServiceNow availability | the instance
+  ansible.builtin.set_fact:
+    _sn_url: >-
+      {%- set h = lookup('ansible.builtin.env', 'SN_HOST') | trim -%}
+      {{ ((h if h.startswith('http') else 'https://' ~ h) | regex_replace('/+$', '')) if h else '' }}
+
+- name: ServiceNow availability | the ServiceNow API credential is attached
+  ansible.builtin.assert:
+    that: _sn_url | length > 0
+    fail_msg: Attach the "ServiceNow API" credential (it sets SN_HOST, SN_USERNAME, SN_PASSWORD).
+    quiet: true
+
+- name: ServiceNow availability
+  ansible.builtin.include_role:
+    name: api_availability
+  vars:
+    _avail_service: ServiceNow
+    _avail_check: servicenow-availability
+    _avail_probes: >-
+      {{ [{'name': 'API', 'url': _sn_url ~ '/api/now/table/' ~ servicenow_table ~ '?sysparm_limit=1&sysparm_fields=sys_id',
+           'group': 'service', 'auth': 'basic', 'user': lookup('ansible.builtin.env', 'SN_USERNAME'),
+           'password': lookup('ansible.builtin.env', 'SN_PASSWORD'), 'expect': [200]}]
+         + ([{'name': 'Login page', 'url': _sn_url ~ '/login.do', 'group': 'service', 'expect': [200]}]
+            if servicenow_availability_ui | bool else []) }}
+    _avail_validate_certs: "{{ servicenow_validate_certs }}"
+    _avail_ca_path: "{{ servicenow_ca_path }}"
+    _avail_hints:
+      API: >-
+        curl -sS -u USER -o /dev/null -w "HTTP %{http_code} in %{time_total}s" "{{ _sn_url }}/api/now/table/{{ servicenow_table }}?sysparm_limit=1"
+      Login page: curl -sS -o /dev/null -w "HTTP %{http_code} in %{time_total}s" {{ _sn_url }}/login.do

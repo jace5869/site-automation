@@ -55,6 +55,11 @@ servicenow_fail_when_findings: true
 servicenow_check_mid: true
 servicenow_slow_seconds: 5               # the API answering slower than this -> warning
 
+# ---- servicenow_availability.yml: is the instance there (every 5 to 15 minutes; roles/api_availability) ----
+# Asked each run: the REST API (a read of servicenow_table with the "ServiceNow API" credential) and - with this - the
+# login page (/login.do, no login: the instance's UI, or the single sign-on page it sends to). false = the API only.
+servicenow_availability_ui: true
+
 # ---- servicenow_health.yml: the MID Servers --------------------------------------------------
 # What the instance says about each MID Server (ecc_agent): Up and validated, its heartbeat
 # (last_refreshed) no older than servicenow_mid_stale_minutes, the same version on every MID Server,
