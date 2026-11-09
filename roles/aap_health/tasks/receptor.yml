@@ -1,6 +1,8 @@
 ---
 # receptorctl status inside the receptor container: nodes, routes, work types. The socket is read from the
-# container's receptor.conf (control-service filename) unless aap_health_receptor_socket names it. Read-only.
+# container's receptor.conf (control-service filename) unless aap_health_receptor_socket names it. Read-only: only
+# "status" is asked. Without the receptorctl command in any of the containers: receptor's own Python library, which
+# the controller containers carry (AAP talks to receptor with it), asked for the same status. Neither: SKIP.
 - name: AAP health | receptor
   when: _aaph.receptor_container | length > 0
   vars:
@@ -37,9 +39,30 @@
           {% endfor %}
             *) ;;
           esac
-          echo "@@@ where"; echo "$W"; echo "@@@ socket2"; echo "$S"
+          # no receptorctl command: the receptorctl Python library (status only), with the socket that container mounts
+          P=""
+          if [ -z "$W" ]; then
+            for C in {{ _aaph_rctl | map('quote') | join(' ') }}; do
+              for PY in python3 python3.12 python3.11 python3.9; do
+                if timeout "$T" podman exec "$C" "$PY" -c 'import receptorctl.socket_interface' >/dev/null 2>&1; then W="$C"; P="$PY"; break 2; fi
+              done
+            done
+            case "$W" in
+            {% for c, p in _aaph_rsock.items() if c != _aaph.receptor_container %}
+              {{ c | quote }}) [ -z {{ aap_health_receptor_socket | quote }} ] && S={{ p | quote }} ;;
+            {% endfor %}
+              *) ;;
+            esac
+          fi
+          echo "@@@ where"; echo "$W${P:+ (receptorctl library, $P)}"; echo "@@@ socket2"; echo "$S"
           echo "@@@ status"
-          if [ -z "$W" ]; then echo "receptorctl is in none of: {{ _aaph_rctl | join(', ') }}"; echo "@@@rc 127"; else
+          if [ -z "$W" ]; then echo "receptorctl is in none of: {{ _aaph_rctl | join(', ') }}"; echo "@@@rc 127"
+          elif [ -n "$P" ]; then
+            out=$(timeout "$T" podman exec "$W" "$P" -c 'import json, sys
+          from receptorctl.socket_interface import ReceptorControl
+          print(json.dumps(ReceptorControl(sys.argv[1]).simple_command("status"), default=str))' "$S" 2>&1); rc=$?
+            echo "$out"; echo "@@@rc $rc"
+          else
             out=$(timeout "$T" podman exec "$W" receptorctl --socket "$S" status --json 2>&1); rc=$?
             # an older receptorctl without --json: its text
             if [ "$rc" -ne 0 ]; then out=$(timeout "$T" podman exec "$W" receptorctl --socket "$S" status 2>&1); rc=$?; fi

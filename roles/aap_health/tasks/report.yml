@@ -104,8 +104,6 @@
           delegate_to: localhost
       vars:
         _aaph_counts: "{{ _aaph_rows | aap_health_counts }}"
-        _aaph_bad: "{{ _aaph_rows | rejectattr('status', 'equalto', 'PASS') | sort(attribute='status') | list }}"
-        _aaph_status: {FAIL: critical, WARN: warning, PASS: ok}
         _report_web_skip: "{{ not aap_health_web | bool }}"
         _report_email_skip: "{{ not aap_health_email | bool and report_email_also | default([]) | length == 0 }}"
         _report_attachments: "{{ [{'path': _aaph_attach.path, 'filename': _aaph_report_file | basename}] if _aaph_attach.path is defined else [] }}"
@@ -113,32 +111,14 @@
           title: "AAP health check: {{ _aaph_counts.FAIL }} FAIL, {{ _aaph_counts.WARN }} WARN - {{ inventory_hostname }}"
           subtitle: "read-only checks of the AAP host; nothing was changed"
           status: "{{ 'critical' if _aaph_counts.FAIL else 'warning' if _aaph_counts.WARN else 'ok' }}"
-          summary:
-            - {label: FAIL, value: "{{ _aaph_counts.FAIL }}", status: "{{ 'critical' if _aaph_counts.FAIL else 'ok' }}"}
-            - {label: WARN, value: "{{ _aaph_counts.WARN }}", status: "{{ 'warning' if _aaph_counts.WARN else 'ok' }}"}
-            - {label: PASS, value: "{{ _aaph_counts.PASS }}"}
-          # FAIL and WARN first, then every area with all its rows (a cell is one line: the detail's lines joined by ";")
-          sections: >-
-            {%- set out = [] -%}
-            {%- set bad = [] -%}
-            {%- for r in _aaph_bad -%}
-            {%-   set _ = bad.append([r.status, r.area, r.check, r.detail | regex_replace('\s*\n\s*', '; '), r.hint]) -%}
-            {%- endfor -%}
-            {%- if bad -%}
-            {%-   set _ = out.append({'title': 'FAIL and WARN', 'status': 'critical' if _aaph_counts.FAIL else 'warning',
-                                      'columns': ['Status', 'Area', 'Check', 'Detail', 'Hint'], 'rows': bad,
-                                      'row_status': _aaph_bad | map(attribute='status') | map('extract', _aaph_status) | list}) -%}
-            {%- endif -%}
-            {%- for area, rows in _aaph_rows | aap_health_by_area(_aaph_areas) -%}
-            {%-   set c = rows | aap_health_counts -%}
-            {%-   set _ = out.append({'title': area,
-                                      'text': c.FAIL ~ ' fail, ' ~ c.WARN ~ ' warn, ' ~ c.PASS ~ ' pass',
-                                      'status': 'critical' if c.FAIL else 'warning' if c.WARN else 'ok',
-                                      'columns': ['Status', 'Check', 'Detail'],
-                                      'rows': rows | map('aap_health_cells') | list,
-                                      'row_status': rows | map(attribute='status') | map('extract', _aaph_status) | list}) -%}
-            {%- endfor -%}
-            {{ out }}
+          # "Not checked" only when a check could not run here
+          summary: >-
+            {{ [{'label': 'FAIL', 'value': _aaph_counts.FAIL, 'status': 'critical' if _aaph_counts.FAIL else 'ok'},
+                {'label': 'WARN', 'value': _aaph_counts.WARN, 'status': 'warning' if _aaph_counts.WARN else 'ok'},
+                {'label': 'PASS', 'value': _aaph_counts.PASS}]
+               + ([{'label': 'Not checked', 'value': _aaph_counts.SKIP}] if _aaph_counts.SKIP else []) }}
+          # FAIL and WARN first, then every area's table (one line per check), each FAIL or WARN list under its area
+          sections: "{{ _aaph_rows | aap_health_email_sections(_aaph_areas, aap_health_top | int) }}"
           footer: "{{ inventory_hostname }}{{ ' - the full report (sortable) is attached' if _aaph_report_file | default('') else '' }}"
   rescue:
     - name: AAP health | not on the report website / not emailed

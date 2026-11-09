@@ -2,8 +2,12 @@
 
 *AAP - health check* (`playbooks/aap_health_check.yml`, role `roles/aap_health`) looks over a **containerized AAP 2.5
 or later** host - all components on one host, rootless podman, systemd `--user` units - and gives every check a
-**PASS, WARN or FAIL**, a detail and a hint. It writes an HTML report and the same results as JSON on the AAP host,
-and prints the FAIL and WARN lines.
+**PASS, WARN or FAIL**, a detail and a hint (**SKIP**: a check this host could not run - not a problem of AAP's, e.g.
+no `receptorctl` anywhere; grey, never red or amber). It writes an HTML report and the same results as JSON on the AAP
+host, and prints the FAIL and WARN lines. In the report a check is one line; a list - the containers by memory, the slow
+paths, the last log lines - is a small table or a box under it, the first `aap_health_top` (10) shown and the rest
+folded (all of them in the JSON). The report website and the email show each FAIL or WARN list as its own section
+under its area.
 
 It is **read-only**: nothing is restarted, changed or installed, and no check fails the job. A check that cannot run
 (a command that hangs, a login refused) is itself a FAIL row and the other checks go on. The only files it writes
@@ -21,7 +25,7 @@ are the two reports. It runs two ways:
 | `logs` | over `aap_health_log_since` (2 h): the gateway proxy's (Envoy) 5xx responses by path and its slowest requests (over 5 s); controller-web's HARAKIRI, killed workers, Tracebacks, OperationalError, timeouts (the last 10); controller-task's dispatcher and callback receiver errors; Tracebacks and ERRORs of the gateway, hub and EDA containers |
 | `db` | per inventory: hosts, total / average / largest `variables` and `ansible_facts` (average over 10 KB or a host over 100 KB: WARN); database size and largest tables; connections against `max_connections`; queries running over 30 s; sessions idle in a transaction; job events and jobs kept (is the cleanup running?) |
 | `api` | the controller's ping and instances (state, capacity, health check errors, last seen); jobs pending or waiting over 15 minutes, running over 4 hours; inventory sources and projects whose last update failed; the two cleanup system jobs - there, scheduled, run lately; **each inventory's `hosts/?page_size=100` timed against `hosts/?page_size=1`** (over 5 s or not 200: FAIL); the gateway's ping and its service clusters |
-| `receptor` | `receptorctl status` - in the receptor container, else in the controller's, which reach its socket: nodes, routes, work types |
+| `receptor` | `receptorctl status` - in the receptor container, else in the controller's, which reach its socket; without the `receptorctl` command, receptor's Python library in a controller container (AAP's own way to receptor), status only: nodes, routes, work types. Neither: SKIP |
 | `certs` | the expiry of the TLS certificates of the gateway, controller, hub, EDA, receptor and postgres (WARN under 30 days, FAIL under 7); the DoD root CAs in the system trust store |
 
 Finding the install and writing the report always run, so `--tags db` (or `os,logs`, ...) runs only those areas.
@@ -49,13 +53,18 @@ uwsgi kills the worker (HARAKIRI) and the gateway answers 503 - whatever memory 
    (all, and the most on one host) and their **groups** (how many, and the most one host is in). Jobs run often against an inventory's hosts pile up summaries; the Hosts list
    reads each host's recent ones. Few KB of variables per host is not a size problem.
 3. **logs / controller-web** - HARAKIRI, and the paths of the requests it killed.
-4. **logs / gateway proxy slow requests** - the slow requests by path: one path, or many.
+4. **logs / gateway proxy slow requests** - the slow requests by path: one path, or many. A websocket (HTTP 101: the
+   UI's live updates) stays open for as long as the page is, so it is never counted as slow.
 5. **api / cleanup: job details** - is *Cleanup Job Details* scheduled and running (it removes old summaries).
 6. **api / small requests** - ping, me and config timed. Slow too: the controller's web workers are busy (the
    HARAKIRI rows), and every page of the UI suffers, not one inventory.
 7. **db / dead rows (vacuum)** - tables autovacuum has not kept up with read slower.
 
 Set `aap_health_focus_inventories: [8]` to see that inventory's rows every time, even when it is fine.
+
+**An inventory's ID** is the number in its address when you open it in AAP: `.../inventories/inventory/8/details` is ID
+8. The report names each inventory with its ID (`host variables: AD hosts (ID 8)`), and `aap_health_focus_inventories`
+and `aap_health_api_time_inventories` take those IDs.
 
 ## Run it on the AAP host
 

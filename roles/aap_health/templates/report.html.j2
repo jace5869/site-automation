@@ -9,10 +9,12 @@
 <title>AAP health - {{ inventory_hostname | e }}</title>
 <style>
 :root { --bg: #f6f7f9; --card: #fff; --ink: #1d2330; --muted: #5b6475; --line: #dde1e8;
-        --pass: #1f7a3d; --pass-bg: #e6f4ea; --warn: #8a5a00; --warn-bg: #fff4d6; --fail: #b3261e; --fail-bg: #fde7e6; }
+        --pass: #1f7a3d; --pass-bg: #e6f4ea; --warn: #8a5a00; --warn-bg: #fff4d6; --fail: #b3261e; --fail-bg: #fde7e6;
+        --skip: #4b5563; --skip-bg: #eceef2; }
 @media (prefers-color-scheme: dark) {
   :root { --bg: #14171c; --card: #1c2027; --ink: #e6e9ef; --muted: #a0a8b8; --line: #2e3440;
-          --pass: #7fd69a; --pass-bg: #18301f; --warn: #f2c66d; --warn-bg: #352a10; --fail: #ff8f86; --fail-bg: #3a1a18; }
+          --pass: #7fd69a; --pass-bg: #18301f; --warn: #f2c66d; --warn-bg: #352a10; --fail: #ff8f86; --fail-bg: #3a1a18;
+          --skip: #b4bccb; --skip-bg: #272c35; }
 }
 * { box-sizing: border-box; }
 body { margin: 0; padding: 24px 16px; background: var(--bg); color: var(--ink);
@@ -23,7 +25,7 @@ h1 { font-size: 22px; margin: 0 0 4px; }
 .tiles { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 18px; }
 .tile { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px 18px; min-width: 120px; }
 .tile b { display: block; font-size: 26px; }
-.tile.FAIL b { color: var(--fail); } .tile.WARN b { color: var(--warn); } .tile.PASS b { color: var(--pass); }
+.tile.FAIL b { color: var(--fail); } .tile.WARN b { color: var(--warn); } .tile.PASS b { color: var(--pass); } .tile.SKIP b { color: var(--skip); }
 .bar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; align-items: center; }
 button { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 6px;
          padding: 5px 12px; cursor: pointer; }
@@ -32,17 +34,28 @@ details { background: var(--card); border: 1px solid var(--line); border-radius:
 summary { cursor: pointer; padding: 10px 14px; font-weight: 600; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 summary .n { font-weight: 400; color: var(--muted); }
 .wrap { overflow-x: auto; }
-table { width: 100%; min-width: 760px; border-collapse: collapse; }
+table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+col.c-st { width: 76px; } col.c-ck { width: 22%; } col.c-hn { width: 28%; }
 th, td { text-align: left; vertical-align: top; padding: 7px 10px; border-top: 1px solid var(--line); }
 th { cursor: pointer; user-select: none; color: var(--muted); font-weight: 600; white-space: nowrap; }
 th::after { content: " \2195"; opacity: .4; }
-td.detail, td.hint { white-space: pre-wrap; word-break: break-word; }
-td.detail { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; }
+td { overflow-wrap: anywhere; }
+td.detail .sum { white-space: pre-wrap; }
 td.hint { color: var(--muted); }
+.note { color: var(--muted); padding: 0 14px 10px; }
+table.items { table-layout: auto; margin-top: 6px; font-size: 12.5px; }
+table.items th { cursor: default; } table.items th::after { content: none; }
+table.items th, table.items td { padding: 3px 8px; }
+table.items tr.WARN td { background: var(--warn-bg); } table.items tr.FAIL td { background: var(--fail-bg); }
+.lines { margin: 6px 0 0; padding: 6px 8px; background: var(--bg); border-radius: 4px; white-space: pre-wrap;
+         font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+details.more summary { padding: 4px 0; font-weight: 400; color: var(--muted); }
+details.more { border: 0; background: none; margin: 0; }
 .badge { display: inline-block; min-width: 46px; text-align: center; border-radius: 4px; padding: 1px 6px; font-weight: 700; font-size: 12px; }
 .badge.PASS { color: var(--pass); background: var(--pass-bg); }
 .badge.WARN { color: var(--warn); background: var(--warn-bg); }
 .badge.FAIL { color: var(--fail); background: var(--fail-bg); }
+.badge.SKIP { color: var(--skip); background: var(--skip-bg); }
 tr.hide { display: none; }
 footer { color: var(--muted); font-size: 12px; margin-top: 18px; }
 </style>
@@ -55,7 +68,8 @@ footer { color: var(--muted); font-size: 12px; margin-top: 18px; }
   <div class="tile FAIL"><b>{{ counts.FAIL }}</b>FAIL</div>
   <div class="tile WARN"><b>{{ counts.WARN }}</b>WARN</div>
   <div class="tile PASS"><b>{{ counts.PASS }}</b>PASS</div>
-</div>
+{% if counts.SKIP %}  <div class="tile SKIP"><b>{{ counts.SKIP }}</b>not checked</div>
+{% endif %}</div>
 <div class="bar">
   <button type="button" data-show="all" aria-pressed="true">All</button>
   <button type="button" data-show="bad" aria-pressed="false">FAIL and WARN only</button>
@@ -66,13 +80,31 @@ footer { color: var(--muted); font-size: 12px; margin-top: 18px; }
 {% set c = rows | aap_health_counts %}
 <details {{ 'open' if c.FAIL or c.WARN else '' }}>
   <summary><span class="badge {{ 'FAIL' if c.FAIL else 'WARN' if c.WARN else 'PASS' }}">{{ 'FAIL' if c.FAIL else 'WARN' if c.WARN else 'PASS' }}</span>
-    {{ area | e }} <span class="n">{{ c.FAIL }} fail, {{ c.WARN }} warn, {{ c.PASS }} pass</span></summary>
+    {{ area | e }} <span class="n">{{ c.FAIL }} fail, {{ c.WARN }} warn, {{ c.PASS }} pass{{ (', ' ~ c.SKIP ~ ' not checked') if c.SKIP else '' }}</span></summary>
+{% if area in ('db', 'api') and rows | selectattr('check', 'search', '\\(ID ') | list %}
+  <div class="note">Inventories are named with their ID: the number in the inventory's address in AAP (&hellip;/inventories/inventory/<b>ID</b>/&hellip;). aap_health_focus_inventories and aap_health_api_time_inventories take these IDs.</div>
+{% endif %}
   <div class="wrap"><table>
+    <colgroup><col class="c-st"><col class="c-ck"><col><col class="c-hn"></colgroup>
     <thead><tr><th>Status</th><th>Check</th><th>Detail</th><th>Hint</th></tr></thead>
     <tbody>
 {% for r in rows %}
-      <tr class="{{ r.status }}"><td data-k="{{ {'FAIL': 0, 'WARN': 1, 'PASS': 2}[r.status] | default(1) }}"><span class="badge {{ r.status }}">{{ r.status }}</span></td>
-        <td>{{ r.check | e }}</td><td class="detail">{{ r.detail | e }}</td><td class="hint">{{ r.hint | e }}</td></tr>
+      <tr class="{{ r.status }}"><td data-k="{{ {'FAIL': 0, 'WARN': 1, 'PASS': 2, 'SKIP': 3}[r.status] | default(1) }}"><span class="badge {{ r.status }}">{{ r.status }}</span></td>
+        <td>{{ r.check | e }}</td><td class="detail">{% set dl = (r.detail | default('')).split('\n') %}<div class="sum">{{ dl[0] | e }}</div>
+{%- if dl | length > 1 %}<div class="lines">{{ dl[1:] | join('\n') | e }}</div>{% endif %}
+{%- set it = r['items'] | default({}) %}
+{%- if it.columns is defined %}
+{%-   set rs = it.row_status | default([]) %}
+{%-   set n = [aap_health_top | int, rs | select('in', ['FAIL', 'WARN']) | list | length] | max %}
+<table class="items"><thead><tr>{% for c in it.columns %}<th>{{ c | e }}</th>{% endfor %}</tr></thead><tbody>
+{%- for x in it.rows[:n] %}<tr class="{{ rs[loop.index0] | default('') }}">{% for c in x %}<td>{{ c | e }}</td>{% endfor %}</tr>{% endfor %}</tbody></table>
+{%-   if it.rows | length > n %}
+<details class="more"><summary>+{{ it.rows | length - n }} more</summary><table class="items"><tbody>
+{%- for x in it.rows[n:] %}<tr class="{{ rs[n + loop.index0] | default('') }}">{% for c in x %}<td>{{ c | e }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></details>
+{%-   endif %}
+{%- elif it.lines is defined %}
+<div class="lines">{{ it.lines | join('\n') | e }}</div>
+{%- endif %}</td><td class="hint">{{ r.hint | e }}</td></tr>
 {% endfor %}
     </tbody>
   </table></div>
@@ -82,7 +114,7 @@ footer { color: var(--muted); font-size: 12px; margin-top: 18px; }
 </main>
 <script>
 (function () {
-  document.querySelectorAll("th").forEach(function (th, i) {
+  document.querySelectorAll("table:not(.items) > thead th").forEach(function (th, i) {
     th.addEventListener("click", function () {
       var tb = th.closest("table").tBodies[0], col = th.cellIndex, up = th.dataset.dir !== "up";
       th.dataset.dir = up ? "up" : "down";
@@ -96,12 +128,12 @@ footer { color: var(--muted); font-size: 12px; margin-top: 18px; }
     b.addEventListener("click", function () {
       var bad = b.dataset.show === "bad";
       document.querySelectorAll("button[data-show]").forEach(function (o) { o.setAttribute("aria-pressed", o === b ? "true" : "false"); });
-      document.querySelectorAll("tbody tr.PASS").forEach(function (tr) { tr.classList.toggle("hide", bad); });
+      document.querySelectorAll("tbody tr.PASS, tbody tr.SKIP").forEach(function (tr) { if (!tr.closest("table.items")) tr.classList.toggle("hide", bad); });
     });
   });
   document.querySelectorAll("button[data-open]").forEach(function (b) {
     b.addEventListener("click", function () {
-      document.querySelectorAll("details").forEach(function (d) { d.open = b.dataset.open === "1"; });
+      document.querySelectorAll("details:not(.more)").forEach(function (d) { d.open = b.dataset.open === "1"; });
     });
   });
 })();

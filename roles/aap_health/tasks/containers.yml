@@ -34,6 +34,7 @@
           mem_warn_mb: "{{ aap_health_container_mem_warn_mb | float }}"
           mem_fail_mb: "{{ aap_health_container_mem_fail_mb | float }}"
           dangling_warn: "{{ aap_health_dangling_warn | int }}"
+          top: "{{ aap_health_top | int }}"
   rescue:
     - name: AAP health | containers - the check could not run
       ansible.builtin.set_fact:

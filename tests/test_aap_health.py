@@ -31,6 +31,11 @@ BIN = os.path.join(REPO, "tests", "aap_health", "bin")
 NOW = 1762300000          # 2025-11-04 23:46:40 UTC
 
 
+def words(text):
+    """The words of a text, without the full stops and semicolons a hint's split moves: what a split must keep."""
+    return sorted(w.rstrip(".;") for w in text.split() if w.rstrip(".;") and w != "#")
+
+
 def st(rows, area, check):
     m = [r for r in rows if r["area"] == area and r["check"] == check]
     return m[0]["status"] if m else None
@@ -170,6 +175,83 @@ class Parsers(unittest.TestCase):
         self.assertIn("names /var/tmp/x.pem, and it is not there", rows[0]["detail"])
 
 
+class Formatting(unittest.TestCase):
+    """The report website's and the email's cells and sections: one line per check, the lists as their own tables
+    (containers by memory, slow paths) or lines, long tokens cut so a table does not scroll sideways."""
+    CFG = {"user": "aap", "now": NOW, "min_uptime_s": 600, "restart_warn": 3, "mem_warn_mb": 4096, "mem_fail_mb": 8192,
+           "dangling_warn": 10, "top": 10}
+
+    def stats(self, n=25):
+        st = [{"name": "ctr-%02d" % i, "mem_usage": "%dMB / 16GB" % (100 + i), "mem_percent": "0.%d%%" % i, "cpu_percent": "1%"}
+              for i in range(n)]
+        st[3]["mem_usage"], st[7]["mem_usage"] = "8.5GB / 16GB", "5GB / 16GB"
+        return "@@@ ps\n[]\n@@@ stats\n" + json.dumps(st)
+
+    def test_memory_per_container_largest_first(self):
+        r = [x for x in f.containers(self.stats(), [], self.CFG) if x["check"] == "memory per container"][0]
+        self.assertEqual(r["status"], "FAIL")
+        self.assertEqual(r["detail"], "25 container(s); over 4096 MB: ctr-03 8704 MB, ctr-07 5120 MB")
+        self.assertEqual([x[0] for x in r["items"]["rows"][:3]], ["ctr-03", "ctr-07", "ctr-24"])
+        self.assertEqual(r["items"]["row_status"][:3], ["FAIL", "WARN", "PASS"])
+        self.assertEqual(len(r["items"]["rows"]), 25)                  # all of them in the JSON
+        sec = f.extra(r, 10)
+        self.assertEqual(len(sec["rows"]), 10)
+        self.assertEqual(sec["row_status"][:3], ["critical", "warning", ""])
+        self.assertIn("and 15 more", sec["text"])
+
+    def test_websocket_is_not_slow(self):
+        log = ('[t] "GET /api/controller/v2/websocket/ HTTP/1.1" 101 - 0 9 426900 426898 "-" "m" "i" "a" "u"\n'
+               '[t] "GET /api/controller/v2/hosts/ HTTP/1.1" 200 - 0 9 7000 6990 "-" "m" "i" "a" "u"')
+        cfg = {"since": "2h", "user": "aap", "proxy": "automation-gateway-proxy", "slow_ms": 5000, "slow_max": 15, "fivexx_fail": 10,
+               "web_patterns": {}, "task_patterns": {}, "web_fail": [], "other_patterns": {}}
+        rows = f.logs("@@@ proxy\n%s\n@@@ web\n\n@@@ task\n" % log, cfg)
+        slow = [x for x in rows if x["check"] == "gateway proxy slow requests"][0]
+        self.assertEqual(slow["items"]["rows"], [["/api/controller/v2/hosts/", "1", "7.0 s", "200 GET"]])
+        rows = f.logs("@@@ proxy\n%s\n@@@ web\n\n@@@ task\n" % log.splitlines()[0], cfg)
+        slow = [x for x in rows if x["check"] == "gateway proxy slow requests"][0]
+        self.assertEqual(slow["status"], "PASS")                         # only a websocket: nothing slow
+        self.assertIn("websocket connections (101) not counted: 1", slow["detail"])
+
+    def test_cells_one_line_tokens_cut(self):
+        long = "rid=" + "a1b2c3d4" * 20
+        c = f.cells({"status": "WARN", "check": "x", "detail": "in 2h: ERROR 3 %s\nsecond\nthird" % long})
+        self.assertNotIn("\n", c[2])
+        self.assertNotIn(";", c[2])
+        self.assertTrue(all(len(t) <= 60 for t in c[2].split()), c[2])
+        self.assertTrue(c[2].endswith("(+2 line(s) below)"))
+
+    def test_hint_parts_keep_every_word(self):
+        h = ("Started 3 min ago - restarted recently? As aap: systemctl --user status a.service --no-pager -l; podman logs --tail 50 a; "
+             "journalctl --user -u a.service -n 50 --no-pager. Starting it again is a person's decision (systemctl --user start a.service).")
+        first, prose, cmds = f.hint_parts(h)
+        self.assertEqual(first, "Started 3 min ago - restarted recently?")
+        self.assertEqual(cmds, ["# As aap:", "systemctl --user status a.service --no-pager -l", "podman logs --tail 50 a",
+                                "journalctl --user -u a.service -n 50 --no-pager"])
+        self.assertEqual(f.hint_cell(h), "Started 3 min ago - restarted recently?")
+        self.assertEqual(f.hint_cell("As aap: podman logs --tail 50 a; journalctl -n 50"), "As aap: podman logs --tail 50 a (+1 more below)")
+        self.assertEqual(words(prose + " " + " ".join(cmds)), words(h))
+        self.assertEqual(f.hint_parts(""), ("", "", []))
+
+    def test_email_sections(self):
+        rows = [f.row("logs", "automation-eda-api", "WARN", "in 2h: Traceback 0, ERROR 20", "look",
+                      {"lines": ["last: 2026-11-05 ERROR " + "x" * 400], "mono": True}),
+                f.row("db", "host variables: %s" % f.inv_label(8, "AD hosts"), "PASS", "fine"),
+                f.row("receptor", "mesh status", "SKIP", "receptorctl is in none of: receptor - not checked")]
+        secs = f.email_sections(rows, ["db", "logs", "receptor"])
+        titles = [x["title"] for x in secs]
+        self.assertEqual(titles, ["FAIL and WARN", "db", "logs", "logs: automation-eda-api", "logs: how to look", "receptor"])
+        self.assertEqual(secs[0]["rows"][0][3], "in 2h: Traceback 0, ERROR 20")
+        self.assertIn("(ID 8)", secs[1]["rows"][0][1])
+        self.assertIn("/inventories/inventory/<ID>/", secs[1]["text"])
+        self.assertLessEqual(len(secs[3]["cards"][0]["code"]), 240)          # the last log line, monospace
+        self.assertEqual(secs[4]["cards"], [{"status": "warning", "chip": "WARN", "title": "automation-eda-api",
+                                             "subject": "in 2h: Traceback 0, ERROR 20", "next": "look"}])
+        self.assertEqual(secs[5]["row_status"], [""])                  # not checked: neither red nor amber
+        self.assertIn("1 not checked", secs[5]["text"])
+        self.assertEqual(f.counts(rows)["SKIP"], 1)
+        self.assertEqual(f.problem_lines(rows), ["WARN logs / automation-eda-api: in 2h: Traceback 0, ERROR 20"])
+
+
 class Api(BaseHTTPRequestHandler):
     """The controller and gateway API, as much as the check reads."""
     auth = ("Basic " + base64.b64encode(b"admin:Pw-for-api").decode(), "Bearer tok-for-api")
@@ -296,9 +378,12 @@ class Playbook(unittest.TestCase):
         self.assertEqual(res.returncode, 0, res.stdout[-3000:])
         self.assertTrue(rows, res.stdout[-3000:])
         for r in rows:
-            self.assertEqual(set(r), {"area", "check", "status", "detail", "hint"})
-            self.assertIn(r["status"], ("PASS", "WARN", "FAIL"))
+            self.assertLessEqual({"area", "check", "status", "detail", "hint"}, set(r))
+            self.assertLessEqual(set(r), {"area", "check", "status", "detail", "hint", "items"})
+            self.assertIn(r["status"], ("PASS", "WARN", "FAIL", "SKIP"))
             self.assertTrue(r["status"] == "PASS" or r["hint"], r)
+            _, prose, cmds = f.hint_parts(r["hint"])
+            self.assertEqual(words(prose + " " + " ".join(cmds)), words(r["hint"]), r["hint"])   # "How to look" keeps every word
         self.assertNotIn("results could not be read", json.dumps(rows))
         self.assertEqual(st(rows, "setup", "installer inventory"), "PASS")
         # containers
@@ -307,30 +392,41 @@ class Playbook(unittest.TestCase):
         self.assertEqual(st(rows, "containers", "automation-controller-task"), "WARN")        # up 3 minutes
         self.assertEqual(st(rows, "containers", "automation-hub-api"), "WARN")                # 5 restarts
         self.assertEqual(st(rows, "containers", "postgresql"), "PASS")
-        self.assertEqual(st(rows, "containers", "memory per container"), "WARN")             # controller-web 5.1 GB
+        mem = [r for r in rows if r["check"] == "memory per container"][0]
+        self.assertEqual(mem["status"], "WARN")                                                   # controller-web 5.1 GB
+        self.assertIn("over 4096 MB: automation-controller-web 5222 MB", mem["detail"])
+        self.assertEqual(mem["items"]["rows"][0], ["automation-controller-web", "5222 MB", "30.91%", "2.0%"])
+        self.assertEqual(mem["items"]["row_status"][:2], ["WARN", "PASS"])
         self.assertIn("someone-elses", [r for r in rows if r["check"] == "other containers"][0]["detail"])
         # logs
         five = [r for r in rows if r["check"] == "gateway proxy 5xx"][0]
         self.assertEqual(five["status"], "WARN")
-        self.assertIn("3 of 5 request(s)", five["detail"])
-        self.assertIn("503 /api/controller/v2/inventories/8/hosts/", five["detail"])
+        self.assertIn("3 of 6 request(s)", five["detail"])              # the websocket line is a request too
+        self.assertIn(["503", "/api/controller/v2/inventories/8/hosts/", "2"], five["items"]["rows"])
         slow = [r for r in rows if r["check"] == "gateway proxy slow requests"][0]
-        self.assertIn("13.2 s  503  GET /api/controller/v2/inventories/8/hosts/?page_size=100", slow["detail"])
-        self.assertIn("6.1 s  200  GET /api/controller/v2/jobs/", slow["detail"])
-        self.assertIn("by path:\n    2  /api/controller/v2/inventories/8/hosts/\n    1  /api/controller/v2/jobs/", slow["detail"])
+        # the websocket (101, open 427 s) is a connection, not a slow request
+        self.assertRegex(slow["detail"], r"^3 request\(s\) took over \d+ s in \S+, on 2 path\(s\)")
+        self.assertIn("websocket connections (101) not counted: 1", slow["detail"])
+        self.assertEqual(slow["items"]["rows"], [["/api/controller/v2/inventories/8/hosts/", "2", "13.2 s", "503 GET"],
+                                                 ["/api/controller/v2/jobs/", "1", "6.1 s", "200 GET"]])
+        self.assertNotIn("websocket", json.dumps(slow["items"]))
         web = [r for r in rows if r["check"] == "controller-web"][0]
         self.assertEqual(web["status"], "FAIL")
         self.assertIn("HARAKIRI 3, worker killed 1, Traceback 1, OperationalError 1", web["detail"])
-        self.assertIn("requests killed (HARAKIRI), by path:\n    1  /api/controller/v2/inventories/8/hosts/\n    1  /api/v2/inventories/8/hosts/",
-                      web["detail"])
+        self.assertIn("2 request(s) killed (HARAKIRI)", web["detail"])
+        self.assertEqual(web["items"]["lines"][:3], ["requests killed (HARAKIRI), by path:", "    1  /api/controller/v2/inventories/8/hosts/",
+                                                     "    1  /api/v2/inventories/8/hosts/"])
         self.assertEqual(st(rows, "logs", "controller-task"), "WARN")
         self.assertEqual(st(rows, "logs", "automation-gateway"), "WARN")
-        self.assertIn("ERROR 1;", [r for r in rows if r["area"] == "logs" and r["check"] == "automation-gateway"][0]["detail"])   # not the INFO or ALWAYS lines
+        gwl = [r for r in rows if r["area"] == "logs" and r["check"] == "automation-gateway"][0]
+        self.assertTrue(gwl["detail"].endswith("ERROR 1"), gwl)                       # not the INFO or ALWAYS lines
+        self.assertEqual(len(gwl["items"]["lines"]), 1)
+        self.assertTrue(gwl["items"]["lines"][0].startswith("last: 2026-11-05 10:02:00,000 ERROR django.request"))
         self.assertIn("dispatcher error 1,", [r for r in rows if r["check"] == "controller-task"][0]["detail"])
         self.assertEqual(st(rows, "logs", "automation-hub-api"), "PASS")
         self.assertEqual(st(rows, "logs", "automation-eda-api"), "PASS")          # an INFO line is not an ERROR
         # db
-        inv8 = [r for r in rows if r["check"] == "host variables: inventory 8 AD hosts"][0]
+        inv8 = [r for r in rows if r["check"] == "host variables: AD hosts (ID 8)"][0]
         self.assertEqual(inv8["status"], "FAIL")
         self.assertIn("1500 host(s)", inv8["detail"])
         self.assertIn("job host summaries 1320000 (one host has 7500)", inv8["detail"])
@@ -359,7 +455,7 @@ class Playbook(unittest.TestCase):
         self.assertEqual(st(rows, "api", "project updates"), "PASS")
         self.assertEqual(st(rows, "api", "cleanup: activity stream"), "PASS")
         self.assertEqual(st(rows, "api", "cleanup: job details"), "FAIL")
-        hp = [r for r in rows if r["check"] == "hosts page: inventory 8 AD hosts"][0]
+        hp = [r for r in rows if r["check"] == "hosts page: AD hosts (ID 8)"][0]
         self.assertEqual(hp["status"], "FAIL")
         self.assertRegex(hp["detail"], r"HTTP 503 in 1\.\d s.*with page_size=1: HTTP 200 in 0\.\d s")
         self.assertIn("each host costs time", hp["hint"])
@@ -387,7 +483,7 @@ class Playbook(unittest.TestCase):
         res, rows, _ = self.run_pb("--tags", "db", env_extra={"AAPH_PEER_REFUSE": "1"})
         self.assertEqual(res.returncode, 0, res.stdout[-3000:])
         self.assertEqual(set(r["area"] for r in rows), {"setup", "db"}, rows)
-        self.assertEqual(st(rows, "db", "host variables: inventory 8 AD hosts"), "FAIL")      # read with the inventory's password
+        self.assertEqual(st(rows, "db", "host variables: AD hosts (ID 8)"), "FAIL")      # read with the inventory's password
         self.assertNotIn("pw-from-inventory", res.stdout)
 
     def test_check_mode_and_broken_checks(self):
@@ -401,8 +497,14 @@ class Playbook(unittest.TestCase):
         self.assertEqual(st(rows, "db", "connect"), "FAIL")
         _, rows2, _ = self.run_pb("--tags", "receptor", aap_health_receptorctl_containers=["receptor"])
         r = [r for r in rows2 if r["area"] == "receptor"][0]
-        self.assertEqual(r["status"], "WARN")
+        self.assertEqual(r["status"], "SKIP")                                 # it could not be checked here: not AAP's problem
         self.assertIn("receptorctl is in none of: receptor - not checked", r["detail"])
+        # no receptorctl command in the controller web container: receptor's Python library there, status only
+        _, rows3, html3 = self.run_pb("--tags", "receptor", aap_health_receptorctl_containers=["automation-controller-web"])
+        r = [r for r in rows3 if r["area"] == "receptor"][0]
+        self.assertEqual(r["status"], "PASS", r)
+        self.assertIn("receptorctl in automation-controller-web (receptorctl library, python3)", r["detail"])
+        self.assertEqual(r["items"]["rows"], [["aap01", "this node"], ["exec01", "via exec01"], ["exec02", "via exec01"]])
         self.assertIn("Connection refused", [r for r in rows if r["check"] == "controller ping"][0]["detail"])
 
     def test_token_and_one_host_slow(self):
@@ -413,7 +515,7 @@ class Playbook(unittest.TestCase):
             Api.slim_refused = False
         self.assertEqual(res.returncode, 0, res.stdout[-3000:])
         self.assertEqual(st(rows, "api", "instance exec01"), "FAIL")                          # read with the token
-        hp = [r for r in rows if r["check"] == "hosts page: inventory 8 AD hosts"][0]
+        hp = [r for r in rows if r["check"] == "hosts page: AD hosts (ID 8)"][0]
         self.assertIn("with page_size=1: HTTP 503", hp["detail"])
         self.assertIn("Even one host fails", hp["hint"])
         self.assertNotIn("tok-for-api", res.stdout)

@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """AAP health check (roles/aap_health): read what the shell tasks printed on the AAP host and turn it into
-results - one dict per check, {area, check, status, detail, hint}, status PASS, WARN or FAIL.
+results - one dict per check, {area, check, status, detail, hint}, status PASS, WARN, FAIL or SKIP (a check that
+could not run here: not a problem of AAP's), and for a list (containers by memory, slow paths, log lines) "items": a
+small table {columns, rows, row_status, more} or {lines} - the detail is then its one-line summary.
 
 The tasks only collect (read-only commands, each section headed by "@@@ name"); every threshold and every
 parse is here, so it is tested without an AAP host (tests/test_aap_health.py). A parse that breaks gives a
@@ -20,8 +22,22 @@ SECRET = re.compile(r"(pass(word)?|secret|token|_key$|passphrase)", re.I)
 # ---------------------------------------------------------------------------------------------------------------
 # helpers
 
-def row(area, check, status, detail, hint=""):
-    return {"area": area, "check": check, "status": status, "detail": detail, "hint": hint}
+def row(area, check, status, detail, hint="", items=None):
+    r = {"area": area, "check": check, "status": status, "detail": detail, "hint": hint}
+    if items:
+        r["items"] = items
+    return r
+
+
+def cut(text, n=200, word=60):
+    """One line for a table cell: a long token (a path, a request ID) shortened, the line cut at n."""
+    text = re.sub(r"\S{%d,}" % (word + 1), lambda m: m.group(0)[:word - 1] + "\u2026", str(text or ""))
+    return text if len(text) <= n else text[:n - 1] + "\u2026"
+
+
+def inv_label(iid, name):
+    """An inventory as the report names it: its name, then the ID its AAP address shows (.../inventories/inventory/ID/)."""
+    return "%s (ID %s)" % (name, iid) if name else "ID %s" % iid
 
 
 def _num(cfg):
@@ -612,27 +628,31 @@ def containers(text, units, cfg):
     if extra:
         rows.append(row("containers", "other containers", "PASS",
                         "not started by an AAP unit: " + ", ".join("%s (%s)" % (n, by[n].get("State", "?")) for n in sorted(extra))))
-    # memory per container
+    # memory per container: the largest first, the top ones as a table, the containers over the limits named
     stats = _json(_sec(s, "stats")["out"])
     if stats == []:
         rows.append(row("containers", "memory per container", "PASS", "no running containers"))
     elif isinstance(stats, list):
-        big = []
         lines = []
         for x in stats:
             nm = x.get("name") or x.get("Name") or "?"
             use = str(x.get("mem_usage") or x.get("MemUsage") or "").split("/")[0]
-            mb = size_mb(use)
-            lines.append((mb, nm, x.get("cpu_percent") or x.get("CPU") or "?"))
-            if mb >= cfg["mem_warn_mb"]:
-                big.append((mb, nm))
-        lines.sort(reverse=True)
-        st = "FAIL" if any(mb >= cfg["mem_fail_mb"] for mb, _ in big) else "WARN" if big else "PASS"
-        rows.append(row("containers", "memory per container", st,
-                        "\n".join("%8.0f MB  %-6s %s" % (mb, cpu, nm) for mb, nm, cpu in lines),
-                        "" if st == "PASS" else "Above %d MB: %s. controller-web grows with large API answers (inventory "
-                        "hosts with big variables); controller-task with concurrent jobs." % (
-                            cfg["mem_warn_mb"], ", ".join(nm for _, nm in big))))
+            pct = str(x.get("mem_percent") or x.get("MemPerc") or "").strip() or "-"
+            lines.append((size_mb(use), nm, pct, str(x.get("cpu_percent") or x.get("CPU") or "-").strip()))
+        lines.sort(key=lambda t: (-t[0], t[1]))
+        over = lambda mb: "FAIL" if mb >= cfg["mem_fail_mb"] else "WARN" if mb >= cfg["mem_warn_mb"] else "PASS"   # noqa: E731
+        big = [(mb, nm) for mb, nm, _, _ in lines if over(mb) != "PASS"]
+        st = worst(*[over(mb) for mb, _ in big]) if big else "PASS"
+        shown = [t for t in lines if over(t[0]) != "PASS"] + [t for t in lines if over(t[0]) == "PASS"]
+        summary = ("%d container(s); over %d MB: %s" % (len(lines), cfg["mem_warn_mb"], ", ".join("%s %.0f MB" % (nm, mb) for mb, nm in big))
+                   if big else "%d container(s), all under %d MB; the largest %s %.0f MB" % (len(lines), cfg["mem_warn_mb"], lines[0][1], lines[0][0])
+                   if lines else "no container answered")
+        rows.append(row("containers", "memory per container", st, summary,
+                        "" if st == "PASS" else "controller-web grows with large API answers (inventory hosts with big variables); "
+                        "controller-task with concurrent jobs.",
+                        {"columns": ["Container", "Memory", "Memory %", "CPU %"],
+                         "rows": [[nm, "%.0f MB" % mb, pct, cpu] for mb, nm, pct, cpu in shown],
+                         "row_status": [over(mb) for mb, _, _, _ in shown]}))
     else:
         rows.append(row("containers", "memory per container", "WARN",
                         "podman stats did not answer: %s" % (_sec(s, "stats")["out"].strip()[:200] or "no output"),
@@ -716,35 +736,43 @@ def logs(text, cfg):
             else:
                 bad += 1
         total = px["count"] if px["count"] is not None else len(lines)
-        cut = " (the last %d read)" % len(lines) if total > len(lines) else ""
+        cut_ = " (the last %d read)" % len(lines) if total > len(lines) else ""
         if px["rc"] == 124:
-            cut += " (podman logs stopped after %s s: the counts are partial; raise aap_health_cmd_timeout)" % cfg.get("timeout", "?")
+            cut_ += " (podman logs stopped after %s s: the counts are partial; raise aap_health_cmd_timeout)" % cfg.get("timeout", "?")
         if lines and not parsed:
             rows.append(row("logs", "gateway proxy 5xx", "WARN",
                             "%d line(s) in %s, none in a known access-log format; first: %s" % (total, since, lines[0][:300]),
                             "Set aap_health_envoy_regex (named groups path, code, dur, up) to read your format."))
         else:
             five = [e for e in parsed if e["code"] >= 500]
-            c = Counter("%d %s" % (e["code"], e["path"].split("?")[0]) for e in five)
+            c = Counter((e["code"], e["path"].split("?")[0]) for e in five)
             st = "FAIL" if len(five) >= cfg["fivexx_fail"] else "WARN" if five else "PASS"
             rows.append(row("logs", "gateway proxy 5xx", st,
-                            "%d of %d request(s) in %s were 5xx%s%s%s" % (
-                                len(five), len(parsed), since, cut, (" (%d line(s) not requests)" % bad) if bad else "",
-                                (":\n" + "\n".join("%5d  %s" % (k[1], k[0]) for k in top(c, n))) if five else ""),
+                            "%d of %d request(s) in %s were 5xx%s%s" % (
+                                len(five), len(parsed), since, cut_, (" (%d line(s) not requests)" % bad) if bad else ""),
                             "" if st == "PASS" else "As %s: podman logs --since %s %s 2>&1 | grep '\" 50[0-9] '; then the controller "
-                            "and logs rows below for the same time." % (cfg["user"], since, cfg["proxy"])))
-            slow = sorted((e for e in parsed if (e["up"] if e["up"] is not None else e["dur"] or 0) >= cfg["slow_ms"]),
-                          key=lambda e: -(e["up"] if e["up"] is not None else e["dur"] or 0))
+                            "and logs rows below for the same time." % (cfg["user"], since, cfg["proxy"]),
+                            {"columns": ["Status", "Path", "Requests"],
+                             "rows": [[str(k[0]), k[1], str(v)] for k, v in c.most_common()]} if five else None))
+            # a websocket upgrade (101) stays open as long as the browser does: a long one is not a slow request
+            took = lambda e: e["up"] if e["up"] is not None else e["dur"] or 0   # noqa: E731
+            ws = [e for e in parsed if e["code"] == 101]
+            slow = sorted((e for e in parsed if e["code"] != 101 and took(e) >= cfg["slow_ms"]), key=lambda e: -took(e))
             st = "WARN" if slow else "PASS"
             bypath = Counter(e["path"].split("?")[0] for e in slow)
+            slowest = {}
+            for e in slow:
+                slowest.setdefault(e["path"].split("?")[0], e)
+            wsnote = "; websocket connections (101) not counted: %d" % len(ws) if ws else ""
             rows.append(row("logs", "gateway proxy slow requests", st,
-                            ("%d request(s) took over %.0f s; by path:\n%s\nslowest:\n%s" % (
-                                len(slow), cfg["slow_ms"] / 1000.0, "\n".join("%5d  %s" % (v, k) for k, v in top(bypath, n)),
-                                "\n".join("%7.1f s  %d  %s %s" % ((e["up"] if e["up"] is not None else e["dur"]) / 1000.0, e["code"],
-                                                                  e["method"], e["path"][:200]) for e in slow[:cfg["slow_max"]])))
-                            if slow else "none over %.0f s in %s" % (cfg["slow_ms"] / 1000.0, since),
+                            ("%d request(s) took over %.0f s in %s, on %d path(s)%s" % (len(slow), cfg["slow_ms"] / 1000.0, since,
+                                                                                    len(bypath), wsnote))
+                            if slow else "none over %.0f s in %s%s" % (cfg["slow_ms"] / 1000.0, since, wsnote),
                             "" if not slow else "The same path again and again (inventories/N/hosts/) = an API answer that is too "
-                            "big or slow to build: the db check's host variables rows and the api check's timing rows say which."))
+                            "big or slow to build: the db check's host variables rows and the api check's timing rows say which.",
+                            {"columns": ["Path", "Requests", "Slowest", "Its status"],
+                             "rows": [[k, str(v), "%.1f s" % (took(slowest[k]) / 1000.0), "%d %s" % (slowest[k]["code"], slowest[k]["method"])]
+                                      for k, v in bypath.most_common()]} if slow else None))
     # controller web / task, the others
     for key, label, pats, fail_on in (("web", "controller-web", cfg["web_patterns"], cfg["web_fail"]),
                                       ("task", "controller-task", cfg["task_patterns"], [])):
@@ -763,23 +791,26 @@ def logs(text, cfg):
         # uwsgi's "... WAS managing request /path", or AAP's "HARAKIRI [core 0] <client> - GET /path since ..."
         killed = Counter((m.group(1) or m.group(2)).split("?")[0] for m in (
             re.search(r"managing request (\S+)|HARAKIRI \[core \d+\] \S+ - [A-Z]+ (\S+)", x) for x in lines) if m)
-        paths = ("\nrequests killed (HARAKIRI), by path:\n%s" % "\n".join("%5d  %s" % (v, k) for k, v in top(killed, n))) if killed else ""
         rows.append(row("logs", label, st,
-                        ("in %s: %s%s\nlast %d:\n%s" % (since_, ", ".join("%s %d" % (k, c.get(k, 0)) for k in pats), paths,
-                                                       min(10, len(lines)), "\n".join(x[:300] for x in lines[-10:])))
+                        ("in %s: %s%s" % (since_, ", ".join("%s %d" % (k, c.get(k, 0)) for k in pats),
+                                          ("; %d request(s) killed (HARAKIRI)" % sum(killed.values())) if killed else ""))
                         if lines else "nothing matching %s in %s" % (", ".join(pats), since_),
                         "" if st == "PASS" else "As %s: podman logs --since %s %s 2>&1 | grep -E '%s'. HARAKIRI / worker killed = "
                         "a request ran longer than uwsgi allows and the worker was killed (the 503s): find its path in the gateway "
-                        "proxy rows." % (cfg["user"], since, cfg[key], "|".join(pats.values())[:120])))
+                        "proxy rows." % (cfg["user"], since, cfg[key], "|".join(pats.values())[:120]),
+                        {"lines": (["requests killed (HARAKIRI), by path:"] + ["%5d  %s" % (v, k) for k, v in top(killed, n)]
+                                   if killed else []) + ["last %d:" % min(10, len(lines))] + [x[:300] for x in lines[-10:]], "mono": True}
+                        if lines else None))
     for name, sec in sorted((k[6:], v) for k, v in s.items() if k.startswith("other:")):
         lines = [x for x in sec["out"].splitlines() if x.strip()]
         c = _classify(lines, cfg["other_patterns"])
         st = "WARN" if lines else "PASS"
         rows.append(row("logs", name, st,
-                        ("in %s: %s; last: %s" % (since, ", ".join("%s %d" % (k, c.get(k, 0)) for k in cfg["other_patterns"]),
-                                                  lines[-1][:300])) if lines else "no %s in %s" % (" / ".join(cfg["other_patterns"]), since),
+                        ("in %s: %s" % (since, ", ".join("%s %d" % (k, c.get(k, 0)) for k in cfg["other_patterns"])))
+                        if lines else "no %s in %s" % (" / ".join(cfg["other_patterns"]), since),
                         "" if st == "PASS" else "As %s: podman logs --since %s %s 2>&1 | grep -E -A5 'Traceback| ERROR |\\[ERROR\\]'" % (
-                            cfg["user"], since, name)))
+                            cfg["user"], since, name),
+                        {"lines": ["last: " + lines[-1][:240] + ("\u2026" if len(lines[-1]) > 240 else "")], "mono": True} if lines else None))
     return rows
 
 
@@ -826,7 +857,7 @@ def db(text, stderr, rc, cfg):
             ok += 1
             continue
         flagged.append(iid)
-        rows.append(row("db", "host variables: inventory %s %s" % (iid, name), st,
+        rows.append(row("db", "host variables: %s" % inv_label(iid, name), st,
                         "%d host(s); variables total %s, average %s, largest %s; facts total %s, average %s, largest %s; job host "
                         "summaries %d (one host has %d); %d group(s), a host in up to %d (average %d)%s" % (
                             hosts, kb(vsum), kb(vavg), kb(vmax), kb(fsum), kb(favg), kb(fmax), jtotal, jmax, gcount, gmax, gavg,
@@ -842,7 +873,7 @@ def db(text, stderr, rc, cfg):
                         "attributes the jobs use, e.g. attributes: {dNSHostName: {}, operatingSystem: {}}; then sync). The largest "
                         "hosts: SELECT name, length(variables) FROM main_host WHERE inventory_id=%s ORDER BY 2 DESC LIMIT 10;" % iid))
         if fst != "PASS":
-            rows.append(row("db", "host facts: inventory %s %s" % (iid, name), fst,
+            rows.append(row("db", "host facts: %s" % inv_label(iid, name), fst,
                             "ansible_facts average %s per host (total %s)" % (kb(favg), kb(fsum)),
                             "Facts are kept when jobs use gather_facts with fact caching (use_fact_cache on the template)."))
     if invs:
@@ -850,7 +881,7 @@ def db(text, stderr, rc, cfg):
                         "%d inventor%s under %d KB average / %d KB largest" % (ok, "y" if ok == 1 else "ies", cfg["vars_avg_warn_kb"],
                                                                               cfg["vars_max_warn_kb"])))
     for want in sorted(focus - set(f[0] for f in invs)):
-        rows.append(row("db", "host variables: inventory %s" % want, "WARN", "inventory %s is not in the database" % want,
+        rows.append(row("db", "host variables: %s" % inv_label(want, ""), "WARN", "inventory ID %s is not in the database" % want,
                         "aap_health_focus_inventories names an ID that does not exist"))
     size = _int(_sec(s, "dbsize")["out"])
     tabs = _rows(_sec(s, "tables")["out"], 3)
@@ -1063,7 +1094,7 @@ def api(resp, timings, cfg):
                 slim_txt = "with page_size=1: HTTP %s in %.1f s" % (scode or "none", ssecs)
                 hint = ("Even one host fails: the request itself is slow, not its hosts - the controller (HARAKIRI, memory) or "
                         "the database (the db rows).")
-            rows.append(row("api", "hosts page: inventory %s %s" % (t.get("id"), t.get("name")), st,
+            rows.append(row("api", "hosts page: %s" % inv_label(t.get("id"), t.get("name")), st,
                             "hosts/?page_size=100: HTTP %s in %.1f s, %s; %s (%s host(s))" % (
                                 code or "none", secs, kb(size), slim_txt, t.get("hosts", "?")),
                             "" if st == "PASS" else hint))
@@ -1105,9 +1136,11 @@ def api(resp, timings, cfg):
         svc = g["json"].get("services") or {}
         names = ", ".join(sorted(svc)) if isinstance(svc, dict) else ""
         rows.append(row("api", "gateway service clusters", "WARN" if badones else "PASS",
-                        ("not good: " + "; ".join(badones[:12])) if badones else "all good%s" % ((": " + names) if names else ""),
+                        ("%d not good" % len(badones)) if badones else "all good%s" % ((": " + names) if names else ""),
                         "" if not badones else "%s/api/gateway/v1/status/ shows each service cluster's nodes; as the AAP user: "
-                        "podman logs --tail 100 automation-gateway" % cfg["url"]))
+                        "podman logs --tail 100 automation-gateway" % cfg["url"],
+                        {"lines": badones[:cfg.get("top", 12)] + (["+%d more" % (len(badones) - cfg.get("top", 12))]
+                                                                 if len(badones) > cfg.get("top", 12) else [])} if badones else None))
     elif cfg.get("auth"):
         bad("gateway_status", "gateway service clusters", g)
     return rows
@@ -1126,7 +1159,7 @@ def receptor(text, cfg):
     j = _json(st_["out"])
     if st_["rc"] not in (0, None) or not isinstance(j, dict):
         if st_["rc"] == 127 and not where:
-            return [row("receptor", "mesh status", "WARN", st_["out"].strip()[:300] + " - not checked (the instances rows "
+            return [row("receptor", "mesh status", "SKIP", st_["out"].strip()[:300] + " - not checked (the instances rows "
                         "of the api check show the mesh's nodes as the controller sees them)",
                         "If receptorctl is in another container: aap_health_receptorctl_containers: [<its name>].")]
         if st_["rc"] == 0 and st_["out"].strip():
@@ -1140,10 +1173,13 @@ def receptor(text, cfg):
     work = sorted(set(w.get("WorkType") for a in j.get("Advertisements") or [] for w in a.get("WorkCommands") or [] if w.get("WorkType")))
     unrouted = [n for n in nodes if n != j.get("NodeID") and n not in routes]
     return [row("receptor", "mesh status", "WARN" if unrouted else "PASS",
-                "this node %s; nodes %s; routes %s; work types %s%s%s" % (
-                    j.get("NodeID"), ", ".join(nodes), ", ".join("%s via %s" % kv for kv in sorted(routes.items())) or "none",
-                    ", ".join(work) or "none", ("; no route to " + ", ".join(unrouted)) if unrouted else "", via),
-                "" if not unrouted else "receptorctl status on both ends; podman logs --tail 50 receptor")]
+                "this node %s; %d node(s)%s; work types %s%s" % (
+                    j.get("NodeID"), len(nodes), ("; no route to " + ", ".join(unrouted)) if unrouted else "",
+                    ", ".join(work) or "none", via),
+                "" if not unrouted else "receptorctl status on both ends; podman logs --tail 50 receptor",
+                {"columns": ["Node", "Route"], "rows": [[n, "this node" if n == j.get("NodeID") else
+                                                         ("via %s" % routes[n]) if n in routes else "NO ROUTE"] for n in nodes],
+                 "row_status": ["WARN" if n in unrouted else "PASS" for n in nodes]})]
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -1215,8 +1251,16 @@ def certs(text, labels, cfg):
 # ---------------------------------------------------------------------------------------------------------------
 # the report
 
+RANK = {"FAIL": 0, "WARN": 1, "PASS": 2, "SKIP": 3}
+EMAIL_STATUS = {"FAIL": "critical", "WARN": "warning", "PASS": "ok", "SKIP": ""}
+AREA_NOTE = {"db": "Inventories are named with their ID - the number in the inventory's address in AAP (.../inventories/"
+                   "inventory/<ID>/...); aap_health_focus_inventories and aap_health_api_time_inventories take those IDs.",
+             "api": "Inventories are named with their ID - the number in the inventory's address in AAP (.../inventories/"
+                    "inventory/<ID>/...); aap_health_focus_inventories and aap_health_api_time_inventories take those IDs."}
+
+
 def counts(rows):
-    c = {"PASS": 0, "WARN": 0, "FAIL": 0}
+    c = {"PASS": 0, "WARN": 0, "FAIL": 0, "SKIP": 0}
     for r in rows or []:
         c[r.get("status", "WARN")] = c.get(r.get("status", "WARN"), 0) + 1
     return c
@@ -1232,16 +1276,157 @@ def problem_lines(rows):
 
 
 def by_area(rows, order):
-    """[(area, [rows])] in the areas' order, FAIL first inside each."""
-    rank = {"FAIL": 0, "WARN": 1, "PASS": 2}
+    """[(area, [rows])] in the areas' order, FAIL first inside each (SKIP last)."""
     areas = list(order) + sorted(set(r["area"] for r in rows or []) - set(order))
-    return [(a, sorted([r for r in rows if r["area"] == a], key=lambda r: rank.get(r["status"], 1)))
+    return [(a, sorted([r for r in rows if r["area"] == a], key=lambda r: RANK.get(r["status"], 1)))
             for a in areas if any(r["area"] == a for r in rows)]
 
 
+CMD_WORDS = (r"(?:sudo|podman|systemctl|journalctl|psql|SELECT|curl|openssl|receptorctl|trust|loginctl|ausearch|"
+             r"fapolicyd-cli|find|free|vmstat|semanage|update-ca-trust|XDG_RUNTIME_DIR=\S+|grep|cat|df|du|chronyc|"
+             r"dig|getent|ss|ip|awx-manage|ansible|lvextend|vgs|lvs)(?:\s|$)")
+CMD = re.compile("^" + CMD_WORDS)
+
+
+def _sentences(text):
+    """A hint's sentences: split after ". " where the next one starts a new sentence (a capital, a command word)."""
+    return [x for x in re.split(r"(?<=[.!?])\s+(?=[A-Z(\"'*]|%s)" % CMD_WORDS, (text or "").strip()) if x]
+
+
+def hint_parts(hint):
+    """A hint as (its first sentence, its prose, its commands): the prose and the commands together are every word of it
+    (a command's last full stop dropped); "As aap: podman ...; journalctl ..." -> prose "As aap:", two commands."""
+    hint = (hint or "").strip()
+    if not hint:
+        return "", "", []
+    sents = [x for x in _sentences(hint) if x]
+    prose, cmds = [], []
+    for sent in sents:
+        body = sent
+        m = re.match(r"^(.*?:)\s+(%s.*)$" % CMD_WORDS, sent)
+        if m and len(m.group(1)) <= 30:
+            cmds.append("# " + m.group(1))       # "As aap:" - who runs the commands under it
+            body = m.group(2)
+        elif m:
+            prose.append(m.group(1))
+            body = m.group(2)
+        elif not CMD.match(sent):
+            prose.append(sent)
+            continue
+        for part in re.split(r";\s+(?=%s)" % CMD_WORDS, body):
+            part = part.strip()
+            if CMD.match(part):
+                cmds.append(part[:-1] if part.endswith(".") and not part.endswith("..") else part)
+            elif part:
+                prose.append(part)
+    return sents[0], " ".join(prose), cmds
+
+
+def summary(r):
+    """The detail's first line, cut, for a table cell; with more lines under it: says so (they are a section below)."""
+    lines = (r.get("detail") or "").splitlines()
+    first = lines[0] if lines else ""
+    more = len(lines) - 1 if len(lines) > 1 and not r.get("items") else 0
+    if more:
+        return cut(first.rstrip(" :"), 200) + " (+%d line(s) below)" % more
+    return cut(first, 200)
+
+
 def cells(r):
-    """One result as a table row of the report website and the email: [status, check, detail on one line]."""
-    return [r.get("status", ""), r.get("check", ""), re.sub(r"\s*\n\s*", "; ", r.get("detail") or "")]
+    """One result as a table row of the report website and the email: [status, check, its summary]; the rest of a long
+    detail and its items are a section of their own (email_sections)."""
+    return [r.get("status", ""), r.get("check", ""), summary(r)]
+
+
+def extra(r, top=10):
+    """The section under an area's table for one row with more to show (items, or a detail of several lines), or None."""
+    it = r.get("items") or {}
+    lines = (r.get("detail") or "").splitlines()
+    title = "%s: %s" % (r.get("area", ""), r.get("check", ""))
+    st = EMAIL_STATUS.get(r.get("status"), "")
+    if it.get("columns"):
+        rs = it.get("rows") or []
+        flagged = [x for x in it.get("row_status") or [] if x in ("FAIL", "WARN")]
+        n = max(top, len(flagged))
+        sec = {"title": title, "columns": it["columns"], "rows": [[cut(c, 120) for c in x] for x in rs[:n]]}
+        if it.get("row_status"):
+            sec["row_status"] = [EMAIL_STATUS.get(x, "") if x in ("FAIL", "WARN") else "" for x in it["row_status"][:n]]
+        sec["text"] = cut(lines[0] if lines else "", 300) + (" - and %d more (all of them in the JSON beside the HTML report)" % (len(rs) - n)
+                                                             if len(rs) > n else "")
+    elif it.get("lines") or len(lines) > 1:
+        src = it.get("lines") or lines[1:]
+        keep = [cut(x, 240, 90) for x in src[:max(top, 12)]] + (["+%d more" % (len(src) - max(top, 12))] if len(src) > max(top, 12) else [])
+        sec = {"title": title, "cards": [{"status": st or "info", "chip": r.get("status", ""), "title": r.get("check", ""),
+                                          "subject": cut(lines[0] if lines else "", 160), "code": "\n".join(keep)}]}
+    else:
+        return None
+    if st in ("critical", "warning"):
+        sec["status"] = st
+    return sec
+
+
+def hint_cell(hint):
+    """A hint for a table cell: its first sentence; one that is commands ("As aap: systemctl ...; podman ...") gives its
+    first command, short, and how many more are under the area ("How to look")."""
+    first, _, _ = hint_parts(hint)
+    _, prose, cmds = hint_parts(first)
+    lead = " ".join(c[2:] for c in cmds if c.startswith("# "))
+    cmds = [c for c in cmds if not c.startswith("# ")]
+    if not cmds:
+        return cut(first, 160)
+    more = len([c for c in hint_parts(hint)[2] if not c.startswith("# ")]) - 1
+    return cut(" ".join(x for x in (prose, lead, cut(cmds[0], 70, 40)) if x), 120) + (" (+%d more below)" % more if more else "")
+
+
+def how_to_look(rows):
+    """A "How to look" section for an area's FAIL and WARN rows: one card each - the check, its detail, the hint's prose,
+    and its commands one per line (monospace, with a Copy button where the look has one). Every word of each hint."""
+    cards = []
+    for r in rows:
+        if r.get("status") not in ("FAIL", "WARN") or not r.get("hint"):
+            continue
+        _, prose, cmds = hint_parts(r["hint"])
+        card = {"status": EMAIL_STATUS[r["status"]], "chip": r["status"], "title": r.get("check", ""),
+                "subject": cut((r.get("detail") or "").splitlines()[0] if r.get("detail") else "", 160), "next": prose}
+        if cmds:
+            card["code"] = "\n".join(cmds)
+        cards.append(card)
+    return cards
+
+
+def email_sections(rows, order, top=10):
+    """The report website's and the email's sections, as the HTML report on the AAP host reads: FAIL and WARN first (one
+    line each, the hint's first sentence), then each area - its table (status, check, a one-line detail, the hint's
+    first sentence), the lists of its FAIL and WARN rows (containers by memory, slow paths, the last log lines...), and
+    "How to look": each FAIL or WARN row's whole hint, its commands one per line."""
+    first = lambda r: hint_cell(r.get("hint"))   # noqa: E731
+    out = []
+    bad = sorted((r for r in rows or [] if r.get("status") in ("FAIL", "WARN")), key=lambda r: RANK[r["status"]])
+    if bad:
+        c = counts(rows)
+        out.append({"title": "FAIL and WARN", "status": "critical" if c["FAIL"] else "warning",
+                    "text": "Each one's list and how to look at it are under its area below.",
+                    "columns": ["Status", "Area", "Check", "Detail", "Hint"],
+                    "rows": [[r["status"], r["area"], r["check"], summary(r), first(r)] for r in bad],
+                    "row_status": [EMAIL_STATUS[r["status"]] for r in bad]})
+    for area, rs in by_area(rows, order):
+        c = counts(rs)
+        text = "%d fail, %d warn, %d pass%s" % (c["FAIL"], c["WARN"], c["PASS"], (", %d not checked" % c["SKIP"]) if c["SKIP"] else "")
+        if area in AREA_NOTE and any("(ID " in r.get("check", "") for r in rs):
+            text += ". " + AREA_NOTE[area]
+        out.append({"title": area, "text": text, "status": "critical" if c["FAIL"] else "warning" if c["WARN"] else "ok",
+                    "columns": ["Status", "Check", "Detail", "Hint"], "rows": [cells(r) + [first(r)] for r in rs],
+                    "row_status": [EMAIL_STATUS.get(r["status"], "") for r in rs]})
+        for r in rs:
+            if r.get("status") in ("FAIL", "WARN"):
+                sec = extra(r, top)
+                if sec:
+                    out.append(sec)
+        cards = how_to_look(rs)
+        if cards:
+            out.append({"title": "%s: how to look" % area, "cards": cards,
+                        "status": "critical" if c["FAIL"] else "warning"})
+    return out
 
 
 class FilterModule(object):
@@ -1263,4 +1448,6 @@ class FilterModule(object):
             "aap_health_by_area": by_area,
             "aap_health_envoy_line": envoy_line,
             "aap_health_cells": cells,
+            "aap_health_email_sections": email_sections,
+            "aap_health_hint_parts": hint_parts,
         }

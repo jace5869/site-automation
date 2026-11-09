@@ -10,7 +10,8 @@ NOW = int(os.environ.get("AAPH_NOW", "1762300000"))
 C = [  # name, state, status, started (s ago), restarts, mounts
     ("automation-gateway-proxy", "running", "Up 3 hours", 10800, 0, [(FAKE + "/gateway.cert", "/etc/ansible-automation-platform/gateway/gateway.cert")]),
     ("automation-gateway", "running", "Up 3 hours", 10800, 0, [(FAKE + "/gateway.cert", "/etc/gw/gateway.cert"), (FAKE + "/gateway.key", "/etc/gw/gateway.key")]),
-    ("automation-controller-web", "running", "Up 3 hours", 10800, 0, [(FAKE + "/tower.cert", "/etc/tower/tower.cert")]),
+    ("automation-controller-web", "running", "Up 3 hours", 10800, 0, [(FAKE + "/tower.cert", "/etc/tower/tower.cert"),
+                                                                       (FAKE + "/receptor.sock", "/var/run/receptor/receptor.sock")]),
     ("automation-controller-task", "running", "Up 3 minutes", 180, 0, [(FAKE + "/receptor.sock", "/run/awx-receptor/receptor.sock")]),
     ("automation-controller-rsyslog", "exited", "Exited (1) 5 minutes ago", 0, 0, []),
     ("automation-hub-api", "running", "Up 2 hours", 7200, 5, []),
@@ -24,6 +25,7 @@ PROXY = """[2026-11-05T10:00:00.000Z] "GET /api/controller/v2/ping/ HTTP/1.1" 20
 [2026-11-05T10:00:01.000Z] "GET /api/controller/v2/inventories/8/hosts/?page_size=100 HTTP/1.1" 503 - 0 95 13012 13010 "-" "Mozilla/5.0" "id2" "aap" "127.0.0.1:8052"
 [2026-11-05T10:00:02.000Z] "GET /api/controller/v2/inventories/8/hosts/?page_size=100 HTTP/1.1" 503 - 0 95 13230 13228 "-" "Mozilla/5.0" "id3" "aap" "127.0.0.1:8052"
 [2026-11-05T10:00:03.000Z] "GET /api/controller/v2/jobs/ HTTP/1.1" 200 - 0 9000 6100 6098 "-" "Mozilla/5.0" "id4" "aap" "127.0.0.1:8052"
+[2026-11-05T10:00:03.500Z] "GET /api/controller/v2/websocket/ HTTP/1.1" 101 - 0 9000 426900 426898 "-" "Mozilla/5.0" "id5" "aap" "127.0.0.1:8052"
 {"start_time":"2026-11-05T10:00:04.000Z","method":"GET","path":"/api/gateway/v1/me/","response_code":502,"duration":40,"upstream_service_time":"-"}
 [2026-11-05 10:00:05.000][1][info][main] starting main dispatch loop"""
 WEB = """2026-11-05 10:00:14,000 WARNING [-] awx.api.generics request took too long
@@ -89,6 +91,7 @@ def main(a):
                 out("/" + n + "".join(" %s=%s" % x for x in m))
     elif cmd == "stats":
         out(json.dumps([{"name": n, "mem_usage": "5.1GB / 16.5GB" if n == "automation-controller-web" else "300.5MB / 16.5GB",
+                         "mem_percent": "30.91%" if n == "automation-controller-web" else "1.78%",
                          "cpu_percent": "2.0%"} for n, st, *_ in C if st == "running"]))
     elif cmd == "images":
         out("a\nb")
@@ -120,6 +123,17 @@ def main(a):
             if name != "automation-controller-task":
                 return 1
             out("/usr/bin/receptorctl")
+        elif name == "automation-controller-web" and prog[0].startswith("python3") and prog[1] == "-c":
+            # receptor's Python library (AAP's own way to receptor): the import, then ReceptorControl(socket).simple_command("status")
+            if prog[2] == "import receptorctl.socket_interface":
+                return 0
+            if "ReceptorControl" not in prog[2] or "status" not in prog[2] or prog[3:] != ["/var/run/receptor/receptor.sock"]:
+                sys.stderr.write("unexpected: %r\n" % prog)
+                return 1
+            out(json.dumps({"NodeID": "aap01", "RoutingTable": {"exec01": "exec01", "exec02": "exec01"},
+                            "Advertisements": [{"NodeID": "aap01", "WorkCommands": [{"WorkType": "local"}]},
+                                               {"NodeID": "exec01", "WorkCommands": [{"WorkType": "ansible-runner"}]},
+                                               {"NodeID": "exec02", "WorkCommands": [{"WorkType": "ansible-runner"}]}]}))
         elif name == "automation-controller-task" and prog[0] == "receptorctl":
             if "/run/awx-receptor/receptor.sock" not in prog:
                 sys.stderr.write("socket not found\n")
