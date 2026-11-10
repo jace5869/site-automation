@@ -740,6 +740,11 @@ def servicenow_insights_page(model, key="all", opts=None):
     c = s["counts"]
     short = m.get("short") or {}
     brief = str(o.get("look") or "").strip().lower() == "brief"     # the website's brief look (0.92.0)
+    slo = m.get("slo") or {}
+    sla_src = slo.get("source") or ("targets" if o.get("sla_targets") or o.get("sla_items") else "made_sla")
+    two = sla_src == "task_sla" or bool(slo.get("response_measured"))      # Response met and Resolution met (1.7.0)
+    src_note = {"task_sla": "ServiceNow's SLAs (task_sla)", "targets": "your targets, " + (slo.get("business_hours") or "calendar hours"),
+                "made_sla": "ServiceNow's Made SLA"}.get(sla_src, "")
 
     def sh(g):
         """A group's short name (the paths, the bars): without the parts every group shares."""
@@ -817,7 +822,13 @@ def servicenow_insights_page(model, key="all", opts=None):
     toc = [("glance", "At a glance", "")]
     if side.get("rows"):
         toc.append(("teams", "%s side by side" % side["kind"], len(side["rows"])))
-    toc += [("keepingup", "Keeping up", ""), ("severity", "Severity", len(s["majors"]) or ""), ("issues", "Top issues", min(len(s["issues"]), int(o.get("top_issues") or 10))),
+    toc += [("acton", "Act on first", sum((s.get(k_) or {}).get(f_) or 0 for k_, f_ in (("at_risk", "count"), ("hops", "open"), ("hold", "late_n"), ("codes", "review_n"),
+                                                                                         ("closure", "count"))) or ""),
+            ("process", "Hops, on hold, codes", ""), ("outcomes", "How incidents ended", "")]
+    toc += [("keepingup", "Keeping up", ""), ("severity", "Severity", len(s["majors"]) or ""),
+            ("categories", "Categories", len((s.get("categories") or {}).get("rows") or []) or "")] + (
+               [("satisfaction", "Satisfaction", (s.get("survey") or {}).get("n") or "")] if (m.get("process") or {}).get("survey_read") or (s.get("survey") or {}).get("n") else []) + [
+            ("issues", "Top issues", min(len(s["issues"]), int(o.get("top_issues") or 10))),
             ("problems", "Problem candidates", len(s["problems"]) or ""), ("handoffs", "Passed between groups", s["handoffs"]["count"] or ""),
             ("requests", "Most requested", min(len(s["requests"]), int(o.get("top_requests") or 10))), ("changes", "Changes", len(s["changes"]["rows"]) or ""),
             ("allstars", "All-stars", ""), ("notes", "Close notes", ""), ("kb", "KB drafts", len(s.get("kb") or []) or ""), ("method", "How this was made", "")]
@@ -854,12 +865,24 @@ def servicenow_insights_page(model, key="all", opts=None):
            "flag": behind},
           {"label": "Median time to resolve an incident", "value": fh(s["median_h"][0]), "delta": delta(s["median_h"][0], s["median_h"][1]),
            "note": "was %s" % fh(s["median_h"][1]) if win.get("compare") else ""},
-          {"label": "SLAs met", "value": pct(s["sla"][0]), "delta": delta(s["sla"][0], s["sla"][1], False, True),
-           "note": "incidents and requests · " + ("your targets" if o.get("sla_targets") or o.get("sla_items") else "ServiceNow's Made SLA")},
+          ] + ([{"label": "Response met", "value": pct(s["resp"][0]), "delta": delta(s["resp"][0], s["resp"][1], False, True),
+                 "note": "incidents and requests · " + src_note},
+                {"label": "Resolution met", "value": pct(s["sla"][0]), "delta": delta(s["sla"][0], s["sla"][1], False, True),
+                 "note": ("%s with no SLO, not counted" % n(s["no_slo"][0])) if s["no_slo"][0] else "every ticket done had an SLO"}] if two else
+               [{"label": "SLAs met", "value": pct(s["sla"][0]), "delta": delta(s["sla"][0], s["sla"][1], False, True),
+                 "note": "incidents and requests · " + src_note}]) + [
           {"label": "Incidents reopened" if reopen_used else "Came back within %d days" % int(o.get("repeat_days") or 14),
            "value": pct(rep[0]), "delta": delta(rep[0], rep[1], True, True),
-           "note": ("reopened within %d days · %s came back as a new ticket" % (int(o.get("repeat_days") or 14), pct(s["came_back"][0]))) if reopen_used else
+           "note": ("reopened%s · %s came back as a new ticket" % (
+               (" · %s within 7 days of resolving" % pct(s["reopen7"]["pct"])) if (s.get("reopen7") or {}).get("measured") else "", pct(s["came_back"][0]))) if reopen_used else
            'a new incident from the same person on the same issue <span class="chip">Reopen not used here</span>'},
+          {"label": "First-contact resolution", "value": pct((s.get("fcr") or {}).get("now")),
+           "delta": delta((s.get("fcr") or {}).get("now"), (s.get("fcr") or {}).get("prev"), False, True) if win.get("compare") else "",
+           "note": ("resolved by the first group · the service desk %s" % pct(s["fcr"]["desk"][0])) if (s.get("fcr") or {}).get("desk") else
+           "resolved by the first group it was assigned to"},
+          {"label": "Unable to resolve", "value": pct(((s.get("outcomes") or {}).get("unable") or [None])[0]),
+           "delta": delta(s["outcomes"]["unable"][0], s["outcomes"]["unable"][1], True, True) if win.get("compare") and s.get("outcomes") else "",
+           "note": " + ".join(e(x) for x in (s.get("outcomes") or {}).get("unable_names") or []) + " · of those resolved"},
           {"label": "Changes successful", "value": pct(_p(ch["successful"], ch["count"])) if ch["count"] else "—",
            "note": ("%d failed · %d backed out · %d followed by an incident" % (ch["failed"], ch["backed_out"], ch["followed"])) if ch["count"] else "no changes closed"},
           {"label": "Reassigned %d+ times" % int(o.get("handoff_min") or 3), "value": n(s["handoffs"]["count"]), "note": "%s of incidents" % pct(s["handoffs"]["pct"])},
@@ -874,7 +897,7 @@ def servicenow_insights_page(model, key="all", opts=None):
         body.append(
             '<div class="brief-hero"><div class="eyebrow">Ticket insights &middot; %s</div><div class="verdict %s">%s<span>%s</span></div>'
             '<p class="say">Resolved <b>%s</b> of <b>%s</b> opened (%s) in %s. The backlog went from <b>%s</b> to <b>%s</b>; '
-            '<b>%s</b> of incidents and requests met their SLA.</p></div>' % (
+            '<b>%s</b> of incidents and requests met their %s.</p></div>' % (
                 e(s["name"]), "c-warn" if behind else "c-good",
                 ('<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.6l6.6 11.6H1.4z" fill="currentColor" opacity=".2" stroke="currentColor" '
                  'stroke-width="1.3" stroke-linejoin="round"/><path d="M8 6v3.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>'
@@ -882,7 +905,7 @@ def servicenow_insights_page(model, key="all", opts=None):
                 ('<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.3" fill="currentColor" opacity=".2"/><path d="M4.7 8.4l2.1 2.1 4.5-4.7" '
                  'fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>'),
                 "Falling behind" if behind else "Keeping up", n(sr_), n(so_), pct(_p(sr_, so_)), e(win.get("label") or span),
-                n(b[1]), n(b[0]), pct(s["sla"][0])))
+                n(b[1]), n(b[0]), pct(s["sla"][0]), "resolution SLO" if two else "SLA"))
     body.append(section("glance", "At a glance", "%s, compared with the %s before (%s)" % (e(win.get("label")), e(span), e(win.get("prev_label") or "")) if win.get("compare") else e(win.get("label")),
                         tiles(tl) + summ))
 
@@ -897,20 +920,143 @@ def servicenow_insights_page(model, key="all", opts=None):
             lab = t.get("label") or t["team"]
             name = ('<a class="teamlink" href="%s" title="%s">%s</a>' % (e(links[k_]), e(t["team"]), e(lab))) if links.get(k_) else "<b>%s</b>" % e(lab)
             rows.append((search_attr(t["team"], t["top"][0]), [
-                td(name), td('<span class="inl">%s<span class="chip %s">%s</span></span>' % (spark(t["series"], "var(--warn)" if up else "var(--s1)", 84, 26),
+                td(name), td('<span class="inl">%s<span class="chip %s">%s</span></span>' % (spark(t["series"], "var(--warn)" if up else "var(--s1)", 84 if not two else 56, 26),
                                                                                          "warn" if up else "good", "Falling behind" if up else "Keeping up")),
                 td("<b>%s</b> %s" % (n(t["backlog"][0]), delta(t["backlog"][0], t["backlog"][1])), "n nw", t["backlog"][0]),
                 td(n(t["old"]), "n" + (" c-warn b" if t["old"] >= 20 else ""), t["old"]), td(fh(t["median_h"]), "n", t["median_h"] or 0),
-                sla_cell(t["sla"]), td('<span class="score">%s<span class="sm mut">%d%% good</span></span>' % (qbar(t["quality"]), t["quality"][0]))] +
+                ] + ([sla_cell(t.get("resp"))] if two else []) + [sla_cell(t["sla"]),
+                td('<span class="score">%s<span class="sm mut">%d%% good</span></span>' % (qbar(t["quality"]), t["quality"][0]))] +
                 ([td(n(t.get("ct_closed") or 0), "n", t.get("ct_closed") or 0), td(n(t.get("ct_open") or 0), "n", t.get("ct_open") or 0)] if ctc else []) +
                 [td('%s <span class="mut num">%s</span>' % (e(t["top"][0]), n(t["top"][1])), "wrap")]))
         one = {"Sites": "Site", "Directorates": "Directorate"}.get(kind, "Team")
         body.append(section("teams", "%s side by side" % kind, "each %s has its own page with every section of this report" % one.lower(),
                             table([(one, "", "name"), ("Backlog over the period", "", ""), ("Open now", "n", "open"), ("Over %d days" % old_days, "n", "old"),
-                                   ("Median fix", "n", "fix"), ("SLA met", "n", "sla"), ("Close notes", "", "")] +
+                                   ("Median fix", "n", "fix")] + ([("Response", "n", "resp"), ("Resolution", "n", "sla")] if two else [("SLA met", "n", "sla")]) +
+                                  [("Close notes", "", "")] +
                                   ([("Change tasks closed", "n", "ctc"), ("Change tasks open", "n", "cto")] if ctc else []) + [("Top issue", "", "")], rows, sortable=True) +
-                            '<div class="fair">Click a %s for its page, a column\'s name to sort by it. The backlog lines show each one\'s shape on its own scale; compare Open now for size.%s</div>' % (
-                                one.lower(), " The change tasks are counted on their own: not in the backlog, Open now or the SLAs." if ctc else "")))
+                            '<div class="fair">Click a %s for its page, a column\'s name to sort by it. The backlog lines show each one\'s shape on its own scale; compare Open now for size.%s%s</div>' % (
+                                one.lower(), " Response and Resolution: the share of SLOs met." if two else "", " The change tasks are counted on their own: not in the backlog, Open now or the SLAs." if ctc else "")))
+
+    # ---- act on first (1.7.0): the 3-hop rule, Awaiting Caller too long, No Resolution Provided, resolved not closed
+    hp, hd, cd, cl = s.get("hops") or {}, s.get("hold") or {}, s.get("codes") or {}, s.get("closure") or {}
+    pr = m.get("process") or {}
+    lim = int(hp.get("limit") or 3)
+    cdays = hd.get("caller_days") or 6
+    rk = s.get("at_risk") or {}
+    act_tiles = [
+        {"label": "SLA at risk now", "value": n(rk.get("count") or 0), "flag": bool(rk.get("count")),
+         "note": ("%s breached and still open · past %g%% of the time" % (n(rk.get("breached") or 0), rk.get("pct") or 75)) if rk.get("read") else
+         "no running SLA read (task_sla)"},
+        {"label": "Open over %d hops" % lim, "value": n(hp.get("open") or 0), "flag": bool(hp.get("open")),
+         "note": ("%s of those resolved went over" % pct(hp["done_pct"]) if hp.get("done_pct") else "none of those resolved went over") +
+                 ((" · most hops: " + e(sh(hp["most"]))) if hp.get("most") else "")},
+        {"label": "Awaiting Caller over %g business days" % cdays, "value": n(hd.get("late_n") or 0), "flag": bool(hd.get("late_n")),
+         "note": "%s on hold now · %s with no reason" % (n(hd.get("open") or 0), n(hd.get("no_reason") or 0))},
+        {"label": e(cd.get("review") or "No Resolution Provided"), "value": n(cd.get("review_n") or 0), "flag": bool(cd.get("review_n")),
+         "note": "resolved in the period · reviewed by leadership"},
+        {"label": "Resolved, not closed after %g days" % (cl.get("days") or 7), "value": n(cl.get("count") or 0), "flag": bool(cl.get("count")),
+         "note": "closing after %g days is automatic: these did not close" % (cl.get("days") or 7)}]
+    hrows_ = [(search_attr(x["number"], x["what"], x["group"]), [td(tk(x["number"], url)), td(e(x["what"]), "wide"), td(n(x["hops"]), "n"),
+                                                                td(glink(x["group"]), "nw"), td(e("%g" % x["age"]), "n", x["age"]), td(e(x["priority"]), "nw")])
+              for x in hp.get("rows") or []]
+    lrows_ = [(search_attr(x["number"], x["what"], x["group"]), [td(tk(x["number"], url)), td(e(x["what"]), "wide"), td(glink(x["group"]), "nw"),
+                                                                td(e(x["since"]), "num nw"), td(n(x["days"]), "n", x["days"])])
+              for x in hd.get("late") or []]
+    rrows_ = [(search_attr(x["number"], x["what"], x["group"], x["note"]), [td(tk(x["number"], url)), td(glink(x["group"]), "nw"), td(e(x["what"]), "wide"),
+                                                                           td(e(x["resolved"]), "num nw"), td(e(x["note"]) or '<span class="mut">no close note</span>', "wide")])
+              for x in cd.get("review_rows") or []]
+    crows_ = [(search_attr(x["number"], x["group"]), [td(tk(x["number"], url)), td(glink(x["group"]), "nw"), td(e(x["resolved"]), "num nw"),
+                                                     td(e("%g" % x["days"]), "n", x["days"]), td(e(x.get("state") or ""), "nw")])
+              for x in cl.get("rows") or []]
+
+    def block(title, cap, head, rows, none, first=10):
+        """A list: its first rows, the rest folded (the page stays short; the search still finds them)."""
+        more = ('<details class="more"><summary>%s more</summary>%s</details>' % (n(len(rows) - first), table(head, rows[first:]))) if len(rows) > first else ""
+        return '<div class="fig"><h3>%s</h3><div class="cap">%s</div>%s%s</div>' % (title, cap, table(head, rows[:first], empty=none), more)
+    hold_src = ", ".join({"metric": "the state metric", "task_sla": "task_sla's pause"}.get(x_, x_) for x_ in hd.get("sources") or [])
+    body.append(section("acton", "Act on first", "what the process says to look at · open now, or in the period",
+                        tiles(act_tiles) +
+                        block("SLA at risk now", "Open incidents whose SLA has used %g%% or more of its time (business time where ServiceNow keeps it), "
+                              "or is breached and still open. Worst first." % (rk.get("pct") or 75),
+                              [("Incident", "", ""), ("Priority", "", ""), ("SLA", "", ""), ("Used", "n", ""), ("Left", "n", ""), ("Group", "", ""), ("Assigned to", "", "")],
+                              [(search_attr(x["number"], x["sla"], x["group"], x["assignee"]), [
+                                  td(tk(x["number"], url)), td(e(x["priority"]), "nw"), td(e(x["sla"])),
+                                  td(('<b class="c-crit">%s</b>' % pct(x["pct"], 0)) if x["breached"] else pct(x["pct"], 0), "n", x["pct"] or 0),
+                                  td("breached" if x["breached"] else fh(x["left_h"]), "n nw", x["left_h"] if x["left_h"] is not None else -1),
+                                  td(glink(x["group"]), "nw"), td(e(x["assignee"]), "nw")]) for x in rk.get("rows") or []],
+                              "No open incident's SLA is at risk.") +
+                        block("Open incidents over %d hops" % lim, "Transferred more than %d times after the first assignment: a leading sign of an SLA breach - "
+                              "to leadership. Oldest first." % lim,
+                              [("Incident", "", ""), ("Short description", "", ""), ("Hops", "n", ""), ("Group now", "", ""), ("Age, days", "n", ""), ("Priority", "", "")],
+                              hrows_, "No open incident is over the limit.") +
+                        block("Awaiting Caller over %g business days" % cdays,
+                              "The process: resolve with No Resolution Provided by day %g. On hold since: %s." % (
+                                  cdays, hold_src or "not known (no state metric or task_sla pause)") +
+                              ((" %s on hold with no date to judge." % n(hd["unknown"])) if hd.get("unknown") else ""),
+                              [("Incident", "", ""), ("Short description", "", ""), ("Group", "", ""), ("On hold since", "", ""), ("Business days", "n", "")],
+                              lrows_, "None over the limit.") +
+                        block(e(cd.get("review") or "No Resolution Provided"), "Resolved in the period with this code: each is reviewed by leadership. "
+                              "The close note's start, names and numbers replaced.",
+                              [("Incident", "", ""), ("Group", "", ""), ("Short description", "", ""), ("Resolved", "", ""), ("Close note", "", "")],
+                              rrows_, "None in the period.") +
+                        block("Resolved, not closed after %g days" % (cl.get("days") or 7), "Resolved tickets close by themselves after %g calendar days; these have not." % (
+                              cl.get("days") or 7),
+                              [("Incident", "", ""), ("Group", "", ""), ("Resolved", "", ""), ("Days since", "n", ""), ("State", "", "")], crows_,
+                              "Every resolved incident closed in time.")))
+    # the same per team, and on hold by reason
+    pg = []
+    for g in hp.get("by_group") or []:
+        pg.append((search_attr(g["group"]), [td(glink(g["group"])), td(n(g["over"]), "n", g["over"]), td(n(g["of"]), "n", g["of"]),
+                                            td(pct(g["pct"]), "n", g["pct"] or 0), td(n(g["received"]), "n", g["received"])]))
+    hg_ = [(search_attr(g["group"]), [td(glink(g["group"])), td(n(g["open"]), "n", g["open"]), td(n(g["no_reason"]), "n" + (" c-warn b" if g["no_reason"] else ""), g["no_reason"]),
+                                     td(n(g["late"]), "n" + (" c-warn b" if g["late"] else ""), g["late"])]) for g in hd.get("by_group") or []]
+    rs_ = [("", [td(e(r_[0])), td(n(r_[1]), "n"), td(n(r_[2]), "n"), td(n(r_[3]), "n"), td(n(r_[4]), "n" + (" c-warn b" if r_[4] else "")), td(n(r_[5]), "n")])
+           for r_ in hd.get("by_reason") or []]
+    codes_ = cd.get("codes") or []
+    cg_ = [(search_attr(g["group"]), [td(glink(g["group"])), td(n(g["_resolved"]), "n")] + [td(n(g[c_]), "n", g[c_]) for c_ in codes_] +
+            [td(n(g["_reopened"]), "n", g["_reopened"])]) for g in cd.get("by_group") or []]
+    body.append(section("process", "Hops, on hold and resolution codes", "per group · the hops and codes of the period, on hold as it is now",
+                        '<div class="two"><div class="fig"><h3>Over %d hops</h3><div class="cap">Of the incidents resolved in the period and open now, by the group '
+                        'they are in; <b>Hops taken</b> = transfers into the group on those over the limit (%s).</div>%s</div>'
+                        '<div class="fig"><h3>On hold now</h3><div class="cap">By group; a reason is required. %s</div>%s</div></div>'
+                        '<div class="fig"><h3>On hold by reason</h3><div class="cap">Business days on hold.</div>%s</div>'
+                        '<div class="fig"><h3>Resolution codes to look at</h3><div class="cap">Resolved in the period: %s; reopened = reopened at least once.</div>%s</div>' % (
+                            lim, "the assignment paths" if hp.get("by_paths") else "the group they ended in: the paths were not read",
+                            table([("Group", "", "name"), ("Over", "n", ""), ("Of", "n", ""), ("Share", "n", ""), ("Hops taken", "n", "")], pg, sortable=True,
+                                  empty="None over the limit."),
+                            (("Median time on hold of the incidents resolved: %s." % fh(hd["median_h"])) if hd.get("median_h") is not None else
+                             "None of the incidents resolved was on hold.") if hd.get("measured") else
+                            "The time on hold is not known (no state metric): what is on hold now only.",
+                            table([("Group", "", "name"), ("On hold", "n", ""), ("No reason", "n", ""), ("Caller over %g" % cdays, "n", "")], hg_, sortable=True,
+                                  empty="Nothing on hold."),
+                            table([("Reason", "", ""), ("Open", "n", ""), ("0–2", "n", ""), ("3–%g" % cdays, "n", ""), ("Over %g" % cdays, "n", ""), ("Not known", "n", "")],
+                                  rs_, empty="Nothing on hold."),
+                            ", ".join("%s %s" % (e(c_), n((cd.get("counts") or {}).get(c_, 0))) for c_ in codes_) + ", reopened %s" % n(cd.get("reopened") or 0),
+                            table([("Group", "", "name"), ("Resolved", "n", "")] + [(c_, "n", "") for c_ in codes_] + [("Reopened", "n", "")], cg_, sortable=True,
+                                  empty="None in the period."))))
+
+    # ---- how incidents ended (1.7.0): the outcome mix per group, unable to resolve, reopened, first contact
+    oc = s.get("outcomes") or {}
+    if oc.get("names"):
+        on_ = oc["names"]
+        orow = [(search_attr(g["group"]), [td(glink(g["group"])), td(n(g["resolved"]), "n", g["resolved"])] +
+                 [td(pct(_p(g["counts"].get(k_, 0), g["resolved"]), 0), "n", g["counts"].get(k_, 0)) for k_ in on_] +
+                 [td(pct(g["unable"]), "n" + (" c-warn b" if (g["unable"] or 0) >= 10 else ""), g["unable"] or 0)]) for g in oc.get("by_group") or []]
+        tot, totp = sum(oc["now"].values()), sum(oc["prev"].values())
+        mixline = " · ".join("%s %s%s" % (e(k_), pct(_p(oc["now"].get(k_, 0), tot), 0),
+                                         (" " + delta(_p(oc["now"].get(k_, 0), tot), _p(oc["prev"].get(k_, 0), totp), k_ != "Fixed", True)) if win.get("compare") and totp else "")
+                             for k_ in on_)
+        fc = s.get("fcr") or {}
+        r7 = s.get("reopen7") or {}
+        body.append(section("outcomes", "How incidents ended", "resolved in the period · by their close code, against the window before",
+                            '<p class="sub">%s</p>' % mixline +
+                            table([("Group", "", "name"), ("Resolved", "n", "")] + [(k_, "n", "") for k_ in on_] + [("Unable to resolve", "n", "")], orow,
+                                  sortable=True, empty="Nothing resolved in the period.") +
+                            '<div class="cap">Unable to resolve = %s, of those resolved. First-contact resolution: %s%s. Reopened within 7 days of resolving: %s.</div>' % (
+                                " + ".join(e(x) for x in oc.get("unable_names") or []), pct(fc.get("now")),
+                                (" (the service desk: %s of %s)" % (pct(fc["desk"][0]), n(fc.get("desk_n") or 0))) if fc.get("desk") else
+                                " (name the service desk's groups in servicenow_insights_service_desk_groups to see its own)",
+                                ("%s of %s" % (n(r7["count"]), n(r7["of"]))) if r7.get("measured") else "not measured (no state metric)")))
 
     # ---- keeping up
     wk = s["weeks"]
@@ -943,13 +1089,27 @@ def servicenow_insights_page(model, key="all", opts=None):
 
     # ---- severity
     mxp = max([p["count"] for p in s["prio"]] + [1])
-    targets = any(p.get("target_h") is not None for p in s["prio"])     # your own SLA targets (servicenow_insights_sla_targets)
+    targets = sla_src == "targets" and any(p.get("target_h") is not None for p in s["prio"])     # your own SLA targets (servicenow_insights_sla_targets)
+    rtargets = targets and any(p.get("resp_target_h") is not None for p in s["prio"])
+    noslo = any(p.get("no_slo") for p in s["prio"])
     prow = []
     for p in s["prio"]:
         cls = "crit" if p["value"] == "1" else ("warn" if p["value"] == "2" else "")
         prow.append(("", [td('<span class="chip %s">%s</span>' % (cls, e(p["label"]))), td("<b>%s</b>" % n(p["count"]), "n"),
                           td('<span class="ib b" style="width:%.1f%%"></span>' % (100.0 * p["count"] / mxp), "barc"), td(fh(p["median_h"]), "n")] +
-                         ([td(fh(p["target_h"]) if p.get("target_h") is not None else "Made SLA", "n")] if targets else []) + [sla_cell(p["sla"])]))
+                         ([td(fh(p["resp_target_h"]) if p.get("resp_target_h") is not None else "—", "n")] if rtargets else []) +
+                         ([sla_cell(p.get("resp"))] if two else []) +
+                         ([td(fh(p["target_h"]) if p.get("target_h") is not None else "Made SLA", "n")] if targets else []) + [sla_cell(p["sla"])] +
+                         ([td(n(p.get("no_slo") or 0), "n")] if noslo else [])))
+    # the priority matrix (1.7.0): the priority set by hand, not the one impact x urgency gives
+    mx = s.get("matrix") or {}
+    mx_html = ""
+    if mx.get("on") and mx.get("checked"):
+        mrows_ = [("", [td(glink(g["group"])), td(n(g["off"]), "n"), td(n(g["of"]), "n"), td(pct(g["pct"]), "n")]) for g in mx.get("by_group") or []]
+        mx_html = ('<div class="fig"><h3>Priority set by hand</h3><div class="cap"><b>%s</b> of %s incidents (%s) have a priority their impact and urgency '
+                   'do not give (the 3 x 3 matrix): %s set higher, %s lower.</div>%s</div>' % (
+                       n(mx["off"]), n(mx["checked"]), pct(mx["pct"]), n(mx.get("higher") or 0), n(mx.get("lower") or 0),
+                       table([("Group", "", ""), ("Set by hand", "n", ""), ("Of", "n", ""), ("Share", "n", "")], mrows_, empty="Every priority matches the matrix.")))
     mrow = []
     for x in s["majors"]:
         mrow.append((search_attr(x["number"], x["what"], x["change"], x["problem"], x["group"]), [
@@ -957,10 +1117,56 @@ def servicenow_insights_page(model, key="all", opts=None):
             td(e(x["what"]), "wide"), td(glink(x["group"]), "nw"), td(fh(x["hours"]), "n"), td(tk(x["change"], url)), td(tk(x["problem"], url))]))
     body.append(section("severity", "Severity", "incidents by priority · P1 and P2 listed one by one",
                         table([("Priority", "", ""), ("Incidents", "n", ""), ("", "", ""), ("Median to resolve", "n", "")] +
-                              ([("SLA target", "n", "")] if targets else []) + [("SLA met", "n", "")], prow, empty="No incidents in the period.") +
+                              ([("Response target", "n", "")] if rtargets else []) + ([("Response met", "n", "")] if two else []) +
+                              ([("Resolution target" if two else "SLA target", "n", "")] if targets else []) +
+                              [("Resolution met" if two else "SLA met", "n", "")] + ([("No SLO", "n", "")] if noslo else []), prow, empty="No incidents in the period.") +
+                        ('<div class="fair">Met or missed: %s.%s</div>' % (e(src_note), " No SLO: done tickets with no SLA attached, left out of the percentages." if noslo else "")) +
+                        mx_html +
                         '<div class="fig"><h3>P1 and P2 incidents in the period</h3>%s</div>' % table(
                             [("Incident", "", ""), ("Opened", "", ""), ("Priority", "", ""), ("What happened", "", ""), ("Group", "", ""), ("To resolve", "n", ""),
                              ("Caused by change", "", ""), ("Problem", "", "")], mrow, empty="No P1 or P2 incidents in the period.")))
+
+    # ---- categories (1.7.0): incidents per category, met or missed, and how well the official list is kept
+    cat = s.get("categories") or {}
+    crow = []
+    for x in cat.get("rows") or []:
+        off = x.get("official") is False
+        crow.append((search_attr(x["name"], x.get("team")), [
+            td(('<b>%s</b>' % e(x["name"])) + (' <span class="chip warn">not on the list</span>' if off else ""), sv=x["name"]),
+            td("<b>%s</b> %s" % (n(x["count"]), delta(x["count"], x["prev"]) if win.get("compare") else ""), "n nw", x["count"]),
+            td(pct(x["share"]), "n", x["share"] or 0), td(fh(x["median_h"]), "n", x["median_h"] or 0)] +
+            ([sla_cell(x.get("resp"))] if two else []) + [sla_cell(x.get("resol")), td(glink(x["team"]) if x.get("team") else "", "nw")]))
+    dq = []
+    if cat.get("total"):
+        dq.append("<b>%s</b> (%s) with no category" % (n(cat["empty"]), pct(cat["empty_pct"])))
+        dq.append("<b>%s</b> (%s) in Other" % (n(cat["other"]), pct(cat["other_pct"])))
+        if cat.get("listed"):
+            dq.append("<b>%s</b> (%s) in a category not on the official list%s" % (
+                n(cat["off_list"]), pct(cat["off_pct"]),
+                (": " + ", ".join("%s (%s)" % (e(nm), n(c_)) for nm, c_ in cat["off_names"])) if cat.get("off_names") else ""))
+    dq_html = ('<div class="callout"><b>Data quality.</b> Of %s incidents: %s.%s</div>' % (
+        n(cat.get("total") or 0), "; ".join(dq), "" if cat.get("listed") else " Set servicenow_insights_categories to your official list to see the ones off it.")) if dq else ""
+    body.append(section("categories", "Categories", "incidents by their category · opened in the period; met or missed of those done",
+                        dq_html + table([("Category", "", "name"), ("Incidents", "n", "inc"), ("Share", "n", "share"), ("Median to resolve", "n", "fix")] +
+                                        ([("Response met", "n", "resp")] if two else []) + [("Resolution met" if two else "SLA met", "n", "sla"),
+                                                                                            ("Mostly in", "", "")],
+                                        crow, tid="catTable", empty="No incidents in the period.", sortable=True)))
+
+    # ---- satisfaction (1.7.0): the incident surveys, best-effort
+    sv = s.get("survey") or {}
+    if pr.get("survey_read") or sv.get("n"):
+        mrows = [("", [td(e(mo)), td("<b>%s</b>" % ("%.2f" % a_ if a_ is not None else "—"), "n"), td(n(c_), "n")]) for mo, a_, c_ in sv.get("months") or []]
+        grows = [(search_attr(g["group"]), [td(glink(g["group"])), td("%.2f" % g["avg"] if g["avg"] is not None else "—", "n", g["avg"] or 0), td(n(g["n"]), "n", g["n"])])
+                 for g in sv.get("by_group") or []]
+        sat_tiles = [{"label": "Average answer", "value": ("%.2f" % sv["avg"]) if sv.get("avg") is not None else "—",
+                      "delta": delta(sv.get("avg"), sv.get("prev"), False) if win.get("compare") and sv.get("prev") is not None else "",
+                      "note": "%s answers%s" % (n(sv.get("n") or 0), (" · was %.2f" % sv["prev"]) if sv.get("prev") is not None else "")}]
+        body.append(section("satisfaction", "Satisfaction", "the incident surveys' answers in the period · %s" % (e(", ".join(sv.get("metrics") or [])) or "no answers"),
+                            tiles(sat_tiles) + '<div class="two"><div class="fig"><h3>By month</h3>%s</div><div class="fig"><h3>By group</h3>%s</div></div>' % (
+                                table([("Month", "", ""), ("Average", "n", ""), ("Answers", "n", "")], mrows, empty="No answers in the period."),
+                                table([("Group", "", "name"), ("Average", "n", "avg"), ("Answers", "n", "n")], grows, sortable=True, empty="No answers in the period.")) +
+                            '<div class="cap">The average of the answers that are numbers (servicenow_insights_survey_metrics names which; every one by default), '
+                            'on the survey\'s own scale.</div>'))
 
     # ---- issues
     top_n = int(o.get("top_issues") or 10)
@@ -1220,6 +1426,20 @@ def servicenow_insights_page(model, key="all", opts=None):
             ('<dt>In Other</dt><dd>%s <span class="mut">- no rule placed them: add them to servicenow_insights_hierarchy_map</span></dd>' % lst(m.get("hier_other") or [])),
             ('<dt>Unknown</dt><dd>%s</dd>' % ", ".join("%s (%s)" % (e(g), n(c_)) for g, c_ in m["hier_unknown"])) if m.get("hier_unknown") else "",
             "".join('<dt>No page</dt><dd>%s - %s, its tickets in %s</dd>' % (e(g), e(why), e(where)) for g, why, where in m.get("hier_folded") or [])))
+    # the SLOs (1.7.0): where met or missed came from, the SLA definitions by kind, the business hours
+    defs = slo.get("definitions") or []
+    kinds = (("response", "Response"), ("resolution", "Resolution"), ("other", "Other (not counted)"))
+    slo_html = ('<details class="notes"%s><summary><b>Your SLOs</b> <span class="mut">%s</span></summary><dl class="kv"><dt>Met or missed</dt><dd>%s</dd>%s'
+                '<dt>Business hours</dt><dd>%s</dd>%s</dl></details>' % (
+                    " open" if defs else "", e(src_note),
+                    e(src_note + ((" - " + slo["note"]) if slo.get("note") else "")),
+                    "".join('<dt>%s</dt><dd>%s</dd>' % (lbl, ", ".join("%s (%s)" % (e(nm), n(c_)) for nm, k_, c_ in defs if k_ == kk) or "none")
+                            for kk, lbl in kinds) if sla_src == "task_sla" else "",
+                    e(slo.get("business_hours") or "calendar hours"),
+                    ('<dt>Response</dt><dd>%s</dd>' % e(("not measured: " + slo["first_assigned_error"]) if slo.get("first_assigned_error") else
+                                                      ("from opened to first assigned to a person (the metric Assigned to)" if slo.get("response_measured") else
+                                                       "not measured: set a response target in servicenow_insights_sla_targets")))
+                    if sla_src == "targets" else ""))
     body.append(section("method", "How this was made", "", '<div class="method"><div><div class="eyebrow">Read from ServiceNow (read only)</div><dl class="kv">%s'
                         '<dt>Window</dt><dd>%s (%s)</dd><dt>Compared with</dt><dd>%s</dd><dt>Reopen</dt><dd>%s</dd></dl></div>'
                         '<div><div class="eyebrow">Replaced before GenAI, put back after</div><dl class="kv">%s</dl></div>'
@@ -1235,7 +1455,7 @@ def servicenow_insights_page(model, key="all", opts=None):
                             e(("%d, grouped by ACT" % a.get("issues", 0)) if a.get("ran") else "the incidents' category / subcategory"),
                             e(str(a.get("fixes", 0)) if a.get("ran") else "none: the most common close notes are shown"),
                             e("by ACT" if s.get("summary_by") == "act" else "from the numbers"),
-                            (('<div class="callout"><b>Not read.</b> %s</div>' % e("; ".join(nr))) if nr else "") + place_html)))
+                            (('<div class="callout"><b>Not read.</b> %s</div>' % e("; ".join(nr))) if nr else "") + place_html + slo_html)))
 
     # the script: loaded from the website (site-insights.js beside the index, written by site_report_web, the address made relative to
     # this page there) and carried in the page too; whichever runs first does the work

@@ -45,6 +45,14 @@ options:
   work_notes_for: {description: "Incident sys_ids: read only their work notes (sys_journal_field), nothing else.", type: list, elements: str, default: []}
   work_notes_max: {description: The newest work notes kept per incident., type: int, default: 20}
   work_note_chars: {description: Each work note cut to this many characters., type: int, default: 1500}
+  sla_source: {description: "Where met or missed comes from (1.7.0): auto (task_sla when the account reads it, else targets), task_sla,
+      targets (the report's own targets), made_sla (ServiceNow's Made SLA flag).", type: str, default: auto}
+  first_assigned: {description: "With the targets: read when each incident done in the window was first assigned to a person
+      (metric_instance, the metric Assigned to) - the response's end.", type: bool, default: false}
+  state_metric: {description: "The metric_instance definition of the incidents' state durations (1.7.0: the time on hold); '' = not read.",
+      type: str, default: Incident State Duration}
+  survey: {description: "Read the incident surveys' results (asmt_metric_result, GET; best-effort): the window's and the window before's.", type: bool, default: true}
+  survey_metrics: {description: "The survey metrics read, by name ([] = every metric whose answer is a number).", type: list, elements: str, default: []}
 author: site automation
 '''
 
@@ -66,6 +74,15 @@ group_tree_error: {description: "Why sys_user_group was not read ('' = read, or 
 url: {description: The instance's address., type: str}
 work_notes: {description: "With work_notes_for: {incident sys_id: [[when (UTC text), text], ...]}, newest first.", type: dict}
 work_notes_error: {description: "Why sys_journal_field was not read ('' = read).", type: str}
+sla: {description: "{source (task_sla, targets, made_sla), asked, error, note, records: {sys_id: [{name, stage, breached, percent, paused_at}]},
+  paused: {sys_id: when its SLA was paused}, paused_error} - task_sla read for the incidents and requested items done in the window and the
+  one before (cancelled left out), and for the incidents on hold now.", type: dict}
+first_assigned: {description: "{incident sys_id: UTC text} - when it was first assigned to a person (the metric Assigned to).", type: dict}
+first_assigned_error: {description: "Why the metric Assigned to was not read ('' = read, or not asked).", type: str}
+states: {description: "{incident sys_id: [[state as shown, start, end]]} - the state metric of the incidents on hold now and those done in the window.", type: dict}
+states_error: {description: "Why the state metric was not read ('' = read; 'none' = no such metric).", type: str}
+survey: {description: "[[incident sys_id, metric, value (a number), taken (UTC text)]] - the incident surveys' answers.", type: list}
+survey_error: {description: "Why the surveys were not read ('' = read, or not asked).", type: str}
 '''
 
 import calendar
@@ -89,7 +106,7 @@ COMMON = ["sys_id", "number", "short_description", "state", "priority", "assigne
           "closed_by", "close_notes", "active", "cmdb_ci", "opened_by", "made_sla", "reassignment_count", "sys_created_on"]
 TABLE_FIELDS = {
     "incident": ["resolved_at", "resolved_by", "close_code", "category", "subcategory", "caller_id", "reopen_count", "caused_by",
-                 "problem_id"],
+                 "problem_id", "impact", "urgency", "hold_reason"],
     "sc_req_item": ["cat_item", "requested_for"],
     "sc_task": ["request_item"],
     "change_request": ["type", "close_code", "start_date", "end_date", "work_start", "work_end", "category"],
@@ -252,7 +269,9 @@ def normalize(rec, table):
     if table == "incident":
         it.update({"resolved_by": d("resolved_by"), "close_code": d("close_code"), "category": d("category"),
                    "subcategory": d("subcategory"), "caller": d("caller_id"), "caller_id": v("caller_id"),
-                   "reopen_count": _int(v("reopen_count")), "caused_by": d("caused_by"), "problem": d("problem_id")})
+                   "reopen_count": _int(v("reopen_count")), "caused_by": d("caused_by"), "problem": d("problem_id"),
+                   "impact_value": _prio(v("impact") or d("impact")), "urgency_value": _prio(v("urgency") or d("urgency")),
+                   "hold_reason": d("hold_reason")})
     elif table == "sc_req_item":
         it.update({"cat_item": d("cat_item"), "caller": d("requested_for")})
     elif table == "sc_task":
@@ -480,6 +499,166 @@ def read_group_tree(api, ids, depth=6, chunk=100):
     return out, ""
 
 
+def duration(text):
+    """A ServiceNow duration's value ('1970-01-02 03:30:00' = 1 day 3.5 hours) -> seconds, or None."""
+    m = re.match(r"^1970-01-(\d{2}) (\d{2}):(\d{2}):(\d{2})", str(text or "").strip())
+    if not m:
+        return None
+    return (int(m.group(1)) - 1) * 86400 + int(m.group(2)) * 3600 + int(m.group(3)) * 60 + int(m.group(4))
+
+
+def read_task_sla(api, ids, chunk=100, stats=None):
+    """The SLAs of these tickets (task_sla, GET; cancelled left out) -> ({task sys_id: [{name, stage, breached, percent}]}, error).
+    Breached: has_breached, or the stage breached; percent: business time where ServiceNow has it, else the clock's."""
+    out = {}
+    ids = [str(x) for x in ids if str(x or "").strip()]
+    for i in range(0, len(ids), chunk):
+        part = ids[i:i + chunk]
+        try:
+            r = api.get("api/now/table/task_sla", {"sysparm_query": "taskIN" + ",".join(part) + "^stage!=cancelled",
+                                                   "sysparm_fields": "task,sla,stage,has_breached,business_percentage,percentage,start_time,end_time,pause_time,"
+                                                                     "business_time_left,planned_end_time",
+                                                   "sysparm_display_value": "all", "sysparm_exclude_reference_link": "true",
+                                                   "sysparm_limit": 20 * len(part)})
+        except SnError as e:
+            text = str(e)
+            if "HTTP 403" in text or "HTTP 401" in text:
+                text += " - the account needs read on task_sla (the itil role has it)"
+            return {}, text
+        rows = r.get("result") if isinstance(r, dict) else None
+        if not isinstance(rows, list):
+            return {}, "GET api/now/table/task_sla: no result list in the answer"
+        if stats is not None and len(rows) >= 20 * len(part):
+            stats["more"] = True                         # a page full: some tickets' SLAs may be cut
+        for x in rows:
+            stage_v, stage_d = _vd(x, "stage")
+            if stage_v.strip().lower() == "cancelled":
+                continue
+            pct = None
+            for f in ("business_percentage", "percentage"):
+                try:
+                    pct = round(float(str(_vd(x, f)[0]).replace(",", "").strip()), 1)
+                    break
+                except ValueError:
+                    continue
+            out.setdefault(_vd(x, "task")[0], []).append({
+                "name": " ".join(str(_vd(x, "sla")[1] or _vd(x, "sla")[0]).split()), "stage": stage_d or stage_v,
+                "breached": _vd(x, "has_breached")[0].strip().lower() in ("true", "1") or stage_v.strip().lower() == "breached",
+                "percent": pct, "paused_at": str(_vd(x, "pause_time")[0] or "") if stage_v.strip().lower() == "paused" else "",
+                "running": stage_v.strip().lower() in ("in_progress", "paused"), "left_s": duration(_vd(x, "business_time_left")[0]),
+                "planned_end": str(_vd(x, "planned_end_time")[0] or "")})
+    return out, ""
+
+
+def read_first_assigned(api, ids, chunk=100):
+    """When each incident was first assigned to a person (metric_instance, the out-of-box metric "Assigned to"; GET) ->
+    ({sys_id: UTC text}, error)."""
+    out = {}
+    ids = [str(x) for x in ids if str(x or "").strip()]
+    for i in range(0, len(ids), chunk):
+        part = ids[i:i + chunk]
+        try:
+            r = api.get("api/now/table/metric_instance", {"sysparm_query": "definition.name=Assigned to^table=incident^idIN" + ",".join(part)
+                                                          + "^ORDERBYstart", "sysparm_fields": "id,value,start",
+                                                          "sysparm_limit": 30 * len(part)})
+        except SnError as e:
+            return {}, str(e)
+        for x in (r.get("result") if isinstance(r, dict) else None) or []:
+            k, start = str(_vd(x, "id")[0] or ""), str(_vd(x, "start")[0] or "")
+            if k and start and str(_vd(x, "value")[1] or _vd(x, "value")[0] or "").strip() and (k not in out or start < out[k]):
+                out[k] = start
+    return out, ""
+
+
+def read_states(api, ids, name, chunk=100):
+    """The incidents' state durations (metric_instance of the definition named; GET) -> ({sys_id: [[state as shown, start, end]]},
+    error). 'none': the instance has no metric of that name (no row at all for these incidents)."""
+    out = {}
+    ids = [str(x) for x in ids if str(x or "").strip()]
+    if not str(name or "").strip() or not ids:
+        return out, ""
+    for i in range(0, len(ids), chunk):
+        part = ids[i:i + chunk]
+        try:
+            r = api.get("api/now/table/metric_instance", {"sysparm_query": "definition.name=%s^table=incident^idIN%s^ORDERBYstart" % (name, ",".join(part)),
+                                                          "sysparm_fields": "id,value,start,end", "sysparm_display_value": "all",
+                                                          "sysparm_exclude_reference_link": "true", "sysparm_limit": 50 * len(part)})
+        except SnError as e:
+            return {}, str(e)
+        for x in (r.get("result") if isinstance(r, dict) else None) or []:
+            k = str(_vd(x, "id")[0] or "")
+            v = " ".join(str(_vd(x, "value")[1] or _vd(x, "value")[0] or "").split())
+            if k and v:
+                out.setdefault(k, []).append([v, str(_vd(x, "start")[0] or ""), str(_vd(x, "end")[0] or "")])
+    for k in out:
+        out[k].sort(key=lambda e: e[1])
+    return out, ("" if out else "none")
+
+
+def read_survey(api, win, metrics=None, limit=20000):
+    """The incident surveys' answers in the window and the one before (asmt_metric_result of assessments triggered by
+    incidents; GET; best-effort) -> ([[incident sys_id, metric, value, taken]], error). Only answers that are numbers."""
+    q = "instance.trigger_table=incident^instance.taken_on>=%s^instance.taken_on<=%s" % (win["prev_since"], win["until"])
+    want = [str(m).strip() for m in metrics or [] if str(m).strip()]
+    if want:
+        q += "^metric.nameIN" + ",".join(want)
+    try:
+        r = api.get("api/now/table/asmt_metric_result", {"sysparm_query": q, "sysparm_fields": "instance.trigger_id,metric,actual_value,instance.taken_on",
+                                                         "sysparm_display_value": "all", "sysparm_exclude_reference_link": "true", "sysparm_limit": limit})
+    except SnError as e:
+        return [], str(e)
+    rows = r.get("result") if isinstance(r, dict) else None
+    if not isinstance(rows, list):
+        return [], "GET api/now/table/asmt_metric_result: no result list in the answer"
+    out = []
+    for x in rows:
+        try:
+            val = float(str(_vd(x, "actual_value")[0]).strip())
+        except ValueError:
+            continue
+        inc, taken = str(_vd(x, "instance.trigger_id")[0] or ""), str(_vd(x, "instance.taken_on")[0] or "")
+        if inc and taken:
+            out.append([inc, " ".join(str(_vd(x, "metric")[1] or _vd(x, "metric")[0] or "").split()), val, taken])
+    return out, ""
+
+
+def read_slas(api, items, win, source="auto", first_assigned=False, max_records=20000):
+    """Met or missed (1.7.0): task_sla for the incidents and requested items done in the window and the one before (auto,
+    task_sla), else the report's targets; the metric Assigned to with the targets when asked -> (sla, first, first_error)."""
+    asked = str(source or "auto").strip().lower()
+    sla = {"source": asked if asked in ("targets", "made_sla") else "task_sla", "asked": asked, "error": "", "note": "", "records": {}}
+    since, until = sn_time(win["prev_since"]), sn_time(win["until"])
+    done = [it for it in items if it["table"] in ("incident", "sc_req_item") and sn_time(it.get("done_at"))
+            and since <= sn_time(it["done_at"]) <= until]
+    if sla["source"] == "task_sla":
+        sla["records"], sla["error"] = read_task_sla(api, [it["sys_id"] for it in done])
+        if sla["error"]:
+            sla["source"] = "targets"
+            sla["note"] = "task_sla not read (%s): the report's targets instead" % sla["error"]
+    # the incidents open now (1.7.0): their SLAs running - at risk, breached and still open - and when an on-hold one's
+    # was paused ("on hold since" where the state metric is not read)
+    opened = sorted([it for it in items if it["table"] == "incident" and not sn_time(it.get("done_at")) and it.get("active") is not False],
+                    key=lambda it: it.get("opened_at") or "")
+    sla["paused"], sla["paused_error"], sla["open"], sla["open_cut"] = {}, "", {}, []
+    if len(opened) > int(max_records):                  # capped as every read (max_records): the newest kept, said
+        sla["open_cut"] = [int(max_records), len(opened)]
+        opened = opened[-int(max_records):]
+    if opened and not (sla["error"] and "HTTP 40" in sla["error"]):
+        st = {}
+        recs, sla["paused_error"] = read_task_sla(api, [it["sys_id"] for it in opened], stats=st)
+        if st.get("more") and not sla["open_cut"]:
+            sla["open_cut"] = [len(opened), len(opened)]
+        sla["open"] = dict((k, [x for x in xs if x.get("running")]) for k, xs in recs.items())
+        for k, xs in recs.items():
+            ts = sorted(x["paused_at"] for x in xs if x.get("paused_at"))
+            if ts:
+                sla["paused"][k] = ts[0]
+    first, ferr = {}, ""
+    if sla["source"] == "targets" and first_assigned:
+        first, ferr = read_first_assigned(api, [it["sys_id"] for it in done if it["table"] == "incident"])
+    return sla, first, ferr
+
+
 def sn_time(text):
     t = str(text or "").strip()
     if not t:
@@ -498,7 +677,8 @@ def keep(it, since, until):
     return d is None or d >= since
 
 
-def read_all(api, groups, tables, win, max_records=20000, audit=True, handoff_min=3, members=True, group_parents=True, handoff_source="auto"):
+def read_all(api, groups, tables, win, max_records=20000, audit=True, handoff_min=3, members=True, group_parents=True, handoff_source="auto",
+             sla_source="auto", first_assigned=False, state_metric="Incident State Duration", survey=True, survey_metrics=None):
     since, until = sn_time(win["prev_since"]), sn_time(win["until"])
     res = {"ok": False, "error": "", "window": win, "groups": [], "tables": [], "items": [], "audit": {}, "audit_error": "",
            "members": {}, "members_error": "", "lookup_note": "", "url": api.url, "group_tree": {}, "group_tree_error": "",
@@ -550,6 +730,13 @@ def read_all(api, groups, tables, win, max_records=20000, audit=True, handoff_mi
     gids = sorted(set(it.get("group_id") for it in items if it.get("group_id") and re.match(r"^[\w-]{1,64}$", str(it["group_id"]))))
     if group_parents and gids:
         res["group_tree"], res["group_tree_error"] = read_group_tree(api, gids)
+    res["sla"], res["first_assigned"], res["first_assigned_error"] = read_slas(api, items, win, sla_source, first_assigned, max_records)
+    # 1.7.0: the time on hold (the incidents on hold now, and those done in the window), the surveys
+    since_w = sn_time(win["since"])
+    hold_ids = [it["sys_id"] for it in items if it["table"] == "incident" and (
+        ("hold" in str(it.get("state") or "").lower() and it.get("active") is not False) or (sn_time(it.get("done_at")) and sn_time(it["done_at"]) >= since_w))]
+    res["states"], res["states_error"] = read_states(api, hold_ids, state_metric)
+    res["survey"], res["survey_error"] = read_survey(api, win, survey_metrics) if survey and "incident" in [str(t) for t in tables or []] else ([], "")
     return res
 
 
@@ -567,6 +754,10 @@ def main():
             handoff_source=dict(type="str", default="auto", choices=["auto", "audit", "metric", "none"]),
             work_notes_for=dict(type="list", elements="str", default=[]), work_notes_max=dict(type="int", default=20),
             work_note_chars=dict(type="int", default=1500),
+            sla_source=dict(type="str", default="auto", choices=["auto", "task_sla", "targets", "made_sla"]),
+            first_assigned=dict(type="bool", default=False),
+            state_metric=dict(type="str", default="Incident State Duration"), survey=dict(type="bool", default=True),
+            survey_metrics=dict(type="list", elements="str", default=[]),
         ),
         supports_check_mode=True)
     p = module.params
@@ -592,7 +783,8 @@ def main():
         url = "https://" + url
     api = Api(url, p["username"], p["password"], p["validate_certs"], p["ca_path"], p["timeout"])
     try:
-        res = read_all(api, p["groups"], p["tables"], win, p["max_records"], p["audit"], p["handoff_min"], p["members"], p["group_parents"], p["handoff_source"])
+        res = read_all(api, p["groups"], p["tables"], win, p["max_records"], p["audit"], p["handoff_min"], p["members"], p["group_parents"], p["handoff_source"],
+                       p["sla_source"], p["first_assigned"], p["state_metric"], p["survey"], p["survey_metrics"])
     except SnError as e:
         res = {"ok": False, "error": str(e), "window": win, "groups": [], "tables": [], "items": [], "audit": {}, "audit_error": "",
                "members": {}, "members_error": "", "lookup_note": "", "url": url}

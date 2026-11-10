@@ -17,8 +17,13 @@ and simpler: the tiles and the main tables, a link to the page, and an Excel wor
 |---|---|
 | **At a glance** | the tickets read, open now (and at the start), the median time to resolve an incident, SLAs met, reopened (or *came back*, below), bare close notes, changes successful, incidents reassigned 3+ times - each against the window before; then **What the period says**: three or four sentences, written by ACT from the tables (or made from the numbers without it) |
 | **Teams side by side** (the site's page) | one row per team: its backlog over the period (Keeping up / Falling behind), open now, open over 30 days, median fix, SLA met, its close notes, its change tasks closed and open (1.2.0), its top issue - the team's name opens its own page |
+| **Act on first** (1.7.0) | what the process says to look at, as tiles and lists (the first 10 rows, the rest folded): **SLA at risk now** (open incidents past 75% of their SLA, or breached and still open - worst first), **open over 3 hops**, **Awaiting Caller over 6 business days**, **No Resolution Provided** in the period (each for leadership's review, the close note's start with names and numbers replaced), **resolved, not closed after 7 days** - below |
+| **Hops, on hold and resolution codes** (1.7.0) | per group: over the hop limit and the hops each group took, on hold now (no reason, Awaiting Caller too long), on hold by reason and business days, the resolution codes to look at and reopened |
+| **How incidents ended** (1.7.0) | the outcome mix (Fixed, Workaround, Duplicate, Known Error, No Resolution Provided) per group against the window before, **unable to resolve**, first-contact resolution (and the service desk's), reopened within 7 days |
 | **Keeping up** | opened and resolved per week, the backlog at the end of each week, the age of what is open now (0-5, 6-15, 16-30, over 30 days), a heatmap of when incidents are opened (weekday by hour), the weeks as a table |
-| **Severity** | incidents per priority (count, median to resolve, SLA met), then every P1 and P2: when, what, the group, the change that caused it, its problem record |
+| **Severity** | incidents per priority - its name (1 - Critical ... 5 - Exempt), count, median to resolve, Response met and Resolution met (1.7.0), No SLO -, the **priority set by hand** (impact x urgency, the 3 x 3 matrix) per group, then every P1 and P2: when, what, the group, the change that caused it, its problem record |
+| **Categories** (1.7.0) | incidents per category (against the window before), their median time to resolve and SLOs met, the group they are mostly in; a data-quality line - no category, Other, off your official list (named) |
+| **Satisfaction** (1.7.0) | the incident surveys' average answer, by month and by group (when the surveys are read) |
 | **Top incident issues** | the issues ranked, with their rank against the window before (▲ ▼ New), their share and the cumulative share, a weekly trend, the median time to fix; open one for its **fix action** (with a Copy button), where the fix comes from - **From the tickets**, **Partly from tickets** or **Suggested by ACT** (not verified) -, the CIs it was seen on, example tickets (links into ServiceNow), its close-note quality, and the flags *KB candidate*, *Self-service candidate*, *Problem candidate*; a fix the close notes disagree on is said |
 | **Problem candidates** | 3 or more incidents of one issue on one CI within 30 days: the counts, the group, the problem record - or *No problem record*, or *Resolved, incidents continue* |
 | **Passed between groups** | incidents reassigned 3 or more times, the paths they took (a group the ticket came back to in amber), the most common issue on each path and the time it added. The groups are shown by their short names - the name without the parts every group shares, such as a site prefix or a contract suffix; rest on one for the full name |
@@ -269,6 +274,9 @@ The **ServiceNow API** credential you already have works ([SERVICENOW_SETUP.md](
 | `sys_audit` | the assignment history of incidents passed between groups (the paths) | `itil` on most instances; refused, the paths come from `metric_instance` (below) |
 | `metric_instance` | the same history from the out-of-box incident metric *Assignment Group* (0.97.0), when `sys_audit` is refused or `servicenow_insights_handoff_source: metric` | read on `metric_instance` (`itil` on most instances); both refused, the report shows the counts without the paths and says which table it could not read |
 | `sys_user_grmember` | the members of the groups the tickets name (the teams' leaderboards) | `itil` on most instances; else the report says so and each leaderboard lists everyone the team's tickets were assigned to or resolved by (or `servicenow_insights_members: false`) |
+| `task_sla` (1.7.0) | the SLAs of the incidents and requested items done in the window (and the one before), and of the incidents open now: met or missed, at risk now, on hold since (the SLA's pause) | `itil`; refused (403), the report says so under *Not read* and counts met or missed from your targets |
+| `metric_instance` (1.7.0) | the metric *Incident State Duration* (`servicenow_insights_state_metric`: the time on hold, reopened within 7 days) and the metric *Assigned to* (the response, with your targets) | as above; not there, the page says what it could not measure |
+| `asmt_metric_result` (1.7.0) | the incident surveys' answers (best-effort; `servicenow_insights_survey: false` = not read) | read on the assessment tables (`asmt_metric_result`, through `asmt_assessment_instance`); refused, said under *Not read*, no satisfaction figures |
 | `sys_journal_field` | the work notes of the top issues' incidents, for ACT's fixes (0.96.0; only with ACT) | read on `sys_journal_field` - `itil` reads the work notes of the incidents it can read on most instances; where an ACL on `sys_journal_field` refuses it (403), ask the ServiceNow admin for a read ACL on `sys_journal_field` for the account's role (the work notes of incidents only is enough), or set `servicenow_insights_act_work_notes: false`; refused, the report says so and the fixes come from the close notes |
 
 A table the account cannot read is listed under *Not read* and the rest is reported; take a table out of
@@ -295,24 +303,68 @@ A table the account cannot read is listed under *Not read* and the rest is repor
 
 To email a team lead their team's page as well: `servicenow_insights_team_email_to: {"Ops - Windows": [lead@yoursite.mil]}`.
 
-## SLA targets
+## Your SLOs, priorities and categories
 
-*SLA met* (the tiles, each team, each priority, each catalog item) counts the incidents and requested items **done in
-the window** that were done within their target: resolved (incidents) or closed (requested items) within the target's
-hours from when they were opened - calendar hours, not business hours. The targets, by table and priority:
+The page and the email count **met or missed** from your SLOs. Where it comes from (`servicenow_insights_sla_source`):
+
+| Source | What |
+|---|---|
+| `auto` (the default) | ServiceNow's own SLAs (`task_sla`) when the account reads them, else your targets (below) - said under *Not read* |
+| `task_sla` | ServiceNow's SLAs, as configured there (business hours, on hold paused). Each SLA definition is a **Response** or a **Resolution** by its name (`servicenow_insights_sla_response_match: [response]`, `servicenow_insights_sla_resolution_match: [resolution, resolve]`; any case); any other is *Other*, shown by name under *How this was made* and not counted. A ticket with no SLA attached is **No SLO** - counted, left out of the percentages (your P5s) |
+| `targets` | your targets below, in your business hours when set |
+| `made_sla` | ServiceNow's *Made SLA* flag (the way before 1.7.0 without targets) |
+
+Met or missed counts the incidents and requested items **done in the window**; the tiles show **Response met** and
+**Resolution met** (with `task_sla`, or a response target), else one *SLAs met*. The Severity table has both per
+priority, the teams side by side per team, the Categories per category.
+
+**Your targets** (the fallback, or `servicenow_insights_sla_source: targets`), in hours from opened to resolved
+(incidents) or closed (requested items), by table and priority. A number is the resolution; a mapping adds the response -
+opened to first assigned to a person (the metric *Assigned to*):
 
 ```yaml
-servicenow_insights_sla_targets:                                    # the defaults - twice common ITIL starting points
-  incident: {"1": 8, "2": 16, "3": 144, "4": 240, "5": 480}         # P1 8 h, P2 16 h, P3 6 days, P4 10 days, P5 20 days
-  sc_req_item: {"1": 48, "2": 144, "3": 240, "4": 480, "5": 960}    # P1 2 days ... P5 40 days
-servicenow_insights_sla_items: {"New account / onboarding": 48}     # a catalog item's own target, beating its priority's
+servicenow_insights_sla_targets:
+  incident:
+    "1": {response: 0.25, resolution: 4}
+    "2": {response: 0.5, resolution: 9}
+    "3": {response: 4, resolution: 27}
+    "4": {response: 9, resolution: 45}
+    "5": none                                  # no SLO for P5
+  sc_req_item: {"*": 45}
+servicenow_insights_sla_items: {"New account / onboarding": 18}     # a catalog item's own target, beating its priority's
+servicenow_insights_business_hours: {days: [mon, tue, wed, thu, fri], start: "07:30", end: "16:30", holidays: ["2026-12-25"]}
 ```
 
-Put your management's numbers in `all.yml` (or the template's Variables) - **both tables**: the setting is replaced
-whole, so a table you leave out falls back to ServiceNow's own *Made SLA* flag (whatever SLA definitions your instance
-has; often every ticket "made" it). `"*"` is every priority not listed. `servicenow_insights_sla_targets: {}` uses
-ServiceNow's flag everywhere. The *Severity* table shows each priority's target beside its SLA met; the workbook has each
-incident's target, and the tile says which way it was counted.
+The business hours are in `report_time_zone`; an end before the start is a shift past midnight; `{}` = calendar hours.
+Put both tables in `all.yml` (the setting is replaced whole: a table left out uses ServiceNow's *Made SLA*); `"*"` is
+every priority not listed.
+
+**Priorities.** `servicenow_insights_priority_names` names them on the report (`{"1": Critical, "2": High, "3": Moderate,
+"4": Low, "5": Exempt}`). `servicenow_insights_priority_matrix` is the standard 3 x 3 (impact -> urgency -> priority); an
+incident whose priority is not the one its impact and urgency give was **set by hand** - counted per group (set higher or
+lower) in Severity. `servicenow_insights_priority_matrix: []` = not checked.
+
+**Categories.** `servicenow_insights_categories` is your official list, e.g. `[Email, Network Connectivity, Workstations,
+Other]`: the Categories section counts the incidents in a category not on it and names those categories, beside those
+with no category and those in Other. Without a list, every category is shown as it is. The issues (without ACT) stay
+the incidents' category / subcategory.
+
+## What to act on first
+
+The *Act on first* section (the email: **Act on**) lists what the process says to look at:
+
+| What | Setting | How it is read |
+|---|---|---|
+| **SLA at risk now** | `servicenow_insights_sla_risk_pct: 75` | open incidents whose running SLA (`task_sla`) has used 75% of its time or more (business time where ServiceNow keeps it), or is breached and still open - worst first, with the time left |
+| **Over 3 hops** | `servicenow_insights_hop_limit: 3` | transferred more than 3 times after the first assignment (`reassignment_count` over 4): the open ones listed, oldest first; per group the share over and the hops each group took (the assignment paths, when read) |
+| **Awaiting Caller over 6 business days** | `servicenow_insights_awaiting_caller_days: 6` | on hold now (the state's name has *hold*) with the reason (`hold_reason`, as shown) Awaiting Caller; on hold since: the metric *Incident State Duration* (`servicenow_insights_state_metric`), else when the SLA was paused (`task_sla`); business days: the business hours' days, else Mon-Fri. On hold with no reason is counted |
+| **No Resolution Provided** | `servicenow_insights_scrutiny_codes`, `servicenow_insights_review_code` | the resolution codes (`close_code`, as shown) counted per group; each No Resolution Provided of the period listed - the close note's start with names, phone numbers, addresses and hosts replaced |
+| **Resolved, not closed after 7 days** | `servicenow_insights_close_after_days: 7` | resolved, never closed: the auto-close is not working |
+
+*How incidents ended* groups the close codes (`servicenow_insights_outcome_map`; any other code is Fixed); **unable to
+resolve** = `servicenow_insights_unable_outcomes` (Known Error + No Resolution Provided) of those resolved.
+**First-contact resolution** = resolved without being reassigned; name the service desk's groups in
+`servicenow_insights_service_desk_groups` for its own. **Reopened within 7 days** needs the state metric.
 
 ## The window
 

@@ -101,29 +101,196 @@ def _hours(it):
     return None
 
 
-def sla_target(it, o):
-    """Your own SLA target for a ticket, in hours (servicenow_insights_sla_targets: by table, then priority, "*" for the
-    rest; servicenow_insights_sla_items: a catalog item's own) - or None: ServiceNow's Made SLA counts then."""
+# ---- met or missed (1.7.0): task_sla's Response and Resolution, else your targets (business hours), else Made SLA ----
+
+WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+NO_TARGET = object()
+# the standard 3 x 3 ITIL matrix: impact -> urgency -> priority (1 Critical ... 5)
+PRIORITY_MATRIX = {"1": {"1": "1", "2": "2", "3": "3"}, "2": {"1": "2", "2": "3", "3": "4"}, "3": {"1": "3", "2": "4", "3": "5"}}
+PRIORITY_NAMES = {"1": "Critical", "2": "High", "3": "Moderate", "4": "Low", "5": "Exempt"}
+# a close code (as shown, any case) -> how the incident ended; any other code: Fixed
+OUTCOME_MAP = {"Workaround": "Workaround", "Workaround provided": "Workaround", "Duplicate": "Duplicate", "Known Error": "Known Error",
+               "No Resolution Provided": "No Resolution Provided"}
+
+
+def _hm(text, what):
+    m = re.match(r"^\s*(\d{1,2}):(\d{2})\s*$", str(text or ""))
+    if not m or int(m.group(1)) > 24 or int(m.group(2)) > 59:
+        raise ValueError("servicenow_insights_business_hours %s must be HH:MM, not %s" % (what, text))
+    return int(m.group(1)) * 60 + int(m.group(2))
+
+
+def business_hours_spec(bh):
+    """servicenow_insights_business_hours -> (weekdays 0-6, start minute, end minute, holidays {YYYY-MM-DD}), or None
+    ({} = calendar hours). An end at or before the start is a shift that runs past midnight (it belongs to its start day)."""
+    if not bh:
+        return None
+    if not isinstance(bh, dict):
+        raise ValueError("servicenow_insights_business_hours must be a mapping, e.g. {days: [mon, tue, wed, thu, fri], start: '07:30', end: '16:30'}")
+    days = bh.get("days") or ["mon", "tue", "wed", "thu", "fri"]
+    if isinstance(days, str):
+        days = days.replace(",", " ").split()
+    wd = set()
+    for d in days:
+        k = str(d).strip().lower()[:3]
+        if k not in WEEKDAYS:
+            raise ValueError("servicenow_insights_business_hours days: %s is not a day (mon ... sun)" % d)
+        wd.add(WEEKDAYS.index(k))
+    hol = set()
+    for h in bh.get("holidays") or []:
+        t = str(h).strip()
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", t):
+            raise ValueError("servicenow_insights_business_hours holidays: %s is not a date (YYYY-MM-DD)" % h)
+        hol.add(t)
+    return wd, _hm(bh.get("start", "00:00"), "start"), _hm(bh.get("end", "24:00"), "end"), hol
+
+
+def business_hours(a, b, spec, tz):
+    """Hours from a to b (aware datetimes) inside the business hours (spec: business_hours_spec), in the time zone tz;
+    calendar hours when spec is None."""
+    if a is None or b is None or b < a:
+        return None
+    if spec is None:
+        return (b - a).total_seconds() / 3600.0
+    days, sm, em, hol = spec
+    total = 0.0
+    d = a.astimezone(tz).date() - datetime.timedelta(days=1)           # yesterday's overnight shift may run into a
+    last = b.astimezone(tz).date()
+    while d <= last:
+        if d.weekday() in days and d.isoformat() not in hol:
+            ws = datetime.datetime(d.year, d.month, d.day, tzinfo=tz) + datetime.timedelta(minutes=sm)
+            end_day = d + datetime.timedelta(days=1) if em <= sm else d
+            we = datetime.datetime(end_day.year, end_day.month, end_day.day, tzinfo=tz) + datetime.timedelta(minutes=em)
+            lo, hi = max(a, ws), min(b, we)
+            if hi > lo:
+                total += (hi - lo).total_seconds() / 3600.0
+        d += datetime.timedelta(days=1)
+    return total
+
+
+def _target_entry(it, o):
+    """The ticket's entry in servicenow_insights_sla_targets (by table, then priority, "*" for the rest; a catalog item's
+    own in servicenow_insights_sla_items): a number (resolution hours), {response, resolution}, None (no SLO: none set on
+    purpose) - or NO_TARGET (the table or priority not there: ServiceNow's Made SLA counts)."""
     items = (o or {}).get("sla_items") or {}
     if it.get("table") == "sc_req_item" and it.get("cat_item") in items:
-        return float(items[it["cat_item"]])
-    by = ((o or {}).get("sla_targets") or {}).get(it.get("table")) or {}
+        return items[it["cat_item"]]
+    by = ((o or {}).get("sla_targets") or {}).get(it.get("table"))
+    if not by:
+        return NO_TARGET
     by = dict((str(k).strip().upper().lstrip("P"), v) for k, v in by.items())
-    v = by.get(str(it.get("priority_value") or "").strip(), by.get("*"))
-    return None if v in (None, "") else float(v)
+    return by.get(str(it.get("priority_value") or "").strip(), by.get("*", NO_TARGET))
+
+
+def _none(v):
+    return v is None or str(v).strip().lower() in ("", "none", "null", "~")
+
+
+def sla_target(it, o):
+    """Your resolution target for a ticket, in hours - or None (none set: ServiceNow's Made SLA counts, or no SLO)."""
+    v = _target_entry(it, o)
+    if v is NO_TARGET or _none(v):
+        return None
+    v = v.get("resolution") if isinstance(v, dict) else v
+    return None if _none(v) else float(v)
+
+
+def response_target(it, o):
+    """Your response target for a ticket, in hours (servicenow_insights_sla_targets {..: {response: 0.5, ...}}) - or None."""
+    v = _target_entry(it, o)
+    if not isinstance(v, dict) or _none(v.get("response")):
+        return None
+    return float(v["response"])
+
+
+def sla_kind(name, o=None):
+    """An SLA definition's kind by its name: response, resolution (servicenow_insights_sla_*_match, any case), else other."""
+    t = str(name or "").lower()
+    if any(str(w).lower() in t for w in (o or {}).get("sla_response_match") or ["response"] if str(w).strip()):
+        return "response"
+    if any(str(w).lower() in t for w in (o or {}).get("sla_resolution_match") or ["resolution", "resolve"] if str(w).strip()):
+        return "resolution"
+    return "other"
+
+
+def apply_slas(items, r, o, tz=UTC):
+    """Each incident's and requested item's met or missed, done tickets only: _resp (Response), _resol (Resolution; made_sla
+    follows it, so every figure that read Made SLA reads it), _no_slo (no SLA at all, out of the percentages), _slas.
+    task_sla: an SLA of the kind breached = missed; the targets: within the hours (business hours when set) - the response
+    from opened to first assigned to a person; made_sla: ServiceNow's flag. -> the source used."""
+    sla = (r or {}).get("sla") or {}
+    src = sla.get("source") or "targets"           # a reading from before 1.7.0: the targets where set, else Made SLA
+    spec = business_hours_spec((o or {}).get("business_hours"))
+    recs = sla.get("records") or {}
+    first = (r or {}).get("first_assigned") or {}
+    for it in items:
+        it["_resp"] = it["_resol"] = None
+        it["_no_slo"], it["_slas"] = False, []
+        if it.get("table") not in ("incident", "sc_req_item"):
+            continue
+        it["sn_made_sla"] = it.get("made_sla")
+        done = _t(it.get("done_at"))
+        if src == "task_sla":
+            mine = recs.get(it.get("sys_id")) or []
+            it["made_sla"] = None
+            if not done:
+                continue
+            if not mine:
+                it["_no_slo"] = True
+                continue
+            by = {}
+            for x in mine:
+                k = sla_kind(x.get("name"), o)
+                by.setdefault(k, []).append(x)
+                it["_slas"].append([x.get("name") or "", k])
+            it["_resp"] = (not any(x.get("breached") for x in by["response"])) if by.get("response") else None
+            it["_resol"] = (not any(x.get("breached") for x in by["resolution"])) if by.get("resolution") else None
+            it["made_sla"] = it["_resol"]
+            continue
+        if src == "targets":
+            entry = _target_entry(it, o)
+            if entry is not NO_TARGET and (_none(entry) or (isinstance(entry, dict) and _none(entry.get("resolution")) and _none(entry.get("response")))):
+                it["made_sla"], it["_no_slo"] = None, bool(done)
+                continue
+            t = sla_target(it, o)
+            if t is not None:
+                h = business_hours(_t(it.get("opened_at")), done, spec, tz)
+                it["made_sla"] = None if h is None else h <= t
+                it["sla_target_h"] = t
+            rt = response_target(it, o)
+            if rt is not None and done and it.get("table") == "incident" and first.get(it.get("sys_id")):
+                h = business_hours(_t(it.get("opened_at")), _t(first[it["sys_id"]]), spec, tz)
+                it["_resp"] = None if h is None else h <= rt
+        it["_resol"] = it.get("made_sla") if done else None
+    return src
 
 
 def apply_sla_targets(items, o):
-    """Made SLA from your targets where you set one: resolved (or closed) within the target's hours. A ticket not yet
-    done keeps None (only done tickets count, as with ServiceNow's flag)."""
-    for it in items:
-        t = sla_target(it, o)
-        if t is None:
-            continue
-        h = _hours(it)
-        it["sn_made_sla"] = it.get("made_sla")
-        it["made_sla"] = None if h is None else h <= t
-        it["sla_target_h"] = t
+    """Made SLA from your targets (calendar hours), for the callers before 1.7.0: apply_slas with the targets."""
+    apply_slas(items, {"sla": {"source": "targets"}}, o)
+
+
+def priority_label(value, shown="", o=None):
+    """'1 - Critical': the priority's number and its name (servicenow_insights_priority_names), else as ServiceNow shows it."""
+    names = dict((str(k).strip().upper().lstrip("P"), str(v)) for k, v in ((o or {}).get("priority_names") or PRIORITY_NAMES).items())
+    v = str(value or "").strip()
+    return ("%s - %s" % (v, names[v])) if v in names else (shown or "(none)")
+
+
+def matrix_priority(it, o=None):
+    """The priority the matrix gives the incident's impact x urgency (servicenow_insights_priority_matrix; [] or {} = off),
+    or '' (off, or impact / urgency not read)."""
+    m = (o or {}).get("priority_matrix", PRIORITY_MATRIX)
+    if not m or not isinstance(m, dict):
+        return ""
+    row = dict((str(k), v) for k, v in m.items()).get(str(it.get("impact_value") or ""))
+    if not isinstance(row, dict):
+        return ""
+    return str(dict((str(k), v) for k, v in row.items()).get(str(it.get("urgency_value") or ""), "") or "")
+
+
+def category_name(it):
+    return " ".join(str(it.get("category") or "").split()) or "(none)"
 
 
 def _norm(text):
@@ -1034,7 +1201,29 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
     old_days = float(_o(o, "old_days", 30))
     weeks = _weeks(since, until, tz)
 
-    apply_sla_targets(items, o)
+    sla_src = apply_slas(items, r, o, tz)
+    sla_r = r.get("sla") or {}
+    resp_measured = sla_src == "task_sla" or (sla_src == "targets" and bool(r.get("first_assigned")) and not r.get("first_assigned_error")
+                                              and any(isinstance(v, dict) and not _none(v.get("response"))
+                                                      for t_ in ((o.get("sla_targets") or {}).values()) if isinstance(t_, dict) for v in t_.values()))
+    cat_list = [" ".join(str(c).split()) for c in name_list(o.get("categories") or []) if str(c).strip()]
+    cat_known = dict((c.lower(), c) for c in cat_list)
+    # 1.7.0: the process checks - the 3-hop rule, on hold, the resolution codes, closure, the surveys
+    hop_limit = int(_o(o, "hop_limit", 3))
+    bh_spec = business_hours_spec(o.get("business_hours"))
+    states = r.get("states") or {}
+    states_read = bool(states) and not r.get("states_error")
+    paused = (r.get("sla") or {}).get("paused") or {}
+    caller_days = float(_o(o, "awaiting_caller_days", 6))
+    close_after = float(_o(o, "close_after_days", 7))
+    codes = [str(c).strip() for c in name_list(o.get("scrutiny_codes") or ["Duplicate", "Known Error", "No Resolution Provided"]) if str(c).strip()]
+    review_code = str(o.get("review_code") or "No Resolution Provided").strip().lower()
+    survey_rows = [x for x in r.get("survey") or [] if isinstance(x, (list, tuple)) and len(x) >= 4]
+    risk_pct = float(_o(o, "sla_risk_pct", 75))
+    open_slas = (r.get("sla") or {}).get("open") or {}
+    omap = dict((" ".join(str(k).split()).lower(), str(v)) for k, v in (o.get("outcome_map") or OUTCOME_MAP).items())
+    unable = [str(x) for x in name_list(o.get("unable_outcomes") or ["Known Error", "No Resolution Provided"])]
+    desk = set(name_list(o.get("service_desk_groups") or []))
     by_table = {}
     for it in items:
         by_table.setdefault(it.get("table"), []).append(it)
@@ -1058,6 +1247,30 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
         for e_ in ev or []:
             group_names.update(x for x in e_[1:] if x)
     for it in inc_all:
+        it["_hold_now"] = "hold" in str(it.get("state") or "").lower() and not _t(it.get("done_at")) and it.get("active") is not False
+        it["_hold_since"], it["_hold_src"] = None, ""
+        if it["_hold_now"]:
+            st = [x for x in states.get(it["sys_id"]) or [] if "hold" in str(x[0]).lower()]
+            if st and _t(st[-1][1]):
+                it["_hold_since"], it["_hold_src"] = _t(st[-1][1]), "metric"
+            elif _t(paused.get(it["sys_id"])):
+                it["_hold_since"], it["_hold_src"] = _t(paused[it["sys_id"]]), "task_sla"
+        held_h = [(_t(x[2]) or until) - _t(x[1]) for x in states.get(it["sys_id"]) or [] if "hold" in str(x[0]).lower() and _t(x[1])]
+        it["_hold_h"] = (sum(d.total_seconds() for d in held_h) / 3600.0) if states_read and it["sys_id"] in states else None
+        it["_hops"] = it.get("reassignment_count") or 0
+        it["_outcome"] = omap.get(" ".join(str(it.get("close_code") or "").split()).lower(), "Fixed") if it.get("done_at") else ""
+        st_ = states.get(it["sys_id"]) or []
+        res_t = [_t(x[1]) for x in st_ if str(x[0]).lower() == "resolved" and _t(x[1])]
+        it["_reopen7"] = (any(_t(y[1]) and t_ < _t(y[1]) <= t_ + datetime.timedelta(days=7) and str(y[0]).lower() not in ("resolved", "closed", "canceled", "cancelled")
+                              for t_ in res_t for y in st_)) if states_read and it["sys_id"] in states else None
+        it["_risk"] = None
+        run_ = [x for x in open_slas.get(it["sys_id"]) or [] if x.get("running")]
+        if run_ and not _t(it.get("done_at")):
+            w = max(run_, key=lambda x: (bool(x.get("breached")), x.get("percent") or 0))
+            if w.get("breached") or (w.get("percent") or 0) >= risk_pct:
+                left = (w["left_s"] / 3600.0) if w.get("left_s") is not None else (
+                    business_hours(until, _t(w.get("planned_end")), bh_spec, tz) if _t(w.get("planned_end")) and _t(w["planned_end"]) > until else None)
+                it["_risk"] = {"sla": w.get("name") or "", "pct": w.get("percent"), "breached": bool(w.get("breached")), "left_h": 0.0 if w.get("breached") else left}
         it["_issue"] = issues_of.get(it["sys_id"])
         it["_grade"] = grade(it.get("close_notes"), o) if it.get("done_at") else ""
     for it in by_table.get("sc_task", []):
@@ -1216,6 +1429,9 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
         flow = inc + ritm
         sla_now = [x for x in flow if _in(_t(x.get("done_at")), since, until) and x.get("made_sla") is not None]
         sla_prev = [x for x in flow if _in(_t(x.get("done_at")), prev, since) and x.get("made_sla") is not None]
+        resp_now = [x for x in flow if _in(_t(x.get("done_at")), since, until) and x.get("_resp") is not None]
+        resp_prev = [x for x in flow if _in(_t(x.get("done_at")), prev, since) and x.get("_resp") is not None]
+        done_now = [x for x in flow if _in(_t(x.get("done_at")), since, until)]
         notes_now = [x.get("close_notes") for x in res_now] + [x.get("close_notes") for x in tasks if _in(_t(x.get("done_at")), since, until)]
         notes_prev = [x.get("close_notes") for x in res_prev] + [x.get("close_notes") for x in tasks if _in(_t(x.get("done_at")), prev, since)]
         q_now, q_n = _quality(notes_now, o)
@@ -1244,19 +1460,65 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
         # priority
         prio = {}
         for x in inc_now:
-            k = (x.get("priority_value") or "9", x.get("priority") or "(none)")
-            e = prio.setdefault(k, {"label": k[1], "value": k[0], "count": 0, "hours": [], "sla": [0, 0]})
+            k = x.get("priority_value") or "9"
+            e = prio.setdefault(k, {"label": priority_label(k if k != "9" else "", x.get("priority"), o), "value": k, "count": 0, "hours": [],
+                                    "sla": [0, 0], "resp": [0, 0], "no_slo": 0})
             e["count"] += 1
         for x in res_now:
-            k = (x.get("priority_value") or "9", x.get("priority") or "(none)")
+            k = x.get("priority_value") or "9"
             if k in prio:
                 prio[k]["hours"].append(_hours(x))
-                if x.get("made_sla") is not None:
-                    prio[k]["sla"][1] += 1
-                    prio[k]["sla"][0] += 1 if x["made_sla"] else 0
+                for f_, kk in (("made_sla", "sla"), ("_resp", "resp")):
+                    if x.get(f_) is not None:
+                        prio[k][kk][1] += 1
+                        prio[k][kk][0] += 1 if x[f_] else 0
+                prio[k]["no_slo"] += 1 if x.get("_no_slo") else 0
         prio_rows = [{"label": e["label"], "value": e["value"], "count": e["count"], "median_h": _r1(_median(e["hours"])),
-                      "sla": _r1(_pct(e["sla"][0], e["sla"][1])),
-                      "target_h": sla_target({"table": "incident", "priority_value": e["value"]}, o)} for _, e in sorted(prio.items())]
+                      "sla": _r1(_pct(e["sla"][0], e["sla"][1])), "resp": _r1(_pct(e["resp"][0], e["resp"][1])), "no_slo": e["no_slo"],
+                      "target_h": sla_target({"table": "incident", "priority_value": e["value"]}, o),
+                      "resp_target_h": response_target({"table": "incident", "priority_value": e["value"]}, o)} for _, e in sorted(prio.items())]
+
+        # the priority matrix (1.7.0): incidents whose priority is not the one their impact x urgency gives - set by hand
+        mx = [(x, matrix_priority(x, o)) for x in inc_now]
+        mx = [(x, p_) for x, p_ in mx if p_ and x.get("priority_value")]
+        off = [(x, p_) for x, p_ in mx if str(x["priority_value"]) != p_]
+        mg = {}
+        for x, p_ in mx:
+            e = mg.setdefault(x.get("group") or "(no group)", [0, 0])
+            e[1] += 1
+            e[0] += 1 if str(x["priority_value"]) != p_ else 0
+        matrix = {"on": bool(o.get("priority_matrix", PRIORITY_MATRIX)), "checked": len(mx), "off": len(off), "pct": _r1(_pct(len(off), len(mx))),
+                  "higher": sum(1 for x, p_ in off if str(x["priority_value"]) < p_), "lower": sum(1 for x, p_ in off if str(x["priority_value"]) > p_),
+                  "by_group": sorted([{"group": g, "off": v[0], "of": v[1], "pct": _r1(_pct(v[0], v[1]))} for g, v in mg.items() if v[0]],
+                                     key=lambda e: (-e["off"], -(e["pct"] or 0), e["group"]))[:5]}
+
+        # categories (1.7.0): incidents per category, the time to resolve, met or missed; the official list's data quality
+        cc, cp, ch, cg, cr, cs = {}, {}, {}, {}, {}, {}
+        for x in inc_now:
+            c_ = category_name(x)
+            _count(cc, c_)
+            _count(cg.setdefault(c_, {}), x.get("group") or "(no group)")
+        for x in inc_prev:
+            _count(cp, category_name(x))
+        for x in res_now:
+            c_ = category_name(x)
+            ch.setdefault(c_, []).append(_hours(x))
+            for f_, d_ in (("_resp", cr), ("made_sla", cs)):
+                if x.get(f_) is not None:
+                    e = d_.setdefault(c_, [0, 0])
+                    e[1] += 1
+                    e[0] += 1 if x[f_] else 0
+        cat_rows = sorted([{"name": c_, "count": v, "prev": cp.get(c_, 0), "share": _r1(_pct(v, len(inc_now))), "median_h": _r1(_median(ch.get(c_, []))),
+                            "resp": _r1(_pct(*cr[c_])) if c_ in cr else None, "resol": _r1(_pct(*cs[c_])) if c_ in cs else None,
+                            "team": _top(cg.get(c_, {}), 1)[0], "official": (c_.lower() in cat_known) if cat_list else None}
+                           for c_, v in cc.items()], key=lambda e: (-e["count"], e["name"]))
+        empty_n = cc.get("(none)", 0)
+        other_n = sum(v for c_, v in cc.items() if c_.lower() == "other")
+        offl = sorted([[c_, v] for c_, v in cc.items() if cat_list and c_ != "(none)" and c_.lower() != "other" and c_.lower() not in cat_known],
+                      key=lambda e: (-e[1], e[0]))
+        categories = {"rows": cat_rows, "total": len(inc_now), "empty": empty_n, "empty_pct": _r1(_pct(empty_n, len(inc_now))),
+                      "other": other_n, "other_pct": _r1(_pct(other_n, len(inc_now))), "listed": bool(cat_list),
+                      "off_list": sum(v for _, v in offl), "off_pct": _r1(_pct(sum(v for _, v in offl), len(inc_now))), "off_names": offl[:30]}
         majors = sorted([x for x in inc_now if str(x.get("priority_value") or "") in ("1", "2")], key=lambda x: x.get("opened_at") or "")
         major_rows = [{"number": x.get("number"), "opened": _t(x["opened_at"]).astimezone(tz).strftime("%Y-%m-%d"),
                        "priority": "P" + str(x.get("priority_value")), "what": x.get("short_description"), "group": x.get("group"),
@@ -1428,6 +1690,140 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
         reo = [_pct(sum(1 for x in lst if (x.get("reopen_count") or 0) > 0), len(lst)) for lst in (res_now, res_prev)]
         cb = [_pct(sum(1 for x in lst if x.get("_came_back")), len(lst)) for lst in (res_now, res_prev)]
 
+        # ---- 1.7.0: what to act on first
+        open_inc = [x for x in inc if _t(x.get("opened_at")) and _t(x["opened_at"]) <= until and (not _t(x.get("done_at")) or _t(x["done_at"]) > until)]
+
+        def prow_(x):
+            return priority_label(x.get("priority_value"), x.get("priority"), o)
+
+        def age_d(x):
+            return _r1((until - _t(x["opened_at"])).total_seconds() / 86400.0)
+        # A. the 3-hop rule: over = reassigned more than hop_limit + 1 times (the first assignment, then hop_limit transfers)
+        over = lambda x: (x.get("_hops") or 0) > hop_limit + 1                     # noqa: E731
+        hop_open = sorted([x for x in open_inc if over(x)], key=lambda x: x.get("opened_at") or "")
+        hg, recv = {}, {}
+        for x in res_now + open_inc:
+            e = hg.setdefault(x.get("group") or "(no group)", [0, 0])
+            e[1] += 1
+            e[0] += 1 if over(x) else 0
+            if over(x):
+                ev = audit.get(x.get("sys_id")) or []
+                for g in ([e_[2] for e_ in ev if e_[2]] if ev else [x.get("group") or "(no group)"]):
+                    _count(recv, g)
+        hops = {"limit": hop_limit, "done": sum(1 for x in res_now if over(x)), "done_of": len(res_now),
+                "done_pct": _r1(_pct(sum(1 for x in res_now if over(x)), len(res_now))), "open": len(hop_open),
+                "rows": [{"number": x.get("number"), "what": x.get("short_description"), "what_m": masked_excerpt(x.get("short_description"), mask, 100),
+                          "hops": x.get("_hops"), "group": x.get("group"),
+                          "age": age_d(x), "priority": prow_(x)} for x in hop_open[:50]],
+                "by_group": sorted([{"group": g, "over": v[0], "of": v[1], "pct": _r1(_pct(v[0], v[1])), "received": recv.get(g, 0)}
+                                    for g, v in hg.items() if v[0] or recv.get(g)], key=lambda e: (-e["received"], -e["over"], e["group"]))[:8],
+                "most": _top(recv, 1)[0] if recv else "", "by_paths": bool(audit)}
+        # B. on hold now: by reason and age (business days on hold), Awaiting Caller over the limit, no reason
+        held = [x for x in open_inc if x.get("_hold_now")]
+        hrows, hr = [], {}
+        for x in sorted(held, key=lambda x: (x.get("_hold_since") or _t(x["opened_at"]))):
+            bd = business_days(x["_hold_since"], until, bh_spec, tz) if x.get("_hold_since") else None
+            reason = " ".join(str(x.get("hold_reason") or "").split()) or "(no reason)"
+            late = bd is not None and "caller" in reason.lower() and bd > caller_days
+            e = hr.setdefault(reason, [0, 0, 0, 0, 0])            # open, 0-2, 3-6, over 6 business days, not known
+            e[0] += 1
+            e[1 if bd is not None and bd <= 2 else (2 if bd is not None and bd <= caller_days else (3 if bd is not None else 4))] += 1
+            hrows.append({"number": x.get("number"), "what": x.get("short_description"), "what_m": masked_excerpt(x.get("short_description"), mask, 100),
+                          "reason": reason, "group": x.get("group"),
+                          "since": x["_hold_since"].astimezone(tz).strftime("%Y-%m-%d") if x.get("_hold_since") else "",
+                          "days": bd, "src": x.get("_hold_src") or "", "late": late, "priority": prow_(x), "age": age_d(x)})
+        hgrp = {}
+        for h in hrows:
+            e = hgrp.setdefault(h["group"] or "(no group)", [0, 0, 0])
+            e[0] += 1
+            e[1] += 1 if h["reason"] == "(no reason)" else 0
+            e[2] += 1 if h["late"] else 0
+        hold_hours = [x["_hold_h"] for x in res_now if x.get("_hold_h") is not None]
+        hold = {"open": len(held), "no_reason": sum(1 for h in hrows if h["reason"] == "(no reason)"), "late": [h for h in hrows if h["late"]][:50],
+                "late_n": sum(1 for h in hrows if h["late"]), "by_reason": sorted([[k_] + v for k_, v in hr.items()], key=lambda e: -e[1]),
+                "by_group": sorted([{"group": g, "open": v[0], "no_reason": v[1], "late": v[2]} for g, v in hgrp.items()], key=lambda e: (-e["open"], e["group"]))[:10],
+                "unknown": sum(1 for h in hrows if h["days"] is None),
+                "sources": sorted(set(h["src"] for h in hrows if h["src"])), "caller_days": caller_days,
+                "median_h": _r1(_median(hold_hours)), "measured": states_read, "rows": hrows[:50]}
+        # C. the resolution codes to look at, per team; No Resolution Provided one by one; reopened
+        cg_ = {}
+        for x in res_now:
+            g = x.get("group") or "(no group)"
+            e = cg_.setdefault(g, dict([(c_, 0) for c_ in codes] + [("_reopened", 0), ("_resolved", 0)]))
+            e["_resolved"] += 1
+            e["_reopened"] += 1 if (x.get("reopen_count") or 0) > 0 else 0
+            code = " ".join(str(x.get("close_code") or "").split()).lower()
+            for c_ in codes:
+                if code == c_.lower():
+                    e[c_] += 1
+        nrp = [x for x in res_now if " ".join(str(x.get("close_code") or "").split()).lower() == review_code]
+        cdx = {"codes": codes, "review": next((c_ for c_ in codes if c_.lower() == review_code), "No Resolution Provided"),
+               "counts": dict((c_, sum(v[c_] for v in cg_.values())) for c_ in codes), "reopened": sum(v["_reopened"] for v in cg_.values()),
+               "resolved": len(res_now),
+               "by_group": sorted([dict(v, group=g) for g, v in cg_.items() if any(v[c_] for c_ in codes) or v["_reopened"]],
+                                  key=lambda e: (-sum(e[c_] for c_ in codes) - e["_reopened"], e["group"]))[:10],
+               "review_rows": [{"number": x.get("number"), "group": x.get("group"), "what": x.get("short_description"),
+                                "what_m": masked_excerpt(x.get("short_description"), mask, 100),
+                                "resolved": _t(x["done_at"]).astimezone(tz).strftime("%Y-%m-%d"),
+                                "note": masked_excerpt(x.get("close_notes"), mask)}
+                               for x in sorted(nrp, key=lambda x: x.get("done_at") or "", reverse=True)[:50]], "review_n": len(nrp)}
+        # D. resolved, not closed after close_after_days (auto-close not working)
+        stale = sorted([x for x in inc if x.get("resolved_at") and not x.get("closed_at") and _t(x["resolved_at"])
+                        and (until - _t(x["resolved_at"])).total_seconds() > close_after * 86400], key=lambda x: x["resolved_at"])
+        closure = {"days": close_after, "count": len(stale),
+                   "rows": [{"number": x.get("number"), "group": x.get("group"), "resolved": _t(x["resolved_at"]).astimezone(tz).strftime("%Y-%m-%d"),
+                             "days": _r1((until - _t(x["resolved_at"])).total_seconds() / 86400.0), "state": x.get("state")} for x in stale[:50]]}
+        # 1.7.0 (2): SLA at risk now - open incidents whose running SLA is past sla_risk_pct, or breached and still open; worst first
+        risk = sorted([x for x in open_inc if x.get("_risk")], key=lambda x: (not x["_risk"]["breached"], -(x["_risk"]["pct"] or 0), x.get("opened_at") or ""))
+        rgrp = {}
+        for x in risk:
+            e = rgrp.setdefault(x.get("group") or "(no group)", [0, 0])
+            e[0] += 1
+            e[1] += 1 if x["_risk"]["breached"] else 0
+        at_risk = {"pct": risk_pct, "count": len(risk), "breached": sum(1 for x in risk if x["_risk"]["breached"]),
+                   "rows": [{"number": x.get("number"), "priority": prow_(x), "sla": x["_risk"]["sla"], "pct": x["_risk"]["pct"], "breached": x["_risk"]["breached"],
+                             "left_h": _r1(x["_risk"]["left_h"]), "group": x.get("group"), "assignee": x.get("assigned_to") or ""} for x in risk[:50]],
+                   "by_group": sorted([{"group": g, "count": v[0], "breached": v[1]} for g, v in rgrp.items()], key=lambda e: (-e["count"], e["group"]))[:10],
+                   "read": bool(open_slas)}
+        # the outcome mix: how the resolved incidents ended; unable to resolve = unable_outcomes / resolved
+        def mix(lst):
+            c_ = {}
+            for x in lst:
+                _count(c_, x.get("_outcome") or "Fixed")
+            return c_
+        mo_now, mo_prev = mix(res_now), mix(res_prev)
+        ogrp = {}
+        for x in res_now:
+            _count(ogrp.setdefault(x.get("group") or "(no group)", {}), x.get("_outcome") or "Fixed")
+        names_ = ["Fixed"] + [v for v in dict.fromkeys(omap.values()) if v != "Fixed"]
+        un = lambda c_, n_: _r1(_pct(sum(c_.get(u, 0) for u in unable), n_))             # noqa: E731
+        outcomes = {"names": names_, "now": mo_now, "prev": mo_prev, "unable": [un(mo_now, len(res_now)), un(mo_prev, len(res_prev))], "unable_names": unable,
+                    "by_group": sorted([{"group": g, "resolved": sum(v.values()), "counts": v, "unable": un(v, sum(v.values()))} for g, v in ogrp.items()],
+                                       key=lambda e: (-e["resolved"], e["group"]))[:12]}
+        # reopened: at least once (reopen_count), and within 7 days of being resolved (the state metric, where read)
+        r7 = [x for x in res_now if x.get("_reopen7") is not None]
+        reopen7 = {"measured": bool(r7), "count": sum(1 for x in r7 if x["_reopen7"]), "of": len(r7), "pct": _r1(_pct(sum(1 for x in r7 if x["_reopen7"]), len(r7)))}
+        # first-contact resolution: resolved by the first group it was assigned to (never reassigned); the service desk's own
+        fcr_ = lambda lst: _r1(_pct(sum(1 for x in lst if (x.get("reassignment_count") or 0) == 0), len(lst)))     # noqa: E731
+        sd_now, sd_prev = [x for x in res_now if x.get("group") in desk], [x for x in res_prev if x.get("group") in desk]
+        fcr = {"now": fcr_(res_now), "prev": fcr_(res_prev), "desk": [fcr_(sd_now), fcr_(sd_prev)] if desk else None, "desk_n": len(sd_now),
+               "desk_groups": sorted(desk)}
+
+        # E. the surveys: the average answer, per month, per team
+        mine_ids = set(x["sys_id"] for x in inc)
+        sv_now = [v for k_, mtr, v, t_ in survey_rows if k_ in mine_ids and _in(_t(t_), since, until)]
+        sv_prev = [v for k_, mtr, v, t_ in survey_rows if k_ in mine_ids and _in(_t(t_), prev, since)]
+        sv_mon, sv_grp = {}, {}
+        grp_of = dict((x["sys_id"], x.get("group") or "(no group)") for x in inc)
+        for k_, mtr, v, t_ in survey_rows:
+            if k_ in mine_ids and _in(_t(t_), since, until):
+                sv_mon.setdefault(_t(t_).astimezone(tz).strftime("%Y-%m"), []).append(v)
+                sv_grp.setdefault(grp_of.get(k_), []).append(v)
+        survey = {"n": len(sv_now), "avg": _r2(_avg(sv_now)), "prev": _r2(_avg(sv_prev)), "prev_n": len(sv_prev),
+                  "months": [[k_, _r2(_avg(v)), len(v)] for k_, v in sorted(sv_mon.items())],
+                  "by_group": sorted([{"group": g, "avg": _r2(_avg(v)), "n": len(v)} for g, v in sv_grp.items()], key=lambda e: (-e["n"], e["group"]))[:12],
+                  "metrics": sorted(set(mtr for k_, mtr, v, t_ in survey_rows if k_ in mine_ids))}
+
         lvl = level or ("all" if allscope else "team")
         sc = {"key": key or ("all" if allscope else team), "name": name or ("All assignment groups" if allscope else team),
               "slug": "all" if allscope else _slug(name or team), "team": team, "level": lvl,
@@ -1437,6 +1833,10 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
                          "resolved": len(res_now)},
               "median_h": [_r1(_median([_hours(x) for x in res_now])), _r1(_median([_hours(x) for x in res_prev]))],
               "sla": [_r1(_pct(sum(1 for x in sla_now if x["made_sla"]), len(sla_now))), _r1(_pct(sum(1 for x in sla_prev if x["made_sla"]), len(sla_prev)))],
+              "resp": [_r1(_pct(sum(1 for x in resp_now if x["_resp"]), len(resp_now))), _r1(_pct(sum(1 for x in resp_prev if x["_resp"]), len(resp_prev)))],
+              "no_slo": [sum(1 for x in done_now if x.get("_no_slo")), len(done_now)], "matrix": matrix, "categories": categories,
+              "hops": hops, "hold": hold, "codes": cdx, "closure": closure, "survey": survey, "at_risk": at_risk, "outcomes": outcomes,
+              "reopen7": reopen7, "fcr": fcr,
               "reopen": [_r1(reo[0]), _r1(reo[1])], "came_back": [_r1(cb[0]), _r1(cb[1])],
               "quality": q_now, "quality_prev": q_prev, "notes_graded": q_n,
               "backlog": [bl_now, bl_start], "age": age, "weeks": wk, "heat": heat,
@@ -1622,7 +2022,10 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
     def side_row(k):
         s = scopes[k]
         return {"key": k, "team": s["name"], "label": s["label"], "slug": s["slug"], "backlog": s["backlog"],
-                "series": [w["backlog"] for w in s["weeks"]], "old": s["age"][3], "median_h": s["median_h"][0], "sla": s["sla"][0],
+                "series": [w["backlog"] for w in s["weeks"]], "old": s["age"][3], "median_h": s["median_h"][0], "sla": s["sla"][0], "resp": s["resp"][0],
+                "hops_open": s["hops"]["open"], "hops_pct": s["hops"]["done_pct"], "hold_late": s["hold"]["late_n"], "review_n": s["codes"]["review_n"],
+                "stale": s["closure"]["count"], "survey": s["survey"]["avg"], "fcr": s["fcr"]["now"], "unable": s["outcomes"]["unable"][0],
+                "at_risk": s["at_risk"]["count"],
                 "quality": s["quality"], "top": [s["issues"][0]["name"], s["issues"][0]["count"]] if s["issues"] else ["", 0],
                 "incidents": s["counts"]["incidents"],
                 "ct_closed": (s.get("ctasks") or {}).get("closed"), "ct_open": (s.get("ctasks") or {}).get("open")}
@@ -1664,7 +2067,15 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
                      "errors": list(state.get("errors") or [])[:20], "model": state.get("model") or "", "provider": state.get("provider") or "",
                      "issues": len(state.get("issues") or []), "fixes": len(state.get("fixes") or {}), "reason": str(o.get("act_reason") or ""),
                      "work_notes": dict(state.get("work_notes") or {})},
-             "mask": dict(mask.get("counts") or {}), "summaries_by": "rules"}
+             "mask": dict(mask.get("counts") or {}), "summaries_by": "rules",
+             "slo": {"source": sla_src, "asked": sla_r.get("asked") or "", "note": sla_r.get("note") or "", "response_measured": resp_measured,
+                     "open_cut": list(sla_r.get("open_cut") or []),
+                     "definitions": sorted([[nm, k_, c_] for (nm, k_), c_ in _sla_defs(items, since, until).items()], key=lambda e: (e[1], -e[2], e[0])),
+                     "business_hours": business_hours_label(o.get("business_hours"), win.get("time_zone")),
+                     "first_assigned_error": str(r.get("first_assigned_error") or ""), "categories": cat_list},
+             "process": {"states_error": str(r.get("states_error") or ""), "state_metric": str(o.get("state_metric") or ""),
+                         "paused_error": str((r.get("sla") or {}).get("paused_error") or ""), "survey_error": str(r.get("survey_error") or ""),
+                         "survey_read": "survey_error" in r and not r.get("survey_error"), "hop_limit": hop_limit}}
     for k, s in scopes.items():
         s["summary"] = rule_summary(s, model, o)
     # the split (0.97.0): every page's figures again for the groups that match servicenow_insights_split_pattern (the group
@@ -1682,6 +2093,61 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
             mv = servicenow_insights_model(rv, state, mask, dict(o, split_pattern="", _fixed={"teams": teams, "hier": hier, "folded": folded}))
             model["variants"][v] = mv["scopes"]
     return model
+
+
+def masked_excerpt(text, mask, n=160):
+    """A close note's start for leadership's list: the names, phone numbers, addresses and hosts the mask knows replaced by
+    [person], [phone] ... - never the mask's own placeholders."""
+    t = PLACEHOLDER.sub(lambda m: "[%s]" % {"ID": "id"}.get(m.group(1), m.group(1).lower()), apply_mask(text, mask))
+    t = EMAIL.sub("[email]", PHONE.sub("[phone]", t))
+    t = " ".join(t.split())
+    return t if len(t) <= n else t[:n - 1].rsplit(" ", 1)[0] + "…"
+
+
+def _avg(vals):
+    v = [float(x) for x in vals if x is not None]
+    return sum(v) / len(v) if v else None
+
+
+def _r2(x):
+    return None if x is None else round(x, 2)
+
+
+def business_days(a, b, spec, tz):
+    """Whole business days from a to b: the days after a's up to b's that are business days (spec's days, not its holidays;
+    Mon-Fri without business hours)."""
+    if a is None or b is None or b <= a:
+        return 0 if a is not None and b is not None else None
+    days, hol = (spec[0], spec[3]) if spec else (set(range(5)), set())
+    d, last, n = a.astimezone(tz).date() + datetime.timedelta(days=1), b.astimezone(tz).date(), 0
+    while d <= last:
+        if d.weekday() in days and d.isoformat() not in hol:
+            n += 1
+        d += datetime.timedelta(days=1)
+    return n
+
+
+def _sla_defs(items, since, until):
+    """{(SLA definition name, kind): tickets done in the window that carried it}."""
+    out = {}
+    for it in items:
+        if _in(_t(it.get("done_at")), since, until):
+            for nm, k in set(tuple(x) for x in it.get("_slas") or []):
+                _count(out, (nm, k))
+    return out
+
+
+def business_hours_label(bh, tz_name=""):
+    """'Mon-Fri 07:30-16:30 (America/New_York), 2 holidays' - or 'calendar hours'."""
+    spec = business_hours_spec(bh)
+    if spec is None:
+        return "calendar hours"
+    days, sm, em, hol = spec
+    names = [WEEKDAYS[d].capitalize() for d in sorted(days)]
+    run = sorted(days)
+    span = ("%s-%s" % (names[0], names[-1])) if len(run) > 2 and run == list(range(run[0], run[-1] + 1)) else ", ".join(names)
+    return "%s %02d:%02d-%02d:%02d%s (%s)%s" % (span, sm // 60, sm % 60, em // 60 % 24, em % 60, " overnight" if em <= sm else "",
+                                               tz_name or "UTC", (", %d holiday%s" % (len(hol), "" if len(hol) == 1 else "s")) if hol else "")
 
 
 def fmt_hours(h):
@@ -1824,6 +2290,11 @@ def servicenow_insights_doc(model, key="all", opts=None):
     win = model.get("window") or {}
     c = s["counts"]
     b = s["backlog"]
+    slo = model.get("slo") or {}
+    two = slo.get("source") == "task_sla" or bool(slo.get("response_measured"))       # Response met and Resolution met (1.7.0)
+
+    def pf(v):
+        return ("%.1f%%" % v) if v is not None else "—"
     behind = b[0] > b[1] * 1.05 and b[0] - b[1] >= 5
     status = "info" if not c["incidents"] and not c["requests"] else ("warning" if behind or s["age"][3] else "ok")
     top = s["issues"][0] if s["issues"] else None
@@ -1834,17 +2305,43 @@ def servicenow_insights_doc(model, key="all", opts=None):
                {"label": "Requests", "value": c["requests"]},
                {"label": "Open now", "value": b[0], "status": "warning" if behind else "", "note": "was %d at the start" % b[1]},
                {"label": "Median time to resolve", "value": fmt_hours(s["median_h"][0])},
-               {"label": "SLAs met", "value": ("%.1f%%" % s["sla"][0]) if s["sla"][0] is not None else "—"},
+               ] + ([{"label": "Response met", "value": pf(s["resp"][0])}, {"label": "Resolution met", "value": pf(s["sla"][0])}] if two else
+                    [{"label": "SLAs met", "value": pf(s["sla"][0])}]) + [
                {"label": "Close notes that say what was done", "value": "%d%%" % s["quality"][0]}]
     secs = [{"title": "What the period says" + (" (written by ACT)" if s.get("summary_by") == "act" else ""), "lines": s["summary"] or ["(nothing to say)"]}]
+    # 1.7.0: what to act on first - the counts, and the first of each list
+    hp, hd, cd, cl = s.get("hops") or {}, s.get("hold") or {}, s.get("codes") or {}, s.get("closure") or {}
+    if hp or hd or cd or cl:
+        lim, cdays = int(hp.get("limit") or 3), hd.get("caller_days") or 6
+        rk = s.get("at_risk") or {}
+        # the email leaves the site: the short descriptions with the names, numbers, addresses and hosts replaced
+        acts = [("SLA at risk now (past %g%%, or breached and open)" % (rk.get("pct") or 75), rk.get("count") or 0,
+                 ["%s %s, %s %s, %s, %s" % (x["number"], x["priority"], x["sla"], "breached" if x["breached"] else ("%.0f%% used, %s left" % (x["pct"] or 0, fmt_hours(x["left_h"]))),
+                                           x["group"], x["assignee"] or "unassigned") for x in (rk.get("rows") or [])[:5]]),
+                ("Open over %d hops" % lim, hp.get("open") or 0, ["%s %s, %s hops, in %s, %g days" % (x["number"], x.get("what_m", ""), x["hops"], x["group"], x["age"])
+                                                                 for x in (hp.get("rows") or [])[:5]]),
+                ("Awaiting Caller over %g business days" % cdays, hd.get("late_n") or 0,
+                 ["%s %s, %s, on hold since %s (%s business days)" % (x["number"], x.get("what_m", ""), x["group"], x["since"], x["days"]) for x in (hd.get("late") or [])[:5]]),
+                ("%s in the period" % (cd.get("review") or "No Resolution Provided"), cd.get("review_n") or 0,
+                 ["%s %s, %s, resolved %s" % (x["number"], x.get("what_m", ""), x["group"], x["resolved"]) for x in (cd.get("review_rows") or [])[:5]]),
+                ("Resolved, not closed after %g days" % (cl.get("days") or 7), cl.get("count") or 0,
+                 ["%s %s, resolved %s" % (x["number"], x["group"], x["resolved"]) for x in (cl.get("rows") or [])[:5]])]
+        lines = []
+        for lbl, cnt, first in acts:
+            lines.append("%s: %d" % (lbl, cnt))
+            lines += ["  - " + x for x in first]
+            if cnt > len(first):
+                lines.append("  - ... and %d more (the web page lists them all)" % (cnt - len(first)))
+        secs.append({"title": "Act on", "status": "warning" if any(cnt for _, cnt, _ in acts) else "ok", "lines": lines})
     side = (s.get("side") or {}).get("rows") or (s.get("teams") if key in (None, "all") else None)
     if side:
         kind = (s.get("side") or {}).get("kind") or "Teams"
         ctc = s.get("ctasks") is not None                 # change_task read (1.2.0): its two columns
         secs.append({"title": "%s side by side" % kind, "columns": [kind[:-1] if kind != "Directorates" else "Directorate", "Incidents", "Open now", "Was", "Over %d days" % int(_o(o, "old_days", 30)),
-                                                               "Median fix", "SLA met", "Bare notes"] + (["Change tasks closed", "Change tasks open"] if ctc else []) + ["Top issue"],
-                     "rows": [[t.get("label") or t["team"], t["incidents"], t["backlog"][0], t["backlog"][1], t["old"], fmt_hours(t["median_h"]),
-                               ("%.1f%%" % t["sla"]) if t["sla"] is not None else "—", "%d%%" % t["quality"][2]] +
+                                                               "Median fix"] + (["Response met", "Resolution met"] if two else ["SLA met"]) + ["Bare notes"] +
+                                (["Change tasks closed", "Change tasks open"] if ctc else []) + ["Top issue"],
+                     "rows": [[t.get("label") or t["team"], t["incidents"], t["backlog"][0], t["backlog"][1], t["old"], fmt_hours(t["median_h"])] +
+                              ([pf(t.get("resp"))] if two else []) + [pf(t["sla"]), "%d%%" % t["quality"][2]] +
                               ([t.get("ct_closed") or 0, t.get("ct_open") or 0] if ctc else []) +
                               [("%s (%d)" % (t["top"][0], t["top"][1])) if t["top"][0] else ""] for t in side],
                      "row_status": ["warning" if t["backlog"][0] > t["backlog"][1] * 1.05 and t["backlog"][0] - t["backlog"][1] >= 5 else ""
@@ -1855,6 +2352,37 @@ def servicenow_insights_doc(model, key="all", opts=None):
         secs.append({"title": "Top incident issues", "columns": ["#", "Rank", "Issue", "Incidents", "Was", "Median fix", "Bare notes", "Fix"],
                      "rows": [[i["rank"], i["mv"]["text"], i["name"], i["count"], i["prev"], fmt_hours(i["median_h"]), "%d%%" % i["quality"][2],
                                src.get(i["fix"]["source"], "")] for i in s["issues"][:n]]})
+    # 1.7.0: by priority with your SLOs, the priority set by hand, the categories
+    if s["prio"]:
+        secs.append({"title": "By priority", "text": "Met or missed: %s." % {"task_sla": "ServiceNow's SLAs (task_sla)", "targets": "your targets, " + (
+                         slo.get("business_hours") or "calendar hours"), "made_sla": "ServiceNow's Made SLA"}.get(slo.get("source") or "targets", ""),
+                     "columns": ["Priority", "Incidents", "Median to resolve"] + (["Response met", "Resolution met"] if two else ["SLA met"]) + ["No SLO"],
+                     "rows": [[p["label"], p["count"], fmt_hours(p["median_h"])] + ([pf(p.get("resp"))] if two else []) + [pf(p["sla"]), p.get("no_slo") or 0]
+                              for p in s["prio"]]})
+    mx = s.get("matrix") or {}
+    if mx.get("on") and mx.get("checked"):
+        secs.append({"title": "Priority set by hand", "status": "warning" if (mx.get("pct") or 0) >= 10 else "",
+                     "text": "%d of %d incidents (%s) have a priority their impact and urgency do not give (the 3 x 3 matrix): %d set higher, %d lower." % (
+                         mx["off"], mx["checked"], pf(mx["pct"]), mx.get("higher") or 0, mx.get("lower") or 0),
+                     "columns": ["Group", "Set by hand", "Of", "Share"],
+                     "rows": [[g["group"], g["off"], g["of"], pf(g["pct"])] for g in mx.get("by_group") or []]})
+    oc = s.get("outcomes") or {}
+    if oc.get("by_group"):
+        secs.append({"title": "How incidents ended", "text": "Unable to resolve (%s): %s, the window before %s. First-contact resolution: %s." % (
+                         " + ".join(oc.get("unable_names") or []), pf(oc["unable"][0]), pf(oc["unable"][1]), pf((s.get("fcr") or {}).get("now"))),
+                     "columns": ["Group", "Resolved"] + oc["names"] + ["Unable to resolve"],
+                     "rows": [[g["group"], g["resolved"]] + [g["counts"].get(k_, 0) for k_ in oc["names"]] + [pf(g["unable"])] for g in oc["by_group"]]})
+    cat = s.get("categories") or {}
+    if cat.get("rows"):
+        dq = "%d with no category (%s), %d in Other (%s)" % (cat["empty"], pf(cat["empty_pct"]), cat["other"], pf(cat["other_pct"]))
+        if cat.get("listed"):
+            dq += ", %d not on the official list (%s)%s" % (cat["off_list"], pf(cat["off_pct"]),
+                                                            (": " + ", ".join("%s (%d)" % (nm, c_) for nm, c_ in cat["off_names"])) if cat["off_names"] else "")
+        secs.append({"title": "Categories", "text": "Data quality: %s." % dq,
+                     "columns": ["Category", "Incidents", "Share", "Median to resolve"] + (["Response met", "Resolution met"] if two else ["SLA met"]) + ["Mostly in"],
+                     "rows": [[x["name"], x["count"], pf(x["share"]), fmt_hours(x["median_h"])] + ([pf(x.get("resp"))] if two else []) + [pf(x.get("resol")), x.get("team") or ""]
+                              for x in cat["rows"][:20]],
+                     "row_status": ["warning" if x.get("official") is False else "" for x in cat["rows"][:20]]})
     if s["requests"]:
         secs.append({"title": "Most requested services", "columns": ["#", "Rank", "Catalog item", "Requests", "Was", "Median to fulfil", "SLA met"],
                      "rows": [[q["rank"], q["mv"]["text"], q["name"], q["count"], q["prev"],
@@ -1940,6 +2468,18 @@ def not_read_lines(model):
     if ((model.get("act") or {}).get("work_notes") or {}).get("error"):
         out.append("sys_journal_field (the incidents' work notes, for ACT's fixes): %s - the fixes were written from the close notes "
                    "only" % model["act"]["work_notes"]["error"])
+    slo, pr = model.get("slo") or {}, model.get("process") or {}
+    if slo.get("note"):
+        out.append(slo["note"])
+    if slo.get("open_cut"):
+        out.append("task_sla of the open incidents: %d of %d read (servicenow_insights_max_records) - SLA at risk now may miss some" % tuple(slo["open_cut"]))
+    if slo.get("first_assigned_error"):
+        out.append("metric_instance (Assigned to, the response from your targets): %s - the response is not measured" % slo["first_assigned_error"])
+    if pr.get("states_error") and pr["states_error"] != "none":
+        out.append("metric_instance (%s, the time on hold): %s - %s" % (pr.get("state_metric") or "the state metric", pr["states_error"],
+                   "on hold since from task_sla's pause instead" if not pr.get("paused_error") else "the time on hold is not known"))
+    if pr.get("survey_error"):
+        out.append("asmt_metric_result (the incident surveys): %s - no satisfaction figures" % pr["survey_error"])
     if model.get("lookup_note"):
         out.append(model["lookup_note"])
     if (model.get("window") or {}).get("note"):
@@ -1969,19 +2509,24 @@ def servicenow_insights_xlsx(model, r=None, state=None, mask=None, opts=None):
     def place(g, k):
         return (hier.get(g) or hier_place(g, o) if g else {}).get(k, "")
     inc = [dict(x) for x in r.get("items") or [] if x.get("table") == "incident" and _in(_t(x.get("opened_at")), since, until)]
-    apply_sla_targets(inc, o)
+    apply_slas(inc, r, o, tz)
+    yn = lambda v: "" if v is None else ("yes" if v else "no")          # noqa: E731
     sheets = [{"name": "Incidents", "columns": ["Number", "Short description", "Issue", "Category", "Subcategory", "Priority", "State",
                                                 "Site", "Directorate", "Placed by", split_col, "Assignment group", "Assigned to", "Resolved by", "Caller", "Configuration item", "Opened",
                                                 "Resolved", "Hours to resolve", "Reassignments", "Reopened", "Made SLA", "SLA target (hours)", "Close code",
-                                                "Close note grade", "Close notes", "Caused by", "Problem"],
+                                                "Close note grade", "Close notes", "Caused by", "Problem",
+                                                # 1.7.0
+                                                "Response met", "No SLO", "SLAs", "Impact", "Urgency", "Priority by the matrix"],
                "rows": [[x.get("number"), x.get("short_description"), issues_of.get(x["sys_id"]) or category_issue(x), x.get("category"),
-                         x.get("subcategory"), x.get("priority"), x.get("state"), place(x.get("group"), "site"), place(x.get("group"), "dir"), place(x.get("group"), "by"),
+                         x.get("subcategory"), x.get("priority"), x.get("state"),
+                         place(x.get("group"), "site"), place(x.get("group"), "dir"), place(x.get("group"), "by"),
                          ("yes" if x.get("group") in split_groups else "no") if split_groups is not None else "",
                          x.get("group"), x.get("assigned_to"), x.get("resolved_by"),
                          x.get("caller"), x.get("cmdb_ci"), when(x.get("opened_at")), when(x.get("done_at")), _r1(_hours(x)),
-                         x.get("reassignment_count"), x.get("reopen_count"), "" if x.get("made_sla") is None else ("yes" if x["made_sla"] else "no"),
-                         x.get("sla_target_h", ""), x.get("close_code"), grade(x.get("close_notes"), o) if x.get("done_at") else "", x.get("close_notes"),
-                         x.get("caused_by"), x.get("problem")] for x in inc]}]
+                         x.get("reassignment_count"), x.get("reopen_count"), yn(x.get("_resol")), x.get("sla_target_h", ""), x.get("close_code"), grade(x.get("close_notes"), o) if x.get("done_at") else "", x.get("close_notes"),
+                         x.get("caused_by"), x.get("problem"),
+                         yn(x.get("_resp")), "yes" if x.get("_no_slo") else "", "; ".join("%s (%s)" % (nm, k_) for nm, k_ in x.get("_slas") or []),
+                         x.get("impact_value"), x.get("urgency_value"), matrix_priority(x, o)] for x in inc]}]
     if split_groups is None:                   # no split: no column for it
         k_ = sheets[0]["columns"].index(split_col)
         del sheets[0]["columns"][k_]
@@ -1994,6 +2539,16 @@ def servicenow_insights_xlsx(model, r=None, state=None, mask=None, opts=None):
                              i["main_group"], ", ".join(i["cis"]), src.get(i["fix"]["source"], ""), " | ".join(i["fix"]["steps"])] for i in s["issues"]]})
     sheets.append({"name": "Requests", "columns": ["Rank", "Catalog item", "Requests", "Window before", "Median days", "SLA met %"],
                    "rows": [[q["rank"], q["name"], q["count"], q["prev"], q["median_days"], q["sla"]] for q in s["requests"]]})
+    cats = s.get("categories") or {}
+    sheets.append({"name": "Categories", "columns": ["Category", "Incidents", "Window before", "Share %", "Median hours", "Response met %",
+                                                     "Resolution met %", "Mostly in", "On the official list"],
+                   "rows": [[c["name"], c["count"], c["prev"], c["share"], c["median_h"], c["resp"], c["resol"], c["team"],
+                             "" if c["official"] is None else ("yes" if c["official"] else "no")] for c in cats.get("rows") or []]})
+    pr = s.get("prio") or []
+    sheets.append({"name": "Priorities", "columns": ["Priority", "Incidents", "Median hours", "Response target (hours)", "Response met %",
+                                                     "Resolution target (hours)", "Resolution met %", "No SLO"],
+                   "rows": [[p["label"], p["count"], p["median_h"], p.get("resp_target_h"), p.get("resp"), p.get("target_h"), p["sla"], p.get("no_slo")]
+                            for p in pr]})
     sheets.append({"name": "Changes failed", "columns": ["Change", "Closed", "What", "Group", "Outcome", "Followed by"],
                    "rows": [[x["number"], x["closed"], x["what"], x["group"], x["outcome"], ", ".join(f[0] + (" (caused by)" if f[1] == "link" else " (same CI)") for f in x["followed"])]
                             for x in s["changes"]["rows"]]})

@@ -44,9 +44,29 @@ def site(sites=False):
         win = rd.window(6, 0, "2026-10-31", True, "", NOW)
         since, until = rd.sn_time(win["prev_since"]), rd.sn_time(win["until"])
         items, audit, members, notes, gtree = [], {}, {}, {}, {}
+        slas, states, first, survey, paused, running = {}, {}, {}, [], {}, {}   # 1.7.0: as the module reads them
         for r in seed:
             t = r.get("_table")
+            if t == "task_sla":
+                if r["stage"] != "cancelled":
+                    x_ = {"name": r["sla"], "stage": r["stage"], "breached": r["has_breached"] == "true", "percent": float(r["business_percentage"]),
+                          "paused_at": r.get("pause_time", ""), "running": r["stage"] in ("in_progress", "paused"),
+                          "left_s": rd.duration(r.get("business_time_left")), "planned_end": ""}
+                    (running if x_["running"] else slas).setdefault(r["task"], []).append(x_)
+                    if r["stage"] == "paused":
+                        paused[r["task"]] = r["pause_time"]
+                continue
+            if t == "asmt_metric_result":
+                try:
+                    survey.append([r["instance.trigger_id"], r["metric"], float(r["actual_value"]), r["instance.taken_on"]])
+                except ValueError:
+                    pass
+                continue
             if t == "metric_instance":
+                if r["definition"] == "Incident State Duration":
+                    states.setdefault(r["id"], []).append([r["value"], r["start"], r["end"]])
+                elif r["definition"] == "Assigned to":
+                    first[r["id"]] = min(first.get(r["id"], r["start"]), r["start"])
                 continue
             if t == "sys_user_group":
                 gtree[r["sys_id"]] = {"name": r["name"], "parent": r["parent"], "active": r["active"] != "false", "type": r["type"]}
@@ -61,12 +81,17 @@ def site(sites=False):
                 members.setdefault(r["group"], []).append(r["user"])
                 continue
             r = dict(r, active="false" if r.get("state") in (("6", "7") if t == "incident" else ("3", "4", "7")) else "true")
-            it = rd.normalize(dict((k, {"value": v, "display_value": v}) for k, v in r.items() if not k.startswith("_")), t)
+            it = rd.normalize(dict((k, {"value": v, "display_value": {"1": "New", "2": "In Progress", "3": "On Hold", "6": "Resolved", "7": "Closed"}.get(v, v)
+                                                                  if (t, k) == ("incident", "state") else v})
+                                   for k, v in r.items() if not k.startswith("_")), t)
             if rd.keep(it, since, until):
                 items.append(it)
         _SITE["r"] = {"ok": True, "window": win, "items": items, "audit": audit, "members": members, "groups": [], "url": "https://sn.example.mil",
                       "group_tree": gtree,
-                      "tables": [{"table": "incident", "read": 10, "kept": 10, "more": False, "error": ""}]}
+                      "tables": [{"table": "incident", "read": 10, "kept": 10, "more": False, "error": ""}],
+                      "sla": {"source": "task_sla", "asked": "auto", "error": "", "note": "", "records": slas, "paused": paused, "paused_error": "",
+                              "open": running, "open_cut": []},
+                      "first_assigned": first, "first_assigned_error": "", "states": states, "states_error": "", "survey": survey, "survey_error": ""}
         _SITE["mask"] = F.servicenow_insights_mask(_SITE["r"], OPTS)
         _SITE["work_notes"] = {"work_notes": dict((k, sorted(v, reverse=True)) for k, v in notes.items()), "work_notes_error": ""}
         _SITE["model"] = F.servicenow_insights_model(_SITE["r"], None, _SITE["mask"], HIER_OPTS if sites else OPTS)
@@ -792,6 +817,244 @@ class SlaTargets(unittest.TestCase):
         d = yaml.safe_load(open(os.path.join(HERE, "..", "roles", "servicenow_insights", "defaults", "main.yml")))
         self.assertEqual(d["servicenow_insights_sla_targets"]["incident"]["1"], 8)
         self.assertEqual(set(d["servicenow_insights_sla_targets"]), {"incident", "sc_req_item"})
+
+
+class YourSlos(unittest.TestCase):
+    """1.7.0: met or missed from task_sla (Response and Resolution by the SLA's name; no SLA = No SLO), else the targets in
+    business hours (07:30-16:30 Mon-Fri, holidays, a shift past midnight) with a response target (opened to first assigned)."""
+    BH = {"days": ["mon", "tue", "wed", "thu", "fri"], "start": "07:30", "end": "16:30", "holidays": ["2026-12-25"]}
+    U = datetime.timezone.utc
+
+    def dt(self, *a):
+        return datetime.datetime(*a, tzinfo=self.U)
+
+    def test_business_hours(self):
+        sp = F.business_hours_spec(self.BH)
+        self.assertEqual(F.business_hours(self.dt(2026, 11, 2, 7, 0), self.dt(2026, 11, 2, 17, 0), sp, self.U), 9.0)       # Monday, the core hours
+        self.assertEqual(F.business_hours(self.dt(2026, 11, 6, 15, 30), self.dt(2026, 11, 9, 8, 30), sp, self.U), 2.0)     # Fri 1 h, Mon 1 h
+        self.assertEqual(F.business_hours(self.dt(2026, 12, 24, 16, 0), self.dt(2026, 12, 28, 7, 30), sp, self.U), 0.5)    # Christmas off
+        self.assertEqual(F.business_hours(self.dt(2026, 11, 7, 9, 0), self.dt(2026, 11, 8, 9, 0), sp, self.U), 0.0)        # a weekend
+        self.assertEqual(F.business_hours(self.dt(2026, 11, 2, 7, 0), self.dt(2026, 11, 2, 9, 0), None, self.U), 2.0)      # {}: calendar
+        night = F.business_hours_spec({"days": ["mon"], "start": "22:00", "end": "06:00"})
+        self.assertEqual(F.business_hours(self.dt(2026, 11, 2, 20, 0), self.dt(2026, 11, 3, 20, 0), night, self.U), 8.0)  # past midnight
+        try:
+            from zoneinfo import ZoneInfo
+            ny = ZoneInfo("America/New_York")                                                                            # report_time_zone
+            self.assertEqual(F.business_hours(self.dt(2026, 11, 2, 12, 30), self.dt(2026, 11, 2, 21, 30), sp, ny), 9.0)
+        except Exception:                # noqa: BLE001 - no zone database
+            pass
+        for bad in ({"start": "7.30"}, {"days": ["funday"]}, {"holidays": ["Dec 25"]}, ["mon"]):
+            with self.assertRaises(ValueError):
+                F.business_hours_spec(bad)
+        self.assertEqual(F.business_days(self.dt(2026, 11, 6, 10, 0), self.dt(2026, 11, 16, 10, 0), sp, self.U), 6)          # Mon-Fri, Mon
+        self.assertEqual(F.business_hours_label(self.BH, "UTC"), "Mon-Fri 07:30-16:30 (UTC), 1 holiday")
+
+    def test_targets_old_and_new(self):
+        o = {"sla_targets": {"incident": {"1": {"response": 0.5, "resolution": 9}, "2": 16, "5": "none"}}}
+        it = lambda p: {"table": "incident", "priority_value": p}                    # noqa: E731
+        self.assertEqual((F.sla_target(it("1"), o), F.response_target(it("1"), o)), (9.0, 0.5))
+        self.assertEqual((F.sla_target(it("2"), o), F.response_target(it("2"), o)), (16.0, None))        # a number: the resolution
+        self.assertEqual(F.sla_target(it("5"), o), None)
+
+    def test_classifier(self):
+        self.assertEqual([F.sla_kind(n) for n in ("P1 Incident Response", "P1 Incident Resolution", "Resolve within 3 days", "Customer Update")],
+                         ["response", "resolution", "resolution", "other"])
+        self.assertEqual(F.sla_kind("First touch", {"sla_response_match": ["first touch"]}), "response")
+
+    def test_task_sla_response_resolution_no_slo(self):
+        r = {"sla": {"source": "task_sla", "records": {
+            "a": [{"name": "P2 Incident Response", "breached": True}, {"name": "P2 Incident Resolution", "breached": False},
+                  {"name": "Customer Update", "breached": True}],
+            "b": [{"name": "P3 Incident Resolution", "breached": True}]}}}
+        xs = [{"table": "incident", "sys_id": k, "opened_at": "2026-10-01 08:00:00", "done_at": "2026-10-02 08:00:00", "made_sla": True} for k in "abc"]
+        self.assertEqual(F.apply_slas(xs, r, {}), "task_sla")
+        self.assertEqual([(x["_resp"], x["_resol"], x["made_sla"], x["_no_slo"]) for x in xs],
+                         [(False, True, True, False), (None, False, False, False), (None, None, None, True)])
+        self.assertIn(["Customer Update", "other"], xs[0]["_slas"])
+
+    def test_targets_in_business_hours_with_a_response(self):
+        o = {"sla_targets": {"incident": {"3": {"response": 1, "resolution": 9}, "5": None}}, "business_hours": self.BH}
+        r = {"sla": {"source": "targets"}, "first_assigned": {"a": "2026-11-02 08:00:00", "b": "2026-11-02 10:00:00"}}
+        xs = [{"table": "incident", "sys_id": "a", "priority_value": "3", "opened_at": "2026-11-02 06:00:00", "done_at": "2026-11-03 07:00:00"},
+              {"table": "incident", "sys_id": "b", "priority_value": "3", "opened_at": "2026-11-02 08:00:00", "done_at": "2026-11-03 16:00:00"},
+              {"table": "incident", "sys_id": "c", "priority_value": "5", "opened_at": "2026-11-02 08:00:00", "done_at": "2026-11-03 16:00:00"}]
+        F.apply_slas(xs, r, o)
+        self.assertEqual([(x["_resp"], x["_resol"], x["_no_slo"]) for x in xs], [(True, True, False), (False, False, False), (None, None, True)])
+
+    def test_the_site(self):
+        m = site()["model"]
+        s = m["scopes"]["all"]
+        self.assertEqual(m["slo"]["source"], "task_sla")
+        self.assertTrue(80 < s["resp"][0] < 100 and 50 < s["sla"][0] < 100, (s["resp"], s["sla"]))
+        self.assertGreater(s["no_slo"][0], 0)                              # P5 and requested items without an SLA
+        kinds = dict(((nm, k) for nm, k, c in m["slo"]["definitions"]))
+        self.assertEqual((kinds["P4 Incident Response"], kinds["P4 Incident Resolution"], kinds["Customer Update Reminder"]),
+                         ("response", "resolution", "other"))
+        p4 = next(p for p in s["prio"] if p["value"] == "4")
+        self.assertEqual(p4["label"], "4 - Low")
+        self.assertIsNotNone(p4["resp"])
+        p5 = next(p for p in s["prio"] if p["value"] == "5")
+        self.assertEqual((p5["label"], p5["sla"]), ("5 - Exempt", None))
+        html = P.servicenow_insights_page(m, "all", OPTS)
+        for t in ("Response met", "Resolution met", "No SLO", "Your SLOs", "P4 Incident Response", "ServiceNow&#x27;s SLAs (task_sla)"):
+            self.assertIn(t, html)
+        doc = F.servicenow_insights_doc(m, "all", OPTS)
+        self.assertEqual([x["label"] for x in doc["summary"]][4:6], ["Response met", "Resolution met"])
+
+
+class MatrixAndCategories(unittest.TestCase):
+    """1.7.0: the priority set by hand (impact x urgency, the 3 x 3 matrix), the categories and the official list."""
+
+    def test_matrix(self):
+        self.assertEqual([F.matrix_priority({"impact_value": i, "urgency_value": u}) for i, u in (("1", "1"), ("2", "2"), ("3", "3"), ("1", "3"))],
+                         ["1", "3", "5", "3"])
+        self.assertEqual(F.matrix_priority({"impact_value": "1", "urgency_value": "1"}, {"priority_matrix": []}), "")
+        self.assertEqual(F.matrix_priority({"impact_value": "", "urgency_value": "1"}), "")
+        mx = site()["model"]["scopes"]["all"]["matrix"]
+        self.assertTrue(mx["on"] and mx["checked"] > 100 and 5 < mx["pct"] < 15, mx)
+        self.assertEqual(mx["higher"] + mx["lower"], mx["off"])
+        self.assertTrue(mx["by_group"] and mx["by_group"][0]["off"] >= mx["by_group"][-1]["off"])
+        self.assertIn("Priority set by hand", P.servicenow_insights_page(site()["model"], "all", OPTS))
+
+    def test_categories_and_the_list(self):
+        r = site()["r"]
+        m = F.servicenow_insights_model(r, None, site()["mask"], dict(OPTS, categories=["Account", "Hardware", "Software", "Other"]))
+        c = m["scopes"]["all"]["categories"]
+        names = [x["name"] for x in c["rows"]]
+        self.assertIn("Account", names)
+        self.assertTrue(c["listed"] and c["off_list"] > 0)
+        self.assertIn("Network", [n_ for n_, _ in c["off_names"]])
+        self.assertIs(next(x for x in c["rows"] if x["name"] == "Network")["official"], False)
+        self.assertIsNotNone(next(x for x in c["rows"] if x["name"] == "Account")["resol"])
+        html = P.servicenow_insights_page(m, "all", OPTS)
+        self.assertIn("not on the official list", html)
+        self.assertIn("in a category not on the official list: Network", html)
+        doc = F.servicenow_insights_doc(m, "all", OPTS)
+        self.assertTrue(any(x["title"] == "Categories" and "not on the official list" in x["text"] for x in doc["sections"]))
+        nolist = site()["model"]["scopes"]["all"]["categories"]
+        self.assertFalse(nolist["listed"])
+        self.assertEqual(nolist["off_list"], 0)
+
+
+class ActOnFirst(unittest.TestCase):
+    """1.7.0: the 3-hop rule, on hold (by reason, Awaiting Caller over 6 business days, no reason; on hold since from the state
+    metric or the SLA's pause), the resolution codes (No Resolution Provided listed, the close note masked), resolved not
+    closed after 7 days, the surveys - on the page near the top and in the email's Act on."""
+
+    def test_the_site(self):
+        m = site()["model"]
+        s = m["scopes"]["all"]
+        hp, hd, cd, cl, sv = s["hops"], s["hold"], s["codes"], s["closure"], s["survey"]
+        self.assertTrue(hp["open"] > 0 and all(x["hops"] > 4 for x in hp["rows"]))
+        self.assertEqual([x["age"] for x in hp["rows"]], sorted([x["age"] for x in hp["rows"]], reverse=True))       # oldest first
+        self.assertTrue(hd["open"] > 5 and hd["late_n"] > 0 and hd["no_reason"] >= 0)
+        self.assertTrue(all("Caller" in x["reason"] and x["days"] > 6 for x in hd["late"]))
+        self.assertEqual(set(hd["sources"]), {"metric", "task_sla"})
+        self.assertTrue(cd["review_n"] > 0 and cd["counts"]["Duplicate"] > 0 and cd["counts"]["Known Error"] > 0)
+        for x in cd["review_rows"]:
+            self.assertNotRegex(x["note"], r"\b(PERSON|HOST|PHONE|EMAIL|IP)-\d+\b")
+        self.assertTrue(0 < cl["count"] <= 6 and all(x["days"] > 7 for x in cl["rows"]))
+        self.assertTrue(sv["n"] > 0 and 3 <= sv["avg"] <= 5 and sv["metrics"] == ["Overall satisfaction"])
+        html = P.servicenow_insights_page(m, "all", OPTS)
+        i = html.index('id="acton"')
+        self.assertLess(html.index('id="glance"'), i)
+        self.assertLess(i, html.index('id="keepingup"'))
+        for t in ("Open incidents over 3 hops", "Awaiting Caller over 6 business days", "No Resolution Provided", "Resolved, not closed after 7 days",
+                  "On hold by reason", "Resolution codes to look at", 'id="satisfaction"'):
+            self.assertIn(t, html)
+        doc = F.servicenow_insights_doc(m, "all", OPTS)
+        act = next(x for x in doc["sections"] if x["title"] == "Act on")
+        self.assertTrue(act["lines"][0].startswith("SLA at risk now (past 75%%, or breached and open): %d" % s["at_risk"]["count"]))
+        self.assertIn("Open over 3 hops: %d" % hp["open"], act["lines"])
+        self.assertIn("Awaiting Caller over 6 business days: %d" % hd["late_n"], act["lines"])
+        joined = "\n".join(act["lines"])                                  # the email leaves the site: masked short descriptions
+        self.assertNotRegex(joined, r"\(\d{3}\) \d{3}-\d{4}|\b(PERSON|HOST|PHONE)-\d+\b")
+        self.assertTrue(any(x["what"] != x["what_m"] for x in hp["rows"] + hd["rows"]))
+
+    def test_snapshot_only_and_limits(self):
+        r = dict(site()["r"], states={}, states_error="none", sla=dict(site()["r"]["sla"], paused={}))
+        m = F.servicenow_insights_model(r, None, site()["mask"], dict(OPTS, hop_limit=5, awaiting_caller_days=2))
+        hd = m["scopes"]["all"]["hold"]
+        self.assertTrue(hd["unknown"] == hd["open"] and hd["late_n"] == 0 and not hd["measured"])
+        self.assertEqual(m["scopes"]["all"]["hops"]["open"], sum(1 for x in site()["model"]["scopes"]["all"]["hops"]["rows"] if x["hops"] > 6))
+        self.assertIn("not known (no state metric or task_sla pause)", P.servicenow_insights_page(m, "all", OPTS))
+
+
+class LeadingIndicators(unittest.TestCase):
+    """1.7.0 (second addendum): SLA at risk now (worst first, in the email's Act on), the outcome mix and unable to resolve,
+    reopened within 7 days (the state metric), first-contact resolution (and the service desk's), every headline's change."""
+
+    def test_the_site(self):
+        r, mask = site()["r"], site()["mask"]
+        m = F.servicenow_insights_model(r, None, mask, dict(OPTS, service_desk_groups=["Ops - Service Desk"]))
+        s = m["scopes"]["all"]
+        rk = s["at_risk"]
+        self.assertTrue(rk["count"] > 0 and rk["breached"] > 0 and rk["read"])
+        self.assertTrue(rk["rows"][0]["breached"])                                                 # worst first
+        self.assertTrue(all(x["breached"] or x["pct"] >= 75 for x in rk["rows"]))
+        self.assertTrue(all(x["left_h"] == 0 for x in rk["rows"] if x["breached"]))
+        oc = s["outcomes"]
+        self.assertEqual(oc["names"][0], "Fixed")
+        self.assertTrue({"Duplicate", "Known Error", "No Resolution Provided"} <= set(oc["now"]))
+        self.assertTrue(0 < oc["unable"][0] < 10 and oc["unable"][1] is not None)
+        self.assertTrue(50 < s["fcr"]["now"] <= 100 and s["fcr"]["desk"][0] is not None)
+        html = P.servicenow_insights_page(m, "all", OPTS)
+        for t in ("SLA at risk now", "How incidents ended", "First-contact resolution", "Unable to resolve", "the service desk"):
+            self.assertIn(t, html)
+        glance = html[html.index('id="glance"'):html.index('id="acton"')]
+        self.assertGreaterEqual(glance.count('class="delta '), 6)                                  # the change against the window before
+        doc = F.servicenow_insights_doc(m, "all", OPTS)
+        self.assertTrue(any(x["title"] == "How incidents ended" for x in doc["sections"]))
+        self.assertEqual(F.servicenow_insights_model(r, None, mask, dict(OPTS, outcome_map={"Duplicate": "Duplicate"}))["scopes"]["all"]["outcomes"]["names"],
+                         ["Fixed", "Duplicate"])
+
+
+class ModuleReads(unittest.TestCase):
+    """1.7.0: task_sla, the state metric, the metric Assigned to and the surveys - GET only; refused said, the targets instead."""
+
+    class Api(object):
+        def __init__(self, deny=()):
+            self.calls, self.deny, self.url = [], deny, "https://sn.example.mil"
+
+        def get(self, path, params):
+            self.calls.append((path, params))
+            table = path.rsplit("/", 1)[1]
+            if table in self.deny:
+                raise rd.SnError("GET %s: HTTP 403: ACL Exception" % path)
+            v = lambda x: {"value": x, "display_value": x}                       # noqa: E731
+            rows = {"task_sla": [{"task": v("i1"), "sla": v("P3 Incident Resolution"), "stage": v("paused"), "has_breached": v("false"),
+                                  "business_percentage": v("40"), "pause_time": v("2026-10-20 10:00:00")},
+                                 {"task": v("i1"), "sla": v("P3 Incident Response"), "stage": v("cancelled"), "has_breached": v("true")}],
+                    "metric_instance": [{"id": v("i1"), "value": v("On Hold"), "start": v("2026-10-21 10:00:00"), "end": v("")}],
+                    "asmt_metric_result": [{"instance.trigger_id": v("i1"), "metric": v("Overall satisfaction"), "actual_value": v("4"),
+                                            "instance.taken_on": v("2026-10-22 10:00:00")},
+                                           {"instance.trigger_id": v("i1"), "metric": v("Comments"), "actual_value": v("ok"),
+                                            "instance.taken_on": v("2026-10-22 10:00:00")}]}[table]
+            return {"result": rows}
+
+    def test_reads(self):
+        api = self.Api()
+        got, err = rd.read_task_sla(api, ["i1"])
+        self.assertEqual((err, [x["name"] for x in got["i1"]], got["i1"][0]["paused_at"]), ("", ["P3 Incident Resolution"], "2026-10-20 10:00:00"))
+        self.assertIn("stage!=cancelled", api.calls[0][1]["sysparm_query"])
+        st, err = rd.read_states(api, ["i1"], "Incident State Duration")
+        self.assertEqual(st, {"i1": [["On Hold", "2026-10-21 10:00:00", ""]]})
+        self.assertIn("definition.name=Incident State Duration", api.calls[-1][1]["sysparm_query"])
+        win = rd.window(6, 0, "2026-10-31", True, "", NOW)
+        self.assertEqual((rd.duration("1970-01-02 03:30:00"), rd.duration("")), (99000, None))
+        sv, err = rd.read_survey(api, win)
+        self.assertEqual(sv, [["i1", "Overall satisfaction", 4.0, "2026-10-22 10:00:00"]])
+        self.assertTrue(all(p.startswith("api/now/table/") for p, _ in api.calls))
+
+    def test_refused_task_sla_falls_back_to_the_targets(self):
+        win = rd.window(6, 0, "2026-10-31", True, "", NOW)
+        items = [{"table": "incident", "sys_id": "i9", "done_at": "2026-10-10 10:00:00", "state": "Resolved", "active": True}]
+        sla, first, ferr = rd.read_slas(self.Api(deny=("task_sla",)), items, win, "auto", True)
+        self.assertEqual(sla["source"], "targets")
+        self.assertIn("task_sla not read", sla["note"])
+        self.assertIn("the itil role has it", sla["note"])
+        sla, _, _ = rd.read_slas(self.Api(), items, win, "made_sla")
+        self.assertEqual((sla["source"], sla["records"]), ("made_sla", {}))
 
 
 class ChangeTasks(unittest.TestCase):

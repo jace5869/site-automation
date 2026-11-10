@@ -55,6 +55,7 @@ Usage: snmock.py PORT   (requests appended to $SNMOCK_LOG as JSON lines)
 """
 import base64
 import datetime
+import functools
 import json
 import re
 import os
@@ -100,12 +101,12 @@ INCIDENTS = {}
 ATTACHMENTS = []
 COUNTER = [10000]
 LOG = os.environ.get("SNMOCK_LOG", "snmock.jsonl")
-STATE_LABEL = {"1": "New", "2": "In Progress", "6": "Resolved", "7": "Closed", "8": "Canceled"}
+STATE_LABEL = {"1": "New", "2": "In Progress", "3": "On Hold", "6": "Resolved", "7": "Closed", "8": "Canceled"}
 TASK_LABEL = {"1": "Open", "2": "Work in Progress", "3": "Closed Complete", "4": "Closed Incomplete", "7": "Closed Skipped",
               "-5": "New", "-4": "Assess", "-3": "Authorize", "-2": "Scheduled", "-1": "Implement", "0": "Review"}
 PREFIX = {"incident": "INC", "sc_task": "SCTASK", "change_request": "CHG", "change_task": "CTASK", "sc_request": "REQ",
           "sc_req_item": "RITM", "problem_task": "PTASK", "problem": "PRB", "sys_audit": "AUD", "sys_user_grmember": "GRM",
-          "sys_journal_field": "JRN", "metric_instance": "MET"}
+          "sys_journal_field": "JRN", "metric_instance": "MET", "asmt_metric_result": "AMR"}
 
 
 def seed():
@@ -147,8 +148,18 @@ def _same(rec_value, value):
         return True
     if any(u["sys_id"] == value and rv in (u["user_name"], u["name"]) for u in SYSUSERS):
         return True
-    ref = next((x for x in INCIDENTS.values() if rv and x.get("number") == rv), {})
-    return bool(value) and ref.get("sys_id") == value
+    return bool(value) and bool(rv) and _by_number().get(rv) == value
+
+
+_NUM = [-1, {}]
+
+
+def _by_number():
+    """{number: sys_id} of every record, made again when records were added (a lookup per condition is too slow for the
+    insights' thousands of records)."""
+    if _NUM[0] != len(INCIDENTS):
+        _NUM[0], _NUM[1] = len(INCIDENTS), dict((x.get("number"), x.get("sys_id")) for x in INCIDENTS.values() if x.get("number"))
+    return _NUM[1]
 
 
 def _cond(rec, cond):
@@ -178,12 +189,17 @@ def _cond(rec, cond):
     if "IN" in cond and "=" not in cond:
         field, _, value = cond.partition("IN")
         field = field[:-5] if field.endswith(".name") else field
-        return any(_same(rec.get(field, ""), v) for v in value.split(","))
+        vals = _in_set(value)
+        if str(rec.get(field, "") or "") in vals:
+            return True
+        return any(_same(rec.get(field, ""), v) for v in vals)
     if "!=" in cond:
         field, _, value = cond.partition("!=")
         return not _same(rec.get(field, ""), value)
     field, _, value = cond.partition("=")
     field = field[:-5] if field.endswith(".name") else field
+    if "." in field and field in rec:                 # a dot-walked field the seed keeps as it is (asmt_metric_result's instance.x)
+        return str(rec.get(field, "")) == value
     if "." in field:
         ref, _, sub = field.partition(".")
         target = next((x for x in INCIDENTS.values() if rec.get(ref) and x.get("number") == rec.get(ref)), {})
@@ -191,6 +207,11 @@ def _cond(rec, cond):
     if field == "active":
         return (not closed(rec)) == (value == "true")
     return _same(rec.get(field, ""), value)
+
+
+@functools.lru_cache(maxsize=256)
+def _in_set(value):
+    return frozenset(value.split(","))
 
 
 def matches(rec, query):

@@ -101,6 +101,26 @@ servicenow_insights_months: 6
 ## false: the switch on All, the sites and directorates only (fewer files)
 # servicenow_insights_split_teams: true
 
+## YOUR SLOs (1.7.0; docs/SERVICENOW_INSIGHTS.md, "Your SLOs, priorities and categories"). Where met
+## or missed comes from: auto ServiceNow's own SLAs (task_sla) when the account reads them (itil
+## does), else the targets below task_sla ServiceNow's SLAs: each SLA definition a Response or a
+## Resolution by its name (the two lists below); a ticket with no SLA attached is "No SLO" -
+## counted, left out of the percentages. On-hold time is ServiceNow's pause. targets the targets
+## below (servicenow_insights_business_hours when set) made_sla ServiceNow's Made SLA flag (before
+## 1.7.0 without targets)
+# servicenow_insights_sla_source: auto
+
+## an SLA definition whose name has one of these is a Response
+# servicenow_insights_sla_response_match: [response]
+
+## ... one of these a Resolution; any other: Other, shown by name
+# servicenow_insights_sla_resolution_match: [resolution, resolve]
+
+## Business hours for the targets: {} = calendar hours. E.g. {days: [mon, tue, wed, thu, fri],
+## start: "07:30", end: "16:30", holidays: ["2026-12-25"]} - in report_time_zone; an end before the
+## start is a shift past midnight.
+# servicenow_insights_business_hours: {}
+
 ## A catalog item's own target in hours, beating its priority's: {"New account / onboarding": 48,
 ## "Software install": 120}
 # servicenow_insights_sla_items: {}
@@ -115,6 +135,75 @@ servicenow_insights_months: 6
 ## leave its sections out. A table the account cannot read is said in the report ("Not read"), the
 ## rest still read.
 # servicenow_insights_tables: [incident, sc_req_item, sc_task, change_request, change_task, problem]
+
+## PRIORITIES AND CATEGORIES (1.7.0). The priorities' names on the report, by number:
+# servicenow_insights_priority_names: {"1": Critical, "2": High, "3": Moderate, "4": Low, "5": Exempt}
+
+## The priority matrix, impact -> urgency -> priority (the standard 3 x 3): an incident whose
+## priority is not the one its impact and urgency give was set by hand - counted, per group. [] =
+## not checked.
+# servicenow_insights_priority_matrix:
+#   "1": {"1": "1", "2": "2", "3": "3"}
+#   "2": {"1": "2", "2": "3", "3": "4"}
+#   "3": {"1": "3", "2": "4", "3": "5"}
+
+## Your official list of incident categories, e.g. [Email, Network Connectivity, Workstations,
+## Other]: the report counts the incidents in a category not on it (and names those categories). []
+## = no list: every category as it is.
+# servicenow_insights_categories: []
+
+## WHAT TO ACT ON FIRST (1.7.0) SLA at risk now: an open incident whose running SLA (task_sla) has
+## used this much of its time (business time where ServiceNow keeps it), or is breached and still
+## open - listed worst first.
+# servicenow_insights_sla_risk_pct: 75
+
+## The 3-hop rule: an incident transferred more than this many times after its first assignment
+## (reassignment_count over hop_limit + 1) is listed while open, and counted per group.
+# servicenow_insights_hop_limit: 3
+
+## On hold: Awaiting Caller longer than this many business days (servicenow_insights_business_hours'
+## days, else Mon-Fri) is listed - the process resolves it with No Resolution Provided by then. On
+## hold since: this metric_instance definition (the incidents' state durations), else when their SLA
+## was paused (task_sla); "" = the metric not read.
+# servicenow_insights_awaiting_caller_days: 6
+
+## the incidents' state durations (metric_instance); "" = not read
+# servicenow_insights_state_metric: Incident State Duration
+
+## The resolution codes counted per group, and the one each of whose tickets is listed for
+## leadership's review.
+# servicenow_insights_scrutiny_codes: [Duplicate, Known Error, No Resolution Provided]
+
+## each incident resolved with it is listed for review
+# servicenow_insights_review_code: No Resolution Provided
+
+## Resolved tickets close by themselves after this many days: a resolved incident older than that
+## and not closed is listed.
+# servicenow_insights_close_after_days: 7
+
+## How incidents ended: a close code (as shown, any case) -> its outcome; any other code is Fixed.
+## Unable to resolve = these outcomes, of those resolved.
+# servicenow_insights_outcome_map:
+#   Workaround: Workaround
+#   Workaround provided: Workaround
+#   Duplicate: Duplicate
+#   Known Error: Known Error
+#   No Resolution Provided: No Resolution Provided
+
+## the outcomes counted as unable to resolve
+# servicenow_insights_unable_outcomes: [Known Error, No Resolution Provided]
+
+## The service desk's assignment groups (exact names), for its own first-contact resolution; [] =
+## the site's only.
+# servicenow_insights_service_desk_groups: []
+
+## The incident surveys (asmt_metric_result, read only, best-effort): the average answer per group
+## and month. The metrics read by name ([] = every metric whose answer is a number); false = not
+## read.
+# servicenow_insights_survey: true
+
+## the survey metrics read, by name; [] = every metric answered with a number
+# servicenow_insights_survey_metrics: []
 
 ## at most this many records per table (the rest are said: shorten the window)
 # servicenow_insights_max_records: 20000

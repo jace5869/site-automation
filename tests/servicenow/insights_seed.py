@@ -282,6 +282,94 @@ def main():
             recs.append({"_table": "change_task", "number": num("CTASK"), "change_request": c["number"], "short_description": "Task %d - %s" % (j + 1, c["short_description"]),
                          "assignment_group": grp, "assigned_to": PEOPLE[grp][j % len(PEOPLE[grp])], "opened_at": c["opened_at"], "state": "2" if j else "1",
                          "planned_start_date": t(d), "planned_end_date": t(d + datetime.timedelta(hours=6)), "closed_at": "", "closed_by": "", "close_notes": ""})
+    # 1.7.0: their own random numbers (R4), so every record above stays as it was - impact and urgency (one in ten set by hand
+    # against the 3 x 3 matrix), resolution codes, incidents on hold now (a reason, or none; on hold since from the state
+    # metric for half, from their SLA's pause for the rest), resolved and never closed, hops over the limit, the SLAs
+    # (task_sla: a response and a resolution, some breached; P5 none - no SLO; a cancelled one; an Other), the metric
+    # Assigned to, survey answers
+    R4 = random.Random(17)
+    pairs = {"1": [("1", "1")], "2": [("1", "2"), ("2", "1")], "3": [("1", "3"), ("2", "2"), ("3", "1")], "4": [("2", "3"), ("3", "2")], "5": [("3", "3")]}
+    late_end = END - datetime.timedelta(days=9)
+    stale = 0
+    for rec in incs:
+        p = rec["priority"][0]
+        imp, urg = R4.choice(pairs[p])
+        if R4.random() < .1:
+            imp, urg = R4.choice([x for k, v in pairs.items() if k != p for x in v])
+        rec["impact"], rec["urgency"] = imp, urg
+        if rec.get("resolved_at"):
+            r = R4.random()
+            rec["close_code"] = "Duplicate" if r < .03 else ("Known Error" if r < .05 else ("No Resolution Provided" if r < .07 else rec["close_code"]))
+            if rec["close_code"] == "No Resolution Provided":
+                rec["close_notes"] = R4.choice(["No response from the caller after three attempts; resolved per the process.",
+                                                "Caller did not reply by day 6 (Awaiting Caller); resolved with No Resolution Provided.",
+                                                "Could not reproduce; the caller was unavailable. Reopen if it happens again."])
+            if stale < 6 and rec["resolved_at"] < t(late_end) and rec["resolved_at"] > t(END - datetime.timedelta(days=40)) and R4.random() < .05:
+                rec.update({"closed_at": "", "state": "6"})
+                stale += 1
+    # forty more incidents open at the end, from the last six weeks: on hold, over the hop limit
+    for k in range(40):
+        iss = R4.choice(ISSUES)
+        grp = R4.choice(list(iss[2]))
+        o = END - datetime.timedelta(days=R4.uniform(1, 42))
+        p = R4.choice(["2", "3", "3", "4", "4", "4"])
+        incs.append({"_table": "incident", "number": num("INC"), "short_description": R4.choice(iss[5]).format(
+                         caller="the caller", phone="(703) 555-0100", wks="wks-1001", host="wks-1001", printer="prn01-fl2", ip="198.51.100.9", n="1001"),
+                     "category": iss[3], "subcategory": iss[4], "assignment_group": grp, "assigned_to": R4.choice(PEOPLE[grp]),
+                     "opened_by": PEOPLE[SD][0], "caller_id": R4.choice(CALLERS), "cmdb_ci": "", "priority": "%s - %s" % (p, ["Critical", "High", "Moderate", "Low", "Planning"][int(p) - 1]),
+                     "opened_at": t(o), "sys_created_on": t(o), "reassignment_count": str(R4.choice([0, 1, 2, 5, 6]) if k % 3 else 1), "reopen_count": "0",
+                     "made_sla": "true", "state": "2", "resolved_at": "", "closed_at": "", "close_notes": "", "sys_updated_on": t(o), "_issue": iss[0]})
+    open_incs = [rec for rec in incs if not rec.get("resolved_at")]
+    for k, rec in enumerate(open_incs):
+        if k % 3 == 0:
+            since = END - datetime.timedelta(days=R4.choice([1, 2, 3, 5, 8, 12, 15, 20]), hours=R4.randint(0, 20))
+            if since < datetime.datetime.strptime(rec["opened_at"], "%Y-%m-%d %H:%M:%S"):
+                continue
+            rec.update({"state": "3", "hold_reason": R4.choices(["Awaiting Caller", "Awaiting Change", "Awaiting Problem", "Awaiting Vendor", ""],
+                                                               weights=[.5, .15, .1, .15, .1])[0]})
+            o = datetime.datetime.strptime(rec["opened_at"], "%Y-%m-%d %H:%M:%S")
+            if k % 2 == 0:
+                for st, a_, b_ in (("New", o, o + datetime.timedelta(hours=1)), ("In Progress", o + datetime.timedelta(hours=1), since), ("On Hold", since, None)):
+                    recs.append({"_table": "metric_instance", "definition": "Incident State Duration", "table": "incident", "_doc": rec["number"],
+                                 "value": st, "start": t(a_), "end": t(b_) if b_ else ""})
+            else:
+                recs.append({"_table": "task_sla", "task": "s-" + rec["number"], "sla": "P%s Incident Resolution" % rec["priority"][0], "stage": "paused",
+                             "has_breached": "false", "business_percentage": "40.0", "pause_time": t(since), "start_time": rec["opened_at"]})
+    for rec in open_incs:                      # their SLAs running: some at risk (past 75%), some breached and still open
+        if rec.get("state") != "3" and rec["priority"][0] != "5":
+            used = R4.choice([20, 45, 60, 80, 92, 130])
+            recs.append({"_table": "task_sla", "task": "s-" + rec["number"], "sla": "P%s Incident Resolution" % rec["priority"][0], "stage": "in_progress",
+                         "has_breached": "true" if used > 100 else "false", "business_percentage": "%d.0" % used, "start_time": rec["opened_at"],
+                         "business_time_left": "1970-01-01 %02d:%02d:00" % (0 if used > 100 else R4.randint(1, 9), R4.choice([0, 15, 30, 45]))})
+    for rec in incs:
+        if not rec.get("resolved_at"):
+            continue
+        p = rec["priority"][0]
+        if p != "5":
+            for kind, bad in (("Response", R4.random() < .08), ("Resolution", rec.get("made_sla") == "false")):
+                recs.append({"_table": "task_sla", "task": "s-" + rec["number"], "sla": "P%s Incident %s" % (p, kind), "stage": "breached" if bad else "completed",
+                             "has_breached": "true" if bad else "false", "business_percentage": "120.0" if bad else "60.0", "start_time": rec["opened_at"],
+                             "end_time": rec["resolved_at"]})
+            if R4.random() < .03:
+                recs.append({"_table": "task_sla", "task": "s-" + rec["number"], "sla": "P%s Incident Resolution" % p, "stage": "cancelled",
+                             "has_breached": "true", "business_percentage": "300.0", "start_time": rec["opened_at"]})
+            if R4.random() < .05:
+                recs.append({"_table": "task_sla", "task": "s-" + rec["number"], "sla": "Customer Update Reminder", "stage": "completed",
+                             "has_breached": "false", "business_percentage": "10.0", "start_time": rec["opened_at"]})
+        o = datetime.datetime.strptime(rec["opened_at"], "%Y-%m-%d %H:%M:%S")
+        recs.append({"_table": "metric_instance", "definition": "Assigned to", "table": "incident", "_doc": rec["number"], "value": rec["assigned_to"],
+                     "start": t(o + datetime.timedelta(minutes=R4.choice([5, 15, 25, 45, 90, 240]))), "end": ""})
+        if R4.random() < .1:
+            taken = t(datetime.datetime.strptime(rec["resolved_at"], "%Y-%m-%d %H:%M:%S") + datetime.timedelta(days=1))
+            recs.append({"_table": "asmt_metric_result", "instance.trigger_table": "incident", "instance.trigger_id": "s-" + rec["number"],
+                         "instance.taken_on": taken, "metric": "Overall satisfaction", "actual_value": str(R4.choice([3, 4, 4, 5, 5, 5]))})
+            recs.append({"_table": "asmt_metric_result", "instance.trigger_table": "incident", "instance.trigger_id": "s-" + rec["number"],
+                         "instance.taken_on": taken, "metric": "Comments", "actual_value": "Thanks"})
+    for rec in [x for x in recs if x.get("_table") == "sc_req_item" and x.get("closed_at")]:
+        if R4.random() < .9:
+            bad = rec.get("made_sla") == "false"
+            recs.append({"_table": "task_sla", "task": "s-" + rec["number"], "sla": "Request Fulfillment Resolution", "stage": "breached" if bad else "completed",
+                         "has_breached": "true" if bad else "false", "business_percentage": "60.0", "start_time": rec["opened_at"], "end_time": rec["closed_at"]})
     for rec in incs:
         rec.pop("_issue", None)
     # the groups' members (sys_user_grmember): the people, and the quiet members

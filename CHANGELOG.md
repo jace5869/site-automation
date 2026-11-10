@@ -1,5 +1,645 @@
 # Changelog
 
+## 1.7.0 — 2026-11-10
+
+**Updating without scripts:** paste `site-automation-1.7.0-changed-since-1.6.1.zip` as it is (from an older version,
+its own zip). They leave out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`. (Never paste the full `site-automation-1.7.0.zip` over your copy: it carries the example
+`group_vars`.) Nothing to set up where the ServiceNow account reads `task_sla`; your process's settings: step 84 below.
+
+**ServiceNow - ticket insights: your SLOs, what to act on first, how incidents ended.** The report counts met or missed
+the way your incident process does, and puts what to act on near the top.
+
+- **Your SLOs** (`servicenow_insights_sla_source: auto`):
+  - ServiceNow's own SLAs (`task_sla`, GET) when the account reads them, else your targets. Each SLA definition is a
+    **Response** or a **Resolution** by its name (`servicenow_insights_sla_response_match` / `_resolution_match`); others
+    are shown by name, not counted.
+  - A ticket with no SLA attached is **No SLO**: counted, left out of the percentages.
+  - The tiles show **Response met** and **Resolution met**; so do the teams side by side, each priority and each category.
+  - Your targets (`task_sla` refused, or `targets`) can take a response per priority (`{response, resolution}`; the old
+    number is the resolution; `none` = no SLO), in **business hours** (`servicenow_insights_business_hours`: days,
+    start, end, holidays, in `report_time_zone`; a shift past midnight). The response runs from opened to first assigned
+    to a person (the metric *Assigned to*), else it is not measured, and the page says so.
+- **Priorities**: their names (`servicenow_insights_priority_names`: 1 Critical ... 5 Exempt), and the **priority set by
+  hand** - impact x urgency against the standard 3 x 3 matrix (`servicenow_insights_priority_matrix`), per group, higher
+  or lower.
+- **Categories**: incidents per category with the time to resolve and the SLOs met; with your official list
+  (`servicenow_insights_categories`) the ones off it are counted and named, beside no category and Other.
+- **Act on first**, after the figures (the email: **Act on**, its short descriptions masked):
+  - SLA at risk now - open incidents past `servicenow_insights_sla_risk_pct` (75) of their SLA, or breached and still
+    open, worst first, with the time left;
+  - open over the hop limit (`servicenow_insights_hop_limit`: 3 transfers after the first assignment);
+  - Awaiting Caller over `servicenow_insights_awaiting_caller_days` (6) business days - on hold since from the metric
+    *Incident State Duration* (`servicenow_insights_state_metric`), else when the SLA was paused;
+  - No Resolution Provided in the period, each listed for leadership, the close note's start masked;
+  - resolved and not closed after `servicenow_insights_close_after_days` (7).
+- **Hops, on hold and resolution codes** per group: over the limit and the hops each took, on hold now and by reason in
+  business days (no reason counted), the codes to look at (`servicenow_insights_scrutiny_codes`), reopened.
+- **How incidents ended**: the outcome mix per group against the window before (`servicenow_insights_outcome_map`),
+  **unable to resolve** (`servicenow_insights_unable_outcomes`), first-contact resolution (and the service desk's,
+  `servicenow_insights_service_desk_groups`), reopened within 7 days (the state metric).
+- **Satisfaction**: the incident surveys' average answer by month and group (`asmt_metric_result`, GET, best-effort;
+  `servicenow_insights_survey`, `_survey_metrics`).
+- Every headline figure shows its change against the window before; long lists show 10 rows, the rest folded.
+- What could not be read is said under *Not read*; the reads are capped by `servicenow_insights_max_records`, a cut said.
+- The workbook: Response met, No SLO, the SLAs, impact, urgency and the matrix's priority on each incident; Categories
+  and Priorities sheets.
+
+Files and tests:
+- roles/servicenow_insights (library/site_servicenow_insights.py: task_sla, the state metric, *Assigned to*, the
+  surveys, impact / urgency / hold_reason; defaults, tasks), plugins/filter/servicenow_insights_filters.py,
+  servicenow_insights_page.py;
+- docs/SERVICENOW_INSIGHTS.md ("Your SLOs, priorities and categories", "What to act on first", the account's tables),
+  VARIABLES_REFERENCE, aap/extra_vars;
+- tests:
+  - test_servicenow_insights.py: business hours (holidays, past midnight, a time zone), the targets old and new, the
+    classifier, task_sla met / missed / no SLO, the matrix, the categories and the list, act on first, the leading
+    indicators, the module's reads (refused task_sla -> the targets), the email masked;
+  - insights_seed.py (task_sla, the state and *Assigned to* metrics, surveys, on hold, hops, codes), snmock.py (On Hold,
+    asmt_metric_result, a faster IN), run_insights_test.sh (task_sla read, refused -> the targets in business hours, the
+    surveys refused); ansible-core 2.22 and 2.16;
+  - the page's tables fit at 1366, 1440 and 390 px.
+
+**To do, if you have not yet: what 0.20.0 to 1.7.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.7.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84).** In order; each step works without
+the ones after it.
+
+1. **Your logo** (0.20.0). A PNG with a transparent background, about 160 px tall and under 100 KB, in
+   *your* repository - never the public one: `playbooks/files/report_logo.png`. In `all.yml`:
+   `report_logo_file: files/report_logo.png`. Add the line `playbooks/files/report_logo.png` to `.site-local`,
+   or `scripts/update-from-release` deletes it.
+2. **The strip of past runs** (0.20.0, 0.21.0). Attach a **Red Hat Ansible Automation Platform** credential to
+   every report template (the pick lists' one works). Give its user **Organization Auditor** on the templates'
+   organization: Access Management > Users > the user > Roles > Assign roles, resource type Organization.
+   Without it the reports go out without the strip, and the job says why.
+3. **The look** (0.20.0, 0.21.0, 0.24.0). In `all.yml`: `report_email_theme: glass` (or `command`, `portal`)
+   and, if you like, `report_email_header_text: <your line above the title>`.
+4. **"Also email the report to" on every report** (0.22.0). Create the job template **AAP - report email
+   question**: playbook `playbooks/aap_email_question.yml`, only the Red Hat Ansible Automation Platform
+   credential (its user: **Admin** on the report templates and their workflows), any inventory, no Limit.
+   Launch it with Job type **Check** first - it only lists the templates and workflows it would change -
+   then for real. It adds the optional box to every report template's survey and to the workflows that run
+   them. Run it again whenever you add a report template. Optional, in `all.yml`:
+   `report_email_also_domains: [yoursite.mil]`, so typed addresses outside your domains get nothing. The
+   mail relay must be set (`report_email_smtp_host`, `report_email_from`). docs/SETUP_AAP.md, "AAP - report
+   email question"; docs/EMAIL_REPORTS.md, "Also email the report to".
+5. **The report website** (0.23.0, 0.27.0). In `all.yml`, `report_web_url: https://web01.yoursite.mil/reports`,
+   `report_web_theme: atlas` (0.43.0; glass before it), and where the pages go - for a Windows server (IIS serving the folder):
+   `report_web_host: web01.yoursite.mil` and `report_web_dest: 'D:\reports'` (the folder already there). Then one
+   of two ways to write them:
+   - **every report template in an execution environment with WinRM (and Kerberos)** - the all-in-one EE, say: the
+     report jobs write their own pages. The login: a **Report website** credential (`user@YOURSITE.MIL` for
+     Kerberos) on the report templates - or, without it, the template's Machine credential; for WinRM over HTTP with
+     Kerberos also `report_web_host_port: 5985`, `report_web_host_scheme: http`, `report_web_host_transport: kerberos`.
+     The **Report website** credential type: create it from `aap/credential_types/report_web.yml`.
+   - **report templates in other execution environments** - the copy job (new in 0.27.0):
+     1. Create the job template **Report website - copy**: playbook `playbooks/report_web_copy.yml`; the execution
+        environment your Windows jobs work with; your Windows inventory - it must have the web server, and
+        `report_web_host` is its name there - no Limit; its Machine credential (an account with **Modify** on
+        `D:\reports`); a **Red Hat Ansible Automation Platform** credential whose user has **Organization Auditor**
+        on the report templates' organizations. *Concurrent jobs* off.
+     2. Try it on one report template: `report_web_copy: true` on its Variables, run it (Run, not Check), then look
+        at that job in AAP (Details > Artifacts: `site_report_page`).
+     3. Launch **Report website - copy** with **Check** (`Would copy: job ...`), then for real: the page appears at the
+        address the report job printed, and the job says how it reached the server - *from this job's inventory*.
+     4. Then `report_web_copy: true` in `all.yml`, and a schedule for the copy job (every 15 minutes). An email's
+        button answers *not found* until the copy job's next run.
+
+     Both ways can be mixed: `report_web_copy: false` on one template's Variables and it writes its own pages.
+   - Or an upload (WebDAV) or a folder (a share on the execution nodes): docs/WEB_REPORTS.md, "Where the files go".
+
+   Run one report with **Check** (it prints the address it would use), then for real: the job prints
+   `Report: https://...`, and its email gets the **Open the full report** button. docs/WEB_REPORTS.md.
+6. **Certificate install** (0.25.0) - only when the renewals order from the PKI's catalog item
+   ([CERT_RENEWAL_CATALOG.md](docs/CERT_RENEWAL_CATALOG.md)). Ask the PKI to attach DISA's files (the .cer and
+   the .p7b) to the request or to its catalog task. Create six templates: *Certificate install - check*
+   (`playbooks/cert_install_check.yml`: Machine, ServiceNow API), *Certificate install - approved*
+   (`playbooks/cert_install_approved.yml`: the same, the same inventory, no Limit, Variables not prompted),
+   *Certificate restore* (`playbooks/cert_restore.yml`), and the three `win_` ones (`win_cert_install_check.yml`,
+   `win_cert_install_approved.yml`, `win_cert_restore.yml`). Make the workflow with an **Approval** on the
+   check's **Run on fail** (workflow 29 in docs/WORKFLOWS_AND_SCHEDULES.md) and schedule it daily; try the check
+   as **Check** with a Limit first. The optional settings: the 0.25.0 notes, "To set it up"; docs/CERT_INSTALL.md.
+7. **VM outage watch and log analysis** (0.26.0). Each does nothing until you make its template.
+   - *VM - outage watch* (`playbooks/vm_outage_watch.yml`): the VMware vCenter credential, the inventory that has
+     your `aap` group, no Limit. Run it once by hand (a clean estate is one green line). Then the workflow
+     `[VM - outage watch] --Always--> [ServiceNow tickets]` (*Always*, so a clean run notes or resolves the
+     incident), scheduled every 5 to 15 minutes with **Concurrent jobs off**, and `vm_watch_window_minutes` set to
+     that interval. It restarts nothing. docs/VM_OUTAGE_WATCH.md, "Set it up".
+   - *Log analysis* (`playbooks/log_analysis.yml`): one template per inventory (Linux with its Machine credential,
+     Windows with its Machine (Windows) credential), plus the **ACT model key**; Limit prompted on launch and a
+     survey with `target`, `log_analysis_question`, `log_analysis_since` / `log_analysis_until`. And
+     *VM - vCenter log analysis* (`playbooks/vm_log_analysis.yml`): VMware vCenter and ACT model key, no Limit.
+     Run each as **Check** first (it reads and reports, ACT is not called). docs/LOG_ANALYSIS.md, "Set it up in
+     AAP". With `report_web_copy: true` their pages go through the copy job too.
+8. **The patch batch size** (0.28.0) - only if you set `patch_serial` or `win_patch_serial` in `all.yml` or in a
+   group's or host's file: it never worked there. Move it to the *Patch hosts* / *Windows patch* template's
+   Variables (or a survey).
+9. **STIG drift report** (0.28.0). On the hosts, `openscap-scanner` and `scap-security-guide` from your RHEL
+   repositories (or `check_stig_install: true`). In STIG Manager, a Keycloak client for the job - your autostig
+   one, or another - with the scope `stig-manager:collection:read` and a grant in the collections (Full, or
+   Restricted with these hosts' assets). In AAP, the template *STIG drift report* (`playbooks/stig_drift_report.yml`):
+   the Machine credential and a **STIG Manager API** credential with that client; `check_stig_stigman_api` in its
+   Variables, and each host's `check_stig_stigman_collection` in the inventory, per group or host. Run it as
+   **Check** with a Limit first (it scans and compares, keeps nothing), then weekly and after patching: the
+   workflow 33 (new in 0.30.0) runs the tickets step after it. docs/STIG_DRIFT.md, "Setting it up".
+10. **The MID Server hosts** (0.29.0). Move them to a group `servicenow_mid_hosts` of your **Windows**
+    inventory, then on the *ServiceNow health* template: that inventory, and its Machine (Windows) credential next
+    to the ServiceNow API one. The API account needs read on `ecc_agent`, `ecc_queue` and `ecc_agent_issue` (e.g.
+    the `mid_server` role). Optional: `servicenow_mid_expected: [mid01, mid02]`. Launch it once by hand.
+    docs/SERVICENOW_SETUP.md, "MID Servers".
+11. **Single sign-on** (0.30.0). Linux: nothing to set - `sso` runs in the health check's daily set; optional
+    `check_sso_test_users: [svc_monitor@yoursite.mil]` in `all.yml`. Add `sso` to the *Health check* survey's
+    `health_checks` choices to run it on its own. vCenter: create the credential type **vCenter SSO test account**
+    from `aap/credential_types/vcenter_sso_test.yml`, a credential with an AD account made for it (Read-only on
+    vCenter's root, not propagated, or no permission at all), and attach it to the *VM - health report* and *VM -
+    outage watch* templates. OCSP (0.31.1): a certificate the responder knows, committed in `playbooks/files/ocsp/`,
+    named once in `all.yml` - `site_ocsp_certs: [files/ocsp/test-user.pem]` - or the responders' addresses alone
+    (`vm_sso_ocsp: [{url: "http://ocsp.example.mil"}]`). Run the VM - health report once by hand: its section
+    **Single sign-on and OCSP**. docs/VMWARE.md, "Single sign-on and OCSP (vCenter 8.0)".
+12. **Network performance report** (0.30.0). In `all.yml`, `net_perf_targets` (the gateway, the domain
+    controllers with port 389, the web servers with 443) and, if you like, `net_perf_ocsp` (the same responders).
+    Create the template *Network performance report* (`playbooks/net_perf_report.yml`): the Machine credential,
+    `target:` the group to measure from. Run it as **Check** first (it measures and keeps nothing), then schedule
+    it hourly as workflow 34, the tickets step after it (Concurrent jobs off) - the trend needs a few runs.
+    docs/NETWORK_PERF.md, "Set it up".
+13. **The hosts' and VMs' network drops** (0.31.0). Nothing to set: the *VM - health report* has the new section
+    **Network drops and errors**. It reads the past day only when vCenter's 5-minute statistics are at level 2 -
+    at level 1 (the default) the last hour, and it says so. To raise it: vSphere Client > the vCenter > Configure >
+    Settings > General > Edit > Statistics, the 5-minute row to **Level 2** (check the database estimate the dialog
+    shows). docs/VMWARE.md, "Network drops and errors".
+14. **A Limit is the hosts, nothing more** (0.32.0) - nothing to set. *Log analysis*, the certificate install and
+    renewal (CSR) jobs and the *Active Directory* reports take a Limit of hosts (`web01,web02`); the `,localhost` you
+    may have added still works. Only *ServiceNow health* and the network config and certificate jobs need `localhost`
+    in a Limit - or no Limit - and they say so.
+15. **Your time zone** (0.32.0) - optional. In `all.yml`: `report_time_zone: America/New_York` (a name as
+    `timedatectl list-timezones` prints it): the VMware health and alarms reports then show each time in it, next to
+    UTC. Then run the *VM - health report* once and look at its **Clock** column and any NTP warnings.
+    docs/VMWARE.md, "Times and clocks".
+16. **ACT asks 5 at a time, and the CRL** (0.32.0) - nothing to set. The alarms analysis, capacity planning and
+    log analysis ask ACT 5 items per question (`site_act_batch`): a `log_analysis_max_items: 5` you set to make it
+    finish can go. The VM - health report also checks the CRL of your `site_ocsp_certs` certificate
+    (`vm_sso_crl: false` turns it off).
+17. **fapolicyd denials by email** (0.32.0) - only if you run ACT's fapolicyd job. On its template, **Playbook**
+    `playbooks/fapolicyd_denials.yml` instead of `vendor/act/ansible/playbooks/fapolicyd_denials.yml`, and
+    `report_email_to` in its **Variables** (or all.yml): one report of every host by email and on the website, the
+    Teams card as before. docs/RUNBOOKS.md, "fapolicyd denials".
+18. **Your execution environments** (0.32.0, 0.33.0, 0.33.1) - when you next build one: from `ee/` and the EE guide
+    PDF (*Execution Environments - step by step*), on your base EE - by hand, or `bash build-ee.sh all-in-one 2` in
+    `~/ee` (`INSECURE=1` behind TLS inspection; as root with `sudo` when podman cannot give the build your RHEL
+    subscription - it says so). An EE that answers `bash: /opt/builder/bin/entrypoint: Permission denied`: build
+    the next tag from 0.33.1's files. Then on your templates in one run: the job template **AAP - set execution
+    environment** (`playbooks/aap_ee.yml`, the Red Hat Ansible Automation Platform credential, Check first);
+    later tags: the EE's Image in AAP. Never push a rebuild under a tag already on the hub. docs/EXECUTION_ENVIRONMENT.md.
+19. **The report website on a Windows share** (0.33.0, 0.33.1) - optional, instead of a mount or a web server:
+    `report_web_dest: '\\fileserver.yourdomain.mil\reports\aap'` in `all.yml` (the server by its full name), and
+    the **Report website** credential (`svc_aap_reports@YOURDOMAIN.MIL`, the realm in capitals; Modify on that
+    folder) on the report templates, which run in an EE with `smbprotocol` (step 18). Leave `report_web_smb_auth` at
+    `negotiate`, on FIPS too. Run one report as **Check** first: it logs in and checks the folder.
+    docs/REPORT_SHARE.md and its PDF.
+20. **Each report's last runs on the website** (0.34.0) - nothing to set; only if you use the report website.
+    Each report keeps its last 5 runs (`report_web_history`) and the job deletes the pages of older ones, so the
+    account that writes there needs **Modify** on the folder (a share, or `report_web_host`) - Write alone cannot
+    delete; an upload address needs `DELETE` (nginx: `dav_methods PUT DELETE MKCOL;`). To keep every page:
+    `report_web_delete_old: false`. Pages from before 0.34.0 are not in the lists - delete them on the server once
+    if you like. Templates named otherwise than in docs/JOB_TEMPLATES.md: check which tab each is on, and set
+    `report_web_tabs` in `all.yml` if you want them elsewhere. docs/WEB_REPORTS.md, "The index page: tabs, and each
+    report's last runs".
+21. **Containers in the certificate trust check** (0.34.0) - nothing to set: it no longer reads inside containers.
+    To read them again, once your security team has cleared the `podman exec` it runs:
+    `check_trust_containers: true` in `all.yml`. docs/TRUST_STORES.md.
+22. **fapolicyd and containers** (0.34.0) - now in step 34: the *fapolicyd* job proposes the container rules. Delete
+    the template *fapolicyd and containers*.
+23. **VM inventory report** (0.35.0) - optional. Create the job template *VM - inventory report*: playbook
+    `playbooks/vm_inventory_report.yml`, the VMware vCenter credential, the execution environment of your other VMware
+    jobs, no Limit, no survey; `report_email_to` on its Variables, and a weekly schedule. Its email carries every VM as
+    a workbook. docs/VMWARE.md, "The VM inventory report".
+24. **ESXi network check** (0.35.0) - optional. First give the vCenter account **Host > CIM > CIM interaction** on the
+    hosts (a role with it on the datacenter or the clusters). Then the job template *ESXi - network check*: playbook
+    `playbooks/esxi_network_check.yml`, the VMware vCenter credential, no Limit, no survey. Run it once with
+    `vm_hostnet_raw: true` at launch: it prints the first ping's answer as the host sent it - if the round trips in
+    the report look a thousand times off, send that output. Optional: `vm_hostnet_targets` (an NFS array, a gateway),
+    `vm_hostnet_services: [vmotion, vsan]`. docs/VMWARE.md, "The ESXi network check".
+25. **A workbook on any report's email** (0.35.0) - optional: `report_email_xlsx: true` in `all.yml`, or on one
+    template's Variables. docs/EMAIL_REPORTS.md, "A workbook attached".
+26. **VM right-sizing report** (0.36.0) - optional. Create the job template *VM - right-sizing report*: playbook
+    `playbooks/vm_rightsizing_report.yml`, the VMware vCenter credential, the execution environment of your other
+    VMware jobs, no Limit, no survey; `report_email_to` on its Variables, and a monthly schedule. Read-only: it only
+    suggests. For ACT's review, `vm_rightsize_act: true` and the **ACT model key** credential. docs/VMWARE.md, "The VM
+    right-sizing report".
+27. **Capacity planning's growth line** (0.36.0) - nothing to set: it is fitted on 90 days now. Only if you set
+    `vm_capacity_trend_days: 30` on the *VM - capacity planning* template on purpose, keep it; otherwise delete it there.
+28. **fapolicyd and containers: the storage rule and the review** (0.37.0) - now in step 34.
+29. **VMware version report** (0.38.0) - optional. Create the job template *VMware - version report*: playbook
+    `playbooks/vmware_version_report.yml`, the VMware vCenter credential (read-only is enough), the execution
+    environment of your other VMware jobs, no Limit, no survey; `report_email_to` on its Variables, and a schedule
+    (monthly, or after patching). docs/VMWARE.md, "The VMware version report".
+30. **Tenable.sc - scan** (0.39.0) - optional. First the credential type *Tenable.sc API* (`aap/credential_types/tenable_sc_api.yml`) and a
+    credential with a Tenable.sc user's API keys. Then the job template *Tenable.sc - scan*: playbook `playbooks/tenable_scan.yml`,
+    the inventory with the hosts, that credential, no Limit; run it with nothing set - the report lists the zones, scanners,
+    policies and repositories - then `tenable_scan_target`, `tenable_scan_policy` and `tenable_scan_repository` on its Variables,
+    a Check run, and the real one. docs/TENABLE.md.
+31. **ServiceNow - weekly activity report** (0.40.0) - optional. The job template *ServiceNow - weekly activity report*: playbook
+    `playbooks/servicenow_war.yml`, any inventory, the *ServiceNow API* credential (its account reads the tables: itil), no Limit;
+    on its Variables `servicenow_war_groups: [<the assignment group's exact name>]` and `report_email_to`; run it once, then a
+    weekly schedule (a Friday afternoon, or a Monday morning with `servicenow_war_period: last-week`). Run *AAP - report email
+    question* again so the launch can add recipients. `servicenow_war_act: true` with an *ACT model key* credential for the
+    narrative. Several teams on the same template: a survey question `servicenow_war_groups` (Text or Textarea), or a
+    schedule per team with its own `servicenow_war_groups` and `report_email_to` (docs/SERVICENOW_WAR.md, "Several
+    teams"). docs/SERVICENOW_WAR.md.
+32. **VM - ask a question** (0.42.0) - optional. The job template *VM - ask a question*: playbook `playbooks/vm_ask.yml`,
+    any inventory, the *VMware vCenter* credential (read-only is enough) and the *ACT model key* credential, the execution
+    environment of your other VMware jobs, no Limit. A survey with one question: *What do you want to know?*, answer
+    variable `vm_ask_question`, type **Textarea**, required. Run *AAP - report email question* again so the launch can add
+    recipients. Try it with *all VMs with dbv in the name* (any part of a name you know). docs/VM_ASK.md, "Set it up in AAP".
+33. **Windows STIG drift report** (0.46.0) - optional. The job template *Windows STIG drift report*: playbook
+    `playbooks/win_stig_drift_report.yml`, your Windows inventory, the *Machine (Windows)* credential (an administrator)
+    and the *STIG Manager API* credential, the execution environment of your other Windows jobs. Variables from
+    `aap/extra_vars/win_stig_drift_report.yml`: `check_stig_stigman_api` and, per group or host in the inventory,
+    `check_stig_stigman_collection`. Run it as **Check** with a Limit of one server: the job output says where it found
+    Evaluate-STIG (or where it looked - then set `win_check_stig_evaluate`). Then weekly. docs/STIG_DRIFT.md, "Windows
+    servers"; docs/SETUP_AAP.md, "Windows STIG drift report".
+34. **fapolicyd** (0.49.0) - optional: the one fapolicyd job and its daily workflow. Two job templates of
+    `playbooks/fapolicyd.yml` - your Linux inventory, the *Machine* credential (with sudo), **Prompt on launch** for
+    Limit: *fapolicyd - check* (Variables `fapolicyd_workflow: true`, `fapolicyd_since: yesterday`, and for ACT's
+    explanation `fapolicyd_act: true` with the *ACT model key* credential) and *fapolicyd - approved* (no Variables). Then
+    workflow 36: check -> (on fail) Approval, 8 hours -> (on success) approved; a schedule, daily 07:00, **limited to the
+    hosts that must run fapolicyd** (an inventory group); on the workflow's Notifications tab, **Approval** on.
+    docs/WORKFLOWS_AND_SCHEDULES.md, 36; docs/RUNBOOKS.md, "fapolicyd".
+35. **The old fapolicyd templates** (0.49.0): delete *fapolicyd fix*, *fapolicyd rules*, *fapolicyd rules - check*,
+    *fapolicyd rules - approved*, *fapolicyd and containers* and the old workflow 36 - their playbooks are gone. Keep
+    *fapolicyd denials* if you use it (ACT's explanation alone).
+36. **STIG recheck** (0.50.0) - optional. Two job templates like the STIG drift reports, with the same inventories and
+    credentials (the machine credential and *STIG Manager API*): *STIG recheck* (`playbooks/stig_recheck.yml`) and
+    *Windows STIG recheck* (`playbooks/win_stig_recheck.yml`), Variables from `aap/extra_vars/stig_recheck.yml`,
+    `win_stig_recheck.yml` (`check_stig_stigman_api`), **Prompt on launch** for Limit. Run each as **Check** with a Limit
+    of one host: it lists what STIG Manager has Open or Not Reviewed and how the host answers now. On demand, or after a
+    patch or fix job. docs/STIG_DRIFT.md, "The STIG recheck"; docs/SETUP_AAP.md, "STIG recheck".
+37. **VMware ask** (0.51.0) - optional: *VM - ask a question* as a web page at STIG Manager's `/ask/`, for people
+    without AAP. On the STIG Manager server, look up its nginx container's podman network (`sudo podman ps`); put the
+    server in the inventory group `vmware_ask`; the job template *VMware ask - deploy*: playbook
+    `playbooks/vmware_ask_deploy.yml`, credentials Machine, VMware vCenter (read-only), ACT model key; Variables from
+    `aap/extra_vars/vmware_ask_deploy.yml` (`vmware_ask_network`, `vmware_ask_image`: your execution environment image,
+    `vmware_ask_public_url`). Run it as **Check**, then **Run**. Then, once, by hand: a copy of nginx's file, the lines of
+    `/etc/vmware-ask/nginx-ask.conf` inside its `server` block above `location /`, `nginx -t`, `nginx -s reload`.
+    docs/VMWARE_ASK.md, "Set it up".
+38. **fapolicyd: what was for a person** (0.52.0) - nothing to set. The *fapolicyd* job and workflow 36 now offer lines
+    for a trusted file that changed (`trust update:`), a file trusted but not loaded (`reload trust database`), an RPM
+    file that no longer matches its package (`reinstall package:`) and a file over 512 MB; each is approved like the
+    rest. To keep them for a person: `fapolicyd_rules_offer: []` (or leave out one of them). docs/RUNBOOKS.md, "fapolicyd".
+39. **STIG Manager updated from the recheck** (0.52.0) - optional: workflow 37. First the client: ask your Keycloak realm
+    owner for a client that may write reviews (client-credentials grant, scope `stig-manager:collection`), and in STIG
+    Manager give its service account a grant in the collections (Restricted with the assets, or Full). In AAP: a
+    second *STIG Manager API* credential with it; the template *STIG Manager - update* (playbook
+    `playbooks/stigman_update.yml`, that credential only, **Prompt on launch** for Job type); a copy of *STIG recheck*
+    as *STIG recheck - check* with `check_stig_update_workflow: true`; workflow 37: check -> (on fail) Approval, 8 hours
+    -> (on success) update. Windows: a second workflow with a copy of *Windows STIG recheck*. Try it once with a Limit
+    of one host and **Deny**: the check's report shows what Approve would write. docs/STIG_DRIFT.md, "Updating STIG
+    Manager, with an approval"; docs/WORKFLOWS_AND_SCHEDULES.md, 37.
+40. **The mail relay whitelist** (0.54.0) - optional.
+    - Put your relay servers in the inventory group `mail_relays`, or set `mail_relay_group: <your group>` on each
+      mail relay template and workflow.
+    - **One address per line, named:** create the job template *Mail relay - format the whitelist*: playbook
+      `playbooks/mail_relay_format.yml`, credentials Machine (sudo on the relays) and VMware vCenter (read-only),
+      Variables `mail_relay_group` and `report_email_to`. Run it as **Check**: its report shows each relay's new list
+      and the names found, and nothing is written. Then **Run**: it keeps `main.cf.before-format-DATE-TIME` first.
+    - **Add and remove with an approval:** if you pasted the mail relay zip of 10/22, these are the same files, now
+      in the repository - keep your templates and workflows. If not: the templates *Mail relay - whitelist plan* and
+      *Mail relay - apply the approved whitelist change*, and the workflow *Mail relay - add an IP* (workflow 38).
+      *Mail relay - remove an IP* uses the same two templates; build it when you are ready.
+    - Run *AAP - report email question* again (step 4), so the three templates get the "Also email the report to"
+      box.
+    - docs/MAIL_RELAY.md.
+41. **Evaluate-STIG's answer files from a Windows share** (0.55.0) - optional, Linux. In AAP, the credential type
+    *Windows file share* (`aap/credential_types/windows_share.yml`) and a credential of it: an account with Read on the
+    share's folder (`user@YOURDOMAIN.MIL`). Attach it to the *STIG drift report* and *STIG recheck* templates. In
+    `all.yml` or the templates' Variables: `check_stig_evaluate_answers: '\\fileserver.yourdomain.mil\stig\AnswerFiles'`.
+    Run the drift report once as **Check** with a Limit of one host: its output says *answer files: USED* (or why not),
+    lists each file read, and how many rules Evaluate-STIG answered from them (0.58.0); it says too if your
+    Evaluate-STIG names the option otherwise (`check_stig_evaluate_answers_arg`, default `--AFPath`).
+    docs/STIG_DRIFT.md, "Answer files from a Windows share".
+42. **VMware hardware inventory** (0.57.0) - optional. The job template *VMware - hardware inventory*: playbook
+    `playbooks/vmware_hardware_report.yml`, the VMware vCenter credential (read-only is enough), the execution environment
+    of your other VMware jobs, no Limit; `report_email_to` on its Variables. Run it once, or monthly on a schedule. Then
+    run *AAP - report email question* again (step 4), so it gets the "Also email the report to" box. docs/VMWARE.md,
+    "The VMware hardware inventory".
+43. **VMware Tools inventory** (0.59.0) - optional. The job template *VM - VMware Tools inventory*: playbook
+    `playbooks/vm_tools_report.yml`, the VMware vCenter credential (read-only is enough), the execution environment of
+    your other VMware jobs, no Limit; `report_email_to` on its Variables. Run it once, or monthly on a schedule. Then
+    run *AAP - report email question* again (step 4). docs/VMWARE.md, "The VMware Tools inventory".
+44. **NetApp ONTAP hardware inventory** (0.59.0) - optional. The job template *NetApp ONTAP hardware inventory*:
+    playbook `playbooks/ontap_hardware_report.yml`, the *NetApp ONTAP read-only* credential of the health report, any
+    execution environment with Python 3, no Limit; `ontap_clusters` (unless in `all.yml`) and `report_email_to` on its
+    Variables. Run it once, or monthly on a schedule. Then run *AAP - report email question* again (step 4).
+    docs/NETAPP.md, "The hardware inventory".
+45. **Mail relay - remove unused addresses** (0.59.0) - optional. The job template *Mail relay - unused addresses plan*:
+    playbook `playbooks/mail_relay_unused.yml`, the Machine credential of your other mail relay templates, Variables
+    `mail_relay_group`. Then the workflow *Mail relay - remove unused addresses*: that template -> Approval -> *Mail
+    relay - apply the approved whitelist change*, `report_email_to` on its Variables. Run the template once as **Check**:
+    its output says how far back each relay's logs go and which addresses sent nothing. docs/MAIL_RELAY.md, "Remove the
+    addresses that sent no mail".
+46. **SQL Server from the EE on a FIPS host** (0.60.0) - only if jobs use the `mssql_*` modules (or
+    `cert_inventory_sql`). Build the Windows or all-in-one EE again from 0.60.0's `execution-environment.yml` and
+    `check-ee.sh` with the next tag (`build-ee.sh` downloads `freetds.tar.gz`; keep your own `ansible.cfg`, `ca/` and
+    the lines you took out), with `pymssql` back and `mssql-python` added in `requirements.txt` and `check-list.txt`.
+    `ee-check`: *YES pymssql*, *YES mssql-python*.
+    Push it, then *AAP - set execution environment* with `aap_ee_name` and `aap_ee_image` (Check first).
+    docs/EXECUTION_ENVIRONMENT.md, "0.60.0: pymssql on a FIPS host".
+47. **Cisco UCS inventory** (0.61.0) - optional. In UCS Manager, a user with only the read-only role on every domain
+    (the same name and password). In AAP, the credential type *Cisco UCS Manager*
+    (`aap/credential_types/cisco_ucs_manager.yml`) and a credential of it; the job template *Cisco UCS inventory*:
+    playbook `playbooks/ucs_inventory_report.yml`, that credential, any execution environment with Python 3, no Limit;
+    `ucs_domains` (each domain's UCS Manager cluster address) and `report_email_to` on its Variables. Run it once, or
+    monthly on a schedule. Then run *AAP - report email question* again (step 4). docs/UCS.md.
+48. **Outage AAR and SOP - Word documents** (0.64.0) - optional. In your `all.yml`: `incident_docs_banner` (the marking
+    at the top and bottom of every page), `incident_aar_instructions` (your own numbered instructions at the end), and
+    `incident_impact_levels`; the logo is `report_logo_file`. Two job templates: *Outage AAR - Word document* (playbook
+    `playbooks/incident_aar.yml`) and *SOP - Word document* (`playbooks/incident_sop.yml`), any inventory, no Limit,
+    any execution environment with Python 3, no credential - the **ACT model key** only for the ACT options. Then
+    *AAP - incident document surveys* (`playbooks/incident_docs_survey.yml`, the *Red Hat Ansible Automation Platform*
+    credential): Check, then run - it writes both surveys. docs/INCIDENT_DOCS.md.
+49. **Outage SOP from the AAR, and the SOP draft to review** (0.65.0) - only if you set up step 48.
+    a. For the SOP draft only (the AAR job fills in the SOP job's form for you to review and launch): in AAP, a user
+       of its own (e.g. `svc_sop_draft`) with the **Admin** role on the *SOP - Word document* template only, and a
+       credential of type *Red Hat Ansible Automation Platform* with its login (e.g. *AAP - SOP draft*); give the user
+       who runs the setup job the **Use** role on it. In `all.yml`: `incident_docs_draft_credential: AAP - SOP draft`.
+    b. Run *AAP - incident document surveys* again (Check, then run): it adds the AAR job's new questions *ACT: write
+       the SOP's steps from the AAR* and *SOP: fill in the SOP job's form to review*, and attaches the credential of a.
+       to both templates. The questions already there keep their 0.64.0 wording; for the new descriptions of *Also
+       make an SOP* and the two step boxes (*empty = from the AAR*), delete those three questions in the AAR
+       template's survey before you run it.
+    c. Try it: the AAR job with *SOP: fill in the SOP job's form to review: Yes*, then launch *SOP - Word document* -
+       its boxes are filled in. docs/INCIDENT_DOCS.md (The SOP draft).
+50. **Evaluate-STIG - update** (0.70.0) - optional, for the RHEL hosts that run Evaluate-STIG (`check_stig_evaluate`).
+    Put the new zip (downloaded as now) in **your** repository: `playbooks/files/evaluate-stig/Evaluate-STIG_<version>.zip`;
+    add the line `playbooks/files/evaluate-stig/` to `.site-local`; commit, push, sync the project (GitHub refuses a file
+    over 100 MB: Git LFS, or an absolute `evaluate_stig_update_zip` on the AAP side). The job template *Evaluate-STIG -
+    update*: playbook `playbooks/evaluate_stig_update.yml`, your RHEL inventory, the Machine credential (sudo), no Limit
+    needed. Launch it with Check first (each host's version, what it would do), then without; then the STIG recheck.
+    docs/EVALUATE_STIG_UPDATE.md.
+51. **VMware - certificate request and install** (0.71.0) - optional, for vCenter's and the ESXi hosts' certificates
+    from your PKI's catalog item (its settings as for the renewal: docs/CERT_RENEWAL_CATALOG.md). On each vCenter whose
+    hosts get your PKI's certificates: `vpxd.certmgmt.mode` = `custom` (vCenter > Configure > Settings > Advanced
+    Settings) - until then their certificates are held. The vCenter credential's account: administrator@vsphere.local
+    or a member of **CAAdmins**. Three job templates, each with the VMware vCenter and ServiceNow API credentials, any
+    inventory, no Limit: *VMware - certificate request* (`playbooks/vmware_cert_request.yml`, a survey question
+    `vmware_cert_request_for`), *VMware - certificate install - check* (`playbooks/vmware_cert_install_check.yml`) and
+    *VMware - certificate install - approved* (`playbooks/vmware_cert_install_approved.yml`, Variables **not** prompted
+    on launch); and workflow 39 - check --Run on fail--> Approval --Run on success--> approved - with a survey question
+    `vmware_cert_install_ritm` (the RITM). Try the request job as Check first. docs/VMWARE.md (Request a certificate now;
+    Installing the issued certificates).
+52. **STIG Manager: a missing asset created** (0.72.0) - optional, only with workflow 37 (step 39).
+    On the check template of workflow 37 (*STIG recheck - check*), Variables: `check_stig_update_create_assets: true`;
+    `check_stig_stigman_collection: <your collection>` in `all.yml` (or per group). In STIG Manager, give the update's
+    client (*STIG Manager - update*'s credential) the **Manage** grant in that collection, and the reports' client
+    **Full** (not Restricted). Run the workflow: a host with no asset is listed under *New in STIG Manager* - check its
+    name - then approve. docs/STIG_DRIFT.md, "A host with no asset in STIG Manager".
+53. **VM deploy: templates from the staging folder** (0.73.0) - optional. In `all.yml`, the folder your deploy templates
+    are in, and the one the new VMs go in - e.g. both `Staging`: `vm_deploy_template_folders: [Staging]` and
+    `vm_deploy_folders: [Staging]` (no `folder` in `vm_deploy_defaults`: a VM goes in its template's folder). Try a ticket
+    with the deploy template as Check: `Placed: ..., folder /<datacenter>/vm/Staging`. docs/VM_DEPLOY_GUIDE.md
+    (Templates from the staging folder).
+54. **AAP - health check** (0.74.0) - optional, read-only, for your AAP host. Job template *AAP - health check*:
+    playbook `playbooks/aap_health_check.yml`; the inventory with your AAP host (it runs on the group `aap_hosts`, or set
+    `target` / a Limit to its name); a **Machine** credential that logs in as the AAP account (`ansible`) with sudo; a
+    **Red Hat Ansible Automation Platform** credential (an administrator or auditor) for the API checks. Launch it: the
+    FAIL and WARN lines are in the output, the report in `/home/ansible/aap-health/` on the AAP host. For the day AAP
+    itself is down: a copy of this repository on the AAP host and a vaulted `~/aap-health.vault.yml` with `aap_username`
+    and `aap_password` - the command is in docs/AAP_HEALTH_CHECK.md, "Run it on the AAP host".
+55. **STIG Manager - import checklists** (0.75.0) - optional: checklists (CKL, CKLB) from a share written to STIG Manager
+    after an approval - VMware's InSpec checklists too. In STIG Manager: the STIGs of your checklists installed; the
+    collection (e.g. `VMware`); the reports' client with **Full** in it, workflow 37's update client with **Manage**
+    (to create the assets). A folder on a share for the checklists, and a *Windows file share* credential that may read
+    it. Job template *STIG Manager - import checklists*: playbook `playbooks/stigman_ckl_import.yml`, credentials *STIG
+    Manager API* (the read-only one) and *Windows file share*, Variables `stigman_ckl_import_src:
+    '\\fileserver.yourdomain.mil\stig\ckl'` and `stigman_ckl_import_collection: VMware`. Launch it: its report lists
+    each checklist, its asset (the checklist's host name - fill it in STIG Viewer) and the STIG it matched, and what
+    it would write. Then a copy, *... - check*, with `stigman_ckl_import_workflow: true`, and workflow 40 (check,
+    approval, *STIG Manager - update*). docs/CKL_IMPORT.md.
+56. **STIG Manager - import checklists as STIG Manager Watcher** (0.76.0) - optional, after step 55: the checklists your
+    scanners write to the share imported on a schedule. In STIG Manager: a staging collection (e.g. `Watcher`) for hosts
+    found nowhere; the client that writes (workflow 37's update client) with **Full** in every collection your hosts are
+    in and **Manage** in the staging one. The *Windows file share* account with **Modify** on the folder. On workflow
+    40's check template (or, for no approval at all, the plain template), Variables `stigman_ckl_import_collection:
+    Watcher`, `stigman_ckl_import_collections: ['*']`, `stigman_ckl_import_auto: existing` (or `all`),
+    `stigman_ckl_import_move: true`, and its *STIG Manager API* credential the client that writes. Launch it with Job type
+    **Check** first: it says what it would write at once and which files it would move - and stops, naming the
+    collection, if the client has only Restricted in one. Then a schedule (every 15 to 60 minutes, *Concurrent jobs*
+    off). docs/CKL_IMPORT.md, "As STIG Manager Watcher".
+57. **The DoD PKI CA bundle** (0.77.0) - optional, for the certificate installs when the PKI sends back only the
+    .cer. Put the DoD PKI's PKCS7 bundle in your repository as `playbooks/files/dod_pki_bundle.p7b` - the
+    `Certificates_PKCS7_v5_xx_DoD.der.p7b` from cyber.mil's *PKI CA Certificate Bundles: PKCS#7 for DoD PKI Only* zip (or
+    the zip itself) - commit, push, sync the project. In `all.yml`: `cert_install_ca_bundle: files/dod_pki_bundle.p7b`.
+    Then a job template **PKI - DoD bundle check** (`playbooks/pki_bundle_check.yml`, no credential, no Limit) with a
+    weekly schedule: it emails you when DISA's bundle differs from yours, the checked file attached. Run it once first:
+    with no bundle of yours yet it lists the roots' SHA-1 to compare with DISA's - or set `cert_install_ca_bundle` first
+    and it checks against yours. No way out to the internet from AAP: `pki_bundle_proxy`, or a copy on a share in
+    `pki_bundle_url`. docs/CERT_INSTALL.md, "When the PKI sends only the .cer".
+58. **The Linux inventory from IdM** (0.78.0) - optional: the RHEL hosts enrolled in IdM and its host groups as an AAP
+    inventory, kept in sync by AAP. In IdM: a plain user to read with (`ipa user-add`; its first password changed once
+    with `kinit`). Your host groups written down against the runbooks' groups (`aap_hosts`, `no_patch`, `rhel9_all`,
+    `idm`...). In AAP: the credential type *IdM inventory* (`aap/credential_types/idm_inventory.yml`) and a credential
+    of it (the IdM server's FQDN, the user, `/etc/ipa/ca.crt`); an inventory with a source **Sourced from a Project**,
+    file `inventories/idm/idm.yml`, that credential, **Overwrite** ticked, and in its Source variables `IDM_GROUP_MAP`
+    (your host groups to the runbooks' groups), `IDM_REQUIRE_GROUPS: [aap_hosts]`, `IDM_MIN_HOSTS`. Launch the update,
+    check the groups, then a schedule on the source (or **Update on launch**). Then point the Linux templates at it.
+    docs/IDM_INVENTORY.md.
+59. **ServiceNow - ticket insights** (0.79.0) - optional. The job template *ServiceNow - ticket insights*: playbook
+    `playbooks/servicenow_insights.yml`, any inventory, the *ServiceNow API* credential (its account reads incident,
+    sc_req_item, sc_task, change_request, problem and sys_audit: itil) and the *ACT model key* credential, no Limit; on its
+    Variables `servicenow_insights_months: 6` (and `servicenow_insights_groups` to report on some groups only); the page goes
+    to the report website (`report_web_dest`, step 5), `report_email_to` is optional. Run it once by hand - with ACT it asks
+    the model a few dozen questions - then a monthly schedule (the 1st, overnight). docs/SERVICENOW_INSIGHTS.md.
+60. **A VMware snapshot before patching** (0.80.0) - optional: the *Patch hosts* template takes a snapshot `patching` of
+    each VM right before it patches it. Attach a **VMware vCenter** credential to the template as well; in its
+    Variables (or a survey) `patch_snapshot: true`, and `patch_serial: 10` for batches of 10. Run it as **Check** first:
+    it lists each host's VM; a host in no vCenter is a physical server, patched without a snapshot (0.86.0) - a VM
+    listed so: set `vmware_vm_name` on that host in the inventory. Delete the snapshots once the
+    patching is proven: the snapshot cleanup with `vm_snapshot_cleanup_name_words: [patching]`. docs/RUNBOOKS.md,
+    "Snapshot before patching".
+61. **A certificate install from a request you name** (0.81.0) - optional, for a certificate the PKI put on a request
+    the renewal did not order (opened by hand with the renewal's CSR, or after an incident): on the certificate install
+    workflow (workflow 29, Linux, and its Windows twin) a **Survey** question `Request (RITM) with the issued
+    certificate - empty: every renewal's own request`, answer variable name `cert_install_ritm`, Text, **not
+    required**; switch the survey on. The schedule leaves it empty (as before); launch the workflow by hand with a
+    RITM number for the one-off. docs/CERT_INSTALL.md, "A request you name".
+62. **The keystore password for the trust store removal** (0.82.0) - only when your Java keystores have a password
+    other than keytool's `changeit`: attach the **Keystore password** credential (the certs check's one) to *Trust
+    store report* and *Windows trust store report*, and take `check_trust_keystore_password` out of `all.yml`. Nothing
+    else in 0.82.0 needs setting up: the fixes work as they are.
+63. **Horizon - events report and settings report** (0.83.0) - optional. Two job templates like the Horizon health
+    report: playbooks `playbooks/horizon_events_report.yml` (*Horizon - events report*) and
+    `playbooks/horizon_settings_report.yml` (*Horizon - settings report*), any inventory, the read-only *Horizon API*
+    credential, no Limit; paste `aap/extra_vars/horizon_events_report.yml` and `horizon_settings_report.yml` into
+    their Variables. Run the settings report once without a baseline: it lists every setting with Horizon's names;
+    then set `horizon_settings_baseline` on its template (docs/HORIZON.md, "Settings report", has a starting
+    point). Schedules: the events report every day 06:10, the settings report every Monday 07:10. The desktops
+    check, the fix job, the health report and the push plan need nothing new: run *Horizon - API test* again
+    (it now asks the event database and the settings too), and the desktops check as a report once to see what it
+    holds back now. Then run *AAP - report email question* again (step 4), so both get the "Also email the report
+    to" box. docs/HORIZON.md.
+64. **Patching and the protected VMs** (0.84.0) - check, then decide. *Patch hosts* now skips every host on the
+    VMware protected lists: a group in `vmware_protected_groups`, or a host, `vmware_vm_name` or VM name matching
+    `vmware_protected_vms` or `vm_snapshot_cleanup_exclude_vms`. If you keep those lists only in the snapshot cleanup
+    template's Variables or survey, copy them into `playbooks/group_vars/all.yml` so *Patch hosts* sees them too.
+    Run *Patch hosts* as **Check** once: the protected ones say `is protected (...): not patched`. To patch them
+    after a snapshot of each VM, add to *Patch hosts*' Variables `patch_snapshot: true` (with the VMware vCenter
+    credential attached, step 60) and `patch_protected_with_snapshot: true` (all of them) or a list of names
+    (`[DB*, app07]`: only those). docs/RUNBOOKS.md, "Protected VMs".
+65. **Horizon - batch 2** (0.85.0) - optional; each job on its own. Like the other Horizon templates (any inventory,
+    no Limit, paste `aap/extra_vars/<playbook>.yml` into Variables) unless said:
+    - *Horizon - sessions report* (`horizon_sessions_report.yml`, read-only *Horizon API*): set
+      `horizon_client_min_versions` on it; schedule every day 07:30.
+    - *Horizon - logon times report* (`horizon_logon_report.yml`, read-only *Horizon API*): on each Connection Server
+      once, `vdmadmin -I -timingProfiler -enable`; if the job says HTTP 403 for the logon timing, give the read-only
+      account Horizon's **Help Desk Administrator (Read only)** role too. Schedule every day 10:00.
+    - *Horizon - message users* (`horizon_message_users.yml`, acting *Horizon API*): a survey - `horizon_message` (text,
+      required), `horizon_message_type` (INFO, WARNING, ERROR), `horizon_message_pools`, `horizon_message_users`.
+    - **Workflow 41, ESXi host maintenance**: *Horizon - host maintenance plan* (read-only), an approval, *Horizon - host
+      maintenance start* (acting; Prompt on launch unticked for Variables); a survey on the workflow:
+      `horizon_maint_host` (required), `horizon_maint_message`. And *Horizon - host maintenance end* (acting, a survey:
+      `horizon_maint_host`). The acting account's role needs **Manage Machine** (maintenance mode) and **Manage
+      Sessions** (messages).
+    - *Horizon - FSLogix profiles report* (`horizon_fslogix_report.yml`): the **Windows file share** credential (not
+      Horizon API), whose account may read the profile shares; `horizon_fslogix_shares` and `horizon_fslogix_size_mb`
+      (your SizeInMBs) on it. Schedule every Monday 07:20.
+    - *Horizon - internal VMs report* (`horizon_internal_vms_report.yml`): the read-only **VMware vCenter** and
+      **Horizon API** credentials. Schedule every Monday 07:30.
+    - *Horizon - golden image check* (`horizon_image_check.yml`): the **VMware vCenter** and the Windows **Machine**
+      credentials and your Windows inventory; launch it with the golden VM in the **Limit** before each snapshot.
+    Then run *AAP - report email question* again (step 4). docs/HORIZON.md, docs/WORKFLOWS_AND_SCHEDULES.md (41).
+66. **Patching: physical servers** (0.86.0) - nothing to set; check once. With `patch_snapshot: true`, a host
+    whose VM is in no vCenter is now a physical server: *Patch hosts* patches it without a snapshot (before, it stopped
+    the job unless `patch_snapshot_required: false`). Run *Patch hosts* as **Check** once: each such host says `NO VM -
+    ... (a physical server: patched without a snapshot)`. A VM listed there is one the job could not find by name: set
+    `vmware_vm_name` for it (on the host, in the inventory). To keep the old way (every host must be a VM), add
+    `patch_snapshot_required: true` to the template's Variables. docs/RUNBOOKS.md, "Snapshot before patching".
+67. **Patching: hosts not reached** (0.87.0) - nothing to set. *Patch hosts* now leaves out a host it cannot reach
+    when it starts (switched off, a firewall, ssh refused) and patches the others; the job is not failed for it. Its
+    last lines list every host not reached: fix the network or firewall, then run it again for those (Limit). Set
+    `target` on the template (the group inside the inventory to patch) if the job says `target 'patch_hosts' matches no
+    host`. To keep the old way (a host not reached fails the job and stops the rollout), add
+    `patch_skip_unreachable: false` to the template's Variables. docs/RUNBOOKS.md, "Patch hosts" (rule 2).
+68. **ServiceNow - ticket insights on the website** (0.88.0) - run it once. The next run takes the team lines off the
+    website's index (one line for the report now), writes `site-insights.js` beside the index (the team menu, search,
+    Copy, sorting and the chart tooltips then work where the web server blocks script inside a page), and gives up to 60 groups
+    with 10 or more tickets their own page. *SLA met* is now counted against SLA targets by priority (defaults: incidents
+    P1 8 h ... P5 480 h, requests P1 48 h ... P5 960 h): put your management's numbers in `all.yml` as
+    `servicenow_insights_sla_targets` (both tables - the setting is replaced whole), and catalog items of their own in
+    `servicenow_insights_sla_items`. Your groups still missing: name them in `servicenow_insights_groups` (the
+    report is then about them only), or lower `servicenow_insights_team_min`. The team folders of older runs keep their
+    dated pages (`<date>_<time>_job-<n>.html`): delete those by hand once if you like; `latest.html` stays. The
+    leaderboards now read the groups' members: if *Not read* on the report names `sys_user_grmember`, ask the
+    ServiceNow admins for read on it (the `itil` role has it on most instances), or set
+    `servicenow_insights_members: false` to keep the old list. docs/SERVICENOW_INSIGHTS.md.
+69. **Patching: RHEL 7, services, hosts not ready** (0.89.0) - nothing to set. *Patch hosts* now patches RHEL 7 hosts
+    (and clones) with yum instead of failing on them; run it as **Check** first to see what yum would update. A RHEL 7
+    host gets updates only with Red Hat's Extended Life Cycle Support (ELS) add-on (or your Satellite's content for
+    it); without it yum finds nothing new. Only services enabled at boot must run again after the update. A host with
+    neither dnf nor yum, a host where root is refused and a host with too little free in /var are left out and listed
+    in the job's last lines - the job stays green. Root comes from the Machine credential: *Privilege Escalation
+    Method* `sudo`, and *Privilege Escalation Password* when your sudo asks for one. To fail on such hosts instead,
+    add `patch_skip_unsupported: false` or `patch_skip_not_ready: false` to the template's Variables.
+    docs/RUNBOOKS.md, "Patch hosts".
+70. **Disk space report and tmp cleanup** (0.90.0) - optional. Create *Linux - disk space report*: playbook
+    `playbooks/disk_report.yml`, your Linux inventory, the Machine credential with *Privilege Escalation Method*
+    `sudo` (LVM is read as root), `aap/extra_vars/disk_report.yml` in Variables with `report_email_to`; run it once and
+    compare it with `df -h` and `lvs` on a host. Then, if you want the cleanup: *Linux - tmp cleanup*
+    (`playbooks/tmp_cleanup.yml`, the same inventory and credential, Variables not prompted on launch) and workflow
+    42 (report, approval, cleanup, report), scheduled daily at 06:30 instead of the report. The health check now also
+    flags LVM thin pools and snapshots at 85%; `check_disk_lvm: false` in its Variables keeps the old check.
+    docs/DISK_SPACE.md.
+
+71. **The brief look for the report website** (0.92.0) - optional. In `all.yml`: `report_web_theme: brief`. The next
+    run of each report draws its page in it, and the index page on the next run of any report (with the copy job:
+    its next run). A report's first step shows under its line on the index once that report has run again. Look at a
+    critical report, the disk space report (its bars) and the ticket insights page, in light and dark and on a phone.
+    `report_web_theme: atlas` goes back. The emails do not change. docs/WEB_REPORTS.md, "The brief look".
+72. **STIG Manager and ServiceNow: health and availability** (0.93.0) - optional. In `all.yml`: `stigman_health_api`
+    (the address people use) and the nodes - the inventory groups `stigman` (nodes) and `stigman_db` (the database
+    host) with `stigman_health_node_url`, or `stigman_health_nodes`. Create *STIG Manager - health* (Machine, STIG
+    Manager API, MariaDB monitor; daily 06:15) and *STIG Manager - availability* (Red Hat Ansible Automation Platform,
+    STIG Manager API; every 5 to 15 minutes, Concurrent jobs off - or workflow 43 with the ServiceNow tickets step),
+    and *ServiceNow - availability* (ServiceNow API, Red Hat Ansible Automation Platform; every 5 to 15 minutes, an
+    email notification on failure). For the database numbers the client needs `stig-manager:op:read` and admin in STIG
+    Manager. docs/STIGMAN_HEALTH.md, docs/AVAILABILITY.md.
+73. **The brief look, calmer and softer** (0.94.0) - nothing to set up. With `report_web_theme: brief` the pages
+    change on each report's next run (the index on the next run of any report). Look at the index (a plain list),
+    a critical report and the ticket insights page in dark, and at your logo: it is drawn up to 60 px tall on the
+    index - a `report_logo_file` at least 64 px tall (step 1's 160 px is right) stays sharp. docs/WEB_REPORTS.md,
+    "The brief look".
+74. **AAP - health check report** (0.95.0) - nothing to set. Run *AAP - health check* once and read the report: each
+    check one line, the lists under it. A check shown as SKIP (*not checked*) could not run on this host - not a
+    problem of AAP's. To always see one inventory, `aap_health_focus_inventories: [<its ID>]`: the ID is the number in
+    the inventory's address in AAP (`.../inventories/inventory/<ID>/...`). docs/AAP_HEALTH_CHECK.md.
+75. **Ticket insights: moving between teams, and ACT reads the work notes** (0.96.0) - nothing to set; one thing to
+    check. The pages change on the next run: the **Team** menu at the top (press **t**), the side bar's filter, the
+    teams A to Z. With ACT, the fixes are now written from the top issues' **work notes** too: the ServiceNow API
+    account needs read on `sys_journal_field` - if the report says *Work notes were not read (... HTTP 403)*, ask the
+    ServiceNow admin for a read ACL on `sys_journal_field` for the account's role, or set
+    `servicenow_insights_act_work_notes: false`. docs/SERVICENOW_INSIGHTS.md, "The work notes" and "Moving between teams".
+76. **Ticket insights: sites, directorates and teams** (0.97.0) - check, then set what fits. The next run writes a page
+    for All, each site, each directorate and each team (`{template}/<site>/<directorate>/<team>/latest.html`) from
+    ServiceNow's group tree: the account needs read on `sys_user_group` (and, for the hand-off paths, on `sys_audit` or
+    `metric_instance`). Open *How this was made* > *Sites, directorates and teams*: the groups in Other or Unknown want a
+    line in `servicenow_insights_hierarchy_map`; `servicenow_insights_site_roots` names the sites' root groups;
+    `servicenow_insights_hierarchy_source: names` places them by their names instead. Retired groups:
+    `servicenow_insights_exclude_groups`. A switch by a name suffix: `servicenow_insights_split_label: <WORD>`
+    and `servicenow_insights_split_pattern: "*- <WORD>"` (and, by the names, `servicenow_insights_suffix_directorates`). Delete the old team folders (`{template}/<team>/`) by hand.
+    docs/SERVICENOW_INSIGHTS.md, "Sites, directorates and teams" and "The hand-off paths".
+77. **AAP - health check, fewer false alarms** (0.98.0) - nothing to set. A controller-web that only recycles its
+    workers is now INFO, not FAIL; fapolicyd not running is INFO, not WARN - where the site's STIG requires it, set
+    `aap_health_fapolicyd_required: true` (then it is a FAIL). With sudo the job also reads the kernel's OOM kills of
+    the last 2 h (read-only). docs/AAP_HEALTH_CHECK.md. *STIG Manager - health* and *- availability*: a Limit no
+    longer needs `localhost` (*ServiceNow - availability* neither); one node that runs everything goes in both
+    groups, `stigman` and `stigman_db` (docs/STIGMAN_HEALTH.md).
+78. **AAP - template variables audit** (0.99.0) - one new job template, read-only. Create *AAP - template variables
+    audit*: playbook `playbooks/aap_template_audit.yml`, any inventory, no Limit, a **Red Hat Ansible Automation
+    Platform** credential whose user is **Organization Auditor** (System Auditor for every organization); Variables from
+    `aap/extra_vars/aap_template_audit.yml` if you like (`report_email_to`). Run it, read the report, and move what it
+    flags: `all.yml` for the site-wide and repeated settings, the Machine credential or the group files for the
+    `ansible_*` ones, a credential for any secret it names - then run it again. Run *AAP - report email question* again
+    so the new template gets the *Also email the report to* box. docs/TEMPLATE_AUDIT.md.
+79. **ServiceNow health - a self-hosted instance** (1.0.0) - only if you run ServiceNow yourself; otherwise nothing
+    (an inventory without the group `servicenow_nodes` runs as before, and its `servicenow_db_hosts` is not read by this
+    job). In your Linux inventory: the group **`servicenow_nodes`** (the front-end nodes) beside `servicenow_db_hosts`
+    (the database host). Create the job template **ServiceNow health - nodes**: playbook `playbooks/servicenow_health.yml`,
+    the Linux inventory, credentials ServiceNow API, your Linux Machine credential (sudo) and **MariaDB monitor** (the
+    same as STIG Manager's), Privilege escalation ticked, Variables `servicenow_health_part: nodes`, hourly, with
+    `--Always--> [ServiceNow tickets]` in its workflow. On the existing *ServiceNow health* template (the Windows
+    inventory) set `servicenow_health_part: mids`. Check the defaults that fit: the units looked for
+    (`servicenow_node_units: [snc_prod, snc_test, snc_dev]`), the install folder (`servicenow_node_home: /glide`), the
+    database's folders (`servicenow_db_paths: [/database]`). Give the ServiceNow API account read on `sys_cluster_state`
+    for the cluster view (without it: said, no problem). The job writes one small file on the database host, the
+    database's size for its growth (`/var/lib/site-health/servicenow-db-history.json`; `servicenow_db_history: false`
+    = none). Run the new template once as *Check*. docs/SERVICENOW_SETUP.md, "Self-hosted instance"; SETUP_AAP.md,
+    "ServiceNow health - nodes".
+80. **Patch hosts: the update check, the snapshot reused** (1.1.0) - nothing to set. A host with no updates is now
+    left out of *Patch hosts* (UP TO DATE: no snapshot, not patched), and a run again within 24 hours reuses the
+    `patching` snapshot the first run took. `patch_update_check: false` and `patch_snapshot_reuse_hours: 0` keep the
+    old ways. docs/RUNBOOKS.md, "Patch hosts". The AD jobs find DCs in `domain_controllers` when there is no
+    `win_dc` group (docs/ACTIVE_DIRECTORY.md).
+81. **Ticket insights: change tasks** (1.2.0) - nothing to set where the ServiceNow account reads `change_task` (`itil`
+    does). If your `servicenow_insights_tables` is set in `all.yml` or the template's Variables, add `change_task` to
+    it. The next run shows them; a *Not read* line for `change_task` means the account cannot read it: give it read on
+    `change_task`, or take it out of the list. docs/SERVICENOW_INSIGHTS.md, "Change tasks".
+82. **Enclaves: the banner, ACT off** (1.3.0) - nothing to set in the unclassified enclave. In the classified one, in
+    `all.yml`: `site_enclave: classified` and `report_banner_text` (SECRET by default) - every report then carries
+    the banner, and the outage AAR and SOP too (an `incident_docs_banner` of your own still wins: take it out of
+    `all.yml` to follow the banner). In an enclave without a model: `site_act_enabled: false`. Setting up another enclave's AAP:
+    docs/ENCLAVES.md, the list of what to change by hand.
+83. **AD health without a domain admin** (1.4.0) - nothing to set where the AD health report's account may log on to
+    the DCs (`ad_health_mode: auto` reads them over WinRM as before). Where only Domain Admins may: give the template a
+    Machine credential of a **plain domain user** (e.g. `svc_aap_adreader`, nothing granted), make sure the EE trusts
+    the DCs' LDAPS certificates (your CA in `ee/*/ca`) and reaches them on 389, 636 and 88, and add the "Red Hat
+    Ansible Automation Platform" credential for *since the last run* (or set `ad_reader_history_file`). The next run
+    says *Reader mode* at the top. docs/ACTIVE_DIRECTORY.md, "Without a domain admin".
+84. **Ticket insights: your SLOs, act on first** (1.7.0) - nothing to set where the ServiceNow account reads `task_sla`
+    (`itil` does): met or missed comes from ServiceNow's own SLAs. In `all.yml`, as your process has them:
+    `servicenow_insights_categories` (your official list), `servicenow_insights_service_desk_groups`, and - where
+    `task_sla` is not read - `servicenow_insights_sla_targets` with a response per priority and
+    `servicenow_insights_business_hours` (e.g. Mon-Fri 07:30-16:30). Check the defaults: the hop limit (3), Awaiting
+    Caller (6 business days), close after (7 days), the priority names and matrix. docs/SERVICENOW_INSIGHTS.md, "Your
+    SLOs, priorities and categories" and "What to act on first".
+
 ## 1.6.1 — 2026-11-10
 
 **Updating without scripts:** paste `site-automation-1.6.1-changed-since-1.6.0.zip` as it is (from an older version,

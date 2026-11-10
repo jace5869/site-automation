@@ -9,6 +9,8 @@
 # work notes (sys_journal_field, GET only, masked - what only they hold too), the page says what each fix was read from; the
 # work notes refused (403): said, the fixes from the close notes; off: not read. 1.2.0: the change tasks (change_task, GET
 # only) - the teams' columns, Held up by, the leaderboards' own column; refused (403): said, the rest whole, green.
+# 1.7.0: task_sla read (Response and Resolution met, No SLO, SLA at risk now, act on first, how incidents ended, the
+# categories, the surveys); task_sla refused: the targets in business hours, a response from the metric Assigned to, said.
 #   bash tests/servicenow/run_insights_test.sh            (ANSIBLE_PLAYBOOK=... to pick one)
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -113,7 +115,8 @@ check "the site's page: every section, links to the teams, ticket links into Ser
     'ServiceNow ticket insights' 'id="teams"' 'id="keepingup"' 'id="severity"' 'id="issues"' 'id="problems"' 'id="handoffs"' \
     'id="requests"' 'id="changes"' 'id="notes"' 'id="allstars"' 'id="kb"' 'id="method"' 'href="ops/other/windows/latest.html"' 'Teams side by side' \
     "http://127.0.0.1:$port/incident.do?sysparm_query=number=INC" 'grouped by their category' 'From the numbers' \
-    'Reopen not used here' 'Came back' 'SLA target' 'your targets' 'data-tab="p1"' 'No drafts: ACT (GenAI) writes them' '!cid:' '!<!--site-report-logo-->'
+    'Reopen not used here' 'Came back' 'Response met' 'Resolution met' 'No SLO' 'P4 Incident Response' 'Act on first' 'SLA at risk now'
+    'How incidents ended' 'Priority set by hand' 'id="categories"' 'id="satisfaction"' 'data-tab="p1"' 'No drafts: ACT (GenAI) writes them' '!cid:' '!<!--site-report-logo-->'
 check "a team's page: that team, linked back to the site's" "$top/ops/other/windows/latest.html" \
     'Ops - Windows ·' '!id="teams"' 'href="../../../latest.html"' 'All-stars' 'Most closed' 2>/dev/null || \
 check "a team's page: that team, linked back to the site's" "$top/ops/other/windows/latest.html" 'href="../../../latest.html"' 'Most closed' '!id="teams"'
@@ -302,6 +305,18 @@ INS_ENV="SN_HOST=" run "no credential" fail "{$NOW}" 'it sets SN_HOST, SN_USERNA
 run "months 0: said" fail "{$NOW, $NOACT, \"servicenow_insights_months\": 0}" 'servicenow_insights_months must be 1 or more'
 run "the last 60 days instead (servicenow_insights_days)" ok "{$NOW, $NOACT, \"servicenow_insights_days\": 60}" 'Window: 2026-09-02 to 2026-10-31'
 
+# ---- 1.7.0: your SLOs - task_sla refused: your targets in business hours instead, said; the surveys refused -------------
+mock SNMOCK_NO_TABLES=task_sla,asmt_metric_result
+mkdir -p "$work/site8"
+run "task_sla refused: the targets in business hours (a response from the metric Assigned to), said; the surveys refused, said" ok \
+    "{$NOW, $NOACT, \"report_web_dest\": \"$work/site8\", \"servicenow_insights_business_hours\": {\"days\": [\"mon\", \"tue\", \"wed\", \"thu\", \"fri\"], \"start\": \"07:30\", \"end\": \"16:30\"},
+      \"servicenow_insights_sla_targets\": {\"incident\": {\"1\": {\"response\": 0.25, \"resolution\": 4}, \"2\": {\"response\": 0.5, \"resolution\": 9}, \"3\": {\"response\": 4, \"resolution\": 27}, \"4\": {\"response\": 9, \"resolution\": 45}, \"5\": \"none\"}}}" \
+    'task_sla not read' 'the itil role has it' 'asmt_metric_result (the incident surveys)'
+check "  ... the page: the targets, business hours, Response met measured, no SLA at risk list" "$work/site8/servicenow-ticket-insights/latest.html" \
+    'Response target' 'Resolution target' 'Mon-Fri 07:30-16:30' 'from opened to first assigned to a person' 'no running SLA read (task_sla)' '!id="satisfaction"'
+grep -q 'definition.name=Assigned to' "$work/log.jsonl" && echo "ok   -   ... the metric Assigned to read" || { echo "FAIL - Assigned to not read"; fails=$((fails + 1)); }
+mock
+
 # ---- emailed with the workbook -----------------------------------------------------------------------------------------
 mkdir -p "$work/mail"
 "$py" "$repo/tests/email/fake_smtp.py" "$smtp" "$work/mail" --no-starttls 2>"$work/relay.err" &
@@ -309,7 +324,7 @@ spid=$!
 for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$smtp") 2>/dev/null && break; sleep 0.1; done
 run "the report emailed, the workbook attached" ok "{$NOW, $NOACT, \"report_email_to\": [\"ops@example.mil\"], \"report_email_smtp_host\": \"localhost\", \"report_email_smtp_port\": $smtp, \"report_email_from\": \"aap@example.mil\", \"report_email_security\": \"none\"}" \
     'emailed'
-if ls "$work"/mail/*.eml >/dev/null 2>&1 && grep -q "Ticket insights for All assignment groups" "$work"/mail/*.eml && grep -q 'ticket-insights_.*\.xlsx\|servicenow-ticket-insights.*\.xlsx\|\.xlsx' "$work"/mail/*.eml; then
+if ls "$work"/mail/*.eml >/dev/null 2>&1 && grep -q "Ticket insights for All assignment groups" "$work"/mail/*.eml && grep -q "SLA at risk now" "$work"/mail/*.eml && grep -q 'ticket-insights_.*\.xlsx\|servicenow-ticket-insights.*\.xlsx\|\.xlsx' "$work"/mail/*.eml; then
     echo "ok   -   ... the mail has the report and the workbook"
 else
     echo "FAIL - no mail with the report and the workbook"; fails=$((fails + 1))
