@@ -402,15 +402,20 @@ def _should_run(e, quadlet, info):
     return False, "no systemd unit runs it and it has no restart policy, so a stop counts as on purpose"
 
 
+_USERNS_OFF = re.compile(r"user namespaces are not enabled|max_user_namespaces", re.I)
+
+
 def podman_discovery(results, ignore=None):
     """The podman containers of one host, from roles/podman_discover's per-owner query (a loop
-    result per owner; item = {name, uid, ...}). -> {'containers': [...], 'errors': [...]}.
+    result per owner; item = {name, uid, ...}). -> {'containers': [...], 'errors': [...], 'userns_off': [users]}.
+    A user whose podman ps says "user namespaces are not enabled" (user.max_user_namespaces = 0, a
+    STIG setting) is in userns_off, not in errors: rootless podman cannot run on that host at all.
     Parsed here, on the controller: nothing but podman and systemctl runs on the host."""
     pats = []
     for p in ignore or []:
         if str(p or "").strip():
             pats.append(re.compile(str(p).strip()))
-    containers, errors = [], []
+    containers, errors, userns_off = [], [], []
     for r in results or []:
         if not isinstance(r, dict) or r.get("skipped"):
             continue
@@ -430,6 +435,9 @@ def podman_discovery(results, ignore=None):
         for kind, arg, lines in secs:
             if kind == "ps":
                 parsed = _json_list(lines) if arg == "0" else None
+                if parsed is None and rootless and arg != "0" and _USERNS_OFF.search("\n".join(lines)):
+                    userns_off.append(owner)
+                    break
                 if parsed is None:
                     errors.append({"owner": owner, "what": "podman ps", "command": run_as + "podman ps -a",
                                    "message": _tail(lines) or "exit code " + arg})
@@ -560,8 +568,10 @@ def podman_discovery(results, ignore=None):
             unit_only(n if n not in have_names else u, u, "unit-file", None, kind, "")
             have_units.add(u)
             have_names.add(n)
+        if owner in userns_off:
+            continue
         containers.extend(sorted(entries, key=lambda e: e["name"]))
-    return {"containers": containers, "errors": errors}
+    return {"containers": containers, "errors": errors, "userns_off": userns_off}
 
 
 # ---- service watch -------------------------------------------------------------------------
@@ -1539,7 +1549,9 @@ def report_cards_text(cards):
         if c.get("subject"):
             out.append("   " + str(c["subject"]))
         if c.get("next") or c.get("code"):
-            out.append("   Next: " + " ".join(x for x in (str(c.get("next") or ""), str(c.get("code") or "")) if x))
+            code = [x for x in str(c.get("code") or "").splitlines() if x.strip()]   # a code of several lines: one per line
+            out.append("   Next: " + " ".join(x for x in (str(c.get("next") or ""), code[0] if code else "") if x))
+            out.extend("         " + x for x in code[1:])
     return out
 
 

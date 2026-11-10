@@ -116,7 +116,7 @@ Then commit, push, and run **Sync** on the project in AAP.
 |---|---|
 | MariaDB installed on the host | Usually nothing. Run with privilege escalation and the check logs in as root through the local socket (RHEL's default). |
 | MySQL installed on the host | Usually the credential: MySQL's root account normally has a password. |
-| In a container (either engine) | Use the credential. The official images give root a password, and without it the job reports a finding that contains `Access denied` and ends with `attach the "MariaDB monitor" credential`. |
+| In a container (either engine) | Use the credential. The official images give root a password, and without it the job reports a finding that contains `Access denied` and ends with `attach the "MariaDB monitor" credential`. Each container has its **own** root password: with several on one host, create one monitoring account with the same password in each (below) rather than using root. |
 
 Steps:
 
@@ -235,7 +235,8 @@ command line. Nothing here has been run against **your** database: step 3 is the
 | `mariadb:replication-query` | the account lacks the replication privilege (MariaDB 10.5.9+: `REPLICA MONITOR`, not `REPLICATION CLIENT`) | section 4 |
 | `mariadb:no-container` | discovery matched nothing, or podman is run as the wrong user | `podman ps -a` as the right user; set `check_mariadb_container_image_regex` or `check_mariadb_container_user` |
 | `mariadb:user` | the rootless user name is wrong | `getent passwd <user>` on the host |
-| `status query failed: ... Access denied ...` and `attach the "MariaDB monitor" credential` | container root has a password | section 4 |
+| `refused the login in container ...: Access denied ...` and `attach the "MariaDB monitor" credential` | container root has a password | section 4 |
+| `refused the login of root (the MariaDB monitor credential) in 2 containers (db1, db2): Access denied ... (using password: YES) - most likely its password is wrong for these containers` | each database container has its own root password (set when it was created); the credential has one of them, or none | see a container's: `podman inspect <container> \| grep -i ROOT_PASSWORD`. Better: one read-only monitoring account with the same password in every container (section 4, in each container), or `check_mariadb_containers` to read only the ones the credential may log in to. The finding's *How to look* has the commands, one per line |
 | `... is not running (container ... is missing)` but it is running | the name is wrong, or the containers belong to another user | compare with the `podman ps -a` output; `check_mariadb_container_user` |
 | The check runs on the wrong host, or not at all after a rename | a settings file only applies to the group named like the file | section 3 |
 | `MariaDB is not running (service mariadb is inactive)` - or a login error from the host's client - but `podman ps` shows the database container up | the host's `mariadb.service` only starts the container (`podman compose up -d`); before 0.7.0 the check took it for the database | 0.7.0 and later find the container by themselves; or name it: `check_mariadb_container: mariadb` |

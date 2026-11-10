@@ -44,7 +44,7 @@ scenario() {
     local name="$1" conts="$2" vars="$3" want="$4" text="${5:-}"
     printf '%b' "$conts" > "$work/containers"; : > "$work/podman.log"
     (cd "$repo" && PATH="$work/bin:$PATH" FAKE_CONTAINERS="$work/containers" FAKE_LOG="$work/podman.log" \
-        MARIADB_MONITOR_USER=monitor MARIADB_MONITOR_PASSWORD="$PW" \
+        MARIADB_MONITOR_USER="${MONUSER-monitor}" MARIADB_MONITOR_PASSWORD="$PW" \
         ANSIBLE_STDOUT_CALLBACK=default ANSIBLE_NOCOLOR=1 ANSIBLE_VERBOSITY="${VERBOSITY:-0}" \
         "$ap" -i "$work/${INV:-inv.yml}" "$here/check.yml" -e "$vars") > "$work/out.txt" 2>&1
     local rc=$?
@@ -118,6 +118,44 @@ FAKE_GROUP=ok scenario "Group Replication smaller than expected" "$MY" '{"check_
 FAKE_GROUP=bad scenario "Group Replication with a member that is not ONLINE" "$MY" '{"check_mariadb_container":"db"}' "mariadb:group" "db2:3306 is RECOVERING"
 FAKE_DENY=1 scenario "MySQL login refused: hint has the GRANT for a monitoring account" "$MY" '{"check_mariadb_container":"db"}' "mariadb:connect" "GRANT PROCESS, REPLICATION CLIENT"
 FAKE_DENY=1 scenario "MariaDB login refused: hint has REPLICA MONITOR" "$RUN" '{"check_mariadb_container":"mariadb"}' "mariadb:connect" "GRANT PROCESS, REPLICA MONITOR"
+# a refused login with the credential set: what is likely (each container has its own root password), the
+# commands one per line, and one finding for every container that refused it
+MONUSER=root FAKE_DENY=1 scenario "root refused in one container: critical, the likely cause" "$RUN" '{"check_mariadb_container":"mariadb"}' \
+    "mariadb:connect" "SUMMARY mariadb:connect | critical | MariaDB refused the login of root (the MariaDB monitor credential) in container mariadb: Access denied for user 'root'@'localhost' (using password: YES) - most likely its password is wrong for this container"
+grep -q "NOTE mariadb:connect | Each database container has its own root password (set when it was created, in its environment): the credential logs in only where its password is that container's. Or use one read-only monitor account" "$work/out.txt" \
+    && echo "ok   -   ... the note: each container has its own root password, or one monitor account, or check_mariadb_containers" \
+    || { echo "FAIL - the note"; grep "NOTE" "$work/out.txt"; fails=$((fails + 1)); }
+for want in '# its root password, set when it was created (its environment):\npodman inspect mariadb | grep -i ROOT_PASSWORD\n' \
+            '# the login by hand (it asks for the password):\npodman exec -it mariadb mariadb -u root -p -e \"SELECT 1\"\n' \
+            "podman exec -it mariadb mariadb -u root -p -e \\\"CREATE USER 'monitor'@'localhost' IDENTIFIED BY '<password>'; GRANT PROCESS, REPLICA MONITOR ON *.* TO 'monitor'@'localhost'\\\"" \
+            '# or read only the containers it may log in to: check_mariadb_containers (read now: mariadb)'; do
+    grep -qF -- "$want" "$work/out.txt" && echo "ok   -   ... the hint, one command per line: ${want:0:60}" \
+        || { echo "FAIL - the hint lacks: $want"; grep "HINT" "$work/out.txt"; fails=$((fails + 1)); }
+done
+MONUSER=root FAKE_DENY=a,c scenario "refused in two of three containers: ONE finding naming both" 'a mariadb:11 running\nb mariadb:11 running\nc mariadb:11 running\n' \
+    '{"check_mariadb_containers":["a","b","c"]}' "mariadb:connect" "refused the login of root (the MariaDB monitor credential) in 2 containers (a, c): Access denied"
+grep -qF 'for c in a c; do echo \"$c: $(podman inspect \"$c\" | grep -i ROOT_PASSWORD)\"; done' "$work/out.txt" \
+    && echo "ok   -   ... each one's root password, in one line" || { echo "FAIL - the for loop"; grep HINT "$work/out.txt"; fails=$((fails + 1)); }
+grep -q "most likely its password is wrong for these containers" "$work/out.txt" \
+    && echo "ok   -   ... these containers" || { echo "FAIL - these containers"; fails=$((fails + 1)); }
+MONUSER=root FAKE_DENY=b scenario "refused in one of three: its own id and [name], as before" 'a mariadb:11 running\nb mariadb:11 running\nc mariadb:11 running\n' \
+    '{"check_mariadb_containers":["a","b","c"]}' "mariadb:b:connect" "SUMMARY mariadb:b:connect | critical | \[b\] MariaDB refused the login of root"
+FAKE_DENY=1 scenario "another account refused (monitor): its password differs, or it is not there" "$MY" '{"check_mariadb_container":"db"}' "mariadb:connect" \
+    "NOTE mariadb:connect | The credential's password differs from the one monitor has in this container, or monitor is not there"
+MONUSER= FAKE_DENY=1 scenario "no credential: attach the MariaDB monitor credential" "$RUN" '{"check_mariadb_container":"mariadb"}' "mariadb:connect" \
+    "MariaDB refused the login in container mariadb: Access denied for user 'root'@'localhost' (using password: [A-Z]*) - log in with a monitoring account: attach the MariaDB monitor credential"
+# the job's own output (roles/site_findings report.yml): the note, then the hint one command per line under look:
+printf 'mariadb mariadb:11 running healthy\n' > "$work/containers"; : > "$work/podman.log"
+(cd "$repo" && PATH="$work/bin:$PATH" FAKE_CONTAINERS="$work/containers" FAKE_LOG="$work/podman.log" FAKE_DENY=1 \
+    MARIADB_MONITOR_USER=root MARIADB_MONITOR_PASSWORD="$PW" ANSIBLE_STDOUT_CALLBACK=default ANSIBLE_NOCOLOR=1 \
+    "$ap" -i "$work/inv.yml" playbooks/health_check.yml -e ansible_become=false -e '{"health_checks":["mariadb"],"check_mariadb_container":"mariadb"}') > "$work/out.txt" 2>&1
+for want in '"      Each database container has its own root password' '"      look: # its root password, set when it was created (its environment):"' \
+            '"            podman inspect mariadb | grep -i ROOT_PASSWORD"' '"            # the login by hand (it asks for the password):"'; do
+    grep -qF -- "$want" "$work/out.txt" && echo "ok   - the job output, line by line: ${want:0:60}" \
+        || { echo "FAIL - the job output lacks: $want"; grep -A14 "finding(s). Checks run" "$work/out.txt"; fails=$((fails + 1)); }
+done
+grep -qF 's3cr3t-pw-XYZ' "$work/out.txt" "$work/podman.log" && { echo "FAIL - the password leaked (health_check.yml)"; fails=$((fails + 1)); } \
+    || echo "ok   -   ... and no password in it"
 scenario "MySQL container stopped: the message says MySQL" 'db mysql:8 exited\n' '{"check_mariadb_container":"db"}' "mariadb:down" "MySQL is not running"
 scenario "MySQL and MariaDB side by side, each labelled" 'a mariadb:11 running\nb mysql:8 running\n' '{"check_mariadb_containers":["a","b"]}' "" "MySQL 8.0.36 - container b"
 FAKE_REPL=broken scenario "two engines, one broken: ids carry the container name" 'a mariadb:11 running\nb mysql:8 running\n' '{"check_mariadb_containers":["a","b"]}' \

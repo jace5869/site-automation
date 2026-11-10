@@ -10,7 +10,10 @@
 #   containers:no-linger   warning   a user's containers stop at logout and do not start at boot
 #                                    (linger is off), or a user with units that should start at boot
 #                                    could not be checked (no /run/user/UID)
-#   containers:query       warning   a user's (or root's) containers could not be read
+#   containers:query       warning   a user's (or root's) containers could not be read; a user named in
+#                                    podman_discover_users when rootless podman is off on the host
+#                                    (user.max_user_namespaces = 0: the other users are not tried, one
+#                                    INFO line says so)
 # Every summary names the owner, and every hint is a read-only command to run as root that shows
 # more, for THAT owner (a user's podman needs runuser ... env XDG_RUNTIME_DIR=...).
 
@@ -43,6 +46,12 @@
       {%- set out = ['podman ' ~ site_podman.version ~ '; owners read: root'
                      ~ ((', ' ~ (site_podman.users | map(attribute='name') | join(', '))) if site_podman.users else '')
                      ~ ('' if site_podman.rootless else ' (rootless containers not looked at: podman_discover_rootless is false)')] -%}
+      {%- if (site_podman.userns | default(-1) | int) == 0 and site_podman.userns_off | default(false) | bool -%}
+      {%-   set _ = out.append("INFO: rootless podman is off on this host (user.max_user_namespaces = 0): only root's containers read") -%}
+      {%- elif site_podman.userns_users | default([]) -%}
+      {%-   set _ = out.append('INFO: rootless podman is off for ' ~ (site_podman.userns_users | join(', '))
+                               ~ ' (podman: "user namespaces are not enabled" - user.max_user_namespaces): their containers not read') -%}
+      {%- endif -%}
       {%- set fmt = '%-12s %-26s %-18s %-30s %s' -%}
       {%- set _ = out.append(fmt | format('OWNER', 'NAME', 'STATE', 'UNIT', 'SHOULD RUN')) -%}
       {%- for c in site_containers -%}
@@ -179,6 +188,12 @@
                                               if not u.linger else ''),
                                 'hint': 'ls -ld /run/user/' ~ u.uid ~ '; ls /var/lib/systemd/linger/; loginctl show-user ' ~ u.user}) -%}
       {%-   endif -%}
+      {%- endfor -%}
+      {%- for u in site_podman.skipped if u.userns | default(false) -%}
+      {%-   set _ = f.append({'check': 'containers', 'id': 'containers:query:' ~ u.user, 'severity': 'warning',
+                              'summary': 'podman_discover_users names ' ~ u.user ~ ', but ' ~ u.reason
+                                         ~ '. Fix: run those containers as root, or take ' ~ u.user ~ ' out of podman_discover_users',
+                              'hint': 'sysctl user.max_user_namespaces; grep -rs max_user_namespaces /etc/sysctl.conf /etc/sysctl.d/'}) -%}
       {%- endfor -%}
       {%- for u in site_podman.skipped if u.uid | int < 0 -%}
       {%-   set _ = f.append({'check': 'containers', 'id': 'containers:query:' ~ u.user, 'severity': 'warning',

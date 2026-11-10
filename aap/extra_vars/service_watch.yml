@@ -126,7 +126,9 @@
 ## (conmon) runs as them, when they have "linger" on (/var/lib/systemd/linger/NAME), or when they
 ## are in /etc/subuid AND have container storage (~/.local/share/containers/storage). Their
 ## containers are read AS that user (runuser), and only when /run/user/UID exists - otherwise podman
-## would create it (a change), so such a user is listed as "not checked" instead.
+## would create it (a change), so such a user is listed as "not checked" instead. With
+## user.max_user_namespaces = 0 (a STIG setting) no user can run podman: no user is tried, one INFO
+## line says so, and only a user named in podman_discover_users gets a warning.
 # podman_discover_rootless: true
 
 ## More users to look at (names), e.g. an application account the rules above miss.

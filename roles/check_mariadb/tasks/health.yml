@@ -331,15 +331,12 @@
       {%- if not (_mdb_running | bool) -%}
       {%-   set _ = f.append({'check': 'mariadb', 'id': 'mariadb:down', 'severity': 'critical',
                               'summary': lbl ~ ' is not running (' ~ where ~ ' is ' ~ (_mdb_p.state | default('') or 'not found') ~ ')', 'hint': look}) -%}
+      {%- elif _mdb_q.rc | default(1) != 0 and 'Access denied' in _mdb_q.stderr | default('') -%}
+      {#-   a refused login: reported by main.yml, once for every instance that refused it (_mdb_denied) -#}
       {%- elif _mdb_q.rc | default(1) != 0 -%}
-      {%-   set denied = 'Access denied' in _mdb_q.stderr | default('') -%}
       {%-   set _ = f.append({'check': 'mariadb', 'id': 'mariadb:connect', 'severity': 'critical',
-                              'summary': lbl ~ ' is running but the status query failed: ' ~ (_mdb_q.stderr | default('') | trim | truncate(200))
-                                         ~ ((' - log in with a monitoring account: attach the "MariaDB monitor" credential'
-                                             ~ (' (container images usually give root a password, so the root socket login is refused)' if _mdb_c else ''))
-                                            if denied and not _mdb_user else ''),
-                              'hint': sql ~ ' -e "SELECT 1"; ' ~ look
-                                      ~ ('; monitoring account (run once as an admin): CREATE USER \'monitor\'@\'localhost\' IDENTIFIED BY \'<password>\'; ' ~ grant if denied else '')}) -%}
+                              'summary': lbl ~ ' is running but the status query failed: ' ~ (_mdb_q.stderr | default('') | trim | truncate(200)),
+                              'hint': sql ~ ' -e "SELECT 1"; ' ~ look}) -%}
       {%- else -%}
       {%-   set s = _mdb.S -%}{%- set g = _mdb.V -%}
       {%-   set up = s.UPTIME | default('0') | int -%}
@@ -455,6 +452,14 @@
       {%-   endif -%}
       {%- endif -%}
       {{ f }}
+
+- name: MariaDB | a refused login - kept for one finding for the host (main.yml)
+  ansible.builtin.set_fact:
+    _mdb_denied: >-
+      {{ _mdb_denied | default([]) + [{'c': _mdb_c, 'run_as': _mdb_run_as | default('', true), 'label': _mdb_label | default('MariaDB/MySQL'),
+           'client': _mdb_p.client | default('mysql' if _mdb_label | default('') == 'MySQL' else 'mariadb', true) | basename,
+           'error': _mdb_q.stderr | default('') | trim | regex_replace('^ERROR [0-9]+ [(][0-9A-Z]+[)](?: at line [0-9]+)?: ', '') | truncate(200)}] }}
+  when: _mdb_running | bool and _mdb_q.rc | default(1) != 0 and 'Access denied' in _mdb_q.stderr | default('')
 
 - name: MariaDB | performance findings (check_mariadb_performance)
   ansible.builtin.set_fact:

@@ -299,8 +299,9 @@ Steps: create the template as in step 6, then launch it twice.
 2. Launch with **Job type** `Run`. The result is the same. A host with findings shows as failed, so
    a workflow can open a ticket ([workflow 8](WORKFLOWS_AND_SCHEDULES.md#8-database-watch-mariadb-and-mysql-hourly)).
 
-If a host prints `mariadb:connect` with `Access denied`, the credential is missing or the account
-lacks a privilege: [MARIADB.md](MARIADB.md#4-the-login-the-mariadb-monitor-credential).
+If a host prints `mariadb:connect` with `Access denied`, the credential is missing, its password is
+not the one this container has (each container has its own root password: the finding names every
+container that refused it), or the account lacks a privilege: [MARIADB.md](MARIADB.md#4-the-login-the-mariadb-monitor-credential).
 
 ### Service watch
 

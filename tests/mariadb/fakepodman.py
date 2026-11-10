@@ -4,7 +4,8 @@ $FAKE_CONTAINERS: lines "name image state [health]". Every call is logged to $FA
 The database client answers as MariaDB, MySQL 8.0.36 or MySQL 5.7 (from the image name, or $FAKE_ENGINE =
 mariadb | mysql8 | mysql84 | mysql57). It accepts only the replication statement its engine really has
 (SHOW ALL SLAVES STATUS / SHOW REPLICA STATUS / SHOW SLAVE STATUS), so a wrong choice shows as a finding.
-$FAKE_REPL = none | ok | broken | lag; $FAKE_GROUP = none | ok | bad; $FAKE_DENY=1 refuses the login;
+$FAKE_REPL = none | ok | broken | lag; $FAKE_GROUP = none | ok | bad; $FAKE_DENY=1 refuses the login
+(FAKE_DENY=a,b: only in those containers);
 $FAKE_REPL_DENY=1 refuses the replication query; $FAKE_PERF = busy | quiet | deny (a server with performance
 problems, one without, one whose account may not read INNODB_TRX); $FAKE_DATADIR its data dir; $FAKE_SIZES = full | small | none
 (the information_schema sizes, a hundredth of them, or an account that sees no tables). Not a podman: only what the check needs."""
@@ -25,12 +26,15 @@ for line in open(os.environ["FAKE_CONTAINERS"]).read().splitlines():
         conts[p[0]] = {"image": p[1], "state": p[2], "health": p[3] if len(p) > 3 else ""}
 
 
-def client(c, joined):
+def client(c, joined, name=""):
     eng = os.environ.get("FAKE_ENGINE") or ("mariadb" if "mariadb" in c["image"] else "mysql8")
     repl_stmt = {"mariadb": "SHOW ALL SLAVES STATUS", "mysql8": "SHOW REPLICA STATUS", "mysql84": "SHOW REPLICA STATUS",
                  "mysql57": "SHOW SLAVE STATUS"}[eng]
-    if os.environ.get("FAKE_DENY") == "1":
-        sys.stderr.write("ERROR 1045 (28000): Access denied for user 'root'@'localhost' (using password: NO)\n")
+    deny = os.environ.get("FAKE_DENY", "")
+    if deny == "1" or (deny and name in deny.split(",")):
+        user = ([w[len("--user="):] for w in joined.split() if w.startswith("--user=")] or ["root"])[-1]
+        sys.stderr.write("ERROR 1045 (28000): Access denied for user '%s'@'localhost' (using password: %s)\n"
+                         % (user, "YES" if "MYSQL_PWD" in os.environ else "NO"))
         return 1
     if "SHOW GLOBAL STATUS" in joined:
         ver = {"mariadb": "10.11.6-MariaDB", "mysql8": "8.0.36", "mysql84": "8.4.0", "mysql57": "5.7.44-log"}[eng]
@@ -145,7 +149,7 @@ if cmd == "exec":
     if rest[:2] == ["sh", "-c"]:
         print("/usr/bin/mariadb")
     elif rest and os.path.basename(rest[0]) in ("mariadb", "mysql"):
-        sys.exit(client(c, " ".join(rest)))
+        sys.exit(client(c, " ".join(rest), name))
     elif rest and rest[0] == "df":
         print("Filesystem 1024-blocks Used Available Capacity Mounted\n/dev/x 100 %s 10 %s%% /var/lib/mysql"
               % (os.environ.get("FAKE_DISKPCT", "40"), os.environ.get("FAKE_DISKPCT", "40")))

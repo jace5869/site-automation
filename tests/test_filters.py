@@ -277,9 +277,23 @@ class PodmanDiscovery(unittest.TestCase):
         self.assertEqual(whats, [("alice", "podman ps"), ("bob", "systemctl show"), ("carol", "the discovery script")])
         self.assertIn("runuser -u alice -- env XDG_RUNTIME_DIR=/run/user/1001 podman ps -a", out["errors"][0]["command"])
 
+    def test_user_namespaces_off(self):
+        # user.max_user_namespaces = 0 (a STIG setting): a user's podman cannot run at all - not an error
+        msg = ("\n@@@ ps 125\ncannot clone: No space left on device\nuser namespaces are not enabled in "
+               "/proc/sys/user/max_user_namespaces\nError: cannot re-exec process\n@@@ end\n")
+        p = ps_entry("db")
+        root = result("root", 0, owner_output([p], [inspect_entry(p, policy="always")], show={}))
+        out = f.podman_discovery([root, result("svc-app", 1001, msg), result("appuser", 1002, msg)])
+        self.assertEqual(out["userns_off"], ["svc-app", "appuser"])
+        self.assertEqual(out["errors"], [])
+        self.assertEqual([c["key"] for c in out["containers"]], ["root/db"])
+        # root does not need user namespaces: the same words from root's podman stay an error
+        out = f.podman_discovery([result("root", 0, msg)])
+        self.assertEqual((out["userns_off"], [e["owner"] for e in out["errors"]]), ([], ["root"]))
+
     def test_empty_ps_null_and_inspect_race(self):
         out = "\n@@@ ps 0\nnull\n@@@ end\n"
-        self.assertEqual(f.podman_discovery([result("root", 0, out)]), {"containers": [], "errors": []})
+        self.assertEqual(f.podman_discovery([result("root", 0, out)]), {"containers": [], "errors": [], "userns_off": []})
         p = ps_entry("gone")
         text = owner_output([p], [], show={}).replace("@@@ inspect 0", "@@@ inspect 125")
         self.assertEqual(f.podman_discovery([result("root", 0, text)])["containers"][0]["name"], "gone")
@@ -562,6 +576,13 @@ class FindingsReport(unittest.TestCase):
         self.assertIn("1. [CRITICAL] x is down  (Service)\n   web01\n   Next: Look further: systemctl status x", text)
         self.assertIn("Critical: 1 (act now)", text)
         self.assertEqual(r["footer"], "Checks run: disk, services")
+        # a hint of several lines (a How to look card: # prose, the commands one per line) and its note
+        many = {"check": "mariadb", "id": "mariadb:connect", "severity": "critical", "summary": "refused",
+                "note": "Each container has its own root password.", "hint": "# its root password:\npodman inspect db1\n\nmariadb -u root -p"}
+        card = f.findings_cards({"db01": [many]})[0][0]
+        self.assertEqual((card["next"], card["code"]), (many["note"], many["hint"]))
+        self.assertEqual(f.report_cards_text([card])[2:], ["   Next: Each container has its own root password. # its root password:",
+                                                          "         podman inspect db1", "         mariadb -u root -p"])
 
     def test_healthy_and_single(self):
         r = f.findings_report({"a": [], "b": []}, "Health check")

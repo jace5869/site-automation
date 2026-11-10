@@ -131,6 +131,10 @@
         - _mdb_instances | length == 0
         - not (_mdb_user_missing | bool)
 
+    - name: MariaDB | no refused login yet
+      ansible.builtin.set_fact:
+        _mdb_denied: []
+
     - name: MariaDB | health, one instance at a time
       ansible.builtin.include_tasks: health.yml
       vars:
@@ -138,3 +142,66 @@
       loop: "{{ _mdb_instances if not (_mdb_user_missing | bool) else [] }}"
       loop_control:
         loop_var: _mdb_c
+
+    # A refused login (Access denied): one finding for the host, naming every instance that refused it
+    # (the same credential is refused by each container that has its own root password), with what is
+    # likely and how to look - the commands one per line, the prose as # lines (a Copy stays safe to paste).
+    - name: MariaDB | a refused login - what is likely, how to look
+      ansible.builtin.set_fact:
+        site_findings: >-
+          {%- set d = _mdb_denied -%}
+          {%- set user = lookup('ansible.builtin.env', 'MARIADB_MONITOR_USER') -%}
+          {%- set names = d | map(attribute='c') | select | list -%}
+          {%- set labels = d | map(attribute='label') | unique | list -%}
+          {%- set lbl = labels[0] if labels | length == 1 else 'MariaDB/MySQL' -%}
+          {%- set hp = ('sudo -u ' ~ d[0].run_as ~ ' ') if d[0].run_as else '' -%}
+          {%- set cl = d[0].client -%}
+          {%- set sq = "'" -%}{%- set dq = '"' -%}
+          {%- set acct = sq ~ 'monitor' ~ sq ~ '@' ~ sq ~ 'localhost' ~ sq -%}
+          {%- set grant = ('GRANT PROCESS, REPLICATION CLIENT ON *.* TO ' ~ acct) if lbl == 'MySQL'
+                          else ('GRANT PROCESS, REPLICA MONITOR ON *.* TO ' ~ acct) -%}
+          {%- set create = 'CREATE USER ' ~ acct ~ ' IDENTIFIED BY ' ~ sq ~ '<password>' ~ sq ~ '; ' ~ grant -%}
+          {#- a command for each container: itself, or a for loop over them -#}
+          {%- set one = names | length == 1 -%}
+          {%- set cv = names[0] if one else '"$c"' -%}
+          {%- set loop_a = '' if one else ('for c in ' ~ (names | join(' ')) ~ '; do ') -%}
+          {%- set loop_b = '' if one else '; done' -%}
+          {%- set where = ('container ' ~ names[0]) if one else ((names | length) ~ ' containers (' ~ (names | join(', ')) ~ ')') if names
+                          else 'the database on the host' -%}
+          {%- set them = ('this container' if one else 'these containers') if names else 'this server' -%}
+          {%- set lines = [] -%}
+          {%- if names and (not user or user == 'root') -%}
+          {%-   set _ = lines.append('# ' ~ ('its' if one else 'each one' ~ sq ~ 's') ~ ' root password, set when it was created (its environment):') -%}
+          {%-   set _ = lines.append(loop_a ~ ('' if one else 'echo "$c: $(') ~ hp ~ 'podman inspect ' ~ cv ~ ' | grep -i ROOT_PASSWORD' ~ ('' if one else ')"') ~ loop_b) -%}
+          {%- endif -%}
+          {%- set _ = lines.append('# the login by hand (it asks for the password):') -%}
+          {%- set _ = lines.append(loop_a ~ (hp ~ 'podman exec -it ' ~ cv ~ ' ' if names else '') ~ cl ~ ' -u ' ~ (user or 'root') ~ ' -p -e ' ~ dq ~ 'SELECT 1' ~ dq ~ loop_b) -%}
+          {%- set _ = lines.append('# one read-only monitor account' ~ (', the same password in every container' if names else '')
+                                   ~ ' (as an admin' ~ (', in each container' if names else '') ~ '; then the MariaDB monitor credential has its name and password):') -%}
+          {%- set _ = lines.append(loop_a ~ (hp ~ 'podman exec -it ' ~ cv ~ ' ' if names else '') ~ cl ~ ' -u root -p -e ' ~ dq ~ create ~ dq ~ loop_b) -%}
+          {%- if lbl != 'MySQL' -%}{%- set _ = lines.append('# (MariaDB before 10.5.9: PROCESS, REPLICATION CLIENT; MySQL: PROCESS, REPLICATION CLIENT)') -%}{%- endif -%}
+          {%- if names -%}
+          {%-   set _ = lines.append('# or read only the containers it may log in to: check_mariadb_containers (read now: ' ~ (_mdb_instances | select | join(', ')) ~ ')') -%}
+          {%- endif -%}
+          {%- if user -%}
+          {%-   set summary = lbl ~ ' refused the login of ' ~ user ~ ' (the MariaDB monitor credential) in ' ~ where ~ ': ' ~ d[0].error
+                              ~ ' - most likely its password is wrong for ' ~ them -%}
+          {%-   set note = (('Each database container has its own root password (set when it was created, in its environment): the credential logs in'
+                             ~ ' only where its password is that container' ~ sq ~ 's. ') if names and user == 'root'
+                            else ('The credential' ~ sq ~ 's password differs from the one ' ~ user ~ ' has in ' ~ them ~ ', or ' ~ user ~ ' is not there. ')
+                                 if names else ('The credential' ~ sq ~ 's password is wrong for this server, or ' ~ user ~ ' is not there. '))
+                           ~ ('Or use one read-only monitor account with the same password in every container (the CREATE USER and GRANT line below), '
+                              ~ 'or pick the containers to read with check_mariadb_containers.' if names
+                              else 'Or create one read-only monitor account (the CREATE USER and GRANT line below).') -%}
+          {%- else -%}
+          {%-   set summary = lbl ~ ' refused the login in ' ~ where ~ ': ' ~ d[0].error ~ ' - log in with a monitoring account: attach the MariaDB monitor credential'
+                              ~ (' (container images usually give root a password, so the root socket login is refused)' if names else '') -%}
+          {%-   set note = 'Create a read-only monitor account (the CREATE USER and GRANT line below, as an admin), then attach the MariaDB monitor credential with its name and password.' -%}
+          {%- endif -%}
+          {%- set several = _mdb_instances | length > 1 and d | length == 1 and names -%}
+          {{ site_findings | default([]) + [{'check': 'mariadb', 'id': ('mariadb:' ~ names[0] ~ ':connect') if several else 'mariadb:connect',
+                                             'severity': 'critical', 'summary': (('[' ~ names[0] ~ '] ') if several else '') ~ summary,
+                                             'note': note, 'hint': lines | join(_mdb_nl)}] }}
+      vars:
+        _mdb_nl: "\n"
+      when: _mdb_denied | length > 0

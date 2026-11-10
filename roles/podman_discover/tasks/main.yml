@@ -3,10 +3,13 @@
 # Check mode (a dry run) too. Sets two facts:
 #
 # site_podman:      {enabled, installed, version, now (the host's clock, seconds since 1970),
-#                    rootless (the setting), users: the users whose containers were read
+#                    rootless (the setting), userns (user.max_user_namespaces; -1 = not read),
+#                    userns_off (rootless podman cannot run here: user namespaces are off),
+#                    userns_users (users whose podman said "user namespaces are not enabled"),
+#                    users: the users whose containers were read
 #                    [{name, uid, home, linger}], skipped: users that were NOT read
 #                    [{user, uid, reason, linger, storage, wants (units that should start at
-#                    boot), ignored}], errors: what could not be read
+#                    boot), ignored, userns}], errors: what could not be read
 #                    [{owner, what, command, message}]}
 # site_containers:  one entry per container (or per container a unit should run but that does
 #                   not exist right now), each:
@@ -34,6 +37,10 @@
 # AS that user), `podman ps -a --format json`, ONE `podman container inspect` of all containers,
 # the Quadlet files and unit files that run podman, and ONE `systemctl show` of those units.
 # The output is parsed on the controller (plugins/filter/site_filters.py, podman_discovery).
+# With user.max_user_namespaces = 0 (a STIG setting) no user can run podman at all: the users are not
+# tried (each try would only fail with "user namespaces are not enabled"), only root's containers are
+# read, and only a user named in podman_discover_users is reported (as not read, naming the setting).
+# A user's podman ps that fails with "user namespaces are not enabled" is taken the same way.
 
 - name: Podman | discovery is off (podman_discover_enabled)
   ansible.builtin.set_fact:
@@ -54,6 +61,7 @@
           echo "version $(timeout {{ podman_discover_timeout | int }} podman --version 2>/dev/null | awk '{print $NF}')"
           now={{ _pd_now | default('') | string | quote }}
           echo "now ${now:-$(date +%s)}"
+          echo "userns $(cat {{ _pd_userns_file | default('/proc/sys/user/max_user_namespaces') | quote }} 2>/dev/null | tr -d '[:space:]')"
           {% if podman_discover_rootless | bool %}
           subuid={{ _pd_subuid_file | default('/etc/subuid') | quote }}
           linger={{ _pd_linger_dir | default('/var/lib/systemd/linger') | quote }}
@@ -101,12 +109,13 @@
     - name: Podman | what was found
       ansible.builtin.set_fact:
         _pd_info: >-
-          {%- set v = {'podman': '', 'version': '', 'now': 0, 'users': [], 'nouser': []} -%}
+          {%- set v = {'podman': '', 'version': '', 'now': 0, 'userns': -1, 'users': [], 'nouser': []} -%}
           {%- for line in _pd_host.stdout_lines | default([]) -%}
           {%-   set w = line.split(' ') -%}
           {%-   if w[0] == 'podman' -%}{%- set _ = v.update({'podman': '' if w[1:2] == ['none'] else w[1:] | join(' ')}) -%}
           {%-   elif w[0] == 'version' -%}{%- set _ = v.update({'version': w[1:] | join(' ')}) -%}
           {%-   elif w[0] == 'now' -%}{%- set _ = v.update({'now': w[1] | default(0) | int}) -%}
+          {%-   elif w[0] == 'userns' -%}{%- set _ = v.update({'userns': (w[1] | int) if w[1:2] and w[1] is match('^[0-9]+$') else -1}) -%}
           {%-   elif w[0] == 'nouser' -%}{%- set _ = v.nouser.append(w[1] | default('')) -%}
           {%-   elif w[0] == 'user' and w | length >= 11 -%}
           {%-     set u = {'name': w[1], 'uid': w[2] | int} -%}
@@ -117,18 +126,19 @@
           {%- endfor -%}
           {{ v }}
 
+    # user.max_user_namespaces = 0: no user is tried; a user named in podman_discover_users is listed as not read
     - name: Podman | the owners whose containers are read (root, and each user whose /run/user/UID exists)
       ansible.builtin.set_fact:
         _pd_owners: >-
           {%- set out = [{'name': 'root', 'uid': 0, 'home': '/root', 'linger': 0}] if _pd_info.podman else [] -%}
-          {%- for u in _pd_info.users | sort(attribute='name') if _pd_info.podman
+          {%- for u in _pd_info.users | sort(attribute='name') if _pd_info.podman and _pd_info.userns != 0
                 and (u.conmon or u.linger or u.extra or (u.subuid and u.storage)) and u.runtime -%}
           {%-   set _ = out.append({'name': u.name, 'uid': u.uid, 'home': u.home, 'linger': u.linger}) -%}
           {%- endfor -%}
           {{ out }}
         _pd_skipped: >-
           {%- set out = [] -%}
-          {%- for u in _pd_info.users | sort(attribute='name') if _pd_info.podman
+          {%- for u in _pd_info.users | sort(attribute='name') if _pd_info.podman and _pd_info.userns != 0
                 and (u.conmon or u.linger or u.extra or (u.subuid and u.storage)) and not u.runtime -%}
           {#-   left out when podman_discover_ignore leaves out all of the user's containers ('carol/.*') -#}
           {%-   set ns = namespace(ignored=false) -%}
@@ -139,6 +149,10 @@
                                     'reason': 'no /run/user/' ~ u.uid ~ ' (the user is not logged in'
                                               ~ (' and linger is off' if not u.linger else '')
                                               ~ '): not read, because podman would have to create it'}) -%}
+          {%- endfor -%}
+          {%- for u in _pd_info.users | sort(attribute='name') if _pd_info.podman and _pd_info.userns == 0 and u.extra -%}
+          {%-   set _ = out.append({'user': u.name, 'uid': u.uid, 'linger': u.linger, 'storage': u.storage, 'wants': 0, 'ignored': false,
+                                    'userns': true, 'reason': _pd_userns_reason}) -%}
           {%- endfor -%}
           {%- for n in _pd_info.nouser if n in (podman_discover_users | map('string') | list) -%}
           {%-   set _ = out.append({'user': n, 'uid': -1, 'linger': 0, 'storage': 0, 'wants': 0, 'ignored': false, 'reason': 'no such user'}) -%}
@@ -235,6 +249,8 @@
       failed_when: false
       check_mode: false
 
+    # a user whose podman said "user namespaces are not enabled" is taken as userns off (no warning),
+    # but for a user named in podman_discover_users
     - name: Podman | the containers
       ansible.builtin.set_fact:
         site_containers: "{{ _pd_parsed.containers }}"
@@ -244,8 +260,20 @@
           version: "{{ _pd_info.version }}"
           now: "{{ _pd_info.now | int }}"
           rootless: "{{ podman_discover_rootless | bool }}"
-          users: "{{ _pd_owners[1:] if (podman_discover_rootless | bool) else [] }}"
-          skipped: "{{ _pd_skipped }}"
+          userns: "{{ _pd_info.userns | int }}"
+          userns_off: "{{ _pd_info.podman | length > 0 and (podman_discover_rootless | bool) and (_pd_info.userns == 0 or _pd_parsed.userns_off | length > 0) }}"
+          userns_users: "{{ _pd_parsed.userns_off }}"
+          users: "{{ (_pd_owners[1:] if (podman_discover_rootless | bool) else []) | rejectattr('name', 'in', _pd_parsed.userns_off) | list }}"
+          skipped: >-
+            {#- podman said user namespaces are off: a user not read for another reason could not run podman either -#}
+            {%- set out = _pd_skipped | list if not _pd_parsed.userns_off
+                          else _pd_skipped | selectattr('uid', 'lt', 0) | list -%}
+            {%- for u in _pd_owners[1:] if u.name in _pd_parsed.userns_off and u.name in (podman_discover_users | map('string') | list) -%}
+            {%-   set _ = out.append({'user': u.name, 'uid': u.uid, 'linger': u.linger, 'storage': 0, 'wants': 0, 'ignored': false,
+                                      'userns': true, 'reason': 'its podman says "user namespaces are not enabled" (user.max_user_namespaces,'
+                                                                ~ ' a STIG setting): their containers cannot run or be read'}) -%}
+            {%- endfor -%}
+            {{ out }}
           errors: "{{ _pd_parsed.errors }}"
       vars:
         _pd_parsed: "{{ (_pd_query.results | default([])) | podman_discovery(ignore=podman_discover_ignore) }}"

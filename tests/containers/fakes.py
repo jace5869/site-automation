@@ -16,7 +16,8 @@ The host it pretends to be is WORKDIR/state.json (from a fixture in tests/contai
   files:  {path relative to WORKDIR: content} (Quadlet files, unit files)
 Every call is logged to WORKDIR/calls.log as "OWNER XDG_RUNTIME_DIR argv...". A start / restart
 changes state.json, so a re-check sees the result. $FAKE_PODMAN_FAIL=OWNER makes that owner's
-podman fail; $FAKE_NOW is "now" (seconds since 1970)."""
+podman fail; $FAKE_USERNS_OFF=1 makes every user's podman fail as with user.max_user_namespaces = 0;
+$FAKE_NOW is "now" (seconds since 1970)."""
 import json
 import os
 import sys
@@ -92,6 +93,10 @@ def podman(argv):
         return 0
     if os.environ.get("FAKE_PODMAN_FAIL") == owner:
         sys.stderr.write("Error: creating runtime static files: mkdir /run/user/x: permission denied\n")
+        return 125
+    if os.environ.get("FAKE_USERNS_OFF") and owner != "root":     # user.max_user_namespaces = 0 (a STIG setting)
+        sys.stderr.write("cannot clone: No space left on device\nuser namespaces are not enabled in "
+                         "/proc/sys/user/max_user_namespaces\nError: cannot re-exec process\n")
         return 125
     st = load()
     o = owner_state(st, owner)

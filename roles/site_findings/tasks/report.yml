@@ -19,7 +19,11 @@
       {%-   set _ = out.append((site_findings | length) ~ ' finding(s). Checks run: ' ~ (site_checks_run | join(', '))) -%}
       {%-   for f in site_findings | sort(attribute='severity') -%}
       {%-     set _ = out.append('[' ~ (f.severity | upper) ~ '] ' ~ f.check ~ ': ' ~ f.summary) -%}
-      {%-     if f.hint -%}{%- set _ = out.append('      look: ' ~ f.hint) -%}{%- endif -%}
+      {%-     if f.note | default('') -%}{%- set _ = out.append('      ' ~ f.note) -%}{%- endif -%}
+      {#-     a hint of several lines (commands one per line): each on its own line, under look: -#}
+      {%-     for line in (f.hint | default('') | string).splitlines() if line | trim -%}
+      {%-       set _ = out.append(('      look: ' if loop.first else '            ') ~ line) -%}
+      {%-     endfor -%}
       {%-   endfor -%}
       {%- endif -%}
       {{ out }}

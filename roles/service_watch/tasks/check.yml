@@ -302,6 +302,10 @@
                                   if watch_discover | bool else 'watch_discover is off')
                                ~ ' and watch_containers is empty.') -%}
       {%- endif -%}
+      {%- if watch_discover | bool and (site_podman | default({})).userns_off | default(false) | bool -%}
+      {%-   set _ = out.append('Not looked at: the users (rootless podman) - user namespaces are off on this host (user.max_user_namespaces'
+                               ~ ((' = ' ~ site_podman.userns) if (site_podman.userns | default(-1) | int) >= 0 else '') ~ '), so only root runs containers') -%}
+      {%- endif -%}
       {%- for u in (site_podman | default({})).skipped | default([]) if watch_discover | bool -%}
       {%-   set _ = out.append('Not looked at: user ' ~ u.user ~ ' - ' ~ u.reason
                              ~ ((' (' ~ u.wants ~ ' unit(s) should start at boot: watched as "the containers of user ' ~ u.user ~ '")')

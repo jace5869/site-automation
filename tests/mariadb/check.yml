@@ -19,6 +19,11 @@
         msg: "SUMMARY {{ item.id }} | {{ item.severity }} | {{ item.summary }}"
       loop: "{{ site_findings }}"
       loop_control: {label: "{{ item.id }}"}
+    - name: Notes
+      ansible.builtin.debug:
+        msg: "NOTE {{ item.id }} | {{ item.note }}"
+      loop: "{{ site_findings | selectattr('note', 'defined') | list }}"
+      loop_control: {label: "{{ item.id }}"}
     - name: Hints
       ansible.builtin.debug:
         msg: "HINT {{ item.id }} | {{ item.hint | default('') }}"

@@ -12,6 +12,8 @@ podman_discover_enabled: true
 # when they are in /etc/subuid AND have container storage (~/.local/share/containers/storage).
 # Their containers are read AS that user (runuser), and only when /run/user/UID exists - otherwise
 # podman would create it (a change), so such a user is listed as "not checked" instead.
+# With user.max_user_namespaces = 0 (a STIG setting) no user can run podman: no user is tried, one INFO
+# line says so, and only a user named in podman_discover_users gets a warning.
 podman_discover_rootless: true
 
 # More users to look at (names), e.g. an application account the rules above miss.
@@ -35,3 +37,8 @@ podman_discover_unit_dirs: [/etc/systemd/system, /usr/local/lib/systemd/system]
 
 # Seconds one podman or systemctl call may take before it is given up (reported as a finding).
 podman_discover_timeout: 60
+
+# Why a user's containers are not read when rootless podman cannot run on the host (not a setting).
+_pd_userns_reason: >-
+  rootless podman is off on this host (user.max_user_namespaces = 0, a STIG setting: podman as a user
+  fails with "user namespaces are not enabled"): their containers cannot run or be read

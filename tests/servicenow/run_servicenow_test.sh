@@ -445,7 +445,7 @@ expect "self-hosted bad: fapolicyd denied the database server" '[CRITICAL] servi
 expect "self-hosted bad: the database's filesystem full soon" "[CRITICAL] servicenow_node: snowdb01.yoursite.mil: at the database's growth"
 expect "self-hosted bad: the sizes from the data dir's files when the login is refused" "Database: snowdb01.yoursite.mil "
 expect "self-hosted bad: ...said so" "(the data dir's files)"
-expect "self-hosted bad: the database host's own check, in the same report" 'mariadb: snowdb01.yoursite.mil: MariaDB is running but the status query failed'
+expect "self-hosted bad: the database host's own check, in the same report" 'mariadb: snowdb01.yoursite.mil: MariaDB refused the login of monitor (the MariaDB monitor credential) in container'
 expect "self-hosted bad: a stale heartbeat" 'the cluster node node01:prod_16000 says online, but its last heartbeat was 30 minutes ago'
 expect "self-hosted bad: a node of the inventory offline" '[CRITICAL] servicenow_node: the cluster node node03:prod_16000 is offline'
 expect "self-hosted bad: a retired node" 'the cluster node node09:prod_16000 is offline (last heartbeat'

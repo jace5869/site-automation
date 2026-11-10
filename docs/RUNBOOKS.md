@@ -309,6 +309,7 @@ container is used. **How to set it up, step by step, and how to verify it: [MARI
 |---|---|---|
 | `MariaDB is not running` | the service or container is down | its log; disk full; a crash |
 | `MariaDB is running but the status query failed` | cannot log in, or it hangs | the login (see below); `max_connections` reached |
+| `MariaDB refused the login of U (the MariaDB monitor credential) in container X: Access denied ...` (or `in 2 containers (X, Y)`) | the credential's password is not the one U has there: each container has its own root password | the finding's *How to look*: the container's root password, the login by hand, one monitor account for every container (see below) |
 | `MariaDB restarted 12 minutes ago` | a restart nobody may have planned | the error log: crash, OOM kill |
 | `143 of 151 connections in use (95%)` | clients are about to be refused | the `look:` query shows which user and client hold them; a connection leak in an app |
 | `N client connection(s) were REFUSED` | `max_connections` was reached since the last start | as above; raise `max_connections` only if the load is real |
@@ -353,7 +354,14 @@ simply not made, the rest still are.
 **Logging in** (the full steps are in [MARIADB.md](MARIADB.md#4-the-login-the-mariadb-monitor-credential)). Without a credential, the check logs in as root through the local socket. That
 is MariaDB's default for a host install on RHEL (no password needed with sudo); MySQL's root
 usually has a password. **A database in a container usually gives root a password** (the official images do), and the check then reports
-`Access denied ... attach the "MariaDB monitor" credential`. For containers, or whenever you prefer
+`Access denied ... attach the "MariaDB monitor" credential`. **Each container has its own root password**
+(set when it was created, in its environment: `podman inspect <container> | grep -i ROOT_PASSWORD`), so a
+credential with root's password logs in to one container and is refused by the others: `MariaDB refused
+the login of root (the MariaDB monitor credential) in 2 containers (db1, db2): Access denied ... - most
+likely its password is wrong for these containers` - one critical finding for the host, naming every
+container that refused it, with how to look one command per line. The fix is one monitoring account with
+the same password in every container (below), or `check_mariadb_containers` to read only the ones the
+credential may log in to. For containers, or whenever you prefer
 not to use root, ask the DBA to create a monitoring account with **no data access**, inside that
 database with host `localhost`, and attach the *MariaDB monitor* credential to the Health check
 template:
@@ -387,6 +395,14 @@ storage in their home (`~/.local/share/containers/storage`). A user's containers
 that user** (`runuser -u USER -- env XDG_RUNTIME_DIR=/run/user/UID podman ...`), and only when
 `/run/user/UID` exists: otherwise podman would create it, and a check must not change anything.
 Such a user is listed as `not checked` instead (and reported, below).
+
+**User namespaces off (a STIG setting).** With `user.max_user_namespaces = 0` no user can run podman
+at all (`podman ps` as a user fails with `cannot clone ... user namespaces are not enabled in
+/proc/sys/user/max_user_namespaces`). The check reads that setting first: at 0 it does not try any
+user, reads only root's containers, and says so in one line, `INFO: rootless podman is off on this
+host (user.max_user_namespaces = 0): only root's containers read` - no finding. Only a user you named
+in `podman_discover_users` gets one warning, naming the setting. A user's `podman ps` that fails with
+`user namespaces are not enabled` is taken the same way (no `could not be read` warning).
 
 **Which should be running.** A container should be running when a systemd unit runs it and
 starts it at boot (a Quadlet `.container` file with an `[Install]` section, or an enabled unit
@@ -431,6 +447,7 @@ Every finding names the owner, and its `look:` command runs as that owner (paste
 | `user U (uid N) has containers that should run (...) but linger is off` (warning) | the user's containers stop when they log out and do not start at boot | `loginctl enable-linger U` (as root) |
 | `user U (uid N) has podman containers ... and N unit(s) that should start at boot, but they could not be checked: no /run/user/N` (warning) | the user has units that should start at boot (a Quadlet with `[Install]`, an enabled unit) but is not logged in and has no linger: none of their containers run now. A user with only container storage (an admin who once ran podman) is listed under `not checked:` and gets no finding | if they should run: `loginctl enable-linger U`. If not, leave them out: `podman_discover_ignore: ['U/.*']` |
 | `the containers of O could not be read: podman ps failed ...` (warning) | podman (or systemctl) failed for that owner: a blind spot | run the `look:` command to see the error (storage problems, `podman system migrate` needed after an upgrade ...) |
+| `podman_discover_users names U, but rootless podman is off on this host (user.max_user_namespaces = 0, a STIG setting ...)` (warning) | you asked for U's containers, but no user can run podman on this host | run U's containers as root, or take U out of `podman_discover_users`. The other users get no finding: `INFO: rootless podman is off on this host` |
 
 **Settings** (roles `podman_discover` and `check_containers`; [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md)):
 
