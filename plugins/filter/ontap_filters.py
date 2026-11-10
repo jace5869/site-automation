@@ -164,16 +164,20 @@ class _Report(object):
         if severity in ("critical", "warning"):
             self.problems.append({"cluster": cluster, "area": area, "object": obj, "severity": severity, "text": text})
 
-    def table(self, title, about, columns, rows, none_text, notes=None, keep_order=False):
-        """rows: [(cells, cell_statuses, row_status)]. Problems first (stable), capped at max_rows."""
+    def table(self, title, about, columns, rows, none_text, notes=None, keep_order=False, cap=None, collapsed=False, more_text=None):
+        """rows: [(cells, cell_statuses, row_status)]. Problems first (stable), capped at max_rows (or cap). collapsed: the
+        website shows the section closed (a long list, opened with a click)."""
         if not keep_order:
             rows = sorted(rows, key=lambda r: RANK.get(r[2], 9))
-        more = len(rows) - self.max if len(rows) > self.max else 0
-        shown = rows[:self.max]
+        mx = int(cap or self.max)
+        more = len(rows) - mx if len(rows) > mx else 0
+        shown = rows[:mx]
         text = about
         if more:
-            text += " The first %d of %d are shown; the job's artifacts (ontap_health) have all." % (self.max, len(rows))
+            text += " " + (more_text or "The first %d of %d are shown; the job's artifacts (ontap_health) have all.") % (mx, len(rows))
         s = {"title": title}
+        if collapsed:
+            s["collapsed"] = True
         if shown:
             s.update({"columns": columns, "rows": [r[0] for r in shown],
                       "cell_status": [[x or "" for x in r[1]] for r in shown],
@@ -234,34 +238,52 @@ def _pct_text(p):
     return "?" if p is None else ("%.0f%%" % p if p >= 10 else "%.1f%%" % p)
 
 
-def cifs_dcs(servers):
-    """An SVM's discovered domain controllers (cifs domains discovered_servers, one entry per node and DC) -> each DC once:
-    {all, ok, undetermined, bad: [names], bad_text: ["dc2 (unavailable, a preferred DC)"]}. ok on a node = OK, unless
-    another node cannot reach it; "undetermined" = listed, not contacted (not a problem); any other state = not reachable.
-    preference (preferred / favored / adequate) is read when ONTAP gives it."""
+SERVER_TYPE = {"ms_dc": "DC", "ms_ldap": "LDAP", "ldap": "LDAP", "kerberos": "KDC"}
+
+
+def cifs_servers(servers):
+    """An SVM's discovered servers (cifs domains discovered_servers: one entry per node, DC and type) -> one per DC and
+    type: {name, address, type, server_type, preference, state, word, nodes, nodes_differ}. state: "bad" (ONTAP tried and
+    could not reach it on some node: unavailable, slow ...), else "ok" (connected on some node), else "undetermined" (not
+    contacted - ONTAP's normal state for a DC it has had no need to probe, even every DC). nodes: "all", or each node's
+    state when they differ."""
     by = {}
     for d in servers or []:
         name = str(d.get("server_name") or d.get("server_ip") or "?")
-        x = by.setdefault(name.lower(), {"name": name, "states": [], "pref": ""})
-        x["states"].append((str(d.get("state") or "").lower(), g(d, "node.name", "")))
-        if str(d.get("preference") or "").lower() == "preferred":
-            x["pref"] = "preferred"
-    out = {"all": [], "ok": [], "undetermined": [], "bad": [], "bad_text": []}
+        typ = str(d.get("server_type") or "").lower()
+        x = by.setdefault((name.lower(), typ), {"name": name, "address": str(d.get("server_ip") or ""), "server_type": typ,
+                                                 "type": SERVER_TYPE.get(typ, typ or "?"), "preference": "", "per_node": []})
+        x["per_node"].append((str(d.get("state") or "unknown").lower(), g(d, "node.name", "")))
+        pref = str(d.get("preference") or "").lower()
+        if pref and pref != "unknown" and (not x["preference"] or pref == "preferred"):
+            x["preference"] = pref
+        if not x["address"] and d.get("server_ip"):
+            x["address"] = str(d.get("server_ip"))
+    out = []
     for k in sorted(by):
         x = by[k]
-        out["all"].append(x["name"])
-        bad = [(st, n) for st, n in x["states"] if st not in ("ok", "undetermined")]
-        if bad:
-            sts = sorted(set(st or "unknown" for st, _ in bad))
-            nodes = sorted(set(n for _, n in bad if n))
-            on = " on %s" % ", ".join(nodes) if nodes and len(nodes) < len(x["states"]) else ""
-            out["bad"].append(x["name"])
-            out["bad_text"].append("%s (%s%s%s)" % (x["name"], "/".join(sts), on, ", a preferred DC" if x["pref"] else ""))
-        elif any(st == "ok" for st, _ in x["states"]):
-            out["ok"].append(x["name"])
-        else:
-            out["undetermined"].append(x["name"])
+        states = [st for st, _ in x["per_node"]]
+        bad = sorted(set(st for st in states if st not in ("ok", "undetermined")))
+        x["state"] = "bad" if bad else ("ok" if "ok" in states else "undetermined")
+        x["word"] = "/".join(bad) if bad else ("ok" if x["state"] == "ok" else "not contacted")
+        differ = len(set(states)) > 1
+        x["nodes_differ"] = differ
+        x["nodes"] = "all" if not differ else ", ".join(
+            "%s %s" % (n or "?", "not contacted" if st == "undetermined" else st) for st, n in sorted(x["per_node"], key=lambda y: y[1]))
+        del x["per_node"]
+        out.append(x)
     return out
+
+
+def cifs_dcs(servers):
+    """An SVM's domain controllers (the ms_dc ones; else every server listed) -> {all, ok, undetermined, bad, bad_text}:
+    the summary of the CIFS servers table."""
+    rows = cifs_servers(servers)
+    dcs = [x for x in rows if x["server_type"] in ("ms_dc", "")] or rows
+    return {"all": [x["name"] for x in dcs], "ok": [x["name"] for x in dcs if x["state"] == "ok"],
+            "undetermined": [x["name"] for x in dcs if x["state"] == "undetermined"], "bad": [x["name"] for x in dcs if x["state"] == "bad"],
+            "bad_text": ["%s (%s%s%s)" % (x["name"], x["word"], (" - " + x["nodes"]) if x["nodes_differ"] else "",
+                                          ", a preferred DC" if x["preference"] == "preferred" else "") for x in dcs if x["state"] == "bad"]}
 
 
 def ontap_report(collected, opts=None):
@@ -772,42 +794,74 @@ def ontap_report(collected, opts=None):
             R.problem(c["_name"], "svm", s.get("name"), sv, "SVM " + st)
     R.table("SVMs not running", "Storage VMs that are stopped or starting. A stopped DR destination (dp_destination) is normal (blue).",
             ["Cluster", "SVM", "State", "Subtype", "Note"], rows, "Every SVM is running.", _notes(cs, SECTION_KEYS["svms"]))
-    rows = []
+    rows, dcrows, hints = [], [], []
     for c in up:
         doms = {g(d, "svm.name"): d.get("discovered_servers") or [] for d in _recs(c, "cifs_domains")}
         for s in _recs(c, "cifs"):
             svm = g(s, "svm.name", "")
             en = as_bool(s.get("enabled"))
-            dcs = [d for d in doms.get(svm, []) if str(d.get("server_type", "")).lower() in ("ms_dc", "")] or doms.get(svm, [])
-            v = cifs_dcs(dcs)
+            v = cifs_dcs(doms.get(svm, []))
+            show = "vserver cifs domain discovered-servers show -vserver %s" % svm
+            reset = "vserver cifs domain discovered-servers reset-servers -vserver %s" % svm
+            hint = ""
             if svm not in doms:
                 dst, dc_txt = "", "?"
             elif not v["all"]:
-                dst, dc_txt = "", "none listed"
-            elif not v["ok"]:
-                dst, dc_txt = "critical", "NONE OK" + (" (%d not contacted)" % len(v["undetermined"]) if v["undetermined"] else "")
+                # nothing listed: the discovery has not run, or finds nothing - for information, with where to look
+                dst, dc_txt = "info", "none listed"
+                hint = "no DC listed - vserver cifs domain discovered-servers discovery-mode show -vserver %s; then %s (a change: run it in a quiet window)" % (svm, reset)
             else:
-                dst = "warning" if v["bad"] else "ok"
-                dc_txt = "%d OK" % len(v["ok"]) + (", %d not contacted" % len(v["undetermined"]) if v["undetermined"] else "")
+                parts = (["%d OK" % len(v["ok"])] if v["ok"] else []) + \
+                    (["%d not contacted" % len(v["undetermined"])] if v["undetermined"] else []) + \
+                    (["%d not reachable" % len(v["bad"])] if v["bad"] else [])
+                dc_txt = " \u00b7 ".join(parts)
+                if v["bad"] and not v["ok"] and not v["undetermined"]:
+                    dst = "critical"                    # ONTAP tried every DC it lists and reached none
+                elif v["bad"]:
+                    dst = "warning"
+                elif v["ok"]:
+                    dst = "ok"
+                else:
+                    dst = "info"                        # every DC not contacted: ONTAP's normal state, CIFS works
+                if v["bad"] or not v["ok"]:
+                    hint = "%s - %s; to make ONTAP probe them again: %s (a change: run it in a quiet window)" % (
+                        "not reachable" if v["bad"] else "not contacted", show, reset)
             est = "ok" if en else ("critical" if en is False else "")
+            if hint:
+                hints.append("%s / %s: %s" % (c["_name"], svm, hint))
             rows.append(_row([c["_name"], svm, s.get("name"), g(s, "ad_domain.fqdn", ""), "yes" if en else ("NO" if en is False else "?"),
-                              dc_txt, "; ".join(v["bad_text"])], ["", "", "", "", est, dst, "warning" if v["bad"] else ""]))
+                              dc_txt, "; ".join(v["bad_text"])], ["", "", "", "", est, dst, "warning" if v["bad"] else ""],
+                             worst([x for x in (est, dst) if x in ("critical", "warning")]) or ("info" if dst == "info" else "")))
             parts = []
             if en is False:
                 parts.append("the CIFS server is DISABLED")
             if dst == "critical":
-                parts.append("ONTAP reports no DC it is connected to - CIFS cannot authenticate users" + (
-                    " (%s)" % "; ".join(v["bad_text"]) if v["bad_text"] else (" (%d not contacted)" % len(v["undetermined"]))))
+                parts.append("ONTAP reports no DC it is connected to - it tried them and reached none: " + "; ".join(v["bad_text"]))
             elif dst == "warning":
                 parts.append("domain controllers not reachable: " + "; ".join(v["bad_text"]))
-            R.problem(c["_name"], "cifs", svm, worst([est, dst]), "; ".join(parts) or "CIFS server enabled; domain controllers ok")
-    R.table("CIFS (SMB) servers", "Each SVM's CIFS server: enabled or not (red when stopped), and the domain controllers ONTAP "
-            "discovered for it (cifs domains; ONTAP 9.10+): OK = connected; not contacted = ONTAP lists the DC (every DC of the "
-            "domain is listed) but has not needed it - DCs in other sites or of lower preference stay \"undetermined\", which "
-            "is normal and never a finding; amber = a DC ONTAP could not reach (unavailable, or another state), saying when it is "
-            "a preferred DC; red = no DC OK at all, or the CIFS server stopped.",
+            R.problem(c["_name"], "cifs", svm, worst([est, dst if dst in ("critical", "warning") else ""]), "; ".join(parts))
+            # every server ONTAP lists for the SVM: one row per DC and type
+            for x in cifs_servers(doms.get(svm, [])):
+                st = {"ok": "ok", "undetermined": "info", "bad": "warning"}[x["state"]]
+                dcrows.append(((c["_name"], svm, {"bad": 0, "ok": 1, "undetermined": 2}[x["state"]], x["name"].lower(), x["type"]),
+                               _row([c["_name"], svm, x["name"], x["address"] if x["address"] != x["name"] else "", x["type"],
+                                     x["preference"] or "-", x["word"], x["nodes"]],
+                                    ["", "", "", "", "", "", st, "warning" if x["state"] == "bad" and x["nodes_differ"] else ""],
+                                    "warning" if x["state"] == "bad" else "")))
+    R.table("CIFS (SMB) servers", "Each SVM's CIFS server: enabled or not (red when stopped), and its domain controllers (cifs "
+            "domains; ONTAP 9.10+) - OK = connected; not contacted = listed, but ONTAP has had no need to probe it (blue, never "
+            "a finding, even when no DC is OK: ONTAP's normal state); not reachable = ONTAP tried it and failed (amber; said "
+            "when it is a preferred DC); red = ONTAP tried every DC it lists and reached none, or the CIFS server stopped. "
+            "Every DC is listed in the next table; below, the commands to look further where no DC is OK or one is not reachable.",
             ["Cluster", "SVM", "CIFS server", "Domain", "Enabled", "Domain controllers", "Not reachable"], rows, "No CIFS server.",
-            _notes(cs, SECTION_KEYS["cifs"]))
+            _notes(cs, SECTION_KEYS["cifs"]) + hints[:50])
+    dcrows.sort(key=lambda r: r[0])
+    R.table("CIFS domain controllers", "Every server ONTAP lists for each SVM (DC, LDAP, KDC), with its preference and state. Not "
+            "contacted (undetermined): ONTAP has not needed it - DCs in other sites or of lower preference stay so; it is not "
+            "a problem. Not reachable first, then OK, then not contacted.",
+            ["Cluster", "SVM", "Domain controller", "Address", "Type", "Preference", "State", "Nodes"], [r[1] for r in dcrows],
+            "ONTAP lists no domain controller.", keep_order=True, cap=max(R.max, 400), collapsed=len(dcrows) > 12,
+            more_text="The first %d of %d are shown.")
     rows = []
     for c in up:
         for l in _recs(c, "luns"):

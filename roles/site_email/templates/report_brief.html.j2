@@ -480,7 +480,8 @@ footer{margin-top:48px;padding-top:18px;border-top:1px solid var(--edge);color:v
 {%- for s in secs %}
 {%- set ss = s.status | default('') %}
 {%- set si = loop.index %}
-<details class="sec{{ ' band' if s.cards | default([]) and s.columns is not defined else '' }}" id="s{{ si }}" open>
+{#- a section the report marks collapsed (a long list - 1.6.1) starts closed: a click, the search or Print opens it #}
+<details class="sec{{ ' band' if s.cards | default([]) and s.columns is not defined else '' }}" id="s{{ si }}"{{ '' if s.collapsed | default(false) else ' open' }}>
 <summary><h2>{{ s.title | e }}{% if s.rows is defined %}<span class="count">{{ s.rows | length }}</span>{% endif %}</h2>
 {%- if ss in words %}{{ chip(ss, chipword[ss]) }}{% endif %}
 <button class="copy scopy" type="button" hidden title="Copy this section" aria-label="Copy {{ s.title | e }}">{{ copyicons() }}<span class="t">Copy</span></button>
