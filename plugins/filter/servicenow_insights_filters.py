@@ -109,6 +109,8 @@ NO_TARGET = object()
 PRIORITY_MATRIX = {"1": {"1": "1", "2": "2", "3": "3"}, "2": {"1": "2", "2": "3", "3": "4"}, "3": {"1": "3", "2": "4", "3": "5"}}
 PRIORITY_NAMES = {"1": "Critical", "2": "High", "3": "Moderate", "4": "Low", "5": "Exempt"}
 # a close code (as shown, any case) -> how the incident ended; any other code: Fixed
+CORE_HOURS = {"days": ["mon", "tue", "wed", "thu", "fri"], "start": "07:30", "end": "16:30"}
+STATE_KINDS = ("new", "progress", "hold", "resolved")
 OUTCOME_MAP = {"Workaround": "Workaround", "Workaround provided": "Workaround", "Duplicate": "Duplicate", "Known Error": "Known Error",
                "No Resolution Provided": "No Resolution Provided"}
 
@@ -143,6 +145,34 @@ def business_hours_spec(bh):
             raise ValueError("servicenow_insights_business_hours holidays: %s is not a date (YYYY-MM-DD)" % h)
         hol.add(t)
     return wd, _hm(bh.get("start", "00:00"), "start"), _hm(bh.get("end", "24:00"), "end"), hol
+
+
+def state_kind(name):
+    """A state as shown -> new (waiting to start), progress, hold, resolved - or '' (closed, cancelled: not counted)."""
+    t = str(name or "").lower()
+    if "hold" in t or "await" in t or "pending" in t:
+        return "hold"
+    if "resolv" in t:
+        return "resolved"
+    if t.strip() == "new" or t.startswith("new") or "open" == t.strip():
+        return "new"
+    if "progress" in t or "assigned" in t or "work" in t:
+        return "progress"
+    return ""
+
+
+def in_hours(t, spec, tz):
+    """t (aware) inside the hours of spec (business_hours_spec), in tz."""
+    if t is None or spec is None:
+        return True
+    days, sm, em, hol = spec
+    lt = t.astimezone(tz)
+    mins = lt.hour * 60 + lt.minute
+    if em > sm:
+        return lt.weekday() in days and lt.date().isoformat() not in hol and sm <= mins < em
+    prev_d = lt.date() - datetime.timedelta(days=1)                     # a shift past midnight belongs to its start day
+    return (lt.weekday() in days and lt.date().isoformat() not in hol and mins >= sm) or (
+        prev_d.weekday() in days and prev_d.isoformat() not in hol and mins < em)
 
 
 def business_hours(a, b, spec, tz):
@@ -1483,6 +1513,12 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
     omap = dict((" ".join(str(k).split()).lower(), str(v)) for k, v in (o.get("outcome_map") or OUTCOME_MAP).items())
     unable = [str(x) for x in name_list(o.get("unable_outcomes") or ["Known Error", "No Resolution Provided"])]
     desk = set(name_list(o.get("service_desk_groups") or []))
+    # 1.9.0: the life cycle and the flow
+    core_spec = business_hours_spec(o.get("core_hours") or o.get("business_hours") or CORE_HOURS)
+    short_chars = int(_o(o, "short_desc_chars", 15))
+    hold_many = int(_o(o, "hold_many", 2))
+    repeat_ci = datetime.timedelta(days=float(_o(o, "repeat_ci_days", 7)))
+    person_metrics = bool(o.get("person_metrics"))
     by_table = {}
     for it in items:
         by_table.setdefault(it.get("table"), []).append(it)
@@ -1517,6 +1553,16 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
         held_h = [(_t(x[2]) or until) - _t(x[1]) for x in states.get(it["sys_id"]) or [] if "hold" in str(x[0]).lower() and _t(x[1])]
         it["_hold_h"] = (sum(d.total_seconds() for d in held_h) / 3600.0) if states_read and it["sys_id"] in states else None
         it["_hops"] = it.get("reassignment_count") or 0
+        # time in each state (the state metric): hours per kind, the times put on hold
+        it["_tis"], it["_holds"] = None, None
+        if states_read and it["sys_id"] in states:
+            tis = {}
+            for v_, a_, b_ in states[it["sys_id"]]:
+                k_ = state_kind(v_)
+                if k_ and _t(a_):
+                    tis[k_] = tis.get(k_, 0.0) + max(0.0, ((_t(b_) or until) - _t(a_)).total_seconds() / 3600.0)
+            it["_tis"] = tis
+            it["_holds"] = sum(1 for x in states[it["sys_id"]] if state_kind(x[0]) == "hold")
         it["_outcome"] = omap.get(" ".join(str(it.get("close_code") or "").split()).lower(), "Fixed") if it.get("done_at") else ""
         st_ = states.get(it["sys_id"]) or []
         res_t = [_t(x[1]) for x in st_ if str(x[0]).lower() == "resolved" and _t(x[1])]
@@ -1836,7 +1882,7 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
                                "median_h": _r1(_median(hours.get(n, []))), "quality": q, "fix": fx, "tags": tags,
                                "cis": _top(ci.get(n, {}), 3), "examples": [it.get("number") for it in newest],
                                "main_group": main, "main_share": round(_pct(g.get(main, 0), x["cur"]) or 0) if main else 0,
-                               "weekly": wkly.get(n, []), "kind": d.get("kind") or "incident", "about": d.get("about") or ""})
+                               "weekly": wkly.get(n, [0] * len(weeks)), "kind": d.get("kind") or "incident", "about": d.get("about") or ""})
         misfiled = [r_ for r_ in issue_rows if r_["kind"] == "request"]
         if not act_ran:
             misfiled = []
@@ -1867,7 +1913,7 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
             s = rsla.get(n)
             req_rows.append({"name": n, "count": x["cur"], "prev": x["prev"], "rank": x["rank"], "mv": x["mv"],
                              "median_days": _r1(_median(rdays.get(n, []))), "sla": _r1(_pct(s[0], s[1])) if s else None,
-                             "weekly": rw.get(n, [])})
+                             "weekly": rw.get(n, [0] * len(weeks))})
 
         # changes
         chg = [c for c in chg_win if mine(c)]
@@ -2068,6 +2114,111 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
         fcr = {"now": fcr_(res_now), "prev": fcr_(res_prev), "desk": [fcr_(sd_now), fcr_(sd_prev)] if desk else None, "desk_n": len(sd_now),
                "desk_groups": sorted(desk)}
 
+        # ---- 1.9.0: the life cycle, the flow, quality, hot spots, after hours, workload
+        # time in each state (resolved in the period, the state metric): the average hours of each, per group - they add up
+        tis_items = [x for x in res_now if x.get("_tis") is not None]
+        tg = {}
+        for x in tis_items:
+            e = tg.setdefault(x.get("group") or "(no group)", {"n": 0, "new": 0.0, "progress": 0.0, "hold": 0.0, "resolved": 0.0})
+            e["n"] += 1
+            for k_ in STATE_KINDS:
+                e[k_] += x["_tis"].get(k_, 0.0)
+        tot = dict((k_, sum(x["_tis"].get(k_, 0.0) for x in tis_items)) for k_ in STATE_KINDS)
+        life = tot["new"] + tot["progress"] + tot["hold"]           # the time to resolve (resolved to closed apart)
+        hreason = {}
+        for x in tis_items:
+            if x["_tis"].get("hold"):
+                r_ = " ".join(str(x.get("hold_reason") or "").split()) or "(reason not kept)"
+                e = hreason.setdefault(r_, [0, 0.0])
+                e[0] += 1
+                e[1] += x["_tis"]["hold"]
+        hold_hours = sum(v[1] for v in hreason.values())
+        vendor_h = sum(v[1] for k_, v in hreason.items() if "vendor" in k_.lower())
+        lifecycle = {"measured": bool(tis_items), "n": len(tis_items),
+                     "avg": dict((k_, _r1(tot[k_] / len(tis_items)) if tis_items else None) for k_ in STATE_KINDS),
+                     "by_group": sorted([dict([("group", g), ("n", v["n"])] + [(k_, _r1(v[k_] / v["n"])) for k_ in STATE_KINDS]) for g, v in tg.items()],
+                                        key=lambda e: (-e["n"], e["group"]))[:12],
+                     "hold_share": _r1(_pct(tot["hold"], life)), "held_many": sum(1 for x in tis_items if (x.get("_holds") or 0) > hold_many),
+                     "hold_many": hold_many, "held_any": sum(1 for x in tis_items if (x.get("_holds") or 0) > 0),
+                     "by_reason": sorted([[k_, v[0], _r1(v[1]), _r1(_pct(v[1], hold_hours))] for k_, v in hreason.items()], key=lambda e: -e[2]),
+                     "vendor_share": _r1(_pct(vendor_h, hold_hours)),
+                     "vendor_now": _r1(_pct(sum(1 for h in hold["rows"] if "vendor" in h["reason"].lower()), len(hold["rows"])))}
+        # the backlog's age in business days, per group; the weekly flow (opened - resolved)
+        open_flow = [x for x in flow if _t(x.get("opened_at")) and _t(x["opened_at"]) <= until and (not _t(x.get("done_at")) or _t(x["done_at"]) > until)]
+        ag = {}
+        for x in open_flow:
+            bd = business_days(_t(x["opened_at"]), until, bh_spec, tz) or 0
+            e = ag.setdefault(x.get("group") or "(no group)", [0, 0, 0, 0])
+            e[0 if bd <= 1 else (1 if bd <= 5 else (2 if bd <= 10 else 3))] += 1
+        aging = {"buckets": ["0–1", "2–5", "6–10", "over 10"], "total": [sum(v[i] for v in ag.values()) for i in range(4)],
+                 "by_group": sorted([{"group": g, "counts": v, "open": sum(v)} for g, v in ag.items()], key=lambda e: (-e["counts"][3], -e["open"], e["group"]))[:12],
+                 "net": [w["opened"] - w["resolved"] for w in wk]}
+        # ping-pong: a ticket sent back to the group it came from (A -> B -> A), from the paths
+        pp, ppn = {}, 0
+        for x in inc_now:
+            ev = audit.get(x.get("sys_id")) or []
+            seq = [g for g in ([ev[0][1] or ev[0][2]] + [e_[2] for e_ in ev] if ev else []) if g]
+            seq = [g for i_, g in enumerate(seq) if i_ == 0 or g != seq[i_ - 1]]
+            hit = False
+            for i_ in range(len(seq) - 2):
+                if seq[i_] == seq[i_ + 2]:
+                    _count(pp, (seq[i_], seq[i_ + 1]))
+                    hit = True
+            ppn += 1 if hit else 0
+        pingpong = {"count": ppn, "pct": _r1(_pct(ppn, len(inc_now))), "read": bool(audit),
+                    "pairs": [[a_, b_, c_] for (a_, b_), c_ in sorted(pp.items(), key=lambda kv: (-kv[1], kv[0]))[:8]]}
+        # ticket quality: category Other or empty, no CI, a very short description - per group
+        qg = {}
+        for x in inc_now:
+            e = qg.setdefault(x.get("group") or "(no group)", [0, 0, 0, 0])
+            e[0] += 1
+            e[1] += 1 if category_name(x).lower() in ("(none)", "other") else 0
+            e[2] += 1 if not x.get("cmdb_ci") else 0
+            e[3] += 1 if len(" ".join(str(x.get("short_description") or "").split())) < short_chars else 0
+        tq = lambda v: {"n": v[0], "other": _r1(_pct(v[1], v[0])), "no_ci": _r1(_pct(v[2], v[0])), "short": _r1(_pct(v[3], v[0]))}   # noqa: E731
+        quality_t = dict(tq([sum(v[i] for v in qg.values()) for i in range(4)]), short_chars=short_chars,
+                         by_group=sorted([dict(tq(v), group=g) for g, v in qg.items()], key=lambda e: (-e["n"], e["group"]))[:12])
+        # hot spots: the configuration items with the most incidents, and those back on the same CI within repeat_ci_days
+        hc = {}
+        for x in inc_now:
+            if x.get("cmdb_ci"):
+                hc.setdefault(x["cmdb_ci"], []).append(x)
+        hot = []
+        for ci_, lst in hc.items():
+            ts = sorted(_t(x["opened_at"]) for x in lst)
+            rep_ = sum(1 for i_ in range(1, len(ts)) if ts[i_] - ts[i_ - 1] <= repeat_ci)
+            gs_ = {}
+            for x in lst:
+                _count(gs_, x.get("group") or "")
+            hot.append({"ci": ci_, "count": len(lst), "repeats": rep_, "group": _top(gs_, 1)[0], "problem": sum(1 for x in lst if x.get("problem"))})
+        hot.sort(key=lambda e: (-e["count"], -e["repeats"], e["ci"]))
+        hotspots = {"cis": hot[:10], "repeat_days": repeat_ci.days, "with_problem": sum(1 for x in inc_now if x.get("problem")),
+                    "problem_pct": _r1(_pct(sum(1 for x in inc_now if x.get("problem")), len(inc_now)))}
+        # after hours: opened outside the core hours, per group
+        ah = {}
+        for x in inc_now:
+            e = ah.setdefault(x.get("group") or "(no group)", [0, 0])
+            e[0] += 1
+            e[1] += 0 if in_hours(_t(x["opened_at"]), core_spec, tz) else 1
+        after = {"pct": _r1(_pct(sum(v[1] for v in ah.values()), len(inc_now))), "count": sum(v[1] for v in ah.values()),
+                 "core": business_hours_label(o.get("core_hours") or o.get("business_hours") or CORE_HOURS, win.get("time_zone")),
+                 "by_group": sorted([{"group": g, "n": v[0], "after": v[1], "pct": _r1(_pct(v[1], v[0]))} for g, v in ah.items()],
+                                    key=lambda e: (-(e["pct"] or 0), e["group"]))[:12]}
+        # workload: open now and resolved in the period per person (the one it is assigned to); the median only with person_metrics
+        wl = {}
+        for x in open_flow:
+            if x.get("assigned_to"):
+                wl.setdefault(x["assigned_to"], {"open": 0, "resolved": 0, "h": [], "group": x.get("group") or ""})["open"] += 1
+        for x in res_now:
+            if x.get("assigned_to"):
+                e = wl.setdefault(x["assigned_to"], {"open": 0, "resolved": 0, "h": [], "group": x.get("group") or ""})
+                e["resolved"] += 1
+                e["h"].append(_hours(x))
+        workload = {"person_metrics": person_metrics, "unassigned": sum(1 for x in open_flow if not x.get("assigned_to")),
+                    "rows": sorted([{"person": k_, "group": v["group"], "open": v["open"], "resolved": v["resolved"],
+                                     "median_h": _r1(_median(v["h"])) if person_metrics else None} for k_, v in wl.items()],
+                                   key=lambda e: (-e["open"], -e["resolved"], e["person"]))[:20]}
+
         # E. the surveys: the average answer, per month, per team
         mine_ids = set(x["sys_id"] for x in inc)
         sv_now = [v for k_, mtr, v, t_ in survey_rows if k_ in mine_ids and _in(_t(t_), since, until)]
@@ -2095,7 +2246,8 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
               "resp": [_r1(_pct(sum(1 for x in resp_now if x["_resp"]), len(resp_now))), _r1(_pct(sum(1 for x in resp_prev if x["_resp"]), len(resp_prev)))],
               "no_slo": [sum(1 for x in done_now if x.get("_no_slo")), len(done_now)], "matrix": matrix, "categories": categories,
               "hops": hops, "hold": hold, "codes": cdx, "closure": closure, "survey": survey, "at_risk": at_risk, "outcomes": outcomes,
-              "reopen7": reopen7, "fcr": fcr,
+              "reopen7": reopen7, "fcr": fcr, "lifecycle": lifecycle, "aging": aging, "pingpong": pingpong, "quality_t": quality_t,
+              "hotspots": hotspots, "after": after, "workload": workload,
               "reopen": [_r1(reo[0]), _r1(reo[1])], "came_back": [_r1(cb[0]), _r1(cb[1])],
               "quality": q_now, "quality_prev": q_prev, "notes_graded": q_n,
               "backlog": [bl_now, bl_start], "age": age, "weeks": wk, "heat": heat,
@@ -2683,6 +2835,18 @@ def servicenow_insights_doc(model, key="all", opts=None):
                          " + ".join(oc.get("unable_names") or []), pf(oc["unable"][0]), pf(oc["unable"][1]), pf((s.get("fcr") or {}).get("now"))),
                      "columns": ["Group", "Resolved"] + oc["names"] + ["Unable to resolve"],
                      "rows": [[g["group"], g["resolved"]] + [g["counts"].get(k_, 0) for k_ in oc["names"]] + [pf(g["unable"])] for g in oc["by_group"]]})
+    # 1.9.0: the time in each state and the backlog's age, per group
+    lc, ag = s.get("lifecycle") or {}, s.get("aging") or {}
+    if lc.get("measured"):
+        secs.append({"title": "Time in each state", "text": "Average hours per state, for the incidents resolved in the period. On hold: %s of the time to "
+                                                            "resolve, %d incidents more than %d times." % (
+                                                                pf(lc.get("hold_share")), lc.get("held_many") or 0, lc.get("hold_many") or 2),
+                     "columns": ["Group", "Incidents", "Waiting to start", "In progress", "On hold", "Resolved to closed"],
+                     "rows": [["All", lc["n"]] + [fmt_hours(lc["avg"].get(k_)) for k_ in STATE_KINDS]] +
+                             [[g["group"], g["n"]] + [fmt_hours(g[k_]) for k_ in STATE_KINDS] for g in lc.get("by_group") or []]})
+    if ag.get("by_group"):
+        secs.append({"title": "Backlog age (business days)", "columns": ["Group", "Open now"] + ag["buckets"],
+                     "rows": [[g["group"], g["open"]] + g["counts"] for g in ag["by_group"]]})
     cat = s.get("categories") or {}
     if cat.get("rows"):
         dq = "%d with no category (%s), %d in Other (%s)" % (cat["empty"], pf(cat["empty_pct"]), cat["other"], pf(cat["other_pct"]))
@@ -2914,6 +3078,16 @@ def servicenow_insights_xlsx(model, r=None, state=None, mask=None, opts=None):
                                 for k, v in sorted(lv, key=lambda kv: (_level_key(kv[1]["site"]), kv[1]["level"] != "site", _level_key(kv[1].get("dir") or "")))]})
     sheets.append({"name": "Hand-off paths", "columns": ["Path", "Incidents", "Most common issue", "Days added", "Examples"],
                    "rows": [[" > ".join(e["path"]), e["count"], e["issue"], e["added_days"], ", ".join(e["items"][:5])] for e in s["handoffs"]["paths"]]})
+    # 1.9.0
+    lc, hs, wl = s.get("lifecycle") or {}, s.get("hotspots") or {}, s.get("workload") or {}
+    if lc.get("measured"):
+        sheets.append({"name": "Time in state", "columns": ["Group", "Incidents", "Waiting to start (h)", "In progress (h)", "On hold (h)", "Resolved to closed (h)"],
+                       "rows": [[g["group"], g["n"]] + [g[k_] for k_ in STATE_KINDS] for g in lc.get("by_group") or []]})
+    sheets.append({"name": "Hot CIs", "columns": ["Configuration item", "Incidents", "Back within %d days" % (hs.get("repeat_days") or 7), "Linked to a problem", "Mostly in"],
+                   "rows": [[c_["ci"], c_["count"], c_["repeats"], c_["problem"], c_["group"]] for c_ in hs.get("cis") or []]})
+    if wl.get("person_metrics"):
+        sheets.append({"name": "Workload", "columns": ["Person", "Group", "Open now", "Resolved", "Median hours to resolve"],
+                       "rows": [[x["person"], x["group"], x["open"], x["resolved"], x["median_h"]] for x in wl.get("rows") or []]})
     return sheets
 
 

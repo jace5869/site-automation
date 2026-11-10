@@ -32,6 +32,7 @@ CSS = r"""/* Layout: sticky report bar with the group filter; section index on t
   --good:#13734f; --good-bg:#e3f5ec; --warn:#9a5806; --warn-bg:#fdf2df; --crit:#b42318; --crit-bg:#fdeaea; --info:#1d4ed8; --info-bg:#e6effd;
   --q-good:#1f9d6b; --q-thin:#e0a100; --q-bare:#d64545;
   --s1:#2a78d6; --s2:#eb6834; --heat:#2a78d6;
+  --st1:#2a78d6; --st2:#eb6834; --st3:#1baf7a; --st4:#eda100;
   --o1:#86b6ef; --o2:#3987e5; --o3:#1c5cab; --o4:#0d366b;
   --shadow:0 1px 2px rgba(15,50,40,.06),0 6px 18px rgba(15,50,40,.06);
   --sans:"Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;
@@ -43,6 +44,7 @@ CSS = r"""/* Layout: sticky report bar with the group filter; section index on t
   --good:#4cc493; --good-bg:#12302a; --warn:#e3a64c; --warn-bg:#33270f; --crit:#f07a70; --crit-bg:#3a1817; --info:#7aa7f5; --info-bg:#16233d;
   --q-good:#2fae7b; --q-thin:#c98f00; --q-bare:#e06060;
   --s1:#3987e5; --s2:#d95926; --heat:#4a93ea;
+  --st1:#3987e5; --st2:#d95926; --st3:#199e70; --st4:#c98500;
   --o1:#184f95; --o2:#256abf; --o3:#3987e5; --o4:#86b6ef;
   --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 18px rgba(0,0,0,.25); color-scheme:dark}}
 :root[data-theme="dark"]{
@@ -51,6 +53,7 @@ CSS = r"""/* Layout: sticky report bar with the group filter; section index on t
   --good:#4cc493; --good-bg:#12302a; --warn:#e3a64c; --warn-bg:#33270f; --crit:#f07a70; --crit-bg:#3a1817; --info:#7aa7f5; --info-bg:#16233d;
   --q-good:#2fae7b; --q-thin:#c98f00; --q-bare:#e06060;
   --s1:#3987e5; --s2:#d95926; --heat:#4a93ea;
+  --st1:#3987e5; --st2:#d95926; --st3:#199e70; --st4:#c98500;
   --o1:#184f95; --o2:#256abf; --o3:#3987e5; --o4:#86b6ef;
   --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 18px rgba(0,0,0,.25); color-scheme:dark}
 
@@ -352,6 +355,7 @@ kbd{font:600 11px var(--mono);border:1px solid var(--line);border-bottom-width:2
 .fix .from{color:var(--muted);font-size:12px;padding:0 14px 12px}
 .kb .worked{margin-top:12px!important;color:var(--muted);font-size:12.5px}
 /* a group's name: its team page (the site's page) */
+.fig.narrow{max-width:820px}
 a.glink{color:inherit;text-decoration:underline;text-decoration-color:var(--line);text-underline-offset:3px}
 a.glink:hover{color:var(--accent);text-decoration-color:currentColor}
 svg a.glink text{fill:var(--fg-2)}svg a.glink:hover text{fill:var(--accent);text-decoration:underline}
@@ -377,14 +381,16 @@ BRIEF_CSS = r"""
   --fg:#e0e0e0; --fg-2:#bdbdbd; --muted:#a3a3a3; --accent:#7fcbac; --accent-soft:rgba(127,203,172,.11); --on-accent:#0f1f19;
   --good:#87c79c; --good-bg:rgba(135,199,156,.12); --warn:#dcb671; --warn-bg:rgba(220,182,113,.12); --crit:#f0968f; --crit-bg:rgba(240,150,143,.12);
   --info:#8fb3ec; --info-bg:rgba(143,179,236,.12);
-  --q-good:#6fb88a; --q-thin:#c9a45e; --q-bare:#d9837c; --s1:#7aa5e0; --s2:#d98a66; --heat:#7aa5e0}}
+  --q-good:#6fb88a; --q-thin:#c9a45e; --q-bare:#d9837c; --s1:#7aa5e0; --s2:#d98a66; --heat:#7aa5e0;
+  --st1:#3987e5; --st2:#d95926; --st3:#199e70; --st4:#c98500}}
 :root[data-theme="dark"]{
   --bg:#121212; --surface:#1e1e1e; --surface-2:#2c2c2c; --line:rgba(255,255,255,.08); --line-2:rgba(255,255,255,.05);
   --glass:rgba(255,255,255,.05); --glow:rgba(127,203,172,.05);
   --fg:#e0e0e0; --fg-2:#bdbdbd; --muted:#a3a3a3; --accent:#7fcbac; --accent-soft:rgba(127,203,172,.11); --on-accent:#0f1f19;
   --good:#87c79c; --good-bg:rgba(135,199,156,.12); --warn:#dcb671; --warn-bg:rgba(220,182,113,.12); --crit:#f0968f; --crit-bg:rgba(240,150,143,.12);
   --info:#8fb3ec; --info-bg:rgba(143,179,236,.12);
-  --q-good:#6fb88a; --q-thin:#c9a45e; --q-bare:#d9837c; --s1:#7aa5e0; --s2:#d98a66; --heat:#7aa5e0}
+  --q-good:#6fb88a; --q-thin:#c9a45e; --q-bare:#d9837c; --s1:#7aa5e0; --s2:#d98a66; --heat:#7aa5e0;
+  --st1:#3987e5; --st2:#d95926; --st3:#199e70; --st4:#c98500}
 body{font-size:14.5px;letter-spacing:-.003em;-webkit-font-smoothing:antialiased;background:radial-gradient(1100px 560px at 12% -10%,var(--glow),transparent 70%) no-repeat,var(--bg)}
 .bar{background:color-mix(in srgb,var(--bg) 86%,transparent);-webkit-backdrop-filter:saturate(150%) blur(12px);backdrop-filter:saturate(150%) blur(12px)}
 .brand h1{font-size:15px;font-weight:700}
@@ -629,7 +635,7 @@ def nice_step(span):
     return 10 * mag
 
 
-def line_chart(series, colors, labels, weeks, label, zoom=False, annot=None):
+def line_chart(series, colors, labels, weeks, label, zoom=False, annot=None, area=True):
     """Weekly lines on one scale; every week has a hit area with its values (data-t, the page's tooltip)."""
     W, H, L, R, T, B = 640, 220, 44, 12, 12, 28
     allv = [v for s in series for v in s] or [0]
@@ -665,8 +671,9 @@ def line_chart(series, colors, labels, weeks, label, zoom=False, annot=None):
         if not s:
             continue
         p = " ".join("%s%.1f %.1f" % ("L" if i else "M", x(i), y(v)) for i, v in enumerate(s))
-        if len(series) == 1:
+        if len(series) == 1 and area:
             out.append('<path d="%s L%.1f %.1f L%.1f %.1fZ" fill="%s" fill-opacity=".12"/>' % (p, x(len(s) - 1), y(lo), x(0), y(lo), colors[k]))
+        if len(series) == 1:
             out.append('<circle cx="%.1f" cy="%.1f" r="4" fill="%s" stroke="var(--surface)" stroke-width="2"/>' % (x(len(s) - 1), y(s[-1]), colors[k]))
         out.append('<path d="%s" fill="none" stroke="%s" stroke-width="2" stroke-linejoin="round"/>' % (p, colors[k]))
     if annot:
@@ -713,6 +720,37 @@ def hbars(rows, label, W=640, lw=120, color="var(--s1)", fmt=None, colors=None, 
         out.append('<text x="%.1f" y="%d" class="val">%s</text>' % (lw + w + 6, y + 16, e(fmt(r[1]))))
     out.append("</svg>")
     return "".join(out)
+
+
+def hstack(rows, kinds, label, W=640, lw=150, fmt=None, hrefs=None):
+    """Stacked horizontal bars on one scale: rows [(label, [value per kind])], kinds [(name, colour)]; a 2px surface gap
+    between segments, the total at the end, each segment's value on hover - the legend and a table view go beside it."""
+    fmt = fmt or (lambda v: n(v))
+    rh = 30
+    mx = max([sum(v or 0 for v in r[1]) for r in rows] + [1e-9])
+    out = ['<svg viewBox="0 0 %d %d" width="100%%" role="img" aria-label="%s">' % (W, len(rows) * rh + 6, e(label))]
+    for i, (lab_, vals) in enumerate(rows):
+        y = i * rh + 4
+        lab = '<text x="%d" y="%d" text-anchor="end" class="lbl">%s</text>' % (lw - 8, y + 15, e(lab_[:24] + ("…" if len(lab_) > 24 else "")))
+        if hrefs and i < len(hrefs) and hrefs[i]:
+            lab = '<a class="glink" href="%s">%s</a>' % (e(hrefs[i]), lab)
+        out.append(lab)
+        x = float(lw)
+        segs = [(k, v or 0) for k, v in zip(kinds, vals) if (v or 0) > 0]
+        for j, ((name, col), v) in enumerate(segs):
+            w = (W - lw - 70) * v / mx
+            attr, title = tip("%s<br>%s <b>%s</b>" % (e(lab_), e(name), e(fmt(v))))
+            last = j == len(segs) - 1
+            out.append('<rect x="%.1f" y="%d" width="%.1f" height="16" rx="%d" fill="%s" stroke="var(--surface)" stroke-width="2"%s>%s</rect>' % (
+                x, y + 4, max(1.0, w), 4 if last else 0, col, attr, title))
+            x += w
+        out.append('<text x="%.1f" y="%d" class="val">%s</text>' % (x + 6, y + 16, e(fmt(sum(v or 0 for v in vals)))))
+    out.append("</svg>")
+    return "".join(out)
+
+
+def legend(kinds):
+    return '<div class="legend">%s</div>' % "".join('<span><i style="background:%s"></i>%s</span>' % (c, e(nm)) for nm, c in kinds)
 
 
 def heatmap(heat):
@@ -903,7 +941,9 @@ def servicenow_insights_page(model, key="all", opts=None):
         toc.append(("teams", "%s side by side" % side["kind"], len(side["rows"])))
     toc += [("acton", "Act on first", sum((s.get(k_) or {}).get(f_) or 0 for k_, f_ in (("at_risk", "count"), ("hops", "open"), ("hold", "late_n"), ("codes", "review_n"),
                                                                                          ("closure", "count"))) or ""),
-            ("process", "Hops, on hold, codes", ""), ("outcomes", "How incidents ended", "")]
+            ("process", "Hops, on hold, codes", ""), ("outcomes", "How incidents ended", ""), ("states", "Time in each state", ""),
+            ("aging", "Backlog age and flow", ""), ("quality", "Quality and hot spots", ""), ("afterhours", "After hours", ""),
+            ("workload", "Workload", "")]
     toc += [("keepingup", "Keeping up", ""), ("severity", "Severity", len(s["majors"]) or ""),
             ("categories", "Categories", len((s.get("categories") or {}).get("rows") or []) or "")] + (
                [("satisfaction", "Satisfaction", (s.get("survey") or {}).get("n") or "")] if (m.get("process") or {}).get("survey_read") or (s.get("survey") or {}).get("n") else []) + [
@@ -1145,6 +1185,100 @@ def servicenow_insights_page(model, key="all", opts=None):
                                 (" The service desk: %s of %s." % (pct(fc["desk"][0]), n(fc.get("desk_n") or 0))) if fc.get("desk") else
                                 " For the service desk's own, name its groups in servicenow_insights_service_desk_groups.",
                                 ("%s of %s" % (n(r7["count"]), n(r7["of"]))) if r7.get("measured") else "not measured (no state metric)")))
+
+    # ---- 1.9.0: time in each state, the backlog's age and flow, ticket quality and hot spots, after hours, workload
+    lc = s.get("lifecycle") or {}
+    KINDS = [("Waiting to start", "var(--st1)"), ("In progress", "var(--st2)"), ("On hold", "var(--st4)")]
+    if lc.get("measured"):
+        av = lc.get("avg") or {}
+        srows = [("All", [av.get("new"), av.get("progress"), av.get("hold")])] + [(sh(g["group"]), [g["new"], g["progress"], g["hold"]]) for g in lc.get("by_group") or []]
+        trows = [("", [td("<b>All</b>"), td(n(lc["n"]), "n"), td(fh(av.get("new")), "n"), td(fh(av.get("progress")), "n"), td(fh(av.get("hold")), "n"),
+                       td(fh(sum(av.get(k_) or 0 for k_ in ("new", "progress", "hold"))), "n"), td(fh(av.get("resolved")), "n")])] + [
+            (search_attr(g["group"]), [td(glink(g["group"])), td(n(g["n"]), "n", g["n"]), td(fh(g["new"]), "n", g["new"] or 0), td(fh(g["progress"]), "n", g["progress"] or 0),
+                                      td(fh(g["hold"]), "n", g["hold"] or 0), td(fh((g["new"] or 0) + (g["progress"] or 0) + (g["hold"] or 0)), "n"),
+                                      td(fh(g["resolved"]), "n", g["resolved"] or 0)]) for g in lc.get("by_group") or []]
+        rrows = [("", [td(e(r_[0])), td(n(r_[1]), "n"), td(fh(r_[2]), "n", r_[2] or 0), td(pct(r_[3]), "n", r_[3] or 0)]) for r_ in lc.get("by_reason") or []]
+        st_body = ('<div class="fig narrow">%s%s</div>' % (legend(KINDS), hstack(srows, KINDS, "Average hours in each state before resolved, per group", W=820, lw=160,
+                                                                              fmt=fh, hrefs=[None] + [links.get(g["group"]) for g in lc.get("by_group") or []])) +
+                   '<div class="fair">Average hours in each state, for the %s incidents resolved in the period. '
+                   'Together they make the time to resolve; the table adds resolved to closed.</div>' % n(lc["n"]) +
+                   '<details class="more"><summary>The numbers as a table</summary>%s</details>' % table(
+                       [("Group", "", "name"), ("Incidents", "n", ""), ("Waiting to start", "n", ""), ("In progress", "n", ""), ("On hold", "n", ""),
+                        ("To resolve", "n", ""), ("Resolved to closed", "n", "")], trows, sortable=True) +
+                   '<div class="fig"><h3>On hold</h3><div class="cap">For the incidents resolved in the period:<ul>'
+                   '<li><b>%s</b> of the time to resolve</li><li><b>%s</b> incidents put on hold, <b>%s</b> of them more than %d times</li>'
+                   '<li><b>Awaiting Vendor</b>: %s of the on-hold time, %s of those on hold now</li>'
+                   '<li><b>Reason</b>: the one the incident had when resolved</li></ul></div>%s</div>' % (
+                       pct(lc.get("hold_share")), n(lc.get("held_any") or 0), n(lc.get("held_many") or 0), lc.get("hold_many") or 2,
+                       pct(lc.get("vendor_share")), pct(lc.get("vendor_now")),
+                       table([("Reason", "", ""), ("Incidents", "n", ""), ("Hours on hold", "n", ""), ("Share", "n", "")], rrows, empty="Nothing was on hold.")))
+    else:
+        st_body = '<div class="callout">Not measured: this needs the metric <b>Incident State Duration</b> (servicenow_insights_state_metric). Here: %s.</div>' % (
+            e(pr.get("states_error") or "not read") if pr.get("states_error") != "none" else "this instance has no such metric")
+    body.append(section("states", "Time in each state", "incidents resolved in the period · waiting to start, in progress, on hold", st_body))
+
+    ag = s.get("aging") or {}
+    if ag:
+        arows = [(search_attr(g["group"]), [td(glink(g["group"])), td(n(g["open"]), "n", g["open"])] +
+                  [td(n(c_), "n" + (" c-warn b" if i_ == 3 and c_ else ""), c_) for i_, c_ in enumerate(g["counts"])]) for g in ag.get("by_group") or []]
+        wk_ = s["weeks"]
+        body.append(section("aging", "Backlog age and flow", "open now, in business days · and each week's net (opened minus resolved)",
+                            table([("Group", "", "name"), ("Open now", "n", "")] + [(b_, "n", "") for b_ in ag["buckets"]], arows, sortable=True,
+                                  empty="Nothing open.") +
+                            '<div class="fair">Business days since opened (%s), incidents and requested items.</div>' % e(
+                                (slo.get("business_hours") or "").split(" ")[0] if slo.get("business_hours") and slo.get("business_hours") != "calendar hours" else "Mon-Fri") +
+                            '<div class="fig narrow"><h3>Net per week</h3><div class="cap">Opened minus resolved. Above zero, the backlog grew that week.</div>%s</div>' % (
+                                line_chart([ag["net"]], ["var(--st1)"], ["Net"], [w["start"] for w in wk_], "Opened minus resolved per week", zoom=True, area=False)
+                                if len(wk_) > 1 else "")))
+
+    qt, hs, pp_ = s.get("quality_t") or {}, s.get("hotspots") or {}, s.get("pingpong") or {}
+    if qt:
+        qrows = [(search_attr(g["group"]), [td(glink(g["group"])), td(n(g["n"]), "n", g["n"]), td(pct(g["other"]), "n", g["other"] or 0),
+                                           td(pct(g["no_ci"]), "n", g["no_ci"] or 0), td(pct(g["short"]), "n", g["short"] or 0)]) for g in qt.get("by_group") or []]
+        crows = [(search_attr(c_["ci"], c_["group"]), [td(e(c_["ci"])), td(n(c_["count"]), "n", c_["count"]), td(n(c_["repeats"]), "n", c_["repeats"]),
+                                                       td(n(c_["problem"]), "n", c_["problem"]), td(glink(c_["group"]), "nw")]) for c_ in hs.get("cis") or []]
+        prows = [("", [td(glink(a_)), td(glink(b_)), td(n(c_), "n")]) for a_, b_, c_ in pp_.get("pairs") or []]
+        body.append(section("quality", "Ticket quality and hot spots", "incidents opened in the period",
+                            '<div class="fig"><h3>Ticket quality</h3><div class="cap">The share of each group\'s incidents filed poorly:<ul>'
+                            '<li><b>Other or none</b>: no real category (all groups %s)</li><li><b>No CI</b>: no configuration item (%s)</li>'
+                            '<li><b>Short</b>: a description under %d characters (%s)</li></ul></div>%s</div>' % (
+                                pct(qt.get("other")), pct(qt.get("no_ci")), qt.get("short_chars") or 15, pct(qt.get("short")),
+                                table([("Group", "", "name"), ("Incidents", "n", ""), ("Other or none", "n", ""), ("No CI", "n", ""), ("Short", "n", "")], qrows,
+                                      sortable=True, empty="No incidents in the period.")) +
+                            '<div class="fig"><h3>Hot spots</h3><div class="cap">The configuration items with the most incidents.<ul>'
+                            '<li><b>Back within %d days</b>: a new incident on the same CI within %d days of the last</li></ul></div>'
+                            '%s<div class="fair">%s incidents (%s) are linked to a problem.</div></div>' % (
+                                hs.get("repeat_days") or 7, hs.get("repeat_days") or 7,
+                                table([("Configuration item", "", ""), ("Incidents", "n", ""), ("Back within %d days" % (hs.get("repeat_days") or 7), "n", ""),
+                                       ("Linked to a problem", "n", ""), ("Mostly in", "", "")], crows, sortable=True, empty="No incident names a CI."),
+                                n(hs.get("with_problem") or 0), pct(hs.get("problem_pct"))) +
+                            '<div class="fig"><h3>Ping-pong</h3><div class="cap">%s</div>%s</div>' % (
+                                ("<b>%s</b> incidents (%s) went back to a group they had come from: A to B, then back to A." % (n(pp_["count"]), pct(pp_["pct"])))
+                                if pp_.get("read") else "Not known: the assignment paths were not read.",
+                                table([("From", "", ""), ("To, and back", "", ""), ("Times", "n", "")], prows, empty="No incident went back and forth.")
+                                if pp_.get("read") else "")))
+
+    af = s.get("after") or {}
+    if af:
+        frows = [(search_attr(g["group"]), [td(glink(g["group"])), td(n(g["n"]), "n", g["n"]), td(n(g["after"]), "n", g["after"]), td(pct(g["pct"]), "n", g["pct"] or 0)])
+                 for g in af.get("by_group") or []]
+        body.append(section("afterhours", "After hours", "incidents opened outside the core hours · for staffing",
+                            '<p class="sub"><b>%s</b> of the incidents (%s) were opened outside the core hours: %s. '
+                            'The heatmap under <a href="#keepingup">Keeping up</a> shows when.</p>' % (pct(af.get("pct")), n(af.get("count") or 0), e(af.get("core") or "")) +
+                            table([("Group", "", "name"), ("Incidents", "n", ""), ("After hours", "n", ""), ("Share", "n", "")], frows, sortable=True,
+                                  empty="No incidents in the period.")))
+
+    wl = s.get("workload") or {}
+    if wl:
+        pm = wl.get("person_metrics")
+        wrows = [(search_attr(x["person"], x["group"]), [td(e(x["person"])), td(glink(x["group"]), "nw"), td(n(x["open"]), "n", x["open"]),
+                                                        td(n(x["resolved"]), "n", x["resolved"])] + ([td(fh(x["median_h"]), "n", x["median_h"] or 0)] if pm else []))
+                 for x in wl["rows"]]
+        body.append(section("workload", "Workload", "per person · open now and resolved in the period (the person each is assigned to)",
+                            table([("Person", "", "name"), ("Group", "", ""), ("Open now", "n", ""), ("Resolved", "n", "")] +
+                                  ([("Median to resolve", "n", "")] if pm else []), wrows, sortable=True, empty="Nothing open or resolved is assigned to a person.") +
+                            '<div class="fair">%s open and assigned to nobody.%s</div>' % (
+                                n(wl.get("unassigned") or 0), "" if pm else " Each person's time to resolve shows only with servicenow_insights_person_metrics: true.")))
 
     # ---- keeping up
     wk = s["weeks"]

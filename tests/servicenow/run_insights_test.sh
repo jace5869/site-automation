@@ -11,6 +11,7 @@
 # only) - the teams' columns, Held up by, the leaderboards' own column; refused (403): said, the rest whole, green.
 # 1.7.0: task_sla read (Response and Resolution met, No SLO, SLA at risk now, act on first, how incidents ended, the
 # categories, the surveys); task_sla refused: the targets in business hours, a response from the metric Assigned to, said.
+# 1.9.0: the time in each state (the state metric), the backlog's age and flow, quality and hot spots, after hours, workload.
 #   bash tests/servicenow/run_insights_test.sh            (ANSIBLE_PLAYBOOK=... to pick one)
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -116,7 +117,8 @@ check "the site's page: every section, links to the teams, ticket links into Ser
     'id="requests"' 'id="changes"' 'id="notes"' 'id="allstars"' 'id="kb"' 'id="method"' 'href="ops/other/windows/latest.html"' 'Teams side by side' \
     "http://127.0.0.1:$port/incident.do?sysparm_query=number=INC" 'grouped by their category' 'From the numbers' \
     'Reopen not used here' 'Came back' 'Response met' 'Resolution met' 'No SLO' 'P4 Incident Response' 'Act on first' 'SLA at risk now'
-    'How incidents ended' 'Priority set by hand' 'id="categories"' 'id="satisfaction"' 'data-tab="p1"' 'No drafts: ACT (GenAI) writes them' '!cid:' '!<!--site-report-logo-->'
+    'How incidents ended' 'Priority set by hand' 'id="categories"' 'id="satisfaction"' 'Time in each state' 'The numbers as a table'
+    'Backlog age and flow' 'Ping-pong' 'id="afterhours"' 'id="workload"' 'data-tab="p1"' 'No drafts: ACT (GenAI) writes them' '!cid:' '!<!--site-report-logo-->'
 check "a team's page: that team, linked back to the site's" "$top/ops/other/windows/latest.html" \
     'Ops - Windows ·' '!id="teams"' 'href="../../../latest.html"' 'All-stars' 'Most closed' 2>/dev/null || \
 check "a team's page: that team, linked back to the site's" "$top/ops/other/windows/latest.html" 'href="../../../latest.html"' 'Most closed' '!id="teams"'

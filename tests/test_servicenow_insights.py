@@ -1009,6 +1009,59 @@ class LeadingIndicators(unittest.TestCase):
                          ["Fixed", "Duplicate"])
 
 
+class LifeCycle(unittest.TestCase):
+    """1.9.0: the time in each state (the state metric; the averages add up to the time to resolve), on hold (share, more
+    than twice, by reason, Awaiting Vendor), the backlog's age in business days and the weekly net, ping-pong, ticket
+    quality, hot spots, after hours, workload (the time per person only with person_metrics)."""
+
+    def test_helpers(self):
+        self.assertEqual([F.state_kind(x) for x in ("New", "In Progress", "On Hold", "Awaiting Info", "Resolved", "Closed", "Canceled")],
+                         ["new", "progress", "hold", "hold", "resolved", "", ""])
+        sp = F.business_hours_spec({"days": ["mon", "tue", "wed", "thu", "fri"], "start": "07:30", "end": "16:30"})
+        U = datetime.timezone.utc
+        self.assertTrue(F.in_hours(datetime.datetime(2026, 11, 2, 9, 0, tzinfo=U), sp, U))
+        self.assertFalse(F.in_hours(datetime.datetime(2026, 11, 2, 17, 0, tzinfo=U), sp, U))
+        self.assertFalse(F.in_hours(datetime.datetime(2026, 11, 7, 9, 0, tzinfo=U), sp, U))               # Saturday
+        night = F.business_hours_spec({"days": ["mon"], "start": "22:00", "end": "06:00"})
+        self.assertTrue(F.in_hours(datetime.datetime(2026, 11, 3, 5, 0, tzinfo=U), night, U))             # Monday's shift, Tuesday 05:00
+
+    def test_the_site(self):
+        s = site()["model"]["scopes"]["all"]
+        lc = s["lifecycle"]
+        self.assertTrue(lc["measured"] and lc["n"] > 100)
+        self.assertTrue(0 < lc["avg"]["new"] < lc["avg"]["progress"] and lc["avg"]["resolved"] > 24)     # resolved to closed: 3 days
+        self.assertTrue(5 < lc["hold_share"] < 30 and lc["held_many"] > 0 and lc["vendor_share"] > 0)
+        self.assertEqual(round(sum(r_[3] for r_ in lc["by_reason"])), 100)
+        ag = s["aging"]
+        self.assertEqual(sum(ag["total"]), sum(g["open"] for g in ag["by_group"]))
+        self.assertEqual(len(ag["net"]), len(s["weeks"]))
+        self.assertEqual(ag["net"], [w["opened"] - w["resolved"] for w in s["weeks"]])
+        pp = s["pingpong"]
+        self.assertTrue(pp["read"] and pp["count"] > 0 and all(a_ != b_ for a_, b_, c_ in pp["pairs"]))
+        q = s["quality_t"]
+        self.assertTrue(q["other"] > 0 and q["no_ci"] > 0 and q["short"] > 0)
+        hs = s["hotspots"]
+        self.assertTrue(hs["cis"][0]["count"] >= hs["cis"][-1]["count"] and hs["cis"][0]["repeats"] > 0 and hs["with_problem"] > 0)
+        self.assertTrue(0 < s["after"]["pct"] < 100 and s["after"]["core"].startswith("Mon-Fri 07:30-16:30"))
+        wl = s["workload"]
+        self.assertTrue(wl["rows"] and all(x["median_h"] is None for x in wl["rows"]))                      # private by default
+        m2 = F.servicenow_insights_model(site()["r"], None, site()["mask"], dict(OPTS, person_metrics=True))
+        self.assertTrue(any(x["median_h"] is not None for x in m2["scopes"]["all"]["workload"]["rows"]))
+        html = P.servicenow_insights_page(site()["model"], "all", OPTS)
+        for sid in ("states", "aging", "quality", "afterhours", "workload"):
+            self.assertIn('id="%s"' % sid, html)
+        self.assertIn("The numbers as a table", html)                                                        # the chart's table view
+        self.assertIn("--st4:#eda100", html)
+        sec = lambda h: h[h.index('id="workload"'):h.index("</section>", h.index('id="workload"'))]     # noqa: E731
+        self.assertNotIn("Median to resolve", sec(html))
+        self.assertIn("Median to resolve", sec(P.servicenow_insights_page(m2, "all", OPTS)))
+
+    def test_not_measured(self):
+        r = dict(site()["r"], states={}, states_error="none")
+        html = P.servicenow_insights_page(F.servicenow_insights_model(r, None, site()["mask"], OPTS), "all", OPTS)
+        self.assertIn("this instance has no such metric", html)
+
+
 class ModuleReads(unittest.TestCase):
     """1.7.0: task_sla, the state metric, the metric Assigned to and the surveys - GET only; refused said, the targets instead."""
 

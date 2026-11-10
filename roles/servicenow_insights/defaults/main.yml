@@ -106,6 +106,16 @@ servicenow_insights_priority_matrix:
 # incidents in a category not on it (and names those categories). [] = no list: every category as it is.
 servicenow_insights_categories: []
 
+# THE LIFE CYCLE AND THE FLOW (1.9.0)
+# The core hours, for After hours (incidents opened outside them): {} = servicenow_insights_business_hours, else Mon-Fri
+# 07:30-16:30; the same form, e.g. {days: [mon, tue, wed, thu, fri], start: "07:30", end: "16:30"}.
+servicenow_insights_core_hours: {}
+servicenow_insights_short_desc_chars: 15      # Ticket quality: a short description under this many characters
+servicenow_insights_hold_many: 2              # On hold: incidents put on hold more than this many times are counted
+servicenow_insights_repeat_ci_days: 7         # Hot spots: another incident on the same CI within this many days is a repeat
+# Workload: the median time to resolve per person, only when true (open and resolved per person are always shown).
+servicenow_insights_person_metrics: false
+
 # WHAT TO ACT ON FIRST (1.7.0)
 # SLA at risk now: an open incident whose running SLA (task_sla) has used this much of its time (business time where
 # ServiceNow keeps it), or is breached and still open - listed worst first.

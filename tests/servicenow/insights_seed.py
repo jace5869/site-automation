@@ -370,6 +370,44 @@ def main():
             bad = rec.get("made_sla") == "false"
             recs.append({"_table": "task_sla", "task": "s-" + rec["number"], "sla": "Request Fulfillment Resolution", "stage": "breached" if bad else "completed",
                          "has_breached": "true" if bad else "false", "business_percentage": "60.0", "start_time": rec["opened_at"], "end_time": rec["closed_at"]})
+    # 1.9.0: their own random numbers (R5) - the state metric of the incidents resolved in the last six months: New, In
+    # Progress, sometimes On Hold (more than twice for a few; the reason kept on some), Resolved, and a few reopened within
+    # 7 days (Resolved, In Progress, Resolved again)
+    R5 = random.Random(19)
+    since6 = END - datetime.timedelta(days=184)
+    for rec in incs:
+        if not rec.get("resolved_at") or rec["resolved_at"] < t(since6):
+            continue
+        o = datetime.datetime.strptime(rec["opened_at"], "%Y-%m-%d %H:%M:%S")
+        rs = datetime.datetime.strptime(rec["resolved_at"], "%Y-%m-%d %H:%M:%S")
+        span = max((rs - o).total_seconds(), 600)
+        start = o + datetime.timedelta(seconds=span * R5.uniform(.02, .2))
+        rows = [("New", o, start)]
+        cur = start
+        holds = R5.choices([0, 1, 2, 3], weights=[.7, .2, .07, .03])[0]
+        for h in range(holds):
+            a_ = cur + datetime.timedelta(seconds=(rs - cur).total_seconds() * R5.uniform(.1, .3))
+            b_ = a_ + datetime.timedelta(seconds=(rs - a_).total_seconds() * R5.uniform(.2, .5))
+            rows += [("In Progress", cur, a_), ("On Hold", a_, b_)]
+            cur = b_
+        if holds and R5.random() < .5:
+            rec["hold_reason"] = R5.choice(["Awaiting Caller", "Awaiting Vendor", "Awaiting Change"])
+        rows.append(("In Progress", cur, rs))
+        closed = datetime.datetime.strptime(rec["closed_at"], "%Y-%m-%d %H:%M:%S") if rec.get("closed_at") else None
+        if R5.random() < .03 and closed:                         # reopened within 7 days, resolved again
+            back = rs + datetime.timedelta(days=R5.uniform(.5, 5))
+            rows += [("Resolved", rs, back), ("In Progress", back, back + datetime.timedelta(hours=2)),
+                     ("Resolved", back + datetime.timedelta(hours=2), closed)]
+        else:
+            rows.append(("Resolved", rs, closed))
+        for st, a_, b_ in rows:
+            recs.append({"_table": "metric_instance", "definition": "Incident State Duration", "table": "incident", "_doc": rec["number"],
+                         "value": st, "start": t(a_), "end": t(b_) if b_ else ""})
+    for rec in incs:                          # the last six weeks' open incidents: some poorly filed (Other or no category, no CI, short)
+        if not rec.get("resolved_at") and rec["opened_at"] > t(END - datetime.timedelta(days=42)) and R5.random() < .5:
+            k = R5.choice(["other", "none", "noci", "short"])
+            rec.update({"other": {"category": "Other"}, "none": {"category": "", "subcategory": ""}, "noci": {"cmdb_ci": ""},
+                        "short": {"short_description": "help"}}[k])
     for rec in incs:
         rec.pop("_issue", None)
     # the groups' members (sys_user_grmember): the people, and the quiet members

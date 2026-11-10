@@ -20,6 +20,11 @@ and simpler: the tiles and the main tables, a link to the page, and an Excel wor
 | **Act on first** (1.7.0) | what the process says to look at, as tiles and lists (the first 10 rows, the rest folded): **SLA at risk now** (open incidents past 75% of their SLA, or breached and still open - worst first), **open over 3 hops**, **Awaiting Caller over 6 business days**, **No Resolution Provided** in the period (each for leadership's review, the close note's start with names and numbers replaced), **resolved, not closed after 7 days** - below |
 | **Hops, on hold and resolution codes** (1.7.0) | per group: over the hop limit and the hops each group took, on hold now (no reason, Awaiting Caller too long), on hold by reason and business days, the resolution codes to look at and reopened |
 | **How incidents ended** (1.7.0) | the outcome mix (Fixed, Workaround, Duplicate, Known Error, No Resolution Provided) per group against the window before, **unable to resolve**, first-contact resolution (and the service desk's), reopened within 7 days |
+| **Time in each state** (1.9.0) | stacked bars per group: the average hours waiting to start, in progress and on hold, for the incidents resolved in the period. A table view adds resolved to closed. On hold: its share of the time, repeat holds, the reasons |
+| **Backlog age and flow** (1.9.0) | what is open now per group, by business days since opened (0-1, 2-5, 6-10, over 10). Each week's net: opened minus resolved |
+| **Ticket quality and hot spots** (1.9.0) | per group: no real category, no CI, a short description. The CIs with the most incidents and repeats. Problem links and ping-pong |
+| **After hours** (1.9.0) | incidents opened outside the core hours, per group, for staffing |
+| **Workload** (1.9.0) | per person: open now and resolved in the period. Each person's time to resolve only with `servicenow_insights_person_metrics: true` |
 | **Keeping up** | opened and resolved per week, the backlog at the end of each week, the age of what is open now (0-5, 6-15, 16-30, over 30 days), a heatmap of when incidents are opened (weekday by hour), the weeks as a table |
 | **Severity** | incidents per priority - its name (1 - Critical ... 5 - Exempt), count, median to resolve, Response met and Resolution met (1.7.0), No SLO -, the **priority set by hand** (impact x urgency, the 3 x 3 matrix) per group, then every P1 and P2: when, what, the group, the change that caused it, its problem record |
 | **Categories** (1.7.0) | incidents per category (against the window before), their median time to resolve and SLOs met, the group they are mostly in; a data-quality line - no category, Other, off your official list (named) |
@@ -487,6 +492,25 @@ How each is read:
 - **First-contact resolution**: resolved without being reassigned. For the service desk's own, name its groups in
   `servicenow_insights_service_desk_groups`.
 - **Reopened within 7 days** needs the state metric.
+
+## The life cycle and the flow (1.9.0)
+
+These sections read the metric *Incident State Duration* and the tickets already read. Without the metric, *Time in
+each state* says it is not measured.
+
+| Section | What it counts | Setting |
+|---|---|---|
+| **Time in each state** | the incidents resolved in the period: average hours waiting to start (New), in progress (In Progress, Assigned, Work in Progress) and on hold (On Hold, Awaiting, Pending); resolved to closed in the table | `servicenow_insights_state_metric` |
+| **On hold** | the share of the time to resolve; incidents on hold more than twice; hours by reason; Awaiting Vendor's share | `servicenow_insights_hold_many: 2` |
+| **Backlog age** | what is open now, by business days since opened | `servicenow_insights_business_hours` (its days, else Mon-Fri) |
+| **Ticket quality** | category Other or none, no CI, a short description | `servicenow_insights_short_desc_chars: 15` |
+| **Hot spots** | the CIs with the most incidents, and repeats on the same CI | `servicenow_insights_repeat_ci_days: 7` |
+| **Ping-pong** | incidents sent from A to B and back to A, from the assignment paths | - |
+| **After hours** | incidents opened outside the core hours | `servicenow_insights_core_hours` (`{}`: the business hours, else Mon-Fri 07:30-16:30) |
+| **Workload** | open now and resolved, per person (the one each is assigned to) | `servicenow_insights_person_metrics: false` |
+
+The on-hold reason is the one the incident had when resolved. Where ServiceNow cleared it, the table says *reason not
+kept*. Each person's time to resolve is shown only when `servicenow_insights_person_metrics` is true.
 
 ## The window
 
