@@ -64,6 +64,8 @@
       custom_view: "{{ servicenow_insights_custom_view | bool }}"
       custom_view_max_rows: "{{ servicenow_insights_custom_view_max_rows | int }}"
       custom_view_presets: "{{ servicenow_insights_custom_view_presets | default({}, true) }}"
+      periods: "{{ servicenow_insights_periods | default(['all', 'this_month', '1m', '2m', '2w', '1w'], true) }}"
+      week_start: "{{ servicenow_insights_week_start | default('mon', true) | string | trim | lower }}"
       split_by: "{{ servicenow_insights_split_by | default('both', true) | string | trim | lower }}"
       directorate_alias: "{{ servicenow_insights_directorate_alias | default({}, true) }}"
       directorate_tags: "{{ servicenow_insights_directorate_tags | default({}, true) }}"

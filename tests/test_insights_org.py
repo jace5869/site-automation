@@ -9,6 +9,7 @@ and the page's script in a headless browser when there is one), the address keep
 tests/servicenow/insights_seed.py, its groups renamed into a four-level tree of placeholders.
     python3 tests/test_insights_org.py"""
 import copy
+import datetime
 import json
 import os
 import re
@@ -123,14 +124,21 @@ class TheCustomView(unittest.TestCase):
         """The compact rows give the same figures as the model, for every node and All."""
         m = model()
         c = m["custom"]
-        self.assertEqual(sorted(c["cols"]), ["d", "g", "hold", "hops", "noslo", "o", "out", "p", "r7", "resp", "risk", "s", "t"])
+        self.assertEqual(sorted(c["cols"]), ["d", "g", "hold", "hops", "noslo", "o", "ob", "out", "p", "r7", "resp", "risk", "s", "t", "tis"])
         self.assertEqual((c["hop_limit"], [c["outcomes"][i] for i in c["unable"]]), (3, ["Known Error", "No Resolution Provided"]))
         self.assertTrue(all(len(v) == c["n"] for v in c["cols"].values()))
-        self.assertLess(len(json.dumps(c, separators=(",", ":"))) / c["n"], 56)                     # 13 small columns with the 1.7.0 figures
+        self.assertLess(len(json.dumps(c, separators=(",", ":"))) / c["n"], 64)                     # 15 small columns: 1.7.0's and 1.9.0's
         gi = dict((g, i) for i, g in enumerate(c["groups"]))
         for nd in list(F.org_walk(m["org"])) + [{"key": "all", "all": c["groups"]}]:
             s = m["scopes"][nd["key"]]
-            self.assertEqual(F.custom_figures(c, [gi[g] for g in nd["all"]]),
+            got = F.custom_figures(c, [gi[g] for g in nd["all"]])
+            # 1.9.0's, as its scope_model: the time in each state (carried in tenths of hours), the backlog's age
+            tis, tis_n = got.pop("tis"), got.pop("tis_n")
+            self.assertEqual(tis_n, s["lifecycle"]["n"], nd["key"])
+            for k_, v in s["lifecycle"]["avg"].items():
+                self.assertAlmostEqual(tis[k_] or 0, v or 0, delta=0.051, msg=(nd["key"], k_))
+            self.assertEqual(got.pop("aging"), s["aging"]["total"], nd["key"])
+            self.assertEqual(got,
                              {"incidents": s["counts"]["incidents"], "requests": s["counts"]["requests"], "resolved": s["counts"]["resolved"],
                               "backlog": [s["backlog"][0], s["backlog"][1]], "median_h": s["median_h"][0], "sla": s["sla"][0],
                               # 1.7.0's, as its scope_model works them out
@@ -138,7 +146,13 @@ class TheCustomView(unittest.TestCase):
                               "fcr": s["fcr"]["now"], "hold": s["hold"]["open"], "unable": s["outcomes"]["unable"][0]}, nd["key"])
 
     def test_too_many_rows_or_off(self):
-        self.assertEqual(model(custom_view_max_rows=10)["custom"], {"skipped": model()["custom"]["n"], "max": 10})
+        # 1.10.0: the window before's tickets go first (no compare), then the Custom view
+        one = model(custom_view_max_rows=1500)["custom"]
+        self.assertTrue(one["no_compare"])
+        self.assertLess(one["n"], model()["custom"]["n"])
+        self.assertEqual([p["ca"] for p in one["periods"] if p["name"] == "all"], [None])
+        self.assertIn("The window before is not carried", P.servicenow_insights_page(model(custom_view_max_rows=1500), "all", {"links": T.page_links(model())}))
+        self.assertEqual(model(custom_view_max_rows=10)["custom"], {"skipped": one["n"], "max": 10})
         self.assertEqual(model(custom_view=False)["custom"], {})
         page = P.servicenow_insights_page(model(custom_view_max_rows=10), "all", {"links": T.page_links(model())})
         self.assertIn("more than servicenow_insights_custom_view_max_rows (10)", page)
@@ -234,6 +248,105 @@ class TheSplit(unittest.TestCase):
                       'opened in the period">%s opened</span>' % (i, "{:,}".format(f["incidents"] + f["requests"])), h)
 
 
+class ThePeriods(unittest.TestCase):
+    """1.10.0: the Custom view's periods - calendar months and Mon-Sun weeks, each against the one before - and their
+    figures: the same as a model whose window is that period."""
+    NY = F._tz("America/New_York")
+
+    def b(self, until, prev_months=6, **o):
+        u = datetime.datetime(*until, tzinfo=self.NY)
+        s = F._midnight(F._month((u - datetime.timedelta(seconds=1)).date(), -5), self.NY)
+        prev = F._midnight(F._month(s.date(), -prev_months), self.NY)
+        return dict((p["name"], p) for p in F.period_bounds(s, u, prev, self.NY, o))
+
+    def day(self, x):
+        return x.astimezone(self.NY).strftime("%Y-%m-%d %H:%M")
+
+    def test_a_window_that_ends_with_its_month(self):
+        p = self.b((2026, 11, 1))                                         # the window ends on 2026-10-31
+        self.assertEqual([p[k]["title"] for k in ("all", "1m", "2m")], ["May to October 2026", "October 2026", "September to October 2026"])
+        self.assertNotIn("this_month", p)                                 # this month is last month: one button
+        self.assertEqual([p[k]["ctitle"] for k in ("all", "1m", "2m")], ["November 2025 to April 2026", "September 2026", "July to August 2026"])
+        # 2026-11-01 is a Sunday: the last whole Mon-Sun week is Oct 19-25, not the week Nov 1 ends
+        self.assertEqual((p["1w"]["title"], p["1w"]["ctitle"]), ("2026-10-19 to 2026-10-25", "2026-10-12 to 2026-10-18"))
+        self.assertEqual((p["2w"]["title"], p["2w"]["ctitle"]), ("2026-10-12 to 2026-10-25", "2026-09-28 to 2026-10-11"))
+        self.assertEqual([p[k]["label"] for k in F.PERIODS if k in p], ["The window", "Last month", "Last 2 months", "Last 2 weeks", "Last week"])
+        self.assertEqual([x["label"] for x in self.b((2026, 11, 10)).values()],
+                         ["The window", "This month", "Last month", "Last 2 months", "Last 2 weeks", "Last week"])
+
+    def test_a_window_that_ends_now(self):
+        p = self.b((2026, 11, 10, 15, 30))                                # a Tuesday afternoon
+        tm = p["this_month"]
+        self.assertEqual((self.day(tm["a"]), self.day(tm["b"])), ("2026-11-01 00:00", "2026-11-10 15:30"))
+        self.assertEqual((self.day(tm["ca"]), self.day(tm["cb"])), ("2026-10-01 00:00", "2026-10-10 15:30"))   # the same days of last month
+        self.assertEqual(tm["title"], "2026-11-01 to 2026-11-10")
+        self.assertEqual((p["1m"]["title"], p["1m"]["ctitle"]), ("October 2026", "September 2026"))
+        self.assertEqual(p["1w"]["title"], "2026-11-02 to 2026-11-08")
+        # the clocks went back on 2026-11-01: the week is 7 local days, every edge a local midnight
+        w = p["1w"]
+        utc = datetime.timezone.utc
+        self.assertEqual((w["b"].astimezone(utc) - w["a"].astimezone(utc)).total_seconds(), 7 * 86400)
+        c2 = self.b((2026, 11, 3))["1w"]
+        self.assertEqual((c2["title"], (c2["b"].astimezone(utc) - c2["a"].astimezone(utc)).total_seconds()),
+                         ("2026-10-26 to 2026-11-01", 7 * 86400 + 3600))
+        self.assertTrue(all(self.day(x).endswith("00:00") for x in (c2["a"], c2["b"], c2["ca"], c2["cb"])))
+
+    def test_the_week_start_and_what_does_not_fit(self):
+        p = self.b((2026, 11, 10), week_start="sun")
+        self.assertEqual(p["1w"]["title"], "2026-11-01 to 2026-11-07")
+        q = self.b((2026, 11, 10), prev_months=0)                         # no window before: no compare for the window
+        self.assertEqual((q["all"]["ca"], q["1m"]["ctitle"]), (None, "September 2026"))
+        u = datetime.datetime(2026, 11, 10, tzinfo=self.NY)
+        nine = u - datetime.timedelta(days=9)                             # 2026-11-01 to 11-09: one whole week, no whole month
+        short = F.period_bounds(nine, u, nine, self.NY, {"periods": "all, 1m, 1w"})
+        self.assertEqual([x["name"] for x in short], ["all", "1w"])
+        self.assertEqual([x["name"] for x in F.period_bounds(u - datetime.timedelta(days=7), u, u, self.NY, {"periods": "1w"})], [])
+        self.assertEqual(short[1]["ca"], None)
+        with self.assertRaises(ValueError):
+            F.period_bounds(u - datetime.timedelta(days=7), u, u, self.NY, {"periods": ["fortnight"]})
+        with self.assertRaises(ValueError):
+            F.period_bounds(u - datetime.timedelta(days=7), u, u, self.NY, {"week_start": "someday"})
+
+    def test_business_days_from_the_calendar(self):
+        spec = F.business_hours_spec({"days": ["mon", "tue", "wed", "thu", "sat"], "holidays": ["2026-10-13", "2026-10-17", "2026-10-18"]})
+        since = datetime.datetime(2026, 10, 1, tzinfo=self.NY)
+        until = datetime.datetime(2026, 11, 3, 12, 0, tzinfo=self.NY)
+        cal = F.day_calendar(datetime.datetime(2026, 9, 1, tzinfo=self.NY), until, since, spec, self.NY)
+        days, hol = set(cal["days"]), cal["hol"]
+        self.assertEqual(hol, ["2026-10-13", "2026-10-17"])               # a holiday on a day off is no business day anyway
+        for a in [datetime.datetime(2026, 8, 20, 9, tzinfo=self.NY), datetime.datetime(2026, 10, 2, 23, tzinfo=self.NY),
+                  datetime.datetime(2026, 10, 12, 1, tzinfo=self.NY)]:
+            for k in range(0, len(cal["mid"]), 3):
+                b = since + datetime.timedelta(seconds=cal["mid"][k])
+                ob = F._bd_ord(a.date(), days, hol) - cal["base"]
+                self.assertEqual(max(cal["bo"][k] - ob, 0), F.business_days(a, b, spec, self.NY), (a, b))
+
+    def test_the_figures_of_a_month_are_a_month_model(self):
+        m = model()
+        c = m["custom"]
+        idx = list(range(len(c["groups"])))
+        r = build()
+        r["window"] = T.rd.window(1, 0, "2026-10-31", True, "", T.NOW)   # October, against September
+        m1 = F.servicenow_insights_model(r, None, T.site(sites=True)["mask"], dict(T.OPTS, hierarchy_source="map", hierarchy_map=MAP))
+        s1 = m1["scopes"]["all"]
+        p = [x for x in c["periods"] if x["name"] == "1m"][0]
+        got, was = F.custom_figures(c, idx, (p["a"], p["b"])), F.custom_figures(c, idx, (p["ca"], p["cb"]))
+        self.assertEqual((got["incidents"], got["requests"], got["resolved"], got["backlog"]),
+                         (s1["counts"]["incidents"], s1["counts"]["requests"], s1["counts"]["resolved"], [s1["backlog"][0], s1["backlog"][1]]))
+        self.assertEqual((got["median_h"], got["sla"], got["resp"], got["no_slo"], got["hops_done_pct"], got["fcr"], got["unable"]),
+                         (s1["median_h"][0], s1["sla"][0], s1["resp"][0], s1["no_slo"][0], s1["hops"]["done_pct"], s1["fcr"]["now"],
+                          s1["outcomes"]["unable"][0]))
+        self.assertEqual(got["aging"], s1["aging"]["total"])
+        for k_, v in s1["lifecycle"]["avg"].items():
+            self.assertAlmostEqual(got["tis"][k_] or 0, v or 0, delta=0.051, msg=k_)
+        # September, the month before: the model's window before
+        self.assertEqual((was["incidents"], was["median_h"], was["sla"], was["resp"]),
+                         (s1["counts"]["incidents_prev"], s1["median_h"][1], s1["sla"][1], s1["resp"][1]))
+        # what is known only now: for a period that ends at the report's end only
+        w1 = [x for x in c["periods"] if x["name"] == "1w"][0]
+        self.assertEqual((got["hold"] is None, F.custom_figures(c, idx, (w1["a"], w1["b"]))["hold"]), (False, None))
+
+
 def browser():
     for b in ("google-chrome", "chromium", "chromium-browser"):
         if shutil.which(b):
@@ -272,6 +385,48 @@ class TheScript(unittest.TestCase):
         self.assertEqual(got["half"], 4)                                  # SITEA, SPLIT, Operations, SITEB: some under them
         want = F.custom_figures(c, [0, 2])
         self.assertEqual(got["opened"], "{:,}".format(want["incidents"] + want["requests"]))
+
+    def test_the_periods_in_a_browser(self):
+        """1.10.0: every period and the one before it, worked out by the page's script as custom_figures does; a period
+        in the address (a calendar one, and a from / to) chosen, titled, charted; what is known only now said so."""
+        m = model()
+        c = m["custom"]
+        page = P.servicenow_insights_page(m, "all", {"links": T.page_links(m), "look": "brief"})
+        idx = [0, 2, 4]
+        spans = [[p["a"], p["b"]] for p in c["periods"]] + [[p["ca"], p["cb"]] for p in c["periods"] if p["ca"] is not None]
+        probe = ('<script>addEventListener("load",function(){setTimeout(function(){var f=window.siteInsightsFigures,D=document,sp=%s;'
+                 'function tx(i){return D.getElementById(i).textContent}'
+                 'D.title="R "+JSON.stringify({figs:sp.map(function(s){return f(%s,s[0],s[1])}),'
+                 'pressed:[].slice.call(D.querySelectorAll("button.cvpd[aria-pressed=true]")).map(function(b){return b.getAttribute("data-name")}),'
+                 'title:tx("cvpt"),from:D.getElementById("cvfrom").value,to:D.getElementById("cvto").value,label:tx("cv-backlog-l"),'
+                 'hold:tx("cv-hold"),holdd:tx("cv-hold-d"),bars:D.querySelectorAll("#cvchart rect").length,rows:D.getElementById("cvtab").tBodies[0].rows.length,'
+                 'x:tx("cv-opened-x"),hash:location.hash})},500)})</script></body>') % (json.dumps(spans), json.dumps(idx))
+        got = {}
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "all.html")
+            with open(path, "w") as fh:
+                fh.write(page.replace("</body>", probe))
+            for k, h in (("week", "#cv=0,2,4&p=1w"), ("range", "#cv=0,2,4&p=2026-10-05_2026-10-18")):
+                out = subprocess.run([browser(), "--headless=new", "--disable-gpu", "--no-sandbox", "--virtual-time-budget=6000", "--dump-dom",
+                                      "file://%s%s" % (path, h)], capture_output=True, text=True, timeout=120).stdout
+                got[k] = json.loads(re.search(r"<title>R (.*?)</title>", out).group(1).replace("&quot;", '"').replace("&amp;", "&"))
+        for s_, g in zip(spans, got["week"]["figs"]):
+            want = F.custom_figures(c, idx, tuple(s_))
+            for f in ("incidents", "requests", "resolved", "backlog", "no_slo", "hops_open", "hold", "aging", "tis_n"):
+                self.assertEqual(g[f], want[f], (s_, f))
+            for f in ("median_h", "sla", "resp", "hops_done_pct", "fcr", "unable"):
+                self.assertAlmostEqual(g[f] or 0, want[f] or 0, delta=0.051, msg=(s_, f))
+            for k_ in want["tis"]:
+                self.assertAlmostEqual(g["tis"][k_] or 0, want["tis"][k_] or 0, delta=0.051, msg=(s_, k_))
+        w = got["week"]
+        self.assertEqual((w["pressed"], w["title"], w["from"], w["to"]), (["1w"], "2026-10-19 to 2026-10-25, compared with 2026-10-12 to 2026-10-18",
+                                                                          "2026-10-19", "2026-10-25"))
+        self.assertEqual((w["label"], w["hold"], w["holdd"], w["rows"], w["bars"]), ("Open at the period's end", "—", "known now only", 3, 14))
+        self.assertRegex(w["x"], r"^(▲ |▼ )\d+%$|^no change$")
+        r = got["range"]
+        self.assertEqual((r["pressed"], r["title"], r["from"], r["to"], r["bars"]),
+                         ([], "2026-10-05 to 2026-10-18, compared with 2026-09-21 to 2026-10-04", "2026-10-05", "2026-10-18", 28))
+        self.assertEqual(r["hash"], "#cv=0,2,4&p=2026-10-05_2026-10-18")
 
     def test_a_preset_in_the_address(self):
         m = model(split_label="SPLIT")

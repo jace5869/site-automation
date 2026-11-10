@@ -259,11 +259,50 @@ groups. Tick them, then **Apply**.
   - `{name: {pattern: "..."}}`: the groups whose name matches.
 - The address keeps a quick choice too: `#cv=preset:SPLIT`.
 
-The Custom view needs no server. The All page carries the tickets as compact rows, about 40 bytes a ticket, in a data
+**Periods (1.10.0)** are buttons under the result. Each works the figures out for that period and compares them with
+the period before it. They follow the calendar, not a count of days back from today.
+
+| Period | What it is | Compared with |
+|---|---|---|
+| **The window** (`all`) | the report's whole window | the window before |
+| **This month** (`this_month`) | the report end's month so far | the same days of the month before |
+| **Last month** (`1m`) | the last whole calendar month | the month before it |
+| **Last 2 months** (`2m`) | the last two whole calendar months | the two before them |
+| **Last week** (`1w`) | the last whole week, Monday to Sunday | the week before |
+| **Last 2 weeks** (`2w`) | the last two whole weeks | the two before them |
+| **From / to** | any days you pick | the same number of days just before |
+
+- Each button's tooltip, and the heading of the result, give the real dates: "October 2026, compared with
+  September 2026".
+- When the report ends on a month's last day, This month is Last month, so only Last month shows.
+- A period that does not fit the window is left out. Its compare is left out when the window before is not carried.
+- The address keeps the period too: `#cv=0-3,7&p=1m`, or `&p=2026-10-05_2026-10-18` for a from / to.
+
+What each figure means for a period:
+
+- **Opened, resolved, the SLOs, the median time to resolve**: the tickets opened, or done, in the period.
+- **Open at the period's end**: the backlog on its last day, with the start's number beside it. For a period that ends
+  now, the tile says *Open now*.
+- **On hold now** and **Open over N hops**: ServiceNow only says how a ticket is now. For a period that ends earlier,
+  these tiles say *known now only*.
+- **Time in each state** (1.9.0): the average hours new, in progress and on hold, of the incidents resolved in the
+  period. It needs the state metric (see "The life cycle and the flow").
+- **Open over 10 business days** (1.9.0): the backlog's age at the period's end, in your business days, with the
+  0–1, 2–5 and 6–10 day counts.
+- **The chart**: opened and incidents resolved per day (up to a month), per week (up to 4 months), else per month.
+
+`servicenow_insights_periods` picks the buttons, in order. `servicenow_insights_week_start` sets the day a week starts
+on (`mon` by default).
+
+The Custom view needs no server. The All page carries the tickets as compact rows, about 55 bytes a ticket, in a data
 block the browser never runs. So a strict Content-Security-Policy, a share or an offline copy all work.
 
-At most `servicenow_insights_custom_view_max_rows` tickets (30,000) are carried. With more, the page says so and has no
-Custom view.
+The rows include the window before, so every period can be compared. At most `servicenow_insights_custom_view_max_rows`
+tickets (30,000) are carried:
+
+- Over that with the window before, only the window's own tickets are carried. The periods then have no compare, and
+  the page says so.
+- Over that with the window alone, the page says so and has no Custom view.
 
 ### The split with the map
 
@@ -286,6 +325,8 @@ they link to the All page.
 | `servicenow_insights_custom_view_max_rows` | `30000` | its tickets carried in the page at most |
 | `servicenow_insights_custom_view_presets` | `{}` | more quick choices: `{name: {levels: [...]}}` or `{name: {pattern: "..."}}` |
 | `servicenow_insights_split_by` | `both` | with the map, the split by `pattern`, by `level` (the label one of the group's levels), or `both` |
+| `servicenow_insights_periods` | `[all, this_month, 1m, 2m, 2w, 1w]` | the Custom view's period buttons, in order (1.10.0) |
+| `servicenow_insights_week_start` | `mon` | the day a week starts on, for `1w` and `2w` |
 
 ## ACT (GenAI), and what never reaches it
 

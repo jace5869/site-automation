@@ -7,6 +7,7 @@ email's report (site_email's _report), the workbook and the job artifact. The we
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import bisect
 import datetime
 import functools
 import fnmatch
@@ -1230,14 +1231,19 @@ def org_walk(nodes):
             yield x
 
 
-def custom_rows(items, since, until, groups, opts=None):
+def custom_rows(items, since, until, groups, opts=None, base=None, tz=None, spec=None):
     """The Custom view's data (1.8.0): one compact row per incident and requested item open at the window's start or after
     - columns, so 20,000 tickets stay small - from which the page works out the figures for any choice of groups: g the
     group's index in groups (-1: none), t 0 incident / 1 requested item, p the priority, o / d opened / done in seconds from
     the window's start (d null: open), s made_sla (the resolution SLO) 1 / 0 / -1; and the 1.7.0 fields where the tickets
     have them: resp (the response SLO) and noslo 1 / 0 / -1, hops (reassignment_count; incidents), hold (on hold now), r7
     (reopened within 7 days), out (the outcome's index in outcomes; -1 not resolved), risk (1 at risk, 2 breached).
-    -> {groups, n, until, cols: {name: [values]}, hop_limit, outcomes, unable (their indices)}"""
+    1.10.0: from base on (the window before's start, for the periods' compare), and 1.9.0's where the tickets have them:
+    tis (the time in each state, tenths of hours: new, progress, hold, resolved; null not measured), ob (the opened day's
+    business-day count on the calendar: the backlog's age at any period's end); the day calendar and the periods.
+    -> {groups, n, until, cols: {name: [values]}, hop_limit, outcomes, unable (their indices), calendar, periods}"""
+    base = base or since
+    tz = tz or UTC
     o = opts or {}
     gi = dict((g, i) for i, g in enumerate(groups))
     flow = []
@@ -1245,7 +1251,7 @@ def custom_rows(items, since, until, groups, opts=None):
         if x.get("table") not in ("incident", "sc_req_item"):
             continue
         op, dn = _t(x.get("opened_at")), _t(x.get("done_at"))
-        if op and op < until and not (dn and dn < since):
+        if op and op < until and not (dn and dn < base):
             flow.append((x, op, dn))
     has = lambda k: any(k in x for x, _, _ in flow)                               # noqa: E731
     cols = dict((k, []) for k in ("g", "t", "p", "o", "d", "s"))
@@ -1253,7 +1259,12 @@ def custom_rows(items, since, until, groups, opts=None):
                                  ("out", "_outcome"), ("risk", "_risk")) if has(f)]
     for k, _ in extra:
         cols[k] = []
+    if has("_tis"):
+        cols["tis"] = []
+    cal = day_calendar(base, until, since, spec, tz)
+    cols["ob"] = []
     names = list(OUTCOMES)
+    bdo = {}
 
     def tri(v):
         return -1 if v is None else (1 if v else 0)
@@ -1288,9 +1299,22 @@ def custom_rows(items, since, until, groups, opts=None):
                 cols[k].append(1 if inc and v else 0)
             else:
                 cols[k].append(tri(v))
+        if "tis" in cols:
+            ts = x.get("_tis") if inc else None
+            cols["tis"].append([int(round(10 * float(ts.get(k_) or 0))) for k_ in STATE_KINDS] if isinstance(ts, dict) else None)
+        od = op.astimezone(tz).date()
+        if od not in bdo:
+            bdo[od] = _bd_ord(od, set(cal["days"]), cal["hol"]) - cal["base"]
+        cols["ob"].append(bdo[od])
     unable = set(str(u).lower() for u in name_list(o.get("unable_outcomes") or ["Known Error", "No Resolution Provided"]))
     return {"groups": list(groups), "n": len(flow), "until": int((until - since).total_seconds()), "cols": cols,
-            "hop_limit": int(_o(o, "hop_limit", 3)), "outcomes": names, "unable": [i for i, n_ in enumerate(names) if n_.lower() in unable]}
+            "hop_limit": int(_o(o, "hop_limit", 3)), "outcomes": names, "unable": [i for i, n_ in enumerate(names) if n_.lower() in unable],
+            "calendar": {"d0": cal["d0"], "mid": cal["mid"], "bo": cal["bo"],
+                         "first": since.astimezone(tz).date().isoformat(), "last": (until - datetime.timedelta(seconds=1)).astimezone(tz).date().isoformat()},
+            "periods": [dict(p, a=int((p["a"] - since).total_seconds()), b=int((p["b"] - since).total_seconds()),
+                             ca=int((p["ca"] - since).total_seconds()) if p["ca"] else None,
+                             cb=int((p["cb"] - since).total_seconds()) if p["cb"] else None)
+                        for p in period_bounds(since, until, base, tz, o)]}
 
 
 def custom_presets(hier, groups, split=None, opts=None):
@@ -1313,11 +1337,15 @@ def custom_presets(hier, groups, split=None, opts=None):
     return [x for x in out if x["name"]]
 
 
-def custom_figures(data, sel):
+def custom_figures(data, sel, period=None):
     """The Custom view's figures for the groups whose indices are in sel - what the page's script works out, the same
-    way as scope_model (the tests compare them): incidents and requests opened, incidents resolved, the backlog now and at
-    the window's start, the median hours to resolve, SLA met %."""
+    way as scope_model (the tests compare them): incidents and requests opened, incidents resolved, the backlog at the
+    period's end and start, the median hours to resolve, SLA met %. period (1.10.0): (a, b) in seconds from the window's
+    start, the window itself when None. What is known only now (on hold, open over the hop limit) only for a period that
+    ends at the report's end; None otherwise."""
     c, w = data["cols"], data["until"]
+    a, b = period if period else (0, w)
+    now = b == w
     sel = set(sel)
     inc = req = res = bl = bl0 = sla_n = sla_ok = 0
     hrs = []
@@ -1325,36 +1353,46 @@ def custom_figures(data, sel):
         if c["g"][i] not in sel:
             continue
         o, d, t = c["o"][i], c["d"][i], c["t"][i]
-        if 0 <= o < w:
+        if a <= o < b:
             if t == 0:
                 inc += 1
             else:
                 req += 1
-        done_in = d is not None and 0 <= d < w
+        done_in = d is not None and a <= d < b
         if t == 0 and done_in:
             res += 1
             if d >= o:
                 hrs.append((d - o) / 3600.0)
-        if o <= w and (d is None or d > w):
+        if o <= b and (d is None or d > b):
             bl += 1
-        if o <= 0 and (d is None or d > 0):
+        if o <= a and (d is None or d > a):
             bl0 += 1
         if done_in and c["s"][i] in (0, 1):
             sla_n += 1
             sla_ok += c["s"][i]
     out = {"incidents": inc, "requests": req, "resolved": res, "backlog": [bl, bl0], "median_h": _r1(_median(hrs)),
            "sla": _r1(_pct(sla_ok, sla_n))}
-    # the 1.7.0 figures, where the rows carry them - as scope_model: the response SLO met of what was done in the window
+    # the 1.7.0 figures, where the rows carry them - as scope_model: the response SLO met of what was done in the period
     # (no SLO left out), done with no SLO, incidents open now over the hop limit (and the share of those resolved), on hold
     # now, unable to resolve and first-contact resolution of the incidents resolved
     rs, ns, hop, hres, hold, una, fcr = [0, 0], 0, 0, 0, 0, 0, 0
     lim, unable = int(data.get("hop_limit", 3)), set(data.get("unable") or [])
+    # 1.9.0's, where the rows carry them: the time in each state of the incidents resolved in the period (tenths of
+    # hours), the backlog's age in business days at the period's end (the day calendar)
+    tis_n, tis = 0, [0, 0, 0, 0]
+    cal = data.get("calendar") or {}
+    mid, bo = cal.get("mid") or [], cal.get("bo") or []
+    age = [0, 0, 0, 0]
+    end_bo = None
+    if mid and "ob" in c:
+        k = bisect.bisect_right(mid, b) - 1
+        end_bo = bo[max(k, 0)]
     for i in range(len(c["g"])):
         if c["g"][i] not in sel:
             continue
         o, d, t = c["o"][i], c["d"][i], c["t"][i]
-        done_in = d is not None and 0 <= d < w
-        open_now = o <= w and (d is None or d > w)
+        done_in = d is not None and a <= d < b
+        open_end = o <= b and (d is None or d > b)
         if done_in and "resp" in c and c["resp"][i] in (0, 1):
             rs[1] += 1
             rs[0] += c["resp"][i]
@@ -1362,26 +1400,143 @@ def custom_figures(data, sel):
             ns += 1
         if t == 0 and "hops" in c:
             over = c["hops"][i] > lim + 1
-            if open_now and over:
+            if open_end and over:
                 hop += 1
             if done_in:
                 hres += 1 if over else 0
                 fcr += 1 if c["hops"][i] == 0 else 0
-        if t == 0 and open_now and "hold" in c and c["hold"][i] == 1:
+        if t == 0 and open_end and "hold" in c and c["hold"][i] == 1:
             hold += 1
         if t == 0 and done_in and "out" in c and c["out"][i] in unable:
             una += 1
+        if t == 0 and done_in and "tis" in c and c["tis"][i] is not None:
+            tis_n += 1
+            for j in range(4):
+                tis[j] += c["tis"][i][j]
+        if end_bo is not None and open_end:
+            bd = max(end_bo - c["ob"][i], 0)
+            age[0 if bd <= 1 else (1 if bd <= 5 else (2 if bd <= 10 else 3))] += 1
     if "resp" in c:
         out["resp"] = _r1(_pct(rs[0], rs[1]))
     if "noslo" in c:
         out["no_slo"] = ns
     if "hops" in c:
-        out.update(hops_open=hop, hops_done_pct=_r1(_pct(hres, res)), fcr=_r1(_pct(fcr, res)))
+        out.update(hops_open=hop if now else None, hops_done_pct=_r1(_pct(hres, res)), fcr=_r1(_pct(fcr, res)))
     if "hold" in c:
-        out["hold"] = hold
+        out["hold"] = hold if now else None
     if "out" in c:
         out["unable"] = _r1(_pct(una, res))
+    if "tis" in c:
+        out["tis"] = dict((k_, _r1(tis[j] / 10.0 / tis_n) if tis_n else None) for j, k_ in enumerate(STATE_KINDS))
+        out["tis_n"] = tis_n
+    if end_bo is not None:
+        out["aging"] = age
     return out
+
+
+PERIODS = ("all", "this_month", "1m", "2m", "2w", "1w")
+PERIOD_LABELS = {"all": "The window", "this_month": "This month", "1m": "Last month", "2m": "Last 2 months", "2w": "Last 2 weeks",
+                 "1w": "Last week"}
+MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")
+
+
+def _midnight(d, tz):
+    return datetime.datetime(d.year, d.month, d.day, tzinfo=tz)
+
+
+def _month(d, k=0):
+    """The first day of d's month, k months later (earlier when negative)."""
+    m = d.year * 12 + d.month - 1 + k
+    return datetime.date(m // 12, m % 12 + 1, 1)
+
+
+def period_title(a, b, tz):
+    """[a, b) in words: whole calendar months by name ("October 2026", "September to October 2026"), else the dates."""
+    la, lb = a.astimezone(tz), b.astimezone(tz)
+    last = (b - datetime.timedelta(seconds=1)).astimezone(tz).date()
+    whole = la.time() == datetime.time(0) and la.day == 1 and lb.time() == datetime.time(0) and lb.day == 1
+    if whole:
+        first = la.date()
+        if (first.year, first.month) == (last.year, last.month):
+            return "%s %d" % (MONTHS[first.month - 1], first.year)
+        if first.year == last.year:
+            return "%s to %s %d" % (MONTHS[first.month - 1], MONTHS[last.month - 1], last.year)
+        return "%s %d to %s %d" % (MONTHS[first.month - 1], first.year, MONTHS[last.month - 1], last.year)
+    return "%s to %s" % (la.date().isoformat(), last.isoformat())
+
+
+def period_bounds(since, until, prev, tz, opts=None):
+    """The Custom view's periods (1.10.0): calendar months and Mon-Sun weeks, not rolling days. -> [{name, label, title,
+    a, b, ca, cb, ctitle}] as datetimes; ca / cb None when the period before is not in the data (prev: where the rows
+    start). A period that does not fit the window is left out.
+      all         the window, against the window before
+      this_month  the report end's month so far, against the same days of the month before
+      1m, 2m      the last whole calendar month(s) up to the report end, against the one(s) before
+      1w, 2w      the last whole weeks (servicenow_insights_week_start: mon), against the one(s) before"""
+    o = opts or {}
+    names = [str(x).strip().lower() for x in name_list(o.get("periods") or list(PERIODS))]
+    wk = str(o.get("week_start") or "mon").strip().lower()[:3]
+    if wk not in WEEKDAYS:
+        raise ValueError("servicenow_insights_week_start: %s is not a day (mon ... sun)" % o.get("week_start"))
+    ws = WEEKDAYS.index(wk)
+    end = until.astimezone(tz)
+    last = (until - datetime.timedelta(seconds=1)).astimezone(tz).date()
+    at_mid = end.time() == datetime.time(0)
+    out = []
+    for nm in names:
+        if nm not in PERIODS:
+            raise ValueError("servicenow_insights_periods: %s is not one of %s" % (nm, ", ".join(PERIODS)))
+        if nm == "all":
+            a, b, ca, cb = since, until, prev, since
+        elif nm == "this_month":
+            a, b = _midnight(_month(last), tz), until
+            ca = _midnight(_month(last, -1), tz)
+            cb = min((ca.replace(tzinfo=None) + (end.replace(tzinfo=None) - a.replace(tzinfo=None))).replace(tzinfo=tz), a)
+        elif nm in ("1m", "2m"):
+            k = int(nm[0])
+            bd = end.date() if at_mid and end.day == 1 else _month(last)
+            b = _midnight(bd, tz)
+            a, ca, cb = _midnight(_month(bd, -k), tz), _midnight(_month(bd, -2 * k), tz), _midnight(_month(bd, -k), tz)
+        else:
+            k = int(nm[0])
+            d = end.date()
+            x = d - datetime.timedelta(days=(d.weekday() - ws) % 7)
+            b = _midnight(x, tz)
+            a, ca, cb = _midnight(x - datetime.timedelta(days=7 * k), tz), _midnight(x - datetime.timedelta(days=14 * k), tz), \
+                _midnight(x - datetime.timedelta(days=7 * k), tz)
+        if a < since or b > until or b <= a:
+            continue
+        if ca is None or ca < prev or cb <= ca:
+            ca = cb = None
+        out.append({"name": nm, "label": PERIOD_LABELS[nm], "a": a, "b": b, "ca": ca, "cb": cb, "title": period_title(a, b, tz),
+                    "ctitle": period_title(ca, cb, tz) if ca else ""})
+    # a report that ends with its month: this month is last month - one button
+    lm = [(p["a"], p["b"]) for p in out if p["name"] == "1m"]
+    return [p for p in out if not (p["name"] == "this_month" and (p["a"], p["b"]) in lm)]
+
+
+def _bd_ord(d, days, hol):
+    """Business days from 0001-01-01 up to and including d: the weekdays in days, less the holidays (sorted ISO dates)."""
+    k = d.toordinal()                       # 1 = Monday 0001-01-01
+    w, r = divmod(k, 7)
+    n = w * len(days) + sum(1 for i in range(r) if i in days)
+    return n - bisect.bisect_right(hol, d.isoformat())
+
+
+def day_calendar(start, until, since, spec, tz):
+    """The local days from start's to until's: each day's start in seconds from since, and its business-day count (the
+    business days from the first day up to it: the age in business days = the end day's less the opened day's - as
+    business_days)."""
+    days, hol = (spec[0], spec[3]) if spec else (set(range(5)), set())
+    hl = sorted(h for h in hol if datetime.date.fromisoformat(h).weekday() in days)
+    d, lastd = start.astimezone(tz).date(), until.astimezone(tz).date()
+    base = _bd_ord(d, days, hl)
+    mid, bo = [], []
+    while d <= lastd:
+        mid.append(int((_midnight(d, tz) - since).total_seconds()))
+        bo.append(_bd_ord(d, days, hl) - base)
+        d += datetime.timedelta(days=1)
+    return {"d0": start.astimezone(tz).date().isoformat(), "mid": mid, "bo": bo, "base": base, "days": sorted(days), "hol": hl}
 
 
 def servicenow_insights_hierarchy(names, opts=None, tree=None, tree_ok=True):
@@ -2501,8 +2656,12 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
         scopes["all"]["teams"] = [side_row(t) for t in sorted(teams, key=_nat)]
         if o.get("custom_view", True) not in (False, "false", "False", 0) and not fixed:
             gl = sorted([g for g in seen_groups], key=_nat) + ([""] if any(not it.get("group") for it in items) else [])
-            data = custom_rows(items, since, until, gl, o)
+            # the periods' compare needs the window before's tickets too: carried while they fit, else the window only
             mx = int(_o(o, "custom_view_max_rows", 30000))
+            data = custom_rows(items, since, until, gl, o, prev if prev < since else since, tz, bh_spec)
+            if data["n"] > mx and prev < since:
+                data = custom_rows(items, since, until, gl, o, since, tz, bh_spec)
+                data["no_compare"] = True
             custom = data if data["n"] <= mx else {"skipped": data["n"], "max": mx}
     model = {"window": win, "url": r.get("url") or "", "teams": teams, "scopes": scopes, "reopen_used": reopen_used,
              "tree": tree, "pages": pages, "scope_ids": ids, "hier": hier, "org": org, "custom": custom,

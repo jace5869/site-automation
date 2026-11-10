@@ -332,14 +332,15 @@ else
     echo "FAIL - no mail with the report and the workbook"; fails=$((fails + 1))
 fi
 
-# ---- the org map (1.8.0): management's own tree, any depth; the Custom view ---------------------------------------------
+# ---- the org map (1.8.0): management's own tree, any depth; the Custom view and its periods (1.10.0) -----------------
 mock SNMOCK_SEED="$work/seed3.json"
 mkdir -p "$work/site8"
 orgmap='{"SITEA - J6 - Service Desk": ["SITEA", "SPLIT", "Operations", "EUCS"], "SITEA - j63 - Windows": "SITEA > SPLIT > Operations > Systems",
          "SITEB - Ops - VDI - nova": ["SITEB"], "SITEB - Network": ["SITEB", "Networks & Comms"]}'
 run "the org map: a page and rollup at every level, the groups it does not name in Unknown, the Custom view" ok \
     "{$NOW, $NOACT, \"servicenow_insights_hierarchy_source\": \"map\", \"servicenow_insights_hierarchy_map\": $orgmap, \"report_web_dest\": \"$work/site8\",
-      \"servicenow_insights_split_label\": \"SPLIT\", \"servicenow_insights_custom_view_presets\": {\"SITEB only\": {\"levels\": [\"SITEB\"]}}}" \
+      \"servicenow_insights_split_label\": \"SPLIT\", \"servicenow_insights_custom_view_presets\": {\"SITEB only\": {\"levels\": [\"SITEB\"]}},
+      \"servicenow_insights_periods\": [\"all\", \"1m\", \"1w\"], \"servicenow_insights_week_start\": \"sun\"}" \
     'Sites side by side' 'SITEA' 'SITEB'
 t8="$work/site8/servicenow-ticket-insights"
 for f in latest.html sitea/latest.html sitea/split/latest.html sitea/split/operations/latest.html sitea/split/operations/eucs/latest.html \
@@ -353,6 +354,12 @@ check "  ... All: the Custom view and its rows, the tree at any depth, the unmap
     '<section class="card" id="custom">' '<script type="application/json" id="cv-data">' 'Units and teams' '<li class="lv4">' \
     '<b>The org map</b>' 'SITE-C - CODEX - Linux (' 'Add them to servicenow_insights_hierarchy_map.' '!<b>Sites, directorates and teams</b>' \
     'class="cvp" data-name="SPLIT"' 'class="cvp" data-name="non-SPLIT"' 'class="cvp" data-name="SITEB only"' 'href="latest-split.html">SPLIT</a>'
+check "  ... the periods (1.10.0): the ones set, calendar titles, weeks from Sunday, a from / to" "$t8/latest.html" \
+    'class="cvpd" data-name="all"' 'class="cvpd" data-name="1m" aria-pressed="false" title="October 2026, compared with September 2026"' \
+    'class="cvpd" data-name="1w" aria-pressed="false" title="2026-10-25 to 2026-10-31, compared with 2026-10-18 to 2026-10-24"' \
+    '!data-name="2m"' 'id="cvfrom" min="2025-11-01" max="2026-10-31"' '"periods":[{"name":"all"' 'Time in each state' 'Open over 10 business days'
+run "a week that starts on no day: said" fail "{$NOW, $NOACT, \"servicenow_insights_hierarchy_source\": \"map\", \"servicenow_insights_hierarchy_map\": $orgmap,
+      \"servicenow_insights_week_start\": \"someday\"}" 'servicenow_insights_week_start: someday is not a day'
 check "  ... the split by the map's level: SPLIT's page says where the Custom view is" "$t8/latest-split.html" \
     '<b>Custom view:</b> on the <a href="latest.html">All page</a>.' '!id="cv-data"' 'aria-current="page">SPLIT</a>'
 check "  ... a unit four levels down: its breadcrumbs, its Custom view link" "$t8/sitea/split/operations/eucs/latest.html" \

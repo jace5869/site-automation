@@ -498,47 +498,115 @@ if(cvd&&cvt){var CV=JSON.parse(cvd.textContent),C=CV.cols,W=CV.until,LIM=CV.hop_
    var p=li.parentNode.closest("li");while(p){p.hidden=false;fold(p,true);p=p.parentNode.closest("li")}})});
  cq.addEventListener("keydown",function(ev){if(ev.key==="Escape"){cq.value="";cq.dispatchEvent(new Event("input"))}});
  function med(v){if(!v.length)return null;v.sort(function(a,b){return a-b});var m=v.length>>1;return v.length%2?v[m]:(v[m-1]+v[m])/2}
- function figs(sel){var f={inc:0,req:0,res:0,bl:0,bl0:0,sn:0,so:0,h:[],rn:0,ro:0,ns:0,hop:0,hres:0,hold:0,una:0,fcr:0};for(var i=0;i<C.g.length;i++){if(!sel[C.g[i]])continue;var o=C.o[i],d=C.d[i],t=C.t[i],din=d!==null&&d>=0&&d<W;
-   if(o>=0&&o<W){if(t===0)f.inc++;else f.req++}if(t===0&&din){f.res++;if(d>=o)f.h.push((d-o)/3600)}if(o<=W&&(d===null||d>W))f.bl++;if(o<=0&&(d===null||d>0))f.bl0++;
+ /* the periods (1.10.0): calendar months and weeks from cv-data, or any from / to; each against the period before */
+ var P=CV.periods||[],CAL=CV.calendar||{},MID=CAL.mid||[],BO=CAL.bo||[],NS="http://www.w3.org/2000/svg";
+ var D0=CAL.d0?Date.UTC(+CAL.d0.slice(0,4),+CAL.d0.slice(5,7)-1,+CAL.d0.slice(8,10)):0;
+ function iso(k){return new Date(D0+k*864e5).toISOString().slice(0,10)}
+ function kof(s){return /^\d{4}-\d{2}-\d{2}$/.test(s||"")?Math.round((Date.UTC(+s.slice(0,4),+s.slice(5,7)-1,+s.slice(8,10))-D0)/864e5):NaN}
+ function kidx(x){var lo=0,hi=MID.length-1,k=-1;while(lo<=hi){var m=(lo+hi)>>1;if(MID[m]<=x){k=m;lo=m+1}else hi=m-1}return Math.max(k,0)}
+ function figs(sel,a,b){if(a===undefined){a=0;b=W}
+  var f={inc:0,req:0,res:0,bl:0,bl0:0,sn:0,so:0,h:[],rn:0,ro:0,ns:0,hop:0,hres:0,hold:0,una:0,fcr:0,tn:0,ts:[0,0,0,0],age:[0,0,0,0],now:b===W},eb=(MID.length&&C.ob)?BO[kidx(b)]:null;
+  for(var i=0;i<C.g.length;i++){if(!sel[C.g[i]])continue;var o=C.o[i],d=C.d[i],t=C.t[i],din=d!==null&&d>=a&&d<b,on=o<=b&&(d===null||d>b);
+   if(o>=a&&o<b){if(t===0)f.inc++;else f.req++}if(t===0&&din){f.res++;if(d>=o)f.h.push((d-o)/3600)}if(on)f.bl++;if(o<=a&&(d===null||d>a))f.bl0++;
    if(din&&(C.s[i]===0||C.s[i]===1)){f.sn++;f.so+=C.s[i]}
    /* the 1.7.0 figures, as scope_model: response met of what was done (no SLO left out), open over the hop limit, on hold now, unable, first contact */
-   var on=o<=W&&(d===null||d>W);if(din&&C.resp&&(C.resp[i]===0||C.resp[i]===1)){f.rn++;f.ro+=C.resp[i]}if(din&&C.noslo&&C.noslo[i]===1)f.ns++;
+   if(din&&C.resp&&(C.resp[i]===0||C.resp[i]===1)){f.rn++;f.ro+=C.resp[i]}if(din&&C.noslo&&C.noslo[i]===1)f.ns++;
    if(t===0&&C.hops){var ov=C.hops[i]>LIM+1;if(on&&ov)f.hop++;if(din){if(ov)f.hres++;if(C.hops[i]===0)f.fcr++}}
-   if(t===0&&on&&C.hold&&C.hold[i]===1)f.hold++;if(t===0&&din&&C.out&&UN[C.out[i]])f.una++}
-  f.med=med(f.h);f.sla=f.sn?100*f.so/f.sn:null;f.resp=f.rn?100*f.ro/f.rn:null;return f}
- window.siteInsightsFigures=function(idx){var s={};idx.forEach(function(i){s[i]=1});var f=figs(s);
-  function r1(x){return x===null?null:Math.round(x*10)/10}function pr(a,b){return b?r1(100*a/b):null}
+   if(t===0&&on&&C.hold&&C.hold[i]===1)f.hold++;if(t===0&&din&&C.out&&UN[C.out[i]])f.una++;
+   /* 1.9.0's: the time in each state of the incidents resolved in the period, the backlog's age in business days at its end */
+   if(t===0&&din&&C.tis&&C.tis[i]){f.tn++;for(var j=0;j<4;j++)f.ts[j]+=C.tis[i][j]}
+   if(eb!==null&&on){var bd=Math.max(eb-C.ob[i],0);f.age[bd<=1?0:(bd<=5?1:(bd<=10?2:3))]++}}
+  f.med=med(f.h);f.sla=f.sn?100*f.so/f.sn:null;f.resp=f.rn?100*f.ro/f.rn:null;f.eb=eb;return f}
+ function r1(x){return x===null?null:Math.round(x*10)/10}
+ window.siteInsightsFigures=function(idx,a,b){var s={};idx.forEach(function(i){s[i]=1});var f=figs(s,a,b);
+  function pr(x,y){return y?r1(100*x/y):null}
   var out={incidents:f.inc,requests:f.req,resolved:f.res,backlog:[f.bl,f.bl0],median_h:r1(f.med),sla:r1(f.sla)};
-  if(C.resp)out.resp=r1(f.resp);if(C.noslo)out.no_slo=f.ns;if(C.hops){out.hops_open=f.hop;out.hops_done_pct=pr(f.hres,f.res);out.fcr=pr(f.fcr,f.res)}
-  if(C.hold)out.hold=f.hold;if(C.out)out.unable=pr(f.una,f.res);return out};
+  if(C.resp)out.resp=r1(f.resp);if(C.noslo)out.no_slo=f.ns;if(C.hops){out.hops_open=f.now?f.hop:null;out.hops_done_pct=pr(f.hres,f.res);out.fcr=pr(f.fcr,f.res)}
+  if(C.hold)out.hold=f.now?f.hold:null;if(C.out)out.unable=pr(f.una,f.res);
+  if(C.tis){out.tis={};["new","progress","hold","resolved"].forEach(function(k,j){out.tis[k]=f.tn?r1(f.ts[j]/10/f.tn):null});out.tis_n=f.tn}
+  if(f.eb!==null)out.aging=f.age;return out};
+ window.siteInsightsPeriods=function(){return P};
  function fh(h){return h===null?"\u2014":(h>=48?(h/24).toFixed(1)+" days":h.toFixed(1)+" h")}
  function pc(x){return x===null?"\u2014":x.toFixed(1)+"%"}
  function nf(x){return x.toLocaleString("en-US")}
  function enc(idx){var v=idx.slice().sort(function(a,b){return a-b}),o=[],i=0;while(i<v.length){var j=i;while(j+1<v.length&&v[j+1]===v[j]+1)j++;o.push(i===j?String(v[i]):v[i]+"-"+v[j]);i=j+1}return o.join(",")}
  function dec(s){var o=[];String(s||"").split(",").forEach(function(p){var m=p.split("-").map(Number);if(m.length===1&&!isNaN(m[0]))o.push(m[0]);else if(m.length===2&&!isNaN(m[0])&&!isNaN(m[1]))for(var k=m[0];k<=m[1]&&k<CV.groups.length;k++)o.push(k)});return o}
- function set(id,v,d){D.getElementById("cv-"+id).textContent=v;if(d!==undefined)D.getElementById("cv-"+id+"-d").textContent=d}
+ function set(id,v,d){var el=D.getElementById("cv-"+id);if(!el)return;el.textContent=v;if(d!==undefined)D.getElementById("cv-"+id+"-d").textContent=d}
+ function setl(id,t){var el=D.getElementById("cv-"+id+"-l");if(el)el.textContent=t}
+ /* the change against the period before, as the page's tiles: % for counts, points for shares; lg = lower is good */
+ function dl(v,p,lg,pts){if(v===null||v===undefined||p===null||p===undefined)return null;var d=pts?v-p:(p?(v-p)/p*100:0);
+  if(Math.abs(d)<0.05)return["no change","flat"];var up=d>0;return[(up?"\u25b2 ":"\u25bc ")+Math.abs(d).toFixed(pts?1:0)+(pts?" pts":"%"),(up?!lg:lg)?"good":"bad"]}
+ function setx(id,x){var el=D.getElementById("cv-"+id+"-x");if(!el)return;el.textContent=x?x[0]:"";el.className=x?"delta "+x[1]:""}
+ var pbs=[].slice.call(D.querySelectorAll("button.cvpd")),cf=D.getElementById("cvfrom"),ct=D.getElementById("cvto");
+ var P0=P.filter(function(x){return x.name==="all"})[0]||P[0]||{name:"",a:0,b:W,ca:null,cb:null,title:"",ctitle:""},per=P0;
+ function pick(name){var p=P.filter(function(x){return x.name===name})[0];if(!p)return null;
+  pbs.forEach(function(x){x.setAttribute("aria-pressed",x.getAttribute("data-name")===name?"true":"false")});
+  if(cf&&MID.length){cf.value=iso(kidx(p.a));ct.value=iso(kidx(p.b-1))}return p}
+ function range(fr,to){var i=kof(fr),j=kof(to);if(isNaN(i)||isNaN(j)||j<i||i<0||i>=MID.length)return null;j=Math.min(j,MID.length-1);
+  var a=MID[i],b=j+1<MID.length?Math.min(MID[j+1],W):W;if(b<=a)return null;var n=j-i+1,ca=i-n>=0?MID[i-n]:null;
+  pbs.forEach(function(x){x.setAttribute("aria-pressed","false")});
+  return {name:iso(i)+"_"+iso(kidx(b-1)),a:a,b:b,ca:ca,cb:ca===null?null:a,title:iso(i)+" to "+iso(kidx(b-1)),ctitle:ca===null?"":iso(i-n)+" to "+iso(i-1)}}
+ /* opened and incidents resolved in the period: per day up to a month, per week up to 4 months, else per month */
+ function lbl(dt,u){var m=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][+dt.slice(5,7)-1];return u==="month"?m+" "+dt.slice(2,4):m+" "+(+dt.slice(8))}
+ function chart(sel,a,b){var el=D.getElementById("cvchart");if(!el||!MID.length)return;el.textContent="";
+  var span=(b-a)/86400,u=span<=31?"day":(span<=124?"week":"month"),e0=[],lk=-99,k,j;
+  for(k=0;k<MID.length;k++){if(MID[k]<a||MID[k]>=b)continue;var dt=iso(k);if(!e0.length||u==="day"||(u==="week"&&k-lk>=7)||(u==="month"&&dt.slice(8)==="01")){e0.push([MID[k],dt]);lk=k}}
+  if(!e0.length)return;var n=e0.length,op=[],rs=[];for(j=0;j<n;j++){op.push(0);rs.push(0)}
+  function bi(x){if(x<a||x>=b)return -1;var lo=0,hi=n-1,r=-1;while(lo<=hi){var m=(lo+hi)>>1;if(e0[m][0]<=x){r=m;lo=m+1}else hi=m-1}return r}
+  for(var i=0;i<C.g.length;i++){if(!sel[C.g[i]])continue;j=bi(C.o[i]);if(j>=0)op[j]++;if(C.t[i]===0&&C.d[i]!==null){j=bi(C.d[i]);if(j>=0)rs[j]++}}
+  var mx=Math.max(1,Math.max.apply(null,op.concat(rs))),w=640,h=170,pl=34,pb=22,bw=(w-pl)/n,H=h-pb-10,s=D.createElementNS(NS,"svg");
+  s.setAttribute("viewBox","0 0 "+w+" "+h);s.setAttribute("class","cvsvg");s.setAttribute("role","img");
+  s.setAttribute("aria-label","Opened and incidents resolved per "+u+": "+nf(op.reduce(function(x,y){return x+y},0))+" opened, "+nf(rs.reduce(function(x,y){return x+y},0))+" resolved");
+  function rc(x,y,ww,hh,c,t){var q=D.createElementNS(NS,"rect");q.setAttribute("x",x.toFixed(1));q.setAttribute("y",y.toFixed(1));q.setAttribute("width",Math.max(ww,0).toFixed(1));
+   q.setAttribute("height",Math.max(hh,0).toFixed(1));q.setAttribute("rx","1.5");q.setAttribute("style","fill:var("+c+")");var tt=D.createElementNS(NS,"title");tt.textContent=t;q.appendChild(tt);s.appendChild(q)}
+  function tx(x,y,t,an){var q=D.createElementNS(NS,"text");q.setAttribute("x",x.toFixed(1));q.setAttribute("y",y);q.setAttribute("class","lbl");if(an)q.setAttribute("text-anchor",an);q.textContent=t;s.appendChild(q)}
+  var ln=D.createElementNS(NS,"line");ln.setAttribute("x1",pl);ln.setAttribute("x2",w);ln.setAttribute("y1",10+H);ln.setAttribute("y2",10+H);ln.setAttribute("style","stroke:var(--line)");s.appendChild(ln);
+  tx(pl-6,16,nf(mx),"end");tx(pl-6,10+H,"0","end");var every=Math.ceil(n/8);
+  for(j=0;j<n;j++){var x0=pl+j*bw,g=Math.max(1,bw*0.12),cw=(bw-3*g)/2,lb=lbl(e0[j][1],u),t=(u==="day"?"":(u==="week"?"Week of ":""))+lb+": "+nf(op[j])+" opened, "+nf(rs[j])+" incidents resolved";
+   rc(x0+g,10+H-H*op[j]/mx,cw,H*op[j]/mx,"--s1",t);rc(x0+2*g+cw,10+H-H*rs[j]/mx,cw,H*rs[j]/mx,"--s2",t);if(j%every===0)tx(x0+bw/2,h-5,lb,"middle")}
+  el.appendChild(s)}
  function apply(push){var idx=all.filter(function(b){return b.checked}).map(function(b){return +b.getAttribute("data-g")});var res=D.getElementById("cvres");
-  if(!idx.length){res.hidden=true;return}var s={};idx.forEach(function(i){s[i]=1});var f=figs(s);
-  set("opened",nf(f.inc+f.req),nf(f.inc)+" incidents \u00b7 "+nf(f.req)+" requests");set("resolved",nf(f.res),"");set("backlog",nf(f.bl),"was "+nf(f.bl0)+" at the start");
-  set("median",fh(f.med===null?null:Math.round(f.med*10)/10),"");set("sla",pc(f.sla===null?null:Math.round(f.sla*10)/10),"incidents and requests"+(C.noslo&&f.ns?" \u00b7 "+nf(f.ns)+" with no SLO":""));
-  function pp(a,b){return b?pc(Math.round(1000*a/b)/10):"\u2014"}
-  if(C.resp)set("resp",pc(f.resp===null?null:Math.round(f.resp*10)/10),"incidents and requests");
-  if(C.hops){set("hops",nf(f.hop),f.hres?pp(f.hres,f.res)+" of those resolved went over":"none of those resolved went over");set("fcr",pp(f.fcr,f.res),"resolved by the first group, never reassigned")}
-  if(C.hold)set("hold",nf(f.hold),"incidents, now");if(C.out)set("unable",pp(f.una,f.res),"of the incidents resolved");
+  if(!idx.length){res.hidden=true;return}var s={};idx.forEach(function(i){s[i]=1});var f=figs(s,per.a,per.b),c=per.ca!==null&&per.ca!==undefined?figs(s,per.ca,per.cb):null;
+  function rr(x){return x===null?null:Math.round(x*10)/10}function pp(a,b){return b?pc(Math.round(1000*a/b)/10):"\u2014"}function sh(a,b){return b?100*a/b:null}
+  set("opened",nf(f.inc+f.req),nf(f.inc)+" incidents \u00b7 "+nf(f.req)+" requests");setx("opened",c&&dl(f.inc+f.req,c.inc+c.req,true,false));
+  set("resolved",nf(f.res),c?"was "+nf(c.res):"");setx("resolved",c&&dl(f.res,c.res,false,false));
+  setl("backlog",f.now?"Open now":"Open at the period's end");set("backlog",nf(f.bl),"was "+nf(f.bl0)+" at the start");setx("backlog",dl(f.bl,f.bl0,true,false));
+  set("median",fh(rr(f.med)),c&&c.med!==null?"was "+fh(rr(c.med)):"");setx("median",c&&dl(rr(f.med),rr(c.med),true,false));
+  set("sla",pc(rr(f.sla)),"incidents and requests"+(C.noslo&&f.ns?" \u00b7 "+nf(f.ns)+" with no SLO":""));setx("sla",c&&dl(rr(f.sla),rr(c.sla),false,true));
+  if(C.resp){set("resp",pc(rr(f.resp)),"incidents and requests");setx("resp",c&&dl(rr(f.resp),rr(c.resp),false,true))}
+  if(C.hops){var went=f.hres?pp(f.hres,f.res)+" of those resolved went over":"none of those resolved went over";
+   set("hops",f.now?nf(f.hop):"\u2014",f.now?went:"known now only \u00b7 "+went);
+   set("fcr",pp(f.fcr,f.res),"resolved by the first group, never reassigned");setx("fcr",c&&dl(rr(sh(f.fcr,f.res)),rr(sh(c.fcr,c.res)),false,true))}
+  if(C.hold)set("hold",f.now?nf(f.hold):"\u2014",f.now?"incidents, now":"known now only");
+  if(C.out){set("unable",pp(f.una,f.res),"of the incidents resolved");setx("unable",c&&dl(rr(sh(f.una,f.res)),rr(sh(c.una,c.res)),true,true))}
+  if(C.tis){var tt=f.tn?(f.ts[0]+f.ts[1]+f.ts[2])/10/f.tn:null,tc=c&&c.tn?(c.ts[0]+c.ts[1]+c.ts[2])/10/c.tn:null;
+   set("tis",fh(rr(tt)),f.tn?"new "+fh(rr(f.ts[0]/10/f.tn))+" \u00b7 in progress "+fh(rr(f.ts[1]/10/f.tn))+" \u00b7 on hold "+fh(rr(f.ts[2]/10/f.tn)):"not measured in this period");
+   setx("tis",dl(rr(tt),rr(tc),true,false))}
+  if(f.eb!==null){set("age",nf(f.age[3]),(f.now?"now":"at the period's end")+" \u00b7 0\u20131: "+nf(f.age[0])+" \u00b7 2\u20135: "+nf(f.age[1])+" \u00b7 6\u201310: "+nf(f.age[2]));
+   setx("age",c&&c.eb!==null?dl(f.age[3],c.age[3],true,false):null)}
   D.getElementById("cvlab").textContent=idx.length+" group"+(idx.length===1?"":"s")+" chosen";
+  /* the period in words, each date kept whole on a narrow screen */
+  var pt=D.getElementById("cvpt"),ps=per.title?per.title+(c?", compared with "+per.ctitle:""):"";pt.textContent="";
+  ps.split(/(\d{4}-\d{2}-\d{2})/).forEach(function(x,k){if(!x)return;if(k%2){var sp=D.createElement("span");sp.className="cvdt";sp.textContent=x;pt.appendChild(sp)}else pt.appendChild(D.createTextNode(x))});
+  chart(s,per.a,per.b);
   var tb=D.getElementById("cvtab").tBodies[0],rows=[];tb.textContent="";
-  idx.forEach(function(i){var one={};one[i]=1;var g=figs(one);rows.push([CV.groups[i]||"(no group)",g.inc+g.req,g.res,g.bl,g.med,g.sla])});
+  idx.forEach(function(i){var one={};one[i]=1;var g=figs(one,per.a,per.b);rows.push([CV.groups[i]||"(no group)",g.inc+g.req,g.res,g.bl,g.med,g.sla])});
   rows.sort(function(a,b){return b[1]-a[1]||String(a[0]).localeCompare(String(b[0]))});
-  var lab=["Group","Opened","Resolved","Open now","Median fix","SLA met"];
-  rows.forEach(function(r){var tr=D.createElement("tr");[[r[0],null],[nf(r[1]),r[1]],[nf(r[2]),r[2]],[nf(r[3]),r[3]],[fh(r[4]===null?null:Math.round(r[4]*10)/10),r[4]===null?-1:r[4]],[pc(r[5]===null?null:Math.round(r[5]*10)/10),r[5]===null?-1:r[5]]].forEach(function(c,k){
-   var td=D.createElement("td");td.textContent=c[0];td.setAttribute("data-l",lab[k]);if(k){td.className="n";td.setAttribute("data-v",c[1])}tr.appendChild(td)});tb.appendChild(tr)});
-  res.hidden=false;var hv=cvp?"preset:"+encodeURIComponent(cvp):enc(idx);if(push!==false)try{history.replaceState(null,"","#cv="+hv)}catch(e){location.hash="cv="+hv}}
+  var lab=["Group","Opened","Resolved","Open at the end","Median fix","SLA met"];
+  rows.forEach(function(r){var tr=D.createElement("tr");[[r[0],null],[nf(r[1]),r[1]],[nf(r[2]),r[2]],[nf(r[3]),r[3]],[fh(rr(r[4])),r[4]===null?-1:r[4]],[pc(rr(r[5])),r[5]===null?-1:r[5]]].forEach(function(c2,k){
+   var td=D.createElement("td");td.textContent=c2[0];td.setAttribute("data-l",lab[k]);if(k){td.className="n";td.setAttribute("data-v",c2[1])}tr.appendChild(td)});tb.appendChild(tr)});
+  res.hidden=false;var hv=(cvp?"preset:"+encodeURIComponent(cvp):enc(idx))+(per!==P0&&per.name?"&p="+encodeURIComponent(per.name):"");
+  if(push!==false)try{history.replaceState(null,"","#cv="+hv)}catch(e){location.hash="cv="+hv}}
+ pbs.forEach(function(x){x.addEventListener("click",function(){var p=pick(x.getAttribute("data-name"));if(p){per=p;apply()}})});
+ var cvft=D.getElementById("cvft");if(cvft)cvft.addEventListener("click",function(){var r=range(cf.value,ct.value);if(r){per=r;apply()}});
+ if(P0.name)pick(P0.name);
  function tick(idx){var want={};idx.forEach(function(i){want[i]=1});all.forEach(function(b){b.checked=!!want[+b.getAttribute("data-g")]});tally()}
  pres.forEach(function(x){x.addEventListener("click",function(){tick(dec(x.getAttribute("data-idx")));press(x.getAttribute("data-name"));apply()})});
  D.getElementById("cvgo").addEventListener("click",function(){apply();D.getElementById("cvres").scrollIntoView({block:"nearest"})});
  D.getElementById("cvcopy").addEventListener("click",function(){var b=this,u=location.href;function ok(){b.textContent="Copied";setTimeout(function(){b.textContent="Copy link"},1600)}
   try{navigator.clipboard.writeText(u).then(ok,function(){})}catch(e){}});
- var h=/[#&]cv=([0-9,\-]*)/.exec(location.hash),hp=/[#&]cv=preset:([^&]*)/.exec(location.hash),hb=null;
+ var h=/[#&]cv=([0-9,\-]*)/.exec(location.hash),hp=/[#&]cv=preset:([^&]*)/.exec(location.hash),hq=/[#&]p=([^&]*)/.exec(location.hash),hb=null;
+ if(hq){var pn=decodeURIComponent(hq[1]),pq=pick(pn),m2=/^(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})$/.exec(pn);if(pq)per=pq;else if(m2){var rq=range(m2[1],m2[2]);if(rq){per=rq;cf.value=m2[1];ct.value=m2[2]}}}
  if(hp){var nm=decodeURIComponent(hp[1]);hb=pres.filter(function(x){return x.getAttribute("data-name")===nm})[0];if(hb){tick(dec(hb.getAttribute("data-idx")));press(nm)}h=hb?h||[""]:null}
  if(h){if(!hb)tick(dec(h[1]));apply(false);
   var d=D.getElementById("cv");if(d)d.open=true;var sec=D.getElementById("custom");if(sec)sec.scrollIntoView({block:"start"})}else tally();
@@ -1811,6 +1879,13 @@ ORG_CSS = """
 .cvpre{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 14px 0}
 .cvpre button{font:inherit;font-size:13px;padding:4px 12px;border:1px solid var(--line);border-radius:999px;background:var(--surface-2);color:var(--fg);cursor:pointer}
 .cvpre button[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);font-weight:700}
+.cvper{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 12px}
+.cvres .cvper button.cvpd{border-radius:999px;padding:4px 12px}
+.cvres .cvper button.cvpd[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);font-weight:700}
+.cvft{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px 8px}.cvft label{font-size:13px;color:var(--fg-2)}
+.cvft input{font:inherit;font-size:13px;padding:3px 6px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--fg);color-scheme:inherit}
+.cvres #cvpt{font-size:13px}.cvdt{white-space:nowrap}
+.cvch{margin:12px 0}.cvsvg{display:block;width:100%;max-width:760px;height:auto}.cvsvg text{font-size:12px}
 .cvaway{margin:0 0 14px;color:var(--fg-2)}
 .cvd:focus-within{outline:none}.cvt input:focus-visible,.cvbar :focus-visible,.cvx:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 """
@@ -1908,19 +1983,38 @@ def custom_view(m, o):
            'spellcheck="false"><button type="button" id="cvopen">Expand all</button><button type="button" id="cvshut">Collapse all</button>'
            '<button type="button" id="cvall">Select all</button><button type="button" id="cvnone">Clear</button>'
            '<span class="cvn" id="cvn" aria-live="polite">0 of %d groups</span><button type="button" class="pri" id="cvgo">Apply</button></div>') % len(groups)
-    res = ('<div class="cvres" id="cvres" hidden><div class="cvhead"><b id="cvlab"></b><button type="button" id="cvcopy">Copy link</button></div>'
-           '<div class="tiles">%s</div>%s<div class="fair">Worked out in this page for the groups chosen, by the same rules as every figure on this page.</div></div>') % (
-        "".join('<div class="tile"><span class="eyebrow">%s</span><span class="v" id="cv-%s">—</span><span class="d" id="cv-%s-d"></span></div>' % (e(lab), k, k)
-                for k, lab in [("opened", "Tickets opened"), ("resolved", "Incidents resolved"), ("backlog", "Open now"),
-                               ("median", "Median time to resolve an incident")] +
-                [("resp", "Response met")] * ("resp" in c["cols"]) + [("sla", "Resolution met" if "resp" in c["cols"] else "SLAs met")] +
-                [(k, lab) for k, lab, col in (("hops", "Open over %d hops" % int(c.get("hop_limit", 3)), "hops"),
-                                              ("hold", "On hold now", "hold"), ("unable", "Unable to resolve", "out"),
-                                              ("fcr", "First-contact resolution", "hops")) if col in c["cols"]]),
-        table([("Group", "", "name"), ("Opened", "n", "opened"), ("Resolved", "n", "res"), ("Open now", "n", "open"), ("Median fix", "n", "fix"),
-               ("SLA met", "n", "sla")], [], tid="cvtab", empty="Choose groups above, then Apply.", sortable=True))
-    data = json.dumps({"until": c["until"], "n": c["n"], "groups": groups, "cols": c["cols"], "hop_limit": c.get("hop_limit", 3),
-                       "unable": c.get("unable") or []}, separators=(",", ":")).replace("</", "<\\/")
+    cols = c["cols"]
+    tl = ([("opened", "Tickets opened"), ("resolved", "Incidents resolved"), ("backlog", "Open now"), ("median", "Median time to resolve an incident")] +
+          [("resp", "Response met")] * ("resp" in cols) + [("sla", "Resolution met" if "resp" in cols else "SLAs met")] +
+          [(k, lab) for k, lab, col in (("hops", "Open over %d hops" % int(c.get("hop_limit", 3)), "hops"), ("hold", "On hold now", "hold"),
+                                        ("unable", "Unable to resolve", "out"), ("fcr", "First-contact resolution", "hops"),
+                                        ("tis", "Time in each state", "tis"), ("age", "Open over 10 business days", "ob")) if col in cols])
+    # the periods (1.10.0): calendar months and weeks, each against the one before; or any from / to
+    pers = c.get("periods") or []
+    cal = c.get("calendar") or {}
+    pbar = ""
+    if pers:
+        pbar = ('<div class="cvper js" role="group" aria-label="Period"><span class="mut">Period:</span>%s'
+                '<span class="cvft"><label>From <input type="date" id="cvfrom" min="%s" max="%s"></label>'
+                '<label>to <input type="date" id="cvto" min="%s" max="%s"></label><button type="button" id="cvft">Show</button></span></div>') % (
+            "".join('<button type="button" class="cvpd" data-name="%s" aria-pressed="false" title="%s">%s</button>' % (
+                e(p_["name"]), e(p_["title"] + ((", compared with " + p_["ctitle"]) if p_.get("ctitle") else "")), e(p_["label"])) for p_ in pers),
+            e(cal.get("d0", "")), e(cal.get("last", "")), e(cal.get("d0", "")), e(cal.get("last", "")))
+    chart = ('<div class="fig cvch"><h3>Opened and resolved</h3><div class="legend"><span><i style="background:var(--s1)"></i>Opened</span>'
+             '<span><i style="background:var(--s2)"></i>Incidents resolved</span></div><div id="cvchart"></div></div>')
+    res = ('<div class="cvres" id="cvres" hidden><div class="cvhead"><b id="cvlab"></b><span class="mut" id="cvpt"></span>'
+           '<button type="button" id="cvcopy">Copy link</button></div>%s'
+           '<div class="tiles">%s</div>%s%s<div class="fair">Worked out in this page for the groups and the period chosen, by the same rules as every '
+           'figure on this page.%s</div></div>') % (
+        pbar,
+        "".join('<div class="tile"><span class="eyebrow" id="cv-%s-l">%s</span><span class="v"><span id="cv-%s">—</span> <span id="cv-%s-x"></span></span>'
+                '<span class="d" id="cv-%s-d"></span></div>' % (k, e(lab), k, k, k) for k, lab in tl),
+        chart,
+        table([("Group", "", "name"), ("Opened", "n", "opened"), ("Resolved", "n", "res"), ("Open at the end", "n", "open"), ("Median fix", "n", "fix"),
+               ("SLA met", "n", "sla")], [], tid="cvtab", empty="Choose groups above, then Apply.", sortable=True),
+        " The window before is not carried (too many tickets), so there is no compare." if c.get("no_compare") else "")
+    data = json.dumps({"until": c["until"], "n": c["n"], "groups": groups, "cols": cols, "hop_limit": c.get("hop_limit", 3),
+                       "unable": c.get("unable") or [], "calendar": cal, "periods": pers}, separators=(",", ":")).replace("</", "<\\/")
     intro = ('<div class="cvintro"><p>Tick units and groups, then Apply: the figures below are for exactly those groups. '
              'A unit ticks every group under it, and the address keeps the choice to share.</p></div>')
     return (section("custom", "Custom view", "any mix of units and groups (%s tickets carried in this page)" % "{:,}".format(c["n"]),

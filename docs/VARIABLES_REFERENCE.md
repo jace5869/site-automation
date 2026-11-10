@@ -1440,8 +1440,10 @@ File: `roles/servicenow_insights/defaults/main.yml`
 | `servicenow_insights_hierarchy_map` | `{}` | map: {"<exact group name>": [Site, Level1, ...]}; parents / names: {"<group>": {site: X, directorate: Y, team: Z}}, wins over either |
 | `servicenow_insights_unmapped_bucket` | `Unknown` | map: where the groups with tickets that are not in the map go (last) |
 | `servicenow_insights_custom_view` | `true` | map: the All page's Custom view (tick units and groups: their figures) |
-| `servicenow_insights_custom_view_max_rows` | `30000` | its tickets carried in the page at most, about 40 bytes each. More: no Custom view |
+| `servicenow_insights_custom_view_max_rows` | `30000` | its tickets carried in the page at most, about 55 bytes each. More: no Custom view |
 | `servicenow_insights_custom_view_presets` | `{}` | map: the Custom view's own quick choices, besides the split's two ("<label>", "non-<label>"). Either {name: {levels: [SPLIT]}} (the groups whose map path has every level listed) or {name: {pattern: "*- Desk*"}}. |
+| `servicenow_insights_periods` | `[all, this_month, 1m, 2m, 2w, 1w]` | map: the Custom view's periods (1.10.0), calendar ones, each against the one before. all = the window; this_month = the report end's month so far; 1m, 2m = the last whole calendar month(s); 1w, 2w = the last whole weeks. A from / to too. |
+| `servicenow_insights_week_start` | `mon` | the day a week starts on, for 1w and 2w (mon ... sun) |
 | `servicenow_insights_suffix_directorates` | `[]` | names: [NOVA] - a group whose name ends in "- NOVA" is in NOVA |
 | `servicenow_insights_directorates` | `[]` | names: second parts that name a directorate (e.g. [CODEX]) |
 | `servicenow_insights_directorate_tags` | `{}` | names: {COMPONENTX: N6} - a whole word in a group's name puts it there |
