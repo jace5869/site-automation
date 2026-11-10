@@ -1097,10 +1097,269 @@ def group_chain(group, tree, depth=8):
     return [x for x in out if x]
 
 
+# ---- the org map (1.8.0): servicenow_insights_hierarchy_source: map - management's own tree, any depth --------------------
+# Every group is placed only by servicenow_insights_hierarchy_map, {"<group>": ["Site", "Level1", ...]} (a list: the names
+# may hold "/" and "&") or "Site > Level1 > ..."; the group is the leaf under its levels. A group with tickets that is not in
+# the map goes to servicenow_insights_unmapped_bucket (Unknown); tickets with no group to Unassigned. Both last.
+ORG_SEP = "›"                  # between a node's levels in its key: never in a group's name the way "/" or ">" may be
+UNASSIGNED = "Unassigned"
+OUTCOMES = ["Fixed", "Workaround", "Duplicate", "Known Error", "No Resolution Provided"]
+
+
+def org_levels(v):
+    """One map value -> its levels: a list ["Site", "Level1", ...], a string "Site > Level1 > ...", or the older
+    {site, directorate} form. Blank levels are left out."""
+    if isinstance(v, (list, tuple)):
+        lv = [" ".join(str(x).split()) for x in v]
+    elif isinstance(v, dict):
+        lv = [" ".join(str(v.get(k) or "").split()) for k in ("site", "directorate", "dir")]
+    else:
+        lv = [" ".join(x.split()) for x in str(v or "").split(">")]
+    return [x for x in lv if x]
+
+
+def org_map(m):
+    """servicenow_insights_hierarchy_map -> ({group, lower case: (group, levels)}, [groups with no level])."""
+    out, bad = {}, []
+    for g, v in (m or {}).items():
+        name = " ".join(str(g or "").split())
+        if not name:
+            continue
+        lv = org_levels(v)
+        if lv:
+            out[name.lower()] = (name, lv)
+        else:
+            bad.append(name)
+    return out, sorted(bad, key=_nat)
+
+
+def org_is_map(o):
+    return str((o or {}).get("hierarchy_source") or "parents").strip().lower() == "map"
+
+
+def org_hierarchy(names, opts=None):
+    """Every group's place by the map -> {group: {site, dir, team, path, rule, by, under}}: site the first level, dir the
+    rest (" > "), path every level; not in the map: the unmapped bucket, rule unknown."""
+    o = opts or {}
+    m, _ = org_map(o.get("hierarchy_map"))
+    bucket = " ".join(str(o.get("unmapped_bucket") or UNKNOWN).split()) or UNKNOWN
+    out = {}
+    for n in names or []:
+        g = " ".join(str(n or "").split())
+        if not g:
+            continue
+        hit = m.get(g.lower())
+        path = hit[1] if hit else [bucket]
+        out[str(n)] = {"site": path[0], "dir": " > ".join(path[1:]), "team": str(n), "path": list(path),
+                       "rule": "map" if hit else "unknown", "by": "map" if hit else PLACED_BY["unknown"], "under": ""}
+    return out
+
+
+def org_teams(r, opts=None):
+    """With the map, every group in it that has tickets has its own page (the map is the list of teams)."""
+    m, _ = org_map((opts or {}).get("hierarchy_map"))
+    seen = set(it.get("group") for it in (r or {}).get("items") or [] if it.get("group"))
+    return sorted([g for g in seen if " ".join(str(g).split()).lower() in m], key=_nat)
+
+
+def org_tree(hier, groups, unassigned=False, opts=None):
+    """The tree of the groups' paths -> [node]: {key, label, path, depth, groups (directly under it), all (every group
+    below it), children}. A to Z at every level, the unmapped bucket and Unassigned last; Unassigned (tickets with no
+    group) holds the group ""."""
+    o = opts or {}
+    bucket = " ".join(str(o.get("unmapped_bucket") or UNKNOWN).split()) or UNKNOWN
+    root = {"children": {}, "groups": []}
+    for g in groups:
+        node = root
+        for lv in (hier.get(g) or {}).get("path") or [bucket]:
+            node = node["children"].setdefault(lv, {"children": {}, "groups": []})
+        node["groups"].append(g)
+    if unassigned:
+        root["children"].setdefault(UNASSIGNED, {"children": {}, "groups": []})["groups"].append("")
+
+    def last(name, depth):
+        return (depth == 1 and name in (bucket, UNASSIGNED), name == UNASSIGNED) + tuple(_nat(name))
+
+    def build(n, path):
+        out = []
+        for name in sorted(n["children"], key=lambda x: last(x, len(path) + 1)):
+            c = n["children"][name]
+            p = path + [name]
+            kids = build(c, p)
+            mine = sorted(c["groups"], key=_nat)
+            out.append({"key": "org:" + ORG_SEP.join(p), "label": name, "path": p, "depth": len(p), "groups": mine,
+                        "all": sorted(set(mine) | set(g for k in kids for g in k["all"]), key=_nat), "children": kids})
+        return out
+    return build(root, [])
+
+
+def org_walk(nodes):
+    for n in nodes or []:
+        yield n
+        for x in org_walk(n["children"]):
+            yield x
+
+
+def custom_rows(items, since, until, groups, opts=None):
+    """The Custom view's data (1.8.0): one compact row per incident and requested item open at the window's start or after
+    - columns, so 20,000 tickets stay small - from which the page works out the figures for any choice of groups: g the
+    group's index in groups (-1: none), t 0 incident / 1 requested item, p the priority, o / d opened / done in seconds from
+    the window's start (d null: open), s made_sla (the resolution SLO) 1 / 0 / -1; and the 1.7.0 fields where the tickets
+    have them: resp (the response SLO) and noslo 1 / 0 / -1, hops (reassignment_count; incidents), hold (on hold now), r7
+    (reopened within 7 days), out (the outcome's index in outcomes; -1 not resolved), risk (1 at risk, 2 breached).
+    -> {groups, n, until, cols: {name: [values]}, hop_limit, outcomes, unable (their indices)}"""
+    o = opts or {}
+    gi = dict((g, i) for i, g in enumerate(groups))
+    flow = []
+    for x in items or []:
+        if x.get("table") not in ("incident", "sc_req_item"):
+            continue
+        op, dn = _t(x.get("opened_at")), _t(x.get("done_at"))
+        if op and op < until and not (dn and dn < since):
+            flow.append((x, op, dn))
+    has = lambda k: any(k in x for x, _, _ in flow)                               # noqa: E731
+    cols = dict((k, []) for k in ("g", "t", "p", "o", "d", "s"))
+    extra = [(k, f) for k, f in (("resp", "_resp"), ("noslo", "_no_slo"), ("hops", "_hops"), ("hold", "_hold_now"), ("r7", "_reopen7"),
+                                 ("out", "_outcome"), ("risk", "_risk")) if has(f)]
+    for k, _ in extra:
+        cols[k] = []
+    names = list(OUTCOMES)
+
+    def tri(v):
+        return -1 if v is None else (1 if v else 0)
+    for x, op, dn in flow:
+        inc = x["table"] == "incident"
+        cols["g"].append(gi.get(x.get("group") or "", -1))
+        cols["t"].append(0 if inc else 1)
+        try:
+            cols["p"].append(int(x.get("priority_value") or 0))
+        except (TypeError, ValueError):
+            cols["p"].append(0)
+        cols["o"].append(int((op - since).total_seconds()))
+        cols["d"].append(int((dn - since).total_seconds()) if dn else None)
+        cols["s"].append(tri(x.get("made_sla")))
+        for k, f in extra:
+            v = x.get(f)
+            if k == "hops":
+                try:
+                    cols[k].append(int(v or 0) if inc else 0)
+                except (TypeError, ValueError):
+                    cols[k].append(0)
+            elif k == "out":
+                if inc and v:
+                    if v not in names:
+                        names.append(v)
+                    cols[k].append(names.index(v))
+                else:
+                    cols[k].append(-1)
+            elif k == "risk":
+                cols[k].append((2 if v.get("breached") else 1) if isinstance(v, dict) else 0)
+            elif k == "hold":
+                cols[k].append(1 if inc and v else 0)
+            else:
+                cols[k].append(tri(v))
+    unable = set(str(u).lower() for u in name_list(o.get("unable_outcomes") or ["Known Error", "No Resolution Provided"]))
+    return {"groups": list(groups), "n": len(flow), "until": int((until - since).total_seconds()), "cols": cols,
+            "hop_limit": int(_o(o, "hop_limit", 3)), "outcomes": names, "unable": [i for i, n_ in enumerate(names) if n_.lower() in unable]}
+
+
+def custom_presets(hier, groups, split=None, opts=None):
+    """The Custom view's one-click choices (1.8.0): the split's "<label>" and "non-<label>", then
+    servicenow_insights_custom_view_presets {name: {levels: [...]}} (the groups whose map path has every level, in any
+    position) or {name: {pattern: "..."}} (by name, * and ?, any case). -> [{name, idx}] (idx: indices into groups)."""
+    gi = dict((g, i) for i, g in enumerate(groups))
+    out = []
+    if split and split.get("label"):
+        inn = set(split.get("groups") or [])
+        out.append({"name": split["label"], "idx": [gi[g] for g in groups if g in inn]})
+        out.append({"name": "non-" + split["label"], "idx": [gi[g] for g in groups if g not in inn]})
+    for name, spec in sorted(((opts or {}).get("custom_view_presets") or {}).items(), key=lambda kv: _nat(kv[0])):
+        spec = spec if isinstance(spec, dict) else {}
+        lv = [x.lower() for x in org_levels(spec.get("levels") or [])]
+        pat = str(spec.get("pattern") or "").strip().lower()
+        idx = [gi[g] for g in groups if (lv and all(x in [y.lower() for y in (hier.get(g) or {}).get("path") or []] for x in lv))
+               or (pat and g and fnmatch.fnmatchcase(g.lower(), pat))]
+        out.append({"name": " ".join(str(name).split()), "idx": idx})
+    return [x for x in out if x["name"]]
+
+
+def custom_figures(data, sel):
+    """The Custom view's figures for the groups whose indices are in sel - what the page's script works out, the same
+    way as scope_model (the tests compare them): incidents and requests opened, incidents resolved, the backlog now and at
+    the window's start, the median hours to resolve, SLA met %."""
+    c, w = data["cols"], data["until"]
+    sel = set(sel)
+    inc = req = res = bl = bl0 = sla_n = sla_ok = 0
+    hrs = []
+    for i in range(len(c["g"])):
+        if c["g"][i] not in sel:
+            continue
+        o, d, t = c["o"][i], c["d"][i], c["t"][i]
+        if 0 <= o < w:
+            if t == 0:
+                inc += 1
+            else:
+                req += 1
+        done_in = d is not None and 0 <= d < w
+        if t == 0 and done_in:
+            res += 1
+            if d >= o:
+                hrs.append((d - o) / 3600.0)
+        if o <= w and (d is None or d > w):
+            bl += 1
+        if o <= 0 and (d is None or d > 0):
+            bl0 += 1
+        if done_in and c["s"][i] in (0, 1):
+            sla_n += 1
+            sla_ok += c["s"][i]
+    out = {"incidents": inc, "requests": req, "resolved": res, "backlog": [bl, bl0], "median_h": _r1(_median(hrs)),
+           "sla": _r1(_pct(sla_ok, sla_n))}
+    # the 1.7.0 figures, where the rows carry them - as scope_model: the response SLO met of what was done in the window
+    # (no SLO left out), done with no SLO, incidents open now over the hop limit (and the share of those resolved), on hold
+    # now, unable to resolve and first-contact resolution of the incidents resolved
+    rs, ns, hop, hres, hold, una, fcr = [0, 0], 0, 0, 0, 0, 0, 0
+    lim, unable = int(data.get("hop_limit", 3)), set(data.get("unable") or [])
+    for i in range(len(c["g"])):
+        if c["g"][i] not in sel:
+            continue
+        o, d, t = c["o"][i], c["d"][i], c["t"][i]
+        done_in = d is not None and 0 <= d < w
+        open_now = o <= w and (d is None or d > w)
+        if done_in and "resp" in c and c["resp"][i] in (0, 1):
+            rs[1] += 1
+            rs[0] += c["resp"][i]
+        if done_in and "noslo" in c and c["noslo"][i] == 1:
+            ns += 1
+        if t == 0 and "hops" in c:
+            over = c["hops"][i] > lim + 1
+            if open_now and over:
+                hop += 1
+            if done_in:
+                hres += 1 if over else 0
+                fcr += 1 if c["hops"][i] == 0 else 0
+        if t == 0 and open_now and "hold" in c and c["hold"][i] == 1:
+            hold += 1
+        if t == 0 and done_in and "out" in c and c["out"][i] in unable:
+            una += 1
+    if "resp" in c:
+        out["resp"] = _r1(_pct(rs[0], rs[1]))
+    if "noslo" in c:
+        out["no_slo"] = ns
+    if "hops" in c:
+        out.update(hops_open=hop, hops_done_pct=_r1(_pct(hres, res)), fcr=_r1(_pct(fcr, res)))
+    if "hold" in c:
+        out["hold"] = hold
+    if "out" in c:
+        out["unable"] = _r1(_pct(una, res))
+    return out
+
+
 def servicenow_insights_hierarchy(names, opts=None, tree=None, tree_ok=True):
     """Every group's place (hier_place; its ServiceNow parents from tree, the groups as the module read them) ->
     {group: {site, dir, team, rule, by, under}}."""
     o = opts or {}
+    if org_is_map(o):
+        return org_hierarchy(names, o)
     roots = group_roots(tree)
     out = {}
     for n in names or []:
@@ -1196,7 +1455,7 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
     issue_def = dict((x["name"], x) for x in state.get("issues") or [])
     act_ran = int(state.get("answered") or 0) > 0 and bool(state.get("classes"))
     fixed = o.get("_fixed")                   # a split's half (0.97.0): the whole site's teams and places, its tickets only
-    teams = list(fixed["teams"]) if fixed else servicenow_insights_teams(r, o)
+    teams = list(fixed["teams"]) if fixed else (org_teams(r, o) if org_is_map(o) else servicenow_insights_teams(r, o))
     repeat = datetime.timedelta(days=float(_o(o, "repeat_days", 14)))
     old_days = float(_o(o, "old_days", 30))
     weeks = _weeks(since, until, tz)
@@ -1982,7 +2241,7 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
     for g, h in hier.items():
         site_g.setdefault(h["site"], set()).add(g)
         dir_g.setdefault((h["site"], h["dir"]), set()).add(g)
-    sites = sorted(site_g, key=_level_key)
+    sites = [] if org_is_map(o) else sorted(site_g, key=_level_key)       # the org map: its own tree, below
     scopes = {"all": scope_model(None)}
     scopes["all"].update({"site": "", "dir": "", "label": "All assignment groups", "path": [], "crumbs": [["all", "All"]], "parent": ""})
     tree, pages, used = [], [], set()
@@ -2042,7 +2301,8 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
         scopes["all"]["side"] = {"kind": "Directorates", "rows": [side_row(d["key"]) for d in tree[0]["dirs"]]}
     else:
         scopes["all"]["side"] = {"kind": "Teams", "rows": [side_row(t["key"]) for n in tree for d in n["dirs"] for t in d["teams"]]}
-    scopes["all"]["teams"] = [side_row(t) for t in sorted(teams, key=_nat)]          # every team (the email's table, the workbook)
+    if not org_is_map(o):                                                             # the org map: once its teams are made, below
+        scopes["all"]["teams"] = [side_row(t) for t in sorted(teams, key=_nat)]      # every team (the email's table, the workbook)
     ids = {"all": "all"}
     for i, n_ in enumerate(tree):
         ids[n_["key"]] = "S%d" % (i + 1)
@@ -2050,8 +2310,52 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
         ids[k] = "D%d" % (i + 1)
     for i, t in enumerate(teams):
         ids[t] = "T%d" % (i + 1)
+    org, custom = [], {}
+    una = fixed.get("unassigned", False) if fixed else any(not it.get("group") for it in items)   # a split's half: the whole's tree
+    if org_is_map(o):
+        # the org map (1.8.0): a page for every node at every depth (its groups' tickets rolled up), every group in the map
+        # a team page under its node; the unmapped bucket and Unassigned last
+        tset = set(teams)
+        org = org_tree(hier, sorted(hier, key=_nat), una, o)          # every group placed (a split's half: the whole's)
+        nid = {1: 0, 2: 0}
+        for nd in org_walk(org):
+            k = nd["key"]
+            par = scopes["org:" + ORG_SEP.join(nd["path"][:-1])] if nd["depth"] > 1 else scopes["all"]
+            pkey = "all" if nd["depth"] == 1 else "org:" + ORG_SEP.join(nd["path"][:-1])
+            slug = unique(_slug(nd["label"]), "/".join(par["path"]))
+            lv = "site" if nd["depth"] == 1 else "dir"
+            scopes[k] = scope_model(None, nd["all"], lv, k, nd["label"])
+            scopes[k].update({"site": nd["path"][0], "dir": " > ".join(nd["path"][1:]), "label": nd["label"], "path": par["path"] + [slug],
+                              "parent": pkey, "crumbs": par["crumbs"] + [[k, nd["label"]]], "depth": nd["depth"],
+                              "teams_under": [g for g in nd["all"] if g in tset]})
+            pages.append({"key": k, "level": lv, "path": scopes[k]["path"]})
+            nid[min(nd["depth"], 2)] += 1
+            ids[k] = ("S%d" if nd["depth"] == 1 else "N%d") % nid[min(nd["depth"], 2)]
+            for t in nd["groups"]:
+                if t not in tset:
+                    continue
+                tp = scopes[k]["path"] + [unique(_slug(t), "/".join(scopes[k]["path"]))]
+                scopes[t] = scope_model(t, None, "team", t, t)
+                scopes[t].update({"site": nd["path"][0], "dir": " > ".join(nd["path"][1:]), "label": t, "path": tp, "parent": k,
+                                  "crumbs": scopes[k]["crumbs"] + [[t, t]], "depth": nd["depth"] + 1})
+                pages.append({"key": t, "level": "team", "path": tp})
+        for nd in org_walk(org):
+            kids = [c["key"] for c in nd["children"]]
+            mine = [t for t in nd["groups"] if t in tset]
+            scopes[nd["key"]]["side"] = {"kind": "Teams" if not kids else ("Units" if not mine else "Units and teams"),
+                                         "rows": [side_row(x) for x in kids + mine]}
+        scopes["all"]["side"] = {"kind": "Sites", "rows": [side_row(nd["key"]) for nd in org]}
+        scopes["all"]["teams_under"] = list(teams)
+        scopes["all"]["teams"] = [side_row(t) for t in sorted(teams, key=_nat)]
+        if o.get("custom_view", True) not in (False, "false", "False", 0) and not fixed:
+            gl = sorted([g for g in seen_groups], key=_nat) + ([""] if any(not it.get("group") for it in items) else [])
+            data = custom_rows(items, since, until, gl, o)
+            mx = int(_o(o, "custom_view_max_rows", 30000))
+            custom = data if data["n"] <= mx else {"skipped": data["n"], "max": mx}
     model = {"window": win, "url": r.get("url") or "", "teams": teams, "scopes": scopes, "reopen_used": reopen_used,
-             "tree": tree, "pages": pages, "scope_ids": ids, "hier": hier,
+             "tree": tree, "pages": pages, "scope_ids": ids, "hier": hier, "org": org, "custom": custom,
+             "org_bad": org_map(o.get("hierarchy_map"))[1] if org_is_map(o) else [],
+             "org_bucket": (" ".join(str(o.get("unmapped_bucket") or UNKNOWN).split()) or UNKNOWN) if org_is_map(o) else "",
              "hier_other": sorted([g for g, h in hier.items() if h["dir"] == OTHER], key=_nat),
              "hier_unknown": [[g, gcount.get(g, 0)] for g in sorted([g for g, h in hier.items() if h["rule"] == "unknown"], key=_nat)],
              "hier_folded": [[g, why, "%s / %s" % (hier[g]["site"], hier[g]["dir"])] for g, why in sorted(folded.items(), key=lambda kv: _nat(kv[0]))
@@ -2081,8 +2385,12 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
     # the split (0.97.0): every page's figures again for the groups that match servicenow_insights_split_pattern (the group
     # or a parent team below the root) and for the rest - worked out here, so the page only switches between them
     label, pat = str(o.get("split_label") or "").strip(), str(o.get("split_pattern") or "").strip().lower()
-    if label and pat and not fixed:
+    by, mapm = str(o.get("split_by") or "both").strip().lower(), org_is_map(o)
+    if label and (pat or (mapm and by in ("level", "both"))) and not fixed:
         def is_split(g):
+            if mapm:                   # the org map (1.8.0): the pattern, or the label as one of the group's levels (split_by)
+                return ((by in ("pattern", "both") and bool(pat) and fnmatch.fnmatchcase(g.lower(), pat))
+                        or (by in ("level", "both") and label.lower() in [x.lower() for x in (hier.get(g) or {}).get("path") or []]))
             below = (group_chain(g, gtree) if tree_ok else [])[:-1]
             return fnmatch.fnmatchcase(g.lower(), pat) or any(fnmatch.fnmatchcase(a.lower(), pat) for a in below)
         sgroups = sorted([g for g in hier if is_split(g)], key=_nat)
@@ -2090,8 +2398,11 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
         model["variants"] = {}
         for v in ("in", "out"):
             rv = dict(r, items=[it for it in r.get("items") or [] if (it.get("group") in sgroups) == (v == "in")])
-            mv = servicenow_insights_model(rv, state, mask, dict(o, split_pattern="", _fixed={"teams": teams, "hier": hier, "folded": folded}))
+            mv = servicenow_insights_model(rv, state, mask, dict(o, split_pattern="", split_label="",
+                                                                 _fixed={"teams": teams, "hier": hier, "folded": folded, "unassigned": una}))
             model["variants"][v] = mv["scopes"]
+    if custom.get("cols"):                        # the Custom view's presets: the split's two halves, and the user's own
+        custom["presets"] = custom_presets(hier, custom["groups"], model.get("split"), o)
     return model
 
 
@@ -2179,7 +2490,7 @@ def rule_summary(s, model, opts=None):
             "{:,}".format(tot), ", ".join("%s (%d)" % (i["name"], i["count"]) for i in iss)))
     b = s["backlog"]
     if b[1] or b[0]:
-        out.append("The backlog went from %d to %d (%s); %d %s older than %s days." % (
+        out.append("The backlog went from %d to %d (%s). %d %s older than %s days." % (
             b[1], b[0], _change(b[0], b[1]) or "no change", s["age"][3], "is" if s["age"][3] == 1 else "are", int(_o(opts, "old_days", 30))))
     if s["majors"]:
         chg = sum(1 for m in s["majors"] if m["change"])
@@ -2188,7 +2499,7 @@ def rule_summary(s, model, opts=None):
     if s["requests"]:
         out.append("The most requested service is %s (%d)." % (s["requests"][0]["name"], s["requests"][0]["count"]))
     if s.get("notes_graded"):
-        out.append("%d%% of close notes say what was done; %d%% are a stock phrase such as \"fixed\" or \"done\", or empty." % (
+        out.append("%d%% of close notes say what was done. %d%% are a stock phrase such as \"fixed\" or \"done\", or empty." % (
             s["quality"][0], s["quality"][2]))
     return out
 
@@ -2362,7 +2673,7 @@ def servicenow_insights_doc(model, key="all", opts=None):
     mx = s.get("matrix") or {}
     if mx.get("on") and mx.get("checked"):
         secs.append({"title": "Priority set by hand", "status": "warning" if (mx.get("pct") or 0) >= 10 else "",
-                     "text": "%d of %d incidents (%s) have a priority their impact and urgency do not give (the 3 x 3 matrix): %d set higher, %d lower." % (
+                     "text": "%d of %d incidents (%s) have a priority the 3 x 3 matrix does not give for their impact and urgency. %d were set higher, %d lower." % (
                          mx["off"], mx["checked"], pf(mx["pct"]), mx.get("higher") or 0, mx.get("lower") or 0),
                      "columns": ["Group", "Set by hand", "Of", "Share"],
                      "rows": [[g["group"], g["off"], g["of"], pf(g["pct"])] for g in mx.get("by_group") or []]})
@@ -2397,7 +2708,7 @@ def servicenow_insights_doc(model, key="all", opts=None):
         secs.append({"title": "Problem candidates", "columns": ["Issue", "CI", "Last %d days" % int(_o(o, "problem_days", 30)), "In the period", "Group", "Problem record"],
                      "rows": [[p["issue"], p["ci"], p["last"], p["count"], p["group"],
                                (p["problem"] + (" (" + p["problem_state"] + ")" if p["problem_state"] else "") +
-                                (" - resolved, incidents continue" if p["continues"] else "")) if p["problem"] else "none"] for p in s["problems"][:10]],
+                                (": resolved, incidents continue" if p["continues"] else "")) if p["problem"] else "none"] for p in s["problems"][:10]],
                      "row_status": ["warning" if not p["problem"] or p["continues"] else "" for p in s["problems"][:10]]})
     if s["changes"]["rows"]:
         secs.append({"title": "Changes failed or backed out", "columns": ["Change", "Closed", "What", "Group", "Outcome", "Incidents that followed"],
@@ -2407,16 +2718,16 @@ def servicenow_insights_doc(model, key="all", opts=None):
     ct = s.get("ctasks")
     if ct and (ct["closed"] or ct["open"]):
         ch = s["changes"]
-        lines = ["Closed: %d (the window before: %d), median %s to close; %d by the planned end, %d after it, %d with no planned end" % (
-                     ct["closed"], ct["closed_prev"], fmt_hours(ct["median_h"]), ct["on_time"], ct["overdue"], ct["no_end"]),
+        lines = ["Closed: %d (the window before: %d), median %s to close" % (ct["closed"], ct["closed_prev"], fmt_hours(ct["median_h"])),
+                 "  - by the planned end %d, after it %d, with no planned end %d" % (ct["on_time"], ct["overdue"], ct["no_end"]),
                  "Open now: %d, %d past the planned end, %d older than %d days" % (ct["open"], ct["late_open"], ct["age"][3], int(_o(o, "old_days", 30)))]
         if ch.get("with_tasks"):
             lines.append("Changes closed with tasks: %d of %d, %s tasks each on average (most: %s, %d)" % (
                 ch["with_tasks"], ch["count"], ch["per_change"], ch["most"][0], ch["most"][1]))
         sec = {"title": "Change tasks", "lines": lines}
         if ch.get("held_by"):
-            sec.update(text="Held up by: the team whose task a change waited on last - from when its other tasks were closed (one task: "
-                            "from the change's work start) to that task's close.",
+            sec.update(text="Held up by: the team whose task a change waited on last. The wait runs from the other tasks' close "
+                            "(one task: the work start) to that task's close.",
                        columns=["Team", "Changes held up", "Median wait"],
                        rows=[[x["group"], x["count"], fmt_hours(x["median_h"])] for x in ch["held_by"]])
         secs.append(sec)

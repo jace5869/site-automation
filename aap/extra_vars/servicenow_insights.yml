@@ -54,14 +54,35 @@ servicenow_insights_months: 6
 ## else a word of the name in servicenow_insights_directorate_tags, else a staff code (J633, A6) in
 ## the name or the nearest parent's, else a second part in servicenow_insights_directorates, else
 ## the parent below the root, else Other. docs/SERVICENOW_INSIGHTS.md, "Sites, directorates and
-## teams". parents or names
+## teams". map (1.8.0): your management's own org tree, any depth - every group placed ONLY by
+## servicenow_insights_hierarchy_map, {"<exact group name>": ["Site", "Level1", "Level2", ...]} (a
+## list, as names may hold "/" and "&"; or "Site > Level1 > ..."); the group is the team under its
+## levels. A page and rollup at every level; groups with tickets not in the map go to
+## servicenow_insights_unmapped_bucket, listed in "How this was made" with their tickets, to add;
+## tickets with no group to Unassigned. Keep the map in your all.yml - it names your organization.
+## docs/SERVICENOW_INSIGHTS.md, "The org map". parents, names or map
 # servicenow_insights_hierarchy_source: parents
 
 ## parents: the sites' root groups (exact names); [] = parentless groups with children
 # servicenow_insights_site_roots: []
 
-## {"<exact group name>": {site: X, directorate: Y, team: Z}}: wins over either
+## map: {"<exact group name>": [Site, Level1, ...]}; parents / names: {"<group>": {site: X,
+## directorate: Y, team: Z}}, wins over either
 # servicenow_insights_hierarchy_map: {}
+
+## map: where the groups with tickets that are not in the map go (last)
+# servicenow_insights_unmapped_bucket: Unknown
+
+## map: the All page's Custom view (tick units and groups: their figures)
+# servicenow_insights_custom_view: true
+
+## its tickets carried in the page at most, about 40 bytes each. More: no Custom view
+# servicenow_insights_custom_view_max_rows: 30000
+
+## map: the Custom view's own quick choices, besides the split's two ("<label>", "non-<label>").
+## Either {name: {levels: [SPLIT]}} (the groups whose map path has every level listed) or {name:
+## {pattern: "*- Desk*"}}.
+# servicenow_insights_custom_view_presets: {}
 
 ## names: [NOVA] - a group whose name ends in "- NOVA" is in NOVA
 # servicenow_insights_suffix_directorates: []
@@ -97,6 +118,9 @@ servicenow_insights_months: 6
 
 ## the groups it picks: e.g. "*- NOVA" (* and ?, any case)
 # servicenow_insights_split_pattern: ""
+
+## map: pattern (the name), level (the label is one of the group's map levels) or both
+# servicenow_insights_split_by: both
 
 ## false: the switch on All, the sites and directorates only (fewer files)
 # servicenow_insights_split_teams: true

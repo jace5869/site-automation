@@ -1437,7 +1437,11 @@ File: `roles/servicenow_insights/defaults/main.yml`
 | `servicenow_insights_team_min` | `10` | a group with at least this many tickets in the window is a team (no groups named) |
 | `servicenow_insights_hierarchy_source` | `parents` | SITES, DIRECTORATES AND TEAMS (0.97.0): a page for each site and directorate with tickets, under All; teams as above. parents (the default): ServiceNow's group tree (sys_user_group, read only) - the site is the root group (its name's first " - " part), the directorate the group one below the root, the team the group (… (all of it: the role file) |
 | `servicenow_insights_site_roots` | `[]` | parents: the sites' root groups (exact names); [] = parentless groups with children |
-| `servicenow_insights_hierarchy_map` | `{}` | {"<exact group name>": {site: X, directorate: Y, team: Z}}: wins over either |
+| `servicenow_insights_hierarchy_map` | `{}` | map: {"<exact group name>": [Site, Level1, ...]}; parents / names: {"<group>": {site: X, directorate: Y, team: Z}}, wins over either |
+| `servicenow_insights_unmapped_bucket` | `Unknown` | map: where the groups with tickets that are not in the map go (last) |
+| `servicenow_insights_custom_view` | `true` | map: the All page's Custom view (tick units and groups: their figures) |
+| `servicenow_insights_custom_view_max_rows` | `30000` | its tickets carried in the page at most, about 40 bytes each. More: no Custom view |
+| `servicenow_insights_custom_view_presets` | `{}` | map: the Custom view's own quick choices, besides the split's two ("<label>", "non-<label>"). Either {name: {levels: [SPLIT]}} (the groups whose map path has every level listed) or {name: {pattern: "*- Desk*"}}. |
 | `servicenow_insights_suffix_directorates` | `[]` | names: [NOVA] - a group whose name ends in "- NOVA" is in NOVA |
 | `servicenow_insights_directorates` | `[]` | names: second parts that name a directorate (e.g. [CODEX]) |
 | `servicenow_insights_directorate_tags` | `{}` | names: {COMPONENTX: N6} - a whole word in a group's name puts it there |
@@ -1449,6 +1453,7 @@ File: `roles/servicenow_insights/defaults/main.yml`
 | `servicenow_insights_skip_group_types` | `[approver, permission, survey, system, idea, legacy]` | no team page for these group types |
 | `servicenow_insights_split_label` | (empty) | THE SPLIT: with both set, every page has All \| LABEL \| non-LABEL - its figures for the groups whose name, or a parent team's below the root, matches the pattern (* and ?, any case), and for the rest. E.g. label NOVA, pattern "*- NOVA". the switch's label (e.g. NOVA); "" = no switch |
 | `servicenow_insights_split_pattern` | (empty) | the groups it picks: e.g. "*- NOVA" (* and ?, any case) |
+| `servicenow_insights_split_by` | `both` | map: pattern (the name), level (the label is one of the group's map levels) or both |
 | `servicenow_insights_split_teams` | `true` | false: the switch on All, the sites and directorates only (fewer files) |
 | `servicenow_insights_sla_source` | `auto` | YOUR SLOs (1.7.0; docs/SERVICENOW_INSIGHTS.md, "Your SLOs, priorities and categories"). Where met or missed comes from: auto ServiceNow's own SLAs (task_sla) when the account reads them (itil does), else the targets below task_sla ServiceNow's SLAs: each SLA definition a Response or a Resolution by its name (the two l… (all of it: the role file) |
 | `servicenow_insights_sla_response_match` | `[response]` | an SLA definition whose name has one of these is a Response |

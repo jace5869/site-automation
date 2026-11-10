@@ -33,9 +33,20 @@ servicenow_insights_team_min: 10        # a group with at least this many ticket
 # servicenow_insights_directorate_tags, else a staff code (J633, A6) in the name or the nearest parent's, else a second
 # part in servicenow_insights_directorates, else the parent below the root, else Other. docs/SERVICENOW_INSIGHTS.md,
 # "Sites, directorates and teams".
-servicenow_insights_hierarchy_source: parents   # parents or names
+# map (1.8.0): your management's own org tree, any depth - every group placed ONLY by servicenow_insights_hierarchy_map,
+# {"<exact group name>": ["Site", "Level1", "Level2", ...]} (a list, as names may hold "/" and "&"; or "Site > Level1 > ...");
+# the group is the team under its levels. A page and rollup at every level; groups with tickets not in the map go to
+# servicenow_insights_unmapped_bucket, listed in "How this was made" with their tickets, to add; tickets with no group to
+# Unassigned. Keep the map in your all.yml - it names your organization. docs/SERVICENOW_INSIGHTS.md, "The org map".
+servicenow_insights_hierarchy_source: parents   # parents, names or map
 servicenow_insights_site_roots: []              # parents: the sites' root groups (exact names); [] = parentless groups with children
-servicenow_insights_hierarchy_map: {}           # {"<exact group name>": {site: X, directorate: Y, team: Z}}: wins over either
+servicenow_insights_hierarchy_map: {}           # map: {"<exact group name>": [Site, Level1, ...]}; parents / names: {"<group>": {site: X, directorate: Y, team: Z}}, wins over either
+servicenow_insights_unmapped_bucket: Unknown    # map: where the groups with tickets that are not in the map go (last)
+servicenow_insights_custom_view: true           # map: the All page's Custom view (tick units and groups: their figures)
+servicenow_insights_custom_view_max_rows: 30000  # its tickets carried in the page at most, about 40 bytes each. More: no Custom view
+# map: the Custom view's own quick choices, besides the split's two ("<label>", "non-<label>"). Either
+# {name: {levels: [SPLIT]}} (the groups whose map path has every level listed) or {name: {pattern: "*- Desk*"}}.
+servicenow_insights_custom_view_presets: {}
 servicenow_insights_suffix_directorates: []     # names: [NOVA] - a group whose name ends in "- NOVA" is in NOVA
 servicenow_insights_directorates: []            # names: second parts that name a directorate (e.g. [CODEX])
 servicenow_insights_directorate_tags: {}        # names: {COMPONENTX: N6} - a whole word in a group's name puts it there
@@ -49,6 +60,7 @@ servicenow_insights_skip_group_types: [approver, permission, survey, system, ide
 # team's below the root, matches the pattern (* and ?, any case), and for the rest. E.g. label NOVA, pattern "*- NOVA".
 servicenow_insights_split_label: ""     # the switch's label (e.g. NOVA); "" = no switch
 servicenow_insights_split_pattern: ""   # the groups it picks: e.g. "*- NOVA" (* and ?, any case)
+servicenow_insights_split_by: both      # map: pattern (the name), level (the label is one of the group's map levels) or both
 servicenow_insights_split_teams: true           # false: the switch on All, the sites and directorates only (fewer files)
 # YOUR SLOs (1.7.0; docs/SERVICENOW_INSIGHTS.md, "Your SLOs, priorities and categories"). Where met or missed comes from:
 #   auto      ServiceNow's own SLAs (task_sla) when the account reads them (itil does), else the targets below

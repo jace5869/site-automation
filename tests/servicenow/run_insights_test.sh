@@ -223,7 +223,7 @@ n=$(find "$t5" -name 'latest-*blue.html' | wc -l)
 check "  ... All: the sites side by side, the tree, the switch" "$t5/latest.html" 'Sites side by side' '<a class="teamlink" href="sitea/latest.html" title="SITEA">SITEA</a>' \
     '<li class="lv1"><a href="sitea/latest.html"' '<li class="lv2"><a href="siteb/client-support/latest.html"' \
     '<nav class="split" aria-label="Which groups"><a href="latest.html" aria-current="page">All</a><a href="latest-blue.html">BLUE</a><a href="latest-non-blue.html">non-BLUE</a></nav>' \
-    '<b>Sites, directorates and teams</b>' 'ServiceNow parent' 'SITEB - Network - inactive in ServiceNow, its tickets in SITEB / Client Support' \
+    '<b>Sites, directorates and teams</b>' 'by their ServiceNow parent' '<dt>No page</dt><dd>SITEB - Network<br><span class="mut">Inactive in ServiceNow. Its tickets are in SITEB / Client Support.</span>' \
     '<dt>Unknown</dt><dd>SITE-C - CODEX - Linux ('
 check "  ... a directorate: its breadcrumbs and teams" "$t5/sitea/j6-staff-division/latest.html" 'Teams side by side' \
     '<nav class="crumbs" aria-label="Where this page is"><a href="../../latest.html">All</a><span class="sep" aria-hidden="true">›</span><a href="../latest.html">SITEA</a>' \
@@ -329,6 +329,32 @@ if ls "$work"/mail/*.eml >/dev/null 2>&1 && grep -q "Ticket insights for All ass
 else
     echo "FAIL - no mail with the report and the workbook"; fails=$((fails + 1))
 fi
+
+# ---- the org map (1.8.0): management's own tree, any depth; the Custom view ---------------------------------------------
+mock SNMOCK_SEED="$work/seed3.json"
+mkdir -p "$work/site8"
+orgmap='{"SITEA - J6 - Service Desk": ["SITEA", "SPLIT", "Operations", "EUCS"], "SITEA - j63 - Windows": "SITEA > SPLIT > Operations > Systems",
+         "SITEB - Ops - VDI - nova": ["SITEB"], "SITEB - Network": ["SITEB", "Networks & Comms"]}'
+run "the org map: a page and rollup at every level, the groups it does not name in Unknown, the Custom view" ok \
+    "{$NOW, $NOACT, \"servicenow_insights_hierarchy_source\": \"map\", \"servicenow_insights_hierarchy_map\": $orgmap, \"report_web_dest\": \"$work/site8\",
+      \"servicenow_insights_split_label\": \"SPLIT\", \"servicenow_insights_custom_view_presets\": {\"SITEB only\": {\"levels\": [\"SITEB\"]}}}" \
+    'Sites side by side' 'SITEA' 'SITEB'
+t8="$work/site8/servicenow-ticket-insights"
+for f in latest.html sitea/latest.html sitea/split/latest.html sitea/split/operations/latest.html sitea/split/operations/eucs/latest.html \
+         sitea/split/operations/eucs/sitea-j6-service-desk/latest.html sitea/split/operations/systems/sitea-j63-windows/latest.html \
+         siteb/latest.html siteb/siteb-ops-vdi-nova/latest.html siteb/networks-comms/latest.html unknown/latest.html \
+         latest-split.html latest-non-split.html sitea/split/latest-split.html siteb/latest-non-split.html \
+         sitea/split/operations/eucs/sitea-j6-service-desk/latest-split.html; do
+    [ -s "$t8/$f" ] || { echo "FAIL - no $f"; fails=$((fails + 1)); }
+done
+check "  ... All: the Custom view and its rows, the tree at any depth, the unmapped group to add" "$t8/latest.html" \
+    '<section class="card" id="custom">' '<script type="application/json" id="cv-data">' 'Units and teams' '<li class="lv4">' \
+    '<b>The org map</b>' 'SITE-C - CODEX - Linux (' 'Add them to servicenow_insights_hierarchy_map.' '!<b>Sites, directorates and teams</b>' \
+    'class="cvp" data-name="SPLIT"' 'class="cvp" data-name="non-SPLIT"' 'class="cvp" data-name="SITEB only"' 'href="latest-split.html">SPLIT</a>'
+check "  ... the split by the map's level: SPLIT's page says where the Custom view is" "$t8/latest-split.html" \
+    '<b>Custom view:</b> on the <a href="latest.html">All page</a>.' '!id="cv-data"' 'aria-current="page">SPLIT</a>'
+check "  ... a unit four levels down: its breadcrumbs, its Custom view link" "$t8/sitea/split/operations/eucs/latest.html" \
+    '<a href="../../../latest.html">SITEA</a>' '<b>EUCS</b>' 'href="../../../../latest.html#cv=' 'Custom view of this group'
 
 if [ "$fails" -gt 0 ]; then echo "FAILED: $fails"; exit 1; fi
 echo "all ticket insights scenarios passed"

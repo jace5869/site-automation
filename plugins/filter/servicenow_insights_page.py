@@ -11,6 +11,7 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import html
+import json
 import math
 import re
 
@@ -224,11 +225,12 @@ td.wrapc{min-width:220px}
 tr.top1 .pos{color:var(--accent)}
 tr.team td{background:var(--surface-2);font-weight:700}
 tr.selrow td{background:var(--accent-soft)}
-.teamlink{border:0;background:none;padding:0;font-weight:700;color:var(--accent);cursor:pointer;text-align:left;white-space:nowrap;border-bottom:1px dotted var(--accent)}
+.teamlink{border:0;background:none;padding:0;font-weight:700;color:var(--accent);cursor:pointer;text-align:left;white-space:normal;border-bottom:1px dotted var(--accent)}
 .teamlink:hover{border-bottom-style:solid}
 .score{display:inline-flex;align-items:center;gap:6px}
 .score .qbar{width:70px;height:7px}
 .fair{font-size:12px;color:var(--muted);max-width:110ch}
+.cap ul,.fair ul,.callout ul{margin:3px 0 0;padding-left:18px}.cap li,.fair li,.callout li{margin:1px 0}
 
 .kb{border:1px solid var(--line);border-radius:12px;overflow:hidden}
 .kb>summary{list-style:none;cursor:pointer;padding:12px 14px;display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;justify-content:space-between;background:var(--surface-2)}
@@ -265,7 +267,7 @@ details.more{border:1px solid var(--line-2);border-radius:10px;padding:8px 12px}
 details.more>summary{cursor:pointer;color:var(--fg-2);font-weight:600;font-size:13px}
 details.more[open]>summary{margin-bottom:10px}
 .qrow.selq{background:var(--accent-soft)}
-.teamlink{font-weight:700;color:var(--accent);text-decoration:none;border-bottom:1px dotted var(--accent);white-space:nowrap}
+.teamlink{font-weight:700;color:var(--accent);text-decoration:none;border-bottom:1px dotted var(--accent);white-space:normal}
 .teamlink:hover{border-bottom-style:solid}
 .kbt{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .kb .body p{margin:0}
@@ -463,6 +465,78 @@ D.addEventListener("keydown",function(ev){var tg=ev.target,typing=/^(INPUT|TEXTA
  if(ev.key==="/"&&q){ev.preventDefault();q.focus();q.select()}else if((ev.key==="t"||ev.key==="T")&&pk){ev.preventDefault();pk.open=true}});
 var links=[].slice.call(D.querySelectorAll(".toc a[href^='#']"));
 if("IntersectionObserver" in window){var io=new IntersectionObserver(function(es){es.forEach(function(en){if(en.isIntersecting)links.forEach(function(a){a.classList.toggle("on",a.getAttribute("href")==="#"+en.target.id)})})},{rootMargin:"-30% 0px -60% 0px"});D.querySelectorAll("main section").forEach(function(s){io.observe(s)})}
+/* the Custom view (1.8.0): tick units and groups (a unit ticks all under it, half-ticked when some are), Apply works the
+   figures out here from the tickets' rows (cv-data: JSON, never run) the way the model does; the address keeps the choice */
+var cvd=D.getElementById("cv-data"),cvt=D.getElementById("cvt");
+if(cvd&&cvt){var CV=JSON.parse(cvd.textContent),C=CV.cols,W=CV.until,LIM=CV.hop_limit||3,UN={},all=[].slice.call(cvt.querySelectorAll("input.cvc[data-g]")),nodes=[].slice.call(cvt.querySelectorAll("li.cvn")).reverse();
+ (CV.unable||[]).forEach(function(i){UN[i]=1});
+ function kids(li){return [].slice.call(li.querySelectorAll("input.cvc[data-g]"))}
+ function own(li,s){return li.querySelector(":scope>.cvr "+s)}
+ function tally(){nodes.forEach(function(li){var k=kids(li),on=k.filter(function(b){return b.checked}).length,b=own(li,"input.cvc");b.checked=on>0&&on===k.length;b.indeterminate=on>0&&on<k.length;
+   own(li,".cvs").textContent=on+" / "+k.length});var n=all.filter(function(b){return b.checked}).length;D.getElementById("cvn").textContent=n+" of "+all.length+" groups"}
+ var cvp=null,pres=[].slice.call(D.querySelectorAll("button.cvp"));
+ function press(name){cvp=name;pres.forEach(function(x){x.setAttribute("aria-pressed",x.getAttribute("data-name")===name?"true":"false")})}
+ cvt.addEventListener("change",function(ev){var b=ev.target;if(!b.classList.contains("cvc"))return;if(!b.hasAttribute("data-g")){var li=b.closest("li.cvn");kids(li).forEach(function(x){x.checked=b.checked})}press(null);tally()});
+ function fold(li,open){var u=li.querySelector(":scope>ul"),x=own(li,".cvx");if(u){u.hidden=!open;x.setAttribute("aria-expanded",open?"true":"false")}}
+ cvt.addEventListener("click",function(ev){var x=ev.target.closest(".cvx");if(!x||x.classList.contains("leaf"))return;var li=x.closest("li");fold(li,x.getAttribute("aria-expanded")!=="true")});
+ nodes.forEach(function(li){fold(li,false)});
+ D.getElementById("cvopen").addEventListener("click",function(){nodes.forEach(function(li){fold(li,true)})});
+ D.getElementById("cvshut").addEventListener("click",function(){nodes.forEach(function(li){fold(li,false)})});
+ D.getElementById("cvall").addEventListener("click",function(){all.forEach(function(b){b.checked=true});press(null);tally()});
+ D.getElementById("cvnone").addEventListener("click",function(){all.forEach(function(b){b.checked=false});press(null);tally()});
+ var cq=D.getElementById("cvq");
+ cq.addEventListener("input",function(){var t=cq.value.trim().toLowerCase(),items=[].slice.call(cvt.querySelectorAll("li"));
+  if(!t){items.forEach(function(li){li.hidden=false});nodes.forEach(function(li){fold(li,false)});return}
+  items.forEach(function(li){li.hidden=true});
+  items.forEach(function(li){if((li.getAttribute("data-s")||"").indexOf(t)<0)return;li.hidden=false;li.querySelectorAll("li").forEach(function(x){x.hidden=false});
+   var p=li.parentNode.closest("li");while(p){p.hidden=false;fold(p,true);p=p.parentNode.closest("li")}})});
+ cq.addEventListener("keydown",function(ev){if(ev.key==="Escape"){cq.value="";cq.dispatchEvent(new Event("input"))}});
+ function med(v){if(!v.length)return null;v.sort(function(a,b){return a-b});var m=v.length>>1;return v.length%2?v[m]:(v[m-1]+v[m])/2}
+ function figs(sel){var f={inc:0,req:0,res:0,bl:0,bl0:0,sn:0,so:0,h:[],rn:0,ro:0,ns:0,hop:0,hres:0,hold:0,una:0,fcr:0};for(var i=0;i<C.g.length;i++){if(!sel[C.g[i]])continue;var o=C.o[i],d=C.d[i],t=C.t[i],din=d!==null&&d>=0&&d<W;
+   if(o>=0&&o<W){if(t===0)f.inc++;else f.req++}if(t===0&&din){f.res++;if(d>=o)f.h.push((d-o)/3600)}if(o<=W&&(d===null||d>W))f.bl++;if(o<=0&&(d===null||d>0))f.bl0++;
+   if(din&&(C.s[i]===0||C.s[i]===1)){f.sn++;f.so+=C.s[i]}
+   /* the 1.7.0 figures, as scope_model: response met of what was done (no SLO left out), open over the hop limit, on hold now, unable, first contact */
+   var on=o<=W&&(d===null||d>W);if(din&&C.resp&&(C.resp[i]===0||C.resp[i]===1)){f.rn++;f.ro+=C.resp[i]}if(din&&C.noslo&&C.noslo[i]===1)f.ns++;
+   if(t===0&&C.hops){var ov=C.hops[i]>LIM+1;if(on&&ov)f.hop++;if(din){if(ov)f.hres++;if(C.hops[i]===0)f.fcr++}}
+   if(t===0&&on&&C.hold&&C.hold[i]===1)f.hold++;if(t===0&&din&&C.out&&UN[C.out[i]])f.una++}
+  f.med=med(f.h);f.sla=f.sn?100*f.so/f.sn:null;f.resp=f.rn?100*f.ro/f.rn:null;return f}
+ window.siteInsightsFigures=function(idx){var s={};idx.forEach(function(i){s[i]=1});var f=figs(s);
+  function r1(x){return x===null?null:Math.round(x*10)/10}function pr(a,b){return b?r1(100*a/b):null}
+  var out={incidents:f.inc,requests:f.req,resolved:f.res,backlog:[f.bl,f.bl0],median_h:r1(f.med),sla:r1(f.sla)};
+  if(C.resp)out.resp=r1(f.resp);if(C.noslo)out.no_slo=f.ns;if(C.hops){out.hops_open=f.hop;out.hops_done_pct=pr(f.hres,f.res);out.fcr=pr(f.fcr,f.res)}
+  if(C.hold)out.hold=f.hold;if(C.out)out.unable=pr(f.una,f.res);return out};
+ function fh(h){return h===null?"\u2014":(h>=48?(h/24).toFixed(1)+" days":h.toFixed(1)+" h")}
+ function pc(x){return x===null?"\u2014":x.toFixed(1)+"%"}
+ function nf(x){return x.toLocaleString("en-US")}
+ function enc(idx){var v=idx.slice().sort(function(a,b){return a-b}),o=[],i=0;while(i<v.length){var j=i;while(j+1<v.length&&v[j+1]===v[j]+1)j++;o.push(i===j?String(v[i]):v[i]+"-"+v[j]);i=j+1}return o.join(",")}
+ function dec(s){var o=[];String(s||"").split(",").forEach(function(p){var m=p.split("-").map(Number);if(m.length===1&&!isNaN(m[0]))o.push(m[0]);else if(m.length===2&&!isNaN(m[0])&&!isNaN(m[1]))for(var k=m[0];k<=m[1]&&k<CV.groups.length;k++)o.push(k)});return o}
+ function set(id,v,d){D.getElementById("cv-"+id).textContent=v;if(d!==undefined)D.getElementById("cv-"+id+"-d").textContent=d}
+ function apply(push){var idx=all.filter(function(b){return b.checked}).map(function(b){return +b.getAttribute("data-g")});var res=D.getElementById("cvres");
+  if(!idx.length){res.hidden=true;return}var s={};idx.forEach(function(i){s[i]=1});var f=figs(s);
+  set("opened",nf(f.inc+f.req),nf(f.inc)+" incidents \u00b7 "+nf(f.req)+" requests");set("resolved",nf(f.res),"");set("backlog",nf(f.bl),"was "+nf(f.bl0)+" at the start");
+  set("median",fh(f.med===null?null:Math.round(f.med*10)/10),"");set("sla",pc(f.sla===null?null:Math.round(f.sla*10)/10),"incidents and requests"+(C.noslo&&f.ns?" \u00b7 "+nf(f.ns)+" with no SLO":""));
+  function pp(a,b){return b?pc(Math.round(1000*a/b)/10):"\u2014"}
+  if(C.resp)set("resp",pc(f.resp===null?null:Math.round(f.resp*10)/10),"incidents and requests");
+  if(C.hops){set("hops",nf(f.hop),f.hres?pp(f.hres,f.res)+" of those resolved went over":"none of those resolved went over");set("fcr",pp(f.fcr,f.res),"resolved by the first group, never reassigned")}
+  if(C.hold)set("hold",nf(f.hold),"incidents, now");if(C.out)set("unable",pp(f.una,f.res),"of the incidents resolved");
+  D.getElementById("cvlab").textContent=idx.length+" group"+(idx.length===1?"":"s")+" chosen";
+  var tb=D.getElementById("cvtab").tBodies[0],rows=[];tb.textContent="";
+  idx.forEach(function(i){var one={};one[i]=1;var g=figs(one);rows.push([CV.groups[i]||"(no group)",g.inc+g.req,g.res,g.bl,g.med,g.sla])});
+  rows.sort(function(a,b){return b[1]-a[1]||String(a[0]).localeCompare(String(b[0]))});
+  var lab=["Group","Opened","Resolved","Open now","Median fix","SLA met"];
+  rows.forEach(function(r){var tr=D.createElement("tr");[[r[0],null],[nf(r[1]),r[1]],[nf(r[2]),r[2]],[nf(r[3]),r[3]],[fh(r[4]===null?null:Math.round(r[4]*10)/10),r[4]===null?-1:r[4]],[pc(r[5]===null?null:Math.round(r[5]*10)/10),r[5]===null?-1:r[5]]].forEach(function(c,k){
+   var td=D.createElement("td");td.textContent=c[0];td.setAttribute("data-l",lab[k]);if(k){td.className="n";td.setAttribute("data-v",c[1])}tr.appendChild(td)});tb.appendChild(tr)});
+  res.hidden=false;var hv=cvp?"preset:"+encodeURIComponent(cvp):enc(idx);if(push!==false)try{history.replaceState(null,"","#cv="+hv)}catch(e){location.hash="cv="+hv}}
+ function tick(idx){var want={};idx.forEach(function(i){want[i]=1});all.forEach(function(b){b.checked=!!want[+b.getAttribute("data-g")]});tally()}
+ pres.forEach(function(x){x.addEventListener("click",function(){tick(dec(x.getAttribute("data-idx")));press(x.getAttribute("data-name"));apply()})});
+ D.getElementById("cvgo").addEventListener("click",function(){apply();D.getElementById("cvres").scrollIntoView({block:"nearest"})});
+ D.getElementById("cvcopy").addEventListener("click",function(){var b=this,u=location.href;function ok(){b.textContent="Copied";setTimeout(function(){b.textContent="Copy link"},1600)}
+  try{navigator.clipboard.writeText(u).then(ok,function(){})}catch(e){}});
+ var h=/[#&]cv=([0-9,\-]*)/.exec(location.hash),hp=/[#&]cv=preset:([^&]*)/.exec(location.hash),hb=null;
+ if(hp){var nm=decodeURIComponent(hp[1]);hb=pres.filter(function(x){return x.getAttribute("data-name")===nm})[0];if(hb){tick(dec(hb.getAttribute("data-idx")));press(nm)}h=hb?h||[""]:null}
+ if(h){if(!hb)tick(dec(h[1]));apply(false);
+  var d=D.getElementById("cv");if(d)d.open=true;var sec=D.getElementById("custom");if(sec)sec.scrollIntoView({block:"start"})}else tally();
+}
 window.addEventListener("beforeprint",function(){D.querySelectorAll("main details").forEach(function(d){d.open=true})});
 }
 if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",init);else init();
@@ -763,14 +837,15 @@ def servicenow_insights_page(model, key="all", opts=None):
 
     head = ['<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
             '<meta name="generator" content="site-automation ticket insights"><title>%s</title><style>%s%s</style></head><body>' % (
-                e("Ticket insights – " + s["name"]), CSS, BRIEF_CSS if brief else "")]
+                e("Ticket insights – " + s["name"]), CSS + ORG_CSS, BRIEF_CSS if brief else "")]
     # the site's logo (report_logo_file) goes in place of the comment when the page is published; else the initials
     logo = '<!--site-report-logo--><div class="logo" aria-hidden="true">%s</div>' % e(
         "".join(w[0] for w in str(o.get("header_text") or "Site automation").split()[:2]).upper() or "SA")
     # where to go (0.97.0): every page - All, each site, each directorate, each team - as a tree, A to Z in each level and
     # Other last: a menu in the bar (t) and the side bar's list (each site and directorate folds), both plain links (no
     # script needed); the script adds the filters (a match at any level shows its branch) and the keys
-    tree = m.get("tree") or [{"key": "", "label": "", "dirs": [{"key": "", "label": "", "teams": [{"key": t, "label": sh(t)} for t in sorted(teams, key=natural_key)]}]}]
+    tree = [] if m.get("org") else (m.get("tree") or [{"key": "", "label": "", "dirs": [{"key": "", "label": "", "teams": [
+        {"key": t, "label": sh(t)} for t in sorted(teams, key=natural_key)]}]}])        # the org map (1.8.0): org_nav, below
     nodes = [{"key": "all", "label": "All assignment groups", "lv": 0, "full": "All assignment groups", "ctx": ""}]
     for sn in tree:
         dirs = sn.get("dirs") or []
@@ -785,6 +860,7 @@ def servicenow_insights_page(model, key="all", opts=None):
             for t in d["teams"]:
                 nodes.append({"key": t["key"], "label": t["label"], "lv": 3 if d["key"] else 1, "full": t["key"],
                               "ctx": " ".join([sn["label"], d["label"]])})
+    nodes += org_nav(m.get("org"), teams)
     nodes = [x for x in nodes if links.get(x["key"])]
     show_teams = len(nodes) > 1 or (nodes and not is_all)                   # a page always links back to the site's
 
@@ -807,6 +883,9 @@ def servicenow_insights_page(model, key="all", opts=None):
             e(s["name"]), e(here), len(nodes) - 1,
             "".join('<li class="lv%d%s">%s</li>' % (x["lv"], " all" if x["lv"] == 0 else "", nlink(x).replace('<a class="lv%d"' % x["lv"], "<a", 1))
                     for x in nodes))
+        if m.get("org"):                                   # the org map: its levels have no fixed names (1.8.0)
+            menu = menu.replace("a site, directorate or team", "a unit or team").replace("Filter sites, directorates, teams", "Filter units and teams")\
+                .replace("Sites, directorates and teams", "Units and teams")
     teamnav = ""
     head.append(
         '<header class="bar gut"><div class="wrap"><div class="brand">%s<div style="min-width:0"><h1>ServiceNow ticket insights</h1>'
@@ -819,7 +898,7 @@ def servicenow_insights_page(model, key="all", opts=None):
             (" · AAP job %s" % e(o["job"])) if o.get("job") and str(o["job"]) != "local" else "", menu))
 
     side = s.get("side") or ({"kind": "Teams", "rows": s.get("teams") or []} if is_all else {})
-    toc = [("glance", "At a glance", "")]
+    toc = ([("custom", "Custom view", "")] if is_all and not variant and m.get("org") else []) + [("glance", "At a glance", "")]
     if side.get("rows"):
         toc.append(("teams", "%s side by side" % side["kind"], len(side["rows"])))
     toc += [("acton", "Act on first", sum((s.get(k_) or {}).get(f_) or 0 for k_, f_ in (("at_risk", "count"), ("hops", "open"), ("hold", "late_n"), ("codes", "review_n"),
@@ -836,14 +915,15 @@ def servicenow_insights_page(model, key="all", opts=None):
     for sid, label, cnt in toc:
         nav.append('<a href="#%s">%s <span class="c">%s</span></a>' % (sid, e(label), e(cnt)))
     if show_teams:
-        tr = ['<div class="lbl">Sites, directorates, teams</div><input class="tf js" id="teamq" type="search" placeholder="Filter" '
-              'aria-label="Filter sites, directorates and teams" autocomplete="off" spellcheck="false">']
+        tr = ['<div class="lbl">%s</div><input class="tf js" id="teamq" type="search" placeholder="Filter" '
+              'aria-label="Filter %s" autocomplete="off" spellcheck="false">' % (("Units and teams", "units and teams") if m.get("org") else
+                                                                               ("Sites, directorates, teams", "sites, directorates and teams"))]
         open_lv = []
         for x in nodes:
             while open_lv and open_lv[-1] >= x["lv"]:
                 tr.append("</details>")
                 open_lv.pop()
-            if x["lv"] in (1, 2) and any(y["lv"] > x["lv"] for y in nodes[nodes.index(x) + 1:nodes.index(x) + 2]):
+            if x["lv"] >= 1 and any(y["lv"] > x["lv"] for y in nodes[nodes.index(x) + 1:nodes.index(x) + 2]):
                 tr.append('<details class="tn lv%d" open><summary>%s</summary>' % (x["lv"], nlink(x, "team")))
                 open_lv.append(x["lv"])
             else:
@@ -906,6 +986,11 @@ def servicenow_insights_page(model, key="all", opts=None):
                  'fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>'),
                 "Falling behind" if behind else "Keeping up", n(sr_), n(so_), pct(_p(sr_, so_)), e(win.get("label") or span),
                 n(b[1]), n(b[0]), pct(s["sla"][0]), "resolution SLO" if two else "SLA"))
+    if is_all and not variant:
+        body.append(custom_view(m, o))                       # the org map's Custom view (1.8.0)
+    elif variant and m.get("org") and links.get("all"):      # a split's page: none here - where it is
+        sfx = "-" + ("non-" if variant == "out" else "") + _slug((m.get("split") or {}).get("label"))
+        body.append('<p class="cvaway"><b>Custom view:</b> on the <a href="%s">All page</a>.</p>' % e(links["all"].replace(sfx + ".html", ".html")))
     body.append(section("glance", "At a glance", "%s, compared with the %s before (%s)" % (e(win.get("label")), e(span), e(win.get("prev_label") or "")) if win.get("compare") else e(win.get("label")),
                         tiles(tl) + summ))
 
@@ -914,7 +999,8 @@ def servicenow_insights_page(model, key="all", opts=None):
         rows = []
         kind = side["kind"]
         ctc = s.get("ctasks") is not None                 # change_task read (1.2.0)
-        for t in sorted(side["rows"], key=lambda t: (t.get("label") == "Other", natural_key(t.get("label") or t["team"]))):   # A to Z, Other last
+        for t in sorted(side["rows"], key=lambda t: (t.get("label") in ("Other", "Unknown", "Unassigned", m.get("org_bucket")),
+                                                     t.get("label") == "Unassigned", natural_key(t.get("label") or t["team"]))):   # A to Z, Other last
             up = t["backlog"][0] > t["backlog"][1] * 1.05 and t["backlog"][0] - t["backlog"][1] >= 5
             k_ = t.get("key") or t["team"]
             lab = t.get("label") or t["team"]
@@ -928,14 +1014,16 @@ def servicenow_insights_page(model, key="all", opts=None):
                 td('<span class="score">%s<span class="sm mut">%d%% good</span></span>' % (qbar(t["quality"]), t["quality"][0]))] +
                 ([td(n(t.get("ct_closed") or 0), "n", t.get("ct_closed") or 0), td(n(t.get("ct_open") or 0), "n", t.get("ct_open") or 0)] if ctc else []) +
                 [td('%s <span class="mut num">%s</span>' % (e(t["top"][0]), n(t["top"][1])), "wrap")]))
-        one = {"Sites": "Site", "Directorates": "Directorate"}.get(kind, "Team")
+        one = {"Sites": "Site", "Directorates": "Directorate", "Units": "Unit", "Units and teams": "Unit or team"}.get(kind, "Team")
         body.append(section("teams", "%s side by side" % kind, "each %s has its own page with every section of this report" % one.lower(),
                             table([(one, "", "name"), ("Backlog over the period", "", ""), ("Open now", "n", "open"), ("Over %d days" % old_days, "n", "old"),
                                    ("Median fix", "n", "fix")] + ([("Response", "n", "resp"), ("Resolution", "n", "sla")] if two else [("SLA met", "n", "sla")]) +
                                   [("Close notes", "", "")] +
                                   ([("Change tasks closed", "n", "ctc"), ("Change tasks open", "n", "cto")] if ctc else []) + [("Top issue", "", "")], rows, sortable=True) +
-                            '<div class="fair">Click a %s for its page, a column\'s name to sort by it. The backlog lines show each one\'s shape on its own scale; compare Open now for size.%s%s</div>' % (
-                                one.lower(), " Response and Resolution: the share of SLOs met." if two else "", " The change tasks are counted on their own: not in the backlog, Open now or the SLAs." if ctc else "")))
+                            '<div class="fair">Click a %s for its page, or a column\'s name to sort by it. Each backlog line has its own scale: compare Open now for size.%s</div>' % (
+                                one.lower(), ("<ul>%s%s</ul>" % ("<li>Response and Resolution: the share of SLOs met.</li>" if two else "",
+                                                                 "<li>Change tasks are counted on their own, not in the backlog, Open now or the SLAs.</li>" if ctc else ""))
+                                if two or ctc else "")))
 
     # ---- act on first (1.7.0): the 3-hop rule, Awaiting Caller too long, No Resolution Provided, resolved not closed
     hp, hd, cd, cl = s.get("hops") or {}, s.get("hold") or {}, s.get("codes") or {}, s.get("closure") or {}
@@ -976,8 +1064,7 @@ def servicenow_insights_page(model, key="all", opts=None):
     hold_src = ", ".join({"metric": "the state metric", "task_sla": "task_sla's pause"}.get(x_, x_) for x_ in hd.get("sources") or [])
     body.append(section("acton", "Act on first", "what the process says to look at · open now, or in the period",
                         tiles(act_tiles) +
-                        block("SLA at risk now", "Open incidents whose SLA has used %g%% or more of its time (business time where ServiceNow keeps it), "
-                              "or is breached and still open. Worst first." % (rk.get("pct") or 75),
+                        block("SLA at risk now", "Open incidents past %g%% of their SLA time, or breached and still open. Worst first." % (rk.get("pct") or 75),
                               [("Incident", "", ""), ("Priority", "", ""), ("SLA", "", ""), ("Used", "n", ""), ("Left", "n", ""), ("Group", "", ""), ("Assigned to", "", "")],
                               [(search_attr(x["number"], x["sla"], x["group"], x["assignee"]), [
                                   td(tk(x["number"], url)), td(e(x["priority"]), "nw"), td(e(x["sla"])),
@@ -985,8 +1072,8 @@ def servicenow_insights_page(model, key="all", opts=None):
                                   td("breached" if x["breached"] else fh(x["left_h"]), "n nw", x["left_h"] if x["left_h"] is not None else -1),
                                   td(glink(x["group"]), "nw"), td(e(x["assignee"]), "nw")]) for x in rk.get("rows") or []],
                               "No open incident's SLA is at risk.") +
-                        block("Open incidents over %d hops" % lim, "Transferred more than %d times after the first assignment: a leading sign of an SLA breach - "
-                              "to leadership. Oldest first." % lim,
+                        block("Open incidents over %d hops" % lim, "Transferred more than %d times after the first assignment, a leading sign of an SLA breach. "
+                              "For leadership, oldest first." % lim,
                               [("Incident", "", ""), ("Short description", "", ""), ("Hops", "n", ""), ("Group now", "", ""), ("Age, days", "n", ""), ("Priority", "", "")],
                               hrows_, "No open incident is over the limit.") +
                         block("Awaiting Caller over %g business days" % cdays,
@@ -995,11 +1082,11 @@ def servicenow_insights_page(model, key="all", opts=None):
                               ((" %s on hold with no date to judge." % n(hd["unknown"])) if hd.get("unknown") else ""),
                               [("Incident", "", ""), ("Short description", "", ""), ("Group", "", ""), ("On hold since", "", ""), ("Business days", "n", "")],
                               lrows_, "None over the limit.") +
-                        block(e(cd.get("review") or "No Resolution Provided"), "Resolved in the period with this code: each is reviewed by leadership. "
-                              "The close note's start, names and numbers replaced.",
+                        block(e(cd.get("review") or "No Resolution Provided"), "Resolved in the period with this code, for leadership to review. "
+                              "The close note's start is shown, names and numbers replaced.",
                               [("Incident", "", ""), ("Group", "", ""), ("Short description", "", ""), ("Resolved", "", ""), ("Close note", "", "")],
                               rrows_, "None in the period.") +
-                        block("Resolved, not closed after %g days" % (cl.get("days") or 7), "Resolved tickets close by themselves after %g calendar days; these have not." % (
+                        block("Resolved, not closed after %g days" % (cl.get("days") or 7), "Resolved tickets close by themselves after %g calendar days. These have not." % (
                               cl.get("days") or 7),
                               [("Incident", "", ""), ("Group", "", ""), ("Resolved", "", ""), ("Days since", "n", ""), ("State", "", "")], crows_,
                               "Every resolved incident closed in time.")))
@@ -1016,11 +1103,11 @@ def servicenow_insights_page(model, key="all", opts=None):
     cg_ = [(search_attr(g["group"]), [td(glink(g["group"])), td(n(g["_resolved"]), "n")] + [td(n(g[c_]), "n", g[c_]) for c_ in codes_] +
             [td(n(g["_reopened"]), "n", g["_reopened"])]) for g in cd.get("by_group") or []]
     body.append(section("process", "Hops, on hold and resolution codes", "per group · the hops and codes of the period, on hold as it is now",
-                        '<div class="two"><div class="fig"><h3>Over %d hops</h3><div class="cap">Of the incidents resolved in the period and open now, by the group '
-                        'they are in; <b>Hops taken</b> = transfers into the group on those over the limit (%s).</div>%s</div>'
-                        '<div class="fig"><h3>On hold now</h3><div class="cap">By group; a reason is required. %s</div>%s</div></div>'
+                        '<div class="two"><div class="fig"><h3>Over %d hops</h3><div class="cap">Incidents resolved in the period or open now, by the group they are in. '
+                        '<b>Hops taken</b> = transfers into the group on those over the limit (%s).</div>%s</div>'
+                        '<div class="fig"><h3>On hold now</h3><div class="cap">By group (a reason is required). %s</div>%s</div></div>'
                         '<div class="fig"><h3>On hold by reason</h3><div class="cap">Business days on hold.</div>%s</div>'
-                        '<div class="fig"><h3>Resolution codes to look at</h3><div class="cap">Resolved in the period: %s; reopened = reopened at least once.</div>%s</div>' % (
+                        '<div class="fig"><h3>Resolution codes to look at</h3><div class="cap">Resolved in the period: %s. Reopened = reopened at least once.</div>%s</div>' % (
                             lim, "the assignment paths" if hp.get("by_paths") else "the group they ended in: the paths were not read",
                             table([("Group", "", "name"), ("Over", "n", ""), ("Of", "n", ""), ("Share", "n", ""), ("Hops taken", "n", "")], pg, sortable=True,
                                   empty="None over the limit."),
@@ -1052,10 +1139,11 @@ def servicenow_insights_page(model, key="all", opts=None):
                             '<p class="sub">%s</p>' % mixline +
                             table([("Group", "", "name"), ("Resolved", "n", "")] + [(k_, "n", "") for k_ in on_] + [("Unable to resolve", "n", "")], orow,
                                   sortable=True, empty="Nothing resolved in the period.") +
-                            '<div class="cap">Unable to resolve = %s, of those resolved. First-contact resolution: %s%s. Reopened within 7 days of resolving: %s.</div>' % (
+                            '<div class="cap"><ul><li><b>Unable to resolve</b>: %s, of those resolved.</li><li><b>First-contact resolution</b>: %s.%s</li>'
+                            '<li><b>Reopened within 7 days</b> of resolving: %s.</li></ul></div>' % (
                                 " + ".join(e(x) for x in oc.get("unable_names") or []), pct(fc.get("now")),
-                                (" (the service desk: %s of %s)" % (pct(fc["desk"][0]), n(fc.get("desk_n") or 0))) if fc.get("desk") else
-                                " (name the service desk's groups in servicenow_insights_service_desk_groups to see its own)",
+                                (" The service desk: %s of %s." % (pct(fc["desk"][0]), n(fc.get("desk_n") or 0))) if fc.get("desk") else
+                                " For the service desk's own, name its groups in servicenow_insights_service_desk_groups.",
                                 ("%s of %s" % (n(r7["count"]), n(r7["of"]))) if r7.get("measured") else "not measured (no state metric)")))
 
     # ---- keeping up
@@ -1106,8 +1194,8 @@ def servicenow_insights_page(model, key="all", opts=None):
     mx_html = ""
     if mx.get("on") and mx.get("checked"):
         mrows_ = [("", [td(glink(g["group"])), td(n(g["off"]), "n"), td(n(g["of"]), "n"), td(pct(g["pct"]), "n")]) for g in mx.get("by_group") or []]
-        mx_html = ('<div class="fig"><h3>Priority set by hand</h3><div class="cap"><b>%s</b> of %s incidents (%s) have a priority their impact and urgency '
-                   'do not give (the 3 x 3 matrix): %s set higher, %s lower.</div>%s</div>' % (
+        mx_html = ('<div class="fig"><h3>Priority set by hand</h3><div class="cap"><b>%s</b> of %s incidents (%s) have a priority the 3 x 3 matrix does not give '
+                   'for their impact and urgency. %s were set higher, %s lower.</div>%s</div>' % (
                        n(mx["off"]), n(mx["checked"]), pct(mx["pct"]), n(mx.get("higher") or 0), n(mx.get("lower") or 0),
                        table([("Group", "", ""), ("Set by hand", "n", ""), ("Of", "n", ""), ("Share", "n", "")], mrows_, empty="Every priority matches the matrix.")))
     mrow = []
@@ -1144,8 +1232,9 @@ def servicenow_insights_page(model, key="all", opts=None):
             dq.append("<b>%s</b> (%s) in a category not on the official list%s" % (
                 n(cat["off_list"]), pct(cat["off_pct"]),
                 (": " + ", ".join("%s (%s)" % (e(nm), n(c_)) for nm, c_ in cat["off_names"])) if cat.get("off_names") else ""))
-    dq_html = ('<div class="callout"><b>Data quality.</b> Of %s incidents: %s.%s</div>' % (
-        n(cat.get("total") or 0), "; ".join(dq), "" if cat.get("listed") else " Set servicenow_insights_categories to your official list to see the ones off it.")) if dq else ""
+    dq_html = ('<div class="callout"><div><b>Data quality</b>, of %s incidents:<ul>%s</ul>%s</div></div>' % (
+        n(cat.get("total") or 0), "".join("<li>%s</li>" % x_ for x_ in dq),
+        "" if cat.get("listed") else "Set servicenow_insights_categories to your official list to see the ones off it.")) if dq else ""
     body.append(section("categories", "Categories", "incidents by their category · opened in the period; met or missed of those done",
                         dq_html + table([("Category", "", "name"), ("Incidents", "n", "inc"), ("Share", "n", "share"), ("Median to resolve", "n", "fix")] +
                                         ([("Response met", "n", "resp")] if two else []) + [("Resolution met" if two else "SLA met", "n", "sla"),
@@ -1165,8 +1254,8 @@ def servicenow_insights_page(model, key="all", opts=None):
                             tiles(sat_tiles) + '<div class="two"><div class="fig"><h3>By month</h3>%s</div><div class="fig"><h3>By group</h3>%s</div></div>' % (
                                 table([("Month", "", ""), ("Average", "n", ""), ("Answers", "n", "")], mrows, empty="No answers in the period."),
                                 table([("Group", "", "name"), ("Average", "n", "avg"), ("Answers", "n", "n")], grows, sortable=True, empty="No answers in the period.")) +
-                            '<div class="cap">The average of the answers that are numbers (servicenow_insights_survey_metrics names which; every one by default), '
-                            'on the survey\'s own scale.</div>'))
+                            '<div class="cap">The average of the answers that are numbers, on the survey\'s own scale. '
+                            'servicenow_insights_survey_metrics names which (all by default).</div>'))
 
     # ---- issues
     top_n = int(o.get("top_issues") or 10)
@@ -1261,10 +1350,10 @@ def servicenow_insights_page(model, key="all", opts=None):
     body.append(section("handoffs", "Passed between groups", "incidents reassigned %d or more times, and the paths they took" % int(o.get("handoff_min") or 3),
                         tiles(ht, "tiles mini") + paths_note +
                         table([("Path", "", ""), ("Incidents", "n", ""), ("Most common issue", "", ""), ("Time added", "n", "")], hrow, empty="No paths to show.") +
-                        '<div class="fair">Time added = the median time to resolve these incidents, less the median for the same issue when it went straight to the group '
-                        'that fixed it. A group in amber is one the ticket came back to. The groups are shown without the parts of the name they all share; '
-                        'the full name shows when you rest on one. Incidents only: change tasks and catalog tasks that go to different teams by '
-                        'design are separate records, not hand-offs.</div>'))
+                        '<div class="fair"><b>Time added</b>: the median time to resolve these incidents, less the median for the same issue when it went straight to '
+                        'the group that fixed it.<ul><li>A group in amber is one the ticket came back to.</li>'
+                        '<li>Group names leave out the parts they all share. Rest on one for its full name.</li>'
+                        '<li>Incidents only: change tasks and catalog tasks are separate records, not hand-offs.</li></ul></div>'))
 
     # ---- requests
     rq = s["requests"][:int(o.get("top_requests") or 10)]
@@ -1322,9 +1411,8 @@ def servicenow_insights_page(model, key="all", opts=None):
                                            td(fh(x["median_h"]), "n", x["median_h"] or 0)]) for x in ch.get("held_by") or []]
         ages = ct["age"]
         ct_html = ('<h3 class="subh">Change tasks</h3>' + tiles(ctt, "tiles mini") +
-                   '<div class="two"><div class="fig"><h3>Held up by</h3><div class="cap">The team whose task a change waited on last, of the %s '
-                   'changes closed with their tasks: the wait runs from when the change\'s other tasks were closed (one task: from the change\'s '
-                   'work start) to that task\'s close. The top 5.</div>%s</div><div class="fig"><h3>How old the open ones are</h3><div class="cap">Days since opened, at the end of the window.</div>%s</div></div>' % (
+                   '<div class="two"><div class="fig"><h3>Held up by</h3><div class="cap">The team whose task a change waited on last: the top 5, of the %s changes closed with their tasks. '
+                   'The wait runs from the other tasks\' close (one task: the work start) to that task\'s close.</div>%s</div><div class="fig"><h3>How old the open ones are</h3><div class="cap">Days since opened, at the end of the window.</div>%s</div></div>' % (
                        n(ch.get("held_n") or 0),
                        table([("Team", "", ""), ("Changes held up", "n", ""), ("Median wait", "n", "")], hrow,
                              empty="No change closed in the period with its tasks closed."),
@@ -1347,21 +1435,22 @@ def servicenow_insights_page(model, key="all", opts=None):
         for g in s["notes_by_group"]) or '<div class="empty">No close notes in the period.</div>'
     brow = [(search_attr(x["note"]), [td('<span class="quote">%s</span>' % e(x["note"])), td("<b>%s</b>" % n(x["count"]), "n"), td(glink(x["group"]))]) for x in s["bare"]]
     notes_line = ('<div class="verdict">Of <b>%s</b> close notes, <b>%d%%</b> say what was done, <b>%d%%</b> are vague and <b>%d%%</b> are a stock phrase or empty. '
-                  'A note that says what was done is what makes the fix actions above and the knowledge drafts below possible.</div>' % (
+                  'Those that say what was done make the fixes above and the knowledge drafts below possible.</div>' % (
                       n(s.get("notes_graded") or 0), q[0], q[1], q[2])) if s.get("notes_graded") else '<div class="empty">No close notes in the period.</div>'
     notes_section = section("notes", "Close notes", "every resolved incident and closed catalog task, graded on what its close note says was done",
                             notes_line + '<details class="notes"><summary><span class="caret">›</span>By assignment group, and the most common notes that say nothing</summary>'
                             '<div class="two"><div class="fig"><h3>By assignment group</h3><div class="legend"><span><i class="sq qg"></i>Good: says what was done</span>'
                             '<span><i class="sq qt"></i>Thin: vague, no action</span><span><i class="sq qb"></i>Bare: a stock phrase, or empty</span></div>%s</div>'
                             '<div class="fig"><h3>The most common bare notes</h3><div class="cap">The whole close note, word for word, and how often it was used.</div>%s</div></div>'
-                            '<div class="fair">Bare = shorter than %d characters, or only a stock phrase (“fixed”, “done”, “resolved per user”, '
-                            '“see work notes” …), or no note at all. Thin = longer, but names no action. Good = says what was changed or done.</div></details>' % (
+                            '<div class="fair"><ul><li><b>Good</b>: says what was changed or done.</li><li><b>Thin</b>: longer, but names no action.</li>'
+                            '<li><b>Bare</b>: shorter than %d characters, only a stock phrase (“fixed”, “done”, “see work notes” …), or no note.</li></ul></div></details>' % (
                                 qrows, table([("Close note", "", ""), ("Times", "n", ""), ("Mostly in", "", "")], brow, empty="No bare close notes."),
                                 int(o.get("bare_chars") or 20)))
 
     # ---- all-stars
-    under = [t["key"] for sn in (m.get("tree") or []) for d in sn.get("dirs") or [] for t in d["teams"]
-             if (lvl == "site" and sn["key"] == s["key"]) or (lvl == "dir" and d["key"] == s["key"])]
+    under = s["teams_under"] if s.get("teams_under") is not None else [
+        t["key"] for sn in (m.get("tree") or []) for d in sn.get("dirs") or [] for t in d["teams"]
+        if (lvl == "site" and sn["key"] == s["key"]) or (lvl == "dir" and d["key"] == s["key"])]
     star_teams = teams if is_all else (under if multi else [s["team"]])
     panels = []
     for k, t in enumerate(star_teams):
@@ -1374,17 +1463,17 @@ def servicenow_insights_page(model, key="all", opts=None):
             for k, t in enumerate(star_teams))
     w = o.get("bare_weight")
     ct_star = any(((m["scopes"].get(t) or {}).get("stars") or {}).get("ctasks") for t in star_teams)
-    fair = ('<div class="fair">Ranks are by tickets closed, with a close-note factor: a ticket with a bare close note counts %s. A ticket counts '
-            'for the team member who resolved it, not for everyone it passed through; one resolved by someone outside the team counts for the member '
-            'it was assigned to. %s Awards need at least %d tickets closed. %s%s</div>' % (
+    fair = ('<div class="fair"><b>How the ranks work</b><ul><li>By tickets closed. A ticket with a bare close note counts %s.</li>'
+            '<li>A ticket counts for the member who resolved it. One resolved outside the team counts for the member it was assigned to.</li>'
+            '<li>%s</li><li>Awards need at least %d tickets closed.</li><li>%s</li>%s</ul></div>' % (
                 ("%g of one" % float(w)) if w is not None and float(w) != 0.5 else "half",
                 "The members are ServiceNow's group membership." if m.get("members_read") else
                 "The group membership could not be read: each leaderboard lists everyone the team's tickets were assigned to or resolved by.",
                 int(o.get("star_min") or 25),
                 ("Reopened = reopened within %d days." % int(o.get("repeat_days") or 14)) if reopen_used else
                 ("Came back = a new incident from the same person on the same issue within %d days (this site does not reopen tickets)." % int(o.get("repeat_days") or 14)),
-                (" Closed = incidents resolved, and catalog tasks and change tasks closed; Change tasks = how many of them were change tasks. "
-                 "Median to resolve leaves the change tasks out: their time is the change's plan.") if ct_star else ""))
+                ("<li>Closed = incidents resolved, plus catalog tasks and change tasks closed. Change tasks = how many of them were change tasks.</li>"
+                 "<li>Median to resolve leaves change tasks out: their time is the change's plan.</li>") if ct_star else ""))
     body.append(section("allstars", "All-stars", "per team · resolved and closed work in the period" + (", change tasks too" if ct_star else ""),
                         ((tabs + "".join(panels)) if star_teams else '<div class="empty">No team to show.</div>') + fair))
     body.append(notes_section)
@@ -1418,21 +1507,34 @@ def servicenow_insights_page(model, key="all", opts=None):
     nr = o.get("not_read") or []
     # how each group was placed (0.97.0): by the map, its ServiceNow parents, its name, or not at all (Other, Unknown)
     pb = m.get("placed_by") or {}
+    PB_WORDS = {"map": "by the map", "name rule": "by a name rule", "ServiceNow parent": "by their ServiceNow parent", "Other": "in Other",
+                "Unknown": "in Unknown", "name (the tree not read)": "by name (the tree not read)"}
     place_html = ""
     if pb:
         lst = lambda gs: ", ".join(e(g) for g in gs) or "none"            # noqa: E731
         place_html = ('<details class="notes"><summary><b>Sites, directorates and teams</b> <span class="mut">%s</span></summary><dl class="kv">%s%s%s</dl></details>' % (
-            e(" · ".join("%s %s" % (n(v), k_) for k_, v in sorted(pb.items()))),
-            ('<dt>In Other</dt><dd>%s <span class="mut">- no rule placed them: add them to servicenow_insights_hierarchy_map</span></dd>' % lst(m.get("hier_other") or [])),
+            e(" · ".join("%s %s" % (n(v), PB_WORDS.get(k_, k_)) for k_, v in sorted(pb.items(), key=lambda kv: (-kv[1], kv[0])))),
+            ('<dt>In Other</dt><dd>%s<br><span class="mut">No rule placed them. Add them to servicenow_insights_hierarchy_map.</span></dd>' % lst(m.get("hier_other") or [])),
             ('<dt>Unknown</dt><dd>%s</dd>' % ", ".join("%s (%s)" % (e(g), n(c_)) for g, c_ in m["hier_unknown"])) if m.get("hier_unknown") else "",
-            "".join('<dt>No page</dt><dd>%s - %s, its tickets in %s</dd>' % (e(g), e(why), e(where)) for g, why, where in m.get("hier_folded") or [])))
+            "".join('<dt>No page</dt><dd>%s<br><span class="mut">%s. Its tickets are in %s.</span></dd>' % (e(g), e(why[:1].upper() + why[1:]), e(where))
+                    for g, why, where in m.get("hier_folded") or [])))
+        if m.get("org"):                   # the org map (1.8.0): the groups with tickets it does not name, to add to it
+            unk = m.get("hier_unknown") or []
+            place_html = ('<details class="notes"%s><summary><b>The org map</b> <span class="mut">%s</span></summary><dl class="kv">%s%s%s</dl></details>' % (
+                " open" if unk else "", e(" · ".join("%s %s" % (n(v), PB_WORDS.get(k_, k_)) for k_, v in sorted(pb.items(), key=lambda kv: (-kv[1], kv[0])))),
+                ('<dt>Not in the map</dt><dd>%s<br><span class="mut">In %s. Add them to servicenow_insights_hierarchy_map.</span></dd>' % (
+                    ", ".join("%s (%s tickets)" % (e(g), n(c_)) for g, c_ in unk), e(m.get("org_bucket") or "Unknown"))) if unk else
+                '<dt>Not in the map</dt><dd>none: every group with tickets is in it</dd>',
+                ('<dt>Not read in the map</dt><dd>%s <span class="mut">(no level given)</span></dd>' % lst(m.get("org_bad"))) if m.get("org_bad") else "",
+                "".join('<dt>No page</dt><dd>%s<br><span class="mut">%s. Its tickets are in %s.</span></dd>' % (e(g), e(why[:1].upper() + why[1:]), e(where))
+                    for g, why, where in m.get("hier_folded") or [])))
     # the SLOs (1.7.0): where met or missed came from, the SLA definitions by kind, the business hours
     defs = slo.get("definitions") or []
     kinds = (("response", "Response"), ("resolution", "Resolution"), ("other", "Other (not counted)"))
     slo_html = ('<details class="notes"%s><summary><b>Your SLOs</b> <span class="mut">%s</span></summary><dl class="kv"><dt>Met or missed</dt><dd>%s</dd>%s'
                 '<dt>Business hours</dt><dd>%s</dd>%s</dl></details>' % (
                     " open" if defs else "", e(src_note),
-                    e(src_note + ((" - " + slo["note"]) if slo.get("note") else "")),
+                    e(src_note) + (("<br>" + e(slo["note"])) if slo.get("note") else ""),
                     "".join('<dt>%s</dt><dd>%s</dd>' % (lbl, ", ".join("%s (%s)" % (e(nm), n(c_)) for nm, k_, c_ in defs if k_ == kk) or "none")
                             for kk, lbl in kinds) if sla_src == "task_sla" else "",
                     e(slo.get("business_hours") or "calendar hours"),
@@ -1462,6 +1564,9 @@ def servicenow_insights_page(model, key="all", opts=None):
     crumbs = s.get("crumbs") or [["all", "All"]]
     bc = '<nav class="crumbs" aria-label="Where this page is">%s</nav>' % '<span class="sep" aria-hidden="true">›</span>'.join(
         ('<a href="%s">%s</a>' % (e(links[k_]), e(lab)) if links.get(k_) and k_ != s["key"] else "<b>%s</b>" % e(lab)) for k_, lab in crumbs)
+    cvl = "" if variant else cv_link(m, s, links)
+    if cvl:
+        bc = '<div class="where">%s%s</div>' % (bc, cvl)
     sp = m.get("split") or {}
     vl = o.get("variant_links") or {}
     if sp.get("label") and vl:              # All | LABEL | non-LABEL: the same page for those groups' tickets, worked out at build time
@@ -1516,8 +1621,7 @@ def stars_panel(team, st, reopen_used, idx, titled):
         rows.append(("", [td(""), td('<span class="mut">and %d more (the workbook has them)</span>' % st["more"])] + [td("")] * (5 if ctc else 4)))
     out_ = st.get("outside") or {}
     who_note = ('<div class="cap">The team\'s %d members, from ServiceNow\'s group membership.%s</div>' % (
-        st.get("members") or 0, (" <b>%s</b> tickets of this team were resolved by people outside it (%s) and not assigned to a member: "
-                                 "in the team total, not ranked." % (n(out_["count"]), e(", ".join(out_.get("names") or [])))) if out_.get("count") else "")
+        st.get("members") or 0, (" <b>%s</b> tickets resolved by others (%s), not assigned to a member, count in the team total but not in the ranks." % (n(out_["count"]), e(", ".join(out_.get("names") or [])))) if out_.get("count") else "")
         if st.get("members_known") else
         '<div class="cap">Everyone the team\'s tickets were assigned to or resolved by in the period (the group membership was not read).</div>')
     op = st.get("openers") or []
@@ -1531,13 +1635,165 @@ def stars_panel(team, st, reopen_used, idx, titled):
     opener = table([("Opened by", "", ""), ("From", "", ""), ("Tickets", "n", ""), ("", "", "")], orow,
                    empty="No ticket was opened for this team in the period.")
     return ('<div class="panel%s" id="p%d" data-team="%s">%s<div class="awards">%s</div><div class="two"><div class="fig"><h3>Leaderboard</h3>%s%s</div>'
-            '<div class="fig"><h3>Who sends this team its tickets</h3><div class="cap">Opened by, on the tickets assigned to this team in the period. '
-            'From = the group that person works tickets in; an end user opens their own.</div>%s</div></div></div>') % (
+            '<div class="fig"><h3>Who sends this team its tickets</h3><div class="cap">Who opened the tickets assigned to this team in the period. '
+            'From = the group that person works tickets in (an end user opens their own).</div>%s</div></div></div>') % (
         " on" if idx == 0 else "", idx, e(team), ('<h3 class="ptitle">%s</h3>' % e(team)) if titled else "", aw,
         table([("#", "n", ""), ("Person", "", ""), ("Closed" if ctc else "Resolved", "n", "")] + ([("Change tasks", "n", "")] if ctc else []) +
               [("Median to resolve", "n", ""), ("Close notes", "", ""), ("Reopened" if reopen_used else "Came back", "n", "")], rows,
               empty="Nobody closed a ticket in this team's queue in the period." if ctc else "Nobody resolved a ticket in this team's queue in the period."),
         who_note, opener)
+
+
+# ---- the org map (1.8.0): the navigation at any depth, and the Custom view ----------------------------------------------
+ORG_CSS = """
+.toc a.lv4{padding-left:44px}.toc a.lv5{padding-left:58px}.toc a.lv6{padding-left:72px}.toc a.lv7{padding-left:86px}.toc a.lv8{padding-left:100px}
+.toc details.lv3>summary{padding-left:20px}.toc details.lv4>summary{padding-left:34px}.toc details.lv5>summary{padding-left:48px}.toc details.lv6>summary{padding-left:62px}
+.toc details.tn>summary a.team.lv3,.toc details.tn>summary a.team.lv4,.toc details.tn>summary a.team.lv5,.toc details.tn>summary a.team.lv6{padding-left:6px}
+.pickpop li.lv4 a{padding-left:54px}.pickpop li.lv5 a{padding-left:70px}.pickpop li.lv6 a{padding-left:86px}.pickpop li.lv7 a{padding-left:102px}
+.cvintro{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;margin:0 0 10px}.cvintro p{margin:0;color:var(--fg-2);max-width:72ch}
+.cvd{border:1px solid var(--line);border-radius:12px;background:var(--surface);margin:0 0 12px}
+.cvd>summary{cursor:pointer;padding:10px 14px;font-weight:700;list-style:none;display:flex;align-items:center;gap:10px}
+.cvd>summary::-webkit-details-marker{display:none}.cvd>summary:before{content:"\\25b8";color:var(--muted);transition:transform .15s}
+.cvd[open]>summary:before{transform:rotate(90deg)}.cvd>summary .mut{font-weight:400}
+.cvbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:0 14px 10px;border-bottom:1px solid var(--line)}
+.cvbar input[type=search]{flex:1 1 220px;min-width:0;padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);color:var(--fg);font:inherit}
+.cvbar button,.cvres button{font:inherit;font-size:13px;padding:5px 11px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);color:var(--fg);cursor:pointer}
+.cvbar button.pri{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:700}
+.cvbar .cvn{margin-left:auto;color:var(--muted);font-size:13px;font-variant-numeric:tabular-nums}
+.cvt,.cvt ul{list-style:none;margin:0;padding:0}.cvt{padding:8px 8px 10px;max-height:480px;overflow:auto}
+.cvt ul{padding-left:22px}.cvt li{margin:0}
+.cvr,.cvt li.cvg{display:flex;align-items:center;gap:6px;padding:3px 4px;border-radius:7px;min-width:0}
+.cvr:hover,.cvt li.cvg:hover{background:var(--surface-2)}
+.cvt label{display:flex;align-items:center;gap:8px;flex:1;min-width:0;cursor:pointer}
+.cvt .cvl{overflow-wrap:anywhere}.cvt li.cvn>.cvr .cvl{font-weight:650}
+.cvt input[type=checkbox]{width:16px;height:16px;flex:none;accent-color:var(--accent)}
+.cvt .cvs{flex:none;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.cvx{flex:none;width:22px;height:22px;border:0;background:none;color:var(--muted);cursor:pointer;border-radius:6px;font-size:11px;padding:0}
+.cvx[aria-expanded=true]{transform:rotate(90deg)}.cvx.leaf{visibility:hidden}
+.cvt [hidden]{display:none!important}
+.cvres{margin-top:4px}.cvres .cvhead{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin:0 0 10px}
+.cvres .cvhead b{font-size:15px}.cvlink{font-size:13px}
+.toc a.team{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}
+.cvpre{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 14px 0}
+.cvpre button{font:inherit;font-size:13px;padding:4px 12px;border:1px solid var(--line);border-radius:999px;background:var(--surface-2);color:var(--fg);cursor:pointer}
+.cvpre button[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);font-weight:700}
+.cvaway{margin:0 0 14px;color:var(--fg-2)}
+.cvd:focus-within{outline:none}.cvt input:focus-visible,.cvbar :focus-visible,.cvx:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+"""
+
+
+def org_nav(org, teams):
+    """The org map's nodes and teams for the View menu and the side bar, parents first: [{key, label, lv, full, ctx}]."""
+    tset = set(teams or [])
+    out = []
+
+    def walk(nodes):
+        for nd in nodes or []:
+            below = [c["label"] for c in _org_all(nd["children"])] + list(nd.get("all") or [])
+            out.append({"key": nd["key"], "label": nd["label"], "lv": nd["depth"], "full": " > ".join(nd["path"]), "ctx": " ".join(below)})
+            walk(nd["children"])
+            for t in nd.get("groups") or []:
+                if t in tset:
+                    out.append({"key": t, "label": t, "lv": nd["depth"] + 1, "full": t, "ctx": " ".join(nd["path"])})
+    walk(org)
+    return out
+
+
+def _org_all(nodes):
+    for nd in nodes or []:
+        yield nd
+        for x in _org_all(nd["children"]):
+            yield x
+
+
+def cv_ranges(idx):
+    """Group indices -> "0-3,7" (the Custom view's address)."""
+    v = sorted(set(int(i) for i in idx))
+    out, i = [], 0
+    while i < len(v):
+        j = i
+        while j + 1 < len(v) and v[j + 1] == v[j] + 1:
+            j += 1
+        out.append(str(v[i]) if i == j else "%d-%d" % (v[i], v[j]))
+        i = j + 1
+    return ",".join(out)
+
+
+def cv_link(m, s, links):
+    """A unit's page: a link to the All page's Custom view with this unit's groups chosen."""
+    c = m.get("custom") or {}
+    if not c.get("cols") or not links.get("all") or s.get("level") not in ("site", "dir"):
+        return ""
+    nd = next((x for x in _org_all(m.get("org")) if x["key"] == s["key"]), None)
+    if not nd:
+        return ""
+    gi = dict((g, i) for i, g in enumerate(c["groups"]))
+    idx = [gi[g] for g in nd["all"] if g in gi]
+    return ('<a class="cvlink" href="%s#cv=%s" title="The All page, with only this unit\'s groups chosen">Custom view of %s</a>' % (
+        e(links["all"]), cv_ranges(idx), "this group" if len(idx) == 1 else "these %d groups" % len(idx))) if idx else ""
+
+
+def custom_view(m, o):
+    """The All page's Custom view (1.8.0): a tree of units and groups to tick (a unit ticks everything under it), and the
+    figures worked out in the browser for exactly those groups, from the tickets' compact rows carried in the page
+    (<script type="application/json">: data, never run - a strict Content-Security-Policy allows it)."""
+    c = m.get("custom") or {}
+    org = m.get("org") or []
+    if not org:
+        return ""
+    if not c.get("cols"):
+        why = ("%s tickets are more than servicenow_insights_custom_view_max_rows (%s)" % ("{:,}".format(c.get("skipped", 0)), c.get("max"))
+               if c.get("skipped") else "off (servicenow_insights_custom_view: false)")
+        return section("custom", "Custom view", "", '<p class="mut">The Custom view is not on this page: %s.</p>' % e(why))
+    groups = c["groups"]
+    gi = dict((g, i) for i, g in enumerate(groups))
+    cnt = [0] * len(groups)                # what "Tickets opened" counts: incidents and requests opened in the period
+    for g, o_ in zip(c["cols"]["g"], c["cols"]["o"]):
+        if g >= 0 and 0 <= o_ < c["until"]:
+            cnt[g] += 1
+
+    def leaf(g):
+        i = gi[g]
+        return ('<li class="cvg" data-s="%s"><span class="cvx leaf" aria-hidden="true"></span><label><input type="checkbox" class="cvc" data-g="%d">'
+                '<span class="cvl">%s</span></label><span class="cvs" title="Incidents and requests opened in the period">%s opened</span></li>') % (
+            e(g.lower() or "unassigned"), i, e(g or "(no group)"), e("{:,}".format(cnt[i])))
+
+    def node(nd):
+        inner = "".join(node(x) for x in nd["children"]) + "".join(leaf(g) for g in nd["groups"] if g in gi)
+        tot = sum(1 for g in nd["all"] if g in gi)
+        return ('<li class="cvn" data-s="%s" data-d="%d"><div class="cvr"><button type="button" class="cvx js" aria-expanded="true" aria-label="Open or close %s">'
+                '&#9654;</button><label><input type="checkbox" class="cvc"><span class="cvl">%s</span></label><span class="cvs" data-tot="%d">%d groups</span></div>'
+                '<ul>%s</ul></li>') % (e(nd["label"].lower()), nd["depth"], e(nd["label"]), e(nd["label"]), tot, tot, inner)
+    tree = '<ul class="cvt" id="cvt" role="tree" aria-label="Units and groups">%s</ul>' % "".join(node(x) for x in org)
+    pre = c.get("presets") or []
+    if pre:
+        tree = ('<div class="cvpre js" role="group" aria-label="Quick choices"><span class="mut">Quick:</span>%s</div>' % "".join(
+            '<button type="button" class="cvp" data-name="%s" data-idx="%s" title="Tick exactly these %d groups">%s <span class="mut">%d</span></button>' % (
+                e(x["name"]), cv_ranges(x["idx"]), len(x["idx"]), e(x["name"]), len(x["idx"])) for x in pre)) + tree
+    bar = ('<div class="cvbar js"><input id="cvq" type="search" placeholder="Filter units and groups" aria-label="Filter units and groups" autocomplete="off" '
+           'spellcheck="false"><button type="button" id="cvopen">Expand all</button><button type="button" id="cvshut">Collapse all</button>'
+           '<button type="button" id="cvall">Select all</button><button type="button" id="cvnone">Clear</button>'
+           '<span class="cvn" id="cvn" aria-live="polite">0 of %d groups</span><button type="button" class="pri" id="cvgo">Apply</button></div>') % len(groups)
+    res = ('<div class="cvres" id="cvres" hidden><div class="cvhead"><b id="cvlab"></b><button type="button" id="cvcopy">Copy link</button></div>'
+           '<div class="tiles">%s</div>%s<div class="fair">Worked out in this page for the groups chosen, by the same rules as every figure on this page.</div></div>') % (
+        "".join('<div class="tile"><span class="eyebrow">%s</span><span class="v" id="cv-%s">—</span><span class="d" id="cv-%s-d"></span></div>' % (e(lab), k, k)
+                for k, lab in [("opened", "Tickets opened"), ("resolved", "Incidents resolved"), ("backlog", "Open now"),
+                               ("median", "Median time to resolve an incident")] +
+                [("resp", "Response met")] * ("resp" in c["cols"]) + [("sla", "Resolution met" if "resp" in c["cols"] else "SLAs met")] +
+                [(k, lab) for k, lab, col in (("hops", "Open over %d hops" % int(c.get("hop_limit", 3)), "hops"),
+                                              ("hold", "On hold now", "hold"), ("unable", "Unable to resolve", "out"),
+                                              ("fcr", "First-contact resolution", "hops")) if col in c["cols"]]),
+        table([("Group", "", "name"), ("Opened", "n", "opened"), ("Resolved", "n", "res"), ("Open now", "n", "open"), ("Median fix", "n", "fix"),
+               ("SLA met", "n", "sla")], [], tid="cvtab", empty="Choose groups above, then Apply.", sortable=True))
+    data = json.dumps({"until": c["until"], "n": c["n"], "groups": groups, "cols": c["cols"], "hop_limit": c.get("hop_limit", 3),
+                       "unable": c.get("unable") or []}, separators=(",", ":")).replace("</", "<\\/")
+    intro = ('<div class="cvintro"><p>Tick units and groups, then Apply: the figures below are for exactly those groups. '
+             'A unit ticks every group under it, and the address keeps the choice to share.</p></div>')
+    return (section("custom", "Custom view", "any mix of units and groups (%s tickets carried in this page)" % "{:,}".format(c["n"]),
+                    intro + '<details class="cvd" id="cv"><summary>Choose groups <span class="mut" id="cvsum">%d groups in %d units</span></summary>%s%s'
+                    '<noscript><p class="mut" style="padding:0 14px 10px">Choosing needs the page&#39;s script.</p></noscript></details>%s' % (
+                        len(groups), sum(1 for _ in _org_all(org)), bar, tree, res))
+            + '<script type="application/json" id="cv-data">%s</script>' % data)
 
 
 class FilterModule(object):

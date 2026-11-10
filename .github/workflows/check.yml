@@ -77,6 +77,7 @@ jobs:
           python tests/test_tenable_scan.py
           python tests/test_servicenow_war.py
           python tests/test_servicenow_insights.py
+          python tests/test_insights_org.py
           python tests/test_disk_report.py
           python tests/test_availability.py
           python tests/test_aap_survey.py

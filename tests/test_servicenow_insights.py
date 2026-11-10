@@ -1193,7 +1193,8 @@ class ChangeTasks(unittest.TestCase):
         sec = dict((s_["title"], s_) for s_ in doc["sections"])
         self.assertEqual(sec["Teams side by side"]["columns"][8:10], ["Change tasks closed", "Change tasks open"])
         ct = sec["Change tasks"]
-        self.assertIn("Closed: 4 (the window before: 0), median 4.8 days to close; 2 by the planned end, 1 after it, 1 with no planned end", ct["lines"][0])
+        self.assertEqual(ct["lines"][:2], ["Closed: 4 (the window before: 0), median 4.8 days to close",
+                                           "  - by the planned end 2, after it 1, with no planned end 1"])
         self.assertEqual(ct["rows"], [[self.NWK, 2, "17.0 h"]])
         h = P.servicenow_insights_page(m, "all", {"links": page_links(m)})
         for t in ("Change tasks closed", "Change tasks open", "Held up by", "Tasks per change", "Open change tasks by age", 'class="subh"'):

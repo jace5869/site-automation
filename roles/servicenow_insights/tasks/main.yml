@@ -60,6 +60,11 @@
       directorates: "{{ servicenow_insights_directorates | servicenow_insights_name_list }}"
       suffix_directorates: "{{ servicenow_insights_suffix_directorates | servicenow_insights_name_list }}"
       hierarchy_map: "{{ servicenow_insights_hierarchy_map | default({}, true) }}"
+      unmapped_bucket: "{{ servicenow_insights_unmapped_bucket | default('Unknown', true) | string | trim }}"
+      custom_view: "{{ servicenow_insights_custom_view | bool }}"
+      custom_view_max_rows: "{{ servicenow_insights_custom_view_max_rows | int }}"
+      custom_view_presets: "{{ servicenow_insights_custom_view_presets | default({}, true) }}"
+      split_by: "{{ servicenow_insights_split_by | default('both', true) | string | trim | lower }}"
       directorate_alias: "{{ servicenow_insights_directorate_alias | default({}, true) }}"
       directorate_tags: "{{ servicenow_insights_directorate_tags | default({}, true) }}"
       use_group_parents: "{{ servicenow_insights_use_group_parents | bool }}"
@@ -249,7 +254,8 @@
       {%- set pages = {} -%}
       {%- for p in _sni_model.pages | default([]) -%}
       {%-   set where = {'site': p.path[0], 'dir': p.path[1] | default(''), 'team': p.path[2] | default('')} -%}
-      {%-   set files = {'page': (latest or page) | replace('{template}', level[p.level]), 'latest': '', 'index': ''}
+      {#-   the page's folder: its path, any depth (the org map, 1.8.0) - for a site, directorate or team the same as level[p.level] -#}
+      {%-   set files = {'page': (latest or page) | replace('{template}', '{template}/' ~ (p.path | join('/'))), 'latest': '', 'index': ''}
                         | report_web_files(base | combine(names) | combine(where)) -%}
       {%-   set _ = pages.update({p.key: files | combine({'level': p.level, 'names': where})}) -%}
       {%- endfor -%}

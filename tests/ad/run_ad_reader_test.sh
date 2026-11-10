@@ -52,7 +52,7 @@ done
 
 # ---- the domain ------------------------------------------------------------------------------------------------------
 echo "building the test DC image (Alpine, samba-dc)"
-R build -q -t "$image" "$here/samba" > "$work/build.log" 2>&1 || { cat "$work/build.log"; exit 1; }
+R build -q -t "$image" -f "$here/samba/Containerfile" "$here/samba" > "$work/build.log" 2>&1 || { cat "$work/build.log"; exit 1; }
 "$py" "$here/make_test_ca.py" "$work/certs" dc01=400 dc02=5 > /dev/null || exit 1
 R network create --subnet "$subnet.0/24" "$net" > /dev/null || exit 1
 

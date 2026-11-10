@@ -196,6 +196,92 @@ sites and the directorates only. A page the same as the one already there is not
 run wrote that this one did not (a team gone, the split switched off) are deleted (`report_web_delete_old`; the job
 writes its own pages - not with the copy job).
 
+## The org map and Custom view (1.8.0)
+
+Use the org map when your management keeps its own tree of the organization. It need not follow ServiceNow's group
+parents, and it can be deeper in some places than in others. Set it in your `playbooks/group_vars/all.yml`:
+
+```yaml
+servicenow_insights_hierarchy_source: map
+servicenow_insights_hierarchy_map:
+  "SITEA - Ops - Desk - SPLIT": [SITEA, SPLIT, Operations, EUCS]        # a list: the levels, the site first
+  "SITEA - Ops - Windows - SPLIT": "SITEA > SPLIT > Operations > Systems"  # or a string with " > "
+  "SITEB - Ops - VDI": [SITEB]                                           # a team straight under a site
+  "SITEB - Network": ["SITEB", "Networks & Comms / East"]                # names may hold "/" and "&"
+```
+
+Each key is an assignment group's exact name (any case), and the group is the team under its levels. The map names your
+organization, so keep it in your own `all.yml`, never in the repository.
+
+### How groups are placed
+
+- **Only the map places a group.** ServiceNow's parents and the name rules are not used. The `parents` and `names`
+  sources work as before.
+- **Unknown**: groups with tickets that the map does not name (`servicenow_insights_unmapped_bucket`).
+- **Unassigned**: tickets with no assignment group. Unknown and Unassigned are always listed last.
+- *How this was made* lists the groups not in the map, each with its tickets, so you can add them. It also lists any
+  map entry with no level.
+
+### The pages
+
+- Every level has a page and a rollup: All, each unit of the tree at every depth, and each group of the map with
+  tickets. A ticket counts once at every level.
+- A group that is excluded, inactive or of a skipped type gets no page.
+- The folders nest like the tree: `{template}/sitea/split/operations/eucs/latest.html`, the team one folder deeper.
+- Breadcrumbs lead up every level. *Side by side* shows a unit's children (*Units*, *Teams*, or both).
+- The **View** menu and the side bar show the whole tree, A to Z, with Unknown and Unassigned last. Each unit folds,
+  and the filter opens a match's branch.
+
+### The Custom view
+
+The All page's Custom view (`servicenow_insights_custom_view: true`) works out the figures for any mix of units and
+groups. Tick them, then **Apply**.
+
+- Ticking a unit ticks every group under it. A unit with some groups ticked shows half-ticked.
+- Every level says how many of its groups are ticked (*3 / 12*), and every group how many tickets it opened.
+- The figures: tickets opened, incidents resolved, open now (and at the start), the median time to resolve an
+  incident and the SLAs met. Where the tickets carry them (1.7.0): Response met, Resolution met, open over the hop
+  limit, on hold now, unable to resolve and first-contact resolution.
+- A table lists the groups ticked. Every figure follows the same rules as the rest of the page.
+- The address keeps the choice (`#cv=0-3,7`), so you can copy it to share the view. Each unit's page links to the
+  Custom view with its own groups ticked.
+
+**Quick choices** are buttons above the tree. One click ticks exactly those groups and applies.
+
+- One button for each half of the split (*SPLIT*, *non-SPLIT*), when the split is set.
+- One for each of `servicenow_insights_custom_view_presets`:
+  - `{name: {levels: [...]}}`: the groups whose map path has every level listed, in any position.
+  - `{name: {pattern: "..."}}`: the groups whose name matches.
+- The address keeps a quick choice too: `#cv=preset:SPLIT`.
+
+The Custom view needs no server. The All page carries the tickets as compact rows, about 40 bytes a ticket, in a data
+block the browser never runs. So a strict Content-Security-Policy, a share or an offline copy all work.
+
+At most `servicenow_insights_custom_view_max_rows` tickets (30,000) are carried. With more, the page says so and has no
+Custom view.
+
+### The split with the map
+
+`servicenow_insights_split_label` works with the map too. `servicenow_insights_split_by` says how a group is picked:
+
+- `pattern`: its name matches `servicenow_insights_split_pattern`.
+- `level`: the label is one of its levels in the map.
+- `both` (the default): either. So `split_label: SPLIT` alone picks every group under any *SPLIT*.
+
+All and every unit get the *All | SPLIT | non-SPLIT* switch and a page for each half (`latest-split.html`,
+`latest-non-split.html`). The teams follow `servicenow_insights_split_teams`. The split's pages have no Custom view:
+they link to the All page.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `servicenow_insights_hierarchy_source` | `parents` | `map`: the groups placed only by the map |
+| `servicenow_insights_hierarchy_map` | `{}` | `{"<group>": [Site, Level1, ...]}` or `"Site > Level1 > ..."` |
+| `servicenow_insights_unmapped_bucket` | `Unknown` | where the groups with tickets that are not in the map go |
+| `servicenow_insights_custom_view` | `true` | the All page's Custom view |
+| `servicenow_insights_custom_view_max_rows` | `30000` | its tickets carried in the page at most |
+| `servicenow_insights_custom_view_presets` | `{}` | more quick choices: `{name: {levels: [...]}}` or `{name: {pattern: "..."}}` |
+| `servicenow_insights_split_by` | `both` | with the map, the split by `pattern`, by `level` (the label one of the group's levels), or `both` |
+
 ## ACT (GenAI), and what never reaches it
 
 With an **ACT model key** credential on the template (and `servicenow_insights_act: true`, the default), ACT is asked in
@@ -305,22 +391,34 @@ To email a team lead their team's page as well: `servicenow_insights_team_email_
 
 ## Your SLOs, priorities and categories
 
-The page and the email count **met or missed** from your SLOs. Where it comes from (`servicenow_insights_sla_source`):
+The page and the email count **met or missed** from your SLOs. `servicenow_insights_sla_source` says where from:
 
-| Source | What |
+| Source | Where met or missed comes from |
 |---|---|
-| `auto` (the default) | ServiceNow's own SLAs (`task_sla`) when the account reads them, else your targets (below) - said under *Not read* |
-| `task_sla` | ServiceNow's SLAs, as configured there (business hours, on hold paused). Each SLA definition is a **Response** or a **Resolution** by its name (`servicenow_insights_sla_response_match: [response]`, `servicenow_insights_sla_resolution_match: [resolution, resolve]`; any case); any other is *Other*, shown by name under *How this was made* and not counted. A ticket with no SLA attached is **No SLO** - counted, left out of the percentages (your P5s) |
+| `auto` (the default) | ServiceNow's own SLAs (`task_sla`) when the account reads them, else your targets (below). *Not read* says which. |
+| `task_sla` | ServiceNow's SLAs, as configured there (business hours, on hold paused) |
 | `targets` | your targets below, in your business hours when set |
-| `made_sla` | ServiceNow's *Made SLA* flag (the way before 1.7.0 without targets) |
+| `made_sla` | ServiceNow's *Made SLA* flag (the way before 1.7.0, without targets) |
 
-Met or missed counts the incidents and requested items **done in the window**; the tiles show **Response met** and
-**Resolution met** (with `task_sla`, or a response target), else one *SLAs met*. The Severity table has both per
-priority, the teams side by side per team, the Categories per category.
+With `task_sla`, each SLA definition is a Response or a Resolution by its name:
 
-**Your targets** (the fallback, or `servicenow_insights_sla_source: targets`), in hours from opened to resolved
-(incidents) or closed (requested items), by table and priority. A number is the resolution; a mapping adds the response -
-opened to first assigned to a person (the metric *Assigned to*):
+- **Response**: the name has one of `servicenow_insights_sla_response_match` (`[response]`, any case).
+- **Resolution**: the name has one of `servicenow_insights_sla_resolution_match` (`[resolution, resolve]`).
+- **Other**: any other definition. It is shown by name under *How this was made* and not counted.
+- **No SLO**: a ticket with no SLA attached (your P5s, say). It is counted, but left out of the percentages.
+
+Met or missed counts the incidents and requested items **done in the window**. The tiles show **Response met** and
+**Resolution met** (with `task_sla`, or a response target), else one *SLAs met*. Severity has them per priority, the
+side by side per team, and Categories per category.
+
+### Your targets
+
+Your targets are the fallback, or the source with `servicenow_insights_sla_source: targets`. They are hours from opened
+to resolved (incidents) or closed (requested items), by table and priority.
+
+- A number is the resolution target.
+- A mapping adds a response target: opened to first assigned to a person (the metric *Assigned to*).
+- `none` is no SLO for that priority, and `"*"` is every priority not listed.
 
 ```yaml
 servicenow_insights_sla_targets:
@@ -335,36 +433,60 @@ servicenow_insights_sla_items: {"New account / onboarding": 18}     # a catalog 
 servicenow_insights_business_hours: {days: [mon, tue, wed, thu, fri], start: "07:30", end: "16:30", holidays: ["2026-12-25"]}
 ```
 
-The business hours are in `report_time_zone`; an end before the start is a shift past midnight; `{}` = calendar hours.
-Put both tables in `all.yml` (the setting is replaced whole: a table left out uses ServiceNow's *Made SLA*); `"*"` is
-every priority not listed.
+- The business hours are in `report_time_zone`. An end before the start is a shift past midnight, and `{}` is
+  calendar hours.
+- Put both tables in `all.yml`: the setting is replaced whole, and a table left out uses ServiceNow's *Made SLA*.
 
-**Priorities.** `servicenow_insights_priority_names` names them on the report (`{"1": Critical, "2": High, "3": Moderate,
-"4": Low, "5": Exempt}`). `servicenow_insights_priority_matrix` is the standard 3 x 3 (impact -> urgency -> priority); an
-incident whose priority is not the one its impact and urgency give was **set by hand** - counted per group (set higher or
-lower) in Severity. `servicenow_insights_priority_matrix: []` = not checked.
+### Priorities
 
-**Categories.** `servicenow_insights_categories` is your official list, e.g. `[Email, Network Connectivity, Workstations,
-Other]`: the Categories section counts the incidents in a category not on it and names those categories, beside those
-with no category and those in Other. Without a list, every category is shown as it is. The issues (without ACT) stay
-the incidents' category / subcategory.
+- `servicenow_insights_priority_names` names them on the report: `{"1": Critical, "2": High, "3": Moderate, "4": Low,
+  "5": Exempt}`.
+- `servicenow_insights_priority_matrix` is the standard 3 x 3 (impact, then urgency, gives the priority).
+- An incident whose priority is not the one its impact and urgency give was **set by hand**. Severity counts these per
+  group, set higher or lower.
+- `servicenow_insights_priority_matrix: []` turns the check off.
+
+### Categories
+
+`servicenow_insights_categories` is your official list, e.g. `[Email, Network Connectivity, Workstations, Other]`.
+
+- With a list, Categories counts and names the categories not on it. It also counts those with no category and those
+  in Other.
+- Without a list, every category is shown as it is.
+- Without ACT, the issues stay the incidents' category / subcategory.
 
 ## What to act on first
 
-The *Act on first* section (the email: **Act on**) lists what the process says to look at:
+The *Act on first* section (in the email: **Act on**) lists what the process says to look at.
 
-| What | Setting | How it is read |
+| What | Setting | What is listed |
 |---|---|---|
-| **SLA at risk now** | `servicenow_insights_sla_risk_pct: 75` | open incidents whose running SLA (`task_sla`) has used 75% of its time or more (business time where ServiceNow keeps it), or is breached and still open - worst first, with the time left |
-| **Over 3 hops** | `servicenow_insights_hop_limit: 3` | transferred more than 3 times after the first assignment (`reassignment_count` over 4): the open ones listed, oldest first; per group the share over and the hops each group took (the assignment paths, when read) |
-| **Awaiting Caller over 6 business days** | `servicenow_insights_awaiting_caller_days: 6` | on hold now (the state's name has *hold*) with the reason (`hold_reason`, as shown) Awaiting Caller; on hold since: the metric *Incident State Duration* (`servicenow_insights_state_metric`), else when the SLA was paused (`task_sla`); business days: the business hours' days, else Mon-Fri. On hold with no reason is counted |
-| **No Resolution Provided** | `servicenow_insights_scrutiny_codes`, `servicenow_insights_review_code` | the resolution codes (`close_code`, as shown) counted per group; each No Resolution Provided of the period listed - the close note's start with names, phone numbers, addresses and hosts replaced |
-| **Resolved, not closed after 7 days** | `servicenow_insights_close_after_days: 7` | resolved, never closed: the auto-close is not working |
+| **SLA at risk now** | `servicenow_insights_sla_risk_pct: 75` | open incidents past 75% of their running SLA, or breached and open. Worst first, with the time left. |
+| **Over 3 hops** | `servicenow_insights_hop_limit: 3` | open incidents transferred more than 3 times after the first assignment. Oldest first. |
+| **Awaiting Caller over 6 business days** | `servicenow_insights_awaiting_caller_days: 6` | incidents on hold with the reason Awaiting Caller for longer |
+| **No Resolution Provided** | `servicenow_insights_review_code` | each incident of the period resolved with that code, for review |
+| **Resolved, not closed after 7 days** | `servicenow_insights_close_after_days: 7` | resolved and never closed: the auto-close is not working |
 
-*How incidents ended* groups the close codes (`servicenow_insights_outcome_map`; any other code is Fixed); **unable to
-resolve** = `servicenow_insights_unable_outcomes` (Known Error + No Resolution Provided) of those resolved.
-**First-contact resolution** = resolved without being reassigned; name the service desk's groups in
-`servicenow_insights_service_desk_groups` for its own. **Reopened within 7 days** needs the state metric.
+How each is read:
+
+- **SLA at risk**: the running SLAs (`task_sla`), in business time where ServiceNow keeps it.
+- **Hops**: `reassignment_count` over 4 (the first assignment is not a hop). Per group, the page shows the share over
+  the limit, and the hops each group took when the assignment paths are read.
+- **On hold**: the state's name has *hold*, and the reason is `hold_reason` as shown. On hold with no reason is
+  counted.
+  - *On hold since* comes from the metric *Incident State Duration* (`servicenow_insights_state_metric`), else from
+    when the SLA was paused (`task_sla`).
+  - Business days are the business hours' days, else Mon-Fri.
+- **Resolution codes**: `close_code` as shown, counted per group for each of `servicenow_insights_scrutiny_codes`.
+  The listed incidents show the close note's start, with names, phone numbers, addresses and hosts replaced.
+
+*How incidents ended* groups the close codes by `servicenow_insights_outcome_map` (any other code is Fixed):
+
+- **Unable to resolve**: `servicenow_insights_unable_outcomes` (Known Error + No Resolution Provided), of those
+  resolved.
+- **First-contact resolution**: resolved without being reassigned. For the service desk's own, name its groups in
+  `servicenow_insights_service_desk_groups`.
+- **Reopened within 7 days** needs the state metric.
 
 ## The window
 
