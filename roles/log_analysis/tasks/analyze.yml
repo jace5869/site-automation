@@ -112,7 +112,7 @@
          if _la_ran | bool else
          ('ACT did not analyze the patterns: ' ~ _la_reason ~ ' The patterns are in the report (and the email) without an analysis.') }}
     quiet: true
-  when: log_analysis_act | bool and _la.problems | length > 0 and not ansible_check_mode
+  when: log_analysis_act | bool and _la.problems | length > 0 and not ansible_check_mode and not _ea_off | default(false) | bool
 
 - name: Logs | no critical or error pattern (log_analysis_fail)
   ansible.builtin.assert:

@@ -104,6 +104,14 @@ vm_snap_vm_key     a snapshot's VM, unique across vCenters (vCenter / moid).
 host_ids           the names and addresses inventory hosts can be recognised by (inventory name
                    and ansible_host; host names without the domain, lower case).
                        {{ groups['aap'] | default([]) | host_ids(hostvars) }}
+
+report_banner      the classification banner (1.3.0; plugins/module_utils/site_banner.py): {banner, text, color,
+                   subject, enclave, domains, hosts: [[name, address]]} -> {on, text, bg, fg, subject, enclave, why}.
+report_banner_hosts  [names] | report_banner_hosts(hostvars) -> [[name, ansible_host]] (localhost left out).
+report_banner_html / report_banner_text / report_banner_subject
+                   an HTML page or email with the banner at the top and bottom of its body; a plain-text report
+                   with it as the first and last line; an email subject with "(TEXT) " before it.
+report_act_off     a report with "ACT is off (site_act_enabled false)." as its last section, when off.
 """
 import base64
 import csv
@@ -111,14 +119,23 @@ import datetime
 import fnmatch
 import gzip
 import hashlib
+import importlib.util
 import json
 import io
+import os
 import re
 
 try:
     from ansible.errors import AnsibleFilterError as _FilterError
 except ImportError:                      # the unit tests, without Ansible
     _FilterError = ValueError
+
+# the banner's code, shared with roles/site_email's modules (there: ansible.module_utils.site_banner)
+_spec = importlib.util.spec_from_file_location(
+    "site_banner", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_banner.py"))
+_banner = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_banner)
+ACT_OFF = "ACT is off (site_act_enabled false)."
 
 
 def from_csv(text, delimiter=","):
@@ -1536,6 +1553,52 @@ def report_notice(report, notice=""):
     return r
 
 
+def report_banner(opts):
+    try:
+        return _banner.banner(opts or {})
+    except ValueError as e:
+        raise _FilterError(str(e))
+
+
+def report_banner_hosts(names, hostvars):
+    """[[name, ansible_host]] of each host named (localhost left out) - what site_enclave_classified_domains is held to."""
+    out, seen = [], set()
+    for n in names or []:
+        n = str(n)
+        if n == "localhost" or n in seen:
+            continue
+        seen.add(n)
+        try:
+            hv = hostvars[n] if n in hostvars else {}
+            addr = hv.get("ansible_host", "") if hasattr(hv, "get") else ""
+        except Exception:                # a host's variable that does not template: its name only
+            addr = ""
+        out.append([n, str(addr or "")])
+    return out
+
+
+def report_banner_html(page, banner):
+    return _banner.inject(page, banner)
+
+
+def report_banner_text(text, banner):
+    return _banner.wrap_text(text, banner)
+
+
+def report_banner_subject(subject, banner):
+    return _banner.subject(subject, banner)
+
+
+def report_act_off(report, off=False):
+    """The report with one line - "ACT is off (site_act_enabled false)." - as its last section when off (roles/site_email:
+    a job that would have asked ACT, with site_act_enabled false); the report as it is otherwise."""
+    if not off:
+        return report
+    r = dict(report or {})
+    r["sections"] = list(r.get("sections") or []) + [{"title": "ACT", "status": "info", "text": ACT_OFF}]
+    return r
+
+
 def report_text(report, footer="", runs=None):
     """A report (roles/site_email: title, subtitle, summary, sections with columns/rows or lines,
     footer) as plain text, tables in aligned columns. runs: the strip of past runs (report_runs), as one line."""
@@ -1969,7 +2032,9 @@ def report_xlsx_sheets(report):
 
 class FilterModule(object):
     def filters(self):
-        return {"from_csv": from_csv, "days_until": days_until, "site_result": site_result,
+        return {"report_banner": report_banner, "report_banner_hosts": report_banner_hosts, "report_banner_html": report_banner_html, "report_banner_text": report_banner_text,
+                "report_banner_subject": report_banner_subject, "report_act_off": report_act_off,
+                "from_csv": from_csv, "days_until": days_until, "site_result": site_result,
                 "podman_discovery": podman_discovery, "podman_run_as": podman_run_as,
                 "watch_targets": watch_targets, "watch_fix_commands": watch_fix_commands,
                 "watch_allow_patterns": watch_allow_patterns, "vm_facts": vm_facts, "vm_where": vm_where, "vm_ds_row": vm_ds_row, "host_ids": host_ids,

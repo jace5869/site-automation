@@ -253,6 +253,12 @@ own workbook whatever the setting says - *VM - inventory report*: every VM on on
 workbook is made with Python's standard library: nothing to add to the execution environment. The website gets no
 workbook; a dry run (Check) makes none.
 
+## The classification banner
+
+In a classified enclave every report carries its banner - at the top and bottom of every look and of the plain text,
+`(SECRET) ` before the subject, the first row of the workbook (`site_enclave`, `report_banner`, `report_banner_text`;
+[ENCLAVES.md](ENCLAVES.md)).
+
 ## Also on a web page
 
 Every report can also be written as a web page - the same report, in the portal look - on a Windows server (over

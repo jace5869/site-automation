@@ -80,18 +80,29 @@
     _ask_resolvers: "{{ _ask_net.stdout.split()[1:] | select('match', '^[0-9.]+$') | list }}"
 
 # ---------------------------------------------------------------- GenAI: ACT's settings, the key
+# ACT off (site_act_enabled false): as vmware_ask_genai false - the page answers with the job's own reader, asks nothing
+- name: GenAI | asked? (vmware_ask_genai, and ACT on - site_act_enabled)
+  ansible.builtin.set_fact:
+    _ask_genai_on: "{{ vmware_ask_genai | bool and site_act_enabled | default(true) | bool }}"
+    _site_act_off: "{{ vmware_ask_genai | bool and not site_act_enabled | default(true) | bool }}"
+
+- name: GenAI | ACT is off (site_act_enabled false) - the page answers with the job's own reader only
+  ansible.builtin.debug:
+    msg: ACT is off (site_act_enabled false) - the page answers only the simplest questions (the job's own reader), and asks no model.
+  when: _site_act_off | bool
+
 - name: GenAI | ACT's settings (site_act_provider, site_act_models, site_act_urls ...)
   ansible.builtin.include_role:
     name: site_act
     tasks_from: env.yml
     public: true                          # site_act_provider and the rest, for the tasks below
-  when: vmware_ask_genai | bool
+  when: _ask_genai_on | bool
 
 - name: GenAI | the key for {{ site_act_provider | default('genai') }}
   ansible.builtin.set_fact:
     _ask_key_env: "{{ {'genai': 'GENAI_KEY', 'genai-beta': 'GENAI_BETA_KEY', 'asksage': 'ASKSAGE_API_KEY'}[site_act_provider | default('genai')] }}"
     _ask_key: >-
-      {{ '' if not vmware_ask_genai | bool
+      {{ '' if not _ask_genai_on | bool
          else lookup('ansible.builtin.env', 'GENAI_KEY') if site_act_provider == 'genai'
          else lookup('ansible.builtin.env', 'GENAI_BETA_KEY') if site_act_provider == 'genai-beta'
          else (lookup('ansible.builtin.env', 'ASKSAGE_API_KEY') or lookup('ansible.builtin.env', 'ASKSAGE_KEY')) }}
@@ -102,7 +113,7 @@
     msg: >-
       WARNING: no API key for provider {{ site_act_provider | default('genai') }} - attach the "ACT model key" credential
       to this job template, or the page answers only the simplest questions (the job's own reader).
-  when: vmware_ask_genai | bool and _ask_key | length == 0
+  when: _ask_genai_on | bool and _ask_key | length == 0
 
 # ---------------------------------------------------------------- directories, the service's files
 - name: Files | directories
@@ -263,7 +274,8 @@
            'ASK_VALIDATE_CERTS': 'true' if vmware_ask_validate_certs | bool else 'false',
            'ASK_DATACENTER': vmware_ask_datacenter, 'ASK_REFRESH_MINUTES': vmware_ask_refresh_minutes | string,
            'ASK_REFRESH_TIMEOUT': vmware_ask_refresh_timeout | string, 'ASK_EVENT_DAYS': vmware_ask_event_days | string,
-           'ASK_MAX_EVENTS': vmware_ask_max_events | string, 'ASK_GENAI': '1' if vmware_ask_genai | bool else '0',
+           'ASK_MAX_EVENTS': vmware_ask_max_events | string, 'ASK_GENAI': '1' if _ask_genai_on | bool else '0',
+           'ASK_GENAI_OFF': 'ACT is off (site_act_enabled false)' if _site_act_off | bool else '',
            'ASK_LOCAL_FALLBACK': '1' if vmware_ask_local_fallback | bool else '0',
            'ASK_GENAI_RETRY': '1' if vmware_ask_genai_retry | bool else '0',
            'ASK_MODEL_TIMEOUT': vmware_ask_model_timeout | string, 'ASK_EXTRA_INSTRUCTIONS': vmware_ask_extra_instructions,
@@ -362,7 +374,7 @@
     msg:
       - >-
         VMware ask is up on the podman network {{ vmware_ask_network }}, GenAI
-        {{ ('through ' ~ site_act_provider) if vmware_ask_genai | bool and _ask_key | length > 0 else "not used (the job's own reader only)" }}.
+        {{ ('through ' ~ site_act_provider) if _ask_genai_on | bool and _ask_key | length > 0 else "not used (the job's own reader only)" }}.
         vCenter: {{ {'ok': 'read', 'reading': 'being read for the first time', 'never': 'not read yet - the first read starts now',
                      'failed': 'NOT READ', 'stale': 'the last read failed'}[(_ask_ready.stdout | default('{}') | from_json).vcenter | default('never')] }}
         (every {{ vmware_ask_refresh_minutes }} minutes; journalctl{{ ' --user' if vmware_ask_scope == 'user' else '' }} -u vmware-ask-app says how it went).

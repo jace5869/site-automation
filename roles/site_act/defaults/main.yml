@@ -19,6 +19,11 @@ site_act_level: explain
 # A job variable, per template or launch - not all.yml (every check job would then call the model).
 use_act: false
 
+# ACT at all (1.3.0): false = no job calls ACT - no request, no model endpoint or key needed, no error; each report
+# says "ACT is off (site_act_enabled false)" in one line and the job stays green (an enclave without a model). Usually
+# in all.yml (docs/ENCLAVES.md).
+site_act_enabled: true
+
 # self-heal only: regular expressions of fix commands ACT may run without a person. Each must
 # match the WHOLE command. Keep them narrow, e.g.
 #   site_act_allow: ['systemctl restart (chronyd|rsyslog|crond)']

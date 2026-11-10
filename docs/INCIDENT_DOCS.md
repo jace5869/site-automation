@@ -24,9 +24,11 @@ The job runs on the AAP side: no inventory of servers, no Limit, no machine cred
 ## What the documents look like
 
 **The AAR** (`AAR.docx`, or `AAR-<outage>.docx` when the outage is named): your logo at the top left, the marking
-banner (`incident_docs_banner`, e.g. `CONTROLLED UNCLASSIFIED INFORMATION (CUI)`) at the top and bottom of every
-page - in bold, in the marking's usual colour: CUI purple, UNCLASSIFIED green, CONFIDENTIAL blue, SECRET red, TOP SECRET
-orange (`incident_docs_banner_color`: your own, hex in quotes) - then:
+banner (`incident_docs_banner`) at the top and bottom of every page - by default (`auto`) the reports' classification
+banner when it is on (the classified enclave: `report_banner_text`, e.g. SECRET; [ENCLAVES.md](ENCLAVES.md)), else
+`CONTROLLED UNCLASSIFIED INFORMATION (CUI)`; your own text wins - in bold, in the marking's usual colour: CUI purple,
+UNCLASSIFIED green, CONFIDENTIAL blue, SECRET red, TOP SECRET orange (`incident_docs_banner_color`: your own, hex in
+quotes) - then:
 
 | Heading | Lines |
 |---|---|
@@ -114,7 +116,7 @@ The email itself names the attachments, says what ACT did, and holds none of the
 1. **Your logo, banner and instructions** - in **your** `playbooks/group_vars/all.yml` (never the public repository):
    ```yaml
    report_logo_file: files/report_logo.png          # the reports' logo is used; incident_docs_logo_file for another
-   incident_docs_banner: CONTROLLED UNCLASSIFIED INFORMATION (CUI)
+   incident_docs_banner: auto                       # the default: the reports' banner when on, else CUI; or your own text
    incident_aar_instructions:
      - Save this file as AAR.docx.
      - Send the AAR to your manager for review and approval before it is posted.

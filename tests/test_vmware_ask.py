@@ -201,6 +201,13 @@ class Ask(Base):
         self.assertIn("GenAI is off (vmware_ask_genai: false)", r["note"])
         self.assertEqual(self.calls(), 0)
 
+    def test_act_off(self):
+        """site_act_enabled false: the stack sets ASK_GENAI 0 and says why (roles/vmware_ask_stack, 1.3.0)."""
+        r = self.asker(ASK_GENAI="0", ASK_GENAI_OFF="ACT is off (site_act_enabled false)").ask("hosts in maintenance mode")
+        self.assertIn("ACT is off (site_act_enabled false)", r["note"])
+        self.assertNotIn("vmware_ask_genai", r["note"])
+        self.assertEqual(self.calls(), 0)
+
     def test_act_fails(self):
         r = self.asker(ASK_ACT=os.path.join(self.d, "no-act")).ask("hosts in maintenance mode")
         self.assertEqual(r["status"], "ok")

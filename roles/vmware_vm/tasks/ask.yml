@@ -41,6 +41,12 @@
     fail_msg: "Refused: {{ _ask_refused }}"
     quiet: true
 
+# ACT off (site_act_enabled false): as with vm_ask_genai false - the job's own reader, and nothing asked
+- name: VMware | GenAI asked? (vm_ask_genai, and ACT on - site_act_enabled)
+  ansible.builtin.set_fact:
+    _ask_genai: "{{ vm_ask_genai | bool and site_act_enabled | default(true) | bool }}"
+    _site_act_off: "{{ vm_ask_genai | bool and not site_act_enabled | default(true) | bool }}"
+
 - name: VMware | GenAI reads the question - evidence mode, ACT runs no command
   ansible.builtin.include_role:
     name: site_act
@@ -54,7 +60,7 @@
     _ea_model_timeout: "{{ vm_ask_model_timeout }}"
     _ea_check_url: true
     _ea_in_check: true                 # the job only reads: a dry run (Check) answers the question too
-  when: _ask_given | length == 0 and vm_ask_genai | bool
+  when: _ask_given | length == 0 and _ask_genai | bool
 
 # a model that answers with a step of its own ({'action': 'plan', ...}) or with no query at all: asked once more,
 # told what it answered (ACT's evidence mode is one call - there is no next step for it to take)
@@ -62,7 +68,7 @@
   ansible.builtin.set_fact:
     _ask_first: "{{ _ea_raw | default('') | vm_ask_parse if _ea_ran | default(false) | bool else {} }}"
     _ask_first_raw: "{{ _ea_raw | default('') }}"
-  when: _ask_given | length == 0 and vm_ask_genai | bool
+  when: _ask_given | length == 0 and _ask_genai | bool
 
 - name: VMware | GenAI asked once more - its answer had no query (vm_ask_genai_retry)
   ansible.builtin.include_role:
@@ -80,7 +86,7 @@
     _ea_check_url: false
     _ea_in_check: true
   when:
-    - _ask_given | length == 0 and vm_ask_genai | bool and vm_ask_genai_retry | default(true) | bool
+    - _ask_given | length == 0 and _ask_genai | bool and vm_ask_genai_retry | default(true) | bool
     - _ask_first.error | default('') | length > 0
 
 # one dict expression, so the query's values keep their types on ansible-core 2.16 too
@@ -104,12 +110,12 @@
           'missing': g.missing | default('')} }}
       {%- endif -%}
       {%- else -%}
-      {%- set why = 'GenAI is off (vm_ask_genai: false)' if not vm_ask_genai | bool else 'GenAI did not run: ' ~ (_ea_reason | default('') | trim | regex_replace('[.]$', '')) -%}
-      {%- set l = _ask_q | vm_ask_local if (vm_ask_local_fallback | bool or not vm_ask_genai | bool) else {} -%}
+      {%- set why = 'GenAI is off (vm_ask_genai: false)' if not vm_ask_genai | bool else 'ACT is off (site_act_enabled false)' if not _ask_genai | bool else 'GenAI did not run: ' ~ (_ea_reason | default('') | trim | regex_replace('[.]$', '')) -%}
+      {%- set l = _ask_q | vm_ask_local if (vm_ask_local_fallback | bool or not _ask_genai | bool) else {} -%}
       {{ {'query': l, 'refused': '',
           'error': '' if l | length > 0 else why ~ (". The job's own reader takes only simple questions ('VMs with dbv in the name', 'VMs in the "
                                                     ~ "acas folder', 'hosts in maintenance mode', 'snapshots older than 7 days'), and not this one."
-                                                    if vm_ask_local_fallback | bool or not vm_ask_genai | bool else ' (vm_ask_local_fallback: false).'),
+                                                    if vm_ask_local_fallback | bool or not _ask_genai | bool else ' (vm_ask_local_fallback: false).'),
           'by': "the job's own reader (simple questions only)",
           'note': why ~ ". The job's own reader read the question: check that 'Read as' is what you asked."} }}
       {%- endif -%}
@@ -130,6 +136,17 @@
       it (GenAI said so rather than answer a different question). docs/VM_ASK.md lists what it reads; ask for the field
       to be added, or ask without it.
     quiet: true
+
+# ACT off and a question the job's own reader cannot read: said in one line, nothing read, the job green
+- name: VMware | ACT is off (site_act_enabled false) and the job's own reader does not take this question - not answered
+  when: _ask.error | length > 0 and _site_act_off | bool
+  block:
+    - name: VMware | not answered - ACT is off (site_act_enabled false)
+      ansible.builtin.debug:
+        msg: "Not answered: {{ _ask.error }}"
+
+    - name: VMware | the job ends here, green
+      ansible.builtin.meta: end_play
 
 - name: VMware | the question was read
   ansible.builtin.assert:

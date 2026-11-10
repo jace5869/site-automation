@@ -19,8 +19,17 @@
         name: site_act
         tasks_from: env.yml
 
+    # this job is ACT's own playbook: with ACT off nothing is read or asked, the job ends green (the job "fapolicyd"
+    # reads the denials without ACT)
+    - name: Fapolicyd denials | ACT is off (site_act_enabled false) - nothing read, nothing asked
+      ansible.builtin.debug:
+        msg: ACT is off (site_act_enabled false) - this job is ACT's own; nothing read, nothing asked.
+      run_once: true
+      when: _site_act_off | bool
+
 - name: Fapolicyd denials - read and analysed (ACT)
   ansible.builtin.import_playbook: ../vendor/act/ansible/playbooks/fapolicyd_denials.yml
+  when: not _site_act_off | default(false) | bool
   vars:
     act_triage_fail_on: []          # no host fails before the report: fapolicyd_fail_on, below, after it
     # the provider and model of site_act; ACT only reads here, so a plain answer (no action tools, schema or "{")
@@ -46,7 +55,9 @@
         _report: >-
           {{ ansible_play_hosts_all | map('extract', hostvars) | list
              | fapolicyd_report(ansible_play_hosts_all, fapolicyd_since, site_report_title | default('')) }}
-      when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0
+      when:
+        - report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0
+        - not _site_act_off | default(false) | bool
 
 - name: Fapolicyd denials - after the report
   hosts: "{{ target | default('all') }}"
@@ -58,7 +69,7 @@
       ansible.builtin.debug:
         msg: "No email: report_email_to is not set (docs/EMAIL_REPORTS.md)."
       run_once: true
-      when: report_email_to | default([]) | length == 0 and report_email_also | default([]) | length == 0
+      when: report_email_to | default([]) | length == 0 and report_email_also | default([]) | length == 0 and not _site_act_off | default(false) | bool
 
     - name: Fapolicyd denials | fail the hosts whose ACT status is in fapolicyd_fail_on (after the report)
       ansible.builtin.fail:

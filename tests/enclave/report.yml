@@ -1,0 +1,26 @@
+---
+# Test harness for tests/enclave/run_enclave_test.sh: one report through roles/site_email, from a play on the hosts
+# given (test_hosts), as the report jobs send theirs - the classification banner (report_banner, site_enclave) on it.
+- name: A report with the classification banner
+  hosts: "{{ test_hosts | default('localhost') }}"
+  gather_facts: false
+  tasks:
+    - name: Report
+      ansible.builtin.include_role:
+        name: site_email
+        apply:
+          delegate_to: localhost
+          run_once: true
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+        _report:
+          title: Enclave test report
+          status: warning
+          summary:
+            - {label: VMs, value: 2}
+          sections:
+            - title: VMs
+              columns: [VM, CPU]
+              rows: [[web01, 2], [web02, 4]]
+      run_once: true

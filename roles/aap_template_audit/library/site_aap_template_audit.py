@@ -25,7 +25,7 @@ description:
     it. Its user needs read access to the templates (Organization Auditor is enough).
 options:
   site_wide: {description: The settings usually in all.yml (every job reads them)., type: list, elements: str, default: []}
-  per_enclave: {description: The settings that differ by enclave (the enclave file)., type: list, elements: str, default: []}
+  per_enclave: {description: "The settings that differ by enclave (all.yml of each enclave - its own AAP, docs/ENCLAVES.md).", type: list, elements: str, default: []}
   per_template: {description: Settings that belong in a template (who gets its email, its target) - never flagged as site-wide or as an address., type: list, elements: str, default: []}
   ignore: {description: Settings never flagged., type: list, elements: str, default: []}
   repeat_min: {description: A setting with the same value in this many templates or more is flagged (0 = never)., type: int, default: 3}
@@ -182,7 +182,7 @@ def connection_suggestion(name):
     return "the group's or host's variables"
 
 
-ENCLAVE = "the enclave file (group_vars/<enclave>.yml)"
+ENCLAVE = "all.yml of each enclave (its own AAP, docs/ENCLAVES.md)"
 ALL_YML = "all.yml"
 SECRET = "a credential (docs/SECRETS.md)"
 

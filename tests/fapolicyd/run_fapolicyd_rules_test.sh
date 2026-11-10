@@ -268,6 +268,11 @@ check "ACT's analysis of ra01's blocks in the report, by its own headings" \
       '"ra01.example.mil: ACT\x27s analysis" in s and s["ra01.example.mil: Blocked"]["lines"] == ["1. tool is not trusted: add it to the trust database"] and "ra01.example.mil: Risk" in s'
 grep -q 'trust file: ' "$work/act/fake-act-stdin.txt" 2>/dev/null && grep -q '"ACT_TOOLS": "0"' "$work/act/fake-act-env.json" \
     && ok "  ... ACT got the job's own reading (the proposed changes) and was asked for a plain answer" || bad "ACT evidence: $(head -c 300 "$work/act/fake-act-stdin.txt" 2>&1)"
+calls0="$(cat "$work/act/fake-act-calls.log" 2>/dev/null | wc -l)"
+GENAI_KEY=test-key run ra01 -e '{"fapolicyd_act": true, "site_act_enabled": false}'
+check "ACT off (site_act_enabled false): not asked, said in the report in one line" \
+      'any("ACT is off (site_act_enabled false)." in x for x in s["For a person"]["lines"]) and "ra01.example.mil: ACT\x27s analysis" not in s'
+[ "$(cat "$work/act/fake-act-calls.log" 2>/dev/null | wc -l)" = "$calls0" ] && ok "  ... ACT was not called" || bad "ACT off: ACT was called"
 
 # ---- the workflow's check: each host's changes handed on, NEEDS APPROVAL, nothing changed ------------------------
 run all -e '{"fapolicyd_workflow": true}'

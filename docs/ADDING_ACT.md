@@ -54,6 +54,10 @@ them: it prints the approved command for a person to run by hand.
 
 ## Turn it on
 
+ACT can be off for a whole AAP: `site_act_enabled: false` in `all.yml` (an enclave without a model) - then no job asks
+it, needs a key or fails for it, and each report says *ACT is off (site_act_enabled false)* in one line
+([ENCLAVES.md](ENCLAVES.md), "ACT").
+
 ### 1. The ACT model key credential
 
 Create the credential type `ACT model key` (`aap/credential_types/act_model_key.yml`) and one

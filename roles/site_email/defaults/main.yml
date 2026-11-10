@@ -25,6 +25,24 @@ report_email_smtp_port: 25               # 25 or 587 with starttls, 465 with ssl
 report_email_security: starttls
 report_email_ca_path: ""                 # a CA file that signed the relay's certificate (empty = the CAs the execution environment trusts)
 report_email_subject_prefix: "[AAP]"     # put before every subject, e.g. "[AAP] Certificate report: ..."
+
+# ---- The enclave and the classification banner (1.3.0; docs/ENCLAVES.md) - usually in all.yml, one AAP per enclave ----
+
+# Which enclave this AAP serves: unclassified or classified; empty = found from the job's hosts - classified when a
+# target host's name or address (inventory_hostname, ansible_host) ends in one of site_enclave_classified_domains, else
+# unclassified. site_enclave, when set, always wins.
+site_enclave: ""
+# DNS suffixes of the classified enclave, e.g. [classified.example.mil]; [] = never found classified from the hosts.
+site_enclave_classified_domains: []
+# The banner at the top and bottom of every report: each email look and the plain text (its first and last line), every
+# report website page and the index, the ticket insights pages, print, and the first row of each workbook sheet.
+# auto = on in the classified enclave (site_enclave), off in the unclassified; true / false = always / never.
+report_banner: auto
+report_banner_text: SECRET               # the banner's text, e.g. SECRET, SECRET//NOFORN, UNCLASSIFIED, CUI
+# The banner's colour (#rrggbb); empty = the standard colour of the text: UNCLASSIFIED green, CUI purple, CONFIDENTIAL blue,
+# SECRET red, TOP SECRET orange; the text black or white, whichever reads 4.5:1 or better.
+report_banner_color: ""
+report_banner_subject: true              # with the banner on: "(SECRET) " before the email subject (and the prefix)
 # Send a formatted (HTML) version too, for reports that come with one (all VMware jobs). The email
 # always carries a plain-text copy for mail clients that do not show HTML. false = plain text only.
 report_email_html: true

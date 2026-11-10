@@ -52,6 +52,26 @@
     msg: "{{ _email_also_refused }}"
   when: _email_also_refused | length > 0
 
+# the banner (report_banner): the job's hosts - the play's, the Limit's and target's - say the enclave when site_enclave
+# is empty. ACT off (site_act_enabled false) in a job that would have asked it (a host has _site_act_off): one line.
+- name: Email | the classification banner (report_banner, site_enclave), and ACT off (site_act_enabled)
+  ansible.builtin.set_fact:
+    _banner: >-
+      {%- set names = ansible_play_hosts_all
+            + (query('ansible.builtin.inventory_hostnames', ansible_limit) if ansible_limit | default('', true) | length > 0 else [])
+            + (query('ansible.builtin.inventory_hostnames', target) if target is defined and target is string and target | length > 0 else []) -%}
+      {{ {'banner': report_banner | default('auto'), 'text': report_banner_text | default('SECRET'), 'color': report_banner_color | default(''),
+          'subject': report_banner_subject | default(true), 'enclave': site_enclave | default(''),
+          'domains': site_enclave_classified_domains | default([]), 'hosts': names | report_banner_hosts(hostvars)} | report_banner }}
+    _act_off: >-
+      {{ not site_act_enabled | default(true) | bool
+         and ((ansible_play_hosts_all + [inventory_hostname, 'localhost']) | unique | select('in', hostvars) | map('extract', hostvars)
+              | map(attribute='_site_act_off', default=false) | map('bool') | select | list | length > 0) }}
+
+- name: Email | the banner - {{ _banner.text if _banner.on else 'none' }} ({{ _banner.why }})
+  ansible.builtin.debug:
+    msg: "{{ ('Banner ' ~ _banner.text ~ ' (' ~ _banner.why ~ ')') if _banner.on else ('No banner (' ~ _banner.enclave ~ ': ' ~ _banner.why ~ ')') }}"
+
 - name: Email | the report website (report_web_dest)
   ansible.builtin.set_fact:
     _web_on: "{{ (report_web_dest | default('') | string | trim | length > 0 and not _report_web_skip | default(false) | bool) }}"
@@ -61,9 +81,9 @@
          and not report_web_copy | default(false) | bool }}
     _web_theme: "{{ report_web_theme | default('atlas') | string | trim | lower }}"
     _web_report: >-
-      {{ _report if _report is defined else
-         {'title': _report_subject | default('Report'), 'status': 'info',
-          'sections': [{'title': 'Report', 'lines': (_report_body | default('')).splitlines()}]} }}
+      {{ (_report if _report is defined else
+          {'title': _report_subject | default('Report'), 'status': 'info',
+           'sections': [{'title': 'Report', 'lines': (_report_body | default('')).splitlines()}]}) | report_act_off(_act_off | bool) }}
     _email_any: "{{ _email_to | length > 0 or (report_web_dest | default('') | string | trim | length > 0 and not _report_web_skip | default(false) | bool) }}"
     # set below when the website copy still failed (report_web_required: false); '' again for each report of a play
     _web_failed: ""
@@ -165,7 +185,9 @@
       AAP job {{ awx_job_id | default(tower_job_id | default('(command line)')) }}{{ (' (' ~ awx_job_template_name ~ ')') if awx_job_template_name is defined else '' }},
       started by {{ awx_user_name | default(tower_user_name | default(lookup('ansible.builtin.env', 'USER') or 'unknown')) }},
       {{ now(fmt='%Y-%m-%d %H:%M %Z') | trim }}.
-    _email_subject: "{{ (report_email_subject_prefix ~ ' ' if report_email_subject_prefix else '') ~ (_report.title if _report is defined else _report_subject) }}"
+    _email_subject: >-
+      {{ ((report_email_subject_prefix ~ ' ' if report_email_subject_prefix else '') ~ (_report.title if _report is defined else _report_subject))
+         | report_banner_subject(_banner) }}
   when: _email_any | bool
 
 - name: Email | the report website's file names (report_web_page, report_web_latest, report_web_index)
@@ -254,6 +276,7 @@
       template_id: "{{ awx_job_template_id | default(tower_job_template_id | default('')) }}"
       when: "{{ _web_when }}"
       runs: "{{ _web_runs | default([]) }}"
+      banner: "{{ _banner if _banner.on else {} }}"     # site_report_web puts it on the page and the index, as does the copy job
     entry:
       key: "{{ _web_files.latest or _web_files.page.split('/')[0] }}"
       name: "{{ awx_job_template_name | default(tower_job_template_name | default(ansible_play_name | default('Report'))) }}"
@@ -378,6 +401,7 @@
     - name: Email | the report's tables as a workbook, attached (report_email_xlsx, or the report's own _report_xlsx)
       site_xlsx:
         sheets: "{{ _report_xlsx if _report_xlsx | default([]) | length > 0 else _report | report_xlsx_sheets }}"
+        banner: "{{ _banner if _banner.on else {} }}"
       register: _email_xlsx
       when: _report is defined and (_report_xlsx | default([]) | length > 0 or report_email_xlsx | bool) and not ansible_check_mode
 
@@ -391,10 +415,11 @@
         cc: "{{ _email_cc }}"
         subject: "{{ _email_subject }}"
         body: >-
-          {{ _report | report_notice(_email_notice) | report_text(_email_footer ~ _email_web_line, _email_runs | default([]))
-             if _report is defined else
-             ((_email_notice ~ '\n\n') if _email_notice else '') ~ _report_body ~ '\n\n--\n' ~ _email_footer ~ _email_web_line }}
-        html: "{{ lookup('ansible.builtin.template', _email_template) if _email_html | bool else omit }}"
+          {{ (_report | report_notice(_email_notice) | report_act_off(_act_off | bool) | report_text(_email_footer ~ _email_web_line, _email_runs | default([]))
+              if _report is defined else
+              ((_email_notice ~ '\n\n') if _email_notice else '') ~ _report_body ~ (('\n\nACT is off (site_act_enabled false).') if _act_off | bool else '')
+              ~ '\n\n--\n' ~ _email_footer ~ _email_web_line) | report_banner_text(_banner) }}
+        html: "{{ lookup('ansible.builtin.template', _email_template) | report_banner_html(_banner) if _email_html | bool else omit }}"
         images: "{{ [{'cid': _email_logo_cid, 'path': _email_logo_file}] if _email_html | bool and _email_logo_cid else [] }}"
         # the workbook, and the files the job hands over (_report_attachments: [{path, filename}] - the outage AAR's Word documents)
         attachments: "{{ ([{'path': _email_xlsx.path, 'filename': _email_xlsx_name}] if _email_xlsx.path | default('') else []) + _report_attachments | default([]) }}"

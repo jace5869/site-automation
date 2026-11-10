@@ -290,6 +290,14 @@ grep -q '/sys_audit' "$work/log.jsonl" && { echo "FAIL - sys_audit asked though 
     || { grep -q '/metric_instance' "$work/log.jsonl" && echo "ok   -   ... only metric_instance asked" || { echo "FAIL - metric_instance not asked"; fails=$((fails + 1)); }; }
 CHECK=1 run "Check: read and printed, nothing written" ok "{$NOW, $NOACT, \"report_web_dest\": \"$work/site3\"}" 'Ticket insights for All assignment groups'
 [ ! -e "$work/site3" ] && echo "ok   -   ... nothing written in Check" || { echo "FAIL - Check wrote $work/site3"; fails=$((fails + 1)); }
+# the classification banner (1.3.0): the site's page, a team's page and the index - top and bottom
+mkdir -p "$work/site7"
+run "classified (site_enclave): the banner on the insights pages" ok "{$NOW, $NOACT, \"site_enclave\": \"classified\", \"report_web_dest\": \"$work/site7\"}" \
+    'Banner SECRET (site_enclave: classified)'
+for f in servicenow-ticket-insights/latest.html servicenow-ticket-insights/ops/other/windows/latest.html index.html; do
+    [ "$(grep -o 'class="site-banner ' "$work/site7/$f" 2>/dev/null | wc -l)" = 2 ] && echo "ok   -   ... $f: top and bottom" \
+        || { echo "FAIL - the banner on $f"; fails=$((fails + 1)); }
+done
 INS_ENV="SN_HOST=" run "no credential" fail "{$NOW}" 'it sets SN_HOST, SN_USERNAME, SN_PASSWORD'
 run "months 0: said" fail "{$NOW, $NOACT, \"servicenow_insights_months\": 0}" 'servicenow_insights_months must be 1 or more'
 run "the last 60 days instead (servicenow_insights_days)" ok "{$NOW, $NOACT, \"servicenow_insights_days\": 60}" 'Window: 2026-09-02 to 2026-10-31'

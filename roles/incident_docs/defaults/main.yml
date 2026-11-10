@@ -5,10 +5,13 @@
 # Never on the report website. The survey itself: the job "AAP - incident document surveys" writes it
 # (playbooks/incident_docs_survey.yml).
 
-# The marking at the top and bottom of every page ("" = none).
-incident_docs_banner: CONTROLLED UNCLASSIFIED INFORMATION (CUI)
+# The marking at the top and bottom of every page: auto = the reports' banner (report_banner_text, in its colour) when
+# that banner is on - the classified enclave, or report_banner true (docs/ENCLAVES.md) - else CONTROLLED UNCLASSIFIED
+# INFORMATION (CUI); your own text wins as it is; "" = none.
+incident_docs_banner: auto
 # Its colour (bold text): "" = the marking's usual one - CUI purple (502B85), UNCLASSIFIED green (007A33), CONFIDENTIAL
-# blue (0033A0), SECRET red (C8102E), TOP SECRET orange (FF8C00); or your own, hex RRGGBB in quotes.
+# blue (0033A0), SECRET red (C8102E), TOP SECRET orange (FF8C00) - or, with auto, the reports' banner's; or your own, hex
+# RRGGBB in quotes.
 incident_docs_banner_color: ""
 # The logo at the top of the first page: report_logo_file, the reports' logo, unless this names another file
 # (files/aar_logo.png = playbooks/files/aar_logo.png, in YOUR repository). "" = report_logo_file.

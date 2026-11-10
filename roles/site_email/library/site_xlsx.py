@@ -23,6 +23,8 @@ options:
     elements: dict
     required: true
   path: {description: "The file to write ('' = a new temporary file).", type: str, default: ''}
+  banner: {description: "The classification banner, {on, text, bg, fg} (roles/site_email): each sheet's first row, across the
+      table, in its colours; the column names under it. {} = none.", type: dict, default: {}}
 author: site automation
 '''
 
@@ -57,16 +59,21 @@ ROOT_RELS = (
     '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
     'Target="xl/workbook.xml"/></Relationships>')
 # style 1: the bold header row on a light green fill
+# style 2: the classification banner (bold, its colours, centred) - only with a banner
 STYLES = (
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
     '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-    '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts>'
-    '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>'
-    '<fill><patternFill patternType="solid"><fgColor rgb="FFE3F5EC"/><bgColor indexed="64"/></patternFill></fill></fills>'
+    '<fonts count="3"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font>'
+    '<font><b/><sz val="11"/><color rgb="FF%(fg)s"/><name val="Calibri"/></font></fonts>'
+    '<fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>'
+    '<fill><patternFill patternType="solid"><fgColor rgb="FFE3F5EC"/><bgColor indexed="64"/></patternFill></fill>'
+    '<fill><patternFill patternType="solid"><fgColor rgb="FF%(bg)s"/><bgColor indexed="64"/></patternFill></fill></fills>'
     '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>'
     '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
-    '<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
-    '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/></cellXfs>'
+    '<cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
+    '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>'
+    '<xf numFmtId="0" fontId="2" fillId="3" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1">'
+    '<alignment horizontal="center"/></xf></cellXfs>'
     '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>')
 
 
@@ -109,35 +116,49 @@ def cell(ref, v, style=0):
     return '<c r="%s"%s t="inlineStr"><is><t%s>%s</t></is></c>' % (ref, st, space, escape(t))
 
 
-def sheet_xml(columns, rows):
+def _rgb(c, default):
+    c = str(c or "").lstrip("#")
+    return c.upper() if re.match(r"^[0-9a-fA-F]{6}$", c) else default
+
+
+def sheet_xml(columns, rows, banner=None):
+    """A sheet; with banner ({text}), its text in the first row across the table, the column names in the second."""
     columns, rows = list(columns or []), [list(r) if isinstance(r, (list, tuple)) else [r] for r in rows or []]
+    top = 1 if banner and banner.get("text") else 0      # rows above the column names
     width = max([len(columns)] + [len(r) for r in rows] or [1]) or 1
     wide = [min(max([len(_text(columns[i])) if i < len(columns) else 0]
                     + [len(_text(r[i])) for r in rows[:2000] if i < len(r) and r[i] is not None]) + 2, 60) for i in range(width)]
     out = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
            '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">']
     if columns:
-        out.append('<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>'
-                   '</sheetView></sheetViews>')
+        out.append('<sheetViews><sheetView workbookViewId="0"><pane ySplit="%d" topLeftCell="A%d" activePane="bottomLeft" state="frozen"/>'
+                   '</sheetView></sheetViews>' % (1 + top, 2 + top))
     out.append('<cols>%s</cols>' % ''.join('<col min="%d" max="%d" width="%d" customWidth="1"/>' % (i + 1, i + 1, max(w, 6))
                                             for i, w in enumerate(wide)))
     out.append('<sheetData>')
     n = 0
+    if top:
+        n += 1
+        out.append('<row r="1">%s</row>' % cell('A1', banner["text"], 2))
     if columns:
         n += 1
-        out.append('<row r="1">%s</row>' % ''.join(cell('%s1' % col_name(i), c, 1) for i, c in enumerate(columns)))
+        out.append('<row r="%d">%s</row>' % (n, ''.join(cell('%s%d' % (col_name(i), n), c, 1) for i, c in enumerate(columns))))
     for r in rows:
         n += 1
         out.append('<row r="%d">%s</row>' % (n, ''.join(cell('%s%d' % (col_name(i), n), v) for i, v in enumerate(r) if v not in (None, ''))))
     out.append('</sheetData>')
     if columns and rows:
-        out.append('<autoFilter ref="A1:%s%d"/>' % (col_name(width - 1), n))
+        out.append('<autoFilter ref="A%d:%s%d"/>' % (1 + top, col_name(width - 1), n))
+    if top and width > 1:
+        out.append('<mergeCells count="1"><mergeCell ref="A1:%s1"/></mergeCells>' % col_name(width - 1))
     out.append('</worksheet>')
     return ''.join(out)
 
 
-def write_xlsx(path, sheets):
-    """sheets [{name, columns, rows}] -> the workbook at path; [[name, rows]]."""
+def write_xlsx(path, sheets, banner=None):
+    """sheets [{name, columns, rows}] -> the workbook at path; [[name, rows]]. banner: {text, bg, fg} - each sheet's first row."""
+    banner = banner if banner and banner.get("text") else None
+    top = 1 if banner else 0
     sheets = [s for s in sheets or [] if isinstance(s, dict)] or [{"name": "Report", "columns": [], "rows": []}]
     names = sheet_names([s.get("name") for s in sheets])
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
@@ -151,8 +172,9 @@ def write_xlsx(path, sheets):
                        ''.join('<sheet name="%s" sheetId="%d" r:id="rId%d"/>' % (escape(n, {'"': '&quot;'}), i + 1, i + 1)
                                for i, n in enumerate(names)),
                        '<definedNames>%s</definedNames>' % ''.join(
-                           '<definedName name="_xlnm._FilterDatabase" localSheetId="%d" hidden="1">\'%s\'!$A$1:$%s$%d</definedName>'
-                           % (i, escape(n.replace("'", "''")), col_name(max(len(s.get("columns") or []), 1) - 1), len(s.get("rows") or []) + 1)
+                           '<definedName name="_xlnm._FilterDatabase" localSheetId="%d" hidden="1">\'%s\'!$A$%d:$%s$%d</definedName>'
+                           % (i, escape(n.replace("'", "''")), 1 + top, col_name(max(len(s.get("columns") or []), 1) - 1),
+                              len(s.get("rows") or []) + 1 + top)
                            for i, (n, s) in enumerate(zip(names, sheets)) if s.get("columns") and s.get("rows"))
                        if any(s.get("columns") and s.get("rows") for s in sheets) else ''))
         z.writestr("xl/_rels/workbook.xml.rels", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
@@ -161,15 +183,16 @@ def write_xlsx(path, sheets):
                    'Target="styles.xml"/></Relationships>' % (''.join(
                        '<Relationship Id="rId%d" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
                        'Target="worksheets/sheet%d.xml"/>' % (i + 1, i + 1) for i in range(len(sheets))), len(sheets) + 1))
-        z.writestr("xl/styles.xml", STYLES)
+        z.writestr("xl/styles.xml", STYLES % {"bg": _rgb((banner or {}).get("bg"), "FFFFFF"), "fg": _rgb((banner or {}).get("fg"), "111111")})
         for i, s in enumerate(sheets):
-            z.writestr("xl/worksheets/sheet%d.xml" % (i + 1), sheet_xml(s.get("columns"), s.get("rows")))
+            z.writestr("xl/worksheets/sheet%d.xml" % (i + 1), sheet_xml(s.get("columns"), s.get("rows"), banner))
     return [[n, len(s.get("rows") or [])] for n, s in zip(names, sheets)]
 
 
 def main():
     module = AnsibleModule(argument_spec=dict(sheets=dict(type="list", elements="dict", required=True),
-                                              path=dict(type="str", default="")),
+                                              path=dict(type="str", default=""),
+                                              banner=dict(type="dict", default={})),
                            supports_check_mode=True)
     p = module.params
     if module.check_mode:
@@ -180,7 +203,7 @@ def main():
         fd, path = tempfile.mkstemp(prefix="site_report_", suffix=".xlsx")
         os.close(fd)
     try:
-        done = write_xlsx(path, p["sheets"])
+        done = write_xlsx(path, p["sheets"], p["banner"] if p["banner"].get("on", True) else None)
     except (IOError, OSError) as e:
         module.fail_json(msg="the workbook %s could not be written: %s" % (path, e))
     module.exit_json(changed=True, path=path, sheets=done)

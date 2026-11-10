@@ -93,6 +93,7 @@ class Config(object):
         self.model_timeout = int(g("ASK_MODEL_TIMEOUT", "120"))
         self.extra = g("ASK_EXTRA_INSTRUCTIONS")
         self.genai = flag(g("ASK_GENAI", "1"))
+        self.genai_off = g("ASK_GENAI_OFF", "") or "GenAI is off (vmware_ask_genai: false)"   # why, when off
         self.local_fallback = flag(g("ASK_LOCAL_FALLBACK", "1"))
         self.genai_retry = flag(g("ASK_GENAI_RETRY", "1"))
         self.keep_days = int(g("ASK_KEEP_DAYS", "365"))
@@ -362,7 +363,7 @@ class Asker(object):
                         "error": (g["error"] + said) if g.get("error") else "", "genai_said": raw.strip()[:1500]}
             why = "GenAI did not run: " + why.rstrip(".")
         else:
-            why = "GenAI is off (vmware_ask_genai: false)"
+            why = c.genai_off
         local = engine.vm_ask_local(q) if (c.local_fallback or not c.genai) else {}
         return {"query": local, "by": "the job's own reader (simple questions only)",
                 "error": "" if local else why + (". The job's own reader takes only simple questions (%s), and not this one." % SIMPLE

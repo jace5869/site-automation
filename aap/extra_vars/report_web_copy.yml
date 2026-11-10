@@ -185,3 +185,9 @@
 
 ## pages a run writes at most; the rest are the next run's
 # report_web_copy_max_pages: 50
+
+# ---- site_act - usually in all.yml ---------------------------------------------------------------
+## ACT at all (1.3.0): false = no job calls ACT - no request, no model endpoint or key needed, no
+## error; each report says "ACT is off (site_act_enabled false)" in one line and the job stays green
+## (an enclave without a model). Usually in all.yml (docs/ENCLAVES.md).
+# site_act_enabled: true

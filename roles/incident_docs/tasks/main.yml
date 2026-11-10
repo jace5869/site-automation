@@ -108,11 +108,21 @@
       {%- endif -%}
       {{ out }}
 
+# incident_docs_banner auto: the reports' banner (report_banner, site_enclave) when it is on, else the CUI marking
+- name: Incident docs | the marking (incident_docs_banner)
+  ansible.builtin.set_fact:
+    _inc_banner: >-
+      {{ incident_docs_banner | default('auto') | incident_banner_auto(incident_docs_banner_color | default('', true),
+           {'banner': report_banner | default('auto'), 'text': report_banner_text | default('SECRET'), 'color': report_banner_color | default(''),
+            'enclave': site_enclave | default(''), 'domains': site_enclave_classified_domains | default([]),
+            'hosts': (ansible_play_hosts_all + (query('ansible.builtin.inventory_hostnames', ansible_limit)
+                      if ansible_limit | default('', true) | length > 0 else [])) | report_banner_hosts(hostvars)} | report_banner) }}
+
 - name: Incident docs | the documents' look
   ansible.builtin.set_fact:
     _inc_opts:
-      banner: "{{ incident_docs_banner | default('', true) }}"
-      banner_color: "{{ incident_docs_banner_color | default('', true) | string }}"
+      banner: "{{ _inc_banner.banner }}"
+      banner_color: "{{ _inc_banner.banner_color | string }}"
       logo: >-
         {%- set f = (incident_docs_logo_file | default('', true) or report_logo_file | default('', true)) | string | trim -%}
         {{ '' if not f else (f if f.startswith('/') else playbook_dir ~ '/' ~ (f[10:] if f.startswith('playbooks/') else f)) }}

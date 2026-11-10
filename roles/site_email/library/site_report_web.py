@@ -57,7 +57,7 @@ options:
   page_url: {description: "The page's address, as the report job printed it (the copy job; '' = url and the page's name).", type: str, default: ''}
   html: {description: The page (not with keep)., type: str, default: ''}
   images: {description: "Pictures in the page: [{cid: name, path: file}].", type: list, elements: dict, default: []}
-  data: {description: The report and its run (written as JSON beside the page)., type: dict, default: {}}
+  data: {description: "The report and its run (written as JSON beside the page); its banner ({on, text, bg, fg} - plugins/module_utils/site_banner.py) goes at the top and bottom of the page and the index.", type: dict, default: {}}
   entry: {description: "This template's line of the index: key (one per template), name, title, status, when, job (and step, the first Start here card of data's report - the brief index shows it).", type: dict, required: true}
   prune: {description: "Leave out of the index the lines whose latest page is no longer there (deleted by hand). Not with windows_host (the server's folder is not read here).", type: bool, default: true}
   drop: {description: "Leave out of the index the lines whose key matches one of these patterns (* and ?) - e.g. pages a report once listed there.", type: list, elements: str, default: []}
@@ -119,6 +119,7 @@ import tempfile
 import time
 
 from ansible.module_utils.basic import AnsibleModule
+from ansible.module_utils.site_banner import inject as banner_inject
 from ansible.module_utils.site_report_page import KEEP_AT_LEAST, pack
 from ansible.module_utils.six.moves.urllib.error import HTTPError, URLError
 from ansible.module_utils.six.moves.urllib.parse import quote
@@ -1361,7 +1362,8 @@ def main():
         else:
             target = Target(dest, p['ca_path'], p['timeout'])
         box['target'] = target
-        html = web_page(p['html'], p['images'], p['theme'])
+        banner = (p['data'] or {}).get('banner') or {}      # the classification banner (1.3.0): the page and the index
+        html = banner_inject(web_page(p['html'], p['images'], p['theme']), banner)
         js = page_script(html)
         js_name = page_script_name(html)                 # site-report.js, or the page's own file (data-file)
         js_tag = '<script src="%s"></script>' % js_name
@@ -1428,7 +1430,7 @@ def main():
                 logo = (uri, p['logo_size'][0], p['logo_size'][1]) if uri.startswith('data:') else None
             index_text = json.dumps({'generated': generated, 'reports': reports}, indent=2, sort_keys=True, default=str) + '\n'
             put(_json_name(index), index_text, 'application/json; charset=utf-8')
-            put(index, index_html(reports, index, p['header_text'], logo, generated, p['tabs'], p['theme'], index_js),
+            put(index, banner_inject(index_html(reports, index, p['header_text'], logo, generated, p['tabs'], p['theme'], index_js), banner),
                 'text/html; charset=utf-8', True)
             # the pages of the runs that fell off this template's line - after the index, which no longer lists them
             kept = set([index, _json_name(index)])

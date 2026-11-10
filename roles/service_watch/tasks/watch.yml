@@ -50,8 +50,15 @@
     tasks_from: env.yml
   when: not service_watch_before.healthy
 
+# ACT off (site_act_enabled false): nothing asked - the standard fix below (self-heal), or for approval, as when ACT
+# cannot run
+- name: Watch | ACT is off (site_act_enabled false) - the standard fix only
+  ansible.builtin.debug:
+    msg: ACT is off (site_act_enabled false) - not asked; the standard fix for the down containers is used.
+  when: not service_watch_before.healthy and _site_act_off | bool
+
 - name: Watch | ACT
-  when: not service_watch_before.healthy
+  when: not service_watch_before.healthy and not _site_act_off | bool
   block:
     # ACT cannot read a user's (rootless) containers itself: the playbook does, for it
     - name: Watch | evidence for the down containers of users (ACT reads it with cat)

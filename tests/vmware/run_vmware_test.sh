@@ -2345,6 +2345,15 @@ run "ask: ... and one that asks to put a host in maintenance mode" fail vm_ask.y
     -e 'vm_ask_question="put DC0_C0_H0 in maintenance mode"' -- "Refused: this job only reads vCenter" "does not put a host in maintenance mode"
 [ "$(grep -c call "$work/act/fake-act-calls.log")" = "$calls0" ] && echo "ok   -   ...GenAI was not asked" \
     || { echo "FAIL -   ...GenAI was asked a refused question"; fails=$((fails + 1)); }
+# ACT off (site_act_enabled false, 1.3.0): the job's own reader, ACT never asked; a question it cannot take - said, green
+run "ask: ACT off - the job's own reader answers a simple question, GenAI not asked" ok vm_ask.yml -e "$actvars" -e site_act_enabled=false \
+    -e 'vm_ask_question="VMs with h0 in the name"' -- "Read by: the job's own reader" "ACT is off (site_act_enabled false)"
+run "ask: ACT off and a question the job's own reader cannot take - not answered, said in one line, the job green" ok vm_ask.yml \
+    -e "$actvars" -e site_act_enabled=false -e 'vm_ask_question="VMs vMotioned in the last 7 days"' \
+    -- "Not answered: ACT is off (site_act_enabled false)"
+grep -qF "VMware | read the VMs" "$work/out.txt" && { echo "FAIL -   ...it read vCenter"; fails=$((fails + 1)); } || echo "ok   -   ...vCenter not read"
+[ "$(grep -c call "$work/act/fake-act-calls.log")" = "$calls0" ] && echo "ok   -   ...ACT off: GenAI was not asked" \
+    || { echo "FAIL -   ...ACT off: GenAI was asked"; fails=$((fails + 1)); }
 # a model that answers with a step of ACT's own ({'action': 'plan', ...}, seen with Gemini): asked once more, told what it
 # answered; then the query - and twice a plan: said in words, the job's own reader tried
 "$py" -c 'import json, sys; json.dump({"summaries": [{"requires_host": False, "thought": "Construct JSON query for VMs on host DC0_H0.", "action": "plan"},

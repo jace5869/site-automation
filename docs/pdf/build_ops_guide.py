@@ -22,7 +22,7 @@ REPO = os.environ.get("SITE_AUTOMATION_DIR") or (
     os.path.dirname(os.path.dirname(_HERE)) if os.path.isfile(os.path.join(_HERE, "..", "START_HERE.md"))
     else sys.exit("build_ops_guide.py: cannot find the site-automation repository; "
                   "run the script from <repo>/docs/pdf or set SITE_AUTOMATION_DIR=<repo>"))
-SA_VERSION = "1.2.0"
+SA_VERSION = "1.3.0"
 DOCS = [  # (file, chapter title)
     ("docs/START_HERE.md", "Start here: the pieces and how they fit"),
     ("docs/SETUP_AAP.md", "Setting up AAP, step by step"),
@@ -32,6 +32,7 @@ DOCS = [  # (file, chapter title)
     ("docs/STIGMAN_HEALTH.md", "STIG Manager: health and availability"),
     ("docs/AVAILABILITY.md", "Availability checks"),
     ("docs/TEMPLATE_AUDIT.md", "AAP - template variables audit: what belongs somewhere else"),
+    ("docs/ENCLAVES.md", "Enclaves: setting up another enclave's AAP - the banner, ACT off, what to change"),
     ("docs/SERVICENOW_SETUP.md", "ServiceNow: set up, test and verify"),
     ("docs/SERVICENOW_INSIGHTS.md", "ServiceNow - ticket insights: months of tickets for management"),
     ("docs/WORKFLOWS_AND_SCHEDULES.md", "Workflows and schedules"),

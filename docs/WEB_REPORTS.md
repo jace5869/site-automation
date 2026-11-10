@@ -186,6 +186,12 @@ report_web_theme: atlas                      # the website (the default; brief, 
 report_logo_file: files/report_logo.png      # both
 ```
 
+## The classification banner
+
+In a classified enclave every page carries its banner at the top and bottom - each report's page, latest page, the
+index, the ticket insights pages and the pages the copy job writes - and in print on every sheet (`site_enclave`,
+`report_banner`; [ENCLAVES.md](ENCLAVES.md)).
+
 ## What it writes
 
 ```

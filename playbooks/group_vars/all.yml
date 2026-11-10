@@ -26,6 +26,13 @@
 # ---- Patching (Linux and Windows): NO automatic restarts unless this is true --------------------
 # automatic_restarts: false
 
+# ---- The enclave this AAP serves: its banner, and ACT (docs/ENCLAVES.md) -----------------------
+# One AAP per enclave, each with its own copy of this file. The banner is on every report in the classified one.
+# site_enclave: classified                # or unclassified; empty = classified when a host is under one of these:
+# site_enclave_classified_domains: [CHANGE-ME.yoursite.mil]
+# report_banner_text: SECRET              # the marking at the top and bottom of every report
+# site_act_enabled: false                 # an enclave without a model: no job asks ACT, each report says so
+
 # ---- ACT: which provider, and the model for each ----------------------------------------------
 # Defaults (roles/site_act/defaults/main.yml): provider genai; models genai gemini-4-argon-withtools,
 # asksage gpt-5.6-sol-gov. Un-comment only to change them.

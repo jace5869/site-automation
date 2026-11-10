@@ -69,7 +69,7 @@ def run_checks():
           "roles/patch/tasks: the skip tests the literal AAP groups")
     check(re.search(r"ansible.builtin.reboot:(.|\n)*?when: .*intersect\(\['aap', 'aap_hosts'\]\) \| length == 0", tasks) is not None,
           "roles/patch/tasks: the reboot tests the literal AAP groups")
-    act = (root / "roles/site_act/tasks/main.yml").read_text()
+    act = (root / "roles/site_act/tasks/main.yml").read_text() + (root / "roles/site_act/tasks/run.yml").read_text()   # run.yml: ACT on (1.3.0)
     check("_site_always_diagnose_only" in act, "roles/site_act/tasks: uses the always-diagnose-only list")
 
     watch = (root / "roles/service_watch/tasks/watch.yml").read_text()

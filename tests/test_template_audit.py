@@ -329,7 +329,7 @@ class AgainstFakeAap(unittest.TestCase):
             page = fh.read()
         self.assertIn("By setting", page)
         self.assertIn("Job template: Certificate report (ID 13)", page)
-        self.assertIn("(group_vars/&lt;enclave&gt;.yml)", page)          # the enclave file
+        self.assertIn("docs/ENCLAVES.md)", page)                         # one AAP per enclave (all.yml of each)
         everything = out.stdout + out.stderr + "".join(open(p, encoding="utf-8").read() for p in
                                                        glob.glob(os.path.join(web, "**", "*"), recursive=True) if os.path.isfile(p))
         for s in (SECRET_PW, SECRET_TOKEN):

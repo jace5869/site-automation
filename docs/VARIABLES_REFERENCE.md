@@ -165,7 +165,7 @@ File: `roles/aap_template_audit/defaults/main.yml`
 | `aap_template_audit_repeat_min` | `3` | A setting with the same value in this many templates or more is flagged: one change would have to be made in each (0 = never) |
 | `aap_template_audit_site_wide_roles` | `[site_email, site_act, site_findings]` | Site-wide: the settings of these roles are the ones "usually in all.yml" (as aap/extra_vars marks them), read from their defaults when the job runs - and these more |
 | `aap_template_audit_site_wide` | `[]` | more site-wide settings, by name |
-| `aap_template_audit_per_enclave` | `[]` | Settings that differ by enclave: the enclave file (playbooks/group_vars/<enclave>.yml; the enclave guide comes in a later version) |
+| `aap_template_audit_per_enclave` | `[]` | Settings that differ by enclave: each enclave has its own AAP, and they go in that AAP's all.yml (docs/ENCLAVES.md) |
 | `aap_template_audit_per_template` | `[report_email_to, report_email_cc, report_email_also, site_fail_on, target]` | Settings that belong in a template (who gets its report, what it runs on): never flagged as site-wide or as an address - still flagged when they are a secret, or the same in many templates |
 | `aap_template_audit_ignore` | `[]` | settings never flagged |
 | `aap_template_audit_ca_path` | (empty) | a CA file for AAP's HTTPS certificate ("" = what the execution environment trusts) |
@@ -896,8 +896,8 @@ File: `roles/incident_docs/defaults/main.yml`
 
 | Setting | Default | What it does |
 |---|---|---|
-| `incident_docs_banner` | `CONTROLLED UNCLASSIFIED INFORMATION (CUI)` | The marking at the top and bottom of every page ("" = none). |
-| `incident_docs_banner_color` | (empty) | Its colour (bold text): "" = the marking's usual one - CUI purple (502B85), UNCLASSIFIED green (007A33), CONFIDENTIAL blue (0033A0), SECRET red (C8102E), TOP SECRET orange (FF8C00); or your own, hex RRGGBB in quotes. |
+| `incident_docs_banner` | `auto` | The marking at the top and bottom of every page: auto = the reports' banner (report_banner_text, in its colour) when that banner is on - the classified enclave, or report_banner true (docs/ENCLAVES.md) - else CONTROLLED UNCLASSIFIED INFORMATION (CUI); your own text wins as it is; "" = none. |
+| `incident_docs_banner_color` | (empty) | Its colour (bold text): "" = the marking's usual one - CUI purple (502B85), UNCLASSIFIED green (007A33), CONFIDENTIAL blue (0033A0), SECRET red (C8102E), TOP SECRET orange (FF8C00) - or, with auto, the reports' banner's; or your own, hex RRGGBB in quotes. |
 | `incident_docs_logo_file` | (empty) | The logo at the top of the first page: report_logo_file, the reports' logo, unless this names another file (files/aar_logo.png = playbooks/files/aar_logo.png, in YOUR repository). "" = report_logo_file. |
 | `incident_docs_logo_height` | `64` | pixels (its width follows) |
 | `incident_docs_font` | `Times New Roman` | the documents' font |
@@ -1519,6 +1519,7 @@ File: `roles/site_act/defaults/main.yml`
 |---|---|---|
 | `site_act_level` | `explain` | ACT (GenAI) on top of ANY check playbook. The check roles already did the cheap, certain part: they found WHAT is wrong (site_findings) and know which read-only command shows more (each finding's `hint`). This role hands that to ACT (the act_triage role) to find out WHY, and to propose - or, if you allow it, make - th… (all of it: the role file) |
 | `use_act` | `false` | The runbooks (Health check, Database health, Troubleshoot): true = ACT looks at what the job found. A job variable, per template or launch - not all.yml (every check job would then call the model). |
+| `site_act_enabled` | `true` | ACT at all (1.3.0): false = no job calls ACT - no request, no model endpoint or key needed, no error; each report says "ACT is off (site_act_enabled false)" in one line and the job stays green (an enclave without a model). Usually in all.yml (docs/ENCLAVES.md). |
 | `site_act_allow` | `[]` | self-heal only: regular expressions of fix commands ACT may run without a person. Each must match the WHOLE command. Keep them narrow, e.g. site_act_allow: ['systemctl restart (chronyd\|rsyslog\|crond)'] |
 | `site_act_diagnose_only_groups` | `[aap, aap_hosts, sat, idm, netapp, netapp_console_hosts]` | Hosts where ACT may only diagnose - never fix by itself, whatever site_act_level says: AAP itself (a fix could stop the job that is running it) and vendor-managed appliances. The apply step (act_fix_approved.yml) skips them too: a person applies the fix there by hand. AAP (groups aap, aap_hosts) is ALWAYS in this list… (all of it: the role file) |
 | `site_act_provider` | `genai` | ---- Which model ACT talks to ----------------------------------------------------------------- site_act_provider genai GenAI.mil (the default) asksage Ask Sage - RETIRED FOR NOW: do not pick it (kept for when it returns) genai-beta the GenAI.mil beta proxy (preview models) site_act_models the model to use FOR EACH pr… (all of it: the role file) |
@@ -1553,6 +1554,12 @@ File: `roles/site_email/defaults/main.yml`
 | `report_email_security` | `starttls` | starttls = encrypt after connecting (the relay must offer it); ssl = encrypted from the start (port 465); none = not encrypted (only for a relay without encryption; then no login is sent). |
 | `report_email_ca_path` | (empty) | a CA file that signed the relay's certificate (empty = the CAs the execution environment trusts) |
 | `report_email_subject_prefix` | `"[AAP]"` | put before every subject, e.g. "[AAP] Certificate report: ..." |
+| `site_enclave` | (empty) | Which enclave this AAP serves: unclassified or classified; empty = found from the job's hosts - classified when a target host's name or address (inventory_hostname, ansible_host) ends in one of site_enclave_classified_domains, else unclassified. site_enclave, when set, always wins. |
+| `site_enclave_classified_domains` | `[]` | DNS suffixes of the classified enclave, e.g. [classified.example.mil]; [] = never found classified from the hosts. |
+| `report_banner` | `auto` | The banner at the top and bottom of every report: each email look and the plain text (its first and last line), every report website page and the index, the ticket insights pages, print, and the first row of each workbook sheet. auto = on in the classified enclave (site_enclave), off in the unclassified; true / false… (all of it: the role file) |
+| `report_banner_text` | `SECRET` | the banner's text, e.g. SECRET, SECRET//NOFORN, UNCLASSIFIED, CUI |
+| `report_banner_color` | (empty) | The banner's colour (#rrggbb); empty = the standard colour of the text: UNCLASSIFIED green, CUI purple, CONFIDENTIAL blue, SECRET red, TOP SECRET orange; the text black or white, whichever reads 4.5:1 or better. |
+| `report_banner_subject` | `true` | with the banner on: "(SECRET) " before the email subject (and the prefix) |
 | `report_email_html` | `true` | Send a formatted (HTML) version too, for reports that come with one (all VMware jobs). The email always carries a plain-text copy for mail clients that do not show HTML. false = plain text only. |
 | `report_email_xlsx` | `false` | Attach the report's tables to the email as an Excel workbook (.xlsx): a sheet per table. Some reports attach their own whatever this says (VM - inventory report: every VM on one sheet). The website gets no workbook. |
 | `report_email_theme` | `standard` | The look of the HTML version (docs/EMAIL_REPORTS.md, "The look"): standard = a header band in the report's colour (green, amber, red, blue) with number boxes under it; command = a dark header with your logo and report_email_header_text, the job's last runs as a strip of bars (report_history), the numbers in one row; p… (all of it: the role file) |

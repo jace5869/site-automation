@@ -5,7 +5,8 @@
 # unhealthy (podman 3 and podman 4 JSON), a recent crash, old exits that must stay quiet, a user with
 # storage but no /run/user/UID, restart loops, OOM kills, no podman at all; and for Service watch:
 # the watched set from discovery, fixes keyed by owner, the rootless fix command, evidence for ACT,
-# self-heal, the approved-fix job and its dry run. Runs nothing for real: every tool it touches is fake.
+# self-heal, the approved-fix job and its dry run; ACT off (site_act_enabled false) asks nothing. Runs nothing for
+# real: every tool it touches is fake.
 #   bash tests/containers/run_containers_test.sh      (ANSIBLE_PLAYBOOK=... to pick one)
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -203,6 +204,18 @@ printf '{"propose": ["sudo -u alice podman start nginx", "podman start nginx", "
 run playbooks/service_watch.yml
 has "ACT's proposals made right per owner, the standard fix for the rest, in dependency order" "systemctl daemon-reload ; podman start cache ; podman start nginx ; $ALICE systemctl --user start nginx.service ; $BOB podman start nginx"
 has "  ... and the approver is told which part is not from ACT" "ACT + the standard fix for cache (root), nginx (user bob), which ACT did not cover"
+
+# ACT off (site_act_enabled false, 1.3.0): ACT never asked - the standard fix, as when ACT cannot run; the Health check's
+# use_act asks nothing either and says so
+prepare watch
+run playbooks/service_watch.yml -e watch_mode=self-heal -e site_act_enabled=false
+[ "$rc" -eq 0 ] && ok "ACT off, self-heal: the standard fix brings all back, the job passes" || bad "ACT off, self-heal: exit $rc" 40
+has "  ... said in one line" "ACT is off (site_act_enabled false) - not asked; the standard fix for the down containers is used."
+[ -e "$H/fake-act-calls.log" ] && bad "  ... ACT was called" || ok "  ... ACT was not called"
+prepare fleet
+run playbooks/health_check.yml -e health_checks=containers -e use_act=true -e site_act_enabled=false
+has "ACT off, Health check with use_act: not asked, said" "ACT is off (site_act_enabled false) - not asked."
+[ -e "$H/fake-act-calls.log" ] && bad "  ... ACT was called" || ok "  ... ACT was not called"
 
 prepare watch
 run playbooks/service_watch.yml -e watch_mode=self-heal

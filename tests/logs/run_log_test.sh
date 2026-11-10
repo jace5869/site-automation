@@ -6,7 +6,8 @@
 # log_analysis_ignore_extra drops a line, the since / until window reaches journalctl and podman and leaves
 # out a line of the text log outside it, the question reaches ACT's prompt, the patterns are grouped and
 # ranked, ACT's answer and the patterns table are emailed and published, a host that cannot be reached is
-# listed (the job stays green), log_analysis_act: false needs no key, no key with ACT fails after the report, a
+# listed (the job stays green), log_analysis_act: false needs no key, no key with ACT fails after the report, ACT off
+# (site_act_enabled false) asks nothing and stays green with one line in the report, a
 # Limit of hosts only (an inventory without localhost, as AAP's) is read, analysed and reported - and one with
 # localhost in it still works.
 #   bash tests/logs/run_log_test.sh                    (ANSIBLE_PLAYBOOK=... for another ansible-core)
@@ -184,6 +185,21 @@ run "a Limit with localhost in it: read, analysed, reported" ok -l "gone01.examp
 unset GENAI_KEY
 run "ACT without an API key: says which credential, still reports, fails" fail -e "$actvars" \
     -- "This job has no API key for provider genai" "ACT did not run" "Patterns ("
+
+# site_act_enabled false (1.3.0): nothing asked - no request, no key - the report says it in one line, the job green
+rm -f "$work/act/fake-act-calls.log"; n0="$(ls "$work/mail"/*.eml 2>/dev/null | wc -l)"
+INV="$work/inv-nolocal.yml" run "ACT off (site_act_enabled false): nothing asked, no key needed, one line in the report, green" ok \
+    -l "gone01.example.mil,lin01.example.mil" -e target=all -e "$actvars" -e site_act_enabled=false -e "$mail" \
+    -- "ACT is off (site_act_enabled false)" "Patterns (" "emailed"
+eml="$(ls "$work/mail"/*.eml 2>/dev/null | sort -V | tail -1)"
+if [ ! -e "$work/act/fake-act-calls.log" ] && [ "$(ls "$work/mail"/*.eml | wc -l)" -eq $((n0 + 1)) ] \
+   && "$py" -c 'import email, sys; m = email.message_from_binary_file(open(sys.argv[1], "rb"))
+t = "".join(p.get_payload(decode=True).decode() for p in m.walk() if p.get_content_type() in ("text/plain", "text/html"))
+sys.exit(0 if t.count("ACT is off (site_act_enabled false).") >= 2 else 1)' "$eml"; then
+    echo "ok   -   ...ACT never called, no model address reached; the email says ACT is off (text and HTML)"
+else
+    echo "FAIL -   ...ACT off: calls $(cat "$work/act/fake-act-calls.log" 2>/dev/null | wc -l), mail"; fails=$((fails + 1))
+fi
 
 [ $fails -eq 0 ] && echo "ALL PASSED" || echo "$fails FAILED"
 exit $fails

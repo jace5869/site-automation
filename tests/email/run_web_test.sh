@@ -370,8 +370,8 @@ check "site_report_page and site_report_url" "$py" -c 'import json, sys
 a = json.loads(sys.argv[1]); u = json.loads(sys.argv[2])
 assert isinstance(a, list) and len(a) == 1 and len(a[0]) > 100 and u.endswith("_job-907.html"), (a, u)' "$(artifact site_report_page)" "$(artifact site_report_url)"
 aapjob 907 71 "Linux - Certificate trust report" 30
-run "copy mode: a second template (critical)" ok \
-    "{$keep, \"awx_job_id\": 4182, \"awx_job_template_id\": 80, \"awx_job_template_name\": \"VMware snapshot cleanup\",
+run "copy mode: a second template (critical), classified (site_enclave - its banner kept with its report)" ok \
+    "{$keep, \"site_enclave\": \"classified\", \"awx_job_id\": 4182, \"awx_job_template_id\": 80, \"awx_job_template_name\": \"VMware snapshot cleanup\",
       \"_report\": {\"title\": \"Snapshots: 3 failed\", \"status\": \"critical\", \"sections\": [{\"title\": \"Failed\", \"lines\": [\"vm1\"]}]}}" \
     "Report: https://reports.example.mil/vmware-snapshot-cleanup/"
 aapjob 4182 80 "VMware snapshot cleanup" 20
@@ -388,6 +388,9 @@ PB=playbooks/report_web_copy.yml run "the copy job: both report jobs' pages into
     "job 907 'Linux - Certificate trust report': https://reports.example.mil/linux-certificate-trust-report/" "job 4182 'VMware snapshot cleanup': https://reports.example.mil/vmware-snapshot-cleanup/"
 cd1="$work/copy/linux-certificate-trust-report"
 cp1="$(ls "$cd1" 2>/dev/null | grep -E '_job-907\.html$')"
+check "the classified report job's page has its banner, top and bottom; the other none (1.3.0)" bash -c \
+    "test \"\$(grep -o 'class=\"site-banner ' '$work/copy/vmware-snapshot-cleanup/latest.html' | wc -l)\" = 2 \
+     && grep -q 'background:#c8102e;color:#ffffff' '$work/copy/vmware-snapshot-cleanup/latest.html' && ! grep -q site-banner '$cd1/latest.html'"
 check "the page the report job named, latest, the JSON" bash -c "test -n '$cp1' && test -s '$cd1/latest.html' && test -s '$cd1/${cp1%.html}.json' && test -s '$cd1/latest.json'"
 check "the page is the report job's: its number and template, its footer - not the copy job's (999)" bash -c "grep -q 'AAP job 907 &middot; Linux - Certificate trust report' '$cd1/$cp1' \
     && grep -q 'AAP job 907 (Linux - Certificate trust report)' '$cd1/$cp1' && ! grep -q 'job 999' '$cd1/$cp1' && ! grep -q 'Report website - copy' '$cd1/$cp1'"

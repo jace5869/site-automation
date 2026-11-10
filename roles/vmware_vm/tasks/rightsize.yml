@@ -112,7 +112,7 @@
          if _ea_ran | bool else
          ('ACT did not review: ' ~ _ea_reason ~ ' The right-sizing report (the math) is above and in the email.') }}
     quiet: true
-  when: vm_rightsize_act | bool and not ansible_check_mode and _vm_rs_items | default([]) | length > 0
+  when: vm_rightsize_act | bool and not ansible_check_mode and _vm_rs_items | default([]) | length > 0 and not _ea_off | default(false) | bool
 
 - name: VMware | every vCenter was read
   ansible.builtin.include_tasks: vcenters_read.yml

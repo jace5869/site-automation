@@ -47,6 +47,8 @@ jobs:
           python tests/test_vm_watch.py
           python tests/test_vm_ask.py
           python tests/test_vmware_ask.py
+          python tests/test_act_switch.py
+          python tests/test_banner.py
           python tests/test_log_analysis.py
           python tests/test_servicenow_mid.py
           python tests/test_servicenow_node.py
@@ -150,6 +152,10 @@ jobs:
         run: |
           bash tests/email/run_web_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/email/run_web_test.sh
+      - name: The enclave and the classification banner - email, workbook, website (fake mail relay; current ansible-core and 2.16)
+        run: |
+          bash tests/enclave/run_enclave_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/enclave/run_enclave_test.sh
       - name: The report website on a Windows file share over SMB, against Samba in a container (current ansible-core and 2.16)
         run: |
           pip install smbprotocol

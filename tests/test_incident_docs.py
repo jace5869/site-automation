@@ -124,6 +124,24 @@ class Layout(unittest.TestCase):
         self.assertEqual(f.incident_banner_color("CUI", "#00aa00"), "00AA00")
         self.assertEqual(f.incident_aar_docx({}, {"banner": "CUI"})["banner_color"], "502B85")
 
+    def test_banner_auto(self):
+        """1.3.0: incident_docs_banner auto = the reports' banner (roles/site_email report_banner) when on, else CUI."""
+        on = {"on": True, "text": "SECRET", "bg": "#c8102e"}
+        self.assertEqual(f.incident_banner_auto("auto", "", on), {"banner": "SECRET", "banner_color": "C8102E"})
+        self.assertEqual(f.incident_banner_auto("auto", "", {"on": False}), {"banner": f.CUI_MARKING, "banner_color": ""})
+        self.assertEqual(f.incident_banner_auto(None, "", None)["banner"], "CONTROLLED UNCLASSIFIED INFORMATION (CUI)")
+        self.assertEqual(f.incident_banner_auto("MY MARKING", "", on), {"banner": "MY MARKING", "banner_color": ""})     # own text wins
+        self.assertEqual(f.incident_banner_auto("", "", on)["banner"], "")                                             # none
+        self.assertEqual(f.incident_banner_auto("auto", "00AA00", on)["banner_color"], "00AA00")                       # own colour wins
+
+    def test_one_colour_table_with_the_reports(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("site_banner", os.path.join(REPO, "plugins", "module_utils", "site_banner.py"))
+        b = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(b)
+        for text in ("SECRET", "TOP SECRET//SCI", "CONFIDENTIAL", "CUI", "UNCLASSIFIED", "CONTROLLED UNCLASSIFIED INFORMATION (CUI)"):
+            self.assertEqual("#" + f.incident_banner_color(text).lower(), b.banner({"banner": True, "text": text})["bg"], text)
+
     def test_impact_wording(self):
         self.assertEqual(f._impact_text({"impact_level": "MAJOR", "impact": ""}), "The operational impact is MAJOR.")
         self.assertEqual(f._impact_text({"impact_level": "", "impact": "users"}), "users")

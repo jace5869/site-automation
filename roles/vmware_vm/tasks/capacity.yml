@@ -97,7 +97,7 @@
          if _ea_ran | bool else
          ('ACT did not estimate: ' ~ _ea_reason ~ ' The capacity report (the math) is above and in the email.') }}
     quiet: true
-  when: vm_capacity_act | bool and not ansible_check_mode
+  when: vm_capacity_act | bool and not ansible_check_mode and not _ea_off | default(false) | bool
 
 - name: VMware | no cluster or datastore is critical
   ansible.builtin.assert:

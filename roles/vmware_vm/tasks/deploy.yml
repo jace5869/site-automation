@@ -283,8 +283,15 @@
     _vd_phase: "{{ vm_deploy_phase | default('', true) | string | lower | trim }}"
     _vd_prop_ok: "{{ vm_deploy_genai | bool and (_vd_prop.digest | default('')) == _vd_digest }}"
     _vd_genai_needed: >-
-      {{ vm_deploy_genai | bool and (not (_vd_own.vm_name is defined and _vd_own.template is defined) or _vd_own_q | length > 0)
+      {{ vm_deploy_genai | bool and site_act_enabled | default(true) | bool
+         and (not (_vd_own.vm_name is defined and _vd_own.template is defined) or _vd_own_q | length > 0)
          and (_vd_prop.digest | default('')) != _vd_digest }}
+
+# vm_deploy_genai with ACT off (site_act_enabled false): as with vm_deploy_genai false - the ticket's own 'key: value' lines
+- name: "VMware | ACT is off (site_act_enabled false) - GenAI does not read the ticket, its own 'key: value' lines do"
+  ansible.builtin.set_fact:
+    _site_act_off: true
+  when: vm_deploy_genai | bool and not site_act_enabled | default(true) | bool
 
 - name: VMware | a step this job knows
   ansible.builtin.assert:

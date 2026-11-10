@@ -10,8 +10,16 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import ast
+import importlib.util
 import json
+import os
 import re
+
+# the classification banner's code (plugins/module_utils/site_banner.py): one colour table for the reports and these
+_spec = importlib.util.spec_from_file_location(
+    "site_banner", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_banner.py"))
+_banner = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_banner)
 
 MARK_BEGIN, MARK_END = "BEGIN_ACT_ANALYSIS", "END_ACT_ANALYSIS"
 
@@ -206,9 +214,24 @@ def _impact_text(r):
     return why
 
 
-# the marking's usual colour, by the first level its text names (incident_docs_banner_color "" = this)
-MARKING_COLORS = [("TOP SECRET", "FF8C00"), ("SECRET", "C8102E"), ("CONFIDENTIAL", "0033A0"), ("CONTROLLED", "502B85"),
-                  ("CUI", "502B85"), ("UNCLASSIFIED", "007A33")]
+# the marking's usual colour, by the first level its text names (incident_docs_banner_color "" = this): the report
+# banner's table (site_banner.COLOURS), and CONTROLLED alone as CUI
+MARKING_COLORS = [(w, c.lstrip("#").upper()) for w, c in _banner.COLOURS if w != "UNCLASSIFIED"] + [
+    ("CONTROLLED", _banner.colour_of("CUI").lstrip("#").upper()), ("UNCLASSIFIED", _banner.colour_of("UNCLASSIFIED").lstrip("#").upper())]
+CUI_MARKING = "CONTROLLED UNCLASSIFIED INFORMATION (CUI)"
+
+
+def incident_banner_auto(setting, color="", report=None):
+    """incident_docs_banner and its colour, from the report banner (roles/site_email's report_banner): auto (the default) =
+    the report banner's text and colour when it is on (the classified enclave, or report_banner true), else the CUI
+    marking; any other text wins as it is; "" = none. -> {banner, banner_color}."""
+    s = "auto" if setting is None else str(setting).strip()
+    r = report or {}
+    if s.lower() == "auto":
+        if r.get("on"):
+            return {"banner": r.get("text", ""), "banner_color": str(color or "") or str(r.get("bg") or "").lstrip("#").upper()}
+        s = CUI_MARKING
+    return {"banner": s, "banner_color": str(color or "")}
 
 
 def incident_banner_color(banner, color=""):
@@ -656,7 +679,7 @@ def incident_survey(kind, opts=None):
 
 class FilterModule(object):
     def filters(self):
-        return {"incident_record": incident_record, "incident_banner_color": incident_banner_color, "incident_problems": incident_problems, "incident_sop_skipped": incident_sop_skipped,
+        return {"incident_record": incident_record, "incident_banner_color": incident_banner_color, "incident_banner_auto": incident_banner_auto, "incident_problems": incident_problems, "incident_sop_skipped": incident_sop_skipped,
                 "incident_sop_on": incident_sop_on, "incident_sop_from_aar": incident_sop_from_aar,
                 "incident_sop_tidied": incident_sop_tidied, "incident_sop_what": incident_sop_what, "incident_sop_draft": incident_sop_draft,
                 "incident_sop_draft_empty": incident_sop_draft_empty, "incident_file_name": incident_file_name, "incident_aar_docx": incident_aar_docx,

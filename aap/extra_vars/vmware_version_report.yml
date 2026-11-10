@@ -77,6 +77,32 @@
 ## put before every subject, e.g. "[AAP] Certificate report: ..."
 # report_email_subject_prefix: "[AAP]"
 
+## Which enclave this AAP serves: unclassified or classified; empty = found from the job's hosts -
+## classified when a target host's name or address (inventory_hostname, ansible_host) ends in one of
+## site_enclave_classified_domains, else unclassified. site_enclave, when set, always wins.
+# site_enclave: ""
+
+## DNS suffixes of the classified enclave, e.g. [classified.example.mil]; [] = never found
+## classified from the hosts.
+# site_enclave_classified_domains: []
+
+## The banner at the top and bottom of every report: each email look and the plain text (its first
+## and last line), every report website page and the index, the ticket insights pages, print, and
+## the first row of each workbook sheet. auto = on in the classified enclave (site_enclave), off in
+## the unclassified; true / false = always / never.
+# report_banner: auto
+
+## the banner's text, e.g. SECRET, SECRET//NOFORN, UNCLASSIFIED, CUI
+# report_banner_text: SECRET
+
+## The banner's colour (#rrggbb); empty = the standard colour of the text: UNCLASSIFIED green, CUI
+## purple, CONFIDENTIAL blue, SECRET red, TOP SECRET orange; the text black or white, whichever
+## reads 4.5:1 or better.
+# report_banner_color: ""
+
+## with the banner on: "(SECRET) " before the email subject (and the prefix)
+# report_banner_subject: true
+
 ## Send a formatted (HTML) version too, for reports that come with one (all VMware jobs). The email
 ## always carries a plain-text copy for mail clients that do not show HTML. false = plain text only.
 # report_email_html: true
@@ -271,3 +297,9 @@
 
 ## the kept report's greatest size, packed (a bigger one: its longest tables cut, said on the page)
 # report_web_copy_max_kb: 256
+
+# ---- site_act - usually in all.yml ---------------------------------------------------------------
+## ACT at all (1.3.0): false = no job calls ACT - no request, no model endpoint or key needed, no
+## error; each report says "ACT is off (site_act_enabled false)" in one line and the job stays green
+## (an enclave without a model). Usually in all.yml (docs/ENCLAVES.md).
+# site_act_enabled: true

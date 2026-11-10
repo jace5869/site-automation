@@ -15,8 +15,7 @@ aap_template_audit_repeat_min: 3
 # their defaults when the job runs - and these more
 aap_template_audit_site_wide_roles: [site_email, site_act, site_findings]
 aap_template_audit_site_wide: []          # more site-wide settings, by name
-# Settings that differ by enclave: the enclave file (playbooks/group_vars/<enclave>.yml; the enclave guide comes
-# in a later version)
+# Settings that differ by enclave: each enclave has its own AAP, and they go in that AAP's all.yml (docs/ENCLAVES.md)
 aap_template_audit_per_enclave: []
 # Settings that belong in a template (who gets its report, what it runs on): never flagged as site-wide or as an
 # address - still flagged when they are a secret, or the same in many templates

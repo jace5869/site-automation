@@ -95,7 +95,7 @@
              if _vm_al_ran | bool else
              ('ACT did not analyze the alarms: ' ~ _vm_al_reason ~ ' The alarms are in the report (and the email) without an analysis.') }}
         quiet: true
-      when: not ansible_check_mode
+      when: not ansible_check_mode and not _ea_off | default(false) | bool
 
 - name: VMware | every vCenter was read
   ansible.builtin.include_tasks: vcenters_read.yml

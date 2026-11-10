@@ -29,7 +29,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(REPO, "plugins", "filter"))
 sys.path.insert(0, os.path.join(REPO, "roles", "site_email", "library"))
-for _name in ("site_aap", "site_report_page"):          # as Ansible gives them to the modules (ansible.cfg: module_utils)
+for _name in ("site_aap", "site_report_page", "site_banner"):   # as Ansible gives them to the modules (ansible.cfg: module_utils)
     _spec = importlib.util.spec_from_file_location("ansible.module_utils." + _name, os.path.join(REPO, "plugins", "module_utils", _name + ".py"))
     _mod = importlib.util.module_from_spec(_spec)
     sys.modules["ansible.module_utils." + _name] = _mod

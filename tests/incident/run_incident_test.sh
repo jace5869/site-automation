@@ -96,6 +96,14 @@ mail "to the address typed only; both Word documents; logo and banner; typed tex
     "banner=CONTROLLED UNCLASSIFIED INFORMATION (CUI)" "SOP-Web-portal-returns-503.docx~Restart the app pool" "subject=Outage AAR: Web portal outage"
 if [ -e "$work/web" ]; then echo "FAIL -   the report website was written"; fails=$((fails + 1)); else echo "ok   -   nothing on the report website"; fi
 
+# 1.3.0: incident_docs_banner auto follows the reports' banner (classified: SECRET); your own text still wins
+run "classified (site_enclave): the documents say SECRET without incident_docs_banner" ok incident_aar.yml -e @"$work/aar.yml" \
+    -e site_enclave=classified -- "Made: AAR-Web-portal-outage.docx"
+mail "the AAR and SOP banner SECRET, the email's subject (SECRET)" "banner=SECRET" "subject=(SECRET) [AAP] Outage AAR: Web portal outage"
+run "classified, incident_docs_banner set: that wins" ok incident_aar.yml -e @"$work/aar.yml" -e site_enclave=classified \
+    -e '{"incident_docs_banner": "SECRET//REL TO EXAMPLE"}' -- "Made: AAR-Web-portal-outage.docx"
+mail "its own marking" "banner=SECRET//REL TO EXAMPLE"
+
 run "AAR only" ok incident_aar.yml -e @"$work/aar.yml" -e incident_make_sop=No -- "Made: AAR-Web-portal-outage.docx\""
 mail "one attachment" attach=AAR-Web-portal-outage.docx
 
