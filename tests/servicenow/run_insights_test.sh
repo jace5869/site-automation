@@ -332,6 +332,45 @@ else
     echo "FAIL - no mail with the report and the workbook"; fails=$((fails + 1))
 fi
 
+# ---- 1.14.0: the team leads' emails, To the lead (report_email_to an extra variable), with their page's link - both ways --
+MAIL="\"report_email_smtp_host\": \"localhost\", \"report_email_smtp_port\": $smtp, \"report_email_from\": \"aap@example.mil\", \"report_email_security\": \"none\""
+LEADS='"servicenow_insights_team_email_to": {"Ops - Windows": ["lead-win@example.mil"], "Ops - Network": ["lead-net@example.mil"]}'
+for n in 40 0; do
+    rm -f "$work"/mail/*.eml
+    mkdir -p "$work/lead$n" "$work/mail$n"
+    run "team leads' emails, pages $n per call: report_email_to given with -e, report_web_url" ok \
+        "{$NOW, $NOACT, $MAIL, $LEADS, \"report_email_to\": [\"ops@example.mil\"], \"report_web_dest\": \"$work/lead$n\",
+          \"report_web_url\": \"https://reports.example.mil/r\", \"servicenow_insights_pages_per_call\": $n}" 'emailed'
+    mv "$work"/mail/*.eml "$work/mail$n/" 2>/dev/null
+done
+"$py" - "$work/mail40" "$work/mail0" <<'EOPY' && echo "ok   -   ... each lead's email To the lead only, with its team page's link; the same email both ways" || { echo "FAIL - the team leads' emails"; fails=$((fails + 1)); }
+import email, glob, re, sys
+from email import policy
+def mails(d):
+    out = {}
+    for f in sorted(glob.glob(d + "/*.eml")):
+        raw = open(f, "rb").read()
+        to = re.search(rb"^X-Envelope-To: (.*)$", raw, re.M).group(1).decode().strip()
+        m = email.message_from_bytes(raw.split(b"\n", 4)[-1] if raw.startswith(b"X-") else raw, policy=policy.default)
+        body = m.get_body(("plain",)).get_content()
+        out.setdefault(to, []).append((m["To"], body))
+    return out
+link = {"lead-win@example.mil": "https://reports.example.mil/r/servicenow-ticket-insights/ops/other/windows/latest.html",
+        "lead-net@example.mil": "https://reports.example.mil/r/servicenow-ticket-insights/ops/other/network/latest.html"}
+norm = lambda b: re.sub(r"\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?( ?[A-Z]{2,5})?", "T", b)
+got = {}
+for d in sys.argv[1:]:
+    m = mails(d)
+    assert sorted(m) == ["lead-net@example.mil", "lead-win@example.mil", "ops@example.mil"], (d, sorted(m))
+    for lead, url in link.items():
+        assert len(m[lead]) == 1 and m[lead][0][0] == lead, (d, lead, m[lead][0][0])
+        assert "In a browser: " + url in m[lead][0][1], (d, lead, m[lead][0][1][-400:])
+    assert len(m["ops@example.mil"]) == 1 and "All assignment groups" in m["ops@example.mil"][0][1]
+    got[d] = dict((k, norm(v[0][1])) for k, v in m.items() if k in link)
+a, b = got.values()
+assert a == b, [(k, a[k][-300:], b[k][-300:]) for k in a if a[k] != b[k]]
+EOPY
+
 # ---- the org map (1.8.0): management's own tree, any depth; the Custom view and its periods (1.10.0) -----------------
 mock SNMOCK_SEED="$work/seed3.json"
 mkdir -p "$work/site8"
@@ -364,6 +403,35 @@ check "  ... the split by the map's level: SPLIT's page says where the Custom vi
     '<b>Custom view:</b> on the <a href="latest.html">All page</a>.' '!id="cv-data"' 'aria-current="page">SPLIT</a>'
 check "  ... a unit four levels down: its breadcrumbs, its Custom view link" "$t8/sitea/split/operations/eucs/latest.html" \
     '<a href="../../../latest.html">SITEA</a>' '<b>EUCS</b>' 'href="../../../../latest.html#cv=' 'Custom view of this group'
+
+# ---- 1.14.0: the pages in one go are the pages the role wrote one by one ------------------------------------------------
+mock SNMOCK_SEED="$work/seed3.json"
+mkdir -p "$work/one" "$work/each"
+SITES="$NOW, $NOACT, \"servicenow_insights_hierarchy_source\": \"parents\", \"servicenow_insights_team_min\": 5, \"servicenow_insights_split_label\": \"BLUE\", \"servicenow_insights_split_pattern\": \"*- nova\""
+run "the pages in one go: 3 per call (servicenow_insights_pages_per_call), the time by phase" ok \
+    "{$SITES, \"report_web_dest\": \"$work/one\", \"servicenow_insights_pages_per_call\": 3}" \
+    'Email | the pages, ' ' in all' 'Time: ServiceNow reads ' 'Pages and email '
+run "  ... and the role once per page (0)" ok "{$SITES, \"report_web_dest\": \"$work/each\", \"servicenow_insights_pages_per_call\": 0}" '!Email | the pages, '
+"$py" - "$work/one" "$work/each" <<'EOPY' && echo "ok   -   ... the same pages and JSON, file for file (less the times)" || { echo "FAIL - the pages differ"; fails=$((fails + 1)); }
+import json, os, re, sys
+def files(d):
+    return sorted(os.path.relpath(os.path.join(r, f), d) for r, _, fs in os.walk(d) for f in fs if not f.startswith("index.") and "_job-" not in f)
+def norm(path):
+    t = open(path, encoding="utf-8").read()
+    if path.endswith(".json"):
+        d = json.loads(t)
+        for k in ("when", "runs"):
+            d.pop(k, None)
+        t = json.dumps(d, sort_keys=True)
+    t = re.sub(r'<details class="notes"><summary><b>Time this run</b>.*?</details>', "", t, flags=re.S)
+    t = re.sub(r"\d{4}-\d{2}-\d{2}_\d{4}_job-", "D_job-", t)        # this run's own page: its name carries the minute
+    return re.sub(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}( [A-Z]{2,5})?", "T", t)
+a, b = files(sys.argv[1]), files(sys.argv[2])
+assert a == b and len(a) > 20, (len(a), len(b), sorted(set(a) ^ set(b))[:5])
+bad = [f for f in a if norm(os.path.join(sys.argv[1], f)) != norm(os.path.join(sys.argv[2], f))]
+assert not bad, bad[:5]
+print(len(a), "files")
+EOPY
 
 if [ "$fails" -gt 0 ]; then echo "FAILED: $fails"; exit 1; fi
 echo "all ticket insights scenarios passed"

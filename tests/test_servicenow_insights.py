@@ -1531,5 +1531,118 @@ class History(unittest.TestCase):
         w = rd.window(3, 0, "month_start", False, "UTC", datetime.datetime(2026, 11, 10, 9, 0, tzinfo=rd.UTC))
         self.assertEqual((w["since"], w["until"]), ("2026-08-01 00:00:00", "2026-11-01 00:00:00"))
 
+class PagesInOneGo(unittest.TestCase):
+    """1.14.0: every site's, unit's and team's page made in one filter call (servicenow_insights_pages) - the same page,
+    report and links the per-page run made - written by site_report_web's pages, many per call; the run's time by phase
+    (servicenow_insights_timing) in the job output and How this was made."""
+
+    @classmethod
+    def setUpClass(cls):
+        x = site(sites=True)
+        cls.o = dict(PARENTS_OPTS, split_label="BLUE", split_pattern="*- nova")
+        cls.m = F.servicenow_insights_model(x["r"], None, x["mask"], cls.o)
+        pages = dict((p["key"], {"page": "t/%s/latest.html" % "/".join(p["path"]), "latest": "", "index": "", "level": p["level"]})
+                     for p in cls.m["pages"])
+        variants = dict((v, dict((k, dict(f, page=f["page"].replace(".html", "-%s.html" % v))) for k, f in
+                                 list(pages.items()) + [("all", {"page": "t/latest.html"})])) for v in ("in", "out"))
+        cls.web = {"pages": pages, "teams": pages, "variants": variants, "all": {"page": "t/latest.html", "latest": "t/latest.html"},
+                   "jobs": [{"key": k, "v": ""} for k in pages] + [{"key": k, "v": v} for v in variants for k in variants[v]]}
+
+    def test_the_same_pages(self):
+        jobs = self.web["jobs"]
+        base = dict(self.o, generated="2026-11-01 06:00 UTC", job="7")
+        got = P.servicenow_insights_pages(self.m, jobs, self.web, base, {"doc_opts": self.o, "logo_img": "<img x>", "act_off": False})
+        self.assertEqual(len(got), len(jobs))
+        for j, g in zip(jobs, got):
+            f = (self.web["variants"][j["v"]] if j["v"] else self.web["pages"])[j["key"]]
+            want = P.servicenow_insights_page(self.m, j["key"], dict(base, links=F.web_links(self.web, f["page"], j["v"]), variant=j["v"],
+                                                                     variant_links=F.variant_links(self.web, j["key"], f["page"])))
+            self.assertEqual(g["page"], f["page"])
+            self.assertEqual(g["html"], want.replace("<!--site-report-logo-->", "<img x>"))
+            self.assertEqual(g["report"], F.servicenow_insights_doc(F.servicenow_insights_variant(self.m, j["v"]), j["key"], self.o))
+            self.assertEqual(g["runs"], [])
+        team = [g for j, g in zip(jobs, got) if j["v"] == "in"][0]
+        self.assertIn('aria-current="page">BLUE</a>', team["html"])                       # a split page knows its half
+        off = P.servicenow_insights_pages(self.m, jobs[:1], self.web, base, {"doc_opts": self.o, "act_off": True,
+                                                                             "runs_past": [], "runs_n": 5, "runs_top": 36})[0]
+        self.assertEqual(off["report"]["sections"][-1]["title"], "ACT")
+        self.assertEqual(len(off["runs"]), 1)                                              # this run's bar
+        self.assertEqual([len(c) for c in P.servicenow_insights_chunks(list(range(85)), 40)], [40, 40, 5])
+        self.assertEqual(P.servicenow_insights_chunks([], 40), [])
+
+    def test_written_in_one_call(self):
+        """site_report_web's pages: each page and its JSON (its own report and runs, the page's address), no index, no
+        main page; the pages' script once beside them."""
+        d = tempfile.mkdtemp()
+        base = dict(self.o, generated="2026-11-01 06:00 UTC")
+        pages = P.servicenow_insights_pages(self.m, self.web["jobs"][:3], self.web, base, {"doc_opts": self.o})
+        args = {"dest": d, "url": "https://web.example.mil/r", "files": {"page": "", "latest": "", "index": ""}, "pages": pages,
+                "entry": {"key": ""}, "data": {"job": "7", "template": "t", "banner": {}}, "theme": "brief", "retries": 0}
+        argf = os.path.join(tempfile.mkdtemp(), "args.json")          # as Ansible hands them over: a file
+        with open(argf, "w") as f:
+            json.dump({"ANSIBLE_MODULE_ARGS": args}, f)
+        # the module run as Ansible runs it: its arguments in a file, the repo's module_utils as ansible.cfg gives them
+        boot = ("import importlib.util, os, runpy, sys\n"
+                "args, module, utils = sys.argv[1:4]\n"
+                "for n in ('site_aap', 'site_report_page', 'site_banner'):\n"
+                "    sp = importlib.util.spec_from_file_location('ansible.module_utils.' + n, os.path.join(utils, n + '.py'))\n"
+                "    m = importlib.util.module_from_spec(sp)\n"
+                "    sys.modules['ansible.module_utils.' + n] = m\n"
+                "    sp.loader.exec_module(m)\n"
+                "sys.argv = ['m', args]\n"
+                "runpy.run_path(module, run_name='__main__')\n")
+        out = subprocess.run([sys.executable, "-c", boot, argf, os.path.join(HERE, "..", "roles", "site_email", "library", "site_report_web.py"),
+                              os.path.join(HERE, "..", "plugins", "module_utils")], capture_output=True, text=True)
+        res = json.loads(out.stdout)
+        self.assertTrue(res.get("published"), out.stdout[-500:] + out.stderr[-500:])
+        for pg in pages:
+            with open(os.path.join(d, pg["page"])) as f:
+                h = f.read()
+            self.assertIn("<title>", h)
+            self.assertIn("site-insights.js", h)
+            with open(os.path.join(d, pg["page"][:-5] + ".json")) as f:
+                doc = json.load(f)
+            self.assertEqual((doc["page"], doc["url"], doc["latest"], doc["index"]), (pg["page"], "https://web.example.mil/r/" + pg["page"], "", ""))
+            self.assertEqual((doc["report"]["title"], doc["job"]), (pg["report"]["title"], "7"))
+        self.assertTrue(os.path.exists(os.path.join(d, "site-insights.js")))
+        self.assertFalse(os.path.exists(os.path.join(d, "index.html")))
+        self.assertEqual(len([w for w in res["written"] if w.endswith(".html")]), 3)
+
+    def test_the_time(self):
+        t = {"start": 0, "read": 600, "act_a": 900, "model": 960, "act_b": 1020, "finish": 1030, "db": 1040}
+        r = F.servicenow_insights_timing(t)
+        self.assertEqual(r["rows"], [["ServiceNow reads", 600.0], ["ACT", 360.0], ["The report worked out", 70.0],
+                                     ["Trends (the report database)", 10.0]])
+        self.assertEqual(r["line"], "Time: ServiceNow reads 10.0 min, ACT 6.0 min, The report worked out 70 s, "
+                                    "Trends (the report database) 10 s - 17.3 min in all")
+        r = F.servicenow_insights_timing(dict(t, pages=1640, end=1650))
+        self.assertEqual(r["rows"][-2:], [["Pages and email", 600.0], ["The report database written", 10.0]])
+        self.assertEqual(F.servicenow_insights_timing({})["line"], "Time: not measured")
+        h = P.servicenow_insights_page(self.m, "all", {"timing": F.servicenow_insights_timing(t)["rows"]})
+        self.assertIn("<b>Time this run</b> <span class=\"mut\">17.3 min before the pages</span>", h)
+        self.assertIn("<dt>ACT</dt><dd>6.0 min</dd>", h)
+        self.assertNotIn("Time this run", P.servicenow_insights_page(self.m, "all", {}))
+
+    def test_the_tasks(self):
+        def read(*p):
+            with open(os.path.join(HERE, "..", *p)) as f:
+                return f.read()
+        main = read("roles", "servicenow_insights", "tasks", "main.yml")
+        self.assertLess(main.index("servicenow_insights_page('all'"), main.index("tasks_from: pages.yml"))        # after the All page
+        self.assertIn("report_web_copy | default(false) | bool and report_web_host | default('', true)", main)
+        # the leads' emails after the pages, linking them; the lead's address beats report_email_to (an extra variable too)
+        self.assertLess(main.index("tasks_from: pages.yml"), main.index("each team lead's email (servicenow_insights_team_email_to), linking"))
+        self.assertEqual(main.count("_report_email_to_override:"), 2)
+        self.assertNotIn("    report_email_to:", main)
+        self.assertIn("_report_web_url: >-", main)
+        email = read("roles", "site_email", "tasks", "main.yml")
+        self.assertIn("_report_email_to_override | email_recipients([], report_email_also_domains) if _report_email_to_override is defined", email)
+        self.assertIn("{{ _report_web_url if _report_web_url | default('') | length > 0 and not ansible_check_mode else", email)
+        for cp in ("'start'", "'read'", "'act_a'", "'model'", "'act_b'", "'finish'", "'db'", "'pages'", "'end'"):
+            self.assertIn("combine({%s: now().timestamp()})" % cp, main)
+        pages = read("roles", "site_email", "tasks", "pages.yml")
+        self.assertIn("servicenow_insights_pages(_pages_chunk", pages)
+        self.assertIn("not _web_copy | default(false) | bool and not _web_win | default(false) | bool", pages)
+
 if __name__ == "__main__":
     unittest.main()

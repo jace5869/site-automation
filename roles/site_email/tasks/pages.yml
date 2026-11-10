@@ -1,0 +1,46 @@
+---
+# MANY PAGES IN ONE GO (1.14.0; the ticket insights' site, unit and team pages): after the role ran for the report's main
+# page (its look, logo, banner and strip of past runs are set), each chunk of _pages_chunks is made by
+# servicenow_insights_pages and written by one site_report_web call - the same pages and JSON the role writes one by one.
+# Input: _pages_chunks (lists of {key, v}), _pages_model, _pages_web, _pages_opts (the page's settings less the links),
+# _pages_doc_opts (the report's). Only where site_report_web writes the website itself: not report_web_copy, not
+# report_web_host.
+- name: Email | the pages, {{ _pages_chunks | map('length') | sum }} in {{ _pages_chunks | length }} calls ({{ report_web_dest | default('') }})
+  site_report_web:
+    dest: "{{ report_web_dest | trim }}"
+    url: "{{ report_web_url | default('') | trim }}"
+    files: {page: "", latest: "", index: ""}
+    pages: >-
+      {{ _pages_model | servicenow_insights_pages(_pages_chunk, _pages_web, _pages_opts, {
+           'doc_opts': _pages_doc_opts, 'logo_img': '<img class="logoimg" src="cid:site-report-logo" alt="">' if _pages_logo | bool else '',
+           'act_off': _act_off | default(false) | bool,
+           'runs_past': _email_hist.runs if _email_hist.ok | default(false) else none,
+           'runs_n': report_history_runs | int, 'runs_top': _bar_tops[_web_theme] | default(36)}) }}
+    footer: "{{ _email_footer | default('') }}"
+    images: "{{ [{'cid': 'site-report-logo', 'path': _email_logo_file}] if _pages_logo | bool else [] }}"
+    logo_size: "{{ _web_logo_size if _pages_logo | bool else [] }}"
+    header_text: "{{ report_email_header_text | default('Site automation report') }}"
+    theme: "{{ _web_theme }}"
+    json: "{{ report_web_json | bool }}"
+    data:
+      job: "{{ awx_job_id | default(tower_job_id | default('local')) }}"
+      template: "{{ awx_job_template_name | default(tower_job_template_name | default(ansible_play_name | default(''))) }}"
+      template_id: "{{ awx_job_template_id | default(tower_job_template_id | default('')) }}"
+      when: "{{ now(utc=true, fmt='%Y-%m-%d %H:%M UTC') }}"
+      banner: "{{ _banner if _banner.on | default(false) else {} }}"
+    entry: {key: ""}
+    ca_path: "{{ report_web_ca_path | default('') }}"
+    smb_auth: "{{ report_web_smb_auth | default('negotiate') }}"
+    smb_encrypt: "{{ report_web_smb_encrypt | default(false) | bool }}"
+    smb_port: "{{ report_web_smb_port | default(445) | int }}"
+    retries: "{{ report_web_retries | default(3) | int }}"
+    retry_delay: "{{ report_web_retry_delay | default(30) | int }}"
+    required: "{{ report_web_required | default(false) | bool }}"
+  vars:
+    _pages_logo: "{{ _email_logo_file | default('') | length > 0 and (_web_logo_size | default([0]))[0] > 0 }}"
+  register: _pages_out
+  loop: "{{ _pages_chunks }}"
+  loop_control:
+    loop_var: _pages_chunk
+    label: "{{ _pages_chunk | length }} pages: {{ _pages_chunk[0].key }} ... {{ _pages_chunk[-1].key }}"
+  when: _web_on | default(false) | bool and not _web_copy | default(false) | bool and not _web_win | default(false) | bool

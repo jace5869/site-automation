@@ -61,6 +61,7 @@ options:
   entry: {description: "This template's line of the index: key (one per template), name, title, status, when, job (and step, the first Start here card of data's report - the brief index shows it).", type: dict, required: true}
   prune: {description: "Leave out of the index the lines whose latest page is no longer there (deleted by hand). Not with windows_host (the server's folder is not read here).", type: bool, default: true}
   drop: {description: "Leave out of the index the lines whose key matches one of these patterns (* and ?) - e.g. pages a report once listed there.", type: list, elements: str, default: []}
+  pages: {description: "More pages written in the same session, beside the page and never on the index (1.14.0, the ticket insights' site, unit and team pages, many per call) - each {page, html, report, runs}: its HTML (images and the banner as the page's) and, with json, its data (data with its own report and runs).", type: list, elements: dict, default: []}
   sub_pages: {description: "The report's other pages this run wrote (ticket insights - a site's, directorate's, team's), kept on its index line; with delete_old, those an older run wrote and this one did not are deleted.", type: list, elements: str, default: []}
   json: {description: Write the JSON files., type: bool, default: true}
   history: {description: "The runs each template's line of the index keeps (report_web_history), at least 1.", type: int, default: 5}
@@ -1324,6 +1325,7 @@ def main():
             prune=dict(type='bool', default=True),
             drop=dict(type='list', elements='str', default=[]),
             sub_pages=dict(type='list', elements='str', default=[]),
+            pages=dict(type='list', elements='dict', default=[]),
             retries=dict(type='int', default=3),
             retry_delay=dict(type='int', default=30),
             required=dict(type='bool', default=True),
@@ -1342,13 +1344,13 @@ def main():
     page, latest, index = (str(p['files'].get(k) or '') for k in ('page', 'latest', 'index'))
     base = (p['url'].strip() or (dest if re.match(r'(?i)https?://', dest) and not win else '')).rstrip('/')
     urls = dict(url=p['page_url'].strip() or _join(base, page), latest_url=_join(base, latest), index_url=_join(base, index))
-    if not page:
+    if not page and not p['pages']:                    # pages alone (1.14.0): only those, no page of its own, no index
         module.fail_json(msg='no page name (report_web_page)')
     if p['keep']:
         keep(module, p, page, latest, index, urls, where, bs)
     if module.check_mode and not smb:
         module.exit_json(changed=False, written=[], msg='Dry run (Check): the report would be published at %s'
-                         % (urls['url'] or _place(where, page, bs)), **urls)
+                         % (urls['url'] or _place(where, page or str((p['pages'][0] or {}).get('page') or ''), bs)), **urls)
     box = {}
 
     def publish():
@@ -1395,6 +1397,27 @@ def main():
                 doc = dict(p['data'], page=page, url=urls['url'], latest=latest, index=index)
                 put(_json_name(rel), json.dumps(doc, indent=2, sort_keys=True, default=str) + '\n',
                     'application/json; charset=utf-8', rel == latest)
+        scripts = {}
+        for sp in p['pages']:                            # more pages, the same way (1.14.0): never on the index
+            rel = str(sp.get('page') or '')
+            if not rel:
+                continue
+            h = banner_inject(web_page(str(sp.get('html') or ''), p['images'], p['theme']), banner)
+            sjs, sname = page_script(h), page_script_name(h)
+            if sjs and not (js and sname == js_name):
+                scripts[sname] = sjs
+            put(rel, h.replace('<script src="%s"></script>' % sname, script_tag(rel, sjs, sname), 1) if sjs else h, 'text/html; charset=utf-8')
+            if p['json']:
+                doc = dict(p['data'], page=rel, url=_join(base, rel), latest='', index='')
+                doc.update(dict((k, sp[k]) for k in ('report', 'runs') if k in sp))
+                put(_json_name(rel), json.dumps(doc, indent=2, sort_keys=True, default=str) + '\n', 'application/json; charset=utf-8')
+        for sname, sjs in sorted(scripts.items()):       # the more pages' script, when the page above did not carry it
+            try:
+                there = target.read(sname)
+            except Fail:
+                there = None
+            if there != sjs:
+                put(sname, sjs, 'text/javascript; charset=utf-8', True)
         if js:                                           # the pages' script, where they load it from - when it changed
             try:
                 there = target.read(js_name)

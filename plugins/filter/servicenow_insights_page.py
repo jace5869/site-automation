@@ -692,6 +692,12 @@ def spark(vals, color="var(--s1)", w=90, h=26):
         w, h, w, h, p, w - 3, h - 2, h - 2, color, p, color, w - 3, y(vals[-1]), color)
 
 
+def fmin(sec):
+    """Seconds in words: 42 s, 3.5 min, 1.8 h."""
+    x = float(sec or 0)
+    return ("%.0f s" % x) if x < 90 else ("%.1f min" % (x / 60.0)) if x < 5400 else ("%.1f h" % (x / 3600.0))
+
+
 def nice_step(span):
     if span <= 0:
         return 1
@@ -1884,6 +1890,10 @@ def servicenow_insights_page(model, key="all", opts=None):
                                                       ("from opened to first assigned to a person (the metric Assigned to)" if slo.get("response_measured") else
                                                        "not measured: set a response target in servicenow_insights_sla_targets")))
                     if sla_src == "targets" else ""))
+    tm = [r_ for r_ in o.get("timing") or [] if isinstance(r_, (list, tuple)) and len(r_) == 2]     # the run's time, so far (1.14.0)
+    time_html = ('<details class="notes"><summary><b>Time this run</b> <span class="mut">%s before the pages</span></summary><dl class="kv">%s</dl>'
+                 '<p class="mut">The pages, the email and the report database come after: the job output has the whole run.</p></details>' % (
+                     e(fmin(sum(x for _l, x in tm))), "".join("<dt>%s</dt><dd>%s</dd>" % (e(lb), e(fmin(x))) for lb, x in tm))) if tm else ""
     body.append(section("method", "How this was made", "", '<div class="method"><div><div class="eyebrow">Read from ServiceNow (read only)</div><dl class="kv">%s'
                         '<dt>Window</dt><dd>%s (%s)</dd><dt>Compared with</dt><dd>%s</dd><dt>Reopen</dt><dd>%s</dd></dl></div>'
                         '<div><div class="eyebrow">Replaced before GenAI, put back after</div><dl class="kv">%s</dl></div>'
@@ -1899,7 +1909,7 @@ def servicenow_insights_page(model, key="all", opts=None):
                             e(("%d, grouped by ACT" % a.get("issues", 0)) if a.get("ran") else "the incidents' category / subcategory"),
                             e(str(a.get("fixes", 0)) if a.get("ran") else "none: the most common close notes are shown"),
                             e("by ACT" if s.get("summary_by") == "act" else "from the numbers"),
-                            (('<div class="callout"><b>Not read.</b> %s</div>' % e("; ".join(nr))) if nr else "") + place_html + slo_html)))
+                            (('<div class="callout"><b>Not read.</b> %s</div>' % e("; ".join(nr))) if nr else "") + place_html + slo_html + time_html)))
 
     # the script: loaded from the website (site-insights.js beside the index, written by site_report_web, the address made relative to
     # this page there) and carried in the page too; whichever runs first does the work
@@ -2164,6 +2174,50 @@ def custom_view(m, o):
             + '<script type="application/json" id="cv-data">%s</script>' % data)
 
 
+_SIBLINGS = {}
+
+
+def _sibling(name):
+    """A filter plugin beside this one (servicenow_insights_filters, site_filters), loaded from its file - filter plugins
+    are not a package."""
+    if name not in _SIBLINGS:
+        import importlib.util
+        import os
+        spec = importlib.util.spec_from_file_location(name + "_for_pages", os.path.join(os.path.dirname(os.path.abspath(__file__)), name + ".py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _SIBLINGS[name] = mod
+    return _SIBLINGS[name]
+
+
+def servicenow_insights_pages(model, jobs, web, opts=None, extra=None):
+    """Many pages at once (1.14.0): for each job ({key, v} of the role's _sni_web.jobs) its page as the per-page run made
+    it - [{page, html, report, runs}] for site_report_web's pages. opts: the page's settings less the links (they are
+    worked out here, for each page, as the role did); extra: doc_opts (the report's settings, _sni_opts), logo_img (what
+    replaces <!--site-report-logo-->), act_off, runs_past (site_report_history's runs, or None), runs_n, runs_top."""
+    F, SF = _sibling("servicenow_insights_filters"), _sibling("site_filters")
+    x = extra or {}
+    out = []
+    for j in jobs or []:
+        key, v = j["key"], j.get("v") or ""
+        f = (web["variants"][v] if v else web["pages"])[key]
+        page = f["page"]
+        o = dict(opts or {}, links=F.web_links(web, page, v), variant=v, variant_links=F.variant_links(web, key, page))
+        h = servicenow_insights_page(model, key, o).replace("<!--site-report-logo-->", x.get("logo_img") or "")
+        rep = SF.report_act_off(F.servicenow_insights_doc(F.servicenow_insights_variant(model, v), key, x.get("doc_opts") or opts), bool(x.get("act_off")))
+        runs = SF.report_runs(x["runs_past"], rep, int(x.get("runs_n") or 14), int(x.get("runs_top") or 36)) if x.get("runs_past") is not None else []
+        out.append({"page": page, "html": h, "report": rep, "runs": runs})
+    return out
+
+
+def servicenow_insights_chunks(jobs, size=40):
+    """The jobs in groups of size: one site_report_web call each."""
+    jobs = list(jobs or [])
+    size = max(1, int(size or 40))
+    return [jobs[i:i + size] for i in range(0, len(jobs), size)]
+
+
 class FilterModule(object):
     def filters(self):
-        return {"servicenow_insights_page": servicenow_insights_page}
+        return {"servicenow_insights_page": servicenow_insights_page, "servicenow_insights_pages": servicenow_insights_pages,
+                "servicenow_insights_chunks": servicenow_insights_chunks}

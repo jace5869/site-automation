@@ -35,6 +35,11 @@
 # a copy as report_web_latest, the data as JSON beside each, and report_web_index; the page's address is printed
 # ("Report: https://...") and kept as the job artifact site_report_url. _report_email_skip: true = only the website.
 # _report_to_only: [addresses] = only these get it (no report_email_to, no report_email_cc).
+# _report_email_to_override: [addresses] = To these instead of report_email_to - even one given as an extra variable (the
+# template's Variables), which an include's vars cannot beat - and no report_email_also; report_email_cc as usual (1.14.0:
+# the ticket insights' team leads).
+# _report_web_url: the address the email links ("Open this report in a browser") when this run does not write the page
+# itself (_report_web_skip) - a page written another way (1.14.0: the insights pages in one go).
 # _report_web_skip: true = never on the website, whatever report_web_dest says (the outage AAR's documents).
 # _report_web: the website's version of _report (more columns, which the atlas and brief looks' Columns menu can hide - an email
 # cannot): the page in those looks and its JSON; the email, and the website in the other looks, use _report (1.11.0).
@@ -48,6 +53,7 @@
     # _report_to_only: the job's own recipients, none else - no report_email_to, no report_email_cc (the outage AAR)
     _email_to: >-
       {{ (_report_to_only if _report_to_only is defined
+          else _report_email_to_override | email_recipients([], report_email_also_domains) if _report_email_to_override is defined
           else report_email_to | email_recipients(report_email_also | default([]), report_email_also_domains))
          if not _report_email_skip | default(false) | bool else [] }}
     _email_cc: >-
@@ -56,7 +62,7 @@
           else report_email_cc) | map('string') | map('trim') | select | unique | list }}
     _email_also_refused: >-
       {{ report_email_also | default([]) | email_also_refused(report_email_also_domains)
-         if not _report_email_skip | default(false) | bool else [] }}
+         if not _report_email_skip | default(false) | bool and _report_email_to_override is not defined else [] }}
 
 - name: Email | not sent to these, from "Also email the report to" (report_email_also)
   ansible.builtin.debug:
@@ -404,7 +410,8 @@
 - name: Email | the email links its web copy
   ansible.builtin.set_fact:
     _email_web_url: >-
-      {{ _web_out.url if _web_on | bool and not ansible_check_mode and _web_failed | length == 0
+      {{ _report_web_url if _report_web_url | default('') | length > 0 and not ansible_check_mode else
+         _web_out.url if _web_on | bool and not ansible_check_mode and _web_failed | length == 0
          and (not _web_copy | bool or _web_out.packed | default('') | length > 0)
          else '' }}
   when: _email_to | length > 0

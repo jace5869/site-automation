@@ -3261,6 +3261,29 @@ def servicenow_insights_artifact(model):
     return out
 
 
+TIMING = (("ServiceNow reads", (("start", "read"),)), ("ACT", (("read", "act_a"), ("model", "act_b"))),
+          ("The report worked out", (("act_a", "model"), ("act_b", "finish"))), ("Trends (the report database)", (("finish", "db"),)),
+          ("Pages and email", (("db", "pages"),)), ("The report database written", (("pages", "end"),)))
+
+
+def servicenow_insights_timing(t):
+    """The run's time by phase (1.14.0), from the role's checkpoints (_sni_t: {name: epoch seconds}): {'rows': [[phase,
+    seconds]] - the phases done so far -, 'total', 'line' (the job output's)}."""
+    t = dict((k, float(v)) for k, v in (t or {}).items() if v is not None)
+    rows = []
+    for label, spans in TIMING:
+        got = [t[b] - t[a] for a, b in spans if a in t and b in t]
+        if got:
+            rows.append([label, round(max(0.0, sum(got)), 1)])
+    last = max(t.values()) if t else 0.0
+    total = round(last - t["start"], 1) if "start" in t else 0.0
+
+    def fmt(x):
+        return ("%.0f s" % x) if x < 90 else ("%.1f min" % (x / 60.0))
+    line = "Time: %s - %s in all" % (", ".join("%s %s" % (lbl, fmt(x)) for lbl, x in rows), fmt(total)) if rows else "Time: not measured"
+    return {"rows": rows, "total": total, "line": line}
+
+
 def rel_link(target, page):
     """The address of the file target (inside the report folder) as a link from the page file (both relative to the
     folder: 'ticket-insights/ops-windows/latest.html' from 'ticket-insights/2026-11-01_0605_job-7.html' ->
@@ -3325,7 +3348,7 @@ class FilterModule(object):
                 "servicenow_insights_summary_task": servicenow_insights_summary_task,
                 "servicenow_insights_summary_merge": servicenow_insights_summary_merge, "servicenow_insights_finish": servicenow_insights_finish,
                 "servicenow_insights_doc": servicenow_insights_doc, "servicenow_insights_xlsx": servicenow_insights_xlsx,
-                "servicenow_insights_artifact": servicenow_insights_artifact, "servicenow_insights_name_list": name_list,
+                "servicenow_insights_artifact": servicenow_insights_artifact, "servicenow_insights_timing": servicenow_insights_timing, "servicenow_insights_name_list": name_list,
                 "servicenow_insights_slug": _slug, "servicenow_insights_not_read": not_read_lines,
                 "servicenow_insights_rel": rel_link, "servicenow_insights_links": web_links,
                 "servicenow_insights_variant_links": variant_links, "servicenow_insights_variant": servicenow_insights_variant,

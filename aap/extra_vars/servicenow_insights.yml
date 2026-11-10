@@ -409,6 +409,12 @@ servicenow_insights_months: 6
 ## after setup (12), as a separate launch. Safe to run twice: each month replaces what was there.
 # servicenow_insights_backfill_months: 0
 
+## THE PAGES (1.14.0): each site's, unit's and team's page is written this many at a time, in one
+## task after the All page, when site_report_web writes the website itself (a folder, an SMB share,
+## an upload). 0 = the site_email role once per page, as before (report_web_copy and report_web_host
+## always do that).
+# servicenow_insights_pages_per_call: 40
+
 ## The workbook on the email: every incident with its issue and close-note grade, the issues,
 ## requests, changes, people.
 # servicenow_insights_xlsx: true

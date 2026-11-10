@@ -379,6 +379,20 @@ made from the numbers, and there are no knowledge drafts. The report says why AC
 batch: 2,000 descriptions in batches of 100 are 20 questions, plus 5 for the fixes and one for the summaries - each the
 model's time (`servicenow_insights_act_model_timeout`). Schedule it monthly, overnight.
 
+**Where this run's time went (1.14.0).** The job's last lines say it by phase, for example:
+
+```text
+Time: ServiceNow reads 78 s, ACT 1 s, The report worked out 8 s, Trends (the report database) 0 s, Pages and email 3 s,
+The report database written 0 s - 89 s in all
+```
+
+*How this was made* on the page has the same split, up to the pages (they are written after it is made).
+
+**The pages in one go (1.14.0).** Each site's, unit's and team's page is written `servicenow_insights_pages_per_call`
+(40) at a time, in one task after the All page. Before, the email role ran once per page, about a second each. The pages
+are the same, file for file (a test checks it). Copy mode (`report_web_copy`) and `report_web_host` still write them one
+by one; so does `servicenow_insights_pages_per_call: 0`.
+
 ## The hand-off paths (0.97.0)
 
 *Passed between groups* counts the incidents reassigned `servicenow_insights_handoff_min` times or more from the

@@ -1525,6 +1525,7 @@ File: `roles/servicenow_insights/defaults/main.yml`
 | `servicenow_insights_db_months` | `12` | the months the trend shows |
 | `servicenow_insights_db_timeout` | `10` | seconds to connect |
 | `servicenow_insights_backfill_months` | `0` | THE BACKFILL: > 0 = this launch reads that many past calendar months from ServiceNow once, writes each month's figures to the report database and stops - no ACT, no pages, no email. Run it once after setup (12), as a separate launch. Safe to run twice: each month replaces what was there. |
+| `servicenow_insights_pages_per_call` | `40` | THE PAGES (1.14.0): each site's, unit's and team's page is written this many at a time, in one task after the All page, when site_report_web writes the website itself (a folder, an SMB share, an upload). 0 = the site_email role once per page, as before (report_web_copy and report_web_host always do that). |
 | `servicenow_insights_xlsx` | `true` | The workbook on the email: every incident with its issue and close-note grade, the issues, requests, changes, people. |
 | `servicenow_insights_fail` | `true` | The job fails when ServiceNow could not be read at all, or a group named is not there. false = a report only. |
 
