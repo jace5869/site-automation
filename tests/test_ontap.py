@@ -203,7 +203,7 @@ class Report(unittest.TestCase):
         self.assertEqual(r["report"]["status"], "critical")
         self.assertEqual(r["clusters"], [{"cluster": "c9.example.mil", "reachable": False, "error": "timed out"}])
         first = r["report"]["sections"][0]
-        self.assertEqual(first["rows"][0][3], "UNREACHABLE")
+        self.assertEqual(first["rows"][0][2], "UNREACHABLE")                       # the address is the cluster's cell (1.12.0)
         self.assertEqual(first["rows"][0][-1], "timed out")
         self.assertEqual(r["critical"], 1)
 
@@ -241,7 +241,7 @@ class Report(unittest.TestCase):
         ems = {"node": {"name": "n1"}, "message": {"name": "callhome.battery.low", "severity": "error"}, "time": "2026-10-07T11:00:00Z",
                "log_message": "battery low"}
         titles = [x["title"] for x in of.ontap_report(self.one([("v", 100, 10)], [alert], [ems]))["report"]["sections"]]
-        self.assertEqual(titles[-2], "Health alerts")
+        self.assertEqual(titles[-3:-1], ["Health alerts", "Health alerts: cause and what to do"])   # two tables (1.12.0)
         self.assertTrue(titles[-1].startswith("Error events"), titles[-1])
         self.assertLess(titles.index("System health"), titles.index("Health alerts"))
         self.assertGreater(titles.index("Health alerts"), titles.index("Certificates expiring"))
@@ -269,6 +269,77 @@ class Report(unittest.TestCase):
         rows, lines = events(None, {"ems_ignore": [r"^callhome\.battery"]})
         self.assertNotIn("callhome.battery.low", rows)
         self.assertIn("c1: 1 event(s) left out by ontap_ems_ignore", lines)
+
+
+class Fit(unittest.TestCase):
+    """1.12.0: the wide tables made to fit a laptop's screen without dropping anything - columns merged into one cell,
+    SnapMirror and Health alerts in two tables each, short headings with their full names, and the columns that wrap."""
+    TB = 1024 ** 4
+
+    def report(self, **data):
+        base = {"cluster": {"records": [{"name": "c1", "version": {"full": "NetApp Release 9.14.1"}}]},
+                "nodes": {"records": [{"name": "c1-01", "state": "up"}]}}
+        base.update(dict((k, {"records": v}) for k, v in data.items()))
+        r = of.ontap_report({"read_at": "2026-10-07T12:00:00Z", "clusters": [{"address": "c1.example.mil", "reachable": True, "data": base}]})
+        return dict((s["title"], s) for s in r["report"]["sections"])
+
+    def test_every_table(self):
+        aggr = {"name": "aggr1", "node": {"name": "c1-02"}, "home_node": {"name": "c1-01"}, "state": "online",
+                "space": {"block_storage": {"size": 4 * self.TB, "used": 3 * self.TB, "available": self.TB}},
+                "block_storage": {"primary": {"raid_type": "raid_dp", "disk_count": 24}}}
+        secs = self.report(aggregates=[aggr])
+        for s in secs.values():
+            if "columns" in s:
+                self.assertLessEqual(len(s["columns"]), 10, s["title"])
+                self.assertEqual(len(s.get("kinds", s["columns"])), len(s["columns"]), s["title"])
+                self.assertEqual(len(s.get("column_titles", s["columns"])), len(s["columns"]), s["title"])
+                for name in ("Cluster", "SVM"):                                   # long hyphenated names break at their hyphens
+                    if name in s["columns"]:
+                        self.assertEqual(s["kinds"][s["columns"].index(name)], "wrap", s["title"])
+        c = secs["Clusters"]
+        self.assertEqual(c["columns"], ["Cluster", "ONTAP", "Health", "Nodes up", "Space used", "NTP servers", "Location", "Notes"])
+        self.assertEqual(c["rows"][0][0], "c1\nc1.example.mil")                  # the address under the name
+        self.assertEqual(c["column_titles"][4], "Space used on the aggregates")   # each column's full name (1.11.0)
+        self.assertEqual(c["column_titles"][0], "Cluster")
+        a = secs["Aggregates"]
+        self.assertEqual(a["columns"], ["Cluster", "Aggregate", "Node", "State", "Space", "Used %", "RAID"])
+        self.assertEqual(a["rows"][0][2:], ["c1-02\nhome: c1-01", "ONLINE", "3.0 TB used of 4.0 TB\n1.0 TB available", "75%", "raid_dp, 24 disks"])
+        self.assertEqual(a["cell_status"][0][2], "warning")                       # away from home
+        self.assertEqual(secs["Aggregates not on their home node"]["rows"], [["c1", "aggr1", "c1-02", "c1-01"]])
+
+    def test_snapmirror_two_tables(self):
+        def sm(dst, healthy, lag, state="snapmirrored", status="idle"):
+            return {"source_path": "src:" + dst, "destination_path": "dst:" + dst, "state": state, "status": status, "healthy": healthy,
+                    "lag_time": lag, "last_transfer_end_timestamp": "2026-10-07T10:00:00Z", "total_progress": 1024 ** 3,
+                    "progress_last_updated": "2026-10-07T11:00:00Z", "policy": "MirrorAllSnapshots",
+                    "unhealthy_reason": "" if healthy else "Transfer failed."}
+        secs = self.report(snapmirror_cli=[sm("v_lag", True, "P1DT1H"), sm("v_bad", False, "PT1H"), sm("v_move", True, "PT1H", status="transferring")])
+        s, x = secs["SnapMirror"], secs["SnapMirror transfers"]
+        self.assertEqual(s["columns"], ["Cluster", "Source", "Destination", "State", "Healthy", "Lag", "Reason / last error"])
+        self.assertEqual(x["columns"], ["Cluster", "Destination", "Last transfer (UTC)", "Progress", "Progress updated", "Policy"])
+        self.assertEqual([r[2] for r in s["rows"]], [r[1] for r in x["rows"]])  # one row each, the same order
+        self.assertEqual([r[2] for r in s["rows"]], ["dst:v_bad", "dst:v_lag", "dst:v_move"])
+        self.assertEqual(s["rows"][2][3], "snapmirrored\ntransferring")          # the mirror state, the transfer status under it
+        self.assertEqual(x["rows"][0][2:], ["2026-10-07 10:00", "1.0 GB", "2026-10-07 11:00", "MirrorAllSnapshots"])
+        self.assertNotIn("SnapMirror transfers", self.report(snapmirror_cli=[]))
+
+    def test_health_alerts_two_tables(self):
+        al = [{"node": "c1-01", "perceived_severity": "minor", "alert_id": "A_minor", "probable_cause": "pc1", "corrective_actions": "ca1"},
+              {"node": "c1-02", "perceived_severity": "major", "alert_id": "B_major", "probable_cause": "pc2", "corrective_actions": "ca2"}]
+        secs = self.report(alerts=al)
+        h, w = secs["Health alerts"], secs["Health alerts: cause and what to do"]
+        self.assertEqual(h["columns"], ["Cluster", "Node", "Severity", "Subsystem", "Alert", "Resource", "Since (UTC)"])
+        self.assertEqual([r[4] for r in h["rows"]], ["B_major", "A_minor"])     # the major one first
+        self.assertEqual(w["rows"], [["c1", "c1-02", "B_major", "pc2", "ca2"], ["c1", "c1-01", "A_minor", "pc1", "ca1"]])
+
+    def test_lif_port(self):
+        lif = {"svm": {"name": "svm1"}, "name": "lif1", "enabled": True, "state": "up", "services": ["data_nfs", "data_cifs"],
+               "location": {"is_home": False, "node": {"name": "c1-02"}, "port": {"name": "e0b"}, "home_node": {"name": "c1-01"},
+                            "home_port": {"name": "e0a"}}, "ip": {"address": "192.0.2.10"}}
+        l = self.report(lifs=[lif])["Network interfaces (LIFs): down, not at home, or disabled"]
+        self.assertEqual(l["columns"], ["Cluster", "SVM", "LIF", "Type", "State", "Port", "Address", "Services"])
+        self.assertEqual(l["rows"][0][5:], ["c1-02:e0b\nhome: c1-01:e0a", "192.0.2.10", "data_nfs, data_cifs"])
+        self.assertEqual((l["cell_status"][0][5], l["row_status"][0]), ("warning", "warning"))
 
 
 class Cifs(unittest.TestCase):
@@ -344,7 +415,7 @@ class Cifs(unittest.TestCase):
         """One row per DC and type: not reachable first, then OK, then not contacted, then by name; the state as a chip."""
         _, _, dcs = self.report([self.dc("dc3", "undetermined"), self.dc("dc1", "ok", "preferred"), self.dc("dc2", "unavailable"),
                                  self.dc("dc1", "ok", "preferred", typ="kerberos"), self.dc("dc4", "undetermined", typ="ms_ldap")])
-        self.assertEqual(dcs["columns"], ["Cluster", "SVM", "Domain controller", "Address", "Type", "Preference", "State", "Nodes"])
+        self.assertEqual(dcs["columns"], ["Cluster", "SVM", "DC", "Address", "Type", "Preference", "State", "Nodes"])
         self.assertEqual([r[2:] for r in dcs["rows"]],
                          [["dc2", "192.0.2.12", "DC", "adequate", "unavailable", "all"],
                           ["dc1", "192.0.2.11", "DC", "preferred", "ok", "all"],

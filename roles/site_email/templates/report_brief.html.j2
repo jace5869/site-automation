@@ -324,6 +324,7 @@ tbody tr:last-child td:first-child{border-bottom-left-radius:11px}tbody tr:last-
 td.k-num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
 td.k-nw,td.nw{white-space:nowrap}
 td.k-mid{min-width:16ch}td.k-mid .w{white-space:nowrap}
+td.k-wrap{overflow-wrap:break-word}td.k-wrap .w{white-space:nowrap}
 td.k-long{min-width:28ch;text-wrap:pretty}
 td.k-path,td.lk{font-size:.92em;min-width:30ch;overflow-wrap:anywhere;color:var(--ink)}
 td.lk{color:var(--muted)}
@@ -548,6 +549,13 @@ table.cc.sq td.k-nw{white-space:normal}
 {%- endfor %}
 {%- set _ = kinds.append('pct' if ns.n and ns.pct == ns.n else ('num' if ns.n and ns.num == ns.n else ('path' if ns.n and ns.path * 2 >= ns.n else ('nw' if ns.mx <= 24 else ('long' if ns.mx > 70 else 'mid'))))) %}
 {%- endfor %}
+{#- a report may name a column's kind itself (s.kinds: one per column, '' = from what it holds): wrap - lines break at
+    spaces, its heading too, no minimum width, words kept whole unless one is wider than the column (1.12.0) -#}
+{%- if s.kinds is defined %}
+{%- set own = [] %}
+{%- for k in kinds %}{% set _ = own.append((s.kinds[loop.index0] if s.kinds | length > loop.index0 else '') or k) %}{% endfor %}
+{%- set kinds = own %}
+{%- endif %}
 <div class="tools2">
 {%- if s.rows | length > 8 %}
 <input class="filter" type="search" hidden placeholder="Filter these {{ s.rows | length }} rows" aria-label="Filter the rows of {{ s.title | e }}"><span class="shown"></span>
@@ -588,11 +596,15 @@ table.cc.sq td.k-nw{white-space:normal}
 {#- a Status or Severity column of a row with its status: that status's chip (upper case - FAIL - as Fail; a STIG CAT I stays, and a section's keep_case: EFI, BIOS) #}
 {%- set cst = cst or (rs if rs in words and lbl | lower in ['status', 'severity', 'result'] and text | trim else '') %}
 {%- if cst %}
-<td data-l="{{ lbl | e }}" data-v="{{ text | e }}"{% if text | length <= 32 %} class="nw"{% else %} class="k-mid"{% endif %}>{{ chip(cst, text | capitalize if text.isupper() and not text.startswith('CAT ') and not s.keep_case | default(false) else text) }}</td>
+<td data-l="{{ lbl | e }}" data-v="{{ text | e }}"{% if kd == 'wrap' and text | length > 12 %} class="k-wrap"{% elif text | length <= 32 %} class="nw"{% else %} class="k-mid"{% endif %}>{{ chip(cst, text | capitalize if text.isupper() and not text.startswith('CAT ') and not s.keep_case | default(false) else text) }}</td>
 {%- elif lbl | lower in ['look further', 'command', 'hint', 'next step'] %}
 <td class="lk" data-l="{{ lbl | e }}" data-v="{{ text | e }}">{% if text | trim %}<span class="cv"><span class="cmd">{{ breakable(text) }}</span><button class="ccopy" type="button" hidden title="Copy" aria-label="Copy the command">{{ copyicons() }}</button></span>{% endif %}</td>
 {%- elif kd == 'path' %}
 <td class="k-path" data-l="{{ lbl | e }}" data-v="{{ text | e }}">{{ breakable(text) }}</td>
+{%- elif kd == 'wrap' %}
+{#- a column the report says wraps (1.12.0): its lines kept, a word up to 16 characters kept whole (cluster1-01, AFF-A400),
+    a longer one breaks at its hyphens rather than widen the table (na-cluster-site-a-prod) #}
+<td class="k-wrap" data-l="{{ lbl | e }}" data-v="{{ text | e }}">{% for ln in text.split('\n') %}{% if not loop.first %}{{ '\n' }}{% endif %}{% for w in ln.split(' ') %}{{ ' ' if not loop.first else '' }}{% if w | length <= 16 %}<span class="w">{{ w | e }}</span>{% else %}{{ w | e }}{% endif %}{% endfor %}{% endfor %}</td>
 {%- elif kd == 'mid' %}
 {#- each word kept whole: a line breaks at a space, never at a hyphen inside an id (RHEL-09-412035) #}
 <td class="k-mid" data-l="{{ lbl | e }}"><span class="cv">{% for w in text.split(' ') %}{{ ' ' if not loop.first else '' }}{% if w | length <= 24 %}<span class="w">{{ w | e }}</span>{% else %}{{ w | e }}{% endif %}{% endfor %}</span></td>

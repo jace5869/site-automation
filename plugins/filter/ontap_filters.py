@@ -164,9 +164,13 @@ class _Report(object):
         if severity in ("critical", "warning"):
             self.problems.append({"cluster": cluster, "area": area, "object": obj, "severity": severity, "text": text})
 
-    def table(self, title, about, columns, rows, none_text, notes=None, keep_order=False, cap=None, collapsed=False, more_text=None):
+    def table(self, title, about, columns, rows, none_text, notes=None, keep_order=False, cap=None, collapsed=False, more_text=None,
+              wrap=(), titles=None):
         """rows: [(cells, cell_statuses, row_status)]. Problems first (stable), capped at max_rows (or cap). collapsed: the
-        website shows the section closed (a long list, opened with a click)."""
+        website shows the section closed (a long list, opened with a click). wrap: the columns (names) whose lines break at
+        spaces on the website, their headings too (short values that would otherwise stay on one line and widen the table);
+        titles: {column: its full name} for a heading kept short (the header's hover, the Columns menu, the phone card's
+        label - so a full name, short enough for a label)."""
         if not keep_order:
             rows = sorted(rows, key=lambda r: RANK.get(r[2], 9))
         mx = int(cap or self.max)
@@ -179,6 +183,13 @@ class _Report(object):
         if collapsed:
             s["collapsed"] = True
         if shown:
+            # the cluster and SVM names wrap in every table: a long name (na-cluster-site-a-prod) breaks at its hyphens
+            wrap = set(wrap) | ({"Cluster", "SVM"} & set(columns))
+            if wrap:
+                s["kinds"] = ["wrap" if c in wrap else "" for c in columns]
+            if titles:
+                # each column's full name (1.11.0's column_titles: the header's hover, the Columns menu, the phone's card labels)
+                s["column_titles"] = [titles.get(c, c) for c in columns]
             s.update({"columns": columns, "rows": [r[0] for r in shown],
                       "cell_status": [[x or "" for x in r[1]] for r in shown],
                       "row_status": [r[2] if r[2] in ("critical", "warning", "info", "unknown") else "" for r in shown]})
@@ -305,8 +316,8 @@ def ontap_report(collected, opts=None):
     rows, summaries = [], []
     for c in cs:
         if not c.get("reachable", True):
-            rows.append(_row([c["address"], c["address"], "?", "UNREACHABLE", "", "", "", "", c.get("error", "")],
-                             ["", "", "", "critical"]))
+            rows.append(_row([c["address"], "?", "UNREACHABLE", "", "", "", "", c.get("error", "")],
+                             ["", "", "critical"]))
             R.problem(c["address"], "cluster", c["address"], "critical", "cannot be read: " + c.get("error", ""))
             summaries.append({"cluster": c["address"], "reachable": False, "error": c.get("error", "")})
             continue
@@ -322,19 +333,22 @@ def ontap_report(collected, opts=None):
         p = pct(used, size)
         ntp = [x.get("server") for x in _recs(c, "ntp") if x.get("server")]
         ntp_st = "" if ntp or (c["data"].get("ntp") or {}).get("error") else "warning"
-        rows.append(_row([c["_name"], c["address"], short_version(g(info, "version.full")), health, "%d of %d" % (n_up, len(nodes)),
+        rows.append(_row([c["_name"] + ("\n" + c["address"] if c["address"] != c["_name"] else ""),
+                          short_version(g(info, "version.full")), health, "%d of %d" % (n_up, len(nodes)),
                           ("%s of %s (%s)" % (human_bytes(used), human_bytes(size), _pct_text(p))) if size else "?",
                           ", ".join(ntp) or "none", info.get("location") or "", ""],
-                         ["", "", "", "warning" if bad else ("ok" if subs else ""), "critical" if n_up < len(nodes) else "ok",
+                         ["", "", "warning" if bad else ("ok" if subs else ""), "critical" if n_up < len(nodes) else "ok",
                           level(p, float(o.get("aggr_warn_pct", 85)), float(o.get("aggr_crit_pct", 90))) if size else "",
                           ntp_st, ""]))
         if ntp_st:
             R.problem(c["_name"], "time", "NTP", "warning", "no NTP server configured")
         summaries.append({"cluster": c["_name"], "reachable": True, "version": g(info, "version.full", ""), "health": health,
                           "nodes_up": n_up, "nodes": len(nodes)})
-    R.table("Clusters", "Each cluster: ONTAP version, system health, nodes up, space used on its aggregates, NTP servers.",
-            ["Cluster", "Address", "ONTAP", "Health", "Nodes up", "Aggregate space used", "NTP servers", "Location", "Notes"],
-            rows, "", keep_order=True)
+    R.table("Clusters", "Each cluster (the address it was read at under its name): ONTAP version, system health, nodes up, space "
+                        "used on its aggregates, NTP servers.",
+            ["Cluster", "ONTAP", "Health", "Nodes up", "Space used", "NTP servers", "Location", "Notes"],
+            rows, "", keep_order=True, wrap=("Cluster", "Nodes up", "Space used", "NTP servers", "Location", "Notes"),
+            titles={"Space used": "Space used on the aggregates"})
 
     # ---- 2. nodes ----------------------------------------------------------------------------------
     rows = []
@@ -373,7 +387,9 @@ def ontap_report(collected, opts=None):
     R.table("Nodes", "State (green up, red down), uptime (days hours:minutes), model, version, whether the partner could take "
                      "over, service processor, NVRAM battery, and the node's clock against the AAP server's.",
             ["Cluster", "Node", "State", "Uptime", "Model", "ONTAP", "Takeover possible", "Service processor", "NVRAM battery",
-             "Clock vs AAP"], rows, "No node was read.", _notes(cs, SECTION_KEYS["nodes"]))
+             "Clock vs AAP"], rows, "No node was read.", _notes(cs, SECTION_KEYS["nodes"]),
+            wrap=("Node", "Uptime", "Model", "Takeover possible", "Service processor", "NVRAM battery", "Clock vs AAP"),
+            titles={"Clock vs AAP": "Clock against the AAP server"})
 
     # ---- 3. system health subsystems + 4. alerts ----------------------------------------------------
     rows = []
@@ -387,17 +403,26 @@ def ontap_report(collected, opts=None):
             R.problem(c["_name"], "health", s.get("subsystem"), stt, "subsystem " + h)
     R.table("System health", "ONTAP's health monitors by subsystem (system health subsystem show). Only the ones not OK.",
             ["Cluster", "Subsystem", "Health", "Open alerts"], rows, "Every subsystem is OK.", _notes(cs, SECTION_KEYS["health"]))
-    rows = []
+    # two tables (nine columns, two of them sentences, did not fit a laptop's screen): the alerts, then the cause and what to do
+    pairs = []
     for c in up:
         for a in _recs(c, "alerts"):
             sev = ALERT_SEV.get(str(a.get("perceived_severity", "")).lower(), "warning")
-            rows.append(_row([c["_name"], a.get("node", ""), str(a.get("perceived_severity", "?")).upper(), a.get("subsystem") or a.get("monitor", ""),
-                              a.get("alert_id", ""), a.get("alerting_resource", ""), time_text(a.get("indication_time")),
-                              a.get("probable_cause", ""), a.get("corrective_actions", "")], ["", "", sev]))
+            pairs.append((RANK.get(sev, 9), len(pairs),
+                          _row([c["_name"], a.get("node", ""), str(a.get("perceived_severity", "?")).upper(), a.get("subsystem") or a.get("monitor", ""),
+                                a.get("alert_id", ""), a.get("alerting_resource", ""), time_text(a.get("indication_time"))], ["", "", sev]),
+                          _row([c["_name"], a.get("node", ""), a.get("alert_id", ""), a.get("probable_cause", ""), a.get("corrective_actions", "")])))
             R.problem(c["_name"], "health alert", a.get("node", ""), sev, "%s: %s" % (a.get("alert_id", ""), a.get("probable_cause", "")))
-    R.table("Health alerts", "What ONTAP's health monitors raised (system health alert show), with the probable cause and what to do.",
-            ["Cluster", "Node", "Severity", "Subsystem", "Alert", "Resource", "Since (UTC)", "Probable cause", "Corrective action"],
-            rows, "No health alert.", _notes(cs, SECTION_KEYS["alerts"]))
+    pairs.sort(key=lambda x: (x[0], x[1]))
+    R.table("Health alerts", "What ONTAP's health monitors raised (system health alert show); the probable cause and what to do "
+            "are in the next table, in the same order.",
+            ["Cluster", "Node", "Severity", "Subsystem", "Alert", "Resource", "Since (UTC)"],
+            [x[2] for x in pairs], "No health alert.", _notes(cs, SECTION_KEYS["alerts"]), keep_order=True,
+            wrap=("Subsystem", "Resource", "Since (UTC)"))
+    if pairs:
+        R.table("Health alerts: cause and what to do", "Each alert of the table above, in the same order: ONTAP's probable cause "
+                "and corrective action.", ["Cluster", "Node", "Alert", "Probable cause", "Corrective action"],
+                [x[3] for x in pairs], "", keep_order=True, wrap=("Probable cause", "Corrective action"))
 
     # ---- 5. EMS error events -------------------------------------------------------------------------
     hours = float(o.get("ems_hours", 24))
@@ -493,7 +518,8 @@ def ontap_report(collected, opts=None):
                 R.problem(c["_name"], "hardware", "shelf " + str(s.get("name") or s.get("id")), st, "; ".join(probs) or "shelf in error")
     R.table("Hardware: controllers and shelves", "Each controller and disk shelf: power supplies, fans, temperature and any failed "
             "part (FRU). Problems first.", ["Cluster", "Component", "Model", "State", "Power supplies", "Fans", "Temperature", "Details"],
-            rows, "No controller or shelf was read.", _notes(cs, SECTION_KEYS["hardware"]))
+            rows, "No controller or shelf was read.", _notes(cs, SECTION_KEYS["hardware"]),
+            wrap=("Component", "Model", "Power supplies", "Fans", "Temperature", "Details"))
 
     # ---- 7. disks + 8. spares --------------------------------------------------------------------------
     rows, spares = [], []
@@ -550,17 +576,19 @@ def ontap_report(collected, opts=None):
                     sv, what = "warning", "not on its home port"
                 else:
                     continue
+                now_p = "%s:%s" % (g(l, "location.node.name", "?"), g(l, "location.port.name", "?"))
+                home_p = "%s:%s" % (g(l, "location.home_node.name", "?"), g(l, "location.home_port.name", "?"))
                 rows.append(_row([c["_name"], g(l, "svm.name", ""), l.get("name"), kind, st.upper() or "?",
-                                  "%s:%s" % (g(l, "location.home_node.name", "?"), g(l, "location.home_port.name", "?")),
-                                  "%s:%s" % (g(l, "location.node.name", "?"), g(l, "location.port.name", "?")),
+                                  now_p + ("\nhome: " + home_p if home_p != now_p else ""),
                                   g(l, "ip.address", ""), ", ".join(l.get("services") or []) if kind == "IP" else ""],
                                  ["", "", "", "", "critical" if what == "down" else ("ok" if st == "up" else ""),
-                                  "warning" if what.startswith("not on") else "", "warning" if what.startswith("not on") else ""], sv))
+                                  "warning" if what.startswith("not on") else ""], sv))
                 R.problem(c["_name"], "network", "%s %s" % (g(l, "svm.name", ""), l.get("name")), sv, "LIF " + what)
     R.table("Network interfaces (LIFs): down, not at home, or disabled", "Data and management LIFs (IP and FC) that are down "
-            "(red), not on their home port (amber), or disabled (blue).", ["Cluster", "SVM", "LIF", "Type", "State", "Home",
-                                                                            "Now on", "Address", "Services"],
-            rows, "Every LIF is up and at home.", _notes(cs, SECTION_KEYS["lifs"]))
+            "(red), not on their home port (amber; the home port under the one it is on), or disabled (blue).",
+            ["Cluster", "SVM", "LIF", "Type", "State", "Port", "Address", "Services"],
+            rows, "Every LIF is up and at home.", _notes(cs, SECTION_KEYS["lifs"]), wrap=("LIF", "Port", "Services"),
+            titles={"Port": "Port (and home port)"})
     rows = []
     for c in up:
         for p in _recs(c, "ports"):
@@ -631,18 +659,22 @@ def ontap_report(collected, opts=None):
             stt = "ok" if a.get("state") == "online" else "critical"
             ps = level(p, aw, ac)
             away = bool(home and node and node != home)
-            rows.append(_row([c["_name"], a.get("name"), node, home, str(a.get("state", "?")).upper(), human_bytes(size), human_bytes(used),
-                              human_bytes(av), _pct_text(p), g(a, "block_storage.primary.raid_type", ""), g(a, "block_storage.primary.disk_count", "")],
-                             ["", "", "warning" if away else "", "", stt, "", "", "", ps]))
+            raid, dc = g(a, "block_storage.primary.raid_type", ""), g(a, "block_storage.primary.disk_count", "")
+            rows.append(_row([c["_name"], a.get("name"), node + ("\nhome: " + home if away else ""), str(a.get("state", "?")).upper(),
+                              "%s used of %s\n%s available" % (human_bytes(used), human_bytes(size), human_bytes(av)), _pct_text(p),
+                              ", ".join(x for x in (raid, ("%s disks" % dc) if dc not in (None, "") else "") if x)],
+                             ["", "", "warning" if away else "", stt, "", ps]))
             R.problem(c["_name"], "capacity", "aggregate " + str(a.get("name")), ps, "aggregate %s used" % _pct_text(p))
             R.problem(c["_name"], "aggregate", a.get("name"), "critical" if stt == "critical" else "", "aggregate " + str(a.get("state")))
             if away:
                 nothome.append(_row([c["_name"], a.get("name"), node, home], ["", "", "warning", ""]))
                 R.problem(c["_name"], "aggregate", a.get("name"), "warning", "on %s, home node %s" % (node, home))
-    R.table("Aggregates", "Every data aggregate, fullest first: the node it is on, size, used, available and used %% (amber from "
-            "%s%%, red from %s%%). Root aggregates are not listed (ONTAP's REST API hides them)." % (_hours(aw), _hours(ac)),
-            ["Cluster", "Aggregate", "Node", "Home node", "State", "Size", "Used", "Available", "Used %", "RAID", "Disks"],
-            rows, "No aggregate was read.", _notes(cs, SECTION_KEYS["aggregates"]), keep_order=True)
+    R.table("Aggregates", "Every data aggregate, fullest first: the node it is on (and its home node when it is away), space "
+            "used, size and available, used %% (amber from %s%%, red from %s%%), RAID type and disks. Root aggregates are not "
+            "listed (ONTAP's REST API hides them)." % (_hours(aw), _hours(ac)),
+            ["Cluster", "Aggregate", "Node", "State", "Space", "Used %", "RAID"],
+            rows, "No aggregate was read.", _notes(cs, SECTION_KEYS["aggregates"]), keep_order=True, wrap=("Node", "Space", "RAID"),
+            titles={"Node": "Node (and home node)", "Space": "Space used, size, available", "RAID": "RAID type and disks"})
     R.table("Aggregates not on their home node", "After a takeover or a manual move an aggregate can stay on the partner node: "
             "give it back (storage failover giveback) when the node is healthy.", ["Cluster", "Aggregate", "Now on", "Home node"],
             nothome, "Every aggregate is on its home node.")
@@ -715,7 +747,7 @@ def ontap_report(collected, opts=None):
 
     # ---- 17. SnapMirror + 18. peers ---------------------------------------------------------------
     lw, lc = float(o.get("lag_warn_hours", 24)) * 3600, float(o.get("lag_crit_hours", 48)) * 3600
-    rows, fine = [], 0
+    rows, xfers, fine = [], [], 0
     for c in up:
         recs = _recs(c, "snapmirror_cli")
         cli = bool(recs)
@@ -747,20 +779,28 @@ def ontap_report(collected, opts=None):
                 continue
             if sv in ("", "ok"):
                 sv = "info"
-            rows.append(_row([c["_name"], src, dst, str(state).replace("_", " "), str(status).replace("_", " "),
+            # two tables (twelve columns did not fit a laptop's screen): the state, and the transfers - one row each, same order
+            rows.append(_row([c["_name"], src, dst, "\n".join(x for x in (str(state).replace("_", " "), str(status).replace("_", " ")) if x),
                               "yes" if healthy else ("NO" if healthy is False else "?"), duration_text(lag) if lag is not None else "?",
-                              time_text(last), human_bytes(prog) if prog not in (None, "") else "", time_text(upd), policy, reason],
-                             ["", "", "", m_st, "info" if transferring else "", h_st, l_st], sv))
+                              reason], ["", "", "", m_st or ("info" if transferring else ""), h_st, l_st], sv))
+            xfers.append((RANK.get(sv, 9), len(xfers), _row([c["_name"], dst, time_text(last), human_bytes(prog) if prog not in (None, "") else "",
+                                                             time_text(upd), policy], None, "info" if transferring else "")))
             R.problem(c["_name"], "snapmirror", dst, sv, "; ".join(x for x in ("unhealthy" if healthy is False else "",
                                                                                 ("lag " + duration_text(lag)) if l_st in ("warning", "critical") else "",
                                                                                 state_l if m_st == "warning" else "", reason) if x))
     R.table("SnapMirror", "Relationships (read on each destination cluster) that are unhealthy (red), lagging (amber from %s h, "
             "red from %s h since the last good transfer), broken off, paused or uninitialized, and the transfers running now (blue): "
             "progress is the data moved so far." % (_hours(lw / 3600), _hours(lc / 3600)),
-            ["Cluster", "Source", "Destination", "Mirror state", "Status", "Healthy", "Lag", "Last transfer (UTC)", "Progress",
-             "Progress updated", "Policy", "Reason / last error"], rows,
+            ["Cluster", "Source", "Destination", "State", "Healthy", "Lag", "Reason / last error"], rows,
             "No relationship needs attention.", _notes(cs, ["snapmirror_cli"] if any(_recs(c, "snapmirror_cli") for c in up) else SECTION_KEYS["snapmirror"])
-            + (["%d healthy, up-to-date relationship(s) are not listed." % fine] if fine else []))
+            + (["%d healthy, up-to-date relationship(s) are not listed." % fine] if fine else []),
+            wrap=("State", "Lag", "Reason / last error"), titles={"State": "Mirror state and transfer status"})
+    if xfers:
+        R.table("SnapMirror transfers", "The same relationships, in the same order: the last transfer, the one running now (blue) - "
+                "its progress (the data moved so far) and when ONTAP last updated it - and the policy.",
+                ["Cluster", "Destination", "Last transfer (UTC)", "Progress", "Progress updated", "Policy"],
+                [x[2] for x in sorted(xfers, key=lambda x: (x[0], x[1]))], "", keep_order=True,
+                wrap=("Last transfer (UTC)", "Progress", "Progress updated", "Policy"))
     rows = []
     for c in up:
         for p in _recs(c, "cluster_peers"):
@@ -853,13 +893,13 @@ def ontap_report(collected, opts=None):
             "a finding, even when no DC is OK: ONTAP's normal state); not reachable = ONTAP tried it and failed (amber; said "
             "when it is a preferred DC); red = ONTAP tried every DC it lists and reached none, or the CIFS server stopped. "
             "Every DC is listed in the next table; below, the commands to look further where no DC is OK or one is not reachable.",
-            ["Cluster", "SVM", "CIFS server", "Domain", "Enabled", "Domain controllers", "Not reachable"], rows, "No CIFS server.",
+            ["Cluster", "SVM", "CIFS server", "Domain", "Enabled", "DCs", "Not reachable"], rows, "No CIFS server.",
             _notes(cs, SECTION_KEYS["cifs"]) + hints[:50])
     dcrows.sort(key=lambda r: r[0])
     R.table("CIFS domain controllers", "Every server ONTAP lists for each SVM (DC, LDAP, KDC), with its preference and state. Not "
             "contacted (undetermined): ONTAP has not needed it - DCs in other sites or of lower preference stay so; it is not "
             "a problem. Not reachable first, then OK, then not contacted.",
-            ["Cluster", "SVM", "Domain controller", "Address", "Type", "Preference", "State", "Nodes"], [r[1] for r in dcrows],
+            ["Cluster", "SVM", "DC", "Address", "Type", "Preference", "State", "Nodes"], [r[1] for r in dcrows],
             "ONTAP lists no domain controller.", keep_order=True, cap=max(R.max, 400), collapsed=len(dcrows) > 12,
             more_text="The first %d of %d are shown.")
     rows = []
@@ -926,7 +966,7 @@ def ontap_report(collected, opts=None):
                 "status": "critical" if any(p["area"] == "network" and p["severity"] == "critical" for p in R.problems) else "ok"},
                {"label": "Certificates expiring", "value": count("certificate"), "status": worst([p["severity"] for p in R.problems if p["area"] == "certificate"]) or "ok"}]
     # the alerts and the event log last: the tables above say what is wrong, these say what ONTAP raised about it
-    last = [s for s in R.sections if s["title"] == "Health alerts" or s["title"].startswith("Error events")]
+    last = [s for s in R.sections if s["title"].startswith("Health alerts") or s["title"].startswith("Error events")]
     R.sections = [s for s in R.sections if s not in last] + last
     # the volumes near the top, after the clusters and nodes: the table most often acted on
     vols = [s for s in R.sections if s["title"].startswith("Volumes ")]

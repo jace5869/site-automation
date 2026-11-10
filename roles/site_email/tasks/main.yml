@@ -17,6 +17,9 @@
 #       - {title: Alarms, columns: [Severity, Host], rows: [[CRITICAL, esx01]], row_status: [critical], cell_status: [[critical, '']]}
 #       # collapsed: true - the website's atlas and brief looks show the section closed (a long list; a click, the search or
 #       # Print opens it); the email shows it all (1.6.1)
+#       # kinds: [wrap, '', ...] - one per column, the atlas and brief looks: wrap = lines break at spaces, its heading too, no
+#       # minimum width, words up to 16 characters kept whole, a status chip over 12 characters wraps too ('' = from what the
+#       # column holds) (1.12.0). The email looks ignore it.
 #       # "Start here" cards (site_filters report_cards_html); a summary box may have a note: {label, value, status, note}
 #       - {title: Start here, cards: [{status: critical, chip: Critical, meta: Certificate, title: ..., subject: web01, next: ..., code: ...}]}
 #       # the website's atlas and brief looks (1.11.0): column_titles - each column's full name (the header's hover, the Columns
