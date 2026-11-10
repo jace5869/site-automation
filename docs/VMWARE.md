@@ -13,7 +13,7 @@ System Center Orchestrator):
 | VM - change VLAN | `playbooks/vm_vlan.yml` | moves one network adapter to another port group (VLAN). The VM's other adapters are not touched |
 | VM - secure boot report | `playbooks/vm_secure_boot_report.yml` | read-only: every VM's firmware and secure boot. Lists BIOS VMs and EFI VMs with secure boot off separately |
 | VM - datastore report | `playbooks/vm_datastore_report.yml` | read-only: every datastore's capacity, free space, used and provisioned %; the ones at 85 / 90 % used listed apart |
-| VM - inventory report | `playbooks/vm_inventory_report.yml` | read-only: every VM of every vCenter, by vCenter and folder - power, the ESXi host it runs on, cluster, guest OS, IP address, vCPUs, memory - and the count; the email attaches every VM as an Excel workbook ("The VM inventory report") |
+| VM - inventory report | `playbooks/vm_inventory_report.yml` | read-only: every VM of every vCenter, by vCenter and folder - power, the ESXi host it runs on, cluster, guest OS, IP address, vCPUs, memory - and the count; the VMs without encryption, EFI or a vTPM; the hardware versions and VMware Tools; the email attaches every VM as an Excel workbook ("The VM inventory report") |
 | VM - VMware Tools inventory | `playbooks/vm_tools_report.yml` | read-only: every VM's VMware Tools version and status (current, upgrade available, not installed, not running, guest managed), hardware version and guest OS, by vCenter and folder; the Tools versions, hardware versions and guest OSes in use with how many VMs each; the email attaches every VM as an Excel workbook ("The VMware Tools inventory") |
 | VM - right-sizing report | `playbooks/vm_rightsizing_report.yml` | read-only: every powered-on VM's vCPUs and memory next to what vCenter's statistics say it used (30 days, and its busiest day of the year) - too big, about right or too small, with a suggested size; memory the host took back, guest disks nearly full; optional ACT review. Suggestions only ("The VM right-sizing report") |
 | VMware - version report | `playbooks/vmware_version_report.yml` | read-only: the version and build of each vCenter and every ESXi host, the builds in use and how many hosts run each, the hosts by vCenter and cluster; amber when a host is newer than its vCenter; the email attaches every host as an Excel workbook ("The VMware version report") |
@@ -228,11 +228,37 @@ to one vCenter folder; `vmware_datacenter` limits either report to one datacente
 
 *VM - inventory report* (`playbooks/vm_inventory_report.yml`) lists every VM of every vCenter (`vmware_vcenters`;
 `vmware_datacenter` for one datacenter) - no survey, read-only. At the top, the counts: VMs, powered on, powered off,
-folders, ESXi hosts, vCenters. Then a table per vCenter and folder (`vc01 - DC1 / Linux / Web`, as vSphere's *VMs and
-Templates* view shows it; a VM in no folder under `DC1 (no folder)`), each VM with its power state, the ESXi host it
-runs on, cluster, guest OS, IP address, vCPUs and memory. The email attaches every VM as an Excel workbook,
-`vm-inventory-report_2026-10-27.xlsx`: one sheet, a line per VM with its vCenter, datacenter and folder too, to sort
-and filter. Schedule it weekly with `report_email_to` on its Variables; on the report website it is on the VMware tab.
+folders, ESXi hosts, vCenters - and how many VMs are **not encrypted**, **without EFI** and **without vTPM**. Then:
+
+- **VMs without encryption, EFI or vTPM** - one row per VM that lacks any of the three, the most missing first:
+  Encrypted, Firmware (EFI or BIOS), Secure Boot and vTPM as chips (a word and its mark - a check for OK, ! for missing - never
+  colour alone), then its vCenter, folder, power, guest OS and hardware version. *Encrypted* is VM Encryption (vCenter's
+  `config.keyId`: a key from a key provider); *Secure Boot* needs EFI (`config.bootOptions.efiSecureBootEnabled`); the
+  vTPM is vCenter's `summary.config.tpmPresent`, or - a vCenter older than 6.7 - a Virtual TPM among the VM's devices
+  (read only for those VMs). A vTPM vCenter could not tell shows `?` and is not counted.
+- **Hardware versions and Tools** - how many VMs have each virtual hardware version (`vmx-21` shown as 21, with the
+  oldest ESXi that runs it) and each VMware Tools status: current, upgrade available, unsupported, not installed, not
+  running (a powered-on VM whose Tools do not run), guest managed (open-vm-tools, updated with the OS).
+- **VMware Tools to upgrade or not running** - the powered-on VMs whose Tools need an upgrade, are not supported, not
+  installed or not running, with the Tools version (`12.3.5`, from vCenter's number for it).
+- a table per vCenter and folder (`vc01 - DC1 / Linux / Web`, as vSphere's *VMs and Templates* view shows it; a VM in
+  no folder under `DC1 (no folder)`), each VM with its power state, the ESXi host it runs on, cluster, guest OS, IP
+  address, vCPUs and memory.
+
+**On the report website** the VM tables also have Encrypted, Firmware, Secure Boot, vTPM, hardware version, Tools status
+and Tools version - short headers (`Enc`, `EFI`, `SB`, `vTPM`, `HW`, `Tools`, `Tools ver.`; the full name when you point
+at one, in the Columns menu and on a phone's cards), the ESXi host by its short name. **Columns** above each table hides
+any of them; the choice is kept in your browser for every VM table, this report and the next.
+`vm_inventory_hidden_columns` starts some hidden (Secure Boot and Tools version: the tables then fit a 1366 px laptop
+screen beside the sections list); the Columns menu still lists them. An email cannot hide columns: its VM tables keep the
+lean list above, and the new fields are in its sections and the workbook. (The website's other looks - `report_web_theme`
+standard, command, portal, glass - have no Columns menu and show the email's tables.)
+
+The email attaches every VM as an Excel workbook, `vm-inventory-report_2026-10-27.xlsx`: one sheet, a line per VM
+with its vCenter, datacenter and folder too, and Encrypted, Key provider, Encrypted vMotion (`disabled`,
+`opportunistic`, `required` - in the workbook only), Firmware, Secure Boot, vTPM, Hardware version, Compatible with,
+VMware Tools, Tools version and Tools running - to sort and filter. Schedule it weekly with `report_email_to` on its
+Variables; on the report website it is on the VMware tab.
 
 | Setting | Default | |
 |---|---|---|
@@ -240,9 +266,15 @@ and filter. Schedule it weekly with `report_email_to` on its Variables; on the r
 | `vm_inventory_by_folder` | `true` | `false` = one table of every VM, with vCenter and folder columns |
 | `vm_inventory_max_rows` | `2000` | VMs listed in the email and on the page at most (2000 make an email of about 2.5 MB) - the workbook always has every VM |
 | `vm_inventory_xlsx` | `true` | `false` = no workbook attached |
+| `vm_inventory_security` | `true` | read each VM's encryption, Secure Boot and vTPM: the section, its three counts, the website's columns and the workbook's (`false`: not read - the firmware, hardware version and Tools still are) |
+| `vm_inventory_security_skip_templates` | `true` | templates left out of that section and its counts (when `vm_inventory_templates` lists them) |
+| `vm_inventory_security_skip_off` | `false` | `true` = powered-off VMs left out of that section and its counts |
+| `vm_inventory_hidden_columns` | `[SB, Tools ver.]` | the website's VM tables: these columns start hidden - a header or its full name (`Secure Boot`), any column (`Cluster`); a list, or text with commas. `[]` = all shown |
 
-Green unless a vCenter could not be read (it is then listed in red on top, its VMs not counted). The counts are also
-the job artifact `vm_inventory`.
+Green unless a vCenter could not be read (it is then listed in red on top, its VMs not counted): the counts of VMs
+without encryption, EFI or a vTPM are information (blue), never a warning. The counts are also the job artifact
+`vm_inventory`. The account needs nothing more than for the rest of the report (Read-only on the VMs): VM Encryption's
+key ID, the boot options and the vTPM are read with the VM's other properties.
 
 ### The VMware Tools inventory
 
@@ -1885,6 +1917,15 @@ the last column says.
 | `Refused: ... is the AAP server or a protected VM` | by design | do it in vCenter yourself |
 | `report_time_zone ... is not a time zone this execution environment knows: times are in UTC` | a misspelt name, or an execution environment without time zone data | a name as `timedatectl list-timezones` prints it (`America/New_York`, `Europe/London`); if the name is right, add `tzdata` to the execution environment's build |
 | A report's time and a host's log time differ | the time zone, the event, or the host's clock | health report: "Times and clocks" above |
+
+### VM inventory report
+
+| You see | It means | Do |
+|---|---|---|
+| Every VM in *VMs without encryption, EFI or vTPM* as not encrypted, though some are | the account cannot see VM Encryption on them, or they use vSAN encryption (the datastore's, not the VM's: vCenter gives the VM no key ID) | look at one in the vSphere Client: VM > Summary > *VM Encryption*. vSAN encryption is not VM Encryption - the report counts only the VM's own |
+| vTPM `?` | vCenter gave no `tpmPresent` for that VM and its devices could not be read | look at the VM's hardware in the vSphere Client (Virtual TPM); a vCenter before 6.7 reads it from the devices - a later run usually has it |
+| A VM table scrolls sideways on the website | more columns shown than fit (Columns: *Show all*, or a narrow window) | take some off with **Columns** (kept in your browser), put the sections list away (its `<<` button), or set `vm_inventory_hidden_columns` for everyone |
+| The website's VM tables have no Enc / SB / vTPM columns | `vm_inventory_security: false`, or `report_web_theme` is not atlas or brief (those looks show the email's tables) | set `vm_inventory_security: true`; use the atlas or brief look |
 
 ### Datastore and snapshot reports, snapshot cleanup
 

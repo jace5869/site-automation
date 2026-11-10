@@ -23,6 +23,7 @@ import site_vmware_certs as vcert  # noqa: E402
 import site_vmware_watch as wt  # noqa: E402
 import site_vcsa_access as va  # noqa: E402
 import site_vmware_cert_install as vci  # noqa: E402
+import site_vmware_vms as vms  # noqa: E402
 
 G = 1024 ** 3
 
@@ -1129,6 +1130,44 @@ class VmwareCertInstall(unittest.TestCase):
         self.assertLess(vci.version_tuple("8.0.1"), vci.NO_RESTART)
         self.assertGreaterEqual(vci.version_tuple("8.0.2"), vci.NO_RESTART)
         self.assertGreaterEqual(vci.version_tuple("9.0"), vci.NO_RESTART)
+
+
+
+class _Obj(object):
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+def _typed(name):
+    """A stand-in of a pyVmomi device class whose type name is NAME (vim.vm.device.VirtualTPM)."""
+    return type(name, (object,), {})()
+
+
+class VmSecurity(unittest.TestCase):
+    """site_vmware_vms with security (1.11.0, the VM inventory): encryption, Secure Boot, vTPM."""
+
+    def test_encrypted_vm_with_tpm_present(self):
+        pr = {"config.keyId": _Obj(keyId="k1", providerId=_Obj(id="provider-a")), "config.migrateEncryption": "required",
+              "config.bootOptions": _Obj(efiSecureBootEnabled=True), "summary.config.tpmPresent": True}
+        self.assertEqual(vms._security(pr), {"encrypted": True, "key_provider": "provider-a", "migrate_encryption": "required",
+                                             "secure_boot": True, "vtpm": True})
+
+    def test_nothing_set(self):
+        # no keyId (not encrypted), no bootOptions (vcsim: Secure Boot unset = off), tpmPresent not given and no devices read
+        self.assertEqual(vms._security({}), {"encrypted": False, "key_provider": "", "migrate_encryption": "",
+                                             "secure_boot": False, "vtpm": None})
+
+    def test_vtpm_from_the_devices_when_vcenter_has_no_tpm_present(self):
+        disk, tpm = _typed("vim.vm.device.VirtualDisk"), _typed("vim.vm.device.VirtualTPM")
+        self.assertTrue(vms._security({}, [disk, tpm])["vtpm"])
+        self.assertFalse(vms._security({}, [disk])["vtpm"])
+        self.assertFalse(vms._security({"summary.config.tpmPresent": False}, [tpm])["vtpm"])   # vCenter's own answer first
+        self.assertFalse(vms._has_tpm(None))
+
+    def test_api_version(self):
+        self.assertEqual(vms._api(_Obj(about=_Obj(apiVersion="8.0.3"))), (8, 0, 3))
+        self.assertLess(vms._api(_Obj(about=_Obj(apiVersion="6.5"))), (6, 7))           # tpmPresent not asked of 6.5
+        self.assertEqual(vms._api(_Obj()), ())
 
 
 if __name__ == "__main__":

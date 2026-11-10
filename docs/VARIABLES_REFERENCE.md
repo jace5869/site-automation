@@ -1922,6 +1922,10 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_inventory_by_folder` | `true` | a table per vCenter and folder; false = one table of every VM (vCenter and folder columns) |
 | `vm_inventory_max_rows` | `2000` | VMs listed in the email and the page at most (2000: about 2.5 MB of email; the workbook always has every VM) |
 | `vm_inventory_xlsx` | `true` | attach every VM as an Excel workbook (.xlsx) to the email |
+| `vm_inventory_security` | `true` | read each VM's encryption, Secure Boot and vTPM: the section "VMs without encryption, EFI or vTPM", its counts, the website's columns and the workbook (false: not read) |
+| `vm_inventory_security_skip_templates` | `true` | templates left out of that section and its counts (when vm_inventory_templates lists them) |
+| `vm_inventory_security_skip_off` | `false` | true = powered-off VMs left out of that section and its counts |
+| `vm_inventory_hidden_columns` | `[SB, Tools ver.]` | the website's VM tables: these of the extra columns (Enc, EFI, SB, vTPM, HW, Tools, Tools ver. - or their full names) start hidden; the Columns menu shows them, and keeps a viewer's choice |
 | `vm_tools_templates` | `false` | ---- VMware Tools inventory (playbooks/vm_tools_report.yml) ---- true = templates counted and listed as VMs (false: left out, their number in the subtitle) |
 | `vm_tools_by_folder` | `true` | a table per vCenter and folder; false = one table of every VM (vCenter and folder columns) |
 | `vm_tools_max_rows` | `2000` | VMs listed in the email and the page at most (the workbook always has every VM) |

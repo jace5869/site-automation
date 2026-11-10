@@ -40,6 +40,12 @@ options:
     description: Read at most this many of those events (the newest).
     type: int
     default: 50000
+  security:
+    description: Also read each VM's encryption (VM Encryption - config.keyId - and encrypted vMotion), whether Secure
+      Boot is on, and whether it has a virtual TPM (summary.config.tpmPresent; where vCenter does not give it, older than
+      6.7, the VM's devices are read for a Virtual TPM). For the VM inventory report.
+    type: bool
+    default: false
 author: site automation
 '''
 
@@ -61,6 +67,8 @@ vms:
     #   volumes [{path: "C:\\", capacity_gb: 99.4, free_gb: 12.1}], storage_used_gb: 54.2, storage_provisioned_gb: 108.0
     # with events_days: last_restart {time, kind (power on, guest restart, reset, HA restart), by}, last_power_off {time, kind, by},
     #   last_vmotion {time, kind (vMotion, DRS vMotion, relocate), from_host, to_host, by} - {} when none in the window
+    # with security: encrypted (true: config.keyId set), key_provider (its key provider), migrate_encryption (encrypted vMotion:
+    #   disabled, opportunistic, required; '' when not given), secure_boot (true/false), vtpm (true/false; null = not known)
 events:
   description: With events_days, one per vCenter read - its name, the days read, how many events, and whether
     max_events cut it short (capped).
@@ -150,6 +158,43 @@ def _disks(pr):
     return vd, vols, (round(used / GB, 1) if used is not None else None), (round((used + unc) / GB, 1) if used is not None else None)
 
 
+def _has_tpm(devices):
+    """A Virtual TPM among the VM's devices (by its type's name: pyVmomi's vim.vm.device.VirtualTPM)."""
+    return any(type(d).__name__.split(".")[-1] == "VirtualTPM" for d in devices or [])
+
+
+def _security(pr, devices=None):
+    """Encryption, Secure Boot and vTPM from the VM's properties: vTPM from summary.config.tpmPresent, else from its
+    devices (None: neither was read)."""
+    key = pr.get("config.keyId")
+    tpm = pr.get("summary.config.tpmPresent")
+    if tpm is None and devices is not None:
+        tpm = _has_tpm(devices)
+    return {"encrypted": key is not None,
+            "key_provider": str(getattr(getattr(key, "providerId", None), "id", "") or "") if key is not None else "",
+            "migrate_encryption": str(pr.get("config.migrateEncryption") or ""),
+            "secure_boot": bool(getattr(pr.get("config.bootOptions"), "efiSecureBootEnabled", False)),
+            "vtpm": None if tpm is None else bool(tpm)}
+
+
+def _devices(content, vms):
+    """{vm moid: its devices} for these VMs, in one query (the vTPM where vCenter has no summary.config.tpmPresent)."""
+    if not vms:
+        return {}
+    spec = vmodl.query.PropertyCollector.FilterSpec(
+        objectSet=[vmodl.query.PropertyCollector.ObjectSpec(obj=v, skip=False) for v in vms],
+        propSet=[vmodl.query.PropertyCollector.PropertySpec(type=vim.VirtualMachine, pathSet=["config.hardware.device"])])
+    return dict((o.obj._moId, [x.val for x in o.propSet][0] if o.propSet else []) for o in content.propertyCollector.RetrieveContents([spec]))
+
+
+def _api(content):
+    """vCenter's API version as numbers ('8.0.3' -> (8, 0, 3))."""
+    try:
+        return tuple(int(x) for x in str(content.about.apiVersion).split(".") if x.isdigit())
+    except Exception:
+        return ()
+
+
 def _vm_events(content, p, now):
     """{vm moid: {'restart': {...}, 'power_off': {...}, 'vmotion': {...}}} - the newest of each, from one query of the
     last events_days days - and what was read."""
@@ -191,6 +236,11 @@ def _vm_events(content, p, now):
 def _read(content, p, now, vcenter):
     out, hosts, folders = [], {}, {}
     props = PROPS + (["config.hardware.device", "guest.disk", "summary.storage"] if p["disks"] else [])
+    if p["security"]:
+        # summary.config.tpmPresent is in vCenter's API from 6.7: an older vCenter refuses the whole query when it is asked
+        props += ["config.keyId", "config.migrateEncryption", "config.bootOptions"] + (
+            ["summary.config.tpmPresent"] if _api(content) >= (6, 7) else [])
+    no_tpm = []
     evs, ev_info = _vm_events(content, p, now) if p["events_days"] > 0 else ({}, {})
     view = content.viewManager.CreateContainerView(content.rootFolder, [vim.VirtualMachine], True)
     spec = vmodl.query.PropertyCollector.FilterSpec(
@@ -230,10 +280,18 @@ def _read(content, p, now, vcenter):
         if p["disks"]:
             vd, vols, used, prov = _disks(pr)
             out[-1].update({"vdisks": vd, "volumes": vols, "storage_used_gb": used, "storage_provisioned_gb": prov})
+        if p["security"]:
+            out[-1].update(_security(pr, pr.get("config.hardware.device") if p["disks"] else None))
+            if out[-1]["vtpm"] is None:
+                no_tpm.append((out[-1], vm))
         if p["events_days"] > 0:
             e = evs.get(vm._moId, {})
             out[-1].update({"last_restart": e.get("restart", {}), "last_power_off": e.get("power_off", {}), "last_vmotion": e.get("vmotion", {})})
     view.Destroy()
+    # no tpmPresent (vcsim, a vCenter before 6.7): the devices of only those VMs, in one more query
+    devs = _devices(content, [vm for _, vm in no_tpm])
+    for rec, vm in no_tpm:
+        rec["vtpm"] = _has_tpm(devs[vm._moId]) if vm._moId in devs else None
     return out, ev_info
 
 
@@ -242,7 +300,7 @@ def main():
         argument_spec=dict(datacenter=dict(type="str"), validate_certs=dict(type="bool", default=True),
                            vcenters=dict(type="list", elements="str", default=[]), now=dict(type="float"),
                            disks=dict(type="bool", default=False), events_days=dict(type="float", default=0),
-                           max_events=dict(type="int", default=50000)),
+                           max_events=dict(type="int", default=50000), security=dict(type="bool", default=False)),
         supports_check_mode=True,
     )
     if not HAS_PYVMOMI:

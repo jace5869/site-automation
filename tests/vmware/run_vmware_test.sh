@@ -12,8 +12,8 @@
 # the pick lists (the survey's choices written in a fake AAP, the picked snapshots deleted and VMs restarted, each checked again);
 # the outage watch (hung VMs by heartbeat and ping, protected ones, HA and storage events, a disconnected host, its
 # incidents opened and resolved in a fake ServiceNow);
-# the vCenter log analysis (vcsim hands out no logs: the job says so); the VM inventory report (and its workbook by email);
-# the VMware Tools inventory;
+# the vCenter log analysis (vcsim hands out no logs: the job says so); the VM inventory report (and its workbook by email;
+# the VMs without encryption, EFI or vTPM, the website's columns); the VMware Tools inventory;
 # the ESXi network check (esxcli through vCenter - vcsim has no network diag ping: its answer is said); the VM right-sizing
 # report (a VM made too big, thresholds, its workbook by email, ACT's review); the VMware version report; VM - ask a question
 # (GenAI's query run with joins, questions that ask for a change refused, the whitelist, the job's own reader without a key);
@@ -442,17 +442,24 @@ run "datastore report for another datacenter: none" ok vm_datastore_report.yml -
 
 # ---- VM inventory report (read-only) ----------------------------------------------------------------------------------
 run "VM inventory report: every VM by vCenter and folder, the count" ok vm_inventory_report.yml \
-    -- "VM inventory: " "VMs in 1 vCenter" '"vm_inventory"' '"VMs": '
-check_inv() {  # the counts in the artifact against vcsim's own VMs
+    -- "VM inventory: " "VMs in 1 vCenter" '"vm_inventory"' '"VMs": ' "Not encrypted: " "Without EFI: " "Without vTPM: "
+check_inv() {  # the counts in the artifact against vcsim's own VMs (1.11.0: vcsim has no VM Encryption and no vTPM - the
+               # vTPM read from the devices, vCenter giving no tpmPresent; web01 and DC0_C0_RP0_VM0 are EFI)
     "$py" - "$work/out.txt" <<'PY'
 import re, sys
 t = open(sys.argv[1]).read()
 m = re.search(r"VM inventory: (\d+) VMs? in 1 vCenter", t)
 assert m and int(m.group(1)) > 0, t[-2000:]
-assert re.search(r'"VMs": %s\b' % m.group(1), t), "the artifact's count"
+n = int(m.group(1))
+assert re.search(r'"VMs": %s\b' % n, t), "the artifact's count"
+c = dict((k, int(v)) for k, v in re.findall(r'"(Not encrypted|Without EFI|Without vTPM)": (\d+)', t))
+assert c == {"Not encrypted": n, "Without EFI": n - 2, "Without vTPM": n}, c
 PY
 }
-check_inv && echo "ok   -   ...the title and the artifact give the same count" || { echo "FAIL -   ...inventory counts"; fails=$((fails + 1)); }
+check_inv && echo "ok   -   ...the title and the artifact give the same count; none encrypted, two EFI, no vTPM" || { echo "FAIL -   ...inventory counts"; fails=$((fails + 1)); }
+run "VM inventory report with vm_inventory_security false: encryption, Secure Boot and vTPM not read" ok vm_inventory_report.yml \
+    -e vm_inventory_security=false -- "VM inventory: "
+if grep -q "Not encrypted" "$work/out.txt"; then echo "FAIL -   ...security read anyway"; fails=$((fails + 1)); else echo "ok   -   ...no counts of them"; fi
 
 # ---- VMware Tools inventory (read-only; vcsim's VMs: its own Tools status and hardware versions) ----------------------
 run "VMware Tools inventory: every VM's Tools version and status, hardware version and guest OS, by vCenter and folder" ok \
@@ -538,10 +545,12 @@ run "cleanup, email only if deleted: deleted one, emailed" ok vm_snapshot_cleanu
     -e "$mail" -e vm_snapshot_cleanup_email_only_if_deleted=true -- "deleted 1 snapshot(s)" "emailed"
 run "cleanup again, nothing left to delete: no email" ok vm_snapshot_cleanup.yml -e _vm_now=$later -e vm_snapshot_cleanup_confirm=true \
     -e "$mail" -e vm_snapshot_cleanup_email_only_if_deleted=true -- "No email: nothing was deleted"
-run "VM inventory report emailed, every VM attached as a workbook" ok vm_inventory_report.yml -e "$mail" -- "emailed"
+mkdir -p "$work/invweb"
+run "VM inventory report emailed, every VM attached as a workbook, and on the website" ok vm_inventory_report.yml -e "$mail" \
+    -e "{\"report_web_dest\": \"$work/invweb\", \"report_web_theme\": \"brief\"}" -- "emailed"
 emlinv="$(grep -l 'Subject: \[AAP\] VM inventory: ' "$work/mail"/*.eml | head -1)"
-if [ -n "$emlinv" ] && "$py" - "$emlinv" <<'PY'
-import email, email.policy, io, re, sys, zipfile
+if [ -n "$emlinv" ] && "$py" - "$emlinv" "$work/invweb" <<'PY'
+import email, email.policy, glob, html, io, re, sys, zipfile
 m = email.message_from_binary_file(open(sys.argv[1], "rb"), policy=email.policy.default)
 n = int(re.search(r"VM inventory: (\d+) VM", m["Subject"]).group(1))
 att = [p for p in m.walk() if re.match(r"vm-inventory-report_\d{4}-\d{2}-\d{2}\.xlsx$", p.get_filename() or "")]
@@ -550,8 +559,22 @@ z = zipfile.ZipFile(io.BytesIO(att[0].get_content()))
 sheet = z.read("xl/worksheets/sheet1.xml").decode()
 assert '<sheet name="VMs"' in z.read("xl/workbook.xml").decode()
 assert sheet.count("<row ") == n + 1, (sheet.count("<row "), n)          # the header and every VM
+cells = re.findall(r"<t[^>]*>([^<]*)</t>", sheet)
+for col in ("Encrypted", "Encrypted vMotion", "Firmware", "Secure Boot", "vTPM", "Hardware version", "VMware Tools", "Tools version"):
+    assert col in cells, col
+assert "required" in cells                                                # web01's encrypted vMotion (vcsim.py setup)
+# the email: the lean VM tables, the new fields in their sections (1.11.0)
+body = [p for p in m.walk() if p.get_content_type() == "text/html"][0].get_content()
+assert "VMs without encryption, EFI or vTPM" in body and "Hardware versions and Tools" in body, "the sections"
+assert ">Enc<" not in body and ">vCPUs<" in body, "the email's VM tables"
+# the website: the VM tables with the short headers, their full names, two columns that start hidden
+page = [p for p in glob.glob(sys.argv[2] + "/*/*.html") if not p.endswith("latest.html")][0]
+h = open(page).read()
+assert 'title="Encrypted"><button type="button">Enc<' in h, "the short header and its name"
+assert '<input type="checkbox" class="c11">Secure Boot</label>' in h, "Secure Boot starts hidden"
+assert '<table class="cc">' in h and "site-report-cols:" in h
 PY
-then echo "ok   -   ...the workbook: one sheet, a line per VM"; else echo "FAIL -   ...the inventory workbook"; fails=$((fails + 1)); fi
+then echo "ok   -   ...the workbook: one sheet, a line per VM, the new columns; the email lean; the website's columns"; else echo "FAIL -   ...the inventory workbook, email or website"; fails=$((fails + 1)); fi
 run "VM right-sizing report emailed, every VM attached as a workbook" ok vm_rightsizing_report.yml -e "$mail" -e vm_rightsize_year=false -- "emailed"
 emlrs="$(grep -l 'Subject: \[AAP\] VM right-sizing: ' "$work/mail"/*.eml | head -1)"
 if [ -n "$emlrs" ] && "$py" - "$emlrs" <<'PY'

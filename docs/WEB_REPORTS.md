@@ -86,7 +86,10 @@ Since 0.63.0:
   (Chrome and Edge 105 and newer). **/** or **Ctrl+K** goes to the box, **Enter** to the first section with a match,
   **Esc** clears it. The table's own filter box (past 8 rows) still works, with the search or alone.
 - **Columns** above each table: tick the columns to see, *Show all* to have them back. It works without the script
-  too, and what you take off is left out of Print, Copy and CSV as well.
+  too, and what you take off is left out of Print, Copy and CSV as well. Your choice is kept in your browser (1.11.0)
+  for every table with the same columns - on this page, and the next report's - and a report may start some hidden
+  (the VM inventory's `vm_inventory_hidden_columns`). A column with a short header (`Enc`) shows its full name when you
+  point at it, in the Columns menu and on a phone's cards.
 - **CSV** above each table: the table **as shown** - its columns, the rows the search and the filter leave, in the order
   sorted - as a `.csv` file named after the report and the section, that opens in Excel (accents and all: it starts
   with a byte order mark). A value that Excel would read as a formula (`=`, `+`, `-` or `@` at its start, and not a
