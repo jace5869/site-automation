@@ -16,6 +16,10 @@ check does) that queries Active Directory, runs `dcdiag` tests that only read, `
 A second job, **`playbooks/ad_lockout.yml`**, is for the service desk: is an account locked out,
 and **which computer is locking it out** - see [Account lockout](#account-lockout) at the end.
 
+**No domain admin?** Where only Domain Admins may log on to the DCs, the job reads the domain from
+the AAP side as a plain domain user instead - over LDAP, DNS and Kerberos, no WinRM: see
+[Without a domain admin](#without-a-domain-admin) (1.4.0, `ad_health_mode`).
+
 **No second hop.** Every DC asks only itself (`localhost`). AD is replicated, so the DC that reads
 the domain has every object in its own copy, and the replication metadata says on which DC a change
 was made. So the job works over WinRM with NTLM or Kerberos and needs no delegation or CredSSP.
@@ -78,7 +82,8 @@ services, dcdiag, events, time and disks are not read, and changes made on it sh
 
 `dcdiag` and `repadmin` need administrator rights **on the DCs**, and the local Administrators group
 of a DC is the domain's built-in Administrators group: there is no smaller group that lets them run.
-So the job needs an account in the domain's **Administrators** (or **Domain Admins**) group.
+So the job needs an account in the domain's **Administrators** (or **Domain Admins**) group - or,
+without one, reader mode with a plain domain user ([Without a domain admin](#without-a-domain-admin)).
 
 - Make a **dedicated** account for it (e.g. `svc_aap_adhealth`), used by nothing else.
 - Treat it as tier 0: allow it to log on to the DCs only (*Log on to* / an authentication policy
@@ -182,6 +187,106 @@ Ready to paste, with every setting switched off: [aap/extra_vars/ad_health_repor
   one of its own DCs. Schema and forest-wide FSMO roles are reported by the forest root domain.
 - The report covers what the DCs say about themselves and the domain. It does not test logons from
   clients, and it does not read Azure AD / Entra ID.
+
+## Without a domain admin
+
+At many sites only Domain Admins may log on to the DCs, and AAP's account cannot be one. Then the
+job runs in **reader mode** (1.4.0): no WinRM at all. Everything is read **from the AAP side**, over
+LDAP, DNS and Kerberos, as the template's Machine credential - a **plain domain user with nothing
+granted**. Nothing runs on a DC and nothing is written to AD.
+
+`ad_health_mode` picks how:
+
+| Value | What it does |
+|---|---|
+| `auto` (default) | the job tries WinRM to the DCs as before; when **no** DC can be reached with the credential, it reads the domain in reader mode instead. The job output and the report's first section say which, and why |
+| `admin` | always WinRM on each DC (this chapter above); a DC that refuses is red |
+| `reader` | never WinRM: reader mode only |
+
+### What reader mode reads
+
+| Check | How | Colours |
+|---|---|---|
+| **The DCs** | AD's own list (the server objects in Configuration with their NTDS Settings, and the DC computer accounts): site, OS, global catalog, read-only. Compared with the inventory's group | amber a DC in the inventory that AD does not have; a DC in AD not in the inventory is still checked |
+| **LDAP and LDAPS** | each DC: 389 answers, 636 answers and binds as the account (else StartTLS on 389) | red no answer or the bind refused; amber LDAPS down but StartTLS works |
+| **Synchronized, clocks** | each DC's rootDSE: `isSynchronized`, `isGlobalCatalogReady`, `currentTime` against the other DCs' | red not synchronized; clock amber 2 min, red 5 min (`ad_reader_clock_warn_seconds` / `_crit_seconds`) |
+| **LDAPS certificate** | each DC's, read from the TLS handshake on 636: expiry, issuer, trusted here | amber 30 days, red 7 (`ad_cert_warn_days` / `_crit_days`); amber not trusted |
+| **Kerberos** | each DC's KDC: a **ticket (TGT)** from it with `kinit` (the Windows EE has it) - else an **AS-REQ** it must answer (`ad_reader_kerberos`) | red no answer; amber the KDC answers but gives no ticket |
+| **FSMO roles** | `fSMORoleOwner` of the five objects: the holder is still a DC, and answers | red |
+| **DNS** | the SRV records `_ldap._tcp.dc._msdcs`, `_kerberos._tcp.dc._msdcs`, `_ldap._tcp`, `_kerberos._tcp`, `_ldap._tcp.gc._msdcs`: every DC (every GC) registered; each DC's A record, against the inventory's address | red a record missing; amber a DC not registered or a different address |
+| **Replication** | each DC's own copy of each partition head, as far as a plain user may read it: `msDS-NCReplInboundNeighbors` (Windows builds it), else `repsFrom` (each partner, last success, consecutive failures, last error), else `replUpToDateVector` (when each partner's changes last arrived). The report says which it could read | amber 6 h, red 24 h (`ad_repl_warn_hours` / `_crit_hours`), as admin mode; **grey "not read (needs admin)"** when the account may read none of them - never a guess |
+| **Privileged groups** | the same groups and `ad_privileged_groups_extra` / `ad_groups_should_be_empty`: their members now; when a member was added or removed and on which DC from `msDS-ReplValueMetaData`, when the account may read it; and who joined or left **since the last run** | amber (`ad_privileged_change_severity`) |
+| **Accounts** | locked out now (`lockoutTime` within the lockout duration); created in the last `ad_report_hours` (`whenCreated`); enabled / disabled / locked / unlocked - when and on which DC from the replication metadata of `userAccountControl` and `lockoutTime`, else `whenChanged` (**best effort**, labelled so) | blue |
+
+**Who** made a change is only in the DCs' Security logs, which need admin: reader mode says *not
+known (needs the event logs)*.
+
+### What it cannot read
+
+**dcdiag, repadmin** (the queue, backups), **the DC services, SYSVOL and DFSR, the disks, the event
+logs, w32tm** and the Security log need admin on the DCs. The report says so **once**, in grey, at
+the top - *Not run - needs admin on the DCs (reader mode)* - not as a row per DC, and the job stays
+green for it: red and amber come only from what was found. Deleted accounts (the Deleted Objects
+container) and anything else the account may not read are listed under *Not read*.
+
+### The account
+
+A **plain domain user**. It needs nothing granted: reader mode reads only what any authenticated
+user may read, and what the account may not is said as *not read*. Make one for the job (e.g. `svc_aap_adreader`), and put it in the template's
+**Machine** credential (user name `svc_aap_adreader@CORP.EXAMPLE.MIL` or `CORP\svc_aap_adreader`).
+Reader mode binds with it - a **simple bind over LDAPS**, else StartTLS on 389; never in clear text.
+The certificate must be trusted by the EE (your CA in `ee/*/ca`) and name the DC before the password
+is sent (`ad_reader_validate_certs`, `ad_reader_ca_file`). A refused password is tried once per run,
+never against every DC, so the job does not lock the account out.
+
+Use the same inventory as admin mode: the DCs in `win_dc` (or `domain_controllers`). They are
+compared with AD's own list, never logged in to. The domain is their names' (`dc01.corp.example.mil`
+-> `corp.example.mil`). With short names (`dc01`) it is learned, in this order: their `ansible_host` when that is
+an FQDN; each DC's rootDSE, read on 389 without a bind (no password sent); the EE's DNS search domain
+(`resolv.conf`). Each DC is then reached as the name its rootDSE gives (`dnsHostName`, the name on its LDAPS
+certificate), else `<short name>.<domain>`. *How this was read* says where the domain came from; only when all of
+these fail, the report says to set `ad_reader_domain`. The EE must reach the DCs on 389,
+636 and 88, and a DNS server that has the domain's records (`ad_reader_dns_servers`, else the EE's).
+
+### Since the last run
+
+Each run keeps the privileged groups' members as a **job artifact** (`ad_privileged_members`). The
+next run reads the last one through AAP's API - the **"Red Hat Ansible Automation Platform"
+credential** on the template, as the report strip (`report_history`) uses - and lists who joined
+or left in between. Without it, one grey line: *no earlier list: the first run, or the last run's
+artifact couldn't be read (the AAP credential?)*; that is never shown as a change.
+
+Instead of AAP, a file: `ad_reader_history_file: /var/lib/site-health/ad-privileged-groups.json`.
+It is written on the AAP side, in the EE, after each run (never in Check mode) - so the folder must
+outlive the job: in AAP, **Settings > Job settings > Paths to expose to isolated jobs**, add
+`/var/lib/site-health:/var/lib/site-health:Z` (on every execution node, the folder made and owned by
+the user jobs run as). `ad_reader_history: false` keeps no list at all.
+
+### Settings (reader mode)
+
+| Setting | Default | What it does |
+|---|---|---|
+| `ad_health_mode` | `auto` | `auto`, `admin` or `reader` (above) |
+| `ad_reader_domain` | `""` | the domain's DNS name (`""` = learned: the DCs' names, their `ansible_host`, their rootDSE, the EE's DNS search domain) |
+| `ad_reader_user` / `ad_reader_password` | `""` | `""` = the Machine credential's |
+| `ad_reader_validate_certs` / `ad_reader_ca_file` | `true` / `""` | the LDAPS certificate must be trusted; a CA file (`""` = the EE's) |
+| `ad_reader_kerberos` | `auto` | `auto` (a TGT with kinit, else an AS-REQ), `tgt`, `probe` (AS-REQ only), `off` |
+| `ad_reader_dns_servers` | `[]` | DNS servers to ask (`[]` = the EE's) |
+| `ad_reader_ports` | `{ldap: 389, ldaps: 636, kerberos: 88, dns: 53}` | the ports |
+| `ad_reader_endpoints` | `{}` | a DC reached at another address or port (NAT): `{dc01.corp.example.mil: {address: 192.0.2.11, ldaps: 636}}` |
+| `ad_reader_timeout` | `5` | seconds per connection |
+| `ad_reader_clock_warn_seconds` / `_crit_seconds` | `120` / `300` | a DC's clock against the others' |
+| `ad_reader_history` / `ad_reader_history_file` | `true` / `""` | the members since the last run: the AAP artifact, or this file |
+
+### Troubleshooting (reader mode)
+
+| You see | It means | Do |
+|---|---|---|
+| **NOT READ** with `the bind was refused - invalidCredentials ... data 52e` | the password is wrong (775: locked out, 533: disabled) | fix the Machine credential |
+| **NOT READ** with `certificate verify failed` | the EE does not trust the DCs' LDAPS certificate | add your CA to `ee/*/ca` and rebuild the EE, or set `ad_reader_ca_file` |
+| Replication **not read (needs admin)** in grey | the account may read none of the replication attributes on that DC | expected for a plain user on some domains; admin mode reads it with repadmin |
+| *Privileged group changes*: **not read (needs admin)** | the account may not read `msDS-ReplValueMetaData` | the *since the last run* table still lists who joined or left |
+| Kerberos **answers; no TGT** | the KDC answers but refused the account a ticket (its password, locked out, expired) | the error says which |
 
 ## Account lockout
 

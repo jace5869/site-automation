@@ -59,6 +59,7 @@ jobs:
           python tests/test_fapolicyd_fix.py
           python tests/test_fapolicyd_rules.py
           python tests/test_ad.py
+          python tests/test_ad_reader.py
           python tests/test_ad_lockout.py
           python tests/test_mariadb_perf.py
           python tests/test_capacity.py
@@ -178,6 +179,13 @@ jobs:
         run: |
           bash tests/ad/run_ad_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/ad/run_ad_test.sh
+      - name: Active Directory health report, reader mode - a plain domain user against two real Samba AD DCs in docker (current ansible-core and 2.16)
+        run: |
+          sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq krb5-user > /dev/null
+          pip install ldap3 dnspython cryptography pywinrm
+          /tmp/ac216/bin/pip -q install ldap3 dnspython cryptography pywinrm
+          AD_TEST_RUNTIME=docker bash tests/ad/run_ad_reader_test.sh
+          AD_TEST_RUNTIME=docker ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/ad/run_ad_reader_test.sh
       - name: Account lockout, the Ansible side with made-up DCs (current ansible-core and 2.16)
         run: |
           bash tests/ad/run_lockout_test.sh
@@ -359,7 +367,7 @@ jobs:
         run: |
           python3 - <<'PY'
           import ast, glob, sys
-          files = [f for pat in ('plugins/**/*.py', 'roles/*/library/*.py', 'roles/*/module_utils/*.py', 'scripts/*.py',
+          files = [f for pat in ('plugins/**/*.py', 'roles/*/library/*.py', 'roles/*/module_utils/*.py', 'roles/*/action_plugins/*.py', 'scripts/*.py',
                                  'inventories/idm/inventory_plugins/*.py') for f in glob.glob(pat, recursive=True)]
           bad = 0
           for f in sorted(files):

@@ -15,6 +15,63 @@
 # ==================================================================================================
 ---
 # ---- ad_report -----------------------------------------------------------------------------------
+## ---- Mode (1.4.0) -------------------------------------------------------------------------------
+## admin: a PowerShell script on every DC over WinRM (an account that may log on to the DCs, Domain
+## Admins). reader: no WinRM - read from the AAP side over LDAP, DNS and Kerberos as a plain domain
+## user with nothing granted; dcdiag, repadmin, services, SYSVOL, disks and events are not run
+## (docs/ACTIVE_DIRECTORY.md, "Without a domain admin"). auto: admin when a DC of the inventory can
+## be reached over WinRM with the credential, else reader.
+# ad_health_mode: auto
+
+## ---- Reader mode -------------------------------------------------------------------------------
+## the AD domain's DNS name ("" = learned: the DCs' names, their ansible_host, their rootDSE, the
+## EE's DNS search domain)
+# ad_reader_domain: ""
+
+## "" = the job's Machine credential (UPN svc@CORP.EXAMPLE.MIL, CORP\svc, or a DN)
+# ad_reader_user: ""
+
+## "" = the Machine credential's (a simple bind over LDAPS, else StartTLS on 389 - never in clear)
+# ad_reader_password: ""
+
+## the LDAPS / StartTLS certificate must be trusted and name the DC before the password is sent
+# ad_reader_validate_certs: true
+
+## a CA file ("" = what the execution environment trusts: ee/*/ca)
+# ad_reader_ca_file: ""
+
+## auto: a TGT from each KDC with kinit (the Windows EE has it), else an AS-REQ; tgt; probe (AS-REQ
+## only); off
+# ad_reader_kerberos: auto
+
+## DNS servers asked for the SRV and A records ([] = the execution environment's)
+# ad_reader_dns_servers: []
+
+## the ports the DCs answer on, and the DNS servers'
+# ad_reader_ports: {ldap: 389, ldaps: 636, kerberos: 88, dns: 53}
+
+## a DC reached at another address or port (NAT, a test): {dc01.corp.example.mil: {address:
+## 192.0.2.11, ldaps: 636}}
+# ad_reader_endpoints: {}
+
+## seconds per connection
+# ad_reader_timeout: 5
+
+## a DC's clock against the others' (rootDSE currentTime) -> amber
+# ad_reader_clock_warn_seconds: 120
+
+## -> red (Kerberos fails at 5 minutes)
+# ad_reader_clock_crit_seconds: 300
+
+## The privileged groups' members of the last run, to say who joined or left since (on top of the
+## replication metadata, when the account may read it): this template's previous job's artifact in
+## AAP - needs the "Red Hat Ansible Automation Platform" credential on the template - or, with
+## ad_reader_history_file set, that file (on the AAP side: see the docs).
+# ad_reader_history: true
+
+## e.g. /var/lib/site-health/ad-privileged-groups.json - "" = the AAP job artifact
+# ad_reader_history_file: ""
+
 ## ---- Changes ------------------------------------------------------------------------------------
 ## the changes of the last this-many hours (match it to the schedule: a daily job = 24)
 # ad_report_hours: 24

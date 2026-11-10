@@ -1,0 +1,10 @@
+# A Samba Active Directory domain controller for tests/ad/run_ad_reader_test.sh (the AD report's reader mode against a
+# real AD: LDAP, LDAPS, DNS, Kerberos, replication between two DCs). Test only - made-up domain corp.example.mil.
+# The xid range is moved under 65536 so a rootless container (podman) can map the IDs Samba gives its groups.
+FROM docker.io/library/alpine:3.20
+RUN apk add --no-cache samba-dc samba-client krb5 python3 \
+ && sed -i 's/^lowerBound: .*/lowerBound: 30000/; s/^upperBound: .*/upperBound: 60000/' /usr/share/samba/setup/idmap_init.ldif
+COPY start.sh /usr/local/bin/sa-dc-start
+COPY admin.py /usr/local/bin/sa-dc-admin
+RUN chmod 755 /usr/local/bin/sa-dc-start /usr/local/bin/sa-dc-admin
+CMD ["/usr/local/bin/sa-dc-start"]

@@ -143,7 +143,7 @@ def short(name):
 
 
 # The replication errors seen most, in plain words (repadmin's "Last Failure Status")
-REPL_ERRORS = {"5": "access denied", "1256": "the remote system is not available", "1396": "logon failure: the target account name is wrong (SPN / duplicate name)",
+REPL_ERRORS = {"5": "access denied", "64": "the partner's network name went away (it stopped, or the network dropped)", "1256": "the remote system is not available", "1396": "logon failure: the target account name is wrong (SPN / duplicate name)",
                "1722": "the RPC server is unavailable (DC down, firewall, DNS)", "1753": "no more endpoints (RPC port blocked)",
                "1908": "could not find the domain controller", "8453": "replication access was denied",
                "8456": "the source DC is refusing replication (inbound/outbound disabled)", "8457": "this DC is refusing replication (disabled)",
@@ -296,15 +296,14 @@ def ad_report(dcs, domains, opts=None):
 
     rw, rc = float(o.get("repl_warn_hours", 6)), float(o.get("repl_crit_hours", 24))
 
-    # ---- 1. domains ------------------------------------------------------------------------------------
-    rows = []
+    # ---- 1. domains (two tables: thirteen columns did not fit a laptop's screen) ------------------------
+    rows, upkeep = [], []
     summaries = []
     for d in domains:
         data = d.get("data") or {}
         if not data.get("dns"):
             err = d.get("error") or "; ".join(data.get("errors") or []) or "no answer"
-            rows.append(_row([d.get("domain") or "?", "", "", "", "", "", "", "", "", "", "", "", "NOT READ on %s: %s" % (d.get("host"), err)],
-                             [""] * 12 + ["critical"]))
+            rows.append(_row([d.get("domain") or "?", "", "", "", "", "", "NOT READ on %s: %s" % (d.get("host"), err)], [""] * 6 + ["critical"]))
             R.problem(d.get("domain") or "?", "domain", d.get("host"), "critical", "the domain-wide part could not be read: " + err)
             continue
         dn = data["dns"]
@@ -325,7 +324,7 @@ def ad_report(dcs, domains, opts=None):
         rid_txt, rid_st = "?", ""
         if total:
             left = 100.0 * (total - (issued or 0)) / total
-            rid_txt = "%.1f%% (%d issued)" % (left, issued or 0)
+            rid_txt = "%.1f%%" % left
             rid_st = level(left, float(o.get("rid_warn_pct", 10)), float(o.get("rid_crit_pct", 2)), higher_is_worse=False)
             R.problem(dn, "domain", "RID pool", rid_st, "%.1f%% of the domain's RID pool is left: new accounts fail when it runs out" % left)
         # backups
@@ -357,19 +356,21 @@ def ad_report(dcs, domains, opts=None):
             R.problem(dn, "sysvol", "dfsrmig", "warning", "SYSVOL migration from FRS to DFSR is at '%s', not 'Eliminated': FRS is removed from Windows Server 2019 and later" % mig)
         dc_st = "ok" if n_read == len(all_dcs) else "info"
         rows.append(_row([dn, fo.get("name", ""), data.get("mode", ""), fo.get("mode", ""), data.get("schema", {}).get("version", ""),
-                          "%d of %d" % (n_read, len(all_dcs)), short(next((f.get("holder") for f in data.get("fsmo") or [] if f.get("role") == "PDC emulator"), "")),
-                          tsl_txt, "on" if rb else ("OFF" if rb is False else "?"), rid_txt, b_txt,
-                          age_text(k_age) if k_age is not None else "?", mig or "-"],
-                         ["", "", "", "", "", dc_st, "", tsl_st, rb_st, rid_st, b_st, k_st, mig_st]))
+                          "%d of %d" % (n_read, len(all_dcs)), short(next((f.get("holder") for f in data.get("fsmo") or [] if f.get("role") == "PDC emulator"), ""))],
+                         ["", "", "", "", "", dc_st, ""]))
+        upkeep.append(_row([dn, tsl_txt, "on" if rb else ("OFF" if rb is False else "?"), rid_txt, b_txt, age_text(k_age) if k_age is not None else "?", mig or "-"],
+                           ["", tsl_st, rb_st, rid_st, b_st, k_st, mig_st]))
         summaries.append({"domain": dn, "forest": fo.get("name", ""), "dcs": len(all_dcs), "dcs_read": n_read, "collector": d.get("host")})
-    R.table("Domains", "Each domain: functional levels, schema version, its DCs (checked here / in AD), the PDC emulator, the "
-            "tombstone lifetime, the Recycle Bin, how much of the RID pool is left, the oldest partition's last backup, the age "
-            "of the krbtgt password and the SYSVOL migration state.",
-            ["Domain", "Forest", "Domain level", "Forest level", "Schema", "DCs checked", "PDC", "Tombstone", "Recycle Bin",
-             "RID pool left", "Oldest backup", "krbtgt password", "SYSVOL migration"], rows, "", keep_order=True)
+    R.table("Domains", "Each domain: functional levels, schema version, its DCs (checked here / in AD) and the PDC emulator.",
+            ["Domain", "Forest", "Domain level", "Forest level", "Schema", "DCs checked", "PDC"], rows, "", keep_order=True)
+    if upkeep:
+        R.table("Domain upkeep", "Each domain: the tombstone lifetime, the Recycle Bin, how much of the RID pool is left, the oldest "
+                "partition's last backup, the age of the krbtgt password and the SYSVOL migration state.",
+                ["Domain", "Tombstone", "Recycle Bin", "RID pool left", "Oldest backup", "krbtgt password", "SYSVOL migration"], upkeep, "",
+                keep_order=True)
 
-    # ---- 2. domain controllers ----------------------------------------------------------------------------
-    rows = []
+    # ---- 2. domain controllers: what they are, and their health (two tables, as the domains) ------------------
+    rows, health = [], []
     dw, dcrit = float(o.get("disk_warn_pct", 15)), float(o.get("disk_crit_pct", 5))
     tw, tc = float(o.get("time_warn_seconds", 5)), float(o.get("time_crit_seconds", 60))
     up_warn = float(o.get("uptime_warn_days", 0) or 0)
@@ -377,7 +378,8 @@ def ad_report(dcs, domains, opts=None):
         dn = x["_domain"]
         if not x["_ok"]:
             err = x.get("error") or "no answer"
-            rows.append(_row([x["_name"], dn, "", "", "", "", "UNREACHABLE", "", "", "", "", "", err], ["", "", "", "", "", "", "critical"]))
+            rows.append(_row([x["_name"], dn, "", "", "", "", "UNREACHABLE"], [""] * 6 + ["critical"]))
+            health.append(_row([x["_name"], "UNREACHABLE", "", "", "", "", err], ["", "critical"]))
             R.problem(dn, "dc", x["_name"], "critical", "the DC could not be read: " + err)
             continue
         d = x["data"]
@@ -391,10 +393,10 @@ def ad_report(dcs, domains, opts=None):
             l_txt, l_st = "NO ANSWER", "critical"
             R.problem(dn, "dc", name, "critical", "LDAP does not answer on the DC: " + str(ld.get("error", "")))
         elif ld.get("synchronized") is False:
-            l_txt, l_st = "not synchronized", "critical"
+            l_txt, l_st = "NOT IN SYNC", "critical"
             R.problem(dn, "dc", name, "critical", "the DC has not finished its initial replication (isSynchronized false): it does not serve logons")
         elif d.get("is_gc") and (d.get("gc_port") or {}).get("ok") is False:
-            l_txt, l_st = "GC port 3268 down", "critical"
+            l_txt, l_st = "GC 3268 DOWN", "critical"
             R.problem(dn, "dc", name, "critical", "the global catalog port 3268 does not answer: " + str(d["gc_port"].get("error", "")))
         elif d.get("is_gc") and ld.get("gc_ready") is False:
             l_txt, l_st = "GC not ready", "warning"
@@ -464,7 +466,7 @@ def ad_report(dcs, domains, opts=None):
             R.problem(dn, "time", name, "critical", "the PDC emulator - the time source of the whole domain - runs on its own clock (%s): give it an NTP source" % src)
         elif off is not None:
             t_st = level(abs(off), tw, tc)
-            t_txt = "%+.2f s vs %s" % (off, short(tm.get("ref")))
+            t_txt = "%+.2f s" % off
             R.problem(dn, "time", name, t_st, "the clock is %+.1f s off %s (Kerberos fails beyond 5 minutes)" % (off, tm.get("ref")))
         elif tm.get("error"):
             t_txt, t_st = "not read", "warning"
@@ -486,9 +488,9 @@ def ad_report(dcs, domains, opts=None):
         kind = ("GC" if d.get("is_gc") else "") + (" RODC" if d.get("is_rodc") else "")
         roles = ", ".join(FSMO_SHORT.get(r, r) for r in d.get("fsmo") or [])
         rows.append(_row([name, dn, d.get("site", ""), d.get("os", "").replace("Microsoft Windows Server", "Server").strip(),
-                          kind.strip() or "-", roles or "-", l_txt, ", ".join(down) or "all running", g_txt, sv_txt, t_txt,
-                          free_txt, age_text(up_h)],
-                         ["", "", "", "", "", "", l_st, s_st, g_st, sv_st, t_st, k_st, u_st]))
+                          kind.strip() or "-", roles or "-", age_text(up_h)], ["", "", "", "", "", "", u_st]))
+        health.append(_row([name, l_txt, ", ".join(down) or "all running", g_txt, sv_txt, t_txt, free_txt],
+                           ["", l_st, s_st, g_st, sv_st, t_st, k_st]))
     # DCs AD knows but the inventory has not
     seen = set(x["_fqdn"] for x in dcs) | set(short(x["_fqdn"]).lower() for x in dcs)
     for fq, (dn, rec) in sorted(known.items()):
@@ -496,14 +498,14 @@ def ad_report(dcs, domains, opts=None):
             continue
         rows.append(_row([short(fq).upper(), dn, rec.get("site", ""), str(rec.get("os", "")).replace("Windows Server", "Server"),
                           ("GC" if rec.get("gc") else "") + (" RODC" if rec.get("rodc") else ""), ", ".join(FSMO_SHORT.get(r, r) for r in rec.get("roles") or []),
-                          "not in the inventory", "", "", "", "", "", ""], [""] * 6 + ["info"], "info"))
+                          "not in the inventory"], [""] * 6 + ["info"], "info"))
     R.table("Domain controllers", "Each DC: site, operating system, global catalog / read-only, the operations master roles it "
-            "holds, LDAP answering (and synchronized), the DC services not running, dcdiag's failed tests, SYSVOL (shared, "
-            "DFSR state), its clock against the PDC emulator (the PDC: against its NTP source), the least free space of the "
-            "database, log and SYSVOL volumes, and the time since it started. Blue: a DC in AD that is not in this job's "
-            "inventory (only the domain-wide checks cover it).",
-            ["DC", "Domain", "Site", "OS", "Kind", "Roles", "LDAP", "Services", "dcdiag failed", "SYSVOL", "Clock", "Least free",
-             "Up"], rows, "No domain controller was read.")
+            "holds and the time since it started. Blue: a DC in AD that is not in this job's inventory (only the domain-wide "
+            "checks cover it).", ["DC", "Domain", "Site", "OS", "Kind", "Roles", "Up"], rows, "No domain controller was read.")
+    R.table("Domain controllers' health", "Each DC read: LDAP answering (and synchronized), the DC services not running, dcdiag's "
+            "failed tests, SYSVOL (shared, DFSR state), its clock against the PDC emulator (the PDC: against its NTP source) and "
+            "the least free space of the database, log and SYSVOL volumes.",
+            ["DC", "LDAP", "Services", "dcdiag failed", "SYSVOL", "Clock", "Least free"], health, "No domain controller was read.")
 
     # ---- 3. FSMO ---------------------------------------------------------------------------------------------
     rows = []
@@ -679,13 +681,14 @@ def ad_report(dcs, domains, opts=None):
             sv, what = EVENTS.get(k, ("info" if int(e.get("level", 2)) > 1 else "warning", ""))
             if k not in EVENTS and int(e.get("level", 2)) == 1:
                 sv = "warning"
-            rows.append(_row([x["_name"], e.get("log", ""), e.get("source", ""), e.get("id", ""), sv.upper(), e.get("count", ""),
-                              time_text(e.get("last")), what or str(e.get("message", ""))[:300]], ["", "", "", "", sv]))
+            rows.append(_row([x["_name"], "%s / %s" % (e.get("log", ""), e.get("source", "")) if e.get("source") else e.get("log", ""),
+                              e.get("id", ""), sv.upper(), e.get("count", ""), time_text(e.get("last")), what or str(e.get("message", ""))[:300]],
+                             ["", "", "", sv]))
             R.problem(x["_domain"], "event", x["_name"], sv, "%s %s x%s: %s" % (e.get("log"), e.get("id"), e.get("count"), what or str(e.get("message", ""))[:200]))
     R.table("Events (last %s h)" % _hours(ev_h), "The Directory Service, DFS Replication and DNS Server logs, and the Netlogon, KDC, "
             "time and Group Policy entries of the System log: the events that matter on a DC (with what they mean) and every "
             "other error (blue, for information). The same event on the same DC is counted once.",
-            ["DC", "Log", "Source", "ID", "Severity", "Count", "Last", "What it means / last message"], rows, "No such event.")
+            ["DC", "Log / source", "ID", "Severity", "Count", "Last", "What it means / last message"], rows, "No such event.")
 
     # ---- 10. clients in no site ---------------------------------------------------------------------------------------------
     rows = []
@@ -742,13 +745,13 @@ def ad_report(dcs, domains, opts=None):
             v_st = "" if not v else ("ok" if re.search(r"NERR_Success|Status = 0 0x0", v) else "critical")
             if v_st == "critical":
                 R.problem(d["data"]["dns"], "trust", t.get("name"), "critical", "the trust with %s does not verify: %s" % (t.get("name"), v))
-            rows.append(_row([d["data"]["dns"], t.get("name", ""), t.get("direction", ""), t.get("type", ""), "yes" if t.get("forest") else "no",
-                              "yes" if t.get("selective") else "no", "on" if t.get("quarantined") else "-",
+            opts = [w for w, on in (("forest trust", t.get("forest")), ("selective auth", t.get("selective")), ("SID quarantine", t.get("quarantined"))) if on]
+            rows.append(_row([d["data"]["dns"], t.get("name", ""), t.get("direction", ""), t.get("type", ""), ", ".join(opts) or "-",
                               "OK" if v_st == "ok" else (v or "not verified (inbound only, or trust_verify off)"), time_text(t.get("changed"))],
-                             ["", "", "", "", "", "", "", v_st]))
+                             ["", "", "", "", "", v_st]))
     R.table("Trusts", "Every trust of each domain; outbound and two-way trusts are verified with nltest /sc_verify (red when the "
             "secure channel to the other domain fails).",
-            ["Domain", "Trust", "Direction", "Type", "Forest trust", "Selective auth", "SID quarantine", "Verified", "Changed"],
+            ["Domain", "Trust", "Direction", "Type", "Options", "Verified", "Changed"],
             rows, "No trust.")
 
     # ---- 13. sites -----------------------------------------------------------------------------------------------------------
@@ -949,7 +952,8 @@ def ad_report(dcs, domains, opts=None):
                {"label": "Accounts created / deleted", "value": n_obj, "status": "info" if n_obj else "ok"},
                {"label": "GPO changes", "value": n_gpo, "status": "info" if n_gpo else "ok"}]
     report = {"title": title, "status": "critical" if crit else ("warning" if warn else "ok"),
-              "subtitle": "Read %s UTC - changes of the last %s h" % (now.strftime("%Y-%m-%d %H:%M"), _hours(hours)),
+              "subtitle": "Read %s UTC - changes of the last %s h%s" % (now.strftime("%Y-%m-%d %H:%M"), _hours(hours),
+                                                                         (" - " + o["mode_line"]) if o.get("mode_line") else ""),
               "summary": summary, "sections": R.sections}
     dc_sum = [{"dc": x["_name"], "domain": x["_domain"], "host": x.get("host"), "read": x["_ok"], "error": x.get("error", "")} for x in dcs]
     return {"report": report, "problems": R.problems, "dcs": dc_sum, "domains": summaries,
@@ -968,6 +972,458 @@ def ps_error(stderr):
     return re.sub(r"\s+", " ", s).strip()
 
 
+# ---- reader mode (1.4.0): AD read from the AAP side as a plain domain user (roles/ad_report/library/site_ad_reader.py) ----
+LEVELS = {0: "2000", 1: "2003 interim", 2: "2003", 3: "2008", 4: "2008 R2", 5: "2012", 6: "2012 R2", 7: "2016", 10: "2025"}
+NOT_RUN = ("dcdiag, repadmin (the replication queue, backups), the DC services, SYSVOL and DFSR, the disks, the event logs, "
+           "w32tm and the Security log (who made a change)")
+NEEDS_ADMIN = "not read (needs admin)"
+ROLE_SHORT = {"PDC emulator": "PDC", "RID master": "RID", "Infrastructure master": "Infra", "Schema master": "Schema",
+              "Domain naming master": "Naming"}
+
+
+def _level(v):
+    try:
+        return LEVELS.get(int(v), str(v))
+    except (TypeError, ValueError):
+        return "?"
+
+
+def _dc_short(fq):
+    return str(fq or "").split(".")[0].upper()
+
+
+def ad_reader_report(reader, opts=None):
+    """The AD health report in reader mode (the same layout as ad_report): reader is site_ad_reader's answer.
+    -> {'report', 'problems', 'dcs', 'domains', 'critical', 'warning'} as ad_report."""
+    o = opts or {}
+    R = _Report(o)
+    r = dict(reader or {})
+    now = parse_time(o.get("now")) or parse_time(r.get("read_at")) or datetime.datetime.now(datetime.timezone.utc)
+    hours = float(o.get("hours", 24))
+    dom = r.get("domain") or "?"
+    user = r.get("user") or "the job's account"
+    how = "simple bind over %s" % (r.get("read_via") or "LDAPS / StartTLS")
+    why_mode = o.get("mode_why") or "ad_health_mode: reader"
+    mode_text = ("Reader mode (%s): read from the AAP side over LDAP (%s), DNS and Kerberos as %s - a plain domain user, "
+                 "nothing granted - from %s. Nothing is run on a DC and nothing is written to AD.%s" % (
+                     why_mode, how, user, short(r.get("read_from") or "") .upper() or "no DC",
+                     (" The domain %s: from %s." % (dom, r["domain_source"])) if r.get("domain_source") else ""))
+    R.sections.append({"title": "How this was read", "status": "unknown", "text": mode_text,
+                       "lines": ["Not run - needs admin on the DCs (reader mode): %s." % NOT_RUN]})
+
+    if not r.get("ok"):
+        why = r.get("why") or "nothing was read"
+        R.problem(dom, "dc", dom, "critical", "Active Directory could not be read: " + why)
+        R.sections.append({"title": "Not read", "status": "critical", "text": "Active Directory could not be read: %s." % why})
+        report = {"title": "Active Directory health report: NOT READ (%s)" % dom, "status": "critical",
+                  "subtitle": "Read %s UTC - reader mode" % now.strftime("%Y-%m-%d %H:%M"),
+                  "summary": [{"label": "DCs answering", "value": "0", "status": "critical"}], "sections": R.sections}
+        return {"report": report, "problems": R.problems, "dcs": [], "domains": [{"domain": dom, "dcs": 0, "dcs_read": 0, "collector": ""}],
+                "critical": 1, "warning": 0}
+
+    dcs = r.get("dcs") or []
+    info = r.get("domain_info") or {}
+    rw, rc = float(o.get("repl_warn_hours", 6)), float(o.get("repl_crit_hours", 24))
+    cw, cc = float(o.get("cert_warn_days", 30)), float(o.get("cert_crit_days", 7))
+    kw, kc = float(o.get("clock_warn_seconds", 120)), float(o.get("clock_crit_seconds", 300))
+    in_ad = [d for d in dcs if d.get("in_ad")]
+
+    # ---- 1. the domain ------------------------------------------------------------------------------------------------
+    tsl = _num(info.get("tombstone_days"))
+    rb = info.get("recycle_bin")
+    if rb is False:
+        R.problem(dom, "domain", "Recycle Bin", "warning", "the AD Recycle Bin is not enabled: a deleted object cannot be restored with its attributes")
+    rid = info.get("rid") or {}
+    total, issued = _num(rid.get("total")), _num(rid.get("issued"))
+    rid_txt, rid_st = "not read", "unknown"
+    if total:
+        left = 100.0 * (total - (issued or 0)) / total
+        rid_txt = "%.1f%% (%d issued)" % (left, issued or 0)
+        rid_st = level(left, float(o.get("rid_warn_pct", 10)), float(o.get("rid_crit_pct", 2)), higher_is_worse=False)
+        R.problem(dom, "domain", "RID pool", rid_st, "%.1f%% of the domain's RID pool is left: new accounts fail when it runs out" % left)
+    k_age = age_hours(info.get("krbtgt_pwd_last_set"), now)
+    kmax = float(o.get("krbtgt_max_days", 180))
+    k_st = "" if k_age is None else ("warning" if k_age / 24.0 > kmax else "ok")
+    if k_st == "warning":
+        R.problem(dom, "domain", "krbtgt", "warning", "the krbtgt password was last changed %s ago (more than %s days)" % (age_text(k_age), _hours(kmax)))
+    pdc = next((f.get("holder_name") for f in r.get("fsmo") or [] if f.get("role") == "PDC emulator"), "")
+    n_in = len([d for d in in_ad if (d.get("bind") or {}).get("ok")])
+    # one domain: a list of its facts (two columns fit any screen; eleven did not)
+    facts = [("Domain", dom, ""), ("Forest", r.get("forest", ""), ""),
+             ("Functional level", "domain %s, forest %s" % (_level(info.get("level")), _level(info.get("forest_level"))), ""),
+             ("Schema version", info.get("schema_version", ""), ""),
+             ("DCs answering", "%d of %d" % (n_in, len(in_ad)), "ok" if n_in >= len(in_ad) else "critical"), ("PDC emulator", pdc or "?", ""),
+             ("Tombstone lifetime", ("%d days" % tsl) if tsl else "not set (60 days)", ""),
+             ("Recycle Bin", "on" if rb else ("OFF" if rb is False else "?"), "ok" if rb else ("warning" if rb is False else "")),
+             ("RID pool left", rid_txt, rid_st), ("krbtgt password", (age_text(k_age) + " old") if k_age is not None else "?", k_st)]
+    rows = [_row([k, v], ["", st]) for k, v, st in facts]
+    R.table("Domain", "The domain: functional levels, schema version, its DCs (answering / in AD), the PDC emulator, the tombstone "
+            "lifetime, the Recycle Bin, how much of the RID pool is left and the age of the krbtgt password.",
+            ["What", "Value"], rows, "", keep_order=True)
+
+    # ---- 2. the domain controllers: what they are, and do they answer (two tables: fourteen columns did not fit) --------------
+    rows, what = [], []
+    for d in dcs:
+        name = d.get("name") or _dc_short(d.get("fqdn"))
+        ldap, ldaps, bind = d.get("ldap") or {}, d.get("ldaps") or {}, d.get("bind") or {}
+        stls = d.get("starttls") or {}
+        down = not ldap.get("ok") and not ldaps.get("ok")
+        if not d.get("in_ad"):
+            R.problem(dom, "dc", name, "warning", "%s is in the inventory's DCs but is not a domain controller in AD (retired? take it out of "
+                                                   "the inventory)" % d.get("fqdn"))
+        # LDAP 389 and LDAPS 636
+        l_txt, l_st = ("OK" if ldap.get("ok") else "NO ANSWER"), ("ok" if ldap.get("ok") else "critical")
+        if ldaps.get("ok"):
+            s_txt, s_st = "OK", "ok"
+        elif stls.get("ok"):
+            s_txt, s_st = "no (StartTLS used)", "warning"
+        else:
+            s_txt, s_st = "NO", "critical" if d.get("in_ad") else "warning"
+        if not d.get("in_ad") and down:
+            l_st = "warning"
+        b_txt = ("OK (%s)" % bind.get("via")) if bind.get("ok") else ("REFUSED" if str(bind.get("error", "")).startswith("the bind was refused") else "NO")
+        b_st = "ok" if bind.get("ok") else l_st if down else "critical"
+        if d.get("in_ad"):
+            if down:
+                R.problem(dom, "dc", name, "critical", "LDAP does not answer on %s (389 and 636): %s" % (name, ldap.get("error") or ldaps.get("error")))
+            else:
+                if not ldap.get("ok"):
+                    R.problem(dom, "dc", name, "critical", "LDAP 389 does not answer on %s: %s" % (name, ldap.get("error")))
+                if not ldaps.get("ok"):
+                    R.problem(dom, "dc", name, s_st, "LDAPS 636 does not answer or bind on %s: %s%s" % (
+                        name, ldaps.get("error"), " (StartTLS on 389 worked)" if stls.get("ok") else ""))
+                if not bind.get("ok"):
+                    R.problem(dom, "dc", name, "critical", "the bind as %s was refused on %s: %s" % (user, name, bind.get("error")))
+        # rootDSE
+        sync = d.get("synchronized")
+        y_txt, y_st = ("yes", "ok") if sync else (("NO", "critical") if sync is False else ("?", ""))
+        if sync is False:
+            R.problem(dom, "dc", name, "critical", "%s has not finished its initial replication (isSynchronized false): it does not serve logons" % name)
+        if d.get("gc") and d.get("gc_ready") is False:
+            y_txt, y_st = "GC not ready", "warning"
+            R.problem(dom, "dc", name, "warning", "%s is a global catalog but not ready as one yet (isGlobalCatalogReady false)" % name)
+        off = d.get("offset")
+        c_txt, c_st = "-", ""
+        if off is not None:
+            c_st = level(abs(off), kw, kc)
+            c_txt = "%+.0f s" % off
+            R.problem(dom, "time", name, c_st, "the clock of %s is %+.0f s off the other DCs' (Kerberos fails beyond 5 minutes)" % (name, off))
+        # Kerberos
+        kr = d.get("kerberos")
+        if kr is None:
+            k_txt, k_st2 = "off", ""
+        elif kr.get("ok") is None:
+            k_txt, k_st2 = "not checked: " + str(kr.get("error", "")), "unknown"
+        elif kr.get("kind") == "tgt":
+            if kr.get("ok"):
+                k_txt, k_st2 = "TGT", "ok"
+            elif kr.get("kdc_answers"):
+                k_txt, k_st2 = "answers; no TGT: %s" % kr.get("error"), "warning"
+                R.problem(dom, "kerberos", name, "warning", "the KDC on %s answers, but gave %s no ticket: %s" % (name, user, kr.get("error")))
+            else:
+                k_txt, k_st2 = "NO ANSWER", "critical" if d.get("in_ad") else "warning"
+                R.problem(dom, "kerberos", name, k_st2, "the KDC on %s does not answer: %s" % (name, kr.get("error")))
+        elif kr.get("ok"):
+            k_txt, k_st2 = "answers" if kr.get("code") == 25 else "answers: %s" % kr.get("answer", ""), "ok"
+            if kr.get("no_preauth"):
+                k_st2 = "warning"
+                R.problem(dom, "kerberos", user, "warning", "%s does not require Kerberos pre-authentication: anyone may ask for its ticket "
+                                                             "and attack its password offline (AS-REP roasting)" % user)
+            elif kr.get("code") == 6:
+                k_st2 = "warning"
+                R.problem(dom, "kerberos", name, "warning", "the KDC on %s does not know %s" % (name, user))
+        else:
+            k_txt, k_st2 = "NO ANSWER", "critical" if d.get("in_ad") else "warning"
+            R.problem(dom, "kerberos", name, k_st2, "the KDC on %s does not answer: %s" % (name, kr.get("error")))
+        # its certificate
+        ce = d.get("cert") or {}
+        t = parse_time(ce.get("not_after"))
+        days = (t - now).total_seconds() / 86400.0 if t else None
+        e_txt = "EXPIRED" if days is not None and days < 0 else ("%d days" % int(days) if days is not None else "-")
+        e_st = level(days, cw, cc, higher_is_worse=False) if days is not None else ""
+        kind = ("GC" if d.get("gc") else "") + (" RODC" if d.get("rodc") else "")
+        what.append(_row([name, d.get("site", ""), str(d.get("os", "")).replace("Windows Server", "Server").strip() or "-", kind.strip() or "-",
+                          ", ".join(ROLE_SHORT.get(x, x) for x in d.get("roles") or []) or "-",
+                          "yes" if d.get("in_inventory") else "no", "yes" if d.get("in_ad") else "NO"],
+                         ["", "", "", "", "", "info" if not d.get("in_inventory") else "", "warning" if not d.get("in_ad") else ""]))
+        rows.append(_row([name, l_txt, s_txt, b_txt, y_txt, c_txt, k_txt, e_txt], ["", l_st, s_st, b_st, y_st, c_st, k_st2, e_st]))
+    R.table("Domain controllers", "Each DC AD lists, and each the inventory has: its site, OS, global catalog / read-only, the "
+            "operations master roles it holds, whether it is in the inventory and in AD.",
+            ["DC", "Site", "OS", "Kind", "Roles", "In inventory", "In AD"], what, "No domain controller was found.")
+    R.table("Domain controllers answering", "Each DC from here: LDAP 389 answering, LDAPS 636 answering and the bind as %s, "
+            "isSynchronized, its clock against the other DCs' (rootDSE currentTime; amber %s s, red %s s), its KDC (%s) and its "
+            "LDAPS certificate's days left." % (user, _hours(kw), _hours(kc), "a ticket (TGT) from it with kinit, or an AS-REQ it must answer"),
+            ["DC", "LDAP 389", "LDAPS 636", "Bind", "Synced", "Clock", "Kerberos", "Certificate"], rows, "No domain controller was found.")
+
+    # ---- 3. FSMO ----------------------------------------------------------------------------------------------------------
+    rows = []
+    by_fq = dict((d.get("fqdn"), d) for d in dcs)
+    for f in r.get("fsmo") or []:
+        h = f.get("holder") or ""
+        d = by_fq.get(h)
+        exists = bool(h) and not f.get("deleted")
+        ans = (d or {}).get("bind", {}).get("ok") or (d or {}).get("ldap", {}).get("ok")
+        st_e, st_a = ("ok" if exists else "critical"), ("ok" if ans else ("critical" if exists else ""))
+        rows.append(_row([f.get("role"), f.get("holder_name") or "?", "yes" if exists else "NO", "yes" if ans else ("NO" if exists else "-")],
+                         ["", "", st_e, st_a]))
+        if not exists:
+            R.problem(dom, "fsmo", f.get("role"), "critical", "the %s role is held by %s, which is not a DC of the domain any more (seize it to a live DC)"
+                      % (f.get("role"), f.get("holder_name") or f.get("holder_dn") or "nobody"))
+        elif not ans:
+            R.problem(dom, "fsmo", f.get("role"), "critical", "the %s (%s) does not answer on LDAP" % (f.get("role"), f.get("holder_name")))
+    R.table("Operations masters (FSMO roles)", "Who holds each role (fSMORoleOwner), whether that holder is still a DC, and whether it "
+            "answers on LDAP from here.", ["Role", "Holder", "A DC in AD", "Answers"], rows, "No role holder was read.", keep_order=True)
+
+    # ---- 4. replication -----------------------------------------------------------------------------------------------------
+    rows, ok_links, sources, not_read = [], 0, set(), []
+    for d in dcs:
+        if not d.get("in_ad") or not (d.get("bind") or {}).get("ok"):
+            continue
+        rp = d.get("repl") or {}
+        name = d.get("name") or _dc_short(d.get("fqdn"))
+        links = rp.get("links") or []
+        if not links and rp.get("cursors"):
+            links = [{"nc": c.get("nc"), "partner": c.get("partner"), "last_success": c.get("last_sync"), "failures": 0, "result": 0, "cursor": True}
+                     for c in rp["cursors"] if c.get("partner") and c.get("last_sync")]
+        if rp.get("source"):
+            sources.add(rp["source"])
+        if not links:
+            if rp.get("why") == NEEDS_ADMIN:
+                not_read.append(name)
+                rows.append(_row([name, "(all)", "", "", "", NEEDS_ADMIN, ""], [""] * 5 + ["unknown"], "unknown"))
+            continue
+        for ln in links:
+            fails = int(ln.get("failures") or 0)
+            ls_h = age_hours(ln.get("last_success"), now)
+            st, why = "ok", ""
+            if tsl and ls_h is not None and ls_h / 24.0 >= tsl:
+                st, why = "critical", "no success for longer than the tombstone lifetime (%d days)" % tsl
+            elif fails:
+                st = "critical" if (ls_h is None or ls_h >= rc) else "warning"
+                code = str(ln.get("result") or "")
+                err = "%s (%s)" % (code, REPL_ERRORS[code]) if code in REPL_ERRORS else code
+                why = "%d consecutive failure(s), last success %s: error %s" % (fails, (age_text(ls_h) + " ago") if ls_h is not None else "never", err or "?")
+            elif ls_h is None:
+                st, why = "warning", "never replicated"
+            elif ls_h >= rw:
+                st = level(ls_h, rw, rc)
+                why = "last success %s ago" % age_text(ls_h)
+            if st == "ok":
+                ok_links += 1
+                continue
+            code = str(ln.get("result") or "")
+            rows.append(_row([name, nc_name(ln.get("nc")), _dc_short(ln.get("partner")), fails, age_text(ls_h) if ls_h is not None else "never",
+                              ("%s (%s)" % (code, REPL_ERRORS[code]) if code in REPL_ERRORS else code) if fails else "", why],
+                             ["", "", "", "critical" if fails else "", st]))
+            R.problem(dom, "replication", "%s <- %s (%s)" % (name, _dc_short(ln.get("partner")), nc_name(ln.get("nc"))), st, why)
+    src = ", ".join(sorted(sources)) or "nothing readable"
+    R.table("Inbound replication", "Each DC's inbound replication from each partner, for every partition, as far as %s may read it "
+            "(here: %s - on each DC's own copy of the partition head; no repadmin). Only links with a problem are listed: amber after "
+            "%s h without success or a failing link that succeeded recently, red after %s h or longer than the tombstone lifetime. "
+            "%d link(s) are healthy.%s" % (user, src, _hours(rw), _hours(rc), ok_links,
+                                            (" Grey: %s - the account may not read its replication state." % ", ".join(not_read)) if not_read else ""),
+            ["DC", "Partition", "From", "Failures", "Last success", "Last error", "Why"], rows, "No link has a problem.")
+
+    # ---- 5. DNS -------------------------------------------------------------------------------------------------------------
+    rows = []
+    gcs = [d for d in in_ad if d.get("gc")]
+    full = [d for d in in_ad if not d.get("rodc")]
+    for s in r.get("dns_srv") or []:
+        rec = s.get("record", "")
+        targets = set(str(x).lower() for x in s.get("targets") or [])
+        if s.get("error"):
+            rows.append(_row([rec, "NOT FOUND", s["error"]], ["", "critical"]))
+            R.problem(dom, "dns", rec, "critical", "the SRV record %s could not be resolved: %s" % (rec, s["error"]))
+            continue
+        want = gcs if "._tcp.gc." in rec else full
+        missing = sorted(_dc_short(d.get("fqdn")) for d in want if str(d.get("fqdn", "")).lower() not in targets)
+        if missing:
+            rows.append(_row([rec, "MISSING", "no record for " + ", ".join(missing)], ["", "warning"]))
+            R.problem(dom, "dns", rec, "warning", "%s has no record for %s (restart Netlogon on them, or check DNS registration)" % (rec, ", ".join(missing)))
+        else:
+            rows.append(_row([rec, "OK", "%d DC(s)" % len(targets)], ["", "ok"]))
+    for d in dcs:
+        name = d.get("name") or _dc_short(d.get("fqdn"))
+        if d.get("dns_a_error"):
+            st = "critical" if d.get("in_ad") else "warning"
+            rows.append(_row([d.get("fqdn"), "NO A RECORD", d["dns_a_error"]], ["", st]))
+            R.problem(dom, "dns", name, st, "%s has no A record: %s" % (d.get("fqdn"), d["dns_a_error"]))
+        elif d.get("inventory_address") and d["inventory_address"] not in (d.get("dns_a") or []):
+            rows.append(_row([d.get("fqdn"), "DIFFERS", "DNS %s, the inventory %s" % (", ".join(d.get("dns_a") or []), d["inventory_address"])], ["", "warning"]))
+            R.problem(dom, "dns", name, "warning", "%s is %s in DNS but %s in the inventory" % (d.get("fqdn"), ", ".join(d.get("dns_a") or []), d["inventory_address"]))
+        else:
+            rows.append(_row([d.get("fqdn"), "OK", ", ".join(d.get("dns_a") or [])], ["", "ok"]))
+    R.table("DNS", "The SRV records clients use to find a DC - every DC (every GC for _gc) must be registered - and each DC's A record "
+            "(against the inventory's address, when the inventory gives one).", ["Record / DC", "Result", "Details"], rows, "No DNS record was read.")
+
+    # ---- 6. certificates --------------------------------------------------------------------------------------------------------
+    rows = []
+    for d in dcs:
+        ce = d.get("cert") or {}
+        name = d.get("name") or _dc_short(d.get("fqdn"))
+        if ce.get("error") and not ce.get("not_after"):
+            rows.append(_row([name, "none read: " + str(ce["error"]), "", "", "", ""], ["", "info"], "info"))
+            continue
+        t = parse_time(ce.get("not_after"))
+        days = (t - now).total_seconds() / 86400.0 if t else None
+        st = level(days, cw, cc, higher_is_worse=False)
+        tr = ce.get("trusted")
+        t_st = "" if tr is None else ("ok" if tr else "warning")
+        if tr is False:
+            R.problem(dom, "certificate", name, "warning", "the LDAPS certificate of %s is not trusted here: %s (the EE's CA certificates: ee/*/ca)"
+                      % (name, ce.get("trust_error") or "?"))
+        R.problem(dom, "certificate", name, st, "the LDAPS certificate of %s %s" % (
+            name, "has EXPIRED" if days is not None and days < 0 else "expires in %d day(s)" % int(days or 0)))
+        rows.append(_row([name, ce.get("subject", ""), ce.get("issuer", ""), time_text(ce.get("not_after")),
+                          "EXPIRED" if days is not None and days < 0 else (int(days) if days is not None else "?"),
+                          "not checked" if tr is None else ("yes" if tr else "NO: " + str(ce.get("trust_error") or ""))],
+                         ["", "", "", "", st, t_st]))
+    R.table("Certificates (LDAPS)", "Each DC's LDAPS certificate, read from the TLS handshake on port 636: amber %s days, red %s days before "
+            "it expires, amber when this side does not trust it (ad_reader_validate_certs)." % (_hours(cw), _hours(cc)),
+            ["DC", "Subject", "Issuer", "Expires", "Days left", "Trusted"], rows, "No DC was read.")
+
+    # ---- 7. privileged groups: changes, since the last run, now ---------------------------------------------------------------------
+    priv_sev = _sev(o, "privileged_change_severity", "warning")
+    groups = r.get("groups") or []
+    rows = []
+    for g in groups:
+        for c in g.get("changes") or []:
+            rows.append(_row([time_text(c.get("time")), g.get("name"), str(c.get("action", "")).upper(), short(c.get("member_dn") or c.get("member")),
+                              c.get("dc", ""), "not known (needs the event logs)"], ["", "", priv_sev], priv_sev))
+            R.problem(dom, "privileged", g.get("name"), priv_sev, "%s %s %s %s (on %s)" % (
+                c.get("member"), c.get("action"), "to" if c.get("action") == "added" else "from", g.get("name"), c.get("dc") or "?"))
+    rows.sort(key=lambda x: x[0][0], reverse=True)
+    meta = r.get("group_meta") or ""
+    R.table("Privileged group changes (last %s h)" % _hours(hours), "Members added to or removed from the privileged groups, when and on "
+            "which DC, from AD's replication metadata (msDS-ReplValueMetaData). Who made a change is only in the DCs' Security logs, which "
+            "reader mode cannot read.", ["When", "Group", "Change", "Member", "Made on", "By"], rows,
+            NEEDS_ADMIN.capitalize() + ": the account may not read the members' replication metadata - see the changes since the last run "
+            "below." if meta == NEEDS_ADMIN else "No change.", keep_order=True)
+    prev = r.get("previous") or {}
+    pg = prev.get("groups") if isinstance(prev.get("groups"), dict) else None
+    rows = []
+    n_since = 0
+    if pg is not None:
+        for g in groups:
+            before = set(str(x).lower() for x in pg.get(g.get("name"), []) or [])
+            now_m = dict((str(x).lower(), x) for x in g.get("member_dns") or [])
+            if g.get("name") not in pg:
+                continue
+            for k in sorted(set(now_m) - before):
+                rows.append(_row([g.get("name"), "JOINED", short(now_m[k])], ["", priv_sev], priv_sev))
+                R.problem(dom, "privileged", g.get("name"), priv_sev, "%s joined %s since the last run" % (short(now_m[k]), g.get("name")))
+            for k in sorted(before - set(now_m)):
+                orig = next((x for x in pg.get(g.get("name")) or [] if str(x).lower() == k), k)
+                rows.append(_row([g.get("name"), "LEFT", short(orig)], ["", priv_sev], priv_sev))
+                R.problem(dom, "privileged", g.get("name"), priv_sev, "%s left %s since the last run" % (short(orig), g.get("name")))
+        n_since = len(rows)
+        R.table("Privileged groups since the last run", "The members now against the last run's (%s, %s): who joined or left in "
+                "between." % (prev.get("source") or "?", time_text(prev.get("read_at"))), ["Group", "Change", "Member"], rows, "No change.",
+                keep_order=True)
+    else:
+        R.sections.append({"title": "Privileged groups since the last run", "status": "unknown",
+                           "text": r.get("previous_why") or "no earlier list: the first run, or the last run's artifact couldn't be read (the AAP credential?)"})
+    rows = []
+    empty = set(str(x).lower() for x in o.get("groups_should_be_empty") or [])
+    for g in groups:
+        n = int(g.get("members") or 0)
+        st = "warning" if n and str(g.get("name", "")).lower() in empty else ""
+        if st:
+            R.problem(dom, "privileged", g.get("name"), "warning", "%s has %d member(s) and should be empty" % (g.get("name"), n))
+        names = g.get("member_names") or []
+        rows.append(_row([g.get("name", ""), n, ", ".join(names[:25]) + (" ..." if len(names) > 25 else "")], ["", st]))
+    R.table("Privileged groups", "The direct members of each privileged group now (nested groups are not expanded).%s" % (
+        (" Amber: a group that should be empty (%s) has members." % ", ".join(sorted(o.get("groups_should_be_empty") or []))) if empty else ""),
+        ["Group", "Members", "Direct members"], rows, "No group was read.", keep_order=True)
+
+    # ---- 8. accounts ------------------------------------------------------------------------------------------------------------------
+    rows = [_row([time_text(x.get("time")), x.get("name", "")], ["", ""], "info") for x in r.get("locked_out") or []]
+    R.table("Accounts locked out now", "Accounts whose lockoutTime is within the domain's lockout duration.", ["Locked out at", "Account"],
+            rows, "None.", keep_order=True)
+    rows = [_row([time_text(x.get("time")), x.get("class", ""), x.get("name", ""), re.sub(r"^CN=[^,]+,", "", x.get("dn", ""))], ["", "", "", ""], "info")
+            for x in sorted(r.get("created") or [], key=lambda y: y.get("time", ""), reverse=True)]
+    R.table("Users, groups and computers created (last %s h)" % _hours(hours), "New accounts (whenCreated) and where they are. Deleted "
+            "ones are in the Deleted Objects container, which needs admin.", ["When", "Type", "Name", "Where"], rows, "None.", keep_order=True)
+    hw = r.get("account_changes_how") or []
+    rows = [_row([time_text(x.get("time")), x.get("class", ""), x.get("name", ""), str(x.get("change", "")).upper(), x.get("dc") or "-",
+                  "replication metadata" if x.get("how") == "metadata" else "whenChanged (best effort)"], ["", "", "", "info"], "info")
+            for x in r.get("account_changes") or []]
+    notes = []
+    if "whenChanged" in hw:
+        notes.append("Best effort: where the account may not read an account's replication metadata, the time is its whenChanged and the "
+                     "change its state now (disabled / enabled) - another attribute may have changed instead.")
+    if r.get("changes_capped"):
+        notes.append("Only the first %s changed accounts were looked at (ad_changes_max)." % o.get("changes_max", 500))
+    R.table("Accounts enabled, disabled, locked or unlocked (last %s h)" % _hours(hours), "From the replication metadata of "
+            "userAccountControl and lockoutTime when the account may read it (when and on which DC), else whenChanged - labelled. Who: "
+            "only in the Security logs (admin).", ["When", "Type", "Name", "Change", "Made on", "From"], rows, "None.", notes, keep_order=True)
+
+    # ---- not read ---------------------------------------------------------------------------------------------------------------------
+    nr = list(r.get("not_read") or []) + list(r.get("errors") or [])
+    if nr:
+        R.sections.append({"title": "Not read", "status": "unknown", "text": "What %s could not read (the report is complete apart from "
+                                                                          "these and what needs admin on the DCs):" % user, "lines": nr[:100]})
+
+    # ---- title, summary -----------------------------------------------------------------------------------------------------------------
+    crit = [p for p in R.problems if p["severity"] == "critical"]
+    warn = [p for p in R.problems if p["severity"] == "warning"]
+
+    def count(*areas):
+        return sum(1 for p in R.problems if p["area"] in areas)
+
+    def st_of(*areas):
+        return worst([p["severity"] for p in R.problems if p["area"] in areas]) or "ok"
+    n_ans = len([d for d in in_ad if (d.get("bind") or {}).get("ok")])
+    if crit or warn:
+        title = "Active Directory health report: %d critical, %d warning (%s)" % (len(crit), len(warn), dom)
+    else:
+        title = "Active Directory health report: all %d domain controller(s) healthy (%s)" % (len(in_ad), dom)
+    n_priv = sum(len(g.get("changes") or []) for g in groups) + n_since
+    n_obj = len(r.get("created") or [])
+    summary = [{"label": "DCs answering", "value": "%d of %d" % (n_ans, len(in_ad)), "status": "ok" if n_ans == len(in_ad) else "critical"},
+               {"label": "Replication problems", "value": count("replication"), "status": st_of("replication")},
+               {"label": "FSMO / DNS / clock", "value": count("fsmo", "dns", "time"), "status": st_of("fsmo", "dns", "time")},
+               {"label": "Kerberos", "value": count("kerberos"), "status": st_of("kerberos")},
+               {"label": "Certificates", "value": count("certificate"), "status": st_of("certificate")},
+               {"label": "Privileged changes", "value": n_priv, "status": priv_sev if n_priv and priv_sev in ("warning", "critical") else ("info" if n_priv else "ok")},
+               {"label": "Accounts created", "value": n_obj, "status": "info" if n_obj else "ok"},
+               {"label": "Locked out now", "value": len(r.get("locked_out") or []), "status": "info" if r.get("locked_out") else "ok"},
+               {"label": "Not run (needs admin)", "value": "dcdiag, repadmin, services ...", "status": "unknown"}]
+    report = {"title": title, "status": "critical" if crit else ("warning" if warn else "ok"),
+              "subtitle": "Read %s UTC - reader mode: LDAP, DNS and Kerberos from AAP as %s - changes of the last %s h" % (
+                  now.strftime("%Y-%m-%d %H:%M"), user, _hours(hours)),
+              "summary": summary, "sections": R.sections}
+    dc_sum = [{"dc": d.get("name") or _dc_short(d.get("fqdn")), "domain": dom, "host": d.get("fqdn"), "read": bool((d.get("bind") or {}).get("ok")),
+               "error": (d.get("bind") or {}).get("error", "")} for d in dcs if d.get("in_ad")]
+    return {"report": report, "problems": R.problems, "dcs": dc_sum,
+            "domains": [{"domain": dom, "forest": r.get("forest", ""), "dcs": len(in_ad), "dcs_read": n_ans, "collector": r.get("read_from")}],
+            "critical": len(crit), "warning": len(warn)}
+
+
+def ad_mode(dcs, wanted):
+    """ad_health_mode (auto / admin / reader) and the DCs' WinRM answers -> {mode, why}."""
+    w = str(wanted or "auto").strip().lower()
+    if w in ("admin", "reader"):
+        return {"mode": w, "why": "ad_health_mode: %s" % w}
+    dcs = list(dcs or [])
+    ok = [x for x in dcs if x.get("reachable") and x.get("data")]
+    if ok:
+        return {"mode": "admin", "why": "ad_health_mode auto: %d of %d DC(s) answered over WinRM" % (len(ok), len(dcs))}
+    if not dcs:
+        return {"mode": "reader", "why": "ad_health_mode auto: no DC of the inventory in this run to reach over WinRM"}
+    errs = sorted(set(str(x.get("error") or "no answer")[:120] for x in dcs))
+    return {"mode": "reader", "why": "ad_health_mode auto: no DC could be reached over WinRM with this credential (%s)" % "; ".join(errs[:2])}
+
+
+def reader_inventory_dc(hv):
+    """A DC of the inventory (its hostvars) -> {name, address} for the reader (never logged in to)."""
+    hv = hv or {}
+    name = str(hv.get("inventory_hostname") or "")
+    addr = str(hv.get("ansible_host") or "")
+    return {"name": name, "address": "" if addr.lower() == name.lower() else addr}
+
+
 class FilterModule(object):
     def filters(self):
-        return {"ad_report": ad_report, "ad_ps_error": ps_error}
+        return {"ad_report": ad_report, "ad_ps_error": ps_error, "ad_reader_inventory_dc": reader_inventory_dc,
+                "ad_reader_report": ad_reader_report, "ad_mode": ad_mode}

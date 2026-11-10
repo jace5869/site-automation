@@ -305,7 +305,9 @@ Every setting: [win_check_certs](VARIABLES_REFERENCE.md#win_check_certs) (`win_c
 
 For the domain controllers (group `win_dc`): one report for the whole domain - replication, dcdiag,
 FSMO, SYSVOL, DNS, time, and what changed in the last day. It needs an account with administrator
-rights on the DCs, in a credential of its own: [ACTIVE_DIRECTORY.md](ACTIVE_DIRECTORY.md).
+rights on the DCs, in a credential of its own: [ACTIVE_DIRECTORY.md](ACTIVE_DIRECTORY.md). No such
+account? A plain domain user reads the domain from the AAP side instead (reader mode, 1.4.0):
+[Without a domain admin](ACTIVE_DIRECTORY.md#without-a-domain-admin).
 
 | Field | Value |
 |---|---|

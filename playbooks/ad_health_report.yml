@@ -14,8 +14,17 @@
 # unless ad_report_fail: true. A DC that cannot be reached is shown in red, the others still report.
 # In AAP: the Windows inventory, the Windows Machine credential (an account that may read AD and run
 # dcdiag / repadmin on the DCs). docs/ACTIVE_DIRECTORY.md
+# WITHOUT A DOMAIN ADMIN (1.4.0, ad_health_mode: reader - or auto, the default, when no DC answers over WinRM with the
+# credential): no WinRM at all; the last play reads AD from the AAP side over LDAP (LDAPS / StartTLS), DNS and Kerberos
+# as the Machine credential's account, a plain domain user with nothing granted - the DCs AD lists and the inventory's,
+# LDAP / LDAPS / bind, isSynchronized, clocks, the LDAPS certificates, the KDCs, the FSMO holders, the SRV and A
+# records, replication as far as a plain user may read it, the privileged groups, accounts locked out, created,
+# enabled or disabled. dcdiag, repadmin, services, SYSVOL, disks and events are said once as not run (needs admin).
+# The report part runs on the AAP side: localhost, or - when the Limit leaves localhost out - the Limit's first host
+# standing in for it (connection local; it is never logged in to).
 #   ansible-playbook playbooks/ad_health_report.yml -i <windows inventory>
 #   ansible-playbook playbooks/ad_health_report.yml -e target=dc01.example.mil -e ad_report_hours=168
+#   ansible-playbook playbooks/ad_health_report.yml -i <windows inventory> -e ad_health_mode=reader -u svc_aap_adreader@CORP.EXAMPLE.MIL -k
 - name: Target check (stops with a clear message when target matches no host)
   hosts: all
   gather_facts: false
@@ -28,6 +37,7 @@
         _target_pattern: "{{ target | default('win_dc' if 'win_dc' in groups else 'domain_controllers') }}"
 
 - name: Active Directory - read the domain controllers
+  # admin mode (and auto, which tries it): WinRM to each DC; reader mode logs in to no DC
   hosts: "{{ target | default('win_dc' if 'win_dc' in groups else 'domain_controllers') }}"
   gather_facts: false
   vars:
@@ -42,19 +52,21 @@
       ansible.builtin.include_role:
         name: ad_report
         tasks_from: collect.yml
+      when: (ad_health_mode | default('auto') | string | lower) != 'reader'
 
 - name: Active Directory health report
-  # on the hosts, once on the AAP side (run_once, delegated to localhost): a Limit of hosts needs no localhost
-  hosts: "{{ target | default('win_dc' if 'win_dc' in groups else 'domain_controllers') }}"
+  # on the AAP side: localhost, or the Limit's first host standing in for it (connection local - never logged in to);
+  # reader mode reads AD from here
+  hosts: >-
+    {{ 'localhost' if ansible_limit | default('', true) | length == 0
+       or 'localhost' in query('ansible.builtin.inventory_hostnames', ansible_limit)
+       else query('ansible.builtin.inventory_hostnames', ansible_limit) | first | default('localhost') }}
   gather_facts: false
+  become: false
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
   tasks:
     - name: Active Directory health report
       ansible.builtin.include_role:
         name: ad_report
-        apply:
-          delegate_to: localhost
-          run_once: true
-          become: false
-      vars:
-        ansible_connection: local
-        ansible_python_interpreter: "{{ ansible_playbook_python }}"

@@ -34,11 +34,11 @@ GUARDED = {"mail_relay_approved.yml", "mail_relay_format.yml", "mail_relay_plan.
            "net_cert_renew.yml", "net_config_backup.yml",
            "net_config_load.yml"}
 # their report part runs on the hosts, once, on the AAP side (0.32.0): a Limit of hosts needs no localhost
-AAP_SIDE = {"ad_health_report.yml", "ad_lockout.yml", "cert_install_approved.yml", "cert_install_check.yml",
+AAP_SIDE = {"ad_lockout.yml", "cert_install_approved.yml", "cert_install_check.yml",
             "cert_renew_csr.yml", "fapolicyd.yml", "fapolicyd_denials.yml", "horizon_image_check.yml", "log_analysis.yml", "win_cert_install_approved.yml", "win_cert_install_check.yml",
             "win_cert_renew_csr.yml"}
 # the AAP-side play runs on localhost or, under a Limit without it, on the Limit's first host (connection local) (0.98.0)
-STAND_IN = {"servicenow_availability.yml", "servicenow_health.yml", "stigman_health.yml", "stigman_availability.yml"}
+STAND_IN = {"ad_health_report.yml", "servicenow_availability.yml", "servicenow_health.yml", "stigman_health.yml", "stigman_availability.yml"}
 # groups filled while the job runs (add_host): empty when the hosts are listed
 RUNTIME_GROUPS = {"adl_sources"}
 ENV = dict(os.environ, ANSIBLE_NOCOLOR="1", ANSIBLE_LOCALHOST_WARNING="False", ANSIBLE_INVENTORY_UNPARSED_WARNING="False",

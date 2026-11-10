@@ -71,7 +71,7 @@ class Healthy(unittest.TestCase):
         row = section(self.r, "Domains")["rows"][0]
         self.assertEqual(row[0], "corp.test")
         self.assertEqual(row[5], "1 of 2")
-        self.assertEqual(row[8], "on")
+        self.assertEqual(section(self.r, "Domain upkeep")["rows"][0][2], "on")
 
     def test_every_section_renders_as_text(self):
         sys.path.insert(0, os.path.join(HERE, "..", "plugins", "filter"))

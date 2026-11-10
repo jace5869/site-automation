@@ -1,11 +1,29 @@
 ---
-# On the AAP side (playbooks/ad_health_report.yml, last play): the report from what every DC and
-# each domain's reading DC answered (collect.yml), in plugins/filter/ad_filters.py. Printed, emailed
-# (report_email_to) and published as job artifacts (ad_health). Green unless ad_report_fail.
+# On the AAP side (playbooks/ad_health_report.yml, last play: localhost, or the Limit's first host standing in for it):
+# the report, in plugins/filter/ad_filters.py - in admin mode from what every DC and each domain's reading DC answered
+# over WinRM (collect.yml), in reader mode from what reader.yml reads here over LDAP, DNS and Kerberos. Printed,
+# emailed (report_email_to) and published as job artifacts (ad_health). Green unless ad_report_fail.
+- name: AD | ad_health_mode is auto, admin or reader
+  ansible.builtin.assert:
+    that: (ad_health_mode | string | lower) in ['auto', 'admin', 'reader']
+    fail_msg: "ad_health_mode is '{{ ad_health_mode }}': auto, admin or reader (docs/ACTIVE_DIRECTORY.md)."
+    quiet: true
+
 - name: AD | the answers of the domain controllers
   ansible.builtin.set_fact:
     _ad_dcs: "{{ groups['all'] | map('extract', hostvars) | selectattr('ad_dc_result', 'defined') | map(attribute='ad_dc_result') | list }}"
     _ad_domains: "{{ groups['all'] | map('extract', hostvars) | selectattr('ad_domain_result', 'defined') | map(attribute='ad_domain_result') | list }}"
+
+- name: AD | admin or reader mode
+  ansible.builtin.set_fact:
+    _ad_mode: "{{ _ad_dcs | ad_mode(ad_health_mode) }}"
+
+- name: "AD | {{ _ad_mode.mode }} mode - {{ _ad_mode.why }}"
+  ansible.builtin.debug:
+    msg: >-
+      {{ "Admin mode: each DC was read over WinRM." if _ad_mode.mode == "admin" else
+         "Reader mode: Active Directory is read from here over LDAP, DNS and Kerberos as the job's account - dcdiag, repadmin, "
+         ~ "services, SYSVOL, disks and events are not run (they need admin on the DCs)." }}
 
 - name: AD | some domain controller answered
   ansible.builtin.assert:
@@ -14,6 +32,24 @@
       No domain controller was read: the job ran on no Windows host of the target ({{ target | default('win_dc') }}).
       Put the DCs in the group win_dc of the Windows inventory, or set target.
     quiet: true
+  when: _ad_mode.mode == 'admin'
+
+- name: AD | reader mode - read Active Directory from here
+  ansible.builtin.include_tasks: reader.yml
+  when: _ad_mode.mode == 'reader'
+
+- name: AD | the report (reader mode)
+  ansible.builtin.set_fact:
+    _ad: >-
+      {{ _ad_reader | ad_reader_report({
+           'hours': ad_report_hours | float, 'mode_why': _ad_mode.why,
+           'repl_warn_hours': ad_repl_warn_hours | float, 'repl_crit_hours': ad_repl_crit_hours | float,
+           'clock_warn_seconds': ad_reader_clock_warn_seconds | float, 'clock_crit_seconds': ad_reader_clock_crit_seconds | float,
+           'cert_warn_days': ad_cert_warn_days | float, 'cert_crit_days': ad_cert_crit_days | float,
+           'krbtgt_max_days': ad_krbtgt_max_days | float, 'rid_warn_pct': ad_rid_warn_pct | float, 'rid_crit_pct': ad_rid_crit_pct | float,
+           'groups_should_be_empty': ad_groups_should_be_empty, 'privileged_change_severity': ad_privileged_change_severity,
+           'changes_max': ad_changes_max | int, 'max_rows': ad_report_max_rows | int, 'now': ad_report_now | default('')}) }}
+  when: _ad_mode.mode == 'reader'
 
 # one dict expression: on ansible-core 2.16 the values of a YAML dict would arrive as strings
 - name: AD | the report
@@ -32,7 +68,8 @@
            'no_client_site_warn': ad_no_client_site_warn | int, 'groups_should_be_empty': ad_groups_should_be_empty,
            'privileged_change_severity': ad_privileged_change_severity, 'schema_change_severity': ad_schema_change_severity,
            'dc_change_severity': ad_dc_change_severity, 'dcdiag_skip': ad_dcdiag_skip, 'changes_max': ad_changes_max | int,
-           'max_rows': ad_report_max_rows | int, 'now': ad_report_now | default('')}) }}
+           'max_rows': ad_report_max_rows | int, 'now': ad_report_now | default(''), 'mode_line': 'admin mode (WinRM on each DC)'}) }}
+  when: _ad_mode.mode == 'admin'
 
 - name: AD | the report to print and email
   ansible.builtin.set_fact:

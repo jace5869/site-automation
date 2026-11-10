@@ -194,10 +194,25 @@ File: `roles/ad_lockout/defaults/main.yml`
 
 File: `roles/ad_report/defaults/main.yml`
 
-> Active Directory health report (playbooks/ad_health_report.yml). Read-only: a PowerShell script on every domain controller (WinRM, the Windows Machine credential) and one more on one DC per domain. The account needs to read AD and run dcdiag / repadmin on the DCs: see docs/ACTIVE_DIRECTORY.md.
+> Active Directory health report (playbooks/ad_health_report.yml). Read-only: a PowerShell script on every domain controller (WinRM, the Windows Machine credential) and one more on one DC per domain - the account needs to read AD and run dcdiag / repadmin on the DCs; or, with no such account, reader mode from the AAP side as a plain domain user (ad_health_mode). See docs/ACTIVE_DIRECTORY.md.
 
 | Setting | Default | What it does |
 |---|---|---|
+| `ad_health_mode` | `auto` | ---- Mode (1.4.0) ------------------------------------------------------------------------------- admin: a PowerShell script on every DC over WinRM (an account that may log on to the DCs, Domain Admins). reader: no WinRM - read from the AAP side over LDAP, DNS and Kerberos as a plain domain user with nothing granted;… (all of it: the role file) |
+| `ad_reader_domain` | (empty) | ---- Reader mode ------------------------------------------------------------------------------- the AD domain's DNS name ("" = learned: the DCs' names, their ansible_host, their rootDSE, the EE's DNS search domain) |
+| `ad_reader_user` | (empty) | "" = the job's Machine credential (UPN svc@CORP.EXAMPLE.MIL, CORP\svc, or a DN) |
+| `ad_reader_password` | (empty) | "" = the Machine credential's (a simple bind over LDAPS, else StartTLS on 389 - never in clear) |
+| `ad_reader_validate_certs` | `true` | the LDAPS / StartTLS certificate must be trusted and name the DC before the password is sent |
+| `ad_reader_ca_file` | (empty) | a CA file ("" = what the execution environment trusts: ee/*/ca) |
+| `ad_reader_kerberos` | `auto` | auto: a TGT from each KDC with kinit (the Windows EE has it), else an AS-REQ; tgt; probe (AS-REQ only); off |
+| `ad_reader_dns_servers` | `[]` | DNS servers asked for the SRV and A records ([] = the execution environment's) |
+| `ad_reader_ports` | `{ldap: 389, ldaps: 636, kerberos: 88, dns: 53}` | the ports the DCs answer on, and the DNS servers' |
+| `ad_reader_endpoints` | `{}` | a DC reached at another address or port (NAT, a test): {dc01.corp.example.mil: {address: 192.0.2.11, ldaps: 636}} |
+| `ad_reader_timeout` | `5` | seconds per connection |
+| `ad_reader_clock_warn_seconds` | `120` | a DC's clock against the others' (rootDSE currentTime) -> amber |
+| `ad_reader_clock_crit_seconds` | `300` | -> red (Kerberos fails at 5 minutes) |
+| `ad_reader_history` | `true` | The privileged groups' members of the last run, to say who joined or left since (on top of the replication metadata, when the account may read it): this template's previous job's artifact in AAP - needs the "Red Hat Ansible Automation Platform" credential on the template - or, with ad_reader_history_file set, that fil… (all of it: the role file) |
+| `ad_reader_history_file` | (empty) | e.g. /var/lib/site-health/ad-privileged-groups.json - "" = the AAP job artifact |
 | `ad_report_hours` | `24` | ---- Changes ------------------------------------------------------------------------------------ the changes of the last this-many hours (match it to the schedule: a daily job = 24) |
 | `ad_event_hours` | `24` | the event log entries of the last this-many hours |
 | `ad_security_events` | `true` | read each DC's Security log for WHO made a change (needs auditing of account and security group management) |

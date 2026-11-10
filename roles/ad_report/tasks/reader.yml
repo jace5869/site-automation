@@ -1,0 +1,43 @@
+---
+# Reader mode (ad_health_mode: reader, or auto when no DC answered over WinRM): Active Directory read from the AAP side
+# (roles/ad_report/library/site_ad_reader.py) as the job's own account - a plain domain user, nothing granted - over
+# LDAP, DNS and Kerberos. Nothing runs on a DC, nothing is written to AD. Sets _ad_reader (what was read).
+# The last run's privileged group members: this template's previous job's artifact ad_privileged_members in AAP (the
+# "Red Hat Ansible Automation Platform" credential), or ad_reader_history_file when it is set.
+- name: AD reader | the inventory's DCs (compared with AD's own list; never logged in to)
+  ansible.builtin.set_fact:
+    _ad_reader_dcs: >-
+      {{ query('ansible.builtin.inventory_hostnames', target | default('win_dc' if 'win_dc' in groups else 'domain_controllers'))
+         | map('extract', hostvars) | map('ad_reader_inventory_dc') | list }}
+
+- name: AD reader | read Active Directory from here as the job's account (LDAP, DNS, Kerberos - read-only)
+  site_ad_reader:
+    domain: "{{ ad_reader_domain }}"
+    dcs: "{{ _ad_reader_dcs }}"
+    user: "{{ ad_reader_user }}"
+    password: "{{ ad_reader_password }}"
+    ports: "{{ ad_reader_ports }}"
+    endpoints: "{{ ad_reader_endpoints }}"
+    dns_servers: "{{ ad_reader_dns_servers }}"
+    validate_certs: "{{ ad_reader_validate_certs | bool }}"
+    ca_file: "{{ ad_reader_ca_file }}"
+    timeout: "{{ ad_reader_timeout | int }}"
+    kerberos: "{{ ad_reader_kerberos }}"
+    hours: "{{ ad_report_hours | float }}"
+    privileged_groups_extra: "{{ ad_privileged_groups_extra }}"
+    changes_max: "{{ ad_changes_max | int }}"
+    history_file: "{{ ad_reader_history_file if ad_reader_history | bool else '' }}"
+    history_job_id: "{{ (awx_job_id | default(tower_job_id | default(0))) | int if ad_reader_history | bool else 0 }}"
+    history_template_id: "{{ (awx_job_template_id | default(tower_job_template_id | default(0))) | int if ad_reader_history | bool else 0 }}"
+    history_ca_path: "{{ report_history_aap_ca_path | default('') }}"
+  register: _ad_reader_out
+
+- name: AD reader | what was read
+  ansible.builtin.set_fact:
+    _ad_reader: "{{ _ad_reader_out.reader }}"
+
+- name: AD reader | the privileged groups' members, for the next run to compare (job artifact ad_privileged_members)
+  ansible.builtin.set_stats:
+    data:
+      ad_privileged_members: "{{ _ad_reader.members_now }}"
+  when: ad_reader_history | bool and (_ad_reader.members_now | default({})).groups | default({}) | length > 0
