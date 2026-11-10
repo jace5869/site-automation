@@ -1,0 +1,33 @@
+---
+# THE HISTORY (1.13.0, docs/REPORT_DATABASE.md), after the pages: this run's figures (db.yml worked them out) written, each
+# calendar month replacing what an older run wrote for it - a complete month never by a month so far. Not written when
+# the database was not read (one warning is enough), nor in Check.
+- name: Insights | write this run's figures to {{ _sni_db.host }}:{{ _sni_db.port }}/{{ _sni_db.database }}
+  site_insights_db:
+    mode: write
+    host: "{{ _sni_db.host }}"
+    port: "{{ _sni_db.port | int }}"
+    database: "{{ _sni_db.database }}"
+    user: "{{ _sni_db.user }}"
+    password: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PASSWORD') }}"
+    tls: "{{ _sni_db.tls | bool }}"
+    ca_file: "{{ _sni_db.ca_file }}"
+    connect_timeout: "{{ servicenow_insights_db_timeout | int }}"
+    create: "{{ servicenow_insights_db_create | bool }}"
+    rows: "{{ _sni_db_runs }}"
+    job: "{{ awx_job_id | default(tower_job_id | default('local')) | string }}"
+    required: "{{ servicenow_insights_db_required | bool }}"
+  register: _sni_db_w
+  when: _sni_hist.ok | default(false) | bool and not ansible_check_mode
+
+- name: Insights | the history
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'Check mode: nothing written to the report database' if ansible_check_mode else
+         ('The report database: the window and ' ~ (_sni_db_w.months | length) ~ ' calendar months (' ~ (_sni_db_w.months | join(', '))
+          ~ ') - ' ~ _sni_db_w.written.nodes ~ ' org node rows, ' ~ _sni_db_w.written.figures ~ ' figures, '
+          ~ ('older runs replaced' if _sni_db_w.replaced else 'all new')
+          ~ ((', kept complete: ' ~ (_sni_db_w.kept | join(', '))) if _sni_db_w.kept | length > 0 else '')
+          ~ (' - the tables made' if _sni_db_w.created else '') ~ ' (' ~ _sni_db.host ~ ':' ~ _sni_db.port ~ '/' ~ _sni_db.database
+          ~ ', TLS ' ~ _sni_db_w.tls ~ ')') if _sni_db_w.ok | default(false) else 'The report database: nothing written this run' }}
+  when: _sni_hist.ok | default(false) | bool

@@ -29,6 +29,15 @@ for d in $($py -c 'import site; print(" ".join(site.getsitepackages()))' 2>/dev/
   done
 done
 [ "$own" = 1 ] || yes "no library with its own OpenSSL 1.1 (FIPS)"
+# MySQL 8.4 over plain TCP (the report database, 1.13.0): caching_sha2_password sends the password RSA-encrypted
+# (OAEP) - what PyMySQL does at a login, tried here, so a FIPS host that refuses it says so before a job does
+if grep -q '^lib pymysql' $list; then
+  if err=$($py -c "from cryptography.hazmat.primitives.asymmetric import rsa; from cryptography.hazmat.primitives import serialization as s
+from pymysql._auth import sha2_rsa_encrypt
+k = rsa.generate_private_key(public_exponent=65537, key_size=2048).public_key().public_bytes(s.Encoding.PEM, s.PublicFormat.SubjectPublicKeyInfo)
+assert len(sha2_rsa_encrypt(b'x', b'0' * 20, k)) == 256" 2>&1); then yes "MySQL login without TLS (caching_sha2_password: PyMySQL's RSA step)"
+  else no "MySQL login without TLS (PyMySQL's RSA step: ${err##*$'\n'}) - use TLS for the report database (REPORT_DATABASE.md)"; fi
+fi
 echo "== Collections"
 have=$(ansible-galaxy collection list 2>/dev/null)
 while read -r kind a _; do

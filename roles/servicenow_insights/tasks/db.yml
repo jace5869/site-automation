@@ -1,0 +1,40 @@
+---
+# THE HISTORY (1.13.0, docs/REPORT_DATABASE.md), before the pages: this run's figures worked out - the window's own, and
+# each calendar month of it (the month so far partial) - and the last months read back for the page's trend. db_write.yml
+# writes them after the pages. The database not reached: one warning, the report whole, the job green
+# (servicenow_insights_db_required: false).
+- name: Insights | the report database's login
+  ansible.builtin.include_tasks: db_login.yml
+
+- name: Insights | this run's figures - the window, and each calendar month in it
+  ansible.builtin.set_fact:
+    _sni_db_runs: "{{ _sni | servicenow_insights_db_runs(_sni_model, _sni_opts, _sni_mask) }}"
+  when: _sni_db.host | length > 0
+
+- name: Insights | read the last {{ servicenow_insights_db_months }} months back from {{ _sni_db.host }}:{{ _sni_db.port }}/{{ _sni_db.database }}
+  site_insights_db:
+    mode: read
+    host: "{{ _sni_db.host }}"
+    port: "{{ _sni_db.port | int }}"
+    database: "{{ _sni_db.database }}"
+    user: "{{ _sni_db.user }}"
+    password: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PASSWORD') }}"
+    tls: "{{ _sni_db.tls | bool }}"
+    ca_file: "{{ _sni_db.ca_file }}"
+    connect_timeout: "{{ servicenow_insights_db_timeout | int }}"
+    create: "{{ servicenow_insights_db_create | bool and not ansible_check_mode }}"
+    source: "{{ _sni_db_runs.runs[0].run.source }}"
+    period: month
+    month: "{{ _sni_db_runs.runs | map(attribute='run') | map(attribute='month') | max }}"
+    months: "{{ servicenow_insights_db_months | int }}"
+    metrics: [sla_met_pct, response_met_pct, fcr_pct, incidents, backlog, median_resolve_h, reopen_pct]
+    required: "{{ servicenow_insights_db_required | bool }}"
+  register: _sni_hist
+  check_mode: false           # only reads (in Check, nothing is made)
+  when: _sni_db.host | length > 0
+
+- name: Insights | the trend on the pages ({{ (_sni_hist.months_kept | default(0)) ~ ' months kept' if _sni_hist.ok | default(false) else 'the database not read' }})
+  ansible.builtin.set_fact:
+    _sni_model: >-
+      {{ _sni_model | servicenow_insights_trend(_sni_hist, _sni_opts | combine({'trend_months': servicenow_insights_db_months}), _sni_db_runs) }}
+  when: _sni_db.host | length > 0

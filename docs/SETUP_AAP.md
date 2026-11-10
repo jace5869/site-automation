@@ -78,6 +78,7 @@ For each file in `aap/credential_types/` that you need now:
 
 | File | Name | Needed for |
 |---|---|---|
+| `report_database.yml` | Report database | the ticket insights' trends, with `servicenow_insights_db: true` - optional ([REPORT_DATABASE.md](REPORT_DATABASE.md)) |
 | `servicenow_api.yml` | ServiceNow API | tickets, ServiceNow health (step 10), the weekly activity report ([SERVICENOW_WAR.md](SERVICENOW_WAR.md)), the ticket insights ([SERVICENOW_INSIGHTS.md](SERVICENOW_INSIGHTS.md)) |
 | `mariadb_monitor.yml` | MariaDB monitor | the MariaDB check on a containerized database (root login refused there); optional on host installs |
 | `keystore_password.yml` | Keystore password | optional: certs check on a PKCS12 keystore |

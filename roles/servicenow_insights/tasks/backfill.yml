@@ -1,0 +1,87 @@
+---
+# THE BACKFILL (1.13.0, docs/REPORT_DATABASE.md): servicenow_insights_backfill_months past calendar months read from
+# ServiceNow once (to the end of last month, nothing to compare), each month's figures worked out by the report's own
+# model and written to the report database - nothing else: no ACT, no email, no pages. Run it once after setup, as a
+# separate launch. Safe to run twice: each month replaces what was there.
+- name: Insights backfill | the report database's login
+  ansible.builtin.include_tasks: db_login.yml
+
+- name: Insights backfill | servicenow_insights_db is on
+  ansible.builtin.assert:
+    that: servicenow_insights_db | bool
+    fail_msg: servicenow_insights_backfill_months writes to the report database - set servicenow_insights_db true as well.
+    quiet: true
+
+- name: Insights backfill | read {{ servicenow_insights_backfill_months }} calendar months of {{ _sni_tables | join(", ") }} from ServiceNow, once
+  site_servicenow_insights:
+    url: "{{ _sni_url }}"
+    username: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
+    password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    validate_certs: "{{ servicenow_validate_certs | default(true) | bool }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout | default(30) | int }}"
+    groups: "{{ _sni_groups }}"
+    tables: "{{ _sni_tables }}"
+    months: "{{ servicenow_insights_backfill_months | int }}"
+    days: 0
+    until: "{{ servicenow_insights_until | default('', true) | string or 'month_start' }}"
+    compare: false
+    time_zone: "{{ report_time_zone | default('', true) | string }}"
+    max_records: "{{ servicenow_insights_max_records | int }}"
+    audit: "{{ servicenow_insights_audit | bool }}"
+    handoff_min: "{{ servicenow_insights_handoff_min | int }}"
+    handoff_source: "{{ servicenow_insights_handoff_source | default('auto') | string | trim | lower }}"
+    members: "{{ servicenow_insights_members | default(true) | bool }}"
+    group_parents: "{{ servicenow_insights_use_group_parents | default(true) | bool }}"
+    now: "{{ servicenow_insights_now | default(omit, true) }}"
+    sla_source: "{{ servicenow_insights_sla_source | default('auto') | string | trim | lower }}"
+    first_assigned: true
+    state_metric: "{{ servicenow_insights_state_metric | default('', true) | string | trim }}"
+    survey: "{{ servicenow_insights_survey | default(true) | bool }}"
+    survey_metrics: "{{ servicenow_insights_survey_metrics | servicenow_insights_name_list }}"
+  register: _sni_bf
+  check_mode: false             # only reads
+
+- name: Insights backfill | ServiceNow read
+  ansible.builtin.assert:
+    that: _sni_bf.ok | default(false) | bool
+    fail_msg: "{{ _sni_bf.error | default('ServiceNow was not read') }}"
+    quiet: true
+
+- name: Insights backfill | the months - {{ _sni_bf.window.label }}, {{ _sni_bf['items'] | length }} records read
+  ansible.builtin.set_fact:
+    _sni_bf_months: "{{ _sni_bf | servicenow_insights_backfill_months }}"
+
+# one month at a time: worked out, written, said - a month that fails stops the backfill; run it again, the months
+# already written are replaced
+- name: Insights backfill | each month worked out and written to {{ _sni_db.host }}:{{ _sni_db.port }}/{{ _sni_db.database }}
+  site_insights_db:
+    mode: write
+    host: "{{ _sni_db.host }}"
+    port: "{{ _sni_db.port | int }}"
+    database: "{{ _sni_db.database }}"
+    user: "{{ _sni_db.user }}"
+    password: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PASSWORD') }}"
+    tls: "{{ _sni_db.tls | bool }}"
+    ca_file: "{{ _sni_db.ca_file }}"
+    connect_timeout: "{{ servicenow_insights_db_timeout | int }}"
+    create: "{{ servicenow_insights_db_create | bool }}"
+    rows: "{{ _sni_bf | servicenow_insights_month_run(_sni_bf_month, _sni_opts) }}"
+    job: "{{ awx_job_id | default(tower_job_id | default('local')) | string }} backfill"
+    required: true
+  loop: "{{ _sni_bf_months if not ansible_check_mode else [] }}"
+  loop_control:
+    loop_var: _sni_bf_month
+  register: _sni_bf_w
+
+- name: Insights backfill | done
+  ansible.builtin.debug:
+    msg: >-
+      {{ (['Check mode: nothing written - ' ~ (_sni_bf_months | length) ~ ' months would be: ' ~ (_sni_bf_months | join(', '))]
+          if ansible_check_mode else
+          ['The backfill wrote ' ~ (_sni_bf_w.results | selectattr('ok', 'defined') | selectattr('ok') | list | length) ~ ' months to '
+           ~ _sni_db.host ~ ':' ~ _sni_db.port ~ '/' ~ _sni_db.database ~ ' (each replaces what was there):']
+          + (_sni_bf_w.results | map(attribute='tickets') | list)) }}
+
+- name: Insights backfill | the play ends here (no pages, no email)
+  ansible.builtin.meta: end_play

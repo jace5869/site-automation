@@ -1,0 +1,48 @@
+# Credential type: "Report database"
+# The report database (docs/REPORT_DATABASE.md): MySQL 8.4 in its own container on the STIG Manager host, apart from
+# STIG Manager's database (port 3309 on the host). Ticket insights writes its figures there each run
+# (servicenow_insights_db: true) and reads the last 12 months back for the page's trend. The account: report_writer
+# (SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, CREATE VIEW, SHOW VIEW on site_reports). Plain TCP unless Use
+# TLS is ticked; then the CA (optional) checks the server's certificate. The password reaches the job only through its
+# environment, never a command line or an extra variable.
+inputs:
+  fields:
+    - id: host
+      type: string
+      label: Database host (the STIG Manager host's name)
+    - id: port
+      type: string
+      label: Port
+      default: "3309"
+    - id: database
+      type: string
+      label: Database
+      default: site_reports
+    - id: username
+      type: string
+      label: User
+      default: report_writer
+    - id: password
+      type: string
+      label: Password
+      secret: true
+    - id: use_tls
+      type: boolean
+      label: Use TLS
+      default: false
+    - id: ca
+      type: string
+      label: CA certificate (PEM) - with Use TLS, the CA that signed the server's certificate (empty = the EE's trust store)
+      multiline: true
+  required: [host, database, username, password]
+injectors:
+  file:
+    template.ca: "{{ ca | default('') }}"
+  env:
+    REPORT_DB_HOST: "{{ host }}"
+    REPORT_DB_PORT: "{{ port | default('3309') }}"
+    REPORT_DB_NAME: "{{ database }}"
+    REPORT_DB_USER: "{{ username }}"
+    REPORT_DB_PASSWORD: "{{ password }}"
+    REPORT_DB_TLS: "{{ use_tls | default(false) }}"
+    REPORT_DB_CA_FILE: "{{ tower.filename.ca if ca | default('') else '' }}"

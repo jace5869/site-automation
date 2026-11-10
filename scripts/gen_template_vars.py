@@ -262,7 +262,7 @@ servicenow_war_groups: [YOUR GROUP NAME]
 # servicenow_war_period: last-week            # days (the last servicenow_war_days), last-week, this-week, dates (servicenow_war_since/_until)
 # servicenow_war_act: true                    # ACT writes the narrative (an ACT model key credential on the template)
 """),
-    "servicenow_insights.yml": ("ServiceNow - ticket insights", "ServiceNow API (ACT model key: optional, recommended)", "", """\
+    "servicenow_insights.yml": ("ServiceNow - ticket insights", "ServiceNow API (ACT model key: for the runs that ask ACT; Report database: for the trends)", "", """\
 ## The window: the last N months up to now (or servicenow_insights_days); every group, a page per team
 servicenow_insights_months: 6
 # servicenow_insights_groups: [YOUR GROUP NAME]  # empty = every group (the whole site)

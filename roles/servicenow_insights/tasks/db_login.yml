@@ -1,0 +1,28 @@
+---
+# The report database's settings, from the "Report database" credential (aap/credential_types/report_database.yml): the
+# host, port, database, user, TLS and CA - the password stays in the environment until the module reads it.
+- name: Insights | the report database (the "Report database" credential)
+  ansible.builtin.set_fact:
+    _sni_db:
+      host: "{{ lookup('ansible.builtin.env', 'REPORT_DB_HOST') | trim }}"
+      port: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PORT') | default('3309', true) | int }}"
+      database: "{{ lookup('ansible.builtin.env', 'REPORT_DB_NAME') | default('site_reports', true) | trim }}"
+      user: "{{ lookup('ansible.builtin.env', 'REPORT_DB_USER') | trim }}"
+      tls: "{{ lookup('ansible.builtin.env', 'REPORT_DB_TLS') | default('false', true) | bool }}"
+      ca_file: "{{ lookup('ansible.builtin.env', 'REPORT_DB_CA_FILE') | trim }}"
+
+- name: Insights | no Report database credential - the history is not kept this run
+  ansible.builtin.debug:
+    msg: >-
+      servicenow_insights_db is true, but the job template has no "Report database" credential
+      (aap/credential_types/report_database.yml): nothing read or written. docs/REPORT_DATABASE.md.
+  when: _sni_db.host | length == 0
+
+- name: Insights | the Report database credential is attached (servicenow_insights_db_required, the backfill)
+  ansible.builtin.assert:
+    that: _sni_db.host | length > 0
+    fail_msg: >-
+      {{ 'servicenow_insights_backfill_months' if servicenow_insights_backfill_months | int > 0 else 'servicenow_insights_db_required is true' }}
+      and the job template has no "Report database" credential.
+    quiet: true
+  when: servicenow_insights_db_required | bool or servicenow_insights_backfill_months | int > 0

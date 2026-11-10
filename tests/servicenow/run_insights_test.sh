@@ -36,7 +36,7 @@ INV
 "$py" "$here/insights_seed.py" "$work/seed.json" 0.5 >/dev/null
 NOW='"servicenow_insights_now": "2026-11-01T06:00:00", "servicenow_insights_until": "2026-10-31", "servicenow_insights_hierarchy_source": "names"'
 NOACT='"servicenow_insights_act": false'
-ACT="\"site_act_url\": \"http://127.0.0.1:$mport/v1/chat/completions\", \"site_act_env\": {\"ACT_STREAM\": \"0\"}, \"servicenow_insights_kb_min\": 40"
+ACT="\"servicenow_insights_act\": true, \"site_act_url\": \"http://127.0.0.1:$mport/v1/chat/completions\", \"site_act_env\": {\"ACT_STREAM\": \"0\"}, \"servicenow_insights_kb_min\": 40"
 
 mock() {
     [ -n "$pid" ] && kill "$pid" 2>/dev/null && wait "$pid" 2>/dev/null
@@ -198,7 +198,7 @@ INS_ENV="GENAI_KEY=test-key" run "  ... servicenow_insights_act_work_notes false
     "{$NOW, $ACT, \"report_web_dest\": \"\", \"servicenow_insights_act_batch\": 15, \"servicenow_insights_act_work_notes\": false}" 'questions answered'
 grep -q 'sys_journal_field' "$work/log.jsonl" && { echo "FAIL - the work notes read though off"; fails=$((fails + 1)); } || echo "ok   -   ... sys_journal_field not asked"
 
-run "ACT on, no model key: said, the report by category" ok "{$NOW, \"report_web_dest\": \"\"}" \
+run "ACT on, no model key: said, the report by category" ok "{$NOW, \"servicenow_insights_act\": true, \"report_web_dest\": \"\"}" \
     'ACT: did not run (This job has no API key for provider genai' 'Account / Password'
 
 # ---- sites, directorates and teams (0.97.0): the same records, the groups named as three made-up sites ----------------

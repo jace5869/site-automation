@@ -17,6 +17,7 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "plugins", "filter"))
 sys.path.insert(0, os.path.join(HERE, "..", "roles", "servicenow_insights", "library"))
+sys.path.insert(0, os.path.join(HERE, "servicenow"))
 import servicenow_insights_filters as F  # noqa: E402
 import servicenow_insights_page as P  # noqa: E402
 import site_servicenow_insights as rd  # noqa: E402
@@ -1293,6 +1294,242 @@ class ChangeTasks(unittest.TestCase):
                          ("Most resolved", "1 tickets resolved"))
         self.assertEqual(self.model(self.r(refused=True))["scopes"]["all"]["counts"], self.model(self.r(tasks=False))["scopes"]["all"]["counts"])
 
+
+class History(unittest.TestCase):
+    """1.13.0: the report database - the rows of a run (every org node, the split's halves; figures only), each calendar
+    month of the window worked out by the report's own model (the month so far partial), the schema (tables and views,
+    no DROP needed), a partial month never over a complete one, the backfill's months, the trend (this run's months win,
+    a short history starts where it starts) and the page's Trends section."""
+
+    @classmethod
+    def setUpClass(cls):
+        import servicenow_insights_history as H
+        import site_insights_db as D
+        cls.H, cls.D = H, D
+        cls.x = site(sites=True)
+        cls.o = dict(PARENTS_OPTS, split_label="BLUE", split_pattern="*- nova")
+        cls.m = F.servicenow_insights_model(cls.x["r"], None, cls.x["mask"], cls.o)
+        cls.rows = H.servicenow_insights_db_rows(cls.m, {})
+        cls.runs = H.servicenow_insights_db_runs(cls.x["r"], cls.m, cls.o)
+
+    def hist(self, months, value=90.0, partial=()):
+        """Stored months as the module reads them back: [month, window_end, node, variant, metric, value, partial]."""
+        return {"ok": True, "months_kept": len(months), "rows": [[mo, mo + "-28 00:00:00", node, v, k, value + i, 1 if mo in partial else 0]
+                                                                  for i, mo in enumerate(months) for node, v in (("all", ""), ("site:SITEA", ""), ("all", "in"))
+                                                                  for k in ("sla_met_pct", "incidents")]}
+
+    def test_every_node_and_half(self):
+        r = self.rows
+        self.assertEqual(r["run"], {"source": "sn.example.mil", "period": "6m", "window_start": "2026-05-01 00:00:00",
+                                    "window_end": "2026-11-01 00:00:00", "month": "2026-10", "partial": False, "schema": 1})
+        keys = set((n_[1], n_[0]) for n_ in r["nodes"])
+        self.assertEqual(keys, set(("", k) for k in self.m["scopes"]) | set((v, k) for v in ("in", "out") for k in self.m["variants"][v]))
+        al = [n_ for n_ in r["nodes"] if n_[:2] == ["all", ""]][0]
+        s = self.m["scopes"]["all"]
+        self.assertEqual(al[2:6], ["All assignment groups", "all", "", 0])
+        self.assertEqual(al[6:], [s["counts"]["incidents"], s["counts"]["requests"], s["counts"]["resolved"], s["backlog"][0], s["sla"][0], s["median_h"][0]])
+        self.assertEqual(max(n_[5] for n_ in r["nodes"]), 3)                                              # site 1, unit 2, team 3
+        figs = dict(((f[0], f[1], f[2], f[3]), f[4]) for f in r["figures"])
+        self.assertEqual(figs[("all", "", "incidents", "")], s["counts"]["incidents"])
+        self.assertEqual(figs[("all", "in", "incidents", "")] + figs[("all", "out", "incidents", "")], s["counts"]["incidents"])
+        self.assertIn(("all", "", "outcome", "Fixed"), figs)
+        self.assertTrue(any(k[2] == "hot_ci" for k in figs))
+        self.assertTrue(all(isinstance(f[4], float) for f in r["figures"]))
+
+    def test_figures_only(self):
+        """No caller, person, description or close note: only the org nodes' and the hot CIs' names, and numbers."""
+        import insights_seed as seed
+        text = json.dumps(self.runs)
+        for who in [p_ for v in seed.PEOPLE.values() for p_ in v] + list(seed.CALLERS[:20]):
+            self.assertNotIn(who, text)
+        for it in self.x["r"]["items"][:300]:
+            d = str(it.get("short_description") or "")
+            if len(d) > 25:
+                self.assertNotIn(d, text)
+        names = set(f[2] for x in self.runs["runs"] for f in x["figures"])
+        known = sum((list(v) for _n, v in self.D.FIGURE_SETS), []) + ["outcome", "aging_bdays", "category", "hot_ci"]
+        self.assertEqual(sorted(names - set(known)), [])
+
+    def test_the_calendar_months(self):
+        H = self.H
+        runs = self.runs["runs"]
+        self.assertEqual(runs[0]["run"]["period"], "6m")                                   # the window's own, first
+        months = [x["run"] for x in runs[1:]]
+        self.assertEqual([x["month"] for x in months], ["2026-05", "2026-06", "2026-07", "2026-08", "2026-09", "2026-10"])
+        self.assertEqual(set((x["period"], x["partial"]) for x in months), {("month", False)})
+        self.assertEqual((months[-1]["window_start"], months[-1]["window_end"]), ("2026-10-01 00:00:00", "2026-11-01 00:00:00"))
+        inc = [dict(((f[0], f[1], f[2]), f[4]) for f in x["figures"] if not f[3]) for x in runs[1:]]
+        s = self.m["scopes"]["all"]["counts"]
+        self.assertEqual(sum(f[("all", "", "incidents")] for f in inc), s["incidents"])     # each incident in one month, never twice
+        self.assertEqual(sum(f[("all", "", "requests")] for f in inc), s["requests"])
+        self.assertEqual(inc[-1][("all", "", "backlog")], self.m["scopes"]["all"]["backlog"][0])   # open at October's end = at the window's
+        # a window that ends inside a month: that month so far, partial, keyed by the whole month; a month cut at the start: left out
+        w = dict(self.x["r"]["window"], since="2026-05-11 00:00:00", until="2026-10-20 00:00:00", time_zone="America/New_York")
+        mw = H.month_windows(w)
+        self.assertEqual([(x[0], x[3]) for x in mw], [("2026-06", False), ("2026-07", False), ("2026-08", False), ("2026-09", False), ("2026-10", True)])
+        self.assertEqual(mw[0][1].strftime("%Y-%m-%d %H:%M"), "2026-06-01 04:00")                     # local midnight
+        part = H.month_run(dict(self.x["r"], window=dict(self.x["r"]["window"], until="2026-10-20 00:00:00")), "2026-10", self.o)
+        self.assertEqual((part["run"]["partial"], part["run"]["window_end"], part["run"]["data_end"]), (True, "2026-11-01 00:00:00", "2026-10-20 00:00:00"))
+        self.assertEqual(H.servicenow_insights_backfill_months({"window": w}), ["2026-06", "2026-07", "2026-08", "2026-09"])
+
+    def test_a_month_reads_only_what_touches_it(self):
+        """The month's records are trimmed (opened before it ends, not done long before it starts): the figures the same."""
+        H = self.H
+        a = H.month_run(self.x["r"], "2026-07", self.o)
+        keep = H._margin
+        try:
+            H._margin = lambda o: 100000.0
+            b = H.month_run(self.x["r"], "2026-07", self.o)
+        finally:
+            H._margin = keep
+        self.assertLess(a["tickets"]["items"], b["tickets"]["items"])
+        self.assertEqual(sorted(a["figures"]), sorted(b["figures"]))
+
+    def test_the_schema_and_the_writes(self):
+        D = self.D
+        self.assertEqual(len(D.OBJECTS), len(D.CREATE) + len(D.VIEWS))
+        for name, sql in zip(D.OBJECTS, D.CREATE + D.VIEWS):
+            self.assertIn(" %s " % name, sql)
+            self.assertNotIn("OR REPLACE", sql)                       # made only when missing: no DROP grant
+        self.assertIn("UNIQUE KEY run_key (source, period, window_end)", D.CREATE[1])
+        self.assertIn("PRIMARY KEY (run_id, variant, node, metric, label)", D.CREATE[3])
+        svc = [v for v in D.VIEWS if "insights_v_service" in v][0]
+        for col in ("r.window_start AS period_start", "r.window_end AS period_end", "r.partial", "n.depth", "AS sla_met_pct", "AS median_resolve_h"):
+            self.assertIn(col, svc)
+        self.assertIn("PARTITION BY r.source, r.period, r.month ORDER BY r.window_end DESC", [v for v in D.VIEWS if "month_run" in v][0])
+
+        class Cur(object):                    # what the module sends: a month kept complete, a partial one replaced
+            def __init__(self, have):
+                self.have, self.sql, self.lastrowid = have, [], 7
+
+            def execute(self, sql, args=None):
+                self.sql.append(sql)
+
+            def executemany(self, sql, args):
+                self.sql.append(sql)
+
+            def fetchone(self):
+                return self.have
+        month = self.runs["runs"][-1]
+        part = dict(month, run=dict(month["run"], partial=True))
+        c = Cur((3, 0))
+        self.assertEqual(D.write_run(c, part, "9"), (False, True, 0, 0))                  # complete there: kept
+        self.assertEqual(len(c.sql), 1)
+        c = Cur((3, 1))
+        replaced, skipped, nn, nf = D.write_run(c, month, "9")
+        self.assertEqual((replaced, skipped, nn, nf), (True, False, len(month["nodes"]), len(month["figures"])))
+        self.assertTrue(c.sql[1].startswith("UPDATE insights_run SET") and c.sql[2].startswith("DELETE FROM insights_figure"))
+        c = Cur(None)
+        self.assertEqual(D.write_run(c, part, "9")[:2], (False, False))
+        self.assertIn("INSERT INTO insights_run", c.sql[1])
+
+    def test_the_doc_has_the_statements(self):
+        """docs/REPORT_DATABASE.md's "Making the tables by hand" is site_insights_db.ddl() word for word: every table and
+        view the first run makes, and schema_version's row."""
+        with open(os.path.join(HERE, "..", "docs", "REPORT_DATABASE.md")) as f:
+            doc = f.read()
+        mark = "<!-- the statements: site_insights_db.ddl(), word for word"
+        block = doc[doc.index(mark):doc.index("<!-- end of the statements -->")]
+        self.assertEqual("\n\n".join(re.findall(r"```sql\n(.*?)\n```", block, re.S)), self.D.ddl())
+        for name in self.D.OBJECTS:
+            self.assertEqual(self.D.ddl().count(" %s " % name) >= 1, True, name)
+        self.assertIn("servicenow_insights_db_create: false", doc)
+        self.assertEqual(self.D.pretty(self.D.CREATE[0]), "CREATE TABLE IF NOT EXISTS schema_version (\n  component VARCHAR(64) NOT NULL PRIMARY KEY,\n"
+                         "  version INT NOT NULL,\n  applied_at DATETIME NOT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+
+    def test_the_trend(self):
+        H = self.H
+        # the database: Nov 2025 to Feb 2026 (January missing) and an older October; this run: May to October 2026
+        t = H.servicenow_insights_trend(self.m, self.hist(["2025-11", "2025-12", "2026-02", "2026-10"]), {}, self.runs)["trend"]
+        self.assertEqual(t["months"], ["2025-11", "2025-12", "2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06", "2026-07",
+                                       "2026-08", "2026-09", "2026-10"])
+        pts = t["nodes"]["all"]
+        i = H.TREND_METRICS.index("sla_met_pct") + 1
+        self.assertEqual([p[i] for p in pts[:5]], [90.0, 91.0, None, 92.0, None])
+        mine = dict((x["run"]["month"], dict(((f[0], f[1], f[2]), f[4]) for f in x["figures"] if not f[3])) for x in self.runs["runs"][1:])
+        self.assertEqual(pts[-1][i], mine["2026-10"][("all", "", "sla_met_pct")])      # this run's October, not the stored one
+        self.assertEqual(t["nodes"]["in|all"][0][i], 90.0)
+        self.assertEqual(t["partial"], [])
+        # a short history: the months start where the figures start; the month so far flagged
+        t = H.servicenow_insights_trend(self.m, self.hist(["2026-09", "2026-10"], partial=["2026-10"]), {})["trend"]
+        self.assertEqual((t["months"], t["partial"]), (["2026-09", "2026-10"], ["2026-10"]))
+        self.assertEqual(H.servicenow_insights_trend(self.m, {"ok": True, "rows": []}, {})["trend"]["months"], [])
+        self.assertNotIn("trend", H.servicenow_insights_trend(self.m, None, {}))      # off: nothing
+        off = H.servicenow_insights_trend(self.m, {"ok": False, "error": "Connection refused"}, {}, self.runs)["trend"]
+        self.assertEqual((off["ok"], off["error"]), (False, "Connection refused"))
+
+    def test_the_page(self):
+        H = self.H
+        links = page_links(self.m)
+        m = H.servicenow_insights_trend(self.m, self.hist(["2026-06", "2026-07", "2026-09", "2026-10"], partial=["2026-10"]), {})
+        h = P.servicenow_insights_page(m, "all", {"links": links, "look": "brief"})
+        sec = h[h.index('<section class="card" id="trend"'):]
+        sec = sec[:sec.index("</section>")]
+        self.assertIn('<a href="#trend">Trends', h)
+        self.assertLess(h.index('id="glance"'), h.index('id="trend"'))
+        self.assertEqual(sec.count("<svg"), 2)                                              # two scales, never two axes on one
+        self.assertIn('<div class="legend"><span><i style="background:var(--st1)"></i>SLO met</span>', sec)
+        self.assertIn("<summary>The months as a table</summary>", sec)
+        self.assertIn('data-t="Sep 2026&lt;br&gt;SLO met &lt;b&gt;92.0%', sec)                  # each month's values on hover
+        self.assertIn("Aug 2026&lt;br&gt;SLO met &lt;b&gt;no run", sec)                         # a month without one: a gap
+        self.assertIn('stroke-dasharray="5 4"', sec)                                          # into the month so far
+        self.assertIn("Oct 2026 (so far)", sec)
+        self.assertIn("4 months so far · each point a calendar month · dashed: the month so far", sec)
+        self.assertEqual(sec.count("<tr>") - 1, 4)
+        self.assertIn('id="trend"', P.servicenow_insights_page(m, "site:SITEA", {"links": links}))
+        twelve = H.servicenow_insights_trend(self.m, self.hist(["2025-%02d" % k for k in range(11, 13)] + ["2026-%02d" % k for k in range(1, 11)]), {})
+        self.assertIn("the last 12 months · each point a calendar month", P.servicenow_insights_page(twelve, "all", {"links": links}))
+        one = P.servicenow_insights_page(H.servicenow_insights_trend(self.m, self.hist(["2026-10"]), {}), "all", {"links": links})
+        sec1 = one[one.index('id="trend"'):]
+        self.assertIn("1 month so far: the line starts next month.", sec1)
+        self.assertIn('<span class="eyebrow">SLO met</span><span class="v">90.0%</span>', sec1)
+        self.assertNotIn("<svg", sec1[:sec1.index("</section>")])
+        none = P.servicenow_insights_page(H.servicenow_insights_trend(self.m, {"ok": True, "rows": []}, {}), "all", {"links": links})
+        self.assertNotIn('id="trend"', none)                                                   # no month: nothing
+        bad = P.servicenow_insights_page(H.servicenow_insights_trend(self.m, {"ok": False, "error": "Can't connect <x>"}, {}), "all", {"links": links})
+        self.assertIn("The report database was not reached this run: Can&#x27;t connect &lt;x&gt;.", bad)
+        self.assertNotIn('id="trend"', P.servicenow_insights_page(self.m, "all", {"links": links}))
+
+    def test_act_off_said_once(self):
+        """1.13.0: ACT is off by default - the page says so once, with how to turn it on; not when it ran."""
+        with open(os.path.join(HERE, "..", "roles", "servicenow_insights", "defaults", "main.yml")) as f:
+            self.assertIn("\nservicenow_insights_act: false\n", f.read())
+        h = P.servicenow_insights_page(self.m, "all", {"links": page_links(self.m)})
+        self.assertEqual(h.count("ACT is off: the issues are grouped by category, the fixes come from the close notes."), 1)
+        self.assertIn("<code>servicenow_insights_act: true</code>", h)
+        on = dict(self.m, act=dict(self.m["act"], on=True, ran=True))
+        self.assertNotIn("ACT is off", P.servicenow_insights_page(on, "all", {"links": page_links(self.m)}))
+
+    def test_the_tasks(self):
+        """Read before the pages (the trend is on them), written after; not written when not read; Check writes nothing; the
+        backfill before the normal read, ending the play."""
+        def read(*p):
+            with open(os.path.join(HERE, "..", *p)) as f:
+                return f.read()
+        main = read("roles", "servicenow_insights", "tasks", "main.yml")
+        self.assertLess(main.index("include_tasks: db.yml"), main.index("servicenow_insights_page('all'"))
+        self.assertLess(main.index("servicenow_insights_page(_sni_team"), main.index("include_tasks: db_write.yml"))
+        self.assertLess(main.index("the settings the report uses"), main.index("backfill.yml"))
+        self.assertLess(main.index("backfill.yml"), main.index("Insights | read the window"))
+        db = read("roles", "servicenow_insights", "tasks", "db.yml") + read("roles", "servicenow_insights", "tasks", "db_write.yml")
+        self.assertIn("when: _sni_hist.ok | default(false) | bool and not ansible_check_mode", db)
+        self.assertIn("lookup('ansible.builtin.env', 'REPORT_DB_PASSWORD')", db)
+        bf = read("roles", "servicenow_insights", "tasks", "backfill.yml")
+        for t in ("compare: false", "'month_start'", "servicenow_insights_month_run(_sni_bf_month, _sni_opts)", "required: true",
+                  "ansible.builtin.meta: end_play"):
+            self.assertIn(t, bf)
+        self.assertNotIn("site_act", bf)
+        self.assertNotIn("site_email", bf)
+        import yaml
+        ct = yaml.safe_load(read("aap", "credential_types", "report_database.yml"))
+        self.assertEqual(sorted(ct["injectors"]["env"]), ["REPORT_DB_CA_FILE", "REPORT_DB_HOST", "REPORT_DB_NAME", "REPORT_DB_PASSWORD",
+                                                         "REPORT_DB_PORT", "REPORT_DB_TLS", "REPORT_DB_USER"])
+        fields = dict((f["id"], f) for f in ct["inputs"]["fields"])
+        self.assertEqual((fields["port"]["default"], fields["database"]["default"], fields["username"]["default"], fields["use_tls"]["default"]),
+                         ("3309", "site_reports", "report_writer", False))
+        self.assertTrue(fields["password"]["secret"])
+        w = rd.window(3, 0, "month_start", False, "UTC", datetime.datetime(2026, 11, 10, 9, 0, tzinfo=rd.UTC))
+        self.assertEqual((w["since"], w["until"]), ("2026-08-01 00:00:00", "2026-11-01 00:00:00"))
 
 if __name__ == "__main__":
     unittest.main()

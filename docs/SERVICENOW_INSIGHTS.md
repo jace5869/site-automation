@@ -330,8 +330,12 @@ they link to the All page.
 
 ## ACT (GenAI), and what never reaches it
 
-With an **ACT model key** credential on the template (and `servicenow_insights_act: true`, the default), ACT is asked in
-batches - nothing large goes in one question:
+**ACT is off by default (1.13.0).** It runs only when asked: `servicenow_insights_act: true` in the template's Variables
+for a monthly run, or on a launch. The work notes stay on, so ACT reads them when it runs. With ACT off, the page says
+so once, in *Top incident issues*.
+
+With an **ACT model key** credential on the template and `servicenow_insights_act: true`, ACT is asked in batches -
+nothing large goes in one question:
 
 1. **The issues.** The incidents' short descriptions, one per distinct description with its count (the most frequent
    first, at most `servicenow_insights_act_max_descriptions`), `servicenow_insights_act_batch` per question. Each question
@@ -367,7 +371,7 @@ answer. `servicenow_insights_act_work_notes: false` leaves them out. An account 
 (403): the page says so above the top issues and under *Not read*, the fixes come from the close notes, and the job is
 green.
 
-**Without ACT** (no key, `servicenow_insights_act: false`, or a dry run) the report is still whole: the issues are the
+**Without ACT** (off, no key, or a dry run) the report is still whole: the issues are the
 incidents' category / subcategory, each issue's fix is its most common close notes that say what was done, the summary is
 made from the numbers, and there are no knowledge drafts. The report says why ACT did not run.
 
@@ -417,9 +421,10 @@ A table the account cannot read is listed under *Not read* and the rest is repor
 ## Step 2. The job template
 
 1. **Templates → Create job template**: name `ServiceNow - ticket insights`, **Inventory** any (the job runs on localhost),
-   **Project** site-automation, **Playbook** `playbooks/servicenow_insights.yml`, **Credentials** `ServiceNow API` and
-   *ACT model key* (and *SMTP relay* if your mail relay needs a login), **Execution environment** any (standard library
-   only). No Limit. Tick **Prompt on launch** for Variables.
+   **Project** site-automation, **Playbook** `playbooks/servicenow_insights.yml`, **Credentials** `ServiceNow API`,
+   *ACT model key* for the runs that ask ACT, *Report database* for the trends, and *SMTP relay* if your mail relay needs
+   a login. **Execution environment** the all-in-one EE (the report database needs PyMySQL). No Limit. Tick **Prompt on
+   launch** for Variables.
 2. **Variables** (paste `aap/extra_vars/servicenow_insights.yml` and switch on what you change):
    ```yaml
    servicenow_insights_months: 6                   # the window: 1, 2, 3, 6, 12 ... months (or servicenow_insights_days: 60)
@@ -431,7 +436,8 @@ A table the account cannot read is listed under *Not read* and the rest is repor
 3. **Run it** once by hand. The job prints the report and the page's address; the site's page is
    `<template>/latest.html`, each team's `<template>/<team>/latest.html` (e.g. `servicenow-ticket-insights/ops-windows/latest.html`).
 4. **Schedule** it monthly - the first of the month, early morning, with `servicenow_insights_until` empty (up to now) -
-   or quarterly with `servicenow_insights_months: 3`.
+   or quarterly with `servicenow_insights_months: 3`. For ACT on the monthly run, add `servicenow_insights_act: true` to
+   that schedule's Variables.
 
 To email a team lead their team's page as well: `servicenow_insights_team_email_to: {"Ops - Windows": [lead@yoursite.mil]}`.
 
@@ -552,6 +558,19 @@ each state* says it is not measured.
 
 The on-hold reason is the one the incident had when resolved. Where ServiceNow cleared it, the table says *reason not
 kept*. Each person's time to resolve is shown only when `servicenow_insights_person_metrics` is true.
+
+## Trends and the report database (1.13.0)
+
+With `servicenow_insights_db: true` and the **Report database** credential, each run writes its figures to the report
+database. Every page then has a **Trends** section after *At a glance*: the figures month by month, for that site, unit
+or team.
+
+- Each point is a calendar month. The month so far is drawn dashed.
+- The section says "N months so far" until there are 12.
+- The database not reached: one warning, the report whole, the job green.
+
+Fill the past year once with `servicenow_insights_backfill_months: 12`, as a separate launch. Setup, the backfill, the
+tables and what is never stored: [REPORT_DATABASE.md](REPORT_DATABASE.md).
 
 ## The window
 

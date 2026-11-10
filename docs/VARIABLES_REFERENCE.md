@@ -1504,7 +1504,7 @@ File: `roles/servicenow_insights/defaults/main.yml`
 | `servicenow_insights_bare_phrases` | `[fixed, done, resolved, closed, complete, completed, resolved per user, closed per user,…` | The close notes that say nothing, whole (any case, the punctuation ignored). |
 | `servicenow_insights_bare_weight` | `0.5` | ALL-STARS (each team): a ticket with a bare close note counts this much (0.5 = half); awards need this many resolved. |
 | `servicenow_insights_star_min` | `25` | awards need this many tickets resolved |
-| `servicenow_insights_act` | `true` | ACT (GenAI): groups the incidents into issues (a list carried from batch to batch), writes each top issue's fix from its close notes (or suggests one, marked, where the notes say too little), drafts knowledge articles and writes the summaries. Attach an "ACT model key" credential (site_act_provider, site_act_models);… (all of it: the role file) |
+| `servicenow_insights_act` | `false` | ACT (GenAI): groups the incidents into issues (a list carried from batch to batch), writes each top issue's fix from its close notes (or suggests one, marked, where the notes say too little), drafts knowledge articles and writes the summaries. Attach an "ACT model key" credential (site_act_provider, site_act_models);… (all of it: the role file) |
 | `servicenow_insights_act_batch` | `100` | incident descriptions per question |
 | `servicenow_insights_act_max_descriptions` | `2000` | the most frequent descriptions grouped; the rest go by their category |
 | `servicenow_insights_act_max_issues` | `40` | at most this many issues |
@@ -1519,6 +1519,12 @@ File: `roles/servicenow_insights/defaults/main.yml`
 | `servicenow_insights_act_check_url` | `true` | first check that this AAP node reaches the model's URL |
 | `servicenow_insights_mask_names` | `[]` | more words to replace before ACT (a project name, a building) |
 | `servicenow_insights_mask_keep` | `[]` | words that look like host names but are not (e.g. [win11, rhel9]): sent as they are |
+| `servicenow_insights_db` | `false` | THE HISTORY (1.13.0, docs/REPORT_DATABASE.md): true = each run writes its figures to the report database (MySQL 8.4, the "Report database" credential) - the window's, and each calendar month in it (the month so far marked partial) - and the pages show the months as Trends, for each site, unit and team. Figures only: c… (all of it: the role file) |
+| `servicenow_insights_db_required` | `false` | true: the database not reached (or no credential) fails the job |
+| `servicenow_insights_db_create` | `true` | make the tables and views on the first run (false: made by hand, from the doc) |
+| `servicenow_insights_db_months` | `12` | the months the trend shows |
+| `servicenow_insights_db_timeout` | `10` | seconds to connect |
+| `servicenow_insights_backfill_months` | `0` | THE BACKFILL: > 0 = this launch reads that many past calendar months from ServiceNow once, writes each month's figures to the report database and stops - no ACT, no pages, no email. Run it once after setup (12), as a separate launch. Safe to run twice: each month replaces what was there. |
 | `servicenow_insights_xlsx` | `true` | The workbook on the email: every incident with its issue and close-note grade, the issues, requests, changes, people. |
 | `servicenow_insights_fail` | `true` | The job fails when ServiceNow could not be read at all, or a group named is not there. false = a report only. |
 

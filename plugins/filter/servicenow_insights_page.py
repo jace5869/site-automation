@@ -761,6 +761,138 @@ def line_chart(series, colors, labels, weeks, label, zoom=False, annot=None, are
     return "".join(out)
 
 
+MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def month_label(mo, year=False):
+    """'2026-10' -> 'Oct' (or 'Oct 2026')."""
+    mt = re.match(r"(\d{4})-(\d{2})", str(mo or ""))
+    if not mt:
+        return str(mo or "")
+    return MONTH_ABBR[int(mt.group(2)) - 1] + ((" " + mt.group(1)) if year else "")
+
+
+def month_chart(series, colors, labels, months, label, fmt=None, zoom=False, partial=()):
+    """Monthly lines on one scale (1.13.0, the history): a month with no figure is a gap, a month alone a dot, the line
+    into a month so far (partial) dashed; every month has a hit area with its values (data-t, the page's tooltip)."""
+    fmt = fmt or n
+    W, H, L, R, T, B = 640, 210, 44, 14, 12, 28
+    allv = [v for s_ in series for v in s_ if v is not None] or [0]
+    mx, mn = max(allv), min(allv)
+    if zoom:
+        step = nice_step(max(1, mx - mn))
+        lo, hi = math.floor(mn / step) * step, math.ceil(mx / step) * step
+    else:
+        step = nice_step(max(1, mx))
+        lo, hi = 0, math.ceil(max(1, mx) / step) * step
+    if hi <= lo:
+        hi = lo + step
+    nm = max(1, len(months) - 1)
+
+    def x(i):
+        return L + i * (W - L - R) / float(nm)
+
+    def y(v):
+        return T + (1 - (v - lo) / float(hi - lo)) * (H - T - B)
+
+    out = ['<svg viewBox="0 0 %d %d" width="100%%" role="img" aria-label="%s">' % (W, H, e(label))]
+    g = lo
+    while g <= hi + 1e-9:
+        out.append('<line class="grid" x1="%d" x2="%d" y1="%.1f" y2="%.1f"/><text x="%d" y="%.1f" text-anchor="end">%s</text>' % (
+            L, W - R, y(g), y(g), L - 6, y(g) + 4, n(g) if float(g).is_integer() else ("%.1f" % g)))
+        g += step
+    every = 1 if len(months) <= 7 else 2
+    ticks = [i for i in range(len(months)) if (len(months) - 1 - i) % every == 0]      # the last month always labelled
+    for i in ticks:
+        mo = months[i]
+        out.append('<text x="%.1f" y="%d" text-anchor="%s">%s</text>' % (
+            x(i), H - 8, "end" if i == len(months) - 1 and len(months) > 1 else ("start" if i == 0 else "middle"),
+            e(month_label(mo, i == ticks[0] or mo.endswith("-01")))))         # the year on the first label and January
+    for k, s_ in enumerate(series):
+        pts = [(i, v) for i, v in enumerate(s_) if v is not None]
+        for (i0, v0), (i1, v1) in zip(pts, pts[1:]):
+            if i1 != i0 + 1:
+                continue                               # a month without a run: a gap
+            dash = ' stroke-dasharray="5 4"' if months[i1] in partial else ""
+            out.append('<path d="M%.1f %.1f L%.1f %.1f" fill="none" stroke="%s" stroke-width="2" stroke-linecap="round"%s/>' % (
+                x(i0), y(v0), x(i1), y(v1), colors[k], dash))
+        for j, (i, v) in enumerate(pts):
+            alone = (j == 0 or pts[j - 1][0] != i - 1) and (j == len(pts) - 1 or pts[j + 1][0] != i + 1)
+            if alone or i == len(s_) - 1:
+                fill = "var(--surface)" if months[i] in partial else colors[k]
+                out.append('<circle cx="%.1f" cy="%.1f" r="4" fill="%s" stroke="%s" stroke-width="2"/>' % (
+                    x(i), y(v), fill, colors[k] if months[i] in partial else "var(--surface)"))
+    cw = (W - L - R) / float(nm)
+    for i, mo in enumerate(months):
+        t = "%s%s<br>" % (e(month_label(mo, True)), " (so far)" if mo in partial else "") + "<br>".join(
+            "%s <b>%s</b>" % (e(labels[k]), e(fmt(s_[i]) if s_[i] is not None else "no run")) for k, s_ in enumerate(series))
+        attr, title = tip(t)
+        out.append('<rect class="hit" x="%.1f" y="0" width="%.1f" height="%d" fill="transparent"%s>%s</rect>' % (
+            max(0, x(i) - cw / 2), cw, H, attr, title))
+    out.append("</svg>")
+    return "".join(out)
+
+
+def trend_section(m, key, variant=""):
+    """Trends (1.13.0): this site's, unit's or team's figures by calendar month, from the report database and this run.
+    None when the history is off (servicenow_insights_db false, or no credential) or no month has a figure."""
+    t = (m or {}).get("trend") or {}
+    if not t.get("on"):
+        return None
+    if not t.get("ok"):
+        return section("trend", "Trends", "from the report database",
+                       '<div class="callout">The report database was not reached this run: %s. The trends come back on the next run '
+                       'that reaches it.</div>' % e(t.get("error") or "no reason given"))
+    pts = (t.get("nodes") or {}).get((variant + "|" if variant else "") + (key or "all")) or []
+    metrics = t.get("metrics") or []
+    keys = [k_[0] for k_ in metrics]
+    months = [p[0] for p in pts]
+    partial = set(t.get("partial") or [])
+    have = [p for p in pts if any(v is not None for v in p[1:])]
+    if not have:
+        return None
+
+    def col(k):
+        i = keys.index(k) + 1
+        return [p[i] if len(p) > i else None for p in pts]
+
+    fmts = {"pct": lambda v: pct(v), "hours": lambda v: fh(v), "count": lambda v: n(v)}
+    head = [("Month", "", "")] + [(e(lb), "n", "") for _k, lb, _kind in metrics]
+    rows = [("", [td(e(month_label(p[0], True)) + (' <span class="mut">so far</span>' if p[0] in partial else ""))] + [
+        td(fmts.get(kind, n)(p[1 + j]) if len(p) > 1 + j and p[1 + j] is not None else "–", "n")
+        for j, (_k, _lb, kind) in enumerate(metrics)]) for p in reversed(have)]
+    tbl = table(head, rows, empty="No month yet.")
+    full = int(t.get("full") or 12)
+    count = len(have)
+    if count < full:
+        note = "%d month%s so far · each point a calendar month" % (count, "" if count == 1 else "s")
+    else:
+        note = "the last %d months · each point a calendar month" % full
+    if count == 1:
+        p = have[0]
+        tl = [{"label": lb, "value": e(fmts.get(kind, n)(p[1 + j])), "note": e(month_label(p[0], True)) + (" so far" if p[0] in partial else "")}
+              for j, (_k, lb, kind) in enumerate(metrics) if p[1 + j] is not None and _k != "reopen_pct"]
+        return section("trend", "Trends", note, '<div class="fair">1 month so far: the line starts next month.</div>' + tiles(tl))
+    colors = ["var(--st1)", "var(--st2)", "var(--st3)"]
+    figs = []
+    if partial & set(months):
+        note += " · dashed: the month so far"
+    pct_series = [(k_, lb) for k_, lb, kind in metrics if kind == "pct" and k_ != "reopen_pct" and any(v is not None for v in col(k_))]
+    cnt_series = [(k_, lb) for k_, lb, kind in metrics if kind == "count" and any(v is not None for v in col(k_))]
+    if pct_series:
+        figs.append('<div class="fig"><h3>Service levels</h3><div class="cap">The share met each month, in %%. The axis does not start at zero.</div>%s%s</div>' % (
+            legend([(lb, colors[i]) for i, (_k, lb) in enumerate(pct_series)]),
+            month_chart([col(k_) for k_, _lb in pct_series], colors, [lb for _k, lb in pct_series], months,
+                        "Service levels per month", fmt=lambda v: pct(v), zoom=True, partial=partial)))
+    if cnt_series:
+        figs.append('<div class="fig"><h3>Volume</h3><div class="cap">Incidents opened each month, and open at its end.</div>%s%s</div>' % (
+            legend([(lb, colors[i]) for i, (_k, lb) in enumerate(cnt_series)]),
+            month_chart([col(k_) for k_, _lb in cnt_series], colors, [lb for _k, lb in cnt_series], months,
+                        "Incidents and open tickets per month", partial=partial)))
+    return section("trend", "Trends", note, '<div class="two even">%s</div>' % "".join(figs) +
+                   '<details class="more"><summary>The months as a table</summary>%s</details>' % tbl)
+
+
 def short_date(iso):
     m = re.match(r"(\d{4})-(\d{2})-(\d{2})", str(iso or ""))
     if not m:
@@ -1005,6 +1137,9 @@ def servicenow_insights_page(model, key="all", opts=None):
 
     side = s.get("side") or ({"kind": "Teams", "rows": s.get("teams") or []} if is_all else {})
     toc = ([("custom", "Custom view", "")] if is_all and not variant and m.get("org") else []) + [("glance", "At a glance", "")]
+    trend_html = trend_section(m, key or "all", variant)          # the history (1.13.0): None when it is off or empty
+    if trend_html:
+        toc.append(("trend", "Trends", ""))
     if side.get("rows"):
         toc.append(("teams", "%s side by side" % side["kind"], len(side["rows"])))
     toc += [("acton", "Act on first", sum((s.get(k_) or {}).get(f_) or 0 for k_, f_ in (("at_risk", "count"), ("hops", "open"), ("hold", "late_n"), ("codes", "review_n"),
@@ -1101,6 +1236,8 @@ def servicenow_insights_page(model, key="all", opts=None):
         body.append('<p class="cvaway"><b>Custom view:</b> on the <a href="%s">All page</a>.</p>' % e(links["all"].replace(sfx + ".html", ".html")))
     body.append(section("glance", "At a glance", "%s, compared with the %s before (%s)" % (e(win.get("label")), e(span), e(win.get("prev_label") or "")) if win.get("compare") else e(win.get("label")),
                         tiles(tl) + summ))
+    if trend_html:
+        body.append(trend_html)
 
     # ---- side by side: the sites (the All page), a site's directorates, a directorate's teams (0.97.0)
     if side.get("rows"):
@@ -1508,6 +1645,9 @@ def servicenow_insights_page(model, key="all", opts=None):
     wn = (m.get("act") or {}).get("work_notes") or {}
     if by_act and wn.get("error"):
         rows.insert(0, '<div class="callout">Work notes were not read (%s): the fixes come from the close notes only.</div>' % e(wn["error"]))
+    elif not (m.get("act") or {}).get("on"):            # ACT off (the default from 1.13.0): said once, here
+        rows.insert(0, '<div class="fair">ACT is off: the issues are grouped by category, the fixes come from the close notes. '
+                       'To turn it on, set <code>servicenow_insights_act: true</code> on a launch.</div>')
     note = "%s incidents grouped %s into %d issues%s" % (
         n(c["incidents"]), "by ACT" if by_act else "by their category", s["issue_total"],
         (" · top %d = %d%% of all" % (len(iss), iss[-1]["cum"])) if iss else "")

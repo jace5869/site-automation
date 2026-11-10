@@ -196,8 +196,9 @@ servicenow_insights_star_min: 25        # awards need this many tickets resolved
 # summaries. Attach an "ACT model key" credential (site_act_provider, site_act_models); this AAP node must reach the
 # model. Without it (or false) the issues are the incidents' category / subcategory and the fix is the most common close
 # note. Names, phone numbers, email addresses, host names, IP addresses and 10-digit IDs are replaced (PERSON-1, HOST-3
-# ...) before anything reaches the model and put back after.
-servicenow_insights_act: true
+# ...) before anything reaches the model and put back after. Off by default (1.13.0): ACT runs only when asked - true in
+# the template's Variables for a monthly run, or on a launch.
+servicenow_insights_act: false
 servicenow_insights_act_batch: 100              # incident descriptions per question
 servicenow_insights_act_max_descriptions: 2000  # the most frequent descriptions grouped; the rest go by their category
 servicenow_insights_act_max_issues: 40          # at most this many issues
@@ -215,6 +216,21 @@ servicenow_insights_act_model_timeout: 600      # seconds the model may take for
 servicenow_insights_act_check_url: true         # first check that this AAP node reaches the model's URL
 servicenow_insights_mask_names: []              # more words to replace before ACT (a project name, a building)
 servicenow_insights_mask_keep: []               # words that look like host names but are not (e.g. [win11, rhel9]): sent as they are
+
+# THE HISTORY (1.13.0, docs/REPORT_DATABASE.md): true = each run writes its figures to the report database (MySQL 8.4,
+# the "Report database" credential) - the window's, and each calendar month in it (the month so far marked partial) -
+# and the pages show the months as Trends, for each site, unit and team. Figures only: counts, percentages and hours per
+# org node - no caller, description, note or person. A month is replaced by the newest run that holds it. The database
+# not reached: one warning, the report whole, the job green.
+servicenow_insights_db: false
+servicenow_insights_db_required: false      # true: the database not reached (or no credential) fails the job
+servicenow_insights_db_create: true         # make the tables and views on the first run (false: made by hand, from the doc)
+servicenow_insights_db_months: 12           # the months the trend shows
+servicenow_insights_db_timeout: 10          # seconds to connect
+# THE BACKFILL: > 0 = this launch reads that many past calendar months from ServiceNow once, writes each month's figures
+# to the report database and stops - no ACT, no pages, no email. Run it once after setup (12), as a separate launch.
+# Safe to run twice: each month replaces what was there.
+servicenow_insights_backfill_months: 0
 
 # The workbook on the email: every incident with its issue and close-note grade, the issues, requests, changes, people.
 servicenow_insights_xlsx: true

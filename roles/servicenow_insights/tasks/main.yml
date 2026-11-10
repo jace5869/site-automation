@@ -19,36 +19,6 @@
     fail_msg: Attach the "ServiceNow API" credential (it sets SN_HOST, SN_USERNAME, SN_PASSWORD).
     quiet: true
 
-- name: Insights | read the window ({{ servicenow_insights_days ~ " days" if servicenow_insights_days | float > 0 else servicenow_insights_months ~ " months" }}) of {{ _sni_tables | join(", ") }} from ServiceNow
-  site_servicenow_insights:
-    url: "{{ _sni_url }}"
-    username: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
-    password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
-    validate_certs: "{{ servicenow_validate_certs | default(true) | bool }}"
-    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
-    timeout: "{{ servicenow_timeout | default(30) | int }}"
-    groups: "{{ _sni_groups }}"
-    tables: "{{ _sni_tables }}"
-    months: "{{ servicenow_insights_months | int }}"
-    days: "{{ servicenow_insights_days | float }}"
-    until: "{{ servicenow_insights_until | default('', true) | string }}"
-    compare: "{{ servicenow_insights_compare | bool }}"
-    time_zone: "{{ report_time_zone | default('', true) | string }}"
-    max_records: "{{ servicenow_insights_max_records | int }}"
-    audit: "{{ servicenow_insights_audit | bool }}"
-    handoff_min: "{{ servicenow_insights_handoff_min | int }}"
-    handoff_source: "{{ servicenow_insights_handoff_source | default('auto') | string | trim | lower }}"
-    members: "{{ servicenow_insights_members | default(true) | bool }}"
-    group_parents: "{{ servicenow_insights_use_group_parents | default(true) | bool }}"
-    now: "{{ servicenow_insights_now | default(omit, true) }}"
-    sla_source: "{{ servicenow_insights_sla_source | default('auto') | string | trim | lower }}"
-    first_assigned: true                # only with the targets: the response's end (the metric Assigned to)
-    state_metric: "{{ servicenow_insights_state_metric | default('', true) | string | trim }}"
-    survey: "{{ servicenow_insights_survey | default(true) | bool }}"
-    survey_metrics: "{{ servicenow_insights_survey_metrics | servicenow_insights_name_list }}"
-  register: _sni
-  check_mode: false             # only reads
-
 - name: Insights | the settings the report uses
   ansible.builtin.set_fact:
     _sni_opts:
@@ -132,6 +102,42 @@
     _sni_state: "{{ {} | servicenow_insights_state }}"
     _sni_act_stop: ""
 
+# THE BACKFILL (1.13.0): servicenow_insights_backfill_months > 0 - past calendar months read once and written to the report
+# database, nothing else (backfill.yml); the play ends there.
+- name: Insights | the backfill - {{ servicenow_insights_backfill_months }} past calendar months into the report database
+  ansible.builtin.include_tasks: backfill.yml
+  when: servicenow_insights_backfill_months | int > 0
+
+- name: Insights | read the window ({{ servicenow_insights_days ~ " days" if servicenow_insights_days | float > 0 else servicenow_insights_months ~ " months" }}) of {{ _sni_tables | join(", ") }} from ServiceNow
+  site_servicenow_insights:
+    url: "{{ _sni_url }}"
+    username: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
+    password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    validate_certs: "{{ servicenow_validate_certs | default(true) | bool }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout | default(30) | int }}"
+    groups: "{{ _sni_groups }}"
+    tables: "{{ _sni_tables }}"
+    months: "{{ servicenow_insights_months | int }}"
+    days: "{{ servicenow_insights_days | float }}"
+    until: "{{ servicenow_insights_until | default('', true) | string }}"
+    compare: "{{ servicenow_insights_compare | bool }}"
+    time_zone: "{{ report_time_zone | default('', true) | string }}"
+    max_records: "{{ servicenow_insights_max_records | int }}"
+    audit: "{{ servicenow_insights_audit | bool }}"
+    handoff_min: "{{ servicenow_insights_handoff_min | int }}"
+    handoff_source: "{{ servicenow_insights_handoff_source | default('auto') | string | trim | lower }}"
+    members: "{{ servicenow_insights_members | default(true) | bool }}"
+    group_parents: "{{ servicenow_insights_use_group_parents | default(true) | bool }}"
+    now: "{{ servicenow_insights_now | default(omit, true) }}"
+    sla_source: "{{ servicenow_insights_sla_source | default('auto') | string | trim | lower }}"
+    first_assigned: true                # only with the targets: the response's end (the metric Assigned to)
+    state_metric: "{{ servicenow_insights_state_metric | default('', true) | string | trim }}"
+    survey: "{{ servicenow_insights_survey | default(true) | bool }}"
+    survey_metrics: "{{ servicenow_insights_survey_metrics | servicenow_insights_name_list }}"
+  register: _sni
+  check_mode: false             # only reads
+
 - name: Insights | what is replaced before ACT reads anything (names, phone numbers, email and IP addresses, host names, IDs)
   ansible.builtin.set_fact:
     _sni_mask: "{{ _sni | servicenow_insights_mask(_sni_opts) if _sni.ok | default(false) | bool else {'pairs': [], 'counts': {}} }}"
@@ -159,7 +165,7 @@
     - name: Insights | the work notes of the top issues' incidents (sys_journal_field, read-only), for ACT's fixes
       when: servicenow_insights_act_work_notes | bool and _sni_fix_batches | length > 0
       block:
-        - name: Insights | read the work notes of {{ _sni_fix_batches | servicenow_insights_fix_ids | length }} incidents
+        - name: Insights | read the work notes of {{ _sni_fix_batches | default([]) | servicenow_insights_fix_ids | length }} incidents
           site_servicenow_insights:
             url: "{{ _sni_url }}"
             username: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
@@ -228,6 +234,10 @@
     _sni_model: "{{ _sni_model | servicenow_insights_finish(_sni_mask_wn | default(_sni_mask)) }}"
     _sni_doc: "{{ _sni_model | servicenow_insights_doc('all', _sni_opts) }}"
   when: _sni.ok | default(false) | bool
+
+- name: Insights | the last months from the report database, for the trend (servicenow_insights_db)
+  ansible.builtin.include_tasks: db.yml
+  when: servicenow_insights_db | bool and _sni.ok | default(false) | bool
 
 - name: Insights | {{ _sni_doc.title | default('nothing read') }}
   ansible.builtin.debug:
@@ -340,6 +350,10 @@
   when: >-
     _sni.ok | default(false) | bool and (report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0
     or _sni_web.on | bool)
+
+- name: Insights | this run's figures into the report database (servicenow_insights_db)
+  ansible.builtin.include_tasks: db_write.yml
+  when: servicenow_insights_db | bool and _sni.ok | default(false) | bool
 
 - name: Insights | ServiceNow read, every group there (servicenow_insights_fail)
   ansible.builtin.assert:

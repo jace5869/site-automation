@@ -23,6 +23,7 @@ into **Injector configuration**. Then create one credential of each type per env
 | `netapp_ontap.yml` | NetApp ONTAP | `ontap_health_report.yml` - a read-only account on the clusters (`docs/NETAPP.md`) |
 | `cisco_ucs_manager.yml` | Cisco UCS Manager | `ucs_inventory_report.yml` - a read-only UCS Manager account on the domains (`docs/UCS.md`) |
 | `cert_inventory_sql.yml` | SQL Server (certificate inventory) | the certificate reports with `cert_inventory_sql: true` - a login that adds and updates the inventory table (`docs/CERT_INVENTORY.md`) - optional |
+| `report_database.yml` | Report database | `servicenow_insights.yml` with `servicenow_insights_db: true` - the report database's writer account, report_writer (`docs/REPORT_DATABASE.md`) - optional |
 | `vcenter_sso_test.yml` | vCenter SSO test account | `vm_health_report.yml`, `vm_outage_watch.yml`: a domain account that logs in to vCenter each run (single sign-on works) - optional |
 | `horizon_api.yml` | Horizon API | every `horizon_*.yml` job - an AD account with a Horizon administrator role (`docs/HORIZON.md`) |
 | `tenable_sc_api.yml` | Tenable.sc API | `tenable_scan.yml` - a Tenable.sc user's API keys (or user name and password) that may create and launch scans (`docs/TENABLE.md`) |

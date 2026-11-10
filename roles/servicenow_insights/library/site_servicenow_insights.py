@@ -32,7 +32,7 @@ options:
   tables: {description: The tables read., type: list, elements: str, default: [incident, sc_req_item, sc_task, change_request, change_task, problem]}
   months: {description: The window - this many months up to until., type: int, default: 6}
   days: {description: "The window in days (> 0 wins over months).", type: float, default: 0}
-  until: {description: "The window's last day (through its end); '' = now.", type: str, default: ''}
+  until: {description: "The window's last day (through its end); '' = now; month_start - the end of last month (the backfill, 1.13.0).", type: str, default: ''}
   compare: {description: Read the window before as well (the same length)., type: bool, default: true}
   time_zone: {description: "The zone of the dates given and of the window's whole days ('' = UTC).", type: str, default: ''}
   max_records: {description: At most this many records per table., type: int, default: 20000}
@@ -190,6 +190,9 @@ def window(months=6, days=0, until="", compare=True, time_zone="", now=None):
     now = (now or datetime.datetime.now(UTC)).astimezone(tz)
     u = now
     t = str(until or "").strip()
+    if t == "month_start":           # the backfill (1.13.0): whole calendar months, up to this month's first day
+        u = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        t = ""
     if t:
         m = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", t)
         if not m:

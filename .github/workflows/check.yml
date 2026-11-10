@@ -321,6 +321,13 @@ jobs:
         run: |
           bash tests/servicenow/run_insights_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/servicenow/run_insights_test.sh
+      - name: Ticket insights' history in a real MySQL 8.4 (docker; plain TCP, caching_sha2_password) - the backfill, the months, the trends (current ansible-core and 2.16)
+        run: |
+          pip install PyMySQL cryptography
+          /tmp/ac216/bin/pip -q install PyMySQL cryptography
+          docker pull -q mysql:8.4
+          INSIGHTS_DB_TEST_RUNTIME=docker INSIGHTS_DB_TEST_IMAGE=mysql:8.4 bash tests/servicenow/run_insights_db_test.sh
+          INSIGHTS_DB_TEST_RUNTIME=docker INSIGHTS_DB_TEST_IMAGE=mysql:8.4 ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/servicenow/run_insights_db_test.sh
       - name: Certificate report finding TLS ports and keystores by itself (in a private namespace)
         run: |
           # Ubuntu 24.04's AppArmor stops unprivileged user namespaces (unshare -rnp); allow them on this runner

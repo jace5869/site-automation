@@ -410,7 +410,7 @@ Everything `base-ee:1.0` has, plus:
 | **Windows** | `ansible.windows`, `community.windows` | `pywinrm` with Kerberos, `pypsrp`, `requests-kerberos`, `requests-ntlm`; `kinit`, `klist` |
 | **Active Directory** | `microsoft.ad` | `pyspnego`, `gssapi`, `krb5`, `sansldap`, `ldap3`, `dnspython`; `dig` |
 | **SQL Server** | `community.general` (`mssql_db`, `mssql_script`), `lowlydba.sqlserver` | `pymssql`, built in the build with FreeTDS and the EE's own OpenSSL and Kerberos (works on a FIPS host); `mssql-python`, Microsoft's driver, for your own Python |
-| **MySQL and MariaDB** | `ansible.mysql` | `PyMySQL` |
+| **MySQL and MariaDB** | `ansible.mysql` | `PyMySQL`, and `cryptography` for a MySQL 8.4 login without TLS (the report database, [REPORT_DATABASE.md](REPORT_DATABASE.md)) |
 | **The report website on an SMB share** | | `smbprotocol` (Kerberos through `pyspnego` and `gssapi`) |
 
 There are two ways to reach SQL Server:
@@ -1085,6 +1085,16 @@ podman run --rm site-ee-all:3 ee-check | grep -iE 'pymssql|OpenSSL'
 #   YES  mssql-python
 #   YES  no library with its own OpenSSL 1.1 (FIPS)
 ```
+
+**1.13.0: the report database's login.** `ee-check` also tries the step a MySQL 8.4 login takes without TLS: PyMySQL
+encrypts the password with the server's RSA key. On a FIPS host this is the line to look at:
+
+```bash
+podman run --rm site-ee-all:3 ee-check | grep -i 'MySQL login'
+#   YES  MySQL login without TLS (caching_sha2_password: PyMySQL's RSA step)
+```
+
+A `no` there means the EE's OpenSSL refuses the RSA step. Use TLS for the report database instead (REPORT_DATABASE.md, TLS).
 
 ## Rebuild with a new tag
 
