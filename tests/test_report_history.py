@@ -370,6 +370,30 @@ class GlassLook(PortalLook):
 
 
 
+def _wrap_columns(case):
+    """1.12.0: a report may name a column's kind itself (wrap: lines break at spaces, the heading too, no minimum width,
+    a status chip too) and give a short heading its full name as its title; without them, as before."""
+    sec = {"title": "T", "columns": ["Cluster", "Takeover possible", "Size"], "rows": [["na-cluster-a", "no (partner down)", "1 GB"]],
+           "cell_status": [["", "warning", ""]], "kinds": ["wrap", "wrap", ""], "column_titles": ["", "Takeover possible after a failure", ""]}
+    h = case.render(_report=dict(REPORT, sections=[sec]))
+    case.assertIn('<th class="k-wrap" scope="col"><button type="button">Cluster', h)
+    case.assertIn('<th class="k-wrap" scope="col" title="Takeover possible after a failure"><button type="button">Takeover possible', h)
+    case.assertIn('<th class="k-nw" scope="col"><button type="button">Size', h)                 # '' = from what it holds
+    case.assertIn('<td class="k-wrap" data-l="Cluster" data-v="na-cluster-a"><span class="w">na-cluster-a</span></td>', h)
+    case.assertIn("td.k-wrap .w{white-space:nowrap}", h)                       # a word up to 16 characters kept whole
+    sec2 = dict(sec, rows=[["na-cluster-site-a-prod c1-02\nhome: c1-01", "no", "1 GB"]])
+    case.assertIn('data-v="na-cluster-site-a-prod c1-02\nhome: c1-01">na-cluster-site-a-prod <span class="w">c1-02</span>\n'
+                  '<span class="w">home:</span> <span class="w">c1-01</span></td>', case.render(_report=dict(REPORT, sections=[sec2])))
+    case.assertIn('<td data-l="Takeover possible" data-v="no (partner down)" class="k-wrap">', h)   # the chip wraps too
+    sec3 = dict(sec, rows=[["c", "+398 s", "1 GB"]])                                  # but a short one stays whole
+    case.assertIn('<td data-l="Takeover possible" data-v="+398 s" class="nw">', case.render(_report=dict(REPORT, sections=[sec3])))
+    case.assertIn("td.k-wrap{overflow-wrap:break-word}", h)
+    h = case.render(_report=dict(REPORT, sections=[dict((k, v) for k, v in sec.items() if k not in ("kinds", "column_titles"))]))
+    case.assertNotIn("k-wrap\"", h)
+    case.assertNotIn(' title="Takeover', h)
+    case.assertIn('<td data-l="Takeover possible" data-v="no (partner down)" class="nw">', h)
+
+
 class AtlasLook(unittest.TestCase):
     """roles/site_email/templates/report_atlas.html.j2 (the report website's look), rendered with plain Jinja."""
 
@@ -390,6 +414,9 @@ class AtlasLook(unittest.TestCase):
                 "report_email_header_text": "Site <automation> report"}
         base.update(v)
         return env.get_template("report_atlas.html.j2").render(**base)
+
+    def test_wrap_columns_and_titles(self):
+        _wrap_columns(self)
 
     def test_escaped_and_self_contained(self):
         h = self.render()
@@ -583,6 +610,9 @@ class BriefLook(unittest.TestCase):
                 "report_email_header_text": "Site <automation> report"}
         base.update(v)
         return env.get_template("report_brief.html.j2").render(**base)
+
+    def test_wrap_columns_and_titles(self):
+        _wrap_columns(self)
 
     def test_escaped_and_self_contained(self):
         h = self.render()
