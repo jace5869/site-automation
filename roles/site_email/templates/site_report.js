@@ -36,8 +36,11 @@
   var p=document.getElementById('print');if(p){p.hidden=false;p.addEventListener('click',function(){
     all('details.sec').forEach(function(d){d.open=true});window.print()})}
   /* a table wider than its card scrolls sideways (its headings then stay in it); one that fits keeps them at the top */
+  /* a compact table (1.11.0) that does not fit: its short values may break at a hyphen (sq) before it scrolls */
   function fit(){all('.tw').forEach(function(w){w.classList.remove('scroll');
-    var t=w.querySelector('table');if(t&&t.scrollWidth>w.clientWidth+1)w.classList.add('scroll')})}
+    var t=w.querySelector('table');if(!t)return;
+    if(t.classList.contains('cc')){t.classList.remove('sq');if(t.scrollWidth>w.clientWidth+1)t.classList.add('sq')}
+    if(t.scrollWidth>w.clientWidth+1)w.classList.add('scroll')})}
   fit();var rt;window.addEventListener('resize',function(){clearTimeout(rt);rt=setTimeout(fit,120)});
   all('details.sec').forEach(function(d){d.addEventListener('toggle',fit)});
   /* the section in view, marked in the bar and in the rail */
@@ -108,10 +111,20 @@
         title=h2&&h2.firstChild&&h2.firstChild.nodeType===3?h2.firstChild.textContent.trim():one(h2);
       save(fname(document.title+' - '+title)+'.csv','\ufeff'+[v[0]].concat(v[1]).map(function(r){return r.map(csvf).join(',')}).join('\r\n')+'\r\n')})});
   /* Columns: check boxes the CSS acts on (they work without this); here a table that now fits stops scrolling, the
-     list closes on a click elsewhere, and Show all */
+     list closes on a click elsewhere, and Show all. 1.11.0: the choice is kept in the browser for every table with the
+     same columns (the VM inventory's folder tables hide a column together, on this page and the next); until a choice is
+     made, the columns the report starts hidden (hidden_columns) */
+  function colsig(d){return 'site-report-cols:'+all('label',d).map(function(l){return l.textContent.trim()}).join('|')}
+  function coloff(d){var off=[];all('label',d).forEach(function(l){var i=l.querySelector('input');if(i&&!i.checked)off.push(l.textContent.trim())});return off}
+  function colput(d,off){all('label',d).forEach(function(l){var i=l.querySelector('input');if(i)i.checked=off.indexOf(l.textContent.trim())<0})}
+  function colkeep(d){var k=colsig(d),off=coloff(d);
+    try{localStorage.setItem(k,JSON.stringify(off))}catch(e){}
+    all('details.cols').forEach(function(o){if(o!==d&&colsig(o)===k)colput(o,off)});fit()}
   all('details.cols').forEach(function(d){var b=d.querySelector('.call');
-    d.addEventListener('change',fit);
-    if(b){b.hidden=false;b.addEventListener('click',function(){all('input',d).forEach(function(i){i.checked=true});fit()})}});
+    try{var kept=JSON.parse(localStorage.getItem(colsig(d))||'null');if(kept&&kept.length!==undefined)colput(d,kept)}catch(e){}
+    d.addEventListener('change',function(){colkeep(d)});
+    if(b){b.hidden=false;b.addEventListener('click',function(){all('input',d).forEach(function(i){i.checked=true});colkeep(d)})}});
+  fit();
   document.addEventListener('click',function(e){all('details.cols[open]').forEach(function(d){if(!d.contains(e.target))d.open=false})});
   /* a row is shown unless the table's filter or the search takes it away */
   function vis(r){var h=!!(r._f||r._s);if(r.hidden!==h)r.hidden=h}

@@ -24,7 +24,7 @@
 Setup (vcsim's default inventory: DC0_H0_VM0/1, DC0_C0_RP0_VM0/1; port groups DC0_DVPG0/1, VM Network):
   DC0_H0_VM0      the AAP server: guest host name aap01.example.mil, IP 192.0.2.5, Tools running, a
                   snapshot "aap-snap" (the snapshot cleanup must never delete it)
-  DC0_H0_VM1      web01: Tools running, EFI, a second adapter (VM Network), a snapshot
+  DC0_H0_VM1      web01: Tools running, EFI, encrypted vMotion required, a second adapter (VM Network), a snapshot
                   "baseline" (vcsim leaves out the snapshot property of a VM with none, where vCenter
                   returns it empty - the snapshot module reads it); its host gets port group VLAN200
   DC0_C0_RP0_VM0  Tools NOT running, EFI without secure boot
@@ -32,7 +32,9 @@ Setup (vcsim's default inventory: DC0_H0_VM0/1, DC0_C0_RP0_VM0/1; port groups DC
   dup (x2)        two VMs with the same name in different folders
 vcsim's special extraConfig keys "SET.<property>" set read-only properties (guest info). vcsim does not
 keep secure boot (bootOptions.efiSecureBootEnabled is always unset): "EFI with secure boot on" is covered
-by tests/test_filters.py instead."""
+by tests/test_filters.py instead. Nor VM Encryption (config.keyId) or a virtual TPM (summary.config.tpmPresent is not
+given, a VirtualTPM added comes back as a plain device): every VM is unencrypted and without a vTPM - the VM inventory's
+other answers are in tests/test_vm_inventory.py and tests/test_vmware_modules.py."""
 import datetime
 import json
 import os
@@ -84,7 +86,8 @@ def setup():
     setx(aap, guest__hostName="aap01.example.mil", guest__ipAddress="192.0.2.5", guest__toolsRunningStatus="guestToolsRunning")
     WaitForTask(aap.CreateSnapshot_Task(name="aap-snap", description="", memory=False, quiesce=False))
     web = vm("DC0_H0_VM1")
-    setx(web, guest__hostName="web01.example.mil", guest__ipAddress="192.0.2.20", guest__toolsRunningStatus="guestToolsRunning")
+    setx(web, guest__hostName="web01.example.mil", guest__ipAddress="192.0.2.20", guest__toolsRunningStatus="guestToolsRunning",
+         config__migrateEncryption="required")
     net = [n for n in content.viewManager.CreateContainerView(content.rootFolder, [vim.Network], True).view if n.name == "VM Network"][0]
     nic = vim.vm.device.VirtualVmxnet3(key=-1, backing=vim.vm.device.VirtualEthernetCard.NetworkBackingInfo(network=net, deviceName=net.name))
     WaitForTask(web.ReconfigVM_Task(vim.vm.ConfigSpec(

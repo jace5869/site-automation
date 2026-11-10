@@ -1,8 +1,11 @@
 ---
 # VM INVENTORY REPORT (playbooks/vm_inventory_report.yml): every VM of every vCenter (vmware_vcenters; or of
 # vmware_datacenter), by vCenter and folder - power, ESXi host, cluster, guest OS, IP address, vCPUs, memory - and the
-# count. Printed, published as artifacts (vm_inventory: the counts), emailed with every VM as an Excel workbook
-# (vm_inventory_xlsx), on the report website. Read-only; green unless a vCenter could not be read.
+# count; the VMs without encryption, EFI or a vTPM (vm_inventory_security), the hardware versions and VMware Tools. The
+# website's VM tables also show encryption, firmware, Secure Boot, vTPM, hardware version and Tools (its Columns menu hides
+# them; vm_inventory_hidden_columns start hidden); the email keeps them in their sections and the workbook. Printed,
+# published as artifacts (vm_inventory: the counts), emailed with every VM as an Excel workbook (vm_inventory_xlsx), on the
+# report website. Read-only; green unless a vCenter could not be read.
 - name: VMware | a vCenter credential is attached
   ansible.builtin.include_tasks: credential.yml
 
@@ -11,25 +14,32 @@
     datacenter: "{{ vmware_datacenter | default(omit, true) }}"
     vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
     validate_certs: "{{ vmware_validate_certs | bool }}"
+    security: "{{ vm_inventory_security | bool }}"
   register: _vm_inv_read
   check_mode: false
 
 - name: VMware | the report
   ansible.builtin.set_fact:
-    _vm_inv_opts:
-      templates: "{{ vm_inventory_templates | bool }}"
-      by_folder: "{{ vm_inventory_by_folder | bool }}"
-      max_rows: "{{ vm_inventory_max_rows | int }}"
-    _vm_inv_doc: >-
-      {{ _vm_inv_read.vms | vm_inventory_doc(_vm_inv_read.vcenters,
-           {'templates': vm_inventory_templates | bool, 'by_folder': vm_inventory_by_folder | bool,
-            'max_rows': vm_inventory_max_rows | int}) }}
+    _vm_inv_opts: >-
+      {{ {'templates': vm_inventory_templates | bool, 'by_folder': vm_inventory_by_folder | bool,
+          'max_rows': vm_inventory_max_rows | int, 'security': vm_inventory_security | bool,
+          'security_skip_templates': vm_inventory_security_skip_templates | bool,
+          'security_skip_off': vm_inventory_security_skip_off | bool,
+          'hidden_columns': vm_inventory_hidden_columns} }}
+
+# the email's (the lean VM tables) and the website's (the VM tables with encryption, firmware, Secure Boot, vTPM, hardware
+# version and Tools - columns its Columns menu hides)
+- name: VMware | the report's content
+  ansible.builtin.set_fact:
+    _vm_inv_doc: "{{ _vm_inv_read.vms | vm_inventory_doc(_vm_inv_read.vcenters, _vm_inv_opts) }}"
+    _vm_inv_web_doc: "{{ _vm_inv_read.vms | vm_inventory_doc(_vm_inv_read.vcenters, _vm_inv_opts | combine({'web': true})) }}"
 
 - name: VM inventory report
   ansible.builtin.include_tasks: report.yml
   vars:
     _vm_vcenters: "{{ _vm_inv_read.vcenters }}"
     _vm_report_doc: "{{ _vm_inv_doc }}"
+    _vm_report_web_doc: "{{ _vm_inv_web_doc }}"
     _vm_report_subject: "{{ _vm_inv_doc.title }}"
     _vm_report_lines: >-
       {{ [_vm_inv_doc.subtitle]

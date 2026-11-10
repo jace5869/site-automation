@@ -11,7 +11,7 @@
     phone, each row a card. Printed: white, landscape, every section open. One file: the styles and the small script
     inline, no fonts or scripts from elsewhere (the page opens from a share too, file://). Without the script it reads
     the same: only the switches, sorting, filtering and the Copy buttons need it (hidden without it). Input as
-    report_portal: _report, _page_logo_cid/_page_logo_size, _page_runs, _page_job/_page_template, _email_footer. Every
+    report_portal: _report (_page_report, the website's, first), _page_logo_cid/_page_logo_size, _page_runs, _page_job/_page_template, _email_footer. Every
     value is escaped. Design notes and their sources: docs/WEB_REPORTS.md, "The look". 0.63.0: a rail of the sections
     beside the report on a wide screen (the one in view marked, how many each has, the search's matches); a search box
     in the bar for the whole report (rows, lines and cards; / or Ctrl+K); on each table Columns (check boxes, CSS) and
@@ -20,7 +20,7 @@
     Content-Security-Policy with script-src 'self' runs it) and inline as well, for a page without the file. 0.66.0:
     the rail can be put away (its button: a check box the CSS acts on) - a narrow strip with the button to bring it
     back, the tables get its width and the bar lists the sections again; the script keeps the choice. -#}
-{%- set r = _report -%}
+{%- set r = _page_report | default(_report) -%}
 {%- set logo_cid = _page_logo_cid | default(_email_logo_cid | default('')) -%}
 {%- set logo_size = _page_logo_size | default(_email_logo_size | default([0, 0])) -%}
 {%- set runs = _page_runs | default(_email_runs | default([])) -%}
@@ -332,6 +332,13 @@ tr.r-info td:first-child{box-shadow:inset 3px 0 0 var(--info)}
 tr.r-critical:hover td,tr.r-warning:hover td{background:var(--hover)}
 .none{color:var(--muted);padding:4px 0}
 footer{margin-top:28px;text-align:center;color:var(--muted);font-size:13px;line-height:1.7}
+/* a compact table (a section's compact: true, 1.11.0 - many short columns, the VM inventory's): tighter cells, small chips
+   that wrap ("upgrade / available"); short values break at a hyphen only when the table would not fit otherwise (the
+   script's sq) */
+@media (min-width:640.02px){table.cc td,table.cc th button{padding-left:8px;padding-right:8px}}
+table.cc td .chip,table.cc td.nw .chip{padding:1px 7px 1px 4px;gap:4px;font-size:12px;white-space:normal;border-radius:9px}
+table.cc td .chip .ic{width:13px;height:13px}
+table.cc.sq td.k-nw{white-space:normal}
 /* Columns: a column whose box is not checked, not shown (a rule per place, 1 to the most columns of a table here) */
 {%- set ncol = namespace(n=0) %}
 {%- for s in r.sections | default([]) if s.columns is defined and s.columns | length > ncol.n %}{% set ncol.n = s.columns | length %}{% endfor %}
@@ -525,16 +532,16 @@ footer{margin-top:28px;text-align:center;color:var(--muted);font-size:13px;line-
 <details class="cols"><summary class="btn" title="Show or hide columns"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8" y="2.5" width="12.4" height="11" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6 2.8v10.4M10 2.8v10.4" stroke="currentColor" stroke-width="1.4"/></svg><span>Columns</span></summary>
 <div class="menu" role="group" aria-label="The columns of {{ s.title | e }}">
 {%- for c in s.columns %}
-<label><input type="checkbox" class="c{{ loop.index }}" checked>{{ c | e }}</label>
+<label><input type="checkbox" class="c{{ loop.index }}"{{ '' if c in s.hidden_columns | default([]) else ' checked' }}>{{ (s.column_titles[loop.index0] if s.column_titles is defined and s.column_titles | length > loop.index0 else c) | e }}</label>
 {%- endfor %}
 <button class="call" type="button" hidden>Show all</button></div></details>
 {%- endif %}
 <button class="btn csv" type="button" hidden title="Download the rows shown as a CSV file (opens in Excel)"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v8M4.8 7l3.2 3.2L11.2 7M2.5 12.2v1.3h11v-1.3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>CSV</span></button>
 </div>
-<div class="tw"><table>
+<div class="tw"><table{{ ' class="cc"' if s.compact | default(false) else '' }}>
 <thead><tr>
 {%- for c in s.columns %}
-<th class="k-{{ kinds[loop.index0] }}" scope="col"><button type="button">{{ c | e }}<span class="sort" aria-hidden="true">&#8597;</span></button></th>
+<th class="k-{{ kinds[loop.index0] }}" scope="col"{% if s.column_titles is defined and s.column_titles | length > loop.index0 and s.column_titles[loop.index0] != c %} title="{{ s.column_titles[loop.index0] | e }}"{% endif %}><button type="button">{{ c | e }}<span class="sort" aria-hidden="true">&#8597;</span></button></th>
 {%- endfor %}
 </tr></thead>
 <tbody>
@@ -544,14 +551,14 @@ footer{margin-top:28px;text-align:center;color:var(--muted);font-size:13px;line-
 <tr{% if rs in words %} class="r-{{ rs }}"{% endif %}>
 {%- for cell in row %}
 {%- set text = ('' if cell is none else cell) | string %}
-{%- set lbl = s.columns[loop.index0] | default('') | string %}
+{%- set lbl = (s.column_titles[loop.index0] if s.column_titles is defined and s.column_titles | length > loop.index0 else s.columns[loop.index0] | default('')) | string %}
 {%- set kd = kinds[loop.index0] | default('mid') %}
 {%- set cst = (cs[loop.index0] if cs | length > loop.index0 else '') | default('', true) %}
 {%- set cst = cst if cst in words else cellword.get(text | trim | lower, '') %}
-{#- a Status or Severity column of a row with its status: that status's chip (upper case - FAIL - as Fail; a STIG CAT I stays) #}
+{#- a Status or Severity column of a row with its status: that status's chip (upper case - FAIL - as Fail; a STIG CAT I stays, and a section's keep_case: EFI, BIOS) #}
 {%- set cst = cst or (rs if rs in words and lbl | lower in ['status', 'severity', 'result'] and text | trim else '') %}
 {%- if cst %}
-<td data-l="{{ lbl | e }}" data-v="{{ text | e }}"{% if text | length <= 32 %} class="nw"{% else %} class="k-mid"{% endif %}>{{ chip(cst, text | capitalize if text.isupper() and not text.startswith('CAT ') else text) }}</td>
+<td data-l="{{ lbl | e }}" data-v="{{ text | e }}"{% if text | length <= 32 %} class="nw"{% else %} class="k-mid"{% endif %}>{{ chip(cst, text | capitalize if text.isupper() and not text.startswith('CAT ') and not s.keep_case | default(false) else text) }}</td>
 {%- elif lbl | lower in ['look further', 'command', 'hint', 'next step'] %}
 <td class="lk" data-l="{{ lbl | e }}" data-v="{{ text | e }}">{% if text | trim %}<span class="cv"><span class="cmd">{{ breakable(text) }}</span><button class="ccopy" type="button" hidden title="Copy" aria-label="Copy the command">{{ copyicons() }}</button></span>{% endif %}</td>
 {%- elif kd == 'path' %}

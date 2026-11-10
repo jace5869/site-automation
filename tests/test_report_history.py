@@ -695,5 +695,54 @@ class BriefLook(unittest.TestCase):
         self.assertNotRegex(palette, r"#000\b|#000000|#fff\b|#ffffff")         # the palette: never pure black or white
 
 
+
+class WebColumns(unittest.TestCase):
+    """1.11.0, the atlas and brief looks: short headers with their full names (hover, Columns, the phone's labels), columns
+    that start hidden, the choice kept in the browser, a compact table, chip text as it is (keep_case), and the page's own
+    report (_page_report) over a caller's _report."""
+    SEC = {"title": "vc01 - DC1 / Linux", "columns": ["VM", "Enc", "EFI", "SB", "Tools ver."],
+           "column_titles": ["VM", "Encrypted", "Firmware (EFI or BIOS)", "Secure Boot", "VMware Tools version"],
+           "hidden_columns": ["SB", "Tools ver."], "compact": True, "keep_case": True,
+           "rows": [["web01", "no", "BIOS", "off", "12.3.5"]], "cell_status": [["", "warning", "warning", "warning", ""]]}
+
+    def render(self, look, **v):
+        import jinja2
+        env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(REPO, "roles", "site_email", "templates")),
+                                 autoescape=False)
+        base = {"_report": dict(REPORT, sections=[dict(self.SEC)]), "_email_footer": "AAP job 9", "_page_logo_cid": "",
+                "_page_runs": [], "report_email_header_text": "Site automation report"}
+        base.update(v)
+        return env.get_template("report_%s.html.j2" % look).render(**base)
+
+    def test_titles_hidden_compact_keep_case(self):
+        for look in ("atlas", "brief"):
+            h = self.render(look)
+            self.assertIn('scope="col" title="Encrypted"><button type="button">Enc<', h)
+            self.assertIn('scope="col"><button type="button">VM<', h)                 # the same name: no title
+            self.assertIn('<input type="checkbox" class="c2" checked>Encrypted</label>', h)
+            self.assertIn('<input type="checkbox" class="c4">Secure Boot</label>', h)     # starts hidden, in the menu
+            self.assertIn('<input type="checkbox" class="c5">VMware Tools version</label>', h)
+            self.assertIn('data-l="Firmware (EFI or BIOS)"', h)                       # the phone's card label
+            self.assertIn('<table class="cc">', h)
+            self.assertIn("table.cc.sq td.k-nw{white-space:normal}", h)               # a hyphen breaks only when it must
+            self.assertRegex(h, r'<span class="chip s-warning">.*?<span>BIOS</span>')  # not "Bios"
+            plain = self.render(look, _report=dict(REPORT, sections=[dict(self.SEC, compact=False, keep_case=False,
+                                                                          hidden_columns=[])]))
+            self.assertIn("<span>Bios</span>", plain)                                  # upper case shown as a word, as before
+            self.assertIn('<input type="checkbox" class="c4" checked>', plain)
+            self.assertIn("<div class=\"tw\"><table>", plain)
+            mine = self.render(look, _page_report=dict(REPORT, sections=[{"title": "The website copy", "lines": ["x"]}]))
+            self.assertIn("The website copy", mine)                                    # site_email's own, over a caller's _report
+            self.assertNotIn(">Enc<", mine)
+
+    def test_the_choice_kept(self):
+        js = open(os.path.join(REPO, "roles", "site_email", "templates", "site_report.js")).read()
+        self.assertIn("'site-report-cols:'", js)                                       # a key per set of columns
+        self.assertIn("localStorage.setItem(k,JSON.stringify(off))", js)
+        self.assertIn("if(o!==d&&colsig(o)===k)colput(o,off)", js)                     # every table with those columns follows
+        self.assertIn("if(t.classList.contains('cc')){t.classList.remove('sq')", js)
+        js.encode("ascii")
+
+
 if __name__ == "__main__":
     unittest.main()

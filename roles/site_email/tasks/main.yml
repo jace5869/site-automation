@@ -19,6 +19,10 @@
 #       # Print opens it); the email shows it all (1.6.1)
 #       # "Start here" cards (site_filters report_cards_html); a summary box may have a note: {label, value, status, note}
 #       - {title: Start here, cards: [{status: critical, chip: Critical, meta: Certificate, title: ..., subject: web01, next: ..., code: ...}]}
+#       # the website's atlas and brief looks (1.11.0): column_titles - each column's full name (the header's hover, the Columns
+#       # menu, the phone's card labels) beside short headers; hidden_columns - columns that start hidden (the Columns menu shows
+#       # them; a viewer's choice is kept in the browser for every table with the same columns); keep_case: true - a chip's text
+#       # as it is (EFI, BIOS; else an upper-case one - FAIL - is shown as Fail)
 #     footer: "vCenter vcsa01"                                 # optional; the AAP job line is added
 # or plain text: _report_subject and _report_body. _report_attachments: files the email attaches, [{path, filename}].
 # The look: report_email_theme (standard | command | portal | glass), report_logo_file. The strip of past runs (all but standard)
@@ -29,6 +33,8 @@
 # ("Report: https://...") and kept as the job artifact site_report_url. _report_email_skip: true = only the website.
 # _report_to_only: [addresses] = only these get it (no report_email_to, no report_email_cc).
 # _report_web_skip: true = never on the website, whatever report_web_dest says (the outage AAR's documents).
+# _report_web: the website's version of _report (more columns, which the atlas and brief looks' Columns menu can hide - an email
+# cannot): the page in those looks and its JSON; the email, and the website in the other looks, use _report (1.11.0).
 # _report_html: the website's page as the report made it (the ticket insights' own page) instead of report_web_theme's look; the
 # logo goes where it has <!--site-report-logo-->. The email and the index still use _report.
 # report_web_copy: true = the page is not written here - the report is kept as the job artifact site_report_page for the
@@ -83,7 +89,8 @@
          and not report_web_copy | default(false) | bool }}
     _web_theme: "{{ report_web_theme | default('atlas') | string | trim | lower }}"
     _web_report: >-
-      {{ (_report if _report is defined else
+      {{ (_report_web if _report_web | default({}, true) and _report is defined and report_web_theme | default('atlas') | string | trim | lower in ['atlas', 'brief']
+          else _report if _report is defined else
           {'title': _report_subject | default('Report'), 'status': 'info',
            'sections': [{'title': 'Report', 'lines': (_report_body | default('')).splitlines()}]}) | report_act_off(_act_off | bool) }}
     _email_any: "{{ _email_to | length > 0 or (report_web_dest | default('') | string | trim | length > 0 and not _report_web_skip | default(false) | bool) }}"
@@ -299,6 +306,8 @@
     # the web copy: its own look's logo size and strip (report_web_theme), the logo put inside the page
     _web_logo_cid: "{{ _email_logo_file | length > 0 and (_web_logo_size | default([0]))[0] > 0 }}"
     _report: "{{ _web_report }}"
+    # the atlas and brief looks read this one: a role's caller's own _report would win over the line above (1.11.0)
+    _page_report: "{{ _web_report }}"
     _page_logo_cid: "{{ 'site-report-logo' if _web_logo_cid | bool else '' }}"
     _page_logo_size: "{{ _web_logo_size | default([0, 0]) }}"
     _page_runs: "{{ _web_runs | default([]) }}"

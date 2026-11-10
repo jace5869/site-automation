@@ -45,6 +45,20 @@
 ## attach every VM as an Excel workbook (.xlsx) to the email
 # vm_inventory_xlsx: true
 
+## read each VM's encryption, Secure Boot and vTPM: the section "VMs without encryption, EFI or
+## vTPM", its counts, the website's columns and the workbook (false: not read)
+# vm_inventory_security: true
+
+## templates left out of that section and its counts (when vm_inventory_templates lists them)
+# vm_inventory_security_skip_templates: true
+
+## true = powered-off VMs left out of that section and its counts
+# vm_inventory_security_skip_off: false
+
+## the website's VM tables: these of the extra columns (Enc, EFI, SB, vTPM, HW, Tools, Tools ver. -
+## or their full names) start hidden; the Columns menu shows them, and keeps a viewer's choice
+# vm_inventory_hidden_columns: [SB, Tools ver.]
+
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no
 ## email. Set it on each TEMPLATE (its Variables, or a survey): in all.yml every report job emails.
