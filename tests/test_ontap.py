@@ -271,5 +271,71 @@ class Report(unittest.TestCase):
         self.assertIn("c1: 1 event(s) left out by ontap_ems_ignore", lines)
 
 
+class Cifs(unittest.TestCase):
+    """1.6.0: ONTAP lists every DC of the domain and marks those it has not needed (other sites, preference adequate)
+    "undetermined": not contacted is normal - a count, never amber or red alone; unavailable is amber; none OK is red."""
+    @staticmethod
+    def report(servers, enabled=True):
+        data = {"cluster": {"records": [{"name": "c1"}]},
+                "cifs": {"records": [{"svm": {"name": "svm1"}, "name": "CIFS1", "enabled": enabled, "ad_domain": {"fqdn": "corp.example.mil"}}]},
+                "cifs_domains": {"records": [{"svm": {"name": "svm1"}, "discovered_servers": servers}]}}
+        r = of.ontap_report({"read_at": "2026-10-07T12:00:00Z", "clusters": [{"address": "c1.example.mil", "reachable": True, "data": data}]}, {})
+        sec = [x for x in r["report"]["sections"] if x["title"].startswith("CIFS")][0]
+        return sec, [(p["severity"], p["text"]) for p in r["problems"] if p["area"] == "cifs"]
+
+    @staticmethod
+    def dc(name, state, pref="adequate", node="c1-01"):
+        return {"server_name": name, "server_type": "ms_dc", "state": state, "preference": pref, "node": {"name": node}}
+
+    def test_all_ok(self):
+        sec, p = self.report([self.dc("dc1", "ok", "preferred"), self.dc("dc2", "ok")])
+        self.assertEqual((sec["rows"][0][5:], sec["cell_status"][0][5]), (["2 OK", ""], "ok"))
+        self.assertEqual(p, [])
+
+    def test_not_contacted_is_no_finding(self):
+        """ok + undetermined: green, with the count of those not contacted."""
+        sec, p = self.report([self.dc("dc1", "ok", "preferred")] + [self.dc("dc%d" % i, "undetermined") for i in range(2, 6)]
+                             + [self.dc("dc6", "ok", "favored")])
+        self.assertEqual(sec["rows"][0][5:], ["2 OK, 4 not contacted", ""])
+        self.assertEqual((sec["cell_status"][0][5], sec["row_status"][0]), ("ok", ""))
+        self.assertEqual(p, [])
+        self.assertNotIn("status", sec)
+        self.assertIn('stay "undetermined", which is normal and never a finding', sec["text"])
+
+    def test_unavailable_is_amber(self):
+        sec, p = self.report([self.dc("dc1", "ok"), self.dc("dc2", "unavailable"), self.dc("dc3", "undetermined")])
+        self.assertEqual(sec["rows"][0][5:], ["1 OK, 1 not contacted", "dc2 (unavailable)"])
+        self.assertEqual(p, [("warning", "domain controllers not reachable: dc2 (unavailable)")])
+
+    def test_a_preferred_dc_unavailable(self):
+        sec, p = self.report([self.dc("dc1", "ok"), self.dc("dc2", "unavailable", "preferred"), self.dc("dc3", "undetermined", "preferred")])
+        self.assertEqual(p, [("warning", "domain controllers not reachable: dc2 (unavailable, a preferred DC)")])
+        self.assertEqual(sec["rows"][0][5], "1 OK, 1 not contacted")          # an undetermined preferred one: a count too
+
+    def test_none_ok_is_red(self):
+        sec, p = self.report([self.dc("dc1", "undetermined"), self.dc("dc2", "undetermined")])
+        self.assertEqual((sec["rows"][0][5], sec["cell_status"][0][5]), ("NONE OK (2 not contacted)", "critical"))
+        self.assertEqual(p, [("critical", "ONTAP reports no DC it is connected to - CIFS cannot authenticate users (2 not contacted)")])
+        sec, p = self.report([self.dc("dc1", "unavailable"), self.dc("dc2", "undetermined")])
+        self.assertIn("ONTAP reports no DC it is connected to - CIFS cannot authenticate users (dc1 (unavailable))", p[0][1])
+
+    def test_disabled_is_red(self):
+        sec, p = self.report([self.dc("dc1", "ok"), self.dc("dc2", "undetermined")], enabled=False)
+        self.assertEqual((sec["rows"][0][4], sec["cell_status"][0][4]), ("NO", "critical"))
+        self.assertEqual(p, [("critical", "the CIFS server is DISABLED")])
+
+    def test_one_dc_per_node(self):
+        """ONTAP lists each DC once per node: counted once; ok on one node and unavailable on another is amber, naming the node."""
+        sec, p = self.report([self.dc("dc1", "ok", node="c1-01"), self.dc("dc1", "undetermined", node="c1-02"),
+                              self.dc("dc2", "ok", node="c1-01"), self.dc("dc2", "unavailable", node="c1-02")])
+        self.assertEqual(sec["rows"][0][5:], ["1 OK", "dc2 (unavailable on c1-02)"])
+        self.assertEqual(p[0][0], "warning")
+
+    def test_no_preference_field(self):
+        """Without preference (it is optional in the API): judged the same, the text without it."""
+        servers = [{"server_name": "dc1", "server_type": "ms_dc", "state": "ok"}, {"server_name": "dc2", "server_type": "ms_dc", "state": "slow"}]
+        self.assertEqual(self.report(servers)[1], [("warning", "domain controllers not reachable: dc2 (slow)")])
+
+
 if __name__ == "__main__":
     unittest.main()

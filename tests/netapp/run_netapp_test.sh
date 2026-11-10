@@ -57,7 +57,7 @@ run "the report: every kind of problem found, coloured, three clusters (one refu
        "2 LDAP event(s) left out - no SVM has an LDAP client configured" \
        "controller cluster1-01" "psu PSU2" "shelf 1.1" "1.0.3" "lif_data1" "not on its home port" "e0c" "LINK DISCONNECTED" \
        "12000" "aggr1_n1" "92%" "Aggregates not on their home node (1)" "vol_full" "vol_off" "95%" "svm1 / vol_ok" "Transfer failed." \
-       "transferring" "1d 06h 00m" "dr_cluster" "svm_stopped" "a DR destination: stopped by design" "CIFS2" "dc2 (unavailable)" \
+       "transferring" "1d 06h 00m" "dr_cluster" "svm_stopped" "a DR destination: stopped by design" "CIFS2" "dc2 (unavailable)" "1 OK, 1 not contacted" \
        "lun_unmapped" "lun_off" "cluster1.example.mil" "Clock vs AAP" "reduced detail - ONTAP refused a field" '"ontap_health"' "emailed"
 eml="$(ls "$work/mail"/*.eml 2>/dev/null | head -1)"
 html="$work/mail.html"

@@ -34,7 +34,7 @@ certificates). Then, in this order:
 | **SnapMirror** | relationships that are unhealthy, lagging, broken off, paused or uninitialized, and transfers running now: mirror state, status, healthy, lag, last transfer, progress, progress updated, policy, reason | red unhealthy / 48 h lag, amber 24 h lag, blue transferring |
 | **Cluster and SVM peers** | cluster peers not available, SVM peers not peered | red / amber |
 | **SVMs not running** | stopped storage VMs (a stopped DR destination is normal: blue) | red |
-| **CIFS (SMB) servers** | each CIFS server: enabled or not, and whether its domain controllers answer | red stopped / no DC, amber a DC down |
+| **CIFS (SMB) servers** | each CIFS server: enabled or not, and its domain controllers: how many are OK, how many ONTAP has not contacted (normal), and those it could not reach | red stopped / no DC OK, amber a DC unavailable (said when it is a preferred one) |
 | **LUNs** | LUNs not mapped to any host (forgotten?) and LUNs not online | amber / red |
 | **Certificates expiring** | certificates expiring within 60 days or expired | amber 60 days, red 14 days |
 | **Health alerts** | what the health monitors raised (`system health alert show`): node, severity, alert, resource, probable cause, corrective action | red critical / major, amber minor |
@@ -231,6 +231,8 @@ Set them in the template's Variables, or in `playbooks/group_vars/all.yml` for e
 | `the ONTAP account was refused (HTTP 401)` | wrong user or password, the account does not exist on **that** cluster, it is locked, or it lacks the `http` application | create it the same on every cluster (step 1); unlock it (`security login unlock`) |
 | `cluster1: could not read alerts - HTTP 403 ... the account's role may not allow this` | the role does not allow that command | use the built-in `readonly` role (step 1) |
 | `... reduced detail - ONTAP refused a field ...` | this ONTAP version does not know a field; the job asked again with fewer | nothing: the section is still shown, a column may say `?`. Send the line to the people who maintain this repository |
+| CIFS *Domain controllers* `2 OK, 4 not contacted` | ONTAP lists **every** DC of the domain; those it has not needed (other sites, preference *adequate*) are `undetermined` in `vserver cifs domain discovered-servers show` | nothing: not contacted is normal and never a finding (1.6.0; before, it showed amber) |
+| CIFS `dc2 (unavailable)` (amber) or `ONTAP reports no DC it is connected to` (red) | ONTAP tried that DC and could not reach it; red: no DC is OK, so the SVM cannot authenticate users | `vserver cifs domain discovered-servers show -vserver <svm>`, then the DC, DNS (`vserver services name-service dns check`) and the route from the SVM's LIFs; `vserver cifs domain discovered-servers reset-servers` rediscovers |
 | `CRC counters need ONTAP 9.11 or later` | older ONTAP has no CRC counter in its REST API | nothing: receive errors are still shown |
 | SnapMirror is empty, but you have relationships | they are read on the destination cluster | add the destination cluster to `ontap_clusters` |
 | An aggregate you know is missing | root aggregates are not returned by ONTAP's REST API | by design: root aggregates are not listed |

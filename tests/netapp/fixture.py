@@ -172,7 +172,9 @@ paths = {
     "/api/protocols/cifs/domains": {"fields": ["svm.name", "discovered_servers"],
                                     "records": [{"svm": {"name": "svm1"}, "discovered_servers": [
                                         {"server_name": "dc1", "server_type": "ms_dc", "state": "ok"},
-                                        {"server_name": "dc2", "server_type": "ms_dc", "state": "unavailable"}]}]},
+                                        {"server_name": "dc2", "server_type": "ms_dc", "state": "unavailable"},
+                                        # every DC of the domain is listed; one ONTAP has not needed is "undetermined" (1.6.0: not a finding)
+                                        {"server_name": "dc3", "server_type": "ms_dc", "state": "undetermined", "preference": "adequate"}]}]},
     "/api/security/certificates": {"fields": ["name", "common_name", "svm.name", "type", "expiry_time", "scope"],
                                    "records": [{"name": "cluster1_server", "common_name": "cluster1.example.mil", "type": "server",
                                                 "expiry_time": iso(10 * D), "scope": "cluster"},
