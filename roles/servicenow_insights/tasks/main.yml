@@ -44,7 +44,7 @@
       custom_view: "{{ servicenow_insights_custom_view | bool }}"
       custom_view_max_rows: "{{ servicenow_insights_custom_view_max_rows | int }}"
       custom_view_presets: "{{ servicenow_insights_custom_view_presets | default({}, true) }}"
-      periods: "{{ servicenow_insights_periods | default(['all', 'this_month', '1m', '2m', '2w', '1w'], true) }}"
+      periods: "{{ servicenow_insights_periods | default(['all', 'this_month', '1m', '2m', '3m', '6m', '9m', '12m', '1w', '2w', '4w'], true) }}"
       week_start: "{{ servicenow_insights_week_start | default('mon', true) | string | trim | lower }}"
       split_by: "{{ servicenow_insights_split_by | default('both', true) | string | trim | lower }}"
       directorate_alias: "{{ servicenow_insights_directorate_alias | default({}, true) }}"
@@ -480,6 +480,16 @@
 - name: Insights | is it writing? - the report database
   ansible.builtin.debug:
     msg: "{{ _sni_db_say.line }}"
+
+- name: Insights | WARNING - records cut by servicenow_insights_max_records (the pages and the email say so at the top)
+  ansible.builtin.debug:
+    msg: "{{ ['WARNING - records cut, some figures are incomplete:'] + _sni_model.cut }}"
+  when: _sni_model.cut | default([]) | length > 0
+
+- name: Insights | the window before was cut (servicenow_insights_max_records) - no compare this run
+  ansible.builtin.debug:
+    msg: "{{ _sni_model.compare_cut }}"
+  when: _sni_model.compare_cut | default('') | length > 0
 
 - name: Insights | ServiceNow read, every group there (servicenow_insights_fail)
   ansible.builtin.assert:

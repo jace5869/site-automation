@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "plugins", "filter"))
@@ -133,7 +134,7 @@ class Reader(unittest.TestCase):
         s, u = rd.sn_time("2026-05-01 00:00:00"), rd.sn_time("2026-11-01 00:00:00")
         q = rd.table_query("incident", ["g5"], [], s, u)
         self.assertEqual(q, "assignment_groupINg5^opened_at>=2026-04-30 00:00:00^ORclosed_at>=2026-04-30 00:00:00^ORactive=true"
-                            "^ORresolved_at>=2026-04-30 00:00:00^opened_at<=2026-11-02 00:00:00^ORDERBYopened_at")
+                            "^ORresolved_at>=2026-04-30 00:00:00^opened_at<=2026-11-02 00:00:00^ORDERBYDESCopened_at")
         self.assertNotIn("resolved_at", rd.table_query("sc_req_item", [], [], s, u))
         self.assertTrue(rd.table_query("change_request", [], ["Ops - Linux"], s, u).startswith("assignment_group.nameINOps - Linux^"))
 
@@ -1293,6 +1294,213 @@ class ChangeTasks(unittest.TestCase):
         self.assertEqual((m["scopes"][self.NWK]["stars"]["awards"][0]["what"], m["scopes"][self.NWK]["stars"]["awards"][0]["stat"]),
                          ("Most resolved", "1 tickets resolved"))
         self.assertEqual(self.model(self.r(refused=True))["scopes"]["all"]["counts"], self.model(self.r(tasks=False))["scopes"]["all"]["counts"])
+
+
+class RecordsCut(unittest.TestCase):
+    """1.16.0: a table over servicenow_insights_max_records keeps its NEWEST records (opened_at descending), then reads
+    the older records that count in the window (open, or done in it): the window whole, the one before cut - no compare,
+    said. That read capped too: the window cut - a banner on every page and first in the email, the job's warning, and no
+    incomplete month written to the report database."""
+
+    class Api(object):
+        """The Table API on a list of incidents (snmock's own query rules), and the Aggregate API's count."""
+
+        def __init__(self, recs, stats=True):
+            import snmock
+            self.match, self.recs, self.stats, self.url, self.calls = snmock.matches, recs, stats, "https://sn.example.mil", []
+
+        def get(self, path, params):
+            self.calls.append((path, dict(params)))
+            q = params.get("sysparm_query", "")
+            if path == "api/now/stats/incident":
+                if not self.stats:
+                    raise rd.SnError("GET api/now/stats/incident: 403 no access")
+                return {"result": {"stats": {"count": str(sum(1 for r in self.recs if self.match(r, q)))}}}
+            if path != "api/now/table/incident":
+                return {"result": []}
+            rows = sorted([r for r in self.recs if self.match(r, q)], key=lambda r: r["opened_at"], reverse="ORDERBYDESC" in q)
+            off, lim = int(params.get("sysparm_offset", 0)), int(params.get("sysparm_limit", 10000))
+            return {"result": rows[off:off + lim]}
+
+    @staticmethod
+    def recs():
+        """Window 2026-05-01 to 2026-11-01, the window before from 2025-11-01: 4 opened each month, from November 2025 to
+        October 2026, each closed 3 days later - and one opened in 2025-11 still open (the backlog)."""
+        out = []
+        for i in range(12):
+            y, mo = (2025, 11 + i) if i < 2 else (2026, i - 1)
+            for d in (3, 9, 15, 21):
+                op = "%04d-%02d-%02d 10:00:00" % (y, mo, d)
+                cl = "%04d-%02d-%02d 10:00:00" % (y, mo, d + 3)
+                out.append({"sys_id": "s%03d" % len(out), "number": "INC%07d" % len(out), "opened_at": op, "closed_at": cl,
+                            "resolved_at": cl, "active": "false", "state": "7", "assignment_group": "Ops - Linux", "priority": "4"})
+        out.append({"sys_id": "old", "number": "INC9999999", "opened_at": "2025-11-02 08:00:00", "closed_at": "", "resolved_at": "",
+                    "active": "true", "state": "2", "assignment_group": "Ops - Linux", "priority": "3"})
+        return out
+
+    def read(self, cap, recs=None, compare=True, stats=True):
+        win = rd.window(6, 0, "2026-10-31", compare, "", NOW)
+        api = self.Api(recs or self.recs(), stats)
+        with mock.patch.object(rd, "read_slas", return_value=({}, {}, "")), mock.patch.object(rd, "read_states", return_value=({}, "")), \
+                mock.patch.object(rd, "read_survey", return_value=([], "")):
+            return rd.read_all(api, [], ["incident"], win, cap, audit=False, members=False, group_parents=False), api
+
+    def test_whole(self):
+        r, api = self.read(1000)
+        t = r["tables"][0]
+        self.assertEqual((t["read"], t["more"], r["cut"], r.get("compare_cut")), (49, False, [], None))
+        self.assertTrue(r["window"]["compare"])
+        self.assertIn("^ORDERBYDESCopened_at", api.calls[0][1]["sysparm_query"])
+
+    def test_the_window_before_cut(self):
+        r, api = self.read(30)                     # 24 opened in the window, 6 of the 25 before kept
+        t = r["tables"][0]
+        self.assertTrue(t["more"])
+        self.assertFalse(t.get("window_cut"))
+        self.assertEqual(t["total"], 49)
+        self.assertEqual(t["cut"][:10], "2026-03-15")      # the oldest opened_at kept
+        nums = set(it["number"] for it in r["items"])
+        self.assertIn("INC9999999", nums)                  # the backlog's old ticket: read by the second read
+        self.assertTrue(all(it["opened_at"] >= "2026-05-01" for it in r["items"] if it["number"] != "INC9999999" and it["opened_at"] < "2026-03-15"))
+        self.assertEqual(r["cut"], [])
+        self.assertEqual(r["compare_cut"], ["incident"])
+        self.assertFalse(r["window"]["compare"])
+        self.assertEqual(r["window"]["prev_since"], r["window"]["since"])
+        older = [c for c in api.calls if "opened_at<2026-03-15" in c[1].get("sysparm_query", "")]
+        self.assertEqual(len(older), 1)
+        self.assertIn("active=true^ORclosed_at>=2026-04-30 00:00:00^ORresolved_at>=2026-04-30 00:00:00", older[0][1]["sysparm_query"])
+
+    def test_the_window_cut(self):
+        r, _api = self.read(10)
+        t = r["tables"][0]
+        self.assertTrue(t["window_cut"])
+        self.assertEqual(t["read"], 20)
+        self.assertEqual(t["cut"][:10], "2026-06-03")      # the oldest of the second read
+        self.assertEqual(r["cut"], [t])
+        self.assertTrue(r["window"]["compare"])            # the window itself is cut: said as that, not as no compare
+        line = F.cut_lines(r)
+        self.assertEqual(line, ["incident: only the newest 20 of 49 read - figures before 2026-06-03 are incomplete; "
+                                "raise servicenow_insights_max_records"])
+        r2, _ = self.read(10, stats=False)
+        self.assertIn("only the newest 20 of more read", F.cut_lines(r2)[0])
+
+    def test_said_on_every_page_and_first_in_the_email(self):
+        r, _ = self.read(10)
+        m = F.servicenow_insights_model(r, None, {}, OPTS)
+        self.assertEqual(len(m["cut"]), 1)
+        h = P.servicenow_insights_page(m, "all", OPTS)
+        self.assertIn('<div class="callout cutbar" role="alert"><b>Records cut: some figures are incomplete.</b>', h)
+        self.assertLess(h.index("cutbar"), h.index('id="glance"') if 'id="glance"' in h else len(h))
+        for k in [p_["key"] for p_ in m["pages"]]:
+            self.assertIn("cutbar", P.servicenow_insights_page(m, k, OPTS), k)
+        doc = F.servicenow_insights_doc(m, "all", OPTS)
+        self.assertEqual(doc["sections"][0]["title"], "Records cut: some figures are incomplete")
+        self.assertEqual(doc["sections"][0]["lines"], m["cut"])
+        self.assertFalse([x for x in F.not_read_lines(m) if x.startswith("incident:")])     # said once, in the banner
+
+    def test_no_compare_said(self):
+        r, _ = self.read(30)
+        m = F.servicenow_insights_model(r, None, {}, OPTS)
+        self.assertEqual(m["cut"], [])
+        self.assertIn("no compare this run. The window's figures are whole.", m["compare_cut"])
+        h = P.servicenow_insights_page(m, "all", OPTS)
+        self.assertIn("<b>No compare this run.</b>", h)
+        self.assertNotIn("role=\"alert\"", h)
+        self.assertEqual(F.servicenow_insights_doc(m, "all", OPTS)["sections"][0]["title"], "No compare this run")
+        self.assertIn("the window before cut at 2026-03-15: no compare", " ".join(F.not_read_lines(m)))
+
+    def test_never_an_incomplete_month_in_the_database(self):
+        import servicenow_insights_history as H
+        r, _ = self.read(10)                               # cut at 2026-06-03: May and June incomplete
+        m = F.servicenow_insights_model(r, None, {}, OPTS)
+        runs = H.servicenow_insights_db_runs(r, m, OPTS)["runs"]
+        cut = [(x["run"]["period"], x["run"]["month"]) for x in runs if x.get("cut")]
+        kept = [x["run"]["month"] for x in runs if not x.get("cut")]
+        self.assertEqual(cut, [("6m", "2026-10"), ("month", "2026-05"), ("month", "2026-06")])
+        self.assertEqual(kept, ["2026-07", "2026-08", "2026-09", "2026-10"])
+        self.assertEqual(H.servicenow_insights_backfill_months(r), ["2026-07", "2026-08", "2026-09", "2026-10"])
+        self.assertEqual(H.servicenow_insights_backfill_months(r, True), ["2026-05", "2026-06"])
+        st = H.servicenow_insights_db_status({"on": True, "host": "db", "port": 3309, "database": "site_reports", "read": {"ok": True},
+                                              "write": {"ok": True, "run_id": 7, "months": kept, "cut": ["the window", "2026-05", "2026-06"],
+                                                        "written": {"runs": 4, "figures": 100}, "held": []}})
+        self.assertIn("written - run 7, 4 months (2026-07, 2026-08, 2026-09, 2026-10), 100 figures; NOT written, the records cut "
+                      "(servicenow_insights_max_records): the window, 2026-05, 2026-06;", st["line"])
+        st = H.servicenow_insights_db_status({"on": True, "host": "db", "port": 3309, "database": "site_reports", "read": {"ok": True},
+                                              "write": {"ok": True, "months": [], "cut": ["2026-05"], "written": {"runs": 0}, "held": []}})
+        self.assertFalse(st["written"])
+        self.assertIn("NOT written - the records were cut (servicenow_insights_max_records): 2026-05", st["line"])
+        r0, _ = self.read(1000)
+        self.assertFalse([x for x in H.servicenow_insights_db_runs(r0, F.servicenow_insights_model(r0, None, {}, OPTS), OPTS)["runs"] if x.get("cut")])
+
+    def test_the_module_writes_none_of_them(self):
+        import site_insights_db as D
+
+        class Cur(object):
+            def __init__(self):
+                self.sql = []
+
+            def execute(self, sql, args=None):
+                self.sql.append(sql)
+
+        runs = {"runs": [{"run": {"period": "6m", "month": "2026-10"}, "cut": True}, {"run": {"period": "month", "month": "2026-05"}, "cut": True}]}
+        cur = Cur()
+        conn = mock.Mock()
+        conn.cursor.return_value = cur
+        with mock.patch.object(D, "held", return_value=[]):
+            out = D.write(conn, {"rows": runs, "job": "1"})
+        self.assertEqual(out["cut"], ["the window", "2026-05"])
+        self.assertEqual(out["written"]["runs"], 0)
+        self.assertFalse([x for x in cur.sql if x.lstrip().upper().startswith(("INSERT", "DELETE"))])
+
+
+class PyMySQLLoginBug(unittest.TestCase):
+    """1.16.0: PyMySQL 1.2.1 to 1.2.3 raise AttributeError ('NoneType' ... 'is_auth_switch_request') on the first
+    caching_sha2_password login over plain TCP after the server's cache is empty: one more try, never more, then the
+    plain-words error naming 1.2.4."""
+
+    class Fake:
+        VERSION_STRING = "1.2.3"
+
+        def __init__(self, fails):
+            self.fails, self.calls = fails, []
+
+        def connect(self, **kw):
+            self.calls.append(kw)
+            if len(self.calls) <= self.fails:
+                raise AttributeError("'NoneType' object has no attribute 'is_auth_switch_request'")
+            return "conn"
+
+    def go(self, fails):
+        import site_insights_db as D
+        fake = self.Fake(fails)
+        with mock.patch.object(D, "pymysql", fake):
+            try:
+                return D.connect_plain({"host": "db"}), fake
+            except RuntimeError as e:
+                return e, fake
+
+    def test_first_login_fails_second_works(self):
+        got, fake = self.go(1)
+        self.assertEqual(got, "conn")
+        self.assertEqual(len(fake.calls), 2)
+        self.assertTrue(all(c.get("ssl_disabled") is True for c in fake.calls))
+
+    def test_twice_said_once(self):
+        got, fake = self.go(5)
+        self.assertEqual(len(fake.calls), 2)                     # never more than one retry
+        self.assertIsInstance(got, RuntimeError)
+        for w in ("PyMySQL 1.2.3 has a bug", "1.2.1 to 1.2.3", "Launch again", "PyMySQL 1.2.4 or later", "is_auth_switch_request"):
+            self.assertIn(w, str(got))
+
+    def test_no_bug_one_login(self):
+        got, fake = self.go(0)
+        self.assertEqual((got, len(fake.calls)), ("conn", 1))
+
+    def test_tls_path_untouched(self):
+        import site_insights_db as D
+        src = open(D.__file__).read()
+        self.assertIn("conn = pymysql.connect(ssl=ctx, **kw)", src)
+        self.assertEqual(src.count("conn = connect_plain(kw)"), 1)
 
 
 class History(unittest.TestCase):

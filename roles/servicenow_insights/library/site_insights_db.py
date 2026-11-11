@@ -202,10 +202,7 @@ def connect(p):
     if ctx is not None:
         conn = pymysql.connect(ssl=ctx, **kw)
     else:
-        try:                    # PyMySQL 1.1+ would use TLS unchecked when the server offers it: plain TCP, as asked
-            conn = pymysql.connect(ssl_disabled=True, **kw)
-        except TypeError:       # an older PyMySQL: plain TCP is its default
-            conn = pymysql.connect(**kw)
+        conn = connect_plain(kw)
     cur = conn.cursor()
     cur.execute("SHOW SESSION STATUS WHERE Variable_name IN ('Ssl_version', 'Ssl_cipher')")
     st = dict((str(k), str(v or "")) for k, v in cur.fetchall())
@@ -213,6 +210,29 @@ def connect(p):
         conn.close()
         raise RuntimeError("the session is not encrypted - the server must offer TLS")
     return conn, ("%s %s" % (st.get("Ssl_version", ""), st.get("Ssl_cipher", ""))) if st.get("Ssl_cipher") else "none"
+
+
+PYMYSQL_AUTH_BUG = ("PyMySQL %s has a bug in the caching_sha2_password login over plain TCP (1.2.1 to 1.2.3: \"'NoneType' "
+                    "object has no attribute 'is_auth_switch_request'\"). Launch again: the second login usually works. "
+                    "The lasting fix: PyMySQL 1.2.4 or later in the execution environment (ee/*/requirements.txt). First error: %s")
+
+
+def connect_plain(kw):
+    """Plain TCP. PyMySQL 1.2.1 to 1.2.3 raise AttributeError on the first caching_sha2_password login after the server's
+    password cache is empty (a restart, FLUSH PRIVILEGES); the server has accepted the login by then, so the second takes
+    the fast path. One more try, never more."""
+    def once():
+        try:                    # PyMySQL 1.1+ would use TLS unchecked when the server offers it: plain TCP, as asked
+            return pymysql.connect(ssl_disabled=True, **kw)
+        except TypeError:       # an older PyMySQL: plain TCP is its default
+            return pymysql.connect(**kw)
+    try:
+        return once()
+    except AttributeError as first:
+        try:
+            return once()
+        except AttributeError:
+            raise RuntimeError(PYMYSQL_AUTH_BUG % (getattr(pymysql, "VERSION_STRING", "?"), first))
 
 
 def auth_plugin(conn):
@@ -301,9 +321,14 @@ def write(conn, p):
     rows = p["rows"] or {}
     runs = rows.get("runs") if "runs" in rows else [rows]
     cur = conn.cursor()
-    out = {"replaced": False, "written": {"runs": 0, "nodes": 0, "figures": 0}, "months": [], "kept": [], "tickets": "", "run_id": 0}
+    out = {"replaced": False, "written": {"runs": 0, "nodes": 0, "figures": 0}, "months": [], "kept": [], "tickets": "", "run_id": 0,
+           "cut": []}
     said = []
     for one in runs or []:
+        if one.get("cut"):          # 1.16.0: records cut (servicenow_insights_max_records) - incomplete, never written
+            run = one.get("run") or {}
+            out["cut"].append(run.get("month") if run.get("period") == "month" else "the window")
+            continue
         replaced, skipped, nn, nf, rid = write_run(cur, one, str(p["job"])[:64])
         out["run_id"] = out["run_id"] or rid
         run = one.get("run") or {}

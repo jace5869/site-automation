@@ -102,8 +102,9 @@ run "servicenow_war_cancelled_states [] and servicenow_war_open_scope all: every
     'Incident INC0020009: Disk alert on the decommissioned host nas02 - closed 2026-10-17 (Jane Doe)' '!more open task(s)' '"cancelled": 0'
 run "the tasks of one person, whatever the group" ok "{$NOW, \"servicenow_war_users\": [\"bsmith\"]}" \
     'Weekly activity report for bsmith: 2 completed, 3 opened, 2 open at the end' 'Assigned to: bsmith' 'INC0020003' 'SCTASK0020001' '!INC0020001'
-run "too many records: said" ok "{$NOW, $GROUP, \"servicenow_war_max_records\": 3}" \
-    'incident: more than the first 3 records - raise servicenow_war_max_records, or narrow the week' 'Not read'
+run "too many records: the newest kept, said first and in a WARNING" ok "{$NOW, $GROUP, \"servicenow_war_max_records\": 3}" \
+    'incident: only the newest 3 records read - the oldest tickets still open are left out of the counts; raise servicenow_war_max_records' \
+    'Records cut: some figures are incomplete' 'WARNING - records cut, some figures are incomplete:'
 CHECK=1 run "Check: read and printed, nothing sent" ok "{$NOW, $GROUP}" '5 completed, 6 opened, 6 open at the end'
 
 # ---- what goes wrong -----------------------------------------------------------------------------------

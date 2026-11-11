@@ -85,11 +85,12 @@ servicenow_insights_months: 6
 # servicenow_insights_custom_view_presets: {}
 
 ## map: the Custom view's periods (1.10.0), calendar ones, each against the one before. all = the
-## window; this_month = the report end's month so far; 1m, 2m = the last whole calendar month(s);
-## 1w, 2w = the last whole weeks. A from / to too.
-# servicenow_insights_periods: [all, this_month, 1m, 2m, 2w, 1w]
+## window; this_month = the report end's month so far; 1m to 12m = the last N whole calendar months;
+## 1w to 8w = the last N whole weeks (1.16.0). A period the page's tickets can not cover with the
+## one before it is left out, said under the buttons. A from / to too.
+# servicenow_insights_periods: [all, this_month, 1m, 2m, 3m, 6m, 9m, 12m, 1w, 2w, 4w]
 
-## the day a week starts on, for 1w and 2w (mon ... sun)
+## the day a week starts on, for the weeks (mon ... sun)
 # servicenow_insights_week_start: mon
 
 ## names: [NOVA] - a group whose name ends in "- NOVA" is in NOVA
@@ -266,7 +267,8 @@ servicenow_insights_months: 6
 ## the survey metrics read, by name; [] = every metric answered with a number
 # servicenow_insights_survey_metrics: []
 
-## at most this many records per table (the rest are said: shorten the window)
+## Records per table at most, the newest kept; more: said on every page (1.16.0). Measured: 20000
+## needs about 0.4 GB in the EE; 100000 about 1.5 GB and 4 minutes more.
 # servicenow_insights_max_records: 20000
 
 ## The assignment history of incidents passed around: the paths of Passed between groups. From

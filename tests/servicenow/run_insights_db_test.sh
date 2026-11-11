@@ -252,5 +252,43 @@ runpy.run_path('$repo/roles/servicenow_insights/library/site_insights_db.py', ru
 case "$out" in *"the login needs the cryptography library"*) ok "without cryptography, a cold cache: the login says it needs cryptography" ;;
     *) bad "without cryptography: $out" ;; esac
 
+# ---- 11. records cut (1.16.0): servicenow_insights_max_records cuts the window itself - the incomplete months and the
+# window's run never written, said in the last line; the complete months after the cut written ----
+since=$(one "SELECT UTC_TIMESTAMP()")      # a month replaced keeps its run_id (UPDATE): what this run wrote, by written_at
+DB_ENV="$DB" run "max_records 250: the window cut - its run and the months before the cut not written, said" ok \
+    "{$NOW, \"servicenow_insights_db\": true, \"servicenow_insights_max_records\": 250, \"report_web_dest\": \"$work/wcut\"}" \
+    'WARNING - records cut, some figures are incomplete:'
+last "  ... the last line: not written, the records cut" "NOT written, the records cut (servicenow_insights_max_records): the window, 2026-05"
+new=$(q report_reader "$rpw" "SELECT period, month FROM insights_run WHERE written_at >= '$since' ORDER BY month")
+case "$new" in *'"6m"'*|*'"2026-05"'*) bad "  ... a cut month or the window written: $new" ;;
+    *'"2026-10"'*) ok "  ... only the complete months after the cut written: $new" ;;
+    *) bad "  ... nothing written after the cut: $new" ;; esac
+
+# ---- 10. PyMySQL 1.2.3 (1.16.0): its first login after FLUSH PRIVILEGES raises AttributeError; the module tries once more ----
+if "$py" -m pip install -q --disable-pip-version-check --target "$work/pm123" "PyMySQL==1.2.3" >/dev/null 2>&1; then
+    flush() { "${rtc[@]}" exec "$name" mysql -uroot "-p$root" -e "FLUSH PRIVILEGES" >/dev/null 2>&1; }
+    flush
+    out=$(PYTHONPATH="$work/pm123" "$py" - "$dbport" "$wpw" <<'EOPY' 2>&1
+import sys, pymysql
+assert pymysql.VERSION_STRING == "1.2.3", pymysql.VERSION_STRING
+try:
+    pymysql.connect(host="127.0.0.1", port=int(sys.argv[1]), user="report_writer", password=sys.argv[2], database="site_reports", ssl_disabled=True)
+    print("no bug")
+except AttributeError as e:
+    print("the bug: %s" % e)
+EOPY
+)
+    case "$out" in *"the bug: "*"is_auth_switch_request"*) ok "PyMySQL 1.2.3, a cold cache: the first login raises the bug (reproduced)" ;;
+        *) bad "PyMySQL 1.2.3 did not show the bug: $out" ;; esac
+    flush
+    out=$(PYTHONPATH="$work/pm123" "$py" -c "import sys, runpy; sys.argv = ['m', sys.argv[1]]
+runpy.run_path('$repo/roles/servicenow_insights/library/site_insights_db.py', run_name='__main__')" \
+        "{\"ANSIBLE_MODULE_ARGS\": {\"mode\": \"read\", \"host\": \"127.0.0.1\", \"port\": $dbport, \"database\": \"site_reports\", \"user\": \"report_writer\", \"password\": \"$wpw\", \"month\": \"2026-10\"}}" 2>&1)
+    case "$out" in *'"ok": true'*) ok "  ... the module with PyMySQL 1.2.3 after FLUSH PRIVILEGES: logged in at the second try, read" ;;
+        *) bad "  ... the module with PyMySQL 1.2.3: $(echo "$out" | tail -c 400)" ;; esac
+else
+    echo "skip - PyMySQL 1.2.3 could not be installed (no PyPI): the login bug's retry is covered by the unit test only"
+fi
+
 if [ "$fails" -gt 0 ]; then echo "FAILED: $fails"; exit 1; fi
 echo "all report database scenarios passed"

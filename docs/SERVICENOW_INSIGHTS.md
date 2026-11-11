@@ -267,16 +267,24 @@ the period before it. They follow the calendar, not a count of days back from to
 |---|---|---|
 | **The window** (`all`) | the report's whole window | the window before |
 | **This month** (`this_month`) | the report end's month so far | the same days of the month before |
-| **Last month** (`1m`) | the last whole calendar month | the month before it |
-| **Last 2 months** (`2m`) | the last two whole calendar months | the two before them |
-| **Last week** (`1w`) | the last whole week, Monday to Sunday | the week before |
-| **Last 2 weeks** (`2w`) | the last two whole weeks | the two before them |
+| **Months** `1m` to `12m` | the last N whole calendar months | the N months before them |
+| **Weeks** `1w` to `8w` | the last N whole weeks, Monday to Sunday | the N weeks before them |
 | **From / to** | any days you pick | the same number of days just before |
 
+The default is `[all, this_month, 1m, 2m, 3m, 6m, 9m, 12m, 1w, 2w, 4w]` (1.16.0).
+
+- The buttons sit in two short rows, *Months* and *Weeks*, each showing its number (1, 2, 3 ...). The window and
+  This month come first, the from / to after. On a phone the buttons become one list to pick from.
 - Each button's tooltip, and the heading of the result, give the real dates: "October 2026, compared with
   September 2026".
 - When the report ends on a month's last day, This month is Last month, so only Last month shows.
-- A period that does not fit the window is left out. Its compare is left out when the window before is not carried.
+- A month or week period needs its own length and the length before it in the page's tickets. One that does not fit is
+  left out, never shown with partial figures. One muted line under the buttons says what and why:
+  - *9 and 12 months need a longer window: servicenow_insights_months.*
+  - *... need the period before as well: ...* when the window before is not carried (the row cap below, or
+    `servicenow_insights_compare: false`).
+- A name that is not a period stops the job: `servicenow_insights_periods: 13m is not a period - all, this_month, 1m to
+  12m (calendar months) or 1w to 8w (weeks)`.
 - The address keeps the period too: `#cv=0-3,7&p=1m`, or `&p=2026-10-05_2026-10-18` for a from / to.
 
 What each figure means for a period:
@@ -301,8 +309,8 @@ block the browser never runs. So a strict Content-Security-Policy, a share or an
 The rows include the window before, so every period can be compared. At most `servicenow_insights_custom_view_max_rows`
 tickets (30,000) are carried:
 
-- Over that with the window before, only the window's own tickets are carried. The periods then have no compare, and
-  the page says so.
+- Over that with the window before, only the window's own tickets are carried. The window then has no compare, and
+  the month and week periods that need the window before are left out, said under the buttons.
 - Over that with the window alone, the page says so and has no Custom view.
 
 ### The split with the map
@@ -326,8 +334,8 @@ they link to the All page.
 | `servicenow_insights_custom_view_max_rows` | `30000` | its tickets carried in the page at most |
 | `servicenow_insights_custom_view_presets` | `{}` | more quick choices: `{name: {levels: [...]}}` or `{name: {pattern: "..."}}` |
 | `servicenow_insights_split_by` | `both` | with the map, the split by `pattern`, by `level` (the label one of the group's levels), or `both` |
-| `servicenow_insights_periods` | `[all, this_month, 1m, 2m, 2w, 1w]` | the Custom view's period buttons, in order (1.10.0) |
-| `servicenow_insights_week_start` | `mon` | the day a week starts on, for `1w` and `2w` |
+| `servicenow_insights_periods` | `[all, this_month, 1m, 2m, 3m, 6m, 9m, 12m, 1w, 2w, 4w]` | the Custom view's periods (1.10.0): `all`, `this_month`, `1m` to `12m`, `1w` to `8w` (1.16.0) |
+| `servicenow_insights_week_start` | `mon` | the day a week starts on, for the weeks |
 
 ## ACT (GenAI), and what never reaches it
 
@@ -628,9 +636,32 @@ tables and what is never stored: [REPORT_DATABASE.md](REPORT_DATABASE.md).
 | `servicenow_insights_days` | 0 | > 0: the last N days instead |
 | `servicenow_insights_until` | "" | the last day (through its end), e.g. `2026-10-31`; "" = now |
 | `servicenow_insights_compare` | true | the window before (the same months, or days) is read too, for the ▲ ▼ and the tiles' changes |
-| `servicenow_insights_max_records` | 20000 | at most this many records per table; more is said (shorten the window, or name the groups) |
+| `servicenow_insights_max_records` | 20000 | at most this many records per table, the newest kept (see below). 20000 needs about 0.4 GB in the EE; 100000 about 1.5 GB and 4 minutes more |
 
 Weekly charts use whole weeks (Monday to Sunday, in `report_time_zone`).
+
+### More records than the cap (1.16.0)
+
+A table over `servicenow_insights_max_records` keeps its newest records. Then the job reads the older ones that still
+count in the window: open now, or closed or resolved in it. So the window is whole first.
+
+- **Only the window before is cut.** The figures are whole. There is no compare this run: no ▲ ▼, and every page says
+  *No compare this run* at the top.
+- **The window itself is cut** (that second read hit the cap too). Every page and the email start with *Records cut:
+  some figures are incomplete*, for example *incident: only the newest 40,000 of 52,310 read - figures before 2026-06-03
+  are incomplete; raise servicenow_insights_max_records*. The job ends with a WARNING line.
+- The report database never gets an incomplete month: the window's run and the months before the cut are not written.
+  The job's *Report database* line names them.
+
+What to raise: the job's line names the table and how many there were. Set `servicenow_insights_max_records` above that
+number, in the template's Variables. Measured on the test site (6 tables, 100,000 incidents in 13 months):
+
+| `servicenow_insights_max_records` | Memory in the EE | Time added |
+|---|---|---|
+| 20000 | about 0.4 GB | - |
+| 100000 | about 1.5 GB while it reads, 0.7 GB for the report | about 4 minutes |
+
+Before 1.16.0 a capped table kept its oldest records, so the newest months looked empty.
 
 ## Every setting
 

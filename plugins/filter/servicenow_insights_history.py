@@ -266,12 +266,30 @@ def servicenow_insights_db_runs(r, model, opts=None, mask=None):
     runs = [servicenow_insights_db_rows(model, opts)]
     for mw in month_windows((r or {}).get("window")):
         runs.append(month_run(r, mw, opts, mask))
+    # 1.16.0: a table cut inside the window (servicenow_insights_max_records): the window's run and every month that starts
+    # before the cut are incomplete - marked, never written
+    at = _cut_at(r)
+    if at is not None:
+        for x in runs:
+            a = _parse((x.get("run") or {}).get("window_start"))
+            if x is runs[0] or a is None or a < at:
+                x["cut"] = True
     return {"runs": runs}
 
 
-def servicenow_insights_backfill_months(r):
-    """The complete calendar months a backfill read holds, oldest first ('YYYY-MM')."""
-    return [mo for mo, _a, _b, partial in month_windows((r or {}).get("window")) if not partial]
+def _cut_at(r):
+    """1.16.0: where a table's records were cut inside the window (servicenow_insights_max_records): the latest such cut,
+    naive UTC - or None."""
+    cuts = [_parse(t.get("cut")) for t in (r or {}).get("tables") or [] if t.get("window_cut") and _parse(t.get("cut"))]
+    return max(cuts).replace(tzinfo=None) if cuts else None
+
+
+def servicenow_insights_backfill_months(r, cut=False):
+    """The complete calendar months a backfill read holds, oldest first ('YYYY-MM'); those that start before a cut in the
+    records (1.16.0) left out - cut=True: only those."""
+    at = _cut_at(r)
+    return [mo for mo, a, _b, partial in month_windows((r or {}).get("window"))
+            if not partial and bool(at is not None and a.replace(tzinfo=None) < at) == bool(cut)]
 
 
 def _parse(ts):
@@ -392,8 +410,14 @@ def servicenow_insights_db_status(st):
     did = "run %s, %d month%s%s, %s figures" % (w.get("run_id") or "?", len(months), "" if len(months) == 1 else "s",
                                                 (" (%s)" % ", ".join(months)) if months else "", "{:,}".format(int(wr.get("figures") or 0)))
     now = "the database now holds %d runs, first month %s, last month %s" % (runs, first or "-", last or "-")
-    return {"written": True, "line": "%s: written - %s; %s" % (head, did, now),
-            "page": "Written this run: %s. The database holds %d runs of this instance, months %s to %s." % (did, runs, first or "-", last or "-"),
+    cut = [str(x) for x in w.get("cut") or []]      # 1.16.0: incomplete (records cut), not written
+    cs = ("; NOT written, the records cut (servicenow_insights_max_records): %s" % ", ".join(cut)) if cut else ""
+    if cut and not wr.get("runs"):
+        return {"written": False, "line": "%s: NOT written - the records were cut (servicenow_insights_max_records): %s; %s" % (head, ", ".join(cut), now),
+                "page": "Not written this run: the records were cut (servicenow_insights_max_records): %s." % ", ".join(cut),
+                "held": {"runs": runs, "first": first, "last": last}}
+    return {"written": True, "line": "%s: written - %s%s; %s" % (head, did, cs, now),
+            "page": "Written this run: %s%s. The database holds %d runs of this instance, months %s to %s." % (did, cs, runs, first or "-", last or "-"),
             "held": {"runs": runs, "first": first, "last": last}}
 
 

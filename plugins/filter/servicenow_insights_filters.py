@@ -1307,6 +1307,7 @@ def custom_rows(items, since, until, groups, opts=None, base=None, tz=None, spec
             bdo[od] = _bd_ord(od, set(cal["days"]), cal["hol"]) - cal["base"]
         cols["ob"].append(bdo[od])
     unable = set(str(u).lower() for u in name_list(o.get("unable_outcomes") or ["Known Error", "No Resolution Provided"]))
+    plan = period_plan(since, until, base, tz, o)
     return {"groups": list(groups), "n": len(flow), "until": int((until - since).total_seconds()), "cols": cols,
             "hop_limit": int(_o(o, "hop_limit", 3)), "outcomes": names, "unable": [i for i, n_ in enumerate(names) if n_.lower() in unable],
             "calendar": {"d0": cal["d0"], "mid": cal["mid"], "bo": cal["bo"],
@@ -1314,7 +1315,7 @@ def custom_rows(items, since, until, groups, opts=None, base=None, tz=None, spec
             "periods": [dict(p, a=int((p["a"] - since).total_seconds()), b=int((p["b"] - since).total_seconds()),
                              ca=int((p["ca"] - since).total_seconds()) if p["ca"] else None,
                              cb=int((p["cb"] - since).total_seconds()) if p["cb"] else None)
-                        for p in period_bounds(since, until, base, tz, o)]}
+                        for p in plan[0]], "left": plan[1]}
 
 
 def custom_presets(hier, groups, split=None, opts=None):
@@ -1434,9 +1435,21 @@ def custom_figures(data, sel, period=None):
     return out
 
 
-PERIODS = ("all", "this_month", "1m", "2m", "2w", "1w")
-PERIOD_LABELS = {"all": "The window", "this_month": "This month", "1m": "Last month", "2m": "Last 2 months", "2w": "Last 2 weeks",
-                 "1w": "Last week"}
+PERIODS = ("all", "this_month", "1m", "2m", "3m", "6m", "9m", "12m", "1w", "2w", "4w")     # the default (1.16.0)
+PERIOD_LABELS = {"all": "The window", "this_month": "This month"}
+PERIOD_MAX = {"m": 12, "w": 8}
+
+
+def period_name(nm):
+    """'all', 'this_month', Nm (1 to 12 months) or Nw (1 to 8 weeks) -> (kind '' / 'm' / 'w', N, label) - else ValueError."""
+    if nm in PERIOD_LABELS:
+        return "", 0, PERIOD_LABELS[nm]
+    m = re.match(r"^(\d{1,2})([mw])$", nm)
+    if not m or not 1 <= int(m.group(1)) <= PERIOD_MAX[m.group(2)]:
+        raise ValueError("servicenow_insights_periods: %s is not a period - all, this_month, 1m to 12m (calendar months) or 1w to 8w "
+                         "(weeks)" % nm)
+    k, unit = int(m.group(1)), "month" if m.group(2) == "m" else "week"
+    return m.group(2), k, ("Last %s" % unit) if k == 1 else ("Last %d %ss" % (k, unit))
 MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")
 
 
@@ -1466,13 +1479,20 @@ def period_title(a, b, tz):
 
 
 def period_bounds(since, until, prev, tz, opts=None):
-    """The Custom view's periods (1.10.0): calendar months and Mon-Sun weeks, not rolling days. -> [{name, label, title,
-    a, b, ca, cb, ctitle}] as datetimes; ca / cb None when the period before is not in the data (prev: where the rows
-    start). A period that does not fit the window is left out.
+    """The Custom view's periods - the periods alone (period_plan)."""
+    return period_plan(since, until, prev, tz, opts)[0]
+
+
+def period_plan(since, until, prev, tz, opts=None):
+    """The Custom view's periods (1.10.0; any Nm and Nw since 1.16.0): calendar months and Mon-Sun weeks, not rolling
+    days. -> ([{name, label, kind, n, title, a, b, ca, cb, ctitle}] as datetimes, [{name, why}] left out). prev: where the
+    rows start. all and this_month: ca / cb None when the period before is not in the rows.
       all         the window, against the window before
       this_month  the report end's month so far, against the same days of the month before
-      1m, 2m      the last whole calendar month(s) up to the report end, against the one(s) before
-      1w, 2w      the last whole weeks (servicenow_insights_week_start: mon), against the one(s) before"""
+      Nm          the last N whole calendar months (1 to 12) up to the report end, against the N before
+      Nw          the last N whole weeks (1 to 8; servicenow_insights_week_start: mon), against the N before
+    Nm and Nw need their own length and the length before it in the rows - never a button with partial figures. One
+    that does not fit is left out: why 'window' (longer than the window) or 'before' (the period before not in the rows)."""
     o = opts or {}
     names = [str(x).strip().lower() for x in name_list(o.get("periods") or list(PERIODS))]
     wk = str(o.get("week_start") or "mon").strip().lower()[:3]
@@ -1482,37 +1502,64 @@ def period_bounds(since, until, prev, tz, opts=None):
     end = until.astimezone(tz)
     last = (until - datetime.timedelta(seconds=1)).astimezone(tz).date()
     at_mid = end.time() == datetime.time(0)
-    out = []
+    out, left = [], []
     for nm in names:
-        if nm not in PERIODS:
-            raise ValueError("servicenow_insights_periods: %s is not one of %s" % (nm, ", ".join(PERIODS)))
+        kind, k, label = period_name(nm)
         if nm == "all":
             a, b, ca, cb = since, until, prev, since
         elif nm == "this_month":
             a, b = _midnight(_month(last), tz), until
             ca = _midnight(_month(last, -1), tz)
             cb = min((ca.replace(tzinfo=None) + (end.replace(tzinfo=None) - a.replace(tzinfo=None))).replace(tzinfo=tz), a)
-        elif nm in ("1m", "2m"):
-            k = int(nm[0])
+        elif kind == "m":
             bd = end.date() if at_mid and end.day == 1 else _month(last)
             b = _midnight(bd, tz)
             a, ca, cb = _midnight(_month(bd, -k), tz), _midnight(_month(bd, -2 * k), tz), _midnight(_month(bd, -k), tz)
         else:
-            k = int(nm[0])
             d = end.date()
             x = d - datetime.timedelta(days=(d.weekday() - ws) % 7)
             b = _midnight(x, tz)
             a, ca, cb = _midnight(x - datetime.timedelta(days=7 * k), tz), _midnight(x - datetime.timedelta(days=14 * k), tz), \
                 _midnight(x - datetime.timedelta(days=7 * k), tz)
+        if any(x["name"] == nm for x in out + left):
+            continue
         if a < since or b > until or b <= a:
+            if kind:
+                left.append({"name": nm, "why": "window"})
             continue
         if ca is None or ca < prev or cb <= ca:
+            if kind:
+                left.append({"name": nm, "why": "before"})
+                continue
             ca = cb = None
-        out.append({"name": nm, "label": PERIOD_LABELS[nm], "a": a, "b": b, "ca": ca, "cb": cb, "title": period_title(a, b, tz),
+        out.append({"name": nm, "label": label, "kind": kind, "n": k, "a": a, "b": b, "ca": ca, "cb": cb, "title": period_title(a, b, tz),
                     "ctitle": period_title(ca, cb, tz) if ca else ""})
     # a report that ends with its month: this month is last month - one button
     lm = [(p["a"], p["b"]) for p in out if p["name"] == "1m"]
-    return [p for p in out if not (p["name"] == "this_month" and (p["a"], p["b"]) in lm)]
+    return [p for p in out if not (p["name"] == "this_month" and (p["a"], p["b"]) in lm)], left
+
+
+def periods_left_line(left, why_before=""):
+    """The muted line under the period buttons (1.16.0): what was left out and why - '9 and 12 months need a longer window:
+    servicenow_insights_months.' why_before: what keeps the period before out of the rows."""
+    def names(xs):
+        out = []
+        for unit, kind in (("month", "m"), ("week", "w")):
+            ns = [int(x["name"][:-1]) for x in xs if x["name"].endswith(kind)]
+            if ns:
+                ns = sorted(set(ns))
+                out.append("%s %s%s" % (" and ".join([", ".join(str(n) for n in ns[:-1]), str(ns[-1])]) if len(ns) > 1 else str(ns[0]),
+                                        unit, "" if ns == [1] else "s"))
+        return " and ".join(out)
+    parts = []
+    w = [x for x in left or [] if x["why"] == "window"]
+    b = [x for x in left or [] if x["why"] == "before"]
+    if w:
+        parts.append("%s need%s a longer window: servicenow_insights_months." % (names(w), "s" if names(w) in ("1 month", "1 week") else ""))
+    if b:
+        parts.append("%s need%s the period before as well: %s." % (names(b), "s" if names(b) in ("1 month", "1 week") else "",
+                                                                    why_before or "the window before is not in this page"))
+    return " ".join(parts)
 
 
 def _bd_ord(d, days, hol):
@@ -2663,6 +2710,10 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
                 data = custom_rows(items, since, until, gl, o, since, tz, bh_spec)
                 data["no_compare"] = True
             custom = data if data["n"] <= mx else {"skipped": data["n"], "max": mx}
+            if custom.get("cols"):          # 1.16.0: one muted line under the period buttons - what was left out, and why
+                custom["left_line"] = periods_left_line(custom.get("left"), (
+                    "the window before is over servicenow_insights_custom_view_max_rows (%s)" % "{:,}".format(mx)) if custom.get("no_compare") else (
+                    "servicenow_insights_compare is false" if not win.get("compare") else "the window before was not read whole this run"))
     model = {"window": win, "url": r.get("url") or "", "teams": teams, "scopes": scopes, "reopen_used": reopen_used,
              "tree": tree, "pages": pages, "scope_ids": ids, "hier": hier, "org": org, "custom": custom,
              "org_bad": org_map(o.get("hierarchy_map"))[1] if org_is_map(o) else [],
@@ -2676,6 +2727,7 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
              "reopened_n": reopened, "incidents_n": len(inc_win), "short": short_names(group_names),
              "members_read": members_known, "members_error": str(r.get("members_error") or ""),
              "tables": r.get("tables") or [], "groups": r.get("groups") or [], "audit_error": r.get("audit_error") or "",
+             "cut": cut_lines(r), "compare_cut": compare_cut_line(r.get("compare_cut")),
              "audit_read": bool(audit) or not r.get("audit_error"), "lookup_note": r.get("lookup_note") or "",
              "audit_source": r.get("audit_source") or ("sys_audit" if audit else ""), "audit_note": r.get("audit_note") or "",
              "act": {"on": bool(o.get("act")), "ran": act_ran, "asked": int(state.get("asked") or 0), "answered": int(state.get("answered") or 0),
@@ -3107,6 +3159,10 @@ def servicenow_insights_doc(model, key="all", opts=None):
     nr = not_read_lines(model)
     if nr:
         secs.append({"title": "Not read", "status": "warning", "lines": nr})
+    if model.get("cut"):                    # 1.16.0: first, before every section
+        secs.insert(0, {"title": "Records cut: some figures are incomplete", "status": "critical", "lines": list(model["cut"])})
+    elif model.get("compare_cut"):
+        secs.insert(0, {"title": "No compare this run", "status": "warning", "lines": [model["compare_cut"]]})
     secs.append({"title": "Read", "lines": ["%s: %d record(s) kept of %d read" % (t["table"], t["kept"], t["read"]) for t in model.get("tables") or [] if not t.get("error")] +
                  ["Window: %s, compared with %s (%s)" % (win.get("label"), win.get("prev_label") or "nothing", win.get("time_zone") or "UTC")] +
                  ["ACT: %s" % act_line(model)]})
@@ -3126,14 +3182,33 @@ def act_line(model):
         a.get("issues", 0), a.get("fixes", 0), ("; not answered: " + "; ".join(a["errors"][:3])) if a.get("errors") else "")
 
 
+def cut_lines(r):
+    """1.16.0: a table over servicenow_insights_max_records keeps its newest records. The window cut too (the read of its
+    older records capped as well): one line a table, for the top of every page and the email."""
+    out = []
+    for t in (r or {}).get("tables") or []:
+        if t.get("window_cut"):
+            tot = t.get("total")
+            out.append("%s: only the newest %s of %s read - figures before %s are incomplete; raise servicenow_insights_max_records" % (
+                t["table"], "{:,}".format(int(t.get("read") or 0)), "{:,}".format(int(tot)) if tot else "more",
+                str(t.get("cut") or "")[:10]))
+    return out
+
+
+def compare_cut_line(cc):
+    return ("The window before was cut (%s: more than servicenow_insights_max_records): no compare this run. The window's "
+            "figures are whole." % ", ".join(cc)) if cc else ""
+
+
 def not_read_lines(model):
     out = []
     for t in model.get("tables") or []:
         if t.get("error"):
             out.append("%s: %s%s" % (t["table"], t["error"], " - the change tasks are left out (their columns, Held up by, the workbook's sheet)"
                                      if t["table"] == "change_task" else ""))
-        elif t.get("more"):
-            out.append("%s: more than the first %d records - raise servicenow_insights_max_records, or shorten the window" % (t["table"], t["read"]))
+        elif t.get("more") and not t.get("window_cut"):
+            out.append("%s: more than servicenow_insights_max_records - the newest kept, the window before cut at %s: no compare" % (
+                t["table"], str(t.get("cut") or "")[:10]))
     for g in model.get("groups") or []:
         if g.get("found") is False:
             out.append("assignment group %s is not in ServiceNow" % g["name"])
@@ -3394,7 +3469,7 @@ class FilterModule(object):
             "servicenow_insights_fix_ids": servicenow_insights_fix_ids,
             "servicenow_insights_fix_work_notes": servicenow_insights_fix_work_notes,
             "servicenow_insights_work_notes_state": servicenow_insights_work_notes_state,
-            "servicenow_insights_mask_more": servicenow_insights_mask_more, "servicenow_insights_fix_evidence": servicenow_insights_fix_evidence,
+            "servicenow_insights_mask_more": servicenow_insights_mask_more, "servicenow_insights_cut_lines": cut_lines, "servicenow_insights_fix_evidence": servicenow_insights_fix_evidence,
                 "servicenow_insights_fix_task": servicenow_insights_fix_task, "servicenow_insights_fix_merge": servicenow_insights_fix_merge,
                 "servicenow_insights_teams": servicenow_insights_teams, "servicenow_insights_model": servicenow_insights_model,
                 "servicenow_insights_summary_evidence": servicenow_insights_summary_evidence,

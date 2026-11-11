@@ -315,7 +315,35 @@ def table_query(table, group_ids, group_names, since, until, margin_days=1):
         when += "^ORresolved_at>=" + s
     q.append(when)
     q.append("opened_at<=" + u)
-    return "^".join(q) + "^ORDERBYopened_at"
+    # newest first (1.16.0): a table over max_records keeps its newest records - the window whole before the one before
+    return "^".join(q) + "^ORDERBYDESCopened_at"
+
+
+def older_query(table, group_ids, group_names, since_w, cut, margin_days=1):
+    """1.16.0: after a capped read (newest first, cut at the oldest opened_at kept), the records opened before the cut
+    that still count in the window itself: still open, or closed / resolved in the window."""
+    m = datetime.timedelta(days=margin_days)
+    s = (since_w - m).strftime("%Y-%m-%d %H:%M:%S")
+    q = []
+    if group_ids:
+        q.append("assignment_groupIN" + ",".join(group_ids))
+    elif group_names:
+        q.append("assignment_group.nameIN" + ",".join(group_names))
+    when = "active=true^ORclosed_at>=" + s
+    if table in RESOLVES:
+        when += "^ORresolved_at>=" + s
+    q.append(when)
+    q.append("opened_at<" + cut.strftime("%Y-%m-%d %H:%M:%S"))
+    return "^".join(q) + "^ORDERBYDESCopened_at"
+
+
+def count_records(api, table, query):
+    """How many records a query matches (the Aggregate API) - None when it can not be read."""
+    try:
+        r = api.get("api/now/stats/%s" % table, {"sysparm_query": query.split("^ORDERBY")[0], "sysparm_count": "true"})
+        return int(((r or {}).get("result") or {}).get("stats", {}).get("count"))
+    except (SnError, TypeError, ValueError, AttributeError):
+        return None
 
 
 def read_table(api, table, query, max_records=20000, page=PAGE):
@@ -739,10 +767,24 @@ def read_all(api, groups, tables, win, max_records=20000, audit=True, handoff_mi
         res["error"] = "none of the assignment groups is in ServiceNow: %s" % ", ".join(x["name"] for x in g)
         return res
     seen, items = set(), []
+    since_w = sn_time(win["since"])
     for t in [str(x).strip() for x in tables or [] if str(x).strip()]:
         entry = {"table": t, "read": 0, "kept": 0, "more": False, "error": ""}
         try:
-            rows, more = read_table(api, t, table_query(t, gids, gnames, since, until), max_records)
+            query = table_query(t, gids, gnames, since, until)
+            rows, more = read_table(api, t, query, max_records)
+            if more:
+                # 1.16.0: cut at the oldest opened_at kept (newest first). The records opened before the cut that count in
+                # the window itself (open, or done in it) are read as well: the window stays whole, the one before is cut.
+                # That second read capped too: the window is cut, before its oldest record read.
+                oldest = lambda rs: min([x for x in (sn_time(_vd(r_, "opened_at")[0]) for r_ in rs) if x] or [until])  # noqa: E731
+                cut = oldest(rows)
+                entry.update(cut=cut.strftime("%Y-%m-%d %H:%M:%S"), total=count_records(api, t, query))
+                old_rows, old_more = read_table(api, t, older_query(t, gids, gnames, since_w, cut), max_records)
+                rows += old_rows
+                entry["older"] = len(old_rows)
+                if old_more:
+                    entry.update(window_cut=True, cut=oldest(old_rows).strftime("%Y-%m-%d %H:%M:%S"))
         except SnError as e:
             entry["error"] = str(e)
             res["tables"].append(entry)
@@ -757,6 +799,11 @@ def read_all(api, groups, tables, win, max_records=20000, audit=True, handoff_mi
             entry["kept"] += 1
         res["tables"].append(entry)
     res["items"] = items
+    # 1.16.0: a cut in the window before only: no compare (the deltas dropped, said); a cut in the window: said on every page
+    res["cut"] = [x for x in res["tables"] if x.get("window_cut")]
+    if win.get("compare") and any(x.get("more") for x in res["tables"]) and not res["cut"]:
+        res["compare_cut"] = [x["table"] for x in res["tables"] if x.get("more")]
+        res["window"] = win = dict(win, prev_since=win["since"], compare=False, prev_label="")
     res["ok"] = any(not x["error"] for x in res["tables"])
     if not res["ok"]:
         res["error"] = ("no table could be read: " + "; ".join("%s - %s" % (x["table"], x["error"]) for x in res["tables"])) if res["tables"] \
@@ -784,7 +831,6 @@ def read_all(api, groups, tables, win, max_records=20000, audit=True, handoff_mi
         res["managers"], res["managers_error"] = manager_names(mgr, gids, names)
     res["sla"], res["first_assigned"], res["first_assigned_error"] = read_slas(api, items, win, sla_source, first_assigned, max_records)
     # 1.7.0: the time on hold (the incidents on hold now, and those done in the window), the surveys
-    since_w = sn_time(win["since"])
     hold_ids = [it["sys_id"] for it in items if it["table"] == "incident" and (
         ("hold" in str(it.get("state") or "").lower() and it.get("active") is not False) or (sn_time(it.get("done_at")) and sn_time(it["done_at"]) >= since_w))]
     res["states"], res["states_error"] = read_states(api, hold_ids, state_metric)

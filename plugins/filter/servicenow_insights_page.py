@@ -539,14 +539,14 @@ if(cvd&&cvt){var CV=JSON.parse(cvd.textContent),C=CV.cols,W=CV.until,LIM=CV.hop_
  function dl(v,p,lg,pts){if(v===null||v===undefined||p===null||p===undefined)return null;var d=pts?v-p:(p?(v-p)/p*100:0);
   if(Math.abs(d)<0.05)return["no change","flat"];var up=d>0;return[(up?"\u25b2 ":"\u25bc ")+Math.abs(d).toFixed(pts?1:0)+(pts?" pts":"%"),(up?!lg:lg)?"good":"bad"]}
  function setx(id,x){var el=D.getElementById("cv-"+id+"-x");if(!el)return;el.textContent=x?x[0]:"";el.className=x?"delta "+x[1]:""}
- var pbs=[].slice.call(D.querySelectorAll("button.cvpd")),cf=D.getElementById("cvfrom"),ct=D.getElementById("cvto");
+ var pbs=[].slice.call(D.querySelectorAll("button.cvpd")),cf=D.getElementById("cvfrom"),ct=D.getElementById("cvto"),psel=D.getElementById("cvpsel");
  var P0=P.filter(function(x){return x.name==="all"})[0]||P[0]||{name:"",a:0,b:W,ca:null,cb:null,title:"",ctitle:""},per=P0;
  function pick(name){var p=P.filter(function(x){return x.name===name})[0];if(!p)return null;
-  pbs.forEach(function(x){x.setAttribute("aria-pressed",x.getAttribute("data-name")===name?"true":"false")});
+  pbs.forEach(function(x){x.setAttribute("aria-pressed",x.getAttribute("data-name")===name?"true":"false")});if(psel)psel.value=name;
   if(cf&&MID.length){cf.value=iso(kidx(p.a));ct.value=iso(kidx(p.b-1))}return p}
  function range(fr,to){var i=kof(fr),j=kof(to);if(isNaN(i)||isNaN(j)||j<i||i<0||i>=MID.length)return null;j=Math.min(j,MID.length-1);
   var a=MID[i],b=j+1<MID.length?Math.min(MID[j+1],W):W;if(b<=a)return null;var n=j-i+1,ca=i-n>=0?MID[i-n]:null;
-  pbs.forEach(function(x){x.setAttribute("aria-pressed","false")});
+  pbs.forEach(function(x){x.setAttribute("aria-pressed","false")});if(psel)psel.value="";
   return {name:iso(i)+"_"+iso(kidx(b-1)),a:a,b:b,ca:ca,cb:ca===null?null:a,title:iso(i)+" to "+iso(kidx(b-1)),ctitle:ca===null?"":iso(i-n)+" to "+iso(i-1)}}
  /* opened and incidents resolved in the period: per day up to a month, per week up to 4 months, else per month */
  function lbl(dt,u){var m=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][+dt.slice(5,7)-1];return u==="month"?m+" "+dt.slice(2,4):m+" "+(+dt.slice(8))}
@@ -600,6 +600,7 @@ if(cvd&&cvt){var CV=JSON.parse(cvd.textContent),C=CV.cols,W=CV.until,LIM=CV.hop_
   res.hidden=false;var hv=(cvp?"preset:"+encodeURIComponent(cvp):enc(idx))+(per!==P0&&per.name?"&p="+encodeURIComponent(per.name):"");
   if(push!==false)try{history.replaceState(null,"","#cv="+hv)}catch(e){location.hash="cv="+hv}}
  pbs.forEach(function(x){x.addEventListener("click",function(){var p=pick(x.getAttribute("data-name"));if(p){per=p;apply()}})});
+ if(psel)psel.addEventListener("change",function(){var p=pick(psel.value);if(p){per=p;apply()}});
  var cvft=D.getElementById("cvft");if(cvft)cvft.addEventListener("click",function(){var r=range(cf.value,ct.value);if(r){per=r;apply()}});
  if(P0.name)pick(P0.name);
  function tick(idx){var want={};idx.forEach(function(i){want[i]=1});all.forEach(function(b){b.checked=!!want[+b.getAttribute("data-g")]});tally()}
@@ -1932,6 +1933,12 @@ def servicenow_insights_page(model, key="all", opts=None):
         bc = '<div class="where">%s<nav class="split" aria-label="Which groups">%s</nav></div>' % (bc, "".join(
             '<a href="%s"%s>%s</a>' % (e(vl.get(v_, "")), ' aria-current="page"' if v_ == variant else "", e(lab))
             for v_, lab in (("", "All"), ("in", sp["label"]), ("out", "non-" + sp["label"])) if vl.get(v_) is not None))
+    cut = m.get("cut") or []                 # 1.16.0: records cut by servicenow_insights_max_records - first on every page
+    if cut:
+        bc += '<div class="callout cutbar" role="alert"><b>Records cut: some figures are incomplete.</b><ul>%s</ul></div>' % "".join(
+            "<li>%s</li>" % e(x) for x in cut)
+    elif m.get("compare_cut"):
+        bc += '<div class="callout cutbar"><b>No compare this run.</b> %s</div>' % e(m["compare_cut"])
     out = head + ['<div class="gut"><div class="wrap layout">'] + nav + ["<main>", teamnav, bc] + body + [
         '</main></div></div><footer class="gut foot"><div class="wrap">%s</div></footer><div class="tip" id="tip" hidden></div>'
         '<script src="%s"></script><script id="site-report-js" data-file="%s">\n%s\n</script></body></html>' % (
@@ -2036,7 +2043,14 @@ ORG_CSS = """
 .cvpre{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 14px 0}
 .cvpre button{font:inherit;font-size:13px;padding:4px 12px;border:1px solid var(--line);border-radius:999px;background:var(--surface-2);color:var(--fg);cursor:pointer}
 .cvpre button[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);font-weight:700}
-.cvper{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 12px}
+.cvper{display:flex;flex-direction:column;align-items:flex-start;gap:8px;margin:0 0 12px}
+.cvpbtn{display:flex;flex-direction:column;gap:6px}
+.cvprow{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.cvplab{font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--fg-2);min-width:58px}
+.cvres .cvper button.cvpd.num{min-width:36px;padding:4px 10px;font-variant-numeric:tabular-nums;text-align:center}
+.cvpsel{display:none;font-size:13px}.cvpsel select{font:inherit;font-size:14px;padding:5px 8px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--fg);color-scheme:inherit}
+.cvleft{font-size:12px;margin:0}
+@media (max-width:640px){.cvpbtn{display:none}.cvpsel{display:inline-flex;align-items:center;gap:8px}}
 .cvres .cvper button.cvpd{border-radius:999px;padding:4px 12px}
 .cvres .cvper button.cvpd[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);font-weight:700}
 .cvft{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px 8px}.cvft label{font-size:13px;color:var(--fg-2)}
@@ -2151,12 +2165,26 @@ def custom_view(m, o):
     cal = c.get("calendar") or {}
     pbar = ""
     if pers:
-        pbar = ('<div class="cvper js" role="group" aria-label="Period"><span class="mut">Period:</span>%s'
-                '<span class="cvft"><label>From <input type="date" id="cvfrom" min="%s" max="%s"></label>'
-                '<label>to <input type="date" id="cvto" min="%s" max="%s"></label><button type="button" id="cvft">Show</button></span></div>') % (
-            "".join('<button type="button" class="cvpd" data-name="%s" aria-pressed="false" title="%s">%s</button>' % (
-                e(p_["name"]), e(p_["title"] + ((", compared with " + p_["ctitle"]) if p_.get("ctitle") else "")), e(p_["label"])) for p_ in pers),
-            e(cal.get("d0", "")), e(cal.get("last", "")), e(cal.get("d0", "")), e(cal.get("last", "")))
+        # 1.16.0: two short labeled rows - The window and This month, then Months (1 2 3 6 9 12) / Weeks (1 2 4) by their
+        # number, the full label in the title and for screen readers; the from / to after. A phone: one select instead.
+        def tip(p_):
+            return p_["title"] + ((", compared with " + p_["ctitle"]) if p_.get("ctitle") else "")
+
+        def btn(p_, short):
+            return ('<button type="button" class="cvpd%s" data-name="%s" aria-pressed="false" title="%s: %s" aria-label="%s">%s</button>' % (
+                " num" if short else "", e(p_["name"]), e(p_["label"]), e(tip(p_)), e(p_["label"]), e(str(p_["n"]) if short else p_["label"])))
+        plain = [p_ for p_ in pers if not p_.get("kind")]
+        rows = [('Months', [p_ for p_ in pers if p_.get("kind") == "m"]), ('Weeks', [p_ for p_ in pers if p_.get("kind") == "w"])]
+        rows_html = "".join('<div class="cvprow" role="group" aria-label="%s"><span class="cvplab">%s</span>%s</div>' % (
+            lab, lab, "".join(btn(p_, True) for p_ in ps)) for lab, ps in rows if ps)
+        sel = ('<label class="cvpsel"><span class="mut">Period</span> <select id="cvpsel">%s<option value="" disabled>From / to below</option>'
+               '</select></label>') % "".join('<option value="%s">%s</option>' % (e(p_["name"]), e(p_["label"])) for p_ in pers)
+        left = ('<p class="cvleft mut">%s</p>' % e(c["left_line"])) if c.get("left_line") else ""
+        pbar = ('<div class="cvper js" role="group" aria-label="Period">%s<div class="cvpbtn"><div class="cvprow cvpfirst">%s</div>%s</div>'
+                '<div class="cvft"><label>From <input type="date" id="cvfrom" min="%s" max="%s"></label>'
+                '<label>to <input type="date" id="cvto" min="%s" max="%s"></label><button type="button" id="cvft">Show</button></div>%s</div>') % (
+            sel, "".join(btn(p_, False) for p_ in plain), rows_html,
+            e(cal.get("d0", "")), e(cal.get("last", "")), e(cal.get("d0", "")), e(cal.get("last", "")), left)
     chart = ('<div class="fig cvch"><h3>Opened and resolved</h3><div class="legend"><span><i style="background:var(--s1)"></i>Opened</span>'
              '<span><i style="background:var(--s2)"></i>Incidents resolved</span></div><div id="cvchart"></div></div>')
     res = ('<div class="cvres" id="cvres" hidden><div class="cvhead"><b id="cvlab"></b><span class="mut" id="cvpt"></span>'

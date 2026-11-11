@@ -31,8 +31,15 @@ never replaces a complete month.
 
 ## Set it up
 
-The setup script `report-db-setup.sh` does the host's part (steps 1 to 3). It was given to you outside the repository.
-Every name below is the one it uses:
+The setup script [`tools/report-db-setup.sh`](../tools/report-db-setup.sh) does the host's part (steps 1 to 3). Copy it
+to the host and run it as root, with the AAP execution nodes' addresses:
+
+```bash
+AAP_SOURCES="192.0.2.21 192.0.2.22" bash report-db-setup.sh
+```
+
+It is safe to run again: each step checks first. What was tested: an earlier version ran once on a real host; this one
+passes `bash -n` and ShellCheck (`tests/test_report_db_setup.py`). Every name below is the one it uses:
 
 | What | Name |
 |---|---|
@@ -65,16 +72,18 @@ The commands under each step are what the script does, for doing it by hand.
    podman ps --filter name=report-db
    ```
 
-2. **The firewall.** Open 3309 to the AAP execution nodes only:
+2. **The firewall.** Open 3309 to the AAP execution nodes only, one rule per node:
 
    ```bash
-   firewall-cmd --permanent --new-zone=report-db
-   firewall-cmd --permanent --zone=report-db --add-source=EXECUTION-NODE-ADDRESS/32
-   firewall-cmd --permanent --zone=report-db --add-port=3309/tcp
+   firewall-cmd --permanent --add-rich-rule='rule family=ipv4 source address=192.0.2.21 port port=3309 protocol=tcp accept'
    firewall-cmd --reload
+   podman network reload --all
    ```
 
-   Add one `--add-source` line for each execution node.
+   - A firewalld reload can drop the rules podman made for every container's network on the host, not only this one.
+     `podman network reload --all` puts them back. Nothing is stopped or restarted.
+   - The source takes addresses, not names: firewalld says `INVALID_ADDR` for a name. The script's `AAP_SOURCES` looks a
+     name up for you.
 
 3. **The two accounts.** In the container (`podman exec -it report-db mysql -uroot -p`):
 
@@ -144,8 +153,8 @@ without the window before. Working out the months is quick. Measured on the test
 
 The job prints each month as it is written, so you can follow it.
 
-A table cut at `servicenow_insights_max_records` gives low counts for its oldest months. Raise the cap for the backfill
-launch if the job says a table was cut.
+A table cut at `servicenow_insights_max_records` keeps its newest records (1.16.0). The months before the cut are
+incomplete, so they are not written; the job says which. Raise the cap for the backfill launch and run it again.
 
 ## Is it writing?
 
@@ -165,7 +174,10 @@ When nothing was written, the same line says why:
 - `NOT written - no Report database credential on the job template`;
 - `NOT written - not reached or refused: ...` (down, the firewall, a wrong password);
 - `NOT written - refused: ...` (the write itself failed, e.g. a grant missing);
-- `NOT written - Check mode`.
+- `NOT written - Check mode`;
+- `NOT written - the records were cut (servicenow_insights_max_records): ...` (1.16.0: every month incomplete). When only
+  some are, the line says `written - ...; NOT written, the records cut (servicenow_insights_max_records): the window,
+  2026-05`.
 
 A backfill ends with the same line. The pages say it too, under *How this was made*, without the host.
 
@@ -502,6 +514,9 @@ podman run --rm site-ee-all:3 ee-check | grep -i 'MySQL login'
 
 A `no` means the EE's OpenSSL refuses that step. Then turn on TLS (above): over TLS no RSA step is needed.
 
+`ee-check` also says no for PyMySQL 1.2.1 to 1.2.3 (1.16.0). Their first login after the database restarts fails. Build
+the EE again from the current `ee/` files: they ask for PyMySQL 1.2.4 or later.
+
 ## Watching it
 
 Use the existing **Database health** job (`docs/MARIADB.md`). Add the container to the STIG Manager host's settings:
@@ -526,6 +541,8 @@ hundred groups adds a few MB a month.
 | `... Access denied for user 'report_writer'` | A wrong password | Fix the credential |
 | `... the login needs the cryptography library` | The EE lacks `cryptography` | Use the all-in-one EE, or turn on TLS |
 | `... the server wants TLS` | The server requires TLS | Tick **Use TLS** on the credential |
+| `... 'NoneType' object has no attribute 'is_auth_switch_request'` | A bug in PyMySQL 1.2.1 to 1.2.3: the first login after the database restarts fails. Since 1.16.0 the job tries once more by itself | Launch again: it works. The lasting fix: build the EE again from the current `ee/` files (PyMySQL 1.2.4 or later) |
+| Another application on the host lost its database after the firewall step | The firewall reload dropped podman's network rules | `podman network reload --all` on the host. Nothing needs a restart |
 | `kept complete: 2026-10` | A run ending inside a month met that month already complete | Nothing: the complete month is kept |
 
 `servicenow_insights_db_required: true` turns the warnings into a failed job.

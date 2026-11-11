@@ -377,6 +377,11 @@ class H(BaseHTTPRequestHandler):
                 return fail("Operation Failed", "ACL Exception: no read access to ecc_queue", 403)
             return 200, {"result": [{"groupby_fields": [{"field": "agent", "value": "mid.server." + k}], "stats": {"count": str(v)}}
                                     for k, v in sorted(mid_data().get("queue", {}).items())]}
+        if parts[:3] == ["api", "now", "stats"] and len(parts) == 4 and parts[3] in PREFIX:   # the Aggregate API: a count
+            if os.environ.get("SNMOCK_NO_STATS") == "1":
+                return fail("Operation Failed", "ACL Exception: no read access to the Aggregate API", 403)
+            n = sum(1 for i in INCIDENTS.values() if i.get("_table", "incident") == parts[3] and matches(i, q.get("sysparm_query", "")))
+            return 200, {"result": {"stats": {"count": str(n)}}}
         if parts[:3] != ["api", "now", "table"] or len(parts) < 4:
             return 404, {"error": {"message": "Requested URI does not represent any resource"}}
         table = parts[3]
@@ -443,6 +448,8 @@ class H(BaseHTTPRequestHandler):
             return 400, {"error": {"message": "Invalid table " + table}}
         if method == "GET" and not sys_id:
             rows = [i for i in INCIDENTS.values() if i.get("_table", "incident") == table and matches(i, q.get("sysparm_query", ""))]
+            if "ORDERBYopened_at" in q.get("sysparm_query", "") or "ORDERBYDESCopened_at" in q.get("sysparm_query", ""):
+                rows.sort(key=lambda i: i.get("opened_at") or "")   # by the field, as ServiceNow does
             if "ORDERBYDESC" in q.get("sysparm_query", ""):
                 rows.reverse()                                  # newest first
             offset = int(q.get("sysparm_offset", "0"))

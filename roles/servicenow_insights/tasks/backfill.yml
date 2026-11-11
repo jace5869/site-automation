@@ -51,6 +51,12 @@
 - name: Insights backfill | the months - {{ _sni_bf.window.label }}, {{ _sni_bf['items'] | length }} records read
   ansible.builtin.set_fact:
     _sni_bf_months: "{{ _sni_bf | servicenow_insights_backfill_months }}"
+    _sni_bf_cut: "{{ _sni_bf | servicenow_insights_backfill_months(true) }}"
+
+- name: Insights backfill | WARNING - records cut by servicenow_insights_max_records, those months not written
+  ansible.builtin.debug:
+    msg: "{{ ['WARNING - records cut, these months are incomplete and not written: ' ~ (_sni_bf_cut | join(', '))] + (_sni_bf | servicenow_insights_cut_lines) }}"
+  when: _sni_bf_cut | length > 0
 
 # one month at a time: worked out, written, said - a month that fails stops the backfill; run it again, the months
 # already written are replaced
@@ -95,7 +101,7 @@
       database: "{{ _sni_db.database }}"
       check: "{{ ansible_check_mode }}"
       write: >-
-        {{ _sni_bf_last | combine({'months': _sni_bf_months, 'written': {'figures':
+        {{ _sni_bf_last | combine({'ok': _sni_bf_last.ok | default(_sni_bf_months | length == 0), 'months': _sni_bf_months, 'cut': _sni_bf_cut, 'written': {'runs': _sni_bf_months | length, 'figures':
         _sni_bf_w.results | default([]) | map(attribute='written.figures', default=0) | sum}}) }}
       source: "{{ _sni_bf | servicenow_insights_db_source(_sni_opts) }}"
 

@@ -1442,8 +1442,8 @@ File: `roles/servicenow_insights/defaults/main.yml`
 | `servicenow_insights_custom_view` | `true` | map: the All page's Custom view (tick units and groups: their figures) |
 | `servicenow_insights_custom_view_max_rows` | `30000` | its tickets carried in the page at most, about 55 bytes each. More: no Custom view |
 | `servicenow_insights_custom_view_presets` | `{}` | map: the Custom view's own quick choices, besides the split's two ("<label>", "non-<label>"). Either {name: {levels: [SPLIT]}} (the groups whose map path has every level listed) or {name: {pattern: "*- Desk*"}}. |
-| `servicenow_insights_periods` | `[all, this_month, 1m, 2m, 2w, 1w]` | map: the Custom view's periods (1.10.0), calendar ones, each against the one before. all = the window; this_month = the report end's month so far; 1m, 2m = the last whole calendar month(s); 1w, 2w = the last whole weeks. A from / to too. |
-| `servicenow_insights_week_start` | `mon` | the day a week starts on, for 1w and 2w (mon ... sun) |
+| `servicenow_insights_periods` | `[all, this_month, 1m, 2m, 3m, 6m, 9m, 12m, 1w, 2w, 4w]` | map: the Custom view's periods (1.10.0), calendar ones, each against the one before. all = the window; this_month = the report end's month so far; 1m to 12m = the last N whole calendar months; 1w to 8w = the last N whole weeks (1.16.0). A period the page's tickets can not cover with the one before it is left out, said… (all of it: the role file) |
+| `servicenow_insights_week_start` | `mon` | the day a week starts on, for the weeks (mon ... sun) |
 | `servicenow_insights_suffix_directorates` | `[]` | names: [NOVA] - a group whose name ends in "- NOVA" is in NOVA |
 | `servicenow_insights_directorates` | `[]` | names: second parts that name a directorate (e.g. [CODEX]) |
 | `servicenow_insights_directorate_tags` | `{}` | names: {COMPONENTX: N6} - a whole word in a group's name puts it there |
@@ -1487,7 +1487,7 @@ File: `roles/servicenow_insights/defaults/main.yml`
 | `servicenow_insights_service_desk_groups` | `[]` | The service desk's assignment groups (exact names), for its own first-contact resolution; [] = the site's only. |
 | `servicenow_insights_survey` | `true` | The incident surveys (asmt_metric_result, read only, best-effort): the average answer per group and month. The metrics read by name ([] = every metric whose answer is a number); false = not read. |
 | `servicenow_insights_survey_metrics` | `[]` | the survey metrics read, by name; [] = every metric answered with a number |
-| `servicenow_insights_max_records` | `20000` | at most this many records per table (the rest are said: shorten the window) |
+| `servicenow_insights_max_records` | `20000` | Records per table at most, the newest kept; more: said on every page (1.16.0). Measured: 20000 needs about 0.4 GB in the EE; 100000 about 1.5 GB and 4 minutes more. |
 | `servicenow_insights_audit` | `true` | The assignment history of incidents passed around: the paths of Passed between groups. From sys_audit, else (0.97.0) the out-of-box incident metric "Assignment Group" (metric_instance) - both read only; the account needs read on one of them; without either the counts are still there and the report says which it could… (all of it: the role file) |
 | `servicenow_insights_handoff_source` | `auto` | auto (sys_audit, else the metric), audit, metric (sys_audit never asked), none |
 | `servicenow_insights_members` | `true` | The groups' members (sys_user_grmember): each team's leaderboard lists its members, and a ticket resolved by someone outside the team counts for the member it was assigned to. The account needs read on sys_user_grmember (itil has it on most instances); without it the leaderboard lists everyone the team's tickets were… (all of it: the role file) |

@@ -371,6 +371,42 @@ a, b = got.values()
 assert a == b, [(k, a[k][-300:], b[k][-300:]) for k in a if a[k] != b[k]]
 EOPY
 
+# ---- 1.16.0: more records than servicenow_insights_max_records - the newest kept; the window before cut: no compare; the
+# window cut: on every page, first in the email, the job's warning ----------------------------------------------------------
+mock
+mkdir -p "$work/cut1" "$work/cut2"
+run "max_records 1000: the newest kept, the window whole - the window before cut: no compare, said" ok \
+    "{$NOW, $NOACT, \"servicenow_insights_max_records\": 1000, \"report_web_dest\": \"$work/cut1\"}" \
+    'The window before was cut (incident' 'no compare this run' '!WARNING - records cut, some' '!Records cut'
+"$py" - "$work/log.jsonl" <<'PYJ' && echo "ok   -   ... newest first (ORDERBYDESCopened_at), the window's older records read after the cut, the count asked" || { echo "FAIL - the capped reads"; fails=$((fails + 1)); }
+import json, sys
+rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
+inc = [r for r in rows if r["path"].endswith("/table/incident")]
+assert inc and all(r["query"]["sysparm_query"].endswith("^ORDERBYDESCopened_at") for r in inc), inc[0]["query"]
+assert any("^opened_at<" in r["query"]["sysparm_query"] and r["query"]["sysparm_query"].startswith("active=true^ORclosed_at>=") for r in inc)
+assert any(r["path"].endswith("/stats/incident") for r in rows)
+PYJ
+check "  ... the All page: No compare this run, no banner" "$work/cut1/servicenow-ticket-insights/latest.html" \
+    '<b>No compare this run.</b>' 'figures are whole.' '!role="alert"'
+rm -f "$work"/mail/*.eml
+run "max_records 300: the window itself cut - the banner, first in the email, the job's warning" ok \
+    "{$NOW, $NOACT, $MAIL, \"report_email_to\": [\"ops@example.mil\"], \"servicenow_insights_max_records\": 300, \"report_web_dest\": \"$work/cut2\"}" \
+    'WARNING - records cut, some figures are incomplete:' 'incident: only the newest 600 of ' 'figures before 2026-' \
+    'raise servicenow_insights_max_records' 'Records cut: some figures are incomplete'
+n=$(grep -rl 'class="callout cutbar" role="alert"' "$work/cut2/servicenow-ticket-insights" --include=latest.html | wc -l)
+t=$(find "$work/cut2/servicenow-ticket-insights" -name latest.html | wc -l)
+[ "$n" -gt 1 ] && [ "$n" = "$t" ] && echo "ok   -   ... the banner on every page ($n of $t)" || { echo "FAIL - the banner on $n of $t pages"; fails=$((fails + 1)); }
+"$py" - "$work"/mail/*.eml <<'PYM' && echo "ok   -   ... the email: Records cut before every section" || { echo "FAIL - the email's Records cut"; fails=$((fails + 1)); }
+import email, sys
+from email import policy
+m = email.message_from_bytes(open(sys.argv[1], "rb").read(), policy=policy.default)
+t = m.get_body(("plain",)).get_content()
+i = t.index("Records cut: some figures are incomplete")
+assert "incident: only the newest 600 of" in t[i:i + 2000]
+assert "Not read" not in t or t.index("Not read") > i
+assert t.index("At a glance") > i if "At a glance" in t else True
+PYM
+
 # ---- 1.15.0: the team leads from ServiceNow (sys_user_group.manager) - the page's line, emailed by pattern, both ways --------
 MGRS='{"Ops - Windows": {"name": "Pat Lee", "email": "pat.lee@example.mil"}, "Ops - Linux": {"name": "Kim Old", "email": "kim@example.mil", "active": "false"},
        "Ops - VDI": {"name": "Sam Ray", "email": "sam.ray@example.mil"}, "Ops - Service Desk": {"name": "Dee Desk", "email": "dee@example.mil"}}'
@@ -451,8 +487,8 @@ check "  ... All: the Custom view and its rows, the tree at any depth, the unmap
     '<b>The org map</b>' 'SITE-C - CODEX - Linux (' 'Add them to servicenow_insights_hierarchy_map.' '!<b>Sites, directorates and teams</b>' \
     'class="cvp" data-name="SPLIT"' 'class="cvp" data-name="non-SPLIT"' 'class="cvp" data-name="SITEB only"' 'href="latest-split.html">SPLIT</a>'
 check "  ... the periods (1.10.0): the ones set, calendar titles, weeks from Sunday, a from / to" "$t8/latest.html" \
-    'class="cvpd" data-name="all"' 'class="cvpd" data-name="1m" aria-pressed="false" title="October 2026, compared with September 2026"' \
-    'class="cvpd" data-name="1w" aria-pressed="false" title="2026-10-25 to 2026-10-31, compared with 2026-10-18 to 2026-10-24"' \
+    'class="cvpd" data-name="all"' 'class="cvpd num" data-name="1m" aria-pressed="false" title="Last month: October 2026, compared with September 2026"' \
+    'class="cvpd num" data-name="1w" aria-pressed="false" title="Last week: 2026-10-25 to 2026-10-31, compared with 2026-10-18 to 2026-10-24"' \
     '!data-name="2m"' 'id="cvfrom" min="2025-11-01" max="2026-10-31"' '"periods":[{"name":"all"' 'Time in each state' 'Open over 10 business days'
 run "a week that starts on no day: said" fail "{$NOW, $NOACT, \"servicenow_insights_hierarchy_source\": \"map\", \"servicenow_insights_hierarchy_map\": $orgmap,
       \"servicenow_insights_week_start\": \"someday\"}" 'servicenow_insights_week_start: someday is not a day'

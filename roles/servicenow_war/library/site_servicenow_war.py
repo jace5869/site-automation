@@ -432,7 +432,7 @@ def table_query(group_ids, user_ids, since, until, margin_days=1, group_names=No
     q = "^OR".join(who)
     q += "^opened_at<=" + u
     q += "^closed_at>=" + s + "^ORclosed_atISEMPTY^ORsys_updated_on>=" + s
-    q += "^ORDERBYopened_at"
+    q += "^ORDERBYDESCopened_at"          # newest first (1.16.0): a table over max_records keeps the week's own records
     return q
 
 
