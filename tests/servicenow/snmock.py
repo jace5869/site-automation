@@ -52,6 +52,8 @@ the incident's sys_id, oldvalue, newvalue, sys_created_on), read with documentke
 (element work_notes, name incident, element_id, value, sys_created_on) for the work notes, read with element_idINa,b.
 metric_instance (definition, table, id = the incident's sys_id, value = a group, start, end): the hand-off paths' second
 source, read with definition.name=Assignment Group^table=incident^idINa,b.
+SNMOCK_GROUP_RENAME={"old": "new"}: groups renamed (the records show the new name, sys_updated_on unchanged);
+SNMOCK_AUDIT_IDS=1: sys_audit's assignment_group values as the groups' sys_ids, as ServiceNow keeps them.
 Usage: snmock.py PORT   (requests appended to $SNMOCK_LOG as JSON lines)
 """
 import base64
@@ -127,6 +129,19 @@ def seed():
             rec.setdefault("state", "1")
             rec.setdefault("work_notes_list", [])
             INCIDENTS[rec["sys_id"]] = rec
+    rename(json.loads(os.environ.get("SNMOCK_GROUP_RENAME") or "{}"), INCIDENTS.values())
+
+
+def rename(ren, recs):
+    """SNMOCK_GROUP_RENAME={"old": "new"} (1.17.0b): groups renamed in ServiceNow. A record points at its group by sys_id, so
+    it shows the new name and its sys_updated_on does not move; sys_audit holds sys_ids, so its paths show the new name
+    too. metric_instance keeps the name it recorded."""
+    for g in GROUPS:
+        g["name"] = ren.get(g["name"], g["name"])
+    for rec in recs:
+        for f in ("assignment_group", "group", "oldvalue", "newvalue"):
+            if rec.get("_table") != "metric_instance" and rec.get(f) in ren:
+                rec[f] = ren[rec[f]]
 APPROVAL_LABEL = {"approved": "Approved", "requested": "Requested", "not requested": "Not Yet Requested", "rejected": "Rejected"}
 
 
@@ -289,6 +304,9 @@ def show(rec, disp, links=True):
             out[field] = "".join("%s (%s)\n%s\n\n" % (head, label, text) for _, head, text in ents)
         else:
             out[field] = ""
+    if rec.get("_table") == "sys_audit" and rec.get("fieldname") == "assignment_group" and os.environ.get("SNMOCK_AUDIT_IDS") == "1":
+        for f in ("oldvalue", "newvalue"):            # 1.17.0b: as ServiceNow keeps them - the groups' sys_ids
+            out[f] = next((g["sys_id"] for g in GROUPS if g["name"] == out.get(f)), out.get(f))
     if disp:
         out["state"] = state_label(rec)
         if out.get("approval"):

@@ -277,14 +277,20 @@ full only the tickets that changed. The pages, the email and the workbook are th
 ### How a run reads
 
 1. **The light read.** The report's own query, with only these fields: `sys_id`, `sys_updated_on`, `opened_at`, the
-   short description, the close notes, the people and the CI. The same cap as before (*More records than the cap*).
+   short description, the close notes, the people and the CI. Also the names ServiceNow shows, which can change without
+   `sys_updated_on` moving: the group, state, priority, category, subcategory, close code, hold reason, impact, urgency,
+   catalog item and change type. The same cap as before (*More records than the cap*).
 2. **Unchanged tickets** (the same `sys_updated_on` as the database holds) come from the database, with this run's text,
    people and CI from step 1.
 3. **New or changed tickets** are read in full, by `sys_id`.
 4. **The follow-up reads** (task_sla, the state metric, the hand-off paths, first assigned) are made for the changed
    tickets and every open one. A closed, unchanged ticket's come from the database.
 
-A deleted ticket, or one moved to a group the report does not read, is not in step 1, so it drops out by itself.
+A deleted ticket, or one moved to a group the report does not read, is not in step 1, so it drops out by itself. A
+renamed group shows its new name on the next run: step 1 reads it.
+
+A run whose window was cut by the cap keeps no ticket. A cut in the window before only keeps the tickets read: they
+are full reads.
 
 The job's last lines and *How this was made* say how the tickets were read:
 
@@ -303,29 +309,46 @@ plus the write: 1 s or less for 2,253 tickets in the tests. The second run shows
 
 | Kept | Never kept |
 |---|---|
-| Number, table, state, priority, impact, urgency | The short description, the close notes, the work notes |
+| Number, table | The short description, the close notes, the work notes |
 | Opened, resolved, closed and done times; `sys_updated_on` | The caller, the assignee, the resolver, anyone's name or sys_id |
-| The assignment group's name and sys_id (new in 1.17.0: per ticket) | The CI |
-| Close code, category, subcategory, hold reason, catalog item, change type | |
-| Reassignment and reopen counts, Made SLA, active | |
+| The assignment group's sys_id (new in 1.17.0: per ticket) | The CI |
+| Reassignment and reopen counts, Made SLA, active | The names ServiceNow shows: the group's, the state's, the priority's, the category's ... |
 | The parent, problem and caused-by numbers | |
-| Its SLAs (name, stage, breached, percent), state times, hand-off path (group names and times), first assigned | |
+| Its SLAs (name, stage, breached, percent), state times, hand-off path, first assigned | |
 
-A row is deleted 800 days after its ticket was done.
+The hand-off path is kept as sys_audit gives it: the groups' sys_ids and times. The metric `Assignment Group` gives the
+names it recorded.
+
+A row is deleted 800 days after its ticket was done. A ticket deleted in ServiceNow, or moved out of the report while
+open, has no done time: its row is deleted 800 days after its last update.
 
 ### The ACT cache
 
 | Table | What it holds |
 |---|---|
 | `insights_act_class` | Each description's issue: the description as a SHA-256 hash (never its words) and the issue's number |
+
+The hash is a plain SHA-256. It cannot be turned back into the words. A reader holding a list of likely descriptions
+could still confirm one by hashing it.
+
 | `insights_act_issue` | Each issue: its number, **its name**, kind (incident or request), self-service |
 
 **The issue's name is the only text the database holds.** It is ACT's short name for an issue ("Printer offline / print
 queue stuck"), never a ticket's own text. Before it is stored, the same mask as the page's replaces any name, host,
-address or phone number in it with `[person]`, `[host]` and so on. It is at most 80 characters.
+address or phone number in it with `[person]`, `[host]` and so on. It is at most 80 characters. A name that ACT invents
+and that is not in the ServiceNow data cannot be masked: it is stored as ACT gave it.
 
 Only new descriptions go to ACT. The fixes and knowledge drafts are asked every run: ACT's text is not kept. Another
-provider, model or grouping prompt starts the cache again.
+provider, model or grouping prompt starts the cache again. The model is the one the run uses, also when it comes from
+site_act's default.
+
+`servicenow_insights_act_cache_clear: true` replaces the cache only when ACT answered every grouping question. The old
+rows are deleted and the new ones written in one transaction. When ACT fails during the run, the cache is kept as it
+was, and the job says so:
+
+```text
+ACT cache: not cleared - ACT answered 2 of 5 grouping questions, so the cache is kept as it was. Launch with servicenow_insights_act_cache_clear: true again.
+```
 
 ### Turning it off, and removing it
 
@@ -341,6 +364,17 @@ provider, model or grouping prompt starts the cache again.
 
 - A closed ticket's SLA or metric row changed without its `sys_updated_on` moving (an SLA recalculated after closing).
   The store keeps the old one. `servicenow_insights_full_refresh: true` reads it again.
+
+### When the writer cannot make the tables
+
+A database from 1.16.0 needs the three tables `insights_ticket`, `insights_act_issue` and `insights_act_class`. The
+first run makes them when the writer has the CREATE grant. Without it, or with `servicenow_insights_db_create: false`:
+
+- the figures are read and written as before;
+- the ticket store and the ACT cache are off for that run;
+- the job warns once, naming the three tables and the CREATE grant.
+
+Make them once by hand (*Making the tables by hand*), or grant the writer CREATE on the database.
 
 A row whose `sys_updated_on` differs from ServiceNow's in either direction (a database restored from an older backup)
 is read again.
@@ -677,7 +711,7 @@ Create the monitoring account in this container too, with the same password (`do
 ## Backups and retention
 
 Backups are the host's existing process: include the folder `/var/lib/report-db`. The figures are kept for ever. A site
-with a few hundred groups adds a few MB a month. The ticket store holds about 1 KB per ticket of the last 800 days.
+with a few hundred groups adds a few MB a month. The ticket store holds about 2 KB per ticket on disk, for the tickets of the last 800 days.
 
 ## When something goes wrong
 

@@ -28,6 +28,7 @@ rt=${INSIGHTS_DB_TEST_RUNTIME:-$(command -v podman || command -v docker || true)
 "$rt" image exists "$image" 2>/dev/null || "$rt" image inspect "$image" >/dev/null 2>&1 || { echo "skip - no image $image ($rt pull it)"; exit 0; }
 case "$rt" in *podman) rtc=("$rt" --cgroup-manager=cgroupfs) ;; *) rtc=("$rt") ;; esac
 work="$(mktemp -d)"
+mkdir -p "$work/tmp"           # 1.17.0b: the runs' temporary folders here (TMPDIR), so none left behind is seen
 root="Test-Only-root-$$"
 wpw="Test-Only-writer-$$"
 rpw="Test-Only-reader-$$"
@@ -76,7 +77,7 @@ DB="REPORT_DB_HOST=127.0.0.1 REPORT_DB_PORT=$dbport REPORT_DB_NAME=site_reports 
 # run NAME EXPECT(ok|fail) EXTRA_VARS_JSON [TEXT...]: the output must contain each TEXT (!TEXT: must not). DB_ENV: the credential.
 run() {
     local name="$1" want="$2" vars="$3"; shift 3
-    (cd "$repo" && env SN_HOST="http://127.0.0.1:$port" SN_USERNAME=api SN_PASSWORD=goodpw ${DB_ENV:-} \
+    (cd "$repo" && env SN_HOST="http://127.0.0.1:$port" SN_USERNAME=api SN_PASSWORD=goodpw TMPDIR="$work/tmp" ${DB_ENV:-} \
         ANSIBLE_NOCOLOR=1 ANSIBLE_ROLES_PATH=roles:vendor/act/ansible/roles ANSIBLE_FILTER_PLUGINS=plugins/filter ANSIBLE_LOCALHOST_WARNING=False \
         ANSIBLE_DEPRECATION_WARNINGS=False ANSIBLE_STDOUT_CALLBACK=default \
         "$ap" -i "$work/inv.yml" playbooks/servicenow_insights.yml -e "$vars" ${CHECK:+--check}) > "$work/out.txt" 2>&1
@@ -93,6 +94,10 @@ run() {
     done
     ok "$name"
 }
+# said TEXT: how many times the run's output says TEXT, its lines joined (a warning is wrapped)
+said() { tr -s ' \n' '  ' < "$work/out.txt" | grep -oF -- "$1" | wc -l; }
+# left: the folders the ticket store's runs left in TMPDIR (1.17.0b: none)
+left() { find "$work/tmp" -maxdepth 1 -name 'ansible.*_insights_store' | wc -l; }
 # q USER PASSWORD SQL: the rows as JSON
 q() { "$py" - "$dbport" "$1" "$2" "$3" <<'EOPY'
 import json, sys, pymysql
@@ -268,7 +273,7 @@ new=$(q report_reader "$rpw" "SELECT period, month FROM insights_run WHERE writt
 has "  ... the page says it" "$(page "$work/wcut")" 'Not written this run: the records were cut (servicenow_insights_max_records). An incomplete run is never written.'
 # 1.17.0: nor the ticket store - not one ticket row written by a cut run
 [ "$(q report_reader "$rpw" "SELECT COUNT(*), COUNT(DISTINCT updated_on), MAX(written_at) FROM insights_ticket")" = "$tk0" ] \
-    && grep -qF 'nothing written: the records were cut (servicenow_insights_max_records)' "$work/out.txt" \
+    && grep -qF "nothing written: the window's records were cut (servicenow_insights_max_records)" "$work/out.txt" \
     && ok "  ... the ticket store untouched, said" || bad "  ... the ticket store written by a cut run: $tk0"
 
 # ---- 12. the survey figures (1.16.0): survey_avg with its scale; the doc's query for rows written before runs as written ----
@@ -311,14 +316,15 @@ pid=$!
 for _ in $(seq 1 100); do (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null && break; sleep 0.1; done
 # same(A B NAME): every page (latest.html of each scope, by path) and the workbook's sheets alike, but for what each run
 # says of itself (the time, its own page's file name, how it read, the report database's line)
-same() { "$py" - "$work/$1" "$work/$2" <<'EOPY'
+same() { "$py" - "$work/$1" "$work/$2" "$(date -u +%Y-%m-%d)" "$(date +%Y-%m-%d)" "$(date -u -d yesterday +%Y-%m-%d)" <<'EOPY'
 import email, email.policy, glob, io, os, re, sys, zipfile
 a, b = sys.argv[1:3]
+days = "|".join(re.escape(x) for x in sorted(set(sys.argv[3:])))     # the run's own clock: today (and yesterday, past midnight)
 def norm(t):
     t = re.sub(r'<details class="notes"><summary><b>Time this run</b>.*?</details>', "", t, flags=re.S)
     t = re.sub(r'<p class="dbline">.*?</p>|<div class="callout"><b>Report database\.</b>.*?</div>', "", t, flags=re.S)
     t = re.sub(r"\d{4}-\d{2}-\d{2}_\d{4}_job-[\w-]+", "PAGE", t)
-    return re.sub(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}( [A-Z]{2,5})?", "WHEN", t)
+    return re.sub(r"(?:%s) \d{2}:\d{2}( [A-Z]{2,5})?" % days, "WHEN", t)
 def pages(d):
     return dict((os.path.relpath(f, d), norm(open(f).read())) for f in glob.glob(d + "/**/latest.html", recursive=True))
 pa, pb = pages(a), pages(b)
@@ -371,6 +377,30 @@ mailed w13s
 out13=$(same w13s w13f) && ok "  ... the same as the full read's ($out13)" || bad "  ... stale rows used: $out13"
 [ "$(one "SELECT COUNT(*) FROM insights_ticket WHERE updated_on < '2021-01-01' OR JSON_EXTRACT(fields, '\$.priority') = 'STALE'")" = "0" ] \
     && ok "  ... and written again" || bad "  ... stale rows left"
+# 1.17.0b: a group renamed in ServiceNow between two runs, its tickets untouched (sys_updated_on the same) - the run that
+# reuses the store shows the new name everywhere, as a full read: one team, not two. sys_audit gives the groups' sys_ids.
+snrestart() {
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+    env SNMOCK_LOG="$work/snmock.jsonl" SNMOCK_SEED="$work/seed2.json" SNMOCK_AUDIT_IDS=1 "$@" "$py" "$here/snmock.py" "$port" >/dev/null 2>&1 &
+    pid=$!
+    for _ in $(seq 1 100); do (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null && break; sleep 0.1; done
+}
+mkdir -p "$work/w13g0" "$work/w13r" "$work/w13g"
+snrestart
+DB_ENV="$DB" run "a group renamed between two runs: the store filled first (a full read)" ok \
+    "{$NOW, \"servicenow_insights_db\": true, \"servicenow_insights_full_refresh\": true, \"report_web_dest\": \"$work/w13g0\", $MAIL}" 'Tickets: '
+mailed w13g0
+[ "$(one "SELECT COUNT(*) FROM insights_ticket WHERE grp LIKE 'Ops - %' OR JSON_SEARCH(fields, 'one', 'Ops - Windows') IS NOT NULL")" = 0 ] \
+    && ok "  ... the store holds the groups' sys_ids, not their names" || bad "  ... a group's name in insights_ticket"
+snrestart 'SNMOCK_GROUP_RENAME={"Ops - Windows": "Ops - Windows Servers"}'
+DB_ENV="$DB" run "  ... Ops - Windows renamed Ops - Windows Servers: the next run reuses the store" ok \
+    "{$NOW, \"servicenow_insights_db\": true, \"report_web_dest\": \"$work/w13r\", $MAIL}" 'from the report database'
+mailed w13r
+DB_ENV="$DB" run "  ... and the same data read in full" ok \
+    "{$NOW, \"servicenow_insights_db\": true, \"servicenow_insights_full_refresh\": true, \"report_web_dest\": \"$work/w13g\", $MAIL}" 'a full read'
+mailed w13g
+out13=$(same w13r w13g) && ok "  ... the pages and the workbook the same as the full read's ($out13)" || bad "  ... a renamed group: incremental and full differ: $out13"
+has "  ... the new name on the page, the old one gone" "$(page "$work/w13r")" 'Ops - Windows Servers' '!>Ops - Windows<'
 # never a person, a text or a CI in the store
 leak=$(q report_reader "$rpw" "SELECT COUNT(*) FROM insights_ticket WHERE JSON_CONTAINS_PATH(fields, 'one', '\$.short_description', '\$.close_notes', '\$.assigned_to', '\$.opened_by', '\$.closed_by', '\$.resolved_by', '\$.caller', '\$.caller_id', '\$.cmdb_ci')")
 [ "$leak" = "[[0]]" ] && ok "  ... no text, person or CI in insights_ticket" || bad "  ... insights_ticket holds text or people: $leak"
@@ -391,6 +421,11 @@ DB_ENV="$DB GENAI_KEY=test-key" run "the ACT cache: the first run asks ACT every
 a1=$(asked); : > "$work/model.log"
 nc=$(one "SELECT COUNT(*) FROM insights_act_class"); ni=$(one "SELECT COUNT(*) FROM insights_act_issue")
 [ "$a1" -gt 0 ] && [ "$nc" -gt 0 ] && [ "$ni" -gt 0 ] && ok "  ... $a1 grouping questions; $nc descriptions and $ni issues kept" || bad "  ... asked $a1, kept $nc / $ni"
+# 1.17.0b: the key has the model the run used - here site_act's default (no site_act_model or site_act_models in the job)
+dm=$("$py" -c "import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))['site_act_models']['genai'])" "$repo/roles/site_act/defaults/main.yml")
+keys=$(q report_reader "$rpw" "SELECT DISTINCT cache_key FROM insights_act_class")
+case "$keys" in "[[\"genai|$dm|"*"\"]]") ok "  ... the cache's key names the model the run used (site_act's default: $dm)" ;;
+    *) bad "  ... the cache's key: $keys (the model: $dm)" ;; esac
 labels=$(q report_reader "$rpw" "SELECT label FROM insights_act_issue ORDER BY issue_no")
 case "$labels" in *Whitfield*|*198.51.100*|*wks-1001*) bad "  ... an issue name stored as ACT gave it: $labels" ;;
     *"VPN drops for [person] at [ip] on [host]"*) ok "  ... the issue names masked before they are stored (a person, an IP address, a host)" ;;
@@ -414,6 +449,102 @@ DB_ENV="$DB GENAI_KEY=test-key" run "  ... servicenow_insights_act_cache_clear: 
     "{$NOWA, \"servicenow_insights_db\": true, \"servicenow_insights_act_cache_clear\": true, \"report_web_dest\": \"$work/w14c\"}" 'questions answered'
 a3=$(asked)
 [ "$a3" = "$a1" ] && ok "  ... $a3 grouping questions, as the first run" || bad "  ... $a3 asked (the first run: $a1)"
+nc=$(one "SELECT COUNT(*) FROM insights_act_class")
+
+# ---- 15. ACT failing mid-run (1.17.0b): without clear, the answered batches kept and the rest asked the next run; with
+# clear, the cache kept as it was - deleted and written only when every grouping question was answered - and said ----
+ff="$work/model-fail"
+mkdir -p "$work/w15a" "$work/w15b" "$work/w15c"
+kill "$mpid" 2>/dev/null; wait "$mpid" 2>/dev/null
+env FAKE_MODEL_LOG="$work/model.log" FAKE_MODEL_LEAKY_LABEL=1 FAKE_MODEL_FAIL_FILE="$ff" "$py" "$here/fake_insights_model.py" "$mport" &
+mpid=$!
+for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$mport") 2>/dev/null && break; sleep 0.1; done
+"${rtc[@]}" exec "$name" mysql -uroot "-p$root" site_reports -e "DELETE FROM insights_act_class; DELETE FROM insights_act_issue" >/dev/null 2>&1
+echo 1 > "$ff"; : > "$work/model.log"
+DB_ENV="$DB GENAI_KEY=test-key" run "ACT failing after its first grouping answer, without clear: the answered batch kept" ok \
+    "{$NOWA, \"servicenow_insights_db\": true, \"report_web_dest\": \"$work/w15a\"}" '!ACT cache: not cleared'
+rm -f "$ff"
+n1=$(one "SELECT COUNT(*) FROM insights_act_class")
+[ "$n1" -gt 0 ] && [ "$n1" -lt "$nc" ] && ok "  ... $n1 of $nc descriptions kept" || bad "  ... $n1 kept (all: $nc)"
+: > "$work/model.log"
+DB_ENV="$DB GENAI_KEY=test-key" run "  ... the next run: only the rest asked" ok \
+    "{$NOWA, \"servicenow_insights_db\": true, \"report_web_dest\": \"$work/w15b\"}" 'questions answered'
+a4=$(asked); n2=$(one "SELECT COUNT(*) FROM insights_act_class")
+[ "$a4" -gt 0 ] && [ "$a4" -lt "$a1" ] && [ "$n2" = "$nc" ] && ok "  ... $a4 grouping questions (of $a1), all $nc kept" \
+    || bad "  ... asked $a4 of $a1, kept $n2 of $nc"
+snap() { q report_reader "$rpw" "SELECT (SELECT COUNT(*) FROM insights_act_class), (SELECT COUNT(*) FROM insights_act_issue), (SELECT SUM(CRC32(CONCAT(key_hash, ':', issue_no))) FROM insights_act_class), (SELECT MAX(written_at) FROM insights_act_class)"; }
+c0=$(snap); echo 1 > "$ff"
+DB_ENV="$DB GENAI_KEY=test-key" run "ACT failing mid-run with servicenow_insights_act_cache_clear: the cache kept as it was, said" ok \
+    "{$NOWA, \"servicenow_insights_db\": true, \"servicenow_insights_act_cache_clear\": true, \"report_web_dest\": \"$work/w15c\"}" \
+    "ACT cache: not cleared - ACT answered 1 of $a1 grouping questions, so the cache is kept as it was."
+rm -f "$ff"
+[ "$(snap)" = "$c0" ] && ok "  ... nothing deleted, nothing written" || bad "  ... the cache changed: $c0 -> $(snap)"
+
+# ---- 16. a 1.16.0 database whose writer cannot CREATE (1.17.0b): the figures written, the trend read, the ticket store
+# and the ACT cache off, one warning naming the three tables - servicenow_insights_db_create true (its default) and false ----
+w16="Test-Only-w16-$$"
+"$py" - "$dbport" "$root" "$w16" "$repo" <<'EOPY' || bad "the 1.16.0 database not made"
+import sys, pymysql
+sys.path.insert(0, sys.argv[4] + "/roles/servicenow_insights/library")
+import site_insights_db as D
+c = pymysql.connect(host="127.0.0.1", port=int(sys.argv[1]), user="root", password=sys.argv[2], ssl_disabled=True, autocommit=True)
+cur = c.cursor()
+cur.execute("CREATE DATABASE site_reports16")
+cur.execute("USE site_reports16")
+for name, sql in zip(D.OBJECTS, D.CREATE + D.VIEWS):          # 1.16.0's tables and views: all but the store's three
+    if name not in D.STORE_TABLES:
+        cur.execute(sql)
+cur.execute("INSERT INTO schema_version (component, version, applied_at) VALUES ('servicenow_insights', 1, UTC_TIMESTAMP())")
+cur.execute("CREATE USER 'writer16'@'%%' IDENTIFIED BY '%s'" % sys.argv[3])
+cur.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON site_reports16.* TO 'writer16'@'%'")
+EOPY
+DB16="REPORT_DB_HOST=127.0.0.1 REPORT_DB_PORT=$dbport REPORT_DB_NAME=site_reports16 REPORT_DB_USER=writer16 REPORT_DB_PASSWORD=$w16"
+tabs="the tables insights_ticket, insights_act_issue and insights_act_class are not there"
+for dc in true false; do
+    mkdir -p "$work/w16$dc"
+    case $dc in true) why="$tabs and this account cannot make them (CREATE command denied" ;; *) why="$tabs (servicenow_insights_db_create: false)" ;; esac
+    runs0=$(q root "$root" "SELECT COUNT(*) FROM site_reports16.insights_run")
+    DB_ENV="$DB16 GENAI_KEY=test-key" run "a 1.16.0 database, a writer without CREATE, servicenow_insights_db_create $dc: the report and its figures" ok \
+        "{$NOWA, \"servicenow_insights_db\": true, \"servicenow_insights_db_create\": $dc, \"report_web_dest\": \"$work/w16$dc\"}" \
+        'Report database 127.0.0.1:'"$dbport"'/site_reports16: written' 'questions answered' '!placed from the ACT cache' '!from the report database;'
+    [ "$(said "$why")" = 1 ] && [ "$(said "$tabs")" = 1 ] && ok "  ... one warning: the three tables, why, the CREATE grant" \
+        || bad "  ... the warning: $(said "$why") / $(said "$tabs") times"
+    [ "$(said 'grant the writer CREATE on the database')" = 1 ] && ok "  ... it names the grant" || bad "  ... the grant not named"
+    [ "$(q root "$root" "SELECT COUNT(*) FROM site_reports16.insights_run")" != "$runs0" ] || [ "$dc" = false ] \
+        && ok "  ... the figures in insights_run" || bad "  ... no run written"
+done
+[ "$(q root "$root" "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'site_reports16' AND table_name IN ('insights_ticket', 'insights_act_issue', 'insights_act_class')")" = "[[0]]" ] \
+    && ok "  ... the three tables still not there" || bad "  ... tables made"
+# the read-only modes against that database: the trend read (read), the store's and the cache's loads - figures read, ok
+ro=$("$py" - "$repo" "$dbport" "$w16" 2>&1 <<'EOPY'
+
+import json, subprocess, sys
+lib = sys.argv[1] + "/roles/servicenow_insights/library/site_insights_db.py"
+base = {"host": "127.0.0.1", "port": int(sys.argv[2]), "database": "site_reports16", "user": "writer16", "password": sys.argv[3], "source": "x"}
+def mod(**kw):
+    out = subprocess.run([sys.executable, lib, json.dumps({"ANSIBLE_MODULE_ARGS": dict(base, **kw)})], capture_output=True, text=True).stdout
+    return json.loads(out[out.index("{"):])
+r = mod(mode="read", month="2026-10")
+assert r["ok"] and r["schema_version"] == 1 and r["store_missing"], r
+for m, extra in (("tickets_load", {"path": "/dev/null"}), ("act_load", {"cache_key": "k"})):
+    r = mod(mode=m, **extra)
+    assert not r["ok"] and "are not there" in r["error"] and r["store_missing"], r
+    assert "CREATE command denied" in json.dumps(r.get("warnings") or []), r      # text (2.16) or a WarningSummary (2.19+)
+EOPY
+) && ok "  ... read, tickets_load and act_load on it: the figures read, the store's loads say why not" \
+    || bad "  ... the read-only modes on a 1.16.0 database: $(echo "$ro" | tail -c 600)"
+
+# ---- 17. the ticket store's folder (1.17.0b): removed however the run ends - a run that failed after the store's load
+# (servicenow_insights_db_required, the database refused), and a folder a killed job left a day ago ----
+mkdir -p "$work/tmp/ansible.oldkill_insights_store" && touch -d '2 days ago' "$work/tmp/ansible.oldkill_insights_store"
+mkdir -p "$work/w17"
+[ "$(left)" = 1 ] || bad "the old folder not made"
+DB_ENV="$DB" run "the ticket store's folders: a normal run leaves none, an old one left by a killed job removed" ok \
+    "{$NOW, \"servicenow_insights_db\": true, \"report_web_dest\": \"$work/w17\"}" 'Tickets: '
+[ "$(left)" = 0 ] && ok "  ... none left" || bad "  ... $(left) left: $(ls "$work/tmp")"
+DB_ENV="${DB/REPORT_DB_PASSWORD=$wpw/REPORT_DB_PASSWORD=wrong}" run "  ... a run that fails at the store's load (servicenow_insights_db_required)" fail \
+    "{$NOW, \"servicenow_insights_db\": true, \"servicenow_insights_db_required\": true}" 'servicenow_insights_db_required: true'
+[ "$(left)" = 0 ] && ok "  ... its folder removed (always)" || bad "  ... $(left) left"
 
 # ---- 10. PyMySQL 1.2.3 (1.16.0): its first login after FLUSH PRIVILEGES raises AttributeError; the module tries once more ----
 if "$py" -m pip install -q --disable-pip-version-check --target "$work/pm123" "PyMySQL==1.2.3" >/dev/null 2>&1; then

@@ -1581,7 +1581,37 @@ class TicketStore(unittest.TestCase):
         self.assertLess(len(ai.calls), len(af.calls))
         self.assertTrue(any("sys_idIN" in q for _t, _f, q in ai.calls))            # the changed ones, by sys_id
         light = [f for t, f, q in ai.calls if t == "incident" and "ORDERBYDESC" in q]
-        self.assertTrue(light and all("close_code" not in f and "sys_updated_on" in f for f in light), light)
+        self.assertTrue(light and all("reopen_count" not in f and "sys_updated_on" in f and "assignment_group" in f for f in light), light)
+
+    def test_a_renamed_group(self):
+        """1.17.0b: a group renamed in ServiceNow between two runs, its tickets untouched (sys_updated_on the same): the run
+        that reuses the store shows the new name everywhere, as a full read - one team, not two. The store keeps the
+        group's sys_id, never its name; the hand-off paths as sys_audit keeps them (sys_ids), named each run."""
+        recs = copy.deepcopy(self.recs)
+        for x in recs:
+            if x.get("_table") == "sys_audit":
+                for f in ("oldvalue", "newvalue"):
+                    x[f] = next((g["sys_id"] for g in snmock.GROUPS if g["name"] == x[f]), x[f])
+        saved = copy.deepcopy(snmock.GROUPS)
+        try:
+            st = rd.Reuse({})
+            first, _ = self.read(recs, st)
+            rows = self.rows(first, st)
+            self.assertIn("Ops - Windows", set(it["group"] for it in first["items"]))
+            self.assertNotIn('"Ops - Windows"', json.dumps(rows))
+            snmock.rename({"Ops - Windows": "Ops - Windows Servers"}, recs)
+            full, _ = self.read(recs)
+            st2 = rd.Reuse(rows)
+            inc, _ = self.read(recs, st2)
+            self.same(full, inc)
+            self.assertGreater(len(st2.fresh), len(full["items"]) * 0.9)
+            names = set(it["group"] for it in inc["items"])
+            self.assertIn("Ops - Windows Servers", names)
+            self.assertNotIn("Ops - Windows", names)
+            self.assertIn("Ops - Windows Servers", json.dumps(inc["audit"]))
+            self.assertNotIn('"Ops - Windows"', json.dumps(inc["audit"]))
+        finally:
+            snmock.GROUPS[:] = saved
 
     def test_the_rows_hold_no_text_people_or_ci(self):
         st = rd.Reuse({})
@@ -1616,14 +1646,16 @@ class TicketStore(unittest.TestCase):
             self.assertTrue(res["cut"])                                       # the window itself cut
             out = os.path.join(d, "out.json")
             got = rd.store_finish(res, store, why, out)["store"]
-            self.assertEqual(got["not_saved"], "the records were cut (servicenow_insights_max_records)")
+            self.assertEqual(got["not_saved"], "the window's records were cut (servicenow_insights_max_records)")
             self.assertFalse(os.path.exists(out))                             # nothing of a cut run kept
             self.assertEqual((got["mode"], got["saved"]), ("full", 0))
             st = rd.Reuse({})
             whole, _ = self.read(self.recs, st)
             self.assertEqual(rd.store_finish(whole, st, why, out)["store"]["saved"], len(whole["items"]))
             with open(out) as f:
-                self.assertEqual(len(json.load(f)["rows"]), len(whole["items"]))
+                kept = json.load(f)
+            self.assertEqual(len(kept["rows"]), len(whole["items"]))
+            self.assertEqual(kept["seen"], sorted(it["sys_id"] for it in whole["items"]))     # 1.17.0b: for the prune
         self.assertEqual(rd.store_load("/nonexistent", full_refresh=True)[1], "servicenow_insights_full_refresh")
 
     def test_rows_of_another_format_read_again(self):
@@ -1650,6 +1682,72 @@ class TicketStore(unittest.TestCase):
                                        "the records were cut (servicenow_insights_max_records).")
         self.assertEqual(L({}), {"line": "", "page": ""})
         self.assertIn("Check mode: nothing written", L(r, {}, True)["line"])
+
+
+class StoreTables(unittest.TestCase):
+    """1.17.0b: a 1.16.0 database whose writer cannot make the three new tables (no CREATE grant, or create false): the
+    figures go on (read and write), the store and the ACT cache are off with one warning naming them."""
+
+    class Conn(object):
+        def __init__(self, have, deny=False):
+            self.have, self.deny, self.sql = set(have), deny, []
+
+        def cursor(self):
+            return self
+
+        def execute(self, sql, args=None):
+            self.sql.append(sql)
+            self.last = sql
+            if sql.startswith("CREATE"):
+                if self.deny:
+                    raise Exception(1142, "CREATE command denied to user 'w'@'%' for table 'insights_ticket'")
+                self.have.add(sql.split()[5] if "IF NOT EXISTS" in sql else sql.split()[2])
+
+        def fetchall(self):
+            return [(x,) for x in self.have]
+
+        def fetchone(self):
+            return (1,)
+
+        def commit(self):
+            pass
+
+    def setUp(self):
+        import site_insights_db as D
+        self.D = D
+        self.old = [o for o in D.OBJECTS if o not in D.STORE_TABLES]          # a 1.16.0 database
+
+    def test_no_create_grant(self):
+        for ro in (False, True):                                               # write; read, tickets_load, act_load
+            c = self.Conn(self.old, deny=True)
+            v, made, store = self.D.schema(c, True, ro)
+            self.assertEqual((v, made), (1, False))
+            self.assertEqual(store["missing"], list(self.D.STORE_TABLES))
+            self.assertIn("CREATE command denied", store["error"])
+            say = self.D.store_tables_say(store, True)
+            self.assertIn("insights_ticket, insights_act_issue and insights_act_class", say)
+            self.assertIn("grant the writer CREATE", say)
+            self.assertIn("the figures are written as before", say)
+
+    def test_create_false(self):
+        for ro in (False, True):
+            c = self.Conn(self.old)
+            v, made, store = self.D.schema(c, False, ro)
+            self.assertEqual((v, made, store["missing"]), (1, False, list(self.D.STORE_TABLES)))
+            self.assertFalse(any(x.startswith("CREATE") for x in c.sql))
+            self.assertIn("(servicenow_insights_db_create: false)", self.D.store_tables_say(store, False))
+
+    def test_made_when_allowed(self):
+        c = self.Conn(self.old)
+        v, made, store = self.D.schema(c, True)
+        self.assertEqual((v, made, store), (1, True, {"missing": [], "error": ""}))
+        self.assertEqual(sum(1 for x in c.sql if x.startswith("CREATE")), 3)
+        # a database without the figures' tables: they are made first, as before; create false is still an error
+        c = self.Conn([])
+        self.assertEqual(self.D.schema(c, True)[:2], (1, True))
+        with self.assertRaises(RuntimeError):
+            self.D.schema(self.Conn([]), False)
+        self.assertEqual(self.D.schema(self.Conn([]), False, True)[:2], (0, False))
 
 
 class ActCache(unittest.TestCase):

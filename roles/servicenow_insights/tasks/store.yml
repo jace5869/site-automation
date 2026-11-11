@@ -1,14 +1,35 @@
 ---
 # THE TICKET STORE (1.17.0, servicenow_insights_incremental, docs/REPORT_DATABASE.md): before the read, what the report
 # database holds of each ticket (its numbers, times, codes, flags, group and follow-up reads - never its text, its people
-# or its CI) into a file for the read; after it, the tickets read from ServiceNow this run written back. A run cut by
-# servicenow_insights_max_records writes nothing; a database not reached: a full read, one warning, the report whole.
-# _sni_store_step: load or save.
+# or its CI) into a file for the read; after it, the tickets read from ServiceNow this run written back. A run whose window
+# was cut by servicenow_insights_max_records writes nothing; a cut in the window before only keeps the tickets read (full
+# reads). A database not reached: a full read, one warning, the report whole. 1.17.0b: the three tables missing and not
+# made (no CREATE grant, or servicenow_insights_db_create false): one warning, the store and the ACT cache off this run,
+# the figures written. _sni_store_step: load or save.
 - name: Insights | the ticket store - what the report database holds
   when: _sni_store_step == 'load'
   block:
     - name: Insights | the report database's login
       ansible.builtin.include_tasks: db_login.yml
+
+    # 1.17.0b: a job killed after the load leaves its folder (an always: cannot run): the ones older than a day go
+    - name: Insights | the folders earlier runs that were stopped left behind
+      ansible.builtin.find:
+        paths: "{{ lookup('ansible.builtin.env', 'TMPDIR') | default('/tmp', true) }}"
+        patterns: "ansible.*_insights_store"
+        file_type: directory
+        age: 1d
+      register: _sni_store_old
+      check_mode: false
+
+    - name: Insights | those folders removed
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ _sni_store_old.files | default([]) }}"
+      loop_control:
+        label: "{{ item.path }}"
+      check_mode: false
 
     - name: Insights | a folder for the tickets the read and the database pass between them
       ansible.builtin.tempfile:
@@ -34,6 +55,7 @@
         path: "{{ _sni_store_dir.path }}/held.json"
         required: "{{ servicenow_insights_db_required | bool }}"
         warn: false             # not reached: the figures' read warns, once (db.yml); this run reads everything
+        warn_tables: "{{ not ansible_check_mode }}"     # the store's tables missing: one warning (Check makes nothing)
       register: _sni_store_held
       check_mode: false         # only reads (in Check, nothing is made)
       when: _sni_db.host | length > 0
@@ -46,6 +68,8 @@
           out: "{{ (_sni_store_dir.path ~ '/read.json') if _sni_store_held.ok | default(false) | bool else '' }}"
           dir: "{{ _sni_store_dir.path | default('') }}"
           source: "{{ {'url': _sni_url} | servicenow_insights_db_source(_sni_opts) }}"
+        # 1.17.0b: the tables missing - the ACT cache is off too, without a second warning
+        _sni_store_tables_missing: "{{ _sni_store_held.store_missing | default([]) | length > 0 }}"
 
 - name: Insights | the ticket store - this run's tickets written back
   when: _sni_store_step == 'save'

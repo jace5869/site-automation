@@ -22,7 +22,11 @@ description:
     account and whether it may write, the tables and views there or missing, and what is held per instance and period.
   - After a write, what the database holds is read back (held - a SELECT, not the rows sent).
   - mode tickets_load (1.17.0) - the ticket store's rows of this instance (insights_ticket) written to path, for the read.
-  - mode tickets_save (1.17.0) - the rows the read wrote to path upserted; the tickets done more than 800 days ago deleted.
+  - mode tickets_save (1.17.0) - the rows the read wrote to path upserted; the tickets done more than 800 days ago deleted,
+    and (1.17.0b) those the light read did not see that were last updated more than 800 days ago.
+  - The ticket store's and the ACT cache's three tables (1.17.0b) - when they are missing and cannot be made (no CREATE
+    grant, or create false), the figures are read and written as before; tickets_load and act_load are ok false, with
+    one warning naming the tables (warn_tables).
   - A database that cannot be reached is a warning and ok false - unless required is true, then the task fails.
 options:
   mode: {description: "read, write, check; tickets_load, tickets_save (1.17.0, the ticket store); act_load, act_save (the ACT cache).", type: str,
@@ -48,6 +52,7 @@ options:
   cache_key: {description: "act_load, act_save (1.17.0): the provider, the model and the prompt's hash.", type: str, default: ""}
   clear: {description: "act_load: nothing held is given; act_save: everything held of the instance deleted first (servicenow_insights_act_cache_clear).", type: bool, default: false}
   warn: {description: "false: a database not reached is not warned of here (the figures' read warns once, later).", type: bool, default: true}
+  warn_tables: {description: "tickets_load, act_load (1.17.0b): warn when the store's three tables are missing and cannot be made.", type: bool, default: true}
 '''
 
 RETURN = r'''
@@ -71,6 +76,7 @@ held: {description: "write, check: [{source, period, runs, months, complete, fir
 version: {description: "check: the server's version.", type: str}
 account: {description: "check: the account as the server knows it, and can_write (INSERT granted).", type: dict}
 objects: {description: "check: {present: [...], missing: [...]} - the tables and views.", type: dict}
+store_missing: {description: "1.17.0b: the ticket store's and the ACT cache's tables that are not there (and could not be made).", type: list}
 '''
 
 import datetime
@@ -150,6 +156,9 @@ VIEWS = [
 ] + ["CREATE VIEW insights_v_%s AS SELECT %s, %s, %s %s GROUP BY r.run_id, n.run_id, n.variant, n.node" % (
      name, RUN_COLS, NODE_COLS, ", ".join("MAX(CASE WHEN f.metric = '%s' THEN f.value END) AS %s" % (k, k) for k in keys), FIGURES_JOIN)
      for name, keys in FIGURE_SETS]
+# 1.17.0: the ticket store's and the ACT cache's tables. A 1.16.0 database whose writer cannot make them (no CREATE grant,
+# or servicenow_insights_db_create false) keeps its figures: the store and the cache are off until they are made.
+STORE_TABLES = ("insights_ticket", "insights_act_issue", "insights_act_class")
 OBJECTS = (["schema_version", "insights_run", "insights_node", "insights_figure", "insights_ticket", "insights_act_issue", "insights_act_class",
             "insights_v_month_run", "insights_v_latest_run",
             "insights_v_labelled"] + ["insights_v_" + name for name, _ in FIGURE_SETS])
@@ -275,31 +284,53 @@ def auth_plugin(conn):
 
 
 def schema(conn, create, read_only=False):
-    """(version, created): the tables when they are not there (and create is true)."""
+    """(version, created, store): the tables when they are not there (and create is true). store (1.17.0b): {missing:
+    the store's tables still not there, error: why they could not be made} - the figures go on without them."""
     cur = conn.cursor()
     cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN (%s)" % (
         ", ".join(["%s"] * len(OBJECTS))), OBJECTS)
     have = set(str(x[0]) for x in cur.fetchall())
+    core = [o for o in OBJECTS if o not in have and o not in STORE_TABLES]
+    store = {"missing": [o for o in STORE_TABLES if o not in have], "error": ""}
     created = False
-    if len(have) < len(OBJECTS):
+    if core:
         if not create and read_only:
-            return 0, False                     # nothing kept yet
+            return 0, False, store              # nothing kept yet
         if not create:
             raise RuntimeError("the tables are not there (servicenow_insights_db_create: false) - make them once, docs/REPORT_DATABASE.md")
         for name, sql in zip(OBJECTS, CREATE + VIEWS):     # only what is missing: no DROP grant needed
-            if name not in have:
+            if name in core:
                 cur.execute(sql)
         created = True
+    if store["missing"] and create:
+        for name, sql in zip(OBJECTS, CREATE + VIEWS):
+            if name in store["missing"]:
+                try:
+                    cur.execute(sql)
+                except Exception as e:      # noqa: BLE001 - no CREATE grant: the figures go on, the store is off
+                    store["error"] = short_error(e)
+                    break
+                store["missing"].remove(name)
+                created = True
     cur.execute("SELECT version FROM schema_version WHERE component = %s", (COMPONENT,))
     r = cur.fetchone()
     if r is None:
         cur.execute("INSERT INTO schema_version (component, version, applied_at) VALUES (%s, %s, UTC_TIMESTAMP())", (COMPONENT, SCHEMA_VERSION))
         conn.commit()
-        return SCHEMA_VERSION, created
+        return SCHEMA_VERSION, created, store
     if int(r[0]) > SCHEMA_VERSION:
         raise RuntimeError("the schema is version %s, newer than this release knows (%s) - update site-automation" % (r[0], SCHEMA_VERSION))
     conn.commit()
-    return int(r[0]), created
+    return int(r[0]), created, store
+
+
+def store_tables_say(store, create):
+    """The one warning when the store's tables are missing (1.17.0b)."""
+    why = (" and this account cannot make them (%s)" % store["error"]) if store.get("error") else (
+        "" if create else " (servicenow_insights_db_create: false)")
+    return ("the tables insights_ticket, insights_act_issue and insights_act_class are not there%s - the ticket store and the ACT cache "
+            "are off this run, the figures are written as before. Make the three tables once (docs/REPORT_DATABASE.md, Making the "
+            "tables by hand), or grant the writer CREATE on the database" % why)
 
 
 def write_run(cur, rows, job):
@@ -474,10 +505,12 @@ def tickets_load(conn, p):
 
 def tickets_save(conn, p, chunk=500):
     """The rows the read wrote to path, upserted by (source, sys_id); the tickets done more than TICKET_KEEP_DAYS ago
-    deleted."""
+    deleted, and (1.17.0b) the ones the light read did not see (deleted in ServiceNow, moved out of the report while open:
+    no done_at) last updated more than TICKET_KEEP_DAYS ago."""
     t0 = datetime.datetime.now()
     with open(p["path"]) as f:
-        rows = (json.load(f) or {}).get("rows") or []
+        got = json.load(f) or {}
+    rows = got.get("rows") or []
     cur = conn.cursor()
     sql = ("INSERT INTO insights_ticket (source, sys_id, tbl, number, updated_on, active, opened_at, done_at, grp, code, fields, follow, written_at) "
            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE tbl = VALUES(tbl), "
@@ -490,11 +523,20 @@ def tickets_save(conn, p, chunk=500):
                                json.dumps(r.get("f") or {})) for r in rows[i:i + chunk]])
     cur.execute("DELETE FROM insights_ticket WHERE source = %s AND done_at < UTC_TIMESTAMP() - INTERVAL %d DAY" % ("%s", TICKET_KEEP_DAYS),
                 (p["source"],))
-    pruned = cur.rowcount
+    pruned = int(cur.rowcount or 0)
+    if "seen" in got:           # the light read's tickets (a file without them: this prune waits for the next run)
+        seen = set(str(x) for x in got.get("seen") or [])
+        cur.execute("SELECT sys_id FROM insights_ticket WHERE source = %%s AND updated_on < UTC_TIMESTAMP() - INTERVAL %d DAY" % TICKET_KEEP_DAYS,
+                    (p["source"],))
+        gone = [str(x[0]) for x in cur.fetchall() if str(x[0]) not in seen]
+        for i in range(0, len(gone), chunk):
+            part = gone[i:i + chunk]
+            cur.execute("DELETE FROM insights_ticket WHERE source = %%s AND sys_id IN (%s)" % ", ".join(["%s"] * len(part)), [p["source"]] + part)
+            pruned += int(cur.rowcount or 0)
     cur.execute("SELECT COUNT(*) FROM insights_ticket WHERE source = %s", (p["source"],))
     held = int(cur.fetchone()[0])
     conn.commit()
-    return {"store": {"held": held, "saved": len(rows), "pruned": int(pruned or 0), "seconds": round((datetime.datetime.now() - t0).total_seconds(), 1)}}
+    return {"store": {"held": held, "saved": len(rows), "pruned": pruned, "seconds": round((datetime.datetime.now() - t0).total_seconds(), 1)}}
 
 
 def act_load(conn, p):
@@ -514,7 +556,9 @@ def act_load(conn, p):
 
 def act_save(conn, p, chunk=500):
     """This run's issues and description keys (rows: {issues, classes}) into the ACT cache: upserted; another cache key's
-    rows of this instance (another model or prompt), and with clear everything held before, deleted first."""
+    rows of this instance (another model or prompt), and with clear everything held before, deleted first - the deletes
+    and the writes in one transaction (a failure leaves the cache as it was). act_cache.yml sends clear only when ACT
+    answered every grouping question (1.17.0b)."""
     rows = p["rows"] or {}
     cur = conn.cursor()
     for t in ("insights_act_issue", "insights_act_class"):
@@ -549,6 +593,7 @@ def main():
             months=dict(type="int", default=12), metrics=dict(type="list", elements="str", default=[]),
             job=dict(type="str", default=""), required=dict(type="bool", default=False), path=dict(type="path", default=""),
             warn=dict(type="bool", default=True), cache_key=dict(type="str", default=""), clear=dict(type="bool", default=False),
+            warn_tables=dict(type="bool", default=True),
         ),
         supports_check_mode=True)
     p = module.params
@@ -556,7 +601,7 @@ def main():
     res = {"changed": False, "ok": False, "error": "", "tls": "", "auth": "", "created": False, "schema_version": 0,
            "replaced": False, "written": {"runs": 0, "nodes": 0, "figures": 0}, "months": [], "kept": [], "tickets": "", "rows": [], "months_kept": 0, "where": where,
            "run_id": 0, "held": [], "version": "", "account": {}, "objects": {}, "store": {"held": 0, "saved": 0, "pruned": 0},
-           "act": {"issues": [], "classes": {}}}
+           "act": {"issues": [], "classes": {}}, "store_missing": []}
 
     def give_up(msg):
         res["error"] = msg
@@ -580,7 +625,14 @@ def main():
             res.update(check(conn))
             res["ok"] = True
             module.exit_json(**res)
-        res["schema_version"], res["created"] = schema(conn, p["create"] and not module.check_mode, p["mode"] in ("read", "tickets_load", "act_load"))
+        res["schema_version"], res["created"], store = schema(conn, p["create"] and not module.check_mode, p["mode"] in ("read", "tickets_load", "act_load"))
+        res["store_missing"] = store["missing"]
+        if store["missing"] and res["schema_version"] and p["mode"] in ("tickets_load", "tickets_save", "act_load", "act_save"):
+            res["error"] = store_tables_say(store, p["create"] and not module.check_mode)
+            if p["warn_tables"] and p["mode"] in ("tickets_load", "act_load"):
+                module.warn("The report database %s: %s." % (where, res["error"]))
+            res["changed"] = res["created"]
+            module.exit_json(**res)
         if p["mode"] == "write":
             res.update(write(conn, p))
         elif p["mode"] == "tickets_save":

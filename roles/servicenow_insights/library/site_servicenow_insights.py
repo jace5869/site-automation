@@ -125,13 +125,21 @@ TABLE_FIELDS = {
 RESOLVES = ("incident", "problem")
 # 1.17.0, the ticket store (servicenow_insights_incremental): the light read every run asks only these - when each ticket
 # changed, and the text, the people and the CI, which the report database never holds; the rest of an unchanged ticket comes
-# from the database. LIGHT_KEYS: the item's keys made from them (never stored).
+# from the database. LIGHT_KEYS: the item's keys made from them (never stored). 1.17.0b: the names ServiceNow shows that can
+# change without the ticket's sys_updated_on moving - the group's name (a group renamed), the choices' labels (state,
+# priority, category, close code, hold reason, impact, urgency, a change's type), the catalog item's name - are read live
+# too (labels): the store keeps the group's sys_id, never its name.
 LIGHT_COMMON = ["sys_id", "sys_updated_on", "opened_at", "sys_created_on", "short_description", "assigned_to", "opened_by", "closed_by",
-                "close_notes", "cmdb_ci"]
-LIGHT_TABLE = {"incident": ["resolved_by", "caller_id"], "sc_req_item": ["requested_for"]}
-LIGHT_KEYS = ("short_description", "assigned_to", "opened_by", "closed_by", "close_notes", "cmdb_ci", "resolved_by", "caller", "caller_id")
-# a stored row's format: a row of another format is read again from ServiceNow
-STORE_CODE = "1"
+                "close_notes", "cmdb_ci", "assignment_group", "state", "priority"]
+LIGHT_TABLE = {"incident": ["resolved_by", "caller_id", "close_code", "category", "subcategory", "hold_reason", "impact", "urgency"],
+               "sc_req_item": ["requested_for", "cat_item"], "change_request": ["type", "close_code", "category"],
+               "change_task": ["close_code"], "problem": ["category"]}
+LABEL_KEYS = ("state", "priority", "priority_value", "group", "group_id", "close_code", "category", "subcategory", "hold_reason",
+              "impact_value", "urgency_value", "cat_item", "change_type", "change_type_value")
+LIGHT_KEYS = ("short_description", "assigned_to", "opened_by", "closed_by", "close_notes", "cmdb_ci", "resolved_by", "caller",
+              "caller_id") + LABEL_KEYS
+# a stored row's format: a row of another format is read again from ServiceNow (2: 1.17.0b, without the labels)
+STORE_CODE = "2"
 
 
 class SnError(Exception):
@@ -271,8 +279,30 @@ def _prio(text):
     return m.group(1) if m else ""
 
 
+def labels(rec, table):
+    """The item's names as ServiceNow shows them now (1.17.0b, LABEL_KEYS): the group (and its sys_id), the choices'
+    labels, the catalog item - read live every run, never kept in the ticket store."""
+    d = lambda f: " ".join(_vd(rec, f)[1].split())          # noqa: E731
+    v = lambda f: _vd(rec, f)[0]                            # noqa: E731
+    it = {"state": d("state"), "priority": d("priority"), "priority_value": _prio(v("priority") or d("priority")),
+          "group": d("assignment_group"), "group_id": v("assignment_group")}
+    if table == "incident":
+        it.update({"close_code": d("close_code"), "category": d("category"), "subcategory": d("subcategory"), "hold_reason": d("hold_reason"),
+                   "impact_value": _prio(v("impact") or d("impact")), "urgency_value": _prio(v("urgency") or d("urgency"))})
+    elif table == "sc_req_item":
+        it["cat_item"] = d("cat_item")
+    elif table == "change_request":
+        it.update({"change_type": d("type"), "change_type_value": v("type").lower(), "close_code": d("close_code"), "category": d("category")})
+    elif table == "change_task":
+        it["close_code"] = d("close_code")
+    elif table == "problem":
+        it["category"] = d("category")
+    return it
+
+
 def light(rec, table):
-    """The item's keys from the light read's fields (1.17.0, LIGHT_KEYS): the text, the people and the CI as shown."""
+    """The item's keys from the light read's fields (1.17.0, LIGHT_KEYS): the text, the people and the CI as shown, and
+    (1.17.0b) the names ServiceNow shows (labels)."""
     d = lambda f: " ".join(_vd(rec, f)[1].split())          # noqa: E731
     it = {"short_description": d("short_description"), "assigned_to": d("assigned_to"), "opened_by": d("opened_by"),
           "cmdb_ci": d("cmdb_ci"), "closed_by": d("closed_by"), "close_notes": d("close_notes")}
@@ -280,6 +310,7 @@ def light(rec, table):
         it.update({"resolved_by": d("resolved_by"), "caller": d("caller_id"), "caller_id": _vd(rec, "caller_id")[0]})
     elif table == "sc_req_item":
         it["caller"] = d("requested_for")
+    it.update(labels(rec, table))
     return it
 
 
@@ -289,33 +320,33 @@ def normalize(rec, table):
     v = lambda f: _vd(rec, f)[0]                            # noqa: E731
     lt = light(rec, table)
     it = {"table": table, "sys_id": v("sys_id"), "number": v("number") or d("number"),
-          "short_description": lt["short_description"], "state": d("state"), "priority": d("priority"),
-          "priority_value": _prio(v("priority") or d("priority")),
-          "assigned_to": lt["assigned_to"], "group": d("assignment_group"),
-          "group_id": v("assignment_group"), "opened_by": lt["opened_by"], "cmdb_ci": lt["cmdb_ci"],
+          "short_description": lt["short_description"], "state": lt["state"], "priority": lt["priority"],
+          "priority_value": lt["priority_value"],
+          "assigned_to": lt["assigned_to"], "group": lt["group"],
+          "group_id": lt["group_id"], "opened_by": lt["opened_by"], "cmdb_ci": lt["cmdb_ci"],
           "opened_at": v("opened_at") or v("sys_created_on"), "closed_at": v("closed_at"), "closed_by": lt["closed_by"],
           "close_notes": lt["close_notes"], "active": _flag(v("active")), "made_sla": _flag(v("made_sla")),
           "reassignment_count": _int(v("reassignment_count"))}
     if table in RESOLVES:
         it["resolved_at"] = v("resolved_at")
     if table == "incident":
-        it.update({"resolved_by": lt["resolved_by"], "close_code": d("close_code"), "category": d("category"),
-                   "subcategory": d("subcategory"), "caller": lt["caller"], "caller_id": lt["caller_id"],
+        it.update({"resolved_by": lt["resolved_by"], "close_code": lt["close_code"], "category": lt["category"],
+                   "subcategory": lt["subcategory"], "caller": lt["caller"], "caller_id": lt["caller_id"],
                    "reopen_count": _int(v("reopen_count")), "caused_by": d("caused_by"), "problem": d("problem_id"),
-                   "impact_value": _prio(v("impact") or d("impact")), "urgency_value": _prio(v("urgency") or d("urgency")),
-                   "hold_reason": d("hold_reason")})
+                   "impact_value": lt["impact_value"], "urgency_value": lt["urgency_value"],
+                   "hold_reason": lt["hold_reason"]})
     elif table == "sc_req_item":
-        it.update({"cat_item": d("cat_item"), "caller": lt["caller"]})
+        it.update({"cat_item": lt["cat_item"], "caller": lt["caller"]})
     elif table == "sc_task":
         it["parent"] = d("request_item")
     elif table == "change_request":
-        it.update({"change_type": d("type"), "change_type_value": v("type").lower(), "close_code": d("close_code"),
-                   "start_date": v("work_start") or v("start_date"), "end_date": v("work_end") or v("end_date"), "category": d("category")})
+        it.update({"change_type": lt["change_type"], "change_type_value": lt["change_type_value"], "close_code": lt["close_code"],
+                   "start_date": v("work_start") or v("start_date"), "end_date": v("work_end") or v("end_date"), "category": lt["category"]})
     elif table == "change_task":
-        it.update({"parent": d("change_request"), "parent_id": v("change_request"), "close_code": d("close_code"),
+        it.update({"parent": d("change_request"), "parent_id": v("change_request"), "close_code": lt["close_code"],
                    "planned_start": v("planned_start_date"), "planned_end": v("planned_end_date")})
     elif table == "problem":
-        it["category"] = d("category")
+        it["category"] = lt["category"]
     # when the work was done: resolved (incidents, problems), else closed
     it["done_at"] = it.get("resolved_at") or it.get("closed_at") or ""
     if it.get("resolved_at") and it.get("closed_at") and it["closed_at"] < it["resolved_at"]:
@@ -905,19 +936,23 @@ def stored_items(api, table, rows, store, chunk=100):
 
 def stored_paths(api, ids, names, source, store):
     """The hand-off paths with the ticket store (1.17.0): the incidents not held asked first (or one, when all are held),
-    which says where the paths come from this run; the held ones read that way reused, the rest asked that way."""
+    which says where the paths come from this run; the held ones read that way reused, the rest asked that way. 1.17.0b:
+    kept as sys_audit gives them (the groups' sys_ids) and named with this run's group names, so a renamed group shows
+    its name now, as a full read shows it."""
     probe = [i for i in ids if not store.has(i, "paths")] or ids[:1]
-    got, src, err, note = read_paths(api, probe, names, source)
+    got, src, err, note = read_paths(api, probe, {}, source)
     if not src:
         return got, src, err, note
     forced = "audit" if src == "sys_audit" else "metric"
     rest = [i for i in ids if i not in set(probe)]
-    more, err2 = store.get("paths", rest, src, lambda xs: (lambda r: (r[0], r[2]))(read_paths(api, xs, names, forced)), probe=False)
+    more, err2 = store.get("paths", rest, src, lambda xs: (lambda r: (r[0], r[2]))(read_paths(api, xs, {}, forced)), probe=False)
     if err2:
         return {}, "", err2, ""
     store.note("paths", probe, src, got)
     out = dict(got)
     out.update(more)
+    if src == "sys_audit":
+        out = dict((k, [[e[0], names.get(e[1], e[1]), names.get(e[2], e[2])] for e in v]) for k, v in out.items())
     return out, src, err, note
 
 
@@ -1067,14 +1102,16 @@ def store_save(res, store):
         if old is not None and f == (old.get("f") or {}):
             continue
         out.append({"s": sid, "t": it["table"], "n": it.get("number") or "", "u": store.upd.get(sid) or "", "a": it.get("active") is not False,
-                    "o": it.get("opened_at") or "", "d": it.get("done_at") or "", "g": it.get("group") or "", "c": STORE_CODE,
+                    "o": it.get("opened_at") or "", "d": it.get("done_at") or "", "g": it.get("group_id") or "", "c": STORE_CODE,
                     "i": dict((k, v) for k, v in it.items() if k not in LIGHT_KEYS), "f": f})
     return out
 
 
 def store_finish(res, store, why_full, out_path):
     """1.17.0: how this run read (res["store"], for the job's last line and How this was made), and the rows to write to
-    out_path - unless the run was cut (servicenow_insights_max_records: nothing of a cut run is kept) or read nothing."""
+    out_path - unless the window itself was cut (servicenow_insights_max_records: nothing of it is kept) or nothing was
+    read. A cut in the window before only keeps the tickets read: they are full reads. seen (1.17.0b): every ticket the
+    light read gave, so tickets_save can prune the ones no longer there."""
     n = len(res.get("items") or [])
     db = sum(1 for it in res.get("items") or [] if it["sys_id"] in store.fresh)
     res["store"] = {"mode": "incremental" if not why_full else "full", "why": why_full, "from_sn": n - db, "from_db": db, "saved": 0,
@@ -1082,11 +1119,11 @@ def store_finish(res, store, why_full, out_path):
     if not res.get("ok"):
         res["store"]["not_saved"] = "nothing read"
     elif res.get("cut"):
-        res["store"]["not_saved"] = "the records were cut (servicenow_insights_max_records)"
+        res["store"]["not_saved"] = "the window's records were cut (servicenow_insights_max_records)"
     elif out_path:
         rows = store_save(res, store)
         with open(out_path, "w") as f:
-            json.dump({"rows": rows}, f)
+            json.dump({"rows": rows, "seen": sorted(it["sys_id"] for it in res.get("items") or [])}, f)
         res["store"]["saved"] = len(rows)
     return res
 

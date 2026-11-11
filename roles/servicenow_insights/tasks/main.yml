@@ -124,55 +124,65 @@
   when: servicenow_insights_backfill_months | int > 0
 
 # 1.17.0: with the report database, each run reads in full only the tickets that changed (docs/REPORT_DATABASE.md, The
-# ticket store); the first run, servicenow_insights_full_refresh or a database not reached: everything, as before
-- name: Insights | the tickets the report database holds (servicenow_insights_incremental)
-  ansible.builtin.include_tasks: store.yml
-  vars:
-    _sni_store_step: load
-  when: servicenow_insights_db | bool and servicenow_insights_incremental | bool
+# ticket store); the first run, servicenow_insights_full_refresh or a database not reached: everything, as before.
+# 1.17.0b: the folder the read and the database pass the tickets through is removed however the run ends (always).
+- name: Insights | read the tickets - the ticket store, ServiceNow
+  block:
+    - name: Insights | the tickets the report database holds (servicenow_insights_incremental)
+      ansible.builtin.include_tasks: store.yml
+      vars:
+        _sni_store_step: load
+      when: servicenow_insights_db | bool and servicenow_insights_incremental | bool
 
-- name: Insights | read the window ({{ servicenow_insights_days ~ " days" if servicenow_insights_days | float > 0 else servicenow_insights_months ~ " months" }}) of {{ _sni_tables | join(", ") }} from ServiceNow
-  site_servicenow_insights:
-    url: "{{ _sni_url }}"
-    username: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
-    password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
-    validate_certs: "{{ servicenow_validate_certs | default(true) | bool }}"
-    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
-    timeout: "{{ servicenow_timeout | default(30) | int }}"
-    groups: "{{ _sni_groups }}"
-    tables: "{{ _sni_tables }}"
-    months: "{{ servicenow_insights_months | int }}"
-    days: "{{ servicenow_insights_days | float }}"
-    until: "{{ servicenow_insights_until | default('', true) | string }}"
-    compare: "{{ servicenow_insights_compare | bool }}"
-    time_zone: "{{ report_time_zone | default('', true) | string }}"
-    max_records: "{{ servicenow_insights_max_records | int }}"
-    audit: "{{ servicenow_insights_audit | bool }}"
-    handoff_min: "{{ servicenow_insights_handoff_min | int }}"
-    handoff_source: "{{ servicenow_insights_handoff_source | default('auto') | string | trim | lower }}"
-    members: "{{ servicenow_insights_members | default(true) | bool }}"
-    group_parents: "{{ servicenow_insights_use_group_parents | default(true) | bool }}"
-    now: "{{ servicenow_insights_now | default(omit, true) }}"
-    sla_source: "{{ servicenow_insights_sla_source | default('auto') | string | trim | lower }}"
-    first_assigned: true                # only with the targets: the response's end (the metric Assigned to)
-    state_metric: "{{ servicenow_insights_state_metric | default('', true) | string | trim }}"
-    survey: "{{ servicenow_insights_survey | default(true) | bool }}"
-    survey_metrics: "{{ servicenow_insights_survey_metrics | servicenow_insights_name_list }}"
-    survey_types: "{{ servicenow_insights_survey_types | default([], true) | servicenow_insights_name_list }}"
-    # the team leads (1.15.0): each group's manager, in the groups' read - for the page's line or the leads' emails
-    managers: "{{ servicenow_insights_show_lead | bool or servicenow_insights_email_leads | default([], true) | length > 0 }}"
-    # the ticket store (1.17.0): the database's rows in, this run's out - files in a folder of the job's own
-    store_in: "{{ (_sni_store | default({})).in | default('') }}"
-    store_out: "{{ (_sni_store | default({})).out | default('') }}"
-    full_refresh: "{{ servicenow_insights_full_refresh | bool }}"
-  register: _sni
-  check_mode: false             # only reads (the tickets go to the database after it, store.yml)
+    - name: Insights | read the window ({{ servicenow_insights_days ~ " days" if servicenow_insights_days | float > 0 else servicenow_insights_months ~ " months" }}) of {{ _sni_tables | join(", ") }} from ServiceNow
+      site_servicenow_insights:
+        url: "{{ _sni_url }}"
+        username: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
+        password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+        validate_certs: "{{ servicenow_validate_certs | default(true) | bool }}"
+        ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+        timeout: "{{ servicenow_timeout | default(30) | int }}"
+        groups: "{{ _sni_groups }}"
+        tables: "{{ _sni_tables }}"
+        months: "{{ servicenow_insights_months | int }}"
+        days: "{{ servicenow_insights_days | float }}"
+        until: "{{ servicenow_insights_until | default('', true) | string }}"
+        compare: "{{ servicenow_insights_compare | bool }}"
+        time_zone: "{{ report_time_zone | default('', true) | string }}"
+        max_records: "{{ servicenow_insights_max_records | int }}"
+        audit: "{{ servicenow_insights_audit | bool }}"
+        handoff_min: "{{ servicenow_insights_handoff_min | int }}"
+        handoff_source: "{{ servicenow_insights_handoff_source | default('auto') | string | trim | lower }}"
+        members: "{{ servicenow_insights_members | default(true) | bool }}"
+        group_parents: "{{ servicenow_insights_use_group_parents | default(true) | bool }}"
+        now: "{{ servicenow_insights_now | default(omit, true) }}"
+        sla_source: "{{ servicenow_insights_sla_source | default('auto') | string | trim | lower }}"
+        first_assigned: true                # only with the targets: the response's end (the metric Assigned to)
+        state_metric: "{{ servicenow_insights_state_metric | default('', true) | string | trim }}"
+        survey: "{{ servicenow_insights_survey | default(true) | bool }}"
+        survey_metrics: "{{ servicenow_insights_survey_metrics | servicenow_insights_name_list }}"
+        survey_types: "{{ servicenow_insights_survey_types | default([], true) | servicenow_insights_name_list }}"
+        # the team leads (1.15.0): each group's manager, in the groups' read - for the page's line or the leads' emails
+        managers: "{{ servicenow_insights_show_lead | bool or servicenow_insights_email_leads | default([], true) | length > 0 }}"
+        # the ticket store (1.17.0): the database's rows in, this run's out - files in a folder of the job's own
+        store_in: "{{ (_sni_store | default({})).in | default('') }}"
+        store_out: "{{ (_sni_store | default({})).out | default('') }}"
+        full_refresh: "{{ servicenow_insights_full_refresh | bool }}"
+      register: _sni
+      check_mode: false             # only reads (the tickets go to the database after it, store.yml)
 
-- name: Insights | the tickets read this run into the report database (servicenow_insights_incremental)
-  ansible.builtin.include_tasks: store.yml
-  vars:
-    _sni_store_step: save
-  when: (_sni_store | default({})).dir | default('') | length > 0
+    - name: Insights | the tickets read this run into the report database (servicenow_insights_incremental)
+      ansible.builtin.include_tasks: store.yml
+      vars:
+        _sni_store_step: save
+      when: (_sni_store | default({})).dir | default('') | length > 0
+  always:
+    - name: Insights | the folder the tickets passed through, removed (a run stopped after the store's load too)
+      ansible.builtin.file:
+        path: "{{ _sni_store_dir.path }}"
+        state: absent
+      check_mode: false
+      when: (_sni_store_dir | default({})).path | default('') | length > 0
 
 - name: Insights | time - ServiceNow read
   ansible.builtin.set_fact:
@@ -523,6 +533,11 @@
   ansible.builtin.debug:
     msg: "{{ _sni_store_say.line }}"
   when: (_sni_store_say | default({})).line | default('') | length > 0
+
+- name: Insights | the ACT cache - not cleared when ACT did not answer every grouping question (1.17.0b)
+  ansible.builtin.debug:
+    msg: "{{ _sni_act_cache_say | trim }}"
+  when: _sni_act_cache_say | default('') | length > 0
 
 - name: Insights | WARNING - records cut by servicenow_insights_max_records (the pages and the email say so at the top)
   ansible.builtin.debug:

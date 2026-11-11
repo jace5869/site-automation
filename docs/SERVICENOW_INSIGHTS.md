@@ -666,7 +666,8 @@ tables and what is never stored: [REPORT_DATABASE.md](REPORT_DATABASE.md).
 
 ### Only what changed is read (1.17.0)
 
-With the report database on, it also keeps each ticket's fields (never its text, people or CI). Each run then reads in
+With the report database on, it also keeps each ticket's fields (never its text, people or CI). The names
+ServiceNow shows, such as a group's, are read every run, so a renamed group shows its new name. Each run then reads in
 full only the tickets that changed, and makes the follow-up reads only for those and the open ones. The pages, the email
 and the workbook are the same as a full read's. The first run reads everything and fills the store.
 

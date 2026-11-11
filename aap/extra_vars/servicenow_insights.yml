@@ -442,9 +442,9 @@ servicenow_insights_months: 6
 # servicenow_insights_db_check: false
 
 ## THE TICKET STORE (1.17.0): with servicenow_insights_db, the report database keeps each ticket's
-## numbers, times, codes, flags and group (never its text, its people or its CI). Each run then
-## reads in full only the tickets that changed; the rest come from the database. The first run reads
-## everything and fills it. The pages are the same either way.
+## numbers, times, flags and group sys_id (never its text, its people, its CI or the names
+## ServiceNow shows). Each run then reads in full only the tickets that changed; the rest come from
+## the database. The first run reads everything and fills it. The pages are the same either way.
 # servicenow_insights_incremental: true
 
 ## true: this launch reads every ticket again (launch with it as an extra variable)
@@ -456,7 +456,8 @@ servicenow_insights_months: 6
 ## starts the cache again.
 # servicenow_insights_act_cache: true
 
-## true: this launch asks ACT everything again and replaces the cache
+## true: this launch asks ACT everything again and replaces the cache (only when ACT answered every
+## grouping question)
 # servicenow_insights_act_cache_clear: false
 
 ## THE PAGES (1.14.0): each site's, unit's and team's page is written this many at a time, in one

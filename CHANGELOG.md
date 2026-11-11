@@ -6,27 +6,37 @@
 its own zip). They leave out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
 `poam/poam.csv`. (Never paste the full `site-automation-1.17.0.zip` over your copy: it carries the example
 `group_vars`.) Nothing new to set up. If you made the report database's tables by hand
-(`servicenow_insights_db_create: false`), make the three new ones the same way (docs/REPORT_DATABASE.md, *Making the
-tables by hand*).
+(`servicenow_insights_db_create: false`), or its writer account has no CREATE grant, make the three new ones the same
+way (docs/REPORT_DATABASE.md, *Making the tables by hand*). Until they are there, the figures are written as before, the
+ticket store and the ACT cache are off, and the job warns once. A store filled by an earlier build of 1.17.0 is read
+again in full once: its rows are of the old format.
 
 **Ticket insights: only what changed is read.** With the report database on (`servicenow_insights_db: true`), it now
 keeps each ticket's fields. A run reads in full only the tickets that changed. The pages, the email and the workbook are
 the same as a full read's.
 
-- **The light read.** Each run asks the report's own query for each ticket's `sys_updated_on`, its text, its people and
-  its CI only. A ticket the database holds unchanged comes from there. A new or changed one is read in full.
+- **The light read.** Each run asks the report's own query for each ticket's `sys_updated_on`, its text, its people, its
+  CI and the names ServiceNow shows for it (its group, state, priority, category ...). A ticket the database holds
+  unchanged comes from there. A new or changed one is read in full.
+- **A renamed group** shows its new name on the next run, as a full read shows it. The store keeps the group's sys_id,
+  never its name.
 - **The follow-up reads** (task_sla, the state metric, the hand-off paths, first assigned) are made only for the changed
   tickets and the open ones.
 - **The first run** after the upgrade reads everything, as before, and fills the store. The second run shows the gain.
   The job's last lines say how the tickets were read: *Tickets: 2,253 - 4 read from ServiceNow (new or changed), 2,249
   from the report database*.
-- **Never kept:** a ticket's text, people or CI. New in the database: each ticket's group name, per ticket.
+- **Never kept:** a ticket's text, people or CI, or the names ServiceNow shows. New in the database: each ticket's group
+  sys_id, per ticket.
   docs/REPORT_DATABASE.md, *What is stored per ticket*, says what is kept and how to remove it.
-- A run cut by `servicenow_insights_max_records` keeps no ticket.
+- A run whose window was cut by `servicenow_insights_max_records` keeps no ticket. A cut in the window before only keeps
+  the tickets read: they are full reads.
+- A ticket deleted in ServiceNow, or moved out of the report while open, is removed from the store 800 days after its
+  last update.
 - `servicenow_insights_full_refresh: true` on a launch reads everything again. `servicenow_insights_incremental: false`
   turns the store off.
 - Measured on the test site (2,253 tickets, a local fake ServiceNow): the ServiceNow reads took 13 s in full and 5 s
-  with the store. A real instance's latency makes the gap larger.
+  with the store. A real instance's latency makes the gap larger. The tester's site of 19,813 tickets: 50 s instead of
+  8 minutes.
 
 **Ticket insights: the ACT cache.** With the report database on, each description's issue is kept. Only new
 descriptions go to ACT, which saves most of its questions.
@@ -35,8 +45,11 @@ descriptions go to ACT, which saves most of its questions.
 - **The issue's name is the only text the database holds**: ACT's short name for an issue, masked like the page (a
   name, host or address becomes `[person]`, `[host]` ...), at most 80 characters.
 - The fixes and knowledge drafts are asked every run: no text of ACT's is kept.
-- Another provider, model or grouping prompt starts the cache again. `servicenow_insights_act_cache_clear: true` asks
-  everything again and replaces it. `servicenow_insights_act_cache: false` turns it off.
+- Another provider, model or grouping prompt starts the cache again. The model is the one the run really uses, also
+  when it comes from site_act's default.
+- `servicenow_insights_act_cache_clear: true` asks everything again and replaces the cache, only when ACT answered every
+  grouping question. When ACT fails during the run, the cache is kept as it was and the job says so.
+- `servicenow_insights_act_cache: false` turns it off.
 - The top issues' *About* line now comes with the fix, so it is there with the cache too.
 
 **Ticket insights: two small fixes (the tester's).**
@@ -51,9 +64,11 @@ recalculated after closing): the store keeps the old one until `servicenow_insig
 your site's size.
 
 Files:
-- roles/servicenow_insights: library/site_servicenow_insights.py (the light read, the store's reuse, the follow-up
-  reads), library/site_insights_db.py (insights_ticket, insights_act_class, insights_act_issue; tickets_load and _save,
-  act_load and _save), tasks/store.yml and act_cache.yml (new), main.yml, db.yml, defaults;
+- roles/servicenow_insights: library/site_servicenow_insights.py (the light read with the names ServiceNow shows, the
+  store's reuse, the follow-up reads, the hand-off paths kept as sys_ids), library/site_insights_db.py (insights_ticket,
+  insights_act_class, insights_act_issue; tickets_load and _save with the prune, act_load and _save; the three tables
+  missing: the figures go on), tasks/store.yml and act_cache.yml (new: the folder removed however the run ends, the
+  cache key's model, the clear only when complete), main.yml, db.yml, defaults;
 - plugins/filter/servicenow_insights_filters.py (the ACT cache: the key, the masked name, what it places; the fix's
   *About*; the survey headline as typed), servicenow_insights_history.py (the *Tickets* line),
   servicenow_insights_page.py (the line under How this was made, the cache's count, the window's last day);
@@ -63,13 +78,17 @@ Files:
 Tests:
 - test_servicenow_insights.py: TicketStore (a run reading only what changed is the same as a full read - new, changed,
   reopened, deleted, moved, closed then updated, a text edited without `sys_updated_on` moving, stale rows; no text,
-  person or CI in a row; open tickets' follow-ups read again; a cut run keeps nothing; the line), ActCache (the name
-  masked, the rows and back, the key);
+  person or CI in a row; open tickets' follow-ups read again; a cut run keeps nothing; the line; a renamed group),
+  StoreTables (a 1.16.0 database without CREATE, or with create false), ActCache (the name masked, the rows and back,
+  the key);
 - run_insights_db_test.sh (real MySQL): the same changes in the fake ServiceNow, then the pages file for file and the
   workbook cell for cell against `servicenow_insights_full_refresh`, and against a database restored from an older
   backup; nothing written by a cut run; no text, person or CI in `insights_ticket`; the ACT cache (the next run asks no
   grouping question, the same issues; a name with a person, an IP address and a host stored masked; cache_clear asks
-  everything again);
+  everything again; the key names site_act's default model); a group renamed between two runs (incremental = full);
+  ACT failing mid-run, with and without clear; a 1.16.0 database whose writer has no CREATE, with db_create true and
+  false (the figures written, one warning; read, tickets_load and act_load on it); no folder left in TMPDIR (a run
+  failing after the store's load, one a killed job left);
 - the CI unit lines, yamllint, ansible-lint, syntax; run_insights_test.sh, run_insights_db_test.sh, run_war_test.sh,
   run_web_test.sh, run_email_test.sh on ansible-core 2.22 and 2.16.
 
