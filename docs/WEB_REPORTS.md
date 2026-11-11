@@ -66,6 +66,12 @@ Since 0.53.0:
   - Over plain http or from a share, text only (columns separated by tabs, which Excel still splits).
 - Sections that fold, tables that sort when a heading is clicked and, past 8 rows, a box to filter them. On a phone,
   a table's rows become small cards, each value under its column's name.
+  - Sorting (1.20.0): numbers as numbers (`1,234`, `4.5 %`, `-7`); IP addresses by their four parts (`192.0.2.5`
+    before `192.0.2.45`); versions and names with a number in them in order (`8.0.2` before `8.0.10`, `vmx-9` before
+    `vmx-21`, `host2` before `host10`). Numbers come before text. Empty cells go last, either way.
+  - A click anywhere in the heading's cell sorts. A first click on a column that is already in order (the VM tables
+    come sorted by VM) sorts it the other way, so the click always shows.
+  - The arrows and the hand pointer appear only once the script runs: without it the headings are plain.
 - **The index page** in the same look, with the same switch.
 - **Printed:** white, landscape, every section open, each table's headings repeated on every page.
 - **One file per page:** no fonts or scripts from elsewhere (system fonts: Segoe UI and Cascadia Mono on Windows), so
@@ -110,8 +116,9 @@ Since 0.63.0:
 | What you see | Why, and what to do |
 |---|---|
 | Everything works | The script ran - from `site-report.js` or from the page |
-| No search box, no CSV, no Copy buttons; the rail, Columns and Light / Auto / Dark work | No script runs on the site at all (`script-src 'none'`, or `site-report.js` not there yet: the next report run writes it). F12 > Console says which: *Loading the script ... violates the following Content Security Policy directive* - allow scripts from the site itself on the report site only: `script-src 'self'` |
+| No search box, no CSV, no Copy buttons, no sort arrows on the headings; the rail, Columns and Light / Auto / Dark work | No script runs on the site at all (`script-src 'none'`, or `site-report.js` not there yet: the next report run writes it). F12 > Console says which: *Loading the script ... violates the following Content Security Policy directive* - allow scripts from the site itself on the report site only: `script-src 'self'` |
 | F12 > Console: *Executing inline script violates ... 'script-src 'self''* (twice) and everything works | Expected: the copy of the script in the page was blocked and `site-report.js` ran instead. Nothing to do |
+| A click on a heading does nothing; F12 > Console: *This document requires 'TrustedHTML' assignment* | The site's policy has Trusted Types (`require-trusted-types-for 'script'`) and its `site-report.js` is older than 1.20.0. From 1.20.0 the script writes no HTML, so it sorts under that policy. The next report run writes the new `site-report.js`, and every page uses it, older pages too. The ticket insights pages' own `site-insights.js` still writes HTML for its chart tips and its sort arrows: under this policy those two fail there |
 
 To see the policy the site sends (on any Linux box that reaches it; the site's own address in place of the example):
 

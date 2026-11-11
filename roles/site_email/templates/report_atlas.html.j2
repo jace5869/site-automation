@@ -308,10 +308,13 @@ th{position:sticky;top:var(--appbar);z-index:2;background:var(--card-strong);tex
   border-bottom:1px solid var(--edge);padding:0;vertical-align:bottom}
 .tw.scroll th{position:static}
 th:first-child{border-top-left-radius:11px}th:last-child{border-top-right-radius:11px}
-th button{all:unset;display:flex;align-items:center;gap:6px;padding:10px var(--cx);cursor:pointer;width:100%;box-sizing:border-box;text-wrap:balance}
+th button{all:unset;display:flex;align-items:center;gap:6px;padding:10px var(--cx);width:100%;box-sizing:border-box;text-wrap:balance}
 th.k-num button{justify-content:flex-end}
 th.k-num,th.k-nw{white-space:nowrap}
 th .sort{opacity:.35;font-size:10px}
+/* sorting is the script's (1.20.0): its arrows and the pointer only once it runs; the whole cell is the target */
+:root:not(.js) th .sort{display:none}
+.js th{cursor:pointer}
 th[aria-sort] .sort{opacity:1;color:var(--accent)}
 td{padding:var(--cy) var(--cx);border-top:1px solid var(--line);vertical-align:top;white-space:pre-line;line-height:1.5}
 tbody tr:first-child td{border-top:0}

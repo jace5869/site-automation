@@ -8,15 +8,36 @@
    the page before it uses it - a page from an older release loads the newest script too. ASCII only (the Windows
    writer writes it as ASCII). */
 (function(){
-  if(window.siteReport)return;window.siteReport=1;
+  if(window.siteReport)return;
+  /* sorting (1.20.0): a cell's value as a key. A lone number (a sign, thousands separators, a decimal point, a % after
+     it) is that number; any other value is its text in parts, the numbers in it as numbers - an IPv4 address sorts by
+     its four octets, 8.0.2 before 8.0.10, vmx-9 before vmx-21, host2 before host10. Numbers before text; an empty
+     cell last, either way */
+  var NUM=/^[-+]?(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)\s*%?$/;
+  function skey(v){v=(v||'').replace(/\s+/g,' ').trim();if(!v)return null;
+    if(NUM.test(v))return [parseFloat(v.replace(/[,%\s]/g,''))];
+    var k=[],re=/\d+(?:[.,]\d+)*/g,m,at=0,low=v.toLowerCase();
+    while((m=re.exec(low))){if(m.index>at)k.push(low.slice(at,m.index));var s=m[0];
+      if(/^\d{1,3}(?:,\d{3})+(?:\.\d+)?$/.test(s)||/^\d+\.\d+$/.test(s))k.push(parseFloat(s.replace(/,/g,'')));
+      else s.split(/([.,])/).forEach(function(x,j){k.push(j%2?x:parseInt(x,10))});
+      at=m.index+s.length}
+    if(at<low.length)k.push(low.slice(at));k.raw=low;return k}
+  function kcmp(x,y){for(var j=0;j<x.length&&j<y.length;j++){var a=x[j],b=y[j],na=typeof a==='number',nb=typeof b==='number';
+      if(na!==nb)return na?-1:1;if(a<b)return -1;if(a>b)return 1}
+    return x.length-y.length||((x.raw||'')<(y.raw||'')?-1:(x.raw||'')>(y.raw||'')?1:0)}
+  function scmp(x,y,asc){if(x===null||y===null)return (x===null)-(y===null);var r=kcmp(x,y);return asc?r:-r}
+  /* what a cell sorts by: its whole value (data-v) where it has one, else its text */
+  function cval(c){return c?(c.getAttribute('data-v')||c.textContent):''}
+  window.siteReport={key:skey,compare:function(a,b,asc){return scmp(skey(a),skey(b),asc!==false)},cellValue:cval};
   var root=document.documentElement;
+  /* the script runs: the headers' sort arrows and pointer show (CSS), not before */
+  root.classList.add('js');
   /* the choices of the last page, before this one is drawn (no light page flashing before a dark one) */
   try{var t=localStorage.getItem('site-report-theme');if(t==='light'||t==='dark')root.setAttribute('data-theme',t);
     var d=localStorage.getItem('site-report-density');if(d==='compact')root.setAttribute('data-density',d);
     if(localStorage.getItem('site-report-rail')==='hidden')root.setAttribute('data-rail','hidden')}catch(e){}
   function ready(f){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',f);else f()}
   ready(function(){
-  root.classList.add('js');
   function all(s,el){return [].slice.call((el||document).querySelectorAll(s))}
   /* a switch of the bar: its radio buttons work by themselves (CSS); here the choice is kept in this browser and set
      again on the next page */
@@ -131,14 +152,20 @@
   var counts=[];
   all('.tw table').forEach(function(tb){
     var body=tb.tBodies[0],rows=[].slice.call(body.rows);
-    tb.querySelectorAll('th button').forEach(function(btn,i){btn.addEventListener('click',function(){
-      var th=btn.parentNode,asc=th.getAttribute('aria-sort')!=='ascending';
-      tb.querySelectorAll('th').forEach(function(h){h.removeAttribute('aria-sort');h.querySelector('.sort').innerHTML='&#8597;'});
-      th.setAttribute('aria-sort',asc?'ascending':'descending');btn.querySelector('.sort').innerHTML=asc?'&#9650;':'&#9660;';
-      function key(r){var c=r.cells[i];var v=c?(c.getAttribute('data-v')||c.textContent).trim():'';var n=parseFloat(v.replace(/[, %]/g,''));
-        return /^-?[\d.,]+\s*%?$/.test(v)&&!isNaN(n)?[0,n]:[1,v.toLowerCase()]}
-      rows.slice().sort(function(a,b){var x=key(a),y=key(b);var r=x[0]-y[0]||(x[1]<y[1]?-1:x[1]>y[1]?1:0);return asc?r:-r})
-        .forEach(function(r){body.appendChild(r)})})});
+    /* a header's click sorts by its column, the next one the other way; the arrows as characters (textContent: a page
+       under Trusted Types sorts too). A first click on a column already in order (the VM tables come sorted by VM)
+       sorts it the other way, so the click always shows. The whole header cell is the target, not only its button */
+    tb.querySelectorAll('th button').forEach(function(btn,i){var th=btn.parentNode;
+      th.addEventListener('click',function(e){if(!btn.contains(e.target))btn.click()});
+      btn.addEventListener('click',function(){
+      var by=rows.map(function(r){return [r,skey(cval(r.cells[i]))]}),
+          order=function(asc){return by.slice().sort(function(a,b){return scmp(a[1],b[1],asc)}).map(function(x){return x[0]})},
+          s=th.getAttribute('aria-sort'),asc=s!=='ascending',up=order(true),now=[].slice.call(body.rows),
+          same=function(o){return o.every(function(r,j){return r===now[j]})};
+      if(!s&&same(up)&&!same(order(false)))asc=false;
+      tb.querySelectorAll('th').forEach(function(h){var a=h.querySelector('.sort');h.removeAttribute('aria-sort');if(a)a.textContent='\u2195'});
+      th.setAttribute('aria-sort',asc?'ascending':'descending');btn.querySelector('.sort').textContent=asc?'\u25b2':'\u25bc';
+      (asc?up:order(false)).forEach(function(r){body.appendChild(r)})})});
     var tools=tb.parentNode.previousElementSibling;
     if(tools&&tools.classList.contains('tools2')){var f=tools.querySelector('.filter'),n=tools.querySelector('.shown');
       if(!f)return;

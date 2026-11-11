@@ -4,6 +4,7 @@ line (plugins/filter/site_filters.py), site_report_history against the fake AAP 
 in this process - the logo's size (image_size), and the command, portal and atlas looks' templates rendered with Jinja.
     python3 tests/test_report_history.py"""
 import importlib.util
+import json
 import os
 import re
 import shutil
@@ -577,7 +578,8 @@ class AtlasLook(unittest.TestCase):
         with open(os.path.join(REPO, "roles", "site_email", "templates", "site_report.js")) as f:
             js = f.read()
         self.assertIn('<script id="site-report-js">\n' + js, h)
-        self.assertIn("if(window.siteReport)return;window.siteReport=1;", js)
+        self.assertIn("if(window.siteReport)return;", js)                           # runs once (1.20.0: its sort key on it)
+        self.assertIn("window.siteReport={key:skey,", js)
         js.encode("ascii")                                                          # the Windows writer writes ASCII
         for t in ("{{", "{%", "{#", "</script"):
             self.assertNotIn(t, js)
@@ -772,6 +774,149 @@ class WebColumns(unittest.TestCase):
         self.assertIn("if(o!==d&&colsig(o)===k)colput(o,off)", js)                     # every table with those columns follows
         self.assertIn("if(t.classList.contains('cc')){t.classList.remove('sq')", js)
         js.encode("ascii")
+
+
+def _browser():
+    for b in ("google-chrome", "chromium", "chromium-browser"):
+        if shutil.which(b):
+            return shutil.which(b)
+    return None
+
+
+SCRIPT = os.path.join(REPO, "roles", "site_email", "templates", "site_report.js")
+# the script's sort key in node: no page, so the page's parts wait for a DOMContentLoaded that never comes
+NODE_STUB = ("var cl={add:function(){}};global.window={};global.document={readyState:'loading',addEventListener:function(){},"
+             "documentElement:{classList:cl,setAttribute:function(){},getAttribute:function(){return null}}};"
+             "global.localStorage={getItem:function(){throw new Error('none')}};require(process.argv[1]);var S=window.siteReport;")
+
+
+class Sorting(unittest.TestCase):
+    """1.20.0, the atlas and brief looks: a column's sort key (one number; IPv4 addresses by their octets, versions and
+    names with a number in them naturally; numbers before text; an empty cell last; data-v before the cell's text), the
+    arrows as characters (a page under Trusted Types sorts), a first click on a column already in order, the whole
+    header cell, and no arrows or pointer before the script runs."""
+
+    def order(self, values, asc=True):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("no node here")
+        out = subprocess.run([node, "-e", NODE_STUB + "var v=JSON.parse(process.argv[2]),a=process.argv[3]==='1';"
+                              "console.log(JSON.stringify(v.slice().sort(function(x,y){return S.compare(x,y,a)})))",
+                              SCRIPT, json.dumps(values), "1" if asc else "0"], capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return json.loads(out.stdout)
+
+    def test_ip_addresses(self):
+        self.assertEqual(self.order(["192.0.2.45", "192.0.2.5", "198.51.100.7", "192.0.2.100", "203.0.113.9", "192.0.2.10"]),
+                         ["192.0.2.5", "192.0.2.10", "192.0.2.45", "192.0.2.100", "198.51.100.7", "203.0.113.9"])
+        self.assertEqual(self.order(["192.0.2.45", "192.0.2.5", "198.51.100.7"], asc=False),
+                         ["198.51.100.7", "192.0.2.45", "192.0.2.5"])
+
+    def test_versions_and_names(self):
+        self.assertEqual(self.order(["8.0.10", "8.0.2", "7.0.3", "8.0", "8.0.2-1", "12.3.5", "11.3.5"]),
+                         ["7.0.3", "8.0", "8.0.2", "8.0.2-1", "8.0.10", "11.3.5", "12.3.5"])
+        self.assertEqual(self.order(["vmx-21", "vmx-9", "vmx-13", "vmx-10"]), ["vmx-9", "vmx-10", "vmx-13", "vmx-21"])
+        self.assertEqual(self.order(["host10", "Host2", "host1", "app01"]), ["app01", "host1", "Host2", "host10"])
+        self.assertEqual(self.order(["ESXi 8.0.2", "ESXi 7.0 U3", "ESXi 8.0"]), ["ESXi 7.0 U3", "ESXi 8.0", "ESXi 8.0.2"])
+        self.assertEqual(self.order(["1.5 GB", "1.25 GB", "10 GB"]), ["1.25 GB", "1.5 GB", "10 GB"])   # a decimal stays one
+
+    def test_numbers(self):
+        self.assertEqual(self.order(["45%", "4.5 %", "100%", "-3%", "0%"]), ["-3%", "0%", "4.5 %", "45%", "100%"])
+        self.assertEqual(self.order(["1,234", "999", "12,345.5", "-7", "0.5", "-0.25", "+3"]),
+                         ["-7", "-0.25", "0.5", "+3", "999", "1,234", "12,345.5"])
+        self.assertEqual(self.order(["10", "9", "100"], asc=False), ["100", "10", "9"])
+
+    def test_mixed_and_empty(self):
+        """Numbers before text, as before 1.20.0; an empty cell last in either direction."""
+        vals = ["abc", "", "12", "  ", "2", "Bcd", "192.0.2.1"]
+        self.assertEqual(self.order(vals), ["2", "12", "192.0.2.1", "abc", "Bcd", "", "  "])
+        self.assertEqual(self.order(vals, asc=False), ["Bcd", "abc", "192.0.2.1", "12", "2", "", "  "])
+
+    def test_data_v_first(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("no node here")
+        out = subprocess.run([node, "-e", NODE_STUB + "function c(v,t){return {getAttribute:function(){return v},textContent:t}}"
+                              "console.log(JSON.stringify([S.cellValue(c('12','twelve')),S.cellValue(c(null,' x ')),"
+                              "S.cellValue(c('','y')),S.cellValue(null)]))", SCRIPT], capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(json.loads(out.stdout), ["12", " x ", "y", ""])
+
+    def test_no_html_sinks(self):
+        with open(SCRIPT) as f:
+            js = f.read()
+        for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"):
+            self.assertNotIn(sink, js)
+        self.assertIn("a.textContent='\\u2195'", js)
+        js.encode("ascii")
+        for look in ("atlas", "brief"):
+            h = WebColumns().render(look)
+            self.assertIn(":root:not(.js) th .sort{display:none}\n.js th{cursor:pointer}", h)
+            self.assertNotRegex(h, r"th button\{[^}]*cursor:pointer")
+
+    HARNESS = """<script>
+window.addEventListener('load',function(){var R={errors:E},root=document.documentElement;
+  try{document.createElement('div').innerHTML='<b>x</b>';R.tt=false}catch(e){R.tt=true}
+  var tb=document.querySelector('.tw table'),ths=[].slice.call(tb.tHead.rows[0].cells);
+  function col(i){return [].map.call(tb.tBodies[0].rows,function(r){return r.cells[i].textContent.trim()})}
+  function st(i){var th=ths[i];return [th.getAttribute('aria-sort'),th.querySelector('.sort').textContent]}
+  var s=ths[0].querySelector('.sort');R.js=[getComputedStyle(s).display,getComputedStyle(ths[0]).cursor];
+  root.classList.remove('js');R.nojs=[getComputedStyle(s).display,getComputedStyle(ths[0]).cursor];root.classList.add('js');
+  ths[0].querySelector('button').click();R.vm1=[st(0),col(0)];
+  ths[0].querySelector('button').click();R.vm2=[st(0),col(0)];
+  ths[1].querySelector('button').click();R.ip=[st(1),st(0),col(1)];
+  var r=ths[2].getBoundingClientRect(),el=document.elementFromPoint(r.left+3,r.top+3);R.corner0=el===ths[2];
+  if(ths[2].contains(el))el.click();R.corner=[st(2),col(2)];
+  ths[3].dispatchEvent(new MouseEvent('click',{bubbles:true}));R.cell=[st(3),col(3)];
+  [].forEach.call(tb.tBodies[0].rows,function(row){var c=row.cells[4];c.setAttribute('data-v',{z:'1',y:'3',x:'2'}[c.textContent.trim()])});
+  ths[4].querySelector('button').click();R.datav=[st(4),col(4)];
+  document.getElementById('out').textContent=JSON.stringify(R)});
+</script><pre id="out"></pre>"""
+
+    def test_in_a_browser(self):
+        """Both looks, light and dark, under require-trusted-types-for 'script': the policy is in force (an innerHTML
+        throws), and the headers sort."""
+        b = _browser()
+        if not b:
+            self.skipTest("no headless browser here")
+        more = ["Red Hat Enterprise Linux 9 (64-bit)", "esx01.example.mil", "cluster1-prod-a", "datastore-ssd-01"]
+        sec = {"title": "VMs", "columns": ["VM", "IP address", "HW", "Used", "Note", "Guest operating system", "ESXi host",
+                                           "Cluster", "Datastore"],             # at 900 px some headers wrap, HW's does not
+               "rows": [["app01", "192.0.2.45", "vmx-21", "45%", "z"] + more, ["db01", "192.0.2.5", "vmx-9", "4.5%", "y"] + more,
+                        ["web01", "198.51.100.7", "vmx-13", "", "x"] + more]}
+        for look in ("atlas", "brief"):
+            for theme in ("light", "dark"):
+                h = WebColumns().render(look, _report=dict(REPORT, sections=[sec]))
+                h = h.replace("<head>", "<head>\n<meta http-equiv=\"Content-Security-Policy\" content=\"require-trusted-types-for 'script'\">", 1)
+                h = h.replace("<html", '<html data-theme="%s"' % theme, 1)
+                h = h.replace("</body>", "<script>var E=[];window.addEventListener('error',function(e){E.push(String(e.message))})"
+                              "</script>" + self.HARNESS + "</body>", 1)
+                with tempfile.TemporaryDirectory() as d:
+                    p = os.path.join(d, "page.html")
+                    with open(p, "w") as f:
+                        f.write(h)
+                    out = subprocess.run([b, "--headless=new", "--disable-gpu", "--no-sandbox", "--window-size=900,800",
+                                          "--virtual-time-budget=6000", "--dump-dom", "file://" + p],
+                                         capture_output=True, text=True, timeout=120)
+                m = re.search(r'<pre id="out">(.*?)</pre>', out.stdout, re.S)
+                self.assertTrue(m and m.group(1), (look, theme, out.stderr[-800:]))
+                import html as htmllib
+                r = json.loads(htmllib.unescape(m.group(1)))
+                k = (look, theme)
+                self.assertTrue(r["tt"], k)                                            # Trusted Types in force
+                self.assertEqual(r["errors"], [], k)
+                self.assertNotEqual(r["js"][0], "none", k)                             # the arrows, and the pointer
+                self.assertEqual(r["js"][1], "pointer", k)
+                self.assertEqual(r["nojs"], ["none", "auto"], k)                       # no arrows, no pointer, without script
+                # VM came in order: the first click sorts it the other way, the second back
+                self.assertEqual(r["vm1"], [["descending", "\u25bc"], ["web01", "db01", "app01"]], k)
+                self.assertEqual(r["vm2"], [["ascending", "\u25b2"], ["app01", "db01", "web01"]], k)
+                self.assertEqual(r["ip"], [["ascending", "\u25b2"], [None, "\u2195"], ["192.0.2.5", "192.0.2.45", "198.51.100.7"]], k)
+                # HW's header is shorter than its row (the long one wraps): its top corner is the cell, not the button
+                self.assertTrue(r["corner0"], k)
+                self.assertEqual(r["corner"], [["ascending", "\u25b2"], ["vmx-9", "vmx-13", "vmx-21"]], k)
+                self.assertEqual(r["cell"], [["ascending", "\u25b2"], ["4.5%", "45%", ""]], k)          # a click on a cell; empty last
+                self.assertEqual(r["datav"], [["ascending", "\u25b2"], ["z", "x", "y"]], k)             # data-v 1, 2, 3
 
 
 if __name__ == "__main__":
