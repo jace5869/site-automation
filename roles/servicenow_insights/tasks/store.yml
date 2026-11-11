@@ -1,0 +1,83 @@
+---
+# THE TICKET STORE (1.17.0, servicenow_insights_incremental, docs/REPORT_DATABASE.md): before the read, what the report
+# database holds of each ticket (its numbers, times, codes, flags, group and follow-up reads - never its text, its people
+# or its CI) into a file for the read; after it, the tickets read from ServiceNow this run written back. A run cut by
+# servicenow_insights_max_records writes nothing; a database not reached: a full read, one warning, the report whole.
+# _sni_store_step: load or save.
+- name: Insights | the ticket store - what the report database holds
+  when: _sni_store_step == 'load'
+  block:
+    - name: Insights | the report database's login
+      ansible.builtin.include_tasks: db_login.yml
+
+    - name: Insights | a folder for the tickets the read and the database pass between them
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: _insights_store
+      register: _sni_store_dir
+      check_mode: false
+      when: _sni_db.host | length > 0
+
+    - name: Insights | the tickets the report database holds (insights_ticket), for the read
+      site_insights_db:
+        mode: tickets_load
+        host: "{{ _sni_db.host }}"
+        port: "{{ _sni_db.port | int }}"
+        database: "{{ _sni_db.database }}"
+        user: "{{ _sni_db.user }}"
+        password: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PASSWORD') }}"
+        tls: "{{ _sni_db.tls | bool }}"
+        ca_file: "{{ _sni_db.ca_file }}"
+        connect_timeout: "{{ servicenow_insights_db_timeout | int }}"
+        create: "{{ servicenow_insights_db_create | bool and not ansible_check_mode }}"
+        source: "{{ {'url': _sni_url} | servicenow_insights_db_source(_sni_opts) }}"
+        path: "{{ _sni_store_dir.path }}/held.json"
+        required: "{{ servicenow_insights_db_required | bool }}"
+        warn: false             # not reached: the figures' read warns, once (db.yml); this run reads everything
+      register: _sni_store_held
+      check_mode: false         # only reads (in Check, nothing is made)
+      when: _sni_db.host | length > 0
+
+    - name: Insights | the ticket store on this run
+      ansible.builtin.set_fact:
+        _sni_store:
+          "on": "{{ _sni_store_held.ok | default(false) | bool }}"
+          in: "{{ (_sni_store_dir.path ~ '/held.json') if _sni_store_held.ok | default(false) | bool else '' }}"
+          out: "{{ (_sni_store_dir.path ~ '/read.json') if _sni_store_held.ok | default(false) | bool else '' }}"
+          dir: "{{ _sni_store_dir.path | default('') }}"
+          source: "{{ {'url': _sni_url} | servicenow_insights_db_source(_sni_opts) }}"
+
+- name: Insights | the ticket store - this run's tickets written back
+  when: _sni_store_step == 'save'
+  block:
+    - name: Insights | the tickets read from ServiceNow this run into the report database (insights_ticket)
+      site_insights_db:
+        mode: tickets_save
+        host: "{{ _sni_db.host }}"
+        port: "{{ _sni_db.port | int }}"
+        database: "{{ _sni_db.database }}"
+        user: "{{ _sni_db.user }}"
+        password: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PASSWORD') }}"
+        tls: "{{ _sni_db.tls | bool }}"
+        ca_file: "{{ _sni_db.ca_file }}"
+        connect_timeout: "{{ servicenow_insights_db_timeout | int }}"
+        create: "{{ servicenow_insights_db_create | bool }}"
+        source: "{{ _sni_store.source }}"
+        path: "{{ _sni_store.out }}"
+        required: "{{ servicenow_insights_db_required | bool }}"
+      register: _sni_store_w
+      when:
+        - _sni_store.on | bool
+        - (_sni.store | default({})).saved | default(0) | int > 0
+        - not ansible_check_mode
+
+    - name: Insights | the folder the tickets passed through, removed
+      ansible.builtin.file:
+        path: "{{ _sni_store.dir }}"
+        state: absent
+      check_mode: false
+      when: _sni_store.dir | default('') | length > 0
+
+    - name: Insights | how the tickets were read
+      ansible.builtin.set_fact:
+        _sni_store_say: "{{ _sni | servicenow_insights_store_line(_sni_store_w | default({}), ansible_check_mode) }}"

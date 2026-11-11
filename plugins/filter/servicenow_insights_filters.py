@@ -9,6 +9,7 @@ __metaclass__ = type
 
 import bisect
 import datetime
+import hashlib
 import functools
 import fnmatch
 import json
@@ -563,10 +564,12 @@ def _in(dt, a, b):
     return dt is not None and a is not None and b is not None and a <= dt < b
 
 
-def servicenow_insights_descriptions(r, mask=None, opts=None):
+def servicenow_insights_descriptions(r, mask=None, opts=None, state=None):
     """The incidents' descriptions ACT groups: one per key (the most frequent first, at most act_max_descriptions), with
-    how many incidents have it and their most common category. -> [{id, key, text (masked), count, category}]."""
+    how many incidents have it and their most common category. -> [{id, key, text (masked), count, category}]. state
+    (1.17.0): the keys it already places (the ACT cache) are not asked again."""
     o = opts or {}
+    placed = (state or {}).get("classes") or {}
     since, until, prev = _window(r)
     agg = {}
     for it in (r or {}).get("items") or []:
@@ -581,7 +584,7 @@ def servicenow_insights_descriptions(r, mask=None, opts=None):
         a["count"] += 1
         cat = category_issue(it)
         a["cats"][cat] = a["cats"].get(cat, 0) + 1
-    rows = sorted(agg.values(), key=lambda a: (-a["count"], a["key"]))[:int(_o(o, "act_max_descriptions", 2000))]
+    rows = sorted([a for a in agg.values() if a["key"] not in placed], key=lambda a: (-a["count"], a["key"]))[:int(_o(o, "act_max_descriptions", 2000))]
     out = []
     for i, a in enumerate(rows):
         out.append({"id": "D%d" % (i + 1), "key": a["key"], "text": apply_mask(a["first"], mask)[:200], "count": a["count"],
@@ -679,9 +682,10 @@ def servicenow_insights_classify_task(opts=None):
     ] + (["", str(o["extra"])] if o.get("extra") else []))
 
 
-def servicenow_insights_classify_merge(state, raw, batch, opts=None, ran=True, reason="", model=""):
+def servicenow_insights_classify_merge(state, raw, batch, opts=None, ran=True, reason="", model="", mask=None):
     """One batch's answer into the state: its new issues (up to act_max_issues; past that, the closest ... Other), each
-    description's issue. A batch not answered leaves its descriptions to their category."""
+    description's issue. A batch not answered leaves its descriptions to their category. An issue's name as the ACT
+    cache keeps it (1.17.0, act_label_for_store: masked), so a run with the cache shows the same."""
     o = opts or {}
     st = json.loads(json.dumps(state or servicenow_insights_state()))
     st["asked"] = int(st.get("asked") or 0) + 1
@@ -698,7 +702,7 @@ def servicenow_insights_classify_merge(state, raw, batch, opts=None, ran=True, r
     for x in obj.get("new_issues") or obj.get("issues") or []:
         if not isinstance(x, dict):
             continue
-        n = _clean(x.get("name"), 80)
+        n = act_label_for_store(_clean(x.get("name"), 80), mask)
         if not n or _norm(n) in names or len(st["issues"]) >= cap:
             continue
         st["issues"].append({"name": n, "about": _clean(x.get("about"), 200),
@@ -710,7 +714,7 @@ def servicenow_insights_classify_merge(state, raw, batch, opts=None, ran=True, r
         if not isinstance(x, dict):
             continue
         key = by_id.get(str(x.get("id") or "").strip())
-        n = _clean(x.get("issue"), 80)
+        n = act_label_for_store(_clean(x.get("issue"), 80), mask)
         if not key or not n:
             continue
         hit = names.get(_norm(n))
@@ -734,6 +738,82 @@ def _assign(r, state, mask, opts=None):
         n = classes.get(desc_key(it.get("short_description"), mask)) if classes else None
         out[it["sys_id"]] = n or category_issue(it)
     return out
+
+
+# ---- the ACT cache (1.17.0): each description's issue kept in the report database, asked again only when new --------
+
+def act_key_hash(key):
+    """A description's key (desc_key) as the database holds it: its SHA-256, never the words."""
+    return hashlib.sha256(str(key or "").encode("utf-8")).hexdigest()
+
+
+def act_label_for_store(name, mask=None):
+    """The one text the report database holds (1.17.0): ACT's short name for an issue - masked as the page masks (the
+    people, hosts and addresses this run knows), then what the name itself holds (an email or IP address, a phone number, a
+    host name), the placeholders as their kind ([person], [host] ...), at most 80 characters. Every stored label goes
+    through here."""
+    t = PLACEHOLDER.sub(lambda m: "[%s]" % m.group(1).lower(), apply_mask(name, mask))
+    found = {}
+    _scan(t, found, KEEP_WORDS)
+    for real in sorted(found, key=len, reverse=True):
+        t = t.replace(real, "[%s]" % found[real].lower())
+    return " ".join(t.split())[:80]
+
+
+def servicenow_insights_act_cache_key(opts=None, provider="", model=""):
+    """What the cache is good for: the provider, the model and the grouping prompt (its hash) - another of any of them,
+    and every description is asked again."""
+    task = servicenow_insights_classify_task(opts)
+    return "%s|%s|%s" % (str(provider or "").strip(), str(model or "").strip(), hashlib.sha256(task.encode("utf-8")).hexdigest()[:12])
+
+
+def servicenow_insights_act_cached(state, r, mask, cached, opts=None):
+    """The state with what the ACT cache holds (site_insights_db act_load: {issues: [{no, label, kind, self_service}],
+    classes: {key hash: no}}): its issues first ("about" not kept), and each of this run's description keys it
+    places. -> state with cache_nos {issue name: no} and cached (keys placed from the cache)."""
+    st = json.loads(json.dumps(state or servicenow_insights_state()))
+    c = cached if isinstance(cached, dict) else {}
+    by_no = {}
+    for x in c.get("issues") or []:
+        n = _clean(x.get("label"), 80)
+        if n and _norm(n) not in set(_norm(i["name"]) for i in st["issues"]):
+            st["issues"].append({"name": n, "about": "", "kind": "request" if x.get("kind") == "request" else "incident",
+                                 "self_service": bool(x.get("self_service"))})
+        if n:
+            by_no[int(x.get("no") or 0)] = n
+    st["cache_nos"] = dict((v, k) for k, v in by_no.items())
+    classes, hit = c.get("classes") or {}, 0
+    if classes:
+        since, until, prev = _window(r)
+        for it in (r or {}).get("items") or []:
+            if it.get("table") != "incident" or not _in(_t(it.get("opened_at")), prev or since, until):
+                continue
+            k = desc_key(it.get("short_description"), mask)
+            if k and k not in st["classes"]:
+                no = classes.get(act_key_hash(k))
+                if no is not None and int(no) in by_no:
+                    st["classes"][k] = by_no[int(no)]
+                    hit += 1
+    st["cached"] = hit
+    return st
+
+
+def servicenow_insights_act_cache_rows(state, mask=None):
+    """What the ACT cache keeps after this run (site_insights_db act_save): {issues: [{no, label, kind, self_service}],
+    classes: [[key hash, no]]} - an issue keeps its number; a new one takes the next. Never a description, a note or a
+    fix: the keys as hashes, the issues by ACT's short name (act_label_for_store)."""
+    st = state or {}
+    nos = dict(st.get("cache_nos") or {})
+    nxt = max(list(nos.values()) + [0]) + 1
+    issues = []
+    for x in st.get("issues") or []:
+        if x["name"] not in nos:
+            nos[x["name"]] = nxt
+            nxt += 1
+        issues.append({"no": nos[x["name"]], "label": act_label_for_store(x["name"], mask), "kind": x.get("kind") or "incident",
+                       "self_service": bool(x.get("self_service"))})
+    classes = [[act_key_hash(k), nos[n]] for k, n in sorted((st.get("classes") or {}).items()) if n in nos]
+    return {"issues": issues, "classes": classes}
 
 
 # ---- fixes: what each top issue's tickets say was done --------------------------------------------------------
@@ -859,6 +939,7 @@ def servicenow_insights_fix_task(opts=None):
         "- support: for each step, how many of the notes show it (0 when you added it);",
         "- source: \"tickets\" when the notes show every step, \"mixed\" when you had to fill gaps, \"suggested\" when the notes say "
         "too little and the steps are your likely fix (they will be marked: not verified);",
+        "- about: one short sentence on what the issue is, as a manager reads it (no ticket numbers, hosts or people);",
         "- why: one sentence on where the steps come from and how much the notes agree;",
         "- disagree: true when the notes show clearly different fixes for the same issue (the fix is not known);",
         "- tickets: how many tickets the steps worked on, as the close notes and work notes show (0 when they do not say);",
@@ -874,7 +955,7 @@ def servicenow_insights_fix_task(opts=None):
         "",
         "End your answer with exactly one JSON object between a line %s and a line %s, nothing else between them:" % (MARK_BEGIN, MARK_END),
         MARK_BEGIN,
-        '{"items": [{"id": "I1", "steps": ["...", "..."], "support": [12, 3], "source": "tickets", "why": "...", "disagree": false, '
+        '{"items": [{"id": "I1", "steps": ["...", "..."], "support": [12, 3], "source": "tickets", "about": "...", "why": "...", "disagree": false, '
         '"tickets": 14, "workaround": null, "kb": {"title": "...", "symptoms": "...", "cause": "...", "steps": ["..."], "tickets": 14}}]}',
         MARK_END,
     ] + (["", str(o["extra"])] if o.get("extra") else []))
@@ -927,6 +1008,7 @@ def servicenow_insights_fix_merge(state, raw, batch, opts=None, ran=True, reason
         wa = x.get("workaround")
         wa = _clean(wa, 300) if wa and str(wa).strip().lower() not in ("null", "none", "false") else ""
         st["fixes"][names[str(x["id"])]] = {"steps": steps, "support": support, "source": src, "why": _clean(x.get("why"), 400),
+                                            "about": _clean(x.get("about"), 200),
                                             "disagree": str(x.get("disagree")).strip().lower() in ("true", "1", "yes"), "kb": kb,
                                             "tickets": _int(x.get("tickets")), "workaround": wa, "read": read[str(x["id"])]}
     return st
@@ -2085,7 +2167,9 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
                                "median_h": _r1(_median(hours.get(n, []))), "quality": q, "fix": fx, "tags": tags,
                                "cis": _top(ci.get(n, {}), 3), "examples": [it.get("number") for it in newest],
                                "main_group": main, "main_share": round(_pct(g.get(main, 0), x["cur"]) or 0) if main else 0,
-                               "weekly": wkly.get(n, [0] * len(weeks)), "kind": d.get("kind") or "incident", "about": d.get("about") or ""})
+                               "weekly": wkly.get(n, [0] * len(weeks)), "kind": d.get("kind") or "incident",
+                               # 1.17.0: the fix question's sentence first - the same with the ACT cache (which keeps no "about")
+                               "about": (fx or {}).get("about") or d.get("about") or ""})
         misfiled = [r_ for r_ in issue_rows if r_["kind"] == "request"]
         if not act_ran:
             misfiled = []
@@ -2725,7 +2809,7 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
              "act": {"on": bool(o.get("act")), "ran": act_ran, "asked": int(state.get("asked") or 0), "answered": int(state.get("answered") or 0),
                      "errors": list(state.get("errors") or [])[:20], "model": state.get("model") or "", "provider": state.get("provider") or "",
                      "issues": len(state.get("issues") or []), "fixes": len(state.get("fixes") or {}), "reason": str(o.get("act_reason") or ""),
-                     "work_notes": dict(state.get("work_notes") or {})},
+                     "work_notes": dict(state.get("work_notes") or {}), "cached": int(state.get("cached") or 0)},
              "mask": dict(mask.get("counts") or {}), "summaries_by": "rules",
              "slo": {"source": sla_src, "asked": sla_r.get("asked") or "", "note": sla_r.get("note") or "", "response_measured": resp_measured,
                      "open_cut": list(sla_r.get("open_cut") or []),
@@ -2896,7 +2980,8 @@ def survey_questions(rows, meta, opts, since, until):
         blocks.append(sv)
     blocks.sort(key=lambda b: (b["state"] == "retired", -b["n"], _nat(b["survey"])))
     head = None
-    want = " ".join(str(o.get("survey_headline") or "").split()).lower()
+    typed = " ".join(str(o.get("survey_headline") or "").split())        # said back as typed (1.17.0); matched in any case
+    want = typed.lower()
     if want:
         for b in blocks:
             if b["survey"].lower() == want:
@@ -2917,7 +3002,7 @@ def survey_questions(rows, meta, opts, since, until):
                 "scale": b["scale"] if b["one_scale"] else out[b["main"][0]]["scale"], "survey": b["survey"], "state": b["state"]}
     other = [out[k] for sv in surveys.values() for k in sv["other"]]
     return {"questions": out, "blocks": blocks, "headline": head, "other": other,
-            "headline_missing": want if want and head is not None and want not in (head["label"].lower(), (head["survey"] or "").lower())
+            "headline_missing": typed if want and head is not None and want not in (head["label"].lower(), (head["survey"] or "").lower())
             and not any(out[k]["name"].lower() == want for k in head["keys"]) else ""}
 
 
@@ -3622,6 +3707,8 @@ def servicenow_insights_variant(model, variant=""):
 class FilterModule(object):
     def filters(self):
         return {"servicenow_insights_mask": servicenow_insights_mask, "servicenow_insights_descriptions": servicenow_insights_descriptions,
+                "servicenow_insights_act_cache_key": servicenow_insights_act_cache_key, "servicenow_insights_act_cached": servicenow_insights_act_cached,
+                "servicenow_insights_act_cache_rows": servicenow_insights_act_cache_rows,
                 "servicenow_insights_batches": servicenow_insights_batches, "servicenow_insights_state": servicenow_insights_state,
                 "servicenow_insights_lead_mail": servicenow_insights_lead_mail,
                 "servicenow_insights_classify_evidence": servicenow_insights_classify_evidence,

@@ -5,19 +5,23 @@ how they moved, month by month, in a **Trends** section. ServiceNow stays the re
 
 It is MySQL 8.4 LTS in its own podman container, `report-db`, on the STIG Manager host, apart from STIG Manager's own
 database.
-Ticket insights is its first user (1.13.0).
+Ticket insights is its first user (1.13.0). Since 1.17.0 it also keeps each ticket's fields, so a run reads only what
+changed (*The ticket store and the ACT cache*).
 
 ## What it keeps
 
-Figures only, per run and per org node (All, each site, each unit at any depth, each team, and the split's two halves).
+The figures, per run and per org node (All, each site, each unit at any depth, each team, and the split's two halves).
+Since 1.17.0 also each ticket's fields and ACT's grouping (*The ticket store and the ACT cache*).
 
 | Kept | Never kept |
 |---|---|
 | Counts: incidents, requested items, changes, problems, resolved, open, open over 30 days | A caller, an assignee, anyone's name |
 | Percentages: SLA met, response met, first contact, reopened, hops, hand-offs, ping-pong, ticket quality, after hours | A short description, a close note, a work note |
-| Hours: median time to resolve, the average time in each state | ACT's text: issues, fixes, summaries |
+| Hours: median time to resolve, the average time in each state | ACT's fixes, knowledge drafts and summaries |
 | Outcomes, categories and backlog age, with their names | The workload table (it names people) |
-| The hot CIs, with their names | |
+| The hot CIs, with their names | A ticket's CI |
+| Per ticket (1.17.0): its numbers, times, codes, flags and group | |
+| ACT's short name for each issue, masked (1.17.0): the only text | |
 
 Each run writes two kinds of rows:
 
@@ -191,7 +195,7 @@ It connects with the template's Report database credential, then stops. The `rep
 
 ```text
 Report database db.yoursite.mil:3309/site_reports: reached - MySQL 8.4.3, TLS none, as report_writer@% (may write)
-Tables and views: all 12 there, schema version 1
+Tables and views: all 15 there, schema version 1
 Held: sn.yoursite.mil, period month - 13 runs, 13 months (12 complete), 2025-11 to 2026-11, newest written 2026-11-01 06:04:12 UTC
 Held: sn.yoursite.mil, period 6m - 25 runs, 13 months (12 complete), 2025-11 to 2026-11, newest written 2026-11-01 06:04:12 UTC
 ```
@@ -233,6 +237,9 @@ database anything: the job reads it and draws the lines into each page.
 | `insights_run` | One row per run: the instance, the period (`6m`, `30d`, or `month`), the window, the month, `partial` (the month so far) |
 | `insights_node` | One row per run and org node: its label, level, depth (0 = All), parent, and six main figures as columns |
 | `insights_figure` | Every figure: run, node, metric, item (an outcome, category, backlog-age bucket or CI; empty for a plain figure), value |
+| `insights_ticket` | 1.17.0: one row per ticket - its fields less its text, people and CI, and its follow-up reads (*The ticket store*) |
+| `insights_act_class` | 1.17.0: each description's issue, the description as a hash (*The ACT cache*) |
+| `insights_act_issue` | 1.17.0: each issue's number, name (masked), kind and self-service (*The ACT cache*) |
 | `schema_version` | The schema's version, per component (`servicenow_insights`: 1) |
 | `insights_v_service`, `_volume`, `_process`, `_lifecycle`, `_quality` | A row per run and node, a column per figure of that set |
 | `insights_v_labelled` | The figures with an item: outcomes, categories, backlog age, hot CIs |
@@ -261,6 +268,82 @@ WHERE f.metric = 'survey_avg' AND NOT EXISTS (SELECT 1 FROM insights_figure g WH
 ```
 
 To replace them, run the backfill again (*The backfill*): it writes each month with the fix.
+
+## The ticket store and the ACT cache (1.17.0)
+
+With `servicenow_insights_db: true`, the database also keeps each ticket's fields and ACT's grouping. A run then reads in
+full only the tickets that changed. The pages, the email and the workbook are the same as a full read's.
+
+### How a run reads
+
+1. **The light read.** The report's own query, with only these fields: `sys_id`, `sys_updated_on`, `opened_at`, the
+   short description, the close notes, the people and the CI. The same cap as before (*More records than the cap*).
+2. **Unchanged tickets** (the same `sys_updated_on` as the database holds) come from the database, with this run's text,
+   people and CI from step 1.
+3. **New or changed tickets** are read in full, by `sys_id`.
+4. **The follow-up reads** (task_sla, the state metric, the hand-off paths, first assigned) are made for the changed
+   tickets and every open one. A closed, unchanged ticket's come from the database.
+
+A deleted ticket, or one moved to a group the report does not read, is not in step 1, so it drops out by itself.
+
+The job's last lines and *How this was made* say how the tickets were read:
+
+```text
+Tickets: 2,253 - 4 read from ServiceNow (new or changed), 2,249 from the report database; 4 written to the report database in 0 s.
+```
+
+### The first run
+
+The first run after the upgrade reads everything, as before, and fills the store. It takes as long as a run of 1.16.0,
+plus the write: 1 s or less for 2,253 tickets in the tests. The second run shows the gain.
+
+### What is stored per ticket
+
+`insights_ticket`, one row per ticket:
+
+| Kept | Never kept |
+|---|---|
+| Number, table, state, priority, impact, urgency | The short description, the close notes, the work notes |
+| Opened, resolved, closed and done times; `sys_updated_on` | The caller, the assignee, the resolver, anyone's name or sys_id |
+| The assignment group's name and sys_id (new in 1.17.0: per ticket) | The CI |
+| Close code, category, subcategory, hold reason, catalog item, change type | |
+| Reassignment and reopen counts, Made SLA, active | |
+| The parent, problem and caused-by numbers | |
+| Its SLAs (name, stage, breached, percent), state times, hand-off path (group names and times), first assigned | |
+
+A row is deleted 800 days after its ticket was done.
+
+### The ACT cache
+
+| Table | What it holds |
+|---|---|
+| `insights_act_class` | Each description's issue: the description as a SHA-256 hash (never its words) and the issue's number |
+| `insights_act_issue` | Each issue: its number, **its name**, kind (incident or request), self-service |
+
+**The issue's name is the only text the database holds.** It is ACT's short name for an issue ("Printer offline / print
+queue stuck"), never a ticket's own text. Before it is stored, the same mask as the page's replaces any name, host,
+address or phone number in it with `[person]`, `[host]` and so on. It is at most 80 characters.
+
+Only new descriptions go to ACT. The fixes and knowledge drafts are asked every run: ACT's text is not kept. Another
+provider, model or grouping prompt starts the cache again.
+
+### Turning it off, and removing it
+
+| To | Do |
+|---|---|
+| Read everything once (e.g. after a ServiceNow restore) | Launch with `servicenow_insights_full_refresh: true` |
+| Ask ACT everything again and replace the cache | Launch with `servicenow_insights_act_cache_clear: true` |
+| Stop keeping tickets | `servicenow_insights_incremental: false` |
+| Stop keeping ACT's grouping | `servicenow_insights_act_cache: false` |
+| Remove what is kept | As root: `DELETE FROM insights_ticket; DELETE FROM insights_act_class; DELETE FROM insights_act_issue;` |
+
+### What it does not see
+
+- A closed ticket's SLA or metric row changed without its `sys_updated_on` moving (an SLA recalculated after closing).
+  The store keeps the old one. `servicenow_insights_full_refresh: true` reads it again.
+
+A row whose `sys_updated_on` differs from ServiceNow's in either direction (a database restored from an older backup)
+is read again.
 
 ## Making the tables by hand
 
@@ -322,6 +405,50 @@ CREATE TABLE IF NOT EXISTS insights_figure (
   value DOUBLE NOT NULL,
   PRIMARY KEY (run_id, variant, node, metric, label),
   KEY by_metric (metric, node)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS insights_ticket (
+  source VARCHAR(190) NOT NULL,
+  sys_id VARCHAR(64) NOT NULL,
+  tbl VARCHAR(40) NOT NULL,
+  number VARCHAR(40) NOT NULL DEFAULT '',
+  updated_on DATETIME NULL,
+  active TINYINT NOT NULL DEFAULT 1,
+  opened_at DATETIME NULL,
+  done_at DATETIME NULL,
+  grp VARCHAR(255) NOT NULL DEFAULT '',
+  code VARCHAR(8) NOT NULL,
+  fields JSON NOT NULL,
+  follow JSON NOT NULL,
+  written_at DATETIME NOT NULL,
+  PRIMARY KEY (source, sys_id),
+  KEY by_done (source, done_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS insights_act_issue (
+  source VARCHAR(190) NOT NULL,
+  cache_key VARCHAR(190) NOT NULL,
+  issue_no INT NOT NULL,
+  label VARCHAR(80) NOT NULL,
+  kind VARCHAR(16) NOT NULL DEFAULT 'incident',
+  self_service TINYINT NOT NULL DEFAULT 0,
+  written_at DATETIME NOT NULL,
+  PRIMARY KEY (source, cache_key, issue_no)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS insights_act_class (
+  source VARCHAR(190) NOT NULL,
+  cache_key VARCHAR(190) NOT NULL,
+  key_hash CHAR(64) NOT NULL,
+  issue_no INT NOT NULL,
+  written_at DATETIME NOT NULL,
+  PRIMARY KEY (source, cache_key, key_hash)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 ```
 
@@ -549,8 +676,8 @@ Create the monitoring account in this container too, with the same password (`do
 
 ## Backups and retention
 
-Backups are the host's existing process: include the folder `/var/lib/report-db`. Rows are kept for ever. A site with a few
-hundred groups adds a few MB a month.
+Backups are the host's existing process: include the folder `/var/lib/report-db`. The figures are kept for ever. A site
+with a few hundred groups adds a few MB a month. The ticket store holds about 1 KB per ticket of the last 800 days.
 
 ## When something goes wrong
 
@@ -578,6 +705,10 @@ hundred groups adds a few MB a month.
 | `servicenow_insights_db_timeout` | `10` | Seconds to connect |
 | `servicenow_insights_backfill_months` | `0` | `> 0`: read and write that many past months, then stop |
 | `servicenow_insights_db_check` | `false` | `true`: only check the database, read only, then stop (*Is it writing?*) |
+| `servicenow_insights_incremental` | `true` | Keep each ticket and read only what changed (*The ticket store*) |
+| `servicenow_insights_full_refresh` | `false` | `true`: this launch reads every ticket again |
+| `servicenow_insights_act_cache` | `true` | Keep each description's issue: only new descriptions go to ACT |
+| `servicenow_insights_act_cache_clear` | `false` | `true`: this launch asks ACT everything again and replaces the cache |
 
 ## Later
 

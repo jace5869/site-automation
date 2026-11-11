@@ -110,7 +110,7 @@ except ImportError:            # Python 3.8: UTC only
 UTC = datetime.timezone.utc
 PAGE = 1000
 COMMON = ["sys_id", "number", "short_description", "state", "priority", "assigned_to", "assignment_group", "opened_at", "closed_at",
-          "closed_by", "close_notes", "active", "cmdb_ci", "opened_by", "made_sla", "reassignment_count", "sys_created_on"]
+          "closed_by", "close_notes", "active", "cmdb_ci", "opened_by", "made_sla", "reassignment_count", "sys_created_on", "sys_updated_on"]
 TABLE_FIELDS = {
     "incident": ["resolved_at", "resolved_by", "close_code", "category", "subcategory", "caller_id", "reopen_count", "caused_by",
                  "problem_id", "impact", "urgency", "hold_reason"],
@@ -123,6 +123,15 @@ TABLE_FIELDS = {
 }
 # the tables whose records have a resolved_at besides closed_at
 RESOLVES = ("incident", "problem")
+# 1.17.0, the ticket store (servicenow_insights_incremental): the light read every run asks only these - when each ticket
+# changed, and the text, the people and the CI, which the report database never holds; the rest of an unchanged ticket comes
+# from the database. LIGHT_KEYS: the item's keys made from them (never stored).
+LIGHT_COMMON = ["sys_id", "sys_updated_on", "opened_at", "sys_created_on", "short_description", "assigned_to", "opened_by", "closed_by",
+                "close_notes", "cmdb_ci"]
+LIGHT_TABLE = {"incident": ["resolved_by", "caller_id"], "sc_req_item": ["requested_for"]}
+LIGHT_KEYS = ("short_description", "assigned_to", "opened_by", "closed_by", "close_notes", "cmdb_ci", "resolved_by", "caller", "caller_id")
+# a stored row's format: a row of another format is read again from ServiceNow
+STORE_CODE = "1"
 
 
 class SnError(Exception):
@@ -262,28 +271,41 @@ def _prio(text):
     return m.group(1) if m else ""
 
 
+def light(rec, table):
+    """The item's keys from the light read's fields (1.17.0, LIGHT_KEYS): the text, the people and the CI as shown."""
+    d = lambda f: " ".join(_vd(rec, f)[1].split())          # noqa: E731
+    it = {"short_description": d("short_description"), "assigned_to": d("assigned_to"), "opened_by": d("opened_by"),
+          "cmdb_ci": d("cmdb_ci"), "closed_by": d("closed_by"), "close_notes": d("close_notes")}
+    if table == "incident":
+        it.update({"resolved_by": d("resolved_by"), "caller": d("caller_id"), "caller_id": _vd(rec, "caller_id")[0]})
+    elif table == "sc_req_item":
+        it["caller"] = d("requested_for")
+    return it
+
+
 def normalize(rec, table):
     """One record -> the item the report uses: only the fields it reads, people and states as shown, dates as UTC text."""
     d = lambda f: " ".join(_vd(rec, f)[1].split())          # noqa: E731
     v = lambda f: _vd(rec, f)[0]                            # noqa: E731
+    lt = light(rec, table)
     it = {"table": table, "sys_id": v("sys_id"), "number": v("number") or d("number"),
-          "short_description": d("short_description"), "state": d("state"), "priority": d("priority"),
+          "short_description": lt["short_description"], "state": d("state"), "priority": d("priority"),
           "priority_value": _prio(v("priority") or d("priority")),
-          "assigned_to": d("assigned_to"), "group": d("assignment_group"),
-          "group_id": v("assignment_group"), "opened_by": d("opened_by"), "cmdb_ci": d("cmdb_ci"),
-          "opened_at": v("opened_at") or v("sys_created_on"), "closed_at": v("closed_at"), "closed_by": d("closed_by"),
-          "close_notes": d("close_notes"), "active": _flag(v("active")), "made_sla": _flag(v("made_sla")),
+          "assigned_to": lt["assigned_to"], "group": d("assignment_group"),
+          "group_id": v("assignment_group"), "opened_by": lt["opened_by"], "cmdb_ci": lt["cmdb_ci"],
+          "opened_at": v("opened_at") or v("sys_created_on"), "closed_at": v("closed_at"), "closed_by": lt["closed_by"],
+          "close_notes": lt["close_notes"], "active": _flag(v("active")), "made_sla": _flag(v("made_sla")),
           "reassignment_count": _int(v("reassignment_count"))}
     if table in RESOLVES:
         it["resolved_at"] = v("resolved_at")
     if table == "incident":
-        it.update({"resolved_by": d("resolved_by"), "close_code": d("close_code"), "category": d("category"),
-                   "subcategory": d("subcategory"), "caller": d("caller_id"), "caller_id": v("caller_id"),
+        it.update({"resolved_by": lt["resolved_by"], "close_code": d("close_code"), "category": d("category"),
+                   "subcategory": d("subcategory"), "caller": lt["caller"], "caller_id": lt["caller_id"],
                    "reopen_count": _int(v("reopen_count")), "caused_by": d("caused_by"), "problem": d("problem_id"),
                    "impact_value": _prio(v("impact") or d("impact")), "urgency_value": _prio(v("urgency") or d("urgency")),
                    "hold_reason": d("hold_reason")})
     elif table == "sc_req_item":
-        it.update({"cat_item": d("cat_item"), "caller": d("requested_for")})
+        it.update({"cat_item": d("cat_item"), "caller": lt["caller"]})
     elif table == "sc_task":
         it["parent"] = d("request_item")
     elif table == "change_request":
@@ -349,10 +371,10 @@ def count_records(api, table, query):
         return None
 
 
-def read_table(api, table, query, max_records=20000, page=PAGE):
+def read_table(api, table, query, max_records=20000, page=PAGE, fields=None):
     """At most max_records records -> (records, more). One record more than the cap is asked for (1.16.0), so a table of
-    exactly max_records is not said to be cut."""
-    fields = COMMON + TABLE_FIELDS.get(table, [])
+    exactly max_records is not said to be cut. fields: the light read's (1.17.0); else every field the report uses."""
+    fields = fields or COMMON + TABLE_FIELDS.get(table, [])
     out, offset, want = [], 0, int(max_records) + 1
     while len(out) < want:
         limit = min(page, want - len(out))
@@ -745,7 +767,7 @@ def _num(v):
         return None
 
 
-def read_slas(api, items, win, source="auto", first_assigned=False, max_records=20000):
+def read_slas(api, items, win, source="auto", first_assigned=False, max_records=20000, store=None):
     """Met or missed (1.7.0): task_sla for the incidents and requested items done in the window and the one before (auto,
     task_sla), else the report's targets; the metric Assigned to with the targets when asked -> (sla, first, first_error)."""
     asked = str(source or "auto").strip().lower()
@@ -754,7 +776,9 @@ def read_slas(api, items, win, source="auto", first_assigned=False, max_records=
     done = [it for it in items if it["table"] in ("incident", "sc_req_item") and sn_time(it.get("done_at"))
             and since <= sn_time(it["done_at"]) <= until]
     if sla["source"] == "task_sla":
-        sla["records"], sla["error"] = read_task_sla(api, [it["sys_id"] for it in done])
+        ids = [it["sys_id"] for it in done]
+        sla["records"], sla["error"] = store.get("sla", ids, "task_sla", lambda xs: read_task_sla(api, xs)) if store is not None else read_task_sla(api, ids)
+        sla["records"] = by_key(sla["records"])
         if sla["error"]:
             sla["source"] = "targets"
             sla["note"] = "task_sla not read (%s): the report's targets instead" % sla["error"]
@@ -771,15 +795,17 @@ def read_slas(api, items, win, source="auto", first_assigned=False, max_records=
         recs, sla["paused_error"] = read_task_sla(api, [it["sys_id"] for it in opened], stats=st)
         if st.get("more") and not sla["open_cut"]:
             sla["open_cut"] = [len(opened), len(opened)]
-        sla["open"] = dict((k, [x for x in xs if x.get("running")]) for k, xs in recs.items())
+        sla["open"] = by_key(dict((k, [x for x in xs if x.get("running")]) for k, xs in recs.items()))
         for k, xs in recs.items():
             ts = sorted(x["paused_at"] for x in xs if x.get("paused_at"))
             if ts:
                 sla["paused"][k] = ts[0]
+    sla["paused"] = by_key(sla["paused"])
     first, ferr = {}, ""
     if sla["source"] == "targets" and first_assigned:
-        first, ferr = read_first_assigned(api, [it["sys_id"] for it in done if it["table"] == "incident"])
-    return sla, first, ferr
+        ids = [it["sys_id"] for it in done if it["table"] == "incident"]
+        first, ferr = store.get("first", ids, "assigned_to", lambda xs: read_first_assigned(api, xs)) if store is not None else read_first_assigned(api, ids)
+    return sla, by_key(first), ferr
 
 
 def sn_time(text):
@@ -800,9 +826,113 @@ def keep(it, since, until):
     return d is None or d >= since
 
 
+def is_open(it):
+    """Still open for the ticket store (1.17.0): anything not inactive and done - its follow-up reads are made every run."""
+    return not (it.get("active") is False and it.get("done_at"))
+
+
+class Reuse(object):
+    """The ticket store (1.17.0): what the database holds of each ticket, and what this run read. A ticket is fresh when
+    the light read gives the same sys_updated_on the database holds; a fresh ticket's fields come from the database, and
+    so do its follow-up reads (task_sla, the state metric, the hand-off paths, first assigned) once it is closed. rows:
+    {sys_id: {u (sys_updated_on), c (STORE_CODE), i (the item less LIGHT_KEYS), f: {kind: {m (where it was read), v}}}}."""
+
+    def __init__(self, rows):
+        self.rows = rows or {}
+        self.fresh, self.closed, self.upd, self.got = set(), set(), {}, {}
+
+    def stored(self, sid, upd):
+        r = self.rows.get(sid)
+        return r if r and r.get("c") == STORE_CODE and upd and r.get("u") == upd and isinstance(r.get("i"), dict) else None
+
+    def has(self, sid, kind, meta=None):
+        f = ((self.rows.get(sid) or {}).get("f") or {}).get(kind) if sid in self.closed else None
+        return isinstance(f, dict) and (meta is None or f.get("m") == meta)
+
+    def note(self, kind, ids, meta, values):
+        for i in ids:
+            self.got.setdefault(i, {})[kind] = {"m": meta, "v": values.get(i)}
+
+    def get(self, kind, ids, meta, reader, probe=True):
+        """reader(ids) -> (values, error). The ids the database holds (closed, fresh, read the same way) are not asked
+        again; one is, when none is left to ask (probe) - so this run still says whether the read works."""
+        ids = list(ids)
+        known = set(i for i in ids if self.has(i, kind, meta))
+        ask = [i for i in ids if i not in known] or (ids[:1] if probe else [])
+        got, err = reader(ask) if ask else ({}, "")
+        if err:
+            return got, err
+        out = dict(got)
+        for i in ids:
+            if i in known and i not in out and i not in ask:
+                v = self.rows[i]["f"][kind].get("v")
+                if v is not None:
+                    out[i] = v
+        self.note(kind, ask, meta, got)
+        return out, err
+
+
+def stored_items(api, table, rows, store, chunk=100):
+    """The light read's records -> the items, in the same order and the same as normalize gives for a full read (1.17.0):
+    a fresh ticket from the database with this run's text, people and CI; the others read in full, by sys_id. A record
+    gone between the two reads -> None (dropped)."""
+    order = list(normalize({}, table))
+    out, need = [], []
+    for rec in rows:
+        sid, upd = _vd(rec, "sys_id")[0], _vd(rec, "sys_updated_on")[0]
+        st = store.stored(sid, upd)
+        if st is None:
+            need.append(sid)
+            out.append(sid)
+            continue
+        it = dict(st["i"])
+        it.update(light(rec, table))
+        it = dict((k, it.get(k)) for k in order if k in it)
+        store.fresh.add(sid)
+        if not is_open(it):
+            store.closed.add(sid)
+        out.append(it)
+    full = {}
+    for i in range(0, len(need), chunk):
+        part = [x for x in need[i:i + chunk] if re.match(r"^[\w-]{1,64}$", x)]
+        if not part:
+            continue
+        got, _more = read_table(api, table, "sys_idIN" + ",".join(part), len(part))
+        for rec in got:
+            full[_vd(rec, "sys_id")[0]] = rec
+    return [normalize(full[x], table) if isinstance(x, str) and x in full else (None if isinstance(x, str) else x) for x in out]
+
+
+def stored_paths(api, ids, names, source, store):
+    """The hand-off paths with the ticket store (1.17.0): the incidents not held asked first (or one, when all are held),
+    which says where the paths come from this run; the held ones read that way reused, the rest asked that way."""
+    probe = [i for i in ids if not store.has(i, "paths")] or ids[:1]
+    got, src, err, note = read_paths(api, probe, names, source)
+    if not src:
+        return got, src, err, note
+    forced = "audit" if src == "sys_audit" else "metric"
+    rest = [i for i in ids if i not in set(probe)]
+    more, err2 = store.get("paths", rest, src, lambda xs: (lambda r: (r[0], r[2]))(read_paths(api, xs, names, forced)), probe=False)
+    if err2:
+        return {}, "", err2, ""
+    store.note("paths", probe, src, got)
+    out = dict(got)
+    out.update(more)
+    return out, src, err, note
+
+
+def by_key(d):
+    """A follow-up read's answer in sys_id order: the same for a run that reads everything and one that reuses the store."""
+    return dict(sorted((d or {}).items()))
+
+
 def read_all(api, groups, tables, win, max_records=20000, audit=True, handoff_min=3, members=True, group_parents=True, handoff_source="auto",
-             sla_source="auto", first_assigned=False, state_metric="Incident State Duration", survey=True, survey_metrics=None, managers=False, survey_types=None):
+             sla_source="auto", first_assigned=False, state_metric="Incident State Duration", survey=True, survey_metrics=None, managers=False, survey_types=None,
+             store=None):
+    """store (1.17.0): None - every record read in full (and nothing kept); a Reuse - its tickets reused where fresh
+    (store.rows empty: a full read that fills the store)."""
     since, until = sn_time(win["prev_since"]), sn_time(win["until"])
+    inc = store is not None and bool(store.rows)
     res = {"ok": False, "error": "", "window": win, "groups": [], "tables": [], "items": [], "audit": {}, "audit_error": "",
            "members": {}, "members_error": "", "lookup_note": "", "url": api.url, "group_tree": {}, "group_tree_error": "",
            "audit_source": "", "audit_note": "", "managers": {}, "managers_error": ""}
@@ -822,7 +952,8 @@ def read_all(api, groups, tables, win, max_records=20000, audit=True, handoff_mi
         entry = {"table": t, "read": 0, "kept": 0, "more": False, "error": ""}
         try:
             query = table_query(t, gids, gnames, since, until)
-            rows, more = read_table(api, t, query, max_records)
+            fields = (LIGHT_COMMON + LIGHT_TABLE.get(t, [])) if inc else None
+            rows, more = read_table(api, t, query, max_records, fields=fields)
             if more:
                 # 1.16.0: cut at the oldest opened_at kept (newest first). The records opened before the cut that count in
                 # the window itself (open, or done in it) are read as well: the window stays whole, the one before is cut.
@@ -830,7 +961,7 @@ def read_all(api, groups, tables, win, max_records=20000, audit=True, handoff_mi
                 oldest = lambda rs: min([x for x in (sn_time(_vd(r_, "opened_at")[0]) for r_ in rs) if x] or [until])  # noqa: E731
                 cut = oldest(rows)
                 entry.update(cut=cut.strftime("%Y-%m-%d %H:%M:%S"), total=count_records(api, t, query))
-                old_rows, old_more = read_table(api, t, older_query(t, gids, gnames, since_w, cut), max_records)
+                old_rows, old_more = read_table(api, t, older_query(t, gids, gnames, since_w, cut), max_records, fields=fields)
                 had = set(_vd(r_, "sys_id")[0] for r_ in rows)
                 rows += [r_ for r_ in old_rows if _vd(r_, "sys_id")[0] not in had]      # the cut's own second: read twice
                 entry["older"] = len(old_rows)
@@ -841,9 +972,17 @@ def read_all(api, groups, tables, win, max_records=20000, audit=True, handoff_mi
             res["tables"].append(entry)
             continue
         entry["read"], entry["more"] = len(rows), more
-        for rec in rows:
-            it = normalize(rec, t)
-            if not it["sys_id"] or it["sys_id"] in seen or not keep(it, since, until):
+        try:
+            made = stored_items(api, t, rows, store) if inc else [normalize(rec, t) for rec in rows]
+        except SnError as e:
+            entry["error"] = str(e)
+            res["tables"].append(entry)
+            continue
+        if store is not None:
+            for rec in rows:
+                store.upd[_vd(rec, "sys_id")[0]] = _vd(rec, "sys_updated_on")[0]
+        for it in made:
+            if it is None or not it["sys_id"] or it["sys_id"] in seen or not keep(it, since, until):
                 continue
             seen.add(it["sys_id"])
             items.append(it)
@@ -868,8 +1007,11 @@ def read_all(api, groups, tables, win, max_records=20000, audit=True, handoff_mi
             names[it.get("group_id") or it["group"]] = it["group"]
     if audit:
         ids = [it["sys_id"] for it in items if it["table"] == "incident" and it.get("reassignment_count", 0) >= int(handoff_min)]
-        if ids:
+        if ids and store is not None:
+            res["audit"], res["audit_source"], res["audit_error"], res["audit_note"] = stored_paths(api, ids, names, handoff_source, store)
+        elif ids:
             res["audit"], res["audit_source"], res["audit_error"], res["audit_note"] = read_paths(api, ids, names, handoff_source)
+        res["audit"] = by_key(res["audit"])
     if members and names:
         res["members"], res["members_error"] = read_members(api, names)
     gids = sorted(set(it.get("group_id") for it in items if it.get("group_id") and re.match(r"^[\w-]{1,64}$", str(it["group_id"]))))
@@ -882,13 +1024,70 @@ def read_all(api, groups, tables, win, max_records=20000, audit=True, handoff_mi
             mgr["_error"] = err
     if managers:
         res["managers"], res["managers_error"] = manager_names(mgr, gids, names)
-    res["sla"], res["first_assigned"], res["first_assigned_error"] = read_slas(api, items, win, sla_source, first_assigned, max_records)
+    res["sla"], res["first_assigned"], res["first_assigned_error"] = read_slas(api, items, win, sla_source, first_assigned, max_records, store)
     # 1.7.0: the time on hold (the incidents on hold now, and those done in the window), the surveys
     hold_ids = [it["sys_id"] for it in items if it["table"] == "incident" and (
         ("hold" in str(it.get("state") or "").lower() and it.get("active") is not False) or (sn_time(it.get("done_at")) and sn_time(it["done_at"]) >= since_w))]
-    res["states"], res["states_error"] = read_states(api, hold_ids, state_metric)
+    if store is not None and str(state_metric or "").strip() and hold_ids:
+        # 'none' (no row at all) is said of what this run holds, read or reused - as a full read says it
+        got, err = store.get("states", hold_ids, state_metric, lambda xs: (lambda r: (r[0], "" if r[1] == "none" else r[1]))(read_states(api, xs, state_metric)))
+        res["states"], res["states_error"] = (got, err) if err else (got, "" if got else "none")
+    else:
+        res["states"], res["states_error"] = read_states(api, hold_ids, state_metric)
+    res["states"] = by_key(res["states"])
     res["survey"], res["survey_questions"], res["survey_error"] = read_survey(api, win, survey_metrics, types=survey_types) \
         if survey and "incident" in [str(t) for t in tables or []] else ([], {}, "")
+    return res
+
+
+def store_load(path, full_refresh=False):
+    """The rows the database holds (site_insights_db tickets_load wrote them to path) -> (Reuse, why it is a full read or
+    ''). Rows of another format are left out: those tickets are read again."""
+    rows = {}
+    try:
+        with open(path) as f:
+            got = json.load(f)
+        rows = dict((k, v) for k, v in ((got or {}).get("rows") or {}).items() if isinstance(v, dict) and v.get("c") == STORE_CODE)
+    except (IOError, OSError, ValueError):
+        rows = {}
+    if full_refresh:
+        return Reuse({}), "servicenow_insights_full_refresh"
+    return Reuse(rows), ("" if rows else "the database holds no tickets yet")
+
+
+def store_save(res, store):
+    """The rows to write after a run (1.17.0): every ticket read from ServiceNow this run, and every reused one whose
+    follow-up reads changed - its fields less the text, the people and the CI (LIGHT_KEYS)."""
+    out = []
+    for it in res.get("items") or []:
+        sid = it["sys_id"]
+        old = store.rows.get(sid) if sid in store.fresh else None
+        f = dict((old or {}).get("f") or {})
+        f.update(store.got.get(sid) or {})
+        if old is not None and f == (old.get("f") or {}):
+            continue
+        out.append({"s": sid, "t": it["table"], "n": it.get("number") or "", "u": store.upd.get(sid) or "", "a": it.get("active") is not False,
+                    "o": it.get("opened_at") or "", "d": it.get("done_at") or "", "g": it.get("group") or "", "c": STORE_CODE,
+                    "i": dict((k, v) for k, v in it.items() if k not in LIGHT_KEYS), "f": f})
+    return out
+
+
+def store_finish(res, store, why_full, out_path):
+    """1.17.0: how this run read (res["store"], for the job's last line and How this was made), and the rows to write to
+    out_path - unless the run was cut (servicenow_insights_max_records: nothing of a cut run is kept) or read nothing."""
+    n = len(res.get("items") or [])
+    db = sum(1 for it in res.get("items") or [] if it["sys_id"] in store.fresh)
+    res["store"] = {"mode": "incremental" if not why_full else "full", "why": why_full, "from_sn": n - db, "from_db": db, "saved": 0,
+                    "not_saved": ""}
+    if not res.get("ok"):
+        res["store"]["not_saved"] = "nothing read"
+    elif res.get("cut"):
+        res["store"]["not_saved"] = "the records were cut (servicenow_insights_max_records)"
+    elif out_path:
+        rows = store_save(res, store)
+        with open(out_path, "w") as f:
+            json.dump({"rows": rows}, f)
+        res["store"]["saved"] = len(rows)
     return res
 
 
@@ -911,6 +1110,7 @@ def main():
             state_metric=dict(type="str", default="Incident State Duration"), survey=dict(type="bool", default=True),
             survey_metrics=dict(type="list", elements="str", default=[]), managers=dict(type="bool", default=False),
             survey_types=dict(type="list", elements="str", default=[]),
+            store_in=dict(type="path", default=""), store_out=dict(type="path", default=""), full_refresh=dict(type="bool", default=False),
         ),
         supports_check_mode=True)
     p = module.params
@@ -935,12 +1135,16 @@ def main():
     if url and not url.startswith("http"):
         url = "https://" + url
     api = Api(url, p["username"], p["password"], p["validate_certs"], p["ca_path"], p["timeout"])
+    store, why_full = store_load(p["store_in"], p["full_refresh"]) if p["store_in"] else (None, "")
     try:
         res = read_all(api, p["groups"], p["tables"], win, p["max_records"], p["audit"], p["handoff_min"], p["members"], p["group_parents"], p["handoff_source"],
-                       p["sla_source"], p["first_assigned"], p["state_metric"], p["survey"], p["survey_metrics"], p["managers"], p["survey_types"])
+                       p["sla_source"], p["first_assigned"], p["state_metric"], p["survey"], p["survey_metrics"], p["managers"], p["survey_types"],
+                       store)
     except SnError as e:
         res = {"ok": False, "error": str(e), "window": win, "groups": [], "tables": [], "items": [], "audit": {}, "audit_error": "",
                "members": {}, "members_error": "", "lookup_note": "", "url": url}
+    if store is not None:
+        store_finish(res, store, why_full, p["store_out"])
     module.exit_json(changed=False, **res)
 
 

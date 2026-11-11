@@ -1,0 +1,72 @@
+---
+# THE ACT CACHE (1.17.0, servicenow_insights_act_cache, docs/REPORT_DATABASE.md): each description's issue kept in the
+# report database - its key as a hash, the issues by ACT's short name (masked) - so only new descriptions go to ACT. The
+# fixes are asked every run (no text of ACT's is kept). servicenow_insights_act_cache_clear: everything asked again, the
+# cache replaced. _sni_act_step: load or save.
+- name: Insights | the ACT cache - what the report database holds
+  when: _sni_act_step == 'load'
+  block:
+    - name: Insights | the report database's login
+      ansible.builtin.include_tasks: db_login.yml
+      when: _sni_db is not defined
+
+    - name: Insights | what the ACT cache is for - the provider, the model, the prompt
+      ansible.builtin.set_fact:
+        _sni_act_key: >-
+          {%- set prov = site_act_provider | default('genai', true) | string | trim -%}
+          {{ _sni_opts | servicenow_insights_act_cache_key(prov, site_act_model | default('', true) or (site_act_models | default({}))[prov] | default('')) }}
+        _sni_act_source: "{{ {'url': _sni_url} | servicenow_insights_db_source(_sni_opts) }}"
+
+    - name: Insights | the issues ACT gave before (insights_act_issue, insights_act_class)
+      site_insights_db:
+        mode: act_load
+        host: "{{ _sni_db.host }}"
+        port: "{{ _sni_db.port | int }}"
+        database: "{{ _sni_db.database }}"
+        user: "{{ _sni_db.user }}"
+        password: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PASSWORD') }}"
+        tls: "{{ _sni_db.tls | bool }}"
+        ca_file: "{{ _sni_db.ca_file }}"
+        connect_timeout: "{{ servicenow_insights_db_timeout | int }}"
+        create: "{{ servicenow_insights_db_create | bool and not ansible_check_mode }}"
+        source: "{{ _sni_act_source }}"
+        cache_key: "{{ _sni_act_key }}"
+        clear: "{{ servicenow_insights_act_cache_clear | bool }}"
+        required: false
+        warn: false             # not reached: the figures' read warns, once (db.yml); ACT is asked everything
+      register: _sni_act_cache
+      check_mode: false         # only reads
+      when: _sni_db.host | length > 0
+
+    # a fact, not the registered answer: the save step's pass skips the read above, and a skipped task's register replaces it
+    - name: Insights | the descriptions the cache places, its issues first
+      ansible.builtin.set_fact:
+        _sni_state: "{{ _sni_state | servicenow_insights_act_cached(_sni, _sni_mask, _sni_act_cache.act, _sni_opts) }}"
+        _sni_act_on: true
+      when: _sni_act_cache.ok | default(false) | bool
+
+- name: Insights | the ACT cache - this run's issues kept
+  when: _sni_act_step == 'save'
+  block:
+    - name: Insights | each description's issue into the report database (the keys as hashes, the issues' names masked)
+      site_insights_db:
+        mode: act_save
+        host: "{{ _sni_db.host }}"
+        port: "{{ _sni_db.port | int }}"
+        database: "{{ _sni_db.database }}"
+        user: "{{ _sni_db.user }}"
+        password: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PASSWORD') }}"
+        tls: "{{ _sni_db.tls | bool }}"
+        ca_file: "{{ _sni_db.ca_file }}"
+        connect_timeout: "{{ servicenow_insights_db_timeout | int }}"
+        create: "{{ servicenow_insights_db_create | bool }}"
+        source: "{{ _sni_act_source }}"
+        cache_key: "{{ _sni_act_key }}"
+        clear: "{{ servicenow_insights_act_cache_clear | bool }}"
+        rows: "{{ _sni_state | servicenow_insights_act_cache_rows(_sni_mask) }}"
+        required: false
+      register: _sni_act_saved
+      when:
+        - _sni_act_on | default(false) | bool
+        - _sni_state.answered | default(0) | int > 0 or servicenow_insights_act_cache_clear | bool
+        - not ansible_check_mode

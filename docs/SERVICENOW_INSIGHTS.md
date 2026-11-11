@@ -349,7 +349,8 @@ nothing large goes in one question:
 1. **The issues.** The incidents' short descriptions, one per distinct description with its count (the most frequent
    first, at most `servicenow_insights_act_max_descriptions`), `servicenow_insights_act_batch` per question. Each question
    carries the issues defined so far, so the same issue keeps its name from batch to batch (at most
-   `servicenow_insights_act_max_issues`).
+   `servicenow_insights_act_max_issues`). With the report database on, a description asked before is placed from the
+   ACT cache and not asked again (1.17.0).
 2. **The fixes.** The top `servicenow_insights_act_fix_issues` issues, `servicenow_insights_act_fix_batch` per question,
    each with its close notes that say something (`servicenow_insights_act_notes`) and, since 0.96.0, its **work notes** -
    what was tried while the tickets were open (below): the steps (those that resolved tickets first, not what was tried
@@ -662,6 +663,19 @@ or team.
 
 Fill the past year once with `servicenow_insights_backfill_months: 12`, as a separate launch. Setup, the backfill, the
 tables and what is never stored: [REPORT_DATABASE.md](REPORT_DATABASE.md).
+
+### Only what changed is read (1.17.0)
+
+With the report database on, it also keeps each ticket's fields (never its text, people or CI). Each run then reads in
+full only the tickets that changed, and makes the follow-up reads only for those and the open ones. The pages, the email
+and the workbook are the same as a full read's. The first run reads everything and fills the store.
+
+- The job's last lines say how: *Tickets: 2,253 - 4 read from ServiceNow (new or changed), 2,249 from the report
+  database*.
+- `servicenow_insights_full_refresh: true` on a launch reads everything again.
+- With ACT on, each description's issue is kept too: only new descriptions go to ACT. The fixes are asked every run.
+
+What is kept, and how to remove it: [REPORT_DATABASE.md](REPORT_DATABASE.md), *The ticket store and the ACT cache*.
 
 ## The window
 

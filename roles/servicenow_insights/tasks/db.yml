@@ -5,6 +5,7 @@
 # (servicenow_insights_db_required: false).
 - name: Insights | the report database's login
   ansible.builtin.include_tasks: db_login.yml
+  when: _sni_db is not defined          # the ticket store logged in already (1.17.0)
 
 - name: Insights | this run's figures - the window, and each calendar month in it
   ansible.builtin.set_fact:

@@ -609,10 +609,12 @@ if(cvd&&cvt){var CV=JSON.parse(cvd.textContent),C=CV.cols,W=CV.until,LIM=CV.hop_
  if(psel)psel.addEventListener("change",function(){var p=pick(psel.value);if(p){per=p;apply()}});
  /* 1.16.0: a from / to that can not be shown says why, beside the fields - no dialog */
  function ftsay(t){var el=D.getElementById("cvftmsg");if(el)el.textContent=t||""}
+ /* the window as the fields show it: its first and last day (not the day after its end) */
+ function outside(){return "Outside this report's window: "+(cf.min||iso(0))+" to "+(ct.max||iso(MID.length-1))}
  var cvft=D.getElementById("cvft");if(cvft)cvft.addEventListener("click",function(){var i=kof(cf.value),j=kof(ct.value);
   if(isNaN(i)||isNaN(j)){ftsay("Pick both dates");return}if(j<i){ftsay("From must be before To");return}
-  if(i<0||i>=MID.length||j<0){ftsay("Outside this report's window: "+iso(0)+" to "+iso(MID.length-1));return}
-  var r=range(cf.value,ct.value);if(r){ftsay("");per=r;apply()}else ftsay("Outside this report's window: "+iso(0)+" to "+iso(MID.length-1))});
+  if(i<0||i>=MID.length||j<0){ftsay(outside());return}
+  var r=range(cf.value,ct.value);if(r){ftsay("");per=r;apply()}else ftsay(outside())});
  if(P0.name)pick(P0.name);
  function tick(idx){var want={};idx.forEach(function(i){want[i]=1});all.forEach(function(b){b.checked=!!want[+b.getAttribute("data-g")]});tally()}
  pres.forEach(function(x){x.addEventListener("click",function(){tick(dec(x.getAttribute("data-idx")));press(x.getAttribute("data-name"));apply()})});
@@ -1959,6 +1961,8 @@ def servicenow_insights_page(model, key="all", opts=None):
                    '</summary><ul>%s</ul></details>' % (len(svr), "" if len(svr) == 1 else "s", "".join("<li>%s</li>" % e(x) for x in svr))) if svr else ""
     db_html = (('<p class="dbline"><b>Report database.</b> %s</p>' if dbs.get("written") else '<div class="callout"><b>Report database.</b> %s</div>')
                % e(dbs.get("page") or "")) if dbs.get("page") else ""
+    if o.get("store_line"):               # the ticket store (1.17.0): how many came from ServiceNow, how many from the database
+        db_html += '<p class="dbline"><b>Tickets.</b> %s</p>' % e(o["store_line"])
     body.append(section("method", "How this was made", "", '<div class="method"><div><div class="eyebrow">Read from ServiceNow (read only)</div><dl class="kv">%s'
                         '<dt>Window</dt><dd>%s (%s)</dd><dt>Compared with</dt><dd>%s</dd><dt>Reopen</dt><dd>%s</dd></dl></div>'
                         '<div><div class="eyebrow">Replaced before GenAI, put back after</div><dl class="kv">%s</dl></div>'
@@ -1969,7 +1973,9 @@ def servicenow_insights_page(model, key="all", opts=None):
                               ("not used: %s of %s incidents reopened, so the report counts the tickets that came back" % (n(m.get("reopened_n")), n(m.get("incidents_n"))))),
                             "".join("<dt>%s</dt><dd class=\"num\">%s</dd>" % (lbl, n(mk.get(kk, 0))) for kk, lbl in
                                     (("PERSON", "Names"), ("PHONE", "Phone numbers"), ("EMAIL", "Email addresses"), ("HOST", "Host names"), ("IP", "IP addresses"), ("ID", "10-digit IDs"))),
-                            e(("%d of %d answered" % (a.get("answered", 0), a.get("asked", 0))) if a.get("ran") or a.get("asked") else
+                            e(("%d of %d answered" % (a.get("answered", 0), a.get("asked", 0)) + (
+                                "; %s descriptions placed from the ACT cache, not asked again" % n(a["cached"]) if a.get("cached") else ""))
+                              if a.get("ran") or a.get("asked") else
                               ("off" if not a.get("on") else "did not run: %s" % (a.get("reason") or "no answer"))),
                             e(("%d, grouped by ACT" % a.get("issues", 0)) if a.get("ran") else "the incidents' category / subcategory"),
                             e(str(a.get("fixes", 0)) if a.get("ran") else "none: the most common close notes are shown"),

@@ -441,6 +441,24 @@ servicenow_insights_months: 6
 ## variable.
 # servicenow_insights_db_check: false
 
+## THE TICKET STORE (1.17.0): with servicenow_insights_db, the report database keeps each ticket's
+## numbers, times, codes, flags and group (never its text, its people or its CI). Each run then
+## reads in full only the tickets that changed; the rest come from the database. The first run reads
+## everything and fills it. The pages are the same either way.
+# servicenow_insights_incremental: true
+
+## true: this launch reads every ticket again (launch with it as an extra variable)
+# servicenow_insights_full_refresh: false
+
+## THE ACT CACHE (1.17.0): with servicenow_insights_db, each description's issue is kept (the
+## description as a hash, the issue by ACT's short name, masked - the one text the database holds).
+## Only new descriptions go to ACT; the fixes are asked every run. Another provider, model or prompt
+## starts the cache again.
+# servicenow_insights_act_cache: true
+
+## true: this launch asks ACT everything again and replaces the cache
+# servicenow_insights_act_cache_clear: false
+
 ## THE PAGES (1.14.0): each site's, unit's and team's page is written this many at a time, in one
 ## task after the All page, when site_report_web writes the website itself (a folder, an SMB share,
 ## an upload). 0 = the site_email role once per page, as before (report_web_copy and report_web_host

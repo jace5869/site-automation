@@ -460,6 +460,10 @@ def main():
         if x.get("_table") not in ("sys_audit", "sys_user_group", "metric_instance") and x.get("number"):
             x["sys_id"] = "s-" + x["number"]
     recs.sort(key=lambda x: x.get("opened_at") or x.get("sys_created_on") or "")
+    # every ticket has a sys_updated_on, as in ServiceNow (1.17.0, the ticket store): its last date where the seed set none
+    for x in recs:
+        if x.get("number") and not x.get("sys_updated_on"):
+            x["sys_updated_on"] = max(str(x.get(k) or "") for k in ("opened_at", "sys_created_on", "resolved_at", "closed_at", "work_end", "end_date"))
     if "--sites" in sys.argv:              # the groups renamed only: every record as it was otherwise
         for x in recs:
             for k in ("assignment_group", "group", "oldvalue", "newvalue", "value"):

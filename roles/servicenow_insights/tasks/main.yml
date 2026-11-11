@@ -123,6 +123,14 @@
   ansible.builtin.include_tasks: backfill.yml
   when: servicenow_insights_backfill_months | int > 0
 
+# 1.17.0: with the report database, each run reads in full only the tickets that changed (docs/REPORT_DATABASE.md, The
+# ticket store); the first run, servicenow_insights_full_refresh or a database not reached: everything, as before
+- name: Insights | the tickets the report database holds (servicenow_insights_incremental)
+  ansible.builtin.include_tasks: store.yml
+  vars:
+    _sni_store_step: load
+  when: servicenow_insights_db | bool and servicenow_insights_incremental | bool
+
 - name: Insights | read the window ({{ servicenow_insights_days ~ " days" if servicenow_insights_days | float > 0 else servicenow_insights_months ~ " months" }}) of {{ _sni_tables | join(", ") }} from ServiceNow
   site_servicenow_insights:
     url: "{{ _sni_url }}"
@@ -153,8 +161,18 @@
     survey_types: "{{ servicenow_insights_survey_types | default([], true) | servicenow_insights_name_list }}"
     # the team leads (1.15.0): each group's manager, in the groups' read - for the page's line or the leads' emails
     managers: "{{ servicenow_insights_show_lead | bool or servicenow_insights_email_leads | default([], true) | length > 0 }}"
+    # the ticket store (1.17.0): the database's rows in, this run's out - files in a folder of the job's own
+    store_in: "{{ (_sni_store | default({})).in | default('') }}"
+    store_out: "{{ (_sni_store | default({})).out | default('') }}"
+    full_refresh: "{{ servicenow_insights_full_refresh | bool }}"
   register: _sni
-  check_mode: false             # only reads
+  check_mode: false             # only reads (the tickets go to the database after it, store.yml)
+
+- name: Insights | the tickets read this run into the report database (servicenow_insights_incremental)
+  ansible.builtin.include_tasks: store.yml
+  vars:
+    _sni_store_step: save
+  when: (_sni_store | default({})).dir | default('') | length > 0
 
 - name: Insights | time - ServiceNow read
   ansible.builtin.set_fact:
@@ -167,10 +185,16 @@
 - name: Insights | ACT groups the incidents into issues, writes the fixes - evidence mode, ACT runs no command
   when: servicenow_insights_act | bool and _sni.ok | default(false) | bool and not ansible_check_mode
   block:
-    - name: Insights | the incidents' descriptions, in batches of {{ servicenow_insights_act_batch }}
+    - name: Insights | the issues ACT gave before (the ACT cache, servicenow_insights_act_cache)
+      ansible.builtin.include_tasks: act_cache.yml
+      vars:
+        _sni_act_step: load
+      when: servicenow_insights_db | bool and servicenow_insights_act_cache | bool
+
+    - name: Insights | the incidents' descriptions, in batches of {{ servicenow_insights_act_batch }} (those the cache places left out)
       ansible.builtin.set_fact:
         _sni_desc_batches: >-
-          {{ _sni | servicenow_insights_descriptions(_sni_mask, _sni_opts) | servicenow_insights_batches(servicenow_insights_act_batch | int) }}
+          {{ _sni | servicenow_insights_descriptions(_sni_mask, _sni_opts, _sni_state) | servicenow_insights_batches(servicenow_insights_act_batch | int) }}
 
     - name: Insights | ACT groups each batch, the issues carried from one batch to the next
       ansible.builtin.include_tasks: act_classify.yml
@@ -179,6 +203,12 @@
         loop_var: _sni_batch
         index_var: _sni_batch_index
         label: "{{ _sni_batch[0].id }}-{{ _sni_batch[-1].id }}"
+
+    - name: Insights | each description's issue kept for the next runs (the ACT cache)
+      ansible.builtin.include_tasks: act_cache.yml
+      vars:
+        _sni_act_step: save
+      when: servicenow_insights_db | bool and servicenow_insights_act_cache | bool
 
     - name: Insights | the top issues ACT writes a fix for, {{ servicenow_insights_act_fix_batch }} per question
       ansible.builtin.set_fact:
@@ -400,7 +430,8 @@
                               'footer': 'AAP job ' ~ awx_job_id | default(tower_job_id | default('(command line)')) ~ ' - ServiceNow ' ~ _sni_url,
                               'header_text': report_email_header_text | default('Site automation report'),
                               'not_read': _sni_model | servicenow_insights_not_read, 'timing': (_sni_t | servicenow_insights_timing).rows,
-                              'db': _sni_db_say if servicenow_insights_db | bool else {}}) }}
+                              'db': _sni_db_say if servicenow_insights_db | bool else {},
+                              'store_line': (_sni_store_say | default({})).page | default('')}) }}
   # the pages in one go (_sni_fast, 1.14.0): the pages below, then the team leads' emails
   loop: "{{ [] if _sni_fast | bool else (_sni_web.jobs if _sni_web.on | bool or _sni_leads.to | length > 0 else []) }}"
   loop_control:
@@ -427,7 +458,8 @@
                               'footer': 'AAP job ' ~ awx_job_id | default(tower_job_id | default('(command line)')) ~ ' - ServiceNow ' ~ _sni_url,
                               'header_text': report_email_header_text | default('Site automation report'),
                               'not_read': _sni_model | servicenow_insights_not_read, 'timing': (_sni_t | servicenow_insights_timing).rows,
-                              'db': _sni_db_say if servicenow_insights_db | bool else {}}) }}
+                              'db': _sni_db_say if servicenow_insights_db | bool else {},
+                              'store_line': (_sni_store_say | default({})).page | default('')}) }}
   when: >-
     _sni.ok | default(false) | bool and (report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0
     or _sni_web.on | bool)
@@ -446,7 +478,8 @@
                               'footer': 'AAP job ' ~ awx_job_id | default(tower_job_id | default('(command line)')) ~ ' - ServiceNow ' ~ _sni_url,
                               'header_text': report_email_header_text | default('Site automation report'),
                               'not_read': _sni_model | servicenow_insights_not_read, 'timing': (_sni_t | servicenow_insights_timing).rows,
-                              'db': _sni_db_say if servicenow_insights_db | bool else {}}) }}
+                              'db': _sni_db_say if servicenow_insights_db | bool else {},
+                              'store_line': (_sni_store_say | default({})).page | default('')}) }}
   when: _sni_fast | bool and _sni.ok | default(false) | bool
 
 - name: Insights | each team lead's email (servicenow_insights_email_leads, servicenow_insights_team_email_to), linking the team's page written above
@@ -485,6 +518,11 @@
 - name: Insights | is it writing? - the report database
   ansible.builtin.debug:
     msg: "{{ _sni_db_say.line }}"
+
+- name: Insights | the tickets - from ServiceNow, from the report database (servicenow_insights_incremental)
+  ansible.builtin.debug:
+    msg: "{{ _sni_store_say.line }}"
+  when: (_sni_store_say | default({})).line | default('') | length > 0
 
 - name: Insights | WARNING - records cut by servicenow_insights_max_records (the pages and the email say so at the top)
   ansible.builtin.debug:

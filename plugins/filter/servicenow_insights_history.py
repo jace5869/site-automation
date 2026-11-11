@@ -442,9 +442,37 @@ def servicenow_insights_db_check_lines(res, where=""):
     return out
 
 
+def servicenow_insights_store_line(r, w=None, check=False):
+    """How this run read the tickets (1.17.0, the ticket store): {line (the job's), page (How this was made)} - '' when the
+    ticket store was not used. r: the read's answer (its store); w: tickets_save's."""
+    st = (r or {}).get("store") or {}
+    if not st:
+        return {"line": "", "page": ""}
+    n = "{:,}".format(int(st.get("from_sn") or 0) + int(st.get("from_db") or 0))
+    if st.get("mode") == "incremental":
+        core = "%s read from ServiceNow (new or changed), %s from the report database" % (
+            "{:,}".format(int(st.get("from_sn") or 0)), "{:,}".format(int(st.get("from_db") or 0)))
+    else:
+        core = "all read from ServiceNow - a full read (%s)" % (st.get("why") or "every ticket")
+    w = w or {}
+    if check:
+        tail = "Check mode: nothing written"
+    elif st.get("not_saved"):
+        tail = "nothing written: " + st["not_saved"]
+    elif not int(st.get("saved") or 0):
+        tail = "nothing to write"
+    elif w.get("ok"):
+        ws = w.get("store") or {}
+        tail = "%s written to the report database in %.0f s" % ("{:,}".format(int(ws.get("saved") or 0)), float(ws.get("seconds") or 0))
+    else:
+        tail = "not written: " + str(w.get("error") or "the report database was not reached")
+    return {"line": "Tickets: %s - %s; %s." % (n, core, tail), "page": "%s tickets - %s; %s." % (n, core, tail)}
+
+
 class FilterModule(object):
     def filters(self):
         return {"servicenow_insights_db_rows": servicenow_insights_db_rows, "servicenow_insights_db_runs": servicenow_insights_db_runs,
                 "servicenow_insights_month_run": month_run, "servicenow_insights_backfill_months": servicenow_insights_backfill_months,
                 "servicenow_insights_trend": servicenow_insights_trend, "servicenow_insights_db_status": servicenow_insights_db_status,
-                "servicenow_insights_db_check_lines": servicenow_insights_db_check_lines, "servicenow_insights_db_source": db_source}
+                "servicenow_insights_db_check_lines": servicenow_insights_db_check_lines, "servicenow_insights_db_source": db_source,
+                "servicenow_insights_store_line": servicenow_insights_store_line}

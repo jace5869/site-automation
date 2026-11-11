@@ -5,6 +5,7 @@ questions and answers merged, the model on a made-up site - tests/servicenow/ins
 workbook, the links between pages) and plugins/filter/servicenow_insights_page.py (the page: every section, no placeholder,
 no unescaped text). Needs ansible-core importable.
     python3 tests/test_servicenow_insights.py"""
+import copy
 import datetime
 import json
 import os
@@ -22,6 +23,8 @@ sys.path.insert(0, os.path.join(HERE, "servicenow"))
 import servicenow_insights_filters as F  # noqa: E402
 import servicenow_insights_page as P  # noqa: E402
 import site_servicenow_insights as rd  # noqa: E402
+import servicenow_insights_history as H  # noqa: E402
+import snmock  # noqa: E402
 
 NOW = datetime.datetime(2026, 11, 1, 6, 0, tzinfo=rd.UTC)
 OPTS = {"bare_chars": 20, "bare_phrases": ["fixed", "done", "resolved", "resolved per user", "see work notes", "rebooted", "n/a",
@@ -1424,10 +1427,10 @@ class Surveys(unittest.TestCase):
         self.assertEqual((p["headline"]["label"], p["headline"]["scale"][:2]), ("Legacy survey", [1.0, 5.0]))
         p = head("q2")
         self.assertEqual((p["headline"]["label"], p["headline"]["survey"]), ("Service desk survey · Q2", "Service desk survey"))
-        p = head("nothing like it")
-        self.assertEqual(p["headline_missing"], "nothing like it")
-        self.assertIn("servicenow_insights_survey_headline: nothing like it is not a survey or rating question read - the default instead",
-                      F.survey_read_lines(p, {"survey_headline": "nothing like it"}))
+        p = head("Nothing  Like It")
+        self.assertEqual(p["headline_missing"], "Nothing Like It")           # said back as typed (1.17.0, the tester), spaces made one
+        self.assertIn("servicenow_insights_survey_headline: Nothing Like It is not a survey or rating question read - the default instead",
+                      F.survey_read_lines(p, {"survey_headline": "Nothing  Like It"}))
 
     @unittest.skipUnless(any(__import__("shutil").which(b) for b in ("google-chrome", "chromium")), "no headless browser here")
     def test_tables_fit(self):
@@ -1492,7 +1495,205 @@ class TrustedTypes(unittest.TestCase):
         self.assertEqual(got["arrows"], 1)
         self.assertTrue(got["ar"][-1] in "\u25b2\u25bc", got["ar"])       # one arrow, made as a node
         self.assertEqual(got.get("back"), "From must be before To", got)
-        self.assertTrue(got.get("out", "").startswith("Outside this report's window: "), got)
+        # the window as the fields show it (1.17.0, the tester): its last day, the To field's max - not the day after its end
+        lo, hi = re.search(r'id="cvto" min="([\d-]+)" max="([\d-]+)"', h).groups()
+        self.assertEqual(got.get("out"), "Outside this report's window: %s to %s" % (lo, hi), got)
+
+
+
+class TicketStore(unittest.TestCase):
+    """1.17.0: the ticket store - a run that reads in full only the tickets that changed gives the same answer as a full
+    read (the items, the follow-up reads, the window, the cut), over new, changed, reopened, deleted, moved, closed then
+    updated, a text edited without sys_updated_on moving and stale rows; the rows never hold text, people or the CI."""
+
+    class Api(object):
+        url = "https://sn.example.mil"
+
+        def __init__(self, recs):
+            self.recs, self.calls = recs, []
+
+        def get(self, path, params):
+            parts = path.split("/")
+            q, table = params.get("sysparm_query", ""), parts[3]
+            self.calls.append((table, params.get("sysparm_fields", ""), q))
+            rows = [x for x in self.recs if (x.get("_table") or "incident") == table and snmock.matches(x, q)]
+            if parts[2] == "stats":
+                return {"result": {"stats": {"count": str(len(rows))}}}
+            if "ORDERBYDESCopened_at" in q:
+                rows.sort(key=lambda x: x.get("opened_at") or "", reverse=True)
+            show = snmock.show_all if params.get("sysparm_display_value") == "all" else (lambda x: x)
+            rows = [snmock.pick(show(x), params.get("sysparm_fields")) for x in rows]
+            off, lim = int(params.get("sysparm_offset", 0)), int(params.get("sysparm_limit", 10000))
+            return {"result": rows[off:off + lim]}
+
+    TABLES = ["incident", "sc_req_item", "sc_task", "change_request", "change_task", "problem"]
+
+    @classmethod
+    def setUpClass(cls):
+        with tempfile.TemporaryDirectory() as d:
+            subprocess.run([sys.executable, os.path.join(HERE, "servicenow", "insights_seed.py"), os.path.join(d, "s.json"), "0.25"],
+                           check=True, capture_output=True)
+            with open(os.path.join(d, "s.json")) as f:
+                cls.recs = json.load(f)
+        cls.win = rd.window(6, 0, "2026-10-31", True, "", rd.datetime.datetime(2026, 11, 1, 6, 0, tzinfo=rd.UTC))
+
+    def read(self, recs, store=None, cap=20000, groups=None):
+        api = self.Api(recs)
+        return rd.read_all(api, groups or [], self.TABLES, self.win, cap, first_assigned=True, store=store), api
+
+    def rows(self, res, store):
+        return dict((x["s"], {"u": x["u"], "c": x["c"], "i": x["i"], "f": x["f"]}) for x in rd.store_save(res, store))
+
+    def changed(self):
+        recs = copy.deepcopy(self.recs)
+        inc = [x for x in recs if (x.get("_table") or "incident") == "incident" and str(x.get("opened_at", "")) >= "2026-06"]
+        closed = [x for x in inc if x.get("state") == "7"]
+        bump = "2026-10-31 23:00:00"
+        inc[0].update(short_description="Changed text now", priority="1", sys_updated_on=bump)
+        closed[0].update(state="2", active="true", closed_at="", resolved_at="", reopen_count="1", sys_updated_on=bump)
+        other = [x for x in inc if x.get("assignment_group") != inc[5].get("assignment_group")][0]["assignment_group"]
+        inc[5].update(assignment_group=other, sys_updated_on=bump)
+        recs.remove(inc[7])
+        closed[1].update(close_notes="Replaced the token, then confirmed with the user.", sys_updated_on=bump)
+        closed[2]["short_description"] = "Quietly edited"
+        recs.append(dict(copy.deepcopy(inc[2]), sys_id="s-INC9999999", number="INC9999999", opened_at="2026-10-30 10:00:00", sys_updated_on=bump))
+        return recs, closed[3]["sys_id"]
+
+    def same(self, a, b):
+        for k in sorted(set(a) | set(b)):
+            if k != "store":
+                self.assertEqual(json.dumps(a.get(k)), json.dumps(b.get(k)), k)
+
+    def test_incremental_is_full(self):
+        st = rd.Reuse({})
+        first, _ = self.read(self.recs, st)
+        rows = self.rows(first, st)
+        self.assertEqual(len(rows), len(first["items"]))
+        recs, stale = self.changed()
+        rows[stale]["u"] = "2020-01-01 00:00:00"            # a database restored from an older backup
+        rows[stale]["i"]["priority"] = "STALE"
+        full, af = self.read(recs)
+        st2 = rd.Reuse(rows)
+        inc, ai = self.read(recs, st2)
+        self.same(full, inc)
+        self.assertGreater(len(st2.fresh), len(full["items"]) * 0.9)
+        self.assertNotIn(stale, st2.fresh)
+        self.assertLess(len(ai.calls), len(af.calls))
+        self.assertTrue(any("sys_idIN" in q for _t, _f, q in ai.calls))            # the changed ones, by sys_id
+        light = [f for t, f, q in ai.calls if t == "incident" and "ORDERBYDESC" in q]
+        self.assertTrue(light and all("close_code" not in f and "sys_updated_on" in f for f in light), light)
+
+    def test_the_rows_hold_no_text_people_or_ci(self):
+        st = rd.Reuse({})
+        res, _ = self.read(self.recs, st)
+        for r in rd.store_save(res, st):
+            self.assertFalse(set(r["i"]) & set(rd.LIGHT_KEYS), r["i"])
+            blob = json.dumps(r)
+            kept = set(json.dumps(v) for v in r["i"].values())           # a request's description may be its catalog item's name
+            for it in [x for x in res["items"] if x["sys_id"] == r["s"]]:
+                for k in ("short_description", "close_notes", "assigned_to", "caller", "cmdb_ci"):
+                    if len(str(it.get(k) or "")) > 12 and json.dumps(it[k]) not in kept:      # a whole value, as JSON writes it
+                        self.assertNotIn(json.dumps(it[k]), blob, (k, it[k]))
+
+    def test_open_tickets_follow_ups_read_again(self):
+        st = rd.Reuse({})
+        res, _ = self.read(self.recs, st)
+        rows = self.rows(res, st)
+        st2 = rd.Reuse(rows)
+        again, api = self.read(self.recs, st2)
+        self.same(res, again)
+        asked = " ".join(q for t, _f, q in api.calls if t == "task_sla")
+        opened = [it["sys_id"] for it in again["items"] if rd.is_open(it) and it["table"] == "incident" and not it.get("done_at")]
+        self.assertTrue(opened and all(s in asked for s in opened[:5]))               # the open ones always
+        self.assertFalse(st2.closed & set(opened))
+
+    def test_a_cut_run_keeps_nothing(self):
+        st = rd.Reuse({})
+        with tempfile.TemporaryDirectory() as d:
+            store, why = rd.store_load(os.path.join(d, "none.json"))
+            self.assertEqual(why, "the database holds no tickets yet")
+            res, _ = self.read(self.recs, store, cap=30)
+            self.assertTrue(res["cut"])                                       # the window itself cut
+            out = os.path.join(d, "out.json")
+            got = rd.store_finish(res, store, why, out)["store"]
+            self.assertEqual(got["not_saved"], "the records were cut (servicenow_insights_max_records)")
+            self.assertFalse(os.path.exists(out))                             # nothing of a cut run kept
+            self.assertEqual((got["mode"], got["saved"]), ("full", 0))
+            st = rd.Reuse({})
+            whole, _ = self.read(self.recs, st)
+            self.assertEqual(rd.store_finish(whole, st, why, out)["store"]["saved"], len(whole["items"]))
+            with open(out) as f:
+                self.assertEqual(len(json.load(f)["rows"]), len(whole["items"]))
+        self.assertEqual(rd.store_load("/nonexistent", full_refresh=True)[1], "servicenow_insights_full_refresh")
+
+    def test_rows_of_another_format_read_again(self):
+        st = rd.Reuse({})
+        res, _ = self.read(self.recs, st)
+        rows = self.rows(res, st)
+        for v in rows.values():
+            v["c"] = "0"
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "held.json")
+            with open(p, "w") as f:
+                json.dump({"rows": rows}, f)
+            store, why = rd.store_load(p)
+        self.assertEqual((store.rows, why), ({}, "the database holds no tickets yet"))
+
+    def test_the_line(self):
+        L = H.servicenow_insights_store_line
+        r = {"store": {"mode": "incremental", "why": "", "from_sn": 4, "from_db": 2249, "saved": 4, "not_saved": ""}}
+        self.assertEqual(L(r, {"ok": True, "store": {"saved": 4, "seconds": 0.4}})["line"],
+                         "Tickets: 2,253 - 4 read from ServiceNow (new or changed), 2,249 from the report database; 4 written to the report database in 0 s.")
+        r = {"store": {"mode": "full", "why": "the database holds no tickets yet", "from_sn": 9, "from_db": 0, "saved": 0,
+                       "not_saved": "the records were cut (servicenow_insights_max_records)"}}
+        self.assertEqual(L(r)["page"], "9 tickets - all read from ServiceNow - a full read (the database holds no tickets yet); nothing written: "
+                                       "the records were cut (servicenow_insights_max_records).")
+        self.assertEqual(L({}), {"line": "", "page": ""})
+        self.assertIn("Check mode: nothing written", L(r, {}, True)["line"])
+
+
+class ActCache(unittest.TestCase):
+    """1.17.0: the ACT cache - each description's issue kept by its key's hash; the issues by ACT's short name, masked
+    (the one text the database holds); only new descriptions asked; another model or prompt, another cache."""
+
+    MASK = {"pairs": [["Dana Whitfield", "PERSON-1"], ["Whitfield", "PERSON-2"], ["prn01-fl3", "HOST-1"]], "counts": {}}
+
+    def test_the_label_is_masked(self):
+        L = F.act_label_for_store
+        for name, want in (("Account locked out / password reset", "Account locked out / password reset"),
+                           ("Windows 11 upgrade fails", "Windows 11 upgrade fails"), ("Wi-Fi drops on floor 3", "Wi-Fi drops on floor 3"),
+                           ("VPN drops for Dana Whitfield at 198.51.100.9 on wks-1001", "VPN drops for [person] at [ip] on [host]"),
+                           ("Printer prn01-fl3 jams", "Printer [host] jams"), ("Mail to jo.smith@example.mil bounces", "Mail to [email] bounces"),
+                           ("Call (703) 555-0101", "Call [phone]"), ("PERSON-1's account", "[person]'s account")):
+            self.assertEqual(L(name, self.MASK), want, name)
+        self.assertEqual(len(L("x" * 200, self.MASK)), 80)
+
+    def test_rows_and_back(self):
+        x = site()
+        st = dict(F.servicenow_insights_state(), issues=[{"name": "Printer offline", "about": "a", "kind": "incident", "self_service": False},
+                                                         {"name": "VPN drops for Dana Whitfield", "about": "", "kind": "incident", "self_service": True}])
+        keys = sorted(set(F.desc_key(it.get("short_description")) for it in x["r"]["items"] if it["table"] == "incident"))[:6]
+        st["classes"] = dict((k, "Printer offline" if i % 2 else "VPN drops for Dana Whitfield") for i, k in enumerate(keys) if k)
+        rows = F.servicenow_insights_act_cache_rows(st, self.MASK)
+        self.assertEqual([i["label"] for i in rows["issues"]], ["Printer offline", "VPN drops for [person]"])
+        self.assertTrue(all(len(h) == 64 and not set(h) - set("0123456789abcdef") for h, _n in rows["classes"]))
+        self.assertNotIn(keys[1], json.dumps(rows))                                  # the words never, the hash only
+        cached = {"issues": rows["issues"], "classes": dict((h, n) for h, n in rows["classes"])}
+        back = F.servicenow_insights_act_cached(F.servicenow_insights_state(), x["r"], None, cached, OPTS)
+        self.assertEqual([i["name"] for i in back["issues"]], ["Printer offline", "VPN drops for [person]"])
+        self.assertTrue(back["cached"] >= 1)
+        left = F.servicenow_insights_descriptions(x["r"], None, OPTS, back)
+        self.assertFalse(set(d["key"] for d in left) & set(back["classes"]))           # those placed are not asked
+        self.assertEqual(len(left) + len(back["classes"]), len(F.servicenow_insights_descriptions(x["r"], None, OPTS)))
+        again = F.servicenow_insights_act_cache_rows(back, self.MASK)                  # an issue keeps its number
+        self.assertEqual([(i["no"], i["label"]) for i in again["issues"]], [(i["no"], i["label"]) for i in rows["issues"]])
+
+    def test_the_key(self):
+        K = F.servicenow_insights_act_cache_key
+        a = K(OPTS, "genai", "model-a")
+        self.assertNotEqual(a, K(OPTS, "genai", "model-b"))
+        self.assertNotEqual(a, K(dict(OPTS, act_max_issues=12), "genai", "model-a"))       # another prompt
+        self.assertEqual(a, K(dict(OPTS), "genai", "model-a"))
 
 
 class RecordsCut(unittest.TestCase):

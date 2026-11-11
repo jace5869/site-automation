@@ -21,9 +21,12 @@ description:
   - mode check (1.15.0) - read only, nothing made or written (the reader account is enough) - the server's version, the
     account and whether it may write, the tables and views there or missing, and what is held per instance and period.
   - After a write, what the database holds is read back (held - a SELECT, not the rows sent).
+  - mode tickets_load (1.17.0) - the ticket store's rows of this instance (insights_ticket) written to path, for the read.
+  - mode tickets_save (1.17.0) - the rows the read wrote to path upserted; the tickets done more than 800 days ago deleted.
   - A database that cannot be reached is a warning and ok false - unless required is true, then the task fails.
 options:
-  mode: {description: read, write or check., type: str, choices: [read, write, check], required: true}
+  mode: {description: "read, write, check; tickets_load, tickets_save (1.17.0, the ticket store); act_load, act_save (the ACT cache).", type: str,
+         choices: [read, write, check, tickets_load, tickets_save, act_load, act_save], required: true}
   host: {description: The database server., type: str, required: true}
   port: {description: "Its port (the report database's: 3309).", type: int, default: 3309}
   database: {description: The schema (database) name., type: str, required: true}
@@ -41,6 +44,10 @@ options:
   metrics: {description: "read: the metrics wanted.", type: list, elements: str, default: []}
   job: {description: "write: the AAP job, kept on the run row.", type: str, default: ""}
   required: {description: "true: a database that cannot be reached fails the task.", type: bool, default: false}
+  path: {description: "tickets_load, tickets_save (1.17.0): the file the ticket store's rows are written to or read from.", type: path, default: ""}
+  cache_key: {description: "act_load, act_save (1.17.0): the provider, the model and the prompt's hash.", type: str, default: ""}
+  clear: {description: "act_load: nothing held is given; act_save: everything held of the instance deleted first (servicenow_insights_act_cache_clear).", type: bool, default: false}
+  warn: {description: "false: a database not reached is not warned of here (the figures' read warns once, later).", type: bool, default: true}
 '''
 
 RETURN = r'''
@@ -52,6 +59,8 @@ created: {description: The tables and views were made this run., type: bool}
 schema_version: {description: The schema's version., type: int}
 replaced: {description: "write: a run of the same window was there and was replaced.", type: bool}
 written: {description: "write: {runs, nodes, figures}.", type: dict}
+store: {description: "tickets_load, tickets_save (1.17.0): {held (rows of this instance now), saved, pruned}.", type: dict}
+act: {description: "act_load (1.17.0): {issues, classes}; act_save: {issues (written), classes (held now)}.", type: dict}
 rows: {description: "read: [[month, window_end, node, variant, metric, value, partial]].", type: list}
 months: {description: "write: the calendar months written (the month so far marked).", type: list}
 tickets: {description: "write: each month's tickets and rows, in words (the backfill's progress).", type: str}
@@ -65,6 +74,7 @@ objects: {description: "check: {present: [...], missing: [...]} - the tables and
 '''
 
 import datetime
+import json
 import os
 import re
 import ssl
@@ -108,6 +118,19 @@ CREATE = [
     "CREATE TABLE IF NOT EXISTS insights_figure (run_id BIGINT UNSIGNED NOT NULL, variant VARCHAR(8) NOT NULL DEFAULT '', "
     "node VARCHAR(255) NOT NULL, metric VARCHAR(64) NOT NULL, label VARCHAR(190) NOT NULL DEFAULT '', value DOUBLE NOT NULL, "
     "PRIMARY KEY (run_id, variant, node, metric, label), KEY by_metric (metric, node)) " + TABLE_OPTS,
+    # 1.17.0, the ticket store (servicenow_insights_incremental): a row per ticket - its numbers, times, codes, flags and
+    # group, and its follow-up reads' results; never its text, its people or its CI (the light read gives those each run)
+    "CREATE TABLE IF NOT EXISTS insights_ticket (source VARCHAR(190) NOT NULL, sys_id VARCHAR(64) NOT NULL, tbl VARCHAR(40) NOT NULL, "
+    "number VARCHAR(40) NOT NULL DEFAULT '', updated_on DATETIME NULL, active TINYINT NOT NULL DEFAULT 1, opened_at DATETIME NULL, "
+    "done_at DATETIME NULL, grp VARCHAR(255) NOT NULL DEFAULT '', code VARCHAR(8) NOT NULL, fields JSON NOT NULL, follow JSON NOT NULL, "
+    "written_at DATETIME NOT NULL, PRIMARY KEY (source, sys_id), KEY by_done (source, done_at)) " + TABLE_OPTS,
+    # 1.17.0, the ACT cache: each description's issue (its key as a SHA-256, never the words) and the issues - by ACT's short
+    # name, masked (the one text the database holds); cache_key: the provider, the model and the prompt's hash
+    "CREATE TABLE IF NOT EXISTS insights_act_issue (source VARCHAR(190) NOT NULL, cache_key VARCHAR(190) NOT NULL, issue_no INT NOT NULL, "
+    "label VARCHAR(80) NOT NULL, kind VARCHAR(16) NOT NULL DEFAULT 'incident', self_service TINYINT NOT NULL DEFAULT 0, "
+    "written_at DATETIME NOT NULL, PRIMARY KEY (source, cache_key, issue_no)) " + TABLE_OPTS,
+    "CREATE TABLE IF NOT EXISTS insights_act_class (source VARCHAR(190) NOT NULL, cache_key VARCHAR(190) NOT NULL, key_hash CHAR(64) NOT NULL, "
+    "issue_no INT NOT NULL, written_at DATETIME NOT NULL, PRIMARY KEY (source, cache_key, key_hash)) " + TABLE_OPTS,
 ]
 RUN_COLS = "r.run_id, r.source, r.period, r.window_start AS period_start, r.window_end AS period_end, r.month, r.partial"
 NODE_COLS = "n.node, n.variant, n.label, n.level, n.depth, n.parent"
@@ -127,7 +150,8 @@ VIEWS = [
 ] + ["CREATE VIEW insights_v_%s AS SELECT %s, %s, %s %s GROUP BY r.run_id, n.run_id, n.variant, n.node" % (
      name, RUN_COLS, NODE_COLS, ", ".join("MAX(CASE WHEN f.metric = '%s' THEN f.value END) AS %s" % (k, k) for k in keys), FIGURES_JOIN)
      for name, keys in FIGURE_SETS]
-OBJECTS = (["schema_version", "insights_run", "insights_node", "insights_figure", "insights_v_month_run", "insights_v_latest_run",
+OBJECTS = (["schema_version", "insights_run", "insights_node", "insights_figure", "insights_ticket", "insights_act_issue", "insights_act_class",
+            "insights_v_month_run", "insights_v_latest_run",
             "insights_v_labelled"] + ["insights_v_" + name for name, _ in FIGURE_SETS])
 
 
@@ -419,35 +443,133 @@ def short_error(e):
     return str(e).strip() or e.__class__.__name__
 
 
+# 1.17.0: a ticket done more than this long ago is out of every window a run can ask (12 months and the 12 before)
+TICKET_KEEP_DAYS = 800
+
+
+def _dt(text):
+    try:
+        return ts(text) if str(text or "").strip() else None
+    except ValueError:
+        return None
+
+
+def tickets_load(conn, p):
+    """The rows the database holds for this instance -> the file at path ({rows: {sys_id: {u, c, i, f}}}), for the read."""
+    cur = conn.cursor()
+    cur.execute("SELECT sys_id, updated_on, code, fields, follow FROM insights_ticket WHERE source = %s", (p["source"],))
+    rows = {}
+    for sid, upd, code, fields, follow in cur.fetchall():
+        try:
+            rows[str(sid)] = {"u": upd.strftime("%Y-%m-%d %H:%M:%S") if upd else "", "c": str(code),
+                              "i": json.loads(fields) if isinstance(fields, (str, bytes)) else fields,
+                              "f": json.loads(follow) if isinstance(follow, (str, bytes)) else follow}
+        except ValueError:
+            continue
+    conn.commit()
+    with open(p["path"], "w") as f:
+        json.dump({"rows": rows}, f)
+    return {"store": {"held": len(rows), "saved": 0, "pruned": 0}}
+
+
+def tickets_save(conn, p, chunk=500):
+    """The rows the read wrote to path, upserted by (source, sys_id); the tickets done more than TICKET_KEEP_DAYS ago
+    deleted."""
+    t0 = datetime.datetime.now()
+    with open(p["path"]) as f:
+        rows = (json.load(f) or {}).get("rows") or []
+    cur = conn.cursor()
+    sql = ("INSERT INTO insights_ticket (source, sys_id, tbl, number, updated_on, active, opened_at, done_at, grp, code, fields, follow, written_at) "
+           "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE tbl = VALUES(tbl), "
+           "number = VALUES(number), updated_on = VALUES(updated_on), active = VALUES(active), opened_at = VALUES(opened_at), "
+           "done_at = VALUES(done_at), grp = VALUES(grp), code = VALUES(code), fields = VALUES(fields), follow = VALUES(follow), "
+           "written_at = VALUES(written_at)")
+    for i in range(0, len(rows), chunk):
+        cur.executemany(sql, [(p["source"], r["s"], r["t"], str(r.get("n") or "")[:40], _dt(r.get("u")), 1 if r.get("a") else 0,
+                               _dt(r.get("o")), _dt(r.get("d")), str(r.get("g") or "")[:255], str(r["c"]), json.dumps(r["i"]),
+                               json.dumps(r.get("f") or {})) for r in rows[i:i + chunk]])
+    cur.execute("DELETE FROM insights_ticket WHERE source = %s AND done_at < UTC_TIMESTAMP() - INTERVAL %d DAY" % ("%s", TICKET_KEEP_DAYS),
+                (p["source"],))
+    pruned = cur.rowcount
+    cur.execute("SELECT COUNT(*) FROM insights_ticket WHERE source = %s", (p["source"],))
+    held = int(cur.fetchone()[0])
+    conn.commit()
+    return {"store": {"held": held, "saved": len(rows), "pruned": int(pruned or 0), "seconds": round((datetime.datetime.now() - t0).total_seconds(), 1)}}
+
+
+def act_load(conn, p):
+    """The ACT cache of this instance and cache key -> {issues: [{no, label, kind, self_service}], classes: {key hash: no}}
+    (clear: nothing - the run asks everything, act_save then replaces it)."""
+    if p["clear"]:
+        return {"act": {"issues": [], "classes": {}}}
+    cur = conn.cursor()
+    cur.execute("SELECT issue_no, label, kind, self_service FROM insights_act_issue WHERE source = %s AND cache_key = %s ORDER BY issue_no",
+                (p["source"], p["cache_key"]))
+    issues = [{"no": int(a), "label": str(b), "kind": str(c), "self_service": bool(d)} for a, b, c, d in cur.fetchall()]
+    cur.execute("SELECT key_hash, issue_no FROM insights_act_class WHERE source = %s AND cache_key = %s", (p["source"], p["cache_key"]))
+    classes = dict((str(a), int(b)) for a, b in cur.fetchall())
+    conn.commit()
+    return {"act": {"issues": issues, "classes": classes}}
+
+
+def act_save(conn, p, chunk=500):
+    """This run's issues and description keys (rows: {issues, classes}) into the ACT cache: upserted; another cache key's
+    rows of this instance (another model or prompt), and with clear everything held before, deleted first."""
+    rows = p["rows"] or {}
+    cur = conn.cursor()
+    for t in ("insights_act_issue", "insights_act_class"):
+        if p["clear"]:
+            cur.execute("DELETE FROM %s WHERE source = %%s" % t, (p["source"],))
+        else:
+            cur.execute("DELETE FROM %s WHERE source = %%s AND cache_key <> %%s" % t, (p["source"], p["cache_key"]))
+    cur.executemany("INSERT INTO insights_act_issue (source, cache_key, issue_no, label, kind, self_service, written_at) VALUES "
+                    "(%s, %s, %s, %s, %s, %s, UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE label = VALUES(label), kind = VALUES(kind), "
+                    "self_service = VALUES(self_service), written_at = VALUES(written_at)",
+                    [(p["source"], p["cache_key"], int(x["no"]), str(x["label"])[:80], str(x.get("kind") or "incident")[:16],
+                      1 if x.get("self_service") else 0) for x in rows.get("issues") or []])
+    cl = rows.get("classes") or []
+    for i in range(0, len(cl), chunk):
+        cur.executemany("INSERT INTO insights_act_class (source, cache_key, key_hash, issue_no, written_at) VALUES (%s, %s, %s, %s, UTC_TIMESTAMP()) "
+                        "ON DUPLICATE KEY UPDATE issue_no = VALUES(issue_no), written_at = VALUES(written_at)",
+                        [(p["source"], p["cache_key"], str(h)[:64], int(n)) for h, n in cl[i:i + chunk]])
+    cur.execute("SELECT COUNT(*) FROM insights_act_class WHERE source = %s AND cache_key = %s", (p["source"], p["cache_key"]))
+    held = int(cur.fetchone()[0])
+    conn.commit()
+    return {"act": {"issues": len(rows.get("issues") or []), "classes": held}}
+
+
 def main():
     module = AnsibleModule(
         argument_spec=dict(
-            mode=dict(type="str", required=True, choices=["read", "write", "check"]), host=dict(type="str", required=True),
+            mode=dict(type="str", required=True, choices=["read", "write", "check", "tickets_load", "tickets_save", "act_load", "act_save"]), host=dict(type="str", required=True),
             port=dict(type="int", default=3309), database=dict(type="str", required=True), user=dict(type="str", required=True),
             password=dict(type="str", required=True, no_log=True), tls=dict(type="bool", default=False), ca_file=dict(type="str", default=""),
             connect_timeout=dict(type="int", default=10), create=dict(type="bool", default=True), rows=dict(type="dict"),
             source=dict(type="str", default=""), period=dict(type="str", default="month"), month=dict(type="str", default=""),
             months=dict(type="int", default=12), metrics=dict(type="list", elements="str", default=[]),
-            job=dict(type="str", default=""), required=dict(type="bool", default=False),
+            job=dict(type="str", default=""), required=dict(type="bool", default=False), path=dict(type="path", default=""),
+            warn=dict(type="bool", default=True), cache_key=dict(type="str", default=""), clear=dict(type="bool", default=False),
         ),
         supports_check_mode=True)
     p = module.params
     where = "%s:%s/%s" % (p["host"], p["port"], p["database"])
     res = {"changed": False, "ok": False, "error": "", "tls": "", "auth": "", "created": False, "schema_version": 0,
            "replaced": False, "written": {"runs": 0, "nodes": 0, "figures": 0}, "months": [], "kept": [], "tickets": "", "rows": [], "months_kept": 0, "where": where,
-           "run_id": 0, "held": [], "version": "", "account": {}, "objects": {}}
+           "run_id": 0, "held": [], "version": "", "account": {}, "objects": {}, "store": {"held": 0, "saved": 0, "pruned": 0},
+           "act": {"issues": [], "classes": {}}}
 
     def give_up(msg):
         res["error"] = msg
         if p["required"]:
             module.fail_json(msg="The report database %s: %s (servicenow_insights_db_required: true)" % (where, msg), **res)
-        module.warn("The report database %s: %s - the report is whole, the history not %s this run (servicenow_insights_db_required: false)" % (
-            where, msg, "read" if p["mode"] in ("read", "check") else "written"))
+        if p["warn"]:
+            module.warn("The report database %s: %s - the report is whole, the history not %s this run (servicenow_insights_db_required: false)" % (
+                where, msg, "read" if p["mode"] in ("read", "check") else "written"))
         module.exit_json(**res)
 
     if not HAS_PYMYSQL:
         give_up("PyMySQL is not in this execution environment (pip install PyMySQL; the all-in-one EE has it)")
-    if p["mode"] == "write" and module.check_mode:
+    if p["mode"] in ("write", "tickets_save", "act_save") and module.check_mode:
         res.update(ok=True, error="check mode: nothing written")
         module.exit_json(**res)
     conn = None
@@ -458,13 +580,21 @@ def main():
             res.update(check(conn))
             res["ok"] = True
             module.exit_json(**res)
-        res["schema_version"], res["created"] = schema(conn, p["create"] and not module.check_mode, p["mode"] == "read")
+        res["schema_version"], res["created"] = schema(conn, p["create"] and not module.check_mode, p["mode"] in ("read", "tickets_load", "act_load"))
         if p["mode"] == "write":
             res.update(write(conn, p))
+        elif p["mode"] == "tickets_save":
+            res.update(tickets_save(conn, p))
+        elif p["mode"] == "tickets_load":
+            res.update(tickets_load(conn, p) if res["schema_version"] else {})
+        elif p["mode"] == "act_save":
+            res.update(act_save(conn, p))
+        elif p["mode"] == "act_load":
+            res.update(act_load(conn, p) if res["schema_version"] else {"act": {"issues": [], "classes": {}}})
         elif res["schema_version"]:
             res.update(read(conn, p))
         res["ok"] = True
-        res["changed"] = p["mode"] == "write" or res["created"]
+        res["changed"] = p["mode"] in ("write", "tickets_save", "act_save") or res["created"]
     except ssl.SSLError as e:
         give_up("TLS: %s - the server's certificate must be signed by the CA and name %s" % (short_error(e), p["host"]))
     except Exception as e:      # unreachable, refused, a login or grant missing: one line, the job goes on

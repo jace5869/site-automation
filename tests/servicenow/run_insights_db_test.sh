@@ -231,7 +231,7 @@ runs=$(one "SELECT COUNT(*) FROM insights_run")
 DB_ENV="$DB" run "servicenow_insights_db_check: the server, the tables and views, what is held - nothing else" ok \
     "{\"servicenow_insights_db_check\": true, \"report_web_dest\": \"$work/wc\"}" \
     "Report database 127.0.0.1:$dbport/site_reports: reached - MySQL 8.4" 'as report_writer@% (may write)' \
-    'Tables and views: all 12 there, schema version 1' ', period month - 7 runs, 7 months (6 complete), 2026-05 to 2026-11, newest written 20' \
+    'Tables and views: all 15 there, schema version 1' ', period month - 7 runs, 7 months (6 complete), 2026-05 to 2026-11, newest written 20' \
     ', period 6m - ' '!Insights | read the window' '!Insights | the settings the report uses'
 [ "$(wc -l < "$work/snmock.jsonl")" = "$before" ] && ok "  ... ServiceNow not asked" || bad "  ... ServiceNow was read"
 [ -z "$(find "$work/wc" -name '*.html' 2>/dev/null)" ] && ok "  ... no pages" || bad "  ... pages written"
@@ -239,7 +239,7 @@ DB_ENV="$DB" run "servicenow_insights_db_check: the server, the tables and views
 RDB="${DB/REPORT_DB_USER=report_writer/REPORT_DB_USER=report_reader}"
 RDB="${RDB/REPORT_DB_PASSWORD=$wpw/REPORT_DB_PASSWORD=$rpw}"
 DB_ENV="$RDB" run "  ... as report_reader: the same, reads only" ok "{\"servicenow_insights_db_check\": true}" 'as report_reader@% (reads only)' \
-    'Tables and views: all 12 there' ', period month - 7 runs'
+    'Tables and views: all 15 there' ', period month - 7 runs'
 DB_ENV="${DB/REPORT_DB_PORT=$dbport/REPORT_DB_PORT=$((dbport + 9))}" run "  ... not reached: the job fails" fail \
     "{\"servicenow_insights_db_check\": true, \"servicenow_insights_db_timeout\": 3}" "Can't connect to MySQL server"
 DB_ENV="" run "  ... no credential: the job fails" fail "{\"servicenow_insights_db_check\": true}" 'servicenow_insights_db_check and the job template has no'
@@ -255,6 +255,7 @@ case "$out" in *"the login needs the cryptography library"*) ok "without cryptog
 # ---- 11. records cut (1.16.0): servicenow_insights_max_records cuts the window itself - nothing of the run written (a ticket
 # opened before the cut is missing from every later month too: the tester's August), the rows already there untouched ----
 since=$(one "SELECT UTC_TIMESTAMP()")      # a month replaced keeps its run_id (UPDATE): what this run wrote, by written_at
+tk0=$(q report_reader "$rpw" "SELECT COUNT(*), COUNT(DISTINCT updated_on), MAX(written_at) FROM insights_ticket")
 held=$(q report_reader "$rpw" "SELECT r.month, f.metric, f.value FROM insights_figure f JOIN insights_run r ON r.run_id = f.run_id WHERE r.period = 'month' AND f.node = 'all' AND f.variant = '' ORDER BY r.month, f.metric, f.label")
 DB_ENV="$DB" run "max_records 250: the window cut - nothing of the run written, said" ok \
     "{$NOW, \"servicenow_insights_db\": true, \"servicenow_insights_max_records\": 250, \"report_web_dest\": \"$work/wcut\"}" \
@@ -265,6 +266,10 @@ new=$(q report_reader "$rpw" "SELECT period, month FROM insights_run WHERE writt
 [ "$(q report_reader "$rpw" "SELECT r.month, f.metric, f.value FROM insights_figure f JOIN insights_run r ON r.run_id = f.run_id WHERE r.period = 'month' AND f.node = 'all' AND f.variant = '' ORDER BY r.month, f.metric, f.label")" = "$held" ] \
     && ok "  ... the complete months already there untouched, figure for figure" || bad "  ... the months already there changed"
 has "  ... the page says it" "$(page "$work/wcut")" 'Not written this run: the records were cut (servicenow_insights_max_records). An incomplete run is never written.'
+# 1.17.0: nor the ticket store - not one ticket row written by a cut run
+[ "$(q report_reader "$rpw" "SELECT COUNT(*), COUNT(DISTINCT updated_on), MAX(written_at) FROM insights_ticket")" = "$tk0" ] \
+    && grep -qF 'nothing written: the records were cut (servicenow_insights_max_records)' "$work/out.txt" \
+    && ok "  ... the ticket store untouched, said" || bad "  ... the ticket store written by a cut run: $tk0"
 
 # ---- 12. the survey figures (1.16.0): survey_avg with its scale; the doc's query for rows written before runs as written ----
 sq=$("$py" -c "import re,sys; d=open(sys.argv[1]).read(); print(re.search(r'To see those months:\n\n\x60\x60\x60sql\n(.*?)\n\x60\x60\x60', d, re.S).group(1))" "$repo/docs/REPORT_DATABASE.md")
@@ -272,6 +277,143 @@ old=$(q report_reader "$rpw" "$sq")
 fx=$(one "SELECT COUNT(*) FROM insights_figure WHERE metric = 'survey_scale_max' AND node = 'all'")
 [ "$old" = "[]" ] && [ "$fx" -gt 0 ] && ok "the survey figures: survey_scale_max beside survey_avg; the doc's query for older rows runs (none here)" \
     || bad "the survey figures: older rows $old, survey_scale_max $fx"
+
+# ---- 13. the ticket store (1.17.0): a run that reads only what changed gives the pages and the workbook a full read
+# gives, file for file and cell for cell - new, changed, reopened, deleted, moved to another group, closed then updated, a
+# closed ticket's text edited without sys_updated_on moving, and a database restored from an older backup (stale rows) ----
+smtp="${INSIGHTS_DB_TEST_SMTP_PORT:-18564}"
+mkdir -p "$work/mail" "$work/w13i" "$work/w13f" "$work/w13s"
+"$py" "$repo/tests/email/fake_smtp.py" "$smtp" "$work/mail" --no-starttls 2>"$work/relay.err" &
+spid=$!
+trap 'kill $spid 2>/dev/null; cleanup' EXIT
+for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$smtp") 2>/dev/null && break; sleep 0.1; done
+MAIL="\"report_email_to\": [\"ops@example.mil\"], \"report_email_smtp_host\": \"localhost\", \"report_email_smtp_port\": $smtp, \"report_email_from\": \"aap@example.mil\", \"report_email_security\": \"none\""
+"$py" - "$work/seed.json" "$work/seed2.json" <<'EOPY'
+import copy, json, sys
+recs = json.load(open(sys.argv[1]))
+inc = [x for x in recs if (x.get("_table") or "incident") == "incident" and str(x.get("opened_at", "")) >= "2026-06"]
+bump = "2026-10-31 23:00:00"
+closed = [x for x in inc if x.get("state") == "7"]
+inc[0].update(short_description="Changed text now", priority="1", sys_updated_on=bump)                         # changed
+closed[0].update(state="2", active="true", closed_at="", resolved_at="", reopen_count="1", sys_updated_on=bump)   # reopened
+inc[5].update(assignment_group=[x for x in inc if x.get("assignment_group") != inc[5].get("assignment_group")][0]["assignment_group"],
+              sys_updated_on=bump)                                                                               # moved to another group
+recs.remove(inc[7])                                                                                              # deleted
+closed[1].update(close_notes="Replaced the token, then confirmed with the user.", sys_updated_on=bump)            # closed, then updated
+closed[2]["short_description"] = "Quietly edited"                                                                # text edited, sys_updated_on not moved
+recs.append(dict(copy.deepcopy(inc[2]), sys_id="s-INC9999999", number="INC9999999", opened_at="2026-10-30 10:00:00", sys_updated_on=bump))  # new
+json.dump(recs, open(sys.argv[2], "w"))
+open(sys.argv[2] + ".stale", "w").write(closed[3]["sys_id"])
+EOPY
+kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+env SNMOCK_LOG="$work/snmock.jsonl" SNMOCK_SEED="$work/seed2.json" "$py" "$here/snmock.py" "$port" >/dev/null 2>&1 &
+pid=$!
+for _ in $(seq 1 100); do (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null && break; sleep 0.1; done
+# same(A B NAME): every page (latest.html of each scope, by path) and the workbook's sheets alike, but for what each run
+# says of itself (the time, its own page's file name, how it read, the report database's line)
+same() { "$py" - "$work/$1" "$work/$2" <<'EOPY'
+import email, email.policy, glob, io, os, re, sys, zipfile
+a, b = sys.argv[1:3]
+def norm(t):
+    t = re.sub(r'<details class="notes"><summary><b>Time this run</b>.*?</details>', "", t, flags=re.S)
+    t = re.sub(r'<p class="dbline">.*?</p>|<div class="callout"><b>Report database\.</b>.*?</div>', "", t, flags=re.S)
+    t = re.sub(r"\d{4}-\d{2}-\d{2}_\d{4}_job-[\w-]+", "PAGE", t)
+    return re.sub(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}( [A-Z]{2,5})?", "WHEN", t)
+def pages(d):
+    return dict((os.path.relpath(f, d), norm(open(f).read())) for f in glob.glob(d + "/**/latest.html", recursive=True))
+pa, pb = pages(a), pages(b)
+bad = sorted(set(pa) ^ set(pb)) + [k for k in sorted(set(pa) & set(pb)) if pa[k] != pb[k]]
+for k in bad[:3]:
+    x, y = pa.get(k, ""), pb.get(k, "")
+    i = next((i for i in range(min(len(x), len(y))) if x[i] != y[i]), min(len(x), len(y)))
+    print("page differs: %s at %d: %r / %r" % (k, i, x[i - 80:i + 120], y[i - 80:i + 120]))
+def book(d):                     # the run's email (moved to its own folder, mail-NAME)
+    for f in sorted(glob.glob(d.replace("/w13", "/mail-w13") + "/*.eml")):
+        m = email.message_from_binary_file(open(f, "rb"), policy=email.policy.default)
+        for part in m.iter_attachments():
+            if part.get_filename().endswith(".xlsx"):
+                z = zipfile.ZipFile(io.BytesIO(part.get_content()))
+                return dict((n, z.read(n)) for n in z.namelist() if n.startswith("xl/worksheets/") or n == "xl/sharedStrings.xml")
+    return None
+ba, bb = book(a), book(b)
+if ba is None or bb is None:
+    bad.append("no workbook"); print("no workbook for %s or %s" % (a, b))
+elif ba != bb:
+    bad.append("workbook"); print("workbook differs:", [n for n in sorted(set(ba) | set(bb)) if ba.get(n) != bb.get(n)])
+print("pages %d, sheets %d: %s" % (len(pa), len(ba or {}), "same" if not bad else "DIFFERENT"))
+sys.exit(1 if bad else 0)
+EOPY
+}
+# mailed DIR: the run's email moved to its own folder
+mailed() { mkdir -p "$work/mail-$1"; mv "$work"/mail/*.eml "$work/mail-$1/" 2>/dev/null; }
+held=$(one "SELECT COUNT(*) FROM insights_ticket")
+DB_ENV="$DB" run "the ticket store: changed in ServiceNow, read again - only what changed read in full" ok \
+    "{$NOW, \"servicenow_insights_db\": true, \"report_web_dest\": \"$work/w13i\", $MAIL}" \
+    'Tickets: ' 'read from ServiceNow (new or changed)' 'from the report database'
+mailed w13i
+echo "info -   ... incremental: $(grep -o '"msg": "Time: ServiceNow reads [^,]*' "$work/out.txt" | tail -1 | cut -d'"' -f4)"
+fromdb=$(grep -oE '[0-9][0-9,]* from the report database' "$work/out.txt" | head -1 | tr -d ', ' | sed 's/from.*//')
+[ "${held:-0}" -gt 0 ] && [ "${fromdb:-0}" -gt 1000 ] && ok "  ... $fromdb tickets from the database ($held held)" \
+    || bad "  ... too few from the database ($held held): $(grep -o '"msg": "Tickets[^"]*"' "$work/out.txt")"
+grep -c 'sysparm_query.*sys_idIN' "$work/snmock.jsonl" >/dev/null && ok "  ... the changed ones read by sys_id" || bad "  ... no read by sys_id"
+DB_ENV="$DB" run "  ... the same data read in full (servicenow_insights_full_refresh)" ok \
+    "{$NOW, \"servicenow_insights_db\": true, \"servicenow_insights_full_refresh\": true, \"report_web_dest\": \"$work/w13f\", $MAIL}" \
+    'all read from ServiceNow - a full read (servicenow_insights_full_refresh)'
+mailed w13f
+echo "info -   ... full read: $(grep -o '"msg": "Time: ServiceNow reads [^,]*' "$work/out.txt" | tail -1 | cut -d'"' -f4); $(grep -o 'written to the report database in [0-9]* s' "$work/out.txt" | tail -1)"
+out13=$(same w13i w13f) && ok "  ... the pages and the workbook the same as the full read's ($out13)" || bad "  ... incremental and full differ: $out13"
+# a database restored from an older backup: rows older than ServiceNow's, one with a field ServiceNow no longer has
+stale=$(cat "$work/seed2.json.stale")
+"${rtc[@]}" exec "$name" mysql -uroot "-p$root" site_reports -e "UPDATE insights_ticket SET updated_on = '2020-01-01 00:00:00', fields = JSON_SET(fields, '\$.priority', 'STALE') WHERE sys_id = '$stale' OR sys_id IN (SELECT sys_id FROM (SELECT sys_id FROM insights_ticket ORDER BY sys_id LIMIT 40) x)" >/dev/null 2>&1
+DB_ENV="$DB" run "  ... a database restored from an older backup: its stale rows read again" ok \
+    "{$NOW, \"servicenow_insights_db\": true, \"report_web_dest\": \"$work/w13s\", $MAIL}" 'from the report database'
+mailed w13s
+out13=$(same w13s w13f) && ok "  ... the same as the full read's ($out13)" || bad "  ... stale rows used: $out13"
+[ "$(one "SELECT COUNT(*) FROM insights_ticket WHERE updated_on < '2021-01-01' OR JSON_EXTRACT(fields, '\$.priority') = 'STALE'")" = "0" ] \
+    && ok "  ... and written again" || bad "  ... stale rows left"
+# never a person, a text or a CI in the store
+leak=$(q report_reader "$rpw" "SELECT COUNT(*) FROM insights_ticket WHERE JSON_CONTAINS_PATH(fields, 'one', '\$.short_description', '\$.close_notes', '\$.assigned_to', '\$.opened_by', '\$.closed_by', '\$.resolved_by', '\$.caller', '\$.caller_id', '\$.cmdb_ci')")
+[ "$leak" = "[[0]]" ] && ok "  ... no text, person or CI in insights_ticket" || bad "  ... insights_ticket holds text or people: $leak"
+
+# ---- 14. the ACT cache (1.17.0): each description's issue kept - the next run asks ACT only what is new; the issue names
+# masked before they are stored (a name ACT should never give, with a person, an IP address and a host); cache_clear ----
+mport="${INSIGHTS_DB_TEST_MODEL_PORT:-18565}"
+: > "$work/model.log"
+env FAKE_MODEL_LOG="$work/model.log" FAKE_MODEL_LEAKY_LABEL=1 "$py" "$here/fake_insights_model.py" "$mport" &
+mpid=$!
+trap 'kill $spid $mpid 2>/dev/null; cleanup' EXIT
+for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$mport") 2>/dev/null && break; sleep 0.1; done
+NOWA="${NOW/\"servicenow_insights_act\": false/\"servicenow_insights_act\": true}, \"site_act_url\": \"http://127.0.0.1:$mport/v1/chat/completions\", \"site_act_env\": {\"ACT_STREAM\": \"0\"}, \"servicenow_insights_act_batch\": 15"
+asked() { grep -c 'Group IT service desk incidents' "$work/model.log"; }
+mkdir -p "$work/w14a" "$work/w14b" "$work/w14c"
+DB_ENV="$DB GENAI_KEY=test-key" run "the ACT cache: the first run asks ACT every description" ok \
+    "{$NOWA, \"servicenow_insights_db\": true, \"report_web_dest\": \"$work/w14a\"}" 'questions answered'
+a1=$(asked); : > "$work/model.log"
+nc=$(one "SELECT COUNT(*) FROM insights_act_class"); ni=$(one "SELECT COUNT(*) FROM insights_act_issue")
+[ "$a1" -gt 0 ] && [ "$nc" -gt 0 ] && [ "$ni" -gt 0 ] && ok "  ... $a1 grouping questions; $nc descriptions and $ni issues kept" || bad "  ... asked $a1, kept $nc / $ni"
+labels=$(q report_reader "$rpw" "SELECT label FROM insights_act_issue ORDER BY issue_no")
+case "$labels" in *Whitfield*|*198.51.100*|*wks-1001*) bad "  ... an issue name stored as ACT gave it: $labels" ;;
+    *"VPN drops for [person] at [ip] on [host]"*) ok "  ... the issue names masked before they are stored (a person, an IP address, a host)" ;;
+    *) bad "  ... the masked name is not there: $labels" ;; esac
+DB_ENV="$DB GENAI_KEY=test-key" run "  ... the next run: no description asked again, the same issues" ok \
+    "{$NOWA, \"servicenow_insights_db\": true, \"report_web_dest\": \"$work/w14b\"}" 'questions answered'
+a2=$(asked); : > "$work/model.log"
+[ "$a2" = 0 ] && ok "  ... no grouping question (the fixes still asked)" || bad "  ... $a2 grouping questions asked again"
+has "  ... said under How this was made" "$(page "$work/w14b")" 'descriptions placed from the ACT cache, not asked again' 'Account locked out / password reset'
+"$py" - "$(page "$work/w14a")" "$(page "$work/w14b")" <<'EOPY' && ok "  ... the issues table the same as the first run's" || bad "  ... the issues differ"
+import re, sys
+def issues(f):
+    h = open(f).read()
+    sec = h[h.index('id="issues"'):]
+    sec = sec[:sec.index("</section>")]
+    return re.findall(r'<span class="t">(.*?)</span>.*?<span class="big">([\d,]+)</span>.*?(<dt>About</dt><dd>.*?</dd>|</dl>)', sec, re.S)
+a, b = issues(sys.argv[1]), issues(sys.argv[2])
+assert a and a == b, (a[:5], b[:5])
+EOPY
+DB_ENV="$DB GENAI_KEY=test-key" run "  ... servicenow_insights_act_cache_clear: everything asked again" ok \
+    "{$NOWA, \"servicenow_insights_db\": true, \"servicenow_insights_act_cache_clear\": true, \"report_web_dest\": \"$work/w14c\"}" 'questions answered'
+a3=$(asked)
+[ "$a3" = "$a1" ] && ok "  ... $a3 grouping questions, as the first run" || bad "  ... $a3 asked (the first run: $a1)"
 
 # ---- 10. PyMySQL 1.2.3 (1.16.0): its first login after FLUSH PRIVILEGES raises AttributeError; the module tries once more ----
 if "$py" -m pip install -q --disable-pip-version-check --target "$work/pm123" "PyMySQL==1.2.3" >/dev/null 2>&1; then
