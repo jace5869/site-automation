@@ -8,9 +8,8 @@ its own zip). They leave out `playbooks/group_vars`, `playbooks/host_vars`, `inv
 `group_vars`.) Nothing to set up.
 
 **Report website: every table fits its page.** In the atlas and brief looks, no table scrolls sideways at 1366 px or
-wider any more, with the section rail put away as the page now does when it needs the room (measured in Chromium -
-Chrome, Edge; in Firefox VM capacity's clusters may still scroll inside their card at 1366 px). At 1280 px the widest
-few scroll inside their card, below. The VM capacity report's cluster and
+wider any more, with the section rail put away as the page now does when it needs the room (at 1280 px, and in
+Firefox at 1366 px, a few of the widest scroll inside their card, below). The VM capacity report's cluster and
 datastore tables did, even on a 1920 px screen; so did tables of about half the
 reports at 1366 px (ONTAP hardware, UCS inventory, VM hardware and health, STIG, AD, fapolicyd, alarms and more). The
 next report run writes the new `site-report.js`, and every page on the site uses it, older pages too.
@@ -18,20 +17,19 @@ next report run writes the new `site-report.js`, and every page on the site uses
 - **How a table fits.** Text wraps; nothing is cut off and no column is hidden. A table that is wider than its card
   takes these steps, one at a time, only while it still does not fit:
   1. Short values and long status chips wrap at their spaces and hyphens, and long columns get smaller minimum widths.
-  2. Cells get tighter, headings wrap at their spaces, and a very long word (a datastore or host name) breaks inside.
-     A text column keeps 10 characters.
+  2. Cells get tighter, headings wrap at their spaces, and a word of over 12 characters (a datastore or host name)
+     may break inside; a shorter word never does. A text column keeps 10 characters.
   3. Numbers wrap at their spaces (`12,050.0` / `GB`), never inside their digits; the table's type and chips get
      smaller.
   4. Before the last step, the section rail is put away for this page, so the tables get its room. The rail's button
      brings it back; this is not kept for the next page. Then long chips get narrower (3 to 4 lines) and cells tighter.
 - **Whole values first.** At every step a date, a time, an IP address and a number (`16,210`, `59%`) stay whole (a
-  date and its time may sit on two lines), and so do a status chip of up to 12 characters (`3 of 4`) and every word of
-  a heading. A longer chip wraps to 2 or 3 lines. A table that cannot fit with them whole after the last step goes back
-  a step, breaks no word inside, and scrolls inside its card; the page never scrolls. With the rail put away that is
-  only at 1280 px, for the widest tables (ONTAP hardware's controllers, VM health's hosts; in brief VM capacity's
-  clusters); with the rail brought back by its button, those and a few more at 1366 and 1440 px (docs/WEB_REPORTS.md
-  lists them). No other table scrolls, at 1280 to 1920 px, with its test data and
-  with names 22 characters longer.
+  date and its time may sit on two lines), and so do a word of up to 12 characters, a status chip of up to 12
+  characters (`3 of 4`) and every word of a heading. A longer chip wraps to 2 or 3 lines. A table that cannot fit with
+  them whole after the last step goes back a step, breaks no text word inside, and scrolls inside its card; the page
+  never scrolls sideways. Which tables do depends on the browser, the width and the values' length: in the tests, a few
+  of the widest (ONTAP hardware's controllers, VM health's hosts, VM capacity's clusters) at 1280 px with the rail put
+  away, in Firefox also at 1366 px, and at some wider widths with the rail brought back by its button.
 - **Quick on big tables.** Each table remembers its card's width and its step: opening or closing a section fits
   nothing again unless a card's width changed (2,000 rows x 14 columns at 1280 px: 7 ms, was about 1 s). A table of
   over 400 rows finds its step on its first 300 rows, then checks once with all of them.
@@ -56,8 +54,8 @@ Tests:
   and dark, atlas and brief, with its test data and again with long values (names 22 characters longer, wider numbers);
   it fails on a table that scrolls sideways at the four wide widths before its last step (those after it are listed),
   on a page that scrolls at 390 px, on a phone's card with a value in pieces, and on a date, time, IP address, short
-  chip, number or heading word split over two lines (a Range around each), and on a table that scrolls in its card
-  before its last step or with f4; and fit() on 2,000 rows x 14 columns: a
+  chip, number, word of up to 12 characters or heading word split over two lines (a Range around each), and on a
+  table that scrolls in its card before its last step or with f4; and fit() on 2,000 rows x 14 columns: a
   section closed in under 300 ms (7 ms here). The reports' documents:
   tests/fixtures/report_fit (82: what the filters return in the unit tests, and from e2e runs the reports made in
   YAML - VMware snapshot and datastore reports, mail relay, API availability, STIG Manager and ServiceNow health,

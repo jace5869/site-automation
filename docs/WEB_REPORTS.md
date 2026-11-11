@@ -43,8 +43,8 @@ Since 0.53.0:
   - **A table wider than its card fits anyway (1.21.0).** Nothing is cut off and no column is hidden. The page's
     script takes these steps, one at a time, only while the table still does not fit:
     1. Short values and long status chips wrap at their spaces and hyphens; long columns get smaller minimum widths.
-    2. Cells get tighter, headings wrap at their spaces, and a very long word (a datastore or host name) breaks inside.
-       A text column keeps 10 characters.
+    2. Cells get tighter, headings wrap at their spaces, and a word of over 12 characters (a datastore or host name)
+       may break inside; a shorter word never does. A text column keeps 10 characters.
     3. Numbers wrap at their spaces (`12,050.0` / `GB`), never inside their digits; the table's type and its chips get
        smaller.
     4. Before the last step, the section rail is put away for this page, so the tables get its room. The rail's button
@@ -53,16 +53,15 @@ Since 0.53.0:
 
     At every step these stay whole: a date, a time, an IP address (`2026-10-20`, `18:14`, `192.0.2.45`,
     `192.0.2.0/24`; a date and its time may sit on two lines), a number (`16,210`, `6338`, `59%`), a status chip of up
-    to 12 characters (`3 of 4`) and every word of a heading. A longer chip wraps to 2 or 3 lines, not one word a line. A date inside a file name or a command
+    to 12 characters (`3 of 4`) and every word of a heading. A longer chip wraps to 2 or 3 lines, not one word a line. A date inside a file name or a command
     (`app.2026-10-20.log`) is part of that name and may break with it.
 
     Whole values come first: a table that does not fit with them whole after the last step goes back one step, breaks no
-    word inside, and scrolls sideways inside its card, with a shadow at the edge; the page itself never does. With the
-    rail put away, that happens only at 1280 px, to the widest tables: ONTAP hardware's controllers and VM health's hosts
-    (in the brief look also VM capacity's clusters). With the rail brought back by its button, also at 1366 px (those,
-    and VM capacity's clusters and datastores) and at 1440 px (ONTAP hardware's controllers, VM health's hosts; in brief
-    VM capacity's clusters). Measured in Chromium (Chrome, Edge); in Firefox VM capacity's clusters may also scroll in
-    their card at 1366 px. Without the script (a blocked script), a
+    text word inside (a path or a command still breaks where it must), and scrolls sideways inside its card, with a
+    shadow at the edge. The page itself never scrolls sideways. Which tables do that depends on the browser, the width
+    and how long the values are: in the tests, with the rail put away, a few of the widest (ONTAP hardware's
+    controllers, VM health's hosts, VM capacity's clusters) at 1280 px and, in Firefox, at 1366 px; with the rail
+    brought back by its button, at some wider widths too. Without the script (a blocked script), a
     wide table keeps its normal widths and scrolls inside its card.
   - **Quick on big tables.** Each table remembers its card's width and its step: opening or closing a section, a
     filter or the search fits nothing again unless a card's width changed. A table of over 400 rows finds its step on
