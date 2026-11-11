@@ -374,6 +374,57 @@ a, b = got.values()
 assert a == b, [(k, a[k][-300:], b[k][-300:]) for k in a if a[k] != b[k]]
 EOPY
 
+# ---- 1.16.0: the surveys - each on its own scale, by survey (one retired), graded; questions that are no rating left out ---
+"$py" "$here/insights_seed.py" "$work/seed-sv.json" 0.5 --surveys >/dev/null
+mock SNMOCK_SEED="$work/seed-sv.json"
+mkdir -p "$work/sv1" "$work/sv2" "$work/sv3"
+rm -f "$work"/mail/*.eml
+run "two surveys, the same question names, one retired, different scales: each its own, graded, never blended" ok \
+    "{$NOW, $NOACT, $MAIL, \"report_email_to\": [\"ops@example.mil\"], \"report_web_dest\": \"$work/sv1\"}" 'Satisfaction'
+p="$work/sv1/servicenow-ticket-insights/latest.html"
+check "  ... the page: the active survey first, the retired one marked, every average with its scale and grade" "$p" \
+    '<h3 class="subh">Service desk survey</h3>' '<h3 class="subh">Legacy survey <span class="chip">retired</span></h3>' \
+    'Retired in ServiceNow: its answers are history, never blended with the active survey.' ' of 4' ' of 5' \
+    '<b>The surveys read</b>' 'Legacy survey (retired) - Q5 - ' 'read, not shown as a rating (datatype numericscale, up to 100;' \
+    'Service desk survey - Contacted again - ' 'name it in servicenow_insights_survey_metrics to show it'
+"$py" - "$work/seed-sv.json" "$p" "$work"/mail/*.eml <<'PYS' && echo "ok   -   ... the plain mean of every answer nowhere: not on the page, not in the email" || { echo "FAIL - the mixed mean shown"; fails=$((fails + 1)); }
+import email, json, re, sys
+from email import policy
+recs = json.load(open(sys.argv[1]))
+vals = []
+for r in recs:
+    if r.get("_table") == "asmt_metric_result" and "2026-05-01" <= r["instance.taken_on"] < "2026-11-01":
+        try:
+            vals.append(float(r["actual_value"]))
+        except ValueError:
+            pass
+mixed = "%.2f" % (sum(vals) / len(vals))
+page = open(sys.argv[2]).read()
+sat = re.search(r'<section class="card" id="satisfaction">.*?</section>', page, re.S).group(0)
+assert ">" + mixed + " " not in sat and ">" + mixed + "<" not in sat, mixed
+m = email.message_from_bytes(open(sys.argv[3], "rb").read(), policy=policy.default)
+body = m.get_body(("plain",)).get_content()
+assert re.search(r"Satisfaction\W+\d\.\d\d of \d", body), body[:1500]
+assert mixed + " " not in body.split("Satisfaction", 1)[1][:200]
+PYS
+run "servicenow_insights_survey_types: one survey only, by name" ok \
+    "{$NOW, $NOACT, \"servicenow_insights_survey_types\": [\"Legacy survey\"], \"report_web_dest\": \"$work/sv2\"}"
+check "  ... only the Legacy survey's answers read" "$work/sv2/servicenow-ticket-insights/latest.html" \
+    '<h3 class="subh">Legacy survey <span class="chip">retired</span></h3>' '!<h3 class="subh">Service desk survey</h3>'
+"$py" - "$work/log.jsonl" <<'PYQ' && echo "ok   -   ... asked by survey (metric.metric_type.nameIN), GET only" || { echo "FAIL - the survey's query"; fails=$((fails + 1)); }
+import json, sys
+rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
+a = [r for r in rows if r["path"].endswith("/asmt_metric_result")]
+assert a and all(r["method"] == "GET" for r in a)
+assert a[-1]["query"]["sysparm_query"].endswith("^metric.metric_type.nameINLegacy survey"), a[-1]["query"]
+PYQ
+run "servicenow_insights_survey_metrics [Q1]: both surveys' Q1, each in its own survey's block" ok \
+    "{$NOW, $NOACT, \"servicenow_insights_survey_metrics\": [\"Q1\"], \"report_web_dest\": \"$work/sv3\"}"
+check "  ... the two Q1 apart" "$work/sv3/servicenow-ticket-insights/latest.html" \
+    '<h3 class="subh">Service desk survey</h3>' '<h3 class="subh">Legacy survey <span class="chip">retired</span></h3>' \
+    'Service desk survey - Q1 - ' 'Legacy survey (retired) - Q1 - ' '!- Q2 - '
+mock
+
 # ---- 1.16.0: more records than servicenow_insights_max_records - the newest kept; the window before cut: no compare; the
 # window cut: on every page, first in the email, the job's warning ----------------------------------------------------------
 mock

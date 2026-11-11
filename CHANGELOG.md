@@ -24,6 +24,21 @@ the newest months empty: a capped table kept its oldest records.
 **Ticket insights say SLA, not SLO.** The pages, the email, the workbook, the job's lines and the docs use the word your
 site uses. The settings and the stored figures are unchanged.
 
+**Ticket insights: satisfaction on each survey's own scale.** The page averaged every survey question together: a 1 to 4
+question with a 0 to 100 one gave months of "34.93" beside months of "3.4".
+
+- Each survey has its own block, each question its own scale (ServiceNow's, or *as observed*). A retired survey is its
+  own block, marked *retired*, never blended with the active one.
+- A question that is not a rating (yes / no, 0 to 100, a count) is read but not shown as one. *How this was made* lists
+  every question: survey - question - answers - scale.
+- Every average reads *3.46 of 4*, graded **Good**, **Fair** or **Low** by its share of the scale (on 1 to 4: Good from
+  3.4, Fair from 2.8). Under 5 answers: no grade. The word is always there beside the colour.
+- The headline (the tile, the email's Satisfaction, the report database): the active survey with the most answers.
+- New settings, all optional: `servicenow_insights_survey_types` (pick by survey), `servicenow_insights_survey_headline`,
+  `servicenow_insights_survey_grades`, `servicenow_insights_survey_min_answers`.
+- The report database: `survey_avg` is now the headline's average, with `survey_scale_max` and `survey_questions`. Rows
+  written before are not rewritten; nothing draws them (docs/REPORT_DATABASE.md, *The survey figures*).
+
 **The weekly activity report: the newest records kept too.** Over `servicenow_war_max_records`, it now keeps the
 newest records. *Records cut: some figures are incomplete* comes first in the report, a tile says *Records cut*, and the
 job ends with a WARNING. The oldest tickets still open are the ones left out.

@@ -133,6 +133,7 @@ section.card{background:var(--surface);border:1px solid var(--line);border-radiu
 .chip.crit{background:var(--crit-bg);border-color:transparent;color:var(--crit)}
 .chip.warn{background:var(--warn-bg);border-color:transparent;color:var(--warn)}
 .chip.good{background:var(--good-bg);border-color:transparent;color:var(--good)}
+.svline{font-size:13px;margin:-6px 0 10px}
 .chip.info{background:var(--info-bg);border-color:transparent;color:var(--info)}
 .mv{display:inline-block;min-width:38px;text-align:center;font-size:11px;font-weight:800;padding:1px 6px;border-radius:6px;font-variant-numeric:tabular-nums;white-space:nowrap}
 .mv.up{background:var(--warn-bg);color:var(--warn)} .mv.down{background:var(--good-bg);color:var(--good)}
@@ -989,6 +990,16 @@ def heatmap(heat):
     return "".join(out), cap
 
 
+GRADE_CLS = {"Good": "good", "Fair": "warn", "Low": "crit"}
+
+
+def _scale_label(sc):
+    if not sc:
+        return "not known"
+    f = lambda x: ("%d" % x) if float(x) == int(x) else ("%g" % x)    # noqa: E731
+    return "%s to %s%s" % (f(sc[0]), f(sc[1]), ", as observed" if sc[2] == "observed" else "")
+
+
 def tiles(rows, cls="tiles"):
     out = ['<div class="%s">' % cls]
     for t in rows:
@@ -1591,21 +1602,54 @@ def servicenow_insights_page(model, key="all", opts=None):
                                                                                             ("Mostly in", "", "")],
                                         crow, tid="catTable", empty="No incidents in the period.", sortable=True)))
 
-    # ---- satisfaction (1.7.0): the incident surveys, best-effort
+    # ---- satisfaction (1.7.0; 1.16.0: each survey on its own scale, graded): the incident surveys, best-effort
     sv = s.get("survey") or {}
-    if pr.get("survey_read") or sv.get("n"):
-        mrows = [("", [td(e(mo)), td("<b>%s</b>" % ("%.2f" % a_ if a_ is not None else "—"), "n"), td(n(c_), "n")]) for mo, a_, c_ in sv.get("months") or []]
-        grows = [(search_attr(g["group"]), [td(glink(g["group"])), td("%.2f" % g["avg"] if g["avg"] is not None else "—", "n", g["avg"] or 0), td(n(g["n"]), "n", g["n"])])
-                 for g in sv.get("by_group") or []]
-        sat_tiles = [{"label": "Average answer", "value": ("%.2f" % sv["avg"]) if sv.get("avg") is not None else "—",
+    if pr.get("survey_read") or sv.get("n") or sv.get("blocks"):
+        def num(v, sc=None):
+            if v is None:
+                return "—"
+            top = sc[1] if sc else None
+            return ("%.2f of %s" % (v, ("%d" % top) if top is not None and float(top) == int(top) else ("%g" % top))) if top is not None else "%.2f" % v
+
+        def grade(g):
+            return ('<span class="chip %s">%s</span>' % (GRADE_CLS[g], g)) if g else '<span class="mut">—</span>'
+
+        def gtable(rows, first, scale, sortable=False, tid=""):
+            rws = [(search_attr(r_[0]) if first == "Group" else "",
+                    [td(glink(r_[0]) if first == "Group" else e(r_[0])), td(num(r_[1], scale), "n", r_[1] if r_[1] is not None else -1),
+                     td(grade(r_[3]), "", r_[3] or ""), td(n(r_[2]), "n", r_[2])]) for r_ in rows]
+            return table([(first, "", "name"), ("Average", "n", "avg"), ("Grade", "", "grade"), ("Answers", "n", "n")], rws, tid=tid,
+                         sortable=sortable, empty="No answers in the period.")
+        sc = sv.get("scale")
+        sat_tiles = [{"label": "Average answer", "value": e(num(sv.get("avg"), sc)) + ((" " + grade(sv["grade"])) if sv.get("grade") else ""),
                       "delta": delta(sv.get("avg"), sv.get("prev"), False) if win.get("compare") and sv.get("prev") is not None else "",
-                      "note": "%s answers%s" % (n(sv.get("n") or 0), (" · was %.2f" % sv["prev"]) if sv.get("prev") is not None else "")}]
-        body.append(section("satisfaction", "Satisfaction", "the incident surveys' answers in the period · %s" % (e(", ".join(sv.get("metrics") or [])) or "no answers"),
-                            tiles(sat_tiles) + '<div class="two"><div class="fig"><h3>By month</h3>%s</div><div class="fig"><h3>By group</h3>%s</div></div>' % (
-                                table([("Month", "", ""), ("Average", "n", ""), ("Answers", "n", "")], mrows, empty="No answers in the period."),
-                                table([("Group", "", "name"), ("Average", "n", "avg"), ("Answers", "n", "n")], grows, sortable=True, empty="No answers in the period.")) +
-                            '<div class="cap">The average of the answers that are numbers, on the survey\'s own scale. '
-                            'servicenow_insights_survey_metrics names which (all by default).</div>'))
+                      "note": e("%s · %s answers%s" % (sv.get("label") or "the survey", n(sv.get("n") or 0),
+                                                      (" · was %.2f" % sv["prev"]) if sv.get("prev") is not None else ""))}]
+        blocks_html = ""
+        for b_ in sv.get("blocks") or []:
+            mn = b_["main"]
+            bsc = b_.get("main_scale")
+            head_ = '<h3 class="subh">%s%s</h3><p class="mut svline">%s</p>' % (
+                e(b_["survey"] or "Survey"), ' <span class="chip">retired</span>' if b_["state"] == "retired" else "",
+                e(("Scale %s. " % _scale_label(b_["scale"])) if b_["one_scale"] else "Its questions are on different scales: each on its own. ") +
+                (("Overall %s, %s answers. " % (num(mn["avg"], b_["scale"]), n(mn["n"]))) if b_["overall"] else "") +
+                ("Retired in ServiceNow: its answers are history, never blended with the active survey. " if b_["state"] == "retired" else ""))
+            qrows = [(q["name"], q["avg"], q["n"], q["grade"]) for q in b_["questions"]]
+            qtab = table([("Question", "", ""), ("Average", "n", ""), ("Grade", "", ""), ("Answers", "n", "")],
+                         [("", [td(e(r_[0]) + ('<span class="mut"> · %s</span>' % e(_scale_label(q["scale"])) if not b_["one_scale"] else "")),
+                                td(num(r_[1], q["scale"]), "n", r_[1] if r_[1] is not None else -1), td(grade(r_[3])), td(n(r_[2]), "n", r_[2])])
+                          for r_, q in zip(qrows, b_["questions"])], empty="No answers in the period.") if len(b_["questions"]) > 1 else ""
+            mlab = b_["main_label"]
+            blocks_html += head_ + qtab + '<div class="two"><div class="fig"><h3>By month · %s</h3>%s</div><div class="fig"><h3>By group · %s</h3>%s</div></div>' % (
+                e(mlab), gtable([(m_[0], m_[1], m_[2], m_[3]) for m_ in mn["months"]], "Month", bsc),
+                e(mlab), gtable([(g["group"], g["avg"], g["n"], g["grade"]) for g in mn["by_group"]], "Group", bsc, sortable=True))
+        if not sv.get("blocks"):
+            blocks_html = '<p class="mut">No answers in the period.</p>'
+        body.append(section("satisfaction", "Satisfaction", "the incident surveys' answers in the period · %s" % (
+                                e(", ".join(sorted(set((b_["survey"] or "Survey") for b_ in sv.get("blocks") or [])))) or "no answers"),
+                            tiles(sat_tiles) + blocks_html +
+                            '<div class="cap">Each survey on its own scale, graded Good, Fair or Low by the share of the scale '
+                            '(servicenow_insights_survey_grades). Under %d answers: no grade.</div>' % int(o.get("survey_min_answers") or 5)))
 
     # ---- issues
     top_n = int(o.get("top_issues") or 10)
@@ -1900,6 +1944,9 @@ def servicenow_insights_page(model, key="all", opts=None):
                  '<p class="mut">The pages and the email come after: the job output has the whole run.</p></details>' % (
                      e(fmin(sum(x for _l, x in tm))), "".join("<dt>%s</dt><dd>%s</dd>" % (e(lb), e(fmin(x))) for lb, x in tm))) if tm else ""
     dbs = o.get("db") or {}               # is it writing? (1.15.0): this run's write, read back from the report database
+    svr = m.get("surveys_read") or []
+    survey_html = ('<details class="notes"><summary><b>The surveys read</b> <span class="mut">%d question%s: survey - question - answers - scale</span>'
+                   '</summary><ul>%s</ul></details>' % (len(svr), "" if len(svr) == 1 else "s", "".join("<li>%s</li>" % e(x) for x in svr))) if svr else ""
     db_html = (('<p class="dbline"><b>Report database.</b> %s</p>' if dbs.get("written") else '<div class="callout"><b>Report database.</b> %s</div>')
                % e(dbs.get("page") or "")) if dbs.get("page") else ""
     body.append(section("method", "How this was made", "", '<div class="method"><div><div class="eyebrow">Read from ServiceNow (read only)</div><dl class="kv">%s'
@@ -1917,7 +1964,7 @@ def servicenow_insights_page(model, key="all", opts=None):
                             e(("%d, grouped by ACT" % a.get("issues", 0)) if a.get("ran") else "the incidents' category / subcategory"),
                             e(str(a.get("fixes", 0)) if a.get("ran") else "none: the most common close notes are shown"),
                             e("by ACT" if s.get("summary_by") == "act" else "from the numbers"),
-                            (('<div class="callout"><b>Not read.</b> %s</div>' % e("; ".join(nr))) if nr else "") + db_html + place_html + slo_html + time_html)))
+                            (('<div class="callout"><b>Not read.</b> %s</div>' % e("; ".join(nr))) if nr else "") + db_html + place_html + slo_html + survey_html + time_html)))
 
     # the script: loaded from the website (site-insights.js beside the index, written by site_report_web, the address made relative to
     # this page there) and carried in the page too; whichever runs first does the work

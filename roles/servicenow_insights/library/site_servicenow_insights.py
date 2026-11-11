@@ -56,6 +56,7 @@ options:
       type: str, default: Incident State Duration}
   survey: {description: "Read the incident surveys' results (asmt_metric_result, GET; best-effort): the window's and the window before's.", type: bool, default: true}
   survey_metrics: {description: "The survey metrics read, by name ([] = every metric whose answer is a number).", type: list, elements: str, default: []}
+  survey_types: {description: "The surveys read, by name (asmt_metric_type; [] = every survey; 1.16.0).", type: list, elements: str, default: []}
 author: site automation
 '''
 
@@ -88,6 +89,7 @@ states: {description: "{incident sys_id: [[state as shown, start, end]]} - the s
 states_error: {description: "Why the state metric was not read ('' = read; 'none' = no such metric).", type: str}
 survey: {description: "[[incident sys_id, metric, value (a number), taken (UTC text)]] - the incident surveys' answers.", type: list}
 survey_error: {description: "Why the surveys were not read ('' = read, or not asked).", type: str}
+survey_questions: {description: "1.16.0 - each question read (its key in survey): name, survey, state, datatype, min, max.", type: dict}
 '''
 
 import calendar
@@ -668,31 +670,77 @@ def read_states(api, ids, name, chunk=100):
     return out, ("" if out else "none")
 
 
-def read_survey(api, win, metrics=None, limit=20000):
+SURVEY_FIELDS = ("instance.trigger_id,metric,metric.name,metric.datatype,metric.min,metric.max,metric.template,metric.metric_type,"
+                 "metric.metric_type.name,metric.metric_type.state,metric.metric_type.active,actual_value,instance.taken_on")
+
+
+def read_survey(api, win, metrics=None, limit=20000, types=None):
     """The incident surveys' answers in the window and the one before (asmt_metric_result of assessments triggered by
-    incidents; GET; best-effort) -> ([[incident sys_id, metric, value, taken]], error). Only answers that are numbers."""
+    incidents; GET; best-effort) -> ([[incident sys_id, question key, value, taken]], {question key: {name, survey, state,
+    datatype, min, max, template}}, error). Only answers that are numbers. 1.16.0: each question (asmt_metric) with its survey
+    (asmt_metric_type: name, state / active) and what ServiceNow says of its scale (datatype, min, max; a template's values),
+    dot-walked in the same read - so two surveys' "Q1" stay apart. types: only those surveys, by name."""
     q = "instance.trigger_table=incident^instance.taken_on>=%s^instance.taken_on<=%s" % (win["prev_since"], win["until"])
     want = [str(m).strip() for m in metrics or [] if str(m).strip()]
     if want:
         q += "^metric.nameIN" + ",".join(want)
+    kinds = [str(m).strip() for m in types or [] if str(m).strip()]
+    if kinds:
+        q += "^metric.metric_type.nameIN" + ",".join(kinds)
     try:
-        r = api.get("api/now/table/asmt_metric_result", {"sysparm_query": q, "sysparm_fields": "instance.trigger_id,metric,actual_value,instance.taken_on",
+        r = api.get("api/now/table/asmt_metric_result", {"sysparm_query": q, "sysparm_fields": SURVEY_FIELDS,
                                                          "sysparm_display_value": "all", "sysparm_exclude_reference_link": "true", "sysparm_limit": limit})
     except SnError as e:
-        return [], str(e)
+        return [], {}, str(e)
     rows = r.get("result") if isinstance(r, dict) else None
     if not isinstance(rows, list):
-        return [], "GET api/now/table/asmt_metric_result: no result list in the answer"
-    out = []
+        return [], {}, "GET api/now/table/asmt_metric_result: no result list in the answer"
+    out, qs = [], {}
     for x in rows:
         try:
             val = float(str(_vd(x, "actual_value")[0]).strip())
         except ValueError:
             continue
         inc, taken = str(_vd(x, "instance.trigger_id")[0] or ""), str(_vd(x, "instance.taken_on")[0] or "")
-        if inc and taken:
-            out.append([inc, " ".join(str(_vd(x, "metric")[1] or _vd(x, "metric")[0] or "").split()), val, taken])
-    return out, ""
+        if not (inc and taken):
+            continue
+        mid, mname = _vd(x, "metric")
+        name = " ".join(str(_vd(x, "metric.name")[1] or _vd(x, "metric.name")[0] or mname or mid or "").split())
+        key = str(mid or name)
+        if key not in qs:
+            st = (str(_vd(x, "metric.metric_type.state")[0] or "") + " " + str(_vd(x, "metric.metric_type.state")[1] or "")).lower()
+            act = str(_vd(x, "metric.metric_type.active")[0] or "").lower()
+            qs[key] = {"name": name, "survey": " ".join(str(_vd(x, "metric.metric_type.name")[1] or _vd(x, "metric.metric_type.name")[0]
+                                                           or _vd(x, "metric.metric_type")[1] or "").split()),
+                       "state": "retired" if ("retired" in st or act == "false") else ("active" if (st.strip() or act) else ""),
+                       "datatype": str(_vd(x, "metric.datatype")[0] or "").strip().lower(),
+                       "min": _num(_vd(x, "metric.min")[0]), "max": _num(_vd(x, "metric.max")[0]),
+                       "template": str(_vd(x, "metric.template")[0] or "")}
+        out.append([inc, key, val, taken])
+    # a template's (likert) scale: its definitions' values - best-effort, one GET
+    tids = sorted(set(v["template"] for v in qs.values() if v["datatype"] == "template" and re.match(r"^[\w-]{1,64}$", v["template"])))
+    if tids:
+        try:
+            t = api.get("api/now/table/asmt_template_definition", {"sysparm_query": "templateIN" + ",".join(tids), "sysparm_fields": "template,value",
+                                                                   "sysparm_exclude_reference_link": "true", "sysparm_limit": 1000})
+            vals = {}
+            for d in (t or {}).get("result") or []:
+                v = _num(_vd(d, "value")[0])
+                if v is not None:
+                    vals.setdefault(str(_vd(d, "template")[0]), []).append(v)
+            for v in qs.values():
+                if vals.get(v["template"]):
+                    v["min"], v["max"] = min(vals[v["template"]]), max(vals[v["template"]])
+        except SnError:
+            pass
+    return out, qs, ""
+
+
+def _num(v):
+    try:
+        return float(str(v).strip())
+    except (TypeError, ValueError):
+        return None
 
 
 def read_slas(api, items, win, source="auto", first_assigned=False, max_records=20000):
@@ -751,7 +799,7 @@ def keep(it, since, until):
 
 
 def read_all(api, groups, tables, win, max_records=20000, audit=True, handoff_min=3, members=True, group_parents=True, handoff_source="auto",
-             sla_source="auto", first_assigned=False, state_metric="Incident State Duration", survey=True, survey_metrics=None, managers=False):
+             sla_source="auto", first_assigned=False, state_metric="Incident State Duration", survey=True, survey_metrics=None, managers=False, survey_types=None):
     since, until = sn_time(win["prev_since"]), sn_time(win["until"])
     res = {"ok": False, "error": "", "window": win, "groups": [], "tables": [], "items": [], "audit": {}, "audit_error": "",
            "members": {}, "members_error": "", "lookup_note": "", "url": api.url, "group_tree": {}, "group_tree_error": "",
@@ -834,7 +882,8 @@ def read_all(api, groups, tables, win, max_records=20000, audit=True, handoff_mi
     hold_ids = [it["sys_id"] for it in items if it["table"] == "incident" and (
         ("hold" in str(it.get("state") or "").lower() and it.get("active") is not False) or (sn_time(it.get("done_at")) and sn_time(it["done_at"]) >= since_w))]
     res["states"], res["states_error"] = read_states(api, hold_ids, state_metric)
-    res["survey"], res["survey_error"] = read_survey(api, win, survey_metrics) if survey and "incident" in [str(t) for t in tables or []] else ([], "")
+    res["survey"], res["survey_questions"], res["survey_error"] = read_survey(api, win, survey_metrics, types=survey_types) \
+        if survey and "incident" in [str(t) for t in tables or []] else ([], {}, "")
     return res
 
 
@@ -856,6 +905,7 @@ def main():
             first_assigned=dict(type="bool", default=False),
             state_metric=dict(type="str", default="Incident State Duration"), survey=dict(type="bool", default=True),
             survey_metrics=dict(type="list", elements="str", default=[]), managers=dict(type="bool", default=False),
+            survey_types=dict(type="list", elements="str", default=[]),
         ),
         supports_check_mode=True)
     p = module.params
@@ -882,7 +932,7 @@ def main():
     api = Api(url, p["username"], p["password"], p["validate_certs"], p["ca_path"], p["timeout"])
     try:
         res = read_all(api, p["groups"], p["tables"], win, p["max_records"], p["audit"], p["handoff_min"], p["members"], p["group_parents"], p["handoff_source"],
-                       p["sla_source"], p["first_assigned"], p["state_metric"], p["survey"], p["survey_metrics"], p["managers"])
+                       p["sla_source"], p["first_assigned"], p["state_metric"], p["survey"], p["survey_metrics"], p["managers"], p["survey_types"])
     except SnError as e:
         res = {"ok": False, "error": str(e), "window": win, "groups": [], "tables": [], "items": [], "audit": {}, "audit_error": "",
                "members": {}, "members_error": "", "lookup_note": "", "url": url}

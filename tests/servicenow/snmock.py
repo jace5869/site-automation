@@ -189,6 +189,8 @@ def _cond(rec, cond):
         return str(rec.get(field, "")).lower().startswith(value.lower())
     if "IN" in cond and "=" not in cond:
         field, _, value = cond.partition("IN")
+        if "." in field and field in rec:             # a dot-walked field the seed keeps (asmt_metric_result's metric.name)
+            return str(rec.get(field) or "") in _in_set(value)
         field = field[:-5] if field.endswith(".name") else field
         vals = _in_set(value)
         if str(rec.get(field, "") or "") in vals:

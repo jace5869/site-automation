@@ -93,9 +93,11 @@ def scope_figures(s):
         put("filed_%s_pct" % k, _get(s, "quality_t", k))
     put("after_hours_pct", _get(s, "after", "pct"))
     sv = s.get("survey") or {}
-    if sv.get("n"):
+    if sv.get("n") and sv.get("scale"):     # 1.16.0: the headline on its scale (a row without survey_scale_max: before, mixed)
         put("survey_avg", sv.get("avg"))
         put("survey_n", sv.get("n"))
+        put("survey_scale_max", sv["scale"][1])
+        put("survey_questions", sv.get("questions_n"))
     lc = s.get("lifecycle") or {}
     if lc.get("measured"):
         for k in ("new", "progress", "hold", "resolved"):

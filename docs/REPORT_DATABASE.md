@@ -242,6 +242,27 @@ database anything: the job reads it and draws the lines into each page.
 
 New figures in later releases are new metric names in `insights_figure`. They need no change to the tables.
 
+### The survey figures (1.16.0)
+
+`survey_avg` is the headline survey's average on its scale (docs/SERVICENOW_INSIGHTS.md, *Satisfaction*). Two figures
+come with it, in `insights_figure` only (in no view):
+
+| Figure | What it holds |
+|---|---|
+| `survey_scale_max` | the top of that average's scale (4 for 1 to 4) |
+| `survey_questions` | how many rating questions were read |
+
+Rows written before 1.16.0 have no `survey_scale_max`. Their `survey_avg` may mix questions on different scales, so
+nothing draws them. They are not rewritten. To see those months:
+
+```sql
+SELECT r.month, f.node, f.value FROM insights_figure f JOIN insights_run r ON r.run_id = f.run_id
+WHERE f.metric = 'survey_avg' AND NOT EXISTS (SELECT 1 FROM insights_figure g WHERE g.run_id = f.run_id
+  AND g.node = f.node AND g.variant = f.variant AND g.metric = 'survey_scale_max');
+```
+
+To replace them, run the backfill again (*The backfill*): it writes each month with the fix.
+
 ## Making the tables by hand
 
 The first run makes the tables and views itself. If your writer account may not create them

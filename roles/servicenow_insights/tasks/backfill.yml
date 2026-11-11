@@ -39,6 +39,7 @@
     state_metric: "{{ servicenow_insights_state_metric | default('', true) | string | trim }}"
     survey: "{{ servicenow_insights_survey | default(true) | bool }}"
     survey_metrics: "{{ servicenow_insights_survey_metrics | servicenow_insights_name_list }}"
+    survey_types: "{{ servicenow_insights_survey_types | default([], true) | servicenow_insights_name_list }}"
   register: _sni_bf
   check_mode: false             # only reads
 

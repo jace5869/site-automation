@@ -156,10 +156,15 @@ servicenow_insights_outcome_map:
 servicenow_insights_unable_outcomes: [Known Error, No Resolution Provided]   # the outcomes counted as unable to resolve
 # The service desk's assignment groups (exact names), for its own first-contact resolution; [] = the site's only.
 servicenow_insights_service_desk_groups: []
-# The incident surveys (asmt_metric_result, read only, best-effort): the average answer per group and month. The metrics
-# read by name ([] = every metric whose answer is a number); false = not read.
+# The incident surveys (asmt_metric_result, read only, best-effort): each survey and question on its own scale, never one
+# average across scales (1.16.0). false = not read.
 servicenow_insights_survey: true
-servicenow_insights_survey_metrics: []      # the survey metrics read, by name; [] = every metric answered with a number
+servicenow_insights_survey_metrics: []      # the questions read, by name; [] = every one answered with a number. Named: always a rating
+servicenow_insights_survey_types: []        # the surveys read, by name (asmt_metric_type); [] = every survey (1.16.0)
+servicenow_insights_survey_headline: ""     # the survey or question for the tile, the email and the history; "" = the active survey with the most answers
+# Good / Fair / Low by the share of the scale, (average - min) / (max - min): on 1 to 4, Good from 3.4, Fair from 2.8.
+servicenow_insights_survey_grades: {good: 0.8, fair: 0.6}
+servicenow_insights_survey_min_answers: 5   # fewer answers: the average without a grade
 # Records per table at most, the newest kept; more: said on every page (1.16.0). Measured: 20000 needs about 0.4 GB in
 # the EE; 100000 about 1.5 GB and 4 minutes more.
 servicenow_insights_max_records: 20000

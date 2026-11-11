@@ -54,6 +54,10 @@
       exclude_groups: "{{ servicenow_insights_exclude_groups | servicenow_insights_name_list }}"
       inactive_teams: "{{ servicenow_insights_inactive_teams | bool }}"
       show_lead: "{{ servicenow_insights_show_lead | bool }}"
+      survey_metrics: "{{ servicenow_insights_survey_metrics | servicenow_insights_name_list }}"
+      survey_headline: "{{ servicenow_insights_survey_headline | default('', true) | string | trim }}"
+      survey_grades: "{{ servicenow_insights_survey_grades | default({'good': 0.8, 'fair': 0.6}, true) }}"
+      survey_min_answers: "{{ servicenow_insights_survey_min_answers | default(5) | int }}"
       skip_group_types: "{{ servicenow_insights_skip_group_types | servicenow_insights_name_list }}"
       # the website's look: brief draws the page in its palette, with the verdict at the top (0.92.0)
       look: "{{ report_web_theme | default('atlas') | string | trim | lower }}"
@@ -146,6 +150,7 @@
     state_metric: "{{ servicenow_insights_state_metric | default('', true) | string | trim }}"
     survey: "{{ servicenow_insights_survey | default(true) | bool }}"
     survey_metrics: "{{ servicenow_insights_survey_metrics | servicenow_insights_name_list }}"
+    survey_types: "{{ servicenow_insights_survey_types | default([], true) | servicenow_insights_name_list }}"
     # the team leads (1.15.0): each group's manager, in the groups' read - for the page's line or the leads' emails
     managers: "{{ servicenow_insights_show_lead | bool or servicenow_insights_email_leads | default([], true) | length > 0 }}"
   register: _sni

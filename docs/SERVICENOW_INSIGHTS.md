@@ -28,7 +28,7 @@ and simpler: the tiles and the main tables, a link to the page, and an Excel wor
 | **Keeping up** | opened and resolved per week, the backlog at the end of each week, the age of what is open now (0-5, 6-15, 16-30, over 30 days), a heatmap of when incidents are opened (weekday by hour), the weeks as a table |
 | **Severity** | incidents per priority - its name (1 - Critical ... 5 - Exempt), count, median to resolve, Response met and Resolution met (1.7.0), No SLA -, the **priority set by hand** (impact x urgency, the 3 x 3 matrix) per group, then every P1 and P2: when, what, the group, the change that caused it, its problem record |
 | **Categories** (1.7.0) | incidents per category (against the window before), their median time to resolve and SLAs met, the group they are mostly in; a data-quality line - no category, Other, off your official list (named) |
-| **Satisfaction** (1.7.0) | the incident surveys' average answer, by month and by group (when the surveys are read) |
+| **Satisfaction** (1.7.0) | the incident surveys, each on its own scale, by survey: the average graded Good, Fair or Low, by month and by group (1.16.0, see *Satisfaction*) |
 | **Top incident issues** | the issues ranked, with their rank against the window before (▲ ▼ New), their share and the cumulative share, a weekly trend, the median time to fix; open one for its **fix action** (with a Copy button), where the fix comes from - **From the tickets**, **Partly from tickets** or **Suggested by ACT** (not verified) -, the CIs it was seen on, example tickets (links into ServiceNow), its close-note quality, and the flags *KB candidate*, *Self-service candidate*, *Problem candidate*; a fix the close notes disagree on is said |
 | **Problem candidates** | 3 or more incidents of one issue on one CI within 30 days: the counts, the group, the problem record - or *No problem record*, or *Resolved, incidents continue* |
 | **Passed between groups** | incidents reassigned 3 or more times, the paths they took (a group the ticket came back to in amber), the most common issue on each path and the time it added. The groups are shown by their short names - the name without the parts every group shares, such as a site prefix or a contract suffix; rest on one for the full name |
@@ -440,7 +440,7 @@ The **ServiceNow API** credential you already have works ([SERVICENOW_SETUP.md](
 | `sys_user_grmember` | the members of the groups the tickets name (the teams' leaderboards) | `itil` on most instances; else the report says so and each leaderboard lists everyone the team's tickets were assigned to or resolved by (or `servicenow_insights_members: false`) |
 | `task_sla` (1.7.0) | the SLAs of the incidents and requested items done in the window (and the one before), and of the incidents open now: met or missed, at risk now, on hold since (the SLA's pause) | `itil`; refused (403), the report says so under *Not read* and counts met or missed from your targets |
 | `metric_instance` (1.7.0) | the metric *Incident State Duration* (`servicenow_insights_state_metric`: the time on hold, reopened within 7 days) and the metric *Assigned to* (the response, with your targets) | as above; not there, the page says what it could not measure |
-| `asmt_metric_result` (1.7.0) | the incident surveys' answers (best-effort; `servicenow_insights_survey: false` = not read) | read on the assessment tables (`asmt_metric_result`, through `asmt_assessment_instance`); refused, said under *Not read*, no satisfaction figures |
+| `asmt_metric_result` (1.7.0) | the incident surveys' answers, with each question's survey, state and scale dot-walked (1.16.0; best-effort; `servicenow_insights_survey: false` = not read) | read on the assessment tables (`asmt_metric_result`, through `asmt_assessment_instance`); refused, said under *Not read*, no satisfaction figures |
 | `sys_journal_field` | the work notes of the top issues' incidents, for ACT's fixes (0.96.0; only with ACT) | read on `sys_journal_field` - `itil` reads the work notes of the incidents it can read on most instances; where an ACL on `sys_journal_field` refuses it (403), ask the ServiceNow admin for a read ACL on `sys_journal_field` for the account's role (the work notes of incidents only is enough), or set `servicenow_insights_act_work_notes: false`; refused, the report says so and the fixes come from the close notes |
 
 A table the account cannot read is listed under *Not read* and the rest is reported; take a table out of
@@ -562,6 +562,41 @@ servicenow_insights_business_hours: {days: [mon, tue, wed, thu, fri], start: "07
   in Other.
 - Without a list, every category is shown as it is.
 - Without ACT, the issues stay the incidents' category / subcategory.
+
+## Satisfaction (1.16.0)
+
+The page never averages questions on different scales together. Each survey has its own block, each question its own
+scale.
+
+- **The scale** comes from ServiceNow: the question's min and max, or its template's values. When those can not be read,
+  the answers' lowest and highest are used and the page says *as observed*.
+- **A rating** is a question ServiceNow calls a scale (scale, numericscale, template) up to 10. When that can not be read,
+  every answer must be a whole number from 0 to 10, with 3 or more different answers.
+- **Not a rating**: a yes / no, a 0 to 100 score, a count. Read, but not shown as a rating. *How this was made* lists it,
+  under *The surveys read*. To show one anyway, name it in `servicenow_insights_survey_metrics`.
+- **A retired survey** keeps its own block, marked *retired*. Months before a switch of surveys show the old survey's
+  figures on its own scale.
+- **The headline** (the tile, the email, the report database): the active survey with the most answers. Its overall
+  average when all its rating questions share one scale, else its most-answered question.
+
+Every average reads *3.46 of 4* with a grade: **Good**, **Fair** or **Low**, by its share of the scale:
+(average - lowest) / (highest - lowest).
+
+| Scale | Good from | Fair from |
+|---|---|---|
+| 1 to 4 | 3.4 | 2.8 |
+| 1 to 5 | 4.2 | 3.4 |
+| 0 to 10 | 8 | 6 |
+
+Under 5 answers, the average shows with no grade, so one answer does not paint a team.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `servicenow_insights_survey_metrics` | `[]` | the questions read, by name; a named question is always a rating |
+| `servicenow_insights_survey_types` | `[]` | the surveys read, by name: questions named Q1 in two surveys stay apart |
+| `servicenow_insights_survey_headline` | `""` | a survey or a question for the headline |
+| `servicenow_insights_survey_grades` | `{good: 0.8, fair: 0.6}` | the shares of the scale for Good and Fair |
+| `servicenow_insights_survey_min_answers` | `5` | fewer answers: no grade |
 
 ## What to act on first
 

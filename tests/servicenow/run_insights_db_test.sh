@@ -264,6 +264,13 @@ case "$new" in *'"6m"'*|*'"2026-05"'*) bad "  ... a cut month or the window writ
     *'"2026-10"'*) ok "  ... only the complete months after the cut written: $new" ;;
     *) bad "  ... nothing written after the cut: $new" ;; esac
 
+# ---- 12. the survey figures (1.16.0): survey_avg with its scale; the doc's query for rows written before runs as written ----
+sq=$("$py" -c "import re,sys; d=open(sys.argv[1]).read(); print(re.search(r'To see those months:\n\n\x60\x60\x60sql\n(.*?)\n\x60\x60\x60', d, re.S).group(1))" "$repo/docs/REPORT_DATABASE.md")
+old=$(q report_reader "$rpw" "$sq")
+fx=$(one "SELECT COUNT(*) FROM insights_figure WHERE metric = 'survey_scale_max' AND node = 'all'")
+[ "$old" = "[]" ] && [ "$fx" -gt 0 ] && ok "the survey figures: survey_scale_max beside survey_avg; the doc's query for older rows runs (none here)" \
+    || bad "the survey figures: older rows $old, survey_scale_max $fx"
+
 # ---- 10. PyMySQL 1.2.3 (1.16.0): its first login after FLUSH PRIVILEGES raises AttributeError; the module tries once more ----
 if "$py" -m pip install -q --disable-pip-version-check --target "$work/pm123" "PyMySQL==1.2.3" >/dev/null 2>&1; then
     flush() { "${rtc[@]}" exec "$name" mysql -uroot "-p$root" -e "FLUSH PRIVILEGES" >/dev/null 2>&1; }

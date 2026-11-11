@@ -28,18 +28,20 @@ OPTS = {"bare_chars": 20, "bare_phrases": ["fixed", "done", "resolved", "resolve
                                             "user confirmed", "completed"], "act": False, "kb_min": 50, "hierarchy_source": "names"}
 _SITE = {}
 _SITES = {}
+_SURVEYS = {}
 HIER_OPTS = dict(OPTS, directorates=["CODEX"], suffix_directorates=["NOVA"])                      # the names (OPTS: hierarchy_source names)
 PARENTS_OPTS = dict(OPTS, hierarchy_source="parents")
 
 
-def site(sites=False):
+def site(sites=False, surveys=False):
     """The made-up site (insights_seed.py), read as the module reads it - once. sites: its groups named as three sites with
-    directorates (--sites, 0.97.0)."""
-    _SITE = _SITES if sites else globals()["_SITE"]
+    directorates (--sites, 0.97.0); surveys: two surveys, one retired, on different scales (--surveys, 1.16.0)."""
+    _SITE = _SURVEYS if surveys else (_SITES if sites else globals()["_SITE"])
     if not _SITE:
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "seed.json")
-            subprocess.check_call([sys.executable, os.path.join(HERE, "servicenow", "insights_seed.py"), path, "0.4"] + (["--sites"] if sites else []),
+            subprocess.check_call([sys.executable, os.path.join(HERE, "servicenow", "insights_seed.py"), path, "0.4"] + (["--sites"] if sites else [])
+                                  + (["--surveys"] if surveys else []),
                                   stdout=subprocess.DEVNULL)
             with open(path) as fh:
                 seed = json.load(fh)
@@ -47,6 +49,7 @@ def site(sites=False):
         since, until = rd.sn_time(win["prev_since"]), rd.sn_time(win["until"])
         items, audit, members, notes, gtree = [], {}, {}, {}, {}
         slas, states, first, survey, paused, running = {}, {}, {}, [], {}, {}   # 1.7.0: as the module reads them
+        questions = {}                                                         # 1.16.0
         for r in seed:
             t = r.get("_table")
             if t == "task_sla":
@@ -62,7 +65,13 @@ def site(sites=False):
                 try:
                     survey.append([r["instance.trigger_id"], r["metric"], float(r["actual_value"]), r["instance.taken_on"]])
                 except ValueError:
-                    pass
+                    continue
+                st = (r.get("metric.metric_type.state") or "").lower()
+                questions.setdefault(r["metric"], {"name": r.get("metric.name") or r["metric"], "survey": r.get("metric.metric_type.name", ""),
+                                                   "state": "retired" if "retired" in st or r.get("metric.metric_type.active") == "false" else
+                                                   ("active" if st or r.get("metric.metric_type.active") else ""),
+                                                   "datatype": r.get("metric.datatype", ""), "min": float(r["metric.min"]) if r.get("metric.min") else None,
+                                                   "max": float(r["metric.max"]) if r.get("metric.max") else None, "template": ""})
                 continue
             if t == "metric_instance":
                 if r["definition"] == "Incident State Duration":
@@ -93,7 +102,8 @@ def site(sites=False):
                       "tables": [{"table": "incident", "read": 10, "kept": 10, "more": False, "error": ""}],
                       "sla": {"source": "task_sla", "asked": "auto", "error": "", "note": "", "records": slas, "paused": paused, "paused_error": "",
                               "open": running, "open_cut": []},
-                      "first_assigned": first, "first_assigned_error": "", "states": states, "states_error": "", "survey": survey, "survey_error": ""}
+                      "first_assigned": first, "first_assigned_error": "", "states": states, "states_error": "", "survey": survey, "survey_error": "",
+                      "survey_questions": questions}
         _SITE["mask"] = F.servicenow_insights_mask(_SITE["r"], OPTS)
         _SITE["work_notes"] = {"work_notes": dict((k, sorted(v, reverse=True)) for k, v in notes.items()), "work_notes_error": ""}
         _SITE["model"] = F.servicenow_insights_model(_SITE["r"], None, _SITE["mask"], HIER_OPTS if sites else OPTS)
@@ -1111,8 +1121,9 @@ class ModuleReads(unittest.TestCase):
         self.assertIn("definition.name=Incident State Duration", api.calls[-1][1]["sysparm_query"])
         win = rd.window(6, 0, "2026-10-31", True, "", NOW)
         self.assertEqual((rd.duration("1970-01-02 03:30:00"), rd.duration("")), (99000, None))
-        sv, err = rd.read_survey(api, win)
+        sv, qs, err = rd.read_survey(api, win)
         self.assertEqual(sv, [["i1", "Overall satisfaction", 4.0, "2026-10-22 10:00:00"]])
+        self.assertEqual(qs["Overall satisfaction"]["name"], "Overall satisfaction")
         self.assertTrue(all(p.startswith("api/now/table/") for p, _ in api.calls))
 
     def test_refused_task_sla_falls_back_to_the_targets(self):
@@ -1310,6 +1321,136 @@ class ChangeTasks(unittest.TestCase):
         self.assertEqual(self.model(self.r(refused=True))["scopes"]["all"]["counts"], self.model(self.r(tasks=False))["scopes"]["all"]["counts"])
 
 
+class Surveys(unittest.TestCase):
+    """1.16.0: never one average across survey questions of different scales. Each question on its own scale (ServiceNow's
+    min and max, else as observed), grouped by its survey; a retired survey its own block; questions that are not ratings
+    (a 0/1, a 0 to 100) read but not shown as one; the headline - the active survey's overall on one scale - on the tile,
+    in the email and the history; each average graded Good / Fair / Low by its share of the scale."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.x = site(surveys=True)
+        cls.m = cls.x["model"]
+        cls.sv = cls.m["scopes"]["all"]["survey"]
+
+    def test_the_questions(self):
+        plan = F.survey_questions(self.x["r"]["survey"], self.x["r"]["survey_questions"], OPTS, *rd_window(self.x))
+        q = dict(((v["survey"], v["name"]), v) for v in plan["questions"].values())
+        self.assertTrue(all(q[("Service desk survey", "Q%d" % i)]["rating"] and q[("Service desk survey", "Q%d" % i)]["scale"] == [1.0, 4.0, "read"]
+                            for i in range(1, 5)))
+        self.assertTrue(all(q[("Legacy survey", "Q%d" % i)]["rating"] and q[("Legacy survey", "Q%d" % i)]["state"] == "retired" for i in range(1, 5)))
+        self.assertFalse(q[("Legacy survey", "Q5")]["rating"])                       # 0 to 100
+        self.assertFalse(q[("Service desk survey", "Contacted again")]["rating"])     # yes / no
+        self.assertTrue(q[("Service desk survey", "Overall satisfaction")]["rating"])
+        named = F.survey_questions(self.x["r"]["survey"], self.x["r"]["survey_questions"], dict(OPTS, survey_metrics=["q5"]), *rd_window(self.x))
+        self.assertTrue(next(v for v in named["questions"].values() if v["name"] == "Q5")["rating"])
+        # the answers alone, the datatype not read: whole numbers 0 to 10 with 3 or more values
+        bare = [["i%d" % i, "k", v, "2026-10-01 10:00:00"] for i, v in enumerate([1, 2, 3, 4, 4])]
+        self.assertTrue(F.survey_questions(bare, {}, OPTS, *rd_window(self.x))["questions"]["k"]["rating"])
+        for vals in ([0, 1, 1, 0], [12, 30, 45], [1.5, 2.5, 3.5]):
+            rows = [["i%d" % i, "k", v, "2026-10-01 10:00:00"] for i, v in enumerate(vals)]
+            self.assertFalse(F.survey_questions(rows, {}, OPTS, *rd_window(self.x))["questions"]["k"]["rating"], vals)
+
+    def test_the_headline_and_the_blocks(self):
+        sv = self.sv
+        # the active survey's questions are on two scales: its most-answered rating question is the headline, never their mean
+        self.assertEqual((sv["survey"], sv["state"]), ("Service desk survey", "active"))
+        self.assertTrue(sv["label"].startswith("Service desk survey · "), sv["label"])
+        self.assertIn(sv["scale"][:2], ([1.0, 4.0], [1.0, 5.0]))
+        b = sv["blocks"]
+        self.assertEqual([(x["survey"], x["state"]) for x in b], [("Service desk survey", "active"), ("Legacy survey", "retired")])
+        self.assertFalse(b[0]["one_scale"])                  # Q1 to Q4 on 1 to 4 and Overall satisfaction on 1 to 5: each on its own
+        self.assertTrue(b[1]["one_scale"] and b[1]["overall"])
+        self.assertEqual(b[1]["scale"][:2], [1.0, 5.0])
+        self.assertEqual(sv["questions_n"], 9)
+
+    def test_the_mixed_mean_nowhere(self):
+        w = rd_window(self.x)
+        vals = [v for k_, q, v, t_ in self.x["r"]["survey"] if F._in(F._t(t_), w[0], w[1])]
+        mixed = "%.2f" % (sum(vals) / len(vals))
+        rated = set(round(v, 2) for v in [self.sv["avg"]] + [b["main"]["avg"] for b in self.sv["blocks"]] if v is not None)
+        self.assertNotIn(round(sum(vals) / len(vals), 2), rated)
+        h = P.servicenow_insights_page(self.m, "all", OPTS)
+        self.assertNotIn(">%s" % mixed, h)
+        self.assertNotIn(mixed, json.dumps(F.servicenow_insights_doc(self.m, "all", OPTS)))
+        import servicenow_insights_history as H
+        rows = H.servicenow_insights_db_rows(self.m, {})
+        fig = dict((f[2], f[4]) for f in rows["figures"] if f[0] == "all" and f[1] == "")
+        self.assertEqual((fig["survey_avg"], fig["survey_scale_max"]), (self.sv["avg"], self.sv["scale"][1]))
+        self.assertEqual(fig["survey_questions"], 9)
+
+    def test_the_page(self):
+        h = P.servicenow_insights_page(self.m, "all", OPTS)
+        sec = re.search(r'<section class="card" id="satisfaction">.*?</section>', h, re.S).group(0)
+        self.assertIn('<h3 class="subh">Legacy survey <span class="chip">retired</span></h3>', sec)
+        self.assertLess(sec.index("Service desk survey</h3>"), sec.index("Legacy survey <span"))
+        self.assertRegex(sec, r'<span class="v">\d\.\d\d of \d <span class="chip (good|warn|crit)">(Good|Fair|Low)</span>')
+        self.assertIn("<th class=\"n\" data-sort=\"avg\">Average</th><th data-sort=\"grade\">Grade</th>", sec)
+        self.assertIn("Retired in ServiceNow: its answers are history, never blended with the active survey.", sec)
+        for tab in re.findall(r"<h3>By month · .*?</table>", sec, re.S):         # every average on its scale, even in a mixed survey
+            self.assertFalse(re.findall(r'data-l="Average" class="n" data-v="[\d.]+">\d\.\d\d<', tab), tab[:200])
+        self.assertNotIn(">Q5<", sec)
+        self.assertNotIn("Contacted again", sec)
+        how = re.search(r"<b>The surveys read</b>.*?</details>", h, re.S).group(0)
+        self.assertIn("Service desk survey - Q1 - ", how)
+        self.assertRegex(how, r"Legacy survey \(retired\) - Q5 - \d+ answers - read, not shown as a rating \(datatype numericscale, up to 100; "
+                              r"values \d+ to 100\): name it in servicenow_insights_survey_metrics to show it")
+        self.assertIn("1 to 4", how)
+
+    def test_the_email(self):
+        doc = F.servicenow_insights_doc(self.m, "all", OPTS)
+        t = next(x for x in doc["summary"] if x["label"] == "Satisfaction")
+        self.assertRegex(t["value"], r"^\d\.\d\d of \d$")
+        self.assertIn(t["status"], ("ok", "warning", "critical"))
+        self.assertTrue(t["note"].startswith(self.sv["grade"] + " · "), t["note"])
+
+    def test_the_grades(self):
+        g = F.survey_grade
+        sc = [1.0, 4.0, "read"]
+        self.assertEqual([g(3.4, sc, 5), g(3.39, sc, 5), g(2.8, sc, 5), g(2.79, sc, 5)], ["Good", "Fair", "Fair", "Low"])
+        self.assertEqual([g(8.0, [0.0, 10.0, "read"], 9), g(5.99, [0.0, 10.0, "observed"], 9)], ["Good", "Low"])   # a 0-based scale
+        self.assertEqual(g(3.9, sc, 4), "")                              # under survey_min_answers (5)
+        self.assertEqual(g(3.9, sc, 2, {"survey_min_answers": 2}), "Good")
+        self.assertEqual((g(3.9, None, 50), g(3.9, [4.0, 4.0, "observed"], 50)), ("", ""))     # no scale known: no grade
+        self.assertEqual(g(3.0, sc, 9, {"survey_grades": {"good": 0.9, "fair": 0.5}}), "Fair")
+        few = P.servicenow_insights_page(self.m, "all", dict(OPTS))
+        self.assertIn('<span class="mut">—</span>', few)                   # a month or group under 5 answers: no grade
+
+    def test_the_headline_setting(self):
+        x = self.x
+        def head(name):
+            return F.survey_questions(x["r"]["survey"], x["r"]["survey_questions"], dict(OPTS, survey_headline=name), *rd_window(x))
+        p = head("Legacy survey")
+        self.assertEqual((p["headline"]["label"], p["headline"]["scale"][:2]), ("Legacy survey", [1.0, 5.0]))
+        p = head("q2")
+        self.assertEqual((p["headline"]["label"], p["headline"]["survey"]), ("Service desk survey · Q2", "Service desk survey"))
+        p = head("nothing like it")
+        self.assertEqual(p["headline_missing"], "nothing like it")
+        self.assertIn("servicenow_insights_survey_headline: nothing like it is not a survey or rating question read - the default instead",
+                      F.survey_read_lines(p, {"survey_headline": "nothing like it"}))
+
+    @unittest.skipUnless(any(__import__("shutil").which(b) for b in ("google-chrome", "chromium")), "no headless browser here")
+    def test_tables_fit(self):
+        import shutil
+        b = shutil.which("google-chrome") or shutil.which("chromium")
+        h = P.servicenow_insights_page(self.m, "all", OPTS)
+        probe = ('<script>addEventListener("load",function(){var s=document.getElementById("satisfaction"),w=[].slice.call(s.querySelectorAll(".tw"))'
+                 '.filter(function(t){return t.scrollWidth>t.clientWidth+1}).length;document.title="R "+w+" "+(document.documentElement.scrollWidth>innerWidth+1)})</script></body>')
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "all.html")
+            with open(path, "w") as fh:
+                fh.write(h.replace("</body>", probe))
+            for wd in (1366, 390):
+                out = subprocess.run([b, "--headless=new", "--disable-gpu", "--no-sandbox", "--virtual-time-budget=3000", "--window-size=%d,900" % wd,
+                                      "--dump-dom", "file://" + path], capture_output=True, text=True, timeout=120).stdout
+                self.assertIn("<title>R 0 false</title>", out, wd)
+
+
+def rd_window(x):
+    w = x["r"]["window"]
+    return rd.sn_time(w["since"]), rd.sn_time(w["until"])
+
+
 class RecordsCut(unittest.TestCase):
     """1.16.0: a table over servicenow_insights_max_records keeps its NEWEST records (opened_at descending), then reads
     the older records that count in the window (open, or done in it): the window whole, the one before cut - no compare,
@@ -1356,7 +1497,7 @@ class RecordsCut(unittest.TestCase):
         win = rd.window(6, 0, "2026-10-31", compare, "", NOW)
         api = self.Api(recs or self.recs(), stats)
         with mock.patch.object(rd, "read_slas", return_value=({}, {}, "")), mock.patch.object(rd, "read_states", return_value=({}, "")), \
-                mock.patch.object(rd, "read_survey", return_value=([], "")):
+                mock.patch.object(rd, "read_survey", return_value=([], {}, "")):
             return rd.read_all(api, [], ["incident"], win, cap, audit=False, members=False, group_parents=False), api
 
     def test_whole(self):
@@ -1569,7 +1710,8 @@ class History(unittest.TestCase):
             if len(d) > 25:
                 self.assertNotIn(d, text)
         names = set(f[2] for x in self.runs["runs"] for f in x["figures"])
-        known = sum((list(v) for _n, v in self.D.FIGURE_SETS), []) + ["outcome", "aging_bdays", "category", "hot_ci"]
+        known = sum((list(v) for _n, v in self.D.FIGURE_SETS), []) + ["outcome", "aging_bdays", "category", "hot_ci",
+                                                                      "survey_scale_max", "survey_questions"]    # 1.16.0: figures, in no view
         self.assertEqual(sorted(names - set(known)), [])
 
     def test_the_calendar_months(self):

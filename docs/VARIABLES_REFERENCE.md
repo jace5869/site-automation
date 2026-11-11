@@ -1485,8 +1485,12 @@ File: `roles/servicenow_insights/defaults/main.yml`
 | `servicenow_insights_outcome_map` | `Workaround: Workaround Workaround provided: Workaround Duplicate: Duplicate Known Error:…` | How incidents ended: a close code (as shown, any case) -> its outcome; any other code is Fixed. Unable to resolve = these outcomes, of those resolved. |
 | `servicenow_insights_unable_outcomes` | `[Known Error, No Resolution Provided]` | the outcomes counted as unable to resolve |
 | `servicenow_insights_service_desk_groups` | `[]` | The service desk's assignment groups (exact names), for its own first-contact resolution; [] = the site's only. |
-| `servicenow_insights_survey` | `true` | The incident surveys (asmt_metric_result, read only, best-effort): the average answer per group and month. The metrics read by name ([] = every metric whose answer is a number); false = not read. |
-| `servicenow_insights_survey_metrics` | `[]` | the survey metrics read, by name; [] = every metric answered with a number |
+| `servicenow_insights_survey` | `true` | The incident surveys (asmt_metric_result, read only, best-effort): each survey and question on its own scale, never one average across scales (1.16.0). false = not read. |
+| `servicenow_insights_survey_metrics` | `[]` | the questions read, by name; [] = every one answered with a number. Named: always a rating |
+| `servicenow_insights_survey_types` | `[]` | the surveys read, by name (asmt_metric_type); [] = every survey (1.16.0) |
+| `servicenow_insights_survey_headline` | (empty) | the survey or question for the tile, the email and the history; "" = the active survey with the most answers |
+| `servicenow_insights_survey_grades` | `{good: 0.8, fair: 0.6}` | Good / Fair / Low by the share of the scale, (average - min) / (max - min): on 1 to 4, Good from 3.4, Fair from 2.8. |
+| `servicenow_insights_survey_min_answers` | `5` | fewer answers: the average without a grade |
 | `servicenow_insights_max_records` | `20000` | Records per table at most, the newest kept; more: said on every page (1.16.0). Measured: 20000 needs about 0.4 GB in the EE; 100000 about 1.5 GB and 4 minutes more. |
 | `servicenow_insights_audit` | `true` | The assignment history of incidents passed around: the paths of Passed between groups. From sys_audit, else (0.97.0) the out-of-box incident metric "Assignment Group" (metric_instance) - both read only; the account needs read on one of them; without either the counts are still there and the report says which it could… (all of it: the role file) |
 | `servicenow_insights_handoff_source` | `auto` | auto (sys_audit, else the metric), audit, metric (sys_audit never asked), none |

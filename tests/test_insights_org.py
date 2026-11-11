@@ -361,7 +361,6 @@ def browser():
     return None
 
 
-@unittest.skipUnless(browser(), "no headless browser here")
 class PeriodButtons(unittest.TestCase):
     """1.16.0: any Nm and Nw; two short labeled rows (Months, Weeks) after The window and This month, the number on the
     button and the full label in its title and aria-label; one select on a phone; what the page's tickets can not cover
@@ -409,6 +408,7 @@ class PeriodButtons(unittest.TestCase):
             model(periods=["all", "14m"])
 
 
+@unittest.skipUnless(browser(), "no headless browser here")
 class TheScript(unittest.TestCase):
     """The page's own script, in a headless browser: the address's choice ticked (its units half-ticked, the counts), the
     figures as custom_figures works them out."""
