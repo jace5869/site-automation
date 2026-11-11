@@ -19,6 +19,8 @@ description:
   - A table (or sys_audit, sys_user_grmember) the account cannot read is returned with its error; the others are still read.
   - With group_parents (0.97.0), reads sys_user_group for the groups the records name and their parents up the chain
     (sys_id, name, parent, active, type - never a person's field): the sites and directorates ServiceNow itself knows.
+  - With managers (1.15.0), the same read of sys_user_group also asks each group's manager, dot-walked (manager.name,
+    manager.email, manager.active) - the team leads; with group_parents off, the groups the records name are read for it alone.
   - With work_notes_for (0.96.0), reads only the work notes of those incidents (sys_journal_field, element work_notes,
     newest first, GET only) for ACT's fixes - nothing else; refused (403) is returned as work_notes_error.
 options:
@@ -41,6 +43,7 @@ options:
   handoff_source: {description: "Where the hand-off paths come from (0.97.0): auto (sys_audit, else metric_instance), audit, metric (never sys_audit), none.", type: str, default: auto}
   members: {description: Read the groups' members (sys_user_grmember) for the leaderboards., type: bool, default: true}
   group_parents: {description: "Read the groups' parents and active flag (sys_user_group) for the sites and directorates.", type: bool, default: true}
+  managers: {description: "Read each group's manager (sys_user_group.manager: name, email, active) in the same read - the team leads.", type: bool, default: false}
   now: {description: "The clock (tests): YYYY-MM-DDTHH:MM:SS UTC.", type: str, default: ''}
   work_notes_for: {description: "Incident sys_ids: read only their work notes (sys_journal_field), nothing else.", type: list, elements: str, default: []}
   work_notes_max: {description: The newest work notes kept per incident., type: int, default: 20}
@@ -71,6 +74,8 @@ members: {description: "{group name: [the members' names]} for every group the r
 members_error: {description: "Why sys_user_grmember was not read ('' = read, or not asked).", type: str}
 group_tree: {description: "{sys_id: {name, parent (sys_id), active, type}} - the groups the records name and their parents.", type: dict}
 group_tree_error: {description: "Why sys_user_group was not read ('' = read, or not asked).", type: str}
+managers: {description: "{group name: {name, email, active}} - the manager of each group the records name that has one (with managers).", type: dict}
+managers_error: {description: "Why the managers were not read ('' = read, or not asked).", type: str}
 url: {description: The instance's address., type: str}
 work_notes: {description: "With work_notes_for: {incident sys_id: [[when (UTC text), text], ...]}, newest first.", type: dict}
 work_notes_error: {description: "Why sys_journal_field was not read ('' = read).", type: str}
@@ -475,20 +480,35 @@ def read_work_notes(api, ids, per_id=20, chars=1500, chunk=100):
     return out, ""
 
 
-def read_group_tree(api, ids, depth=6, chunk=100):
+MANAGER_FIELDS = ",manager,manager.name,manager.email,manager.active"
+
+
+def read_group_tree(api, ids, depth=6, chunk=100, managers=None):
     """The groups (sys_user_group, GET only) and their parents up the chain, at most depth levels, each read once (a
-    cycle stops) -> ({sys_id: {name, parent, active, type}}, error). Only those fields: never a manager or a person."""
+    cycle stops) -> ({sys_id: {name, parent, active, type}}, error). No person's field - but with managers (a dict,
+    1.15.0) the same read asks each group's manager too (dot-walked: name, email, active), put in managers as
+    {sys_id: {name, email, active}} with managers["_error"] when they could not be read (the groups are read without them)."""
     out, want, level = {}, [str(x) for x in ids if str(x or "").strip()], 0
+    ask = managers is not None
     while want and level < int(depth):
         level += 1
         nxt = []
         for i in range(0, len(want), chunk):
             part = want[i:i + chunk]
+            q = {"sysparm_query": "sys_idIN" + ",".join(part), "sysparm_fields": "sys_id,name,parent,active,type" + (MANAGER_FIELDS if ask else ""),
+                 "sysparm_display_value": "all", "sysparm_exclude_reference_link": "true", "sysparm_limit": len(part) + 10}
             try:
-                r = api.get("api/now/table/sys_user_group", {"sysparm_query": "sys_idIN" + ",".join(part), "sysparm_fields": "sys_id,name,parent,active,type",
-                                                             "sysparm_display_value": "all", "sysparm_exclude_reference_link": "true", "sysparm_limit": len(part) + 10})
+                r = api.get("api/now/table/sys_user_group", q)
             except SnError as e:
-                return out, str(e)
+                if not ask:
+                    return out, str(e)
+                managers["_error"] = str(e)                # the groups again without the managers
+                ask = False
+                q["sysparm_fields"] = "sys_id,name,parent,active,type"
+                try:
+                    r = api.get("api/now/table/sys_user_group", q)
+                except SnError as e2:
+                    return out, str(e2)
             for x in (r.get("result") if isinstance(r, dict) else None) or []:
                 k = str(_vd(x, "sys_id")[0] or "")
                 if not k or k in out:
@@ -496,9 +516,31 @@ def read_group_tree(api, ids, depth=6, chunk=100):
                 par = str(_vd(x, "parent")[0] or "")
                 out[k] = {"name": " ".join(str(_vd(x, "name")[1] or "").split()), "parent": par, "active": _flag(_vd(x, "active")[0]) is not False,
                           "type": str(_vd(x, "type")[1] or "")}
+                if ask and str(_vd(x, "manager")[0] or "").strip():
+                    managers[k] = {"name": " ".join(str(_vd(x, "manager.name")[1] or "").split()), "email": str(_vd(x, "manager.email")[1] or "").strip(),
+                                   "active": _flag(_vd(x, "manager.active")[0]) is not False, "id": str(_vd(x, "manager")[0])}
                 if par and par not in out and par not in nxt:
                     nxt.append(par)
         want = [k for k in nxt if k not in out]
+    return out, ""
+
+
+def manager_names(mgr, gids, names):
+    """The managers read (read_group_tree's) of the groups the records name -> ({group name: {name, email, active}}, error).
+    A manager whose name came back empty: the account reads sys_user_group.manager but not the person (sys_user)."""
+    if mgr.get("_error"):
+        return {}, "%s - the groups were read without them" % mgr["_error"]
+    out, hidden = {}, 0
+    for gid in gids:
+        m = mgr.get(gid)
+        if not m:
+            continue
+        if not m["name"]:
+            hidden += 1
+            continue
+        out[names.get(gid) or gid] = {"name": m["name"], "email": m["email"], "active": m["active"]}
+    if hidden and not out:
+        return {}, "the managers' names came back empty (%d groups): the account needs read on sys_user's name and email" % hidden
     return out, ""
 
 
@@ -681,11 +723,11 @@ def keep(it, since, until):
 
 
 def read_all(api, groups, tables, win, max_records=20000, audit=True, handoff_min=3, members=True, group_parents=True, handoff_source="auto",
-             sla_source="auto", first_assigned=False, state_metric="Incident State Duration", survey=True, survey_metrics=None):
+             sla_source="auto", first_assigned=False, state_metric="Incident State Duration", survey=True, survey_metrics=None, managers=False):
     since, until = sn_time(win["prev_since"]), sn_time(win["until"])
     res = {"ok": False, "error": "", "window": win, "groups": [], "tables": [], "items": [], "audit": {}, "audit_error": "",
            "members": {}, "members_error": "", "lookup_note": "", "url": api.url, "group_tree": {}, "group_tree_error": "",
-           "audit_source": "", "audit_note": ""}
+           "audit_source": "", "audit_note": "", "managers": {}, "managers_error": ""}
     g, gerr = lookup_groups(api, groups)
     res["groups"] = g
     gids = [x["sys_id"] for x in g if x.get("sys_id")]
@@ -731,8 +773,15 @@ def read_all(api, groups, tables, win, max_records=20000, audit=True, handoff_mi
     if members and names:
         res["members"], res["members_error"] = read_members(api, names)
     gids = sorted(set(it.get("group_id") for it in items if it.get("group_id") and re.match(r"^[\w-]{1,64}$", str(it["group_id"]))))
+    mgr = {} if managers else None
     if group_parents and gids:
-        res["group_tree"], res["group_tree_error"] = read_group_tree(api, gids)
+        res["group_tree"], res["group_tree_error"] = read_group_tree(api, gids, managers=mgr)
+    elif managers and gids:                               # 1.15.0: the teams' own groups only, for their managers
+        _tree, err = read_group_tree(api, gids, depth=1, managers=mgr)
+        if err:
+            mgr["_error"] = err
+    if managers:
+        res["managers"], res["managers_error"] = manager_names(mgr, gids, names)
     res["sla"], res["first_assigned"], res["first_assigned_error"] = read_slas(api, items, win, sla_source, first_assigned, max_records)
     # 1.7.0: the time on hold (the incidents on hold now, and those done in the window), the surveys
     since_w = sn_time(win["since"])
@@ -760,7 +809,7 @@ def main():
             sla_source=dict(type="str", default="auto", choices=["auto", "task_sla", "targets", "made_sla"]),
             first_assigned=dict(type="bool", default=False),
             state_metric=dict(type="str", default="Incident State Duration"), survey=dict(type="bool", default=True),
-            survey_metrics=dict(type="list", elements="str", default=[]),
+            survey_metrics=dict(type="list", elements="str", default=[]), managers=dict(type="bool", default=False),
         ),
         supports_check_mode=True)
     p = module.params
@@ -787,7 +836,7 @@ def main():
     api = Api(url, p["username"], p["password"], p["validate_certs"], p["ca_path"], p["timeout"])
     try:
         res = read_all(api, p["groups"], p["tables"], win, p["max_records"], p["audit"], p["handoff_min"], p["members"], p["group_parents"], p["handoff_source"],
-                       p["sla_source"], p["first_assigned"], p["state_metric"], p["survey"], p["survey_metrics"])
+                       p["sla_source"], p["first_assigned"], p["state_metric"], p["survey"], p["survey_metrics"], p["managers"])
     except SnError as e:
         res = {"ok": False, "error": str(e), "window": win, "groups": [], "tables": [], "items": [], "audit": {}, "audit_error": "",
                "members": {}, "members_error": "", "lookup_note": "", "url": url}

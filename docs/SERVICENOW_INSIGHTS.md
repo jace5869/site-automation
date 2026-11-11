@@ -139,7 +139,8 @@ of 0.88.0 to 0.96.0, `{template}/<team>/latest.html`, are no longer written or l
 Where each assignment group belongs comes from `servicenow_insights_hierarchy_source`:
 
 **parents** (the default): ServiceNow's own group tree - the job reads `sys_user_group` (GET only: `sys_id`, `name`,
-`parent`, `active`, `type` of the groups the tickets name and their parents, never a manager or a person). The **site**
+`parent`, `active`, `type` of the groups the tickets name and their parents; a person's field only for the team leads,
+below). The **site**
 is the root group at the top (shown by its name's first ` - ` part: a root *SITEA - J6* shows as SITEA); the
 **directorate** is the group one below the root (a group right under the root has the root as its directorate - *J6*,
 or *(site direct)* when the root is just the site's name); the **team** is the group (a team under a team is still a
@@ -382,9 +383,14 @@ model's time (`servicenow_insights_act_model_timeout`). Schedule it monthly, ove
 **Where this run's time went (1.14.0).** The job's last lines say it by phase, for example:
 
 ```text
-Time: ServiceNow reads 78 s, ACT 1 s, The report worked out 8 s, Trends (the report database) 0 s, Pages and email 3 s,
-The report database written 0 s - 89 s in all
+Time: ServiceNow reads 78 s, ACT 1 s, The report worked out 8 s, The report database (read and written) 0 s,
+Pages and email 3 s - 89 s in all
+Report database db.yoursite.mil:3309/site_reports: written - run 41, 2 months (2026-10, 2026-11 (so far)), 4,210 figures;
+the database now holds 38 runs, first month 2025-11, last month 2026-11
 ```
+
+The last line says whether this run's figures reached the report database (1.15.0): see
+[REPORT_DATABASE.md](REPORT_DATABASE.md), *Is it writing?*.
 
 *How this was made* on the page has the same split, up to the pages (they are written after it is made).
 
@@ -420,7 +426,7 @@ The **ServiceNow API** credential you already have works ([SERVICENOW_SETUP.md](
 | Table | What | The role that reads it |
 |---|---|---|
 | `incident`, `sc_req_item`, `sc_task`, `change_request`, `change_task` (1.2.0), `problem` | the tickets | `itil`; `change_task` refused (403): said under *Not read*, the change tasks left out |
-| `sys_user_group` | the groups named in `servicenow_insights_groups`; since 0.97.0 the tickets' groups and their parents (sites and directorates) | `itil`; refused, the sites come from the names (or `servicenow_insights_use_group_parents: false`) |
+| `sys_user_group` | the groups named in `servicenow_insights_groups`; since 0.97.0 the tickets' groups and their parents (sites and directorates); since 1.15.0 each group's `manager` with its name, email and active flag (the team leads) | `itil`; refused, the sites come from the names (or `servicenow_insights_use_group_parents: false`); the manager refused, said under *Not read*, no Group manager line |
 | `sys_audit` | the assignment history of incidents passed between groups (the paths) | `itil` on most instances; refused, the paths come from `metric_instance` (below) |
 | `metric_instance` | the same history from the out-of-box incident metric *Assignment Group* (0.97.0), when `sys_audit` is refused or `servicenow_insights_handoff_source: metric` | read on `metric_instance` (`itil` on most instances); both refused, the report shows the counts without the paths and says which table it could not read |
 | `sys_user_grmember` | the members of the groups the tickets name (the teams' leaderboards) | `itil` on most instances; else the report says so and each leaderboard lists everyone the team's tickets were assigned to or resolved by (or `servicenow_insights_members: false`) |
@@ -453,7 +459,35 @@ A table the account cannot read is listed under *Not read* and the rest is repor
    or quarterly with `servicenow_insights_months: 3`. For ACT on the monthly run, add `servicenow_insights_act: true` to
    that schedule's Variables.
 
-To email a team lead their team's page as well: `servicenow_insights_team_email_to: {"Ops - Windows": [lead@yoursite.mil]}`.
+To email a team lead their team's page as well, see [Team leads](#team-leads-1150) below.
+
+## Team leads (1.15.0)
+
+The team lead is the group's **Manager** in ServiceNow (`sys_user_group.manager`). The job reads it with the groups it
+already reads: no extra call per group. A team's page shows **Group manager: NAME** under the title. Its email shows it after
+the window.
+
+- No manager in ServiceNow: no line.
+- An inactive manager: the name, then *(inactive in ServiceNow)*.
+- Site, directorate and unit pages: no line, in every hierarchy source.
+- The account may not read the manager (403), or the person's name comes back empty: said once under *Not read*. The rest
+  of the report is whole.
+
+To email a team's page to its lead, name the teams:
+
+```yaml
+servicenow_insights_email_leads: ["Ops - Windows", "ops - net*"]   # names or patterns, any case; or "all"
+servicenow_insights_show_lead: true                                # the Group manager line; false = off (the emails still go)
+```
+
+- `[]` (the default) emails nobody.
+- A pattern works as in `servicenow_insights_split_pattern` (`*` any text, `?` one character).
+- A manager who is inactive, or has no email address, gets nothing. The job output says so, one line per team.
+- `servicenow_insights_team_email_to: {"Ops - Windows": [lead@yoursite.mil]}` still works. For a team named in both, it
+  wins: the email goes to its addresses, not to the manager.
+
+Each lead's email goes **To** the lead alone. `report_email_to` does not get it, even as an extra variable. The email
+links the team's page on the report website. The report database keeps no name: the lead is never written there.
 
 ## Your SLOs, priorities and categories
 

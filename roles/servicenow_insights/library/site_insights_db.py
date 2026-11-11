@@ -18,9 +18,12 @@ description:
   - tls false (the default) - plain TCP. caching_sha2_password then needs the cryptography library.
   - tls true - the server's certificate must be signed by the CA (ca_file, else the EE's trust store) and name the host.
     A session that is not encrypted is refused.
+  - mode check (1.15.0) - read only, nothing made or written (the reader account is enough) - the server's version, the
+    account and whether it may write, the tables and views there or missing, and what is held per instance and period.
+  - After a write, what the database holds is read back (held - a SELECT, not the rows sent).
   - A database that cannot be reached is a warning and ok false - unless required is true, then the task fails.
 options:
-  mode: {description: read or write., type: str, choices: [read, write], required: true}
+  mode: {description: read, write or check., type: str, choices: [read, write, check], required: true}
   host: {description: The database server., type: str, required: true}
   port: {description: "Its port (the report database's: 3309).", type: int, default: 3309}
   database: {description: The schema (database) name., type: str, required: true}
@@ -54,6 +57,11 @@ months: {description: "write: the calendar months written (the month so far mark
 tickets: {description: "write: each month's tickets and rows, in words (the backfill's progress).", type: str}
 kept: {description: "write: months not written - their complete figures are kept over a partial run's.", type: list}
 months_kept: {description: "read: the months with a run of this instance and period.", type: int}
+run_id: {description: "write: the first run written (the window's).", type: int}
+held: {description: "write, check: [{source, period, runs, months, complete, first, last, newest}] - read back from insights_run.", type: list}
+version: {description: "check: the server's version.", type: str}
+account: {description: "check: the account as the server knows it, and can_write (INSERT granted).", type: dict}
+objects: {description: "check: {present: [...], missing: [...]} - the tables and views.", type: dict}
 '''
 
 import datetime
@@ -264,7 +272,7 @@ def write_run(cur, rows, job):
                 (run["source"], run["period"], we))
     r = cur.fetchone()
     if r and partial and not int(r[1]):
-        return False, True, 0, 0
+        return False, True, 0, 0, 0
     if r:
         run_id = int(r[0])
         cur.execute("UPDATE insights_run SET window_start = %s, month = %s, partial = %s, data_end = %s, written_at = UTC_TIMESTAMP(), "
@@ -285,7 +293,7 @@ def write_run(cur, rows, job):
     for i in range(0, len(figs), 2000):
         cur.executemany("INSERT INTO insights_figure (run_id, variant, node, metric, label, value) VALUES (%s, %s, %s, %s, %s, %s)",
                         figs[i:i + 2000])
-    return bool(r), False, len(nodes), len(figs)
+    return bool(r), False, len(nodes), len(figs), run_id
 
 
 def write(conn, p):
@@ -293,10 +301,11 @@ def write(conn, p):
     rows = p["rows"] or {}
     runs = rows.get("runs") if "runs" in rows else [rows]
     cur = conn.cursor()
-    out = {"replaced": False, "written": {"runs": 0, "nodes": 0, "figures": 0}, "months": [], "kept": [], "tickets": ""}
+    out = {"replaced": False, "written": {"runs": 0, "nodes": 0, "figures": 0}, "months": [], "kept": [], "tickets": "", "run_id": 0}
     said = []
     for one in runs or []:
-        replaced, skipped, nn, nf = write_run(cur, one, str(p["job"])[:64])
+        replaced, skipped, nn, nf, rid = write_run(cur, one, str(p["job"])[:64])
+        out["run_id"] = out["run_id"] or rid
         run = one.get("run") or {}
         if skipped:
             out["kept"].append(run.get("month"))
@@ -313,6 +322,45 @@ def write(conn, p):
                 run.get("month"), t.get("incidents", 0), t.get("requests", 0), t.get("items", 0), nn, nf,
                 ", replaced" if replaced else ""))
     out["tickets"] = "; ".join(said)
+    conn.commit()
+    out["held"] = held(conn)            # read back: what the database holds now, not what was sent
+    return out
+
+
+def held(conn):
+    """What insights_run holds, per instance and period: [{source, period, runs, months, complete, first, last, newest}]."""
+    cur = conn.cursor()
+    cur.execute("SELECT source, period, COUNT(*), COUNT(DISTINCT month), COUNT(DISTINCT CASE WHEN partial = 0 THEN month END), "
+                "MIN(month), MAX(month), MAX(written_at) FROM insights_run GROUP BY source, period ORDER BY source, period")
+    out = [{"source": str(a), "period": str(b), "runs": int(c), "months": int(d), "complete": int(e), "first": str(f or ""), "last": str(g or ""),
+            "newest": h.strftime("%Y-%m-%d %H:%M:%S UTC") if h else ""} for a, b, c, d, e, f, g, h in cur.fetchall()]
+    conn.commit()
+    return out
+
+
+def check(conn):
+    """Read only (the reader account is enough): the server, the account, the objects, what is held."""
+    cur = conn.cursor()
+    cur.execute("SELECT VERSION(), CURRENT_USER()")
+    version, account = cur.fetchone()
+    grants = []
+    try:
+        cur.execute("SHOW GRANTS FOR CURRENT_USER()")
+        grants = [str(x[0]) for x in cur.fetchall()]
+    except Exception:           # noqa: BLE001 - not allowed: unknown
+        pass
+    can_write = any(re.search(r"\b(INSERT|ALL PRIVILEGES)\b", g) for g in grants) if grants else None
+    cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN (%s)" % (
+        ", ".join(["%s"] * len(OBJECTS))), OBJECTS)
+    have = set(str(x[0]) for x in cur.fetchall())
+    out = {"version": str(version), "account": {"name": str(account), "can_write": can_write},
+           "objects": {"present": [o for o in OBJECTS if o in have], "missing": [o for o in OBJECTS if o not in have]}, "held": [], "schema_version": 0}
+    if "schema_version" in have:
+        cur.execute("SELECT version FROM schema_version WHERE component = %s", (COMPONENT,))
+        r = cur.fetchone()
+        out["schema_version"] = int(r[0]) if r else 0
+    if "insights_run" in have:
+        out["held"] = held(conn)
     conn.commit()
     return out
 
@@ -349,7 +397,7 @@ def short_error(e):
 def main():
     module = AnsibleModule(
         argument_spec=dict(
-            mode=dict(type="str", required=True, choices=["read", "write"]), host=dict(type="str", required=True),
+            mode=dict(type="str", required=True, choices=["read", "write", "check"]), host=dict(type="str", required=True),
             port=dict(type="int", default=3309), database=dict(type="str", required=True), user=dict(type="str", required=True),
             password=dict(type="str", required=True, no_log=True), tls=dict(type="bool", default=False), ca_file=dict(type="str", default=""),
             connect_timeout=dict(type="int", default=10), create=dict(type="bool", default=True), rows=dict(type="dict"),
@@ -361,14 +409,15 @@ def main():
     p = module.params
     where = "%s:%s/%s" % (p["host"], p["port"], p["database"])
     res = {"changed": False, "ok": False, "error": "", "tls": "", "auth": "", "created": False, "schema_version": 0,
-           "replaced": False, "written": {"runs": 0, "nodes": 0, "figures": 0}, "months": [], "kept": [], "tickets": "", "rows": [], "months_kept": 0, "where": where}
+           "replaced": False, "written": {"runs": 0, "nodes": 0, "figures": 0}, "months": [], "kept": [], "tickets": "", "rows": [], "months_kept": 0, "where": where,
+           "run_id": 0, "held": [], "version": "", "account": {}, "objects": {}}
 
     def give_up(msg):
         res["error"] = msg
         if p["required"]:
             module.fail_json(msg="The report database %s: %s (servicenow_insights_db_required: true)" % (where, msg), **res)
         module.warn("The report database %s: %s - the report is whole, the history not %s this run (servicenow_insights_db_required: false)" % (
-            where, msg, "read" if p["mode"] == "read" else "written"))
+            where, msg, "read" if p["mode"] in ("read", "check") else "written"))
         module.exit_json(**res)
 
     if not HAS_PYMYSQL:
@@ -380,6 +429,10 @@ def main():
     try:
         conn, res["tls"] = connect(p)
         res["auth"] = auth_plugin(conn)
+        if p["mode"] == "check":            # 1.15.0: nothing made, nothing written
+            res.update(check(conn))
+            res["ok"] = True
+            module.exit_json(**res)
         res["schema_version"], res["created"] = schema(conn, p["create"] and not module.check_mode, p["mode"] == "read")
         if p["mode"] == "write":
             res.update(write(conn, p))

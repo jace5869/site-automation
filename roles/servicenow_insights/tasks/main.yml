@@ -17,6 +17,12 @@
   ansible.builtin.set_fact:
     _sni_t: "{{ _sni_t | default({}) | combine({'start': now().timestamp()}) }}"
 
+# IS IT WRITING? (1.15.0): servicenow_insights_db_check: true - only the report database checked, read only (db_check.yml);
+# no ServiceNow credential needed, the play ends there.
+- name: Insights | check the report database, nothing else (servicenow_insights_db_check)
+  ansible.builtin.include_tasks: db_check.yml
+  when: servicenow_insights_db_check | bool
+
 - name: Insights | the ServiceNow API credential is attached
   ansible.builtin.assert:
     that: _sni_url | length > 0
@@ -47,6 +53,7 @@
       known_groups_only: "{{ servicenow_insights_known_groups_only | bool }}"
       exclude_groups: "{{ servicenow_insights_exclude_groups | servicenow_insights_name_list }}"
       inactive_teams: "{{ servicenow_insights_inactive_teams | bool }}"
+      show_lead: "{{ servicenow_insights_show_lead | bool }}"
       skip_group_types: "{{ servicenow_insights_skip_group_types | servicenow_insights_name_list }}"
       # the website's look: brief draws the page in its palette, with the verdict at the top (0.92.0)
       look: "{{ report_web_theme | default('atlas') | string | trim | lower }}"
@@ -139,6 +146,8 @@
     state_metric: "{{ servicenow_insights_state_metric | default('', true) | string | trim }}"
     survey: "{{ servicenow_insights_survey | default(true) | bool }}"
     survey_metrics: "{{ servicenow_insights_survey_metrics | servicenow_insights_name_list }}"
+    # the team leads (1.15.0): each group's manager, in the groups' read - for the page's line or the leads' emails
+    managers: "{{ servicenow_insights_show_lead | bool or servicenow_insights_email_leads | default([], true) | length > 0 }}"
   register: _sni
   check_mode: false             # only reads
 
@@ -218,6 +227,18 @@
            ('a dry run (Check): ACT was not asked' if ansible_check_mode else _sni_act_stop)})) }}
   when: _sni.ok | default(false) | bool
 
+# 1.15.0: each team's own email - to its manager (servicenow_insights_email_leads) or to servicenow_insights_team_email_to
+- name: Insights | who gets each team's own email (servicenow_insights_email_leads, servicenow_insights_team_email_to)
+  ansible.builtin.set_fact:
+    _sni_leads: >-
+      {{ _sni_model | default({}) | servicenow_insights_lead_mail(servicenow_insights_email_leads | default([], true),
+                                                                  servicenow_insights_team_email_to | default({}, true)) }}
+
+- name: Insights | the team leads not emailed
+  ansible.builtin.debug:
+    msg: "{{ _sni_leads.lines }}"
+  when: _sni_leads.lines | length > 0
+
 - name: Insights | time - the report worked out
   ansible.builtin.set_fact:
     _sni_t: "{{ _sni_t | default({}) | combine({'model': now().timestamp()}) }}"
@@ -263,7 +284,21 @@
   ansible.builtin.include_tasks: db.yml
   when: servicenow_insights_db | bool and _sni.ok | default(false) | bool
 
-- name: Insights | time - the trends read
+# 1.15.0: written before the pages, so each page can say it was (How this was made); a month replaces an older run's
+- name: Insights | this run's figures into the report database (servicenow_insights_db)
+  ansible.builtin.include_tasks: db_write.yml
+  when: servicenow_insights_db | bool and _sni.ok | default(false) | bool
+
+- name: Insights | is it writing? - the report database, read back after the write
+  ansible.builtin.set_fact:
+    _sni_db_say: >-
+      {{ {'on': servicenow_insights_db | bool, 'host': (_sni_db | default({})).host | default(''), 'port': (_sni_db | default({})).port | default(''),
+          'database': (_sni_db | default({})).database | default(''), 'check': ansible_check_mode,
+          'read': _sni_hist | default({}), 'write': _sni_db_w | default({}),
+          'source': (_sni_db_runs | default({'runs': [{'run': {}}]})).runs[0].run.source | default(''),
+          'not_read': '' if _sni.ok | default(false) | bool else 'ServiceNow was not read'} | servicenow_insights_db_status }}
+
+- name: Insights | time - the report database read and written
   ansible.builtin.set_fact:
     _sni_t: "{{ _sni_t | default({}) | combine({'db': now().timestamp()}) }}"
 
@@ -337,7 +372,7 @@
       {{ _sni_web.on | bool and not report_web_copy | default(false) | bool and report_web_host | default('', true) | string | trim | length == 0
          and servicenow_insights_pages_per_call | int > 0 and not ansible_check_mode }}
 
-- name: Insights | each site's, directorate's and team's page on the report website (and a team's email to its lead, servicenow_insights_team_email_to)
+- name: Insights | each site's, directorate's and team's page on the report website (and a team's email to its lead)
   ansible.builtin.include_role:
     name: site_email
   vars:
@@ -346,9 +381,9 @@
     _report: "{{ _sni_model | servicenow_insights_variant(_sni_job.v) | servicenow_insights_doc(_sni_team, _sni_opts) }}"
     _report_html: "{{ _sni_model | servicenow_insights_page(_sni_team, _sni_page_opts) }}"
     _report_xlsx: []
-    _report_email_skip: "{{ _sni_job.v | length > 0 or (servicenow_insights_team_email_to[_sni_team] | default([])) | length == 0 }}"
+    _report_email_skip: "{{ _sni_job.v | length > 0 or (_sni_leads.to[_sni_team] | default([])) | length == 0 }}"
     # the lead's address wins over report_email_to, even one in the template's Variables (an extra variable)
-    _report_email_to_override: "{{ [] if _sni_job.v else servicenow_insights_team_email_to[_sni_team] | default([]) }}"
+    _report_email_to_override: "{{ [] if _sni_job.v else _sni_leads.to[_sni_team] | default([]) }}"
     report_web_names: "{{ _sni_web.names | combine(_sni_file.names) }}"
     report_web_page: "{{ _sni_file.page }}"
     report_web_latest: ""
@@ -359,9 +394,10 @@
                               'generated': now(fmt='%Y-%m-%d %H:%M %Z') | trim, 'job': awx_job_id | default(tower_job_id | default('local')),
                               'footer': 'AAP job ' ~ awx_job_id | default(tower_job_id | default('(command line)')) ~ ' - ServiceNow ' ~ _sni_url,
                               'header_text': report_email_header_text | default('Site automation report'),
-                              'not_read': _sni_model | servicenow_insights_not_read, 'timing': (_sni_t | servicenow_insights_timing).rows}) }}
+                              'not_read': _sni_model | servicenow_insights_not_read, 'timing': (_sni_t | servicenow_insights_timing).rows,
+                              'db': _sni_db_say if servicenow_insights_db | bool else {}}) }}
   # the pages in one go (_sni_fast, 1.14.0): the pages below, then the team leads' emails
-  loop: "{{ [] if _sni_fast | bool else (_sni_web.jobs if _sni_web.on | bool or servicenow_insights_team_email_to | length > 0 else []) }}"
+  loop: "{{ [] if _sni_fast | bool else (_sni_web.jobs if _sni_web.on | bool or _sni_leads.to | length > 0 else []) }}"
   loop_control:
     loop_var: _sni_job
     label: "{{ _sni_job.key }}{{ (' (' ~ _sni_job.v ~ ')') if _sni_job.v else '' }}"
@@ -385,7 +421,8 @@
                               'generated': now(fmt='%Y-%m-%d %H:%M %Z') | trim, 'job': awx_job_id | default(tower_job_id | default('local')),
                               'footer': 'AAP job ' ~ awx_job_id | default(tower_job_id | default('(command line)')) ~ ' - ServiceNow ' ~ _sni_url,
                               'header_text': report_email_header_text | default('Site automation report'),
-                              'not_read': _sni_model | servicenow_insights_not_read, 'timing': (_sni_t | servicenow_insights_timing).rows}) }}
+                              'not_read': _sni_model | servicenow_insights_not_read, 'timing': (_sni_t | servicenow_insights_timing).rows,
+                              'db': _sni_db_say if servicenow_insights_db | bool else {}}) }}
   when: >-
     _sni.ok | default(false) | bool and (report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0
     or _sni_web.on | bool)
@@ -403,10 +440,11 @@
       {{ _sni_opts | combine({'generated': now(fmt='%Y-%m-%d %H:%M %Z') | trim, 'job': awx_job_id | default(tower_job_id | default('local')),
                               'footer': 'AAP job ' ~ awx_job_id | default(tower_job_id | default('(command line)')) ~ ' - ServiceNow ' ~ _sni_url,
                               'header_text': report_email_header_text | default('Site automation report'),
-                              'not_read': _sni_model | servicenow_insights_not_read, 'timing': (_sni_t | servicenow_insights_timing).rows}) }}
+                              'not_read': _sni_model | servicenow_insights_not_read, 'timing': (_sni_t | servicenow_insights_timing).rows,
+                              'db': _sni_db_say if servicenow_insights_db | bool else {}}) }}
   when: _sni_fast | bool and _sni.ok | default(false) | bool
 
-- name: Insights | each team lead's email (servicenow_insights_team_email_to), linking the team's page written above
+- name: Insights | each team lead's email (servicenow_insights_email_leads, servicenow_insights_team_email_to), linking the team's page written above
   ansible.builtin.include_role:
     name: site_email
   vars:
@@ -414,7 +452,7 @@
     _report: "{{ _sni_model | servicenow_insights_doc(_sni_team, _sni_opts) }}"
     _report_xlsx: []
     _report_web_skip: true
-    _report_email_to_override: "{{ servicenow_insights_team_email_to[_sni_team] | default([]) }}"
+    _report_email_to_override: "{{ _sni_leads.to[_sni_team] | default([]) }}"
     # the page's address as the one-page-at-a-time run gives it: report_web_url (or an https report_web_dest) and the file
     _report_web_url: >-
       {%- set base = (report_web_url | default('') | trim) or (report_web_dest | trim if report_web_dest | trim is match('(?i)https?://') else '') -%}
@@ -422,7 +460,7 @@
     _pages_ok: >-
       {{ _pages_out is defined and _pages_out.results | default([]) | rejectattr('skipped', 'defined')
          | selectattr('published', 'equalto', false) | list | length == 0 }}
-  loop: "{{ _sni_web.jobs | selectattr('v', 'equalto', '') | selectattr('key', 'in', servicenow_insights_team_email_to.keys() | list) | list if _sni_fast | bool else [] }}"
+  loop: "{{ _sni_web.jobs | selectattr('v', 'equalto', '') | selectattr('key', 'in', _sni_leads.to.keys() | list) | list if _sni_fast | bool else [] }}"
   loop_control:
     loop_var: _sni_job
     label: "{{ _sni_job.key }}"
@@ -431,10 +469,6 @@
   ansible.builtin.set_fact:
     _sni_t: "{{ _sni_t | default({}) | combine({'pages': now().timestamp()}) }}"
 
-- name: Insights | this run's figures into the report database (servicenow_insights_db)
-  ansible.builtin.include_tasks: db_write.yml
-  when: servicenow_insights_db | bool and _sni.ok | default(false) | bool
-
 - name: Insights | time - done
   ansible.builtin.set_fact:
     _sni_t: "{{ _sni_t | default({}) | combine({'end': now().timestamp()}) }}"
@@ -442,6 +476,10 @@
 - name: Insights | the time this run took
   ansible.builtin.debug:
     msg: "{{ (_sni_t | servicenow_insights_timing).line }}"
+
+- name: Insights | is it writing? - the report database
+  ansible.builtin.debug:
+    msg: "{{ _sni_db_say.line }}"
 
 - name: Insights | ServiceNow read, every group there (servicenow_insights_fail)
   ansible.builtin.assert:

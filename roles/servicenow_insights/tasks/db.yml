@@ -1,7 +1,7 @@
 ---
 # THE HISTORY (1.13.0, docs/REPORT_DATABASE.md), before the pages: this run's figures worked out - the window's own, and
 # each calendar month of it (the month so far partial) - and the last months read back for the page's trend. db_write.yml
-# writes them after the pages. The database not reached: one warning, the report whole, the job green
+# writes them next, before the pages (1.15.0). The database not reached: one warning, the report whole, the job green
 # (servicenow_insights_db_required: false).
 - name: Insights | the report database's login
   ansible.builtin.include_tasks: db_login.yml

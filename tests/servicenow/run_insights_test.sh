@@ -243,12 +243,12 @@ assert inc("siteb/latest.html") == inc("siteb/latest-blue.html") + inc("siteb/la
 PYJ
 keys=$("$py" -c "import json,sys; print(' '.join(sorted(r['key'] for r in json.load(open(sys.argv[1]))['reports'])))" "$work/site5/index.json")
 [ "$keys" = "servicenow-ticket-insights/latest.html" ] && echo "ok   -   ... one line on the index" || { echo "FAIL - the index: $keys"; fails=$((fails + 1)); }
-"$py" - "$work/log.jsonl" <<'PYJ' && echo "ok   -   ... sys_user_group read with GET only, no person's field" || { echo "FAIL - the groups' requests"; fails=$((fails + 1)); }
+"$py" - "$work/log.jsonl" <<'PYJ' && echo "ok   -   ... sys_user_group read with GET only, the team lead's name and email the only person's fields" || { echo "FAIL - the groups' requests"; fails=$((fails + 1)); }
 import json, sys
 rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
 g = [r for r in rows if r["path"].endswith("/sys_user_group") and r["query"].get("sysparm_query", "").startswith("sys_idIN")]
 assert g and all(r["method"] == "GET" for r in g)
-assert all(r["query"]["sysparm_fields"] == "sys_id,name,parent,active,type" for r in g), g[0]["query"]
+assert all(r["query"]["sysparm_fields"] == "sys_id,name,parent,active,type,manager,manager.name,manager.email,manager.active" for r in g), g[0]["query"]
 PYJ
 run "  ... again with servicenow_insights_split_teams false: the teams' split pages gone, the rest kept" ok \
     "{$NOW, $NOACT, \"servicenow_insights_hierarchy_source\": \"parents\", \"report_web_dest\": \"$work/site5\", \"servicenow_insights_team_min\": 5,
@@ -370,6 +370,63 @@ for d in sys.argv[1:]:
 a, b = got.values()
 assert a == b, [(k, a[k][-300:], b[k][-300:]) for k in a if a[k] != b[k]]
 EOPY
+
+# ---- 1.15.0: the team leads from ServiceNow (sys_user_group.manager) - the page's line, emailed by pattern, both ways --------
+MGRS='{"Ops - Windows": {"name": "Pat Lee", "email": "pat.lee@example.mil"}, "Ops - Linux": {"name": "Kim Old", "email": "kim@example.mil", "active": "false"},
+       "Ops - VDI": {"name": "Sam Ray", "email": "sam.ray@example.mil"}, "Ops - Service Desk": {"name": "Dee Desk", "email": "dee@example.mil"}}'
+mock SNMOCK_GROUP_MANAGERS="$MGRS"
+ELEADS='"servicenow_insights_email_leads": ["ops - w*", "Ops - Linux", "Ops - Network", "Ops - VDI"], "servicenow_insights_team_email_to": {"Ops - VDI": ["vdi-list@example.mil"]}'
+for n in 40 0; do
+    rm -f "$work"/mail/*.eml
+    mkdir -p "$work/mgr$n" "$work/mmail$n"
+    run "team leads from ServiceNow, pages $n per call: a pattern, no manager, inactive, both settings on one group" ok \
+        "{$NOW, $NOACT, $MAIL, $ELEADS, \"report_email_to\": [\"ops@example.mil\"], \"report_web_dest\": \"$work/mgr$n\",
+          \"report_web_url\": \"https://reports.example.mil/r\", \"servicenow_insights_pages_per_call\": $n}" \
+        'Ops - Linux: not emailed - the manager Kim Old is inactive' 'Ops - Network: not emailed - no manager in ServiceNow' \
+        '!Ops - VDI: not emailed' '!Ops - Service Desk: not emailed'
+    mv "$work"/mail/*.eml "$work/mmail$n/" 2>/dev/null
+    t="$work/mgr$n/servicenow-ticket-insights/ops/other"
+    check "  ... the team's page says its lead; none without a manager, none on the All page" "$t/windows/latest.html" \
+        '<div class="sub lead">Group manager: <b>Pat Lee</b></div>'
+    check "  ... inactive said" "$t/linux/latest.html" 'Group manager: <b>Kim Old (inactive in ServiceNow)</b>'
+    check "  ... no manager: nothing" "$t/network/latest.html" '!Group manager'
+    check "  ... the All page: nothing" "$work/mgr$n/servicenow-ticket-insights/latest.html" '!Group manager'
+done
+"$py" - "$work/mmail40" "$work/mmail0" <<'EOPY' && echo "ok   -   ... the lead To alone, the list for both settings, the Group manager line in the email; the same both ways" || { echo "FAIL - the team leads from ServiceNow"; fails=$((fails + 1)); }
+import email, glob, re, sys
+from email import policy
+def mails(d):
+    out = {}
+    for f in sorted(glob.glob(d + "/*.eml")):
+        raw = open(f, "rb").read()
+        to = re.search(rb"^X-Envelope-To: (.*)$", raw, re.M).group(1).decode().strip()
+        m = email.message_from_bytes(raw.split(b"\n", 4)[-1] if raw.startswith(b"X-") else raw, policy=policy.default)
+        out.setdefault(to, []).append((m["To"], m.get_body(("plain",)).get_content()))
+    return out
+norm = lambda b: re.sub(r"\d{4}-\d{2}-\d{2}[ T_]\d{2}:?\d{2}(:\d{2})?( ?[A-Z]{2,5})?", "T", b)
+got = {}
+for d in sys.argv[1:]:
+    m = mails(d)
+    assert sorted(m) == ["ops@example.mil", "pat.lee@example.mil", "vdi-list@example.mil"], (d, sorted(m))
+    lee, vdi = m["pat.lee@example.mil"], m["vdi-list@example.mil"]
+    assert len(lee) == 1 and lee[0][0] == "pat.lee@example.mil", (d, lee[0][0])
+    assert "Group manager: Pat Lee" in lee[0][1] and "In a browser: https://reports.example.mil/r/servicenow-ticket-insights/ops/other/windows/latest.html" in lee[0][1], lee[0][1][:600]
+    assert len(vdi) == 1 and "Group manager: Sam Ray" in vdi[0][1], vdi[0][1][:400]        # team_email_to won: the list, not Sam
+    assert "Group manager" not in m["ops@example.mil"][0][1]
+    got[d] = dict((k, norm(v[0][1])) for k, v in m.items())
+a, b = got.values()
+assert a == b, [(k, a[k][-300:], b[k][-300:]) for k in a if a[k] != b[k]]
+EOPY
+mock SNMOCK_GROUP_MANAGERS="$MGRS" SNMOCK_NO_MANAGER=1
+rm -f "$work"/mail/*.eml
+run "the managers refused: said once, nobody emailed, the job green" ok \
+    "{$NOW, $NOACT, $MAIL, \"servicenow_insights_email_leads\": \"all\", \"report_email_to\": [\"ops@example.mil\"]}" \
+    'sys_user_group.manager (the team leads): GET' 'Team leads not emailed: the managers were not read' '!Group manager: '
+if ls "$work"/mail/*.eml >/dev/null 2>&1 && [ "$(grep -l '^X-Envelope-To: ops@example.mil' "$work"/mail/*.eml | wc -l)" = "$(ls "$work"/mail/*.eml | wc -l)" ]; then
+    echo "ok   -   ... only the All page's email"
+else
+    echo "FAIL - the managers refused: a lead was emailed"; fails=$((fails + 1))
+fi
 
 # ---- the org map (1.8.0): management's own tree, any depth; the Custom view and its periods (1.10.0) -----------------
 mock SNMOCK_SEED="$work/seed3.json"

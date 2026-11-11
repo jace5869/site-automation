@@ -77,6 +77,7 @@ button,input,select{font:inherit;color:inherit}
 .logo{width:38px;height:38px;border-radius:9px;background:var(--accent);color:var(--on-accent);display:grid;place-items:center;font-weight:800;font-size:13px;letter-spacing:.5px;flex:none}
 .brand h1{font-size:18px;margin:0;line-height:1.2;text-wrap:balance}
 .brand .sub{color:var(--muted);font-size:12.5px}
+.brand .sub.lead{color:var(--fg-2);margin-top:2px}.brand .sub.lead b{color:var(--fg);font-weight:600}
 .tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .sel{padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);font-weight:600;font-size:13px;max-width:230px}
 .search{position:relative}
@@ -201,6 +202,7 @@ td .ib{display:inline-block;height:8px;border-radius:0 4px 4px 0;background:var(
 td .ib.b{background:var(--s1)}
 td.wrapc{min-width:220px}
 .callout{display:flex;gap:12px;align-items:flex-start;border:1px solid var(--line);border-left:4px solid var(--warn);border-radius:10px;padding:11px 14px;background:var(--warn-bg);font-size:13px}
+.dbline{font-size:13px;margin:12px 0 0;color:var(--fg-2)}.dbline b{color:var(--fg)}
 .callout b{color:var(--warn)}
 .empty{color:var(--muted);font-size:13px;padding:10px 2px}
 
@@ -1133,13 +1135,15 @@ def servicenow_insights_page(model, key="all", opts=None):
     teamnav = ""
     head.append(
         '<header class="bar gut"><div class="wrap"><div class="brand">%s<div style="min-width:0"><h1>ServiceNow ticket insights</h1>'
-        '<div class="sub">%s · %s (%s) · generated %s%s</div></div></div>'
+        '<div class="sub">%s · %s (%s) · generated %s%s</div>%s</div></div>'
         '<div class="tools">%s<label class="search" for="q"><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5" '
         'fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M11 11l3.5 3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>'
         '<input id="q" type="search" placeholder="Search issues, tickets, CIs…" aria-label="Search the report"></label>'
         '<span class="hits" id="hits" aria-live="polite"></span><button class="btn js" id="expand" type="button">Expand all</button></div></div></header>' % (
             logo, e(s["name"]), e(win.get("label") or ""), e(span), e(o.get("generated") or ""),
-            (" · AAP job %s" % e(o["job"])) if o.get("job") and str(o["job"]) != "local" else "", menu))
+            (" · AAP job %s" % e(o["job"])) if o.get("job") and str(o["job"]) != "local" else "",
+            # 1.15.0: the team's manager in ServiceNow (servicenow_insights_show_lead)
+            ('<div class="sub lead">Group manager: <b>%s</b></div>' % e(s["lead"])) if s.get("lead") else "", menu))
 
     side = s.get("side") or ({"kind": "Teams", "rows": s.get("teams") or []} if is_all else {})
     toc = ([("custom", "Custom view", "")] if is_all and not variant and m.get("org") else []) + [("glance", "At a glance", "")]
@@ -1892,8 +1896,11 @@ def servicenow_insights_page(model, key="all", opts=None):
                     if sla_src == "targets" else ""))
     tm = [r_ for r_ in o.get("timing") or [] if isinstance(r_, (list, tuple)) and len(r_) == 2]     # the run's time, so far (1.14.0)
     time_html = ('<details class="notes"><summary><b>Time this run</b> <span class="mut">%s before the pages</span></summary><dl class="kv">%s</dl>'
-                 '<p class="mut">The pages, the email and the report database come after: the job output has the whole run.</p></details>' % (
+                 '<p class="mut">The pages and the email come after: the job output has the whole run.</p></details>' % (
                      e(fmin(sum(x for _l, x in tm))), "".join("<dt>%s</dt><dd>%s</dd>" % (e(lb), e(fmin(x))) for lb, x in tm))) if tm else ""
+    dbs = o.get("db") or {}               # is it writing? (1.15.0): this run's write, read back from the report database
+    db_html = (('<p class="dbline"><b>Report database.</b> %s</p>' if dbs.get("written") else '<div class="callout"><b>Report database.</b> %s</div>')
+               % e(dbs.get("page") or "")) if dbs.get("page") else ""
     body.append(section("method", "How this was made", "", '<div class="method"><div><div class="eyebrow">Read from ServiceNow (read only)</div><dl class="kv">%s'
                         '<dt>Window</dt><dd>%s (%s)</dd><dt>Compared with</dt><dd>%s</dd><dt>Reopen</dt><dd>%s</dd></dl></div>'
                         '<div><div class="eyebrow">Replaced before GenAI, put back after</div><dl class="kv">%s</dl></div>'
@@ -1909,7 +1916,7 @@ def servicenow_insights_page(model, key="all", opts=None):
                             e(("%d, grouped by ACT" % a.get("issues", 0)) if a.get("ran") else "the incidents' category / subcategory"),
                             e(str(a.get("fixes", 0)) if a.get("ran") else "none: the most common close notes are shown"),
                             e("by ACT" if s.get("summary_by") == "act" else "from the numbers"),
-                            (('<div class="callout"><b>Not read.</b> %s</div>' % e("; ".join(nr))) if nr else "") + place_html + slo_html + time_html)))
+                            (('<div class="callout"><b>Not read.</b> %s</div>' % e("; ".join(nr))) if nr else "") + db_html + place_html + slo_html + time_html)))
 
     # the script: loaded from the website (site-insights.js beside the index, written by site_report_web, the address made relative to
     # this page there) and carried in the page too; whichever runs first does the work

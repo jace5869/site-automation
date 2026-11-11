@@ -43,7 +43,8 @@ instance's nodes; SNMOCK_NO_TABLES=sys_cluster_state: 403).
 The weekly activity report: SNMOCK_SEED=<file.json> (records to start with, each with its _table and dates), problem_task and
 problem tables, sysparm_display_value=all ({"value", "display_value"} per field), sysparm_offset, the query operators <=, <, >,
 ISEMPTY, ISNOTEMPTY, !=, aINb,c on a reference (by name or sys_id) and ^OR (joins the condition before it); sys_user_group
-nameINa,b and sys_user user_nameINa,b^ORnameINa,b; SNMOCK_NO_GROUPS=1: sys_user_group answers 403; SNMOCK_NO_TABLES=a,b:
+nameINa,b and sys_user user_nameINa,b^ORnameINa,b; SNMOCK_NO_GROUPS=1: sys_user_group answers 403; SNMOCK_GROUP_MANAGERS
+(JSON {group: {name, email, active}}): the groups' managers, dot-walked; SNMOCK_NO_MANAGER=1: asking for them answers 403; SNMOCK_NO_TABLES=a,b:
 reading those tables answers 403. task_sla: the seed's records with _table task_sla (task = the task's sys_id, sla = its name,
 stage, has_breached, business_percentage, planned_end_time ...), read with taskINa,b and stage!=cancelled; not part of task.
 The ticket insights: the seed may hold sc_req_item, problem, sys_user_grmember (user, group: names) and sys_audit records (tablename, fieldname, documentkey =
@@ -293,6 +294,15 @@ def show(rec, disp, links=True):
     return out
 
 
+def group_manager(m):
+    """The ticket insights' team leads (1.15.0): a group's manager dot-walked - SNMOCK_GROUP_MANAGERS={"group": {"name",
+    "email", "active"}}; a group not there has none."""
+    if not m:
+        return {"manager": "", "manager.name": "", "manager.email": "", "manager.active": ""}
+    return {"manager": "u-" + m["name"].lower().replace(" ", "-"), "manager.name": m["name"], "manager.email": m.get("email", ""),
+            "manager.active": m.get("active", "true")}
+
+
 def pick(rec, fields):
     return {k: rec.get(k, "") for k in fields.split(",")} if fields else dict(rec)
 
@@ -378,7 +388,12 @@ class H(BaseHTTPRequestHandler):
             query = q.get("sysparm_query", "")
             if query.startswith("sys_idIN"):             # sys_idINa,b (the ticket insights' group parents)
                 want = query[8:].split("^")[0].split(",")
-                return 200, {"result": [dict({"parent": "", "type": ""}, **g) for g in GROUPS if g["sys_id"] in want]}
+                fields = q.get("sysparm_fields", "")
+                if "manager" in fields and os.environ.get("SNMOCK_NO_MANAGER") == "1":
+                    return fail("Operation Failed", "ACL Exception: no read access to sys_user_group.manager", 403)
+                mgr = json.loads(os.environ.get("SNMOCK_GROUP_MANAGERS") or "{}")
+                return 200, {"result": [dict({"parent": "", "type": ""}, **dict(g, **(group_manager(mgr.get(g["name"])) if "manager" in fields else {})))
+                                        for g in GROUPS if g["sys_id"] in want]}
             if query.startswith("nameIN"):               # nameINa,b (the weekly activity report)
                 want = query[6:].split(",")
                 return 200, {"result": [g for g in GROUPS if g["name"] in want]}

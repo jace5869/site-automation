@@ -1413,10 +1413,10 @@ class History(unittest.TestCase):
         month = self.runs["runs"][-1]
         part = dict(month, run=dict(month["run"], partial=True))
         c = Cur((3, 0))
-        self.assertEqual(D.write_run(c, part, "9"), (False, True, 0, 0))                  # complete there: kept
+        self.assertEqual(D.write_run(c, part, "9"), (False, True, 0, 0, 0))                  # complete there: kept
         self.assertEqual(len(c.sql), 1)
         c = Cur((3, 1))
-        replaced, skipped, nn, nf = D.write_run(c, month, "9")
+        replaced, skipped, nn, nf, _rid = D.write_run(c, month, "9")
         self.assertEqual((replaced, skipped, nn, nf), (True, False, len(month["nodes"]), len(month["figures"])))
         self.assertTrue(c.sql[1].startswith("UPDATE insights_run SET") and c.sql[2].startswith("DELETE FROM insights_figure"))
         c = Cur(None)
@@ -1501,14 +1501,24 @@ class History(unittest.TestCase):
         self.assertNotIn("ACT is off", P.servicenow_insights_page(on, "all", {"links": page_links(self.m)}))
 
     def test_the_tasks(self):
-        """Read before the pages (the trend is on them), written after; not written when not read; Check writes nothing; the
-        backfill before the normal read, ending the play."""
+        """Read before the pages (the trend is on them), written before them too since 1.15.0 (each page says it was
+        written); not written when not read; Check writes nothing; the backfill before the normal read, ending the play; the
+        check (1.15.0) before the ServiceNow credential is asked for, ending the play."""
         def read(*p):
             with open(os.path.join(HERE, "..", *p)) as f:
                 return f.read()
         main = read("roles", "servicenow_insights", "tasks", "main.yml")
         self.assertLess(main.index("include_tasks: db.yml"), main.index("servicenow_insights_page('all'"))
-        self.assertLess(main.index("servicenow_insights_page(_sni_team"), main.index("include_tasks: db_write.yml"))
+        self.assertLess(main.index("include_tasks: db.yml"), main.index("include_tasks: db_write.yml"))
+        self.assertLess(main.index("include_tasks: db_write.yml"), main.index("servicenow_insights_db_status"))
+        self.assertLess(main.index("servicenow_insights_db_status"), main.index("servicenow_insights_page(_sni_team"))
+        self.assertLess(main.index("include_tasks: db_check.yml"), main.index("the ServiceNow API credential is attached"))
+        self.assertLess(main.index("(_sni_t | servicenow_insights_timing).line"), main.index("msg: \"{{ _sni_db_say.line }}\""))
+        self.assertEqual(main.count("'db': _sni_db_say if servicenow_insights_db | bool else {}"), 3)   # every page's opts
+        chk = read("roles", "servicenow_insights", "tasks", "db_check.yml")
+        self.assertIn("mode: check", chk)
+        self.assertIn("create: false", chk)
+        self.assertIn("meta: end_play", chk)
         self.assertLess(main.index("the settings the report uses"), main.index("backfill.yml"))
         self.assertLess(main.index("backfill.yml"), main.index("Insights | read the window"))
         db = read("roles", "servicenow_insights", "tasks", "db.yml") + read("roles", "servicenow_insights", "tasks", "db_write.yml")
@@ -1612,11 +1622,12 @@ class PagesInOneGo(unittest.TestCase):
         t = {"start": 0, "read": 600, "act_a": 900, "model": 960, "act_b": 1020, "finish": 1030, "db": 1040}
         r = F.servicenow_insights_timing(t)
         self.assertEqual(r["rows"], [["ServiceNow reads", 600.0], ["ACT", 360.0], ["The report worked out", 70.0],
-                                     ["Trends (the report database)", 10.0]])
+                                     ["The report database (read and written)", 10.0]])
         self.assertEqual(r["line"], "Time: ServiceNow reads 10.0 min, ACT 6.0 min, The report worked out 70 s, "
-                                    "Trends (the report database) 10 s - 17.3 min in all")
+                                    "The report database (read and written) 10 s - 17.3 min in all")
         r = F.servicenow_insights_timing(dict(t, pages=1640, end=1650))
-        self.assertEqual(r["rows"][-2:], [["Pages and email", 600.0], ["The report database written", 10.0]])
+        self.assertEqual(r["rows"][-1:], [["Pages and email", 600.0]])
+        self.assertEqual(r["total"], 1650.0)
         self.assertEqual(F.servicenow_insights_timing({})["line"], "Time: not measured")
         h = P.servicenow_insights_page(self.m, "all", {"timing": F.servicenow_insights_timing(t)["rows"]})
         self.assertIn("<b>Time this run</b> <span class=\"mut\">17.3 min before the pages</span>", h)
@@ -1631,7 +1642,7 @@ class PagesInOneGo(unittest.TestCase):
         self.assertLess(main.index("servicenow_insights_page('all'"), main.index("tasks_from: pages.yml"))        # after the All page
         self.assertIn("report_web_copy | default(false) | bool and report_web_host | default('', true)", main)
         # the leads' emails after the pages, linking them; the lead's address beats report_email_to (an extra variable too)
-        self.assertLess(main.index("tasks_from: pages.yml"), main.index("each team lead's email (servicenow_insights_team_email_to), linking"))
+        self.assertLess(main.index("tasks_from: pages.yml"), main.index("each team lead's email (servicenow_insights_email_leads, servicenow_insights_team_email_to), linking"))
         self.assertEqual(main.count("_report_email_to_override:"), 2)
         self.assertNotIn("    report_email_to:", main)
         self.assertIn("_report_web_url: >-", main)
@@ -1643,6 +1654,222 @@ class PagesInOneGo(unittest.TestCase):
         pages = read("roles", "site_email", "tasks", "pages.yml")
         self.assertIn("servicenow_insights_pages(_pages_chunk", pages)
         self.assertIn("not _web_copy | default(false) | bool and not _web_win | default(false) | bool", pages)
+
+class TeamLeads(unittest.TestCase):
+    """1.15.0: each group's manager in ServiceNow (sys_user_group.manager, dot-walked in the groups' own read) - "Group manager:
+    NAME" on the team's page and email (servicenow_insights_show_lead), the team's page emailed to the lead
+    (servicenow_insights_email_leads: names, patterns, all; servicenow_insights_team_email_to wins); never in the history."""
+
+    class Api(object):
+        def __init__(self, groups, deny_manager=False, hide_person=False):
+            self.calls, self.groups, self.deny, self.hide, self.url = [], groups, deny_manager, hide_person, "https://sn.example.mil"
+
+        def get(self, path, params):
+            self.calls.append(params["sysparm_fields"])
+            if self.deny and "manager" in params["sysparm_fields"]:
+                raise rd.SnError("GET %s: HTTP 403: ACL Exception: manager" % path)
+            v = lambda x: {"value": x, "display_value": x}                       # noqa: E731
+            want = params["sysparm_query"][8:].split(",")
+            out = []
+            for g in self.groups:
+                if g["sys_id"] not in want:
+                    continue
+                row = dict((k, v(g.get(k, ""))) for k in ("sys_id", "name", "parent", "active", "type"))
+                if "manager" in params["sysparm_fields"]:
+                    m = g.get("m") or {}
+                    row.update({"manager": v(m.get("id", "")), "manager.name": v("" if self.hide else m.get("name", "")),
+                                "manager.email": v("" if self.hide else m.get("email", "")), "manager.active": v(m.get("active", "true"))})
+                out.append(row)
+            return {"result": out}
+
+    GROUPS = [{"sys_id": "g1", "name": "Ops - Windows", "parent": "g0", "active": "true", "m": {"id": "u1", "name": "Pat Lee", "email": "pat.lee@example.mil"}},
+              {"sys_id": "g2", "name": "Ops - Network", "parent": "g0", "active": "true", "m": {"id": "u2", "name": "Sam Ray", "email": "", "active": "true"}},
+              {"sys_id": "g3", "name": "Ops - Linux", "parent": "g0", "active": "true", "m": {"id": "u3", "name": "Kim Old", "email": "kim@example.mil",
+                                                                                               "active": "false"}},
+              {"sys_id": "g0", "name": "Ops", "parent": "", "active": "true", "m": {"id": "u9", "name": "Top Boss", "email": "boss@example.mil"}}]
+
+    def test_read_with_the_groups(self):
+        api = self.Api(self.GROUPS)
+        mgr = {}
+        tree, err = rd.read_group_tree(api, ["g1", "g2", "g3"], managers=mgr)
+        self.assertEqual((err, sorted(tree)), ("", ["g0", "g1", "g2", "g3"]))
+        self.assertEqual(len(api.calls), 2)                                        # the two levels, no call per group
+        self.assertTrue(all("manager.name,manager.email,manager.active" in c for c in api.calls))
+        got, err = rd.manager_names(mgr, ["g1", "g2", "g3"], {"g1": "Ops - Windows", "g2": "Ops - Network", "g3": "Ops - Linux"})
+        self.assertEqual(err, "")
+        self.assertEqual(got, {"Ops - Windows": {"name": "Pat Lee", "email": "pat.lee@example.mil", "active": True},
+                               "Ops - Network": {"name": "Sam Ray", "email": "", "active": True},
+                               "Ops - Linux": {"name": "Kim Old", "email": "kim@example.mil", "active": False}})   # the parent's not asked
+        # without the managers: never a person's field
+        api = self.Api(self.GROUPS)
+        rd.read_group_tree(api, ["g1"])
+        self.assertTrue(all("manager" not in c for c in api.calls))
+
+    def test_not_readable(self):
+        api = self.Api(self.GROUPS, deny_manager=True)                            # the manager refused: the groups still read
+        mgr = {}
+        tree, err = rd.read_group_tree(api, ["g1"], managers=mgr)
+        self.assertEqual((err, sorted(tree)), ("", ["g0", "g1"]))
+        got, err = rd.manager_names(mgr, ["g1"], {"g1": "Ops - Windows"})
+        self.assertEqual(got, {})
+        self.assertIn("HTTP 403", err)
+        self.assertIn("the groups were read without them", err)
+        mgr = {}
+        rd.read_group_tree(self.Api(self.GROUPS, hide_person=True), ["g1"], managers=mgr)   # sys_user hidden: names empty
+        got, err = rd.manager_names(mgr, ["g1"], {"g1": "Ops - Windows"})
+        self.assertEqual(got, {})
+        self.assertIn("needs read on sys_user", err)
+
+    def model(self, managers=None, err="", **o):
+        r = dict(site()["r"], managers=managers if managers is not None else self.leads(), managers_error=err)
+        return F.servicenow_insights_model(r, None, site()["mask"], dict(OPTS, **o))
+
+    def leads(self):
+        teams = [p["key"] for p in site()["model"]["pages"] if p["level"] == "team"]
+        self.__class__.teams = teams
+        return {teams[0]: {"name": "Pat Lee", "email": "pat.lee@example.mil", "active": True},
+                teams[1]: {"name": "Kim Old", "email": "kim@example.mil", "active": False},
+                teams[2]: {"name": "Sam Ray", "email": "", "active": True}}
+
+    def test_on_the_page_and_email(self):
+        m = self.model()
+        t0, t1 = self.teams[0], self.teams[1]
+        h = P.servicenow_insights_page(m, t0, OPTS)
+        self.assertIn('<div class="sub lead">Group manager: <b>Pat Lee</b></div>', h)
+        self.assertLess(h.index("<h1>"), h.index("Group manager:"))
+        self.assertLess(h.index("Group manager:"), h.index("</header>"))              # near the title
+        self.assertIn("Group manager: <b>Kim Old (inactive in ServiceNow)</b>", P.servicenow_insights_page(m, t1, OPTS))
+        doc = F.servicenow_insights_doc(m, t0, OPTS)
+        self.assertTrue(doc["subtitle"].endswith(" · Group manager: Pat Lee"), doc["subtitle"])
+        nolead = [t for t in self.teams if t not in self.leads()][0]                # no manager: nothing
+        self.assertNotIn("Group manager", P.servicenow_insights_page(m, nolead, OPTS))
+        self.assertNotIn("Group manager", F.servicenow_insights_doc(m, nolead, OPTS)["subtitle"])
+        for k in [p["key"] for p in m["pages"] if p["level"] != "team"] + ["all"]:  # the sites' and directorates' pages: nothing
+            self.assertNotIn("Group manager", P.servicenow_insights_page(m, k, OPTS), k)
+        off = self.model(show_lead=False)
+        self.assertNotIn("Group manager", P.servicenow_insights_page(off, t0, OPTS))
+        self.assertNotIn("Group manager", F.servicenow_insights_doc(off, t0, OPTS)["subtitle"])
+
+    def test_split_and_map(self):
+        x = site(sites=True)
+        teams = [p["key"] for p in x["model"]["pages"] if p["level"] == "team"]
+        r = dict(x["r"], managers={teams[0]: {"name": "Pat Lee", "email": "p@example.mil", "active": True}})
+        m = F.servicenow_insights_model(r, None, x["mask"], dict(PARENTS_OPTS, split_label="BLUE", split_pattern="*"))
+        self.assertIn("Group manager: <b>Pat Lee</b>", P.servicenow_insights_page(m, teams[0], dict(PARENTS_OPTS, variant="in")))
+        omap = dict(OPTS, hierarchy_source="map", hierarchy_map={teams[0]: ["SITEA", "Ops"]})
+        m = F.servicenow_insights_model(r, None, x["mask"], omap)
+        tp = [p for p in m["pages"] if p["level"] == "team" and p["key"] == teams[0]]
+        self.assertTrue(tp)
+        self.assertIn("Group manager: <b>Pat Lee</b>", P.servicenow_insights_page(m, teams[0], omap))
+        for p in m["pages"]:
+            if p["level"] != "team":
+                self.assertNotIn("Group manager", P.servicenow_insights_page(m, p["key"], omap), p["key"])
+
+    def test_not_read_said_once(self):
+        m = self.model(managers={}, err="GET api/now/table/sys_user_group: HTTP 403: ACL - the groups were read without them")
+        nr = [x for x in F.not_read_lines(m) if "team leads" in x]
+        self.assertEqual(len(nr), 1)
+        self.assertIn("sys_user_group.manager (the team leads): GET", nr[0])
+        h = P.servicenow_insights_page(m, "all", dict(OPTS, not_read=F.not_read_lines(m)))
+        self.assertEqual(h.count("the team leads"), 1)
+        got = F.servicenow_insights_lead_mail(m, "all", {})
+        self.assertEqual(got["to"], {})
+        self.assertEqual(len(got["lines"]), 1)
+        self.assertIn("Team leads not emailed: the managers were not read", got["lines"][0])
+
+    def test_who_is_emailed(self):
+        m = self.model()
+        t = self.teams
+        self.assertEqual(F.servicenow_insights_lead_mail(m, [], {}), {"to": {}, "lines": []})       # the default: nobody
+        got = F.servicenow_insights_lead_mail(m, "all", {})
+        self.assertEqual(got["to"], {t[0]: ["pat.lee@example.mil"]})
+        self.assertIn("%s: not emailed - the manager Kim Old is inactive" % t[1], got["lines"])
+        self.assertIn("%s: not emailed - the manager Sam Ray has no email address" % t[2], got["lines"])
+        self.assertIn("%s: not emailed - no manager in ServiceNow" % t[3], got["lines"])
+        pat = t[0][:3].upper() + "*"                                               # a pattern, any case
+        got = F.servicenow_insights_lead_mail(m, [pat], {})
+        self.assertIn(t[0], got["to"])
+        self.assertEqual(F.servicenow_insights_lead_mail(m, [t[0].lower()], {})["to"], {t[0]: ["pat.lee@example.mil"]})
+        # named in both: servicenow_insights_team_email_to wins; one of its teams the pattern does not name: kept
+        got = F.servicenow_insights_lead_mail(m, [t[0], t[1]], {t[0]: ["other@example.mil"], t[4]: "x@example.mil"})
+        self.assertEqual(got["to"], {t[0]: ["other@example.mil"], t[4]: ["x@example.mil"]})
+        self.assertEqual(got["lines"], ["%s: not emailed - the manager Kim Old is inactive" % t[1]])
+        got = F.servicenow_insights_lead_mail(m, ["No such team*"], {})
+        self.assertEqual(got["lines"], ["Team leads: servicenow_insights_email_leads matches no team page (no such team*)"])
+        # the shown line off: the emails still go
+        self.assertEqual(F.servicenow_insights_lead_mail(self.model(show_lead=False), "all", {})["to"], {t[0]: ["pat.lee@example.mil"]})
+
+    def test_never_in_the_history(self):
+        import servicenow_insights_history as H
+        m = self.model()
+        rows = json.dumps(H.servicenow_insights_db_rows(m, OPTS))
+        for nm in ("Pat Lee", "Kim Old", "Sam Ray", "pat.lee@example.mil"):
+            self.assertNotIn(nm, rows)
+        self.assertNotIn("Pat Lee", json.dumps(F.servicenow_insights_artifact(m)))
+
+    def test_the_tasks(self):
+        with open(os.path.join(HERE, "..", "roles", "servicenow_insights", "tasks", "main.yml")) as f:
+            main = f.read()
+        self.assertIn("managers: \"{{ servicenow_insights_show_lead | bool or servicenow_insights_email_leads", main)
+        self.assertEqual(main.count("_sni_leads.to[_sni_team] | default([])"), 3)  # both ways: the per-page loop and after pages.yml
+        self.assertNotIn("servicenow_insights_team_email_to[", main)
+        self.assertLess(main.index("servicenow_insights_lead_mail("), main.index("tasks_from: pages.yml"))
+
+
+class IsItWriting(unittest.TestCase):
+    """1.15.0: the report database's one line - written (read back) or why not - in the job and on the page; the check's lines."""
+
+    W = {"ok": True, "run_id": 41, "months": ["2026-10", "2026-11 (so far)"], "written": {"runs": 3, "nodes": 30, "figures": 4210},
+         "held": [{"source": "sn.example.mil", "period": "month", "runs": 13, "months": 13, "complete": 12, "first": "2025-11", "last": "2026-11", "newest": "x"},
+                  {"source": "sn.example.mil", "period": "6m", "runs": 25, "months": 13, "complete": 13, "first": "2025-11", "last": "2026-10", "newest": "x"},
+                  {"source": "other.example.mil", "period": "month", "runs": 4, "months": 4, "complete": 4, "first": "2024-01", "last": "2024-04", "newest": "x"}]}
+    BASE = {"on": True, "host": "db.example.mil", "port": 3309, "database": "site_reports", "check": False, "read": {"ok": True},
+            "source": "sn.example.mil", "not_read": ""}
+
+    def setUp(self):
+        import servicenow_insights_history as H
+        self.H = H
+
+    def test_written(self):
+        r = self.H.servicenow_insights_db_status(dict(self.BASE, write=self.W))
+        self.assertTrue(r["written"])
+        self.assertEqual(r["line"], "Report database db.example.mil:3309/site_reports: written - run 41, 2 months (2026-10, 2026-11 (so far)), "
+                                    "4,210 figures; the database now holds 38 runs, first month 2025-11, last month 2026-11")
+        self.assertNotIn("db.example.mil", r["page"])                               # the page: without the host
+        self.assertIn("The database holds 38 runs of this instance, months 2025-11 to 2026-11.", r["page"])
+
+    def test_why_not(self):
+        S = self.H.servicenow_insights_db_status
+        self.assertEqual(S(dict(self.BASE, on=False))["line"], "Report database db.example.mil:3309/site_reports: NOT written - servicenow_insights_db is false")
+        self.assertEqual(S(dict(self.BASE, host=""))["line"], "Report database: NOT written - no Report database credential on the job template")
+        self.assertEqual(S(dict(self.BASE, check=True, write={"skipped": True}))["line"].split(" - ", 1)[1], "Check mode")
+        self.assertEqual(S(dict(self.BASE, read={"ok": False, "error": "Can't connect (MySQL error 2003)"}, write={"skipped": True}))["line"].split(" - ", 1)[1],
+                         "not reached or refused: Can't connect (MySQL error 2003)")
+        self.assertEqual(S(dict(self.BASE, write={"ok": False, "error": "INSERT command denied"}))["line"].split(" - ", 1)[1], "refused: INSERT command denied")
+        self.assertEqual(S(dict(self.BASE, not_read="ServiceNow was not read"))["page"], "Not written this run: ServiceNow was not read.")
+
+    def test_on_the_page(self):
+        m = site()["model"]
+        r = self.H.servicenow_insights_db_status(dict(self.BASE, write=self.W))
+        h = P.servicenow_insights_page(m, "all", dict(OPTS, db=r))
+        self.assertIn('<p class="dbline"><b>Report database.</b> Written this run: run 41', h)
+        self.assertLess(h.index('id="method"'), h.index("Report database.</b>"))  # under How this was made
+        no = self.H.servicenow_insights_db_status(dict(self.BASE, host=""))
+        self.assertIn('<div class="callout"><b>Report database.</b> Not written this run: no Report database credential', P.servicenow_insights_page(m, "all", dict(OPTS, db=no)))
+        self.assertNotIn("Report database.</b>", P.servicenow_insights_page(m, "all", OPTS))
+
+    def test_the_check(self):
+        L = self.H.servicenow_insights_db_check_lines
+        res = {"ok": True, "version": "8.4.3", "tls": "none", "account": {"name": "report_reader@%", "can_write": False}, "schema_version": 1,
+               "objects": {"present": ["a"] * 12, "missing": []}, "held": self.W["held"][:1]}
+        got = L(res, "db.example.mil:3309/site_reports")
+        self.assertEqual(got[0], "Report database db.example.mil:3309/site_reports: reached - MySQL 8.4.3, TLS none, as report_reader@% (reads only)")
+        self.assertEqual(got[1], "Tables and views: all 12 there, schema version 1")
+        self.assertEqual(got[2], "Held: sn.example.mil, period month - 13 runs, 13 months (12 complete), 2025-11 to 2026-11, newest written x")
+        got = L(dict(res, objects={"present": [], "missing": ["insights_run"]}, held=[]), "h")
+        self.assertEqual(got[1:], ["Tables and views: 0 there, missing insights_run", "Held: nothing yet - no run has been written"])
+        self.assertEqual(L({"ok": False, "error": "Access denied"}, "h"), ["Report database h: NOT reached - Access denied"])
+
 
 if __name__ == "__main__":
     unittest.main()

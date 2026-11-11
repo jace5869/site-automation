@@ -6,7 +6,9 @@
 # cryptography), each written, nothing else; twice: replaced. A normal run: the window and its months, the backfill's months
 # replaced, the page's Trends. A window ending inside a complete month: that month kept. This month so far: partial, dashed.
 # Check: nothing written. Unreachable: one warning, the report whole, green; required (and the backfill): failed. The
-# reader sees the views. Without cryptography and a cold cache: said in words.
+# reader sees the views. Without cryptography and a cold cache: said in words. 1.15.0, is it writing?: the job's last line
+# (read back after the write, or why not) and the page's How this was made; servicenow_insights_db_check as the writer
+# and the reader (read only, no ServiceNow read, no pages), not reached or no credential: failed.
 # The container has a fixed name and port and is removed by name. Skipped (exit 0) when no container runtime or image.
 #   bash tests/servicenow/run_insights_db_test.sh      (INSIGHTS_DB_TEST_IMAGE=..., INSIGHTS_DB_TEST_RUNTIME=docker, ANSIBLE_PLAYBOOK=...)
 set -u
@@ -111,6 +113,17 @@ has() {  # has NAME FILE TEXT... (!TEXT: must not)
     ok "$name"
 }
 
+# last NAME TEXT: the job's "is it writing?" line (1.15.0) has TEXT and comes after the time line - the job's last lines
+last() {
+    local l
+    l=$(grep -o '"msg": "Report database[^"]*"' "$work/out.txt" | tail -1)
+    case "$l" in *"$2"*) ;; *) bad "$1: the last line is: $l"; return 1 ;; esac
+    if grep -q '"msg": "Time: ' "$work/out.txt" && [ "$(grep -n '"msg": "Time: ' "$work/out.txt" | tail -1 | cut -d: -f1)" -gt "$(grep -n '"msg": "Report database' "$work/out.txt" | tail -1 | cut -d: -f1)" ]; then
+        bad "$1: the database line is before the time line"; return 1
+    fi
+    ok "$1"
+}
+
 NOWB='"servicenow_insights_now": "2026-11-01T06:00:00", "servicenow_insights_hierarchy_source": "names", "servicenow_insights_act": false'
 mkdir -p "$work/w0" "$work/w1" "$work/w2" "$work/w3" "$work/wb"
 # rows SQL: one value
@@ -121,6 +134,11 @@ DB_ENV="" run "servicenow_insights_db with no Report database credential: said o
     "{$NOW, \"servicenow_insights_db\": true, \"report_web_dest\": \"$work/w0\"}" \
     'credential (aap/credential_types/report_database.yml): nothing read or written' '!The report database: the window'
 has "  ... no trends on the page" "$(page "$work/w0")" '!id="trend"' 'ACT is off: the issues are grouped by category'
+last "  ... is it writing? the last line says why not" "Report database: NOT written - no Report database credential on the job template"
+has "  ... and the page" "$(page "$work/w0")" 'Report database.</b> Not written this run: no Report database credential on the job template.'
+DB_ENV="$DB" run "servicenow_insights_db false: the last line says so, the page says nothing" ok "{$NOW, \"report_web_dest\": \"$work/w0\"}"
+last "  ... the line" "Report database: NOT written - servicenow_insights_db is false"
+has "  ... the page: nothing" "$(page "$work/w0")" '!Report database.</b>'
 DB_ENV="" run "  ... servicenow_insights_db_required: the job fails" fail \
     "{$NOW, \"servicenow_insights_db\": true, \"servicenow_insights_db_required\": true}" 'servicenow_insights_db_required is true and the job template has no'
 
@@ -129,6 +147,8 @@ DB_ENV="$DB" run "the backfill: 6 calendar months read once, each worked out and
     "{$NOWB, \"servicenow_insights_db\": true, \"servicenow_insights_backfill_months\": 6, \"report_web_dest\": \"$work/wb\"}" \
     'The backfill wrote 6 months to 127.0.0.1:' '2026-05: ' ' incidents, ' '2026-10: ' '(item=2026-07)' '!Insights | ACT' '![WARNING]'
 [ -z "$(find "$work/wb" -name '*.html')" ] && ok "  ... no pages, no email" || bad "  ... the backfill wrote pages"
+grep -o '"msg": "Report database[^"]*"' "$work/out.txt" | tail -1 | grep -qE "Report database 127.0.0.1:$dbport/site_reports: written - run [0-9]+, 6 months \(2026-05, 2026-06, 2026-07, 2026-08, 2026-09, 2026-10\), [0-9,]+ figures; the database now holds 6 runs, first month 2026-05, last month 2026-10" \
+    && ok "  ... is it writing? the backfill's last line, read back" || bad "  ... the backfill's last line: $(grep -o '"msg": "Report database[^"]*"' "$work/out.txt" | tail -1)"
 v=$(q report_reader "$rpw" "SELECT period, month, partial, window_start, window_end FROM insights_run ORDER BY month")
 case "$v" in '[["month", "2026-05", 0, "2026-05-01 00:00:00", "2026-06-01 00:00:00"], ["month", "2026-06", 0,'*'["month", "2026-10", 0, "2026-10-01 00:00:00", "2026-11-01 00:00:00"]]')
     ok "  ... six month rows, May to October, complete - read as report_reader" ;; *) bad "  ... the months: $v" ;; esac
@@ -151,6 +171,11 @@ DB_ENV="$DB" run "a 6-month run: the window and its six calendar months written,
     'TLS none)' '6 months kept' '![WARNING]'
 [ "$(one "SELECT COUNT(*) FROM insights_run")" = 7 ] && ok "  ... seven runs: the window's own and six months" || bad "  ... the runs: $(one "SELECT COUNT(*) FROM insights_run")"
 p1="$(page "$work/w1")"
+last "  ... is it writing? written, read back: the run, its months, what the database holds" \
+    "written - run $(one "SELECT MIN(run_id) FROM insights_run WHERE period = '6m'"), 6 months (2026-05, 2026-06, 2026-07, 2026-08, 2026-09, 2026-10), "
+last "  ... the database now holds 7 runs" "the database now holds 7 runs, first month 2026-05, last month 2026-10"
+has "  ... How this was made: written, without the host" "$p1" 'Report database.</b> Written this run: run ' \
+    'The database holds 7 runs of this instance, months 2026-05 to 2026-10.' "!127.0.0.1:$dbport"
 has "  ... the All page: Trends, 6 months so far, two charts, a legend, the months as a table" "$p1" \
     '<a href="#trend">Trends' '6 months so far · each point a calendar month' '<h3>Service levels</h3>' '<h3>Volume</h3>' \
     '<i style="background:var(--st1)"></i>SLO met' '<summary>The months as a table</summary>' 'May 2026' 'Oct 2026' '!stroke-dasharray="5 4"'
@@ -179,6 +204,7 @@ v=$(q report_reader "$rpw" "SELECT month FROM insights_v_month_run WHERE period 
 before=$(one "SELECT COUNT(*) FROM insights_run")
 CHECK=1 DB_ENV="$DB" run "Check: read, nothing written" ok "{$NOW, \"servicenow_insights_db\": true}" \
     'Check mode: nothing written to the report database'
+last "  ... the last line" "Report database 127.0.0.1:$dbport/site_reports: NOT written - Check mode"
 [ "$(one "SELECT COUNT(*) FROM insights_run")" = "$before" ] && ok "  ... the same runs" || bad "  ... Check wrote"
 
 # ---- 7. unreachable: one warning, the report whole, green; required: failed; a wrong password ----
@@ -186,15 +212,37 @@ DB_ENV="${DB/REPORT_DB_PORT=$dbport/REPORT_DB_PORT=$((dbport + 9))}" run "the da
     "{$NOW, \"servicenow_insights_db\": true, \"report_web_dest\": \"$work/w3\", \"servicenow_insights_db_timeout\": 3}" \
     '[WARNING]: The report database 127.0.0.1:' '!The report database: the window'
 [ "$(grep -c '\[WARNING\]: The report database' "$work/out.txt")" = 1 ] && ok "  ... said once" || bad "  ... said more than once"
+last "  ... the last line: not written, why" "NOT written - not reached or refused: Can't connect to MySQL server"
+has "  ... How this was made: not written" "$(page "$work/w3")" 'Report database.</b> Not written this run: not reached or refused: '
 has "  ... the page says so" "$(page "$work/w3")" 'The report database was not reached this run:' 'id="glance"'
 DB_ENV="${DB/REPORT_DB_PORT=$dbport/REPORT_DB_PORT=$((dbport + 9))}" run "  ... servicenow_insights_db_required: the job fails" fail \
     "{$NOW, \"servicenow_insights_db\": true, \"servicenow_insights_db_required\": true, \"servicenow_insights_db_timeout\": 3}" \
     'servicenow_insights_db_required: true'
 DB_ENV="${DB/REPORT_DB_PASSWORD=$wpw/REPORT_DB_PASSWORD=wrong}" run "a wrong password: one warning, green" ok \
     "{$NOW, \"servicenow_insights_db\": true}" 'Access denied for'
+last "  ... the last line" "NOT written - not reached or refused: Access denied for user"
 DB_ENV="${DB/REPORT_DB_PORT=$dbport/REPORT_DB_PORT=$((dbport + 9))}" run "the backfill, the database not reached: failed" fail \
     "{$NOWB, \"servicenow_insights_db\": true, \"servicenow_insights_backfill_months\": 2, \"servicenow_insights_db_timeout\": 3}" \
     "Can't connect to MySQL server"
+
+# ---- 9. is it writing? the check launch (1.15.0): read only, no ServiceNow read, no pages - the writer and the reader ----
+before=$(wc -l < "$work/snmock.jsonl")
+runs=$(one "SELECT COUNT(*) FROM insights_run")
+DB_ENV="$DB" run "servicenow_insights_db_check: the server, the tables and views, what is held - nothing else" ok \
+    "{\"servicenow_insights_db_check\": true, \"report_web_dest\": \"$work/wc\"}" \
+    "Report database 127.0.0.1:$dbport/site_reports: reached - MySQL 8.4" 'as report_writer@% (may write)' \
+    'Tables and views: all 12 there, schema version 1' ', period month - 7 runs, 7 months (6 complete), 2026-05 to 2026-11, newest written 20' \
+    ', period 6m - ' '!Insights | read the window' '!Insights | the settings the report uses'
+[ "$(wc -l < "$work/snmock.jsonl")" = "$before" ] && ok "  ... ServiceNow not asked" || bad "  ... ServiceNow was read"
+[ -z "$(find "$work/wc" -name '*.html' 2>/dev/null)" ] && ok "  ... no pages" || bad "  ... pages written"
+[ "$(one "SELECT COUNT(*) FROM insights_run")" = "$runs" ] && ok "  ... nothing written" || bad "  ... the check wrote"
+RDB="${DB/REPORT_DB_USER=report_writer/REPORT_DB_USER=report_reader}"
+RDB="${RDB/REPORT_DB_PASSWORD=$wpw/REPORT_DB_PASSWORD=$rpw}"
+DB_ENV="$RDB" run "  ... as report_reader: the same, reads only" ok "{\"servicenow_insights_db_check\": true}" 'as report_reader@% (reads only)' \
+    'Tables and views: all 12 there' ', period month - 7 runs'
+DB_ENV="${DB/REPORT_DB_PORT=$dbport/REPORT_DB_PORT=$((dbport + 9))}" run "  ... not reached: the job fails" fail \
+    "{\"servicenow_insights_db_check\": true, \"servicenow_insights_db_timeout\": 3}" "Can't connect to MySQL server"
+DB_ENV="" run "  ... no credential: the job fails" fail "{\"servicenow_insights_db_check\": true}" 'servicenow_insights_db_check and the job template has no'
 
 # ---- 8. no cryptography, a cold cache: said in words (the module alone) ----
 "${rtc[@]}" exec "$name" mysql -uroot "-p$root" -e "FLUSH PRIVILEGES" >/dev/null 2>&1

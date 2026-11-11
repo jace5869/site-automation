@@ -351,8 +351,77 @@ def servicenow_insights_trend(model, history=None, opts=None, runs=None):
     return m
 
 
+def db_source(r, o=None):
+    """The run key's source (the instance) of what the module read: db_source, else the instance's host."""
+    return str((o or {}).get("db_source") or "").strip() or source_of((r or {}).get("url"))
+
+
+def servicenow_insights_db_status(st):
+    """Is it writing? (1.15.0) - the report database's one line, from st: {on, host, port, database, check (Check mode),
+    read (site_insights_db read's result), write (write's result, or the backfill's last), source, not_read (why the run
+    read nothing)} -> {written, line (the job's last lines: with the host), page (How this was made: without it), held}.
+    What the database holds comes from the write's read-back (a SELECT), never from the rows sent."""
+    st = st or {}
+    where = "%s:%s/%s" % (st.get("host"), st.get("port"), st.get("database")) if st.get("host") else ""
+    head = "Report database %s" % where if where else "Report database"
+    w, rd = st.get("write") or {}, st.get("read") or {}
+    why = ""
+    if not st.get("on"):
+        why = "servicenow_insights_db is false"
+    elif not where:
+        why = "no Report database credential on the job template"
+    elif st.get("not_read"):
+        why = st["not_read"]
+    elif st.get("check"):
+        why = "Check mode"
+    elif rd and not rd.get("ok"):
+        why = "not reached or refused: %s" % (rd.get("error") or "no answer")
+    elif not w or w.get("skipped"):
+        why = "not reached"
+    elif not w.get("ok"):
+        why = "refused: %s" % (w.get("error") or "no answer")
+    if why:
+        return {"written": False, "line": "%s: NOT written - %s" % (head, why), "page": "Not written this run: %s." % why, "held": {}}
+    src = str(st.get("source") or "")
+    rows = [h for h in w.get("held") or [] if not src or h.get("source") == src]
+    runs = sum(int(h.get("runs") or 0) for h in rows)
+    first = min([h["first"] for h in rows if h.get("first")] or [""])
+    last = max([h["last"] for h in rows if h.get("last")] or [""])
+    months = [str(m) for m in w.get("months") or []]
+    wr = w.get("written") or {}
+    did = "run %s, %d month%s%s, %s figures" % (w.get("run_id") or "?", len(months), "" if len(months) == 1 else "s",
+                                                (" (%s)" % ", ".join(months)) if months else "", "{:,}".format(int(wr.get("figures") or 0)))
+    now = "the database now holds %d runs, first month %s, last month %s" % (runs, first or "-", last or "-")
+    return {"written": True, "line": "%s: written - %s; %s" % (head, did, now),
+            "page": "Written this run: %s. The database holds %d runs of this instance, months %s to %s." % (did, runs, first or "-", last or "-"),
+            "held": {"runs": runs, "first": first, "last": last}}
+
+
+def servicenow_insights_db_check_lines(res, where=""):
+    """servicenow_insights_db_check (1.15.0): what site_insights_db's check found, in lines."""
+    r = res or {}
+    if not r.get("ok"):
+        return ["Report database %s: NOT reached - %s" % (where, r.get("error") or "no answer")]
+    acc = r.get("account") or {}
+    ob = r.get("objects") or {}
+    cw = acc.get("can_write")
+    out = ["Report database %s: reached - MySQL %s, TLS %s, as %s (%s)" % (
+               where, r.get("version"), r.get("tls") or "none", acc.get("name"),
+               "may write" if cw else ("reads only" if cw is False else "its grants not readable")),
+           ("Tables and views: all %d there, schema version %s" % (len(ob.get("present") or []), r.get("schema_version")) if not ob.get("missing")
+            else "Tables and views: %d there, missing %s" % (len(ob.get("present") or []), ", ".join(ob["missing"])))]
+    held = r.get("held") or []
+    if not held:
+        out.append("Held: nothing yet - no run has been written")
+    for h in held:
+        out.append("Held: %s, period %s - %d runs, %d months (%d complete), %s to %s, newest written %s" % (
+            h["source"], h["period"], h["runs"], h["months"], h["complete"], h["first"] or "-", h["last"] or "-", h["newest"] or "-"))
+    return out
+
+
 class FilterModule(object):
     def filters(self):
         return {"servicenow_insights_db_rows": servicenow_insights_db_rows, "servicenow_insights_db_runs": servicenow_insights_db_runs,
                 "servicenow_insights_month_run": month_run, "servicenow_insights_backfill_months": servicenow_insights_backfill_months,
-                "servicenow_insights_trend": servicenow_insights_trend}
+                "servicenow_insights_trend": servicenow_insights_trend, "servicenow_insights_db_status": servicenow_insights_db_status,
+                "servicenow_insights_db_check_lines": servicenow_insights_db_check_lines, "servicenow_insights_db_source": db_source}

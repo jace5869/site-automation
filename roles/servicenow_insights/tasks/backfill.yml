@@ -83,5 +83,21 @@
            ~ _sni_db.host ~ ':' ~ _sni_db.port ~ '/' ~ _sni_db.database ~ ' (each replaces what was there):']
           + (_sni_bf_w.results | map(attribute='tickets') | list)) }}
 
+- name: Insights backfill | is it writing? - the report database, read back after the last month
+  ansible.builtin.debug:
+    msg: "{{ (_sni_bf_st | servicenow_insights_db_status).line }}"
+  vars:
+    _sni_bf_last: "{{ _sni_bf_w.results | default([]) | last | default({}) }}"
+    _sni_bf_st:
+      'on': true
+      host: "{{ _sni_db.host }}"
+      port: "{{ _sni_db.port }}"
+      database: "{{ _sni_db.database }}"
+      check: "{{ ansible_check_mode }}"
+      write: >-
+        {{ _sni_bf_last | combine({'months': _sni_bf_months, 'written': {'figures':
+        _sni_bf_w.results | default([]) | map(attribute='written.figures', default=0) | sum}}) }}
+      source: "{{ _sni_bf | servicenow_insights_db_source(_sni_opts) }}"
+
 - name: Insights backfill | the play ends here (no pages, no email)
   ansible.builtin.meta: end_play

@@ -147,6 +147,56 @@ The job prints each month as it is written, so you can follow it.
 A table cut at `servicenow_insights_max_records` gives low counts for its oldest months. Raise the cap for the backfill
 launch if the job says a table was cut.
 
+## Is it writing?
+
+Three ways to know (1.15.0).
+
+**1. The job's last line.** Every ticket insights run ends with it. After a write, the job reads the database back with a
+SELECT, so the counts are what the database holds, not what was sent:
+
+```text
+Report database db.yoursite.mil:3309/site_reports: written - run 41, 2 months (2026-10, 2026-11 (so far)), 4,210 figures;
+the database now holds 38 runs, first month 2025-11, last month 2026-11
+```
+
+When nothing was written, the same line says why:
+
+- `NOT written - servicenow_insights_db is false`;
+- `NOT written - no Report database credential on the job template`;
+- `NOT written - not reached or refused: ...` (down, the firewall, a wrong password);
+- `NOT written - refused: ...` (the write itself failed, e.g. a grant missing);
+- `NOT written - Check mode`.
+
+A backfill ends with the same line. The pages say it too, under *How this was made*, without the host.
+
+**2. The check launch.** It needs no ServiceNow read and writes nothing. Launch the ticket insights template with this
+extra variable:
+
+```yaml
+servicenow_insights_db_check: true
+```
+
+It connects with the template's Report database credential, then stops. The `report_reader` account works too. It prints:
+
+```text
+Report database db.yoursite.mil:3309/site_reports: reached - MySQL 8.4.3, TLS none, as report_writer@% (may write)
+Tables and views: all 12 there, schema version 1
+Held: sn.yoursite.mil, period month - 13 runs, 13 months (12 complete), 2025-11 to 2026-11, newest written 2026-11-01 06:04:12 UTC
+Held: sn.yoursite.mil, period 6m - 25 runs, 13 months (12 complete), 2025-11 to 2026-11, newest written 2026-11-01 06:04:12 UTC
+```
+
+Not reached, the job fails with the reason.
+
+**3. By hand, on the STIG Manager host:**
+
+```bash
+podman exec -it report-db mysql -ureport_reader -p site_reports \
+  -e "SELECT source, period, month, period_end, partial FROM insights_v_latest_run"
+```
+
+It shows the newest run per instance and period. The newest write's time is in `insights_run`:
+`SELECT MAX(written_at) FROM insights_run`.
+
 ## On the pages
 
 Each page has a **Trends** section after *At a glance*:
@@ -490,6 +540,7 @@ hundred groups adds a few MB a month.
 | `servicenow_insights_db_months` | `12` | The months the trends show |
 | `servicenow_insights_db_timeout` | `10` | Seconds to connect |
 | `servicenow_insights_backfill_months` | `0` | `> 0`: read and write that many past months, then stop |
+| `servicenow_insights_db_check` | `false` | `true`: only check the database, read only, then stop (*Is it writing?*) |
 
 ## Later
 

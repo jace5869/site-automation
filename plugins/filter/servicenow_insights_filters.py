@@ -2693,6 +2693,13 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
                          "survey_read": "survey_error" in r and not r.get("survey_error"), "hop_limit": hop_limit}}
     for k, s in scopes.items():
         s["summary"] = rule_summary(s, model, o)
+    # 1.15.0: the team lead - the group's manager in ServiceNow (sys_user_group.manager), on the team's page and email only
+    model["leads"] = dict((g, dict(m)) for g, m in (r.get("managers") or {}).items() if isinstance(m, dict) and m.get("name"))
+    model["leads_error"] = str(r.get("managers_error") or "")
+    if o.get("show_lead", True) not in (False, "false", "False", 0):
+        for k, s in scopes.items():
+            if s.get("level") == "team" and model["leads"].get(s.get("team")):
+                s["lead"] = lead_label(model["leads"][s["team"]])
     # the split (0.97.0): every page's figures again for the groups that match servicenow_insights_split_pattern (the group
     # or a parent team below the root) and for the rest - worked out here, so the page only switches between them
     label, pat = str(o.get("split_label") or "").strip(), str(o.get("split_pattern") or "").strip().lower()
@@ -2715,6 +2722,49 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
     if custom.get("cols"):                        # the Custom view's presets: the split's two halves, and the user's own
         custom["presets"] = custom_presets(hier, custom["groups"], model.get("split"), o)
     return model
+
+
+def lead_label(m):
+    """A team lead as the page and the email show it: the name, and (inactive) when ServiceNow has the account inactive."""
+    return m["name"] + ("" if m.get("active", True) else " (inactive in ServiceNow)")
+
+
+def _lead_patterns(want):
+    """servicenow_insights_email_leads: a list of group names or patterns (fnmatch, any case), or "all"."""
+    if isinstance(want, str):
+        want = [] if not want.strip() else (["*"] if want.strip().lower() == "all" else [x for x in re.split(r"[,\n]", want)])
+    pats = [" ".join(str(x).split()).lower() for x in want or [] if str(x or "").strip()]
+    return ["*" if x == "all" else x for x in pats]
+
+
+def servicenow_insights_lead_mail(model, email_leads=None, team_email_to=None):
+    """Who gets each team's own email (1.15.0) -> {to: {team: [addresses]}, lines: [the job output's lines]}. A team that
+    servicenow_insights_email_leads names (a name, a pattern, or "all") goes to its manager in ServiceNow - not when the group
+    has no manager, the manager is inactive or has no email (a line each); servicenow_insights_team_email_to wins for a team
+    it names. Only the teams with a page."""
+    m = model or {}
+    teams = [p["key"] for p in m.get("pages") or [] if p.get("level") == "team"]
+    pats, leads, to, lines = _lead_patterns(email_leads), m.get("leads") or {}, {}, []
+    fixed = dict((k, v) for k, v in (team_email_to or {}).items() if v)
+    picked = [t for t in teams if any(fnmatch.fnmatchcase(t.lower(), x) for x in pats)] if pats else []
+    if picked and m.get("leads_error"):
+        lines.append("Team leads not emailed: the managers were not read (%s)" % m["leads_error"])
+        picked = []
+    for t in picked:
+        if t in fixed:
+            continue
+        ld = leads.get(t)
+        why = ("no manager in ServiceNow" if not ld else "the manager %s is inactive" % ld["name"] if not ld.get("active", True)
+               else "the manager %s has no email address" % ld["name"] if not ld.get("email") else "")
+        if why:
+            lines.append("%s: not emailed - %s" % (t, why))
+        else:
+            to[t] = [ld["email"]]
+    for t, v in fixed.items():
+        to[t] = [v] if isinstance(v, str) else list(v)
+    if pats and not picked and not m.get("leads_error"):
+        lines.append("Team leads: servicenow_insights_email_leads matches no team page (%s)" % ", ".join(pats))
+    return {"to": to, "lines": lines}
 
 
 def masked_excerpt(text, mask, n=160):
@@ -3060,7 +3110,7 @@ def servicenow_insights_doc(model, key="all", opts=None):
     secs.append({"title": "Read", "lines": ["%s: %d record(s) kept of %d read" % (t["table"], t["kept"], t["read"]) for t in model.get("tables") or [] if not t.get("error")] +
                  ["Window: %s, compared with %s (%s)" % (win.get("label"), win.get("prev_label") or "nothing", win.get("time_zone") or "UTC")] +
                  ["ACT: %s" % act_line(model)]})
-    return {"title": title, "subtitle": "%s - %s" % (s["name"], win.get("label") or ""), "status": status, "summary": summary, "sections": secs,
+    return {"title": title, "subtitle": "%s - %s%s" % (s["name"], win.get("label") or "", (" · Group manager: " + s["lead"]) if s.get("lead") else ""), "status": status, "summary": summary, "sections": secs,
             "footer": "ServiceNow %s" % (model.get("url") or "")}
 
 
@@ -3096,6 +3146,8 @@ def not_read_lines(model):
     if model.get("members_error"):
         out.append("sys_user_grmember (the teams' members): %s - each leaderboard lists everyone the team's tickets were assigned to or "
                    "resolved by instead" % model["members_error"])
+    if model.get("leads_error"):
+        out.append("sys_user_group.manager (the team leads): %s - no Group manager line, no lead emailed" % model["leads_error"])
     if model.get("group_tree_error"):
         out.append("sys_user_group (the groups' parents, for the sites and directorates): %s - placed by their names instead"
                    % model["group_tree_error"])
@@ -3262,8 +3314,8 @@ def servicenow_insights_artifact(model):
 
 
 TIMING = (("ServiceNow reads", (("start", "read"),)), ("ACT", (("read", "act_a"), ("model", "act_b"))),
-          ("The report worked out", (("act_a", "model"), ("act_b", "finish"))), ("Trends (the report database)", (("finish", "db"),)),
-          ("Pages and email", (("db", "pages"),)), ("The report database written", (("pages", "end"),)))
+          ("The report worked out", (("act_a", "model"), ("act_b", "finish"))), ("The report database (read and written)", (("finish", "db"),)),
+          ("Pages and email", (("db", "pages"),)))
 
 
 def servicenow_insights_timing(t):
@@ -3334,6 +3386,7 @@ class FilterModule(object):
     def filters(self):
         return {"servicenow_insights_mask": servicenow_insights_mask, "servicenow_insights_descriptions": servicenow_insights_descriptions,
                 "servicenow_insights_batches": servicenow_insights_batches, "servicenow_insights_state": servicenow_insights_state,
+                "servicenow_insights_lead_mail": servicenow_insights_lead_mail,
                 "servicenow_insights_classify_evidence": servicenow_insights_classify_evidence,
                 "servicenow_insights_classify_task": servicenow_insights_classify_task,
                 "servicenow_insights_classify_merge": servicenow_insights_classify_merge,

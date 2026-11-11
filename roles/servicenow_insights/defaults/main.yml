@@ -90,7 +90,14 @@ servicenow_insights_sla_targets:
 # A catalog item's own target in hours, beating its priority's: {"New account / onboarding": 48, "Software install": 120}
 servicenow_insights_sla_items: {}
 # Also email a team's own report to these people (the team's page, the same look): {"Ops - Windows": [lead@yoursite.mil]}.
+# It wins over servicenow_insights_email_leads for a team named in both.
 servicenow_insights_team_email_to: {}
+# TEAM LEADS (1.15.0): each group's manager in ServiceNow (sys_user_group.manager, read with the groups). Show it on the
+# team's page and email as "Group manager: NAME" - nothing when the group has no manager.
+servicenow_insights_show_lead: true
+# Email these teams' pages to their manager: group names or patterns (fnmatch, any case, as servicenow_insights_split_pattern),
+# or "all". [] = nobody. A manager inactive or without an email address gets nothing: a line in the job output says so.
+servicenow_insights_email_leads: []
 
 # The tables read: incident, sc_req_item (requested items: the most requested services), sc_task (catalog tasks: the
 # All-stars count their closures), change_request, change_task (1.2.0: the changes' tasks - each team's, and which team a
@@ -231,6 +238,10 @@ servicenow_insights_db_timeout: 10          # seconds to connect
 # to the report database and stops - no ACT, no pages, no email. Run it once after setup (12), as a separate launch.
 # Safe to run twice: each month replaces what was there.
 servicenow_insights_backfill_months: 0
+# Is it writing? (1.15.0) true = only check the report database with the job's Report database credential, read only (the
+# reader account works): the server, the tables and views, the runs and months held, the newest write. No ServiceNow read,
+# no pages, no email. Launch with it as an extra variable.
+servicenow_insights_db_check: false
 
 # THE PAGES (1.14.0): each site's, unit's and team's page is written this many at a time, in one task after the All page,
 # when site_report_web writes the website itself (a folder, an SMB share, an upload). 0 = the site_email role once per
