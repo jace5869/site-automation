@@ -99,8 +99,9 @@ function splits(d){var out=[];
   // a word of up to 12 characters (not a path's or a command's), and any word of a short-value cell (k-nw) or a chip:
   // no run of its letters and digits on two lines
   [].forEach.call(d.querySelectorAll('td'),function(td){if(!td.offsetParent||td.matches('.k-path,.lk'))return;
-    var it=d.createTreeWalker(td,NodeFilter.SHOW_TEXT),n,short=td.matches('.k-nw,.nw');
-    while((n=it.nextNode())){var v=n.nodeValue,m,re=/\S+/g,whole=short||!!(n.parentNode.closest&&n.parentNode.closest('.chip'));
+    // a short value or a chip is whole at the wide widths; on a phone a value wider than its card breaks inside it
+    var it=d.createTreeWalker(td,NodeFilter.SHOW_TEXT),n,short=td.matches('.k-nw,.nw')&&W!==%(phone)d;
+    while((n=it.nextNode())){var v=n.nodeValue,m,re=/\S+/g,whole=short||(W!==%(phone)d&&!!(n.parentNode.closest&&n.parentNode.closest('.chip')));
       while((m=re.exec(v))){if(m[0].length>12&&!whole)continue;var q=/[A-Za-z0-9]{2,}/g,k;
         while((k=q.exec(m[0]))){var rg=d.createRange();rg.setStart(n,m.index+k.index);rg.setEnd(n,m.index+k.index+k[0].length);
           if(lines(rg)>1)out.push('word '+m[0])}}}});
@@ -135,7 +136,7 @@ def measure(browser, folder, pages, width):
         part = pages[i:i + BATCH]
         h = os.path.join(folder, "fit-%d-%d.html" % (width, i))
         with open(h, "w") as f:
-            f.write(HARNESS % {"w": width, "pages": json.dumps(part)})
+            f.write(HARNESS % {"w": width, "pages": json.dumps(part), "phone": PHONE})
         with tempfile.TemporaryDirectory() as prof:
             r = subprocess.run([browser, "--headless=new", "--disable-gpu", "--no-sandbox", "--user-data-dir=" + prof,
                                 "--allow-file-access-from-files", "--window-size=%d,900" % (width + 40),

@@ -260,8 +260,9 @@ got=$(api "$atok" GET "/collections/$col/reviews/${nid%% *}" | "$py" -c 'import 
 d = json.load(sys.stdin); print("%d %s" % (len(d), sorted(set(r["status"]["label"] for r in d))))')
 [ "$got" = "$nrev ['submitted']" ] && ok "  ... STIG Manager has $nrev reviews of newbox, submitted" || bad "newbox's reviews: $got"
 play stigman_update.yml -e "@$work/plan4.json"
-[ "$rc" = 0 ] && grep -q '"there since the check - NEW ASSET newbox' "$work/out.txt" && [ "$(api "$wtok" GET "/assets?collectionId=$col" | grep -o '"newbox"' | wc -l)" = 1 ] \
-    && ok "the same plan again: newbox is there - not created twice, nothing written" || { bad "again, new asset: rc $rc"; grep -n "newbox\|fatal" "$work/out.txt" | head -5; }
+# 1.24.0: the asset this plan made on its first run is used; its reviews read again (already so) - green, not created twice
+[ "$rc" = 0 ] && grep -q '"there from an earlier run - NEW ASSET newbox' "$work/out.txt" && [ "$(api "$wtok" GET "/assets?collectionId=$col" | grep -o '"newbox"' | wc -l)" = 1 ] \
+    && ok "the same plan again: newbox is there from the first run - not created twice" || { bad "again, new asset: rc $rc"; grep -n "newbox\|fatal" "$work/out.txt" | head -5; }
 play stig_recheck.yml -e "$newvars"
 grep -q "NO ASSET" "$work/out.txt" && bad "the recheck after: still no asset" || ok "the recheck after: newbox found, rechecked as any asset"
 api "$atok" DELETE "/assets/${nid%% *}" >/dev/null

@@ -76,6 +76,7 @@ db: {description: "kind db: {datadir, datadir_fs, datadir_under, source, total_b
 import base64
 import fnmatch
 import glob
+import http.client
 import json
 import os
 import re
@@ -399,21 +400,75 @@ def context(validate=True):
     return ssl.create_default_context()
 
 
-def opener(validate=True):
-    """An opener that follows no redirect, its HTTPS checked as context() says."""
-    return build_opener(_NoRedirect(), HTTPSHandler(context=context(validate)))
+class _NamedHTTPSConnection(http.client.HTTPSConnection):
+    """An HTTPS connection to the URL's address (127.0.0.1) that says server_name in the TLS handshake (SNI) and checks
+    the certificate against server_name, not against the address: the name sent as the Host header."""
+    def __init__(self, host, server_name="", context=None, **kw):
+        super().__init__(host, context=context, **kw)
+        self._name_ctx, self._server_name = context, server_name
+
+    def connect(self):
+        http.client.HTTPConnection.connect(self)       # the TCP connection (and a proxy's tunnel), no TLS yet
+        self.sock = self._name_ctx.wrap_socket(self.sock, server_hostname=self._server_name)
+
+
+class _NamedHTTPSHandler(HTTPSHandler):
+    """HTTPS through _NamedHTTPSConnection: the certificate checked against server_name."""
+    def __init__(self, server_name, ctx):
+        super().__init__(context=ctx)
+        self._server_name, self._ctx = server_name, ctx
+
+    def https_open(self, req):
+        return self.do_open(_NamedHTTPSConnection, req, context=self._ctx, server_name=self._server_name)
+
+
+def opener(validate=True, server_name=""):
+    """An opener that follows no redirect, its HTTPS checked as context() says - against server_name when one is given
+    (also the name sent in the handshake), else against the URL's host."""
+    https = _NamedHTTPSHandler(server_name, context(validate)) if server_name else HTTPSHandler(context=context(validate))
+    return build_opener(_NoRedirect(), https)
+
+
+def _url_host(url):
+    """The host of a URL, without its port (an IPv6 address without its brackets)."""
+    rest = re.sub(r"^[a-z]+://", "", url).split("/")[0].rsplit("@", 1)[-1]
+    if rest.startswith("["):
+        return rest[1:].split("]")[0]
+    return rest.rsplit(":", 1)[0] if ":" in rest else rest
+
+
+# OpenSSL's verify codes: the certificate does not name the host / its issuer is not trusted
+_NAME_MISMATCH = (62, 64)                 # X509_V_ERR_HOSTNAME_MISMATCH, X509_V_ERR_IP_ADDRESS_MISMATCH
+_UNTRUSTED = (2, 18, 19, 20, 21)          # unable to get the issuer, self-signed (in the chain), no local issuer, ...
+
+
+def cert_message(err, name):
+    """What a certificate the check refused means, and what to do (name: what it was checked against)."""
+    why = err.verify_message or str(err)
+    code = getattr(err, "verify_code", None)
+    if code in _NAME_MISMATCH or "mismatch" in why.lower():
+        return ("the certificate does not name %s: give the node one that does (its name, or glide.servlet.uri's host), "
+                "or set servicenow_node_validate_certs false" % name)
+    if code in _UNTRUSTED:
+        return ("its certificate is not trusted (%s): add its CA to the host's trust store, or set "
+                "servicenow_node_validate_certs false" % why)
+    return "its certificate is not accepted (%s): renew or replace it, or set servicenow_node_validate_certs false" % why
 
 
 def fetch(url, host, timeout, login=None, validate=True):
     """GET url (a Host header if given; basic auth with login (user, password); https checked unless validate is false)
     -> (status, body): status -1 when there was no answer. A redirect is not followed: its status, and as the body
-    where it pointed."""
+    where it pointed. Over HTTPS with a Host header (127.0.0.1 with the node's name), the connection goes to the URL's
+    address but the handshake says the Host name (SNI) and the certificate is checked against it, not the address."""
     headers = {"Host": host} if host else {}
     if login:
         headers["Authorization"] = "Basic " + base64.b64encode(("%s:%s" % login).encode("utf-8")).decode("ascii")
     req = Request(url, headers=headers)
+    server_name = ""
+    if host and url.lower().startswith("https://"):
+        server_name = _url_host("https://" + host)              # the Host header's name, without a port
     try:
-        resp = opener(validate).open(req, timeout=timeout)
+        resp = opener(validate, server_name).open(req, timeout=timeout)
         return resp.getcode() or 200, resp.read(4 * 1048576).decode("utf-8", "replace")
     except HTTPError as e:
         if 300 <= e.code < 400:
@@ -427,8 +482,7 @@ def fetch(url, host, timeout, login=None, validate=True):
     except (URLError, socket.timeout, OSError, ValueError, ssl.SSLError) as e:
         r = getattr(e, "reason", e)
         if isinstance(r, ssl.SSLCertVerificationError):
-            return -1, ("its certificate is not trusted (%s): add its CA to the host's trust store, or set "
-                        "servicenow_node_validate_certs false" % (r.verify_message or r))
+            return -1, cert_message(r, server_name or _url_host(url))
         return -1, str(r)
 
 

@@ -233,8 +233,9 @@ index, the ticket insights pages and the pages the copy job writes - and in prin
 
 The index lists many reports, so it carries the **highest** marking among the runs it lists (TOP SECRET, SECRET,
 CONFIDENTIAL, CUI, UNCLASSIFIED; a text of no known classification counts as SECRET) - whichever job wrote it last. A
-run without a banner never takes a classified report's banner off the index (1.24.0: each line of `index.json` keeps
-its runs' banner; a line written before that counts as none until its report runs again).
+run without a banner never takes a classified report's banner off the index: each line of `index.json` keeps its runs'
+banner (1.24.0), and `index.json` the index's own. On a site updated from an older release, the banner the index
+already carries stays while any line from before is listed - until each of those reports has run again.
 
 ## What it writes
 
@@ -641,6 +642,10 @@ Good to know:
   line, or put back a line the other took off. What that looks like: a report not listed (its page is there, but no
   line links it, and it is not deleted with the older runs) or a link to a run whose page was deleted - until that
   template's next run writes its line again.
+- Two runs of the **same template** at once (its Concurrent jobs on): the one that finishes last writes its line,
+  `latest.html` and the index - the older run can win, and the newer run's page then stays in the folder, not listed
+  and not deleted, until that template's next run. Leave Concurrent jobs off on report templates that write the
+  website.
 - `report_web_host` not a host of the copy job's inventory (or under another name there, a short name, say): the
   copy job reaches it with the `report_web_host_*` settings and the Report website credential (else its Machine
   credential), as a report job would. The job says which it did.

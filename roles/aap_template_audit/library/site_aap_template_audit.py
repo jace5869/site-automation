@@ -17,9 +17,10 @@ description:
     one's Variables (extra_vars, YAML or JSON) and, where its survey is on, the survey's questions. GET only.
   - "Flags each setting that is: connection (an C(ansible_*) setting); an address (a host name, a URL or an IP address
     in its value); site-wide (in O(site_wide): the settings usually in all.yml); repeated (the same value in at least
-    O(repeat_min) templates); a secret (its name - password, secret, token, key - or its value, a long random string)."
+    O(repeat_min) templates); a secret (a word of its name - password, pwd, secret, token, api key, credential, pin -
+    or its value: a long random string, a URL with a password, a key named like a secret in a text holding JSON or YAML)."
   - "A secret is never returned: only its name. A repeated setting's value is returned (cut) only when it is no secret,
-    is not named like one, and is not a list or a dict (those come back as '(same; not shown)')."
+    is not named like one, and is not a list or a dict or a text holding one (those come back as '(same; not shown)')."
   - "A template that asks for its Variables on launch, or whose survey asks for a flagged setting: a launch can set
     these settings again."
   - AAP's address and login come from the environment, as the "Red Hat Ansible Automation Platform" credential sets
@@ -70,12 +71,21 @@ NO_CREDENTIAL = ('No AAP connection: attach a credential of type "Red Hat Ansibl
                  '(its AAP URL, and the user name and password - or a token - of an AAP user that can read the job and '
                  'workflow templates: Organization Auditor is enough)')
 
-# a setting named like a secret (db_password, aap_token, client_secret, api_key)
-SECRET_NAME = re.compile(r"(^|_)(password|passwd|pass|pw|secret|token|api_?key|apikey|private_?key|secret_?key|access_?key|"
-                         r"passphrase)($|_)", re.I)
-# a name like these is about a secret, not one: where it is, what it is called, a rule for it
+# a name's words: split at _ - . (any other sign too), where camelCase turns and between letters and digits
+# (adminPwd, client-secret, db.password, APIKey, secret1)
+NAME_WORDS = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|[0-9]+")
+# a setting named like a secret: one of these words, whole (bypass, compass, keyboard and spin are not) ...
+SECRET_WORDS = frozenset(("password", "passwords", "passwd", "pwd", "pass", "pw", "secret", "secrets", "token", "apikey",
+                          "apikeys", "passphrase", "credential", "credentials", "pin", "privatekey", "secretkey", "accesskey"))
+# ... or two of them in a row (api_key, private-key, aws_access_key, key_material)
+SECRET_PAIRS = frozenset((("api", "key"), ("private", "key"), ("secret", "key"), ("access", "key"), ("key", "material")))
+# a name like these is about a secret, not one: where it is, what it is called, a rule for it (its words, joined by _)
 NOT_SECRET_NAME = re.compile(r"_(file|path|dir|name|names|id|ids|url|host|user|username|type|length|len|days|age|"
                              r"expires?|expiry|policy|rotation|field|header|check|checks|warn|crit|min|max)$", re.I)
+# a URL with a password in it (mysql://svc:<password>@db01)
+URL_PASSWORD = re.compile(r"[a-z][a-z0-9+.-]*://[^\s/?#@:]*:[^\s/?#]+@", re.I)
+# name=value or name: value in a text (Server=db01;Uid=svc;Pwd=...), the name in quotes or not
+TEXT_SETTING = re.compile(r"""([A-Za-z][\w.-]*)["']?\s*[:=]\s*["']?[^\s"',;]""")
 URL = re.compile(r"^[a-z][a-z0-9+.-]*://[^\s/]+", re.I)
 IPV4 = re.compile(r"^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:/\d{1,2})?(?::\d+)?$")
 IPV6 = re.compile(r"^\[?(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}\]?(?:/\d{1,3})?$", re.I)
@@ -111,10 +121,31 @@ def parse_vars(text):
     return d, ""
 
 
+def _value(v):
+    """A text that holds JSON or YAML - a dict or a list - is that dict or list; any other value is itself. Pure."""
+    if not isinstance(v, str):
+        return v
+    t, d = v.strip(), None
+    if not t:
+        return v
+    if t[0] in "[{":
+        try:
+            d = json.loads(t)
+        except Exception:                            # not JSON (or too deep): YAML may read it
+            d = None
+    if d is None and yaml is not None and (":" in t or t[0] in "-[{"):
+        try:
+            d = yaml.safe_load(t)
+        except Exception:                            # not YAML either: it stays a text
+            d = None
+    return d if isinstance(d, (dict, list)) else v
+
+
 def _strings(v, depth=0):
-    """Every text inside a value (lists and dicts, a few levels down)."""
+    """Every text inside a value (lists and dicts, a few levels down; a text holding JSON or YAML is read)."""
     if depth > 6:
         return
+    v = _value(v)
     if isinstance(v, str):
         yield v
     elif isinstance(v, dict):
@@ -159,16 +190,33 @@ def looks_random(s):
     return classes >= 3 and _entropy(s) >= 3.5
 
 
+def name_words(name):
+    """A name's words, in lower case: adminPwd -> admin, pwd; API-KEY -> api, key; secret1 -> secret, 1. Pure."""
+    return [w.lower() for w in NAME_WORDS.findall(str(name or ""))]
+
+
 def secret_name(name):
-    """A setting named like a secret (db_password, api_token, client_secret) - not one that names where it is. Pure."""
-    n = str(name or "")
-    return bool(SECRET_NAME.search(n)) and not NOT_SECRET_NAME.search(n)
+    """A setting named like a secret (db_password, adminPwd, client-secret, API-KEY, secret1): a whole word of its
+    name, never a part of one (bypass, keyboard) - and not one that names where it is (vcenter_password_file). Pure."""
+    w = name_words(name)
+    if not w or NOT_SECRET_NAME.search("_".join(w)):
+        return False
+    return any(x in SECRET_WORDS for x in w) or any((a, "key" if b == "keys" else b) in SECRET_PAIRS for a, b in zip(w, w[1:]))
+
+
+def secret_text(s):
+    """A text with a secret written in it: a URL with a password (mysql://svc:...@db01), or name=value / name: value
+    under a secret's name (Uid=svc;Pwd=...). Pure."""
+    s = str(s or "")
+    return bool(URL_PASSWORD.search(s)) or any(secret_name(k) for k in TEXT_SETTING.findall(s))
 
 
 def _keys(v, depth=0):
-    """Every (key, value) of the dicts inside a value (lists and dicts, a few levels down)."""
+    """Every (key, value) of the dicts inside a value (lists and dicts, a few levels down; a text holding JSON or YAML
+    is read)."""
     if depth > 6:
         return
+    v = _value(v)
     if isinstance(v, dict):
         for k, x in v.items():
             yield k, x
@@ -197,19 +245,20 @@ def _filled(v, depth=0):
 
 def is_secret(name, value):
     """A secret: named like one (with a value - an empty one is no secret; a number counts), a key named like one
-    anywhere inside it (stigman_db: {password: ...}), or a value that is a long random string. A vault-encrypted
-    value is a secret too: it is fine in a vars file, not in a template's Variables. Pure."""
+    anywhere inside it (stigman_db: {password: ...}, or a text holding JSON or YAML: '{"password": ...}'), a text with
+    a secret written in it (a URL with a password: the whole value is the secret), or a value that is a long random
+    string. A vault-encrypted value is a secret too: it is fine in a vars file, not in a template's Variables. Pure."""
     if secret_name(name) and _filled(value):
         return True
     if any(secret_name(k) and _filled(x) for k, x in _keys(value)):
         return True
-    return any(looks_random(s) or str(s).lstrip().startswith("$ANSIBLE_VAULT") for s in _strings(value))
+    return any(looks_random(s) or secret_text(s) or str(s).lstrip().startswith("$ANSIBLE_VAULT") for s in _strings(value))
 
 
 def hidden(name, value):
     """A value the report never shows, secret or not: one named like a secret (even true/false), and a list or a dict
-    (a key inside may be one). Pure."""
-    return secret_name(name) or isinstance(value, (dict, list, tuple))
+    (a key inside may be one), a text holding one as JSON or YAML too. Pure."""
+    return secret_name(name) or isinstance(_value(value), (dict, list, tuple))
 
 
 def connection_suggestion(name):

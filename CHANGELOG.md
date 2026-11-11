@@ -15,19 +15,33 @@ refused:
   a failed try that names where it pointed; it is not followed and never counts as "up". The ServiceNow login page
   check, which sends no login, still follows its single sign-on redirect.
 - **The ServiceNow node stats page over HTTPS is checked:** its certificate and host name, against the node's own
-  trust store (`servicenow_node_validate_certs`, default true). Plain HTTP to 127.0.0.1 works as before.
+  trust store (`servicenow_node_validate_certs`, default true). Asked at 127.0.0.1 with the node's name, the
+  certificate is checked against that name (sent as the server name too); a certificate that names another host says
+  so, apart from one whose CA is not trusted. Plain HTTP to 127.0.0.1 works as before.
 - **The report copy job:**
   - It writes only inside `report_web_dest`: a kept report whose file names leave that folder (an absolute path, a
     drive letter, a backslash, `..`) is skipped with a warning that names the job and the page. A report job refuses
     such a name too.
-  - One page that fails no longer stops the copy: the job warns, names it, writes the other pages, records how far it
-    got after each page, and tries the failed job again on its next runs (named each time until it is written).
+  - One page that fails no longer stops the copy: the job warns, names it, writes the other pages, keeps where it
+    got to at the end of the run together with the pages that failed, and tries those jobs again on its next runs
+    (named each time until their page is written). A run stopped half-way keeps nothing: the next one copies those
+    pages again (an older copy never replaces a newer page).
 - **The report website's index** carries the highest banner of the reports it lists (TOP SECRET, SECRET, CONFIDENTIAL,
   CUI, UNCLASSIFIED), not the last job's. Before it writes, a report job reads `index.json` again and changes only its
   own line (a folder, a share or an upload address; for `report_web_host` docs/WEB_REPORTS.md says what can still be
-  lost and how it comes back).
-- **The template audit** never shows a secret's value: a number under a secret's name, a secret name anywhere inside a
-  dict or list, and any dict or list value are shown as "(same; not shown)" or "(differs)".
+  lost and how it comes back). On a site updated from an older release, the index keeps the banner it already carries
+  while a line written before is listed - until each of those reports has run again. Two runs of the same template at
+  once (Concurrent jobs on) can still leave the older run's line: docs/WEB_REPORTS.md.
+- **The report website on a phone** (1.21.0's fit, with wider fonts such as a Linux browser's): a section title, a
+  long word in a table's card and a long status chip break inside the card instead of widening the page.
+- **The template audit** never shows a secret's value. A setting's name is read word by word (split at `_ - .`,
+  camelCase and digits): one of its words a secret word (password, passwd, pwd, pass, pw, secret, token, apikey,
+  passphrase, credential(s), pin, or the pairs api key, private key, secret key, access key, key material) makes it a
+  secret - `admin_pwd`, `dbPassword`, `client-secret`, `API-KEY`, `db.password`, `svc_credentials`, `secret1`; never a
+  word inside another (bypass, compass, keyboard). A number under such a name, such a name anywhere inside a dict or
+  list, a URL with a password in it (`user:password@`), a text that holds JSON or YAML with such a key, and a text
+  such as `Pwd=...` in a connection string are secrets too. Any dict or list value is shown as "(same; not shown)" or
+  "(differs)"; so is a text that reads as JSON or YAML.
 - **STIG Manager stack:** the check that refuses to change a deployed database password shows only the names of the
   passwords that differ, never anything derived from them.
 - **DoD PKI bundle:** a bundle that differs from yours and whose DISA signature could not be checked (always the case
@@ -53,8 +67,10 @@ refused:
 - An availability check, a ServiceNow node stats read or a report upload whose address answers with a redirect now
   fails. Set the final address (http to https, a trailing slash).
 - A ServiceNow node whose stats page has a self-signed certificate, or one from a CA the node does not trust, is not
-  read: add the CA to the node's trust store, or set `servicenow_node_validate_certs: false`. A node that answers only
-  HTTPS is read at `https://<its name>`.
+  read: add the CA to the node's trust store, or set `servicenow_node_validate_certs: false`. A certificate that does
+  not name the node (its name or the address it is asked at) is not read either: the job says which name it lacks.
+- The template audit shows fewer values: a setting whose name has a secret word in it, and a text that reads as JSON
+  or YAML (a line with a colon can), are not shown.
 - The DoD PKI bundle check no longer offers a bundle it could not verify (FIPS-mode execution environments, copies
   without the signed list), unless `pki_bundle_accept_unverified: true`.
 - The checklist import may list more conflicts where old scans of a host stay on the share (with
@@ -62,7 +78,8 @@ refused:
 - The STIG Manager update fails when a new asset was made by someone else since the check.
 - The report copy job stays green when a page fails (it warns and tries again on the next run); a kept report whose
   file names leave the folder is skipped.
-- `index.json` lines and runs gain a `banner` key when their run had one.
+- `index.json` gains a `banner` key: on each line (empty when its run had none), on a run that had one, and the
+  index's own at the top.
 
 Files:
 - roles/api_availability (site_http_probe: no redirects followed with a login; a probe's `follow`),
@@ -83,10 +100,13 @@ Files:
 
 Tests: a test for each fix that runs without a real system - for the three HTTP clients two local servers, the first
 answering with a redirect, and the login never reaching the second; the copy job's names and failing pages; the
-index's banner and line merge; nested and numeric secrets; the stack's output at -vvv; an unverified bundle; the
+index's banner and line merge, and an index from an older release keeping its banner; nested and numeric secrets and
+every secret-name spelling, URL passwords and JSON/YAML texts; the node stats certificate checked against the name it
+is asked with (a TLS-only node at 127.0.0.1); the stack's output at -vvv; an unverified bundle; the
 checklist conflict and a UTF-16 DTD; LDAP paging and the lockout policy; an asset of an earlier run; approvals; the
 WAR cap; the win_act scripts' order (and a run with pwsh). New: tests/test_stigman_stack.py, tests/test_win_act.py.
-The unit tests and the e2e tests of these roles on ansible-core 2.22 and 2.16.
+The unit tests and the e2e tests of these roles on ansible-core 2.22 and 2.16; tests/test_report_fit.py also with a
+Linux browser's wider fonts (DejaVu), as CI has them.
 
 SA_VERSION 1.24.0; the PDFs at 1.24.0.
 

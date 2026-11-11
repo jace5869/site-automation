@@ -17,7 +17,7 @@ shown**: not its value, not part of it, not in the email, the website, the job's
 | **an address** | a value that is a host name, a URL or an IP address (`vcsa01.yoursite.mil`, `https://stigman.yoursite.mil/api`, `192.0.2.10`) | `all.yml` of the enclave's own AAP - one AAP per enclave (below) |
 | **site-wide** | a setting the job templates' variable files mark *usually in all.yml* (`aap/extra_vars`: the settings of the email, ACT and findings roles - the mail relay, the report website, the logo) | `playbooks/group_vars/all.yml` |
 | **repeated** | the same setting with the same value in 3 templates or more (`aap_template_audit_repeat_min`): one change would have to be made in each. The note names the other templates | `all.yml` - one place to change it |
-| **a secret** | a setting named like one (`*_password`, `*_token`, `*_secret`, `api_key`, ...) with a value (text or a number), a list or dict with a key named like one anywhere inside (`stigman_db: {password: ...}`), or any value that is a long random string or vault-encrypted | a credential (a custom credential type, [SECRETS.md](SECRETS.md)) - never plain in Variables |
+| **a secret** | a setting named like one - a whole word of its name, in any case, split at `_` `-` `.`, camelCase and digits: password, passwd, pwd, pass, pw, secret, token, api key, passphrase, credential(s), pin, private / secret / access key, key material (`db_password`, `adminPwd`, `client-secret`, `API-KEY`, `secret1`; not `bypass_mode` or `keyboard_layout`) - with a value (text or a number), a list or dict with a key named like one anywhere inside (`stigman_db: {password: ...}`, also in a text holding JSON or YAML), a text with a password in a URL (`mysql://svc:...@db01`) or after a secret's name (`Uid=svc;Pwd=...`), or any value that is a long random string or vault-encrypted | a credential (a custom credential type, [SECRETS.md](SECRETS.md)) - never plain in Variables |
 | **set at launch** | a template with **Prompt on launch** on for its Variables (a launch can set any of the flagged settings again), or whose survey asks for a flagged setting - or for a password in a *Text* question instead of a *Password* one | ask on launch only for what a launch must choose |
 
 **One AAP per enclave.** Each enclave has its own AAP, with its own copy of the settings: what differs between
@@ -39,7 +39,8 @@ One report, on the report website and by email like the others (`report_email_to
 
 - **the counts**: job templates and workflows read, how many have something to move, and each kind of flag;
 - **By setting**: each flagged setting once - why, how many templates have it, in how many it is the same, the value
-  (cut; *not shown* for a secret, a setting named like one, or a list or dict - only *(same; not shown)*) and where
+  (cut; *not shown* for a secret, a setting named like one, or a list or dict, a text holding one as JSON or YAML
+  too - only *(same; not shown)*) and where
   to move it;
 - **a table per template** (the ones with a secret first, then the most flags): setting, why, where to move it, a
   note (the other templates with the same value; what its survey asks);
