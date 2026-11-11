@@ -174,10 +174,17 @@
 ## the node's full name, {host}: its inventory name, {port}).
 # servicenow_node_stats_url: ""
 
-## A stats page that asks for a login (401 / 403, a login page): auto = asked again with the
-## ServiceNow API credential's login (basic auth) - sent only over HTTPS to the node's own name, or
-## to 127.0.0.1, never shown; basic = with it from the start; none = never.
+## A stats page that asks for a login (401 / 403, a redirect, a login page): auto = asked again with
+## the ServiceNow API credential's login (basic auth) - sent only over HTTPS to the node's own name,
+## or to 127.0.0.1, never shown; basic = with it from the start; none = never. A redirect is never
+## followed: the try fails and says where it pointed.
 # servicenow_node_stats_auth: auto
+
+## Check the stats page's HTTPS certificate and name, with the node's own trust store. A node whose
+## certificate is self-signed or from a CA the node does not trust is not read over HTTPS: add that
+## CA to the node's trust store, or set this false (the page is still read over plain HTTP on
+## 127.0.0.1).
+# servicenow_node_validate_certs: true
 
 ## reads of the stats page ...
 # servicenow_node_stats_samples: 3

@@ -231,6 +231,11 @@ In a classified enclave every page carries its banner at the top and bottom - ea
 index, the ticket insights pages and the pages the copy job writes - and in print on every sheet (`site_enclave`,
 `report_banner`; [ENCLAVES.md](ENCLAVES.md)).
 
+The index lists many reports, so it carries the **highest** marking among the runs it lists (TOP SECRET, SECRET,
+CONFIDENTIAL, CUI, UNCLASSIFIED; a text of no known classification counts as SECRET) - whichever job wrote it last. A
+run without a banner never takes a classified report's banner off the index (1.24.0: each line of `index.json` keeps
+its runs' banner; a line written before that counts as none until its report runs again).
+
 ## What it writes
 
 ```
@@ -434,7 +439,9 @@ if you use it) - or let the copy job write the pages ("The copy job", below). `r
 
 `report_web_dest: https://reports.yoursite.mil/upload` - the job uploads each file with `PUT` (WebDAV), from the
 AAP side. Nothing to mount, nothing on the execution nodes. The job reads `index.json` back from the same address
-(`GET`) to add its line. nginx, for example (the web developer's part):
+(`GET`) to add its line. A redirect (`301`, `302` ... to a login page, another host or `http://`) is never followed -
+the login is never sent on: the job stops and names the address it pointed to; set `report_web_dest` to the address
+that takes the upload itself. nginx, for example (the web developer's part):
 
 ```nginx
 server {
@@ -590,6 +597,20 @@ first run (no run before it) copies the report jobs of the last `report_web_copy
 `report_web_copy_jobs: [907, 908]` (on the template's Variables, or a survey) copies those jobs' pages again,
 whatever was copied before - a page deleted on the server, say.
 
+**A page that fails** (HTTP 413 for one big page, a path too long on the server, no Modify on one folder) is a
+warning that names the job and why - `WARNING - job 907 'Linux - Certificate trust report': its page ... was not
+copied: ...` - and the run goes on with the next page; at the end `Not copied: ...` lists each one. Where the run got
+to still moves on, and `site_report_copied` keeps those jobs (`failed`): the next run tries them again first and says
+so (`[WARNING]: The report website copy: job 907: its page was not copied by the last copy (...) - tried again now`),
+every run until the page is written. One page that always fails never holds back the reports after it. A job AAP has
+no more (deleted) is said once and not tried again.
+
+**File names**: the copy job writes a kept report only at names inside `report_web_dest` - a path below the folder,
+`/` between its parts, ending in `.html` (no leading `/` or `\`, no drive or `:`, no backslash, no `.` or `..` part),
+as `report_web_files` makes them. A kept report with any other page, latest or index name is not copied:
+`job 907 (...): its page ... is not copied - ...: not a file name inside report_web_dest`, and the run goes on. The
+module checks the same before it writes anything, for a folder, a share, an upload and the Windows script alike.
+
 An older run never takes the place of a newer one: the template's `latest.html` and its line in the index are only
 written over by a run at least as new as the one there (by its time); the older run gets its own page.
 
@@ -612,8 +633,14 @@ Good to know:
   copy job's own: it writes everything into its own `report_web_dest`. The file names (`report_web_page`,
   `report_web_names`) are the report job's - they are kept with the report.
 - A template with `report_web_copy: false` on its Variables writes its pages itself, as before. It then shares the
-  index with the copy job: two jobs writing it in the same second can lose one line (it is back after that
-  template's next run).
+  index with the copy job, and the index has no lock: each job reads `index.json`, puts its own line in and writes it
+  back. Into a folder, a share or an upload address the job reads it again just before it writes it (1.24.0) and keeps
+  every other line as it is then, so only two writes in the same moment can lose one. On `report_web_host` (a
+  Windows server) the index is read over WinRM before the pages are made and written by the second WinRM step, and the
+  copy job carries it from page to page through its whole run: a job that writes the index in that time can lose its
+  line, or put back a line the other took off. What that looks like: a report not listed (its page is there, but no
+  line links it, and it is not deleted with the older runs) or a link to a run whose page was deleted - until that
+  template's next run writes its line again.
 - `report_web_host` not a host of the copy job's inventory (or under another name there, a short name, say): the
   copy job reaches it with the `report_web_host_*` settings and the Report website credential (else its Machine
   credential), as a report job would. The job says which it did.
@@ -647,7 +674,10 @@ variable (`{{ site_report_url }}`) - for a Teams post or a ServiceNow work note.
 | `The report website: Access to the path 'D:\reports\...' is denied` | The account has no Modify on the folder (NTFS) |
 | `winrm or requests is not installed` | The execution environment has no `pywinrm` (docs/WINDOWS.md, step 2) |
 | `report_web_page '...': there is no {x}` | A name that does not exist; the message lists the ones that do |
-| A report missing from the index | Two jobs finished in the same second and one line was lost; it is back after that job's next run |
+| A report missing from the index, or a link to a page that is gone | Two jobs wrote the index at the same time and one line was lost (on `report_web_host`, the copy job's whole run counts - "The copy job"); it is back after that template's next run |
+| `HTTP 302 Found - the address answers with a redirect to https://...` | The upload address sends the job elsewhere (a login page, another host, `http://`): never followed, so the login is never sent on. Set `report_web_dest` to the address that takes `PUT` itself |
+| `'../x.html': not a file name inside report_web_dest` | A page, latest or index name outside the folder (a hand-set `_web_files`, or a kept report): nothing written. The copy job skips that report and goes on |
+| The copy job: `WARNING - job 907 '...': its page ... was not copied: ...` | That page failed (the reason's own row here); the other pages are written, and the next run tries the job again first, every run until it works |
 | The copy job: `Nothing to copy: no report job kept its report for this job since ...` | No report job finished with `report_web_copy: true` since then: is it in `all.yml`, did the project sync? A report run with Check keeps nothing |
 | The copy job: `AAP refused the list of jobs (HTTP 403)` | Its AAP credential's user needs Organization Auditor on the report templates' organizations |
 | The copy job: `could not reach report_web_host web01..., a host of this job's inventory` | The template's Machine credential, and that host's connection settings in the inventory - as for your other Windows jobs |

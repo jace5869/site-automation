@@ -11,6 +11,9 @@ pki_bundle_ca_path: ""               # a CA bundle for that check (the EE's own 
 pki_bundle_timeout: 120              # seconds for the download
 pki_bundle_warn_days: 90             # a CA in the bundle expiring within this many days is listed
 pki_bundle_fail_when_newer: false    # true = the job ends red when a newer bundle is there (an AAP notification on failure tells you)
+# A bundle that differs from yours while DISA's signature on it could not be checked (a FIPS-mode execution environment,
+# a copy without the signed list): false = listed as NOT VERIFIED, not attached, not offered; true = offered as a newer one.
+pki_bundle_accept_unverified: false
 # Email the result like the other reports: to report_email_to, through the mail relay in all.yml (docs/EMAIL_REPORTS.md),
 # the checked .p7b attached when it differs from yours. false = never emailed (the launch box "Also email the report to" still is).
 pki_bundle_email: true

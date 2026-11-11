@@ -422,6 +422,9 @@ server first. To roll out group by group with an approval: workflow 15 in
 - **Locked down.** Ordinary users may create folders and files in `C:\ProgramData` (and in
   `C:\temp`). Someone could then place, or swap, `act.ps1` before an administrator runs it, and
   their code would run with administrator rights. So the job:
+  - refuses a `C:\ProgramData\act` that is a link (a junction or symbolic link) and changes
+    nothing - the install and the removal stop with a plain message; remove the link itself, not
+    its target (`rmdir` in cmd.exe), and run it again;
   - takes ownership of `C:\ProgramData\act`;
   - lets only Administrators and SYSTEM in (nothing inherited from `C:\ProgramData`);
   - checks the file's SHA256 against the one in the repository, every run, and replaces it if it

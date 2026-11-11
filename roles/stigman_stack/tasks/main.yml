@@ -123,6 +123,7 @@
   changed_when: false
   failed_when: false
   check_mode: false                       # only reads the label
+  no_log: true                            # the label is the deployed value's hash: not in the job output (also at -v)
 
 - name: Secrets | desired state
   ansible.builtin.set_fact:
@@ -135,21 +136,27 @@
         have: "{{ (_stigman_secret_state.results[1].stdout | trim) if _stigman_secret_state.results[1].rc == 0 else '' }}"
   no_log: true
 
+# The names only: the refusal below prints these, never a hash (a failed loop would print its whole item)
+- name: Secrets | the deployed ones whose value in AAP differs
+  ansible.builtin.set_fact:
+    _stigman_secrets_differ: >-
+      {%- set out = [] -%}
+      {%- for s in _stigman_secrets if s.have | length > 0 and s.have != s.sha -%}
+      {%-   set _ = out.append(s.name) -%}
+      {%- endfor -%}
+      {{ out }}
+  no_log: true
+
 - name: Secrets | refuse to silently change a deployed database password
   ansible.builtin.fail:
     msg: >-
-      The {{ item.name }} value in AAP differs from the one already deployed. Changing it here would
-      only change the secret, not the password inside MySQL, and STIG Manager would lose its database.
-      Rotate it with a password-rotation run (ALTER USER, then update the secret), or re-run with
-      stigman_replace_secrets=true if the database is being re-created.
-  loop: "{{ _stigman_secrets }}"
-  loop_control:
-    label: "{{ item.name }}"
+      The {{ _stigman_secrets_differ | join(' and ') }} value in AAP differs from the one already deployed.
+      Changing it here would only change the secret, not the password inside MySQL, and STIG Manager would
+      lose its database. Rotate it with a password-rotation run (ALTER USER, then update the secret), or
+      re-run with stigman_replace_secrets=true if the database is being re-created.
   when:
-    - item.have | length > 0
-    - item.have != item.sha
+    - _stigman_secrets_differ | length > 0
     - not (stigman_replace_secrets | default(false) | bool)
-  no_log: false
 
 - name: Secrets | create (first deployment) or replace (when explicitly allowed)
   ansible.builtin.command:

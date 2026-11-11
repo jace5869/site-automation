@@ -1,11 +1,15 @@
 """Unit tests for the DoD PKI bundle check (roles/pki_bundle/library/site_pki_bundle.py) against a made-up PKI laid out
 as DISA's zip is: the PKCS7 bundle, a list of its files' SHA-256 signed (CMS) by a code signing certificate, and that
 certificate's chain. First, current, newer, a root not in yours, a file changed after it was signed, a list signed under
-another root, a download over HTTP.
+another root, a download over HTTP; a bundle that differs without a checked signature (not offered unless
+pki_bundle_accept_unverified), and the role's output and email for it with an expired CA (needs ansible-playbook;
+ANSIBLE_PLAYBOOK=<2.16's ansible-playbook> for 2.16).
     python3 tests/test_pki_bundle.py"""
+import datetime
 import hashlib
 import http.server
 import io
+import json
 import os
 import shutil
 import subprocess
@@ -15,6 +19,8 @@ import threading
 import types
 import unittest
 import zipfile
+
+import yaml
 
 here = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(here, "..", "roles", "pki_bundle", "library"))
@@ -98,10 +104,29 @@ def bundle_zip(version, certs, signer="signer", chain=("email70", "r3"), tamper=
     return z.getvalue()
 
 
+def expired_ca(name, cn, by):
+    """A CA under by that expired last month (openssl before 3.4 cannot make one: the cryptography library does)."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+    ca = x509.load_pem_x509_certificate(read(by + ".crt"))
+    ca_key = serialization.load_pem_private_key(read(by + ".key"), None)
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    subj = x509.Name(list(ca.subject)[:-1] + [x509.NameAttribute(NameOID.COMMON_NAME, cn)])
+    cert = (x509.CertificateBuilder().subject_name(subj).issuer_name(ca.subject).public_key(key.public_key())
+            .serial_number(x509.random_serial_number()).not_valid_before(now - datetime.timedelta(days=60))
+            .not_valid_after(now - datetime.timedelta(days=30))
+            .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+            .sign(ca_key, hashes.SHA256()))
+    write(name + ".crt", cert.public_bytes(serialization.Encoding.PEM))
+
+
 def check(data, current=None, **kw):
     url = write("dl-%d.zip" % len(os.listdir(W)), data) if isinstance(data, bytes) else data
     p = dict(url=url, current=current or "", dest_dir=os.path.join(W, "out"), validate_certs=True, ca_path=None, timeout=10,
-             max_bytes=20971520, warn_days=90)
+             max_bytes=20971520, warn_days=90, accept_unverified=False)
     p.update(kw)
     return m.run(types.SimpleNamespace(params=p))
 
@@ -150,6 +175,73 @@ class Check(unittest.TestCase):
         self.assertTrue(r["signature"].startswith("not checked"))
         self.assertEqual(len(r["untrusted"]), 1)
         self.assertFalse(r["file"])
+
+    def test_a_new_root_alone_without_a_signature_is_not_offered(self):
+        """A root not in yours, nothing under it, and no signed list (a copy on a share; FIPS mode is the same): not
+        "newer" on its own word - "not verified", no file to attach. pki_bundle_accept_unverified: true offers it."""
+        cur = write("mine.p7b", p7b("r3", "id70", "email70"))
+        r = check(write("bare-root.p7b", p7b("r3", "id70", "email70", "r9")), cur)
+        self.assertEqual((r["status"], r["problems"], r["file"]), ("not verified", [], ""), r)
+        self.assertTrue(r["signature"].startswith("not checked"))
+        self.assertEqual(subjects(r["new_roots"]), ["CN=TEST ROOT CA 9"])
+        # a CA added under your own root, no signed list: not offered either
+        r = check(write("bare-id.p7b", p7b("r3", "id70", "id71", "email70")), cur)
+        self.assertEqual((r["status"], r["file"]), ("not verified", ""), r)
+        # the operator accepts unverified bundles: offered as newer, the file written
+        r = check(write("bare-root2.p7b", p7b("r3", "id70", "email70", "r9")), cur, accept_unverified=True)
+        self.assertEqual(r["status"], "newer", r)
+        self.assertTrue(r["file"])
+        # CAs under a root nothing vouches for stay refused, whatever the setting
+        r = check(write("bare2.p7b", p7b("r3", "id70", "email70", "r9", "id90")), cur, accept_unverified=True)
+        self.assertEqual((r["status"], r["file"]), ("failed", ""), r)
+
+    def test_the_output_and_the_email(self):
+        """The role's result lines and email sections (roles/pki_bundle/tasks/main.yml) for a bundle not verified - no
+        "save it" advice, no attachment - and an expired CA listed as EXPIRED, both run through ansible-playbook."""
+        exe = os.environ.get("ANSIBLE_PLAYBOOK") or shutil.which("ansible-playbook")
+        if not exe:
+            self.skipTest("ansible-playbook not on PATH")
+        expired_ca("old70", "TEST OLD CA-70", "r3")
+        cur = write("mine.p7b", p7b("r3", "id70", "email70"))
+        r = check(write("bare-old.p7b", p7b("r3", "id70", "email70", "r9", "old70")), cur)
+        self.assertEqual(r["status"], "not verified", r)
+        self.assertEqual(subjects(r["expired"]), ["CN=TEST OLD CA-70"])
+        with open(os.path.join(here, "..", "roles", "pki_bundle", "tasks", "main.yml"), encoding="utf-8") as fh:
+            role = {t["name"]: t for t in yaml.safe_load(fh)}
+        email = role["PKI bundle | the email (site_email)"]["vars"]
+        result = role["PKI bundle | the result"]["vars"]
+        lines_f, mail_f = os.path.join(W, "lines.json"), os.path.join(W, "mail.json")
+        keep = [{"name": "the lines", "ansible.builtin.copy": {"content": "{{ _pkib_lines | to_json }}", "dest": lines_f}, "vars": result},
+                {"name": "the email", "ansible.builtin.copy": {
+                    "content": "{{ {'title': _report.title, 'sections': _report.sections, 'attachments': _report_attachments} | to_json }}",
+                    "dest": mail_f}, "vars": email}]
+        with open(os.path.join(here, "..", "roles", "pki_bundle", "defaults", "main.yml"), encoding="utf-8") as fh:
+            defaults = yaml.safe_load(fh)
+        play = [{"hosts": "localhost", "gather_facts": False,
+                 "vars": dict(defaults, _pkib={"bundle": r}, _pkib_current=cur, _pkib_save_as="playbooks/files/dod_pki_bundle.p7b",
+                              cert_install_ca_bundle="files/dod_pki_bundle.p7b"),
+                 "tasks": [role["PKI bundle | what to do with one that is not verified (the output and the email)"],
+                           role["PKI bundle | the result"]] + keep}]
+        p = write("play.yml", yaml.safe_dump(play))
+        out = subprocess.run([exe, "-i", "localhost,", "-c", "local", p], capture_output=True, text=True,
+                             env=dict(os.environ, ANSIBLE_NOCOLOR="1"), timeout=300)
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        with open(lines_f, encoding="utf-8") as fh:
+            lines = json.load(fh)
+        with open(mail_f, encoding="utf-8") as fh:
+            mail = json.load(fh)
+        self.assertTrue(lines[0].startswith("NOT VERIFIED"), lines)
+        self.assertIn("EXPIRED CN=TEST OLD CA-70", "\n".join(lines))
+        self.assertIn("pki_bundle_accept_unverified: true", "\n".join(lines))
+        self.assertFalse(any(x.startswith("The checked bundle") for x in lines), lines)
+        self.assertIn("not verified", mail["title"])
+        self.assertEqual(mail["attachments"], [])
+        titles = [s_["title"] for s_ in mail["sections"]]
+        self.assertIn("Not verified", titles)
+        self.assertNotIn("What to do", titles)
+        rows = [row for s_ in mail["sections"] for row in s_.get("rows", [])]
+        self.assertIn(["expired", r["expired"][0]["subject"], r["expired"][0]["not_after"], r["expired"][0]["sha1"]], rows)
+        self.assertNotIn("replace the old file", json.dumps(mail))
 
     def test_changed_after_signing(self):
         cur = write("mine.p7b", p7b("r3", "id70", "email70"))

@@ -1184,6 +1184,13 @@ class NewAsset(unittest.TestCase):
         items = smu.update({"plan": p}, c, False)
         self.assertEqual([i["state"] for i in items], ["there since the check"] + ["asset not created"] * 3)
         self.assertEqual((len(c.made), len(c.posts)), (1, 1))
+        # 1.24.0: the report counts an asset left there and its reviews as not written, as the job does
+        left = sf.stig_update_report(items)
+        self.assertEqual((left["status"], left["sections"][0]["status"], left["sections"][0]["row_status"]), ("critical", "critical", ["critical"]))
+        self.assertTrue(left["title"].endswith(", 4 not"), left["title"])
+        again = [dict(items[0], state="there from an earlier run")] + [dict(i, state="written") for i in items[1:]]
+        r = sf.stig_update_report(again)
+        self.assertEqual((r["status"], r["sections"][0]["status"], r["sections"][0]["row_status"]), ("ok", "ok", ["ok"]))
         # an asset of the host's name made by a person since the check (its short name): left
         c = C(there=[{"assetId": "5", "name": "WEB01"}])
         self.assertEqual(smu.update({"plan": p}, c, False)[0]["state"], "there since the check")

@@ -1169,6 +1169,10 @@ def api(resp, timings, cfg):
         if r.get("status") == 200:
             stuck, long_ = [], []
             for jb in _results(r.get("json")):
+                # an approval waits for a person, and its workflow waits with it: neither is stuck (the workflow's
+                # own jobs are in the list on their own)
+                if jb.get("type") in ("workflow_approval", "workflow_job"):
+                    continue
                 created, started = parse_time(jb.get("created")), parse_time(jb.get("started"))
                 if jb.get("status") in ("pending", "waiting") and created and now - created > cfg["stuck_s"]:
                     stuck.append("%s %s '%s' %s for %s" % (jb.get("type", "job"), jb.get("id"), jb.get("name"), jb.get("status"),

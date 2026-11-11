@@ -37,7 +37,7 @@ options:
   kinit: {description: The kinit command., type: str, default: kinit}
   hours: {description: The changes of the last this-many hours., type: float, default: 24}
   privileged_groups_extra: {description: More privileged groups (names or SIDs)., type: list, elements: str, default: []}
-  changes_max: {description: Look at most at this many changed accounts., type: int, default: 500}
+  changes_max: {description: "Look at most at this many accounts per list (locked out, created, changed); a list cut there says so (locked_out_capped, created_capped, changes_capped).", type: int, default: 500}
   history_file: {description: 'A file with the last run''s members ("" = none).', type: str, default: ''}
   history_job_id: {description: This job's ID (0 = not in AAP)., type: int, default: 0}
   history_template_id: {description: Its template's ID., type: int, default: 0}
@@ -90,6 +90,8 @@ except ImportError:
     HAS_AAP = False
 
 EPOCH_1601 = datetime.datetime(1601, 1, 1, tzinfo=datetime.timezone.utc)
+PAGED_RESULTS = "1.2.840.113556.1.4.319"            # the LDAP paged-results control: its cookie asks for the next page
+PAGE_SIZE = 500
 NEEDS_ADMIN = "not read (needs admin)"
 # replPropertyMetaData attribute IDs (ATTRTYP) in the fixed prefix table every DC shares (1.2.840.113556.1.4.x = 0x9xxxx)
 ATTID = {0x00090008: "userAccountControl", 0x00090296: "lockoutTime"}
@@ -130,6 +132,27 @@ def filetime(v):
     if n <= 0 or n >= 0x7FFFFFFFFFFFFFFF:
         return None
     return EPOCH_1601 + datetime.timedelta(microseconds=n // 10)
+
+
+def to_filetime(t):
+    """An aware datetime -> FILETIME (100 ns since 1601), for an LDAP filter on lockoutTime."""
+    return max(0, (t - EPOCH_1601) // datetime.timedelta(microseconds=1) * 10)
+
+
+def lockout_window(v):
+    """The domain's lockoutDuration (negative 100 ns intervals, or a timedelta) -> how long a lockout lasts, a timedelta;
+    None when it lasts until an administrator unlocks the account: 0, or the most negative value AD and Samba store for
+    it (-9223372036854775808), or a value not read."""
+    if isinstance(v, datetime.timedelta):
+        v = abs(v)
+        return v if v and v < datetime.timedelta(days=36500) else None       # AD allows 99999 minutes at most
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        return None
+    if n == 0 or n <= -0x7FFFFFFFFFFFFFFF or n >= 0x7FFFFFFFFFFFFFFF:
+        return None
+    return datetime.timedelta(microseconds=abs(n) // 10)
 
 
 def dstime(seconds):
@@ -516,15 +539,34 @@ class Reader(object):
             return None, None, short_err(e)
 
     def search(self, c, base, flt, attrs, scope=None, controls=None, size=0):
-        try:
-            ok = c.search(base, flt, scope if scope is not None else ldap3.SUBTREE, attributes=attrs, controls=controls,
-                          size_limit=size, paged_size=500 if scope != ldap3.BASE else None)
-        except Exception as e:                    # noqa: BLE001
-            raise LookupError(short_err(e))
-        res = [e for e in (c.response or []) if e.get("type") == "searchResEntry"]
-        if not ok and not res and (c.result or {}).get("result") not in (0, 4, 32):
-            raise LookupError("%s: %s" % ((c.result or {}).get("description"), (c.result or {}).get("message", "")))
-        return res
+        return self.search_capped(c, base, flt, attrs, scope, controls, size)[0]
+
+    def search_capped(self, c, base, flt, attrs, scope=None, controls=None, size=0):
+        """-> (entries, capped). A SUBTREE search reads every page (it follows the paged-results cookie), up to size
+        entries when size is set; capped: there were more than that (or the DC's own size limit cut it)."""
+        scope = scope if scope is not None else ldap3.SUBTREE
+        res, cookie = [], None
+        while True:
+            try:
+                if scope == ldap3.BASE:
+                    ok = c.search(base, flt, scope, attributes=attrs, controls=controls)
+                else:
+                    ok = c.search(base, flt, scope, attributes=attrs, controls=controls, paged_size=PAGE_SIZE, paged_cookie=cookie)
+            except Exception as e:                    # noqa: BLE001
+                raise LookupError(short_err(e))
+            page = [e for e in (c.response or []) if e.get("type") == "searchResEntry"]
+            result = c.result or {}
+            if not ok and not page and result.get("result") not in (0, 4, 32):
+                raise LookupError("%s: %s" % (result.get("description"), result.get("message", "")))
+            res += page
+            if size and len(res) > size:
+                return res[:size], True
+            if result.get("result") == 4:             # sizeLimitExceeded: the DC stopped it
+                return res, True
+            ctl = ((result.get("controls") or {}).get(PAGED_RESULTS) or {}).get("value") or {}
+            cookie = ctl.get("cookie") if isinstance(ctl, dict) else None
+            if scope == ldap3.BASE or not cookie:
+                return res, False
 
     def base(self, c, dn, attrs):
         r = self.search(c, dn, "(objectClass=*)", attrs, scope=ldap3.BASE)
@@ -1054,25 +1096,36 @@ class Reader(object):
         since = self.now - datetime.timedelta(hours=hours)
         gen = since.strftime("%Y%m%d%H%M%S.0Z")
         mx = int(self.p.get("changes_max") or 500)
-        # locked out now: lockoutTime within the domain's lockout duration (0 = until an admin unlocks it)
-        dur = int((out.get("domain_info") or {}).get("lockout_duration") or 0)
+        # locked out now: lockoutTime within the domain's lockout duration; a lockout that lasts until an admin unlocks the
+        # account (lockoutDuration 0 or the most negative value) never runs out. Only those are asked for, every page of them.
+        win = lockout_window((out.get("domain_info") or {}).get("lockout_duration"))
+        try:
+            lock_from = self.now - win if win is not None else None
+        except OverflowError:
+            lock_from = None
+        if lock_from is not None and lock_from <= EPOCH_1601:
+            lock_from = None
+        flt = "(lockoutTime>=%d)" % max(1, to_filetime(lock_from)) if lock_from is not None else "(lockoutTime>=1)"
         locked = []
-        for e in self.search(c, nc, "(&(objectCategory=person)(objectClass=user)(lockoutTime>=1))", ["sAMAccountName", "lockoutTime"], size=mx):
+        found, out["locked_out_capped"] = self.search_capped(c, nc, "(&(objectCategory=person)(objectClass=user)%s)" % flt,
+                                                             ["sAMAccountName", "lockoutTime"], size=mx)
+        for e in found:
             t = filetime(first(e, "lockoutTime"))
             if not t:
                 continue
-            if dur and t + datetime.timedelta(microseconds=abs(dur) // 10) <= self.now:
+            if lock_from is not None and t <= lock_from:
                 continue                                    # its lockout has run out
             locked.append({"name": first(e, "sAMAccountName") or rdn(e["dn"]), "time": iso(t)})
         out["locked_out"] = sorted(locked, key=lambda x: x["time"], reverse=True)
+        found, out["created_capped"] = self.search_capped(
+            c, nc, "(&(|(objectCategory=person)(objectClass=group)(objectClass=computer))(whenCreated>=%s))" % gen,
+            ["sAMAccountName", "whenCreated", "objectClass"], size=mx)
         out["created"] = [{"class": self._class(e), "name": first(e, "sAMAccountName") or rdn(e["dn"]), "dn": e["dn"],
-                           "time": iso(gentime(first(e, "whenCreated")))}
-                          for e in self.search(c, nc, "(&(|(objectCategory=person)(objectClass=group)(objectClass=computer))(whenCreated>=%s))" % gen,
-                                               ["sAMAccountName", "whenCreated", "objectClass"], size=mx)]
-        changed = self.search(c, nc, "(&(|(objectCategory=person)(objectClass=computer))(whenChanged>=%s)(!(whenCreated>=%s)))" % (gen, gen),
-                              ["sAMAccountName", "userAccountControl", "lockoutTime", "whenChanged", "objectClass",
-                               "msDS-ReplAttributeMetaData", "replPropertyMetaData"], size=mx)
-        out["changes_capped"] = len(changed) >= mx
+                           "time": iso(gentime(first(e, "whenCreated")))} for e in found]
+        changed, out["changes_capped"] = self.search_capped(
+            c, nc, "(&(|(objectCategory=person)(objectClass=computer))(whenChanged>=%s)(!(whenCreated>=%s)))" % (gen, gen),
+            ["sAMAccountName", "userAccountControl", "lockoutTime", "whenChanged", "objectClass",
+             "msDS-ReplAttributeMetaData", "replPropertyMetaData"], size=mx)
         how_seen = set()
         acc = []
         for e in changed:

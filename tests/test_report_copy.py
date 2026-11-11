@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Unit tests for roles/site_email/library/site_report_copy.py: the copy job's checkpoint. A job AAP did not answer
-for (a 503 on its detail page) is looked at again by the next run - never passed over. Needs ansible-core (the
-module's imports): python3 tests/test_report_copy.py"""
+for (a 503 on its detail page) is looked at again by the next run - never passed over. The jobs whose page the last
+copy could not write (its site_report_copied failed) are tried again first and named, without holding back where the
+run gets to (1.24.0). Needs ansible-core (the module's imports): python3 tests/test_report_copy.py"""
 import datetime
 import importlib.util
 import os
@@ -65,6 +66,73 @@ class Checkpoint(unittest.TestCase):
         aap = FakeAap({10: (t(60), 200), 12: (t(20), 200)})
         r = m.find(aap, params(), NOW)
         self.assertEqual((r["until"], r["seen"], r["warnings_text"]), (m.iso(m.parse_time(t(20))), [12], []))
+
+
+
+def report(job, when):
+    """A report kept for the copy job (site_report_web with keep), packed."""
+    page = "vm/2026-11-07_job-%d.html" % job
+    doc = {"files": {"page": page, "latest": "vm/latest.html", "index": "index.html"}, "url": "", "footer": "",
+           "data": {"report": {"title": "t", "sections": []}, "job": job, "template": "VM health", "when": when},
+           "entry": {"key": "vm/latest.html", "when": when, "job": job}}
+    return sys.modules["ansible.module_utils.site_report_page"].pack(doc, 1 << 20)[0]
+
+
+class FakeCopyAap(object):
+    """jobs: {id: {finished, template, artifacts, code}} - the copy template's earlier runs, the list, each job's detail."""
+    def __init__(self, jobs):
+        self.jobs, self.detail_calls = jobs, []
+
+    def call(self, method, path):
+        q = dict(x.split("=", 1) for x in path.split("?", 1)[1].split("&")) if "?" in path else {}
+        if "job_template" in q:                            # this template's earlier runs, newest first
+            rows = [{"id": i} for i, j in sorted(self.jobs.items(), reverse=True)
+                    if j["template"] == int(q["job_template"]) and i < int(q["id__lt"])]
+            return 200, {"results": rows}
+        if "finished__gt" in q:
+            rows = [{"id": i, "finished": j["finished"], "job_template": j["template"]} for i, j in sorted(self.jobs.items())
+                    if m.parse_time(j["finished"]) > m.parse_time(q["finished__gt"])]
+            return 200, {"results": rows, "next": None}
+        i = int(path.split("/")[1])
+        self.detail_calls.append(i)
+        j = self.jobs.get(i)
+        if j is None:
+            return 404, {"detail": "Not found."}
+        if j.get("code", 200) != 200:
+            return j["code"], {"detail": "Service Unavailable"}
+        return 200, {"id": i, "name": "VM health", "finished": j["finished"], "status": "successful", "artifacts": j.get("artifacts", {})}
+
+
+class FailedPages(unittest.TestCase):
+    def aap(self):
+        failed = [{"job": 11, "why": "uploading https://web/r/x.html: HTTP 413 Request Entity Too Large"},
+                  {"job": 12, "why": "access denied"}, {"job": 13, "why": "x"}, {"job": 21, "why": "y"}]
+        return FakeCopyAap({
+            11: {"finished": t(600), "template": 7, "artifacts": {"site_report_page": [report(11, "2026-11-07 02:00 UTC")]}},
+            12: {"finished": t(500), "template": 7, "code": 503},
+            21: {"finished": t(20), "template": 7, "artifacts": {"site_report_page": [report(21, "2026-11-07 11:40 UTC")]}},
+            22: {"finished": t(10), "template": 7, "artifacts": {"site_report_page": [report(22, "2026-11-07 11:50 UTC")]}},
+            400: {"finished": t(30), "template": 90, "artifacts": {"site_report_copied": {"until": t(30), "seen": [], "failed": failed}}}})
+
+    def test_tried_again_first_named_never_holding_back(self):
+        aap = self.aap()
+        r = m.find(aap, params(template_id=90, job_id=401), NOW)
+        self.assertEqual([x["job"] for x in r["reports"]], [11, 21, 22])          # 11 long before the window, 21 read once
+        self.assertEqual(aap.detail_calls.count(21), 1)
+        self.assertEqual([x["job"] for x in r["retry"]], [12])                    # AAP did not answer: the next run again
+        self.assertEqual(r["retry"][0]["why"], "access denied")
+        self.assertEqual(len(r["retrying"]), 4)
+        self.assertIn("job 11: its page was not copied by the last copy (uploading https://web/r/x.html: HTTP 413", r["retrying"][0])
+        self.assertTrue(any(w.startswith("job 13: AAP answered HTTP 404") for w in r["warnings_text"]))   # gone: not again
+        self.assertEqual(r["until"], m.iso(m.parse_time(t(10))))                 # the failed jobs never hold it back
+
+    def test_what_a_copy_kept(self):
+        self.assertEqual(m._failed({"failed": [11, "12", {"job": 13, "why": " a\n b "}, {"job": 11}, {"job": "x"}, None]}),
+                         [(11, "it failed"), (12, "it failed"), (13, "a b")])
+        self.assertEqual(m._failed({"failed": "11"}), [])
+        self.assertEqual(m._failed({}), [])
+        aap = self.aap()
+        self.assertEqual(m.last_copy(aap, 90, 401)[2][0], (11, "uploading https://web/r/x.html: HTTP 413 Request Entity Too Large"))
 
 
 if __name__ == "__main__":

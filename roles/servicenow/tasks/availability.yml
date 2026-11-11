@@ -24,7 +24,7 @@
       {{ [{'name': 'API', 'url': _sn_url ~ '/api/now/table/' ~ servicenow_table ~ '?sysparm_limit=1&sysparm_fields=sys_id',
            'group': 'service', 'auth': 'basic', 'user': lookup('ansible.builtin.env', 'SN_USERNAME'),
            'password': lookup('ansible.builtin.env', 'SN_PASSWORD'), 'expect': [200]}]
-         + ([{'name': 'Login page', 'url': _sn_url ~ '/login.do', 'group': 'service', 'expect': [200]}]
+         + ([{'name': 'Login page', 'url': _sn_url ~ '/login.do', 'group': 'service', 'expect': [200], 'follow': true}]
             if servicenow_availability_ui | bool else []) }}
     _avail_validate_certs: "{{ servicenow_validate_certs }}"
     _avail_ca_path: "{{ servicenow_ca_path }}"

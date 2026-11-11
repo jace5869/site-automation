@@ -128,6 +128,7 @@ import os
 import re
 import ssl
 import xml.etree.ElementTree as ET
+from xml.parsers import expat
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.six.moves.urllib.parse import urlencode, quote
@@ -328,11 +329,29 @@ def _engine(tools, details, custom):
     return None
 
 
+NO_DTD = "it declares a DOCTYPE or entities - not read (a checklist has none)"
+
+
+def _no_dtd(data):
+    """Refuse a DOCTYPE or an entity in any encoding: expat reads the file as its BOM or XML declaration says (UTF-16 too),
+    and stops at the DOCTYPE, before any entity is read. A file expat cannot read is left to the parse that follows."""
+    def refuse(*_a):
+        raise Fail(NO_DTD)
+    px = expat.ParserCreate()
+    px.StartDoctypeDeclHandler = refuse
+    px.EntityDeclHandler = refuse
+    try:
+        px.Parse(data, True)
+    except expat.ExpatError:
+        pass
+
+
 def parse_ckl(data):
     """A CKL (STIG Viewer 2, XML) -> {target, stigs: [{stig, title, revision, rules: [...]}]}."""
     head = data[:4096].lower()
     if b"<!doctype" in head or b"<!entity" in data.lower():
-        raise Fail("it declares a DOCTYPE or entities - not read (a checklist has none)")
+        raise Fail(NO_DTD)
+    _no_dtd(data)
     try:
         root = ET.fromstring(data)
     except ET.ParseError as e:
@@ -774,10 +793,9 @@ def plan_all(p, client, files):
                     st = cur.get("status") or {}
                     was = {"result": cur.get("result") or "", "status": (st.get("label", "") if isinstance(st, dict) else str(st)),
                            "ts": cur.get("ts") or cur.get("touchTs") or ""}
-                    if was["result"] == r["result"]:
-                        leave("same", "STIG Manager has it so: %s (%s)" % (word(was["result"]), was["status"] or "-"), row, [r])
-                        continue
-                    if was["status"] == "accepted" and was["result"] not in ("", "notchecked") and not p["overwrite_accepted"]:
+                    # One that STIG Manager has so still goes into the choice below: another checklist may disagree with it.
+                    if was["result"] != r["result"] and was["status"] == "accepted" and was["result"] not in ("", "notchecked") \
+                            and not p["overwrite_accepted"]:
                         leave("accepted", "Accepted in STIG Manager as %s - left for the reviewers (stigman_ckl_import_overwrite_accepted)"
                               % word(was["result"]), row, [r])
                         continue
@@ -790,7 +808,7 @@ def plan_all(p, client, files):
     plan = []
     for key in sorted(picks):
         got = picks[key]
-        if len(set(g[1]["result"] for g in got)) > 1:
+        if len(set(g[1]["result"] for g in got)) > 1:      # every answer of the rule, those STIG Manager has so too
             for row, r, smr, m, was, ck in got:
                 left.append({"file": row["file"], "collection": row["collection"], "asset": row["asset"], "benchmark": m["bench"],
                              "v": smr.get("groupId") or r.get("v", ""), "version": smr.get("version") or r.get("version", ""),
@@ -799,6 +817,13 @@ def plan_all(p, client, files):
                              "kind": "conflict"})
             continue
         row, r, smr, m, was, ck = sorted(got, key=lambda g: g[0]["modified"])[-1]     # the same answer twice: the newest file's
+        if was["result"] == r["result"]:                    # STIG Manager has it so already: nothing to write
+            for g in got:
+                left.append({"file": g[0]["file"], "collection": g[0]["collection"], "asset": g[0]["asset"],
+                             "benchmark": g[0]["benchmark"] or g[5]["stig"], "v": g[1].get("v", ""), "version": g[1].get("version", ""),
+                             "title": g[1].get("title", ""), "result": g[1]["result"],
+                             "why": "STIG Manager has it so: %s (%s)" % (word(was["result"]), was["status"] or "-"), "kind": "same"})
+            continue
         item = review_item(p, row, r, smr, m, was, ck, many)
         item["files"] = sorted(set(g[0]["file"] for g in got))
         plan.append(item)

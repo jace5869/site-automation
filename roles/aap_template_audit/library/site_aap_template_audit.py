@@ -5,7 +5,7 @@ box should not be there (playbooks/aap_template_audit.yml): connection and infra
 one set the same way in many templates, and secrets. Read-only (GET). The address and login come from the "Red Hat
 Ansible Automation Platform" credential's variables (plugins/module_utils/site_aap.py). Standard library and PyYAML
 (which ansible-core brings) only. The values never leave this module: a secret comes back as its name, a repeated
-setting's value only when it is not a secret."""
+setting's value only when it is not a secret, not named like one and holds no list or dict."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
@@ -18,7 +18,8 @@ description:
   - "Flags each setting that is: connection (an C(ansible_*) setting); an address (a host name, a URL or an IP address
     in its value); site-wide (in O(site_wide): the settings usually in all.yml); repeated (the same value in at least
     O(repeat_min) templates); a secret (its name - password, secret, token, key - or its value, a long random string)."
-  - A secret is never returned: only its name. A repeated setting's value is returned (cut) only when it is no secret.
+  - "A secret is never returned: only its name. A repeated setting's value is returned (cut) only when it is no secret,
+    is not named like one, and is not a list or a dict (those come back as '(same; not shown)')."
   - "A template that asks for its Variables on launch, or whose survey asks for a flagged setting: a launch can set
     these settings again."
   - AAP's address and login come from the environment, as the "Red Hat Ansible Automation Platform" credential sets
@@ -47,7 +48,8 @@ templates:
   type: list
 settings:
   description: "Each flagged setting once: setting, why, templates (how many have it), same (how many with the same value),
-    value (cut; '' for a secret, or when the values differ), suggestion."
+    value (cut; '' for a secret, or when the values differ; '(same; not shown)' for a setting named like a secret or a
+    list or dict), suggestion."
   type: list
 '''
 
@@ -163,12 +165,51 @@ def secret_name(name):
     return bool(SECRET_NAME.search(n)) and not NOT_SECRET_NAME.search(n)
 
 
+def _keys(v, depth=0):
+    """Every (key, value) of the dicts inside a value (lists and dicts, a few levels down)."""
+    if depth > 6:
+        return
+    if isinstance(v, dict):
+        for k, x in v.items():
+            yield k, x
+            for kx in _keys(x, depth + 1):
+                yield kx
+    elif isinstance(v, (list, tuple)):
+        for x in v:
+            for kx in _keys(x, depth + 1):
+                yield kx
+
+
+def _filled(v, depth=0):
+    """A value with something in it: a text that is not empty, or a number (true/false is a switch, not a secret)."""
+    if depth > 6:
+        return False
+    if isinstance(v, bool) or v is None:
+        return False
+    if isinstance(v, (int, float)):
+        return True
+    if isinstance(v, dict):
+        return any(_filled(x, depth + 1) for x in v.values())
+    if isinstance(v, (list, tuple)):
+        return any(_filled(x, depth + 1) for x in v)
+    return bool(str(v).strip())
+
+
 def is_secret(name, value):
-    """A secret: named like one (with a value - an empty one is no secret), or a value that is a long random string.
-    A vault-encrypted value is a secret too: it is fine in a vars file, not in a template's Variables. Pure."""
-    if secret_name(name) and any(str(s).strip() for s in _strings(value)):
-        return True                                  # a text value: a number or true/false is a rule, not a secret
+    """A secret: named like one (with a value - an empty one is no secret; a number counts), a key named like one
+    anywhere inside it (stigman_db: {password: ...}), or a value that is a long random string. A vault-encrypted
+    value is a secret too: it is fine in a vars file, not in a template's Variables. Pure."""
+    if secret_name(name) and _filled(value):
+        return True
+    if any(secret_name(k) and _filled(x) for k, x in _keys(value)):
+        return True
     return any(looks_random(s) or str(s).lstrip().startswith("$ANSIBLE_VAULT") for s in _strings(value))
+
+
+def hidden(name, value):
+    """A value the report never shows, secret or not: one named like a secret (even true/false), and a list or a dict
+    (a key inside may be one). Pure."""
+    return secret_name(name) or isinstance(value, (dict, list, tuple))
 
 
 def connection_suggestion(name):
@@ -225,7 +266,7 @@ def fingerprint(value):
 
 
 def shown(value):
-    """A value as the report shows it, cut. Never called for a secret."""
+    """A value as the report shows it, cut. Never called for a secret, or for a value hidden() keeps out."""
     s = value if isinstance(value, str) else json.dumps(value, sort_keys=True, default=str)
     s = " ".join(s.split())
     return s if len(s) <= CUT else s[:CUT - 3] + "..."
@@ -253,7 +294,7 @@ def audit(records, opts):
             if "secret" in why:
                 secrets.add(n)
             else:
-                seen.setdefault(n, {}).setdefault(fingerprint(v), []).append((len(templates), shown(v)))
+                seen.setdefault(n, {}).setdefault(fingerprint(v), []).append((len(templates), None if hidden(n, v) else shown(v)))
             if why:
                 t["flags"].append({"setting": n, "why": why, "suggestion": sug, "note": ""})
         templates.append(t)
@@ -314,7 +355,9 @@ def audit(records, opts):
         if n not in secrets and by_value:
             fp, where = max(by_value.items(), key=lambda kv: len(kv[1]))
             s["same"] = len(where)
-            s["value"] = where[0][1] if len(by_value) == 1 or (n, fp) in repeats else ""
+            if len(by_value) == 1 or (n, fp) in repeats:
+                # named like a secret, or a list or dict: only that it is the same, never the value
+                s["value"] = where[0][1] if where[0][1] is not None else ("(same; not shown)" if len(where) > 1 else "")
         s["suggestion"] = suggest(n, s["why"])
     out = sorted(settings.values(), key=lambda s: (-s["templates"], min(WHY.index(w) for w in s["why"]) if s["why"] else 9, s["setting"]))
     return templates, out

@@ -16,6 +16,9 @@ The full checks are other jobs: *STIG Manager - health*, *ServiceNow health* (th
 ## How a run decides
 
 Each address is asked `availability_attempts` (3) times, `availability_pause_seconds` (2) apart; each answer timed.
+A redirect (3xx) is not followed and is a bad try that says where it pointed, so a login is never sent on to another
+address. Only an address asked without a login may follow one: the ServiceNow login page, which may send people on to
+the single sign-on page.
 
 | | Severity | The run |
 |---|---|---|

@@ -25,6 +25,7 @@
         host_name: "{{ inventory_hostname }}"
         stats_url: "{{ servicenow_node_stats_url }}"
         stats_auth: "{{ servicenow_node_stats_auth }}"
+        validate_certs: "{{ servicenow_node_validate_certs | bool }}"
         # the ServiceNow API credential's login, for a stats page that asks for one (never in the result)
         stats_user: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') if servicenow_node_stats_auth != 'none' else '' }}"
         stats_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') if servicenow_node_stats_auth != 'none' else '' }}"

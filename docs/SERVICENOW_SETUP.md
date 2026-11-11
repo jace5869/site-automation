@@ -400,7 +400,10 @@ servicenow_db_hosts:         # the database host (servicenow_db_group) - already
   `servicenow_node_stats_url: "https://{fqdn}:{port}/stats.do"`. A page that asks for a login (401, 403, a login page)
   is asked again with the ServiceNow API credential's login (basic auth; `servicenow_node_stats_auth: auto`, or
   `basic` from the start, `none` never) - sent only over HTTPS to the node's own name or to 127.0.0.1, and never
-  shown. Not read: the finding says the port and the last answer, and lists what was tried and how the answer began. The numbers are found by their names on the page (memory max and in use, the
+  shown. A redirect (to login.do, an SSO page) is not followed, so the login never goes on to another address: that
+  try fails and says where it pointed. HTTPS is checked - the certificate and the name, with the node's own trust
+  store (`servicenow_node_validate_certs: true`): a self-signed certificate, or one from a CA the node does not trust,
+  needs that CA in the node's trust store, or the setting false. Plain HTTP on 127.0.0.1 is read as before. Not read: the finding says the port and the last answer, and lists what was tried and how the answer began. The numbers are found by their names on the page (memory max and in use, the
   semaphore sets' in use and queue depth, the scheduler's workers and queue, active transactions,
   uptime, the node's ID). A page that answers but holds none of them is said, and a field it
   cannot find is shown as `-`. The page is read 3 times, 5 seconds apart

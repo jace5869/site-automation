@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The availability checks and STIG Manager - health: plugins/filter/availability_filters.py (up, degraded, down, a node,
 a dependency, slow, flaky, the line, the tables), plugins/filter/stigman_health_filters.py (state, login, versions,
-schemas, one database, connections, restarts, the tables), site_http_probe (attempts, JSON values, no answer) and
+schemas, one database, connections, restarts, the tables), site_http_probe (attempts, JSON values, no answer, a redirect not followed) and
 site_availability_history (the periods, the run before, down since) against fakes, in this process.
     python3 tests/test_availability.py"""
 import datetime
@@ -9,7 +9,9 @@ import importlib.util
 import json
 import os
 import sys
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.error import URLError
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -25,6 +27,7 @@ sys.path.insert(0, os.path.join(REPO, "roles", "stigman_health", "library"))
 import availability_filters as A  # noqa: E402
 import site_availability_history as H  # noqa: E402
 import site_http_probe as P  # noqa: E402
+_build_opener = P.build_opener
 import site_stigman_health as SM  # noqa: E402
 import stigman_health_filters as S  # noqa: E402
 
@@ -195,6 +198,57 @@ class Probe(unittest.TestCase):
         self.assertEqual(out[0]["attempts"][1]["why"], 'currentState is "unavailable"')
         self.assertEqual(out[0]["why"], "connection refused (nothing listens there)")
         self.assertIsNotNone(out[0]["ms_max"])
+
+    def test_a_redirect_is_not_followed(self):
+        got = []
+
+        class Other(BaseHTTPRequestHandler):
+            def do_GET(self):
+                got.append(self.headers.get("Authorization"))
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b'{"currentState": "available"}')
+
+            def log_message(self, *a):
+                pass
+        other = HTTPServer(("127.0.0.1", 0), Other)
+        to = "http://127.0.0.1:%d/x" % other.server_port
+
+        class Moved(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(302)
+                self.send_header("Location", to)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, *a):
+                pass
+        first = HTTPServer(("127.0.0.1", 0), Moved)
+        for srv in (other, first):
+            threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            out = P.run([{"name": "a", "url": "http://127.0.0.1:%d/api" % first.server_port, "auth": "basic", "user": "svc_probe",
+                          "password": "S3cret-pw!", "expect": [200, 302]}], 2, 0, 5, True, "", sleep=lambda s: None)
+        finally:
+            for srv in (first, other):
+                srv.shutdown()
+                srv.server_close()
+        self.assertEqual(got, [])                         # the second host never asked, the login never sent there
+        self.assertEqual(out[0]["good"], 0)               # a redirect is never "up", even when expect lists it
+        self.assertEqual(out[0]["attempts"][0]["status"], 302)
+        self.assertEqual(out[0]["why"], "HTTP 302, sent to %s (not followed)" % to)
+
+    def test_follow_only_without_a_login(self):
+        stay, follow = FakeOpener((200, {}), (200, {})), FakeOpener((200, {}))
+        P.build_opener = lambda *h: stay if any(isinstance(x, P._NoRedirect) for x in h) else follow
+        try:
+            P.run([{"name": "page", "url": "http://a/login.do", "follow": True},
+                   {"name": "api", "url": "http://a/api", "auth": "basic", "user": "svc_probe", "password": "x", "follow": True},
+                   {"name": "plain", "url": "http://a/x"}], 1, 0, 1, True, "", sleep=lambda s: None)
+        finally:
+            P.build_opener = _build_opener
+        self.assertEqual(follow.urls, ["http://a/login.do"])
+        self.assertEqual(stay.urls, ["http://a/api", "http://a/x"])
 
     def test_median(self):
         self.assertEqual(P.median([5, 1, 3]), 3)

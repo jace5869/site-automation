@@ -214,6 +214,11 @@ You save the attachment over your copy, commit and push - the job writes nothing
   it the CAs under it are refused and the job fails.
 - **No copy of yours yet** (`cert_install_ca_bundle` empty): its roots are taken on trust and listed with their SHA-1
   - compare them with the ones DISA publishes (the bundle's README.txt says where) the first time.
+- **Signature not checked** (a FIPS-mode execution environment, or a copy on a share without DISA's signed list): a
+  bundle that differs from yours is `NOT VERIFIED` - listed with what it adds and removes, but not attached and not
+  offered. Check it where the signature can be checked, or compare its roots' SHA-1 with DISA's and download it by
+  hand; `pki_bundle_accept_unverified: true` makes the job offer such a bundle anyway.
+- CAs in it that have already **expired** are listed (`EXPIRED`), as are the ones expiring soon.
 
 | Setting | Default | |
 |---|---|---|
@@ -223,6 +228,7 @@ You save the attachment over your copy, commit and push - the job writes nothing
 | `pki_bundle_email` / `pki_bundle_email_when` | `true` / `newer` | email it (to `report_email_to`) only when it differs or the check fails; `always` = every run |
 | `pki_bundle_fail_when_newer` | `false` | `true` = the job ends red on a newer bundle (an AAP notification on failure tells you) |
 | `pki_bundle_warn_days` | `90` | CAs of the bundle expiring within these days are listed |
+| `pki_bundle_accept_unverified` | `false` | `true` = offer a bundle that differs from yours although DISA's signature on it could not be checked (FIPS mode, a copy without the signed list) |
 
 The template: **PKI - DoD bundle check**, playbook `playbooks/pki_bundle_check.yml`, the execution environment of the
 other jobs, no credential (the email goes through the relay in `all.yml`), no Limit; a weekly schedule.
@@ -313,6 +319,7 @@ and renew again.
 | `cert_install_ca_bundle ... cannot be read` / `holds no CA certificate` | the file is not in the project (not pushed, not synced) or not a bundle | push it, sync the project; the .p7b, a .pem or the zip |
 | *PKI - DoD bundle check*: `could not be downloaded` | no way out from the execution environment | `pki_bundle_proxy`, or a copy on a share in `pki_bundle_url` |
 | *PKI - DoD bundle check*: `FAILED` | a file not as DISA signed it, or CAs under a root that nothing vouches for | do not use it; download it again by hand and compare |
+| *PKI - DoD bundle check*: `NOT VERIFIED` | it differs from yours, but DISA's signature could not be checked (FIPS mode, no signed list with the copy) | check it on a system that can, or compare its roots' SHA-1 with DISA's; `pki_bundle_accept_unverified: true` to have it offered |
 | `HELD ... no service found that uses ...` | no known configuration names the file, no port known | `cert_install_services` |
 | `ROLLED BACK ... the configuration test of httpd.service failed` | the new files do not fit the configuration | the job output has the test's message; the old files are back |
 | `ROLLED BACK ... after the reload, 127.0.0.1:443 serves ...` | the service still serves something else after the reload | the configuration may name another file - the old files are back |

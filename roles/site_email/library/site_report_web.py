@@ -24,7 +24,8 @@ description:
   - dest is a folder (an absolute path), a Windows file share's folder (\\server\share\folder, or
     smb://server/share/folder) or an http(s):// address that accepts PUT. A login for the upload comes
     from the environment - REPORT_WEB_TOKEN (sent as a bearer token), or REPORT_WEB_USERNAME and
-    REPORT_WEB_PASSWORD (basic) - as the "Report website" credential sets it, never from a parameter. The share's
+    REPORT_WEB_PASSWORD (basic) - as the "Report website" credential sets it, never from a parameter; a redirect is
+    never followed (the login stays with that address) - the 3xx is a failure that names where it pointed. The share's
     login is REPORT_WEB_USERNAME (user@YOURDOMAIN.MIL - the realm in capitals - for Kerberos; DOMAIN\user for NTLM
     only) and REPORT_WEB_PASSWORD too, or a Kerberos ticket (smb_auth kerberos, no password). The share's folder must
     be there (it is never made); the folders inside it are.
@@ -34,6 +35,12 @@ description:
   - With windows_host, dest is a folder on that Windows server - nothing is written here, the files are put in a
     PowerShell script (returned as script, a temporary file) that writes them there; index_text is that
     server's index.json, read before. The script only uses what Constrained Language Mode allows.
+  - Every name (files' page, latest and index, each of pages' page) must be a name inside dest - a path with / between
+    its parts, ending in .html, no leading / or \, no drive or ':', no backslash, no empty, '.' or '..' part - or nothing
+    is written (also with keep, and for windows_host's script).
+  - index.json is read again just before it is written, and only this template's line is this run's (another job's
+    line written in between stays); not with windows_host (the script writes the index read before).
+  - Each line of the index keeps its runs' banner; the index carries the highest of them and this run's.
   - The template's latest page and its line in the index are only written over by a run at least as new as the one
     already there (its when) - a copy of an older run (the copy job) never takes the place of a newer one.
   - With keep, nothing is written and html is not needed - the report, its file names, address, index line and footer
@@ -120,11 +127,11 @@ import tempfile
 import time
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible.module_utils.site_banner import inject as banner_inject
+from ansible.module_utils.site_banner import COLOURS, OTHER, colour_of, ink, inject as banner_inject
 from ansible.module_utils.site_report_page import KEEP_AT_LEAST, pack
 from ansible.module_utils.six.moves.urllib.error import HTTPError, URLError
 from ansible.module_utils.six.moves.urllib.parse import quote
-from ansible.module_utils.six.moves.urllib.request import Request, build_opener, HTTPSHandler
+from ansible.module_utils.six.moves.urllib.request import Request, build_opener, HTTPRedirectHandler, HTTPSHandler
 
 IMAGE_TYPES = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif'}
 RANK = {'critical': 0, 'warning': 1, 'unknown': 2, 'info': 3, 'ok': 4}
@@ -135,7 +142,7 @@ PAL = {
     'info': ('#1d4ed8', '#e6effd', '#c3d5f7', 'Info'),
     'unknown': ('#4b5753', '#eef2f1', '#d5ddda', 'Unknown')}
 IN_USE = (errno.EACCES, errno.EBUSY, errno.EPERM, errno.ETXTBSY)    # a mounted share's file open in a browser
-RUN_KEYS = ('page', 'status', 'when', 'job', 'title')
+RUN_KEYS = ('page', 'status', 'when', 'job', 'title', 'banner')
 WAIT = (0.5, 1, 2, 3, 4)                                 # a file in use: written again after these seconds
 SCRIPT = 'site-report.js'                                # the atlas and brief pages' script, at the folder's top
 WEB_LOOKS = ('atlas', 'brief')                           # the looks made for a browser (never an email): pages already
@@ -160,6 +167,31 @@ class Fail(Exception):
     pass
 
 
+class _NoRedirect(HTTPRedirectHandler):
+    """Follows no redirect: the 3xx answer comes back as an HTTPError (urllib would send the Authorization header on)."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _http(e):
+    """An HTTP error in words: its code, the login hint (401, 403) or where a redirect pointed (never followed)."""
+    if 300 <= e.code < 400:
+        where = str((e.headers.get('Location') if e.headers is not None else '') or 'no Location')[:300]
+        return ('HTTP %s %s - the address answers with a redirect to %s, which is not followed (the login is never sent on): '
+                'set report_web_dest to the address that takes the upload itself' % (e.code, e.reason, where))
+    return 'HTTP %s %s%s' % (e.code, e.reason, _login_hint(e.code))
+
+
+def safe_name(rel, ends=('.html',)):
+    """A file name inside the report folder: a relative path with / between its parts - no leading / or \\, no drive or
+    ':', no backslash, no empty, '.' or '..' part - that ends in one of ends."""
+    return (isinstance(rel, str) and rel.endswith(ends) and '\\' not in rel and ':' not in rel
+            and not any(x in ('', '.', '..') for x in rel.split('/')))
+
+
+WRITTEN = ('.html', '.json', '.js')                     # the files the module writes: pages, their JSON, the pages' script
+
+
 class Target(object):
     """The report folder: a local path, or an http(s) address (GET to read, PUT to write, MKCOL for a folder)."""
 
@@ -170,7 +202,7 @@ class Target(object):
         self.auth = ''
         if self.http:
             ctx = ssl.create_default_context(cafile=ca_path or None)
-            self.opener = build_opener(HTTPSHandler(context=ctx))
+            self.opener = build_opener(_NoRedirect(), HTTPSHandler(context=ctx))   # the login stays with this address
             token = os.environ.get('REPORT_WEB_TOKEN', '')
             user, password = os.environ.get('REPORT_WEB_USERNAME', ''), os.environ.get('REPORT_WEB_PASSWORD', '')
             self.auth = ('Bearer ' + token if token else
@@ -203,7 +235,7 @@ class Target(object):
         except HTTPError as e:
             if e.code == 404:
                 return None
-            raise Fail('reading %s/%s: HTTP %s %s%s' % (self.dest, rel, e.code, e.reason, _login_hint(e.code)))
+            raise Fail('reading %s/%s: %s' % (self.dest, rel, _http(e)))
         except URLError as e:
             raise Fail('reading %s/%s: %s' % (self.dest, rel, e.reason))
 
@@ -215,6 +247,8 @@ class Target(object):
             self._call('HEAD', rel).close()
             return True
         except HTTPError as e:
+            if 300 <= e.code < 400:                      # a redirect is never followed: said, not taken for a yes
+                raise Fail('looking for %s/%s: %s' % (self.dest, rel, _http(e)))
             return e.code not in (404, 410)
         except Exception:                               # noqa: BLE001
             return True
@@ -256,12 +290,12 @@ class Target(object):
             self._call('PUT', rel, body, ctype).read()
         except HTTPError as e:
             if e.code != 409 or '/' not in rel:          # 409: the folder is not there (WebDAV) - make it, again
-                raise Fail('uploading %s/%s: HTTP %s %s%s' % (self.dest, rel, e.code, e.reason, _login_hint(e.code)))
+                raise Fail('uploading %s/%s: %s' % (self.dest, rel, _http(e)))
             self._folders(rel)
             try:
                 self._call('PUT', rel, body, ctype).read()
             except HTTPError as e2:
-                raise Fail('uploading %s/%s: HTTP %s %s%s' % (self.dest, rel, e2.code, e2.reason, _login_hint(e2.code)))
+                raise Fail('uploading %s/%s: %s' % (self.dest, rel, _http(e2)))
         except URLError as e:
             raise Fail('uploading %s/%s: %s' % (self.dest, rel, e.reason))
 
@@ -279,7 +313,7 @@ class Target(object):
             self._call('DELETE', rel).read()
         except HTTPError as e:
             if e.code not in (404, 410):
-                raise Fail('HTTP %s %s%s' % (e.code, e.reason, _login_hint(e.code)))
+                raise Fail(_http(e))
         except URLError as e:
             raise Fail(str(e.reason))
 
@@ -292,7 +326,7 @@ class Target(object):
                 if e.code == 409:                        # the report folder itself is not there - never made here
                     raise Fail('the folder %s is not there on the website (report_web_dest)' % self.dest)
                 if e.code != 405:                        # 405: it is there already
-                    raise Fail('making the folder %s/%s: HTTP %s %s%s' % (self.dest, '/'.join(parts[:i]), e.code, e.reason, _login_hint(e.code)))
+                    raise Fail('making the folder %s/%s: %s' % (self.dest, '/'.join(parts[:i]), _http(e)))
 
 
 def smb_path(dest):
@@ -455,7 +489,7 @@ NOT_PASSING = ('logon_failure', 'logon failure', 'status_logon', 'invalid creden
                'server not found in kerberos database', 'cannot find kdc', 'clock skew', 'skew too great', 'md4',
                'unsupported hash', 'invalid token was supplied', 'revoked', 'is not there', 'must be', 'no login for',
                'no smbprotocol', 'certificate verify failed', 'http 400', 'http 401', 'http 403', 'http 404', 'http 405',
-               'http 409', 'http 413')
+               'http 409', 'http 413', 'http 301', 'http 302', 'http 303', 'http 307', 'http 308')
 PASSING = ('message stream modified', 'cannot contact any kdc', 'unable to reach any kdc', 'kdc unreachable',
            'unspecified gss failure', 'connection reset', 'connection refused', 'connection aborted', 'broken pipe',
            'timed out', 'timeout', 'network_name_deleted', '0xc00000c9', 'user_session_deleted', '0xc0000203',
@@ -570,6 +604,9 @@ def windows_script(dest, files, remove=(), soft=()):
     """The PowerShell script that writes files [(rel, text)] into dest, then deletes remove [rel]; a text used twice is
     in it once. One of soft (latest, the index) open there all that time is left for the next run, not a failure."""
     body, seen = [], {}
+    for rel in [f[0] for f in files] + list(remove):     # only names inside dest go into the script (main checked them)
+        if not safe_name(rel, WRITTEN):
+            raise Fail('the file name %s is not a name inside report_web_dest - nothing was written' % rel)
     for rel, text in files:
         if text not in seen:
             seen[text] = '$t%d' % len(seen)
@@ -665,7 +702,12 @@ def _job(job):
 def _runs(r):
     """A line's runs, newest first - an index from before 0.34.0 has none: its one run."""
     runs = [x for x in (r.get('runs') or []) if isinstance(x, dict) and x.get('page')]
-    return runs or ([dict((k, r.get(k)) for k in RUN_KEYS)] if r.get('page') else [])
+    return runs or ([_run(r)] if r.get('page') else [])
+
+
+def _run(r):
+    """A run as a line lists it (its banner only when it had one)."""
+    return dict((k, r.get(k)) for k in RUN_KEYS if k != 'banner' or r.get(k))
 
 
 # the index page's tabs (radio buttons and their labels: no script) and its lines that open (details) - every other
@@ -1236,7 +1278,7 @@ def index_brief(reports, index, header_text, logo, generated, tabs=(), js=''):
 def history(old, entry, n):
     """This template's line of the index with this run in its runs (newest first, n of them), and the runs that fell
     off it. A run of the copy job older than the line's own (old) leaves the line as it is, its runs but for this."""
-    this = dict((k, entry.get(k)) for k in RUN_KEYS)
+    this = _run(entry)
     runs = [x for x in (_runs(old) if old else []) if x.get('page') != this['page']]
     runs = sorted(runs + [this], key=lambda x: (str(x.get('when') or ''), x is this), reverse=True)   # this run first of its minute
     line = dict(entry if newer(old, entry) else old)
@@ -1246,8 +1288,7 @@ def history(old, entry, n):
 
 def deletable(rel, kept):
     """An older run's page (or its JSON) that may be deleted: inside the folder, a page, not one still listed."""
-    return (isinstance(rel, str) and rel.endswith(('.html', '.json')) and rel not in kept and not rel.startswith('/')
-            and '\\' not in rel and ':' not in rel and '..' not in rel.split('/') and '' not in rel.split('/'))
+    return safe_name(rel, ('.html', '.json')) and rel not in kept
 
 
 def _place(where, rel, win):
@@ -1271,6 +1312,42 @@ def _reports(known):
 def newer(old, entry):
     """This run (entry) is at least as new as the index's line for its template (old) - by when, 2026-10-23 06:05 UTC."""
     return not old or str(entry.get('when') or '') >= str(old.get('when') or '')
+
+
+HEX6 = re.compile(r'^#[0-9a-fA-F]{6}$')
+
+
+def _mark(b):
+    """A banner as an index line keeps it - {on, text, bg, fg}, its colours checked - or {} for none."""
+    if not isinstance(b, dict) or not b.get('on') or not str(b.get('text') or '').strip():
+        return {}
+    text = re.sub(r'\s+', ' ', str(b['text'])).strip()[:200]
+    bg = str(b.get('bg') or '')
+    bg = bg if HEX6.match(bg) else (colour_of(text) or OTHER)
+    fg = str(b.get('fg') or '')
+    return {'on': True, 'text': text, 'bg': bg, 'fg': fg if HEX6.match(fg) else ink(bg)}
+
+
+def _level(b):
+    """How high a banner's marking is: 0 none, then UNCLASSIFIED, CUI, CONFIDENTIAL, SECRET, TOP SECRET. A text of no
+    known classification counts as SECRET (the default text)."""
+    m = _mark(b)
+    if not m:
+        return 0
+    colours = [c for _, c in COLOURS]
+    c = colour_of(m['text'])
+    return len(colours) - colours.index(c) if c else len(colours) - 1
+
+
+def top_banner(this, reports):
+    """The index's banner: the highest marking among its lines and their runs (this run's own when it is as high). A line
+    from before 1.24.0 keeps no banner: it counts as none."""
+    best = _mark(this)
+    for r in reports:
+        for b in [r.get('banner')] + [x.get('banner') for x in _runs(r)]:
+            if _level(b) > _level(best):
+                best = _mark(b)
+    return best
 
 
 def keep(module, p, page, latest, index, urls, where, win):
@@ -1346,6 +1423,17 @@ def main():
     urls = dict(url=p['page_url'].strip() or _join(base, page), latest_url=_join(base, latest), index_url=_join(base, index))
     if not page and not p['pages']:                    # pages alone (1.14.0): only those, no page of its own, no index
         module.fail_json(msg='no page name (report_web_page)')
+    # every name stays inside report_web_dest - also one a kept report brings to the copy job: refused before anything
+    bad = [n for n in [page, latest, index] + [sp.get('page') for sp in p['pages'] if isinstance(sp, dict)]
+           if n and not safe_name(n)]
+    if bad or not all(isinstance(sp, dict) for sp in p['pages']):
+        why = ('%s: not a file name inside report_web_dest (a path below the folder with / between its parts, ending in .html - '
+               'no leading / or \\, no drive or \':\', no backslash, no \'.\' or \'..\' part); nothing was written'
+               % ', '.join(repr(str(n)) for n in bad or ['pages']))
+        if p['required']:
+            module.fail_json(msg='The report website: %s' % why, **urls)
+        module.warn('The report website: not published (%s) - the job goes on (report_web_required: false)' % why)
+        module.exit_json(changed=False, published=False, error=why, retried=[], written=[], **urls)
     if p['keep']:
         keep(module, p, page, latest, index, urls, where, bs)
     if module.check_mode and not smb:
@@ -1371,17 +1459,24 @@ def main():
         js_tag = '<script src="%s"></script>' % js_name
         written = []
         entry = dict(p['entry'], page=page, latest=latest)
+        entry.pop('banner', None)                        # this run's banner, never one the entry brings
+        mark = _mark(banner)
+        if mark:                                         # kept on its line and run: the index carries the highest (1.24.0)
+            entry['banner'] = mark
         if p['sub_pages']:
             entry['sub'] = sorted(set(str(x) for x in p['sub_pages'] if x))
         step = first_step((p['data'] or {}).get('report'))     # the brief index's first step for this report (0.92.0)
         if step:
             entry['step'] = step
-        reports = _reports(target.read(_json_name(index))) if index else []
+        known = target.read(_json_name(index)) if index else None
+        reports = _reports(known)
         old = next((r for r in reports if r.get('key') == entry.get('key')), None)
         is_newest = newer(old, entry)
         busy = []                                        # latest and the index, open somewhere all that time: next run
 
         def put(rel, text, ctype, soft=False):
+            if not safe_name(rel, WRITTEN):              # checked above; never written outside the folder
+                raise Fail('%s is not a file name inside report_web_dest - not written' % rel)
             try:
                 target.write(rel, text, ctype)
                 written.append(rel)
@@ -1444,6 +1539,13 @@ def main():
                 lost = [r for r in reports if r.get('latest') and not target.exists(r['latest'])]
                 gone += lost
                 reports = [r for r in reports if r not in lost]
+            now = target.read(_json_name(index)) if not win else known
+            if now and now != known and _reports(now):
+                # another job wrote the index since it was read above (before the pages, the script and the HEADs): its
+                # lines as they are now, only this template's line this run's, the lines left out above still out (1.24.0)
+                out = set(str(r.get('key')) for r in gone)
+                reports = [r for r in _reports(now) if r.get('key') != entry.get('key') and str(r.get('key')) not in out
+                           and not any(fnmatch.fnmatchcase(str(r.get('key') or ''), d) for d in p['drop'])]
             reports.append(line)
             reports.sort(key=lambda r: (RANK.get(r.get('status'), 2), str(r.get('name') or r.get('key') or '').lower()))
             generated = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
@@ -1453,7 +1555,8 @@ def main():
                 logo = (uri, p['logo_size'][0], p['logo_size'][1]) if uri.startswith('data:') else None
             index_text = json.dumps({'generated': generated, 'reports': reports}, indent=2, sort_keys=True, default=str) + '\n'
             put(_json_name(index), index_text, 'application/json; charset=utf-8')
-            put(index, banner_inject(index_html(reports, index, p['header_text'], logo, generated, p['tabs'], p['theme'], index_js), banner),
+            put(index, banner_inject(index_html(reports, index, p['header_text'], logo, generated, p['tabs'], p['theme'], index_js),
+                                     top_banner(banner, reports)),
                 'text/html; charset=utf-8', True)
             # the pages of the runs that fell off this template's line - after the index, which no longer lists them
             kept = set([index, _json_name(index)])

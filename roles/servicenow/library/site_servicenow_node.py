@@ -36,7 +36,8 @@ options:
   host_name: {description: "The node's name in the inventory: a Host header and an address to try for the stats page.", type: str, default: ''}
   stats_url: {description: "The stats page's address, forced ({port} and {host} filled in; '' = try the ways in turn).", type: str, default: ''}
   sem_wait_ms: {description: "A slow transaction's semaphore wait from this many ms is a semaphore problem.", type: int, default: 1000}
-  stats_auth: {description: "auto - the ServiceNow API login when every way without it is refused (401/403, a login page); none; basic - from the start. Sent only over HTTPS to the node's own name, or to 127.0.0.1.", type: str, default: auto}
+  stats_auth: {description: "auto - the ServiceNow API login when every way without it is refused (401/403, a redirect, a login page); none; basic - from the start. Sent only over HTTPS to the node's own name, or to 127.0.0.1. A redirect is never followed.", type: str, default: auto}
+  validate_certs: {description: "Check the stats page's HTTPS certificate and name (the host's trust store). false = not checked.", type: bool, default: true}
   stats_user: {description: The ServiceNow API account (SN_USERNAME)., type: str, default: ''}
   stats_password: {description: Its password (SN_PASSWORD); never in the result., type: str, default: '', no_log: true}
   kind: {description: "node (a front-end node) or db (the database host).", type: str, default: node}
@@ -84,7 +85,7 @@ import subprocess
 import time
 import xml.etree.ElementTree as ET
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
 from ansible.module_utils.basic import AnsibleModule
 
@@ -385,33 +386,59 @@ def may_send_login(url, names):
     return host == "127.0.0.1" or (url.startswith("https://") and host in (names or []))
 
 
-def fetch(url, host, timeout, login=None):
-    """GET url (a Host header if given; basic auth with login (user, password); https without checking the
-    certificate: the node itself, read-only) -> (status, body): status -1 when there was no answer."""
+class _NoRedirect(HTTPRedirectHandler):
+    """Follows no redirect: the 3xx answer comes back as an HTTPError (urllib would send the Authorization header on)."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def context(validate=True):
+    """The HTTPS context: the certificate and the host name checked (the host's trust store), unless validate is false."""
+    if not validate:
+        return ssl._create_unverified_context()   # noqa: S323 - servicenow_node_validate_certs false says so
+    return ssl.create_default_context()
+
+
+def opener(validate=True):
+    """An opener that follows no redirect, its HTTPS checked as context() says."""
+    return build_opener(_NoRedirect(), HTTPSHandler(context=context(validate)))
+
+
+def fetch(url, host, timeout, login=None, validate=True):
+    """GET url (a Host header if given; basic auth with login (user, password); https checked unless validate is false)
+    -> (status, body): status -1 when there was no answer. A redirect is not followed: its status, and as the body
+    where it pointed."""
     headers = {"Host": host} if host else {}
     if login:
         headers["Authorization"] = "Basic " + base64.b64encode(("%s:%s" % login).encode("utf-8")).decode("ascii")
     req = Request(url, headers=headers)
-    ctx = ssl._create_unverified_context() if url.startswith("https") else None
     try:
-        resp = urlopen(req, timeout=timeout, context=ctx) if ctx else urlopen(req, timeout=timeout)
+        resp = opener(validate).open(req, timeout=timeout)
         return resp.getcode() or 200, resp.read(4 * 1048576).decode("utf-8", "replace")
     except HTTPError as e:
+        if 300 <= e.code < 400:
+            where = (e.headers.get("Location") or "") if e.headers is not None else ""
+            return e.code, "sent to %s (not followed)" % (where[:200] or "no Location")
         try:
             body = e.read(4096).decode("utf-8", "replace")
         except Exception:                   # noqa: BLE001 - the body of an error is only for the message
             body = ""
         return e.code, body
     except (URLError, socket.timeout, OSError, ValueError, ssl.SSLError) as e:
-        return -1, str(getattr(e, "reason", e))
+        r = getattr(e, "reason", e)
+        if isinstance(r, ssl.SSLCertVerificationError):
+            return -1, ("its certificate is not trusted (%s): add its CA to the host's trust store, or set "
+                        "servicenow_node_validate_certs false" % (r.verify_message or r))
+        return -1, str(r)
 
 
-def read_stats(port, pages, samples, interval, timeout, host_names=None, forced="", auth="auto", login=None):
+def read_stats(port, pages, samples, interval, timeout, host_names=None, forced="", auth="auto", login=None, validate=True):
     """The stats page, read samples times: the first way (stats_bases) and page that answers 200 with numbers on it is
-    used for every read. auth auto: when none answered with numbers and one asked for a login (401 / 403, a login
-    page), the ways are asked again with the ServiceNow API login (basic; only where may_send_login); basic: with it
+    used for every read. auth auto: when none answered with numbers and one asked for a login (401 / 403, a redirect,
+    a login page), the ways are asked again with the ServiceNow API login (basic; only where may_send_login); basic: with it
     from the start; none: never. Not read: what was tried (never the login), the last status and the start of the
-    last answer."""
+    last answer. A redirect is never followed (the login is not sent on): it is a failed try that says where it
+    pointed. HTTPS is checked unless validate is false."""
     st = {"status": 0, "page": "", "url": "", "why": "", "up": False, "sem_queued_samples": [], "tried": [], "body": "",
           "login": False}
     if not port and not forced:
@@ -426,9 +453,9 @@ def read_stats(port, pages, samples, interval, timeout, host_names=None, forced=
         lg = login if use_login and may_send_login(url, names) else None
         if use_login and not lg:
             return None
-        code, body = fetch(url, host, timeout, lg)
-        st["tried"].append("%s%s%s -> %s" % (url, (" (Host: %s)" % host) if host else "", " (with the login)" if lg else "",
-                                            code if code != -1 else body[:80]))
+        code, body = fetch(url, host, timeout, lg, validate)
+        said = body[:80] if code == -1 else ("%s %s" % (code, body)) if 300 <= code < 400 else code   # a redirect: where to
+        st["tried"].append("%s%s%s -> %s" % (url, (" (Host: %s)" % host) if host else "", " (with the login)" if lg else "", said))
         return code, body
 
     chosen, last_http, needs_login = None, None, False
@@ -450,13 +477,15 @@ def read_stats(port, pages, samples, interval, timeout, host_names=None, forced=
                 if code == 200 and parse_stats(body)["found"]:
                     got, chosen = parse_stats(body), (base, host, page, use_login)
                     break
-                if code in (401, 403) or (code == 200 and LOGIN.search(body)):
+                # a redirect (to login.do, an SSO page) is asked for a login too: never followed
+                if code in (401, 403) or 300 <= code < 400 or (code == 200 and LOGIN.search(body)):
                     needs_login = True
                 st["status"] = code
                 st["why"] = ("%s%s: %s" % (base + page, (" (Host: %s)" % host) if host else "",
-                                           ("HTTP %s" % code) if code != -1 else body[:200])
+                                           ("HTTP %s%s" % (code, (", " + body) if 300 <= code < 400 else ""))
+                                           if code != -1 else body[:200])
                              if not (code == 200) else "%s answered, but nothing on it was recognised" % (base + page))
-                st["body"] = re.sub(r"\s+", " ", body or "")[:200] if code != -1 else ""
+                st["body"] = re.sub(r"\s+", " ", body or "")[:200] if code != -1 and not 300 <= code < 400 else ""
             if got:
                 break
         if got is None:
@@ -844,6 +873,7 @@ def main():
         host_name=dict(type="str", default=""), stats_url=dict(type="str", default=""),
         stats_auth=dict(type="str", default="auto", choices=["auto", "none", "basic"]),
         stats_user=dict(type="str", default=""), stats_password=dict(type="str", default="", no_log=True),
+        validate_certs=dict(type="bool", default=True),
         sem_wait_ms=dict(type="int", default=1000),
         paths=dict(type="list", elements="str", default=[]), fapolicyd=dict(type="bool", default=True),
         fapolicyd_since=dict(type="str", default="today"), fapolicyd_critical=dict(type="list", elements="str", default=[]),
@@ -873,7 +903,7 @@ def main():
         uri = properties(os.path.join(ndir, "conf", "glide.properties")).get("glide.servlet.uri", "")
         names = [p["host_name"], socket.getfqdn(), re.sub(r"^[a-z]+://", "", uri).split("/")[0].split(":")[0]]
         st = read_stats(port, p["stats_pages"], p["samples"], p["interval"], p["timeout"], names, p["stats_url"],
-                        p["stats_auth"], (p["stats_user"], p["stats_password"])) if p["stats"] and active else \
+                        p["stats_auth"], (p["stats_user"], p["stats_password"]), p["validate_certs"]) if p["stats"] and active else \
             {"status": 0, "why": "not read: the unit is not running" if p["stats"] else "not read (servicenow_node_stats false)",
              "up": False, "sem_queued_samples": []}
         units.append({"unit": u, "env": env, "active": show.get("ActiveState", "unknown"), "sub": show.get("SubState", ""),

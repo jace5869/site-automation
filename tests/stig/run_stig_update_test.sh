@@ -264,8 +264,9 @@ assert all("checked it with the new asset" in x["comment"] for x in r), [x["comm
     && echo "ok   - ... in STIG Manager: the asset (no FQDN: the inventory name has no dot), 8 reviews submitted, each with the job's comment" \
     || { echo "FAIL - the new asset in STIG Manager"; fails=$((fails + 1)); }
 n=$(writes)
+# 1.24.0: the asset this plan made on its first run is used, each review read again: already so, nothing written
 play stigman_update.yml "the same plan again: the asset is there - not created twice, nothing written" ok -e "@$work/plan-new.json" -e "$writer" -- \
-    "there since the check - NEW ASSET newbox" "its reviews: asset not created 8"
+    "there from an earlier run - NEW ASSET newbox" "its reviews: already so 8"
 [ "$(writes)" = "$n" ] && echo "ok   - ... nothing posted" || { echo "FAIL - posted again"; fails=$((fails + 1)); }
 if grep -qvE '^(GET /api/|POST /token$|POST /api/assets\?projection=stigs$|POST /api/collections/1/reviews/1[0-9][0-9]$)' "$work/sm.log"; then
     echo "FAIL - a request other than a read, the token, the new asset or its reviews"; fails=$((fails + 1))

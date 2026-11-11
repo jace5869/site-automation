@@ -89,6 +89,12 @@ hundreds). The reviews are written to the STIG's revision the asset has - else t
   that is not in the STIG; everything of a checklist with no host name or no STIG matched; a review with attachments
   in STIG Manager (as workflow 37: the evidence stays with its result).
 - The same answer in two checklists (two runs of the same scan) is written once, from the newest file.
+- A checklist that says what STIG Manager has already still counts (1.24.0): when another checklist of the host
+  answers the rule otherwise (older or newer), the two disagree - nothing is written, both are listed and both files stay.
+- A checklist that declares a DOCTYPE or entities is not read, whatever its encoding (UTF-8 or UTF-16).
+
+A new asset that someone else made since the check is left, nothing is written to it and the job fails; one an
+earlier run of the same approved plan created is used (1.24.0).
 
 **How it keeps your STIG Manager safe** is workflow 37's update, unchanged: only the approved reviews and the new
 assets; each review read again first and left when a person changed it since; read back after; Check mode writes

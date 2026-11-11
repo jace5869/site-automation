@@ -169,6 +169,16 @@ class Reads(unittest.TestCase):
         self.assertNotIn("resolved_at", api.calls[0][1]["sysparm_fields"])          # a table the job does not know: the common fields
         self.assertIn("u_site", api.calls[0][1]["sysparm_fields"])
 
+    def test_exactly_the_cap_is_not_cut(self):
+        for n, cut in ((5, False), (6, True), (4, False)):
+            api = FakeApi({"incident": [rec("incident", "INC%d" % i, "2026-10-20 10:00:00") for i in range(n)]})
+            rows, more = war.read_table(api, "incident", "q", max_records=5, page=3)
+            self.assertEqual((len(rows), more), (min(n, 5), cut), n)
+            self.assertEqual(sum(c[1]["sysparm_limit"] for c in api.calls), 6)       # never more than the cap + 1 asked for
+        api = FakeApi({"incident": [rec("incident", "INC%d" % i, "2026-10-20 10:00:00") for i in range(5)]})
+        rows, more = war.read_table(api, "incident", "q", max_records=5, page=5)        # a full page at the cap: one more asked
+        self.assertEqual((len(rows), more, len(api.calls)), (5, False, 2))
+
     def test_lookups(self):
         api = FakeApi({})
         g, err = war.lookup(api, "sys_user_group", ["Linux Operations", "Linux Ops"], ["name"])

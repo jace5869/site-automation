@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   ansible:
     name: Ansible syntax + shell
@@ -68,6 +71,10 @@ jobs:
           python tests/test_cert_order.py
           python tests/test_cert_issued.py
           python tests/test_pki_bundle.py
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_pki_bundle.py
+          python tests/test_stigman_stack.py
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_stigman_stack.py
+          python tests/test_win_act.py
           python tests/test_cert_install.py
           python tests/test_horizon.py
           python tests/test_horizon_fslogix.py
@@ -508,7 +515,7 @@ jobs:
           New-Item -ItemType Directory -Path C:\sa-reports -Force | Out-Null      # the report website's folder (report_web_host)
           New-Item -ItemType Directory -Path C:\sa-copy -Force | Out-Null         # the same, written by the copy job (report_web_copy)
           "SATEST_PW=$pw" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-      - uses: Vampire/setup-wsl@v3
+      - uses: Vampire/setup-wsl@6c400b755bcd0583e60c2e7aa0cdc61794355c9b  # v3
         with:
           distribution: Ubuntu-24.04        # Python 3.12: pip gets a current ansible-core (22.04 = 3.10 = at most 2.17)
           additional-packages: python3-venv python3-pip
@@ -636,7 +643,7 @@ jobs:
           Set-Item -Path WSMan:\localhost\Service\Auth\Basic -Value $true
           Set-Item -Path WSMan:\localhost\Service\AllowUnencrypted -Value $true
           "SATEST_PW=$pw" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-      - uses: Vampire/setup-wsl@v3
+      - uses: Vampire/setup-wsl@6c400b755bcd0583e60c2e7aa0cdc61794355c9b  # v3
         with:
           distribution: Ubuntu-24.04        # Python 3.12: pip gets a current ansible-core (22.04 = 3.10 = at most 2.17)
           additional-packages: python3-venv python3-pip openssl

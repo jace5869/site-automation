@@ -21,6 +21,13 @@ function Invoke-Native([string] $What, [string] $Exe, [string[]] $Arguments) {
     finally { $ErrorActionPreference = $old }
     if ($global:LASTEXITCODE -ne 0) { throw ("$What failed (exit $($global:LASTEXITCODE)): " + ($out -join ' ')) }
 }
+# A junction or symbolic link at the folder (any user can make one in C:\ProgramData) would turn the takeover,
+# the permissions and the file write onto its target: refused before anything is changed.
+$link = Get-Item -LiteralPath $dir -Force -ErrorAction SilentlyContinue
+if ($link -and ([string]$link.Attributes -match 'ReparsePoint')) {
+    throw ("$dir is a link ($($link.LinkType) to $($link.Target)), not a folder: refused, nothing was changed. " +
+        "Remove the link itself, not its target (in cmd.exe: rmdir `"$dir`"), and run the job again.")
+}
 $parent = Split-Path -Path $dir -Parent
 if ($parent -and -not (Test-Path -LiteralPath $parent)) { $null = New-Item -ItemType Directory -Path $parent -Force }
 if (-not (Test-Path -LiteralPath $dir)) { $null = New-Item -ItemType Directory -Path $dir -Force }

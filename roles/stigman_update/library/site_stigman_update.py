@@ -26,7 +26,9 @@ description:
     write, so one attached after the check is left too.
   - A plan item C(kind=create) (a host with no asset) - its collection's assets read again: one of the host's names (the
     asset's name or FQDN, or their short names) there by now - created by a person since the check - is left, and
-    its reviews are not written (state C(there since the check)); else POST /assets (name, FQDN, the STIG; the Manage
+    its reviews are not written (state C(there since the check), which fails the job); one with the plan's name and the
+    description this job gives it was made by an earlier run of the same plan (state C(there from an earlier run)): its
+    reviews are written to it, each read again first as any asset's; else POST /assets (name, FQDN, the STIG; the Manage
     grant) and the reviews of the plan with C(new_asset) its name are written to it (none to read again: it is new),
     then read back in one GET.
   - The checklist import's items (0.76.0: it may look in several collections) - the client's grants read (GET /user): a
@@ -60,7 +62,7 @@ items:
   description: "Each review of the plan with its state - written, would write, changed since, has attachments, rejected (STIG Manager's reason),
                 not as written (read back otherwise), bad (not a plan item), error, asset not created, no grant (the import's: the
                 client has less than Full there) - and why, and what STIG Manager holds now; each new asset (kind create): created,
-                would create, there since the check, bad, error, no grant - and its assetId."
+                would create, there since the check, there from an earlier run, bad, error, no grant - and its assetId."
   type: list
   returned: always
 error:
@@ -182,7 +184,7 @@ class Client(object):
         """POST /assets: the new asset with its STIGs (the collection's revision) -> STIG Manager's record of it."""
         return self._send("POST", "/assets?projection=stigs", {
             "name": name, "fqdn": fqdn or None, "collectionId": c,
-            "description": description or "Created by the STIG recheck (site-automation), approved in AAP",
+            "description": description or RECHECK_DESCRIPTION,
             "ip": ip or "", "mac": mac or "", "noncomputing": False, "metadata": {}, "stigs": list(benches)}) or {}
 
     def asset_reviews(self, c, a):
@@ -201,6 +203,17 @@ class Client(object):
 
 def short(name):
     return (name or "").lower().split(".")[0]
+
+
+RECHECK_DESCRIPTION = "Created by the STIG recheck (site-automation), approved in AAP"
+
+
+def made_by_this_plan(it, asset):
+    """Is this asset the one this plan item creates - made by an earlier run of the same approved plan (one whose
+    reviews were then not all written)? The same name in the plan's collection and the description this job gives it."""
+    want = str(it.get("description") or "")[:255] or RECHECK_DESCRIPTION
+    return (str(asset.get("name") or "").lower() == str(it.get("asset") or "").lower()
+            and str(asset.get("description") or "") == want and bool(ID_RE.match(str(asset.get("assetId") or ""))))
 
 
 def matching(names, assets):
@@ -271,10 +284,17 @@ def make_assets(p, client, check, grants=None):
         except RuntimeError as e:
             row.update(state="error", why="the collection's assets could not be read - not created: %s" % e)
             continue
+        if len(there) == 1 and made_by_this_plan(it, there[0]):
+            # made by an earlier run of this plan: its reviews are written to it, each read again first (as any asset's)
+            a = str(there[0]["assetId"])
+            row.update(state="there from an earlier run", assetId=a, collectionId=c,
+                       why="created by an earlier run of this plan - its reviews written to it, each read again first")
+            ids[key] = a
+            continue
         if there:
             row.update(state="there since the check", assetId=str(there[0].get("assetId") or ""),
-                       why="%s is in %s now (made since the check) - not created, and its reviews not written: run the recheck again" % (
-                           there[0].get("name"), it.get("collection") or "the collection"))
+                       why="%s is in %s now (made since the check) - not created, and its reviews not written: run the %s again" % (
+                           there[0].get("name"), it.get("collection") or "the collection", "import" if it.get("benchmarks") else "recheck"))
             continue
         if check:
             row.update(state="would create", why="")
@@ -361,6 +381,7 @@ def update(p, client, check):
         except RuntimeError:
             grants = None               # not read: STIG Manager itself refuses what the grant does not allow
     items, ids = make_assets(p, client, check, grants)
+    again = set((r.get("collectionId"), r["asset"].lower()) for r in items if r.get("state") == "there from an earlier run")
     groups, fresh = {}, {}
     for n, it in enumerate(p["plan"]):
         if it.get("kind") == "create":
@@ -371,7 +392,7 @@ def update(p, client, check):
             row["new_asset"] = it["new_asset"]
             a = ids.get((str(it.get("collectionId", "")), str(it["new_asset"]).lower()))
             if not a:
-                row.update(state="asset not created", why="")
+                row.update(state="asset not created", why="its new asset %s was not created - not written" % it["new_asset"])
                 items.append(row)
                 continue
             if a == "check":
@@ -391,7 +412,7 @@ def update(p, client, check):
             items.append(row)
             continue
         items.append(row)
-        if it.get("new_asset"):
+        if it.get("new_asset") and (str(it["collectionId"]), str(it["new_asset"]).lower()) not in again:
             fresh.setdefault((str(it["collectionId"]), str(it["assetId"])), []).append((row, it))
         else:
             groups.setdefault((str(it["collectionId"]), str(it["assetId"])), []).append((row, it))

@@ -426,6 +426,43 @@ r = [x for x in json.load(open(sys.argv[1]))[\"reports\"] if x[\"key\"].startswi
 assert str(r[0][\"job\"]) == \"908\", r' '$work/copy/index.json'"
 PB=playbooks/report_web_copy.yml run "the copy job without report_web_dest: says where to set it" fail "{$copyjob}" "Set report_web_dest (and report_web_url)"
 CONTROLLER_PASSWORD=wrong PB=playbooks/report_web_copy.yml run "the copy job with a wrong AAP login: says so" fail "{$cvars}" "AAP refused the login (HTTP 401)"
+check "the index keeps the classified report's banner after an unclassified run wrote it (1.24.0)" bash -c \
+    "test \"\$(grep -o 'class=\"site-banner ' '$work/copy/index.html' | wc -l)\" = 2 && grep -q 'background:#c8102e;color:#ffffff' '$work/copy/index.html'"
+
+# ---- the copy job: a page that fails, and a kept report whose file names leave the folder (1.24.0) ----------------
+mkdir -p "$work/copy3"
+: > "$work/copy3/vmware-snapshot-cleanup"           # a file where that template's folder goes: its page cannot be written
+"$py" - "$repo/plugins/module_utils/site_report_page.py" "$work/jobs.json" <<'PY'
+import datetime, importlib.util, json, sys
+sp = importlib.util.spec_from_file_location("site_report_page", sys.argv[1])
+pg = importlib.util.module_from_spec(sp)
+sp.loader.exec_module(pg)
+doc = {"files": {"page": "../escaped/evil.html", "latest": "", "index": "../escaped/index.html"}, "url": "", "footer": "",
+       "data": {"report": {"title": "t", "sections": []}, "job": 4300, "template": "Hostile", "when": "2026-10-23 06:05 UTC"},
+       "entry": {"key": "h/latest.html", "when": "2026-10-23 06:05 UTC", "job": 4300}}
+when = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=15)
+js = json.load(open(sys.argv[2]))
+js.append({"id": 4300, "job_template": 81, "name": "Hostile", "status": "successful", "job_type": "run",
+           "finished": when.strftime("%Y-%m-%dT%H:%M:%S.%fZ"), "artifacts": {"site_report_page": [pg.pack(doc, 1 << 20)[0]]}})
+json.dump(js, open(sys.argv[2], "w"))
+PY
+c3="\"report_web_dest\": \"$work/copy3\", \"report_web_url\": \"https://reports.example.mil\", \"report_web_theme\": \"glass\",
+    \"awx_job_id\": 600, \"awx_job_template_id\": 91, \"awx_job_template_name\": \"Report website - copy 2\""
+PB=playbooks/report_web_copy.yml run "a page that fails: a warning naming the job, the other pages written, the run goes on" ok "{$c3}" \
+    "WARNING - job 4182 'VMware snapshot cleanup': its page https://reports.example.mil/vmware-snapshot-cleanup/" \
+    "Not copied: job 4182 'VMware snapshot cleanup'" "job 908 'Linux - Certificate trust report': https://reports.example.mil/" \
+    "job 4300 (Hostile): its page ../escaped/evil.html is not copied - ../escaped/evil.html, ../escaped/index.html: not a file name inside report_web_dest"
+check "nothing outside the folder" bash -c "test ! -e '$work/escaped' && ! ls '$work'/*.html 2>/dev/null | grep -q ."
+check "where it got to kept all the same, job 4182 kept as failed (site_report_copied)" "$py" -c 'import json, sys
+c = json.loads(sys.argv[1])
+assert [f["job"] for f in c["failed"]] == [4182] and "File exists" in c["failed"][0]["why"] and c["copied"] == 2 and c["until"].endswith("Z"), c' "$(artifact site_report_copied)"
+aapjob 600 91 "Report website - copy 2" 0
+rm -f "$work/copy3/vmware-snapshot-cleanup"
+PB=playbooks/report_web_copy.yml run "the next run: the failed job tried again first, named, written now" ok "{$c3, \"awx_job_id\": 601}" \
+    "its page was not copied by the last copy" "job 4182 'VMware snapshot cleanup': https://reports.example.mil/vmware-snapshot-cleanup/"
+check "its page there now, nothing failed" bash -c "ls '$work'/copy3/vmware-snapshot-cleanup/*_job-4182.html >/dev/null && \"$py\" -c 'import json, sys
+c = json.loads(sys.argv[1])
+assert c[\"failed\"] == [] and c[\"copied\"] == 1, c' '$(artifact site_report_copied)'"
 
 if command -v pwsh >/dev/null 2>&1; then
     mkdir -p "$work/wincopy"
