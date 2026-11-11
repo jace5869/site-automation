@@ -425,8 +425,8 @@ report-web is plain HTTP on the podman network, inside the host. No certificate 
    SERVER_NAME=stigman.yoursite.mil bash report-web-setup.sh
    ```
 
-   `SERVER_NAME` is the name people open STIG Manager at. Success: it ends with `== 8. Done. Then:` and three
-   steps. Step 1 of its output says which nginx container it found and which network report-web joins.
+   `SERVER_NAME` is the name people open STIG Manager at. Success: it ends with `== 8. Done. Then:` and four
+   steps, a to d. Step 1 of its output says which nginx container it found and which network report-web joins.
    Several nginx containers: `NGINX_CONTAINER=<name>`. It is safe to run again.
 2. **Read the paste file**, `/root/report-web-nginx.conf`. Its last lines are STIG Manager's own `add_header` lines:
    check them against its configuration. They are repeated there because an `add_header` in a location replaces every
@@ -434,8 +434,8 @@ report-web is plain HTTP on the podman network, inside the host. No certificate 
    rest. (With `SKIP_READ_CONFIG=1` the file has a marked place: copy those lines in by hand.)
 3. **Read the file into STIG Manager's `server { }` block**, beside `location /stigman/`: in the nginx
    configuration file on the host that its nginx container mounts (`podman inspect <nginx container> --format
-   '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{println}}{{end}}'` lists them: the file on the host, then
-   where the container sees it). `<nginx container>`: STIG Manager's nginx container -
+   '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{println}}{{end}}'` lists them: `Source` is the file on the
+   host, `Destination` the same file inside the container). `<nginx container>`: STIG Manager's nginx container -
    step 1 of the script's output names it, and its last lines repeat these commands with it.
    Read the file in; do not paste it by hand. A terminal paste into vim indents each line further than the last
    (a paste after all: type `:set paste` in vim first). In nano: `Ctrl+R`, then the file name. In vim:
@@ -454,11 +454,11 @@ report-web is plain HTTP on the podman network, inside the host. No certificate 
    Success: a number above 0, then `syntax is ok` and `test is successful`. A failed check: fix the block and check
    again - the running nginx is unchanged until a reload succeeds.
 
-   `0`: the running nginx still has the old file. Write the file through the container, with the two paths of
-   step 3 (on the host, then inside the container), then the count again:
+   `0`: the running nginx still has the old file. Write the file through the container, with the `Source` and
+   `Destination` of step 3, then the count again:
 
    ```bash
-   podman exec -i <nginx container> sh -c 'cat > <path inside the container>' < <path on the host>
+   podman exec -i <nginx container> sh -c 'cat > <Destination>' < <Source>
    ```
 
    Still `0`, or `Read-only file system`: see `report-web: 0` in Troubleshooting.
@@ -517,8 +517,18 @@ tickets at about 55 bytes each - about 2 MB.
 
 Each step on its own; the old report address works again once `all.yml` points back at it.
 
-1. Take the pasted block out of STIG Manager's nginx (from `# ---- site-automation report website` to
-   `# ---- end of report-web ----`), then `podman exec <nginx container> nginx -t` and `podman exec <nginx container> nginx -s reload`.
+1. Take the block out of STIG Manager's nginx (from `# ---- site-automation report website` to
+   `# ---- end of report-web ----`); in vim `:set backupcopy=yes` before `:w`, as in step 3. Then:
+
+   ```bash
+   podman exec <nginx container> nginx -T | grep -c report-web
+   podman exec <nginx container> nginx -t
+   podman exec <nginx container> nginx -s reload
+   ```
+
+   The count must be `0` now. Above 0: the running nginx still has the file with the block - write it through the
+   container (`podman exec -i <nginx container> sh -c 'cat > <Destination>' < <Source>`, setting-up step 4), then
+   the count again.
 2. Stop report-web and remove its start at boot:
 
    ```bash
@@ -535,8 +545,13 @@ Each step on its own; the old report address works again once `all.yml` points b
 3. With `PUBLISH_PORT` only: remove its rules (`firewall-cmd --permanent --list-rich-rules`, then
    `firewall-cmd --permanent --remove-rich-rule='<the rule>'`), `firewall-cmd --reload`, `podman network reload --all`.
 4. The pages, its configuration and the login: `rm -rf /var/lib/report-web /etc/report-web`, `rm -f /root/report-web.env
-   /root/report-web-nginx.conf`. The image stays (it is STIG Manager's own).
-5. `report_web_dest` and `report_web_url` back to the old server in `all.yml`.
+   /root/report-web-nginx.conf`.
+5. The image - step 2 of the script's output says which:
+   - `STIG Manager's nginx image: ...`: it stays, STIG Manager uses it.
+   - `... pulled`: remove it by name, once nothing else uses it: `podman image rm docker.io/library/nginx:stable` (or
+     the `IMAGE` you gave). podman refuses while a container still uses it.
+   - `... is here`: it was on the host before; leave it.
+6. `report_web_dest` and `report_web_url` back to the old server in `all.yml`.
 
 #### What was tested, and what was not
 
@@ -570,7 +585,8 @@ The script never reloads or restarts STIG Manager's nginx: you run the count, `n
 If report-web should not join STIG Manager's network: `PUBLISH_PORT=8085 bash report-web-setup.sh`. report-web then
 listens on port 8085 of the host, and the paste file sends `/reports/` to `HOST_ADDR:8085` (this host's address).
 The firewall gets one rule, for STIG Manager's nginx network only (added only when missing; firewalld reloaded only
-then, and `podman network reload --all` after it). With `AAP_SOURCES="<execution nodes>"` they may upload to the port
+then, and `podman network reload --all` after it). The rules are IPv4 only: on a dual-stack network the script
+skips the IPv6 subnet and says so. With `AAP_SOURCES="<execution nodes>"` they may upload to the port
 directly too (`report_web_dest: http://<host>:8085/reports`) - plain HTTP, the login unencrypted on the network:
 uploading through STIG Manager's nginx (step 6) is the encrypted way.
 
@@ -789,7 +805,7 @@ variable (`{{ site_report_url }}`) - for a Teams post or a ServiceNow work note.
 | report-web: `uploading ...: HTTP 500`, `podman logs report-web` says `Permission denied` | A file report-web reads lost its SELinux label or its owner: run the script again (it puts them back); `ausearch -m AVC -ts recent` |
 | report-web: the page opens but search, sort and CSV are missing | The browser refused `site-report.js`: the pasted block's `Content-Security-Policy` must be there, and `site-report.js` must answer 200 (`curl -sI https://<name>/reports/site-report.js`) |
 | report-web: `uploading ...: HTTP 400` ... `The SSL certificate error` or `495` | STIG Manager's server requires a client certificate for every request (`ssl_verify_client on`, or an `if ($ssl_client_verify ...)` at server level - the script warns): the report jobs have none |
-| report-web: `0` from `podman exec <nginx container> nginx -T \| grep -c report-web`, or `/reports/` answers STIG Manager's 404 after the reload | The running nginx does not have the block. The wrong file: `podman inspect <nginx container> --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{println}}{{end}}'` lists the mounted ones (on the host, then inside the container). The right file, mounted on its own: the editor wrote a new file (vim's usual write), and the container keeps the old one - writing again on the host does not change that. 1) Write it through the container: `podman exec -i <nginx container> sh -c 'cat > <path inside the container>' < <path on the host>`, then the count, `nginx -t` and the reload - no restart. Until the container's next restart it keeps its own copy: after another edit on the host, write it through again. 2) Still `0`, or `Read-only file system` (a mount with `:ro`): restart the container once at a quiet moment (STIG Manager is away for some seconds): `podman restart <nginx container>`, or its systemd unit; then the count again (it does not start: `podman logs <nginx container>` names the line). Next time, in vim `:set backupcopy=yes` before `:w` |
+| report-web: `0` from `podman exec <nginx container> nginx -T \| grep -c report-web`, or `/reports/` answers STIG Manager's 404 after the reload | The running nginx does not have the block. The wrong file: `podman inspect <nginx container> --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{println}}{{end}}'` lists the mounted ones (`Source` on the host, `Destination` inside the container). The right file, mounted on its own: the editor wrote a new file (vim's usual write), and the container keeps the old one - writing again on the host does not change that. 1) Write it through the container: `podman exec -i <nginx container> sh -c 'cat > <Destination>' < <Source>`, then the count, `nginx -t` and the reload - no restart. Until the container's next restart it keeps its own copy: after another edit on the host, write it through again. 2) Still `0`, or `Read-only file system` (a mount with `:ro`): restart the container once at a quiet moment (STIG Manager is away for some seconds): `podman restart <nginx container>`, or its systemd unit; then the count again (it does not start: `podman logs <nginx container>` names the line). Next time, in vim `:set backupcopy=yes` before `:w` |
 | `could not reach report_web_host web01... (winrm, port 5986): ...` - `the specified credentials were rejected` | The login: the Report website credential (`DOMAIN\user`), or the account is locked; without that credential, the template's Machine credential is used |
 | `could not reach report_web_host ...: ... certificate verify failed` | `report_web_ca_path` (the CA of the server's WinRM certificate), or `report_web_host_cert_validation: ignore` to try it |
 | `could not reach report_web_host ...: ... Connection refused` or timed out | WinRM is not on that port (`report_web_host_port`, `_scheme`), or a firewall between AAP and the server |

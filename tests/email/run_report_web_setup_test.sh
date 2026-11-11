@@ -273,7 +273,21 @@ esac
 SH
 # shellcheck disable=SC2016   # the stand-in's own code
 printf '#!/bin/sh\n[ "$1 $2" = "is-active --quiet" ] && [ "$3" = firewalld ] && exit 0\nexec /usr/bin/systemctl "$@"\n' > "$work/bin/systemctl"
-chmod +x "$work/bin/firewall-cmd" "$work/bin/systemctl"
+# a stand-in podman in front of the real one: "network reload --all" only logged (the real one touches every container of
+# this user on a shared box); with FAKE_V6=1 each network also lists an IPv6 subnet and gateway (dual stack), first
+cat > "$work/bin/podman" <<'SH'
+#!/usr/bin/env bash
+real=$(PATH="${PATH#*:}" command -v podman)
+if [ "$1 $2" = "network reload" ]; then echo "podman $*" >> "$FW_STATE.log"; exit 0; fi
+if [ "${FAKE_V6:-0}" = 1 ] && [ "$1 $2" = "network inspect" ]; then
+  case "$*" in
+    *'{{.Subnet}}'*) printf 'fd00:5:6::/64 %s\n' "$("$real" "$@")"; exit 0 ;;
+    *'{{.Gateway}}'*) printf 'fd00:5:6::1 %s\n' "$("$real" "$@")"; exit 0 ;;
+  esac
+fi
+exec "$real" "$@"
+SH
+chmod +x "$work/bin/firewall-cmd" "$work/bin/systemctl" "$work/bin/podman"
 fw() { ( export PATH="$work/bin:$PATH" FW_STATE="$work/fw"; "$@" ); }
 fw setup "$work/setup3.log" NAME="$rwp" DATA_DIR="$work/datap" CONF_DIR="$work/confp" ENV_FILE="$work/report-web-p.env" PASTE_FILE="$work/pastep.conf" \
     PUBLISH_PORT="$pport" AAP_SOURCES="192.0.2.21" HOST_ADDR="${PUBLISH_TEST_HOST_ADDR:-host.containers.internal}" SKIP_READ_CONFIG=1
@@ -286,6 +300,14 @@ check "  ...direct uploads said to be plain HTTP" has "$work/setup3.log" "Plain 
 fw setup "$work/setup4.log" NAME="$rwp" DATA_DIR="$work/datap" CONF_DIR="$work/confp" ENV_FILE="$work/report-web-p.env" PASTE_FILE="$work/pastep.conf" \
     PUBLISH_PORT="$pport" AAP_SOURCES="192.0.2.21" HOST_ADDR="${PUBLISH_TEST_HOST_ADDR:-host.containers.internal}" SKIP_READ_CONFIG=1
 check "  ...again: every rule already there, no reload" bash -c "grep -q 'nothing new - firewall not reloaded' '$work/setup4.log' && [ \"\$(grep -c -- '--reload' '$work/fw.log')\" = 1 ]"
+fw setup "$work/setup5.log" FAKE_V6=1 NAME="$rwp" DATA_DIR="$work/datap" CONF_DIR="$work/confp" ENV_FILE="$work/report-web-p.env" PASTE_FILE="$work/pastep6.conf" \
+    PUBLISH_PORT="$pport" AAP_SOURCES="192.0.2.21" HOST_ADDR="${PUBLISH_TEST_HOST_ADDR:-host.containers.internal}" SKIP_READ_CONFIG=1
+check "  ...a dual-stack network: its IPv6 subnet skipped and said, IPv4 rules only, no stop" bash -c "grep -q \"IPv6 subnet fd00:5:6::/64 skipped: the firewall rules here are IPv4 only\" '$work/setup5.log' \
+    && grep -q '8. Done' '$work/setup5.log' && ! grep -q STOPPED '$work/setup5.log' && ! grep -q 'fd00' '$work/fw'"
+# a dual-stack network (IPv6 gateway listed first): the paste's resolver is still the IPv4 gateway
+fw setup "$work/setup2b.log" FAKE_V6=1 PASTE_FILE="$work/paste6.conf"
+check "the first layout on a dual-stack network: the paste's resolver is the IPv4 gateway" bash -c "grep -qE '^    resolver [0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+ ' '$work/paste6.conf' \
+    && grep -q '^    resolver '\"\$(podman network inspect '$net' --format '{{range .Subnets}}{{.Gateway}}{{end}}')\"' ' '$work/paste6.conf'"
 # the paste of this layout into the stand-in (its marked place left empty), then a read and an upload through it
 sed '/>>> COPY HERE/d' "$work/pastep.conf" > "$work/front/conf.d/reports.conf"; chmod 644 "$work/front/conf.d/reports.conf"
 check "  ...its paste passes nginx -t in the stand-in, reload" bash -c "podman exec '$front' nginx -t >/dev/null 2>&1 && podman exec '$front' nginx -s reload >/dev/null 2>&1"

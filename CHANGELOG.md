@@ -28,7 +28,7 @@ The report jobs upload there too, over the same https, with a login (`report_web
   for you to check. You read the file in (vim `:r`, not a terminal paste, which indents each line further), check that
   nginx sees it (`nginx -T | grep -c report-web` above 0 - a file mounted on its own that the editor replaced stays
   the old one in the container; then write it through the container, `podman exec -i <nginx container> sh -c 'cat >
-  <path inside>' < <path on the host>`, no restart; a restart only if that fails), run `nginx -t` and reload: the script never reloads STIG Manager's nginx, and a
+  <Destination>' < <Source>`, the two paths from `podman inspect`, no restart; a restart only if that fails), run `nginx -t` and reload: the script never reloads STIG Manager's nginx, and a
   refused check or reload leaves the running nginx as it was. The block is indented shallow, its comments on their
   own lines. The script warns when that server would require a client
   certificate for every request (the report jobs have none).
@@ -42,19 +42,20 @@ The report jobs upload there too, over the same https, with a login (`report_web
   network at boot.
 - **Second layout, `PUBLISH_PORT=<port>`**: report-web on a port of the host instead; one firewall rule for STIG
   Manager's nginx network (added only when missing, firewalld reloaded only then, `podman network reload --all` after
-  it); with `AAP_SOURCES`, direct uploads to that port too - plain HTTP, said so.
+  it; IPv4 rules only - a dual-stack network's IPv6 subnet is skipped, said so); with `AAP_SOURCES`, direct uploads to that port too - plain HTTP, said so.
 
 docs/WEB_REPORTS.md: "Your own report server, behind STIG Manager's nginx" - the steps with what success looks like,
 moving from another web server (copy the whole folder, the scripts at its top; nothing to rerun but the next report),
 undoing it, what was tested and what was not, the second layout; six rows in Troubleshooting. Tests:
-`tests/email/run_report_web_setup_test.sh` (new, CI; 48 checks) - rootless, umask 077, against a stand-in for STIG
+`tests/email/run_report_web_setup_test.sh` (new, CI; 50 checks) - rootless, umask 077, against a stand-in for STIG
 Manager's nginx (https, `ssl_verify_client optional`, a strict server-level CSP, HSTS, X-Frame-Options, a secret in
 its configuration): the script twice, the paste seen by the stand-in (`nginx -T | grep -c`, and a file replaced
 under a single-file mount not seen - the case that count catches - and seen once written through the container,
 with no restart) through `nginx -t` and a reload, a read without login, uploads without
 and with a wrong login refused, a report job uploading the atlas page over https (ansible-core 2.16 and 2.22), in a
 headless browser search, sort and CSV on the atlas page and `site-insights.js` running on a ticket insights page under
-the website's CSP; `PUBLISH_PORT` with a stand-in firewall-cmd. shellcheck clean; CI's parse check covers `tools/`.
+the website's CSP; `PUBLISH_PORT` with a stand-in firewall-cmd (and a stand-in for `podman network reload`); a
+dual-stack network (the IPv4 gateway for the resolver, IPv6 subnets left out of the firewall). shellcheck clean; CI's parse check covers `tools/`.
 **Not tested**: rootful on a hardened RHEL host, SELinux enforcing, fapolicyd, FIPS mode, podman's CNI networking.
 The PDFs at 1.19.0.
 
@@ -732,7 +733,8 @@ the ones after it.
     `report_web_dest` and `report_web_url` = `https://<that name>/reports`. In AAP, a **Report website** credential
     (user `aap-reports`, the `UPLOAD_PASSWORD` of `/root/report-web.env`) on each report template. Run one report job.
     The old server's pages stay there: copy the whole folder into `/var/lib/report-web` to keep them.
-    docs/WEB_REPORTS.md, "Your own report server, behind STIG Manager's nginx" (also as report-web-guide.pdf).
+    docs/WEB_REPORTS.md, "Your own report server, behind STIG Manager's nginx" (also in the PDF
+    `docs/pdf/Site-Automation-Ops-Runbooks-Guide.pdf`).
 
 ## 1.14.0 — 2026-11-11
 

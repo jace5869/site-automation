@@ -129,8 +129,9 @@ else
   fi
   podman network exists "$NETWORK" || die "no podman network $NETWORK (podman network ls)"
   dns=$(podman network inspect "$NETWORK" --format '{{.DNSEnabled}}' 2>/dev/null || echo unknown)
-  GATEWAY=$(podman network inspect "$NETWORK" --format '{{range .Subnets}}{{.Gateway}} {{end}}' | awk '{print $1}')
-  [ -n "$GATEWAY" ] || die "network $NETWORK has no gateway address (podman network inspect $NETWORK): use PUBLISH_PORT=<port>"
+  # the IPv4 gateway (a dual-stack network lists an IPv6 one too; the paste's resolver takes the IPv4 one)
+  GATEWAY=$(podman network inspect "$NETWORK" --format '{{range .Subnets}}{{.Gateway}} {{end}}' | tr ' ' '\n' | grep -v ':' | grep -m1 . || true)
+  [ -n "$GATEWAY" ] || die "network $NETWORK has no IPv4 gateway address (podman network inspect $NETWORK): use PUBLISH_PORT=<port>"
   [ "$dns" = false ] && die "network $NETWORK has no DNS (podman network inspect $NETWORK): nginx could not find report-web by name - use PUBLISH_PORT=<port>"
   UPSTREAM="http://$NAME:$CPORT"
   ok "layout: report-web will join podman network $NETWORK from outside (podman run --network): ${NGINX_CONTAINER:-the STIG Manager nginx}"
@@ -159,6 +160,7 @@ if podman image exists "$IMAGE"; then
   ok "$IMAGE is here"
 else
   podman pull --tls-verify=false "$IMAGE"
+  ok "$IMAGE pulled (to undo: podman image rm $IMAGE, once nothing else uses it)"
 fi
 # the user nginx's workers run as, in that image: the pages and the login file are theirs to read (and the pages to write)
 NGX_UID=$(podman run --rm --entrypoint id "$IMAGE" -u nginx 2>/dev/null) || die "$IMAGE has no user nginx: use IMAGE=docker.io/library/nginx:stable"
@@ -324,7 +326,12 @@ else
   sources=""
   if [ -n "$NGINX_CONTAINER" ]; then
     for net in $(podman inspect "$NGINX_CONTAINER" --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}'); do
-      sources="$sources $(podman network inspect "$net" --format '{{range .Subnets}}{{.Subnet}} {{end}}')"
+      for sub in $(podman network inspect "$net" --format '{{range .Subnets}}{{.Subnet}} {{end}}'); do
+        case "$sub" in
+          *:*) note "network $net's IPv6 subnet $sub skipped: the firewall rules here are IPv4 only" ;;
+          *) sources="$sources $sub" ;;
+        esac
+      done
     done
   fi
   sources="$sources $AAP_SOURCES"
@@ -508,9 +515,9 @@ cat <<INFO
         a terminal paste after all: in vim   :set paste   first
       Check that nginx sees it - a number above 0:
         podman exec ${NGINX_CONTAINER:-<nginx container>} nginx -T | grep -c report-web
-      0: the running nginx still has the old file. Write it through the container (Source and Destination from:
-         podman inspect ${NGINX_CONTAINER:-<nginx container>} --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{println}}{{end}}'),
-         then the count again:
+      0: the running nginx still has the old file. Write it through the container, then the count again.
+         Source is the file on this host, Destination the same file inside the container:
+         podman inspect ${NGINX_CONTAINER:-<nginx container>} --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{println}}{{end}}'
         podman exec -i ${NGINX_CONTAINER:-<nginx container>} sh -c 'cat > <Destination>' < <Source>
       Still 0, or "Read-only file system": docs/WEB_REPORTS.md, Troubleshooting, "report-web: 0".
       Then check and reload it:
