@@ -94,6 +94,8 @@ jobs:
           python tests/test_report_fit.py
           python tests/test_email_question.py
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_email_question.py
+          python tests/test_vmware_protect.py
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_vmware_protect.py
           python tests/test_aap_ee.py
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_aap_ee.py
           python tests/test_template_audit.py
@@ -219,6 +221,8 @@ jobs:
           /tmp/ac216/bin/pip -q install pyvmomi requests
           bash tests/patch/run_patch_snapshot_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/patch/run_patch_snapshot_test.sh
+          bash tests/patch/run_patch_not_ready_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/patch/run_patch_not_ready_test.sh
       - name: Disk space report and the tmp cleanup - UBI 9 containers, web01's /tmp on a real filesystem (current ansible-core and 2.16)
         env:
           DISK_TEST_COLLECTIONS: /home/runner/.ansible/collections
@@ -234,6 +238,8 @@ jobs:
         run: |
           bash tests/vmware_ask/run_vmware_ask_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/vmware_ask/run_vmware_ask_test.sh
+          bash tests/vmware_ask/run_secrets_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/vmware_ask/run_secrets_test.sh
       - name: Log analysis, this runner as a Linux host with made-up logs (stand-in journalctl and podman, fake ACT; current ansible-core and 2.16)
         run: |
           bash tests/logs/run_log_test.sh
@@ -408,6 +414,8 @@ jobs:
         run: pwsh -NoProfile -File tests/windows/test_lockout_collect.ps1
       - name: Windows patching, simulated (stand-in ConfigMgr client and restart)
         run: bash tests/windows/patch_sim/run_patch_sim.sh
+      - name: Windows trust removal only from the trust store report, simulated
+        run: bash tests/windows/trust_sim/run_trust_sim.sh
       - name: No private keys or obvious secrets committed
         run: |
           # the header alone: a real key has its base64 on the NEXT line (git grep looks at one line at a time)

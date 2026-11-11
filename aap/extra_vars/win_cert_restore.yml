@@ -28,8 +28,9 @@
 ## certificates, self-signed ones (unless win_cert_renew_self_signed), a certificate only served on
 ## a port (win_check_certs_endpoints: its store is not known). cert_renew_skip_hosts /
 ## cert_renew_skip_groups, cert_renew_attach_ext / _type / _retry_txt apply to Windows too. the CSRs
-## and their .inf / .json, on the server (administrators and SYSTEM only); the key is not here: it
-## is in the machine key store
+## and their .inf / .json, on the server (administrators and SYSTEM only: one that is there already
+## and that others can change is refused - no CSR, no install); the key is not here: it is in the
+## machine key store
 # win_cert_renew_dir: 'C:\ProgramData\site-automation\renew'
 
 # ---- site_findings - usually in all.yml ----------------------------------------------------------

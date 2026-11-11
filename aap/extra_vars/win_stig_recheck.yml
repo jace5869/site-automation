@@ -80,7 +80,8 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 ## --------------------------------------------------------------------------------------- one
 ## folder per checklist (a STIG, or a STIG of one web site or database instance): each run's summary
 ## (JSON) and checklist (STIG Manager imports it), latest-summary.json; only SYSTEM and
-## Administrators can open it. A dry run keeps nothing
+## Administrators can open it (one that is there already and that others can change is refused: the
+## server is not scanned). A dry run keeps nothing
 # win_check_stig_dir: 'C:\ProgramData\site-automation\stig'
 
 ## runs kept per checklist (the oldest deleted); when each rule last passed is kept in every

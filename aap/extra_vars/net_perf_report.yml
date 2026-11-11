@@ -86,9 +86,10 @@ net_perf_targets: [{name: Gateway, host: GATEWAY-ADDRESS}, {name: DC01, host: DC
 # net_perf_slower_min_ms: 5
 
 ## ---- iperf3 between named pairs (optional, needs iperf3 on both hosts and port 5201 open)
-## -------------------- server and client are inventory names of this job's hosts; the server runs
-## iperf3 for one test only (-1), then exits. e.g. [{server: app01.example.mil, client:
-## db01.example.mil, min_mbps: 900}]
+## -------------------- server and client are inventory names of this job's hosts. One pair at a
+## time: the server runs iperf3 for that pair's test only (-1, as the login user, at most
+## net_perf_iperf_seconds + 60 s), and is stopped after the client. e.g. [{server:
+## app01.example.mil, client: db01.example.mil, min_mbps: 900}]
 # net_perf_iperf_pairs: []
 
 ## seconds per test (at most 30)

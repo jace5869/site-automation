@@ -86,6 +86,11 @@ the incident only. **Try it first on one lab or spare device** (`net_cert_only: 
 the CLI's prompts differ between IOS releases. `subject-alt-name` needs IOS-XE 16 or later; on older IOS the job
 says it did not work (the incident stays, without a CSR).
 
+The subject and names come from the certificate the device served, and each goes into a configuration line. One
+that is not a plain DN or host name - control characters, a line break, quotes, a backslash, a semicolon,
+non-ASCII letters - is refused for that certificate: nothing is sent to the device, the incident says why
+(without a CSR). Make that CSR by hand.
+
 ## Templates
 
 | Field | Report | Renewal |

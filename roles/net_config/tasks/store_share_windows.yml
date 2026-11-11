@@ -6,7 +6,7 @@
   ansible.windows.win_file:
     path: "{{ net_config_share_dir }}\\{{ (item.file | splitext)[0] }}"
     state: directory
-  loop: "{{ _ncs_res.devices | selectattr('status', 'in', ['new', 'changed']) | list }}"
+  loop: "{{ _ncs_res.devices | selectattr('status', 'in', _ncs_write) | list }}"
   loop_control:
     label: "{{ item.host }}"
 
@@ -25,7 +25,7 @@
   ansible.windows.win_find:
     paths: "{{ net_config_share_dir }}\\{{ (item.file | splitext)[0] }}"
     patterns: ["{{ (item.file | splitext)[0] }}-*{{ (item.file | splitext)[1] }}"]
-  loop: "{{ _ncs_res.devices | selectattr('status', 'in', ['new', 'changed']) | list }}"
+  loop: "{{ _ncs_res.devices | selectattr('status', 'in', _ncs_write) | list }}"
   loop_control:
     label: "{{ item.host }}"
   register: _ncs_dated

@@ -300,6 +300,25 @@ class Backups(unittest.TestCase):
         self.assertEqual(self.live(), (b"old cert\n", b"old key\n"))
         self.assertEqual(oct(os.stat(self.key).st_mode & 0o777), "0o600")
 
+    def test_the_new_file_is_never_written_through_a_link(self):
+        victim = write("bk/victim.txt", "left alone\n", 0o600)
+        os.symlink(victim, os.path.join(os.path.dirname(self.crt), ".%s.site-new" % os.path.basename(self.crt)))
+        self.i.put_back(self.name)
+        self.assertEqual(read(victim), b"left alone\n")
+        self.assertEqual(oct(os.stat(victim).st_mode & 0o777), "0o600")
+        self.assertEqual(self.live(), (b"old cert\n", b"old key\n"))
+        # a folder on the way that became a link since the plan, or a file that became one: not written
+        real = os.path.dirname(write("bk-real/x.crt", "old\n"))
+        os.symlink(real, os.path.join(W, "bk-link"))
+        with self.assertRaises(OSError):
+            self.i.write_like(os.path.join(W, "bk-link", "x.crt"), b"new\n")
+        os.symlink(victim, os.path.join(real, "y.crt"))
+        with self.assertRaises(OSError):
+            self.i.write_like(os.path.join(real, "y.crt"), b"new\n")
+        self.assertEqual((read(os.path.join(real, "x.crt")), read(victim)), (b"old\n", b"left alone\n"))
+        self.i.write_like(os.path.join(real, "x.crt"), b"new\n")
+        self.assertEqual(read(os.path.join(real, "x.crt")), b"new\n")
+
     def test_a_missing_copy_changes_nothing(self):
         os.remove(os.path.join(self.copies, "1-" + os.path.basename(self.key)))
         with self.assertRaises(IOError) as c:

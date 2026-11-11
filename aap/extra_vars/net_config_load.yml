@@ -35,6 +35,12 @@ net_config_git_repo: ssh://git@GIT-SERVER/netops/configs.git   # the backups' re
 ## the folder in the repository: <path>/<device>.cfg (IOS), .xml (PAN-OS)
 # net_config_git_path: configs
 
+## the commits' author
+# net_config_git_author_name: site-automation
+
+## and its email
+# net_config_git_author_email: site-automation@localhost
+
 ## The git server's SSH host key: accept-new (the first connection learns it), or yes (only the keys
 ## in net_config_git_known_hosts - lines as in a known_hosts file). In an execution environment
 ## ssh's own known_hosts is empty every job, so accept-new learns the key each time: only
@@ -51,6 +57,9 @@ net_config_git_repo: ssh://git@GIT-SERVER/netops/configs.git   # the backups' re
 ## an inventory host to keep them on (Linux, or a Windows file server); its credential on the
 ## template
 # net_config_share_host: ''
+
+## dated copies kept per device (the oldest go)
+# net_config_share_keep: 30
 
 ## ---- what is read ---- IOS: the command whose output is kept
 # net_config_ios_command: show running-config
@@ -118,6 +127,12 @@ net_config_git_repo: ssh://git@GIT-SERVER/netops/configs.git   # the backups' re
 
 ## a load to more devices at once is refused (net_config_only, the template's Limit - or raise it)
 # net_config_max_devices: 10
+
+## A real load first reads each device's running configuration and keeps it where the backup keeps
+## them (net_config_store), named <time>-before-<change> (git: a tag; share: a dated copy) - restore
+## it with net_config_load_mode: restore and net_config_restore_ref set to that name. A device whose
+## copy could not be kept gets nothing sent. false = the load without that copy (as before 1.22.0).
+# net_config_keep_before: true
 
 # ---- servicenow ----------------------------------------------------------------------------------
 ## check the instance's HTTPS certificate (see servicenow_ca_path)

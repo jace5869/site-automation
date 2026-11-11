@@ -355,7 +355,8 @@ Applications listed in Software Center are not installed; only software updates 
    job restarts a server only when the updates or the ConfigMgr client say so, and never one in
    `win_patch_never_reboot_groups`.
 2. **Prove the server is back** (after a restart, and also when none was needed). A new boot
-   time, and every automatic service that ran before runs again. Delayed services get
+   time, and every automatic service that ran before runs again - checked after every install and
+   every restart, also a restart that was only pending with nothing to install. Delayed services get
    `win_patch_services_grace_min` (5 minutes) to start.
 3. **Look again.** After a restart, servicing-stack and cumulative updates often reveal more
    updates. There is a second round (`win_patch_max_rounds: 2`), only when it restarted.

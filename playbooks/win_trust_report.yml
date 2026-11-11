@@ -38,6 +38,7 @@
         tasks_from: run_check.yml
       vars:
         _site_check: trust
+        _win_check_trust_removal: true     # the one play that removes (check_trust_remove); the health check only reads
 
     - name: Every store on every server, worst first
       ansible.builtin.debug:

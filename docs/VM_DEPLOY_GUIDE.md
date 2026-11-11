@@ -919,7 +919,7 @@ instead - read the same way, and their notes rewritten in the new layout when on
 | marked **built** for this ticket | left as it is: reported with its IP address (and added to its service's AAP inventory if it is not there yet) |
 | marked **building** for this ticket (cloned, not finished) | **finished where it is**: the CPU, memory and disks it still lacks, the customization, the power on - never cloned again (already powered on: its result is read) |
 | not there | built |
-| there, but not this ticket's (another ticket's mark, or none) | refused, nothing built: *a VM named web02 already exists* |
+| there, but not this ticket's (another ticket's mark, or none) - the name in any case (WEB02 for web02), in any vCenter of the job | refused, nothing built: *a VM named web02 already exists* |
 
 The work notes say which: *"[AAP] Deploying 3 VMs ... Picking up where an earlier run for this ticket
 stopped: - web01: built already - left as it is - web02: started, not finished - finished in place -
@@ -930,7 +930,8 @@ finished in place."*). The ticket is closed once all of them are built.
   closed, when close fields are set). To build a test VM again, delete it in vCenter first.
 - VMs built by an earlier release (no mark; their notes begin *"Deployed from TEMPLATE for CTASK0010009 by"* -
   the ticket's number written anywhere else does not count): powered on or with the ticket's *"[AAP] VM
-  web01 deployed"* note - left as they are; powered off - finished in place.
+  web01 deployed"* note - left as they are; powered off - refused, nothing done (whether it was finished cannot
+  be told): power it on if it is built, or delete it, then run again.
 - Built, but its **guest customization failed** (marked *failed*): refused - check it, delete it, run again.
 - `vm_deploy_resume: false`: the way of earlier releases - a VM the ticket's own *"[AAP] VM web01 deployed"*
   note names is left as it is; any other VM with the name is refused, and one started is never finished.

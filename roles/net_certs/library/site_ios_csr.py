@@ -13,6 +13,9 @@ description:
     (enrollment terminal pem, the subject and names given, rsakeypair the key), then crypto pki enroll, its
     questions answered, and the CSR it prints. All in one configuration session (crypto pki enroll is a
     configuration command), through the device's own edit_config, which answers prompts.
+  - The subject and names come from the certificate the device served. Each goes into a configuration line, so
+    one with a character outside a plain DN / host name (control characters, line breaks, quotes, backslash,
+    non-ASCII) is refused before anything is sent.
   - The certificate in use is not touched. The running configuration gets the key and the trustpoint; saving it
     (write memory) is left to the person who imports the issued certificate.
 options:
@@ -28,8 +31,30 @@ key_made: {description: A new key was made (false - one with the label was there
 output: {description: What crypto pki enroll printed (the last part)., type: str, returned: always}
 """
 
+import re
+
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.connection import Connection, ConnectionError
+
+# What may go into a configuration line. A DN: attr=value pairs split by commas, the values printable ASCII
+# without , = ; \ " < > (net_cert_ios_subject has already dropped escaped commas and quotes). A name: a host
+# name, or *. and one. A trustpoint: one word. Whole-string matches (fullmatch: no line break slips past).
+_DN_RE = re.compile(r"[A-Za-z0-9.]+=[A-Za-z0-9 ._@'()/:+?*&#!-]*(, ?[A-Za-z0-9.]+=[A-Za-z0-9 ._@'()/:+?*&#!-]*)*")
+_NAME_RE = re.compile(r"(\*\.)?[A-Za-z0-9_]([A-Za-z0-9_-]{0,62})(\.[A-Za-z0-9_]([A-Za-z0-9_-]{0,62}))*\.?")
+_TP_RE = re.compile(r"[A-Za-z0-9._-]{1,64}")
+
+
+def refused(trustpoint, subject, names):
+    """Why these cannot go into a configuration line - '' when they can."""
+    if not _TP_RE.fullmatch(str(trustpoint or "")):
+        return "trustpoint: one word of letters, digits, . _ - (%r)" % trustpoint
+    if len(str(subject or "")) > 512 or not _DN_RE.fullmatch(str(subject or "")):
+        return "subject refused - characters outside a plain DN (%r)" % subject
+    for n in names or []:
+        if len(str(n)) > 253 or not _NAME_RE.fullmatch(str(n)):
+            return "name refused - not a plain host name (%r)" % n
+    return ""
+
 
 PROMPTS = [r"Display Certificate Request to terminal\? \[yes/no\]:", r"Redisplay enrollment request\? \[yes/no\]:"]
 
@@ -62,8 +87,9 @@ def main():
     )
     p = module.params
     tp = p["trustpoint"]
-    if not tp or any(c.isspace() for c in tp):
-        module.fail_json(msg="trustpoint: one word, no spaces (%r)" % tp)
+    why = refused(tp, p["subject"], p["names"])
+    if why:
+        module.fail_json(msg="nothing sent: %s" % why, output="")
     conn = Connection(module._socket_path)
     try:
         have = conn.get(command="show crypto key mypubkey rsa %s" % tp)

@@ -102,6 +102,9 @@ for _i, _m in enumerate(MACHINES):                  # three ESXi hosts, the desk
 MACHINES[6]["managed_machine_data"] = {"clone_error_message": "Customization operation timed out", "clone_error_time": NOW - 3 * H,
                                        "create_time": NOW - 3 * H, "host_name": "esx01.example.mil"}
 MACHINES[9]["managed_machine_data"] = {"create_time": NOW - 1 * H, "host_name": "esx01.example.mil"}
+for _m in MACHINES:                                 # HZMOCK_PARKED: desktops an admin put in maintenance mode
+    if _m["id"] in os.environ.get("HZMOCK_PARKED", "").split(","):
+        _m["state"] = "MAINTENANCE"
 if GAPS:
     def mm(i, name, state, **mdd):
         r = m(i, name, "pool-ic1", state)
@@ -376,6 +379,8 @@ class H_(BaseHTTPRequestHandler):
                     MACHINES.remove(mm[0])
                 else:
                     mm[0]["state"] = {"recover": "PROVISIONING", "enter-maintenance-mode": "MAINTENANCE"}.get(verb, "AVAILABLE")
+                    if verb == "enter-maintenance-mode" and os.environ.get("HZMOCK_DRS_TO"):     # the host's maintenance: DRS moves it
+                        mm[0]["managed_machine_data"]["host_name"] = os.environ["HZMOCK_DRS_TO"]
                 out.append({"id": i, "status_code": 200})
             return self.send(200, out)
         if rest[0] == "sessions":

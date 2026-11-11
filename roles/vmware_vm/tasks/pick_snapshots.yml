@@ -2,9 +2,15 @@
 # THE SNAPSHOTS A PICK LIST MAY OFFER, read now (pick_refresh.yml makes the list, snapshot_delete_picked.yml
 # checks each pick again): every snapshot of every vCenter, and which of them may be deleted - the holds of
 # the snapshot cleanup (snapshot_split.yml: a name or description that says keep, the excluded VMs,
-# datacenters and clusters, vmware_protected_vms, the AAP server, bigger than vm_snapshot_cleanup_max_size_gb
-# or size unknown), at least vm_pick_snapshot_min_age_days old. The name words are not used: they only
-# narrow the automatic cleanup. Output: _vm_snap_read, _vm_sn (all / old = may be picked / held), _vm_sn_multi.
+# datacenters and clusters, the AAP server and the protected VMs of protected.yml - refused when the inventory
+# cannot say which VM is the AAP server - bigger than vm_snapshot_cleanup_max_size_gb or size unknown), at least
+# vm_pick_snapshot_min_age_days old. The name words are not used: they only narrow the automatic cleanup.
+# Output: _vm_snap_read, _vm_sn (all / old = may be picked / held), _vm_sn_multi.
+- name: VMware | the protected VMs, and this inventory says which server is AAP
+  ansible.builtin.include_tasks: protected.yml
+  vars:
+    _vm_prot_refuse: offer or delete any snapshot
+
 - name: VMware | read the snapshots now
   site_vmware_snapshots:
     datacenter: "{{ vmware_datacenter | default(omit, true) }}"

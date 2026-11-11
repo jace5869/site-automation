@@ -480,6 +480,93 @@ class Removal(unittest.TestCase):
         self.assertEqual(r["actions"], [])
         self.assertEqual(open(f).read(), text)
 
+    def test_the_new_bundle_is_never_written_through_a_link(self):
+        f = os.path.join(self.tmp, "certifi", "cacert.pem")
+        os.makedirs(os.path.dirname(f))
+        open(f, "w").write(pem("emsign-ecc-root-ca-g3") + pem("aaa-certificate-services"))
+        other = os.path.join(self.tmp, "other.conf")
+        open(other, "w").write("left alone\n")
+        os.symlink(other, f + ".site-trust-new")              # a link waiting at the old fixed name
+        store = {"kind": "python", "where": f, "hits": [{"name": "emSign ECC Root CA - G3", "severity": "warning"}]}
+        r = self.run_remove([store])
+        self.assertTrue(r["actions"][0]["done"], r)
+        self.assertEqual(open(other).read(), "left alone\n")
+        self.assertEqual(len(st.pem_certs(open(f).read())), 1)
+        self.assertFalse(os.path.islink(f))
+        self.assertEqual(sorted(os.listdir(os.path.dirname(f))), ["cacert.pem", "cacert.pem.site-trust-new"])
+
+    def test_a_linked_store_and_a_folder_others_can_write_are_left(self):
+        d = os.path.join(self.tmp, "app")
+        os.makedirs(d)
+        real = os.path.join(self.tmp, "real.pem")
+        text = pem("emsign-ecc-root-ca-g3") + pem("aaa-certificate-services")
+        open(real, "w").write(text)
+        os.symlink(real, os.path.join(d, "bundle.pem"))
+        store = {"kind": "file", "where": os.path.join(d, "bundle.pem"), "hits": [{"name": "emSign ECC Root CA - G3", "severity": "warning"}]}
+        r = self.run_remove([store])
+        self.assertEqual(r["actions"], [])
+        self.assertIn("symbolic link", r["not_removed"][0]["why"])
+        self.assertEqual(open(real).read(), text)
+        # a folder every user can write: the bundle there is left, with why
+        os.unlink(os.path.join(d, "bundle.pem"))
+        open(os.path.join(d, "bundle.pem"), "w").write(text)
+        os.chmod(d, 0o777)
+        r = self.run_remove([store])
+        self.assertEqual(r["actions"], [])
+        self.assertIn("folder can be written by every user", r["not_removed"][0]["why"])
+        self.assertEqual(open(os.path.join(d, "bundle.pem")).read(), text)
+        os.chmod(d, 0o755)
+        r = self.run_remove([store])
+        self.assertTrue(r["actions"][0]["done"], r)
+
+    def test_pkcs12_keystore_goes_through_keytool(self):
+        """A keystore that is not JKS: keytool (a stand-in here) lists and deletes the entry on a private copy;
+        the result is written back and reported on the store."""
+        import hashlib
+        fp = hashlib.sha256(_der("emsign-ecc-root-ca-g3")).hexdigest().upper()
+        fp = ":".join(fp[i:i + 2] for i in range(0, 64, 2))
+        f = os.path.join(self.tmp, "app", "truststore.p12")
+        os.makedirs(os.path.dirname(f))
+        open(f, "w").write("PKCS12 stand-in\nemsign %s\nsectigo 00\n" % fp)
+        os.chmod(f, 0o640)
+        bindir = os.path.join(self.tmp, "bin")
+        os.makedirs(bindir)
+        log = os.path.join(self.tmp, "keytool.log")
+        with open(os.path.join(bindir, "keytool"), "w") as k:
+            k.write("""#!/usr/bin/env python3
+import sys
+a = sys.argv[1:]
+ks = a[a.index("-keystore") + 1]
+open(%r, "a").write(" ".join(a) + "\\n")
+lines = open(ks).read().splitlines()
+if a[0] == "-list":
+    for l in lines[1:]:
+        alias, fp = l.split()
+        print("%%s, Nov 11, 2026, trustedCertEntry," %% alias)
+        print("Certificate fingerprint (SHA-256): %%s" %% (fp if len(fp) == 95 else ":".join(["00"] * 32)))
+elif a[0] == "-delete":
+    alias = a[a.index("-alias") + 1]
+    open(ks, "w").write("\\n".join(l for l in lines if not l.startswith(alias + " ")) + "\\n")
+""" % log)
+        os.chmod(os.path.join(bindir, "keytool"), 0o755)
+        store = {"kind": "java", "where": f, "hits": [{"name": "emSign ECC Root CA - G3", "severity": "warning"}]}
+        path = os.environ["PATH"]
+        os.environ["PATH"] = bindir + os.pathsep + path
+        try:
+            plan = self.run_remove([store], check=True)
+            self.assertIn("emsign", open(f).read())         # Check mode: nothing changed
+            r = self.run_remove([store])
+        finally:
+            os.environ["PATH"] = path
+        self.assertEqual(plan["actions"][0]["aliases"], ["emsign"])
+        a = r["actions"][0]
+        self.assertTrue(a["done"] and r["changed"], r)
+        self.assertEqual((a["kind"], a["where"], a["aliases"]), ("java", f, ["emsign"]))
+        self.assertEqual(open(f).read(), "PKCS12 stand-in\nsectigo 00\n")
+        self.assertEqual(oct(os.stat(f).st_mode & 0o777), "0o640")
+        self.assertIn("emsign " + fp, open(a["backup"]).read())
+        self.assertNotIn(f, open(log).read())                 # keytool only ever saw the private copy
+
     def test_a_file_that_is_the_certificate_is_moved_away(self):
         f = os.path.join(self.tmp, "app", "chain.cer")
         os.makedirs(os.path.dirname(f))

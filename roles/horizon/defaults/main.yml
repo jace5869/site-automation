@@ -122,6 +122,10 @@ horizon_maint_host: ""                   # the ESXi host, as vCenter names it (a
 # What the users on its desktops read (empty = no message). A survey question on the workflow.
 horizon_maint_message: "Your desktop's server goes into maintenance in 15 minutes. Please save your work and log off; your next logon gets a desktop on another server."
 horizon_maint_message_type: WARNING      # INFO, WARNING or ERROR
+# The end job brings back only the desktops the start job put in maintenance mode (handed on in the workflow). true =
+# without that list, every desktop in maintenance mode on the host - also one put there for another reason (as
+# before 1.22.0).
+horizon_maint_end_all: false
 
 # ---- Disconnected sessions (playbooks/horizon_session_cleanup.yml) ------------------------------
 horizon_session_max_disconnected_hours: 8   # log off a session disconnected for this many hours or more

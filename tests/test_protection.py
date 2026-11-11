@@ -89,10 +89,26 @@ def run_checks():
     # VMware jobs (restart, shut down, VLAN change) never touch the AAP VM: literal groups in the condition,
     # checked before the change in each of them.
     vguard = (root / "roles/vmware_vm/tasks/guard.yml").read_text()
+    vprot = (root / "roles/vmware_vm/tasks/protected.yml").read_text()
     check("item.ids | intersect(((groups['aap'] | default([])) + (groups['aap_hosts'] | default([]))) | host_ids(hostvars)) | length == 0" in vguard,
           "VMware guard: the AAP VM is refused through the literal groups aap / aap_hosts")
-    check("((groups['aap'] | default([])) + (groups['aap_hosts'] | default([]))) | length > 0" in vguard,
-          "VMware guard: refuses when the inventory cannot say which VM is AAP")
+    check("((groups['aap'] | default([])) + (groups['aap_hosts'] | default([]))) | length > 0" in vprot
+          and "when: _vm_prot_refuse is defined" in vprot and "_vm_prot_refuse:" in vguard,
+          "VMware guard: refuses when the inventory cannot say which VM is AAP (protected.yml)")
+    check("['aap', 'aap_hosts'] + (vmware_protected_groups | name_list)" in vprot
+          and "| host_ids(hostvars)\n      | difference(_vm_prot.ids) | length == 0" in vprot,
+          "VMware protected list: the literal AAP groups always on it, the settings read with name_list")
+    # one protected list for restart, shut down, VLAN, the restart pick list, the snapshot cleanup / pick list and the watch
+    for f in ("guard.yml", "pick_vms.yml", "snapshot_split.yml", "watch.yml"):
+        txt = (root / "roles/vmware_vm/tasks" / f).read_text()
+        check("include_tasks: protected.yml" in txt and "_vm_prot.ids" in txt and "vmware_protected_groups | select" not in txt,
+              f"roles/vmware_vm/tasks/{f}: uses the one protected list (protected.yml)")
+    # the snapshot cleanup and the snapshot pick list refuse, before reading or deleting, when AAP is unknown
+    for f in ("snapshot_cleanup.yml", "pick_snapshots.yml"):
+        txt = (root / "roles/vmware_vm/tasks" / f).read_text()
+        check(re.search(r"include_tasks: protected.yml\n\s+vars:\n\s+_vm_prot_refuse: ", txt) is not None
+              and txt.index("protected.yml") < txt.index("site_vmware_snapshots"),
+              f"roles/vmware_vm/tasks/{f}: refuses when the inventory cannot say which VM is AAP, before the snapshots are read")
     check(AAP <= set(load("roles/vmware_vm/defaults/main.yml")["vmware_protected_groups"]), "roles/vmware_vm/defaults: protected groups list AAP")
     for f in ("reboot.yml", "shutdown.yml", "vlan.yml"):
         txt = (root / "roles/vmware_vm/tasks" / f).read_text()

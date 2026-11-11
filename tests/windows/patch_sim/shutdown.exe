@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # stand-in for shutdown.exe /r: the WinRM port goes down, the "server" comes back later with a new
-# boot time; updates waiting for a restart are then installed, and a new one appears (round 2)
+# boot time; updates waiting for a restart are then installed, and a new one appears (round 2); a restart that was
+# pending is done; a service marked "dies" does not start again
 import json, os, subprocess, sys, time, datetime
 st = os.environ['FAKECCM_STATE']
 s = json.load(open(st))
@@ -10,9 +11,10 @@ s['updates'] = [u for u in s['updates'] if int(u['EvaluationState']) != 8]
 for u in s.get('after_restart', []):
     s['updates'].append(u)
 s['after_restart'] = []
+s['pending_reboot'] = False          # a restart that was pending (not a lingering flag) is done
 for sv in s['services']:
-    if sv.get('slow'):
-        sv['state'] = 'Stopped'
+    if sv.get('slow') or sv.get('dies'):
+        sv['state'] = 'Stopped'      # a slow one comes back after two looks; one that dies does not
 json.dump(s, open(st, 'w'), indent=1)
 pid = open(os.environ['FAKECCM_PORTPID']).read().strip()
 subprocess.run(['kill', pid])

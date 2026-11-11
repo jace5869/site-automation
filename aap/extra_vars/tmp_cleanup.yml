@@ -23,7 +23,9 @@
 ## filesystem is full, deleted by "Linux - tmp cleanup" after the approval (workflow 42). Old =
 ## accessed, changed and modified more than days ago (as systemd-tmpfiles ages them; 10 days for
 ## /tmp and 30 for /var/tmp are its own defaults). Only regular files, only on the folder's own
-## filesystem, never under a name in tmp_cleanup_keep; then the folders left empty.
+## filesystem, never under a name in tmp_cleanup_keep; then the folders left empty. Each path's last
+## part must be tmp or end in .tmp, -tmp or _tmp (/opt/app/tmp), with no . or .. part: anything else
+## stops the job before anything is read.
 # tmp_cleanup_dirs:
 #   - {path: /tmp, days: 10}
 #   - {path: /var/tmp, days: 30}

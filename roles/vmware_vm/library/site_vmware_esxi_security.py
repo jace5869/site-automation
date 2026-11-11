@@ -364,7 +364,8 @@ def main():
     _, statuses = each_vcenter(module, lambda si, content, name: _read(content, p, want, module.check_mode, name, out),
                                p["vcenters"], p["validate_certs"], "the hosts",
                                error_format="Setting the hosts through vCenter {name} failed: {error}")
-    module.exit_json(changed=any(h["status"] in ("changed", "failed") and h["changes"] for h in out) and not module.check_mode,
+    # changed: anything set (or, in check mode, to set) on any host - one that also had an error included
+    module.exit_json(changed=any(h["changes"] for h in out),
                      hosts=out, vcenters=statuses, check_mode=module.check_mode)
 
 

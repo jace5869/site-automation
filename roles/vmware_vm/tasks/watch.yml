@@ -31,16 +31,17 @@
   register: _vm_w
   check_mode: false                      # read-only: a dry run (Check) reads and reports the same
 
+- name: VMware | the protected VMs (the same list as a restart's)
+  ansible.builtin.include_tasks: protected.yml
+
 # one dict expression: on ansible-core 2.16 the values of a YAML dict would arrive as strings
 - name: VMware | what was found, and what phase 2 would restart (nothing is restarted)
   ansible.builtin.set_fact:
     _vm_w_cond: "{{ _vm_w | vm_watch_conditions({'one_signal_severity': vm_watch_one_signal_severity}) }}"
     _vm_w_opts: >-
-      {{ {'protected_ids': ((groups['aap'] | default([])) + (groups['aap_hosts'] | default([]))
-                            + (vmware_protected_groups | select('in', groups) | map('extract', groups) | flatten)) | host_ids(hostvars),
-          'protected_names': (vmware_protected_vms | name_list) + (vm_watch_protect | name_list),
-          'aap_known': ((groups['aap'] | default([])) + (groups['aap_hosts'] | default([]))) | length > 0
-                       or (vmware_protected_vms | name_list) | length > 0,
+      {{ {'protected_ids': _vm_prot.ids,
+          'protected_names': _vm_prot.names + (vm_watch_protect | name_list),
+          'aap_known': _vm_prot.aap_known,
           'max_actions': vm_watch_max_actions | int} }}
 
 - name: VMware | is single sign-on down now (vm_watch_sso)

@@ -1,0 +1,6 @@
+---
+# NETWORK CONFIG LOAD, before the change, on each device (net_config_keep_before; not in a dry run): its running
+# configuration read (read.yml -> _ncf_got), for load_keep.yml to keep before anything is sent.
+- name: Network config | {{ inventory_hostname }} - the running configuration before the change
+  ansible.builtin.include_tasks: read.yml
+  when: net_config_keep_before | bool and not ansible_check_mode

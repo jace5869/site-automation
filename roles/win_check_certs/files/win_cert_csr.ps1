@@ -40,6 +40,81 @@ function Invoke-Native([string] $Exe, [string[]] $Arguments) {
     return New-Object -TypeName PSObject -Property @{ Out = $out; Code = $global:LASTEXITCODE }
 }
 # ---- end of the common part --------------------------------------------------------------------
+# ---- who besides SYSTEM and the Administrators can change a file or folder (keep identical where it is used) ----
+# Read from its SDDL (Get-Acl): SIDs, the same in every language, and no .NET methods (Constrained Language too).
+# Allowed: SYSTEM, the Administrators, TrustedInstaller, and the SIDs given. A CREATOR OWNER or OWNER RIGHTS entry
+# gives nobody else anything here (the owner is checked); an inherit-only entry is not for the item itself.
+$SDDL_RIGHTS = @{ GA = 268435456; GX = 536870912; GW = 1073741824; GR = 2147483648; FA = 2032127; FR = 1179785; FW = 1180054; FX = 1179817
+    SD = 65536; RC = 131072; WD = 262144; WO = 524288; CC = 1; DC = 2; LC = 4; SW = 8; RP = 16; WP = 32; DT = 64; LO = 128; CR = 256 }
+$ADMIN_SIDS = @('SY', 'BA', 'S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+$RIGHTS_WRITE = 1343029590      # any change: data, append, attributes, delete, delete a child, permissions, owner, generic write/all
+$RIGHTS_SWAP = 269221952        # a folder above: delete a child, permissions, owner, generic all (and delete it, below a drive's root)
+# an SDDL entry's rights ('FA', '0x1301bf' or two-letter codes) as a number; a code not known counts as every right
+function Get-SddlRights([string] $Text) {
+    if ($Text -match '^0[xX][0-9a-fA-F]+$') { return [int64]$Text }
+    if (-not $Text -or $Text.Length % 2) { return [int64]-1 }
+    $n = [int64]0
+    for ($i = 0; $i -lt $Text.Length; $i += 2) {
+        $v = $SDDL_RIGHTS[$Text.Substring($i, 2)]
+        if ($null -eq $v) { return [int64]-1 }
+        $n = $n -bor [int64]$v
+    }
+    return $n
+}
+# '' when the owner is allowed and no allow entry gives anyone else one of the $Mask rights; else who (SIDs)
+function Get-SddlOthers([string] $Sddl, [int64] $Mask, [string[]] $Allowed) {
+    $ok = @($ADMIN_SIDS) + @($Allowed | Where-Object { $_ })
+    $o = [regex]::Match($Sddl, '^O:(S-1-[0-9-]+|[A-Z][A-Z])')
+    if (-not $o.Success) { return 'its owner could not be read' }
+    if ($Sddl -match 'D:[A-Z]*NO_ACCESS_CONTROL') { return 'it has no access list: everyone can change it' }
+    $who = @()
+    if ($ok -notcontains $o.Groups[1].Value) { $who += @('owner ' + $o.Groups[1].Value) }
+    $d = [regex]::Match($Sddl, 'D:[A-Z]*((?:\([^)]*\))*)')
+    if (-not $d.Success) { return 'its access list could not be read' }
+    foreach ($ace in [regex]::Matches($d.Groups[1].Value, '\(([^)]*)\)')) {
+        $p = @($ace.Groups[1].Value -split ';')
+        if ($p.Count -lt 6) { $who += @('an entry not read: ' + $ace.Value); continue }
+        if (@('A', 'OA', 'XA', 'ZA') -notcontains $p[0]) { continue }        # deny and audit entries
+        $flags = @()
+        for ($i = 0; $i + 1 -lt $p[1].Length; $i += 2) { $flags += @($p[1].Substring($i, 2)) }
+        if ($flags -contains 'IO') { continue }
+        if ($ok -contains $p[5] -or @('CO', 'S-1-3-0', 'OW', 'S-1-3-4') -contains $p[5]) { continue }
+        if ((Get-SddlRights $p[2]) -band $Mask) { $who += @($p[5] + ' (' + $p[2] + ')') }
+    }
+    return ($who -join ', ')
+}
+# '' when only SYSTEM, the Administrators (and the SIDs given) own and can change $Path and everything in it, and no
+# folder above it lets anyone else delete, rename or replace it; else where and who
+function Get-ChangeableBy([string] $Path, [string[]] $Allowed) {
+    try {
+        $items = @(Get-Item -LiteralPath $Path -Force -ErrorAction Stop)
+        if (Test-Path -LiteralPath $Path -PathType Container) { $items += @(Get-ChildItem -LiteralPath $Path -Recurse -Force -ErrorAction Stop) }
+        foreach ($i in $items) {
+            $w = Get-SddlOthers ([string](Get-Acl -LiteralPath $i.FullName).Sddl) $RIGHTS_WRITE $Allowed
+            if ($w) { return ([string]$i.FullName + ': ' + $w) }
+        }
+        $up = Split-Path -Parent $Path
+        while ($up) {
+            $above = Split-Path -Parent $up
+            $mask = $RIGHTS_SWAP
+            if ($above) { $mask = $mask -bor 65536 }
+            $w = Get-SddlOthers ([string](Get-Acl -LiteralPath $up).Sddl) $mask $Allowed
+            if ($w) { return ($up + ': ' + $w) }
+            $up = $above
+        }
+    }
+    catch { return ('its permissions could not be read: ' + [string]$_.Exception.Message) }
+    return ''
+}
+# the SID of the account this runs as ('' when not known)
+function Get-MySid {
+    foreach ($l in @((Invoke-Native 'whoami.exe' @('/user', '/fo', 'csv', '/nh')).Out)) {
+        $sid = [regex]::Match([string]$l, '"(S-1-[0-9-]+)"\s*$')
+        if ($sid.Success) { return $sid.Groups[1].Value }
+    }
+    return ''
+}
+# ---- end of the permission check ----
 
 $dir = [string](Get-Setting 'dir' 'C:\ProgramData\site-automation\renew')
 $keyBits = [int](Get-Setting 'key_bits' 2048)
@@ -55,6 +130,19 @@ $checkMode = [bool](Get-Setting 'check_mode' $false)
 $job = [string](Get-Setting 'job' '')
 $results = @()
 $made = 0
+# the renewal folder: used only when SYSTEM, the Administrators or this job's account alone own and can change it and
+# everything in it (anyone can make a folder in ProgramData: an earlier renewal's files there could be anyone's)
+$aclOn = [bool](Get-Command -Name Get-Acl -ErrorAction SilentlyContinue)
+$mySid = ''
+if ($aclOn) { $mySid = Get-MySid }
+function Get-DirProblem {
+    if (-not $aclOn -or -not (Test-Path -LiteralPath $dir)) { return '' }
+    $who = Get-ChangeableBy $dir @($mySid)
+    if (-not $who) { return '' }
+    return ("the renewal folder $dir can be changed by others than SYSTEM and the Administrators ($who): no CSR is made or read there. " +
+        'Delete it (the next renewal makes it again, for SYSTEM and the Administrators only), or make them its only owners and writers (win_cert_renew_dir)')
+}
+$dirProblem = Get-DirProblem
 
 # ---- reading the certificate's extensions from their bytes (no .NET methods: Constrained Language too)
 $script:at = 0
@@ -198,6 +286,7 @@ foreach ($cand in @(Get-Setting 'certs' @())) {
     $r.key = $key.text
     $r.self_signed = $self
     $r.key_path = 'the new key: in the server''s machine key store, with the pending request (certlm.msc > Certificate Enrollment Requests)'
+    if ($dirProblem) { $r.status = 'failed'; $r.reason = $dirProblem; $results += @($r); continue }
     $r.install = Get-Install $where
     $info = Join-Path $dir "$tp.json"
     $r.file_name = "$short.$fileExt"
@@ -220,8 +309,10 @@ foreach ($cand in @(Get-Setting 'certs' @())) {
         try {
             if (-not (Test-Path -LiteralPath $dir)) {
                 New-Item -ItemType Directory -Path $dir -Force | Out-Null
-                # administrators and SYSTEM only (the CSRs are public; the folder is kept tidy)
+                # administrators and SYSTEM only (the CSRs are public; the install trusts the files kept here)
                 $null = Invoke-Native 'icacls.exe' @($dir, '/inheritance:r', '/grant:r', '*S-1-5-32-544:(OI)(CI)F', '*S-1-5-18:(OI)(CI)F')
+                $dirProblem = Get-DirProblem
+                if ($dirProblem) { throw $dirProblem }
             }
             $inf = $r.csr_path -replace '\.csr$', '.inf'
             $lines = @('[Version]', 'Signature="$Windows NT$"', '', '[NewRequest]',

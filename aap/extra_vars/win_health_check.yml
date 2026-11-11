@@ -241,7 +241,9 @@
 ## ------------------------------------------------------------------------------ its folder on the
 ## server (or Evaluate-STIG.ps1), e.g. 'C:\Evaluate-STIG'; empty = found: a scheduled task that runs
 ## Evaluate-STIG.ps1, else a folder named Evaluate-STIG* on the local drives
-## (win_check_stig_search_depth levels down; the newest if several) - the report says where
+## (win_check_stig_search_depth levels down) - the report says where. A script found is run as
+## SYSTEM only when SYSTEM and the Administrators alone own and can change its folder (or its
+## scheduled task runs as SYSTEM); found in several places, none is run - set this
 # win_check_stig_evaluate: ""
 
 ## read the checklists Evaluate-STIG already wrote instead of running it: auto = the folder its
@@ -293,7 +295,8 @@
 ## --------------------------------------------------------------------------------------- one
 ## folder per checklist (a STIG, or a STIG of one web site or database instance): each run's summary
 ## (JSON) and checklist (STIG Manager imports it), latest-summary.json; only SYSTEM and
-## Administrators can open it. A dry run keeps nothing
+## Administrators can open it (one that is there already and that others can change is refused: the
+## server is not scanned). A dry run keeps nothing
 # win_check_stig_dir: 'C:\ProgramData\site-automation\stig'
 
 ## runs kept per checklist (the oldest deleted); when each rule last passed is kept in every
@@ -425,9 +428,10 @@
 ## trust is blocklisted (RHEL / SUSE: a PEM in the blocklist folder and update-ca-trust; Debian /
 ## Ubuntu: the line in /etc/ca-certificates.conf and update-ca-certificates), a Java keystore loses
 ## the entry, a certifi or application bundle loses the block, a file that is the certificate itself
-## is moved to the backup folder. A file a package owns is left alone (update the package). Node, Go
-## programs and containers cannot be changed this way (update, rebuild) and stay in the report.
-## docs/TRUST_STORES.md remove them (true) - or only report (false)
+## is moved to the backup folder. A file a package owns is left alone (update the package), and so
+## is one that is a symbolic link or whose folder another user can write (take it out by hand).
+## Node, Go programs and containers cannot be changed this way (update, rebuild) and stay in the
+## report. docs/TRUST_STORES.md remove them (true) - or only report (false)
 # check_trust_remove: false
 
 ## only certificates at these severities go; a notice-level one (AAA Certificate Services) never,

@@ -8,6 +8,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import unittest.mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "roles", "net_certs", "library"))
 import site_net_certs as nc  # noqa: E402
@@ -124,6 +125,64 @@ class NetCerts(unittest.TestCase):
             r = nc.cert_record(der)
             self.assertEqual((r["tier"], r["key"]), (tier, key), n)
         self.assertEqual(nc.cert_record(der)["sans"], ["DNS:self01.example.mil"])
+
+
+class IosCsrRefuses(unittest.TestCase):
+    """site_ios_csr: a subject or name from the served certificate that is not a plain DN / host name is refused
+    and nothing reaches the device; a plain one goes through."""
+
+    def run_module(self, subject, names):
+        import site_ios_csr as ic
+        sent, out = [], {}
+
+        class Done(Exception):
+            pass
+
+        class FakeModule(object):      # AnsibleModule's part main() uses, the same on every ansible-core
+            def __init__(self, **kw):
+                self.params = {"trustpoint": "SA-RENEW-20270101", "subject": subject, "names": names, "key_bits": 2048}
+                self._socket_path = "/nonexistent"
+
+            def exit_json(self, **kw):
+                out.update(kw)
+                raise Done()
+
+            def fail_json(self, **kw):
+                out.update(kw, failed=True)
+                raise Done()
+
+        class FakeConn(object):
+            def __init__(self, path):
+                pass
+
+            def get(self, command):
+                return ""
+
+            def edit_config(self, candidate):
+                sent.extend(candidate)
+                return {"response": ["-----BEGIN CERTIFICATE REQUEST-----\nAAAA\n-----END CERTIFICATE REQUEST-----"]}
+        with unittest.mock.patch.object(ic, "AnsibleModule", FakeModule), unittest.mock.patch.object(ic, "Connection", FakeConn):
+            with self.assertRaises(Done):
+                ic.main()
+        return out, sent
+
+    def test_ios_csr_refuses_line_break_in_subject(self):
+        out, sent = self.run_module("CN=sw01.example.mil\nusername x privilege 15", ["sw01.example.mil"])
+        self.assertTrue(out.get("failed"))
+        self.assertIn("nothing sent", out["msg"])
+        self.assertEqual(sent, [])
+
+    def test_ios_csr_refuses_odd_name(self):
+        for bad in ["sw01.example.mil\rend", "sw01 example", "sw01.example.mil;x", "sw\u00e9.example.mil"]:
+            out, sent = self.run_module("CN=sw01.example.mil", ["sw01.example.mil", bad])
+            self.assertTrue(out.get("failed"), bad)
+            self.assertEqual(sent, [], bad)
+
+    def test_ios_csr_plain_subject_goes_through(self):
+        out, sent = self.run_module("CN=sw01.example.mil,OU=Network,O=Example Org,C=US", ["sw01.example.mil", "*.example.mil"])
+        self.assertFalse(out.get("failed"), out)
+        self.assertIn(" subject-name CN=sw01.example.mil,OU=Network,O=Example Org,C=US", sent)
+        self.assertIn(" subject-alt-name sw01.example.mil *.example.mil", sent)
 
 
 if __name__ == "__main__":

@@ -40,10 +40,86 @@ function Invoke-Native([string] $Exe, [string[]] $Arguments) {
     return New-Object -TypeName PSObject -Property @{ Out = $out; Code = $global:LASTEXITCODE }
 }
 # ---- end of the common part --------------------------------------------------------------------
+# ---- who besides SYSTEM and the Administrators can change a file or folder (keep identical where it is used) ----
+# Read from its SDDL (Get-Acl): SIDs, the same in every language, and no .NET methods (Constrained Language too).
+# Allowed: SYSTEM, the Administrators, TrustedInstaller, and the SIDs given. A CREATOR OWNER or OWNER RIGHTS entry
+# gives nobody else anything here (the owner is checked); an inherit-only entry is not for the item itself.
+$SDDL_RIGHTS = @{ GA = 268435456; GX = 536870912; GW = 1073741824; GR = 2147483648; FA = 2032127; FR = 1179785; FW = 1180054; FX = 1179817
+    SD = 65536; RC = 131072; WD = 262144; WO = 524288; CC = 1; DC = 2; LC = 4; SW = 8; RP = 16; WP = 32; DT = 64; LO = 128; CR = 256 }
+$ADMIN_SIDS = @('SY', 'BA', 'S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+$RIGHTS_WRITE = 1343029590      # any change: data, append, attributes, delete, delete a child, permissions, owner, generic write/all
+$RIGHTS_SWAP = 269221952        # a folder above: delete a child, permissions, owner, generic all (and delete it, below a drive's root)
+# an SDDL entry's rights ('FA', '0x1301bf' or two-letter codes) as a number; a code not known counts as every right
+function Get-SddlRights([string] $Text) {
+    if ($Text -match '^0[xX][0-9a-fA-F]+$') { return [int64]$Text }
+    if (-not $Text -or $Text.Length % 2) { return [int64]-1 }
+    $n = [int64]0
+    for ($i = 0; $i -lt $Text.Length; $i += 2) {
+        $v = $SDDL_RIGHTS[$Text.Substring($i, 2)]
+        if ($null -eq $v) { return [int64]-1 }
+        $n = $n -bor [int64]$v
+    }
+    return $n
+}
+# '' when the owner is allowed and no allow entry gives anyone else one of the $Mask rights; else who (SIDs)
+function Get-SddlOthers([string] $Sddl, [int64] $Mask, [string[]] $Allowed) {
+    $ok = @($ADMIN_SIDS) + @($Allowed | Where-Object { $_ })
+    $o = [regex]::Match($Sddl, '^O:(S-1-[0-9-]+|[A-Z][A-Z])')
+    if (-not $o.Success) { return 'its owner could not be read' }
+    if ($Sddl -match 'D:[A-Z]*NO_ACCESS_CONTROL') { return 'it has no access list: everyone can change it' }
+    $who = @()
+    if ($ok -notcontains $o.Groups[1].Value) { $who += @('owner ' + $o.Groups[1].Value) }
+    $d = [regex]::Match($Sddl, 'D:[A-Z]*((?:\([^)]*\))*)')
+    if (-not $d.Success) { return 'its access list could not be read' }
+    foreach ($ace in [regex]::Matches($d.Groups[1].Value, '\(([^)]*)\)')) {
+        $p = @($ace.Groups[1].Value -split ';')
+        if ($p.Count -lt 6) { $who += @('an entry not read: ' + $ace.Value); continue }
+        if (@('A', 'OA', 'XA', 'ZA') -notcontains $p[0]) { continue }        # deny and audit entries
+        $flags = @()
+        for ($i = 0; $i + 1 -lt $p[1].Length; $i += 2) { $flags += @($p[1].Substring($i, 2)) }
+        if ($flags -contains 'IO') { continue }
+        if ($ok -contains $p[5] -or @('CO', 'S-1-3-0', 'OW', 'S-1-3-4') -contains $p[5]) { continue }
+        if ((Get-SddlRights $p[2]) -band $Mask) { $who += @($p[5] + ' (' + $p[2] + ')') }
+    }
+    return ($who -join ', ')
+}
+# '' when only SYSTEM, the Administrators (and the SIDs given) own and can change $Path and everything in it, and no
+# folder above it lets anyone else delete, rename or replace it; else where and who
+function Get-ChangeableBy([string] $Path, [string[]] $Allowed) {
+    try {
+        $items = @(Get-Item -LiteralPath $Path -Force -ErrorAction Stop)
+        if (Test-Path -LiteralPath $Path -PathType Container) { $items += @(Get-ChildItem -LiteralPath $Path -Recurse -Force -ErrorAction Stop) }
+        foreach ($i in $items) {
+            $w = Get-SddlOthers ([string](Get-Acl -LiteralPath $i.FullName).Sddl) $RIGHTS_WRITE $Allowed
+            if ($w) { return ([string]$i.FullName + ': ' + $w) }
+        }
+        $up = Split-Path -Parent $Path
+        while ($up) {
+            $above = Split-Path -Parent $up
+            $mask = $RIGHTS_SWAP
+            if ($above) { $mask = $mask -bor 65536 }
+            $w = Get-SddlOthers ([string](Get-Acl -LiteralPath $up).Sddl) $mask $Allowed
+            if ($w) { return ($up + ': ' + $w) }
+            $up = $above
+        }
+    }
+    catch { return ('its permissions could not be read: ' + [string]$_.Exception.Message) }
+    return ''
+}
+# the SID of the account this runs as ('' when not known)
+function Get-MySid {
+    foreach ($l in @((Invoke-Native 'whoami.exe' @('/user', '/fo', 'csv', '/nh')).Out)) {
+        $sid = [regex]::Match([string]$l, '"(S-1-[0-9-]+)"\s*$')
+        if ($sid.Success) { return $sid.Groups[1].Value }
+    }
+    return ''
+}
+# ---- end of the permission check ----
 
 # Settings (roles/win_check_stig/defaults/main.yml):
 #   evaluate   Evaluate-STIG's folder or Evaluate-STIG.ps1; '' = found: a scheduled task that runs it, else a folder named
-#              Evaluate-STIG* on the local drives (search_depth levels down)
+#              Evaluate-STIG* on the local drives (search_depth levels down). A script found (not set) runs as SYSTEM
+#              only when SYSTEM and the Administrators alone own and can change it (a task that runs as SYSTEM: its own)
 #   read       '' = run it; 'auto' = read the checklists it already wrote (the folder its scheduled task writes to, else
 #              its default, C:\Users\Public\Documents\STIG_Compliance); or that folder
 #   select, exclude, args, output, rejected, run_as (task or direct), powershell, timeout, dir, keep, save,
@@ -53,6 +129,8 @@ function Invoke-Native([string] $Exe, [string[]] $Arguments) {
 #   history    $false (the recheck): not compared with the earlier scans nor kept with them - the checklist is kept as
 #              dir\recheck\<checklist>.<ext>
 $onWindows = ($env:OS -eq 'Windows_NT')
+$aclOn = [bool](Get-Command -Name Get-Acl -ErrorAction SilentlyContinue)
+$privateOk = @()
 $me = [string](Get-Setting 'host' '')
 if (-not $me) { $me = [string]$env:COMPUTERNAME }
 $dir = [string](Get-Setting 'dir' '')
@@ -119,7 +197,8 @@ function Find-EvaluateIn([string] $Path) {
     return ''
 }
 
-# The scheduled tasks that run Evaluate-STIG.ps1: the script and the folder it writes to (-OutputPath)
+# The scheduled tasks that run Evaluate-STIG.ps1: the script, the folder it writes to (-OutputPath), and whether the
+# task runs as SYSTEM (only an administrator can make such a task)
 function Get-EvaluateTasks {
     $out = @()
     if (-not (Get-Command -Name Get-ScheduledTask -ErrorAction SilentlyContinue)) { return $out }
@@ -133,13 +212,15 @@ function Get-EvaluateTasks {
             $outPath = ''
             $o = [regex]::Match($text, '(?i)-OutputPath\s+(?:"([^"]+)"|''([^'']+)''|(\S+))')
             if ($o.Success) { $outPath = ($o.Groups[1].Value + $o.Groups[2].Value + $o.Groups[3].Value) }
-            $out += @(@{ task = ([string]$t.TaskPath + [string]$t.TaskName); script = $script; output = $outPath })
+            $system = ([string]$t.Principal.UserId -match '^(S-1-5-18|SYSTEM|NT AUTHORITY\\SYSTEM)$')
+            $out += @(@{ task = ([string]$t.TaskPath + [string]$t.TaskName); script = $script; output = $outPath; system = $system })
         }
     }
     return $out
 }
 
-# A folder named Evaluate-STIG* with the script, at most $Depth levels down the local drives (or the folders given)
+# A folder named Evaluate-STIG* with the script, at most $Depth levels down the local drives (or the folders given):
+# [@{folder; script}]
 function Search-Evaluate([int] $Depth) {
     $skip = @('Windows', '$Recycle.Bin', 'System Volume Information', 'Recovery', 'PerfLogs', 'AppData', 'WinSxS', 'Config.Msi', '.git', 'node_modules')
     $level = @($searchIn)
@@ -156,7 +237,7 @@ function Search-Evaluate([int] $Depth) {
                 if ($skip -contains $c.Name -or [string]$c.Attributes -match 'ReparsePoint') { continue }
                 if ($c.Name -like 'Evaluate-STIG*') {
                     $s = Find-EvaluateIn $c.FullName
-                    if ($s) { $found += @($s); continue }
+                    if ($s) { $found += @(@{ folder = $c.FullName; script = $s }); continue }
                 }
                 $next += @($c.FullName)
             }
@@ -348,11 +429,28 @@ function Invoke-Evaluate([string] $Script, [string] $OutDir, [string] $Work) {
     return $r
 }
 
-# A folder only SYSTEM and the Administrators can open
+# Why a script found (not set) is not run as SYSTEM: '' when only SYSTEM and the Administrators own and can change
+# its folder and everything in it, and no folder above lets anyone else replace it
+function Get-NotSafe([string] $Folder) {
+    if (-not $aclOn) { return 'its permissions cannot be read here' }
+    return (Get-ChangeableBy $Folder @())
+}
+
+# A folder only SYSTEM and the Administrators can open: made so when it is not there; one that is there (anyone can
+# make a folder in ProgramData) is used only when SYSTEM, the Administrators or this job's account alone own and can
+# change it and everything in it - else an error says what to do
 function New-PrivateFolder([string] $Path) {
-    if (Test-Path -LiteralPath $Path -PathType Container) { return }
-    New-Item -ItemType Directory -Path $Path -Force | Out-Null
-    if ($onWindows) { Invoke-Native 'icacls.exe' @($Path, '/inheritance:r', '/grant:r', '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F') | Out-Null }
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+        New-Item -ItemType Directory -Path $Path -Force | Out-Null
+        if ($onWindows) { Invoke-Native 'icacls.exe' @($Path, '/inheritance:r', '/grant:r', '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F') | Out-Null }
+    }
+    if (-not $aclOn -or $script:privateOk -contains $Path) { return }
+    $who = Get-ChangeableBy $Path @(Get-MySid)
+    if ($who) {
+        throw ('the folder ' + $Path + ' can be changed by others than SYSTEM and the Administrators (' + $who + '): nothing is run or kept there. ' +
+            'Delete it (the job makes it again, for SYSTEM and the Administrators only), or make them its only owners and writers (win_check_stig_dir)')
+    }
+    $script:privateOk += @($Path)
 }
 
 # One checklist (a STIG, or a STIG of one web site or database instance): its rules with the scan before and when
@@ -475,15 +573,32 @@ try {
             $facts.found_by = 'win_check_stig_evaluate'
         }
         else {
+            # found, not set: run as SYSTEM only when nobody but SYSTEM and the Administrators can change it - the script
+            # of a task that runs as SYSTEM already (an administrator made it), else its folder checked (Get-NotSafe)
+            $refused = @()
             foreach ($t in $tasks) {
-                if (-not $script -and $t.script -and (Test-Path -LiteralPath $t.script -PathType Leaf)) { $script = $t.script; $facts.found_by = 'the scheduled task ' + $t.task }
+                if ($script -or -not $t.script -or -not (Test-Path -LiteralPath $t.script -PathType Leaf)) { continue }
+                $notSafe = ''
+                if (-not $t.system) { $notSafe = Get-NotSafe (Split-Path -Parent $t.script) }
+                if ($notSafe) { $refused += @($t.script + ' (the scheduled task ' + $t.task + '; ' + $notSafe + ')') }
+                else { $script = $t.script; $facts.found_by = 'the scheduled task ' + $t.task }
             }
             if (-not $script) {
-                $all = @(Search-Evaluate $searchDepth)
-                if ($all.Count) {
-                    $script = @($all | Sort-Object -Property @{ Expression = { (Get-Item -LiteralPath $_).LastWriteTimeUtc } } -Descending)[0]
-                    $facts.found_by = 'a search of the local drives (' + $all.Count + ' found, the newest taken)'
+                $safe = @()
+                foreach ($h in @(Search-Evaluate $searchDepth)) {
+                    $notSafe = Get-NotSafe $h.folder
+                    if ($notSafe) { $refused += @($h.script + ' (' + $notSafe + ')') } else { $safe += @($h.script) }
                 }
+                if ($safe.Count -gt 1) {
+                    throw ('Evaluate-STIG was found in ' + $safe.Count + ' places (' + ($safe -join ', ') + '): the job does not pick one. Set win_check_stig_evaluate to the one to run, or remove the others')
+                }
+                if ($safe.Count) { $script = $safe[0]; $facts.found_by = 'a search of the local drives' }
+            }
+            if ($refused.Count) { $facts.refused = $refused }
+            if (-not $script -and $refused.Count) {
+                $why = 'Evaluate-STIG was found, but it is not run as SYSTEM: others than SYSTEM and the Administrators can change it - ' + ($refused -join '; ') +
+                    '. Make SYSTEM and the Administrators its folder''s only owners and writers (owner Administrators, no write access for other accounts, the files in it too), or set win_check_stig_evaluate to its folder (it is then run as it is)'
+                throw $why
             }
             if (-not $script) {
                 $why = 'Evaluate-STIG was not found on the server: no scheduled task runs Evaluate-STIG.ps1'

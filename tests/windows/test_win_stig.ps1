@@ -2,7 +2,8 @@
 # (tests/windows/stig/Evaluate-STIG.ps1): run (in this session; on Windows as administrator also as SYSTEM in a
 # scheduled task), the history kept per checklist (the result before, when a rule last passed, keep), a dry run (save
 # false), the arguments given to Evaluate-STIG, CKL, checklists its schema check rejected, no checklist, a timeout,
-# found on the drives or not, read what it wrote (this server's newest, not its Previous, not another server's;
+# found on the drives or not (run as SYSTEM only when nobody else can change it), its own folder refused when others
+# can change it, read what it wrote (this server's newest, not its Previous, not another server's;
 # auto), the STIG recheck (only the rules asked for, -SelectVuln or not, no history), and Constrained Language Mode. Windows PowerShell 5.1 and PowerShell 7, on Windows and on Linux:
 #   pwsh -File tests/windows/test_win_stig.ps1         powershell -File tests\windows\test_win_stig.ps1
 $ErrorActionPreference = 'Continue'
@@ -19,6 +20,24 @@ $wrapper = Join-Path $tmp 'clm.ps1'
 Set-Content -LiteralPath $wrapper -Value @'
 param([string] $Script)
 $ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage'
+& $Script
+'@
+# runs the scan with stand-in permissions: Get-Acl gives each path's SDDL from $env:SA_TEST_ACL (JSON, path -> SDDL;
+# any other path: SYSTEM and the Administrators only), whoami the job's account
+$aclWrapper = Join-Path $tmp 'acl.ps1'
+Set-Content -LiteralPath $aclWrapper -Value @'
+param([string] $Script, [switch] $Clm)
+$aclMap = @{}
+if ($env:SA_TEST_ACL) { foreach ($p in @((ConvertFrom-Json -InputObject $env:SA_TEST_ACL).PSObject.Properties)) { $aclMap[$p.Name] = [string]$p.Value } }
+function Get-Acl {
+    param([string] $LiteralPath, [string] $Path)
+    $p = $LiteralPath; if (-not $p) { $p = $Path }
+    $s = 'O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)'
+    if ($aclMap.ContainsKey($p)) { $s = $aclMap[$p] }
+    return [pscustomobject]@{ Sddl = $s }
+}
+function whoami.exe { $global:LASTEXITCODE = 0; '"host01\svc_aap","S-1-5-21-1-2-3-1500"' }
+if ($Clm) { $ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage' }
 & $Script
 '@
 $fail = 0
@@ -43,11 +62,19 @@ function Spec($Checklists, [int] $Exit = 0, [int] $Sleep = 0, [string] $Reject =
     Set-Content -LiteralPath (Join-Path $es 'spec.json') -Value (ConvertTo-Json -InputObject $s -Depth 6) -Encoding UTF8
 }
 # run the script with these settings -> its facts (or $null)
-function Scan($Cfg, [switch] $Clm) {
+# -Acl: with the stand-in permissions ($Acl: path -> SDDL)
+function Scan($Cfg, [switch] $Clm, $Acl) {
     $c = @{ host = 'WIN01'; run_as = 'direct'; dir = (Join-Path $tmp 'kept'); evaluate = $es; timeout = 60 }
     foreach ($k in $Cfg.Keys) { $c[$k] = $Cfg[$k] }
     $env:SITE_CHECK_CONFIG = ConvertTo-Json -InputObject $c -Depth 4 -Compress
-    if ($Clm) { $out = @(& $shell -NoProfile -ExecutionPolicy Bypass -File $wrapper -Script $script 2>&1 | ForEach-Object { [string]$_ }) }
+    if ($null -ne $Acl) {
+        $env:SA_TEST_ACL = ConvertTo-Json -InputObject $Acl -Compress
+        $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $aclWrapper, '-Script', $script)
+        if ($Clm) { $a += '-Clm' }
+        $out = @(& $shell @a 2>&1 | ForEach-Object { [string]$_ })
+        Remove-Item Env:\SA_TEST_ACL -ErrorAction SilentlyContinue
+    }
+    elseif ($Clm) { $out = @(& $shell -NoProfile -ExecutionPolicy Bypass -File $wrapper -Script $script 2>&1 | ForEach-Object { [string]$_ }) }
     else { $out = @(& $shell -NoProfile -ExecutionPolicy Bypass -File $script 2>&1 | ForEach-Object { [string]$_ }) }
     $line = @($out | Where-Object { $_ -like '###SITE-JSON### *' }) | Select-Object -Last 1
     if (-not $line) { Write-Host '       no result line:'; $out | Select-Object -Last 8 | ForEach-Object { Write-Host "       $_" }; return $null }
@@ -137,8 +164,37 @@ Check 'win_check_stig_timeout: stopped, not scanned' ($f -and -not $f.scanned -a
 
 # ---- where Evaluate-STIG is ----------------------------------------------------------------------------------------
 Spec @((Ws))
-$f = Scan @{ evaluate = ''; search = @($tmp); save = $false }
-Check 'found on the drives (a folder named Evaluate-STIG*)' ($f -and $f.scanned -and $f.evaluate -eq (Join-Path $es 'Evaluate-STIG.ps1') -and $f.found_by -match 'search') $f
+$drives = Join-Path $tmp 'drives'
+$hit = Join-Path $drives 'Evaluate-STIG-1.2507'
+New-Item -ItemType Directory -Path $drives -Force | Out-Null
+Copy-Item -LiteralPath $es -Destination $hit -Recurse
+$hitScript = Join-Path $hit 'Evaluate-STIG.ps1'
+$userOwns = 'O:S-1-5-21-1-2-3-1001G:SYD:AI(A;ID;FA;;;S-1-5-21-1-2-3-1001)(A;ID;FA;;;SY)(A;ID;FA;;;BA)'
+$f = Scan @{ evaluate = ''; search = @($drives); save = $false } -Acl @{}
+Check 'found on the drives (a folder named Evaluate-STIG*), only SYSTEM and the Administrators can change it: run' ($f -and $f.scanned -and $f.evaluate -eq $hitScript -and $f.found_by -match 'search') $f
+$f = Scan @{ evaluate = ''; search = @($drives); save = $false } -Acl @{} -Clm
+Check 'Constrained Language Mode: found on the drives, its permissions read' ($f -and $f.scanned -and $f.evaluate -eq $hitScript) $f
+$f = Scan @{ evaluate = ''; search = @($drives); save = $false } -Acl @{ $hit = 'O:BAG:SYD:AI(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIID;0x1301bf;;;AU)' }
+Check 'found, but other accounts can write to its folder: not run, says who and what to set' ($f -and -not $f.scanned -and -not $f.evaluate -and $f.why -match 'not run as SYSTEM' -and $f.why -match 'AU \(0x1301bf\)' -and $f.why -match 'win_check_stig_evaluate' -and $f.why.Contains($hitScript)) $f
+$f = Scan @{ evaluate = ''; search = @($drives); save = $false } -Acl @{ (Join-Path $hit 'spec.json') = $userOwns }
+Check 'found, but a file in its folder belongs to another account: not run, names the file' ($f -and -not $f.scanned -and $f.why.Contains((Join-Path $hit 'spec.json')) -and $f.why -match 'owner S-1-5-21-1-2-3-1001') $f
+$f = Scan @{ evaluate = ''; search = @($drives); save = $false } -Acl @{ $drives = 'O:BAG:SYD:AI(A;OICI;FA;;;BA)(A;OICI;0x1301ff;;;BU)' }
+Check 'found, but the folder above lets others replace it: not run' ($f -and -not $f.scanned -and $f.why.Contains($drives + ': BU')) $f
+Copy-Item -LiteralPath $es -Destination (Join-Path $drives 'Evaluate-STIG-old') -Recurse
+$f = Scan @{ evaluate = ''; search = @($drives); save = $false } -Acl @{}
+Check 'found in two places: none is picked, both named' ($f -and -not $f.scanned -and $f.why -match 'found in 2 places' -and $f.why.Contains($hitScript) -and $f.why -match 'win_check_stig_evaluate') $f
+Remove-Item -LiteralPath (Join-Path $drives 'Evaluate-STIG-old') -Recurse -Force
+$f = Scan @{ evaluate = ''; search = @($drives); save = $false }
+Check 'found where its permissions are not known to be safe (a temporary folder; no ACLs off Windows): not run' ($f -and -not $f.scanned -and $f.why -match 'not run as SYSTEM' -and $f.why.Contains($hitScript)) $f
+$f = Scan @{ evaluate = $hit; save = $false } -Acl @{ $hit = 'O:BAG:SYD:AI(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIID;0x1301bf;;;AU)' }
+Check 'win_check_stig_evaluate names it: run as it is' ($f -and $f.scanned -and $f.found_by -eq 'win_check_stig_evaluate') $f
+# its own folder: one that is there and that others can change is refused; the job's account may own it
+$open = Join-Path $tmp 'kept-open'
+New-Item -ItemType Directory -Path $open -Force | Out-Null
+$f = Scan @{ dir = $open } -Acl @{ $open = $userOwns }
+Check 'win_check_stig_dir there already, another account owns it: not scanned, says what to do' ($f -and -not $f.scanned -and $f.why -match 'can be changed by others' -and $f.why -match 'win_check_stig_dir' -and -not @(Get-ChildItem -LiteralPath $open).Count) $f
+$f = Scan @{ dir = $open } -Acl @{ $open = 'O:S-1-5-21-1-2-3-1500G:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)' }
+Check "win_check_stig_dir owned by the job's own account: used" ($f -and $f.scanned -and (Test-Path -LiteralPath $f.scans[0].saved.summary)) $f
 New-Item -ItemType Directory -Path (Join-Path $tmp 'empty') -Force | Out-Null
 $f = Scan @{ evaluate = ''; search = @((Join-Path $tmp 'empty')); save = $false }
 Check 'not found: says where it looked and what to set' ($f -and -not $f.scanned -and $f.why -match 'not found' -and $f.why -match 'win_check_stig_evaluate') $f
@@ -228,10 +284,25 @@ if ($admin) {
     $f = Scan @{ run_as = 'task'; vulns = @('V-254238', 'V-218736'); history = $false; save = $false }
     $a = ArgsSaid
     Check 'run_as task: the recheck, -SelectVuln as one array' ($f -and $f.scanned -and $f.selected -and $a -match 'SelectVuln=V-254238,V-218736') @($f, $a)
+    # found on the drives, with the server's real permissions: a folder only SYSTEM and the Administrators can change
+    # is run as SYSTEM; once the Users may change it, it is not
+    $pd = Join-Path $env:ProgramData ('sa-win-stig-found-' + (Get-Random))
+    New-Item -ItemType Directory -Path $pd -Force | Out-Null
+    & icacls.exe $pd /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' | Out-Null
+    Spec @((Ws))
+    Copy-Item -LiteralPath $es -Destination (Join-Path $pd 'Evaluate-STIG') -Recurse
+    & icacls.exe $pd /setowner '*S-1-5-32-544' /T /C | Out-Null
+    $f = Scan @{ evaluate = ''; search = @($pd); run_as = 'task'; save = $false }
+    Check 'found in a folder only SYSTEM and the Administrators can change (real permissions): run as SYSTEM' ($f -and $f.scanned -and $f.found_by -match 'search') $f
+    & icacls.exe (Join-Path $pd 'Evaluate-STIG') /grant '*S-1-5-32-545:(OI)(CI)M' | Out-Null
+    $f = Scan @{ evaluate = ''; search = @($pd); run_as = 'task'; save = $false }
+    Check 'the same folder once the Users may change it (real permissions): not run' ($f -and -not $f.scanned -and $f.why -match 'not run as SYSTEM' -and $f.why -match 'BU') $f
+    Remove-Item -LiteralPath $pd -Recurse -Force -ErrorAction SilentlyContinue
 }
 else { Write-Host 'skip - run_as task (needs Windows and an administrator)' }
 
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item Env:\SA_TEST_ACL -ErrorAction SilentlyContinue
 Remove-Item Env:\SITE_CHECK_CONFIG -ErrorAction SilentlyContinue
 if ($fail) { Write-Host "$fail of $count test(s) failed"; exit 1 }
 Write-Host "all $count tests passed"

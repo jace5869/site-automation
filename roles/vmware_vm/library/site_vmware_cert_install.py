@@ -442,6 +442,7 @@ def install_esxi(r, f, host_wait, check):
         finally:
             api.logout()
         out["done"].append("the CA chain added to %s's trusted roots" % vc)
+        out["chain_added"] = True
     h = f.hosts[r["name"]]
     cm = h.configManager.certificateManager
     try:
@@ -535,6 +536,7 @@ def run(module, p):
         if p["action"] == "plan":
             return {"changed": False, "plan": planned}
         done = []
+        added = {}                              # vCenter -> the CA certificates (sha256) this run added to its trusted roots
         # the hosts first: vCenter's own certificate may restart its services
         order = sorted(range(len(items)), key=lambda i: (items[i].get("kind") == "vcenter", i))
         for i in order:
@@ -548,8 +550,15 @@ def run(module, p):
                 continue
             f = facts[it.get("vcenter")]
             if it.get("kind") == "esxi":
+                have = added.get(it.get("vcenter"), set()) | set(f.roots or ())
+                if r.get("add_chain") and all(str(c.get("sha256", "")).lower() in have for c in r.get("chain") or []):
+                    # an earlier host of this run (same CA) added the chain: it is not added twice
+                    r = dict(r, add_chain=False, steps=[x for x in r["steps"] if not x.startswith("add the CA chain")])
                 res = install_esxi(r, f, p["host_wait"], module.check_mode)
-                if res.get("status") == "installed" and r.get("add_chain"):
+                chain_added = res.pop("chain_added", False)
+                if chain_added or (module.check_mode and r.get("add_chain")):    # a dry run: the chain once too
+                    added.setdefault(it.get("vcenter"), set()).update(str(c.get("sha256", "")).lower() for c in r.get("chain") or [])
+                if chain_added:
                     f.read_roots()              # the next host of this vCenter: the chain is there now
             else:
                 f.close()                       # its services may restart: no session held across it

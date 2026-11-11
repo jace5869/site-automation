@@ -168,6 +168,10 @@ vmware_protected_vms: [AAP01, VCSA01]      # the exact VM names in vCenter
 This covers the case where the AAP VM's name differs from its host name and VMware Tools is not
 running, so neither the guest host name nor the IP is known. More groups to refuse:
 `vmware_protected_groups: [aap, aap_hosts, my_group]` (aap and aap_hosts are always refused anyway).
+Given as text (a survey, an extra variable), both are names separated by commas or line breaks - not
+spaces: `File Server 01, VCSA01` is two VMs, `dcs` one group. The same list holds for restart, shut
+down, VLAN change, the snapshot cleanup and the snapshot pick list; each of them is refused when the
+inventory has no `aap` (or `aap_hosts`) group and `vmware_protected_vms` is empty.
 
 ## Which VMs a job acts on
 
@@ -524,7 +528,7 @@ AAP user in their description.
 | Any snapshot of the VMs on your do-not-touch list | domain controllers, vCenter, ... | `vm_snapshot_cleanup_exclude_vms: [DC*, VCSA*]` (`*` = anything) |
 | Any snapshot of a VM in a datacenter on your list | a datacenter (DR site, a lab) whose snapshots someone else looks after | `vm_snapshot_cleanup_exclude_datacenters: [DRSITE]` (the datacenter's name in vCenter) |
 | Any snapshot of a VM running in a cluster on your list | a cluster (SQL, management) whose snapshots are done by hand | `vm_snapshot_cleanup_exclude_clusters: [SQL*, MGMT*]` (a VM on a host in no cluster is not matched) |
-| Any snapshot of the VMs in `vmware_protected_vms` | the same protected VMs as for restart | `vmware_protected_vms` |
+| Any snapshot of the VMs in `vmware_protected_vms` and of the hosts in `vmware_protected_groups` | the same protected VMs as for restart | `vmware_protected_vms`, `vmware_protected_groups` |
 | Any snapshot of the AAP server | AAP must never be put at risk by AAP | (always) |
 | With words in `vm_snapshot_cleanup_name_words`: a snapshot whose **name** contains none of them | only the patching snapshots are cleaned up (any case; `Patch` also matches `Patching`, `Patches` - and `dispatch`). Empty (the default) = any name | `vm_snapshot_cleanup_name_words: [Patching, Patches, Patch]` |
 | A snapshot bigger than **1 TB**, or whose size is unknown | merging a huge snapshot can take hours and slow the VM: do it by hand, at a quiet time | `vm_snapshot_cleanup_max_size_gb: 1024` |
@@ -698,7 +702,7 @@ with the same name, or two VMs with the same name in different vCenters, are nev
 
 | List | Offered | Never offered (counted in the refresh's output, with the reason) |
 |---|---|---|
-| Snapshots | every snapshot the **snapshot cleanup could delete**: the same holds (table "What the cleanup never deletes" above), at least `vm_pick_snapshot_min_age_days` old (0 = any age) | a name or description that says keep, the excluded VMs, datacenters and clusters, `vmware_protected_vms`, the AAP server, bigger than 1 TB. **Not** the name words: they only narrow the automatic cleanup |
+| Snapshots | every snapshot the **snapshot cleanup could delete**: the same holds (table "What the cleanup never deletes" above), at least `vm_pick_snapshot_min_age_days` old (0 = any age) | a name or description that says keep, the excluded VMs, datacenters and clusters, `vmware_protected_vms` and `vmware_protected_groups`, the AAP server, bigger than 1 TB. **Not** the name words: they only narrow the automatic cleanup |
 | VMs | every VM that is **powered on**, among `vm_pick_reboot_vms` / `vm_pick_reboot_clusters` / `vm_pick_reboot_folders` (empty = all) | templates, VMs that are off, the AAP server and the protected VMs (the same rules as every restart), `vm_pick_reboot_exclude_vms` |
 | Hung VMs (`vm_pick_reboot_only_hung: true`) | powered on, VMware Tools **installed**, but **no heartbeat** (red in vCenter) or Tools **not running** - and up for `vm_pick_hung_min_minutes` (15) at least | a VM that is still starting (it has neither yet), a VM without VMware Tools (vCenter cannot tell if it is hung) |
 
@@ -1717,7 +1721,9 @@ HELD | esx03.yoursite.mil | ESXi host | RITM0012348 | vCenter vc01.yoursite.mil'
 
 ### The approved install (after the approval)
 
-Each approved certificate is **planned again first** - still ready (the mode, the connection, the certificate in use
+It takes only the plan of **its own workflow's** check step: the check hands on the plan with its workflow job's ID
+(`vmware_cert_install_plan_workflow`), and a plan from another workflow, or the job launched on its own, is refused
+before anything is read. Each approved certificate is **planned again first** - still ready (the mode, the connection, the certificate in use
 still the one it was ordered for), or it is `REFUSED` and nothing is done to it. Then:
 
 - **The ESXi hosts, one by one, in use** - no maintenance mode, their VMs keep running: the CA chain added to vCenter's

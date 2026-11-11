@@ -579,7 +579,7 @@ def main():
             break
         time.sleep(max(0.0, float(p["confirm_seconds"])))
         t = now + (time.time() - started)
-        again, unread = {}, {}
+        again, unread = {}, {}                  # again: by (vCenter, moid) - the same moid is another VM in another vCenter
         for name in sorted(set(v["vcenter"] for v in live)):
             try:
                 si = connect(name, p["validate_certs"])
@@ -587,7 +587,7 @@ def main():
                 unread[name] = str(e)
                 continue
             try:
-                again.update(_recheck(si.RetrieveContent(), name, live, p, t))
+                again.update(((name, k), c) for k, c in _recheck(si.RetrieveContent(), name, live, p, t).items())
             except Exception as e:              # noqa: BLE001
                 unread[name] = "reading the suspects again failed: %s" % e
             finally:
@@ -597,7 +597,7 @@ def main():
                 v["checks"].append({"time": "", "reason": v["checks"][-1]["reason"], "busy": "vCenter could not be read again (%s)"
                                     % unread[v["vcenter"]]})
                 continue
-            c = again.get(v["moid"]) or {"time": "", "reason": "", "gone": True, "busy": ""}
+            c = again.get((v["vcenter"], v["moid"])) or {"time": "", "reason": "", "gone": True, "busy": ""}
             if c.get("ip") or c.get("ips"):
                 v["ip"], v["ips"] = c.get("ip") or v["ip"], sorted(set(v["ips"]) | set(c.get("ips") or []))
             for k in ("ip", "ips"):

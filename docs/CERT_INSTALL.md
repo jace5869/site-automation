@@ -58,7 +58,9 @@ bindings (Windows), the same services - or it is refused ("changed since the app
    the old key is among them).
 2. The new files are written **in the old ones' layout** - text or binary (DER), with the chain if the old file had
    one (the PKI's chain; a root only if the old file had one), with the key if the old file held it - and with the
-   old file's owner, mode and SELinux label. The old key's file gets the new key.
+   old file's owner, mode and SELinux label. The old key's file gets the new key. Each is written as a new file
+   next to the old one under a fresh name, then renamed over it; a folder on the way, or the file itself, that has
+   become a symbolic link since the check is not written through - the install is rolled back.
 3. The service's configuration is tested (`apachectl configtest`, `nginx -t`, `haproxy -c`, `postfix check` ...).
 4. The service is **reloaded** - never restarted.
 5. The port must then serve the new certificate (`cert_install_verify_wait` seconds).
@@ -80,14 +82,23 @@ was installed where.
    Remote Desktop, NETWORK SERVICE.
 4. Each binding of the old certificate moves to the new one, and is read back:
    - **https** in HTTP.sys (IIS, WSUS, any `netsh http` binding - IP:port and hostname:port), the same
-     application and store;
+     application and its settings (client certificate negotiation, the CTL store, the revocation checks...
+     given back to `netsh` and read back unchanged), the new certificate from *Personal* (`My`) - also for a
+     binding that took the old one from another store such as *Web Hosting* (a restore puts that store back);
    - **Remote Desktop** (RDP-Tcp);
    - **the WinRM HTTPS listener**.
 5. With full PowerShell, each https port is asked which certificate it serves (in Constrained Language Mode the
    bindings are read back only).
 
-Anything fails: the bindings go back to the old certificate. **The old certificate stays in Personal**, so
-putting it back is only a rebinding.
+Anything fails: the bindings go back to the old certificate. **The old certificate stays in its store**, so
+putting it back is only a rebinding. A binding that cannot be put back makes the result `FAILED ... rollback
+FAILED: <binding>`, never `ROLLED BACK`.
+
+The renewal folder (`win_cert_renew_dir`) is used only when SYSTEM, the Administrators or the job's own
+account alone own and can change it and everything in it: one that others can change (any account can make a
+folder in ProgramData) holds every certificate of that server (`HELD`), and the renewal makes no CSR there - the
+reason names who and which file. Delete the folder (the next renewal makes it again) or fix its owner and
+permissions.
 
 ## A request you name (opened by hand, or after an incident)
 
@@ -127,6 +138,7 @@ The job lists these with the steps, and never touches them:
 |---|---|
 | a keystore (Java: its program needs a restart) | SQL Server uses it (a restart) |
 | a certificate seen only on a port (its file not known) | a Central Certificate Store binding (a file on the share) |
+| | an https binding with a setting the job does not give back (Disable HTTP2, Reject Connections... set), or one `netsh` prints in another language than English (its settings are not read) |
 | a service that cannot reload (only a restart) | the WinRM HTTPS listener **AAP connects through** (it would cut the job) |
 | the port is served by a container or a user's program | a binding kind not in `win_cert_install_rebind` |
 | a path in `cert_renew_install_notes` (something else deploys it - STIG Manager's comes from an AAP credential) | |

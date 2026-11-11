@@ -50,40 +50,21 @@
             site_checks_run: "{{ (site_checks_run + ['netperf']) | unique }}"
             site_checks_failed: "{{ (site_checks_failed | default([]) + ['netperf']) | unique }}"
 
-    # iperf3, one pair at a time: the server answers one test (-1) and exits; the client measures for a few seconds
-    - name: Throughput (iperf3) - the server side, for one test
-      ansible.builtin.command:
-        argv: [iperf3, -s, -1, -D, -p, "{{ net_perf_iperf_port | int }}"]
-      delegate_to: "{{ item.server }}"
+    # iperf3, one pair at a time (roles/net_perf/tasks/iperf_pair.yml): the server started for one test, the client's
+    # test, the server stopped - so pairs that share a server do not meet a busy port
+    - name: Throughput (iperf3) - each pair in turn
+      ansible.builtin.include_role:
+        name: net_perf
+        tasks_from: iperf_pair.yml
       loop: "{{ net_perf_iperf_pairs | default([]) }}"
       loop_control:
-        label: "{{ item.client }} -> {{ item.server }}"
-      run_once: true
-      changed_when: false
-      failed_when: false
-      register: _np_iperf_srv
-      when: item.server in ansible_play_hosts and item.client in ansible_play_hosts and not ansible_check_mode
-
-    - name: Throughput (iperf3) - the client side
-      ansible.builtin.command:
-        argv: [iperf3, -c, "{{ hostvars[item.server].ansible_host | default(item.server) }}", -p, "{{ net_perf_iperf_port | int }}",
-               -t, "{{ [net_perf_iperf_seconds | int, 30] | min }}", -J]
-      delegate_to: "{{ item.client }}"
-      loop: "{{ net_perf_iperf_pairs | default([]) }}"
-      loop_control:
-        label: "{{ item.client }} -> {{ item.server }}"
-      run_once: true
-      changed_when: false
-      failed_when: false
-      register: _np_iperf_cli
-      until: _np_iperf_cli.rc | default(0) == 0
-      retries: 2                          # the server may not be listening yet
-      delay: 2
-      when: item.server in ansible_play_hosts and item.client in ansible_play_hosts and not ansible_check_mode
+        loop_var: _np_pair
+        label: "{{ _np_pair.client }} -> {{ _np_pair.server }}"
+      when: inventory_hostname == ansible_play_hosts[0]
 
     - name: Throughput (iperf3) - the results, and a finding on the client of a pair below its min_mbps
       ansible.builtin.set_fact:
-        _np_iperf: "{{ _np_iperf_cli.results | default([]) | net_perf_iperf(net_perf_iperf_pairs | default([])) }}"
+        _np_iperf: "{{ hostvars[ansible_play_hosts[0]]._np_iperf_runs | default([]) | net_perf_iperf(net_perf_iperf_pairs | default([])) }}"
       run_once: true
 
     - name: Throughput (iperf3) - findings for this host (as the client)

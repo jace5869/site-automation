@@ -34,7 +34,7 @@ snapshots:
   description: One entry per snapshot.
   type: list
   returned: success
-  sample: [{vm: web01, moid: vm-42, vcenter: vc01.example.mil, datacenter: DC1, folder: /DC1/vm/Linux, cluster: PROD-CL01, hostname: web01.example.mil, ip: 192.0.2.3,
+  sample: [{vm: web01, moid: vm-42, vcenter: vc01.example.mil, datacenter: DC1, folder: /DC1/vm/Linux, cluster: PROD-CL01, hostname: web01.example.mil, ip: 192.0.2.3, ips: [192.0.2.3],
             power: poweredOn, name: before-patch,
             id: 7, description: "CHG123", taken_by: "CORP\\jdoe", created: "2026-10-01T12:00:00Z", age_days: 4.8, size_gb: 12.4,
             quiesced: false, memory: false, current: true, depth: 0}]
@@ -162,6 +162,13 @@ def _walk(nodes, parent, depth, out, children):
         _walk(n.childSnapshotList, key, depth + 1, out, children)
 
 
+def _ips(pr):
+    """Every guest IP address of the VM (the primary one and each NIC's), as site_vmware_vms gives them: the AAP
+    server is known by any of them."""
+    ips = [pr.get("guest.ipAddress")] + [ip for n in pr.get("guest.net") or [] for ip in (getattr(n, "ipAddress", None) or [])]
+    return sorted(set(str(i) for i in ips if i))
+
+
 def _read(content, p, now, vcenter):
     out, clusters = [], {}
     view = content.viewManager.CreateContainerView(content.rootFolder, [vim.VirtualMachine], True)
@@ -171,7 +178,7 @@ def _read(content, p, now, vcenter):
             selectSet=[vmodl.query.PropertyCollector.TraversalSpec(name="v", path="view", skip=False, type=vim.view.ContainerView)])],
         propSet=[vmodl.query.PropertyCollector.PropertySpec(type=vim.VirtualMachine,
                                                              pathSet=["name", "snapshot", "runtime.powerState", "runtime.host",
-                                                                      "guest.hostName", "guest.ipAddress"])])
+                                                                      "guest.hostName", "guest.ipAddress", "guest.net"])])
     for o in content.propertyCollector.RetrieveContents([spec]):
         pr = {x.name: x.val for x in o.propSet}
         info = pr.get("snapshot")
@@ -204,7 +211,7 @@ def _read(content, p, now, vcenter):
             age = (now - created.timestamp()) / 86400.0
             out.append({"vm": pr.get("name", ""), "moid": vm._moId, "vcenter": vcenter, "datacenter": dc, "folder": folder,
                         "cluster": _cluster(pr.get("runtime.host"), clusters),
-                        "hostname": pr.get("guest.hostName") or "", "ip": pr.get("guest.ipAddress") or "",
+                        "hostname": pr.get("guest.hostName") or "", "ip": pr.get("guest.ipAddress") or "", "ips": _ips(pr),
                         "power": str(pr.get("runtime.powerState") or ""), "name": n.name, "id": int(n.id),
                         "description": n.description or "", "taken_by": who.get(key, ""),
                         "created": created.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

@@ -2,9 +2,10 @@
 # WINDOWS TRUST. Runs files/win_trust.ps1 on the server (ansible.builtin.script: no collection needed) with the
 # trust check's list (roles/check_trust/vars/main.yml + check_trust_extra) and the settings from defaults/main.yml,
 # then adds its findings to this host's list. The script's result has the shape of the Linux scan's, so the
-# trust report (playbooks/win_trust_report.yml) uses the same tables. check_trust_remove: true (not a dry run)
-# makes it put the certificates in the Disallowed store and delete them from the store they are in, delete Java
-# entries, cut certifi bundles - backups first.
+# trust report (playbooks/win_trust_report.yml) uses the same tables. check_trust_remove: true (not a dry run) on
+# that report - and only there, as on Linux: it sets _win_check_trust_removal - makes it put the certificates in the
+# Disallowed store and delete them from the store they are in, delete Java entries, cut certifi bundles - backups
+# first. Any other play that runs this check (the weekly health check) only reads, whatever check_trust_remove says.
 - name: Windows trust | the shipped list (roles/check_trust/vars/main.yml)
   ansible.builtin.include_vars:
     file: "{{ role_path }}/../check_trust/vars/main.yml"
@@ -18,7 +19,7 @@
           'stores': win_check_trust_stores, 'block_stores': win_check_trust_block_stores,
           'java': win_check_trust_java | bool, 'java_dirs': win_check_trust_java_dirs,
           'python': win_check_trust_python | bool, 'python_dirs': win_check_trust_python_dirs,
-          'remove': check_trust_remove | default(false) | bool, 'dry_run': ansible_check_mode,
+          'remove': _win_trust_remove, 'dry_run': ansible_check_mode,
           'severities': check_trust_remove_severities | default(['critical', 'warning']),
           'severity_overrides': check_trust_severity | default({}, true),
           'backup_dir': win_check_trust_backup_dir,
@@ -28,6 +29,15 @@
   changed_when: false
   failed_when: false
   check_mode: false             # a dry run reads too (and shows what the removal would do)
+  vars:
+    _win_trust_remove: "{{ check_trust_remove | default(false) | bool and _win_check_trust_removal | default(false) | bool }}"
+
+- name: Windows trust | check_trust_remove is set, but this play only reads
+  ansible.builtin.debug:
+    msg: >-
+      check_trust_remove is true, but certificates are removed only by the Windows trust store report
+      (playbooks/win_trust_report.yml) - this play read the stores and removed nothing
+  when: check_trust_remove | default(false) | bool and not (_win_check_trust_removal | default(false) | bool)
 
 - name: Windows trust | findings
   ansible.builtin.include_role:

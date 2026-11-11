@@ -12,6 +12,8 @@
 # import, load, commit). The share: the latest and a dated copy, a restore from it. PAN-OS refuses with
 # someone's uncommitted changes, and reverts a change that does not validate (or an entry it refuses midway). At
 # most net_config_max_devices. A push the git server refuses, and an unreadable last backup, fail those devices.
+# A real load first keeps each device's configuration (a tag, a dated copy, named after the change); one whose copy
+# cannot be kept gets nothing sent (net_config_keep_before: false - as before); a restore from that copy undoes a load.
 #   bash tests/netconfig/run_net_config_test.sh        (ANSIBLE_PLAYBOOK=... to pick one; needs cisco.ios,
 #   ansible.netcommon, paramiko and scp)
 set -u
@@ -197,11 +199,12 @@ print("" if ok else "       %s" % notes)
 sys.exit(0 if ok else 1)
 EOPY
 lacks "...no secret in the output" l1.txt n3wc0mm
-
-# ---- 8. the same load again: nothing changes ----
-run l2.txt playbooks/net_config_load.yml -e "$lines" -e "net_config_change=$chg"
-has "load again: both unchanged" l2.txt "Network config load: 0 changed, 2 unchanged, 0 failed" "every line is there already" \
-    "every entry is there already - nothing committed"
+git --git-dir="$work/configs.git" tag -l "*-before-$chg" | grep -q . && ok "...the configurations before it kept: a tag named after the change" \
+    || bad "no tag *-before-$chg in the repository"
+kept="$(git --git-dir="$work/configs.git" tag -l "*-before-$chg" | head -1)"
+git --git-dir="$work/configs.git" show "$kept:configs/rtr01.example.mil.cfg" 2>/dev/null | grep -q 'ntp server 192.0.2.124' \
+    && bad "the copy before the change holds the change" || ok "...the tagged copy is rtr01 as it was before"
+has "...the report says where, and how to restore it" l1.txt "Before the change" "Kept as $kept" "net_config_restore_ref: $kept"
 
 # ---- 9. the backup sees the change: incidents with the diff, the secret hidden ----
 : > requests.jsonl
@@ -223,6 +226,26 @@ ok = (sorted(i["short_description"].split("] ")[1].split(":")[0] for i in inc) =
 print("" if ok else "       %s" % txt[:800])
 sys.exit(0 if ok else 1)
 EOPY
+
+# ---- 9b. the copy before the change cannot be kept (a share folder that cannot be made): nothing sent; net_config_keep_before: false - as before ----
+nokeep="{\"net_config_lines\": [\"ntp server 192.0.2.125\"], \"net_config_only\": [\"rtr01*\"]}"
+run l-nokeep.txt playbooks/net_config_load.yml -e "$nokeep" -e "net_config_change=$chg" -e net_config_store=share -e "net_config_share_dir=$work/inv.yml/share"
+rc=$?
+[ $rc -ne 0 ] && has "the copy before the change not kept: refused, the job fails" l-nokeep.txt \
+    "its configuration before the change could not be kept in the share $work/inv.yml/share on the AAP node, so nothing was sent" \
+    "set net_config_keep_before: false to load without the copy" \
+    || { bad "a load without its copy kept: exit $rc"; tail -20 l-nokeep.txt | sed 's/^/       /'; }
+grep -q 'ntp server 192.0.2.125' "$work/ios.log" && bad "a load whose copy was not kept sent the lines" || ok "...nothing sent to rtr01"
+run l-nokeep2.txt playbooks/net_config_load.yml -e "$nokeep" -e "net_config_change=$chg" -e net_config_store=share -e "net_config_share_dir=$work/inv.yml/share" -e net_config_keep_before=false
+[ $? -eq 0 ] && grep -q 'ntp server 192.0.2.125' "$work/ios.log" && ok "...net_config_keep_before: false - sent without the copy" \
+    || { bad "net_config_keep_before: false"; tail -20 l-nokeep2.txt | sed 's/^/       /'; }
+run l-nokeep3.txt playbooks/net_config_load.yml -e '{"net_config_lines": ["no ntp server 192.0.2.125"], "net_config_only": ["rtr01*"]}' -e "net_config_change=$chg"
+[ $? -eq 0 ] || { bad "taking 192.0.2.125 out again"; tail -20 l-nokeep3.txt | sed 's/^/       /'; }
+
+# ---- 9c. the same load again: nothing changes ----
+run l2.txt playbooks/net_config_load.yml -e "$lines" -e "net_config_change=$chg"
+has "load again: both unchanged" l2.txt "Network config load: 0 changed, 2 unchanged, 0 failed" "every line is there already" \
+    "every entry is there already - nothing committed"
 
 # ---- 10. a restore to the first backup: both back as they were ----
 restore="{\"net_config_load_mode\": \"restore\", \"net_config_restore_ref\": \"$first\", \"net_config_only\": [\"rtr01*\", \"fw01*\"]}"
@@ -267,6 +290,8 @@ run s2.txt playbooks/net_config_backup.yml -e "$two" -e net_config_store=share -
 run s3.txt playbooks/net_config_load.yml -e net_config_store=share -e "net_config_share_dir=$work/share" -e "$restore" -e net_config_restore_ref= \
     -e "net_config_change=$chg"
 has "restore from the share: both as they are already" s3.txt "Network config restore: 0 changed, 2 unchanged, 0 failed" "From: the share"
+ls "$work/share/rtr01.example.mil" | grep -q -- "-before-$chg.cfg\$" && ls "$work/share/fw01.example.mil" | grep -q -- "-before-$chg.xml\$" \
+    && ok "...the configurations before it kept on the share too (a copy named after the change)" || { bad "no -before- copy on the share"; ls -R "$work/share" | sed 's/^/       /'; }
 
 # ---- 13. a push the git server refuses (someone else's push, a protected branch): reported, the job red ----
 git -C "$work/check" pull -q
@@ -292,5 +317,17 @@ rc=$?
 [ $rc -ne 0 ] && has "both, the share's copy unreadable: fw01 failed, said which store" both1.txt \
     "share: could not read its last backup" "fw01.example.mil" || { bad "both with an unreadable share copy: exit $rc"; tail -20 both1.txt | sed 's/^/       /'; }
 rmdir "$work/share/fw01.example.mil/fw01.example.mil.xml"; mv "$work/fw01.keep" "$work/share/fw01.example.mil/fw01.example.mil.xml"
+
+# ---- 15. a load undone with the copy kept before it: restore with net_config_restore_ref = its name ----
+chg2="$(newchg -1)"
+undo="{\"net_config_panos_entries\": [{\"xpath\": \"$XP\", \"element\": \"<login-banner>To be undone</login-banner>\"}], \"net_config_only\": [\"fw01*\"]}"
+run u1.txt playbooks/net_config_load.yml -e "$undo" -e "net_config_change=$chg2"
+kept2="$(git --git-dir="$work/configs.git" tag -l "*-before-$chg2" | head -1)"
+[ -n "$kept2" ] && has "a load: its copy before kept as $kept2" u1.txt "Network config load: 1 changed" "Kept as $kept2" || bad "no tag *-before-$chg2"
+run u2.txt playbooks/net_config_load.yml -e "{\"net_config_load_mode\": \"restore\", \"net_config_restore_ref\": \"$kept2\", \"net_config_only\": [\"fw01*\"]}" \
+    -e "net_config_change=$chg2"
+rc=$?
+[ $rc -eq 0 ] && has "...restored from it: fw01 as before the load" u2.txt "Network config restore: 1 changed, 0 unchanged, 0 failed" "- -          <login-banner>To be undone</login-banner>" \
+    || { bad "restore from $kept2: exit $rc"; tail -25 u2.txt | sed 's/^/       /'; }
 
 [ "$fails" -eq 0 ] && echo "ok   - all network config scenarios passed" || { echo "$fails FAILED"; exit 1; }

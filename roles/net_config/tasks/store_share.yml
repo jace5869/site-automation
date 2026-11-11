@@ -3,6 +3,8 @@
 # AAP exposes to jobs) or on net_config_share_host (Linux, or a Windows file server). Per device a folder:
 # <device>/<file> (the latest) and, each time it changed, a dated copy beside it (<stem>-YYYYMMDDTHHMMSSZ<ext>);
 # the oldest beyond net_config_share_keep go. Check: compared, nothing written.
+# _ncs_keep_ref (a load's copy before the change, load_keep.yml): every device read gets a copy named
+# <stem>-<_ncs_keep_ref><ext> - also when nothing changed since the last backup - and the latest when it changed.
 # Input: _ncf_all. Output: _ncs_res (net_config_backup_result), _ncs_where.
 - name: Network config | where the share is
   ansible.builtin.set_fact:
@@ -11,7 +13,8 @@
       {{ (net_config_share_host | default('', true)) != ''
          and (hostvars[net_config_share_host].ansible_connection | default('') in ['winrm', 'psrp']
               or hostvars[net_config_share_host].site_os | default('') == 'windows') }}
-    _ncs_stamp: "{{ now(utc=true).strftime('%Y%m%dT%H%M%SZ') }}"
+    _ncs_stamp: "{{ _ncs_keep_ref | default('', true) or now(utc=true).strftime('%Y%m%dT%H%M%SZ') }}"
+    _ncs_write: "{{ ['new', 'changed', 'unchanged'] if _ncs_keep_ref | default('', true) else ['new', 'changed'] }}"
 
 - name: Network config | net_config_share_host is in the inventory
   ansible.builtin.assert:
@@ -53,9 +56,9 @@
   ansible.builtin.set_fact:
     _ncs_files: >-
       {%- set out = [] -%}
-      {%- for d in _ncs_res.devices | default([]) if d.status in ['new', 'changed'] -%}
+      {%- for d in _ncs_res.devices | default([]) if d.status in _ncs_write -%}
       {%-   set p = d.file | splitext -%}
-      {%-   set _ = out.extend([{'d': d, 'name': d.file}, {'d': d, 'name': p[0] ~ '-' ~ _ncs_stamp ~ p[1]}]) -%}
+      {%-   set _ = out.extend(([{'d': d, 'name': d.file}] if d.status != 'unchanged' else []) + [{'d': d, 'name': p[0] ~ '-' ~ _ncs_stamp ~ p[1]}]) -%}
       {%- endfor -%}
       {{ out }}
     _ncs_where: "{{ net_config_share_dir }} on {{ _ncs_on }}{{ ' (the AAP node: kept only if AAP exposes that path to jobs)' if _ncs_on == 'localhost' else '' }}"
@@ -71,7 +74,7 @@
         path: "{{ net_config_share_dir }}/{{ (item.file | splitext)[0] }}"
         state: directory
         mode: "0700"
-      loop: "{{ _ncs_res.devices | selectattr('status', 'in', ['new', 'changed']) | list }}"
+      loop: "{{ _ncs_res.devices | selectattr('status', 'in', _ncs_write) | list }}"
       loop_control:
         label: "{{ item.host }}"
 
@@ -89,7 +92,7 @@
       ansible.builtin.find:
         paths: "{{ net_config_share_dir }}/{{ (item.file | splitext)[0] }}"
         patterns: "{{ (item.file | splitext)[0] }}-*{{ (item.file | splitext)[1] }}"
-      loop: "{{ _ncs_res.devices | selectattr('status', 'in', ['new', 'changed']) | list }}"
+      loop: "{{ _ncs_res.devices | selectattr('status', 'in', _ncs_write) | list }}"
       loop_control:
         label: "{{ item.host }}"
       register: _ncs_dated

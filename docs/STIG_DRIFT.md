@@ -327,9 +327,16 @@ Windows, with Evaluate-STIG - there is no free SCAP content for Windows to run O
   unless `win_check_stig_evaluate_select` names some (Evaluate-STIG's short names, `-SelectSTIG`).
 - **Where it is**: `win_check_stig_evaluate` (its folder, e.g. `C:\Evaluate-STIG`). Empty, the job finds
   it: a scheduled task that runs `Evaluate-STIG.ps1` (its path, and where it writes), else a folder named
-  `Evaluate-STIG*` on the local drives, four levels down (`C:\Users\admin\Desktop\Evaluate-STIG` is four);
-  the newest if there are several. The report's **Every host** table and the job output say where it was
-  found. Not found, the server is listed as not scanned, with where it looked and what to set.
+  `Evaluate-STIG*` on the local drives, four levels down (`C:\Users\admin\Desktop\Evaluate-STIG` is four).
+  The report's **Every host** table and the job output say where it was found. Not found, the server is
+  listed as not scanned, with where it looked and what to set.
+- **A script the job found is run as SYSTEM only when nobody else can change it**: its folder, every file
+  in it and the folders above it owned by and writable only by SYSTEM, the Administrators or
+  TrustedInstaller (a scheduled task that runs as SYSTEM: its script is used as it is - only an
+  administrator can make such a task). Otherwise the server is not scanned and the report says who else
+  can change which file: make SYSTEM and the Administrators the folder's only owners and writers, or set
+  `win_check_stig_evaluate` to it (a folder you name is run as it is). Found in **more than one place**,
+  none is picked: set `win_check_stig_evaluate` to the one to run.
 - **Or read what it already wrote**: `win_check_stig_evaluate_read: auto` reads the checklists your own
   Evaluate-STIG runs leave - the folder its scheduled task writes to (`-OutputPath`), else its default,
   `C:\Users\Public\Documents\STIG_Compliance` - or name a folder. Each STIG's newest checklist of this
@@ -349,7 +356,9 @@ Windows, with Evaluate-STIG - there is no free SCAP content for Windows to run O
   report are the Linux ones; the `check_stig_*` settings for STIG Manager and the findings apply to both.
 
 On the server, `win_check_stig_dir` (`C:\ProgramData\site-automation\stig`, only SYSTEM and
-Administrators can open it), one folder per checklist:
+Administrators can open it; a folder that is there already is used only when SYSTEM, the Administrators or the
+job's own account alone own and can change it and everything in it - else the server is not scanned and the
+report says who else can), one folder per checklist:
 
 ```text
 Windows_Server_2022_STIG\20261030T120500Z_summary.json     one result per rule, and when each last passed

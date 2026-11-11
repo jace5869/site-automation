@@ -5,8 +5,13 @@
 # Old = accessed, changed AND modified more than DAYS days ago (as systemd-tmpfiles ages them). Only regular files
 # (never a socket, pipe or device), only on DIR's own filesystem (-xdev), never under a NAME (a pattern: the
 # systemd-private-* folders, .X11-unix ...). Prints one line: DIR MOUNT FILES BYTES [FILES_AFTER BYTES_AFTER], then
-# the biggest of them, "big SIZE PATH" (scan only).
+# the biggest of them, "big SIZE PATH" (scan only). Deleting runs rm and rmdir in each file's own folder (-execdir),
+# so a folder replaced by a link while the cleanup runs is never followed.
 set -u
+p=""
+IFS=: read -ra parts <<< "$PATH"
+for x in "${parts[@]}"; do case "$x" in /*) p="${p:+$p:}$x" ;; esac; done
+PATH="${p:-/usr/bin:/bin}"          # find's -execdir refuses a PATH with a relative folder in it
 mode="$1" dir="$2" days="$3"
 shift 3
 if [ ! -d "$dir" ] || [ -L "$dir" ]; then
@@ -30,9 +35,9 @@ count() {
 mount=$(df --output=target "$dir" 2>/dev/null | tail -n 1)
 before=$(count)
 if [ "$mode" = clean ]; then
-    find "${sel[@]}" "${old[@]}" -exec rm -f -- {} + 2>/dev/null
-    # folders left empty, as old (deepest first; a folder that is not empty stays)
-    find "${sel[@]}" -type d -empty -mmin +"$mins" -print0 2>/dev/null | sort -rz | xargs -0 -r rmdir -- 2>/dev/null
+    find "${sel[@]}" "${old[@]}" -execdir rm -f -- {} + 2>/dev/null
+    # folders that are empty, as old (a folder that is not empty stays)
+    find "${sel[@]}" -type d -empty -mmin +"$mins" -execdir rmdir -- {} + 2>/dev/null
     echo "$dir ${mount:--} $before $(count)"
 else
     echo "$dir ${mount:--} $before"

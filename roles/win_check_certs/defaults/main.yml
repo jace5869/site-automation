@@ -27,7 +27,7 @@ win_check_certs_endpoints: []
 # certificate. Never: CA certificates, self-signed ones (unless win_cert_renew_self_signed), a certificate
 # only served on a port (win_check_certs_endpoints: its store is not known). cert_renew_skip_hosts /
 # cert_renew_skip_groups, cert_renew_attach_ext / _type / _retry_txt apply to Windows too.
-win_cert_renew_dir: 'C:\ProgramData\site-automation\renew'  # the CSRs and their .inf / .json, on the server (administrators and SYSTEM only); the key is not here: it is in the machine key store
+win_cert_renew_dir: 'C:\ProgramData\site-automation\renew'  # the CSRs and their .inf / .json, on the server (administrators and SYSTEM only: one that is there already and that others can change is refused - no CSR, no install); the key is not here: it is in the machine key store
 win_cert_renew_key_bits: 2048            # RSA key size, at least 2048 (a bigger old key keeps its size; an EC certificate gets a new key on the same curve)
 win_cert_renew_digest: sha256            # the CSR's signature: sha256, sha384 or sha512
 win_cert_renew_max: 10                   # at most this many NEW CSRs per server in one run (the rest come the next run)

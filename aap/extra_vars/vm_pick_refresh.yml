@@ -37,8 +37,12 @@ vm_pick_reboot_templates: ["VM - restart picked VMs (workflow)"]          # whos
 ## The AAP server is ALWAYS refused (hosts in the groups aap / aap_hosts, matched by VM name, guest
 ## host name and IP address), and so are the hosts of these groups and these VM names (* and ?
 ## allowed: DC*). List the AAP VM's name here when it differs from its host name, and vCenter's own
-## VM. The snapshot cleanup never deletes their snapshots either, and Patch hosts does not patch
-## them (docs/RUNBOOKS.md).
+## VM. The snapshot cleanup and the snapshot pick list never delete their snapshots either, and
+## Patch hosts does not patch them (docs/RUNBOOKS.md). Given as text (a survey, an extra variable):
+## names separated by commas or line breaks, never by spaces - "File Server 01" is one VM name,
+## "dcs" one group. Restart, shut down, VLAN change, the snapshot cleanup and the snapshot pick list
+## are refused when the inventory has no group aap / aap_hosts and vmware_protected_vms is empty
+## (the job cannot tell which VM is the AAP server).
 # vmware_protected_groups: [aap, aap_hosts]
 
 ## e.g. [AAP01, VCSA01, DC*] (* and ? allowed)
@@ -47,8 +51,9 @@ vm_pick_reboot_templates: ["VM - restart picked VMs (workflow)"]          # whos
 ## Snapshots at least this many days old: listed apart by the report, deleted by the cleanup.
 # vm_snapshot_max_age_days: 5
 
-## Never deleted by the cleanup (the report lists them, with the reason): - a snapshot whose name or
-## description matches this
+## Never deleted by the cleanup (the report lists them, with the reason). Names given as text (a
+## survey): separated by commas or line breaks, not spaces. - a snapshot whose name or description
+## matches this
 # vm_snapshot_keep_regex: '(?i)keep|do.?not.?delete'
 
 ## - a snapshot of these VMs: names, * and ? allowed (e.g. [DC*, VCSA01, AAP01]). The VMs in
@@ -90,7 +95,8 @@ vm_pick_reboot_templates: ["VM - restart picked VMs (workflow)"]          # whos
 # vm_pick_snapshot_min_age_days: 0
 
 ## The VMs offered for a restart: powered on, never the AAP server or a protected VM
-## (vmware_protected_*), among these (names, * and ?, any case; [] = every VM) ...
+## (vmware_protected_*), among these (names, * and ?, any case; [] = every VM; survey text:
+## separated by commas or line breaks) ...
 # vm_pick_reboot_vms: []
 
 ## e.g. [PROD-*]

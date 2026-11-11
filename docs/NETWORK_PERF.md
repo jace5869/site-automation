@@ -71,7 +71,9 @@ An interface's first run (or after a reboot: its counters start over) is counted
    ("unauthorized", usually) is the responder up; no answer, an HTTP error or an answer that is not OCSP
    is the problem.
 3. **iperf3** (optional): `iperf3` installed on both hosts of a pair, TCP port 5201 open on the server.
-   Both hosts must be in the job; the server answers one test and exits.
+   Both hosts must be in the job. One pair at a time: the server is started for that pair's test only
+   (as the login user, not root), answers one test, and is stopped after the client's step - also when the
+   client never connected; it also stops by itself 60 seconds after the test time. Pairs may share a server.
 
    ```yaml
    net_perf_iperf_pairs:

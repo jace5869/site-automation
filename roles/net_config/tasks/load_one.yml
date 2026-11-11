@@ -3,6 +3,7 @@
 # restored - IOS: ios_config (only the lines not there yet), or the backup copied to the device (scp) and
 # configure replace <file> force, then write memory (net_config_save); PAN-OS: the entries set, or the backup
 # imported, loaded, validated and committed (site_panos_api). Check: what would change, nothing sent.
+# A real run first needs the device's configuration before the change kept (load_keep.yml, net_config_keep_before).
 # -> _ncl_got {host, platform, status (changed / would change / unchanged / failed), what, lines, error}.
 - name: Network config | {{ inventory_hostname }} - the platform, the backup to restore
   ansible.builtin.set_fact:
@@ -16,6 +17,11 @@
       {{ {'host': inventory_hostname, 'platform': _ncf_platform, 'status': 'failed',
           'error': ('which platform? Set ansible_network_os (cisco.ios.ios or paloaltonetworks.panos) or net_config_platform (ios, panos)')
                    if not _ncf_platform else
+                   ('its configuration before the change could not be kept in ' ~ hostvars['localhost']._ncl_keep_store | default('the backup store')
+                    ~ ', so nothing was sent (' ~ (hostvars['localhost']._ncl_keep_error | default('')
+                    or (hostvars['localhost']._ncl_keep_why | default({}))[inventory_hostname] | default('not read'))
+                    ~ '). Make that store reachable, or set net_config_keep_before: false to load without the copy.')
+                   if net_config_keep_before | bool and not ansible_check_mode and inventory_hostname not in hostvars['localhost']._ncl_kept | default({}) else
                    ('no backup of this device to restore (' ~ hostvars['localhost']._ncl_from | default('') ~ ')') if net_config_load_mode == 'restore' and not _ncl_backup else
                    ('no lines for IOS: net_config_lines') if _ncf_platform == 'ios' and net_config_load_mode == 'lines' and not net_config_lines | default([], true) else
                    ('no entries for PAN-OS: net_config_panos_entries') if _ncf_platform == 'panos' and net_config_load_mode == 'lines' and not net_config_panos_entries | default([], true)

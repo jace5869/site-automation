@@ -255,11 +255,33 @@ mplan="$(stats horizon_maint_plan)"
 run "host maintenance start: the message, then the desktops into maintenance" ok horizon_host_maintenance_start.yml "$mplan" \
     'Horizon host maintenance: esx02 - 2 desktop(s) into maintenance' '"path": "inventory/machines/action/enter-maintenance-mode", "query": {}, "body": ["m-w05", "m-w08"]' \
     '"path": "inventory/sessions/action/send-message"'
-run "host maintenance end: the host's desktops out of maintenance" ok horizon_host_maintenance_end.yml '{"horizon_maint_host": "esx02.example.mil"}' \
+mdone="$(stats horizon_maint_done)"
+case "$mdone" in *'"ids": ["m-w05", "m-w08"]'*) echo "ok   - ... the start job hands on the desktops it put in maintenance mode";;
+    *) echo "FAIL - horizon_maint_done: $mdone"; fails=$((fails + 1));; esac
+run "host maintenance end: the desktops the start job put in maintenance mode come back" ok horizon_host_maintenance_end.yml \
+    "$("$py" -c 'import json,sys; d=json.loads(sys.argv[1]); d["horizon_maint_host"]="esx02.example.mil"; print(json.dumps(d))' "$mdone")" \
     'Horizon host maintenance end: esx02.example.mil - 2 desktop(s) back' '"path": "inventory/machines/action/exit-maintenance-mode", "query": {}, "body": ["m-w05", "m-w08"]'
 run "host maintenance plan: a host Horizon has no desktop on" fail horizon_host_maintenance_plan.yml '{"horizon_maint_host": "esx99"}' \
     'Horizon has no desktop on host esx99 (hosts it knows: esx01.example.mil' '!horizon_maint_plan": {'
 run "host maintenance start on its own: refused" fail horizon_host_maintenance_start.yml '{}' 'Nothing to do: no approved plan (horizon_maint_plan)'
+# a desktop an admin parked in maintenance mode (m-f04) stays there; the start's desktops come back wherever DRS moved them
+mock HZMOCK_PARKED=m-f04 HZMOCK_DRS_TO=esx01.example.mil
+run "host maintenance plan, a desktop parked in maintenance mode by an admin" ok horizon_host_maintenance_plan.yml '{"horizon_maint_host": "esx02"}' \
+    'READY FOR APPROVAL: ESXi host esx02 - 2 desktop(s) into Horizon maintenance mode'
+mplan="$(stats horizon_maint_plan)"
+run "host maintenance start (DRS then moves its desktops to esx01)" ok horizon_host_maintenance_start.yml "$mplan" '"body": ["m-w05", "m-w08"]'
+mdone="$(stats horizon_maint_done)"
+run "host maintenance end on its own, without the start job's list: refused, nothing sent" fail horizon_host_maintenance_end.yml '{"horizon_maint_host": "esx02"}' \
+    'Nothing is brought back: no list of the desktops the start job put in maintenance mode (horizon_maint_done) reached this job - run the end from the host maintenance workflow (after the start job), or set horizon_maint_end_all: true with horizon_maint_host to bring back every desktop in maintenance mode on esx02, also any put there for another reason.' \
+    '!exit-maintenance-mode'
+run "host maintenance end, the list of another host: refused" fail horizon_host_maintenance_end.yml \
+    "$("$py" -c 'import json,sys; d=json.loads(sys.argv[1]); d["horizon_maint_host"]="esx03"; print(json.dumps(d))' "$mdone")" \
+    'The list of the start job is for host esx02, not esx03' '!exit-maintenance-mode'
+run "host maintenance end: only the start job's desktops (moved to esx01), not the parked one" ok horizon_host_maintenance_end.yml "$mdone" \
+    'Horizon host maintenance end: esx02 - 2 desktop(s) back' '"path": "inventory/machines/action/exit-maintenance-mode", "query": {}, "body": ["m-w05", "m-w08"]' '!m-f04'
+run "host maintenance end, horizon_maint_end_all: every desktop in maintenance mode on the host (as before)" ok horizon_host_maintenance_end.yml \
+    '{"horizon_maint_host": "esx02", "horizon_maint_end_all": true}' '"path": "inventory/machines/action/exit-maintenance-mode", "query": {}, "body": ["m-f04"]' \
+    'horizon_maint_end_all: every desktop in maintenance mode on esx02 is brought back, whether the start job put it there or not.'
 
 # ---- image push: plan -> approval -> push ---------------------------------------------------------
 mock

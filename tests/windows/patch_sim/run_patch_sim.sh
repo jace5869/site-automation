@@ -72,6 +72,8 @@ run "default: no automatic restart" state_two_rounds.json 0 && check "by default
     "s['restarts'] == 0 and s['install_calls'] == 1" "automatic restarts are off"
 run "a restart flag that a restart does not clear" state_lingering.json 0 -e automatic_restarts=true && check "a lingering restart flag: one install, one restart - not a restart per round" \
     "s['install_calls'] == 1 and s['restarts'] == 1" "Round 1: asked to install 2026-09 Cumulative Update"
+run "a pending restart, nothing to install" state_pending_only.json 1 -e automatic_restarts=true && check "a restart that was pending, nothing to install: restarted, then the services checked - one that did not come back stops it" \
+    "s['install_calls'] == 0 and s['restarts'] == 1" "MSSQLSERVER ran before patching and do not run now"
 run "no client" state_noclient.json 1 && check "no ConfigMgr client: stops" "s['install_calls'] == 0" "no working ConfigMgr client"
 [ $fail -eq 0 ] && echo "all patch simulations passed"
 exit $fail

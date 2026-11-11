@@ -13,17 +13,18 @@
       {{ now(fmt='%Y-%m-%d %H:%M') }}]
 
 # vm_snapshot takes no second snapshot of a name a VM already has: it rewrites the old one's description (and
-# says "changed"). Read first: a VM that has one named so keeps it as it is, and the report says so.
+# says "changed"). Read first: a VM that has one named so keeps it as it is, and the report says so. Only the
+# credential's vCenter is read - the one the VMs were found in: a VM ID (moid) means another VM in any other vCenter.
 - name: VMware | the snapshots the VMs have now
   site_vmware_snapshots:
     datacenter: "{{ vmware_datacenter | default(omit, true) }}"
-    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+    vcenters: []
     validate_certs: "{{ vmware_validate_certs | bool }}"
     taken_by: false
   register: _vm_snap_have
   check_mode: false
 
-- name: VMware | every vCenter answered
+- name: VMware | the vCenter answered
   ansible.builtin.assert:
     that: _vm_snap_have.vcenters | selectattr('error') | list | length == 0
     fail_msg: "No snapshot taken: {{ _vm_snap_have.vcenters | selectattr('error') | map(attribute='error') | join('; ') }}"

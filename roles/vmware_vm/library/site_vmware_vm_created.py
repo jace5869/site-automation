@@ -234,9 +234,15 @@ def _read(content, p, since, until, vcenter):
                 folder, dc = _folder(v)
                 if p["datacenter"] and dc != p["datacenter"]:
                     continue
-                hw = v.config.hardware
+                cfg = v.config
+                if cfg is None or cfg.hardware is None:
+                    # inaccessible or orphaned (e.g. its datastore gone): no size to read - the VM stays in the report, marked so
+                    r.update(datacenter=dc, folder=folder, guest_os="", power="inaccessible")
+                    out.append(r)
+                    continue
+                hw = cfg.hardware
                 host = v.runtime.host
-                r.update(datacenter=dc, folder=folder, guest_os=v.config.guestFullName or "", cpu=hw.numCPU,
+                r.update(datacenter=dc, folder=folder, guest_os=cfg.guestFullName or "", cpu=hw.numCPU,
                          memory_gb=round(hw.memoryMB / 1024.0, 1),
                          disk_gb=round(sum(d.capacityInKB for d in hw.device if isinstance(d, vim.vm.device.VirtualDisk)) / 1048576.0, 1),
                          power=str(v.runtime.powerState), host=host.name if host is not None else "",

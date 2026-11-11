@@ -1,7 +1,9 @@
 ---
 # SNAPSHOT CLEANUP: delete the snapshots that are vm_snapshot_max_age_days or older, then report what
 # was deleted (printed, emailed, artifacts). Never deleted: names that say keep, the VMs in
-# vm_snapshot_cleanup_exclude_vms / vmware_protected_vms, the AAP server, bigger than
+# vm_snapshot_cleanup_exclude_vms, the AAP server and the protected VMs (protected.yml: the groups aap,
+# aap_hosts and vmware_protected_groups, vmware_protected_vms - refused when the inventory cannot say
+# which VM is the AAP server), bigger than
 # vm_snapshot_cleanup_max_size_gb (or size unknown); with vm_snapshot_cleanup_name_words, a name
 # without one of them (e.g. only the patching snapshots: [Patching, Patches, Patch]).
 #   - in the workflow, after the approval: only the snapshots the report listed
@@ -10,6 +12,11 @@
 # Never more than vm_snapshot_cleanup_max at once. As Check (a dry run) it deletes nothing.
 - name: VMware | a vCenter credential is attached
   ansible.builtin.include_tasks: credential.yml
+
+- name: VMware | the protected VMs, and this inventory says which server is AAP
+  ansible.builtin.include_tasks: protected.yml
+  vars:
+    _vm_prot_refuse: delete any snapshot
 
 - name: VMware | read the snapshots now
   site_vmware_snapshots:

@@ -1,11 +1,13 @@
 ---
 # Old snapshots: the ones the cleanup deletes, and the ones it never deletes (keep name, excluded
-# VM / datacenter / cluster, protected VM, the AAP server, a name without
-# vm_snapshot_cleanup_name_words, too big or size unknown). Input: _vm_snap_read. Output: _vm_sn,
-# _vm_sn_days ("1 day", "3 days") for the report titles, _vm_sn_named (' whose name has Patching,
-# Patches or Patch', or '') after them, and _vm_sn_multi (several vCenters read: the tables name each
-# snapshot's vCenter). The pick lists (pick_snapshots.yml) set _vm_sn_age and _vm_sn_words: their own age, and
-# no name words (those only narrow the automatic cleanup) - every other hold is the same.
+# VM / datacenter / cluster, the AAP server or a protected VM - protected.yml: the groups aap, aap_hosts,
+# vmware_protected_groups, and vmware_protected_vms - a name without vm_snapshot_cleanup_name_words, too
+# big or size unknown). Text from a survey is names separated by commas or line breaks (name_list).
+# Input: _vm_snap_read. Output: _vm_sn, _vm_sn_days ("1 day", "3 days") for the report titles,
+# _vm_sn_named (' whose name has Patching, Patches or Patch', or '') after them, and _vm_sn_multi (several
+# vCenters read: the tables name each snapshot's vCenter). The pick lists (pick_snapshots.yml) set _vm_sn_age
+# and _vm_sn_words: their own age, and no name words (those only narrow the automatic cleanup) - every
+# other hold is the same.
 - name: VMware | {{ _vm_sn_age_name | default('vm_snapshot_max_age_days') }} is a number of days
   ansible.builtin.assert:
     that: _vm_sn_age | default(vm_snapshot_max_age_days) | string | trim is match('^[0-9]+([.][0-9]+)?$')
@@ -13,6 +15,9 @@
       {{ _vm_sn_age_name | default('vm_snapshot_max_age_days') }} must be a number of days (e.g. 1, 2 or 3), not
       '{{ _vm_sn_age | default(vm_snapshot_max_age_days) }}'
     quiet: true
+
+- name: VMware | the protected VMs (the same list as a restart's)
+  ansible.builtin.include_tasks: protected.yml
 
 - name: VMware | which snapshots are old, and which of those are held back
   ansible.builtin.set_fact:
@@ -26,12 +31,9 @@
     _vm_sn: >-
       {{ _vm_snap_read.snapshots
          | vm_snapshot_split(_vm_sn_age | default(vm_snapshot_max_age_days), vm_snapshot_keep_regex,
-                             ((vm_snapshot_cleanup_exclude_vms | replace(',', ' ')).split() if vm_snapshot_cleanup_exclude_vms is string
-                              else vm_snapshot_cleanup_exclude_vms) + (vmware_protected_vms | name_list),
-                             ((groups['aap'] | default([])) + (groups['aap_hosts'] | default([]))) | host_ids(hostvars),
+                             (vm_snapshot_cleanup_exclude_vms | name_list) + _vm_prot.names,
+                             _vm_prot.ids,
                              vm_snapshot_cleanup_max_size_gb | float,
-                             ((vm_snapshot_cleanup_exclude_datacenters | replace(',', ' ')).split() if vm_snapshot_cleanup_exclude_datacenters is string
-                              else vm_snapshot_cleanup_exclude_datacenters),
-                             ((vm_snapshot_cleanup_exclude_clusters | replace(',', ' ')).split() if vm_snapshot_cleanup_exclude_clusters is string
-                              else vm_snapshot_cleanup_exclude_clusters),
+                             vm_snapshot_cleanup_exclude_datacenters | name_list,
+                             vm_snapshot_cleanup_exclude_clusters | name_list,
                              _vm_sn_words | default(vm_snapshot_cleanup_name_words | default([]))) }}

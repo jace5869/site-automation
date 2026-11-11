@@ -57,13 +57,22 @@ foreach ($l in $status) {
     if ($l -match '^\s*Source:\s*(.+?)\s*$') { $src = $Matches[1] }
     elseif ($l -match '^\s*Last Successful Sync Time:\s*(.+?)\s*$') { $lastSync = $Matches[1] }
 }
+# w32tm prints its labels in the server's language: not read so, the source is asked alone (w32tm /query /source: one
+# line, no label), and a local clock is known by its reference id, LOCL (0x4C4F434C), which is not translated
+if (-not $src) {
+    $q = Invoke-Native 'w32tm.exe' @('/query', '/source')
+    $alone = @(@($q.Out) | Where-Object { ([string]$_).Trim() })
+    # an error is one line too: it ends with its code, "(0x80070426)"
+    if ($q.Code -eq 0 -and $alone.Count -eq 1 -and ([string]$alone[0]) -notmatch '\(0x[0-9A-Fa-f]+\)\s*$') { $src = ([string]$alone[0]).Trim(); $facts.labels_read = $false }
+}
+$localClock = (($status -join ' ') -match '0x4C4F434C')
 $facts.source = $src
 $facts.last_sync = $lastSync
 $cs = Get-CimInstance -ClassName Win32_ComputerSystem
 if (-not $src) {
     Add-Finding 'time:status' 'warning' ('could not read the time status: ' + (($status -join ' ').Trim())) $hintStatus
 }
-elseif ($src -match 'Local CMOS Clock|Free-running System Clock') {
+elseif ($localClock -or $src -match 'Local CMOS Clock|Free-running System Clock') {
     Add-Finding 'time:source' 'critical' "the clock is not synchronized with anything: its time source is '$src'" ($hintStatus + '; w32tm /resync /rediscover')
 }
 else {

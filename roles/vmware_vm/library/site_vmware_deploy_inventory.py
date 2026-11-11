@@ -47,7 +47,7 @@ vcenters:
 '''
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible.module_utils.site_vcenters import each_vcenter
+from ansible.module_utils.site_vcenters import each_vcenter, vm_properties
 
 try:
     from pyVmomi import vim, vmodl
@@ -140,10 +140,12 @@ def _read(content, p, vcenter):
             continue
         crs = [c for c in _view(content, dc.hostFolder, vim.ComputeResource)]
         templates = []
-        for v in _view(content, dc.vmFolder, vim.VirtualMachine):
+        # which VMs are templates: one call for the datacenter; only a template is read further
+        for v, pr in vm_properties(content, ["config.template"], dc.vmFolder):
+            if not pr.get("config.template"):
+                continue
             try:
-                if v.config is not None and v.config.template:
-                    templates.append(_template(v, dc))
+                templates.append(_template(v, dc))
             except vmodl.fault.ManagedObjectNotFound:
                 continue
         out.append({"vcenter": vcenter, "name": dc.name,

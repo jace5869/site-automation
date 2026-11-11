@@ -54,12 +54,20 @@ $rdpOn = [bool](Get-Setting 'remote_desktop' $false)
 $now = Get-Date
 # Which certificates are in use: https bindings (IIS, WSUS, ...), the WinRM HTTPS listener AAP
 # connects through, and Remote Desktop (with remote_desktop on).
+# netsh prints its labels in the server's language: each https binding is a block of "label : value" lines, read by
+# place - the first its address (ip:port, host:port, or a port), the next its certificate's hash; a blank line ends it.
 $bound = @{}
 $rdpTp = ''
 $ipport = ''
+$n = 0
 foreach ($l in @((Invoke-Native 'netsh.exe' @('http', 'show', 'sslcert')).Out)) {
-    if ($l -match '^\s*(IP:port|Hostname:port|Central Certificate Store)\s*:\s*(.+?)\s*$') { $ipport = $Matches[2] }
-    elseif ($l -match '^\s*Certificate Hash\s*:\s*([0-9a-fA-F]{40})') { $bound[$Matches[1].ToUpper()] = "https $ipport" }
+    $hit = [regex]::Match([string]$l, '^\s*(\S.*?)\s*:(?:\s+(.*?))?\s*$')
+    if (-not $hit.Success) { $ipport = ''; $n = 0; continue }
+    $v = $hit.Groups[2].Value
+    if (-not $v) { continue }
+    if (-not $ipport) { $ipport = $v; $n = 0; continue }
+    $n++
+    if ($n -eq 1 -and $v -match '^[0-9a-fA-F]{40}$') { $bound[$v.ToUpper()] = "https $ipport" }
 }
 foreach ($k in @(Get-ChildItem -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WSMAN\Listener' -ErrorAction SilentlyContinue)) {
     $v = Get-ItemProperty -Path $k.PSPath -ErrorAction SilentlyContinue

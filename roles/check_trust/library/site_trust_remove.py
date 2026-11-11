@@ -48,12 +48,18 @@ backup:
 '''
 
 import base64
+import binascii
+import errno
+import grp
 import hashlib
 import os
+import pwd
 import re
 import shutil
+import stat
 import struct
 import subprocess
+import tempfile
 import time
 
 from ansible.module_utils.basic import AnsibleModule
@@ -93,6 +99,37 @@ def slug(name):
 def to_pem(der):
     b64 = base64.b64encode(der).decode("ascii")
     return "-----BEGIN CERTIFICATE-----\n" + "\n".join(b64[i:i + 64] for i in range(0, len(b64), 64)) + "\n-----END CERTIFICATE-----\n"
+
+
+def other_writer(folder, owner):
+    """Who besides root and the file's owner (uid) can write the folder - '' when nobody. A sticky folder (/tmp) does
+    not count: nobody can rename or remove another user's file in it. Group write counts unless the group is the
+    owner's own (a user private group with no other member)."""
+    try:
+        d = os.stat(folder)
+    except OSError:
+        return ""
+    if d.st_mode & stat.S_ISVTX:
+        return ""
+    if d.st_uid not in (0, owner):
+        try:
+            return "the user %s" % pwd.getpwuid(d.st_uid).pw_name
+        except KeyError:
+            return "the user %d" % d.st_uid
+    if d.st_mode & stat.S_IWOTH:
+        return "every user"
+    if d.st_mode & stat.S_IWGRP:
+        try:
+            g = grp.getgrgid(d.st_gid)
+        except KeyError:
+            return "the group %d" % d.st_gid
+        try:
+            own = pwd.getpwuid(owner)
+        except KeyError:
+            own = None
+        if own is None or d.st_gid != own.pw_gid or set(g.gr_mem) - set([own.pw_name]):
+            return "the group %s" % g.gr_name
+    return ""
 
 
 def jks_entries(blob):
@@ -203,17 +240,76 @@ class Remover(object):
             return ""
         return ""
 
-    def write_back(self, path, data):
-        st = os.stat(path)
-        tmp = path + ".site-trust-new"
-        with open(tmp, "wb") as f:
-            f.write(data)
-        os.chmod(tmp, st.st_mode & 0o7777)
+    def read_store(self, path):
+        """(bytes, stat) of a store that is to be changed, or (None, why it is left alone): a symbolic link is not
+        followed, and a file in a folder another user can write is not rewritten."""
         try:
-            os.chown(tmp, st.st_uid, st.st_gid)
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        except OSError as e:
+            if e.errno == errno.ELOOP:
+                return None, "it is a symbolic link (to %s): take the certificate out of the file it points to by hand" % os.path.realpath(path)
+            return None, "not readable: %s" % e
+        with os.fdopen(fd, "rb") as f:
+            st = os.fstat(f.fileno())
+            if not stat.S_ISREG(st.st_mode):
+                return None, "not a regular file"
+            blob = f.read()
+        who = other_writer(os.path.dirname(path) or ".", st.st_uid)
+        if who:
+            return None, "its folder can be written by %s, not only by the file's owner: fix the folder's permissions, or take the certificate out by hand" % who
+        return (blob, st), ""
+
+    def pinned(self, path, st):
+        """The open folder of path and the file's name - when the file there is still the one read (st)."""
+        dfd = os.open(os.path.dirname(path) or ".", os.O_RDONLY | os.O_DIRECTORY)
+        name = os.path.basename(path)
+        try:
+            now = os.stat(name, dir_fd=dfd, follow_symlinks=False)
         except OSError:
-            pass
-        os.rename(tmp, path)
+            os.close(dfd)
+            raise
+        if (now.st_dev, now.st_ino) != (st.st_dev, st.st_ino):
+            os.close(dfd)
+            raise OSError(errno.ESTALE, "the file was replaced after it was read: not changed")
+        return dfd, name
+
+    def write_back(self, path, data, st):
+        """The file replaced by data with its mode and owner (st: as read). The new file is made in the same folder
+        under a fresh name (O_EXCL, never through a symbolic link), mode and owner set on the open file, then
+        renamed over the file."""
+        dfd, name = self.pinned(path, st)
+        tmp = ""
+        try:
+            for _ in range(10):
+                tmp = ".%s.%s.site-trust-new" % (name, binascii.hexlify(os.urandom(6)).decode("ascii"))
+                try:
+                    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dfd)
+                    break
+                except OSError as e:
+                    if e.errno != errno.EEXIST:
+                        tmp = ""
+                        raise
+            else:
+                tmp = ""
+                raise OSError(errno.EEXIST, "no free name for the new file in %s" % os.path.dirname(path))
+            with os.fdopen(fd, "wb") as f:
+                try:
+                    os.fchown(f.fileno(), st.st_uid, st.st_gid)
+                except OSError:
+                    pass
+                os.fchmod(f.fileno(), st.st_mode & 0o7777)
+                f.write(data)
+                f.flush()
+                os.fsync(f.fileno())
+            os.rename(tmp, name, src_dir_fd=dfd, dst_dir_fd=dfd)
+            tmp = ""
+        finally:
+            if tmp:
+                try:
+                    os.unlink(tmp, dir_fd=dfd)
+                except OSError:
+                    pass
+            os.close(dfd)
 
     # ---- the stores ---------------------------------------------------------------------------------
     def system(self, store):
@@ -311,21 +407,20 @@ class Remover(object):
             a["written"] = [conf + ": !" + rel for rel in sorted(targets.values())]
         if not self.check:
             self.backup_file(conf)
-            self.write_back(conf, "\n".join(lines).encode("utf-8"))
+            self.write_back(conf, "\n".join(lines).encode("utf-8"), os.lstat(conf))
 
     def java(self, store):
         path = store["where"]
         rp = os.path.realpath(path)
         if any(rp.startswith(x) or path.startswith(x) for x in SYSTEM_JAVA):
             return self.leave(store, "it follows the system trust (the blocklist clears it)")
-        try:
-            with open(path, "rb") as f:
-                blob = f.read()
-        except (OSError, IOError) as e:
-            return self.leave(store, "not readable: %s" % e)
+        got, why = self.read_store(path)
+        if got is None:
+            return self.leave(store, why)
+        blob, st = got
         parsed = jks_entries(blob)
         if parsed is None:
-            return self.java_keytool(store, path)
+            return self.java_keytool(store, path, blob, st)
         version, entries = parsed
         keep, gone = [], []
         for alias, tag, raw, certs in entries:
@@ -340,20 +435,32 @@ class Remover(object):
         try:
             backup = self.backup_file(path)
             if not self.check:
-                self.write_back(path, jks_write(version, keep, self.p["keystore_password"]))
+                self.write_back(path, jks_write(version, keep, self.p["keystore_password"]), st)
             self.act(store, "deleted the entries %s from the keystore - restart the Java services that use it (a running JVM keeps the old trust until it restarts)" % ", ".join(gone), names, backup=backup, aliases=gone)
         except (OSError, IOError) as e:
             self.act(store, "delete the entries %s from the keystore" % ", ".join(gone), names, done=False, backup=backup, error=str(e))
 
-    def java_keytool(self, store, path):
+    def java_keytool(self, store, path, blob, st):
+        """A keystore keytool reads (PKCS12): keytool works on a copy in a private folder; the result is written
+        back like any other store (write_back)."""
         kt = self.m.get_bin_path("keytool")
         if not kt:
             return self.leave(store, "not a JKS keystore and no keytool on this host: keytool -delete by hand")
+        work = tempfile.mkdtemp(prefix="site-trust-")
+        try:
+            copy = os.path.join(work, os.path.basename(path))
+            with open(copy, "wb") as f:
+                f.write(blob)
+            return self.keytool_delete(store, path, st, kt, copy)
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+
+    def keytool_delete(self, store, path, st, kt, copy):
         # the password reaches keytool in its own environment only (-storepass:env): never on the command line,
         # which ps and the execve audit records show
         env = {"SITE_KS_PW": self.p["keystore_password"]}
-        store = ["-keystore", path, "-storepass:env", "SITE_KS_PW"]
-        rc, out, err = run([kt, "-list"] + store, self.timeout, env=env)
+        ks_args = ["-keystore", copy, "-storepass:env", "SITE_KS_PW"]
+        rc, out, err = run([kt, "-list"] + ks_args, self.timeout, env=env)
         if rc != 0:
             return self.leave(store, "keytool could not open it: %s" % err.decode("utf-8", "replace").strip()[:150])
         gone, names = [], set()
@@ -376,9 +483,15 @@ class Remover(object):
         for a in gone:
             if self.check:
                 continue
-            rc, _, err = run([kt, "-delete", "-alias", a] + store, self.timeout, env=env)
+            rc, _, err = run([kt, "-delete", "-alias", a] + ks_args, self.timeout, env=env)
             if rc != 0:
                 errors.append("%s: %s" % (a, err.decode("utf-8", "replace").strip()[:120]))
+        if not self.check and len(errors) < len(gone):
+            try:
+                with open(copy, "rb") as f:
+                    self.write_back(path, f.read(), st)
+            except (OSError, IOError) as e:
+                errors = ["the keystore was not written back: %s" % e]
         self.act(store, "deleted the entries %s with keytool - restart the Java services that use it (a running JVM keeps the old trust until it restarts)" % ", ".join(gone), sorted(names), done=not errors, backup=backup,
                  error="; ".join(errors), aliases=gone)
 
@@ -389,15 +502,14 @@ class Remover(object):
         pkg = self.owned_by_package(path)
         if pkg:
             return self.leave(store, "owned by the package %s: update the package (pip install -U certifi in a venv)" % pkg)
-        try:
-            with open(path, "rb") as f:
-                blob = f.read()
-        except (OSError, IOError) as e:
-            return self.leave(store, "not readable: %s" % e)
+        got, why = self.read_store(path)
+        if got is None:
+            return self.leave(store, why)
+        blob, st = got
         if b"-----BEGIN" not in blob:
             certs = der_certs(blob)
             if certs and self.wanted(certs[0][0]) is not None:
-                return self.move_away(store, path, [self.wanted(certs[0][0])["name"]])
+                return self.move_away(store, path, [self.wanted(certs[0][0])["name"]], st)
             return self.leave(store, "not a PEM file: take the certificate out by hand")
         text = blob.decode("utf-8", "replace")
         names, kept = set(), 0
@@ -428,21 +540,25 @@ class Remover(object):
         if kept == 0 and store.get("kind") == "python":
             return self.leave(store, "the bundle holds nothing else - cut, it would leave the environment without roots: pip install -U certifi there")
         if kept == 0:
-            return self.move_away(store, path, sorted(names))
+            return self.move_away(store, path, sorted(names), st)
         backup = ""
         try:
             backup = self.backup_file(path)
             if not self.check:
-                self.write_back(path, "".join(parts).encode("utf-8"))
+                self.write_back(path, "".join(parts).encode("utf-8"), st)
             self.act(store, "removed the block from the bundle (%d certificates kept)" % kept, sorted(names), backup=backup)
         except (OSError, IOError) as e:
             self.act(store, "remove the block from the bundle", sorted(names), done=False, backup=backup, error=str(e))
 
-    def move_away(self, store, path, names):
+    def move_away(self, store, path, names, st):
         try:
             backup = self.backup_file(path)
             if not self.check:
-                os.unlink(path)
+                dfd, name = self.pinned(path, st)
+                try:
+                    os.unlink(name, dir_fd=dfd)
+                finally:
+                    os.close(dfd)
             self.act(store, "the file is the certificate itself: moved to the backup folder", names, backup=backup)
         except (OSError, IOError) as e:
             self.act(store, "move the file to the backup folder", names, done=False, error=str(e))

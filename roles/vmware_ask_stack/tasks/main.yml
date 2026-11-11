@@ -228,16 +228,31 @@
       - name: vmware-ask-vcenter
         sha: "{{ vmware_ask_vcenter_password | hash('sha256') }}"
         have: "{{ (_ask_secret_state.results[0].stdout | trim) if _ask_secret_state.results[0].rc == 0 else '' }}"
+        there: "{{ _ask_secret_state.results[0].rc == 0 }}"
         want: true
       - name: vmware-ask-genai
         sha: "{{ _ask_key | hash('sha256') if _ask_key else '' }}"
         have: "{{ (_ask_secret_state.results[1].stdout | trim) if _ask_secret_state.results[1].rc == 0 else '' }}"
+        there: "{{ _ask_secret_state.results[1].rc == 0 }}"
         want: "{{ _ask_key | length > 0 }}"
   no_log: true
 
+# podman secret create --replace needs podman 4.7; before it (RHEL 9.2 / 8.8 ship 4.4) the old secret is removed
+# first, then made again (--label is there since 4.3)
+- name: Secrets | the old value removed first (podman before 4.7)
+  ansible.builtin.command:
+    argv: [podman, secret, rm, "{{ item.name }}"]
+  loop: "{{ _ask_secrets }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.want | bool and item.have != item.sha and item.there | bool and _ask_podman.stdout is version('4.7', '<')
+  changed_when: true
+
 - name: Secrets | create or replace
   ansible.builtin.command:
-    argv: [podman, secret, create, --replace, --label, "site.sha256={{ item.sha }}", "{{ item.name }}", "-"]
+    argv: >-
+      {{ ['podman', 'secret', 'create'] + (['--replace'] if _ask_podman.stdout is version('4.7', '>=') else [])
+         + ['--label', 'site.sha256=' ~ item.sha, item.name, '-'] }}
     stdin: "{{ vmware_ask_vcenter_password if item.name == 'vmware-ask-vcenter' else _ask_key }}"
     stdin_add_newline: false
   loop: "{{ _ask_secrets }}"

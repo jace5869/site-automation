@@ -2,7 +2,8 @@
 # Job 2 of the host maintenance workflow (playbooks/horizon_host_maintenance_start.yml), after the approval. AAP hands
 # it the plan (horizon_maint_plan). The desktops are read again: each planned desktop still on the host, still without a
 # session, not protected, goes into Horizon maintenance mode; the sessions on the host's desktops now get the plan's
-# message. Then put the host itself into maintenance in vCenter. A dry run (Check) changes nothing.
+# message. Then put the host itself into maintenance in vCenter. A dry run (Check) changes nothing. The desktops it
+# put in maintenance mode go to the end job (set_stats horizon_maint_done): the end brings back only those.
 - name: Horizon | the approved plan came from the plan job
   ansible.builtin.assert:
     that:
@@ -63,6 +64,17 @@
                         'rows': _hz_mr.skipped | map(attribute='name') | zip(_hz_mr.skipped | map(attribute='pool'),
                                                                              _hz_mr.skipped | map(attribute='reason')) | map('list') | list}]} }}
     _hz_footer: "The approved plan of the plan job {{ horizon_maint_plan.job | default('') }}; each desktop was read again first."
+
+# the end job brings back only these: not a desktop someone else put in maintenance mode
+- name: Horizon | hand the desktops put in maintenance mode to the end job (set_stats horizon_maint_done)
+  ansible.builtin.set_stats:
+    data:
+      horizon_maint_done: >-
+        {%- set ours = [] if ansible_check_mode else _hz_all_results | selectattr('ok') | map(attribute='id') | list -%}
+        {%- set before = horizon_maint_done.ids | default([]) if horizon_maint_done is defined and horizon_maint_done is mapping
+                         and (horizon_maint_done.host | default('') | trim | lower) == (horizon_maint_plan.host | trim | lower) else [] -%}
+        {{ {'host': horizon_maint_plan.host, 'ids': (before + ours) | unique | list, 'job': awx_job_id | default('')} }}
+    per_host: false
 
 - name: Horizon | Horizon took every action
   ansible.builtin.assert:

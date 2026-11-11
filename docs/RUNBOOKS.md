@@ -1007,7 +1007,8 @@ yum; `patch_exclude` for packages never updated here). Then:
    its password wrong or missing: the template's Machine credential needs *Privilege Escalation
    Method* `sudo` and, when sudo asks for one, the *Privilege Escalation Password*), or it has less
    than `patch_min_free_mb` free in `/var` - is listed as `NOT READY - <why>` (the login banner left
-   out) and left out, the job not failed for it; nothing is changed or cleaned up on it. The last
+   out; for a refused sudo, sudo's own last line, such as `sudo: a password is required`) and left
+   out, the job not failed for it; nothing is changed or cleaned up on it. The last
    lines list them: `1 host(s) not ready, not patched: ...`. Fix it, then run again for those.
    `patch_skip_not_ready: false`: such a host fails the job and stops the rollout, as before 0.89.0.
 4. **No automatic restarts** unless `automatic_restarts: true` (the survey or the template's

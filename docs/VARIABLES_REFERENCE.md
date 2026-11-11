@@ -858,6 +858,7 @@ File: `roles/horizon/defaults/main.yml`
 | `horizon_maint_host` | (empty) | ---- Host maintenance (playbooks/horizon_host_maintenance_*.yml) -------------------------------- the ESXi host, as vCenter names it (a survey question on the workflow) |
 | `horizon_maint_message` | `"Your desktop's server goes into maintenance in 15 minutes. Please save your work and log…` | What the users on its desktops read (empty = no message). A survey question on the workflow. |
 | `horizon_maint_message_type` | `WARNING` | INFO, WARNING or ERROR |
+| `horizon_maint_end_all` | `false` | The end job brings back only the desktops the start job put in maintenance mode (handed on in the workflow). true = without that list, every desktop in maintenance mode on the host - also one put there for another reason (as before 1.22.0). |
 | `horizon_session_max_disconnected_hours` | `8` | ---- Disconnected sessions (playbooks/horizon_session_cleanup.yml) ------------------------------ log off a session disconnected for this many hours or more |
 | `horizon_session_cleanup_max` | `100` | log off at most this many sessions per run |
 | `horizon_session_cleanup_exclude_pools` | `[]` | pools whose sessions are never logged off: names, * and ? allowed |
@@ -1086,7 +1087,7 @@ File: `roles/net_certs/defaults/main.yml`
 
 File: `roles/net_config/defaults/main.yml`
 
-> NETWORK DEVICE CONFIGURATIONS: the backup (playbooks/net_config_backup.yml) keeps each device's running configuration - in a git repository (a commit when one changed) or on a file share (dated copies) - and can open a ServiceNow incident when one changed. The load (playbooks/net_config_load.yml) sends configuration lines, or restores a backup, after an approved change request - always a dry run (Check) first. Cisco IOS / IOS-XE (over its CLI: network_cli, a Machine credential) and Palo Alto Networks PAN-OS (over its XML API from the controller: the "Palo Alto PAN-OS API" credential). docs/NETWORK_CONFIG.md. A backup holds the device's secrets (password hashes, SNMP communities, keys): keep it in a private, internal repository or share only - never in this one.
+> NETWORK DEVICE CONFIGURATIONS: the backup (playbooks/net_config_backup.yml) keeps each device's running configuration - in a git repository (a commit when one changed) or on a file share (dated copies) - and can open a ServiceNow incident when one changed. The load (playbooks/net_config_load.yml) sends configuration lines, or restores a backup, after an approved change request - run it in Check first to see what it sends (the job does not check that you did: an approval step in a workflow does); a real load first keeps each device's running configuration (net_config_keep_before). Cisco IOS / IOS-XE (over its CLI: network_cli, a Machine credential) and Palo Alto Networks PAN-OS (over its XML API from the controller: the "Palo Alto PAN-OS API" credential). docs/NETWORK_CONFIG.md. A backup holds the device's secrets (password hashes, SNMP communities, keys): keep it in a private, internal repository or share only - never in this one.
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -1127,6 +1128,7 @@ File: `roles/net_config/defaults/main.yml`
 | `net_config_ios_file` | `flash:site-automation-restore.cfg` | IOS restore: where the backup is copied first (scp; ip scp server enable on the device) |
 | `net_config_panos_allow_pending` | `false` | PAN-OS: change even with someone's uncommitted changes (they would be committed too) |
 | `net_config_max_devices` | `10` | a load to more devices at once is refused (net_config_only, the template's Limit - or raise it) |
+| `net_config_keep_before` | `true` | A real load first reads each device's running configuration and keeps it where the backup keeps them (net_config_store), named <time>-before-<change> (git: a tag; share: a dated copy) - restore it with net_config_load_mode: restore and net_config_restore_ref set to that name. A device whose copy could not be kept gets… (all of it: the role file) |
 
 ## net_perf
 
@@ -1159,7 +1161,7 @@ File: `roles/net_perf/defaults/main.yml`
 | `net_perf_keep` | `30` | runs kept on the host |
 | `net_perf_slower_factor` | `2.0` | a target's average round trip this many times its usual (the median of the kept runs) -> warning |
 | `net_perf_slower_min_ms` | `5` | ... and at least this many ms more than usual (2 ms against 1 ms is not news) |
-| `net_perf_iperf_pairs` | `[]` | ---- iperf3 between named pairs (optional, needs iperf3 on both hosts and port 5201 open) -------------------- server and client are inventory names of this job's hosts; the server runs iperf3 for one test only (-1), then exits. e.g. [{server: app01.example.mil, client: db01.example.mil, min_mbps: 900}] |
+| `net_perf_iperf_pairs` | `[]` | ---- iperf3 between named pairs (optional, needs iperf3 on both hosts and port 5201 open) -------------------- server and client are inventory names of this job's hosts. One pair at a time: the server runs iperf3 for that pair's test only (-1, as the login user, at most net_perf_iperf_seconds + 60 s), and is stopped a… (all of it: the role file) |
 | `net_perf_iperf_seconds` | `5` | seconds per test (at most 30) |
 | `net_perf_iperf_port` | `5201` | the TCP port iperf3 listens on, on the server of each pair |
 
@@ -1903,7 +1905,7 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vmware_validate_certs` | `true` | Check vCenter's certificate. false only if the execution environment does not trust your CA yet. |
 | `vmware_vcenters` | `[]` | Several vCenters (e.g. Enhanced Linked Mode), one report: the reports and the ESXi security settings read the credential's vCenter AND these (names, or name:port), with the same account. The same vCenter under two names is read once. docs/VMWARE.md, "Several vCenters". e.g. [vc01.yoursite.mil, vc02.yoursite.mil] |
 | `vmware_vcenter_fail_unread` | `false` | true = the job shows failed when a vCenter could not be read (the report lists it in red either way) |
-| `vmware_protected_groups` | `[aap, aap_hosts]` | The AAP server is ALWAYS refused (hosts in the groups aap / aap_hosts, matched by VM name, guest host name and IP address), and so are the hosts of these groups and these VM names (* and ? allowed: DC*). List the AAP VM's name here when it differs from its host name, and vCenter's own VM. The snapshot cleanup never de… (all of it: the role file) |
+| `vmware_protected_groups` | `[aap, aap_hosts]` | The AAP server is ALWAYS refused (hosts in the groups aap / aap_hosts, matched by VM name, guest host name and IP address), and so are the hosts of these groups and these VM names (* and ? allowed: DC*). List the AAP VM's name here when it differs from its host name, and vCenter's own VM. The snapshot cleanup and the… (all of it: the role file) |
 | `vmware_protected_vms` | `[]` | e.g. [AAP01, VCSA01, DC*] (* and ? allowed) |
 | `vm_power_mode` | `guest` | guest = ask the operating system (needs VMware Tools running; services stop cleanly) hard = reset / power off, like the button on a physical server (unsaved data is lost) |
 | `vm_power_timeout` | `600` | shut down: seconds to wait for the VM to be off |
@@ -1997,7 +1999,7 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_rightsize_act_model_timeout` | `"{{ site_act_model_timeout \| default(600) }}"` | seconds the model may take for its answer |
 | `vm_rightsize_act_check_url` | `true` | first check that the AAP node can reach the model's URL |
 | `vm_snapshot_max_age_days` | `5` | Snapshots at least this many days old: listed apart by the report, deleted by the cleanup. |
-| `vm_snapshot_keep_regex` | `'(?i)keep\|do.?not.?delete'` | Never deleted by the cleanup (the report lists them, with the reason): - a snapshot whose name or description matches this |
+| `vm_snapshot_keep_regex` | `'(?i)keep\|do.?not.?delete'` | Never deleted by the cleanup (the report lists them, with the reason). Names given as text (a survey): separated by commas or line breaks, not spaces. - a snapshot whose name or description matches this |
 | `vm_snapshot_cleanup_exclude_vms` | `[]` | - a snapshot of these VMs: names, * and ? allowed (e.g. [DC*, VCSA01, AAP01]). The VMs in vmware_protected_vms and the AAP server are never cleaned up either. Patch hosts does not patch these VMs. (docs/RUNBOOKS.md, Patch hosts) |
 | `vm_snapshot_cleanup_exclude_datacenters` | `[]` | - a snapshot of a VM in these vCenter datacenters: names, * and ? allowed, any case (e.g. [DRSITE]) |
 | `vm_snapshot_cleanup_exclude_clusters` | `[]` | - a snapshot of a VM running in these clusters: names, * and ? allowed, any case (e.g. [SQL*, MGMT*]). A VM on a host that is in no cluster is not matched. |
@@ -2013,7 +2015,7 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_pick_reboot_question` | `vm_reboot_picks` | the question's Answer variable name |
 | `vm_pick_max_choices` | `200` | a list never has more choices than this (the rest is counted in the job's output) |
 | `vm_pick_snapshot_min_age_days` | `0` | The snapshots offered: only those the snapshot cleanup could delete (the same holds - a name that says keep, the excluded VMs, datacenters and clusters, the protected VMs and the AAP server, bigger than vm_snapshot_cleanup_max_size_gb; not the name words), at least this many days old. 0 = any age. |
-| `vm_pick_reboot_vms` | `[]` | The VMs offered for a restart: powered on, never the AAP server or a protected VM (vmware_protected_*), among these (names, * and ?, any case; [] = every VM) ... |
+| `vm_pick_reboot_vms` | `[]` | The VMs offered for a restart: powered on, never the AAP server or a protected VM (vmware_protected_*), among these (names, * and ?, any case; [] = every VM; survey text: separated by commas or line breaks) ... |
 | `vm_pick_reboot_clusters` | `[]` | e.g. [PROD-*] |
 | `vm_pick_reboot_folders` | `[]` | folder paths as vCenter shows them, e.g. ["/DC1/vm/Linux*"] |
 | `vm_pick_reboot_exclude_vms` | `[]` | ... and never these (e.g. [SQL*, DC*]) |

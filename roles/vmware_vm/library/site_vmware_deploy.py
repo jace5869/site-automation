@@ -22,7 +22,10 @@ description:
     annotation under it. Run again for the same ticket, a VM it built is left as it is, one it started
     and did not finish (cloned, not yet powered on) is finished where it is, one whose customization
     failed is refused - the job picks up where it stopped. The mark of older releases
-    ([site-automation ticket=NUMBER state=built]) is read the same way.
+    ([site-automation ticket=NUMBER state=built]) is read the same way. A VM whose notes are an older
+    release's without a mark (Deployed from ... for NUMBER) is left as it is when it is powered on (or
+    existing_ok), and refused when it is off (whether it was finished cannot be told).
+  - The new VM's name is free in every vCenter of the job, compared in any case.
   - vCenter's address and account come from VMWARE_HOST, VMWARE_USER, VMWARE_PASSWORD (and
     VMWARE_PORT), as a "VMware vCenter" credential in AAP gives them.
 options:
@@ -88,7 +91,7 @@ import re
 import time
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible.module_utils.site_vcenters import connect, disconnect, vcenter_list
+from ansible.module_utils.site_vcenters import connect, disconnect, vcenter_list, vm_properties
 
 try:
     from pyVmomi import vim, vmodl
@@ -369,6 +372,18 @@ def _existing(vc, v, template):
             "customization": "-"}
 
 
+def customization_result(events):
+    """vCenter's events of the new VM -> 'succeeded', 'FAILED (the event: its message)' or '' (no result yet). Every kind
+    of failure is a CustomizationFailed event (CustomizationUnknownFailure too, whatever its name ends in)."""
+    if any(isinstance(e, vim.event.CustomizationSucceeded) for e in events):
+        return "succeeded"
+    for e in events:
+        if isinstance(e, vim.event.CustomizationFailed):
+            msg = getattr(e, "fullFormattedMessage", "") or ""
+            return "FAILED (%s%s)" % (type(e).__name__.split(".")[-1], (": " + msg) if msg else "")
+    return ""
+
+
 def _wait(task, timeout, what):
     end = time.time() + timeout
     while task.info.state not in (vim.TaskInfo.State.success, vim.TaskInfo.State.error):
@@ -449,29 +464,37 @@ def main():
                 module.fail_json(msg="%s - the new VM's name could not be checked there, so nothing was built" % e, vm=vm, notes=notes)
             sessions[n] = si
             content = si.RetrieveContent()
-            for v in _all(content, vim.VirtualMachine):
-                try:
-                    vname, is_t = v.name, bool(v.config and v.config.template)
-                except vmodl.fault.ManagedObjectNotFound:
+            # every VM's name, notes and power state in one call; a VM itself is read further only when its name matches
+            for v, pr in vm_properties(content, ["name", "config.template", "config.annotation", "runtime.powerState"]):
+                vname, is_t = str(pr.get("name") or ""), bool(pr.get("config.template"))
+                if not vname:
                     continue
-                st = read_mark(v.config.annotation, p["ticket"]) if vname == p["name"] and not is_t else ""
-                on = st and str(v.runtime.powerState) == "poweredOn"
+                same = vname.lower() == p["name"].lower()      # VM names, and the host names made of them, in any case
+                st = read_mark(pr.get("config.annotation"), p["ticket"]) if same and not is_t else ""
+                on = st and str(pr.get("runtime.powerState")) == "poweredOn"
                 if not p["resume"]:                 # off: only the ticket's own note says it was built (as before)
                     st = "built" if st and p["existing_ok"] else ""
                 if st == "failed":
                     module.fail_json(msg="a VM named %s is in vCenter %s: an earlier run of this ticket built it, and its guest "
                                          "customization failed - check it (vCenter > the VM > Monitor > Events), then delete it "
-                                         "and run the job again" % (p["name"], n), vm=vm, notes=notes)
+                                         "and run the job again" % (vname, n), vm=vm, notes=notes)
                 if st == "built" or (st == "legacy" and (p["existing_ok"] or on)):
                     module.exit_json(changed=False, vm=_existing(n, v, p["template"]),
                                      notes=["built by an earlier run for this ticket (%s): left as it is"
                                             % ("the VM's notes say so" if st == "built" else "the VM's notes name the ticket")], issues=[])
-                if st in ("building", "legacy") and p["resume"]:
+                if st == "legacy":
+                    # an older release's notes (no mark) on a VM that is off: built and later powered off, or not finished -
+                    # it cannot be told, so it is neither finished again (a built server customized again) nor taken as built
+                    module.fail_json(msg="a VM named %s is in vCenter %s, powered off: its notes name this ticket (written by an older "
+                                         "release), so whether it was finished cannot be told - nothing was done. Check it: if it is "
+                                         "built, power it on and run the job again - it is then left as it is; "
+                                         "if not, delete it and run the job again" % (vname, n), vm=vm, notes=notes)
+                if st == "building" and p["resume"]:
                     again, again_vc = v, n
                     continue
-                if vname == p["name"]:
+                if same:
                     module.fail_json(msg="a VM named %s already exists in vCenter %s (%s): nothing was built"
-                                         % (p["name"], n, "a template" if is_t else _folder_path(v.parent)), vm=vm, notes=notes)
+                                         % (vname, n, "a template" if is_t else _folder_path(v.parent)), vm=vm, notes=notes)
                 if is_t and _tnorm(vname) == _tnorm(p["template"]) and (not want_vc or n.lower() == want_vc.lower()):
                     if not p["datacenter"] or _datacenter(v).name == p["datacenter"]:
                         # only from vm_deploy_template_folders (e.g. the staging folder): a copy elsewhere is not used
@@ -791,14 +814,9 @@ def main():
             while time.time() < end:
                 evs = content.eventManager.QueryEvents(vim.event.EventFilterSpec(
                     entity=vim.event.EventFilterSpec.ByEntity(entity=new, recursion="self"))) or []
-                kinds = {type(e).__name__.split(".")[-1]: e for e in evs}
-                if "CustomizationSucceeded" in kinds:
-                    vm["customization"] = "succeeded"
-                    break
-                bad = [k for k in kinds if k.startswith("Customization") and k.endswith(("Failed", "FailedEvent"))]
-                if bad:
-                    e = kinds[bad[0]]
-                    vm["customization"] = "FAILED (%s%s)" % (bad[0], (": " + e.fullFormattedMessage) if getattr(e, "fullFormattedMessage", "") else "")
+                result = customization_result(evs)
+                if result:
+                    vm["customization"] = result
                     break
                 time.sleep(5)
             if vm["customization"].startswith("no result"):

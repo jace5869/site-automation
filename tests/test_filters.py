@@ -613,7 +613,7 @@ class Snapshots(unittest.TestCase):
         self.assertEqual([(x["vm"], x["id"]) for x in r["old"]], [("web01", 1), ("app02", 3)])
         self.assertEqual({x["vm"]: x["reason"] for x in r["held"]}, {
             "db01": "its name or description says keep", "files01": "bigger than 1.00 TB: delete it by hand, at a quiet time",
-            "DC01": "the VM is on the exclusion list", "aapvm": "the VM is the AAP server", "odd": "its size could not be read",
+            "DC01": "the VM is on the exclusion list", "aapvm": "the VM is the AAP server or a protected VM (vmware_protected_groups)", "odd": "its size could not be read",
             "app01": "its name or description says keep"})
         # without the size limit an unknown size does not hold a snapshot back
         self.assertIn("odd", [x["vm"] for x in f.vm_snapshot_split(self.S, 3, self.RX)["old"]])
@@ -631,6 +631,13 @@ class Snapshots(unittest.TestCase):
         self.assertEqual(f.vm_snapshot_split(s, 3, self.RX, ["web*"], [], 1024, ["dr-*"])["held"][0]["reason"],
                          "the VM is on the exclusion list")
         self.assertEqual(len(f.vm_snapshot_split(s, 3, self.RX, [], [], 1024)["old"]), 4)
+
+    def test_split_any_guest_ip_is_protected(self):
+        # the AAP host's inventory address is its second NIC: any guest IP of the VM matches, as a restart's guard does
+        s = [dict(self.S[7], vm="node-a", hostname="", ip="198.51.100.4", ips=["198.51.100.4", "192.0.2.11"])]
+        r = f.vm_snapshot_split(s, 3, self.RX, [], ["aap01", "192.0.2.11"], 1024)
+        self.assertEqual([x["vm"] for x in r["held"]], ["node-a"])
+        self.assertEqual(r["old"], [])
 
     def test_name_words(self):
         S = [dict(self.S[0], name="Pre-Patching 10/14"), dict(self.S[4], name="PATCHES oct"), dict(self.S[5], vm="dc02", name="patch"),
@@ -750,6 +757,14 @@ class NameLists(unittest.TestCase):
         self.assertEqual(f.name_list(None), [])
         with self.assertRaises(ValueError):
             f.name_list({"AAP01": 1})
+
+    def test_name_list_spaces_stay_in_a_name(self):
+        # a VM name may have spaces: text is split on commas and line breaks only
+        self.assertEqual(f.name_list("File Server 01, VCSA01"), ["File Server 01", "VCSA01"])
+        self.assertEqual(f.name_list("File Server 01\r\nDC*\n\n"), ["File Server 01", "DC*"])
+        self.assertEqual(f.name_list("dcs"), ["dcs"])
+        self.assertTrue(f.name_matches("file server 01", "File Server 01, VCSA01"))
+        self.assertFalse(f.name_matches("File", "File Server 01, VCSA01"))
 
     def test_name_matches_text(self):
         self.assertTrue(f.name_matches("aap01", "AAP01"))

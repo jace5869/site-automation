@@ -13,7 +13,7 @@ import os
 
 try:
     from pyVim.connect import Disconnect, SmartConnect
-    from pyVmomi import vim
+    from pyVmomi import vim, vmodl
     HAS_PYVMOMI = True
 except ImportError:
     HAS_PYVMOMI = False
@@ -95,6 +95,22 @@ def connect(name, validate_certs=True, timeout=None):
         raise RuntimeError(no_rights(name, e))
     except Exception as e:                      # noqa: BLE001
         raise RuntimeError("Could not connect to vCenter %s: %s" % (name, e))
+
+
+def vm_properties(content, paths, root=None):
+    """Some properties of every VM below root (default: the whole vCenter) in one call - a property collector over a
+    container view, not a call per VM and property -> [(vm, {path: value})]. A property vCenter does not have for a VM
+    (e.g. its config, when the VM is inaccessible) is left out of its dict."""
+    view = content.viewManager.CreateContainerView(root or content.rootFolder, [vim.VirtualMachine], True)
+    try:
+        spec = vmodl.query.PropertyCollector.FilterSpec(
+            objectSet=[vmodl.query.PropertyCollector.ObjectSpec(
+                obj=view, skip=True,
+                selectSet=[vmodl.query.PropertyCollector.TraversalSpec(name="v", path="view", skip=False, type=vim.view.ContainerView)])],
+            propSet=[vmodl.query.PropertyCollector.PropertySpec(type=vim.VirtualMachine, pathSet=list(paths))])
+        return [(o.obj, dict((x.name, x.val) for x in (o.propSet or []))) for o in content.propertyCollector.RetrieveContents([spec]) or []]
+    finally:
+        view.Destroy()
 
 
 def disconnect(si):

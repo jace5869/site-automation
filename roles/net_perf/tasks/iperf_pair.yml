@@ -1,0 +1,45 @@
+---
+# One iperf3 pair (playbooks/net_perf_report.yml loops over net_perf_iperf_pairs, one pair at a time, on the first
+# host of the play): the server started for one test (-1), as the login user (no become) and under timeout - it
+# stops by itself when no client comes; the client's test; then the server stopped, whatever the test gave. Two
+# pairs with the same server so each get their own server. -> _np_iperf_runs + [the client's result].
+- name: Throughput (iperf3) | {{ _np_pair.client }} -> {{ _np_pair.server }}
+  when: _np_pair.server in ansible_play_hosts and _np_pair.client in ansible_play_hosts and not ansible_check_mode
+  block:
+    - name: Throughput (iperf3) | {{ _np_pair.server }} - the server, for one test
+      ansible.builtin.shell:
+        cmd: >-
+          setsid timeout {{ [net_perf_iperf_seconds | int, 30] | min + 60 }} iperf3 -s -1 -p {{ net_perf_iperf_port | int }}
+          </dev/null >/dev/null 2>&1 & echo $!
+      delegate_to: "{{ _np_pair.server }}"
+      become: false
+      changed_when: false
+      failed_when: false
+      register: _np_srv
+
+    - name: Throughput (iperf3) | {{ _np_pair.client }} - the client's test
+      ansible.builtin.command:
+        argv: [iperf3, -c, "{{ hostvars[_np_pair.server].ansible_host | default(_np_pair.server) }}", -p, "{{ net_perf_iperf_port | int }}",
+               -t, "{{ [net_perf_iperf_seconds | int, 30] | min }}", -J]
+      delegate_to: "{{ _np_pair.client }}"
+      become: false
+      changed_when: false
+      failed_when: false
+      register: _np_cli
+      until: _np_cli.rc | default(0) == 0
+      retries: 2                          # the server may not be listening yet
+      delay: 2
+
+  always:
+    - name: Throughput (iperf3) | {{ _np_pair.server }} - the server stopped
+      ansible.builtin.command:              # the shell's kill: no kill binary needed
+        argv: [/bin/sh, -c, 'kill "$1"', sh, "{{ _np_srv.stdout | trim | int }}"]
+      delegate_to: "{{ _np_pair.server }}"
+      become: false
+      changed_when: false
+      failed_when: false                  # it has gone already: it answered its one test
+      when: (_np_srv.stdout | default('') | trim) is match('^[0-9]+$')
+
+- name: Throughput (iperf3) | the result of this pair
+  ansible.builtin.set_fact:
+    _np_iperf_runs: "{{ _np_iperf_runs | default([]) + [_np_cli if _np_cli is not skipped else {'skipped': true}] }}"

@@ -24,12 +24,6 @@
 ## Check vCenter's certificate. false only if the execution environment does not trust your CA yet.
 # vmware_validate_certs: true
 
-## Several vCenters (e.g. Enhanced Linked Mode), one report: the reports and the ESXi security
-## settings read the credential's vCenter AND these (names, or name:port), with the same account.
-## The same vCenter under two names is read once. docs/VMWARE.md, "Several vCenters". e.g.
-## [vc01.yoursite.mil, vc02.yoursite.mil]
-# vmware_vcenters: []
-
 ## The snapshot's name. Taking one: empty = aap-<date>-<time>. Deleting: the exact name to delete.
 # vm_snapshot_name: ""
 

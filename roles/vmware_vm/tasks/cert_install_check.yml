@@ -204,6 +204,7 @@
   ansible.builtin.set_stats:
     data:
       vmware_cert_install_plan: "{{ _vci_ready }}"
+      vmware_cert_install_plan_workflow: "{{ awx_workflow_job_id | default('') | string }}"   # the install job takes only its own workflow's plan
     per_host: false
     aggregate: false
   when: _vci_ready | length > 0

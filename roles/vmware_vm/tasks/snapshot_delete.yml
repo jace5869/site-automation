@@ -24,6 +24,8 @@
   register: _vm_snaps
   check_mode: false
 
+# By snapshot ID: a VM may have several snapshots of one name, and each of them is deleted (by name, vCenter
+# would delete only the first).
 - name: VMware | the snapshots to delete
   ansible.builtin.set_fact:
     _vm_snap_del: >-
@@ -34,6 +36,21 @@
       {%-   set _ = out.append({'vm': r.item.name, 'moid': r.item.moid, 'datacenter': r.item.datacenter, 'have': have, 'delete': del}) -%}
       {%- endfor -%}
       {{ out }}
+    _vm_snap_todo: >-
+      {%- set out = [] -%}
+      {%- for r in _vm_snaps.results -%}
+      {%-   set snaps = r.snapshots | default([]) -%}
+      {%-   if vm_snapshot_delete_all | bool and snaps -%}
+      {%-     set _ = out.append({'vm': r.item.name, 'moid': r.item.moid, 'datacenter': r.item.datacenter, 'all': true,
+                                  'what': snaps | map(attribute='name') | join(', ')}) -%}
+      {%-   elif not vm_snapshot_delete_all | bool -%}
+      {%-     for x in snaps | selectattr('name', 'equalto', vm_snapshot_name | trim) -%}
+      {%-       set _ = out.append({'vm': r.item.name, 'moid': r.item.moid, 'datacenter': r.item.datacenter, 'all': false,
+                                    'id': x.id, 'what': x.name ~ ' (ID ' ~ x.id ~ ')'}) -%}
+      {%-     endfor -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}
 
 - name: VMware | delete {{ 'every snapshot' if vm_snapshot_delete_all | bool else 'snapshot ' ~ vm_snapshot_name | trim }}
   vmware.vmware.vm_snapshot:
@@ -41,11 +58,11 @@
     datacenter: "{{ item.datacenter }}"
     validate_certs: "{{ vmware_validate_certs | bool }}"
     state: absent
-    snapshot_name: "{{ omit if vm_snapshot_delete_all | bool else vm_snapshot_name | trim }}"
-    remove_all: "{{ vm_snapshot_delete_all | bool }}"
-  loop: "{{ _vm_snap_del | selectattr('delete') | list }}"
+    snapshot_id: "{{ omit if item.all else item.id | int }}"
+    remove_all: "{{ item.all }}"
+  loop: "{{ _vm_snap_todo }}"
   loop_control:
-    label: "{{ item.vm }}: {{ item.delete | join(', ') }}"
+    label: "{{ item.vm }}: {{ item.what }}"
 
 - name: VMware | done
   ansible.builtin.include_tasks: report.yml

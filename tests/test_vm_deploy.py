@@ -1806,5 +1806,185 @@ class AapInventory(unittest.TestCase):
         self.assertEqual((r[1]["host"], r[1]["in_group"], r[1]["ok"]), ("added", "joined", True))
 
 
+try:
+    from pyVmomi import vim as _vim
+except ImportError:                             # the tests below need pyVmomi (CI has it)
+    _vim = None
+
+
+class _NS(object):
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+if _vim is not None:
+    class _View(_vim.view.ContainerView):
+        """A container view of the objects given: no vCenter behind it."""
+
+        def __init__(self, objs):
+            _vim.view.ContainerView.__init__(self, "session[1]view-1")
+            self._objs = list(objs)
+        view = property(lambda s: s._objs)
+
+        def Destroy(self):
+            pass
+
+
+class _VM(object):
+    """A VM or template as pyVmomi shows it; every read of its name, config or runtime counted (a call to vCenter each)."""
+
+    def __init__(self, name, template=False, annotation="", power="poweredOff", parent=None):
+        self.reads = 0
+        self._name, self._parent = name, parent
+        self._config = _NS(template=template, annotation=annotation, guestId="rhel9_64Guest", guestFullName="Red Hat Enterprise Linux 9",
+                           firmware="efi", hardware=_NS(device=[], numCPU=2, memoryMB=4096))
+        self._runtime = _NS(powerState=power, host=None)
+        self.datastore, self.network, self.guest = [], [], None
+
+    def _get(self, k):
+        self.reads += 1
+        return getattr(self, "_" + k)
+    name = property(lambda s: s._get("name"))
+    config = property(lambda s: s._get("config"))
+    runtime = property(lambda s: s._get("runtime"))
+    parent = property(lambda s: s._get("parent"))
+
+
+class _Content(object):
+    """A vCenter's content: container views of its VMs (and datacenters), a property collector that counts its calls."""
+
+    def __init__(self, vms, dcs=()):
+        self.vms, self.dcs, self.collected = list(vms), list(dcs), 0
+        self.rootFolder = _NS(name="Datacenters")
+        self.customizationSpecManager = None
+        self.viewManager = _NS(CreateContainerView=self._view)
+        self.propertyCollector = _NS(RetrieveContents=self._retrieve)
+
+    def _view(self, root, kinds, recursive):
+        return _View(self.vms if kinds[0] is _vim.VirtualMachine else self.dcs if kinds[0] is _vim.Datacenter else [])
+
+    def _retrieve(self, specs):
+        self.collected += 1
+        out = []
+        for v in specs[0].objectSet[0].obj.view:
+            props = []
+            for path in specs[0].propSet[0].pathSet:
+                parts = path.split(".")
+                x = getattr(v, "_" + parts[0])      # the collector's own read: not a call per VM
+                for part in parts[1:]:
+                    x = getattr(x, part, None) if x is not None else None
+                if x is not None:
+                    props.append(_NS(name=path, val=x))
+            out.append(_NS(obj=v, propSet=props))
+        return out
+
+
+class _Done(BaseException):
+    """exit_json / fail_json: the module's result (BaseException, as SystemExit: the module's own except never takes it)."""
+
+
+class _Module(object):
+    args, check_mode = {}, False
+
+    def __init__(self, argument_spec, supports_check_mode=False):
+        self.params = dict((k, v.get("default")) for k, v in argument_spec.items())
+        self.params.update(_Module.args)
+
+    def exit_json(self, **kw):
+        raise _Done(dict(kw, failed=False))
+
+    def fail_json(self, **kw):
+        raise _Done(dict(kw, failed=True))
+
+
+@unittest.skipIf(_vim is None, "needs pyVmomi")
+class DeployExisting(unittest.TestCase):
+    """site_vmware_deploy's first step against fake vCenters: the new VM's name is free in every vCenter (in any case), a
+    VM of this ticket is found by its mark (in any case), an older release's VM is never finished again, and every VM is
+    read in one property-collector call per vCenter, not one call per VM and property."""
+
+    def setUp(self):
+        self._saved = (m.AnsibleModule, m.connect, m.disconnect, os.environ.get("VMWARE_HOST"))
+        m.AnsibleModule, m.disconnect = _Module, (lambda si: None)
+        os.environ["VMWARE_HOST"] = "vc01.example.mil"
+
+    def tearDown(self):
+        m.AnsibleModule, m.connect, m.disconnect, host = self._saved
+        if host is None:
+            os.environ.pop("VMWARE_HOST", None)
+        else:
+            os.environ["VMWARE_HOST"] = host
+
+    def run_deploy(self, vcenters, **args):
+        m.connect = lambda name, validate_certs=True: _NS(RetrieveContent=lambda: vcenters[name])
+        _Module.args = dict({"name": "app01", "template": "rhel9-gold", "ticket": "INC0010001",
+                             "vcenters": [n for n in vcenters if n != "vc01.example.mil"]}, **args)
+        with self.assertRaises(_Done) as cm:
+            m.main()
+        return cm.exception.args[0]
+
+    def test_name_taken_in_another_case_is_refused(self):
+        tpl, other = _VM("rhel9-gold", template=True), _VM("APP01")
+        r = self.run_deploy({"vc01.example.mil": _Content([tpl]), "vc02.example.mil": _Content([other])})
+        self.assertTrue(r["failed"])
+        self.assertIn("a VM named APP01 already exists in vCenter vc02.example.mil", r["msg"])
+
+    def test_the_tickets_vm_found_by_its_mark_in_another_case(self):
+        built = _VM("APP01", annotation="INC0010001 - built 2026-10-20\nTemplate: rhel9-gold", power="poweredOn")
+        r = self.run_deploy({"vc01.example.mil": _Content([_VM("rhel9-gold", template=True), built])})
+        self.assertFalse(r["failed"], r.get("msg"))
+        self.assertEqual((r["changed"], r["vm"]["name"], r["vm"]["existing"]), (False, "APP01", True))
+
+    def test_an_older_releases_vm_powered_off_is_refused_not_finished_again(self):
+        legacy = "Deployed from rhel9-gold for INC0010001 by svc_aap"
+        r = self.run_deploy({"vc01.example.mil": _Content([_VM("rhel9-gold", template=True), _VM("app01", annotation=legacy)])})
+        self.assertTrue(r["failed"])
+        self.assertIn("a VM named app01 is in vCenter vc01.example.mil, powered off: its notes name this ticket", r["msg"])
+        self.assertNotIn("created", r["msg"])
+        # powered on, or the ticket's own note says it was built: left as it is (as before)
+        r = self.run_deploy({"vc01.example.mil": _Content([_VM("rhel9-gold", template=True),
+                                                           _VM("app01", annotation=legacy, power="poweredOn")])})
+        self.assertEqual((r["failed"], r["changed"], r["vm"]["existing"]), (False, False, True))
+        r = self.run_deploy({"vc01.example.mil": _Content([_VM("rhel9-gold", template=True), _VM("app01", annotation=legacy)])},
+                            existing_ok=True)
+        self.assertEqual((r["failed"], r["vm"]["existing"]), (False, True))
+
+    def test_one_collector_call_per_vcenter_and_no_call_per_vm(self):
+        others = [_VM("vm%03d" % i, annotation="INC0010001 - built 2026-10-20") for i in range(200)]
+        vc1, vc2 = _Content([_VM("rhel9-gold", template=True)] + others[:100]), _Content(others[100:] + [_VM("app01")])
+        r = self.run_deploy({"vc01.example.mil": vc1, "vc02.example.mil": vc2})
+        self.assertIn("a VM named app01 already exists in vCenter vc02.example.mil", r["msg"])
+        self.assertEqual((vc1.collected, vc2.collected), (1, 1))
+        self.assertEqual(sum(v.reads for v in others), 0, "a VM whose name does not match is never read on its own")
+
+    def test_customization_failed_of_any_kind(self):
+        ev = _vim.event
+        self.assertEqual(m.customization_result([ev.CustomizationUnknownFailure(fullFormattedMessage="the guest stopped")]),
+                         "FAILED (CustomizationUnknownFailure: the guest stopped)")
+        self.assertEqual(m.customization_result([ev.CustomizationLinuxIdentityFailed()]), "FAILED (CustomizationLinuxIdentityFailed)")
+        self.assertEqual(m.customization_result([ev.CustomizationStartedEvent(), ev.CustomizationSucceeded()]), "succeeded")
+        self.assertEqual(m.customization_result([ev.CustomizationStartedEvent()]), "")
+
+
+@unittest.skipIf(_vim is None, "needs pyVmomi")
+class DeployInventoryTemplates(unittest.TestCase):
+    """site_vmware_deploy_inventory: which VMs are templates is read in one call; only the templates are read further."""
+
+    def test_templates_in_one_call(self):
+        import site_vmware_deploy_inventory as di
+        vmf = _NS(name="vm", childEntity=[])
+        dc = _NS(name="DC1", vmFolder=vmf, hostFolder=_NS(), datastoreFolder=_NS())
+        vmf.parent = dc
+        tpl = _VM("rhel9-gold", template=True, parent=vmf)
+        others = [_VM("vm%03d" % i, parent=vmf) for i in range(50)]
+        content = _Content([tpl] + others, [dc])
+        r = di._read(content, {"datacenter": None}, "vc01.example.mil")
+        t = r["datacenters"][0]["templates"]
+        self.assertEqual([(x["name"], x["cpu"], x["memory_gb"], x["guest"], x["firmware"]) for x in t],
+                         [("rhel9-gold", 2, 4.0, "Red Hat Enterprise Linux 9", "efi")])
+        self.assertEqual(content.collected, 1)
+        self.assertEqual(sum(v.reads for v in others), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

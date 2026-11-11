@@ -1,0 +1,93 @@
+---
+# NETWORK CONFIG LOAD, before the change, on localhost (net_config_keep_before; not in a dry run): each device's
+# running configuration (load_before.yml) kept where the backup keeps them (net_config_store), under one name -
+# _ncl_keep_ref, <time>-before-<change> - so it can be restored: net_config_load_mode: restore with
+# net_config_restore_ref: <that name> (git: a tag on the commit; share: a dated copy). A device whose copy was
+# not kept gets nothing sent (load_one.yml).
+# -> _ncl_kept {host: true}, _ncl_keep_why {host: why}, _ncl_keep_ref, _ncl_keep_where, _ncl_keep_store.
+# where they go, as a refusal names it (a login in the repository's URL left out)
+- name: Network config | where the configurations before the change go
+  ansible.builtin.set_fact:
+    _ncl_keep_store: >-
+      {{ ((['the git repository ' ~ (net_config_git_repo | default('', true) | regex_replace('//[^/@]*@', '//') or '(net_config_git_repo is empty)')]
+           if net_config_store in ['git', 'both'] else [])
+          + (['the share ' ~ net_config_share_dir ~ ' on ' ~ (net_config_share_host | default('', true) or 'the AAP node')]
+             if net_config_store in ['share', 'both'] else [])) | join(' and ') or ('net_config_store ' ~ net_config_store) }}
+  when: net_config_keep_before | bool and not ansible_check_mode
+
+- name: Network config | the configurations before the change
+  when: net_config_keep_before | bool and not ansible_check_mode
+  block:
+    - name: Network config | what each device gave, and the name they are kept under
+      ansible.builtin.set_fact:
+        _ncf_all: >-
+          {%- set out = [] -%}
+          {%- for h in _ncl_hosts -%}
+          {%-   set _ = out.append(hostvars[h]._ncf_got | default({'host': h, 'platform': hostvars[h]._ncf_platform | default(''), 'ok': false, 'text': '',
+                                    'error': 'no result: the device could not be reached or logged in to (see its tasks above), or the job stopped first'})) -%}
+          {%- endfor -%}
+          {{ out }}
+        _ncl_keep_ref: >-
+          {{ now(utc=true).strftime('%Y%m%dT%H%M%SZ') ~ '-before-'
+             ~ ((_ncl_change.number | default('', true) or ('job' ~ awx_job_id | default('local'))) | regex_replace('[^A-Za-z0-9_.-]', '_')) }}
+      no_log: true
+
+    - name: Network config | net_config_store is git, share or both
+      ansible.builtin.assert:
+        that: net_config_store in ['git', 'share', 'both']
+        fail_msg: "net_config_store is git, share or both - not '{{ net_config_store }}'."
+        quiet: true
+
+    - name: Network config | kept in git
+      ansible.builtin.include_tasks: store_git.yml
+      vars:
+        _ncg_keep_ref: "{{ _ncl_keep_ref }}"
+      when: net_config_store in ['git', 'both']
+
+    - name: Network config | kept on the share
+      ansible.builtin.include_tasks: store_share.yml
+      vars:
+        _ncs_keep_ref: "{{ _ncl_keep_ref }}"
+      when: net_config_store in ['share', 'both']
+
+    - name: Network config | which devices' copies were kept
+      ansible.builtin.set_fact:
+        _ncl_keep_res: >-
+          {{ _ncg_res | net_config_merge_results(_ncs_res) if net_config_store == 'both'
+             else (_ncg_res if net_config_store == 'git' else _ncs_res) }}
+      no_log: true
+
+    - name: Network config | kept
+      ansible.builtin.set_fact:
+        _ncl_kept: >-
+          {%- set out = {} -%}
+          {%- for d in _ncl_keep_res.devices if d.status != 'failed' -%}
+          {%-   set _ = out.update({d.host: true}) -%}
+          {%- endfor -%}
+          {{ out }}
+        _ncl_keep_why: >-
+          {%- set out = {} -%}
+          {%- for d in _ncl_keep_res.devices if d.status == 'failed' -%}
+          {%-   set _ = out.update({d.host: d.error | default('?')}) -%}
+          {%- endfor -%}
+          {{ out }}
+        _ncl_keep_where: >-
+          {{ ((['git ' ~ net_config_git_repo ~ ': ' ~ (('tag ' ~ _ncg_tag) if _ncg_tag | default('') else ('branch ' ~ net_config_git_branch
+               ~ ((', commit ' ~ _ncg_commit) if _ncg_commit | default('') else '') ~ ' (the tag could not be pushed)'))])
+              if net_config_store in ['git', 'both'] else [])
+             + (['share ' ~ (_ncs_where | default('')) ~ ': <device>-' ~ _ncl_keep_ref ~ '.cfg / .xml'] if net_config_store in ['share', 'both'] else []) }}
+  rescue:
+    - name: Network config | the configurations before the change could not be kept
+      ansible.builtin.set_fact:
+        _ncl_kept: {}
+        _ncl_keep_why: {}
+        _ncl_keep_error: "{{ ansible_failed_result.msg | default('?') | string | regex_replace('\\s+', ' ') | truncate(300) }}"
+        _ncl_keep_where: []
+
+- name: Network config | before the change - kept as {{ _ncl_keep_ref | default('') }}
+  ansible.builtin.debug:
+    msg: >-
+      {{ ('Not kept - nothing is sent: ' ~ _ncl_keep_error) if _ncl_keep_error | default('') else
+         ((_ncl_kept | length) ~ ' of ' ~ (_ncl_hosts | length) ~ ' kept - ' ~ (_ncl_keep_where | join(' ; '))
+          ~ ((' - not kept, nothing is sent to: ' ~ (_ncl_keep_why.keys() | join(', '))) if _ncl_keep_why else '')) }}
+  when: net_config_keep_before | bool and not ansible_check_mode

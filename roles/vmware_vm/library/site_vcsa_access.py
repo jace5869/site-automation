@@ -219,7 +219,8 @@ def main():
             out.append(appliance(Api(host, port, p["validate_certs"], p["timeout"]), name, want, p["shell_timeout"], module.check_mode))
         except Exception as e:                  # noqa: BLE001 - one vCenter's error never stops the others
             out.append({"name": name, "status": "failed", "before": {}, "changes": [], "errors": [str(e)]})
-    module.exit_json(changed=any(a["status"] == "changed" for a in out) and not module.check_mode, appliances=out)
+    # changed: anything set (or, in check mode, to set) on any appliance - one that also had an error included
+    module.exit_json(changed=any(a["changes"] for a in out), appliances=out)
 
 
 if __name__ == "__main__":

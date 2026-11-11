@@ -1002,12 +1002,13 @@ def human_size(gb):
 
 
 def name_list(value):
-    """A list of names as a setting may give it: a list as it is, or text - separated by commas, spaces or line
-    breaks ("AAP01, VCSA01" or "AAP01" alone). Never the letters of one name."""
+    """A list of names as a setting may give it: a list as it is, or text - separated by commas or line breaks
+    ("AAP01, VCSA01", one per line, or "AAP01" alone). Not by spaces: "File Server 01" is one name. Never the
+    letters of one name."""
     if value is None:
         return []
     if isinstance(value, str):
-        return [w for w in re.split(r"[\s,]+", value) if w]
+        return [w.strip() for w in re.split(r"[,\r\n]+", value) if w.strip()]
     if isinstance(value, dict):
         raise ValueError("a list of names, not a mapping: %r" % (value,))
     return [str(w).strip() for w in value if str(w).strip()]
@@ -1034,7 +1035,8 @@ def vm_snapshot_split(snaps, max_age_days, keep_regex="", exclude=None, protecte
     deletable, 'held': old but never deleted automatically, each with a 'reason'}. Held back: the name
     or description matches keep_regex; the VM matches an exclude pattern; its datacenter or cluster
     matches one of exclude_datacenters / exclude_clusters; the VM is a protected host (its name, guest
-    host name or IP in protected_ids - the AAP server); name_words given and the name contains none of
+    host name or one of its IP addresses in protected_ids - the AAP server and the hosts of
+    vmware_protected_groups, as protected.yml lists them); name_words given and the name contains none of
     them (any case: Patch also matches Patching); bigger than max_size_gb, or its size unknown."""
     rx = re.compile(keep_regex) if keep_regex else None
     prot = set(protected_ids or [])
@@ -1046,7 +1048,8 @@ def vm_snapshot_split(snaps, max_age_days, keep_regex="", exclude=None, protecte
         if (age or 0) < float(max_age_days):
             continue
         size = x.get("size_gb")
-        ids = {_id(x.get("vm")), _id(x.get("hostname")), _id(x.get("ip"))} - {""}
+        ids = {_id(x.get("vm")), _id(x.get("hostname"))} | {_id(i) for i in [x.get("ip")] + list(x.get("ips") or [])}
+        ids -= {""}
         if rx and (rx.search(x.get("name") or "") or rx.search(x.get("description") or "")):
             why = "its name or description says keep"
         elif name_matches(x.get("vm"), exclude):
@@ -1056,7 +1059,7 @@ def vm_snapshot_split(snaps, max_age_days, keep_regex="", exclude=None, protecte
         elif x.get("cluster") and name_matches(x.get("cluster"), exclude_clusters):
             why = "its cluster %s is on the exclusion list" % x.get("cluster")
         elif ids & prot:
-            why = "the VM is the AAP server"
+            why = "the VM is the AAP server or a protected VM (vmware_protected_groups)"
         elif words and not any(w.lower() in (x.get("name") or "").lower() for w in words):
             why = "its name has none of: %s" % ", ".join(words)
         elif max_size_gb is not None and size is None:

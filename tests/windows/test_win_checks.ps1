@@ -19,6 +19,8 @@ $cases = @(
     @('time', 'time_cmos', @{ 'time:source' = 'critical' }),
     @('time', 'time_offset', @{ 'time:last-sync' = 'warning'; 'time:offset' = 'critical' }),
     @('time', 'time_stopped', @{ 'time:service' = 'critical' }),
+    @('time', 'time_localized', @{}),
+    @('time', 'time_localized_cmos', @{ 'time:source' = 'critical' }),
     @('network', 'network', @{ 'network:gateway' = 'warning'; 'network:dns:bad.test' = 'critical'; 'network:secure-channel' = 'critical'; 'network:tcp:127.0.0.1:1' = 'critical' }),
     @('network', 'network_ok', @{}),
     @('eventlog', 'eventlog', @{ 'eventlog:unexpected-shutdown' = 'critical'; 'eventlog:disk-errors' = 'critical'; 'eventlog:security-log-cleared' = 'critical'; 'eventlog:errors' = 'warning'; 'eventlog:full:Security' = 'critical' }),
@@ -29,10 +31,13 @@ $cases = @(
     @('accounts', 'accounts', @{ 'accounts:guest' = 'critical'; 'accounts:password-age:Administrator' = 'warning'; 'accounts:inactive:svc_old' = 'warning'; 'accounts:admin:CORP\jdoe' = 'warning' }),
     @('accounts', 'accounts_dc', @{}),
     @('certs', 'certs', @{ ('certs:' + ('A' * 40)) = 'critical'; ('certs:' + ('B' * 40)) = 'critical'; ('certs:' + ('C' * 40)) = 'warning' }),
+    @('certs', 'certs_localized', @{ ('certs:' + ('A' * 40)) = 'critical'; ('certs:' + ('B' * 40)) = 'critical'; ('certs:' + ('C' * 40)) = 'warning' }),
     @('certs', 'certs_trust', @{ ('certs:' + ('G' * 40)) = 'warning'; ('certs:' + ('ABCD' * 10)) = 'critical' }),
     @('trust', 'trust', @{ 'trust:system' = 'critical'; ('trust:java:' + (Join-Path $fsTrust 'java\lib\security\cacerts')) = 'warning'; 'trust:python' = 'warning' }),
     @('trust', 'trust_remove_dry', @{ 'trust:system' = 'critical'; ('trust:java:' + (Join-Path $fsTrust 'java\lib\security\cacerts')) = 'warning'; 'trust:python' = 'warning' }),
     @('trust', 'trust_remove', @{ 'trust:python' = 'warning' }),
+    @('trust', 'trust_remove_wrongpw', @{ ('trust:java:' + (Join-Path $fsTrust 'java\lib\security\cacerts')) = 'warning'; 'trust:python' = 'warning' }),
+    @('trust', 'trust_remove_partial', @{ ('trust:java:' + (Join-Path $fsTrust 'java\lib\security\cacerts')) = 'warning'; 'trust:python' = 'warning' }),
     @('patching', 'patching', @{ 'patching:reboot' = 'warning'; 'patching:age' = 'critical' }),
     @('patching', 'patching_ok', @{})
 )
@@ -125,6 +130,16 @@ foreach ($clm in @($false, $true)) {
     $label = 'certs/certs_meta inventory fields' + $(if ($clm) { ' (constrained)' } else { '' })
     if ($bad.Count) { $fail++; Write-Host "FAIL - $label : $($bad -join '; ')" } else { Write-Host "ok   - $label" }
 }
+# netsh in another language: the https binding is still found (its certificate is "used by https 0.0.0.0:443")
+foreach ($clm in @($false, $true)) {
+    $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $runner, '-Script', (Script 'certs'), '-Scenario', 'certs_localized')
+    if ($clm) { $a += '-Clm' }
+    $out = @(& $shell @a 2>&1 | ForEach-Object { [string]$_ })
+    $count++
+    $label = 'certs/certs_localized: the binding read without its labels' + $(if ($clm) { ' (constrained)' } else { '' })
+    if (($out -join "`n") -match 'used by https 0\.0\.0\.0:443' -and ($out -join "`n") -notmatch 'used by https 0\.0\.0\.0:8443') { Write-Host "ok   - $label" }
+    else { $fail++; Write-Host "FAIL - $label"; $out | Select-Object -Last 3 | ForEach-Object { Write-Host "       $_" } }
+}
 # Remote Desktop: left out of the report (and so of the renewal) unless remote_desktop is on
 $rdpWant = @{
     certs_rdp    = @{ 'CN=web01.corp.test' = 'LocalMachine\My'; 'CN=bound.corp.test' = 'LocalMachine\My, used by https 0.0.0.0:443' }
@@ -191,6 +206,24 @@ foreach ($scen in 'csr', 'csr_check') {
         if ($bad.Count) { $fail++; Write-Host "FAIL - $label : $($bad -join '; ')" } else { Write-Host "ok   - $label" }
     }
 }
+# The renewal folder made by another account: no CSR is made, and the earlier one there is not read
+foreach ($clm in @($false, $true)) {
+    $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $runner, '-Script', (Join-Path $root 'roles/win_check_certs/files/win_cert_csr.ps1'), '-Scenario', 'csr_open_dir')
+    if ($clm) { $a += '-Clm' }
+    $out = @(& $shell @a 2>&1 | ForEach-Object { [string]$_ })
+    $count++
+    $label = 'certs/csr_open_dir' + $(if ($clm) { ' (constrained)' } else { '' })
+    $line = @($out | Where-Object { $_ -like '###SITE-JSON### *' }) | Select-Object -Last 1
+    $bad = @()
+    if (-not $line) { $bad += 'no result line' }
+    else {
+        foreach ($c in @((ConvertFrom-Json -InputObject $line.Substring(16)).facts.certs)) {
+            if (@('CN=pend.corp.test', 'CN=ec.corp.test', 'CN=big.corp.test') -contains [string]$c.subject -and ([string]$c.status -ne 'failed' -or [string]$c.reason -notmatch 'can be changed by others than SYSTEM')) { $bad += "$($c.subject) is '$($c.status)' ($($c.reason))" }
+        }
+        if (@($out | Where-Object { $_ -like '###INF### *' }).Count) { $bad += 'a request was made' }
+    }
+    if ($bad.Count) { $fail++; Write-Host "FAIL - $label : $($bad -join '; ')" } else { Write-Host "ok   - $label" }
+}
 # The install (win_cert_install.ps1): scenario -> what the result must be, what the stand-ins must hold after
 $old = 'A1' * 20; $new = 'B2' * 20
 $installCases = @(
@@ -206,6 +239,14 @@ $installCases = @(
     @('install_rollback', 'installed', 'rolled back', 'hostnameport=www.corp.test:443'),
     @('install_changed', 'installed', 'refused', 'changed since the approval'),
     @('install_accept_fails', 'installed', 'failed', 'certreq -accept -machine did not put it in Personal'),
+    @('install_webhosting', 'installed', 'installed', ''),
+    @('install_clientcert', 'installed', 'installed', ''),
+    @('install_plan_http2', 'plan', 'by hand', 'Disable HTTP2: Set'),
+    @('install_plan_localized', 'plan', 'by hand', 'another language'),
+    @('install_undo_fails', 'installed', 'failed', 'rollback FAILED'),
+    @('install_plan_open_dir', 'plan', 'held', 'can be changed by others than SYSTEM and the Administrators'),
+    @('install_open_dir', 'installed', 'refused', 'can be changed by others than SYSTEM and the Administrators'),
+    @('restore_webhosting', 'restored', 'restored', ''),
     @('restore', 'restored', 'restored', ''),
     @('restore_check', 'restored', 'would restore', ''))
 foreach ($clm in @($false, $true)) {
@@ -226,6 +267,8 @@ foreach ($clm in @($false, $true)) {
         $moved = ($ssl -eq "ipport=0.0.0.0:443=$new hostnameport=www.corp.test:443=$new ipport=0.0.0.0:8443=$('F6' * 20)") -and $state.rdp -eq $new -and $state.winrm -eq $new
         $kept = ($ssl -eq "ipport=0.0.0.0:443=$old hostnameport=www.corp.test:443=$old ipport=0.0.0.0:8443=$('F6' * 20)") -and $state.rdp -eq $old -and $state.winrm -eq $old
         $tree = @($state.tree) -join ' '
+        $stores = (@($state.stores) -join ' ')
+        $settings = (@($state.settings) -join ' | ')
         if ($what -eq 'pending') {
             $p = @($facts.pending)
             if ($p.Count -ne 1 -or $p[0].stem -notmatch '^web01\.corp\.test-[0-9a-f]{8}$' -or $p[0].csr -notmatch '^-----BEGIN CERTIFICATE REQUEST-----\nWEB01') { $bad += "pending: $(ConvertTo-Json -Compress $p)" }
@@ -261,6 +304,24 @@ foreach ($clm in @($false, $true)) {
                 if ($tree -notmatch "/renew/$old\.json") { $bad += "the renewal does not wait again: $tree" }
             }
             'restore_check' { if (-not $moved) { $bad += 'a dry run changed something' } }
+            'install_webhosting' {
+                # the https bindings took the old one from Web Hosting: the new one is bound from Personal, where it is
+                if (-not $moved) { $bad += "the bindings did not move: $ssl" }
+                if ($stores -notmatch 'ipport=0\.0\.0\.0:443=My' -or $stores -notmatch 'hostnameport=www\.corp\.test:443=My') { $bad += "stores: $stores" }
+            }
+            'install_clientcert' {
+                if (-not $moved) { $bad += "the bindings did not move: $ssl" }
+                if ($settings -ne 'ipport=0.0.0.0:443 sslctlstorename=ClientAuthIssuer | ipport=0.0.0.0:443 clientcertnegotiation=Enabled') { $bad += "the binding's settings: $settings" }
+            }
+            'install_undo_fails' { if (@($state.netsh | Where-Object { $_ -match "certhash=$old" }).Count -lt 1) { $bad += 'no rollback was tried' } }
+            'install_open_dir' {
+                if (-not $kept) { $bad += "changed: $ssl rdp $($state.rdp) winrm $($state.winrm)" }
+                if ($state.accepted -or @($state.netsh).Count) { $bad += 'something was changed' }
+            }
+            'restore_webhosting' {
+                if ($ssl -notmatch "ipport=0\.0\.0\.0:443=$old" -or $ssl -notmatch "hostnameport=www\.corp\.test:443=$old") { $bad += "not restored: $ssl" }
+                if ($stores -notmatch 'ipport=0\.0\.0\.0:443=WebHosting') { $bad += "stores: $stores" }
+            }
         }
         if ($bad.Count) { $fail++; Write-Host "FAIL - $label : $($bad -join '; ')" } else { Write-Host "ok   - $label" }
     }
@@ -279,6 +340,46 @@ $parts = @($withCommon | ForEach-Object { [regex]::Match((Get-Content -LiteralPa
 $count++
 if ($withCommon.Count -ge 12 -and $parts.Count -eq 1) { Write-Host "ok   - the common part is identical in all $($withCommon.Count) checks" }
 else { $fail++; Write-Host "FAIL - the common part differs between the checks ($($parts.Count) versions in $($withCommon.Count) files)" }
+# The permission check (who besides SYSTEM and the Administrators can change a folder: the STIG scan's script and
+# folder, the renewal folder) is the same in each script that has it, and reads SDDL right - normal and constrained
+$withAcl = @(Get-ChildItem -Path (Join-Path $root 'roles') -Recurse -Filter '*.ps1' | Where-Object {
+        (Get-Content -LiteralPath $_.FullName -Raw) -match '# ---- who besides SYSTEM and the Administrators can change' })
+$aclParts = @($withAcl | ForEach-Object { [regex]::Match((Get-Content -LiteralPath $_.FullName -Raw),
+            '(?s)# ---- who besides SYSTEM and the Administrators can change.*?# ---- end of the permission check ----').Value } | Sort-Object -Unique)
+$count++
+if ($withAcl.Count -ge 3 -and $aclParts.Count -eq 1) { Write-Host "ok   - the permission check is identical in all $($withAcl.Count) scripts" }
+else { $fail++; Write-Host "FAIL - the permission check differs between the scripts ($($aclParts.Count) versions in $($withAcl.Count) files)" }
+$ti = 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'
+$probe = Join-Path ([System.IO.Path]::GetTempPath()) ('sddl-' + [guid]::NewGuid().ToString('N') + '.ps1')
+Set-Content -LiteralPath $probe -Encoding UTF8 -Value (@('function Invoke-Native { }', $aclParts[0], @"
+`$cases = @(
+    @('O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)', `$RIGHTS_WRITE, @(), ''),
+    @('O:S-1-5-21-1-2-3-1001G:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)', `$RIGHTS_WRITE, @(), 'owner S-1-5-21-1-2-3-1001'),
+    @('O:BAG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;OICIID;0x1301bf;;;AU)', `$RIGHTS_WRITE, @(), 'AU (0x1301bf)'),
+    @('O:BAG:SYD:PAI(A;OICIIO;GA;;;CO)(A;OICIIO;GW;;;BU)(A;OICI;FA;;;BA)', `$RIGHTS_WRITE, @(), ''),
+    @('O:BAG:SYD:NO_ACCESS_CONTROL', `$RIGHTS_WRITE, @(), 'it has no access list: everyone can change it'),
+    @('O:${ti}G:SYD:PAI(A;OICIIO;GA;;;CO)(A;;FA;;;BA)(A;OICI;0x1200a9;;;BU)(A;CIIO;DC;;;BU)(A;;LC;;;BU)', `$RIGHTS_SWAP, @(), ''),
+    @('O:${ti}G:SYD:PAI(A;;LC;;;BU)', `$RIGHTS_WRITE, @(), 'BU (LC)'),
+    @('O:BAG:SYD:PAI(D;OICI;FA;;;WD)(A;OICI;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;S-1-5-21-9)', `$RIGHTS_WRITE, @(), 'S-1-5-21-9 (CCDCLCSWRPWPDTLOCRSDRCWDWO)'),
+    @('O:BAG:SYD:PAI(A;OICI;ZZ;;;BU)', `$RIGHTS_SWAP, @(), 'BU (ZZ)'),
+    @('O:BAG:SYD:AI(A;CIID;DCLCRPCR;;;BU)(A;OICIID;FA;;;BA)', `$RIGHTS_SWAP, @(), ''),
+    @('O:S-1-5-21-7G:SYD:AI(A;OICI;FA;;;S-1-5-21-7)', `$RIGHTS_WRITE, @('S-1-5-21-7'), ''))
+`$bad = @()
+foreach (`$c in `$cases) { `$g = Get-SddlOthers `$c[0] `$c[1] `$c[2]; if (`$g -ne `$c[3]) { `$bad += (`$c[0] + ' -> ' + `$g) } }
+'###SDDL### ' + `$ExecutionContext.SessionState.LanguageMode + ' ' + `$cases.Count + ' ' + (`$bad -join ' | ')
+"@) -join "`n")
+$clmProbe = Join-Path ([System.IO.Path]::GetTempPath()) ('sddl-clm-' + [guid]::NewGuid().ToString('N') + '.ps1')
+Set-Content -LiteralPath $clmProbe -Value "param([string] `$S)`n`$ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage'`n& `$S"
+foreach ($clm in @($false, $true)) {
+    if ($clm) { $out = @(& $shell -NoProfile -ExecutionPolicy Bypass -File $clmProbe -S $probe 2>&1 | ForEach-Object { [string]$_ }) }
+    else { $out = @(& $shell -NoProfile -ExecutionPolicy Bypass -File $probe 2>&1 | ForEach-Object { [string]$_ }) }
+    $count++
+    $line = [string](@($out | Where-Object { $_ -like '###SDDL### *' }) | Select-Object -Last 1)
+    $mode = $(if ($clm) { 'ConstrainedLanguage' } else { 'FullLanguage' })
+    if ($line.TrimEnd() -eq "###SDDL### $mode 11") { Write-Host "ok   - the permission check reads SDDL: owners, allow entries, inherit-only, no access list ($mode)" }
+    else { $fail++; Write-Host "FAIL - the permission check ($mode): $line"; $out | Select-Object -Last 5 | ForEach-Object { Write-Host "       $_" } }
+}
+Remove-Item -LiteralPath $probe, $clmProbe -Force
 $fn = [regex]::Match($parts[0], '(?ms)^function Invoke-Native.*?^\}').Value
 $probe = Join-Path ([System.IO.Path]::GetTempPath()) ('invoke-native-' + [guid]::NewGuid().ToString('N') + '.ps1')
 Set-Content -LiteralPath $probe -Encoding UTF8 -Value (@('param([string] $Shell)', "`$ErrorActionPreference = 'Stop'", $fn, @'

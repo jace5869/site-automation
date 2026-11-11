@@ -43,6 +43,11 @@
 ## the ESXi host, as vCenter names it (a survey question on the workflow)
 # horizon_maint_host: ""
 
+## The end job brings back only the desktops the start job put in maintenance mode (handed on in the
+## workflow). true = without that list, every desktop in maintenance mode on the host - also one put
+## there for another reason (as before 1.22.0).
+# horizon_maint_end_all: false
+
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no
 ## email. Set it on each TEMPLATE (its Variables, or a survey): in all.yml every report job emails.

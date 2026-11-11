@@ -105,11 +105,13 @@
     # a host that answers but where the job cannot become root (sudo refused, its password wrong or missing), or with too
     # little room in /var: listed as NOT READY and left out, the job not failed for it - nothing was changed on it.
     # Nothing is cleaned up; free the space or fix the account, then run again for it. patch_skip_not_ready: false =
-    # it fails in the patch play, as before 0.89.0.
+    # it fails in the patch play, as before 0.89.0. A refused become fails the task before the command runs (failed_when
+    # does not see it): ignore_errors keeps the host for the "Not ready" step, which lists it.
     - name: Root on it, and room in /var (patch_skip_not_ready)
       ansible.builtin.command: df -P -m /var
       become: true
       ignore_unreachable: true
+      ignore_errors: true
       failed_when: false
       changed_when: false
       check_mode: false
@@ -119,23 +121,30 @@
         - site_host_unreached | length == 0
         - group_names | intersect((patch_never_patch_groups | default(['no_patch', 'aap', 'aap_hosts', 'sat', 'netapp', 'netapp_console_hosts'])) + ['aap', 'aap_hosts']) | length == 0
 
-    # the reason without the login banner: Ansible's own message, else the last line of the output that is not ssh's
+    # the reason without the login banner: the last line of the output that is not ssh's, else Ansible's own message
     - name: Not ready - root refused, or /var too full
       ansible.builtin.set_fact:
         patch_not_ready: >-
-          {%- if _patch_ready.unreachable | default(false) or _patch_ready.rc | default(0) != 0 -%}
+          {%- if _patch_ready.unreachable | default(false) or _patch_ready.failed | default(false) or _patch_ready.rc | default(0) != 0 -%}
           {%-   set lines = ((_patch_ready.module_stderr | default('')) ~ '\n' ~ (_patch_ready.stderr | default(''))
-                            ~ '\n' ~ (_patch_ready.module_stdout | default(''))).splitlines() | map('trim')
+                            ~ '\n' ~ (_patch_ready.module_stdout | default(''))).splitlines()
+                            | map('regex_replace', '^\\[[^\\]]*key=[^\\]]*\\][^:]*:', '') | map('trim')
                             | reject('equalto', '') | reject('match', '(?i)^shared connection to ') | list -%}
-          {%-   set m = lines[-1] if lines else _patch_ready.msg | default('') | string -%}
-          cannot become root: {{ (m or 'unknown') | truncate(200) }}
+          {#-   a refused become: the last line sudo printed, else Ansible's first line (a password prompt's echo taken off) -#}
+          {%-   set mparts = (_patch_ready.msg | default('') | string).split('>>> Standard Error') -%}
+          {%-   set mlines = (mparts[1:] | join('\n')).splitlines() | map('regex_replace', '^\\[[^\\]]*key=[^\\]]*\\][^:]*:', '')
+                             | map('trim') | reject('equalto', '') | reject('match', '^>>>') | list -%}
+          {%-   set mfirst = mparts[0].splitlines() | map('regex_replace', '^Task failed:\\s*', '') | map('trim')
+                             | reject('equalto', '') | first | default('') -%}
+          {%-   set m = lines[-1] if lines else (mlines[-1] if mlines else mfirst) -%}
+          cannot become root: {{ (m or 'unknown') | regex_replace('[.]$', '') | truncate(200) }}
           {%- else -%}
           {%-   set free = _patch_ready.stdout_lines[-1].split()[3] | int -%}
           {%-   if free < patch_min_free_mb | default(1024) | int -%}only {{ free }} MB free in /var (need {{ patch_min_free_mb | default(1024) }} MB){%- endif -%}
           {%- endif -%}
       when:
         - _patch_ready is not skipped
-        - _patch_ready.unreachable | default(false) or _patch_ready.rc | default(0) != 0
+        - _patch_ready.unreachable | default(false) or _patch_ready.failed | default(false) or _patch_ready.rc | default(0) != 0
           or (_patch_ready.stdout_lines[-1].split()[3] | int) < patch_min_free_mb | default(1024) | int
         # with patch_skip_unreachable: false a host not reached goes on, and fails the job in the patch play
         - not _patch_ready.unreachable | default(false) or patch_skip_unreachable | default(true) | bool

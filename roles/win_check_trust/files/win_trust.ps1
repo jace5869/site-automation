@@ -193,7 +193,8 @@ function Get-PemCerts([string] $text) {
     }
     return , $out
 }
-# a JKS keystore -> the trusted certificates with their aliases; $null when the bytes are not a JKS
+# a JKS keystore -> the trusted certificates with their aliases, and whether it was read to its end (every entry, then
+# exactly its 20-byte digest); $null when the bytes are not a JKS
 function Get-JksEntries($b) {
     if ($b.Count -lt 12 -or [int]$b[0] -ne 0xFE -or [int]$b[1] -ne 0xED -or [int]$b[2] -ne 0xFE -or [int]$b[3] -ne 0xED) { return $null }
     $pos = 4
@@ -201,6 +202,7 @@ function Get-JksEntries($b) {
     function Utf { $n = ([int]$b[$script:pos] * 256) + [int]$b[$script:pos + 1]; $script:pos += 2; $s = -join @($b[$script:pos..($script:pos + $n - 1)] | ForEach-Object { [char][int]$_ }); if ($n -eq 0) { $s = '' }; $script:pos += $n; return $s }
     $script:pos = 4
     $out = @()
+    $complete = $false
     try {
         $version = U4
         $count = U4
@@ -225,9 +227,33 @@ function Get-JksEntries($b) {
             else { break }
             $out += , @{ alias = $alias; der = $null; start = $start; end = $script:pos; trusted = $false }
         }
+        $complete = ($out.Count -eq $count -and $script:pos -eq $b.Count - 20)
     }
     catch { }
-    return @{ version = $version; entries = @($out); end = $script:pos }
+    return @{ version = $version; entries = @($out); end = $script:pos; complete = $complete }
+}
+# the integrity digest keytool checks: SHA-1 over the password (UTF-16BE), 'Mighty Aphrodite' and the keystore's bytes
+# before it - a temporary file and Get-FileHash, so it works in Constrained Language Mode too -> 40 hex digits
+function Get-JksDigest($Body, [string] $Password) {
+    $pw = @()
+    foreach ($ch in $Password.ToCharArray()) { $c = [int][char]$ch; $pw += @(($c -shr 8), ($c -band 255)) }
+    $salted = [byte[]]@($pw) + [byte[]][char[]]'Mighty Aphrodite' + [byte[]]@($Body)
+    $script:tmpN++
+    $f = Join-Path $tmpDir ('sa-trust-' + $PID + '-' + $script:tmpN + '.jks')
+    try {
+        if ($PSVersionTable.PSVersion.Major -ge 6) { Set-Content -LiteralPath $f -Value $salted -AsByteStream } else { Set-Content -LiteralPath $f -Value $salted -Encoding Byte }
+        return ([string](Get-FileHash -LiteralPath $f -Algorithm SHA1).Hash).ToUpper()
+    }
+    finally { Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue }
+}
+# why a keystore is not rewritten here ('' = it can be): read to its end, and its digest made with the password given
+function Get-JksRefusal($b, $Jks, [string] $Password) {
+    if (-not $Jks.complete) { return 'not read to its end (an entry of a kind this job does not read): left as it is - keytool -delete by hand' }
+    $have = (@($b[($b.Count - 20)..($b.Count - 1)] | ForEach-Object { '{0:X2}' -f [int]$_ })) -join ''
+    if ((Get-JksDigest @($b[0..($b.Count - 21)]) $Password) -ne $have) {
+        return 'its integrity digest does not match the keystore password given (KEYSTORE_PASSWORD or check_trust_keystore_password; changeit when neither is set): left as it is'
+    }
+    return ''
 }
 # the keystore without some entries, with the integrity digest keytool checks (SHA-1 over the password as UTF-16BE,
 # 'Mighty Aphrodite', the data) - a temporary file and Get-FileHash, so it works in Constrained Language Mode too
@@ -236,16 +262,7 @@ function Write-Jks([string] $Path, $b, $Jks, $DropAliases, [string] $Password) {
     $n = [int]$keep.Count
     $body = [byte[]]@(0xFE, 0xED, 0xFE, 0xED) + [byte[]]@(0, 0, 0, [int]$Jks.version) + [byte[]]@((($n -shr 24) -band 255), (($n -shr 16) -band 255), (($n -shr 8) -band 255), ($n -band 255))
     foreach ($e in $keep) { $body += [byte[]]@($b[$e.start..($e.end - 1)]) }
-    $pw = @()
-    foreach ($ch in $Password.ToCharArray()) { $pw += @(0, [int][char]$ch) }
-    $salted = [byte[]]@($pw) + [byte[]][char[]]'Mighty Aphrodite' + $body
-    $script:tmpN++
-    $f = Join-Path $tmpDir ('sa-trust-' + $PID + '-' + $script:tmpN + '.jks')
-    try {
-        if ($PSVersionTable.PSVersion.Major -ge 6) { Set-Content -LiteralPath $f -Value $salted -AsByteStream } else { Set-Content -LiteralPath $f -Value $salted -Encoding Byte }
-        $hex = [string](Get-FileHash -LiteralPath $f -Algorithm SHA1).Hash
-    }
-    finally { Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue }
+    $hex = Get-JksDigest $body $Password
     $digest = @()
     for ($i = 0; $i -lt 40; $i += 2) { $digest += @([int]('0x' + $hex.Substring($i, 2))) }
     $all = $body + [byte[]]@($digest)
@@ -385,6 +402,7 @@ function Read-Java([string] $f) {
     $rec['aliases'] = $al
     $rec['keytool'] = Get-Keytool $f
     $rec['jks'] = $true
+    if (-not $jks.complete) { $rec['note'] = 'read up to an entry of a kind this job does not read: the entries after it are not seen' }
 }
 function Read-Pem([string] $Kind, [string] $f) {
     $script:fileCount++
@@ -455,6 +473,13 @@ function Remove-FromJava($rec) {
     $aliases = @()
     foreach ($a in @($rec.aliases.Keys)) { if ($names -contains [string]$rec.aliases[$a]) { $aliases += @([string]$a) } }
     if ($aliases.Count -eq 0) { Leave $rec 'its matching entries are key entries, or matched by key only: keytool -delete by hand'; return }
+    if ($native) {
+        # rewritten here only when read to its end and its digest is made with the password given: else keytool and
+        # every Java program that checks it would call it tampered with. Not read to its end: its keytool, if it has one
+        try { $b0 = Read-FileBytes $rec.where; $why = Get-JksRefusal $b0 (Get-JksEntries $b0) $keystorePassword } catch { $why = 'not readable: ' + [string]$_ }
+        if ($why -and $kt -and $why -like 'not read to its end*') { $native = $false }
+        elseif ($why) { Leave $rec $why; return }
+    }
     $action = 'deleted the entries ' + ($aliases -join ', ') + $(if ($native) { ' from the keystore' } else { ' with keytool' }) + ' - restart the Java services that use it (a running JVM keeps the old trust until it restarts)'
     if ($dryRun) { Add-Action $rec $action $names $false '' ''; return }
     $dir = Get-BackupDir

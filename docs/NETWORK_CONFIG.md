@@ -5,7 +5,7 @@ Two jobs for **Cisco IOS / IOS-XE** and **Palo Alto Networks PAN-OS** devices:
 | Template | Playbook | Does |
 |---|---|---|
 | Network config backup | `playbooks/net_config_backup.yml` | every device's running configuration, kept in a **private git repository** (one commit when any changed - its history is the record of every change) and / or on a **file share** (the latest and dated copies). The report shows what changed, with the diff; optionally a ServiceNow incident for each change. Read-only on the devices |
-| Network config load | `playbooks/net_config_load.yml` | **lines** sent to the devices (IOS configuration lines; PAN-OS changes at an xpath), or a device **restored** to a backup - after an approved change request, and always tried in **Check** first: what would change, nothing sent |
+| Network config load | `playbooks/net_config_load.yml` | **lines** sent to the devices (IOS configuration lines; PAN-OS changes at an xpath), or a device **restored** to a backup - after an approved change request. Try it in **Check** first: what would change, nothing sent. A real run first keeps each device's running configuration, to undo it |
 
 **The backups hold the devices' secrets** - password hashes, SNMP communities, VPN and API keys - so that a
 restore puts back exactly what was there. Keep them in a **private, internal** repository or share that only
@@ -81,6 +81,18 @@ reason; its last good backup stays as it was, and the job fails (red) so the sch
 
 Always run it in **Check** first: it reads each device and shows what would change - the lines it would send, or
 the restore's diff - and sends nothing. A Check needs no change request.
+
+The job itself does not check that a Check ran first: to make it a rule, launch the load through the workflow
+below (Check, an approval, then Run).
+
+**Before the change.** A real run (not Check) first reads each device's running configuration and keeps it
+where the backup keeps them (`net_config_store`), named `<time>-before-<change>` - e.g.
+`20261111T140500Z-before-CHG0012345`: in git a tag on the commit that holds it, on the share a dated copy
+`<device>-20261111T140500Z-before-CHG0012345.cfg`. The report, the work note and the job's artifacts
+(`net_config_load.before`) give the name. To undo the load: `net_config_load_mode: restore` with
+`net_config_restore_ref` set to that name. A device whose copy could not be kept (the repository or the share
+not reachable, the device not read) gets nothing sent and counts as failed. `net_config_keep_before: false` loads
+without that copy (as before 1.22.0) - then the last backup is the only way back.
 
 A real run needs the **change request** it belongs to - `net_config_change: CHG0012345`, in state **Implement**
 (`net_config_change_states`) - and the **ServiceNow API** credential: the job reads the change first and stops when

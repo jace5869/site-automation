@@ -5,6 +5,8 @@
 # The login (the "Network config git repository" credential): NET_CONFIG_GIT_KEY_FILE (an SSH key), or
 # NET_CONFIG_GIT_USERNAME + NET_CONFIG_GIT_TOKEN (https) - sent as a header from a git config file in the work
 # folder (0600), never on a command line or in the environment. Input: _ncf_all. Output: _ncg_res (net_config_backup_result), _ncg_commit, _ncg_where.
+# _ncg_keep_ref (a load's copy before the change, load_keep.yml): the commit says so, and a tag of that name marks
+# it (_ncg_tag; also when nothing changed since the last backup - the commit there holds the same).
 - name: Network config | the repository is set
   ansible.builtin.assert:
     that: net_config_git_repo | default('', true) | length > 0
@@ -80,7 +82,8 @@
             _ncg_msg: >-
               {%- set ch = _ncg_res.devices | selectattr('status', 'equalto', 'changed') | map(attribute='host') | list -%}
               {%- set nw = _ncg_res.devices | selectattr('status', 'equalto', 'new') | map(attribute='host') | list -%}
-              Backup {{ now(utc=true).strftime('%Y-%m-%d %H:%M UTC') }}: {{ (['%d changed (%s)' | format(ch | length, ch | join(', ')) if ch else '']
+              {%- set what = ('Before ' ~ _ncg_keep_ref.split('-before-')[-1]) if _ncg_keep_ref | default('') else 'Backup' -%}
+              {{ what }} {{ now(utc=true).strftime('%Y-%m-%d %H:%M UTC') }}: {{ (['%d changed (%s)' | format(ch | length, ch | join(', ')) if ch else '']
               + ['%d new (%s)' | format(nw | length, nw | join(', ')) if nw else '']) | select | join(', ') | truncate(200) }}{{
               '\n\nAAP job ' ~ awx_job_id if awx_job_id is defined else '' }}
           changed_when: true
@@ -133,9 +136,36 @@
           register: _ncg_head
           changed_when: false
 
+    - name: Network config | the tag {{ _ncg_keep_ref | default('') }} (the configurations before the change)
+      when: _ncg_keep_ref | default('') | length > 0 and not ansible_check_mode and not _ncg_unpushed | default(false)
+      block:
+        - name: Network config | tag it
+          ansible.builtin.command:
+            argv: [git, -C, "{{ _ncg_dir }}", tag, "{{ _ncg_keep_ref }}"]
+          register: _ncg_tag_out
+          changed_when: _ncg_tag_out.rc == 0
+          failed_when: false
+
+        - name: Network config | push the tag
+          ansible.builtin.command:
+            argv: [git, -C, "{{ _ncg_dir }}", push, --quiet, origin, "refs/tags/{{ _ncg_keep_ref }}"]
+          environment: "{{ _ncg_env }}"
+          register: _ncg_tag_push
+          changed_when: _ncg_tag_push.rc == 0
+          failed_when: false
+          when: _ncg_tag_out.rc == 0
+
+        - name: Network config | the commit tagged
+          ansible.builtin.command:
+            argv: [git, -C, "{{ _ncg_dir }}", rev-parse, --short=12, HEAD]
+          register: _ncg_head
+          changed_when: false
+          failed_when: false
+
     - name: Network config | where it is kept
       ansible.builtin.set_fact:
         _ncg_commit: "{{ '' if _ncg_unpushed | default(false) else _ncg_head.stdout | default('') }}"
+        _ncg_tag: "{{ _ncg_keep_ref if _ncg_tag_push.rc | default(1) == 0 else '' }}"
         _ncg_where: "{{ net_config_git_repo }} ({{ net_config_git_branch }}, {{ net_config_git_path }}/)"
 
   always:

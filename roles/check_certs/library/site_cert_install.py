@@ -57,6 +57,8 @@ backups: {description: "action=restore - every backup there is (name, base, subj
 '''
 
 import base64
+import binascii
+import errno
 import fnmatch
 import glob
 import hashlib
@@ -64,6 +66,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import time
 
 from ansible.module_utils.basic import AnsibleModule
@@ -116,6 +119,21 @@ def der_of(pem):
 
 def sha256_pem(pem):
     return hashlib.sha256(der_of(pem)).hexdigest()
+
+
+def open_dir(path):
+    """The folder open, reached from / without following a symbolic link on the way (a real path: a link there now
+    means a folder was replaced since the plan)."""
+    fd = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in [p for p in path.split('/') if p]:
+            nfd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = nfd
+    except OSError as e:
+        os.close(fd)
+        raise OSError(e.errno, 'the folder %s cannot be opened without following a link (%s)' % (path, e.strerror))
+    return fd
 
 
 def new_dir(parent, name):
@@ -790,36 +808,70 @@ class Installer(object):
 
     def write_like(self, path, data, meta=None):
         """Write a file in place of another - the same owner, mode and SELinux label - through a new file renamed
-        over it (never half-written)."""
-        st = os.stat(path) if meta is None and os.path.exists(path) else None
-        label = None
+        over it (never half-written). The paths are the real ones (the plan resolved them): the folder is opened
+        without following a symbolic link on the way, the file itself must not be one, and the new file is made under a
+        fresh name (O_EXCL) with its owner, mode and label set on the open file."""
+        dfd = open_dir(os.path.dirname(path))
+        name = os.path.basename(path)
+        tmp = ''
         try:
-            label = os.getxattr(path, 'security.selinux') if meta is None else None
-        except (OSError, AttributeError):
-            label = None
-        if meta is not None:
-            mode, uid, gid = int(meta['mode'], 8), meta['uid'], meta['gid']
-            label = base64.b64decode(meta['selinux']) if meta.get('selinux') else None
-        else:
-            mode, uid, gid = st.st_mode & 0o7777, st.st_uid, st.st_gid
-        tmp = os.path.join(os.path.dirname(path), '.%s.site-new' % os.path.basename(path))
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        try:
-            os.write(fd, data)
-            os.fsync(fd)
-        finally:
-            os.close(fd)
-        try:
-            os.chown(tmp, uid, gid)
-        except OSError:
-            pass              # not root (the tests): the owner stays
-        os.chmod(tmp, mode)
-        if label:
             try:
-                os.setxattr(tmp, 'security.selinux', label)
-            except (OSError, AttributeError):
-                pass
-        os.rename(tmp, path)
+                st = os.stat(name, dir_fd=dfd, follow_symlinks=False)
+            except OSError:
+                st = None
+            if st is not None and not stat.S_ISREG(st.st_mode):
+                raise OSError(errno.EINVAL, '%s is no longer a plain file' % path)
+            label = None
+            if meta is not None:
+                mode, uid, gid = int(meta['mode'], 8), meta['uid'], meta['gid']
+                label = base64.b64decode(meta['selinux']) if meta.get('selinux') else None
+            else:
+                if st is None:
+                    raise OSError(errno.ENOENT, '%s is gone' % path)
+                mode, uid, gid = st.st_mode & 0o7777, st.st_uid, st.st_gid
+                try:
+                    rfd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dfd)
+                    try:
+                        label = os.getxattr(rfd, 'security.selinux')
+                    finally:
+                        os.close(rfd)
+                except (OSError, AttributeError):
+                    label = None
+            for _ in range(10):
+                tmp = '.%s.%s.site-new' % (name, binascii.hexlify(os.urandom(6)).decode('ascii'))
+                try:
+                    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dfd)
+                    break
+                except OSError as e:
+                    tmp = ''
+                    if e.errno != errno.EEXIST:
+                        raise
+            else:
+                raise OSError(errno.EEXIST, 'no free name for the new file next to %s' % path)
+            try:
+                try:
+                    os.fchown(fd, uid, gid)
+                except OSError:
+                    pass              # not root (the tests): the owner stays
+                os.fchmod(fd, mode)
+                if label:
+                    try:
+                        os.setxattr(fd, 'security.selinux', label)
+                    except (OSError, AttributeError):
+                        pass
+                os.write(fd, data)
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            os.rename(tmp, name, src_dir_fd=dfd, dst_dir_fd=dfd)
+            tmp = ''
+        finally:
+            if tmp:
+                try:
+                    os.unlink(tmp, dir_fd=dfd)
+                except OSError:
+                    pass
+            os.close(dfd)
 
     def backup(self, base, plan, ap):
         d = new_dir(os.path.join(self.dir, 'backup'), base)          # it holds the old key: 0700, the copies 0600

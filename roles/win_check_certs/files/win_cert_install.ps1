@@ -48,6 +48,81 @@ function Invoke-Native([string] $Exe, [string[]] $Arguments) {
     return New-Object -TypeName PSObject -Property @{ Out = $out; Code = $global:LASTEXITCODE }
 }
 # ---- end of the common part --------------------------------------------------------------------
+# ---- who besides SYSTEM and the Administrators can change a file or folder (keep identical where it is used) ----
+# Read from its SDDL (Get-Acl): SIDs, the same in every language, and no .NET methods (Constrained Language too).
+# Allowed: SYSTEM, the Administrators, TrustedInstaller, and the SIDs given. A CREATOR OWNER or OWNER RIGHTS entry
+# gives nobody else anything here (the owner is checked); an inherit-only entry is not for the item itself.
+$SDDL_RIGHTS = @{ GA = 268435456; GX = 536870912; GW = 1073741824; GR = 2147483648; FA = 2032127; FR = 1179785; FW = 1180054; FX = 1179817
+    SD = 65536; RC = 131072; WD = 262144; WO = 524288; CC = 1; DC = 2; LC = 4; SW = 8; RP = 16; WP = 32; DT = 64; LO = 128; CR = 256 }
+$ADMIN_SIDS = @('SY', 'BA', 'S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+$RIGHTS_WRITE = 1343029590      # any change: data, append, attributes, delete, delete a child, permissions, owner, generic write/all
+$RIGHTS_SWAP = 269221952        # a folder above: delete a child, permissions, owner, generic all (and delete it, below a drive's root)
+# an SDDL entry's rights ('FA', '0x1301bf' or two-letter codes) as a number; a code not known counts as every right
+function Get-SddlRights([string] $Text) {
+    if ($Text -match '^0[xX][0-9a-fA-F]+$') { return [int64]$Text }
+    if (-not $Text -or $Text.Length % 2) { return [int64]-1 }
+    $n = [int64]0
+    for ($i = 0; $i -lt $Text.Length; $i += 2) {
+        $v = $SDDL_RIGHTS[$Text.Substring($i, 2)]
+        if ($null -eq $v) { return [int64]-1 }
+        $n = $n -bor [int64]$v
+    }
+    return $n
+}
+# '' when the owner is allowed and no allow entry gives anyone else one of the $Mask rights; else who (SIDs)
+function Get-SddlOthers([string] $Sddl, [int64] $Mask, [string[]] $Allowed) {
+    $ok = @($ADMIN_SIDS) + @($Allowed | Where-Object { $_ })
+    $o = [regex]::Match($Sddl, '^O:(S-1-[0-9-]+|[A-Z][A-Z])')
+    if (-not $o.Success) { return 'its owner could not be read' }
+    if ($Sddl -match 'D:[A-Z]*NO_ACCESS_CONTROL') { return 'it has no access list: everyone can change it' }
+    $who = @()
+    if ($ok -notcontains $o.Groups[1].Value) { $who += @('owner ' + $o.Groups[1].Value) }
+    $d = [regex]::Match($Sddl, 'D:[A-Z]*((?:\([^)]*\))*)')
+    if (-not $d.Success) { return 'its access list could not be read' }
+    foreach ($ace in [regex]::Matches($d.Groups[1].Value, '\(([^)]*)\)')) {
+        $p = @($ace.Groups[1].Value -split ';')
+        if ($p.Count -lt 6) { $who += @('an entry not read: ' + $ace.Value); continue }
+        if (@('A', 'OA', 'XA', 'ZA') -notcontains $p[0]) { continue }        # deny and audit entries
+        $flags = @()
+        for ($i = 0; $i + 1 -lt $p[1].Length; $i += 2) { $flags += @($p[1].Substring($i, 2)) }
+        if ($flags -contains 'IO') { continue }
+        if ($ok -contains $p[5] -or @('CO', 'S-1-3-0', 'OW', 'S-1-3-4') -contains $p[5]) { continue }
+        if ((Get-SddlRights $p[2]) -band $Mask) { $who += @($p[5] + ' (' + $p[2] + ')') }
+    }
+    return ($who -join ', ')
+}
+# '' when only SYSTEM, the Administrators (and the SIDs given) own and can change $Path and everything in it, and no
+# folder above it lets anyone else delete, rename or replace it; else where and who
+function Get-ChangeableBy([string] $Path, [string[]] $Allowed) {
+    try {
+        $items = @(Get-Item -LiteralPath $Path -Force -ErrorAction Stop)
+        if (Test-Path -LiteralPath $Path -PathType Container) { $items += @(Get-ChildItem -LiteralPath $Path -Recurse -Force -ErrorAction Stop) }
+        foreach ($i in $items) {
+            $w = Get-SddlOthers ([string](Get-Acl -LiteralPath $i.FullName).Sddl) $RIGHTS_WRITE $Allowed
+            if ($w) { return ([string]$i.FullName + ': ' + $w) }
+        }
+        $up = Split-Path -Parent $Path
+        while ($up) {
+            $above = Split-Path -Parent $up
+            $mask = $RIGHTS_SWAP
+            if ($above) { $mask = $mask -bor 65536 }
+            $w = Get-SddlOthers ([string](Get-Acl -LiteralPath $up).Sddl) $mask $Allowed
+            if ($w) { return ($up + ': ' + $w) }
+            $up = $above
+        }
+    }
+    catch { return ('its permissions could not be read: ' + [string]$_.Exception.Message) }
+    return ''
+}
+# the SID of the account this runs as ('' when not known)
+function Get-MySid {
+    foreach ($l in @((Invoke-Native 'whoami.exe' @('/user', '/fo', 'csv', '/nh')).Out)) {
+        $sid = [regex]::Match([string]$l, '"(S-1-[0-9-]+)"\s*$')
+        if ($sid.Success) { return $sid.Groups[1].Value }
+    }
+    return ''
+}
+# ---- end of the permission check ----
 
 $action = [string](Get-Setting 'action' 'pending')
 $dir = [string](Get-Setting 'dir' 'C:\ProgramData\site-automation\renew')
@@ -59,6 +134,16 @@ $verifyWait = [int](Get-Setting 'verify_wait' 15)
 $byHand = [string](Get-Setting 'by_hand' '')
 $wsmanKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WSMAN\Listener'
 $rdpNs = 'root\cimv2\TerminalServices'
+# the renewal folder: used only when SYSTEM, the Administrators or this job's account alone own and can change it and
+# everything in it (anyone can make a folder in ProgramData, so a renewal's files there could be anyone's)
+$dirProblem = ''
+if ((Test-Path -LiteralPath $dir) -and (Get-Command -Name Get-Acl -ErrorAction SilentlyContinue)) {
+    $who = Get-ChangeableBy $dir @(Get-MySid)
+    if ($who) {
+        $dirProblem = "the renewal folder $dir can be changed by others than SYSTEM and the Administrators ($who): nothing in it is used. " +
+            'Delete it (the next renewal makes it again, for SYSTEM and the Administrators only), or make them its only owners and writers (win_cert_renew_dir)'
+    }
+}
 
 function Get-Info([string] $Path) {
     return (Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json)
@@ -85,6 +170,7 @@ function Get-Cert([string] $Store, [string] $Tp) {
 
 # ---- the renewals waiting in the folder ---------------------------------------------------------
 function Get-Pending {
+    if ($dirProblem) { throw $dirProblem }
     $out = @()
     if (-not (Test-Path -LiteralPath $dir)) { return , $out }
     foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter '*.json' -File)) {
@@ -103,23 +189,71 @@ function Get-Pending {
 }
 
 # ---- what uses a certificate (its thumbprint) -----------------------------------------------------
+# An https binding's settings as netsh prints them in English: the netsh parameter that sets each one again, and its
+# default. One at its default needs nothing; one that is not is given back when the binding is moved - or, with no
+# parameter here, the binding is left to a person. A setting not listed here counts as at its default when it reads
+# Not Set, (null), Disabled or 0. A server that prints them in another language has its https bindings moved by a person.
+$SSL_SETTINGS = @{
+    'Verify Client Certificate Revocation'                   = @('verifyclientcertrevocation', 'Enabled')
+    'Verify Revocation Using Cached Client Certificate Only' = @('verifyrevocationwithcachedclientcertonly', 'Disabled')
+    'Usage Check'                                            = @('usagecheck', 'Enabled')
+    'Revocation Freshness Time'                              = @('revocationfreshnesstime', '0')
+    'URL Retrieval Timeout'                                  = @('urlretrievaltimeout', '0')
+    'Ctl Identifier'                                         = @('sslctlidentifier', '(null)')
+    'Ctl Store Name'                                         = @('sslctlstorename', '(null)')
+    'DS Mapper Usage'                                        = @('dsmapperusage', 'Disabled')
+    'Negotiate Client Certificate'                           = @('clientcertnegotiation', 'Disabled')
+    'Reject Connections'                                     = @('', 'Disabled')
+    'PropertyId'                                             = @('', '*')
+    'Receive Window'                                         = @('', '1048576')
+    'Max Settings Per Frame'                                 = @('', '2796202')
+    'Max Settings Per Minute'                                = @('', '4294967295')
+}
+$sslOdd = @()
+# HTTP.sys's https bindings (all, or one). netsh prints its labels in the server's language, so they are read by
+# their place: each binding is a block of "label : value" lines - its address (ip:port, host:port, or a port: the
+# Central Certificate Store), the certificate hash, the application, the store, then its settings. A block that does
+# not read so goes to $sslOdd (the plan then leaves the https bindings to a person).
 function Get-SslBindings([string] $Only) {
     $a = @('http', 'show', 'sslcert')
     if ($Only) { $a += @($Only) }
     $r = Invoke-Native 'netsh.exe' $a
     $out = @()
     $cur = $null
-    foreach ($l in @($r.Out)) {
-        if ($l -match '^\s*(IP:port|Hostname:port|Central Certificate Store)\s*:\s*(.+?)\s*$') {
-            if ($cur) { $out += @($cur) }
-            $k = @{ 'IP:port' = 'ipport'; 'Hostname:port' = 'hostnameport'; 'Central Certificate Store' = 'ccs' }[$Matches[1]]
-            $cur = @{ kind = 'https'; key = ($k + '=' + $Matches[2]); hash = ''; appid = ''; store = 'My'; ccs = ($k -eq 'ccs') }
+    foreach ($l in @($r.Out) + @('')) {
+        $hit = [regex]::Match([string]$l, '^\s*(\S.*?)\s*:(?:\s+(.*?))?\s*$')
+        if (-not $hit.Success) {
+            # a blank line (or a heading) ends a binding
+            if ($cur) {
+                if ($cur.appid -notmatch '^\{[0-9a-fA-F-]+\}$' -or $cur.n -lt 2) { $script:sslOdd += @($cur.key) } else { $out += @($cur) }
+                $cur = $null
+            }
+            continue
         }
-        elseif ($cur -and $l -match '^\s*Certificate Hash\s*:\s*([0-9a-fA-F]{40})') { $cur.hash = $Matches[1].ToUpper() }
-        elseif ($cur -and $l -match '^\s*Application ID\s*:\s*(\{[0-9a-fA-F-]+\})') { $cur.appid = $Matches[1] }
-        elseif ($cur -and $l -match '^\s*Certificate Store Name\s*:\s*(.+?)\s*$' -and $Matches[1] -ne '(null)') { $cur.store = $Matches[1] }
+        $label = $hit.Groups[1].Value
+        $v = $hit.Groups[2].Value
+        if (-not $v) { continue }
+        if (-not $cur) {
+            $k = 'hostnameport'
+            if ($v -match '^\d+$') { $k = 'ccs' }
+            elseif ($v -match '^(\d{1,3}(\.\d{1,3}){3}|\[[0-9A-Fa-f:.%]+\]):\d+$') { $k = 'ipport' }
+            $cur = @{ kind = 'https'; key = ($k + '=' + $v); hash = ''; appid = ''; store = 'My'; ccs = ($k -eq 'ccs'); n = 0
+                settings = @(); opts = @(); unread = @() }
+            continue
+        }
+        $cur.n += 1
+        if ($cur.n -eq 1) { if ($v -match '^[0-9a-fA-F]{40}$') { $cur.hash = $v.ToUpper() } }
+        elseif ($cur.n -eq 2) { $cur.appid = $v }
+        elseif ($cur.n -eq 3) { if ($v -ne '(null)') { $cur.store = $v } }
+        else {
+            $cur.settings += @($label + ': ' + $v)
+            $s = $SSL_SETTINGS[$label]
+            if ($null -eq $s) { if (@('Not Set', '(null)', 'Disabled', '0') -notcontains $v) { $cur.unread += @($label + ': ' + $v) } }
+            elseif ($s[1] -eq '*' -or $v -eq $s[1]) { }
+            elseif ($s[0]) { $cur.opts += @($s[0] + '=' + $(if ($v -eq 'Enabled') { 'enable' } elseif ($v -eq 'Disabled') { 'disable' } else { $v })) }
+            else { $cur.unread += @($label + ': ' + $v) }
+        }
     }
-    if ($cur) { $out += @($cur) }
     return , $out
 }
 function Get-WinrmListeners {
@@ -174,6 +308,7 @@ function Get-Plan($iss) {
         chain_roots = @(@($iss.chain) | Where-Object { $_ -and $_.self_signed } | ForEach-Object { ([string]$_.sha1).ToUpper() })
         chain_sha1 = @(@($iss.chain) | Where-Object { $_ } | ForEach-Object { ([string]$_.sha1).ToUpper() }); source = [string]$iss.source }
     $infoPath = Join-Path $dir "$base.json"
+    if ($dirProblem) { $item.status = 'held'; $item.reason = $dirProblem; return $item }
     if (-not $base -or -not (Test-Path -LiteralPath $infoPath)) {
         $item.status = 'gone'; $item.reason = "no renewal $base waiting on this server (installed or removed since)"
         return $item
@@ -202,8 +337,15 @@ function Get-Plan($iss) {
     $sql = Get-SqlUses $old
     $hand = @()
     $steps = @()
+    if (@($script:sslOdd).Count) {
+        $hand += @("https bindings that netsh http show sslcert prints in a way this job does not read ($(@($script:sslOdd) -join ', ')) - one may use it")
+    }
     foreach ($b in $uses) {
         if ($b.kind -eq 'https' -and $b.ccs) { $hand += @("the Central Certificate Store binding $($b.key) (its certificate is a file on the share)"); continue }
+        if ($b.kind -eq 'https' -and @($b.unread).Count) {
+            $hand += @("the https binding $($b.key), whose settings this job does not carry over ($(@($b.unread) -join '; '); netsh http show sslcert in another language reads so too)")
+            continue
+        }
         if ($rebindKinds -notcontains $b.kind) { $hand += @("its $($b.kind) binding ($($b.key)) - not in win_cert_install_rebind"); continue }
         if ($b.kind -eq 'winrm' -and $b.transport -eq 'HTTPS' -and $aapHttps) {
             $hand += @("the WinRM HTTPS listener ($($b.key)): AAP connects through it")
@@ -211,7 +353,8 @@ function Get-Plan($iss) {
             continue
         }
         $item.bindings += @(@{ kind = $b.kind; key = $b.key; appid = [string]$b.appid; store = [string]$b.store; address = [string]$b.address
-                transport = [string]$b.transport })
+                transport = [string]$b.transport; opts = @($b.opts | Where-Object { $_ }); settings = @($b.settings | Where-Object { $_ }) })
+        if ($b.kind -eq 'https' -and $b.store -and $b.store -ne 'My') { $item.notes += @("$($b.key) takes its certificate from $($b.store): it is bound to the new one in Personal (My), where certreq puts it") }
     }
     foreach ($s in $sql) {
         $hand += @("SQL Server $s (it needs a restart to take another certificate)")
@@ -278,17 +421,25 @@ function Copy-KeyAccess([string] $OldTp, [string] $NewTp, [bool] $Rdp) {
     }
     return $notes
 }
-function Set-Binding($b, [string] $Tp) {
+# A binding moved to the certificate $Tp. https: in the store $Store (the new certificate is in Personal - My; the
+# old one goes back to the binding's own store), the same application and its settings given again; read back, its
+# settings must read as before
+function Set-Binding($b, [string] $Tp, [string] $Store) {
     if ($b.kind -eq 'https') {
-        $r = Invoke-Native 'netsh.exe' @('http', 'update', 'sslcert', $b.key, "certhash=$Tp", "appid=$($b.appid)", "certstorename=$($b.store)")
+        if (-not $Store) { $Store = 'My' }
+        $set = @("certhash=$Tp", "appid=$($b.appid)", "certstorename=$Store") + @($b.opts | Where-Object { $_ } | ForEach-Object { [string]$_ })
+        $r = Invoke-Native 'netsh.exe' (@('http', 'update', 'sslcert', $b.key) + $set)
         if ($r.Code -ne 0) {
-            # an older netsh without update: the binding made again, the same application and store
+            # an older netsh without update: the binding made again, the same application, store and settings
             $null = Invoke-Native 'netsh.exe' @('http', 'delete', 'sslcert', $b.key)
-            $r = Invoke-Native 'netsh.exe' @('http', 'add', 'sslcert', $b.key, "certhash=$Tp", "appid=$($b.appid)", "certstorename=$($b.store)")
+            $r = Invoke-Native 'netsh.exe' (@('http', 'add', 'sslcert', $b.key) + $set)
         }
         $now = @(Get-SslBindings $b.key | Where-Object { $_.key -eq $b.key })
-        if ($now.Count -and $now[0].hash -eq $Tp) { return '' }
-        return "netsh http update sslcert $($b.key): $(@($r.Out) -join ' ')"
+        if (-not $now.Count -or $now[0].hash -ne $Tp) { return "netsh http update sslcert $($b.key): $(@($r.Out) -join ' ')" }
+        $before = @($b.settings | Where-Object { $_ }) -join '; '
+        $after = @($now[0].settings | Where-Object { $_ }) -join '; '
+        if ($before -and $after -ne $before) { return "$($b.key): its settings changed with the certificate (now $after; before $before)" }
+        return ''
     }
     if ($b.kind -eq 'rdp') {
         try {
@@ -335,8 +486,22 @@ function Get-Served($b) {
     catch { $script:servedWhy = "${h}:$p - " + [string]$_.Exception.Message; return '' }
     finally { $tcp.Close() }
 }
+# the bindings back on the old certificate, in their own stores -> the ones that could not be put back
 function Undo-Bindings($done, [string] $Old) {
-    foreach ($b in $done) { $null = Set-Binding $b $Old }
+    $bad = @()
+    foreach ($b in $done) {
+        $why = Set-Binding $b $Old ([string]$b.store)
+        if ($why) { $bad += @($why) }
+    }
+    return , $bad
+}
+# the result of a move that went back: rolled back, or - a binding not put back - failed, and which
+function Set-RolledBack($res, [string] $Why, $Undo, [string] $Old) {
+    if (@($Undo).Count) {
+        $res.status = 'failed'
+        $res.reason = "$Why - rollback FAILED: $(@($Undo) -join '; ') - put those back on the old certificate $Old by hand (backup $($res.backup) lists every binding); the others are back on it"
+    }
+    else { $res.status = 'rolled back'; $res.reason = "$Why - the bindings are back on the old certificate (the new one stays in Personal)" }
 }
 function Install-One($ap) {
     $script:incoming = ''
@@ -399,10 +564,9 @@ function Install-Approved($ap) {
     ConvertTo-Json -InputObject $rec -Depth 5 | Set-Content -LiteralPath (Join-Path $bk 'backup.json') -Encoding UTF8
     $done = @()
     foreach ($b in $now.bindings) {
-        $why = Set-Binding $b $new
+        $why = Set-Binding $b $new 'My'
         if ($why) {
-            Undo-Bindings ($done + @($b)) $old
-            $res.status = 'rolled back'; $res.reason = "$why - the bindings are back on the old certificate (the new one stays in Personal)"
+            Set-RolledBack $res $why (Undo-Bindings ($done + @($b)) $old) $old
             return $res
         }
         $done += @($b)
@@ -420,8 +584,7 @@ function Install-Approved($ap) {
         if ($tp -eq $new) { $res.verified += @($b.key) }
         elseif (-not $tp) { $res.notes += @("$($b.key): the port was not asked ($($script:servedWhy)) - the binding was read back") }
         elseif ($tp) {
-            Undo-Bindings $done $old
-            $res.status = 'rolled back'; $res.reason = "$($b.key) serves $tp, not the new certificate - the bindings are back on the old one"
+            Set-RolledBack $res "$($b.key) serves $tp, not the new certificate" (Undo-Bindings $done $old) $old
             return $res
         }
     }
@@ -455,8 +618,9 @@ function Get-Backups {
     return , $out
 }
 function Restore-Backups {
-    $all = Get-Backups
     $name = [string](Get-Setting 'backup' '')
+    if ($dirProblem) { return @{ backups = @(); restored = @(@{ backup = $name; status = 'failed'; reason = $dirProblem }) } }
+    $all = Get-Backups
     $only = [string](Get-Setting 'only' '')
     $pick = @()
     if ($name) {
@@ -473,12 +637,22 @@ function Restore-Backups {
         $rec = Get-Info $b.path
         $r = @{ backup = $b.name; base = [string]$rec.base; subject = [string]$rec.subject; status = ''; reason = ''; files = @($b.files); units = @() }
         $old = ([string]$rec.old_thumbprint).ToUpper()
-        if (-not (Get-Cert 'Cert:\LocalMachine\My' $old)) { $r.status = 'failed'; $r.reason = "the old certificate $old is no longer in Personal"; $out += @($r); continue }
+        # the old certificate where its bindings take it from: an https binding's own store (WebHosting ...), else Personal
+        $need = @()
+        foreach ($x in @($rec.bindings)) {
+            $st = 'My'
+            if ([string]$x.kind -eq 'https' -and [string]$x.store) { $st = [string]$x.store }
+            if ($need -notcontains $st) { $need += @($st) }
+        }
+        if (-not $need.Count) { $need = @('My') }
+        $gone = @($need | Where-Object { -not (Get-Cert ('Cert:\LocalMachine\' + $_) $old) })
+        if ($gone.Count) { $r.status = 'failed'; $r.reason = "the old certificate $old is no longer in $(@($gone | ForEach-Object { 'LocalMachine\' + $_ }) -join ', ')"; $out += @($r); continue }
         if ($checkMode) { $r.status = 'would restore'; $out += @($r); continue }
         $bad = @()
         foreach ($x in @($rec.bindings)) {
-            $bd = @{ kind = [string]$x.kind; key = [string]$x.key; appid = [string]$x.appid; store = [string]$x.store; address = [string]$x.address; transport = [string]$x.transport }
-            $why = Set-Binding $bd $old
+            $bd = @{ kind = [string]$x.kind; key = [string]$x.key; appid = [string]$x.appid; store = [string]$x.store; address = [string]$x.address; transport = [string]$x.transport
+                opts = @($x.opts | Where-Object { $_ }); settings = @($x.settings | Where-Object { $_ }) }
+            $why = Set-Binding $bd $old ([string]$x.store)
             if ($why) { $bad += @($why) }
         }
         if ($bad.Count) { $r.status = 'failed'; $r.reason = $bad -join '; '; $out += @($r); continue }

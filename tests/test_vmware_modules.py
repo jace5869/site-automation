@@ -71,6 +71,19 @@ class SnapshotCreators(unittest.TestCase):
         self.assertEqual(m.snapshot_creators([("a", 100)], []), {"a": ""})
 
 
+class SnapshotGuestIps(unittest.TestCase):
+    """Every guest IP of the VM (the snapshot holds know the AAP server by any of them, not only the primary)."""
+    def test_primary_and_every_nic(self):
+        class Nic(object):
+            def __init__(self, ips):
+                self.ipAddress = ips
+        pr = {"guest.ipAddress": "192.0.2.10", "guest.net": [Nic(["192.0.2.10", "192.0.2.11"]), Nic(None), Nic(["fe80::1"])]}
+        self.assertEqual(m._ips(pr), ["192.0.2.10", "192.0.2.11", "fe80::1"])
+
+    def test_no_guest_info(self):
+        self.assertEqual(m._ips({}), [])
+
+
 class VmCreated(unittest.TestCase):
     DAY = 86400.0
     NOW = 1760000000.0
@@ -119,6 +132,51 @@ class VmCreated(unittest.TestCase):
                                self.SINCE, self.NOW)
         self.assertEqual((len(rows), rows[0]["by"], rows[0]["how"]), (1, "", ""))
         self.assertEqual(vc.created_rows([], [], self.SINCE, self.NOW), [])
+
+
+    def test_an_inaccessible_vm_keeps_its_row_and_the_others_are_read(self):
+        import datetime
+        from pyVmomi import vim
+
+        class View(vim.view.ContainerView):
+            def __init__(self, objs):
+                vim.view.ContainerView.__init__(self, "session[1]view-1")
+                self._objs = objs
+            view = property(lambda s: s._objs)
+
+            def Destroy(self):
+                pass
+
+        class VmCreatedEvent(object):           # as vCenter's event of the inaccessible VM (it has no creation date to read)
+            def __init__(self, key, moid, name, t):
+                self.key, self.createdTime, self.userName, self.datacenter = key, t, "CORP\\jdoe", None
+                self.vm = _Obj(name=name, vm=_Obj(_moId=moid))
+        t = datetime.datetime.fromtimestamp(self.NOW - self.DAY, tz=datetime.timezone.utc)
+        ok = _Obj(_moId="vm-1", parent=None, guest=None, runtime=_Obj(powerState="poweredOn", host=None),
+                  config=_Obj(template=False, createDate=t, annotation="", guestFullName="Red Hat Enterprise Linux 9",
+                              hardware=_Obj(numCPU=2, memoryMB=4096, device=[])))
+        lost = _Obj(_moId="vm-2", parent=None, guest=None, runtime=_Obj(powerState="poweredOff", host=None), config=None)
+        names = {"vm-1": "web01", "vm-2": "web02"}
+
+        def retrieve(specs):
+            out = []
+            for v in specs[0].objectSet[0].obj.view:
+                props = [_Obj(name="name", val=names[v._moId])]
+                if v.config is not None:
+                    props += [_Obj(name="config." + k, val=getattr(v.config, k)) for k in ("template", "createDate", "annotation")]
+                out.append(_Obj(obj=v, propSet=props))
+            return out
+        col = _Obj(SetCollectorPageSize=lambda n: None, latestPage=[VmCreatedEvent(1, "vm-2", "web02", t)],
+                   ReadPreviousEvents=lambda n: [], DestroyCollector=lambda: None)
+        content = _Obj(rootFolder=_Obj(), viewManager=_Obj(CreateContainerView=lambda root, kinds, rec: View([ok, lost])),
+                       eventManager=_Obj(CreateCollectorForEvents=lambda spec: col), propertyCollector=_Obj(RetrieveContents=retrieve))
+        rows = vc._read(content, {"datacenter": None}, self.SINCE, self.NOW, "vc01.example.mil")
+        by = dict((r["vm"], r) for r in rows)
+        self.assertEqual(sorted(by), ["web01", "web02"])
+        self.assertEqual((by["web01"]["cpu"], by["web01"]["power"]), (2, "poweredOn"))
+        self.assertEqual(by["web02"]["power"], "inaccessible")
+        self.assertNotIn("cpu", by["web02"])
+        self.assertFalse(by["web02"]["deleted"])
 
 
 class AlarmEvents(unittest.TestCase):
@@ -1061,6 +1119,32 @@ class VmwareCertInstall(unittest.TestCase):
         self.assertIn("the CA chain added to vCenter 127.0.0.1:%d's trusted roots" % api.port, out["done"])
         self.assertTrue(any("could not be told" in d for d in out["done"]), "no NotifyAffectedServices: said")
         self.assertEqual(out["verified"], ["the host (vCenter 127.0.0.1:%d shows it)" % api.port])
+
+    def test_two_hosts_of_one_ca_add_the_chain_once(self):
+        api = _FakeCertApi("api")
+        hosts = {"esx01.example.mil": self.host(), "esx02.example.mil": self.host()}
+
+        class Facts(vci.Facts):                 # vCenter's own facts without pyVmomi; its trusted roots from the fake API
+            def read(self):
+                self.mode, self.version, self.build, self.hosts = "custom", "8.0.3", "24322831", hosts
+                self.read_roots()
+                return self
+        saved = vci.Facts
+        vci.Facts = Facts
+        try:
+            name = "127.0.0.1:%d" % api.port
+            items = [self.item(vcenter=name), self.item(vcenter=name, key="vc01|esxi|esx02.example.mil", name="esx02.example.mil")]
+            res = vci.run(_Obj(check_mode=False), {"items": items, "action": "install", "trust_check": True, "validate_certs": False,
+                                                   "timeout": 5, "host_wait": 30, "vcenter_wait": 60})
+        finally:
+            vci.Facts = saved
+            api.close()
+        self.assertEqual([r["status"] for r in res["installed"]], ["installed", "installed"], res)
+        posts = [c for c in api.calls if c[0] == "POST" and c[1].endswith("trusted-root-chains")]
+        self.assertEqual(len(posts), 1, "the second host of the same CA does not add the chain again")
+        self.assertFalse(any("CA chain" in d for d in res["installed"][1]["done"]))
+        self.assertFalse(any(x.startswith("add the CA chain") for x in res["installed"][1]["steps"]))
+        self.assertNotIn("chain_added", res["installed"][0])
 
     def test_install_host_refused_or_not_shown(self):
         f = self.facts(host=self.host(refuse=True), roots={self.ca_sha})

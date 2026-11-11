@@ -176,6 +176,11 @@ run "delete a name the VM does not have: says what it has" ok vm_snapshot_delete
     -- 'no snapshot named \"nope\" (it has: baseline, multi, before-patch, aap-'
 run "delete one by name" ok vm_snapshot_delete.yml -e vm_names=DC0_H0_VM1 -e vm_snapshot_name=before-patch -- "DC0_H0_VM1: deleted before-patch"
 check "  ...the others stay" DC0_H0_VM1 "','.join(s['name'][:5] for s in v['snapshots'])" "basel,multi,aap-2"
+VMWARE_PORT=$port "$py" "$here/vcsim.py" snap DC0_H0_VM1 twice
+VMWARE_PORT=$port "$py" "$here/vcsim.py" snap DC0_H0_VM1 twice
+run "delete by name, two snapshots of that name: each deleted (by its ID)" ok vm_snapshot_delete.yml -e vm_names=DC0_H0_VM1 \
+    -e vm_snapshot_name=twice -- "DC0_H0_VM1: deleted twice, twice"
+check "  ...none of that name left, the others stay" DC0_H0_VM1 "','.join(s['name'][:5] for s in v['snapshots'])" "basel,multi,aap-2"
 run "dry run delete all" ok vm_snapshot_delete.yml --check -e vm_names=DC0_H0_VM1 -e vm_snapshot_delete_all=true -- "would delete baseline, multi, aap-"
 run "delete all" ok vm_snapshot_delete.yml -e vm_names=DC0_H0_VM1 -e vm_snapshot_delete_all=true -- "DC0_H0_VM1: deleted baseline, multi, aap-"
 check "  ...none left" DC0_H0_VM1 "len(v['snapshots'])" 0
@@ -226,7 +231,7 @@ run "snapshot report: nothing old yet" ok vm_snapshot_report.yml -- "VMware snap
 run "a snapshot to keep (its name says so)" ok vm_snapshot.yml -e vm_names=DC0_C0_RP0_VM1 -e vm_snapshot_name=keep-me -- "Took snapshot"
 run "snapshot report seven days later: to delete apart, held back apart with the reason, sizes readable" ok vm_snapshot_report.yml -e _vm_now=$later \
     -- "VMware snapshot report (older than 5 days): 2 to delete (0 MB), 2 held back; 4 snapshot(s) on 2 VM(s)" \
-       "HELD BACK (the VM is the AAP server) DC0_H0_VM0" "HELD BACK (its name or description says keep) DC0_C0_RP0_VM1" \
+       "HELD BACK (the VM is the AAP server or a protected VM (vmware_protected_groups)) DC0_H0_VM0" "HELD BACK (its name or description says keep) DC0_C0_RP0_VM1" \
        "OLD DC0_C0_RP0_VM1" "days old, 0 MB, taken" "jdoe" '"vm_snapshot_cleanup_candidates"' '"held_back"'
 run "exclusion list (wildcards): the VM's snapshots are held back" ok vm_snapshot_report.yml -e _vm_now=$later \
     -e '{"vm_snapshot_cleanup_exclude_vms": ["dc0_c0_*"]}' -- "nothing to delete, 4 held back; 4 snapshot(s) on 2 VM(s)" \
@@ -792,6 +797,11 @@ m1="$(state DC0_C0_RP0_VM1 "v['moid']")"; m2="$(STATE_PORT=$port2 state DC0_C0_R
 id2="$(STATE_PORT=$port2 state DC0_C0_RP0_VM1 "[s['id'] for s in v['snapshots'] if s['name'] == 'old-b'][0]")"
 id1="$(state DC0_C0_RP0_VM1 "[s['id'] for s in v['snapshots'] if s['name'] == 'old-a'][0]")"
 [ "$m1" = "$m2" ] && echo "ok   -   ...the two VMs have the same ID ($m1): the case to get right" || echo "ok   -   ...(moids differ here: $m1 / $m2)"
+run "snapshot old-b of vCenter 1's VM: vCenter 2's VM (same ID) has one of that name - taken all the same" ok vm_snapshot.yml \
+    -e vm_names=DC0_C0_RP0_VM1 -e vm_snapshot_name=old-b -e "$two" -- 'Took snapshot \"old-b\" (no memory) of: DC0_C0_RP0_VM1'
+run "  (old-b deleted again on vCenter 1)" ok vm_snapshot_delete.yml -e vm_names=DC0_C0_RP0_VM1 -e vm_snapshot_name=old-b -- "deleted old-b"
+run "...a vCenter in vmware_vcenters that cannot be reached does not stop a snapshot (dry run)" ok vm_snapshot.yml --check \
+    -e vm_names=DC0_C0_RP0_VM1 -e vm_snapshot_name=never -e '{"vmware_vcenters": ["127.0.0.1:1"]}' -- 'Would take snapshot \"never\"'
 run "snapshot report of both vCenters: one report, each snapshot with its vCenter" ok vm_snapshot_report.yml -e _vm_now=$later -e "$two" \
     -- 'OLD DC0_C0_RP0_VM1 (127.0.0.1): \"old-a\"' 'OLD DC0_C0_RP0_VM1 ('"$vc2"'): \"old-b\"' "\"vcenter\": \"$vc2\""
 approved2="{\"vm_snapshot_cleanup_candidates\": [{\"vm\": \"DC0_C0_RP0_VM1\", \"vcenter\": \"$vc2\", \"moid\": \"$m2\", \"id\": $id2, \"name\": \"old-b\"}],
@@ -2275,7 +2285,7 @@ run "...vmware_cert_install_trust_check: false - READY: NEEDS APPROVAL, the plan
 "$py" -c 'import json,sys; p=json.load(sys.stdin)["vmware_cert_install_plan"]; sys.exit(0 if len(p) == 1 and p[0]["chain"] == [] else 1)' <<< "$(vstats)" \
     && echo "ok   -   ...only the .cer on the request: no chain" || { echo "FAIL -   ...a chain without a bundle: $(vstats | head -c 300)"; fails=$((fails + 1)); }
 run "...with a CA bundle (cert_install_ca_bundle): its chain from the bundle" fail vmware_cert_install_check.yml -e "$cinst" \
-    -e "vmware_cert_install_ritm=$iritm" -e "cert_install_ca_bundle=$work/pki-bundle.p7b" \
+    -e "vmware_cert_install_ritm=$iritm" -e "cert_install_ca_bundle=$work/pki-bundle.p7b" -e awx_workflow_job_id=95 \
     -- "READY | DC0_H0 | ESXi host | $iritm | install it on the host" "NEEDS APPROVAL: 1 certificate(s) to install"
 vstats > "$work/vplan.json"
 "$py" -c 'import json,sys; p=json.load(open(sys.argv[1]))["vmware_cert_install_plan"]; sys.exit(0 if len(p) == 1 and p[0]["kind"] == "esxi" and p[0]["cert"]["serial"] == "5A17" and p[0]["chain"][0]["subject"] == "CN=Test PKI CA" and p[0]["chain"][0]["from_bundle"] else 1)' "$work/vplan.json" \
@@ -2284,17 +2294,22 @@ run "...a CA bundle that is not there: the check stops, says which" fail vmware_
     -e "vmware_cert_install_ritm=$iritm" -e "cert_install_ca_bundle=$work/nothere.p7b" -- "cert_install_ca_bundle $work/nothere.p7b cannot be read"
 before="$(hostcert DC0_H0)"
 run "the approved job on its own (no plan): refused, nothing changed" fail vmware_cert_install_approved.yml -- "Nothing to install: no approved plan"
-run "...the plan, dry run: what it would do, nothing changed" ok vmware_cert_install_approved.yml --check -e "@$work/vplan.json" -e "$cinst" \
+run "...the plan in another workflow: refused, nothing changed" fail vmware_cert_install_approved.yml -e "@$work/vplan.json" -e "$cinst" \
+    -e awx_workflow_job_id=96 -- "did not come from this workflow's own check step (it is from workflow job 95, this is workflow job 96)"
+run "...the plan outside a workflow: refused" fail vmware_cert_install_approved.yml -e "@$work/vplan.json" -e "$cinst" \
+    -- "did not come from this workflow's own check step"
+[ "$(hostcert DC0_H0)" = "$before" ] && echo "ok   -   ...the host keeps its certificate" || { echo "FAIL -   ...a refused plan changed the host"; fails=$((fails + 1)); }
+run "...the plan, dry run: what it would do, nothing changed" ok vmware_cert_install_approved.yml --check -e "@$work/vplan.json" -e "$cinst" -e awx_workflow_job_id=95 \
     -- "WOULD INSTALL | DC0_H0"
 [ "$(hostcert DC0_H0)" = "$before" ] && echo "ok   -   ...the host keeps its certificate" || { echo "FAIL -   ...the dry run changed the host"; fails=$((fails + 1)); }
 certmode vmca
 run "...vpxd.certmgmt.mode back to vmca after the approval: planned again, REFUSED, nothing changed" fail vmware_cert_install_approved.yml \
-    -e "@$work/vplan.json" -e "$cinst" -- "REFUSED | DC0_H0" "no longer ready - held" "1 not installed"
+    -e "@$work/vplan.json" -e "$cinst" -e awx_workflow_job_id=95 -- "REFUSED | DC0_H0" "no longer ready - held" "1 not installed"
 [ "$(hostcert DC0_H0)" = "$before" ] && echo "ok   -   ...the host keeps its certificate" || { echo "FAIL -   ...refused but changed"; fails=$((fails + 1)); }
 certmode custom
 n1=$(cn csn3)
 run "...approved: installed on the host, vCenter shows it, a work note on the request" ok vmware_cert_install_approved.yml \
-    -e "@$work/vplan.json" -e "$cinst" -- "INSTALLED | DC0_H0" "$iritm" "installed on the host" "the host (vCenter 127.0.0.1 shows it) serves it"
+    -e "@$work/vplan.json" -e "$cinst" -e awx_workflow_job_id=95 -- "INSTALLED | DC0_H0" "$iritm" "installed on the host" "the host (vCenter 127.0.0.1 shows it) serves it"
 [ "$(hostcert DC0_H0)" = "CN=Test PKI CA | $iexp" ] && echo "ok   -   ...vCenter shows the new certificate: the test CA's, expiring $iexp" \
     || { echo "FAIL -   ...the host's certificate: $(hostcert DC0_H0)"; fails=$((fails + 1)); }
 tail -n +"$((n1 + 1))" "$work/csn3.jsonl" | "$py" -c '
@@ -2302,7 +2317,7 @@ import json, sys
 notes = [json.loads(l)["body"].get("work_notes", "") for l in sys.stdin if json.loads(l)["method"] == "PATCH" and "/sc_req_item/" in json.loads(l)["path"]]
 sys.exit(0 if len(notes) == 1 and notes[0].startswith("Installed on DC0_H0 by AAP job 4711: the certificate serial 5A17") and "kept on the host" not in notes[0] else 1)' \
     && echo "ok   -   ...one work note: what, where, by which job" || { echo "FAIL -   ...the work note"; fails=$((fails + 1)); }
-run "...the same plan again: INSTALLED ALREADY, nothing done" ok vmware_cert_install_approved.yml -e "@$work/vplan.json" -e "$cinst" \
+run "...the same plan again: INSTALLED ALREADY, nothing done" ok vmware_cert_install_approved.yml -e "@$work/vplan.json" -e "$cinst" -e awx_workflow_job_id=95 \
     -- "INSTALLED ALREADY | DC0_H0"
 run "...the check, the request named again: INSTALLED ALREADY, nothing handed on" ok vmware_cert_install_check.yml -e "$cinst" \
     -e "vmware_cert_install_ritm=$iritm" -- "INSTALLED ALREADY | DC0_H0 | ESXi host | $iritm | the host has it already"

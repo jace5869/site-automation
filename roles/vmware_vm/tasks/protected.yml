@@ -1,0 +1,40 @@
+---
+# THE PROTECTED VMs - one list for every job that changes VMs or deletes snapshots: restart, shut down and VLAN change
+# (guard.yml), the restart pick list (pick_vms.yml), the snapshot cleanup, report and pick list (snapshot_split.yml)
+# and the outage watch. Protected: the hosts of the groups aap and aap_hosts (always: they are literal here, no
+# setting removes them) and of vmware_protected_groups - matched by VM name, guest host name and IP address - and the
+# VM names of vmware_protected_vms (* and ?). Both settings are read with name_list: text from a survey or an extra
+# variable ("dcs", "AAP01, File Server 01", one per line) is names separated by commas or line breaks - never the
+# letters of one name, and a name with spaces stays one name.
+# Input: _vm_prot_refuse (optional): what the job will not do when the inventory cannot say which VM is the AAP server
+# - given, the job is refused then. Output: _vm_prot {groups, ids, names, aap_known}.
+- name: VMware | the protected VMs (the AAP server, vmware_protected_groups, vmware_protected_vms)
+  ansible.builtin.set_fact:
+    _vm_prot: >-
+      {%- set aap = (groups['aap'] | default([])) + (groups['aap_hosts'] | default([])) -%}
+      {%- set grp = (['aap', 'aap_hosts'] + (vmware_protected_groups | name_list)) | unique | list -%}
+      {%- set names = vmware_protected_vms | name_list -%}
+      {{ {'groups': grp,
+          'ids': grp | select('in', groups) | map('extract', groups) | flatten | unique | list | host_ids(hostvars),
+          'names': names,
+          'aap_known': aap | length > 0 or names | length > 0} }}
+
+- name: VMware | the AAP server is on the protected list
+  ansible.builtin.assert:
+    that: >-
+      ((groups['aap'] | default([])) + (groups['aap_hosts'] | default([]))) | host_ids(hostvars)
+      | difference(_vm_prot.ids) | length == 0
+    fail_msg: "Refused: the protected list (_vm_prot) does not have the AAP server on it. Nothing was changed."
+    quiet: true
+
+- name: VMware | this inventory says which server is AAP
+  ansible.builtin.assert:
+    that: >-
+      ((groups['aap'] | default([])) + (groups['aap_hosts'] | default([]))) | length > 0
+      or (vmware_protected_vms | name_list) | length > 0
+    fail_msg: >-
+      Refused: this job cannot tell which VM is the AAP server, so it will not {{ _vm_prot_refuse }}. Run the
+      template with your inventory that has the group aap (or aap_hosts), and/or list the AAP VM's name in
+      vmware_protected_vms.
+    quiet: true
+  when: _vm_prot_refuse is defined

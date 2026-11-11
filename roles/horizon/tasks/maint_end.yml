@@ -1,6 +1,31 @@
 ---
 # HOST MAINTENANCE END (playbooks/horizon_host_maintenance_end.yml): after the ESXi host horizon_maint_host is back,
-# its desktops in Horizon maintenance mode leave it (never one in a protected pool). A dry run (Check) changes nothing.
+# the desktops the start job put in Horizon maintenance mode leave it (horizon_maint_done, handed on by the start job
+# in the host maintenance workflow - wherever DRS moved them since); never one in a protected pool, never one someone
+# else put in maintenance mode. Without that list it stops - unless horizon_maint_end_all: true (every desktop in
+# maintenance mode on the host). A dry run (Check) changes nothing.
+- name: Horizon | the desktops the start job put in maintenance mode, and the host
+  ansible.builtin.set_fact:
+    _hz_end_host: "{{ horizon_maint_host | default('', true) | trim or _hz_done.host | default('', true) | trim }}"
+    _hz_end_why: >-
+      {{ 'Which host? Set horizon_maint_host.' if not (_hz_a or _hz_b) else
+         '' if horizon_maint_end_all | bool else
+         ('Nothing is brought back: no list of the desktops the start job put in maintenance mode (horizon_maint_done) reached this job -'
+          ~ ' run the end from the host maintenance workflow (after the start job), or set horizon_maint_end_all: true with horizon_maint_host'
+          ~ ' to bring back every desktop in maintenance mode on ' ~ horizon_maint_host ~ ', also any put there for another reason.') if not _hz_done else
+         ('The list of the start job is for host ' ~ _hz_done.host ~ ', not ' ~ horizon_maint_host ~ ': nothing is brought back.')
+         if _hz_a and _hz_b and _hz_a != _hz_b and not (('.' not in _hz_a or '.' not in _hz_b) and _hz_a.split('.')[0] == _hz_b.split('.')[0]) else '' }}
+  vars:
+    _hz_done: "{{ horizon_maint_done if horizon_maint_done is defined and horizon_maint_done is mapping and horizon_maint_done.ids is defined else {} }}"
+    # the same host: the same full name, or the same short name when one of the two has no domain
+    _hz_a: "{{ horizon_maint_host | default('', true) | trim | lower }}"
+    _hz_b: "{{ _hz_done.host | default('', true) | trim | lower }}"
+
+- name: Horizon | the desktops to bring back are known
+  ansible.builtin.fail:
+    msg: "{{ _hz_end_why }}"
+  when: _hz_end_why | default('', true) | length > 0
+
 - name: Horizon | read the pools and desktops
   ansible.builtin.include_tasks: read.yml
   vars:
@@ -9,8 +34,20 @@
 
 - name: Horizon | the host's desktops in maintenance mode
   ansible.builtin.set_fact:
-    _hz_me: "{{ _hz | hz_host_in_maintenance(horizon_maint_host, {'protected_pools': horizon_protected_pools}) }}"
+    # the start job's desktops, each counted as on the host (DRS may have moved them): still in maintenance mode, not protected
+    _hz_me: >-
+      {{ (_hz if horizon_maint_end_all | bool else _hz | combine({'machines': _hz.machines | default([])
+            | selectattr('id', 'in', horizon_maint_done.ids) | map('combine', {'host': _hz_end_host}) | list}))
+         | hz_host_in_maintenance(_hz_end_host, {'protected_pools': horizon_protected_pools}) }}
     _hz_all_results: []
+    _hz_end_all_note: >-
+      horizon_maint_end_all: every desktop in maintenance mode on {{ _hz_end_host }} is brought back, whether the start job
+      put it there or not.
+
+- name: Horizon | horizon_maint_end_all - every desktop in maintenance mode on the host
+  ansible.builtin.debug:
+    msg: "{{ _hz_end_all_note }}"
+  when: horizon_maint_end_all | bool
 
 - name: Horizon | out of maintenance mode
   ansible.builtin.include_tasks: act.yml
@@ -24,9 +61,10 @@
   ansible.builtin.include_tasks: report.yml
   vars:
     _hz_doc: >-
-      {{ {'title': 'Horizon host maintenance end: ' ~ horizon_maint_host ~ ' - ' ~ _hz_me.act | length ~ ' desktop(s) back'
+      {{ {'title': 'Horizon host maintenance end: ' ~ _hz_end_host ~ ' - ' ~ _hz_me.act | length ~ ' desktop(s) back'
                    ~ (' (a dry run)' if ansible_check_mode else ''),
           'status': 'critical' if _hz_all_results | rejectattr('ok') | list else 'ok',
+          'subtitle': _hz_end_all_note if horizon_maint_end_all | bool else 'Only the desktops the start job put in maintenance mode.',
           'sections': [{'title': 'Desktops', 'lines': (_hz_all_results | hz_act_lines(_hz_me.act, 'out of maintenance mode', ansible_check_mode))
                                                       or ['None in maintenance mode on this host.']},
                        {'title': 'Held back', 'columns': ['Desktop', 'Why'],

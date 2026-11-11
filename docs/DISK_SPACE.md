@@ -53,9 +53,12 @@ Never deleted:
   `.X11-unix` and the other X folders, `krb5cc*` (Kerberos tickets), `ssh-*` (agents), `tmux-*`,
   PostgreSQL's and MySQL's sockets;
 - anything on another filesystem mounted inside the tmp folder (`find -xdev`);
-- any folder that is not a tmp folder: each path in `tmp_cleanup_dirs` must have *tmp* in its last
-  part (`/tmp`, `/var/tmp`, `/opt/app/tmp`) and never be `/`, `/var`, `/usr`, `/etc`, `/home`... - a
-  setting that names one stops the job before anything is read.
+- any folder that is not a tmp folder: the last part of each path in `tmp_cleanup_dirs` must be *tmp*
+  or end in `.tmp`, `-tmp` or `_tmp` (`/tmp`, `/var/tmp`, `/opt/app/tmp`; not `/usr/lib/tmpfiles.d`),
+  with no `.` or `..` part, and never be `/`, `/var`, `/usr`, `/etc`, `/home`... - a setting that names
+  one stops the job before anything is read;
+- anything through a folder replaced by a link while the cleanup runs (`rm` and `rmdir` run in each
+  file's own folder, `find -execdir`).
 
 | Setting | Default | |
 |---|---|---|

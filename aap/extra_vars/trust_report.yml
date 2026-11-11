@@ -132,9 +132,10 @@
 ## trust is blocklisted (RHEL / SUSE: a PEM in the blocklist folder and update-ca-trust; Debian /
 ## Ubuntu: the line in /etc/ca-certificates.conf and update-ca-certificates), a Java keystore loses
 ## the entry, a certifi or application bundle loses the block, a file that is the certificate itself
-## is moved to the backup folder. A file a package owns is left alone (update the package). Node, Go
-## programs and containers cannot be changed this way (update, rebuild) and stay in the report.
-## docs/TRUST_STORES.md remove them (true) - or only report (false)
+## is moved to the backup folder. A file a package owns is left alone (update the package), and so
+## is one that is a symbolic link or whose folder another user can write (take it out by hand).
+## Node, Go programs and containers cannot be changed this way (update, rebuild) and stay in the
+## report. docs/TRUST_STORES.md remove them (true) - or only report (false)
 # check_trust_remove: false
 
 ## which kinds of store to change: system (blocklist), java (every keystore), python (certifi), file

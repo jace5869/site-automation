@@ -4,7 +4,8 @@
 # real TCP listener and a real OCSP responder (openssl ocsp, a throwaway CA). In order: all well (the first run: no
 # usual yet); loss and latency warnings and criticals, a target's own thresholds; a closed TCP port; slower than the
 # host's usual; interface drops since the last run, a counter reset; OCSP good, revoked, no answer, a URL only; iperf3
-# between two hosts of the job, below its min_mbps; a dry run keeps nothing; the email's tables.
+# between two hosts of the job, below its min_mbps; a dry run keeps nothing; the email's tables; two pairs that share a
+# server (one pair at a time, the server stopped after its client - also when the client never connects).
 #   bash tests/netperf/run_netperf_test.sh        (ANSIBLE_PLAYBOOK=... to pick one)
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -30,9 +31,20 @@ echo "20 packets transmitted, \$recv received, \$loss% packet loss, time 3800ms"
 [ "\$recv" -gt 0 ] && echo "rtt min/avg/max/mdev = 0.1/\$avg/\$max/\$mdev ms"
 exit 0
 EOF
+# fake iperf3: the server takes the port ($W/listening) for one test - none when it is taken already (as iperf3 on a
+# busy port); in the foreground it waits for its test, logging its pid; the client uses the server up, or is refused
 cat > "$W/bin/iperf3" <<EOF
 #!/bin/bash
-case " \$* " in *" -s "*) exit 0 ;; esac
+case " \$* " in
+  *" -s "*)
+    [ -f "$W/listening" ] && { echo "iperf3: error - unable to start listener for connections: Address already in use"; exit 1; }
+    echo "\$\$" > "$W/listening"; echo "\$\$" >> "$W/servers"
+    case " \$* " in *" -D "*) exit 0 ;; esac
+    for _ in \$(seq 1 600); do [ -f "$W/listening" ] || exit 0; sleep 0.1; done
+    exit 0 ;;
+esac
+if [ -f "$W/client_fails" ] || [ ! -f "$W/listening" ]; then echo '{"start": {}, "error": "unable to connect to server: Connection refused"}'; exit 1; fi
+rm -f "$W/listening"
 cat "$W/iperf"
 EOF
 chmod +x "$W/bin/ping" "$W/bin/iperf3"
@@ -149,6 +161,23 @@ n=$(wc -l < "$W/kept/app01/history.jsonl")
 run "Check mode: measured, nothing kept, iperf3 not run" ok --check -e '{"net_perf_iperf_pairs": [{"server": "app01", "client": "db01", "min_mbps": 900}]}' -- "!throughput to app01"
 [ "$(wc -l < "$W/kept/app01/history.jsonl")" -eq "$n" ] && echo "ok   - Check mode kept nothing" || { echo "FAIL - Check mode kept a run"; fails=$((fails + 1)); }
 [ "$(stat -c %a "$W/kept/app01")" = 700 ] && [ "$(stat -c %a "$W/kept/app01/history.jsonl")" = 600 ] && echo "ok   - the history is root-only" || { echo "FAIL - the history's modes"; fails=$((fails + 1)); }
+
+# two pairs that share a server: each its own server in turn, both tests run; a server whose client never comes is stopped
+cat >> "$W/inv.yml" <<EOI
+    web01: {ansible_connection: local, ansible_python_interpreter: $py}
+EOI
+rm -f "$W/listening" "$W/servers"
+two='{"net_perf_iperf_pairs": [{"server": "app01", "client": "db01", "min_mbps": 300}, {"server": "app01", "client": "web01", "min_mbps": 300}]}'
+run "iperf3: two pairs with the same server (app01): both measured, no finding" ok -e "$two" -- "HEALTHY" "!throughput to app01"
+[ "$(wc -l < "$W/servers" 2>/dev/null)" = 2 ] && [ ! -f "$W/listening" ] && echo "ok   - ... a server per pair, none left listening" \
+    || { echo "FAIL - the servers: $(cat "$W/servers" 2>/dev/null | wc -l) started, listening: $([ -f "$W/listening" ] && echo yes || echo no)"; fails=$((fails + 1)); }
+rm -f "$W/listening" "$W/servers"; touch "$W/client_fails"
+run "iperf3: the client cannot connect - a warning on it" fail -e "$two" -- "[WARNING] netperf: the iperf3 test to app01 did not run"
+rm -f "$W/client_fails"
+alive=0; for p in $(cat "$W/servers" 2>/dev/null); do kill -0 "$p" 2>/dev/null && alive=1; done
+[ "$(wc -l < "$W/servers" 2>/dev/null)" -ge 1 ] && [ $alive -eq 0 ] && echo "ok   - ... its server stopped after the client step, not left listening" \
+    || { echo "FAIL - a server left running (or none started)"; fails=$((fails + 1)); }
+for p in $(cat "$W/servers" 2>/dev/null); do kill "$p" 2>/dev/null; done; rm -f "$W/listening"
 
 echo
 if [ $fails -eq 0 ]; then echo "all network performance scenarios passed"; else echo "$fails network performance scenario(s) FAILED"; exit 1; fi

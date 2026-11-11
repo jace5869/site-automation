@@ -120,7 +120,11 @@ report*) and the check `trust` in the Windows health check's **weekly** set read
 Expect the two Microsoft-only emSign roots (`emSign Root TLS CA - G3`, `emSign Root CS CA - G3`,
 warning) on most Windows servers: Microsoft's root program ships them. They are the amber rows there
 until Microsoft moves them to its disallowed list, or you do with the removal. The Windows report has
-the same sections and the same `check_trust_extra`, `check_trust_severity` and `check_trust_remove`.
+the same sections and the same `check_trust_extra`, `check_trust_severity` and `check_trust_remove` -
+which removes only on the Windows trust store report: the health check's `trust` check only reads,
+whatever `check_trust_remove` says. A JKS `cacerts` is rewritten only when it was read to its end and its
+integrity digest matches the keystore password given (the **Keystore password** credential, else
+`check_trust_keystore_password`, `changeit`); otherwise it is listed as not removed, unchanged.
 
 ## VMware
 
@@ -157,6 +161,12 @@ the path with `__` for `/`); the report's *Removed* table names the backup of ea
 at `check_trust_remove_severities` go (critical and warning): *AAA Certificate Services* at notice is
 never touched unless you put `notice` there or raise its severity - and that one you decide on first,
 because much chains to it. `check_trust_remove_kinds` narrows it to, say, `[system]`.
+
+A changed file is written as a new file next to it under a fresh name, with the old one's owner and
+mode, then renamed over it (`keytool` works on a copy in a private folder); it is written only when it
+is still the file that was read. A keystore or bundle that is a **symbolic link**, or whose folder
+another user can write (not only root and the file's owner; a sticky folder like `/tmp` is fine), is
+left alone and listed with why in *Not removed* - take the certificate out of it by hand.
 
 ```yaml
 check_trust_remove: true                  # the switch (Check mode first) - on either report

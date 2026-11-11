@@ -140,7 +140,7 @@ Create one template per row: **Inventory** any (the jobs run on the AAP side, ag
 | Horizon - message users | acting | `horizon_message` (text, **required**), `horizon_message_type` (multiple choice: `INFO`, `WARNING`, `ERROR`), `horizon_message_pools` (text: pool names, commas), `horizon_message_users` (text, optional) | |
 | Horizon - host maintenance plan | read only | none: the survey is on the workflow | |
 | Horizon - host maintenance start | acting | none | **Prompt on launch** unticked for Variables |
-| Horizon - host maintenance end | acting | `horizon_maint_host` (text, **required**) | |
+| Horizon - host maintenance end | acting | none: the last node of the workflow (it gets the start job's list) | **Prompt on launch** unticked for Variables; alone only with `horizon_maint_end_all: true` and `horizon_maint_host` |
 | Horizon - desktops check | read only | none | `horizon_desktops_mode: approval` when it is the workflow's first node |
 | Horizon - fix the approved desktops | acting | none | **Prompt on launch** unticked for Variables; Job type: tick Prompt on launch to rehearse with Check |
 | Horizon - user help | acting | `horizon_user` (text, **required**), `horizon_user_action` (multiple choice: `look`, `logoff`, `disconnect`, `reset`, `restart`, `recover`; default `look`) | give the service desk Execute on this template only |
@@ -488,6 +488,12 @@ get it.
    |  Run on success
    v
 [Horizon - host maintenance start]
+   |  Run on success
+   v
+[Approval]  "Is the host back?"
+   |  Run on success
+   v
+[Horizon - host maintenance end]
 ```
 
 Before you put an ESXi host into maintenance mode in vCenter:
@@ -497,7 +503,8 @@ Before you put an ESXi host into maintenance mode in vCenter:
    - `horizon_maint_message`: textarea, optional. What the users on its desktops read; empty = no
      message. The default asks them to save their work and log off in 15 minutes.
 2. Nodes: *Horizon - host maintenance plan* → **Run on success** → **Approval** (`Start the host
-   maintenance?`) → **Run on success** → *Horizon - host maintenance start*.
+   maintenance?`) → **Run on success** → *Horizon - host maintenance start* → **Run on success** →
+   **Approval** (`Is the host back?`, no timeout) → **Run on success** → *Horizon - host maintenance end*.
 
 The plan lists the host's desktops (as Horizon has them: each desktop's ESXi host), the free ones that
 go into **Horizon maintenance mode** (no new user is given them), the sessions that get the message,
@@ -507,8 +514,12 @@ desktop on stops the plan.
 
 After the approval the start job reads the desktops again, sends the message to the sessions on the
 host's desktops now, and puts the planned desktops still free into maintenance mode. Then put the
-host into maintenance in vCenter (DRS moves the running desktops). Afterwards, run *Horizon - host
-maintenance end* with the host: its desktops leave maintenance mode.
+host into maintenance in vCenter (DRS moves the running desktops). When the host is back, approve
+`Is the host back?`: the end job brings out of maintenance mode only the desktops the start job put there
+(the start job hands their list on, `horizon_maint_done`), wherever DRS moved them; a desktop someone put in
+maintenance mode for another reason stays there. Run on its own, without that list, the end job stops;
+`horizon_maint_end_all: true` with `horizon_maint_host` brings back every desktop in maintenance mode on
+the host instead (as before 1.22.0).
 
 On Horizon before 2306, or a pool that still uses parent VMs (`cp-parent-*`), the parent VMs block
 the host's maintenance mode: run `IcMaint.cmd -vc <vcenter> -uid <user> -hostName <host>

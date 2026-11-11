@@ -69,6 +69,20 @@ switch ($Scenario -replace '^audit_fallback$', 'audit') {   # audit_fallback: th
         $M.exe['w32tm.exe /query /status'] = @('Leap Indicator: 0(no warning)', 'Stratum: 4', 'Source: dc01.corp.test,0x9', ('Last Successful Sync Time: ' + $now.AddDays(-2).ToString()))
         $M.exe['w32tm.exe /stripchart /computer:dc01.corp.test /samples:1 /dataonly'] = @('Tracking dc01.corp.test [192.0.2.1:123].', 'The current time is 9/28/2026 12:00:00 PM.', '12:00:00, +06.5000000s')
     }
+    { $_ -in @('time_localized', 'time_localized_cmos') } {
+        # w32tm in another language: its labels translated (the source asked alone: w32tm /query /source)
+        $M.cim.Win32_Service = @(O @{ Name = 'W32Time'; State = 'Running'; StartMode = 'Auto'; ExitCode = 0 })
+        $M.cim.Win32_ComputerSystem = @(O @{ PartOfDomain = $true; DomainRole = 3; Domain = 'corp.test' })
+        if ($Scenario -eq 'time_localized') {
+            $M.exe['w32tm.exe /query /status'] = @('Sprungindikator: 0(keine Warnung)', 'Stratum: 4', 'Referenz-ID: 0xC0000201 (Quell-IP: 192.0.2.1)', ('Letzte erfolgreiche Synchronisierungszeit: ' + $now.ToString()), 'Quelle: dc01.corp.test,0x9')
+            $M.exe['w32tm.exe /query /source'] = @('dc01.corp.test,0x9')
+            $M.exe['w32tm.exe /stripchart /computer:dc01.corp.test /samples:1 /dataonly'] = @('dc01.corp.test [192.0.2.1:123] wird verfolgt.', '12:00:00, +00.0100000s')
+        }
+        else {
+            $M.exe['w32tm.exe /query /status'] = @('Sprungindikator: 3(nicht synchronisiert)', 'Stratum: 1 (primaere Referenz - synchronisiert per Funkuhr)', 'Referenz-ID: 0x4C4F434C (Quellname: "LOCL")', 'Quelle: Lokale CMOS-Uhr')
+            $M.exe['w32tm.exe /query /source'] = @('Lokale CMOS-Uhr')
+        }
+    }
     'time_stopped' {
         $M.cim.Win32_Service = @(O @{ Name = 'W32Time'; State = 'Stopped'; StartMode = 'Manual'; ExitCode = 0 })
     }
@@ -159,10 +173,17 @@ switch ($Scenario -replace '^audit_fallback$', 'audit') {   # audit_fallback: th
     'accounts_dc' {
         $M.cim.Win32_ComputerSystem = @(O @{ PartOfDomain = $true; DomainRole = 5; Domain = 'corp.test' })
     }
-    'certs' {
+    { $_ -in @('certs', 'certs_localized') } {
         $cfg = @{ warn_days = 30; crit_days = 7; expired_report_days = 30; stores = @('Cert:\LocalMachine\My'); ignore_subjects = @('CN=ignore*'); endpoints = @() }
         $a = 'A' * 40; $b = 'B' * 40; $c = 'C' * 40; $d = 'D' * 40; $e = 'E' * 40
         $M.exe['netsh.exe http show sslcert'] = @('SSL Certificate bindings:', '', '    IP:port                      : 0.0.0.0:443', "    Certificate Hash             : $($a.ToLower())", '    Application ID               : {4dc3e181-e14b-4a21-b022-59fc669b0914}')
+        if ($Scenario -eq 'certs_localized') {
+            # netsh in another language: its labels translated (a binding on another port first, its certificate not in the store)
+            $M.exe['netsh.exe http show sslcert'] = @('SSL-Zertifikatbindungen:', '-------------------------', '', '    IP:Port                      : 0.0.0.0:8443', "    Zertifikathash               : $('9' * 40)",
+                '    Anwendungs-ID                : {4dc3e181-e14b-4a21-b022-59fc669b0914}', '    Zertifikatspeichername       : My', '    Clientzertifikat aushandeln  : Deaktiviert', '',
+                '    IP:Port                      : 0.0.0.0:443', "    Zertifikathash               : $($a.ToLower())", '    Anwendungs-ID                : {4dc3e181-e14b-4a21-b022-59fc669b0914}',
+                '    Zertifikatspeichername       : My', '    Clientzertifikat aushandeln  : Deaktiviert', '')
+        }
         $M.wsman = @(O @{ PSPath = 'wsman-https' })
         $M.reg['wsman-https'] = O @{ certThumbprint = " $b " }
         $M.certs = @{ 'Cert:\LocalMachine\My' = @(
@@ -192,7 +213,7 @@ switch ($Scenario -replace '^audit_fallback$', 'audit') {   # audit_fallback: th
             'Cert:\LocalMachine\AuthRoot'    = @(O @{ Subject = 'CN=wu'; Thumbprint = $l; NotAfter = $now.AddDays(1); HasPrivateKey = $true })
         }
     }
-    { $_ -in @('trust', 'trust_remove', 'trust_remove_dry') } {
+    { $_ -in @('trust', 'trust_remove', 'trust_remove_dry', 'trust_remove_wrongpw', 'trust_remove_partial') } {
         # the Windows trust check against real certificates (tests/trust/fixtures): the dropped root and Sectigo's
         # AAA root in Trusted Root, a compromised intermediate in Intermediate CAs, the root again in AuthRoot (Windows
         # Update's store), AAA in Disallowed (blocked); a Java cacerts (JKS, made here) with the root; two certifi
@@ -218,8 +239,16 @@ switch ($Scenario -replace '^audit_fallback$', 'audit') {   # audit_fallback: th
         $rd = [byte[]]$root.RawData
         $len = [byte[]][System.BitConverter]::GetBytes([int32]$rd.Length)
         [array]::Reverse($len)                  # big-endian
+        # the keystore with its integrity digest for the password changeit (SHA-1 over the password as UTF-16BE,
+        # 'Mighty Aphrodite', the data); trust_remove_partial: a second entry of a kind the script does not read
         $jks = [System.Collections.Generic.List[byte]]::new()
-        foreach ($part in @(([byte[]]@(0xFE, 0xED, 0xFE, 0xED, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 2, 0, 6)), ([byte[]][char[]]'emsign'), ([byte[]]@(0, 0, 0, 0, 0, 0, 0, 0, 0, 5)), ([byte[]][char[]]'X.509'), $len, $rd, ([byte[]]::new(20)))) { $jks.AddRange([byte[]]$part) }
+        $n = 1; if ($Scenario -eq 'trust_remove_partial') { $n = 2 }
+        foreach ($part in @(([byte[]]@(0xFE, 0xED, 0xFE, 0xED, 0, 0, 0, 2, 0, 0, 0, $n, 0, 0, 0, 2, 0, 6)), ([byte[]][char[]]'emsign'), ([byte[]]@(0, 0, 0, 0, 0, 0, 0, 0, 0, 5)), ([byte[]][char[]]'X.509'), $len, $rd)) { $jks.AddRange([byte[]]$part) }
+        if ($n -eq 2) { $jks.AddRange([byte[]]@(0, 0, 0, 7, 0, 3, 0x61, 0x62, 0x63, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4)) }
+        $salted = [System.Collections.Generic.List[byte]]::new()
+        foreach ($ch in 'changeit'.ToCharArray()) { $salted.Add(0); $salted.Add([byte][char]$ch) }
+        $salted.AddRange([byte[]][char[]]'Mighty Aphrodite'); $salted.AddRange($jks)
+        $jks.AddRange([System.Security.Cryptography.SHA1]::Create().ComputeHash($salted.ToArray()))
         $jks = $jks.ToArray()
         $jf = Join-Path $fs 'java\lib\security\cacerts'
         if ($PSVersionTable.PSVersion.Major -ge 6) { Set-Content -LiteralPath $jf -Value $jks -AsByteStream } else { Set-Content -LiteralPath $jf -Value $jks -Encoding Byte }
@@ -230,7 +259,8 @@ switch ($Scenario -replace '^audit_fallback$', 'audit') {   # audit_fallback: th
         $M.fs = $fs
         $cfg = @{ known = $known; stores = @('Cert:\LocalMachine\Root', 'Cert:\LocalMachine\CA', 'Cert:\LocalMachine\AuthRoot', 'Cert:\CurrentUser\Root'); block_stores = @('Cert:\LocalMachine\Disallowed')
             java = $true; java_dirs = @((Join-Path $fs 'java')); python = $true; python_dirs = @((Join-Path $fs 'py')); backup_dir = (Join-Path $fs 'backup')
-            remove = ($Scenario -ne 'trust'); dry_run = ($Scenario -eq 'trust_remove_dry'); severities = @('critical', 'warning'); keystore_password = 'changeit' }
+            remove = ($Scenario -ne 'trust'); dry_run = ($Scenario -eq 'trust_remove_dry'); severities = @('critical', 'warning')
+            keystore_password = $(if ($Scenario -eq 'trust_remove_wrongpw') { 'not-the-password' } else { 'changeit' }) }
         $M.certs = @{
             'Cert:\LocalMachine\Root'       = @($root, $aaa, $harmless)
             'Cert:\LocalMachine\CA'         = @($dv, $harmless)
@@ -268,7 +298,7 @@ switch ($Scenario -replace '^audit_fallback$', 'audit') {   # audit_fallback: th
             'Cert:\LocalMachine\Root'           = @()
         }
     }
-    { $_ -in @('csr', 'csr_check') } {
+    { $_ -in @('csr', 'csr_check', 'csr_open_dir') } {
         # the renewal (win_cert_csr.ps1): certreq is a stand-in; the CSR folder is a real temporary one
         $M.fs = Join-Path ([System.IO.Path]::GetTempPath()) ('sa-csr-' + (Get-Random))
         $null = New-Item -ItemType Directory -Path $M.fs
@@ -320,6 +350,8 @@ switch ($Scenario -replace '^audit_fallback$', 'audit') {   # audit_fallback: th
         }
         $cands += @(@{ id = 'certs:tls:127.0.0.1:8443'; store = ''; where = 'TLS app'; subject = 'CN=tls'; days = 5; expires = '2026-01-01'; severity = 'critical' })
         $cfg = @{ certs = $cands; dir = $M.fs; key_bits = 2048; digest = 'sha256'; max = 10; check_mode = ($Scenario -eq 'csr_check') }
+        # csr_open_dir: the renewal folder made by another account, which owns it
+        if ($Scenario -eq 'csr_open_dir') { $M.acl = @{ $M.fs = 'O:S-1-5-21-1-2-3-1001G:SYD:AI(A;OICI;FA;;;S-1-5-21-1-2-3-1001)(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)' } }
     }
     { $_ -like 'install*' -or $_ -like 'restore*' } {
         # the certificate install (win_cert_install.ps1): the stores, HTTP.sys's bindings, Remote Desktop, the WinRM
@@ -391,6 +423,27 @@ switch ($Scenario -replace '^audit_fallback$', 'audit') {   # audit_fallback: th
             'install_rollback' { $M.netshFail = @('hostnameport=www.corp.test:443'); $cfg = @{ action = 'install'; dir = $dir; approved = $ap; verify_wait = 1 } }
             'install_changed' { $M.cim.Win32_TSGeneralSetting[0].SSLCertificateSHA1Hash = $other; $cfg = @{ action = 'install'; dir = $dir; approved = $ap } }
             'install_accept_fails' { $M.acceptFail = $true; $cfg = @{ action = 'install'; dir = $dir; approved = $ap } }
+            'install_webhosting' {
+                # the old certificate in Web Hosting (IIS), its https bindings take it from there; the new one goes to Personal
+                $M.certs['Cert:\LocalMachine\WebHosting'] = @((O @{ Subject = 'CN=web01.corp.test'; Thumbprint = $old; HasPrivateKey = $true }))
+                foreach ($b in $M.ssl) { if ($b.hash -eq $old) { $b.store = 'WebHosting' } }
+                $cfg = @{ action = 'install'; dir = $dir; approved = $ap; verify_wait = 1 }
+            }
+            'install_clientcert' {
+                $M.sslSet = @{ 'ipport=0.0.0.0:443' = @{ clientcertnegotiation = 'Enabled'; sslctlstorename = 'ClientAuthIssuer' } }
+                $cfg = @{ action = 'install'; dir = $dir; approved = $ap; verify_wait = 1 }
+            }
+            'install_plan_http2' { $M.sslSet = @{ 'hostnameport=www.corp.test:443' = @{ disablehttp2 = 'Set' } } }
+            'install_plan_localized' { $M.sslLang = 'de' }
+            'install_undo_fails' {
+                $M.netshFail = @('hostnameport=www.corp.test:443'); $M.netshFailHash = @($old)
+                $cfg = @{ action = 'install'; dir = $dir; approved = $ap; verify_wait = 1 }
+            }
+            { $_ -in @('install_plan_open_dir', 'install_open_dir') } {
+                # the renewal folder made by another account, which owns it
+                $M.acl = @{ $dir = 'O:S-1-5-21-1-2-3-1001G:SYD:AI(A;OICI;FA;;;S-1-5-21-1-2-3-1001)(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)' }
+                if ($Scenario -eq 'install_open_dir') { $cfg = @{ action = 'install'; dir = $dir; approved = $ap; verify_wait = 1 } }
+            }
             { $_ -like 'restore*' } {
                 # after an install: the bindings on the new one, the renewal's files in installed\, its backup
                 $M.certs['Cert:\LocalMachine\My'] += @(O @{ Subject = 'CN=web01.corp.test'; Thumbprint = $new; HasPrivateKey = $true })
@@ -405,6 +458,14 @@ switch ($Scenario -replace '^audit_fallback$', 'audit') {   # audit_fallback: th
                 $null = New-Item -ItemType Directory -Path $bk -Force
                 ConvertTo-Json -Depth 5 @{ base = $old; subject = 'CN=web01.corp.test'; made = '2026-10-24 09:00:00 UTC'; old_thumbprint = $old; new_thumbprint = $new
                     bindings = $bind } | Microsoft.PowerShell.Management\Set-Content -LiteralPath (Join-Path $bk 'backup.json')
+                if ($Scenario -eq 'restore_webhosting') {
+                    # the https bindings took the old certificate from Web Hosting, which is the only store that has it now
+                    $M.certs['Cert:\LocalMachine\WebHosting'] = @((O @{ Subject = 'CN=web01.corp.test'; Thumbprint = $old; HasPrivateKey = $true }))
+                    $M.certs['Cert:\LocalMachine\My'] = @($M.certs['Cert:\LocalMachine\My'] | Where-Object { $_.Thumbprint -ne $old })
+                    $wh = @($bind | Where-Object { $_.kind -eq 'https' } | ForEach-Object { $x = $_.Clone(); $x.store = 'WebHosting'; $x })
+                    ConvertTo-Json -Depth 5 @{ base = $old; subject = 'CN=web01.corp.test'; made = '2026-10-24 09:00:00 UTC'; old_thumbprint = $old; new_thumbprint = $new
+                        bindings = $wh } | Microsoft.PowerShell.Management\Set-Content -LiteralPath (Join-Path $bk 'backup.json')
+                }
                 $cfg = @{ action = 'restore'; dir = $dir; only = $(if ($Scenario -eq 'restore_list') { '' } else { 'web01' }); check_mode = ($Scenario -eq 'restore_check') }
             }
         }
@@ -483,7 +544,7 @@ function Get-HotFix { $M.hotfix }
 function Get-LocalUser { if ($null -eq $M.users) { throw 'not available' } ; $M.users }
 function Get-LocalGroupMember { if ($M.adminsFail) { throw 'Failed to compare two elements in the array.' } ; $M.admins }
 function Get-ChildItem {
-    param([string] $Path, $ErrorAction, [switch] $Recurse, [int] $Depth, [string] $Filter, [switch] $File, [string] $LiteralPath)
+    param([string] $Path, $ErrorAction, [switch] $Recurse, [int] $Depth, [string] $Filter, [switch] $File, [string] $LiteralPath, [switch] $Force)
     $p = $Path; if ($LiteralPath) { $p = $LiteralPath }
     if ($M.fs -and $p -and $p.StartsWith($M.fs)) {
         $a = @{ Path = $p; ErrorAction = 'SilentlyContinue' }
@@ -552,26 +613,53 @@ function auditpol.exe {
     }
     Invoke-Exe ('auditpol.exe ' + ($args -join ' '))
 }
+# a binding's settings, as netsh prints them (English), and the parameter that sets each: an update or add sets every
+# one it is not given back to its default ($M.sslLang 'de': the labels and values in another language)
+function SslSettings {
+    return @([ordered]@{ label = 'Verify Client Certificate Revocation'; de = 'Clientzertifikatsperrung ueberpruefen'; param = 'verifyclientcertrevocation'; def = 'Enabled'; value = 'Enabled' },
+        [ordered]@{ label = 'Usage Check'; de = 'Verwendungsueberpruefung'; param = 'usagecheck'; def = 'Enabled'; value = 'Enabled' },
+        [ordered]@{ label = 'Ctl Store Name'; de = 'CTL-Speichername'; param = 'sslctlstorename'; def = '(null)'; value = '(null)' },
+        [ordered]@{ label = 'Negotiate Client Certificate'; de = 'Clientzertifikat aushandeln'; param = 'clientcertnegotiation'; def = 'Disabled'; value = 'Disabled' },
+        [ordered]@{ label = 'Disable HTTP2'; de = 'HTTP2 deaktivieren'; param = 'disablehttp2'; def = 'Not Set'; value = 'Not Set' })
+}
+$DE = @{ 'IP:port' = 'IP:Port'; 'Hostname:port' = 'Hostname:Port'; 'Certificate Hash' = 'Zertifikathash'; 'Application ID' = 'Anwendungs-ID'
+    'Certificate Store Name' = 'Zertifikatspeichername'; Enabled = 'Aktiviert'; Disabled = 'Deaktiviert'; 'Not Set' = 'Nicht festgelegt' }
+function Say([string] $Text) { if ($M.sslLang -eq 'de' -and $DE.ContainsKey($Text)) { return $DE[$Text] }; return $Text }
 function netsh.exe {
     if ($null -eq $M.ssl) { return (Invoke-Exe ('netsh.exe ' + ($args -join ' '))) }
-    # HTTP.sys's SSL bindings as a list: show (all, or one), update, delete, add - $M.netshFail: keys that refuse a change
+    # HTTP.sys's SSL bindings as a list: show (all, or one), update, delete, add - $M.netshFail: keys that refuse a
+    # change, $M.netshFailHash: certificates that cannot be bound; a certificate not in the store named: error 1312
     $global:LASTEXITCODE = 0
     $verb = $args[1]; $key = [string]$args[3]
     $kv = @{}; foreach ($a in @($args | Select-Object -Skip 4)) { $k, $v = ([string]$a) -split '=', 2; $kv[$k] = $v }
     if ($verb -eq 'show') {
-        $out = @('', 'SSL Certificate bindings:', '-------------------------', '')
+        $out = @('', (Say 'SSL Certificate bindings:'), '-------------------------', '')
         foreach ($b in @($M.ssl | Where-Object { -not $key -or $_.key -eq $key })) {
-            $out += @(('    {0,-28} : {1}' -f $b.label, (($b.key -split '=', 2)[1])), "    Certificate Hash             : $($b.hash.ToLower())",
-                "    Application ID               : $($b.appid)", "    Certificate Store Name       : $($b.store)", '')
+            if ($null -eq $b.settings) {
+                # first read: the defaults, and the scenario's own ($M.sslSet: key -> {parameter = value})
+                $b.settings = SslSettings
+                if ($M.sslSet -and $M.sslSet.ContainsKey($b.key)) { foreach ($x in $b.settings) { if ($M.sslSet[$b.key].ContainsKey($x.param)) { $x.value = $M.sslSet[$b.key][$x.param] } } }
+            }
+            $out += @(('    {0,-28} : {1}' -f (Say $b.label), (($b.key -split '=', 2)[1])), ('    {0,-28} : {1}' -f (Say 'Certificate Hash'), $b.hash.ToLower()),
+                ('    {0,-28} : {1}' -f (Say 'Application ID'), $b.appid), ('    {0,-28} : {1}' -f (Say 'Certificate Store Name'), $b.store))
+            foreach ($x in @($b.settings)) { $out += @(('    {0,-28} : {1}' -f $(if ($M.sslLang -eq 'de') { $x.de } else { $x.label }), (Say $x.value))) }
+            $out += @('')
         }
         return $out
     }
     $M.netshLog += @(($args -join ' '))
     if (@($M.netshFail) -contains $key) { $global:LASTEXITCODE = 1; return 'SSL Certificate add failed, Error: 1312' }
+    if ($verb -eq 'update' -or $verb -eq 'add') {
+        $tp = ([string]$kv['certhash']).ToUpper()
+        $inStore = @($M.certs[('Cert:\LocalMachine\' + [string]$kv['certstorename'])] | Where-Object { $_.Thumbprint -eq $tp })
+        if (@($M.netshFailHash) -contains $tp -or -not $inStore.Count) { $global:LASTEXITCODE = 1; return 'SSL Certificate add failed, Error: 1312 A specified logon session does not exist.' }
+    }
     $b = @($M.ssl | Where-Object { $_.key -eq $key })
-    if ($verb -eq 'update' -and $b.Count) { $b[0].hash = $kv['certhash'].ToUpper(); return 'SSL Certificate successfully updated' }
+    $set = SslSettings
+    foreach ($x in $set) { if ($kv.ContainsKey($x.param)) { $x.value = $(if ($kv[$x.param] -eq 'enable') { 'Enabled' } elseif ($kv[$x.param] -eq 'disable') { 'Disabled' } else { $kv[$x.param] }) } }
+    if ($verb -eq 'update' -and $b.Count) { $b[0].hash = $kv['certhash'].ToUpper(); $b[0].store = $kv['certstorename']; $b[0].settings = $set; return 'SSL Certificate successfully updated' }
     if ($verb -eq 'delete' -and $b.Count) { $M.ssl = @($M.ssl | Where-Object { $_.key -ne $key }); return 'SSL Certificate successfully deleted' }
-    if ($verb -eq 'add') { $M.ssl += @(@{ label = 'IP:port'; key = $key; hash = $kv['certhash'].ToUpper(); appid = $kv['appid']; store = $kv['certstorename'] }); return 'SSL Certificate successfully added' }
+    if ($verb -eq 'add') { $M.ssl += @(@{ label = 'IP:port'; key = $key; hash = $kv['certhash'].ToUpper(); appid = $kv['appid']; store = $kv['certstorename']; settings = $set }); return 'SSL Certificate successfully added' }
     $global:LASTEXITCODE = 1
     return 'The parameter is incorrect.'
 }
@@ -590,6 +678,15 @@ function Set-Item {
     Microsoft.PowerShell.Management\Set-Item @PSBoundParameters
 }
 function net.exe { Invoke-Exe ('net.exe ' + ($args -join ' ')) }
+# the permissions (Get-Acl's SDDL): $M.acl by path, else SYSTEM and the Administrators only; whoami: the job's account
+function Get-Acl {
+    param([string] $LiteralPath, [string] $Path)
+    $p = $LiteralPath; if (-not $p) { $p = $Path }
+    $s = 'O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)'
+    if ($M.acl -and $M.acl.ContainsKey($p)) { $s = $M.acl[$p] }
+    return [pscustomobject]@{ Sddl = $s }
+}
+function whoami.exe { $global:LASTEXITCODE = 0; '"host01\svc_aap","S-1-5-21-1-2-3-1500"' }
 function icacls.exe {
     $global:LASTEXITCODE = 0
     if ($args.Count -eq 1 -and $M.icacls -and $M.icacls.ContainsKey([string]$args[0])) { return $M.icacls[[string]$args[0]] }
@@ -631,6 +728,8 @@ try { & $Script }
 finally {
     if ($null -ne $M.ssl) {
         '###STATE### ' + (ConvertTo-Json -Compress -Depth 4 -InputObject @{ ssl = @($M.ssl | ForEach-Object { $_.key + '=' + $_.hash })
+                stores = @($M.ssl | ForEach-Object { $_.key + '=' + $_.store })
+                settings = @($M.ssl | ForEach-Object { $k = $_.key; @($_.settings) | Where-Object { $_ -and $_.value -ne $_.def } | ForEach-Object { $k + ' ' + $_.param + '=' + $_.value } })
                 rdp = [string]$M.cim.Win32_TSGeneralSetting[0].SSLCertificateSHA1Hash; winrm = [string]$M.reg[$M.wsmanItems[0].Reg].certThumbprint
                 grants = @($M.grants); addstore = @($M.addstore); accepted = [bool]$M.accepted; netsh = @($M.netshLog)
                 tree = @(Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $M.fs -Recurse -File | ForEach-Object { $_.FullName.Substring($M.fs.Length) -replace '\\', '/' }) })

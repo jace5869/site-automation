@@ -13,10 +13,21 @@
 
 - name: Network config | the report
   ansible.builtin.set_fact:
-    _ncl_doc: >-
+    _ncl_doc: "{{ _ncl_doc_main | combine({'sections': _ncl_doc_main.sections + _ncl_doc_before}) }}"
+  vars:
+    _ncl_doc_main: >-
       {{ _ncl_all | net_config_load_report({'mode': net_config_load_mode, 'check_mode': ansible_check_mode,
                                             'change': (_ncl_change.number ~ ' (' ~ _ncl_change.state ~ ')') if _ncl_change.number else '',
                                             'source': _ncl_from | default('')}) }}
+    # where each device's configuration before the change was kept (load_keep.yml)
+    _ncl_doc_before: >-
+      {%- set why = _ncl_keep_why | default({}) -%}
+      {{ [{'title': 'Before the change', 'lines':
+           ((['Kept as ' ~ _ncl_keep_ref ~ ' - to undo the load: net_config_load_mode: restore, net_config_restore_ref: ' ~ _ncl_keep_ref]
+             + _ncl_keep_where | default([])) if _ncl_kept | default({}) else [])
+           + (['Not kept - nothing was sent: ' ~ _ncl_keep_error] if _ncl_keep_error | default('') else [])
+           + (why | dict2items | map(attribute='key') | zip(why.values() | list) | map('join', ': not kept - ') | list)}]
+         if _ncl_keep_ref is defined and not ansible_check_mode else [] }}
 
 - name: Network config | {{ _ncl_doc.title }}
   ansible.builtin.debug:
@@ -34,7 +45,9 @@
     headers: {Accept: application/json}
     body_format: json
     body:
-      work_notes: "{{ _ncl_all | net_config_load_note({'mode': net_config_load_mode, 'job': awx_job_id | default('-')}) }}"
+      work_notes: >-
+        {{ _ncl_all | net_config_load_note({'mode': net_config_load_mode, 'job': awx_job_id | default('-')})
+           ~ (('\nBefore the change: kept as ' ~ _ncl_keep_ref ~ ' (' ~ (_ncl_keep_where | default([]) | join(' ; ')) ~ ')') if _ncl_kept | default({}) else '') }}
     validate_certs: "{{ servicenow_validate_certs | default(true) }}"
     ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
     timeout: "{{ servicenow_timeout | default(30) }}"
@@ -58,6 +71,7 @@
         mode: "{{ net_config_load_mode }}"
         change: "{{ _ncl_change.number }}"
         results: "{{ _ncl_all | map(attribute='host') | zip(_ncl_all | map(attribute='status')) | map('join', ': ') | list }}"
+        before: "{{ _ncl_keep_ref if _ncl_kept | default({}) else '' }}"
 
 - name: Network config | email it, publish it (report_email_to, report_web_dest)
   ansible.builtin.include_role:

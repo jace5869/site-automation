@@ -286,7 +286,8 @@ def main():
         return None
 
     _, statuses = each_vcenter(module, read, p["vcenters"], p["validate_certs"], what="trust stores", timeout=p["timeout"])
-    module.exit_json(changed=any(r["done"] for r in removed), stores=stores, not_read=not_read, vcenters=statuses, removed=removed)
+    # changed: a store changed (or, in check mode, one that would be)
+    module.exit_json(changed=any(r["done"] or r.get("planned") for r in removed), stores=stores, not_read=not_read, vcenters=statuses, removed=removed)
 
 
 if __name__ == "__main__":

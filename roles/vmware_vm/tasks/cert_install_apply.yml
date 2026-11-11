@@ -4,7 +4,8 @@
 # certificate, still ready, or it is refused - then the ESXi hosts (the CA chain added to vCenter's trusted roots when
 # missing, the certificate installed, the host reconnected if vCenter lost it, vCenter must show it), then vCenter's own
 # (its Machine SSL certificate replaced, port 443 must serve it). A work note on each request; the job fails when one was
-# not installed. It refuses to run on its own: outside the workflow nothing was approved. Check: what it would do.
+# not installed. It refuses to run on its own: outside the workflow nothing was approved - the plan must carry the
+# workflow job ID of this run (vmware_cert_install_plan_workflow, from the check step). Check: what it would do.
 - name: VMware certs | install | the check job's plan reached this job
   ansible.builtin.assert:
     that:
@@ -16,6 +17,18 @@
       Nothing to install: no approved plan (vmware_cert_install_plan) reached this job. It runs only in the VMware
       certificate install workflow, after "VMware - certificate install - check" and the approval step: docs/VMWARE.md.
       Do not tick "Prompt on launch" for Variables on this template.
+    quiet: true
+
+- name: VMware certs | install | the approved plan is this workflow's own
+  ansible.builtin.assert:
+    that:
+      - awx_workflow_job_id is defined
+      - (vmware_cert_install_plan_workflow | default('') | string) == (awx_workflow_job_id | string)
+    fail_msg: >-
+      Refused: vmware_cert_install_plan did not come from this workflow's own check step (it is from
+      {{ ('workflow job ' ~ vmware_cert_install_plan_workflow) if vmware_cert_install_plan_workflow | default('') | string else 'no workflow' }}, this is
+      {{ ('workflow job ' ~ awx_workflow_job_id) if awx_workflow_job_id is defined else 'no workflow' }}). Nothing was installed.
+      Launch the workflow, and do not tick "Prompt on launch" for Variables on this template.
     quiet: true
 
 - name: VMware | a vCenter credential is attached

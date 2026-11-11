@@ -2,7 +2,9 @@
 # NETWORK DEVICE CONFIGURATIONS: the backup (playbooks/net_config_backup.yml) keeps each device's running
 # configuration - in a git repository (a commit when one changed) or on a file share (dated copies) - and can
 # open a ServiceNow incident when one changed. The load (playbooks/net_config_load.yml) sends configuration
-# lines, or restores a backup, after an approved change request - always a dry run (Check) first.
+# lines, or restores a backup, after an approved change request - run it in Check first to see what it sends (the
+# job does not check that you did: an approval step in a workflow does); a real load first keeps each device's
+# running configuration (net_config_keep_before).
 # Cisco IOS / IOS-XE (over its CLI: network_cli, a Machine credential) and Palo Alto Networks PAN-OS (over its
 # XML API from the controller: the "Palo Alto PAN-OS API" credential). docs/NETWORK_CONFIG.md.
 # A backup holds the device's secrets (password hashes, SNMP communities, keys): keep it in a private, internal
@@ -82,3 +84,8 @@ net_config_save: true                   # IOS: write memory after a change (fals
 net_config_ios_file: flash:site-automation-restore.cfg   # IOS restore: where the backup is copied first (scp; ip scp server enable on the device)
 net_config_panos_allow_pending: false   # PAN-OS: change even with someone's uncommitted changes (they would be committed too)
 net_config_max_devices: 10              # a load to more devices at once is refused (net_config_only, the template's Limit - or raise it)
+# A real load first reads each device's running configuration and keeps it where the backup keeps them
+# (net_config_store), named <time>-before-<change> (git: a tag; share: a dated copy) - restore it with
+# net_config_load_mode: restore and net_config_restore_ref set to that name. A device whose copy could not be
+# kept gets nothing sent. false = the load without that copy (as before 1.22.0).
+net_config_keep_before: true
