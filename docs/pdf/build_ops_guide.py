@@ -72,6 +72,8 @@ CRED_TYPES = ["servicenow_api.yml", "mariadb_monitor.yml", "keystore_password.ym
 
 ST["bullet2"] = style("bullet2", leftIndent=30, bulletIndent=17, spaceAfter=3)
 ST["bullet3"] = style("bullet3", leftIndent=46, bulletIndent=33, spaceAfter=3)
+ST["h4"] = style("h4", fontName="Sans-Semi", fontSize=9.8, leading=13, textColor=TEAL, spaceBefore=6, spaceAfter=2,
+                 keepWithNext=1)
 LIST_ST = ["bullet", "bullet2", "bullet3"]
 
 
@@ -485,6 +487,11 @@ def render(md_text, chapter):
         if line.startswith("### "):
             flush()
             story.append(H3(inline(line[4:].strip()).replace("`", "")))
+            i += 1
+            continue
+        if line.startswith("#### "):
+            flush()
+            story.append(Paragraph(escape(inline(line[5:].strip()).replace("`", "")), ST["h4"]))
             i += 1
             continue
         if stripped.startswith("> "):

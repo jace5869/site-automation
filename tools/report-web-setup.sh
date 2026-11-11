@@ -452,51 +452,64 @@ if target["if"]:
 fi
 CSP="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
 {
-  echo "    # ---- site-automation report website (report-web) - written by report-web-setup.sh $(date -u '+%Y-%m-%d %H:%M UTC') ----"
-  echo "    # Paste inside STIG Manager's server { } block (beside location /stigman/), then: nginx -t, and reload."
-  echo "    # Reading: anyone. Writing (PUT, DELETE, MKCOL): report-web asks for the upload login; no client certificate."
-  echo "    location = $URL_PATH { return 301 $URL_PATH/; }"
-  echo "    location $URL_PATH/ {"
+  echo "# ---- site-automation report website (report-web) - written by report-web-setup.sh $(date -u '+%Y-%m-%d %H:%M UTC') ----"
+  echo "# Read this file into STIG Manager's server { } block, beside location /stigman/ (in vim: :r $PASTE_FILE)."
+  echo "# Then: nginx -T | grep -c report-web (above 0), nginx -t, and reload."
+  echo "# Reading: anyone. Writing (PUT, DELETE, MKCOL): report-web asks for the upload login; no client certificate."
+  echo "location = $URL_PATH { return 301 $URL_PATH/; }"
+  echo "location $URL_PATH/ {"
   if [ -n "$NETWORK" ]; then
-    echo "        resolver $GATEWAY valid=30s ipv6=off;      # podman network $NETWORK's DNS: finds $NAME again after a restart"
-    echo "        set \$report_web $UPSTREAM;"
-    echo "        proxy_pass \$report_web;                   # the address as asked for, not rewritten"
+    echo "    # podman network $NETWORK's DNS: finds $NAME again after a restart"
+    echo "    resolver $GATEWAY valid=30s ipv6=off;"
+    echo "    # a variable: the address goes on as asked for, not rewritten"
+    echo "    set \$report_web $UPSTREAM;"
+    echo "    proxy_pass \$report_web;"
   else
-    echo "        proxy_pass $UPSTREAM;"
+    echo "    proxy_pass $UPSTREAM;"
   fi
-  echo "        proxy_http_version 1.1;"
-  echo "        proxy_set_header Host \$host;"
-  echo "        proxy_set_header X-Forwarded-Proto \$scheme;"
-  echo "        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;"
-  echo "        proxy_request_buffering off;               # an upload goes through as it comes (its login with it)"
-  echo "        client_max_body_size $MAX_BODY;                   # the largest page or JSON an upload may be"
-  echo "        proxy_read_timeout 300s;"
-  echo "        proxy_send_timeout 300s;"
-  echo "        # The website's own security header: its scripts (site-report.js, site-insights.js) come from this address."
-  echo "        # An add_header here replaces EVERY add_header of the server for $URL_PATH/ - so the server's own are repeated below."
-  echo "        add_header Content-Security-Policy \"$CSP\" always;"
+  echo "    proxy_http_version 1.1;"
+  echo "    proxy_set_header Host \$host;"
+  echo "    proxy_set_header X-Forwarded-Proto \$scheme;"
+  echo "    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;"
+  echo "    # an upload goes through as it comes (its login with it); the largest page or JSON an upload may be"
+  echo "    proxy_request_buffering off;"
+  echo "    client_max_body_size $MAX_BODY;"
+  echo "    proxy_read_timeout 300s;"
+  echo "    proxy_send_timeout 300s;"
+  echo "    # The website's own security header: its scripts (site-report.js, site-insights.js) come from this address."
+  echo "    # An add_header here replaces EVERY add_header of the server for $URL_PATH/ - so the server's own are repeated below."
+  echo "    add_header Content-Security-Policy \"$CSP\" always;"
   if [ "$readconf" = 1 ]; then
-    echo "        # STIG Manager's own headers (from its running configuration, $(date -u '+%Y-%m-%d')): check them against it"
+    echo "    # STIG Manager's own headers (from its running configuration, $(date -u '+%Y-%m-%d')): check them against it"
     if [ -n "$headers" ]; then
-      printf '%s\n' "$headers" | sed 's/^/        /'
+      printf '%s\n' "$headers" | sed 's/^/    /'
     else
-      echo "        # (it sets none)"
+      echo "    # (it sets none)"
     fi
   else
-    echo "        # >>> COPY HERE every add_header line of STIG Manager's server { } (or of http { }, if the server has none),"
-    echo "        # >>> except its Content-Security-Policy: HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy..."
+    echo "    # >>> COPY HERE every add_header line of STIG Manager's server { } (or of http { }, if the server has none),"
+    echo "    # >>> except its Content-Security-Policy: HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy..."
   fi
-  echo "    }"
-  echo "    # ---- end of report-web ----"
+  echo "}"
+  echo "# ---- end of report-web ----"
 } > "$PASTE_FILE.new"
 put "$PASTE_FILE.new" "$PASTE_FILE"
 chmod 644 "$PASTE_FILE"
-ok "$PASTE_FILE written - paste it, run nginx -t, reload (docs/WEB_REPORTS.md, \"report-web\")"
+ok "$PASTE_FILE written - read it in, check, reload (step 8a; docs/WEB_REPORTS.md, \"report-web\")"
 
 # ---- 8. what goes where -------------------------------------------------------------
 say "8. Done. Then:"
 cat <<INFO
-   a. Paste $PASTE_FILE into STIG Manager's nginx (inside its server { }), then check and reload it:
+   a. Read $PASTE_FILE into STIG Manager's nginx configuration, inside its server { }, beside location /stigman/.
+      Read it in, do not paste it by hand: a terminal paste into vim indents each line further than the last.
+        vim:  the cursor on the line above where it goes, then   :r $PASTE_FILE
+              before writing:   :set backupcopy=yes   then   :w
+              (a file mounted on its own: vim's usual write makes a new file, and the running nginx keeps the old one)
+        a terminal paste after all: in vim   :set paste   first
+      Check that nginx sees it - a number above 0:
+        podman exec ${NGINX_CONTAINER:-<nginx container>} nginx -T | grep -c report-web
+      0: the running nginx still has the old file (docs/WEB_REPORTS.md, Troubleshooting, "report-web: 0").
+      Then check and reload it:
         podman exec ${NGINX_CONTAINER:-<nginx container>} nginx -t
         podman exec ${NGINX_CONTAINER:-<nginx container>} nginx -s reload
       A refused check or reload changes nothing: the running nginx keeps its configuration.

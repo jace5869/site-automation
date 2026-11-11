@@ -117,7 +117,18 @@ check "the script again: nothing new, the files rewritten in place (the running 
     && grep -q 'its password is kept' '$work/setup2.log' && [ \"\$(stat -c %i '$work/conf/htpasswd')\" = '$ino' ] && grep -q 'ok: answers' '$work/setup2.log'"
 
 # ---- 2. the paste: into the stand-in, nginx -t, reload ----------------------------------------------------------------
+check "the paste file: shallow (4 spaces inside the location), no comment after a directive" bash -c "! grep -q '^        ' '$work/paste.conf' \
+    && ! grep -qE '^[^#]*;[[:space:]]*#' '$work/paste.conf' && grep -q '^location /reports/ {' '$work/paste.conf' && grep -q '^    proxy_pass ' '$work/paste.conf'"
+seen() { podman exec "$front" nginx -T 2>/dev/null | grep -c -- "$1" || true; }   # step 8a's count
+before=$(seen report-web)
 cp "$work/paste.conf" "$work/front/conf.d/reports.conf"; chmod 644 "$work/front/conf.d/reports.conf"
+check "step 8a's count (nginx -T | grep -c report-web): 0 before, above 0 once the file is in" bash -c "[ '$before' = 0 ] && [ \"\$(podman exec '$front' nginx -T 2>/dev/null | grep -c report-web)\" -gt 0 ]"
+# an editor that writes a new file (vim's usual write) under a file mounted on its own: the container keeps the old one
+{ cat "$work/front/nginx.conf"; echo "# report-web replaced-file probe"; } > "$work/front/nginx.conf.new"
+chmod 644 "$work/front/nginx.conf.new"; mv "$work/front/nginx.conf.new" "$work/front/nginx.conf"
+echo "# report-web replaced-file probe, written again in place" >> "$work/front/nginx.conf"
+check "  ...and its 0 for a file replaced under a single-file mount, even written again in place (Troubleshooting)" \
+    bash -c "grep -q 'replaced-file probe' '$work/front/nginx.conf' && [ \"\$(podman exec '$front' nginx -T 2>/dev/null | grep -c 'replaced-file probe')\" = 0 ]"
 check "the paste passes nginx -t in the stand-in, and it reloads" bash -c "podman exec '$front' nginx -t >/dev/null 2>&1 && podman exec '$front' nginx -s reload >/dev/null 2>&1"
 sleep 1
 # shellcheck disable=SC1091   # written by the script above

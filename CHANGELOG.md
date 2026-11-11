@@ -25,8 +25,11 @@ The report jobs upload there too, over the same https, with a login (`report_web
   insights All page, is about 2 MB), and the website's own **Content-Security-Policy** (`script-src 'self'`, styles
   inline, images `data:` - worked out on the real pages in a browser). Because an `add_header` in a location replaces
   every `add_header` of the server there, STIG Manager's own (HSTS, X-Frame-Options...) are copied into the block,
-  for you to check. You paste, run `nginx -t` and reload: the script never reloads STIG Manager's nginx, and a refused
-  check or reload leaves the running nginx as it was. The script warns when that server would require a client
+  for you to check. You read the file in (vim `:r`, not a terminal paste, which indents each line further), check that
+  nginx sees it (`nginx -T | grep -c report-web` above 0 - a file mounted on its own that the editor replaced stays
+  the old one in the container), run `nginx -t` and reload: the script never reloads STIG Manager's nginx, and a
+  refused check or reload leaves the running nginx as it was. The block is indented shallow, its comments on their
+  own lines. The script warns when that server would require a client
   certificate for every request (the report jobs have none).
 - **The login**: nginx basic authentication with a SHA-512 crypt hash (`openssl passwd -6` - no MD5 or apr1, as FIPS
   requires); reading needs none, `PUT`, `DELETE` and `MKCOL` need it. The password stays in `/root/report-web.env`
@@ -42,10 +45,11 @@ The report jobs upload there too, over the same https, with a login (`report_web
 
 docs/WEB_REPORTS.md: "Your own report server, behind STIG Manager's nginx" - the steps with what success looks like,
 moving from another web server (copy the whole folder, the scripts at its top; nothing to rerun but the next report),
-undoing it, what was tested and what was not, the second layout; five rows in Troubleshooting. Tests:
-`tests/email/run_report_web_setup_test.sh` (new, CI; 44 checks) - rootless, umask 077, against a stand-in for STIG
+undoing it, what was tested and what was not, the second layout; six rows in Troubleshooting. Tests:
+`tests/email/run_report_web_setup_test.sh` (new, CI; 47 checks) - rootless, umask 077, against a stand-in for STIG
 Manager's nginx (https, `ssl_verify_client optional`, a strict server-level CSP, HSTS, X-Frame-Options, a secret in
-its configuration): the script twice, the paste through `nginx -t` and a reload, a read without login, uploads without
+its configuration): the script twice, the paste seen by the stand-in (`nginx -T | grep -c`, and a file replaced
+under a single-file mount not seen - the case that count catches) through `nginx -t` and a reload, a read without login, uploads without
 and with a wrong login refused, a report job uploading the atlas page over https (ansible-core 2.16 and 2.22), in a
 headless browser search, sort and CSV on the atlas page and `site-insights.js` running on a ticket insights page under
 the website's CSP; `PUBLISH_PORT` with a stand-in firewall-cmd. shellcheck clean; CI's parse check covers `tools/`.
@@ -718,9 +722,11 @@ the ones after it.
     scripts work (search, sort, CSV, the ticket insights' Custom view) when your web server refuses `.js` files. On the
     STIG Manager host, as root: `SERVER_NAME=<the name people open STIG Manager at> bash tools/report-web-setup.sh`. It
     starts report-web on STIG Manager's nginx network (that container read, never changed or restarted; nothing in
-    the firewall) and writes `/root/report-web-nginx.conf`. Paste that file inside STIG Manager's `server { }`, then
-    `podman exec <nginx container> nginx -t` and `podman exec <nginx container> nginx -s reload` (step 1 of the script's
-    output names that container) - the script never reloads it. In `all.yml`:
+    the firewall) and writes `/root/report-web-nginx.conf`. Read that file into STIG Manager's `server { }` - in vim
+    `:r /root/report-web-nginx.conf` with the cursor on the line above, and `:set backupcopy=yes` before `:w` (a
+    terminal paste needs `:set paste` first). Then `podman exec <nginx container> nginx -T | grep -c report-web` (above
+    0), `podman exec <nginx container> nginx -t` and `podman exec <nginx container> nginx -s reload` (step 1 of the
+    script's output names that container) - the script never reloads it. In `all.yml`:
     `report_web_dest` and `report_web_url` = `https://<that name>/reports`. In AAP, a **Report website** credential
     (user `aap-reports`, the `UPLOAD_PASSWORD` of `/root/report-web.env`) on each report template. Run one report job.
     The old server's pages stay there: copy the whole folder into `/var/lib/report-web` to keep them.
