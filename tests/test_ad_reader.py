@@ -339,6 +339,17 @@ def section(out, title):
 
 
 class Report(unittest.TestCase):
+    def test_every_cut_list_says_so(self):
+        """1.24.0: the locked-out and created lists say when they were cut at ad_changes_max, as the changed list does."""
+        out = judge(reader(locked_out_capped=True, created_capped=True))
+        self.assertEqual(section(out, "Accounts locked out now")["lines"],
+                         ["Only the first 500 locked-out accounts were looked at (ad_changes_max)."])
+        self.assertEqual(section(out, "Users, groups and computers created")["lines"],
+                         ["Only the first 500 created accounts were looked at (ad_changes_max)."])
+        out = judge(reader())
+        self.assertNotIn("lines", section(out, "Accounts locked out now"))
+        self.assertNotIn("lines", section(out, "Users, groups and computers created"))
+
     def test_healthy(self):
         out = judge(reader())
         self.assertEqual(out["report"]["title"], "Active Directory health report: all 2 domain controller(s) healthy (corp.example.mil)")
@@ -497,6 +508,117 @@ class Report(unittest.TestCase):
         self.assertEqual(out["report"]["title"], "Active Directory health report: NOT READ (corp.example.mil)")
         self.assertEqual((out["report"]["status"], out["critical"]), ("critical", 1))
         self.assertIn("invalidCredentials", json.dumps(out["report"]))
+
+
+class FakeLdap(object):
+    """ldap3's names the reader uses (ldap3 is not needed for the tests)."""
+    SUBTREE, BASE = "SUBTREE", "BASE"
+
+
+class FakeConn(object):
+    """An ldap3 Connection whose searches answer from lists of entries, a page at a time with the paged-results cookie;
+    page_size: the DC's page (the reader asks for 500)."""
+    def __init__(self, by_filter, page_size=3):
+        self.by_filter, self.page_size, self.calls = by_filter, page_size, []
+        self.response, self.result = [], {}
+
+    def search(self, base, flt, scope, attributes=None, controls=None, paged_size=None, paged_cookie=None):
+        self.calls.append((flt, paged_cookie))
+        found = []
+        for key, entries in self.by_filter.items():
+            if key in flt:
+                found = entries
+        start = int(paged_cookie or b"0")
+        page = found[start:start + self.page_size] if paged_size else found
+        more = paged_size and start + self.page_size < len(found)
+        self.response = [{"type": "searchResEntry", "dn": e["dn"], "attributes": e["attributes"]} for e in page]
+        self.result = {"result": 0, "description": "success",
+                       "controls": {M.PAGED_RESULTS: {"value": {"size": 0, "cookie": str(start + self.page_size).encode() if more else b""}}}}
+        return True
+
+
+def accounts(n, prefix="u", **attrs):
+    return [{"dn": "CN=%s%d,OU=Staff,%s" % (prefix, i, NC), "attributes": dict({"sAMAccountName": "%s%d" % (prefix, i), "objectClass": ["user"]}, **attrs)}
+            for i in range(n)]
+
+
+class Paging(unittest.TestCase):
+    """1.24.0: every page of a search is read (the paged-results cookie followed) up to each list's cap, and each list
+    says when it was cut; lockoutDuration 'until an administrator unlocks it' counts as never running out."""
+    def setUp(self):
+        self.had = getattr(M, "ldap3", None)
+        M.ldap3 = FakeLdap
+
+    def tearDown(self):
+        if self.had is None:
+            del M.ldap3
+        else:
+            M.ldap3 = self.had
+
+    def read(self, conn, duration, mx=500):
+        r = M.Reader({"hours": 24, "changes_max": mx})
+        r.now = datetime.datetime(2026, 11, 10, 9, 0, tzinfo=datetime.timezone.utc)
+        r.dsa_name = {}
+        out = {"base_dn": NC, "domain_info": {"lockout_duration": duration}}
+        try:
+            r.read_accounts(conn, out)
+        finally:
+            r.close()
+        return out
+
+    @staticmethod
+    def ft(t):
+        return str(M.to_filetime(t))
+
+    def test_all_pages_read(self):
+        """10 created accounts, the DC gives 3 a page: all 10 read in 4 searches, not capped."""
+        conn = FakeConn({"whenCreated>=": accounts(10, whenCreated="20261110080000.0Z")})
+        got = M.Reader({}).search_capped(conn, NC, "(whenCreated>=x)", ["sAMAccountName"])
+        self.assertEqual((len(got[0]), got[1]), (10, False))
+        self.assertEqual([c[1] for c in conn.calls], [None, b"3", b"6", b"9"])
+        # with a cap: read until there are more than it, then cut - and said so
+        conn.calls = []
+        got = M.Reader({}).search_capped(conn, NC, "(whenCreated>=x)", ["sAMAccountName"], size=4)
+        self.assertEqual((len(got[0]), got[1]), (4, True))
+        self.assertEqual(len(conn.calls), 2)
+        self.assertEqual(M.Reader({}).search_capped(conn, NC, "(whenCreated>=x)", ["sAMAccountName"], size=10)[1], False)
+
+    def test_every_list_says_when_it_was_cut(self):
+        when = datetime.datetime(2026, 11, 10, 8, 40, tzinfo=datetime.timezone.utc)
+        conn = FakeConn({"lockoutTime>=": accounts(7, "l", lockoutTime=self.ft(when)),
+                         "whenCreated>=": accounts(8, "n", whenCreated="20261110080000.0Z"),
+                         "whenChanged>=": accounts(9, "c", whenChanged="20261110080000.0Z", userAccountControl="514")})
+        out = self.read(conn, "-18000000000", mx=5)                     # 30 minutes
+        self.assertEqual((len(out["locked_out"]), len(out["created"]), len(out["account_changes"])), (5, 5, 5))
+        self.assertEqual((out["locked_out_capped"], out["created_capped"], out["changes_capped"]), (True, True, True))
+        out = self.read(conn, "-18000000000", mx=50)
+        self.assertEqual((len(out["locked_out"]), len(out["created"]), len(out["account_changes"])), (7, 8, 9))
+        self.assertEqual((out["locked_out_capped"], out["created_capped"], out["changes_capped"]), (False, False, False))
+
+    def test_only_accounts_locked_now_are_asked_for(self):
+        """A 30-minute lockout: the search asks for lockoutTime since 08:30 (FILETIME), so stale lockouts do not fill the cap."""
+        conn = FakeConn({})
+        self.read(conn, "-18000000000")
+        flt = [c[0] for c in conn.calls if "lockoutTime" in c[0]][0]
+        self.assertIn("(lockoutTime>=%s)" % self.ft(datetime.datetime(2026, 11, 10, 8, 30, tzinfo=datetime.timezone.utc)), flt)
+        # one locked at 08:00 (run out) and one at 08:45 (still locked), should the DC give both
+        conn = FakeConn({"lockoutTime>=": [
+            {"dn": "CN=old," + NC, "attributes": {"sAMAccountName": "old", "lockoutTime": self.ft(datetime.datetime(2026, 11, 10, 8, 0, tzinfo=datetime.timezone.utc))}},
+            {"dn": "CN=now," + NC, "attributes": {"sAMAccountName": "now", "lockoutTime": self.ft(datetime.datetime(2026, 11, 10, 8, 45, tzinfo=datetime.timezone.utc))}}]})
+        self.assertEqual([x["name"] for x in self.read(conn, "-18000000000")["locked_out"]], ["now"])
+
+    def test_until_an_administrator_unlocks_it(self):
+        """lockoutDuration -9223372036854775808 (AD's and Samba's 'until an admin unlocks it') and 0: no crash, an
+        account locked a year ago is still locked, and every account with a lockoutTime is asked for."""
+        long_ago = datetime.datetime(2025, 11, 10, 9, 0, tzinfo=datetime.timezone.utc)
+        for dur in ("-9223372036854775808", -9223372036854775808, -0x7FFFFFFFFFFFFFFF, "0", 0, None, ""):
+            conn = FakeConn({"lockoutTime>=": [{"dn": "CN=lockme," + NC, "attributes": {"sAMAccountName": "lockme", "lockoutTime": self.ft(long_ago)}}]})
+            out = self.read(conn, dur)
+            self.assertEqual([x["name"] for x in out["locked_out"]], ["lockme"], dur)
+            self.assertIn("(lockoutTime>=1)", [c[0] for c in conn.calls if "lockoutTime" in c[0]][0], dur)
+        self.assertIsNone(M.lockout_window("-9223372036854775808"))
+        self.assertEqual(M.lockout_window("-18000000000"), datetime.timedelta(minutes=30))
+        self.assertEqual(M.lockout_window(datetime.timedelta(minutes=-30)), datetime.timedelta(minutes=30))
 
 
 class Mode(unittest.TestCase):

@@ -26,9 +26,18 @@
     ca_path: "{{ pki_bundle_ca_path | default(omit, true) }}"
     timeout: "{{ pki_bundle_timeout | int }}"
     warn_days: "{{ pki_bundle_warn_days | int }}"
+    accept_unverified: "{{ pki_bundle_accept_unverified | bool }}"
   environment: "{{ {'https_proxy': pki_bundle_proxy, 'http_proxy': pki_bundle_proxy} if pki_bundle_proxy | default('') else {} }}"
   register: _pkib
   check_mode: false                   # only reads
+
+- name: PKI bundle | what to do with one that is not verified (the output and the email)
+  ansible.builtin.set_fact:
+    _pkib_not_verified: >-
+      Nothing but the download itself says this bundle is DISA's ({{ _pkib.bundle.signature }}), so it is not
+      offered and your copy stays as it is. Check it where DISA's signature can be checked (the zip DISA publishes,
+      on a system not in FIPS mode), or compare its roots' SHA-1 with DISA's and download it by hand; to have the job
+      offer such a bundle anyway, set pki_bundle_accept_unverified: true.
 
 - name: PKI bundle | the result
   ansible.builtin.debug:
@@ -40,6 +49,7 @@
       {%- set word = {'current': 'CURRENT - yours has the same certificates',
                       'newer': 'NEWER - it differs from yours: put it in your repository (below)',
                       'first': 'FOUND - no bundle of yours yet (cert_install_ca_bundle): its roots are taken on trust - check them (below)',
+                      'not verified': 'NOT VERIFIED - it differs from yours, but DISA\'s signature on it could not be checked: not offered (below)',
                       'failed': 'FAILED - do not use it'} -%}
       {%- set _ = out.append(word[b.status] ~ ' | ' ~ (b.name or pki_bundle_url) ~ (' | version ' ~ b.version if b.version else '')
                              ~ ' | ' ~ b.cas ~ ' CA certificates' ~ ('; yours ' ~ b.current_count ~ ((' (version ' ~ b.current_version ~ ')') if b.current_version else '') if _pkib_current else '')) -%}
@@ -54,6 +64,10 @@
       {%-   for c in b.roots -%}{%- set _ = out.append('ROOT ' ~ c.subject ~ ' SHA-1 ' ~ c.sha1 ~ ' - compare it with DISA\'s') -%}{%- endfor -%}
       {%- endif -%}
       {%- for c in b.expiring -%}{%- set _ = out.append('EXPIRES SOON ' ~ c.subject ~ ' on ' ~ c.not_after) -%}{%- endfor -%}
+      {%- for c in b.expired -%}{%- set _ = out.append('EXPIRED ' ~ c.subject ~ ' on ' ~ c.not_after) -%}{%- endfor -%}
+      {%- if b.status == 'not verified' -%}
+      {%-   set _ = out.append(_pkib_not_verified) -%}
+      {%- endif -%}
       {%- if b.unreadable -%}{%- set _ = out.append(b.unreadable ~ ' certificate(s) in it cannot be read by this execution environment\'s Python library (left out)') -%}{%- endif -%}
       {%- if b.file -%}
       {%-   set _ = out.append('The checked bundle: ' ~ (b.file | basename) ~ ' - attached to the email; save it as '
@@ -77,9 +91,11 @@
             'newer': 'DoD PKI bundle: a newer one' ~ ((' (' ~ _pkib_b.version ~ ')') if _pkib_b.version else '') ~ ' - '
                      ~ _pkib_b.added | length ~ ' CA(s) added, ' ~ _pkib_b.removed | length ~ ' removed',
             'first': 'DoD PKI bundle' ~ ((' ' ~ _pkib_b.version) if _pkib_b.version else '') ~ ': no copy of yours yet',
+            'not verified': 'DoD PKI bundle: a different one' ~ ((' (' ~ _pkib_b.version ~ ')') if _pkib_b.version else '')
+                            ~ ' - not verified, not offered',
             'failed': 'DoD PKI bundle: the check FAILED'}[_pkib_b.status] }}
       subtitle: "{{ pki_bundle_url }} against {{ cert_install_ca_bundle | default('', true) or 'no cert_install_ca_bundle' }}"
-      status: "{{ {'current': 'ok', 'newer': 'warning', 'first': 'warning', 'failed': 'critical'}[_pkib_b.status] }}"
+      status: "{{ {'current': 'ok', 'newer': 'warning', 'first': 'warning', 'not verified': 'warning', 'failed': 'critical'}[_pkib_b.status] }}"
       summary:
         - {label: Its CA certificates, value: "{{ _pkib_b.cas }}"}
         - {label: Yours, value: "{{ _pkib_b.current_count }}"}
@@ -90,6 +106,9 @@
         {%- set b = _pkib_b -%}
         {%- if b.problems -%}
         {%-   set _ = out.append({'title': 'Do not use it', 'status': 'critical', 'lines': b.problems}) -%}
+        {%- endif -%}
+        {%- if b.status == 'not verified' -%}
+        {%-   set _ = out.append({'title': 'Not verified', 'status': 'warning', 'lines': [_pkib_not_verified]}) -%}
         {%- endif -%}
         {%- set _ = out.append({'title': 'Checked', 'lines': ['DISA signature on its list of files: ' ~ b.signature]
                                 + (['The files\' SHA-256: ' ~ b.hashes] if b.hashes else [])
@@ -110,6 +129,7 @@
         {%- endfor -%}
         {%- for c in b.new_roots -%}{%- set _ = rows.append(['a root not in yours (DISA\'s signature vouches for it when verified): compare its SHA-1 with DISA\'s', c.subject, c.not_after, c.sha1]) -%}{%- endfor -%}
         {%- for c in b.expiring -%}{%- set _ = rows.append(['expires soon', c.subject, c.not_after, c.sha1]) -%}{%- endfor -%}
+        {%- for c in b.expired -%}{%- set _ = rows.append(['expired', c.subject, c.not_after, c.sha1]) -%}{%- endfor -%}
         {%- if rows -%}
         {%-   set _ = out.append({'title': 'Certificates', 'columns': ['What', 'CA', 'Until', 'SHA-1'], 'rows': rows}) -%}
         {%- endif -%}
@@ -131,5 +151,9 @@
 
 - name: PKI bundle | a newer one is there (pki_bundle_fail_when_newer)
   ansible.builtin.fail:
-    msg: "A newer DoD PKI bundle{{ (' (' ~ _pkib.bundle.version ~ ')') if _pkib.bundle.version else '' }} than yours: put it in your repository (the email has it)."
-  when: pki_bundle_fail_when_newer | bool and _pkib.bundle.status in ['newer', 'first']
+    msg: >-
+      {{ 'A different' if _pkib.bundle.status == 'not verified' else 'A newer' }} DoD PKI
+      bundle{{ (' (' ~ _pkib.bundle.version ~ ')') if _pkib.bundle.version else '' }} than yours:
+      {{ 'DISA\'s signature on it could not be checked, so it is not offered (the job output says what to do).'
+         if _pkib.bundle.status == 'not verified' else 'put it in your repository (the email has it).' }}
+  when: pki_bundle_fail_when_newer | bool and _pkib.bundle.status in ['newer', 'first', 'not verified']

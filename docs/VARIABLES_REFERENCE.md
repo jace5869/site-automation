@@ -1251,6 +1251,7 @@ File: `roles/pki_bundle/defaults/main.yml`
 | `pki_bundle_timeout` | `120` | seconds for the download |
 | `pki_bundle_warn_days` | `90` | a CA in the bundle expiring within this many days is listed |
 | `pki_bundle_fail_when_newer` | `false` | true = the job ends red when a newer bundle is there (an AAP notification on failure tells you) |
+| `pki_bundle_accept_unverified` | `false` | A bundle that differs from yours while DISA's signature on it could not be checked (a FIPS-mode execution environment, a copy without the signed list): false = listed as NOT VERIFIED, not attached, not offered; true = offered as a newer one. |
 | `pki_bundle_email` | `true` | Email the result like the other reports: to report_email_to, through the mail relay in all.yml (docs/EMAIL_REPORTS.md), the checked .p7b attached when it differs from yours. false = never emailed (the launch box "Also email the report to" still is). |
 | `pki_bundle_email_when` | `newer` | newer = only when it differs from yours (or fails); always = every run |
 | `pki_bundle_web` | `false` | true = also on the report website (report_web_dest) |
@@ -1378,7 +1379,8 @@ File: `roles/servicenow/defaults/main.yml`
 | `servicenow_node_port` | `0` | the stats page's port: 0 = glide.servlet.port in the node's glide.properties, |
 | `servicenow_node_stats` | `true` | read each node's stats page |
 | `servicenow_node_stats_url` | (empty) | Where: tried in turn until one answers with the numbers - https://<the node's name>:<port>, http:// on it, then 127.0.0.1 (http, https), then 127.0.0.1 with the node's name as the Host header; each /xmlstats.do then /stats.do. Or force one: "https://{fqdn}:{port}/stats.do" ({fqdn}: the node's full name, {host}: its in… (all of it: the role file) |
-| `servicenow_node_stats_auth` | `auto` | A stats page that asks for a login (401 / 403, a login page): auto = asked again with the ServiceNow API credential's login (basic auth) - sent only over HTTPS to the node's own name, or to 127.0.0.1, never shown; basic = with it from the start; none = never. |
+| `servicenow_node_stats_auth` | `auto` | A stats page that asks for a login (401 / 403, a redirect, a login page): auto = asked again with the ServiceNow API credential's login (basic auth) - sent only over HTTPS to the node's own name, or to 127.0.0.1, never shown; basic = with it from the start; none = never. A redirect is never followed: the try fails and… (all of it: the role file) |
+| `servicenow_node_validate_certs` | `true` | Check the stats page's HTTPS certificate and name, with the node's own trust store. A node whose certificate is self-signed or from a CA the node does not trust is not read over HTTPS: add that CA to the node's trust store, or set this false (the page is still read over plain HTTP on 127.0.0.1). |
 | `servicenow_node_stats_samples` | `3` | reads of the stats page ... |
 | `servicenow_node_stats_interval` | `5` | ... this many seconds apart |
 | `servicenow_node_stats_timeout` | `10` | seconds per read |

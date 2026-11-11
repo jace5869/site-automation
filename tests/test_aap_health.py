@@ -381,6 +381,27 @@ class LogsAndInfo(unittest.TestCase):
         self.assertEqual(f.worst("PASS", "INFO"), "INFO")
         self.assertEqual(f.worst("INFO", "WARN"), "WARN")
 
+    def test_approvals_are_not_stuck_jobs(self):
+        """An approval waits for a person (pending), its workflow runs while it waits: neither is a stuck or a
+        long-running job. A job pending as long is."""
+        def iso(ago_s):
+            return time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime(NOW - ago_s))
+        jobs = [{"id": 201, "type": "workflow_approval", "name": "Approve the fix", "status": "pending", "created": iso(7200)},
+                {"id": 200, "type": "workflow_job", "name": "Service watch", "status": "running", "created": iso(20000),
+                 "started": iso(20000)}]
+        cfg = {"now": NOW, "auth": True, "stuck_s": 900, "running_s": 14400, "capacity_warn_pct": 10, "last_seen_s": 600,
+               "url": "https://aap01.example.mil", "api_slow_s": 5, "cleanup_max_days": 8, "cleanup_types": [],
+               "gw_good": ["good"], "light_warn_s": 2, "light_fail_s": 10}
+        rows = f.api({"jobs": {"status": 200, "json": {"results": jobs}}}, [], cfg)
+        self.assertEqual(st(rows, "api", "jobs pending or waiting"), "PASS", rows)
+        self.assertEqual(st(rows, "api", "long-running jobs"), "PASS", rows)
+        jobs.append({"id": 202, "type": "job", "name": "Patch", "status": "pending", "created": iso(3600)})
+        rows = f.api({"jobs": {"status": 200, "json": {"results": jobs}}}, [], cfg)
+        self.assertEqual(st(rows, "api", "jobs pending or waiting"), "FAIL")
+        detail = [r for r in rows if r["check"] == "jobs pending or waiting"][0]
+        self.assertIn("202", json.dumps(detail))
+        self.assertNotIn("201", json.dumps(detail))
+
     def test_memory_hint_names_the_causes(self):
         r = [x for x in f.containers(Formatting().stats(), [{"container": "automation-controller-web",
                                                               "unit": "automation-controller-web.service"}], Formatting.CFG)

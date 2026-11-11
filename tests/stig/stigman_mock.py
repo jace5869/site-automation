@@ -94,6 +94,7 @@ class H(BaseHTTPRequestHandler):
         with open(LOG + ".writes", "a") as f:
             f.write(json.dumps({"asset": b}) + "\n")
         new = {"assetId": str(100 + sum(len(v) for v in d["assets"].values())), "name": b["name"], "fqdn": b.get("fqdn"),
+               "description": b.get("description") or "", "ip": b.get("ip") or "", "mac": b.get("mac") or "",
                "stigs": [{"benchmarkId": x, "revisionStr": self.revision(d, b["collectionId"], x)} for x in b.get("stigs") or []]}
         mine.append(new)
         json.dump(d, open(DATA, "w"))

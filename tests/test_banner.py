@@ -148,7 +148,7 @@ class Where(unittest.TestCase):
     def test_the_website_module_uses_it(self):
         with open(os.path.join(REPO, "roles", "site_email", "library", "site_report_web.py")) as f:
             src = f.read()
-        self.assertIn("from ansible.module_utils.site_banner import inject as banner_inject", src)
+        self.assertRegex(src, r"from ansible\.module_utils\.site_banner import [^\n]*\binject as banner_inject\b")
         self.assertIn("html = banner_inject(web_page(", src)
         self.assertIn("put(index, banner_inject(index_html(", src)
 

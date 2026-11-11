@@ -3,9 +3,10 @@
 """The report jobs whose pages the job "Report website - copy" (playbooks/report_web_copy.yml) writes on the report
 website: the jobs that kept their report for it (report_web_copy: true - the job artifact site_report_page), from AAP's
 own API. Every job finished since the copy job's last run, or the jobs named. How far a run got is its own job artifact
-site_report_copied (until, seen), which the next run starts from; a dry run (Check) or a run of named jobs keeps none,
-so it never moves that on. The address and login come from the "Red Hat Ansible Automation Platform" credential's
-variables (plugins/module_utils/site_aap.py). Read only. Standard library only."""
+site_report_copied (until, seen, and the jobs whose page failed - failed), which the next run starts from, those jobs
+tried again first; a dry run (Check) or a run of named jobs keeps none, so it never moves that on. The address and
+login come from the "Red Hat Ansible Automation Platform" credential's variables (plugins/module_utils/site_aap.py).
+Read only. Standard library only."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
@@ -18,6 +19,10 @@ description:
     left out), oldest first. Without such a run, the jobs of the last hours.
   - Reads each job's artifacts for site_report_page (each report it kept), and checks that each can be read; a job
     whose report cannot be read is a warning, never a failure.
+  - A kept report whose file names (page, latest, index) are not names inside report_web_dest - a path below the folder
+    with / between its parts, ending in .html - is not copied, and a warning names the job and the name.
+  - The jobs the last copy could not write a page for (its site_report_copied failed) are tried again first, each
+    named in a warning, every run until their page is written (the copy job keeps them in failed again when it fails).
   - At most max_pages reports a run; the rest are the next run's (more is true, and until is where this run stopped).
   - jobs - these job IDs only, whatever the last copy got to.
   - Read only, also in check mode. The AAP user needs Organization Auditor on the organizations of the report
@@ -39,6 +44,8 @@ reports: {description: "The reports to copy, oldest first: {job, template, finis
 since: {description: "Where the list starts (UTC, AAP's clock) - '' with jobs.", type: str}
 until: {description: "Where the next run starts: the last job looked at (UTC) - '' with jobs.", type: str}
 seen: {description: The jobs looked at that finished near until (the next run leaves them out)., type: list}
+retry: {description: "The jobs of the last copy's failed that AAP did not answer for now: [{job, why}] - kept for the next run.", type: list}
+retrying: {description: "The jobs the last copy could not write a page for, tried again first - one line each (also a warning).", type: list}
 more: {description: There were more reports than max_pages - the next run copies them., type: bool}
 looked: {description: Jobs looked at., type: int}
 warnings_text: {description: "Jobs whose report cannot be read, and why.", type: list}
@@ -46,6 +53,7 @@ problems: {description: Why AAP could not be read (the job stops)., type: list}
 '''
 
 import datetime
+import re
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.site_aap import Api, connection, error_text
@@ -80,11 +88,30 @@ def _path_after(api, nxt):
     return nxt.split(api.base, 1)[1] if api.base in nxt else nxt.lstrip("/")
 
 
+def safe_name(rel):
+    """A file name inside report_web_dest - the same rule as site_report_web's safe_name (and report_web_files): a
+    relative path with / between its parts, no leading / or \\, no drive or ':', no backslash, no empty, '.' or '..'
+    part, ending in .html."""
+    return (isinstance(rel, str) and rel.endswith(".html") and "\\" not in rel and ":" not in rel
+            and not any(x in ("", ".", "..") for x in rel.split("/")))
+
+
+def _failed(rec):
+    """The jobs a copy could not write a page for, from its site_report_copied: [(job, why)], each job once."""
+    out, ids = [], set()
+    for x in (rec.get("failed") if isinstance(rec.get("failed"), list) else []):
+        i, why = (x.get("job"), x.get("why")) if isinstance(x, dict) else (x, "")
+        if str(i).strip().isdigit() and int(str(i).strip()) not in ids:
+            ids.add(int(str(i).strip()))
+            out.append((int(str(i).strip()), re.sub(r"\s+", " ", str(why or "it failed")).strip()[:300]))
+    return out
+
+
 def last_copy(api, template_id, job_id):
-    """Where the newest earlier run (job type Run) of this template that kept site_report_copied got to: (until, seen) or
-    ('', []). A dry run and a run of named jobs keep none - they are passed over."""
+    """Where the newest earlier run (job type Run) of this template that kept site_report_copied got to: (until, seen,
+    failed) or ('', [], []). A dry run and a run of named jobs keep none - they are passed over."""
     if not template_id:
-        return "", []
+        return "", [], []
     code, data = api.call("GET", "jobs/?job_template=%d&id__lt=%d&job_type=run&order_by=-id&page_size=100"
                           % (template_id, job_id or 2 ** 31 - 1))
     if code != 200:
@@ -95,14 +122,17 @@ def last_copy(api, template_id, job_id):
         c, d = api.call("GET", "jobs/%d/" % j["id"])      # the list leaves the artifacts out
         rec = (d.get("artifacts") or {}).get("site_report_copied") if c == 200 and isinstance(d.get("artifacts"), dict) else None
         if isinstance(rec, dict) and parse_time(rec.get("until")):
-            return str(rec["until"]), [int(x) for x in rec.get("seen") or [] if str(x).isdigit()]
-    return "", []
+            return str(rec["until"]), [int(x) for x in rec.get("seen") or [] if str(x).isdigit()], _failed(rec)
+    return "", [], []
 
 
 def kept(api, j, out, warnings):
     """The reports job j kept (its artifact site_report_page), each checked: appended to out. False when the job could
-    not be read (AAP did not answer 200 for it): the next run must look at it again."""
+    not be read (AAP did not answer 200 for it): the next run must look at it again; None when AAP has it no more (404)."""
     c, d = api.call("GET", "jobs/%d/" % j["id"])
+    if c == 404:
+        warnings.append("job %s: AAP answered HTTP 404 for it (deleted, or its user may not see it) - not looked at again" % j["id"])
+        return None
     if c != 200:
         warnings.append("job %s: AAP answered HTTP %d for it: %s - the next run looks at it again" % (j["id"], c, error_text(d)))
         return False
@@ -116,6 +146,12 @@ def kept(api, j, out, warnings):
             doc = unpack(text)
         except ValueError as e:
             warnings.append("job %s (%s): its report cannot be read - %s" % (j["id"], name, e))
+            continue
+        files = doc["files"]
+        bad = [str(files.get(k)) for k in ("page", "latest", "index") if files.get(k) and not safe_name(files.get(k))]
+        if bad:                                          # site_report_web refuses them too: never written outside the folder
+            warnings.append("job %s (%s): its page %s is not copied - %s: not a file name inside report_web_dest (a path below "
+                            "the folder with / between its parts, ending in .html)" % (j["id"], name, files.get("page"), ", ".join(bad)))
             continue
         out.append({"job": j["id"], "template": str(doc["data"].get("template") or name), "finished": str(d.get("finished") or ""),
                     "status": str(d.get("status") or ""), "when": str(doc["data"].get("when") or ""), "packed": text,
@@ -139,7 +175,14 @@ def find(api, p, now):
                 warnings.append("job %d: kept no report for the copy job (report_web_copy is off for its template, it ran "
                                 "with Check, or it sent no report)" % i)
         return {"reports": out, "warnings_text": warnings, "since": "", "until": "", "seen": [], "more": False, "looked": len(ids)}
-    until, seen = last_copy(api, p["template_id"], p["job_id"])
+    until, seen, failed = last_copy(api, p["template_id"], p["job_id"])
+    # the jobs the last copy could not write a page for: first, named every run until their page is written
+    retrying, retry, done = [], [], set()
+    for i, why in failed:
+        retrying.append("job %d: its page was not copied by the last copy (%s) - tried again now" % (i, why))
+        if kept(api, {"id": i}, out, warnings) is False:
+            retry.append({"job": i, "why": why})        # AAP did not answer for it: the next run, again
+        done.add(i)
     if until:
         start = parse_time(until) - datetime.timedelta(minutes=max(0, p["overlap_minutes"]))
     else:
@@ -163,10 +206,10 @@ def find(api, p, now):
             looked_at.append((j["id"], fin))
             if fin is not None and (last is None or fin > last):
                 last = fin
-            if j["id"] in seen or (p["template_id"] and j.get("job_template") == p["template_id"]):
+            if j["id"] in seen or j["id"] in done or (p["template_id"] and j.get("job_template") == p["template_id"]):
                 continue
             looked += 1
-            if not kept(api, j, out, warnings):
+            if kept(api, j, out, warnings) is False:
                 unread.append((j["id"], fin))
         if more or not data.get("next"):
             break
@@ -183,7 +226,7 @@ def find(api, p, now):
     near = sorted(i for i, fin in looked_at if fin is not None and fin >= edge and i not in bad) if looked_at else sorted(seen)
     out.sort(key=lambda r: (r["when"], r["job"]))
     return {"reports": out, "warnings_text": warnings, "since": iso(start), "until": iso(last), "seen": near, "more": more,
-            "looked": looked}
+            "looked": looked, "retry": retry, "retrying": retrying}
 
 
 def main():
@@ -195,14 +238,20 @@ def main():
     api = Api(connection(), p["ca_path"], p["timeout"], ca_setting="report_history_aap_ca_path", no_credential=NO_CREDENTIAL)
     why = api.probe()
     if why:
-        module.exit_json(changed=False, problems=[why], reports=[], warnings_text=[], since="", until="", seen=[], more=False, looked=0)
+        module.exit_json(changed=False, problems=[why], reports=[], warnings_text=[], since="", until="", seen=[], more=False, looked=0,
+                         retry=[])
     try:
         r = find(api, p, datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None))
     except IOError as e:
-        module.exit_json(changed=False, problems=[str(e)], reports=[], warnings_text=[], since="", until="", seen=[], more=False, looked=0)
+        module.exit_json(changed=False, problems=[str(e)], reports=[], warnings_text=[], since="", until="", seen=[], more=False, looked=0,
+                         retry=[])
     r.setdefault("problems", [])
-    for k, v in (("reports", []), ("warnings_text", []), ("since", ""), ("until", ""), ("seen", []), ("more", False), ("looked", 0)):
+    for k, v in (("reports", []), ("warnings_text", []), ("since", ""), ("until", ""), ("seen", []), ("more", False), ("looked", 0),
+                 ("retry", [])):
         r.setdefault(k, v)
+    r.setdefault("retrying", [])
+    for w in r["retrying"]:
+        module.warn("The report website copy: %s" % w)
     module.exit_json(changed=False, **r)
 
 

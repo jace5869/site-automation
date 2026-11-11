@@ -21,6 +21,8 @@ description:
     the list of files verified - else the check fails (compare that root's fingerprint with DISA's).
   - Compares it with C(current) - the CAs it adds, the ones it no longer has, the ones expiring - and writes the
     checked .p7b into C(dest_dir) (for the email) when it differs. Reads only - also in check mode.
+  - "A bundle that differs from C(current) while DISA's signature on it was not checked (FIPS mode, a copy without the
+    signed list) is not offered on its own word: status not verified, no file - unless C(accept_unverified)."
 options:
   url: {description: "The bundle: https://..., file:///..., or a path on the execution environment.", type: str, required: true}
   current: {description: "Your bundle file (cert_install_ca_bundle); empty = none yet.", type: str, default: ''}
@@ -30,13 +32,15 @@ options:
   timeout: {description: Seconds for the download., type: int, default: 120}
   max_bytes: {description: A bigger download is refused., type: int, default: 20971520}
   warn_days: {description: A CA in the bundle expiring within this many days is listed., type: int, default: 90}
+  accept_unverified: {description: "Offer a bundle that differs from yours although DISA's signature on it was not checked.", type: bool, default: false}
 author: site automation
 '''
 
 RETURN = r'''
 bundle:
   description: >-
-    status (current, newer, first, failed), version (5.14), name (the .p7b's file name), file (the checked copy in
+    status (current, newer, first, not verified - it differs, but DISA's signature was not checked, failed),
+    version (5.14), name (the .p7b's file name), file (the checked copy in
     dest_dir, when it differs from current), cas (its CA certificates), unreadable, roots (checked up to; of current, else its own), signature (verified, not checked: why, FAILED: why),
     hashes (match, mismatch: files, not in the zip), added / removed / expiring / expired ([{subject, not_after, sha1}]),
     new_roots, untrusted, broken (its chain does not build in the bundle), current_count, problems (why it must not be used).
@@ -374,6 +378,8 @@ def run(m):
         res['status'] = 'first' if not cur else ('newer' if res['added'] or res['removed'] else 'current')
         if res['problems']:
             res['status'] = 'failed'
+        elif res['status'] == 'newer' and not signed and not p.get('accept_unverified'):
+            res['status'] = 'not verified'           # differs, and nothing but the download itself says it is DISA's
         elif res['status'] != 'current':
             if not os.path.isdir(p['dest_dir']):
                 os.makedirs(p['dest_dir'], 0o755)
@@ -396,7 +402,8 @@ def main():
     m = AnsibleModule(argument_spec=dict(
         url=dict(type='str', required=True), current=dict(type='str', default=''), dest_dir=dict(type='path', required=True),
         validate_certs=dict(type='bool', default=True), ca_path=dict(type='path'), timeout=dict(type='int', default=120),
-        max_bytes=dict(type='int', default=20971520), warn_days=dict(type='int', default=90)),
+        max_bytes=dict(type='int', default=20971520), warn_days=dict(type='int', default=90),
+        accept_unverified=dict(type='bool', default=False)),
         supports_check_mode=True)
     if not HAS_CRYPTO:
         m.fail_json(msg='the Python library cryptography is not in this execution environment (ansible-core needs it: use an EE built on ansible-core)')

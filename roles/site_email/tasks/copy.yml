@@ -5,8 +5,9 @@
 # report_web_host is reached as a host of this job's inventory when it is one (that host's connection settings, the
 # template's Machine credential), else with the report_web_host_* settings (web_host.yml). Which jobs: those finished
 # since this template's run before (AAP's API - the "Red Hat Ansible Automation Platform" credential), or
-# report_web_copy_jobs. A run keeps where it got to as the job artifact site_report_copied, for the next one; a dry run
-# (Check) lists what it would copy and writes nothing. One page: copy_page.yml.
+# report_web_copy_jobs. A run keeps where it got to as the job artifact site_report_copied, for the next one - with the
+# jobs whose page failed (failed), which the next run tries again first; a page that fails is a warning, never the end
+# of the run. A dry run (Check) lists what it would copy and writes nothing. One page: copy_page.yml.
 - name: Copy | report_web_dest is set
   ansible.builtin.assert:
     that: report_web_dest | default('') | string | trim | length > 0
@@ -77,6 +78,12 @@
     msg: "{{ _copy.warnings_text }}"
   when: _copy.warnings_text | length > 0
 
+# also a warning; here one line each, whatever the ansible-core (2.16 wraps a long warning)
+- name: Copy | the jobs the last copy could not write a page for, tried again first
+  ansible.builtin.debug:
+    msg: "{{ _copy.retrying }}"
+  when: _copy.retrying | default([]) | length > 0
+
 - name: Copy | the report jobs that kept their report for this job
   ansible.builtin.debug:
     msg: >-
@@ -143,6 +150,17 @@
     msg: "{{ _copy_written | default([]) }}"
   when: _copy_written | default([]) | length > 0
 
+- name: Copy | NOT COPIED - the pages that failed (each said above)
+  ansible.builtin.debug:
+    msg: >-
+      {%- set out = [] -%}
+      {%- for f in _copy_failed -%}
+      {%-   set _ = out.append('Not copied: job ' ~ f.job ~ " '" ~ f.template ~ "' - " ~ f.page ~ ': ' ~ f.why) -%}
+      {%- endfor -%}
+      {{ out + [('The next run tries these jobs again (site_report_copied: failed).' if _copy.until | length > 0 else
+                 'Launch the copy job again with report_web_copy_jobs to try them again.')] }}
+  when: _copy_failed | default([]) | length > 0
+
 - name: Copy | more to copy
   ansible.builtin.debug:
     msg: >-
@@ -154,5 +172,9 @@
   ansible.builtin.set_stats:
     data:
       # one expression: the numbers stay numbers (ansible-core 2.16 makes text of a lone number)
-      site_report_copied: "{{ {'until': _copy.until, 'seen': _copy.seen, 'copied': _copy.reports | length} }}"
+      # failed: the jobs whose page this run could not write, and those AAP did not answer for (retry) - the next run
+      # tries them again first
+      site_report_copied: >-
+        {{ {'until': _copy.until, 'seen': _copy.seen, 'copied': _copy.reports | length - _copy_failed | default([]) | length,
+            'failed': (_copy_failed | default([]) + _copy.retry | default([]))[:100]} }}
   when: not ansible_check_mode and _copy.until | length > 0

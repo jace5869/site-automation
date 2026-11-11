@@ -216,10 +216,13 @@ granted**. Nothing runs on a DC and nothing is written to AD.
 | **DNS** | the SRV records `_ldap._tcp.dc._msdcs`, `_kerberos._tcp.dc._msdcs`, `_ldap._tcp`, `_kerberos._tcp`, `_ldap._tcp.gc._msdcs`: every DC (every GC) registered; each DC's A record, against the inventory's address | red a record missing; amber a DC not registered or a different address |
 | **Replication** | each DC's own copy of each partition head, as far as a plain user may read it: `msDS-NCReplInboundNeighbors` (Windows builds it), else `repsFrom` (each partner, last success, consecutive failures, last error), else `replUpToDateVector` (when each partner's changes last arrived). The report says which it could read | amber 6 h, red 24 h (`ad_repl_warn_hours` / `_crit_hours`), as admin mode; **grey "not read (needs admin)"** when the account may read none of them - never a guess |
 | **Privileged groups** | the same groups and `ad_privileged_groups_extra` / `ad_groups_should_be_empty`: their members now; when a member was added or removed and on which DC from `msDS-ReplValueMetaData`, when the account may read it; and who joined or left **since the last run** | amber (`ad_privileged_change_severity`) |
-| **Accounts** | locked out now (`lockoutTime` within the lockout duration); created in the last `ad_report_hours` (`whenCreated`); enabled / disabled / locked / unlocked - when and on which DC from the replication metadata of `userAccountControl` and `lockoutTime`, else `whenChanged` (**best effort**, labelled so) | blue |
+| **Accounts** | locked out now (`lockoutTime` within the lockout duration; a lockout *until an administrator unlocks it* never runs out); created in the last `ad_report_hours` (`whenCreated`); enabled / disabled / locked / unlocked - when and on which DC from the replication metadata of `userAccountControl` and `lockoutTime`, else `whenChanged` (**best effort**, labelled so) | blue |
 
 **Who** made a change is only in the DCs' Security logs, which need admin: reader mode says *not
 known (needs the event logs)*.
+
+Each list is read page by page to its end, up to `ad_changes_max` (500) entries; a list cut there says so
+(1.24.0: the locked-out and created lists too, not only the changed accounts).
 
 ### What it cannot read
 

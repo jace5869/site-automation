@@ -1338,12 +1338,15 @@ def ad_reader_report(reader, opts=None):
 
     # ---- 8. accounts ------------------------------------------------------------------------------------------------------------------
     rows = [_row([time_text(x.get("time")), x.get("name", "")], ["", ""], "info") for x in r.get("locked_out") or []]
+    capped = ["Only the first %s locked-out accounts were looked at (ad_changes_max)." % o.get("changes_max", 500)] if r.get("locked_out_capped") else []
     R.table("Accounts locked out now", "Accounts whose lockoutTime is within the domain's lockout duration.", ["Locked out at", "Account"],
-            rows, "None.", keep_order=True)
+            rows, "None.", capped, keep_order=True)
     rows = [_row([time_text(x.get("time")), x.get("class", ""), x.get("name", ""), re.sub(r"^CN=[^,]+,", "", x.get("dn", ""))], ["", "", "", ""], "info")
             for x in sorted(r.get("created") or [], key=lambda y: y.get("time", ""), reverse=True)]
     R.table("Users, groups and computers created (last %s h)" % _hours(hours), "New accounts (whenCreated) and where they are. Deleted "
-            "ones are in the Deleted Objects container, which needs admin.", ["When", "Type", "Name", "Where"], rows, "None.", keep_order=True)
+            "ones are in the Deleted Objects container, which needs admin.", ["When", "Type", "Name", "Where"], rows, "None.",
+            ["Only the first %s created accounts were looked at (ad_changes_max)." % o.get("changes_max", 500)] if r.get("created_capped") else [],
+            keep_order=True)
     hw = r.get("account_changes_how") or []
     rows = [_row([time_text(x.get("time")), x.get("class", ""), x.get("name", ""), str(x.get("change", "")).upper(), x.get("dc") or "-",
                   "replication metadata" if x.get("how") == "metadata" else "whenChanged (best effort)"], ["", "", "", "info"], "info")

@@ -12,11 +12,15 @@ description:
   - Each probe is asked C(attempts) times (GET), C(pause) seconds apart. An attempt is good when the answer's HTTP status
     is in the probe's C(expect) and - with C(json_key) - the JSON answer's value there is in C(json_expect).
   - Never fails: a probe that cannot be reached says why in its attempts.
+  - A redirect (3xx) is not followed - the login is never sent on to another address - and is a bad attempt that says
+    where it pointed. Only a probe without a login and with C(follow) true follows it (a login page that sends people
+    on to the single sign-on page).
 options:
   probes:
     description: "[{name, url, group: service (the address people use), node (one server behind it)
       or dependency (what it needs, e.g. its login server) - roles/api_availability, auth: none / basic, user, password,
-      expect: [200], json_key: 'currentState' (a top-level key of the JSON answer), json_expect: ['available']}]"
+      expect: [200], json_key: 'currentState' (a top-level key of the JSON answer), json_expect: ['available'],
+      follow: false (true = follow redirects; never with auth basic)}]"
     type: list
     elements: dict
     required: true
@@ -43,9 +47,15 @@ import socket
 import ssl
 import time
 from urllib.error import HTTPError, URLError
-from urllib.request import HTTPSHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
 from ansible.module_utils.basic import AnsibleModule
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    """Follows no redirect: the 3xx answer comes back as an HTTPError (urllib would send the Authorization header on)."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 def context(validate, ca_path):
@@ -57,6 +67,9 @@ def context(validate, ca_path):
 def reason(e):
     """A failed request in plain words."""
     if isinstance(e, HTTPError):
+        if 300 <= e.code < 400:
+            where = (e.headers.get("Location") or "") if e.headers is not None else ""
+            return "HTTP %d, sent to %s (not followed)" % (e.code, where[:200] or "no Location")
         return "HTTP %d" % e.code
     r = getattr(e, "reason", e)
     if isinstance(r, ssl.SSLCertVerificationError):
@@ -98,7 +111,8 @@ def attempt(opener, probe, timeout):
             value = data.get(key) if isinstance(data, dict) else None
         except ValueError:
             value = None
-    ok = status in [int(s) for s in (probe.get("expect") or [200])]
+    # a redirect is never "up", even when the probe's expect lists it
+    ok = status in [int(s) for s in (probe.get("expect") or [200])] and not 300 <= status < 400
     if ok and key:
         ok = value in (probe.get("json_expect") or [])
         if not ok:
@@ -117,14 +131,17 @@ def median(values):
 
 
 def run(probes, attempts, pause, timeout, validate, ca_path, opener=None, sleep=time.sleep):
-    opener = opener or build_opener(HTTPSHandler(context=context(validate, ca_path)))
+    ctx = context(validate, ca_path)
+    # a redirect is followed only by a probe that asks for it and sends no login
+    stay = opener or build_opener(_NoRedirect(), HTTPSHandler(context=ctx))
+    follow = opener or build_opener(HTTPSHandler(context=ctx))
     out = []
     for p in probes:
         tries = []
         for i in range(max(1, attempts)):
             if i:
                 sleep(pause)
-            tries.append(attempt(opener, p, timeout))
+            tries.append(attempt(follow if p.get("follow") and p.get("auth") != "basic" else stay, p, timeout))
         answered = [t["ms"] for t in tries if t["status"] > 0]
         bad = [t for t in tries if not t["ok"]]
         out.append({"name": p.get("name") or p["url"], "url": p["url"], "group": p.get("group") or "service",

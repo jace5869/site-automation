@@ -6,11 +6,14 @@ import datetime
 import json
 import os
 import socket
+import ssl
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "plugins", "filter"))
@@ -214,7 +217,7 @@ class StatsWays(unittest.TestCase):
 
     def test_tls_connector_answers_plain_http_400(self):
         port = self.serve("tls=" + self.cert)
-        st = nm.read_stats(port, ["/xmlstats.do", "/stats.do"], 1, 0, 5, ["node01.invalid"])
+        st = nm.read_stats(port, ["/xmlstats.do", "/stats.do"], 1, 0, 5, ["node01.invalid"], validate=False)
         self.assertTrue(st["up"], st)
         self.assertEqual(st["url"], "https://127.0.0.1:%d/xmlstats.do" % port)
         self.assertIn("http://127.0.0.1:%d/xmlstats.do -> 400" % port, st["tried"])
@@ -237,6 +240,38 @@ class StatsWays(unittest.TestCase):
         self.assertTrue(nm.may_send_login("https://node01.invalid:3306/x", ["node01.invalid"]))
         self.assertFalse(nm.may_send_login("http://node01.invalid:3306/x", ["node01.invalid"]))        # not over plain HTTP
         self.assertFalse(nm.may_send_login("https://elsewhere.invalid:3306/x", ["node01.invalid"]))
+
+    def test_https_is_checked_by_default(self):
+        ctx = nm.context()
+        self.assertTrue(ctx.check_hostname)
+        self.assertEqual(ctx.verify_mode, ssl.CERT_REQUIRED)
+        ctx = nm.context(False)
+        self.assertEqual((ctx.check_hostname, ctx.verify_mode), (False, ssl.CERT_NONE))
+        # a certificate the host does not trust: not read, and it says why
+        port = self.serve("tls=" + self.cert)
+        st = nm.read_stats(port, ["/xmlstats.do"], 1, 0, 5, ["node01.invalid"])
+        self.assertFalse(st["up"])
+        self.assertIn("certificate is not trusted", st["why"])
+        self.assertIn("servicenow_node_validate_certs", st["why"])
+
+    def test_https_read_when_its_certificate_is_trusted(self):
+        cert = os.path.join(self.d, "ip.pem")
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=127.0.0.1", "-days", "1",
+                        "-addext", "subjectAltName=IP:127.0.0.1", "-addext", "basicConstraints=critical,CA:TRUE",
+                        "-addext", "keyUsage=critical,digitalSignature,keyCertSign",
+                        "-keyout", cert, "-out", cert], check=True, capture_output=True)
+        port = self.serve("tls=" + cert)
+        before = os.environ.get("SSL_CERT_FILE")
+        os.environ["SSL_CERT_FILE"] = cert            # the host's trust store, for this test: that certificate
+        try:
+            st = nm.read_stats(port, ["/xmlstats.do"], 1, 0, 5, [])
+        finally:
+            if before is None:
+                os.environ.pop("SSL_CERT_FILE", None)
+            else:
+                os.environ["SSL_CERT_FILE"] = before
+        self.assertTrue(st["up"], st)
+        self.assertEqual(st["url"], "https://127.0.0.1:%d/xmlstats.do" % port)
 
     def test_not_read_says_what_was_tried(self):
         port = self.serve("tls=" + self.cert, "host=node01.invalid", "auth=a:b")
@@ -530,6 +565,71 @@ class DatabaseHost(unittest.TestCase):
                                  {"cluster_read": True, "outside": ["node12.yoursite.mil"]})
         self.assertEqual(line, "Nodes: node01 snc_prod running, node01 snc_test FAILED; hosts read: 1 of 1; cluster: 1 of 1 online; "
                                "not in this run's Limit: node12.yoursite.mil")
+
+
+class _Recorder(BaseHTTPRequestHandler):
+    """The second host: notes every request and its Authorization header."""
+    got = []
+
+    def do_GET(self):
+        self.got.append((self.path, self.headers.get("Authorization")))
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"<title>Log in</title>")
+
+    def log_message(self, *a):
+        pass
+
+
+def _redirector(to):
+    class Redirect(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(302)
+            self.send_header("Location", to + self.path)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+    return Redirect
+
+
+class StatsRedirect(unittest.TestCase):
+    """A stats page that answers 302 to another address: not followed, the login never sent there."""
+    def setUp(self):
+        _Recorder.got = []
+        self.other = HTTPServer(("127.0.0.1", 0), _Recorder)
+        self.to = "http://127.0.0.1:%d/idp/login" % self.other.server_port
+        self.node = HTTPServer(("127.0.0.1", 0), _redirector(self.to))
+        for srv in (self.other, self.node):
+            threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+    def tearDown(self):
+        for srv in (self.node, self.other):
+            srv.shutdown()
+            srv.server_close()
+
+    def test_basic_login_not_sent_on(self):
+        url = "http://127.0.0.1:%d/stats.do" % self.node.server_port
+        st = nm.read_stats(1, ["/stats.do"], 1, 0, 5, [], url, auth="basic", login=("svc_aap", "S3cret-pw!"))
+        self.assertEqual(_Recorder.got, [])
+        self.assertFalse(st["up"])
+        self.assertEqual(st["status"], 302)
+        self.assertIn("HTTP 302", st["why"])
+        self.assertIn(self.to + "/stats.do (not followed)", st["why"])
+        self.assertNotIn("S3cret", json.dumps(st))
+
+    def test_auto_redirect_asks_for_the_login_but_still_not_followed(self):
+        st = nm.read_stats(self.node.server_port, ["/stats.do"], 1, 0, 5, [], login=("svc_aap", "S3cret-pw!"))
+        self.assertEqual(_Recorder.got, [])
+        self.assertFalse(st["up"])
+        self.assertIn("http://127.0.0.1:%d/stats.do (with the login) -> 302 sent to %s/stats.do (not followed)"
+                      % (self.node.server_port, self.to), st["tried"])
+
+    def test_fetch(self):
+        code, body = nm.fetch("http://127.0.0.1:%d/stats.do" % self.node.server_port, "", 5, ("svc_aap", "S3cret-pw!"))
+        self.assertEqual((code, body), (302, "sent to %s/stats.do (not followed)" % self.to))
+        self.assertEqual(_Recorder.got, [])
 
 
 if __name__ == "__main__":

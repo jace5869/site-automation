@@ -1287,7 +1287,7 @@ def stig_update_sections(plan, list_max=200):
                      + (" The first %d of %d (check_stig_list_max)." % (list_max, len(rows)) if len(rows) > list_max else "")}]
 
 
-UPDATE_BAD = ("rejected", "error", "bad", "not as written", "no grant")
+UPDATE_BAD = ("rejected", "error", "bad", "not as written", "no grant", "asset not created")
 
 
 def _is_new(p):
@@ -1367,8 +1367,10 @@ def stig_update_report(items, check=False, error="", planned=0, source=""):
     news = [i for i in items if i.get("kind") == "create"]
     revs = [i for i in items if i.get("kind") != "create"]
     n = dict((k, len([i for i in revs if i.get("state") == k])) for k in (
-        "written", "would write", "already so", "changed since", "has attachments", "rejected", "error", "bad", "not as written", "no grant"))
-    nbad = len([i for i in news if i.get("state") in ("bad", "error", "no grant")])
+        "written", "would write", "already so", "changed since", "has attachments", "rejected", "error", "bad", "not as written", "no grant",
+        "asset not created"))
+    # a new asset made by someone else since the check is left, and its reviews not written: a failure, as in the job (1.24.0)
+    nbad = len([i for i in news if i.get("state") in ("bad", "error", "no grant", "there since the check")])
     bad = sum(n[k] for k in UPDATE_BAD) + nbad
     status = "critical" if (error or bad) else "warning" if n["changed since"] else "ok"
     chip = {"written": "ok", "would write": "info", "already so": "ok", "changed since": "warning", "has attachments": "info"}
@@ -1388,21 +1390,20 @@ def stig_update_report(items, check=False, error="", planned=0, source=""):
     if error:
         sections.append({"title": "Nothing written", "status": "critical", "lines": [error]})
     if news:
-        nchip = {"created": "ok", "would create": "info", "there since the check": "warning", "bad": "critical", "error": "critical",
-                 "no grant": "critical"}
-        sections.append({"title": "New assets", "status": "critical" if nbad else "warning" if any(
-            i.get("state") == "there since the check" for i in news) else "ok",
+        nchip = {"created": "ok", "would create": "info", "there from an earlier run": "ok", "there since the check": "critical",
+                 "bad": "critical", "error": "critical", "no grant": "critical"}
+        sections.append({"title": "New assets", "status": "critical" if nbad else "ok",
             "columns": ["Host", "Asset", "FQDN", "Collection", "STIG", "Result", "Its reviews", "Why"],
             "rows": [[i.get("host", ""), i.get("asset", ""), i.get("fqdn") or "-", i.get("collection", ""),
                       "%s %s" % (i.get("benchmark", ""), i.get("revision", "")), i.get("state", ""), _new_states(items, i.get("asset")),
                       i.get("why", "")] for i in news],
             "row_status": [nchip.get(i.get("state"), "") for i in news],
             "text": ("The checklists' host names the check found no asset for: created only if still not there (one made since "
-                     "the check is left, and nothing written to it), with every STIG their checklists matched, then the "
+                     "the check is left, nothing is written to it and the job fails; one this plan made on an earlier run is used), with every STIG their checklists matched, then the "
                      "checklists' answers written as its reviews and read back. Its reviews are counted here; one not written is "
                      "also listed below.") if source == "import" else
                     "The hosts the check found no asset for: created only if still not there (an asset of the host's made since "
-                    "the check is left, and nothing written to it), with the host's STIG, then the scan's answers written as "
+                    "the check is left, nothing is written to it and the job fails; one this plan made on an earlier run is used), with the host's STIG, then the scan's answers written as "
                     "its reviews and read back. Its reviews are counted here; one not written is also listed below."})
     if rows:
         sections.append({"title": "Each review of the plan", "status": status,

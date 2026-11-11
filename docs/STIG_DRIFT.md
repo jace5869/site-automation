@@ -536,7 +536,9 @@ host), a Linux host that has no asset in its collection gets one, behind the sam
      **Approve** lists *NEW ASSET web01 (web01.example.mil) in RHEL Servers with RHEL_9_STIG V2R8 - then 312 review(s)
      ...*.
 2. **STIG Manager - update**, after the approval: the collection's assets are read again - an asset of the host's
-   made since the check is **left** (*there since the check*), and nothing is written to it; run the recheck again.
+   made since the check is **left** (*there since the check*), nothing is written to it and the job fails (1.24.0); run
+   the recheck again. One made by an earlier run of the same approved plan (its name in the plan's collection, the
+   description the job gives it - a run that then failed) is used: its reviews are read again and written as below.
    Else the asset is created (`POST /assets`: the name, the FQDN, the STIG) and the scan's answers written as its
    reviews (Not a Finding, Open - with the job's comment - and Not Applicable; the status `check_stig_update_status`),
    then read back. Manual checks, held back and left out stay Not Reviewed.

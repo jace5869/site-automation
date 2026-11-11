@@ -338,7 +338,8 @@ class History(unittest.TestCase):
         self.assertEqual([x["job"] for x in line["runs"]], [7, 6, 5, 4, 3])              # newest first, 5 of them
         self.assertEqual([x["job"] for x in dropped], [2])                               # 1 went the run before
         self.assertEqual(line["job"], 7)
-        self.assertEqual(sorted(line["runs"][0]), sorted(rw.RUN_KEYS))                  # no key, name or runs in a run
+        # no key, name or runs in a run; a banner only when the run had one
+        self.assertEqual(sorted(line["runs"][0]), sorted(set(rw.RUN_KEYS) - {"banner"}))
 
     def test_an_older_run_copied_later(self):
         line = None
@@ -881,6 +882,259 @@ class Retries(unittest.TestCase):
         self.assertEqual(len(r["sections"]), 1)                        # the report itself unchanged
         self.assertIn("The report website copy failed: x", sf.report_text(n))
         self.assertLess(sf.report_text(n).index("copy failed"), sf.report_text(n).index("\nA\n"))
+
+
+
+# the module run as Ansible runs it: its arguments in a file, the repo's module_utils as ansible.cfg gives them; patch
+# (Python, with m the module) runs before main() - a target that changes the folder half-way, say
+BOOT = ("import importlib.util, json, os, sys\n"
+        "args, module, utils, patch = sys.argv[1:5]\n"
+        "for n in ('site_aap', 'site_report_page', 'site_banner'):\n"
+        "    sp = importlib.util.spec_from_file_location('ansible.module_utils.' + n, os.path.join(utils, n + '.py'))\n"
+        "    u = importlib.util.module_from_spec(sp)\n"
+        "    sys.modules['ansible.module_utils.' + n] = u\n"
+        "    sp.loader.exec_module(u)\n"
+        "sp = importlib.util.spec_from_file_location('site_report_web', module)\n"
+        "m = importlib.util.module_from_spec(sp)\n"
+        "sp.loader.exec_module(m)\n"
+        "exec(patch)\n"
+        "sys.argv = ['m', args]\n"
+        "m.main()\n")
+
+
+def run_module(args, patch="", env=None):
+    """site_report_web's answer (a dict) to args."""
+    argf = os.path.join(tempfile.mkdtemp(), "args.json")
+    with open(argf, "w") as f:
+        json.dump({"ANSIBLE_MODULE_ARGS": dict({"retries": 0}, **args)}, f)
+    out = subprocess.run([sys.executable, "-c", BOOT, argf, os.path.join(REPO, "roles", "site_email", "library", "site_report_web.py"),
+                          os.path.join(REPO, "plugins", "module_utils"), patch], capture_output=True, text=True,
+                         env=dict(os.environ, **(env or {})))
+    try:
+        return json.loads(out.stdout)
+    except ValueError:
+        raise AssertionError(out.stdout[-800:] + out.stderr[-800:])
+
+
+def web_args(dest, page="vm/2026-10-01_0600_job-1.html", key="vm/latest.html", banner=None, **kw):
+    entry = {"key": key, "name": "VMware - VM health report", "title": "VM health", "status": "ok", "when": "2026-10-01 06:00 UTC", "job": 1}
+    return dict({"dest": dest, "files": {"page": page, "latest": key, "index": "index.html"}, "entry": entry,
+                 "html": "<html><head></head><body><p>report</p></body></html>",
+                 "data": {"report": {"title": "VM health"}, "banner": banner or {}}}, **kw)
+
+
+class Traversal(unittest.TestCase):
+    """1.24.0: a kept report's file names stay inside report_web_dest - refused before anything is written, whatever the
+    target (a folder, a share, an upload, the Windows script)."""
+    BAD = ("../../outside/evil.html", "/etc/evil.html", "\\evil.html", "C:/evil.html", "D:evil.html", "a\\..\\evil.html",
+           "a/./evil.html", "a//evil.html", "a/..", "a/evil.htm", ".", "")
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.dest = os.path.join(self.root, "a", "reports")
+        os.makedirs(self.dest)
+
+    def files(self):
+        return sorted(os.path.relpath(os.path.join(dp, f), self.root) for dp, _, fs in os.walk(self.root) for f in fs)
+
+    def test_the_rule(self):
+        for rel in ("index.html", "vm/latest.html", "site/vm/2026/ok-1.html"):
+            self.assertTrue(rw.safe_name(rel), rel)
+            self.assertTrue(rc.safe_name(rel), rel)
+        for rel in self.BAD + (None, 5):
+            self.assertFalse(rw.safe_name(rel), rel)
+            self.assertFalse(rc.safe_name(rel), rel)
+        self.assertTrue(rw.safe_name("site-report.js", rw.WRITTEN))
+
+    def test_a_folder_target_writes_nothing(self):
+        for k in ("page", "latest", "index"):
+            with self.subTest(name=k):
+                args = web_args(self.dest)
+                args["files"][k] = "../../outside/evil.html"
+                r = run_module(args)
+                self.assertTrue(r.get("failed"), r)
+                self.assertIn("'../../outside/evil.html': not a file name inside report_web_dest", r["msg"])
+                self.assertEqual(self.files(), [])
+        r = run_module(web_args(self.dest, pages=[{"page": "../x/evil.html", "html": "<p>x</p>"}]))
+        self.assertTrue(r.get("failed"), r)
+        self.assertEqual(self.files(), [])
+        r = run_module(dict(web_args(self.dest, page="/tmp/evil.html"), required=False))        # a warning, not a failure
+        self.assertEqual((r.get("failed"), r["published"]), (None, False))
+        self.assertIn("not a file name inside report_web_dest", r["error"])
+        self.assertEqual(self.files(), [])
+        r = run_module(dict(web_args(self.dest, page="../../evil.html"), keep=True))            # never kept for the copy job
+        self.assertTrue(r.get("failed"), r)
+        r = run_module(web_args(self.dest))                                                      # a good name is written
+        self.assertTrue(r["published"], r)
+        self.assertIn("a/reports/vm/2026-10-01_0600_job-1.html", self.files())
+
+    def test_no_windows_script_for_them(self):
+        tmp = tempfile.mkdtemp()
+        r = run_module(web_args("D:\\reports", page="..\\..\\inetpub\\wwwroot\\default.html", windows_host="web01.example.mil"),
+                       env={"TMPDIR": tmp})
+        self.assertTrue(r.get("failed"), r)
+        self.assertNotIn("script", r)
+        self.assertEqual(os.listdir(tmp), [])
+        with self.assertRaises(rw.Fail):
+            rw.windows_script("D:\\reports", [("../../inetpub/wwwroot/default.html", "x")])
+        with self.assertRaises(rw.Fail):
+            rw.windows_script("D:\\reports", [("a/p.html", "x")], remove=["../x.html"])
+        self.assertIn("Save-File @('a', 'p.html')", rw.windows_script("D:\\reports", [("a/p.html", "x")]))
+
+    def test_the_copy_job_names_the_report_and_goes_on(self):
+        good, bad = kept_doc(907), kept_doc(908)
+        bad["files"]["index"] = "../../inetpub/wwwroot/default.html"
+        warnings, out = [], []
+
+        class Aap(object):
+            def call(self, method, path):
+                i = int(path.split("/")[1])
+                return 200, {"id": i, "name": "T", "artifacts": {"site_report_page": pg.pack(good if i == 907 else bad, 1 << 20)[0]}}
+        self.assertTrue(rc.kept(Aap(), {"id": 908}, out, warnings))
+        self.assertTrue(rc.kept(Aap(), {"id": 907}, out, warnings))
+        self.assertEqual([r["job"] for r in out], [907])
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("job 908 (T): its page linux-certificate-trust-report/2026-10-23_0605_job-908.html is not copied - "
+                      "../../inetpub/wwwroot/default.html: not a file name inside report_web_dest", warnings[0])
+
+
+class IndexBanner(unittest.TestCase):
+    """1.24.0: the index carries the highest banner among its lines' runs - an unclassified run never takes a classified
+    report's marking off the index."""
+    SECRET = {"on": True, "text": "SECRET//NOFORN", "bg": "#c8102e", "fg": "#ffffff", "subject": True, "enclave": "classified"}
+
+    def test_the_highest(self):
+        ts = {"on": True, "text": "TOP SECRET", "bg": "#ff8c00", "fg": "#111111"}
+        cui = {"on": True, "text": "CUI", "bg": "#502b85", "fg": "#ffffff"}
+        unc = {"on": True, "text": "UNCLASSIFIED", "bg": "#007a33", "fg": "#ffffff"}
+        line = lambda *bs: {"key": "k", "page": "p.html", "runs": [{"page": "p%d.html" % i, "banner": b} for i, b in enumerate(bs)]}  # noqa: E731
+        self.assertEqual(rw.top_banner({}, [line(None, self.SECRET), line(unc)])["text"], "SECRET//NOFORN")
+        self.assertEqual(rw.top_banner(unc, [line(cui), line(ts)])["text"], "TOP SECRET")
+        self.assertEqual(rw.top_banner(cui, [line(unc)])["text"], "CUI")
+        self.assertEqual(rw.top_banner({}, [line(None), {"key": "old", "page": "o.html"}]), {})   # lines from before: none
+        self.assertEqual(rw.top_banner(dict(self.SECRET, bg="#c8102e"), [line(dict(self.SECRET, bg="#000000"))])["bg"], "#c8102e")  # this run's own
+        odd = rw.top_banner({}, [line({"on": True, "text": "x", "bg": "red;background:url(x)", "fg": "\"><b>"})])
+        self.assertEqual((odd["bg"], odd["fg"]), ("#4d4d4d", "#ffffff"))             # colours checked
+
+    def test_an_unclassified_run_after_a_classified_one(self):
+        dest = tempfile.mkdtemp()
+        r = run_module(web_args(dest, banner=self.SECRET))
+        self.assertTrue(r["published"], r)
+        r = run_module(web_args(dest, page="os/2026-10-01_0600_job-2.html", key="os/latest.html"))
+        self.assertTrue(r["published"], r)
+        with open(os.path.join(dest, "index.html")) as f:
+            index = f.read()
+        self.assertEqual(index.count('class="site-banner '), 2)
+        self.assertIn("SECRET//NOFORN", index)
+        with open(os.path.join(dest, "os", "latest.html")) as f:
+            self.assertNotIn("site-banner", f.read())                                # the page keeps its own (none)
+        with open(os.path.join(dest, "index.json")) as f:
+            lines = dict((x["key"], x) for x in json.load(f)["reports"])
+        self.assertEqual(lines["vm/latest.html"]["banner"]["text"], "SECRET//NOFORN")
+        self.assertEqual(lines["vm/latest.html"]["runs"][0]["banner"]["text"], "SECRET//NOFORN")
+        self.assertNotIn("banner", lines["os/latest.html"])
+        self.assertNotIn("banner", lines["os/latest.html"]["runs"][0])
+
+    def test_a_banner_the_entry_brings_is_not_kept(self):
+        dest = tempfile.mkdtemp()
+        args = web_args(dest)
+        args["entry"]["banner"] = {"on": True, "text": "x", "bg": "#000000", "fg": "#ffffff"}
+        self.assertTrue(run_module(args)["published"])
+        with open(os.path.join(dest, "index.json")) as f:
+            self.assertNotIn("banner", json.load(f)["reports"][0])
+
+
+class IndexReadAgain(unittest.TestCase):
+    """1.24.0: index.json is read again just before it is written - a line another job wrote in between stays."""
+    def test_a_line_written_meanwhile_stays(self):
+        dest = tempfile.mkdtemp()
+        self.assertTrue(run_module(web_args(dest))["published"])
+        # the next run: while it looks for the lines' latest pages (prune), another job writes its own line
+        patch = ("import json, os\n"
+                 "Base = m.Target\n"
+                 "class T(Base):\n"
+                 "    def exists(self, rel):\n"
+                 "        path = os.path.join(self.dest, 'index.json')\n"
+                 "        doc = json.load(open(path))\n"
+                 "        doc['reports'].append({'key': 'other/latest.html', 'name': 'Other', 'status': 'ok', 'latest': 'other/latest.html',\n"
+                 "                               'page': 'other/1.html', 'when': '2026-10-01 05:00 UTC'})\n"
+                 "        json.dump(doc, open(path, 'w'))\n"
+                 "        return Base.exists(self, rel)\n"
+                 "m.Target = T\n")
+        args = web_args(dest, page="os/2026-10-01_0600_job-2.html", key="os/latest.html", drop=["gone/*"])
+        self.assertTrue(run_module(args, patch)["published"])
+        with open(os.path.join(dest, "index.json")) as f:
+            keys = sorted(x["key"] for x in json.load(f)["reports"])
+        self.assertEqual(keys, ["os/latest.html", "other/latest.html", "vm/latest.html"])
+        with open(os.path.join(dest, "index.html")) as f:
+            self.assertIn("other/latest.html", f.read())
+
+
+class NoRedirect(unittest.TestCase):
+    """1.24.0: the upload client follows no redirect - the login never goes to another address; the 3xx is a failure
+    that names where it pointed."""
+    def setUp(self):
+        self.seen = []
+        seen = self.seen
+
+        class Other(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def any(self):
+                seen.append((self.command, self.headers.get("Authorization")))
+                self.send_response(200)
+                self.send_header("Content-Length", "2")
+                self.end_headers()
+                if self.command != "HEAD":
+                    self.wfile.write(b"{}")
+            do_GET = do_HEAD = do_PUT = do_DELETE = do_MKCOL = any
+
+        self.other = ThreadingHTTPServer(("127.0.0.1", 0), Other)
+        to = "http://127.0.0.1:%d/idp/login" % self.other.server_port
+
+        class First(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def any(self):
+                n = int(self.headers.get("Content-Length") or 0)
+                if n:
+                    self.rfile.read(n)
+                self.send_response(302)
+                self.send_header("Location", to)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+            do_GET = do_HEAD = do_PUT = do_DELETE = do_MKCOL = any
+
+        self.first = ThreadingHTTPServer(("127.0.0.1", 0), First)
+        for srv in (self.other, self.first):
+            threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.to = to
+        os.environ["REPORT_WEB_TOKEN"] = "t0ken"
+
+    def tearDown(self):
+        os.environ.pop("REPORT_WEB_TOKEN", None)
+        for srv in (self.other, self.first):
+            srv.shutdown()
+            srv.server_close()
+
+    def test_a_302_is_not_followed(self):
+        t = rw.Target("http://127.0.0.1:%d/reports" % self.first.server_port, "", 5)
+        for what, call in (("read", lambda: t.read("index.json")), ("exists", lambda: t.exists("vm/latest.html")),
+                           ("write", lambda: t.write("vm/p.html", "<p>x</p>", "text/html")), ("remove", lambda: t.remove("vm/p.html")),
+                           ("folder", lambda: t._folders("vm/p.html"))):
+            with self.subTest(what=what):
+                with self.assertRaises(rw.Fail) as e:
+                    call()
+                self.assertIn("HTTP 302", str(e.exception))
+                self.assertIn("a redirect to %s, which is not followed" % self.to, str(e.exception))
+                self.assertIsNone(rw.passing(e.exception))                              # not tried again
+        self.assertEqual(self.seen, [])                                                 # the other address saw nothing, no login
+        r = run_module(web_args("http://127.0.0.1:%d/reports" % self.first.server_port), env={"REPORT_WEB_TOKEN": "t0ken"})
+        self.assertTrue(r.get("failed"), r)
+        self.assertIn(self.to, r["msg"])
+        self.assertEqual(self.seen, [])
 
 
 if __name__ == "__main__":

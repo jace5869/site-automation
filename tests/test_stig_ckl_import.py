@@ -135,6 +135,19 @@ class Parse(unittest.TestCase):
         with self.assertRaises(ci.Fail):
             ci.parse("x.cklb", b"{not json")
 
+    def test_entities_refused_in_utf16(self):
+        """1.24.0: the DOCTYPE is refused whatever the file's encoding (its BOM or XML declaration)."""
+        doc = ('<?xml version="1.0" encoding="UTF-16"?><!DOCTYPE CHECKLIST [<!ENTITY a "AAAA"><!ENTITY b "&a;&a;&a;">]>'
+               '<CHECKLIST><ASSET><HOST_NAME>&b;</HOST_NAME></ASSET><STIGS/></CHECKLIST>')
+        for enc, bom in (("utf-16-le", b"\xff\xfe"), ("utf-16-be", b"\xfe\xff")):
+            raw = bom + doc.encode(enc)
+            with self.assertRaises(ci.Fail) as e:
+                ci.parse("x.ckl", raw)
+            self.assertIn("DOCTYPE", str(e.exception), enc)
+        # a UTF-16 checklist with no DOCTYPE is still read
+        ok = '<?xml version="1.0" encoding="UTF-16"?><CHECKLIST><ASSET><HOST_NAME>web01</HOST_NAME></ASSET><STIGS/></CHECKLIST>'
+        self.assertEqual(ci.parse_ckl(ok.encode("utf-16"))["target"]["host"], "web01")
+
     def test_web_database_asset_name(self):
         self.assertEqual(ci.asset_name({"host": "db01", "web": True, "site": "", "instance": "MSSQLSERVER"}), "db01-NA-MSSQLSERVER")
         self.assertEqual(ci.asset_name({"host": "web01", "web": False, "site": "x"}), "web01")
@@ -250,6 +263,38 @@ class Plan(unittest.TestCase):
         self.assertEqual(len([x for x in left if x["kind"] == "conflict"]), 2)
         self.assertEqual([p.get("reviews") for p in plan if p["kind"] == "create"], [2])    # the same answers twice: once
 
+    def test_a_newer_checklist_like_stig_manager_still_disagrees(self):
+        """1.24.0: a checklist STIG Manager agrees with takes part in the choice - an older one that disagrees is not
+        written over the newer result, and both stay (not settled)."""
+        d = data()
+        d["assets"]["5"] = [{"assetId": "41", "name": "vrops01", "stigs": [{"benchmarkId": ARIA, "revisionStr": "V1R1"}]}]
+        d["reviews"]["41"] = [{"ruleId": "SV-260002r1_rule", "result": "pass", "status": {"label": "submitted"}, "ts": "t1"}]
+        new = fixture().replace(b"<STATUS>Open</STATUS>", b"<STATUS>NotAFinding</STATUS>")       # V-260002: Not a Finding, as STIG Manager
+        files = [{"name": "new.ckl", "data": new, "modified": "2026-11-10 10:00 UTC"},
+                 {"name": "old.ckl", "data": fixture(), "modified": "2025-01-01 10:00 UTC"}]   # V-260002: Open
+        for order in (files, files[::-1]):
+            cks, plan, left, _ = run(d, order)
+            self.assertNotIn("SV-260002r1_rule", [p.get("ruleId") for p in plan])
+            two = sorted((x["file"], x["kind"]) for x in left if x["version"] == "VRPE-8X-000002")
+            self.assertEqual(two, [("new.ckl", "conflict"), ("old.ckl", "conflict")])
+            ci_out = {"files": [{"name": n, "sha256": n, "checklists": 1} for n in ("new.ckl", "old.ckl")], "checklists": cks, "left": left}
+            moved = dict((x["name"], x["move"]) for x in cf.stig_ckl_settled(ci_out, [i for i in plan if i["kind"] == "import"]))
+            self.assertEqual(moved, {"new.ckl": False, "old.ckl": False})
+        # the newer one disagrees with STIG Manager, an older one agrees: they disagree too - a person decides
+        swapped = [dict(files[0], modified="2025-01-01 10:00 UTC"), dict(files[1], modified="2026-11-10 10:00 UTC")]
+        cks, plan, left, _ = run(d, swapped)
+        self.assertNotIn("SV-260002r1_rule", [p.get("ruleId") for p in plan])
+        self.assertEqual(sorted((x["file"], x["kind"]) for x in left if x["version"] == "VRPE-8X-000002"),
+                         [("new.ckl", "conflict"), ("old.ckl", "conflict")])
+        # both say what STIG Manager has: same, from both files, nothing written
+        cks, plan, left, _ = run(d, [dict(files[0]), dict(files[1], data=new)])
+        self.assertNotIn("SV-260002r1_rule", [p.get("ruleId") for p in plan])
+        self.assertEqual(sorted((x["file"], x["kind"]) for x in left if x["version"] == "VRPE-8X-000002"),
+                         [("new.ckl", "same"), ("old.ckl", "same")])
+        # one checklist only, as STIG Manager: same, as before
+        cks, plan, left, _ = run(d, [files[0]])
+        self.assertEqual([x["kind"] for x in left if x["version"] == "VRPE-8X-000002"], ["same"])
+
     def test_another_revision_is_held(self):
         d = data()
         d["rules"][(ARIA, "V1R1")] = aria_rules("r2")
@@ -320,6 +365,71 @@ class Update(unittest.TestCase):
         self.assertEqual(rows[0]["state"], "created")
         self.assertIn("without VMW_Aria_Operations_8-x_Application_STIG", rows[0]["why"])
         self.assertEqual(ids[("5", "vrops01")], "77")
+
+    def test_asset_made_by_an_earlier_run(self):
+        """1.24.0: the plan's asset is there already. Made by an earlier run of this plan (its name, in the plan's collection,
+        the description this job gives it): its reviews are written to it, each read again first. Made by anyone else: nothing
+        written - a state that fails the job (tasks/main.yml _su_bad)."""
+        desc = "Created by the checklist import (site-automation), approved in AAP: vrops01/apache.ckl"
+        plan = [{"kind": "create", "collectionId": "5", "asset": "vrops01", "fqdn": "", "benchmark": ARIA, "benchmarks": [ARIA],
+                 "revision": "V1R1", "description": desc, "line": "NEW ASSET vrops01"}]
+        plan += [{"kind": "import", "collectionId": "5", "assetId": "", "new_asset": "vrops01", "ruleId": "SV-26000%dr1_rule" % n,
+                  "result": "pass", "status": "submitted", "was": {"result": "", "status": "", "ts": ""}, "detail": "x", "engine": None,
+                  "line": "vrops01 V-26000%d" % n} for n in (1, 2)]
+
+        class C(object):
+            def __init__(self, there, db=None):
+                self.there, self.db, self.made, self.posts, self.read = there, dict(db or {}), [], [], []
+
+            def grants(self):
+                return {"5": 4}
+
+            def assets(self, c):
+                return self.there
+
+            def create(self, c, name, fqdn, benches, description="", ip="", mac=""):
+                self.made.append(name)
+                return {"assetId": "99", "stigs": [{"benchmarkId": ARIA, "revisionStr": "V1R1"}]}
+
+            def review(self, c, a, rule):
+                self.read.append((a, rule))
+                return self.db.get(rule)
+
+            def write(self, c, a, reviews):
+                self.posts.append((a, [r["ruleId"] for r in reviews]))
+                for r in reviews:
+                    self.db[r["ruleId"]] = {"result": r["result"], "status": {"label": r["status"]}, "ts": "t9"}
+                return {"rejected": []}
+
+            def asset_reviews(self, c, a):
+                return dict((k, smu.held(v)) for k, v in self.db.items())
+        # the earlier run created it, then one review was written before it failed: the other is written now
+        mine = {"assetId": "77", "name": "VROPS01", "description": desc, "stigs": [{"benchmarkId": ARIA, "revisionStr": "V1R1"}]}
+        c = C([mine], {"SV-260001r1_rule": {"result": "pass", "status": {"label": "submitted"}, "ts": "t1"}})
+        items = smu.update({"plan": plan, "skip_attachments": False}, c, False)
+        self.assertEqual([i["state"] for i in items], ["there from an earlier run", "already so", "written"])
+        self.assertEqual((items[0]["assetId"], c.made, c.posts), ("77", [], [("77", ["SV-260002r1_rule"])]))
+        self.assertEqual(sorted(c.read), [("77", "SV-260001r1_rule"), ("77", "SV-260002r1_rule"), ("77", "SV-260002r1_rule")])
+        # a review someone wrote meanwhile is left
+        c = C([mine], {"SV-260002r1_rule": {"result": "fail", "status": {"label": "saved"}, "ts": "t5"}})
+        self.assertEqual([i["state"] for i in smu.update({"plan": plan, "skip_attachments": False}, c, False)],
+                         ["there from an earlier run", "written", "changed since"])
+        # check mode: read, nothing written
+        c = C([mine])
+        self.assertEqual([i["state"] for i in smu.update({"plan": plan, "skip_attachments": False}, c, True)],
+                         ["there from an earlier run", "would write", "would write"])
+        self.assertEqual(c.posts, [])
+        # made by a person (another description, or none): not used - states the job fails on
+        for other in (dict(mine, description="web server"), dict(mine, description=None), dict(mine, name="vrops01.example.mil")):
+            c = C([other])
+            items = smu.update({"plan": plan, "skip_attachments": False}, c, False)
+            self.assertEqual([i["state"] for i in items], ["there since the check", "asset not created", "asset not created"])
+            self.assertEqual((c.made, c.posts, c.read), ([], [], []))
+            self.assertIn("run the import again", items[0]["why"])
+        with open(os.path.join(ROOT, "roles", "stigman_update", "tasks", "main.yml")) as f:
+            bad = f.read().split("_su_bad:")[1].split("\n  when:")[0]
+        for state in ("there since the check", "asset not created", "rejected", "error"):
+            self.assertIn("'%s'" % state, bad)
 
     def test_benchmark_ids_with_spaces(self):
         """STIG Manager takes any benchmark id up to 255 characters - STIG content from elsewhere has spaces in it."""

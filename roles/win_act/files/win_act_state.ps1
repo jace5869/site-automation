@@ -27,7 +27,14 @@ function Test-Sddl([string] $Sddl, [bool] $NeedProtected) {
 $r = @{ dir = $dir; present = (Test-Path -LiteralPath $file); sha256 = ''; sha_ok = $false; unblocked = $false
     dir_ok = $false; file_ok = $false; problems = @()
     language_mode = [string]$ExecutionContext.SessionState.LanguageMode }
-if (Test-Path -LiteralPath $dir) {
+# a junction or symbolic link at the folder: its target's permissions are not the folder's (the install refuses it)
+$link = Get-Item -LiteralPath $dir -Force -ErrorAction SilentlyContinue
+$isLink = [bool]($link -and ([string]$link.Attributes -match 'ReparsePoint'))
+if ($isLink) {
+    $r.present = $false
+    $r.problems += @("the folder is a link ($($link.LinkType) to $($link.Target)), not a folder: remove the link itself, not its target")
+}
+elseif (Test-Path -LiteralPath $dir) {
     $d = Test-Sddl ((Get-Acl -LiteralPath $dir).Sddl) $true
     $r.dir_ok = $d.ok
     if (-not $d.ok) { $r.problems += @("the folder is owned by $($d.owner), protected=$($d.protected), others with rights: $($d.others -join ', ')") }
@@ -46,6 +53,6 @@ if ($r.present) {
     $r.file_ok = $f.ok
     if (-not $f.ok) { $r.problems += @("act.ps1 is owned by $($f.owner), others with rights: $($f.others -join ', ')") }
 }
-else { $r.problems += @('act.ps1 is not there') }
+elseif (-not $isLink) { $r.problems += @('act.ps1 is not there') }
 $r.ok = $r.dir_ok -and $r.file_ok -and $r.sha_ok -and $r.unblocked
 '###SITE-JSON### ' + (ConvertTo-Json -InputObject $r -Compress)

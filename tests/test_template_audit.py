@@ -168,6 +168,31 @@ class Judge(unittest.TestCase):
         self.assertNotIn(SECRET_PW, json.dumps([templates, settings]))
         self.assertNotIn(SECRET_TOKEN, json.dumps([templates, settings]))
 
+    def test_nested_and_numeric_secrets_are_never_shown(self):
+        """A number under a secret's name, a short password in a dict (or a list of dicts), and a true/false under a
+        secret's name: in 3 templates each, never a value in the module's result or in the report."""
+        ev = ("db_password: 12345678\nstigman_db:\n  password: Summer2026!\n  user: svc_stig\n"
+              "ldap_binds:\n- {host: ldap01.example.mil, bind_pw: Pine-4-Cone}\nsmtp_password: true\n"
+              "check_list: [alpha, beta]\n")
+        recs = [{"kind": "job", "id": i, "name": "Job %d" % i, "extra_vars": ev} for i in range(3)]
+        self.assertTrue(m.is_secret("db_password", 12345678))
+        self.assertTrue(m.is_secret("stigman_db", {"password": "Summer2026!", "user": "svc_stig"}))
+        self.assertTrue(m.is_secret("ldap_binds", [{"host": "x", "bind_pw": 1234}]))
+        self.assertFalse(m.is_secret("smtp_password", True))                   # a switch: not a secret ...
+        self.assertTrue(m.hidden("smtp_password", True))                        # ... and still not shown
+        templates, settings = m.audit(recs, {"repeat_min": 3})
+        s = dict((x["setting"], x) for x in settings)
+        for n in ("db_password", "stigman_db", "ldap_binds"):
+            self.assertIn("secret", s[n]["why"], n)
+            self.assertEqual(s[n]["value"], "", n)
+        self.assertEqual(s["smtp_password"]["value"], "(same; not shown)")    # repeated, named like a secret
+        self.assertEqual(s["check_list"]["value"], "(same; not shown)")       # a list: never its value
+        out = json.dumps([templates, settings])
+        r = f.template_audit_report({"templates": templates, "settings": settings, "problems": []}, {"repeat_min": 3})
+        out += json.dumps(r, default=str)
+        for v in ("12345678", "Summer2026", "Pine-4-Cone", "svc_stig", "alpha"):
+            self.assertNotIn(v, out, v)
+
     def test_repeat_min(self):
         _, settings = m.audit(records(), dict(OPTS, repeat_min=0))
         self.assertNotIn("check_disk_warn_pct", [x["setting"] for x in settings])
