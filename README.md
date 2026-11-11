@@ -224,7 +224,7 @@ The guides, in the order a new site needs them: how it works and the setup first
 | [docs/SECRETS.md](docs/SECRETS.md) | where every secret lives |
 | [docs/DRY_RUNS.md](docs/DRY_RUNS.md) | dry runs (Job type Check): what each template does in one, where to set it, examples |
 | [docs/EMAIL_REPORTS.md](docs/EMAIL_REPORTS.md) | emailed reports: which jobs email, setting it up, green or red when a report finds problems, the look, adding email to a playbook |
-| [docs/WEB_REPORTS.md](docs/WEB_REPORTS.md) | the report website: every report also as a web page (on a Windows server over WinRM, a folder or an upload), the file names, the JSON, nginx, the address in the job output |
+| [docs/WEB_REPORTS.md](docs/WEB_REPORTS.md) | the report website: every report also as a web page (on a Windows server over WinRM, a folder or an upload), the file names, the JSON, nginx, the address in the job output; report-web, a small nginx of your own behind STIG Manager's nginx (`tools/report-web-setup.sh`) |
 | [docs/REPORT_SHARE.md](docs/REPORT_SHARE.md) | the reports on a Windows file share over SMB: set up, test and use, nothing mounted on the execution nodes |
 | [docs/RUNBOOKS.md](docs/RUNBOOKS.md) | every check and finding, and what to do about it |
 | [docs/DISK_SPACE.md](docs/DISK_SPACE.md) | the disk space report (filesystems and LVM, 85% and 90%) and the tmp cleanup after an approval: what is read, what is deleted and what never is |

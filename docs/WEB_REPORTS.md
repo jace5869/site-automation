@@ -394,6 +394,168 @@ above are all it needs. Every report template must then run in an execution envi
 if you use it) - or let the copy job write the pages ("The copy job", below). `report_web_dest` is a folder **on** that server (`D:\reports`), not a share
 (`\\fileserver\reports`): over WinRM that would be a second hop, which NTLM does not allow.
 
+### Your own report server, behind STIG Manager's nginx (report-web, 1.19.0)
+
+A small nginx of your own, `report-web`, in a podman container on the STIG Manager host. People read the reports at
+`https://<stigman name>/reports/`, through STIG Manager's nginx. The report jobs upload to the same address, over the
+same https, with a login. The pages' scripts (`site-report.js`, `site-insights.js`) are served with the right types
+and allowed by the website's own security header, so search, sort, CSV and the insights' Custom view work.
+
+**What it touches of STIG Manager:**
+
+- **Its nginx container is read, never changed, stopped or restarted.** The script reads its image, its podman network
+  and (unless `SKIP_READ_CONFIG=1`) its `add_header` lines, in memory: nothing else of its configuration is printed or
+  kept.
+- **report-web joins that container's podman network** from outside (`podman run --network`), so nginx reaches it by
+  name. No port on the host, nothing in the firewall. `NETWORK=<name>` picks the network by hand; `PUBLISH_PORT=<port>`
+  joins none (the second layout, below).
+- **You paste one block into its nginx configuration** and reload it yourself. A refused check or reload changes
+  nothing: the running nginx keeps its configuration.
+- STIG Manager's database and its other containers are not touched.
+
+**What is encrypted:** the browser and the report jobs to STIG Manager's nginx - its https, as today. From that nginx to
+report-web is plain HTTP on the podman network, inside the host. No certificate to make.
+
+#### Setting it up
+
+1. **Copy the script to the STIG Manager host** - `tools/report-web-setup.sh` from this repository - and run it as root:
+
+   ```bash
+   sudo -i
+   SERVER_NAME=stigman.yoursite.mil bash report-web-setup.sh
+   ```
+
+   `SERVER_NAME` is the name people open STIG Manager at. Success: it ends with `== 8. Done. Then:` and three
+   steps. Step 1 of its output says which nginx container it found and which network report-web joins.
+   Several nginx containers: `NGINX_CONTAINER=<name>`. It is safe to run again.
+2. **Read the paste file**, `/root/report-web-nginx.conf`. Its last lines are STIG Manager's own `add_header` lines:
+   check them against its configuration. They are repeated there because an `add_header` in a location replaces every
+   `add_header` of the server for that location - without them `/reports/` would lose HSTS, X-Frame-Options and the
+   rest. (With `SKIP_READ_CONFIG=1` the file has a marked place: copy those lines in by hand.)
+3. **Paste the file inside STIG Manager's `server { }` block**, beside `location /stigman/`: in the nginx
+   configuration file on the host that its nginx container mounts (`podman inspect <nginx container> --format
+   '{{range .Mounts}}{{.Source}} {{end}}'` lists them). `<nginx container>`: STIG Manager's nginx container -
+   step 1 of the script's output names it, and its last lines repeat these commands with it.
+4. **Check and reload STIG Manager's nginx:**
+
+   ```bash
+   podman exec <nginx container> nginx -t
+   podman exec <nginx container> nginx -s reload
+   ```
+
+   Success: `syntax is ok` and `test is successful`. A failed check: fix the paste and check again - the running
+   nginx is unchanged until a reload succeeds.
+5. **Check the address** (no login needed to read):
+
+   ```bash
+   curl -sI https://stigman.yoursite.mil/reports/
+   ```
+
+   Success: `HTTP/1.1 403` (an empty folder: no index yet, no listing) and a `Content-Security-Policy` line with
+   `script-src 'self'`. After the first report: `200` for `index.html`.
+6. **In `playbooks/group_vars/all.yml`:**
+
+   ```yaml
+   report_web_dest: https://stigman.yoursite.mil/reports
+   report_web_url: https://stigman.yoursite.mil/reports
+   ```
+
+   If your STIG Manager jobs already work from AAP, the execution environment trusts that server's certificate.
+   Otherwise: `report_web_ca_path: <the CA file inside the EE>`.
+7. **In AAP, a "Report website" credential** (`aap/credential_types/report_web.yml`), attached to each report template:
+   user name `aap-reports`, password the `UPLOAD_PASSWORD` line of `/root/report-web.env`
+   (`sudo grep PASSWORD /root/report-web.env`).
+8. **Run one report job.** Success: `Report: https://stigman.yoursite.mil/reports/<template>/...` in its output,
+   and the page opens with its search box and its CSV buttons.
+
+The script's settings (all optional): `NGINX_CONTAINER`, `NETWORK`, `SKIP_READ_CONFIG=1`, `PUBLISH_PORT`,
+`HOST_ADDR`, `AAP_SOURCES`, `IMAGE` (default: STIG Manager's own nginx image, already on the host - else
+`docker.io/library/nginx:stable`, pulled with TLS verification off), `NAME` (`report-web`), `URL_PATH`
+(`/reports`), `DATA_DIR` (`/var/lib/report-web`, the pages), `CONF_DIR` (`/etc/report-web`), `ENV_FILE`
+(`/root/report-web.env`), `UPLOAD_USER` (`aap-reports`), `MAX_BODY` (`64m`, the largest file an upload may be),
+`PASTE_FILE`, `SKIP_SYSTEMD=1`, `SKIP_FIREWALL=1`. It starts at boot (a Quadlet unit on podman 4.4 and later, else a
+generated systemd unit) and waits for STIG Manager's network after a reboot.
+
+**The login.** nginx's basic authentication with a SHA-512 crypt hash (`openssl passwd -6`: no MD5 or apr1, as FIPS
+requires). Reading needs no login; `PUT`, `DELETE` and `MKCOL` need it. The password stays in `/root/report-web.env`
+(root only) and is never printed.
+
+**The upload size.** `client_max_body_size` is `MAX_BODY` (64m) in both nginx configurations. The biggest pages are
+the ticket insights' All pages: their Custom view carries at most `servicenow_insights_custom_view_max_rows` (30,000)
+tickets at about 55 bytes each - about 2 MB.
+
+#### Moving from another web server
+
+- The pages already on the old server stay there. To keep them, copy the whole old report folder - with
+  `site-report.js` and `site-insights.js` at its top, and its folders as they are - into `/var/lib/report-web`, then
+  give them to the container's nginx user: `chown -R "$(podman exec report-web id -u nginx):$(podman exec report-web
+  id -g nginx)" /var/lib/report-web` and `restorecon -R /var/lib/report-web` (or `chcon -R -t container_file_t`). Or
+  let them go.
+- Nothing to run again: the next run of each report job writes its page, `latest.html`, the JSON and the index at the
+  new address. Its line in the index starts again from that run.
+- Change `report_web_dest` and `report_web_url` in `all.yml` (step 6), and the credential (step 7). Remove the old
+  server's settings (`report_web_host`, a share's path) if they are there.
+
+#### Undoing it
+
+Each step on its own; the old report address works again once `all.yml` points back at it.
+
+1. Take the pasted block out of STIG Manager's nginx (from `# ---- site-automation report website` to
+   `# ---- end of report-web ----`), then `podman exec <nginx container> nginx -t` and `podman exec <nginx container> nginx -s reload`.
+2. Stop report-web and remove its start at boot:
+
+   ```bash
+   # a Quadlet unit:
+   systemctl stop report-web
+   # or a generated unit:
+   systemctl disable --now container-report-web
+   rm -f /etc/containers/systemd/report-web.container
+   rm -f /etc/systemd/system/container-report-web.service
+   systemctl daemon-reload
+   podman rm -f report-web
+   ```
+
+3. With `PUBLISH_PORT` only: remove its rules (`firewall-cmd --permanent --list-rich-rules`, then
+   `firewall-cmd --permanent --remove-rich-rule='<the rule>'`), `firewall-cmd --reload`, `podman network reload --all`.
+4. The pages, its configuration and the login: `rm -rf /var/lib/report-web /etc/report-web`, `rm -f /root/report-web.env
+   /root/report-web-nginx.conf`. The image stays (it is STIG Manager's own).
+5. `report_web_dest` and `report_web_url` back to the old server in `all.yml`.
+
+#### What was tested, and what was not
+
+Tested (tests/email/run_report_web_setup_test.sh): rootless podman with netavark under root's STIG umask (077), against a
+stand-in for STIG Manager's nginx (https, `ssl_verify_client optional`, a strict server-level Content-Security-Policy,
+HSTS and X-Frame-Options, a secret in its configuration): the script twice, the paste through `nginx -t` and a reload,
+a read without login, uploads without and with a wrong login refused, a report job uploading over https with the login
+(ansible-core 2.16 and the current one), and in a headless browser the atlas page's search, sort and CSV and a ticket
+insights page's `site-insights.js`, under the website's own security header. The second layout's firewall rules with a
+stand-in `firewall-cmd`.
+
+**Not tested:** rootful podman on a hardened RHEL host, SELinux enforcing as root, fapolicyd, FIPS mode, and podman's
+older CNI networking (the script reads the same network fields there). If it stops on such a host, look at:
+
+```bash
+# report-web's nginx: a file it may not read, a refused upload
+podman logs report-web
+# SELinux: a denial on /var/lib/report-web or /etc/report-web
+ausearch -m AVC -ts recent
+# fapolicyd: a denied nginx or openssl
+journalctl -u fapolicyd --since -10min
+# STIG Manager's nginx: the pasted block
+podman exec <nginx container> nginx -t
+```
+
+The script never reloads or restarts STIG Manager's nginx: you run `nginx -t`, then the reload, after pasting.
+
+#### The second layout: a port on the host (PUBLISH_PORT)
+
+If report-web should not join STIG Manager's network: `PUBLISH_PORT=8085 bash report-web-setup.sh`. report-web then
+listens on port 8085 of the host, and the paste file sends `/reports/` to `HOST_ADDR:8085` (this host's address).
+The firewall gets one rule, for STIG Manager's nginx network only (added only when missing; firewalld reloaded only
+then, and `podman network reload --all` after it). With `AAP_SOURCES="<execution nodes>"` they may upload to the port
+directly too (`report_web_dest: http://<host>:8085/reports`) - plain HTTP, the login unencrypted on the network:
+uploading through STIG Manager's nginx (step 6) is the encrypted way.
+
 ### A web server that takes uploads (HTTP PUT)
 
 `report_web_dest: https://reports.yoursite.mil/upload` - the job uploads each file with `PUT` (WebDAV), from the
@@ -604,6 +766,11 @@ variable (`{{ site_report_url }}`) - for a Teams post or a ServiceNow work note.
 | `Message stream modified` on a share, now and then | Kerberos's KRB_AP_ERR_MODIFIED - most often a file server's machine password that just changed (a NetApp SVM rotates it) while AD replicates: tried again by itself (`report_web_retries`). Every time: an alias or address in `report_web_dest`, or a duplicate SPN - [REPORT_SHARE.md](REPORT_SHARE.md#when-something-fails) |
 | `WARNING - The report website copy failed: ...` (the job green) | Not published after the retries, or a real error: the email carries the same line at the top. The reason's own row here; `report_web_required: true` makes it fail the job |
 | `certificate verify failed` | Set `report_web_ca_path` to the CA that signed the server's certificate |
+| report-web: `uploading ...: HTTP 401` | The Report website credential's password is not the `UPLOAD_PASSWORD` of `/root/report-web.env` on the STIG Manager host, or the credential is not attached |
+| report-web: `uploading ...: HTTP 502` or `504` | STIG Manager's nginx cannot reach report-web: `podman ps` (is it up?), the paste's `resolver` (the network's gateway) - run the script again and paste the new file |
+| report-web: `uploading ...: HTTP 500`, `podman logs report-web` says `Permission denied` | A file report-web reads lost its SELinux label or its owner: run the script again (it puts them back); `ausearch -m AVC -ts recent` |
+| report-web: the page opens but search, sort and CSV are missing | The browser refused `site-report.js`: the pasted block's `Content-Security-Policy` must be there, and `site-report.js` must answer 200 (`curl -sI https://<name>/reports/site-report.js`) |
+| report-web: `uploading ...: HTTP 400` ... `The SSL certificate error` or `495` | STIG Manager's server requires a client certificate for every request (`ssl_verify_client on`, or an `if ($ssl_client_verify ...)` at server level - the script warns): the report jobs have none |
 | `could not reach report_web_host web01... (winrm, port 5986): ...` - `the specified credentials were rejected` | The login: the Report website credential (`DOMAIN\user`), or the account is locked; without that credential, the template's Machine credential is used |
 | `could not reach report_web_host ...: ... certificate verify failed` | `report_web_ca_path` (the CA of the server's WinRM certificate), or `report_web_host_cert_validation: ignore` to try it |
 | `could not reach report_web_host ...: ... Connection refused` or timed out | WinRM is not on that port (`report_web_host_port`, `_scheme`), or a firewall between AAP and the server |

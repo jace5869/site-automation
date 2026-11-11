@@ -172,6 +172,9 @@ jobs:
         run: |
           bash tests/stig/run_ckl_import_smb_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook SMB_TEST_PORT=14464 STIG_CKL_SM_PORT=12600 bash tests/stig/run_ckl_import_smb_test.sh
+      - name: The report website on report-web behind a stand-in for STIG Manager's nginx (tools/report-web-setup.sh; https, the login, a browser; current ansible-core and 2.16)
+        run: |
+          ANSIBLE216_IMAGE=docker.io/library/python:3.12-slim bash tests/email/run_report_web_setup_test.sh
       - name: Horizon - FSLogix profiles report, a Windows file share over SMB against Samba in a container (current ansible-core and 2.16)
         run: |
           bash tests/horizon/run_fslogix_smb_test.sh
@@ -370,7 +373,7 @@ jobs:
           PY
       - name: Shell scripts parse (scripts, the execution environments, the roles' shipped scripts, the tests)
         run: |
-          find scripts ee roles tests -name '*.sh' -print0 | while IFS= read -r -d '' f; do bash -n "$f" || { echo "does not parse: $f"; exit 1; }; done
+          find scripts ee roles tests tools -name '*.sh' -print0 | while IFS= read -r -d '' f; do bash -n "$f" || { echo "does not parse: $f"; exit 1; }; done
       - name: Python is Python 3.9 (the execution environment's) - plugins, modules, scripts
         run: |
           python3 - <<'PY'
