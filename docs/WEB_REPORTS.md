@@ -434,7 +434,8 @@ report-web is plain HTTP on the podman network, inside the host. No certificate 
    rest. (With `SKIP_READ_CONFIG=1` the file has a marked place: copy those lines in by hand.)
 3. **Read the file into STIG Manager's `server { }` block**, beside `location /stigman/`: in the nginx
    configuration file on the host that its nginx container mounts (`podman inspect <nginx container> --format
-   '{{range .Mounts}}{{.Source}} {{end}}'` lists them). `<nginx container>`: STIG Manager's nginx container -
+   '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{println}}{{end}}'` lists them: the file on the host, then
+   where the container sees it). `<nginx container>`: STIG Manager's nginx container -
    step 1 of the script's output names it, and its last lines repeat these commands with it.
    Read the file in; do not paste it by hand. A terminal paste into vim indents each line further than the last
    (a paste after all: type `:set paste` in vim first). In nano: `Ctrl+R`, then the file name. In vim:
@@ -450,9 +451,17 @@ report-web is plain HTTP on the podman network, inside the host. No certificate 
    podman exec <nginx container> nginx -s reload
    ```
 
-   Success: a number above 0, then `syntax is ok` and `test is successful`. `0`: the running nginx still has the
-   old file - see `report-web: 0` in Troubleshooting. A failed check: fix the block and check again - the running
-   nginx is unchanged until a reload succeeds.
+   Success: a number above 0, then `syntax is ok` and `test is successful`. A failed check: fix the block and check
+   again - the running nginx is unchanged until a reload succeeds.
+
+   `0`: the running nginx still has the old file. Write the file through the container, with the two paths of
+   step 3 (on the host, then inside the container), then the count again:
+
+   ```bash
+   podman exec -i <nginx container> sh -c 'cat > <path inside the container>' < <path on the host>
+   ```
+
+   Still `0`, or `Read-only file system`: see `report-web: 0` in Troubleshooting.
 5. **Check the address** (no login needed to read):
 
    ```bash
@@ -534,7 +543,7 @@ Each step on its own; the old report address works again once `all.yml` points b
 Tested (tests/email/run_report_web_setup_test.sh): rootless podman with netavark under root's STIG umask (077), against a
 stand-in for STIG Manager's nginx (https, `ssl_verify_client optional`, a strict server-level Content-Security-Policy,
 HSTS and X-Frame-Options, a secret in its configuration): the script twice, the block read in and counted (`nginx -T | grep -c report-web`; a file replaced under a
-single-file mount gives 0, as in Troubleshooting), `nginx -t` and a reload, a read without login, uploads without and with a wrong login refused, a report job uploading over https with the login
+single-file mount gives 0, as in Troubleshooting, and written through the container is seen, with no restart), `nginx -t` and a reload, a read without login, uploads without and with a wrong login refused, a report job uploading over https with the login
 (ansible-core 2.16 and the current one), and in a headless browser the atlas page's search, sort and CSV and a ticket
 insights page's `site-insights.js`, under the website's own security header. The second layout's firewall rules with a
 stand-in `firewall-cmd`.
@@ -780,7 +789,7 @@ variable (`{{ site_report_url }}`) - for a Teams post or a ServiceNow work note.
 | report-web: `uploading ...: HTTP 500`, `podman logs report-web` says `Permission denied` | A file report-web reads lost its SELinux label or its owner: run the script again (it puts them back); `ausearch -m AVC -ts recent` |
 | report-web: the page opens but search, sort and CSV are missing | The browser refused `site-report.js`: the pasted block's `Content-Security-Policy` must be there, and `site-report.js` must answer 200 (`curl -sI https://<name>/reports/site-report.js`) |
 | report-web: `uploading ...: HTTP 400` ... `The SSL certificate error` or `495` | STIG Manager's server requires a client certificate for every request (`ssl_verify_client on`, or an `if ($ssl_client_verify ...)` at server level - the script warns): the report jobs have none |
-| report-web: `0` from `podman exec <nginx container> nginx -T \| grep -c report-web`, or `/reports/` answers STIG Manager's 404 after the reload | The running nginx does not have the block. The wrong file: `podman inspect <nginx container> --format '{{range .Mounts}}{{.Source}} {{end}}'` lists the mounted ones. The right file, mounted on its own: the editor wrote a new file (vim's usual write), and the container keeps the old one - writing again does not change that. Restart the container once at a quiet moment (STIG Manager is away for some seconds): `podman restart <nginx container>`, or its systemd unit; then the count again (it does not start: `podman logs <nginx container>` names the line). Next time, in vim `:set backupcopy=yes` before `:w` |
+| report-web: `0` from `podman exec <nginx container> nginx -T \| grep -c report-web`, or `/reports/` answers STIG Manager's 404 after the reload | The running nginx does not have the block. The wrong file: `podman inspect <nginx container> --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{println}}{{end}}'` lists the mounted ones (on the host, then inside the container). The right file, mounted on its own: the editor wrote a new file (vim's usual write), and the container keeps the old one - writing again on the host does not change that. 1) Write it through the container: `podman exec -i <nginx container> sh -c 'cat > <path inside the container>' < <path on the host>`, then the count, `nginx -t` and the reload - no restart. Until the container's next restart it keeps its own copy: after another edit on the host, write it through again. 2) Still `0`, or `Read-only file system` (a mount with `:ro`): restart the container once at a quiet moment (STIG Manager is away for some seconds): `podman restart <nginx container>`, or its systemd unit; then the count again (it does not start: `podman logs <nginx container>` names the line). Next time, in vim `:set backupcopy=yes` before `:w` |
 | `could not reach report_web_host web01... (winrm, port 5986): ...` - `the specified credentials were rejected` | The login: the Report website credential (`DOMAIN\user`), or the account is locked; without that credential, the template's Machine credential is used |
 | `could not reach report_web_host ...: ... certificate verify failed` | `report_web_ca_path` (the CA of the server's WinRM certificate), or `report_web_host_cert_validation: ignore` to try it |
 | `could not reach report_web_host ...: ... Connection refused` or timed out | WinRM is not on that port (`report_web_host_port`, `_scheme`), or a firewall between AAP and the server |

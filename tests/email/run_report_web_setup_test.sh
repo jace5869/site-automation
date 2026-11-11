@@ -82,7 +82,7 @@ CONF
 chmod -R a+rX "$work/front"; chmod 644 "$work"/srv.key "$work"/srv.pem "$work"/ca.pem
 podman network create "$net" >/dev/null || { echo "ABORT - podman network create"; exit 1; }
 podman run -d --name "$front" --network "$net" -p "127.0.0.1:$fport:8443" \
-    -v "$work/front/nginx.conf:/etc/nginx/nginx.conf:ro,Z" -v "$work/front/conf.d:/etc/nginx/conf.d:ro,Z" \
+    -v "$work/front/nginx.conf:/etc/nginx/nginx.conf:Z" -v "$work/front/conf.d:/etc/nginx/conf.d:ro,Z" \
     -v "$work/srv.pem:/etc/nginx/srv.pem:ro,Z" -v "$work/srv.key:/etc/nginx/srv.key:ro,Z" -v "$work/ca.pem:/etc/nginx/ca.pem:ro,Z" \
     "$img" >/dev/null || { echo "ABORT - the stand-in nginx did not start"; exit 1; }
 base="https://127.0.0.1:$fport/reports"
@@ -129,6 +129,11 @@ chmod 644 "$work/front/nginx.conf.new"; mv "$work/front/nginx.conf.new" "$work/f
 echo "# report-web replaced-file probe, written again in place" >> "$work/front/nginx.conf"
 check "  ...and its 0 for a file replaced under a single-file mount, even written again in place (Troubleshooting)" \
     bash -c "grep -q 'replaced-file probe' '$work/front/nginx.conf' && [ \"\$(podman exec '$front' nginx -T 2>/dev/null | grep -c 'replaced-file probe')\" = 0 ]"
+# the remedy, as on a real host: write it through the container (the mount is writable), no restart
+started=$(podman inspect "$front" --format '{{.State.StartedAt}}')
+podman exec -i "$front" sh -c 'cat > /etc/nginx/nginx.conf' < "$work/front/nginx.conf"
+check "  ...written through the container: seen (count above 0), no restart" bash -c "[ \"\$(podman exec '$front' nginx -T 2>/dev/null | grep -c 'replaced-file probe')\" -gt 0 ] \
+    && [ \"\$(podman inspect '$front' --format '{{.State.StartedAt}}')\" = '$started' ]"
 check "the paste passes nginx -t in the stand-in, and it reloads" bash -c "podman exec '$front' nginx -t >/dev/null 2>&1 && podman exec '$front' nginx -s reload >/dev/null 2>&1"
 sleep 1
 # shellcheck disable=SC1091   # written by the script above

@@ -508,7 +508,11 @@ cat <<INFO
         a terminal paste after all: in vim   :set paste   first
       Check that nginx sees it - a number above 0:
         podman exec ${NGINX_CONTAINER:-<nginx container>} nginx -T | grep -c report-web
-      0: the running nginx still has the old file (docs/WEB_REPORTS.md, Troubleshooting, "report-web: 0").
+      0: the running nginx still has the old file. Write it through the container (Source and Destination from:
+         podman inspect ${NGINX_CONTAINER:-<nginx container>} --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{println}}{{end}}'),
+         then the count again:
+        podman exec -i ${NGINX_CONTAINER:-<nginx container>} sh -c 'cat > <Destination>' < <Source>
+      Still 0, or "Read-only file system": docs/WEB_REPORTS.md, Troubleshooting, "report-web: 0".
       Then check and reload it:
         podman exec ${NGINX_CONTAINER:-<nginx container>} nginx -t
         podman exec ${NGINX_CONTAINER:-<nginx container>} nginx -s reload
