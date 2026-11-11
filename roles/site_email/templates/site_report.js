@@ -60,7 +60,8 @@
      headings, f3 numbers wrap at spaces and a smaller type, f4 long chips narrower; a compact table's sq, 1.11.0,
      before them), one by one while it does not fit; one still too wide scrolls sideways inside its card (its headings
      then stay in it) - a date, an address, a short chip or a heading's word is never broken to fit. Before f4, the
-     tables get the rail's room: the rail is put away for this page only (not kept); its button brings it back. Each table keeps its card's width (data-fw)
+     tables get the rail's room: the rail is put away for this page only (not kept); its button brings it back. A
+     table still too wide after f4 takes f4 off and breaks no word (fx) before it scrolls in its card. Each table keeps its card's width (data-fw)
      and its steps (data-fs): it is fitted again only when that width changed (a narrower card goes on from the steps
      it has) or when it must be (its Columns, the rows' height) - opening a section costs the others nothing */
   var railAuto=0,railUser=0,lastW=0;
@@ -75,10 +76,13 @@
       var st=(t.classList.contains('cc')?['sq']:[]).concat(['f1','f2','f3','f4']),i=0,b=t.tBodies[0],big=b&&b.rows.length>400;
       var over=function(){return t.scrollWidth>w.clientWidth+1};
       if(more)i=fs==='9'?st.length:+fs;
-      else{w.classList.remove('scroll');t.classList.remove('sq','f1','f2','f3','f4')}
+      else{w.classList.remove('scroll');t.classList.remove('sq','f1','f2','f3','f4','fx')}
       if(big){t.classList.add('fsample');for(;i<st.length&&over();i++)t.classList.add(st[i]);t.classList.remove('fsample')}
       for(;i<st.length&&over();i++)t.classList.add(st[i]);
-      var sc=over();w.classList.toggle('scroll',sc);
+      /* still too wide after the last step: f4 off again and no word broken inside (fx) - a table that scrolls in its
+         card is never also broken up (1.21.0) */
+      var sc=over();if(sc){t.classList.remove('f4');t.classList.add('fx')}else t.classList.remove('fx');
+      w.classList.toggle('scroll',sc);
       w.setAttribute('data-fw',cw);w.setAttribute('data-fs',sc?'9':String(i))}
     return w.classList.contains('scroll')?9:t.classList.contains('f4')?4:0}
   function fit(mode){if(mode!==true&&mode!=='grow')mode=false;

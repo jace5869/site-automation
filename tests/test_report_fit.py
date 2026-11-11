@@ -2,8 +2,8 @@
 390 px (a phone; a table there may scroll inside its card) - in the atlas and brief looks, light and dark. Each report's
 document as its unit tests or its e2e run make it (tests/fixtures/report_fit, refreshed by tests/report_fit_docs.py), and
 again with long values: names 22 characters longer, numbers wider. A table that does not fit first takes the script's
-steps (f1 to f4: wrapping); one that still scrolls fails here. At every width no date, time, IP address or chip of up to
-12 characters is split over two lines (a Range around each: more than one line box is a split). Many pages per browser
+steps (f1 to f4: wrapping); one that scrolls before its last step fails here (after it: no word broken, fx - listed). At every width no date, time, IP address, number, heading word or chip of
+up to 12 characters is split over two lines (a Range around each: more than one line box is a split). Many pages per browser
 start: each width is one page of frames, the report pages in them at that width. And fit() is quick on a big table:
 opening or closing a section that changes no table's width refits nothing.
   python tests/test_report_fit.py           (skips without google-chrome or chromium)"""
@@ -77,15 +77,17 @@ function measure(d){var de=d.documentElement,r={page:Math.max(0,de.scrollWidth-d
   [].forEach.call(d.querySelectorAll('table'),function(t){if(!t.offsetParent)return;var a=t.parentElement;
     while(a&&a!==d.body){var o=getComputedStyle(a).overflowX;if(o==='auto'||o==='scroll'||o==='hidden')break;a=a.parentElement}
     if(a&&a!==d.body&&a.scrollWidth>a.clientWidth+1){var h=t.closest('details');h=h&&h.querySelector('h2');
-      (t.classList.contains('f4')?r.last:r.inner).push((h?h.childNodes[0].textContent.trim():'?')+' +'+(a.scrollWidth-a.clientWidth))}});
+      if(t.classList.contains('f4'))r.inner.push('(with f4) ');
+      (t.classList.contains('fx')?r.last:r.inner).push((h?h.childNodes[0].textContent.trim():'?')+' +'+(a.scrollWidth-a.clientWidth))}});
   r.split=splits(d);r.torn=torn(d);return r}
 // a phone's card: each cell is its label and ONE value - a value in pieces (its text beside a span) is torn apart
 function torn(d){var out=[];[].forEach.call(d.querySelectorAll('td'),function(td){if(!td.offsetParent||getComputedStyle(td).display!=='grid')return;
   var n=[].filter.call(td.childNodes,function(c){return c.nodeType===1||(c.nodeType===3&&c.nodeValue.trim())}).length;
   if(n>1)out.push((td.getAttribute('data-l')||'?')+': '+td.textContent.trim().slice(0,40))});return out}
 // a date, a time or an IP address in a cell, and a chip of up to 12 characters: on more than one line is a split
-// (a word of its own: a date inside a file name - localhost_log.2026-11-11.txt, user@192.0.2.9 - is part of that name)
-var TOK=/(?<![\w.@\-])(\d{4}-\d\d-\d\d(T[\d:.]+Z?)?|\d\d?\/\d\d?\/\d{4}|\d\d?:\d\d(:\d\d)?|(\d{1,3}\.){3}\d{1,3}(\/\d+|:\d+)?)(?![\w@\-])/g;
+// (a word of its own: a date inside a file name - localhost_log.2026-11-11.txt, user@192.0.2.9, host:1688 - is part of that name)
+// a number (16,210  6338  59%%  12,050.0) too: never broken inside its digits
+var TOK=/(?<![\w.@\-:\/\\])(\d{4}-\d\d-\d\d(T[\d:.]+Z?)?|\d\d?\/\d\d?\/\d{4}|\d\d?:\d\d(:\d\d)?|(\d{1,3}\.){3}\d{1,3}(\/\d+|:\d+)?|\d[\d,.]*\d%%?)(?![\w@\-])/g;
 function lines(rg){var tops=[];[].forEach.call(rg.getClientRects(),function(b){if(b.width<1)return;
   if(!tops.some(function(t){return Math.abs(t-b.top)<3}))tops.push(b.top)});return tops.length}
 function splits(d){var out=[];
