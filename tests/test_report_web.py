@@ -131,6 +131,7 @@ class Module(unittest.TestCase):
             tpl = f.read()
         light = tpl[tpl.index("{%- set light %}"):tpl.index("{%- set dark %}")]
         dark = tpl[tpl.index("{%- set dark %}"):tpl.index("{%- endset %}", tpl.index("{%- set dark %}"))]
+        dark = dark + dark_greys_text()          # the greys come from site_dark.j2 (1.25.0), the page includes it
         for mine, theirs in ((rw.ATLAS_LIGHT, light), (rw.ATLAS_DARK, dark)):
             tokens = dict(re.findall(r"(--[\w-]+):([^;]+);", mine))
             self.assertGreater(len(tokens), 30)
@@ -147,8 +148,8 @@ class Module(unittest.TestCase):
             self.assertIn('<label for="theme-%s"' % t, html)
         self.assertIn('id="theme-auto" value="auto" checked>', html)
         self.assertIn(":root:has(#theme-light:checked){--ink:#111827;", html)
-        self.assertIn(":root:has(#theme-dark:checked){--ink:#e6edf3;", html)
-        self.assertIn(':root[data-theme="dark"]{--ink:#e6edf3;', html)      # older browsers without :has(): the script
+        self.assertIn(":root:has(#theme-dark:checked){--bg:#2f3237;", html)
+        self.assertIn(':root[data-theme="dark"]{--bg:#2f3237;', html)      # older browsers without :has(): the script
         self.assertIn("localStorage.setItem('site-report-theme',n)", html)
         self.assertNotIn("<button", html)
 
@@ -252,6 +253,71 @@ class Module(unittest.TestCase):
         for k in ("REPORT_WEB_TOKEN", "REPORT_WEB_USERNAME", "REPORT_WEB_PASSWORD"):
             os.environ.pop(k)
         self.assertEqual(rw.Target("http://reports.example.mil/r", "", 5).auth, "")
+
+
+def dark_greys_text():
+    """roles/site_email/templates/site_dark.j2 rendered, as the role's template lookup renders it."""
+    import jinja2
+    env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(REPO, "roles", "site_email", "templates")))
+    return env.get_template("site_dark.j2").render()
+
+
+def _lum(h):
+    r, g, b = [int(h.lstrip("#")[i:i + 2], 16) / 255.0 for i in (0, 2, 4)]
+    f = lambda c: c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+
+
+def _ratio(a, b):
+    la, lb = _lum(a), _lum(b)
+    return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+
+
+class DarkGreys(unittest.TestCase):
+    """1.25.0: the atlas look's dark mode, lighter (a mid-dark grey): its greys in one place (site_dark.j2) for the report
+    pages, the index and the ticket insights pages; every text colour readable on every surface."""
+
+    def greys(self):
+        return dict(re.findall(r"(--[\w-]+):(#[0-9a-f]{6});", dark_greys_text()))
+
+    def test_one_place(self):
+        g = dark_greys_text()
+        names = lambda t: sorted(re.findall(r"(--[\w-]+):", t))
+        self.assertEqual(names(g), names(rw.DARK_GREYS))     # the index's own copy (a caller passing none): the same greys
+        tasks = os.path.join(REPO, "roles", "site_email", "tasks")
+        for t in ("main.yml", "pages.yml", "copy_page.yml"):       # every call of site_report_web passes the file's greys
+            with open(os.path.join(tasks, t)) as f:
+                self.assertIn("dark_greys: \"{{ lookup('ansible.builtin.template', 'site_dark.j2') }}\"", f.read(), t)
+        with open(os.path.join(REPO, "roles", "site_email", "templates", "report_atlas.html.j2")) as f:
+            self.assertIn("{% include 'site_dark.j2' %}", f.read())
+        html = rw.index_html([], "index.html", "x", None, "now", (), "atlas", "", "--bg:#404040;--card:#4a4a4a;")
+        self.assertIn(':root[data-theme="dark"]{--bg:#404040;--card:#4a4a4a;--accent:', html)      # passed in: used
+        sys.path.insert(0, os.path.join(REPO, "plugins", "filter"))
+        import servicenow_insights_page as ip
+        self.assertEqual(ip.dark_greys()["--card"], self.greys()["--card"])                     # the insights pages too
+        self.assertIn("--surface:%s;" % self.greys()["--card"], ip.dark_css())
+
+    def test_a_mid_dark_grey(self):
+        bg = self.greys()["--bg"]
+        self.assertGreaterEqual(_lum(bg), 0.020, bg)                # a grey (#2b2e33 and lighter), not near-black
+        self.assertGreater(_lum(self.greys()["--card"]), _lum(bg))  # cards one step lighter
+
+    def test_every_text_readable_on_every_surface(self):
+        g = self.greys()
+        surfaces = dict((k, g[k]) for k in ("--bg", "--bg2", "--card", "--zebra", "--card-strong", "--code", "--hover", "--accent-soft"))
+        rest = dict(re.findall(r"(--[\w-]+):(#[0-9a-f]{6});", rw.ATLAS_DARK_REST))
+        texts = dict((k, g[k]) for k in ("--ink", "--label", "--muted"))
+        texts.update((k, rest[k]) for k in ("--accent", "--ok", "--warning", "--critical", "--info", "--unknown"))
+        for tn, t in texts.items():
+            for sn, sv in surfaces.items():
+                self.assertGreaterEqual(_ratio(t, sv), 4.5, "%s on %s" % (tn, sn))
+            if tn in ("--ink", "--label", "--muted"):
+                continue
+            # a status chip: its colour at 12% over a card, its text the colour itself - 3:1 (a chip's bold label)
+            card = [int(g["--card"][i:i + 2], 16) for i in (1, 3, 5)]
+            fg = [int(t[i:i + 2], 16) for i in (1, 3, 5)]
+            chip = "#%02x%02x%02x" % tuple(int(round(.12 * a + .88 * b)) for a, b in zip(fg, card))
+            self.assertGreaterEqual(_ratio(t, chip), 3.0, "%s on its chip" % tn)
 
 
 def kept_doc(job=907, rows=2, when="2026-10-23 06:05 UTC", template="Linux - Certificate trust report"):

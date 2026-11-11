@@ -72,7 +72,11 @@ Since 0.53.0:
 - **A bar at the top that stays:**
   - the report's sections, with the one you are reading marked, and each table's row count;
   - **Compact / Comfortable** rows;
-  - **Light / Auto / Dark**, which follows the reader's own setting on Auto;
+  - **Light / Auto / Dark**, which follows the reader's own setting on Auto. Dark (1.25.0) is a mid-dark neutral grey,
+    not near-black: the page `#2f3237`, the cards a step lighter. The same greys on the index and the ticket insights
+    pages; they live in one file, `roles/site_email/templates/site_dark.j2`, whose `base` line makes the whole dark mode
+    lighter or darker (as light as `#3b3e43` with today's text colours; tests/test_report_web.py says when a colour needs a
+    lighter shade);
   - **Print**.
   - The rows and light/dark choices are kept in that browser, for every page of the website.
   - The two switches work even where the page's script is blocked (a web server whose Content-Security-Policy allows
@@ -84,7 +88,8 @@ Since 0.53.0:
   critical.
   - **Where they appear:** the tables' Severity and Status columns, a cell that says PASSED or FAILED, the sections' and
     the cards' status, and a coloured edge on the header and on each tile that needs a look.
-  - **Contrast:** every text colour is at least 4.5:1 against what it is on, in light and in dark (most over 7:1).
+  - **Contrast:** every text colour is at least 4.5:1 against what it is on, in light and in dark (most over 7:1); a
+    test checks every dark text colour on every dark surface, so a change to the greys that breaks it is caught.
 - **Start here cards** with a **Copy** button for their command. The health check's healthy hosts each get a check
   mark, under *Every check passed* and the checks run.
 - **Copy** on every number tile (its line: *Completed: 3 (resolved or closed)*) and on every section: all of it, with

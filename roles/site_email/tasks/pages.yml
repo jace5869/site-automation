@@ -21,6 +21,7 @@
     logo_size: "{{ _web_logo_size if _pages_logo | bool else [] }}"
     header_text: "{{ report_email_header_text | default('Site automation report') }}"
     theme: "{{ _web_theme }}"
+    dark_greys: "{{ lookup('ansible.builtin.template', 'site_dark.j2') }}"   # the atlas index's dark greys (1.25.0)
     json: "{{ report_web_json | bool }}"
     data:
       job: "{{ awx_job_id | default(tower_job_id | default('local')) }}"

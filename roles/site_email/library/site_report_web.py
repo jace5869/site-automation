@@ -79,6 +79,7 @@ options:
   smb_port: {description: The share's port., type: int, default: 445}
   footer: {description: With keep - the email's footer line (the AAP job, who started it, when) for the copied page., type: str, default: ''}
   theme: {description: "The website's look (report_web_theme) - atlas and brief draw the index page in it too; the others, in the portal look.", type: str, default: portal}
+  dark_greys: {description: "The atlas look's dark greys for the index page (roles/site_email/templates/site_dark.j2, as the role renders it; '' = as 1.25.0 drew them).", type: str, default: ''}
   retries: {description: "Tries again after a failure that passes (report_web_retries); 0 = none.", type: int, default: 3}
   retry_delay: {description: Seconds between two tries (report_web_retry_delay)., type: int, default: 30}
   required: {description: "false = a publish that still fails after the retries returns published false and error, not a failure (report_web_required).", type: bool, default: true}
@@ -709,10 +710,10 @@ INDEX_PAGE = """<!DOCTYPE html>
 """
 
 
-def index_html(reports, index, header_text, logo, generated, tabs=(), theme='portal', js=''):
+def index_html(reports, index, header_text, logo, generated, tabs=(), theme='portal', js='', dark_greys=''):
     """The index page: a tab per area (All first), every report's line - worst first - opening to its last runs."""
     if theme == 'atlas':
-        return index_atlas(reports, index, header_text, logo, generated, tabs, js)
+        return index_atlas(reports, index, header_text, logo, generated, tabs, js, dark_greys)
     if theme == 'brief':
         return index_brief(reports, index, header_text, logo, generated, tabs, js)
     e = htmllib.escape
@@ -792,14 +793,19 @@ ATLAS_LIGHT = """--ink:#111827;--muted:#4b5563;--label:#374151;--accent:#0b7352;
 --warning-bd:#eec27c;--critical:#b42318;--critical-bg:#fdeceb;--critical-bd:#f0a59c;--info:#1d4ed8;
 --info-bg:#e9effd;--info-bd:#a9c0f5;--unknown:#4b5563;--unknown-bg:#eef1f4;--unknown-bd:#c9d1da;
 --critical-row:#fff6f5;--warning-row:#fffaf0;color-scheme:light;"""
-ATLAS_DARK = """--ink:#e6edf3;--muted:#9aa7b4;--label:#c2ccd6;--accent:#3ecf98;--accent-ink:#04221a;
---accent-soft:#12302a;--bg:#0b0f14;--bg2:#0e141b;--card:#121820;--card-solid:#121820;
---card-strong:#171f29;--edge:#263243;--line:#1e2834;--zebra:#141b24;--hover:#15241f;
---code:#0d1319;--bar:rgba(14,19,26,.84);--shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.30);--glow1:rgba(62,207,152,.13);--glow2:rgba(96,140,255,.11);
---ok:#4fd69a;--ok-bg:rgba(79,214,154,.12);--ok-bd:rgba(79,214,154,.36);--warning:#f2b450;--warning-bg:rgba(242,180,80,.12);
---warning-bd:rgba(242,180,80,.38);--critical:#ff8a80;--critical-bg:rgba(255,138,128,.12);--critical-bd:rgba(255,138,128,.40);--info:#8ab4ff;
---info-bg:rgba(138,180,255,.12);--info-bd:rgba(138,180,255,.36);--unknown:#a8b3bf;--unknown-bg:rgba(168,179,191,.11);--unknown-bd:rgba(168,179,191,.30);
---critical-row:rgba(255,138,128,.06);--warning-row:rgba(242,180,80,.05);color-scheme:dark;"""
+# the dark greys come from roles/site_email/templates/site_dark.j2 (1.25.0: one place for the page, this index and the
+# ticket insights pages), passed in as dark_greys by the role's tasks; DARK_GREYS is that file as 1.25.0 drew it, for a
+# caller that passes none
+DARK_GREYS = """--bg:#2f3237;--bg2:#33363b;--card:#383b40;--card-solid:#383b40;--zebra:#3b3e43;--card-strong:#3e4146;
+--code:#2b2e33;--line:#44474c;--edge:#4f5257;--hover:#354845;--accent-soft:#324c47;
+--bar:rgba(51,54,59,.88);--ink:#eef1f4;--label:#d3dae1;--muted:#c3cbd4;"""
+ATLAS_DARK_REST = """--accent:#5ee0ad;--accent-ink:#04221a;
+--shadow:0 1px 2px rgba(0,0,0,.28),0 10px 30px rgba(0,0,0,.20);--glow1:rgba(94,224,173,.10);--glow2:rgba(171,202,255,.08);
+--ok:#6be2ad;--ok-bg:rgba(107,226,173,.12);--ok-bd:rgba(107,226,173,.40);--warning:#f7c574;--warning-bg:rgba(247,197,116,.12);
+--warning-bd:rgba(247,197,116,.42);--critical:#ffb3ab;--critical-bg:rgba(255,179,171,.12);--critical-bd:rgba(255,179,171,.44);--info:#abcaff;
+--info-bg:rgba(171,202,255,.12);--info-bd:rgba(171,202,255,.40);--unknown:#c3cbd4;--unknown-bg:rgba(195,203,212,.11);--unknown-bd:rgba(195,203,212,.34);
+--critical-row:rgba(255,179,171,.07);--warning-row:rgba(247,197,116,.06);color-scheme:dark;"""
+ATLAS_DARK = DARK_GREYS + ATLAS_DARK_REST
 ATLAS_STYLE = """:root{%(light)s}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){%(dark)s}}
 :root[data-theme="dark"]{%(dark)s}
@@ -927,7 +933,7 @@ def _chip(status, text=None):
     return '<span class="chip s-%s">%s<span>%s</span></span>' % (k, ATLAS_ICON[k], htmllib.escape(text or PAL[k][3]))
 
 
-def index_atlas(reports, index, header_text, logo, generated, tabs=(), js=''):
+def index_atlas(reports, index, header_text, logo, generated, tabs=(), js='', dark_greys=''):
     """The index page in the atlas look: the header card with the light / auto / dark switch, a tile per status, a tab
     per area (All first; radio buttons and their labels, no script), every report's line - worst first - opening to its
     last runs."""
@@ -986,7 +992,7 @@ def index_atlas(reports, index, header_text, logo, generated, tabs=(), js=''):
             '<div class="tools">%(switch)s</div></div></header>\n'
             '<div class="tiles">%(tiles)s</div>\n%(tabs)s<div class="card list">\n%(rows)s\n</div>\n</div>\n%(script)s\n</body>\n</html>\n') % {
         'header': e(header_text), 'early': ATLAS_EARLY + ('\n' + script_tag(index, js) if js else ''), 'logo': logo_img, 'n': len(reports), 'generated': e(generated),
-        'style': ATLAS_STYLE % {'light': ATLAS_LIGHT, 'dark': ATLAS_DARK, 'tabs': ''.join(rules)},
+        'style': ATLAS_STYLE % {'light': ATLAS_LIGHT, 'dark': (dark_greys.strip() or DARK_GREYS) + ATLAS_DARK_REST, 'tabs': ''.join(rules)},
         'switch': ATLAS_SWITCH, 'tiles': tiles,
         'tabs': (''.join(inputs) + '\n<div class="bar">' + ''.join(labels) + '</div>\n') if reports else '',
         'rows': '\n'.join(rows) or '<div class="none">No reports yet.</div>', 'script': ATLAS_SCRIPT}
@@ -1319,6 +1325,7 @@ def main():
             max_kb=dict(type='int', default=256),
             footer=dict(type='str', default=''),
             theme=dict(type='str', default='portal'),
+            dark_greys=dict(type='str', default=''),
             smb_auth=dict(type='str', default='negotiate'),
             smb_encrypt=dict(type='bool', default=False),
             smb_port=dict(type='int', default=445),
@@ -1453,7 +1460,7 @@ def main():
                 logo = (uri, p['logo_size'][0], p['logo_size'][1]) if uri.startswith('data:') else None
             index_text = json.dumps({'generated': generated, 'reports': reports}, indent=2, sort_keys=True, default=str) + '\n'
             put(_json_name(index), index_text, 'application/json; charset=utf-8')
-            put(index, banner_inject(index_html(reports, index, p['header_text'], logo, generated, p['tabs'], p['theme'], index_js), banner),
+            put(index, banner_inject(index_html(reports, index, p['header_text'], logo, generated, p['tabs'], p['theme'], index_js, p['dark_greys']), banner),
                 'text/html; charset=utf-8', True)
             # the pages of the runs that fell off this template's line - after the index, which no longer lists them
             kept = set([index, _json_name(index)])

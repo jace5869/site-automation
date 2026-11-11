@@ -445,7 +445,7 @@ class AtlasLook(unittest.TestCase):
         self.assertIn('id="theme-auto" value="auto" checked>', h)
         self.assertIn('id="density-comfortable" value="comfortable" checked>', h)
         self.assertIn(":root:has(#theme-light:checked){--ink:#111827;", h.replace("\n", "").replace(" ", ""))
-        self.assertIn(":root:has(#theme-dark:checked){--ink:#e6edf3;", h.replace("\n", "").replace(" ", ""))
+        self.assertIn(":root:has(#theme-dark:checked){--bg:#2f3237;", h.replace("\n", "").replace(" ", ""))
         self.assertIn(":root:has(#density-compact:checked){--cy:5px;", h)
         self.assertIn(".btn[hidden]{display:none}", h)
         self.assertIn('<button class="btn" type="button" id="print" hidden>', h)

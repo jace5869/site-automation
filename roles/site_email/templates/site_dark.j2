@@ -1,0 +1,11 @@
+{#- The report website's dark greys (1.25.0): the atlas look's pages (report_atlas.html.j2), its index
+    (site_report_web, through the role's tasks) and the ticket insights pages (plugins/filter/servicenow_insights_page.py).
+    One base grey; every other surface a fixed step above it, the text greys fixed. A lighter or darker dark mode is the
+    `base` line alone: tests/test_report_web.py then checks every text colour on every surface (4.5:1). -#}
+{%- set base = [47, 50, 55] -%}
+{%- macro g(n, tint=[0, 0, 0]) -%}
+#{{ '%02x%02x%02x' % ([[base[0] + n + tint[0], 0] | max, 255] | min, [[base[1] + n + tint[1], 0] | max, 255] | min, [[base[2] + n + tint[2], 0] | max, 255] | min) }}
+{%- endmacro -%}
+--bg:{{ g(0) }};--bg2:{{ g(4) }};--card:{{ g(9) }};--card-solid:{{ g(9) }};--zebra:{{ g(12) }};--card-strong:{{ g(15) }};
+--code:{{ g(-4) }};--line:{{ g(21) }};--edge:{{ g(32) }};--hover:{{ g(0, [6, 22, 14]) }};--accent-soft:{{ g(0, [3, 26, 16]) }};
+--bar:rgba({{ base[0] + 4 }},{{ base[1] + 4 }},{{ base[2] + 4 }},.88);--ink:#eef1f4;--label:#d3dae1;--muted:#c3cbd4;

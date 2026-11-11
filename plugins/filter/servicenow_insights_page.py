@@ -13,6 +13,7 @@ __metaclass__ = type
 import html
 import json
 import math
+import os
 import re
 
 TABLE_OF = {"INC": "incident", "RITM": "sc_req_item", "REQ": "sc_request", "SCTASK": "sc_task", "CHG": "change_request",
@@ -24,6 +25,44 @@ ICON = {"trophy": '<path d="M7 4h10v4a5 5 0 01-10 0V4zM7 6H4a3 3 0 003 4M17 6h3a
         "check": '<path d="M5 12.5l4.5 4.5L19 7.5"/>'}
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 DAYS_LONG = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+# 1.25.0: the dark greys are the report website's (roles/site_email/templates/site_dark.j2 - one place for the atlas
+# pages, their index and these pages), drawn here with these pages' own names; the rest of the dark palette is this
+# page's own (its status and chart colours, checked on those greys). DARK_GREYS: the file as 1.25.0 drew it, for a
+# copy of this filter without the role beside it.
+DARK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles", "site_email", "templates", "site_dark.j2")
+DARK_GREYS = ("--bg:#2f3237;--bg2:#33363b;--card:#383b40;--card-solid:#383b40;--zebra:#3b3e43;--card-strong:#3e4146;"
+              "--code:#2b2e33;--line:#44474c;--edge:#4f5257;--hover:#354845;--accent-soft:#324c47;"
+              "--bar:rgba(51,54,59,.88);--ink:#eef1f4;--label:#d3dae1;--muted:#c3cbd4;")
+DARK_REST = ("--accent:#5ee0ad; --on-accent:#04221a;"
+             " --good:#6be2ad; --good-bg:rgba(107,226,173,.12); --warn:#f7c574; --warn-bg:rgba(247,197,116,.12);"
+             " --crit:#ffb3ab; --crit-bg:rgba(255,179,171,.12); --info:#abcaff; --info-bg:rgba(171,202,255,.12);"
+             " --q-good:#2fae7b; --q-thin:#c98f00; --q-bare:#ea7070;"
+             " --s1:#3987e5; --s2:#e8693a; --heat:#4a93ea;"
+             " --st1:#3987e5; --st2:#e8693a; --st3:#199e70; --st4:#c98500;"
+             " --o1:#3a77c4; --o2:#5590dd; --o3:#78aced; --o4:#b0d0f7;"
+             " --shadow:0 1px 2px rgba(0,0,0,.28),0 6px 18px rgba(0,0,0,.20); color-scheme:dark")
+
+
+def dark_greys():
+    """site_dark.j2 rendered, as {name: value} (DARK_GREYS where the file or Jinja is not there)."""
+    text = DARK_GREYS
+    try:
+        import jinja2
+        with open(DARK_FILE) as f:
+            text = jinja2.Template(f.read()).render()
+    except Exception:
+        pass
+    return dict((k.strip(), v.strip()) for k, v in re.findall(r"(--[\w-]+)\s*:\s*([^;]+);", text))
+
+
+def dark_css():
+    """This page's dark palette: the website's greys under this page's names, then its own colours."""
+    g = dark_greys()
+    names = (("--bg", "--bg"), ("--surface", "--card"), ("--surface-2", "--card-strong"), ("--line", "--edge"), ("--line-2", "--line"),
+             ("--fg", "--ink"), ("--fg-2", "--label"), ("--muted", "--muted"), ("--accent-soft", "--accent-soft"))
+    return "\n  " + " ".join("%s:%s;" % (mine, g[theirs]) for mine, theirs in names if theirs in g) + "\n  " + DARK_REST
+
 
 CSS = r"""/* Layout: sticky report bar with the group filter; section index on the left (wide screens); one column of sections, summary before detail. */
 :root{
@@ -39,23 +78,9 @@ CSS = r"""/* Layout: sticky report bar with the group filter; section index on t
   --mono:Consolas,"Cascadia Mono",Menlo,"DejaVu Sans Mono",monospace;
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
-  --bg:#0c1311; --surface:#131c19; --surface-2:#18231f; --line:#283632; --line-2:#1f2b27;
-  --fg:#e6eeeb; --fg-2:#b6c4bf; --muted:#8b9b95; --accent:#43b98d; --accent-soft:#163029; --on-accent:#08130f;
-  --good:#4cc493; --good-bg:#12302a; --warn:#e3a64c; --warn-bg:#33270f; --crit:#f07a70; --crit-bg:#3a1817; --info:#7aa7f5; --info-bg:#16233d;
-  --q-good:#2fae7b; --q-thin:#c98f00; --q-bare:#e06060;
-  --s1:#3987e5; --s2:#d95926; --heat:#4a93ea;
-  --st1:#3987e5; --st2:#d95926; --st3:#199e70; --st4:#c98500;
-  --o1:#184f95; --o2:#256abf; --o3:#3987e5; --o4:#86b6ef;
-  --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 18px rgba(0,0,0,.25); color-scheme:dark}}
+@DARK@}}
 :root[data-theme="dark"]{
-  --bg:#0c1311; --surface:#131c19; --surface-2:#18231f; --line:#283632; --line-2:#1f2b27;
-  --fg:#e6eeeb; --fg-2:#b6c4bf; --muted:#8b9b95; --accent:#43b98d; --accent-soft:#163029; --on-accent:#08130f;
-  --good:#4cc493; --good-bg:#12302a; --warn:#e3a64c; --warn-bg:#33270f; --crit:#f07a70; --crit-bg:#3a1817; --info:#7aa7f5; --info-bg:#16233d;
-  --q-good:#2fae7b; --q-thin:#c98f00; --q-bare:#e06060;
-  --s1:#3987e5; --s2:#d95926; --heat:#4a93ea;
-  --st1:#3987e5; --st2:#d95926; --st3:#199e70; --st4:#c98500;
-  --o1:#184f95; --o2:#256abf; --o3:#3987e5; --o4:#86b6ef;
-  --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 18px rgba(0,0,0,.25); color-scheme:dark}
+@DARK@}
 
 *{box-sizing:border-box}
 html,body{margin:0}
@@ -1081,7 +1106,7 @@ def servicenow_insights_page(model, key="all", opts=None):
 
     head = ['<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
             '<meta name="generator" content="site-automation ticket insights"><title>%s</title><style>%s%s</style></head><body>' % (
-                e("Ticket insights – " + s["name"]), CSS + ORG_CSS, BRIEF_CSS if brief else "")]
+                e("Ticket insights – " + s["name"]), CSS.replace("@DARK@", dark_css()) + ORG_CSS, BRIEF_CSS if brief else "")]
     # the site's logo (report_logo_file) goes in place of the comment when the page is published; else the initials
     logo = '<!--site-report-logo--><div class="logo" aria-hidden="true">%s</div>' % e(
         "".join(w[0] for w in str(o.get("header_text") or "Site automation").split()[:2]).upper() or "SA")
