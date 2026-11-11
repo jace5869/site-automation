@@ -34,7 +34,7 @@ and simpler: the tiles and the main tables, a link to the page, and an Excel wor
 | **Passed between groups** | incidents reassigned 3 or more times, the paths they took (a group the ticket came back to in amber), the most common issue on each path and the time it added. The groups are shown by their short names - the name without the parts every group shares, such as a site prefix or a contract suffix; rest on one for the full name |
 | **Most requested services** | the catalog items ranked (▲ ▼ against the window before), the median time to fulfil, SLA met, the trend; and **requests opened as incidents** (an install, an account, access - things the catalog offers), when ACT ran |
 | **Changes** | success rate, failed or backed out, followed by an incident, emergency share; each failed or backed-out change with the incidents that followed it - **Caused by** (linked in ServiceNow) or **Same CI** (on its CI within 72 hours, not linked) - and the emergency changes by group; then **Change tasks** (1.2.0, below) |
-| **All-stars** | each team: the awards (Most resolved - *Most closed* when the change tasks are read -, Best close notes, Fastest to resolve, Fixed for good), the leaderboard - the team's members (ServiceNow's group membership), each with closed (incidents resolved, catalog tasks and change tasks closed), change tasks (how many of them were change tasks, 1.2.0), median to resolve (without the change tasks), close notes, reopened or came back; a member with nothing closed is listed too -, the team's total, and **who sends this team its tickets**: Opened by on the tickets assigned to it, with the group each opener works tickets in (or *end user*) |
+| **All-stars** | each team: the awards (Most resolved - *Most closed* when the change tasks are read -, Best close notes, Fastest to resolve, Fixed for good), the leaderboard - the team's members (ServiceNow's group membership), each with closed (incidents resolved, catalog tasks and change tasks closed), change tasks (how many of them were change tasks, 1.2.0), median to resolve (without the change tasks), close notes, reopened or came back; a member with nothing closed is listed too -, the team's total, and **who sends this team its tickets**: Opened by on the tickets assigned to it, with the group each opener works tickets in (or *end user*), the first 8 and of how many (1.18.0: *312 of 540 tickets, from 8 of 61 people*) |
 | **Close notes** (after the All-stars) | one line: how many close notes say what was done, are vague, or are a stock phrase or empty; open it for Good / Thin / Bare per group and the most common bare notes word for word |
 | **Knowledge article drafts** | for the issues with enough incidents and a fix the close notes agree on: symptoms, cause, resolution, with a Copy button - drafts to review, never written to ServiceNow |
 | **How this was made** | what was read, the window, what was replaced before GenAI, how ACT did |
@@ -54,7 +54,8 @@ The changes' tasks (`change_task`, read with GET like the rest) have figures of 
   the **wait** - from when the change's other tasks were all closed (a change with one task: from the change's *actual
   start*, else its *planned start*) to that last task's close. The 5 teams that held up the most changes, how often, and
   their median wait;
-- the **Teams side by side** table and the email have *Change tasks closed* and *Change tasks open*; the **All-stars**
+- the **Teams side by side** table has *Change tasks closed* and *Change tasks open*, the email one column *Change
+  tasks closed / open* (1.18.0, so it fits); the **All-stars**
   count them in *Closed*, with a *Change tasks* column (their time is the change's plan, so *Median to resolve* leaves
   them out);
 - the workbook has a **Change tasks** sheet: every change task opened, closed or open in the window, its change, group,
@@ -86,6 +87,21 @@ list with 0. A ticket with a bare close note counts half (`servicenow_insights_b
 does not win. Awards need at least `servicenow_insights_star_min` tickets resolved. There is no "worst" list. When the
 account cannot read `sys_user_grmember`, each leaderboard lists everyone the team's tickets were assigned to or
 resolved by, and the report says so under *Not read*.
+
+**Ticket links (1.18.0).** Each ticket number opens the ticket in ServiceNow, in a new tab. The link goes through
+`nav_to.do`, so the ticket shows inside ServiceNow's own frame.
+
+```yaml
+servicenow_insights_ticket_links: true          # false = the numbers alone
+servicenow_insights_ticket_base: ""             # the address people open ServiceNow at; "" = the API credential's
+```
+
+Set `servicenow_insights_ticket_base` when people reach ServiceNow at another address than the API's. An address that
+is not a web address is ignored: the numbers then show without links.
+
+**Sorting (1.18.0).** A table sorts as the report website does ([WEB_REPORTS.md](WEB_REPORTS.md)). A number sorts as a
+number, an IP address by its four parts, *host2* before *host10*. An empty cell or a lone dash goes last both ways. The
+first click sorts ascending. On a column already in that order it sorts descending, so the click always shows.
 
 **Without the page's script.** The page carries a little script (search, sorting, Copy, the tooltips on the charts, the
 team menu). A report web server whose Content-Security-Policy blocks inline scripts does not run it; since 0.88.0 the
@@ -435,7 +451,7 @@ The **ServiceNow API** credential you already have works ([SERVICENOW_SETUP.md](
 | Table | What | The role that reads it |
 |---|---|---|
 | `incident`, `sc_req_item`, `sc_task`, `change_request`, `change_task` (1.2.0), `problem` | the tickets | `itil`; `change_task` refused (403): said under *Not read*, the change tasks left out |
-| `sys_user_group` | the groups named in `servicenow_insights_groups`; since 0.97.0 the tickets' groups and their parents (sites and directorates); since 1.15.0 each group's `manager` with its name, email and active flag (the team leads) | `itil`; refused, the sites come from the names (or `servicenow_insights_use_group_parents: false`); the manager refused, said under *Not read*, no Group manager line |
+| `sys_user_group` | the groups named in `servicenow_insights_groups`; since 0.97.0 the tickets' groups and their parents (sites and directorates); since 1.15.0 each group's `manager` with its name and active flag (the team leads), and its email only when `servicenow_insights_email_leads` names a team (1.18.0) | `itil`; refused, the sites come from the names (or `servicenow_insights_use_group_parents: false`); the manager refused, said under *Not read*, no Group manager line |
 | `sys_audit` | the assignment history of incidents passed between groups (the paths) | `itil` on most instances; refused, the paths come from `metric_instance` (below) |
 | `metric_instance` | the same history from the out-of-box incident metric *Assignment Group* (0.97.0), when `sys_audit` is refused or `servicenow_insights_handoff_source: metric` | read on `metric_instance` (`itil` on most instances); both refused, the report shows the counts without the paths and says which table it could not read |
 | `sys_user_grmember` | the members of the groups the tickets name (the teams' leaderboards) | `itil` on most instances; else the report says so and each leaderboard lists everyone the team's tickets were assigned to or resolved by (or `servicenow_insights_members: false`) |
@@ -478,7 +494,10 @@ the window.
 
 - No manager in ServiceNow: no line.
 - An inactive manager: the name, then *(inactive in ServiceNow)*.
-- Site, directorate and unit pages: no line, in every hierarchy source.
+- Site, directorate and unit pages: no line, in every hierarchy source. Their list of teams has no Manager column: it
+  would not fit at 1280 px (1.18.0).
+- The workbook's **Teams** sheet has a **Manager** column (1.18.0), empty for a team without one.
+- The manager's email address is read only when `servicenow_insights_email_leads` names a team (1.18.0).
 - The account may not read the manager (403), or the person's name comes back empty: said once under *Not read*. The rest
   of the report is whole.
 

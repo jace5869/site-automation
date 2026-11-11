@@ -494,7 +494,7 @@ class Page(unittest.TestCase):
         for sid in ("glance", "teams", "keepingup", "severity", "issues", "problems", "handoffs", "requests", "changes", "notes", "allstars", "kb", "method"):
             self.assertIn('id="%s"' % sid, h)
         self.assertIn('href="ops/other/windows/latest.html"', h)
-        self.assertIn("https://sn.example.mil/incident.do?sysparm_query=number=INC", h)
+        self.assertIn("https://sn.example.mil/nav_to.do?uri=incident.do%3Fsysparm_query%3Dnumber%3DINC", h)
         self.assertIn("<!--site-report-logo-->", h)
         self.assertIn("AAP job 7", h)
         self.assertNotRegex(h, r"\b(PERSON|HOST|PHONE)-\d+\b")
@@ -553,7 +553,21 @@ class Page(unittest.TestCase):
 
     def test_ticket_links(self):
         self.assertEqual(P.tk("CHG0031001", "https://sn/"), '<a class="tk" target="_blank" rel="noopener" '
-                                                            'href="https://sn/change_request.do?sysparm_query=number=CHG0031001">CHG0031001</a>')
+                                                            'href="https://sn/nav_to.do?uri=change_request.do%3Fsysparm_query%3Dnumber%3DCHG0031001">CHG0031001</a>')
+        # 1.18.0: where they go - the API's instance, the address people use, or none
+        B = P.ticket_base
+        self.assertEqual(B({"url": "https://api.example.mil"}, {}), "https://api.example.mil")
+        self.assertEqual(B({"url": "https://api.example.mil"}, {"ticket_base": "sn.example.mil/"}), "https://sn.example.mil")
+        self.assertEqual(B({"url": "https://api.example.mil"}, {"ticket_links": False}), "")
+        self.assertEqual(B({"url": "https://api.example.mil"}, {"ticket_base": "javascript:alert(1)"}), "")
+        self.assertEqual(B({"url": "https://api.example.mil"}, {"ticket_base": 'https://sn.example.mil/"><b>'}), "")
+        m = site()["model"]
+        h = P.servicenow_insights_page(m, "all", {"ticket_base": "https://sn.example.mil:8443/"})
+        self.assertIn('href="https://sn.example.mil:8443/nav_to.do?uri=incident.do%3Fsysparm_query%3Dnumber%3DINC', h)
+        h = P.servicenow_insights_page(m, "all", {"ticket_links": False})
+        self.assertNotIn("nav_to.do", h)
+        self.assertNotIn('class="tk"', h)
+        self.assertIn('<span class="mono">INC', h)
         self.assertIn("mono", P.tk("XYZ1", "https://sn"))
         self.assertTrue(re.search("—", P.tk("", "https://sn")))
 
@@ -1274,7 +1288,10 @@ class ChangeTasks(unittest.TestCase):
         m = self.model(r)
         doc = F.servicenow_insights_doc(m, "all", OPTS)
         sec = dict((s_["title"], s_) for s_ in doc["sections"])
-        self.assertEqual(sec["Teams side by side"]["columns"][8:10], ["Change tasks closed", "Change tasks open"])
+        tm = sec["Teams side by side"]
+        self.assertEqual(tm["columns"][7:9], ["Change tasks closed / open", "Top issue"])         # 1.18.0: one column, the email fits
+        self.assertTrue(all(re.match(r"^[\d,]+ / [\d,]+$", row[7]) for row in tm["rows"]), tm["rows"])
+        self.assertTrue(all(re.match(r"^[\d,]+ \([\d,]+\)$", row[2]) for row in tm["rows"]), tm["rows"])
         ct = sec["Change tasks"]
         self.assertEqual(ct["lines"][:2], ["Closed: 4 (the window before: 0), median 4.8 days to close",
                                            "  - by the planned end 2, after it 1, with no planned end 1"])
@@ -1315,7 +1332,7 @@ class ChangeTasks(unittest.TestCase):
         doc = F.servicenow_insights_doc(m, "all", OPTS)
         titles = [s_["title"] for s_ in doc["sections"]]
         self.assertNotIn("Change tasks", titles)
-        self.assertNotIn("Change tasks closed", next(s_ for s_ in doc["sections"] if s_["title"] == "Teams side by side")["columns"])
+        self.assertNotIn("Change tasks closed / open", next(s_ for s_ in doc["sections"] if s_["title"] == "Teams side by side")["columns"])
         h = P.servicenow_insights_page(m, "all", {"links": page_links(m)})
         self.assertNotIn("Change tasks", h)
         self.assertNotIn("Change tasks", [s_["name"] for s_ in F.servicenow_insights_xlsx(m, self.r(refused=True), None, {"pairs": [], "counts": {}}, OPTS)])
@@ -1499,6 +1516,103 @@ class TrustedTypes(unittest.TestCase):
         lo, hi = re.search(r'id="cvto" min="([\d-]+)" max="([\d-]+)"', h).groups()
         self.assertEqual(got.get("out"), "Outside this report's window: %s to %s" % (lo, hi), got)
 
+
+
+class Senders(unittest.TestCase):
+    """1.18.0: under Who sends this team its tickets, of how many - "N of M tickets, from 8 of P people"."""
+
+    def test_of_how_many(self):
+        m, seen, more = site()["model"], 0, False
+        for t in m["teams"]:
+            st = m["scopes"][t].get("stars") or {}
+            op, of = st.get("openers") or [], st.get("openers_of") or {}
+            if not op:
+                continue
+            self.assertGreaterEqual(of["tickets"], sum(p["opened"] for p in op))
+            self.assertGreaterEqual(of["people"], len(op))
+            self.assertLessEqual(len(op), 8)
+            h = P.servicenow_insights_page(m, t, OPTS)
+            line = '<div class="cap of">%s of %s tickets, from %d of %s people.</div>' % (
+                "{:,}".format(sum(p["opened"] for p in op)), "{:,}".format(of["tickets"]), len(op), "{:,}".format(of["people"]))
+            self.assertIn(line, h)
+            self.assertLess(h.index("Who sends this team its tickets"), h.index(line))
+            seen += 1
+            if len(op) == 8:
+                more = True
+        self.assertTrue(seen and more)                  # some team with more senders than shown
+
+
+@unittest.skipUnless(__import__("shutil").which("node"), "no node here")
+class InsightsSort(unittest.TestCase):
+    """1.18.0: the page's sort key is the website's (site_report.js 1.20.0): a lone number as that number, IPv4 by its
+    octets, versions and host2 before host10, numbers before text, an empty cell or a lone dash last both ways."""
+
+    def key_js(self):
+        a = P.SCRIPT.index("/*sortkey")
+        return P.SCRIPT[a:P.SCRIPT.index("/*sortkey end*/")]
+
+    def order(self, vals, asc=True):
+        js = self.key_js() + ("var v=%s;v.sort(function(a,b){return scmp(skey(a),skey(b),%s)});console.log(JSON.stringify(v))" % (json.dumps(vals), "true" if asc else "false"))
+        return json.loads(subprocess.run(["node", "-e", js], capture_output=True, text=True, check=True).stdout)
+
+    def test_the_key(self):
+        self.assertEqual(self.order(["192.0.2.10", "192.0.2.9", "198.51.100.1", "192.0.2.100"]), ["192.0.2.9", "192.0.2.10", "192.0.2.100", "198.51.100.1"])
+        self.assertEqual(self.order(["8.0.10", "8.0.2"]), ["8.0.2", "8.0.10"])
+        self.assertEqual(self.order(["host10", "host2", "Host1"]), ["Host1", "host2", "host10"])
+        self.assertEqual(self.order(["1,200", "950", "-3", "12.5%", "2.5%"]), ["-3", "2.5%", "12.5%", "950", "1,200"])
+        self.assertEqual(self.order(["b", "", "—", "3", "a", "-"]), ["3", "a", "b", "", "—", "-"])
+        self.assertEqual(self.order(["b", "", "-", "3", "a"], asc=False), ["b", "a", "3", "", "-"])      # empty last either way
+
+    @unittest.skipUnless(any(__import__("shutil").which(b) for b in ("google-chrome", "chromium")), "no headless browser here")
+    def test_the_first_click(self):
+        """A first click sorts ascending; on a column already in order, descending - so the click always shows."""
+        import shutil
+        b = shutil.which("google-chrome") or shutil.which("chromium")
+        rows = [("192.0.2.10", "3"), ("192.0.2.9", "1"), ("—", "2"), ("198.51.100.1", "4")]
+        body = "".join("<tr><td>%s</td><td>%s</td></tr>" % rw for rw in rows)
+        page = ('<!DOCTYPE html><html><head><meta http-equiv="Content-Security-Policy" content="require-trusted-types-for \'script\'"></head><body>'
+                '<table><thead><tr><th data-sort="ip">IP</th><th data-sort="n">N</th></tr></thead><tbody>%s</tbody></table><div id="tip" hidden></div>'
+                '<script>%s</script><script>addEventListener("load",function(){setTimeout(function(){var D=document,out={},'
+                'col=function(i){return [].map.call(D.querySelectorAll("tbody tr"),function(r){return r.cells[i].textContent})};'
+                'var h=D.querySelectorAll("th");h[0].click();out.a=col(0);h[0].click();out.d=col(0);h[1].click();out.n1=col(1);'
+                'D.title="R "+JSON.stringify(out)},200)})</script></body></html>') % (body, P.SCRIPT)
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "s.html")
+            with open(path, "w") as fh:
+                fh.write(page)
+            out = subprocess.run([b, "--headless=new", "--disable-gpu", "--no-sandbox", "--virtual-time-budget=3000", "--dump-dom", "file://" + path],
+                                 capture_output=True, text=True, timeout=120).stdout
+        got = json.loads(re.search(r"<title>R (.*?)</title>", out).group(1).replace("&quot;", '"'))
+        self.assertEqual(got["a"], ["192.0.2.9", "192.0.2.10", "198.51.100.1", "—"])
+        self.assertEqual(got["d"], ["198.51.100.1", "192.0.2.10", "192.0.2.9", "—"])          # the dash last both ways
+        # N is 4 3 1 2 after IP descending: not in order, so the first click sorts it ascending
+        self.assertEqual(got["n1"], ["1", "2", "3", "4"])
+
+
+@unittest.skipUnless(any(__import__("shutil").which(b) for b in ("google-chrome", "chromium")), "no headless browser here")
+class EmailFits(unittest.TestCase):
+    """1.18.0: the insights email fits a window 800 px wide in the standard, command and portal looks - the standard look's
+    tiles four to a row (as portal and glass), the teams' table in 10 columns at most. (glass: its cells' padding, every report.)"""
+
+    def test_800(self):
+        import shutil
+        import jinja2
+        b = shutil.which("google-chrome") or shutil.which("chromium")
+        x = site()
+        doc = F.servicenow_insights_doc(x["model"], "all", OPTS)
+        self.assertGreater(len(doc["summary"]), 5)
+        env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(HERE, "..", "roles", "site_email", "templates")), autoescape=False)
+        probe = '<script>addEventListener("load",function(){document.title="R "+document.documentElement.scrollWidth+" "+innerWidth})</script></body>'
+        with tempfile.TemporaryDirectory() as d:
+            for tpl in ("report.html.j2", "report_command.html.j2", "report_portal.html.j2"):
+                h = env.get_template(tpl).render(_report=doc, _email_footer="AAP job 9", _email_logo_cid="", _email_runs=[],
+                                                 report_email_header_text="Site automation report")
+                path = os.path.join(d, tpl + ".html")
+                with open(path, "w") as fh:
+                    fh.write(h.replace("</body>", probe))
+                out = subprocess.run([b, "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars", "--virtual-time-budget=3000",
+                                      "--window-size=800,900", "--dump-dom", "file://" + path], capture_output=True, text=True, timeout=120).stdout
+                self.assertIn("<title>R 800 800</title>", out, tpl)
 
 
 class TicketStore(unittest.TestCase):
@@ -2454,7 +2568,9 @@ class TeamLeads(unittest.TestCase):
                 if "manager" in params["sysparm_fields"]:
                     m = g.get("m") or {}
                     row.update({"manager": v(m.get("id", "")), "manager.name": v("" if self.hide else m.get("name", "")),
-                                "manager.email": v("" if self.hide else m.get("email", "")), "manager.active": v(m.get("active", "true"))})
+                                "manager.active": v(m.get("active", "true"))})
+                    if "manager.email" in params["sysparm_fields"]:       # only the fields asked, as ServiceNow
+                        row["manager.email"] = v("" if self.hide else m.get("email", ""))
                 out.append(row)
             return {"result": out}
 
@@ -2470,7 +2586,7 @@ class TeamLeads(unittest.TestCase):
         tree, err = rd.read_group_tree(api, ["g1", "g2", "g3"], managers=mgr)
         self.assertEqual((err, sorted(tree)), ("", ["g0", "g1", "g2", "g3"]))
         self.assertEqual(len(api.calls), 2)                                        # the two levels, no call per group
-        self.assertTrue(all("manager.name,manager.email,manager.active" in c for c in api.calls))
+        self.assertTrue(all(c.endswith(",manager,manager.name,manager.active,manager.email") for c in api.calls), api.calls)
         got, err = rd.manager_names(mgr, ["g1", "g2", "g3"], {"g1": "Ops - Windows", "g2": "Ops - Network", "g3": "Ops - Linux"})
         self.assertEqual(err, "")
         self.assertEqual(got, {"Ops - Windows": {"name": "Pat Lee", "email": "pat.lee@example.mil", "active": True},
@@ -2480,6 +2596,12 @@ class TeamLeads(unittest.TestCase):
         api = self.Api(self.GROUPS)
         rd.read_group_tree(api, ["g1"])
         self.assertTrue(all("manager" not in c for c in api.calls))
+        # 1.18.0: the name without the email - nobody's leads to email
+        api, mgr = self.Api(self.GROUPS), {}
+        rd.read_group_tree(api, ["g1"], managers=mgr, emails=False)
+        self.assertTrue(api.calls and all("manager.name" in c and "email" not in c for c in api.calls), api.calls)
+        got, err = rd.manager_names(mgr, ["g1"], {"g1": "Ops - Windows"})
+        self.assertEqual((got, err), ({"Ops - Windows": {"name": "Pat Lee", "email": "", "active": True}}, ""))
 
     def test_not_readable(self):
         api = self.Api(self.GROUPS, deny_manager=True)                            # the manager refused: the groups still read
@@ -2575,6 +2697,24 @@ class TeamLeads(unittest.TestCase):
         # the shown line off: the emails still go
         self.assertEqual(F.servicenow_insights_lead_mail(self.model(show_lead=False), "all", {})["to"], {t[0]: ["pat.lee@example.mil"]})
 
+    def test_the_workbook_column(self):
+        """1.18.0: Manager on the Teams sheet, as the team page shows it; empty without one or with the line off. The site's
+        list of teams on the page has no Manager column: it does not fit at 1280 px (the line stays on each team's page)."""
+        x, m = site(), self.model()
+        t = self.teams
+        def sheet(mm, o):
+            wb = F.servicenow_insights_xlsx(mm, x["r"], None, x["mask"], dict(OPTS, **o))
+            sh = [w for w in wb if w["name"] == "Teams"][0]
+            i = sh["columns"].index("Manager")
+            self.assertEqual(sh["columns"][i - 1], "Team")
+            return dict((row[i - 1], row[i]) for row in sh["rows"])
+        got = sheet(m, {})
+        self.assertEqual(got[t[0]], "Pat Lee")
+        self.assertEqual(got[t[1]], "Kim Old (inactive in ServiceNow)")
+        self.assertEqual(got[t[3]], "")
+        self.assertEqual(set(sheet(self.model(show_lead=False), {"show_lead": False}).values()), {""})
+        self.assertNotIn("<th>Manager</th>", P.servicenow_insights_page(m, "all", OPTS))
+
     def test_never_in_the_history(self):
         import servicenow_insights_history as H
         m = self.model()
@@ -2587,6 +2727,7 @@ class TeamLeads(unittest.TestCase):
         with open(os.path.join(HERE, "..", "roles", "servicenow_insights", "tasks", "main.yml")) as f:
             main = f.read()
         self.assertIn("managers: \"{{ servicenow_insights_show_lead | bool or servicenow_insights_email_leads", main)
+        self.assertIn("manager_email: \"{{ servicenow_insights_email_leads | default([], true) | length > 0 }}\"", main)    # 1.18.0
         self.assertEqual(main.count("_sni_leads.to[_sni_team] | default([])"), 3)  # both ways: the per-page loop and after pages.yml
         self.assertNotIn("servicenow_insights_team_email_to[", main)
         self.assertLess(main.index("servicenow_insights_lead_mail("), main.index("tasks_from: pages.yml"))

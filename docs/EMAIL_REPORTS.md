@@ -178,7 +178,8 @@ the hosts that did not report. The ServiceNow weekly activity report has none: i
 `report_email_theme` picks one of four looks, for every report job at once when it is in `all.yml`:
 
 - **standard** (the default): the header band in the report's colour, number boxes under it - as
-  described above.
+  described above. Since 1.18.0 the boxes go four to a row, as in portal and glass, so a report with many
+  numbers fits an 800 px window.
 - **command**: a dark header with your logo, a small line of text above the title
   (`report_email_header_text`, default `Site automation report`) and the status as a label beside it;
   under it **the job's last runs** as a strip of bars, oldest first, this run last and outlined. A

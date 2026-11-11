@@ -54,6 +54,9 @@
       exclude_groups: "{{ servicenow_insights_exclude_groups | servicenow_insights_name_list }}"
       inactive_teams: "{{ servicenow_insights_inactive_teams | bool }}"
       show_lead: "{{ servicenow_insights_show_lead | bool }}"
+      # the ticket numbers on the pages link into ServiceNow (1.18.0): at the address people use, else the API's instance
+      ticket_links: "{{ servicenow_insights_ticket_links | bool }}"
+      ticket_base: "{{ servicenow_insights_ticket_base | default('', true) | string | trim }}"
       survey_metrics: "{{ servicenow_insights_survey_metrics | servicenow_insights_name_list }}"
       survey_headline: "{{ servicenow_insights_survey_headline | default('', true) | string | trim }}"
       survey_grades: "{{ servicenow_insights_survey_grades | default({'good': 0.8, 'fair': 0.6}, true) }}"
@@ -164,6 +167,7 @@
         survey_types: "{{ servicenow_insights_survey_types | default([], true) | servicenow_insights_name_list }}"
         # the team leads (1.15.0): each group's manager, in the groups' read - for the page's line or the leads' emails
         managers: "{{ servicenow_insights_show_lead | bool or servicenow_insights_email_leads | default([], true) | length > 0 }}"
+        manager_email: "{{ servicenow_insights_email_leads | default([], true) | length > 0 }}"   # 1.18.0: only for the leads' emails
         # the ticket store (1.17.0): the database's rows in, this run's out - files in a folder of the job's own
         store_in: "{{ (_sni_store | default({})).in | default('') }}"
         store_out: "{{ (_sni_store | default({})).out | default('') }}"

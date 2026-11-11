@@ -2554,11 +2554,13 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
         return names, False
 
     def senders(team, roster):
-        """Who opens the team's tickets (Opened by, on the tickets assigned to it): [{name, opened, from, member, end_user}]."""
-        cnt, own = {}, {}
+        """Who opens the team's tickets (Opened by, on the tickets assigned to it): ([{name, opened, from, member, end_user}],
+        {tickets, people}) - the first 8, and of how many (1.18.0: the tickets in the period, the people who opened them)."""
+        cnt, own, all_n = {}, {}, 0
         for x in inc_all + by_table.get("sc_req_item", []):
             if (x.get("group") or "") != team or not _in(_t(x.get("opened_at")), since, until):
                 continue
+            all_n += 1
             who = str(x.get("opened_by") or "").strip()
             if not who:
                 continue
@@ -2571,7 +2573,7 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
             end_user = (not member) and own.get(who, 0) * 2 > c and who not in work
             rows.append({"name": who, "opened": c, "from": team if member else ("" if end_user else home.get(who, "")),
                          "member": member, "end_user": end_user})
-        return rows
+        return rows, {"tickets": all_n, "people": len(cnt)}
 
     def stars(team):
         weight = float(_o(o, "bare_weight", 0.5))
@@ -2633,11 +2635,12 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
         tr = sum(p["resolved"] for p in rows)
         team_q = [round(sum(p["quality"][k] * p["resolved"] for p in rows) / tr) if tr else 0 for k in range(3)]
         reps = [p for p in rows if p["repeat"] is not None]
+        op_rows, op_of = senders(team, roster)
         return {"people": rows[:25], "awards": awards,
                 "total": {"resolved": tr + sum(outside.values()), "quality": team_q, "ctask": sum(p["ctask"] for p in rows),
                           "repeat": _r1(sum(p["repeat"] for p in reps) / len(reps)) if reps else None},
                 "members_known": known, "members": len(roster), "outside": {"count": sum(outside.values()), "names": _top(outside, 3)},
-                "openers": senders(team, roster), "more": max(0, len(rows) - 25), "ctasks": ct_read}
+                "openers": op_rows, "openers_of": op_of, "more": max(0, len(rows) - 25), "ctasks": ct_read}
 
     # sites, directorates and teams (0.97.0): every group with tickets has its place; a site or directorate with tickets
     # has a page, a team when it is one of the teams (team_min, teams_max, or named)
@@ -3307,12 +3310,15 @@ def servicenow_insights_doc(model, key="all", opts=None):
     if side:
         kind = (s.get("side") or {}).get("kind") or "Teams"
         ctc = s.get("ctasks") is not None                 # change_task read (1.2.0): its two columns
-        secs.append({"title": "%s side by side" % kind, "columns": [kind[:-1] if kind != "Directorates" else "Directorate", "Incidents", "Open now", "Was", "Over %d days" % int(_o(o, "old_days", 30)),
-                                                               "Median fix"] + (["Response met", "Resolution met"] if two else ["SLA met"]) + ["Bare notes"] +
-                                (["Change tasks closed", "Change tasks open"] if ctc else []) + ["Top issue"],
-                     "rows": [[t.get("label") or t["team"], t["incidents"], t["backlog"][0], t["backlog"][1], t["old"], fmt_hours(t["median_h"])] +
+        # 1.18.0: Open now with what it was, and the change tasks closed / open, each in one column - the table fits an
+        # email 800 px wide (it was 12 columns)
+        secs.append({"title": "%s side by side" % kind, "columns": [kind[:-1] if kind != "Directorates" else "Directorate", "Incidents", "Open now (was)",
+                                                               "Over %d days" % int(_o(o, "old_days", 30)), "Median fix"] +
+                                (["Response met", "Resolution met"] if two else ["SLA met"]) + ["Bare notes"] +
+                                (["Change tasks closed / open"] if ctc else []) + ["Top issue"],
+                     "rows": [[t.get("label") or t["team"], t["incidents"], "{:,} ({:,})".format(t["backlog"][0], t["backlog"][1]), t["old"], fmt_hours(t["median_h"])] +
                               ([pf(t.get("resp"))] if two else []) + [pf(t["sla"]), "%d%%" % t["quality"][2]] +
-                              ([t.get("ct_closed") or 0, t.get("ct_open") or 0] if ctc else []) +
+                              (["{:,} / {:,}".format(t.get("ct_closed") or 0, t.get("ct_open") or 0)] if ctc else []) +
                               [("%s (%d)" % (t["top"][0], t["top"][1])) if t["top"][0] else ""] for t in side],
                      "row_status": ["warning" if t["backlog"][0] > t["backlog"][1] * 1.05 and t["backlog"][0] - t["backlog"][1] >= 5 else ""
                                     for t in side]})
@@ -3595,10 +3601,14 @@ def servicenow_insights_xlsx(model, r=None, state=None, mask=None, opts=None):
                            "", "", "", "", "", "", ""])
     sheets.append({"name": "People", "columns": ["Team", "Person", "In the team", "Closed", "Of them change tasks", "Score", "Median hours", "Good notes %",
                                                  "Bare notes %", "Reopened %" if model.get("reopen_used") else "Came back %", "Opened"], "rows": people})
-    sheets.append({"name": "Teams", "columns": ["Site", "Directorate", "Team", "Incidents", "Open now", "Open at the start", "Over old days", "Median hours", "SLA met %",
-                                                "Bare notes %", "Change tasks closed", "Change tasks open", "Top issue"],
-                   "rows": [[place(t["team"], "site"), place(t["team"], "dir"), t["team"], t["incidents"], t["backlog"][0], t["backlog"][1], t["old"],
-                             t["median_h"], t["sla"], t["quality"][2], t.get("ct_closed"), t.get("ct_open"), t["top"][0]] for t in s.get("teams") or []]})
+    # Manager (1.18.0): the group's manager as its team page shows it (servicenow_insights_show_lead); empty without one
+    show = o.get("show_lead", True) not in (False, "false", "False", 0)
+    lead_of = lambda g: lead_label(model["leads"][g]) if show and (model.get("leads") or {}).get(g) else ""     # noqa: E731
+    sheets.append({"name": "Teams", "columns": ["Site", "Directorate", "Team", "Manager", "Incidents", "Open now", "Open at the start", "Over old days", "Median hours",
+                                                "SLA met %", "Bare notes %", "Change tasks closed", "Change tasks open", "Top issue"],
+                   "rows": [[place(t["team"], "site"), place(t["team"], "dir"), t["team"], lead_of(t["team"]), t["incidents"],
+                             t["backlog"][0], t["backlog"][1], t["old"], t["median_h"], t["sla"], t["quality"][2], t.get("ct_closed"), t.get("ct_open"), t["top"][0]]
+                            for t in s.get("teams") or []]})
     sc = model.get("scopes") or {}
     lv = [(k, v) for k, v in sc.items() if v.get("level") in ("site", "dir")]
     if lv:

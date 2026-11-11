@@ -115,7 +115,7 @@ check "the change tasks on the site's page: the teams' columns, Held up by, the 
 check "the site's page: every section, links to the teams, ticket links into ServiceNow" "$top/latest.html" \
     'ServiceNow ticket insights' 'id="teams"' 'id="keepingup"' 'id="severity"' 'id="issues"' 'id="problems"' 'id="handoffs"' \
     'id="requests"' 'id="changes"' 'id="notes"' 'id="allstars"' 'id="kb"' 'id="method"' 'href="ops/other/windows/latest.html"' 'Teams side by side' \
-    "http://127.0.0.1:$port/incident.do?sysparm_query=number=INC" 'grouped by their category' 'From the numbers' \
+    "http://127.0.0.1:$port/nav_to.do?uri=incident.do%3Fsysparm_query%3Dnumber%3DINC" 'grouped by their category' 'From the numbers' \
     'Reopen not used here' 'Came back' 'Response met' 'Resolution met' 'No SLA' 'P4 Incident Response' 'Act on first' 'SLA at risk now' \
     'How incidents ended' 'Priority set by hand' 'id="categories"' 'id="satisfaction"' 'Time in each state' 'The numbers as a table' \
     'Backlog age and flow' 'Ping-pong' 'id="afterhours"' 'id="workload"' 'data-tab="p1"' 'No drafts: ACT (GenAI) writes them' '!cid:' '!<!--site-report-logo-->'
@@ -246,12 +246,12 @@ assert inc("siteb/latest.html") == inc("siteb/latest-blue.html") + inc("siteb/la
 PYJ
 keys=$("$py" -c "import json,sys; print(' '.join(sorted(r['key'] for r in json.load(open(sys.argv[1]))['reports'])))" "$work/site5/index.json")
 [ "$keys" = "servicenow-ticket-insights/latest.html" ] && echo "ok   -   ... one line on the index" || { echo "FAIL - the index: $keys"; fails=$((fails + 1)); }
-"$py" - "$work/log.jsonl" <<'PYJ' && echo "ok   -   ... sys_user_group read with GET only, the team lead's name and email the only person's fields" || { echo "FAIL - the groups' requests"; fails=$((fails + 1)); }
+"$py" - "$work/log.jsonl" <<'PYJ' && echo "ok   -   ... sys_user_group read with GET only, the team lead's name the only person's field (no email: no leads to mail)" || { echo "FAIL - the groups' requests"; fails=$((fails + 1)); }
 import json, sys
 rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
 g = [r for r in rows if r["path"].endswith("/sys_user_group") and r["query"].get("sysparm_query", "").startswith("sys_idIN")]
 assert g and all(r["method"] == "GET" for r in g)
-assert all(r["query"]["sysparm_fields"] == "sys_id,name,parent,active,type,manager,manager.name,manager.email,manager.active" for r in g), g[0]["query"]
+assert all(r["query"]["sysparm_fields"] == "sys_id,name,parent,active,type,manager,manager.name,manager.active" for r in g), g[0]["query"]
 PYJ
 run "  ... again with servicenow_insights_split_teams false: the teams' split pages gone, the rest kept" ok \
     "{$NOW, $NOACT, \"servicenow_insights_hierarchy_source\": \"parents\", \"report_web_dest\": \"$work/site5\", \"servicenow_insights_team_min\": 5,
@@ -507,6 +507,12 @@ for d in sys.argv[1:]:
 a, b = got.values()
 assert a == b, [(k, a[k][-300:], b[k][-300:]) for k in a if a[k] != b[k]]
 EOPY
+"$py" - "$work/log.jsonl" <<'PYJ' && echo "ok   -   ... with leads to mail, their email asked too" || { echo "FAIL - the leads' email not asked"; fails=$((fails + 1)); }
+import json, sys
+rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
+g = [r for r in rows if r["path"].endswith("/sys_user_group") and r["query"].get("sysparm_query", "").startswith("sys_idIN")]
+assert g and all(r["query"]["sysparm_fields"].endswith(",manager,manager.name,manager.active,manager.email") for r in g), g[0]["query"]
+PYJ
 mock SNMOCK_GROUP_MANAGERS="$MGRS" SNMOCK_NO_MANAGER=1
 rm -f "$work"/mail/*.eml
 run "the managers refused: said once, nobody emailed, the job green" ok \

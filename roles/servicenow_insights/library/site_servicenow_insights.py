@@ -20,7 +20,8 @@ description:
   - With group_parents (0.97.0), reads sys_user_group for the groups the records name and their parents up the chain
     (sys_id, name, parent, active, type - never a person's field): the sites and directorates ServiceNow itself knows.
   - With managers (1.15.0), the same read of sys_user_group also asks each group's manager, dot-walked (manager.name,
-    manager.email, manager.active) - the team leads; with group_parents off, the groups the records name are read for it alone.
+    manager.active) - the team leads; with group_parents off, the groups the records name are read for it alone. Their
+    email (manager.email) only with manager_email (1.18.0: the role asks it only when servicenow_insights_email_leads is set).
   - With work_notes_for (0.96.0), reads only the work notes of those incidents (sys_journal_field, element work_notes,
     newest first, GET only) for ACT's fixes - nothing else; refused (403) is returned as work_notes_error.
 options:
@@ -43,7 +44,8 @@ options:
   handoff_source: {description: "Where the hand-off paths come from (0.97.0): auto (sys_audit, else metric_instance), audit, metric (never sys_audit), none.", type: str, default: auto}
   members: {description: Read the groups' members (sys_user_grmember) for the leaderboards., type: bool, default: true}
   group_parents: {description: "Read the groups' parents and active flag (sys_user_group) for the sites and directorates.", type: bool, default: true}
-  managers: {description: "Read each group's manager (sys_user_group.manager: name, email, active) in the same read - the team leads.", type: bool, default: false}
+  managers: {description: "Read each group's manager (sys_user_group.manager: name, active) in the same read - the team leads.", type: bool, default: false}
+  manager_email: {description: "With managers: their email too (manager.email) - for the leads' emails.", type: bool, default: true}
   now: {description: "The clock (tests): YYYY-MM-DDTHH:MM:SS UTC.", type: str, default: ''}
   work_notes_for: {description: "Incident sys_ids: read only their work notes (sys_journal_field), nothing else.", type: list, elements: str, default: []}
   work_notes_max: {description: The newest work notes kept per incident., type: int, default: 20}
@@ -565,22 +567,24 @@ def read_work_notes(api, ids, per_id=20, chars=1500, chunk=100):
     return out, ""
 
 
-MANAGER_FIELDS = ",manager,manager.name,manager.email,manager.active"
+MANAGER_FIELDS = ",manager,manager.name,manager.active"
 
 
-def read_group_tree(api, ids, depth=6, chunk=100, managers=None):
+def read_group_tree(api, ids, depth=6, chunk=100, managers=None, emails=True):
     """The groups (sys_user_group, GET only) and their parents up the chain, at most depth levels, each read once (a
     cycle stops) -> ({sys_id: {name, parent, active, type}}, error). No person's field - but with managers (a dict,
-    1.15.0) the same read asks each group's manager too (dot-walked: name, email, active), put in managers as
-    {sys_id: {name, email, active}} with managers["_error"] when they could not be read (the groups are read without them)."""
+    1.15.0) the same read asks each group's manager too (dot-walked: name, active, and email only with emails), put in
+    managers as {sys_id: {name, email, active}} with managers["_error"] when they could not be read (the groups are read
+    without them)."""
     out, want, level = {}, [str(x) for x in ids if str(x or "").strip()], 0
     ask = managers is not None
+    mfields = MANAGER_FIELDS + (",manager.email" if emails else "")
     while want and level < int(depth):
         level += 1
         nxt = []
         for i in range(0, len(want), chunk):
             part = want[i:i + chunk]
-            q = {"sysparm_query": "sys_idIN" + ",".join(part), "sysparm_fields": "sys_id,name,parent,active,type" + (MANAGER_FIELDS if ask else ""),
+            q = {"sysparm_query": "sys_idIN" + ",".join(part), "sysparm_fields": "sys_id,name,parent,active,type" + (mfields if ask else ""),
                  "sysparm_display_value": "all", "sysparm_exclude_reference_link": "true", "sysparm_limit": len(part) + 10}
             try:
                 r = api.get("api/now/table/sys_user_group", q)
@@ -963,7 +967,7 @@ def by_key(d):
 
 def read_all(api, groups, tables, win, max_records=20000, audit=True, handoff_min=3, members=True, group_parents=True, handoff_source="auto",
              sla_source="auto", first_assigned=False, state_metric="Incident State Duration", survey=True, survey_metrics=None, managers=False, survey_types=None,
-             store=None):
+             store=None, manager_email=True):
     """store (1.17.0): None - every record read in full (and nothing kept); a Reuse - its tickets reused where fresh
     (store.rows empty: a full read that fills the store)."""
     since, until = sn_time(win["prev_since"]), sn_time(win["until"])
@@ -1052,9 +1056,9 @@ def read_all(api, groups, tables, win, max_records=20000, audit=True, handoff_mi
     gids = sorted(set(it.get("group_id") for it in items if it.get("group_id") and re.match(r"^[\w-]{1,64}$", str(it["group_id"]))))
     mgr = {} if managers else None
     if group_parents and gids:
-        res["group_tree"], res["group_tree_error"] = read_group_tree(api, gids, managers=mgr)
+        res["group_tree"], res["group_tree_error"] = read_group_tree(api, gids, managers=mgr, emails=manager_email)
     elif managers and gids:                               # 1.15.0: the teams' own groups only, for their managers
-        _tree, err = read_group_tree(api, gids, depth=1, managers=mgr)
+        _tree, err = read_group_tree(api, gids, depth=1, managers=mgr, emails=manager_email)
         if err:
             mgr["_error"] = err
     if managers:
@@ -1146,6 +1150,7 @@ def main():
             first_assigned=dict(type="bool", default=False),
             state_metric=dict(type="str", default="Incident State Duration"), survey=dict(type="bool", default=True),
             survey_metrics=dict(type="list", elements="str", default=[]), managers=dict(type="bool", default=False),
+            manager_email=dict(type="bool", default=True),
             survey_types=dict(type="list", elements="str", default=[]),
             store_in=dict(type="path", default=""), store_out=dict(type="path", default=""), full_refresh=dict(type="bool", default=False),
         ),
@@ -1176,7 +1181,7 @@ def main():
     try:
         res = read_all(api, p["groups"], p["tables"], win, p["max_records"], p["audit"], p["handoff_min"], p["members"], p["group_parents"], p["handoff_source"],
                        p["sla_source"], p["first_assigned"], p["state_metric"], p["survey"], p["survey_metrics"], p["managers"], p["survey_types"],
-                       store)
+                       store, p["manager_email"])
     except SnError as e:
         res = {"ok": False, "error": str(e), "window": win, "groups": [], "tables": [], "items": [], "audit": {}, "audit_error": "",
                "members": {}, "members_error": "", "lookup_note": "", "url": url}

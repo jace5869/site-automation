@@ -14,6 +14,10 @@ import html
 import json
 import math
 import re
+try:
+    from urllib.parse import quote
+except ImportError:                    # Python 2 (ansible-core's sanity)
+    from urllib import quote
 
 TABLE_OF = {"INC": "incident", "RITM": "sc_req_item", "REQ": "sc_request", "SCTASK": "sc_task", "CHG": "change_request",
             "CTASK": "change_task", "PRB": "problem", "PTASK": "problem_task"}
@@ -449,10 +453,27 @@ D.querySelectorAll("[data-copy]").forEach(function(b){b.addEventListener("click"
  function ok(){b.textContent="Copied";b.classList.add("done");setTimeout(function(){b.textContent="Copy";b.classList.remove("done")},1600)}
  function fb(){var t=D.createElement("textarea");t.value=text;D.body.appendChild(t);t.select();try{D.execCommand("copy");ok()}catch(e){}t.remove()}
  try{navigator.clipboard.writeText(text).then(ok,fb)}catch(e){fb()}})});
-D.querySelectorAll("th[data-sort]").forEach(function(th){th.style.cursor="pointer";th.addEventListener("click",function(){var tb=th.closest("table").tBodies[0],i=Array.prototype.indexOf.call(th.parentNode.children,th),dir=th.getAttribute("data-dir")==="desc"?"asc":"desc";
+/*sortkey: the website's sort (site_report.js 1.20.0) - a lone number (a sign, thousands separators, a decimal point, a % after it) is that number;
+ other text in parts, its numbers as numbers (IPv4 by octets, 8.0.2 before 8.0.10, host2 before host10); numbers before text; empty or a lone dash last both ways*/
+var NUM=/^[-+]?(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)\s*%?$/;
+function skey(v){v=String(v==null?"":v).replace(/\s+/g," ").trim();if(!v||/^[-\u2013\u2014]$/.test(v))return null;if(NUM.test(v))return[parseFloat(v.replace(/[,%\s]/g,""))];
+ var k=[],re=/\d+(?:[.,]\d+)*/g,m,at=0,low=v.toLowerCase();
+ while((m=re.exec(low))){if(m.index>at)k.push(low.slice(at,m.index));var s=m[0];
+  if(/^\d{1,3}(?:,\d{3})+(?:\.\d+)?$/.test(s)||/^\d+\.\d+$/.test(s))k.push(parseFloat(s.replace(/,/g,"")));else s.split(/([.,])/).forEach(function(x,j){k.push(j%2?x:parseInt(x,10))});
+  at=m.index+s.length}
+ if(at<low.length)k.push(low.slice(at));k.raw=low;return k}
+function kcmp(x,y){for(var j=0;j<x.length&&j<y.length;j++){var a=x[j],b=y[j],na=typeof a==="number",nb=typeof b==="number";if(na!==nb)return na?-1:1;if(a<b)return-1;if(a>b)return 1}
+ return x.length-y.length||((x.raw||"")<(y.raw||"")?-1:(x.raw||"")>(y.raw||"")?1:0)}
+function scmp(x,y,asc){if(x===null||y===null)return(x===null)-(y===null);var r=kcmp(x,y);return asc?r:-r}
+/*sortkey end*/
+function cval(c){if(!c)return"";var v=c.getAttribute("data-v");return v===null?c.textContent:v}
+/* a heading's click sorts by its column, the next the other way; the first click on a column already in order (as the rows stand, not all the same) sorts it the other way */
+D.querySelectorAll("th[data-sort]").forEach(function(th){th.style.cursor="pointer";th.addEventListener("click",function(){var tb=th.closest("table").tBodies[0],i=Array.prototype.indexOf.call(th.parentNode.children,th),
+ s=th.getAttribute("data-dir"),asc=s!=="asc",now=[].map.call(tb.rows,function(r){return skey(cval(r.cells[i]))}),inc=true,diff=false;
+ for(var j=1;j<now.length;j++){var c=scmp(now[j-1],now[j],true);if(c>0)inc=false;if(c<0&&now[j]!==null)diff=true}
+ if(!s&&inc&&diff)asc=false;var dir=asc?"asc":"desc";
  th.parentNode.querySelectorAll("th").forEach(function(h){h.removeAttribute("data-dir");var a=h.querySelector(".ar");if(a)a.remove()});th.setAttribute("data-dir",dir);var ar=D.createElement("span");ar.className="ar";ar.textContent=(dir==="asc"?" \u25b2":" \u25bc");th.appendChild(ar);
- var rows=Array.prototype.slice.call(tb.rows);function val(r){var c=r.cells[i];if(!c)return"";var v=c.getAttribute("data-v");if(v===null)v=c.textContent.trim();var f=parseFloat(String(v).replace(/,/g,""));return isNaN(f)?String(v).toLowerCase():f}
- rows.sort(function(a,b){var x=val(a),y=val(b);var r=(typeof x==="number"&&typeof y==="number")?x-y:String(x).localeCompare(String(y));return dir==="asc"?r:-r});rows.forEach(function(r){tb.appendChild(r)})})});
+ var by=[].map.call(tb.rows,function(r){return[r,skey(cval(r.cells[i]))]});by.sort(function(a,b){return scmp(a[1],b[1],asc)});by.forEach(function(x){tb.appendChild(x[0])})})});
 D.querySelectorAll(".tab").forEach(function(b){b.addEventListener("click",function(){var id=b.getAttribute("data-tab");D.querySelectorAll(".tab").forEach(function(x){x.setAttribute("aria-selected",x===b?"true":"false")});
  D.querySelectorAll(".tabs~.panel").forEach(function(p){p.classList.toggle("on",p.id===id)})})});
 /* the team picker and the side bar's filter (0.96.0); t opens the picker, / goes to the search, Esc closes */
@@ -657,14 +678,27 @@ def _slug(name):
 
 
 def tk(num, url):
-    """A ticket number as a link into ServiceNow."""
+    """A ticket number as a link into ServiceNow (1.18.0: nav_to.do, the form in ServiceNow's own frame), url its address;
+    '' = the number alone."""
     if not num:
         return '<span class="mut">—</span>'
     m = re.match(r"^([A-Z]+)\d+$", str(num))
     table = TABLE_OF.get(m.group(1)) if m else None
     if not url or not table:
         return '<span class="mono">%s</span>' % e(num)
-    return '<a class="tk" target="_blank" rel="noopener" href="%s/%s.do?sysparm_query=number=%s">%s</a>' % (e(url.rstrip("/")), table, e(num), e(num))
+    uri = quote("%s.do?sysparm_query=number=%s" % (table, num), safe="")
+    return '<a class="tk" target="_blank" rel="noopener" href="%s/nav_to.do?uri=%s">%s</a>' % (e(url.rstrip("/")), uri, e(num))
+
+
+def ticket_base(m, o):
+    """Where the ticket links go (1.18.0): servicenow_insights_ticket_base (the address people open ServiceNow at), else the
+    API's instance; '' with servicenow_insights_ticket_links false or an address that is not one."""
+    if o.get("ticket_links", True) in (False, "false", "False", 0):
+        return ""
+    b = str(o.get("ticket_base") or "").strip() or str(m.get("url") or "").strip()
+    if b and not re.match(r"^https?://", b, re.I):
+        b = "https://" + b
+    return b.rstrip("/") if re.match(r"^https?://[\w.-]+(:\d+)?(/[\w./-]*)?$", b) else ""
 
 
 def delta(now, prev, lower_good=True, pts=False):
@@ -1074,7 +1108,7 @@ def servicenow_insights_page(model, key="all", opts=None):
     is_all = lvl == "all"
     multi = lvl != "team"                                                   # more than one group's tickets
     win = m.get("window") or {}
-    url = m.get("url") or ""
+    url = ticket_base(m, o)                 # the ticket links (1.18.0)
     old_days = int(o.get("old_days") or 30)
     reopen_used = bool(m.get("reopen_used"))
     links = o.get("links") or {}           # team -> href (and "all"), relative to this page
@@ -2063,6 +2097,11 @@ def stars_panel(team, st, reopen_used, idx, titled):
                           td('<span class="ib b" style="width:%.1f%%"></span>' % (100.0 * p["opened"] / mx), "barc")]))
     opener = table([("Opened by", "", ""), ("From", "", ""), ("Tickets", "n", ""), ("", "", "")], orow,
                    empty="No ticket was opened for this team in the period.")
+    of = st.get("openers_of") or {}
+    if op and of.get("tickets"):              # 1.18.0: of how many - the tickets in the period, the people who opened them
+        shown = sum(p["opened"] for p in op)
+        opener = '<div class="cap of">%s of %s tickets, from %s of %s people.</div>%s' % (
+            n(shown), n(of["tickets"]), n(len(op)), n(of.get("people") or len(op)), opener)
     return ('<div class="panel%s" id="p%d" data-team="%s">%s<div class="awards">%s</div><div class="two"><div class="fig"><h3>Leaderboard</h3>%s%s</div>'
             '<div class="fig"><h3>Who sends this team its tickets</h3><div class="cap">Who opened the tickets assigned to this team in the period. '
             'From = the group that person works tickets in (an end user opens their own).</div>%s</div></div></div>') % (

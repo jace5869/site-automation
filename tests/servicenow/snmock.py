@@ -417,7 +417,7 @@ class H(BaseHTTPRequestHandler):
                 if "manager" in fields and os.environ.get("SNMOCK_NO_MANAGER") == "1":
                     return fail("Operation Failed", "ACL Exception: no read access to sys_user_group.manager", 403)
                 mgr = json.loads(os.environ.get("SNMOCK_GROUP_MANAGERS") or "{}")
-                return 200, {"result": [dict({"parent": "", "type": ""}, **dict(g, **(group_manager(mgr.get(g["name"])) if "manager" in fields else {})))
+                return 200, {"result": [dict({"parent": "", "type": ""}, **dict(g, **(dict((k, v) for k, v in group_manager(mgr.get(g["name"])).items() if k in fields.split(",")) if "manager" in fields else {})))
                                         for g in GROUPS if g["sys_id"] in want]}
             if query.startswith("nameIN"):               # nameINa,b (the weekly activity report)
                 want = query[6:].split(",")

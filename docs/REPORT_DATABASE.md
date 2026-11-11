@@ -320,7 +320,8 @@ The hand-off path is kept as sys_audit gives it: the groups' sys_ids and times. 
 names it recorded.
 
 A row is deleted 800 days after its ticket was done. A ticket deleted in ServiceNow, or moved out of the report while
-open, has no done time: its row is deleted 800 days after its last update.
+open, has no done time: its row is deleted 800 days after its last update. Both deletes happen on a run that writes
+tickets. A cut run deletes nothing.
 
 ### The ACT cache
 
@@ -374,7 +375,9 @@ first run makes them when the writer has the CREATE grant. Without it, or with `
 - the ticket store and the ACT cache are off for that run;
 - the job warns once, naming the three tables and the CREATE grant.
 
-Make them once by hand (*Making the tables by hand*), or grant the writer CREATE on the database.
+Make them once by hand, or grant the writer CREATE on the database. By hand: run only the three statements
+`CREATE TABLE IF NOT EXISTS insights_ticket`, `insights_act_issue` and `insights_act_class` of *Making the tables by
+hand*. The rest are there already. A view's statement would stop with *ERROR 1050: Table ... already exists*.
 
 A row whose `sys_updated_on` differs from ServiceNow's in either direction (a database restored from an older backup)
 is read again.
@@ -384,6 +387,9 @@ is read again.
 The first run makes the tables and views itself. If your writer account may not create them
 (`servicenow_insights_db_create: false`), make them once as root with these statements, in `site_reports`. Then the
 writer needs only SELECT, INSERT, UPDATE and DELETE.
+
+On a database that already has some of them (an upgrade), run only the statements of what is missing. The tables'
+statements may run again, the views' may not (*ERROR 1050*).
 
 <!-- the statements: site_insights_db.ddl(), word for word, a block per statement (tests/test_servicenow_insights.py checks it) -->
 ```sql
