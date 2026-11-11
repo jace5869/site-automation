@@ -21,6 +21,9 @@ the newest months empty: a capped table kept its oldest records.
   100000 about 1.5 GB while it reads, 0.7 GB for the report, and about 4 minutes more. A site over the cap: raise it above
   the number the job names (docs/SERVICENOW_INSIGHTS.md, *More records than the cap*).
 
+**Ticket insights say SLA, not SLO.** The pages, the email, the workbook, the job's lines and the docs use the word your
+site uses. The settings and the stored figures are unchanged.
+
 **The weekly activity report: the newest records kept too.** Over `servicenow_war_max_records`, it now keeps the
 newest records. *Records cut: some figures are incomplete* comes first in the report, a tile says *Records cut*, and the
 job ends with a WARNING. The oldest tickets still open are the ones left out.

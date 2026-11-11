@@ -511,7 +511,7 @@ if(cvd&&cvt){var CV=JSON.parse(cvd.textContent),C=CV.cols,W=CV.until,LIM=CV.hop_
   for(var i=0;i<C.g.length;i++){if(!sel[C.g[i]])continue;var o=C.o[i],d=C.d[i],t=C.t[i],din=d!==null&&d>=a&&d<b,on=o<=b&&(d===null||d>b);
    if(o>=a&&o<b){if(t===0)f.inc++;else f.req++}if(t===0&&din){f.res++;if(d>=o)f.h.push((d-o)/3600)}if(on)f.bl++;if(o<=a&&(d===null||d>a))f.bl0++;
    if(din&&(C.s[i]===0||C.s[i]===1)){f.sn++;f.so+=C.s[i]}
-   /* the 1.7.0 figures, as scope_model: response met of what was done (no SLO left out), open over the hop limit, on hold now, unable, first contact */
+   /* the 1.7.0 figures, as scope_model: response met of what was done (no SLA left out), open over the hop limit, on hold now, unable, first contact */
    if(din&&C.resp&&(C.resp[i]===0||C.resp[i]===1)){f.rn++;f.ro+=C.resp[i]}if(din&&C.noslo&&C.noslo[i]===1)f.ns++;
    if(t===0&&C.hops){var ov=C.hops[i]>LIM+1;if(on&&ov)f.hop++;if(din){if(ov)f.hres++;if(C.hops[i]===0)f.fcr++}}
    if(t===0&&on&&C.hold&&C.hold[i]===1)f.hold++;if(t===0&&din&&C.out&&UN[C.out[i]])f.una++;
@@ -574,7 +574,7 @@ if(cvd&&cvt){var CV=JSON.parse(cvd.textContent),C=CV.cols,W=CV.until,LIM=CV.hop_
   set("resolved",nf(f.res),c?"was "+nf(c.res):"");setx("resolved",c&&dl(f.res,c.res,false,false));
   setl("backlog",f.now?"Open now":"Open at the period's end");set("backlog",nf(f.bl),"was "+nf(f.bl0)+" at the start");setx("backlog",dl(f.bl,f.bl0,true,false));
   set("median",fh(rr(f.med)),c&&c.med!==null?"was "+fh(rr(c.med)):"");setx("median",c&&dl(rr(f.med),rr(c.med),true,false));
-  set("sla",pc(rr(f.sla)),"incidents and requests"+(C.noslo&&f.ns?" \u00b7 "+nf(f.ns)+" with no SLO":""));setx("sla",c&&dl(rr(f.sla),rr(c.sla),false,true));
+  set("sla",pc(rr(f.sla)),"incidents and requests"+(C.noslo&&f.ns?" \u00b7 "+nf(f.ns)+" with no SLA":""));setx("sla",c&&dl(rr(f.sla),rr(c.sla),false,true));
   if(C.resp){set("resp",pc(rr(f.resp)),"incidents and requests");setx("resp",c&&dl(rr(f.resp),rr(c.resp),false,true))}
   if(C.hops){var went=f.hres?pp(f.hres,f.res)+" of those resolved went over":"none of those resolved went over";
    set("hops",f.now?nf(f.hop):"\u2014",f.now?went:"known now only \u00b7 "+went);
@@ -1202,7 +1202,7 @@ def servicenow_insights_page(model, key="all", opts=None):
           ] + ([{"label": "Response met", "value": pct(s["resp"][0]), "delta": delta(s["resp"][0], s["resp"][1], False, True),
                  "note": "incidents and requests · " + src_note},
                 {"label": "Resolution met", "value": pct(s["sla"][0]), "delta": delta(s["sla"][0], s["sla"][1], False, True),
-                 "note": ("%s with no SLO, not counted" % n(s["no_slo"][0])) if s["no_slo"][0] else "every ticket done had an SLO"}] if two else
+                 "note": ("%s with no SLA, not counted" % n(s["no_slo"][0])) if s["no_slo"][0] else "every ticket done had an SLA"}] if two else
                [{"label": "SLAs met", "value": pct(s["sla"][0]), "delta": delta(s["sla"][0], s["sla"][1], False, True),
                  "note": "incidents and requests · " + src_note}]) + [
           {"label": "Incidents reopened" if reopen_used else "Came back within %d days" % int(o.get("repeat_days") or 14),
@@ -1239,7 +1239,7 @@ def servicenow_insights_page(model, key="all", opts=None):
                 ('<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.3" fill="currentColor" opacity=".2"/><path d="M4.7 8.4l2.1 2.1 4.5-4.7" '
                  'fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>'),
                 "Falling behind" if behind else "Keeping up", n(sr_), n(so_), pct(_p(sr_, so_)), e(win.get("label") or span),
-                n(b[1]), n(b[0]), pct(s["sla"][0]), "resolution SLO" if two else "SLA"))
+                n(b[1]), n(b[0]), pct(s["sla"][0]), "resolution SLA" if two else "SLA"))
     if is_all and not variant:
         body.append(custom_view(m, o))                       # the org map's Custom view (1.8.0)
     elif variant and m.get("org") and links.get("all"):      # a split's page: none here - where it is
@@ -1277,7 +1277,7 @@ def servicenow_insights_page(model, key="all", opts=None):
                                   [("Close notes", "", "")] +
                                   ([("Change tasks closed", "n", "ctc"), ("Change tasks open", "n", "cto")] if ctc else []) + [("Top issue", "", "")], rows, sortable=True) +
                             '<div class="fair">Click a %s for its page, or a column\'s name to sort by it. Each backlog line has its own scale: compare Open now for size.%s</div>' % (
-                                one.lower(), ("<ul>%s%s</ul>" % ("<li>Response and Resolution: the share of SLOs met.</li>" if two else "",
+                                one.lower(), ("<ul>%s%s</ul>" % ("<li>Response and Resolution: the share of SLAs met.</li>" if two else "",
                                                                  "<li>Change tasks are counted on their own, not in the backlog, Open now or the SLAs.</li>" if ctc else ""))
                                 if two or ctc else "")))
 
@@ -1557,8 +1557,8 @@ def servicenow_insights_page(model, key="all", opts=None):
                         table([("Priority", "", ""), ("Incidents", "n", ""), ("", "", ""), ("Median to resolve", "n", "")] +
                               ([("Response target", "n", "")] if rtargets else []) + ([("Response met", "n", "")] if two else []) +
                               ([("Resolution target" if two else "SLA target", "n", "")] if targets else []) +
-                              [("Resolution met" if two else "SLA met", "n", "")] + ([("No SLO", "n", "")] if noslo else []), prow, empty="No incidents in the period.") +
-                        ('<div class="fair">Met or missed: %s.%s</div>' % (e(src_note), " No SLO: done tickets with no SLA attached, left out of the percentages." if noslo else "")) +
+                              [("Resolution met" if two else "SLA met", "n", "")] + ([("No SLA", "n", "")] if noslo else []), prow, empty="No incidents in the period.") +
+                        ('<div class="fair">Met or missed: %s.%s</div>' % (e(src_note), " No SLA: done tickets with no SLA attached, left out of the percentages." if noslo else "")) +
                         mx_html +
                         '<div class="fig"><h3>P1 and P2 incidents in the period</h3>%s</div>' % table(
                             [("Incident", "", ""), ("Opened", "", ""), ("Priority", "", ""), ("What happened", "", ""), ("Group", "", ""), ("To resolve", "n", ""),
@@ -1881,10 +1881,10 @@ def servicenow_insights_page(model, key="all", opts=None):
                 ('<dt>Not read in the map</dt><dd>%s <span class="mut">(no level given)</span></dd>' % lst(m.get("org_bad"))) if m.get("org_bad") else "",
                 "".join('<dt>No page</dt><dd>%s<br><span class="mut">%s. Its tickets are in %s.</span></dd>' % (e(g), e(why[:1].upper() + why[1:]), e(where))
                     for g, why, where in m.get("hier_folded") or [])))
-    # the SLOs (1.7.0): where met or missed came from, the SLA definitions by kind, the business hours
+    # the SLAs (1.7.0): where met or missed came from, the SLA definitions by kind, the business hours
     defs = slo.get("definitions") or []
     kinds = (("response", "Response"), ("resolution", "Resolution"), ("other", "Other (not counted)"))
-    slo_html = ('<details class="notes"%s><summary><b>Your SLOs</b> <span class="mut">%s</span></summary><dl class="kv"><dt>Met or missed</dt><dd>%s</dd>%s'
+    slo_html = ('<details class="notes"%s><summary><b>Your SLAs</b> <span class="mut">%s</span></summary><dl class="kv"><dt>Met or missed</dt><dd>%s</dd>%s'
                 '<dt>Business hours</dt><dd>%s</dd>%s</dl></details>' % (
                     " open" if defs else "", e(src_note),
                     e(src_note) + (("<br>" + e(slo["note"])) if slo.get("note") else ""),

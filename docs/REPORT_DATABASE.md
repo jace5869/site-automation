@@ -14,7 +14,7 @@ Figures only, per run and per org node (All, each site, each unit at any depth, 
 | Kept | Never kept |
 |---|---|
 | Counts: incidents, requested items, changes, problems, resolved, open, open over 30 days | A caller, an assignee, anyone's name |
-| Percentages: SLO met, response met, first contact, reopened, hops, hand-offs, ping-pong, ticket quality, after hours | A short description, a close note, a work note |
+| Percentages: SLA met, response met, first contact, reopened, hops, hand-offs, ping-pong, ticket quality, after hours | A short description, a close note, a work note |
 | Hours: median time to resolve, the average time in each state | ACT's text: issues, fixes, summaries |
 | Outcomes, categories and backlog age, with their names | The workload table (it names people) |
 | The hot CIs, with their names | |
@@ -213,7 +213,7 @@ It shows the newest run per instance and period. The newest write's time is in `
 
 Each page has a **Trends** section after *At a glance*:
 
-- **Service levels**: SLO met, response met, first contact, in %.
+- **Service levels**: SLA met, response met, first contact, in %.
 - **Volume**: incidents opened each month, and open at its end.
 - **The months as a table**, with the median time to resolve and reopened.
 

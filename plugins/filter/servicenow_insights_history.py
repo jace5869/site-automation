@@ -14,7 +14,7 @@ SCHEMA_VERSION = 1
 # the node row's typed columns (the long table has them too, so a query needs only one of them)
 NODE_COLUMNS = ("incidents", "requests", "resolved", "backlog", "sla_met_pct", "median_resolve_h")
 # what the page's trend draws, in this order: (metric, label, kind) - kind pct (one chart) or count (the other)
-TREND = (("sla_met_pct", "SLO met", "pct"), ("response_met_pct", "Response met", "pct"), ("fcr_pct", "First contact", "pct"),
+TREND = (("sla_met_pct", "SLA met", "pct"), ("response_met_pct", "Response met", "pct"), ("fcr_pct", "First contact", "pct"),
          ("incidents", "Incidents", "count"), ("backlog", "Open at the end", "count"),
          ("median_resolve_h", "Median time to resolve (h)", "hours"), ("reopen_pct", "Reopened", "pct"))
 TREND_METRICS = [t[0] for t in TREND]

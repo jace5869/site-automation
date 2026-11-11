@@ -822,7 +822,7 @@ class SlaTargets(unittest.TestCase):
 
 
 class YourSlos(unittest.TestCase):
-    """1.7.0: met or missed from task_sla (Response and Resolution by the SLA's name; no SLA = No SLO), else the targets in
+    """1.7.0: met or missed from task_sla (Response and Resolution by the SLA's name; no SLA = No SLA), else the targets in
     business hours (07:30-16:30 Mon-Fri, holidays, a shift past midnight) with a response target (opened to first assigned)."""
     BH = {"days": ["mon", "tue", "wed", "thu", "fri"], "start": "07:30", "end": "16:30", "holidays": ["2026-12-25"]}
     U = datetime.timezone.utc
@@ -883,6 +883,20 @@ class YourSlos(unittest.TestCase):
         F.apply_slas(xs, r, o)
         self.assertEqual([(x["_resp"], x["_resol"], x["_no_slo"]) for x in xs], [(True, True, False), (False, False, False), (None, None, True)])
 
+    def test_never_says_slo(self):
+        """1.16.0: the user's word is SLA - no page (both looks, every scope), email, workbook or job line says SLO."""
+        word = re.compile(r"\bslos?\b", re.I)
+        for x in (site(), site(sites=True)):
+            m = x["model"]
+            for look in ("atlas", "brief"):
+                for k in ["all"] + [p_["key"] for p_ in m["pages"]]:
+                    h = P.servicenow_insights_page(m, k, dict(OPTS, look=look))
+                    self.assertFalse(word.findall(re.sub(r'<script type="application/json"[^>]*>.*?</script>', "", h, flags=re.S)), (look, k))
+            for k in ["all"] + [p_["key"] for p_ in m["pages"]]:
+                self.assertFalse(word.findall(json.dumps(F.servicenow_insights_doc(m, k, OPTS))), k)
+            self.assertFalse(word.findall(json.dumps(F.servicenow_insights_xlsx(m, x["r"], None, x["mask"], OPTS), default=str)))
+            self.assertFalse(word.findall(" ".join(F.not_read_lines(m))))
+
     def test_the_site(self):
         m = site()["model"]
         s = m["scopes"]["all"]
@@ -898,7 +912,7 @@ class YourSlos(unittest.TestCase):
         p5 = next(p for p in s["prio"] if p["value"] == "5")
         self.assertEqual((p5["label"], p5["sla"]), ("5 - Exempt", None))
         html = P.servicenow_insights_page(m, "all", OPTS)
-        for t in ("Response met", "Resolution met", "No SLO", "Your SLOs", "P4 Incident Response", "ServiceNow&#x27;s SLAs (task_sla)"):
+        for t in ("Response met", "Resolution met", "No SLA", "Your SLAs", "P4 Incident Response", "ServiceNow&#x27;s SLAs (task_sla)"):
             self.assertIn(t, html)
         doc = F.servicenow_insights_doc(m, "all", OPTS)
         self.assertEqual([x["label"] for x in doc["summary"]][4:6], ["Response met", "Resolution met"])
@@ -1676,10 +1690,10 @@ class History(unittest.TestCase):
         self.assertIn('<a href="#trend">Trends', h)
         self.assertLess(h.index('id="glance"'), h.index('id="trend"'))
         self.assertEqual(sec.count("<svg"), 2)                                              # two scales, never two axes on one
-        self.assertIn('<div class="legend"><span><i style="background:var(--st1)"></i>SLO met</span>', sec)
+        self.assertIn('<div class="legend"><span><i style="background:var(--st1)"></i>SLA met</span>', sec)
         self.assertIn("<summary>The months as a table</summary>", sec)
-        self.assertIn('data-t="Sep 2026&lt;br&gt;SLO met &lt;b&gt;92.0%', sec)                  # each month's values on hover
-        self.assertIn("Aug 2026&lt;br&gt;SLO met &lt;b&gt;no run", sec)                         # a month without one: a gap
+        self.assertIn('data-t="Sep 2026&lt;br&gt;SLA met &lt;b&gt;92.0%', sec)                  # each month's values on hover
+        self.assertIn("Aug 2026&lt;br&gt;SLA met &lt;b&gt;no run", sec)                         # a month without one: a gap
         self.assertIn('stroke-dasharray="5 4"', sec)                                          # into the month so far
         self.assertIn("Oct 2026 (so far)", sec)
         self.assertIn("4 months so far · each point a calendar month · dashed: the month so far", sec)
@@ -1690,7 +1704,7 @@ class History(unittest.TestCase):
         one = P.servicenow_insights_page(H.servicenow_insights_trend(self.m, self.hist(["2026-10"]), {}), "all", {"links": links})
         sec1 = one[one.index('id="trend"'):]
         self.assertIn("1 month so far: the line starts next month.", sec1)
-        self.assertIn('<span class="eyebrow">SLO met</span><span class="v">90.0%</span>', sec1)
+        self.assertIn('<span class="eyebrow">SLA met</span><span class="v">90.0%</span>', sec1)
         self.assertNotIn("<svg", sec1[:sec1.index("</section>")])
         none = P.servicenow_insights_page(H.servicenow_insights_trend(self.m, {"ok": True, "rows": []}, {}), "all", {"links": links})
         self.assertNotIn('id="trend"', none)                                                   # no month: nothing

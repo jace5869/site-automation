@@ -201,7 +201,7 @@ def business_hours(a, b, spec, tz):
 
 def _target_entry(it, o):
     """The ticket's entry in servicenow_insights_sla_targets (by table, then priority, "*" for the rest; a catalog item's
-    own in servicenow_insights_sla_items): a number (resolution hours), {response, resolution}, None (no SLO: none set on
+    own in servicenow_insights_sla_items): a number (resolution hours), {response, resolution}, None (no SLA: none set on
     purpose) - or NO_TARGET (the table or priority not there: ServiceNow's Made SLA counts)."""
     items = (o or {}).get("sla_items") or {}
     if it.get("table") == "sc_req_item" and it.get("cat_item") in items:
@@ -218,7 +218,7 @@ def _none(v):
 
 
 def sla_target(it, o):
-    """Your resolution target for a ticket, in hours - or None (none set: ServiceNow's Made SLA counts, or no SLO)."""
+    """Your resolution target for a ticket, in hours - or None (none set: ServiceNow's Made SLA counts, or no SLA)."""
     v = _target_entry(it, o)
     if v is NO_TARGET or _none(v):
         return None
@@ -1235,8 +1235,8 @@ def custom_rows(items, since, until, groups, opts=None, base=None, tz=None, spec
     """The Custom view's data (1.8.0): one compact row per incident and requested item open at the window's start or after
     - columns, so 20,000 tickets stay small - from which the page works out the figures for any choice of groups: g the
     group's index in groups (-1: none), t 0 incident / 1 requested item, p the priority, o / d opened / done in seconds from
-    the window's start (d null: open), s made_sla (the resolution SLO) 1 / 0 / -1; and the 1.7.0 fields where the tickets
-    have them: resp (the response SLO) and noslo 1 / 0 / -1, hops (reassignment_count; incidents), hold (on hold now), r7
+    the window's start (d null: open), s made_sla (the resolution SLA) 1 / 0 / -1; and the 1.7.0 fields where the tickets
+    have them: resp (the response SLA) and noslo 1 / 0 / -1, hops (reassignment_count; incidents), hold (on hold now), r7
     (reopened within 7 days), out (the outcome's index in outcomes; -1 not resolved), risk (1 at risk, 2 breached).
     1.10.0: from base on (the window before's start, for the periods' compare), and 1.9.0's where the tickets have them:
     tis (the time in each state, tenths of hours: new, progress, hold, resolved; null not measured), ob (the opened day's
@@ -1373,8 +1373,8 @@ def custom_figures(data, sel, period=None):
             sla_ok += c["s"][i]
     out = {"incidents": inc, "requests": req, "resolved": res, "backlog": [bl, bl0], "median_h": _r1(_median(hrs)),
            "sla": _r1(_pct(sla_ok, sla_n))}
-    # the 1.7.0 figures, where the rows carry them - as scope_model: the response SLO met of what was done in the period
-    # (no SLO left out), done with no SLO, incidents open now over the hop limit (and the share of those resolved), on hold
+    # the 1.7.0 figures, where the rows carry them - as scope_model: the response SLA met of what was done in the period
+    # (no SLA left out), done with no SLA, incidents open now over the hop limit (and the share of those resolved), on hold
     # now, unable to resolve and first-contact resolution of the incidents resolved
     rs, ns, hop, hres, hold, una, fcr = [0, 0], 0, 0, 0, 0, 0, 0
     lim, unable = int(data.get("hop_limit", 3)), set(data.get("unable") or [])
@@ -3076,11 +3076,11 @@ def servicenow_insights_doc(model, key="all", opts=None):
         secs.append({"title": "Top incident issues", "columns": ["#", "Rank", "Issue", "Incidents", "Was", "Median fix", "Bare notes", "Fix"],
                      "rows": [[i["rank"], i["mv"]["text"], i["name"], i["count"], i["prev"], fmt_hours(i["median_h"]), "%d%%" % i["quality"][2],
                                src.get(i["fix"]["source"], "")] for i in s["issues"][:n]]})
-    # 1.7.0: by priority with your SLOs, the priority set by hand, the categories
+    # 1.7.0: by priority with your SLAs, the priority set by hand, the categories
     if s["prio"]:
         secs.append({"title": "By priority", "text": "Met or missed: %s." % {"task_sla": "ServiceNow's SLAs (task_sla)", "targets": "your targets, " + (
                          slo.get("business_hours") or "calendar hours"), "made_sla": "ServiceNow's Made SLA"}.get(slo.get("source") or "targets", ""),
-                     "columns": ["Priority", "Incidents", "Median to resolve"] + (["Response met", "Resolution met"] if two else ["SLA met"]) + ["No SLO"],
+                     "columns": ["Priority", "Incidents", "Median to resolve"] + (["Response met", "Resolution met"] if two else ["SLA met"]) + ["No SLA"],
                      "rows": [[p["label"], p["count"], fmt_hours(p["median_h"])] + ([pf(p.get("resp"))] if two else []) + [pf(p["sla"]), p.get("no_slo") or 0]
                               for p in s["prio"]]})
     mx = s.get("matrix") or {}
@@ -3277,7 +3277,7 @@ def servicenow_insights_xlsx(model, r=None, state=None, mask=None, opts=None):
                                                 "Resolved", "Hours to resolve", "Reassignments", "Reopened", "Made SLA", "SLA target (hours)", "Close code",
                                                 "Close note grade", "Close notes", "Caused by", "Problem",
                                                 # 1.7.0
-                                                "Response met", "No SLO", "SLAs", "Impact", "Urgency", "Priority by the matrix"],
+                                                "Response met", "No SLA", "SLAs", "Impact", "Urgency", "Priority by the matrix"],
                "rows": [[x.get("number"), x.get("short_description"), issues_of.get(x["sys_id"]) or category_issue(x), x.get("category"),
                          x.get("subcategory"), x.get("priority"), x.get("state"),
                          place(x.get("group"), "site"), place(x.get("group"), "dir"), place(x.get("group"), "by"),
@@ -3307,7 +3307,7 @@ def servicenow_insights_xlsx(model, r=None, state=None, mask=None, opts=None):
                              "" if c["official"] is None else ("yes" if c["official"] else "no")] for c in cats.get("rows") or []]})
     pr = s.get("prio") or []
     sheets.append({"name": "Priorities", "columns": ["Priority", "Incidents", "Median hours", "Response target (hours)", "Response met %",
-                                                     "Resolution target (hours)", "Resolution met %", "No SLO"],
+                                                     "Resolution target (hours)", "Resolution met %", "No SLA"],
                    "rows": [[p["label"], p["count"], p["median_h"], p.get("resp_target_h"), p.get("resp"), p.get("target_h"), p["sla"], p.get("no_slo")]
                             for p in pr]})
     sheets.append({"name": "Changes failed", "columns": ["Change", "Closed", "What", "Group", "Outcome", "Followed by"],

@@ -67,10 +67,10 @@ servicenow_insights_split_label: ""     # the switch's label (e.g. NOVA); "" = n
 servicenow_insights_split_pattern: ""   # the groups it picks: e.g. "*- NOVA" (* and ?, any case)
 servicenow_insights_split_by: both      # map: pattern (the name), level (the label is one of the group's map levels) or both
 servicenow_insights_split_teams: true           # false: the switch on All, the sites and directorates only (fewer files)
-# YOUR SLOs (1.7.0; docs/SERVICENOW_INSIGHTS.md, "Your SLOs, priorities and categories"). Where met or missed comes from:
+# YOUR SLAs (1.7.0; docs/SERVICENOW_INSIGHTS.md, "Your SLAs, priorities and categories"). Where met or missed comes from:
 #   auto      ServiceNow's own SLAs (task_sla) when the account reads them (itil does), else the targets below
 #   task_sla  ServiceNow's SLAs: each SLA definition a Response or a Resolution by its name (the two lists below); a ticket
-#             with no SLA attached is "No SLO" - counted, left out of the percentages. On-hold time is ServiceNow's pause.
+#             with no SLA attached is "No SLA" - counted, left out of the percentages. On-hold time is ServiceNow's pause.
 #   targets   the targets below (servicenow_insights_business_hours when set)
 #   made_sla  ServiceNow's Made SLA flag (before 1.7.0 without targets)
 servicenow_insights_sla_source: auto
@@ -82,7 +82,7 @@ servicenow_insights_business_hours: {}
 # SLA TARGETS, in hours from when a ticket was opened to when it was resolved (incidents) or closed (requested items) - business
 # hours when set: a ticket met its SLA when it was done within its target. By table, then by priority ("1" to "5", or "P1";
 # "*" = every other priority). A number is the resolution; {response: 0.5, resolution: 9} adds a response target (opened to
-# first assigned to a person: the metric Assigned to); none = no SLO for that priority. Only tickets done in the window count.
+# first assigned to a person: the metric Assigned to); none = no SLA for that priority. Only tickets done in the window count.
 # These are common ITIL starting points - put your management's numbers here (in all.yml, or the template's Variables). A
 # table left out (or {} for all of them) uses ServiceNow's own Made SLA flag instead.
 servicenow_insights_sla_targets:

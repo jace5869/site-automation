@@ -134,10 +134,10 @@ servicenow_insights_months: 6
 ## false: the switch on All, the sites and directorates only (fewer files)
 # servicenow_insights_split_teams: true
 
-## YOUR SLOs (1.7.0; docs/SERVICENOW_INSIGHTS.md, "Your SLOs, priorities and categories"). Where met
+## YOUR SLAs (1.7.0; docs/SERVICENOW_INSIGHTS.md, "Your SLAs, priorities and categories"). Where met
 ## or missed comes from: auto ServiceNow's own SLAs (task_sla) when the account reads them (itil
 ## does), else the targets below task_sla ServiceNow's SLAs: each SLA definition a Response or a
-## Resolution by its name (the two lists below); a ticket with no SLA attached is "No SLO" -
+## Resolution by its name (the two lists below); a ticket with no SLA attached is "No SLA" -
 ## counted, left out of the percentages. On-hold time is ServiceNow's pause. targets the targets
 ## below (servicenow_insights_business_hours when set) made_sla ServiceNow's Made SLA flag (before
 ## 1.7.0 without targets)

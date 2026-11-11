@@ -26,8 +26,8 @@ and simpler: the tiles and the main tables, a link to the page, and an Excel wor
 | **After hours** (1.9.0) | incidents opened outside the core hours, per group, for staffing |
 | **Workload** (1.9.0) | per person: open now and resolved in the period. Each person's time to resolve only with `servicenow_insights_person_metrics: true` |
 | **Keeping up** | opened and resolved per week, the backlog at the end of each week, the age of what is open now (0-5, 6-15, 16-30, over 30 days), a heatmap of when incidents are opened (weekday by hour), the weeks as a table |
-| **Severity** | incidents per priority - its name (1 - Critical ... 5 - Exempt), count, median to resolve, Response met and Resolution met (1.7.0), No SLO -, the **priority set by hand** (impact x urgency, the 3 x 3 matrix) per group, then every P1 and P2: when, what, the group, the change that caused it, its problem record |
-| **Categories** (1.7.0) | incidents per category (against the window before), their median time to resolve and SLOs met, the group they are mostly in; a data-quality line - no category, Other, off your official list (named) |
+| **Severity** | incidents per priority - its name (1 - Critical ... 5 - Exempt), count, median to resolve, Response met and Resolution met (1.7.0), No SLA -, the **priority set by hand** (impact x urgency, the 3 x 3 matrix) per group, then every P1 and P2: when, what, the group, the change that caused it, its problem record |
+| **Categories** (1.7.0) | incidents per category (against the window before), their median time to resolve and SLAs met, the group they are mostly in; a data-quality line - no category, Other, off your official list (named) |
 | **Satisfaction** (1.7.0) | the incident surveys' average answer, by month and by group (when the surveys are read) |
 | **Top incident issues** | the issues ranked, with their rank against the window before (▲ ▼ New), their share and the cumulative share, a weekly trend, the median time to fix; open one for its **fix action** (with a Copy button), where the fix comes from - **From the tickets**, **Partly from tickets** or **Suggested by ACT** (not verified) -, the CIs it was seen on, example tickets (links into ServiceNow), its close-note quality, and the flags *KB candidate*, *Self-service candidate*, *Problem candidate*; a fix the close notes disagree on is said |
 | **Problem candidates** | 3 or more incidents of one issue on one CI within 30 days: the counts, the group, the problem record - or *No problem record*, or *Resolved, incidents continue* |
@@ -289,7 +289,7 @@ The default is `[all, this_month, 1m, 2m, 3m, 6m, 9m, 12m, 1w, 2w, 4w]` (1.16.0)
 
 What each figure means for a period:
 
-- **Opened, resolved, the SLOs, the median time to resolve**: the tickets opened, or done, in the period.
+- **Opened, resolved, the SLAs, the median time to resolve**: the tickets opened, or done, in the period.
 - **Open at the period's end**: the backlog on its last day, with the start's number beside it. For a period that ends
   now, the tile says *Open now*.
 - **On hold now** and **Open over N hops**: ServiceNow only says how a ticket is now. For a period that ends earlier,
@@ -497,9 +497,9 @@ servicenow_insights_show_lead: true                                # the Group m
 Each lead's email goes **To** the lead alone. `report_email_to` does not get it, even as an extra variable. The email
 links the team's page on the report website. The report database keeps no name: the lead is never written there.
 
-## Your SLOs, priorities and categories
+## Your SLAs, priorities and categories
 
-The page and the email count **met or missed** from your SLOs. `servicenow_insights_sla_source` says where from:
+The page and the email count **met or missed** from your SLAs. `servicenow_insights_sla_source` says where from:
 
 | Source | Where met or missed comes from |
 |---|---|
@@ -513,7 +513,7 @@ With `task_sla`, each SLA definition is a Response or a Resolution by its name:
 - **Response**: the name has one of `servicenow_insights_sla_response_match` (`[response]`, any case).
 - **Resolution**: the name has one of `servicenow_insights_sla_resolution_match` (`[resolution, resolve]`).
 - **Other**: any other definition. It is shown by name under *How this was made* and not counted.
-- **No SLO**: a ticket with no SLA attached (your P5s, say). It is counted, but left out of the percentages.
+- **No SLA**: a ticket with no SLA attached (your P5s, say). It is counted, but left out of the percentages.
 
 Met or missed counts the incidents and requested items **done in the window**. The tiles show **Response met** and
 **Resolution met** (with `task_sla`, or a response target), else one *SLAs met*. Severity has them per priority, the
@@ -526,7 +526,7 @@ to resolved (incidents) or closed (requested items), by table and priority.
 
 - A number is the resolution target.
 - A mapping adds a response target: opened to first assigned to a person (the metric *Assigned to*).
-- `none` is no SLO for that priority, and `"*"` is every priority not listed.
+- `none` is no SLA for that priority, and `"*"` is every priority not listed.
 
 ```yaml
 servicenow_insights_sla_targets:
@@ -535,7 +535,7 @@ servicenow_insights_sla_targets:
     "2": {response: 0.5, resolution: 9}
     "3": {response: 4, resolution: 27}
     "4": {response: 9, resolution: 45}
-    "5": none                                  # no SLO for P5
+    "5": none                                  # no SLA for P5
   sc_req_item: {"*": 45}
 servicenow_insights_sla_items: {"New account / onboarding": 18}     # a catalog item's own target, beating its priority's
 servicenow_insights_business_hours: {days: [mon, tue, wed, thu, fri], start: "07:30", end: "16:30", holidays: ["2026-12-25"]}

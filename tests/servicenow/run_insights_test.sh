@@ -9,7 +9,7 @@
 # work notes (sys_journal_field, GET only, masked - what only they hold too), the page says what each fix was read from; the
 # work notes refused (403): said, the fixes from the close notes; off: not read. 1.2.0: the change tasks (change_task, GET
 # only) - the teams' columns, Held up by, the leaderboards' own column; refused (403): said, the rest whole, green.
-# 1.7.0: task_sla read (Response and Resolution met, No SLO, SLA at risk now, act on first, how incidents ended, the
+# 1.7.0: task_sla read (Response and Resolution met, No SLA, SLA at risk now, act on first, how incidents ended, the
 # categories, the surveys); task_sla refused: the targets in business hours, a response from the metric Assigned to, said.
 # 1.9.0: the time in each state (the state metric), the backlog's age and flow, quality and hot spots, after hours, workload.
 #   bash tests/servicenow/run_insights_test.sh            (ANSIBLE_PLAYBOOK=... to pick one)
@@ -116,9 +116,12 @@ check "the site's page: every section, links to the teams, ticket links into Ser
     'ServiceNow ticket insights' 'id="teams"' 'id="keepingup"' 'id="severity"' 'id="issues"' 'id="problems"' 'id="handoffs"' \
     'id="requests"' 'id="changes"' 'id="notes"' 'id="allstars"' 'id="kb"' 'id="method"' 'href="ops/other/windows/latest.html"' 'Teams side by side' \
     "http://127.0.0.1:$port/incident.do?sysparm_query=number=INC" 'grouped by their category' 'From the numbers' \
-    'Reopen not used here' 'Came back' 'Response met' 'Resolution met' 'No SLO' 'P4 Incident Response' 'Act on first' 'SLA at risk now'
-    'How incidents ended' 'Priority set by hand' 'id="categories"' 'id="satisfaction"' 'Time in each state' 'The numbers as a table'
+    'Reopen not used here' 'Came back' 'Response met' 'Resolution met' 'No SLA' 'P4 Incident Response' 'Act on first' 'SLA at risk now' \
+    'How incidents ended' 'Priority set by hand' 'id="categories"' 'id="satisfaction"' 'Time in each state' 'The numbers as a table' \
     'Backlog age and flow' 'Ping-pong' 'id="afterhours"' 'id="workload"' 'data-tab="p1"' 'No drafts: ACT (GenAI) writes them' '!cid:' '!<!--site-report-logo-->'
+# 1.16.0: the user's word is SLA - no page, email or job line says SLO (the pages' data blocks aside: keys, never shown)
+n=$(find "$top" -name '*.html' -exec sed 's#<script type="application/json"[^>]*>.*</script>##' {} + | cat - "$work/out.txt" "$work"/mail/*.eml 2>/dev/null | grep -ciwE 'slos?')
+[ "$n" = 0 ] && echo "ok   -   ... no page, email or job line says SLO" || { echo "FAIL - SLO said $n times"; fails=$((fails + 1)); }
 check "a team's page: that team, linked back to the site's" "$top/ops/other/windows/latest.html" \
     'Ops - Windows ·' '!id="teams"' 'href="../../../latest.html"' 'All-stars' 'Most closed' 2>/dev/null || \
 check "a team's page: that team, linked back to the site's" "$top/ops/other/windows/latest.html" 'href="../../../latest.html"' 'Most closed' '!id="teams"'
@@ -307,7 +310,7 @@ INS_ENV="SN_HOST=" run "no credential" fail "{$NOW}" 'it sets SN_HOST, SN_USERNA
 run "months 0: said" fail "{$NOW, $NOACT, \"servicenow_insights_months\": 0}" 'servicenow_insights_months must be 1 or more'
 run "the last 60 days instead (servicenow_insights_days)" ok "{$NOW, $NOACT, \"servicenow_insights_days\": 60}" 'Window: 2026-09-02 to 2026-10-31'
 
-# ---- 1.7.0: your SLOs - task_sla refused: your targets in business hours instead, said; the surveys refused -------------
+# ---- 1.7.0: your SLAs - task_sla refused: your targets in business hours instead, said; the surveys refused -------------
 mock SNMOCK_NO_TABLES=task_sla,asmt_metric_result
 mkdir -p "$work/site8"
 run "task_sla refused: the targets in business hours (a response from the metric Assigned to), said; the surveys refused, said" ok \

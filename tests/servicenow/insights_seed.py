@@ -285,7 +285,7 @@ def main():
     # 1.7.0: their own random numbers (R4), so every record above stays as it was - impact and urgency (one in ten set by hand
     # against the 3 x 3 matrix), resolution codes, incidents on hold now (a reason, or none; on hold since from the state
     # metric for half, from their SLA's pause for the rest), resolved and never closed, hops over the limit, the SLAs
-    # (task_sla: a response and a resolution, some breached; P5 none - no SLO; a cancelled one; an Other), the metric
+    # (task_sla: a response and a resolution, some breached; P5 none - no SLA; a cancelled one; an Other), the metric
     # Assigned to, survey answers
     R4 = random.Random(17)
     pairs = {"1": [("1", "1")], "2": [("1", "2"), ("2", "1")], "3": [("1", "3"), ("2", "2"), ("3", "1")], "4": [("2", "3"), ("3", "2")], "5": [("3", "3")]}

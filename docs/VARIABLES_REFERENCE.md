@@ -1457,7 +1457,7 @@ File: `roles/servicenow_insights/defaults/main.yml`
 | `servicenow_insights_split_pattern` | (empty) | the groups it picks: e.g. "*- NOVA" (* and ?, any case) |
 | `servicenow_insights_split_by` | `both` | map: pattern (the name), level (the label is one of the group's map levels) or both |
 | `servicenow_insights_split_teams` | `true` | false: the switch on All, the sites and directorates only (fewer files) |
-| `servicenow_insights_sla_source` | `auto` | YOUR SLOs (1.7.0; docs/SERVICENOW_INSIGHTS.md, "Your SLOs, priorities and categories"). Where met or missed comes from: auto ServiceNow's own SLAs (task_sla) when the account reads them (itil does), else the targets below task_sla ServiceNow's SLAs: each SLA definition a Response or a Resolution by its name (the two l… (all of it: the role file) |
+| `servicenow_insights_sla_source` | `auto` | YOUR SLAs (1.7.0; docs/SERVICENOW_INSIGHTS.md, "Your SLAs, priorities and categories"). Where met or missed comes from: auto ServiceNow's own SLAs (task_sla) when the account reads them (itil does), else the targets below task_sla ServiceNow's SLAs: each SLA definition a Response or a Resolution by its name (the two l… (all of it: the role file) |
 | `servicenow_insights_sla_response_match` | `[response]` | an SLA definition whose name has one of these is a Response |
 | `servicenow_insights_sla_resolution_match` | `[resolution, resolve]` | ... one of these a Resolution; any other: Other, shown by name |
 | `servicenow_insights_business_hours` | `{}` | Business hours for the targets: {} = calendar hours. E.g. {days: [mon, tue, wed, thu, fri], start: "07:30", end: "16:30", holidays: ["2026-12-25"]} - in report_time_zone; an end before the start is a shift past midnight. |

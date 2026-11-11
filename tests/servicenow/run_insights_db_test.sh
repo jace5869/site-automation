@@ -178,7 +178,7 @@ has "  ... How this was made: written, without the host" "$p1" 'Report database.
     'The database holds 7 runs of this instance, months 2026-05 to 2026-10.' "!127.0.0.1:$dbport"
 has "  ... the All page: Trends, 6 months so far, two charts, a legend, the months as a table" "$p1" \
     '<a href="#trend">Trends' '6 months so far · each point a calendar month' '<h3>Service levels</h3>' '<h3>Volume</h3>' \
-    '<i style="background:var(--st1)"></i>SLO met' '<summary>The months as a table</summary>' 'May 2026' 'Oct 2026' '!stroke-dasharray="5 4"'
+    '<i style="background:var(--st1)"></i>SLA met' '<summary>The months as a table</summary>' 'May 2026' 'Oct 2026' '!stroke-dasharray="5 4"'
 team="$(find "$work/w1" -path '*service-desk*' -name latest.html | head -1)"
 has "  ... a team's page: its own trends" "$team" '<h3>Service levels</h3>' '6 months so far'
 DB_ENV="$DB" run "  ... the same window again: replaced, not added" ok "{$NOW, \"servicenow_insights_db\": true}" 'older runs replaced'
