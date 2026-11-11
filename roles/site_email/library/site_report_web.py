@@ -1339,15 +1339,34 @@ def _level(b):
     return len(colours) - colours.index(c) if c else len(colours) - 1
 
 
-def top_banner(this, reports):
+def top_banner(this, reports, floor=None):
     """The index's banner: the highest marking among its lines and their runs (this run's own when it is as high). A line
-    from before 1.24.0 keeps no banner: it counts as none."""
+    from before 1.24.0 has no banner key: while one is listed, the banner the index carried before (floor) stays the
+    lowest it may have - an upgraded site keeps its marking until every older line has been written again."""
     best = _mark(this)
-    for r in reports:
-        for b in [r.get('banner')] + [x.get('banner') for x in _runs(r)]:
-            if _level(b) > _level(best):
-                best = _mark(b)
+    cands = [b for r in reports for b in [r.get('banner')] + [x.get('banner') for x in _runs(r)]]
+    if floor and any('banner' not in r for r in reports):
+        cands.append(floor)
+    for b in cands:
+        if _level(b) > _level(best):
+            best = _mark(b)
     return best
+
+
+BANNER_ROW = re.compile(r'class="site-banner site-banner-top"[^>]*>\s*<tr><td[^>]*\bbgcolor="(#[0-9a-fA-F]{6})"[^>]*>([^<]*)</td>')
+
+
+def index_banner(json_text, html_text):
+    """The banner the index carried when it was written: index.json's own (1.24.0b on), else the top banner row of an
+    index.html from before - {} for none."""
+    try:
+        doc = json.loads(json_text) if json_text else {}
+    except ValueError:
+        doc = {}
+    if isinstance(doc, dict) and 'banner' in doc:
+        return _mark(doc.get('banner'))
+    m = BANNER_ROW.search(html_text or '')
+    return _mark({'on': True, 'text': htmllib.unescape(m.group(2)), 'bg': m.group(1)}) if m else {}
 
 
 def keep(module, p, page, latest, index, urls, where, win):
@@ -1460,9 +1479,9 @@ def main():
         written = []
         entry = dict(p['entry'], page=page, latest=latest)
         entry.pop('banner', None)                        # this run's banner, never one the entry brings
-        mark = _mark(banner)
-        if mark:                                         # kept on its line and run: the index carries the highest (1.24.0)
-            entry['banner'] = mark
+        # kept on its line and run, an empty one too (1.24.0b: a line with the key is from 1.24.0 on): the index carries the
+        # highest
+        entry['banner'] = _mark(banner)
         if p['sub_pages']:
             entry['sub'] = sorted(set(str(x) for x in p['sub_pages'] if x))
         step = first_step((p['data'] or {}).get('report'))     # the brief index's first step for this report (0.92.0)
@@ -1553,10 +1572,22 @@ def main():
             if p['images'] and len(p['logo_size']) == 2 and p['logo_size'][0] > 0:
                 uri = inline_images('cid:' + str(p['images'][0].get('cid')), p['images'][:1])
                 logo = (uri, p['logo_size'][0], p['logo_size'][1]) if uri.startswith('data:') else None
-            index_text = json.dumps({'generated': generated, 'reports': reports}, indent=2, sort_keys=True, default=str) + '\n'
+            floor = {}
+            if any('banner' not in r for r in reports):     # lines from before 1.24.0: the banner the index carried stays
+                last = now or known
+                page_before = ''
+                if not win and not (last and '"banner"' in last):
+                    try:
+                        page_before = target.read(index) or ''
+                    except Fail:
+                        page_before = ''
+                floor = index_banner(last, page_before)
+            top = top_banner(banner, reports, floor)
+            index_text = json.dumps({'generated': generated, 'reports': reports, 'banner': top}, indent=2, sort_keys=True,
+                                    default=str) + '\n'
             put(_json_name(index), index_text, 'application/json; charset=utf-8')
             put(index, banner_inject(index_html(reports, index, p['header_text'], logo, generated, p['tabs'], p['theme'], index_js),
-                                     top_banner(banner, reports)),
+                                     top),
                 'text/html; charset=utf-8', True)
             # the pages of the runs that fell off this template's line - after the index, which no longer lists them
             kept = set([index, _json_name(index)])

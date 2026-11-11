@@ -209,7 +209,7 @@ h1.big{margin-top:12px}
 .sec{margin-top:clamp(28px,3vw,44px);border-top:1px solid var(--edge)}
 .sec>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:10px;padding:18px 0 14px}
 .sec>summary::-webkit-details-marker{display:none}
-.sec>summary h2{margin:0;font-family:var(--display);font-size:clamp(19px,1.55vw,24px);font-weight:650;letter-spacing:-.015em;flex:1;min-width:0;line-height:1.25;text-wrap:balance}
+.sec>summary h2{margin:0;font-family:var(--display);font-size:clamp(19px,1.55vw,24px);font-weight:650;letter-spacing:-.015em;flex:1;min-width:0;line-height:1.25;text-wrap:balance;overflow-wrap:break-word}
 .sec>summary .count{display:inline-block;font-family:var(--mono);font-size:13px;font-weight:500;color:var(--muted);margin-left:10px;vertical-align:2px;letter-spacing:0;font-variant-numeric:tabular-nums}
 .sec>summary:hover h2{color:var(--accent)}
 .caret{width:18px;height:18px;flex:none;color:var(--muted);transition:transform .25s var(--ease)}
@@ -427,6 +427,9 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
   .tw thead{display:none}
   .tw tbody tr{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:6px 0;margin-bottom:8px}
   .tw td,.tw td.k-nw,.tw td.nw,.tw td.k-num,.tw td.nw .chip{white-space:normal;text-align:left;min-width:0}
+  /* a word wider than the card breaks inside it (1.24.0b: wider fonts); a date, an address, a number stay whole */
+  .tw td .w{white-space:normal}
+  .tw td .chip{min-width:0;max-width:100%}.tw td .chip>span{min-width:0;overflow-wrap:anywhere}
   .tw td{border:0;padding:4px 14px;display:grid;grid-template-columns:minmax(90px,34%) minmax(0,1fr);gap:10px;align-items:start;background:none!important;overflow-wrap:break-word}
   .tw td:before{content:attr(data-l);font-family:var(--sans);font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--label);padding-top:3px}
   .tw td .chip,.tw td .pct{justify-self:start}

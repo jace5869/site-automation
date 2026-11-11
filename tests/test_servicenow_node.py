@@ -289,6 +289,105 @@ class StatsWays(unittest.TestCase):
         self.assertIn("servicenow_node_stats_url", f[0]["hint"])
 
 
+
+def _ca_and_cert(d, tag, name):
+    """A local CA and a server certificate for name signed by it (key and certificate in one file): (ca.pem, server.pem)."""
+    ca, cakey, key, csr, crt, ext = (os.path.join(d, "%s-%s" % (tag, f)) for f in ("ca.pem", "ca.key", "srv.key", "srv.csr", "srv.crt", "ext"))
+    run = lambda *a: subprocess.run(list(a), check=True, capture_output=True)      # noqa: E731
+    run("openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=Test CA %s" % tag, "-days", "1",
+        "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign,cRLSign",
+        "-keyout", cakey, "-out", ca)
+    run("openssl", "req", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=%s" % name, "-keyout", key, "-out", csr)
+    with open(ext, "w") as f:
+        f.write("subjectAltName=DNS:%s\nbasicConstraints=CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\n"
+                "extendedKeyUsage=serverAuth\n" % name)
+    run("openssl", "x509", "-req", "-in", csr, "-CA", ca, "-CAkey", cakey, "-CAcreateserial", "-days", "1", "-extfile", ext, "-out", crt)
+    srv = os.path.join(d, "%s-server.pem" % tag)
+    with open(srv, "w") as out:
+        for f in (key, crt):
+            with open(f) as i:
+                out.write(i.read())
+    return ca, srv
+
+
+class StatsNamedCert(unittest.TestCase):
+    """A TLS-only node whose certificate (from a CA the host trusts) names a name that does not resolve: read on
+    127.0.0.1 with that name as the Host, the handshake saying it (SNI) and the certificate checked against it."""
+    NAME = "node01.example.invalid"
+    procs = []
+    serve = StatsWays.serve
+
+    @classmethod
+    def tearDownClass(cls):
+        for p in cls.procs:
+            p.kill()
+
+    @classmethod
+    def setUpClass(cls):
+        cls.d = tempfile.mkdtemp()
+        cls.ca, cls.srv = _ca_and_cert(cls.d, "good", cls.NAME)
+        cls.other_ca, cls.other_srv = _ca_and_cert(cls.d, "other", "elsewhere.example.invalid")
+
+    def read(self, srv, trust, names=None, **kw):
+        port = self.serve("tls=" + srv)
+        before = os.environ.get("SSL_CERT_FILE")
+        os.environ["SSL_CERT_FILE"] = trust            # the host's trust store, for this test: that CA
+        try:
+            return port, nm.read_stats(port, ["/xmlstats.do"], 1, 0, 5, names or [self.NAME], **kw)
+        finally:
+            if before is None:
+                os.environ.pop("SSL_CERT_FILE", None)
+            else:
+                os.environ["SSL_CERT_FILE"] = before
+
+    def test_read_on_127_with_the_name_as_host_and_sni(self):
+        port, st = self.read(self.srv, self.ca)
+        self.assertTrue(st["up"], st)
+        self.assertEqual((st["url"], st["host_header"], st["status"]), ("https://127.0.0.1:%d/xmlstats.do" % port, self.NAME, 200))
+        # the ways before it: the name does not resolve, 127.0.0.1 alone is not what the certificate names
+        self.assertTrue(any(t.startswith("https://127.0.0.1:%d/xmlstats.do -> the certificate does not name 127.0.0.1" % port)
+                            for t in st["tried"]), st["tried"])
+
+    def test_fetch_checks_against_the_host_it_sends(self):
+        port = self.serve("tls=" + self.srv)
+        before = os.environ.get("SSL_CERT_FILE")
+        os.environ["SSL_CERT_FILE"] = self.ca
+        try:
+            code, body = nm.fetch("https://127.0.0.1:%d/xmlstats.do" % port, self.NAME, 5)
+            self.assertEqual(code, 200, body)
+            code, body = nm.fetch("https://127.0.0.1:%d/xmlstats.do" % port, "", 5)
+            self.assertEqual(code, -1)
+            self.assertTrue(body.startswith("the certificate does not name 127.0.0.1:"), body)
+            code, body = nm.fetch("https://127.0.0.1:%d/xmlstats.do" % port, "wrong.example.invalid", 5)
+            self.assertEqual(code, -1)
+            self.assertTrue(body.startswith("the certificate does not name wrong.example.invalid:"), body)
+        finally:
+            if before is None:
+                os.environ.pop("SSL_CERT_FILE", None)
+            else:
+                os.environ["SSL_CERT_FILE"] = before
+        code, body = nm.fetch("https://127.0.0.1:%d/xmlstats.do" % port, "wrong.example.invalid", 5, validate=False)
+        self.assertEqual(code, 200, body)
+
+    def test_certificate_for_another_name(self):
+        port, st = self.read(self.other_srv, self.other_ca)          # trusted CA, the certificate names elsewhere
+        self.assertFalse(st["up"])
+        self.assertIn("(Host: %s): the certificate does not name %s" % (self.NAME, self.NAME), st["why"])
+        self.assertIn("or set servicenow_node_validate_certs false", st["why"])
+        self.assertNotIn("add its CA", st["why"])
+        self.assertNotIn("add its CA", json.dumps(st["tried"]))
+
+    def test_untrusted_ca(self):
+        port, st = self.read(self.srv, self.other_ca)                # the right name, a CA the host does not trust
+        self.assertFalse(st["up"])
+        self.assertIn("(Host: %s): its certificate is not trusted" % self.NAME, st["why"])
+        self.assertIn("add its CA to the host's trust store, or set servicenow_node_validate_certs false", st["why"])
+        self.assertNotIn("does not name", st["why"])
+
+    def test_not_checked_when_validate_false(self):
+        port, st = self.read(self.other_srv, self.ca, validate=False)
+        self.assertTrue(st["up"], st)
+
 class PortAndFolder(unittest.TestCase):
     def setUp(self):
         self.home = tempfile.mkdtemp()

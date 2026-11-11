@@ -193,6 +193,64 @@ class Judge(unittest.TestCase):
         for v in ("12345678", "Summer2026", "Pine-4-Cone", "svc_stig", "alpha"):
             self.assertNotIn(v, out, v)
 
+    def test_odd_names_urls_and_texts(self):
+        """The tester's list, each setting in 3 templates with the same value: a secret's value is never in the module's
+        result or the report - its name a whole word (any case, - . _ or camelCase, a digit after it), a URL with a
+        password, a text holding JSON or YAML (or name=value) with one in it. Words inside other words, a URL without a
+        password and plain text are still shown."""
+        hide = [  # (setting, value, what must never be seen)
+            ("admin_pwd", "Hx-admin_pwd", "Hx-admin_pwd"), ("adminPwd", "Hx-adminPwd", "Hx-adminPwd"),
+            ("dbPassword", "Hx-dbPassword", "Hx-dbPassword"), ("client-secret", "Hx-client-secret", "Hx-client-secret"),
+            ("API-KEY", "Hx-API-KEY", "Hx-API-KEY"), ("db.password", "Hx-db.password", "Hx-db.password"),
+            ("credential", "Hx-credential", "Hx-credential"), ("svc_credentials", "Hx-svc_creds", "Hx-svc_creds"),
+            ("secret1", "Hx-secret1", "Hx-secret1"), ("pin", 4711, "4711"), ("vault_pin", "8812", "8812"),
+            ("key_material", "Hx-key_material", "Hx-key_material"), ("apiKey", "Hx-apiKey", "Hx-apiKey"),
+            ("conn_string", "mysql://svc:Tr0ub4dor@db01.example.mil:3306/app", "Tr0ub4dor"),
+            ("app_json", '{"password": "Bl4ckC4t", "user": "svc"}', "Bl4ckC4t"),
+            ("app_yaml", "password: Gr33nD0g\nuser: svc\n", "Gr33nD0g"),
+            ("app_yaml_list", "- user: svc\n  password: R3dF0x\n", "R3dF0x"),
+            ("odbc", "Server=db01;Uid=svc;Pwd=Wh1teOwl;", "Wh1teOwl"),
+            # already fixed in 1.24.0: still hidden
+            ("db_password", 12345678, "12345678"), ("PASSPHRASE", "Hx-PASSPHRASE", "Hx-PASSPHRASE"),
+            ("ldap_bind_pw", "Hx-ldap_bind_pw", "Hx-ldap_bind_pw"), ("radius_shared_secret", "Hx-radius", "Hx-radius"),
+            ("stigman_db", {"user": "svc", "password": "Hx-nested"}, "Hx-nested"),
+            ("binds", [{"host": "ldap01.example.mil", "bindPw": "Hx-list"}], "Hx-list"),
+        ]
+        not_shown = [  # never a value, though no secret
+            ("smtpPassword", True, "true"), ("check_list", ["alpha", "beta"], "alpha"),
+            ("deep", {"a": {"b": {"c": {"d": {"e": {"f": {"g": {"password": "Hx-deep"}}}}}}}}, "Hx-deep"),
+            ("list_text", '["alpha", "beta"]', "alpha"), ("map_text", "colour: green", "green"),
+        ]
+        show = [  # (setting, value, the value shown)
+            ("bypass_mode", "strict", "strict"), ("compass_heading", "north", "north"), ("keyboard_layout", "us", "us"),
+            ("spin_count", 3, "3"), ("opinion", "fine", "fine"),
+            ("report_url", "https://reports.example.mil:8443/x", "https://reports.example.mil:8443/x"),
+            ("git_url", "ssh://git@git.example.mil/site.git", "ssh://git@git.example.mil/site.git"),
+            ("note", "nightly patch window", "nightly patch window"),
+        ]
+        for n, v, expect in hide + not_shown + show:
+            with self.subTest(setting=n):
+                recs = [{"kind": "job", "id": i, "name": "Job %d" % i, "extra_vars": json.dumps({n: v})} for i in range(3)]
+                templates, settings = m.audit(recs, {"repeat_min": 3})
+                s = dict((x["setting"], x) for x in settings)[n]
+                r = f.template_audit_report({"templates": templates, "settings": settings, "problems": []}, {"repeat_min": 3})
+                out = json.dumps([templates, settings]) + json.dumps(r, default=str)
+                if (n, v, expect) in hide:
+                    self.assertIn("secret", s["why"])
+                    self.assertEqual(s["value"], "")
+                    self.assertNotIn(expect, out)
+                elif (n, v, expect) in not_shown:
+                    self.assertNotIn("secret", s["why"])
+                    self.assertEqual(s["value"], "(same; not shown)")
+                    self.assertNotIn(expect, out)
+                else:
+                    self.assertNotIn("secret", s["why"])
+                    self.assertEqual(s["value"], expect)
+        for n in ("bypass", "compass", "keyboard", "spin", "opinion", "passthrough", "tokenizer", "pinned_version",
+                  "vcenter_password_file", "dbPasswordFile", "api_key_id", "check_accounts_pw_max_days"):
+            self.assertFalse(m.secret_name(n), n)
+        self.assertEqual(m.name_words("APIKey-db.password_v2"), ["api", "key", "db", "password", "v", "2"])
+
     def test_repeat_min(self):
         _, settings = m.audit(records(), dict(OPTS, repeat_min=0))
         self.assertNotIn("check_disk_warn_pct", [x["setting"] for x in settings])

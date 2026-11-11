@@ -1032,8 +1032,44 @@ class IndexBanner(unittest.TestCase):
             lines = dict((x["key"], x) for x in json.load(f)["reports"])
         self.assertEqual(lines["vm/latest.html"]["banner"]["text"], "SECRET//NOFORN")
         self.assertEqual(lines["vm/latest.html"]["runs"][0]["banner"]["text"], "SECRET//NOFORN")
-        self.assertNotIn("banner", lines["os/latest.html"])
+        self.assertEqual(lines["os/latest.html"]["banner"], {})                     # 1.24.0b: the key, empty (a line from now)
         self.assertNotIn("banner", lines["os/latest.html"]["runs"][0])
+
+    def test_an_upgraded_site_keeps_its_banner(self):
+        """1.24.0b: an index written before 1.24.0 (its lines without a banner key) carried SECRET: unclassified runs keep
+        it while such a line is listed - from its index.html, then from index.json's own banner - and the marking goes
+        only when every older line has been written again."""
+        dest = tempfile.mkdtemp()
+        old = {"key": "vm/latest.html", "name": "VM health", "status": "critical", "page": "vm/2026-09-01_0600_job-1.html",
+               "latest": "vm/latest.html", "when": "2026-09-01 06:00 UTC", "runs": [{"page": "vm/2026-09-01_0600_job-1.html",
+               "status": "critical", "when": "2026-09-01 06:00 UTC", "job": 1, "title": "VM health"}]}
+        os.makedirs(os.path.join(dest, "vm"))
+        for rel in ("vm/latest.html", "vm/2026-09-01_0600_job-1.html"):                 # its pages are there (not pruned)
+            with open(os.path.join(dest, rel), "w") as f:
+                f.write("<html><body>VM health</body></html>")
+        with open(os.path.join(dest, "index.json"), "w") as f:
+            json.dump({"generated": "2026-09-01 06:00 UTC", "reports": [old]}, f)
+        with open(os.path.join(dest, "index.html"), "w") as f:
+            f.write(rw.banner_inject("<html><body><h1>Reports</h1></body></html>", self.SECRET))
+        self.assertEqual(rw.index_banner("", open(os.path.join(dest, "index.html")).read())["text"], "SECRET//NOFORN")
+
+        def index():
+            with open(os.path.join(dest, "index.html")) as f:
+                html = f.read()
+            with open(os.path.join(dest, "index.json")) as f:
+                return html, json.load(f)
+        r = run_module(web_args(dest, page="os/2026-10-01_0600_job-2.html", key="os/latest.html"))
+        self.assertTrue(r["published"], r)
+        html, doc = index()
+        self.assertIn("SECRET//NOFORN", html)                                             # from the index.html before
+        self.assertEqual(doc["banner"]["text"], "SECRET//NOFORN")
+        r = run_module(web_args(dest, page="os/2026-10-02_0600_job-3.html", key="os/latest.html"))
+        html, doc = index()
+        self.assertIn("SECRET//NOFORN", html)                                             # now from index.json's own
+        r = run_module(web_args(dest, page="vm/2026-10-03_0600_job-4.html", key="vm/latest.html"))   # its next run: unclassified
+        html, doc = index()
+        self.assertNotIn("site-banner", html)                                             # every line from now: none left
+        self.assertEqual(doc["banner"], {})
 
     def test_a_banner_the_entry_brings_is_not_kept(self):
         dest = tempfile.mkdtemp()
@@ -1041,7 +1077,7 @@ class IndexBanner(unittest.TestCase):
         args["entry"]["banner"] = {"on": True, "text": "x", "bg": "#000000", "fg": "#ffffff"}
         self.assertTrue(run_module(args)["published"])
         with open(os.path.join(dest, "index.json")) as f:
-            self.assertNotIn("banner", json.load(f)["reports"][0])
+            self.assertEqual(json.load(f)["reports"][0]["banner"], {})
 
 
 class IndexReadAgain(unittest.TestCase):
