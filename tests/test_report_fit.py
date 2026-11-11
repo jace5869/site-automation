@@ -3,7 +3,7 @@
 document as its unit tests or its e2e run make it (tests/fixtures/report_fit, refreshed by tests/report_fit_docs.py), and
 again with long values: names 22 characters longer, numbers wider. A table that does not fit first takes the script's
 steps (f1 to f4: wrapping); one that scrolls before its last step fails here (after it: no word broken, fx - listed). At every width no date, time, IP address, number, heading word, word of up
-to 12 characters or chip of up to 12 characters is split over two lines (a Range around each: more than one line box is a split). Many pages per browser
+to 12 characters, word of a short-value cell or a chip, or chip of up to 12 characters is split over two lines (a Range around each: more than one line box is a split). Many pages per browser
 start: each width is one page of frames, the report pages in them at that width. And fit() is quick on a big table:
 opening or closing a section that changes no table's width refits nothing.
   python tests/test_report_fit.py           (skips without google-chrome or chromium)"""
@@ -96,11 +96,12 @@ function splits(d){var out=[];
     while((n=it.nextNode())){var m,v=n.nodeValue;TOK.lastIndex=0;
       while((m=TOK.exec(v))){var rg=d.createRange();rg.setStart(n,m.index);rg.setEnd(n,m.index+m[0].length);
         if(lines(rg)>1)out.push(m[0])}}});
-  // a word of up to 12 characters (not a path's or a command's): no run of its letters and digits on two lines
+  // a word of up to 12 characters (not a path's or a command's), and any word of a short-value cell (k-nw) or a chip:
+  // no run of its letters and digits on two lines
   [].forEach.call(d.querySelectorAll('td'),function(td){if(!td.offsetParent||td.matches('.k-path,.lk'))return;
-    var it=d.createTreeWalker(td,NodeFilter.SHOW_TEXT),n;
-    while((n=it.nextNode())){var v=n.nodeValue,m,re=/\S+/g;
-      while((m=re.exec(v))){if(m[0].length>12)continue;var q=/[A-Za-z0-9]{2,}/g,k;
+    var it=d.createTreeWalker(td,NodeFilter.SHOW_TEXT),n,short=td.matches('.k-nw,.nw');
+    while((n=it.nextNode())){var v=n.nodeValue,m,re=/\S+/g,whole=short||!!(n.parentNode.closest&&n.parentNode.closest('.chip'));
+      while((m=re.exec(v))){if(m[0].length>12&&!whole)continue;var q=/[A-Za-z0-9]{2,}/g,k;
         while((k=q.exec(m[0]))){var rg=d.createRange();rg.setStart(n,m.index+k.index);rg.setEnd(n,m.index+k.index+k[0].length);
           if(lines(rg)>1)out.push('word '+m[0])}}}});
   // a heading's words: each on one line

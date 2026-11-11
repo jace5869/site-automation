@@ -17,8 +17,9 @@ next report run writes the new `site-report.js`, and every page on the site uses
 - **How a table fits.** Text wraps; nothing is cut off and no column is hidden. A table that is wider than its card
   takes these steps, one at a time, only while it still does not fit:
   1. Short values and long status chips wrap at their spaces and hyphens, and long columns get smaller minimum widths.
-  2. Cells get tighter, headings wrap at their spaces, and a word of over 12 characters (a datastore or host name)
-     may break inside; a shorter word never does. A text column keeps 10 characters.
+  2. Cells get tighter, headings wrap at their spaces, and a word of over 12 characters in a text column (a long
+     name inside a sentence) may break inside. A shorter word, and any word of a short value or a status chip, never
+     does. A text column keeps 10 characters.
   3. Numbers wrap at their spaces (`12,050.0` / `GB`), never inside their digits; the table's type and chips get
      smaller.
   4. Before the last step, the section rail is put away for this page, so the tables get its room. The rail's button

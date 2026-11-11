@@ -368,7 +368,7 @@ table.cc td .chip .ic{width:13px;height:13px}
 table.cc.sq td.k-nw{white-space:normal}
 /* 1.21.0: a table fits its card without scrolling sideways - the script's steps, one after the other, only while it is
    still wider than its card: f1 short values and chips wrap at spaces and hyphens, smaller minimum widths; f2 tighter
-   cells, headings wrap at their spaces, a word of over 12 characters (lw) may break inside, a text column keeps 10
+   cells, headings wrap at their spaces, a word of over 12 characters (lw) in a text column may break inside, a text column keeps 10
    characters (a shorter word never breaks inside); f3 numbers wrap at their spaces (12,050.0 / GB), a smaller type and
    smaller chips; f4 long chips narrower, tighter cells. A heading word, a date, an address and a number never break.
    Wider still: no text word broken (fx), it scrolls in its card */
@@ -376,7 +376,7 @@ table.f1 :is(td.k-nw,td.nw,td.nw .chip,td.k-mid .w,td.k-wrap .w){white-space:nor
 table.f1 td.k-mid{min-width:10ch}table.f1 td.k-long{min-width:16ch}table.f1 :is(td.k-path,td.lk){min-width:14ch}
 table.f2 td,table.f2 th button{padding-left:6px;padding-right:6px}
 table.f2 :is(th.k-num,th.k-nw){white-space:normal}table.f2 th{letter-spacing:.03em}
-table.f2 td .lw{overflow-wrap:anywhere}
+table.f2 :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap:anywhere}
 table.f2 :is(td.k-mid,td.k-long,td.k-wrap,td.k-path,td.lk){min-width:10ch}
 table.f3 td .chip{padding:1px 7px 1px 4px;gap:4px;font-size:12px}table.f3 td .chip .ic{width:13px;height:13px}
 table.f3{font-size:calc(var(--fs) * .92)}table.f3 td.k-num{white-space:normal}table.f3 th{letter-spacing:0;font-size:10.5px}
@@ -392,7 +392,7 @@ td .chip.c2{min-width:13ch}td .chip.c3{min-width:17ch}td .chip.c4{min-width:23ch
 table.f4 td .chip.c3{min-width:14ch}table.f4 td .chip.c4{min-width:19ch}table.f4 td .chip.c5{min-width:22ch}table.f4 td,table.f4 th button{padding-left:4px;padding-right:4px}
 /* a table that still does not fit after f4 (the script takes f4 off again): no text word broken inside (a path or a
    command still breaks where it must), it scrolls in its card */
-table.fx td .lw{overflow-wrap:normal}
+table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap:normal}
 /* Columns: a column whose box is not checked, not shown (a rule per place, 1 to the most columns of a table here) */
 {%- set ncol = namespace(n=0) %}
 {%- for s in r.sections | default([]) if s.columns is defined and s.columns | length > ncol.n %}{% set ncol.n = s.columns | length %}{% endfor %}
