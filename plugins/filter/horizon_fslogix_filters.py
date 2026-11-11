@@ -224,6 +224,7 @@ def hz_fslogix(scan, opts=None):
             for x in ([] if top else odd):
                 _flag(frec, "warning", "naming", "%s is a VHD(x) of another name (not %s, %s or a differencing disk)"
                       % (x["name"], o.get("profile_name") or "Profile_%username%", o.get("odfc_name") or "ODFC_%username%"))
+            here = []                   # this folder's containers (not a search of every share's)
             for c in mine:
                 srec["containers"] += 1
                 srec["used"] += c["size"]
@@ -238,9 +239,10 @@ def hz_fslogix(scan, opts=None):
                 own = "rw diff" if c["kind"] == "profile" else ("odfc diff" if c["kind"] == "odfc" else "")
                 rec["diffs"] = [d for d in diffs if d["kind"] == own]
                 containers.append(rec)
+                here.append(rec)
                 frec["containers"] += 1
             # lock and meta files of no container, differencing disks of none
-            named = set(a["name"] for c in containers if c["share"] == path and c["folder"] == fname for a in c["aux"] + c["diffs"])
+            named = set(a["name"] for c in here for a in c["aux"] + c["diffs"])
             for x in diffs + aux:
                 if x["name"] not in named and mine:
                     _flag(frec, "info", "other", "%s belongs to no container here" % x["name"])

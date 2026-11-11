@@ -107,6 +107,23 @@ class Check(unittest.TestCase):
                      "cpu 12 is more than vm_deploy_max_cpu (8)", "memory_gb 'lots' is not a number"):
             self.assertIn(want, text)
 
+    def test_a_thousands_comma(self):
+        """1.23.0: "2,048 GB" is one disk of 2048 GB; "100,200" and "100, 200" are two disks."""
+        for desc, disks, mem in (("disks: 2,048 GB\nmemory: 16,384 MB", [2048], 16), ("disks: 100,200\nmemory: 1,536 MB", [100, 200], 1.5),
+                                 ("disks: C: 100 GB, D: 1,500 GB", [100, 1500], None)):
+            rec = dict(REC, description="vm_name: web01\ntemplate: rhel9\n" + desc, comments="", work_notes="")
+            spec = d.vm_deploy_check(d.vm_deploy_spec(rec), rec, dict(RULES, max_disk_gb=4096))["spec"]
+            self.assertEqual(spec["disks_gb"], disks, desc)
+            if mem:
+                self.assertEqual(spec["memory_gb"], mem, desc)
+
+    def test_a_long_line_is_quick(self):
+        """1.23.0: a ticket line of thousands of spaces is read in well under a second."""
+        import time
+        t0 = time.time()
+        d.vm_deploy_spec(dict(REC, description="\n".join(["disk" + " " * 3900 + "!"] * 20)))
+        self.assertLess(time.time() - t0, 2)
+
     def test_required_and_no_templates_listed(self):
         probs = d.vm_deploy_check({"spec": {"template": "rhel9-gold"}}, {}, dict(RULES, templates=[]))["problems"]
         self.assertIn("the ticket does not say vm_name: add a line 'vm_name: ...' to the description or a comment", probs)

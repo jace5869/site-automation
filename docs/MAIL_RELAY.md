@@ -225,6 +225,9 @@ this: it is inside 198.51.100.0/24`), and which listed addresses sit inside a su
    Postfix access map: also `mail_relay_entry_suffix: " OK"` and `mail_relay_postmap: true` (a `hash:`/`lmdb:` map
    cannot hold a subnet - the plan refuses one; use a `cidr:` table, `mail_relay_postmap: false`).
 
+   A map line that refuses its address (`REJECT`, `DISCARD`, `554 ...`) is never changed by the jobs (1.23.0). That
+   address is not on the list: a remove leaves the line, and an add says to change the line by hand.
+
    Put them in `playbooks/group_vars/all.yml`.
 3. **Email:** the `report_email_*` settings in `all.yml` (your other report jobs use them already). Who gets both
    emails: `report_email_to`, set on each workflow. These reports are emailed only, not put on the report website

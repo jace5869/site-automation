@@ -43,7 +43,7 @@ KEYS = {"vm_name": ("vm_name", "vm name", "vm hostname", "server name", "hostnam
         "customization_spec": ("customization_spec", "customization spec"),
         "notes": ("notes", "vm notes", "purpose")}
 ALIAS = {a: k for k, names in KEYS.items() for a in names}
-LINE = re.compile(r"^\s*[-*]?\s*([A-Za-z][A-Za-z0-9 _]*?)\s*(?:\(\s*(gb|gib|mb|mib|tb|tib)\s*\)\s*)?[:=]\s*(.*?)\s*$", re.I)
+LINE = re.compile(r"^\s*[-*]?\s*([A-Za-z][A-Za-z0-9 _]{0,40}?)\s*(?:\(\s*(gb|gib|mb|mib|tb|tib)\s*\)\s*)?[:=]\s*(.*?)\s*$", re.I)
 # a journal entry's header in a display value: "2026-10-08 09:15:02 - Jane Doe (Additional comments)";
 # the date follows the API account's own format, so only the "(... comments)" / "(Work notes)" end is relied on
 HEADER = re.compile(r"^\s*(\S.*?)\s+\((Additional comments|Comments|Work notes)\)\s*$", re.I)
@@ -287,9 +287,15 @@ def _gb(num, unit):
     return int(n) if n == int(n) else n
 
 
+# a thousands comma: one or two digits, then groups of three ("2,048 GB", "16,384 MB"); "100,200" stays two sizes
+_THOUSANDS = re.compile(r"(?<![\d.,])(\d{1,2})((?:,\d{3})+)(?![\d,])")
+
+
 def _sizes_gb(value):
-    """'100GB, 1TB' -> [100, 1024]; '16384 MB' -> [16]; [100, 200] -> [100, 200]: every size of a value, in GB."""
+    """'100GB, 1TB' -> [100, 1024]; '16384 MB' -> [16]; '2,048 GB' -> [2048]; [100, 200] -> [100, 200]: every size of a
+    value, in GB."""
     text = " ".join(str(x) for x in value) if isinstance(value, (list, tuple)) else str(value)
+    text = _THOUSANDS.sub(lambda m: m.group(1) + m.group(2).replace(",", ""), text)
     return [_gb(n, u) for n, u in re.findall(r"(\d+(?:\.\d+)?)\s*(%s|%s)?\b" % (_UNIT, _DU), text, re.I)]
 
 

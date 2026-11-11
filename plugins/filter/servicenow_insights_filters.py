@@ -35,9 +35,10 @@ TICKET = re.compile(r"^(?:INC|RITM|REQ|SCTASK|TASK|CHG|CTASK|PRB|PTASK|KB)\d+$",
 EMAIL = re.compile(r"(?<![\w.+-])[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
 IPV4 = re.compile(r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.]\d)")
 PHONE = re.compile(r"(?<![\w-])(?:\+?1[\s.-]?)?(?:\(\d{3}\)\s?|\d{3}[\s.-])\d{3}[\s.-]\d{4}(?![\w-])|(?<![\w-])\d{3}-\d{4}(?![\w-])")
-ID10 = re.compile(r"(?<![\w.-])\d{10}(?![\w.-])")
-FQDN = re.compile(r"(?<![\w.-])[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.(?:mil|gov|com|net|org|edu|local|lan|internal|corp|us)(?![\w.-])", re.I)
-HOSTLIKE = re.compile(r"(?<![\w.-])[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*\d[A-Za-z0-9-]*(?![\w.-])")
+# each ends before a space, a sign, or a full stop that ends the sentence ("web01." and "web01.corp" differ)
+ID10 = re.compile(r"(?<![\w.-])\d{10}(?![\w-]|\.\w)")
+FQDN = re.compile(r"(?<![\w.-])[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.(?:mil|gov|com|net|org|edu|local|lan|internal|corp|us)(?![\w-]|\.\w)", re.I)
+HOSTLIKE = re.compile(r"(?<![\w.-])[A-Za-z][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+)*\d[A-Za-z0-9_-]*(?![\w-]|\.\w)")
 PLACEHOLDER = re.compile(r"\b(PERSON|PHONE|EMAIL|HOST|IP|ID)-(\d+)\b")
 # tokens with a digit that are not host names
 KEEP_WORDS = set("""win7 win8 win10 win11 windows7 windows10 windows11 server2016 server2019 server2022 rhel6 rhel7 rhel8 rhel9 rhel10
@@ -442,9 +443,9 @@ def servicenow_insights_mask(r, opts=None):
             first, last = parts[0], parts[-1]
             if "," not in p:
                 found.setdefault("%s, %s" % (last, first), "PERSON")
-            for w in (last,):
-                if len(w) >= 4 and w.lower() not in COMMON_WORDS and w[:1].isupper():
-                    found.setdefault(w, "PERSON")
+            # a name ServiceNow's people fields give is masked whatever the word (Page, Young, Smith ...)
+            if len(last) >= 2:
+                found.setdefault(last, "PERSON")
     for w in o.get("mask_names") or []:
         if str(w).strip():
             found.setdefault(str(w).strip(), "PERSON")

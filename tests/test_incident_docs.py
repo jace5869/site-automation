@@ -233,6 +233,20 @@ class Act(unittest.TestCase):
             self.assertIn(words, kept)
         self.assertEqual(out["record"], self.r)
 
+    def test_a_changed_number_is_not_kept(self):
+        """1.23.0: numbers and addresses compared whole - 10 is not kept by 100, 192.0.2.30 not by 192.0.2.3."""
+        r = dict(self.r, actions="Rebooted 10 servers at 10:28\nchecked 192.0.2.30")
+        out = f.incident_act_apply(r, self.answer({"tidy": {"actions": "Rebooted 100 servers at 10:28 AM.\nChecked 192.0.2.3."}}),
+                                   {"tidy": True})
+        self.assertEqual(out["tidied"], [])
+        self.assertIn("10, 192.0.2.30", " ".join(out["kept"]))
+        out = f.incident_act_apply(r, self.answer({"tidy": {"actions": "Rebooted 10 servers at 10:28.\nChecked 192.0.2.30."}}),
+                                   {"tidy": True})
+        self.assertEqual(out["tidied"], ["actions"])
+        rec = f.incident_record(dict(TYPED, sop_troubleshoot="", sop_fix="", sop_verify=""))
+        out = f.incident_act_apply(rec, self.answer({"sop": {"sop_troubleshoot": ["Fail over to 192.0.2.3."]}}), {"sop": True})
+        self.assertIn("192.0.2.3, not in the AAR", " ".join(out["kept"]))
+
     def test_suggestions(self):
         out = f.incident_act_apply(self.r, self.answer({"suggestions": [{"for": "sop_verify", "text": "Log in.", "why": "proof"},
                                                                         {"for": "nonsense", "text": "  Keep\n spares. "}, "bad", {"for": "x"}]}),

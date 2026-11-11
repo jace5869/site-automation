@@ -45,22 +45,19 @@ def pack(doc, max_bytes):
         big = max(sections, key=lambda s: len(_items(s)[1]), default=None)
         key, items = _items(big) if big is not None else ("", [])
         if len(items) <= KEEP_AT_LEAST:
-            return "", sorted((s.get("title") or "", len(_items(s)[1]), n) for s, n in total.values())
-        total.setdefault(id(big), (big, len(items)))
+            return "", sorted((s.get("title") or "", len(_items(s)[1]), n) for s, n, _ in total.values())
+        total.setdefault(id(big), (big, len(items), big.get("text")))
         keep = max(KEEP_AT_LEAST, len(items) // 2)
         big[key] = items[:keep]
         for k in ("row_status", "cell_status"):
             if key == "rows" and isinstance(big.get(k), list):
                 big[k] = big[k][:keep]
+        # the note on the page, written before the size is measured again: the text with it fits max_bytes
+        own = total[id(big)][2]
+        note = "This page shows the first %d of %d %s (report_web_copy_max_kb)." % (keep, total[id(big)][1], key)
+        big["text"] = ((str(own).rstrip() + " ") if own else "") + note
         text = _text(doc)
-    cut = []
-    for s, n in total.values():
-        kept = len(_items(s)[1])
-        note = "This page shows the first %d of %d %s (report_web_copy_max_kb)." % (kept, n, "rows" if s.get("rows") else "lines")
-        s["text"] = ((str(s.get("text")).rstrip() + " ") if s.get("text") else "") + note
-        cut.append((s.get("title") or "", kept, n))
-    text = _text(doc)
-    return text, sorted(cut)
+    return text, sorted((s.get("title") or "", len(_items(s)[1]), n) for s, n, _ in total.values())
 
 
 def unpack(text):

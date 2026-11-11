@@ -12,12 +12,18 @@ PLATFORMS = {"ios": ".cfg", "panos": ".xml"}
 IOS_VOLATILE = re.compile(r"^(Building configuration\.\.\.|Current configuration\s*:.*|! Last configuration change at .*|"
                           r"! NVRAM config last updated at .*|! No configuration change since last restart.*|ntp clock-period \d+)\s*$")
 
-# a secret's value on an IOS line: what follows the keyword (an encryption type digit first, if any)
-IOS_SECRET = re.compile(r"(?P<k>\b(?:password|secret|key-string|pre-shared-key|community|authentication-key|md5|server-private|"
-                        r"(?<!-)key(?=\s+[0-9]{1,2}\s))\s+)(?P<t>[0-9]{1,2}\s+)?(?P<v>\S+)", re.I)
-# a PAN-OS element whose text is a secret
-PAN_SECRET = re.compile(r"(<(?P<t>phash|password|key|secret|pre-shared-key|authkey|auth-password|priv-password|"
-                        r"community|passphrase|api-key|private-key|shared-secret|bind-password)>)[^<]*(</(?P=t)>)", re.I)
+# a secret on an IOS line: everything after the keyword (its "level N" and encryption type digit kept). A bare "key"
+# is a secret too (crypto isakmp key, tacacs-server key, radius-server key), except where it names a command
+IOS_SECRET = re.compile(r"(?P<k>(?<![\w-])(?:password|secret|key-string|pre-shared-key|authentication-key|md5|"
+                        r"password-encrypt|server-private|wpa-psk|"
+                        r"(?<!crypto )key(?!\s+(?:chain|generate|zeroize|import|export|storage|pubkey-chain|config-key)\b))"
+                        r"(?![\w-])\s+)(?P<t>(?:level\s+\d+\s+)?(?:[0-9]{1,2}\s+)?)(?P<v>\S.*)$", re.I)
+# the SNMP community, and the community of a trap host or the passwords of an SNMPv3 user: what follows them
+IOS_SNMP = re.compile(r"^(?P<k>[-+]?\s*snmp-server\s+(?:community\s+|host\s+\S+\s+|user\s+\S+\s+\S+\s+(?:remote\s+\S+\s+(?:udp-port\s+\d+\s+)?)?v3\s+))"
+                      r"(?P<v>\S.*)$", re.I)
+# a PAN-OS element whose text is a secret (any tag that names a password, a key or a secret)
+PAN_SECRET = re.compile(r"(<(?P<t>[\w-]*(?:password|passwd|pwd|phash|secret|passphrase)|key|pre-shared-key|authkey|psk|"
+                        r"community|api-key|private-key)>)[^<]*(</(?P=t)>)", re.I)
 HIDDEN = "<hidden>"
 
 
@@ -59,7 +65,13 @@ def mask(line, platform=""):
     if platform != "ios":
         s = PAN_SECRET.sub(lambda m: m.group(1) + HIDDEN + m.group(3), s)
     if platform != "panos":
-        s = IOS_SECRET.sub(lambda m: m.group("k") + (m.group("t") or "") + HIDDEN, s)
+        m = IOS_SNMP.match(s)
+        if m:
+            # "community X RO": only X; a trap host or a v3 user: all that follows
+            v = m.group("v").split(None, 1)
+            rest = " " + v[1] if "community" in m.group("k").lower() and len(v) > 1 else ""
+            return m.group("k") + HIDDEN + rest
+        s = IOS_SECRET.sub(lambda m: m.group("k") + m.group("t") + HIDDEN, s)
     return s
 
 

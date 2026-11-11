@@ -47,7 +47,8 @@ additional_build_steps:
     # pip in every stage of the build reads this build-only file: PyPI or your mirror (--build-arg
     # PIP_INDEX_URL=https://...), and the hosts pip may reach without checking their certificate (--build-arg
     # PIP_TRUSTED_HOST="pypi.org files.pythonhosted.org" - behind TLS inspection; build-ee.sh INSECURE=1 sets it).
-    # The file is removed at the end: the finished EE's pip is as before.
+    # The file is removed at the end: the finished EE's pip is as before. Its text stays in a lower layer of the
+    # image, so a PIP_INDEX_URL never holds a user name or password (a mirror that reads without a login).
     - ARG PIP_INDEX_URL
     - ARG PIP_TRUSTED_HOST
     - ENV PIP_CONFIG_FILE=/etc/pip-ee-build.conf

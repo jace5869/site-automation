@@ -293,6 +293,12 @@ class Packed(unittest.TestCase):
         self.assertEqual((len(back["row_status"]), len(back["cell_status"])), (kept, kept))
         self.assertIn("This page shows the first %d of 6000 rows (report_web_copy_max_kb)." % kept, back["text"])
         self.assertEqual(len(doc["data"]["report"]["sections"][0]["rows"]), 6000)    # the report itself is not changed
+        # 1.23.0: with its note the text still fits (these sizes were a few bytes over before)
+        random.seed(5)
+        rows = [["h%d" % i, "%x" % random.getrandbits(160)] for i in range(6000)]
+        small = {"files": {"page": "a.html"}, "entry": {}, "data": {"report": {"sections": [{"title": "All", "rows": rows}]}}}
+        for most in (7165, 14339, 28476):
+            self.assertLessEqual(len(pg.pack(small, most)[0]), most)
 
     def test_too_big_even_cut(self):
         doc = kept_doc(rows=5)

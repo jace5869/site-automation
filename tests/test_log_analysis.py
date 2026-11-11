@@ -111,6 +111,7 @@ class Window(unittest.TestCase):
         self.assertIn("must look like", lf.log_window(24, "yesterday", "", NOW)["error"])
         self.assertIn("is not after", lf.log_window(24, "2026-10-23 06:00", "2026-10-23 05:00", NOW)["error"])
         self.assertIn("more than 0", lf.log_window(0, "", "", NOW)["error"])
+        self.assertIn("is in the future", lf.log_window(24, "2026-10-24 08:00", "", NOW)["error"])     # 1.23.0
 
 
 def journal(prio, msg, ts, ident="sshd", cursor=""):
@@ -146,6 +147,13 @@ class Readers(unittest.TestCase):
         self.assertEqual(r["entries"][3]["time"], "2026-10-23T07:58:00")         # a text log's own time: local, no Z
         self.assertEqual(r["sources"][3]["error"], "not readable")
         self.assertEqual(r["sources"][-1], {"name": "/var/log/old.log", "lines": 0, "error": "", "skipped": "unchanged in the window"})
+
+    def test_container_time_in_utc(self):
+        """1.23.0: a container line's time is turned into UTC by its offset."""
+        out = "\n".join(["@@@ container web", "2026-10-23T08:30:00.123-04:00 ERROR db down", "2026-10-23T08:30:00+0530 ERROR b",
+                         "2026-10-23T08:30:00Z ERROR c", "2026-10-23T08:30:00 ERROR d"])
+        self.assertEqual([e["time"] for e in lf.log_linux_entries(out, "web01")["entries"]],
+                         ["2026-10-23T12:30:00Z", "2026-10-23T03:00:00Z", "2026-10-23T08:30:00Z", "2026-10-23T08:30:00Z"])
 
     def test_windows(self):
         res = {"findings": [], "facts": {"entries": [

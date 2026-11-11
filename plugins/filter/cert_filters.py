@@ -153,6 +153,8 @@ def cert_csv(records):
                 v = "true" if v else "false"
             elif v is None:
                 v = ""
+            if isinstance(v, str) and v[:1] in ("=", "+", "-", "@", "\t", "\r"):
+                v = "'" + v                      # a certificate's text is never a spreadsheet formula
             row.append(v)
         w.writerow(row)
     return buf.getvalue()

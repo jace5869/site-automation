@@ -163,7 +163,8 @@ def vm_tools_doc(vms, vcenters=None, opts=None):
     upgrade = [v for v, (w, lk) in states if lk == "info"]
     current = [v for v in allv if v.get("tools_status") == "guestToolsCurrent"]
     none = [v for v in allv if v.get("tools_status") == "guestToolsNotInstalled" or (not v.get("tools_status") and v.get("tools") == "toolsNotInstalled")]
-    not_running = [v for v in allv if v.get("power") == "poweredOn" and v not in none and v.get("tools_running") == "guestToolsNotRunning"]
+    none_ids = set(id(v) for v in none)
+    not_running = [v for v in allv if v.get("power") == "poweredOn" and id(v) not in none_ids and v.get("tools_running") == "guestToolsNotRunning"]
     managed = [v for v in allv if v.get("tools_status") == "guestToolsUnmanaged"]
     unsupported = [v for v in allv if v.get("tools_status") in ("guestToolsTooOld", "guestToolsTooNew", "guestToolsBlacklisted")]
 
@@ -257,7 +258,7 @@ def vm_tools_doc(vms, vcenters=None, opts=None):
     summary = [{"label": "VMs", "value": len(allv)}, {"label": "Tools current", "value": len(current)},
                {"label": "Upgrade available", "value": len(upgrade), "status": "info" if upgrade else ""},
                {"label": "Guest managed", "value": len(managed)},
-               {"label": "No Tools", "value": len(none), "status": "warning" if [v for v in none if v in look] else ""},
+               {"label": "No Tools", "value": len(none), "status": "warning" if set(id(v) for v in look) & none_ids else ""},
                {"label": "Not running (on)", "value": len(not_running), "status": "warning" if not_running else ""},
                {"label": "Not supported", "value": len(unsupported), "status": "warning" if unsupported else ""},
                {"label": "Tools versions", "value": len([k for k, _ in _group(allv, _version) if k not in ("-", "?")])},

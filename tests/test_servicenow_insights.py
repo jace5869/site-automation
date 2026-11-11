@@ -171,6 +171,28 @@ class Masking(unittest.TestCase):
         self.assertEqual(F.unmask(masked, m), text)
         self.assertTrue(set(m["counts"]) >= {"PERSON", "HOST", "PHONE", "EMAIL", "IP", "ID"})
 
+    def test_at_a_sentence_end_and_with_an_underscore(self):
+        """1.23.0: a host, an FQDN or an ID before a full stop, and a name with "_", are masked - each text on its own."""
+        for text, real in (("Rebooted web01.", "web01"), ("Restarted app02.corp.example.mil.", "app02.corp.example.mil"),
+                           ("EDIPI 1234567890.", "1234567890"), ("Cleared queue on SQL_PROD01", "SQL_PROD01"),
+                           ("srv01_backup is full.", "srv01_backup")):
+            m = F.servicenow_insights_mask({"items": [{"table": "incident", "sys_id": "1", "short_description": text}]}, OPTS)
+            out = F.apply_mask(text, m)
+            self.assertNotIn(real, out, text)
+            self.assertEqual(F.unmask(out, m), text)
+        # a version, a ticket and a word with a full stop inside stay as they are
+        text = "Updated to win11. See INC0040001. Use x86_64."
+        m = F.servicenow_insights_mask({"items": [{"table": "incident", "sys_id": "1", "short_description": text}]}, OPTS)
+        self.assertEqual(F.apply_mask(text, m), text)
+
+    def test_a_last_name_that_is_a_word(self):
+        """1.23.0: a last name from the people fields is masked whatever the word."""
+        for name in ("Alex Smith", "Sam Page", "Jordan Young"):
+            last = name.split()[1]
+            r = {"items": [{"table": "incident", "assigned_to": name, "short_description": "Called %s about the printer" % last}]}
+            m = F.servicenow_insights_mask(r, OPTS)
+            self.assertNotIn(last, F.apply_mask(r["items"][0]["short_description"], m))
+
     def test_keep_and_more_names(self):
         r = {"items": [{"table": "incident", "short_description": "Project Falcon down on sw7x"}]}
         m = F.servicenow_insights_mask(r, dict(OPTS, mask_names=["Project Falcon"], mask_keep=["sw7x"]))

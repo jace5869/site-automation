@@ -458,7 +458,7 @@ def ontap_report(collected, opts=None):
     rows = []
     for (cl, node, name), x in sorted(groups.items(), key=lambda kv: -kv[1]["n"]):
         sv = EMS_SEV[x["sev"]]
-        rows.append(_row([cl, node, x["sev"].upper(), name, x["n"], x["last"].strftime("%Y-%m-%d %H:%M") if x["last"] else "?", x["msg"]],
+        rows.append(_row([cl, node, x["sev"].upper(), name, x["n"], x["last"].astimezone(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M") if x["last"] else "?", x["msg"]],
                          ["", "", sv]))
         R.problem(cl, "event", node, sv, "%s x%d: %s" % (name, x["n"], x["msg"][:200]))
     R.table("Error events (last %s h)" % _hours(hours), "ONTAP's event log (EMS): emergency, alert and error events, the same "

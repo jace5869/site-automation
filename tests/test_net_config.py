@@ -65,6 +65,34 @@ class Filters(unittest.TestCase):
         self.assertEqual(f.mask("<phash>$5$x</phash> <key>K</key> <hostname>fw</hostname>", "panos"),
                          "<phash><hidden></phash> <key><hidden></key> <hostname>fw</hostname>")
 
+    def test_mask_every_form(self):
+        """1.23.0: a bare key, the trap host's community, an SNMPv3 user, a level, an NTP key - hidden; commands kept."""
+        hidden = {
+            "crypto isakmp key Sup3rPSK address 192.0.2.1": "crypto isakmp key <hidden>",
+            "tacacs-server key PlainKey1": "tacacs-server key <hidden>",
+            "radius-server key 7 0822455D0A16": "radius-server key 7 <hidden>",
+            " key PlainKey3": " key <hidden>",
+            "snmp-server host 192.0.2.1 version 2c PUBLICSTR": "snmp-server host 192.0.2.1 <hidden>",
+            "snmp-server host 192.0.2.1 PUBLICSTR": "snmp-server host 192.0.2.1 <hidden>",
+            "+snmp-server host 192.0.2.1 informs version 2c PUB udp-port 162": "+snmp-server host 192.0.2.1 <hidden>",
+            "snmp-server user svc_x grp v3 auth sha AuthP priv aes 128 PrivP": "snmp-server user svc_x grp v3 <hidden>",
+            "ntp authentication-key 1 md5 NtpKey 7": "ntp authentication-key 1 <hidden>",
+            "enable secret level 15 5 $1$abcHASH": "enable secret level 15 5 <hidden>",
+            "key config-key password-encrypt MASTERK": "key config-key password-encrypt <hidden>",
+            " pre-shared-key local PSK3": " pre-shared-key <hidden>",
+            " pre-shared-key address 192.0.2.1 key PSK2": " pre-shared-key <hidden>",
+            "ip ospf authentication-key 7 OSPFK": "ip ospf authentication-key 7 <hidden>",
+            " standby 1 authentication md5 key-string HSRPK": " standby 1 authentication md5 <hidden>",
+            "-neighbor 192.0.2.1 password 7 XX": "-neighbor 192.0.2.1 password 7 <hidden>",
+        }
+        for line, want in hidden.items():
+            self.assertEqual(f.mask(line, "ios"), want, line)
+        for line in ("crypto key generate rsa modulus 2048", "crypto keyring KR", "service password-encryption",
+                     "ip community-list 1 permit 65000:1", "set community 65000:1", "tacacs server T1", " address ipv4 192.0.2.5"):
+            self.assertEqual(f.mask(line, "ios"), line)
+        for tag in ("authpwd", "privpwd", "bind-password", "shared-secret"):
+            self.assertEqual(f.mask("<%s>-AQ==abc</%s>" % (tag, tag), "panos"), "<%s><hidden></%s>" % (tag, tag))
+
     def test_diff(self):
         d = f.diff("a\nb\nc\n", "a\nc\nsnmp-server community new RO\n", "ios", 60, "rtr01")
         self.assertEqual((d["added"], d["removed"], d["truncated"]), (1, 1, False))
