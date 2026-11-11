@@ -57,10 +57,10 @@
   var p=document.getElementById('print');if(p){p.hidden=false;p.addEventListener('click',function(){
     all('details.sec').forEach(function(d){d.open=true});window.print()})}
   /* a table wider than its card first takes the CSS's steps (1.21.0: f1 short values wrap, f2 tighter cells and
-     headings, f3 numbers wrap at spaces and a smaller type, f4 a heading word may break; a compact table's sq, 1.11.0,
-     before them), one by one while it does not fit; only one still too wide scrolls sideways (its headings then stay
-     in it). Before a heading word breaks, the tables get the rail's room: the rail is put away for this page only
-     (not kept); its button brings it back, and then the tables take f4. Each table keeps its card's width (data-fw)
+     headings, f3 numbers wrap at spaces and a smaller type, f4 long chips narrower; a compact table's sq, 1.11.0,
+     before them), one by one while it does not fit; one still too wide scrolls sideways inside its card (its headings
+     then stay in it) - a date, an address, a short chip or a heading's word is never broken to fit. Before f4, the
+     tables get the rail's room: the rail is put away for this page only (not kept); its button brings it back. Each table keeps its card's width (data-fw)
      and its steps (data-fs): it is fitted again only when that width changed (a narrower card goes on from the steps
      it has) or when it must be (its Columns, the rows' height) - opening a section costs the others nothing */
   var railAuto=0,railUser=0,lastW=0;

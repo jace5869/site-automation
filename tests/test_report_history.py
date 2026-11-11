@@ -380,11 +380,11 @@ def _wrap_columns(case):
     case.assertIn('<th class="k-wrap" scope="col"><button type="button">Cluster', h)
     case.assertIn('<th class="k-wrap" scope="col" title="Takeover possible after a failure"><button type="button">Takeover possible', h)
     case.assertIn('<th class="k-nw" scope="col"><button type="button">Size', h)                 # '' = from what it holds
-    case.assertIn('<td class="k-wrap" data-l="Cluster" data-v="na-cluster-a"><span class="w">na-cluster-a</span></td>', h)
+    case.assertIn('<td class="k-wrap" data-l="Cluster" data-v="na-cluster-a"><span class="cv"><span class="w">na-cluster-a</span></span></td>', h)
     case.assertIn("td.k-wrap .w{white-space:nowrap}", h)                       # a word up to 16 characters kept whole
     sec2 = dict(sec, rows=[["na-cluster-site-a-prod c1-02\nhome: c1-01", "no", "1 GB"]])
-    case.assertIn('data-v="na-cluster-site-a-prod c1-02\nhome: c1-01">na-cluster-site-a-prod <span class="w">c1-02</span>\n'
-                  '<span class="w">home:</span> <span class="w">c1-01</span></td>', case.render(_report=dict(REPORT, sections=[sec2])))
+    case.assertIn('data-v="na-cluster-site-a-prod c1-02\nhome: c1-01"><span class="cv">na-cluster-site-a-prod <span class="w">c1-02</span>\n'
+                  '<span class="w">home:</span> <span class="w">c1-01</span></span></td>', case.render(_report=dict(REPORT, sections=[sec2])))
     case.assertIn('<td data-l="Takeover possible after a failure" data-v="no (partner down)" class="k-wrap">', h)   # the chip wraps too
     sec3 = dict(sec, rows=[["c", "+398 s", "1 GB"]])                                  # but a short one stays whole
     case.assertIn('<td data-l="Takeover possible after a failure" data-v="+398 s" class="nw">', case.render(_report=dict(REPORT, sections=[sec3])))
@@ -505,7 +505,7 @@ class AtlasLook(unittest.TestCase):
         self.assertIn('<td class="k-num" data-l="Bytes">1,200</td>', h)
         self.assertIn('<span class="w">V-257800</span> <span class="w">(RHEL-09-412035)</span>', h)
         self.assertIn('/<wbr>var/<wbr>lib/<wbr>', h)
-        self.assertIn('/<wbr>opt/<wbr>a &lt;b&gt;</td>', h)                        # escaped first, then the breaks
+        self.assertIn('/<wbr>opt/<wbr>a &lt;b&gt;</span></td>', h)                 # escaped first, then the breaks (one value, 1.21.0)
         self.assertIn('C:\\<wbr>x\\<wbr>y.exe', h)
 
     def test_density_and_bar(self):

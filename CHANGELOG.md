@@ -7,8 +7,10 @@ its own zip). They leave out `playbooks/group_vars`, `playbooks/host_vars`, `inv
 `poam/poam.csv`. (Never paste the full `site-automation-1.21.0.zip` over your copy: it carries the example
 `group_vars`.) Nothing to set up.
 
-**Report website: every table fits its page.** In the atlas and brief looks, a wide table no longer scrolls sideways.
-The VM capacity report's cluster and datastore tables did, even on a 1920 px screen; so did tables of about half the
+**Report website: every table fits its page.** In the atlas and brief looks, no table scrolls sideways at 1366 px or
+wider any more, with the section rail put away as the page now does when it needs the room (the three widest scroll
+inside their card at 1280 px, below). The VM capacity report's cluster and
+datastore tables did, even on a 1920 px screen; so did tables of about half the
 reports at 1366 px (ONTAP hardware, UCS inventory, VM hardware and health, STIG, AD, fapolicyd, alarms and more). The
 next report run writes the new `site-report.js`, and every page on the site uses it, older pages too.
 
@@ -19,18 +21,21 @@ next report run writes the new `site-report.js`, and every page on the site uses
      A text column keeps 9 characters.
   3. Numbers wrap at their spaces (`12,050.0` / `GB`), never inside their digits; the table's type and chips get
      smaller.
-  4. Before a heading's word would break, the section rail is put away for this page, so the tables get its room.
-     The rail's button brings it back; this is not kept for the next page. Then a long heading word may break.
+  4. Before the last step, the section rail is put away for this page, so the tables get its room. The rail's button
+     brings it back; this is not kept for the next page. Then long chips get narrower (3 to 4 lines).
 - **Whole values first.** At every step a date, a time and an IP address stay whole (a date and its time may sit on
-  two lines), and so does a status chip of up to 12 characters (`3 of 4`). A longer chip wraps to 2 or 3 lines. A
-  table that cannot fit with them whole scrolls inside its card; the page never scrolls. No report's table does, at
-  1280, 1366, 1440 or 1920 px, with its test data and with names 22 characters longer. With the rail brought back by
-  its button at 1280 or 1366 px, VM capacity's cluster table scrolls inside its card.
+  two lines), and so do a status chip of up to 12 characters (`3 of 4`) and every word of a heading. A longer chip
+  wraps to 2 or 3 lines. A table that cannot fit with them whole after the last step scrolls inside its card; the page
+  never scrolls. With the rail put away that is only at 1280 px, for the widest tables (VM capacity's clusters, VM
+  health's hosts, ONTAP hardware's controllers); with the rail brought back by its button, those and a few more at
+  1366 and 1440 px (docs/WEB_REPORTS.md lists them). No other table scrolls, at 1280 to 1920 px, with its test data and
+  with names 22 characters longer.
 - **Quick on big tables.** Each table remembers its card's width and its step: opening or closing a section fits
   nothing again unless a card's width changed (2,000 rows x 14 columns at 1280 px: 7 ms, was about 1 s). A table of
   over 400 rows finds its step on its first 300 rows, then checks once with all of them.
-- **Phones (390 px).** Rows are cards, as before. A long value with no space (a sha256, a path, an event name such as
-  `com.vmware.vc.ha.VmRestartedByHAEvent`) now breaks inside its card. Before, it made the whole page scroll sideways
+- **Phones (390 px).** Rows are cards, as before; each value stays one piece beside its column's name. A long value
+  with no space (a sha256, a path, an event name such as `com.vmware.vc.ha.VmRestartedByHAEvent`) now breaks inside
+  its card. Before, it made the whole page scroll sideways
   on 10 reports (fapolicyd, Horizon health, ServiceNow nodes, VM alarms ACT, trust and others).
 - **What every page has.** Every table in every report already had sorting, Columns, CSV and the page's search. The
   section rail shows from 3 sections; a page with 1 or 2 lists them in its top bar. Copy is beside each command, in
@@ -47,8 +52,9 @@ Files:
 Tests:
 - test_report_fit.py (new, CI): every report's page in headless Chrome at 1280, 1366, 1440, 1920 and 390 px, light
   and dark, atlas and brief, with its test data and again with long values (names 22 characters longer, wider numbers);
-  it fails on a table that scrolls sideways at the four wide widths, on a page that scrolls at 390 px, and on a date,
-  time, IP address or short chip split over two lines (a Range around each); and fit() on 2,000 rows x 14 columns: a
+  it fails on a table that scrolls sideways at the four wide widths before its last step (those after it are listed),
+  on a page that scrolls at 390 px, on a phone's card with a value in pieces, and on a date, time, IP address, short
+  chip or heading word split over two lines (a Range around each); and fit() on 2,000 rows x 14 columns: a
   section closed in under 300 ms (7 ms here). The reports' documents:
   tests/fixtures/report_fit (82: what the filters return in the unit tests, and from e2e runs the reports made in
   YAML - VMware snapshot and datastore reports, mail relay, API availability, STIG Manager and ServiceNow health,

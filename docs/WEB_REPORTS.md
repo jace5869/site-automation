@@ -47,23 +47,25 @@ Since 0.53.0:
        A text column keeps 9 characters.
     3. Numbers wrap at their spaces (`12,050.0` / `GB`), never inside their digits; the table's type and its chips get
        smaller.
-    4. Before a heading's word would break, the section rail is put away for this page, so the tables get its room.
-       The rail's button brings it back; this is not kept for the next page. Then a long heading word may break (each
-       heading keeps 5 to 7 characters on a line).
+    4. Before the last step, the section rail is put away for this page, so the tables get its room. The rail's button
+       brings it back; this is not kept for the next page. Then long chips get narrower (3 to 4 lines).
 
     At every step these stay whole: a date, a time, an IP address (`2026-10-20`, `18:14`, `192.0.2.45`,
-    `192.0.2.0/24`; a date and its time may sit on two lines), and a status chip of up to 12 characters (`3 of 4`). A
-    longer chip wraps to 2 or 3 lines, not one word a line. A date inside a file name or a command
+    `192.0.2.0/24`; a date and its time may sit on two lines), a status chip of up to 12 characters (`3 of 4`) and every
+    word of a heading. A longer chip wraps to 2 or 3 lines, not one word a line. A date inside a file name or a command
     (`app.2026-10-20.log`) is part of that name and may break with it.
 
-    Whole values come first: a table that still does not fit scrolls sideways inside its card, with a shadow at the
-    edge; the page itself never does. No report's table does at 1280 px or wider with the section rail put away. With
-    the rail brought back by its button, the widest table (VM capacity's clusters, at 1280 and 1366 px) scrolls inside
-    its card. Without the script (a blocked script), a wide table keeps its normal widths and scrolls inside its card.
+    Whole values come first: a table that does not fit with them whole after the last step scrolls sideways inside its
+    card, with a shadow at the edge; the page itself never does. With the rail put away, that happens only at 1280 px,
+    to the widest tables: VM capacity's clusters, VM health's hosts and ONTAP hardware's controllers. With the rail
+    brought back by its button, also at 1366 px (those, VM capacity's datastores and VM health's clusters) and at 1440 px
+    (VM capacity's clusters, VM health's hosts, ONTAP hardware's controllers). Without the script (a blocked script), a
+    wide table keeps its normal widths and scrolls inside its card.
   - **Quick on big tables.** Each table remembers its card's width and its step: opening or closing a section, a
     filter or the search fits nothing again unless a card's width changed. A table of over 400 rows finds its step on
     its first 300 rows and checks once with all of them.
-  - **On a phone** each row is a card; a long value with no space (a hash, a path) breaks inside its card.
+  - **On a phone** each row is a card: each value beside its column's name, in one piece; a long value with no space
+    (a hash, a path) breaks inside its card.
 - **A bar at the top that stays:**
   - the report's sections, with the one you are reading marked, and each table's row count;
   - **Compact / Comfortable** rows;

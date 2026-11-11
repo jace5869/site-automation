@@ -73,12 +73,16 @@ def render(look, doc):
 # and each table whose box scrolls sideways (its section's title, how much)
 HARNESS = r"""<!doctype html><html><body><pre id="out"></pre><script>
 var W=%(w)d,P=%(pages)s,R={},n=0;
-function measure(d){var de=d.documentElement,r={page:Math.max(0,de.scrollWidth-de.clientWidth),inner:[]};
+function measure(d){var de=d.documentElement,r={page:Math.max(0,de.scrollWidth-de.clientWidth),inner:[],last:[]};
   [].forEach.call(d.querySelectorAll('table'),function(t){if(!t.offsetParent)return;var a=t.parentElement;
     while(a&&a!==d.body){var o=getComputedStyle(a).overflowX;if(o==='auto'||o==='scroll'||o==='hidden')break;a=a.parentElement}
     if(a&&a!==d.body&&a.scrollWidth>a.clientWidth+1){var h=t.closest('details');h=h&&h.querySelector('h2');
-      r.inner.push((h?h.childNodes[0].textContent.trim():'?')+' +'+(a.scrollWidth-a.clientWidth))}});
-  r.split=splits(d);return r}
+      (t.classList.contains('f4')?r.last:r.inner).push((h?h.childNodes[0].textContent.trim():'?')+' +'+(a.scrollWidth-a.clientWidth))}});
+  r.split=splits(d);r.torn=torn(d);return r}
+// a phone's card: each cell is its label and ONE value - a value in pieces (its text beside a span) is torn apart
+function torn(d){var out=[];[].forEach.call(d.querySelectorAll('td'),function(td){if(!td.offsetParent||getComputedStyle(td).display!=='grid')return;
+  var n=[].filter.call(td.childNodes,function(c){return c.nodeType===1||(c.nodeType===3&&c.nodeValue.trim())}).length;
+  if(n>1)out.push((td.getAttribute('data-l')||'?')+': '+td.textContent.trim().slice(0,40))});return out}
 // a date, a time or an IP address in a cell, and a chip of up to 12 characters: on more than one line is a split
 // (a word of its own: a date inside a file name - localhost_log.2026-11-11.txt, user@192.0.2.9 - is part of that name)
 var TOK=/(?<![\w.@\-])(\d{4}-\d\d-\d\d(T[\d:.]+Z?)?|\d\d?\/\d\d?\/\d{4}|\d\d?:\d\d(:\d\d)?|(\d{1,3}\.){3}\d{1,3}(\/\d+|:\d+)?)(?![\w@\-])/g;
@@ -90,6 +94,10 @@ function splits(d){var out=[];
     while((n=it.nextNode())){var m,v=n.nodeValue;TOK.lastIndex=0;
       while((m=TOK.exec(v))){var rg=d.createRange();rg.setStart(n,m.index);rg.setEnd(n,m.index+m[0].length);
         if(lines(rg)>1)out.push(m[0])}}});
+  // a heading's words: each on one line
+  [].forEach.call(d.querySelectorAll('th button'),function(b){if(!b.offsetParent)return;var x=b.firstChild;if(!x||x.nodeType!==3)return;
+    var re=/\S+/g,m;while((m=re.exec(x.nodeValue))){var rg=d.createRange();rg.setStart(x,m.index);rg.setEnd(x,m.index+m[0].length);
+      if(lines(rg)>1)out.push('heading '+m[0])}});
   [].forEach.call(d.querySelectorAll('td .chip'),function(c){if(!c.offsetParent)return;var x=c.lastElementChild;
     if(!x||x.textContent.length>12)return;var rg=d.createRange();rg.selectNodeContents(x);if(lines(rg)>1)out.push('chip '+x.textContent)});
   return out}
@@ -138,7 +146,7 @@ class Fit(unittest.TestCase):
             self.skipTest("no headless browser here")
         docs = sorted(glob.glob(os.path.join(DOCS, "*.json")))
         self.assertGreater(len(docs), 50, "the reports' documents (tests/report_fit_docs.py)")
-        bad = []
+        bad, last = [], {}
         with tempfile.TemporaryDirectory() as d:
             pages = []
             for f in docs:
@@ -159,7 +167,14 @@ class Fit(unittest.TestCase):
                         bad.append("%s at %d px: a table scrolls sideways: %s" % (k, w, "; ".join(r["inner"])))
                     if r["split"]:
                         bad.append("%s at %d px: split over two lines: %s" % (k, w, ", ".join(r["split"][:6])))
+                    if r["torn"]:
+                        bad.append("%s at %d px: a value in pieces on the phone's card: %s" % (k, w, "; ".join(r["torn"][:4])))
+                    if w != PHONE and r["last"]:
+                        last.setdefault(k.rsplit(" ", 1)[0].replace("-long.html", ".html"), set()).add(
+                            "%d px: %s" % (w, "; ".join(x.rsplit(" +", 1)[0] for x in r["last"])))
         self.assertEqual(bad, [], "\n".join(bad[:40]) + ("\n... %d in all" % len(bad) if len(bad) > 40 else ""))
+        for k in sorted(last):          # only after every step: a table that cannot fit with its values whole
+            print("  scrolls inside its card: %s - %s" % (k, ", ".join(sorted(last[k]))), file=sys.stderr)
         print("ok: %d report pages (%d documents, atlas and brief, as tested and with long values) fit at %s px and %d px, "
               "light and dark" % (len(pages), len(docs), "/".join(map(str, WIDE)), PHONE), file=sys.stderr)
 
