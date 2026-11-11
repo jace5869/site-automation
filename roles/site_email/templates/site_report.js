@@ -12,9 +12,9 @@
   /* sorting (1.20.0): a cell's value as a key. A lone number (a sign, thousands separators, a decimal point, a % after
      it) is that number; any other value is its text in parts, the numbers in it as numbers - an IPv4 address sorts by
      its four octets, 8.0.2 before 8.0.10, vmx-9 before vmx-21, host2 before host10. Numbers before text; an empty
-     cell last, either way */
+     cell, or a lone dash (how a report writes a missing value), last, either way */
   var NUM=/^[-+]?(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)\s*%?$/;
-  function skey(v){v=(v||'').replace(/\s+/g,' ').trim();if(!v)return null;
+  function skey(v){v=(v||'').replace(/\s+/g,' ').trim();if(!v||/^[-\u2013\u2014]$/.test(v))return null;
     if(NUM.test(v))return [parseFloat(v.replace(/[,%\s]/g,''))];
     var k=[],re=/\d+(?:[.,]\d+)*/g,m,at=0,low=v.toLowerCase();
     while((m=re.exec(low))){if(m.index>at)k.push(low.slice(at,m.index));var s=m[0];
@@ -153,19 +153,22 @@
   all('.tw table').forEach(function(tb){
     var body=tb.tBodies[0],rows=[].slice.call(body.rows);
     /* a header's click sorts by its column, the next one the other way; the arrows as characters (textContent: a page
-       under Trusted Types sorts too). A first click on a column already in order (the VM tables come sorted by VM)
-       sorts it the other way, so the click always shows. The whole header cell is the target, not only its button */
+       under Trusted Types sorts too). A first click on a column whose values are already in order as the rows stand
+       now (the VM tables come sorted by VM), not all the same (empty cells aside), sorts it the other way, so the click
+       always shows. The
+       whole header cell is the target, not only its button */
     tb.querySelectorAll('th button').forEach(function(btn,i){var th=btn.parentNode;
       th.addEventListener('click',function(e){if(!btn.contains(e.target))btn.click()});
       btn.addEventListener('click',function(){
       var by=rows.map(function(r){return [r,skey(cval(r.cells[i]))]}),
           order=function(asc){return by.slice().sort(function(a,b){return scmp(a[1],b[1],asc)}).map(function(x){return x[0]})},
-          s=th.getAttribute('aria-sort'),asc=s!=='ascending',up=order(true),now=[].slice.call(body.rows),
-          same=function(o){return o.every(function(r,j){return r===now[j]})};
-      if(!s&&same(up)&&!same(order(false)))asc=false;
+          s=th.getAttribute('aria-sort'),asc=s!=='ascending',
+          now=[].map.call(body.rows,function(r){return skey(cval(r.cells[i]))}),inc=true,diff=false;
+      for(var j=1;j<now.length;j++){var c=scmp(now[j-1],now[j],true);if(c>0)inc=false;if(c<0&&now[j]!==null)diff=true}
+      if(!s&&inc&&diff)asc=false;
       tb.querySelectorAll('th').forEach(function(h){var a=h.querySelector('.sort');h.removeAttribute('aria-sort');if(a)a.textContent='\u2195'});
       th.setAttribute('aria-sort',asc?'ascending':'descending');btn.querySelector('.sort').textContent=asc?'\u25b2':'\u25bc';
-      (asc?up:order(false)).forEach(function(r){body.appendChild(r)})})});
+      order(asc).forEach(function(r){body.appendChild(r)})})});
     var tools=tb.parentNode.previousElementSibling;
     if(tools&&tools.classList.contains('tools2')){var f=tools.querySelector('.filter'),n=tools.querySelector('.shown');
       if(!f)return;

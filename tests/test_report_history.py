@@ -832,15 +832,23 @@ class Sorting(unittest.TestCase):
         self.assertEqual(self.order(vals), ["2", "12", "192.0.2.1", "abc", "Bcd", "", "  "])
         self.assertEqual(self.order(vals, asc=False), ["Bcd", "abc", "192.0.2.1", "12", "2", "", "  "])
 
+    def test_a_lone_dash_is_empty(self):
+        """A report writes a missing value as a dash (the VM tables: "-"): last in either direction, like an empty cell.
+        A dash with more to it is text."""
+        vals = ["no", "-", "yes", " \u2013 ", "\u2014", "", "-1", "a-b"]
+        self.assertEqual(self.order(vals), ["-1", "a-b", "no", "yes", "-", " \u2013 ", "\u2014", ""])
+        self.assertEqual(self.order(vals, asc=False), ["yes", "no", "a-b", "-1", "-", " \u2013 ", "\u2014", ""])
+
     def test_data_v_first(self):
         node = shutil.which("node")
         if not node:
             self.skipTest("no node here")
         out = subprocess.run([node, "-e", NODE_STUB + "function c(v,t){return {getAttribute:function(){return v},textContent:t}}"
                               "console.log(JSON.stringify([S.cellValue(c('12','twelve')),S.cellValue(c(null,' x ')),"
-                              "S.cellValue(c('','y')),S.cellValue(null)]))", SCRIPT], capture_output=True, text=True)
+                              "S.cellValue(c('','y')),S.cellValue(null),S.key(S.cellValue(c('3','-'))),S.key(S.cellValue(c(null,'-')))]))",
+                              SCRIPT], capture_output=True, text=True)
         self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertEqual(json.loads(out.stdout), ["12", " x ", "y", ""])
+        self.assertEqual(json.loads(out.stdout), ["12", " x ", "y", "", [3], None])      # data-v over a shown dash
 
     def test_no_html_sinks(self):
         with open(SCRIPT) as f:
@@ -865,9 +873,11 @@ window.addEventListener('load',function(){var R={errors:E},root=document.documen
   ths[0].querySelector('button').click();R.vm1=[st(0),col(0)];
   ths[0].querySelector('button').click();R.vm2=[st(0),col(0)];
   ths[1].querySelector('button').click();R.ip=[st(1),st(0),col(1)];
+  ths[5].querySelector('button').click();R.tie=[st(5),col(5),col(0)];
   var r=ths[2].getBoundingClientRect(),el=document.elementFromPoint(r.left+3,r.top+3);R.corner0=el===ths[2];
   if(ths[2].contains(el))el.click();R.corner=[st(2),col(2)];
   ths[3].dispatchEvent(new MouseEvent('click',{bubbles:true}));R.cell=[st(3),col(3)];
+  ths[3].querySelector('button').click();R.cell2=[st(3),col(3)];
   [].forEach.call(tb.tBodies[0].rows,function(row){var c=row.cells[4];c.setAttribute('data-v',{z:'1',y:'3',x:'2'}[c.textContent.trim()])});
   ths[4].querySelector('button').click();R.datav=[st(4),col(4)];
   document.getElementById('out').textContent=JSON.stringify(R)});
@@ -880,10 +890,12 @@ window.addEventListener('load',function(){var R={errors:E},root=document.documen
         if not b:
             self.skipTest("no headless browser here")
         more = ["Red Hat Enterprise Linux 9 (64-bit)", "esx01.example.mil", "cluster1-prod-a", "datastore-ssd-01"]
-        sec = {"title": "VMs", "columns": ["VM", "IP address", "HW", "Used", "Note", "Guest operating system", "ESXi host",
-                                           "Cluster", "Datastore"],             # at 900 px some headers wrap, HW's does not
-               "rows": [["app01", "192.0.2.45", "vmx-21", "45%", "z"] + more, ["db01", "192.0.2.5", "vmx-9", "4.5%", "y"] + more,
-                        ["web01", "198.51.100.7", "vmx-13", "", "x"] + more]}
+        # vTPM in value order only after IP is sorted (db01, app01, web01), not in the page's own order; Used's "-" is how
+        # the VM tables write a missing value
+        sec = {"title": "VMs", "columns": ["VM", "IP address", "HW", "Used", "Note", "vTPM", "Guest operating system",
+                                           "ESXi host", "Cluster", "Datastore"],  # at 900 px some headers wrap, HW's does not
+               "rows": [["app01", "192.0.2.45", "vmx-21", "45%", "z", "no"] + more, ["db01", "192.0.2.5", "vmx-9", "4.5%", "y", "no"] + more,
+                        ["web01", "198.51.100.7", "vmx-13", "-", "x", "yes"] + more]}
         for look in ("atlas", "brief"):
             for theme in ("light", "dark"):
                 h = WebColumns().render(look, _report=dict(REPORT, sections=[sec]))
@@ -915,7 +927,10 @@ window.addEventListener('load',function(){var R={errors:E},root=document.documen
                 # HW's header is shorter than its row (the long one wraps): its top corner is the cell, not the button
                 self.assertTrue(r["corner0"], k)
                 self.assertEqual(r["corner"], [["ascending", "\u25b2"], ["vmx-9", "vmx-13", "vmx-21"]], k)
-                self.assertEqual(r["cell"], [["ascending", "\u25b2"], ["4.5%", "45%", ""]], k)          # a click on a cell; empty last
+                self.assertEqual(r["cell"], [["ascending", "\u25b2"], ["4.5%", "45%", "-"]], k)         # a click on a cell; a dash last
+                self.assertEqual(r["cell2"], [["descending", "\u25bc"], ["45%", "4.5%", "-"]], k)       # ... either way
+                # ties in value order after another column's sort: the first click sorts the other way, and it shows
+                self.assertEqual(r["tie"], [["descending", "\u25bc"], ["yes", "no", "no"], ["web01", "app01", "db01"]], k)   # ties: the page's order
                 self.assertEqual(r["datav"], [["ascending", "\u25b2"], ["z", "x", "y"]], k)             # data-v 1, 2, 3
 
 

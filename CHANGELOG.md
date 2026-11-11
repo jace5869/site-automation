@@ -16,15 +16,17 @@ expect. The next report run writes the new `site-report.js`, and every page on t
     address sorted as its first number only (`192`).
   - Versions and names with a number in them sort in order: `8.0.2` before `8.0.10`, `vmx-9` before `vmx-21`,
     `host2` before `host10`.
-  - Numbers come before text, as before. Empty cells go last, either way.
+  - Numbers come before text, as before. Empty cells and a lone dash (`-`, how the VM tables write a missing value)
+    go last, either way.
   - A cell's whole value (where the page shows less) is still what it sorts by.
 - **Sites with Trusted Types.** Under a policy with `require-trusted-types-for 'script'`, every click on a heading
   failed, and nothing sorted. The script now writes no HTML at all, so it sorts there too. The ticket insights pages
   have a script of their own (`site-insights.js`); its chart tips and its sort arrows still write HTML, so under that
   policy those two fail on those pages.
 - **A first click that moved nothing.** A table that comes in order (the VM inventory's tables, by VM) showed an
-  arrow on the first click and moved nothing. Now a first click on a column that is already in order sorts it the
-  other way, so the click always shows.
+  arrow on the first click and moved nothing. Now a first click on a column whose values are already in order, as the
+  rows stand, sorts it the other way, so the click always shows. That holds after another column was sorted too, with
+  ties (a vTPM column of no, no, yes).
 - **The whole heading.** A click anywhere in a heading's cell sorts. Before, only the heading's button did, and on a
   row of headings with some wrapped, that covered about half of a short heading's cell.
 - **No arrows without the script.** Where no script runs, the headings no longer show sort arrows or a hand pointer:
@@ -38,10 +40,11 @@ Files:
 
 Tests:
 - test_report_history.py (Sorting: IP addresses across and inside subnets, versions, `vmx-N` and host names, numbers
-  with %, thousands separators and signs, mixed columns, empty cells, a cell's whole value first; in a headless browser,
-  both looks, light and dark, under `require-trusted-types-for 'script'`: the policy in force, no error, the first
-  click on a column in order, the IP column, a click on a short heading's corner, a click on the cell, the arrows and
-  the pointer only with the script);
+  with %, thousands separators and signs, mixed columns, empty cells and a lone dash, a cell's whole value first; in a
+  headless browser, both looks, light and dark, under `require-trusted-types-for 'script'`: the policy in force, no
+  error, the first click on a column in order, the IP column, a column with ties in order after another column's sort,
+  a click on a short heading's corner, a click on the cell, a dash last both ways, the arrows and the pointer only with
+  the script);
 - run_web_test.sh and run_email_test.sh on ansible-core 2.22 and 2.16.
 
 SA_VERSION 1.20.0; the PDFs at 1.20.0.

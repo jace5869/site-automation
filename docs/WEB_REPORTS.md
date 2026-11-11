@@ -68,9 +68,10 @@ Since 0.53.0:
   a table's rows become small cards, each value under its column's name.
   - Sorting (1.20.0): numbers as numbers (`1,234`, `4.5 %`, `-7`); IP addresses by their four parts (`192.0.2.5`
     before `192.0.2.45`); versions and names with a number in them in order (`8.0.2` before `8.0.10`, `vmx-9` before
-    `vmx-21`, `host2` before `host10`). Numbers come before text. Empty cells go last, either way.
-  - A click anywhere in the heading's cell sorts. A first click on a column that is already in order (the VM tables
-    come sorted by VM) sorts it the other way, so the click always shows.
+    `vmx-21`, `host2` before `host10`). Numbers come before text. Empty cells and a lone dash (`-`, how a report
+    writes a missing value) go last, either way.
+  - A click anywhere in the heading's cell sorts. A first click on a column whose values are already in order, as the
+    rows stand (the VM tables come sorted by VM), sorts it the other way, so the click always shows.
   - The arrows and the hand pointer appear only once the script runs: without it the headings are plain.
 - **The index page** in the same look, with the same switch.
 - **Printed:** white, landscape, every section open, each table's headings repeated on every page.
