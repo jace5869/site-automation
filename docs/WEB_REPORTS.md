@@ -42,16 +42,27 @@ Since 0.53.0:
     off the edge, and nothing is added to what you copy.
   - **A table wider than its card fits anyway (1.21.0).** Nothing is cut off and no column is hidden. The page's
     script takes these steps, one at a time, only while the table still does not fit:
-    1. Short values and status chips wrap at their spaces and hyphens; long columns get smaller minimum widths.
+    1. Short values and long status chips wrap at their spaces and hyphens; long columns get smaller minimum widths.
     2. Cells get tighter, headings wrap at their spaces, and a very long word (a datastore or host name) breaks inside.
        A text column keeps 9 characters.
-    3. Numbers wrap at their spaces (`12,050.0` / `GB`), never inside their digits; the table's type gets smaller.
+    3. Numbers wrap at their spaces (`12,050.0` / `GB`), never inside their digits; the table's type and its chips get
+       smaller.
     4. Before a heading's word would break, the section rail is put away for this page, so the tables get its room.
-       The rail's button brings it back (then a heading's word may break); this is not kept for the next page.
+       The rail's button brings it back; this is not kept for the next page. Then a long heading word may break (each
+       heading keeps 5 to 7 characters on a line).
 
-    Only a table still too wide after that scrolls sideways, with a shadow at the edge. No report's table does at 1366
-    px or wider. Without the script (a blocked script), a wide table keeps its normal widths and scrolls sideways
-    inside its card.
+    At every step these stay whole: a date, a time, an IP address (`2026-10-20`, `18:14`, `192.0.2.45`,
+    `192.0.2.0/24`; a date and its time may sit on two lines), and a status chip of up to 12 characters (`3 of 4`). A
+    longer chip wraps to 2 or 3 lines, not one word a line. A date inside a file name or a command
+    (`app.2026-10-20.log`) is part of that name and may break with it.
+
+    Whole values come first: a table that still does not fit scrolls sideways inside its card, with a shadow at the
+    edge; the page itself never does. No report's table does at 1280 px or wider with the section rail put away. With
+    the rail brought back by its button, the widest table (VM capacity's clusters, at 1280 and 1366 px) scrolls inside
+    its card. Without the script (a blocked script), a wide table keeps its normal widths and scrolls inside its card.
+  - **Quick on big tables.** Each table remembers its card's width and its step: opening or closing a section, a
+    filter or the search fits nothing again unless a card's width changed. A table of over 400 rows finds its step on
+    its first 300 rows and checks once with all of them.
   - **On a phone** each row is a card; a long value with no space (a hash, a path) breaks inside its card.
 - **A bar at the top that stays:**
   - the report's sections, with the one you are reading marked, and each table's row count;

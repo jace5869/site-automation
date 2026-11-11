@@ -14,15 +14,21 @@ next report run writes the new `site-report.js`, and every page on the site uses
 
 - **How a table fits.** Text wraps; nothing is cut off and no column is hidden. A table that is wider than its card
   takes these steps, one at a time, only while it still does not fit:
-  1. Short values and status chips wrap at their spaces and hyphens, and long columns get smaller minimum widths.
+  1. Short values and long status chips wrap at their spaces and hyphens, and long columns get smaller minimum widths.
   2. Cells get tighter, headings wrap at their spaces, and a very long word (a datastore or host name) breaks inside.
      A text column keeps 9 characters.
-  3. Numbers wrap at their spaces (`12,050.0` / `GB`), never inside their digits; the table's type gets smaller.
+  3. Numbers wrap at their spaces (`12,050.0` / `GB`), never inside their digits; the table's type and chips get
+     smaller.
   4. Before a heading's word would break, the section rail is put away for this page, so the tables get its room.
-     The rail's button brings it back; this is not kept for the next page. With the rail back, a heading's word may
-     break.
-  - Only a table still too wide after all of that scrolls sideways. No report's table does, at 1366, 1440 or 1920 px,
-    with its test data and with names 22 characters longer.
+     The rail's button brings it back; this is not kept for the next page. Then a long heading word may break.
+- **Whole values first.** At every step a date, a time and an IP address stay whole (a date and its time may sit on
+  two lines), and so does a status chip of up to 12 characters (`3 of 4`). A longer chip wraps to 2 or 3 lines. A
+  table that cannot fit with them whole scrolls inside its card; the page never scrolls. No report's table does, at
+  1280, 1366, 1440 or 1920 px, with its test data and with names 22 characters longer. With the rail brought back by
+  its button at 1280 or 1366 px, VM capacity's cluster table scrolls inside its card.
+- **Quick on big tables.** Each table remembers its card's width and its step: opening or closing a section fits
+  nothing again unless a card's width changed (2,000 rows x 14 columns at 1280 px: 7 ms, was about 1 s). A table of
+  over 400 rows finds its step on its first 300 rows, then checks once with all of them.
 - **Phones (390 px).** Rows are cards, as before. A long value with no space (a sha256, a path, an event name such as
   `com.vmware.vc.ha.VmRestartedByHAEvent`) now breaks inside its card. Before, it made the whole page scroll sideways
   on 10 reports (fapolicyd, Horizon health, ServiceNow nodes, VM alarms ACT, trust and others).
@@ -33,18 +39,21 @@ next report run writes the new `site-report.js`, and every page on the site uses
   have a fixed width of their own; many of their tables are wider than 800 px. A later version takes them on.
 
 Files:
-- roles/site_email: templates/site_report.js (the steps, the rail put away for a page), templates/report_atlas.html.j2
-  and report_brief.html.j2 (the steps' CSS; a long word breaks inside a phone's card);
+- roles/site_email: templates/site_report.js (the steps, the rail put away for a page, each table's width and step
+  kept), templates/report_atlas.html.j2 and report_brief.html.j2 (the steps' CSS; dates, times, IP addresses and short
+  chips kept whole; a long word breaks inside a phone's card);
 - docs/WEB_REPORTS.md (how a wide table fits).
 
 Tests:
-- test_report_fit.py (new, CI): every report's page in headless Chrome at 1366, 1440, 1920 and 390 px, light and dark,
-  atlas and brief, with its test data and again with long values (names 22 characters longer, wider numbers); it fails
-  on a table that scrolls sideways at the three widths, and on a page that scrolls at 390 px. The reports' documents:
+- test_report_fit.py (new, CI): every report's page in headless Chrome at 1280, 1366, 1440, 1920 and 390 px, light
+  and dark, atlas and brief, with its test data and again with long values (names 22 characters longer, wider numbers);
+  it fails on a table that scrolls sideways at the four wide widths, on a page that scrolls at 390 px, and on a date,
+  time, IP address or short chip split over two lines (a Range around each); and fit() on 2,000 rows x 14 columns: a
+  section closed in under 300 ms (7 ms here). The reports' documents:
   tests/fixtures/report_fit (82: what the filters return in the unit tests, and from e2e runs the reports made in
   YAML - VMware snapshot and datastore reports, mail relay, API availability, STIG Manager and ServiceNow health,
   Horizon's task reports, STIG recheck); tests/report_fit_docs.py makes them again;
-- test_report_history.py (the compact table's first step);
+- test_report_history.py (the compact table's first step; a short chip's class);
 - run_web_test.sh on ansible-core 2.22, run_email_test.sh on 2.22 and 2.16.
 
 SA_VERSION 1.21.0; the PDFs at 1.21.0.

@@ -1,9 +1,11 @@
-"""1.21.0: every report page fits its window - no table scrolls sideways at 1366, 1440 and 1920 px and no page scrolls at
+"""1.21.0: every report page fits its window - no table scrolls sideways at 1280, 1366, 1440 and 1920 px and no page scrolls at
 390 px (a phone; a table there may scroll inside its card) - in the atlas and brief looks, light and dark. Each report's
 document as its unit tests or its e2e run make it (tests/fixtures/report_fit, refreshed by tests/report_fit_docs.py), and
 again with long values: names 22 characters longer, numbers wider. A table that does not fit first takes the script's
-steps (f1, f2, f3: wrapping); one that still scrolls fails here. Many pages per browser start: each width is one page of
-frames, the report pages in them at that width.
+steps (f1 to f4: wrapping); one that still scrolls fails here. At every width no date, time, IP address or chip of up to
+12 characters is split over two lines (a Range around each: more than one line box is a split). Many pages per browser
+start: each width is one page of frames, the report pages in them at that width. And fit() is quick on a big table:
+opening or closing a section that changes no table's width refits nothing.
   python tests/test_report_fit.py           (skips without google-chrome or chromium)"""
 import glob
 import json
@@ -17,7 +19,7 @@ import unittest
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DOCS = os.path.join(REPO, "tests", "fixtures", "report_fit")
-WIDE = (1366, 1440, 1920)
+WIDE = (1280, 1366, 1440, 1920)
 PHONE = 390
 BATCH = 40                       # report pages per browser start (each twice: light and dark)
 
@@ -76,7 +78,21 @@ function measure(d){var de=d.documentElement,r={page:Math.max(0,de.scrollWidth-d
     while(a&&a!==d.body){var o=getComputedStyle(a).overflowX;if(o==='auto'||o==='scroll'||o==='hidden')break;a=a.parentElement}
     if(a&&a!==d.body&&a.scrollWidth>a.clientWidth+1){var h=t.closest('details');h=h&&h.querySelector('h2');
       r.inner.push((h?h.childNodes[0].textContent.trim():'?')+' +'+(a.scrollWidth-a.clientWidth))}});
-  return r}
+  r.split=splits(d);return r}
+// a date, a time or an IP address in a cell, and a chip of up to 12 characters: on more than one line is a split
+// (a word of its own: a date inside a file name - localhost_log.2026-11-11.txt, user@192.0.2.9 - is part of that name)
+var TOK=/(?<![\w.@\-])(\d{4}-\d\d-\d\d(T[\d:.]+Z?)?|\d\d?\/\d\d?\/\d{4}|\d\d?:\d\d(:\d\d)?|(\d{1,3}\.){3}\d{1,3}(\/\d+|:\d+)?)(?![\w@\-])/g;
+function lines(rg){var tops=[];[].forEach.call(rg.getClientRects(),function(b){if(b.width<1)return;
+  if(!tops.some(function(t){return Math.abs(t-b.top)<3}))tops.push(b.top)});return tops.length}
+function splits(d){var out=[];
+  [].forEach.call(d.querySelectorAll('td'),function(td){if(!td.offsetParent)return;
+    var it=d.createTreeWalker(td,NodeFilter.SHOW_TEXT),n;
+    while((n=it.nextNode())){var m,v=n.nodeValue;TOK.lastIndex=0;
+      while((m=TOK.exec(v))){var rg=d.createRange();rg.setStart(n,m.index);rg.setEnd(n,m.index+m[0].length);
+        if(lines(rg)>1)out.push(m[0])}}});
+  [].forEach.call(d.querySelectorAll('td .chip'),function(c){if(!c.offsetParent)return;var x=c.lastElementChild;
+    if(!x||x.textContent.length>12)return;var rg=d.createRange();rg.selectNodeContents(x);if(lines(rg)>1)out.push('chip '+x.textContent)});
+  return out}
 P.forEach(function(p){['light','dark'].forEach(function(s){var f=document.createElement('iframe');
   f.style.cssText='width:'+W+'px;height:900px;border:0;display:block';
   f.onload=function(){var d=f.contentDocument;d.documentElement.setAttribute('data-theme',s);
@@ -141,9 +157,62 @@ class Fit(unittest.TestCase):
                         bad.append("%s at %d px: the page scrolls sideways (+%d px)" % (k, w, r["page"]))
                     if w != PHONE and r["inner"]:
                         bad.append("%s at %d px: a table scrolls sideways: %s" % (k, w, "; ".join(r["inner"])))
+                    if r["split"]:
+                        bad.append("%s at %d px: split over two lines: %s" % (k, w, ", ".join(r["split"][:6])))
         self.assertEqual(bad, [], "\n".join(bad[:40]) + ("\n... %d in all" % len(bad) if len(bad) > 40 else ""))
         print("ok: %d report pages (%d documents, atlas and brief, as tested and with long values) fit at %s px and %d px, "
               "light and dark" % (len(pages), len(docs), "/".join(map(str, WIDE)), PHONE), file=sys.stderr)
+
+
+# a big table's page in a frame: once it is loaded (its script ran), timed at once, synchronously: a section closed (the
+# page's toggle handler: fit) and the rows' height changed (every table fitted again)
+TIMING = r"""<!doctype html><html><body><pre id="out"></pre><script>
+var f=document.createElement('iframe');f.style.cssText='width:1280px;height:900px;border:0';
+f.onload=function(){var d=f.contentDocument,w=f.contentWindow,secs=d.querySelectorAll('details.sec'),small=secs[secs.length-1];
+  var big=d.querySelector('.tw table'),t0=w.performance.now();
+  small.open=false;small.dispatchEvent(new Event('toggle'));void d.body.offsetHeight;var t1=w.performance.now();
+  var c=d.querySelector('#density-compact');c.checked=true;c.dispatchEvent(new Event('change',{bubbles:true}));void d.body.offsetHeight;
+  var t2=w.performance.now();
+  document.getElementById('out').textContent=JSON.stringify({toggle:t1-t0,refit:t2-t1,steps:big.className,rows:big.tBodies[0].rows.length})};
+f.src='%(page)s';document.body.appendChild(f);
+</script></body></html>"""
+
+
+class Quick(unittest.TestCase):
+    def test_fit_is_quick_on_a_big_table(self):
+        """2,000 rows of 14 columns at 1280 px: closing another section refits nothing (under 100 ms here; 300 ms
+        allowed for a slow runner); the rows' height changed refits it (printed, for the record)."""
+        b = _browser()
+        if not b:
+            self.skipTest("no headless browser here")
+        cols = ["Cluster", "Datacenter", "Hosts", "CPU used", "Memory used", "Memory after host failure", "vCPU per core",
+                "VMs on", "Average VM", "Memory growth", "Memory runway", "Room for more VMs", "Hosts recommended",
+                "Last read"]
+        rows = [["PROD-%04d (vc01 / DC1)" % i, "vc01 / DC1", "3 of 4", "25%%", "78%%", "117%%", 1.88, 30 + i,
+                 "4.0 vCPU, 50.0 GB", "+120.0 GB / month", "80%% N-1 reached", "0 (memory)",
+                 "1 now (memory 59%% on average then); 5 within 12 months", "2026-10-20 18:14"] for i in range(2000)]
+        rows = [[c.replace("%%", "%") if isinstance(c, str) else c for c in r] for r in rows]
+        doc = {"title": "Big", "status": "info", "sections": [
+            {"title": "Clusters", "columns": cols, "rows": rows, "cell_status": [["", "", "warning"] + [""] * 11] * 2000},
+            {"title": "Notes", "lines": ["one", "two"]}]}
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "big.html"), "w") as o:
+                o.write(render("atlas", doc))
+            h = os.path.join(d, "timing.html")
+            with open(h, "w") as o:
+                o.write(TIMING % {"page": "big.html"})
+            with tempfile.TemporaryDirectory() as prof:
+                r = subprocess.run([b, "--headless=new", "--disable-gpu", "--no-sandbox", "--user-data-dir=" + prof,
+                                    "--allow-file-access-from-files", "--window-size=1320,900", "--dump-dom", "file://" + h],
+                                   capture_output=True, text=True, timeout=300)
+        m = re.search(r'<pre id="out">(.*?)</pre>', r.stdout, re.S)
+        self.assertTrue(m and m.group(1), r.stderr[-600:])
+        import html as htmllib
+        t = json.loads(htmllib.unescape(m.group(1)))
+        self.assertEqual(t["rows"], 2000)
+        self.assertLess(t["toggle"], 300, t)
+        print("ok: fit on 2,000 rows x 14 columns at 1280 px (%s): a section closed %.0f ms, every table again (rows' "
+              "height) %.0f ms" % (t["steps"] or "no step", t["toggle"], t["refit"]), file=sys.stderr)
 
 
 if __name__ == "__main__":

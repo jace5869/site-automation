@@ -52,12 +52,31 @@
 {%- macro copyicons() -%}
 <svg class="ic i1" viewBox="0 0 16 16" aria-hidden="true"><rect x="5.2" y="5.2" width="8.6" height="8.6" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10.8 3.2V3a1.6 1.6 0 00-1.6-1.6H3.4A1.6 1.6 0 001.8 3v5.8a1.6 1.6 0 001.6 1.6h.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><svg class="ic i2" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.4 8.6l3 3 6.2-6.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
 {%- endmacro -%}
+{#- 1.21.0: a date, a time or an IP address kept whole, at any width (2026-10-20, 18:14, 2026-10-20T18:14Z, 10/20/2026,
+    192.0.2.45, 192.0.2.0/24, 192.0.2.5:443; a version with 4 parts too); a value's other words as they are -#}
+{%- macro nbw(w) -%}
+{%- set c = w.strip('()[],;"\'') -%}
+{%- set ip = c.split('/')[0].split(':')[0] -%}
+{%- if c and ((c[:4].isdigit() and c[4:5] == '-' and c[5:7].isdigit() and c[7:8] == '-')
+     or (c.count('/') == 2 and c.replace('/', '').isdigit())
+     or (c.count(':') in [1, 2] and c | length <= 12 and c.replace(':', '').replace('.', '').isdigit())
+     or (ip.count('.') == 3 and ip.replace('.', '').isdigit())) -%}
+<span class="nb">{{ w | e }}</span>
+{%- else -%}
+{{ w | e }}
+{%- endif -%}
+{%- endmacro -%}
+{%- macro keep(text) -%}
+{%- for ln in text.split('\n') -%}{{ '\n' if not loop.first else '' }}{%- for w in ln.split(' ') -%}{{ ' ' if not loop.first else '' }}{{ nbw(w) }}{%- endfor -%}{%- endfor -%}
+{%- endmacro -%}
+{#- a chip: up to 12 characters on one line (sh); a longer one wraps, at a width by its length (2 to 4 lines) -#}
 {%- macro chip(k, text) -%}
-<span class="chip s-{{ k }}">{{ icon(k) }}<span>{{ text | e }}</span></span>
+{%- set n = text | string | length -%}
+<span class="chip s-{{ k }} {{ 'sh' if n <= 12 else ('c2' if n <= 24 else ('c3' if n <= 40 else ('c4' if n <= 60 else 'c5'))) }}">{{ icon(k) }}<span>{{ keep(text | string) }}</span></span>
 {%- endmacro -%}
 {#- a path, address or hash: escaped, with a place to break after each / and \ (no hyphen is added) -#}
 {%- macro breakable(text) -%}
-{{ text | e | replace('/', '/<wbr>') | replace('\\', '\\<wbr>') }}
+{%- for seg in text.split('/') -%}{{ '/<wbr>' if not loop.first else '' }}{%- for part in seg.split('\\') -%}{{ '\\<wbr>' if not loop.first else '' }}{{ keep(part) }}{%- endfor -%}{%- endfor -%}
 {%- endmacro -%}
 <!DOCTYPE html>
 <html lang="en">
@@ -346,7 +365,7 @@ table.cc.sq td.k-nw{white-space:normal}
 /* 1.21.0: a table fits its card without scrolling sideways - the script's steps, one after the other, only while it is
    still wider than its card: f1 short values and chips wrap at spaces and hyphens, smaller minimum widths; f2 tighter
    cells, headings wrap at their spaces, a long word breaks inside but a text cell keeps 9 characters; f3 numbers wrap
-   at their spaces (12,050.0 / GB, never inside the digits), a smaller type; f4 a heading word may break, no minimum
+   at their spaces (12,050.0 / GB, never inside the digits), a smaller type and smaller chips; f4 a heading word may break, no minimum
    width. Wider still: it scrolls (the last resort) */
 table.f1 :is(td.k-nw,td.nw,td.nw .chip,td.k-mid .w,td.k-wrap .w){white-space:normal}
 table.f1 td.k-mid{min-width:10ch}table.f1 td.k-long{min-width:16ch}table.f1 :is(td.k-path,td.lk){min-width:14ch}
@@ -354,9 +373,18 @@ table.f2 td,table.f2 th button{padding-left:6px;padding-right:6px}
 table.f2 :is(th.k-num,th.k-nw){white-space:normal}table.f2 th{letter-spacing:.03em}
 table.f2 :is(td.k-mid,td.k-long,td.k-wrap,td.k-mid .w,td.k-wrap .w){overflow-wrap:anywhere}
 table.f2 :is(td.k-mid,td.k-long,td.k-wrap,td.k-path,td.lk){min-width:9ch}
+table.f3 td .chip{padding:1px 7px 1px 4px;gap:4px;font-size:12px}table.f3 td .chip .ic{width:13px;height:13px}
 table.f3{font-size:calc(var(--fs) * .92)}table.f3 td.k-num{white-space:normal}table.f3 th{letter-spacing:0;font-size:10.5px}
+/* at every step: a date, a time and an IP address never break (nb); a chip of up to 12 characters stays on one line (sh),
+   a longer one keeps a width by its length (2 to 4 lines, not one word a line) */
+td .nb{white-space:nowrap;overflow-wrap:normal}
+/* the script finds a big table's steps on its first 300 rows, for a moment */
+table.fsample>tbody>tr:nth-child(n+301){display:none}
+td .chip.sh{white-space:nowrap!important}
+td .chip.c2{min-width:13ch}td .chip.c3{min-width:17ch}td .chip.c4{min-width:23ch}td .chip.c5{min-width:27ch}
 /* without the script (blocked): a table too wide scrolls inside its card, not the whole page */
 :root:not(.js) .tw{overflow-x:auto}
+table.f4 th{min-width:7ch}
 table.f4 th button{overflow-wrap:anywhere}table.f4 :is(td.k-mid,td.k-long,td.k-wrap,td.k-path,td.lk){min-width:0}
 /* Columns: a column whose box is not checked, not shown (a rule per place, 1 to the most columns of a table here) */
 {%- set ncol = namespace(n=0) %}
@@ -592,12 +620,12 @@ table.f4 th button{overflow-wrap:anywhere}table.f4 :is(td.k-mid,td.k-long,td.k-w
 {%- elif kd == 'wrap' %}
 {#- a column the report says wraps (1.12.0): its lines kept, a word up to 16 characters kept whole (cluster1-01, AFF-A400),
     a longer one breaks at its hyphens rather than widen the table (na-cluster-site-a-prod) #}
-<td class="k-wrap" data-l="{{ lbl | e }}" data-v="{{ text | e }}">{% for ln in text.split('\n') %}{% if not loop.first %}{{ '\n' }}{% endif %}{% for w in ln.split(' ') %}{{ ' ' if not loop.first else '' }}{% if w | length <= 16 %}<span class="w">{{ w | e }}</span>{% else %}{{ w | e }}{% endif %}{% endfor %}{% endfor %}</td>
+<td class="k-wrap" data-l="{{ lbl | e }}" data-v="{{ text | e }}">{% for ln in text.split('\n') %}{% if not loop.first %}{{ '\n' }}{% endif %}{% for w in ln.split(' ') %}{{ ' ' if not loop.first else '' }}{% if w | length <= 16 %}<span class="w">{{ nbw(w) }}</span>{% else %}{{ nbw(w) }}{% endif %}{% endfor %}{% endfor %}</td>
 {%- elif kd == 'mid' %}
 {#- each word kept whole: a line breaks at a space, never at a hyphen inside an id (RHEL-09-412035) #}
-<td class="k-mid" data-l="{{ lbl | e }}"><span class="cv">{% for w in text.split(' ') %}{{ ' ' if not loop.first else '' }}{% if w | length <= 24 %}<span class="w">{{ w | e }}</span>{% else %}{{ w | e }}{% endif %}{% endfor %}</span></td>
+<td class="k-mid" data-l="{{ lbl | e }}"><span class="cv">{% for ln in text.split('\n') %}{{ '\n' if not loop.first else '' }}{% for w in ln.split(' ') %}{{ ' ' if not loop.first else '' }}{% if w | length <= 24 %}<span class="w">{{ nbw(w) }}</span>{% else %}{{ nbw(w) }}{% endif %}{% endfor %}{% endfor %}</span></td>
 {%- else %}
-<td class="k-{{ kd }}" data-l="{{ lbl | e }}">{{ text | e }}</td>
+<td class="k-{{ kd }}" data-l="{{ lbl | e }}">{{ keep(text) }}</td>
 {%- endif %}
 {%- endfor %}
 </tr>

@@ -453,9 +453,9 @@ class AtlasLook(unittest.TestCase):
 
     def test_status_chips_with_words(self):
         h = self.render()
-        self.assertIn('<span class="chip s-ok"><svg', h)                           # PASSED: a check mark, its word kept
+        self.assertIn('<span class="chip s-ok sh"><svg', h)                        # PASSED: a check mark, its word kept (on one line, 1.21.0)
         self.assertIn("<span>Passed</span>", h)
-        self.assertIn('<span class="chip s-warning"><svg', h)                      # cell_status
+        self.assertRegex(h, r'<span class="chip s-warning( sh| c\d)?"><svg')         # cell_status
         self.assertIn('<tr class="r-critical">', h)                                # row_status
         self.assertIn("<span>breached</span>", h)                                  # a Status column: the row's status
         self.assertNotIn("<span>late</span>", h)                                    # ... a row without one: plain
@@ -643,7 +643,7 @@ class BriefLook(unittest.TestCase):
         i = self.render(_report=dict(REPORT, status="info", sections=[]))
         self.assertNotIn('class="verdict', i)
         self.assertIn('<h1 class="big">Snapshot cleanup: deleted 4</h1>', i)
-        self.assertIn('<span class="chip s-info">', i)                            # the status still said: icon and word
+        self.assertRegex(i, r'<span class="chip s-info( sh| c\d)?">')                # the status still said: icon and word
         self.assertIn('<div class="verdict c-ok">', self.render(_report=dict(REPORT, status="ok", sections=[])))
 
     def test_figures_steps_and_bars(self):
@@ -757,7 +757,7 @@ class WebColumns(unittest.TestCase):
             self.assertIn('data-l="Firmware (EFI or BIOS)"', h)                       # the phone's card label
             self.assertIn('<table class="cc">', h)
             self.assertIn("table.cc.sq td.k-nw{white-space:normal}", h)               # a hyphen breaks only when it must
-            self.assertRegex(h, r'<span class="chip s-warning">.*?<span>BIOS</span>')  # not "Bios"
+            self.assertRegex(h, r'<span class="chip s-warning sh">.*?<span>BIOS</span>')  # not "Bios"
             plain = self.render(look, _report=dict(REPORT, sections=[dict(self.SEC, compact=False, keep_case=False,
                                                                           hidden_columns=[])]))
             self.assertIn("<span>Bios</span>", plain)                                  # upper case shown as a word, as before

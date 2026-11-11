@@ -46,7 +46,7 @@
     g.addEventListener('change',function(ev){var n=ev.target.value;
       if(n===def)root.removeAttribute(attr);else root.setAttribute(attr,n);
       try{if(n===def)localStorage.removeItem(key);else localStorage.setItem(key,n)}catch(e){}
-      fit()})}
+      fit(attr==='data-density'?'grow':false)})}
   seg('theme','data-theme','site-report-theme','auto');
   seg('density','data-density','site-report-density','comfortable');
   /* the rail put away (0.66.0): its check box works by itself (CSS); kept here like the switches */
@@ -60,24 +60,36 @@
      headings, f3 numbers wrap at spaces and a smaller type, f4 a heading word may break; a compact table's sq, 1.11.0,
      before them), one by one while it does not fit; only one still too wide scrolls sideways (its headings then stay
      in it). Before a heading word breaks, the tables get the rail's room: the rail is put away for this page only
-     (not kept); its button brings it back, and then the tables take f4 */
-  var railAuto=0,railUser=0;
-  function fit1(w){w.classList.remove('scroll');
-    var t=w.querySelector('table');if(!t)return 0;
-    function over(){return t.scrollWidth>w.clientWidth+1}
-    t.classList.remove('sq','f1','f2','f3','f4');
-    var st=(t.classList.contains('cc')?['sq']:[]).concat(['f1','f2','f3','f4']),i=0;
-    for(;i<st.length&&over();i++)t.classList.add(st[i]);
-    if(over()){w.classList.add('scroll');return 9}
-    return st[i-1]==='f4'?4:0}
-  function fit(){
-    if(railAuto){railAuto=0;root.removeAttribute('data-rail');if(rh)rh.checked=false}
-    var worst=0;all('.tw').forEach(function(w){worst=Math.max(worst,fit1(w))});
+     (not kept); its button brings it back, and then the tables take f4. Each table keeps its card's width (data-fw)
+     and its steps (data-fs): it is fitted again only when that width changed (a narrower card goes on from the steps
+     it has) or when it must be (its Columns, the rows' height) - opening a section costs the others nothing */
+  var railAuto=0,railUser=0,lastW=0;
+  /* mode: true = from no step again (its Columns); 'grow' = its values may be wider now (the rows' height): on from
+     the steps it has. A table of over 400 rows finds its steps on its first 300 rows, then checks once with all of
+     them (and goes on if it must): the same steps, far fewer layouts of a big table */
+  function fit1(w,mode){
+    var t=w.querySelector('table');if(!t||!w.offsetParent)return -1;
+    var cw=w.clientWidth,fw=+(w.getAttribute('data-fw')||-1),fs=w.getAttribute('data-fs');
+    var redo=mode===true||fs===null||cw>fw,more=!redo&&(mode==='grow'||cw<fw);
+    if(redo||more){
+      var st=(t.classList.contains('cc')?['sq']:[]).concat(['f1','f2','f3','f4']),i=0,b=t.tBodies[0],big=b&&b.rows.length>400;
+      var over=function(){return t.scrollWidth>w.clientWidth+1};
+      if(more)i=fs==='9'?st.length:+fs;
+      else{w.classList.remove('scroll');t.classList.remove('sq','f1','f2','f3','f4')}
+      if(big){t.classList.add('fsample');for(;i<st.length&&over();i++)t.classList.add(st[i]);t.classList.remove('fsample')}
+      for(;i<st.length&&over();i++)t.classList.add(st[i]);
+      var sc=over();w.classList.toggle('scroll',sc);
+      w.setAttribute('data-fw',cw);w.setAttribute('data-fs',sc?'9':String(i))}
+    return w.classList.contains('scroll')?9:t.classList.contains('f4')?4:0}
+  function fit(mode){if(mode!==true&&mode!=='grow')mode=false;
+    if(railAuto&&(mode===true||window.innerWidth!==lastW)){railAuto=0;root.removeAttribute('data-rail');if(rh)rh.checked=false}
+    lastW=window.innerWidth;
+    var worst=0;all('.tw').forEach(function(w){worst=Math.max(worst,fit1(w,mode))});
     var rail=document.querySelector('.has-rail>.rail');
-    if(worst&&rh&&!rh.checked&&!railUser&&rail&&getComputedStyle(rail).position==='sticky'){
-      railAuto=1;rh.checked=true;root.setAttribute('data-rail','hidden');all('.tw').forEach(fit1)}}
-  fit();var rt;window.addEventListener('resize',function(){clearTimeout(rt);rt=setTimeout(fit,120)});
-  all('details.sec').forEach(function(d){d.addEventListener('toggle',fit)});
+    if(worst>0&&rh&&!rh.checked&&!railUser&&rail&&getComputedStyle(rail).position==='sticky'){
+      railAuto=1;rh.checked=true;root.setAttribute('data-rail','hidden');all('.tw').forEach(function(w){fit1(w)})}}
+  fit();var rt;window.addEventListener('resize',function(){clearTimeout(rt);rt=setTimeout(function(){fit()},120)});
+  all('details.sec').forEach(function(d){d.addEventListener('toggle',function(){fit()})});
   /* the section in view, marked in the bar and in the rail */
   var links={};all('.nav a,.rail a').forEach(function(a){var k=a.getAttribute('href').slice(1);(links[k]=links[k]||[]).push(a)});
   if(window.IntersectionObserver&&Object.keys(links).length){var seen={};
@@ -154,9 +166,10 @@
   function colput(d,off){all('label',d).forEach(function(l){var i=l.querySelector('input');if(i)i.checked=off.indexOf(l.textContent.trim())<0})}
   function colkeep(d){var k=colsig(d),off=coloff(d);
     try{localStorage.setItem(k,JSON.stringify(off))}catch(e){}
-    all('details.cols').forEach(function(o){if(o!==d&&colsig(o)===k)colput(o,off)});fit()}
+    all('details.cols').forEach(function(o){if(o!==d&&colsig(o)===k)colput(o,off);if(colsig(o)===k)refit(o)});fit()}
+  function refit(d){var sec=d.closest('details.sec');if(sec)all('.tw',sec).forEach(function(w){w.removeAttribute('data-fs')})}
   all('details.cols').forEach(function(d){var b=d.querySelector('.call');
-    try{var kept=JSON.parse(localStorage.getItem(colsig(d))||'null');if(kept&&kept.length!==undefined)colput(d,kept)}catch(e){}
+    try{var kept=JSON.parse(localStorage.getItem(colsig(d))||'null');if(kept&&kept.length!==undefined){colput(d,kept);refit(d)}}catch(e){}
     d.addEventListener('change',function(){colkeep(d)});
     if(b){b.hidden=false;b.addEventListener('click',function(){all('input',d).forEach(function(i){i.checked=true});colkeep(d)})}});
   fit();
@@ -226,7 +239,7 @@
       found.textContent=q?(ns?total+' found in '+ns+' section'+(ns===1?'':'s'):'Nothing found'):'';
       box.classList.toggle('none-found',!!q&&!ns);
       counts.forEach(function(c){c()});mark(q);
-      if(window.requestAnimationFrame)requestAnimationFrame(fit);else fit()};
+      if(window.requestAnimationFrame)requestAnimationFrame(function(){fit()});else fit()};
     find.addEventListener('input',function(){clearTimeout(tm);tm=setTimeout(run,150)});
     find.addEventListener('search',run);
     find.addEventListener('keydown',function(e){
