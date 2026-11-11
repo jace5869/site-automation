@@ -1,0 +1,63 @@
+{
+"footer": "Read-only: nothing was changed. The change waits for approval.",
+"sections": [
+{
+"lines": [
+"# 203.0.113.9        Web  [added 2026-11-11 by jdoe]",
+"mynetworks = ..., 203.0.113.9"
+],
+"title": "The lines to be added"
+},
+{
+"columns": [
+"Relay",
+"File",
+"Change",
+"Problem"
+],
+"row_status": [
+"",
+""
+],
+"rows": [
+[
+"relay1",
+"/tmp/tmp.4I3BdcTXg1/r1/main.cf",
+"add",
+""
+],
+[
+"relay2",
+"/tmp/tmp.4I3BdcTXg1/r2/main.cf",
+"add",
+""
+]
+],
+"title": "Relay servers"
+},
+{
+"lines": [
+"In AAP: Automation Execution > Administration > Workflow Approvals, or open the workflow job.",
+"Once approved, the lines above are written exactly as shown (the file is backed up first), the mail configuration is checked and Postfix reloaded. You get an email with the result."
+],
+"title": "To approve or deny"
+}
+],
+"status": "info",
+"subtitle": "Requested by jdoe. Nothing changes until a person approves it in AAP.",
+"summary": [
+{
+"label": "Add",
+"value": "203.0.113.9"
+},
+{
+"label": "Relays to change",
+"value": "2 of 2"
+},
+{
+"label": "Requested by",
+"value": "jdoe"
+}
+],
+"title": "Mail relay whitelist - waiting for approval: add 203.0.113.9 (Web)"
+}

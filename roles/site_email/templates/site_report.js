@@ -51,17 +51,31 @@
   seg('density','data-density','site-report-density','comfortable');
   /* the rail put away (0.66.0): its check box works by itself (CSS); kept here like the switches */
   var rh=document.getElementById('rail-hide');if(rh){rh.checked=root.getAttribute('data-rail')==='hidden';
-    rh.addEventListener('change',function(){if(rh.checked)root.setAttribute('data-rail','hidden');else root.removeAttribute('data-rail');
+    rh.addEventListener('change',function(){railUser=1;railAuto=0;if(rh.checked)root.setAttribute('data-rail','hidden');else root.removeAttribute('data-rail');
       try{if(rh.checked)localStorage.setItem('site-report-rail','hidden');else localStorage.removeItem('site-report-rail')}catch(e){}
       fit()})}
   var p=document.getElementById('print');if(p){p.hidden=false;p.addEventListener('click',function(){
     all('details.sec').forEach(function(d){d.open=true});window.print()})}
-  /* a table wider than its card scrolls sideways (its headings then stay in it); one that fits keeps them at the top */
-  /* a compact table (1.11.0) that does not fit: its short values may break at a hyphen (sq) before it scrolls */
-  function fit(){all('.tw').forEach(function(w){w.classList.remove('scroll');
-    var t=w.querySelector('table');if(!t)return;
-    if(t.classList.contains('cc')){t.classList.remove('sq');if(t.scrollWidth>w.clientWidth+1)t.classList.add('sq')}
-    if(t.scrollWidth>w.clientWidth+1)w.classList.add('scroll')})}
+  /* a table wider than its card first takes the CSS's steps (1.21.0: f1 short values wrap, f2 tighter cells and
+     headings, f3 numbers wrap at spaces and a smaller type, f4 a heading word may break; a compact table's sq, 1.11.0,
+     before them), one by one while it does not fit; only one still too wide scrolls sideways (its headings then stay
+     in it). Before a heading word breaks, the tables get the rail's room: the rail is put away for this page only
+     (not kept); its button brings it back, and then the tables take f4 */
+  var railAuto=0,railUser=0;
+  function fit1(w){w.classList.remove('scroll');
+    var t=w.querySelector('table');if(!t)return 0;
+    function over(){return t.scrollWidth>w.clientWidth+1}
+    t.classList.remove('sq','f1','f2','f3','f4');
+    var st=(t.classList.contains('cc')?['sq']:[]).concat(['f1','f2','f3','f4']),i=0;
+    for(;i<st.length&&over();i++)t.classList.add(st[i]);
+    if(over()){w.classList.add('scroll');return 9}
+    return st[i-1]==='f4'?4:0}
+  function fit(){
+    if(railAuto){railAuto=0;root.removeAttribute('data-rail');if(rh)rh.checked=false}
+    var worst=0;all('.tw').forEach(function(w){worst=Math.max(worst,fit1(w))});
+    var rail=document.querySelector('.has-rail>.rail');
+    if(worst&&rh&&!rh.checked&&!railUser&&rail&&getComputedStyle(rail).position==='sticky'){
+      railAuto=1;rh.checked=true;root.setAttribute('data-rail','hidden');all('.tw').forEach(fit1)}}
   fit();var rt;window.addEventListener('resize',function(){clearTimeout(rt);rt=setTimeout(fit,120)});
   all('details.sec').forEach(function(d){d.addEventListener('toggle',fit)});
   /* the section in view, marked in the bar and in the rail */

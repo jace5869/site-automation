@@ -1,0 +1,76 @@
+{
+"sections": [
+{
+"columns": [
+"Pool",
+"Logons",
+"Median",
+"95th",
+"Slowest",
+"Slowest phase"
+],
+"row_status": [
+"warning"
+],
+"rows": [
+[
+"IC-Win11",
+2,
+"50",
+"90",
+"90",
+"userProfile (60 s on average)"
+]
+],
+"text": "1 session(s) without timing (started before the profiler, or an older agent).",
+"title": "By pool (seconds)"
+},
+{
+"columns": [
+"User",
+"Desktop",
+"Pool",
+"Started",
+"Seconds",
+"Slowest phase"
+],
+"rows": [
+[
+"S-1",
+"d-1",
+"IC-Win11",
+"2026-09-21 13:13 UTC",
+"90",
+"userProfile 60 s"
+],
+[
+"S-3",
+"?",
+"IC-Win11",
+"2026-09-21 13:13 UTC",
+"50",
+"y 30 s"
+]
+],
+"title": "The slowest logons"
+}
+],
+"status": "warning",
+"subtitle": "2 logon(s) timed; red when a pool's 95th percentile is 120 s or more, amber at 60 s",
+"summary": [
+{
+"label": "Logons timed",
+"value": 2
+},
+{
+"label": "Without timing",
+"value": 1
+},
+{
+"label": "Slow pools",
+"status": "warning",
+"value": 1
+}
+],
+"title": "Horizon logon times: 1 pool(s) slow"
+}

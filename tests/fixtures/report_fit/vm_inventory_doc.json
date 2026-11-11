@@ -1,0 +1,400 @@
+{
+"sections": [
+{
+"cell_status": [
+[
+"",
+"warning",
+"warning",
+"warning",
+"warning",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"warning",
+"ok",
+"ok",
+"warning",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"warning",
+"ok",
+"warning",
+"ok",
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"VM",
+"Encrypted",
+"Firmware (EFI or BIOS)",
+"Secure Boot",
+"Virtual TPM",
+"vCenter",
+"Folder",
+"Power",
+"Guest OS",
+"Hardware version"
+],
+"rows": [
+[
+"bios01",
+"no",
+"BIOS",
+"off",
+"no",
+"vc01",
+"DC1 / Linux",
+"on",
+"Red Hat Enterprise Linux 9 (64-bit)",
+"15"
+],
+[
+"off01",
+"no",
+"EFI",
+"on",
+"no",
+"vc01",
+"DC1 / Linux",
+"off",
+"Red Hat Enterprise Linux 9 (64-bit)",
+"19"
+],
+[
+"efi01",
+"no",
+"EFI",
+"off",
+"yes",
+"vc01",
+"DC1 / Linux",
+"on",
+"Red Hat Enterprise Linux 9 (64-bit)",
+"21"
+]
+],
+"text": "Each VM missing VM Encryption (a key from a key provider), EFI firmware or a virtual TPM - the most missing first. Secure Boot needs EFI. Templates left out.",
+"title": "VMs without encryption, EFI or vTPM"
+},
+{
+"cell_status": [
+[
+"",
+"",
+""
+],
+[
+"",
+"",
+""
+],
+[
+"",
+"",
+""
+],
+[
+"",
+"",
+""
+],
+[
+"warning",
+"",
+""
+],
+[
+"",
+"",
+""
+],
+[
+"warning",
+"",
+""
+],
+[
+"info",
+"",
+""
+],
+[
+"ok",
+"",
+""
+],
+[
+"",
+"",
+""
+]
+],
+"columns": [
+"Hardware version or Tools",
+"VMs",
+"Powered on"
+],
+"compact": false,
+"rows": [
+[
+"Hardware version 21 - ESXi 8.0 U2 and later",
+2,
+2
+],
+[
+"Hardware version 19 - ESXi 7.0 U2 and later",
+2,
+1
+],
+[
+"Hardware version 15 - ESXi 6.7 U2 and later",
+1,
+1
+],
+[
+"Hardware version not read",
+1,
+0
+],
+[
+"VMware Tools not running",
+1,
+1
+],
+[
+"VMware Tools not installed",
+1,
+0
+],
+[
+"VMware Tools unsupported",
+1,
+1
+],
+[
+"VMware Tools upgrade available",
+1,
+1
+],
+[
+"VMware Tools current",
+1,
+1
+],
+[
+"VMware Tools not known",
+1,
+0
+]
+],
+"text": "How many VMs have each virtual hardware version (and the oldest ESXi that runs it), and what vCenter says of each VM's VMware Tools for the host it runs on. Guest managed: open-vm-tools, updated with the guest's OS.",
+"title": "Hardware versions and Tools"
+},
+{
+"cell_status": [
+[
+"",
+"warning",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"warning",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"info",
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"VM",
+"VMware Tools status",
+"VMware Tools version",
+"vCenter",
+"Folder",
+"Guest OS",
+"Hardware version"
+],
+"rows": [
+[
+"efi01",
+"not running",
+"12.3.5",
+"vc01",
+"DC1 / Linux",
+"Red Hat Enterprise Linux 9 (64-bit)",
+"21"
+],
+[
+"old01",
+"unsupported",
+"10.3.10",
+"vc01",
+"DC1 / Linux",
+"Red Hat Enterprise Linux 9 (64-bit)",
+"19"
+],
+[
+"bios01",
+"upgrade available",
+"11.2.5",
+"vc01",
+"DC1 / Linux",
+"Red Hat Enterprise Linux 9 (64-bit)",
+"15"
+]
+],
+"text": "Powered-on VMs whose VMware Tools need an upgrade, are not supported on their host, not installed or not running.",
+"title": "VMware Tools to upgrade or not running"
+},
+{
+"columns": [
+"VM",
+"Power",
+"ESXi host",
+"Cluster",
+"Guest OS",
+"IP address",
+"vCPUs",
+"Memory (GB)"
+],
+"rows": [
+[
+"bios01",
+"on",
+"esx01.example.mil",
+"CL1",
+"Red Hat Enterprise Linux 9 (64-bit)",
+"192.0.2.10",
+2,
+"6"
+],
+[
+"efi01",
+"on",
+"esx01.example.mil",
+"CL1",
+"Red Hat Enterprise Linux 9 (64-bit)",
+"192.0.2.10",
+2,
+"6"
+],
+[
+"enc01",
+"on",
+"esx01.example.mil",
+"CL1",
+"Red Hat Enterprise Linux 9 (64-bit)",
+"192.0.2.10",
+2,
+"6"
+],
+[
+"off01",
+"off",
+"esx01.example.mil",
+"CL1",
+"Red Hat Enterprise Linux 9 (64-bit)",
+"192.0.2.10",
+2,
+"6"
+],
+[
+"old01",
+"on",
+"esx01.example.mil",
+"CL1",
+"Red Hat Enterprise Linux 9 (64-bit)",
+"192.0.2.10",
+2,
+"6"
+],
+[
+"tpl02",
+"off (template)",
+"esx01.example.mil",
+"CL1",
+"Red Hat Enterprise Linux 9 (64-bit)",
+"192.0.2.10",
+2,
+"6"
+]
+],
+"title": "vc01 - DC1 / Linux"
+}
+],
+"status": "ok",
+"subtitle": "Every VM by vCenter and folder, with the ESXi host it runs on - vc01, vc02; templates included",
+"summary": [
+{
+"label": "VMs",
+"value": 6
+},
+{
+"label": "Powered on",
+"value": 4
+},
+{
+"label": "Powered off",
+"value": 2
+},
+{
+"label": "Folders",
+"value": 1
+},
+{
+"label": "ESXi hosts",
+"value": 1
+},
+{
+"label": "vCenters",
+"value": 2
+},
+{
+"label": "Not encrypted",
+"status": "info",
+"value": 3
+},
+{
+"label": "Without EFI",
+"status": "info",
+"value": 1
+},
+{
+"label": "Without vTPM",
+"status": "info",
+"value": 2
+}
+],
+"title": "VM inventory: 6 VMs in 2 vCenters"
+}

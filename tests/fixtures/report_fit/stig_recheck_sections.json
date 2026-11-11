@@ -1,0 +1,198 @@
+{
+"sections": [
+{
+"boxes": [
+{
+"label": "Open findings",
+"note": "fail on the host now: fix, or put on the POA&M",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Status updates",
+"note": "no fix needed: the host passes, no longer applies, or was answered - only STIG Manager's review changes",
+"status": "info",
+"value": 2
+},
+{
+"label": "Manual review",
+"note": "no automatic check: DISA's manual checks, or a rule not in the scan's STIG",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Held back: scan's STIG older",
+"note": "not written - the rule changed since the scan's STIG (scanned with V2R8, STIG Manager has V2R9): update Evaluate-STIG to STIG Manager's revision",
+"status": "warning",
+"value": 1
+},
+{
+"label": "Not rechecked",
+"note": "no result for these",
+"status": "ok",
+"value": 0
+}
+],
+"cell_status": [
+[
+"",
+"",
+"warning",
+"",
+"ok",
+"unknown",
+"ok",
+""
+]
+],
+"columns": [
+"Host",
+"STIG rule",
+"CAT",
+"Title",
+"Scan now",
+"STIG Manager",
+"Set it to",
+"What was found"
+],
+"headline": "0 rules open, 2 status updates in STIG Manager, 1 held back (the scan's STIG is older)",
+"headline_status": "info",
+"row_status": [
+"info"
+],
+"rows": [
+[
+"web01",
+"V-2 (X-2)",
+"CAT II",
+"Rule SV-2",
+"pass",
+"no review",
+"Not a Finding",
+""
+]
+],
+"status": "info",
+"summary_only": true,
+"text": "STIG Manager has no review that counts for these (none, Not Reviewed, or one rejected): the scan answered them. A fail is Open - and a finding to fix or put on the POA&M.",
+"title": "2. Not Reviewed in STIG Manager - the scan has an answer",
+"top": true
+},
+{
+"cell_status": [
+[
+"",
+"",
+"warning",
+"",
+"ok",
+"unknown",
+"ok"
+]
+],
+"columns": [
+"Host",
+"STIG rule",
+"CAT",
+"Title",
+"Scan now",
+"STIG Manager",
+"Set it to"
+],
+"row_status": [
+"info"
+],
+"rows": [
+[
+"web01",
+"V-3 (X-3)",
+"CAT II",
+"Rule SV-3",
+"pass",
+"no review in V2R9 - V2R8: Not a Finding (accepted)",
+"Not a Finding"
+]
+],
+"status": "info",
+"text": "DISA changed these rules since the scan's STIG, so STIG Manager has no review of them in its revision; the earlier revision's review counts and the scan (of that revision) agrees with it. Approved, the answer is written to the rule of STIG Manager's revision, with a comment that says it was carried forward - checked against the earlier revision's check, not this one. Update Evaluate-STIG to check them for real.",
+"title": "4. Carried forward from an earlier revision (check_stig_recheck_carry_forward)",
+"top": true
+},
+{
+"columns": [
+"Host",
+"STIG (scan)",
+"STIG Manager (collection / asset)",
+"Open / Not Reviewed",
+"Fixed",
+"Answered",
+"Still open",
+"Manual review",
+"Held back",
+"Left out",
+"Checked",
+"The checklist on the host"
+],
+"row_status": [
+"warning"
+],
+"rows": [
+[
+"web01",
+"V2R8 (Evaluate-STIG) - 1 answer held back: the scan's STIG is older - 1 carried forward",
+"C / web01 (V2R9)",
+"1 / 2",
+"0",
+"2",
+"0",
+"0",
+"1",
+"0",
+"only these rules (-SelectVuln)",
+"/var/lib/site-automation/stig/recheck/latest-checklist.cklb"
+]
+],
+"status": "warning",
+"text": "Only the rules STIG Manager has Open or Not Reviewed (check_stig_recheck) were checked; nothing is kept with the STIG drift report's scans. Checked: only these rules (Evaluate-STIG's -SelectVuln, or oscap's --rule) - fast - or in full when this Evaluate-STIG has no -SelectVuln. The STIG drift report checks every rule.",
+"title": "Every host - what STIG Manager has Open / Not Reviewed, and the recheck"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"warning",
+"",
+"unknown",
+""
+]
+],
+"columns": [
+"Host",
+"STIG rule",
+"CAT",
+"Title",
+"STIG Manager",
+"Why"
+],
+"row_status": [
+"info"
+],
+"rows": [
+[
+"web01",
+"V-1 (X-1)",
+"CAT II",
+"Rule SV-1",
+"Open (accepted, 2026-09-01)",
+"the rule changed - the scan checked SV-1r1_rule, STIG Manager has SV-1r2_rule - the scan says pass, not written (update the scan's STIG to V2R9, or review it)"
+]
+],
+"status": "warning",
+"text": "The scan answered these, but DISA changed the rule since the scan's STIG (a new rule id): STIG Manager keeps the review of the old rule apart and has none in its revision, and the scan's answer is to the old check - so it is not written. They need a newer scan, not a person: update Evaluate-STIG to the revision STIG Manager uses and run the recheck again. Or set check_stig_recheck_carry_forward: true to write the earlier revision's answer where the scan agrees with it (said in each review's comment).",
+"title": "Held back - the scan's STIG is older than STIG Manager's"
+}
+],
+"status": "info",
+"title": "stig_recheck_sections (its tables, inside a findings report)"
+}

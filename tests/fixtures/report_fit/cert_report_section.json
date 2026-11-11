@@ -1,0 +1,110 @@
+{
+"sections": [
+{
+"cell_status": [
+[
+"critical",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"warning",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"info",
+"",
+"",
+"",
+"",
+"info"
+],
+[
+"info",
+"",
+"",
+"",
+"",
+"info"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok"
+]
+],
+"columns": [
+"Days left",
+"Expires",
+"Host",
+"Subject",
+"Where",
+"Status"
+],
+"row_status": [
+"critical",
+"warning",
+"info",
+"info",
+""
+],
+"rows": [
+[
+-3,
+"2026-10-05",
+"db01",
+"CN=db01",
+"tcp 443",
+"EXPIRED"
+],
+[
+30,
+"2026-11-07",
+"app02",
+"CN=app02",
+"/etc/app2.crt",
+"expires within 30 days"
+],
+[
+45,
+"2026-11-22",
+"web01",
+"CN=web01",
+"/etc/pki/tls/certs/web01.crt",
+"expires within 60 days"
+],
+[
+60,
+"2026-12-07",
+"app03",
+"CN=app03",
+"/etc/app3.crt",
+"expires within 60 days"
+],
+[
+200,
+"2027-04-26",
+"app01",
+"CN=app01",
+"/etc/app.crt",
+"ok"
+]
+],
+"status": "critical",
+"text": "Red = expired, amber = expires within 30 days, blue = within 60 days.",
+"title": "All certificates, soonest expiry first"
+}
+],
+"status": "info",
+"title": "cert_report_section (its tables, inside a findings report)"
+}

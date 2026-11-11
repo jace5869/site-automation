@@ -1,0 +1,274 @@
+{
+"sections": [
+{
+"cell_status": [
+[
+"critical",
+"",
+"",
+""
+],
+[
+"critical",
+"",
+"",
+""
+],
+[
+"critical",
+"",
+"",
+""
+],
+[
+"critical",
+"",
+"",
+""
+],
+[
+"critical",
+"",
+"",
+""
+],
+[
+"warning",
+"",
+"",
+""
+],
+[
+"warning",
+"",
+"",
+""
+],
+[
+"warning",
+"",
+"",
+""
+],
+[
+"warning",
+"",
+"",
+""
+],
+[
+"warning",
+"",
+"",
+""
+],
+[
+"warning",
+"",
+"",
+""
+],
+[
+"info",
+"",
+"",
+""
+]
+],
+"columns": [
+"Severity",
+"Area",
+"What",
+"Problem"
+],
+"rows": [
+[
+"CRITICAL",
+"Connection Server",
+"cs1",
+"service Blast is DOWN"
+],
+[
+"CRITICAL",
+"Connection Server",
+"cs2",
+"status NOT_RESPONDING"
+],
+[
+"CRITICAL",
+"Connection Server",
+"cs2",
+"its certificate is not valid (untrusted)"
+],
+[
+"CRITICAL",
+"License",
+"-",
+"the license expired 2026-09-20 14:13 UTC"
+],
+[
+"CRITICAL",
+"Pool",
+"IC-Win11",
+"its current image is failed"
+],
+[
+"WARNING",
+"AD domain",
+"corp.example.mil",
+"from Connection Server cs1: CANNOT_BIND"
+],
+[
+"WARNING",
+"Connection Server",
+"cs1",
+"its certificate expires in 20 days (2026-10-11 14:13 UTC)"
+],
+[
+"WARNING",
+"Desktops",
+"-",
+"1 broken: 1 ERROR - the desktops check lists them (playbooks/horizon_desktops_check.yml)"
+],
+[
+"WARNING",
+"Event database",
+"-",
+"no event database: Horizon keeps no history of its events"
+],
+[
+"WARNING",
+"Gateway",
+"uag",
+"status STALE"
+],
+[
+"WARNING",
+"Not read",
+"gateways",
+"x answered HTTP 500"
+],
+[
+"INFO",
+"Not read",
+"true_sso",
+"not in this Horizon (HTTP 404 at every API version, v9 to v1)"
+]
+],
+"title": "Problems"
+},
+{
+"columns": [
+"Name",
+"Status",
+"Version",
+"Connections",
+"Tunnelled",
+"Certificate until"
+],
+"rows": [
+[
+"cs1",
+"OK",
+"",
+0,
+0,
+"2026-10-11 14:13 UTC"
+],
+[
+"cs2",
+"NOT_RESPONDING",
+"",
+0,
+0,
+""
+]
+],
+"title": "Connection Servers"
+},
+{
+"columns": [
+"Name",
+"Status",
+"Type",
+"Version",
+"Connections"
+],
+"rows": [
+[
+"uag",
+"STALE",
+"",
+"",
+0
+]
+],
+"title": "Gateways"
+},
+{
+"columns": [
+"Name",
+"Version",
+"From the Connection Servers"
+],
+"rows": [],
+"title": "vCenters"
+},
+{
+"columns": [
+"Domain",
+"From the Connection Servers"
+],
+"rows": [
+[
+"corp.example.mil",
+"cs1: CANNOT_BIND"
+]
+],
+"title": "AD domains"
+},
+{
+"columns": [
+"Edition",
+"Usage model",
+"Expires"
+],
+"rows": [
+[
+"",
+"",
+"2026-09-20 14:13 UTC"
+]
+],
+"title": "License"
+}
+],
+"status": "critical",
+"subtitle": "2 Connection Server(s), 1 pool(s), 1 desktop(s), 0 session(s)",
+"summary": [
+{
+"label": "Critical",
+"status": "critical",
+"value": 5
+},
+{
+"label": "Warning",
+"status": "warning",
+"value": 6
+},
+{
+"label": "Connected",
+"value": 0
+},
+{
+"label": "Disconnected",
+"value": 0
+},
+{
+"label": "Broken desktops",
+"status": "warning",
+"value": 1
+}
+],
+"title": "Horizon health report: 5 critical, 6 warning"
+}

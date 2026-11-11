@@ -1,0 +1,374 @@
+{
+"sections": [
+{
+"columns": [
+"vCenter",
+"Folder",
+"VM",
+"Power",
+"Guest OS",
+"VMware Tools",
+"Tools status",
+"Hardware version"
+],
+"row_status": [
+"warning",
+"warning",
+"warning"
+],
+"rows": [
+[
+"vc01",
+"DC1 (no folder)",
+"old01",
+"on",
+"Red Hat Enterprise Linux 9.4 (64-bit)",
+"10.3.10",
+"too old (not supported)",
+"vmx-13"
+],
+[
+"vc01",
+"DC1 / Linux",
+"bare01",
+"on",
+"Red Hat Enterprise Linux 9 (64-bit)",
+"-",
+"not installed",
+"vmx-21"
+],
+[
+"vc02",
+"DC2 / Apps",
+"hung01",
+"on",
+"Microsoft Windows Server 2022 (64-bit)",
+"12.3.5",
+"current; NOT RUNNING",
+"vmx-21"
+]
+],
+"status": "warning",
+"text": "Powered-on VMs with no VMware Tools, Tools not running, or a Tools version vCenter does not support on the host the VM runs on.",
+"title": "To look at"
+},
+{
+"columns": [
+"VMware Tools",
+"VMs",
+"Powered on",
+"Status (VMs)",
+"Installed as (VMs)"
+],
+"rows": [
+[
+"12.3.5",
+3,
+3,
+"current (1), current; NOT RUNNING (1), guest managed (updated by the OS) (1)",
+"open-vm-tools (2), MSI (Windows) (1)"
+],
+[
+"12.2.0",
+1,
+1,
+"upgrade available (1)",
+"open-vm-tools (1)"
+],
+[
+"10.3.10",
+1,
+1,
+"too old (not supported) (1)",
+"open-vm-tools (1)"
+],
+[
+"(not installed)",
+2,
+1,
+"not installed (2)",
+"open-vm-tools (1)"
+]
+],
+"text": "Each Tools version, how many VMs run it, and what vCenter says of it for the host each VM runs on (current, upgrade available ...). Guest managed: open-vm-tools, updated with the guest's OS (dnf, apt), not by vCenter.",
+"title": "VMware Tools versions"
+},
+{
+"columns": [
+"Hardware version",
+"Compatible with",
+"VMs",
+"Powered on"
+],
+"rows": [
+[
+"vmx-21",
+"ESXi 8.0 U2 and later",
+5,
+4
+],
+[
+"vmx-19",
+"ESXi 7.0 U2 and later",
+1,
+1
+],
+[
+"vmx-13",
+"ESXi 6.5 and later",
+1,
+1
+]
+],
+"text": "Each virtual hardware version (VM compatibility), the oldest ESXi that runs it, and how many VMs.",
+"title": "Hardware versions"
+},
+{
+"columns": [
+"Guest OS",
+"VMs",
+"VMware Tools (VMs)",
+"Hardware versions (VMs)"
+],
+"rows": [
+[
+"Red Hat Enterprise Linux 9.4 (64-bit)",
+4,
+"12.3.5 (2), 12.2.0 (1), 10.3.10 (1)",
+"vmx-21 (2), vmx-19 (1), vmx-13 (1)"
+],
+[
+"Red Hat Enterprise Linux 9 (64-bit)",
+2,
+"- (2)",
+"vmx-21 (2)"
+],
+[
+"Microsoft Windows Server 2022 (64-bit)",
+1,
+"12.3.5 (1)",
+"vmx-21 (1)"
+]
+],
+"text": "Each guest OS (as VMware Tools reports it, else as the VM is configured), with the Tools and hardware versions its VMs have.",
+"title": "Guest OS"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"warning",
+""
+]
+],
+"columns": [
+"VM",
+"Power",
+"Guest OS",
+"VMware Tools",
+"Tools status",
+"Hardware version"
+],
+"rows": [
+[
+"old01",
+"on",
+"Red Hat Enterprise Linux 9.4 (64-bit)",
+"10.3.10",
+"too old (not supported)",
+"vmx-13"
+]
+],
+"title": "vc01 - DC1 (no folder)"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"warning",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"info",
+""
+]
+],
+"columns": [
+"VM",
+"Power",
+"Guest OS",
+"VMware Tools",
+"Tools status",
+"Hardware version"
+],
+"rows": [
+[
+"bare01",
+"on",
+"Red Hat Enterprise Linux 9 (64-bit)",
+"-",
+"not installed",
+"vmx-21"
+],
+[
+"off01",
+"off",
+"Red Hat Enterprise Linux 9 (64-bit)",
+"-",
+"not installed",
+"vmx-21"
+],
+[
+"web01",
+"on",
+"Red Hat Enterprise Linux 9.4 (64-bit)",
+"12.3.5",
+"current",
+"vmx-21"
+],
+[
+"web02",
+"on",
+"Red Hat Enterprise Linux 9.4 (64-bit)",
+"12.2.0",
+"upgrade available",
+"vmx-19"
+]
+],
+"title": "vc01 - DC1 / Linux"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"VM",
+"Power",
+"Guest OS",
+"VMware Tools",
+"Tools status",
+"Hardware version"
+],
+"rows": [
+[
+"db01",
+"on",
+"Red Hat Enterprise Linux 9.4 (64-bit)",
+"12.3.5",
+"guest managed (updated by the OS)",
+"vmx-21"
+]
+],
+"title": "vc01 - DC1 / Linux / DB"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"warning",
+""
+]
+],
+"columns": [
+"VM",
+"Power",
+"Guest OS",
+"VMware Tools",
+"Tools status",
+"Hardware version"
+],
+"rows": [
+[
+"hung01",
+"on",
+"Microsoft Windows Server 2022 (64-bit)",
+"12.3.5",
+"current; NOT RUNNING",
+"vmx-21"
+]
+],
+"title": "vc02 - DC2 / Apps"
+}
+],
+"status": "warning",
+"subtitle": "Every VM's VMware Tools, hardware version and guest OS, by vCenter and folder - vc01, vc02; templates left out (1)",
+"summary": [
+{
+"label": "VMs",
+"value": 7
+},
+{
+"label": "Tools current",
+"value": 2
+},
+{
+"label": "Upgrade available",
+"status": "info",
+"value": 1
+},
+{
+"label": "Guest managed",
+"value": 1
+},
+{
+"label": "No Tools",
+"status": "warning",
+"value": 2
+},
+{
+"label": "Not running (on)",
+"status": "warning",
+"value": 1
+},
+{
+"label": "Not supported",
+"status": "warning",
+"value": 1
+},
+{
+"label": "Tools versions",
+"value": 3
+},
+{
+"label": "Hardware versions",
+"value": 3
+}
+],
+"title": "VMware Tools: 7 VMs - 1 to upgrade, 2 without Tools, 1 not running, 1 not supported"
+}

@@ -1,0 +1,329 @@
+{
+"sections": [
+{
+"boxes": [
+{
+"label": "Drifted",
+"note": "passed before, now fails its Not a Finding",
+"status": "critical",
+"value": 1
+},
+{
+"label": "New fails",
+"note": "passed in an earlier scan",
+"status": "warning",
+"value": 1
+},
+{
+"label": "Disagree",
+"note": "never passed here, Not a Finding: look once",
+"status": "info",
+"value": 1
+},
+{
+"label": "Fixed, still Open",
+"note": "update STIG Manager",
+"status": "info",
+"value": 1
+},
+{
+"label": "Not scanned",
+"note": "no result for these hosts",
+"status": "warning",
+"value": 1
+}
+],
+"cell_status": [
+[
+"",
+"",
+"critical",
+"",
+"critical",
+"",
+"ok"
+]
+],
+"columns": [
+"Host",
+"STIG rule",
+"CAT",
+"Title",
+"Scan now",
+"Last passed",
+"STIG Manager"
+],
+"row_status": [
+"critical"
+],
+"rows": [
+[
+"web01",
+"V-257821 (RHEL-09-214020)",
+"CAT I",
+"DISA SV_257821",
+"FAIL",
+"t",
+"Not a Finding (accepted)"
+]
+],
+"start_here": [
+{
+"chip": "CAT I",
+"code": "sudo oscap xccdf eval --profile xccdf_org.ssgproject.content_profile_stig --rule xccdf_org.ssgproject.content_rule_ensure_gpgcheck_local_packages /usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml",
+"meta": "Drifted",
+"next": "Passed t, fails now. STIG Manager: Not a Finding (accepted). Fix the host, or - if the change was approved - update the review in STIG Manager. To check it again on the host:",
+"status": "critical",
+"subject": "web01 - V-257821 (RHEL-09-214020)",
+"title": "DISA SV_257821"
+}
+],
+"start_here_text": "The CAT I rules that moved: drifted from the checklist, or failing since they passed. CAT II and III are in the tables below.",
+"status": "critical",
+"text": "These rules passed on the host in an earlier scan and fail now, and the checklist has them as Not a Finding: the host moved away from its checklist. Fix the host, or - if the change was approved - update the review in STIG Manager (this job never writes to it). They stay here every run until one of the two is done. CAT I is critical, CAT II and III a warning (check_stig_severity).",
+"title": "1. Drifted - the host fails what STIG Manager has as Not a Finding",
+"top": true
+},
+{
+"cell_status": [
+[
+"",
+"",
+"warning",
+"",
+"",
+"critical",
+"unknown"
+]
+],
+"columns": [
+"Host",
+"STIG rule",
+"CAT",
+"Title",
+"Last passed",
+"Scan now",
+"STIG Manager"
+],
+"row_status": [
+"warning"
+],
+"rows": [
+[
+"web01",
+"V-257883 (RHEL-09-412035)",
+"CAT II",
+"RHEL 9 must automatically exit interactive command shell user sessions after 10 minutes of inactivity.",
+"t",
+"FAIL",
+"no review"
+]
+],
+"status": "warning",
+"text": "Something changed on the host since these passed (the scans are kept on the host, check_stig_dir). STIG Manager has no Not a Finding for them, so they are not drift from the checklist - but they are new. Once the review is Open, they leave this table.",
+"title": "2. New fails - passed in an earlier scan",
+"top": true
+},
+{
+"cell_status": [
+[
+"",
+"",
+"warning",
+"",
+"critical",
+"ok",
+""
+]
+],
+"columns": [
+"Host",
+"STIG rule",
+"CAT",
+"Title",
+"Scan now",
+"STIG Manager",
+"The scan's check"
+],
+"row_status": [
+"info"
+],
+"rows": [
+[
+"web01",
+"V-257779 (RHEL-09-211020)",
+"CAT II",
+"DISA SV_257779",
+"FAIL",
+"Not a Finding (accepted)",
+"banner_etc_issue"
+]
+],
+"status": "info",
+"text": "The checklist has these as Not a Finding, and they have failed in every scan of the host: nothing moved that this job saw. Either the host was like this before its first scan, or the scanner checks the rule another way than DISA's check text (OpenSCAP's check, or what Evaluate-STIG found, is the last column; the scan's report on the host shows more). For each: fix the host, set the review to Open, or - the scanner is wrong for your site - add the rule to check_stig_ignore_rules. Report only (check_stig_disagree_severity: warning makes them findings).",
+"title": "3. The scan and the checklist disagree - look at each once",
+"top": true
+},
+{
+"cell_status": [
+[
+"",
+"",
+"warning",
+"",
+"ok",
+"warning"
+]
+],
+"columns": [
+"Host",
+"STIG rule",
+"CAT",
+"Title",
+"Scan now",
+"STIG Manager"
+],
+"row_status": [
+"info"
+],
+"rows": [
+[
+"web01",
+"V-258176 (RHEL-09-654225)",
+"CAT II",
+"DISA SV_258176",
+"pass",
+"Open (saved, 2026-09-01)"
+]
+],
+"status": "info",
+"text": "No finding: the host passes. Update these reviews in STIG Manager (and close their POA&M items).",
+"title": "4. Fixed on the host, still Open in STIG Manager - the checklist is behind",
+"top": true
+},
+{
+"columns": [
+"Host",
+"STIG (scan)",
+"STIG Manager (collection / asset)",
+"Pass",
+"Fail",
+"Drifted",
+"New",
+"Disagree",
+"Fixed, open",
+"By hand",
+"Left out",
+"The report on the host"
+],
+"row_status": [
+"critical",
+"warning"
+],
+"rows": [
+[
+"web01",
+"V2R9 ",
+"C / web01 (V2R7)",
+"5",
+"4",
+"1",
+"1",
+"1",
+"1",
+"0",
+"1",
+"/var/lib/site-automation/stig/x_report.html"
+],
+[
+"web02",
+"not scanned: no content",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+]
+],
+"status": "critical",
+"text": "Pass and Fail count STIG rules (several SCAP checks of one rule count once, one SCAP check of several rules counts for each); the rest are not applicable or not checked automatically. By hand: the rules the checklist has a review of that the scan gives no result for - DISA's manual checks (Evaluate-STIG: Not Reviewed), never compared by this job. Left out: fails of the rules in check_stig_ignore_rules. Each scan's report (OpenSCAP), results or checklist (Evaluate-STIG) and summary stay on the host.",
+"title": "Every host - the scan, STIG Manager, the counts"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"warning",
+"",
+"critical",
+"unknown"
+]
+],
+"columns": [
+"Host",
+"STIG rule",
+"CAT",
+"Title",
+"Scan now",
+"STIG Manager"
+],
+"row_status": [
+"info"
+],
+"rows": [
+[
+"web01",
+"V-257985 (RHEL-09-255045)",
+"CAT II",
+"RHEL 9 must not permit direct logons to the root account using remote access through SSH.",
+"FAIL",
+"no review"
+]
+],
+"status": "info",
+"text": "Never a finding: the scan fails these, and check_stig_ignore_rules says the scanner is known to get them wrong here. Take a rule off the list when its check is fixed (a newer scap-security-guide or Evaluate-STIG).",
+"title": "Left out on purpose - check_stig_ignore_rules"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"warning",
+"",
+"critical"
+]
+],
+"columns": [
+"Host",
+"STIG rule",
+"CAT",
+"Title",
+"Scan now"
+],
+"row_status": [
+"info"
+],
+"rows": [
+[
+"web01",
+"V-257883 (RHEL-09-412035)",
+"CAT II",
+"RHEL 9 must automatically exit interactive command shell user sessions after 10 minutes of inactivity.",
+"FAIL"
+]
+],
+"status": "info",
+"text": "Report only: the checklist has no result for these rules yet (a rule new in the scan's STIG release, too).",
+"title": "Fails STIG Manager has no review for"
+}
+],
+"status": "info",
+"title": "stig_report_sections (its tables, inside a findings report)"
+}

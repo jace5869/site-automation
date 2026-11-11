@@ -1,0 +1,186 @@
+{
+"footer": "STIG Manager: GET, and the reviews and assets written at once (stigman_ckl_import_auto); the share: only read (playbooks/stigman_ckl_import.yml). playbooks/stigman_update.yml writes what waits for workflow 40's approval.",
+"sections": [
+{
+"columns": [
+"Checklist",
+"Collection / asset",
+"Rule",
+"Written as",
+"Result",
+"Why"
+],
+"row_status": [
+"ok",
+"ok",
+"ok",
+"ok",
+"ok",
+"ok",
+"ok"
+],
+"rows": [
+[
+"",
+"Watcher / vrops03",
+"",
+"-",
+"written",
+""
+],
+[
+"vrops03.ckl",
+"Watcher / vrops03",
+"VRPE-8X-000001",
+"-",
+"written",
+""
+],
+[
+"vrops03.ckl",
+"Watcher / vrops03",
+"VRPE-8X-000002",
+"-",
+"written",
+""
+],
+[
+"vrops03.ckl",
+"Watcher / vrops03",
+"VRPE-8X-000005",
+"-",
+"written",
+""
+],
+[
+"vrops01.ckl",
+"Ops / vrops01",
+"VRPE-8X-000001",
+"-",
+"written",
+""
+],
+[
+"vrops01.ckl",
+"Ops / vrops01",
+"VRPE-8X-000002",
+"-",
+"written",
+""
+],
+[
+"vrops01.ckl",
+"Ops / vrops01",
+"VRPE-8X-000005",
+"-",
+"written",
+""
+]
+],
+"status": "ok",
+"text": "stigman_ckl_import_auto: all - the reviews of every asset, the new ones too written by this job, as STIG Manager - update writes them: each read again first and left when it changed since, read back after; never over Accepted, never with attachments. A new asset's reviews are counted in its row.",
+"title": "Written at once, no approval: 7 review(s)",
+"top": true
+},
+{
+"lines": [
+"stigman_ckl_import_auto: all - the reviews of every asset, the new ones too are written at once (above)."
+],
+"status": "ok",
+"title": "Nothing waits for an approval",
+"top": true
+},
+{
+"columns": [
+"Checklist",
+"Its STIG",
+"Host name",
+"Collection / asset",
+"STIG Manager's STIG",
+"Rules matched",
+"Matched by",
+"NaF / Open / NA / NR",
+"To write",
+"State",
+"Why"
+],
+"row_status": [
+"ok",
+"ok"
+],
+"rows": [
+[
+"vrops01.ckl",
+"VMware Aria Operations 8.x Apache Profile ",
+"vrops01",
+"Ops / vrops01",
+"VMW_Aria_Operations_8-x_Apache_STIG V1R1",
+"4 of 4",
+"version",
+"1 / 1 / 1 / 1",
+3,
+"written",
+""
+],
+[
+"vrops03.ckl",
+"VMware Aria Operations 8.x Apache Profile ",
+"vrops03",
+"Watcher / vrops03 (new)",
+"VMW_Aria_Operations_8-x_Apache_STIG V1R1",
+"4 of 4",
+"version",
+"1 / 1 / 1 / 1",
+3,
+"written",
+""
+]
+],
+"status": "ok",
+"text": "Each STIG of each checklist, in each collection that has its asset: the checklist's host name (HOST_NAME), (new): none there, created once approved - and the STIG installed in STIG Manager whose rules it matched (by the benchmark id, the rule ids, V-numbers or versions; stigman_ckl_import_benchmarks names one). Collections searched: Lab, Ops, RHEL, Watcher; a new asset is created in Watcher. NaF / Open / NA / NR: the checklist's answers.",
+"title": "Each checklist"
+}
+],
+"status": "ok",
+"subtitle": "Workflow 40's check: the checklists on /ckl, for Watcher",
+"summary": [
+{
+"label": "Checklists",
+"note": "STIGs in 2 file(s)",
+"value": 2
+},
+{
+"label": "Written",
+"note": "no approval (all)",
+"status": "ok",
+"value": 7
+},
+{
+"label": "To approve",
+"status": "ok",
+"value": 0
+},
+{
+"label": "New assets",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Already so",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Not written",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Not imported",
+"note": "checklists and files",
+"status": "ok",
+"value": 0
+}
+],
+"title": "Checklist import: 7 review(s) written"
+}

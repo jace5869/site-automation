@@ -1,0 +1,545 @@
+{
+"footer": "Checks run: mariadb, servicenow, servicenow_node",
+"sections": [
+{
+"cards": [
+{
+"code": "on node01.yoursite.mil: ausearch -m FANOTIFY -ts today -i | tail -40; fapolicyd-cli --list; a rule or trust entry for it is a change: your decision",
+"meta": "ServiceNow node",
+"next": "Look further:",
+"status": "critical",
+"subject": "node01.yoursite.mil",
+"title": "fapolicyd denied the ServiceNow node's java or install folder on node01.yoursite.mil 1 time(s) today: /usr/lib/jvm/java-17-openjdk/bin/java -> /tmp/tmp.v6aGuAIS9v/glide-bad/nodes/prod_16000/lib/glide-extra.jar (1x)"
+},
+{
+"code": "on node01.yoursite.mil: curl -sS http://127.0.0.1:18302/xmlstats.do | grep -i memory; the heap: -Xmx in the node's wrapper or glide.properties; a node restart in a quiet window frees it (your decision)",
+"meta": "ServiceNow node",
+"next": "Look further:",
+"status": "critical",
+"subject": "node01.yoursite.mil",
+"title": "the ServiceNow node snc_prod.service on node01.yoursite.mil uses 97.4% of its JVM memory (3990 of 4096 MB; critical at 95%): it slows, then fails with OutOfMemory"
+},
+{
+"code": "# java.lang.OutOfMemoryError: Java heap space\ngrep -n OutOfMemory /tmp/tmp.v6aGuAIS9v/glide-bad/nodes/prod_16000/logs/localhost_log.2026-11-11.txt | tail",
+"meta": "ServiceNow node",
+"next": "Look further:",
+"status": "critical",
+"subject": "node01.yoursite.mil",
+"title": "the ServiceNow node snc_prod.service on node01.yoursite.mil ran out of memory 1 time(s) in the last 24 h"
+},
+{
+"code": "on node03.yoursite.mil: systemctl list-unit-files 'snc_*'; ls /glide (servicenow_node_units)",
+"meta": "ServiceNow node",
+"next": "Look further:",
+"status": "critical",
+"subject": "node03.yoursite.mil",
+"title": "no ServiceNow node unit found on node03.yoursite.mil (looked for snc_prod, snc_test, snc_dev)"
+},
+{
+"code": "on node01: the node's stats page and its localhost log",
+"meta": "ServiceNow node",
+"next": "Look further:",
+"status": "critical",
+"subject": "node01:prod_16000",
+"title": "the cluster node node01:prod_16000 says online, but its last heartbeat was 30 minutes ago (2026-11-11 09:07:39 UTC; more than 10): it may be hung"
+},
+{
+"code": "ServiceNow: sys_cluster_state.list; on node03: systemctl status 'snc_*'",
+"meta": "ServiceNow node",
+"next": "Look further:",
+"status": "critical",
+"subject": "node03:prod_16000",
+"title": "the cluster node node03:prod_16000 is offline (last heartbeat 2026-11-10 23:37:39 UTC)"
+}
+],
+"status": "critical",
+"text": "What to act on first: critical, then warning - 10 more there. Every finding is in the tables below.",
+"title": "Start here"
+},
+{
+"boxes": [
+{
+"label": "Nodes running",
+"note": "2 of 2 host(s) read",
+"status": "critical",
+"value": "1 of 2"
+},
+{
+"label": "Database",
+"note": "0% of /tmp, 32.5% used",
+"status": "critical",
+"value": "0 MB"
+},
+{
+"label": "Cluster online",
+"note": "sys_cluster_state",
+"status": "warning",
+"value": "2 of 4"
+}
+],
+"columns": [
+"Host",
+"Node :port",
+"State",
+"Cluster",
+"JVM memory",
+"Semaphores in use / queued",
+"Scheduler workers / queue",
+"Active transactions",
+"Uptime",
+"Log 24 h: SEVERE / OOM / semaphore / slow"
+],
+"row_status": [
+"critical",
+"critical"
+],
+"rows": [
+[
+"node01.yoursite.mil",
+"snc_prod :18302",
+"running, at boot",
+"online, 30 min ago",
+"97.4% (3990 / 4096 MB)",
+"2 / 3, 3, 3",
+"8 / 70",
+"40",
+"1 Days 4 Hours 2 Minutes",
+"144 / 1 / 4 / 0"
+],
+[
+"node03.yoursite.mil",
+"-",
+"NO NODE UNIT (snc_prod, snc_test, snc_dev)",
+"-",
+"-",
+"-",
+"-",
+"-",
+"-",
+"-"
+]
+],
+"title": "Front-end nodes",
+"top": true
+},
+{
+"columns": [
+"Severity",
+"Check",
+"Finding",
+"Look further"
+],
+"rows": [
+[
+"CRITICAL",
+"servicenow_node",
+"fapolicyd denied the ServiceNow node's java or install folder on node01.yoursite.mil 1 time(s) today: /usr/lib/jvm/java-17-openjdk/bin/java -> /tmp/tmp.v6aGuAIS9v/glide-bad/nodes/prod_16000/lib/glide-extra.jar (1x)",
+"on node01.yoursite.mil: ausearch -m FANOTIFY -ts today -i | tail -40; fapolicyd-cli --list; a rule or trust entry for it is a change: your decision"
+],
+[
+"CRITICAL",
+"servicenow_node",
+"the ServiceNow node snc_prod.service on node01.yoursite.mil uses 97.4% of its JVM memory (3990 of 4096 MB; critical at 95%): it slows, then fails with OutOfMemory",
+"on node01.yoursite.mil: curl -sS http://127.0.0.1:18302/xmlstats.do | grep -i memory; the heap: -Xmx in the node's wrapper or glide.properties; a node restart in a quiet window frees it (your decision)"
+],
+[
+"CRITICAL",
+"servicenow_node",
+"the ServiceNow node snc_prod.service on node01.yoursite.mil ran out of memory 1 time(s) in the last 24 h",
+"# java.lang.OutOfMemoryError: Java heap space\ngrep -n OutOfMemory /tmp/tmp.v6aGuAIS9v/glide-bad/nodes/prod_16000/logs/localhost_log.2026-11-11.txt | tail"
+],
+[
+"CRITICAL",
+"servicenow_node",
+"no ServiceNow node unit found on node03.yoursite.mil (looked for snc_prod, snc_test, snc_dev)",
+"on node03.yoursite.mil: systemctl list-unit-files 'snc_*'; ls /glide (servicenow_node_units)"
+],
+[
+"CRITICAL",
+"servicenow_node",
+"the cluster node node01:prod_16000 says online, but its last heartbeat was 30 minutes ago (2026-11-11 09:07:39 UTC; more than 10): it may be hung",
+"on node01: the node's stats page and its localhost log"
+],
+[
+"CRITICAL",
+"servicenow_node",
+"the cluster node node03:prod_16000 is offline (last heartbeat 2026-11-10 23:37:39 UTC)",
+"ServiceNow: sys_cluster_state.list; on node03: systemctl status 'snc_*'"
+],
+[
+"CRITICAL",
+"mariadb",
+"snowdb01.yoursite.mil: MariaDB refused the login of monitor (the MariaDB monitor credential) in container snowdb: Access denied for user 'monitor'@'localhost' (using password: YES) - most likely its password is wrong for this container",
+"# the login by hand (it asks for the password):\npodman exec -it snowdb mariadb -u monitor -p -e \"SELECT 1\"\n# one read-only monitor account, the same password in every container (as an admin, in each container; then the MariaDB monitor credential has its name and password):\npodman exec -it snowdb mariadb -u root -p -e \"CREATE USER 'monitor'@'localhost' IDENTIFIED BY '<password>'; GRANT PROCESS, REPLICA MONITOR ON *.* TO 'monitor'@'localhost'\"\n# (MariaDB before 10.5.9: PROCESS, REPLICATION CLIENT; MySQL: PROCESS, REPLICATION CLIENT)\n# or read only the containers it may log in to: check_mariadb_containers (read now: snowdb)"
+],
+[
+"CRITICAL",
+"servicenow_node",
+"snowdb01.yoursite.mil: at the database's growth (3.2 GB a day over 3.0 days) /tmp is full in 2 days (9.5 GB free)",
+"the report's Largest tables (sys_audit, syslog, attachments: their table cleanup and archive rules); grow /tmp"
+],
+[
+"CRITICAL",
+"servicenow_node",
+"fapolicyd denied the database server or its data on snowdb01.yoursite.mil 1 time(s) today: /usr/sbin/mariadbd -> /tmp/tmp.v6aGuAIS9v/database/data/ibtmp1 (1x)",
+"on snowdb01.yoursite.mil: ausearch -m FANOTIFY -ts today -i | tail -40; fapolicyd-cli --list; a rule or trust entry for it is a change: your decision"
+],
+[
+"WARNING",
+"servicenow_node",
+"fapolicyd denied 1 program(s) or file(s) on node01.yoursite.mil 2 time(s) today; the most: /usr/bin/bash -> /home/admin/tools/collect.sh (2x)",
+"on node01.yoursite.mil: ausearch -m FANOTIFY -ts today -i | tail -40"
+],
+[
+"WARNING",
+"servicenow_node",
+"the ServiceNow node snc_prod.service on node01.yoursite.mil has transactions waiting for a semaphore in every read (3, 3, 3; 2 in use): users wait",
+"on node01.yoursite.mil: curl -sS http://127.0.0.1:18302/xmlstats.do (Semaphore Sets); ServiceNow: Active Transactions (All Nodes) - a long one holds a semaphore"
+],
+[
+"WARNING",
+"servicenow_node",
+"the ServiceNow node snc_prod.service on node01.yoursite.mil has 70 scheduled job(s) waiting for its 8 worker(s) (warning above 50): jobs run late",
+"ServiceNow: System Scheduler > Scheduled Jobs > Today's Scheduled Jobs (State Queued); sys_trigger, Next action in the past"
+],
+[
+"WARNING",
+"servicenow_node",
+"the ServiceNow node snc_prod.service on node01.yoursite.mil logged 4 semaphore problem(s) in the last 24 h (a queue, a limit exceeded, or a wait of 1000 ms or more)",
+"# Default semaphore queue depth 23 exceeded, transaction waited 30003 ms\ngrep -inE 'semaphore.*(queue|exceeded|timed out)|semaphore wait: [0-9]{4,}' /tmp/tmp.v6aGuAIS9v/glide-bad/nodes/prod_16000/logs/localhost_log.2026-11-11.txt | tail"
+],
+[
+"WARNING",
+"servicenow_node",
+"the ServiceNow node snc_prod.service on node01.yoursite.mil logged 144 SEVERE line(s) in the last 24 h (the most frequent 140 times)",
+"# Transaction cancelled: maximum execution time exceeded for /api/now/table/incident (user \u2026)\ngrep -c SEVERE /tmp/tmp.v6aGuAIS9v/glide-bad/nodes/prod_16000/logs/localhost_log.2026-11-11.txt; the report's Node log errors table"
+],
+[
+"WARNING",
+"servicenow_node",
+"the cluster node node09:prod_16000 is offline (last heartbeat 2026-11-05 03:37:39 UTC), and it is not in the inventory group: a retired node's record?",
+"ServiceNow: sys_cluster_state.list - a node that is gone for good: its record can be deleted (your decision)"
+],
+[
+"WARNING",
+"servicenow_node",
+"the cluster node node12:test_16001 is online but its host is not in the inventory group servicenow_nodes: it is not checked",
+"add node12 to the group servicenow_nodes"
+]
+],
+"status": "critical",
+"title": "Findings"
+},
+{
+"columns": [
+"Host",
+"Role",
+"Disk used",
+"Memory available",
+"Swap used",
+"fapolicyd",
+"Database check"
+],
+"row_status": [
+"critical",
+"",
+"critical"
+],
+"rows": [
+[
+"node01.yoursite.mil",
+"front-end node",
+"/tmp/tmp.v6aGuAIS9v/glide-bad 32.5% (9.5 GB free); / 3.9% (1828.6 GB free)",
+"14553 MB of 28797 MB",
+"0.0% of 8191 MB",
+"active: 3 denial(s) today",
+"-"
+],
+[
+"node03.yoursite.mil",
+"front-end node",
+"/tmp/tmp.v6aGuAIS9v/glide03 32.5% (9.5 GB free); / 3.9% (1828.6 GB free)",
+"14523 MB of 28797 MB",
+"0.0% of 8191 MB",
+"active: 0 denial(s) today",
+"-"
+],
+[
+"snowdb01.yoursite.mil",
+"database",
+"/tmp/tmp.v6aGuAIS9v/database 32.5% (9.5 GB free); / 3.9% (1828.6 GB free)",
+"14602 MB of 28797 MB",
+"0.0% of 8191 MB",
+"active: 1 denial(s) today",
+"1: MariaDB refused the login of monitor (the MariaDB monitor credential) in container snowdb: Access denied for user..."
+]
+],
+"title": "Node and database hosts"
+},
+{
+"columns": [
+"Host",
+"Data dir",
+"Database",
+"Its filesystem",
+"Database's share",
+"Growth",
+"Full in"
+],
+"row_status": [
+"critical"
+],
+"rows": [
+[
+"snowdb01.yoursite.mil",
+"/tmp/tmp.v6aGuAIS9v/database/data",
+"0 MB (data, indexes and InnoDB's files; from the data dir's files)",
+"/tmp: 4.6 GB used, 9.5 GB free (32.5%)",
+"0.0%",
+"+9.5 GB since the last run (2026-11-08 09:37 UTC); +3.2 GB a day over 3.0 days",
+"2 days"
+]
+],
+"title": "Database size"
+},
+{
+"columns": [
+"Host",
+"Schema",
+"Size",
+"Tables",
+"Of the database"
+],
+"row_status": [
+"",
+""
+],
+"rows": [
+[
+"snowdb01.yoursite.mil",
+"snprod",
+"0 MB",
+2,
+"80.4%"
+],
+[
+"snowdb01.yoursite.mil",
+"snaudit",
+"0 MB",
+1,
+"8.0%"
+]
+],
+"title": "Largest schemas"
+},
+{
+"columns": [
+"Host",
+"Table",
+"Size",
+"Of the database"
+],
+"row_status": [
+"",
+"",
+""
+],
+"rows": [
+[
+"snowdb01.yoursite.mil",
+"snprod.sys_audit",
+"0 MB",
+"48.3%"
+],
+[
+"snowdb01.yoursite.mil",
+"snprod.syslog",
+"0 MB",
+"32.2%"
+],
+[
+"snowdb01.yoursite.mil",
+"snaudit.old",
+"0 MB",
+"8.0%"
+]
+],
+"title": "Largest tables"
+},
+{
+"columns": [
+"Host",
+"Program",
+"Path denied",
+"Count"
+],
+"row_status": [
+"critical",
+"warning",
+"critical"
+],
+"rows": [
+[
+"node01.yoursite.mil",
+"/usr/lib/jvm/java-17-openjdk/bin/java",
+"/tmp/tmp.v6aGuAIS9v/glide-bad/nodes/prod_16000/lib/glide-extra.jar",
+1
+],
+[
+"node01.yoursite.mil",
+"/usr/bin/bash",
+"/home/admin/tools/collect.sh",
+2
+],
+[
+"snowdb01.yoursite.mil",
+"/usr/sbin/mariadbd",
+"/tmp/tmp.v6aGuAIS9v/database/data/ibtmp1",
+1
+]
+],
+"title": "fapolicyd denials (today)"
+},
+{
+"columns": [
+"Host",
+"Node",
+"Kind",
+"Count",
+"Longest",
+"Last",
+"Message"
+],
+"row_status": [
+"critical",
+"warning",
+"",
+""
+],
+"rows": [
+[
+"node01.yoursite.mil",
+"snc_prod",
+"OutOfMemory, SEVERE",
+1,
+"-",
+"2026-11-11 10:35:39",
+"java.lang.OutOfMemoryError: Java heap space"
+],
+[
+"node01.yoursite.mil",
+"snc_prod",
+"semaphore",
+4,
+"-",
+"2026-11-11 10:29:09",
+"Default semaphore queue depth 23 exceeded, transaction waited 30003 ms"
+],
+[
+"node01.yoursite.mil",
+"snc_prod",
+"SEVERE",
+140,
+"-",
+"2026-11-11 09:50:29",
+"Transaction cancelled: maximum execution time exceeded for /api/now/table/incident (user \u2026)"
+],
+[
+"node01.yoursite.mil",
+"snc_prod",
+"SEVERE",
+3,
+"-",
+"2026-11-11 09:39:39",
+"Invalid query detected, please check logs for details [Unknown field sys_id2 in table incident]"
+]
+],
+"title": "Node log errors (the most frequent, last 24 h)"
+},
+{
+"columns": [
+"System ID",
+"Node ID",
+"Status",
+"Last heartbeat",
+"Schedulers",
+"In the inventory"
+],
+"row_status": [
+"critical",
+"critical",
+"warning",
+"warning"
+],
+"rows": [
+[
+"node01:prod_16000",
+"node01_prod_16000_id",
+"online",
+"2026-11-11 09:07:39 UTC (30 min ago)",
+"any",
+"yes"
+],
+[
+"node03:prod_16000",
+"node03_prod_16000_id",
+"offline",
+"2026-11-10 23:37:39 UTC (600 min ago)",
+"any",
+"yes"
+],
+[
+"node09:prod_16000",
+"node09_prod_16000_id",
+"offline",
+"2026-11-05 03:37:39 UTC (9000 min ago)",
+"any",
+"NO"
+],
+[
+"node12:test_16001",
+"node12_test_16001_id",
+"online",
+"2026-11-11 09:36:39 UTC (1 min ago)",
+"any",
+"NO"
+]
+],
+"title": "Cluster (sys_cluster_state)"
+}
+],
+"status": "critical",
+"summary": [
+{
+"label": "Critical",
+"note": "act now",
+"status": "critical",
+"value": 9
+},
+{
+"label": "Warning",
+"note": "plan a fix",
+"status": "warning",
+"value": 7
+},
+{
+"label": "Nodes running",
+"note": "2 of 2 host(s) read",
+"status": "critical",
+"value": "1 of 2"
+},
+{
+"label": "Database",
+"note": "0% of /tmp, 32.5% used",
+"status": "critical",
+"value": "0 MB"
+},
+{
+"label": "Cluster online",
+"note": "sys_cluster_state",
+"status": "warning",
+"value": "2 of 4"
+}
+],
+"title": "ServiceNow health: 16 finding(s)"
+}

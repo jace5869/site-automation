@@ -1,0 +1,377 @@
+{
+"sections": [
+{
+"lines": [
+"READY: W11-Gold can be shut down, snapshotted and pushed"
+],
+"status": "ok",
+"title": "Verdict"
+},
+{
+"cell_status": [
+[
+"ok",
+"",
+"",
+"",
+""
+],
+[
+"info",
+"",
+"",
+"",
+""
+],
+[
+"ok",
+"",
+"",
+"",
+""
+],
+[
+"ok",
+"",
+"",
+"",
+""
+],
+[
+"ok",
+"",
+"",
+"",
+""
+],
+[
+"ok",
+"",
+"",
+"",
+""
+],
+[
+"ok",
+"",
+"",
+"",
+""
+],
+[
+"ok",
+"",
+"",
+"",
+""
+],
+[
+"ok",
+"",
+"",
+"",
+""
+],
+[
+"ok",
+"",
+"",
+"",
+""
+],
+[
+"ok",
+"",
+"",
+"",
+""
+],
+[
+"info",
+"",
+"",
+"",
+""
+],
+[
+"info",
+"",
+"",
+"",
+""
+],
+[
+"ok",
+"",
+"",
+"",
+""
+],
+[
+"ok",
+"",
+"",
+"",
+""
+],
+[
+"ok",
+"",
+"",
+"",
+""
+],
+[
+"ok",
+"",
+"",
+"",
+""
+],
+[
+"ok",
+"",
+"",
+"",
+""
+],
+[
+"ok",
+"",
+"",
+"",
+""
+],
+[
+"ok",
+"",
+"",
+"",
+""
+],
+[
+"ok",
+"",
+"",
+"",
+""
+],
+[
+"ok",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Result",
+"Part",
+"Check",
+"Found",
+"Fix"
+],
+"rows": [
+[
+"PASS",
+"vCenter",
+"VM found",
+"W11-Gold (/DC1/vm/Gold), host esx01.example.mil",
+""
+],
+[
+"INFO",
+"vCenter",
+"Power state",
+"poweredOn - snapshot it powered off: shut Windows down from inside the guest first",
+""
+],
+[
+"PASS",
+"vCenter",
+"VMware Tools",
+"version 12.2.0 (12352), guestToolsCurrent, running",
+""
+],
+[
+"PASS",
+"vCenter",
+"Network adapters",
+"Network adapter 1 Vmxnet3 on VDI-VLAN20",
+""
+],
+[
+"PASS",
+"vCenter",
+"CD/DVD drive",
+"CD/DVD drive 1: client, not connected",
+""
+],
+[
+"PASS",
+"vCenter",
+"Floppy drive",
+"none",
+""
+],
+[
+"PASS",
+"vCenter",
+"Serial port",
+"none",
+""
+],
+[
+"PASS",
+"vCenter",
+"Parallel port",
+"none",
+""
+],
+[
+"PASS",
+"vCenter",
+"vTPM",
+"none on the golden image (add it at the pool when the desktops need one)",
+""
+],
+[
+"PASS",
+"vCenter",
+"Hardware version",
+"vmx-19 (efi, secure boot on)",
+""
+],
+[
+"PASS",
+"vCenter",
+"Snapshots",
+"2 snapshot(s); the current one, v2026-11, is 2 deep (v2026-10 > v2026-11), taken 2026-11-01 12:00:00 UTC",
+""
+],
+[
+"INFO",
+"vCenter",
+"Size",
+"2 vCPU (2 per socket), 8 GB memory, Hard disk 1 64 GB thin on DS01",
+""
+],
+[
+"INFO",
+"Guest",
+"Windows",
+"Microsoft Windows 11 Enterprise 10.0.22631 (build 22631) on w11-gold.corp.example.mil",
+""
+],
+[
+"PASS",
+"Guest",
+"Horizon Agent",
+"Omnissa Horizon Agent 8.14.0.25172 = Horizon 2412, installed 2026-10-02",
+""
+],
+[
+"PASS",
+"Guest",
+"Instant Clone Agent",
+"Omnissa Horizon Instant Clone Agent (vmware-viewcomposer-ga): Auto, Running",
+""
+],
+[
+"PASS",
+"Guest",
+"Tools before agent",
+"VMware Tools 12.4.0.23259341 installed 2026-10-01, the Horizon Agent 2026-10-02",
+""
+],
+[
+"PASS",
+"Guest",
+"Domain joined",
+"joined to corp.example.mil",
+""
+],
+[
+"PASS",
+"Guest",
+"Windows activation",
+"KMS (Volume:GVLK, kmshost.corp.example.mil:1688), licensed",
+""
+],
+[
+"PASS",
+"Guest",
+"DHCP",
+"1 adapter(s) on DHCP",
+""
+],
+[
+"PASS",
+"Guest",
+"Restart pending",
+"none",
+""
+],
+[
+"PASS",
+"Guest",
+"Windows Update busy",
+"Windows Update and TrustedInstaller idle",
+""
+],
+[
+"PASS",
+"Guest",
+"FSLogix",
+"Microsoft FSLogix Apps 2.9.8884.27471, service frxsvc Running",
+""
+]
+],
+"title": "Checks"
+},
+{
+"lines": [
+"licensing: Access denied"
+],
+"status": "warning",
+"title": "Not read in the guest"
+},
+{
+"lines": [
+"1. Shut Windows down from inside the guest (Start > Shut down) - do not power the VM off.",
+"2. Take the snapshot with the VM powered off (no memory); name it for the date or the change.",
+"3. Push it: the Horizon image push plan (horizon_push_base_vm W11-Gold, horizon_push_snapshot the new snapshot's name)."
+],
+"title": "Next"
+}
+],
+"status": "ok",
+"subtitle": "VM W11-Gold; vCenter vc01.example.mil, /DC1/vm/Gold; guest w11-gold.corp.example.mil",
+"summary": [
+{
+"label": "Verdict",
+"status": "ok",
+"value": "READY"
+},
+{
+"label": "FAIL",
+"status": "ok",
+"value": 0
+},
+{
+"label": "WARN",
+"status": "ok",
+"value": 0
+},
+{
+"label": "PASS",
+"value": 19
+},
+{
+"label": "Guest checked",
+"status": "ok",
+"value": "yes"
+}
+],
+"title": "Horizon golden image W11-Gold: READY"
+}

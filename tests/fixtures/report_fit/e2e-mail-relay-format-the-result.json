@@ -1,0 +1,118 @@
+{
+"footer": "Job - by jdoe, 2026-11-11. The copy of main.cf before is next to it on each relay.",
+"sections": [
+{
+"columns": [
+"Relay",
+"Result",
+"Addresses",
+"Detail"
+],
+"row_status": [
+"",
+""
+],
+"rows": [
+[
+"relay1",
+"dry run",
+4,
+"Check mode: nothing was written"
+],
+[
+"relay2",
+"dry run",
+2,
+"Check mode: nothing was written"
+]
+],
+"title": "Relay servers"
+},
+{
+"lines": [
+"No VMware vCenter credential on the template: the names are from DNS only, with no service (folder)."
+],
+"title": "vCenter"
+},
+{
+"columns": [
+"Address",
+"DNS name",
+"VM",
+"Folder",
+"VM found by"
+],
+"rows": [
+[
+"127.0.0.1",
+"localhost",
+"-",
+"",
+""
+],
+[
+"192.0.2.10",
+"-",
+"-",
+"",
+""
+]
+],
+"title": "Each address looked up"
+},
+{
+"lines": [
+"mynetworks =",
+"    127.0.0.0/8",
+"",
+"    # localhost [AAP]",
+"    127.0.0.1",
+"",
+"    192.0.2.10",
+"",
+"    # Printer  [added 2026-10-22 by jdoe]",
+"    192.0.2.11"
+],
+"title": "The list on relay1"
+},
+{
+"lines": [
+"mynetworks =",
+"    127.0.0.0/8",
+"",
+"    192.0.2.10"
+],
+"title": "The list on relay2"
+}
+],
+"status": "ok",
+"subtitle": "DRY RUN (Check mode): nothing was written - this is what a Run would write. 2 of 2 relay(s) would be formatted. The list keeps exactly its addresses;\n1 of 2 address(es) without a comment named, 0 matched a VM in vCenter, 0 with its folder.",
+"summary": [
+{
+"label": "Named",
+"value": 1
+},
+{
+"label": "Looked up",
+"value": 2
+},
+{
+"label": "Matched a VM",
+"value": "0 (0 with a folder)"
+},
+{
+"label": "VMs read in vCenter",
+"value": "not read"
+},
+{
+"label": "Formatted",
+"value": "2 of 2"
+},
+{
+"label": "Failed",
+"status": "ok",
+"value": 0
+}
+],
+"title": "Mail relay whitelist - dry run: one address per line"
+}

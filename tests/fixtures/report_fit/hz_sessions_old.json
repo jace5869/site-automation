@@ -1,0 +1,81 @@
+{
+"sections": [
+{
+"columns": [
+"User",
+"Desktop",
+"Pool",
+"Disconnected since",
+"Hours"
+],
+"rows": [
+[
+"S-3",
+"(an RDS host)",
+"farm Farm A",
+"2026-09-20 08:13 UTC",
+"30.0"
+],
+[
+"CORP\\jdoe",
+"d-1",
+"IC-Win11",
+"2026-09-21 05:13 UTC",
+"9.0"
+]
+],
+"title": "To log off"
+},
+{
+"columns": [
+"User",
+"Desktop",
+"Pool",
+"Why not"
+],
+"rows": [
+[
+"S-5",
+"(an RDS host)",
+"IC-Win11",
+"when it was disconnected is not known"
+],
+[
+"S-4",
+"(an RDS host)",
+"VIP-Desk",
+"pool VIP-Desk is excluded (horizon_protected_pools, horizon_session_cleanup_exclude_pools)"
+],
+[
+"S-10",
+"(an RDS host)",
+"px",
+"its pool px is not among the pools Horizon gave: whether it is protected is not known"
+]
+],
+"title": "Held back"
+}
+],
+"status": "warning",
+"subtitle": "disconnected for 8 hours or more; 1 more disconnected for less",
+"summary": [
+{
+"label": "Sessions",
+"value": 7
+},
+{
+"label": "Disconnected",
+"value": 6
+},
+{
+"label": "To log off",
+"status": "warning",
+"value": 2
+},
+{
+"label": "Held back",
+"value": 3
+}
+],
+"title": "Horizon disconnected sessions: 2 to log off"
+}

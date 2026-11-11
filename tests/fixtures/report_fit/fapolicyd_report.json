@@ -1,0 +1,93 @@
+{
+"footer": "ACT's proposals (a trust entry, a narrow rule) are security-control changes: route them through your security approval (e.g. the ISSO) before anyone applies them.",
+"sections": [
+{
+"cell_status": [
+[
+"",
+"critical",
+"ok",
+"",
+"",
+""
+]
+],
+"columns": [
+"Host",
+"fapolicyd",
+"auditd",
+"Denials",
+"Files denied",
+"Programs"
+],
+"row_status": [
+"critical"
+],
+"rows": [
+[
+"fa01",
+"failed",
+"active",
+0,
+"-",
+"-"
+]
+],
+"status": "critical",
+"text": "What fapolicyd blocked since today: the files denied and the programs that tried. A denial is fapolicyd doing its job, or a legitimate program missing from the trust database - ACT's analysis below says which. auditd not running = denials are not recorded.",
+"title": "Hosts with denials or a problem"
+},
+{
+"lines": [
+"fapolicyd is failed",
+"There are no blocked accesses in the evidence.",
+"ACT proposes (for your security approval): chmod 0644 /etc/fapolicyd/trust.d/app"
+],
+"status": "critical",
+"text": "What the job found, then ACT's analysis - it read the evidence only and ran nothing on the host.",
+"title": "fa01: ACT's analysis"
+},
+{
+"lines": [
+"While the exact failure message is not in the output, two causes:",
+"1. Unreadable trust files: fapolicyd runs as uid = fapolicyd.",
+"2. Missing journal output: run these read-only commands:",
+"systemctl status fapolicyd.service",
+"journalctl -u fapolicyd.service -n 100",
+"uid = fapolicyd gid = fapolicyd"
+],
+"title": "fa01: Service Failure Triage (fapolicyd is failed)"
+},
+{
+"lines": [
+"Finding 1: Incorrect ownership",
+"ROOT CAUSE: three trust files are 0600."
+],
+"title": "fa01: Findings"
+}
+],
+"status": "critical",
+"subtitle": "1 host(s) read - denials since today (the audit log: ausearch -m FANOTIFY -ts today)",
+"summary": [
+{
+"label": "Denials",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Hosts with denials",
+"status": "ok",
+"value": 0
+},
+{
+"label": "fapolicyd not running",
+"status": "critical",
+"value": 1
+},
+{
+"label": "Hosts read",
+"value": 1
+}
+],
+"title": "fapolicyd denials: fapolicyd not running on 1"
+}

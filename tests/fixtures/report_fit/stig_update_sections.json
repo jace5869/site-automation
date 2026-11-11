@@ -1,0 +1,67 @@
+{
+"sections": [
+{
+"columns": [
+"Host",
+"Collection / asset",
+"STIG",
+"Rule",
+"CAT",
+"Title",
+"STIG Manager now",
+"Written as",
+"Status",
+"Comment"
+],
+"row_status": [
+"info",
+"info",
+"info"
+],
+"rows": [
+[
+"web01",
+"C / web01",
+"RHEL_9_STIG",
+"V-1",
+"CAT II",
+"Rule SV-1",
+"Open (accepted)",
+"Not a Finding",
+"submitted",
+"set"
+],
+[
+"web01",
+"C / web01",
+"RHEL_9_STIG",
+"V-2",
+"CAT II",
+"Rule SV-2",
+"no review",
+"Not a Finding",
+"submitted",
+"set"
+],
+[
+"web01",
+"C / web01",
+"RHEL_9_STIG",
+"V-3",
+"CAT II",
+"Rule SV-3",
+"no review in V2R9 - V2R8: Not a Finding (accepted)",
+"Not a Finding",
+"submitted",
+"set"
+]
+],
+"status": "warning",
+"text": "The approval step's next job writes exactly these reviews - nothing else: no collection, user or other review is changed, and no asset but the new ones (NEW ASSET: created with that name and STIG, then the scan's answers written as its reviews - the update does not create one that is there by then). Each review is written only if it is still as it was read here (STIG Manager now); one changed since is left, and said. The detail is what the scan found; a review that has a comment keeps it (a finding gets one).",
+"title": "Approve writes these reviews to STIG Manager",
+"top": true
+}
+],
+"status": "info",
+"title": "stig_update_sections (its tables, inside a findings report)"
+}

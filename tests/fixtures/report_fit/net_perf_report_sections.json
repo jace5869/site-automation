@@ -1,0 +1,63 @@
+{
+"sections": [
+{
+"boxes": [
+{
+"label": "Paths measured",
+"status": "ok",
+"value": 2
+},
+{
+"label": "Slow or lossy",
+"status": "critical",
+"value": 1
+}
+],
+"columns": [
+"From",
+"To",
+"Loss",
+"Avg ms",
+"Max ms",
+"Jitter ms",
+"Usual ms",
+"TCP connect ms",
+"Note"
+],
+"row_status": [
+"critical",
+"ok"
+],
+"rows": [
+[
+"h1",
+"B",
+"50 %",
+"1.0",
+"1.0",
+"0.1",
+"-",
+"-",
+""
+],
+[
+"h1",
+"A",
+"0 %",
+"1.0",
+"1.0",
+"0.1",
+"-",
+"-",
+""
+]
+],
+"status": "critical",
+"text": "Ping from each host (round trip in ms; jitter = mdev). Usual = the median of the host's last runs, kept on the host. TCP connect: the time to open the target's port, when it has one.",
+"title": "Latency and loss - from each host to its targets, worst first",
+"top": true
+}
+],
+"status": "info",
+"title": "net_perf_report_sections (its tables, inside a findings report)"
+}

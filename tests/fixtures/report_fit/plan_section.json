@@ -1,0 +1,41 @@
+{
+"sections": [
+{
+"columns": [
+"Checklist",
+"Collection / asset",
+"STIG",
+"Rule",
+"CAT",
+"Title",
+"STIG Manager now",
+"Written as",
+"Status",
+"Answered by"
+],
+"row_status": [
+"info"
+],
+"rows": [
+[
+"NEW ASSET",
+"VMware / vrops01",
+"VMW_Aria_Operations_8-x_Apache_STIG",
+"-",
+"-",
+"vrops01 - FQDN vrops01.example.mil, then its 3 review(s): Not a Finding 1, Open 1, Not Applicable 1",
+"no asset",
+"created",
+"",
+""
+]
+],
+"status": "warning",
+"text": "The approval step's next job writes exactly these reviews - nothing else: no collection, user, STIG or other review is changed, and no asset but the new ones (NEW ASSET: created with that name and every STIG its checklists matched, then the checklists' answers written as its reviews - 3 of them, counted in its row; the update does not create one that is there by then). Each review is written only if it is still as it was read here (STIG Manager now); one changed since is left, and said. The detail is the checklist's finding details, the comment its comments and where it came from. Not Reviewed in a checklist is never written.",
+"title": "Approve writes these reviews to STIG Manager and creates 1 asset",
+"top": true
+}
+],
+"status": "info",
+"title": "_plan_section (its tables, inside a findings report)"
+}

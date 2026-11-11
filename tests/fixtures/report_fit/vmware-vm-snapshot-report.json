@@ -1,0 +1,148 @@
+{
+"footer": "vCenter 127.0.0.1",
+"sections": [
+{
+"columns": [
+"VM",
+"Snapshot",
+"Taken (UTC)",
+"Taken by",
+"Age (days)",
+"Size",
+"Folder",
+"Description"
+],
+"rows": [
+[
+"DC0_H0_VM1",
+"baseline",
+"2026-11-11 09:39:27",
+"unknown",
+7.0,
+"0 MB",
+"/DC0/vm",
+"test fixture"
+]
+],
+"status": "warning",
+"text": "The snapshot cleanup deletes these (in the workflow: after the approval). Old snapshots slow the VM down and fill the datastore.",
+"title": "To delete: older than 5 days"
+},
+{
+"columns": [
+"VM",
+"Snapshot",
+"Taken (UTC)",
+"Taken by",
+"Age (days)",
+"Size",
+"Folder",
+"Description",
+"Why"
+],
+"rows": [
+[
+"DC0_C0_RP0_VM1",
+"baseline",
+"2026-11-11 09:39:27",
+"CORP\\jdoe",
+7.0,
+"0 MB",
+"/DC0/vm",
+"test fixture",
+"the VM is on the exclusion list"
+],
+[
+"DC0_H0_VM0",
+"aap-snap",
+"2026-11-11 09:39:27",
+"unknown",
+7.0,
+"0 MB",
+"/DC0/vm",
+"",
+"the VM is the AAP server"
+]
+],
+"text": "The cleanup leaves these alone. The big ones are best deleted by hand, at a quiet time.",
+"title": "Older than 5 days, held back (never deleted automatically)"
+},
+{
+"columns": [
+"VM",
+"Snapshot",
+"Taken (UTC)",
+"Taken by",
+"Age (days)",
+"Size",
+"Folder",
+"Description"
+],
+"rows": [
+[
+"DC0_C0_RP0_VM1",
+"baseline",
+"2026-11-11 09:39:27",
+"CORP\\jdoe",
+7.0,
+"0 MB",
+"/DC0/vm",
+"test fixture"
+],
+[
+"DC0_H0_VM0",
+"aap-snap",
+"2026-11-11 09:39:27",
+"unknown",
+7.0,
+"0 MB",
+"/DC0/vm",
+""
+],
+[
+"DC0_H0_VM1",
+"baseline",
+"2026-11-11 09:39:27",
+"unknown",
+7.0,
+"0 MB",
+"/DC0/vm",
+"test fixture"
+]
+],
+"text": "Taken by: from vCenter events; unknown = older than vCenter keeps its events (often 30 days).",
+"title": "All snapshots (any age), oldest first"
+}
+],
+"status": "warning",
+"subtitle": "Every snapshot is listed below, whatever its age; the ones older than 5 days are listed apart, for the cleanup",
+"summary": [
+{
+"label": "VMs with snapshots",
+"value": 3
+},
+{
+"label": "Snapshots",
+"value": 3
+},
+{
+"label": "Total size",
+"value": "0 MB"
+},
+{
+"label": "To delete (older than 5 days)",
+"status": "warning",
+"value": 1
+},
+{
+"label": "Their size",
+"status": "warning",
+"value": "0 MB"
+},
+{
+"label": "Old, held back",
+"value": 2
+}
+],
+"title": "VMware snapshot report (older than 5 days): 1 to delete (0 MB), 2 held back; 3 snapshot(s) on 3 VM(s)"
+}

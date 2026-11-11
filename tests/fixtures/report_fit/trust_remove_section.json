@@ -1,0 +1,39 @@
+{
+"sections": [
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Host",
+"Where",
+"Certificates",
+"What was done",
+"Outcome"
+],
+"row_status": [
+"ok"
+],
+"rows": [
+[
+"vc01.example.mil",
+"vCenter trusted roots vc01.example.mil",
+"emSign ECC Root CA - G3",
+"deleted the chain A1",
+"removed"
+]
+],
+"status": "ok",
+"text": "The system trust is blocklisted, not edited; every file changed was copied to the backup folder first. Left alone: a store this cannot change (a container's image, Node, a Go program: update or rebuild), a file a package owns, a kind not in check_trust_remove_kinds. The table above shows what is left after the removal.",
+"title": "Removed (check_trust_remove)"
+}
+],
+"status": "info",
+"title": "trust_remove_section (its tables, inside a findings report)"
+}

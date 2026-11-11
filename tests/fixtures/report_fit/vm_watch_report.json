@@ -1,0 +1,119 @@
+{
+"footer": "Read-only: the watch changed nothing.",
+"sections": [
+{
+"cell_status": [
+[
+"critical",
+"",
+"",
+"",
+""
+],
+[
+"critical",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Severity",
+"Object",
+"Where",
+"Problem",
+"What to do"
+],
+"row_status": [
+"critical",
+"critical"
+],
+"rows": [
+[
+"critical",
+"host esx01",
+"CL1 / DC1",
+"ESXi host esx01 is not responding (cluster CL1): its VMs may be down (vSphere HA restarts them on other hosts when it is on)",
+"Check the host's management network and its console (iDRAC / iLO): is it up? Reconnect it in the vSphere Client (Connection > Connect) once it answers. Do not restart its VMs elsewhere by hand while HA is working."
+],
+[
+"critical",
+"vm app01",
+"CL1 / DC1",
+"VM app01 is hung: no guest heartbeat (red); no answer at 192.0.2.20, in 2 check(s)",
+"Open its console in the vSphere Client. Frozen or a crash screen: restart it (guest restart first, a reset only if that does nothing). Note the time for its owner."
+]
+],
+"status": "critical",
+"title": "Down or hung now"
+},
+{
+"columns": [
+"VM",
+"vCenter",
+"Host",
+"Why"
+],
+"rows": [
+[
+"app01",
+"vc01.example.mil",
+"esx01.example.mil",
+"no guest heartbeat (red); no answer at 192.0.2.20, in 2 check(s) (checked 2026-10-23T10:00:00Z to 2026-10-23T10:02:00Z)"
+]
+],
+"status": "info",
+"text": "Phase 2 is not built yet. This is what it would restart (a guest restart first), so you can check every one by hand now and count the false alarms before any action is turned on.",
+"title": "Would be restarted in phase 2 (nothing was done)"
+},
+{
+"columns": [
+"VM",
+"vCenter",
+"Host",
+"Why"
+],
+"rows": [
+[
+"app04",
+"vc01.example.mil",
+"esx01.example.mil",
+"a vCenter task was running on it: "
+]
+],
+"title": "Not judged this run"
+},
+{
+"lines": [
+"Probe from the AAP node: ping, 3 s per address."
+],
+"title": "How it judged"
+}
+],
+"status": "critical",
+"subtitle": "Read 2026-10-23T10:02:00Z UTC: 1 host(s), 1 datastore(s), 40 powered-on VM(s); HA and storage events of the last 15 minutes. A VM is hung only when it has no heartbeat AND does not answer on the network, in each of 2 check(s) 120 seconds apart. Watch only: nothing was restarted.",
+"summary": [
+{
+"label": "Critical",
+"status": "critical",
+"value": 2
+},
+{
+"label": "Warning",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Hung VMs",
+"status": "critical",
+"value": 1
+},
+{
+"label": "Phase 2 would restart",
+"status": "info",
+"value": 1
+}
+],
+"title": "VM outage watch: 2 critical"
+}

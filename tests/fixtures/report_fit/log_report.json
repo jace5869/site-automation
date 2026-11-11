@@ -1,0 +1,233 @@
+{
+"footer": "ACT is an AI assistant: it read the evidence only, ran nothing and changed nothing. Confidence is its own estimate.",
+"sections": [
+{
+"cell_status": [
+[
+"critical",
+"",
+""
+]
+],
+"columns": [
+"Host",
+"Kind",
+"Why"
+],
+"row_status": [
+"critical"
+],
+"rows": [
+[
+"web03.example.mil",
+"Linux",
+"ssh refused"
+]
+],
+"status": "critical",
+"title": "Not read (1)"
+},
+{
+"lines": [
+"slow logins"
+],
+"title": "Your question"
+},
+{
+"lines": [
+"Fix the kernel first."
+],
+"status": "critical",
+"title": "What to do first"
+},
+{
+"cell_status": [
+[
+"",
+"critical",
+"",
+"",
+"",
+"",
+"",
+"ok"
+]
+],
+"columns": [
+"#",
+"Level",
+"Hosts",
+"Pattern",
+"Likely cause",
+"Evidence",
+"Fix",
+"Confidence"
+],
+"row_status": [
+"critical"
+],
+"rows": [
+[
+"P1",
+"CRITICAL",
+"web01.example.mil",
+"kernel panic",
+"A driver bug.",
+"kernel panic",
+"Update the driver.",
+"85% high"
+]
+],
+"text": "Confidence: ACT's own estimate that the cause is right - green 80+ (the evidence shows it), amber 50-79 (likely), red under 50 (a guess: check first).",
+"title": "Likely causes and fixes"
+},
+{
+"cell_status": [
+[
+"",
+"critical",
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"critical",
+"",
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"#",
+"Level",
+"Hosts",
+"Log",
+"Lines",
+"First seen",
+"Last seen",
+"Example"
+],
+"row_status": [
+"critical",
+"critical"
+],
+"rows": [
+[
+"P1",
+"CRITICAL",
+"web01.example.mil",
+"journal kernel",
+1,
+"2026-10-23 07:00:00",
+"2026-10-23 07:00:00",
+"kernel panic"
+],
+[
+"P2",
+"ERROR",
+"web01.example.mil, web02.example.mil",
+"journal sshd",
+2,
+"2026-10-23 07:00:00",
+"2026-10-23 07:00:00",
+"Connection reset by 192.0.2.10"
+]
+],
+"text": "P2 to P2 (over log_analysis_max_items, 1) were not given to ACT.",
+"title": "Patterns (2), most severe first"
+},
+{
+"columns": [
+"Host",
+"Kind",
+"Logs",
+"Lines",
+"Patterns"
+],
+"rows": [
+[
+"web01.example.mil",
+"Linux",
+"journal",
+2,
+2
+],
+[
+"web02.example.mil",
+"Linux",
+"journal",
+1,
+1
+]
+],
+"title": "Hosts read (2)"
+},
+{
+"lines": [
+"Window: the last 24 h.",
+"Profile nginx: web01.",
+"ACT: ran."
+],
+"title": "What was read"
+}
+],
+"status": "critical",
+"subtitle": "The warning, error and critical log lines of the last 24 h on web, grouped into patterns (the same line with other numbers, times and names is one pattern). ACT analyzed the top 1: likely causes, not certain ones - check before you change anything.",
+"summary": [
+{
+"label": "Hosts read",
+"value": 2
+},
+{
+"label": "Not read",
+"status": "critical",
+"value": 1
+},
+{
+"label": "Lines",
+"value": 3
+},
+{
+"label": "Patterns",
+"value": 2
+},
+{
+"label": "Critical",
+"status": "critical",
+"value": 1
+},
+{
+"label": "Error",
+"status": "critical",
+"value": 1
+},
+{
+"label": "Warning",
+"status": "ok",
+"value": 0
+},
+{
+"label": "High confidence (80+)",
+"status": "ok",
+"value": 1
+},
+{
+"label": "Medium (50-79)",
+"status": "warning",
+"value": 0
+},
+{
+"label": "Low (under 50)",
+"status": "critical",
+"value": 0
+}
+],
+"title": "Log analysis: likely causes and fixes for 1 pattern(s), 1 host(s) not read"
+}

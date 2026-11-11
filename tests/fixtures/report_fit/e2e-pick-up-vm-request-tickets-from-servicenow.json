@@ -1,0 +1,41 @@
+{
+"footer": "Query: active=true^assignment_group.name=Linux Operations^short_descriptionSTARTSWITHVM request^stateIN1^ORDERBYsys_created_on ",
+"sections": [
+{
+"columns": [
+"Ticket",
+"Short description",
+"Workflow"
+],
+"rows": [
+[
+"INC0010005",
+"VM request: AAP will not start it",
+"NOT STARTED: AAP did not start it (HTTP 400: {\"resources_needed_to_start\": [\"Job Template 'VM - deploy' is missing or undefined.\"]})"
+]
+],
+"status": "critical",
+"title": "Picked up"
+},
+{
+"columns": [
+"Ticket",
+"Why"
+],
+"rows": [
+[
+"INC0010001",
+"AAP has it already ([AAP] Workflow job 1001 started for this ticket: http://127.0.0.1:18274/execution/jobs/workflow/1001/output)"
+],
+[
+"INC0010003",
+"AAP has it already ([AAP] Workflow job 1001 started for this ticket: http://127.0.0.1:18275/#/jobs/workflow/1001/output)"
+]
+],
+"title": "Not picked up"
+}
+],
+"status": "critical",
+"subtitle": "ServiceNow http://127.0.0.1:18273 - AAP job 4711",
+"title": "VM request pickup: 1 ticket(s) could not be started"
+}

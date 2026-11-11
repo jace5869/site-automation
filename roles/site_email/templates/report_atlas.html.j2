@@ -343,6 +343,21 @@ footer{margin-top:28px;text-align:center;color:var(--muted);font-size:13px;line-
 table.cc td .chip,table.cc td.nw .chip{padding:1px 7px 1px 4px;gap:4px;font-size:12px;white-space:normal;border-radius:9px}
 table.cc td .chip .ic{width:13px;height:13px}
 table.cc.sq td.k-nw{white-space:normal}
+/* 1.21.0: a table fits its card without scrolling sideways - the script's steps, one after the other, only while it is
+   still wider than its card: f1 short values and chips wrap at spaces and hyphens, smaller minimum widths; f2 tighter
+   cells, headings wrap at their spaces, a long word breaks inside but a text cell keeps 9 characters; f3 numbers wrap
+   at their spaces (12,050.0 / GB, never inside the digits), a smaller type; f4 a heading word may break, no minimum
+   width. Wider still: it scrolls (the last resort) */
+table.f1 :is(td.k-nw,td.nw,td.nw .chip,td.k-mid .w,td.k-wrap .w){white-space:normal}
+table.f1 td.k-mid{min-width:10ch}table.f1 td.k-long{min-width:16ch}table.f1 :is(td.k-path,td.lk){min-width:14ch}
+table.f2 td,table.f2 th button{padding-left:6px;padding-right:6px}
+table.f2 :is(th.k-num,th.k-nw){white-space:normal}table.f2 th{letter-spacing:.03em}
+table.f2 :is(td.k-mid,td.k-long,td.k-wrap,td.k-mid .w,td.k-wrap .w){overflow-wrap:anywhere}
+table.f2 :is(td.k-mid,td.k-long,td.k-wrap,td.k-path,td.lk){min-width:9ch}
+table.f3{font-size:calc(var(--fs) * .92)}table.f3 td.k-num{white-space:normal}table.f3 th{letter-spacing:0;font-size:10.5px}
+/* without the script (blocked): a table too wide scrolls inside its card, not the whole page */
+:root:not(.js) .tw{overflow-x:auto}
+table.f4 th button{overflow-wrap:anywhere}table.f4 :is(td.k-mid,td.k-long,td.k-wrap,td.k-path,td.lk){min-width:0}
 /* Columns: a column whose box is not checked, not shown (a rule per place, 1 to the most columns of a table here) */
 {%- set ncol = namespace(n=0) %}
 {%- for s in r.sections | default([]) if s.columns is defined and s.columns | length > ncol.n %}{% set ncol.n = s.columns | length %}{% endfor %}
@@ -366,9 +381,9 @@ table.cc.sq td.k-nw{white-space:normal}
   .tw table,.tw tbody,.tw tr,.tw td{display:block;width:100%}
   .tw thead{display:none}
   .tw tbody tr{background:var(--card-strong);border:1px solid var(--line);border-radius:12px;padding:6px 0;margin-bottom:8px}
-  .tw td,.tw td.k-nw,.tw td.nw,.tw td.k-num{white-space:normal;text-align:left;min-width:0}
+  .tw td,.tw td.k-nw,.tw td.nw,.tw td.k-num,.tw td.nw .chip{white-space:normal;text-align:left;min-width:0}
   /* the value one item beside its column's name (.cv: a value made of several pieces - words, a command and its Copy) */
-  .tw td{border:0;padding:4px 14px;display:grid;grid-template-columns:minmax(90px,34%) 1fr;gap:10px;align-items:start;background:none!important}
+  .tw td{border:0;padding:4px 14px;display:grid;grid-template-columns:minmax(90px,34%) minmax(0,1fr);gap:10px;align-items:start;background:none!important;overflow-wrap:break-word}
   .tw td:before{content:attr(data-l);font-family:"Segoe UI",system-ui,sans-serif;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--label);padding-top:3px}
   .tw td .chip{justify-self:start}
   tr.r-critical td:first-child,tr.r-warning td:first-child,tr.r-ok td:first-child,tr.r-info td:first-child{box-shadow:none}

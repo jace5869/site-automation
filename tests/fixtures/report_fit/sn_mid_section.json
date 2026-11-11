@@ -1,0 +1,67 @@
+{
+"sections": [
+{
+"columns": [
+"MID Server",
+"Host",
+"Status",
+"Validated",
+"Version",
+"Heartbeat",
+"Stuck output",
+"Service on the host"
+],
+"row_status": [
+"",
+"critical",
+"warning",
+"critical"
+],
+"rows": [
+[
+"mid01",
+"mid01.example.mil",
+"Up",
+"yes",
+"xanadu-07-02-2024",
+"2 min ago",
+"0",
+"snc_mid_mid01 Running"
+],
+[
+"mid02",
+"mid02.example.mil",
+"Down",
+"yes",
+"xanadu-07-02-2024",
+"2 min ago",
+"4",
+"not checked"
+],
+[
+"extra",
+"mid01.example.mil",
+"not in the instance's list",
+"-",
+"-",
+"-",
+"-",
+"snc_mid_extra Running"
+],
+[
+"-",
+"mid09.example.mil",
+"-",
+"-",
+"-",
+"-",
+"-",
+"NOT REACHED"
+]
+],
+"title": "MID Servers"
+}
+],
+"status": "info",
+"title": "sn_mid_section (its tables, inside a findings report)"
+}

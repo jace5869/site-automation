@@ -1,0 +1,152 @@
+{
+"footer": "Read-only: nothing was changed. The change waits for approval.",
+"sections": [
+{
+"lines": [
+"192.0.2.11 (out of the mynetworks line)"
+],
+"title": "The lines to be removed"
+},
+{
+"lines": [
+"relay2: 192.0.2.11 is not on the list."
+],
+"title": "Note"
+},
+{
+"columns": [
+"Relay",
+"Oldest line",
+"Newest line",
+"Days back",
+"Covers 183 days",
+"Logs read",
+"Errors"
+],
+"row_status": [
+"",
+""
+],
+"rows": [
+[
+"relay1",
+"2026-04-25",
+"2026-11-06",
+200,
+"yes",
+2,
+""
+],
+[
+"relay2",
+"2026-04-25",
+"2026-11-08",
+200,
+"yes",
+1,
+""
+]
+],
+"text": "An address is unused when no relay accepted a message from it since 2026-05-12 08:32 UTC (183 days, mail_relay_unused_days). The logs of each relay must go back that far.",
+"title": "How far back the logs go"
+},
+{
+"columns": [
+"Address",
+"Kind",
+"On relays",
+"Last mail",
+"Messages in the logs",
+"Connections",
+"Verdict"
+],
+"row_status": [
+"",
+"",
+"warning"
+],
+"rows": [
+[
+"127.0.0.0/8",
+"subnet",
+"all",
+"never in the logs",
+0,
+"",
+"kept: the relay itself"
+],
+[
+"192.0.2.10",
+"address",
+"all",
+"2026-11-08 09:32 UTC",
+2,
+"1 connection(s)",
+"in use"
+],
+[
+"192.0.2.11",
+"address",
+"relay1",
+"2026-05-05 09:32 UTC",
+1,
+"2 connection(s)",
+"UNUSED"
+]
+],
+"text": "Last mail: the newest message any relay accepted from it (or from an address inside the subnet). Connections: how often it connected (a monitor or a scanner connects and sends nothing - that does not count as sending).",
+"title": "Each address on the list"
+},
+{
+"columns": [
+"Relay",
+"File",
+"Change",
+"Problem"
+],
+"row_status": [
+"",
+""
+],
+"rows": [
+[
+"relay1",
+"/tmp/tmp.4I3BdcTXg1/r1/main.cf",
+"remove",
+""
+],
+[
+"relay2",
+"/tmp/tmp.4I3BdcTXg1/r2/main.cf",
+"none",
+""
+]
+],
+"title": "Relay servers"
+},
+{
+"lines": [
+"In AAP: Automation Execution > Administration > Workflow Approvals, or open the workflow job.",
+"Once approved, the lines above are written exactly as shown (the file is backed up first), the mail configuration is checked and Postfix reloaded. You get an email with the result."
+],
+"title": "To approve or deny"
+}
+],
+"status": "warning",
+"subtitle": "Requested by jdoe. Nothing changes until a person approves it in AAP.",
+"summary": [
+{
+"label": "Remove",
+"value": "192.0.2.11"
+},
+{
+"label": "Relays to change",
+"value": "1 of 2"
+},
+{
+"label": "Requested by",
+"value": "jdoe"
+}
+],
+"title": "Mail relay whitelist - waiting for approval: unused - remove 192.0.2.11"
+}

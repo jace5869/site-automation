@@ -1,0 +1,221 @@
+{
+"footer": "Checks run: stigman",
+"sections": [
+{
+"cards": [
+{
+"code": "",
+"meta": "stigman",
+"next": "",
+"status": "warning",
+"subject": "localhost",
+"title": "the database restarted 10 min ago (seen through node stig-b)"
+},
+{
+"code": "",
+"meta": "stigman",
+"next": "",
+"status": "warning",
+"subject": "localhost",
+"title": "node stig-b restarted 5 min ago"
+},
+{
+"code": "",
+"meta": "stigman",
+"next": "",
+"status": "warning",
+"subject": "localhost",
+"title": "the nodes run different STIG Manager versions: service 1.6.18, stig-a 1.6.18, stig-b 1.6.17"
+},
+{
+"code": "",
+"meta": "stigman",
+"next": "",
+"status": "warning",
+"subject": "localhost",
+"title": "the nodes see different database schemas (lastMigration): service 42, stig-a 42, stig-b 41 - do they use the same database?"
+},
+{
+"code": "",
+"meta": "stigman",
+"next": "",
+"status": "warning",
+"subject": "localhost",
+"title": "the nodes do not seem to use the same database (its version or uptime differ): service 10.11.9-MariaDB up 24 h, stig-a 10.11.9-MariaDB up 24 h, stig-b 10.11.9-MariaDB up 10 min"
+}
+],
+"status": "warning",
+"text": "What to act on first: critical, then warning. Every finding is in the tables below.",
+"title": "Start here"
+},
+{
+"columns": [
+"Severity",
+"Check",
+"Finding",
+"Look further"
+],
+"rows": [
+[
+"WARNING",
+"stigman",
+"the database restarted 10 min ago (seen through node stig-b)",
+""
+],
+[
+"WARNING",
+"stigman",
+"node stig-b restarted 5 min ago",
+""
+],
+[
+"WARNING",
+"stigman",
+"the nodes run different STIG Manager versions: service 1.6.18, stig-a 1.6.18, stig-b 1.6.17",
+""
+],
+[
+"WARNING",
+"stigman",
+"the nodes see different database schemas (lastMigration): service 42, stig-a 42, stig-b 41 - do they use the same database?",
+""
+],
+[
+"WARNING",
+"stigman",
+"the nodes do not seem to use the same database (its version or uptime differ): service 10.11.9-MariaDB up 24 h, stig-a 10.11.9-MariaDB up 24 h, stig-b 10.11.9-MariaDB up 10 min",
+""
+]
+],
+"status": "warning",
+"title": "Findings"
+},
+{
+"columns": [
+"Name",
+"API",
+"Kind",
+"State",
+"Database",
+"Keycloak",
+"Version",
+"Schema",
+"Answer",
+"Login + database",
+"Collections",
+"Node.js up",
+"Memory"
+],
+"row_status": [
+"",
+"",
+""
+],
+"rows": [
+[
+"service",
+"http://127.0.0.1:18631/api",
+"service",
+"available",
+"up",
+"up",
+"1.6.18",
+"42",
+"1 ms",
+"0 ms",
+"2",
+"24 h",
+"300 MB"
+],
+[
+"stig-a",
+"http://127.0.0.1:18632/api",
+"node",
+"available",
+"up",
+"up",
+"1.6.18",
+"42",
+"1 ms",
+"0 ms",
+"2",
+"24 h",
+"300 MB"
+],
+[
+"stig-b",
+"http://127.0.0.1:18633/api",
+"node",
+"available",
+"up",
+"up",
+"1.6.17",
+"41",
+"0 ms",
+"0 ms",
+"2",
+"5 min",
+"300 MB"
+]
+],
+"text": "State, Database and Keycloak are the API's own view (/op/state). Login + database: a call with the health check's token that reads the database (/user). Slow = above 1000 ms.",
+"title": "STIG Manager's address and nodes"
+},
+{
+"columns": [
+"Seen through",
+"MySQL / MariaDB",
+"Up",
+"Connections now",
+"Most at once",
+"Failed connections"
+],
+"rows": [
+[
+"service",
+"10.11.9-MariaDB",
+"24 h",
+"12 of 151 (7%)",
+"30",
+"2"
+]
+],
+"text": "From /op/appinfo (an admin client). The database host itself (its container, disk, the server's own numbers) is in the findings of the database host above.",
+"title": "The database, as STIG Manager sees it"
+},
+{
+"columns": [
+"Realm",
+"OpenID configuration",
+"Token for the client"
+],
+"row_status": [
+""
+],
+"rows": [
+[
+"http://127.0.0.1:18634/realms/stigman",
+"OK, 1 ms",
+"OK, 1 ms"
+]
+],
+"title": "Keycloak"
+}
+],
+"status": "warning",
+"summary": [
+{
+"label": "Critical",
+"note": "act now",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Warning",
+"note": "plan a fix",
+"status": "warning",
+"value": 5
+}
+],
+"title": "STIG Manager health: 5 finding(s)"
+}

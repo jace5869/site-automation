@@ -1,0 +1,185 @@
+{
+"footer": "Tenable.sc at https://tenable.example.mil. A scan is launched only with tenable_scan_target set and tenable_scan_policy and tenable_scan_repository named; Check launches nothing. The zone of each host: its tenable_zone, else its site (tenable_scan_sites), else the zone whose ranges hold its address, else tenable_scan_zone_default.",
+"sections": [
+{
+"columns": [
+"Zone",
+"Scan",
+"Scan id",
+"Result id",
+"Hosts",
+"Status",
+"Why not",
+"Critical",
+"High",
+"Medium",
+"Low"
+],
+"row_status": [
+"critical",
+"critical"
+],
+"rows": [
+[
+"Datacenter East",
+"AAP web - Datacenter East",
+"101",
+"501",
+1,
+"launched - completed",
+"-",
+1,
+2,
+3,
+1
+],
+[
+"Datacenter West",
+"AAP web - Datacenter West",
+"102",
+"-",
+1,
+"not launched",
+"Scan zone unavailable",
+0,
+0,
+0,
+0
+]
+],
+"status": "critical",
+"text": "One scan per zone, from that zone's scanners, with the policy Basic Network Scan into the repository Main. A scan of the same name from an earlier run is updated and launched again, not made twice.",
+"title": "Scans"
+},
+{
+"columns": [
+"Host",
+"Address",
+"IP",
+"Zone",
+"Chosen by",
+"Note"
+],
+"row_status": [
+"warning",
+"ok"
+],
+"rows": [
+[
+"web03",
+"203.0.113.9",
+"203.0.113.9",
+"-",
+"-",
+"no zone's ranges hold 203.0.113.9 (and no tenable_zone, site or default zone): not scanned"
+],
+[
+"web01",
+"192.0.2.10",
+"192.0.2.10",
+"Datacenter East",
+"its address",
+"-"
+]
+],
+"status": "warning",
+"text": "Each host's address as the inventory has it, the IP it resolves to from the execution environment, the zone chosen and by which rule - the host's tenable_zone, its site (a group, or the code in its name), its address in the zone's ranges, or the default. A host no rule gives a zone is not scanned (amber).",
+"title": "The hosts and their zones"
+},
+{
+"columns": [
+"Zone",
+"Host",
+"IP",
+"Critical",
+"High",
+"Medium",
+"Low",
+"Total"
+],
+"row_status": [
+"critical"
+],
+"rows": [
+[
+"Datacenter East",
+"host-10",
+"192.0.2.10",
+1,
+2,
+3,
+1,
+12
+]
+],
+"status": "critical",
+"text": "From Tenable.sc's analysis of each scan's result: the vulnerabilities by severity on each host scanned. The details are in Tenable.sc (Analysis > Vulnerabilities, the scan's result).",
+"title": "Findings by host, the worst first"
+},
+{
+"columns": [
+"Zone",
+"IP ranges",
+"Scanners (status)",
+"This run"
+],
+"row_status": [
+"ok",
+"warning",
+""
+],
+"rows": [
+[
+"Datacenter East",
+"192.0.2.0/25, 198.51.100.10-198.51.100.20",
+"scanner-east (working)",
+"used"
+],
+[
+"Datacenter West",
+"192.0.2.128/25",
+"scanner-west (unable to connect)",
+"-"
+],
+[
+"Lab",
+"192.0.2.0/24, 2001:db8::/32",
+"scanner-east (working)",
+"-"
+]
+],
+"status": "warning",
+"text": "Tenable.sc's scan zones: the IP ranges each covers and the scanners that scan them. A host is scanned from the zone whose ranges hold its address, unless its tenable_zone or its site says otherwise. A scanner not working (amber) is as Tenable.sc's Scanners page shows it.",
+"title": "Scan zones and their scanners"
+}
+],
+"status": "critical",
+"subtitle": "Tenable.sc https://tenable.example.mil as svc-tenable - no targets",
+"summary": [
+{
+"label": "Hosts",
+"value": 2
+},
+{
+"label": "Scans launched",
+"status": "critical",
+"value": 1
+},
+{
+"label": "Not scanned",
+"status": "warning",
+"value": 1
+},
+{
+"label": "Critical",
+"status": "critical",
+"value": 1
+},
+{
+"label": "High",
+"status": "warning",
+"value": 2
+}
+],
+"title": "Tenable.sc scan: 1 scan(s) launched in 1 zone(s) for 1 host(s), 1 not launched, 1 critical, 2 high, 1 host(s) not scanned"
+}

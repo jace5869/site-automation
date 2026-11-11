@@ -1,0 +1,35 @@
+{
+"sections": [
+{
+"lines": [
+"Nothing: see the job's output."
+],
+"title": "Attached"
+},
+{
+"lines": [
+"The form of 'SOP' is filled in"
+],
+"title": "SOP draft"
+},
+{
+"lines": [
+"Open the attachments, check them, and save or send them on as your process says."
+],
+"title": "Next"
+}
+],
+"status": "info",
+"subtitle": "Launched by jdoe",
+"summary": [
+{
+"label": "Documents",
+"value": 0
+},
+{
+"label": "Start",
+"value": "10/27/2026 10:28 AM"
+}
+],
+"title": "Outage AAR: Web portal outage"
+}

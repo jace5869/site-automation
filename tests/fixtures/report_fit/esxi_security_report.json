@@ -1,0 +1,197 @@
+{
+"sections": [
+{
+"cell_status": [
+[
+"critical",
+"",
+""
+]
+],
+"columns": [
+"Host",
+"Cluster",
+"Error"
+],
+"row_status": [
+"critical"
+],
+"rows": [
+[
+"esx02",
+"C",
+"lockdown: the vCenter account lacks the privilege Host.Config.Settings on this host"
+]
+],
+"status": "critical",
+"text": "These hosts are not (fully) set. A missing privilege is named: grant it to the vCenter account (docs/VMWARE.md, ESXi security settings).",
+"title": "Failed"
+},
+{
+"cell_status": [
+[
+"warning",
+"",
+""
+]
+],
+"columns": [
+"Host",
+"Cluster",
+"What"
+],
+"row_status": [
+"warning"
+],
+"rows": [
+[
+"esx01",
+"C",
+"SSH stopped and set to start manually; lockdown disabled -> normal"
+]
+],
+"status": "warning",
+"text": "These had drifted (someone turned SSH on, changed a timeout or left lockdown) and were set again.",
+"title": "Changed"
+},
+{
+"columns": [
+"Host",
+"Cluster",
+"Why"
+],
+"rows": [
+[
+"esx04",
+"C",
+"not connected to vCenter (notResponding)"
+]
+],
+"title": "Not touched"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"warning",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"critical",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"ok",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"unknown",
+"",
+"",
+""
+]
+],
+"columns": [
+"Host",
+"Cluster",
+"Datacenter",
+"Result",
+"SSH (before)",
+"lockdown (before)",
+"Notes"
+],
+"row_status": [
+"warning",
+"critical",
+"",
+"unknown"
+],
+"rows": [
+[
+"esx01",
+"C",
+"D",
+"CHANGED",
+"running, starts with the host",
+"disabled",
+"SSH stopped and set to start manually; lockdown disabled -> normal"
+],
+[
+"esx02",
+"C",
+"D",
+"FAILED",
+"stopped, starts manually",
+"",
+"lockdown: the vCenter account lacks the privilege Host.Config.Settings on this host"
+],
+[
+"esx03",
+"C",
+"D",
+"OK",
+"stopped, starts manually",
+"normal",
+""
+],
+[
+"esx04",
+"C",
+"D",
+"SKIPPED",
+"",
+"",
+"not connected to vCenter (notResponding)"
+]
+],
+"text": "The values before this run. Result OK = already set; CHANGED = set by this run.",
+"title": "All hosts"
+}
+],
+"status": "critical",
+"subtitle": "Wanted: SSH disabled; UserVars.ESXiShellTimeOut = 600; lockdown normal",
+"summary": [
+{
+"label": "Hosts",
+"value": 4
+},
+{
+"label": "Changed",
+"status": "warning",
+"value": 1
+},
+{
+"label": "Failed",
+"status": "critical",
+"value": 1
+},
+{
+"label": "Already set",
+"status": "ok",
+"value": 1
+},
+{
+"label": "Skipped (not connected)",
+"status": "warning",
+"value": 1
+}
+],
+"title": "ESXi security settings: 1 of 4 host(s) changed, 1 failed, 1 skipped (not connected)"
+}

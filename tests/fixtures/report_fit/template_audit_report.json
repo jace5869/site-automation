@@ -1,0 +1,433 @@
+{
+"footer": "Read-only: AAP's job and workflow templates and their surveys were read (GET); nothing was changed. A secret's value is never read out. docs/TEMPLATE_AUDIT.md",
+"sections": [
+{
+"columns": [
+"Setting",
+"Why",
+"Templates",
+"Same value",
+"Value",
+"Move it to"
+],
+"row_status": [
+"warning",
+"warning",
+"warning",
+"warning",
+"warning",
+"warning",
+"warning",
+"warning",
+"critical",
+"critical",
+"critical",
+"warning"
+],
+"rows": [
+[
+"report_email_from",
+"site-wide, repeated",
+"4",
+"4",
+"aap@yoursite.mil",
+"all.yml"
+],
+[
+"check_disk_warn_pct",
+"repeated",
+"3",
+"3",
+"90",
+"all.yml"
+],
+[
+"ansible_become",
+"connection (ansible_*)",
+"1",
+"1",
+"true",
+"the group's or host's variables"
+],
+[
+"ansible_user",
+"connection (ansible_*)",
+"1",
+"1",
+"admin",
+"the Machine credential"
+],
+[
+"ansible_winrm_transport",
+"connection (ansible_*)",
+"1",
+"1",
+"ntlm",
+"the windows group (group_vars/windows.yml)"
+],
+[
+"ntp_servers",
+"an address",
+"1",
+"1",
+"[\"192.0.2.10\", \"192.0.2.11\"]",
+"all.yml of each enclave (its own AAP, docs/ENCLAVES.md)"
+],
+[
+"stigman_url",
+"an address",
+"1",
+"1",
+"https://stigman.yoursite.mil/api",
+"all.yml of each enclave (its own AAP, docs/ENCLAVES.md)"
+],
+[
+"vmware_vcenter",
+"an address",
+"1",
+"1",
+"vcsa01.yoursite.mil",
+"all.yml of each enclave (its own AAP, docs/ENCLAVES.md)"
+],
+[
+"db_password",
+"a secret, set at launch",
+"1",
+"-",
+"(not shown: a secret)",
+"a credential (docs/SECRETS.md)"
+],
+[
+"some_setting",
+"a secret",
+"1",
+"-",
+"(not shown: a secret)",
+"a credential (docs/SECRETS.md)"
+],
+[
+"vcenter_password",
+"a secret",
+"1",
+"-",
+"(not shown: a secret)",
+"a credential (docs/SECRETS.md)"
+],
+[
+"report_web_dest",
+"site-wide, set at launch",
+"1",
+"-",
+"-",
+"all.yml"
+]
+],
+"status": "critical",
+"text": "Each flagged setting once. Templates: how many have it in their Variables. Same value: in how many it is set the same way (3 or more is flagged: one change would have to be made in each). A secret's value is never read out.",
+"title": "By setting"
+},
+{
+"columns": [
+"Setting",
+"Why",
+"Move it to",
+"Note"
+],
+"row_status": [
+"critical",
+"warning",
+"warning",
+"warning"
+],
+"rows": [
+[
+"vcenter_password",
+"a secret",
+"a credential (docs/SECRETS.md)",
+""
+],
+[
+"report_email_from",
+"site-wide, the same in 4 templates",
+"all.yml",
+"also in Health check, Disk report, Daily health"
+],
+[
+"check_disk_warn_pct",
+"the same in 3 templates",
+"all.yml",
+"also in Health check, Disk report"
+],
+[
+"(Variables on launch)",
+"set at launch",
+"ask at launch only what a launch must choose",
+"Prompt on launch is on for Variables: a launch can set any of the settings above, and any other"
+]
+],
+"status": "critical",
+"text": "project Site automation; 5 settings in its Variables; Prompt on launch for Variables.",
+"title": "Job template: Certificate report (ID 13)"
+},
+{
+"columns": [
+"Setting",
+"Why",
+"Move it to",
+"Note"
+],
+"row_status": [
+"critical"
+],
+"rows": [
+[
+"db_password",
+"a secret, set at launch",
+"make the survey question a Password question",
+"its survey asks for it as plain text (text, not Password)"
+]
+],
+"status": "critical",
+"text": "project Site automation; 2 settings in its Variables; its survey asks for db_password, health_checks, vault_password.",
+"title": "Job template: Patch hosts (ID 16)"
+},
+{
+"columns": [
+"Setting",
+"Why",
+"Move it to",
+"Note"
+],
+"row_status": [
+"critical"
+],
+"rows": [
+[
+"some_setting",
+"a secret",
+"a credential (docs/SECRETS.md)",
+""
+]
+],
+"status": "critical",
+"text": "project Site automation; 2 settings in its Variables.",
+"title": "Job template: Token in a value (ID 18)"
+},
+{
+"columns": [
+"Setting",
+"Why",
+"Move it to",
+"Note"
+],
+"row_status": [
+"warning",
+"warning",
+"warning"
+],
+"rows": [
+[
+"ansible_become",
+"connection (ansible_*)",
+"the group's or host's variables",
+""
+],
+[
+"report_email_from",
+"site-wide, the same in 4 templates",
+"all.yml",
+"also in Health check, Disk report, Certificate report"
+],
+[
+"report_web_dest",
+"site-wide, set at launch",
+"all.yml",
+"its survey asks for it on every launch"
+]
+],
+"status": "warning",
+"text": "2 settings in its Variables; its survey asks for report_email_also, report_web_dest.",
+"title": "Workflow: Daily health (ID 101)"
+},
+{
+"columns": [
+"Setting",
+"Why",
+"Move it to",
+"Note"
+],
+"row_status": [
+"warning",
+"warning",
+"warning"
+],
+"rows": [
+[
+"ansible_winrm_transport",
+"connection (ansible_*)",
+"the windows group (group_vars/windows.yml)",
+""
+],
+[
+"report_email_from",
+"site-wide, the same in 4 templates",
+"all.yml",
+"also in Disk report, Certificate report, Daily health"
+],
+[
+"check_disk_warn_pct",
+"the same in 3 templates",
+"all.yml",
+"also in Disk report, Certificate report"
+]
+],
+"status": "warning",
+"text": "project Site automation; 4 settings in its Variables.",
+"title": "Job template: Health check (ID 11)"
+},
+{
+"columns": [
+"Setting",
+"Why",
+"Move it to",
+"Note"
+],
+"row_status": [
+"warning",
+"warning",
+"warning"
+],
+"rows": [
+[
+"ntp_servers",
+"an address",
+"all.yml of each enclave (its own AAP, docs/ENCLAVES.md)",
+""
+],
+[
+"stigman_url",
+"an address",
+"all.yml of each enclave (its own AAP, docs/ENCLAVES.md)",
+""
+],
+[
+"vmware_vcenter",
+"an address",
+"all.yml of each enclave (its own AAP, docs/ENCLAVES.md)",
+""
+]
+],
+"status": "warning",
+"text": "project Site automation; 6 settings in its Variables.",
+"title": "Job template: VM - health report (ID 14)"
+},
+{
+"columns": [
+"Setting",
+"Why",
+"Move it to",
+"Note"
+],
+"row_status": [
+"warning",
+"warning"
+],
+"rows": [
+[
+"report_email_from",
+"site-wide, the same in 4 templates",
+"all.yml",
+"also in Health check, Certificate report, Daily health"
+],
+[
+"check_disk_warn_pct",
+"the same in 3 templates",
+"all.yml",
+"also in Health check, Certificate report"
+]
+],
+"status": "warning",
+"text": "project Site automation; 3 settings in its Variables.",
+"title": "Job template: Disk report (ID 12)"
+},
+{
+"columns": [
+"Setting",
+"Why",
+"Move it to",
+"Note"
+],
+"row_status": [
+"warning"
+],
+"rows": [
+[
+"ansible_user",
+"connection (ansible_*)",
+"the Machine credential",
+""
+]
+],
+"status": "warning",
+"text": "project Other project; 1 setting in its Variables.",
+"title": "Job template: Other project job (ID 17)"
+},
+{
+"status": "warning",
+"text": "project Site automation; 0 settings in its Variables. Its Variables could not be read: not YAML or JSON (line 2) - fix them in AAP (Variables box, YAML or JSON).",
+"title": "Job template: Broken vars (ID 15)"
+},
+{
+"text": "Empty (ID 19).",
+"title": "Nothing to move (1)"
+}
+],
+"status": "critical",
+"subtitle": "9 job templates and 1 workflow read in AAP at aap01.yoursite.mil",
+"summary": [
+{
+"label": "Job templates",
+"value": 9
+},
+{
+"label": "Workflows",
+"value": 1
+},
+{
+"label": "With something to move",
+"status": "critical",
+"value": 9
+},
+{
+"label": "Connection",
+"status": "warning",
+"value": 3
+},
+{
+"label": "Addresses",
+"status": "warning",
+"value": 3
+},
+{
+"label": "Secrets",
+"status": "critical",
+"value": 3
+},
+{
+"label": "Site-wide",
+"status": "warning",
+"value": 5
+},
+{
+"label": "Repeated",
+"status": "warning",
+"value": 7
+},
+{
+"label": "Set at launch",
+"status": "warning",
+"value": 3
+}
+],
+"title": "AAP template variables audit: 12 settings in 9 templates to move"
+}

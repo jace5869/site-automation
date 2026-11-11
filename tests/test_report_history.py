@@ -772,7 +772,7 @@ class WebColumns(unittest.TestCase):
         self.assertIn("'site-report-cols:'", js)                                       # a key per set of columns
         self.assertIn("localStorage.setItem(k,JSON.stringify(off))", js)
         self.assertIn("if(o!==d&&colsig(o)===k)colput(o,off)", js)                     # every table with those columns follows
-        self.assertIn("if(t.classList.contains('cc')){t.classList.remove('sq')", js)
+        self.assertIn("(t.classList.contains('cc')?['sq']:[]).concat(", js)              # a compact table's sq comes first (1.21.0)
         js.encode("ascii")
 
 

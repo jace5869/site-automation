@@ -1,0 +1,225 @@
+{
+"sections": [
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"warning"
+]
+],
+"columns": [
+"Setting",
+"Where",
+"Baseline",
+"Horizon has",
+"Result"
+],
+"rows": [
+[
+"connection_server.fips_mode_enabled",
+"cs1",
+"True",
+"True",
+"OK"
+],
+[
+"connection_server.fips_mode_enabled",
+"cs2",
+"True",
+"False",
+"DRIFT"
+],
+[
+"connection_server.smart_card_support",
+"cs1",
+"one of REQUIRED",
+"OPTIONAL",
+"DRIFT"
+],
+[
+"connection_server.smart_card_support",
+"cs2",
+"one of REQUIRED",
+"REQUIRED",
+"OK"
+],
+[
+"general.client_idle_session_timeout_policy",
+"global",
+"timeout_after",
+"NEVER",
+"DRIFT"
+],
+[
+"general.client_max_session_timeout_minutes",
+"global",
+"<= 720",
+"600",
+"OK"
+],
+[
+"general.nested.a",
+"global",
+"True",
+"True",
+"OK"
+],
+[
+"general.pre_login_message",
+"global",
+"contains \"u.s. government\"",
+"You are accessing a U.S. Government (USG) system",
+"OK"
+],
+[
+"security.x",
+"global",
+"1",
+"(not in Horizon's answer)",
+"NOT READ"
+]
+],
+"text": "",
+"title": "Against the baseline"
+},
+{
+"columns": [
+"Setting",
+"Where",
+"Value"
+],
+"rows": [
+[
+"general.client_idle_session_timeout_policy",
+"global",
+"NEVER"
+],
+[
+"general.client_max_session_timeout_minutes",
+"global",
+"600"
+],
+[
+"general.nested.a",
+"global",
+"True"
+],
+[
+"general.pre_login_message",
+"global",
+"You are accessing a U.S. Government (USG) system"
+],
+[
+"connection_server.fips_mode_enabled",
+"cs1",
+"True"
+],
+[
+"connection_server.name",
+"cs1",
+"cs1"
+],
+[
+"connection_server.smart_card_support",
+"cs1",
+"OPTIONAL"
+],
+[
+"connection_server.fips_mode_enabled",
+"cs2",
+"False"
+],
+[
+"connection_server.name",
+"cs2",
+"cs2"
+],
+[
+"connection_server.smart_card_support",
+"cs2",
+"REQUIRED"
+]
+],
+"text": "Copy a line into horizon_settings_baseline as  setting: value  to watch it.",
+"title": "Every setting read"
+}
+],
+"status": "critical",
+"subtitle": "7 baseline setting(s), 10 setting(s) read",
+"summary": [
+{
+"label": "Baseline",
+"value": 7
+},
+{
+"label": "Differ",
+"status": "critical",
+"value": 3
+},
+{
+"label": "Not read",
+"status": "warning",
+"value": 1
+}
+],
+"title": "Horizon settings: 3 setting(s) differ from the baseline"
+}

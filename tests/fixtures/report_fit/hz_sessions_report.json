@@ -1,0 +1,173 @@
+{
+"sections": [
+{
+"lines": [
+"1 session(s) from a Horizon Client older than the baseline (horizon_client_min_versions)",
+"1 session(s) pending for 10 minutes or more: a launch that never finished - log it off (Horizon - user help)",
+"1 session(s) on a broken desktop: the user may be stuck - log off, then the desktops check fixes the desktop",
+"1 session(s) on a protocol other than BLAST"
+],
+"status": "warning",
+"title": "Problems"
+},
+{
+"columns": [
+"User",
+"Client",
+"Version",
+"Baseline",
+"Client machine"
+],
+"rows": [
+[
+"S-1",
+"WINDOWS",
+"8.9.0",
+"8.10",
+""
+]
+],
+"text": "",
+"title": "Old Horizon Clients"
+},
+{
+"columns": [
+"User",
+"Desktop",
+"Pool",
+"Started",
+"Minutes"
+],
+"rows": [
+[
+"S-1",
+"d-3",
+"IC-Win11",
+"2026-09-21 13:43 UTC",
+"30"
+]
+],
+"title": "Pending sessions"
+},
+{
+"columns": [
+"User",
+"Desktop",
+"Pool",
+"Desktop state",
+"Session"
+],
+"rows": [
+[
+"S-2",
+"d-2",
+"IC-Win11",
+"AGENT_UNREACHABLE",
+"disconnected"
+]
+],
+"title": "Sessions on broken desktops"
+},
+{
+"columns": [
+"User",
+"Desktop",
+"Pool",
+"Session",
+"Started",
+"Hours"
+],
+"rows": [
+[
+"S-3",
+"(an RDS host)",
+"IC-Win11",
+"connected",
+"2026-09-18 06:13 UTC",
+"80"
+]
+],
+"text": "Started 72 hours ago or more.",
+"title": "Long sessions"
+},
+{
+"columns": [
+"User",
+"Sessions",
+"Desktops"
+],
+"rows": [
+[
+"S-1",
+2,
+"d-1, d-3"
+]
+],
+"title": "Users with two or more desktop sessions"
+},
+{
+"columns": [
+"Client",
+"Sessions"
+],
+"rows": [
+[
+"WINDOWS 8.12.0",
+2
+],
+[
+"MAC 8.1",
+1
+],
+[
+"WINDOWS 8.9.0",
+1
+]
+],
+"title": "Client versions"
+},
+{
+"columns": [
+"User",
+"Desktop",
+"Protocol"
+],
+"rows": [
+[
+"S-1",
+"d-3",
+"PCOIP"
+]
+],
+"title": "Other protocols"
+}
+],
+"status": "warning",
+"subtitle": "BLAST 3, PCOIP 1",
+"summary": [
+{
+"label": "Sessions",
+"value": 4
+},
+{
+"label": "Old clients",
+"status": "warning",
+"value": 1
+},
+{
+"label": "Pending",
+"status": "warning",
+"value": 1
+},
+{
+"label": "On broken desktops",
+"status": "warning",
+"value": 1
+},
+{
+"label": "Two or more desktops",
+"value": 1
+}
+],
+"title": "Horizon sessions: 4 session(s), 4 to look at"
+}

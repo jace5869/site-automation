@@ -1,0 +1,1537 @@
+{
+"sections": [
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"ok",
+"",
+"warning",
+"",
+""
+]
+],
+"column_titles": [
+"Cluster",
+"ONTAP",
+"Health",
+"Nodes up",
+"Space used on the aggregates",
+"NTP servers",
+"Location",
+"Notes"
+],
+"columns": [
+"Cluster",
+"ONTAP",
+"Health",
+"Nodes up",
+"Space used",
+"NTP servers",
+"Location",
+"Notes"
+],
+"kinds": [
+"wrap",
+"",
+"",
+"wrap",
+"wrap",
+"wrap",
+"wrap",
+"wrap"
+],
+"row_status": [
+"warning"
+],
+"rows": [
+[
+"c1\nc1.example.mil",
+"?",
+"?",
+"0 of 0",
+"?",
+"none",
+"",
+""
+]
+],
+"status": "warning",
+"text": "Each cluster (the address it was read at under its name): ONTAP version, system health, nodes up, space used on its aggregates, NTP servers.",
+"title": "Clusters"
+},
+{
+"text": "State (green up, red down), uptime (days hours:minutes), model, version, whether the partner could take over, service processor, NVRAM battery, and the node's clock against the AAP server's. No node was read.",
+"title": "Nodes"
+},
+{
+"text": "Volumes at or above 85% used (amber) or 90% (red), and volumes offline or restricted (red), with the aggregate they are on. Volumes under 50 GB are left out (0 at or above 85%, 0 not online). Every volume is online and below 85%.",
+"title": "Volumes 85% full or more, or not online"
+},
+{
+"text": "ONTAP's health monitors by subsystem (system health subsystem show). Only the ones not OK. Every subsystem is OK.",
+"title": "System health"
+},
+{
+"text": "Each controller and disk shelf: power supplies, fans, temperature and any failed part (FRU). Problems first. No controller or shelf was read.",
+"title": "Hardware: controllers and shelves"
+},
+{
+"text": "Disks that are broken (red), rebuilding, copying or in maintenance (amber), or not assigned to a node (blue). No failed or rebuilding disk.",
+"title": "Disks: failed, rebuilding or unassigned"
+},
+{
+"text": "Spare disks per node (by home node): ONTAP rebuilds a failed disk onto a spare. No disk was read.",
+"title": "Spare disks"
+},
+{
+"text": "Data and management LIFs (IP and FC) that are down (red), not on their home port (amber; the home port under the one it is on), or disabled (blue). Every LIF is up and at home.",
+"title": "Network interfaces (LIFs): down, not at home, or disabled"
+},
+{
+"text": "Enabled Ethernet and FC ports that are not up. Red: a port in a broadcast domain (meant to be used) or an FC port that lost its link. Blue: a port with no cable or not in use. Every enabled port is up.",
+"title": "Ports down"
+},
+{
+"text": "Physical Ethernet ports with receive errors (bad frames, CRC errors among them) or CRC errors, counted since the node booted. Rising numbers mean a bad cable, SFP or switch port. No port has errors.",
+"title": "Port errors (CRC)"
+},
+{
+"text": "Every data aggregate, fullest first: the node it is on (and its home node when it is away), space used, size and available, used % (amber from 85%, red from 90%), RAID type and disks. Root aggregates are not listed (ONTAP's REST API hides them). No aggregate was read.",
+"title": "Aggregates"
+},
+{
+"text": "After a takeover or a manual move an aggregate can stay on the partner node: give it back (storage failover giveback) when the node is healthy. Every aggregate is on its home node.",
+"title": "Aggregates not on their home node"
+},
+{
+"text": "Volumes running out of inodes: when they are all used, no new file can be created, whatever the free space (volume modify -files). No volume is running out of inodes.",
+"title": "Inodes (files) 85% used or more"
+},
+{
+"text": "The volumes whose snapshots hold the most space (top 25), and any whose snapshots use more than their reserve (amber from 100% of the reserve: they spill into the volume's space). No snapshot space used.",
+"title": "Snapshot space"
+},
+{
+"text": "Relationships (read on each destination cluster) that are unhealthy (red), lagging (amber from 24 h, red from 48 h since the last good transfer), broken off, paused or uninitialized, and the transfers running now (blue): progress is the data moved so far. No relationship needs attention.",
+"title": "SnapMirror"
+},
+{
+"text": "The peer relationships SnapMirror needs: cluster peers not available, SVM peers not peered. Every peer is available.",
+"title": "Cluster and SVM peers"
+},
+{
+"text": "Storage VMs that are stopped or starting. A stopped DR destination (dp_destination) is normal (blue). Every SVM is running.",
+"title": "SVMs not running"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"ok",
+"info",
+""
+]
+],
+"columns": [
+"Cluster",
+"SVM",
+"CIFS server",
+"Domain",
+"Enabled",
+"DCs",
+"Not reachable"
+],
+"kinds": [
+"wrap",
+"wrap",
+"",
+"",
+"",
+"",
+""
+],
+"lines": [
+"c1 / svm1: not contacted - vserver cifs domain discovered-servers show -vserver svm1; to make ONTAP probe them again: vserver cifs domain discovered-servers reset-servers -vserver svm1 (a change: run it in a quiet window)"
+],
+"row_status": [
+"info"
+],
+"rows": [
+[
+"c1",
+"svm1",
+"CIFS1",
+"corp.example.mil",
+"yes",
+"60 not contacted",
+""
+]
+],
+"text": "Each SVM's CIFS server: enabled or not (red when stopped), and its domain controllers (cifs domains; ONTAP 9.10+) - OK = connected; not contacted = listed, but ONTAP has had no need to probe it (blue, never a finding, even when no DC is OK: ONTAP's normal state); not reachable = ONTAP tried it and failed (amber; said when it is a preferred DC); red = ONTAP tried every DC it lists and reached none, or the CIFS server stopped. Every DC is listed in the next table; below, the commands to look further where no DC is OK or one is not reachable.",
+"title": "CIFS (SMB) servers"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"info",
+""
+]
+],
+"collapsed": true,
+"columns": [
+"Cluster",
+"SVM",
+"DC",
+"Address",
+"Type",
+"Preference",
+"State",
+"Nodes"
+],
+"kinds": [
+"wrap",
+"wrap",
+"",
+"",
+"",
+"",
+"",
+""
+],
+"row_status": [
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+],
+"rows": [
+[
+"c1",
+"svm1",
+"dc01",
+"192.0.2.11",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc02",
+"192.0.2.12",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc03",
+"192.0.2.13",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc04",
+"192.0.2.14",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc05",
+"192.0.2.15",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc06",
+"192.0.2.16",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc07",
+"192.0.2.17",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc08",
+"192.0.2.18",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc09",
+"192.0.2.19",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc10",
+"192.0.2.10",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc11",
+"192.0.2.11",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc12",
+"192.0.2.12",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc13",
+"192.0.2.13",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc14",
+"192.0.2.14",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc15",
+"192.0.2.15",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc16",
+"192.0.2.16",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc17",
+"192.0.2.17",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc18",
+"192.0.2.18",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc19",
+"192.0.2.19",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc20",
+"192.0.2.10",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc21",
+"192.0.2.11",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc22",
+"192.0.2.12",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc23",
+"192.0.2.13",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc24",
+"192.0.2.14",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc25",
+"192.0.2.15",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc26",
+"192.0.2.16",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc27",
+"192.0.2.17",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc28",
+"192.0.2.18",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc29",
+"192.0.2.19",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc30",
+"192.0.2.10",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc31",
+"192.0.2.11",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc32",
+"192.0.2.12",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc33",
+"192.0.2.13",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc34",
+"192.0.2.14",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc35",
+"192.0.2.15",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc36",
+"192.0.2.16",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc37",
+"192.0.2.17",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc38",
+"192.0.2.18",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc39",
+"192.0.2.19",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc40",
+"192.0.2.10",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc41",
+"192.0.2.11",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc42",
+"192.0.2.12",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc43",
+"192.0.2.13",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc44",
+"192.0.2.14",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc45",
+"192.0.2.15",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc46",
+"192.0.2.16",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc47",
+"192.0.2.17",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc48",
+"192.0.2.18",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc49",
+"192.0.2.19",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc50",
+"192.0.2.10",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc51",
+"192.0.2.11",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc52",
+"192.0.2.12",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc53",
+"192.0.2.13",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc54",
+"192.0.2.14",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc55",
+"192.0.2.15",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc56",
+"192.0.2.16",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc57",
+"192.0.2.17",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc58",
+"192.0.2.18",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc59",
+"192.0.2.19",
+"DC",
+"adequate",
+"not contacted",
+"all"
+],
+[
+"c1",
+"svm1",
+"dc60",
+"192.0.2.10",
+"DC",
+"adequate",
+"not contacted",
+"all"
+]
+],
+"text": "Every server ONTAP lists for each SVM (DC, LDAP, KDC), with its preference and state. Not contacted (undetermined): ONTAP has not needed it - DCs in other sites or of lower preference stay so; it is not a problem. Not reachable first, then OK, then not contacted.",
+"title": "CIFS domain controllers"
+},
+{
+"text": "LUNs no host can see (not mapped to an igroup: amber - forgotten, or waiting to be deleted?) and LUNs not online (red). Every LUN is online and mapped.",
+"title": "LUNs: unmapped or not online"
+},
+{
+"text": "Certificates that expire within 60 days (amber) or 14 days (red), or have expired. CA certificates are amber at most until they expire. No certificate expires within 60 days.",
+"title": "Certificates expiring"
+},
+{
+"text": "What ONTAP's health monitors raised (system health alert show); the probable cause and what to do are in the next table, in the same order. No health alert.",
+"title": "Health alerts"
+},
+{
+"text": "ONTAP's event log (EMS): emergency, alert and error events, the same event on the same node counted once, most frequent first. No such event.",
+"title": "Error events (last 24 h)"
+}
+],
+"status": "warning",
+"subtitle": "Read 2026-10-07 12:00 UTC - c1 (?)",
+"summary": [
+{
+"label": "Clusters read",
+"status": "ok",
+"value": "1 of 1"
+},
+{
+"label": "Nodes down",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Health alerts",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Hardware / disk problems",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Volumes 85%+",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Aggregates 85%+",
+"status": "ok",
+"value": 0
+},
+{
+"label": "SnapMirror problems",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Network down",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Certificates expiring",
+"status": "ok",
+"value": 0
+}
+],
+"title": "NetApp ONTAP health report: 0 critical, 1 warning on 1 cluster(s)"
+}

@@ -1,0 +1,213 @@
+{
+"footer": "ACT is an AI assistant: it read the evidence only, ran nothing and changed nothing. Confidence is its own estimate.",
+"sections": [
+{
+"lines": [
+"o"
+],
+"status": "critical",
+"title": "What to do first"
+},
+{
+"cell_status": [
+[
+"",
+"critical",
+"",
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"critical",
+"",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"warning",
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"warning",
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"warning",
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"warning",
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"warning",
+"",
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"#",
+"Severity",
+"Object",
+"Problem",
+"Likely cause",
+"Evidence",
+"Fix",
+"Confidence"
+],
+"row_status": [
+"critical",
+"critical",
+"warning",
+"warning",
+"warning",
+"warning",
+"warning"
+],
+"rows": [
+[
+"P1",
+"CRITICAL",
+"Host esx01 (CL1 / DC1)",
+"alarm \"Host hardware power status\" - PSU",
+"PSU",
+"e",
+"f",
+"90% high"
+],
+[
+"P2",
+"CRITICAL",
+"Host esx02 (CL1 / DC1)",
+"host is notResponding (not connected to vCenter) - Host esx02 is not responding",
+"net",
+"",
+"",
+"60% medium"
+],
+[
+"P3",
+"WARNING",
+"Cluster CL1 (CL1 / DC1)",
+"alarm \"vSphere HA failover resources\"",
+"?",
+"",
+"",
+"20% low"
+],
+[
+"P4",
+"WARNING",
+"Host esx01 (CL1 / DC1)",
+"3 failed login(s) as svc_scan from 192.0.2.99 - first 2026-10-07 01:00:00, last 2026-10-07 03:00:00: Cannot login svc_scan@192.0.2.99",
+"ACT gave no answer for this one",
+"",
+"",
+""
+],
+[
+"P5",
+"WARNING",
+"VM db01 (CL1 / DC1)",
+"VM event com.vmware.vc.ha.VmRestartedByHAEvent - vSphere HA restarted db01 (host esx03, by nobody)",
+"ACT gave no answer for this one",
+"",
+"",
+""
+],
+[
+"P6",
+"WARNING",
+"Host esx01 (CL1 / DC1)",
+"warning event esx.problem.storage.latency, 2 time(s) - first 2026-10-07 10:00:00, last 2026-10-07 11:00:00: latency 101 ms",
+"ACT gave no answer for this one",
+"",
+"",
+""
+],
+[
+"P7",
+"WARNING",
+"Host esx02 (CL1 / DC1)",
+"configuration issue - SSH for the host has been enabled",
+"ACT gave no answer for this one",
+"",
+"",
+""
+]
+],
+"text": "Confidence: ACT's own estimate that the cause is right - green 80+ (the evidence shows it), amber 50-79 (likely), red under 50 (a guess: check first).",
+"title": "Likely causes and fixes"
+}
+],
+"status": "critical",
+"subtitle": "ACT (genai m) read vCenter vc01's alarms and the events of the last 24 h. Likely causes, not certain ones: check before you change anything.",
+"summary": [
+{
+"label": "Problems",
+"value": 7
+},
+{
+"label": "Critical",
+"status": "critical",
+"value": 2
+},
+{
+"label": "Warning",
+"status": "warning",
+"value": 5
+},
+{
+"label": "High confidence (80+)",
+"status": "ok",
+"value": 1
+},
+{
+"label": "Medium (50-79)",
+"status": "warning",
+"value": 1
+},
+{
+"label": "Low (under 50)",
+"status": "critical",
+"value": 1
+}
+],
+"title": "VMware alarms ACT analysis: likely causes and fixes for 7 problem(s)"
+}

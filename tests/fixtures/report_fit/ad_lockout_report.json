@@ -1,0 +1,462 @@
+{
+"sections": [
+{
+"lines": [
+"CORP\\jdoe is LOCKED OUT since 2026-10-20 18:34 UTC (recorded by DC01).",
+"This domain's policy locks an account out after 5 bad passwords within 30 minutes, for 30 minutes.",
+"Most bad passwords came from PC123 (192.0.2.50): 8 failed sign-ins, 1 lockout in the last 24 h, the last at 2026-10-20 18:44 UTC.",
+"PC123 kept trying after the account was locked out (3 times): something on it still has the old password, so the account will lock out again after an unlock.",
+"EXCH01 is a mail server (ad_lockout_exchange_servers): a phone or a mail app (ActiveSync, Outlook) with the old password - update the password on the phone, or remove the account from it until then.",
+"EXCH01 is not in this job's inventory: check it by hand (below).",
+"WS9: something on it opens a share, a mapped drive or an application with the old password.",
+"WS9 is not in this job's inventory: check it by hand (below).",
+"On PC123: the service BackupAgent (Backup Agent - Running, Auto) logs on as CORP\\jdoe - type the new password in services.msc > Log On, or give it a service account.",
+"On PC123: the service Sync (Sync - Stopped, Manual) logs on as CORP\\jdoe - type the new password in services.msc > Log On, or give it a service account.",
+"On PC123: the scheduled task \\Copy reports runs as CORP\\jdoe - update its password in Task Scheduler (Properties > Change User or Group), or give it a service account.",
+"On PC123: CORP\\jdoe has a DISCONNECTED session (Disc, idle 1+02:00, logged on 10/19/2026 9:00 AM) - it keeps the old password: sign it out (quser, then logoff 3).",
+"On PC123: OUTLOOK runs as CORP\\jdoe (2 running) - an application holding the old password: close it or sign out.",
+"On PC123: CORP\\jdoe has drive H: mapped to \\\\files\\home\\jdoe - remove it and map it again with the new password (net use H: /delete).",
+"To check a computer by hand: services (Log On As), Task Scheduler (Run as), Credential Manager (Windows Credentials) of the user, mapped drives (net use), disconnected Remote Desktop sessions (quser), applications with a saved password (Outlook, VPN, a phone's mail or Wi-Fi). On the user's own PC: lock it, and unlock it with the new password."
+],
+"status": "warning",
+"title": "CORP\\jdoe: what to do"
+},
+{
+"cell_status": [
+[
+"",
+""
+],
+[
+"",
+"warning"
+],
+[
+"",
+""
+],
+[
+"",
+""
+],
+[
+"",
+""
+],
+[
+"",
+""
+]
+],
+"columns": [
+"What",
+"Now"
+],
+"row_status": [
+"",
+"",
+"",
+"",
+"",
+""
+],
+"rows": [
+[
+"Name",
+"Jane Doe"
+],
+[
+"Locked out",
+"YES, since 2026-10-20 18:34 UTC"
+],
+[
+"Enabled",
+"yes"
+],
+[
+"Password last set",
+"2026-10-19 18:54 UTC"
+],
+[
+"Password",
+"valid"
+],
+[
+"UPN",
+"jdoe@corp.test"
+]
+],
+"title": "CORP\\jdoe - Jane Doe"
+},
+{
+"cell_status": [
+[
+"warning",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Source",
+"Address",
+"Bad passwords",
+"After the lock",
+"Lockouts",
+"First",
+"Last",
+"Pace",
+"How",
+"Seen by",
+"In the inventory"
+],
+"row_status": [
+"warning",
+"",
+"",
+""
+],
+"rows": [
+[
+"PC123",
+"192.0.2.50",
+5,
+3,
+1,
+"2026-10-20 18:14",
+"2026-10-20 18:44",
+"-",
+"Kerberos; NTLM - 5 bad password, 3 account locked out or disabled",
+"DC01",
+"pc123.corp.test"
+],
+[
+"EXCH01",
+"192.0.2.25",
+2,
+0,
+0,
+"2026-10-20 17:59",
+"2026-10-20 18:04",
+"-",
+"Kerberos - 2 bad password",
+"DC02",
+"not in it"
+],
+[
+"WS9",
+"192.0.2.60",
+1,
+0,
+0,
+"2026-10-20 18:09",
+"2026-10-20 18:09",
+"-",
+"logon; network (a mapped drive, a share, an application) - 1 bad password",
+"DC01",
+"not in it"
+],
+[
+"192.0.2.99",
+"192.0.2.99",
+1,
+0,
+0,
+"2026-10-20 17:56",
+"2026-10-20 17:56",
+"-",
+"Kerberos - 1 bad password",
+"DC02",
+"not in it"
+]
+],
+"status": "warning",
+"text": "Each computer or address the DCs saw a failed sign-in from, the ones that locked it out first. 'After the lock' = it kept trying while the account was locked out.",
+"title": "CORP\\jdoe: where the failed sign-ins came from (last 24 h)"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"When (UTC)",
+"DC",
+"What",
+"Computer / by"
+],
+"row_status": [
+"warning",
+""
+],
+"rows": [
+[
+"2026-10-20 18:34",
+"DC01",
+"locked out",
+"PC123"
+],
+[
+"2026-10-20 13:54",
+"DC01",
+"unlocked",
+"CORP\\helpdesk1"
+]
+],
+"text": "Event 4740 (locked out, with the caller computer) and 4767 (unlocked, by whom).",
+"title": "CORP\\jdoe: lockouts and unlocks (last 24 h)"
+},
+{
+"cell_status": [
+[
+"warning",
+"",
+"",
+"",
+"",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+"",
+""
+],
+[
+"critical",
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"DC",
+"Bad passwords now",
+"Last bad password",
+"Locked out",
+"Last logon",
+""
+],
+"row_status": [
+"warning",
+"warning",
+"critical"
+],
+"rows": [
+[
+"DC01 (PDC)",
+5,
+"2026-10-20 18:34",
+"yes",
+"2026-10-19 18:54",
+""
+],
+[
+"DC02",
+3,
+"2026-10-20 18:34",
+"yes",
+"2026-10-19 18:54",
+""
+],
+[
+"DC03",
+"UNREACHABLE",
+"",
+"",
+"",
+""
+]
+],
+"text": "badPwdCount and the last bad password are NOT replicated: each DC counts the bad passwords it was given itself, and the PDC emulator is told of each one. Last logon is this DC's own.",
+"title": "CORP\\jdoe: on each domain controller"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Computer",
+"What",
+"Name",
+"Detail"
+],
+"row_status": [
+"warning",
+"warning",
+"warning",
+"warning",
+"warning",
+"warning"
+],
+"rows": [
+[
+"PC123",
+"service",
+"BackupAgent",
+"Backup Agent - Running, Auto"
+],
+[
+"PC123",
+"service",
+"Sync",
+"Sync - Stopped, Manual"
+],
+[
+"PC123",
+"scheduled task",
+"\\Copy reports",
+"Ready"
+],
+[
+"PC123",
+"session",
+"session 3",
+"Disc, idle 1+02:00, logged on 10/19/2026 9:00 AM"
+],
+[
+"PC123",
+"process",
+"OUTLOOK",
+"2 running"
+],
+[
+"PC123",
+"mapped drive",
+"H:",
+"\\\\files\\home\\jdoe"
+]
+],
+"text": "Services, scheduled tasks, sessions, processes and mapped drives of the account on pc123.corp.test.",
+"title": "CORP\\jdoe: on the source computers"
+},
+{
+"lines": [
+"DC03: UNREACHABLE - ntlm: rejected",
+"PC9 (source computer): UNREACHABLE - timed out"
+],
+"text": "What could not be read (the report is complete apart from these):",
+"title": "Not read"
+}
+],
+"status": "warning",
+"subtitle": "Read 2026-10-20 18:54 UTC - the Security logs of the last 24 h",
+"summary": [
+{
+"label": "Locked out",
+"status": "warning",
+"value": 1
+},
+{
+"label": "Failed sign-ins",
+"status": "info",
+"value": 12
+},
+{
+"label": "Source computers",
+"status": "info",
+"value": 4
+},
+{
+"label": "DCs read",
+"status": "critical",
+"value": "2 of 3"
+}
+],
+"title": "Account lockout: CORP\\jdoe LOCKED OUT - from PC123"
+}

@@ -1,0 +1,96 @@
+{
+"sections": [
+{
+"columns": [
+"Days left",
+"Expires",
+"Name",
+"Signed by",
+"Ticket",
+"Renewal"
+],
+"row_status": [
+"critical",
+"warning",
+"warning"
+],
+"rows": [
+[
+-48,
+"2026-09-01",
+"esx03.example.mil",
+"self-signed",
+"INC0010009",
+"would make a CSR (dry run)"
+],
+[
+1,
+"2026-10-20",
+"esx01.example.mil",
+"VMCA (vCenter's own CA)",
+"-",
+"no CSR: signed by vCenter's own CA (VMCA): renew it in the vSphere Client > the host > Configure > System > Certificate > Renew"
+],
+[
+12,
+"2026-11-01",
+"vc01.example.mil",
+"CA",
+"-",
+"would make a CSR (dry run)"
+]
+],
+"status": "critical",
+"text": "A CSR is made where the key stays (vCenter, or the host) and attached to the certificate's incident, with what to do next. Signed by VMCA: renewed in vCenter, no CSR.",
+"title": "Due - the incident and the CSR of each"
+},
+{
+"rows": [],
+"title": "All certificates"
+},
+{
+"columns": [
+"Name",
+"vCenter",
+"Why"
+],
+"rows": [
+[
+"esx09.example.mil",
+"vc01.example.mil",
+"not connected (notResponding)"
+]
+],
+"status": "warning",
+"title": "Not checked"
+}
+],
+"status": "critical",
+"subtitle": "Due = expires within vmware_cert_warn_days (30) - DRY RUN: no CSR made, nothing sent to ServiceNow",
+"summary": [
+{
+"label": "Certificates",
+"value": 4
+},
+{
+"label": "Due",
+"status": "warning",
+"value": 3
+},
+{
+"label": "Expired",
+"status": "critical",
+"value": 1
+},
+{
+"label": "Not checked",
+"status": "warning",
+"value": 1
+},
+{
+"label": "CSRs made",
+"value": 0
+}
+],
+"title": "VMware certificates (dry run): 3 due within 30 days (1 expired), of 4, 1 not checked"
+}

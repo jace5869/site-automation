@@ -1,0 +1,107 @@
+{
+"sections": [
+{
+"lines": [
+"1 user(s) failed to log on 5 or more times: CORP\\jdoe",
+"1 error event(s) of 1 kind(s)"
+],
+"status": "warning",
+"title": "Problems"
+},
+{
+"columns": [
+"User",
+"Failed",
+"Why",
+"From",
+"Last"
+],
+"row_status": [
+"warning",
+""
+],
+"rows": [
+[
+"CORP\\jdoe",
+5,
+"bad user password (5)",
+"198.51.100.23",
+"2026-09-21 13:13 UTC"
+],
+[
+"S-1-5-21-7",
+1,
+"not entitled (1)",
+"",
+"2026-09-21 13:13 UTC"
+]
+],
+"text": "Amber: 5 or more in the window. Why = Horizon's event type (bad password, locked account, not entitled...).",
+"title": "Failed logons by user"
+},
+{
+"columns": [
+"Event type",
+"Count",
+"Pools",
+"Last",
+"Last message"
+],
+"rows": [
+[
+"BROKER_POOL_EMPTY",
+1,
+"IC-Win11",
+"2026-09-21 13:13 UTC",
+"Pool IC-Win11 is empty"
+]
+],
+"title": "Errors by type"
+},
+{
+"columns": [
+"When",
+"Who",
+"Event type",
+"Message"
+],
+"rows": [
+[
+"2026-09-21 13:13 UTC",
+"CORP\\adm",
+"VLSI_X",
+"User CORP\\adm changed it"
+]
+],
+"text": "Horizon's own audit of its console and API (event module Vlsi).",
+"title": "What administrators changed"
+}
+],
+"status": "warning",
+"subtitle": "8 event(s) read from the event database",
+"summary": [
+{
+"label": "Events",
+"value": 8
+},
+{
+"label": "Failed logons",
+"status": "warning",
+"value": 6
+},
+{
+"label": "Users",
+"value": 2
+},
+{
+"label": "Errors",
+"status": "warning",
+"value": 1
+},
+{
+"label": "Admin changes",
+"value": 1
+}
+],
+"title": "Horizon events, last 24 h: 6 failed logon(s), 1 error(s), 1 change(s)"
+}

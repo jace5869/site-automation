@@ -1,0 +1,95 @@
+{
+"footer": "vCenter 127.0.0.1",
+"sections": [
+{
+"columns": [
+"Datastore",
+"Datacenter",
+"Datastore cluster",
+"Type",
+"Capacity (GB)",
+"Free (GB)",
+"Used %",
+"Provisioned %",
+"Hosts",
+"VMs",
+"State"
+],
+"rows": [
+[
+"LocalDS_0",
+"DC0",
+"",
+"OTHER",
+4096.0,
+4036.0,
+1.5,
+1.5,
+4,
+6,
+"ok"
+]
+],
+"status": "warning",
+"title": "0.5% to 50% used"
+},
+{
+"columns": [
+"Datastore",
+"Datacenter",
+"Datastore cluster",
+"Type",
+"Capacity (GB)",
+"Free (GB)",
+"Used %",
+"Provisioned %",
+"Hosts",
+"VMs",
+"State"
+],
+"rows": [
+[
+"LocalDS_0",
+"DC0",
+"",
+"OTHER",
+4096.0,
+4036.0,
+1.5,
+1.5,
+4,
+6,
+"ok"
+]
+],
+"title": "All datastores, fullest first"
+}
+],
+"status": "warning",
+"subtitle": "1 datastores - warning at 0.5% used, critical at 50%",
+"summary": [
+{
+"label": "Datastores",
+"value": 1
+},
+{
+"label": "Capacity (TB)",
+"value": 4.0
+},
+{
+"label": "Free (TB)",
+"value": 3.9
+},
+{
+"label": "0.5%+ used",
+"status": "warning",
+"value": 1
+},
+{
+"label": "50%+ used",
+"status": "ok",
+"value": 0
+}
+],
+"title": "VMware datastore report: 1 of 1 at 0.5%+ used"
+}

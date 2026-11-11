@@ -1,0 +1,1073 @@
+{
+"footer": "ServiceNow https://sn.example.mil",
+"sections": [
+{
+"lines": [
+"The top 3 issues make up 45% of the 688 incidents: Account / Password (112), Software / VDI (101), Hardware / Smart card (98).",
+"The backlog went from 21 to 80 (\u25b2 281.0%). 43 are older than 30 days.",
+"10 P1/P2 incidents, 4 of them caused by a change.",
+"The most requested service is New account / onboarding (78).",
+"47% of close notes say what was done. 44% are a stock phrase such as \"fixed\" or \"done\", or empty."
+],
+"title": "What the period says"
+},
+{
+"lines": [
+"SLA at risk now (past 75%, or breached and open): 16",
+"  - INC0041223 4 - Low, P4 Incident Resolution breached, Ops - Service Desk, Priya Raman",
+"  - INC0041212 4 - Low, P4 Incident Resolution breached, Ops - Service Desk, Marcus Lee",
+"  - INC0041229 2 - High, P2 Incident Resolution breached, Ops - Windows, Sam Patel",
+"  - INC0041211 3 - Moderate, P3 Incident Resolution 92% used, 4.5 h left, Ops - Service Desk, Tom Okafor",
+"  - INC0041224 4 - Low, P4 Incident Resolution 92% used, 5.5 h left, Ops - VDI, Morgan Diaz",
+"  - ... and 11 more (the web page lists them all)",
+"Open over 3 hops: 8",
+"  - INC0041216 help, 5 hops, in Ops - Windows, 38.6 days",
+"  - INC0041219 No network at desk, port [host] Gi1/0/14, 5 hops, in Ops - Service Desk, 38.3 days",
+"  - INC0041240 /var full on [host], service stopped, 6 hops, in Ops - Network, 36.7 days",
+"  - INC0041224 Slow logon, takes 10 minutes, 5 hops, in Ops - VDI, 26.2 days",
+"  - INC0041237 No network at desk, port [host] Gi1/0/14, 6 hops, in Ops - Service Desk, 25.2 days",
+"  - ... and 3 more (the web page lists them all)",
+"Awaiting Caller over 6 business days: 4",
+"  - INC0041216 help, Ops - Windows, on hold since 2026-10-11 (15 business days)",
+"  - INC0041219 No network at desk, port [host] Gi1/0/14, Ops - Service Desk, on hold since 2026-10-11 (15 business days)",
+"  - INC0041234 help, Ops - Linux, on hold since 2026-10-11 (15 business days)",
+"  - INC0040963 Access denied to share on [host], Ops - Windows, on hold since 2026-10-12 (14 business days)",
+"No Resolution Provided in the period: 15",
+"  - INC0041177 Horizon session stuck connecting for [person], Ops - Service Desk, resolved 2026-10-24",
+"  - INC0040945 PIV certificate not showing at login, Ops - Service Desk, resolved 2026-09-03",
+"  - INC0041128 Password reset needed for [person], Ops - Service Desk, resolved 2026-08-07",
+"  - INC0041189 PIV certificate not showing at login, Ops - Windows, resolved 2026-07-27",
+"  - INC0040366 Print queue stuck on [host], Ops - Service Desk, resolved 2026-07-24",
+"  - ... and 10 more (the web page lists them all)",
+"Resolved, not closed after 7 days: 6",
+"  - INC0041194 Ops - Service Desk, resolved 2026-09-23",
+"  - INC0040414 Ops - Network, resolved 2026-09-24",
+"  - INC0040843 Ops - Windows, resolved 2026-09-25",
+"  - INC0040161 Ops - Linux, resolved 2026-09-28",
+"  - INC0040210 Ops - Windows, resolved 2026-10-01",
+"  - ... and 1 more (the web page lists them all)"
+],
+"status": "warning",
+"title": "Act on"
+},
+{
+"columns": [
+"Team",
+"Incidents",
+"Open now",
+"Was",
+"Over 30 days",
+"Median fix",
+"Response met",
+"Resolution met",
+"Bare notes",
+"Change tasks closed",
+"Change tasks open",
+"Top issue"
+],
+"row_status": [
+"",
+"warning",
+"warning",
+"",
+"warning"
+],
+"rows": [
+[
+"Linux",
+25,
+2,
+1,
+2,
+"1.5 h",
+"100.0%",
+"93.1%",
+"20%",
+10,
+1,
+"Software / Operating system (24)"
+],
+[
+"Network",
+62,
+8,
+2,
+4,
+"4.0 h",
+"92.6%",
+"92.2%",
+"50%",
+10,
+5,
+"Network / VPN (40)"
+],
+[
+"Service Desk",
+339,
+41,
+14,
+23,
+"1.6 h",
+"91.5%",
+"94.2%",
+"42%",
+2,
+0,
+"Account / Password (103)"
+],
+[
+"VDI",
+80,
+5,
+2,
+3,
+"3.5 h",
+"90.3%",
+"90.2%",
+"54%",
+12,
+1,
+"Software / VDI (77)"
+],
+[
+"Windows",
+182,
+24,
+2,
+11,
+"2.8 h",
+"88.6%",
+"88.9%",
+"43%",
+4,
+1,
+"Hardware / Smart card (41)"
+]
+],
+"title": "Teams side by side"
+},
+{
+"columns": [
+"#",
+"Rank",
+"Issue",
+"Incidents",
+"Was",
+"Median fix",
+"Bare notes",
+"Fix"
+],
+"rows": [
+[
+1,
+"\u2014",
+"Account / Password",
+112,
+92,
+"0.6 h",
+"18%",
+"from the tickets"
+],
+[
+2,
+"\u25b2 2",
+"Software / VDI",
+101,
+53,
+"3.4 h",
+"53%",
+"from the tickets"
+],
+[
+3,
+"\u25bc 1",
+"Hardware / Smart card",
+98,
+73,
+"2.1 h",
+"29%",
+"from the tickets"
+],
+[
+4,
+"\u25bc 1",
+"Software / Email",
+62,
+67,
+"2.2 h",
+"36%",
+"from the tickets"
+],
+[
+5,
+"\u25b2 3",
+"Network / VPN",
+53,
+36,
+"5.4 h",
+"58%",
+"from the tickets"
+],
+[
+6,
+"\u25bc 1",
+"Hardware / Printer",
+50,
+49,
+"5.4 h",
+"88%",
+"from the tickets"
+],
+[
+7,
+"\u2014",
+"Access / File share",
+46,
+47,
+"1.7 h",
+"43%",
+"from the tickets"
+],
+[
+8,
+"New",
+"Software / Login",
+34,
+18,
+"8.0 h",
+"61%",
+"from the tickets"
+],
+[
+9,
+"\u2014",
+"Software / Install",
+33,
+31,
+"2.8 h",
+"52%",
+"from the tickets"
+],
+[
+10,
+"\u25bc 4",
+"Software / Collaboration",
+32,
+48,
+"1.2 h",
+"47%",
+"from the tickets"
+]
+],
+"title": "Top incident issues"
+},
+{
+"columns": [
+"Priority",
+"Incidents",
+"Median to resolve",
+"Response met",
+"Resolution met",
+"No SLO"
+],
+"rows": [
+[
+"1 - Critical",
+2,
+"4.0 h",
+"\u2014",
+"\u2014",
+2
+],
+[
+"2 - High",
+8,
+"4.0 h",
+"\u2014",
+"\u2014",
+3
+],
+[
+"3 - Moderate",
+208,
+"1.9 h",
+"91.5%",
+"92.1%",
+0
+],
+[
+"4 - Low",
+425,
+"2.3 h",
+"90.8%",
+"91.8%",
+0
+],
+[
+"5 - Exempt",
+45,
+"2.5 h",
+"\u2014",
+"\u2014",
+44
+]
+],
+"text": "Met or missed: ServiceNow's SLAs (task_sla).",
+"title": "By priority"
+},
+{
+"columns": [
+"Group",
+"Set by hand",
+"Of",
+"Share"
+],
+"rows": [
+[
+"Ops - Service Desk",
+27,
+321,
+"8.4%"
+],
+[
+"Ops - Windows",
+11,
+166,
+"6.6%"
+],
+[
+"Ops - VDI",
+7,
+76,
+"9.2%"
+],
+[
+"Ops - Network",
+5,
+57,
+"8.8%"
+],
+[
+"Ops - Linux",
+4,
+23,
+"17.4%"
+]
+],
+"status": "",
+"text": "54 of 643 incidents (8.4%) have a priority the 3 x 3 matrix does not give for their impact and urgency. 16 were set higher, 38 lower.",
+"title": "Priority set by hand"
+},
+{
+"columns": [
+"Group",
+"Resolved",
+"Fixed",
+"Workaround",
+"Duplicate",
+"Known Error",
+"No Resolution Provided",
+"Unable to resolve"
+],
+"rows": [
+[
+"Ops - Service Desk",
+319,
+291,
+0,
+12,
+8,
+8,
+"5.0%"
+],
+[
+"Ops - Windows",
+162,
+147,
+0,
+5,
+4,
+6,
+"6.2%"
+],
+[
+"Ops - VDI",
+77,
+72,
+0,
+5,
+0,
+0,
+"0.0%"
+],
+[
+"Ops - Network",
+56,
+52,
+0,
+2,
+2,
+0,
+"3.6%"
+],
+[
+"Ops - Linux",
+24,
+23,
+0,
+0,
+0,
+1,
+"4.2%"
+]
+],
+"text": "Unable to resolve (Known Error + No Resolution Provided): 4.5%, the window before 3.8%. First-contact resolution: 93.3%.",
+"title": "How incidents ended"
+},
+{
+"columns": [
+"Group",
+"Incidents",
+"Waiting to start",
+"In progress",
+"On hold",
+"Resolved to closed"
+],
+"rows": [
+[
+"All",
+633,
+"0.7 h",
+"5.4 h",
+"0.7 h",
+"3.1 days"
+],
+[
+"Ops - Service Desk",
+319,
+"0.6 h",
+"4.4 h",
+"0.6 h",
+"3.0 days"
+],
+[
+"Ops - Windows",
+160,
+"1.0 h",
+"6.6 h",
+"1.0 h",
+"3.2 days"
+],
+[
+"Ops - VDI",
+76,
+"0.8 h",
+"6.4 h",
+"0.6 h",
+"3.1 days"
+],
+[
+"Ops - Network",
+55,
+"1.2 h",
+"8.2 h",
+"1.2 h",
+"3.4 days"
+],
+[
+"Ops - Linux",
+23,
+"0.2 h",
+"1.7 h",
+"0.1 h",
+"4.3 days"
+]
+],
+"text": "Average hours per state, for the incidents resolved in the period. On hold: 10.6% of the time to resolve, 13 incidents more than 2 times.",
+"title": "Time in each state"
+},
+{
+"columns": [
+"Group",
+"Open now",
+"0\u20131",
+"2\u20135",
+"6\u201310",
+"over 10"
+],
+"rows": [
+[
+"Ops - Service Desk",
+41,
+3,
+5,
+6,
+27
+],
+[
+"Ops - Windows",
+24,
+2,
+2,
+3,
+17
+],
+[
+"Ops - Network",
+8,
+0,
+1,
+0,
+7
+],
+[
+"Ops - VDI",
+5,
+0,
+1,
+0,
+4
+],
+[
+"Ops - Linux",
+2,
+0,
+0,
+0,
+2
+]
+],
+"title": "Backlog age (business days)"
+},
+{
+"columns": [
+"Category",
+"Incidents",
+"Share",
+"Median to resolve",
+"Response met",
+"Resolution met",
+"Mostly in"
+],
+"row_status": [
+"",
+"",
+"",
+"",
+"",
+"",
+""
+],
+"rows": [
+[
+"Software",
+296,
+"43.0%",
+"2.8 h",
+"91.8%",
+"91.0%",
+"Ops - Service Desk"
+],
+[
+"Hardware",
+148,
+"21.5%",
+"2.7 h",
+"89.1%",
+"90.6%",
+"Ops - Service Desk"
+],
+[
+"Account",
+112,
+"16.3%",
+"0.6 h",
+"89.4%",
+"95.2%",
+"Ops - Service Desk"
+],
+[
+"Network",
+73,
+"10.6%",
+"4.5 h",
+"93.8%",
+"90.8%",
+"Ops - Network"
+],
+[
+"Access",
+46,
+"6.7%",
+"1.7 h",
+"91.9%",
+"94.6%",
+"Ops - Service Desk"
+],
+[
+"(none)",
+7,
+"1.0%",
+"\u2014",
+"\u2014",
+"\u2014",
+"Ops - Service Desk"
+],
+[
+"Other",
+6,
+"0.9%",
+"\u2014",
+"\u2014",
+"\u2014",
+"Ops - Service Desk"
+]
+],
+"text": "Data quality: 7 with no category (1.0%), 6 in Other (0.9%).",
+"title": "Categories"
+},
+{
+"columns": [
+"#",
+"Rank",
+"Catalog item",
+"Requests",
+"Was",
+"Median to fulfil",
+"SLA met"
+],
+"rows": [
+[
+1,
+"\u2014",
+"New account / onboarding",
+78,
+69,
+"2.0 days",
+"94.2%"
+],
+[
+2,
+"\u25b2 1",
+"Software install",
+61,
+63,
+"1.9 days",
+"92.3%"
+],
+[
+3,
+"\u25b2 1",
+"Hardware: laptop or peripheral",
+46,
+53,
+"7.8 days",
+"97.2%"
+],
+[
+4,
+"\u25b2 2",
+"Distribution list change",
+39,
+24,
+"2.5 days",
+"94.3%"
+],
+[
+5,
+"\u25bc 3",
+"Access to shared drive",
+38,
+64,
+"1.9 days",
+"85.7%"
+],
+[
+6,
+"\u25b2 1",
+"VPN token",
+27,
+20,
+"1.5 days",
+"95.7%"
+],
+[
+7,
+"\u25b2 1",
+"Elevated privileges",
+18,
+17,
+"2.7 days",
+"87.5%"
+],
+[
+8,
+"\u25bc 3",
+"Mobile device",
+18,
+29,
+"2.3 days",
+"81.2%"
+],
+[
+9,
+"\u2014",
+"Horizon desktop entitlement",
+10,
+16,
+"2.0 days",
+"100.0%"
+],
+[
+10,
+"\u2014",
+"Linux server account",
+10,
+10,
+"2.0 days",
+"100.0%"
+]
+],
+"title": "Most requested services"
+},
+{
+"columns": [
+"Incident",
+"Opened",
+"Priority",
+"What happened",
+"Group",
+"To resolve",
+"Caused by change",
+"Problem"
+],
+"rows": [
+[
+"INC0041200",
+"2026-06-17",
+"P2",
+"CAC sign-in failing site-wide after root update",
+"Ops - Windows",
+"4.0 h",
+"CHG0031001",
+""
+],
+[
+"INC0041201",
+"2026-07-14",
+"P1",
+"Email delivery stopped for all users",
+"Ops - Windows",
+"4.0 h",
+"CHG0031002",
+""
+],
+[
+"INC0041202",
+"2026-08-20",
+"P2",
+"VDI pool vdi-pool-eng unavailable",
+"Ops - VDI",
+"4.0 h",
+"",
+""
+],
+[
+"INC0041203",
+"2026-09-09",
+"P1",
+"Building 4 network down",
+"Ops - Network",
+"4.0 h",
+"CHG0031004",
+""
+],
+[
+"INC0041215",
+"2026-09-20",
+"P2",
+"Need access to the GIS folder",
+"Ops - Windows",
+"\u2014",
+"",
+""
+],
+[
+"INC0041235",
+"2026-09-20",
+"P2",
+"Access denied to share on fs01",
+"Ops - Windows",
+"\u2014",
+"",
+""
+],
+[
+"INC0041243",
+"2026-09-28",
+"P2",
+"Network drop dead in room 214",
+"Ops - Service Desk",
+"\u2014",
+"",
+""
+],
+[
+"INC0041204",
+"2026-10-02",
+"P2",
+"Patching left 40 Linux hosts without a service",
+"Ops - Linux",
+"4.0 h",
+"CHG0031005",
+""
+],
+[
+"INC0041227",
+"2026-10-13",
+"P2",
+"Cannot open mapped drive S:",
+"Ops - Windows",
+"\u2014",
+"",
+""
+],
+[
+"INC0041229",
+"2026-10-30",
+"P2",
+"Install software request for the caller",
+"Ops - Windows",
+"\u2014",
+"",
+""
+]
+],
+"status": "critical",
+"title": "P1 and P2 incidents"
+},
+{
+"columns": [
+"Issue",
+"CI",
+"Last 30 days",
+"In the period",
+"Group",
+"Problem record"
+],
+"row_status": [
+"warning",
+"warning",
+"",
+"warning",
+"warning",
+"warning",
+"warning",
+"warning",
+"warning",
+"warning"
+],
+"rows": [
+[
+"Software / VDI",
+"vdi-pool-eng",
+12,
+59,
+"Ops - VDI",
+"none"
+],
+[
+"Account / Password",
+"ad02",
+11,
+54,
+"Ops - Service Desk",
+"none"
+],
+[
+"Software / VDI",
+"vdi-pool-ops",
+11,
+38,
+"Ops - VDI",
+"PRB0004401 (2)"
+],
+[
+"Software / Email",
+"exch01",
+9,
+61,
+"Ops - Service Desk",
+"none"
+],
+[
+"Hardware / Printer",
+"prn01",
+9,
+48,
+"Ops - Windows",
+"none"
+],
+[
+"Software / Login",
+"ad01",
+6,
+33,
+"Ops - Windows",
+"none"
+],
+[
+"Network / VPN",
+"vpn01",
+6,
+28,
+"Ops - Network",
+"none"
+],
+[
+"Software / Operating system",
+"app-db03",
+6,
+14,
+"Ops - Linux",
+"none"
+],
+[
+"Account / Password",
+"ad01",
+5,
+57,
+"Ops - Service Desk",
+"none"
+],
+[
+"Network / VPN",
+"vpn02",
+4,
+23,
+"Ops - Network",
+"none"
+]
+],
+"title": "Problem candidates"
+},
+{
+"columns": [
+"Change",
+"Closed",
+"What",
+"Group",
+"Outcome",
+"Incidents that followed"
+],
+"rows": [
+[
+"CHG0031001",
+"2026-06-17",
+"DoD root certificate update via GPO",
+"Ops - Windows",
+"Failed",
+"INC0041200 (caused by), INC0041040 (same CI)"
+],
+[
+"CHG0031002",
+"2026-07-14",
+"Exchange hybrid certificate renewal",
+"Ops - Windows",
+"Failed",
+"INC0041201 (caused by), INC0040553 (same CI)"
+],
+[
+"CHG0031005",
+"2026-10-02",
+"Monthly Linux patching (RHEL 9)",
+"Ops - Linux",
+"Failed",
+"INC0041204 (caused by)"
+]
+],
+"title": "Changes failed or backed out"
+},
+{
+"columns": [
+"Team",
+"Changes held up",
+"Median wait"
+],
+"lines": [
+"Closed: 38 (the window before: 0), median 4.2 days to close",
+"  - by the planned end 23, after it 14, with no planned end 1",
+"Open now: 8, 8 past the planned end, 4 older than 30 days",
+"Changes closed with tasks: 23 of 29, 1.7 tasks each on average (most: CHG0031004, 4)"
+],
+"rows": [
+[
+"Ops - VDI",
+9,
+"7.7 h"
+],
+[
+"Ops - Linux",
+6,
+"1.6 h"
+],
+[
+"Ops - Network",
+5,
+"30.6 h"
+],
+[
+"Ops - Windows",
+3,
+"1.2 h"
+]
+],
+"text": "Held up by: the team whose task a change waited on last. The wait runs from the other tasks' close (one task: the work start) to that task's close.",
+"title": "Change tasks"
+},
+{
+"lines": [
+"incident: 10 record(s) kept of 10 read",
+"Window: 2026-05-01 to 2026-10-31, compared with 2025-11-01 to 2026-04-30 (UTC)",
+"ACT: off (servicenow_insights_act): the issues are the incidents' categories, the fixes their most common close notes"
+],
+"title": "Read"
+}
+],
+"status": "warning",
+"subtitle": "All assignment groups - 2026-05-01 to 2026-10-31",
+"summary": [
+{
+"label": "Incidents",
+"note": "was 547",
+"value": 688
+},
+{
+"label": "Requests",
+"value": 345
+},
+{
+"label": "Open now",
+"note": "was 21 at the start",
+"status": "warning",
+"value": 80
+},
+{
+"label": "Median time to resolve",
+"value": "2.2 h"
+},
+{
+"label": "Response met",
+"value": "91.0%"
+},
+{
+"label": "Resolution met",
+"value": "92.1%"
+},
+{
+"label": "Close notes that say what was done",
+"value": "47%"
+}
+],
+"title": "Ticket insights for All assignment groups: 688 incidents, 345 requests, top issue Account / Password (112), backlog 80 (\u25b2 281.0%)"
+}

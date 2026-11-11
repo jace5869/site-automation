@@ -1,0 +1,623 @@
+{
+"sections": [
+{
+"lines": [
+"Not run - needs admin on the DCs (reader mode): dcdiag, repadmin (the replication queue, backups), the DC services, SYSVOL and DFSR, the disks, the event logs, w32tm and the Security log (who made a change)."
+],
+"status": "unknown",
+"text": "Reader mode (ad_health_mode: reader): read from the AAP side over LDAP (simple bind over LDAPS), DNS and Kerberos as svc_aap_adreader@CORP.EXAMPLE.MIL - a plain domain user, nothing granted - from DC01. Nothing is run on a DC and nothing is written to AD.",
+"title": "How this was read"
+},
+{
+"cell_status": [
+[
+"",
+""
+],
+[
+"",
+""
+],
+[
+"",
+""
+],
+[
+"",
+""
+],
+[
+"",
+"ok"
+],
+[
+"",
+""
+],
+[
+"",
+""
+],
+[
+"",
+"ok"
+],
+[
+"",
+"ok"
+],
+[
+"",
+"ok"
+]
+],
+"columns": [
+"What",
+"Value"
+],
+"row_status": [
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+],
+"rows": [
+[
+"Domain",
+"corp.example.mil"
+],
+[
+"Forest",
+"corp.example.mil"
+],
+[
+"Functional level",
+"domain 2016, forest 2016"
+],
+[
+"Schema version",
+"88"
+],
+[
+"DCs answering",
+"2 of 2"
+],
+[
+"PDC emulator",
+"DC01"
+],
+[
+"Tombstone lifetime",
+"180 days"
+],
+[
+"Recycle Bin",
+"on"
+],
+[
+"RID pool left",
+"100.0% (5000 issued)"
+],
+[
+"krbtgt password",
+"70 days old"
+]
+],
+"text": "The domain: functional levels, schema version, its DCs (answering / in AD), the PDC emulator, the tombstone lifetime, the Recycle Bin, how much of the RID pool is left and the age of the krbtgt password.",
+"title": "Domain"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"DC",
+"Site",
+"OS",
+"Kind",
+"Roles",
+"In inventory",
+"In AD"
+],
+"row_status": [
+"",
+""
+],
+"rows": [
+[
+"DC01",
+"Site-A",
+"Server 2022 Standard",
+"GC",
+"PDC, RID, Infra, Schema, Naming",
+"yes",
+"yes"
+],
+[
+"DC02",
+"Site-A",
+"Server 2022 Standard",
+"GC",
+"-",
+"yes",
+"yes"
+]
+],
+"text": "Each DC AD lists, and each the inventory has: its site, OS, global catalog / read-only, the operations master roles it holds, whether it is in the inventory and in AD.",
+"title": "Domain controllers"
+},
+{
+"cell_status": [
+[
+"",
+"ok",
+"ok",
+"ok",
+"ok",
+"ok",
+"ok",
+"ok"
+],
+[
+"",
+"ok",
+"ok",
+"ok",
+"ok",
+"ok",
+"ok",
+"ok"
+]
+],
+"columns": [
+"DC",
+"LDAP 389",
+"LDAPS 636",
+"Bind",
+"Synced",
+"Clock",
+"Kerberos",
+"Certificate"
+],
+"row_status": [
+"",
+""
+],
+"rows": [
+[
+"DC01",
+"OK",
+"OK",
+"OK (LDAPS)",
+"yes",
+"+0 s",
+"TGT",
+"365 days"
+],
+[
+"DC02",
+"OK",
+"OK",
+"OK (LDAPS)",
+"yes",
+"+0 s",
+"TGT",
+"365 days"
+]
+],
+"text": "Each DC from here: LDAP 389 answering, LDAPS 636 answering and the bind as svc_aap_adreader@CORP.EXAMPLE.MIL, isSynchronized, its clock against the other DCs' (rootDSE currentTime; amber 120 s, red 300 s), its KDC (a ticket (TGT) from it with kinit, or an AS-REQ it must answer) and its LDAPS certificate's days left.",
+"title": "Domain controllers answering"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"ok",
+"ok"
+],
+[
+"",
+"",
+"ok",
+"ok"
+],
+[
+"",
+"",
+"ok",
+"ok"
+],
+[
+"",
+"",
+"ok",
+"ok"
+],
+[
+"",
+"",
+"ok",
+"ok"
+]
+],
+"columns": [
+"Role",
+"Holder",
+"A DC in AD",
+"Answers"
+],
+"row_status": [
+"",
+"",
+"",
+"",
+""
+],
+"rows": [
+[
+"PDC emulator",
+"DC01",
+"yes",
+"yes"
+],
+[
+"RID master",
+"DC01",
+"yes",
+"yes"
+],
+[
+"Infrastructure master",
+"DC01",
+"yes",
+"yes"
+],
+[
+"Schema master",
+"DC01",
+"yes",
+"yes"
+],
+[
+"Domain naming master",
+"DC01",
+"yes",
+"yes"
+]
+],
+"text": "Who holds each role (fSMORoleOwner), whether that holder is still a DC, and whether it answers on LDAP from here.",
+"title": "Operations masters (FSMO roles)"
+},
+{
+"text": "Each DC's inbound replication from each partner, for every partition, as far as svc_aap_adreader@CORP.EXAMPLE.MIL may read it (here: repsFrom - on each DC's own copy of the partition head; no repadmin). Only links with a problem are listed: amber after 6 h without success or a failing link that succeeded recently, red after 24 h or longer than the tombstone lifetime. 2 link(s) are healthy. No link has a problem.",
+"title": "Inbound replication"
+},
+{
+"cell_status": [
+[
+"",
+"ok",
+""
+],
+[
+"",
+"ok",
+""
+],
+[
+"",
+"ok",
+""
+],
+[
+"",
+"ok",
+""
+]
+],
+"columns": [
+"Record / DC",
+"Result",
+"Details"
+],
+"row_status": [
+"",
+"",
+"",
+""
+],
+"rows": [
+[
+"_ldap._tcp.dc._msdcs.corp.example.mil",
+"OK",
+"2 DC(s)"
+],
+[
+"_ldap._tcp.gc._msdcs.corp.example.mil",
+"OK",
+"2 DC(s)"
+],
+[
+"dc01.corp.example.mil",
+"OK",
+"192.0.2.11"
+],
+[
+"dc02.corp.example.mil",
+"OK",
+"192.0.2.12"
+]
+],
+"text": "The SRV records clients use to find a DC - every DC (every GC for _gc) must be registered - and each DC's A record (against the inventory's address, when the inventory gives one).",
+"title": "DNS"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"ok",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"ok",
+"ok"
+]
+],
+"columns": [
+"DC",
+"Subject",
+"Issuer",
+"Expires",
+"Days left",
+"Trusted"
+],
+"row_status": [
+"",
+""
+],
+"rows": [
+[
+"DC01",
+"CN=dc01.corp.example.mil",
+"CN=Issuing CA",
+"2027-11-10 09:00",
+365,
+"yes"
+],
+[
+"DC02",
+"CN=dc02.corp.example.mil",
+"CN=Issuing CA",
+"2027-11-10 09:00",
+365,
+"yes"
+]
+],
+"text": "Each DC's LDAPS certificate, read from the TLS handshake on port 636: amber 30 days, red 7 days before it expires, amber when this side does not trust it (ad_reader_validate_certs).",
+"title": "Certificates (LDAPS)"
+},
+{
+"text": "Members added to or removed from the privileged groups, when and on which DC, from AD's replication metadata (msDS-ReplValueMetaData). Who made a change is only in the DCs' Security logs, which reader mode cannot read. No change.",
+"title": "Privileged group changes (last 24 h)"
+},
+{
+"status": "unknown",
+"text": "no earlier list: the first run, or the last run's artifact couldn't be read (the AAP credential?)",
+"title": "Privileged groups since the last run"
+},
+{
+"cell_status": [
+[
+"",
+"",
+""
+]
+],
+"columns": [
+"Group",
+"Members",
+"Direct members"
+],
+"row_status": [
+""
+],
+"rows": [
+[
+"Domain Admins",
+1,
+"Administrator"
+]
+],
+"text": "The direct members of each privileged group now (nested groups are not expanded).",
+"title": "Privileged groups"
+},
+{
+"cell_status": [
+[
+"",
+""
+]
+],
+"columns": [
+"Locked out at",
+"Account"
+],
+"row_status": [
+"info"
+],
+"rows": [
+[
+"2026-11-10 08:00",
+"lockme"
+]
+],
+"text": "Accounts whose lockoutTime is within the domain's lockout duration.",
+"title": "Accounts locked out now"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"When",
+"Type",
+"Name",
+"Where"
+],
+"row_status": [
+"info"
+],
+"rows": [
+[
+"2026-11-10 07:00",
+"user",
+"newuser",
+"OU=Staff,DC=corp,DC=example,DC=mil"
+]
+],
+"text": "New accounts (whenCreated) and where they are. Deleted ones are in the Deleted Objects container, which needs admin.",
+"title": "Users, groups and computers created (last 24 h)"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"info",
+"",
+""
+],
+[
+"",
+"",
+"",
+"info",
+"",
+""
+]
+],
+"columns": [
+"When",
+"Type",
+"Name",
+"Change",
+"Made on",
+"From"
+],
+"lines": [
+"Best effort: where the account may not read an account's replication metadata, the time is its whenChanged and the change its state now (disabled / enabled) - another attribute may have changed instead."
+],
+"row_status": [
+"info",
+"info"
+],
+"rows": [
+[
+"2026-11-10 08:40",
+"user",
+"gone",
+"DISABLED",
+"DC01",
+"replication metadata"
+],
+[
+"2026-11-10 08:00",
+"user",
+"other",
+"ENABLED",
+"-",
+"whenChanged (best effort)"
+]
+],
+"text": "From the replication metadata of userAccountControl and lockoutTime when the account may read it (when and on which DC), else whenChanged - labelled. Who: only in the Security logs (admin).",
+"title": "Accounts enabled, disabled, locked or unlocked (last 24 h)"
+}
+],
+"status": "ok",
+"subtitle": "Read 2026-11-10 09:00 UTC - reader mode: LDAP, DNS and Kerberos from AAP as svc_aap_adreader@CORP.EXAMPLE.MIL - changes of the last 24 h",
+"summary": [
+{
+"label": "DCs answering",
+"status": "ok",
+"value": "2 of 2"
+},
+{
+"label": "Replication problems",
+"status": "ok",
+"value": 0
+},
+{
+"label": "FSMO / DNS / clock",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Kerberos",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Certificates",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Privileged changes",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Accounts created",
+"status": "info",
+"value": 1
+},
+{
+"label": "Locked out now",
+"status": "info",
+"value": 1
+},
+{
+"label": "Not run (needs admin)",
+"status": "unknown",
+"value": "dcdiag, repadmin, services ..."
+}
+],
+"title": "Active Directory health report: all 2 domain controller(s) healthy (corp.example.mil)"
+}

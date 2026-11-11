@@ -1,0 +1,75 @@
+{
+"sections": [
+{
+"lines": [
+"Asked: all vms with dbv in the name",
+"Read as: VMs whose name contains 'dbv'; counted by vCenter; templates left out; in every vCenter read",
+"Read by: GenAI (genai)"
+],
+"text": "This job only reads vCenter: nothing was changed.",
+"title": "The question, as the job read it"
+},
+{
+"columns": [
+"vCenter",
+"Vms"
+],
+"rows": [
+[
+"vc01.example.mil",
+2
+],
+[
+"vc02.example.mil",
+1
+]
+],
+"title": "How many, by vCenter"
+},
+{
+"columns": [
+"VM",
+"Power",
+"vCenter",
+"Folder",
+"Cluster",
+"ESXi host",
+"IP address",
+"Guest OS"
+],
+"rows": [
+[
+"dbv01",
+"on",
+"vc01.example.mil",
+"DC1 / ACAS / Scanners",
+"CL1",
+"esx01.example.mil",
+"192.0.2.11",
+"Microsoft Windows Server 2022 (64-bit)"
+],
+[
+"dbv02",
+"off",
+"vc01.example.mil",
+"DC1 / Linux",
+"CL1",
+"esx02.example.mil",
+"",
+"Red Hat Enterprise Linux 9 (64-bit)"
+]
+],
+"text": "1 more not listed here (vm_ask_max_rows: 2); the workbook has every row. 1 template(s) left out (ask about templates to see them).",
+"title": "The answer"
+}
+],
+"status": "info",
+"subtitle": "all vms with dbv in the name",
+"summary": [
+{
+"label": "Vms",
+"value": 3
+}
+],
+"title": "VMware question: 3 VMs"
+}

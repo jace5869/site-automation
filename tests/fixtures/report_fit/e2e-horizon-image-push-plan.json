@@ -1,0 +1,43 @@
+{
+"footer": "Read-only: nothing was scheduled. The push waits for approval (the image push workflow).",
+"sections": [
+{
+"columns": [
+"Pool",
+"Golden image VM",
+"Snapshot"
+],
+"rows": [
+[
+"IC-Win11",
+"W11-Gold",
+"/v2026-10/v2026-11"
+],
+[
+"IC-Finance",
+"W11-Gold",
+"/v2026-10/v2026-11"
+]
+],
+"title": "Pools"
+},
+{
+"lines": [
+"None."
+],
+"title": "Problems - nothing goes to the approval"
+},
+{
+"lines": [
+"pool IC-Win11: the snapshot's vGPU profile (grid_a40-2q) is not the pool's (none) - the new desktops may not start",
+"pool IC-Win11: datastore DS2 has 500 GB free; the new image's replica needs about 586 GB there",
+"pool IC-Finance: the snapshot's vGPU profile (grid_a40-2q) is not the pool's (none) - the new desktops may not start",
+"Push W11-Gold / /v2026-10/v2026-11 to IC-Win11, IC-Finance, starting as soon as the approved push job runs; users: each desktop is replaced when its user logs off; it stops at the first desktop that fails."
+],
+"title": "For the approver"
+}
+],
+"status": "warning",
+"subtitle": "Push W11-Gold / /v2026-10/v2026-11 to IC-Win11, IC-Finance, starting as soon as the approved push job runs; users: each desktop is replaced when its user logs off; it stops at the first desktop that fails.",
+"title": "Horizon image push plan: IC-Win11, IC-Finance"
+}

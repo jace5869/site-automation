@@ -1,0 +1,121 @@
+{
+"footer": "Read-only: nothing was changed.",
+"sections": [
+{
+"columns": [
+"Relay",
+"Oldest line",
+"Newest line",
+"Days back",
+"Covers 400 days",
+"Logs read",
+"Errors"
+],
+"row_status": [
+"warning",
+"warning"
+],
+"rows": [
+[
+"relay1",
+"2026-04-25",
+"2026-11-06",
+200,
+"NO",
+2,
+""
+],
+[
+"relay2",
+"2026-04-25",
+"2026-11-08",
+200,
+"NO",
+1,
+""
+]
+],
+"text": "An address is unused when no relay accepted a message from it since 2025-10-07 08:32 UTC (400 days, mail_relay_unused_days). The logs of each relay must go back that far.",
+"title": "How far back the logs go"
+},
+{
+"columns": [
+"Address",
+"Kind",
+"On relays",
+"Last mail",
+"Messages in the logs",
+"Connections",
+"Verdict"
+],
+"row_status": [
+"",
+"",
+""
+],
+"rows": [
+[
+"127.0.0.0/8",
+"subnet",
+"all",
+"never in the logs",
+0,
+"",
+"kept: the relay itself"
+],
+[
+"192.0.2.10",
+"address",
+"all",
+"2026-11-08 09:32 UTC",
+2,
+"1 connection(s)",
+"in use"
+],
+[
+"192.0.2.11",
+"address",
+"relay1",
+"2026-05-05 09:32 UTC",
+1,
+"2 connection(s)",
+"in use"
+]
+],
+"text": "Last mail: the newest message any relay accepted from it (or from an address inside the subnet). Connections: how often it connected (a monitor or a scanner connects and sends nothing - that does not count as sending).",
+"title": "Each address on the list"
+},
+{
+"lines": [
+"The logs do not go back 400 days on relay1, relay2: relay1 back to 2026-04-25 (200 days); relay2 back to 2026-04-25 (200 days). An address may have sent mail before that and be called unused. Keep the mail logs longer (logrotate: /etc/logrotate.d/syslog), or set mail_relay_unused_days to what they cover."
+],
+"title": "Note"
+}
+],
+"status": "warning",
+"subtitle": "Nothing was changed and nothing waits for approval: the mail logs do not go back 400 days on every relay (How far back the logs go), so a quiet address cannot be told from an unused one.",
+"summary": [
+{
+"label": "Addresses in use",
+"value": 2
+},
+{
+"label": "Unused",
+"value": 0
+},
+{
+"label": "Unused subnets",
+"value": 0
+},
+{
+"label": "Days asked",
+"value": 400
+},
+{
+"label": "Logs cover them",
+"status": "warning",
+"value": "NO"
+}
+],
+"title": "Mail relay whitelist - unused addresses: logs too short to tell"
+}

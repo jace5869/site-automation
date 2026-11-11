@@ -1,0 +1,162 @@
+{
+"bad": [
+"vCenter trusted roots vc01.example.mil (vc01.example.mil) trusts emSign ECC Root CA - G3"
+],
+"sections": [
+{
+"boxes": [
+{
+"label": "Remove now",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Remove next",
+"status": "warning",
+"value": 1
+},
+{
+"label": "Then update",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Listed only",
+"status": "ok",
+"value": 0
+}
+],
+"cell_status": [
+[
+"warning",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Host",
+"Where",
+"What",
+"Certificate / program",
+"What to do"
+],
+"row_status": [
+"warning"
+],
+"rows": [
+[
+"vc01.example.mil",
+"vc01.example.mil",
+"vCenter trusted roots",
+"emSign ECC Root CA - G3",
+"delete the chain from vCenter's trusted roots (check_trust_remove on the VMware report)"
+]
+],
+"status": "warning",
+"text": "The root the browsers dropped: it cross-signs the issuer of the compromised intermediates, so a client that still trusts it can be led to accept them. Blocklist or update at normal patching pace (check_trust_remove: true does it).",
+"title": "2. Remove next - a distrusted root is still trusted",
+"top": true
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Host",
+"Where",
+"Certificates",
+"What was done",
+"Outcome"
+],
+"row_status": [
+"ok"
+],
+"rows": [
+[
+"vc01.example.mil",
+"vCenter trusted roots vc01.example.mil",
+"emSign ECC Root CA - G3",
+"deleted the chain A1",
+"removed"
+]
+],
+"status": "ok",
+"text": "The system trust is blocklisted, not edited; every file changed was copied to the backup folder first. Left alone: a store this cannot change (a container's image, Node, a Go program: update or rebuild), a file a package owns, a kind not in check_trust_remove_kinds. The table above shows what is left after the removal.",
+"title": "Removed (check_trust_remove)",
+"top": true
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"warning"
+]
+],
+"columns": [
+"vCenter",
+"Name",
+"What",
+"Holds",
+"Status"
+],
+"row_status": [
+"warning",
+"ok",
+"warning"
+],
+"rows": [
+[
+"vc01.example.mil",
+"vc01.example.mil",
+"vCenter trusted roots",
+"1 certificate: emSign ECC Root CA - G3",
+"distrusted root still trusted"
+],
+[
+"vc01.example.mil",
+"esx01",
+"ESXi trusted CAs",
+"3 certificates",
+"ok"
+],
+[
+"vc01.example.mil",
+"esx02",
+"ESXi trusted CAs",
+"not read: not connected",
+"not read"
+]
+],
+"status": "warning",
+"text": "vCenter: its trusted root store (Administration > Certificates > Trusted Root Certificates: what vCenter and the hosts it manages trust for outbound TLS). ESXi: the CA certificates each host trusts. The count is how many certificates the store holds.",
+"title": "VMware - everything read: vCenter's trusted roots and each ESXi host's trusted CAs"
+}
+],
+"status": "warning",
+"title": "VMware trust store report: 1 store holds a compromised or dropped CA - 1 vCenter, 1 ESXi host read, 1 not read; 1 removed"
+}

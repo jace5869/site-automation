@@ -1,0 +1,103 @@
+{
+"sections": [
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Host",
+"Mounted on",
+"Device",
+"Type",
+"Used",
+"Used space",
+"Free",
+"Size",
+"Inodes used",
+"Old tmp files on it",
+"Status"
+],
+"row_status": [
+"",
+""
+],
+"rows": [
+[
+"a",
+"/",
+"/dev/mapper/rhel-",
+"xfs",
+"40%",
+"4.0G",
+"6.0G",
+"10.0G",
+"1%",
+"",
+"ok"
+],
+[
+"a",
+"/var",
+"/dev/mapper/rhel-var",
+"xfs",
+"10%",
+"1.0G",
+"9.0G",
+"10.0G",
+"1%",
+"",
+"ok"
+]
+],
+"text": "Red = 90% or more, amber = 85% or more (space or inodes). Logical volumes are here by their mount point.",
+"title": "Every filesystem"
+},
+{
+"columns": [
+"Host",
+"Volume group",
+"Size",
+"Free",
+"Free %"
+],
+"rows": [
+[
+"a",
+"rhel",
+"32.0G",
+"4.0G",
+"12.5%"
+]
+],
+"text": "Free space in a volume group can grow a full logical volume and its filesystem in one step: lvextend -r -L +10G /dev/VG/LV.",
+"title": "Volume groups"
+}
+],
+"status": "info",
+"title": "disk_report_sections (its tables, inside a findings report)"
+}

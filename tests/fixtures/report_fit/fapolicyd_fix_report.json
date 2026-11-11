@@ -1,0 +1,147 @@
+{
+"footer": "Each fix changes how fapolicyd, a security control, runs: approve it through your security approval (e.g. the ISSO) before it is listed in fapolicyd_approved. A host where fapolicyd was running and is not after a fix gets everything put back and fapolicyd restarted.",
+"sections": [
+{
+"lines": [
+"trust file access: /etc/fapolicyd/trust.d/vendor-app root:root 0600 -> root:fapolicyd 0644",
+"SELinux label: /etc/fapolicyd/trust.d/vendor-app a_u:object_r:user_tmp_t:s0 -> system_u:object_r:fapolicyd_config_t:s0",
+"db_max_size: 50 -> 200",
+"permissive: 0 -> 1",
+"restart fapolicyd (it is failed)"
+],
+"status": "warning",
+"text": "Each line is a fix (its hosts and why: below). To apply them, after your security approval, list the lines in fapolicyd_fix_approved (the template's Variables) exactly as here and run the job again - a Check run first shows what it would change. A db_max_size line may end in your own number of MB. A line is applied on every host of the run that has it (use a Limit for fewer). Trust file access: to the owner, group and mode the fapolicyd package gives its own trust files.",
+"title": "Fixes to approve"
+},
+{
+"columns": [
+"Host",
+"Fix",
+"Why"
+],
+"row_status": [
+"warning",
+"warning",
+"warning",
+"warning",
+"critical"
+],
+"rows": [
+[
+"fa01",
+"trust file access: /etc/fapolicyd/trust.d/vendor-app root:root 0600 -> root:fapolicyd 0644",
+"the fapolicyd user cannot read it"
+],
+[
+"fa01",
+"SELinux label: /etc/fapolicyd/trust.d/vendor-app a_u:object_r:user_tmp_t:s0 -> system_u:object_r:fapolicyd_config_t:s0",
+"label"
+],
+[
+"fa01",
+"db_max_size: 50 -> 200",
+"fapolicyd says: db_max_size needs to be increased"
+],
+[
+"fa01",
+"permissive: 0 -> 1",
+"start it permissive"
+],
+[
+"fa01",
+"restart fapolicyd (it is failed)",
+"down"
+]
+],
+"title": "Why each fix"
+},
+{
+"lines": [
+"fa01: /etc/fapolicyd/trust.d/big-list: a large trust file, 64.5 MB"
+],
+"status": "warning",
+"text": "What the job does not change: decide it with the system's owner and your security approval.",
+"title": "For a person"
+},
+{
+"columns": [
+"Host",
+"fapolicyd",
+"At boot",
+"Version",
+"db_max_size",
+"Estimate",
+"Fixes"
+],
+"row_status": [
+"critical",
+"ok"
+],
+"rows": [
+[
+"fa01",
+"failed",
+"?",
+"fapolicyd-1.3.2-1.el8.x86_64",
+"50",
+"120 MB (64.5 MB of trust files, 30000 RPM files)",
+5
+],
+[
+"fa02",
+"active",
+"?",
+"fapolicyd-1.3.2-1.el8.x86_64",
+"50",
+"120 MB (64.5 MB of trust files, 30000 RPM files)",
+0
+]
+],
+"status": "critical",
+"text": "fapolicyd on each host, db_max_size and the estimate it is weighed against (the trust files and the RPM files, about twice that in the database), and how many fixes it has.",
+"title": "The hosts"
+},
+{
+"lines": [
+"1 host(s), not looked at: fa04"
+],
+"title": "fapolicyd not installed"
+},
+{
+"lines": [
+"gone01: could not be reached, or failed before it was read"
+],
+"status": "warning",
+"title": "Not read"
+}
+],
+"status": "critical",
+"subtitle": "2 host(s) read - fapolicyd's trust files, SELinux labels, db_max_size and service",
+"summary": [
+{
+"label": "Fixes to approve",
+"status": "warning",
+"value": 5
+},
+{
+"label": "fapolicyd not running",
+"status": "critical",
+"value": 1
+},
+{
+"label": "For a person",
+"status": "warning",
+"value": 1
+},
+{
+"label": "Hosts read",
+"value": 2
+},
+{
+"label": "Not read",
+"status": "warning",
+"value": 1
+}
+],
+"title": "fapolicyd fix: 5 fix(es) to approve on 1 host(s), fapolicyd not running on 1"
+}

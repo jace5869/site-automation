@@ -1,0 +1,170 @@
+{
+"sections": [
+{
+"columns": [
+"vCenter",
+"ESXi host",
+"Cluster",
+"State"
+],
+"row_status": [
+"warning"
+],
+"rows": [
+[
+"vc01",
+"esx04.example.mil",
+"PROD-CL01",
+"not responding"
+]
+],
+"status": "warning",
+"text": "What vCenter last knew of them; their software was not read.",
+"title": "Hosts not connected"
+},
+{
+"columns": [
+"Vendor",
+"Model",
+"Hosts",
+"BIOS versions (hosts)",
+"ESXi (hosts)"
+],
+"rows": [
+[
+"Dell Inc.",
+"PowerEdge R750",
+3,
+"1.10.2 (2), 1.9.0 (1)",
+"8.0.3 build 24022510 (3)"
+],
+[
+"Dell Inc.",
+"ProLiant DL380 Gen11",
+1,
+"1.10.2 (1)",
+"8.0.3 build 24022510 (1)"
+]
+],
+"text": "Each server model, how many hosts, and the BIOS versions and ESXi builds they run (the newest first). One model on several BIOS versions: some hosts were left behind by an update.",
+"title": "Models"
+},
+{
+"columns": [
+"vCenter",
+"Cluster",
+"ESXi host",
+"Vendor",
+"Model",
+"Serial",
+"BIOS (date)",
+"CPU",
+"Memory GB",
+"ESXi",
+"NICs (driver, speed)",
+"Storage adapters",
+"State"
+],
+"row_status": [
+"",
+"",
+"",
+"warning"
+],
+"rows": [
+[
+"vc01",
+"DEV-CL01",
+"esx03.example.mil",
+"Dell Inc.",
+"ProLiant DL380 Gen11",
+"-",
+"1.10.2 (2026-03-01)",
+"2 x Intel(R) Xeon(R) Gold 6338, 64 cores",
+1024,
+"8.0.3 build 24022510",
+"2x bnxtnet 25G, igbn",
+"lsi_mr3 (local / RAID), lpfc (Fibre Channel)",
+"connected"
+],
+[
+"vc01",
+"PROD-CL01",
+"esx01.example.mil",
+"Dell Inc.",
+"PowerEdge R750",
+"ABC1234",
+"1.10.2 (2026-03-01)",
+"2 x Intel(R) Xeon(R) Gold 6338, 64 cores",
+1024,
+"8.0.3 build 24022510",
+"2x bnxtnet 25G, igbn",
+"lsi_mr3 (local / RAID), lpfc (Fibre Channel)",
+"connected"
+],
+[
+"vc01",
+"PROD-CL01",
+"esx02.example.mil",
+"Dell Inc.",
+"PowerEdge R750",
+"ABC1234",
+"1.9.0 (2026-03-01)",
+"2 x Intel(R) Xeon(R) Gold 6338, 64 cores",
+1024,
+"8.0.3 build 24022510",
+"2x bnxtnet 25G, igbn",
+"lsi_mr3 (local / RAID), lpfc (Fibre Channel)",
+"connected"
+],
+[
+"vc01",
+"PROD-CL01",
+"esx04.example.mil",
+"Dell Inc.",
+"PowerEdge R750",
+"ABC1234",
+"1.10.2 (2026-03-01)",
+"2 x Intel(R) Xeon(R) Gold 6338, 64 cores",
+1024,
+"8.0.3 build 24022510",
+"2x bnxtnet 25G, igbn",
+"lsi_mr3 (local / RAID), lpfc (Fibre Channel)",
+"not responding"
+]
+],
+"text": "The workbook attached has every host, NIC, storage adapter, software component (drivers and firmware the hardware status shows, with versions) and VIB.",
+"title": "ESXi hosts"
+}
+],
+"status": "warning",
+"subtitle": "Every ESXi host's hardware and software, as vCenter reports them - vc01",
+"summary": [
+{
+"label": "ESXi hosts",
+"value": 4
+},
+{
+"label": "Models",
+"value": 2
+},
+{
+"label": "BIOS versions",
+"value": 3
+},
+{
+"label": "ESXi builds",
+"value": 1
+},
+{
+"label": "With a serial number",
+"value": "3 of 4"
+},
+{
+"label": "Not connected",
+"status": "warning",
+"value": 1
+}
+],
+"title": "VMware hardware: 4 ESXi hosts, 2 models - 1 not connected"
+}

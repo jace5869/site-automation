@@ -1,0 +1,409 @@
+{
+"footer": "Checks run: stig",
+"sections": [
+{
+"columns": [
+"Host",
+"Collection / asset",
+"STIG",
+"Rule",
+"CAT",
+"Title",
+"STIG Manager now",
+"Written as",
+"Status",
+"Comment"
+],
+"row_status": [
+"info",
+"info",
+"info",
+"info",
+"info"
+],
+"rows": [
+[
+"localhost",
+"RHEL Servers / localhost",
+"RHEL_9_STIG",
+"V-258176",
+"CAT II",
+"RHEL 9 must audit all uses of privileged commands.",
+"Open (accepted)",
+"Not a Finding",
+"submitted",
+"kept"
+],
+[
+"localhost",
+"RHEL Servers / localhost",
+"RHEL_9_STIG",
+"V-257835",
+"CAT I",
+"RHEL 9 must not have the telnet-server package installed.",
+"no review",
+"Not a Finding",
+"submitted",
+"set"
+],
+[
+"localhost",
+"RHEL Servers / localhost",
+"RHEL_9_STIG",
+"V-257779",
+"CAT II",
+"RHEL 9 must display the Standard Mandatory DoD Notice and Consent Banner.",
+"Not a Finding (rejected)",
+"Open",
+"submitted",
+"set"
+],
+[
+"localhost",
+"RHEL Servers / localhost",
+"RHEL_9_STIG",
+"V-258012",
+"CAT II",
+"RHEL 9 must display the banner before granting access via the GUI.",
+"no review",
+"Not a Finding",
+"submitted",
+"set"
+],
+[
+"localhost",
+"RHEL Servers / localhost",
+"RHEL_9_STIG",
+"V-258013",
+"CAT II",
+"RHEL 9 must prevent a user from overriding the banner-message-enable setting.",
+"no review",
+"Not a Finding",
+"submitted",
+"set"
+]
+],
+"status": "warning",
+"text": "The approval step's next job writes exactly these reviews - nothing else: no collection, user or other review is changed, and no asset but the new ones (NEW ASSET: created with that name and STIG, then the scan's answers written as its reviews - the update does not create one that is there by then). Each review is written only if it is still as it was read here (STIG Manager now); one changed since is left, and said. The detail is what the scan found; a review that has a comment keeps it (a finding gets one).",
+"title": "Approve writes these reviews to STIG Manager",
+"top": true
+},
+{
+"boxes": [
+{
+"label": "Open findings",
+"note": "fail on the host now: fix, or put on the POA&M",
+"status": "warning",
+"value": 2
+},
+{
+"label": "Status updates",
+"note": "no fix needed: the host passes, no longer applies, or was answered - only STIG Manager's review changes (1 answered as a fail: also under Open findings)",
+"status": "info",
+"value": 5
+},
+{
+"label": "Manual review",
+"note": "no automatic check: DISA's manual checks, or a rule not in the scan's STIG",
+"status": "info",
+"value": 1
+},
+{
+"label": "Not rechecked",
+"note": "no result for these",
+"status": "ok",
+"value": 0
+}
+],
+"cell_status": [
+[
+"",
+"",
+"warning",
+"",
+"ok",
+"warning",
+"ok"
+]
+],
+"columns": [
+"Host",
+"STIG rule",
+"CAT",
+"Title",
+"Scan now",
+"STIG Manager",
+"Set it to"
+],
+"headline": "2 rules open, 5 status updates in STIG Manager, 1 for manual review",
+"headline_status": "warning",
+"row_status": [
+"info"
+],
+"rows": [
+[
+"localhost",
+"V-258176 (RHEL-09-654225)",
+"CAT II",
+"RHEL 9 must audit all uses of privileged commands.",
+"pass",
+"Open (accepted, 2026-08-15)",
+"Not a Finding"
+]
+],
+"status": "info",
+"summary_only": true,
+"text": "Checked again on the host just now: these pass (or no longer apply). Set the reviews in STIG Manager as the last column says (this job never writes to it), and close their POA&M items. The checklist kept on the host (the last column of Every host) has these results; STIG Manager can import it.",
+"title": "1. Open in STIG Manager - the host passes now: update the review",
+"top": true
+},
+{
+"cell_status": [
+[
+"",
+"",
+"critical",
+"",
+"ok",
+"unknown",
+"ok",
+""
+],
+[
+"",
+"",
+"warning",
+"",
+"critical",
+"unknown",
+"warning",
+""
+],
+[
+"",
+"",
+"warning",
+"",
+"ok",
+"unknown",
+"ok",
+""
+],
+[
+"",
+"",
+"warning",
+"",
+"ok",
+"unknown",
+"ok",
+""
+]
+],
+"columns": [
+"Host",
+"STIG rule",
+"CAT",
+"Title",
+"Scan now",
+"STIG Manager",
+"Set it to",
+"What was found"
+],
+"row_status": [
+"info",
+"info",
+"info",
+"info"
+],
+"rows": [
+[
+"localhost",
+"V-257835 (RHEL-09-215040)",
+"CAT I",
+"RHEL 9 must not have the telnet-server package installed.",
+"pass",
+"no review",
+"Not a Finding",
+""
+],
+[
+"localhost",
+"V-257779 (RHEL-09-211020)",
+"CAT II",
+"RHEL 9 must display the Standard Mandatory DoD Notice and Consent Banner.",
+"FAIL",
+"Not a Finding (rejected, 2026-08-15)",
+"Open",
+""
+],
+[
+"localhost",
+"V-258012 (RHEL-09-271010)",
+"CAT II",
+"RHEL 9 must display the banner before granting access via the GUI.",
+"pass",
+"no review",
+"Not a Finding",
+""
+],
+[
+"localhost",
+"V-258013 (RHEL-09-271015)",
+"CAT II",
+"RHEL 9 must prevent a user from overriding the banner-message-enable setting.",
+"pass",
+"no review",
+"Not a Finding",
+""
+]
+],
+"status": "info",
+"text": "STIG Manager has no review that counts for these (none, Not Reviewed, or one rejected): the scan answered them. A fail is Open - and a finding to fix or put on the POA&M.",
+"title": "2. Not Reviewed in STIG Manager - the scan has an answer",
+"top": true
+},
+{
+"cell_status": [
+[
+"",
+"",
+"warning",
+"",
+"critical",
+"warning",
+""
+]
+],
+"columns": [
+"Host",
+"STIG rule",
+"CAT",
+"Title",
+"Scan now",
+"STIG Manager",
+"What was found"
+],
+"row_status": [
+"info"
+],
+"rows": [
+[
+"localhost",
+"V-257883 (RHEL-09-412035)",
+"CAT II",
+"RHEL 9 must automatically exit interactive sessions after 10 minutes.",
+"FAIL",
+"Open (saved, 2026-08-15)",
+"accounts_tmout"
+]
+],
+"status": "info",
+"text": "Open in STIG Manager and the host still fails them: nothing to update.",
+"title": "3. Still open - the scan agrees with STIG Manager",
+"top": true
+},
+{
+"columns": [
+"Host",
+"STIG (scan)",
+"STIG Manager (collection / asset)",
+"Open / Not Reviewed",
+"Fixed",
+"Answered",
+"Still open",
+"Manual review",
+"Held back",
+"Left out",
+"Checked",
+"The checklist on the host"
+],
+"row_status": [
+"info"
+],
+"rows": [
+[
+"localhost",
+"V2R9 (OpenSCAP)",
+"RHEL Servers / localhost (V2R7)",
+"2 / 5",
+"1",
+"4",
+"1",
+"1",
+"0",
+"0",
+"only these rules (--rule)",
+"/tmp/tmp.5JzJGLjIyI/kept/recheck/latest-results.xml"
+]
+],
+"status": "info",
+"text": "Only the rules STIG Manager has Open or Not Reviewed (check_stig_recheck) were checked; nothing is kept with the STIG drift report's scans. Checked: only these rules (Evaluate-STIG's -SelectVuln, or oscap's --rule) - fast - or in full when this Evaluate-STIG has no -SelectVuln. The STIG drift report checks every rule.",
+"title": "Every host - what STIG Manager has Open / Not Reviewed, and the recheck"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"warning",
+"",
+"unknown",
+""
+]
+],
+"columns": [
+"Host",
+"STIG rule",
+"CAT",
+"Title",
+"STIG Manager",
+"Why"
+],
+"row_status": [
+"info"
+],
+"rows": [
+[
+"localhost",
+"V-258999 (RHEL-09-999990)",
+"CAT II",
+"A manual check: a document, never scanned.",
+"no review",
+"no SCAP check for it (a manual check)"
+]
+],
+"status": "info",
+"text": "DISA's manual checks (Evaluate-STIG leaves them Not Reviewed unless an answer file covers them), and rules not in the scan's STIG revision: a person reviews these.",
+"title": "Manual review - the scan gave no answer"
+}
+],
+"status": "warning",
+"summary": [
+{
+"label": "Open findings",
+"note": "fail on the host now: fix, or put on the POA&M",
+"status": "warning",
+"value": 2
+},
+{
+"label": "Status updates",
+"note": "no fix needed: the host passes, no longer applies, or was answered - only STIG Manager's review changes (1 answered as a fail: also under Open findings)",
+"status": "info",
+"value": 5
+},
+{
+"label": "Manual review",
+"note": "no automatic check: DISA's manual checks, or a rule not in the scan's STIG",
+"status": "info",
+"value": 1
+},
+{
+"label": "Not rechecked",
+"note": "no result for these",
+"status": "ok",
+"value": 0
+}
+],
+"title": "STIG recheck: 2 rules open, 5 status updates in STIG Manager, 1 for manual review"
+}

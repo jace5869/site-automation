@@ -1,0 +1,102 @@
+{
+"sections": [
+{
+"columns": [
+"Name",
+"API",
+"Kind",
+"State",
+"Database",
+"Keycloak",
+"Version",
+"Schema",
+"Answer",
+"Login + database",
+"Collections",
+"Node.js up",
+"Memory"
+],
+"row_status": [
+"",
+"critical"
+],
+"rows": [
+[
+"api",
+"https://api/api",
+"service",
+"available",
+"up",
+"up",
+"1.6.18",
+"42",
+"50 ms",
+"80 ms",
+"3",
+"24 h",
+"300 MB"
+],
+[
+"b",
+"https://b/api",
+"node",
+"unavailable",
+"DOWN",
+"up",
+"1.6.18",
+"42",
+"50 ms",
+"80 ms",
+"3",
+"-",
+"-"
+]
+],
+"status": "critical",
+"text": "State, Database and Keycloak are the API's own view (/op/state). Login + database: a call with the health check's token that reads the database (/user). Slow = above 2000 ms.",
+"title": "STIG Manager's address and nodes"
+},
+{
+"columns": [
+"Seen through",
+"MySQL / MariaDB",
+"Up",
+"Connections now",
+"Most at once",
+"Failed connections"
+],
+"rows": [
+[
+"api",
+"10.11.9-MariaDB",
+"24 h",
+"10 of 151 (6%)",
+"-",
+"-"
+]
+],
+"text": "From /op/appinfo (an admin client). The database host itself (its container, disk, the server's own numbers) is in the findings of the database host above.",
+"title": "The database, as STIG Manager sees it"
+},
+{
+"columns": [
+"Realm",
+"OpenID configuration",
+"Token for the client"
+],
+"row_status": [
+""
+],
+"rows": [
+[
+"https://kc/realms/stigman",
+"OK, 20 ms",
+"OK, 30 ms"
+]
+],
+"title": "Keycloak"
+}
+],
+"status": "info",
+"title": "stigman_health_sections (its tables, inside a findings report)"
+}

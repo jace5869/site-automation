@@ -35,12 +35,24 @@ Since 0.53.0:
   all of it, while words stay at a length you can read (about 80 to 90 characters a line).
 - **Columns sized by what they hold.** Each column is sized from its values:
   - **numbers:** right-aligned, every digit the same width (`1,200` lines up with `37`);
-  - **short values** (hosts, dates, ids up to 24 characters): never broken;
-  - **ids like `V-257800 (RHEL-09-412035)`:** broken at a space only, never at a hyphen;
+  - **short values** (hosts, dates, ids up to 24 characters): kept whole while the table fits (below);
+  - **ids like `V-257800 (RHEL-09-412035)`:** broken at a space only, not at a hyphen, while the table fits;
   - **titles and findings:** given room to wrap;
   - **paths, addresses and hashes:** shown in a fixed-width font and broken after a `/` or `\`. A long path never runs
     off the edge, and nothing is added to what you copy.
-  - A table that still does not fit (many columns on a small window) scrolls sideways, with a shadow at the edge.
+  - **A table wider than its card fits anyway (1.21.0).** Nothing is cut off and no column is hidden. The page's
+    script takes these steps, one at a time, only while the table still does not fit:
+    1. Short values and status chips wrap at their spaces and hyphens; long columns get smaller minimum widths.
+    2. Cells get tighter, headings wrap at their spaces, and a very long word (a datastore or host name) breaks inside.
+       A text column keeps 9 characters.
+    3. Numbers wrap at their spaces (`12,050.0` / `GB`), never inside their digits; the table's type gets smaller.
+    4. Before a heading's word would break, the section rail is put away for this page, so the tables get its room.
+       The rail's button brings it back (then a heading's word may break); this is not kept for the next page.
+
+    Only a table still too wide after that scrolls sideways, with a shadow at the edge. No report's table does at 1366
+    px or wider. Without the script (a blocked script), a wide table keeps its normal widths and scrolls sideways
+    inside its card.
+  - **On a phone** each row is a card; a long value with no space (a hash, a path) breaks inside its card.
 - **A bar at the top that stays:**
   - the report's sections, with the one you are reading marked, and each table's row count;
   - **Compact / Comfortable** rows;

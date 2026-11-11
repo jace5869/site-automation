@@ -1,0 +1,42 @@
+{
+"footer": "Secret values are shown as <hidden>.",
+"sections": [
+{
+"lines": [
+"Change: CHG1 (Implement)"
+],
+"title": "Change"
+},
+{
+"columns": [
+"Device",
+"Platform",
+"Status",
+"What"
+],
+"rows": [
+[
+"fw01",
+"panos",
+"FAILED",
+"validation failed"
+],
+[
+"rtr01",
+"ios",
+"CHANGED",
+"2 line(s)"
+]
+],
+"title": "Devices"
+},
+{
+"lines": [
+"ntp server 192.0.2.1"
+],
+"title": "Sent to rtr01"
+}
+],
+"status": "critical",
+"title": "Network config load: 1 changed, 0 unchanged, 1 failed"
+}

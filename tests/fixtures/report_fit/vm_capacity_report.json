@@ -1,0 +1,734 @@
+{
+"footer": "Estimates from a straight line over the last 30 days of vCenter's daily statistics: a guide for planning, not a promise. Cluster runways run to 80% N-1 - 80% of what is left with 1 host(s) down - not to full hosts. Read-only.",
+"sections": [
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"ok",
+"ok",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"ok",
+"critical",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"ok",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"ok",
+"",
+"",
+"ok"
+]
+],
+"columns": [
+"Resource",
+"Capacity",
+"Used",
+"Used %",
+"Used after host failure",
+"Growth",
+"Runway"
+],
+"row_status": [
+"",
+"critical",
+"critical",
+"",
+""
+],
+"rows": [
+[
+"CPU",
+"640.0 GHz",
+"130.0 GHz",
+"20%",
+"32%",
+"+5.7 GHz / month",
+"1000 days (2029-06-17) to 80% N-1"
+],
+[
+"Memory",
+"3.5 TB",
+"2.4 TB",
+"70%",
+"108%",
+"+240.0 GB / month",
+"80% N-1 reached"
+],
+[
+"Hosts",
+"8 usable of 10",
+"",
+"",
+"",
+"",
+"2 recommended now, 10 within 12 months"
+],
+[
+"vCPUs",
+"256 cores",
+"260 vCPUs",
+"1.02 per core",
+"",
+"+10.0 VMs / month",
+"room for about 10 more average VMs"
+],
+[
+"Storage (shared datastores)",
+"40.0 TB",
+"27.0 TB",
+"68%",
+"",
+"+600.0 GB / month",
+"460 days (2027-12-25) to 90%; full: 665 days (2028-07-17)"
+]
+],
+"status": "critical",
+"text": "All 3 cluster(s) of vCenters vc01.example.mil, vc02.example.mil together: 10 hosts (8 usable), 70 VMs powered on. \"After host failure\" and \"N-1\" are the use with 1 host(s) of each cluster down (the cluster must still run everything): the CPU and memory runways run to 80% / 80% of what is left then, not to 100% of what is installed. Growth is fitted on vCenter's daily statistics of the last 30 days.",
+"title": "Overall"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"warning",
+"ok",
+"ok",
+"critical",
+"ok",
+"",
+"",
+"",
+"critical",
+"critical",
+"critical",
+""
+],
+[
+"",
+"",
+"warning",
+"ok",
+"ok",
+"critical",
+"ok",
+"",
+"",
+"",
+"critical",
+"critical",
+"critical",
+""
+],
+[
+"",
+"",
+"ok",
+"ok",
+"ok",
+"ok",
+"ok",
+"",
+"",
+"",
+"ok",
+"ok",
+"ok",
+""
+]
+],
+"columns": [
+"Cluster",
+"Datacenter",
+"Hosts",
+"CPU used",
+"Memory used",
+"Memory after host failure",
+"vCPU per core",
+"VMs on",
+"Average VM",
+"Memory growth",
+"Memory runway",
+"Room for more VMs",
+"Hosts recommended",
+"VMs +/- (30 d)"
+],
+"row_status": [
+"critical",
+"critical",
+""
+],
+"rows": [
+[
+"PROD (vc01 / DC1)",
+"vc01 / DC1",
+"3 of 4",
+"25%",
+"78%",
+"117%",
+1.88,
+30,
+"4.0 vCPU, 50.0 GB",
+"+120.0 GB / month",
+"80% N-1 reached",
+"0 (memory)",
+"1 now (memory 59% on average then); 5 within 12 months",
+"+6 / -1"
+],
+[
+"PROD (vc02 / DC1)",
+"vc02 / DC1",
+"3 of 4",
+"25%",
+"78%",
+"117%",
+1.88,
+30,
+"4.0 vCPU, 50.0 GB",
+"+120.0 GB / month",
+"80% N-1 reached",
+"0 (memory)",
+"1 now (memory 59% on average then); 5 within 12 months",
+"+6 / -1"
+],
+[
+"LAB",
+"vc01 / DC1",
+"2 of 2",
+"6%",
+"20%",
+"39%",
+0.62,
+10,
+"2.0 vCPU, 20.0 GB",
+"+0 B / month",
+"not growing (limit 80% N-1)",
+"10 (memory)",
+"none within 12 months",
+"0"
+]
+],
+"status": "critical",
+"text": "Per cluster: hosts usable (connected, not in maintenance), CPU and memory used now, memory used if the biggest 1 host(s) fail (the cluster must still run everything: amber from 80%, red at 100%), vCPUs per physical core (amber from 4.0), VMs powered on and their average size, memory growth, the memory runway (days until memory after a host failure reaches 80% - \"80% N-1\" - not until the hosts are full), how many more VMs of the average size fit (and what limits them), how many hosts of the cluster's average size are recommended to keep memory and CPU at 80% / 80% with a host down (now, and at the current growth within 12 months), and VMs added / removed in the last 30 days.",
+"title": "Clusters: CPU and memory"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"critical",
+"",
+"",
+"critical",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"ok",
+"",
+"",
+"warning",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"ok",
+"",
+"",
+"ok",
+"ok"
+]
+],
+"columns": [
+"Cluster",
+"Datastores",
+"Capacity",
+"Free",
+"Used",
+"Provisioned",
+"Growth",
+"Runway to 85%",
+"Runway to full"
+],
+"row_status": [
+"critical",
+"warning",
+""
+],
+"rows": [
+[
+"PROD (vc02 / DC1)",
+1,
+"20.0 TB",
+"2.0 TB",
+"90%",
+"110%",
+"+300.0 GB / month",
+"reached",
+"204 days (2027-04-13)"
+],
+[
+"PROD (vc01 / DC1)",
+1,
+"10.0 TB",
+"2.0 TB",
+"80%",
+"120%",
+"+300.0 GB / month",
+"51 days (2026-11-11)",
+"204 days (2027-04-13)"
+],
+[
+"LAB",
+1,
+"10.0 TB",
+"9.0 TB",
+"10%",
+"10%",
+"?",
+"not growing",
+"not growing"
+]
+],
+"status": "critical",
+"text": "Per cluster, its shared datastores together: capacity, free, used %, provisioned % (thin disks counted at their full size: over 100% means overcommitted), growth, and the days until 85% and until full at that growth.",
+"title": "Clusters: storage"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"critical",
+"",
+"",
+"critical",
+"critical",
+"ok",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"ok",
+"",
+"",
+"warning",
+"ok",
+"ok",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"ok",
+"",
+"",
+"ok",
+"ok",
+"ok",
+""
+]
+],
+"columns": [
+"Datastore",
+"Clusters",
+"Datastore cluster",
+"Type",
+"Capacity",
+"Free",
+"Used",
+"Provisioned",
+"Growth",
+"Runway to 85%",
+"Runway to 90%",
+"Runway to full",
+"Trend fit"
+],
+"row_status": [
+"critical",
+"",
+""
+],
+"rows": [
+[
+"ds_prod (vc02 / DC1)",
+"vc02: PROD",
+"",
+"VMFS",
+"20.0 TB",
+"2.0 TB",
+"90%",
+"110%",
+"+300.0 GB / month",
+"reached",
+"reached",
+"204 days (2027-04-13)",
+"good (R2 1.00, 30 days)"
+],
+[
+"ds_prod (vc01 / DC1)",
+"vc01: PROD",
+"",
+"VMFS",
+"10.0 TB",
+"2.0 TB",
+"80%",
+"120%",
+"+300.0 GB / month",
+"51 days (2026-11-11)",
+"102 days (2027-01-01)",
+"204 days (2027-04-13)",
+"good (R2 1.00, 30 days)"
+],
+[
+"ds_lab",
+"vc01: LAB",
+"",
+"NFS",
+"10.0 TB",
+"9.0 TB",
+"10%",
+"10%",
+"+0 B / month",
+"not growing",
+"not growing",
+"not growing",
+"good (R2 1.00, 30 days)"
+]
+],
+"status": "critical",
+"text": "Each shared datastore, the ones that reach 90% first on top: growth fitted on vCenter's daily used space, the days (and date) until 85%, 90% and full, and how well a straight line fits the history (poor = jumps: snapshots deleted, VMs moved - the runway is a rough guide then).",
+"title": "Datastores: runway"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"ok",
+"",
+"ok",
+"",
+"ok",
+""
+],
+[
+"",
+"",
+"ok",
+"",
+"ok",
+"",
+"ok",
+""
+],
+[
+"",
+"",
+"ok",
+"",
+"ok",
+"",
+"ok",
+""
+],
+[
+"",
+"",
+"ok",
+"",
+"ok",
+"",
+"ok",
+""
+],
+[
+"",
+"",
+"ok",
+"",
+"ok",
+"",
+"ok",
+""
+],
+[
+"",
+"",
+"critical",
+"",
+"ok",
+"",
+"ok",
+""
+],
+[
+"",
+"",
+"ok",
+"",
+"ok",
+"",
+"ok",
+""
+],
+[
+"",
+"",
+"ok",
+"",
+"ok",
+"",
+"ok",
+""
+],
+[
+"",
+"",
+"ok",
+"",
+"ok",
+"",
+"ok",
+""
+],
+[
+"",
+"",
+"critical",
+"",
+"ok",
+"",
+"ok",
+""
+]
+],
+"columns": [
+"Cluster",
+"Host",
+"State",
+"Cores",
+"CPU used",
+"Memory",
+"Memory used",
+"VMs on"
+],
+"row_status": [
+"",
+"",
+"",
+"",
+"",
+"critical",
+"",
+"",
+"",
+"critical"
+],
+"rows": [
+[
+"LAB",
+"lab1",
+"CONNECTED",
+32,
+"6%",
+"256.0 GB",
+"20%",
+10
+],
+[
+"LAB",
+"lab2",
+"CONNECTED",
+32,
+"6%",
+"256.0 GB",
+"20%",
+10
+],
+[
+"PROD (vc01 / DC1)",
+"esx1",
+"CONNECTED",
+32,
+"25%",
+"512.0 GB",
+"78%",
+10
+],
+[
+"PROD (vc01 / DC1)",
+"esx2",
+"CONNECTED",
+32,
+"25%",
+"512.0 GB",
+"78%",
+10
+],
+[
+"PROD (vc01 / DC1)",
+"esx3",
+"CONNECTED",
+32,
+"25%",
+"512.0 GB",
+"78%",
+10
+],
+[
+"PROD (vc01 / DC1)",
+"esx4",
+"NOTRESPONDING",
+32,
+"25%",
+"512.0 GB",
+"0%",
+10
+],
+[
+"PROD (vc02 / DC1)",
+"esx1",
+"CONNECTED",
+32,
+"25%",
+"512.0 GB",
+"78%",
+10
+],
+[
+"PROD (vc02 / DC1)",
+"esx2",
+"CONNECTED",
+32,
+"25%",
+"512.0 GB",
+"78%",
+10
+],
+[
+"PROD (vc02 / DC1)",
+"esx3",
+"CONNECTED",
+32,
+"25%",
+"512.0 GB",
+"78%",
+10
+],
+[
+"PROD (vc02 / DC1)",
+"esx4",
+"NOTRESPONDING",
+32,
+"25%",
+"512.0 GB",
+"0%",
+10
+]
+],
+"status": "critical",
+"text": "Every host: state (blue: in maintenance, red: not connected - neither counts as capacity), cores, CPU and memory used now, VMs. Hosts much fuller than their neighbours mean DRS is off or limited.",
+"title": "Hosts per cluster"
+}
+],
+"status": "critical",
+"subtitle": "vCenters vc01.example.mil, vc02.example.mil - read 2026-09-21 14:13 UTC",
+"summary": [
+{
+"label": "Clusters",
+"value": 3
+},
+{
+"label": "Hosts usable",
+"status": "warning",
+"value": "8 of 10"
+},
+{
+"label": "VMs powered on",
+"value": 70
+},
+{
+"label": "Memory used",
+"status": "ok",
+"value": "70%"
+},
+{
+"label": "Memory after host failure",
+"status": "critical",
+"value": "108%"
+},
+{
+"label": "vCPU per core",
+"status": "ok",
+"value": 1.02
+},
+{
+"label": "Room for more VMs",
+"value": "~10"
+},
+{
+"label": "Storage used",
+"status": "ok",
+"value": "68%"
+},
+{
+"label": "Storage runway to 90%",
+"status": "ok",
+"value": "460 days"
+}
+],
+"title": "vSphere capacity planning: 2 of 3 cluster(s) short on CPU or memory; 1 datastore(s) at 85% or within 90 days of 90%"
+}

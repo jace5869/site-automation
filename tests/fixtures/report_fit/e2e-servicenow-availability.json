@@ -1,0 +1,98 @@
+{
+"footer": "Checks run: servicenow-availability",
+"sections": [
+{
+"cards": [
+{
+"code": "curl -sS -u USER -o /dev/null -w \"HTTP %{http_code} in %{time_total}s\" \"http://127.0.0.1:18635/api/now/table/incident?sysparm_limit=1\"",
+"meta": "servicenow-availability",
+"next": "Look further:",
+"status": "critical",
+"subject": "localhost",
+"title": "ServiceNow (API) does not answer: HTTP 401 (2 of 2 tries)"
+}
+],
+"status": "critical",
+"text": "What to act on first: critical, then warning. Every finding is in the tables below.",
+"title": "Start here"
+},
+{
+"columns": [
+"Severity",
+"Check",
+"Finding",
+"Look further"
+],
+"rows": [
+[
+"CRITICAL",
+"servicenow-availability",
+"ServiceNow (API) does not answer: HTTP 401 (2 of 2 tries)",
+"curl -sS -u USER -o /dev/null -w \"HTTP %{http_code} in %{time_total}s\" \"http://127.0.0.1:18635/api/now/table/incident?sysparm_limit=1\""
+]
+],
+"status": "critical",
+"title": "Findings"
+},
+{
+"columns": [
+"Probe",
+"Address",
+"Kind",
+"Result",
+"Good tries",
+"Median",
+"Slowest",
+"HTTP",
+"Why not"
+],
+"row_status": [
+"critical",
+""
+],
+"rows": [
+[
+"API",
+"http://127.0.0.1:18635/api/now/table/incident?sysparm_limit=1&sysparm_fields=sys_id",
+"service",
+"DOWN",
+"0 of 2",
+"1 ms",
+"1 ms",
+"401",
+"HTTP 401"
+],
+[
+"Login page",
+"http://127.0.0.1:18635/login.do",
+"service",
+"UP",
+"2 of 2",
+"0 ms",
+"1 ms",
+"200",
+""
+]
+],
+"status": "critical",
+"text": "Each address asked several times, a moment apart. Slow = the median above 1000 ms. HTTP none = no answer at all (the name, a firewall, the certificate, a timeout).",
+"title": "What answered"
+}
+],
+"status": "critical",
+"summary": [
+{
+"label": "Critical",
+"note": "act now",
+"status": "critical",
+"value": 1
+},
+{
+"label": "Warning",
+"note": "plan a fix",
+"status": "ok",
+"value": 0
+}
+],
+"title": "ServiceNow availability: 1 finding(s)"
+}

@@ -1,0 +1,471 @@
+{
+"footer": "Read-only.",
+"sections": [
+{
+"cell_status": [
+[
+"critical",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Severity",
+"Type",
+"Object",
+"Alarm",
+"Since (UTC)",
+"Acknowledged",
+"Cluster",
+"Datacenter"
+],
+"row_status": [
+"critical",
+"warning"
+],
+"rows": [
+[
+"CRITICAL",
+"Host",
+"esx01",
+"Host hardware power status",
+"2026-10-07 03:00:00",
+"no",
+"CL1",
+"vc01 / DC1"
+],
+[
+"WARNING",
+"Cluster",
+"CL1",
+"vSphere HA failover resources",
+"2026-10-06 03:00:00",
+"yes - CORP\\op, 2026-10-06 04:00:00",
+"CL1",
+"vc01 / DC1"
+]
+],
+"status": "critical",
+"text": "As vCenter shows them now: red = critical, yellow = warning. Acknowledged = someone has seen it in vCenter; the alarm is still active until its cause is gone.",
+"title": "Triggered alarms"
+},
+{
+"text": "No alarm fired in the last 24 h.",
+"title": "Alarms that fired in the last 24 h"
+},
+{
+"cell_status": [
+[
+"critical",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Severity",
+"Host",
+"State now",
+"Maintenance",
+"Connection events",
+"Last event (UTC)",
+"Last message",
+"Cluster",
+"Datacenter"
+],
+"row_status": [
+"critical"
+],
+"rows": [
+[
+"CRITICAL",
+"esx02",
+"notResponding",
+"no",
+1,
+"2026-10-07 05:00:00",
+"Host esx02 is not responding",
+"CL1",
+"vc01 / DC1"
+]
+],
+"status": "critical",
+"text": "Hosts not connected to vCenter now (critical), and hosts that lost the connection in the last 24 h but are back (warning).",
+"title": "Host connection"
+},
+{
+"cell_status": [
+[
+"warning",
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Severity",
+"User",
+"From",
+"Where",
+"Failures",
+"First (UTC)",
+"Last (UTC)"
+],
+"row_status": [
+"warning",
+"warning"
+],
+"rows": [
+[
+"WARNING",
+"svc_scan",
+"192.0.2.99",
+"esx01",
+3,
+"2026-10-07 01:00:00",
+"2026-10-07 03:00:00"
+],
+[
+"WARNING",
+"bob",
+"203.0.113.1",
+"vc02.example.mil",
+1,
+"2026-10-07 09:00:00",
+"2026-10-07 09:00:00"
+]
+],
+"status": "warning",
+"text": "Wrong user name or password, per user, source and server. 10 or more = critical: an account being locked out, a service or scanner with an old password, or someone guessing.",
+"title": "Failed logins"
+},
+{
+"cell_status": [
+[
+"warning",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"info",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Severity",
+"Time (UTC)",
+"VM",
+"Event",
+"Host",
+"Cluster",
+"Datacenter",
+"By"
+],
+"row_status": [
+"warning",
+"info"
+],
+"rows": [
+[
+"WARNING",
+"2026-10-07 07:00:00",
+"db01",
+"vSphere HA restarted db01",
+"esx03",
+"CL1",
+"vc01 / DC1",
+"-"
+],
+[
+"INFO",
+"2026-10-07 06:00:00",
+"app01",
+"Guest OS shut down for app01",
+"esx01",
+"CL1",
+"vc01 / DC1",
+"CORP\\admin"
+]
+],
+"status": "warning",
+"text": "Guest shutdowns and restarts, power-offs, resets and HA restarts. Info = someone did it (By); warning = HA restarted or reset it, or it was powered off with no user; critical = a failover or power-on failed.",
+"title": "Virtual machine events"
+},
+{
+"cell_status": [
+[
+"warning",
+"",
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Severity",
+"Object",
+"Event",
+"Count",
+"First (UTC)",
+"Last (UTC)",
+"Latest message"
+],
+"row_status": [
+"warning"
+],
+"rows": [
+[
+"WARNING",
+"Host esx01",
+"esx.problem.storage.latency",
+2,
+"2026-10-07 10:00:00",
+"2026-10-07 11:00:00",
+"latency 101 ms"
+]
+],
+"status": "warning",
+"text": "vCenter's error and warning events, the same event on the same object counted once.",
+"title": "Other errors and warnings"
+},
+{
+"cell_status": [
+[
+"warning",
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Severity",
+"Type",
+"Object",
+"Issue",
+"Cluster",
+"Datacenter"
+],
+"row_status": [
+"warning"
+],
+"rows": [
+[
+"WARNING",
+"Host",
+"esx02",
+"SSH for the host has been enabled",
+"CL1",
+"vc01 / DC1"
+]
+],
+"status": "warning",
+"text": "What vCenter shows as configuration issues (e.g. SSH or the ESXi shell left on, HA problems).",
+"title": "Configuration issues"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"critical",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Host",
+"Cluster",
+"Datacenter",
+"Connection",
+"Maintenance",
+"ESXi",
+"Hardware",
+"Alarms",
+"Errors / warnings (24 h)"
+],
+"row_status": [
+"critical",
+"critical",
+"info",
+""
+],
+"rows": [
+[
+"esx01",
+"CL1",
+"vc01 / DC1",
+"connected",
+"no",
+"8.0.2 (1)",
+"Dell R750",
+1,
+5
+],
+[
+"esx02",
+"CL1",
+"vc01 / DC1",
+"notResponding",
+"no",
+"",
+"",
+0,
+1
+],
+[
+"esx03",
+"CL1",
+"vc01 / DC1",
+"connected",
+"yes",
+"8.0.2 (1)",
+"Dell R750",
+0,
+1
+],
+[
+"esx01b",
+"CL9",
+"vc02 / DC9",
+"connected",
+"no",
+"8.0.2 (1)",
+"",
+0,
+0
+]
+],
+"text": "Red = not connected or a critical alarm, amber = a warning alarm, blue = in maintenance mode.",
+"title": "All hosts"
+}
+],
+"status": "critical",
+"subtitle": "vCenters vc01.example.mil, vc02.example.mil - alarms now on vCenter, datacenters, clusters and hosts; events of the last 24 hours - read 2026-10-07 12:00:00 UTC",
+"summary": [
+{
+"label": "Critical alarms",
+"status": "critical",
+"value": 1
+},
+{
+"label": "Warning alarms",
+"status": "warning",
+"value": 1
+},
+{
+"label": "Hosts not connected",
+"status": "critical",
+"value": 1
+},
+{
+"label": "Alarms fired (24 h)",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Failed logins",
+"status": "warning",
+"value": 4
+},
+{
+"label": "VM events to check",
+"status": "warning",
+"value": 1
+},
+{
+"label": "Other errors / warnings",
+"status": "warning",
+"value": 2
+},
+{
+"label": "Configuration issues",
+"status": "warning",
+"value": 1
+}
+],
+"title": "VMware alarms report: 1 critical, 1 warning alarm(s), 1 host(s) not connected, 4 failed login(s), 1 VM event(s) to check (events: last 24 h)"
+}

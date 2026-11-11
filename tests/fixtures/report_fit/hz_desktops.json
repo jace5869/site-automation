@@ -1,0 +1,175 @@
+{
+"sections": [
+{
+"lines": [
+"ESXi host esx9: 4 desktops broken at once - look at the host (vCenter, its datastores and network) before the desktops; Broadcom KB 431732 has the recovery steps."
+],
+"status": "critical",
+"title": "Look at these first"
+},
+{
+"columns": [
+"Desktop",
+"Pool",
+"State",
+"Action"
+],
+"rows": [
+[
+"d-3",
+"IC-Win11",
+"ERROR - not in vCenter",
+"remove"
+],
+[
+"d-4",
+"IC-Win11",
+"ERROR - not in vCenter",
+"remove"
+],
+[
+"d-2",
+"IC-Win11",
+"PROVISIONING_ERROR",
+"recover"
+]
+],
+"status": "critical",
+"text": "Fixed only after approval (the workflow), each one checked again first.",
+"title": "To fix"
+},
+{
+"columns": [
+"Desktop",
+"Pool",
+"State",
+"Why not automatically"
+],
+"rows": [
+[
+"d-h0",
+"IC-Win11",
+"AGENT_UNREACHABLE",
+"4 desktops on ESXi host esx9 are broken at once: look at the host first, not the desktops (Broadcom KB 431732)"
+],
+[
+"d-h1",
+"IC-Win11",
+"AGENT_UNREACHABLE",
+"4 desktops on ESXi host esx9 are broken at once: look at the host first, not the desktops (Broadcom KB 431732)"
+],
+[
+"d-h2",
+"IC-Win11",
+"AGENT_UNREACHABLE",
+"4 desktops on ESXi host esx9 are broken at once: look at the host first, not the desktops (Broadcom KB 431732)"
+],
+[
+"d-5",
+"IC-Win11",
+"CUSTOMIZING for 9 h",
+"stuck customizing since 2026-09-21 05:13 UTC: look at it in vCenter and in Horizon's events (horizon_fix_stuck_actions can fix it)"
+],
+[
+"d-7",
+"IC-Win11",
+"DELETING for 30 h",
+"stuck deleting since 2026-09-20 08:13 UTC: look at it in vCenter and in Horizon's events (horizon_fix_stuck_actions can fix it)"
+],
+[
+"d-1",
+"IC-Win11",
+"PROVISIONING_ERROR",
+"its clone error is a domain problem (Domain join failed): a recover would fail the same way - fix the cause first (horizon_fix_hold_error_kinds)"
+]
+],
+"status": "warning",
+"title": "Held back - fix by hand"
+},
+{
+"columns": [
+"Desktop",
+"Kind",
+"Horizon's message"
+],
+"rows": [
+[
+"d-2",
+"timeout",
+"Customization operation timed out"
+],
+[
+"d-1",
+"domain",
+"Domain join failed"
+]
+],
+"title": "Clone errors"
+},
+{
+"columns": [
+"State",
+"Desktops"
+],
+"rows": [
+[
+"AGENT_UNREACHABLE",
+3
+],
+[
+"CUSTOMIZING",
+2
+],
+[
+"ERROR",
+2
+],
+[
+"PROVISIONING_ERROR",
+2
+],
+[
+"DELETING",
+1
+],
+[
+"PROVISIONING",
+1
+]
+],
+"title": "Desktops by state"
+}
+],
+"status": "critical",
+"subtitle": "11 desktops in 1 pools",
+"summary": [
+{
+"label": "Desktops",
+"value": 11
+},
+{
+"label": "Broken",
+"status": "critical",
+"value": 9
+},
+{
+"label": "To fix",
+"status": "warning",
+"value": 3
+},
+{
+"label": "Held back",
+"status": "warning",
+"value": 6
+},
+{
+"label": "Stuck",
+"value": 2
+},
+{
+"label": "Not in vCenter",
+"value": 2
+}
+],
+"title": "Horizon desktops: 9 broken, 3 to fix"
+}

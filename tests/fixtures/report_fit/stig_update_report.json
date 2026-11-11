@@ -1,0 +1,74 @@
+{
+"footer": "STIG Manager: GET and POST of these reviews only (playbooks/stigman_update.yml).",
+"sections": [
+{
+"columns": [
+"Host",
+"Asset",
+"Rule",
+"Read by the check",
+"STIG Manager before",
+"Written as",
+"Result",
+"Why"
+],
+"row_status": [
+"critical",
+"ok"
+],
+"rows": [
+[
+"",
+"",
+"SV-260001r1_rule",
+"no review",
+"-",
+"Not a Finding (submitted)",
+"no grant",
+"the client has Restricted in Ops - the import writes only where it needs Full or more (a Restricted grant reaches only the assets given to it)"
+],
+[
+"",
+"",
+"SV-260001r1_rule",
+"no review",
+"no review",
+"Not a Finding (submitted)",
+"written",
+""
+]
+],
+"status": "critical",
+"text": "Only the reviews the approval allowed (the check's plan). Each was read again first: one changed in STIG Manager since the check is left as it is, and so is one with attachments (evidence a person attached stays with its result). A written review was read back. STIG Manager keeps each review's history: what it was is there too. No collection, user or other review was changed, nor an asset that was there.",
+"title": "Each review of the plan"
+}
+],
+"status": "critical",
+"subtitle": "The reviews approved in workflow 37 (the STIG recheck)",
+"summary": [
+{
+"label": "Written",
+"status": "ok",
+"value": 1
+},
+{
+"label": "Already so",
+"value": 0
+},
+{
+"label": "Changed since the check",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Has attachments (left)",
+"value": 0
+},
+{
+"label": "Not written",
+"status": "critical",
+"value": 1
+}
+],
+"title": "STIG Manager update: 1 review(s) written, 1 not"
+}

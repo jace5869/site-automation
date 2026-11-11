@@ -1,0 +1,236 @@
+{
+"sections": [
+{
+"columns": [
+"Status",
+"Where",
+"Problem",
+"Fix"
+],
+"row_status": [
+"critical"
+],
+"rows": [
+[
+"CRITICAL",
+"esx23",
+"vMotion ping (1472 bytes, don't fragment) to and from it fail with the other hosts of DC2/Production (esx21, esx22; 4 pings): no answer",
+"Check the address, VLAN and port group of both adapters, the physical uplinks, and the network stack (vmotion) - a routed network needs its gateway."
+]
+],
+"status": "critical",
+"title": "Needs attention"
+},
+{
+"columns": [
+"Host",
+"Cluster",
+"vmk",
+"Services",
+"IP address",
+"MTU",
+"Switch (MTU)",
+"Network stack",
+"ESXi"
+],
+"row_status": [
+"ok",
+"ok",
+"ok",
+"ok",
+"ok"
+],
+"rows": [
+[
+"esx01",
+"DC1/Production",
+"vmk1",
+"vMotion",
+"192.0.2.10",
+9000,
+"DSwitch (9000)",
+"vmotion",
+"-"
+],
+[
+"esx02",
+"DC1/Production",
+"vmk1",
+"vMotion",
+"192.0.2.11",
+9000,
+"DSwitch (9000)",
+"vmotion",
+"-"
+],
+[
+"esx21",
+"DC2/Production",
+"vmk1",
+"vMotion",
+"198.51.100.20",
+1500,
+"DSwitch (9000)",
+"vmotion",
+"-"
+],
+[
+"esx22",
+"DC2/Production",
+"vmk1",
+"vMotion",
+"198.51.100.21",
+1500,
+"DSwitch (9000)",
+"vmotion",
+"-"
+],
+[
+"esx23",
+"DC2/Production",
+"vmk1",
+"vMotion",
+"198.51.100.22",
+1500,
+"DSwitch (9000)",
+"vmotion",
+"-"
+]
+],
+"title": "VMkernel adapters"
+},
+{
+"columns": [
+"Status",
+"From",
+"To",
+"Bytes",
+"Answered",
+"Avg ms",
+"Max ms",
+"Note"
+],
+"row_status": [
+"critical",
+"critical",
+"critical",
+"critical",
+"ok",
+"ok",
+"ok",
+"ok"
+],
+"rows": [
+[
+"CRITICAL",
+"esx21 vmk1",
+"esx23 (192.0.2.1)",
+"1472 DF",
+"0/3",
+"-",
+"-",
+"no answer"
+],
+[
+"CRITICAL",
+"esx22 vmk1",
+"esx23 (192.0.2.1)",
+"1472 DF",
+"0/3",
+"-",
+"-",
+"no answer"
+],
+[
+"CRITICAL",
+"esx23 vmk1",
+"esx21 (192.0.2.1)",
+"1472 DF",
+"0/3",
+"-",
+"-",
+"no answer"
+],
+[
+"CRITICAL",
+"esx23 vmk1",
+"esx22 (192.0.2.1)",
+"1472 DF",
+"0/3",
+"-",
+"-",
+"no answer"
+],
+[
+"OK",
+"esx01 vmk1",
+"esx02 (192.0.2.1)",
+"8972 DF",
+"3/3",
+"0.2",
+"0.2",
+"-"
+],
+[
+"OK",
+"esx02 vmk1",
+"esx01 (192.0.2.1)",
+"8972 DF",
+"3/3",
+"0.2",
+"0.2",
+"-"
+],
+[
+"OK",
+"esx21 vmk1",
+"esx22 (192.0.2.1)",
+"1472 DF",
+"3/3",
+"0.2",
+"0.2",
+"-"
+],
+[
+"OK",
+"esx22 vmk1",
+"esx21 (192.0.2.1)",
+"1472 DF",
+"3/3",
+"0.2",
+"0.2",
+"-"
+]
+],
+"text": "Full size (the adapter's MTU less 28 bytes) with don't fragment; when that fails, a small ping too - it tells a broken link from an MTU too small on the way.",
+"title": "vMotion pings between the hosts of each cluster"
+}
+],
+"status": "critical",
+"subtitle": "5 host(s): their VMkernel adapters, vmkping between the hosts of each cluster (vMotion), storage latency",
+"summary": [
+{
+"label": "Hosts checked",
+"value": 5
+},
+{
+"label": "Pings",
+"value": 8
+},
+{
+"label": "Pings with a problem",
+"status": "critical",
+"value": 4
+},
+{
+"label": "Worst round trip (ms)",
+"value": "0.2"
+},
+{
+"label": "Slow datastores",
+"status": "ok",
+"value": 0
+}
+],
+"title": "ESXi network check: 1 problem(s) (1 critical)"
+}

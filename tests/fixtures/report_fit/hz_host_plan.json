@@ -1,0 +1,82 @@
+{
+"sections": [
+{
+"columns": [
+"Desktop",
+"Pool",
+"State"
+],
+"rows": [
+[
+"d-1",
+"IC-Win11",
+"AVAILABLE"
+]
+],
+"title": "Into Horizon maintenance mode"
+},
+{
+"columns": [
+"User",
+"Desktop",
+"Pool",
+"Session"
+],
+"rows": [
+[
+"S-1",
+"d-2",
+"IC-Win11",
+"connected"
+]
+],
+"title": "Sessions that get the message"
+},
+{
+"columns": [
+"Desktop",
+"Pool",
+"Why"
+],
+"rows": [
+[
+"d-2",
+"IC-Win11",
+"a user's session is on it: it gets the message, and goes into maintenance once free (run the start job again)"
+],
+[
+"d-3",
+"VIP-Desk",
+"pool VIP-Desk is protected (horizon_protected_pools)"
+],
+[
+"d-4",
+"IC-Win11",
+"already in maintenance mode"
+]
+],
+"title": "Held back"
+}
+],
+"status": "info",
+"subtitle": "4 desktop(s) on it, 1 into maintenance mode, 1 session(s) to message",
+"summary": [
+{
+"label": "Desktops",
+"value": 4
+},
+{
+"label": "Into maintenance",
+"value": 1
+},
+{
+"label": "Sessions",
+"value": 1
+},
+{
+"label": "Held back",
+"value": 3
+}
+],
+"title": "Horizon host maintenance plan: ESX2"
+}

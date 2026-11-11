@@ -1,0 +1,98 @@
+{
+"sections": [
+{
+"columns": [
+"Pool",
+"Kind",
+"Max",
+"Desktops",
+"Free",
+"In use",
+"Broken",
+"Other",
+"Sessions",
+"Full",
+"Why"
+],
+"row_status": [
+"critical",
+"",
+"warning"
+],
+"rows": [
+[
+"Full",
+"instant clone",
+4,
+4,
+0,
+4,
+0,
+0,
+0,
+"100%",
+"full: no desktop left for the next user"
+],
+[
+"RDS",
+"rds",
+"-",
+0,
+0,
+0,
+0,
+0,
+0,
+"-",
+"sessions on RDS hosts: the farm's size is in Horizon"
+],
+[
+"Spare",
+"instant clone",
+10,
+2,
+1,
+1,
+0,
+0,
+0,
+"10%",
+"fewer free desktops (1) than its spares (3)"
+]
+],
+"text": "Full = desktops in use (connected or disconnected) against the pool's maximum; amber at 80%, red at 95%. Other = being made, customized, deleted or in maintenance.",
+"title": "Pools"
+}
+],
+"status": "critical",
+"subtitle": "3 pool(s), 14 desktop(s) at most, 5 in use",
+"summary": [
+{
+"label": "Pools",
+"value": 3
+},
+{
+"label": "Desktops",
+"value": 6
+},
+{
+"label": "In use",
+"value": 5
+},
+{
+"label": "Sessions",
+"value": 0
+},
+{
+"label": "Full",
+"status": "critical",
+"value": 1
+},
+{
+"label": "Nearly full",
+"status": "warning",
+"value": 1
+}
+],
+"title": "Horizon capacity: 1 pool(s) full or nearly, 1 to watch"
+}

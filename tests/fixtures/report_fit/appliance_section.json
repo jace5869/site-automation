@@ -1,0 +1,64 @@
+{
+"sections": [
+{
+"cell_status": [
+[
+"",
+"warning",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"critical",
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"vCenter",
+"Result",
+"SSH Login (before)",
+"DCUI (before)",
+"Console CLI (before)",
+"Bash Shell (before)",
+"What"
+],
+"row_status": [
+"warning",
+"critical"
+],
+"rows": [
+[
+"vc01.example.mil",
+"CHANGED",
+"Activated",
+"Deactivated",
+"Activated",
+"Deactivated",
+"SSH Login: Activated -> Deactivated"
+],
+[
+"vc02.example.mil",
+"FAILED",
+"",
+"",
+"",
+"",
+"SSH Login: the account may not change the appliance's settings (HTTP 403 reading ssh)"
+]
+],
+"status": "critical",
+"text": "The appliance's own SSH Login, DCUI, Console CLI and Bash Shell (its VAMI's Access page, port 5480), set through vCenter's API. CHANGED = set by this run, and read back; a refusal (HTTP 403) means the credential's account is not in SystemConfiguration.Administrators.",
+"title": "vCenter appliance access"
+}
+],
+"status": "info",
+"title": "_appliance_section (its tables, inside a findings report)"
+}

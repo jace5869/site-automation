@@ -1,0 +1,496 @@
+{
+"sections": [
+{
+"lines": [
+"ucs02.example.mil: UCS Manager refused the login (error 551: Authentication failed)",
+"ucs03.example.mil: timed out - no answer within 60 s"
+],
+"status": "critical",
+"text": "Their hardware is not in this report: the counts below are of the others.",
+"title": "Domains not read"
+},
+{
+"columns": [
+"Domain",
+"Component",
+"Kind",
+"Model",
+"Serial",
+"Operability"
+],
+"row_status": [
+"warning",
+"warning"
+],
+"rows": [
+[
+"UCS-DC1",
+"chassis-1/blade-3",
+"blade",
+"UCSB-B200-M6",
+"FLM0000003",
+"degraded"
+],
+[
+"UCS-DC1",
+"chassis-1/psu-4",
+"power supply",
+"UCSB-PSU-2500ACDV",
+"DTM0000004",
+"inoperable"
+]
+],
+"status": "warning",
+"text": "Components UCS Manager does not call operable (and HA not ready): what to look at first.",
+"title": "Not operable"
+},
+{
+"columns": [
+"Domain",
+"Address",
+"UCS Manager",
+"HA",
+"Fabric interconnects",
+"Chassis",
+"Servers",
+"Service profiles",
+"Critical faults",
+"Major faults",
+"The account's privileges"
+],
+"row_status": [
+""
+],
+"rows": [
+[
+"UCS-DC1",
+"ucs01.example.mil",
+"4.2(3d)",
+"ready",
+"2x UCS-FI-6454",
+1,
+4,
+2,
+1,
+2,
+"read-only"
+]
+],
+"title": "Domains"
+},
+{
+"columns": [
+"Domain",
+"FI",
+"Model",
+"Serial",
+"Role",
+"Management IP",
+"System firmware",
+"Kernel",
+"Memory GB",
+"Power supplies",
+"Operability"
+],
+"row_status": [
+"",
+""
+],
+"rows": [
+[
+"UCS-DC1",
+"A",
+"UCS-FI-6454",
+"FDO0000000A",
+"primary",
+"192.0.2.11",
+"9.3(5)I42(3d)",
+"9.3(5)I42(3d)",
+64,
+"1",
+"operable"
+],
+[
+"UCS-DC1",
+"B",
+"UCS-FI-6454",
+"FDO0000000B",
+"subordinate",
+"192.0.2.12",
+"9.3(5)I42(3d)",
+"9.3(5)I42(3d)",
+64,
+"1",
+"operable"
+]
+],
+"title": "Fabric interconnects"
+},
+{
+"columns": [
+"Domain",
+"Chassis",
+"Model",
+"Serial",
+"IO modules (firmware)",
+"Blades",
+"Power supplies",
+"Power",
+"Operability"
+],
+"row_status": [
+""
+],
+"rows": [
+[
+"UCS-DC1",
+"chassis-1",
+"UCSB-5108-AC2",
+"FOX0000001",
+"A: UCS-IOM-2408 (4.2(3d)), B: UCS-IOM-2408 (4.2(3d))",
+3,
+"4 (1 not operable)",
+"ok",
+"operable"
+]
+],
+"title": "Chassis"
+},
+{
+"columns": [
+"Model",
+"Servers",
+"BIOS (servers)",
+"CIMC (servers)",
+"Adapters (firmware)"
+],
+"rows": [
+[
+"UCSB-B200-M5",
+2,
+"B200M5.4.2.3b.0.0613230245 (1), B200M5.4.2.1c.0.0405220734 (1)",
+"4.2(3d) (1), 4.2(1f) (1)",
+"UCSB-MLOM-40G-04 5.2(3a) (1), UCSB-MLOM-40G-04 5.2(1b) (1)"
+],
+[
+"UCSB-B200-M6",
+1,
+"B200M6.4.2.3b.0.0613230246 (1)",
+"4.2(3d) (1)",
+"UCSB-MLOM-40G-04 5.2(3a) (1)"
+],
+[
+"UCSC-C240-M5SX",
+1,
+"C240M5.4.2.3b.0.0613230245 (1)",
+"4.2(3d) (1)",
+"UCSC-PCIE-C25Q-04 5.2(3a) (1)"
+]
+],
+"text": "Each server model, how many servers, and the BIOS and CIMC versions they run (the newest first). One model on several versions: some servers were left behind by a firmware update (a host firmware package not applied).",
+"title": "Server models"
+},
+{
+"columns": [
+"Domain",
+"Server",
+"Name",
+"Service profile",
+"Model",
+"Serial",
+"CPU",
+"Memory GB",
+"BIOS",
+"CIMC",
+"Adapters (firmware)",
+"Storage controllers",
+"Power",
+"State"
+],
+"row_status": [
+"",
+"",
+"warning",
+""
+],
+"rows": [
+[
+"UCS-DC1",
+"chassis-1/blade-1",
+"-",
+"ESX01",
+"UCSB-B200-M5",
+"FLM0000001",
+"2 x Intel(R) Xeon(R) Gold 6248 CPU @ 2.50GHz, 40 cores",
+384,
+"B200M5.4.2.3b.0.0613230245",
+"4.2(3d)",
+"UCSB-MLOM-40G-04 (5.2(3a))",
+"Cisco 12G Modular RAID controller with 2GB cache (51.10.0-3612)",
+"on",
+"ok"
+],
+[
+"UCS-DC1",
+"chassis-1/blade-2",
+"-",
+"ESX02",
+"UCSB-B200-M5",
+"FLM0000002",
+"2 x Intel(R) Xeon(R) Gold 6248 CPU @ 2.50GHz, 40 cores",
+384,
+"B200M5.4.2.1c.0.0405220734",
+"4.2(1f)",
+"UCSB-MLOM-40G-04 (5.2(1b))",
+"-",
+"on",
+"ok"
+],
+[
+"UCS-DC1",
+"chassis-1/blade-3",
+"-",
+"-",
+"UCSB-B200-M6",
+"FLM0000003",
+"2 x Intel(R) Xeon(R) Gold 6330 CPU @ 2.00GHz, 56 cores",
+512,
+"B200M6.4.2.3b.0.0613230246",
+"4.2(3d)",
+"UCSB-MLOM-40G-04 (5.2(3a))",
+"-",
+"on",
+"degraded"
+],
+[
+"UCS-DC1",
+"rack-unit-1",
+"-",
+"-",
+"UCSC-C240-M5SX",
+"WZP0000001",
+"2 x Intel(R) Xeon(R) Gold 6248 CPU @ 2.50GHz, 40 cores",
+384,
+"C240M5.4.2.3b.0.0613230245",
+"4.2(3d)",
+"UCSC-PCIE-C25Q-04 (5.2(3a))",
+"-",
+"on",
+"ok"
+]
+],
+"text": "The workbook attached has every fabric interconnect, chassis, IO module, server, adapter, CPU, DIMM, storage controller, power supply, running firmware, service profile and fault.",
+"title": "Servers"
+},
+{
+"columns": [
+"Component",
+"Model",
+"Count",
+"Versions (count)"
+],
+"rows": [
+[
+"UCS Manager",
+"-",
+1,
+"4.2(3d) (1)"
+],
+[
+"FI system",
+"UCS-FI-6454",
+2,
+"9.3(5)I42(3d) (2)"
+],
+[
+"FI kernel",
+"UCS-FI-6454",
+2,
+"9.3(5)I42(3d) (2)"
+],
+[
+"IO module",
+"UCS-IOM-2408",
+2,
+"4.2(3d) (2)"
+],
+[
+"BIOS",
+"UCSB-B200-M5",
+2,
+"B200M5.4.2.3b.0.0613230245 (1), B200M5.4.2.1c.0.0405220734 (1)"
+],
+[
+"BIOS",
+"UCSB-B200-M6",
+1,
+"B200M6.4.2.3b.0.0613230246 (1)"
+],
+[
+"BIOS",
+"UCSC-C240-M5SX",
+1,
+"C240M5.4.2.3b.0.0613230245 (1)"
+],
+[
+"CIMC",
+"UCSB-B200-M5",
+2,
+"4.2(3d) (1), 4.2(1f) (1)"
+],
+[
+"CIMC",
+"UCSB-B200-M6",
+1,
+"4.2(3d) (1)"
+],
+[
+"CIMC",
+"UCSC-C240-M5SX",
+1,
+"4.2(3d) (1)"
+],
+[
+"Board controller",
+"UCSB-B200-M5",
+2,
+"14.0 (2)"
+],
+[
+"Board controller",
+"UCSB-B200-M6",
+1,
+"14.0 (1)"
+],
+[
+"Board controller",
+"UCSC-C240-M5SX",
+1,
+"14.0 (1)"
+],
+[
+"Adapter",
+"UCSB-MLOM-40G-04",
+3,
+"5.2(3a) (2), 5.2(1b) (1)"
+],
+[
+"Adapter",
+"UCSC-PCIE-C25Q-04",
+1,
+"5.2(3a) (1)"
+],
+[
+"Storage controller",
+"Cisco 12G Modular RAID controller with 2GB cache",
+1,
+"51.10.0-3612 (1)"
+]
+],
+"text": "Each component and model, and the firmware versions running on them (how many of each, the newest first). Several versions of one component and model: an update did not reach them all.",
+"title": "Firmware in use"
+},
+{
+"columns": [
+"Domain",
+"Severity",
+"Code",
+"Component",
+"Description",
+"Since",
+"Acknowledged"
+],
+"row_status": [
+"",
+"warning",
+""
+],
+"rows": [
+[
+"UCS-DC1",
+"major",
+"F0283",
+"chassis-1/blade-3",
+"DIMM 4 on server 1/3 operability: degraded",
+"2026-11-02 09:30:00",
+"yes"
+],
+[
+"UCS-DC1",
+"critical",
+"F0369",
+"chassis-1/psu-4",
+"Power supply 4 in chassis 1 power: failed",
+"2026-10-20 08:00:00",
+""
+],
+[
+"UCS-DC1",
+"major",
+"F0999",
+"chassis-1/blade-1",
+"no time",
+"",
+""
+]
+],
+"text": "UCS Manager's own fault list, the newest first (Since). Acknowledged: someone in UCS Manager marked it seen.",
+"title": "Faults (critical, major)"
+},
+{
+"lines": [
+"UCS-DC1: could not read equipmentFex - error 103: class equipmentFex is not a valid class"
+],
+"text": "What could not be read (the rest of each domain is in).",
+"title": "Not all read"
+}
+],
+"status": "critical",
+"subtitle": "Every fabric interconnect, chassis and server, as UCS Manager reports them - UCS-DC1",
+"summary": [
+{
+"label": "Domains",
+"value": 1
+},
+{
+"label": "Fabric interconnects",
+"value": 2
+},
+{
+"label": "Chassis",
+"value": 1
+},
+{
+"label": "Servers",
+"value": 4
+},
+{
+"label": "Models",
+"value": 3
+},
+{
+"label": "BIOS versions",
+"value": 4
+},
+{
+"label": "With a serial number",
+"value": "4 of 4"
+},
+{
+"label": "Not operable",
+"status": "warning",
+"value": 2
+},
+{
+"label": "Critical faults",
+"status": "warning",
+"value": 1
+},
+{
+"label": "Domains not read",
+"status": "critical",
+"value": 2
+}
+],
+"title": "Cisco UCS: 4 servers, 3 models, 1 domain, 2 fabric interconnects - 2 not operable - 1 critical fault - 2 domains not read"
+}

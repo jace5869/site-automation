@@ -1,0 +1,91 @@
+{
+"sections": [
+{
+"columns": [
+"Container",
+"Memory",
+"Memory %",
+"CPU %"
+],
+"row_status": [
+"critical",
+"warning",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+],
+"rows": [
+[
+"ctr-03",
+"8704 MB",
+"0.3%",
+"1%"
+],
+[
+"ctr-07",
+"5120 MB",
+"0.7%",
+"1%"
+],
+[
+"ctr-24",
+"124 MB",
+"0.24%",
+"1%"
+],
+[
+"ctr-23",
+"123 MB",
+"0.23%",
+"1%"
+],
+[
+"ctr-22",
+"122 MB",
+"0.22%",
+"1%"
+],
+[
+"ctr-21",
+"121 MB",
+"0.21%",
+"1%"
+],
+[
+"ctr-20",
+"120 MB",
+"0.20%",
+"1%"
+],
+[
+"ctr-19",
+"119 MB",
+"0.19%",
+"1%"
+],
+[
+"ctr-18",
+"118 MB",
+"0.18%",
+"1%"
+],
+[
+"ctr-17",
+"117 MB",
+"0.17%",
+"1%"
+]
+],
+"status": "critical",
+"text": "25 container(s); over 4096 MB: ctr-03 8704 MB, ctr-07 5120 MB - and 15 more (all of them in the JSON beside the HTML report)",
+"title": "containers: memory per container"
+}
+],
+"status": "info",
+"title": "extra (its tables, inside a findings report)"
+}

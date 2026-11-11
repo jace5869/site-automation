@@ -1,0 +1,210 @@
+{
+"footer": "Each change is to a security control: approve it through your security approval (e.g. the ISSO) before it is listed in fapolicyd_approved. A host where fapolicyd was running and is not after the change - or a program no longer starts - gets every file put back.",
+"sections": [
+{
+"lines": [
+"trust file: /opt/app/tool size 51 sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+"allow rule: allow perm=any all : dir=/var/lib/containers/storage/overlay/",
+"remove rule: 50-local.rules: allow perm=any all : dir=/usr/lib/",
+"remove rule: 50-local.rules: allow perm=open all : dir=/srv/data/",
+"rename rules file: 50-local.rules -> 39-local.rules",
+"permissive: 0 -> 1"
+],
+"status": "warning",
+"text": "Each line is a change (its hosts, why and what it does: below). To make them, after your security approval, list the lines in fapolicyd_approved (the template's Variables) exactly as here and run the job again - a Check run first shows what it would change. Trust file: that file, as it is now (its size and sha256: a changed file is a new line), added to the job's own trust file. Allow rule: a container's file, to the job's own rules file. Remove rule: the rule commented out in its file, marked. A change that blocks more is made only while fapolicyd is permissive.",
+"title": "Changes to approve"
+},
+{
+"columns": [
+"Hosts",
+"Change",
+"Why",
+"What it does"
+],
+"row_status": [
+"warning",
+"warning",
+"critical",
+"warning",
+"warning",
+"critical"
+],
+"rows": [
+[
+"a",
+"trust file: /opt/app/tool size 51 sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+"",
+""
+],
+[
+"a",
+"allow rule: allow perm=any all : dir=/var/lib/containers/storage/overlay/",
+"",
+""
+],
+[
+"a",
+"remove rule: 50-local.rules: allow perm=any all : dir=/usr/lib/",
+"",
+"blocks more: what the rule let through is checked again"
+],
+[
+"a",
+"remove rule: 50-local.rules: allow perm=open all : dir=/srv/data/",
+"",
+"no change in what runs"
+],
+[
+"a",
+"rename rules file: 50-local.rules -> 39-local.rules",
+"",
+""
+],
+[
+"a",
+"permissive: 0 -> 1",
+"",
+""
+]
+],
+"title": "Why each change"
+},
+{
+"columns": [
+"Host",
+"Blocked",
+"Program",
+"File",
+"Permission",
+"Times",
+"Last",
+"Rule",
+"File on",
+"Change"
+],
+"row_status": [
+"warning",
+"info"
+],
+"rows": [
+[
+"a",
+"blocked",
+"/usr/bin/bash",
+"/opt/app/tool",
+"execute",
+2,
+"x",
+"13. deny_audit perm=execute all : all",
+"the host",
+"trust file: ..."
+],
+[
+"b",
+"would be (permissive)",
+"/usr/bin/bash",
+"/opt/app/tool",
+"execute",
+3,
+"x",
+"13. deny_audit perm=execute all : all",
+"the host",
+"trust file: ..."
+]
+],
+"status": "warning",
+"text": "Since today: the program, the file, how often, the rule (its text only for blocks since the rules last changed - an older block's number may point at another rule now), where the file is, and the change proposed. Would be: fapolicyd is permissive - it let it through and logged it.",
+"title": "What fapolicyd blocked"
+},
+{
+"columns": [
+"Host",
+"fapolicyd",
+"Permissive",
+"auditd",
+"Version",
+"Block groups",
+"Changes"
+],
+"row_status": [
+"warning",
+"critical"
+],
+"rows": [
+[
+"a",
+"active",
+"no",
+"?",
+"fapolicyd-1.4.5",
+1,
+6
+],
+[
+"b",
+"active",
+"yes",
+"?",
+"fapolicyd-1.4.5",
+1,
+0
+]
+],
+"status": "critical",
+"text": "fapolicyd on each host: running, permissive (it blocks nothing: a STIG finding), auditd (without it no block is recorded).",
+"title": "The hosts"
+},
+{
+"lines": [
+"1 host(s), not looked at: c"
+],
+"title": "fapolicyd not installed"
+},
+{
+"lines": [
+"gone: could not be reached, or failed before it was read"
+],
+"status": "warning",
+"title": "Not read"
+}
+],
+"status": "critical",
+"subtitle": "2 host(s) read - what fapolicyd blocked since today (ausearch -m FANOTIFY -ts today), the trust entries and rules to let it through, the rules files' clean-up",
+"summary": [
+{
+"label": "Blocked",
+"status": "warning",
+"value": 2
+},
+{
+"label": "Would be blocked (permissive)",
+"status": "warning",
+"value": 3
+},
+{
+"label": "Changes to approve",
+"status": "warning",
+"value": 6
+},
+{
+"label": "Permissive",
+"status": "critical",
+"value": 1
+},
+{
+"label": "For a person",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Hosts read",
+"value": 2
+},
+{
+"label": "Not read",
+"status": "warning",
+"value": 1
+}
+],
+"title": "fapolicyd rules: 5 block(s), 3 of them would-be (permissive) on 2 host(s), 6 change(s) to approve, permissive on 1"
+}

@@ -1,0 +1,290 @@
+{
+"sections": [
+{
+"cell_status": [
+[
+"",
+"",
+"warning",
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"VM",
+"Cluster",
+"vCPUs",
+"CPU used (95th % / peak)",
+"CPU ready",
+"Memory (GB)",
+"Active memory (95th % / peak)",
+"Why"
+],
+"row_status": [
+"warning"
+],
+"rows": [
+[
+"busy",
+"vc01 / CL1",
+"8 \u2192 12",
+"90% / 135%",
+"0.2%",
+"16",
+"50% / 60%",
+"CPU: busy - 90% of its 8 vCPUs (95th percentile); Adding vCPUs needs the VM shut down (hot add is off)."
+]
+],
+"status": "warning",
+"text": "CPU busy most of the time, or active memory near all it has. More vCPUs or memory suggested (amber). Together: 4 vCPUs and 0 GB more.",
+"title": "Too small"
+},
+{
+"columns": [
+"VM",
+"Cluster",
+"ESXi host",
+"Ballooned (peak)",
+"Swapped (peak)",
+"Memory limit",
+"Why"
+],
+"row_status": [
+"warning"
+],
+"rows": [
+[
+"bal",
+"vc02 / CL1",
+"esx01",
+"1024 MB",
+"-",
+"none",
+"Memory taken back: up to 1024 MB ballooned; the ESXi host was short of memory (its other VMs, or the host itself): check the host before resizing."
+]
+],
+"status": "warning",
+"text": "The ESXi host took memory back from these VMs (ballooning, swapping) or a limit caps them: they run slower than their size says. Not a sizing problem of the VM: its host, or the limit.",
+"title": "Memory taken back by the host"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"ok",
+"",
+"",
+"ok",
+"",
+""
+]
+],
+"columns": [
+"VM",
+"Cluster",
+"vCPUs",
+"CPU used (95th % / peak)",
+"CPU ready",
+"Memory (GB)",
+"Active memory (95th % / peak)",
+"Why"
+],
+"rows": [
+[
+"web01",
+"vc01 / CL1",
+"8 \u2192 4",
+"10% / 15%",
+"0.2%",
+"32 \u2192 16",
+"10% / 12%",
+"CPU: about 0.8 of 8 vCPUs used (95th percentile 10%); at most 50% fewer at once; memory: about 3.2 of 32 GB active (95th percentile 10%), plus 100% headroom; at most 50% less at once"
+]
+],
+"text": "More vCPUs or memory than they use: the suggested size (green) still leaves room - CPU sized to 70% busy, memory to its active memory plus 100%. Together they free 4 vCPUs and 16 GB of memory for other VMs.",
+"title": "Too big"
+},
+{
+"columns": [
+"VM",
+"Cluster",
+"Disk",
+"Used",
+"Free",
+"Size"
+],
+"row_status": [
+"warning"
+],
+"rows": [
+[
+"disk",
+"vc01 / CL1",
+"C:\\",
+"97.0%",
+"3 GB",
+"100 GB"
+]
+],
+"status": "warning",
+"text": "As VMware Tools reports them (90% used or more: vm_rightsize_disk_warn_pct).",
+"title": "Guest disks nearly full"
+},
+{
+"columns": [
+"VM",
+"Cluster",
+"vCPUs",
+"Memory (GB)",
+"Why"
+],
+"rows": [
+[
+"new",
+"vc01 / CL1",
+"4",
+"16",
+"2 day(s) of statistics in vCenter (vm_rightsize_min_days: 7)"
+]
+],
+"text": "Too little of vCenter's statistics to size them (new VMs, or moved in from another vCenter): checked again next run.",
+"title": "Not enough history"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"VM",
+"Cluster",
+"vCPUs",
+"CPU used (95th % / peak)",
+"CPU ready",
+"Memory (GB)",
+"Active memory (95th % / peak)",
+"Why"
+],
+"rows": [
+[
+"disk",
+"vc01 / CL1",
+"2",
+"40% / 60%",
+"0.2%",
+"8",
+"40% / 48%",
+""
+],
+[
+"ok01",
+"vc01 / CL1",
+"2",
+"40% / 60%",
+"0.2%",
+"8",
+"40% / 48%",
+""
+],
+[
+"bal",
+"vc02 / CL1",
+"2",
+"40% / 60%",
+"0.2%",
+"8",
+"40% / 48%",
+""
+]
+],
+"text": "Sized for what they use.",
+"title": "About right"
+},
+{
+"lines": [
+"From vCenter's own statistics of the last 30 days (2-hour averages) - the hypervisor's measurements, nothing from inside the guests - and each VM's busiest day of the last year (daily averages).",
+"CPU: the busiest 5% of the time is left out (the 95th percentile), or the year's busiest day is used when it was busier; vCPUs are suggested so that use would be about 70%, never more than 50% fewer at once, at least 2 (Windows 2). 85% or more is too small.",
+"CPU ready is the time a VM waited for a physical CPU: 5% or more is said. It often means too many vCPUs, or a busy host.",
+"Memory (the less certain one): vCenter sees the memory a guest touched in the last minutes (active memory), not what it needs - file caches and databases want more. So the suggestion is its active memory plus 100%, never more than 50% less at once, at least 2 GB (Windows 4), and only when it is 25% and 2 GB smaller or more. Active memory at 90% or more is too small.",
+"Suggestions only: nothing was changed. Check a VM's own peaks (month end, patching, backups) before resizing it; removing vCPUs or memory needs the VM shut down."
+],
+"title": "How the suggestions are worked out"
+}
+],
+"status": "warning",
+"subtitle": "vCPUs and memory next to what vCenter's statistics of the last 30 days say each VM uses - vc01, vc02; 3 powered off and 1 templates not checked - suggestions only, nothing was changed",
+"summary": [
+{
+"label": "VMs checked",
+"value": 6
+},
+{
+"label": "Too big",
+"value": 1
+},
+{
+"label": "Too small",
+"status": "warning",
+"value": 1
+},
+{
+"label": "About right",
+"value": 3
+},
+{
+"label": "vCPUs to free",
+"value": 4
+},
+{
+"label": "Memory to free (GB)",
+"value": 16
+},
+{
+"label": "Not enough history",
+"value": 1
+},
+{
+"label": "Memory taken back",
+"status": "warning",
+"value": 1
+},
+{
+"label": "Disks nearly full",
+"status": "warning",
+"value": 1
+}
+],
+"title": "VM right-sizing: 1 too big, 1 too small of 6 VMs"
+}

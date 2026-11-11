@@ -1,0 +1,1369 @@
+{
+"sections": [
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"",
+"ok",
+""
+]
+],
+"columns": [
+"Domain",
+"Forest",
+"Domain level",
+"Forest level",
+"Schema",
+"DCs checked",
+"PDC"
+],
+"row_status": [
+""
+],
+"rows": [
+[
+"corp.test",
+"corp.test",
+"Windows2016Domain",
+"Windows2016Forest",
+88,
+"2 of 2",
+"dc01"
+]
+],
+"text": "Each domain: functional levels, schema version, its DCs (checked here / in AD) and the PDC emulator.",
+"title": "Domains"
+},
+{
+"cell_status": [
+[
+"",
+"info",
+"warning",
+"critical",
+"ok",
+"warning",
+"warning"
+]
+],
+"columns": [
+"Domain",
+"Tombstone",
+"Recycle Bin",
+"RID pool left",
+"Oldest backup",
+"krbtgt password",
+"SYSVOL migration"
+],
+"row_status": [
+"critical"
+],
+"rows": [
+[
+"corp.test",
+"not set (60 days)",
+"OFF",
+"1.3%",
+"20.0 h ago (corp.test)",
+"699 days",
+"Start"
+]
+],
+"status": "critical",
+"text": "Each domain: the tombstone lifetime, the Recycle Bin, how much of the RID pool is left, the oldest partition's last backup, the age of the krbtgt password and the SYSVOL migration state.",
+"title": "Domain upkeep"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"DC",
+"Domain",
+"Site",
+"OS",
+"Kind",
+"Roles",
+"Up"
+],
+"row_status": [
+"",
+""
+],
+"rows": [
+[
+"DC01",
+"corp.test",
+"HQ",
+"Server 2022 Standard",
+"GC",
+"PDC, RID",
+"20 days"
+],
+[
+"DC02",
+"corp.test",
+"HQ",
+"Server 2022 Standard",
+"GC",
+"-",
+"19 days"
+]
+],
+"text": "Each DC: site, operating system, global catalog / read-only, the operations master roles it holds and the time since it started. Blue: a DC in AD that is not in this job's inventory (only the domain-wide checks cover it).",
+"title": "Domain controllers"
+},
+{
+"cell_status": [
+[
+"",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical"
+],
+[
+"",
+"ok",
+"ok",
+"ok",
+"ok",
+"ok",
+"ok"
+]
+],
+"columns": [
+"DC",
+"LDAP",
+"Services",
+"dcdiag failed",
+"SYSVOL",
+"Clock",
+"Least free"
+],
+"row_status": [
+"critical",
+""
+],
+"rows": [
+[
+"DC02",
+"NOT IN SYNC",
+"kdc (Stopped)",
+"Replications",
+"share missing: SYSVOL; In error",
+"-91.50 s",
+"2% (D:)"
+],
+[
+"DC01",
+"OK",
+"all running",
+"3 passed",
+"Normal",
+"+0.01 s",
+"60% (C:)"
+]
+],
+"status": "critical",
+"text": "Each DC read: LDAP answering (and synchronized), the DC services not running, dcdiag's failed tests, SYSVOL (shared, DFSR state), its clock against the PDC emulator (the PDC: against its NTP source) and the least free space of the database, log and SYSVOL volumes.",
+"title": "Domain controllers' health"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"ok",
+"ok"
+],
+[
+"",
+"",
+"",
+"ok",
+"ok"
+],
+[
+"",
+"",
+"",
+"critical",
+"critical"
+],
+[
+"",
+"",
+"",
+"ok",
+"ok"
+],
+[
+"",
+"",
+"",
+"ok",
+"ok"
+]
+],
+"columns": [
+"Domain",
+"Role",
+"Holder",
+"A DC in AD",
+"Answers"
+],
+"row_status": [
+"",
+"",
+"critical",
+"",
+""
+],
+"rows": [
+[
+"corp.test",
+"PDC emulator",
+"dc01.corp.test",
+"yes",
+"yes"
+],
+[
+"corp.test",
+"RID master",
+"dc01.corp.test",
+"yes",
+"yes"
+],
+[
+"corp.test",
+"Infrastructure master",
+"dc09.corp.test",
+"NO",
+"NO"
+],
+[
+"corp.test",
+"Schema master",
+"dc01.corp.test",
+"yes",
+"yes"
+],
+[
+"corp.test",
+"Domain naming master",
+"dc01.corp.test",
+"yes",
+"yes"
+]
+],
+"status": "critical",
+"text": "Who holds each role, whether that holder is a DC that still exists, and whether it answers on LDAP (TCP 389) from the DC that read the domain.",
+"title": "Operations masters (FSMO roles)"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"critical",
+"critical",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"critical",
+"critical",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"warning"
+]
+],
+"columns": [
+"DC",
+"Partition",
+"From",
+"From site",
+"Failures",
+"Last success",
+"Last failure",
+"Last error"
+],
+"row_status": [
+"critical",
+"critical",
+"warning"
+],
+"rows": [
+[
+"DC02",
+"corp.test",
+"DC01",
+"HQ",
+12,
+"30.0 h",
+"2026-10-15 06:47",
+"8453 (replication access was denied)"
+],
+[
+"DC02",
+"Configuration",
+"DC01",
+"HQ",
+3,
+"never",
+"",
+"1722 (the RPC server is unavailable (DC down, firewall, DNS))"
+],
+[
+"DC02",
+"(inbound queue)",
+"",
+"",
+"",
+"",
+"",
+"75 requests waiting"
+]
+],
+"status": "critical",
+"text": "Each DC's inbound replication from each partner, for every partition (repadmin /showrepl), with consecutive failures, the last success and the last error. Only links with a problem are listed: amber after 6 h without success (or a failing link that succeeded recently), red after 24 h or longer than the tombstone lifetime. 2 link(s) are healthy.",
+"title": "Inbound replication"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"ok"
+]
+],
+"columns": [
+"Domain",
+"DC",
+"Site",
+"Seen from",
+"Last replication"
+],
+"row_status": [
+""
+],
+"rows": [
+[
+"corp.test",
+"DC02",
+"HQ",
+"DC01",
+"5 min"
+]
+],
+"text": "For each DC of the domain, how long ago the latest of its changes reached the DC that read the domain (repadmin /showutdvec /latency). This covers the DCs that are not in the inventory too: a DC that stopped replicating shows up here.",
+"title": "Replication from every DC (up-to-dateness)"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"critical",
+""
+]
+],
+"columns": [
+"DC",
+"Target",
+"Test",
+"Result",
+"What dcdiag said"
+],
+"row_status": [
+"critical"
+],
+"rows": [
+[
+"DC02",
+"DC02",
+"Replications",
+"FAILED",
+"[Replications Check,DC02] A recent replication attempt failed: / From DC01 to DC02 / The replication generated an error (8453): / Replication access was denied."
+]
+],
+"status": "critical",
+"text": "The tests of dcdiag that failed on each DC, with the lines dcdiag printed about it. Red: Connectivity, Advertising, NetLogons, Replications, SysVolCheck, Services, KnowsOfRoleHolders, RidManager, MachineAccount. Skipped: SystemLog.",
+"title": "dcdiag"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"critical",
+""
+],
+[
+"",
+"",
+"warning",
+""
+],
+[
+"",
+"",
+"warning",
+""
+]
+],
+"columns": [
+"DC / domain",
+"Test / record",
+"Result",
+"Details"
+],
+"row_status": [
+"critical",
+"warning",
+"warning"
+],
+"rows": [
+[
+"corp.test",
+"_kerberos._tcp.dc._msdcs.corp.test",
+"NOT FOUND",
+"_kerberos._tcp.dc._msdcs.corp.test : DNS name does not exist"
+],
+[
+"DC02",
+"dcdiag /test:DNS",
+"FAILED",
+"Error: no DNS servers reachable / Warning: forwarder 192.0.2.53 does not answer"
+],
+[
+"corp.test",
+"_ldap._tcp.dc._msdcs.corp.test",
+"MISSING",
+"no record for DC02"
+]
+],
+"status": "critical",
+"text": "dcdiag's DNS tests on each DC (basic, forwarders, delegation, record registration - the tests that only read), and the SRV records clients use to find a DC: every DC must be registered.",
+"title": "DNS"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"ok",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"warning",
+"",
+"critical"
+]
+],
+"columns": [
+"DC",
+"Role",
+"Source",
+"Stratum",
+"Last sync",
+"Measured against",
+"Offset"
+],
+"row_status": [
+"",
+"critical"
+],
+"rows": [
+[
+"DC01",
+"PDC emulator",
+"ntp.corp.test,0x8",
+"2",
+"30 min",
+"ntp.corp.test",
+"+0.015 s"
+],
+[
+"DC02",
+"",
+"dc01.corp.test,0x9",
+"3",
+"2 days",
+"dc01.corp.test",
+"-91.500 s"
+]
+],
+"status": "critical",
+"text": "Each DC's time source, stratum, last synchronization and offset: a DC against the PDC emulator, the PDC emulator against its NTP source. Amber 5 s, red 60 s off (Kerberos fails at 5 minutes); red: the PDC on its own clock.",
+"title": "Time"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"critical",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"warning",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"warning",
+"",
+"",
+""
+]
+],
+"columns": [
+"DC",
+"Log / source",
+"ID",
+"Severity",
+"Count",
+"Last",
+"What it means / last message"
+],
+"row_status": [
+"critical",
+"warning",
+"warning"
+],
+"rows": [
+[
+"DC02",
+"DFS Replication / DFSR",
+2213,
+"CRITICAL",
+2,
+"2026-10-15 05:53",
+"DFSR stopped replicating SYSVOL after an unexpected shutdown and waits for a manual resume"
+],
+[
+"DC02",
+"System / NETLOGON",
+5719,
+"WARNING",
+1,
+"2026-10-15 02:53",
+"Netlogon could not reach a domain controller"
+],
+[
+"DC02",
+"Directory Service / Microsoft-Windows-ActiveDirectory_DomainService",
+2887,
+"WARNING",
+1,
+"2026-10-15 03:53",
+"clients made unsigned or clear-text LDAP binds (this event counts them; 2889 names them when diagnostic logging is on)"
+]
+],
+"status": "critical",
+"text": "The Directory Service, DFS Replication and DNS Server logs, and the Netlogon, KDC, time and Group Policy entries of the System log: the events that matter on a DC (with what they mean) and every other error (blue, for information). The same event on the same DC is counted once.",
+"title": "Events (last 24 h)"
+},
+{
+"cell_status": [
+[
+"",
+"warning",
+"",
+""
+],
+[
+"",
+"warning",
+"",
+""
+]
+],
+"columns": [
+"DC",
+"Addresses",
+"Logons",
+"Addresses (computer)"
+],
+"row_status": [
+"warning",
+"warning"
+],
+"rows": [
+[
+"DC02",
+2,
+3,
+"198.51.100.5 (WS01), 198.51.100.6 (WS02)"
+],
+[
+"(corp.test)",
+1,
+"",
+"subnets with no site: 198.51.100.0/24"
+]
+],
+"status": "warning",
+"text": "Client addresses that are in no AD subnet (netlogon.log NO_CLIENT_SITE): they are sent to any DC, often across the WAN. Add their subnets to Active Directory Sites and Services.",
+"title": "Clients in no site"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"info",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"ok"
+]
+],
+"columns": [
+"DC",
+"For",
+"Subject",
+"Expires",
+"Days left"
+],
+"row_status": [
+"critical",
+"info",
+"",
+""
+],
+"rows": [
+[
+"DC02",
+"LDAPS",
+"CN=dc02.corp.test",
+"2026-10-18 06:53",
+3
+],
+[
+"DC02",
+"KDC",
+"none",
+"",
+""
+],
+[
+"DC01",
+"LDAPS",
+"CN=dc01.corp.test",
+"2027-05-03 06:53",
+200
+],
+[
+"DC01",
+"KDC",
+"CN=dc01.corp.test",
+"2027-05-03 06:53",
+200
+]
+],
+"status": "critical",
+"text": "The newest certificate each DC has for LDAPS (server authentication) and for the KDC (smart card / PKINIT logons). Amber 30 days, red 7 days before it expires; blue: none (that service is not available on the DC).",
+"title": "Certificates (LDAPS and Kerberos)"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"",
+"critical",
+""
+]
+],
+"columns": [
+"Domain",
+"Trust",
+"Direction",
+"Type",
+"Options",
+"Verified",
+"Changed"
+],
+"row_status": [
+"critical"
+],
+"rows": [
+[
+"corp.test",
+"partner.test",
+"BiDirectional",
+"Uplevel",
+"forest trust",
+"Trusted DC Connection Status Status = 1311 0x51f ERROR_NO_LOGON_SERVERS / Trust Verification Status = 1311 0x51f ERROR_NO_LOGON_SERVERS",
+"2026-10-15 04:53"
+]
+],
+"status": "critical",
+"text": "Every trust of each domain; outbound and two-way trusts are verified with nltest /sc_verify (red when the secure channel to the other domain fails).",
+"title": "Trusts"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"info",
+"info"
+],
+[
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Domain",
+"Site",
+"DCs",
+"Subnets"
+],
+"row_status": [
+"info",
+""
+],
+"rows": [
+[
+"corp.test",
+"Branch",
+0,
+0
+],
+[
+"corp.test",
+"HQ",
+2,
+1
+]
+],
+"text": "AD sites, the DCs of this domain in each and their subnets (blue: no DC of this domain, or no subnet - clients are never placed in a site without one).",
+"title": "Sites"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"warning",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"warning",
+"",
+"",
+""
+]
+],
+"columns": [
+"When",
+"Domain",
+"Group",
+"Change",
+"Member",
+"Made on",
+"By"
+],
+"row_status": [
+"warning",
+"warning"
+],
+"rows": [
+[
+"2026-10-15 04:53",
+"corp.test",
+"Domain Admins",
+"ADDED",
+"Mallory",
+"DC02",
+"CORP\\admin1"
+],
+[
+"2026-10-15 01:53",
+"corp.test",
+"Domain Admins",
+"REMOVED",
+"Old Admin",
+"DC01",
+"-"
+]
+],
+"status": "warning",
+"text": "Members added to or removed from the privileged groups, with the DC the change was made on (from AD's replication metadata: no auditing needed) and who made it (from that DC's Security log, when auditing of security group management is on).",
+"title": "Privileged group changes (last 24 h)"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Domain",
+"Group",
+"Members",
+"Direct members"
+],
+"row_status": [
+"",
+"",
+""
+],
+"rows": [
+[
+"corp.test",
+"Domain Admins",
+2,
+"Administrator, Mallory"
+],
+[
+"corp.test",
+"Administrators",
+2,
+"Domain Admins, Administrator"
+],
+[
+"corp.test",
+"DnsAdmins",
+0,
+""
+]
+],
+"text": "The direct members of each privileged group now (nested groups are not expanded).",
+"title": "Privileged groups"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"info",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"info",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"info",
+"",
+""
+]
+],
+"columns": [
+"When",
+"Domain",
+"Type",
+"Name",
+"Change",
+"Where",
+"By"
+],
+"row_status": [
+"info",
+"info",
+"info"
+],
+"rows": [
+[
+"2026-10-15 03:53",
+"corp.test",
+"user",
+"mallory",
+"CREATED",
+"CN=Users,DC=corp,DC=test",
+"CORP\\admin1"
+],
+[
+"2026-10-15 02:53",
+"corp.test",
+"computer",
+"WS99$",
+"CREATED",
+"OU=PCs,DC=corp,DC=test",
+"-"
+],
+[
+"2026-10-15 00:53",
+"corp.test",
+"user",
+"bob",
+"DELETED",
+"OU=Staff,DC=corp,DC=test",
+"-"
+]
+],
+"text": "New and deleted accounts, where they are (for a deleted one: where it was), and who (from the Security log, when audited).",
+"title": "Users, groups and computers created or deleted (last 24 h)"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"info",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"info",
+"",
+""
+]
+],
+"columns": [
+"When",
+"Domain",
+"Type",
+"Name",
+"Change",
+"Made on",
+"By"
+],
+"lines": [
+"corp.test: locked out now: erin"
+],
+"row_status": [
+"info",
+"info"
+],
+"rows": [
+[
+"2026-10-15 05:53",
+"corp.test",
+"user",
+"carol",
+"DISABLED",
+"DC01",
+"-"
+],
+[
+"2026-10-15 04:53",
+"corp.test",
+"user",
+"dave",
+"UNLOCKED",
+"DC02",
+"-"
+]
+],
+"text": "From the replication metadata of userAccountControl and lockoutTime: the DC it happened on, and who (Security log).",
+"title": "Accounts enabled, disabled, locked or unlocked (last 24 h)"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"info",
+""
+],
+[
+"",
+"",
+"",
+"info",
+""
+]
+],
+"columns": [
+"When",
+"Domain",
+"GPO / where",
+"Change",
+"Version / links"
+],
+"row_status": [
+"info",
+"info"
+],
+"rows": [
+[
+"2026-10-15 05:53",
+"corp.test",
+"links on Staff",
+"LINKS CHANGED",
+"now: Default Domain Policy (on DC01)"
+],
+[
+"2026-10-15 04:53",
+"corp.test",
+"New Policy",
+"CREATED",
+1
+]
+],
+"text": "GPOs created, changed or deleted, and OUs, domains or sites whose GPO links changed (with the GPOs linked there now).",
+"title": "Group Policy changes (last 24 h)"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"info"
+]
+],
+"columns": [
+"Domain",
+"GPO",
+"GUID",
+"Problem"
+],
+"row_status": [
+"warning",
+"warning",
+"info"
+],
+"rows": [
+[
+"corp.test",
+"Default Domain Policy",
+"{31B2F340-016D-11D2-945F-00C04FB984F9}",
+"version AD 7, SYSVOL 5"
+],
+[
+"corp.test",
+"New Policy",
+"{11111111-2222-3333-4444-555555555555}",
+"no folder in SYSVOL"
+],
+[
+"corp.test",
+"",
+"{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}",
+"folder in SYSVOL, no GPO in AD"
+]
+],
+"status": "warning",
+"text": "On the DC that read the domain: GPOs without a SYSVOL folder, GPOs whose version differs between AD and SYSVOL (normal for a few minutes after an edit), and SYSVOL folders with no GPO (left over).",
+"title": "Group Policy: AD against SYSVOL"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"info"
+],
+[
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"",
+"info"
+],
+[
+"",
+"",
+"",
+"",
+"info"
+]
+],
+"columns": [
+"When",
+"Domain",
+"What",
+"Name",
+"Change"
+],
+"row_status": [
+"info",
+"warning",
+"warning",
+"info",
+"info"
+],
+"rows": [
+[
+"2026-10-15 05:53",
+"corp.test",
+"subnet",
+"198.51.100.0/24",
+"CREATED"
+],
+[
+"2026-10-15 04:53",
+"corp.test",
+"trust",
+"partner.test",
+"CREATED"
+],
+[
+"2026-10-15 03:53",
+"corp.test",
+"schema",
+"version 88",
+"CHANGED"
+],
+[
+"2026-10-15 03:53",
+"corp.test",
+"attributeSchema",
+"msExampleAttr",
+"ADDED TO SCHEMA"
+],
+[
+"2026-10-14 22:53",
+"corp.test",
+"domain controller",
+"DC03",
+"CREATED"
+]
+],
+"status": "warning",
+"text": "Schema updates (the version and new classes and attributes), sites, subnets, site links and domain controllers added, changed or removed, and new trusts.",
+"title": "Schema and configuration changes (last 24 h)"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"critical",
+"",
+""
+]
+],
+"columns": [
+"When",
+"DC",
+"Event",
+"Severity",
+"What",
+"By"
+],
+"row_status": [
+"critical"
+],
+"rows": [
+[
+"2026-10-15 05:53",
+"DC02",
+1102,
+"CRITICAL",
+"the Security log was cleared",
+"CORP\\admin1"
+]
+],
+"status": "critical",
+"text": "The Security log cleared on a DC, the DSRM password set, trusts created or removed, the domain policy changed.",
+"title": "Security log: notable events (last 24 h)"
+},
+{
+"lines": [
+"corp.test (domain-wide, on dc01.corp.test): group NoSuchGroup: Cannot find an object with identity: 'NoSuchGroup'"
+],
+"text": "What could not be read (the report is complete apart from these):",
+"title": "Not read"
+}
+],
+"status": "critical",
+"subtitle": "Read 2026-10-15 06:53 UTC - changes of the last 24 h",
+"summary": [
+{
+"label": "DCs read",
+"status": "ok",
+"value": "2 of 2"
+},
+{
+"label": "Replication problems",
+"status": "critical",
+"value": 3
+},
+{
+"label": "dcdiag failures",
+"status": "critical",
+"value": 1
+},
+{
+"label": "Services down",
+"status": "critical",
+"value": 1
+},
+{
+"label": "SYSVOL / GPO",
+"status": "critical",
+"value": 5
+},
+{
+"label": "FSMO / DNS / time",
+"status": "critical",
+"value": 6
+},
+{
+"label": "Privileged changes",
+"status": "warning",
+"value": 2
+},
+{
+"label": "Accounts created / deleted",
+"status": "info",
+"value": 3
+},
+{
+"label": "GPO changes",
+"status": "info",
+"value": 2
+}
+],
+"title": "Active Directory health report: 17 critical, 17 warning (corp.test)"
+}

@@ -1,0 +1,44 @@
+{
+"footer": "The approved list of the check job ; each desktop was read again first.",
+"sections": [
+{
+"lines": [
+"Nothing."
+],
+"title": "Done"
+},
+{
+"columns": [
+"Desktop",
+"Pool",
+"Why"
+],
+"rows": [
+[
+"w11-008",
+"IC-Win11",
+"it is AVAILABLE now: it recovered by itself"
+],
+[
+"w11-004",
+"IC-Win11",
+"it is PROVISIONING now: it recovered by itself"
+],
+[
+"w11-005",
+"IC-Win11",
+"it is PROVISIONING now: it recovered by itself"
+],
+[
+"w11-007",
+"IC-Win11",
+"it is PROVISIONING now: it recovered by itself"
+]
+],
+"title": "Left alone since the approval"
+}
+],
+"status": "info",
+"subtitle": "approved from the check of 2026-11-11 09:33 UTC",
+"title": "Horizon desktops fixed: none - every approved desktop changed since the check"
+}

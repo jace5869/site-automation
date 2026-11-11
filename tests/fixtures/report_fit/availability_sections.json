@@ -1,0 +1,74 @@
+{
+"sections": [
+{
+"columns": [
+"Probe",
+"Address",
+"Kind",
+"Result",
+"Good tries",
+"Median",
+"Slowest",
+"HTTP",
+"Why not"
+],
+"row_status": [
+"",
+"warning"
+],
+"rows": [
+[
+"API",
+"https://x/API",
+"service",
+"UP",
+"3 of 3",
+"100 ms",
+"100 ms",
+"200",
+""
+],
+[
+"b",
+"https://x/b",
+"node",
+"DOWN",
+"0 of 3",
+"-",
+"-",
+"none",
+"no answer in time"
+]
+],
+"status": "warning",
+"text": "Each address asked several times, a moment apart. Slow = the median above 1000 ms. HTTP none = no answer at all (the name, a firewall, the certificate, a timeout).",
+"title": "What answered"
+},
+{
+"columns": [
+"Period",
+"Available",
+"Runs up",
+"Runs down"
+],
+"rows": [
+[
+"Last 24 hours",
+"100%",
+"96",
+"0"
+],
+[
+"Last 30 days",
+"-",
+"0",
+"0"
+]
+],
+"text": "Runs of this job that ended well (the service answered) against those that failed; a canceled run is not counted.",
+"title": "Availability"
+}
+],
+"status": "info",
+"title": "availability_sections (its tables, inside a findings report)"
+}

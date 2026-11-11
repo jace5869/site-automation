@@ -1,0 +1,43 @@
+{
+"sections": [
+{
+"columns": [
+"Status",
+"vCenter / responder",
+"SSO services",
+"STS signing certificate",
+"Identity providers",
+"Test login / answer time",
+"Notes"
+],
+"row_status": [
+"ok",
+"ok"
+],
+"rows": [
+[
+"OK",
+"vc01.example.mil",
+"sts started",
+"2027-08-01 (300 days)",
+"example.mil (default)",
+"svc@example.mil: logs in",
+""
+],
+[
+"OK",
+"CRL http://crl.example.mil/ca.crl",
+"120000 certificate(s) listed, 30.0 MB, next update 2026-11-01 00:00 UTC; the test certificate is not on it",
+"",
+"",
+"4200 ms",
+""
+]
+],
+"status": "ok",
+"text": "Single sign-on is how every user and job logs in to vCenter: its services, the certificate that signs its tokens, its identity sources, and a real login by a test domain account. The OCSP responders and the CRLs are what smart card logins check revocation with - both asked from the AAP node: whether each vCenter reaches them too is not seen from here.",
+"title": "Single sign-on and OCSP"
+}
+],
+"title": "T"
+}

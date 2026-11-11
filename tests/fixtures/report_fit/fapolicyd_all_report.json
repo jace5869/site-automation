@@ -1,0 +1,176 @@
+{
+"footer": "Each change is to a security control: approve it through your security approval (e.g. the ISSO) before it is listed in fapolicyd_approved. A host where fapolicyd was running and is not after the change - or a program no longer starts - gets every file put back.",
+"sections": [
+{
+"lines": [
+"enable fapolicyd at boot (it is disabled)",
+"trust file: /opt/app/tool size 51 sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+"allow rule: allow perm=any all : dir=/var/lib/containers/storage/overlay/",
+"remove rule: 50-local.rules: allow perm=any all : dir=/usr/lib/",
+"remove rule: 50-local.rules: allow perm=open all : dir=/srv/data/",
+"rename rules file: 50-local.rules -> 39-local.rules",
+"permissive: 0 -> 1"
+],
+"status": "warning",
+"text": "Each line is a change (its hosts, why and what it does: below). Getting fapolicyd running first - its trust files, labels, db_max_size, enabled at boot, started permissive - then trust entries for what it blocked, container rules, the rules files' clean-up, and back to enforcing on a quiet day. To make them: the workflow's approval step, or by hand - list them in fapolicyd_approved exactly as here and run the job again (a Check run first). A db_max_size line may end in your own number.",
+"title": "Changes to approve"
+},
+{
+"columns": [
+"Hosts",
+"Change",
+"Why",
+"What it does"
+],
+"row_status": [
+"warning",
+"warning",
+"warning",
+"critical",
+"warning",
+"warning",
+"critical"
+],
+"rows": [
+[
+"h",
+"enable fapolicyd at boot (it is disabled)",
+"a reboot",
+"gets fapolicyd running"
+],
+[
+"h",
+"trust file: /opt/app/tool size 51 sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+"",
+""
+],
+[
+"h",
+"allow rule: allow perm=any all : dir=/var/lib/containers/storage/overlay/",
+"",
+""
+],
+[
+"h",
+"remove rule: 50-local.rules: allow perm=any all : dir=/usr/lib/",
+"",
+"blocks more: what the rule let through is checked again"
+],
+[
+"h",
+"remove rule: 50-local.rules: allow perm=open all : dir=/srv/data/",
+"",
+"no change in what runs"
+],
+[
+"h",
+"rename rules file: 50-local.rules -> 39-local.rules",
+"",
+""
+],
+[
+"h",
+"permissive: 0 -> 1",
+"",
+""
+]
+],
+"title": "Why each change"
+},
+{
+"columns": [
+"Host",
+"fapolicyd",
+"Permissive",
+"auditd",
+"Version",
+"Block groups",
+"Changes"
+],
+"row_status": [
+"critical"
+],
+"rows": [
+[
+"h",
+"inactive",
+"no",
+"?",
+"fapolicyd-1.4.5",
+0,
+6
+]
+],
+"status": "critical",
+"text": "fapolicyd on each host: running, permissive (it blocks nothing: a STIG finding), auditd (without it no block is recorded).",
+"title": "The hosts"
+},
+{
+"columns": [
+"Host",
+"fapolicyd",
+"At boot",
+"Version",
+"db_max_size",
+"Estimate",
+"Fixes"
+],
+"row_status": [
+"critical"
+],
+"rows": [
+[
+"h",
+"inactive",
+"disabled",
+"fapolicyd-1.4.5",
+"100",
+"5 MB (1 MB of trust files, 10 RPM files)",
+1
+]
+],
+"status": "critical",
+"text": "fapolicyd on each host, db_max_size and the estimate it is weighed against (the trust files and the RPM files, about twice that in the database), and how many fixes it has.",
+"title": "The trust database"
+}
+],
+"status": "critical",
+"subtitle": "1 host(s) read - what fapolicyd blocked since today (ausearch -m FANOTIFY -ts today), the trust entries and rules to let it through, the rules files' clean-up - and what keeps fapolicyd down: its trust files, SELinux labels, db_max_size, the service",
+"summary": [
+{
+"label": "Blocked",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Would be blocked (permissive)",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Changes to approve",
+"status": "warning",
+"value": 7
+},
+{
+"label": "fapolicyd not running",
+"status": "critical",
+"value": 1
+},
+{
+"label": "Permissive",
+"status": "ok",
+"value": 0
+},
+{
+"label": "For a person",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Hosts read",
+"value": 1
+}
+],
+"title": "fapolicyd: 1 fix(es) to approve on 1 host(s), fapolicyd not running on 1, 6 change(s) to approve"
+}

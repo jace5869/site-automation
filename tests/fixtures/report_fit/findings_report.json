@@ -1,0 +1,365 @@
+{
+"footer": "Checks run: stig",
+"sections": [
+{
+"cards": [
+{
+"chip": "CAT I",
+"code": "sudo oscap xccdf eval --profile xccdf_org.ssgproject.content_profile_stig --rule xccdf_org.ssgproject.content_rule_ensure_gpgcheck_local_packages /usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml",
+"meta": "Drifted",
+"next": "Passed 2026-10-01, fails now. STIG Manager: Not a Finding (accepted). Fix the host, or - if the change was approved - update the review in STIG Manager. To check it again on the host:",
+"status": "critical",
+"subject": "web01 - V-257821 (RHEL-09-214020)",
+"title": "DISA SV_257821"
+},
+{
+"chip": "CAT I",
+"code": "sudo oscap xccdf eval --profile xccdf_org.ssgproject.content_profile_stig --rule xccdf_org.ssgproject.content_rule_package_telnet-server_removed /usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml",
+"meta": "New fail",
+"next": "Passed 2026-10-01, fails now. No review in STIG Manager. Fix the host, or set the review to Open. To check it again on the host:",
+"status": "critical",
+"subject": "web01 - V-257835 (RHEL-09-215040)",
+"title": "RHEL 9 must not have the telnet-server package installed."
+}
+],
+"status": "critical",
+"text": "The CAT I rules that moved: drifted from the checklist, or failing since they passed. CAT II and III are in the tables below.",
+"title": "Start here"
+},
+{
+"boxes": [
+{
+"label": "Drifted",
+"note": "passed before, now fails its Not a Finding",
+"status": "critical",
+"value": 2
+},
+{
+"label": "New fails",
+"note": "passed in an earlier scan",
+"status": "critical",
+"value": 1
+},
+{
+"label": "Disagree",
+"note": "never passed here, Not a Finding: look once",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Fixed, still Open",
+"note": "update STIG Manager",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Not scanned",
+"note": "no result for these hosts",
+"status": "warning",
+"value": 1
+}
+],
+"cell_status": [
+[
+"",
+"",
+"critical",
+"",
+"critical",
+"",
+"ok"
+],
+[
+"",
+"",
+"warning",
+"",
+"critical",
+"",
+"ok"
+]
+],
+"columns": [
+"Host",
+"STIG rule",
+"CAT",
+"Title",
+"Scan now",
+"Last passed",
+"STIG Manager"
+],
+"row_status": [
+"critical",
+"warning"
+],
+"rows": [
+[
+"web01",
+"V-257821 (RHEL-09-214020)",
+"CAT I",
+"DISA SV_257821",
+"FAIL",
+"2026-10-01",
+"Not a Finding (accepted)"
+],
+[
+"web01",
+"V-257985 (RHEL-09-255045)",
+"CAT II",
+"DISA SV_257985",
+"FAIL",
+"2026-10-01",
+"Not a Finding (accepted)"
+]
+],
+"start_here": [
+{
+"chip": "CAT I",
+"code": "sudo oscap xccdf eval --profile xccdf_org.ssgproject.content_profile_stig --rule xccdf_org.ssgproject.content_rule_ensure_gpgcheck_local_packages /usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml",
+"meta": "Drifted",
+"next": "Passed 2026-10-01, fails now. STIG Manager: Not a Finding (accepted). Fix the host, or - if the change was approved - update the review in STIG Manager. To check it again on the host:",
+"status": "critical",
+"subject": "web01 - V-257821 (RHEL-09-214020)",
+"title": "DISA SV_257821"
+},
+{
+"chip": "CAT I",
+"code": "sudo oscap xccdf eval --profile xccdf_org.ssgproject.content_profile_stig --rule xccdf_org.ssgproject.content_rule_package_telnet-server_removed /usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml",
+"meta": "New fail",
+"next": "Passed 2026-10-01, fails now. No review in STIG Manager. Fix the host, or set the review to Open. To check it again on the host:",
+"status": "critical",
+"subject": "web01 - V-257835 (RHEL-09-215040)",
+"title": "RHEL 9 must not have the telnet-server package installed."
+}
+],
+"start_here_text": "The CAT I rules that moved: drifted from the checklist, or failing since they passed. CAT II and III are in the tables below.",
+"status": "critical",
+"text": "These rules passed on the host in an earlier scan and fail now, and the checklist has them as Not a Finding: the host moved away from its checklist. Fix the host, or - if the change was approved - update the review in STIG Manager (this job never writes to it). They stay here every run until one of the two is done. CAT I is critical, CAT II and III a warning (check_stig_severity).",
+"title": "1. Drifted - the host fails what STIG Manager has as Not a Finding",
+"top": true
+},
+{
+"cell_status": [
+[
+"",
+"",
+"critical",
+"",
+"",
+"critical",
+"unknown"
+]
+],
+"columns": [
+"Host",
+"STIG rule",
+"CAT",
+"Title",
+"Last passed",
+"Scan now",
+"STIG Manager"
+],
+"row_status": [
+"critical"
+],
+"rows": [
+[
+"web01",
+"V-257835 (RHEL-09-215040)",
+"CAT I",
+"RHEL 9 must not have the telnet-server package installed.",
+"2026-10-01",
+"FAIL",
+"no review"
+]
+],
+"status": "critical",
+"text": "Something changed on the host since these passed (the scans are kept on the host, check_stig_dir). STIG Manager has no Not a Finding for them, so they are not drift from the checklist - but they are new. Once the review is Open, they leave this table.",
+"title": "2. New fails - passed in an earlier scan",
+"top": true
+},
+{
+"columns": [
+"Host",
+"Severity",
+"Check",
+"Finding",
+"Look further"
+],
+"rows": [
+[
+"web01",
+"CRITICAL",
+"stig",
+"2 STIG rules STIG Manager has as Not a Finding or Not Applicable fail now: V-257821 CAT I, V-257985 CAT II",
+"sudo oscap xccdf eval --profile xccdf_org.ssgproject.content_profile_stig --rule xccdf_org.ssgproject.content_rule_ensure_gpgcheck_local_packages /usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml"
+],
+[
+"web01",
+"CRITICAL",
+"stig",
+"1 STIG rule passed in an earlier scan (last 2026-10-01) and fails now: V-257835 CAT I",
+"sudo oscap xccdf eval --profile xccdf_org.ssgproject.content_profile_stig --rule xccdf_org.ssgproject.content_rule_package_telnet-server_removed /usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml"
+],
+[
+"web02",
+"WARNING",
+"stig",
+"the STIG scan did not run: no content",
+"rpm -q openscap-scanner scap-security-guide"
+]
+],
+"status": "critical",
+"title": "Findings"
+},
+{
+"columns": [
+"Host",
+"STIG (scan)",
+"STIG Manager (collection / asset)",
+"Pass",
+"Fail",
+"Drifted",
+"New",
+"Disagree",
+"Fixed, open",
+"By hand",
+"Left out",
+"The report on the host"
+],
+"row_status": [
+"critical",
+"warning"
+],
+"rows": [
+[
+"web01",
+"V2R9 ",
+"C / web01 (V2R7)",
+"6",
+"3",
+"2",
+"1",
+"0",
+"0",
+"0",
+"0",
+"/var/lib/site-automation/stig/x_report.html"
+],
+[
+"web02",
+"not scanned: no content",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+]
+],
+"status": "critical",
+"text": "Pass and Fail count STIG rules (several SCAP checks of one rule count once, one SCAP check of several rules counts for each); the rest are not applicable or not checked automatically. By hand: the rules the checklist has a review of that the scan gives no result for - DISA's manual checks (Evaluate-STIG: Not Reviewed), never compared by this job. Left out: fails of the rules in check_stig_ignore_rules. Each scan's report (OpenSCAP), results or checklist (Evaluate-STIG) and summary stay on the host.",
+"title": "Every host - the scan, STIG Manager, the counts"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"critical",
+"",
+"critical"
+]
+],
+"columns": [
+"Host",
+"STIG rule",
+"CAT",
+"Title",
+"Scan now"
+],
+"row_status": [
+"info"
+],
+"rows": [
+[
+"web01",
+"V-257835 (RHEL-09-215040)",
+"CAT I",
+"RHEL 9 must not have the telnet-server package installed.",
+"FAIL"
+]
+],
+"status": "info",
+"text": "Report only: the checklist has no result for these rules yet (a rule new in the scan's STIG release, too).",
+"title": "Fails STIG Manager has no review for"
+}
+],
+"status": "critical",
+"summary": [
+{
+"label": "Hosts checked",
+"note": "reported this run",
+"value": 2
+},
+{
+"label": "Healthy",
+"note": "no findings",
+"status": "ok",
+"value": 0
+},
+{
+"label": "With findings",
+"note": "hosts to look at",
+"status": "warning",
+"value": 2
+},
+{
+"label": "Critical",
+"note": "act now",
+"status": "critical",
+"value": 2
+},
+{
+"label": "Warning",
+"note": "plan a fix",
+"status": "warning",
+"value": 1
+},
+{
+"label": "Drifted",
+"note": "passed before, now fails its Not a Finding",
+"status": "critical",
+"value": 2
+},
+{
+"label": "New fails",
+"note": "passed in an earlier scan",
+"status": "critical",
+"value": 1
+},
+{
+"label": "Disagree",
+"note": "never passed here, Not a Finding: look once",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Fixed, still Open",
+"note": "update STIG Manager",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Not scanned",
+"note": "no result for these hosts",
+"status": "warning",
+"value": 1
+}
+],
+"title": "STIG drift report: 3 finding(s) on 2 of 2 host(s)"
+}

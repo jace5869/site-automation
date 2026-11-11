@@ -1,0 +1,270 @@
+{
+"sections": [
+{
+"lines": [
+"cluster2.example.mil: the ONTAP account was refused (HTTP 401)",
+"cluster3.example.mil: cannot resolve cluster3.example.mil (DNS)"
+],
+"status": "critical",
+"text": "Their hardware is not in this report: the counts below are of the others.",
+"title": "Clusters not read"
+},
+{
+"columns": [
+"Cluster",
+"Controller",
+"Model",
+"Serial",
+"State"
+],
+"row_status": [
+"warning"
+],
+"rows": [
+[
+"cluster1",
+"cluster1-02",
+"AFF-A400",
+"SN0002",
+"down"
+]
+],
+"status": "warning",
+"text": "What the cluster last knew of them (the NetApp ONTAP health report says more).",
+"title": "Controllers not up"
+},
+{
+"columns": [
+"Model",
+"Controllers",
+"ONTAP (controllers)",
+"System firmware (controllers)",
+"SP / BMC (controllers)"
+],
+"rows": [
+[
+"AFF-A400",
+2,
+"9.14.1P3 (1), 9.13.1P8 (1)",
+"11.10 (1), 11.9 (1)",
+"BMC 13.10 (1)"
+]
+],
+"text": "Each controller model, how many controllers, and the ONTAP, system firmware and service processor (SP / BMC) versions they run (the newest first). One model on several firmware versions: some controllers were left behind by an update.",
+"title": "Models"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"warning",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Cluster",
+"Controller",
+"Model",
+"Serial",
+"System ID",
+"ONTAP",
+"HA partner",
+"CPU",
+"Memory",
+"System firmware",
+"SP / BMC",
+"NVRAM battery",
+"Flash Cache",
+"Ports",
+"Up",
+"State"
+],
+"row_status": [
+"",
+"warning"
+],
+"rows": [
+[
+"cluster1",
+"cluster1-01",
+"AFF-A400",
+"SN0001",
+"0537000001",
+"9.14.1P3",
+"cluster1-02",
+"Intel(R) Xeon(R) Silver 4210 (20 CPUs)",
+"128.0 GB",
+"11.10",
+"BMC 13.10",
+"ok",
+"X1970A 1.0 TB",
+"2x 25G, 3x down; 2x 32G FC",
+"1d 02:03",
+"up"
+],
+[
+"cluster1",
+"cluster1-02",
+"AFF-A400",
+"SN0002",
+"-",
+"9.13.1P8",
+"-",
+"-",
+"-",
+"11.9",
+"-",
+"near end of life",
+"-",
+"-",
+"0d 00:00",
+"down"
+]
+],
+"text": "The workbook attached has every controller, shelf, shelf module, disk and port.",
+"title": "Controllers"
+},
+{
+"columns": [
+"Cluster",
+"Shelf",
+"Model",
+"Serial",
+"Modules",
+"Module firmware (modules)",
+"Connection",
+"Disks",
+"State"
+],
+"row_status": [
+"warning"
+],
+"rows": [
+[
+"cluster1",
+"1.1",
+"NS224",
+"SHFMS0001",
+"iom12f",
+"0220 (1), 0210 (1)",
+"nvme",
+4,
+"error"
+]
+],
+"title": "Shelves"
+},
+{
+"columns": [
+"Cluster",
+"Vendor",
+"Model",
+"Type",
+"Size",
+"Disks",
+"Spares",
+"Firmware (disks)"
+],
+"rows": [
+[
+"cluster1",
+"NETAPP",
+"X357",
+"SSD",
+"3.8 TB",
+4,
+1,
+"NA02 (2), NA01 (2)"
+]
+],
+"text": "Each disk model of each cluster, how many, how many are spares, and the firmware versions they run (the newest first). One model on several firmware versions: the disk qualification package or a disk firmware update did not reach them all.",
+"title": "Disks by model"
+},
+{
+"lines": [
+"cluster1: disks - reduced detail - ONTAP refused a field (HTTP 400)"
+],
+"text": "What could not be read (the rest of each cluster is in).",
+"title": "Not all read"
+}
+],
+"status": "critical",
+"subtitle": "Every controller, shelf and disk, as ONTAP reports them - cluster1",
+"summary": [
+{
+"label": "Clusters",
+"value": 1
+},
+{
+"label": "Controllers",
+"value": 2
+},
+{
+"label": "Models",
+"value": 1
+},
+{
+"label": "ONTAP versions",
+"value": 2
+},
+{
+"label": "Shelves",
+"value": 1
+},
+{
+"label": "Disks",
+"value": 4
+},
+{
+"label": "With a serial number",
+"value": "2 of 2"
+},
+{
+"label": "Not up",
+"status": "warning",
+"value": 1
+},
+{
+"label": "Shelves not ok",
+"status": "warning",
+"value": 1
+},
+{
+"label": "Clusters not read",
+"status": "critical",
+"value": 2
+}
+],
+"title": "NetApp hardware: 2 controllers, 1 model, 1 shelf, 4 disks - 1 not up - 2 clusters not read"
+}

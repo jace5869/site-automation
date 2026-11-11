@@ -1,0 +1,150 @@
+{
+"footer": "Checks run: stigman-availability",
+"sections": [
+{
+"cards": [
+{
+"code": "curl -sS http://127.0.0.1:18631/api/op/state",
+"meta": "stigman-availability",
+"next": "Look further:",
+"status": "critical",
+"subject": "localhost",
+"title": "STIG Manager (API) does not answer: HTTP 502 (2 of 2 tries)"
+},
+{
+"code": "curl -sS http://127.0.0.1:18632/api/op/state",
+"meta": "stigman-availability",
+"next": "Look further:",
+"status": "warning",
+"subject": "localhost",
+"title": "STIG Manager node stig-a does not answer: HTTP 502 (2 of 2 tries)"
+},
+{
+"code": "curl -sS http://127.0.0.1:18633/api/op/state",
+"meta": "stigman-availability",
+"next": "Look further:",
+"status": "warning",
+"subject": "localhost",
+"title": "STIG Manager node stig-b does not answer: currentState is \"unavailable\" (2 of 2 tries)"
+}
+],
+"status": "critical",
+"text": "What to act on first: critical, then warning. Every finding is in the tables below.",
+"title": "Start here"
+},
+{
+"columns": [
+"Severity",
+"Check",
+"Finding",
+"Look further"
+],
+"rows": [
+[
+"CRITICAL",
+"stigman-availability",
+"STIG Manager (API) does not answer: HTTP 502 (2 of 2 tries)",
+"curl -sS http://127.0.0.1:18631/api/op/state"
+],
+[
+"WARNING",
+"stigman-availability",
+"STIG Manager node stig-a does not answer: HTTP 502 (2 of 2 tries)",
+"curl -sS http://127.0.0.1:18632/api/op/state"
+],
+[
+"WARNING",
+"stigman-availability",
+"STIG Manager node stig-b does not answer: currentState is \"unavailable\" (2 of 2 tries)",
+"curl -sS http://127.0.0.1:18633/api/op/state"
+]
+],
+"status": "critical",
+"title": "Findings"
+},
+{
+"columns": [
+"Probe",
+"Address",
+"Kind",
+"Result",
+"Good tries",
+"Median",
+"Slowest",
+"HTTP",
+"Why not"
+],
+"row_status": [
+"critical",
+"warning",
+"warning",
+""
+],
+"rows": [
+[
+"API",
+"http://127.0.0.1:18631/api/op/state",
+"service",
+"DOWN",
+"0 of 2",
+"1 ms",
+"1 ms",
+"502",
+"HTTP 502"
+],
+[
+"stig-a",
+"http://127.0.0.1:18632/api/op/state",
+"node",
+"DOWN",
+"0 of 2",
+"1 ms",
+"1 ms",
+"502",
+"HTTP 502"
+],
+[
+"stig-b",
+"http://127.0.0.1:18633/api/op/state",
+"node",
+"DOWN",
+"0 of 2",
+"1 ms",
+"1 ms",
+"200",
+"currentState is \"unavailable\""
+],
+[
+"Keycloak",
+"http://127.0.0.1:18634/realms/stigman/.well-known/openid-configuration",
+"dependency",
+"UP",
+"2 of 2",
+"1 ms",
+"1 ms",
+"200",
+""
+]
+],
+"status": "critical",
+"text": "Each address asked several times, a moment apart. Slow = the median above 1000 ms. HTTP none = no answer at all (the name, a firewall, the certificate, a timeout).",
+"title": "What answered"
+}
+],
+"status": "critical",
+"summary": [
+{
+"label": "Critical",
+"note": "act now",
+"status": "critical",
+"value": 1
+},
+{
+"label": "Warning",
+"note": "plan a fix",
+"status": "warning",
+"value": 2
+}
+],
+"title": "STIG Manager availability: 3 finding(s)"
+}

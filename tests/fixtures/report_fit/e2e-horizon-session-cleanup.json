@@ -1,0 +1,87 @@
+{
+"footer": "Sessions disconnected 8 hours or more (horizon_session_max_disconnected_hours).",
+"sections": [
+{
+"columns": [
+"User",
+"Desktop",
+"Pool",
+"Disconnected since",
+"Hours"
+],
+"rows": [
+[
+"CORP\\jdoe",
+"(an RDS host)",
+"farm RDS-Farm",
+"2026-11-10 03:34 UTC",
+"30.0"
+]
+],
+"title": "To log off"
+},
+{
+"columns": [
+"User",
+"Desktop",
+"Pool",
+"Why not"
+],
+"rows": [
+[
+"CORP\\eve",
+"leg-002",
+"FC-Legacy",
+"when it was disconnected is not known"
+],
+[
+"CORP\\asmith",
+"w11-003",
+"IC-Win11",
+"the user is excluded (horizon_session_cleanup_exclude_users)"
+],
+[
+"CORP\\dprince",
+"prot-002",
+"IC-Protected",
+"pool IC-Protected is excluded (horizon_protected_pools, horizon_session_cleanup_exclude_pools)"
+],
+[
+"CORP\\asmith",
+"fin-004",
+"IC-Finance",
+"the user is excluded (horizon_session_cleanup_exclude_users)"
+]
+],
+"title": "Held back"
+},
+{
+"lines": [
+"CORP\\jdoe on (an RDS host): log off requested - Horizon took it"
+],
+"title": "Done"
+}
+],
+"status": "warning",
+"subtitle": "disconnected for 8 hours or more; 1 more disconnected for less",
+"summary": [
+{
+"label": "Sessions",
+"value": 10
+},
+{
+"label": "Disconnected",
+"value": 6
+},
+{
+"label": "To log off",
+"status": "warning",
+"value": 1
+},
+{
+"label": "Held back",
+"value": 4
+}
+],
+"title": "Horizon disconnected sessions: 1 to log off"
+}

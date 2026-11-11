@@ -1,0 +1,797 @@
+{
+"footer": "Read-only. The alarms themselves, failed logins and the events of the day: the VMware alarms report.",
+"sections": [
+{
+"cell_status": [
+[
+"critical",
+"",
+"",
+"",
+""
+],
+[
+"critical",
+"",
+"",
+"",
+""
+],
+[
+"critical",
+"",
+"",
+"",
+""
+],
+[
+"critical",
+"",
+"",
+"",
+""
+],
+[
+"critical",
+"",
+"",
+"",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+""
+],
+[
+"info",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Severity",
+"Object",
+"Problem",
+"What to do",
+"Where"
+],
+"row_status": [
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"warning",
+"warning",
+"warning",
+"warning",
+"warning",
+"warning",
+"warning",
+"warning",
+"info"
+],
+"rows": [
+[
+"CRITICAL",
+"Host esx01",
+"vSphere HA agent: network isolated",
+"The host cannot reach the other hosts or its isolation address: check its management network and uplinks. HA may restart its VMs elsewhere.",
+"DC1 / CL1"
+],
+[
+"CRITICAL",
+"Host esx02",
+"Memory 95% used",
+"DRS should spread the load; if it cannot, move or power off VMs (see the capacity report).",
+"DC1 / CL1"
+],
+[
+"CRITICAL",
+"Host esx04",
+"Hardware fault: Power Supply 2",
+"Host > Monitor > Hardware Health, and the server's management controller (iDRAC, iLO, XCC).",
+"DC1 / CL2"
+],
+[
+"CRITICAL",
+"Host esx05",
+"Not responding to vCenter",
+"Check the host is on and its management network; then right-click > Connection > Connect.",
+"DC1 / CL2"
+],
+[
+"CRITICAL",
+"Cluster CL3",
+"vSphere Cluster Services (vCLS) in retreat mode: DRS is not working and HA works less well",
+"Retreat mode is set by hand: vCenter > Configure > Settings > Advanced Settings, config.vcls.clusters.domain-CL3.enabled. When the work it was set for is done, set it to true.",
+"DC2"
+],
+[
+"WARNING",
+"Cluster CL1",
+"HA can survive 0 host failure(s) now; admission control reserves 1",
+"Add capacity or power off / move VMs (see the capacity report).",
+"DC1"
+],
+[
+"WARNING",
+"Cluster CL1",
+"2 DRS recommendation(s) waiting",
+"Cluster > Monitor > vSphere DRS > Recommendations: apply them.",
+"DC1"
+],
+[
+"WARNING",
+"Cluster CL2",
+"vSphere HA is off: the VMs of a failed host are not restarted",
+"Cluster > Configure > vSphere Availability > Edit: turn on vSphere HA (vm_health_require_ha: false if this is on purpose).",
+"DC1"
+],
+[
+"WARNING",
+"Cluster CL2",
+"DRS is off: VMs are not balanced, and maintenance mode does not move them",
+"Cluster > Configure > vSphere DRS > Edit: turn it on (vm_health_require_drs: false where DRS is not licensed).",
+"DC1"
+],
+[
+"WARNING",
+"Host esx04",
+"Hardware warning: Fan 3",
+"Host > Monitor > Hardware Health, and the server's management controller (iDRAC, iLO, XCC).",
+"DC1 / CL2"
+],
+[
+"WARNING",
+"Host esx04",
+"Needs a restart (an update or a setting waits for it)",
+"Restart it in a maintenance window (maintenance mode first).",
+"DC1 / CL2"
+],
+[
+"WARNING",
+"Host esx08",
+"SSH for the host has been enabled",
+"Host > Summary in vCenter (the issue is shown there).",
+"DC2"
+],
+[
+"WARNING",
+"Host esx08",
+"Alarm: Host memory usage (since 2026-10-13 05:00:00 UTC)",
+"Monitor > Issues and Alarms > Triggered Alarms on the host: the alarm says what to look at.",
+"DC2"
+],
+[
+"INFO",
+"Host esx03",
+"In maintenance mode",
+"Exit maintenance mode when the work on it is done.",
+"DC1 / CL1"
+]
+],
+"status": "critical",
+"text": "Red = critical (broken now), amber = warning (fix soon), blue = info (worth knowing, not broken).",
+"title": "Needs attention"
+},
+{
+"cell_status": [
+[
+"critical",
+"",
+"",
+"",
+"",
+"",
+"critical",
+"",
+""
+],
+[
+"critical",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Status",
+"Datacenter",
+"Clusters",
+"Hosts",
+"Hosts running VMs",
+"In maintenance",
+"Not connected",
+"Alarms on it",
+"Problems (its clusters and hosts too)"
+],
+"row_status": [
+"critical",
+"critical"
+],
+"rows": [
+[
+"CRITICAL",
+"DC1",
+2,
+5,
+3,
+1,
+1,
+0,
+"4 critical, 6 warning, 1 info"
+],
+[
+"CRITICAL",
+"DC2",
+2,
+3,
+3,
+0,
+0,
+0,
+"1 critical, 2 warning"
+]
+],
+"status": "critical",
+"text": "Each datacenter with everything in it.",
+"title": "Datacenters"
+},
+{
+"cell_status": [
+[
+"critical",
+"",
+"",
+"warning",
+"critical",
+"warning",
+"",
+"",
+"",
+"",
+""
+],
+[
+"critical",
+"",
+"",
+"critical",
+"warning",
+"warning",
+"",
+"",
+"",
+"",
+""
+],
+[
+"critical",
+"",
+"",
+"",
+"critical",
+"critical",
+"critical",
+"",
+"",
+"",
+""
+],
+[
+"ok",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Status",
+"Cluster",
+"Datacenter",
+"Hosts running VMs",
+"vSphere HA",
+"DRS",
+"vCLS",
+"CPU used",
+"Memory used",
+"Alarms on it",
+"Problems (its hosts too)"
+],
+"row_status": [
+"critical",
+"critical",
+"critical",
+""
+],
+"rows": [
+[
+"CRITICAL",
+"CL1",
+"DC1",
+"2 of 3",
+"on, reserves 1 host(s); 1 host agent(s) not OK",
+"on (fully automated), score 97%, 2 waiting",
+"normal",
+"10%",
+"67%",
+0,
+"2 critical, 2 warning, 1 info"
+],
+[
+"CRITICAL",
+"CL2",
+"DC1",
+"1 of 2 (1 not connected)",
+"OFF",
+"OFF",
+"normal",
+"10%",
+"38%",
+0,
+"2 critical, 4 warning"
+],
+[
+"CRITICAL",
+"CL3",
+"DC2",
+"1 of 1",
+"on, reserves 1 host(s)",
+"on (fully automated), score 97%",
+"RETREAT MODE",
+"10%",
+"38%",
+0,
+"1 critical"
+],
+[
+"OK",
+"CL4",
+"DC2",
+"1 of 1",
+"OFF",
+"OFF",
+"normal",
+"10%",
+"38%",
+0,
+"-"
+]
+],
+"status": "critical",
+"text": "HA restarts the VMs of a failed host; DRS balances the VMs and empties a host for maintenance; vCLS keeps DRS running (retreat mode stops it). CPU and memory: of the hosts running VMs.",
+"title": "Clusters"
+},
+{
+"cell_status": [
+[
+"critical",
+"",
+"",
+"",
+"",
+"",
+"critical",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"critical",
+"",
+"",
+"",
+"",
+"",
+"ok",
+"",
+"",
+"critical",
+"",
+"",
+"",
+""
+],
+[
+"info",
+"",
+"",
+"",
+"",
+"info",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"critical",
+"",
+"",
+"",
+"",
+"",
+"",
+"critical",
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"critical",
+"",
+"",
+"",
+"critical",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"ok",
+"",
+"",
+"",
+"",
+"",
+"ok",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"ok",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Status",
+"Host",
+"Cluster",
+"Datacenter",
+"Connection",
+"Maintenance",
+"HA agent",
+"Hardware",
+"CPU used",
+"Memory used",
+"Up (days)",
+"Clock",
+"ESXi",
+"Alarms"
+],
+"row_status": [
+"critical",
+"critical",
+"info",
+"critical",
+"critical",
+"",
+"",
+"warning"
+],
+"rows": [
+[
+"CRITICAL",
+"esx01",
+"CL1",
+"DC1",
+"connected",
+"no",
+"network isolated",
+"green",
+"10%",
+"38%",
+40.5,
+"?",
+"8.0.3 (24022510)",
+0
+],
+[
+"CRITICAL",
+"esx02",
+"CL1",
+"DC1",
+"connected",
+"no",
+"primary",
+"green",
+"10%",
+"95%",
+40.5,
+"?",
+"8.0.3 (24022510)",
+0
+],
+[
+"INFO",
+"esx03",
+"CL1",
+"DC1",
+"connected",
+"yes",
+"not configured",
+"green",
+"10%",
+"38%",
+40.5,
+"?",
+"8.0.3 (24022510)",
+0
+],
+[
+"CRITICAL",
+"esx04",
+"CL2",
+"DC1",
+"connected",
+"no",
+"-",
+"1 red, 1 yellow",
+"10%",
+"38%",
+40.5,
+"?",
+"8.0.3 (24022510)",
+0
+],
+[
+"CRITICAL",
+"esx05",
+"CL2",
+"DC1",
+"not responding",
+"no",
+"-",
+"-",
+"-",
+"-",
+"-",
+"-",
+"8.0.3 (24022510)",
+0
+],
+[
+"OK",
+"esx06",
+"CL3",
+"DC2",
+"connected",
+"no",
+"primary",
+"green",
+"10%",
+"38%",
+40.5,
+"?",
+"8.0.3 (24022510)",
+0
+],
+[
+"OK",
+"esx07",
+"CL4",
+"DC2",
+"connected",
+"no",
+"-",
+"green",
+"10%",
+"38%",
+40.5,
+"?",
+"8.0.3 (24022510)",
+0
+],
+[
+"WARNING",
+"esx08",
+"(standalone)",
+"DC2",
+"connected",
+"no",
+"-",
+"green",
+"10%",
+"38%",
+40.5,
+"?",
+"8.0.3 (24022510)",
+1
+]
+],
+"status": "critical",
+"text": "Every host, by datacenter and cluster. Hardware: the sensors and hardware status that are not green. Clock: the host's clock against vCenter's (+ ahead, - behind; ? = vCenter would not say) - the host writes its own logs by it.",
+"title": "Hosts"
+},
+{
+"cell_status": [
+[
+"ok",
+"",
+"",
+""
+]
+],
+"columns": [
+"Status",
+"vCenter",
+"Version",
+"Alarms on vCenter itself"
+],
+"row_status": [
+""
+],
+"rows": [
+[
+"OK",
+"vc01.example.mil",
+"VMware vCenter Server 8.0.3",
+0
+]
+],
+"title": "vCenter"
+}
+],
+"status": "critical",
+"subtitle": "vCenter vc01.example.mil - every datacenter, cluster and host - read 2026-10-13 06:00:00 UTC",
+"summary": [
+{
+"label": "Datacenters",
+"status": "critical",
+"value": 2
+},
+{
+"label": "Clusters",
+"status": "critical",
+"value": 4
+},
+{
+"label": "Hosts",
+"status": "critical",
+"value": 8
+},
+{
+"label": "Hosts not connected",
+"status": "critical",
+"value": 1
+},
+{
+"label": "HA problems",
+"status": "critical",
+"value": 4
+},
+{
+"label": "DRS problems",
+"status": "critical",
+"value": 3
+},
+{
+"label": "Hosts with hardware faults",
+"status": "critical",
+"value": 1
+},
+{
+"label": "Triggered alarms",
+"status": "warning",
+"value": 1
+}
+],
+"title": "VMware health report: 5 critical, 8 warning(s) - 2 datacenter(s), 4 cluster(s), 8 host(s)"
+}

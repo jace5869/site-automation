@@ -1,0 +1,107 @@
+{
+"sections": [
+{
+"columns": [
+"VM",
+"Kind",
+"ESXi host",
+"Datastores",
+"GB on disk",
+"Power",
+"Connection",
+"Created",
+"Golden image VM / snapshot",
+"Used by",
+"Verdict"
+],
+"row_status": [
+"",
+"",
+""
+],
+"rows": [
+[
+"cp-parent-001",
+"parent",
+"esx02.example.mil",
+"DS01",
+"40.0",
+"off",
+"connected",
+"2026-10-01",
+"W11-Gold / v2026-10/v2026-11",
+"pool IC-Win11",
+"in use (matched by ID)"
+],
+[
+"cp-replica-001",
+"replica",
+"esx01.example.mil",
+"DS01",
+"40.0",
+"off",
+"connected",
+"2026-10-01",
+"W11-Gold / v2026-10/v2026-11",
+"pool IC-Win11",
+"in use (matched by ID)"
+],
+[
+"cp-template-001",
+"template",
+"esx01.example.mil",
+"DS01",
+"40.0",
+"off",
+"connected",
+"2026-10-01",
+"W11-Gold / v2026-10/v2026-11",
+"pool IC-Win11",
+"in use (matched by ID)"
+]
+],
+"status": "ok",
+"text": "A current pool, farm or desktop uses these: leave them.",
+"title": "In use"
+},
+{
+"lines": [
+"cp-parent-001 is on host esx02.example.mil, which is in maintenance mode: a cp-parent VM can keep a host from entering maintenance mode (Broadcom KB 322191)",
+"Golden image read from the replica or template that names them: cp-template-001, cp-parent-001."
+],
+"title": "Notes"
+}
+],
+"status": "ok",
+"subtitle": "3 internal VM(s) in 1 vCenter(s), 120.0 GB on disk",
+"summary": [
+{
+"label": "Internal VMs",
+"value": 3
+},
+{
+"label": "In use",
+"value": 3
+},
+{
+"label": "Probably left over",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Inaccessible or orphaned",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Not decided",
+"status": "ok",
+"value": 0
+},
+{
+"label": "GB to reclaim",
+"value": 0
+}
+],
+"title": "Horizon internal VMs: none left over"
+}

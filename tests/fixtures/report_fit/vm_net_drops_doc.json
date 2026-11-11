@@ -1,0 +1,62 @@
+{
+"sections": [
+{
+"title": "Needs attention"
+},
+{
+"title": "Single sign-on and OCSP"
+},
+{
+"columns": [
+"Status",
+"Host / VM",
+"Runs on",
+"Datacenter",
+"Hours",
+"Dropped in",
+"Dropped out",
+"Errors in",
+"Errors out",
+"By NIC (in/out)"
+],
+"row_status": [
+"warning",
+"ok"
+],
+"rows": [
+[
+"WARNING",
+"host esx01",
+"CL1",
+"DC1",
+"24",
+4800,
+0,
+0,
+0,
+"vmnic0 4800/0 dropped, 0/0 errors"
+],
+[
+"OK",
+"VM app01",
+"esx01",
+"DC1",
+"24",
+10,
+0,
+0,
+0,
+"-"
+]
+],
+"status": "warning",
+"text": "Packets the ESXi hosts' physical NICs and the VMs' virtual NICs dropped, and network errors, from vCenter: 4 host(s) and 40 powered-on VM(s) read; only those with a drop or an error are listed. A warning from 100 dropped packets an hour, or 10 errors an hour. vc01.example.mil: the past 24 hours of vCenter's statistics (level 2).",
+"title": "Network drops and errors"
+},
+{
+"title": "Datacenters"
+}
+],
+"status": "warning",
+"title": "VMware health report: 1 warning(s) - 1 datacenter(s) - network: 1 warning(s)"
+}

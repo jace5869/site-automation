@@ -1,0 +1,652 @@
+{
+"sections": [
+{
+"boxes": [
+{
+"label": "Remove now",
+"status": "critical",
+"value": 1
+},
+{
+"label": "Remove next",
+"status": "warning",
+"value": 6
+},
+{
+"label": "Then update",
+"status": "warning",
+"value": 4
+},
+{
+"label": "Listed only",
+"status": "info",
+"value": 1
+}
+],
+"cell_status": [
+[
+"critical",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Host",
+"Where",
+"What",
+"Certificate / program",
+"What to do"
+],
+"row_status": [
+"critical"
+],
+"rows": [
+[
+"web01.example.mil",
+"/opt/app/certs/bundle.pem",
+"certificate file",
+"EM DV TLS CA - G3B (the same key, as EM DV TLS CA - G3B)",
+"take it out of the file (check_trust_remove does this); an application's own bundle: update the application"
+]
+],
+"status": "critical",
+"text": "1 store on 1 host. These stores hold one of the compromised intermediates: anything using them accepts certificates anyone can sign. Take the certificate out today (check_trust_remove: true does it, Check mode first).",
+"title": "1. Remove now - a compromised CA is trusted",
+"top": true
+},
+{
+"cell_status": [
+[
+"warning",
+"",
+"",
+"",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Host",
+"Where",
+"What",
+"Certificate / program",
+"What to do"
+],
+"row_status": [
+"warning",
+"warning",
+"warning",
+"warning",
+"warning",
+"warning"
+],
+"rows": [
+[
+"vc01.example.mil",
+"vc01.example.mil",
+"vCenter trusted roots",
+"emSign ECC Root CA - G3",
+"delete the chain from vCenter's trusted roots (check_trust_remove on the VMware report)"
+],
+[
+"web01.example.mil",
+"/etc/pki/ca-trust/extracted/openssl/ca-bundle.trust.crt",
+"system CA bundle",
+"emSign ECC Root CA - G3",
+"blocklist it and run update-ca-trust (check_trust_remove does this), or update ca-certificates"
+],
+[
+"web01.example.mil",
+"/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
+"system CA bundle",
+"emSign ECC Root CA - G3",
+"blocklist it and run update-ca-trust (check_trust_remove does this), or update ca-certificates"
+],
+[
+"web01.example.mil",
+"/opt/app/venv/lib/python3.12/site-packages/certifi/cacert.pem",
+"Python certifi 2025.8.3",
+"emSign ECC Root CA - G3",
+"pip install -U certifi in /opt/app/venv (check_trust_remove cuts the block out)"
+],
+[
+"web01.example.mil",
+"/opt/app/venv/lib/python3.12/site-packages/pip/_vendor/certifi/cacert.pem",
+"Python certifi 2025.1.31",
+"emSign ECC Root CA - G3",
+"pip install -U certifi in /opt/app/venv (check_trust_remove cuts the block out)"
+],
+[
+"web01.example.mil",
+"p11-kit trust (the live anchors)",
+"p11-kit trust",
+"emSign ECC Root CA - G3",
+"follows the system trust: clears with the blocklist"
+]
+],
+"status": "warning",
+"text": "The root the browsers dropped: it cross-signs the issuer of the compromised intermediates, so a client that still trusts it can be led to accept them. Blocklist or update at normal patching pace (check_trust_remove: true does it).",
+"title": "2. Remove next - a distrusted root is still trusted",
+"top": true
+},
+{
+"cell_status": [
+[
+"warning",
+"",
+"",
+"",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Host",
+"Where",
+"What",
+"Certificate / program",
+"What to do"
+],
+"row_status": [
+"warning",
+"warning",
+"warning",
+"warning"
+],
+"rows": [
+[
+"web01.example.mil",
+"/usr/bin/dockerd",
+"Go program 1.24.6",
+"github.com/docker/docker/cmd/dockerd",
+"rebuild it with a fixed Go (1.27.3 / 1.26.10): its line got no fix"
+],
+[
+"web01.example.mil",
+"/usr/bin/node",
+"Node.js 20.9.0",
+"",
+"update Node, or run it with --use-openssl-ca"
+],
+[
+"web01.example.mil",
+"/usr/local/bin/tool",
+"Go program 1.27.1",
+"github.com/example/tool",
+"rebuild it with Go 1.27.3 or later"
+],
+[
+"web01.example.mil",
+"package nss",
+"NSS 3.126.0-1",
+"",
+"update the nss package to 3.131.1"
+]
+],
+"status": "warning",
+"text": "Nothing to remove here: the roots are built into the program or the image. Update or rebuild; they stay in this list until then.",
+"title": "3. Then update - built-in roots and programs with their own trust logic",
+"top": true
+},
+{
+"cell_status": [
+[
+"info",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Host",
+"Where",
+"What",
+"Certificate / program",
+"What to do"
+],
+"row_status": [
+"info"
+],
+"rows": [
+[
+"web01.example.mil",
+"/opt/app/certs/sectigo.pem",
+"certificate file",
+"AAA Certificate Services",
+"take it out of the file (check_trust_remove does this); an application's own bundle: update the application"
+]
+],
+"status": "ok",
+"text": "Notice-level: Sectigo's AAA Certificate Services cross-signed the eight intermediates, but it is not compromised, is in every trust store and most public certificates chain to it. No finding, no ticket. check_trust_severity: {\"AAA Certificate Services\": warning} when you decide to blocklist it.",
+"title": "4. Listed only - your decision",
+"top": true
+},
+{
+"cell_status": [
+[
+"critical",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"warning",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"warning",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"warning",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"warning",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"warning",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"warning",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"warning",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"warning",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"warning",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"info",
+"",
+"",
+"",
+"",
+"info"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok"
+]
+],
+"columns": [
+"Host",
+"Where",
+"What",
+"Version",
+"Holds",
+"Status"
+],
+"row_status": [
+"critical",
+"warning",
+"warning",
+"warning",
+"warning",
+"warning",
+"warning",
+"warning",
+"warning",
+"warning",
+"info",
+"ok",
+"ok",
+"ok",
+"ok"
+],
+"rows": [
+[
+"web01.example.mil",
+"/opt/app/certs/bundle.pem",
+"certificate file",
+"",
+"3 certificates: EM DV TLS CA - G3B (the same key, as EM DV TLS CA - G3B)",
+"COMPROMISED CA TRUSTED"
+],
+[
+"web01.example.mil",
+"/etc/pki/ca-trust/extracted/openssl/ca-bundle.trust.crt",
+"system CA bundle",
+"",
+"146 certificates: emSign ECC Root CA - G3, AAA Certificate Services [notice]",
+"distrusted root still trusted"
+],
+[
+"web01.example.mil",
+"/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
+"system CA bundle",
+"",
+"146 certificates: emSign ECC Root CA - G3, AAA Certificate Services [notice]",
+"distrusted root still trusted"
+],
+[
+"web01.example.mil",
+"/opt/app/venv/lib/python3.12/site-packages/certifi/cacert.pem",
+"Python certifi",
+"2025.8.3",
+"150 certificates: emSign ECC Root CA - G3",
+"distrusted root still trusted"
+],
+[
+"web01.example.mil",
+"/opt/app/venv/lib/python3.12/site-packages/pip/_vendor/certifi/cacert.pem",
+"Python certifi",
+"2025.1.31",
+"150 certificates: emSign ECC Root CA - G3",
+"distrusted root still trusted"
+],
+[
+"web01.example.mil",
+"/usr/bin/dockerd",
+"Go program",
+"1.24.6",
+"github.com/docker/docker/cmd/dockerd",
+"older than every fixed line"
+],
+[
+"web01.example.mil",
+"/usr/bin/node",
+"Node.js",
+"20.9.0",
+"",
+"older than every fixed line"
+],
+[
+"web01.example.mil",
+"/usr/local/bin/tool",
+"Go program",
+"1.27.1",
+"fixed: 1.27.3",
+"BELOW the fixed version"
+],
+[
+"web01.example.mil",
+"p11-kit trust (the live anchors)",
+"p11-kit trust",
+"",
+"146 certificates: emSign ECC Root CA - G3",
+"distrusted root still trusted"
+],
+[
+"web01.example.mil",
+"package nss",
+"NSS",
+"3.126.0-1",
+"fixed: 3.131.1",
+"BELOW the fixed version"
+],
+[
+"web01.example.mil",
+"/opt/app/certs/sectigo.pem",
+"certificate file",
+"",
+"1 certificate: AAA Certificate Services [notice]",
+"notice"
+],
+[
+"web01.example.mil",
+"/usr/lib/jvm/java-17/lib/security/cacerts",
+"Java cacerts",
+"17.0.9",
+"140 certificates",
+"ok"
+],
+[
+"web01.example.mil",
+"/usr/local/bin/fine",
+"Go program",
+"1.27.3",
+"fixed: 1.27.3",
+"ok"
+],
+[
+"web01.example.mil",
+"container web (root)",
+"podman container",
+"registry/web:1",
+"140 certificates: blocked: emSign ECC Root CA - G3",
+"blocked"
+],
+[
+"web01.example.mil",
+"package ca-certificates",
+"ca-certificates package",
+"2025.2.80-7",
+"",
+"version not compared"
+]
+],
+"status": "critical",
+"text": "The proof of what was looked at. Red = holds a compromised CA, amber = holds a root that was dropped (or a program below the version that fixed it), blue = a notice-level certificate (listed only), green = nothing of the list in it, or blocked. The count is how many certificates the store holds.",
+"title": "Everything read - every trust store and program, worst first"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"",
+"warning"
+]
+],
+"columns": [
+"vCenter",
+"Name",
+"What",
+"Holds",
+"Status"
+],
+"row_status": [
+"warning",
+"ok",
+"warning",
+"warning"
+],
+"rows": [
+[
+"vc01.example.mil",
+"vc01.example.mil",
+"vCenter trusted roots",
+"12 certificates: emSign ECC Root CA - G3",
+"distrusted root still trusted"
+],
+[
+"vc01.example.mil",
+"esx01.example.mil",
+"ESXi trusted CAs",
+"3 certificates",
+"ok"
+],
+[
+"vc01.example.mil",
+"esx02.example.mil",
+"ESXi trusted CAs",
+"not read: not connected (disconnected)",
+"not read"
+],
+[
+"vc02.example.mil",
+"",
+"vCenter",
+"not read: refused the login",
+"not read"
+]
+],
+"status": "warning",
+"text": "vCenter: its trusted root store (Administration > Certificates > Trusted Root Certificates: what vCenter and the hosts it manages trust for outbound TLS). ESXi: the CA certificates each host trusts. The count is how many certificates the store holds.",
+"title": "VMware - everything read: vCenter's trusted roots and each ESXi host's trusted CAs"
+},
+{
+"columns": [
+"Host",
+"Where",
+"Why"
+],
+"rows": [
+[
+"web01.example.mil",
+"/opt/x/cacerts",
+"keytool could not list it"
+]
+],
+"text": "A keystore keytool could not open, a container without a shell, a search that took longer than check_trust_timeout.",
+"title": "Not read"
+}
+],
+"status": "info",
+"title": "trust_report_sections (its tables, inside a findings report)"
+}

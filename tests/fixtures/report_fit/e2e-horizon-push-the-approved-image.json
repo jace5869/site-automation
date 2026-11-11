@@ -1,0 +1,31 @@
+{
+"footer": "The approved plan of job  (2026-11-11 09:35 UTC); each pool was read again first.",
+"sections": [
+{
+"lines": [
+"Nothing."
+],
+"title": "Done"
+},
+{
+"columns": [
+"Pool",
+"Why"
+],
+"rows": [
+[
+"IC-Win11",
+"a push is already scheduled or running on it (pending image pending)"
+],
+[
+"IC-Finance",
+"a push is already scheduled or running on it (pending image pending)"
+]
+],
+"title": "Left alone since the approval"
+}
+],
+"status": "critical",
+"subtitle": "W11-Gold / /v2026-10/v2026-11, starting 2026-11-11 09:36 UTC, WAIT_FOR_LOGOFF",
+"title": "Horizon image push: nothing scheduled"
+}

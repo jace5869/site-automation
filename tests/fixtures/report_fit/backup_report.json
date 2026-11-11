@@ -1,0 +1,70 @@
+{
+"footer": "Read only from the devices.",
+"sections": [
+{
+"lines": [
+"Kept in: git repo",
+"Commit: abc"
+],
+"title": "Where"
+},
+{
+"columns": [
+"Device",
+"Platform",
+"Status",
+"Lines +/-",
+"File"
+],
+"rows": [
+[
+"new01",
+"ios",
+"NEW",
+"",
+"new01.cfg"
+],
+[
+"rtr02",
+"ios",
+"CHANGED",
+"+1 / -0",
+"rtr02.cfg"
+],
+[
+"sw09",
+"ios",
+"FAILED",
+"",
+""
+]
+],
+"title": "Devices"
+},
+{
+"columns": [
+"Device",
+"Why"
+],
+"rows": [
+[
+"sw09",
+"timeout"
+]
+],
+"text": "Their last good backup is kept as it was.",
+"title": "Not backed up"
+},
+{
+"lines": [
+"@@ -1 +1,2 @@",
+" hostname rtr02",
+"+snmp-server community <hidden> RO"
+],
+"text": "Secret values are shown as <hidden> here; the backup keeps them.",
+"title": "What changed on rtr02"
+}
+],
+"status": "critical",
+"title": "Network config backup: 1 changed, 1 new, 0 unchanged, 1 failed"
+}

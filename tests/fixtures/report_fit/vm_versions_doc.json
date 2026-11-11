@@ -1,0 +1,267 @@
+{
+"sections": [
+{
+"columns": [
+"vCenter",
+"vCenter version",
+"ESXi host",
+"Cluster",
+"ESXi version"
+],
+"row_status": [
+"warning"
+],
+"rows": [
+[
+"vc02",
+"8.0.2 build 22617221",
+"esx10.example.mil",
+"DMZ-CL01",
+"8.0.3 build 24022510"
+]
+],
+"status": "warning",
+"text": "vCenter must be at the version of the hosts it manages or newer: update vCenter before these hosts' next update, and check VMware's interoperability matrix for the builds.",
+"title": "ESXi newer than its vCenter"
+},
+{
+"columns": [
+"vCenter",
+"Version",
+"Build",
+"Product",
+"ESXi hosts",
+"ESXi versions (hosts)"
+],
+"rows": [
+[
+"vc01.example.mil",
+"8.0.3",
+"24322831",
+"VMware vCenter Server 8.0.3 build-24322831",
+3,
+"8.0.3 (3)"
+],
+[
+"vc02.example.mil",
+"8.0.2",
+"22617221",
+"VMware vCenter Server 8.0.2 build-22617221",
+3,
+"8.0.3 (1), 8.0.2 (1)"
+]
+],
+"title": "vCenters"
+},
+{
+"columns": [
+"Version",
+"Build",
+"Hosts",
+"Product",
+"vCenters",
+"Clusters"
+],
+"rows": [
+[
+"8.0.3",
+"24280767",
+1,
+"VMware ESXi 8.0.3 build-24280767",
+"vc01",
+"PROD-CL01"
+],
+[
+"8.0.3",
+"24022510",
+3,
+"VMware ESXi 8.0.3 build-24022510",
+"vc01, vc02",
+"DMZ-CL01, PROD-CL01"
+],
+[
+"8.0.2",
+"22380479",
+1,
+"VMware ESXi 8.0.2 build-22380479",
+"vc02",
+"DMZ-CL01"
+]
+],
+"text": "Each version and build, the newest first, and how many hosts run it.",
+"title": "ESXi builds in use"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Datacenter",
+"Cluster",
+"ESXi host",
+"Version",
+"Build",
+"State"
+],
+"row_status": [
+"",
+"",
+""
+],
+"rows": [
+[
+"DC1",
+"PROD-CL01",
+"esx01.example.mil",
+"8.0.3",
+"24022510",
+"connected"
+],
+[
+"DC1",
+"PROD-CL01",
+"esx02.example.mil",
+"8.0.3",
+"24022510",
+"connected"
+],
+[
+"DC1",
+"PROD-CL01",
+"esx03.example.mil",
+"8.0.3",
+"24280767",
+"connected"
+]
+],
+"text": "Clusters whose hosts run more than one build (an update in progress, or a host left behind): PROD-CL01: 2 builds - 8.0.3 build 24280767 (1), 8.0.3 build 24022510 (2).",
+"title": "vc01 - ESXi hosts"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"warning",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Datacenter",
+"Cluster",
+"ESXi host",
+"Version",
+"Build",
+"State"
+],
+"row_status": [
+"",
+"warning",
+""
+],
+"rows": [
+[
+"DC2",
+"(standalone)",
+"esx12.example.mil",
+"-",
+"-",
+"not responding"
+],
+[
+"DC2",
+"DMZ-CL01",
+"esx10.example.mil",
+"8.0.3",
+"24022510",
+"connected"
+],
+[
+"DC2",
+"DMZ-CL01",
+"esx11.example.mil",
+"8.0.2",
+"22380479",
+"connected"
+]
+],
+"text": "Clusters whose hosts run more than one build (an update in progress, or a host left behind): DMZ-CL01: 2 builds - 8.0.3 build 24022510 (1), 8.0.2 build 22380479 (1).",
+"title": "vc02 - ESXi hosts"
+}
+],
+"status": "warning",
+"subtitle": "The version and build of each vCenter and every ESXi host, as vCenter reports them - vc01, vc02",
+"summary": [
+{
+"label": "vCenters",
+"value": 2
+},
+{
+"label": "ESXi hosts",
+"value": 6
+},
+{
+"label": "ESXi versions",
+"value": 2
+},
+{
+"label": "ESXi builds",
+"value": 3
+},
+{
+"label": "Clusters on more than one build",
+"value": 2
+},
+{
+"label": "ESXi newer than its vCenter",
+"status": "warning",
+"value": 1
+},
+{
+"label": "Version not known (not connected)",
+"value": 1
+}
+],
+"title": "VMware versions: 2 vCenters, 6 ESXi hosts on 3 builds - 1 newer than their vCenter"
+}
