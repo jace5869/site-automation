@@ -670,7 +670,7 @@ tables and what is never stored: [REPORT_DATABASE.md](REPORT_DATABASE.md).
 | `servicenow_insights_months` | 6 | the last N calendar months, up to now (a run on 1 November with until 31 October: 1 May - 31 October) |
 | `servicenow_insights_days` | 0 | > 0: the last N days instead |
 | `servicenow_insights_until` | "" | the last day (through its end), e.g. `2026-10-31`; "" = now |
-| `servicenow_insights_compare` | true | the window before (the same months, or days) is read too, for the ▲ ▼ and the tiles' changes |
+| `servicenow_insights_compare` | true | the window before (the same months, or days) is read too, for the up and down arrows and the tiles' changes |
 | `servicenow_insights_max_records` | 20000 | at most this many records per table, the newest kept (see below). 20000 needs about 0.4 GB in the EE; 100000 about 1.5 GB and 4 minutes more |
 
 Weekly charts use whole weeks (Monday to Sunday, in `report_time_zone`).
@@ -680,13 +680,17 @@ Weekly charts use whole weeks (Monday to Sunday, in `report_time_zone`).
 A table over `servicenow_insights_max_records` keeps its newest records. Then the job reads the older ones that still
 count in the window: open now, or closed or resolved in it. So the window is whole first.
 
-- **Only the window before is cut.** The figures are whole. There is no compare this run: no ▲ ▼, and every page says
-  *No compare this run* at the top.
+- **Only the window before is cut.** The figures are whole. There is no compare this run: no up or down arrows, and
+  every page says *No compare this run* at the top.
 - **The window itself is cut** (that second read hit the cap too). Every page and the email start with *Records cut:
-  some figures are incomplete*, for example *incident: only the newest 40,000 of 52,310 read - figures before 2026-06-03
-  are incomplete; raise servicenow_insights_max_records*. The job ends with a WARNING line.
-- The report database never gets an incomplete month: the window's run and the months before the cut are not written.
-  The job's *Report database* line names them.
+  some figures are incomplete*, for example *incident: only the newest 40,000 of 52,310 read, back to 2026-06-03.
+  Figures in this report are incomplete: raise servicenow_insights_max_records.* The job ends with a WARNING line, and
+  there is no compare.
+- The date is where the read stopped. A ticket opened before it is missing from every month it counts in, a later one
+  too (resolved in August, open at the end).
+- So a cut window writes nothing to the report database: no run, no month. The rows already there stay as they were.
+  The job's *Report database* line says so.
+- The cap counts exactly: a table of exactly `servicenow_insights_max_records` records is not cut.
 
 What to raise: the job's line names the table and how many there were. Set `servicenow_insights_max_records` above that
 number, in the template's Variables. Measured on the test site (6 tables, 100,000 incidents in 13 months):

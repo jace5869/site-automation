@@ -322,8 +322,9 @@ def table_query(table, group_ids, group_names, since, until, margin_days=1):
 
 
 def older_query(table, group_ids, group_names, since_w, cut, margin_days=1):
-    """1.16.0: after a capped read (newest first, cut at the oldest opened_at kept), the records opened before the cut
-    that still count in the window itself: still open, or closed / resolved in the window."""
+    """1.16.0: after a capped read (newest first, cut at the oldest opened_at kept), the records opened up to the cut
+    that still count in the window itself: still open, or closed / resolved in the window (the first read's ones again
+    are dropped by their sys_id)."""
     m = datetime.timedelta(days=margin_days)
     s = (since_w - m).strftime("%Y-%m-%d %H:%M:%S")
     q = []
@@ -335,7 +336,7 @@ def older_query(table, group_ids, group_names, since_w, cut, margin_days=1):
     if table in RESOLVES:
         when += "^ORresolved_at>=" + s
     q.append(when)
-    q.append("opened_at<" + cut.strftime("%Y-%m-%d %H:%M:%S"))
+    q.append("opened_at<=" + cut.strftime("%Y-%m-%d %H:%M:%S"))       # <=: the records opened in the cut's own second too
     return "^".join(q) + "^ORDERBYDESCopened_at"
 
 
@@ -349,12 +350,12 @@ def count_records(api, table, query):
 
 
 def read_table(api, table, query, max_records=20000, page=PAGE):
+    """At most max_records records -> (records, more). One record more than the cap is asked for (1.16.0), so a table of
+    exactly max_records is not said to be cut."""
     fields = COMMON + TABLE_FIELDS.get(table, [])
-    out, offset = [], 0
-    while True:
-        limit = min(page, max_records - len(out))
-        if limit <= 0:
-            return out, True
+    out, offset, want = [], 0, int(max_records) + 1
+    while len(out) < want:
+        limit = min(page, want - len(out))
         r = api.get("api/now/table/%s" % table, {"sysparm_query": query, "sysparm_fields": ",".join(fields), "sysparm_display_value": "all",
                                                  "sysparm_exclude_reference_link": "true", "sysparm_limit": limit, "sysparm_offset": offset})
         rows = r.get("result") if isinstance(r, dict) else None
@@ -362,8 +363,9 @@ def read_table(api, table, query, max_records=20000, page=PAGE):
             raise SnError("GET api/now/table/%s: no result list in the answer" % table)
         out += rows
         if len(rows) < limit:
-            return out, False
+            break
         offset += len(rows)
+    return out[:int(max_records)], len(out) > int(max_records)
 
 
 def lookup_groups(api, names):
@@ -829,7 +831,8 @@ def read_all(api, groups, tables, win, max_records=20000, audit=True, handoff_mi
                 cut = oldest(rows)
                 entry.update(cut=cut.strftime("%Y-%m-%d %H:%M:%S"), total=count_records(api, t, query))
                 old_rows, old_more = read_table(api, t, older_query(t, gids, gnames, since_w, cut), max_records)
-                rows += old_rows
+                had = set(_vd(r_, "sys_id")[0] for r_ in rows)
+                rows += [r_ for r_ in old_rows if _vd(r_, "sys_id")[0] not in had]      # the cut's own second: read twice
                 entry["older"] = len(old_rows)
                 if old_more:
                     entry.update(window_cut=True, cut=oldest(old_rows).strftime("%Y-%m-%d %H:%M:%S"))
@@ -847,10 +850,12 @@ def read_all(api, groups, tables, win, max_records=20000, audit=True, handoff_mi
             entry["kept"] += 1
         res["tables"].append(entry)
     res["items"] = items
-    # 1.16.0: a cut in the window before only: no compare (the deltas dropped, said); a cut in the window: said on every page
+    # 1.16.0: any cut drops the compare (the deltas, said). A cut in the window before only: the window's figures whole; a cut
+    # in the window itself: said on every page, nothing written to the report database
     res["cut"] = [x for x in res["tables"] if x.get("window_cut")]
-    if win.get("compare") and any(x.get("more") for x in res["tables"]) and not res["cut"]:
-        res["compare_cut"] = [x["table"] for x in res["tables"] if x.get("more")]
+    if win.get("compare") and any(x.get("more") for x in res["tables"]):
+        if not res["cut"]:
+            res["compare_cut"] = [x["table"] for x in res["tables"] if x.get("more")]
         res["window"] = win = dict(win, prev_since=win["since"], compare=False, prev_label="")
     res["ok"] = any(not x["error"] for x in res["tables"])
     if not res["ok"]:

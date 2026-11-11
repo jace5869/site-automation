@@ -125,7 +125,7 @@ last() {
 }
 
 NOWB='"servicenow_insights_now": "2026-11-01T06:00:00", "servicenow_insights_hierarchy_source": "names", "servicenow_insights_act": false'
-mkdir -p "$work/w0" "$work/w1" "$work/w2" "$work/w3" "$work/wb"
+mkdir -p "$work/w0" "$work/w1" "$work/w2" "$work/w3" "$work/wb" "$work/wcut"
 # rows SQL: one value
 one() { q report_reader "$rpw" "$1" | "$py" -c "import json,sys; print(json.load(sys.stdin)[0][0])"; }
 
@@ -252,17 +252,19 @@ runpy.run_path('$repo/roles/servicenow_insights/library/site_insights_db.py', ru
 case "$out" in *"the login needs the cryptography library"*) ok "without cryptography, a cold cache: the login says it needs cryptography" ;;
     *) bad "without cryptography: $out" ;; esac
 
-# ---- 11. records cut (1.16.0): servicenow_insights_max_records cuts the window itself - the incomplete months and the
-# window's run never written, said in the last line; the complete months after the cut written ----
+# ---- 11. records cut (1.16.0): servicenow_insights_max_records cuts the window itself - nothing of the run written (a ticket
+# opened before the cut is missing from every later month too: the tester's August), the rows already there untouched ----
 since=$(one "SELECT UTC_TIMESTAMP()")      # a month replaced keeps its run_id (UPDATE): what this run wrote, by written_at
-DB_ENV="$DB" run "max_records 250: the window cut - its run and the months before the cut not written, said" ok \
+held=$(q report_reader "$rpw" "SELECT r.month, f.metric, f.value FROM insights_figure f JOIN insights_run r ON r.run_id = f.run_id WHERE r.period = 'month' AND f.node = 'all' AND f.variant = '' ORDER BY r.month, f.metric, f.label")
+DB_ENV="$DB" run "max_records 250: the window cut - nothing of the run written, said" ok \
     "{$NOW, \"servicenow_insights_db\": true, \"servicenow_insights_max_records\": 250, \"report_web_dest\": \"$work/wcut\"}" \
     'WARNING - records cut, some figures are incomplete:'
-last "  ... the last line: not written, the records cut" "NOT written, the records cut (servicenow_insights_max_records): the window, 2026-05"
+last "  ... the last line: not written, the records cut" "NOT written - the records were cut (servicenow_insights_max_records): an incomplete run is never written"
 new=$(q report_reader "$rpw" "SELECT period, month FROM insights_run WHERE written_at >= '$since' ORDER BY month")
-case "$new" in *'"6m"'*|*'"2026-05"'*) bad "  ... a cut month or the window written: $new" ;;
-    *'"2026-10"'*) ok "  ... only the complete months after the cut written: $new" ;;
-    *) bad "  ... nothing written after the cut: $new" ;; esac
+[ "$new" = "[]" ] && ok "  ... no run, no month written" || bad "  ... written after a window cut: $new"
+[ "$(q report_reader "$rpw" "SELECT r.month, f.metric, f.value FROM insights_figure f JOIN insights_run r ON r.run_id = f.run_id WHERE r.period = 'month' AND f.node = 'all' AND f.variant = '' ORDER BY r.month, f.metric, f.label")" = "$held" ] \
+    && ok "  ... the complete months already there untouched, figure for figure" || bad "  ... the months already there changed"
+has "  ... the page says it" "$(page "$work/wcut")" 'Not written this run: the records were cut (servicenow_insights_max_records). An incomplete run is never written.'
 
 # ---- 12. the survey figures (1.16.0): survey_avg with its scale; the doc's query for rows written before runs as written ----
 sq=$("$py" -c "import re,sys; d=open(sys.argv[1]).read(); print(re.search(r'To see those months:\n\n\x60\x60\x60sql\n(.*?)\n\x60\x60\x60', d, re.S).group(1))" "$repo/docs/REPORT_DATABASE.md")

@@ -38,8 +38,8 @@ to the host and run it as root, with the AAP execution nodes' addresses:
 AAP_SOURCES="192.0.2.21 192.0.2.22" bash report-db-setup.sh
 ```
 
-It is safe to run again: each step checks first. What was tested: an earlier version ran once on a real host; this one
-passes `bash -n` and ShellCheck (`tests/test_report_db_setup.py`). Every name below is the one it uses:
+It is safe to run again: each step checks first. What was tested: the 1.16.0 tester ran it on a test host, as root and
+rootless, twice; CI runs `bash -n` and ShellCheck (`tests/test_report_db_setup.py`). Every name below is the one it uses:
 
 | What | Name |
 |---|---|
@@ -153,8 +153,8 @@ without the window before. Working out the months is quick. Measured on the test
 
 The job prints each month as it is written, so you can follow it.
 
-A table cut at `servicenow_insights_max_records` keeps its newest records (1.16.0). The months before the cut are
-incomplete, so they are not written; the job says which. Raise the cap for the backfill launch and run it again.
+A table cut inside the window at `servicenow_insights_max_records` (1.16.0): every month can be short, so the backfill
+writes nothing, and says so. Raise the cap for the backfill launch and run it again.
 
 ## Is it writing?
 
@@ -175,9 +175,8 @@ When nothing was written, the same line says why:
 - `NOT written - not reached or refused: ...` (down, the firewall, a wrong password);
 - `NOT written - refused: ...` (the write itself failed, e.g. a grant missing);
 - `NOT written - Check mode`;
-- `NOT written - the records were cut (servicenow_insights_max_records): ...` (1.16.0: every month incomplete). When only
-  some are, the line says `written - ...; NOT written, the records cut (servicenow_insights_max_records): the window,
-  2026-05`.
+- `NOT written - the records were cut (servicenow_insights_max_records): an incomplete run is never written` (1.16.0: the
+  window itself was cut, so every month can be short; the rows already there stay as they were).
 
 A backfill ends with the same line. The pages say it too, under *How this was made*, without the host.
 

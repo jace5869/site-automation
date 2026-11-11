@@ -107,7 +107,12 @@ def md(text, mono_size=None):
 
     text = re.sub(r"\x00(\d+)\x00", restore, text)
     # Noto Sans has no arrow glyph (it would render blank): show menu paths as breadcrumbs.
-    return text.replace("\u2192", "\u203a")
+    text = text.replace("\u2192", "\u203a")
+    # nor the triangles, the other arrows and the box lines: drawn in Noto Sans Mono, which has them (1.16.0)
+    return re.sub("([%s]+)" % NOT_IN_SANS, r'<font name="Mono">\1</font>', text)
+
+
+NOT_IN_SANS = "\u25b2\u25bc\u25b8\u2191\u2193\u2500\u2502\u2514\u250c\u2510\u2518\u251c\u2524"
 
 
 def P(text, st="body"):

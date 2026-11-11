@@ -434,7 +434,12 @@ function init(){
 var D=document;D.documentElement.classList.add("js-on");
 D.querySelectorAll("[data-t]>title").forEach(function(t){t.remove()});
 var tip=D.getElementById("tip");
-function showTip(ev,h){tip.innerHTML=h;tip.hidden=false;var x=ev.clientX+14,y=ev.clientY+14,w=tip.offsetWidth,hh=tip.offsetHeight;if(x+w>innerWidth-8)x=ev.clientX-w-14;if(y+hh>innerHeight-8)y=ev.clientY-hh-14;tip.style.left=x+"px";tip.style.top=y+"px"}
+/* 1.16.0: no HTML sink (a Trusted Types policy allows none) - the tooltip's own few tags, <br> and <b>, made as nodes */
+function tipFill(el,h){el.textContent="";var re=/<br>|<b>|<\/b>/g,m,last=0,b=null;
+ function txt(t){t=t.replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&#x27;|&#39;/g,"'").replace(/&amp;/g,"&");if(t)(b||el).appendChild(D.createTextNode(t))}
+ while((m=re.exec(h))){txt(h.slice(last,m.index));last=re.lastIndex;if(m[0]==="<br>"){b=null;el.appendChild(D.createElement("br"))}else if(m[0]==="<b>"){b=D.createElement("b");el.appendChild(b)}else b=null}
+ txt(h.slice(last))}
+function showTip(ev,h){tipFill(tip,h);tip.hidden=false;var x=ev.clientX+14,y=ev.clientY+14,w=tip.offsetWidth,hh=tip.offsetHeight;if(x+w>innerWidth-8)x=ev.clientX-w-14;if(y+hh>innerHeight-8)y=ev.clientY-hh-14;tip.style.left=x+"px";tip.style.top=y+"px"}
 D.querySelectorAll("[data-t]").forEach(function(r){r.addEventListener("mousemove",function(ev){showTip(ev,r.getAttribute("data-t"))});r.addEventListener("mouseleave",function(){tip.hidden=true})});
 var q=D.getElementById("q"),hits=D.getElementById("hits");
 function search(){var t=q.value.trim().toLowerCase(),k=0;D.querySelectorAll("[data-search]").forEach(function(el){var m=!t||el.getAttribute("data-search").indexOf(t)>=0;el.classList.toggle("hide",!m);if(t&&m){k++;if(el.tagName==="DETAILS")el.open=true}});hits.textContent=t?(k+" match"+(k===1?"":"es")):""}
@@ -445,7 +450,7 @@ D.querySelectorAll("[data-copy]").forEach(function(b){b.addEventListener("click"
  function fb(){var t=D.createElement("textarea");t.value=text;D.body.appendChild(t);t.select();try{D.execCommand("copy");ok()}catch(e){}t.remove()}
  try{navigator.clipboard.writeText(text).then(ok,fb)}catch(e){fb()}})});
 D.querySelectorAll("th[data-sort]").forEach(function(th){th.style.cursor="pointer";th.addEventListener("click",function(){var tb=th.closest("table").tBodies[0],i=Array.prototype.indexOf.call(th.parentNode.children,th),dir=th.getAttribute("data-dir")==="desc"?"asc":"desc";
- th.parentNode.querySelectorAll("th").forEach(function(h){h.removeAttribute("data-dir");var a=h.querySelector(".ar");if(a)a.remove()});th.setAttribute("data-dir",dir);th.insertAdjacentHTML("beforeend",' <span class="ar">'+(dir==="asc"?"\u25b2":"\u25bc")+"</span>");
+ th.parentNode.querySelectorAll("th").forEach(function(h){h.removeAttribute("data-dir");var a=h.querySelector(".ar");if(a)a.remove()});th.setAttribute("data-dir",dir);var ar=D.createElement("span");ar.className="ar";ar.textContent=(dir==="asc"?" \u25b2":" \u25bc");th.appendChild(ar);
  var rows=Array.prototype.slice.call(tb.rows);function val(r){var c=r.cells[i];if(!c)return"";var v=c.getAttribute("data-v");if(v===null)v=c.textContent.trim();var f=parseFloat(String(v).replace(/,/g,""));return isNaN(f)?String(v).toLowerCase():f}
  rows.sort(function(a,b){var x=val(a),y=val(b);var r=(typeof x==="number"&&typeof y==="number")?x-y:String(x).localeCompare(String(y));return dir==="asc"?r:-r});rows.forEach(function(r){tb.appendChild(r)})})});
 D.querySelectorAll(".tab").forEach(function(b){b.addEventListener("click",function(){var id=b.getAttribute("data-tab");D.querySelectorAll(".tab").forEach(function(x){x.setAttribute("aria-selected",x===b?"true":"false")});
@@ -602,7 +607,12 @@ if(cvd&&cvt){var CV=JSON.parse(cvd.textContent),C=CV.cols,W=CV.until,LIM=CV.hop_
   if(push!==false)try{history.replaceState(null,"","#cv="+hv)}catch(e){location.hash="cv="+hv}}
  pbs.forEach(function(x){x.addEventListener("click",function(){var p=pick(x.getAttribute("data-name"));if(p){per=p;apply()}})});
  if(psel)psel.addEventListener("change",function(){var p=pick(psel.value);if(p){per=p;apply()}});
- var cvft=D.getElementById("cvft");if(cvft)cvft.addEventListener("click",function(){var r=range(cf.value,ct.value);if(r){per=r;apply()}});
+ /* 1.16.0: a from / to that can not be shown says why, beside the fields - no dialog */
+ function ftsay(t){var el=D.getElementById("cvftmsg");if(el)el.textContent=t||""}
+ var cvft=D.getElementById("cvft");if(cvft)cvft.addEventListener("click",function(){var i=kof(cf.value),j=kof(ct.value);
+  if(isNaN(i)||isNaN(j)){ftsay("Pick both dates");return}if(j<i){ftsay("From must be before To");return}
+  if(i<0||i>=MID.length||j<0){ftsay("Outside this report's window: "+iso(0)+" to "+iso(MID.length-1));return}
+  var r=range(cf.value,ct.value);if(r){ftsay("");per=r;apply()}else ftsay("Outside this report's window: "+iso(0)+" to "+iso(MID.length-1))});
  if(P0.name)pick(P0.name);
  function tick(idx){var want={};idx.forEach(function(i){want[i]=1});all.forEach(function(b){b.checked=!!want[+b.getAttribute("data-g")]});tally()}
  pres.forEach(function(x){x.addEventListener("click",function(){tick(dec(x.getAttribute("data-idx")));press(x.getAttribute("data-name"));apply()})});
@@ -2096,7 +2106,7 @@ ORG_CSS = """
 .cvplab{font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--fg-2);min-width:58px}
 .cvres .cvper button.cvpd.num{min-width:36px;padding:4px 10px;font-variant-numeric:tabular-nums;text-align:center}
 .cvpsel{display:none;font-size:13px}.cvpsel select{font:inherit;font-size:14px;padding:5px 8px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--fg);color-scheme:inherit}
-.cvleft{font-size:12px;margin:0}
+.cvleft{font-size:12px;margin:0}.cvftmsg{font-size:12px}
 @media (max-width:640px){.cvpbtn{display:none}.cvpsel{display:inline-flex;align-items:center;gap:8px}}
 .cvres .cvper button.cvpd{border-radius:999px;padding:4px 12px}
 .cvres .cvper button.cvpd[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);font-weight:700}
@@ -2229,7 +2239,7 @@ def custom_view(m, o):
         left = ('<p class="cvleft mut">%s</p>' % e(c["left_line"])) if c.get("left_line") else ""
         pbar = ('<div class="cvper js" role="group" aria-label="Period">%s<div class="cvpbtn"><div class="cvprow cvpfirst">%s</div>%s</div>'
                 '<div class="cvft"><label>From <input type="date" id="cvfrom" min="%s" max="%s"></label>'
-                '<label>to <input type="date" id="cvto" min="%s" max="%s"></label><button type="button" id="cvft">Show</button></div>%s</div>') % (
+                '<label>to <input type="date" id="cvto" min="%s" max="%s"></label><button type="button" id="cvft">Show</button><span class="mut cvftmsg" id="cvftmsg" aria-live="polite"></span></div>%s</div>') % (
             sel, "".join(btn(p_, False) for p_ in plain), rows_html,
             e(cal.get("d0", "")), e(cal.get("last", "")), e(cal.get("d0", "")), e(cal.get("last", "")), left)
     chart = ('<div class="fig cvch"><h3>Opened and resolved</h3><div class="legend"><span><i style="background:var(--s1)"></i>Opened</span>'

@@ -69,7 +69,12 @@ fi
 # ---- 3. data folder and passwords ---------------------------------------------
 say "3. Data folder and passwords"
 mkdir -p "$DATA_DIR"
-chmod 700 "$DATA_DIR"
+# once the container runs, MySQL owns the folder (rootless: as a sub-uid we may not chmod) - its mode is left as it is
+if [ "$EXISTS" = 0 ]; then
+  chmod 700 "$DATA_DIR"
+elif ! chmod 700 "$DATA_DIR" 2>/dev/null; then
+  ok "$DATA_DIR is the container's now - its mode left as it is"
+fi
 ok "$DATA_DIR"
 if [ -f "$ENV_FILE" ]; then
   ok "$ENV_FILE exists - its passwords are kept"

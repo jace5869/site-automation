@@ -445,8 +445,8 @@ check "  ... the All page: No compare this run, no banner" "$work/cut1/serviceno
 rm -f "$work"/mail/*.eml
 run "max_records 300: the window itself cut - the banner, first in the email, the job's warning" ok \
     "{$NOW, $NOACT, $MAIL, \"report_email_to\": [\"ops@example.mil\"], \"servicenow_insights_max_records\": 300, \"report_web_dest\": \"$work/cut2\"}" \
-    'WARNING - records cut, some figures are incomplete:' 'incident: only the newest 600 of ' 'figures before 2026-' \
-    'raise servicenow_insights_max_records' 'Records cut: some figures are incomplete'
+    'WARNING - records cut, some figures are incomplete:' 'incident: only the newest ' 'read, back to 2026-' \
+    'Figures in this report are incomplete: raise servicenow_insights_max_records.' 'Records cut: some figures are incomplete'
 n=$(grep -rl 'class="callout cutbar" role="alert"' "$work/cut2/servicenow-ticket-insights" --include=latest.html | wc -l)
 t=$(find "$work/cut2/servicenow-ticket-insights" -name latest.html | wc -l)
 [ "$n" -gt 1 ] && [ "$n" = "$t" ] && echo "ok   -   ... the banner on every page ($n of $t)" || { echo "FAIL - the banner on $n of $t pages"; fails=$((fails + 1)); }
@@ -456,7 +456,7 @@ from email import policy
 m = email.message_from_bytes(open(sys.argv[1], "rb").read(), policy=policy.default)
 t = m.get_body(("plain",)).get_content()
 i = t.index("Records cut: some figures are incomplete")
-assert "incident: only the newest 600 of" in t[i:i + 2000]
+assert "incident: only the newest " in t[i:i + 2000] and "Figures in this report are incomplete" in t[i:i + 2000]
 assert "Not read" not in t or t.index("Not read") > i
 assert t.index("At a glance") > i if "At a glance" in t else True
 PYM

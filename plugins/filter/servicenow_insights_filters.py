@@ -3345,14 +3345,15 @@ def act_line(model):
 
 def cut_lines(r):
     """1.16.0: a table over servicenow_insights_max_records keeps its newest records. The window cut too (the read of its
-    older records capped as well): one line a table, for the top of every page and the email."""
+    older records capped as well): one line a table, for the top of every page and the email. The date is where the read
+    stopped: a ticket opened before it is missing from every month it counts in (resolved, open, ...)."""
     out = []
     for t in (r or {}).get("tables") or []:
         if t.get("window_cut"):
-            tot = t.get("total")
-            out.append("%s: only the newest %s of %s read - figures before %s are incomplete; raise servicenow_insights_max_records" % (
-                t["table"], "{:,}".format(int(t.get("read") or 0)), "{:,}".format(int(tot)) if tot else "more",
-                str(t.get("cut") or "")[:10]))
+            tot, n_ = t.get("total"), "{:,}".format(int(t.get("read") or 0))
+            out.append("%s: only the newest %s read, back to %s%s. Figures in this report are incomplete: raise "
+                       "servicenow_insights_max_records." % (t["table"], ("%s of %s" % (n_, "{:,}".format(int(tot)))) if tot else n_,
+                                                             str(t.get("cut") or "")[:10], "" if tot else ", and there are more"))
     return out
 
 

@@ -14,9 +14,11 @@ the newest months empty: a capped table kept its oldest records.
   in the window (open, or closed or resolved in it). The window is whole before the window before.
 - **Only the window before cut:** the figures are whole, with no compare this run. Every page says so at the top.
 - **The window itself cut:** every page and the email start with *Records cut: some figures are incomplete*, with the
-  table, how many were read of how many, and the date before which figures are incomplete. The job ends with a WARNING.
-- **The report database** never gets an incomplete month. The window's run and the months before the cut are not
-  written, and the *Report database* line names them. The backfill does the same.
+  table, how many were read of how many, and the date where the read stopped. The job ends with a WARNING. No compare.
+- **The report database** never gets an incomplete month: a cut window writes nothing, no run and no month. A ticket
+  opened before the cut can be missing from any later month too. The rows already there stay. The backfill does the same.
+- A table of exactly the cap is not cut: one record more than the cap is asked for. Records opened in the cut's own
+  second are all read.
 - `servicenow_insights_max_records` stays 20000. Measured on the test site: 20000 a table needs about 0.4 GB in the EE;
   100000 about 1.5 GB while it reads, 0.7 GB for the report, and about 4 minutes more. A site over the cap: raise it above
   the number the job names (docs/SERVICENOW_INSIGHTS.md, *More records than the cap*).
@@ -41,7 +43,8 @@ question with a 0 to 100 one gave months of "34.93" beside months of "3.4".
 
 **The weekly activity report: the newest records kept too.** Over `servicenow_war_max_records`, it now keeps the
 newest records. *Records cut: some figures are incomplete* comes first in the report, a tile says *Records cut*, and the
-job ends with a WARNING. The oldest tickets still open are the ones left out.
+job ends with a WARNING. Tickets opened before the cut are not read, so the completed, opened and open counts can be
+short.
 
 **Ticket insights: more periods on the Custom view.** `servicenow_insights_periods` takes any `1m` to `12m` and `1w` to
 `8w`, beside `all` and `this_month`.
@@ -67,7 +70,19 @@ bug in PyMySQL 1.2.1 to 1.2.3. Their first login after the database restarts fai
 - After a reload it runs `podman network reload --all`. A firewalld reload can drop the rules podman made for every
   container on the host, so another application's containers lose each other. This puts them back; nothing restarts.
 - `AAP_SOURCES` takes addresses. A name is looked up first: firewalld itself says `INVALID_ADDR` for a name.
-- Tested: `bash -n` and ShellCheck. An earlier version ran once on a real host.
+- Tested: run twice on a test host, as root and rootless (a second rootless run no longer stops at the data folder's
+  mode). CI runs `bash -n` and ShellCheck.
+
+**Ticket insights: smaller fixes.**
+
+- The page's script has no HTML sink left: the tooltips and the sort arrows work under a Trusted Types policy
+  (`require-trusted-types-for 'script'`).
+- A from / to that can not be shown says why beside the fields: *From must be before To*, or *Outside this report's
+  window*.
+- The PDFs draw the triangles and arrows again (the guides' font lacks them: they come from the mono font).
+
+**Not tested:** a real ServiceNow's newest-first paging with many records in one second; the memory figures on your
+EE; an EE built with the PyMySQL pin; the setup script with systemd and firewalld on your host.
 
 Files:
 - roles/servicenow_insights: library/site_servicenow_insights.py (newest first, the window's older records, the count),

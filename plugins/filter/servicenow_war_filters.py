@@ -159,9 +159,11 @@ def servicenow_war_lines(r, opts=None):
 
 
 def war_cut_line(t):
-    """1.16.0: a table cut at servicenow_war_max_records - the newest kept, the oldest still open left out."""
-    return ("%s: only the newest %s records read - the oldest tickets still open are left out of the counts; raise "
-            "servicenow_war_max_records, or narrow the week" % (t["table"], "{:,}".format(_n(t.get("read")))))
+    """1.16.0: a table cut at servicenow_war_max_records - the newest kept; a ticket opened before the cut is not read
+    (one completed this week too)."""
+    return ("%s: only the newest %s records read%s. Tickets opened before that are not read, so the completed, opened and "
+            "open counts can be short: raise servicenow_war_max_records, or narrow the week." % (
+                t["table"], "{:,}".format(_n(t.get("read"))), (", back to %s" % t["cut"]) if t.get("cut") else ""))
 
 
 def servicenow_war_report(r, opts=None):

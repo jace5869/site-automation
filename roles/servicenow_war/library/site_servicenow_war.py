@@ -441,11 +441,9 @@ def read_table(api, table, query, extra_fields=None, max_records=5000, page=PAGE
     fields = COMMON + TABLE_FIELDS.get(table, []) + [f for f in (extra_fields or []) if f]
     if table != "task" and table not in TABLE_FIELDS:
         fields = COMMON + [f for f in (extra_fields or []) if f]
-    out, offset = [], 0
-    while True:
-        limit = min(page, max_records - len(out))
-        if limit <= 0:
-            return out, True
+    out, offset, want = [], 0, int(max_records) + 1        # one more than the cap (1.16.0): exactly max_records is not cut
+    while len(out) < want:
+        limit = min(page, want - len(out))
         r = api.get("api/now/table/%s" % table, {"sysparm_query": query, "sysparm_fields": ",".join(fields), "sysparm_display_value": "all",
                                                  "sysparm_exclude_reference_link": "true", "sysparm_limit": limit, "sysparm_offset": offset})
         rows = r.get("result") if isinstance(r, dict) else None
@@ -453,8 +451,9 @@ def read_table(api, table, query, extra_fields=None, max_records=5000, page=PAGE
             raise SnError("GET api/now/table/%s: no result list in the answer" % table)
         out += rows
         if len(rows) < limit:
-            return out, False
+            break
         offset += len(rows)
+    return out[:int(max_records)], len(out) > int(max_records)
 
 
 def lookup(api, table, names, name_fields):
@@ -511,6 +510,9 @@ def read_week(api, groups, users, tables, win, extra_fields=None, max_records=50
             res["tables"].append(entry)
             continue
         entry["read"], entry["more"] = len(rows), more
+        if more:                    # 1.16.0: where the read stopped (newest first) - a ticket opened before it is not read
+            ts = [x for x in (sn_time(_vd(r_, "opened_at")[0]) for r_ in rows) if x]
+            entry["cut"] = min(ts).strftime("%Y-%m-%d") if ts else ""
         found = []
         for rec in rows:
             it = normalize(rec, t, api.url, extra_fields)

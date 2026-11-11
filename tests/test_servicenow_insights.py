@@ -1451,6 +1451,50 @@ def rd_window(x):
     return rd.sn_time(w["since"]), rd.sn_time(w["until"])
 
 
+@unittest.skipUnless(any(__import__("shutil").which(b) for b in ("google-chrome", "chromium")), "no headless browser here")
+class TrustedTypes(unittest.TestCase):
+    """1.16.0: the page's script under Content-Security-Policy require-trusted-types-for 'script' - no HTML sink: a tooltip
+    shown (its <br> and <b> as nodes, its text as text) and a column sorted, with no violation and no error; a from / to
+    that can not be shown says why beside the fields."""
+
+    def test_no_sink(self):
+        import shutil
+        self.assertNotIn("innerHTML", P.SCRIPT)
+        self.assertNotIn("insertAdjacentHTML", P.SCRIPT)
+        b = shutil.which("google-chrome") or shutil.which("chromium")
+        import test_insights_org as O                       # the org map's All page: the Custom view and its from / to
+        m = O.model()
+        h = P.servicenow_insights_page(m, "all", {"links": page_links(m)})
+        self.assertIn('id="cvfrom"', h)
+        csp = '<meta http-equiv="Content-Security-Policy" content="require-trusted-types-for \'script\'">'
+        probe = ('<script>var V=[];document.addEventListener("securitypolicyviolation",function(e){V.push(e.violatedDirective)});'
+                 'addEventListener("error",function(e){V.push(String(e.message))});'
+                 'addEventListener("load",function(){setTimeout(function(){var D=document,t=D.querySelector("[data-t]"),out={};'
+                 'try{t.dispatchEvent(new MouseEvent("mousemove",{clientX:20,clientY:20,bubbles:true}));var tp=D.getElementById("tip");'
+                 'out.tip=!tp.hidden;out.br=tp.querySelectorAll("br").length;out.b=tp.querySelectorAll("b").length;out.text=tp.textContent;'
+                 'var th=D.querySelector("th[data-sort]");th.click();th.click();out.arrows=th.querySelectorAll(".ar").length;out.ar=th.textContent;'
+                 'var f=D.getElementById("cvfrom"),g=D.getElementById("cvto");if(f){f.value="2026-10-10";g.value="2026-10-01";D.getElementById("cvft").click();'
+                 'out.back=D.getElementById("cvftmsg").textContent;f.value="2020-01-01";g.value="2020-01-05";D.getElementById("cvft").click();'
+                 'out.out=D.getElementById("cvftmsg").textContent}}catch(e){V.push("thrown: "+e.message)}'
+                 'out.v=V;D.title="R "+JSON.stringify(out)},300)})</script>')
+        page = h.replace("<head>", "<head>" + csp, 1).replace("</body>", probe + "</body>")
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "all.html")
+            with open(path, "w") as fh:
+                fh.write(page)
+            out = subprocess.run([b, "--headless=new", "--disable-gpu", "--no-sandbox", "--virtual-time-budget=4000", "--dump-dom", "file://" + path],
+                                 capture_output=True, text=True, timeout=120).stdout
+        got = json.loads(re.search(r"<title>R (.*?)</title>", out).group(1).replace("&quot;", '"').replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">"))
+        self.assertEqual(got["v"], [], got)
+        self.assertTrue(got["tip"])
+        self.assertGreaterEqual(got["br"] + got["b"], 1, got)
+        self.assertNotIn("<", got["text"])
+        self.assertEqual(got["arrows"], 1)
+        self.assertTrue(got["ar"][-1] in "\u25b2\u25bc", got["ar"])       # one arrow, made as a node
+        self.assertEqual(got.get("back"), "From must be before To", got)
+        self.assertTrue(got.get("out", "").startswith("Outside this report's window: "), got)
+
+
 class RecordsCut(unittest.TestCase):
     """1.16.0: a table over servicenow_insights_max_records keeps its NEWEST records (opened_at descending), then reads
     the older records that count in the window (open, or done in it): the window whole, the one before cut - no compare,
@@ -1521,7 +1565,7 @@ class RecordsCut(unittest.TestCase):
         self.assertEqual(r["compare_cut"], ["incident"])
         self.assertFalse(r["window"]["compare"])
         self.assertEqual(r["window"]["prev_since"], r["window"]["since"])
-        older = [c for c in api.calls if "opened_at<2026-03-15" in c[1].get("sysparm_query", "")]
+        older = [c for c in api.calls if "opened_at<=2026-03-15" in c[1].get("sysparm_query", "")]
         self.assertEqual(len(older), 1)
         self.assertIn("active=true^ORclosed_at>=2026-04-30 00:00:00^ORresolved_at>=2026-04-30 00:00:00", older[0][1]["sysparm_query"])
 
@@ -1529,15 +1573,17 @@ class RecordsCut(unittest.TestCase):
         r, _api = self.read(10)
         t = r["tables"][0]
         self.assertTrue(t["window_cut"])
-        self.assertEqual(t["read"], 20)
-        self.assertEqual(t["cut"][:10], "2026-06-03")      # the oldest of the second read
+        self.assertEqual(t["read"], 19)                     # 10 + 10, the cut's own record read twice, counted once
+        self.assertEqual(t["cut"][:10], "2026-06-09")      # where the second read stopped
         self.assertEqual(r["cut"], [t])
-        self.assertTrue(r["window"]["compare"])            # the window itself is cut: said as that, not as no compare
+        self.assertFalse(r["window"]["compare"])           # a cut drops the compare, the window cut too
+        self.assertNotIn("compare_cut", r)                 # said as the window cut, not as no compare
         line = F.cut_lines(r)
-        self.assertEqual(line, ["incident: only the newest 20 of 49 read - figures before 2026-06-03 are incomplete; "
-                                "raise servicenow_insights_max_records"])
+        self.assertEqual(line, ["incident: only the newest 19 of 49 read, back to 2026-06-09. Figures in this report are incomplete: "
+                                "raise servicenow_insights_max_records."])
         r2, _ = self.read(10, stats=False)
-        self.assertIn("only the newest 20 of more read", F.cut_lines(r2)[0])
+        self.assertEqual(F.cut_lines(r2), ["incident: only the newest 19 read, back to 2026-06-09, and there are more. Figures in this "
+                                           "report are incomplete: raise servicenow_insights_max_records."])
 
     def test_said_on_every_page_and_first_in_the_email(self):
         r, _ = self.read(10)
@@ -1565,27 +1611,94 @@ class RecordsCut(unittest.TestCase):
         self.assertIn("the window before cut at 2026-03-15: no compare", " ".join(F.not_read_lines(m)))
 
     def test_never_an_incomplete_month_in_the_database(self):
+        """The tester's finding: a ticket opened before the cut and resolved in a later month is missing from that month too,
+        so a window cut writes nothing - no run, no month, no figure."""
         import servicenow_insights_history as H
-        r, _ = self.read(10)                               # cut at 2026-06-03: May and June incomplete
+        r, _ = self.read(10)
         m = F.servicenow_insights_model(r, None, {}, OPTS)
         runs = H.servicenow_insights_db_runs(r, m, OPTS)["runs"]
-        cut = [(x["run"]["period"], x["run"]["month"]) for x in runs if x.get("cut")]
-        kept = [x["run"]["month"] for x in runs if not x.get("cut")]
-        self.assertEqual(cut, [("6m", "2026-10"), ("month", "2026-05"), ("month", "2026-06")])
-        self.assertEqual(kept, ["2026-07", "2026-08", "2026-09", "2026-10"])
-        self.assertEqual(H.servicenow_insights_backfill_months(r), ["2026-07", "2026-08", "2026-09", "2026-10"])
-        self.assertEqual(H.servicenow_insights_backfill_months(r, True), ["2026-05", "2026-06"])
+        self.assertTrue(runs and all(x.get("cut") for x in runs))
+        self.assertEqual(H.servicenow_insights_backfill_months(r), [])
+        self.assertEqual(H.servicenow_insights_backfill_months(r, True), ["2026-05", "2026-06", "2026-07", "2026-08", "2026-09", "2026-10"])
         st = H.servicenow_insights_db_status({"on": True, "host": "db", "port": 3309, "database": "site_reports", "read": {"ok": True},
-                                              "write": {"ok": True, "run_id": 7, "months": kept, "cut": ["the window", "2026-05", "2026-06"],
-                                                        "written": {"runs": 4, "figures": 100}, "held": []}})
-        self.assertIn("written - run 7, 4 months (2026-07, 2026-08, 2026-09, 2026-10), 100 figures; NOT written, the records cut "
-                      "(servicenow_insights_max_records): the window, 2026-05, 2026-06;", st["line"])
-        st = H.servicenow_insights_db_status({"on": True, "host": "db", "port": 3309, "database": "site_reports", "read": {"ok": True},
-                                              "write": {"ok": True, "months": [], "cut": ["2026-05"], "written": {"runs": 0}, "held": []}})
+                                              "write": {"ok": True, "months": [], "cut": ["the window", "2026-05"], "written": {"runs": 0}, "held": []}})
         self.assertFalse(st["written"])
-        self.assertIn("NOT written - the records were cut (servicenow_insights_max_records): 2026-05", st["line"])
+        self.assertIn("NOT written - the records were cut (servicenow_insights_max_records): an incomplete run is never written;", st["line"])
+        self.assertEqual(st["page"], "Not written this run: the records were cut (servicenow_insights_max_records). An incomplete run is never written.")
         r0, _ = self.read(1000)
         self.assertFalse([x for x in H.servicenow_insights_db_runs(r0, F.servicenow_insights_model(r0, None, {}, OPTS), OPTS)["runs"] if x.get("cut")])
+        r1, _ = self.read(30)                                # the window before cut only: the window's runs written
+        self.assertFalse([x for x in H.servicenow_insights_db_runs(r1, F.servicenow_insights_model(r1, None, {}, OPTS), OPTS)["runs"] if x.get("cut")])
+
+    def test_the_testers_august(self):
+        """The tester's repro: 30 incidents opened 2026-03-03 to 03-09, resolved 2026-08-14, and newer ones after them. Whole,
+        August has them; a cap that cuts the window (its second read too) leaves them out - and nothing is written."""
+        import servicenow_insights_history as H
+        recs = [{"sys_id": "m%02d" % i, "number": "INC1%06d" % i, "opened_at": "2026-03-0%d 10:%02d:00" % (3 + i % 7, i), "closed_at": "2026-08-14 10:00:00",
+                 "resolved_at": "2026-08-14 10:00:00", "active": "false", "state": "7", "assignment_group": "Ops - Linux", "priority": "4"} for i in range(30)]
+        recs += [{"sys_id": "n%03d" % i, "number": "INC2%06d" % i, "opened_at": "2026-%02d-%02d 09:00:00" % (5 + i // 25, 1 + i % 25),
+                  "closed_at": "2026-%02d-%02d 12:00:00" % (5 + i // 25, 1 + i % 25), "resolved_at": "2026-%02d-%02d 12:00:00" % (5 + i // 25, 1 + i % 25),
+                  "active": "false", "state": "7", "assignment_group": "Ops - Linux", "priority": "4"} for i in range(150)]
+        whole, _ = self.read(1000, recs)
+        aug = lambda r: sum(1 for it in r["items"] if it["number"].startswith("INC1"))   # noqa: E731
+        self.assertEqual(aug(whole), 30)
+        cut, _ = self.read(60, recs)
+        self.assertTrue(cut["tables"][0]["window_cut"])
+        self.assertLess(aug(cut), 30)
+        m = F.servicenow_insights_model(cut, None, {}, OPTS)
+        self.assertTrue(all(x.get("cut") for x in H.servicenow_insights_db_runs(cut, m, OPTS)["runs"]))
+
+    def test_ties_at_the_cut(self):
+        """The tester's second finding: 20 incidents opened in the same second, the cap falling among them - every one read
+        (the second read takes the cut's own second, opened_at<=); more in one second than the cap - a window cut, said."""
+        recs = [{"sys_id": "t%02d" % i, "number": "INC3%06d" % i, "opened_at": "2026-08-01 10:00:00", "closed_at": "2026-08-02 10:00:00",
+                 "resolved_at": "2026-08-02 10:00:00", "active": "false", "state": "7", "assignment_group": "Ops - Linux", "priority": "4"} for i in range(20)]
+        recs += [{"sys_id": "u%02d" % i, "number": "INC4%06d" % i, "opened_at": "2026-09-%02d 10:00:00" % (1 + i), "closed_at": "2026-09-%02d 12:00:00" % (1 + i),
+                  "resolved_at": "2026-09-%02d 12:00:00" % (1 + i), "active": "false", "state": "7", "assignment_group": "Ops - Linux", "priority": "4"} for i in range(25)]
+        r, _ = self.read(30, recs)                          # 25 newer, then 5 of the 20 tied: the second read takes all 20
+        t = r["tables"][0]
+        self.assertTrue(t["more"])
+        self.assertFalse(t.get("window_cut"))
+        self.assertEqual(len([it for it in r["items"] if it["number"].startswith("INC3")]), 20)
+        r, _ = self.read(10, recs)                          # 20 in one second, a cap of 10: never silent
+        self.assertTrue(r["tables"][0]["window_cut"])
+        self.assertTrue(F.cut_lines(r))
+
+    def test_exactly_at_the_cap(self):
+        """The tester's third finding: a table of exactly max_records is not cut - one more than the cap is asked for -
+        and so for the second read."""
+        recs = self.recs()                                   # 49
+        for cap, more in ((48, True), (49, False), (50, False)):         # cap - 1, cap, cap + 1
+            r, api = self.read(cap, recs)
+            self.assertEqual(r["tables"][0]["more"], more, cap)
+            self.assertEqual(api.calls[0][1]["sysparm_limit"], min(1000, cap + 1))
+        # the second read at its own edge: 10 in October fill the first read; K in June (the window's older ones) and the cut's
+        # own record make the second read K + 1 - K = 9: exactly the cap, whole; K = 10: one more, the window cut
+        def recs2(k):
+            mk = lambda i, op, cl: {"sys_id": "s%03d" % i, "number": "INC6%06d" % i, "opened_at": op, "closed_at": cl, "resolved_at": cl,   # noqa: E731
+                                    "active": "false", "state": "7", "assignment_group": "Ops - Linux", "priority": "4"}
+            out = [mk(i, "2026-10-%02d 10:00:00" % (1 + i), "2026-10-%02d 12:00:00" % (1 + i)) for i in range(10)]
+            out += [mk(100 + i, "2026-06-%02d 10:00:00" % (1 + i), "2026-06-%02d 12:00:00" % (1 + i)) for i in range(k)]
+            return out + [mk(200 + i, "2026-01-%02d 10:00:00" % (1 + i), "2026-01-%02d 12:00:00" % (1 + i)) for i in range(5)]
+        for k, cut in ((9, False), (10, True)):
+            r, _ = self.read(10, recs2(k))
+            self.assertTrue(r["tables"][0]["more"])
+            self.assertEqual(bool(r["tables"][0].get("window_cut")), cut, k)
+
+    def test_the_window_edge(self):
+        """Records exactly on the window's first second: opened at it counts as opened in the window, resolved at it as
+        resolved in it - and one second before, in the window before."""
+        e = [{"sys_id": "e1", "number": "INC5000001", "opened_at": "2026-05-01 00:00:00", "closed_at": "2026-05-02 00:00:00", "resolved_at": "2026-05-02 00:00:00",
+              "active": "false", "state": "7", "assignment_group": "Ops - Linux", "priority": "4"},
+             {"sys_id": "e2", "number": "INC5000002", "opened_at": "2026-04-20 00:00:00", "closed_at": "2026-05-01 00:00:00", "resolved_at": "2026-05-01 00:00:00",
+              "active": "false", "state": "7", "assignment_group": "Ops - Linux", "priority": "4"},
+             {"sys_id": "e3", "number": "INC5000003", "opened_at": "2026-04-30 23:59:59", "closed_at": "2026-04-30 23:59:59", "resolved_at": "2026-04-30 23:59:59",
+              "active": "false", "state": "7", "assignment_group": "Ops - Linux", "priority": "4"}]
+        r, _ = self.read(1000, e)
+        m = F.servicenow_insights_model(r, None, {}, OPTS)
+        c = m["scopes"]["all"]["counts"]
+        self.assertEqual((c["incidents"], c["resolved"]), (1, 2))          # e1 opened at the first second; e1 and e2 resolved in the window
+        self.assertEqual(c["incidents_prev"], 2)                           # e2 and e3 opened in the window before
 
     def test_the_module_writes_none_of_them(self):
         import site_insights_db as D

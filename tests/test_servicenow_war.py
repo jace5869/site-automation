@@ -164,6 +164,10 @@ class Reads(unittest.TestCase):
         self.assertIn("resolved_at", api.calls[0][1]["sysparm_fields"])
         rows, more = war.read_table(api, "incident", "q", max_records=5, page=3)
         self.assertEqual((len(rows), more), (5, True))
+        # 1.16.0: one more than the cap is asked for - 7 records at a cap of 6, 7 and 8: cut, whole, whole
+        for cap, want in ((6, (6, True)), (7, (7, False)), (8, (7, False))):
+            rows, more = war.read_table(api, "incident", "q", max_records=cap, page=3)
+            self.assertEqual((len(rows), more), want, cap)
         api = FakeApi({"u_ops_task": [rec("u_ops_task", "OPS1", "2026-10-20 10:00:00")]})
         war.read_table(api, "u_ops_task", "q", ["u_site"])
         self.assertNotIn("resolved_at", api.calls[0][1]["sysparm_fields"])          # a table the job does not know: the common fields
@@ -371,8 +375,11 @@ class Report(unittest.TestCase):
                                        "assignment group Linux Ops is not in ServiceNow (its exact name, as the group list shows it)"])
         # 1.16.0: the newest kept (ORDERBYDESCopened_at) - said first, before every section
         self.assertEqual(rep["sections"][0], {"title": "Records cut: some figures are incomplete", "status": "critical", "lines": [
-            "incident: only the newest 5 records read - the oldest tickets still open are left out of the counts; raise "
-            "servicenow_war_max_records, or narrow the week"]})
+            "incident: only the newest 5 records read. Tickets opened before that are not read, so the completed, opened and open "
+            "counts can be short: raise servicenow_war_max_records, or narrow the week."]})
+        r["tables"][0]["cut"] = "2026-10-12"
+        self.assertIn("incident: only the newest 5 records read, back to 2026-10-12. Tickets opened before that",
+                      wf.servicenow_war_report(r)["sections"][0]["lines"][0])
 
     def test_not_run_and_nothing(self):
         rep = wf.servicenow_war_report({"ok": False, "error": "GET api/now/table/sys_user_group: HTTP 401: User Not Authenticated", "window": {"label": "x"}})
