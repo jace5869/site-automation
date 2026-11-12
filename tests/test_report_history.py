@@ -192,12 +192,13 @@ class History(unittest.TestCase):
 
 
 class CommandLook(unittest.TestCase):
-    """roles/site_email/templates/report_command.html.j2, rendered with plain Jinja (it uses no Ansible filter)."""
+    """roles/site_email/templates/report_command.html.j2, rendered with plain Jinja and site_filters.report_cell_html."""
 
     def render(self, **v):
         import jinja2
         env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(REPO, "roles", "site_email", "templates")),
                                  autoescape=False)
+        env.filters["report_cell_html"] = sf.report_cell_html
         base = {"_report": dict(REPORT, subtitle="<b>sub</b>",
                                 sections=[{"title": "Deleted", "status": "ok", "columns": ["VM"], "rows": [["<x>"]]}]),
                 "_email_footer": "AAP job 9", "_email_logo_cid": "", "_email_runs": [],
@@ -239,12 +240,13 @@ class Ago(unittest.TestCase):
 
 
 class PortalLook(unittest.TestCase):
-    """roles/site_email/templates/report_portal.html.j2, rendered with plain Jinja (it uses no Ansible filter)."""
+    """roles/site_email/templates/report_portal.html.j2, rendered with plain Jinja and site_filters.report_cell_html."""
 
     def render(self, **v):
         import jinja2
         env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(REPO, "roles", "site_email", "templates")),
                                  autoescape=False)
+        env.filters["report_cell_html"] = sf.report_cell_html
         base = {"_report": dict(REPORT, subtitle="<b>sub</b>",
                                 sections=[{"title": "Deleted", "status": "ok", "columns": ["VM", "State"], "rows": [["<x>", "off"]],
                                            "cell_status": [["", "critical"]]},
@@ -300,6 +302,7 @@ class GlassLook(PortalLook):
         import jinja2
         env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(REPO, "roles", "site_email", "templates")),
                                  autoescape=False)
+        env.filters["report_cell_html"] = sf.report_cell_html
         base = {"_report": dict(REPORT, subtitle="<b>sub</b>",
                                 summary=REPORT["summary"] + [{"label": "Old <ones>", "value": 3, "status": "warning"}],
                                 sections=[{"title": "Deleted", "status": "ok", "columns": ["VM", "State"], "rows": [["<x>", "off"]],
@@ -402,6 +405,7 @@ class AtlasLook(unittest.TestCase):
         import jinja2
         env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(REPO, "roles", "site_email", "templates")),
                                  autoescape=False)
+        env.filters["report_cell_html"] = sf.report_cell_html
         base = {"_report": dict(REPORT, subtitle="<b>sub</b>", sections=[
                     {"title": "Start here", "status": "critical", "cards": [
                         {"status": "critical", "chip": "Critical", "meta": "Certificate", "title": "<t>", "subject": "web01",
@@ -596,6 +600,7 @@ class BriefLook(unittest.TestCase):
         import jinja2
         env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(REPO, "roles", "site_email", "templates")),
                                  autoescape=False)
+        env.filters["report_cell_html"] = sf.report_cell_html
         base = {"_report": dict(REPORT, status="critical", subtitle="<b>sub</b>", summary=[{"label": "Past <90%>", "value": 2, "status": "critical"},
                                                                                          {"label": "Hosts", "value": 12, "note": "read"}],
                                 sections=[
@@ -741,6 +746,7 @@ class WebColumns(unittest.TestCase):
         import jinja2
         env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(REPO, "roles", "site_email", "templates")),
                                  autoescape=False)
+        env.filters["report_cell_html"] = sf.report_cell_html
         base = {"_report": dict(REPORT, sections=[dict(self.SEC)]), "_email_footer": "AAP job 9", "_page_logo_cid": "",
                 "_page_runs": [], "report_email_header_text": "Site automation report"}
         base.update(v)

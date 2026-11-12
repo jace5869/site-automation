@@ -166,6 +166,10 @@ that have a severity, each row is tinted (light red, amber or blue) and the seve
 in its colour, so the problems stand out at a glance. Every value
 from a host or vCenter is escaped, so a VM name cannot add markup to the email.
 
+In the Checklist import email (workflow 40's check), a long collection, STIG or host name wraps after `_ . - / \` and
+commas, so its tables keep to 1280 px (1.45.0). A copied name is the name as it is, and other reports' tables are
+unchanged. Classic Outlook keeps a long name on one line.
+
 **Start here** is the short list of what to act on first, as cards ordered by priority: a coloured bar and a chip
 (Critical, Warning, Not checked ...), what kind of thing it is on the right (Certificate, Storage, SLA ...), what was
 found, the host in monospace, and **Next ->** with the step - a command to look further in its own monospace box. The

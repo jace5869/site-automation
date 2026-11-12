@@ -103,9 +103,9 @@
 {%- for cell in row %}
 {%- set cst = cs[loop.index0] if cs | length > loop.index0 else '' %}
 {%- if cst and cst in colour %}
-<td bgcolor="{{ colour[cst] }}" style="padding:5px 8px;border:1px solid #c5cedb;vertical-align:top;background:{{ colour[cst] }};color:#ffffff;font-weight:bold;">{{ ('' if cell is none else cell) | string | e }}</td>
+<td bgcolor="{{ colour[cst] }}" style="padding:5px 8px;border:1px solid #c5cedb;vertical-align:top;background:{{ colour[cst] }};color:#ffffff;font-weight:bold;">{{ cell | report_cell_html if s.wrap | default(false) else ('' if cell is none else cell) | string | e }}</td>
 {%- else %}
-<td style="padding:5px 8px;border:1px solid #c5cedb;vertical-align:top;">{{ ('' if cell is none else cell) | string | e }}</td>
+<td style="padding:5px 8px;border:1px solid #c5cedb;vertical-align:top;">{{ cell | report_cell_html if s.wrap | default(false) else ('' if cell is none else cell) | string | e }}</td>
 {%- endif %}
 {%- endfor %}
 </tr>

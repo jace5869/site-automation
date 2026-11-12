@@ -25,6 +25,7 @@ import servicenow_insights_page as P  # noqa: E402
 import site_servicenow_insights as rd  # noqa: E402
 import servicenow_insights_history as H  # noqa: E402
 import snmock  # noqa: E402
+import site_filters  # noqa: E402
 
 NOW = datetime.datetime(2026, 11, 1, 6, 0, tzinfo=rd.UTC)
 OPTS = {"bare_chars": 20, "bare_phrases": ["fixed", "done", "resolved", "resolved per user", "see work notes", "rebooted", "n/a",
@@ -1669,6 +1670,7 @@ class EmailFits(unittest.TestCase):
         doc = F.servicenow_insights_doc(x["model"], "all", OPTS)
         self.assertGreater(len(doc["summary"]), 5)
         env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(HERE, "..", "roles", "site_email", "templates")), autoescape=False)
+        env.filters["report_cell_html"] = site_filters.report_cell_html
         probe = '<script>addEventListener("load",function(){document.title="R "+document.documentElement.scrollWidth+" "+innerWidth})</script></body>'
         with tempfile.TemporaryDirectory() as d:
             for tpl in ("report.html.j2", "report_command.html.j2", "report_portal.html.j2"):
@@ -1691,6 +1693,7 @@ class EmailFits(unittest.TestCase):
         self.assertTrue(any(re.match(r"^\d\.\d\d of \d$", str(t["value"])) for t in doc["summary"]), doc["summary"])
         doc["sections"].append({"title": "Act on", "lines": ["SLA at risk: 1", "  - INC0041200 P2, 80% used"]})
         env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(HERE, "..", "roles", "site_email", "templates")), autoescape=False)
+        env.filters["report_cell_html"] = site_filters.report_cell_html
         probe = ('<script>addEventListener("load",function(){var t=[].slice.call(document.querySelectorAll("td[width=\'25%\'] > table"))'
                  '.map(function(x){return Math.round(x.getBoundingClientRect().width)});var v=[].slice.call(document.querySelectorAll("div"))'
                  '.filter(function(d){return /^\\d\\.\\d\\d of \\d$/.test(d.textContent)})[0];var lh=parseFloat(getComputedStyle(v).fontSize)*1.6;'

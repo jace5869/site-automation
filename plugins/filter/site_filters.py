@@ -1675,6 +1675,29 @@ CARD_PAL = {"critical": ("#d64545", "#b42318", "#fdeaea", "#f5c4c4", "#fdf5f5", 
             "ok": ("#2f9e72", "#13734f", "#e3f5ec", "#bfe6d3", "#f3faf6", "OK")}
 
 
+# a long token in an email's table cell (a host name, a path, a collection name): a place to wrap after each
+# _ . / \ - and comma, so the table keeps to the email's width; shorter words (a date, a status) as they are. Only in a
+# section marked "wrap" (the checklist import's tables): another report's tables are as they were
+_CELL_LONG = 21
+_CELL_SOFT = re.compile(r"(?<=[_./\\,-])(?=[^\s_./\\,-])")
+
+
+def report_cell_html(value, min_len=_CELL_LONG):
+    """A table cell's text for an email, escaped, a <wbr> after each _ . / \\ - , inside a token of min_len characters
+    or more ('VMware_vSphere_8_Management' -> 'VMware_<wbr>vSphere_<wbr>8_<wbr>Management'); None -> ''. A browser
+    wraps there only when the cell would not fit, and a copy of the text has no character there; classic Outlook ignores
+    <wbr>."""
+    import html as htmllib
+    text = "" if value is None else str(value)
+    out = []
+    for tok in re.split(r"(\s+)", text):
+        if len(tok) >= int(min_len) and not tok.isspace():
+            out.append("<wbr>".join(htmllib.escape(x, quote=True) for x in _CELL_SOFT.split(tok)))
+        else:
+            out.append(htmllib.escape(tok, quote=True))
+    return "".join(out)
+
+
 def report_cards_html(cards, ink="#111827", muted="#4b5563", accent="#0f6b4f"):
     """A section's cards (roles/site_email: [{status, chip, meta, title, subject, next, code}]) as "Start here" cards in HTML a
     mail client draws (tables, every style inline): a coloured bar on the left, the status chip and the meta (what kind,
@@ -2228,7 +2251,7 @@ class FilterModule(object):
                 "vm_pick_reboot_plan": vm_pick_reboot_plan, "vm_snap_row": vm_snap_row, "vm_snap_vm_key": vm_snap_vm_key, "patch_vm_match": patch_vm_match, "patch_protected": patch_protected, "cert_report_section": cert_report_section,
                 "site_correlation_id": site_correlation_id,
                 "human_size": human_size, "name_matches": name_matches, "name_list": name_list,
-                "report_text": report_text, "report_notice": report_notice, "report_cards_html": report_cards_html, "findings_report": findings_report,
+                "report_text": report_text, "report_notice": report_notice, "report_cards_html": report_cards_html, "report_cell_html": report_cell_html, "findings_report": findings_report,
                 "report_headline": report_headline, "report_runs": report_runs,
                 "image_size": image_size, "email_recipients": email_recipients, "email_also_refused": email_also_refused,
                 "report_web_files": report_web_files, "site_web_win_error": site_web_win_error,

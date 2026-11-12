@@ -277,9 +277,9 @@ body>table:first-of-type{position:relative;z-index:1;background:transparent !imp
 {%- set text = ('' if cell is none else cell) | string %}
 {%- set cellbd = '' if last else 'border-bottom:1px solid #edf2f6;' %}
 {%- if cst and cst in pal %}
-<td style="padding:9px 12px;{{ cellbd }}vertical-align:top;"><span style="display:inline-block;border-radius:999px;background:{{ pal[cst].bg }};border:1px solid {{ pal[cst].bd }};color:{{ pal[cst].fg }};font-weight:600;padding:1px 10px;">{{ text | e }}</span></td>
+<td style="padding:9px 12px;{{ cellbd }}vertical-align:top;"><span style="display:inline-block;border-radius:999px;background:{{ pal[cst].bg }};border:1px solid {{ pal[cst].bd }};color:{{ pal[cst].fg }};font-weight:600;padding:1px 10px;">{{ text | report_cell_html if s.wrap | default(false) else text | e }}</span></td>
 {%- else %}
-<td style="padding:9px 12px;{{ cellbd }}vertical-align:top;color:{{ ink }};">{{ text | e }}</td>
+<td style="padding:9px 12px;{{ cellbd }}vertical-align:top;color:{{ ink }};">{{ text | report_cell_html if s.wrap | default(false) else text | e }}</td>
 {%- endif %}
 {%- endfor %}
 </tr>

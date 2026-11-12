@@ -385,6 +385,9 @@ def stig_ckl_report(ci, plan=None, sections=None, workflow=False, list_max=200, 
                     "columns": ["File", "Why"], "rows": [[f.get("name", ""), f.get("error", "")] for f in bad_files[:list_max]]})
     if moved is not None and settled is not None:
         out.append(_moved_section(moved, settled, move_to or "imported", list_max))
+    for s in out:                               # long collection, STIG and host names: the email's tables wrap them (1.45.0)
+        if s.get("columns"):
+            s["wrap"] = True
     return {"title": title, "status": status,
             "subtitle": "Workflow 40's check: the checklists on %s, for %s" % (ci.get("source") or "the share", col or "STIG Manager"),
             "summary": [{"label": "Checklists", "value": len(cks), "note": "STIGs in %d file(s)" % len(files)}]

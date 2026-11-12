@@ -80,7 +80,8 @@
 "status": "ok",
 "text": "stigman_ckl_import_auto: all - the reviews of every asset, the new ones too written by this job, as STIG Manager - update writes them: each read again first and left when it changed since, read back after; never over Accepted, never with attachments. A new asset's reviews are counted in its row.",
 "title": "Written at once, no approval: 7 review(s)",
-"top": true
+"top": true,
+"wrap": true
 },
 {
 "lines": [
@@ -138,7 +139,8 @@
 ],
 "status": "ok",
 "text": "Each STIG of each checklist, in each collection that has its asset: the checklist's host name (HOST_NAME), (new): none there, created once approved - and the STIG installed in STIG Manager whose rules it matched (by the benchmark id, the rule ids, V-numbers or versions; stigman_ckl_import_benchmarks names one). Collections searched: Lab, Ops, RHEL, Watcher; a new asset is created in Watcher. NaF / Open / NA / NR: the checklist's answers.",
-"title": "Each checklist"
+"title": "Each checklist",
+"wrap": true
 }
 ],
 "status": "ok",

@@ -290,6 +290,106 @@ class EmailTiles(unittest.TestCase):
                 for k, r in sorted(measure(b, d, pages, w).items()):
                     self.assertEqual(r["page"], 0, "%s at %d px: the email scrolls sideways (+%d px)" % (k, w, r["page"]))
 
+
+# the emails of the glass look that still scroll at 1280 px: tables of 9 to 16 columns wider than glass's 900 px frame
+# even with every long word wrapped (1.45.0, left for a glass change of its own). The test fails when one fits too.
+EMAIL_KNOWN = {"glass-ontap_hardware_doc", "glass-vm_health_report", "glass-vm_health_report_read", "glass-sn_node_sections",
+               "glass-sn_node_sections_pages", "glass-ucs_inventory_doc"}
+EMAIL_LOOKS = {"standard": "report.html.j2", "command": "report_command.html.j2", "portal": "report_portal.html.j2",
+               "glass": "report_glass.html.j2"}
+
+
+class EmailFit(unittest.TestCase):
+    def test_every_email_fits_at_1280(self):
+        """1.45.0: every report's email, in each email look (standard, command, portal, glass), with its values as tested
+        and long, never scrolls sideways at 1280 px, light and dark. Fit tests only the website's looks (atlas, brief)
+        and EmailTiles only the right-sizing email: a Checklist import email 227 px too wide (a 10-column table of long
+        collection, STIG and host names) passed both. EMAIL_KNOWN: those that do not fit yet."""
+        b = _browser()
+        if not b:
+            self.skipTest("no headless browser here")
+        env = EmailTiles()._env()
+        docs = sorted(glob.glob(os.path.join(DOCS, "*.json")))
+        self.assertGreater(len(docs), 50, "the reports' documents (tests/report_fit_docs.py)")
+        with tempfile.TemporaryDirectory() as d:
+            pages = []
+            for f in docs:
+                with open(f) as fh:
+                    doc = json.load(fh)
+                for kind, dd in (("", doc), ("-long", long_doc(doc))):
+                    for look, tpl in sorted(EMAIL_LOOKS.items()):
+                        p = "%s-%s%s.html" % (look, os.path.basename(f)[:-5], kind)
+                        with open(os.path.join(d, p), "w") as o:
+                            o.write(env.get_template(tpl).render(_report=dd, _email_footer="AAP job 9",
+                                                                 report_email_header_text="Site automation report"))
+                        pages.append(p)
+            got = measure(b, d, pages, 1280)
+        wide = dict((k, r["page"]) for k, r in got.items() if r["page"])
+        bad = ["%s at 1280 px: the email scrolls sideways (+%d px)" % (k, px) for k, px in sorted(wide.items())
+               if k.rsplit(" ", 1)[0].replace("-long.html", "").replace(".html", "") not in EMAIL_KNOWN]
+        self.assertEqual(bad, [], "\n".join(bad[:40]))
+        fits = sorted(k for k in EMAIL_KNOWN if not any(x.startswith(k + ".html") or x.startswith(k + "-long.html") for x in wide))
+        self.assertEqual(fits, [], "these emails fit now - take them out of EMAIL_KNOWN")
+        print("ok: %d emails (%d documents, 4 looks, as tested and long) fit at 1280 px, light and dark; %d known not to"
+              % (len(pages), len(docs), len(EMAIL_KNOWN)), file=sys.stderr)
+
+    def test_a_long_word_wraps_in_a_cell(self):
+        """1.45.0: report_cell_html - a token of 21 characters or more takes a <wbr> after each _ . / \\ - and comma;
+        shorter words, dates and times as they are; every value escaped."""
+        sys.path.insert(0, os.path.join(REPO, "plugins", "filter"))
+        import site_filters as sf
+        self.assertEqual(sf.report_cell_html("VMware_vSphere_8_Management_Clusters"),
+                         "VMware_<wbr>vSphere_<wbr>8_<wbr>Management_<wbr>Clusters")
+        self.assertEqual(sf.report_cell_html("app01.vsphere-management.example.mil"),
+                         "app01.<wbr>vsphere-<wbr>management.<wbr>example.<wbr>mil")
+        for v in ("2026-11-12T06:00:00Z", "VRPE-8X-000001", "rhel01.example.mil", "short words stay", "192.0.2.10"):
+            self.assertEqual(sf.report_cell_html(v), v)
+        self.assertEqual(sf.report_cell_html("<b> & a_very_long_name_with_parts"), "&lt;b&gt; &amp; a_<wbr>very_<wbr>long_<wbr>name_<wbr>with_<wbr>parts")
+        self.assertEqual((sf.report_cell_html(None), sf.report_cell_html(12)), ("", "12"))
+
+    def test_a_long_name_copies_back_byte_for_byte(self):
+        """1.45.0: the wrap points are <wbr> tags, never a character, and only in a section marked "wrap" (the checklist
+        import's tables): a long host name, path or collection copied out of a rendered email (each look) is the name
+        byte for byte; the email holds no zero-width or soft-hyphen character; the plain-text part and the workbook's rows
+        are the values as they are; a section not marked has no <wbr>."""
+        sys.path.insert(0, os.path.join(REPO, "plugins", "filter"))
+        import site_filters as sf
+        names = ["app01.vsphere-management.example.mil", "VMware_vSphere_8_Management_Clusters_East",
+                 "C:\\Program Files\\Site_Agent\\collector-service.exe", "/var/lib/site-automation/reports/stig_ckl.json",
+                 "svc_x@yoursite.mil,svc_y@yoursite.mil"]
+        doc = {"title": "Copy test", "status": "warning", "summary": [{"label": "Hosts", "value": 1}],
+               "sections": [{"title": "Long names", "status": "warning", "columns": ["Name", "Status"],
+                             "rows": [[n, "warning"] for n in names], "row_status": ["warning"] * len(names), "wrap": True}]}
+        hidden = re.compile("[\u200b\u200c\u200d\u2060\ufeff\u00ad]")
+        text = sf.report_text(doc)
+        self.assertFalse(hidden.search(text) or "<wbr" in text, "the plain-text part")
+        for n in names:
+            self.assertIn(n, text)
+        self.assertEqual([r[0] for r in sf.report_xlsx_sheets(doc)[0]["rows"]], names)
+        env = EmailTiles()._env()
+        b = _browser()
+        probe = ('<script>addEventListener("load",function(){var s=getSelection(),r=document.createRange(),o=[];'
+                 '[].forEach.call(document.querySelectorAll("td"),function(td){r.selectNodeContents(td);s.removeAllRanges();s.addRange(r);'
+                 'o.push(s.toString())});var p=document.createElement("pre");p.id="out";p.textContent=JSON.stringify(o);'
+                 'document.body.appendChild(p)})</script></body>')
+        with tempfile.TemporaryDirectory() as d:
+            for look, tpl in EMAIL_LOOKS.items():
+                h = env.get_template(tpl).render(_report=doc, _email_footer="AAP job 9", report_email_header_text="Site automation report")
+                self.assertIn("<wbr>", h, look)
+                self.assertFalse(hidden.search(h), look)
+                plain = dict(doc, sections=[dict(doc["sections"][0], wrap=False)])
+                self.assertNotIn("<wbr>", env.get_template(tpl).render(_report=plain, _email_footer="AAP job 9",
+                                                                       report_email_header_text="Site automation report"), look)
+                if not b:
+                    continue
+                page = os.path.join(d, look + ".html")
+                with open(page, "w", encoding="utf-8") as f:
+                    f.write(h.replace("</body>", probe))
+                got, err = _run(b, page, 1280, 60)
+                cells = [c.strip() for c in got or []]
+                for n in names:
+                    self.assertIn(n.encode("utf-8"), [c.encode("utf-8") for c in cells], (look, n, err))
+
 # a big table's page in a frame: once it is loaded (its script ran), timed at once, synchronously: a section closed (the
 # page's toggle handler: fit) and the rows' height changed (every table fitted again)
 TIMING = r"""<!doctype html><html><body><pre id="out"></pre><script>
