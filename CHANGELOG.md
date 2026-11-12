@@ -14,8 +14,9 @@ its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inve
 - a list written as YAML text that starts with a comment line, a `%YAML` directive, or `-` and a tab - its values are
   not shown (as a list starting with `- ` or `---` already was).
 
-A setting's text is read in one pass: 200 KB of any text takes well under a second. Known limits: quotes nested more
-than 3 levels.
+A setting's text is read in one pass: 200 KB of text takes well under a second - except a text that really is YAML
+(a long list, deep nesting), which is parsed as YAML and takes about a second per 200 KB, as in 1.24.0. Known limits:
+quotes nested more than 3 levels.
 
 Tests: tests/test_template_audit.py - each case above, the lists written as YAML text (with `---`, `--- # comment`, a
 comment line, `%YAML`, `-` and a tab), and 200 KB texts of the slowest shapes, each under a second.
