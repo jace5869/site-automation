@@ -1,5 +1,38 @@
 # Changelog
 
+## 1.33.0 — 2026-11-12
+
+**Updating without scripts:** paste `site-automation-1.33.0-changed-since-1.31.0.zip` as it is (from an older version,
+its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`. Nothing to set up: the new settings have defaults.
+
+**The VMware health report reads faster and says where the time went** (docs/VMWARE.md, "Read speed"). A real run
+spent 30 minutes in "read every datacenter, cluster and host", most of it asking one host after another:
+
+- **Each host's clock** is asked `vm_health_workers` (8) hosts at a time, and one host's answer is waited for at most
+  `vm_health_host_timeout` (20) seconds: a host slower than that is said as *clock not read (no answer in 20 s)* -
+  not judged - and the others are read meanwhile.
+- **When a host not connected lost vCenter** is read the same way, and only from the last `vm_health_events_days` (30)
+  days, at most `vm_health_events_max` (100) events per host (the newest): a large event database is not read through.
+- **How long each stage took** is in the job's output, in one line - `read in 41 s: hosts 3 s, clocks 22 s, events 15 s,
+  alarms 1 s` - and in the report's new last section, *How it was read*, with each host a stage gave up on. There is
+  no limit on the whole read; a report with a host not read says so in its subtitle.
+- The hardware sensors were measured on a simulator of 200 hosts (1 second, about 5 ms a host): read as before, and
+  counted in *hosts*.
+
+**Behaviour changes:**
+
+- A host that does not answer its clock (or its events) within 20 seconds now shows **not read** in the Clock column
+  and a line in *How it was read*; before, the job waited for it however long it took.
+- A host not connected whose newest event of losing vCenter is older than 30 days shows without its "since".
+- The report has a last section, *How it was read*, and the job prints a line with the read time of each stage.
+
+Tests: tests/test_vmware_modules.py - the hosts asked in parallel (8 hosts of 0.3 s in well under a second), a host that
+never answers given up on after the limit while the others are read, the event window and cap, the timing line, and the
+report's *How it was read*. tests/vmware/run_vmware_test.sh (vcsim) - the read time in the job's output; a host 60 s slow
+for its clock and one for its events, not read after 3 s, the job done in seconds; 8 threads on one vCenter connection,
+each getting its own host's answer. The slowness there is a test-only stand-in that a real run refuses.
+
 ## 1.31.0 — 2026-11-12
 
 **Updating without scripts:** paste `site-automation-1.31.0-changed-since-1.29.0.zip` as it is (from an older version,

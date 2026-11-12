@@ -2063,6 +2063,10 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_health_clock` | `true` | Each connected host's clock against vCenter's, and its NTP setting: a host writes its own logs (hostd, vmkernel) by its clock, vCenter its events by its own - off clocks are why a disconnection's time in a host's log does not match vCenter's. No NTP server set, or the NTP service stopped, is a warning. vCenter's clock… (all of it: the role file) |
 | `vm_health_clock_warn_seconds` | `60` | a host's clock this many seconds off vCenter's (ahead or behind) -> warning |
 | `vm_health_clock_crit_seconds` | `300` | -> critical (Active Directory logins fail from 5 minutes off) |
+| `vm_health_workers` | `8` | Read speed (1.33.0): each host's clock, and when a host not connected lost vCenter, are asked a few hosts at a time, and one host's answer is waited for at most vm_health_host_timeout seconds - a slow host is said as not read, the others go on. The job's output says how long each stage took. hosts asked at a time (the… (all of it: the role file) |
+| `vm_health_host_timeout` | `20` | seconds to wait for one host's answer; past it: "not read (no answer in 20 s)", not judged |
+| `vm_health_events_days` | `30` | how far back to look for a host losing vCenter (0 = no limit: slow on a large event database) |
+| `vm_health_events_max` | `100` | at most this many events read per host (the newest) |
 | `vm_health_max_rows` | `500` | rows per table in the report (the artifacts have them all) |
 | `vm_health_fail` | `false` | The job stays green when it finds problems: the report and email say what. true = mark the job FAILED when there is a critical problem (a host not connected, an HA agent isolated ...), for workflows. |
 | `vm_net_drops` | `true` | Network drops and errors in the health report: packets dropped and network errors of every ESXi host (by physical NIC) and powered-on VM (by virtual NIC), from vCenter's statistics. The past day needs vCenter's 5-minute statistics at level 2 (the default is 1); at level 1 the last hour is read, and the report says so.… (all of it: the role file) |

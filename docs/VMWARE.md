@@ -850,6 +850,7 @@ in [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md)).
 | vCenter | each vCenter's version and the alarms on vCenter itself |
 | Single sign-on and OCSP | below |
 | Network drops and errors | each ESXi host and powered-on VM that dropped packets or had network errors, by NIC - below |
+| How it was read | how long each stage of the read took, and any host that gave no answer in time ("Read speed", below) |
 
 On top: the counts in coloured boxes (hosts not connected, HA problems, DRS problems, hosts with
 hardware faults, triggered alarms). The subject says it in one line, e.g.
@@ -887,6 +888,9 @@ not configured (that is what maintenance mode does).
 | `vm_health_sensors` | `true` | read the hosts' hardware sensors |
 | `vm_health_clock` | `true` | read each host's clock and NTP setting ("Times and clocks", below) |
 | `vm_health_clock_warn_seconds` / `vm_health_clock_crit_seconds` | `60` / `300` | a host's clock this far off vCenter's, ahead or behind: amber from, red from |
+| `vm_health_workers` | `8` | hosts asked at a time for their clock and their events ("Read speed", below) |
+| `vm_health_host_timeout` | `20` | seconds to wait for one host's answer; past it the host is said as not read, not judged |
+| `vm_health_events_days` / `vm_health_events_max` | `30` / `100` | how far back, and how many events at most, to read for a host not connected |
 | `report_time_zone` | `""` (UTC only) | the times in that time zone too, e.g. `America/New_York` - best in `all.yml` (below) |
 | `vm_health_fail` | `false` | `true` = the job shows **failed** on a critical problem, for a workflow |
 | `vmware_datacenter` | (all) | one datacenter only |
@@ -894,6 +898,28 @@ not configured (that is what maintenance mode does).
 **vCLS retreat mode** is read from vCenter's advanced settings
 (`config.vcls.clusters.<cluster id>.enabled = false`). If the account may not read them, the report
 says so in blue, and retreat mode still shows as vCenter's own alarm on the cluster.
+
+### Read speed
+
+Most of the read is one question to vCenter for every host at once. Two parts are asked **per host**, and
+they are the slow ones on a large or busy vCenter:
+
+- **Each connected host's clock** (`vm_health_clock`) - vCenter passes the question on to the host, so a
+  host slow to answer is slow here.
+- **When a host not connected lost vCenter** - its newest event of it, from vCenter's event database.
+
+Both are asked `vm_health_workers` (8) hosts at a time, and one host's answer is waited for at most
+`vm_health_host_timeout` (20) seconds: a host that takes longer is said as **not read** - "clock not read (no
+answer in 20 s)" in its row, the Clock column `not read`, and a line in **How it was read** - never as a clock
+problem, and the other hosts are read meanwhile. The events are read only for the last `vm_health_events_days`
+(30) days, at most `vm_health_events_max` (100) per host, the newest: an outage older than that shows without
+its "since".
+
+The job's output says how long each stage took, in one line, e.g. `read in 41 s: hosts 3 s, clocks 22 s,
+events 15 s, alarms 1 s` - a slow run says where it was slow. *hosts* is every datacenter, cluster and host with
+their hardware sensors; *alarms* the triggered alarms. There is no limit on the whole read: a report that looks
+complete but is not would be worse, so a stage that skipped a host says so, and the report's subtitle says
+"not everything was read in time".
 
 ### Times and clocks
 
@@ -916,7 +942,8 @@ report shows each:
   shows for it. A triggered alarm's "since" is when the alarm turned that colour, which can be later.
 - **The host's clock.** A host writes its own logs by its own clock, vCenter its events by vCenter's: a host
   3 minutes behind logs the disconnection 3 minutes "before" vCenter's event. The **Clock** column shows each
-  connected host's clock against vCenter's (`+` ahead, `-` behind, `?` = vCenter would not say). From
+  connected host's clock against vCenter's (`+` ahead, `-` behind, `?` = vCenter would not say, `not read` = no
+  answer in `vm_health_host_timeout`). From
   `vm_health_clock_warn_seconds` (60) it is amber, from `vm_health_clock_crit_seconds` (300) red - Active
   Directory logins to a host fail from 5 minutes off. No NTP server set on a host, or its NTP service stopped,
   is amber: fix it under **Host > Configure > System > Time Configuration**. vCenter's own clock is compared

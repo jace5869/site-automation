@@ -186,7 +186,8 @@ def host_problems(h, cluster, o):
     o = _opts(o)
     out = []
     conn, power = h.get("connection", ""), h.get("power", "")
-    since = (" since %s (vCenter's event)" % _when(h["down_since"], o["tz"])) if h.get("down_since") else ""
+    since = (" since %s (vCenter's event)" % _when(h["down_since"], o["tz"])) if h.get("down_since") else (
+        " (%s)" % h["down_note"] if h.get("down_note") else "")
     if conn == "notResponding":
         out.append(("critical", "Not responding to vCenter" + since,
                     "Check the host is on and its management network; then right-click > Connection > Connect."))
@@ -446,6 +447,8 @@ def vm_health_report(data, opts=None):
         vc, (" of datacenter " + o["datacenter"]) if o["datacenter"] else "", _when(d.get("read_at"), o["tz"]))
     if o["tz_note"]:
         subtitle += " - " + o["tz_note"]
+    if d.get("notes"):
+        subtitle += " - not everything was read in time: see How it was read"
     summary = [
         {"label": "Datacenters", "value": len(dcs), "status": status},
         {"label": "Clusters", "value": len(clusters), "status": _worst([p[0] for _, _, ps in clusters for p in ps if p[0] != "info"]) or "ok"},
@@ -558,7 +561,7 @@ def vm_health_report(data, opts=None):
         rows.append((st, [st.upper(), h.get("name", ""), "(standalone)" if h.get("standalone") else h.get("cluster", ""),
                           _where(h, multi, h.get("datacenter", "")), CONN_LABEL.get(conn, conn), maint, ha_txt, hw_txt, _pct_text(cpu), _pct_text(mem),
                           "-" if h.get("uptime_days") is None else h["uptime_days"],
-                          _clock_cell(h.get("clock_offset_s")) if conn == "connected" else "-",
+                          ("not read" if h.get("clock_note") else _clock_cell(h.get("clock_offset_s"))) if conn == "connected" else "-",
                           ("%s (%s)" % (h.get("version"), h.get("build"))) if h.get("version") else "",
                           len([a for a in h.get("alarms") or [] if a.get("status") in ("red", "yellow")])],
                      [st, "", "", "", "critical" if conn not in ("connected", "") else "", "info" if maint != "no" else "", ha_st, hw_st,
@@ -566,8 +569,8 @@ def vm_health_report(data, opts=None):
     sections.append(_section("Hosts", ["Status", "Host", "Cluster", "Datacenter", "Connection", "Maintenance", "HA agent", "Hardware",
                                        "CPU used", "Memory used", "Up (days)", "Clock", "ESXi", "Alarms"], rows,
                              "Every host, by datacenter and cluster. Hardware: the sensors and hardware status that are not green. "
-                             "Clock: the host's clock against vCenter's (+ ahead, - behind; ? = vCenter would not say) - the host "
-                             "writes its own logs by it." if rows else "No host.", o["max_rows"]))
+                             "Clock: the host's clock against vCenter's (+ ahead, - behind; ? = vCenter would not say; not read = "
+                             "no answer in time) - the host writes its own logs by it." if rows else "No host.", o["max_rows"]))
 
     rows = []
     for v, ps in vres:
@@ -575,6 +578,13 @@ def vm_health_report(data, opts=None):
         rows.append((st, [st.upper(), v.get("vcenter", ""), v.get("name", "") or v.get("version", ""),
                           len([a for a in v.get("alarms") or [] if a.get("status") in ("red", "yellow")])], [st, "", "", ""]))
     sections.append(_section("vCenter", ["Status", "vCenter", "Version", "Alarms on vCenter itself"], rows, "", o["max_rows"]))
+    # how the read went (1.33.0): how long each stage took, and what a stage did not read - a report that looks complete
+    # is never partial without saying so
+    if d.get("timing_line") or d.get("notes"):
+        sec = {"title": "How it was read", "lines": [x for x in [d.get("timing_line")] if x] + list(d.get("notes") or [])}
+        if d.get("notes"):
+            sec["status"] = "warning"
+        sections.append(sec)
     return {"title": title, "status": status, "subtitle": subtitle, "summary": summary, "sections": sections,
             "footer": "Read-only. The alarms themselves, failed logins and the events of the day: the VMware alarms report."}
 
