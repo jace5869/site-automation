@@ -103,9 +103,25 @@ URL_PASSWORD = re.compile(r"[a-z][a-z0-9+.-]*://[^\s/?#@:]*:[^\s/?#]+@", re.I)
 TEXT_SETTING = re.compile(r"""([A-Za-z][\w.-]*)["']?\s*[:=]\s*["']?[^\s"',;]""")
 # a command line's option and its value after a space (--password X, -p X)
 CLI_OPTION = re.compile(r"(?:^|\s)(--?)([A-Za-z][\w-]*)(?:\s+|=)([\"']?)([^\s\"']+)")
-# mysql's -p with the password joined to it (mysql -u root -pXXXX), and the commands that take it so
-GLUED_P = re.compile(r"(?:^|\s)-p([^\s\d:/][^\s]*)")
-MYSQL = re.compile(r"(?:^|[\s/;|&])(?:mysql\w*|mariadb(?:-\w+)?)(?=\s)")
+# -p with a value joined to it (tool -pS3cret!) - a password when it has a digit or a sign in it, but not a port
+# (-p8080:80), a variable (-p$SSH_PORT) or one of these single-dash options (find -print0, openssl -pubout)
+GLUED_P = re.compile(r"(?:^|\s)-p([^\s\d:/$][^\s]*)")
+P_OPTIONS = frozenset(("print", "print0", "printf", "prune", "perm", "pubout", "pthread", "progress", "pattern"))
+# a command's own password option, only after that command (mysql -p2024x, sqlcmd -P X, ldapsearch -w X, smbclient
+# -U user%X, ipmitool -P X, redis-cli -a X, winrs -p:X, sshpass -p X, curl -u user:X): (option, the value's kind) -
+# any (the value), colon (user:password), percent (user%password); the value after a space or joined to it
+TOOL_OPTIONS = (
+    (re.compile(r"^(?:mysql\w*|mariadb(?:-\w+)?)$"), (("-p", "any"), ("--password", "any"))),
+    (re.compile(r"^(?:curl|wget)$"), (("-u", "colon"), ("--user", "colon"), ("--proxy-user", "colon"))),
+    (re.compile(r"^sqlcmd$"), (("-P", "any"),)),
+    (re.compile(r"^ldap\w+$"), (("-w", "any"),)),
+    (re.compile(r"^(?:smbclient|smbcacls|smbget|rpcclient|net)$"), (("-U", "percent"), ("--user", "percent"))),
+    (re.compile(r"^ipmitool$"), (("-P", "any"),)),
+    (re.compile(r"^redis-cli$"), (("-a", "any"),)),
+    (re.compile(r"^winrs$"), (("-p:", "any"), ("-password:", "any"))),
+    (re.compile(r"^sshpass$"), (("-p", "any"),)),
+)
+COMMAND_END = frozenset(("|", "||", "&&", ";", "&"))
 # a value that is an HTTP Authorization header's credentials (Basic <base64>, Bearer <token>), alone or after its name
 AUTH_VALUE = re.compile(r"(?:^|authorization\"?\s*[:=]\s*\"?)(?:basic|bearer|token|negotiate|digest)\s+[A-Za-z0-9+/=._~-]{8,}", re.I)
 # a PEM private key (RSA, EC, OPENSSH, ENCRYPTED ...)
@@ -274,12 +290,9 @@ def prose(s):
 
 def _cli_secret(dash, opt, value):
     """--password X: an option named like a secret, its value after a space or =; -p X too (a password for mysql and
-    others), but not a number, a port mapping or a path (ssh -p 2222, podman -p 8080:80, rsync -p /src); -u or --user
-    with user:password (curl -u svc:...), but not uid:gid (podman -u 1000:1000)."""
+    others), but not a number, a port mapping or a path (ssh -p 2222, podman -p 8080:80, rsync -p /src)."""
     if value.startswith("-"):
         return False
-    if opt in ("u", "user"):
-        return bool(re.match(r"^[^:]+:.", value)) and not re.match(r"^\d+:\d+$", value)
     if dash == "-" and opt == "p":
         return not re.match(r"^[\d:./~]+$", value) and not value.startswith(("/", "./", "~", "$"))
     return secret_name(opt)
@@ -287,8 +300,8 @@ def _cli_secret(dash, opt, value):
 
 def secret_text(s):
     """A text with a secret written in it: a URL with a password (mysql://svc:...@db01), a PEM private key, an HTTP
-    Authorization header's credentials (Basic ..., Bearer ...), --password X, -p X or -pX, -u user:password, or
-    name=value / name: value under a
+    Authorization header's credentials (Basic ..., Bearer ...), --password X, -p X or -pX, a command's own password
+    option (TOOL_OPTIONS), or name=value / name: value under a
     secret's name (Uid=svc;Pwd=..., PGPASSWORD=...). A sentence of plain words is prose: only a URL or a key counts
     there. Pure."""
     s = str(s or "")
@@ -297,13 +310,49 @@ def secret_text(s):
     if prose(s):
         return False
     return bool(AUTH_VALUE.search(s.strip())) or any(_cli_secret(*m[:2], m[3]) for m in CLI_OPTION.findall(s)) or any(
-        _glued_p(s, g) for g in GLUED_P.findall(s)) or any(secret_name(k) for k in TEXT_SETTING.findall(s))
+        _glued_p(g) for g in GLUED_P.findall(s)) or _tool_secret(s) or any(secret_name(k) for k in TEXT_SETTING.findall(s))
 
 
-def _glued_p(s, glued):
-    """-pXXXX: after mysql, mysqldump, mysqladmin, mariadb ... always a password; after another command too, unless it
-    is a few letters of flags (cp -pR, tar -pcf)."""
-    return bool(MYSQL.search(" " + s)) or not re.match(r"^[A-Za-z]{1,4}$", glued)
+def _glued_p(glued):
+    """-pXXXX after any command: a password when it has a digit or a sign in it (tool -pS3cret) - letters only are flags
+    (cp -pR, rsync -prltDvz, netstat -plantu), and -print0, -perm ... options of their own."""
+    return "p" + glued not in P_OPTIONS and bool(re.search(r"[^A-Za-z]", glued))
+
+
+def _tool_value(kind, value):
+    if not value or value.startswith("-"):
+        return False
+    if kind == "colon":
+        return bool(re.match(r"^[^:]+:.", value))
+    if kind == "percent":
+        return bool(re.match(r"^[^%]+%.", value))
+    return True
+
+
+def _tool_secret(s):
+    """A command's own password option, after that command word, up to the next | ; && (TOOL_OPTIONS): mysql -pXXXX
+    (any value - mysql's port is -P), curl -u svc:XXXX or -usvc:XXXX, smbclient -U svc%XXXX, sqlcmd -P XXXX ... Pure."""
+    words, options = s.split(), ()
+    for i, w in enumerate(words):
+        if w in COMMAND_END or w.endswith(";"):
+            options = ()
+            continue
+        name = w.rsplit("/", 1)[-1].rsplit("\\", 1)[-1].lower()
+        name = name[:-4] if name.endswith(".exe") else name
+        found = next((o for rx, o in TOOL_OPTIONS if rx.match(name)), None)
+        if found is not None:
+            options = found
+            continue
+        for opt, kind in options:
+            if w == opt or (w.startswith(opt + "=") and opt.startswith("--")):
+                value = words[i + 1] if w == opt and i + 1 < len(words) else w[len(opt) + 1:]
+            elif w.startswith(opt) and not opt.startswith("--") and len(w) > len(opt):
+                value = w[len(opt):]
+            else:
+                continue
+            if _tool_value(kind, value.strip("\"'")):
+                return True
+    return False
 
 
 def _named_secret(name, value):

@@ -43,8 +43,9 @@ refused:
   a secret - `admin_pwd`, `dbPassword`, `client-secret`, `API-KEY`, `db.password`, `secret1`; never a short word inside
   another (keyboard, spin), nor one with a count or a version after it (`pin_version`, `pass_count`). A number under
   such a name, such a name anywhere inside a dict or list, a URL with a password in it (`user:password@`), a text that
-  holds JSON or YAML with such a key, a text such as `Pwd=...` in a connection string or `--password X` / `-p X` /
-  mysql's `-pXXXX` / `curl -u user:password` on a command line, an Authorization header's `Basic ...` / `Bearer ...` and a PEM private key are secrets too, whatever
+  holds JSON or YAML with such a key, a text such as `Pwd=...` in a connection string, `--password X` / `-p X` on a
+  command line or a tool's own password option after that tool (mysql's `-pXXXX`, `curl -u user:password`, `sqlcmd
+  -P`, `ldapsearch -w`, `smbclient -U user%password`, `ipmitool -P`, `redis-cli -a`, `winrs -p:`), an Authorization header's `Basic ...` / `Bearer ...` and a PEM private key are secrets too, whatever
   the setting is called. A setting named for a credential (`scan_credentials`) is a secret when its value is not a
   credential's name or id (`AAP - SOP draft`, `[12, 15]`, `["ssh-linux"]`); a limit (`max_tokens`) and a sentence of
   plain words are not secrets. The audit hides on suspicion: a value it cannot tell is not shown (its known limits:
@@ -111,9 +112,10 @@ Tests: a test for each fix that runs without a real system - for the three HTTP 
 answering with a redirect, and the login never reaching the second; the copy job's names and failing pages; the
 index's banner and line merge, and an index from an older release keeping its banner (also while a report's own older
 classified run is listed); nested and numeric secrets and every secret-name spelling (joined ones too), URL passwords,
-JSON/YAML texts, Authorization headers, PEM keys and command-line passwords (mysql's -pXXXX, -u user:password),
-rootpw, bindpw and SNMP communities, and the false alarms (a credential's name, pin_version, pass_count, max_tokens,
-ssh -p 2222, cp -pR, a sentence); the node stats certificate checked against the name it
+JSON/YAML texts, Authorization headers, PEM keys and command-line passwords (mysql's -pXXXX, each tool's own
+password option after that tool), rootpw, bindpw and SNMP communities, and the false alarms (a credential's name,
+pin_version, pass_count, max_tokens, ssh -p 2222, cp -pR, date -u +%H:%M, find -print0, a sentence); a list under a
+credential's setting never shown; the node stats certificate checked against the name it
 is asked with (a TLS-only node at 127.0.0.1); the stack's output at -vvv; an unverified bundle; the
 checklist conflict and a UTF-16 DTD; LDAP paging and the lockout policy; an asset of an earlier run; approvals; the
 WAR cap; the win_act scripts' order (and a run with pwsh). New: tests/test_stigman_stack.py, tests/test_win_act.py.
