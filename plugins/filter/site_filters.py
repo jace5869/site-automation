@@ -1002,13 +1002,26 @@ def human_size(gb):
 
 
 def name_list(value):
-    """A list of names as a setting may give it: a list as it is, or text - separated by commas or line breaks
+    """A list of names as a setting may give it: a list as it is, or text - separated by commas, tabs or line breaks
     ("AAP01, VCSA01", one per line, or "AAP01" alone). Not by spaces: "File Server 01" is one name. Never the
-    letters of one name."""
+    letters of one name, and never a name lost to how it was written: text that is a list as YAML or JSON writes it
+    ("[AAP01, VCSA01]", "- AAP01" lines, '"AAP01"' in quotes) gives its names."""
     if value is None:
         return []
     if isinstance(value, str):
-        return [w.strip() for w in re.split(r"[,\r\n]+", value) if w.strip()]
+        t = value.strip()
+        if t.startswith("[") and t.endswith("]"):       # a list written as text: [AAP01, "VCSA01"]
+            t = t[1:-1]
+        out = []
+        for w in re.split(r"[,\t\r\n]+", t):
+            w = w.strip()
+            if w.startswith("- ") or w == "-":         # a YAML list's line: - AAP01
+                w = w[1:].strip()
+            while len(w) >= 2 and w[0] == w[-1] and w[0] in "\"'":   # a quoted name
+                w = w[1:-1].strip()
+            if w:
+                out.append(w)
+        return out
     if isinstance(value, dict):
         raise ValueError("a list of names, not a mapping: %r" % (value,))
     return [str(w).strip() for w in value if str(w).strip()]

@@ -766,6 +766,19 @@ class NameLists(unittest.TestCase):
         self.assertTrue(f.name_matches("file server 01", "File Server 01, VCSA01"))
         self.assertFalse(f.name_matches("File", "File Server 01, VCSA01"))
 
+    def test_name_list_never_loses_a_name_to_how_it_is_written(self):
+        # a protected name written as YAML or JSON writes a list, or quoted, or with tabs: each form gives the names
+        self.assertEqual(f.name_list('"VCSA01"'), ["VCSA01"])
+        self.assertEqual(f.name_list("'VCSA01', \"AAP01\""), ["VCSA01", "AAP01"])
+        self.assertEqual(f.name_list("[VCSA01, AAP01]"), ["VCSA01", "AAP01"])
+        self.assertEqual(f.name_list("['File Server 01', \"VCSA01\"]"), ["File Server 01", "VCSA01"])
+        self.assertEqual(f.name_list("VCSA01\tAAP01"), ["VCSA01", "AAP01"])
+        self.assertEqual(f.name_list("- VCSA01\n- AAP01\n"), ["VCSA01", "AAP01"])
+        self.assertEqual(f.name_list("-"), [])
+        self.assertEqual(f.name_list("web-01, -db01"), ["web-01", "-db01"])        # a dash in or before a name stays
+        for text in ('"VCSA01"', "[VCSA01, AAP01]", "VCSA01\tAAP01", "- AAP01\n- VCSA01"):
+            self.assertTrue(f.name_matches("vcsa01", text), text)
+
     def test_name_matches_text(self):
         self.assertTrue(f.name_matches("aap01", "AAP01"))
         self.assertTrue(f.name_matches("dc02", "AAP01, DC*"))

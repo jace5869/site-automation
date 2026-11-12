@@ -272,7 +272,7 @@ mplan="$(stats horizon_maint_plan)"
 run "host maintenance start (DRS then moves its desktops to esx01)" ok horizon_host_maintenance_start.yml "$mplan" '"body": ["m-w05", "m-w08"]'
 mdone="$(stats horizon_maint_done)"
 run "host maintenance end on its own, without the start job's list: refused, nothing sent" fail horizon_host_maintenance_end.yml '{"horizon_maint_host": "esx02"}' \
-    'Nothing is brought back: no list of the desktops the start job put in maintenance mode (horizon_maint_done) reached this job - run the end from the host maintenance workflow (after the start job), or set horizon_maint_end_all: true with horizon_maint_host to bring back every desktop in maintenance mode on esx02, also any put there for another reason.' \
+    'Nothing is brought back: no list of the desktops the start job put in maintenance mode (horizon_maint_done) reached this job - run the end from the host maintenance workflow (after the start job), or put horizon_maint_end_all: true and horizon_maint_host in the Variables of this template for one run to bring back every desktop in maintenance mode on esx02, also any put there for another reason.' \
     '!exit-maintenance-mode'
 run "host maintenance end, the list of another host: refused" fail horizon_host_maintenance_end.yml \
     "$("$py" -c 'import json,sys; d=json.loads(sys.argv[1]); d["horizon_maint_host"]="esx03"; print(json.dumps(d))' "$mdone")" \

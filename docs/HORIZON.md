@@ -518,8 +518,8 @@ host into maintenance in vCenter (DRS moves the running desktops). When the host
 `Is the host back?`: the end job brings out of maintenance mode only the desktops the start job put there
 (the start job hands their list on, `horizon_maint_done`), wherever DRS moved them; a desktop someone put in
 maintenance mode for another reason stays there. Run on its own, without that list, the end job stops;
-`horizon_maint_end_all: true` with `horizon_maint_host` brings back every desktop in maintenance mode on
-the host instead (as before 1.22.0).
+`horizon_maint_end_all: true` with `horizon_maint_host`, put in the end template's Variables for one run (and taken
+out after), brings back every desktop in maintenance mode on the host instead (as before 1.22.0).
 
 On Horizon before 2306, or a pool that still uses parent VMs (`cp-parent-*`), the parent VMs block
 the host's maintenance mode: run `IcMaint.cmd -vc <vcenter> -uid <user> -hostName <host>

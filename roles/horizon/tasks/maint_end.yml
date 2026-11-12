@@ -11,7 +11,7 @@
       {{ 'Which host? Set horizon_maint_host.' if not (_hz_a or _hz_b) else
          '' if horizon_maint_end_all | bool else
          ('Nothing is brought back: no list of the desktops the start job put in maintenance mode (horizon_maint_done) reached this job -'
-          ~ ' run the end from the host maintenance workflow (after the start job), or set horizon_maint_end_all: true with horizon_maint_host'
+          ~ ' run the end from the host maintenance workflow (after the start job), or put horizon_maint_end_all: true and horizon_maint_host in the Variables of this template for one run'
           ~ ' to bring back every desktop in maintenance mode on ' ~ horizon_maint_host ~ ', also any put there for another reason.') if not _hz_done else
          ('The list of the start job is for host ' ~ _hz_done.host ~ ', not ' ~ horizon_maint_host ~ ': nothing is brought back.')
          if _hz_a and _hz_b and _hz_a != _hz_b and not (('.' not in _hz_a or '.' not in _hz_b) and _hz_a.split('.')[0] == _hz_b.split('.')[0]) else '' }}

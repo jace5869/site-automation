@@ -455,6 +455,16 @@ class Remover(object):
         finally:
             shutil.rmtree(work, ignore_errors=True)
 
+    @staticmethod
+    def said(out, err, n):
+        """What keytool said: its error output, else its standard output (a wrong password is said there), its last
+        lines - else its exit code."""
+        for b in (err, out):
+            t = " ".join(x.strip() for x in b.decode("utf-8", "replace").strip().splitlines()[-3:] if x.strip())
+            if t:
+                return t[:n]
+        return ""
+
     def keytool_delete(self, store, path, st, kt, copy):
         # the password reaches keytool in its own environment only (-storepass:env): never on the command line,
         # which ps and the execve audit records show
@@ -462,7 +472,7 @@ class Remover(object):
         ks_args = ["-keystore", copy, "-storepass:env", "SITE_KS_PW"]
         rc, out, err = run([kt, "-list"] + ks_args, self.timeout, env=env)
         if rc != 0:
-            return self.leave(store, "keytool could not open it: %s" % err.decode("utf-8", "replace").strip()[:150])
+            return self.leave(store, "keytool could not open it: %s" % (self.said(out, err, 200) or "exit %d" % rc))
         gone, names = [], set()
         alias = ""
         for line in out.decode("utf-8", "replace").splitlines():
@@ -483,9 +493,9 @@ class Remover(object):
         for a in gone:
             if self.check:
                 continue
-            rc, _, err = run([kt, "-delete", "-alias", a] + ks_args, self.timeout, env=env)
+            rc, dout, err = run([kt, "-delete", "-alias", a] + ks_args, self.timeout, env=env)
             if rc != 0:
-                errors.append("%s: %s" % (a, err.decode("utf-8", "replace").strip()[:120]))
+                errors.append("%s: %s" % (a, self.said(dout, err, 120) or "exit %d" % rc))
         if not self.check and len(errors) < len(gone):
             try:
                 with open(copy, "rb") as f:

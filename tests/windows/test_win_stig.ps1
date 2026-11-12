@@ -186,16 +186,23 @@ Check 'found in two places: none is picked, both named' ($f -and -not $f.scanned
 Remove-Item -LiteralPath (Join-Path $drives 'Evaluate-STIG-old') -Recurse -Force
 if ($onWindows -and ((& whoami.exe /groups) -match 'S-1-16-12288')) {
     # the folder's real permissions, set here (the temporary folder's own depend on the account the test runs as - the
-    # built-in Administrator's are LA, SYSTEM and the Administrators only, which is safe): only SYSTEM and the
-    # Administrators - run; the Users may change it - not run
-    & icacls.exe $drives /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /T /C /Q | Out-Null
-    & icacls.exe $drives /setowner '*S-1-5-32-544' /T /C /Q | Out-Null
+    # built-in Administrator's are LA, SYSTEM and the Administrators only, which is safe). Set on the folder alone: its
+    # files take them by inheritance (an (OI)(CI) grant given to a file with /T leaves it with none - unreadable).
+    # what icacls said, and the permissions it left, go with a failure
+    $icl = @(& icacls.exe $drives /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /C 2>&1 | ForEach-Object { [string]$_ })
+    $icl += @(& icacls.exe $drives /setowner '*S-1-5-32-544' /T /C 2>&1 | ForEach-Object { [string]$_ })
     $f = Scan @{ evaluate = ''; search = @($drives); save = $false }
-    Check 'found where only SYSTEM and the Administrators can change it (real permissions): run' ($f -and $f.scanned -and $f.evaluate -eq $hitScript) $f
-    & icacls.exe $hit /grant '*S-1-5-32-545:(OI)(CI)M' /T /C /Q | Out-Null
+    Check 'found where only SYSTEM and the Administrators can change it (real permissions): run' ($f -and $f.scanned -and $f.evaluate -eq $hitScript) @($f, $icl, @(& icacls.exe $hitScript 2>&1 | ForEach-Object { [string]$_ }))
+    $icl = @(& icacls.exe $hit /grant '*S-1-5-32-545:(OI)(CI)RX' /C 2>&1 | ForEach-Object { [string]$_ })
     $f = Scan @{ evaluate = ''; search = @($drives); save = $false }
-    Check 'found where the Users may change it (real permissions): not run, names them' ($f -and -not $f.scanned -and $f.why -match 'not run as SYSTEM' -and $f.why -match 'BU' -and $f.why.Contains($hitScript)) $f
-    & icacls.exe $hit /remove:g '*S-1-5-32-545' /T /C /Q | Out-Null
+    Check '... the Users may read and run it (not a change): run' ($f -and $f.scanned -and $f.evaluate -eq $hitScript) @($f, $icl)
+    $icl = @(& icacls.exe $hit /grant '*S-1-5-32-545:(OI)(CI)M' /C 2>&1 | ForEach-Object { [string]$_ })
+    $f = Scan @{ evaluate = ''; search = @($drives); save = $false }
+    Check 'found where the Users may change it (real permissions): not run, names them' ($f -and -not $f.scanned -and $f.why -match 'not run as SYSTEM' -and $f.why -match 'BU' -and $f.why.Contains($hitScript)) @($f, $icl)
+    # put back as it was (inherited from the temporary folder again) before the next checks run the same script
+    $icl = @(& icacls.exe $hit /remove:g '*S-1-5-32-545' /C 2>&1 | ForEach-Object { [string]$_ })
+    $icl += @(& icacls.exe $drives /inheritance:e /C 2>&1 | ForEach-Object { [string]$_ })
+    Check '... its permissions put back: the script readable again' ($null -ne (Get-Content -LiteralPath $hitScript -Raw -ErrorAction SilentlyContinue)) $icl
 }
 else {
     $f = Scan @{ evaluate = ''; search = @($drives); save = $false }

@@ -19,7 +19,8 @@ reports that were wrong.
   `report_web_copy_jobs`, `report_email_also_domains`, the ServiceNow lists such as `servicenow_mid_names`,
   `aap_email_question_playbooks`): `File Server 01, VCSA01` is two names, and a name with spaces is one name. Text
   written as `AAP01 VCSA01` is now ONE name: write `AAP01, VCSA01`, or one per line. Lists (YAML `[a, b]`) are read
-  as before.
+  as before, and so is a list written as text - `[AAP01, VCSA01]`, `- AAP01` lines, quoted names, names split by
+  tabs: no protected name is lost to how it was written.
 - **VMware snapshot cleanup and the snapshot pick list need to know the AAP server**, as a restart already does:
   run them with the inventory that has the group `aap` (or `aap_hosts`), or name the AAP VM in
   `vmware_protected_vms`. Otherwise they stop before reading any snapshot.
@@ -33,8 +34,9 @@ reports that were wrong.
 - **Horizon host maintenance end brings back only the desktops the start job put in maintenance mode**, and needs
   the start job's list: run it as the last node of the host maintenance workflow (step 91). Run alone it stops and
   says so. If a host is already in maintenance on the day you update (started with an older release), run the end
-  template alone with `horizon_maint_end_all: true` and `horizon_maint_host: <the host>`: that brings back every
-  desktop in maintenance mode on the host, also one put there for another reason (as before).
+  template alone once with `horizon_maint_end_all: true` and `horizon_maint_host: <the host>` - before step 91 its
+  survey asks for the host; after it, put both in the template's Variables for that one run and take them out again.
+  That brings back every desktop in maintenance mode on the host, also one put there for another reason (as before).
 - **Network config load keeps each device's running configuration before a real load** (git: a tag, share: a dated
   copy, `<time>-before-<change>`), and sends nothing to a device whose copy could not be kept. Without a reachable
   backup store, set `net_config_keep_before: false` to load as before (step 92).
@@ -83,7 +85,8 @@ reports that were wrong.
 - Trust store removal: a changed keystore or bundle is written as a new file next to it under a fresh name, owner
   and mode set on the open file, then renamed over it - and only when it is still the file that was read. A PKCS12
   keystore is changed with keytool on a private copy and written back; the removal now finishes and reports what it
-  changed, with the backup.
+  changed, with the backup. A keystore keytool cannot open is left with keytool's own reason (a wrong password, said
+  on its standard output).
 - Certificate install and restore: the new file is created under a fresh name with owner, mode and SELinux label set
   on the open file; a folder on the way, or the file itself, that has become a symbolic link since the check is not
   written through (the install is rolled back).
@@ -112,8 +115,8 @@ reports that were wrong.
 
 **Network, Horizon, ask page.**
 - Network certificate renewal (Cisco CSR): a subject or DNS name that is not a plain DN or host name (control
-  characters, line breaks, quotes, backslash, semicolon, non-ASCII) is refused for that certificate; nothing is sent
-  to the device, and the incident says why.
+  characters, line breaks, quotes, backslash, semicolon, `?` - the CLI's help -, non-ASCII) is refused for that
+  certificate; nothing is sent to the device, and the incident says why.
 - Network config load: a real run first keeps each device's running configuration (Behaviour changes); restore it
   with `net_config_restore_ref: <time>-before-<change>` to undo the load. The report, the work note and the job's
   artifacts give the name. The docs now say plainly that Check first is recommended, not checked by the job: the
@@ -806,8 +809,9 @@ the ones after it.
        maintenance end*.
     2. On the template *Horizon - host maintenance end*, delete its survey (`horizon_maint_host`) and untick
        **Prompt on launch** for Variables.
-    3. A host already in maintenance from an older release: run the end template once alone with
-       `horizon_maint_end_all: true` and `horizon_maint_host: <the host>` in its Variables.
+    3. A host already in maintenance from an older release: put `horizon_maint_end_all: true` and
+       `horizon_maint_host: <the host>` in the template's Variables, launch it once alone, then take both out again
+       (or do it before step 2, with its survey).
     Details: docs/HORIZON.md, "Workflow: ESXi host maintenance".
 92. **Network config load: the copy before the change** (1.22.0) - only if the load template cannot reach the
     backup store today. A real load first keeps each device's running configuration where the backups are kept.

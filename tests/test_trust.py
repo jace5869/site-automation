@@ -567,6 +567,26 @@ elif a[0] == "-delete":
         self.assertIn("emsign " + fp, open(a["backup"]).read())
         self.assertNotIn(f, open(log).read())                 # keytool only ever saw the private copy
 
+    def test_keytool_wrong_password_says_why(self):
+        """keytool says a wrong password on its standard output, not its error output: the store left says it."""
+        f = os.path.join(self.tmp, "app", "truststore.p12")
+        os.makedirs(os.path.dirname(f))
+        open(f, "w").write("PKCS12 stand-in\n")
+        bindir = os.path.join(self.tmp, "bin")
+        os.makedirs(bindir)
+        with open(os.path.join(bindir, "keytool"), "w") as k:
+            k.write("#!/bin/sh\necho 'keytool error: keystore password was incorrect'\nexit 1\n")
+        os.chmod(os.path.join(bindir, "keytool"), 0o755)
+        store = {"kind": "java", "where": f, "hits": [{"name": "emSign ECC Root CA - G3", "severity": "warning"}]}
+        path = os.environ["PATH"]
+        os.environ["PATH"] = bindir + os.pathsep + path
+        try:
+            r = self.run_remove([store])
+        finally:
+            os.environ["PATH"] = path
+        why = r["not_removed"][0]["why"] if r.get("not_removed") else str(r)
+        self.assertIn("keytool could not open it: keytool error: keystore password was incorrect", why)
+
     def test_a_file_that_is_the_certificate_is_moved_away(self):
         f = os.path.join(self.tmp, "app", "chain.cer")
         os.makedirs(os.path.dirname(f))

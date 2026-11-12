@@ -178,6 +178,14 @@ class IosCsrRefuses(unittest.TestCase):
             self.assertTrue(out.get("failed"), bad)
             self.assertEqual(sent, [], bad)
 
+    def test_ios_csr_refuses_question_mark(self):
+        # "?" in an IOS command line is the CLI's help, not a character of the line: refused in the subject and a name
+        for subject, names in (("CN=sw01.example.mil,OU=Net?", ["sw01.example.mil"]), ("CN=sw01.example.mil", ["sw01?.example.mil"])):
+            out, sent = self.run_module(subject, names)
+            self.assertTrue(out.get("failed"), (subject, names))
+            self.assertIn("nothing sent", out["msg"])
+            self.assertEqual(sent, [])
+
     def test_ios_csr_plain_subject_goes_through(self):
         out, sent = self.run_module("CN=sw01.example.mil,OU=Network,O=Example Org,C=US", ["sw01.example.mil", "*.example.mil"])
         self.assertFalse(out.get("failed"), out)

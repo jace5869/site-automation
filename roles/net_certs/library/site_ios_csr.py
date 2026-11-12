@@ -39,7 +39,8 @@ from ansible.module_utils.connection import Connection, ConnectionError
 # What may go into a configuration line. A DN: attr=value pairs split by commas, the values printable ASCII
 # without , = ; \ " < > (net_cert_ios_subject has already dropped escaped commas and quotes). A name: a host
 # name, or *. and one. A trustpoint: one word. Whole-string matches (fullmatch: no line break slips past).
-_DN_RE = re.compile(r"[A-Za-z0-9.]+=[A-Za-z0-9 ._@'()/:+?*&#!-]*(, ?[A-Za-z0-9.]+=[A-Za-z0-9 ._@'()/:+?*&#!-]*)*")
+# no "?": in an IOS command line it is the CLI's help, not a character of the line
+_DN_RE = re.compile(r"[A-Za-z0-9.]+=[A-Za-z0-9 ._@'()/:+*&#!-]*(, ?[A-Za-z0-9.]+=[A-Za-z0-9 ._@'()/:+*&#!-]*)*")
 _NAME_RE = re.compile(r"(\*\.)?[A-Za-z0-9_]([A-Za-z0-9_-]{0,62})(\.[A-Za-z0-9_]([A-Za-z0-9_-]{0,62}))*\.?")
 _TP_RE = re.compile(r"[A-Za-z0-9._-]{1,64}")
 
