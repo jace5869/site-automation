@@ -235,13 +235,7 @@ class Fit(unittest.TestCase):
 
 
 class EmailTiles(unittest.TestCase):
-    def test_tiles_in_rows_when_a_report_asks(self):
-        """1.31.0b: the standard email look puts every tile in one row - the right-sizing report's 10 widened the email
-        (+58 px at 1280). A report with summary_per_row has them in rows of that many: no sideways scroll at 1280 or 800.
-        A report without it is one row, as before: the same HTML."""
-        b = _browser()
-        if not b:
-            self.skipTest("no headless browser here")
+    def _env(self):
         import importlib
         import jinja2
         sys.path.insert(0, os.path.join(REPO, "plugins", "filter"))
@@ -251,25 +245,50 @@ class EmailTiles(unittest.TestCase):
                 env.filters.update(importlib.import_module(os.path.basename(f)[:-3]).FilterModule().filters())
             except Exception:                    # noqa: BLE001 - a filter file this test does not need
                 pass
-        docs = [f for f in sorted(glob.glob(os.path.join(DOCS, "*.json"))) if "summary_per_row" in json.load(open(f))]
-        self.assertTrue(docs, "a document with summary_per_row (vm_rightsize_doc)")
+        return env
+
+    def _render(self, env, doc):
+        return env.get_template("report.html.j2").render(_report=doc, _email_footer="AAP job 9",
+                                                         report_email_header_text="Site automation report")
+
+    def test_tiles_in_rows_of_four(self):
+        """1.30.0 (test 1.44.0): the standard email look puts four or more tiles four to a row in even columns, a short
+        last row kept by empty cells; fewer than four are one row. Every report, no setting (summary_per_row, 1.31.0b,
+        is gone)."""
+        env = self._env()
+        doc = json.load(open(os.path.join(DOCS, "vm_rightsize_doc.json")))
+        self.assertGreater(len(doc["summary"]), 4, "the right-sizing document has more than 4 tiles")
+        for n in (1, 3, 4, 5, 8, len(doc["summary"])):
+            html = self._render(env, dict(doc, summary=(doc["summary"] * 3)[:n]))
+            tiles = html.count('<div style="font-size:22px')
+            self.assertEqual(tiles, n)
+            if n < 4:
+                self.assertNotIn('width="25%"', html, n)
+                continue
+            cells = re.findall(r'<td width="25%" style="padding:0 8px 8px 0;', html)
+            self.assertEqual(len(cells), -(-n // 4) * 4, n)              # whole rows of 4: the last one padded
+            self.assertEqual(html.count('<td width="25%" style="padding:0 8px 8px 0;"></td>'), (-n) % 4, n)
+            self.assertNotIn("summary_per_row", html)
+        self.assertNotIn("summary_per_row", doc)
+
+    def test_tiles_never_scroll_sideways(self):
+        """1.31.0b: the right-sizing report's 10 tiles once widened the email (+58 px at 1280): no sideways scroll at
+        1280 or 800."""
+        b = _browser()
+        if not b:
+            self.skipTest("no headless browser here")
+        env = self._env()
         with tempfile.TemporaryDirectory() as d:
             pages = []
-            for f in docs:
+            for f in [os.path.join(DOCS, "vm_rightsize_doc.json")]:
+                doc = json.load(open(f))
                 p = "mail-" + os.path.basename(f)[:-5] + ".html"
                 with open(os.path.join(d, p), "w") as o:
-                    o.write(env.get_template("report.html.j2").render(_report=json.load(open(f)), _email_footer="AAP job 9",
-                                                                      report_email_header_text="Site automation report"))
+                    o.write(self._render(env, doc))
                 pages.append(p)
             for w in (1280, 800):
                 for k, r in sorted(measure(b, d, pages, w).items()):
                     self.assertEqual(r["page"], 0, "%s at %d px: the email scrolls sideways (+%d px)" % (k, w, r["page"]))
-        one = dict(json.load(open(docs[0])))
-        one.pop("summary_per_row")
-        kw = dict(_email_footer="AAP job 9", report_email_header_text="Site automation report")
-        self.assertEqual(env.get_template("report.html.j2").render(_report=one, **kw),
-                         env.get_template("report.html.j2").render(_report=dict(one, summary_per_row=len(one["summary"])), **kw))
-
 
 # a big table's page in a frame: once it is loaded (its script ran), timed at once, synchronously: a section closed (the
 # page's toggle handler: fit) and the rows' height changed (every table fitted again)

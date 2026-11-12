@@ -439,7 +439,7 @@ def vm_rightsize_doc(result, sized, opts=None):
                         "suggestions only, nothing was changed" % (
                             days, ", ".join(_short(x) for x in read) or "no vCenter",
                             "%d powered off and %d templates not checked" % (sk.get("off", 0), sk.get("templates", 0))),
-            "summary": summary, "summary_per_row": 4, "sections": sections}   # 1.31.0b: up to 10 tiles - in the email, 4 a row
+            "summary": summary, "sections": sections}       # up to 10 tiles: the email puts 4 a row (1.30.0)
 
 
 def vm_rightsize_xlsx(sized, opts=None):

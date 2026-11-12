@@ -30,7 +30,8 @@
       {{ {'on': vm_deploy_plain_words | bool, 'templates': vm_deploy_plain_templates | default({}, true),
           'sizes': vm_deploy_plain_sizes | default({}, true), 'allowed': vm_deploy_templates,
           'aliases': vm_deploy_template_aliases | default({}, true), 'name_rules': vm_deploy_name_rules | default([], true),
-          'sites': (vm_deploy_sites | default({}, true)).keys() | list, 'site_words': vm_deploy_plain_sites | default({}, true)} }}
+          'sites': (vm_deploy_sites | default({}, true)).keys() | list, 'site_words': vm_deploy_plain_sites | default({}, true),
+          'max_disk_gb': vm_deploy_max_disk_gb | float} }}
 
 - name: VMware | the plain-words settings have their shape (words -> a template; a size word -> CPU and memory)
   ansible.builtin.assert:

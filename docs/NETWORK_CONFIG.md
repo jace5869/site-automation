@@ -17,9 +17,9 @@ What is hidden on a shown line (1.41.0):
 
 - **IOS**: all that follows `password`, `secret`, any `xxx-password` (`area-password`, `domain-password`), `key`, `key-string`, `pre-shared-key`, `authentication-key` and `md5`. A `level N` and the encryption type digit stay.
 - **IOS HSRP, VRRP, GLBP**: the text after `authentication` (and `authentication text`). A `md5 key-chain` keeps the chain's name.
-- **IOS SNMP**: the `snmp-server community` string, also on a `no snmp-server` line, everything after the address of an `snmp-server host`, and everything after `v3` of an `snmp-server user`.
+- **IOS SNMP**: the `snmp-server community` string, also on a `no snmp-server` line, and the community of `snmp mib community-map` and `snmp-server community-map` (1.44.0). Everything after the address of an `snmp-server host` is hidden, and everything after `v3` (or NX-OS `auth`) of an `snmp-server user`.
 - **Kept as written**: `description` lines, banners, and the number of a key chain's `key 1`.
-- **PAN-OS**: the text of every element named for a password, key or secret (`phash`, `password`, `authpwd`, `auth-key`, `shared-key`, `private-key`, `community` and the like), attributes or not. A body over several lines is hidden line by line.
+- **PAN-OS**: the text of every element named for a password, key or secret (`phash`, `password`, `authpwd`, `auth-key`, `shared-key`, `private-key`, `community`, `community-string` and the like), attributes or not. A body over several lines is hidden line by line.
 
 ## Which devices
 

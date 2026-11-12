@@ -123,6 +123,31 @@ class Filters(unittest.TestCase):
         self.assertFalse([x for x in d["lines"] if "KEY" in x], d["lines"])
         self.assertIn("+    <hidden>", d["lines"])
 
+
+    def test_mask_every_snmp_community_form(self):
+        """1.44.0: the community of a community map (IOS "snmp mib community-map", "snmp-server community-map"), an
+        NX-OS SNMP user's passwords and PAN-OS community-string - hidden; the other snmp lines kept."""
+        hidden = {
+            "snmp mib community-map TOPSECRET context C": "snmp mib community-map <hidden> context C",
+            "snmp mib community-map TOPSECRET engineid 800000090300 security-name S":
+                "snmp mib community-map <hidden> engineid 800000090300 security-name S",
+            "no snmp mib community-map TOPSECRET": "no snmp mib community-map <hidden>",
+            "+snmp mib community-map TOPSECRET context C": "+snmp mib community-map <hidden> context C",
+            "snmp-server community-map TOPSECRET context C": "snmp-server community-map <hidden> context C",
+            "snmp-server community TOPSECRET group network-operator": "snmp-server community <hidden> group network-operator",
+            "snmp-server user svc_x network-admin auth sha TOPSECRET priv aes-128 TOPSECRET":
+                "snmp-server user svc_x network-admin auth <hidden>",
+            "snmp-server user svc_x auth md5 TOPSECRET": "snmp-server user svc_x auth <hidden>",
+            "snmp-server user svc_x grp remote 192.0.2.9 v3 auth md5 TOPSECRET": "snmp-server user svc_x grp remote 192.0.2.9 v3 <hidden>",
+        }
+        for line, want in hidden.items():
+            self.assertEqual(f.mask(line, "ios"), want, line)
+        for line in ("snmp-server group G v3 priv", "snmp-server user svc_x network-admin", "snmp-server contact ops",
+                     "snmp-server location rack 4", "snmp-server enable traps", "snmp mib bulkstat object-list L"):
+            self.assertEqual(f.mask(line, "ios"), line)
+        self.assertEqual(f.mask("<community-string>TOPSECRET</community-string>", "panos"), "<community-string><hidden></community-string>")
+        d = f.diff("snmp mib community-map OLDX context C\n", "snmp mib community-map NEWX context C\n", "ios")
+        self.assertFalse([x for x in d["lines"] if "OLDX" in x or "NEWX" in x], d["lines"])
     def test_diff(self):
         d = f.diff("a\nb\nc\n", "a\nc\nsnmp-server community new RO\n", "ios", 60, "rtr01")
         self.assertEqual((d["added"], d["removed"], d["truncated"]), (1, 1, False))
