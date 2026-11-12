@@ -120,6 +120,66 @@ class Check(unittest.TestCase):
             if mem:
                 self.assertEqual(spec["memory_gb"], mem, desc)
 
+    def test_a_thousands_comma_over_the_cap(self):
+        """1.44.0 round b: "N,NNN GB" is one size within vm_deploy_max_disk_gb (2048 when none); over it a question (one
+        disk, or a list?), never a guess. "100,200 GB" (three digits first) is a list, as before."""
+        for desc, cap, disks in (("disks: 2,048 GB", 2048, [2048]), ("disks: 100,200 GB", 2048, [100, 200]),
+                                 ("disks: 60, 100 GB", 2048, [60, 100]), ("disks: 80/100 GB", 2048, [80, 100]),
+                                 ("disks: 3,000 GB", 4096, [3000]), ("disks: 60,100 GB", 65536, [60100]),
+                                 ("disks: 1,500 GB", 2048, [1500])):
+            rec = dict(REC, description="vm_name: web01\ntemplate: rhel9\n" + desc, comments="", work_notes="")
+            got = d.vm_deploy_check(d.vm_deploy_spec(rec), rec, dict(RULES, max_disk_gb=cap))
+            self.assertEqual(got["spec"]["disks_gb"], disks, (desc, cap))
+            self.assertFalse([p for p in got["problems"] if "disk" in p], (desc, cap))
+        for said, one, parts, cap in (("16,384 GB", 16384, "16, 384", 2048), ("10,240 GB", 10240, "10, 240", 2048),
+                                      ("12,288 GB", 12288, "12, 288", 2048), ("20,480 GB", 20480, "20, 480", 2048),
+                                      ("65,536 GB", 65536, "65, 536", 2048), ("60,100 GB", 60100, "60, 100", 2048),
+                                      ("80,100 GB", 80100, "80, 100", 2048), ("1,500 GB", 1500, "1, 500", 1024)):
+            q = "'%s': one disk of %d GB, or disks of %s GB? write a line 'disks_gb: %s'" % (said, one, " and ".join(parts.split(", ")), parts)
+            for desc in ("disks: " + said, "Disk: " + said, "disks_gb: " + said):
+                rec = dict(REC, description="vm_name: web01\ntemplate: rhel9\n" + desc, comments="", work_notes="")
+                got = d.vm_deploy_check(d.vm_deploy_spec(rec), rec, dict(RULES, max_disk_gb=cap))
+                self.assertTrue(any(p.startswith(q) for p in got["problems"]), (desc, cap, got["problems"]))
+                self.assertNotIsInstance(got["spec"]["disks_gb"], list, desc)
+            # in plain words too, the cap from vm_deploy_max_disk_gb
+            words = dict(WORDS, max_disk_gb=cap)
+            for text in ("need a %s disk" % said, "rhel 9, a %s data disk and a 100 GB system disk" % said):
+                rec = _wt("rhel 9, large, named ab01web06\n" + text)
+                p = d.vm_deploy_spec(rec, {}, None, words)
+                self.assertNotIn("disks_gb", p["spec"], text)
+                self.assertTrue(any(x.startswith(q) for x in p["questions"]), (text, p["questions"]))
+        # "3,000 GB": a list would hold a disk of 0 GB - one disk, which the cap refuses
+        for desc in ("disks: 3,000 GB", "Disk: 3,000 GB"):
+            rec = dict(REC, description="vm_name: web01\ntemplate: rhel9\n" + desc, comments="", work_notes="")
+            got = d.vm_deploy_check(d.vm_deploy_spec(rec), rec, RULES)
+            self.assertIn("'3,000 GB' is one disk of 3000 GB: more than vm_deploy_max_disk_gb (2048 GB)", got["problems"], desc)
+        # memory is not a disk: "16,384 MB RAM" stays 16 GB of memory
+        p = d.vm_deploy_spec(_wt("rhel 9, named ab01web06\n16,384 MB RAM and a 100 GB disk"), {}, None, WORDS)
+        self.assertEqual((p["spec"].get("disks_gb"), p["questions"]), ([100], []))
+
+    def test_a_disk_line_reads_only_disk_sizes(self):
+        """1.44.0 round b: a "Disk:" / "Disks:" line - never a date, a version or the memory on it; a plain number it cannot
+        place is a question."""
+        cases = {"Disk: 100 GB, by 11/12/2026": [100], "Disk: 100 GB, by 11/12": [100], "Disk: 100 GB version 8/9": [100],
+                 "Disks: 80/100 GB, 16/32 GB RAM": [80, 100], "disk: 80 GB / memory: 16 GB": [80], "Disks: 80 GB/16 GB RAM": [80],
+                 "Disks: 80/100 GB": [80, 100], "Disks: 1/2 TB": [1024, 2048], "disks: 100, 200": [100, 200],
+                 "Disks: C: 100, D: 200": [100, 200], "disks: C: 100 GB, D: 1,500 GB": [100, 1500], "Disk: 100 GB, 4 CPU": [100],
+                 "Disk: 100 GB for the OS and 200 GB for data": [100, 200], "Disk (GB): 100, 200": [100, 200],
+                 "Disk: rhel 9, 100 GB": [100], "disks_gb: 100, 200": [100, 200]}
+        for desc, want in cases.items():
+            rec = dict(REC, description="vm_name: web01\ntemplate: rhel9\n" + desc, comments="", work_notes="")
+            got = d.vm_deploy_check(d.vm_deploy_spec(rec), rec, dict(RULES, max_disk_gb=2048))
+            self.assertEqual((got["spec"]["disks_gb"], [p for p in got["problems"] if "disk" in p]), (want, []), desc)
+        for desc, said in (("Disk: 100 GB, maybe 50 later", "'50'"), ("Disks: 100 GB 7 of them", "'7'")):
+            rec = dict(REC, description="vm_name: web01\ntemplate: rhel9\n" + desc, comments="", work_notes="")
+            p = d.vm_deploy_spec(rec)
+            self.assertNotIn("disks_gb", p["spec"], desc)
+            self.assertTrue(any("has numbers the job cannot place (%s)" % said in q for q in p["questions"]), (desc, p["questions"]))
+        # a later line answers the question
+        rec = dict(REC, description="vm_name: web01\nDisk: 100 GB, maybe 50 later", comments="disks_gb: 100, 50", work_notes="")
+        p = d.vm_deploy_spec(rec)
+        self.assertEqual((p["spec"]["disks_gb"], p["questions"]), ("100, 50", []))
+
     def test_a_long_line_is_quick(self):
         """1.23.0: a ticket line of thousands of spaces is read in well under a second."""
         import time
@@ -863,6 +923,39 @@ class PlainWords(unittest.TestCase):
             self.assertIn("more than one size for disk 1", p["questions"][0])
         p = self.spec(_wt("rhel 9, large, named ab01web06, 200 GB data disk\ndisks_gb: 100, 200"))
         self.assertEqual(p["questions"], [])
+
+    def test_disks_in_words_a_slash_list(self):
+        """1.44.0: "/" between sizes is a list like ",", "and" or "+"; a number without a unit takes the next one's; a
+        plural "Disks:" is never read as drive S:; a thousands comma as on the disks_gb line."""
+        cases = {"Storage: 80GB/100GB": [80, 100], "Disks: 80/100 GB": [80, 100], "disks: 80 GB and 100 GB": [80, 100],
+                 "hard disk 80/100 GB": [80, 100], "disks: 80 GB, 100 GB": [80, 100], "Disks: 80 GB + 100 GB": [80, 100],
+                 "80GB / 100GB disks": [80, 100], "need 80/100 GB of storage": [80, 100], "Disks: 1/2 TB": [1024, 2048],
+                 "disks: 2,048 GB": [2048]}
+        for text, want in cases.items():
+            p = self.spec(_wt("rhel 9, large, named ab01web06\n" + text))
+            self.assertEqual((d._sizes_gb(p["spec"].get("disks_gb", [])), p["questions"]), (want, []), text)
+
+    def test_numbered_disks_one_per_line(self):
+        """1.44.0 round b: numbered disks as tickets write them, one per line or on one line, disk 1 first; a date or RAM
+        line under them adds no disk."""
+        cases = {"Disk 1 - 50g\nDisk 2 - 20g": [50, 20], "disk 1 20g\nDisk 2 50g": [20, 50], "Disk 1: 50 GB\nDisk 2: 20 GB": [50, 20],
+                 "Disk1 50G\nDisk2 20G": [50, 20], "disk 1 20g, disk 2 50g": [20, 50],
+                 "Disk 1 - 50g\nDisk 2 - 20g\nDisk 3 - 100g": [50, 20, 100]}
+        rules = dict(RULES, max_disk_gb=2048, templates=["rhel9-*"])
+        for text, want in cases.items():
+            for under in ("", "\nNeeded by 11/12", "\nRAM 16g", "\nNeeded by 11/12\nRAM 16g"):
+                rec = _wt("rhel 9, large, named ab01web06\n" + text + under)
+                c = d.vm_deploy_check(self.spec(rec, words=dict(WORDS, max_disk_gb=2048)), rec, rules)
+                self.assertEqual((c["spec"].get("disks_gb"), [x for x in c["problems"] if "disk" in x]), (want, []), text + under)
+
+    def test_a_disk_size_not_placed_is_a_question(self):
+        """1.44.0: a size on a disk line that the words cannot place is a question, never the default disk; memory
+        on the same line is not a disk size."""
+        p = self.spec(_wt("rhel 9, large, named ab01web06\na 100 GB disk, maybe 50 GB later on the disk"))
+        self.assertNotIn("disks_gb", p["spec"])
+        self.assertTrue(any("disk sizes the job cannot place ('50 GB')" in q for q in p["questions"]), p["questions"])
+        p = self.spec(_wt("rhel 9, named ab01web06\n4 cpus, 16 GB RAM, 100 GB disk"))
+        self.assertEqual((d._sizes_gb(p["spec"].get("disks_gb", [])), p["questions"]), ([100], []))
 
     def test_the_check_asks_in_plain_english_and_keeps_the_rules(self):
         opts = dict(RULES, templates=["rhel9-*", "WIN2022-TPL"], name_regex=r"^[a-z0-9][a-z0-9-]{1,62}$")

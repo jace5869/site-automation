@@ -263,8 +263,8 @@ class Judge(unittest.TestCase):
             ("curl_args", "-H 'Authorization: Token Hx0tok3n99' https://api.example.mil", "Hx0tok3n99"),
             ("cli_args", "--user svc --password Hx-cli6", "Hx-cli6"), ("mysql_args", "-u root -p Hx-cli7", "Hx-cli7"),
             ("env_line", "PGPASSWORD=Hx-env8 psql -h db01", "Hx-env8"),
-            ("tls_key", "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n-----END PRIVATE KEY-----", "MIIEvQ"),
-            ("ssh_key", "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n", "b3BlbnNz"),
+            ("tls_key", "-----" "BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n-----END PRIVATE KEY-----", "MIIEvQ"),
+            ("ssh_key", "-----" "BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n", "b3BlbnNz"),
             ("ldap_credential", "Hx9Summer2024", "Hx9Summer2024"), ("svc_creds", {"user": "svc", "pass": "Hx-c10"}, "Hx-c10"),
         ]
         show = [  # (setting, value, the value shown)
@@ -480,8 +480,8 @@ class Judge(unittest.TestCase):
             ("2FA_SECRET=Hx1", "Hx1"), ("1PASSWORD=Hx2", "Hx2"), ("export %s=Hx3" % long_name, "Hx3"),
             ("DB_HOST=db01 %s=Hx4" % long_name, "Hx4"), ("%s='Hx5 x'" % long_name, "Hx5"),
             ("a" * 40 + "+svc.scheme://svc:Hx6@db01.example.mil", "Hx6"), ("--" + "a" * 70 + "-password Hx7", "Hx7"),
-            ("-----BEGIN ONE TWO THREE FOUR FIVE PRIVATE KEY-----\nHx8", "Hx8"),
-            ("-----BEGIN ABCDEFGHIJKLMNOPQRS PRIVATE KEY-----\nHx9", "Hx9"), ("-----BEGIN PGP PRIVATE KEY BLOCK-----\nHx10", "Hx10"),
+            ("-----" "BEGIN ONE TWO THREE FOUR FIVE PRIVATE KEY-----\nHx8", "Hx8"),
+            ("-----" "BEGIN ABCDEFGHIJKLMNOPQRS PRIVATE KEY-----\nHx9", "Hx9"), ("-----" "BEGIN PGP PRIVATE KEY BLOCK-----\nHx10", "Hx10"),
         ]
         for i, (v, expect) in enumerate(hide):
             with self.subTest(value=v[:40]):

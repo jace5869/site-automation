@@ -1840,6 +1840,7 @@ class PagePeriods(unittest.TestCase):
         self.assertIn('id="cv-data"', h)
         self.assertNotIn('id="pp-data"', h)
 
+    @unittest.skipUnless(any(__import__("shutil").which(b) for b in ("google-chrome", "chromium")), "no headless browser here")
     def test_in_a_browser(self):
         m = site()["model"]
         team = m["teams"][0]
@@ -1863,6 +1864,7 @@ class PagePeriods(unittest.TestCase):
         got = json.loads(self.chrome(P.servicenow_insights_page(m, "all", dict(OPTS, look="brief")), "#p=1m"))
         self.assertEqual((got["v"], got["act"], got["acta"]), ([], 2, 0), got)
 
+    @unittest.skipUnless(any(__import__("shutil").which(b) for b in ("google-chrome", "chromium")), "no headless browser here")
     def test_it_fits(self):
         m = site()["model"]
         for key in ("all", m["teams"][0]):
