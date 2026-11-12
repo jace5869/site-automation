@@ -23,9 +23,15 @@ import site_vmware_rightsize as rs  # noqa: E402
 import vmware_rightsize_filters as f  # noqa: E402
 
 
+def _days(n, level, busy=None):
+    """n days of busiest 2-hour averages: every one at level, or busy days at 100% and the rest at 50% (1.31.0)."""
+    return [["2026-10-%02d" % (i + 1), (100.0 if i < busy else 50.0) if busy is not None else min(level, 100.0)] for i in range(int(n))]
+
+
 def vm(name, cpus=4, mem_gb=16, cpu=20.0, mem=20.0, days=30.0, win=False, ready=0.2, balloon=None, swapped=None, limit=-1,
-       year_cpu=None, year_mem=None, disks=None, hot=False, vc="vc01.example.mil", cluster="CL1"):
-    return {"name": name, "vcenter": vc, "datacenter": "DC1", "cluster": cluster, "esxi_host": "esx01.example.mil",
+       year_cpu=None, year_mem=None, disks=None, hot=False, vc="vc01.example.mil", cluster="CL1", busy_cpu=None, busy_mem=None,
+       year_cpu_top=None, year_mem_top=None):
+    v = {"name": name, "vcenter": vc, "datacenter": "DC1", "cluster": cluster, "esxi_host": "esx01.example.mil",
             "guest_os": "Microsoft Windows Server 2022 (64-bit)" if win else "Red Hat Enterprise Linux 9 (64-bit)", "windows": win,
             "cpus": cpus, "memory_mb": int(mem_gb * 1024), "cpu_limit_mhz": -1, "mem_limit_mb": limit, "cpu_hot_add": hot,
             "mem_hot_add": hot, "disks": disks or [],
@@ -33,7 +39,13 @@ def vm(name, cpus=4, mem_gb=16, cpu=20.0, mem=20.0, days=30.0, win=False, ready=
                       "ready_avg": ready / 2, "ready_p95": ready, "mem_avg": mem / 2, "mem_p95": mem, "mem_max": mem * 1.2,
                       "consumed_mb_avg": mem_gb * 900, "balloon_mb_max": balloon, "balloon_mb_avg": None, "swapped_mb_max": swapped,
                       "year_cpu_day": year_cpu, "year_cpu_date": "2026-03-31" if year_cpu is not None else "",
-                      "year_mem_day": year_mem, "year_mem_date": "2026-03-31" if year_mem is not None else ""}}
+                      "year_mem_day": year_mem, "year_mem_date": "2026-03-31" if year_mem is not None else "",
+                      "cpu_days": _days(days, cpu * 1.5, busy_cpu), "mem_days": _days(days, mem * 1.2, busy_mem)}}
+    if year_cpu_top is not None:
+        v["stats"]["year_cpu_top"] = year_cpu_top
+    if year_mem_top is not None:
+        v["stats"]["year_mem_top"] = year_mem_top
+    return v
 
 
 def size(v, **opts):
@@ -108,7 +120,7 @@ class Suggestions(unittest.TestCase):
     def test_busiest_day_of_the_year_keeps_the_size(self):
         s = size(vm("batch", cpus=8, cpu=18.0, mem=50.0, year_cpu=78.0))
         self.assertEqual(s["verdict"], f.RIGHT)
-        self.assertIn("busiest day of the year (2026-03-31, 78% CPU) is sized for", " ".join(s["notes"]))
+        self.assertIn("Kept for its busiest day of the year, 78% CPU on 2026-03-31 (a one-off).", s["notes"])
 
     def test_not_enough_history(self):
         s = size(vm("new", days=3.0, cpu=1.0))
@@ -137,8 +149,8 @@ class Suggestions(unittest.TestCase):
         v["stats"]["cpu_max"], v["stats"]["mem_max"] = 90.0, 70.0
         s = size(v)
         self.assertEqual((s["cpu"]["suggested"], s["mem"]["suggested"]), (8, 32))
-        self.assertIn("At its peak it used about 14.4 vCPUs, more than 8: short bursts would be slower.", s["notes"])
-        self.assertIn("At its peak about 44.8 GB was active, more than 32 GB: check it before giving less.", s["notes"])
+        self.assertIn("Peak about 14.4 vCPUs: short bursts would be slower.", s["notes"])
+        self.assertIn("Peak about 44.8 GB active: check it before giving less.", s["notes"])
 
     def test_disk(self):
         s = size(vm("d", disks=[{"path": "/", "capacity_gb": 40.0, "free_gb": 20.0}, {"path": "/var", "capacity_gb": 100.0, "free_gb": 5.0}]))
@@ -167,8 +179,9 @@ class Report(unittest.TestCase):
         self.assertEqual(summary, {"VMs checked": 6, "Too big": 1, "Too small": 1, "About right": 3, "vCPUs to free": 4,
                                    "Memory to free (GB)": 16, "Not enough history": 1, "Memory taken back": 1, "Disks nearly full": 1})
         titles = [s["title"] for s in d["sections"]]
-        self.assertEqual(titles, ["Too small", "Memory taken back by the host", "Too big", "Guest disks nearly full", "Not enough history",
-                                  "About right", "How the suggestions are worked out"])
+        self.assertEqual(titles, ["Before you resize", "Too small", "Memory taken back by the host", "Too big", "Guest disks nearly full",
+                                  "Not enough history", "About right", "How the suggestions are worked out"])
+        d["sections"] = d["sections"][1:]                                              # CPU ready low everywhere: said first (1.31.0)
         big = d["sections"][2]
         self.assertEqual(big["columns"], f.SIZE_COLS)
         self.assertEqual(big["rows"][0][:3], ["web01", "vc01 / CL1", "8 → 4"])          # two vCenters: the vCenter with the cluster
@@ -210,7 +223,145 @@ class Report(unittest.TestCase):
     def test_change_artifact(self):
         v = f.vm_rightsize([vm("web01", cpus=8, mem_gb=32, cpu=10.0, mem=10.0)])[0]
         self.assertEqual(f.vm_rightsize_change(v), {"vcenter": "vc01.example.mil", "name": "web01", "verdict": f.TOO_BIG,
-                                                    "vcpus": [8, 4], "memory_gb": [32, 16]})
+                                                    "confidence": "Medium", "vcpus": [8, 4], "memory_gb": [32, 16]})
+
+
+class Reliable(unittest.TestCase):
+    """1.31.0: growth only from the last days and on several of them, implausible days left out, how often the year's
+    busiest day came near, and a confidence for each suggestion."""
+
+    def test_the_users_vm_gets_no_growth_from_one_day(self):
+        # 9% at the 95th percentile, 14% peak, its busiest day of the year read 118%: was 8 -> 14 vCPUs
+        v = vm("app07", cpus=8, cpu=9.0, year_cpu=118.0)
+        v["stats"]["cpu_max"] = 14.0
+        s = size(v)
+        self.assertNotEqual(s["cpu"]["change"], "up")
+        self.assertEqual(s["cpu"], {"now": 8, "suggested": 4, "change": "down"})      # the suspect day left out: sized as the rest
+        self.assertIn("a 118% day (2026-03-31) left out: above 100%", s["why"])
+        self.assertEqual((s["confidence"], s["doubts"]), ("Medium", ["a suspect CPU day left out"]))
+
+    def test_the_years_busiest_day_never_adds(self):
+        for cpu, day in ((21.0, 88.0), (40.0, 95.0), (61.0, 98.0)):
+            s = size(vm("batch", cpus=4, cpu=cpu, mem=30.0, year_cpu=day))
+            self.assertEqual(s["cpu"]["change"], "", (cpu, day))                     # holds a cut back, adds nothing
+            self.assertNotEqual(s["verdict"], f.TOO_SMALL)
+        s = size(vm("m", mem_gb=16, mem=40.0, year_mem=96.0))
+        self.assertNotEqual(s["mem"]["change"], "up")
+
+    def test_growth_needs_several_busy_days(self):
+        s = size(vm("busy", cpus=8, cpu=90.0, mem=60.0, busy_cpu=2))
+        self.assertEqual((s["cpu"]["change"], s["verdict"], s["watch"]), ("", f.RIGHT, ["CPU"]))
+        self.assertIn("CPU: busy on 2 day(s): watch, not enough to grow", s["why"])
+        self.assertEqual(s["confidence"], "")                                        # no change: no confidence
+        self.assertEqual(size(vm("busy", cpus=8, cpu=90.0, busy_cpu=3))["cpu"]["change"], "up")
+        self.assertEqual(size(vm("busy", cpus=8, cpu=90.0, busy_cpu=2), grow_days=2)["cpu"]["change"], "up")
+        self.assertIn("CPU: busy on 3 of 30 days", size(vm("busy", cpus=8, cpu=90.0, busy_cpu=3))["why"])
+        m = size(vm("full", mem_gb=24, mem=95.0, busy_mem=1))
+        self.assertEqual((m["mem"]["change"], m["watch"]), ("", ["memory"]))
+        self.assertIn("memory: busy on 1 day(s): watch, not enough to grow", m["why"])
+        self.assertEqual(size(vm("full", mem_gb=24, mem=95.0, busy_mem=5))["mem"]["change"], "up")
+        b = vm("nodays", cpus=8, cpu=90.0)
+        del b["stats"]["cpu_days"]                                                   # not read: no growth
+        self.assertEqual(size(b)["cpu"]["change"], "")
+        self.assertIn("CPU: busy, its busy days not read: watch", size(b)["why"])
+
+    def test_a_suspect_day_left_out_the_next_one_holds_the_cut(self):
+        top = [["2026-02-28", 118.0], ["2026-03-31", 40.0], ["2026-03-30", 38.0], ["2026-01-31", 35.0], ["2026-05-01", 12.0]]
+        s = size(vm("rep", cpus=8, cpu=9.0, year_cpu=118.0, year_cpu_top=top))
+        self.assertEqual(s["cpu"], {"now": 8, "suggested": 6, "change": "down"})      # 40% of 8 / 70% = 4.6 -> 6, not 4
+        self.assertIn("sized for its busiest day, 40% on 2026-03-31 (3 days within 10 points)", s["why"])
+        self.assertIn("a 118% day (2026-02-28) left out: above 100%", s["why"])
+        self.assertEqual(s["confidence"], "Low")                                      # two doubts: suspect, held by the day
+        one = size(vm("rep", cpus=8, cpu=9.0, year_cpu_top=[["2026-03-31", 40.0], ["2026-01-31", 20.0]]))
+        self.assertIn("sized for its busiest day, 40% on 2026-03-31 (a one-off)", one["why"])
+        self.assertEqual((one["confidence"], one["doubts"]), ("Medium", ["held by its busiest day"]))
+        full = [["2026-%02d-%02d" % (1 + i // 28, 1 + i % 28), 40.0 - i * 0.1] for i in range(31)]
+        self.assertIn("(31+ days within 10 points)", "; ".join(size(vm("rep", cpus=8, cpu=9.0, year_cpu_top=full))["why"]))
+
+    def test_a_suspect_value_that_changes_nothing_is_one_doubt_and_said(self):
+        s = size(vm("busy", cpus=8, cpu=97.0, year_cpu=118.0))                       # growth from the last days anyway
+        self.assertEqual(s["cpu"]["change"], "up")
+        self.assertIn("a 118% day (2026-03-31) left out: above 100%", s["why"])
+        self.assertEqual((s["confidence"], s["doubts"]), ("Medium", ["a suspect CPU day left out"]))
+        r = size(vm("calm", cpus=2, mem_gb=8, cpu=40.0, mem=40.0, year_cpu=130.0))  # no change at all: still said
+        self.assertIn("CPU: a 130% day (2026-03-31) left out: above 100%", r["why"])
+        self.assertEqual(r["confidence"], "")                                       # no change: no confidence
+        m = size(vm("memcut", cpus=2, mem_gb=16, cpu=40.0, mem=10.0, year_cpu=130.0))  # only memory changes: still a doubt
+        self.assertEqual((m["cpu"]["change"], m["mem"]["change"], m["doubts"]), ("", "down", ["a suspect CPU day left out"]))
+
+    def test_confidence(self):
+        self.assertEqual(size(vm("w", cpus=8, mem_gb=16, cpu=10.0, mem=10.0))["confidence"], "High")
+        self.assertEqual(size(vm("w", cpus=8, mem_gb=16, cpu=10.0, mem=10.0, days=14.0))["doubts"], ["14 days of history"])
+        close = size(vm("c", cpus=16, cpu=61.0, mem=60.0))                            # 9.8 used -> 14: 9 points under the target
+        self.assertEqual((close["cpu"]["suggested"], close["doubts"]), (14, ["CPU close to the target"]))
+        self.assertEqual(size(vm("g", cpus=8, cpu=90.0, busy_cpu=5))["doubts"], ["CPU just over the line"])   # 5 of 30 days
+        self.assertEqual(size(vm("g", cpus=8, cpu=90.0))["confidence"], "High")                          # busy on every day
+        big = size(vm("db01", cpus=4, mem_gb=64, cpu=40.0, mem=5.0))
+        self.assertEqual((big["mem"]["change"], big["confidence"]), ("down", "Medium"))
+        self.assertIn("Check the application's own memory setting (database, Java) first: active memory understates those.", big["notes"])
+
+    def test_most_certain_first_and_the_report(self):
+        vms = [vm("low1", cpus=8, mem_gb=16, cpu=9.0, mem=10.0, year_cpu=118.0, year_cpu_top=[["2026-02-28", 118.0], ["2026-03-31", 40.0]]),
+               vm("high1", cpus=4, mem_gb=8, cpu=10.0, mem=10.0), vm("watch1", cpus=8, cpu=90.0, mem=60.0, busy_cpu=1)]
+        sized = f.vm_rightsize(vms)
+        self.assertEqual([v["name"] for v in sized if v["size"]["verdict"] == f.TOO_BIG], ["high1", "low1"])
+        d = f.vm_rightsize_doc({"vcenters": [{"name": "vc01.example.mil", "ok": True}], "days": 30}, sized)
+        big = [x for x in d["sections"] if x["title"] == "Too big"][0]
+        self.assertEqual(big["columns"][-2:], ["Confidence", "Why"])
+        self.assertEqual([r[-2] for r in big["rows"]], ["High", "Low"])
+        self.assertEqual([c[-2] for c in big["cell_status"]], ["ok", "warning"])
+        watch = [x for x in d["sections"] if x["title"] == "Watch: busy on a few days"][0]
+        self.assertEqual([r[0] for r in watch["rows"]], ["watch1"])
+        self.assertIn({"label": "Watch", "value": 1}, d["summary"])
+        self.assertEqual(d["summary_per_row"], 4)                                 # up to 10 tiles: 4 a row in the email (1.31.0b)
+        sheet = f.vm_rightsize_xlsx(sized)[0]
+        row = [r for r in sheet["rows"] if r[4] == "low1"][0]
+        self.assertEqual((row[sheet["columns"].index("Confidence")], row[sheet["columns"].index("Confidence because")]),
+                         ("Low", "a suspect CPU day left out; held by its busiest day"))
+        self.assertEqual([r[sheet["columns"].index("Watch")] for r in sheet["rows"] if r[4] == "watch1"], ["Watch"])
+        ev = f.vm_rightsize_evidence(f.vm_rightsize_items(sized), sized)
+        self.assertIn("job says Too big, confidence High.", ev)
+        self.assertIn("confidence Low (a suspect CPU day left out; held by its busiest day)", ev)
+
+    def test_cpu_ready_low_everywhere_said_first(self):
+        sized = f.vm_rightsize([vm("w", cpus=8, cpu=10.0, ready=0.4), vm("o", cpus=2, mem_gb=8, cpu=40.0, mem=40.0, ready=0.1)])
+        d = f.vm_rightsize_doc({"days": 30}, sized)
+        self.assertEqual(d["sections"][0]["title"], "Before you resize")
+        self.assertIn("CPU ready is low on every VM (at most 0.4%)", d["sections"][0]["lines"][0])
+        self.assertIn("they do not make anything faster", d["sections"][0]["lines"][0])
+        sized = f.vm_rightsize([vm("w", cpus=8, cpu=10.0, ready=0.4), vm("r", cpus=2, mem_gb=8, cpu=40.0, mem=40.0, ready=6.0)])
+        self.assertNotIn("Before you resize", [x["title"] for x in f.vm_rightsize_doc({"days": 30}, sized)["sections"]])
+
+    def test_report_fit_document(self):
+        """Every kind of row and reason at once: the document tests/report_fit_docs.py keeps for test_report_fit (the
+        biggest of vm_rightsize_doc) - the Why and Confidence columns must fit."""
+        top = [["2026-02-28", 118.0], ["2026-03-31", 40.0], ["2026-03-30", 38.0], ["2026-01-31", 35.0]]
+        mtop = [["2026-02-27", 104.0], ["2026-03-31", 45.0], ["2026-04-30", 41.0]]
+        vms = [vm("app07-reporting-prod", cpus=8, cpu=9.0, year_cpu=118.0), vm("rep01", cpus=8, cpu=9.0, year_cpu=118.0, year_cpu_top=top),
+               vm("db01-finance", cpus=4, mem_gb=64, cpu=40.0, mem=5.0, days=14.0), vm("w01", cpus=8, mem_gb=16, cpu=10.0, mem=10.0),
+               vm("mem01", cpus=2, mem_gb=32, cpu=40.0, mem=8.0, year_mem=104.0, year_mem_top=mtop),
+               vm("busy01", cpus=8, cpu=97.0, mem=60.0, year_cpu=118.0), vm("busy02", cpus=8, cpu=90.0, mem=95.0),
+               vm("watch01", cpus=8, cpu=90.0, mem=60.0, busy_cpu=2), vm("watch02", mem_gb=24, mem=95.0, busy_mem=1),
+               vm("batch01", cpus=4, cpu=40.0, mem=30.0, year_cpu=95.0), vm("c16", cpus=16, cpu=61.0, mem=60.0),
+               vm("bal01", cpus=2, mem_gb=8, cpu=40.0, mem=40.0, balloon=1024),
+               vm("disk01", cpus=2, mem_gb=8, cpu=40.0, mem=40.0, disks=[{"path": "/var/lib/pgsql", "capacity_gb": 100.0, "free_gb": 3.0}]),
+               vm("new01", days=2.0)]
+        d = f.vm_rightsize_doc({"vcenters": [{"name": "vc01.example.mil", "ok": True}], "days": 30, "interval": 7200}, f.vm_rightsize(vms))
+        titles = [x["title"] for x in d["sections"]]
+        for t in ("Before you resize", "Too small", "Too big", "Watch: busy on a few days", "About right"):
+            self.assertIn(t, titles)
+        self.assertEqual(sorted(set(r[-2] for x in d["sections"] if x.get("columns") == f.SIZE_COLS for r in x["rows"])),
+                         ["", "High", "Low", "Medium"])
+
+    def test_module_days_and_top(self):
+        t = [datetime.datetime(2026, 10, 1, h, tzinfo=datetime.timezone.utc) for h in (0, 2, 4)] + \
+            [datetime.datetime(2026, 10, 2, 0, tzinfo=datetime.timezone.utc)]
+        self.assertEqual(rs.daily_max([1000, 9000, -1, 4000], t), [["2026-10-01", 90.0], ["2026-10-02", 40.0]])
+        s = rs.summarize({"cpu": [1000, 9000, -1, 4000], "mem": [500, 500, 500, 500]}, 7200, 2, t)
+        self.assertEqual((s["cpu_days"], s["mem_days"]), ([["2026-10-01", 90.0], ["2026-10-02", 40.0]],
+                                                         [["2026-10-01", 5.0], ["2026-10-02", 5.0]]))
+        days = [datetime.datetime(2026, 3, d, tzinfo=datetime.timezone.utc) for d in (29, 30, 31)]
+        self.assertEqual(rs.top_days([4000, 11800, 7850], days, 2), [["2026-03-30", 118.0], ["2026-03-31", 78.5]])
 
 
 class Act(unittest.TestCase):
@@ -231,7 +382,7 @@ class Act(unittest.TestCase):
         secs = f.vm_rightsize_act_section(items, sized, parsed, {"ran": True})
         self.assertEqual([s["title"] for s in secs], ["ACT's review of each suggestion", "GenAI (ACT): what to change first"])
         self.assertIn("1 of 2 agreed", secs[0]["text"])
-        self.assertEqual(secs[0]["rows"][1][3], "vCPUs 8 → 4; memory 32 → 16 GB")
+        self.assertEqual(secs[0]["rows"][1][3], "vCPUs 8 → 4; memory 32 → 16 GB; Medium")
         self.assertEqual([c[4] for c in secs[0]["cell_status"]], ["ok", "warning"])
         self.assertEqual(secs[1]["lines"], ["Shrink the web tier first."])
         # asked in batches: a line per batch, not one paragraph

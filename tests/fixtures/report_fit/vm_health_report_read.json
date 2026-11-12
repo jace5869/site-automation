@@ -1,0 +1,239 @@
+{
+"footer": "Read-only. The alarms themselves, failed logins and the events of the day: the VMware alarms report.",
+"sections": [
+{
+"cell_status": [
+[
+"critical",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Severity",
+"Object",
+"Problem",
+"What to do",
+"Where"
+],
+"row_status": [
+"critical"
+],
+"rows": [
+[
+"CRITICAL",
+"Host esx09.example.mil",
+"Not responding to vCenter (down time not read (no answer in 20 s))",
+"Check the host is on and its management network; then right-click > Connection > Connect.",
+"DC1"
+]
+],
+"status": "critical",
+"text": "Red = critical (broken now), amber = warning (fix soon), blue = info (worth knowing, not broken).",
+"title": "Needs attention"
+},
+{
+"cell_status": [
+[
+"critical",
+"",
+"",
+"",
+"",
+"",
+"critical",
+"",
+""
+]
+],
+"columns": [
+"Status",
+"Datacenter",
+"Clusters",
+"Hosts",
+"Hosts running VMs",
+"In maintenance",
+"Not connected",
+"Alarms on it",
+"Problems (its clusters and hosts too)"
+],
+"row_status": [
+"critical"
+],
+"rows": [
+[
+"CRITICAL",
+"DC1",
+0,
+2,
+1,
+0,
+1,
+0,
+"1 critical"
+]
+],
+"status": "critical",
+"text": "Each datacenter with everything in it.",
+"title": "Datacenters"
+},
+{
+"text": "No cluster.",
+"title": "Clusters"
+},
+{
+"cell_status": [
+[
+"ok",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"critical",
+"",
+"",
+"",
+"critical",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Status",
+"Host",
+"Cluster",
+"Datacenter",
+"Connection",
+"Maintenance",
+"HA agent",
+"Hardware",
+"CPU used",
+"Memory used",
+"Up (days)",
+"Clock",
+"ESXi",
+"Alarms"
+],
+"row_status": [
+"",
+"critical"
+],
+"rows": [
+[
+"OK",
+"esx07.example.mil",
+"(standalone)",
+"DC1",
+"connected",
+"no",
+"-",
+"green",
+"-",
+"-",
+"-",
+"not read",
+"",
+0
+],
+[
+"CRITICAL",
+"esx09.example.mil",
+"(standalone)",
+"DC1",
+"not responding",
+"no",
+"-",
+"-",
+"-",
+"-",
+"-",
+"-",
+"",
+0
+]
+],
+"status": "critical",
+"text": "Every host, by datacenter and cluster. Hardware: the sensors and hardware status that are not green. Clock: the host's clock against vCenter's (+ ahead, - behind; ? = vCenter would not say; not read = no answer in time) - the host writes its own logs by it.",
+"title": "Hosts"
+},
+{
+"lines": [
+"None."
+],
+"title": "vCenter"
+},
+{
+"lines": [
+"read in 41 s: hosts 3 s, clocks 22 s, events 15 s, alarms 1 s",
+"clocks: 1 host(s) gave no answer in 20 s, not read: esx07.example.mil"
+],
+"status": "warning",
+"title": "How it was read"
+}
+],
+"status": "critical",
+"subtitle": "vCenter vc01.example.mil - every datacenter, cluster and host - read 2026-11-12 06:00:00 UTC - not everything was read in time: see How it was read",
+"summary": [
+{
+"label": "Datacenters",
+"status": "critical",
+"value": 1
+},
+{
+"label": "Clusters",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Hosts",
+"status": "critical",
+"value": 2
+},
+{
+"label": "Hosts not connected",
+"status": "critical",
+"value": 1
+},
+{
+"label": "HA problems",
+"status": "ok",
+"value": 0
+},
+{
+"label": "DRS problems",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Hosts with hardware faults",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Triggered alarms",
+"status": "ok",
+"value": 0
+}
+],
+"title": "VMware health report: 1 critical - 1 datacenter(s), 0 cluster(s), 2 host(s)"
+}

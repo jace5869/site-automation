@@ -71,6 +71,21 @@
 ## -> critical (Active Directory logins fail from 5 minutes off)
 # vm_health_clock_crit_seconds: 300
 
+## Read speed (1.33.0): each host's clock, and when a host not connected lost vCenter, are asked a
+## few hosts at a time, and one host's answer is waited for at most vm_health_host_timeout seconds -
+## a slow host is said as not read, the others go on. The job's output says how long each stage
+## took. hosts asked at a time (their clock, their events)
+# vm_health_workers: 8
+
+## seconds to wait for one host's answer; past it: "not read (no answer in 20 s)", not judged
+# vm_health_host_timeout: 20
+
+## how far back to look for a host losing vCenter (0 = no limit: slow on a large event database)
+# vm_health_events_days: 30
+
+## at most this many events read per host (the newest)
+# vm_health_events_max: 100
+
 ## rows per table in the report (the artifacts have them all)
 # vm_health_max_rows: 500
 

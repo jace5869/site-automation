@@ -1,6 +1,6 @@
 ---
 # VM RIGHT-SIZING REPORT (playbooks/vm_rightsizing_report.yml): every powered-on VM's vCPUs and memory next to what
-# vCenter's own statistics say it used - the last vm_rightsize_days days and its busiest day of the last year - too
+# vCenter's own statistics say it used - the last vm_rightsize_days days and its busiest days of the last year - too
 # big, about right or too small, with a suggested size (plugins/filter/vmware_rightsize_filters.py), and the memory
 # the host took back, CPU waiting for a physical CPU, guest disks nearly full. vCenter only: nothing from inside the
 # guests. Optionally ACT reviews the suggestions (vm_rightsize_act). Printed, published as artifacts (vm_rightsize),
@@ -36,7 +36,10 @@
           'min_mem_gb': vm_rightsize_min_mem_gb | float, 'min_mem_gb_windows': vm_rightsize_min_mem_gb_windows | float,
           'mem_max_cut_pct': vm_rightsize_mem_max_cut_pct | float, 'min_change_pct': vm_rightsize_min_change_pct | float,
           'disk_warn_pct': vm_rightsize_disk_warn_pct | float, 'taken_mb': vm_rightsize_taken_mb | float,
-          'max_rows': vm_rightsize_max_rows | int,
+          'max_rows': vm_rightsize_max_rows | int, 'grow_days': vm_rightsize_grow_days | int,
+          'year_near_pts': vm_rightsize_year_near_pts | float, 'conf_days': vm_rightsize_conf_days | float,
+          'conf_margin_pts': vm_rightsize_conf_margin_pts | float, 'conf_mem_large_gb': vm_rightsize_conf_mem_large_gb | float,
+          'conf_mem_low_pct': vm_rightsize_conf_mem_low_pct | float,
           'days': _vm_rs_read.days | int, 'max_items': vm_rightsize_act_max_items | int} }}
 
 - name: VMware | each VM sized

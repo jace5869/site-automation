@@ -17,9 +17,18 @@
     validate_certs: "{{ vmware_validate_certs | bool }}"
     sensors: "{{ vm_health_sensors | bool }}"
     clock: "{{ vm_health_clock | bool }}"
+    workers: "{{ vm_health_workers | int }}"
+    host_timeout: "{{ vm_health_host_timeout | float }}"
+    events_days: "{{ vm_health_events_days | int }}"
+    events_max: "{{ vm_health_events_max | int }}"
     now: "{{ _vm_now | default(omit) }}"
+    test_slow: "{{ _vm_test_slow | default(omit) }}"
   register: _vm_hl_read
   check_mode: false
+
+- name: VMware | how long the read took (and what it did not read)
+  ansible.builtin.debug:
+    msg: "{{ [_vm_hl_read.timing_line] + _vm_hl_read.notes }}"
 
 # one dict expression: on ansible-core 2.16 the values of a YAML dict would arrive as strings
 - name: VMware | what counts as a problem

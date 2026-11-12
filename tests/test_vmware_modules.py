@@ -491,6 +491,84 @@ class HealthFacts(unittest.TestCase):
                 hl.vim = saved
 
 
+class HealthReadSpeed(unittest.TestCase):
+    """1.33.0: the hosts' clocks and events asked a few at a time, each waited for at most host_timeout; the event of a
+    host losing vCenter read within a window and capped; how long each stage took."""
+
+    def test_in_parallel_with_a_limit(self):
+        import time as t
+        slow = lambda s, v: (lambda: (t.sleep(s), v)[1])                       # noqa: E731
+        t0 = t.monotonic()
+        got = hl.each_host([("h%d" % i, slow(0.3, i)) for i in range(8)], 8, 5)
+        self.assertLess(t.monotonic() - t0, 1.5)                                 # 8 x 0.3 s at once, not 2.4 s
+        self.assertEqual(got, dict(("h%d" % i, ("ok", i)) for i in range(8)))
+        t0 = t.monotonic()
+        got = hl.each_host([("stuck", slow(30, 0))] + [("h%d" % i, slow(0.2, i)) for i in range(6)], 2, 1.0)
+        took = t.monotonic() - t0
+        self.assertEqual(got["stuck"], ("late", None))                          # given up on after 1 s, not 30
+        self.assertEqual([got["h%d" % i] for i in range(6)], [("ok", i) for i in range(6)])   # the others still read
+        self.assertLess(took, 3.0)
+
+        def boom():
+            raise RuntimeError("no permission")
+        self.assertEqual(hl.each_host([("x", boom)], 4, 5), {"x": ("error", "no permission")})
+        self.assertEqual(hl.each_host([], 4, 5), {})
+
+    def test_down_events_window_and_cap(self):
+        import datetime as dt
+        saved = getattr(hl, "vim", None)
+        spec = lambda **kw: kw                          # noqa: E731
+        spec.ByEntity = lambda **kw: kw
+        spec.ByTime = lambda **kw: kw
+        hl.vim = _NS(event=_NS(EventFilterSpec=spec))
+        try:
+            made, sized, destroyed = [], [], []
+            ev = _NS(createdTime=dt.datetime(2026, 10, 25, 14, 3, 12, tzinfo=dt.timezone.utc), fullFormattedMessage="Host esx01 is not responding")
+            col = _NS(SetCollectorPageSize=sized.append, latestPage=[ev], DestroyCollector=lambda: destroyed.append(1))
+            em = _NS(CreateCollectorForEvents=lambda filter: made.append(filter) or col)
+            since = dt.datetime(2026, 10, 1, tzinfo=dt.timezone.utc)
+            self.assertEqual(hl.down_since(_NS(eventManager=em), "HOST", since, 50), ("2026-10-25T14:03:12Z", "Host esx01 is not responding"))
+            self.assertEqual((made[0]["time"], made[0]["eventTypeId"], sized, destroyed), ({"beginTime": since}, hl.DOWN_EVENTS, [50], [1]))
+            hl.down_since(_NS(eventManager=em), "HOST")                          # no window: no time in the filter
+            self.assertNotIn("time", made[1])
+        finally:
+            if saved is None:
+                del hl.vim
+            else:
+                hl.vim = saved
+
+    def test_timing_line(self):
+        t = {"vcenter": "vc01", "total_s": 41.0, "hosts_s": 3.2, "clocks_s": 22.0, "events_s": 15.0, "alarms_s": 0.8}
+        self.assertEqual(hl.timing_line([t]), "read in 41 s: hosts 3.2 s, clocks 22 s, events 15 s, alarms 0.8 s")
+        self.assertEqual(hl.timing_line([t, dict(t, vcenter="vc02")]).count("read in 41 s"), 2)
+
+    def test_the_report_says_what_was_not_read(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "plugins", "filter"))
+        import vmware_health_filters as hf
+        host = {"vcenter": "vc01.example.mil", "datacenter": "DC1", "cluster": "", "standalone": True, "name": "esx07.example.mil",
+                "connection": "connected", "power": "poweredOn", "status": "green", "clock_offset_s": None,
+                "clock_note": "clock not read (no answer in 20 s)", "ntp_servers": None}
+        down = dict(host, name="esx09.example.mil", connection="notResponding", clock_note="", down_since="",
+                    down_note="down time not read (no answer in 20 s)")
+        data = {"vcenter": "vc01.example.mil", "read_at": "2026-11-12T06:00:00Z", "datacenters": [{"vcenter": "vc01.example.mil", "name": "DC1"}],
+                "clusters": [], "hosts": [host, down], "vcenter_info": [],
+                "timing_line": "read in 41 s: hosts 3 s, clocks 22 s, events 15 s, alarms 1 s",
+                "notes": ["clocks: 1 host(s) gave no answer in 20 s, not read: esx07.example.mil"]}
+        d = hf.vm_health_report(data)
+        last = d["sections"][-1]
+        self.assertEqual((last["title"], last["status"]), ("How it was read", "warning"))
+        self.assertEqual(last["lines"], [data["timing_line"]] + data["notes"])
+        self.assertIn("not everything was read in time", d["subtitle"])
+        hosts = [x for x in d["sections"] if x["title"] == "Hosts"][0]
+        row = [r for r in hosts["rows"] if r[1] == "esx07.example.mil"][0]
+        self.assertEqual(row[hosts["columns"].index("Clock")], "not read")
+        self.assertFalse([p for p in hf.vm_health_problems(data) if "lock" in p["problem"] and p["object"] == "esx07.example.mil"])
+        self.assertIn("Not responding to vCenter (down time not read (no answer in 20 s))",
+                      [p["problem"] for p in hf.vm_health_problems(data)])
+        ok = hf.vm_health_report(dict(data, notes=[]))
+        self.assertNotIn("status", ok["sections"][-1])                           # only the times: no warning
+
+
 def _self_signed(cn, days=30, sans=(), extra=()):
     """A key and a self-signed certificate (PEM) for the tests."""
     import datetime as dt

@@ -1,5 +1,38 @@
 # Changelog
 
+## 1.33.0 — 2026-11-12
+
+**Updating without scripts:** paste `site-automation-1.33.0-changed-since-1.32.1.zip` as it is (from an older version,
+its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`. Nothing to set up: the new settings have defaults.
+
+**The VMware health report reads faster and says where the time went** (docs/VMWARE.md, "Read speed"). A real run
+spent 30 minutes in "read every datacenter, cluster and host", most of it asking one host after another:
+
+- **Each host's clock** is asked `vm_health_workers` (8) hosts at a time, and one host's answer is waited for at most
+  `vm_health_host_timeout` (20) seconds: a host slower than that is said as *clock not read (no answer in 20 s)* -
+  not judged - and the others are read meanwhile.
+- **When a host not connected lost vCenter** is read the same way, and only from the last `vm_health_events_days` (30)
+  days, at most `vm_health_events_max` (100) events per host (the newest): a large event database is not read through.
+- **How long each stage took** is in the job's output, in one line - `read in 41 s: hosts 3 s, clocks 22 s, events 15 s,
+  alarms 1 s` - and in the report's new last section, *How it was read*, with each host a stage gave up on. There is
+  no limit on the whole read; a report with a host not read says so in its subtitle.
+- The hardware sensors were measured on a simulator of 200 hosts (1 second, about 5 ms a host): read as before, and
+  counted in *hosts*.
+
+**Behaviour changes:**
+
+- A host that does not answer its clock (or its events) within 20 seconds now shows **not read** in the Clock column
+  and a line in *How it was read*; before, the job waited for it however long it took.
+- A host not connected whose newest event of losing vCenter is older than 30 days shows without its "since".
+- The report has a last section, *How it was read*, and the job prints a line with the read time of each stage.
+
+Tests: tests/test_vmware_modules.py - the hosts asked in parallel (8 hosts of 0.3 s in well under a second), a host that
+never answers given up on after the limit while the others are read, the event window and cap, the timing line, and the
+report's *How it was read*. tests/vmware/run_vmware_test.sh (vcsim) - the read time in the job's output; a host 60 s slow
+for its clock and one for its events, not read after 3 s, the job done in seconds; 8 threads on one vCenter connection,
+each getting its own host's answer. The slowness there is a test-only stand-in that a real run refuses.
+
 ## 1.32.1 — 2026-11-12
 
 **Updating without scripts:** paste `site-automation-1.32.1-changed-since-1.32.0.zip` as it is (from an older version,
@@ -95,6 +128,51 @@ tests/test_report_fit.py (the wider table fits). FormLogin in tests/test_service
 POST per read, logout after a failed read, any other answer to the login is refused, nothing secret in the result.
 
 SA_VERSION 1.32.0; the PDFs at 1.32.0.
+
+## 1.31.0 — 2026-11-12
+
+**Updating without scripts:** paste `site-automation-1.31.0-changed-since-1.29.0.zip` as it is (from an older version,
+its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`. Nothing to set up: the new settings have defaults.
+
+**The VM right-sizing report is a more reliable source of truth** (docs/VMWARE.md, "The VM right-sizing report"):
+
+- **More vCPUs or memory only from a pattern in the last 30 days**: 85% CPU (90% active memory) or more at the 95th
+  percentile, and busy on 3 separate days or more (`vm_rightsize_grow_days`). Busy on fewer days: listed under *Watch:
+  busy on a few days*, not grown. Ballooned or swapped memory is still said on its own.
+- **The year's busiest day never adds vCPUs or memory**: it only holds a cut back, and the reason says how many days of
+  the year were within 10 points of it (`vm_rightsize_year_near_pts`) - a one-off, or a pattern such as month end.
+- **A day above 100% is left out** as suspect (the next busiest day is used) and said in the reason. A day's average is
+  a percent of the vCPUs or memory the VM had that day - the docs say what that means when they changed.
+- **A confidence for each suggestion** - High, Medium or Low, from its doubts (few days of history, a suspect day, the
+  busiest day holding the cut back, a close call, less memory for a large VM with little active memory) - in the page,
+  the email, the workbook (with its doubts), the job's output and artifacts, and what ACT reads. The most certain come
+  first in *Too big* and *Too small*. Less memory for a VM of 32 GB or more with 10% or less active says to check the
+  application's own memory setting (database, Java) first.
+- **When CPU ready is low on every VM**, the report says so first: fewer vCPUs free capacity for other VMs, they do not
+  make anything faster.
+- The *Why* column is shorter: the numbers already in the other columns are left out of it.
+- In the email, the report's tiles come 4 to a row, so its 10 tiles do not widen the email.
+
+New settings, with their defaults: `vm_rightsize_grow_days: 3`, `vm_rightsize_year_near_pts: 10`,
+`vm_rightsize_conf_days: 21`, `vm_rightsize_conf_margin_pts: 10`, `vm_rightsize_conf_mem_large_gb: 32`,
+`vm_rightsize_conf_mem_low_pct: 10`. Every existing setting keeps its name and default; `vm_rightsize_year: false`
+still works (no busiest day: nothing held back).
+
+**Behaviour changes:**
+
+- **Fewer growth suggestions than before.** A VM is no longer *Too small* because of its busiest day of the year, a
+  value above 100%, or one or two busy days in the last 30: it stays *About right* (and is listed under *Watch* when it
+  was busy on a day or two). Reductions are as before, held back by the year's busiest day as before.
+- The size tables have a new *Confidence* column; the workbook has *Confidence*, *Confidence because*, *Watch*, *CPU busy
+  days* and *Memory busy days* columns; the job's output line reads `web01: Too big (High) - vCPUs 8 → 4, ...`; the
+  artifact's changes carry a `confidence`.
+
+Tests: tests/test_vm_rightsize.py - the reported case (9% at the 95th percentile, 14% peak, a busiest day of 118%: no
+growth), busiest days of 88 to 98% that add nothing, growth only on 3 busy days or more (watch below that), a suspect
+day left out and the next one holding the cut, a suspect value that changes nothing still said and still a doubt, the
+confidence of each kind of doubt, the most certain first, the CPU ready note, and the module's busy days and the
+year's busiest days.
 
 ## 1.29.0 — 2026-11-12
 
@@ -203,7 +281,7 @@ tests/stig/run_stigman_real_test.sh against STIG Manager 1.6.18 (not in CI).
 
 SA_VERSION 1.26.0; the PDFs at 1.26.0.
 
-**To do, if you have not yet: what 0.20.0 to 1.32.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.32.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.32.0 step 94).** In order; each step works without
+**To do, if you have not yet: what 0.20.0 to 1.33.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.33.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing).** In order; each step works without
 the ones after it. Steps 89 and 90 belong to 1.23.0, which is not in this release.
 
 1. **Your logo** (0.20.0). A PNG with a transparent background, about 160 px tall and under 100 KB, in

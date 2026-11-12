@@ -23,7 +23,10 @@ SKIP = re.compile(r":(report_act_off|report_notice|vm_vcenter_report|_report|ser
 NAMED = (("test_stig_ckl_import.py", "RouteReport.test_report_fit_document", "stig_ckl_filters.py:stig_ckl_report", "stig_ckl_report_routes"),
          ("test_stig.py", "UpdateReportMoves.test_report_fit_document", "stig_filters.py:stig_update_report", "stig_update_report_moves"),
          # 1.32.0: the Front-end nodes table with friendly names, the address that answered, nodes by their stats page only
-         ("test_servicenow_node.py", "Labels.test_report_fit_document", "servicenow_node_filters.py:sn_node_sections", "sn_node_sections_pages"))
+         ("test_servicenow_node.py", "Labels.test_report_fit_document", "servicenow_node_filters.py:sn_node_sections", "sn_node_sections_pages"),
+         # 1.33.0: the VMware health report's "How it was read" (a host's clock not read, the read times)
+         ("test_vmware_modules.py", "HealthReadSpeed.test_the_report_says_what_was_not_read", "vmware_health_filters.py:vm_health_report",
+          "vm_health_report_read"))
 
 # run inside each test file's process: keep the biggest document each filter function returns
 CHILD = r"""

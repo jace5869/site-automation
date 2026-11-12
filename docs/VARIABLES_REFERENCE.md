@@ -1977,13 +1977,15 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_hardware_max_rows` | `2000` | ESXi hosts listed in the email and the page at most (the workbook always has every host) |
 | `vm_hardware_xlsx` | `true` | attach every host, NIC, storage adapter, software component and VIB as an Excel workbook |
 | `vm_rightsize_days` | `30` | ---- VM right-sizing report (playbooks/vm_rightsizing_report.yml) ---- vCenter's own statistics only (statistics level 1, vCenter's default, is enough). Suggestions only: nothing is changed. days of history (at most 30: what vCenter keeps of 2-hour averages) |
-| `vm_rightsize_year` | `true` | also each VM's busiest day of the last year (daily averages): month-end and yearly peaks |
+| `vm_rightsize_year` | `true` | also each VM's busiest days of the last year (daily averages): month-end and yearly peaks - they only hold a cut back |
+| `vm_rightsize_year_near_pts` | `10` | the reason counts the days of the year within this many points of the busiest one: a pattern, or a single day |
 | `vm_rightsize_min_days` | `7` | fewer days of statistics than this = 'Not enough history' (no suggestion) |
 | `vm_rightsize_clusters` | `[]` | only the VMs of these clusters (names; * and ? allowed); [] = every VM |
 | `vm_rightsize_vms` | `[]` | only these VMs (names; * and ? allowed) |
 | `vm_rightsize_exclude` | `[]` | never these VMs (names; * and ? allowed) |
 | `vm_rightsize_cpu_target_pct` | `70` | vCPUs suggested so that the 95th percentile of CPU use would be about this |
-| `vm_rightsize_cpu_high_pct` | `85` | CPU at this or more 95% of the time = too small |
+| `vm_rightsize_cpu_high_pct` | `85` | CPU at this or more 95% of the time = too small (on vm_rightsize_grow_days days or more) |
+| `vm_rightsize_grow_days` | `3` | more vCPUs or memory only when busy on at least this many separate days of the last vm_rightsize_days (fewer: watch) |
 | `vm_rightsize_ready_warn_pct` | `5` | CPU ready (waiting for a physical CPU, per vCPU) at this or more is said |
 | `vm_rightsize_min_vcpus` | `2` | never fewer vCPUs than this |
 | `vm_rightsize_min_vcpus_windows` | `2` | ... for Windows |
@@ -1995,6 +1997,10 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_rightsize_mem_max_cut_pct` | `50` | never suggest more than this % less memory at once |
 | `vm_rightsize_min_change_pct` | `25` | a smaller memory size is suggested only when it is this % (and 2 GB) smaller or more |
 | `vm_rightsize_taken_mb` | `100` | memory ballooned or swapped by the host at this many MB or more (its peak) is said |
+| `vm_rightsize_conf_days` | `21` | confidence: fewer days of history than this is a doubt (High: no doubt, Medium: one, Low: two or more) |
+| `vm_rightsize_conf_margin_pts` | `10` | confidence: the 95th percentile within this many points of the line it crossed (the target, or the high mark) is a doubt |
+| `vm_rightsize_conf_mem_large_gb` | `32` | confidence: less memory for a VM of this many GB or more ... |
+| `vm_rightsize_conf_mem_low_pct` | `10` | ... with active memory at this % or less is a doubt (check the application's own memory setting first) |
 | `vm_rightsize_disk_warn_pct` | `90` | a guest disk this % used or more (VMware Tools' numbers) is listed |
 | `vm_rightsize_max_rows` | `500` | rows per table in the email and the page (the workbook always has every VM) |
 | `vm_rightsize_xlsx` | `true` | attach every VM with every number as an Excel workbook (.xlsx) to the email |
@@ -2059,6 +2065,10 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_health_clock` | `true` | Each connected host's clock against vCenter's, and its NTP setting: a host writes its own logs (hostd, vmkernel) by its clock, vCenter its events by its own - off clocks are why a disconnection's time in a host's log does not match vCenter's. No NTP server set, or the NTP service stopped, is a warning. vCenter's clock… (all of it: the role file) |
 | `vm_health_clock_warn_seconds` | `60` | a host's clock this many seconds off vCenter's (ahead or behind) -> warning |
 | `vm_health_clock_crit_seconds` | `300` | -> critical (Active Directory logins fail from 5 minutes off) |
+| `vm_health_workers` | `8` | Read speed (1.33.0): each host's clock, and when a host not connected lost vCenter, are asked a few hosts at a time, and one host's answer is waited for at most vm_health_host_timeout seconds - a slow host is said as not read, the others go on. The job's output says how long each stage took. hosts asked at a time (the… (all of it: the role file) |
+| `vm_health_host_timeout` | `20` | seconds to wait for one host's answer; past it: "not read (no answer in 20 s)", not judged |
+| `vm_health_events_days` | `30` | how far back to look for a host losing vCenter (0 = no limit: slow on a large event database) |
+| `vm_health_events_max` | `100` | at most this many events read per host (the newest) |
 | `vm_health_max_rows` | `500` | rows per table in the report (the artifacts have them all) |
 | `vm_health_fail` | `false` | The job stays green when it finds problems: the report and email say what. true = mark the job FAILED when there is a critical problem (a host not connected, an HA agent isolated ...), for workflows. |
 | `vm_net_drops` | `true` | Network drops and errors in the health report: packets dropped and network errors of every ESXi host (by physical NIC) and powered-on VM (by virtual NIC), from vCenter's statistics. The past day needs vCenter's 5-minute statistics at level 2 (the default is 1); at level 1 the last hour is read, and the report says so.… (all of it: the role file) |

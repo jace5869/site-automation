@@ -476,10 +476,15 @@ run "VMware Tools inventory, one table of every VM" ok vm_tools_report.yml -e vm
 VMWARE_PORT=$port "$py" "$here/vcsim.py" size DC0_H0_VM1 16 65536 || { echo "FAIL - vcsim size"; fails=$((fails + 1)); }
 # (the busiest day of the year left out here: vcsim's are random)
 run "VM right-sizing report: a VM with 16 vCPUs is too big, at most half fewer at once" ok vm_rightsizing_report.yml -e vm_rightsize_year=false \
-    -- "VM right-sizing: 1 too big, 0 too small of " '"vm_rightsize"' '"VMs checked": ' "DC0_H0_VM1: Too big - vCPUs 16 → 8, memory "
+    -- "VM right-sizing: 1 too big, 0 too small of " '"vm_rightsize"' '"VMs checked": ' "DC0_H0_VM1: Too big (" ") - vCPUs 16 → 8, memory " \
+       '"confidence": '
+# 1.31.0: growth only when busy on vm_rightsize_grow_days separate days or more (vcsim's days are all alike)
 run "VM right-sizing report: one VM, CPU busy from 1% (a test threshold): too small" ok vm_rightsizing_report.yml \
     -e '{"vm_rightsize_vms": ["DC0_H0_VM1"], "vm_rightsize_cpu_high_pct": 1}' -- "0 too big, 1 too small of 1 VM" \
-       "DC0_H0_VM1: Too small - vCPUs 16 → 18, memory "
+       "DC0_H0_VM1: Too small (" ") - vCPUs 16 → 18, memory "
+run "VM right-sizing report: growth asked on more busy days than vCenter keeps: watch, not grown" ok vm_rightsizing_report.yml \
+    -e '{"vm_rightsize_vms": ["DC0_H0_VM1"], "vm_rightsize_cpu_high_pct": 1, "vm_rightsize_grow_days": 400}' \
+    -- "0 too big, 0 too small of 1 VM" '"Watch": 1' '"changes": []'
 run "VM right-sizing report: more days asked than vCenter has: not enough history, no suggestion" ok vm_rightsizing_report.yml \
     -e vm_rightsize_min_days=60 -- "0 too big, 0 too small of " '"Not enough history": ' '"changes": []'
 run "VM right-sizing report: a VM left out, a cluster that matches nothing" ok vm_rightsizing_report.yml \
@@ -2037,6 +2042,40 @@ RUN_PORT=$port3 run "health report as a dry run (Check): the same report" ok vm_
 RUN_PORT=$port3 run "health report of two vCenters with the same datacenter names: nothing mixed up" ok vm_health_report.yml \
     -e "{\"vmware_vcenters\": [\"$vc2\"]}" \
     -- "VMware health report: 2 critical, 4 warning(s) - 3 datacenter(s), 5 cluster(s), 14 host(s)" "$vc2 / DC0" "127.0.0.1 / DC1"
+# 1.33.0 read speed: each stage's time in the job's output; a host slow to give its clock (DC0_C0_H0) and one slow to give
+# its events (DC0_C1_H1, disconnected) are given up on after vm_health_host_timeout, said as not read, the rest read -
+# the slowness is a test-only stand-in (test_slow, refused without SITE_AUTOMATION_TEST_SLOW=1: never in a real run)
+RUN_PORT=$port3 run "health report: each stage's read time in the job's output" ok vm_health_report.yml -e vm_net_drops=false \
+    -- "read in " " s: hosts " " s, clocks " " s, events " " s, alarms " "How it was read"
+t0=$(date +%s)
+RUN_PORT=$port3 SITE_AUTOMATION_TEST_SLOW=1 run "health report: a host 60 s slow for its clock and one for its events: not read after 3 s, the rest read" ok \
+    vm_health_report.yml -e vm_net_drops=false -e '{"_vm_test_slow": {"DC0_C0_H0": 60, "DC0_C1_H1": 60}, "vm_health_host_timeout": 3}' \
+    -- "clocks: 1 host(s) gave no answer in 3 s, not read: DC0_C0_H0" "down times: 1 host(s) gave no answer in 3 s, not read: DC0_C1_H1" \
+       "not everything was read in time" "Disconnected from vCenter (down time not read (no answer in 3 s))" \
+       "VMware health report: 2 critical, 3 warning(s) - 2 datacenter(s), 4 cluster(s), 10 host(s)"
+if [ $(( $(date +%s) - t0 )) -lt 50 ]; then echo "ok   -   ...in $(( $(date +%s) - t0 )) s, not the 60 s a slow host would take"
+else echo "FAIL -   ...took $(( $(date +%s) - t0 )) s: the limit did not hold"; fails=$((fails + 1)); fi
+RUN_PORT=$port3 run "health report: the test-only slow hosts refused without SITE_AUTOMATION_TEST_SLOW" fail vm_health_report.yml \
+    -e vm_net_drops=false -e '{"_vm_test_slow": {"DC0_C0_H0": 60}}' -- "test_slow is for tests only: refused unless SITE_AUTOMATION_TEST_SLOW=1"
+# several threads on one connection, as the module asks the hosts: each call gets its own host's answer
+VMWARE_PORT=$port3 "$py" - <<'EOPY' && echo "ok   - 8 threads on one vCenter connection: every host's own answer" || { echo "FAIL - parallel answers mixed"; fails=$((fails + 1)); }
+import os, threading
+from pyVim.connect import SmartConnect
+from pyVmomi import vim
+si = SmartConnect(host="127.0.0.1", port=int(os.environ["VMWARE_PORT"]), user="user", pwd="pass", disableSslCertValidation=True)
+c = si.RetrieveContent()
+hosts = list(c.viewManager.CreateContainerView(c.rootFolder, [vim.HostSystem], True).view)
+want, bad = {h._moId: h.name for h in hosts}, []
+def work(chunk):
+    for _ in range(20):
+        for h in chunk:
+            if h.name != want[h._moId]:
+                bad.append(h._moId)
+ts = [threading.Thread(target=work, args=(hosts[i::8],)) for i in range(8)]
+[t.start() for t in ts]
+[t.join() for t in ts]
+assert not bad, bad
+EOPY
 
 # ---- VMware certificate renewal: vCenter's and the hosts' certificates (vcsim's expire in 2084 - the days
 # to expiry raised to make them due, as a site tries the job), the incidents and the CSRs in a fake ServiceNow.
