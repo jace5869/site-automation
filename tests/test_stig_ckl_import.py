@@ -1234,10 +1234,36 @@ class Routes(unittest.TestCase):
             self.assertTrue(str(e.exception).startswith("stigman_ckl_import_routes, rule 2: " + said), str(e.exception))
             self.assertTrue(str(e.exception).endswith(" - nothing planned"), str(e.exception))
             self.assertFalse([c for c in f.calls if c.startswith("/assets")], "nothing looked for")
-        # what is one: a list of text, text with commas or lines, a tuple; none (the key not given)
-        rts = ci.read_routes([{"collection": "VMware", "stigs": ("VMW_*",), "names": "esx01,\nvc01", "roles": None, "tech_areas": []}],
-                             routed()["collections"])
+        # what is one: a list of text, text with commas or lines, a tuple; the key not given
+        rts = ci.read_routes([{"collection": "VMware", "stigs": ("VMW_*",), "names": "esx01,\nvc01"}], routed()["collections"])
         self.assertEqual((rts[0]["stigs"], rts[0]["names"], rts[0]["roles"], rts[0]["tech_areas"]), (["VMW_*"], ["esx01", "vc01"], [], []))
+
+    def test_a_rule_key_with_no_names(self):
+        """1.26.0 round c: a key given with no names (null, "", [], [" "]) fit every host - refused before anything is read
+        or written; a rule with only its collection is the one for every host (still allowed)."""
+        for key in ("names", "stigs", "roles", "tech_areas"):
+            for empty in (None, "", [], [" "], " , "):
+                f = Fake(routed())
+                with self.assertRaises(ci.Fail) as e:
+                    ci.plan_all(params(routes=[{"collection": "Linux", key: empty}, {"collection": "Windows", "stigs": ["*Windows_Server*"]}],
+                                       collection="Staging", auto="all"), f, copy.deepcopy(VC))
+                self.assertEqual(str(e.exception), "stigman_ckl_import_routes, rule 1: %s has no names (%r) - give it names or patterns, "
+                                 "or leave the key out (a rule with only a collection fits every host); nothing planned" % (key, empty))
+                self.assertFalse([c for c in f.calls if c.startswith("/assets")], "nothing looked for")
+        self.assertEqual(ci.read_routes([{"collection": "Linux"}], routed()["collections"])[0]["text"], "every host")
+
+    def test_auto_all_asks_manage_only_where_it_can_act(self):
+        """1.26.0 round c: routes, auto all, create_assets false and route_move none (no assign_stigs): nothing can be created,
+        moved or assigned - Full in every collection is enough, the reviews are written at once."""
+        d = routed()
+        d["assets"]["5"] = [staged()]
+        give(d, {"5": 2, "7": 2, "8": 2, "9": 2})
+        cks, plan, left, st, searched, rts, held, f = run_routes(d, VC, TO_VMWARE, auto="all", create_assets=False, route_move="none")
+        self.assertEqual(set((p["kind"], p["collectionId"], p["auto"]) for p in plan), {("import", "5", True)})
+        # assign_stigs can assign there: Manage is asked for again
+        with self.assertRaises(ci.Fail) as e:
+            run_routes(d, VC, TO_VMWARE, auto="all", create_assets=False, route_move="none", assign_stigs=True)
+        self.assertIn("it has Full in Staging, Full in VMware: nothing written", str(e.exception))
 
     def test_names_fit_the_short_name(self):
         """1.26.0 tester fix: names is compared with the host name, its FQDN and each one's short name (before the first dot),

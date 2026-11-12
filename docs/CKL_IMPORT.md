@@ -222,7 +222,8 @@ any of:
 | `roles` | the checklist's ROLE | `['Domain Controller']` |
 | `tech_areas` | the checklist's TECH_AREA | `['UNIX OS']` |
 
-`*` and `?`, any case; a list, or text with commas. Each key given must fit; one value of a key is enough.
+`*` and `?`, any case; a list, or text with commas. Each key given must fit; one value of a key is enough. A key
+given with no names (`names:` empty, `[]`, `""`) stops the job; a rule with only `collection` fits every host.
 
 - **A new host:** created in its rule's collection, with the STIGs its checklists matched, at that collection's
   revision.
@@ -237,7 +238,9 @@ any of:
 With routes, **every collection the client reads** is searched for the host's asset, whatever
 `stigman_ckl_import_collections` says: a host anywhere is written where it is - never created again, never moved but
 out of the staging collection. A collection where the client has only Restricted then stops the run (a host there
-would look new): give it Full there, or no grant at all.
+would look new): give it Full there. A collection the client has no grant in is not searched at all - a host whose asset
+is there only would be created again in its route's collection, so give the client Full in every collection your hosts
+are in. The run reads each collection's assets once: it takes longer the more collections the client can read.
 
 ### Moves out of the staging collection - `stigman_ckl_import_route_move`
 

@@ -654,8 +654,7 @@ def pick_collections(cols, want, staging, grants=None, routed=False):
     low = [c["name"] for c in out + [st] if grants is not None and grants.get(c["collectionId"], 0) < 2]
     if low and routed:
         raise Fail("the client has only Restricted in %s - with stigman_ckl_import_routes every collection the client reads is "
-                   "searched, and a host whose asset is there would look new (created again): give it Full there, or take its "
-                   "grant there away" % ", ".join(low))
+                   "searched, and a host whose asset is there would look new (created again): give it Full there" % ", ".join(low))
     if low:
         raise Fail("the client has only Restricted in %s - it may not see every asset there, and a host whose asset is there would "
                    "look new (created again in %s): give it Full there, or leave %s out of stigman_ckl_import_collections" % (
@@ -713,6 +712,11 @@ def read_routes(routes, cols):
                        "name, or give the client a grant there; nothing planned" % (
                            n, want, ", ".join(sorted(c.get("name") or "" for c in cols)) or "none"))
         rule = dict((k, _list(r.get(k), n, k)) for k in ROUTE_KEYS)
+        empty = [k for k in ROUTE_KEYS if k in r and not rule[k]]
+        if empty:
+            # a key given with no names would fit every host: refused - a rule with only its collection is the one for every host
+            raise Fail("stigman_ckl_import_routes, rule %d: %s has no names (%r) - give it names or patterns, or leave the key out "
+                       "(a rule with only a collection fits every host); nothing planned" % (n, empty[0], r.get(empty[0])))
         text = "; ".join("%s %s" % (k, ", ".join(rule[k])) for k in ROUTE_KEYS if rule[k]) or "every host"
         out.append(dict(rule, n=n, want=want, collection=as_col(got[0]), text=text, error=""))
     return out
@@ -847,7 +851,10 @@ def plan_all(p, client, files):
     auto_all = p["auto"] == "all"
     if auto_all and grants is not None and routes:
         # written at once: every grant a create or a move needs is checked before anything is written - one too low stops it all
-        need = ([staging] if p["create_assets"] or p["route_move"] == "staging" else []) + [r["collection"] for r in routes]
+        # Manage only where this run can create, move or assign: the staging collection (a new host no rule fits, a move out
+        # of it, an assignment there) and each route's collection (a new host, a move into it, an assignment there)
+        acts = p["create_assets"] or p["route_move"] == "staging" or p["assign_stigs"]
+        need = ([staging] + [r["collection"] for r in routes]) if acts else []
         low, seen = [], set()
         for c in need:
             if c["collectionId"] not in seen and grants.get(c["collectionId"], 0) < 3:
