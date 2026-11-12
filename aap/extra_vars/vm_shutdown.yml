@@ -24,6 +24,12 @@
 ## Check vCenter's certificate. false only if the execution environment does not trust your CA yet.
 # vmware_validate_certs: true
 
+## Several vCenters (e.g. Enhanced Linked Mode), one report: the reports and the ESXi security
+## settings read the credential's vCenter AND these (names, or name:port), with the same account.
+## The same vCenter under two names is read once. docs/VMWARE.md, "Several vCenters". e.g.
+## [vc01.yoursite.mil, vc02.yoursite.mil]
+# vmware_vcenters: []
+
 ## The AAP server is ALWAYS refused (hosts in the groups aap / aap_hosts, matched by VM name, guest
 ## host name and IP address), and so are the hosts of these groups and these VM names (* and ?
 ## allowed: DC*). List the AAP VM's name here when it differs from its host name, and vCenter's own
@@ -37,6 +43,11 @@
 
 ## e.g. [AAP01, VCSA01, DC*] (* and ? allowed)
 # vmware_protected_vms: []
+
+## restart, shut down, VLAN, snapshot cleanup: a protected name (or exclude) that matches no VM in
+## vCenter, and a protected group not in the inventory, is a warning line - one read of every VM's
+## name per vCenter; never a failure. false = not checked
+# vmware_protected_check: true
 
 ## guest = ask the operating system (needs VMware Tools running; services stop cleanly) hard = reset
 ## / power off, like the button on a physical server (unsaved data is lost)

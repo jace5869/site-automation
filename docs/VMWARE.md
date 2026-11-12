@@ -173,6 +173,27 @@ spaces: `File Server 01, VCSA01` is two VMs, `dcs` one group. The same list hold
 down, VLAN change, the snapshot cleanup and the snapshot pick list; each of them is refused when the
 inventory has no `aap` (or `aap_hosts`) group and `vmware_protected_vms` is empty.
 
+**A name that matches no VM is said.** A typo in `vmware_protected_vms` protects nothing. Restart, shut down, VLAN
+change and the snapshot cleanup read every VM's name in each vCenter they use (one read per vCenter). Each
+protected name, or pattern, that matches none is a warning line (`WARNING: ...`) in the job's output and on top of
+its report:
+
+```
+Protected name matches no VM: VCSA1 - check the spelling
+Excluded name matches no VM (vm_snapshot_cleanup_exclude_vms): NOPE01 - check the spelling
+Protected group not in this inventory: dcs (vmware_protected_groups) - check the spelling
+```
+
+It never fails the job and never changes what it does. When the names cannot be read, it says *Could not check the
+protected names* once. `vmware_protected_check: false` turns the check off.
+
+**How a list written as text is read** (a survey, an extra variable; a YAML list is used as it is): names are separated
+by commas, semicolons, tabs or line breaks - never spaces. A list as YAML or JSON writes it (`[AAP01, VCSA01]`,
+`- AAP01` lines) gives its names; a quoted name is one name, its commas too (`"Server, Main"`), curly quotes from Word,
+Outlook or Teams as well; a pattern's brackets stay in it (`vm[0-9]*`), and `[Test] VM01` is a name that matches
+itself. A `#` is part of a name (`Build #3`); only a line that starts with `#` is left out. A name with a `;` is also
+read whole (a VM's name may have one).
+
 ## Which VMs a job acts on
 
 You type them. Every job (except the report) asks for **VM names**, one per line: one VM, or

@@ -71,6 +71,19 @@ class SnapshotCreators(unittest.TestCase):
         self.assertEqual(m.snapshot_creators([("a", 100)], []), {"a": ""})
 
 
+class ProtectedCheck(unittest.TestCase):
+    """site_vmware_protected_check.unmatched: which protected names and patterns match none of the VM names read."""
+    def test_unmatched(self):
+        import site_vmware_protected_check as pc
+        names = ["AAP01", "VCSA01", "[Test] VM01", "web01", "web02"]
+        got = pc.unmatched([{"setting": "vmware_protected_vms", "names": ["aap01", "VCSA1", "web*", "db*", "[Test] VM01", "AAP01"]},
+                            {"setting": "vm_snapshot_cleanup_exclude_vms", "names": ["nope01", "web0?"]}], names)
+        self.assertEqual(got, [{"setting": "vmware_protected_vms", "name": "VCSA1"}, {"setting": "vmware_protected_vms", "name": "db*"},
+                               {"setting": "vm_snapshot_cleanup_exclude_vms", "name": "nope01"}])
+        self.assertEqual(pc.unmatched([{"setting": "x", "names": []}], names), [])
+        self.assertEqual(pc.unmatched([{"setting": "x", "names": ["a"]}], []), [{"setting": "x", "name": "a"}])
+
+
 class SnapshotGuestIps(unittest.TestCase):
     """Every guest IP of the VM (the snapshot holds know the AAP server by any of them, not only the primary)."""
     def test_primary_and_every_nic(self):

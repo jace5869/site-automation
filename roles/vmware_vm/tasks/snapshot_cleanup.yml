@@ -18,6 +18,11 @@
   vars:
     _vm_prot_refuse: delete any snapshot
 
+- name: VMware | a protected or excluded name that matches no VM (vmware_protected_check)
+  ansible.builtin.include_tasks: protected_check.yml
+  vars:
+    _vm_prot_more: [{setting: vm_snapshot_cleanup_exclude_vms, names: "{{ vm_snapshot_cleanup_exclude_vms | name_list }}"}]
+
 - name: VMware | read the snapshots now
   site_vmware_snapshots:
     datacenter: "{{ vmware_datacenter | default(omit, true) }}"
