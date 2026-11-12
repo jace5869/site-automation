@@ -296,6 +296,47 @@ class Judge(unittest.TestCase):
                   "password_max_days", "pin_version", "pass_count", "keyboard", "spin", "credential_name"):
             self.assertFalse(m.secret_name(n), n)
 
+    def test_glued_p_user_colon_pw_and_community(self):
+        """1.24.0d, the third pass: mysql's -pXXXX (and -pXXXX elsewhere but a few flag letters), -u / --user
+        user:password, a name ending in pw (rootpw, bindpw), and community (SNMP) - and what must stay shown."""
+        hide = [  # (setting, value, what must never be seen)
+            ("db_cmd", "mysql -u root -pHx1glued db", "Hx1glued"), ("dump_cmd", "mysqldump -uroot -pHx2dump app", "Hx2dump"),
+            ("maria_cmd", "mariadb-dump -pHx3maria app", "Hx3maria"), ("admin_cmd", "/usr/bin/mysqladmin -pabc status", "-pabc"),
+            ("psql_cmd", "tool -pHx4!glued", "Hx4!glued"),
+            ("curl_cmd", "curl -u svc:Hx5user https://api.example.mil/x", "Hx5user"),
+            ("curl_long", "curl --user svc:Hx6user https://api.example.mil/x", "Hx6user"),
+            ("curl_eq", "curl --user=svc:Hx7user https://api.example.mil/x", "Hx7user"),
+            ("rootpw", "Hx8root", "Hx8root"), ("bindpw", "Hx9bind", "Hx9bind"), ("ldapBindpw", "Hx10bind", "Hx10bind"),
+            ("snmp_community", "Hx11comm", "Hx11comm"), ("community", "Hx12comm", "Hx12comm"),
+            ("snmpcommunity", "Hx13comm", "Hx13comm"),
+        ]
+        show = [  # (setting, value, the value shown)
+            ("ssh_cmd", "ssh -p 2222 host01", "ssh -p 2222 host01"), ("run_cmd", "podman run -p 8080:80 web", "podman run -p 8080:80 web"),
+            ("sync_cmd", "rsync -p /src /dst", "rsync -p /src /dst"), ("copy_cmd", "cp -pR /a /b", "cp -pR /a /b"),
+            ("tar_cmd", "tar -pcf x.tar dir", "tar -pcf x.tar dir"), ("uid_cmd", "podman run -u 1000:1000 web", "podman run -u 1000:1000 web"),
+            ("curl_plain", "curl -u svc https://api.example.mil/x", "curl -u svc https://api.example.mil/x"),
+            ("max_tokens", 4096, "4096"), ("community_name", "SNMP v2c", "SNMP v2c"),
+        ]
+        for n, v, expect in hide + show:
+            with self.subTest(setting=n):
+                recs = [{"kind": "job", "id": i, "name": "Job %d" % i, "extra_vars": json.dumps({n: v})} for i in range(3)]
+                templates, settings = m.audit(recs, {"repeat_min": 3})
+                s = dict((x["setting"], x) for x in settings)[n]
+                r = f.template_audit_report({"templates": templates, "settings": settings, "problems": []}, {"repeat_min": 3})
+                out = json.dumps([templates, settings]) + json.dumps(r, default=str)
+                if (n, v, expect) in hide:
+                    self.assertIn("secret", s["why"])
+                    self.assertNotIn(expect, out)
+                else:
+                    self.assertNotIn("secret", s["why"])
+                    self.assertEqual(s["value"], expect)
+        self.assertFalse(m.is_secret("tenable_scan_credentials", ["ssh-linux", "smb-windows"]))   # names in a list
+        self.assertTrue(m.is_secret("tenable_scan_credentials", "ssh-linux"))                      # one word alone: hidden
+        for n in ("rootpw", "bindpw", "ldap_bindpw", "snmp_community", "snmpCommunity"):
+            self.assertTrue(m.secret_name(n), n)
+        for n in ("max_tokens", "min_password_length", "community_name"):
+            self.assertFalse(m.secret_name(n), n)
+
     def test_repeat_min(self):
         _, settings = m.audit(records(), dict(OPTS, repeat_min=0))
         self.assertNotIn("check_disk_warn_pct", [x["setting"] for x in settings])

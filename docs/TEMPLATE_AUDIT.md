@@ -17,7 +17,7 @@ shown**: not its value, not part of it, not in the email, the website, the job's
 | **an address** | a value that is a host name, a URL or an IP address (`vcsa01.yoursite.mil`, `https://stigman.yoursite.mil/api`, `192.0.2.10`) | `all.yml` of the enclave's own AAP - one AAP per enclave (below) |
 | **site-wide** | a setting the job templates' variable files mark *usually in all.yml* (`aap/extra_vars`: the settings of the email, ACT and findings roles - the mail relay, the report website, the logo) | `playbooks/group_vars/all.yml` |
 | **repeated** | the same setting with the same value in 3 templates or more (`aap_template_audit_repeat_min`): one change would have to be made in each. The note names the other templates | `all.yml` - one place to change it |
-| **a secret** | a setting named like one - a whole word of its name, in any case, split at `_` `-` `.`, camelCase and digits: password, passwd, pwd, pass, pw, secret, token, api key, passphrase, pin, private / secret / access key, key material, or a word ending in a long one or in pass (`db_password`, `adminPwd`, `client-secret`, `API-KEY`, `secret1`, `PGPASSWORD`, `dbpassword`, `adminpass`; not `bypass_mode`, `keyboard_layout`, `pin_version` or `pass_count`) - with a value (text or a number); a setting named for a credential (`ldap_credential`) whose value is not a credential's name or id; a list or dict with a key named like one anywhere inside (`stigman_db: {password: ...}`, also in a text holding JSON or YAML); whatever its name, a text with a password in a URL (`mysql://svc:...@db01`), after a secret's name (`Uid=svc;Pwd=...`, `PGPASSWORD=...`) or option (`--password X`, `-p X`), an Authorization header's `Basic ...` or `Bearer ...`, a PEM private key, or any value that is a long random string or vault-encrypted | a credential (a custom credential type, [SECRETS.md](SECRETS.md)) - never plain in Variables |
+| **a secret** | a setting named like one - a whole word of its name, in any case, split at `_` `-` `.`, camelCase and digits: password, passwd, pwd, pass, pw, secret, token, api key, passphrase, pin, community, private / secret / access key, key material, or a word ending in a long one, in pw or in pass (`db_password`, `adminPwd`, `client-secret`, `API-KEY`, `secret1`, `PGPASSWORD`, `dbpassword`, `adminpass`, `rootpw`, `bindpw`, `snmp_community`; not `bypass_mode`, `keyboard_layout`, `pin_version` or `pass_count`) - with a value (text or a number); a setting named for a credential (`ldap_credential`) whose value is not a credential's name or id; a list or dict with a key named like one anywhere inside (`stigman_db: {password: ...}`, also in a text holding JSON or YAML); whatever its name, a text with a password in a URL (`mysql://svc:...@db01`), after a secret's name (`Uid=svc;Pwd=...`, `PGPASSWORD=...`) or option (`--password X`, `-p X`, mysql's `-pXXXX`, `curl -u user:password`), an Authorization header's `Basic ...` or `Bearer ...`, a PEM private key, or any value that is a long random string or vault-encrypted | a credential (a custom credential type, [SECRETS.md](SECRETS.md)) - never plain in Variables |
 | **set at launch** | a template with **Prompt on launch** on for its Variables (a launch can set any of the flagged settings again), or whose survey asks for a flagged setting - or for a password in a *Text* question instead of a *Password* one | ask on launch only for what a launch must choose |
 
 **One AAP per enclave.** Each enclave has its own AAP, with its own copy of the settings: what differs between
@@ -31,10 +31,14 @@ Not flagged: settings that belong to one template - who gets its report (`report
 A setting whose name is a rule or a place for a password (`check_accounts_pw_max_days: 60`,
 `vcenter_password_file`) is no secret, nor is true / false under a password's name (but its value is not shown either).
 Nor is a credential's name or id under a credential's setting (`incident_docs_draft_credential: AAP - SOP draft`,
-`tenable_scan_credentials: [12, 15]`; a single word there may be a password: it is), or a sentence of plain words
+`tenable_scan_credentials: [12, 15]` or `["ssh-linux"]`; a single word on its own may be a password: it is), a limit
+(`max_tokens: 4096`), or a sentence of plain words
 (`Change the password: see the runbook`).
 The audit hides on suspicion: a value it cannot tell from a secret is not shown, and it may call a setting a secret
-that is none (`max_tokens: 4096`). A false "not shown" costs a look in AAP; a shown secret cannot be taken back.
+that is none. A false "not shown" costs a look in AAP; a shown secret cannot be taken back.
+Known limits - shown, though they may be a secret: a name ending in pass of 5 letters or fewer (`xpass`), a
+password-like value under a plain name (`Passw0rd`), an AWS access key ID (`AKIA...`, only an ID), a Bearer token
+under 8 characters.
 A file name (`report.html.j2`, `logo.png`) is no address.
 
 ## The report
