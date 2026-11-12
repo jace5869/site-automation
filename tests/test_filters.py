@@ -1560,6 +1560,11 @@ class EmailRecipients(unittest.TestCase):
         self.assertEqual(f.email_recipients("root; ops@example.mil  x@example.mil"), ["root", "ops@example.mil", "x@example.mil"])
         self.assertEqual(f.email_recipients([" a@example.mil ", ""]), ["a@example.mil"])
 
+    def test_a_plain_address_beside_an_outlook_one(self):
+        """1.23.0: a plain address and an Outlook "Name <address>" in one entry - both get the report."""
+        self.assertEqual(f.email_recipients([], "ops@example.mil, Pat Doe <pat@example.mil>"), ["pat@example.mil", "ops@example.mil"])
+        self.assertEqual(f.email_also_refused("ops@example.mil Pat Doe <pat@example.mil>"), [])
+
     def test_outlook_and_text_forms(self):
         text = "Doe, Jane CIV USN (US) <jane.doe@example.mil>; Roe, Rick <rick.roe@example.mil>\nx@example.mil, y@example.mil z@example.mil"
         self.assertEqual(f.email_recipients([], text),

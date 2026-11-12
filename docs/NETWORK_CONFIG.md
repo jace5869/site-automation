@@ -13,6 +13,14 @@ the devices' admins can read - never in this (public) repository. What the jobs 
 an incident, the note on a change - has the secret values replaced by `<hidden>`; the job output never shows a
 configuration (every task that has one runs with `no_log`).
 
+What is hidden on a shown line (1.41.0):
+
+- **IOS**: all that follows `password`, `secret`, any `xxx-password` (`area-password`, `domain-password`), `key`, `key-string`, `pre-shared-key`, `authentication-key` and `md5`. A `level N` and the encryption type digit stay.
+- **IOS HSRP, VRRP, GLBP**: the text after `authentication` (and `authentication text`). A `md5 key-chain` keeps the chain's name.
+- **IOS SNMP**: the `snmp-server community` string, also on a `no snmp-server` line, everything after the address of an `snmp-server host`, and everything after `v3` of an `snmp-server user`.
+- **Kept as written**: `description` lines, banners, and the number of a key chain's `key 1`.
+- **PAN-OS**: the text of every element named for a password, key or secret (`phash`, `password`, `authpwd`, `auth-key`, `shared-key`, `private-key`, `community` and the like), attributes or not. A body over several lines is hidden line by line.
+
 ## Which devices
 
 An inventory group, `net_config_devices` (`net_config_group`), in the template's inventory:

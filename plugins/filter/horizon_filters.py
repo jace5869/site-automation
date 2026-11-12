@@ -220,9 +220,12 @@ def _pool_hold(pool, pool_id, opts):
 
 
 def _same_domain(a, b):
-    """CORP, corp.example.mil and CORP.EXAMPLE.MIL name the same domain."""
-    a, b = str(a or "").lower(), str(b or "").lower()
-    return a == b or a.split(".")[0] == b.split(".")[0]
+    """CORP, corp.example.mil and CORP.EXAMPLE.MIL name the same domain; two DNS names only when they are equal
+    (corp.example.mil is not corp.yoursite.mil)."""
+    a, b = str(a or "").lower().rstrip("."), str(b or "").lower().rstrip(".")
+    if a == b:
+        return True
+    return ("." not in a or "." not in b) and a.split(".")[0] == b.split(".")[0]
 
 
 def _is_sid(text):
@@ -794,7 +797,7 @@ def _cert(rec, now, warn, crit):
     if c.get("valid") is False:
         return ("critical", "its certificate is not valid%s" % ((" (" + str(c.get("invalid_reason")) + ")") if c.get("invalid_reason") else ""))
     if to:
-        days = int((to - now) / 86400000)
+        days = int((to - now) // 86400000)             # whole days, rounded down: 10 hours ago is -1, expired
         if days < 0:
             return ("critical", "its certificate expired %s" % _when(to))
         if days <= crit:
@@ -939,7 +942,7 @@ def hz_health(data, opts=None):
         if _g(li, "licensed", default=True) is False:
             add("critical", "License", "-", "Horizon is not licensed")
         elif exp:
-            days = int((exp - now) / 86400000)
+            days = int((exp - now) // 86400000)        # rounded down: expired 10 hours ago is expired
             if days < 0:
                 add("critical", "License", "-", "the license expired %s" % _when(exp))
             elif days <= _int(o.get("license_warn_days"), 60):
@@ -1140,7 +1143,8 @@ def hz_events(data, opts=None):
         fail_rows.append([user, u["n"], ", ".join("%s (%d)" % kv for kv in sorted(u["types"].items(), key=lambda kv: -kv[1])),
                           ", ".join(sorted(u["clients"])[:3]), _when(u["last"])])
         fail_st.append("warning" if u["n"] >= warn_n else "")
-    errs = [e for e in evs if e["severity"] in sev and e not in failed]
+    failed_ids = set(id(e) for e in failed)
+    errs = [e for e in evs if e["severity"] in sev and id(e) not in failed_ids]
     by_type = {}
     for e in errs:
         t = by_type.setdefault(e["type"] or "(no type)", {"n": 0, "last": 0, "msg": "", "pools": set()})
@@ -1501,9 +1505,20 @@ def hz_logon(data, opts=None):
     return {"report": report, "critical": nc, "warning": nw, "timed": len(rows), "missing": missing, "unnamed": sorted(unnamed)}
 
 
+IPV4 = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
+
+
 def _on_host(m, host):
-    h, want = str(m.get("host") or "").lower(), str(host or "").strip().lower()
-    return bool(h) and bool(want) and (h == want or h.split(".")[0] == want.split(".")[0])
+    """The desktop is on this ESXi host: the same name, or a short name and a full name with that first label
+    (esx01, esx01.corp.example.mil). Two full names, or an address, only when they are the same."""
+    h, want = str(m.get("host") or "").strip().lower().rstrip("."), str(host or "").strip().lower().rstrip(".")
+    if not h or not want:
+        return False
+    if h == want:
+        return True
+    if IPV4.match(h) or IPV4.match(want) or ":" in h or ":" in want or ("." in h and "." in want):
+        return False
+    return h.split(".")[0] == want.split(".")[0]
 
 
 def hz_host_plan(data, host, opts=None):

@@ -584,6 +584,9 @@ class Cancelled(unittest.TestCase):
         opn = dict((s["title"], s) for s in rep["sections"])["Open at the end of the week"]
         self.assertEqual([x[1] for x in opn["rows"]], ["INC8", "INC3", "INC2", "SCTASK2"])
         self.assertNotIn("backlog", opn["text"])
+        # 1.23.0: the report's own WAR lines follow open_scope too
+        prog = dict((s["title"], s) for s in rep["sections"])["For the WAR (from the tables): in progress"]
+        self.assertEqual([x.split(":")[0] for x in prog["lines"]][:2], ["Incident INC8", "Incident INC3"])
         self.assertEqual(wf.servicenow_war_lines(r, {"open_scope": "all"})["in_progress"][0].split(":")[0], "Incident INC8")
         self.assertIn("OPEN AT THE END OF THE WEEK (4):", wf.servicenow_war_act_evidence(r, {"open_scope": "all"}))
         # the workbook has everything: the Cancelled sheet, the backlog on Open at the end

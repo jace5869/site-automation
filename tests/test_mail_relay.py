@@ -217,6 +217,21 @@ class FileStyle(unittest.TestCase):
         self.assertIn("198.51.100.9 can relay already: it is inside 198.51.100 OK", notes)
         self.assertNotIn("192.0.2.9 can relay", notes)
 
+    def test_a_line_that_refuses_is_never_changed(self):
+        """1.23.0: an address with a REJECT line is not on the list: a remove leaves the line, an add says to change it."""
+        text = "192.0.2 OK\n192.0.2.7 REJECT\n"
+        p = m.mail_relay_plan(text, req(action="remove", ips=["192.0.2.7"]), style="file", suffix=" OK")
+        self.assertEqual((p["change"], p["todo"], p["already"], p["lines"]), ("none", [], ["192.0.2.7"], []))
+        self.assertIn("192.0.2.7 has a line that refuses it (192.0.2.7 REJECT)", p["notes"][0])
+        self.assertNotIn("can relay", " ".join(p["notes"]))
+        self.assertEqual(m.mail_relay_edit(text, req(action="remove", ips=["192.0.2.7"]), style="file")["text"], text)
+        p = m.mail_relay_plan("192.0.2.7 554 not here\n", req(ips=["192.0.2.7"]), style="file", suffix=" OK")
+        self.assertEqual((p["change"], p["todo"]), ("none", []))
+        self.assertIn("Change that line by hand", p["notes"][0])
+        # an OK line beside it is removed, the REJECT line stays
+        e = m.mail_relay_edit("192.0.2.7 OK\n192.0.2.7 REJECT\n", req(action="remove", ips=["192.0.2.7"]), style="file")
+        self.assertEqual(e["text"], "192.0.2.7 REJECT\n")
+
 
 class Notes(unittest.TestCase):
     def test_once_or_per_relay(self):

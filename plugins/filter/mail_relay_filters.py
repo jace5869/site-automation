@@ -169,9 +169,16 @@ def _own_comment(ip):
     return re.compile(r"^#[ \t]+%s(/32)?[ \t].*" % re.escape(ip) + STAMP)
 
 
-def _file_entries(lines):
-    """{index: first word} of every address line of a list file (comment and blank lines are not entries)."""
-    return {i: line.split()[0] for i, line in enumerate(lines) if line.strip() and not line.strip().startswith("#")}
+def _rejects(line):
+    """A map line that refuses its key (REJECT, DISCARD, 554 ...): the address is not one that may relay."""
+    return any(NOT_ALLOWED.match(w) for w in _words(line.strip())[1:])
+
+
+def _file_entries(lines, refused=False):
+    """{index: first word} of every address line of a list file that lets its address relay (comment and blank lines,
+    and a line that refuses, are not entries). refused: the lines that refuse instead."""
+    return {i: line.split()[0] for i, line in enumerate(lines)
+            if line.strip() and not line.strip().startswith("#") and _rejects(line) == refused}
 
 
 def _networks(line, all_words=False):
@@ -181,7 +188,7 @@ def _networks(line, all_words=False):
     if not text or text.startswith("#"):
         return []
     words = _words(text)
-    if not all_words and any(NOT_ALLOWED.match(w) for w in words[1:]):
+    if not all_words and _rejects(text):
         return []
     found = []
     for i, w in enumerate(words):
@@ -607,12 +614,24 @@ def mail_relay_plan(text, req, style="main_cf", param="mynetworks", suffix="", p
         words = list(entries.values())
         where = {w: i for i, w in entries.items()}
         nets = [(n, w, line.strip()) for line in lines for n, w in _networks(line)]
-    listed = [ip for ip in ips if any(_same(w, ip) for w in words)]
+    # a line that refuses the address (REJECT ...) is never changed: an add would not let it relay (its first line
+    # counts), a remove would let it relay
+    refused = {}
+    if style == "file":
+        for i, w in _file_entries(lines, refused=True).items():
+            for ip in ips:
+                if _same(w, ip):
+                    refused.setdefault(ip, lines[i].strip())
+    listed = [ip for ip in ips if any(_same(w, ip) for w in words) or (action == "add" and ip in refused)]
     out["todo"] = [ip for ip in ips if ip not in listed] if action == "add" else listed
     out["already"] = listed if action == "add" else [ip for ip in ips if ip not in listed]
     notes = []
     for ip in out["already"]:
-        if action == "add":
+        if ip in refused:
+            notes.append("%s has a line that refuses it (%s): it cannot relay, and that line is left as it is. %s"
+                         % (ip, refused[ip], "Change that line by hand to let it relay." if action == "add" else
+                            "It is not on the list of those that may relay."))
+        elif action == "add":
             i = next((where[w] for w in words if _same(w, ip)), None)
             who = _who(lines, i, ip, style, param)
             notes.append("%s is on the list already%s - left as it is." % (ip, (" (%s)" % who) if who else ""))
@@ -622,7 +641,7 @@ def mail_relay_plan(text, req, style="main_cf", param="mynetworks", suffix="", p
         want = ipaddress.ip_network(ip, strict=False)
         covers = list(dict.fromkeys(s for n, w, s in nets if want.subnet_of(n) and not (n == want and _same(w, ip))))
         inside = list(dict.fromkeys(s for n, w, s in nets if n.subnet_of(want) and n != want))
-        if covers and (ip in out["todo"] or action == "remove"):
+        if covers and (ip in out["todo"] or action == "remove") and ip not in refused:
             c = ", ".join(covers)
             if action == "add":
                 notes.append("%s can relay already: it is inside %s, on the list. Adding it gives it a line of its own "

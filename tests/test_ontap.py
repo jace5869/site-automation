@@ -247,6 +247,10 @@ class Report(unittest.TestCase):
         self.assertGreater(titles.index("Health alerts"), titles.index("Certificates expiring"))
         self.assertTrue(titles[2].startswith("Volumes "), titles[:4])                      # after Clusters and Nodes
         self.assertEqual(titles[:2], ["Clusters", "Nodes"])
+        # 1.23.0: an event's time with an offset is shown in UTC
+        ev = dict(ems, time="2026-10-07T07:00:00-04:00")
+        sec = [x for x in of.ontap_report(self.one([("v", 100, 10)], [], [ev]))["report"]["sections"] if x["title"].startswith("Error events")][0]
+        self.assertIn("2026-10-07 11:00", repr(sec["rows"]))
 
 
     def test_ldap_events_left_out_when_ldap_is_not_configured(self):

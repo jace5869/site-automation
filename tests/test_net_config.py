@@ -65,6 +65,64 @@ class Filters(unittest.TestCase):
         self.assertEqual(f.mask("<phash>$5$x</phash> <key>K</key> <hostname>fw</hostname>", "panos"),
                          "<phash><hidden></phash> <key><hidden></key> <hostname>fw</hostname>")
 
+    def test_mask_every_form(self):
+        """1.23.0: a bare key, the trap host's community, an SNMPv3 user, a level, an NTP key - hidden; commands kept."""
+        hidden = {
+            "crypto isakmp key Sup3rPSK address 192.0.2.1": "crypto isakmp key <hidden>",
+            "tacacs-server key PlainKey1": "tacacs-server key <hidden>",
+            "radius-server key 7 0822455D0A16": "radius-server key 7 <hidden>",
+            " key PlainKey3": " key <hidden>",
+            "snmp-server host 192.0.2.1 version 2c PUBLICSTR": "snmp-server host 192.0.2.1 <hidden>",
+            "snmp-server host 192.0.2.1 PUBLICSTR": "snmp-server host 192.0.2.1 <hidden>",
+            "+snmp-server host 192.0.2.1 informs version 2c PUB udp-port 162": "+snmp-server host 192.0.2.1 <hidden>",
+            "snmp-server user svc_x grp v3 auth sha AuthP priv aes 128 PrivP": "snmp-server user svc_x grp v3 <hidden>",
+            "ntp authentication-key 1 md5 NtpKey 7": "ntp authentication-key 1 <hidden>",
+            "enable secret level 15 5 $1$abcHASH": "enable secret level 15 5 <hidden>",
+            "key config-key password-encrypt MASTERK": "key config-key password-encrypt <hidden>",
+            " pre-shared-key local PSK3": " pre-shared-key <hidden>",
+            " pre-shared-key address 192.0.2.1 key PSK2": " pre-shared-key <hidden>",
+            "ip ospf authentication-key 7 OSPFK": "ip ospf authentication-key 7 <hidden>",
+            " standby 1 authentication md5 key-string HSRPK": " standby 1 authentication md5 <hidden>",
+            "-neighbor 192.0.2.1 password 7 XX": "-neighbor 192.0.2.1 password 7 <hidden>",
+        }
+        for line, want in hidden.items():
+            self.assertEqual(f.mask(line, "ios"), want, line)
+        for line in ("crypto key generate rsa modulus 2048", "crypto keyring KR", "service password-encryption",
+                     "ip community-list 1 permit 65000:1", "set community 65000:1", "tacacs server T1", " address ipv4 192.0.2.5"):
+            self.assertEqual(f.mask(line, "ios"), line)
+        for tag in ("authpwd", "privpwd", "bind-password", "shared-secret"):
+            self.assertEqual(f.mask("<%s>-AQ==abc</%s>" % (tag, tag), "panos"), "<%s><hidden></%s>" % (tag, tag))
+
+    def test_mask_removed_lines_and_text(self):
+        """1.23.0 b: a removed community, any xxx-password, HSRP/VRRP/GLBP text, PAN-OS attributes and long bodies
+        hidden; descriptions, banners and a key chain's key number kept."""
+        hidden = {
+            "no snmp-server community PUBX RO": "no snmp-server community <hidden> RO",
+            "-no snmp-server community PUBX RO": "-no snmp-server community <hidden> RO",
+            " area-password ISISA": " area-password <hidden>",
+            " domain-password ISISD": " domain-password <hidden>",
+            " standby 1 authentication HSRPT": " standby 1 authentication <hidden>",
+            " standby 1 authentication text HSRPT": " standby 1 authentication text <hidden>",
+            " vrrp 1 authentication text VRRPT": " vrrp 1 authentication text <hidden>",
+            " glbp 1 authentication text GLBPT": " glbp 1 authentication text <hidden>",
+        }
+        for line, want in hidden.items():
+            self.assertEqual(f.mask(line, "ios"), want, line)
+        for line in ("service password-encryption", " standby 1 authentication md5 key-chain HSRP-KC", " key 1",
+                     " description key uplink to core", " description Secret lab switch", "banner motd ^C password ^C"):
+            self.assertEqual(f.mask(line, "ios"), line)
+        for x in ('<password encrypted="yes">PANX</password>', "<auth-key>PANX</auth-key>",
+                  "<authentication-key>PANX</authentication-key>", "<shared-key>PANX</shared-key>"):
+            self.assertNotIn("PANX", f.mask(x, "panos"), x)
+        # a banner's body and a PAN-OS key over several lines: the diff knows where each starts and ends
+        d = f.diff("banner motd ^C\nGive your password\n^C\n", "banner motd ^C\nGive your password now\n^C\n", "ios")
+        self.assertIn("+Give your password now", d["lines"])
+        key = "<entry>\n  <private-key>\n    -----BEGIN KEY-----\n    PANKEY1\n    -----END KEY-----\n  </private-key>\n</entry>\n"
+        d = f.diff(key, key.replace("PANKEY1", "PANKEY2"), "panos")
+        self.assertEqual((d["added"], d["removed"]), (1, 1))
+        self.assertFalse([x for x in d["lines"] if "KEY" in x], d["lines"])
+        self.assertIn("+    <hidden>", d["lines"])
+
     def test_diff(self):
         d = f.diff("a\nb\nc\n", "a\nc\nsnmp-server community new RO\n", "ios", 60, "rtr01")
         self.assertEqual((d["added"], d["removed"], d["truncated"]), (1, 1, False))

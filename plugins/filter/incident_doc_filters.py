@@ -509,10 +509,16 @@ def _json_in(raw):
     return None
 
 
+def _tokens(text):
+    """The whole words with a digit in a text (a number, an address, a time), lower case, end marks off."""
+    return set(x.strip(".:-/").lower() for x in _KEEP.findall(text or ""))
+
+
 def _kept(before, after):
-    """What of before (anything with a digit in it) after left out - [] when all of it is there."""
-    low = after.lower()
-    return [x for x in dict.fromkeys(_KEEP.findall(before)) if x.strip(".:-/").lower() not in low]
+    """What of before (anything with a digit in it) after left out - [] when all of it is there, each word whole
+    (10 is not kept by 100, nor 192.0.2.1 by 192.0.2.10)."""
+    have = _tokens(after)
+    return [x for x in dict.fromkeys(_KEEP.findall(before)) if x.strip(".:-/").lower() not in have]
 
 
 def incident_act_apply(record, raw, opts=None):
@@ -554,6 +560,7 @@ def incident_act_apply(record, raw, opts=None):
     if write:
         sop = v.get("sop") if isinstance(v.get("sop"), dict) else {}
         typed = _aar_text(record).lower()
+        typed_words = _tokens(typed)
         for k in write:
             steps = _lines(sop.get(k))[:SOP_MOST_STEPS]
             if not steps:
@@ -561,7 +568,7 @@ def incident_act_apply(record, raw, opts=None):
                     out["kept"].append("%s: ACT wrote no steps - the AAR's %s as written" % (LABEL[k], LABEL[dict(SOP_FROM_AAR)[k]]))
                 continue
             new = "\n".join(steps)
-            made_up = [x for x in dict.fromkeys(y.strip(".:-/") for y in _KEEP.findall(new)) if x.lower() not in typed]
+            made_up = [x for x in dict.fromkeys(y.strip(".:-/") for y in _KEEP.findall(new)) if x.lower() not in typed_words]
             if re.search(r"\[REDACTED|<[A-Z_]+_\d+>", new):
                 why = "a masked word in them"
             elif made_up:

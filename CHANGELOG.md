@@ -1,5 +1,102 @@
 # Changelog
 
+## 1.41.0 — 2026-11-12 (the code review's slice A, built as 1.23.0)
+
+**Updating without scripts:** paste `site-automation-1.41.0-changed-since-1.38.0.zip` as it is (from an older version,
+its own zip). They leave out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`. (Never paste the full `site-automation-1.41.0.zip` over your copy: it carries the example
+`group_vars`.) Nothing to set up.
+
+**Fixes from a code review of the filters, module_utils, scripts and the EE recipes.** A read-only review of 1.21.0
+found these. Each fix has its own test.
+
+- **Network config: every secret form hidden.** A shown diff (the report, the email, an incident, a change note) hides
+  all that follows `password`, `secret`, any `xxx-password` (IS-IS `area-password`, `domain-password`), `key`
+  (`crypto isakmp key`, `tacacs-server key`, `radius-server key` too), `key-string`, `pre-shared-key`,
+  `authentication-key` and `md5`. A `level N` and the encryption type digit stay.
+- **Network config: HSRP, VRRP and GLBP.** The text after `authentication` (and `authentication text`) is hidden. A
+  `md5 key-chain` keeps the chain's name.
+- **Network config: free text kept.** `description` lines, banners and a key chain's `key 1` are shown as written.
+- **Network config, SNMP and PAN-OS.** Hidden: the `snmp-server community` string (on a `no snmp-server` line too),
+  everything after the address of an `snmp-server host`, and everything after `v3` of an `snmp-server user`. On
+  PAN-OS, every element named for a password, key or secret (`authpwd`, `privpwd`, `auth-key`, `shared-key` too),
+  with attributes or not. A `private-key` over several lines is hidden line by line.
+- **Ticket insights: more masked before GenAI.** A host name, a domain name or a 10-digit number at the end of a
+  sentence (`Rebooted web01.`) is masked, and so is a name with an underscore (`SQL_PROD01`).
+- **Ticket insights: last names.** A last name from ServiceNow's people fields is always masked, from `Last, First`
+  too, a `Jr.` left out. A short or word-like one (`Do`, `Page`) is masked where it is written as a name
+  (capitalised): `do` and `page` stay words. A full name is masked in any case.
+- **Horizon: hosts and domains matched in full.** Host maintenance, its recheck, bringing desktops out of maintenance
+  and messages to a host's users: two full host names, or two IP addresses, match only when they are the same. A short
+  name (`esx01`) still finds its full name.
+- **Horizon user help: domains in full.** Two DNS domains match only when they are the same (`corp.example.mil` is not
+  `corp.yoursite.mil`). A NetBIOS name (`CORP`) still matches its domain.
+- **Mail relay, file style: a line that refuses an address is never changed.** An address with a `REJECT` (or
+  `DISCARD`, `554 ...`) line is not on the list. A remove leaves that line, and an add says to change it by hand.
+- **Incident documents: numbers compared whole.** ACT's tidied text and ACT's SOP steps are used only when every
+  number, address and time is there whole, as typed (`10` is not kept by `100`).
+- **VM deploy: a thousands comma.** `2,048 GB` is one disk of 2048 GB and `16,384 MB` is 16 GB: the unit follows
+  the number. Without a unit, commas make a list (`80,100` and `1,024` are two disks), and so does `100,200 GB`. A very
+  long ticket line is read quickly.
+- **Log analysis: container times in UTC.** A container line's time is turned into UTC by its own offset. A
+  `log_analysis_since` in the future is refused, with the reason.
+- **WAR report.** Its in-progress lines follow `servicenow_war_open_scope` and the report's time zone, as its tables
+  do.
+- **Horizon license and certificates.** One that expired less than a day ago reads "expired".
+- **Smaller ones.** ONTAP's error events show "Last (UTC)" in UTC. FSLogix reads 20,000 user folders in under a second
+  (was 35 s), and the Horizon events and VMware Tools reports stay quick on large sites. `report_email_also` keeps a
+  plain address beside an Outlook-style `Name <address>`. A certificate CSV cell never starts with a formula sign. A
+  kept report (`report_web_copy`) fits `report_web_copy_max_kb` with its note. `build-ee.sh` hands the hub token to
+  podman through its environment.
+
+**Behaviour changes** (what you may see differ after the update):
+- Horizon: a license or certificate that expired less than a day ago is "expired" (critical), not "expires in 0 days"
+  (warning).
+- Horizon: `horizon_maint_host` as an IP address or a full name picks only that host's desktops. A short name still
+  picks each host with that first label.
+- Horizon user help: `corp.example.mil\user` no longer finds a user of another DNS domain with the same first label.
+- VM deploy: `2,048 GB` and `16,384 MB` are one size each (were two). Plain numbers with commas are a list, as
+  before.
+- Mail relay: removing an address that has a `REJECT` line changes nothing (that line was deleted before).
+- Incident documents: ACT's tidied text with a changed number stays as typed, so a few more boxes may keep their typed
+  wording.
+- Log analysis: lines of a container on a host not set to UTC move by its offset, in the window and in the times
+  shown.
+- Ticket insights: more words become placeholders before GenAI, so the grouping of issues may shift a little on the
+  next run.
+- Network config: diffs hide more of a secret's line (a `crypto isakmp key` line's peer address too). `description`
+  lines, banners and `ip community-list` / `set community` lines are shown as written.
+- Ticket insights: a short or word-like last name in lower case (`do`, `page`) is no longer a placeholder.
+- WAR with `servicenow_war_open_scope: all`: its in-progress lines list every open task.
+- Certificate CSV: a value that starts with `=`, `+`, `-` or `@` gets a `'` in front.
+
+Files:
+- plugins/filter: net_config_filters.py (IOS_SECRET, IOS_SNMP, IOS_FHRP, PAN_SECRET, mask, mask_lines, diff),
+  servicenow_insights_filters.py (ID10, FQDN, HOSTLIKE; the last name in servicenow_insights_mask, "exact" in the mask
+  and _mask_parts), horizon_filters.py
+  (_same_domain, _on_host, the license and certificate days, the events list), horizon_fslogix_filters.py,
+  mail_relay_filters.py, incident_doc_filters.py, vm_deploy_filters.py (_sizes_gb, LINE), log_filters.py,
+  servicenow_war_filters.py, ontap_filters.py, vmware_tools_filters.py, site_filters.py (_email_also), cert_filters.py
+  (cert_csv);
+- plugins/module_utils/site_report_page.py (pack); ee/build-ee.sh; ee/*/execution-environment.yml (a comment);
+- docs: NETWORK_CONFIG.md (what is hidden), MAIL_RELAY.md (a line that refuses), EXECUTION_ENVIRONMENT.md (the token
+  and a mirror login).
+
+Tests:
+- test_net_config.py (every IOS, SNMP and PAN-OS form; removed lines, HSRP / VRRP / GLBP, a multi-line key, kept
+  text), test_servicenow_insights.py (a sentence end, an underscore, last names that are words, short ones, `Last,
+  First`), test_horizon.py (two FQDNs with one short name and IP addresses through plan, recheck and in-maintenance;
+  two DNS domains; expired 10 hours ago), test_horizon_fslogix.py (20,000 folders), test_mail_relay.py (a REJECT
+  line), test_incident_docs.py (a changed number or address), test_vm_deploy.py (a thousands comma, lists of plain
+  numbers, a long line), test_log_analysis.py (offsets, a future since), test_servicenow_war.py (open_scope in the
+  report), test_ontap.py (EMS in UTC), test_report_web.py (the packed size), test_cert_inventory.py (no formula in the
+  CSV), test_filters.py (a plain address beside `Name <address>`), tests/ee/test_build_ee.sh (the token by the
+  environment); tests/vmware/run_vmware_test.sh: a WinRM test password of 8 characters (ansible-core 2.22 hides a
+  one-letter password wherever that letter is in the output);
+- every CI unit test line, and the e2e of these filters on ansible-core 2.22 and 2.16.
+
+SA_VERSION 1.41.0; the PDFs at 1.41.0.
+
 ## 1.38.0 — 2026-11-12
 
 **Updating without scripts:** paste `site-automation-1.38.0-changed-since-1.33.0.zip` as it is (from an older version,
@@ -1044,8 +1141,18 @@ tests/stig/run_stigman_real_test.sh against STIG Manager 1.6.18 (not in CI).
 
 SA_VERSION 1.26.0; the PDFs at 1.26.0.
 
-**To do, if you have not yet: what 0.20.0 to 1.38.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.38.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing).** In order; each step works without
-the ones after it. There is no step 90.
+**To do, if you have not yet: what 0.20.0 to 1.41.0 ask you to set up.** In order; each step works without the ones
+after it. There is no step 90.
+
+- Step 5 changes in 0.43.0 (`report_web_theme: atlas`). 0.92.0 offers a second website look (step 71), 0.94.0 makes it
+  calmer (step 73).
+- Steps 48 to 70: 0.64.0 to 0.90.0, one step each (0.66.0 to 0.69.0, 0.70.1, 0.75.1, 0.76.1 and 0.78.1 add nothing).
+- Steps 71 to 83: 0.92.0 to 1.4.0, one step each (0.91.0 adds nothing).
+- Steps 84 to 87: 1.7.0 to 1.10.0 (1.5.0, 1.6.0 and 1.6.1 add nothing).
+- Steps 88 and 89: 1.13.0 and 1.15.0 (1.11.0, 1.12.0 and 1.14.0 add nothing).
+- Steps 91 and 92: 1.22.0. Step 93: 1.26.0. Step 94: 1.32.0.
+- Nothing to set up: 1.16.0, 1.17.0, 1.18.0, 1.20.0, 1.21.0, 1.24.0, 1.28.0, 1.29.0, 1.30.0, 1.31.0, 1.32.1, 1.33.0,
+  1.38.0 and 1.41.0.
 
 1. **Your logo** (0.20.0). A PNG with a transparent background, about 160 px tall and under 100 KB, in
    *your* repository - never the public one: `playbooks/files/report_logo.png`. In `all.yml`:

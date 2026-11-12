@@ -13,6 +13,7 @@ mkdir -p "$work/bin" "$work/graph"
 cat > "$work/bin/podman" <<'EOF'
 #!/usr/bin/env bash
 echo "podman $*" >> "$FAKE_LOG"
+[ "$1" != build ] || echo "podman build env: ${ANSIBLE_GALAXY_SERVER_RH_CERTIFIED_TOKEN:-} ${ANSIBLE_GALAXY_SERVER_COMMUNITY_TOKEN:-} ${ANSIBLE_GALAXY_SERVER_PUBLISHED_TOKEN:-}" >> "$FAKE_LOG"
 case "$1 $2" in
   "image exists") [ -n "${FAKE_BASE:-}" ] ;;
   "run --rm")
@@ -65,8 +66,11 @@ has() { grep -qF -- "$1" "${2:-$work/out.txt}"; }
 fresh; run TOKEN=s3cr3t-tok -- all-in-one 2
 [ "$rc" = 0 ] && has "== ALL YES" && has "Image: localhost/site-ee-all:2" && ok "builds, ee-check ALL YES, the AAP fields" || bad "the build (rc $rc)"
 has "ansible-builder create -f execution-environment.yml -c context" "$work/log" && ok "  ... ansible-builder create" || bad "ansible-builder"
-has "--build-arg ANSIBLE_GALAXY_SERVER_RH_CERTIFIED_TOKEN=s3cr3t-tok --build-arg ANSIBLE_GALAXY_SERVER_COMMUNITY_TOKEN=s3cr3t-tok --build-arg ANSIBLE_GALAXY_SERVER_PUBLISHED_TOKEN=s3cr3t-tok -f context/Containerfile -t localhost/site-ee-all:2 context" "$work/log" \
+has "--build-arg ANSIBLE_GALAXY_SERVER_RH_CERTIFIED_TOKEN --build-arg ANSIBLE_GALAXY_SERVER_COMMUNITY_TOKEN --build-arg ANSIBLE_GALAXY_SERVER_PUBLISHED_TOKEN -f context/Containerfile -t localhost/site-ee-all:2 context" "$work/log" \
   && ok "  ... podman build with the three token build arguments and the tag" || bad "build arguments: $(grep 'podman build' "$work/log")"
+# 1.23.0: the token's value through the environment, never on podman's command line
+has "podman build env: s3cr3t-tok s3cr3t-tok s3cr3t-tok" "$work/log" && ! grep "^podman " "$work/log" | grep -v "^podman build env:" | grep -qF s3cr3t-tok \
+  && ok "  ... the token reaches podman by its environment, not its command line" || bad "token on the command line: $(grep 'podman build' "$work/log")"
 has "s3cr3t-tok" && bad "the token is printed" || ok "  ... the token is never printed"
 has "PIP_INDEX_URL" "$work/log" && bad "PIP_INDEX_URL passed without being set" || ok "  ... no PIP_INDEX_URL unless set"
 has "podman push" "$work/log" && bad "pushed without PUSH" || ok "  ... nothing pushed without PUSH"
