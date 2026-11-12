@@ -98,11 +98,11 @@ NOT_SECRET_NAME = re.compile(r"^(max|min|num)_|_(file|path|dir|name|names|id|ids
                              r"expires?|expiry|policy|rotation|field|header|check|checks|warn|crit|min|max|"
                              r"count|counts|version|ver|total|limit|limits|size|retries|attempts|tries)$", re.I)
 # a URL with a password in it (mysql://svc:<password>@db01)
-URL_PASSWORD = re.compile(r"[a-z][a-z0-9+.-]*://[^\s/?#@:]*:[^\s/?#]+@", re.I)
+URL_PASSWORD = re.compile(r"(?<![a-z0-9+.-])[a-z][a-z0-9+.-]{0,31}://[^\s/?#@:]*:[^\s/?#]+@", re.I)
 # name=value or name: value in a text (Server=db01;Uid=svc;Pwd=...), the name in quotes or not
-TEXT_SETTING = re.compile(r"""([A-Za-z][\w.-]*)["']?\s*[:=]\s*["']?[^\s"',;]""")
+TEXT_SETTING = re.compile(r"""(?<![\w.])([A-Za-z][\w.-]{0,63})["']?\s*[:=]\s*["']?[^\s"',;]""")
 # a command line's option and its value after a space (--password X, -p X)
-CLI_OPTION = re.compile(r"(?:^|\s)(--?)([A-Za-z][\w-]*)(?:\s+|=)([\"']?)([^\s\"']+)")
+CLI_OPTION = re.compile(r"(?:^|\s)(--?)([A-Za-z][\w-]{0,63})(?:\s+|=)([\"']?)([^\s\"']+)")
 # -p with a value joined to it (tool -pS3cret!) - a password when it has a digit or a sign in it, but not a port
 # (-p8080:80), a variable (-p$SSH_PORT) or one of these single-dash options (find -print0, openssl -pubout)
 GLUED_P = re.compile(r"(?:^|\s)-p([^\s\d:/$][^\s]*)")
@@ -128,13 +128,19 @@ TOOL_OPTIONS = (
 # word of the command around it, whatever signs it holds (mysql -e "select count(*)" -pX), and is read again as a
 # command line of its own (ssh db01 'mysql ...', bash -c '...')
 SIGNS = set(";|&()`")
+# its tokens: a '...' string, a "..." string (\\" inside it no end), a backslash and the character after it, spaces, a new
+# line, a sign, and a run of other characters - each matched once, so a long text is read in one pass
+SHELL_TOKEN = re.compile(r"""(?P<sq>'(?P<sqb>[^']*)(?P<sqe>'?))|(?P<dq>"(?P<dqb>(?:[^"\\]|\\.)*)(?P<dqe>"?))|(?P<esc>\\.)"""
+                         r"""|(?P<sp>[^\S\r\n]+)|(?P<nl>\r\n?|\n)|(?P<sign>\$\(|[;|&()`])|(?P<plain>[^\s;|&()`'"\\$]+|[$\\])""", re.S)
+DQ_ESCAPE = re.compile(r"""\\([\\"$`])""")
+OUT_ESCAPE = set(" \t\"'\\$`;|&()<>")
 # a value that is an HTTP Authorization header's credentials (Basic <base64>, Bearer <token>), alone or after its name
 AUTH_VALUE = re.compile(r"(?:^|authorization\"?\s*[:=]\s*\"?)(?:basic|bearer|token|negotiate|digest)\s+[A-Za-z0-9+/=._~-]{8,}", re.I)
 # a PEM private key (RSA, EC, OPENSSH, ENCRYPTED ...)
-PEM_KEY = re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----")
+PEM_KEY = re.compile(r"-----BEGIN (?:[A-Z0-9]{1,16} ){0,4}PRIVATE KEY-----")
 # a sentence of plain words (Change the password: see the runbook) - prose, not a name=value text
 PROSE_WORD = re.compile(r"""^["'(]?[A-Za-z]+(?:'[a-z]+)?[.,:;!?)"']*$""")
-URL = re.compile(r"^[a-z][a-z0-9+.-]*://[^\s/]+", re.I)
+URL = re.compile(r"^[a-z][a-z0-9+.-]{0,31}://[^\s/]+", re.I)
 IPV4 = re.compile(r"^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:/\d{1,2})?(?::\d+)?$")
 IPV6 = re.compile(r"^\[?(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}\]?(?:/\d{1,3})?$", re.I)
 # a host name: two labels or more, the last letters only (aap01.yoursite.mil); a file name (report.html.j2) is not one
@@ -311,12 +317,12 @@ def secret_text(s):
     secret's name (Uid=svc;Pwd=..., PGPASSWORD=...). A sentence of plain words is prose: only a URL or a key counts
     there. Pure."""
     s = str(s or "")
-    if URL_PASSWORD.search(s) or PEM_KEY.search(s):
+    if ("://" in s and URL_PASSWORD.search(s)) or ("-----BEGIN" in s and PEM_KEY.search(s)):
         return True
     if prose(s):
         return False
     return bool(AUTH_VALUE.search(s.strip())) or any(_cli_secret(*m[:2], m[3]) for m in CLI_OPTION.findall(s)) or any(
-        _glued_p(g) for g in GLUED_P.findall(s)) or _tool_secret(s) or any(secret_name(k) for k in TEXT_SETTING.findall(s))
+        _glued_p(g) for g in GLUED_P.findall(s)) or _tool_secret(s) or (("=" in s or ":" in s) and any(secret_name(k) for k in TEXT_SETTING.findall(s)))
 
 
 def _glued_p(glued):
@@ -341,35 +347,35 @@ def shell_words(s):
     """(words, quoted): a text's words as a shell splits them - each sign (; | & ( ) ` $( and a new line, as ;) a word of
     its own; a quoted string part of the word it is in (its quotes off), however many signs it holds; an unclosed one
     runs to the end; a \\ at a line's end goes on - and the quoted strings' insides, each to read as a command line of
-    its own (with an unclosed quote, the whole text without it as well: a typo hides nothing). Pure."""
+    its own (with an unclosed quote, the whole text without it as well: a typo hides nothing). A backslash as POSIX has
+    it (1.24.0h): inside "..." it makes " \\ $ ` plain (ssh h "mysql -e \\"select 1\\" -pX"), the inside handed on
+    without it; inside '...' nothing is special; outside quotes it makes a shell's sign plain - before any other
+    character it stays (C:\\tools\\sqlcmd.exe). Linear. Pure."""
     t = re.sub(r"\\\r?\n", " ", str(s or ""))
-    words, quoted, cur, i, n = [], [], None, 0, len(t)
-
-    def end():
-        if cur is not None:
-            words.append(cur)
-        return None
-    while i < n:
-        c = t[i]
-        if c in "'\"":
-            j = t.find(c, i + 1)
-            if j < 0:                                    # unclosed: to the end - the text read again without it too
-                quoted.append(t[:i] + t[i + 1:])
-                j = n
-            quoted.append(t[i + 1:j])
-            cur = (cur or "") + t[i + 1:j]
-            i = j + 1
-        elif c.isspace() and c not in "\r\n":
-            cur = end()
-            i += 1
-        elif c in "\r\n" or c in SIGNS or t.startswith("$(", i):
-            cur = end()
-            words.append(";" if c in "\r\n" else ("$(" if c == "$" else c))
-            i += 2 if c == "$" else 1
+    words, quoted, cur = [], [], None
+    for m in SHELL_TOKEN.finditer(t):
+        k = m.lastgroup
+        if k in ("sp", "nl", "sign"):
+            if cur is not None:
+                words.append("".join(cur))
+            cur = None
+            if k != "sp":
+                words.append(";" if k == "nl" else m.group())
+            continue
+        if k == "sq" or k == "dq":
+            inner = m.group(k + "b") if k == "sq" else DQ_ESCAPE.sub(r"\1", m.group("dqb"))
+            quoted.append(inner)
+            if not m.group(k + "e"):                     # unclosed: to the end - the text read again without it too
+                quoted.append(t[:m.start()] + t[m.start() + 1:])
+            piece = inner
+        elif k == "esc":
+            piece = m.group()[1] if m.group()[1] in OUT_ESCAPE else m.group()
         else:
-            cur = (cur or "") + c
-            i += 1
-    end()
+            piece = m.group()
+        cur = [] if cur is None else cur
+        cur.append(piece)
+    if cur is not None:
+        words.append("".join(cur))
     return words, quoted
 
 

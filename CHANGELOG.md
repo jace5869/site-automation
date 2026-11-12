@@ -45,7 +45,8 @@ refused:
   such a name, such a name anywhere inside a dict or list, a URL with a password in it (`user:password@`), a text that
   holds JSON or YAML with such a key, a text such as `Pwd=...` in a connection string, `--password X` / `-p X` on a
   command line or a tool's own password option after that tool, wherever a script starts it (`N=$(mysql ...)`,
-  `ssh db01 'mysql ...'`, `cd /tmp;mysql ...`; a quoted string is one word: `mysql -e "select count(*)" -p...`): mysql's `-pXXXX`, `curl -u user:password`, `sqlcmd -P`, `ldapsearch
+  `ssh db01 'mysql ...'`, `cd /tmp;mysql ...`; a quoted string is one word: `mysql -e "select count(*)" -p...`; a
+  backslash as in a shell: `ssh h "mysql -e \"select 1\" -p..."`): mysql's `-pXXXX`, `curl -u user:password`, `sqlcmd -P`, `ldapsearch
   -w`, `smbclient -U user%password`, `ipmitool -P`, `redis-cli -a`, `winrs -p:` (Windows switches with `/` too), an Authorization header's `Basic ...` / `Bearer ...` and a PEM private key are secrets too, whatever
   the setting is called. A setting named for a credential (`scan_credentials`) is a secret when its value is not a
   credential's name or id (`AAP - SOP draft`, `[12, 15]`, `["ssh-linux"]`); a limit (`max_tokens`) and a sentence of
@@ -117,7 +118,7 @@ JSON/YAML texts, Authorization headers, PEM keys and command-line passwords (mys
 password option after that tool), rootpw, bindpw and SNMP communities, and the false alarms (a credential's name,
 pin_version, pass_count, max_tokens, ssh -p 2222, cp -pR, date -u +%H:%M, find -print0, a sentence); a script's
 commands split as a shell does ($( ` ( ; | && a new line; a quoted string one word, read as a command line of its
-own); sqlcmd -p1; a list under a credential's setting never shown; the node stats certificate checked against the name it
+own; backslashes as POSIX has them); sqlcmd -p1; a 200 KB value read in under a second; a list under a credential's setting never shown; the node stats certificate checked against the name it
 is asked with (a TLS-only node at 127.0.0.1); the stack's output at -vvv; an unverified bundle; the
 checklist conflict and a UTF-16 DTD; LDAP paging and the lockout policy; an asset of an earlier run; approvals; the
 WAR cap; the win_act scripts' order (and a run with pwsh). New: tests/test_stigman_stack.py, tests/test_win_act.py.
