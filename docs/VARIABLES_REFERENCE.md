@@ -2495,3 +2495,4 @@ host has none, the role works the value out from the host, so no role file has a
 | `net_config_platform` | [net_config](#net_config) | from `ansible_network_os` | `ios` or `panos`: the platform of a host that has no `ansible_network_os` (`cisco.ios.ios` / `paloaltonetworks.panos`) |
 | `net_cert_address` | [net_certs](#net_certs) | the host's `ansible_host`, else its name | The address the certificate report connects to (a host of `net_cert_group`) |
 | `net_cert_servername` | [net_certs](#net_certs) | the host's name | The name sent in the TLS hello (SNI): the certificate a device with several names shows for this one |
+| `servicenow_node_label` | [servicenow](#servicenow) | from `servicenow_node_labels`, else the host's short name | The friendly name of one self-hosted node in the health report ("Node 1"), set on that node's host |

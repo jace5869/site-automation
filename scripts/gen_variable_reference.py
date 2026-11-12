@@ -33,6 +33,8 @@ HOST_SETTINGS = [
      "The address the certificate report connects to (a host of `net_cert_group`)"),
     ("net_certs", "net_cert_servername", "the host's name",
      "The name sent in the TLS hello (SNI): the certificate a device with several names shows for this one"),
+    ("servicenow", "servicenow_node_label", "from `servicenow_node_labels`, else the host's short name",
+     "The friendly name of one self-hosted node in the health report (\"Node 1\"), set on that node's host"),
 ]
 
 

@@ -582,5 +582,74 @@ PLAYBOOK=playbooks/servicenow_health.yml scenario "stats pages: an entry without
 expect "stats pages wrong: why" 'servicenow_node_stats_pages, entry 1: needs name and url'
 deny "stats pages wrong: nothing read" 'Nodes: '
 
+# servicenow_node_stats_auth form: nodes that answer stats.do only in a logged-in session (single sign-on in front). The
+# node stats login's own credential (SN_STATS_USERNAME / SN_STATS_PASSWORD), one login per node, the first node alone
+# first; refused there: the others (and the listed pages) send none. Each fake node writes its requests to a log.
+start_stats $((port + 35)) html form=stats_reader:St4ts-pw9 log="$work/form35.log"
+start_stats $((port + 36)) html form=stats_reader:St4ts-pw9 log="$work/form36.log"
+start_stats $((port + 37)) html form=stats_reader:St4ts-pw9 log="$work/form37.log"
+make_home "$work/glide-f1" prod_16000 $((port + 35)) well
+make_home "$work/glide-f2" prod_16000 $((port + 36)) well
+mkpy nodef1 SNNODE_HOME="$work/glide-f1" SNNODE_UNITS=snc_prod:active:enabled SNNODE_FAPOLICYD=active
+mkpy nodef2 SNNODE_HOME="$work/glide-f2" SNNODE_UNITS=snc_prod:active:enabled SNNODE_FAPOLICYD=active
+nodeinv "$work/inv-form.yml" "$(hostline node04 nodef1 "servicenow_node_home: $work/glide-f1")
+$(hostline node05 nodef2 "servicenow_node_home: $work/glide-f2")" ""
+FORM='{"servicenow_node_stats_auth": "form", "servicenow_cluster_check": false}'
+posts() {   # posts LOG: the logins that node was sent
+    if [ -f "$1" ]; then grep -c '^POST /login.do' "$1"; else echo 0; fi
+}
+formlogs() {   # formlogs NAME WANT35 WANT36: how many logins each of the two nodes was sent
+    local got; got="$(posts "$work/form35.log") $(posts "$work/form36.log")"
+    if [ "$got" = "$2 $3" ]; then echo "ok   - $1"; else echo "FAIL - $1: logins sent: $got, expected $2 $3"; fails=$((fails + 1)); fi
+}
+SN_STATS_USERNAME=stats_reader SN_STATS_PASSWORD=St4ts-pw9 PLAYBOOK=playbooks/servicenow_health.yml \
+    scenario "form login: both nodes read in a session of the local login page" 0 \
+    $((port + 43)) api goodpw -i "$work/inv-form.yml" -e "$HOSTOK" -e "$FORM"
+expect "form login: the nodes' line" 'hosts read: 2 of 2'
+deny "form login: no finding about the stats page" 'stats page of'
+formlogs "form login: one login per node" 1 1
+if [ "$(grep -c '^GET /logout.do session=yes' "$work/form35.log")" = 1 ] && [ "$(grep -c '^GET /logout.do session=yes' "$work/form36.log")" = 1 ] \
+   && ! grep -q 'redirect' "$work/form35.log" "$work/form36.log" \
+   && [ "$(sed -n 1p "$work/form36.log")" = "GET /side_door.do" ]; then
+    echo "ok   - form login: each session closed (logout.do), no redirect followed"
+else echo "FAIL - form login: the nodes' request logs"; cat "$work/form35.log" "$work/form36.log"; fails=$((fails + 1)); fi
+deny "form login: the password is never shown" 'St4ts-pw9'
+rm -f "$work"/form3?.log
+SN_STATS_USERNAME=stats_reader SN_STATS_PASSWORD=St4ts-pw9 PLAYBOOK=playbooks/servicenow_health.yml \
+    scenario "form login: -vvv - no password, no cookie, no sysparm_ck printed" 0 \
+    $((port + 43)) api goodpw -i "$work/inv-form.yml" -e "$HOSTOK" -e "$FORM" -vvv
+deny "form login -vvv: no password" 'St4ts-pw9'
+deny "form login -vvv: no cookie" 'JSESSIONID'
+deny "form login -vvv: no session store cookie" 'glide_session_store'
+if grep -qE 'sysparm_ck[^a-z ]{1,6}[0-9a-f]{20}|(sess|pre)[0-9a-f]{16}' "$work/out.txt"; then
+    echo "FAIL - form login -vvv: a sysparm_ck or a cookie value is printed"; fails=$((fails + 1))
+else echo "ok   - form login -vvv: no sysparm_ck value, no cookie value"; fi
+# a wrong password: one login on the first node, none on the second, none on a listed page; said once per node
+rm -f "$work"/form3?.log
+FPAGE="{\"servicenow_node_stats_pages\": [{\"name\": \"Node 27\", \"url\": \"https://127.0.0.1:$((port + 37))/stats.do\"}]}"
+SN_STATS_USERNAME=stats_reader SN_STATS_PASSWORD=Wr0ng-pw9 PLAYBOOK=playbooks/servicenow_health.yml \
+    scenario "form login: a wrong password - tried once on the first node, not on the others" 2 \
+    $((port + 43)) api goodpw -i "$work/inv-form.yml" -e "$HOSTOK" -e "$FORM" -e "$FPAGE" -vvv
+expect "form login refused: the finding, with what login.do answered" '[WARNING] servicenow_node: the node stats login was refused on snc_prod.service on node04.yoursite.mil (http://127.0.0.1:'"$((port + 35))"'/login.do: HTTP 302 to /login.do)'
+expect "form login refused: the second node says why it was not read" 'the stats page of snc_prod.service on node05.yoursite.mil was not read: the node stats login was refused on node04.yoursite.mil'
+expect "form login refused: a listed page too" 'the stats page of the ServiceNow node Node 27 (127.0.0.1) was not read: the node stats login was refused on node04.yoursite.mil'
+formlogs "form login refused: one login in the whole run" 1 0
+if [ ! -e "$work/form36.log" ] && [ ! -e "$work/form37.log" ]; then echo "ok   - form login refused: the other nodes were sent nothing at all"
+else echo "FAIL - form login refused: the other nodes were asked"; cat "$work"/form36.log "$work"/form37.log 2>/dev/null; fails=$((fails + 1)); fi
+deny "form login refused: the password is never shown, -vvv too" 'Wr0ng-pw9'
+# no "ServiceNow node stats login" credential on the template: said, nothing sent - the API login is never used for it
+rm -f "$work"/form3?.log
+PLAYBOOK=playbooks/servicenow_health.yml scenario "form login: no node stats login credential - said, nothing sent" 2 \
+    $((port + 43)) api goodpw -i "$work/inv-form.yml" -e "$HOSTOK" -e "$FORM"
+expect "form login no credential: what it needs" 'servicenow_node_stats_auth form needs the '
+expect "form login no credential: names the credential type" 'ServiceNow node stats login'
+if [ ! -e "$work/form35.log" ] && [ ! -e "$work/form36.log" ]; then echo "ok   - form login no credential: no request to any node"
+else echo "FAIL - form login no credential: a node was asked"; fails=$((fails + 1)); fi
+# auto never picks form: with the credential there, the nodes' login page is not asked
+SN_STATS_USERNAME=stats_reader SN_STATS_PASSWORD=St4ts-pw9 PLAYBOOK=playbooks/servicenow_health.yml \
+    scenario "form login: auto never uses it" 2 \
+    $((port + 43)) api goodpw -i "$work/inv-form.yml" -e "$HOSTOK" -e servicenow_cluster_check=false
+formlogs "form login: auto sent no login to the login page" 0 0
+
 if [ "$fails" -gt 0 ]; then echo "$fails check(s) failed"; exit 1; fi
 echo "all ServiceNow test-ticket, tickets, VM request pickup and ServiceNow health checks (MID Servers, self-hosted nodes) passed"

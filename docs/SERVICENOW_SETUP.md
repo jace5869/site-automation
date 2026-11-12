@@ -411,6 +411,9 @@ servicenow_db_hosts:         # the database host (servicenow_db_group) - already
     `servicenow_node_stats_url: "https://{fqdn}:{port}/xmlstats.do"`.
   - **A redirect** (to login.do, an SSO page) is not followed, so the login never goes on to another address: that
     try fails and says where it pointed.
+  - **Single sign-on in front, and no basic auth** (every try ends in a redirect to `logout_redirect.do`):
+    `servicenow_node_stats_auth: form` logs in through the instance's local login page. It needs its own
+    credential - see *The node stats login* below.
   - **HTTPS is checked** - the certificate and the name, with the node's own trust store
     (`servicenow_node_validate_certs: true`): a self-signed certificate, or one from a CA the node does not trust,
     needs that CA in the node's trust store, or the setting false. Plain HTTP on 127.0.0.1 is read as before.
@@ -420,6 +423,49 @@ servicenow_db_hosts:         # the database host (servicenow_db_group) - already
     answers but holds none of them is said, and a field it cannot find is shown as `-`. The page is read 3 times,
     5 seconds apart (`servicenow_node_stats_samples`, `_interval`): a semaphore queue counts only when it is there
     in every read.
+
+**The node stats login** (optional; `servicenow_node_stats_auth: form`). For nodes that show `stats.do` only in a
+logged-in session: single sign-on is in front, and the API login (basic auth) is answered with a redirect. The check
+then does what a browser does, on the node's own address:
+
+1. it reads `side_door.do` (the instance's local login page) for the form's hidden `sysparm_ck`;
+2. it sends the user name and password to `login.do`, once;
+3. it reads the stats page in that session (3 reads, as always);
+4. it logs out (`logout.do`), also when a read failed.
+
+Set it up:
+
+1. **In ServiceNow**, ask for a dedicated **local** account (not a single sign-on one), for example
+   `svc_aap_stats`, with only a role that may read `stats.do`. Not a person's account, not an admin, and not the
+   API account.
+2. **Try it in a browser:** `https://node01.yoursite.mil:16000/side_door.do`, log in, then open
+   `https://node01.yoursite.mil:16000/stats.do`. **You should see** the stats page.
+3. **In AAP**, create the credential type **ServiceNow node stats login** from
+   `aap/credential_types/servicenow_node_stats_login.yml` ([SETUP_AAP.md](SETUP_AAP.md), step 2), then a credential
+   of that type with the account's user name and password.
+4. **On the template** *ServiceNow health - nodes*: add that credential, and in Variables:
+
+   ```yaml
+   servicenow_node_stats_auth: form
+   ```
+
+5. Run it. **You should see** the nodes' numbers in the *Front-end nodes* table, and no finding about the stats page.
+
+What to know:
+
+- **One login per node per run.** Each run shows as one UI login per node in the instance's login history
+  (hourly: 24 a day per node).
+- **Never a second try.** The first node is asked alone. When its login is refused, the other nodes and the listed
+  stats pages send none in that run, so a wrong password costs one failed login, not one per node.
+- **The login is refused** when `login.do` answers anything but the redirect to `login_redirect.do`: a wrong
+  password, a locked account, a page that asks one more step (a code, a new password). The finding says the status
+  and where the answer pointed - never the page.
+- **Where the login goes:** only over HTTPS to the node's own name, or to 127.0.0.1 on the node; for a listed stats
+  page only over HTTPS to the host the entry names. The certificate is checked. No redirect is followed.
+- **What is kept:** nothing. The session's cookies and the `sysparm_ck` live in memory for that node's read; they,
+  and the password, are in no result, log or report.
+- **`auto` never picks `form`**, and `form` never uses the API account.
+- **The logout failed:** a warning. The session stays open until the instance's session timeout.
 
 **A friendly name per node** (optional). The report shows it beside the host - *Node 1 (node01.yoursite.mil)* - in
 the *Front-end nodes* table, the findings and the *Start here* cards. Either way:
@@ -462,6 +508,9 @@ servicenow_node_stats_pages:
 | its stats page not answering while the unit runs | critical | |
 | the stats page refused (HTTP 401/403), no port found, nothing on it recognised | warning | `servicenow_node_port` |
 | the stats page wants a login the API account cannot give | warning | `servicenow_node_stats_auth`, `servicenow_node_stats_url` |
+| `form`: the node stats login refused (the other nodes: not read, the login is not tried again) | warning | the *ServiceNow node stats login* credential |
+| `form`: no login form on `side_door.do`; logged in and still no numbers; no credential on the template | warning | `servicenow_node_stats_auth` |
+| `form`: the session was not closed (`logout.do` failed) | warning | |
 | a listed stats page (`servicenow_node_stats_pages`) not reached | critical | `servicenow_node_stats_pages` |
 | JVM memory in use 85 % of its max (95 %: critical) | warning | `servicenow_node_mem_warn_pct`, `_critical_pct` |
 | transactions queued for a semaphore in every read (10 or more: critical) | warning | `servicenow_node_semaphore_queue_critical` |
@@ -546,7 +595,8 @@ MID Server hosts (Windows, WinRM) and the nodes (Linux, SSH) need one each:
 
 - **Two templates** (recommended): *ServiceNow health* as before - the Windows inventory,
   `servicenow_health_part: mids` - and **ServiceNow health - nodes**: the same playbook, the Linux
-  inventory, its Machine credential, ServiceNow API, MariaDB monitor, and `servicenow_health_part: nodes`.
+  inventory, its Machine credential, ServiceNow API, MariaDB monitor (and, with `servicenow_node_stats_auth: form`,
+  ServiceNow node stats login), and `servicenow_health_part: nodes`.
   The nodes part reads the API it needs (the answer, the cluster) and no MID Server. Its findings carry
   the check `servicenow_node`, never `servicenow`, so the two templates never resolve each other's tickets.
 - **One template** (`servicenow_health_part: all`, the default): its inventory holds both - an AAP

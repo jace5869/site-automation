@@ -36,10 +36,13 @@ options:
   host_name: {description: "The node's name in the inventory: with its FQDN, the addresses asked for the stats page before 127.0.0.1. The instance's address (glide.servlet.uri) is never asked - only sent as a Host header to 127.0.0.1.", type: str, default: ''}
   stats_url: {description: "The stats page's address, forced ({port} and {host} filled in; '' = try the ways in turn).", type: str, default: ''}
   sem_wait_ms: {description: "A slow transaction's semaphore wait from this many ms is a semaphore problem.", type: int, default: 1000}
-  stats_auth: {description: "auto - the ServiceNow API login when every way without it is refused (401/403, a redirect, a login page); none; basic - from the start. Sent only over HTTPS to the node's own name, or to 127.0.0.1. A redirect is never followed.", type: str, default: auto}
+  stats_auth: {description: "auto - the ServiceNow API login when every way without it is refused (401/403, a redirect, a login page); none; basic - from the start; form - a session of the instance's local login page (side_door.do, login.do) with form_user, closed with logout.do: one login per run, its cookies in memory only. Sent only over HTTPS to the node's own name, or to 127.0.0.1. A redirect is never followed.", type: str, default: auto}
   validate_certs: {description: "Check the stats page's HTTPS certificate and name (the host's trust store). false = not checked.", type: bool, default: true}
   stats_user: {description: The ServiceNow API account (SN_USERNAME)., type: str, default: ''}
   stats_password: {description: Its password (SN_PASSWORD); never in the result., type: str, default: '', no_log: true}
+  form_user: {description: "stats_auth form: the node stats login's user name (SN_STATS_USERNAME) - a local account, never the API account.", type: str, default: ''}
+  form_password: {description: Its password (SN_STATS_PASSWORD); never in the result., type: str, default: '', no_log: true}
+  form_skip: {description: "stats_auth form: where that login was refused before in this run ('' = nowhere). Set: no login is sent here.", type: str, default: ''}
   kind: {description: "node (a front-end node), db (the database host) or pages (the stats pages of the option pages, read from where this runs).", type: str, default: node}
   pages: {description: "kind pages: [{name, url}] - each node's stats page by its own address, read without SSH to the node (the login only over HTTPS to that address's host; no redirect followed).", type: list, elements: dict, default: []}
   paths: {description: "More paths whose filesystems are reported (the database's: /database).", type: list, elements: str, default: []}
@@ -66,6 +69,7 @@ units:
 disk: {description: "[{path, size_gb, used_pct, free_gb}] - the install folder's filesystem and /'s (once when the same).", type: list}
 memory: {description: "{total_mb, available_mb, available_pct, swap_total_mb, swap_used_pct}", type: dict}
 pages: {description: "kind pages: [{name, url, host, port, stats}] - stats as a unit's.", type: list}
+form_refused: {description: "stats_auth form: the node stats login was sent here and not accepted (the other nodes do not try it).", type: bool}
 missing: {description: "The units asked for that are not installed here (not judged: a box runs one of them).", type: list}
 looked_for: {description: The units looked for ([] = every snc_*.service)., type: list}
 fapolicyd: {description: "{installed, active, enabled, since, denials, groups: [{exe, path, count, critical}], why}", type: dict}
@@ -88,6 +92,7 @@ import subprocess
 import time
 import xml.etree.ElementTree as ET
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
 from ansible.module_utils.basic import AnsibleModule
@@ -463,35 +468,178 @@ def cert_message(err, name):
     return "its certificate is not accepted (%s): renew or replace it, or set servicenow_node_validate_certs false" % why
 
 
-def fetch(url, host, timeout, login=None, validate=True):
-    """GET url (a Host header if given; basic auth with login (user, password); https checked unless validate is false)
-    -> (status, body): status -1 when there was no answer. A redirect is not followed: its status, and as the body
-    where it pointed. Over HTTPS with a Host header (127.0.0.1 with the node's name), the connection goes to the URL's
+def ask(url, host, timeout, login=None, validate=True, cookies=None, data=None):
+    """GET url - or POST data (a dict: a form) - with a Host header if given, basic auth with login (user, password),
+    cookies ({name: value}) as the Cookie header; https checked unless validate is false -> (status, body, headers):
+    status -1 when there was no answer (headers None). A redirect is not followed: its status, and as the body where
+    it pointed. Over HTTPS with a Host header (127.0.0.1 with the node's name), the connection goes to the URL's
     address but the handshake says the Host name (SNI) and the certificate is checked against it, not the address."""
     headers = {"Host": host} if host else {}
     if login:
         headers["Authorization"] = "Basic " + base64.b64encode(("%s:%s" % login).encode("utf-8")).decode("ascii")
-    req = Request(url, headers=headers)
+    if cookies:
+        headers["Cookie"] = "; ".join("%s=%s" % kv for kv in cookies.items())
+    if data is not None:
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
+        data = urlencode(data).encode("utf-8")
+    req = Request(url, headers=headers, data=data)
     server_name = ""
     if host and url.lower().startswith("https://"):
         server_name = _url_host("https://" + host)              # the Host header's name, without a port
     try:
         resp = opener(validate, server_name).open(req, timeout=timeout)
-        return resp.getcode() or 200, resp.read(4 * 1048576).decode("utf-8", "replace")
+        return resp.getcode() or 200, resp.read(4 * 1048576).decode("utf-8", "replace"), resp.headers
     except HTTPError as e:
         if 300 <= e.code < 400:
             where = (e.headers.get("Location") or "") if e.headers is not None else ""
-            return e.code, "sent to %s (not followed)" % (where[:200] or "no Location")
+            return e.code, "sent to %s (not followed)" % (where[:200] or "no Location"), e.headers
         try:
             body = e.read(4096).decode("utf-8", "replace")
         except Exception:                   # noqa: BLE001 - the body of an error is only for the message
             body = ""
-        return e.code, body
+        return e.code, body, e.headers
     except (URLError, socket.timeout, OSError, ValueError, ssl.SSLError) as e:
         r = getattr(e, "reason", e)
         if isinstance(r, ssl.SSLCertVerificationError):
-            return -1, cert_message(r, server_name or _url_host(url))
-        return -1, str(r)
+            return -1, cert_message(r, server_name or _url_host(url)), None
+        return -1, str(r), None
+
+
+def fetch(url, host, timeout, login=None, validate=True):
+    """ask(), a GET: -> (status, body)."""
+    return ask(url, host, timeout, login, validate)[:2]
+
+
+# ---- servicenow_node_stats_auth form (1.32.0): the instance's local login page, as a browser would -----------------
+CK_INPUT = re.compile(r"<input[^>]*\bsysparm_ck\b[^>]*>", re.I)
+ORIGIN = re.compile(r"^(https?://[^/]+)", re.I)
+
+
+def keep_cookies(headers, jar):
+    """Every Set-Cookie of an answer into jar {name: value} - kept in memory only, for this node's address only."""
+    for c in (headers.get_all("Set-Cookie") or []) if headers is not None else []:
+        nv = c.split(";", 1)[0]
+        if "=" in nv:
+            k, v = nv.split("=", 1)
+            jar[k.strip()] = v.strip()
+
+
+def _where(headers):
+    """Where a redirect points, for a message: its path only (no host, no query - a query may carry a token)."""
+    loc = (headers.get("Location") or "") if headers is not None else ""
+    return re.sub(r"^[a-z]+://[^/]*", "", loc, flags=re.I).split("?")[0].split("#")[0][:120]
+
+
+def form_login(origin, host, timeout, creds, validate, tried):
+    """One login through the local login page of origin (scheme://host:port): GET side_door.do for its sysparm_ck (a
+    hidden input), POST login.do with the user name, the password and that sysparm_ck. No redirect is followed: an
+    answer 302 to login_redirect.do is the login accepted; anything else is refused (never asked twice).
+    -> (state, said, jar): state 'in'; 'refused' (the POST was sent, and not accepted); 'none' (no login form here:
+    nothing was sent). tried gets a line per request - never the password, the sysparm_ck or a cookie."""
+    jar = {}
+    code, body, hdrs = ask(origin + "/side_door.do", host, timeout, None, validate)
+    hs = (" (Host: %s)" % host) if host else ""
+    if code != 200:
+        said = body[:80] if code == -1 else "HTTP %s%s" % (code, (" to " + _where(hdrs)) if 300 <= code < 400 else "")
+        tried.append("%s/side_door.do%s -> %s" % (origin, hs, said))
+        return "none", "%s/side_door.do%s: %s" % (origin, hs, said), jar
+    keep_cookies(hdrs, jar)
+    tag = CK_INPUT.search(body or "")
+    m = re.search(r"\bvalue\s*=\s*[\"']([^\"']+)[\"']", tag.group(0)) if tag else None
+    if not m:
+        tried.append("%s/side_door.do%s -> 200, no sysparm_ck on it" % (origin, hs))
+        return "none", "%s/side_door.do%s answered, but with no login form on it (no sysparm_ck)" % (origin, hs), jar
+    tried.append("%s/side_door.do%s -> 200" % (origin, hs))
+    code, body, hdrs = ask(origin + "/login.do", host, timeout, None, validate, cookies=jar,
+                           data={"user_name": creds[0], "user_password": creds[1], "sys_action": "sysverb_login",
+                                 "sysparm_ck": m.group(1)})
+    keep_cookies(hdrs, jar)
+    where = _where(hdrs) if 300 <= code < 400 else ""
+    said = body[:80] if code == -1 else "HTTP %s%s" % (code, (" to " + where) if where else "")
+    tried.append("%s/login.do%s (the node stats login) -> %s" % (origin, hs, said))
+    if 300 <= code < 400 and "login_redirect.do" in where:
+        return "in", said, jar
+    return "refused", said, jar
+
+
+def form_logout(origin, host, timeout, validate, jar, tried):
+    """GET logout.do with the session's cookies -> '' when it answered (200, or a redirect - not followed), else why."""
+    code, body, hdrs = ask(origin + "/logout.do", host, timeout, None, validate, cookies=jar)
+    said = body[:80] if code == -1 else "HTTP %s" % code
+    tried.append("%s/logout.do%s -> %s" % (origin, (" (Host: %s)" % host) if host else "", said))
+    return "" if code == 200 or 300 <= code < 400 else said
+
+
+FORM_NEEDS = ('servicenow_node_stats_auth form needs the "ServiceNow node stats login" credential on the job template '
+              "(SN_STATS_USERNAME, SN_STATS_PASSWORD)")
+
+
+def read_stats_form(st, ways, names, local, samples, interval, timeout, creds, validate, skip=""):
+    """servicenow_node_stats_auth form: the stats page read in a session of the instance's local login page. One login
+    per call, never a second try: the first of the node's own addresses (may_send_login: HTTPS to its own name, or
+    127.0.0.1) whose side_door.do shows a login form gets it; then the samples there with the session's cookies, and
+    logout.do whatever happened. st.form: in, refused, no_numbers (logged in, no numbers), no_page (no login form on
+    any address), not_asked (no credential, no address the login may go to), skipped (skip: where it was refused
+    before - nothing is sent). st.form_logout: why the session was not closed. No redirect is followed."""
+    st["form"] = "not_asked"
+    if skip:
+        st.update({"form": "skipped", "form_skip": skip,
+                   "why": "not asked: the node stats login was refused on %s, and a refused login is not tried again in "
+                          "the same run" % skip})
+        return st
+    if not (creds and creds[0] and creds[1]):
+        st["why"] = "not asked: " + FORM_NEEDS
+        return st
+    groups = {}                                 # (origin, Host header) -> the stats pages' URLs there, in order
+    for base, host, page in ways:
+        m = ORIGIN.match(base + page)
+        if m and may_send_login(m.group(1), names, local):
+            groups.setdefault((m.group(1), host), []).append(base + page)
+    if not groups:
+        st["why"] = ("not asked: with servicenow_node_stats_auth form the login is sent only over HTTPS to the node's own "
+                     "name%s, and no address here is one" % (", or to 127.0.0.1 on it" if local else ""))
+        return st
+    st["form"] = "no_page"
+    for (origin, host), urls in groups.items():
+        state, said, jar = form_login(origin, host, timeout, creds, validate, st["tried"])
+        if state == "none":
+            st["why"] = st["why"] or said
+            m = re.search(r"HTTP (\d+)", said)
+            st["status"] = int(m.group(1)) if m else (st["status"] or -1)
+            continue
+        try:
+            if state != "in":
+                st.update({"form": "refused", "status": 0, "why": "%s/login.do: %s" % (origin, said)})
+                break
+            st["form"] = "no_numbers"
+            chosen = None
+            for i in range(max(1, samples)):
+                if i:
+                    time.sleep(max(0.0, interval))
+                got = None
+                for url in ([chosen] if chosen else urls):
+                    code, body, _h = ask(url, host, timeout, None, validate, cookies=jar)
+                    said = body[:80] if code == -1 else ("%s %s" % (code, body)) if 300 <= code < 400 else code
+                    st["tried"].append("%s%s (in the session) -> %s" % (url, (" (Host: %s)" % host) if host else "", said))
+                    if code == 200 and parse_stats(body)["found"]:
+                        got, chosen = parse_stats(body), url
+                        break
+                    if not chosen:              # a later sample that failed keeps what the first ones read
+                        st["status"] = code
+                        st["why"] = "logged in at %s, but %s showed no numbers (%s)" % (
+                            origin, url, ("HTTP %s" % code) if code != -1 else body[:120])
+                if got is None:
+                    break
+                st.update(got)
+                st.update({"page": chosen[len(origin):], "url": chosen, "host_header": host, "login": True, "why": "",
+                           "up": True, "status": 200, "body": "", "answered": answered_at(origin, host), "form": "in"})
+                st["sem_queued_samples"].append(got["sem_queued"])
+        finally:
+            out = form_logout(origin, host, timeout, validate, jar, st["tried"])
+            if out:
+                st["form_logout"] = out
+        break
+    return st
 
 
 def answered_at(base, host=""):
@@ -504,7 +652,7 @@ def answered_at(base, host=""):
 
 
 def read_stats(port, pages, samples, interval, timeout, host_names=None, forced="", auth="auto", login=None, validate=True,
-               header_names=None, local=True):
+               header_names=None, local=True, form=None, form_skip=""):
     """The stats page, read samples times: the first way (stats_bases) and page that answers 200 with numbers on it is
     used for every read. auth auto: when none answered with numbers and one asked for a login (401 / 403, a redirect,
     a login page), the ways are asked again with the ServiceNow API login (basic; only where may_send_login); basic: with it
@@ -512,7 +660,8 @@ def read_stats(port, pages, samples, interval, timeout, host_names=None, forced=
     last answer. A redirect is never followed (the login is not sent on): it is a failed try that says where it
     pointed. HTTPS is checked unless validate is false. header_names: names sent only as a Host header to 127.0.0.1
     (the instance's); local false (a listed page read from the AAP side): no login to 127.0.0.1. answered: the address
-    that answered, short, for the report."""
+    that answered, short, for the report. auth form: read_stats_form() with form (user, password) - the node stats
+    login, never the API login; form_skip: where that login was refused before (nothing is sent)."""
     st = {"status": 0, "page": "", "url": "", "why": "", "up": False, "sem_queued_samples": [], "tried": [], "body": "",
           "login": False, "answered": "", "login_refused": False}
     if not port and not forced:
@@ -521,6 +670,8 @@ def read_stats(port, pages, samples, interval, timeout, host_names=None, forced=
     names = [n for n in host_names or [] if n]
     ways = [(b, h, pg) for b, h in stats_bases(port, names, forced, header_names) for pg in ([""] if forced else pages)]
     login = login if login and login[0] and login[1] else None
+    if auth == "form":
+        return read_stats_form(st, ways, names, local, samples, interval, timeout, form, validate, form_skip)
 
     def attempt(base, host, page, use_login):
         url = base + page
@@ -593,27 +744,36 @@ def page_port(url):
     return int(m.group(3)) if m.group(3) else (443 if m.group(1).lower() == "https" else 80)
 
 
-def read_pages(entries, samples, interval, timeout, auth="auto", login=None, validate=True):
+def read_pages(entries, samples, interval, timeout, auth="auto", login=None, validate=True, form=None, form_skip=""):
     """servicenow_node_stats_pages, read from where this runs (the AAP side), no SSH to the nodes: each entry {name,
     url} asked at its own URL only, the same way a node's page is (the same numbers, samples, no redirect followed);
     the login only over HTTPS and only to the entry's own host. The entries are read side by side (each waits between
     its samples). -> [{name, url, host, port, stats}] in the entries' order; an entry not read: stats.up false with
-    what was tried."""
+    what was tried. auth form: the first entry alone first - when its login is refused, the others are not asked (one
+    refused login per run: an account locks after a few)."""
     import threading
     out = [None] * len(entries or [])
+    skip = [form_skip]
 
     def one(i, e):
         url = str((e or {}).get("url") or "").strip()
         host = _url_host(url)
         try:
-            st = read_stats(page_port(url), [""], samples, interval, timeout, [host], url, auth, login, validate, local=False)
+            st = read_stats(page_port(url), [""], samples, interval, timeout, [host], url, auth, login, validate, local=False,
+                            form=form, form_skip=skip[0])
         except Exception as err:            # noqa: BLE001 - one entry's failure is its own finding, the others are read
             st = {"status": -1, "why": str(err)[:200], "up": False, "sem_queued_samples": [], "tried": [], "body": "",
                   "url": "", "page": "", "login": False, "answered": "", "login_refused": False}
         out[i] = {"name": str((e or {}).get("name") or "").strip() or host, "url": url, "host": host, "port": page_port(url),
                   "stats": st}
 
-    threads = [threading.Thread(target=one, args=(i, e)) for i, e in enumerate(entries or [])]
+    first = 0
+    if auth == "form" and entries and not skip[0]:
+        one(0, entries[0])
+        first = 1
+        if out[0]["stats"].get("form") == "refused":
+            skip[0] = out[0]["name"]
+    threads = [threading.Thread(target=one, args=(i, e)) for i, e in enumerate(entries or []) if i >= first]
     for t in threads:
         t.start()
     for t in threads:
@@ -995,8 +1155,10 @@ def main():
         timeout=dict(type="int", default=10), kind=dict(type="str", default="node", choices=["node", "db", "pages"]),
         pages=dict(type="list", elements="dict", default=[]),
         host_name=dict(type="str", default=""), stats_url=dict(type="str", default=""),
-        stats_auth=dict(type="str", default="auto", choices=["auto", "none", "basic"]),
+        stats_auth=dict(type="str", default="auto", choices=["auto", "none", "basic", "form"]),
         stats_user=dict(type="str", default=""), stats_password=dict(type="str", default="", no_log=True),
+        form_user=dict(type="str", default=""), form_password=dict(type="str", default="", no_log=True),
+        form_skip=dict(type="str", default=""),
         validate_certs=dict(type="bool", default=True),
         sem_wait_ms=dict(type="int", default=1000),
         paths=dict(type="list", elements="str", default=[]), fapolicyd=dict(type="bool", default=True),
@@ -1008,8 +1170,9 @@ def main():
     p = module.params
     if p["kind"] == "pages":
         got = read_pages(p["pages"], p["samples"], p["interval"], p["timeout"], p["stats_auth"],
-                         (p["stats_user"], p["stats_password"]), p["validate_certs"])
-        module.exit_json(changed=False, pages=got, msg="; ".join("%s %s" % (x["name"], "read" if x["stats"]["up"] else "not read")
+                         (p["stats_user"], p["stats_password"]), p["validate_certs"],
+                         form=(p["form_user"], p["form_password"]), form_skip=p["form_skip"])
+        module.exit_json(changed=False, pages=got, form_refused=any(x["stats"].get("form") == "refused" for x in got), msg="; ".join("%s %s" % (x["name"], "read" if x["stats"]["up"] else "not read")
                                                                   for x in got) or "no stats page listed")
     home = p["home"].rstrip("/") or "/"
     fa = fapolicyd(p["fapolicyd_since"], p["fapolicyd_critical"]) if p["fapolicyd"] else {}
@@ -1023,6 +1186,7 @@ def main():
     wanted = [u for u in p["units"] if str(u).strip()]
     names, missing = find_units(wanted)
     units = []
+    form_skip = p["form_skip"]                 # the node stats login refused before (another node, a unit above): not again
     for u in names:
         show = unit_show(u)
         env = re.sub(r"\.service$", "", u)[len("snc_"):]
@@ -1035,9 +1199,12 @@ def main():
         names = own_names(p["host_name"], socket.getfqdn())
         st = read_stats(port, p["stats_pages"], p["samples"], p["interval"], p["timeout"], names, p["stats_url"],
                         p["stats_auth"], (p["stats_user"], p["stats_password"]), p["validate_certs"],
-                        header_names=[_url_host(uri)] if uri else []) if p["stats"] and active else \
+                        header_names=[_url_host(uri)] if uri else [],
+                        form=(p["form_user"], p["form_password"]), form_skip=form_skip) if p["stats"] and active else \
             {"status": 0, "why": "not read: the unit is not running" if p["stats"] else "not read (servicenow_node_stats false)",
              "up": False, "sem_queued_samples": []}
+        if st.get("form") == "refused" and not form_skip:
+            form_skip = "%s on this node" % u.replace(".service", "")
         units.append({"unit": u, "env": env, "active": show.get("ActiveState", "unknown"), "sub": show.get("SubState", ""),
                       "enabled": show.get("UnitFileState", "unknown"), "since": show.get("ActiveEnterTimestamp", ""),
                       "node_dir": ndir, "port": port, "port_from": port_from, "stats": st,
@@ -1045,6 +1212,7 @@ def main():
                                       sem_wait_ms=p["sem_wait_ms"])})
     module.exit_json(changed=False, hostname=socket.gethostname(), units=units, missing=missing,
                      looked_for=[unit_name(u) for u in wanted], fapolicyd=fa,
+                     form_refused=any((x["stats"] or {}).get("form") == "refused" for x in units),
                      disk=disks([home] + [x for x in p["paths"] if str(x).strip()] + ["/"]), memory=memory(),
                      msg="; ".join("%s %s%s" % (x["unit"], x["active"], (", stats " + ("up" if x["stats"]["up"] else "not read"))
                                                 if p["stats"] else "") for x in units) or "no snc_*.service unit")

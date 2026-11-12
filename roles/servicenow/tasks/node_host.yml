@@ -5,10 +5,21 @@
 # servicenow_node_result {host, hostname, reachable, error, units, missing, looked_for, fapolicyd, disk, memory} for the
 # instance's check on the AAP side, which judges it (plugins/filter/servicenow_node_filters.py). The play has reached
 # the host before this.
+# servicenow_node_stats_auth form (1.32.0): the node stats login ("ServiceNow node stats login": SN_STATS_USERNAME,
+# SN_STATS_PASSWORD) is tried on the first node alone; the others are read after it, and send no login when it was
+# refused there (one refused login per run: an account locks after a few). Any other value: every node in one task.
 - name: ServiceNow node | the node units, stats page, log, disk and memory (read-only)
+  vars:
+    _snn_form: "{{ (servicenow_node_stats_auth | string | lower) == 'form' }}"
+    # the first front-end node of this run that was reached
+    _snn_lead: >-
+      {{ _snh_nodes | default([]) | select('in', ansible_play_hosts_all) | map('extract', hostvars)
+         | rejectattr('servicenow_host_unreached', 'defined') | map(attribute='inventory_hostname') | first | default('') }}
+    _snn_first: "{{ not _snn_form | bool or _snn_lead in ['', inventory_hostname] }}"
+    _snn: "{{ _snn_a if _snn_first | bool else _snn_b }}"
   block:
     - name: ServiceNow node | read
-      site_servicenow_node:
+      site_servicenow_node: &snn_read
         units: "{{ servicenow_node_units | name_list }}"
         home: "{{ servicenow_node_home }}"
         port: "{{ servicenow_node_port }}"
@@ -26,12 +37,24 @@
         stats_url: "{{ servicenow_node_stats_url }}"
         stats_auth: "{{ servicenow_node_stats_auth }}"
         validate_certs: "{{ servicenow_node_validate_certs | bool }}"
-        # the ServiceNow API credential's login, for a stats page that asks for one (never in the result)
-        stats_user: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') if servicenow_node_stats_auth != 'none' else '' }}"
-        stats_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') if servicenow_node_stats_auth != 'none' else '' }}"
+        # the ServiceNow API credential's login, for a stats page that asks for one (never in the result; never with form)
+        stats_user: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') if servicenow_node_stats_auth not in ['none', 'form'] else '' }}"
+        stats_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') if servicenow_node_stats_auth not in ['none', 'form'] else '' }}"
+        # form: the node stats login's own account (never the API account; never in the result)
+        form_user: "{{ lookup('ansible.builtin.env', 'SN_STATS_USERNAME') if _snn_form | bool else '' }}"
+        form_password: "{{ lookup('ansible.builtin.env', 'SN_STATS_PASSWORD') if _snn_form | bool else '' }}"
         sem_wait_ms: "{{ servicenow_node_semaphore_wait_ms | int }}"
-      register: _snn
+      register: _snn_a
       check_mode: false                  # it only reads: a dry run (Check) shows the real result
+      when: _snn_first | bool
+
+    - name: ServiceNow node | read (form - after the first node; no login when it was refused there)
+      site_servicenow_node:
+        <<: *snn_read
+        form_skip: "{{ _snn_lead if hostvars[_snn_lead]._snn_a.form_refused | default(false) | bool else '' }}"
+      register: _snn_b
+      check_mode: false
+      when: not _snn_first | bool
 
     - name: ServiceNow node | what it said
       ansible.builtin.set_fact:
@@ -39,7 +62,8 @@
           {{ {'host': inventory_hostname, 'hostname': _snn.hostname | default(''), 'reachable': true, 'error': '',
               'label': servicenow_node_label | default('', true) | string | trim,
               'units': _snn.units | default([]), 'missing': _snn.missing | default([]), 'looked_for': _snn.looked_for | default([]),
-              'fapolicyd': _snn.fapolicyd | default({}), 'disk': _snn.disk | default([]), 'memory': _snn.memory | default({})} }}
+              'fapolicyd': _snn.fapolicyd | default({}), 'disk': _snn.disk | default([]), 'memory': _snn.memory | default({}),
+              'form_refused': _snn.form_refused | default(false) | bool} }}
   rescue:
     - name: ServiceNow node | it could not be read (sudo refused, no Python) - a finding on the AAP side
       ansible.builtin.set_fact:

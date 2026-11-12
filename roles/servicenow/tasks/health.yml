@@ -196,8 +196,14 @@
     validate_certs: "{{ servicenow_node_validate_certs | bool }}"
     fapolicyd: false
     # the ServiceNow API credential's login, for a stats page that asks for one: only over HTTPS, only to the listed host
-    stats_user: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') if servicenow_node_stats_auth != 'none' else '' }}"
-    stats_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') if servicenow_node_stats_auth != 'none' else '' }}"
+    stats_user: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') if servicenow_node_stats_auth not in ['none', 'form'] else '' }}"
+    stats_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') if servicenow_node_stats_auth not in ['none', 'form'] else '' }}"
+    # form: the node stats login (its own account), the first listed page first; none when a node refused it already
+    form_user: "{{ lookup('ansible.builtin.env', 'SN_STATS_USERNAME') if servicenow_node_stats_auth == 'form' else '' }}"
+    form_password: "{{ lookup('ansible.builtin.env', 'SN_STATS_PASSWORD') if servicenow_node_stats_auth == 'form' else '' }}"
+    form_skip: >-
+      {{ _sn_node_hosts | map('extract', hostvars) | selectattr('servicenow_node_result.form_refused', 'defined')
+         | selectattr('servicenow_node_result.form_refused') | map(attribute='inventory_hostname') | first | default('') }}
   register: _sn_pages
   failed_when: false               # not read: a finding per entry below, never a green run that read nothing
   check_mode: false                # only reads

@@ -1086,5 +1086,209 @@ class StatsPages(unittest.TestCase):
         self.assertIn("only over HTTPS", f[0]["summary"])
 
 
+class FormLogin(unittest.TestCase):
+    """servicenow_node_stats_auth form: a session of the instance's local login page - side_door.do for its sysparm_ck,
+    one POST to login.do, the stats page with the cookies of both, logout.do whatever happened. No redirect followed,
+    never a second try, nothing secret in the result."""
+    procs = []
+    free = StatsPages.free
+    PW = "S3cret-pw!"
+    WHO = ("stats_reader", PW)
+
+    @classmethod
+    def setUpClass(cls):
+        cls.d = tempfile.mkdtemp()
+        cls.cert = os.path.join(cls.d, "node.pem")
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=127.0.0.1", "-days", "1",
+                        "-keyout", cls.cert, "-out", cls.cert], check=True, capture_output=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        for p in cls.procs:
+            p.kill()
+
+    def serve(self, *opts):
+        """A fake node with the local login page -> (port, its request log's path)."""
+        port = self.free()
+        log = os.path.join(self.d, "log-%d" % port)
+        self.procs.append(subprocess.Popen([sys.executable, os.path.join(NODE, "statsmock.py"), str(port), "html",
+                                            "form=stats_reader:" + self.PW, "log=" + log] + list(opts)))
+        for _ in range(50):
+            with socket.socket() as c:
+                if c.connect_ex(("127.0.0.1", port)) == 0:
+                    return port, log
+            time.sleep(0.1)
+        self.fail("the fake node did not start")
+
+    def said(self, log):
+        if not os.path.exists(log):
+            return []
+        with open(log) as f:
+            return f.read().splitlines()
+
+    def read(self, port, who=None, samples=2, **kw):
+        return nm.read_stats(port, ["/xmlstats.do", "/stats.do"], samples, 0, 5, ["node01.example.invalid"], "", "form",
+                             ("svc_aap", "api-pw-never-sent"), True, form=who or self.WHO, **kw)
+
+    def nothing_secret(self, *things):
+        text = json.dumps(things)
+        self.assertNotIn(self.PW, text)
+        self.assertNotIn("api-pw-never-sent", text)
+        self.assertNotRegex(text, r"[0-9a-f]{16,}")          # no sysparm_ck, no cookie value
+        self.assertNotIn("JSESSIONID", text)
+
+    def findings(self, st):
+        u = unit(up=bool(st.get("up")))
+        u["stats"].update(st)
+        return nf.sn_node_findings([node(units=[u])], [], {})
+
+    def test_logs_in_reads_and_logs_out(self):
+        port, log = self.serve()
+        st = self.read(port)
+        self.assertTrue(st["up"], st)
+        self.assertEqual((st["form"], st["page"], st["mem_used"], len(st["sem_queued_samples"])), ("in", "/stats.do", 1200.0, 2))
+        self.assertEqual(st["answered"], "127.0.0.1:%d (http)" % port)
+        lines = self.said(log)
+        self.assertEqual([x for x in lines if x.startswith("POST")], ["POST /login.do user=stats_reader ck=ok -> in"])
+        self.assertEqual(lines[-1], "GET /logout.do session=yes")
+        self.assertEqual(len([x for x in lines if x == "GET /stats.do session=yes"]), 2)
+        self.assertFalse([x for x in lines if "redirect" in x], lines)       # no redirect was followed
+        self.assertNotIn("form_logout", st)
+        self.nothing_secret(st)
+        self.assertEqual(self.findings(st), [])
+
+    def test_without_the_session_the_node_refuses(self):
+        port, log = self.serve()
+        for auth in ("auto", "basic", "none"):                  # form is never chosen by auto: no login page is asked
+            st = nm.read_stats(port, ["/stats.do"], 1, 0, 5, ["node01.example.invalid"], "", auth, self.WHO, True, form=self.WHO)
+            self.assertFalse(st["up"])
+        self.assertFalse([x for x in self.said(log) if "side_door" in x or x.startswith("POST")])
+
+    def test_wrong_password_one_try_and_said(self):
+        port, log = self.serve()
+        st = self.read(port, ("stats_reader", "Wr0ng-pw!"))
+        self.assertEqual((st["up"], st["form"]), (False, "refused"))
+        lines = self.said(log)
+        self.assertEqual(len([x for x in lines if x.startswith("POST")]), 1)           # never a second try
+        self.assertEqual(lines[-1], "GET /logout.do session=no")
+        self.assertFalse([x for x in lines if "stats.do" in x])
+        self.assertIn("HTTP 302 to /login.do", st["why"])
+        self.assertNotIn("Wr0ng", json.dumps(st))
+        self.nothing_secret(st)
+        f = self.findings(st)
+        self.assertEqual([(x["severity"], x["id"].rsplit(":", 1)[1]) for x in f], [("warning", "stats-login")])
+        self.assertIn("HTTP 302 to /login.do", f[0]["summary"])
+        self.assertIn("ServiceNow node stats login", f[0]["hint"])
+        self.nothing_secret(f)
+
+    def test_a_sysparm_ck_that_changes(self):
+        port, log = self.serve()
+        for _ in range(3):                                      # each login needs the ck of its own side_door.do read
+            self.assertTrue(self.read(port, samples=1)["up"])
+        self.assertEqual(len([x for x in self.said(log) if x == "POST /login.do user=stats_reader ck=ok -> in"]), 3)
+
+    def test_logout_after_a_read_that_failed(self):
+        port, log = self.serve("formmode=norole")
+        st = self.read(port)
+        self.assertEqual((st["up"], st["form"], st["status"]), (False, "no_numbers", 302))
+        lines = self.said(log)
+        self.assertEqual(lines[-1], "GET /logout.do session=yes")
+        self.assertEqual(len([x for x in lines if x.startswith("POST")]), 1)
+        f = self.findings(st)
+        self.assertEqual([(x["severity"], x["id"].rsplit(":", 1)[1]) for x in f], [("warning", "stats-unread")])
+        self.assertIn("was accepted", f[0]["summary"])
+        self.assertIn("may read stats.do", f[0]["hint"].replace("\n", " "))
+        self.nothing_secret(st, f)
+
+    def test_any_other_answer_to_the_login_is_refused(self):
+        port, log = self.serve("formmode=other")                # a page after the password (a code is asked): not answered
+        st = self.read(port)
+        self.assertEqual((st["up"], st["form"]), (False, "refused"))
+        self.assertIn("HTTP 200", st["why"])
+        self.assertNotIn("6 digit", json.dumps(st))            # the status, never the page's text
+        self.assertEqual(len([x for x in self.said(log) if x.startswith("POST")]), 1)
+        self.assertTrue(self.said(log)[-1].startswith("GET /logout.do"))
+        self.assertFalse([x for x in self.said(log) if "stats.do" in x])
+
+    def test_no_login_form_nothing_sent(self):
+        port, log = self.serve("formmode=sso")
+        st = self.read(port)
+        self.assertEqual((st["up"], st["form"]), (False, "no_page"))
+        self.assertFalse([x for x in self.said(log) if x.startswith("POST") or "logout" in x])
+        f = self.findings(st)
+        self.assertEqual([(x["severity"], x["id"].rsplit(":", 1)[1]) for x in f], [("warning", "stats-unread")])
+        self.assertIn("no login form", f[0]["summary"])
+        dead = self.read(self.free())                           # nothing listens: no login form either, a finding
+        self.assertEqual(dead["form"], "no_page")
+        self.assertEqual(len(self.findings(dead)), 1)
+
+    def test_logout_that_fails_is_a_warning(self):
+        port, _log = self.serve("formmode=nologout")
+        st = self.read(port)
+        self.assertTrue(st["up"])
+        self.assertEqual(st["form_logout"], "HTTP 500")
+        f = self.findings(st)
+        self.assertEqual([(x["severity"], x["id"].rsplit(":", 1)[1]) for x in f], [("warning", "stats-logout")])
+        self.assertIn("session timeout", f[0]["summary"])
+
+    def test_no_credential_or_refused_before_nothing_is_sent(self):
+        port, log = self.serve()
+        st = self.read(port, ("", ""))
+        self.assertEqual(st["form"], "not_asked")
+        self.assertIn("ServiceNow node stats login", st["why"])
+        self.assertIn("SN_STATS_USERNAME", self.findings(st)[0]["summary"])
+        st = self.read(port, form_skip="node01.example.mil")
+        self.assertEqual(st["form"], "skipped")
+        f = self.findings(st)
+        self.assertEqual([(x["severity"], x["id"].rsplit(":", 1)[1]) for x in f], [("warning", "stats-unread")])
+        self.assertIn("refused on node01.example.mil", f[0]["summary"])
+        self.assertEqual(self.said(log), [])
+
+    def test_listed_pages_first_alone_and_only_over_https(self):
+        good, glog = self.serve("tls=" + self.cert)
+        other, olog = self.serve("tls=" + self.cert)
+        plain, plog = self.serve()
+        url = "https://127.0.0.1:%d/stats.do"
+        e = [{"name": "Node 1", "url": url % good}, {"name": "Node 2", "url": url % other},
+             {"name": "Node 3", "url": "http://127.0.0.1:%d/stats.do" % plain}]
+        got = nm.read_pages(e, 1, 0, 5, "form", None, False, form=self.WHO)
+        self.assertEqual([x["stats"]["form"] for x in got], ["in", "in", "not_asked"])
+        self.assertEqual(got[0]["stats"]["answered"], "127.0.0.1:%d" % good)
+        self.assertEqual(self.said(plog), [])                   # plain HTTP from the AAP side: no login, not even the form
+        self.assertIn("only over HTTPS", got[2]["stats"]["why"])
+        self.nothing_secret(got)
+        # the first entry refuses the login: the others are not asked
+        for lg in (glog, olog):
+            os.remove(lg)
+        got = nm.read_pages(e[:2], 1, 0, 5, "form", None, False, form=("stats_reader", "Wr0ng-pw!"))
+        self.assertEqual([x["stats"]["form"] for x in got], ["refused", "skipped"])
+        self.assertEqual(len([x for x in self.said(glog) if x.startswith("POST")]), 1)
+        self.assertEqual(self.said(olog), [])
+        f = nf.sn_node_findings(nf.sn_node_pages(got), [], {})
+        self.assertEqual(sorted(x["id"].rsplit(":", 1)[1] for x in f), ["stats-login", "stats-unread"])
+        self.assertIn("refused on Node 1", [x for x in f if x["id"].endswith("stats-unread")][0]["summary"])
+        # refused on a node before (form_skip): no listed page is asked
+        os.remove(glog)
+        got = nm.read_pages(e[:2], 1, 0, 5, "form", None, False, form=self.WHO, form_skip="node01.example.mil")
+        self.assertEqual([x["stats"]["form"] for x in got], ["skipped", "skipped"])
+        self.assertEqual(self.said(glog) + self.said(olog), [])
+
+    def test_the_cookies_stay_with_the_node(self):
+        jar = {}
+
+        class Hd(object):
+            def get_all(self, name):
+                return ["JSESSIONID=abc123; Path=/; HttpOnly", "glide_user_route=glide.x; Path=/", "broken"]
+        nm.keep_cookies(Hd(), jar)
+        self.assertEqual(jar, {"JSESSIONID": "abc123", "glide_user_route": "glide.x"})
+        nm.keep_cookies(None, jar)                              # no answer: nothing
+        self.assertEqual(len(jar), 2)
+
+        class Loc(object):
+            def get(self, name):
+                return "https://node01.example.mil:16000/login_redirect.do?sysparm_stack=no&token=t0ken"
+        self.assertEqual(nm._where(Loc()), "/login_redirect.do")   # the path only: a query may carry a token
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

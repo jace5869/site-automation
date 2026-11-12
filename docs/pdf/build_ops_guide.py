@@ -65,7 +65,7 @@ DOCS = [  # (file, chapter title)
     ("docs/ACTIVE_DIRECTORY.md", "Active Directory health report and account lockout"),
     ("docs/HORIZON.md", "Horizon 8 (VDI): reports, broken desktops, user help, image push"),
 ]
-CRED_TYPES = ["servicenow_api.yml", "mariadb_monitor.yml", "keystore_password.yml",
+CRED_TYPES = ["servicenow_api.yml", "servicenow_node_stats_login.yml", "mariadb_monitor.yml", "keystore_password.yml",
               "stigman_api.yml", "act_model_key.yml", "act_genai_beta_key.yml",
               "stigman_database.yml", "tls_certificate.yml", "registry_login.yml", "teams_webhook.yml", "smtp_relay.yml", "report_web.yml", "horizon_api.yml",
               "report_database.yml"]

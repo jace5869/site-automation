@@ -29,6 +29,9 @@
 # ecc_agent_issue (e.g. itil + mid_server), and sys_cluster_state for the cluster; with MID hosts, also the Windows
 # inventory's Machine (Windows) credential; with nodes or a database host, the Linux Machine credential (sudo) and
 # "MariaDB monitor". docs/SERVICENOW_SETUP.md, "MID Servers" and "Self-hosted instance".
+# Nodes that show stats.do only in a logged-in session (single sign-on in front): servicenow_node_stats_auth: form and
+# the credential "ServiceNow node stats login" - one login per node per run through the instance's local login page,
+# closed with logout.do; refused on the first node: not tried on the others.
 #   ansible-playbook -i inventories/example-windows playbooks/servicenow_health.yml
 #   ansible-playbook -i inventories/site playbooks/servicenow_health.yml -l node01.yoursite.mil   # one node
 # Two templates (AAP: one inventory and one Machine credential each) - the Windows inventory with

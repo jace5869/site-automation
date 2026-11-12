@@ -181,7 +181,14 @@
 ## instance's normal web page in place of the numbers): auto = asked again with the ServiceNow API
 ## credential's login (basic auth) - sent only over HTTPS to the node's own name (its inventory name
 ## or FQDN), or to 127.0.0.1, never shown; basic = with it from the start; none = never. A redirect
-## is never followed: the try fails and says where it pointed.
+## is never followed: the try fails and says where it pointed. form (1.32.0; never chosen by auto) =
+## nodes behind single sign-on that answer stats.do only in a logged-in session: the check logs in
+## through the instance's local login page on the node's own address (side_door.do, login.do), reads
+## the stats page in that session and logs out (logout.do). Its own credential, "ServiceNow node
+## stats login" (SN_STATS_USERNAME / SN_STATS_PASSWORD) - a dedicated local account that may only
+## read stats.do, never the API account. One login per node per run; refused on the first node: not
+## tried on the others. The session's cookies stay in memory. docs/SERVICENOW_SETUP.md, "The node
+## stats login".
 # servicenow_node_stats_auth: auto
 
 ## A friendly name per node, shown beside its host in the report ("Node 1

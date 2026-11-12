@@ -4,8 +4,8 @@
 
 **Updating without scripts:** paste `site-automation-1.32.0-changed-since-1.29.0.zip` as it is (from an older version,
 its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
-`poam/poam.csv`. Set up: step 94, optional (friendly names for the nodes; nodes AAP does not log in to). Read
-**Behaviour changes** below before you update.
+`poam/poam.csv`. Set up: step 94, optional (friendly names for the nodes; nodes AAP does not log in to; the node
+stats login for nodes behind single sign-on). Read **Behaviour changes** below before you update.
 
 **ServiceNow health, self-hosted: each node's own stats page, and only its own** (docs/SERVICENOW_SETUP.md,
 "Self-hosted instance").
@@ -30,6 +30,24 @@ its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inve
   when the login was already sent: it says what the page wants (single sign-on, or an account with access to the UI
   or to `stats.do`) and that the XML page can be tried,
   `servicenow_node_stats_url: "https://{fqdn}:{port}/xmlstats.do"`.
+- **Nodes that show the stats page only after a login** (optional, off by default):
+  `servicenow_node_stats_auth: form`. For an instance with single sign-on in front, where `stats.do` answers a
+  redirect to `logout_redirect.do` and basic auth is not taken.
+  - **What it does**, on the node's own address: reads `side_door.do` (the local login page) for its `sysparm_ck`,
+    sends the login to `login.do` once, reads the stats page in that session, logs out (`logout.do`) - also when a
+    read failed. No redirect is followed.
+  - **Its own credential:** the new type **ServiceNow node stats login**
+    (`aap/credential_types/servicenow_node_stats_login.yml`; `SN_STATS_USERNAME`, `SN_STATS_PASSWORD`). Use a
+    dedicated local account that may only read `stats.do` - not a person's, not an admin, never the API account.
+  - **One login per node per run**, never a second try. The first node is asked alone; refused there, the other
+    nodes and the listed stats pages send none in that run. Each run is one UI login per node in the instance's
+    login history.
+  - **Where the login goes:** only over HTTPS to the node's own name, or to 127.0.0.1 on it; the certificate is
+    checked. The cookies and the `sysparm_ck` stay in memory; they and the password are in no result or log.
+  - **Findings** (warnings): the login refused (with the status and where `login.do` pointed), no login form on
+    `side_door.do`, logged in and still no numbers (the account's role), no credential on the template, the logout
+    failed (the session stays until its timeout).
+  - `auto` never picks `form`. docs/SERVICENOW_SETUP.md, "The node stats login".
 - **A node of another instance in the group.** *X is in the inventory group, but not in the instance's cluster* now
   names the units the node runs - *node05 (runs snc_dev)* - so you see it belongs to another instance. The hint: one
   job template per instance (its own group, its own ServiceNow credential), or `servicenow_cluster_check: false`.
@@ -45,12 +63,17 @@ its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inve
   (... the last answer: HTTP 403)*. The finding's key is the same, so its ticket stays.
 - The *Front-end nodes* table has one more column, and its first is the friendly name beside the host when one is set.
 - No setting changed its name or default. `servicenow_node_stats_url` still forces one address.
+  `servicenow_node_stats_auth` has one more value, `form`; nothing uses it unless you set it.
 
 Tests: tests/test_servicenow_node.py (OwnAddress - a listener at the "instance's address" with other numbers is never
 read, fails on 1.29.0; the normal web page asks for the login too, fails on 1.29.0; Labels, StatsPagesPlan, StatsPages;
 the login already sent is not suggested again; the units named for a node of another instance) and
 tests/servicenow/run_servicenow_test.sh (current ansible-core and 2.16: own address, friendly names, stats pages -
-read, not answering, an entry without a url, no node in the inventory), tests/test_report_fit.py (the wider table fits).
+read, not answering, an entry without a url, no node in the inventory; the form login - both nodes read, -vvv shows no
+password, cookie or sysparm_ck, a wrong password is one login in the whole run, no credential, auto never uses it),
+tests/test_report_fit.py (the wider table fits). FormLogin in tests/test_servicenow_node.py: the fake node
+(tests/servicenow/node/statsmock.py form=) gives a new sysparm_ck on every read and wants the cookies of both steps; one
+POST per read, logout after a failed read, any other answer to the login is refused, nothing secret in the result.
 
 SA_VERSION 1.32.0; the PDFs at 1.32.0.
 
@@ -857,8 +880,8 @@ the ones after it. Steps 89 and 90 belong to 1.23.0, which is not in this releas
     3. Launch it once with Job type **Check**: its report lists each host's collection, the moves and the new assets.
     4. Schedule it (every 15 to 60 minutes, **Concurrent jobs** off), then turn Watcher off yourself.
     Details: docs/CKL_IMPORT.md, "Switching over from STIG Manager Watcher".
-94. **ServiceNow health, self-hosted: names for the nodes, and nodes AAP does not log in to** (1.32.0) - both
-    optional; without them the job reads the nodes as before.
+94. **ServiceNow health, self-hosted: names for the nodes, nodes AAP does not log in to, and the node stats
+    login** (1.32.0) - all optional; without them the job reads the nodes as before.
     1. A friendly name per node: in the inventory, on each node, `servicenow_node_label: Node 1` - or in the
        Variables of *ServiceNow health - nodes*:
        ```yaml
@@ -872,7 +895,16 @@ the ones after it. Steps 89 and 90 belong to 1.23.0, which is not in this releas
        servicenow_node_stats_pages:
          - {name: "Node 5", url: "https://node05.yoursite.mil:16000/stats.do"}
        ```
-    3. Run it. The *Front-end nodes* table shows each name beside its host, and *Stats page answered at* says which
+    3. Only when the stats page asks for a single sign-on login (the finding says every try ends in a redirect to
+       `logout_redirect.do`): the node stats login. Ask for a dedicated local ServiceNow account with only a role
+       that may read `stats.do` (not a person's account, not an admin). Create the credential type **ServiceNow node
+       stats login** from `aap/credential_types/servicenow_node_stats_login.yml`, a credential of it with that
+       account, add it to the template, and in its Variables:
+       ```yaml
+       servicenow_node_stats_auth: form
+       ```
+       Each run is one UI login per node in the instance's login history.
+    4. Run it. The *Front-end nodes* table shows each name beside its host, and *Stats page answered at* says which
        address answered. A listed node's row says *stats page only*.
     Details: docs/SERVICENOW_SETUP.md, "Self-hosted instance".
 

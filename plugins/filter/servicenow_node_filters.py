@@ -240,6 +240,49 @@ def _login_sent(st):
     return any("(with the login)" in _s(t) for t in (st or {}).get("tried") or [])
 
 
+_FORM_HINT = ('the "ServiceNow node stats login" credential on the job template: a local account of the instance (not a '
+              "single sign-on one), active, not locked out, its password current. Try it in a browser at the node's own "
+              "address, /side_door.do. A login that asks one more step after the password (a code, a new password) "
+              "cannot be used here. A refused login is sent once per run, never again")
+
+
+def _form_findings(add, ub, who, st, tried):
+    """servicenow_node_stats_auth form: what the node stats login did here, when the stats page was not read with it ->
+    True (the finding is made; no other one about this stats page). A session that was not closed is said either way."""
+    form = _s((st or {}).get("form"))
+    if not form:
+        return False
+    why = _s(st.get("why"))
+    if st.get("form_logout"):
+        add(ub + "stats-logout", "warning", "the session of the node stats login on %s was not closed (logout.do: %s): it "
+            "stays open until the instance's session timeout" % (who, _s(st["form_logout"])[:80]),
+            "%s\nServiceNow: System Security > Sessions > Logged in users - the account of the \"ServiceNow node stats "
+            "login\" credential; it ends by itself (glide.ui.session_timeout)" % tried)
+    if form == "in" and st.get("up"):
+        return False
+    if form == "skipped":
+        add(ub + "stats-unread", "warning", "the stats page of %s was not read: the node stats login was refused on %s, and a "
+            "refused login is not tried again in the same run" % (who, _s(st.get("form_skip")) or "another node"),
+            "the finding of %s says what its login page answered; put that right, then run again" % (_s(st.get("form_skip")) or "that node"))
+    elif form == "refused":
+        add(ub + "stats-login", "warning", "the node stats login was refused on %s (%s): its stats page was not read, and the "
+            "login is not tried on the nodes after it" % (who, why[:160] or "no answer"), "%s\n%s" % (tried, _FORM_HINT))
+    elif form == "no_page":
+        add(ub + "stats-unread", "warning", "the stats page of %s was not read: no login form was found to log in with (%s)" % (
+            who, why[:200] or "side_door.do did not answer"),
+            "%s\nservicenow_node_stats_auth form needs the instance's local login page on the node's own address: "
+            "https://<node>:<port>/side_door.do must show the user name and password form. Nothing was sent" % tried)
+    elif form == "no_numbers":
+        add(ub + "stats-unread", "warning", "the node stats login was accepted on %s, but its stats page still showed no "
+            "numbers: that account may not read stats.do" % who,
+            "%s\nServiceNow: give the account of the \"ServiceNow node stats login\" credential a role that may read "
+            "stats.do, then run again. The session was closed (logout.do)" % tried)
+    else:
+        add(ub + "stats-unread", "warning", "the stats page of %s was not asked: %s" % (who, why[11:] if why.startswith("not asked: ") else why or "?"),
+            "servicenow_node_stats_auth form: docs/SERVICENOW_SETUP.md, \"The node stats login\"")
+    return True
+
+
 def _page_findings(add, base, h, shown, o):
     """A node read by its stats page only (servicenow_node_stats_pages): not reached is a finding that names the entry
     and what was tried - never green having read nothing; read: its memory, semaphores and scheduler as any node's."""
@@ -252,6 +295,8 @@ def _page_findings(add, base, h, shown, o):
     t_show = t_all if len(t_all) <= 14 else t_all[:8] + ["... %d more" % (len(t_all) - 14)] + t_all[-6:]
     tried = "\n".join("# tried: " + t for t in t_show)
     code = int(st.get("status") or 0)
+    if _form_findings(add, ub, "the ServiceNow node %s" % shown, st, tried):
+        return
     if not st.get("up") and code in (-1, 0) and not t_all and _s(st.get("why")).startswith("not asked"):
         add(ub + "stats-unread", "warning", "the stats page of the ServiceNow node %s was not asked at %s: %s" % (
             shown, url, _s(st.get("why"))[11:]),
@@ -360,7 +405,9 @@ def sn_node_findings(nodes, cluster=None, opts=None):
                 t_show = t_all if len(t_all) <= 14 else t_all[:8] + ["... %d more" % (len(t_all) - 14)] + t_all[-6:]
                 tried = "\n".join("# tried: " + t for t in t_show)
                 said = ("\n# the last answer began: %s" % (st.get("body") or "(empty)")) if int(st.get("status") or 0) > 0 else ""
-                if not st.get("up") and int(st.get("status") or 0) in (-1, 0) and port:
+                if _form_findings(add, ub, who, st, tried):
+                    pass
+                elif not st.get("up") and int(st.get("status") or 0) in (-1, 0) and port:
                     add(ub + "stats-down", "critical", "the ServiceNow node %s runs, but its stats page answers on no address "
                         "(port %s)" % (who, port), "%s\non %s: ss -ltnp | grep %s; tail -100 %s" % (tried, host, port, logf))
                 elif not st.get("up") and st.get("login_refused"):

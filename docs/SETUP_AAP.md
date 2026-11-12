@@ -80,6 +80,7 @@ For each file in `aap/credential_types/` that you need now:
 |---|---|---|
 | `report_database.yml` | Report database | the ticket insights' trends, with `servicenow_insights_db: true` - optional ([REPORT_DATABASE.md](REPORT_DATABASE.md)) |
 | `servicenow_api.yml` | ServiceNow API | tickets, ServiceNow health (step 10), the weekly activity report ([SERVICENOW_WAR.md](SERVICENOW_WAR.md)), the ticket insights ([SERVICENOW_INSIGHTS.md](SERVICENOW_INSIGHTS.md)) |
+| `servicenow_node_stats_login.yml` | ServiceNow node stats login | optional: ServiceNow health on a self-hosted instance whose nodes show their stats page only after a login (`servicenow_node_stats_auth: form`; [SERVICENOW_SETUP.md](SERVICENOW_SETUP.md), "The node stats login") |
 | `mariadb_monitor.yml` | MariaDB monitor | the MariaDB check on a containerized database (root login refused there); optional on host installs |
 | `keystore_password.yml` | Keystore password | optional: certs check on a PKCS12 keystore |
 | `stigman_api.yml` | STIG Manager API | optional: POA&M cross-check with STIG Manager; the STIG drift report's checklist comparison |

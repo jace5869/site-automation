@@ -1,0 +1,22 @@
+# Credential type: "ServiceNow node stats login"
+# Used by playbooks/servicenow_health.yml with servicenow_node_stats_auth: form only (a self-hosted instance whose nodes
+# answer stats.do only in a logged-in session: single sign-on in front, no basic auth). The check logs in at the node's
+# own address through the instance's local login page (side_door.do), reads the stats page and logs out.
+# A dedicated LOCAL account of the instance with only a role that may read stats.do - not a person's account, not an
+# admin, not the ServiceNow API account. Each run is one UI login per node in the instance's login history.
+# docs/SERVICENOW_SETUP.md, "The node stats login".
+inputs:
+  fields:
+    - id: username
+      type: string
+      label: User name
+      help_text: A local account of the instance (not a single sign-on one) that may read stats.do
+    - id: password
+      type: string
+      label: Password
+      secret: true
+  required: [username, password]
+injectors:
+  env:
+    SN_STATS_USERNAME: "{{ username }}"
+    SN_STATS_PASSWORD: "{{ password }}"
