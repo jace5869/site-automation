@@ -1,9 +1,11 @@
 """Unit tests for plugins/filter/site_filters.py (standard library only: python3 tests/test_filters.py)."""
 import datetime
+import fnmatch
 import json
 import os
 import re
 import sys
+import random
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "plugins", "filter"))
@@ -778,6 +780,66 @@ class NameLists(unittest.TestCase):
         self.assertEqual(f.name_list("web-01, -db01"), ["web-01", "-db01"])        # a dash in or before a name stays
         for text in ('"VCSA01"', "[VCSA01, AAP01]", "VCSA01\tAAP01", "- AAP01\n- VCSA01"):
             self.assertTrue(f.name_matches("vcsa01", text), text)
+
+    def test_name_list_every_way_a_name_is_written(self):
+        # 1.42.0: each form gives its names (written=True: the names as they were meant); nothing that 1.22.0 (6f1d106)
+        # read is lost - name_list itself has that reading's names after these (NameListNeverFewer below)
+        def L(text):
+            return f.name_list(text, written=True)
+        self.assertEqual(L("\u201cVCSA01\u201d, \u2018AAP01\u2019"), ["VCSA01", "AAP01"])        # Word / Outlook / Teams quotes
+        self.assertEqual(L("VCSA01;AAP01"), ["VCSA01", "AAP01", "VCSA01;AAP01"])                # ";" - and whole, a name may have one
+        self.assertEqual(L('"Server, Main", VCSA01'), ["Server, Main", "VCSA01"])                # a quoted name with a comma
+        self.assertEqual(L("[a, b], VCSA01"), ["a", "b", "VCSA01"])                             # a list, then more
+        self.assertEqual(L("'AAP01, VCSA01"), ["AAP01", "VCSA01"])                              # a quote never closed
+        self.assertEqual(L("# the old vCenter\nVCSA01\n  # AAP01"), ["VCSA01"])                 # commented-out lines
+        # a "#" is part of a name - there are no comments after a name
+        self.assertEqual(L("Build #3, VCSA01"), ["Build #3", "VCSA01"])
+        self.assertEqual(L("VM #1, VM #2"), ["VM #1", "VM #2"])
+        # brackets inside a pattern, in a list written as text (12a111b lost these)
+        self.assertEqual(L("[VCSA01, vm[0-9]*]"), ["VCSA01", "vm[0-9]*"])
+        self.assertEqual(L("['vm[0-9]*', 'DC*']"), ["vm[0-9]*", "DC*"])
+        self.assertEqual(L('["vm[0-9]*", "DC*"]'), ["vm[0-9]*", "DC*"])
+        self.assertEqual(L("[vm[0-9]*]"), ["vm[0-9]*"])
+        self.assertEqual(L("[[Vv]CSA*]"), ["[Vv]CSA*"])
+        self.assertEqual(L("[VCSA01, [Test] VM01]"), ["VCSA01", "[Test] VM01"])
+        # a quote inside a name, quotes around quotes (12a111b lost these)
+        for text in ("'O'Brien-VM'", "['O'Brien-VM']", "- 'O'Brien-VM'"):
+            self.assertEqual(L(text), ["O'Brien-VM"], text)
+        self.assertEqual(L("\u2018O\u2019Brien-VM\u2019"), ["O\u2019Brien-VM"])
+        self.assertEqual(L("O\u2019Brien VM"), ["O\u2019Brien VM"])
+        for text in ('"\'VCSA01\'"', "'\"VCSA01\"'", '""VCSA01""', "''VCSA01''"):
+            self.assertEqual(L(text), ["VCSA01"], text)
+        # a name in brackets: as a name, quoted, or in a list - and it matches itself
+        self.assertEqual(L("[Test] VM01, VCSA01"), ["[Test] VM01", "VCSA01"])
+        self.assertEqual(L('"[VM01]"'), ["[VM01]"])
+        self.assertTrue(f.name_matches("[Test] VM01", ["[Test] VM01"]))
+        self.assertTrue(f.name_matches("[test] vm01", "[Test] VM01"))
+
+    def test_name_list_keeps_what_1_22_0_read(self):
+        # the names as meant first, then the ones 1.22.0 cut from the same text: a VM it protected stays protected
+        self.assertEqual(f.name_list('"a, AAP01, b"'), ["a, AAP01, b", '"a', "AAP01", 'b"'])
+        self.assertEqual(f.name_list("\u201cVCSA01\u201d"), ["VCSA01", "\u201cVCSA01\u201d"])
+        self.assertEqual(f.name_list("[a, b], VCSA01"), ["a", "b", "VCSA01", "[a", "b]"])
+        self.assertEqual(f.name_list("a[1, AAP01, b]2"), ["a[1, AAP01, b]2", "a[1", "AAP01", "b]2"])
+        self.assertEqual(f.name_list("AAP01, VCSA01"), ["AAP01", "VCSA01"])                     # the usual forms: nothing more
+        self.assertEqual(f.name_list('["AAP01", "VCSA01"]'), ["AAP01", "VCSA01"])
+        self.assertEqual(f.name_list("- AAP01\n- 'VCSA01'"), ["AAP01", "VCSA01"])
+        self.assertEqual(f.name_list("# AAP01, DC01\nVCSA01"), ["VCSA01"])                      # a commented-out line stays out
+        self.assertTrue(f.name_matches("AAP01", "'a, AAP01, b'"))
+
+    def test_name_list_a_bracket_never_closed_is_a_plain_character(self):
+        # the tester's five (1.27.0 read each as one name, and AAP01 was no longer protected): the separators still separate
+        for text, names in (("vm[0-9*, AAP01, VCSA01", ["vm[0-9*", "AAP01", "VCSA01"]),
+                            ("[AAP01, VCSA01\nDC01", ["[AAP01", "VCSA01", "DC01"]),
+                            ("VCSA[01\nAAP01\nDC01", ["VCSA[01", "AAP01", "DC01"]),
+                            ("AAP01, [VCSA01, DC01", ["AAP01", "[VCSA01", "DC01"]),
+                            ("web[12, AAP01", ["web[12", "AAP01"])):
+            self.assertEqual(f.name_list(text, written=True), names, text)
+            self.assertEqual(f.name_list(text), names, text)
+            for vm in ("AAP01", "VCSA01", "DC01"):          # "[AAP01" and "[VCSA01": so read by 1.22.0 too
+                self.assertEqual(f.name_matches(vm, text), vm in names, (text, vm))
+        self.assertEqual(f.name_list("vm[0-9]*, web[12, AAP01", written=True), ["vm[0-9]*", "web[12", "AAP01"])
+        self.assertEqual(f.name_list("x[a\nb]y, AAP01", written=True), ["x[a", "b]y", "AAP01"])  # not closed on its line
 
     def test_name_matches_text(self):
         self.assertTrue(f.name_matches("aap01", "AAP01"))
@@ -1574,6 +1636,99 @@ class EmailRecipients(unittest.TestCase):
         # a domain is matched whole: example.mil is not in the domain "ample" + ".mil" (in two parts for tests/check_public.py)
         self.assertEqual(f.email_recipients([], "x@example.mil", ["ample" + ".mil"]), [])
         self.assertEqual(f.email_also_refused(None), [])
+
+
+# 1.22.0's name_list and name_matches (6f1d106), as the reference: 1.42.0's may never protect fewer VMs for the same text
+def _ref_name_list(value):
+    if value is None:
+        return []
+    if isinstance(value, str):
+        t = value.strip()
+        if t.startswith("[") and t.endswith("]"):
+            t = t[1:-1]
+        out = []
+        for w in re.split(r"[,\t\r\n]+", t):
+            w = w.strip()
+            if w.startswith("- ") or w == "-":
+                w = w[1:].strip()
+            while len(w) >= 2 and w[0] == w[-1] and w[0] in "\"'":
+                w = w[1:-1].strip()
+            if w:
+                out.append(w)
+        return out
+    return [str(w).strip() for w in value if str(w).strip()]
+
+
+def _ref_name_matches(name, patterns):
+    n = str(name or "").lower()
+    return any(fnmatch.fnmatchcase(n, str(p).lower()) for p in _ref_name_list(patterns))
+
+
+class NameListNeverFewer(unittest.TestCase):
+    """The tester's matrix (1.42.0): patterns with * ? [0-9] [Vv] [!x] [a-c], names with spaces, quotes, #, ; and brackets,
+    each written every way - alone and all together. Every VM 6f1d106's reading protected is still protected."""
+    ITEMS = [("VCSA01", ["VCSA01", "vcsa01"]), ("DC*", ["DC01", "dc-backup"]), ("web?", ["web1"]), ("vm[0-9]*", ["vm1", "vm42x"]),
+             ("[Vv]CSA*", ["VCSA02", "vCSA9"]), ("db[!x]1", ["dba1"]), ("app[a-c]", ["appb"]), ("File Server 01", ["File Server 01"]),
+             ("O'Brien-VM", ["O'Brien-VM"]), ("O\u2019Brien VM", ["O\u2019Brien VM"]), ("Build #3", ["Build #3"]), ("VM #1", ["VM #1"]),
+             ("Web;01", ["Web;01"]), ("[Test] VM01", ["[Test] VM01", "T VM01"]), ("x[y]z", ["xyz"])]
+    FORMS = {
+        "commas": lambda xs: ", ".join(xs), "lines": lambda xs: "\n".join(xs), "crlf": lambda xs: "\r\n".join(xs),
+        "tabs": lambda xs: "\t".join(xs), "padded": lambda xs: "  " + ", ".join(xs) + "  ",
+        "yaml": lambda xs: "\n".join("- " + x for x in xs), "yaml single": lambda xs: "\n".join("- '" + x.replace("'", "''") + "'" for x in xs),
+        "yaml double": lambda xs: "\n".join('- "' + x + '"' for x in xs), "json": lambda xs: json.dumps(xs, ensure_ascii=False),
+        "python": lambda xs: "[" + ", ".join(repr(x) for x in xs) + "]", "brackets": lambda xs: "[" + ", ".join(xs) + "]",
+        "double quotes": lambda xs: ", ".join('"%s"' % x for x in xs), "single quotes": lambda xs: ", ".join("'%s'" % x for x in xs),
+        "curly": lambda xs: ", ".join("\u201c%s\u201d" % x for x in xs), "semicolons": lambda xs: "; ".join(xs)}
+
+    def test_never_fewer_than_6f1d106(self):
+        for form, write in sorted(self.FORMS.items()):
+            for items in [[x] for x in self.ITEMS] + [self.ITEMS]:
+                text = write([p for p, _vms in items])
+                new = f.name_list(text)
+                for vm in [v for _p, vms in self.ITEMS for v in vms] + [p for p, _vms in self.ITEMS]:
+                    if _ref_name_matches(vm, text):
+                        self.assertTrue(f.name_matches(vm, new), "%s: %r protected %r in 6f1d106, not now (%r)" % (form, text, vm, new))
+
+    UNCLOSED = ["vm[0-9*, AAP01, VCSA01", "[AAP01, VCSA01\nDC01", "VCSA[01\nAAP01\nDC01", "AAP01, [VCSA01, DC01", "web[12, AAP01"]
+
+    def test_a_bracket_never_closed_loses_no_name(self):
+        for text in self.UNCLOSED:
+            self.assertGreaterEqual(len(f.name_list(text)), len(set(_ref_name_list(text))), text)
+            for vm in ("AAP01", "VCSA01", "DC01", "vm1"):
+                if _ref_name_matches(vm, text):
+                    self.assertTrue(f.name_matches(vm, text), "%r: %r protected in 6f1d106, not now (%r)" % (text, vm, f.name_list(text)))
+
+    def test_random_text_never_fewer_than_6f1d106(self):
+        # random text of names and every character that means something to a reader of lists: every name 6f1d106 read is
+        # still read (so never fewer names, and every VM it matched still matches) - but for a line that starts with "#"
+        rnd = random.Random(1360)
+        words = ["AAP01", "VCSA01", "DC*", "vm", "0-9", "File Server 01", "web?", "x"]
+        marks = [",", ",", ";", '"', "'", "[", "]", "-", "- ", "#", "\n", "\n", "\r\n", "\t", "*", "?", " ", "\u201c", "\u201d", "\u2018", "\u2019"]
+        vms = ["AAP01", "VCSA01", "DC01", "vm1", "web1", "File Server 01", "x", "0-9", "vm"]
+        for _n in range(6000):
+            text = "".join(rnd.choice(words) if rnd.random() < 0.4 else rnd.choice(marks) for _i in range(rnd.randint(1, 14)))
+            ref = _ref_name_list(text)
+            off = [x for x in text.strip().split("\n") if x.strip().startswith("#")]     # commented-out lines: left out now
+            gone = set(w for x in off for w in _ref_name_list(x) + _ref_name_list(x.rstrip().rstrip("]")))
+            ref = [w for w in ref if w not in gone]
+            new = f.name_list(text)
+            for w in ref:
+                self.assertIn(w, new, "%r: 6f1d106 read %r, now %r" % (text, ref, new))
+            self.assertGreaterEqual(len(new), len(set(ref)), text)
+            for vm in vms + ref:
+                if any(fnmatch.fnmatchcase(str(vm).lower(), w.lower()) for w in ref):
+                    self.assertTrue(f.name_matches(vm, text), "%r: %r matched in 6f1d106, not now (%r)" % (text, vm, new))
+            for w in f.name_list(text, written=True):
+                self.assertIn(w, new)
+
+    def test_each_pattern_is_read_whole_in_every_form(self):
+        # beyond never fewer: in each form each pattern comes back as written (Web;01 also split: ";" separates)
+        for form, write in sorted(self.FORMS.items()):
+            for p, _vms in self.ITEMS:
+                if form in ("commas", "padded", "brackets") and "," in p:
+                    continue
+                got = f.name_list(write([p]))
+                self.assertIn(p, got, "%s: %r" % (form, write([p])))
 
 
 if __name__ == "__main__":

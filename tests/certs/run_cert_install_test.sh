@@ -40,7 +40,7 @@ q() { openssl "$@" 2>/dev/null; }
 
 # ---- a test CA: a root and the intermediate that signs; the certificates in use, about to expire ----
 q req -x509 -newkey rsa:2048 -nodes -keyout root.key -out root.crt -days 400 -subj "/C=US/O=U.S. Government/OU=DoD/OU=PKI/CN=TEST ROOT CA 3" \
-    -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign
+    -addext keyUsage=critical,keyCertSign,cRLSign
 q req -new -newkey rsa:2048 -nodes -keyout int.key -out int.csr -subj "/C=US/O=U.S. Government/OU=DoD/OU=PKI/CN=TEST ID CA-70"
 printf 'basicConstraints=critical,CA:TRUE,pathlen:0\nkeyUsage=critical,keyCertSign,cRLSign\n' > ca.ext
 q x509 -req -in int.csr -CA root.crt -CAkey root.key -CAcreateserial -days 390 -out int.crt -extfile ca.ext

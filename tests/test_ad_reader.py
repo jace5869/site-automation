@@ -639,5 +639,67 @@ class Mode(unittest.TestCase):
         self.assertEqual(F.reader_inventory_dc({"inventory_hostname": "dc01", "ansible_host": "dc01"}), {"name": "dc01", "address": ""})
 
 
+class Python36Cert(unittest.TestCase):
+    """1.42.0: a Python without ssl.SSLCertVerificationError (3.6): a domain controller's LDAPS certificate the trust
+    store refuses is said as not trusted, never a traceback."""
+    VERIFY = "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed (_ssl.c:897)"
+
+    def cert(self, err):
+        import ssl
+
+        class Sock(object):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def getpeercert(self, binary_form=False):
+                return b""
+
+        class Ctx(object):
+            check_hostname, verify_mode = True, None
+
+            def __init__(self, fail):
+                self.fail = fail
+
+            def wrap_socket(self, s, server_hostname=None):
+                if self.fail:
+                    raise err
+                return Sock()
+
+        saved = (M.socket.create_connection, ssl.SSLContext, ssl.create_default_context, getattr(ssl, "SSLCertVerificationError", None))
+        M.socket.create_connection = lambda *a, **kw: Sock()
+        ssl.SSLContext = lambda *a, **kw: Ctx(False)
+        ssl.create_default_context = lambda *a, **kw: Ctx(True)
+        if saved[3] is not None:
+            delattr(ssl, "SSLCertVerificationError")
+        try:
+            r = object.__new__(M.Reader)
+            r.p, r.timeout = {"validate_certs": True}, 1
+            return r.cert("dc01.corp.example.mil", {"address": "192.0.2.10", "ldaps": 636})
+        finally:
+            M.socket.create_connection, ssl.SSLContext, ssl.create_default_context = saved[:3]
+            if saved[3] is not None:
+                ssl.SSLCertVerificationError = saved[3]
+
+    def test_a_refused_certificate_is_said(self):
+        import ssl
+        out = self.cert(ssl.SSLError(1, self.VERIFY))
+        self.assertIs(out["trusted"], False)
+        self.assertIn("CERTIFICATE_VERIFY_FAILED", out["trust_error"])
+
+    def test_a_name_that_does_not_match(self):
+        import ssl
+        out = self.cert(ssl.CertificateError("hostname 'dc01.corp.example.mil' doesn't match 'dc09.corp.example.mil'"))
+        self.assertIs(out["trusted"], False)
+        self.assertIn("doesn't match", out["trust_error"])
+
+    def test_is_cert_error(self):
+        import ssl
+        self.assertTrue(M.is_cert_error(ssl.SSLError(1, self.VERIFY)))
+        self.assertFalse(M.is_cert_error(OSError("connection refused")))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

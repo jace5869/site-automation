@@ -74,6 +74,28 @@ class Protected(unittest.TestCase):
                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=300)
         return r.returncode, r.stdout
 
+    # ---- 1.42.0: a protected name that matches no VM is said (protected_check.yml) - never a failure ----
+    def test_check_read_fails_said_once_job_goes_on(self):
+        prot = {"groups": ["aap", "aap_hosts", "dcs"], "ids": [], "names": ["VCSA01"], "aap_known": True}
+        rc, out = self.run_tasks("protected_check.yml", {"_vm_prot": prot, "vmware_protected_vms": ["VCSA01"],
+                                                         "vmware_protected_groups": ["aap", "dcs", "nogroup"]},
+                                 after="    - ansible.builtin.debug: {msg: 'AFTER THE CHECK'}\n",
+                                 env={"VMWARE_HOST": "127.0.0.1", "VMWARE_PORT": "1", "VMWARE_USER": "u", "VMWARE_PASSWORD": "p"})
+        self.assertEqual(rc, 0, out)
+        self.assertIn("AFTER THE CHECK", out)
+        self.assertEqual(out.count("WARNING: Could not check the protected names: "), 1, out)
+        self.assertIn("WARNING: Protected group not in this inventory: nogroup (vmware_protected_groups) - check the spelling", out)
+        self.assertNotIn("not in this inventory: dcs", out)
+        self.assertNotIn("not in this inventory: aap", out)
+
+    def test_check_off(self):
+        prot = {"groups": ["aap", "aap_hosts"], "ids": [], "names": ["VCSA01"], "aap_known": True}
+        rc, out = self.run_tasks("protected_check.yml", {"_vm_prot": prot, "vmware_protected_vms": ["VCSA01"], "vmware_protected_check": False,
+                                                         "vmware_protected_groups": ["nogroup"]},
+                                 env={"VMWARE_HOST": "127.0.0.1", "VMWARE_PORT": "1"})
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("WARNING:", out)
+
     # ---- restart, shut down, VLAN change (guard.yml) ----
     def test_spaced_vm_name_in_survey_text_is_protected(self):
         rc, out = self.run_tasks("guard.yml", {"_vm_found": [{"name": "File Server 01", "ids": ["fs01"]}],

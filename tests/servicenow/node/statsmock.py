@@ -10,8 +10,9 @@ host: what a load balancer's address would be); ui=USER:PASSWORD - without that 
 form=USER:PASSWORD - an SSO instance with a local login page: the stats pages without a session answer 302 to
 /logout_redirect.do; GET /side_door.do gives a login form with a hidden sysparm_ck (another one on every GET, good for
 one POST, tied to the cookie it came with); POST /login.do with them answers 302 to /login_redirect.do and the session's
-cookies, anything wrong 302 back to /login.do; GET /logout.do ends the session. formmode= sso (side_door.do goes to the
-SSO page too: no login form), other (the POST answers a page: one more step is asked), norole (logged in, the stats
+cookies, anything wrong 302 back to /login.do; GET /logout.do ends the session. formmode= sso (side_door.do and
+login.do go to the SSO page too: no login form), dev (side_door.do answers 302 to /navpage.do, GET /login.do shows
+the form), devnock (as dev, the form has no sysparm_ck and the POST wants none), other (the POST answers a page: one more step is asked), norole (logged in, the stats
 pages still refused), nologout (logout.do answers 500); log=FILE - a line per request (never the password)."""
 import base64
 import os
@@ -20,7 +21,15 @@ import socket
 import ssl
 import sys
 from urllib.parse import parse_qs
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
+try:
+    from http.server import ThreadingHTTPServer
+except ImportError:                        # Python 3.6 (the node tests are run there too: a RHEL 8 node's Python)
+    from http.server import HTTPServer
+    from socketserver import ThreadingMixIn
+
+    class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+        daemon_threads = True
 
 here = os.path.dirname(os.path.abspath(__file__))
 port, kind = int(sys.argv[1]), sys.argv[2]
@@ -79,17 +88,21 @@ class H(BaseHTTPRequestHandler):
     def form_get(self, path):
         """The local login page's part of a GET -> True when it was answered here."""
         mode, jar = opts.get("formmode", ""), self.cookies()
-        if path == "/side_door.do":
-            note("GET /side_door.do")
+        if path in ("/side_door.do", "/login.do"):
+            note("GET " + path)
             if mode == "sso":
                 self.bare(302, {"Location": self.here() + "/login_with_sso.do"})
                 return True
+            if path == "/side_door.do" and mode in ("dev", "devnock"):
+                self.bare(302, {"Location": self.here() + "/navpage.do"})
+                return True
             pre, ck = "pre" + secrets.token_hex(8), secrets.token_hex(36)
-            cks[pre] = ck
+            cks[pre] = "" if mode == "devnock" else ck
             body = ('<html><head><title>Log in | ServiceNow</title></head><body><form id="loginPage" action="login.do" '
-                    'method="post"><input type="hidden" name="sysparm_ck" id="sysparm_ck" value="%s"></input>'
+                    'method="post">%s'
                     '<input name="user_name" id="user_name" type="text"/><input name="user_password" id="user_password" '
-                    'type="password"/></form></body></html>' % ck).encode()
+                    'type="password"/></form></body></html>' % ("" if mode == "devnock" else
+                    '<input type="hidden" name="sysparm_ck" id="sysparm_ck" value="%s"></input>' % ck)).encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
             self.send_header("Set-Cookie", "JSESSIONID=%s; Path=/; HttpOnly; Secure" % pre)
@@ -105,12 +118,12 @@ class H(BaseHTTPRequestHandler):
                 self.bare(500)
                 return True
             sessions.discard(jar.get("JSESSIONID"))
-            self.bare(302, {"Location": self.here() + "/logout_redirect.do?sysparm_url=navpage.do"})
+            self.bare(302, {"Location": self.here() + "/logout_redirect.do?sysparm_url=navpage.do&sysparm_token=t0ken-in-a-query"})
             return True
         ok = jar.get("JSESSIONID") in sessions and jar.get("glide_session_store") and mode != "norole"
         note("GET %s session=%s" % (path, "yes" if jar.get("JSESSIONID") in sessions else "no"))
         if not ok:
-            self.bare(302, {"Location": self.here() + "/logout_redirect.do?sysparm_url=navpage.do"})
+            self.bare(302, {"Location": self.here() + "/logout_redirect.do?sysparm_url=navpage.do&sysparm_token=t0ken-in-a-query"})
             return True
         return False
 
@@ -123,10 +136,11 @@ class H(BaseHTTPRequestHandler):
             self.bare(404)
             return
         pre = self.cookies().get("JSESSIONID")
-        ck_ok = bool(pre) and cks.pop(pre, None) == form.get("sysparm_ck")
+        ck_ok = bool(pre) and cks.pop(pre, None) == form.get("sysparm_ck", "")
         good = (ck_ok and form.get("sys_action") == "sysverb_login"
                 and "%s:%s" % (form.get("user_name"), form.get("user_password")) == opts["form"])
-        note("POST /login.do user=%s ck=%s -> %s" % (form.get("user_name"), "ok" if ck_ok else "bad", "in" if good else "refused"))
+        note("POST /login.do user=%s ck=%s -> %s" % (form.get("user_name"), "none" if "sysparm_ck" not in form else
+                                                     "ok" if ck_ok else "bad", "in" if good else "refused"))
         if good and opts.get("formmode") == "other":
             self.page("<html><head><title>ServiceNow</title></head><body>Enter the 6 digit code</body></html>")
             return
@@ -136,7 +150,7 @@ class H(BaseHTTPRequestHandler):
         sid = "sess" + secrets.token_hex(8)
         sessions.add(sid)
         self.send_response(302)
-        self.send_header("Location", self.here() + "/login_redirect.do?sysparm_stack=no")
+        self.send_header("Location", self.here() + "/login_redirect.do?sysparm_stack=no&sysparm_token=t0ken-in-a-query")
         self.send_header("Set-Cookie", "JSESSIONID=%s; Path=/; HttpOnly; Secure" % sid)
         self.send_header("Set-Cookie", "glide_session_store=%s; Path=/; HttpOnly" % secrets.token_hex(16))
         self.send_header("Content-Length", "0")

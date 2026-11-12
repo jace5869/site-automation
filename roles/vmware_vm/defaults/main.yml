@@ -26,6 +26,7 @@ vmware_vcenter_fail_unread: false        # true = the job shows failed when a vC
 # vmware_protected_vms is empty (the job cannot tell which VM is the AAP server).
 vmware_protected_groups: [aap, aap_hosts]
 vmware_protected_vms: []                 # e.g. [AAP01, VCSA01, DC*]  (* and ? allowed)
+vmware_protected_check: true             # restart, shut down, VLAN, snapshot cleanup: a protected name (or exclude) that matches no VM in vCenter, and a protected group not in the inventory, is a warning line - one read of every VM's name per vCenter; never a failure. false = not checked
 
 # ---- Restart / shut down ----
 

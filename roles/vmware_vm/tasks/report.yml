@@ -7,20 +7,23 @@
 # sheets of the workbook the email attaches (roles/site_email/library/site_xlsx.py);
 # _vm_report_no_email (true = no email) with _vm_report_no_email_why (said instead); _vm_vcenters,
 # the vCenters the job read (a site_vmware_* module's 'vcenters'): the ones not read are listed in
-# red on top (the job fails at its end: vcenters_read.yml).
+# red on top (the job fails at its end: vcenters_read.yml); _vm_prot_warn (protected_check.yml, 1.42.0: a protected
+# name that matches no VM): warning lines after the job's own, and a section on top of its report.
 - name: VMware | the result as job artifacts (vm_report)
   ansible.builtin.set_stats:
     data:
       # one expression, so dry_run stays a boolean on ansible-core 2.16 too
       vm_report: >-
-        {{ {'subject': _vm_report_subject, 'lines': _vm_report_lines, 'dry_run': ansible_check_mode,
+        {{ {'subject': _vm_report_subject, 'lines': _vm_report_lines + _vm_report_warn, 'dry_run': ansible_check_mode,
             'vcenters': _vm_vcenters | default([])} }}
+  vars:
+    _vm_report_warn: "{{ _vm_prot_warn | default([]) | map('regex_replace', '^', 'WARNING: ') | list }}"
 
 - name: VMware | {{ _vm_report_subject }}
   ansible.builtin.debug:
     msg: >-
       {{ (_vm_vcenters | default([]) | selectattr('error') | map(attribute='error') | map('regex_replace', '^', 'NOT READ: ') | list)
-         + _vm_report_lines }}
+         + _vm_report_lines + (_vm_prot_warn | default([]) | map('regex_replace', '^', 'WARNING: ') | list) }}
 
 - name: VMware | email it, publish it (report_email_to, report_web_dest)
   ansible.builtin.include_role:
@@ -28,12 +31,20 @@
   vars:
     # a job may hand over its own formatted report (_vm_report_doc); otherwise its lines become one section
     _report: >-
-      {{ (_vm_report_doc | default({'title': _vm_report_subject, 'status': 'info',
-                                    'sections': [{'title': 'Result', 'lines': _vm_report_lines}]}, true))
-         | vm_vcenter_report(_vm_vcenters | default([])) | combine({'footer': _vm_report_footer}) }}
+      {%- set d = (_vm_report_doc | default({'title': _vm_report_subject, 'status': 'info',
+                                             'sections': [{'title': 'Result', 'lines': _vm_report_lines}]}, true))
+                  | vm_vcenter_report(_vm_vcenters | default([])) | combine({'footer': _vm_report_footer}) -%}
+      {{ d | combine({'status': 'warning' if d.status | default('info') in ['ok', 'info'] else d.status,
+                     'sections': [{'title': 'Protected names to check (vmware_protected_check)', 'status': 'warning', 'top': true,
+                                   'lines': _vm_prot_warn}] + d.sections | default([])})
+         if _vm_prot_warn | default([]) else d }}
     _report_web: >-
-      {{ _vm_report_web_doc | vm_vcenter_report(_vm_vcenters | default([])) | combine({'footer': _vm_report_footer})
-         if _vm_report_web_doc | default({}, true) else {} }}
+      {%- set d = _vm_report_web_doc | vm_vcenter_report(_vm_vcenters | default([])) | combine({'footer': _vm_report_footer})
+                  if _vm_report_web_doc | default({}, true) else {} -%}
+      {{ d | combine({'status': 'warning' if d.status | default('info') in ['ok', 'info'] else d.status,
+                     'sections': [{'title': 'Protected names to check (vmware_protected_check)', 'status': 'warning', 'top': true,
+                                   'lines': _vm_prot_warn}] + d.sections | default([])})
+         if d and _vm_prot_warn | default([]) else d }}
     _vm_report_footer: >-
       {%- set read = _vm_vcenters | default([]) | vm_vcenters_read -%}
       {{ ((_vm_report_doc.footer ~ ' ') if (_vm_report_doc | default({}, true)).footer is defined else '')

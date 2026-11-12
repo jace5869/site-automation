@@ -124,6 +124,25 @@ INV="$work/inv-noaap.yml" run "inventory without the aap group and no protected 
 INV="$work/inv-noaap.yml" run "...but with the AAP VM named in vmware_protected_vms it runs" ok vm_reboot.yml -e vm_names=DC0_H0_VM1 \
     -e '{"vmware_protected_vms": ["DC0_H0_VM0"]}' -- "Restart requested for (operating system restart through VMware Tools): DC0_H0_VM1"
 run "snapshots and notes are allowed on the AAP VM (they do not stop it)" ok vm_notes.yml -e vm_names=DC0_H0_VM0 -e vm_notes=x
+# 1.42.0: a protected name that matches no VM is said (vmware_protected_check) - never a failure
+run "a protected name with a typo: said as a warning, the restart goes on (Check)" ok vm_reboot.yml --check -e vm_names=DC0_H0_VM1 \
+    -e '{"vmware_protected_vms": ["DC0_H0_VM0", "DC0_H0_VMX"]}' \
+    -- "WARNING: Protected name matches no VM: DC0_H0_VMX - check the spelling" "Would restart"
+grep -qF "matches no VM: DC0_H0_VM0" "$work/out.txt" && { echo "FAIL -   ...a correct name warned"; fails=$((fails + 1)); } \
+    || echo "ok   -   ...the correct name is not said"
+grep -qF '"WARNING: Protected name matches no VM: DC0_H0_VMX - check the spelling"' "$work/out.txt" \
+    && echo "ok   -   ...in the job's artifacts (vm_report lines) too" || { echo "FAIL -   ...not in vm_report"; fails=$((fails + 1)); }
+run "a pattern that matches nothing warns; one that matches does not (shut down, Check)" ok vm_shutdown.yml --check -e vm_names=DC0_H0_VM1 \
+    -e '{"vmware_protected_vms": ["DC9_*", "DC0_C0_RP0_VM?"]}' -- "WARNING: Protected name matches no VM: DC9_* - check the spelling"
+grep -qF "matches no VM: DC0_C0_RP0_VM?" "$work/out.txt" && { echo "FAIL -   ...a matching pattern warned"; fails=$((fails + 1)); } \
+    || echo "ok   -   ...the matching pattern is not said"
+run "a protected group not in the inventory warns (VLAN, Check)" ok vm_vlan.yml --check -e vm_names=DC0_H0_VM1 -e vm_portgroup=DC0_DVPG1 \
+    -e '{"vmware_protected_groups": ["aap", "dcs"]}' -- "WARNING: Protected group not in this inventory: dcs (vmware_protected_groups) - check the spelling"
+run "vmware_protected_check: false - not checked" ok vm_reboot.yml --check -e vm_names=DC0_H0_VM1 \
+    -e '{"vmware_protected_vms": ["DC0_H0_VMX"], "vmware_protected_check": false}' -- "Would restart"
+grep -qF "WARNING: Protected name matches no VM" "$work/out.txt" && { echo "FAIL -   ...checked anyway"; fails=$((fails + 1)); } || echo "ok   -   ...no warning"
+run "the snapshot cleanup: an exclude with a typo warns too" ok vm_snapshot_cleanup.yml -e '{"vm_snapshot_cleanup_exclude_vms": ["NOPE01"]}' \
+    -- "WARNING: Excluded name matches no VM (vm_snapshot_cleanup_exclude_vms): NOPE01 - check the spelling"
 
 # ---- names, credential ---------------------------------------------------------------------------
 run "unknown VM name" fail vm_reboot.yml -e vm_names=nope -- "No VM is named nope"
@@ -798,6 +817,36 @@ while t.info.state not in ("success", "error"):
 assert t.info.state == "success", t.info.error
 EOPY
 echo "ok   - vCenter 2: a snapshot old-b on its own DC0_C0_RP0_VM1"
+# 1.42.0: a protected VM that is only on the second vCenter matches when the job reads both
+VMWARE_PORT=$port2 "$py" - <<'EOPY' || { echo "ABORT - rename on the second vCenter"; exit 1; }
+import os, time
+from pyVim.connect import SmartConnect
+from pyVmomi import vim
+si = SmartConnect(host="127.0.0.1", port=int(os.environ["VMWARE_PORT"]), user="user", pwd="pass", disableSslCertValidation=True)
+c = si.RetrieveContent()
+vm = [v for v in c.viewManager.CreateContainerView(c.rootFolder, [vim.VirtualMachine], True).view if v.name == "DC0_C0_RP0_VM0"][0]
+t = vm.Rename_Task("VC2ONLY01")
+while t.info.state not in ("success", "error"):
+    time.sleep(0.1)
+assert t.info.state == "success", t.info.error
+EOPY
+run "a protected VM on the second vCenter only: not said when the job reads both" ok vm_reboot.yml --check -e vm_names=DC0_H0_VM1 -e "$two" \
+    -e '{"vmware_protected_vms": ["VC2ONLY01"]}' -- "Would restart"
+grep -qF "WARNING: Protected name matches no VM" "$work/out.txt" && { echo "FAIL -   ...said although vCenter 2 has it"; fails=$((fails + 1)); } || echo "ok   -   ...no warning"
+run "...and said when the job reads vCenter 1 only" ok vm_reboot.yml --check -e vm_names=DC0_H0_VM1 \
+    -e '{"vmware_protected_vms": ["VC2ONLY01"]}' -- "WARNING: Protected name matches no VM: VC2ONLY01 - check the spelling"
+VMWARE_PORT=$port2 "$py" - <<'EOPY' || { echo "ABORT - rename back on the second vCenter"; exit 1; }
+import os, time
+from pyVim.connect import SmartConnect
+from pyVmomi import vim
+si = SmartConnect(host="127.0.0.1", port=int(os.environ["VMWARE_PORT"]), user="user", pwd="pass", disableSslCertValidation=True)
+c = si.RetrieveContent()
+vm = [v for v in c.viewManager.CreateContainerView(c.rootFolder, [vim.VirtualMachine], True).view if v.name == "VC2ONLY01"][0]
+t = vm.Rename_Task("DC0_C0_RP0_VM0")       # as it was, for the tests after
+while t.info.state not in ("success", "error"):
+    time.sleep(0.1)
+assert t.info.state == "success", t.info.error
+EOPY
 m1="$(state DC0_C0_RP0_VM1 "v['moid']")"; m2="$(STATE_PORT=$port2 state DC0_C0_RP0_VM1 "v['moid']")"
 id2="$(STATE_PORT=$port2 state DC0_C0_RP0_VM1 "[s['id'] for s in v['snapshots'] if s['name'] == 'old-b'][0]")"
 id1="$(state DC0_C0_RP0_VM1 "[s['id'] for s in v['snapshots'] if s['name'] == 'old-a'][0]")"

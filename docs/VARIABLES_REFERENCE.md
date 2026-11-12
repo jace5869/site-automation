@@ -1928,6 +1928,7 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vmware_vcenter_fail_unread` | `false` | true = the job shows failed when a vCenter could not be read (the report lists it in red either way) |
 | `vmware_protected_groups` | `[aap, aap_hosts]` | The AAP server is ALWAYS refused (hosts in the groups aap / aap_hosts, matched by VM name, guest host name and IP address), and so are the hosts of these groups and these VM names (* and ? allowed: DC*). List the AAP VM's name here when it differs from its host name, and vCenter's own VM. The snapshot cleanup and the… (all of it: the role file) |
 | `vmware_protected_vms` | `[]` | e.g. [AAP01, VCSA01, DC*] (* and ? allowed) |
+| `vmware_protected_check` | `true` | restart, shut down, VLAN, snapshot cleanup: a protected name (or exclude) that matches no VM in vCenter, and a protected group not in the inventory, is a warning line - one read of every VM's name per vCenter; never a failure. false = not checked |
 | `vm_power_mode` | `guest` | guest = ask the operating system (needs VMware Tools running; services stop cleanly) hard = reset / power off, like the button on a physical server (unsaved data is lost) |
 | `vm_power_timeout` | `600` | shut down: seconds to wait for the VM to be off |
 | `vm_snapshot_name` | (empty) | The snapshot's name. Taking one: empty = aap-<date>-<time>. Deleting: the exact name to delete. |

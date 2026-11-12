@@ -1,0 +1,53 @@
+---
+# A PROTECTED NAME THAT MATCHES NO VM IS SAID (1.42.0): a typo in vmware_protected_vms protects nothing, and nothing
+# else would say so. Every VM's name is read once per vCenter (library/site_vmware_protected_check.py: one
+# property-collector call each, no call per VM) and each protected name - and the job's own VM-name excludes - that
+# matches none, a pattern too, is one warning line in the job's output and its report; a vmware_protected_groups group
+# that is not in the inventory too. Never a failure, never changes what the job does; the read failing is said once.
+# vmware_protected_check: false = not checked. Restart, shut down, VLAN change (after guard.yml) and the snapshot
+# cleanup (after protected.yml). Input: vmware_protected_vms; optional _vm_prot_more: [{setting, names}]. The names checked are
+# the ones as written (name_list(true)): the 1.22.0 reading name_list keeps beside them ('"a' of '"a, b"') protects
+# as before and is not said here.
+# Output: _vm_prot_warn (lines; report.yml puts them in the job's output and report).
+- name: VMware | the protected names, checked against every VM's name (vmware_protected_check)
+  site_vmware_protected_check:
+    lists: "{{ [{'setting': 'vmware_protected_vms', 'names': vmware_protected_vms | name_list(true)}] + _vm_prot_more | default([]) }}"
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+  register: _vm_prot_chk
+  check_mode: false                     # only reads: a dry run says it too
+  failed_when: false                    # never a failure: said, and the job goes on
+  when: >-
+    vmware_protected_check | bool
+    and ((vmware_protected_vms | name_list(true)) + (_vm_prot_more | default([]) | map(attribute='names') | flatten)) | length > 0
+
+- name: VMware | what the check says
+  ansible.builtin.set_fact:
+    _vm_prot_warn: >-
+      {%- set c = _vm_prot_chk | default({}) -%}
+      {%- set out = [] -%}
+      {%- if vmware_protected_check | bool -%}
+        {%- for g in vmware_protected_groups | name_list(true) if g not in groups and g not in ['aap', 'aap_hosts'] -%}
+          {%- set _ = out.append('Protected group not in this inventory: ' ~ g ~ ' (vmware_protected_groups) - check the spelling') -%}
+        {%- endfor -%}
+        {%- if c.skipped is not defined and c | length > 0 -%}
+          {#- failed_when: false keeps 'failed' false: a module that failed has no 'unmatched' -#}
+          {%- if c.unmatched is not defined or c.error | default('') -%}
+            {%- set _ = out.append('Could not check the protected names: ' ~ ((c.error | default('', true)) or (c.msg | default('?')))
+                                   | regex_replace('\s+', ' ') | truncate(200)) -%}
+          {%- else -%}
+            {%- set unread = c.vcenters | default([]) | rejectattr('ok') | map(attribute='name') | list -%}
+            {%- for u in c.unmatched | default([]) -%}
+              {%- set _ = out.append(('Protected name matches no VM: ' if u.setting == 'vmware_protected_vms'
+                                      else 'Excluded name matches no VM (' ~ u.setting ~ '): ') ~ u.name ~ ' - check the spelling'
+                                     ~ ((' (vCenter ' ~ unread | join(', ') ~ ' not read)') if unread else '')) -%}
+            {%- endfor -%}
+          {%- endif -%}
+        {%- endif -%}
+      {%- endif -%}
+      {{ out }}
+
+- name: VMware | protected names to check
+  ansible.builtin.debug:
+    msg: "{{ _vm_prot_warn | map('regex_replace', '^', 'WARNING: ') | list }}"
+  when: _vm_prot_warn | length > 0

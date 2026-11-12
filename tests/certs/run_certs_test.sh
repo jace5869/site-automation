@@ -56,7 +56,7 @@ openssl req -x509 -newkey rsa:2048 -nodes -keyout w.key -outform DER -out disc/w
 for i in $(seq 1 11); do openssl req -x509 -newkey rsa:2048 -nodes -keyout b.key -days 90 -subj "/CN=bundle$i.example.mil" 2>/dev/null; done > disc/bundle.pem
 openssl req -x509 -newkey rsa:2048 -nodes -keyout a.key -out home/alice/alice.crt -days 26 -subj "/C=US/O=U.S. Government/CN=alice01.example.mil" 2>/dev/null
 openssl req -x509 -newkey rsa:2048 -nodes -keyout r.key -out anchors/Test_Root_CA_9 -days 21 -subj "/C=US/O=U.S. Government/CN=TEST ROOT CA 9" \
-    -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign 2>/dev/null
+    -addext keyUsage=critical,keyCertSign,cRLSign 2>/dev/null
 openssl req -x509 -newkey rsa:2048 -nodes -keyout i.key -outform DER -out anchors/test-int.der -days 300 -subj "/C=US/O=U.S. Government/CN=TEST INT CA 70" 2>/dev/null
 # the shared test certificates (tests/fixtures/pki): what the inventory reads from each
 cp "$repo/tests/fixtures/pki/web.pem" disc/fixture-web.pem; cp "$repo/tests/fixtures/pki/int.pem" disc/fixture-int.pem

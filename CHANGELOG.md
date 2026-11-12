@@ -1,5 +1,128 @@
 # Changelog
 
+## 1.42.0 (built as 1.36.0) — 2026-11-12
+
+**Updating without scripts:** paste `site-automation-1.42.0-changed-since-1.38.0.zip` as it is (from an older version,
+its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`. Nothing to set up. Read **Behaviour changes** below before you update.
+
+**VMware: a protected name that matches no VM is said.** A typo in `vmware_protected_vms` protects nothing, and nothing
+said so. Restart, shut down, VLAN change and the snapshot cleanup now read every VM's name in each vCenter they use -
+one property-collector read per vCenter, no call per VM (`roles/vmware_vm/library/site_vmware_protected_check.py`,
+`roles/vmware_vm/tasks/protected_check.yml`) - and each protected name or pattern that matches none is a warning line
+in the job's output, its artifacts and on top of its report: *Protected name matches no VM: VCSA1 - check the
+spelling*. The snapshot cleanup's `vm_snapshot_cleanup_exclude_vms` the same way (*Excluded name matches no VM*), and a
+`vmware_protected_groups` group that is not in the inventory (*Protected group not in this inventory*; `aap` and
+`aap_hosts` are not said). A VM on a vCenter the job did not read is said with that vCenter. Never a failure, never
+changes what the job does; when the names cannot be read: *Could not check the protected names* once, and the job
+goes on. A dry run (Check) says it too. `vmware_protected_check: false` turns it off (default on). docs/VMWARE.md,
+"Name the AAP VM". In the Variables files of restart, shut down and VLAN change (`aap/extra_vars/vm_reboot.yml`,
+`vm_shutdown.yml`, `vm_vlan.yml`) the words above `vmware_vcenters` now say what the list does there: it is used only
+by this check (`scripts/gen_template_vars.py`, `NARROW`).
+
+**Names given as text: every way they are written** (`name_list`, every setting read as a list of names). More forms
+are read: Word, Outlook and Teams curly quotes; `;` separates (a name with one is read whole too); a quoted name keeps
+its commas (`"Server, Main"`); a quote never closed is dropped; a list written as text may have more after it
+(`[a, b], VCSA01`) and brackets inside its patterns (`[VCSA01, vm[0-9]*]`); a quote inside a name stays
+(`'O'Brien-VM'`). A name in brackets (`[Test] VM01`) matches itself (it was read as a character class), also in the
+patch job's reason.
+
+- **A `[` that is not closed on its line is a plain character.** The names after it are still read one by one:
+  `vm[0-9*, AAP01, VCSA01` gives three names, `web[12, AAP01` two, and a `[` on one line never joins the lines under
+  it.
+- **Never fewer names than 1.22.0.** Every name 1.22.0 read from a text still counts, beside the names read the new
+  way: the old reading is kept in `name_list` and its names are added. So a VM a text protected in 1.22.0 is
+  protected in 1.42.0, whatever the text looks like. The one exception is a line that starts with `#` (below).
+- The warnings of the check above name only the names as you wrote them (`name_list(true)`), not the second reading
+  of the same text.
+
+**ServiceNow health, self-hosted - follow-ups to 1.32.0** (docs/SERVICENOW_SETUP.md, "The node stats login" and
+"Nodes AAP does not log in to"):
+
+- **The node stats login: one login per node address** (`servicenow_node_stats_auth: form`). An address is the node
+  and its port. 1.32.0 said "one login per node" and sent one per unit: a node whose two units answer on one port got
+  two logins. Now the units share the session, and it is closed once (`logout.do`) when the node is read. A node with
+  two instances on two ports gets one login each. Two listed stats pages on one host and port share one login too.
+- **The node stats login: `side_door.do` that shows no form** (seen on a real instance: `side_door.do` answered
+  *HTTP 302 to /navpage.do*, and the finding said *no login form was found*). The check now reads `login.do` on the
+  same node and port, once, for the form and its `sysparm_ck`, then sends the login as before. A login form with no
+  `sysparm_ck` on it is sent without one. Still one login per node address, never a second try, no redirect
+  followed, the same rule for where the login may go. The *tried* lines name both pages. When neither page shows a
+  form, nothing is sent and the finding's hint says: *the instance's local login is switched off or redirected
+  (side_door.do and login.do show no login form): ask the ServiceNow admins, or read this instance's nodes with
+  servicenow_node_stats_auth basic*.
+- **A line about a redirect shows its page only.** The *tried* lines and the findings showed where a redirect pointed
+  with all that followed the `?` - `logout_redirect.do?sysparm_token=...`. Now: `HTTP 302 to /logout_redirect.do`;
+  an answer that points to another host says that host, never a login written in the address.
+- **A listed stats page's `url` is read one way** (`servicenow_node_stats_pages`). A `url` such as
+  `https://node03.yoursite.mil#@node04.yoursite.mil/stats.do` showed one host in the report and asked another. The
+  plan and the report now take the host from the same reading (`urlsplit`), and a `url` that is not plain is refused
+  (below).
+- **Where the form login goes, said in full:** over HTTPS to the node's own name, or to 127.0.0.1 on the node, also
+  over plain HTTP. 1.32.0 did that and its text said "only over HTTPS". The docs, the credential type's words and
+  setup step 94 now say it. A listed stats page: only over HTTPS, as before.
+- **The test** `tests/servicenow/run_servicenow_test.sh` takes its first port from `SN_TEST_PORT` (default 18270;
+  it uses 44 ports from there) and stops at once, naming the ports in use, when one is taken.
+
+**A refused certificate on an older Python, the AAP-side checks** (the same care as 1.32.1 took for the ServiceNow
+nodes). Three checks named a class that Python 3.6 does not have (`ssl.SSLCertVerificationError`) and would stop with
+a traceback where a certificate is refused. They now say it on any Python 3:
+
+- Active Directory health, a domain controller's LDAPS certificate (`roles/ad_report/library/site_ad_reader.py`):
+  *trusted: no*, with why.
+- Availability, a web address (`roles/api_availability/library/site_http_probe.py`) and STIG Manager health
+  (`roles/stigman_health/library/site_stigman_health.py`): *its certificate is not trusted (...)*.
+- Nothing changes on the Python of a current execution environment.
+- Left as they are, AAP side only and Python 3.7 or newer: `ssl.TLSVersion` in
+  `roles/net_certs/library/site_net_certs.py`, and `capture_output` in
+  `roles/pki_bundle/library/site_pki_bundle.py`.
+
+**The tests' own CAs on OpenSSL 1.1.1** (RHEL 8). The tests made a CA with `openssl req -x509 -addext
+basicConstraints=...`; OpenSSL 1.1.1 then writes that extension twice and refuses the CA. They leave it to
+`req -x509` now (it writes `CA:TRUE` itself, on 1.1.1 and on 3). `tests/test_servicenow_node.py` and its fake node
+also run on Python 3.6.
+
+**Behaviour changes**
+
+- **A line that starts with `#` in a list of names given as text is left out** (a survey answer, an extra variable):
+  it is a commented-out line. 1.22.0 read it as a name (`#VCSA01`). This is the safe side for an exclude list, and no
+  VM name starts with `#` in practice; a `#` inside a name stays part of it (`Build #3`). A YAML list is used as it is.
+- **A list of names given as text may now give more names than before, never fewer** (see above). A protect or exclude
+  list can therefore match a VM it did not match in 1.22.0 - e.g. `"Server, Main"` now also protects the VM named
+  `Server, Main`. Nothing is unprotected by the update.
+- **Restart, shut down, VLAN change and the snapshot cleanup read every VM's name once per vCenter** before they act
+  (`vmware_protected_check: true`, the default), and may print warning lines they did not print before. No job fails
+  or acts differently because of them. `vmware_protected_check: false` gives the old behaviour.
+- **A `servicenow_node_stats_pages` entry whose `url` has a `#`, a backslash or a blank in it is refused**: the job
+  stops before it reads anything and names the entry (*its url must be plain - https://host:port/page*). A `url`
+  that carries a login was refused before and still is. Write the page's address only.
+- **ServiceNow health: lines about a redirect are shorter** (the page, without what follows the `?`). A rule that
+  matched the old text of a finding needs the new one.
+- **`servicenow_node_stats_auth: form`: a node whose `side_door.do` shows no login form is now asked `login.do`**
+  (one more read), and gets the login when the form is there. Before, such a node was not read (a warning).
+- **`servicenow_node_stats_auth: form`: fewer logins** in the instance's login history when a node's units share a
+  port - one per node address and run, not one per unit.
+
+Tests: tests/vmware/run_vmware_test.sh (vcsim, current ansible-core and 2.16: a typo warns and a correct name does not,
+in the artifacts too; a pattern that matches nothing warns, one that matches does not; a group not in the inventory;
+the check off; the snapshot cleanup's exclude; a VM only on the second vCenter - not said when the job reads both,
+said when it reads one; all in Check), tests/test_vmware_protect.py (the read failing: said once, the job goes on;
+the check off), tests/test_vmware_modules.py (which names and patterns match no VM), tests/test_filters.py
+(test_name_list_every_way_a_name_is_written; test_name_list_a_bracket_never_closed_is_a_plain_character;
+test_name_list_keeps_what_1_22_0_read; NameListNeverFewer - 1.22.0's name_list kept in the test as the reference: the
+matrix in every written form, the five texts with a bracket never closed, and 6000 random texts made of `,` `;`
+quotes, curly quotes, `[` `]` `-` `#` `*` `?` and line breaks: every name 1.22.0 read is read, and every VM it matched
+still matches), tests/test_servicenow_node.py (two units of one address: one login, one logout; two listed pages of one
+address: one login; no query of a redirect in any line; the host named is the host asked - `#@`, a backslash, a blank
+and a login refused; `side_door.do` that redirects and `login.do` with the form: logged in, one POST; the same with no
+`sysparm_ck` on the form; neither page with a form: the hint, nothing sent), tests/servicenow/run_servicenow_test.sh
+(current ansible-core and 2.16: two units of one node on one port - one login, both units read in it, one logout;
+one of the two nodes redirects `side_door.do` - read through `login.do`; the fake node's redirects carry a token in the query, never
+printed, `-vvv` too); tests/test_servicenow_node.py was also run on Python 3.6.8 with OpenSSL 1.1.1k (all 94 pass);
+tests/test_availability.py and
+tests/test_ad_reader.py (`Python36Cert`: a refused certificate with no `ssl.SSLCertVerificationError` - said, never a
+traceback; a name that does not match; they fail on 1.33.0).
+
 ## 1.38.0 — 2026-11-12
 
 **Updating without scripts:** paste `site-automation-1.38.0-changed-since-1.33.0.zip` as it is (from an older version,
@@ -1044,7 +1167,7 @@ tests/stig/run_stigman_real_test.sh against STIG Manager 1.6.18 (not in CI).
 
 SA_VERSION 1.26.0; the PDFs at 1.26.0.
 
-**To do, if you have not yet: what 0.20.0 to 1.38.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.38.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing).** In order; each step works without
+**To do, if you have not yet: what 0.20.0 to 1.42.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.42.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing, 1.42.0 nothing).** In order; each step works without
 the ones after it. There is no step 90.
 
 1. **Your logo** (0.20.0). A PNG with a transparent background, about 160 px tall and under 100 KB, in
@@ -1779,7 +1902,8 @@ the ones after it. There is no step 90.
        ```yaml
        servicenow_node_stats_auth: form
        ```
-       Each run is one UI login per node in the instance's login history.
+       Each run is one UI login per node address (node and port) in the instance's login history. The login goes
+       over HTTPS to the node's own name, or to 127.0.0.1 on the node, also over plain HTTP.
     4. Run it. The *Front-end nodes* table shows each name beside its host, and *Stats page answered at* says which
        address answered. A listed node's row says *stats page only*.
     Details: docs/SERVICENOW_SETUP.md, "Self-hosted instance".

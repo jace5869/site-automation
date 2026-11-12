@@ -27,6 +27,7 @@ __metaclass__ = type
 
 import datetime
 import re
+from urllib.parse import urlsplit
 
 
 def _s(v):
@@ -88,14 +89,26 @@ def _same_host(a, b):
 
 
 def _page_url(url):
-    """(host, why not) of a servicenow_node_stats_pages URL: http or https, a host, no login written in it."""
+    """(host, why not) of a servicenow_node_stats_pages URL: http or https, a host, no login written in it. Read with
+    urlsplit(), as the request that asks it is (1.42.0): the host named here is the host that is asked - a url whose
+    host could be read two ways ('#', a backslash, a blank, a login) is refused."""
     u = _s(url)
-    m = re.match(r"^https?://([^/?#]*)", u, re.I)
-    if not m or not m.group(1):
-        return "", "its url must be the stats page's full address (https://node1.example.mil:16000/stats.do)"
-    rest = m.group(1)
-    if "@" in rest:
+    full = "its url must be the stats page's full address (https://node1.example.mil:16000/stats.do)"
+    try:
+        sp = urlsplit(u)
+        sp.port
+    except ValueError:
+        return "", full
+    if sp.scheme.lower() not in ("http", "https") or not sp.netloc:
+        return "", full
+    plain = "its url must be plain - https://host:port/page - with no #, no backslash and no blank in it"
+    if "#" in u or "\\" in u or re.search(r"\s", u):
+        return "", plain
+    if re.match(r"^https?://[^/]*@", u, re.I):
         return "", "its url carries a login: leave it out (the ServiceNow API credential's is used, servicenow_node_stats_auth)"
+    if not re.match(r"^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9._-]+)(:\d{1,5})?$", sp.netloc):
+        return "", plain
+    rest = sp.netloc
     host = rest[1:].split("]")[0] if rest.startswith("[") else rest.rsplit(":", 1)[0] if ":" in rest else rest
     return (host, "") if host else ("", "its url names no host")
 
@@ -269,9 +282,13 @@ def _form_findings(add, ub, who, st, tried):
             "login is not tried on the nodes after it" % (who, why[:160] or "no answer"), "%s\n%s" % (tried, _FORM_HINT))
     elif form == "no_page":
         add(ub + "stats-unread", "warning", "the stats page of %s was not read: no login form was found to log in with (%s)" % (
-            who, why[:200] or "side_door.do did not answer"),
-            "%s\nservicenow_node_stats_auth form needs the instance's local login page on the node's own address: "
-            "https://<node>:<port>/side_door.do must show the user name and password form. Nothing was sent" % tried)
+            who, why[:240] or "side_door.do did not answer"),
+            ("%s\nthe instance's local login is switched off or redirected (side_door.do and login.do show no login "
+             "form): ask the ServiceNow admins, or read this instance's nodes with servicenow_node_stats_auth basic. "
+             "Nothing was sent" if "shows no login form" in why else
+             "%s\nservicenow_node_stats_auth form needs the instance's local login page on the node's own address: "
+             "https://<node>:<port>/side_door.do or /login.do must show the user name and password form. Nothing was "
+             "sent") % tried)
     elif form == "no_numbers":
         add(ub + "stats-unread", "warning", "the node stats login was accepted on %s, but its stats page still showed no "
             "numbers: that account may not read stats.do" % who,
