@@ -3,7 +3,8 @@ filter returns while the unit tests run (a dict with sections, or a list of tabl
 adds), and with --pages, the reports of e2e runs that wrote a report website (their page's JSON: report_web_dest), for
 the reports made in YAML. Run it again when a report gets new tables.
   python3 tests/report_fit_docs.py                       (about 5 minutes: each tests/test_*.py once)
-  python3 tests/report_fit_docs.py --pages DIR [PREFIX]  (only the pages' reports, named PREFIX-<template>)"""
+  python3 tests/report_fit_docs.py --pages DIR [PREFIX]  (only the pages' reports, named PREFIX-<template>)
+  python3 tests/report_fit_docs.py --named               (only NAMED: one test's document of a filter, its own name)"""
 import glob
 import json
 import os
@@ -17,6 +18,10 @@ OUT = os.path.join(REPO, "tests", "fixtures", "report_fit")
 SKIP = re.compile(r":(report_act_off|report_notice|vm_vcenter_report|_report|servicenow_war_add_act|\w*_xlsx|"
                   r"report_xlsx_sheets|<genexpr>|vm_ask_run|table|_table|_section|_item_table|_moved_section|"
                   r"_written_section)$")
+# a filter's document from one test, under a name of its own - a report's parts the biggest document of the filter has not
+# (1.26.0: the checklist import's routes, moves and assignments; the update's Moves and STIG assignments)
+NAMED = (("test_stig_ckl_import.py", "RouteReport.test_report_fit_document", "stig_ckl_filters.py:stig_ckl_report", "stig_ckl_report_routes"),
+         ("test_stig.py", "UpdateReportMoves.test_report_fit_document", "stig_filters.py:stig_update_report", "stig_update_report_moves"))
 
 # run inside each test file's process: keep the biggest document each filter function returns
 CHILD = r"""
@@ -50,7 +55,7 @@ def prof(frame, event, arg):
     if k not in keep or rows(d) > rows(keep[k]):
         keep[k] = d
 sys.path.insert(0, os.path.dirname(test))
-sys.argv = [test]
+sys.argv = [test] + sys.argv[3:]        # a test's name: that test only (NAMED)
 sys.setprofile(prof)
 try:
     runpy.run_path(test, run_name='__main__')
@@ -85,6 +90,21 @@ def from_tests():
     return len(found)
 
 
+def from_named():
+    for test, name, key, out in NAMED:
+        tmp = os.path.join(OUT, ".capture.json")
+        subprocess.run([sys.executable, "-c", CHILD, os.path.join(REPO, "tests", test), tmp, name], cwd=REPO, stdin=subprocess.DEVNULL,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=900)
+        got = json.load(open(tmp)) if os.path.exists(tmp) else {}
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        if key not in got:
+            raise SystemExit("%s %s made no %s document" % (test, name, key))
+        with open(os.path.join(OUT, out + ".json"), "w") as f:
+            json.dump(got[key], f, indent=0, sort_keys=True)
+    return len(NAMED)
+
+
 def from_pages(folder, prefix):
     """Each report template's run with the most table rows (a page's JSON beside it: {template, report, ...})."""
     best = {}
@@ -110,5 +130,7 @@ if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
     if len(sys.argv) > 2 and sys.argv[1] == "--pages":
         print("%d report(s) from %s" % (from_pages(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else "e2e"), sys.argv[2]))
+    elif sys.argv[1:] == ["--named"]:
+        print("%d named report document(s)" % from_named())
     else:
-        print("%d report document(s) from the unit tests" % from_tests())
+        print("%d report document(s) from the unit tests, %d named" % (from_tests(), from_named()))

@@ -70,9 +70,6 @@ def stig_ckl_settled(ci, waiting=None, auto_plan=None, su=None, att=None, att_er
     for x in ci.get("held") or []:      # a move a person decides: the file stays, so the next run says it again
         for fn in x.get("files") or []:
             h(fn, "the move of %s to %s waits for a person: %s" % (x.get("asset", ""), x.get("to", ""), x.get("why", "")))
-    for c in ci.get("checklists") or []:   # a move refused for the grants: the file stays, the next run moves it
-        if c.get("move_refused"):
-            h(c.get("file"), "not moved to its route's collection: %s" % c["move_refused"])
     for it in waiting or []:
         for fn in it.get("files") or [it.get("file")]:
             h(fn, "waits for the approval (%s)" % ("new asset " + it.get("asset", "") if it.get("kind") == "create" else it.get("line", "")))
@@ -350,7 +347,10 @@ def stig_ckl_report(ci, plan=None, sections=None, workflow=False, list_max=200, 
                             "created once approved - and the STIG installed in STIG Manager whose rules it matched (by the benchmark "
                             "id, the rule ids, V-numbers or versions; stigman_ckl_import_benchmarks names one). Collections searched: %s; "
                             "a new asset is created in %s. NaF / Open / NA / NR: the checklist's answers." % (
-                                ", ".join(ci.get("collections") or [col or "-"]), col or "the collection")})
+                                ("every one the client reads (%d)" % len(ci.get("collections") or [])) if ci.get("routes") else
+                                ", ".join(ci.get("collections") or [col or "-"]),
+                                ("its route's collection, else in %s" % (col or "the staging collection")) if ci.get("routes")
+                                else col or "the collection")})
     if held_moves:
         out.append({"title": "Not moved - a person decides (%d)" % len(held_moves), "status": "warning",
                     "columns": ["Asset", "In", "Its route", "Would lose it", "What to do"],

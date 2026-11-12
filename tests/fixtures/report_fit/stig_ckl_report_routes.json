@@ -1,0 +1,534 @@
+{
+"footer": "STIG Manager: GET; the share: only read (playbooks/stigman_ckl_import.yml). playbooks/stigman_update.yml writes what waits for workflow 40's approval.",
+"sections": [
+{
+"columns": [
+"Checklist",
+"Collection / asset",
+"STIG",
+"Rule",
+"CAT",
+"Title",
+"STIG Manager now",
+"Written as",
+"Status",
+"Answered by"
+],
+"row_status": [
+"info",
+"info",
+"info",
+"info",
+"info",
+"info",
+"info",
+"info",
+"info",
+"info",
+"info",
+"info",
+"info",
+"info",
+"info",
+"info",
+"info",
+"info",
+"info",
+"info",
+"info"
+],
+"rows": [
+[
+"NEW ASSET",
+"Staging / app01",
+"VMW_Aria_Operations_8-x_Apache_STIG",
+"-",
+"-",
+"app01 - FQDN app01.vsphere-management.east-region.example.mil, then its 3 review(s): Not a Finding 1, Open 1, Not Applicable 1",
+"no asset",
+"created",
+"",
+""
+],
+[
+"NEW ASSET",
+"VMware_vSphere_8_Management_Clusters_East_Region / esx01",
+"VMW_Aria_Operations_8-x_Apache_STIG",
+"-",
+"-",
+"esx01 - FQDN esx01.vsphere-management.east-region.example.mil, then its 3 review(s): Not a Finding 1, Open 1, Not Applicable 1",
+"no asset",
+"created",
+"",
+""
+],
+[
+"NEW ASSET",
+"Linux Servers Production East Region Datacenter / rhel02",
+"RHEL_9_STIG",
+"-",
+"-",
+"rhel02 - FQDN rhel02.linux-servers.east-region.example.mil, then its 3 review(s): Not a Finding 1, Open 1, Not Applicable 1",
+"no asset",
+"created",
+"",
+""
+],
+[
+"MOVE",
+"VMware_vSphere_8_Management_Clusters_East_Region / vc01",
+"VMW_Aria_Operations_8-x_Apache_STIG",
+"-",
+"-",
+"from Staging (route 1), then its 3 review(s); 3 review(s) of VMW_Aria_Operations_8-x_Apache_STIG not shown at V1R2 there (kept: shown at V1R1)",
+"in Staging",
+"moved",
+"",
+""
+],
+[
+"MOVE",
+"VMware_vSphere_8_Management_Clusters_East_Region / vc03",
+"VMW_Aria_Operations_8-x_Apache_STIG",
+"-",
+"-",
+"from Staging (route 1), then its 3 review(s)",
+"in Staging",
+"moved",
+"",
+""
+],
+[
+"ASSIGN",
+"Linux Servers Production East Region Datacenter / rhel01",
+"RHEL_9_STIG V2R9",
+"-",
+"-",
+"the STIG assigned to it, then its 3 review(s)",
+"not on the asset",
+"assigned",
+"",
+""
+],
+[
+"web01.ckl",
+"Ops / web01",
+"VMW_Aria_Operations_8-x_Apache_STIG V1R1",
+"VRPE-8X-000001",
+"CAT II",
+"Apache rule 1",
+"no review",
+"Not a Finding",
+"submitted",
+"InSpec"
+],
+[
+"web01.ckl",
+"Ops / web01",
+"VMW_Aria_Operations_8-x_Apache_STIG V1R1",
+"VRPE-8X-000002",
+"CAT II",
+"Apache rule 2",
+"no review",
+"Open",
+"submitted",
+"InSpec"
+],
+[
+"web01.ckl",
+"Ops / web01",
+"VMW_Aria_Operations_8-x_Apache_STIG V1R1",
+"VRPE-8X-000005",
+"CAT II",
+"Apache rule 5",
+"no review",
+"Not Applicable",
+"submitted",
+"InSpec"
+],
+[
+"vc02.ckl",
+"Staging / vc02",
+"VMW_Aria_Operations_8-x_Apache_STIG V1R1",
+"VRPE-8X-000001",
+"CAT II",
+"Apache rule 1",
+"no review",
+"Not a Finding",
+"submitted",
+"InSpec"
+],
+[
+"vc02.ckl",
+"Staging / vc02",
+"VMW_Aria_Operations_8-x_Apache_STIG V1R1",
+"VRPE-8X-000002",
+"CAT II",
+"Apache rule 2",
+"no review",
+"Open",
+"submitted",
+"InSpec"
+],
+[
+"vc02.ckl",
+"Staging / vc02",
+"VMW_Aria_Operations_8-x_Apache_STIG V1R1",
+"VRPE-8X-000005",
+"CAT II",
+"Apache rule 5",
+"no review",
+"Not Applicable",
+"submitted",
+"InSpec"
+],
+[
+"rhel01.cklb",
+"Linux Servers Production East Region Datacenter / rhel01",
+"RHEL_9_STIG V2R9",
+"RHEL-09-000001",
+"CAT II",
+"RHEL rule 1",
+"no review",
+"Not a Finding",
+"submitted",
+"a person"
+],
+[
+"rhel01.cklb",
+"Linux Servers Production East Region Datacenter / rhel01",
+"RHEL_9_STIG V2R9",
+"RHEL-09-000002",
+"CAT II",
+"RHEL rule 2",
+"no review",
+"Open",
+"submitted",
+"a person"
+],
+[
+"rhel01.cklb",
+"Linux Servers Production East Region Datacenter / rhel01",
+"RHEL_9_STIG V2R9",
+"RHEL-09-000003",
+"CAT II",
+"RHEL rule 3",
+"no review",
+"Not Applicable",
+"submitted",
+"a person"
+],
+[
+"vc01.ckl",
+"VMware_vSphere_8_Management_Clusters_East_Region / vc01 (moved first)",
+"VMW_Aria_Operations_8-x_Apache_STIG V1R2",
+"VRPE-8X-000001",
+"CAT II",
+"Apache rule 1",
+"no review",
+"Not a Finding",
+"submitted",
+"InSpec"
+],
+[
+"vc01.ckl",
+"VMware_vSphere_8_Management_Clusters_East_Region / vc01 (moved first)",
+"VMW_Aria_Operations_8-x_Apache_STIG V1R2",
+"VRPE-8X-000002",
+"CAT II",
+"Apache rule 2",
+"no review",
+"Open",
+"submitted",
+"InSpec"
+],
+[
+"vc01.ckl",
+"VMware_vSphere_8_Management_Clusters_East_Region / vc01 (moved first)",
+"VMW_Aria_Operations_8-x_Apache_STIG V1R2",
+"VRPE-8X-000005",
+"CAT II",
+"Apache rule 5",
+"no review",
+"Not Applicable",
+"submitted",
+"InSpec"
+],
+[
+"vc03.ckl",
+"VMware_vSphere_8_Management_Clusters_East_Region / vc03 (moved first)",
+"VMW_Aria_Operations_8-x_Apache_STIG V1R2",
+"VRPE-8X-000001",
+"CAT II",
+"Apache rule 1",
+"no review",
+"Not a Finding",
+"submitted",
+"InSpec"
+],
+[
+"vc03.ckl",
+"VMware_vSphere_8_Management_Clusters_East_Region / vc03 (moved first)",
+"VMW_Aria_Operations_8-x_Apache_STIG V1R2",
+"VRPE-8X-000002",
+"CAT II",
+"Apache rule 2",
+"no review",
+"Open",
+"submitted",
+"InSpec"
+],
+[
+"vc03.ckl",
+"VMware_vSphere_8_Management_Clusters_East_Region / vc03 (moved first)",
+"VMW_Aria_Operations_8-x_Apache_STIG V1R2",
+"VRPE-8X-000005",
+"CAT II",
+"Apache rule 5",
+"no review",
+"Not Applicable",
+"submitted",
+"InSpec"
+]
+],
+"status": "warning",
+"text": "The approval step's next job writes exactly these reviews - nothing else: no collection, user, STIG or other review is changed, and no asset but the new ones (NEW ASSET: created with that name and every STIG its checklists matched, then the checklists' answers written as its reviews - 9 of them, counted in its row; the update does not create one that is there by then). Each review is written only if it is still as it was read here (STIG Manager now); one changed since is left, and said. The detail is the checklist's finding details, the comment its comments and where it came from. Not Reviewed in a checklist is never written. MOVE: an asset only in the staging collection, moved to its route's collection first - and only if it is still as it was read; its reviews are written there after it, none if it is not moved. A move keeps the asset's reviews and their history, its STIGs, metadata and labels; a Restricted grant in the staging collection that reached it would lose it - such an asset is not moved, a person decides. ASSIGN: the STIG its checklist matched, assigned to the asset first (stigman_ckl_import_assign_stigs); its reviews after it.",
+"title": "Approve writes these reviews to STIG Manager and creates 3 assets, moves 2 assets, assigns 1 STIG",
+"top": true
+},
+{
+"columns": [
+"Checklist",
+"Its STIG",
+"Host name",
+"Collection / asset",
+"STIG Manager's STIG",
+"Rules matched",
+"Matched by",
+"NaF / Open / NA / NR",
+"To write",
+"State",
+"Why"
+],
+"row_status": [
+"warning",
+"warning",
+"warning",
+"warning",
+"warning",
+"warning",
+"warning",
+"warning"
+],
+"rows": [
+[
+"vc01.ckl",
+"VMware Aria Operations 8.x Apache Profile ",
+"vc01",
+"VMware_vSphere_8_Management_Clusters_East_Region / vc01",
+"VMW_Aria_Operations_8-x_Apache_STIG V1R2",
+"4 of 4",
+"version",
+"1 / 1 / 1 / 1",
+3,
+"planned",
+"Route: route 1 (stigs VMW_Aria_Operations_*, VMW_vSphere_8-0_*; names vc*, esx*) -> VMware_vSphere_8_Management_Clusters_East_Region; it fits route 4 (Windows, by VMW_Aria_Operations_8-x_Apache_STIG) too - the first rule in the list wins"
+],
+[
+"vc02.ckl",
+"VMware Aria Operations 8.x Apache Profile ",
+"vc02",
+"Staging / vc02",
+"VMW_Aria_Operations_8-x_Apache_STIG V1R1",
+"4 of 4",
+"version",
+"1 / 1 / 1 / 1",
+3,
+"planned",
+"Route: route 1 (stigs VMW_Aria_Operations_*, VMW_vSphere_8-0_*; names vc*, esx*) -> VMware_vSphere_8_Management_Clusters_East_Region; it fits route 4 (Windows, by VMW_Aria_Operations_8-x_Apache_STIG) too - the first rule in the list wins - not moved - a person decides: the user auditor-vsphere-management-east, the group vsphere-auditors-east-region would lose vc02 (a Restricted grant in Staging) - move it in STIG Manager yourself, or take it out of that grant"
+],
+[
+"vc03.ckl",
+"VMware Aria Operations 8.x Apache Profile ",
+"vc03",
+"VMware_vSphere_8_Management_Clusters_East_Region / vc03",
+"VMW_Aria_Operations_8-x_Apache_STIG V1R2",
+"4 of 4",
+"version",
+"1 / 1 / 1 / 1",
+3,
+"planned",
+"Route: route 1 (stigs VMW_Aria_Operations_*, VMW_vSphere_8-0_*; names vc*, esx*) -> VMware_vSphere_8_Management_Clusters_East_Region; it fits route 4 (Windows, by VMW_Aria_Operations_8-x_Apache_STIG) too - the first rule in the list wins"
+],
+[
+"esx01.ckl",
+"VMware Aria Operations 8.x Apache Profile ",
+"esx01",
+"VMware_vSphere_8_Management_Clusters_East_Region / esx01 (new)",
+"VMW_Aria_Operations_8-x_Apache_STIG V1R2",
+"4 of 4",
+"version",
+"1 / 1 / 1 / 1",
+3,
+"planned",
+"Route: route 1 (stigs VMW_Aria_Operations_*, VMW_vSphere_8-0_*; names vc*, esx*) -> VMware_vSphere_8_Management_Clusters_East_Region"
+],
+[
+"web01.ckl",
+"VMware Aria Operations 8.x Apache Profile ",
+"web01",
+"Ops / web01",
+"VMW_Aria_Operations_8-x_Apache_STIG V1R1",
+"4 of 4",
+"version",
+"1 / 1 / 1 / 1",
+3,
+"planned",
+"Route: no route fits - written where it is: Ops"
+],
+[
+"app01.ckl",
+"VMware Aria Operations 8.x Apache Profile ",
+"app01",
+"Staging / app01 (new)",
+"VMW_Aria_Operations_8-x_Apache_STIG V1R1",
+"4 of 4",
+"version",
+"1 / 1 / 1 / 1",
+3,
+"planned",
+"Route: no route fits - created in Staging"
+],
+[
+"rhel01.cklb",
+"RHEL_9_STIG V2R9",
+"rhel01",
+"Linux Servers Production East Region Datacenter / rhel01",
+"RHEL_9_STIG V2R9",
+"3 of 3",
+"benchmark id",
+"1 / 1 / 1 / 0",
+3,
+"planned",
+"Route: route 2 (stigs RHEL_*; roles Member Server, Domain Controller; tech_areas UNIX OS, Database) -> Linux Servers Production East Region Datacenter"
+],
+[
+"rhel02.cklb",
+"RHEL_9_STIG V2R9",
+"rhel02",
+"Linux Servers Production East Region Datacenter / rhel02 (new)",
+"RHEL_9_STIG V2R9",
+"3 of 3",
+"benchmark id",
+"1 / 1 / 1 / 0",
+3,
+"planned",
+"Route: route 2 (stigs RHEL_*; roles Member Server, Domain Controller; tech_areas UNIX OS, Database) -> Linux Servers Production East Region Datacenter"
+]
+],
+"status": "ok",
+"text": "Each STIG of each checklist, in each collection that has its asset: the checklist's host name (HOST_NAME), (new): none there, created once approved - and the STIG installed in STIG Manager whose rules it matched (by the benchmark id, the rule ids, V-numbers or versions; stigman_ckl_import_benchmarks names one). Collections searched: every one the client reads (5); a new asset is created in its route's collection, else in Staging. NaF / Open / NA / NR: the checklist's answers.",
+"title": "Each checklist"
+},
+{
+"columns": [
+"Asset",
+"In",
+"Its route",
+"Would lose it",
+"What to do"
+],
+"rows": [
+[
+"vc02",
+"Staging",
+"VMware_vSphere_8_Management_Clusters_East_Region (route 1)",
+"the user auditor-vsphere-management-east, the group vsphere-auditors-east-region",
+"Move it in STIG Manager yourself, or take it out of that Restricted grant - the next run moves it then."
+]
+],
+"status": "warning",
+"text": "A move keeps the asset's reviews and their history, its STIGs, metadata and labels; a Restricted grant in the staging collection that reached it would lose it - such an asset is not moved, a person decides. These assets stay in the staging collection; their reviews are written there. Their checklist files are not moved (stigman_ckl_import_move), so each run lists them again.",
+"title": "Not moved - a person decides (1)"
+},
+{
+"columns": [
+"Rule",
+"Collection",
+"Fits",
+"Problem"
+],
+"rows": [
+[
+"1",
+"VMware_vSphere_8_Management_Clusters_East_Region",
+"stigs VMW_Aria_Operations_*, VMW_vSphere_8-0_*; names vc*, esx*",
+"-"
+],
+[
+"2",
+"Linux Servers Production East Region Datacenter",
+"stigs RHEL_*; roles Member Server, Domain Controller; tech_areas UNIX OS, Database",
+"-"
+],
+[
+"3",
+"Windows",
+"roles Domain Controller; tech_areas Windows OS",
+"-"
+],
+[
+"4",
+"Windows",
+"stigs VMW_Aria_*; names vc0*.vsphere-management.east-region.example.mil",
+"-"
+]
+],
+"status": "ok",
+"text": "stigman_ckl_import_routes, in order: the first rule that fits a host wins. A host no rule fits goes to Staging. An asset already in another collection is written there and never moved.",
+"title": "Routes (4)"
+}
+],
+"status": "warning",
+"subtitle": "Workflow 40's check: the checklists on \\\\fileserver.example.mil\\stig\\ckl, for Staging",
+"summary": [
+{
+"label": "Checklists",
+"note": "STIGs in 8 file(s)",
+"value": 8
+},
+{
+"label": "Reviews to write",
+"status": "warning",
+"value": 24
+},
+{
+"label": "New assets",
+"status": "warning",
+"value": 3
+},
+{
+"label": "To move",
+"note": "1 for a person",
+"status": "warning",
+"value": 2
+},
+{
+"label": "Already so",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Not written",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Not imported",
+"note": "checklists and files",
+"status": "ok",
+"value": 0
+}
+],
+"title": "Checklist import: 24 review(s) to write, 3 new asset(s), 2 to move, 1 STIG(s) to assign, 1 move(s) for a person"
+}

@@ -28,10 +28,12 @@ stigman_ckl_import_collections: []
 stigman_ckl_import_create_assets: true
 # Where each host goes (1.26.0): an ordered list of rules, the first that fits a host wins. A rule: collection (its name or id)
 # and any of stigs (the installed STIG its checklist matched, its id or title: "*Windows_Server*", "RHEL_*", "VMW_*"), names
-# (the host name or FQDN: "esx*", "vc*"), roles and tech_areas (the checklist's ROLE and TECH_AREA) - * and ?, any case;
+# (the host name or FQDN, or its short name: "esx*", "vc*"), roles and tech_areas (the checklist's ROLE and TECH_AREA) -
+# * and ?, any case;
 # each one given must fit. A new asset is created in its rule's collection; an asset that is only in the staging collection
 # is moved there (stigman_ckl_import_route_move); an asset in any other collection is written there, never moved. A host no
-# rule fits: the staging collection, as before. A rule's collection is searched for the host's asset too. [] = no routes.
+# rule fits: the staging collection, as before. With routes every collection the client reads is searched for the host's
+# asset (whatever stigman_ckl_import_collections says). A rule whose collection is not there stops the job. [] = no routes.
 #   - {collection: Windows, stigs: ["*Windows_Server*"]}
 #   - {collection: VMware, names: ["esx*", "vc*"]}
 #   - {collection: Linux, stigs: ["RHEL_*"]}

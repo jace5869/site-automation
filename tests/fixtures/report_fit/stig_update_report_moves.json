@@ -1,0 +1,245 @@
+{
+"footer": "STIG Manager: GET and POST of these reviews only, PATCH /assets/{id} for the moves (its collection only), PUT /assets/{id}/stigs/{benchmark} for the STIGs assigned (playbooks/stigman_update.yml).",
+"sections": [
+{
+"columns": [
+"Host",
+"Asset",
+"What",
+"Result",
+"Why"
+],
+"row_status": [
+"ok",
+"ok",
+"critical",
+"ok",
+"critical",
+"critical",
+"critical"
+],
+"rows": [
+[
+"vc01",
+"vc01",
+"from Staging to VMware_vSphere_8_Management_Clusters_East_Region",
+"moved",
+"it keeps its reviews and their history, its STIGs, metadata and labels; a Restricted grant in Staging that reached it loses it"
+],
+[
+"rhel01",
+"rhel01",
+"RHEL_9_STIG in Linux",
+"assigned",
+""
+],
+[
+"vc01",
+"vc01",
+"from Staging to VMware_vSphere_8_Management_Clusters_East_Region",
+"held",
+"not moved - a person decides: the user auditor-vsphere-management-east, the group vsphere-auditors-east-region would lose it (a Restricted grant in Staging)"
+],
+[
+"rhel01",
+"rhel01",
+"RHEL_9_STIG in Linux",
+"assigned",
+""
+],
+[
+"vc01",
+"vc01",
+"from Staging to VMware_vSphere_8_Management_Clusters_East_Region",
+"no grant",
+"the client has Full in VMware_vSphere_8_Management_Clusters_East_Region - moving an asset needs Manage in both collections - not moved"
+],
+[
+"rhel01",
+"rhel01",
+"RHEL_9_STIG in Linux",
+"no grant",
+"the client has Full in Linux - assigning a STIG needs Manage - not assigned"
+],
+[
+"vc01",
+"vc01",
+"from Staging to VMware_vSphere_8_Management_Clusters_East_Region",
+"changed since",
+"its labels are dmz-vsphere-management-east, web now since the check - not moved, and its reviews not written: run the import again"
+]
+],
+"status": "critical",
+"text": "Done before the reviews, each checked again first. A move keeps the asset's reviews and their history, its STIGs, metadata and labels; a Restricted grant in the collection it leaves loses it - an asset such a grant reaches is not moved (a person decides). The reviews of an asset not moved, or of a STIG not assigned, are not written.",
+"title": "Moves and STIG assignments"
+},
+{
+"columns": [
+"Host",
+"Asset",
+"Rule",
+"Read by the check",
+"STIG Manager before",
+"Written as",
+"Result",
+"Why"
+],
+"row_status": [
+"ok",
+"ok",
+"ok",
+"",
+"",
+"ok",
+"",
+"",
+"",
+"",
+""
+],
+"rows": [
+[
+"vc01",
+"vc01",
+"V-1",
+"no review",
+"no review",
+"Not a Finding (submitted)",
+"written",
+""
+],
+[
+"vc01",
+"vc01",
+"V-2",
+"no review",
+"no review",
+"Not a Finding (submitted)",
+"written",
+""
+],
+[
+"rhel01",
+"rhel01",
+"V-7",
+"no review",
+"no review",
+"Not a Finding (submitted)",
+"written",
+""
+],
+[
+"vc01",
+"vc01",
+"V-1",
+"no review",
+"-",
+"Not a Finding (submitted)",
+"asset not moved",
+"its asset vc01 was not moved - not written"
+],
+[
+"vc01",
+"vc01",
+"V-2",
+"no review",
+"-",
+"Not a Finding (submitted)",
+"asset not moved",
+"its asset vc01 was not moved - not written"
+],
+[
+"rhel01",
+"rhel01",
+"V-7",
+"no review",
+"no review",
+"Not a Finding (submitted)",
+"written",
+""
+],
+[
+"vc01",
+"vc01",
+"V-1",
+"no review",
+"-",
+"Not a Finding (submitted)",
+"asset not moved",
+"its asset vc01 was not moved - not written"
+],
+[
+"vc01",
+"vc01",
+"V-2",
+"no review",
+"-",
+"Not a Finding (submitted)",
+"asset not moved",
+"its asset vc01 was not moved - not written"
+],
+[
+"rhel01",
+"rhel01",
+"V-7",
+"no review",
+"-",
+"Not a Finding (submitted)",
+"STIG not assigned",
+"RHEL_9_STIG was not assigned to rhel01 - not written"
+],
+[
+"vc01",
+"vc01",
+"V-1",
+"no review",
+"-",
+"Not a Finding (submitted)",
+"asset not moved",
+"its asset vc01 was not moved - not written"
+],
+[
+"vc01",
+"vc01",
+"V-2",
+"no review",
+"-",
+"Not a Finding (submitted)",
+"asset not moved",
+"its asset vc01 was not moved - not written"
+]
+],
+"status": "critical",
+"text": "Only the reviews the approval allowed (the check's plan). Each was read again first: one changed in STIG Manager since the check is left as it is, and so is one with attachments (evidence a person attached stays with its result). A written review was read back. STIG Manager keeps each review's history: what it was is there too. No collection, user or other review was changed, nor an asset that was there - but the moves and STIG assignments above, each as the approval allowed it.",
+"title": "Each review of the plan"
+}
+],
+"status": "critical",
+"subtitle": "The reviews approved in workflow 40 (the checklist import)",
+"summary": [
+{
+"label": "Written",
+"status": "ok",
+"value": 4
+},
+{
+"label": "Already so",
+"value": 0
+},
+{
+"label": "Changed since the check",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Has attachments (left)",
+"value": 0
+},
+{
+"label": "Not written",
+"status": "critical",
+"value": 11
+}
+],
+"title": "STIG Manager update: 4 review(s) written, 1 asset(s) moved, 2 STIG(s) assigned, 11 not"
+}

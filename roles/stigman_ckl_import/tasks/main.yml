@@ -15,15 +15,27 @@
       - check_stig_stigman_api | default('') | length > 0
       - stigman_ckl_import_auto in ['none', 'existing', 'all']
       - stigman_ckl_import_collections is sequence and stigman_ckl_import_collections is not string
-      - stigman_ckl_import_routes is sequence and stigman_ckl_import_routes is not string
       - stigman_ckl_import_route_move in ['staging', 'none']
     fail_msg: >-
       Set stigman_ckl_import_src (the share's folder: \\fileserver\stig\ckl), stigman_ckl_import_collection (the STIG Manager
       collection) and check_stig_stigman_api (all.yml, as for the STIG drift report), and attach the "STIG Manager API"
       credential (read-only is enough, unless stigman_ckl_import_auto) and the "Windows file share" credential;
       stigman_ckl_import_auto is none, existing or all; stigman_ckl_import_collections a list ([] or ['*'] or names);
-      stigman_ckl_import_routes a list of rules ({collection: ..., stigs: [...]}); stigman_ckl_import_route_move staging or none.
+      stigman_ckl_import_route_move staging or none.
       docs/CKL_IMPORT.md. Nothing read.
+    quiet: true
+
+# a mapping, a list of names or an empty item is not a list of rules: said in our words, before anything is read
+- name: Import checklists | stigman_ckl_import_routes is a list of rules
+  ansible.builtin.assert:
+    that:
+      - stigman_ckl_import_routes is not mapping and stigman_ckl_import_routes is not string
+      - stigman_ckl_import_routes is sequence
+      - stigman_ckl_import_routes | reject('mapping') | list | length == 0
+    fail_msg: >-
+      stigman_ckl_import_routes is a list of rules, each a mapping - {collection: <its name or id>, stigs: [...], names:
+      [...]} - not {{ stigman_ckl_import_routes | to_json | truncate(120) }}. docs/CKL_IMPORT.md, Routes. Nothing read or
+      written.
     quiet: true
 
 - name: Import checklists | read them, match them to STIG Manager, plan the reviews (reads only)

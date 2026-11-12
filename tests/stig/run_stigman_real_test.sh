@@ -415,6 +415,8 @@ m.write(sys.argv[2], 1, None, "General_Purpose_Operating_System_SRG", "General P
 curl -s -H "Authorization: Bearer $atok" -F "importFile=@$work/srg.xml" "$A/stigs?elevate=true" > "$work/imp-srg.json"
 grep -q General_Purpose_Operating_System_SRG "$work/imp-srg.json" && ok "1.26.0: an SRG imported (General_Purpose_Operating_System_SRG V3R1)" \
     || bad "SRG import: $(head -c 300 "$work/imp-srg.json")"
+# with routes every collection the client reads is searched: Full in Lab VMware again (Restricted there would stop the run)
+api "$atok" PUT "/collections/$lab2/grants/$gid" "{\"userId\": \"$wid\", \"roleId\": 2}" >/dev/null
 stg=$(mkcol Staging 3); lnx=$(mkcol Linux 3)
 mkr() {  # mkr COLLECTION NAME STIGS -> its id
     api "$atok" POST /assets "{\"name\": \"$2\", \"collectionId\": \"$1\", \"description\": \"\", \"ip\": \"\", \"noncomputing\": false,

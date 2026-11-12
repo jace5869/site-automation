@@ -1590,6 +1590,26 @@ class UpdateReportMoves(unittest.TestCase):
         self.assertEqual(sf.stig_update_report(items, source="import")["title"],
                          "STIG Manager update: 1 review(s) written, 0 asset(s) moved, 1 STIG(s) assigned, 3 not")
 
+    def test_report_fit_document(self):
+        """The update's report with its Moves and STIG assignments section and long values (a long collection name, a long
+        FQDN, who would lose an asset): moved, held, no grant, changed since, assigned - from the update itself. Its document is
+        tests/fixtures/report_fit/stig_update_report_moves.json (python3 tests/report_fit_docs.py --named), that
+        tests/test_report_fit.py renders."""
+        vmw = "VMware_vSphere_8_Management_Clusters_East_Region"
+        items = []
+        for sm in (SM(), SM(who=["the user auditor-vsphere-management-east", "the group vsphere-auditors-east-region"]),
+                   SM(grants={"5": 3, "8": 2, "9": 2})):
+            sm.db["51"]["fqdn"] = "vc01.vsphere-management.east-region.example.mil"
+            plan = move_plan(collection=vmw, fqdn="vc01.vsphere-management.east-region.example.mil") + assign_plan()
+            items += smu.update({"plan": plan}, sm, False)
+        sm = SM()
+        sm.db["51"]["labels"].append({"labelId": "L-dmz", "name": "dmz-vsphere-management-east"})
+        items += smu.update({"plan": move_plan(collection=vmw)}, sm, False)
+        r = sf.stig_update_report(items, source="import")
+        s = [x for x in r["sections"] if x["title"] == "Moves and STIG assignments"][0]
+        self.assertEqual([x[3] for x in s["rows"]], ["moved", "assigned", "held", "assigned", "no grant", "no grant", "changed since"])
+        self.assertEqual(s["rows"][0][2], "from Staging to " + vmw)
+        self.assertEqual(r["status"], "critical")
 
 class Attachments(unittest.TestCase):
     def test_what_the_review_panel_writes(self):

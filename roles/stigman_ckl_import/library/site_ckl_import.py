@@ -32,8 +32,8 @@ description:
   - C(routes) (1.26.0) - an ordered list of rules, the first that fits a host wins - a new asset is created in its route's
     collection (else C(collection)); an asset only in the staging collection is planned to move to it (C(route_move); a move
     keeps its reviews and their history, STIGs, metadata and labels - one a Restricted grant in the staging collection reaches
-    is held for a person); an asset in any other collection is written there, never moved. A route's collection is searched
-    too.
+    is held for a person); an asset in any other collection is written there, never moved. With routes every collection
+    the client reads is searched (whatever C(collections) says); a route whose collection is not there fails the plan.
   - C(assign_stigs) - an asset that is there without the STIG its checklist matched - the assignment is planned, then its
     reviews.
   - GET requests only, to STIG Manager; the share is only read.
@@ -67,7 +67,7 @@ options:
   move_to: {description: "The folder under src the imported files go to (never read).", type: str, default: imported}
   create_assets: {description: "Plan a new asset for a host name with none (the update needs the Manage grant).", type: bool, default: true}
   routes:
-    description: "[{collection (name or id), stigs (the matched installed STIG's id or title), names (host name or FQDN), roles,
+    description: "[{collection (name or id), stigs (the matched installed STIG's id or title), names (host name or FQDN, or its short name), roles,
       tech_areas (the checklist's) - fnmatch, any case, a list or text with commas; each given must fit}] - the first that fits
       a host wins."
     type: list
@@ -631,7 +631,7 @@ def as_col(c):
     return {"collectionId": str(c.get("collectionId")), "name": c.get("name") or ""}
 
 
-def pick_collections(cols, want, staging, grants=None):
+def pick_collections(cols, want, staging, grants=None, routed=False):
     """-> (the staging collection - where a new asset is created -, the collections a host's asset is looked for in): those
     of want (names or ids, * and ?, any case; '*' = every one the client reads), the staging one last. want empty: the
     staging one only (as 0.75.0). grants ({collectionId: roleId}, GET /user): one where the client has less than Full is
@@ -652,6 +652,10 @@ def pick_collections(cols, want, staging, grants=None):
             if c["collectionId"] != st["collectionId"] and c not in out:
                 out.append(c)
     low = [c["name"] for c in out + [st] if grants is not None and grants.get(c["collectionId"], 0) < 2]
+    if low and routed:
+        raise Fail("the client has only Restricted in %s - with stigman_ckl_import_routes every collection the client reads is "
+                   "searched, and a host whose asset is there would look new (created again): give it Full there, or take its "
+                   "grant there away" % ", ".join(low))
     if low:
         raise Fail("the client has only Restricted in %s - it may not see every asset there, and a host whose asset is there would "
                    "look new (created again in %s): give it Full there, or leave %s out of stigman_ckl_import_collections" % (
@@ -673,32 +677,44 @@ def my_grants(client):
 ROUTE_KEYS = ("stigs", "names", "roles", "tech_areas")
 
 
-def _list(v):
-    """A route's patterns: a list, or text - one per line or separated by commas (never cut at spaces)."""
+def _list(v, n, key):
+    """A route's patterns: a list of names or patterns, or text - one per line or separated by commas (never cut at
+    spaces). Anything else (a number, a mapping, a list holding one) is refused, naming the rule."""
     if v is None:
         return []
-    if isinstance(v, (list, tuple)):
-        return [str(x).strip() for x in v if str(x).strip()]
-    return [x.strip() for x in re.split(r"[,\n]", str(v)) if x.strip()]
+    if isinstance(v, str):
+        return [x.strip() for x in re.split(r"[,\n]", v) if x.strip()]
+    if isinstance(v, (list, tuple)) and all(isinstance(x, str) for x in v):
+        return [x.strip() for x in v if x.strip()]
+    raise Fail("stigman_ckl_import_routes, rule %d: %s is a list of names or patterns (or text with commas), not %r - "
+               "nothing planned" % (n, key, v))
 
 
 def read_routes(routes, cols):
-    """stigman_ckl_import_routes -> [{n (1, 2 ...), collection (as_col, or None: one the client cannot read), want, stigs, names,
+    """stigman_ckl_import_routes -> [{n (1, 2 ...), collection (as_col), want, stigs, names,
     roles, tech_areas, text, error}] in their order (the first that matches a host wins)."""
     out = []
     for n, r in enumerate(routes or [], 1):
-        if not isinstance(r, dict) or not str(r.get("collection") or "").strip():
-            raise Fail("stigman_ckl_import_routes, rule %d: no collection - each rule is {collection: <name or id>, stigs: [...], "
-                       "names: [...]}" % n)
+        if not isinstance(r, dict):
+            raise Fail("stigman_ckl_import_routes, rule %d: %r is not a rule - each rule is {collection: <name or id>, stigs: [...], "
+                       "names: [...]}; nothing planned" % (n, r))
+        if not isinstance(r.get("collection"), (str, int)) or isinstance(r.get("collection"), bool) or not str(r.get("collection")).strip():
+            raise Fail("stigman_ckl_import_routes, rule %d: collection is one collection's name or id, not %r - nothing planned"
+                       % (n, r.get("collection")))
         bad = sorted(set(r) - set(("collection",) + ROUTE_KEYS))
         if bad:
             raise Fail("stigman_ckl_import_routes, rule %d: %s is not a rule's key (collection, %s)" % (n, ", ".join(bad), ", ".join(ROUTE_KEYS)))
         want = str(r["collection"]).strip()
         got = [c for c in cols if (c.get("name") or "").lower() == want.lower() or str(c.get("collectionId")) == want]
-        rule = dict((k, _list(r.get(k))) for k in ROUTE_KEYS)
+        if not got:
+            # a typo, or a collection the client has no grant in: the run stops before anything is written (a host routed
+            # there would be written in the staging collection, its file moved, and the route never done)
+            raise Fail("stigman_ckl_import_routes, rule %d: no collection %s that the client can read (it reads: %s) - check the "
+                       "name, or give the client a grant there; nothing planned" % (
+                           n, want, ", ".join(sorted(c.get("name") or "" for c in cols)) or "none"))
+        rule = dict((k, _list(r.get(k), n, k)) for k in ROUTE_KEYS)
         text = "; ".join("%s %s" % (k, ", ".join(rule[k])) for k in ROUTE_KEYS if rule[k]) or "every host"
-        out.append(dict(rule, n=n, want=want, collection=as_col(got[0]) if got else None, text=text,
-                        error="" if got else "the client cannot read the collection %s (route %d) - nothing is created or moved there" % (want, n)))
+        out.append(dict(rule, n=n, want=want, collection=as_col(got[0]), text=text, error=""))
     return out
 
 
@@ -709,14 +725,16 @@ def _any(patterns, values):
 
 def route_of(routes, host, matched):
     """A host's route: the first rule (in the list's order) that one of its checklists' STIGs fits - each key given must fit
-    (stigs: the matched installed STIG's id or title; names: the host name or FQDN; roles, tech_areas: the checklist's) ->
+    (stigs: the matched installed STIG's id or title; names: the host name or FQDN, or its short name - before the first
+    dot -, any case; roles, tech_areas: the checklist's) ->
     (the route or None, [the later rules that fit too, with another collection: (route, by what)])."""
     first, also = None, []
     for r in routes:
         for bench, title, target in matched:
             if r["stigs"] and not _any(r["stigs"], [bench, title]):
                 continue
-            if r["names"] and not _any(r["names"], [host, target.get("host"), target.get("fqdn")]):
+            if r["names"] and not _any(r["names"], [x for v in (host, target.get("host"), target.get("fqdn")) if v
+                                                    for x in (v, v.split(".")[0])]):
                 continue
             if r["roles"] and not _any(r["roles"], [target.get("role")]):
                 continue
@@ -820,22 +838,25 @@ def plan_all(p, client, files):
     cols = client.get("/collections") or []
     grants = my_grants(client)
     routes = read_routes(p["routes"], cols)
-    # a route's collection is searched too: a host whose asset is there already is written there, never created again
-    staging, searched = pick_collections(cols, list(p["collections"]) + [r["collection"]["collectionId"] for r in routes if r["collection"]],
-                                         p["collection"], grants)
+    # with routes, every collection the client reads is searched (whatever stigman_ckl_import_collections says): a host whose
+    # asset is anywhere is written where it is - never created again, never moved out of a collection but the staging one
+    staging, searched = pick_collections(cols, ["*"] if routes else list(p["collections"]), p["collection"], grants, bool(routes))
     many = len(searched) > 1
     stigs = client.get("/stigs") or []
     stigs_by_id = dict((s.get("benchmarkId"), s) for s in stigs)
     auto_all = p["auto"] == "all"
-
-    def manage(*cids):
-        """With auto all (written at once) the client must have Manage to create, move or assign there: '' or why not."""
-        if not auto_all or grants is None:
-            return ""
-        low = [c for c in cids if grants.get(c["collectionId"], 0) < 3]
-        return ("stigman_ckl_import_auto: all writes at once, and the client has %s - that needs Manage: give it Manage there, "
-                "or let the approval write it" % ", ".join("%s in %s" % ({1: "Restricted", 2: "Full", 4: "Owner"}.get(grants.get(c["collectionId"], 0),
-                                                                                                                   "no grant"), c["name"]) for c in low)) if low else ""
+    if auto_all and grants is not None and routes:
+        # written at once: every grant a create or a move needs is checked before anything is written - one too low stops it all
+        need = ([staging] if p["create_assets"] or p["route_move"] == "staging" else []) + [r["collection"] for r in routes]
+        low, seen = [], set()
+        for c in need:
+            if c["collectionId"] not in seen and grants.get(c["collectionId"], 0) < 3:
+                low.append("%s in %s" % ({1: "Restricted", 2: "Full", 4: "Owner"}.get(grants.get(c["collectionId"], 0), "no grant"), c["name"]))
+            seen.add(c["collectionId"])
+        if low:
+            raise Fail("stigman_ckl_import_auto: all creates and moves assets at once, so the client needs Manage in the staging "
+                       "collection and every route's collection - it has %s: nothing written. Give it Manage there, or "
+                       "stigman_ckl_import_auto: existing (the approval then creates and moves)" % ", ".join(low))
 
     # every checklist read first: a host's route is decided by all of its checklists
     parsed = []
@@ -884,15 +905,14 @@ def plan_all(p, client, files):
             if others:
                 rnote += "; it fits %s too - the first rule in the list wins" % ", ".join(
                     "route %d (%s, by %s)" % (r["n"], r["want"], b) for r, b in others)
+        elif routes and name:
+            rnote = "no route fits - " + (("written where it is: %s" % ", ".join(c["name"] for c, _a in real)) if real else
+                                          ("stays in %s" % staging["name"]) if hits else ("created in %s" % staging["name"]))
         moving = None           # the host's asset, moved out of the staging collection to its route's
-        refused = ""            # its move refused for the grants (auto all): its file stays, the next run moves it
         if not real and hits and rcol and rcol["collectionId"] != staging["collectionId"]:
             asset = hits[0][1]
             aid = str(asset.get("assetId") or "")
             why = "" if p["route_move"] != "none" else "not moved (stigman_ckl_import_route_move: none) - written in %s" % staging["name"]
-            if not why and manage(staging, rcol):
-                refused = manage(staging, rcol)
-                why = "not moved: %s - written in %s" % (refused, staging["name"])
             if not why and aid not in moves and aid not in held:
                 # who has it in the staging collection through a Restricted grant loses it: such a move waits for a person
                 who = restricted_on(client, staging, asset) if (grants or {}).get(staging["collectionId"], 0) >= 3 else None
@@ -915,8 +935,6 @@ def plan_all(p, client, files):
                     moves[aid]["files"].append(f["name"])
             else:
                 rnote += " - " + why
-        elif route and route["error"] and not real and hits:
-            rnote += " - %s; written in %s" % (route["error"], staging["name"])
         elif route and real and rcol and all(c["collectionId"] != rcol["collectionId"] for c, _a in real):
             rnote += " - its asset is in %s: written there, never moved out of it" % ", ".join(c["name"] for c, _a in real)
         for ck in ckl["stigs"]:
@@ -927,7 +945,7 @@ def plan_all(p, client, files):
             base = {"file": f["name"], "modified": f.get("modified", ""), "stig": ck["stig"], "title": ck["title"], "release": ck["revision"],
                     "host": ckl["target"]["host"], "asset": name, "assetId": "", "collection": staging["name"],
                     "collectionId": staging["collectionId"], "new": False, "benchmark": "", "revision": "", "match": "", "by": "",
-                    "counts": counts, "planned": 0, "state": "", "why": "", "route": rnote, "move_refused": refused}
+                    "counts": counts, "planned": 0, "state": "", "why": "", "route": rnote}
             answered = [r for r in ck["rules"] if r["result"] != "notchecked"]
 
             def add(**kw):
@@ -955,16 +973,7 @@ def plan_all(p, client, files):
                                                 "stigman_ckl_import_create_assets: true" % (name, ", ".join(c["name"] for c in searched)))
                 leave("no_asset", row["why"], row)
                 continue
-            if not targets and route and route["error"]:
-                row = add(state="no asset", why="no asset %s yet, and %s" % (name, route["error"]))
-                leave("no_asset", row["why"], row)
-                continue
             home = rcol or staging          # where a new asset is created: its route's collection, else the staging one
-            if not targets and manage(home):
-                row = add(collection=home["name"], collectionId=home["collectionId"], new=True, state="no grant",
-                          why="%s is not created: %s" % (name, manage(home)))
-                leave("grant", row["why"], row)
-                continue
             tries = targets or [(home, None)]
             first_revs = revisions_of(client, tries[0][0])
             m = match_stig(client, ck, stigs, p, None if moving else tries[0][1], first_revs)
@@ -989,7 +998,6 @@ def plan_all(p, client, files):
                                                                                                         ", ".join(c["name"] for c, _a in have)))
                         continue
                     no = "" if p["assign_stigs"] else "stigman_ckl_import_assign_stigs: false"
-                    no = no or manage(col)
                     if no:
                         row.update(state="no STIG on the asset", why="%s has no %s in STIG Manager - assign it to the asset (Collection > "
                                                                      "Assets), then run this again (%s)" % (row["asset"], m["bench"], no))
@@ -1121,6 +1129,19 @@ def plan_all(p, client, files):
                     and i.get("collectionId") == it["collectionId"]]
         it["reviews"] = len(mine)
         it["line"] += " - then %d review(s)" % len(mine) if mine else ""
+    if auto_all and grants is not None:
+        # written at once: a create, move or assignment where the client has less than Manage stops it all, before anything is
+        # written (with routes their collections were checked above already)
+        low = []
+        for it in creates + list(moves.values()) + list(assigns.values()):
+            for cid, cname in ([(it["fromId"], it["from"])] if it["kind"] == "move" else []) + [(it["collectionId"], it["collection"])]:
+                w = "%s in %s" % ({1: "Restricted", 2: "Full", 4: "Owner"}.get(grants.get(cid, 0), "no grant"), cname)
+                if grants.get(cid, 0) < 3 and w not in low:
+                    low.append(w)
+        if low:
+            raise Fail("stigman_ckl_import_auto: all creates, moves and assigns at once, and the client has %s - that needs Manage: "
+                       "nothing written. Give it Manage there, or stigman_ckl_import_auto: existing (the approval then does it)"
+                       % ", ".join(low))
     return (checklists, creates + list(moves.values()) + list(assigns.values()) + plan, left, staging, [c["name"] for c in searched],
             [dict((k, r[k]) for k in ("n", "want", "text", "error")) for r in routes], list(held.values()))
 
