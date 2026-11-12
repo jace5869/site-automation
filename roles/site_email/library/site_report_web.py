@@ -706,8 +706,14 @@ def _runs(r):
 
 
 def _run(r):
-    """A run as a line lists it (its banner only when it had one)."""
-    return dict((k, r.get(k)) for k in RUN_KEYS if k != 'banner' or r.get(k))
+    """A run as a line lists it. Its banner key ({} for none) only when the line had one: a run from before 1.24.0 has
+    none, and keeps none (top_banner)."""
+    return dict((k, r.get(k)) for k in RUN_KEYS if k != 'banner' or k in r)
+
+
+def from_before(reports):
+    """A line, or a run it lists, written before 1.24.0 (no banner key): its marking is not known."""
+    return any('banner' not in x for r in reports for x in [r] + _runs(r))
 
 
 # the index page's tabs (radio buttons and their labels: no script) and its lines that open (details) - every other
@@ -1342,10 +1348,11 @@ def _level(b):
 def top_banner(this, reports, floor=None):
     """The index's banner: the highest marking among its lines and their runs (this run's own when it is as high). A line
     from before 1.24.0 has no banner key: while one is listed, the banner the index carried before (floor) stays the
-    lowest it may have - an upgraded site keeps its marking until every older line has been written again."""
+    lowest it may have - an upgraded site keeps its marking until every older line and run has left the index (1.24.0c:
+    a run too - a classified template that runs again unclassified still lists its older run)."""
     best = _mark(this)
     cands = [b for r in reports for b in [r.get('banner')] + [x.get('banner') for x in _runs(r)]]
-    if floor and any('banner' not in r for r in reports):
+    if floor and from_before(reports):
         cands.append(floor)
     for b in cands:
         if _level(b) > _level(best):
@@ -1479,7 +1486,7 @@ def main():
         written = []
         entry = dict(p['entry'], page=page, latest=latest)
         entry.pop('banner', None)                        # this run's banner, never one the entry brings
-        # kept on its line and run, an empty one too (1.24.0b: a line with the key is from 1.24.0 on): the index carries the
+        # kept on its line and run, an empty one too (1.24.0b/c: a line or run with the key is from 1.24.0 on): the index carries the
         # highest
         entry['banner'] = _mark(banner)
         if p['sub_pages']:
@@ -1573,7 +1580,7 @@ def main():
                 uri = inline_images('cid:' + str(p['images'][0].get('cid')), p['images'][:1])
                 logo = (uri, p['logo_size'][0], p['logo_size'][1]) if uri.startswith('data:') else None
             floor = {}
-            if any('banner' not in r for r in reports):     # lines from before 1.24.0: the banner the index carried stays
+            if from_before(reports):     # lines or runs from before 1.24.0: the banner the index carried stays
                 last = now or known
                 page_before = ''
                 if not win and not (last and '"banner"' in last):

@@ -338,8 +338,10 @@ class History(unittest.TestCase):
         self.assertEqual([x["job"] for x in line["runs"]], [7, 6, 5, 4, 3])              # newest first, 5 of them
         self.assertEqual([x["job"] for x in dropped], [2])                               # 1 went the run before
         self.assertEqual(line["job"], 7)
-        # no key, name or runs in a run; a banner only when the run had one
+        # no key, name or runs in a run; a banner key only when the line had one (1.24.0c: the module always gives one)
         self.assertEqual(sorted(line["runs"][0]), sorted(set(rw.RUN_KEYS) - {"banner"}))
+        line, _ = rw.history(line, dict(self.entry(8, "2026-10-08 06:00 UTC"), banner={}), 5)
+        self.assertEqual(line["runs"][0]["banner"], {})
 
     def test_an_older_run_copied_later(self):
         line = None
@@ -1012,6 +1014,10 @@ class IndexBanner(unittest.TestCase):
         self.assertEqual(rw.top_banner(unc, [line(cui), line(ts)])["text"], "TOP SECRET")
         self.assertEqual(rw.top_banner(cui, [line(unc)])["text"], "CUI")
         self.assertEqual(rw.top_banner({}, [line(None), {"key": "old", "page": "o.html"}]), {})   # lines from before: none
+        self.assertTrue(rw.from_before([{"key": "k", "banner": {}, "runs": [{"page": "a.html", "banner": {}}, {"page": "b.html"}]}]))
+        self.assertFalse(rw.from_before([dict(line(None, unc), banner=unc)]))
+        self.assertEqual(rw.top_banner({}, [{"key": "k", "banner": {}, "runs": [{"page": "a.html", "banner": {}},
+                                                                               {"page": "b.html"}]}], self.SECRET)["text"], "SECRET//NOFORN")
         self.assertEqual(rw.top_banner(dict(self.SECRET, bg="#c8102e"), [line(dict(self.SECRET, bg="#000000"))])["bg"], "#c8102e")  # this run's own
         odd = rw.top_banner({}, [line({"on": True, "text": "x", "bg": "red;background:url(x)", "fg": "\"><b>"})])
         self.assertEqual((odd["bg"], odd["fg"]), ("#4d4d4d", "#ffffff"))             # colours checked
@@ -1033,7 +1039,7 @@ class IndexBanner(unittest.TestCase):
         self.assertEqual(lines["vm/latest.html"]["banner"]["text"], "SECRET//NOFORN")
         self.assertEqual(lines["vm/latest.html"]["runs"][0]["banner"]["text"], "SECRET//NOFORN")
         self.assertEqual(lines["os/latest.html"]["banner"], {})                     # 1.24.0b: the key, empty (a line from now)
-        self.assertNotIn("banner", lines["os/latest.html"]["runs"][0])
+        self.assertEqual(lines["os/latest.html"]["runs"][0]["banner"], {})          # 1.24.0c: a run from now has the key too
 
     def test_an_upgraded_site_keeps_its_banner(self):
         """1.24.0b: an index written before 1.24.0 (its lines without a banner key) carried SECRET: unclassified runs keep
@@ -1068,7 +1074,16 @@ class IndexBanner(unittest.TestCase):
         self.assertIn("SECRET//NOFORN", html)                                             # now from index.json's own
         r = run_module(web_args(dest, page="vm/2026-10-03_0600_job-4.html", key="vm/latest.html"))   # its next run: unclassified
         html, doc = index()
-        self.assertNotIn("site-banner", html)                                             # every line from now: none left
+        lines = dict((x["key"], x) for x in doc["reports"])
+        self.assertEqual(lines["vm/latest.html"]["banner"], {})
+        self.assertNotIn("banner", lines["vm/latest.html"]["runs"][1])                    # its SECRET run from before, still listed
+        self.assertIn("SECRET//NOFORN", html)                                             # 1.24.0c: so the marking stays
+        self.assertEqual(doc["banner"]["text"], "SECRET//NOFORN")
+        for day in range(4, 8):                                                           # 4 more: the old run leaves its 5
+            run_module(web_args(dest, page="vm/2026-10-%02d_0600_job-%d.html" % (day, day + 1), key="vm/latest.html"))
+        html, doc = index()
+        self.assertNotIn("vm/2026-09-01_0600_job-1.html", json.dumps(doc))
+        self.assertNotIn("site-banner", html)                                             # every line and run from now: none left
         self.assertEqual(doc["banner"], {})
 
     def test_a_banner_the_entry_brings_is_not_kept(self):
