@@ -381,6 +381,37 @@ class Judge(unittest.TestCase):
         self.assertNotIn("Hx17", out)
         self.assertNotIn("Hx18", out)
 
+    def test_shell_words(self):
+        """1.24.0f: the command word wherever a shell starts a command - after $( ` ( ; | && and inside quotes - the
+        command ends at a new line (not after a \\ at its end), and Windows tools' switches with / or - in any case."""
+        hide = [  # (value, what must never be seen)
+            ("N=$(mysql -uroot -p2024Hx1 -N)", "2024Hx1"), ("N=`mysql -uroot -pHx2`", "Hx2"), ("(mysql -uroot -p2024Hx3 db)", "2024Hx3"),
+            ("ssh db01 'mysql -uroot -p9Hx4! -e status'", "9Hx4!"), ('ssh db01 "mysql -uroot -p9Hx5! -e status"', "9Hx5!"),
+            ("bash -c 'mysql -uroot -p2024Hx6'", "2024Hx6"), ("cd /tmp;mysql -uroot -p2024Hx7 db", "2024Hx7"),
+            ("true&&mysql -uroot -p2024Hx8", "2024Hx8"), ("echo 'select 1'|mysql -uroot -pHxnine", "Hxnine"),
+            ("true|mysql -uroot -pHxten", "Hxten"), ("x=$(curl -usvc:Hx11 https://api.example.mil/x)", "Hx11"),
+            ("mysqldump \\\n  -pHxtwelve app", "Hxtwelve"), ("mysql -e 'select 1' -pHxthirteen", "Hxthirteen"),
+            ("mysql -p 'Hxfourteen'", "Hxfourteen"), ("winrs /p:Hx15 ipconfig", "Hx15"), ("WINRS -r:host01 -P:Hx16 ipconfig", "Hx16"),
+            ("sqlcmd /P Hx17", "Hx17"), ("SQLCMD -S db01 /PHx18", "Hx18"), ("NET ads join /U svc%Hx19", "Hx19"),
+        ]
+        show = [
+            "mysqldump app > app.sql\nrsync -prltDvz a b", "echo mysql\nls -pabc", "net use \\\\fs01\\share /user:svc",
+            "mysql -P 3306 app", "date -u +%H:%M:%S", "podman exec -u apache:apache web ls", "ssh -p$SSH_PORT host01",
+            "find . -print0", "rsync -prltDvz a b", "curl -u svc https://api.example.mil/x",
+        ]
+        for i, (v, expect) in enumerate(hide):
+            with self.subTest(value=v):
+                n = "cmd%d" % i
+                recs = [{"kind": "job", "id": j, "name": "Job %d" % j, "extra_vars": json.dumps({n: v})} for j in range(3)]
+                templates, settings = m.audit(recs, {"repeat_min": 3})
+                self.assertIn("secret", dict((x["setting"], x) for x in settings)[n]["why"])
+                self.assertNotIn(expect, json.dumps([templates, settings]))
+        for v in show:
+            with self.subTest(value=v):
+                self.assertFalse(m.is_secret("cmd", v), v)
+        self.assertEqual(m.shell_words("N=$(mysql -pX);ls 'a b'|wc"),
+                         ["N=$", "(", "mysql", "-pX", ")", ";", "ls", "'", "a", "b'", "|", "wc", ";"])
+
     def test_repeat_min(self):
         _, settings = m.audit(records(), dict(OPTS, repeat_min=0))
         self.assertNotIn("check_disk_warn_pct", [x["setting"] for x in settings])
