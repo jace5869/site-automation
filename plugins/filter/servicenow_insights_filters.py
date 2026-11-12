@@ -2546,6 +2546,7 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
 
         lvl = level or ("all" if allscope else "team")
         sc = {"key": key or ("all" if allscope else team), "name": name or ("All assignment groups" if allscope else team),
+              "groups_of": None if allscope else sorted(gs, key=_nat),      # the page's own rows for its periods (1.34.0)
               "slug": "all" if allscope else _slug(name or team), "team": team, "level": lvl,
               "counts": {"incidents": len(inc_now), "incidents_prev": len(inc_prev), "requests": len(ritm_now),
                          "changes": len(chg), "problems": sum(1 for p in by_table.get("problem", []) if mine(p) and
@@ -2777,6 +2778,23 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
         ids[t] = "T%d" % (i + 1)
     org, custom = [], {}
     una = fixed.get("unassigned", False) if fixed else any(not it.get("group") for it in items)   # a split's half: the whole's tree
+    # the tickets' compact rows (1.8.0's Custom view; 1.34.0: every page's periods take its own groups' rows from them):
+    # from the window before's start while it is read, and from the window's start for a page whose rows do not fit
+    mx = int(_o(o, "custom_view_max_rows", 30000))
+    gl = sorted([g for g in seen_groups], key=_nat) + ([""] if any(not it.get("group") for it in items) else [])
+    page_periods = o.get("page_periods", True) not in (False, "false", "False", 0)
+    rows_full = custom_rows(items, since, until, gl, o, prev if prev < since else since, tz, bh_spec) if (
+        not fixed and (page_periods or (org_is_map(o) and o.get("custom_view", True) not in (False, "false", "False", 0)))) else None
+    _win = []
+
+    def rows_win():
+        if not _win:
+            _win.append(custom_rows(items, since, until, gl, o, since, tz, bh_spec))
+        return _win[0]
+
+    def why_before(cut):
+        return ("the window before is over servicenow_insights_custom_view_max_rows (%s)" % "{:,}".format(mx)) if cut else (
+            "servicenow_insights_compare is false" if not win.get("compare") else "the window before was not read whole this run")
     if org_is_map(o):
         # the org map (1.8.0): a page for every node at every depth (its groups' tickets rolled up), every group in the map
         # a team page under its node; the unmapped bucket and Unassigned last
@@ -2813,18 +2831,13 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
         scopes["all"]["teams_under"] = list(teams)
         scopes["all"]["teams"] = [side_row(t) for t in sorted(teams, key=_nat)]
         if o.get("custom_view", True) not in (False, "false", "False", 0) and not fixed:
-            gl = sorted([g for g in seen_groups], key=_nat) + ([""] if any(not it.get("group") for it in items) else [])
             # the periods' compare needs the window before's tickets too: carried while they fit, else the window only
-            mx = int(_o(o, "custom_view_max_rows", 30000))
-            data = custom_rows(items, since, until, gl, o, prev if prev < since else since, tz, bh_spec)
-            if data["n"] > mx and prev < since:
-                data = custom_rows(items, since, until, gl, o, since, tz, bh_spec)
+            data = rows_full if rows_full["n"] <= mx or not prev < since else rows_win()
+            if data is not rows_full:
                 data["no_compare"] = True
             custom = data if data["n"] <= mx else {"skipped": data["n"], "max": mx}
             if custom.get("cols"):          # 1.16.0: one muted line under the period buttons - what was left out, and why
-                custom["left_line"] = periods_left_line(custom.get("left"), (
-                    "the window before is over servicenow_insights_custom_view_max_rows (%s)" % "{:,}".format(mx)) if custom.get("no_compare") else (
-                    "servicenow_insights_compare is false" if not win.get("compare") else "the window before was not read whole this run"))
+                custom["left_line"] = periods_left_line(custom.get("left"), why_before(custom.get("no_compare")))
     model = {"window": win, "url": r.get("url") or "", "prefixes": prefix_map(r.get("items"), o), "teams": teams, "scopes": scopes, "reopen_used": reopen_used,
              "tree": tree, "pages": pages, "scope_ids": ids, "hier": hier, "org": org, "custom": custom,
              "org_bad": org_map(o.get("hierarchy_map"))[1] if org_is_map(o) else [],
@@ -2884,6 +2897,12 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
             model["variants"][v] = mv["scopes"]
     if custom.get("cols"):                        # the Custom view's presets: the split's two halves, and the user's own
         custom["presets"] = custom_presets(hier, custom["groups"], model.get("split"), o)
+    if page_periods and rows_full is not None:
+        # 1.34.0: what each page's period bar takes its rows from - the window before as well while the page's rows fit
+        # servicenow_insights_custom_view_max_rows, else the window only; "custom" = the same rows as the Custom view's
+        model["rows"] = {"max": mx, "full": "custom" if custom.get("cols") and not custom.get("no_compare") else rows_full,
+                         "win": ("custom" if custom.get("no_compare") else rows_win()) if rows_full["n"] > mx and prev < since else None,
+                         "why_before": why_before(True), "why_none": why_before(False)}
     return model
 
 

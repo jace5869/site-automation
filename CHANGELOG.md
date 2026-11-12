@@ -1,5 +1,56 @@
 # Changelog
 
+## 1.39.0 (built as 1.34.0) — 2026-11-12
+
+**Updating without scripts:** paste `site-automation-1.39.0-changed-since-1.38.0.zip` as it is (from an older version,
+its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`. Nothing to set up.
+
+**Ticket insights: periods on every page.** The All page and every site's, unit's and team's page have the period bar
+at the top. No groups to tick: each page takes its own tickets. It works with or without the org map.
+
+- The page opens on *The window*, exactly as before.
+- A period chosen works out *At a glance* and *Keeping up*'s first chart from the page's tickets. They use the same
+  script as the Custom view.
+- The address keeps it (`#p=3m`). *Copy link* copies it. Back goes to the period before.
+- A split's page takes its half's tickets.
+
+What follows a period, section by section:
+
+| Section | With a period |
+|---|---|
+| At a glance | tickets, open, median to resolve, response, resolution, first contact, unable to resolve |
+| At a glance: reopened, changes, reassigned, close notes | the window, said *whole window* |
+| Keeping up | the opened and resolved chart; the rest the window |
+| Every other section | the window, said *whole window* in its heading |
+
+The other sections need what the page does not carry per ticket: the P1 and P2 list, Act on first, the categories,
+ACT's text.
+
+**Size:** about 52 bytes a ticket on each page. On the tests' made-up site: All 340 to 458 KB, a team page 250 to
+319 KB. With the map, the All page shares the Custom view's rows (466 to 475 KB). `servicenow_insights_custom_view_max_rows`
+caps each page.
+
+- New setting `servicenow_insights_page_periods: true`. `false` = the pages as before.
+- The email and the workbook do not change.
+
+Files:
+- plugins/filter/servicenow_insights_page.py (the bar, the page's rows, the script: one copy of the figures for the
+  Custom view and the page);
+- plugins/filter/servicenow_insights_filters.py (the rows kept for every page);
+- roles/servicenow_insights (defaults, tasks), VARIABLES_REFERENCE, aap/extra_vars;
+- docs/SERVICENOW_INSIGHTS.md ("Periods on every page").
+
+Tests:
+- test_servicenow_insights.py PagePeriods:
+  - each page's rows, the split's halves, the map's All page carrying them once, the cap;
+  - in headless Chrome under Trusted Types: a period changes All's tiles and a team's to custom_figures' numbers, the
+    hash, Back, the window as written;
+  - it fits at 1280 px and 390 px in both looks.
+- test_insights_org.py: the Custom view's bar found under the Custom view.
+
+SA_VERSION 1.39.0; the PDFs at 1.39.0.
+
 ## 1.38.0 — 2026-11-12
 
 **Updating without scripts:** paste `site-automation-1.38.0-changed-since-1.33.0.zip` as it is (from an older version,

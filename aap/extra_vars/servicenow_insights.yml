@@ -79,15 +79,22 @@ servicenow_insights_months: 6
 ## its tickets carried in the page at most, about 55 bytes each. More: no Custom view
 # servicenow_insights_custom_view_max_rows: 30000
 
+## PERIODS ON EVERY PAGE (1.39.0): the period bar at the top of the All page and of each unit's and
+## team's page, with or without the map. A period chosen shows the At a glance tiles and the opened
+## and resolved chart for it; the page's own tickets are carried in it
+## (servicenow_insights_custom_view_max_rows each page). false = the window only.
+# servicenow_insights_page_periods: true
+
 ## map: the Custom view's own quick choices, besides the split's two ("<label>", "non-<label>").
 ## Either {name: {levels: [SPLIT]}} (the groups whose map path has every level listed) or {name:
 ## {pattern: "*- Desk*"}}.
 # servicenow_insights_custom_view_presets: {}
 
-## map: the Custom view's periods (1.10.0), calendar ones, each against the one before. all = the
-## window; this_month = the report end's month so far; 1m to 12m = the last N whole calendar months;
-## 1w to 8w = the last N whole weeks (1.16.0). A period the page's tickets can not cover with the
-## one before it is left out, said under the buttons. A from / to too.
+## The periods of the Custom view (1.10.0) and of every page's bar (1.39.0), calendar ones, each
+## against the one before. all = the window; this_month = the report end's month so far; 1m to 12m =
+## the last N whole calendar months; 1w to 8w = the last N whole weeks (1.16.0). A period the page's
+## tickets can not cover with the one before it is left out, said under the buttons. A from / to
+## too.
 # servicenow_insights_periods: [all, this_month, 1m, 2m, 3m, 6m, 9m, 12m, 1w, 2w, 4w]
 
 ## the day a week starts on, for the weeks (mon ... sun)

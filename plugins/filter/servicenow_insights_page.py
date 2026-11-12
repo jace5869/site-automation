@@ -501,11 +501,91 @@ D.addEventListener("keydown",function(ev){var tg=ev.target,typing=/^(INPUT|TEXTA
  if(ev.key==="/"&&q){ev.preventDefault();q.focus();q.select()}else if((ev.key==="t"||ev.key==="T")&&pk){ev.preventDefault();pk.open=true}});
 var links=[].slice.call(D.querySelectorAll(".toc a[href^='#']"));
 if("IntersectionObserver" in window){var io=new IntersectionObserver(function(es){es.forEach(function(en){if(en.isIntersecting)links.forEach(function(a){a.classList.toggle("on",a.getAttribute("href")==="#"+en.target.id)})})},{rootMargin:"-30% 0px -60% 0px"});D.querySelectorAll("main section").forEach(function(s){io.observe(s)})}
+/* the tickets' rows (cv-data / pp-data: JSON, never run) and their figures, worked out here the way the model does - one
+   copy for the Custom view (1.8.0) and the page's own periods (1.34.0) */
+var NS="http://www.w3.org/2000/svg";
+function med(v){if(!v.length)return null;v.sort(function(a,b){return a-b});var m=v.length>>1;return v.length%2?v[m]:(v[m-1]+v[m])/2}
+function r1(x){return x===null||x===undefined?null:Math.round(x*10)/10}
+function fh(h){return h===null?"\u2014":(h>=48?(h/24).toFixed(1)+" days":h.toFixed(1)+" h")}
+function pc(x){return x===null?"\u2014":x.toFixed(1)+"%"}
+function nf(x){return x.toLocaleString("en-US")}
+/* the change against the period before, as the page's tiles: % for counts, points for shares; lg = lower is good */
+function dl(v,p,lg,pts){if(v===null||v===undefined||p===null||p===undefined)return null;var d=pts?v-p:(p?(v-p)/p*100:0);
+ if(Math.abs(d)<0.05)return["no change","flat"];var up=d>0;return[(up?"\u25b2 ":"\u25bc ")+Math.abs(d).toFixed(pts?1:0)+(pts?" pts":"%"),(up?!lg:lg)?"good":"bad"]}
+function eng(CV){var C=CV.cols,W=CV.until,LIM=CV.hop_limit||3,UN={};(CV.unable||[]).forEach(function(i){UN[i]=1});
+ /* the periods (1.10.0): calendar months and weeks from the rows, or any from / to; each against the period before */
+ var P=CV.periods||[],CAL=CV.calendar||{},MID=CAL.mid||[],BO=CAL.bo||[];
+ var D0=CAL.d0?Date.UTC(+CAL.d0.slice(0,4),+CAL.d0.slice(5,7)-1,+CAL.d0.slice(8,10)):0;
+ function iso(k){return new Date(D0+k*864e5).toISOString().slice(0,10)}
+ function kof(s){return /^\d{4}-\d{2}-\d{2}$/.test(s||"")?Math.round((Date.UTC(+s.slice(0,4),+s.slice(5,7)-1,+s.slice(8,10))-D0)/864e5):NaN}
+ function kidx(x){var lo=0,hi=MID.length-1,k=-1;while(lo<=hi){var m=(lo+hi)>>1;if(MID[m]<=x){k=m;lo=m+1}else hi=m-1}return Math.max(k,0)}
+ function figs(sel,a,b){if(a===undefined){a=0;b=W}
+  var f={inc:0,req:0,res:0,bl:0,bl0:0,sn:0,so:0,h:[],rn:0,ro:0,ns:0,hop:0,hres:0,hold:0,una:0,fcr:0,tn:0,ts:[0,0,0,0],age:[0,0,0,0],now:b===W},eb=(MID.length&&C.ob)?BO[kidx(b)]:null;
+  for(var i=0;i<C.g.length;i++){if(!sel[C.g[i]])continue;var o=C.o[i],d=C.d[i],t=C.t[i],din=d!==null&&d>=a&&d<b,on=o<=b&&(d===null||d>b);
+   if(o>=a&&o<b){if(t===0)f.inc++;else f.req++}if(t===0&&din){f.res++;if(d>=o)f.h.push((d-o)/3600)}if(on)f.bl++;if(o<=a&&(d===null||d>a))f.bl0++;
+   if(din&&(C.s[i]===0||C.s[i]===1)){f.sn++;f.so+=C.s[i]}
+   /* the 1.7.0 figures, as scope_model: response met of what was done (no SLA left out), open over the hop limit, on hold now, unable, first contact */
+   if(din&&C.resp&&(C.resp[i]===0||C.resp[i]===1)){f.rn++;f.ro+=C.resp[i]}if(din&&C.noslo&&C.noslo[i]===1)f.ns++;
+   if(t===0&&C.hops){var ov=C.hops[i]>LIM+1;if(on&&ov)f.hop++;if(din){if(ov)f.hres++;if(C.hops[i]===0)f.fcr++}}
+   if(t===0&&on&&C.hold&&C.hold[i]===1)f.hold++;if(t===0&&din&&C.out&&UN[C.out[i]])f.una++;
+   /* 1.9.0's: the time in each state of the incidents resolved in the period, the backlog's age in business days at its end */
+   if(t===0&&din&&C.tis&&C.tis[i]){f.tn++;for(var j=0;j<4;j++)f.ts[j]+=C.tis[i][j]}
+   if(eb!==null&&on){var bd=Math.max(eb-C.ob[i],0);f.age[bd<=1?0:(bd<=5?1:(bd<=10?2:3))]++}}
+  f.med=med(f.h);f.sla=f.sn?100*f.so/f.sn:null;f.resp=f.rn?100*f.ro/f.rn:null;f.eb=eb;return f}
+ /* opened and incidents resolved in the period: per day up to a month, per week up to 4 months, else per month */
+ function lbl(dt,u){var m=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][+dt.slice(5,7)-1];return u==="month"?m+" "+dt.slice(2,4):m+" "+(+dt.slice(8))}
+ function chart(el,sel,a,b){if(!el||!MID.length)return;el.textContent="";
+  var span=(b-a)/86400,u=span<=31?"day":(span<=124?"week":"month"),e0=[],lk=-99,k,j;
+  for(k=0;k<MID.length;k++){if(MID[k]<a||MID[k]>=b)continue;var dt=iso(k);if(!e0.length||u==="day"||(u==="week"&&k-lk>=7)||(u==="month"&&dt.slice(8)==="01")){e0.push([MID[k],dt]);lk=k}}
+  if(!e0.length)return;var n=e0.length,op=[],rs=[];for(j=0;j<n;j++){op.push(0);rs.push(0)}
+  function bi(x){if(x<a||x>=b)return -1;var lo=0,hi=n-1,r=-1;while(lo<=hi){var m=(lo+hi)>>1;if(e0[m][0]<=x){r=m;lo=m+1}else hi=m-1}return r}
+  for(var i=0;i<C.g.length;i++){if(!sel[C.g[i]])continue;j=bi(C.o[i]);if(j>=0)op[j]++;if(C.t[i]===0&&C.d[i]!==null){j=bi(C.d[i]);if(j>=0)rs[j]++}}
+  var mx=Math.max(1,Math.max.apply(null,op.concat(rs))),w=640,h=170,pl=34,pb=22,bw=(w-pl)/n,H=h-pb-10,s=D.createElementNS(NS,"svg");
+  s.setAttribute("viewBox","0 0 "+w+" "+h);s.setAttribute("class","cvsvg");s.setAttribute("role","img");
+  s.setAttribute("aria-label","Opened and incidents resolved per "+u+": "+nf(op.reduce(function(x,y){return x+y},0))+" opened, "+nf(rs.reduce(function(x,y){return x+y},0))+" resolved");
+  function rc(x,y,ww,hh,c,t){var q=D.createElementNS(NS,"rect");q.setAttribute("x",x.toFixed(1));q.setAttribute("y",y.toFixed(1));q.setAttribute("width",Math.max(ww,0).toFixed(1));
+   q.setAttribute("height",Math.max(hh,0).toFixed(1));q.setAttribute("rx","1.5");q.setAttribute("style","fill:var("+c+")");var tt=D.createElementNS(NS,"title");tt.textContent=t;q.appendChild(tt);s.appendChild(q)}
+  function tx(x,y,t,an){var q=D.createElementNS(NS,"text");q.setAttribute("x",x.toFixed(1));q.setAttribute("y",y);q.setAttribute("class","lbl");if(an)q.setAttribute("text-anchor",an);q.textContent=t;s.appendChild(q)}
+  var ln=D.createElementNS(NS,"line");ln.setAttribute("x1",pl);ln.setAttribute("x2",w);ln.setAttribute("y1",10+H);ln.setAttribute("y2",10+H);ln.setAttribute("style","stroke:var(--line)");s.appendChild(ln);
+  tx(pl-6,16,nf(mx),"end");tx(pl-6,10+H,"0","end");var every=Math.ceil(n/8);
+  for(j=0;j<n;j++){var x0=pl+j*bw,g=Math.max(1,bw*0.12),cw=(bw-3*g)/2,lb=lbl(e0[j][1],u),t=(u==="day"?"":(u==="week"?"Week of ":""))+lb+": "+nf(op[j])+" opened, "+nf(rs[j])+" incidents resolved";
+   rc(x0+g,10+H-H*op[j]/mx,cw,H*op[j]/mx,"--s1",t);rc(x0+2*g+cw,10+H-H*rs[j]/mx,cw,H*rs[j]/mx,"--s2",t);if(j%every===0)tx(x0+bw/2,h-5,lb,"middle")}
+  el.appendChild(s)}
+ return {CV:CV,C:C,W:W,P:P,MID:MID,iso:iso,kof:kof,kidx:kidx,figs:figs,chart:chart}}
+/* the period text, each date kept whole on a narrow screen */
+function ptext(el,per,c){if(!el)return;var ps=per&&per.title?per.title+(c?", compared with "+per.ctitle:""):"";el.textContent="";
+ ps.split(/(\d{4}-\d{2}-\d{2})/).forEach(function(x,k){if(!x)return;if(k%2){var sp=D.createElement("span");sp.className="cvdt";sp.textContent=x;el.appendChild(sp)}else el.appendChild(D.createTextNode(x))})}
+/* the period buttons, the phone's select and the from / to inside root (ids pfx+from, to, ft, ftmsg, psel); go(period) */
+function pbar(E,root,pfx,go){var P=E.P,MID=E.MID,iso=E.iso,kof=E.kof,kidx=E.kidx,W=E.W;
+ var pbs=[].slice.call(root.querySelectorAll("button.cvpd")),cf=D.getElementById(pfx+"from"),ct=D.getElementById(pfx+"to"),psel=D.getElementById(pfx+"psel");
+ var P0=P.filter(function(x){return x.name==="all"})[0]||P[0]||{name:"",a:0,b:W,ca:null,cb:null,title:"",ctitle:""};
+ function pick(name){var p=P.filter(function(x){return x.name===name})[0];if(!p)return null;
+  pbs.forEach(function(x){x.setAttribute("aria-pressed",x.getAttribute("data-name")===name?"true":"false")});if(psel)psel.value=name;
+  if(cf&&MID.length){cf.value=iso(kidx(p.a));ct.value=iso(kidx(p.b-1))}return p}
+ function range(fr,to){var i=kof(fr),j=kof(to);if(isNaN(i)||isNaN(j)||j<i||i<0||i>=MID.length)return null;j=Math.min(j,MID.length-1);
+  var a=MID[i],b=j+1<MID.length?Math.min(MID[j+1],W):W;if(b<=a)return null;var n=j-i+1,ca=i-n>=0?MID[i-n]:null;
+  pbs.forEach(function(x){x.setAttribute("aria-pressed","false")});if(psel)psel.value="";
+  return {name:iso(i)+"_"+iso(kidx(b-1)),a:a,b:b,ca:ca,cb:ca===null?null:a,title:iso(i)+" to "+iso(kidx(b-1)),ctitle:ca===null?"":iso(i-n)+" to "+iso(i-1)}}
+ /* a period's name as the address keeps it: a button's, or from_to */
+ function byname(pn){var p=pick(pn),m2=/^(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})$/.exec(pn||"");if(p)return p;if(m2){var r=range(m2[1],m2[2]);if(r){cf.value=m2[1];ct.value=m2[2]}return r}return null}
+ pbs.forEach(function(x){x.addEventListener("click",function(){var p=pick(x.getAttribute("data-name"));if(p)go(p)})});
+ if(psel)psel.addEventListener("change",function(){var p=pick(psel.value);if(p)go(p)});
+ /* 1.16.0: a from / to that can not be shown says why, beside the fields - no dialog */
+ function ftsay(t){var el=D.getElementById(pfx+"ftmsg");if(el)el.textContent=t||""}
+ /* the window as the fields show it: its first and last day (not the day after its end) */
+ function outside(){return "Outside this report's window: "+(cf.min||iso(0))+" to "+(ct.max||iso(MID.length-1))}
+ var ft=D.getElementById(pfx+"ft");if(ft)ft.addEventListener("click",function(){var i=kof(cf.value),j=kof(ct.value);
+  if(isNaN(i)||isNaN(j)){ftsay("Pick both dates");return}if(j<i){ftsay("From must be before To");return}
+  if(i<0||i>=MID.length||j<0){ftsay(outside());return}
+  var r=range(cf.value,ct.value);if(r){ftsay("");go(r)}else ftsay(outside())});
+ if(P0.name)pick(P0.name);
+ return {P0:P0,pick:pick,range:range,byname:byname}}
+function copier(id){var b=D.getElementById(id);if(b)b.addEventListener("click",function(){var u=location.href;function ok(){b.textContent="Copied";setTimeout(function(){b.textContent="Copy link"},1600)}
+ try{navigator.clipboard.writeText(u).then(ok,function(){})}catch(e){}})}
 /* the Custom view (1.8.0): tick units and groups (a unit ticks all under it, half-ticked when some are), Apply works the
-   figures out here from the tickets' rows (cv-data: JSON, never run) the way the model does; the address keeps the choice */
+   figures out for exactly those groups; the address keeps the choice */
 var cvd=D.getElementById("cv-data"),cvt=D.getElementById("cvt");
-if(cvd&&cvt){var CV=JSON.parse(cvd.textContent),C=CV.cols,W=CV.until,LIM=CV.hop_limit||3,UN={},all=[].slice.call(cvt.querySelectorAll("input.cvc[data-g]")),nodes=[].slice.call(cvt.querySelectorAll("li.cvn")).reverse();
- (CV.unable||[]).forEach(function(i){UN[i]=1});
+if(cvd&&cvt){var E=eng(JSON.parse(cvd.textContent)),CV=E.CV,C=E.C,figs=E.figs,all=[].slice.call(cvt.querySelectorAll("input.cvc[data-g]")),nodes=[].slice.call(cvt.querySelectorAll("li.cvn")).reverse();
  function kids(li){return [].slice.call(li.querySelectorAll("input.cvc[data-g]"))}
  function own(li,s){return li.querySelector(":scope>.cvr "+s)}
  function tally(){nodes.forEach(function(li){var k=kids(li),on=k.filter(function(b){return b.checked}).length,b=own(li,"input.cvc");b.checked=on>0&&on===k.length;b.indeterminate=on>0&&on<k.length;
@@ -527,27 +607,6 @@ if(cvd&&cvt){var CV=JSON.parse(cvd.textContent),C=CV.cols,W=CV.until,LIM=CV.hop_
   items.forEach(function(li){if((li.getAttribute("data-s")||"").indexOf(t)<0)return;li.hidden=false;li.querySelectorAll("li").forEach(function(x){x.hidden=false});
    var p=li.parentNode.closest("li");while(p){p.hidden=false;fold(p,true);p=p.parentNode.closest("li")}})});
  cq.addEventListener("keydown",function(ev){if(ev.key==="Escape"){cq.value="";cq.dispatchEvent(new Event("input"))}});
- function med(v){if(!v.length)return null;v.sort(function(a,b){return a-b});var m=v.length>>1;return v.length%2?v[m]:(v[m-1]+v[m])/2}
- /* the periods (1.10.0): calendar months and weeks from cv-data, or any from / to; each against the period before */
- var P=CV.periods||[],CAL=CV.calendar||{},MID=CAL.mid||[],BO=CAL.bo||[],NS="http://www.w3.org/2000/svg";
- var D0=CAL.d0?Date.UTC(+CAL.d0.slice(0,4),+CAL.d0.slice(5,7)-1,+CAL.d0.slice(8,10)):0;
- function iso(k){return new Date(D0+k*864e5).toISOString().slice(0,10)}
- function kof(s){return /^\d{4}-\d{2}-\d{2}$/.test(s||"")?Math.round((Date.UTC(+s.slice(0,4),+s.slice(5,7)-1,+s.slice(8,10))-D0)/864e5):NaN}
- function kidx(x){var lo=0,hi=MID.length-1,k=-1;while(lo<=hi){var m=(lo+hi)>>1;if(MID[m]<=x){k=m;lo=m+1}else hi=m-1}return Math.max(k,0)}
- function figs(sel,a,b){if(a===undefined){a=0;b=W}
-  var f={inc:0,req:0,res:0,bl:0,bl0:0,sn:0,so:0,h:[],rn:0,ro:0,ns:0,hop:0,hres:0,hold:0,una:0,fcr:0,tn:0,ts:[0,0,0,0],age:[0,0,0,0],now:b===W},eb=(MID.length&&C.ob)?BO[kidx(b)]:null;
-  for(var i=0;i<C.g.length;i++){if(!sel[C.g[i]])continue;var o=C.o[i],d=C.d[i],t=C.t[i],din=d!==null&&d>=a&&d<b,on=o<=b&&(d===null||d>b);
-   if(o>=a&&o<b){if(t===0)f.inc++;else f.req++}if(t===0&&din){f.res++;if(d>=o)f.h.push((d-o)/3600)}if(on)f.bl++;if(o<=a&&(d===null||d>a))f.bl0++;
-   if(din&&(C.s[i]===0||C.s[i]===1)){f.sn++;f.so+=C.s[i]}
-   /* the 1.7.0 figures, as scope_model: response met of what was done (no SLA left out), open over the hop limit, on hold now, unable, first contact */
-   if(din&&C.resp&&(C.resp[i]===0||C.resp[i]===1)){f.rn++;f.ro+=C.resp[i]}if(din&&C.noslo&&C.noslo[i]===1)f.ns++;
-   if(t===0&&C.hops){var ov=C.hops[i]>LIM+1;if(on&&ov)f.hop++;if(din){if(ov)f.hres++;if(C.hops[i]===0)f.fcr++}}
-   if(t===0&&on&&C.hold&&C.hold[i]===1)f.hold++;if(t===0&&din&&C.out&&UN[C.out[i]])f.una++;
-   /* 1.9.0's: the time in each state of the incidents resolved in the period, the backlog's age in business days at its end */
-   if(t===0&&din&&C.tis&&C.tis[i]){f.tn++;for(var j=0;j<4;j++)f.ts[j]+=C.tis[i][j]}
-   if(eb!==null&&on){var bd=Math.max(eb-C.ob[i],0);f.age[bd<=1?0:(bd<=5?1:(bd<=10?2:3))]++}}
-  f.med=med(f.h);f.sla=f.sn?100*f.so/f.sn:null;f.resp=f.rn?100*f.ro/f.rn:null;f.eb=eb;return f}
- function r1(x){return x===null?null:Math.round(x*10)/10}
  window.siteInsightsFigures=function(idx,a,b){var s={};idx.forEach(function(i){s[i]=1});var f=figs(s,a,b);
   function pr(x,y){return y?r1(100*x/y):null}
   var out={incidents:f.inc,requests:f.req,resolved:f.res,backlog:[f.bl,f.bl0],median_h:r1(f.med),sla:r1(f.sla)};
@@ -555,46 +614,13 @@ if(cvd&&cvt){var CV=JSON.parse(cvd.textContent),C=CV.cols,W=CV.until,LIM=CV.hop_
   if(C.hold)out.hold=f.now?f.hold:null;if(C.out)out.unable=pr(f.una,f.res);
   if(C.tis){out.tis={};["new","progress","hold","resolved"].forEach(function(k,j){out.tis[k]=f.tn?r1(f.ts[j]/10/f.tn):null});out.tis_n=f.tn}
   if(f.eb!==null)out.aging=f.age;return out};
- window.siteInsightsPeriods=function(){return P};
- function fh(h){return h===null?"\u2014":(h>=48?(h/24).toFixed(1)+" days":h.toFixed(1)+" h")}
- function pc(x){return x===null?"\u2014":x.toFixed(1)+"%"}
- function nf(x){return x.toLocaleString("en-US")}
+ window.siteInsightsPeriods=function(){return E.P};
  function enc(idx){var v=idx.slice().sort(function(a,b){return a-b}),o=[],i=0;while(i<v.length){var j=i;while(j+1<v.length&&v[j+1]===v[j]+1)j++;o.push(i===j?String(v[i]):v[i]+"-"+v[j]);i=j+1}return o.join(",")}
  function dec(s){var o=[];String(s||"").split(",").forEach(function(p){var m=p.split("-").map(Number);if(m.length===1&&!isNaN(m[0]))o.push(m[0]);else if(m.length===2&&!isNaN(m[0])&&!isNaN(m[1]))for(var k=m[0];k<=m[1]&&k<CV.groups.length;k++)o.push(k)});return o}
  function set(id,v,d){var el=D.getElementById("cv-"+id);if(!el)return;el.textContent=v;if(d!==undefined)D.getElementById("cv-"+id+"-d").textContent=d}
  function setl(id,t){var el=D.getElementById("cv-"+id+"-l");if(el)el.textContent=t}
- /* the change against the period before, as the page's tiles: % for counts, points for shares; lg = lower is good */
- function dl(v,p,lg,pts){if(v===null||v===undefined||p===null||p===undefined)return null;var d=pts?v-p:(p?(v-p)/p*100:0);
-  if(Math.abs(d)<0.05)return["no change","flat"];var up=d>0;return[(up?"\u25b2 ":"\u25bc ")+Math.abs(d).toFixed(pts?1:0)+(pts?" pts":"%"),(up?!lg:lg)?"good":"bad"]}
  function setx(id,x){var el=D.getElementById("cv-"+id+"-x");if(!el)return;el.textContent=x?x[0]:"";el.className=x?"delta "+x[1]:""}
- var pbs=[].slice.call(D.querySelectorAll("button.cvpd")),cf=D.getElementById("cvfrom"),ct=D.getElementById("cvto"),psel=D.getElementById("cvpsel");
- var P0=P.filter(function(x){return x.name==="all"})[0]||P[0]||{name:"",a:0,b:W,ca:null,cb:null,title:"",ctitle:""},per=P0;
- function pick(name){var p=P.filter(function(x){return x.name===name})[0];if(!p)return null;
-  pbs.forEach(function(x){x.setAttribute("aria-pressed",x.getAttribute("data-name")===name?"true":"false")});if(psel)psel.value=name;
-  if(cf&&MID.length){cf.value=iso(kidx(p.a));ct.value=iso(kidx(p.b-1))}return p}
- function range(fr,to){var i=kof(fr),j=kof(to);if(isNaN(i)||isNaN(j)||j<i||i<0||i>=MID.length)return null;j=Math.min(j,MID.length-1);
-  var a=MID[i],b=j+1<MID.length?Math.min(MID[j+1],W):W;if(b<=a)return null;var n=j-i+1,ca=i-n>=0?MID[i-n]:null;
-  pbs.forEach(function(x){x.setAttribute("aria-pressed","false")});if(psel)psel.value="";
-  return {name:iso(i)+"_"+iso(kidx(b-1)),a:a,b:b,ca:ca,cb:ca===null?null:a,title:iso(i)+" to "+iso(kidx(b-1)),ctitle:ca===null?"":iso(i-n)+" to "+iso(i-1)}}
- /* opened and incidents resolved in the period: per day up to a month, per week up to 4 months, else per month */
- function lbl(dt,u){var m=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][+dt.slice(5,7)-1];return u==="month"?m+" "+dt.slice(2,4):m+" "+(+dt.slice(8))}
- function chart(sel,a,b){var el=D.getElementById("cvchart");if(!el||!MID.length)return;el.textContent="";
-  var span=(b-a)/86400,u=span<=31?"day":(span<=124?"week":"month"),e0=[],lk=-99,k,j;
-  for(k=0;k<MID.length;k++){if(MID[k]<a||MID[k]>=b)continue;var dt=iso(k);if(!e0.length||u==="day"||(u==="week"&&k-lk>=7)||(u==="month"&&dt.slice(8)==="01")){e0.push([MID[k],dt]);lk=k}}
-  if(!e0.length)return;var n=e0.length,op=[],rs=[];for(j=0;j<n;j++){op.push(0);rs.push(0)}
-  function bi(x){if(x<a||x>=b)return -1;var lo=0,hi=n-1,r=-1;while(lo<=hi){var m=(lo+hi)>>1;if(e0[m][0]<=x){r=m;lo=m+1}else hi=m-1}return r}
-  for(var i=0;i<C.g.length;i++){if(!sel[C.g[i]])continue;j=bi(C.o[i]);if(j>=0)op[j]++;if(C.t[i]===0&&C.d[i]!==null){j=bi(C.d[i]);if(j>=0)rs[j]++}}
-  var mx=Math.max(1,Math.max.apply(null,op.concat(rs))),w=640,h=170,pl=34,pb=22,bw=(w-pl)/n,H=h-pb-10,s=D.createElementNS(NS,"svg");
-  s.setAttribute("viewBox","0 0 "+w+" "+h);s.setAttribute("class","cvsvg");s.setAttribute("role","img");
-  s.setAttribute("aria-label","Opened and incidents resolved per "+u+": "+nf(op.reduce(function(x,y){return x+y},0))+" opened, "+nf(rs.reduce(function(x,y){return x+y},0))+" resolved");
-  function rc(x,y,ww,hh,c,t){var q=D.createElementNS(NS,"rect");q.setAttribute("x",x.toFixed(1));q.setAttribute("y",y.toFixed(1));q.setAttribute("width",Math.max(ww,0).toFixed(1));
-   q.setAttribute("height",Math.max(hh,0).toFixed(1));q.setAttribute("rx","1.5");q.setAttribute("style","fill:var("+c+")");var tt=D.createElementNS(NS,"title");tt.textContent=t;q.appendChild(tt);s.appendChild(q)}
-  function tx(x,y,t,an){var q=D.createElementNS(NS,"text");q.setAttribute("x",x.toFixed(1));q.setAttribute("y",y);q.setAttribute("class","lbl");if(an)q.setAttribute("text-anchor",an);q.textContent=t;s.appendChild(q)}
-  var ln=D.createElementNS(NS,"line");ln.setAttribute("x1",pl);ln.setAttribute("x2",w);ln.setAttribute("y1",10+H);ln.setAttribute("y2",10+H);ln.setAttribute("style","stroke:var(--line)");s.appendChild(ln);
-  tx(pl-6,16,nf(mx),"end");tx(pl-6,10+H,"0","end");var every=Math.ceil(n/8);
-  for(j=0;j<n;j++){var x0=pl+j*bw,g=Math.max(1,bw*0.12),cw=(bw-3*g)/2,lb=lbl(e0[j][1],u),t=(u==="day"?"":(u==="week"?"Week of ":""))+lb+": "+nf(op[j])+" opened, "+nf(rs[j])+" incidents resolved";
-   rc(x0+g,10+H-H*op[j]/mx,cw,H*op[j]/mx,"--s1",t);rc(x0+2*g+cw,10+H-H*rs[j]/mx,cw,H*rs[j]/mx,"--s2",t);if(j%every===0)tx(x0+bw/2,h-5,lb,"middle")}
-  el.appendChild(s)}
+ var per=null,PB=pbar(E,D.getElementById("cvres"),"cv",function(p){per=p;apply()}),P0=PB.P0;per=P0;
  function apply(push){var idx=all.filter(function(b){return b.checked}).map(function(b){return +b.getAttribute("data-g")});var res=D.getElementById("cvres");
   if(!idx.length){res.hidden=true;return}var s={};idx.forEach(function(i){s[i]=1});var f=figs(s,per.a,per.b),c=per.ca!==null&&per.ca!==undefined?figs(s,per.ca,per.cb):null;
   function rr(x){return x===null?null:Math.round(x*10)/10}function pp(a,b){return b?pc(Math.round(1000*a/b)/10):"\u2014"}function sh(a,b){return b?100*a/b:null}
@@ -615,10 +641,8 @@ if(cvd&&cvt){var CV=JSON.parse(cvd.textContent),C=CV.cols,W=CV.until,LIM=CV.hop_
   if(f.eb!==null){set("age",nf(f.age[3]),(f.now?"now":"at the period's end")+" \u00b7 0\u20131: "+nf(f.age[0])+" \u00b7 2\u20135: "+nf(f.age[1])+" \u00b7 6\u201310: "+nf(f.age[2]));
    setx("age",c&&c.eb!==null?dl(f.age[3],c.age[3],true,false):null)}
   D.getElementById("cvlab").textContent=idx.length+" group"+(idx.length===1?"":"s")+" chosen";
-  /* the period in words, each date kept whole on a narrow screen */
-  var pt=D.getElementById("cvpt"),ps=per.title?per.title+(c?", compared with "+per.ctitle:""):"";pt.textContent="";
-  ps.split(/(\d{4}-\d{2}-\d{2})/).forEach(function(x,k){if(!x)return;if(k%2){var sp=D.createElement("span");sp.className="cvdt";sp.textContent=x;pt.appendChild(sp)}else pt.appendChild(D.createTextNode(x))});
-  chart(s,per.a,per.b);
+  ptext(D.getElementById("cvpt"),per,c);
+  E.chart(D.getElementById("cvchart"),s,per.a,per.b);
   var tb=D.getElementById("cvtab").tBodies[0],rows=[];tb.textContent="";
   idx.forEach(function(i){var one={};one[i]=1;var g=figs(one,per.a,per.b);rows.push([CV.groups[i]||"(no group)",g.inc+g.req,g.res,g.bl,g.med,g.sla])});
   rows.sort(function(a,b){return b[1]-a[1]||String(a[0]).localeCompare(String(b[0]))});
@@ -627,27 +651,58 @@ if(cvd&&cvt){var CV=JSON.parse(cvd.textContent),C=CV.cols,W=CV.until,LIM=CV.hop_
    var td=D.createElement("td");td.textContent=c2[0];td.setAttribute("data-l",lab[k]);if(k){td.className="n";td.setAttribute("data-v",c2[1])}tr.appendChild(td)});tb.appendChild(tr)});
   res.hidden=false;var hv=(cvp?"preset:"+encodeURIComponent(cvp):enc(idx))+(per!==P0&&per.name?"&p="+encodeURIComponent(per.name):"");
   if(push!==false)try{history.replaceState(null,"","#cv="+hv)}catch(e){location.hash="cv="+hv}}
- pbs.forEach(function(x){x.addEventListener("click",function(){var p=pick(x.getAttribute("data-name"));if(p){per=p;apply()}})});
- if(psel)psel.addEventListener("change",function(){var p=pick(psel.value);if(p){per=p;apply()}});
- /* 1.16.0: a from / to that can not be shown says why, beside the fields - no dialog */
- function ftsay(t){var el=D.getElementById("cvftmsg");if(el)el.textContent=t||""}
- /* the window as the fields show it: its first and last day (not the day after its end) */
- function outside(){return "Outside this report's window: "+(cf.min||iso(0))+" to "+(ct.max||iso(MID.length-1))}
- var cvft=D.getElementById("cvft");if(cvft)cvft.addEventListener("click",function(){var i=kof(cf.value),j=kof(ct.value);
-  if(isNaN(i)||isNaN(j)){ftsay("Pick both dates");return}if(j<i){ftsay("From must be before To");return}
-  if(i<0||i>=MID.length||j<0){ftsay(outside());return}
-  var r=range(cf.value,ct.value);if(r){ftsay("");per=r;apply()}else ftsay(outside())});
- if(P0.name)pick(P0.name);
  function tick(idx){var want={};idx.forEach(function(i){want[i]=1});all.forEach(function(b){b.checked=!!want[+b.getAttribute("data-g")]});tally()}
  pres.forEach(function(x){x.addEventListener("click",function(){tick(dec(x.getAttribute("data-idx")));press(x.getAttribute("data-name"));apply()})});
  D.getElementById("cvgo").addEventListener("click",function(){apply();D.getElementById("cvres").scrollIntoView({block:"nearest"})});
- D.getElementById("cvcopy").addEventListener("click",function(){var b=this,u=location.href;function ok(){b.textContent="Copied";setTimeout(function(){b.textContent="Copy link"},1600)}
-  try{navigator.clipboard.writeText(u).then(ok,function(){})}catch(e){}});
- var h=/[#&]cv=([0-9,\-]*)/.exec(location.hash),hp=/[#&]cv=preset:([^&]*)/.exec(location.hash),hq=/[#&]p=([^&]*)/.exec(location.hash),hb=null;
- if(hq){var pn=decodeURIComponent(hq[1]),pq=pick(pn),m2=/^(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})$/.exec(pn);if(pq)per=pq;else if(m2){var rq=range(m2[1],m2[2]);if(rq){per=rq;cf.value=m2[1];ct.value=m2[2]}}}
+ copier("cvcopy");
+ var h=/[#&]cv=([0-9,\-]*)/.exec(location.hash),hp=/[#&]cv=preset:([^&]*)/.exec(location.hash),hq=/[#&]cv=.*&p=([^&]*)/.exec(location.hash),hb=null;
+ if(hq){var pq=PB.byname(decodeURIComponent(hq[1]));if(pq)per=pq}
  if(hp){var nm=decodeURIComponent(hp[1]);hb=pres.filter(function(x){return x.getAttribute("data-name")===nm})[0];if(hb){tick(dec(hb.getAttribute("data-idx")));press(nm)}h=hb?h||[""]:null}
  if(h){if(!hb)tick(dec(h[1]));apply(false);
   var d=D.getElementById("cv");if(d)d.open=true;var sec=D.getElementById("custom");if(sec)sec.scrollIntoView({block:"start"})}else tally();
+}
+/* the page's own periods (1.34.0): the period bar at the top; a period chosen works out At a glance's tiles and the opened
+   and resolved chart from this page's rows (pp-data; the All page with the Custom view: cv-data, the same rows), every
+   other section says "whole window"; the window itself is the page as written. The address keeps it: #p=3m */
+var ppb=D.getElementById("ppbar"),ppd=D.getElementById("pp-data")||(ppb&&D.getElementById("cv-data"));
+if(ppb&&ppd){var PE=eng(JSON.parse(ppd.textContent)),PC=PE.C,PS={};PE.CV.groups.forEach(function(_,i){PS[i]=1});
+ function mk(tag,cls,t){var x=D.createElement(tag);if(cls)x.className=cls;if(t!==undefined)x.textContent=t;x.hidden=true;return x}
+ /* each tile keeps what the page wrote and gets a second value and note beside it, shown while a period is chosen */
+ var TL=[].slice.call(D.querySelectorAll("#glance .tile[data-pp]")).map(function(t){var v=t.querySelector(".v"),d=t.querySelector(".d"),l=t.querySelector(".eyebrow"),
+   nv=mk("span","v"),nd=mk("span","d"),nl=mk("span","eyebrow"),w=mk("span","chip ppw","whole window");t.insertBefore(nl,l.nextSibling);v.parentNode.insertBefore(nv,v.nextSibling);
+   d.parentNode.insertBefore(nd,d.nextSibling);t.appendChild(w);return {k:t.getAttribute("data-pp"),t:t,v:v,d:d,l:l,nv:nv,nd:nd,nl:nl,w:w}});
+ /* each section's note gets "whole window" while a period is chosen - At a glance and the first chart of Keeping up follow it */
+ var SK={glance:1,custom:1,method:1},CH=[];
+ [].slice.call(D.querySelectorAll("main section.card")).forEach(function(sec){if(SK[sec.id])return;var nt=sec.querySelector(".sh .note");if(!nt)return;
+  var c=mk("span","chip ppw",sec.id==="keepingup"?"whole window, but the first chart":"whole window");nt.appendChild(D.createTextNode(" "));nt.appendChild(c);CH.push(c)});
+ var gn=D.querySelector("#glance .sh .note"),gt=gn&&mk("span","note");if(gt)gn.parentNode.insertBefore(gt,gn.nextSibling);
+ var fl=D.getElementById("ppflow"),fh3=fl&&fl.querySelector("h3"),fh0=fh3&&fh3.textContent,fc=fl&&mk("div","");if(fc)fl.appendChild(fc);
+ function show(t,on){t.v.hidden=on;t.d.hidden=on;t.l.hidden=on;t.nv.hidden=!on;t.nd.hidden=!on;t.nl.hidden=!on;t.w.hidden=true}
+ /* whole: a figure the rows do not carry (reopened, changes, hand-offs, close notes) - the window's, said so */
+ function tile(t,lab,v,x,note,whole){if(whole){show(t,false);t.w.hidden=false;return}show(t,true);t.nl.textContent=lab;t.nv.textContent="";
+  t.nv.appendChild(D.createTextNode(v));if(x){var s=D.createElement("span");s.className="delta "+x[1];s.textContent=x[0];t.nv.appendChild(D.createTextNode(" "));t.nv.appendChild(s)}t.nd.textContent=note}
+ var PPB=pbar(PE,ppb,"pp",function(p){choose(p,true)}),PP0=PPB.P0;
+ function choose(p,push){var win=!p||p===PP0||p.name===PP0.name;if(win)PPB.pick(PP0.name);
+  D.getElementById("ppsay").hidden=win;CH.forEach(function(c){c.hidden=win});if(gt){gn.hidden=!win;gt.hidden=win}
+  if(fl){[].slice.call(fl.children).forEach(function(x){if(x!==fh3&&x!==fc&&!x.classList.contains("legend"))x.hidden=!win});fc.hidden=win;fh3.textContent=win?fh0:"Opened and incidents resolved"}
+  ptext(D.getElementById("pppt"),win?null:p,!win&&p.ca!==null&&p.ca!==undefined);
+  if(win){TL.forEach(function(t){show(t,false)})}
+  else{var f=PE.figs(PS,p.a,p.b),c=p.ca!==null&&p.ca!==undefined?PE.figs(PS,p.ca,p.cb):null;
+   function pp(a,b){return b?pc(Math.round(1000*a/b)/10):"\u2014"}function sh(a,b){return b?100*a/b:null}
+   if(gt)gt.textContent=p.title+(c?", compared with "+p.ctitle:"");
+   TL.forEach(function(t){var k=t.k,L=t.l.textContent;
+    if(k==="opened")tile(t,L,nf(f.inc+f.req),c&&dl(f.inc+f.req,c.inc+c.req,true,false),nf(f.inc)+" incidents \u00b7 "+nf(f.req)+" requests");
+    else if(k==="backlog")tile(t,f.now?"Open now":"Open at the period's end",nf(f.bl),dl(f.bl,f.bl0,true,false),"was "+nf(f.bl0)+" at the start");
+    else if(k==="median")tile(t,L,fh(r1(f.med)),c&&dl(r1(f.med),r1(c.med),true,false),c&&c.med!==null?"was "+fh(r1(c.med)):"");
+    else if(k==="resp"&&PC.resp)tile(t,L,pc(r1(f.resp)),c&&dl(r1(f.resp),r1(c.resp),false,true),"incidents and requests");
+    else if(k==="sla")tile(t,L,pc(r1(f.sla)),c&&dl(r1(f.sla),r1(c.sla),false,true),PC.noslo&&f.ns?nf(f.ns)+" with no SLA, not counted":"incidents and requests");
+    else if(k==="fcr"&&PC.hops)tile(t,L,pp(f.fcr,f.res),c&&dl(r1(sh(f.fcr,f.res)),r1(sh(c.fcr,c.res)),false,true),"resolved by the first group it was assigned to");
+    else if(k==="unable"&&PC.out)tile(t,L,pp(f.una,f.res),c&&dl(r1(sh(f.una,f.res)),r1(sh(c.una,c.res)),true,true),"of the incidents resolved");
+    else tile(t,L,"",null,"",true)});
+   if(fc)PE.chart(fc,PS,p.a,p.b)}
+  if(push){var u=win?location.pathname+location.search:"#p="+encodeURIComponent(p.name);try{history.pushState(null,"",u)}catch(e){if(!win)location.hash="p="+encodeURIComponent(p.name)}}}
+ function fromhash(){if(/[#&]cv=/.test(location.hash))return;var m=/[#&]p=([^&]*)/.exec(location.hash),p=m?PPB.byname(decodeURIComponent(m[1])):null;choose(p||PP0,false)}
+ copier("ppcopy");window.addEventListener("popstate",fromhash);fromhash();
 }
 window.addEventListener("beforeprint",function(){D.querySelectorAll("main details").forEach(function(d){d.open=true})});
 }
@@ -1054,8 +1109,9 @@ def _scale_label(sc):
 def tiles(rows, cls="tiles"):
     out = ['<div class="%s">' % cls]
     for t in rows:
-        out.append('<div class="tile%s"><span class="eyebrow">%s</span><span class="v">%s%s</span><span class="d">%s</span></div>' % (
-            " flag" if t.get("flag") else "", e(t["label"]), t["value"], (" " + t["delta"]) if t.get("delta") else "", t.get("note") or ""))
+        out.append('<div class="tile%s"%s><span class="eyebrow">%s</span><span class="v">%s%s</span><span class="d">%s</span></div>' % (
+            " flag" if t.get("flag") else "", (' data-pp="%s"' % e(t["pp"])) if t.get("pp") else "", e(t["label"]), t["value"],
+            (" " + t["delta"]) if t.get("delta") else "", t.get("note") or ""))
     out.append("</div>")
     return "".join(out)
 
@@ -1250,40 +1306,43 @@ def servicenow_insights_page(model, key="all", opts=None):
     nav.append("</nav>")
 
     body = []
+    pbar_html, pdata = page_periods(m, s, o, variant)     # the page's own periods (1.34.0)
+    if pbar_html:
+        body.append(pbar_html)
     # ---- at a glance
     b = s["backlog"]
     behind = b[0] > b[1] * 1.05 and b[0] - b[1] >= 5
     rep = s["reopen"] if reopen_used else s["came_back"]
     q = s["quality"]
     ch = s["changes"]
-    tl = [{"label": "Tickets", "value": n(c["incidents"] + c["requests"]), "note": "%s incidents · %s requests · %s changes · %s problems" % (
+    tl = [{"pp": "opened", "label": "Tickets", "value": n(c["incidents"] + c["requests"]), "note": "%s incidents · %s requests · %s changes · %s problems" % (
               n(c["incidents"]), n(c["requests"]), n(c["changes"]), n(c["problems"]))},
-          {"label": "Open now", "value": n(b[0]), "delta": delta(b[0], b[1]), "note": "was %s at the start · %s older than %d days" % (n(b[1]), n(s["age"][3]), old_days),
+          {"pp": "backlog", "label": "Open now", "value": n(b[0]), "delta": delta(b[0], b[1]), "note": "was %s at the start · %s older than %d days" % (n(b[1]), n(s["age"][3]), old_days),
            "flag": behind},
-          {"label": "Median time to resolve an incident", "value": fh(s["median_h"][0]), "delta": delta(s["median_h"][0], s["median_h"][1]),
+          {"pp": "median", "label": "Median time to resolve an incident", "value": fh(s["median_h"][0]), "delta": delta(s["median_h"][0], s["median_h"][1]),
            "note": "was %s" % fh(s["median_h"][1]) if win.get("compare") else ""},
-          ] + ([{"label": "Response met", "value": pct(s["resp"][0]), "delta": delta(s["resp"][0], s["resp"][1], False, True),
+          ] + ([{"pp": "resp", "label": "Response met", "value": pct(s["resp"][0]), "delta": delta(s["resp"][0], s["resp"][1], False, True),
                  "note": "incidents and requests · " + src_note},
-                {"label": "Resolution met", "value": pct(s["sla"][0]), "delta": delta(s["sla"][0], s["sla"][1], False, True),
+                {"pp": "sla", "label": "Resolution met", "value": pct(s["sla"][0]), "delta": delta(s["sla"][0], s["sla"][1], False, True),
                  "note": ("%s with no SLA, not counted" % n(s["no_slo"][0])) if s["no_slo"][0] else "every ticket done had an SLA"}] if two else
-               [{"label": "SLAs met", "value": pct(s["sla"][0]), "delta": delta(s["sla"][0], s["sla"][1], False, True),
+               [{"pp": "sla", "label": "SLAs met", "value": pct(s["sla"][0]), "delta": delta(s["sla"][0], s["sla"][1], False, True),
                  "note": "incidents and requests · " + src_note}]) + [
-          {"label": "Incidents reopened" if reopen_used else "Came back within %d days" % int(o.get("repeat_days") or 14),
+          {"pp": "-", "label": "Incidents reopened" if reopen_used else "Came back within %d days" % int(o.get("repeat_days") or 14),
            "value": pct(rep[0]), "delta": delta(rep[0], rep[1], True, True),
            "note": ("reopened%s · %s came back as a new ticket" % (
                (" · %s within 7 days of resolving" % pct(s["reopen7"]["pct"])) if (s.get("reopen7") or {}).get("measured") else "", pct(s["came_back"][0]))) if reopen_used else
            'a new incident from the same person on the same issue <span class="chip">Reopen not used here</span>'},
-          {"label": "First-contact resolution", "value": pct((s.get("fcr") or {}).get("now")),
+          {"pp": "fcr", "label": "First-contact resolution", "value": pct((s.get("fcr") or {}).get("now")),
            "delta": delta((s.get("fcr") or {}).get("now"), (s.get("fcr") or {}).get("prev"), False, True) if win.get("compare") else "",
            "note": ("resolved by the first group · the service desk %s" % pct(s["fcr"]["desk"][0])) if (s.get("fcr") or {}).get("desk") else
            "resolved by the first group it was assigned to"},
-          {"label": "Unable to resolve", "value": pct(((s.get("outcomes") or {}).get("unable") or [None])[0]),
+          {"pp": "unable", "label": "Unable to resolve", "value": pct(((s.get("outcomes") or {}).get("unable") or [None])[0]),
            "delta": delta(s["outcomes"]["unable"][0], s["outcomes"]["unable"][1], True, True) if win.get("compare") and s.get("outcomes") else "",
            "note": " + ".join(e(x) for x in (s.get("outcomes") or {}).get("unable_names") or []) + " · of those resolved"},
-          {"label": "Changes successful", "value": pct(_p(ch["successful"], ch["count"])) if ch["count"] else "—",
+          {"pp": "-", "label": "Changes successful", "value": pct(_p(ch["successful"], ch["count"])) if ch["count"] else "—",
            "note": ("%d failed · %d backed out · %d followed by an incident" % (ch["failed"], ch["backed_out"], ch["followed"])) if ch["count"] else "no changes closed"},
-          {"label": "Reassigned %d+ times" % int(o.get("handoff_min") or 3), "value": n(s["handoffs"]["count"]), "note": "%s of incidents" % pct(s["handoffs"]["pct"])},
-          {"label": "Close notes that say what was done", "value": "%d%%" % q[0],
+          {"pp": "-", "label": "Reassigned %d+ times" % int(o.get("handoff_min") or 3), "value": n(s["handoffs"]["count"]), "note": "%s of incidents" % pct(s["handoffs"]["pct"])},
+          {"pp": "-", "label": "Close notes that say what was done", "value": "%d%%" % q[0],
            "delta": delta(q[0], s["quality_prev"][0], False, True) if win.get("compare") and s.get("notes_graded") else "",
            "note": "%d%% vague · %d%% a stock phrase or empty" % (q[1], q[2])}]
     by = s.get("summary_by") == "act"
@@ -1579,7 +1638,7 @@ def servicenow_insights_page(model, key="all", opts=None):
     wtable = table([("Week of", "", ""), ("Opened", "n", ""), ("Resolved", "n", ""), ("Open at its end", "n", "")],
                    [("", [td(e(w["start"])), td(n(w["opened"]), "n"), td(n(w["resolved"]), "n"), td(n(w["backlog"]), "n")]) for w in wk])
     body.append(section("keepingup", "Keeping up", "incidents and requested items · weekly, by the opened and resolved dates",
-                        verdict + '<div class="two"><div class="fig"><h3>Opened and resolved per week</h3><div class="legend"><span><i style="background:var(--s1)"></i>Opened</span>'
+                        verdict + '<div class="two"><div class="fig" id="ppflow"><h3>Opened and resolved per week</h3><div class="legend"><span><i style="background:var(--s1)"></i>Opened</span>'
                         '<span><i style="background:var(--s2)"></i>Resolved</span></div>%s</div><div class="fig"><h3>Open at the end of each week</h3>'
                         '<div class="cap">The backlog: everything not yet resolved, at the end of each whole week. The axis does not start at zero, so the change shows.</div>%s</div></div>'
                         '<div class="two"><div class="fig"><h3>Age of what is open now</h3><div class="cap">Days since opened, at the end of the window.</div>%s</div>'
@@ -2043,7 +2102,7 @@ def servicenow_insights_page(model, key="all", opts=None):
             "<li>%s</li>" % e(x) for x in cut)
     elif m.get("compare_cut"):
         bc += '<div class="callout cutbar"><b>No compare this run.</b> %s</div>' % e(m["compare_cut"])
-    out = head + ['<div class="gut"><div class="wrap layout">'] + nav + ["<main>", teamnav, bc] + body + [
+    out = head + ['<div class="gut"><div class="wrap layout">'] + nav + ["<main>", teamnav, bc] + body + [pdata,
         '</main></div></div><footer class="gut foot"><div class="wrap">%s</div></footer><div class="tip" id="tip" hidden></div>'
         '<script src="%s"></script><script id="site-report-js" data-file="%s">\n%s\n</script></body></html>' % (
             e(o.get("footer") or ""), SCRIPT_FILE, SCRIPT_FILE, SCRIPT)]
@@ -2167,6 +2226,9 @@ ORG_CSS = """
 .cvres #cvpt{font-size:13px}.cvdt{white-space:nowrap}
 .cvch{margin:12px 0}.cvsvg{display:block;width:100%;max-width:760px;height:auto}.cvsvg text{font-size:12px}
 .cvaway{margin:0 0 14px;color:var(--fg-2)}
+.ppbar{margin:0 0 14px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}.ppbar .cvper{margin:0}
+.ppsay{font-size:12px;margin:8px 0 0}.ppnone{font-size:12px;margin:0 0 12px}.chip.ppw{font-weight:600;color:var(--muted)}.tile .chip.ppw{margin-top:4px;align-self:flex-start}
+.tile>[hidden],#ppflow>[hidden],.sh [hidden],.ppbar [hidden]{display:none!important}
 .cvd:focus-within{outline:none}.cvt input:focus-visible,.cvbar :focus-visible,.cvx:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 """
 
@@ -2222,6 +2284,95 @@ def cv_link(m, s, links):
         e(links["all"]), cv_ranges(idx), "this group" if len(idx) == 1 else "these %d groups" % len(idx))) if idx else ""
 
 
+def page_rows(m, s, variant=""):
+    """The rows a page's period bar works from (1.34.0): the page's own groups' (every group on the All page; a split's
+    page its half's), from the window before's start while they fit servicenow_insights_custom_view_max_rows, else from
+    the window's. -> (data as the Custom view's: {until, n, groups, cols, hop_limit, unable, calendar, periods, left_line},
+    why not) - (None, why) when there are none or too many."""
+    rw = m.get("rows") or {}
+    if not rw:
+        return None, ""
+    gs = s.get("groups_of")
+    sp = set((m.get("split") or {}).get("groups") or [])
+    mx = int(rw.get("max") or 30000)
+
+    def cut(src):
+        d = m.get("custom") if src == "custom" else src
+        if not d or not d.get("cols"):
+            return None
+        want = set(gs) if gs is not None else None
+        keep = [i for i, g in enumerate(d["groups"]) if (want is None or g in want) and (not variant or (g in sp) == (variant == "in"))]
+        if len(keep) == len(d["groups"]):
+            return d
+        new = dict((g, k) for k, g in enumerate(keep))
+        rows = [r for r, g in enumerate(d["cols"]["g"]) if g in new]
+        cols = dict((k, [v[r] for r in rows]) for k, v in d["cols"].items())
+        cols["g"] = [new[g] for g in cols["g"]]
+        return dict(d, groups=[d["groups"][i] for i in keep], cols=cols, n=len(rows))
+    d, before = cut(rw.get("full")), True
+    if d and d["n"] > mx and rw.get("win"):
+        d, before = cut(rw["win"]), False
+    if not d:
+        return None, ""
+    if d["n"] > mx:
+        return None, "%s tickets are more than servicenow_insights_custom_view_max_rows (%s)" % ("{:,}".format(d["n"]), "{:,}".format(mx))
+    left = _sibling("servicenow_insights_filters").periods_left_line(d.get("left"), rw.get("why_none") if before else rw.get("why_before"))
+    return dict(d, left_line=left), ""
+
+
+def page_periods(m, s, o, variant=""):
+    """The page's own period bar (1.34.0), at the top of the All page and every unit's and team's page: the same buttons,
+    from / to and phone select as the Custom view; a period chosen works out the At a glance tiles and the opened and
+    resolved chart in the page from the carried rows (cv-data's figures, the same script); the rest says "whole window".
+    The address keeps it (#p=3m). Off: servicenow_insights_page_periods: false."""
+    if o.get("page_periods", True) in (False, "false", "False", 0):
+        return "", ""
+    d, why = page_rows(m, s, variant)
+    if not d:
+        return ('<p class="ppnone mut">Periods: not on this page - %s.</p>' % e(why)) if why else "", ""
+    bar = period_bar(d.get("periods") or [], d.get("calendar") or {}, d.get("left_line"), "pp")
+    if not bar:
+        return "", ""
+    html_ = ('<div class="cvres ppbar" id="ppbar"><div class="cvhead"><b>Period</b><span class="mut" id="pppt"></span>'
+             '<button type="button" id="ppcopy">Copy link</button></div>%s'
+             '<p class="ppsay mut" id="ppsay" hidden>The tiles and the opened and resolved chart are for the period chosen, worked out in this page. '
+             'Sections marked <span class="chip ppw">whole window</span> are not.</p></div>') % bar
+    data = json.dumps({"until": d["until"], "n": d["n"], "groups": d["groups"], "cols": d["cols"], "hop_limit": d.get("hop_limit", 3),
+                       "unable": d.get("unable") or [], "calendar": d.get("calendar") or {}, "periods": d.get("periods") or []},
+                      separators=(",", ":")).replace("</", "<\\/")
+    if d.get("cols") is ((m.get("custom") or {}).get("cols")) and s.get("level") == "all" and not variant and m.get("org"):
+        return html_, ""                    # the All page's Custom view carries these very rows (cv-data): not twice
+    return html_, '<script type="application/json" id="pp-data">%s</script>' % data
+
+
+def period_bar(pers, cal, left_line, pfx):
+    """The period buttons (1.10.0; 1.16.0: two short labeled rows - The window and This month, then Months (1 2 3 6 9 12) /
+    Weeks (1 2 4) by their number, the full label in the title and for screen readers; the from / to after. A phone: one
+    select instead). pfx: the ids' prefix - cv the Custom view's, pp the page's own (1.34.0)."""
+    if not pers:
+        return ""
+
+    def tip(p_):
+        return p_["title"] + ((", compared with " + p_["ctitle"]) if p_.get("ctitle") else "")
+
+    def btn(p_, short):
+        return ('<button type="button" class="cvpd%s" data-name="%s" aria-pressed="false" title="%s: %s" aria-label="%s">%s</button>' % (
+            " num" if short else "", e(p_["name"]), e(p_["label"]), e(tip(p_)), e(p_["label"]), e(str(p_["n"]) if short else p_["label"])))
+    plain = [p_ for p_ in pers if not p_.get("kind")]
+    rows = [('Months', [p_ for p_ in pers if p_.get("kind") == "m"]), ('Weeks', [p_ for p_ in pers if p_.get("kind") == "w"])]
+    rows_html = "".join('<div class="cvprow" role="group" aria-label="%s"><span class="cvplab">%s</span>%s</div>' % (
+        lab, lab, "".join(btn(p_, True) for p_ in ps)) for lab, ps in rows if ps)
+    sel = ('<label class="cvpsel"><span class="mut">Period</span> <select id="%spsel">%s<option value="" disabled>From / to below</option>'
+           '</select></label>') % (pfx, "".join('<option value="%s">%s</option>' % (e(p_["name"]), e(p_["label"])) for p_ in pers))
+    left = ('<p class="cvleft mut">%s</p>' % e(left_line)) if left_line else ""
+    return ('<div class="cvper js" role="group" aria-label="Period">%s<div class="cvpbtn"><div class="cvprow cvpfirst">%s</div>%s</div>'
+            '<div class="cvft"><label>From <input type="date" id="%sfrom" min="%s" max="%s"></label>'
+            '<label>to <input type="date" id="%sto" min="%s" max="%s"></label><button type="button" id="%sft">Show</button>'
+            '<span class="mut cvftmsg" id="%sftmsg" aria-live="polite"></span></div>%s</div>') % (
+        sel, "".join(btn(p_, False) for p_ in plain), rows_html, pfx,
+        e(cal.get("d0", "")), e(cal.get("last", "")), pfx, e(cal.get("d0", "")), e(cal.get("last", "")), pfx, pfx, left)
+
+
 def custom_view(m, o):
     """The All page's Custom view (1.8.0): a tree of units and groups to tick (a unit ticks everything under it), and the
     figures worked out in the browser for exactly those groups, from the tickets' compact rows carried in the page
@@ -2272,28 +2423,7 @@ def custom_view(m, o):
     # the periods (1.10.0): calendar months and weeks, each against the one before; or any from / to
     pers = c.get("periods") or []
     cal = c.get("calendar") or {}
-    pbar = ""
-    if pers:
-        # 1.16.0: two short labeled rows - The window and This month, then Months (1 2 3 6 9 12) / Weeks (1 2 4) by their
-        # number, the full label in the title and for screen readers; the from / to after. A phone: one select instead.
-        def tip(p_):
-            return p_["title"] + ((", compared with " + p_["ctitle"]) if p_.get("ctitle") else "")
-
-        def btn(p_, short):
-            return ('<button type="button" class="cvpd%s" data-name="%s" aria-pressed="false" title="%s: %s" aria-label="%s">%s</button>' % (
-                " num" if short else "", e(p_["name"]), e(p_["label"]), e(tip(p_)), e(p_["label"]), e(str(p_["n"]) if short else p_["label"])))
-        plain = [p_ for p_ in pers if not p_.get("kind")]
-        rows = [('Months', [p_ for p_ in pers if p_.get("kind") == "m"]), ('Weeks', [p_ for p_ in pers if p_.get("kind") == "w"])]
-        rows_html = "".join('<div class="cvprow" role="group" aria-label="%s"><span class="cvplab">%s</span>%s</div>' % (
-            lab, lab, "".join(btn(p_, True) for p_ in ps)) for lab, ps in rows if ps)
-        sel = ('<label class="cvpsel"><span class="mut">Period</span> <select id="cvpsel">%s<option value="" disabled>From / to below</option>'
-               '</select></label>') % "".join('<option value="%s">%s</option>' % (e(p_["name"]), e(p_["label"])) for p_ in pers)
-        left = ('<p class="cvleft mut">%s</p>' % e(c["left_line"])) if c.get("left_line") else ""
-        pbar = ('<div class="cvper js" role="group" aria-label="Period">%s<div class="cvpbtn"><div class="cvprow cvpfirst">%s</div>%s</div>'
-                '<div class="cvft"><label>From <input type="date" id="cvfrom" min="%s" max="%s"></label>'
-                '<label>to <input type="date" id="cvto" min="%s" max="%s"></label><button type="button" id="cvft">Show</button><span class="mut cvftmsg" id="cvftmsg" aria-live="polite"></span></div>%s</div>') % (
-            sel, "".join(btn(p_, False) for p_ in plain), rows_html,
-            e(cal.get("d0", "")), e(cal.get("last", "")), e(cal.get("d0", "")), e(cal.get("last", "")), left)
+    pbar = period_bar(pers, cal, c.get("left_line"), "cv")
     chart = ('<div class="fig cvch"><h3>Opened and resolved</h3><div class="legend"><span><i style="background:var(--s1)"></i>Opened</span>'
              '<span><i style="background:var(--s2)"></i>Incidents resolved</span></div><div id="cvchart"></div></div>')
     res = ('<div class="cvres" id="cvres" hidden><div class="cvhead"><b id="cvlab"></b><span class="mut" id="cvpt"></span>'

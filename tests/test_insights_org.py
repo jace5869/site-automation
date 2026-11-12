@@ -371,7 +371,8 @@ class PeriodButtons(unittest.TestCase):
         c = m["custom"]
         self.assertEqual([p["name"] for p in c["periods"]], ["all", "1m", "2m", "3m", "6m", "1w", "2w", "4w"])
         h = P.servicenow_insights_page(m, "all", {"links": T.page_links(m)})
-        bar = h[h.index('<div class="cvper js"'):h.index('<div class="tiles">')]
+        cv = h.index('id="cvres"')                         # the Custom view's own bar (1.34.0: the page's is at the top)
+        bar = h[h.index('<div class="cvper js"', cv):h.index('<div class="tiles">', cv)]
         self.assertIn('<div class="cvprow cvpfirst"><button type="button" class="cvpd" data-name="all" aria-pressed="false" '
                       'title="The window: May to October 2026, compared with November 2025 to April 2026" aria-label="The window">The window</button></div>', bar)
         self.assertIn('<div class="cvprow" role="group" aria-label="Months"><span class="cvplab">Months</span>', bar)
@@ -451,7 +452,7 @@ class TheScript(unittest.TestCase):
         probe = ('<script>addEventListener("load",function(){setTimeout(function(){var f=window.siteInsightsFigures,D=document,sp=%s;'
                  'function tx(i){return D.getElementById(i).textContent}'
                  'D.title="R "+JSON.stringify({figs:sp.map(function(s){return f(%s,s[0],s[1])}),'
-                 'pressed:[].slice.call(D.querySelectorAll("button.cvpd[aria-pressed=true]")).map(function(b){return b.getAttribute("data-name")}),'
+                 'pressed:[].slice.call(D.querySelectorAll("#cvres button.cvpd[aria-pressed=true]")).map(function(b){return b.getAttribute("data-name")}),'
                  'title:tx("cvpt"),from:D.getElementById("cvfrom").value,to:D.getElementById("cvto").value,label:tx("cv-backlog-l"),'
                  'hold:tx("cv-hold"),holdd:tx("cv-hold-d"),bars:D.querySelectorAll("#cvchart rect").length,rows:D.getElementById("cvtab").tBodies[0].rows.length,'
                  'x:tx("cv-opened-x"),hash:location.hash})},500)})</script></body>') % (json.dumps(spans), json.dumps(idx))
