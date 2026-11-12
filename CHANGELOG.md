@@ -30,17 +30,23 @@ refused:
   CUI, UNCLASSIFIED), not the last job's. Before it writes, a report job reads `index.json` again and changes only its
   own line (a folder, a share or an upload address; for `report_web_host` docs/WEB_REPORTS.md says what can still be
   lost and how it comes back). On a site updated from an older release, the index keeps the banner it already carries
-  while a line written before is listed - until each of those reports has run again. Two runs of the same template at
+  while a line or a run written before is listed - until each of those runs has left its report's last runs. Two runs of the same template at
   once (Concurrent jobs on) can still leave the older run's line: docs/WEB_REPORTS.md.
 - **The report website on a phone** (1.21.0's fit, with wider fonts such as a Linux browser's): a section title, a
-  long word in a table's card and a long status chip break inside the card instead of widening the page.
+  long word in a table's card and a long status chip break inside the card instead of widening the page (a chip's
+  long word after a `_` first: `ERROR_NO_LOGON_` / `SERVERS`).
 - **The template audit** never shows a secret's value. A setting's name is read word by word (split at `_ - .`,
   camelCase and digits): one of its words a secret word (password, passwd, pwd, pass, pw, secret, token, apikey,
-  passphrase, credential(s), pin, or the pairs api key, private key, secret key, access key, key material) makes it a
-  secret - `admin_pwd`, `dbPassword`, `client-secret`, `API-KEY`, `db.password`, `svc_credentials`, `secret1`; never a
-  word inside another (bypass, compass, keyboard). A number under such a name, such a name anywhere inside a dict or
-  list, a URL with a password in it (`user:password@`), a text that holds JSON or YAML with such a key, and a text
-  such as `Pwd=...` in a connection string are secrets too. Any dict or list value is shown as "(same; not shown)" or
+  passphrase, pin, or the pairs api key, private key, secret key, access key, key material), or a word ending in a long
+  one with no sign (`PGPASSWORD`, `dbpassword`, `clientsecret`) or in pass (`adminpass`; not bypass, compass) makes it
+  a secret - `admin_pwd`, `dbPassword`, `client-secret`, `API-KEY`, `db.password`, `secret1`; never a short word inside
+  another (keyboard, spin), nor one with a count or a version after it (`pin_version`, `pass_count`). A number under
+  such a name, such a name anywhere inside a dict or list, a URL with a password in it (`user:password@`), a text that
+  holds JSON or YAML with such a key, a text such as `Pwd=...` in a connection string or `--password X` / `-p X` on a
+  command line, an Authorization header's `Basic ...` / `Bearer ...` and a PEM private key are secrets too, whatever
+  the setting is called. A setting named for a credential (`scan_credentials`) is a secret when its value is not a
+  credential's name or id (`AAP - SOP draft`, `[12, 15]`); a sentence of plain words is prose, not a setting. The audit
+  hides on suspicion: a value it cannot tell is not shown. Any dict or list value is shown as "(same; not shown)" or
   "(differs)"; so is a text that reads as JSON or YAML.
 - **STIG Manager stack:** the check that refuses to change a deployed database password shows only the names of the
   passwords that differ, never anything derived from them.
@@ -69,8 +75,9 @@ refused:
 - A ServiceNow node whose stats page has a self-signed certificate, or one from a CA the node does not trust, is not
   read: add the CA to the node's trust store, or set `servicenow_node_validate_certs: false`. A certificate that does
   not name the node (its name or the address it is asked at) is not read either: the job says which name it lacks.
-- The template audit shows fewer values: a setting whose name has a secret word in it, and a text that reads as JSON
-  or YAML (a line with a colon can), are not shown.
+- The template audit shows fewer values: a setting whose name has a secret word in it (or ends in one: `PGPASSWORD`),
+  a text that reads as JSON or YAML (a line with a colon can), and, under any name, an Authorization header, a PEM
+  private key or `--password X` are not shown. It hides on suspicion: a setting may be called a secret that is none.
 - The DoD PKI bundle check no longer offers a bundle it could not verify (FIPS-mode execution environments, copies
   without the signed list), unless `pki_bundle_accept_unverified: true`.
 - The checklist import may list more conflicts where old scans of a host stay on the share (with
@@ -78,8 +85,8 @@ refused:
 - The STIG Manager update fails when a new asset was made by someone else since the check.
 - The report copy job stays green when a page fails (it warns and tries again on the next run); a kept report whose
   file names leave the folder is skipped.
-- `index.json` gains a `banner` key: on each line (empty when its run had none), on a run that had one, and the
-  index's own at the top.
+- `index.json` gains a `banner` key: on each line and each run (empty when the run had none), and the index's own at
+  the top.
 
 Files:
 - roles/api_availability (site_http_probe: no redirects followed with a login; a probe's `follow`),
@@ -100,8 +107,10 @@ Files:
 
 Tests: a test for each fix that runs without a real system - for the three HTTP clients two local servers, the first
 answering with a redirect, and the login never reaching the second; the copy job's names and failing pages; the
-index's banner and line merge, and an index from an older release keeping its banner; nested and numeric secrets and
-every secret-name spelling, URL passwords and JSON/YAML texts; the node stats certificate checked against the name it
+index's banner and line merge, and an index from an older release keeping its banner (also while a report's own older
+classified run is listed); nested and numeric secrets and every secret-name spelling (joined ones too), URL passwords,
+JSON/YAML texts, Authorization headers, PEM keys and command-line passwords, and the false alarms (a credential's
+name, pin_version, pass_count, a sentence); the node stats certificate checked against the name it
 is asked with (a TLS-only node at 127.0.0.1); the stack's output at -vvv; an unverified bundle; the
 checklist conflict and a UTF-16 DTD; LDAP paging and the lockout policy; an asset of an earlier run; approvals; the
 WAR cap; the win_act scripts' order (and a run with pwsh). New: tests/test_stigman_stack.py, tests/test_win_act.py.

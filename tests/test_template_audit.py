@@ -251,6 +251,51 @@ class Judge(unittest.TestCase):
             self.assertFalse(m.secret_name(n), n)
         self.assertEqual(m.name_words("APIKey-db.password_v2"), ["api", "key", "db", "password", "v", "2"])
 
+    def test_joined_names_values_and_false_alarms(self):
+        """1.24.0c, the re-pass: a name ending in a long secret word with no sign (PGPASSWORD, dbpassword) or in pass
+        (adminpass); a secret in the value under a neutral name (an Authorization header, --password X, -p X, a PEM
+        private key); and the false alarms - a credential's name or id, pin or pass with a count or a version, a sentence."""
+        hide = [  # (setting, value, what must never be seen)
+            ("PGPASSWORD", "Hx-pg1", "Hx-pg1"), ("dbpassword", "Hx-db2", "Hx-db2"), ("adminpass", "Hx-adm3", "Hx-adm3"),
+            ("clientsecret", "Hx-cs4", "Hx-cs4"), ("vaultToken2", "Hx-vt5", "Hx-vt5"),
+            ("auth_header", "Basic c3ZjOkh4LWJhc2lj", "c3ZjOkh4LWJhc2lj"),
+            ("authorization", "Bearer eyJhbGciOiJIUzI1NiJ9.e30.Hx-bearer", "Hx-bearer"),
+            ("curl_args", "-H 'Authorization: Token Hx0tok3n99' https://api.example.mil", "Hx0tok3n99"),
+            ("cli_args", "--user svc --password Hx-cli6", "Hx-cli6"), ("mysql_args", "-u root -p Hx-cli7", "Hx-cli7"),
+            ("env_line", "PGPASSWORD=Hx-env8 psql -h db01", "Hx-env8"),
+            ("tls_key", "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n-----END PRIVATE KEY-----", "MIIEvQ"),
+            ("ssh_key", "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n", "b3BlbnNz"),
+            ("ldap_credential", "Hx9Summer2024", "Hx9Summer2024"), ("svc_creds", {"user": "svc", "pass": "Hx-c10"}, "Hx-c10"),
+        ]
+        show = [  # (setting, value, the value shown)
+            ("incident_docs_draft_credential", "AAP - SOP draft", "AAP - SOP draft"),
+            ("pin_version", "1.2.3", "1.2.3"), ("pass_count", 3, "3"),
+            ("note", "Change the password: see the runbook", "Change the password: see the runbook"),
+            ("ssh_args", "-p 2222 -o BatchMode=yes", "-p 2222 -o BatchMode=yes"),
+            ("intro", "Basic information about the site", "Basic information about the site"),
+        ]
+        for n, v, expect in hide + show:
+            with self.subTest(setting=n):
+                recs = [{"kind": "job", "id": i, "name": "Job %d" % i, "extra_vars": json.dumps({n: v})} for i in range(3)]
+                templates, settings = m.audit(recs, {"repeat_min": 3})
+                s = dict((x["setting"], x) for x in settings)[n]
+                r = f.template_audit_report({"templates": templates, "settings": settings, "problems": []}, {"repeat_min": 3})
+                out = json.dumps([templates, settings]) + json.dumps(r, default=str)
+                if (n, v, expect) in hide:
+                    self.assertIn("secret", s["why"])
+                    self.assertNotIn(expect, out)
+                else:
+                    self.assertNotIn("secret", s["why"])
+                    self.assertEqual(s["value"], expect)
+        # the repo's own: a list of credential names or ids is no secret, and shown as a list is not (never a value)
+        for v in (["SITEA - Linux SSH", "SITEA - Windows SMB"], [12, 15]):
+            self.assertFalse(m.is_secret("tenable_scan_credentials", v), v)
+        for n in ("PGPASSWORD", "dbpassword", "adminpass", "rootpass", "apitoken", "clientsecret", "sshprivatekey"):
+            self.assertTrue(m.secret_name(n), n)
+        for n in ("bypass", "compass", "multipass", "passenger_list", "secretary_email", "tokenizer", "token_url",
+                  "password_max_days", "pin_version", "pass_count", "keyboard", "spin", "credential_name"):
+            self.assertFalse(m.secret_name(n), n)
+
     def test_repeat_min(self):
         _, settings = m.audit(records(), dict(OPTS, repeat_min=0))
         self.assertNotIn("check_disk_warn_pct", [x["setting"] for x in settings])

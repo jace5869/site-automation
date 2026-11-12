@@ -17,8 +17,10 @@ description:
     one's Variables (extra_vars, YAML or JSON) and, where its survey is on, the survey's questions. GET only.
   - "Flags each setting that is: connection (an C(ansible_*) setting); an address (a host name, a URL or an IP address
     in its value); site-wide (in O(site_wide): the settings usually in all.yml); repeated (the same value in at least
-    O(repeat_min) templates); a secret (a word of its name - password, pwd, secret, token, api key, credential, pin -
-    or its value: a long random string, a URL with a password, a key named like a secret in a text holding JSON or YAML)."
+    O(repeat_min) templates); a secret (a word of its name - password, pwd, secret, token, api key, pin, or a word ending
+    in one: PGPASSWORD -, a credential's setting whose value is no credential name, or its value: a long random string,
+    a URL with a password, --password X, an Authorization header, a PEM private key, a key named like a secret in a text
+    holding JSON or YAML). It hides on suspicion."
   - "A secret is never returned: only its name. A repeated setting's value is returned (cut) only when it is no secret,
     is not named like one, and is not a list or a dict or a text holding one (those come back as '(same; not shown)')."
   - "A template that asks for its Variables on launch, or whose survey asks for a flagged setting: a launch can set
@@ -75,17 +77,35 @@ NO_CREDENTIAL = ('No AAP connection: attach a credential of type "Red Hat Ansibl
 # (adminPwd, client-secret, db.password, APIKey, secret1)
 NAME_WORDS = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|[0-9]+")
 # a setting named like a secret: one of these words, whole (bypass, compass, keyboard and spin are not) ...
-SECRET_WORDS = frozenset(("password", "passwords", "passwd", "pwd", "pass", "pw", "secret", "secrets", "token", "apikey",
-                          "apikeys", "passphrase", "credential", "credentials", "pin", "privatekey", "secretkey", "accesskey"))
+SECRET_WORDS = frozenset(("password", "passwords", "passwd", "pwd", "pass", "pw", "secret", "secrets", "token", "tokens",
+                          "apikey", "apikeys", "passphrase", "pin", "privatekey", "secretkey", "accesskey"))
+# ... or a word that ends in a long one, joined with no sign (PGPASSWORD, dbpassword, clientsecret, apitoken) ...
+SECRET_ENDS = ("password", "passwords", "passwd", "pwd", "passphrase", "secret", "secrets", "token", "tokens", "apikey",
+               "apikeys", "privatekey", "secretkey", "accesskey")
+# ... or in pass, 6 letters or more (adminpass, dbpass, rootpass) - but for these words of their own
+PASS_WORDS = frozenset(("bypass", "compass", "encompass", "overpass", "underpass", "surpass", "trespass", "multipass",
+                        "firstpass", "onepass", "singlepass", "twopass", "flypass"))
+# ... credential(s) only when its value looks like a secret: the repo's own name a credential (tenable_scan_credentials,
+# incident_docs_draft_credential: a credential's name, a list of names or ids)
+CREDENTIAL_WORDS = frozenset(("credential", "credentials", "creds", "cred"))
 # ... or two of them in a row (api_key, private-key, aws_access_key, key_material)
 SECRET_PAIRS = frozenset((("api", "key"), ("private", "key"), ("secret", "key"), ("access", "key"), ("key", "material")))
 # a name like these is about a secret, not one: where it is, what it is called, a rule for it (its words, joined by _)
 NOT_SECRET_NAME = re.compile(r"_(file|path|dir|name|names|id|ids|url|host|user|username|type|length|len|days|age|"
-                             r"expires?|expiry|policy|rotation|field|header|check|checks|warn|crit|min|max)$", re.I)
+                             r"expires?|expiry|policy|rotation|field|header|check|checks|warn|crit|min|max|"
+                             r"count|counts|version|ver|total|limit|limits|size|retries|attempts|tries)$", re.I)
 # a URL with a password in it (mysql://svc:<password>@db01)
 URL_PASSWORD = re.compile(r"[a-z][a-z0-9+.-]*://[^\s/?#@:]*:[^\s/?#]+@", re.I)
 # name=value or name: value in a text (Server=db01;Uid=svc;Pwd=...), the name in quotes or not
 TEXT_SETTING = re.compile(r"""([A-Za-z][\w.-]*)["']?\s*[:=]\s*["']?[^\s"',;]""")
+# a command line's option and its value after a space (--password X, -p X)
+CLI_OPTION = re.compile(r"(?:^|\s)(--?)([A-Za-z][\w-]*)\s+([\"']?)([^\s\"']+)")
+# a value that is an HTTP Authorization header's credentials (Basic <base64>, Bearer <token>), alone or after its name
+AUTH_VALUE = re.compile(r"(?:^|authorization\"?\s*[:=]\s*\"?)(?:basic|bearer|token|negotiate|digest)\s+[A-Za-z0-9+/=._~-]{8,}", re.I)
+# a PEM private key (RSA, EC, OPENSSH, ENCRYPTED ...)
+PEM_KEY = re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----")
+# a sentence of plain words (Change the password: see the runbook) - prose, not a name=value text
+PROSE_WORD = re.compile(r"""^["'(]?[A-Za-z]+(?:'[a-z]+)?[.,:;!?)"']*$""")
 URL = re.compile(r"^[a-z][a-z0-9+.-]*://[^\s/]+", re.I)
 IPV4 = re.compile(r"^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:/\d{1,2})?(?::\d+)?$")
 IPV6 = re.compile(r"^\[?(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}\]?(?:/\d{1,3})?$", re.I)
@@ -122,7 +142,8 @@ def parse_vars(text):
 
 
 def _value(v):
-    """A text that holds JSON or YAML - a dict or a list - is that dict or list; any other value is itself. Pure."""
+    """A text that holds JSON or YAML - a dict or a list - is that dict or list; any other value (a sentence of plain
+    words too: "Change the password: see the runbook" is no setting) is itself. Pure."""
     if not isinstance(v, str):
         return v
     t, d = v.strip(), None
@@ -133,7 +154,7 @@ def _value(v):
             d = json.loads(t)
         except Exception:                            # not JSON (or too deep): YAML may read it
             d = None
-    if d is None and yaml is not None and (":" in t or t[0] in "-[{"):
+    if d is None and yaml is not None and (":" in t or t[0] in "-[{") and not prose(t):   # a sentence with a colon: a text
         try:
             d = yaml.safe_load(t)
         except Exception:                            # not YAML either: it stays a text
@@ -195,20 +216,83 @@ def name_words(name):
     return [w.lower() for w in NAME_WORDS.findall(str(name or ""))]
 
 
+def _secret_word(w):
+    return w in SECRET_WORDS or w.endswith(SECRET_ENDS) or (len(w) >= 6 and w.endswith("pass") and w not in PASS_WORDS)
+
+
 def secret_name(name):
-    """A setting named like a secret (db_password, adminPwd, client-secret, API-KEY, secret1): a whole word of its
-    name, never a part of one (bypass, keyboard) - and not one that names where it is (vcenter_password_file). Pure."""
+    """A setting named like a secret (db_password, adminPwd, client-secret, API-KEY, secret1, PGPASSWORD, adminpass): a
+    whole word of its name, or a word ending in a long one - never a short one inside a word (bypass, keyboard, spin) -
+    and not one that names where it is or counts it (vcenter_password_file, pin_version, pass_count). Pure."""
     w = name_words(name)
     if not w or NOT_SECRET_NAME.search("_".join(w)):
         return False
-    return any(x in SECRET_WORDS for x in w) or any((a, "key" if b == "keys" else b) in SECRET_PAIRS for a, b in zip(w, w[1:]))
+    return any(_secret_word(x) for x in w) or any((a, "key" if b == "keys" else b) in SECRET_PAIRS for a, b in zip(w, w[1:]))
+
+
+def credential_name(name):
+    """A setting about a credential (scan_credentials, ldap_cred) - a secret only when its value looks like one. Pure."""
+    w = name_words(name)
+    return bool(w) and not NOT_SECRET_NAME.search("_".join(w)) and any(x in CREDENTIAL_WORDS for x in w)
+
+
+def names_only(v, depth=0):
+    """A credential's name as AAP shows it, its id, or a list of them (AAP - SOP draft, Tenable scan (Linux), 12, [12, 15]):
+    two words or more with spaces, or a number. A single word (tenable-linux-ssh, Summer2024) may be a password: not a
+    name - when in doubt, hidden. Pure."""
+    if depth > 6:
+        return False
+    v = _value(v)
+    if isinstance(v, bool) or v is None:
+        return True
+    if isinstance(v, int):
+        return True
+    if isinstance(v, (list, tuple)):
+        return all(names_only(x, depth + 1) for x in v)
+    if not isinstance(v, str):
+        return False
+    s = v.strip()
+    if re.match(r"^\d{1,12}$", s):
+        return True
+    words = s.split()
+    return 2 <= len(words) and len(s) <= 128 and bool(re.match(r"^[\w ()\[\].,:/&'-]+$", s)) and not any(
+        looks_random(x) for x in words)
+
+
+def prose(s):
+    """A sentence of plain words, four or more (Change the password: see the runbook). Pure."""
+    words = str(s or "").split()
+    return len(words) >= 4 and all(PROSE_WORD.match(x) for x in words)
+
+
+def _cli_secret(dash, opt, value):
+    """--password X: an option named like a secret, its value after a space; -p X too (a password for mysql and
+    others), but not a number, a port mapping or a path (ssh -p 2222, podman -p 8080:80, rsync -p /src)."""
+    if value.startswith("-"):
+        return False
+    if dash == "-" and opt == "p":
+        return not re.match(r"^[\d:./~]+$", value) and not value.startswith(("/", "./", "~", "$"))
+    return secret_name(opt)
 
 
 def secret_text(s):
-    """A text with a secret written in it: a URL with a password (mysql://svc:...@db01), or name=value / name: value
-    under a secret's name (Uid=svc;Pwd=...). Pure."""
+    """A text with a secret written in it: a URL with a password (mysql://svc:...@db01), a PEM private key, an HTTP
+    Authorization header's credentials (Basic ..., Bearer ...), --password X or -p X, or name=value / name: value under a
+    secret's name (Uid=svc;Pwd=..., PGPASSWORD=...). A sentence of plain words is prose: only a URL or a key counts
+    there. Pure."""
     s = str(s or "")
-    return bool(URL_PASSWORD.search(s)) or any(secret_name(k) for k in TEXT_SETTING.findall(s))
+    if URL_PASSWORD.search(s) or PEM_KEY.search(s):
+        return True
+    if prose(s):
+        return False
+    return bool(AUTH_VALUE.search(s.strip())) or any(_cli_secret(*m[:2], m[3]) for m in CLI_OPTION.findall(s)) or any(
+        secret_name(k) for k in TEXT_SETTING.findall(s))
+
+
+def _named_secret(name, value):
+    """Named like a secret, with a value (an empty one is no secret; a number counts) - named for a credential, with a
+    value that is not just a credential's name or id."""
+    return _filled(value) and (secret_name(name) or (credential_name(name) and not names_only(value)))
 
 
 def _keys(v, depth=0):
@@ -248,9 +332,9 @@ def is_secret(name, value):
     anywhere inside it (stigman_db: {password: ...}, or a text holding JSON or YAML: '{"password": ...}'), a text with
     a secret written in it (a URL with a password: the whole value is the secret), or a value that is a long random
     string. A vault-encrypted value is a secret too: it is fine in a vars file, not in a template's Variables. Pure."""
-    if secret_name(name) and _filled(value):
+    if _named_secret(name, value):
         return True
-    if any(secret_name(k) and _filled(x) for k, x in _keys(value)):
+    if any(_named_secret(k, x) for k, x in _keys(value)):
         return True
     return any(looks_random(s) or secret_text(s) or str(s).lstrip().startswith("$ANSIBLE_VAULT") for s in _strings(value))
 
@@ -258,7 +342,7 @@ def is_secret(name, value):
 def hidden(name, value):
     """A value the report never shows, secret or not: one named like a secret (even true/false), and a list or a dict
     (a key inside may be one), a text holding one as JSON or YAML too. Pure."""
-    return secret_name(name) or isinstance(_value(value), (dict, list, tuple))
+    return secret_name(name) or (credential_name(name) and not names_only(value)) or isinstance(_value(value), (dict, list, tuple))
 
 
 def connection_suggestion(name):

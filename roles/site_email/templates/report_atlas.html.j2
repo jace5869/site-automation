@@ -73,10 +73,14 @@
 {%- macro keep(text) -%}
 {%- for ln in text.split('\n') -%}{{ '\n' if not loop.first else '' }}{%- for w in ln.split(' ') -%}{{ ' ' if not loop.first else '' }}{{ nbw(w) }}{%- endfor -%}{%- endfor -%}
 {%- endmacro -%}
-{#- a chip: up to 12 characters on one line (sh); a longer one wraps, at a width by its length (2 to 4 lines) -#}
+{#- a chip: up to 12 characters on one line (sh); a longer one wraps, at a width by its length (2 to 4 lines); a long
+    word of it breaks after a _ before anywhere else (ERROR_NO_LOGON_ / SERVERS, 1.24.0c) -#}
 {%- macro chip(k, text) -%}
 {%- set n = text | string | length -%}
-<span class="chip s-{{ k }} {{ 'sh' if n <= 12 else ('c2' if n <= 24 else ('c3' if n <= 40 else ('c4' if n <= 60 else 'c5'))) }}">{{ icon(k) }}<span>{{ keep(text | string) }}</span></span>
+<span class="chip s-{{ k }} {{ 'sh' if n <= 12 else ('c2' if n <= 24 else ('c3' if n <= 40 else ('c4' if n <= 60 else 'c5'))) }}">{{ icon(k) }}<span>
+{%- for ln in (text | string).split('\n') -%}{{ '\n' if not loop.first else '' }}{%- for w in ln.split(' ') -%}{{ ' ' if not loop.first else '' }}
+{%- if w | length > 12 and '_' in w.strip('_') -%}<span class="lw">{{ w.split('_') | map('e') | join('_<wbr>') }}</span>{%- else -%}{{ nbw(w) }}{%- endif -%}
+{%- endfor -%}{%- endfor -%}</span></span>
 {%- endmacro -%}
 {#- a path, address or hash: escaped, with a place to break after each / and \ (no hyphen is added) -#}
 {%- macro breakable(text) -%}

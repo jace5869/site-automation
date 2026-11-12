@@ -235,7 +235,9 @@ The index lists many reports, so it carries the **highest** marking among the ru
 CONFIDENTIAL, CUI, UNCLASSIFIED; a text of no known classification counts as SECRET) - whichever job wrote it last. A
 run without a banner never takes a classified report's banner off the index: each line of `index.json` keeps its runs'
 banner (1.24.0), and `index.json` the index's own. On a site updated from an older release, the banner the index
-already carries stays while any line from before is listed - until each of those reports has run again.
+already carries stays while any line or run from before is listed - until each of those runs has left its report's
+last runs (`report_web_history`, 5): a report that was classified before the update and runs unclassified after it
+still lists its classified run.
 
 ## What it writes
 
