@@ -38,15 +38,17 @@ refused:
 - **The template audit** never shows a secret's value. A setting's name is read word by word (split at `_ - .`,
   camelCase and digits): one of its words a secret word (password, passwd, pwd, pass, pw, secret, token, apikey,
   passphrase, pin, or the pairs api key, private key, secret key, access key, key material), or a word ending in a long
-  one with no sign (`PGPASSWORD`, `dbpassword`, `clientsecret`) or in pass (`adminpass`; not bypass, compass) makes it
+  one with no sign (`PGPASSWORD`, `dbpassword`, `clientsecret`), in pw (`rootpw`, `bindpw`) or in pass (`adminpass`;
+  not bypass, compass), or the word community (`snmp_community`) makes it
   a secret - `admin_pwd`, `dbPassword`, `client-secret`, `API-KEY`, `db.password`, `secret1`; never a short word inside
   another (keyboard, spin), nor one with a count or a version after it (`pin_version`, `pass_count`). A number under
   such a name, such a name anywhere inside a dict or list, a URL with a password in it (`user:password@`), a text that
-  holds JSON or YAML with such a key, a text such as `Pwd=...` in a connection string or `--password X` / `-p X` on a
-  command line, an Authorization header's `Basic ...` / `Bearer ...` and a PEM private key are secrets too, whatever
+  holds JSON or YAML with such a key, a text such as `Pwd=...` in a connection string or `--password X` / `-p X` /
+  mysql's `-pXXXX` / `curl -u user:password` on a command line, an Authorization header's `Basic ...` / `Bearer ...` and a PEM private key are secrets too, whatever
   the setting is called. A setting named for a credential (`scan_credentials`) is a secret when its value is not a
-  credential's name or id (`AAP - SOP draft`, `[12, 15]`); a sentence of plain words is prose, not a setting. The audit
-  hides on suspicion: a value it cannot tell is not shown. Any dict or list value is shown as "(same; not shown)" or
+  credential's name or id (`AAP - SOP draft`, `[12, 15]`, `["ssh-linux"]`); a limit (`max_tokens`) and a sentence of
+  plain words are not secrets. The audit hides on suspicion: a value it cannot tell is not shown (its known limits:
+  docs/TEMPLATE_AUDIT.md). Any dict or list value is shown as "(same; not shown)" or
   "(differs)"; so is a text that reads as JSON or YAML.
 - **STIG Manager stack:** the check that refuses to change a deployed database password shows only the names of the
   passwords that differ, never anything derived from them.
@@ -109,13 +111,15 @@ Tests: a test for each fix that runs without a real system - for the three HTTP 
 answering with a redirect, and the login never reaching the second; the copy job's names and failing pages; the
 index's banner and line merge, and an index from an older release keeping its banner (also while a report's own older
 classified run is listed); nested and numeric secrets and every secret-name spelling (joined ones too), URL passwords,
-JSON/YAML texts, Authorization headers, PEM keys and command-line passwords, and the false alarms (a credential's
-name, pin_version, pass_count, a sentence); the node stats certificate checked against the name it
+JSON/YAML texts, Authorization headers, PEM keys and command-line passwords (mysql's -pXXXX, -u user:password),
+rootpw, bindpw and SNMP communities, and the false alarms (a credential's name, pin_version, pass_count, max_tokens,
+ssh -p 2222, cp -pR, a sentence); the node stats certificate checked against the name it
 is asked with (a TLS-only node at 127.0.0.1); the stack's output at -vvv; an unverified bundle; the
 checklist conflict and a UTF-16 DTD; LDAP paging and the lockout policy; an asset of an earlier run; approvals; the
 WAR cap; the win_act scripts' order (and a run with pwsh). New: tests/test_stigman_stack.py, tests/test_win_act.py.
 The unit tests and the e2e tests of these roles on ansible-core 2.22 and 2.16; tests/test_report_fit.py also with a
-Linux browser's wider fonts (DejaVu), as CI has them.
+Linux browser's wider fonts (DejaVu), as CI has them; it prints each browser start's pages, width and seconds,
+and a start past 150 s runs its pages again one at a time (60 s each), naming a page that hangs.
 
 SA_VERSION 1.24.0; the PDFs at 1.24.0.
 

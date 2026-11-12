@@ -78,10 +78,12 @@ NO_CREDENTIAL = ('No AAP connection: attach a credential of type "Red Hat Ansibl
 NAME_WORDS = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|[0-9]+")
 # a setting named like a secret: one of these words, whole (bypass, compass, keyboard and spin are not) ...
 SECRET_WORDS = frozenset(("password", "passwords", "passwd", "pwd", "pass", "pw", "secret", "secrets", "token", "tokens",
-                          "apikey", "apikeys", "passphrase", "pin", "privatekey", "secretkey", "accesskey"))
+                          "apikey", "apikeys", "passphrase", "pin", "privatekey", "secretkey", "accesskey", "community",
+                          "communities"))
 # ... or a word that ends in a long one, joined with no sign (PGPASSWORD, dbpassword, clientsecret, apitoken) ...
 SECRET_ENDS = ("password", "passwords", "passwd", "pwd", "passphrase", "secret", "secrets", "token", "tokens", "apikey",
-               "apikeys", "privatekey", "secretkey", "accesskey")
+               "apikeys", "privatekey", "secretkey", "accesskey", "community")
+# ... or in pw, 4 letters or more (rootpw in a kickstart, bindpw for LDAP) ...
 # ... or in pass, 6 letters or more (adminpass, dbpass, rootpass) - but for these words of their own
 PASS_WORDS = frozenset(("bypass", "compass", "encompass", "overpass", "underpass", "surpass", "trespass", "multipass",
                         "firstpass", "onepass", "singlepass", "twopass", "flypass"))
@@ -91,7 +93,8 @@ CREDENTIAL_WORDS = frozenset(("credential", "credentials", "creds", "cred"))
 # ... or two of them in a row (api_key, private-key, aws_access_key, key_material)
 SECRET_PAIRS = frozenset((("api", "key"), ("private", "key"), ("secret", "key"), ("access", "key"), ("key", "material")))
 # a name like these is about a secret, not one: where it is, what it is called, a rule for it (its words, joined by _)
-NOT_SECRET_NAME = re.compile(r"_(file|path|dir|name|names|id|ids|url|host|user|username|type|length|len|days|age|"
+# (and a limit's: max_tokens, min_password)
+NOT_SECRET_NAME = re.compile(r"^(max|min|num)_|_(file|path|dir|name|names|id|ids|url|host|user|username|type|length|len|days|age|"
                              r"expires?|expiry|policy|rotation|field|header|check|checks|warn|crit|min|max|"
                              r"count|counts|version|ver|total|limit|limits|size|retries|attempts|tries)$", re.I)
 # a URL with a password in it (mysql://svc:<password>@db01)
@@ -99,7 +102,10 @@ URL_PASSWORD = re.compile(r"[a-z][a-z0-9+.-]*://[^\s/?#@:]*:[^\s/?#]+@", re.I)
 # name=value or name: value in a text (Server=db01;Uid=svc;Pwd=...), the name in quotes or not
 TEXT_SETTING = re.compile(r"""([A-Za-z][\w.-]*)["']?\s*[:=]\s*["']?[^\s"',;]""")
 # a command line's option and its value after a space (--password X, -p X)
-CLI_OPTION = re.compile(r"(?:^|\s)(--?)([A-Za-z][\w-]*)\s+([\"']?)([^\s\"']+)")
+CLI_OPTION = re.compile(r"(?:^|\s)(--?)([A-Za-z][\w-]*)(?:\s+|=)([\"']?)([^\s\"']+)")
+# mysql's -p with the password joined to it (mysql -u root -pXXXX), and the commands that take it so
+GLUED_P = re.compile(r"(?:^|\s)-p([^\s\d:/][^\s]*)")
+MYSQL = re.compile(r"(?:^|[\s/;|&])(?:mysql\w*|mariadb(?:-\w+)?)(?=\s)")
 # a value that is an HTTP Authorization header's credentials (Basic <base64>, Bearer <token>), alone or after its name
 AUTH_VALUE = re.compile(r"(?:^|authorization\"?\s*[:=]\s*\"?)(?:basic|bearer|token|negotiate|digest)\s+[A-Za-z0-9+/=._~-]{8,}", re.I)
 # a PEM private key (RSA, EC, OPENSSH, ENCRYPTED ...)
@@ -217,7 +223,8 @@ def name_words(name):
 
 
 def _secret_word(w):
-    return w in SECRET_WORDS or w.endswith(SECRET_ENDS) or (len(w) >= 6 and w.endswith("pass") and w not in PASS_WORDS)
+    return w in SECRET_WORDS or w.endswith(SECRET_ENDS) or (len(w) >= 4 and w.endswith("pw")) or (
+        len(w) >= 6 and w.endswith("pass") and w not in PASS_WORDS)
 
 
 def secret_name(name):
@@ -236,10 +243,10 @@ def credential_name(name):
     return bool(w) and not NOT_SECRET_NAME.search("_".join(w)) and any(x in CREDENTIAL_WORDS for x in w)
 
 
-def names_only(v, depth=0):
+def names_only(v, depth=0, listed=False):
     """A credential's name as AAP shows it, its id, or a list of them (AAP - SOP draft, Tenable scan (Linux), 12, [12, 15]):
-    two words or more with spaces, or a number. A single word (tenable-linux-ssh, Summer2024) may be a password: not a
-    name - when in doubt, hidden. Pure."""
+    two words or more with spaces, or a number; in a list also words joined by - _ . with no digit (["ssh-linux"]). A
+    single word on its own (tenable-linux-ssh, Summer2024) may be a password: not a name - when in doubt, hidden. Pure."""
     if depth > 6:
         return False
     v = _value(v)
@@ -248,11 +255,11 @@ def names_only(v, depth=0):
     if isinstance(v, int):
         return True
     if isinstance(v, (list, tuple)):
-        return all(names_only(x, depth + 1) for x in v)
+        return all(names_only(x, depth + 1, True) for x in v)
     if not isinstance(v, str):
         return False
     s = v.strip()
-    if re.match(r"^\d{1,12}$", s):
+    if re.match(r"^\d{1,12}$", s) or (listed and re.match(r"^[A-Za-z]+(?:[_.-][A-Za-z]+)+$", s)):
         return True
     words = s.split()
     return 2 <= len(words) and len(s) <= 128 and bool(re.match(r"^[\w ()\[\].,:/&'-]+$", s)) and not any(
@@ -266,10 +273,13 @@ def prose(s):
 
 
 def _cli_secret(dash, opt, value):
-    """--password X: an option named like a secret, its value after a space; -p X too (a password for mysql and
-    others), but not a number, a port mapping or a path (ssh -p 2222, podman -p 8080:80, rsync -p /src)."""
+    """--password X: an option named like a secret, its value after a space or =; -p X too (a password for mysql and
+    others), but not a number, a port mapping or a path (ssh -p 2222, podman -p 8080:80, rsync -p /src); -u or --user
+    with user:password (curl -u svc:...), but not uid:gid (podman -u 1000:1000)."""
     if value.startswith("-"):
         return False
+    if opt in ("u", "user"):
+        return bool(re.match(r"^[^:]+:.", value)) and not re.match(r"^\d+:\d+$", value)
     if dash == "-" and opt == "p":
         return not re.match(r"^[\d:./~]+$", value) and not value.startswith(("/", "./", "~", "$"))
     return secret_name(opt)
@@ -277,7 +287,8 @@ def _cli_secret(dash, opt, value):
 
 def secret_text(s):
     """A text with a secret written in it: a URL with a password (mysql://svc:...@db01), a PEM private key, an HTTP
-    Authorization header's credentials (Basic ..., Bearer ...), --password X or -p X, or name=value / name: value under a
+    Authorization header's credentials (Basic ..., Bearer ...), --password X, -p X or -pX, -u user:password, or
+    name=value / name: value under a
     secret's name (Uid=svc;Pwd=..., PGPASSWORD=...). A sentence of plain words is prose: only a URL or a key counts
     there. Pure."""
     s = str(s or "")
@@ -286,7 +297,13 @@ def secret_text(s):
     if prose(s):
         return False
     return bool(AUTH_VALUE.search(s.strip())) or any(_cli_secret(*m[:2], m[3]) for m in CLI_OPTION.findall(s)) or any(
-        secret_name(k) for k in TEXT_SETTING.findall(s))
+        _glued_p(s, g) for g in GLUED_P.findall(s)) or any(secret_name(k) for k in TEXT_SETTING.findall(s))
+
+
+def _glued_p(s, glued):
+    """-pXXXX: after mysql, mysqldump, mysqladmin, mariadb ... always a password; after another command too, unless it
+    is a few letters of flags (cp -pR, tar -pcf)."""
+    return bool(MYSQL.search(" " + s)) or not re.match(r"^[A-Za-z]{1,4}$", glued)
 
 
 def _named_secret(name, value):

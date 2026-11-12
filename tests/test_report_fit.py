@@ -12,9 +12,11 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -22,6 +24,8 @@ DOCS = os.path.join(REPO, "tests", "fixtures", "report_fit")
 WIDE = (1280, 1366, 1440, 1920)
 PHONE = 390
 BATCH = 40                       # report pages per browser start (each twice: light and dark)
+BATCH_WALL = int(os.environ.get("FIT_BATCH_WALL") or 150)   # seconds for a batch (a few here; CI ten times that at most) ...
+PAGE_WALL = 60                   # ... and, past it, for each of its pages alone
 
 ID = re.compile(r'^(?=.*(\d|_|\.[a-z]))(?=.*[A-Za-z])[A-Za-z][\w.\-]{3,40}$')    # vc01, esx01.example.mil, ds_prod (not N-1)
 NUM = re.compile(r'^(\d{2,})((?:\.\d+)?)$')
@@ -129,24 +133,64 @@ def _browser():
     return None
 
 
+def _run(browser, h, width, wall):
+    """One browser start on a harness page: its result ({} when it gave none), or None when it ran past wall seconds
+    (the browser and its helpers are stopped: a group of their own)."""
+    import html as htmllib
+    prof = tempfile.mkdtemp()
+    try:
+        r = subprocess.Popen([browser, "--headless=new", "--disable-gpu", "--no-sandbox", "--user-data-dir=" + prof,
+                              "--allow-file-access-from-files", "--window-size=%d,900" % (width + 40),
+                              "--virtual-time-budget=120000", "--dump-dom", "file://" + h],
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+        try:
+            stdout, stderr = r.communicate(timeout=wall)
+        except subprocess.TimeoutExpired:
+            os.killpg(r.pid, signal.SIGKILL)
+            r.communicate()
+            return None, ""
+    finally:
+        shutil.rmtree(prof, ignore_errors=True)
+    m = re.search(r'<pre id="out">(.*?)</pre>', stdout, re.S)
+    return (json.loads(htmllib.unescape(m.group(1))) if m and m.group(1) else {}), stderr[-600:]
+
+
 def measure(browser, folder, pages, width):
-    """{page name + ' light'|' dark': {page: px, inner: [title +px]}} for these pages at this width."""
+    """{page name + ' light'|' dark': {page: px, inner: [title +px]}} for these pages at this width. Each batch's pages,
+    width and seconds are printed. A batch past BATCH_WALL seconds runs again a page at a time, each with PAGE_WALL: a
+    page that hangs alone is named (its script, in that browser - a user's could too); when every page alone is quick,
+    the batch was the runner's browser, and their results count (1.24.0d: CI's one 600 s wall named nothing)."""
     out = {}
     for i in range(0, len(pages), BATCH):
         part = pages[i:i + BATCH]
         h = os.path.join(folder, "fit-%d-%d.html" % (width, i))
         with open(h, "w") as f:
             f.write(HARNESS % {"w": width, "pages": json.dumps(part), "phone": PHONE})
-        with tempfile.TemporaryDirectory() as prof:
-            r = subprocess.run([browser, "--headless=new", "--disable-gpu", "--no-sandbox", "--user-data-dir=" + prof,
-                                "--allow-file-access-from-files", "--window-size=%d,900" % (width + 40),
-                                "--virtual-time-budget=120000", "--dump-dom", "file://" + h],
-                               capture_output=True, text=True, timeout=600)
-        m = re.search(r'<pre id="out">(.*?)</pre>', r.stdout, re.S)
-        if not (m and m.group(1)):
-            raise AssertionError("no result at %d px (pages %s...): %s" % (width, part[:2], r.stderr[-600:]))
-        import html as htmllib
-        out.update(json.loads(htmllib.unescape(m.group(1))))
+        t = time.time()
+        got, err = _run(browser, h, width, BATCH_WALL)
+        print("  fit %d px: pages %d-%d (%s .. %s) %.1f s%s" % (width, i + 1, i + len(part), part[0], part[-1], time.time() - t,
+                                                             "" if got is not None else " - past %d s" % BATCH_WALL), file=sys.stderr)
+        if got is None:
+            got, slow = {}, []
+            for p in part:
+                hp = os.path.join(folder, "fit-%d-%s" % (width, p))
+                with open(hp, "w") as f:
+                    f.write(HARNESS % {"w": width, "pages": json.dumps([p]), "phone": PHONE})
+                t = time.time()
+                one, err = _run(browser, hp, width, PAGE_WALL)
+                print("    %s alone: %.1f s%s" % (p, time.time() - t, "" if one is not None else " - HANGS"), file=sys.stderr)
+                if one is None:
+                    slow.append(p)
+                elif not one:
+                    raise AssertionError("no result at %d px (page %s): %s" % (width, p, err))
+                else:
+                    got.update(one)
+            if slow:
+                raise AssertionError("at %d px these pages gave no result in %d s each, alone: %s" % (width, PAGE_WALL, ", ".join(slow)))
+            print("    every page alone gave its result: the batch's browser stalled, not a page", file=sys.stderr)
+        elif not got:
+            raise AssertionError("no result at %d px (pages %s...): %s" % (width, part[:2], err))
+        out.update(got)
     return out
 
 
