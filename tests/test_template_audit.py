@@ -337,6 +337,50 @@ class Judge(unittest.TestCase):
         for n in ("max_tokens", "min_password_length", "community_name"):
             self.assertFalse(m.secret_name(n), n)
 
+    def test_command_password_options(self):
+        """1.24.0e, the last pattern round: mysql's glued -p takes any value (its port is -P); -u user:password only
+        after curl or wget; a glued -p elsewhere only with a digit or a sign and not $; each tool's own password option
+        after that tool; a list under a credential's setting never shown."""
+        hide = [  # (setting, value, what must never be seen)
+            ("my1", "mysql -u root -p2024Hx1 db", "2024Hx1"), ("my2", "mysql -uroot -p9Hx2", "9Hx2"),
+            ("my3", "/usr/bin/mariadb-dump -pHxthree app", "Hxthree"),
+            ("cu1", "curl -usvc:Hx4 https://api.example.mil/x", "Hx4"), ("cu2", "wget --user svc:Hx5 https://api.example.mil/x", "Hx5"),
+            ("sq1", "sqlcmd -S db01 -U sa -P Hx6 -Q go", "Hx6"), ("sq2", "C:\\tools\\sqlcmd.exe -PHx7", "Hx7"),
+            ("ld1", "ldapsearch -x -D cn=svc -w Hx8 -b dc=example", "Hx8"), ("ld2", "ldapmodify -wHx9 -f x.ldif", "Hx9"),
+            ("sm1", "smbclient //fs01/share -U svc%Hx10", "Hx10"), ("sm2", "net ads join -Usvc%Hx11", "Hx11"),
+            ("ip1", "ipmitool -I lanplus -H bmc01 -U admin -P Hx12 power status", "Hx12"),
+            ("rd1", "redis-cli -a Hx13 ping", "Hx13"), ("wr1", "winrs -r:host01 -u:admin -p:Hx14 ipconfig", "Hx14"),
+            ("sp1", "sshpass -p Hx15 ssh host01", "Hx15"), ("gp1", "tool -pHx16!x", "Hx16"),
+        ]
+        show = [
+            "date -u +%H:%M:%S", "podman exec -u apache:apache web ls", "docker run -u root:wheel web", "rsync -u host01:/src /dst",
+            "ssh -p$SSH_PORT host01", "podman run -p${PORT}:80 web", "find . -print0", "find . -printf %p", "find . -prune",
+            "find . -perm 644", "openssl rsa -pubout", "gcc -pthread x.c", "rsync -prltDvz a b", "netstat -plantu",
+            "mysql -P 3306 app", "ldapsearch -W -x", "curl -u svc https://api.example.mil/x",
+        ]
+        for n, v, expect in hide:
+            with self.subTest(setting=n):
+                recs = [{"kind": "job", "id": i, "name": "Job %d" % i, "extra_vars": json.dumps({n: v})} for i in range(3)]
+                templates, settings = m.audit(recs, {"repeat_min": 3})
+                s = dict((x["setting"], x) for x in settings)[n]
+                self.assertIn("secret", s["why"])
+                self.assertNotIn(expect, json.dumps([templates, settings]))
+        for v in show:
+            with self.subTest(value=v):
+                self.assertFalse(m.is_secret("cmd", v), v)
+                self.assertFalse(m.hidden("cmd", v), v)
+        # a list under a credential's setting: no secret, and its values never shown (pinned: the tester's check)
+        v = ["SITEA - Linux SSH Hx17", "SITEA - Windows SMB Hx18"]
+        recs = [{"kind": "job", "id": i, "name": "Job %d" % i, "extra_vars": json.dumps({"tenable_scan_credentials": v})} for i in range(3)]
+        templates, settings = m.audit(recs, {"repeat_min": 3})
+        s = dict((x["setting"], x) for x in settings)["tenable_scan_credentials"]
+        r = f.template_audit_report({"templates": templates, "settings": settings, "problems": []}, {"repeat_min": 3})
+        out = json.dumps([templates, settings]) + json.dumps(r, default=str)
+        self.assertNotIn("secret", s["why"])
+        self.assertEqual(s["value"], "(same; not shown)")
+        self.assertNotIn("Hx17", out)
+        self.assertNotIn("Hx18", out)
+
     def test_repeat_min(self):
         _, settings = m.audit(records(), dict(OPTS, repeat_min=0))
         self.assertNotIn("check_disk_warn_pct", [x["setting"] for x in settings])
