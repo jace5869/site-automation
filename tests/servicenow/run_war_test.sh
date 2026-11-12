@@ -24,6 +24,17 @@ spid=""
 fails=0
 cleanup() { [ -n "$pid" ] && kill "$pid" 2>/dev/null; [ -n "$spid" ] && kill "$spid" 2>/dev/null; rm -rf "$work"; }
 trap cleanup EXIT
+# vacant PORT VAR: stop at once when another server holds PORT - every scenario would read it
+vacant() { if (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; then echo "port $1 in use: set $2"; exit 2; fi; }
+# up PID PORT VAR: wait for the fake server we started; stop when it could not take PORT
+up() {
+    for _ in $(seq 1 50); do
+        kill -0 "$1" 2>/dev/null || break
+        (exec 3<>"/dev/tcp/127.0.0.1/$2") 2>/dev/null && return 0
+        sleep 0.1
+    done
+    echo "port $2 in use: set $3"; exit 2
+}
 cat > "$work/inv.yml" <<INV
 all:
   hosts:
@@ -36,9 +47,10 @@ GROUP='"servicenow_war_groups": ["ABC - Ops - IT - Linux"]'
 mock() {
     [ -n "$pid" ] && kill "$pid" 2>/dev/null && wait "$pid" 2>/dev/null
     : > "$work/log.jsonl"
+    vacant "$port" WAR_TEST_PORT
     env SNMOCK_LOG="$work/log.jsonl" SNMOCK_SEED="$here/war_seed.json" "$@" "$py" "$here/snmock.py" "$port" &
     pid=$!
-    for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null && break; sleep 0.1; done
+    up "$pid" "$port" WAR_TEST_PORT
 }
 
 # run NAME EXPECT(ok|fail) EXTRA_VARS_JSON [TEXT...]: the output and the mail must contain each TEXT; a TEXT starting
@@ -163,9 +175,10 @@ WAR_ENV="SN_HOST=" run "no credential" fail "{$NOW, $GROUP}" 'it sets SN_HOST, S
 
 # ---- emailed with the workbook ------------------------------------------------------------------------
 mkdir -p "$work/mail"
+vacant "$smtp" SMTP_TEST_PORT
 "$py" "$repo/tests/email/fake_smtp.py" "$smtp" "$work/mail" --no-starttls 2>"$work/relay.err" &
 spid=$!
-for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$smtp") 2>/dev/null && break; sleep 0.1; done
+up "$spid" "$smtp" SMTP_TEST_PORT
 run "the report emailed, the workbook attached" ok "{$NOW, $GROUP, \"report_email_to\": [\"ops@example.mil\"], \"report_email_smtp_host\": \"localhost\", \"report_email_smtp_port\": $smtp, \"report_email_from\": \"aap@example.mil\", \"report_email_security\": \"none\"}" \
     '5 completed, 6 opened, 6 open at the end' 'emailed'
 if ls "$work"/mail/*.eml >/dev/null 2>&1 && grep -q "Weekly activity report" "$work"/mail/*.eml && grep -q 'weekly-activity-report_.*\.xlsx' "$work"/mail/*.eml; then
