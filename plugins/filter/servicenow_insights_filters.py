@@ -260,7 +260,7 @@ def apply_slas(items, r, o, tz=UTC):
     first = (r or {}).get("first_assigned") or {}
     for it in items:
         it["_resp"] = it["_resol"] = None
-        it["_no_slo"], it["_slas"] = False, []
+        it["_no_slo"], it["_slas"], it["_sla_recs"] = False, [], []
         if it.get("table") not in ("incident", "sc_req_item"):
             continue
         it["sn_made_sla"] = it.get("made_sla")
@@ -278,6 +278,9 @@ def apply_slas(items, r, o, tz=UTC):
                 k = sla_kind(x.get("name"), o)
                 by.setdefault(k, []).append(x)
                 it["_slas"].append([x.get("name") or "", k])
+                # 1.43.0: each SLA's own outcome and elapsed hours (the VIP section's SLA definitions)
+                el = x.get("elapsed_s")
+                it["_sla_recs"].append([x.get("name") or "", k, bool(x.get("breached")), None if el is None else el / 3600.0])
             it["_resp"] = (not any(x.get("breached") for x in by["response"])) if by.get("response") else None
             it["_resol"] = (not any(x.get("breached") for x in by["resolution"])) if by.get("resolution") else None
             it["made_sla"] = it["_resol"]
@@ -1328,6 +1331,7 @@ def custom_rows(items, since, until, groups, opts=None, base=None, tz=None, spec
     the window's start (d null: open), s made_sla (the resolution SLA) 1 / 0 / -1; and the 1.7.0 fields where the tickets
     have them: resp (the response SLA) and noslo 1 / 0 / -1, hops (reassignment_count; incidents), hold (on hold now), r7
     (reopened within 7 days), out (the outcome's index in outcomes; -1 not resolved), risk (1 at risk, 2 breached).
+    1.43.0: vip, where any ticket has a VIP tier - its tier's number (1 the first tier listed; 0 not VIP).
     1.10.0: from base on (the window before's start, for the periods' compare), and 1.9.0's where the tickets have them:
     tis (the time in each state, tenths of hours: new, progress, hold, resolved; null not measured), ob (the opened day's
     business-day count on the calendar: the backlog's age at any period's end); the day calendar and the periods.
@@ -1351,6 +1355,9 @@ def custom_rows(items, since, until, groups, opts=None, base=None, tz=None, spec
         cols[k] = []
     if has("_tis"):
         cols["tis"] = []
+    vip_on = any(x.get("_vip") is not None for x, _, _ in flow)
+    if vip_on:
+        cols["vip"] = []
     cal = day_calendar(base, until, since, spec, tz)
     cols["ob"] = []
     names = list(OUTCOMES)
@@ -1389,6 +1396,8 @@ def custom_rows(items, since, until, groups, opts=None, base=None, tz=None, spec
                 cols[k].append(1 if inc and v else 0)
             else:
                 cols[k].append(tri(v))
+        if vip_on:
+            cols["vip"].append(0 if x.get("_vip") is None else x["_vip"] + 1)
         if "tis" in cols:
             ts = x.get("_tis") if inc else None
             cols["tis"].append([int(round(10 * float(ts.get(k_) or 0))) for k_ in STATE_KINDS] if isinstance(ts, dict) else None)
@@ -1428,16 +1437,20 @@ def custom_presets(hier, groups, split=None, opts=None):
     return [x for x in out if x["name"]]
 
 
-def custom_figures(data, sel, period=None):
+def custom_figures(data, sel, period=None, vip=None):
     """The Custom view's figures for the groups whose indices are in sel - what the page's script works out, the same
     way as scope_model (the tests compare them): incidents and requests opened, incidents resolved, the backlog at the
     period's end and start, the median hours to resolve, SLA met %. period (1.10.0): (a, b) in seconds from the window's
     start, the window itself when None. What is known only now (on hold, open over the hop limit) only for a period that
-    ends at the report's end; None otherwise."""
+    ends at the report's end; None otherwise. vip (1.43.0, the VIP only choice): None every ticket, 0 any VIP tier, k the
+    tier k (1 the first listed)."""
     c, w = data["cols"], data["until"]
     a, b = period if period else (0, w)
     now = b == w
     sel = set(sel)
+    if vip is not None:            # the tickets of other tiers as if of no group chosen (-2: never an index)
+        vc = c.get("vip") or [0] * len(c["g"])
+        c = dict(c, g=[g if (vc[i] == vip if vip else vc[i] > 0) else -2 for i, g in enumerate(c["g"])])
     inc = req = res = bl = bl0 = sla_n = sla_ok = 0
     hrs = []
     for i in range(len(c["g"])):
@@ -1776,6 +1789,20 @@ def ticket_prefixes(setting):
     return good, bad
 
 
+def servicenow_insights_vip_errors(fields, people="caller"):
+    """1.43.0: what is wrong with servicenow_insights_vip_fields / vip_people -> [text] ([] = fine)."""
+    out = []
+    if not isinstance(fields, list):
+        return ["servicenow_insights_vip_fields is a list of {label, column}"]
+    for f in fields:
+        c = str((f or {}).get("column") or "").strip() if isinstance(f, dict) else ""
+        if not re.match(r"^[a-z0-9_]{1,80}$", c):
+            out.append("%s: column is a sys_user column name, a-z, 0-9 and _ only" % (f if not isinstance(f, dict) else (f.get("label") or c or "(no column)")))
+    if str(people or "").strip().lower() not in ("caller", "caller_and_opened_by"):
+        out.append("servicenow_insights_vip_people: caller or caller_and_opened_by, not %s" % people)
+    return out
+
+
 def servicenow_insights_prefix_errors(setting):
     """The servicenow_insights_ticket_prefixes entries refused (1.30.0): [] = all good."""
     return ticket_prefixes(setting)[1]
@@ -1815,6 +1842,9 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
     weeks = _weeks(since, until, tz)
 
     sla_src = apply_slas(items, r, o, tz)
+    vip = vip_tiers(r, o)
+    for it in items:
+        it["_vip"] = vip_of(it, vip) if vip["on"] and it.get("table") in ("incident", "sc_req_item") else None
     sla_r = r.get("sla") or {}
     resp_measured = sla_src == "task_sla" or (sla_src == "targets" and bool(r.get("first_assigned")) and not r.get("first_assigned_error")
                                               and any(isinstance(v, dict) and not _none(v.get("response"))
@@ -2572,7 +2602,8 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
               "backlog": [bl_now, bl_start], "age": age, "weeks": wk, "heat": heat,
               "prio": prio_rows, "majors": major_rows, "issues": issue_rows, "issue_total": len(cur), "misfiled": misfiled[:5],
               "requests": req_rows, "changes": changes, "notes_by_group": q_groups, "bare": bare_rows,
-              "handoffs": handoffs, "problems": pc[:15], "resolved_n": len(rep_now), "ctasks": ctasks}
+              "handoffs": handoffs, "problems": pc[:15], "resolved_n": len(rep_now), "ctasks": ctasks,
+              "vip": vip_scope(inc_now, ritm_now, flow, since, until, vip, o)}
         if lvl == "team":
             sc["stars"] = stars(team)
         share = {"all": 1, "site": 0.6, "dir": 0.4}.get(lvl, 0.2)         # a draft's incidents, of kb_min, at this level
@@ -2761,7 +2792,8 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
                 "at_risk": s["at_risk"]["count"],
                 "quality": s["quality"], "top": [s["issues"][0]["name"], s["issues"][0]["count"]] if s["issues"] else ["", 0],
                 "incidents": s["counts"]["incidents"],
-                "ct_closed": (s.get("ctasks") or {}).get("closed"), "ct_open": (s.get("ctasks") or {}).get("open")}
+                "ct_closed": (s.get("ctasks") or {}).get("closed"), "ct_open": (s.get("ctasks") or {}).get("open"),
+                "vip": (s.get("vip") or {}).get("unit")}
     # side by side: the All page its sites (or, with one site, its directorates; with one of those, its teams), a site its
     # directorates, a directorate its teams
     for snode in tree:
@@ -2848,6 +2880,7 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
                 custom["left_line"] = periods_left_line(custom.get("left"), why_before(custom.get("no_compare")))
     model = {"window": win, "url": r.get("url") or "", "prefixes": prefix_map(r.get("items"), o), "teams": teams, "scopes": scopes, "reopen_used": reopen_used,
              "tree": tree, "pages": pages, "scope_ids": ids, "hier": hier, "org": org, "custom": custom,
+             "vip": dict((k_, v_) for k_, v_ in vip.items() if k_ != "of"),
              "org_bad": org_map(o.get("hierarchy_map"))[1] if org_is_map(o) else [],
              "org_bucket": (" ".join(str(o.get("unmapped_bucket") or UNKNOWN).split()) or UNKNOWN) if org_is_map(o) else "",
              "hier_other": sorted([g for g, h in hier.items() if h["dir"] == OTHER], key=_nat),
@@ -3163,6 +3196,78 @@ def _sla_defs(items, since, until):
     return out
 
 
+def vip_tiers(r, o):
+    """1.43.0: the VIP tiers read (the module's vip) -> {on, tiers, of, error, hidden, people, min}; on False when
+    servicenow_insights_vip_fields is empty or the read is from before 1.43.0."""
+    v = (r or {}).get("vip")
+    if not isinstance(v, dict) or not v.get("tiers"):
+        return {"on": False, "tiers": [], "of": {}, "error": "", "hidden": [], "people": [], "min": 5}
+    return {"on": True, "tiers": [str(t) for t in v["tiers"]], "of": dict(v.get("of") or {}), "error": str(v.get("error") or ""),
+            "hidden": [str(c) for c in v.get("hidden") or []], "people": list(v.get("people") or ["caller_id"]),
+            "min": int(_o(o or {}, "vip_min", 5))}
+
+
+def vip_of(it, vip):
+    """The ticket's tier index (the first tier listed wins, across the people asked), or None (not VIP)."""
+    ts = [vip["of"][it[k]] for k in vip["people"] if it.get(k) and it[k] in vip["of"]]
+    return min(ts) if ts else None
+
+
+def vip_scope(inc_now, ritm_now, flow, since, until, vip, o=None):
+    """1.43.0: one scope's VIP tickets - a row per tier and Not VIP (incidents and requests opened in the window; of those
+    done in it the median hours to respond (the response SLAs' elapsed) and resolve, response and resolution met, no SLA;
+    open now), the incidents by priority and tier, each tier's SLA definitions (tickets, met, missed, met %, median
+    elapsed), and the unit line (side by side). Under vip_min tickets a row has its counts only."""
+    if not vip["on"]:
+        return None
+    n = len(vip["tiers"])
+    keys = list(range(n)) + [None]
+    done = [x for x in flow if _in(_t(x.get("done_at")), since, until)]
+    open_now = [x for x in flow if _t(x.get("opened_at")) and _t(x["opened_at"]) <= until and (not _t(x.get("done_at")) or _t(x["done_at"]) > until)]
+
+    def resp_h(lst):
+        return _r1(_median([e[3] for x in lst for e in x.get("_sla_recs") or [] if e[1] == "response" and e[3] is not None]))
+
+    def row(sel, label, k):
+        i_, r_ = [x for x in inc_now if sel(x)], [x for x in ritm_now if sel(x)]
+        d_ = [x for x in done if sel(x)]
+        rs, rl = [x for x in d_ if x.get("_resp") is not None], [x for x in d_ if x.get("_resol") is not None]
+        small = len(i_) + len(r_) < vip["min"]
+        return {"label": label, "tier": k, "incidents": len(i_), "requests": len(r_), "open": sum(1 for x in open_now if sel(x)),
+                "done": len(d_), "small": small, "no_slo": sum(1 for x in d_ if x.get("_no_slo")),
+                "resp_h": None if small else resp_h(d_), "median_h": None if small else _r1(_median([_hours(x) for x in d_])),
+                "resp": None if small else _r1(_pct(sum(1 for x in rs if x["_resp"]), len(rs))),
+                "resol": None if small else _r1(_pct(sum(1 for x in rl if x["_resol"]), len(rl)))}
+    rows = [row(lambda x, k=k: x.get("_vip") == k, vip["tiers"][k] if k is not None else "Not VIP", k) for k in keys]
+    prio = {}
+    for x in inc_now:
+        pk = x.get("priority_value") or "9"
+        e = prio.setdefault(pk, {"label": priority_label(pk if pk != "9" else "", x.get("priority"), o), "value": pk, "n": [0] * (n + 1)})
+        e["n"][x["_vip"] if x.get("_vip") is not None else n] += 1
+    defs = []
+    for k in range(n):
+        by = {}
+        for x in done:
+            if x.get("_vip") == k:
+                for nm, kind, br, el in x.get("_sla_recs") or []:
+                    e = by.setdefault(nm, {"name": nm, "kind": kind, "tickets": set(), "met": 0, "missed": 0, "el": []})
+                    e["tickets"].add(x.get("sys_id"))
+                    e["missed" if br else "met"] += 1
+                    if el is not None:
+                        e["el"].append(el)
+        lst = []
+        for e in sorted(by.values(), key=lambda e: (e["kind"] != "response", -len(e["tickets"]), e["name"])):
+            small = len(e["tickets"]) < vip["min"]
+            lst.append({"name": e["name"], "kind": e["kind"], "tickets": len(e["tickets"]), "met": e["met"], "missed": e["missed"],
+                        "pct": None if small else _r1(_pct(e["met"], e["met"] + e["missed"])), "median_h": None if small else _r1(_median(e["el"]))})
+        defs.append({"tier": k, "label": vip["tiers"][k], "rows": lst})
+    anyv = lambda x: x.get("_vip") is not None                    # noqa: E731
+    unit = row(anyv, "VIP", -1)
+    unit["n"] = [r_["incidents"] + r_["requests"] for r_ in rows[:n]]
+    return {"rows": rows, "prio": sorted(prio.values(), key=lambda e: e["value"]), "defs": defs, "unit": unit,
+            "total": sum(r_["incidents"] + r_["requests"] for r_ in rows[:n])}
+
+
 def business_hours_label(bh, tz_name=""):
     """'Mon-Fri 07:30-16:30 (America/New_York), 2 holidays' - or 'calendar hours'."""
     spec = business_hours_spec(bh)
@@ -3394,6 +3499,9 @@ def servicenow_insights_doc(model, key="all", opts=None):
                      "columns": ["Priority", "Incidents", "Median to resolve"] + (["Response met", "Resolution met"] if two else ["SLA met"]) + ["No SLA"],
                      "rows": [[p["label"], p["count"], fmt_hours(p["median_h"])] + ([pf(p.get("resp"))] if two else []) + [pf(p["sla"]), p.get("no_slo") or 0]
                               for p in s["prio"]]})
+    vsec = vip_email(model, s, side, two, pf)
+    if vsec:
+        secs += vsec
     mx = s.get("matrix") or {}
     if mx.get("on") and mx.get("checked"):
         secs.append({"title": "Priority set by hand", "status": "warning" if (mx.get("pct") or 0) >= 10 else "",
@@ -3479,6 +3587,41 @@ def servicenow_insights_doc(model, key="all", opts=None):
                  ["ACT: %s" % act_line(model)]})
     return {"title": title, "subtitle": "%s - %s%s" % (s["name"], win.get("label") or "", (" · Group manager: " + s["lead"]) if s.get("lead") else ""), "status": status, "summary": summary, "sections": secs,
             "footer": "ServiceNow %s" % (model.get("url") or "")}
+
+
+VIP_EMAIL_COLS = 8                 # the by-unit table in the email while it has at most this many columns (800 px wide)
+
+
+def vip_email(model, s, side, two, pf):
+    """1.43.0: the email's VIP sections - the scope's table (a row per tier and Not VIP), and on a page with units below
+    it the VIP tickets by unit: a table while it fits the email (VIP_EMAIL_COLS columns), else one line per unit."""
+    v, mv = s.get("vip"), model.get("vip") or {}
+    if v is None or not mv.get("on"):
+        return []
+    tiers = mv.get("tiers") or []
+    notes = []
+    if any(r_["small"] for r_ in v["rows"]):
+        notes.append("Fewer than %d tickets: counts only." % int(mv.get("min") or 5))
+    if mv.get("error"):
+        notes.append("The VIP tiers were not read: %s. Every ticket counts as Not VIP." % mv["error"])
+    if mv.get("hidden"):
+        notes.append("Not readable on sys_user: %s. That tier counts no one." % ", ".join(mv["hidden"]))
+    out = [{"title": "VIP tickets", "text": " ".join(["Opened in the window, by the VIP tier of who they were raised for."] + notes),
+            "columns": ["Tier", "Incidents", "Requests", "Open now", "Median to resolve"] + (["Response met", "Resolution met"] if two else ["SLA met"]) + ["No SLA"],
+            "rows": [[r_["label"], r_["incidents"], r_["requests"], r_["open"], fmt_hours(r_["median_h"])] + ([pf(r_["resp"])] if two else []) +
+                     [pf(r_["resol"]), r_["no_slo"]] for r_ in v["rows"]]}]
+    units = [t for t in side or [] if t.get("vip")]
+    if units and s.get("level") != "team":
+        cols = ["Unit"] + tiers + ["Open now"] + (["Response met"] if two else []) + ["Resolution met" if two else "SLA met", "Median to resolve"]
+        if len(cols) <= VIP_EMAIL_COLS:
+            out.append({"title": "VIP tickets by unit", "columns": cols,
+                        "rows": [[t.get("label") or t["team"]] + list(t["vip"]["n"]) + [t["vip"]["open"]] + ([pf(t["vip"]["resp"])] if two else []) +
+                                 [pf(t["vip"]["resol"]), fmt_hours(t["vip"]["median_h"])] for t in units]})
+        else:
+            out.append({"title": "VIP tickets by unit", "lines": ["%s: %s, open now %d, %s met %s" % (
+                t.get("label") or t["team"], ", ".join("%s %d" % (lb, x) for lb, x in zip(tiers, t["vip"]["n"])), t["vip"]["open"],
+                "resolution" if two else "SLA", pf(t["vip"]["resol"])) for t in units]})
+    return out
 
 
 def act_line(model):
@@ -3678,6 +3821,13 @@ def servicenow_insights_xlsx(model, r=None, state=None, mask=None, opts=None):
                                  v["age"][3], v["median_h"][0], v["sla"][0], v["quality"][2], (v.get("ctasks") or {}).get("closed"),
                                  (v.get("ctasks") or {}).get("open"), v["issues"][0]["name"] if v["issues"] else ""]
                                 for k, v in sorted(lv, key=lambda kv: (_level_key(kv[1]["site"]), kv[1]["level"] != "site", _level_key(kv[1].get("dir") or "")))]})
+    if (model.get("vip") or {}).get("on"):
+        # 1.43.0: the VIP tickets, counts only - every scope (All, sites or units, teams) by tier; never a ticket's tier
+        path = lambda v: [c_[1] for c_ in v.get("crumbs") or [["", v["name"]]]]          # noqa: E731  All, then each unit above its teams
+        vs = sorted([(k, v) for k, v in sc.items() if v.get("vip")], key=lambda kv: [_nat(x) for x in path(kv[1])])
+        sheets.append({"name": "VIP", "columns": ["Scope", "Level", "Tier", "Incidents", "Requests", "Open now", "No SLA"],
+                       "rows": [[" > ".join(path(v)), v.get("level") or "", r_["label"], r_["incidents"],
+                                 r_["requests"], r_["open"], r_["no_slo"]] for k, v in vs for r_ in v["vip"]["rows"]]})
     sheets.append({"name": "Hand-off paths", "columns": ["Path", "Incidents", "Most common issue", "Days added", "Examples"],
                    "rows": [[" > ".join(e["path"]), e["count"], e["issue"], e["added_days"], ", ".join(e["items"][:5])] for e in s["handoffs"]["paths"]]})
     # 1.9.0
@@ -3791,6 +3941,7 @@ class FilterModule(object):
                 "servicenow_insights_fix_task": servicenow_insights_fix_task, "servicenow_insights_fix_merge": servicenow_insights_fix_merge,
                 "servicenow_insights_teams": servicenow_insights_teams, "servicenow_insights_model": servicenow_insights_model,
                 "servicenow_insights_prefix_errors": servicenow_insights_prefix_errors,
+                "servicenow_insights_vip_errors": servicenow_insights_vip_errors,
                 "servicenow_insights_summary_evidence": servicenow_insights_summary_evidence,
                 "servicenow_insights_summary_task": servicenow_insights_summary_task,
                 "servicenow_insights_summary_merge": servicenow_insights_summary_merge, "servicenow_insights_finish": servicenow_insights_finish,

@@ -328,6 +328,7 @@ mock
 
 # ---- emailed with the workbook -----------------------------------------------------------------------------------------
 mkdir -p "$work/mail"
+MAILV="\"report_email_smtp_host\": \"localhost\", \"report_email_smtp_port\": $smtp, \"report_email_from\": \"aap@example.mil\", \"report_email_security\": \"none\""
 "$py" "$repo/tests/email/fake_smtp.py" "$smtp" "$work/mail" --no-starttls 2>"$work/relay.err" &
 spid=$!
 for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$smtp") 2>/dev/null && break; sleep 0.1; done
@@ -338,6 +339,52 @@ if ls "$work"/mail/*.eml >/dev/null 2>&1 && grep -q "Ticket insights for All ass
 else
     echo "FAIL - no mail with the report and the workbook"; fails=$((fails + 1))
 fi
+
+# ---- 1.43.0: VIP tickets - two tiers (made-up columns, callers from the seed), the section on every page, by unit, the
+# email's table, the workbook's sheet; a column the account cannot read and sys_user refused: said, the job goes on
+VIPS=$("$py" -c 'import json, sys; sys.path.insert(0, sys.argv[1]); import insights_seed as s; print(json.dumps({"u_tier1_vip": s.CALLERS[:6], "vip": s.CALLERS[:70]}))' "$here")
+VIPF='"servicenow_insights_vip_fields": [{"label": "Tier 1", "column": "u_tier1_vip"}, {"label": "VIP", "column": "vip"}]'
+mkdir -p "$work/vip" "$work/vip2" "$work/vip3" "$work/vip4"
+mock SNMOCK_VIP="$VIPS"
+rm -f "$work"/mail/*.eml
+run "VIP tickets: two tiers, emailed with the workbook" ok "{$NOW, $NOACT, $VIPF, $MAILV, \"report_email_to\": [\"ops@example.mil\"], \"report_web_dest\": \"$work/vip\"}" \
+    'VIP tickets' 'VIP tickets by unit' 'Not VIP' 'Tier 1'
+"$py" - "$work/log.jsonl" <<'PYJ' && echo "ok   -   ... sys_user read in batches: sys_id and the tiers' columns only, GET" || { echo "FAIL - the VIP read"; fails=$((fails + 1)); }
+import json, sys
+rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
+u = [r for r in rows if r["path"].endswith("/sys_user") and str((r.get("query") or {}).get("sysparm_query", "")).startswith("sys_idIN")]
+assert u and all(r["method"] == "GET" for r in u), u[:1]
+assert all(r["query"].get("sysparm_fields") == "sys_id,u_tier1_vip,vip" for r in u), u[:1]
+PYJ
+vt="$work/vip/servicenow-ticket-insights"
+check "  ... the site's page: the section, by team, each tier's SLA definitions" "$vt/latest.html" \
+    'id="vip"' '<h2>VIP tickets</h2>' 'VIP tickets by team' 'SLA definitions: Tier 1' 'SLA definitions: VIP' 'Median to respond' '<span class="chip info">Tier 1</span>' '!Not readable'
+check "  ... a team's page: its own section, no by-unit table" "$vt/ops/other/windows/latest.html" 'id="vip"' '<h2>VIP tickets</h2>' '!VIP tickets by'
+"$py" - "$work"/mail/*.eml <<'PYJ' && echo "ok   -   ... the workbook's VIP sheet: counts only" || { echo "FAIL - the workbook's VIP sheet"; fails=$((fails + 1)); }
+import email, io, sys, zipfile
+for path in sys.argv[1:]:
+    m = email.message_from_binary_file(open(path, "rb"))
+    for part in m.walk():
+        if (part.get_filename() or "").endswith(".xlsx"):
+            z = zipfile.ZipFile(io.BytesIO(part.get_payload(decode=True)))
+            wb = z.read("xl/workbook.xml").decode()
+            assert 'name="VIP"' in wb, wb[:300]
+            ss = z.read("xl/sharedStrings.xml").decode() if "xl/sharedStrings.xml" in z.namelist() else "".join(z.read(n).decode() for n in z.namelist() if n.startswith("xl/worksheets/"))
+            assert "Not VIP" in ss and "Tier 1" in ss
+            sys.exit(0)
+sys.exit("no workbook")
+PYJ
+mock SNMOCK_VIP="$VIPS" SNMOCK_VIP_HIDDEN=u_tier1_vip
+run "  ... a tier's column the account cannot read: said, the job goes on" ok "{$NOW, $NOACT, $VIPF, \"report_web_dest\": \"$work/vip2\"}"
+check "  ... said in the section" "$work/vip2/servicenow-ticket-insights/latest.html" 'Not readable: <code>u_tier1_vip</code>' 'id="vip"'
+mock SNMOCK_NO_TABLES=sys_user
+run "  ... sys_user refused: said, every ticket Not VIP, the job goes on" ok "{$NOW, $NOACT, \"report_web_dest\": \"$work/vip3\"}"
+check "  ... said in the section" "$work/vip3/servicenow-ticket-insights/latest.html" 'The VIP tiers were not read: ' 'the account needs read on sys_user'
+run "  ... a column name that is not one: stopped with the reason" fail "{$NOW, $NOACT, \"servicenow_insights_vip_fields\": [{\"label\": \"X\", \"column\": \"u x\"}]}" \
+    'column is a sys_user column name'
+run "  ... none: no section" ok "{$NOW, $NOACT, \"servicenow_insights_vip_fields\": [], \"report_web_dest\": \"$work/vip4\"}"
+check "  ... no section" "$work/vip4/servicenow-ticket-insights/latest.html" '!id="vip"'
+mock
 
 # ---- 1.14.0: the team leads' emails, To the lead (report_email_to an extra variable), with their page's link - both ways --
 MAIL="\"report_email_smtp_host\": \"localhost\", \"report_email_smtp_port\": $smtp, \"report_email_from\": \"aap@example.mil\", \"report_email_security\": \"none\""

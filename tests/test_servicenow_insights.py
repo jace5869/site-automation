@@ -59,7 +59,8 @@ def site(sites=False, surveys=False):
                 if r["stage"] != "cancelled":
                     x_ = {"name": r["sla"], "stage": r["stage"], "breached": r["has_breached"] == "true", "percent": float(r["business_percentage"]),
                           "paused_at": r.get("pause_time", ""), "running": r["stage"] in ("in_progress", "paused"),
-                          "left_s": rd.duration(r.get("business_time_left")), "planned_end": ""}
+                          "left_s": rd.duration(r.get("business_time_left")), "planned_end": "",
+                          "elapsed_s": rd.duration(r.get("business_duration"))}
                     (running if x_["running"] else slas).setdefault(r["task"], []).append(x_)
                     if r["stage"] == "paused":
                         paused[r["task"]] = r["pause_time"]
@@ -1765,8 +1766,10 @@ class PagePeriods(unittest.TestCase):
              'addEventListener("load",function(){setTimeout(function(){var D=document,o={};try{o.h0=location.hash;o.t0=tv("opened");o.b0=tv("backlog");'
              'o.say=!D.getElementById("ppsay").hidden;o.whole=[].slice.call(D.querySelectorAll("#glance .tile[data-pp=\'-\'] .chip.ppw")).filter(function(x){return !x.hidden}).length;'
              'o.notes=[].slice.call(D.querySelectorAll("section.card .sh .chip.ppw")).filter(function(x){return !x.hidden}).length;o.chart=!!D.querySelector("#ppflow .cvsvg");'
+             'o.act=[].slice.call(D.querySelectorAll("#glance .act .chip.ppw, .brief-hero>.chip.ppw")).filter(function(x){return !x.hidden}).length;'
              'D.querySelector("#ppbar button.cvpd[data-name=\'3m\']").click();o.h3=location.hash;o.t3=tv("opened");history.back();'
              'setTimeout(function(){o.hb=location.hash;o.tb=tv("opened");D.querySelector("#ppbar button.cvpd[data-name=\'all\']").click();o.ta=tv("opened");o.ha=location.hash;'
+             'o.acta=[].slice.call(D.querySelectorAll("#glance .act .chip.ppw, .brief-hero>.chip.ppw")).filter(function(x){return !x.hidden}).length;'
              'o.v=V;D.title="R "+JSON.stringify(o)},300)}catch(e){V.push("thrown: "+e.message);o.v=V;D.title="R "+JSON.stringify(o)}},300)})</script></body>')
     CSP = '<head><meta http-equiv="Content-Security-Policy" content="require-trusted-types-for \'script\'">'
 
@@ -1848,13 +1851,17 @@ class PagePeriods(unittest.TestCase):
             self.assertTrue(got["say"] and got["chart"])
             self.assertEqual(got["whole"], 4, got)                 # reopened, changes, hand-offs, close notes: the window's, said so
             self.assertGreater(got["notes"], 10)
+            self.assertEqual((got["act"], got["acta"]), (1, 0), got)       # What the period says: the window's sentences, said so
             self.assertEqual((got["h3"], got["t3"]), ("#p=3m", self.want(m, key, "3m")[0]))
             self.assertEqual((got["hb"], got["tb"]), ("#p=1m", got["t0"]))        # Back
             w = re.search(r'<div class="tile" data-pp="opened"><span class="eyebrow">Tickets</span><span class="v">([\d,]+)', P.servicenow_insights_page(m, key, OPTS)).group(1)
             self.assertEqual((got["ta"], got["ha"]), (w, ""))               # the window: the page as written
         # without a hash: the window, nothing marked
         got = json.loads(self.chrome(P.servicenow_insights_page(m, "all", OPTS)))
-        self.assertEqual((got["h0"], got["say"], got["whole"], got["notes"]), ("", False, 0, 0))
+        self.assertEqual((got["h0"], got["say"], got["whole"], got["notes"], got["act"]), ("", False, 0, 0, 0))
+        # the brief look: its sentence and What the period says, both marked
+        got = json.loads(self.chrome(P.servicenow_insights_page(m, "all", dict(OPTS, look="brief")), "#p=1m"))
+        self.assertEqual((got["v"], got["act"], got["acta"]), ([], 2, 0), got)
 
     def test_it_fits(self):
         m = site()["model"]
@@ -3038,6 +3045,261 @@ class IsItWriting(unittest.TestCase):
         got = L(dict(res, objects={"present": [], "missing": ["insights_run"]}, held=[]), "h")
         self.assertEqual(got[1:], ["Tables and views: 0 there, missing insights_run", "Held: nothing yet - no run has been written"])
         self.assertEqual(L({"ok": False, "error": "Access denied"}, "h"), ["Report database h: NOT reached - Access denied"])
+
+
+def vip_r(r, tiers=("Tier 1", "VIP"), people=("caller_id",)):
+    """1.43.0: a reading with VIP tiers - the seed's callers (their names are their ids here): the first 6 the first tier,
+    the next 60 the second."""
+    r = json.loads(json.dumps(r))
+    callers = sorted(set(it.get("caller_id") for it in r["items"] if it.get("caller_id")))
+    of = dict((c, 0) for c in callers[:6])
+    of.update((c, min(1, len(tiers) - 1)) for c in callers[6:66])
+    r["vip"] = {"tiers": list(tiers), "of": of, "asked": len(callers), "error": "", "hidden": [], "people": list(people)}
+    return r
+
+
+class Vip(unittest.TestCase):
+    """1.43.0: VIP tickets - sys_user read in batches (sys_id and the tiers' columns only), the tier on each ticket (the
+    first tier listed wins), a section on every page (a row per tier and Not VIP, by priority, each tier's SLA definitions,
+    on the All, site and directorate pages by unit), counts only under vip_min, the tier in the rows (the Custom view's VIP
+    only), the email's table, the workbook's sheet (counts only); a column the account cannot read and sys_user refused:
+    said, the job goes on."""
+
+    _m = {}
+
+    def model(self, key="flat", **kw):
+        if key not in self._m:
+            x = site(sites=key == "sites")
+            self._m[key] = F.servicenow_insights_model(vip_r(x["r"], **kw), None, x["mask"], HIER_OPTS if key == "sites" else OPTS)
+        return self._m[key]
+
+    def test_read_in_batches(self):
+        calls = []
+
+        class Api:
+            def get(self, path, q):
+                calls.append((path, dict(q)))
+                ids = q["sysparm_query"][8:].split(",")
+                return {"result": [{"sys_id": i, "u_tier1_vip": "true" if i == "u7" else "false", "vip": "true" if i in ("u7", "u150") else "false",
+                                    "u_hidden": ""} for i in ids]}
+        ids = ["u%d" % i for i in range(250)] + ["", "bad id"]
+        of, err, hidden = rd.read_vip(Api(), ids, [{"label": "Tier 1", "column": "u_tier1_vip"}, {"label": "VIP", "column": "vip"},
+                                                   {"label": "Hidden", "column": "u_hidden"}])
+        self.assertEqual((of, err, hidden), ({"u7": 0, "u150": 1}, "", ["u_hidden"]))    # the first tier listed wins; empty = not readable
+        self.assertEqual([len(q["sysparm_query"][8:].split(",")) for _, q in calls], [100, 100, 50])
+        self.assertEqual(set(q["sysparm_fields"] for _, q in calls), {"sys_id,u_tier1_vip,vip,u_hidden"})   # never a name
+        self.assertEqual(set(p for p, _ in calls), {"api/now/table/sys_user"})
+
+        class No:
+            def get(self, path, q):
+                raise rd.SnError("GET api/now/table/sys_user: HTTP 403 Forbidden")
+        of, err, hidden = rd.read_vip(No(), ["u1"], [{"label": "VIP", "column": "vip"}])
+        self.assertEqual(of, {})
+        self.assertIn("the account needs read on sys_user", err)
+        self.assertEqual(rd.read_vip(No(), ["u1"], [{"label": "X", "column": "bad column"}]), ({}, "", []))    # no read at all
+
+    def test_the_requested_for_and_opened_by(self):
+        rec = dict((k, {"value": v, "display_value": d}) for k, v, d in (("sys_id", "r1", "r1"), ("number", "RITM1", "RITM1"),
+                                                                         ("requested_for", "u9", "Pat Doe"), ("opened_by", "u3", "Sam Roe")))
+        it = rd.normalize(rec, "sc_req_item")
+        self.assertEqual((it["caller"], it["caller_id"], it["opened_by_id"]), ("Pat Doe", "u9", "u3"))
+        self.assertIn("opened_by_id", rd.LIGHT_KEYS)          # read live, never kept in the ticket store
+        vip = {"on": True, "of": {"u3": 0, "u9": 1}, "people": ["caller_id"]}
+        self.assertEqual(F.vip_of({"caller_id": "u9", "opened_by_id": "u3"}, vip), 1)
+        self.assertEqual(F.vip_of({"caller_id": "u9", "opened_by_id": "u3"}, dict(vip, people=["caller_id", "opened_by_id"])), 0)
+
+    def test_the_model(self):
+        m = self.model()
+        v = m["scopes"]["all"]["vip"]
+        self.assertEqual([r_["label"] for r_ in v["rows"]], ["Tier 1", "VIP", "Not VIP"])
+        s = m["scopes"]["all"]
+        self.assertEqual(sum(r_["incidents"] for r_ in v["rows"]), s["counts"]["incidents"])     # every ticket once
+        self.assertEqual(sum(r_["requests"] for r_ in v["rows"]), s["counts"]["requests"])
+        self.assertEqual(sum(sum(p_["n"]) for p_ in v["prio"]), s["counts"]["incidents"])
+        for r_ in v["rows"]:
+            small = r_["incidents"] + r_["requests"] < 5
+            self.assertEqual(r_["small"], small)
+            if small:
+                self.assertEqual((r_["resp"], r_["resol"], r_["median_h"], r_["resp_h"]), (None, None, None, None))
+        self.assertIsNotNone(v["rows"][1]["resp_h"])               # the response SLAs' elapsed
+        d1 = v["defs"][1]["rows"]
+        self.assertTrue(d1 and d1[0]["kind"] == "response")
+        for x in d1:
+            self.assertEqual(x["met"] + x["missed"] >= x["tickets"], True)
+            if x["tickets"] >= 5:
+                self.assertAlmostEqual(x["pct"], 100.0 * x["met"] / (x["met"] + x["missed"]), delta=0.051)
+        self.assertNotIn("of", m["vip"])                              # never the people's ids in the model
+        self.assertEqual(m["vip"]["tiers"], ["Tier 1", "VIP"])
+        side = s["side"]["rows"]
+        self.assertEqual(sum(sum(t["vip"]["n"]) for t in side), v["total"])                       # each team's VIP tickets add up
+        for t in m["teams"]:
+            self.assertIsNotNone(m["scopes"][t]["vip"])                                           # every page
+        # the rows carry the tier: the VIP only choice gives the section's counts
+        c = m["rows"]["full"]
+        allg = list(range(len(c["groups"])))
+        for vv, row in ((1, v["rows"][0]), (2, v["rows"][1])):
+            f = F.custom_figures(c, allg, None, vv)
+            self.assertEqual((f["incidents"], f["requests"]), (row["incidents"], row["requests"]))
+        f = F.custom_figures(c, allg, None, 0)
+        self.assertEqual(f["incidents"], v["rows"][0]["incidents"] + v["rows"][1]["incidents"])
+
+    def test_off_and_older_readings(self):
+        x = site()
+        m = x["model"]                                          # a reading without vip (before 1.43.0, or vip_fields [])
+        self.assertIsNone(m["scopes"]["all"]["vip"])
+        self.assertFalse(m["vip"]["on"])
+        self.assertNotIn('id="vip"', P.servicenow_insights_page(m, "all", OPTS))
+        self.assertNotIn("VIP", [sh["name"] for sh in F.servicenow_insights_xlsx(m, x["r"], None, x["mask"], OPTS)])
+        self.assertNotIn("vip", m["rows"]["full"]["cols"])
+
+    def test_every_page(self):
+        m = self.model("sites")
+        links = page_links(m)
+        for p_ in [{"key": "all", "level": "all"}] + m["pages"]:
+            h = P.servicenow_insights_page(m, p_["key"], {"links": links})
+            self.assertIn('<section class="card" id="vip">', h, p_["key"])
+            self.assertIn('<a href="#vip">VIP tickets', h)
+            if p_["level"] == "team":
+                self.assertNotIn("VIP tickets by", h, p_["key"])
+            elif m["scopes"][p_["key"]].get("side", {}).get("rows"):
+                self.assertRegex(h, r"<h3>VIP tickets by (team|directorate|site)</h3>", p_["key"])
+        h = P.servicenow_insights_page(m, "all", {"links": links})
+        sec = h[h.index('id="vip"'):h.index("</section>", h.index('id="vip"'))]
+        self.assertIn('<span class="chip info">Tier 1</span>', sec)
+        self.assertIn("SLA definitions: Tier 1", sec)
+        self.assertIn("SLA definitions: VIP", sec)
+        self.assertIn('<div class="fair">A dash: fewer than 5 tickets, so counts only.</div>', sec)
+        self.assertIn("Median to respond", sec)
+        self.assertIn('data-sort="t0"', sec)                                                       # by unit: sortable
+        self.assertNotIn("Not readable", sec)
+
+    def test_the_split_pages(self):
+        x = site(sites=True)
+        o = dict(HIER_OPTS, split_label="BLUE", split_pattern="*- nova")
+        m = F.servicenow_insights_model(vip_r(x["r"]), None, x["mask"], o)
+        self.assertTrue(m.get("variants"))
+        for v_ in ("in", "out"):
+            sc = m["variants"][v_]["all"]
+            self.assertIsNotNone(sc["vip"])
+        h = P.servicenow_insights_page(dict(m, scopes=m["variants"]["in"]), "all", {})
+        self.assertIn('id="vip"', h)
+        a, b = (m["variants"][v_]["all"]["vip"]["total"] for v_ in ("in", "out"))
+        self.assertEqual(a + b, m["scopes"]["all"]["vip"]["total"])                               # the two halves add up
+
+    def test_not_readable_and_refused(self):
+        x = site()
+        r = vip_r(x["r"])
+        r["vip"]["hidden"] = ["u_tier1_vip"]
+        h = P.servicenow_insights_page(F.servicenow_insights_model(r, None, x["mask"], OPTS), "all", {})
+        self.assertIn("Not readable: <code>u_tier1_vip</code>. The account cannot read it on sys_user, or there is no such column. "
+                      "Its tier counts no one.", h)
+        r = vip_r(x["r"])
+        r["vip"].update(of={}, error="GET api/now/table/sys_user: HTTP 403 Forbidden - the account needs read on sys_user")
+        m = F.servicenow_insights_model(r, None, x["mask"], OPTS)
+        h = P.servicenow_insights_page(m, "all", {})
+        self.assertIn("The VIP tiers were not read: GET api/now/table/sys_user: HTTP 403 Forbidden - the account needs read on sys_user. "
+                      "Every ticket counts as Not VIP.", h)
+        self.assertEqual(m["scopes"]["all"]["vip"]["total"], 0)
+        d = F.servicenow_insights_doc(m, "all", OPTS)
+        self.assertIn("The VIP tiers were not read", [sc for sc in d["sections"] if sc["title"] == "VIP tickets"][0]["text"])
+
+    def test_vip_min(self):
+        x = site()
+        m = F.servicenow_insights_model(vip_r(x["r"]), None, x["mask"], dict(OPTS, vip_min=10000))
+        for r_ in m["scopes"]["all"]["vip"]["rows"]:
+            self.assertTrue(r_["small"])
+            self.assertIsNone(r_["resol"])
+            self.assertGreaterEqual(r_["incidents"] + r_["requests"], 0)
+        self.assertEqual(m["vip"]["min"], 10000)
+
+    def test_the_email(self):
+        m = self.model()
+        d = F.servicenow_insights_doc(m, "all", OPTS)
+        t = [sc["title"] for sc in d["sections"]]
+        self.assertIn("VIP tickets", t)
+        self.assertEqual(t.index("VIP tickets"), t.index("By priority") + 1)
+        vt = d["sections"][t.index("VIP tickets")]
+        self.assertEqual([r_[0] for r_ in vt["rows"]], ["Tier 1", "VIP", "Not VIP"])
+        bu = d["sections"][t.index("VIP tickets by unit")]
+        self.assertLessEqual(len(bu["columns"]), F.VIP_EMAIL_COLS)                    # a table while it fits 800 px
+        self.assertEqual(bu["columns"][:3], ["Unit", "Tier 1", "VIP"])
+        team = F.servicenow_insights_doc(m, m["teams"][0], OPTS)
+        self.assertIn("VIP tickets", [sc["title"] for sc in team["sections"]])
+        self.assertNotIn("VIP tickets by unit", [sc["title"] for sc in team["sections"]])
+        # four tiers: too wide for the email - one line per unit
+        x = site()
+        m4 = F.servicenow_insights_model(vip_r(x["r"], tiers=("Tier 1", "Tier 2", "Tier 3", "VIP")), None, x["mask"], OPTS)
+        bu = [sc for sc in F.servicenow_insights_doc(m4, "all", OPTS)["sections"] if sc["title"] == "VIP tickets by unit"][0]
+        self.assertNotIn("columns", bu)
+        self.assertRegex(bu["lines"][0], r"^.+: Tier 1 \d+, Tier 2 \d+, Tier 3 \d+, VIP \d+, open now \d+, resolution met ")
+
+    def test_the_email_fits_800(self):
+        """The VIP table and the by-unit table at their widest (three tiers: 8 columns) in 800 px, in the standard, command
+        and portal looks."""
+        import shutil
+        import jinja2
+        b = shutil.which("google-chrome") or shutil.which("chromium")
+        if not b:
+            self.skipTest("no headless browser here")
+        x = site(sites=True)
+        m3 = F.servicenow_insights_model(vip_r(x["r"], tiers=("Tier 1", "Tier 2", "VIP")), None, x["mask"], HIER_OPTS)
+        env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(HERE, "..", "roles", "site_email", "templates")), autoescape=False)
+        probe = '<script>addEventListener("load",function(){document.title="R "+document.documentElement.scrollWidth+" "+innerWidth})</script></body>'
+        with tempfile.TemporaryDirectory() as d:
+            for m in (self.model("sites"), m3):
+                doc = F.servicenow_insights_doc(m, "all", HIER_OPTS)
+                bu = [sc for sc in doc["sections"] if sc["title"] == "VIP tickets by unit"][0]
+                self.assertIn("columns", bu)
+                doc["sections"] = [sc for sc in doc["sections"] if sc["title"].startswith("VIP")]
+                for tpl in ("report.html.j2", "report_command.html.j2", "report_portal.html.j2"):
+                    h = env.get_template(tpl).render(_report=doc, _email_footer="AAP job 9", _email_logo_cid="", _email_runs=[],
+                                                     report_email_header_text="Site automation report")
+                    path = os.path.join(d, tpl + ".html")
+                    with open(path, "w") as fh:
+                        fh.write(h.replace("</head>", PageFits.FONTS, 1).replace("</body>", probe))
+                    out = subprocess.run([b, "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars", "--virtual-time-budget=3000",
+                                          "--window-size=800,900", "--dump-dom", "file://" + path], capture_output=True, text=True, timeout=120).stdout
+                    self.assertIn("<title>R 800 800</title>", out, (tpl, len(m["vip"]["tiers"])))
+
+    def test_the_workbook_counts_only(self):
+        x = site()
+        r = vip_r(x["r"])
+        m = F.servicenow_insights_model(r, None, x["mask"], OPTS)
+        sheets = dict((sh["name"], sh) for sh in F.servicenow_insights_xlsx(m, r, None, x["mask"], OPTS))
+        v = sheets["VIP"]
+        self.assertEqual(v["columns"], ["Scope", "Level", "Tier", "Incidents", "Requests", "Open now", "No SLA"])
+        self.assertEqual(v["rows"][0][:3], ["All", "all", "Tier 1"])
+        self.assertEqual(len(v["rows"]), 3 * len(m["scopes"]))                         # every scope, a row per tier and Not VIP
+        self.assertFalse(any("VIP" in c or "Tier" in c for c in sheets["Incidents"]["columns"]))      # never a ticket's tier
+
+    def test_the_setting_checked(self):
+        self.assertEqual(F.servicenow_insights_vip_errors([{"label": "VIP", "column": "vip"}, {"label": "Tier 1", "column": "u_tier1_vip"}]), [])
+        self.assertEqual(len(F.servicenow_insights_vip_errors([{"label": "X", "column": "u x"}, {"column": ""}, "vip"])), 3)
+        self.assertEqual(F.servicenow_insights_vip_errors([], "who"), ["servicenow_insights_vip_people: caller or caller_and_opened_by, not who"])
+        self.assertEqual(F.servicenow_insights_vip_errors({"vip": 1}), ["servicenow_insights_vip_fields is a list of {label, column}"])
+
+    def test_it_fits(self):
+        import shutil
+        b = shutil.which("google-chrome") or shutil.which("chromium")
+        if not b:
+            self.skipTest("no headless browser here")
+        m = self.model("sites")
+        keys = ["all"] + [p_["key"] for p_ in m["pages"] if p_["level"] != "team"][:2] + [p_["key"] for p_ in m["pages"] if p_["level"] == "team"][:1]
+        with tempfile.TemporaryDirectory() as d:
+            for look in ("", "brief"):
+                for k in keys:
+                    for w in (1280, 390):
+                        h = P.servicenow_insights_page(m, k, dict(HIER_OPTS, look=look))
+                        path = os.path.join(d, "p.html")
+                        with open(path, "w") as fh:
+                            fh.write(h.replace("</head>", PageFits.FONTS, 1).replace("</body>", PageFits.PROBE))
+                        out = subprocess.run([b, "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars", "--virtual-time-budget=4000",
+                                              "--window-size=%d,900" % w, "--dump-dom", "file://" + path], capture_output=True, text=True, timeout=120).stdout
+                        t = re.findall(r"<title>(.*?)</title>", out)
+                        bad = [x for x in t[0][2:].split("; ") if x.startswith("vip/")] if t else ["no title"]
+                        self.assertEqual(bad, [], (k, look or "atlas", w))
+                        if w == 1280:
+                            self.assertIn("<title>R page 0</title>", out, (k, look or "atlas", t))
 
 
 if __name__ == "__main__":

@@ -426,6 +426,7 @@ section.card{border-radius:16px;background:var(--glass);box-shadow:none}
 .brief-hero .verdict svg{width:15px;height:15px;flex:none}
 .brief-hero .say{margin:10px 0 0;color:var(--fg-2);font-size:15px;max-width:80ch}
 .brief-hero .say b{color:var(--fg);font-variant-numeric:tabular-nums}
+.brief-hero>.chip.ppw{margin-top:8px}.brief-hero>[hidden]{display:none!important}
 @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 @media (prefers-reduced-motion:no-preference){.brief-hero>*{animation:rise .5s cubic-bezier(.16,1,.3,1) both}.brief-hero>:nth-child(2){animation-delay:.06s}.brief-hero>:nth-child(3){animation-delay:.12s}}
 @media print{*{animation:none!important}}
@@ -512,7 +513,9 @@ function nf(x){return x.toLocaleString("en-US")}
 /* the change against the period before, as the page's tiles: % for counts, points for shares; lg = lower is good */
 function dl(v,p,lg,pts){if(v===null||v===undefined||p===null||p===undefined)return null;var d=pts?v-p:(p?(v-p)/p*100:0);
  if(Math.abs(d)<0.05)return["no change","flat"];var up=d>0;return[(up?"\u25b2 ":"\u25bc ")+Math.abs(d).toFixed(pts?1:0)+(pts?" pts":"%"),(up?!lg:lg)?"good":"bad"]}
-function eng(CV){var C=CV.cols,W=CV.until,LIM=CV.hop_limit||3,UN={};(CV.unable||[]).forEach(function(i){UN[i]=1});
+function eng(CV){var C=CV.cols,W=CV.until,LIM=CV.hop_limit||3,UN={},VF=null;(CV.unable||[]).forEach(function(i){UN[i]=1});
+ /* 1.43.0: VIP only - null every ticket, 0 any tier, k the tier k (the rows' vip: 0 not VIP) */
+ function vok(i){return VF===null||(C.vip?(VF?C.vip[i]===VF:C.vip[i]>0):false)}
  /* the periods (1.10.0): calendar months and weeks from the rows, or any from / to; each against the period before */
  var P=CV.periods||[],CAL=CV.calendar||{},MID=CAL.mid||[],BO=CAL.bo||[];
  var D0=CAL.d0?Date.UTC(+CAL.d0.slice(0,4),+CAL.d0.slice(5,7)-1,+CAL.d0.slice(8,10)):0;
@@ -521,7 +524,7 @@ function eng(CV){var C=CV.cols,W=CV.until,LIM=CV.hop_limit||3,UN={};(CV.unable||
  function kidx(x){var lo=0,hi=MID.length-1,k=-1;while(lo<=hi){var m=(lo+hi)>>1;if(MID[m]<=x){k=m;lo=m+1}else hi=m-1}return Math.max(k,0)}
  function figs(sel,a,b){if(a===undefined){a=0;b=W}
   var f={inc:0,req:0,res:0,bl:0,bl0:0,sn:0,so:0,h:[],rn:0,ro:0,ns:0,hop:0,hres:0,hold:0,una:0,fcr:0,tn:0,ts:[0,0,0,0],age:[0,0,0,0],now:b===W},eb=(MID.length&&C.ob)?BO[kidx(b)]:null;
-  for(var i=0;i<C.g.length;i++){if(!sel[C.g[i]])continue;var o=C.o[i],d=C.d[i],t=C.t[i],din=d!==null&&d>=a&&d<b,on=o<=b&&(d===null||d>b);
+  for(var i=0;i<C.g.length;i++){if(!sel[C.g[i]]||!vok(i))continue;var o=C.o[i],d=C.d[i],t=C.t[i],din=d!==null&&d>=a&&d<b,on=o<=b&&(d===null||d>b);
    if(o>=a&&o<b){if(t===0)f.inc++;else f.req++}if(t===0&&din){f.res++;if(d>=o)f.h.push((d-o)/3600)}if(on)f.bl++;if(o<=a&&(d===null||d>a))f.bl0++;
    if(din&&(C.s[i]===0||C.s[i]===1)){f.sn++;f.so+=C.s[i]}
    /* the 1.7.0 figures, as scope_model: response met of what was done (no SLA left out), open over the hop limit, on hold now, unable, first contact */
@@ -539,7 +542,7 @@ function eng(CV){var C=CV.cols,W=CV.until,LIM=CV.hop_limit||3,UN={};(CV.unable||
   for(k=0;k<MID.length;k++){if(MID[k]<a||MID[k]>=b)continue;var dt=iso(k);if(!e0.length||u==="day"||(u==="week"&&k-lk>=7)||(u==="month"&&dt.slice(8)==="01")){e0.push([MID[k],dt]);lk=k}}
   if(!e0.length)return;var n=e0.length,op=[],rs=[];for(j=0;j<n;j++){op.push(0);rs.push(0)}
   function bi(x){if(x<a||x>=b)return -1;var lo=0,hi=n-1,r=-1;while(lo<=hi){var m=(lo+hi)>>1;if(e0[m][0]<=x){r=m;lo=m+1}else hi=m-1}return r}
-  for(var i=0;i<C.g.length;i++){if(!sel[C.g[i]])continue;j=bi(C.o[i]);if(j>=0)op[j]++;if(C.t[i]===0&&C.d[i]!==null){j=bi(C.d[i]);if(j>=0)rs[j]++}}
+  for(var i=0;i<C.g.length;i++){if(!sel[C.g[i]]||!vok(i))continue;j=bi(C.o[i]);if(j>=0)op[j]++;if(C.t[i]===0&&C.d[i]!==null){j=bi(C.d[i]);if(j>=0)rs[j]++}}
   var mx=Math.max(1,Math.max.apply(null,op.concat(rs))),w=640,h=170,pl=34,pb=22,bw=(w-pl)/n,H=h-pb-10,s=D.createElementNS(NS,"svg");
   s.setAttribute("viewBox","0 0 "+w+" "+h);s.setAttribute("class","cvsvg");s.setAttribute("role","img");
   s.setAttribute("aria-label","Opened and incidents resolved per "+u+": "+nf(op.reduce(function(x,y){return x+y},0))+" opened, "+nf(rs.reduce(function(x,y){return x+y},0))+" resolved");
@@ -551,7 +554,7 @@ function eng(CV){var C=CV.cols,W=CV.until,LIM=CV.hop_limit||3,UN={};(CV.unable||
   for(j=0;j<n;j++){var x0=pl+j*bw,g=Math.max(1,bw*0.12),cw=(bw-3*g)/2,lb=lbl(e0[j][1],u),t=(u==="day"?"":(u==="week"?"Week of ":""))+lb+": "+nf(op[j])+" opened, "+nf(rs[j])+" incidents resolved";
    rc(x0+g,10+H-H*op[j]/mx,cw,H*op[j]/mx,"--s1",t);rc(x0+2*g+cw,10+H-H*rs[j]/mx,cw,H*rs[j]/mx,"--s2",t);if(j%every===0)tx(x0+bw/2,h-5,lb,"middle")}
   el.appendChild(s)}
- return {CV:CV,C:C,W:W,P:P,MID:MID,iso:iso,kof:kof,kidx:kidx,figs:figs,chart:chart}}
+ return {CV:CV,C:C,W:W,P:P,MID:MID,iso:iso,kof:kof,kidx:kidx,figs:figs,chart:chart,vip:function(v){VF=v}}}
 /* the period text, each date kept whole on a narrow screen */
 function ptext(el,per,c){if(!el)return;var ps=per&&per.title?per.title+(c?", compared with "+per.ctitle:""):"";el.textContent="";
  ps.split(/(\d{4}-\d{2}-\d{2})/).forEach(function(x,k){if(!x)return;if(k%2){var sp=D.createElement("span");sp.className="cvdt";sp.textContent=x;el.appendChild(sp)}else el.appendChild(D.createTextNode(x))})}
@@ -590,7 +593,8 @@ if(cvd&&cvt){var E=eng(JSON.parse(cvd.textContent)),CV=E.CV,C=E.C,figs=E.figs,al
  function own(li,s){return li.querySelector(":scope>.cvr "+s)}
  function tally(){nodes.forEach(function(li){var k=kids(li),on=k.filter(function(b){return b.checked}).length,b=own(li,"input.cvc");b.checked=on>0&&on===k.length;b.indeterminate=on>0&&on<k.length;
    own(li,".cvs").textContent=on+" / "+k.length});var n=all.filter(function(b){return b.checked}).length;D.getElementById("cvn").textContent=n+" of "+all.length+" groups"}
- var cvp=null,pres=[].slice.call(D.querySelectorAll("button.cvp"));
+ var cvp=null,pres=[].slice.call(D.querySelectorAll("button.cvp")),cvv=D.getElementById("cvvip");
+ function vsel(){return cvv&&cvv.value!==""?+cvv.value:null}
  function press(name){cvp=name;pres.forEach(function(x){x.setAttribute("aria-pressed",x.getAttribute("data-name")===name?"true":"false")})}
  cvt.addEventListener("change",function(ev){var b=ev.target;if(!b.classList.contains("cvc"))return;if(!b.hasAttribute("data-g")){var li=b.closest("li.cvn");kids(li).forEach(function(x){x.checked=b.checked})}press(null);tally()});
  function fold(li,open){var u=li.querySelector(":scope>ul"),x=own(li,".cvx");if(u){u.hidden=!open;x.setAttribute("aria-expanded",open?"true":"false")}}
@@ -607,7 +611,7 @@ if(cvd&&cvt){var E=eng(JSON.parse(cvd.textContent)),CV=E.CV,C=E.C,figs=E.figs,al
   items.forEach(function(li){if((li.getAttribute("data-s")||"").indexOf(t)<0)return;li.hidden=false;li.querySelectorAll("li").forEach(function(x){x.hidden=false});
    var p=li.parentNode.closest("li");while(p){p.hidden=false;fold(p,true);p=p.parentNode.closest("li")}})});
  cq.addEventListener("keydown",function(ev){if(ev.key==="Escape"){cq.value="";cq.dispatchEvent(new Event("input"))}});
- window.siteInsightsFigures=function(idx,a,b){var s={};idx.forEach(function(i){s[i]=1});var f=figs(s,a,b);
+ window.siteInsightsFigures=function(idx,a,b,v){var s={};idx.forEach(function(i){s[i]=1});E.vip(v===undefined?null:v);var f=figs(s,a,b);E.vip(vsel());
   function pr(x,y){return y?r1(100*x/y):null}
   var out={incidents:f.inc,requests:f.req,resolved:f.res,backlog:[f.bl,f.bl0],median_h:r1(f.med),sla:r1(f.sla)};
   if(C.resp)out.resp=r1(f.resp);if(C.noslo)out.no_slo=f.ns;if(C.hops){out.hops_open=f.now?f.hop:null;out.hops_done_pct=pr(f.hres,f.res);out.fcr=pr(f.fcr,f.res)}
@@ -622,7 +626,7 @@ if(cvd&&cvt){var E=eng(JSON.parse(cvd.textContent)),CV=E.CV,C=E.C,figs=E.figs,al
  function setx(id,x){var el=D.getElementById("cv-"+id+"-x");if(!el)return;el.textContent=x?x[0]:"";el.className=x?"delta "+x[1]:""}
  var per=null,PB=pbar(E,D.getElementById("cvres"),"cv",function(p){per=p;apply()}),P0=PB.P0;per=P0;
  function apply(push){var idx=all.filter(function(b){return b.checked}).map(function(b){return +b.getAttribute("data-g")});var res=D.getElementById("cvres");
-  if(!idx.length){res.hidden=true;return}var s={};idx.forEach(function(i){s[i]=1});var f=figs(s,per.a,per.b),c=per.ca!==null&&per.ca!==undefined?figs(s,per.ca,per.cb):null;
+  if(!idx.length){res.hidden=true;return}E.vip(vsel());var s={};idx.forEach(function(i){s[i]=1});var f=figs(s,per.a,per.b),c=per.ca!==null&&per.ca!==undefined?figs(s,per.ca,per.cb):null;
   function rr(x){return x===null?null:Math.round(x*10)/10}function pp(a,b){return b?pc(Math.round(1000*a/b)/10):"\u2014"}function sh(a,b){return b?100*a/b:null}
   set("opened",nf(f.inc+f.req),nf(f.inc)+" incidents \u00b7 "+nf(f.req)+" requests");setx("opened",c&&dl(f.inc+f.req,c.inc+c.req,true,false));
   set("resolved",nf(f.res),c?"was "+nf(c.res):"");setx("resolved",c&&dl(f.res,c.res,false,false));
@@ -640,7 +644,7 @@ if(cvd&&cvt){var E=eng(JSON.parse(cvd.textContent)),CV=E.CV,C=E.C,figs=E.figs,al
    setx("tis",dl(rr(tt),rr(tc),true,false))}
   if(f.eb!==null){set("age",nf(f.age[3]),(f.now?"now":"at the period's end")+" \u00b7 0\u20131: "+nf(f.age[0])+" \u00b7 2\u20135: "+nf(f.age[1])+" \u00b7 6\u201310: "+nf(f.age[2]));
    setx("age",c&&c.eb!==null?dl(f.age[3],c.age[3],true,false):null)}
-  D.getElementById("cvlab").textContent=idx.length+" group"+(idx.length===1?"":"s")+" chosen";
+  var vv=vsel();D.getElementById("cvlab").textContent=idx.length+" group"+(idx.length===1?"":"s")+" chosen"+(vv===null?"":" \u00b7 VIP only: "+(vv?(CV.vip_tiers||[])[vv-1]:"every tier"));
   ptext(D.getElementById("cvpt"),per,c);
   E.chart(D.getElementById("cvchart"),s,per.a,per.b);
   var tb=D.getElementById("cvtab").tBodies[0],rows=[];tb.textContent="";
@@ -649,12 +653,14 @@ if(cvd&&cvt){var E=eng(JSON.parse(cvd.textContent)),CV=E.CV,C=E.C,figs=E.figs,al
   var lab=["Group","Opened","Resolved","Open at the end","Median fix","SLA met"];
   rows.forEach(function(r){var tr=D.createElement("tr");[[r[0],null],[nf(r[1]),r[1]],[nf(r[2]),r[2]],[nf(r[3]),r[3]],[fh(rr(r[4])),r[4]===null?-1:r[4]],[pc(rr(r[5])),r[5]===null?-1:r[5]]].forEach(function(c2,k){
    var td=D.createElement("td");td.textContent=c2[0];td.setAttribute("data-l",lab[k]);if(k){td.className="n";td.setAttribute("data-v",c2[1])}tr.appendChild(td)});tb.appendChild(tr)});
-  res.hidden=false;var hv=(cvp?"preset:"+encodeURIComponent(cvp):enc(idx))+(per!==P0&&per.name?"&p="+encodeURIComponent(per.name):"");
+  res.hidden=false;var hv=(cvp?"preset:"+encodeURIComponent(cvp):enc(idx))+(vv===null?"":"&v="+vv)+(per!==P0&&per.name?"&p="+encodeURIComponent(per.name):"");
   if(push!==false)try{history.replaceState(null,"","#cv="+hv)}catch(e){location.hash="cv="+hv}}
  function tick(idx){var want={};idx.forEach(function(i){want[i]=1});all.forEach(function(b){b.checked=!!want[+b.getAttribute("data-g")]});tally()}
  pres.forEach(function(x){x.addEventListener("click",function(){tick(dec(x.getAttribute("data-idx")));press(x.getAttribute("data-name"));apply()})});
  D.getElementById("cvgo").addEventListener("click",function(){apply();D.getElementById("cvres").scrollIntoView({block:"nearest"})});
  copier("cvcopy");
+ if(cvv){var hv0=/[#&]cv=.*&v=(\d+)/.exec(location.hash);if(hv0&&cvv.querySelector('option[value="'+hv0[1]+'"]'))cvv.value=hv0[1];
+  cvv.addEventListener("change",function(){if(all.some(function(b){return b.checked}))apply()})}
  var h=/[#&]cv=([0-9,\-]*)/.exec(location.hash),hp=/[#&]cv=preset:([^&]*)/.exec(location.hash),hq=/[#&]cv=.*&p=([^&]*)/.exec(location.hash),hb=null;
  if(hq){var pq=PB.byname(decodeURIComponent(hq[1]));if(pq)per=pq}
  if(hp){var nm=decodeURIComponent(hp[1]);hb=pres.filter(function(x){return x.getAttribute("data-name")===nm})[0];if(hb){tick(dec(hb.getAttribute("data-idx")));press(nm)}h=hb?h||[""]:null}
@@ -675,6 +681,9 @@ if(ppb&&ppd){var PE=eng(JSON.parse(ppd.textContent)),PC=PE.C,PS={};PE.CV.groups.
  var SK={glance:1,custom:1,method:1},CH=[];
  [].slice.call(D.querySelectorAll("main section.card")).forEach(function(sec){if(SK[sec.id])return;var nt=sec.querySelector(".sh .note");if(!nt)return;
   var c=mk("span","chip ppw",sec.id==="keepingup"?"whole window, but the first chart":"whole window");nt.appendChild(D.createTextNode(" "));nt.appendChild(c);CH.push(c)});
+ /* What the period says (and the brief look's sentence) are the window's sentences: "whole window" too (1.43.0) */
+ [].slice.call(D.querySelectorAll("#glance .act .acth>.eyebrow, p.say")).forEach(function(x){var c=mk("span","chip ppw","whole window");
+  x.parentNode.insertBefore(c,x.nextSibling);x.parentNode.insertBefore(D.createTextNode(" "),c);CH.push(c)});
  var gn=D.querySelector("#glance .sh .note"),gt=gn&&mk("span","note");if(gt)gn.parentNode.insertBefore(gt,gn.nextSibling);
  var fl=D.getElementById("ppflow"),fh3=fl&&fl.querySelector("h3"),fh0=fh3&&fh3.textContent,fc=fl&&mk("div","");if(fc)fl.appendChild(fc);
  function show(t,on){t.v.hidden=on;t.d.hidden=on;t.l.hidden=on;t.nv.hidden=!on;t.nd.hidden=!on;t.nl.hidden=!on;t.w.hidden=true}
@@ -1154,6 +1163,70 @@ def mv_chip(mv):
     return '<span class="mv %s" title="%s">%s</span>' % (mv["kind"], e(t), e(mv["text"]))
 
 
+def vip_section(m, s, side, links, two):
+    """1.43.0: the VIP tickets section - a row per tier and Not VIP, the incidents by priority, each tier's SLA definitions,
+    and on a page with units below it (side by side) the VIP tickets by unit. None when servicenow_insights_vip_fields is
+    empty. Under vip_min tickets a row has its counts only."""
+    v, mv = s.get("vip"), m.get("vip") or {}
+    if v is None or not mv.get("on"):
+        return None
+    tiers, vmin = mv.get("tiers") or [], int(mv.get("min") or 5)
+    fair = []
+    if mv.get("error"):
+        fair.append("The VIP tiers were not read: %s. Every ticket counts as Not VIP." % e(mv["error"]))
+    if mv.get("hidden"):
+        fair.append("Not readable: %s. The account cannot read %s on sys_user, or there is no such column. %s" % (
+            ", ".join("<code>%s</code>" % e(c) for c in mv["hidden"]), "it" if len(mv["hidden"]) == 1 else "them",
+            "Its tier counts no one." if len(mv["hidden"]) == 1 else "Those tiers count no one."))
+    rh = any(r_.get("resp_h") is not None for r_ in v["rows"])
+
+    def cnt(x):
+        return td(n(x), "n", x)
+    rows = []
+    for r_ in v["rows"]:
+        nv = r_["tier"] is None
+        lab = '<span class="mut">%s</span>' % e(r_["label"]) if nv else '<span class="chip info">%s</span>' % e(r_["label"])
+        rows.append(("", [td(lab), cnt(r_["incidents"]), cnt(r_["requests"]), cnt(r_["open"])] +
+                     ([td(fh(r_["resp_h"]), "n")] if rh else []) + [td(fh(r_["median_h"]), "n")] +
+                     ([sla_cell(r_["resp"])] if two else []) + [sla_cell(r_["resol"]), cnt(r_["no_slo"])]))
+    head = [("Tier", "", ""), ("Incidents", "n", ""), ("Requests", "n", ""), ("Open now", "n", "")] + (
+        [("Median to respond", "n", "")] if rh else []) + [("Median to resolve", "n", "")] + (
+        [("Response met", "n", ""), ("Resolution met", "n", "")] if two else [("SLA met", "n", "")]) + [("No SLA", "n", "")]
+    out = [table(head, rows)]
+    cap = ["Tier: of the person a ticket was raised for (an incident's caller, a request's requested for)%s. The first tier listed wins." % (
+        ", or who opened it" if "opened_by_id" in (mv.get("people") or []) else "")]
+    if rh:
+        cap.append("Median to respond: the response SLAs' elapsed time.")
+    out.append('<div class="fair">%s</div>' % " ".join(cap + fair))
+    if v["prio"]:
+        prow = [("", [td(e(p_["label"]))] + [cnt(x) for x in p_["n"]]) for p_ in v["prio"]]
+        out.append('<div class="fig"><h3>Incidents by priority</h3>%s</div>' % table(
+            [("Priority", "", "")] + [(e(t), "n", "") for t in tiers] + [("Not VIP", "n", "")], prow))
+    for d_ in v["defs"]:
+        drow = [("", [td(e(x["name"])), td(e(x["kind"])), cnt(x["tickets"]), cnt(x["met"]), cnt(x["missed"]), sla_cell(x["pct"]),
+                      td(fh(x["median_h"]), "n")]) for x in d_["rows"]]
+        out.append('<div class="fig"><h3>SLA definitions: %s</h3>%s</div>' % (e(d_["label"]), table(
+            [("SLA", "", ""), ("Kind", "", ""), ("Tickets", "n", ""), ("Met", "n", ""), ("Missed", "n", ""), ("Met %", "n", ""), ("Median elapsed", "n", "")],
+            drow, empty="No SLA on this tier's tickets done in the window.")))
+    urows = [t for t in (side or {}).get("rows") or [] if t.get("vip")]
+    if urows and s.get("level") != "team":
+        one = {"Sites": "Site", "Directorates": "Directorate", "Units": "Unit", "Units and teams": "Unit or team"}.get(side.get("kind"), "Team")
+        rows = []
+        for t in sorted(urows, key=lambda t: natural_key(t.get("label") or t["team"])):
+            u, k_ = t["vip"], t.get("key") or t["team"]
+            lab = t.get("label") or t["team"]
+            name = ('<a class="teamlink" href="%s" title="%s">%s</a>' % (e(links[k_]), e(t["team"]), e(lab))) if links.get(k_) else "<b>%s</b>" % e(lab)
+            rows.append((search_attr(t["team"]), [td(name, sv=lab)] + [cnt(x) for x in u["n"]] + [cnt(u["open"])] +
+                         ([sla_cell(u["resp"])] if two else []) + [sla_cell(u["resol"]), td(fh(u["median_h"]), "n", u["median_h"] if u["median_h"] is not None else -1)]))
+        out.append('<div class="fig"><h3>VIP tickets by %s</h3>%s<div class="cap">Click a column\'s name to sort by it.</div></div>' % (one.lower(), table(
+            [(one, "", "name")] + [(e(t), "n", "t%d" % i) for i, t in enumerate(tiers)] + [("Open now", "n", "open")] +
+            ([("Response met", "n", "resp")] if two else []) + [("Resolution met" if two else "SLA met", "n", "sla"), ("Median to resolve", "n", "fix")],
+            rows, sortable=True)))
+    if any(r_["small"] for r_ in v["rows"]) or any(x["tickets"] < vmin for d_ in v["defs"] for x in d_["rows"]) or any(t["vip"]["small"] for t in urows):
+        out.append('<div class="fair">A dash: fewer than %d tickets, so counts only.</div>' % vmin)
+    return section("vip", "VIP tickets", "incidents and requests opened in the window, by the VIP tier of who they were raised for", "".join(out))
+
+
 def search_attr(*parts):
     return ' data-search="%s"' % e(" ".join(str(p or "") for p in parts).lower())
 
@@ -1277,7 +1350,8 @@ def servicenow_insights_page(model, key="all", opts=None):
             ("process", "Hops, on hold, codes", ""), ("outcomes", "How incidents ended", ""), ("states", "Time in each state", ""),
             ("aging", "Backlog age and flow", ""), ("quality", "Quality and hot spots", ""), ("afterhours", "After hours", ""),
             ("workload", "Workload", "")]
-    toc += [("keepingup", "Keeping up", ""), ("severity", "Severity", len(s["majors"]) or ""),
+    toc += [("keepingup", "Keeping up", ""), ("severity", "Severity", len(s["majors"]) or "")] + (
+        [("vip", "VIP tickets", (s.get("vip") or {}).get("total") or "")] if s.get("vip") is not None else []) + [
             ("categories", "Categories", len((s.get("categories") or {}).get("rows") or []) or "")] + (
                [("satisfaction", "Satisfaction", (s.get("survey") or {}).get("n") or "")] if (m.get("process") or {}).get("survey_read") or (s.get("survey") or {}).get("n") else []) + [
             ("issues", "Top issues", min(len(s["issues"]), int(o.get("top_issues") or 10))),
@@ -1686,6 +1760,11 @@ def servicenow_insights_page(model, key="all", opts=None):
                         '<div class="fig"><h3>P1 and P2 incidents in the period</h3>%s</div>' % table(
                             [("Incident", "", ""), ("Opened", "", ""), ("Priority", "", ""), ("What happened", "", ""), ("Group", "", ""), ("To resolve", "n", ""),
                              ("Caused by change", "", ""), ("Problem", "", "")], mrow, empty="No P1 or P2 incidents in the period.")))
+
+    # ---- VIP tickets (1.43.0)
+    vh = vip_section(m, s, side, links, two)
+    if vh:
+        body.append(vh)
 
     # ---- categories (1.7.0): incidents per category, met or missed, and how well the official list is kept
     cat = s.get("categories") or {}
@@ -2207,6 +2286,7 @@ ORG_CSS = """
 .cvt [hidden]{display:none!important}
 .cvres{margin-top:4px}.cvres .cvhead{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin:0 0 10px}
 .cvres .cvhead b{font-size:15px}.cvlink{font-size:13px}
+.cvvip{display:inline-flex;align-items:center;gap:6px;font-size:13px}.cvvip select{font:inherit;max-width:100%}
 .toc a.team{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}
 .cvpre{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 14px 0}
 .cvpre button{font:inherit;font-size:13px;padding:4px 12px;border:1px solid var(--line);border-radius:999px;background:var(--surface-2);color:var(--fg);cursor:pointer}
@@ -2227,8 +2307,8 @@ ORG_CSS = """
 .cvch{margin:12px 0}.cvsvg{display:block;width:100%;max-width:760px;height:auto}.cvsvg text{font-size:12px}
 .cvaway{margin:0 0 14px;color:var(--fg-2)}
 .ppbar{margin:0 0 14px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}.ppbar .cvper{margin:0}
-.ppsay{font-size:12px;margin:8px 0 0}.ppnone{font-size:12px;margin:0 0 12px}.chip.ppw{font-weight:600;color:var(--muted)}.tile .chip.ppw{margin-top:4px;align-self:flex-start}
-.tile>[hidden],#ppflow>[hidden],.sh [hidden],.ppbar [hidden]{display:none!important}
+.ppsay{font-size:12px;margin:8px 0 0}.ppnone{font-size:12px;margin:0 0 12px}.chip.ppw{font-weight:600;color:var(--muted)}.tile .chip.ppw{margin-top:4px;align-self:flex-start}.acth .chip.ppw{margin-right:auto}
+.tile>[hidden],#ppflow>[hidden],.sh [hidden],.ppbar [hidden],.acth>[hidden]{display:none!important}
 .cvd:focus-within{outline:none}.cvt input:focus-visible,.cvbar :focus-visible,.cvx:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 """
 
@@ -2426,7 +2506,10 @@ def custom_view(m, o):
     pbar = period_bar(pers, cal, c.get("left_line"), "cv")
     chart = ('<div class="fig cvch"><h3>Opened and resolved</h3><div class="legend"><span><i style="background:var(--s1)"></i>Opened</span>'
              '<span><i style="background:var(--s2)"></i>Incidents resolved</span></div><div id="cvchart"></div></div>')
-    res = ('<div class="cvres" id="cvres" hidden><div class="cvhead"><b id="cvlab"></b><span class="mut" id="cvpt"></span>'
+    tiers = (m.get("vip") or {}).get("tiers") or [] if "vip" in c["cols"] else []
+    vsel = ('<label class="cvvip">VIP only <select id="cvvip"><option value="">No, every ticket</option><option value="0">Every VIP tier</option>%s'
+            '</select></label>' % "".join('<option value="%d">%s</option>' % (i + 1, e(t)) for i, t in enumerate(tiers))) if tiers else ""
+    res = ('<div class="cvres" id="cvres" hidden><div class="cvhead"><b id="cvlab"></b><span class="mut" id="cvpt"></span>' + vsel +
            '<button type="button" id="cvcopy">Copy link</button></div>%s'
            '<div class="tiles">%s</div>%s%s<div class="fair">Worked out in this page for the groups and the period chosen, by the same rules as every '
            'figure on this page.%s</div></div>') % (
@@ -2438,7 +2521,7 @@ def custom_view(m, o):
                ("SLA met", "n", "sla")], [], tid="cvtab", empty="Choose groups above, then Apply.", sortable=True),
         " The window before is not carried (too many tickets), so there is no compare." if c.get("no_compare") else "")
     data = json.dumps({"until": c["until"], "n": c["n"], "groups": groups, "cols": cols, "hop_limit": c.get("hop_limit", 3),
-                       "unable": c.get("unable") or [], "calendar": cal, "periods": pers}, separators=(",", ":")).replace("</", "<\\/")
+                       "unable": c.get("unable") or [], "calendar": cal, "periods": pers, "vip_tiers": tiers}, separators=(",", ":")).replace("</", "<\\/")
     intro = ('<div class="cvintro"><p>Tick units and groups, then Apply: the figures below are for exactly those groups. '
              'A unit ticks every group under it, and the address keeps the choice to share.</p></div>')
     return (section("custom", "Custom view", "any mix of units and groups (%s tickets carried in this page)" % "{:,}".format(c["n"]),

@@ -1,5 +1,73 @@
 # Changelog
 
+## 1.43.0 (built as 1.37.0) — 2026-11-12
+
+**Updating without scripts:** paste `site-automation-1.43.0-changed-since-1.42.0.zip` as it is (from an older version,
+its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`. Nothing to set up: the VIP settings are optional and work as they are.
+
+**Ticket insights: VIP tickets.** Every page has a *VIP tickets* section, the split's pages too. A ticket's tier comes
+from the person it was raised for: an incident's caller, a request's requested for.
+
+| Part | What it shows |
+|---|---|
+| VIP tickets | a row per tier and Not VIP: incidents, requests, open now, median to respond and resolve, response and resolution met, no SLA |
+| Incidents by priority | each priority's incidents, per tier |
+| SLA definitions | per tier, each SLA on its tickets done: tickets, met, missed, met %, median elapsed |
+| VIP tickets by unit | the All, site and directorate pages, a row per unit, sortable |
+| Custom view | *VIP only*: every ticket, every tier or one tier, kept in the address (`&v=1`) |
+| Email | the scope's VIP table, and by unit while it fits 800 px (else a line per unit) |
+| Workbook | a VIP sheet, counts only |
+
+- Under `servicenow_insights_vip_min` (5) tickets, a row has counts only.
+- Each tier is a true / false column on sys_user. The default is ServiceNow's own `vip`.
+- The docs say how to find a column's name: right-click the field's label, choose Show.
+
+**What is read:** sys_user in batches of 100, only `sys_id` and the tiers' columns, never a name. The pages keep
+counts only. A column the account cannot read is said in the section and counts no one. sys_user refused: said, every
+ticket Not VIP, the job goes on. task_sla also reads each SLA's elapsed time.
+
+New settings:
+
+```yaml
+servicenow_insights_vip_fields: [{label: VIP, column: vip}]    # [] = no section
+servicenow_insights_vip_people: caller                          # or caller_and_opened_by
+servicenow_insights_vip_min: 5
+```
+
+A second tier later is one more line, first listed wins:
+`[{label: "Tier 1", column: u_tier1_vip}, {label: VIP, column: vip}]`.
+
+**Periods on every page:** *What the period says* under At a glance shows the window's sentences. While a period is
+chosen it is now marked *whole window*, as the other sections are. In the brief look its sentence is marked too.
+
+**Size** on the tests' made-up site: All 459 to 474 KB, a team page 320 to 330 KB, the map's All 476 to 491 KB.
+
+Files:
+- roles/servicenow_insights/library/site_servicenow_insights.py (read_vip, requested_for and opened_by ids, task_sla's
+  elapsed time);
+- plugins/filter/servicenow_insights_filters.py (the tiers, each scope's VIP block, the rows' tier, the email, the
+  workbook, the settings check);
+- plugins/filter/servicenow_insights_page.py (the section, the Custom view's VIP only, What the period says marked);
+- roles/servicenow_insights (defaults, tasks), VARIABLES_REFERENCE, aap/extra_vars;
+- docs/SERVICENOW_INSIGHTS.md ("VIP tickets", the account's tables, "Periods on every page").
+
+Tests:
+- test_servicenow_insights.py Vip:
+  - the batched read, a column not readable, sys_user refused;
+  - the model's rows add up, the counts-only rows, the SLA definitions, every page and the split's halves;
+  - the email's tables (and lines for four tiers), 800 px in three looks, the workbook's sheet;
+  - every page fits at 1280 and 390 px in both looks.
+- test_insights_org.py TheVipChoice: the Custom view's VIP only in headless Chrome under Trusted Types, custom_figures'
+  numbers, the address.
+- run_insights_test.sh: two tiers on the fake ServiceNow (the pages, the email, the workbook's sheet, the read's fields), a
+  column hidden, sys_user refused, a bad column name, the section off.
+- test_servicenow_insights.py PagePeriods: What the period says marked with a period, not without one, both looks.
+- snmock.py: a caller with no sys_user gets a sys_id of its own, the same every time.
+- insights_seed.py: a done SLA's business_duration, from the ticket alone (the other records unchanged).
+
+SA_VERSION 1.43.0; the PDFs at 1.43.0.
+
 ## 1.42.0 (built as 1.36.0) — 2026-11-12
 
 **Updating without scripts:** paste `site-automation-1.42.0-changed-since-1.38.0.zip` as it is (from an older version,
@@ -1315,7 +1383,7 @@ tests/stig/run_stigman_real_test.sh against STIG Manager 1.6.18 (not in CI).
 
 SA_VERSION 1.26.0; the PDFs at 1.26.0.
 
-**To do, if you have not yet: what 0.20.0 to 1.42.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.42.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing, 1.39.0 nothing, 1.41.0 nothing, 1.42.0 nothing).** In order; each step works without
+**To do, if you have not yet: what 0.20.0 to 1.43.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.43.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing, 1.39.0 nothing, 1.41.0 nothing, 1.42.0 nothing, 1.43.0 nothing).** In order; each step works without
 the ones after it. There is no step 90.
 
 1. **Your logo** (0.20.0). A PNG with a transparent background, about 160 px tall and under 100 KB, in

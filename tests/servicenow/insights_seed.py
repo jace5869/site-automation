@@ -12,9 +12,22 @@ codes J6 and j63, SITEB's NOVA (the suffix) and an Other, SITE-C (a hyphen in it
 import datetime
 import json
 import random
+import re
 import sys
 
 R = random.Random(7)
+
+
+def sla_took(rec, kind):
+    """1.43.0: a done SLA's business_duration (a ServiceNow duration) - from the ticket alone, no random draw (the seed's
+    other records stay the same): a response 5 to 59 minutes, a resolution the time to resolve (at most 30 days)."""
+    if kind == "Response":
+        s_ = 60 * (5 + int(re.sub(r"\D", "", rec["number"]) or 0) * 7 % 55)
+    else:
+        f_ = "%Y-%m-%d %H:%M:%S"
+        s_ = int((datetime.datetime.strptime(rec["resolved_at"], f_) - datetime.datetime.strptime(rec["opened_at"], f_)).total_seconds())
+        s_ = max(60, min(s_, 30 * 86400 - 1))
+    return "1970-01-%02d %02d:%02d:%02d" % (s_ // 86400 + 1, s_ % 86400 // 3600, s_ % 3600 // 60, s_ % 60)
 END = datetime.datetime(2026, 11, 1, 0, 0, 0)          # the test's window ends here (until 2026-10-31)
 START = END - datetime.timedelta(days=368)              # the window and the one before it, and a little more
 SD, WIN, VDI, LNX, NET = "Ops - Service Desk", "Ops - Windows", "Ops - VDI", "Ops - Linux", "Ops - Network"
@@ -382,7 +395,7 @@ def main():
             for kind, bad in (("Response", R4.random() < .08), ("Resolution", rec.get("made_sla") == "false")):
                 recs.append({"_table": "task_sla", "task": "s-" + rec["number"], "sla": "P%s Incident %s" % (p, kind), "stage": "breached" if bad else "completed",
                              "has_breached": "true" if bad else "false", "business_percentage": "120.0" if bad else "60.0", "start_time": rec["opened_at"],
-                             "end_time": rec["resolved_at"]})
+                             "end_time": rec["resolved_at"], "business_duration": sla_took(rec, kind)})
             if R4.random() < .03:
                 recs.append({"_table": "task_sla", "task": "s-" + rec["number"], "sla": "P%s Incident Resolution" % p, "stage": "cancelled",
                              "has_breached": "true", "business_percentage": "300.0", "start_time": rec["opened_at"]})

@@ -33,6 +33,14 @@
   vars:
     _sni_bad_prefixes: "{{ servicenow_insights_ticket_prefixes | default({}, true) | servicenow_insights_prefix_errors }}"
 
+- name: Insights | servicenow_insights_vip_fields - a sys_user column each (1.43.0)
+  ansible.builtin.assert:
+    that: _sni_bad_vip | length == 0
+    fail_msg: "{{ _sni_bad_vip | join('. ') }}."
+    quiet: true
+  vars:
+    _sni_bad_vip: "{{ servicenow_insights_vip_fields | default([], true) | servicenow_insights_vip_errors(servicenow_insights_vip_people | default('caller', true)) }}"
+
 - name: Insights | the ServiceNow API credential is attached
   ansible.builtin.assert:
     that: _sni_url | length > 0
@@ -69,6 +77,7 @@
       ticket_links: "{{ servicenow_insights_ticket_links | bool }}"
       ticket_base: "{{ servicenow_insights_ticket_base | default('', true) | string | trim }}"
       ticket_prefixes: "{{ servicenow_insights_ticket_prefixes | default({}, true) }}"
+      vip_min: "{{ servicenow_insights_vip_min | default(5) | int }}"
       survey_metrics: "{{ servicenow_insights_survey_metrics | servicenow_insights_name_list }}"
       survey_headline: "{{ servicenow_insights_survey_headline | default('', true) | string | trim }}"
       survey_grades: "{{ servicenow_insights_survey_grades | default({'good': 0.8, 'fair': 0.6}, true) }}"
@@ -180,6 +189,9 @@
         # the team leads (1.15.0): each group's manager, in the groups' read - for the page's line or the leads' emails
         managers: "{{ servicenow_insights_show_lead | bool or servicenow_insights_email_leads | default([], true) | length > 0 }}"
         manager_email: "{{ servicenow_insights_email_leads | default([], true) | length > 0 }}"   # 1.18.0: only for the leads' emails
+        # the VIP tiers (1.43.0): sys_user's columns for the people the tickets were raised for
+        vip_fields: "{{ servicenow_insights_vip_fields | default([], true) }}"
+        vip_people: "{{ servicenow_insights_vip_people | default('caller', true) | string | trim | lower }}"
         # the ticket store (1.17.0): the database's rows in, this run's out - files in a folder of the job's own
         store_in: "{{ (_sni_store | default({})).in | default('') }}"
         store_out: "{{ (_sni_store | default({})).out | default('') }}"

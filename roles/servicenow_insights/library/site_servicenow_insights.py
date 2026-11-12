@@ -22,6 +22,8 @@ description:
   - With managers (1.15.0), the same read of sys_user_group also asks each group's manager, dot-walked (manager.name,
     manager.active) - the team leads; with group_parents off, the groups the records name are read for it alone. Their
     email (manager.email) only with manager_email (1.18.0: the role asks it only when servicenow_insights_email_leads is set).
+  - With vip_fields (1.43.0), reads sys_user for the callers (incident caller_id, requested item requested_for; opened_by
+    too with vip_people caller_and_opened_by) in batches (sys_id IN), only sys_id and the VIP columns - never a name.
   - With work_notes_for (0.96.0), reads only the work notes of those incidents (sys_journal_field, element work_notes,
     newest first, GET only) for ACT's fixes - nothing else; refused (403) is returned as work_notes_error.
 options:
@@ -54,6 +56,10 @@ options:
       targets (the report's own targets), made_sla (ServiceNow's Made SLA flag).", type: str, default: auto}
   first_assigned: {description: "With the targets: read when each incident done in the window was first assigned to a person
       (metric_instance, the metric Assigned to) - the response's end.", type: bool, default: false}
+  vip_fields: {description: "1.43.0 - the VIP tiers, first listed wins: [{label, column}] (a sys_user true/false column each); [] = not read.",
+      type: list, elements: dict, default: []}
+  vip_people: {description: "Whose tier counts (1.43.0): caller (incident caller_id, requested item requested_for), or caller_and_opened_by.",
+      type: str, default: caller}
   state_metric: {description: "The metric_instance definition of the incidents' state durations (1.7.0: the time on hold); '' = not read.",
       type: str, default: Incident State Duration}
   survey: {description: "Read the incident surveys' results (asmt_metric_result, GET; best-effort): the window's and the window before's.", type: bool, default: true}
@@ -91,6 +97,8 @@ states: {description: "{incident sys_id: [[state as shown, start, end]]} - the s
 states_error: {description: "Why the state metric was not read ('' = read; 'none' = no such metric).", type: str}
 survey: {description: "[[incident sys_id, metric, value (a number), taken (UTC text)]] - the incident surveys' answers.", type: list}
 survey_error: {description: "Why the surveys were not read ('' = read, or not asked).", type: str}
+vip: {description: "1.43.0 - {tiers: [labels], of: {sys_user sys_id: tier index} (VIP people only), asked (people), error, hidden
+  (the columns no record carried: not readable by the account, or not on sys_user)}.", type: dict}
 survey_questions: {description: "1.16.0 - each question read (its key in survey): name, survey, state, datatype, min, max.", type: dict}
 '''
 
@@ -139,7 +147,7 @@ LIGHT_TABLE = {"incident": ["resolved_by", "caller_id", "close_code", "category"
 LABEL_KEYS = ("state", "priority", "priority_value", "group", "group_id", "close_code", "category", "subcategory", "hold_reason",
               "impact_value", "urgency_value", "cat_item", "change_type", "change_type_value")
 LIGHT_KEYS = ("short_description", "assigned_to", "opened_by", "closed_by", "close_notes", "cmdb_ci", "resolved_by", "caller",
-              "caller_id") + LABEL_KEYS
+              "caller_id", "opened_by_id") + LABEL_KEYS
 # a stored row's format: a row of another format is read again from ServiceNow (2: 1.17.0b, without the labels)
 STORE_CODE = "2"
 
@@ -311,7 +319,9 @@ def light(rec, table):
     if table == "incident":
         it.update({"resolved_by": d("resolved_by"), "caller": d("caller_id"), "caller_id": _vd(rec, "caller_id")[0]})
     elif table == "sc_req_item":
-        it["caller"] = d("requested_for")
+        it.update({"caller": d("requested_for"), "caller_id": _vd(rec, "requested_for")[0]})       # 1.43.0: the VIP tier's person
+    if table in ("incident", "sc_req_item"):
+        it["opened_by_id"] = _vd(rec, "opened_by")[0]
     it.update(labels(rec, table))
     return it
 
@@ -338,7 +348,9 @@ def normalize(rec, table):
                    "impact_value": lt["impact_value"], "urgency_value": lt["urgency_value"],
                    "hold_reason": lt["hold_reason"]})
     elif table == "sc_req_item":
-        it.update({"cat_item": lt["cat_item"], "caller": lt["caller"]})
+        it.update({"cat_item": lt["cat_item"], "caller": lt["caller"], "caller_id": lt["caller_id"]})
+    if table in ("incident", "sc_req_item"):
+        it["opened_by_id"] = lt["opened_by_id"]
     elif table == "sc_task":
         it["parent"] = d("request_item")
     elif table == "change_request":
@@ -537,6 +549,45 @@ def read_members(api, groups, chunk=50):
     return out, ""
 
 
+VIP_COLUMN = re.compile(r"^[a-z0-9_]{1,80}$")
+
+
+def read_vip(api, ids, fields, chunk=100):
+    """1.43.0: the VIP tier of these people (sys_user, GET, sys_id IN; only sys_id and the tiers' columns, never a name)
+    -> ({sys_id: tier index, the first tier listed that is true; VIP people only}, error, hidden). hidden: the columns no
+    record carried a value in - the account cannot read them (an ACL leaves them out or empty), or sys_user has no such
+    column; the others still count."""
+    cols = [str(f.get("column") or "").strip() for f in fields or []]
+    cols = [c for c in cols if VIP_COLUMN.match(c)]
+    out, seen = {}, set()
+    ids = sorted(set(str(x) for x in ids if re.match(r"^[\w-]{1,64}$", str(x or ""))))
+    if not cols or not ids:
+        return out, "", []
+    got = 0
+    for i in range(0, len(ids), chunk):
+        part = ids[i:i + chunk]
+        try:
+            r = api.get("api/now/table/sys_user", {"sysparm_query": "sys_idIN" + ",".join(part), "sysparm_fields": ",".join(["sys_id"] + cols),
+                                                   "sysparm_display_value": "false", "sysparm_exclude_reference_link": "true",
+                                                   "sysparm_limit": len(part)})
+        except SnError as e:
+            text = str(e)
+            if "HTTP 403" in text or "HTTP 401" in text:
+                text += " - the account needs read on sys_user"
+            return {}, text, []
+        rows = r.get("result") if isinstance(r, dict) else None
+        if not isinstance(rows, list):
+            return {}, "GET api/now/table/sys_user: no result list in the answer", []
+        for x in rows:
+            got += 1
+            seen.update(c for c in cols if str(_vd(x, c)[0] or "").strip())     # a true / false column: empty = not readable
+            for n, c in enumerate(cols):
+                if str(_vd(x, c)[0] or "").strip().lower() in ("true", "1", "yes"):
+                    out[_vd(x, "sys_id")[0]] = n
+                    break
+    return out, "", [c for c in cols if got and c not in seen]
+
+
 def read_work_notes(api, ids, per_id=20, chars=1500, chunk=100):
     """The work notes of these incidents (sys_journal_field, element work_notes; GET only) -> ({sys_id: [[when, text]]}
     newest first, at most per_id each, each cut to chars; error). Who wrote a note is not read."""
@@ -642,7 +693,8 @@ def duration(text):
 
 
 def read_task_sla(api, ids, chunk=100, stats=None):
-    """The SLAs of these tickets (task_sla, GET; cancelled left out) -> ({task sys_id: [{name, stage, breached, percent}]}, error).
+    """The SLAs of these tickets (task_sla, GET; cancelled left out) -> ({task sys_id: [{name, stage, breached, percent,
+    elapsed_s (1.43.0: business time where ServiceNow has it, else the clock's)}]}, error).
     Breached: has_breached, or the stage breached; percent: business time where ServiceNow has it, else the clock's."""
     out = {}
     ids = [str(x) for x in ids if str(x or "").strip()]
@@ -651,7 +703,7 @@ def read_task_sla(api, ids, chunk=100, stats=None):
         try:
             r = api.get("api/now/table/task_sla", {"sysparm_query": "taskIN" + ",".join(part) + "^stage!=cancelled",
                                                    "sysparm_fields": "task,sla,stage,has_breached,business_percentage,percentage,start_time,end_time,pause_time,"
-                                                                     "business_time_left,planned_end_time",
+                                                                     "business_time_left,planned_end_time,business_duration,duration",
                                                    "sysparm_display_value": "all", "sysparm_exclude_reference_link": "true",
                                                    "sysparm_limit": 20 * len(part)})
         except SnError as e:
@@ -680,7 +732,8 @@ def read_task_sla(api, ids, chunk=100, stats=None):
                 "breached": _vd(x, "has_breached")[0].strip().lower() in ("true", "1") or stage_v.strip().lower() == "breached",
                 "percent": pct, "paused_at": str(_vd(x, "pause_time")[0] or "") if stage_v.strip().lower() == "paused" else "",
                 "running": stage_v.strip().lower() in ("in_progress", "paused"), "left_s": duration(_vd(x, "business_time_left")[0]),
-                "planned_end": str(_vd(x, "planned_end_time")[0] or "")})
+                "planned_end": str(_vd(x, "planned_end_time")[0] or ""),
+                "elapsed_s": duration(_vd(x, "business_duration")[0]) or duration(_vd(x, "duration")[0])})
     return out, ""
 
 
@@ -812,7 +865,7 @@ def read_slas(api, items, win, source="auto", first_assigned=False, max_records=
             and since <= sn_time(it["done_at"]) <= until]
     if sla["source"] == "task_sla":
         ids = [it["sys_id"] for it in done]
-        sla["records"], sla["error"] = store.get("sla", ids, "task_sla", lambda xs: read_task_sla(api, xs)) if store is not None else read_task_sla(api, ids)
+        sla["records"], sla["error"] = store.get("sla", ids, "task_sla2", lambda xs: read_task_sla(api, xs)) if store is not None else read_task_sla(api, ids)
         sla["records"] = by_key(sla["records"])
         if sla["error"]:
             sla["source"] = "targets"
@@ -967,7 +1020,7 @@ def by_key(d):
 
 def read_all(api, groups, tables, win, max_records=20000, audit=True, handoff_min=3, members=True, group_parents=True, handoff_source="auto",
              sla_source="auto", first_assigned=False, state_metric="Incident State Duration", survey=True, survey_metrics=None, managers=False, survey_types=None,
-             store=None, manager_email=True):
+             store=None, manager_email=True, vip_fields=None, vip_people="caller"):
     """store (1.17.0): None - every record read in full (and nothing kept); a Reuse - its tickets reused where fresh
     (store.rows empty: a full read that fills the store)."""
     since, until = sn_time(win["prev_since"]), sn_time(win["until"])
@@ -1074,6 +1127,13 @@ def read_all(api, groups, tables, win, max_records=20000, audit=True, handoff_mi
     else:
         res["states"], res["states_error"] = read_states(api, hold_ids, state_metric)
     res["states"] = by_key(res["states"])
+    if vip_fields:
+        # 1.43.0: the VIP tiers of the people the tickets were raised for (and who opened them, when asked)
+        keys = ("caller_id", "opened_by_id") if str(vip_people or "").strip().lower() == "caller_and_opened_by" else ("caller_id",)
+        people = set(it.get(k) for it in items if it["table"] in ("incident", "sc_req_item") for k in keys if it.get(k))
+        of, err, hidden = read_vip(api, people, vip_fields)
+        res["vip"] = {"tiers": [str(f.get("label") or f.get("column") or "").strip() for f in vip_fields], "of": of,
+                      "asked": len(people), "error": err, "hidden": hidden, "people": list(keys)}
     res["survey"], res["survey_questions"], res["survey_error"] = read_survey(api, win, survey_metrics, types=survey_types) \
         if survey and "incident" in [str(t) for t in tables or []] else ([], {}, "")
     return res
@@ -1152,6 +1212,8 @@ def main():
             survey_metrics=dict(type="list", elements="str", default=[]), managers=dict(type="bool", default=False),
             manager_email=dict(type="bool", default=True),
             survey_types=dict(type="list", elements="str", default=[]),
+            vip_fields=dict(type="list", elements="dict", default=[]),
+            vip_people=dict(type="str", default="caller", choices=["caller", "caller_and_opened_by"]),
             store_in=dict(type="path", default=""), store_out=dict(type="path", default=""), full_refresh=dict(type="bool", default=False),
         ),
         supports_check_mode=True)
@@ -1181,7 +1243,7 @@ def main():
     try:
         res = read_all(api, p["groups"], p["tables"], win, p["max_records"], p["audit"], p["handoff_min"], p["members"], p["group_parents"], p["handoff_source"],
                        p["sla_source"], p["first_assigned"], p["state_metric"], p["survey"], p["survey_metrics"], p["managers"], p["survey_types"],
-                       store, p["manager_email"])
+                       store, p["manager_email"], p["vip_fields"], p["vip_people"])
     except SnError as e:
         res = {"ok": False, "error": str(e), "window": win, "groups": [], "tables": [], "items": [], "audit": {}, "audit_error": "",
                "members": {}, "members_error": "", "lookup_note": "", "url": url}

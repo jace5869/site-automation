@@ -504,5 +504,47 @@ class TheScript(unittest.TestCase):
         self.assertEqual(got["opened"], "{:,}".format(f["incidents"] + f["requests"]))
 
 
+@unittest.skipUnless(browser(), "no headless browser here")
+class TheVipChoice(unittest.TestCase):
+    """1.43.0: the Custom view's VIP only - a tier select (every ticket, every VIP tier, one tier) that works out the tiles,
+    the chart and the groups' table for the groups and the period chosen; the address keeps it (&v=); custom_figures'
+    numbers; under require-trusted-types-for 'script'."""
+
+    def test_in_a_browser(self):
+        r = T.vip_r(build())
+        m = F.servicenow_insights_model(r, None, T.site(sites=True)["mask"], dict(T.OPTS, hierarchy_source="map", hierarchy_map=MAP))
+        c = m["custom"]
+        self.assertIn("vip", c["cols"])
+        page = P.servicenow_insights_page(m, "all", {"links": T.page_links(m)})
+        self.assertIn('<label class="cvvip">VIP only <select id="cvvip"><option value="">No, every ticket</option><option value="0">Every VIP tier</option>'
+                      '<option value="1">Tier 1</option><option value="2">VIP</option></select></label>', page)
+        allg = list(range(len(c["groups"])))
+        probe = ('<script>var V=[];document.addEventListener("securitypolicyviolation",function(e){V.push(e.violatedDirective)});'
+                 'addEventListener("load",function(){setTimeout(function(){var f=window.siteInsightsFigures,D=document,o={};'
+                 'o.f=[null,0,1,2].map(function(v){return f(%s,undefined,undefined,v===null?undefined:v)});o.sel=D.getElementById("cvvip").value;'
+                 'o.lab=D.getElementById("cvlab").textContent;o.opened=D.getElementById("cv-opened").textContent;'
+                 'var s=D.getElementById("cvvip");s.value="";s.dispatchEvent(new Event("change"));o.opened2=D.getElementById("cv-opened").textContent;o.hash=location.hash;'
+                 'o.v=V;D.title="R "+JSON.stringify(o)},500)})</script></body>') % json.dumps(allg)
+        csp = '<head><meta http-equiv="Content-Security-Policy" content="require-trusted-types-for \'script\'">'
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "all.html")
+            with open(path, "w") as fh:
+                fh.write(page.replace("<head>", csp, 1).replace("</body>", probe))
+            out = subprocess.run([browser(), "--headless=new", "--disable-gpu", "--no-sandbox", "--virtual-time-budget=6000", "--dump-dom",
+                                  "file://%s#cv=0,2&v=1" % path], capture_output=True, text=True, timeout=120).stdout
+        got = json.loads(re.search(r"<title>R (.*?)</title>", out).group(1).replace("&quot;", '"').replace("&amp;", "&"))
+        self.assertEqual(got["v"], [])
+        for g, v in zip(got["f"], (None, 0, 1, 2)):
+            want = F.custom_figures(c, allg, None, v)
+            for k in ("incidents", "requests", "resolved", "backlog"):
+                self.assertEqual(g[k], want[k], (v, k))
+        self.assertEqual(got["sel"], "1")                                   # from the address
+        self.assertEqual(got["lab"], "2 groups chosen \u00b7 VIP only: Tier 1")
+        w1, w0 = F.custom_figures(c, [0, 2], None, 1), F.custom_figures(c, [0, 2])
+        self.assertEqual(got["opened"], "{:,}".format(w1["incidents"] + w1["requests"]))
+        self.assertEqual(got["opened2"], "{:,}".format(w0["incidents"] + w0["requests"]))     # every ticket again
+        self.assertEqual(got["hash"], "#cv=0,2")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

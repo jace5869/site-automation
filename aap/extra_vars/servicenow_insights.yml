@@ -194,6 +194,18 @@ servicenow_insights_months: 6
 ## records and the usual prefixes only.
 # servicenow_insights_ticket_prefixes: {}
 
+## VIP tickets (1.43.0). Each tier is a true / false column on sys_user. The first tier listed that
+## is true wins. A column's name: open a user, right-click the field's label, choose Show. [] = no
+## VIP section. Two tiers: [{label: "Tier 1", column: u_tier1_vip}, {label: VIP, column: vip}]
+# servicenow_insights_vip_fields: [{label: VIP, column: vip}]
+
+## Whose tier counts: caller (an incident's caller, a request's requested for), or
+## caller_and_opened_by.
+# servicenow_insights_vip_people: caller
+
+## Under this many tickets, a tier's row has its counts only (no percentages or medians).
+# servicenow_insights_vip_min: 5
+
 ## The tables read: incident, sc_req_item (requested items: the most requested services), sc_task
 ## (catalog tasks: the All-stars count their closures), change_request, change_task (1.2.0: the
 ## changes' tasks - each team's, and which team a change waited on last), problem. Take one out to

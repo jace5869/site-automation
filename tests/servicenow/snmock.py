@@ -43,7 +43,8 @@ instance's nodes; SNMOCK_NO_TABLES=sys_cluster_state: 403).
 The weekly activity report: SNMOCK_SEED=<file.json> (records to start with, each with its _table and dates), problem_task and
 problem tables, sysparm_display_value=all ({"value", "display_value"} per field), sysparm_offset, the query operators <=, <, >,
 ISEMPTY, ISNOTEMPTY, !=, aINb,c on a reference (by name or sys_id) and ^OR (joins the condition before it); sys_user_group
-nameINa,b and sys_user user_nameINa,b^ORnameINa,b; SNMOCK_NO_GROUPS=1: sys_user_group answers 403; SNMOCK_GROUP_MANAGERS
+nameINa,b and sys_user user_nameINa,b^ORnameINa,b; sys_user sys_idINa,b (1.43.0) answers each id with the columns asked
+that SNMOCK_VIP ({column: [caller name]}) names, and vip ("false" unless listed); SNMOCK_VIP_HIDDEN=a,b leaves those out (an ACL); SNMOCK_NO_GROUPS=1: sys_user_group answers 403; SNMOCK_GROUP_MANAGERS
 (JSON {group: {name, email, active}}): the groups' managers, dot-walked; SNMOCK_NO_MANAGER=1: asking for them answers 403; SNMOCK_NO_TABLES=a,b:
 reading those tables answers 403. task_sla: the seed's records with _table task_sla (task = the task's sys_id, sla = its name,
 stage, has_breached, business_percentage, planned_end_time ...), read with taskINa,b and stage!=cancelled; not part of task.
@@ -267,6 +268,11 @@ def journal_add(rec, body, user):
 REFS = ("assignment_group", "location", "caller_id", "parent", "change_request")
 
 
+def user_id(name):
+    """1.43.0: a caller the mock has no sys_user for gets a sys_id of its own, the same every time (the seed's callers are names)."""
+    return uuid.uuid5(uuid.NAMESPACE_OID, str(name)).hex if name else name
+
+
 def show_all(rec):
     """A record with sysparm_display_value=all: every field as {"value", "display_value"} - a state's label, a
     reference's name (its sys_id as the value when the mock knows it), the class's label."""
@@ -277,8 +283,8 @@ def show_all(rec):
         value = v
         if k == "assignment_group":
             value = next((g["sys_id"] for g in GROUPS if g["name"] == v), v)
-        elif k in ("assigned_to", "opened_by", "caller_id", "resolved_by"):
-            value = next((u["sys_id"] for u in SYSUSERS if v in (u["user_name"], u["name"])), v)
+        elif k in ("assigned_to", "opened_by", "caller_id", "resolved_by", "requested_for"):
+            value = next((u["sys_id"] for u in SYSUSERS if v in (u["user_name"], u["name"])), user_id(v) if k in ("caller_id", "requested_for") else v)
         display = shown.get(k, v)
         if k in ("assigned_to", "opened_by", "caller_id", "resolved_by"):
             display = next((u["name"] for u in SYSUSERS if v in (u["user_name"], u["name"])), v)
@@ -426,6 +432,16 @@ class H(BaseHTTPRequestHandler):
             return 200, {"result": [g for g in GROUPS if g["name"] == want]}
         if table == "sys_user":
             query = q.get("sysparm_query", "")
+            if query.startswith("sys_idIN"):             # sys_idINa,b (1.43.0: the ticket insights' VIP tiers)
+                if "sys_user" in os.environ.get("SNMOCK_NO_TABLES", "").split(","):
+                    return fail("Operation Failed", "ACL Exception: no read access to sys_user", 403)
+                want = query[8:].split("^")[0].split(",")
+                vip = json.loads(os.environ.get("SNMOCK_VIP") or "{}")          # {column: [caller name, ...]}; vip exists on every instance
+                cols = [c for c in q.get("sysparm_fields", "").split(",") if c and c != "sys_id"]
+                have = set(vip) | {"vip"}
+                hidden = os.environ.get("SNMOCK_VIP_HIDDEN", "").split(",")     # an ACL: the column left out
+                return 200, {"result": [dict([("sys_id", u)] + [(c, "true" if u in [user_id(x) for x in vip.get(c, [])] else "false") for c in cols if c in have and c not in hidden])
+                                        for u in want]}
             if query.startswith("user_nameIN"):          # user_nameINa,b^ORnameINa,b
                 want = query.partition("^OR")[0][11:].split(",")
                 return 200, {"result": [u for u in SYSUSERS if u["user_name"] in want or u["name"] in want]}

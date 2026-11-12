@@ -27,6 +27,7 @@ and simpler: the tiles and the main tables, a link to the page, and an Excel wor
 | **Workload** (1.9.0) | per person: open now and resolved in the period. Each person's time to resolve only with `servicenow_insights_person_metrics: true` |
 | **Keeping up** | opened and resolved per week, the backlog at the end of each week, the age of what is open now (0-5, 6-15, 16-30, over 30 days), a heatmap of when incidents are opened (weekday by hour), the weeks as a table |
 | **Severity** | incidents per priority - its name (1 - Critical ... 5 - Exempt), count, median to resolve, Response met and Resolution met (1.7.0), No SLA -, the **priority set by hand** (impact x urgency, the 3 x 3 matrix) per group, then every P1 and P2: when, what, the group, the change that caused it, its problem record |
+| **VIP tickets** (1.43.0) | a row per VIP tier and Not VIP, the incidents by priority, each tier's SLA definitions, and by unit on the All, site and directorate pages. See *VIP tickets* below |
 | **Categories** (1.7.0) | incidents per category (against the window before), their median time to resolve and SLAs met, the group they are mostly in; a data-quality line - no category, Other, off your official list (named) |
 | **Satisfaction** (1.7.0) | the incident surveys, each on its own scale, by survey: the average graded Good, Fair or Low, by month and by group (1.16.0, see *Satisfaction*) |
 | **Top incident issues** | the issues ranked, with their rank against the window before (▲ ▼ New), their share and the cumulative share, a weekly trend, the median time to fix; open one for its **fix action** (with a Copy button), where the fix comes from - **From the tickets**, **Partly from tickets** or **Suggested by ACT** (not verified) -, the CIs it was seen on, example tickets (links into ServiceNow), its close-note quality, and the flags *KB candidate*, *Self-service candidate*, *Problem candidate*; a fix the close notes disagree on is said |
@@ -376,10 +377,11 @@ The page opens on *The window*, exactly as written. A period chosen changes:
 
 Everything else stays on the window and says *whole window* in its heading while a period is chosen. These tiles do
 too: reopened, changes successful, reassigned 3+ times and the close notes. The rows do not carry what they need.
+*What the period says* under At a glance is marked too (1.43.0). Its sentences are the window's.
 
 | Section | With a period |
 |---|---|
-| At a glance | follows, except the four tiles above |
+| At a glance | follows, except the four tiles above and *What the period says* |
 | Keeping up | the first chart follows, the rest is the window |
 | Every other section | the window: *whole window* |
 
@@ -404,6 +406,63 @@ servicenow_insights_page_periods: true          # false = no bar, the pages as b
 ```
 
 The email and the workbook do not change.
+
+## VIP tickets (1.43.0)
+
+Every page has a **VIP tickets** section: the All page, each site's, unit's and team's page, and the split's pages.
+Each counts its own tickets. A ticket's tier comes from the person it was raised for: an incident's caller, a
+request's requested for.
+
+| Table | What it shows |
+|---|---|
+| VIP tickets | a row per tier and Not VIP: incidents, requests, open now, median to respond and resolve, response and resolution met, no SLA |
+| Incidents by priority | each priority's incidents, per tier |
+| SLA definitions: a tier | each SLA on the tier's tickets done in the window: tickets, met, missed, met %, median elapsed |
+| VIP tickets by unit | All, site and directorate pages: a row per unit below, sortable |
+
+A row with fewer than `servicenow_insights_vip_min` tickets shows counts only, and a dash for the rest. Median to
+respond is the response SLAs' elapsed time, from task_sla.
+
+The **Custom view** has a *VIP only* choice: every ticket, every VIP tier, or one tier. The tiles, the chart and the
+groups' table follow it, and the address keeps it (`&v=1`). The **email** has the scope's VIP table. On the All, site
+and directorate emails, the by-unit table follows while it fits 800 px. Otherwise each unit gets one line. The
+**workbook** has a VIP sheet with counts only. No sheet shows a ticket's tier.
+
+### The tiers
+
+Each tier is a true / false column on sys_user. The default is ServiceNow's own VIP flag:
+
+```yaml
+servicenow_insights_vip_fields: [{label: VIP, column: vip}]
+```
+
+A second tier is one more line. The first tier listed that is true for a person wins:
+
+```yaml
+servicenow_insights_vip_fields:
+  - {label: "Tier 1", column: u_tier1_vip}
+  - {label: VIP, column: vip}
+```
+
+To find a column's name, open a user in ServiceNow, right-click the field's label and choose **Show**. The name is
+after `sys_user.`. Column names are checked: a-z, 0-9 and _ only.
+
+### What is read
+
+The job reads sys_user in batches of 100 (`sys_id IN`), and only `sys_id` and the tiers' columns. It never reads a
+name. The page, email and workbook keep counts only.
+
+- A column the account cannot read is said in the section, and that tier counts no one. The other tiers still count.
+- When sys_user is refused, the section says so and every ticket counts as Not VIP. The job goes on.
+- `[]` turns the section off.
+
+```yaml
+servicenow_insights_vip_people: caller     # caller_and_opened_by: who opened it counts too
+servicenow_insights_vip_min: 5             # under this many tickets: counts only
+```
+
+The account needs read on sys_user and its tier columns. The itil role reads sys_user. A custom column may need its
+own read ACL.
 
 ## ACT (GenAI), and what never reaches it
 
@@ -510,6 +569,7 @@ The **ServiceNow API** credential you already have works ([SERVICENOW_SETUP.md](
 | `task_sla` (1.7.0) | the SLAs of the incidents and requested items done in the window (and the one before), and of the incidents open now: met or missed, at risk now, on hold since (the SLA's pause) | `itil`; refused (403), the report says so under *Not read* and counts met or missed from your targets |
 | `metric_instance` (1.7.0) | the metric *Incident State Duration* (`servicenow_insights_state_metric`: the time on hold, reopened within 7 days) and the metric *Assigned to* (the response, with your targets) | as above; not there, the page says what it could not measure |
 | `asmt_metric_result` (1.7.0) | the incident surveys' answers, with each question's survey, state and scale dot-walked (1.16.0; best-effort; `servicenow_insights_survey: false` = not read) | read on the assessment tables (`asmt_metric_result`, through `asmt_assessment_instance`); refused, said under *Not read*, no satisfaction figures |
+| `sys_user` (1.43.0) | the VIP tiers: `sys_id` and the tiers' columns (`servicenow_insights_vip_fields`) of the people the tickets were raised for, never a name | `itil`; a custom column may need its own read ACL; refused, the VIP section says so and every ticket counts as Not VIP |
 | `sys_journal_field` | the work notes of the top issues' incidents, for ACT's fixes (0.96.0; only with ACT) | read on `sys_journal_field` - `itil` reads the work notes of the incidents it can read on most instances; where an ACL on `sys_journal_field` refuses it (403), ask the ServiceNow admin for a read ACL on `sys_journal_field` for the account's role (the work notes of incidents only is enough), or set `servicenow_insights_act_work_notes: false`; refused, the report says so and the fixes come from the close notes |
 
 A table the account cannot read is listed under *Not read* and the rest is reported; take a table out of
