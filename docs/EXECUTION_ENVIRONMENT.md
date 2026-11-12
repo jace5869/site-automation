@@ -395,6 +395,11 @@ ansible-galaxy `--ignore-certs`, podman `--tls-verify=false`; `PIP_TRUSTED_HOST=
 is `windows`, `network` or `all-in-one`; the second is the version. At the end it prints what to enter
 in AAP (chapter 6, step 2).
 
+Two secrets the build keeps out of sight (1.41.0):
+
+- **The hub token**: `build-ee.sh` hands it to podman through its environment, so it is on no command line.
+- **A mirror login**: the address in `PIP_INDEX_URL` stays in a lower layer of the image. Use a mirror that pip reads without a user name or password.
+
 > **You should see:** `== ALL YES` (ee-check), and then the AAP fields: *Name*, *Image*, *Pull*.
 
 # EE 1: Windows, Active Directory and SQL

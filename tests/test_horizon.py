@@ -176,6 +176,11 @@ class Users(unittest.TestCase):
         u = f.hz_user(self.d, "LAB\\jdoe")                    # the domain counts: never CORP's jdoe
         self.assertEqual((u["sid"], u["sessions"], u["machines"]), ("", [], []))
         self.assertIn("No user jdoe in domain LAB - Horizon knows CORP\\jdoe", u["problems"][0])
+        # 1.23.0: two DNS domains are the same only when equal (corp.example.mil is not corp.yoursite.mil)
+        other = data([IC], [], [], ad_users=[{"id": "S-5", "login_name": "svc_x", "domain": "corp.yoursite.mil"}])
+        self.assertEqual(f.hz_user(other, "corp.example.mil\\svc_x")["sid"], "")
+        self.assertEqual(f.hz_user(other, "corp.yoursite.mil\\svc_x")["sid"], "S-5")
+        self.assertEqual(f.hz_user(other, "CORP\\svc_x")["sid"], "S-5")
         u = f.hz_user(self.d, "nora")                         # no AD record: the name a session carries
         self.assertEqual(([s["id"] for s in u["sessions"]], u["problems"]), (["s4"], []))
         self.assertIn("Horizon knows no user LAB\\nora", f.hz_user(self.d, "LAB\\nora")["problems"][0])
@@ -269,6 +274,13 @@ class Reports(unittest.TestCase):
         self.assertEqual(got[("uag", "status STALE")], "warning")
         self.assertEqual(got[("-", "no event database: Horizon keeps no history of its events")], "warning")
         self.assertEqual(got[("-", "the license expired %s" % f._when(NOW - D))], "critical")
+        # 1.23.0: expired 10 hours ago is expired, not "expires in 0 days"
+        r10 = f.hz_health(data([], [], [], license=[{"licensed": True, "expiration_time": NOW - 10 * H}],
+                               connection_servers=[{"name": "cs1", "status": "OK", "certificate": {"valid": True, "valid_to": NOW - 10 * H}}]),
+                          {"now": NOW})
+        late = dict(((p["what"], p["text"]), p["severity"]) for p in r10["problems"])
+        self.assertEqual(late[("-", "the license expired %s" % f._when(NOW - 10 * H))], "critical")
+        self.assertEqual(late[("cs1", "its certificate expired %s" % f._when(NOW - 10 * H))], "critical")
         self.assertEqual(got[("IC-Win11", "its current image is failed")], "critical")
         self.assertEqual(got[("corp.example.mil", "from Connection Server cs1: CANNOT_BIND")], "warning")
         self.assertEqual(got[("true_sso", "not in this Horizon (HTTP 404 at every API version, v9 to v1)")], "info")
@@ -538,6 +550,21 @@ class Batch2(unittest.TestCase):
         back = f.hz_host_in_maintenance(data([IC, PROT], ms + [mach("6", "p3", "MAINTENANCE", managed_machine_data=on)]), "esx2",
                                         {"protected_pools": ["VIP-*"]})
         self.assertEqual(([x["id"] for x in back["act"]], [x["id"] for x in back["held"]]), (["4"], ["6"]))
+
+    def test_host_names_in_full(self):
+        """1.23.0: two full names, or two addresses, match only when equal; a short name still finds its full name."""
+        a, b = {"host_name": "esx01.sitea.corp.example.mil"}, {"host_name": "esx01.siteb.corp.example.mil"}
+        ms = [mach("1", "p1", "AVAILABLE", managed_machine_data=a), mach("2", "p1", "AVAILABLE", managed_machine_data=b),
+              mach("3", "p1", "MAINTENANCE", managed_machine_data=a), mach("4", "p1", "MAINTENANCE", managed_machine_data=b)]
+        d = data([IC], ms)
+        self.assertEqual([x["id"] for x in f.hz_host_plan(d, "esx01.sitea.corp.example.mil")["desktops"]], ["1"])
+        self.assertEqual(sorted(x["id"] for x in f.hz_host_plan(d, "esx01")["desktops"]), ["1", "2"])
+        rc = f.hz_host_recheck({"host": "esx01.sitea.corp.example.mil", "desktops": [{"id": "2", "name": "d-2"}]}, d, {})
+        self.assertEqual(rc["act"], [])
+        back = f.hz_host_in_maintenance(d, "esx01.siteb.corp.example.mil", {})
+        self.assertEqual([x["id"] for x in back["act"]], ["4"])
+        ips = [mach(str(i), "p1", "AVAILABLE", managed_machine_data={"host_name": "192.0.2.%d" % (10 + i)}) for i in range(5)]
+        self.assertEqual([x["id"] for x in f.hz_host_plan(data([IC], ips), "192.0.2.10")["desktops"]], ["0"])
 
 
 class Module(unittest.TestCase):

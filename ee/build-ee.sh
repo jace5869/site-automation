@@ -125,9 +125,12 @@ free=$(df -Pk "$(podman info --format '{{.Store.GraphRoot}}' 2>/dev/null || echo
 if [ "${free:-0}" -lt 15 ]; then note "only ${free:-?} GB free for podman's images: the build needs about 15"; else ok "${free} GB free"; fi
 
 step "Build $image (ansible-builder, then podman: 10 to 25 minutes)"
-args=(--build-arg "ANSIBLE_GALAXY_SERVER_RH_CERTIFIED_TOKEN=$TOKEN"
-      --build-arg "ANSIBLE_GALAXY_SERVER_COMMUNITY_TOKEN=$TOKEN"
-      --build-arg "ANSIBLE_GALAXY_SERVER_PUBLISHED_TOKEN=$TOKEN")
+# the token by name only: podman takes its value from the environment, so it is never on a command line (ps)
+export ANSIBLE_GALAXY_SERVER_RH_CERTIFIED_TOKEN="$TOKEN" ANSIBLE_GALAXY_SERVER_COMMUNITY_TOKEN="$TOKEN" \
+       ANSIBLE_GALAXY_SERVER_PUBLISHED_TOKEN="$TOKEN"
+args=(--build-arg ANSIBLE_GALAXY_SERVER_RH_CERTIFIED_TOKEN
+      --build-arg ANSIBLE_GALAXY_SERVER_COMMUNITY_TOKEN
+      --build-arg ANSIBLE_GALAXY_SERVER_PUBLISHED_TOKEN)
 [ -z "${PIP_INDEX_URL:-}" ] || args+=(--build-arg "PIP_INDEX_URL=$PIP_INDEX_URL")
 [ -z "${PIP_TRUSTED_HOST:-}" ] || args+=(--build-arg "PIP_TRUSTED_HOST=$PIP_TRUSTED_HOST")
 [ -z "${INSECURE:-}" ] || args+=(--build-arg ANSIBLE_GALAXY_CLI_COLLECTION_OPTS=--ignore-certs

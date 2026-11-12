@@ -213,6 +213,17 @@ class Report(unittest.TestCase):
         self.assertEqual((r["critical"], r["warning"]), (0, 0))
         self.assertNotIn("Problems", [s["title"] for s in r["report"]["sections"]])
 
+    def test_a_large_share(self):
+        """1.23.0: 20000 user folders (horizon_fslogix_max_folders) in seconds, not minutes."""
+        import time
+        folders = [("S-1-5-21-1-2-3-%d_svc_x%d" % (i, i), [fi("Profile_svc_x%d.vhdx" % i, 100), fi("ODFC_svc_x%d.vhdx" % i, 100),
+                                                          fi("Profile_svc_x%d.vhdx.lock" % i, 0)]) for i in range(20000)]
+        t0 = time.time()
+        r = run(scan(folders))
+        self.assertLess(time.time() - t0, 15)
+        self.assertEqual(len(r["containers"]), 40000)
+        self.assertEqual(by_file(r)["S-1-5-21-1-2-3-7_svc_x7\\Profile_svc_x7.vhdx"]["aux"][0]["name"], "Profile_svc_x7.vhdx.lock")
+
     def test_milliseconds_now(self):
         r = run(scan([(J + "_jdoe", [fi("Profile_jdoe.vhdx", 100, 100)])]), now=NOW * 1000)
         self.assertEqual(r["counts"]["stale"], 1)

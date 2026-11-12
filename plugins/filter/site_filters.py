@@ -1960,7 +1960,8 @@ def _email_also(also, domains=None):
         for entry in re.split(r"[;\r\n]+", str(item if item is not None else "")):
             inside = EMAIL_BRACKETED.findall(entry)
             if inside:
-                words += inside
+                # a plain address beside the <...> ones counts too (the names around them are not addresses)
+                words += inside + [w for w in re.split(r"[\s,]+", re.sub(r"<[^>]*>", " ", entry)) if "@" in w]
                 continue
             for part in (x.strip() for x in entry.split(",")):
                 if part and "@" not in part:

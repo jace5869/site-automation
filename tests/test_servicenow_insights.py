@@ -185,6 +185,43 @@ class Masking(unittest.TestCase):
         self.assertEqual(F.unmask(masked, m), text)
         self.assertTrue(set(m["counts"]) >= {"PERSON", "HOST", "PHONE", "EMAIL", "IP", "ID"})
 
+    def test_at_a_sentence_end_and_with_an_underscore(self):
+        """1.23.0: a host, an FQDN or an ID before a full stop, and a name with "_", are masked - each text on its own."""
+        for text, real in (("Rebooted web01.", "web01"), ("Restarted app02.corp.example.mil.", "app02.corp.example.mil"),
+                           ("EDIPI 1234567890.", "1234567890"), ("Cleared queue on SQL_PROD01", "SQL_PROD01"),
+                           ("srv01_backup is full.", "srv01_backup")):
+            m = F.servicenow_insights_mask({"items": [{"table": "incident", "sys_id": "1", "short_description": text}]}, OPTS)
+            out = F.apply_mask(text, m)
+            self.assertNotIn(real, out, text)
+            self.assertEqual(F.unmask(out, m), text)
+        # a version, a ticket and a word with a full stop inside stay as they are
+        text = "Updated to win11. See INC0040001. Use x86_64."
+        m = F.servicenow_insights_mask({"items": [{"table": "incident", "sys_id": "1", "short_description": text}]}, OPTS)
+        self.assertEqual(F.apply_mask(text, m), text)
+
+    def test_a_last_name_that_is_a_word(self):
+        """1.23.0: a last name from the people fields is masked whatever the word."""
+        for name in ("Alex Smith", "Sam Page", "Jordan Young"):
+            last = name.split()[1]
+            r = {"items": [{"table": "incident", "assigned_to": name, "short_description": "Called %s about the printer" % last}]}
+            m = F.servicenow_insights_mask(r, OPTS)
+            self.assertNotIn(last, F.apply_mask(r["items"][0]["short_description"], m))
+
+    def test_a_short_or_word_like_last_name_only_as_a_name(self):
+        """1.23.0 b: "Do" and "Page" masked where written as a name, "do" and "page" kept (and kept in desc_key); the
+        full name in any case; "Last, First" masks the last name; a suffix is not a last name."""
+        r = {"items": [{"table": "incident", "caller": "Tran Do", "assigned_to": "Pat Page", "opened_by": "Smith, Kim",
+                        "resolved_by": "Mary Ann Jones Jr.", "short_description": "page file full - what do I do"}]}
+        m = F.servicenow_insights_mask(r, OPTS)
+        out = F.apply_mask("Do called; what do I do with the page file? pat page and TRAN DO agree. Smith wrote, Jones Jr. too", m)
+        for real in ("Do called", "pat page", "TRAN DO", "Smith", "Jones"):
+            self.assertNotIn(real, out)
+        for kept in ("what do I do", "the page file", "Jr."):
+            self.assertIn(kept, out)
+        self.assertEqual(F.desc_key("page file full - what do I do", m), "page file full what do i do")
+        self.assertNotIn("Jr.", [p[0] for p in m["pairs"]])
+        self.assertEqual(F.servicenow_insights_mask_more(m, {"work_notes": {}}, OPTS)["exact"], m["exact"])
+
     def test_keep_and_more_names(self):
         r = {"items": [{"table": "incident", "short_description": "Project Falcon down on sw7x"}]}
         m = F.servicenow_insights_mask(r, dict(OPTS, mask_names=["Project Falcon"], mask_keep=["sw7x"]))

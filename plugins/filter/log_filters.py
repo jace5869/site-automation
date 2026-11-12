@@ -150,6 +150,16 @@ def _parse_time(s):
     return False
 
 
+def _utc_text(stamp, offset):
+    """'2026-10-23T08:30:00', '-04:00' -> '2026-10-23T12:30:00Z' (no offset, or Z: as it is)."""
+    if not offset or offset.upper() == "Z":
+        return stamp + "Z"
+    sign = -1 if offset[0] == "-" else 1
+    hh, mm = int(offset[1:3]), int(offset[-2:])
+    when = datetime.datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%S") - sign * datetime.timedelta(hours=hh, minutes=mm)
+    return when.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def log_window(hours, since="", until="", now=None):
     """The window to read: the last `hours` hours, or since .. until (UTC text such as '2026-10-23 08:00';
     until empty = now). -> {since_min, until_min (minutes before now; 0 = now), begin, end (ISO, end '' = now),
@@ -164,6 +174,9 @@ def log_window(hours, since="", until="", now=None):
         return out
     if e is not None and e > n:
         e = None
+    if b is not None and b >= n:
+        out["error"] = "log_analysis_since (%s) is in the future: the time is UTC" % since
+        return out
     if b is None:
         try:
             h = float(hours)
@@ -300,10 +313,10 @@ def log_linux_entries(stdout, host="", opts=None):
             src = cur["name"]
             text = raw
             if cur["kind"] == "container":
-                # podman logs --timestamps: "2026-10-23T08:00:01.123456789+00:00 the line"
-                mt = re.match(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)\S*\s+(.*)$", raw)
-                t = (mt.group(1) + "Z") if mt else ""
-                text = mt.group(2) if mt else raw
+                # podman logs --timestamps: "2026-10-23T08:00:01.123456789-04:00 the line" - in UTC by its offset
+                mt = re.match(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.\d+)?(Z|[+-]\d\d:?\d\d)?\S*\s+(.*)$", raw)
+                t = _utc_text(mt.group(1), mt.group(2)) if mt else ""
+                text = mt.group(3) if mt else raw
             else:
                 t = _text_time(raw)
             entries.append({"host": host, "source": src, "time": t, "level": log_level(None, text),

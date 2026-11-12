@@ -362,7 +362,7 @@ def servicenow_war_report(r, opts=None):
                              "problem tasks need problem_read or itil on the problem tables), or take it out of servicenow_war_tables."})
     tail.append({"title": "Read", "lines": ["%s: %d record(s) kept of %d read" % (t["table"], _n(t.get("rows")), _n(t.get("read"))) for t in tables if not t.get("error")]})
     # 7. ready to paste: this version from the tables, then ACT's (servicenow_war_add_act puts it here), then the tail
-    lines = servicenow_war_lines(r, {"old_days": old_days})
+    lines = servicenow_war_lines(r, {"old_days": old_days, "open_scope": o.get("open_scope"), "time_zone": o.get("time_zone")})
     both = ("Two versions of the WAR, to choose from: this one, one line per task from the tables, and ACT's, written by GenAI "
             "from the same tables, right after it. " if o.get("act") else "")
     war = []
