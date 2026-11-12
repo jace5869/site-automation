@@ -36,7 +36,7 @@ function Get-Acl {
     if ($aclMap.ContainsKey($p)) { $s = $aclMap[$p] }
     return [pscustomobject]@{ Sddl = $s }
 }
-function whoami.exe { $global:LASTEXITCODE = 0; $s = 'S-1-5-21-1-2-3-1500'; if ($env:SA_TEST_SID) { $s = $env:SA_TEST_SID }; '"host01\svc_aap","' + $s + '"' }
+function whoami.exe { $global:LASTEXITCODE = 0; '"host01\svc_aap","S-1-5-21-1-2-3-1500"' }
 if ($Clm) { $ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage' }
 & $Script
 '@
@@ -195,21 +195,14 @@ $f = Scan @{ dir = $open } -Acl @{ $open = $userOwns }
 Check 'win_check_stig_dir there already, another account owns it: not scanned, says what to do' ($f -and -not $f.scanned -and $f.why -match 'can be changed by others' -and $f.why -match 'win_check_stig_dir' -and -not @(Get-ChildItem -LiteralPath $open).Count) $f
 $f = Scan @{ dir = $open } -Acl @{ $open = 'O:S-1-5-21-1-2-3-1500G:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)' }
 Check "win_check_stig_dir owned by the job's own account: used" ($f -and $f.scanned -and (Test-Path -LiteralPath $f.scans[0].saved.summary)) $f
-# Windows writes the built-in Administrator as LA in an SDDL: a job running as it owns its folder all the same (its SID,
-# as whoami gives it, is LA's) - Windows only: Windows itself turns the alias into the SID
-$la = ''
-if ($IsWindows -or $env:OS -eq 'Windows_NT') { $la = [string](ConvertFrom-SddlString -Sddl 'O:LA').RawDescriptor.Owner.Value }
-if ($la -match '^S-1-5-21-.*-500$') {
-    $env:SA_TEST_SID = $la
-    $f = Scan @{ dir = $open } -Acl @{ $open = 'O:LAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;LA)' }
-    Check 'win_check_stig_dir made by the built-in Administrator (LA in its SDDL), the job runs as it: used' ($f -and $f.scanned) $f
-    $f = Scan @{ dir = $open } -Acl @{ $open = 'O:LAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;LA)' } -Clm
-    Check '... the same in Constrained Language Mode' ($f -and $f.scanned) $f
-    Remove-Item Env:\SA_TEST_SID
-    $f = Scan @{ dir = $open } -Acl @{ $open = 'O:LAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;LA)' }
-    Check '... and refused when the job runs as another account (LA is not it)' ($f -and -not $f.scanned -and $f.why -match 'owner LA') $f
-}
-else { Write-Host 'skip - the built-in Administrator as LA (needs Windows)' }
+# Windows writes the built-in Administrator as LA in an SDDL (a job running as it makes its folders so): LA counts as the
+# Administrators - it can never be taken out of them; any other alias (DA: Domain Admins) counts as someone else
+$f = Scan @{ dir = $open } -Acl @{ $open = 'O:LAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;LA)' }
+Check 'win_check_stig_dir made by the built-in Administrator (LA in its SDDL): used' ($f -and $f.scanned) $f
+$f = Scan @{ dir = $open } -Acl @{ $open = 'O:LAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;LA)' } -Clm
+Check '... the same in Constrained Language Mode' ($f -and $f.scanned) $f
+$f = Scan @{ dir = $open } -Acl @{ $open = 'O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;DA)' } -Clm
+Check '... an entry for another alias (DA, Domain Admins): refused, named as the SDDL does' ($f -and -not $f.scanned -and $f.why -match 'DA \(FA\)') $f
 New-Item -ItemType Directory -Path (Join-Path $tmp 'empty') -Force | Out-Null
 $f = Scan @{ evaluate = ''; search = @((Join-Path $tmp 'empty')); save = $false }
 Check 'not found: says where it looked and what to set' ($f -and -not $f.scanned -and $f.why -match 'not found' -and $f.why -match 'win_check_stig_evaluate') $f
