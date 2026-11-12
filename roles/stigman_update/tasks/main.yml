@@ -5,7 +5,9 @@
 # (stigman_update_skip_attachments). A new asset of the plan (0.72.0) is created first, if still not there, and its
 # reviews written to it; one made by an earlier run of the same plan is used (its reviews read again first), one made by
 # anyone else since the check fails the job (1.24.0). A Check run reads and writes nothing. The report says what became
-# of each; a review not written (rejected, an error, its asset not created) fails the job.
+# of each; a review not written (rejected, an error, its asset not created) fails the job. 1.26.0: the checklist import's
+# moves and STIG assignments are done first, each checked again; one not done (held for a person, changed since) leaves its
+# reviews unwritten and fails the job.
 - name: STIG Manager update | the plan from the workflow's check (stigman_update_plan)
   ansible.builtin.assert:
     that: stigman_update_plan is defined and stigman_update_plan is sequence and stigman_update_plan is not string
@@ -33,5 +35,6 @@
                                                                       | map('join', ': ') | join('; ')) }}
   vars:
     _su_bad: "{{ _su['items'] | default([]) | selectattr('state', 'in', ['rejected', 'error', 'bad', 'not as written', 'no grant',
-                                                                       'there since the check', 'asset not created']) | list }}"
+                                                                       'there since the check', 'asset not created', 'held',
+                                                                       'asset not moved', 'STIG not assigned']) | list }}"
   when: (_su.error | default('') | length > 0) or _su_bad | length > 0

@@ -407,7 +407,7 @@ Variables.
 As STIG Manager Watcher (0.76.0: on a schedule, written at once, several collections, the files moved - `stigman_ckl_import_auto`,
 `stigman_ckl_import_collections`, `stigman_ckl_import_move`): the *STIG Manager API* credential is the client that writes
 (Full in every collection searched, Manage in the staging one), the *Windows file share* account needs **Modify** on the
-folder. [CKL_IMPORT.md](CKL_IMPORT.md#as-stig-manager-watcher-0760).
+folder. [CKL_IMPORT.md](CKL_IMPORT.md#switching-over-from-stig-manager-watcher).
 
 ### Network performance report
 

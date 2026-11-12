@@ -14,7 +14,9 @@
 # 0.75.0 (workflow 40): checklists imported - matched to two installed STIGs by their rules' versions, a new asset
 # created with both, the InSpec answers and a person's (no result engine) written, an Accepted review left. 0.76.0 (as
 # STIG Manager Watcher): several collections, a staging one, written at once, a Restricted grant refused (GET /user), the
-# files moved.
+# files moved. 1.26.0 (routes): Staging and Linux - an asset moved out of Staging (its Accepted review, label, metadata and
+# STIG kept), one a Restricted group reaches held, one changed after the check not moved (the job fails), an SRG
+# checklist creating its asset in Linux, a STIG assigned to an asset without it, Check moving nothing, run again.
 #   bash tests/stig/run_stigman_real_test.sh     (CONTAINER_ENGINE=... ; STIGMAN_TEST_KEEP=1 keeps the pod and work folder)
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -401,6 +403,99 @@ n5=$(api "$atok" GET "/collections/$lab2/reviews/$v5" | j 'len(d)')
 [ "$rc" = 2 ] && [ "$n5" = 3 ] && grep -q "no grant - Lab VMware/vrops05 SV-260009r1_rule - the client has Restricted in Lab VMware" "$work/out.txt" \
     && ok "the update, its client Restricted in Lab VMware (GET /user): the approved review refused, not written - the job fails" \
     || { bad "the update, Restricted: rc $rc, Lab $n5"; grep -n "no grant\|written\|fatal" "$work/out.txt" | cut -c1-250 | head -6; }
+
+# ---- 1.26.0: each host to its collection (stigman_ckl_import_routes) - moved out of Staging, created, a STIG assigned ----
+# Staging (the client: Manage): rhel10 (a review, the label web, metadata), rhel11 (a Restricted group's: held), rhel12
+# (changed after the check). Linux (Manage): rhel13 without its STIG (assigned). gpos01 is nowhere: its SRG checklist
+# creates it in Linux. One route: Linux for RHEL_* and *_SRG.
+"$py" -c 'import sys; sys.path.insert(0, sys.argv[1]); import make_stig_xccdf as m
+m.write(sys.argv[2], 1, None, "General_Purpose_Operating_System_SRG", "General Purpose Operating System Security Requirements Guide",
+        [("SV-2035%02dr1_rule" % n, "V-2035%02d" % n, "SRG-OS-%06d-GPOS-%05d" % (n, n), "medium", "GPOS requirement %d" % n) for n in (1, 2, 3)], 3)' \
+    "$here" "$work/srg.xml"
+curl -s -H "Authorization: Bearer $atok" -F "importFile=@$work/srg.xml" "$A/stigs?elevate=true" > "$work/imp-srg.json"
+grep -q General_Purpose_Operating_System_SRG "$work/imp-srg.json" && ok "1.26.0: an SRG imported (General_Purpose_Operating_System_SRG V3R1)" \
+    || bad "SRG import: $(head -c 300 "$work/imp-srg.json")"
+stg=$(mkcol Staging 3); lnx=$(mkcol Linux 3)
+mkr() {  # mkr COLLECTION NAME STIGS -> its id
+    api "$atok" POST /assets "{\"name\": \"$2\", \"collectionId\": \"$1\", \"description\": \"\", \"ip\": \"\", \"noncomputing\": false,
+      \"metadata\": {\"owner\": \"ops\"}, \"stigs\": [$3]}" | j 'd["assetId"]'
+}
+r10=$(mkr "$stg" rhel10 '"RHEL_9_STIG"'); r11=$(mkr "$stg" rhel11 '"RHEL_9_STIG"'); r12=$(mkr "$stg" rhel12 '"RHEL_9_STIG"'); r13=$(mkr "$lnx" rhel13 '')
+lab=$(api "$atok" POST "/collections/$stg/labels" '{"name": "web", "description": "web servers", "color": "aabbcc"}' | j 'd["labelId"]')
+api "$atok" PUT "/collections/$stg/labels/$lab/assets" "[\"$r10\"]" >/dev/null
+api "$atok" POST "/collections/$stg/reviews/$r10" '[{"ruleId": "SV-258176r1045388_rule", "result": "fail", "detail": "No audit rules for sudo.",
+  "comment": "POA&M 21: next change window", "status": "accepted"}]' >/dev/null
+grp=$(api "$atok" POST '/user-groups?elevate=true' '{"name": "auditors", "description": "", "userIds": []}' | j 'd["userGroupId"]')
+api "$atok" POST "/collections/$stg/grants" "[{\"userGroupId\": \"$grp\", \"roleId\": 1}]" >/dev/null
+ggr=$(api "$atok" GET "/collections/$stg/grants" | "$py" -c 'import json, sys; print([g["grantId"] for g in json.load(sys.stdin) if g.get("userGroup")][0])')
+api "$atok" PUT "/collections/$stg/grants/$ggr/acl" "[{\"assetId\": \"$r11\", \"access\": \"r\"}]" >/dev/null
+[ -n "$r10" ] && [ -n "$r13" ] && [ -n "$ggr" ] && ok "  ... Staging: rhel10 (an Accepted review, label, metadata), rhel11 (a Restricted group's), rhel12; Linux: rhel13 without its STIG" \
+    || bad "1.26.0 set up"
+mkdir -p "$work/route"
+for h in rhel10 rhel11 rhel12 rhel13; do
+    "$py" -c 'import json, sys; sys.path.insert(0, sys.argv[1]); import make_cklb
+make_cklb.write(sys.argv[2], {"SV-257883": "open"}, "V2R8", "cklb")
+d = json.load(open(sys.argv[2])); d["target_data"]["host_name"] = sys.argv[3]; d["stigs"] = d["stigs"][:1]
+json.dump(d, open(sys.argv[2], "w"))' "$here" "$work/route/$h.cklb" "$h"
+done
+"$py" -c 'import sys
+v = "".join("<VULN><STIG_DATA><VULN_ATTRIBUTE>Vuln_Num</VULN_ATTRIBUTE><ATTRIBUTE_DATA>V-2035%02d</ATTRIBUTE_DATA></STIG_DATA>"
+            "<STIG_DATA><VULN_ATTRIBUTE>Rule_ID</VULN_ATTRIBUTE><ATTRIBUTE_DATA>SV-2035%02dr1_rule</ATTRIBUTE_DATA></STIG_DATA>"
+            "<STIG_DATA><VULN_ATTRIBUTE>Rule_Ver</VULN_ATTRIBUTE><ATTRIBUTE_DATA>SRG-OS-%06d-GPOS-%05d</ATTRIBUTE_DATA></STIG_DATA>"
+            "<STATUS>%s</STATUS><FINDING_DETAILS>Checked by hand.</FINDING_DETAILS><COMMENTS></COMMENTS></VULN>" % (n, n, n, n, st)
+            for n, st in ((1, "NotAFinding"), (2, "Open"), (3, "Not_Applicable")))
+open(sys.argv[1], "w").write("<?xml version=\"1.0\" encoding=\"UTF-8\"?><CHECKLIST><ASSET><ROLE>Member Server</ROLE><HOST_NAME>gpos01</HOST_NAME>"
+    "<HOST_FQDN>gpos01.example.mil</HOST_FQDN><TECH_AREA>UNIX OS</TECH_AREA></ASSET><STIGS><iSTIG><STIG_INFO>"
+    "<SI_DATA><SID_NAME>version</SID_NAME><SID_DATA>3</SID_DATA></SI_DATA><SI_DATA><SID_NAME>stigid</SID_NAME><SID_DATA>General_Purpose_Operating_System_SRG</SID_DATA></SI_DATA>"
+    "<SI_DATA><SID_NAME>releaseinfo</SID_NAME><SID_DATA>Release: 1 Benchmark Date: 01 Oct 2026</SID_DATA></SI_DATA>"
+    "<SI_DATA><SID_NAME>title</SID_NAME><SID_DATA>General Purpose Operating System Security Requirements Guide</SID_DATA></SI_DATA>"
+    "</STIG_INFO>" + v + "</iSTIG></STIGS></CHECKLIST>")' "$work/route/gpos01.ckl"
+route="{\"stigman_ckl_import_src\": \"$work/route\", \"stigman_ckl_import_collection\": \"Staging\", \"stigman_ckl_import_collections\": [],
+        \"stigman_ckl_import_routes\": [{\"collection\": \"Linux\", \"stigs\": [\"RHEL_*\", \"*_SRG\"]}], \"stigman_ckl_import_assign_stigs\": true,
+        \"stigman_ckl_import_auto\": \"none\", \"stigman_ckl_import_move\": false, \"stigman_ckl_import_workflow\": true}"
+play stigman_ckl_import.yml -e "$route"
+grep -P '^\tRUN: ' "$work/out.txt" | sed 's/^\tRUN: //' | "$py" -c 'import json, sys; json.dump({"stigman_update_plan": json.load(sys.stdin)["stigman_update_plan"]}, open(sys.argv[1], "w"))' "$work/plan8.json"
+[ "$rc" = 2 ] && grep -q "MOVE rhel10 from Staging to Linux (route 1)" "$work/out.txt" && grep -q "MOVE rhel12 from Staging to Linux (route 1)" "$work/out.txt" \
+    && grep -q "NEW ASSET gpos01 (gpos01.example.mil) in Linux (route 1) with General_Purpose_Operating_System_SRG V3R1" "$work/out.txt" \
+    && grep -q "ASSIGN RHEL_9_STIG V2R8 to rhel13 in Linux" "$work/out.txt" \
+    && grep -q "not moved - a person decides: the group auditors would lose rhel11" "$work/out.txt" && ! grep -q "MOVE rhel11" "$work/out.txt" \
+    && ok "the check with a route: rhel10 and rhel12 to move, gpos01 (its SRG checklist) new in Linux, RHEL_9_STIG for rhel13; rhel11 held - its Restricted group" \
+    || { bad "the route check: rc $rc"; grep -n "MOVE\|NEW ASSET\|ASSIGN\|person decides\|fatal" "$work/out.txt" | cut -c1-300 | head -12; }
+play stigman_update.yml -e "@$work/plan8.json" --check
+inl() { api "$atok" GET "/assets/$1" | j 'd["collection"]["name"]'; }
+[ "$rc" = 0 ] && [ "$(inl "$r10")" = Staging ] && grep -q "would move - MOVE rhel10" "$work/out.txt" \
+    && ok "  ... the update in Check: would move rhel10, nothing moved" || { bad "the route update, Check: rc $rc, rhel10 in $(inl "$r10")"; grep -n "would\|fatal" "$work/out.txt" | head -6; }
+api "$atok" PUT "/collections/$stg/labels/$lab/assets" "[\"$r10\", \"$r12\"]" >/dev/null       # rhel12 changed since the check
+play stigman_update.yml -e "@$work/plan8.json"
+got=$(api "$atok" GET "/assets/$r10?projection=stigs" | j '"%s %s %s %s" % (d["collection"]["name"], [x["name"] for x in d["labels"]], d["metadata"].get("owner"), [s["benchmarkId"] for s in d["stigs"]])')
+old=$(api "$atok" GET "/collections/$lnx/reviews/$r10/SV-258176r1045388_rule" | j 'd["comment"]')
+n10=$(api "$atok" GET "/collections/$lnx/reviews/$r10" | j 'len(d)')
+[ "$rc" = 2 ] && [ "$got" = "Linux ['web'] ops ['RHEL_9_STIG']" ] && [ "$old" = "POA&M 21: next change window" ] && [ "$n10" -gt 1 ] \
+    && grep -q "moved - MOVE rhel10" "$work/out.txt" && [ "$(inl "$r12")" = Staging ] && grep -q "changed since - MOVE rhel12" "$work/out.txt" \
+    && grep -q "its labels are web now since the check - not moved" "$work/out.txt" && grep -q "asset not moved" "$work/out.txt" \
+    && ok "the update: rhel10 moved to Linux - its review, label, metadata and STIG kept - and its reviews written; rhel12 changed since: not moved, nothing written, the job fails" \
+    || { bad "the route update: rc $rc, rhel10 $got / $old / $n10, rhel12 in $(inl "$r12")"; grep -n "move\|changed since\|fatal" "$work/out.txt" | cut -c1-300 | head -10; }
+g1=$(api "$wtok" GET "/assets?collectionId=$lnx&projection=stigs" | "$py" -c 'import json, sys
+a = [x for x in json.load(sys.stdin) if x["name"] == "gpos01"]
+print("%s %s" % (a[0]["assetId"], [s["benchmarkId"] for s in a[0]["stigs"]]) if a else "none")')
+ng=$([ "$g1" != none ] && api "$atok" GET "/collections/$lnx/reviews/${g1%% *}" | j 'sorted(r["result"] for r in d)')
+s13=$(api "$atok" GET "/assets/$r13?projection=stigs" | j '[s["benchmarkId"] for s in d["stigs"]]')
+n13=$(api "$atok" GET "/collections/$lnx/reviews/$r13" | j 'len(d)')
+[ "${g1#* }" = "['General_Purpose_Operating_System_SRG']" ] && [ "$ng" = "['fail', 'notapplicable', 'pass']" ] && [ "$s13" = "['RHEL_9_STIG']" ] && [ "$n13" -gt 0 ] \
+    && [ "$(inl "$r11")" = Staging ] \
+    && ok "  ... gpos01 created in Linux with the SRG and its 3 reviews (an SRG checklist imports as a STIG's); RHEL_9_STIG assigned to rhel13, its reviews written; rhel11 stays" \
+    || bad "  ... gpos01 $g1 / $ng, rhel13 $s13 / $n13, rhel11 in $(inl "$r11")"
+play stigman_ckl_import.yml -e "$route"
+grep -P '^\tRUN: ' "$work/out.txt" | sed 's/^\tRUN: //' | "$py" -c 'import json, sys; json.dump({"stigman_update_plan": json.load(sys.stdin)["stigman_update_plan"]}, open(sys.argv[1], "w"))' "$work/plan9.json"
+[ "$rc" = 2 ] && grep -q "MOVE rhel12 from Staging to Linux" "$work/out.txt" && ! grep -q "MOVE rhel10\|NEW ASSET gpos01\|ASSIGN RHEL_9_STIG" "$work/out.txt" \
+    && ok "the check again: only rhel12's move (as it is now) - rhel10, gpos01 and rhel13 have nothing to write" \
+    || { bad "the route check again: rc $rc"; grep -n "MOVE\|NEW ASSET\|ASSIGN\|NEEDS" "$work/out.txt" | cut -c1-250 | head -8; }
+play stigman_update.yml -e "@$work/plan9.json"
+play stigman_ckl_import.yml -e "$route"
+[ "$(inl "$r12")" = Linux ] && [ "$rc" = 0 ] && grep -q "nothing to write to STIG Manager" "$work/out.txt" \
+    && grep -q "Not moved - a person decides (1)" "$work/site"/*/latest.html 2>/dev/null \
+    && ok "  ... rhel12 moved by the next approval; then nothing to write - rhel11 still listed for a person" \
+    || { bad "the third route check: rc $rc, rhel12 in $(inl "$r12")"; grep -n "MOVE\|NEEDS\|nothing" "$work/out.txt" | cut -c1-250 | head -6; }
 
 echo
 if [ $fails -eq 0 ]; then echo "all real STIG Manager scenarios passed"; else echo "$fails real STIG Manager scenario(s) FAILED"; exit 1; fi

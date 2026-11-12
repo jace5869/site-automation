@@ -11,10 +11,16 @@ DATA.json: {"secret": "...", "collections": [{"collectionId": "1", "name": "..."
             "writers": ["<client>", ...] (optional: the clients that may write reviews - none: read-only),
             "managers": ["<client>", ...] (optional: the clients that may create assets - the Manage grant; none: no one),
             "grants": {"<client>": {"<collectionId>": roleId}} (optional: GET /api/user's collectionGrants - 1 Restricted, 2 Full,
-                      3 Manage, 4 Owner - and what writes are allowed; else managers 3, others 2 in every collection),
+                      3 Manage, 4 Owner - and what writes are allowed; else managers 3, others 2 in every collection;
+                      GET /api/collections lists only those the client has a grant in, as STIG Manager),
             "latest": {"<benchmarkId>": "V2R8"} (optional: the newest revision; else V2R7),
             "titles": {"<benchmarkId>": "..."} (optional: the STIGs' titles in GET /api/stigs - the installed STIGs are the rules' keys),
-            "reject_fail_without_comment": true (optional: a finding without a comment is rejected, as a collection may say)}
+            "reject_fail_without_comment": true (optional: a finding without a comment is rejected, as a collection may say),
+            "collection_grants": {"<collectionId>": [{"grantId", "roleId", "user": {...} or "userGroup": {...}, "acl": {"defaultAccess",
+                                  "acl": [...]}}]} (optional: GET /api/collections/C/grants and .../grants/G/acl - Manage only)}
+An asset may carry "labels": [{"labelId", "name"}]; GET /api/assets gives each its statusStats.maxTs (its reviews' latest ts).
+1.26.0: PATCH /api/assets/A {"collectionId"} moves it (Manage in both; a name in the destination: a duplicate error, as
+STIG Manager); PUT /api/assets/A/stigs/B assigns a STIG (Manage; at the collection's revision).
 Re-read on every request, so a test can change it between runs. Every request is written to LOG (method, path); a write's
 body to LOG.writes, one JSON line each. Writes (playbooks/stigman_update.yml): GET /api/collections/C/reviews/A/RULE and
 POST /api/collections/C/reviews/A only - DATA.json is updated as STIG Manager would; POST /api/assets (a new asset, with its
@@ -72,6 +78,11 @@ class H(BaseHTTPRequestHandler):
         if form.get("grant_type") != ["client_credentials"] or form.get("client_secret") != [d.get("secret")]:
             return self.send(401, {"error": "unauthorized_client"})
         self.send(200, {"access_token": "tok-" + form["client_id"][0], "token_type": "Bearer"})
+
+    def stats(self, d, a):
+        """The asset as GET /api/assets gives it: its labels, and statusStats.maxTs - its reviews' latest time."""
+        ts = [r.get("ts") or "" for r in d["reviews"].get(a["assetId"], []) if r.get("ts")]
+        return dict(a, labels=a.get("labels") or [], statusStats={"maxTs": max(ts) if ts else None})
 
     def revision(self, d, cid, bench):
         """The collection's revision of a STIG (its assets'), else the newest."""
@@ -139,7 +150,8 @@ class H(BaseHTTPRequestHandler):
         q = parse_qs(u.query)
         parts = u.path.split("/")
         if u.path == "/api/collections":
-            return self.send(200, d["collections"])
+            # as STIG Manager: only the collections the client has a grant in (1.26.0: a route to one it cannot read)
+            return self.send(200, [c for c in d["collections"] if self.role(d, c["collectionId"]) > 0])
         if u.path == "/api/user":
             return self.send(200, {"userId": "1", "username": self.client(d), "collectionGrants": [
                 {"roleId": self.role(d, c["collectionId"]), "collection": {"collectionId": c["collectionId"], "name": c["name"]}}
@@ -147,13 +159,27 @@ class H(BaseHTTPRequestHandler):
         if u.path == "/api/stigs":
             return self.send(200, [{"benchmarkId": b, "title": d.get("titles", {}).get(b, b), "lastRevisionStr": d.get("latest", {}).get(b, "V2R7"),
                                     "ruleCount": len(rows)} for b, rows in sorted(d.get("rules", {}).items())])
+        if len(parts) == 4 and parts[1:3] == ["api", "assets"]:
+            cid, a = self.find(d, parts[3])
+            if a is None:
+                return self.send(404, {"error": "no asset " + parts[3]})
+            col = [c for c in d["collections"] if c["collectionId"] == cid][0]
+            return self.send(200, dict(self.stats(d, a), collection={"collectionId": cid, "name": col["name"]}))
+        if len(parts) in (5, 7) and parts[1:3] == ["api", "collections"] and parts[4] == "grants":
+            if self.role(d, parts[3]) < 3:
+                return self.send(403, {"error": "User has insufficient privilege to complete this request."})
+            rows = d.get("collection_grants", {}).get(parts[3], [])
+            if len(parts) == 5:
+                return self.send(200, [dict((k, v) for k, v in g.items() if k != "acl") for g in rows])
+            g = [g for g in rows if str(g.get("grantId")) == parts[5]]
+            return self.send(200, g[0].get("acl") or {"defaultAccess": "none", "acl": []}) if g else self.send(404, {"error": "no grant"})
         if u.path == "/api/assets":
             if "collectionId" not in q:
                 return self.send(422, {"error": "collectionId is required"})
             rows = [a for a in d["assets"].get(q["collectionId"][0], [])
                     if "benchmarkId" not in q or q["benchmarkId"][0] in [s["benchmarkId"] for s in a.get("stigs", [])]]
             col = [c for c in d["collections"] if c["collectionId"] == q["collectionId"][0]][0]
-            return self.send(200, [dict(a, collection={"collectionId": col["collectionId"], "name": col["name"]}) for a in rows])
+            return self.send(200, [dict(self.stats(d, a), collection={"collectionId": col["collectionId"], "name": col["name"]}) for a in rows])
         if len(parts) in (9, 10) and parts[1:3] == ["api", "collections"] and parts[4] == "reviews" and parts[7:9] == ["metadata", "keys"]:
             # a review's metadata (STIG Manager keeps a review's attachments there: the key "artifacts"); no review: 404
             r = next((r for r in d["reviews"].get(parts[5], []) if parts[6] in [r["ruleId"]] + r.get("ruleIds", [])), None)
@@ -197,7 +223,66 @@ class H(BaseHTTPRequestHandler):
         self.note()
         self.send(405, {"error": "this test API takes no %s" % self.command})
 
-    do_PUT = do_PATCH = do_DELETE = refuse
+    do_DELETE = refuse
+
+    def find(self, d, aid):
+        """(collectionId, the asset) or (None, None)."""
+        for cid, rows in d["assets"].items():
+            for a in rows:
+                if a["assetId"] == aid:
+                    return cid, a
+        return None, None
+
+    def do_PATCH(self):
+        """PATCH /api/assets/A {"collectionId": X}: the asset moved, its reviews, STIGs and labels with it (Manage in both)."""
+        self.note()
+        d = json.load(open(DATA))
+        raw = self.rfile.read(int(self.headers.get("Content-Length", 0))).decode()
+        parts = urlparse(self.path).path.split("/")
+        if not self.client(d) or len(parts) != 4 or parts[1:3] != ["api", "assets"]:
+            return self.send(405, {"error": "this test API takes no PATCH there"})
+        b = json.loads(raw)
+        cid, a = self.find(d, parts[3])
+        if a is None:
+            return self.send(404, {"error": "no asset " + parts[3]})
+        to = str(b.get("collectionId") or cid)
+        if set(b) - {"collectionId"}:
+            return self.send(400, {"error": "this test API moves assets only"})
+        if self.role(d, cid) < 3:
+            return self.send(403, {"error": "User has insufficient privilege to complete this request.", "detail": "Insufficient access to this asset's collection."})
+        if self.role(d, to) < 3:
+            return self.send(403, {"error": "User has insufficient privilege to complete this request.",
+                                   "detail": "User has insufficient privilege in destination collection to transfer this asset."})
+        if any(x["name"].lower() == a["name"].lower() for x in d["assets"].get(to, [])) and to != cid:
+            return self.send(500, {"error": "Duplicate entry '%s-%s-1' for key 'asset.INDEX_NAME_COLLECTION_ENABLED'" % (a["name"], to), "code": "ER_DUP_ENTRY"})
+        with open(LOG + ".writes", "a") as f:
+            f.write(json.dumps({"move": a["assetId"], "from": cid, "to": to}) + "\n")
+        d["assets"][cid].remove(a)
+        d["assets"].setdefault(to, []).append(a)
+        json.dump(d, open(DATA, "w"))
+        col = [c for c in d["collections"] if c["collectionId"] == to][0]
+        self.send(200, dict(a, collection={"collectionId": to, "name": col["name"]}))
+
+    def do_PUT(self):
+        """PUT /api/assets/A/stigs/B: the STIG assigned to the asset (Manage), at its collection's revision."""
+        self.note()
+        d = json.load(open(DATA))
+        parts = urlparse(self.path).path.split("/")
+        if not self.client(d) or len(parts) != 6 or parts[1:3] != ["api", "assets"] or parts[4] != "stigs":
+            return self.send(405, {"error": "this test API takes no PUT there"})
+        cid, a = self.find(d, parts[3])
+        if a is None:
+            return self.send(404, {"error": "no asset " + parts[3]})
+        if self.role(d, cid) < 3:
+            return self.send(403, {"error": "User has insufficient privilege to complete this request."})
+        if parts[5] not in d.get("rules", {}):
+            return self.send(404, {"error": "no STIG " + parts[5]})
+        if parts[5] not in [x["benchmarkId"] for x in a.get("stigs", [])]:
+            with open(LOG + ".writes", "a") as f:
+                f.write(json.dumps({"assign": parts[5], "asset": a["assetId"]}) + "\n")
+            a.setdefault("stigs", []).append({"benchmarkId": parts[5], "revisionStr": self.revision(d, cid, parts[5])})
+            json.dump(d, open(DATA, "w"))
+        self.send(200, a["stigs"])
 
 
 HTTPServer(("127.0.0.1", PORT), H).serve_forever()

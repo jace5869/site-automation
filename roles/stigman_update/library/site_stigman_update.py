@@ -34,7 +34,15 @@ description:
   - The checklist import's items (0.76.0: it may look in several collections) - the client's grants read (GET /user): a
     review is written only where it has Full or more (state C(no grant) where it has Restricted or none), a new asset
     created only where it has Manage or more.
-  - In check mode reads, and writes nothing (state C(would write), C(would create)).
+  - The checklist import's moves (1.26.0, C(kind=move) - an asset only in the staging collection, to its route's
+    collection) - the asset read again (GET /assets/{id}) and moved (PATCH /assets/{id} with the destination's
+    collectionId) only if it is still as the check read it (in the staging collection, its name, FQDN, STIGs, labels, no
+    review since), no Restricted grant in the staging collection reaches it (state C(held)), no asset of its name is in the
+    destination, and the client has Manage in both. Its reviews are written after it, to the destination - none when it is
+    not moved. A move keeps the asset's reviews and their history, STIGs, metadata and labels.
+  - The checklist import's assignments (C(kind=assign) - a STIG its checklist matched, on an asset that is there) - PUT
+    /assets/{id}/stigs/{benchmark} (Manage), only if the asset is still in that collection; its reviews after it.
+  - In check mode reads, and writes nothing (state C(would write), C(would create), C(would move), C(would assign)).
 options:
   api: {description: "STIG Manager's API (https://stigman.example.mil/api).", type: str, required: true}
   token_url: {description: The Keycloak token endpoint., type: str, required: true}
@@ -62,7 +70,10 @@ items:
   description: "Each review of the plan with its state - written, would write, changed since, has attachments, rejected (STIG Manager's reason),
                 not as written (read back otherwise), bad (not a plan item), error, asset not created, no grant (the import's: the
                 client has less than Full there) - and why, and what STIG Manager holds now; each new asset (kind create): created,
-                would create, there since the check, there from an earlier run, bad, error, no grant - and its assetId."
+                would create, there since the check, there from an earlier run, bad, error, no grant - and its assetId; each move (kind
+                move): moved, would move, held, changed since, there since the check, there from an earlier run, no grant, error, bad;
+                each assignment (kind assign): assigned, would assign, already so, asset not moved, changed since, no grant, error; a
+                review after one not done: asset not moved, STIG not assigned."
   type: list
   returned: always
 error:
@@ -163,8 +174,11 @@ class Client(object):
         return (0, []) if v in (None, "", {}) else (-1, [])
 
     def _send(self, method, path, body):
-        req = Request(self.api + path, data=json.dumps(body).encode("utf-8"),
-                      headers={"Authorization": "Bearer " + self.token, "Accept": "application/json", "Content-Type": "application/json"})
+        """A write: body None sends none (PUT /assets/{a}/stigs/{b})."""
+        hdr = {"Authorization": "Bearer " + self.token, "Accept": "application/json"}
+        if body is not None:
+            hdr["Content-Type"] = "application/json"
+        req = Request(self.api + path, data=None if body is None else json.dumps(body).encode("utf-8"), headers=hdr)
         req.get_method = lambda: method
         return self._open(req)
 
@@ -187,6 +201,25 @@ class Client(object):
             "description": description or RECHECK_DESCRIPTION,
             "ip": ip or "", "mac": mac or "", "noncomputing": False, "metadata": {}, "stigs": list(benches)}) or {}
 
+    def asset(self, a):
+        """GET /assets/{a}: where the asset is now, its name, FQDN, STIGs, labels and its reviews' latest time."""
+        req = Request("%s/assets/%s?%s" % (self.api, quote(a, safe=''), urlencode([("projection", "stigs"), ("projection", "statusStats")])),
+                      headers={"Authorization": "Bearer " + self.token, "Accept": "application/json"})
+        return self._open(req) or {}
+
+    def restricted(self, c, asset):
+        """Who has the asset in collection c through a Restricted grant - its access list reaches it ([words])."""
+        hdr = {"Authorization": "Bearer " + self.token, "Accept": "application/json"}
+        out = []
+        for g in self._open(Request("%s/collections/%s/grants" % (self.api, quote(c, safe='')), headers=hdr)) or []:
+            if int(g.get("roleId") or 0) != 1:
+                continue
+            acl = self._open(Request("%s/collections/%s/grants/%s/acl" % (self.api, quote(c, safe=''), quote(str(g.get("grantId")), safe='')),
+                                     headers=hdr))
+            if acl_covers(acl, asset):
+                out.append(grant_who(g))
+        return out
+
     def asset_reviews(self, c, a):
         """Every review of an asset: {ruleId: what STIG Manager holds}."""
         req = Request("%s/collections/%s/reviews/%s" % (self.api, quote(c, safe=''), quote(a, safe='')),
@@ -203,6 +236,42 @@ class Client(object):
 
 def short(name):
     return (name or "").lower().split(".")[0]
+
+
+def stigs_of(asset):
+    return sorted(str(s.get("benchmarkId")) for s in (asset or {}).get("stigs") or [])
+
+
+def labels_of(asset):
+    return sorted(str(x.get("name") or "") for x in (asset or {}).get("labels") or [])
+
+
+def acl_covers(acl, asset):
+    """Does a grant's access list reach the asset: its default access, or a rule whose asset, label and STIG (each given) fit
+    it and whose access is not none (as the checklist import's check reads it)."""
+    acl = acl or {}
+    if (acl.get("defaultAccess") or "none") != "none":
+        return True
+    labels = set(str(x.get("labelId")) for x in asset.get("labels") or []) | set(str(x) for x in asset.get("labelIds") or [])
+    for r in acl.get("acl") or []:
+        if (r.get("access") or "none") == "none":
+            continue
+        a, lb, b = (r.get("asset") or {}).get("assetId"), (r.get("label") or {}).get("labelId"), r.get("benchmarkId")
+        if a is not None and str(a) != str(asset.get("assetId")):
+            continue
+        if lb is not None and str(lb) not in labels:
+            continue
+        if b and b not in stigs_of(asset):
+            continue
+        return True
+    return False
+
+
+def grant_who(g):
+    if g.get("userGroup"):
+        return "the group %s" % (g["userGroup"].get("name") or g["userGroup"].get("userGroupId"))
+    u = g.get("user") or {}
+    return "the user %s" % (u.get("username") or u.get("displayName") or u.get("userId") or "?")
 
 
 RECHECK_DESCRIPTION = "Created by the STIG recheck (site-automation), approved in AAP"
@@ -327,6 +396,156 @@ def make_assets(p, client, check, grants=None):
     return rows, ids
 
 
+MOVE_WORDS = ("it keeps its reviews and their history, its STIGs, metadata and labels; a Restricted grant in %s that reached it "
+              "loses it")
+
+
+def move_assets(p, client, check, grants=None):
+    """The checklist import's moves (kind move: an asset only in the staging collection, to its route's collection) -> (their
+    rows, {assetId: 'ok', 'check' or None - not moved}). Each asset is read again first and moved only if it is still as the
+    check read it: in the staging collection, its name, FQDN, STIGs and labels, no review since; no Restricted grant there
+    reaches it; no asset of its name in the destination; Manage in both."""
+    rows, done = [], {}
+    for n, it in enumerate(p["plan"]):
+        if it.get("kind") != "move":
+            continue
+        a, src, dest = str(it.get("assetId", "")), str(it.get("fromId", "")), str(it.get("collectionId", ""))
+        row = {"n": n, "kind": "move", "line": it.get("line", ""), "host": it.get("host", ""), "asset": it.get("asset", ""),
+               "collection": it.get("collection", ""), "from": it.get("from", ""), "assetId": a}
+        rows.append(row)
+        if a in done:
+            row.update(state="bad", why="the plan moves this asset twice - not moved again")
+            continue
+        done[a] = None
+        if not (ID_RE.match(a) and ID_RE.match(src) and ID_RE.match(dest)) or src == dest:
+            row.update(state="bad", why="no asset, source or destination collection id")
+            continue
+        low = [x for x in ((src, it.get("from")), (dest, it.get("collection"))) if grants is not None and grants.get(x[0], 0) < 3]
+        if low:
+            row.update(state="no grant", why="the client has %s - moving an asset needs Manage in both collections - not moved" % ", ".join(
+                "%s in %s" % (ROLES.get(grants.get(c, 0), "no grant"), name) for c, name in low))
+            continue
+        try:
+            now = client.asset(a)
+        except NotFound:
+            row.update(state="changed since", why="the asset is gone from STIG Manager - not moved")
+            continue
+        except RuntimeError as e:
+            row.update(state="error", why="the asset could not be read - not moved: %s" % e)
+            continue
+        where = str((now.get("collection") or {}).get("collectionId") or "")
+        if where == dest and str(now.get("name") or "").lower() == str(it.get("asset") or "").lower():
+            row.update(state="there from an earlier run", why="in %s already (an earlier run of this plan) - its reviews written there" % it.get("collection"))
+            done[a] = "ok"
+            continue
+        changed = []
+        if where != src:
+            changed.append("it is in %s now" % ((now.get("collection") or {}).get("name") or where or "another collection"))
+        if str(now.get("name") or "") != str(it.get("asset") or ""):
+            changed.append("its name is %s now" % now.get("name"))
+        if str(now.get("fqdn") or "") != str(it.get("fqdn") or ""):
+            changed.append("its FQDN is %s now" % (now.get("fqdn") or "empty"))
+        if stigs_of(now) != sorted(it.get("stigs") or []):
+            changed.append("its STIGs are %s now" % (", ".join(stigs_of(now)) or "none"))
+        if labels_of(now) != sorted(it.get("labels") or []):
+            changed.append("its labels are %s now" % (", ".join(labels_of(now)) or "none"))
+        ts = str((now.get("statusStats") or {}).get("maxTs") or "")
+        if ts != str(it.get("maxTs") or ""):
+            changed.append("a review of it changed since (%s)" % (ts or "none now"))
+        if changed:
+            row.update(state="changed since", why="%s since the check - not moved, and its reviews not written: run the import again" % "; ".join(changed))
+            continue
+        try:
+            who = client.restricted(src, now)
+            clash = [x for x in client.assets(dest) if str(x.get("name") or "").lower() == str(it.get("asset") or "").lower()]
+        except RuntimeError as e:
+            row.update(state="error", why="the grants of %s or the assets of %s could not be read - not moved: %s" % (it.get("from"), it.get("collection"), e))
+            continue
+        if who:
+            row.update(state="held", why="not moved - a person decides: %s would lose it (a Restricted grant in %s)" % (", ".join(who), it.get("from")))
+            continue
+        if clash:
+            row.update(state="there since the check", why="%s has an asset %s now - not moved, and its reviews not written: run the import again"
+                       % (it.get("collection"), clash[0].get("name")))
+            continue
+        if check:
+            row.update(state="would move", why=MOVE_WORDS % it.get("from"))
+            done[a] = "check"
+            continue
+        try:
+            ans = client._send("PATCH", "/assets/%s" % quote(a, safe=''), {"collectionId": dest}) or {}
+        except RuntimeError as e:
+            row.update(state="error", why="not moved: %s" % e)
+            continue
+        if str((ans.get("collection") or {}).get("collectionId") or "") != dest:
+            row.update(state="error", why="STIG Manager did not say it is in %s now - its reviews not written" % it.get("collection"))
+            continue
+        row.update(state="moved", why=MOVE_WORDS % it.get("from"))
+        done[a] = "ok"
+    return rows, done
+
+
+def assign_stigs(p, client, check, grants=None, moved=None):
+    """The checklist import's assignments (kind assign: an asset that is there without the STIG its checklist matched) ->
+    (their rows, {(collectionId, assetId, benchmark): 'ok', 'check' or None}). An assignment after a move waits for it."""
+    rows, done = [], {}
+    for n, it in enumerate(p["plan"]):
+        if it.get("kind") != "assign":
+            continue
+        c, a, b = str(it.get("collectionId", "")), str(it.get("assetId", "")), str(it.get("benchmark") or "")
+        row = {"n": n, "kind": "assign", "line": it.get("line", ""), "host": it.get("host", ""), "asset": it.get("asset", ""),
+               "collection": it.get("collection", ""), "benchmark": b, "assetId": a}
+        rows.append(row)
+        key = (c, a, b)
+        if key in done:
+            row.update(state="bad", why="the plan assigns it twice")
+            continue
+        done[key] = None
+        if not (ID_RE.match(c) and ID_RE.match(a) and BENCH_RE.match(b)):
+            row.update(state="bad", why="no collection, asset or STIG")
+            continue
+        if it.get("moved_asset"):
+            m = (moved or {}).get(str(it["moved_asset"]))
+            if not m:
+                row.update(state="asset not moved", why="its move was not done - not assigned")
+                continue
+            if m == "check":
+                row.update(state="would assign", why="after the move")
+                done[key] = "check"
+                continue
+        if grants is not None and grants.get(c, 0) < 3:
+            row.update(state="no grant", why="the client has %s in %s - assigning a STIG needs Manage - not assigned" % (
+                ROLES.get(grants.get(c, 0), "no grant"), it.get("collection")))
+            continue
+        try:
+            now = client.asset(a)
+        except RuntimeError as e:
+            row.update(state="error", why="the asset could not be read - not assigned: %s" % e)
+            continue
+        if str((now.get("collection") or {}).get("collectionId") or "") != c:
+            row.update(state="changed since", why="it is in %s now - not assigned" % ((now.get("collection") or {}).get("name") or "another collection"))
+            continue
+        if b in stigs_of(now):
+            row.update(state="already so", why="")
+            done[key] = "ok"
+            continue
+        if check:
+            row.update(state="would assign", why="")
+            done[key] = "check"
+            continue
+        try:
+            got = client._send("PUT", "/assets/%s/stigs/%s" % (quote(a, safe=''), quote(b, safe='')), None) or []
+        except RuntimeError as e:
+            row.update(state="error", why="not assigned: %s" % e)
+            continue
+        if b not in [str(x.get("benchmarkId")) for x in got if isinstance(x, dict)]:
+            row.update(state="error", why="STIG Manager did not list %s on it after - its reviews not written" % b)
+            continue
+        row.update(state="assigned", why="")
+        done[key] = "ok"
+    return rows, done
+
+
 def label_of(review):
     st = (review or {}).get("status") or {}
     return st.get("label", "") if isinstance(st, dict) else str(st)
@@ -381,10 +600,14 @@ def update(p, client, check):
         except RuntimeError:
             grants = None               # not read: STIG Manager itself refuses what the grant does not allow
     items, ids = make_assets(p, client, check, grants)
+    rows, moved = move_assets(p, client, check, grants)
+    items += rows
+    rows, assigned = assign_stigs(p, client, check, grants, moved)
+    items += rows
     again = set((r.get("collectionId"), r["asset"].lower()) for r in items if r.get("state") == "there from an earlier run")
     groups, fresh = {}, {}
     for n, it in enumerate(p["plan"]):
-        if it.get("kind") == "create":
+        if it.get("kind") in ("create", "move", "assign"):
             continue
         row = {"n": n, "line": it.get("line", ""), "host": it.get("host", ""), "asset": it.get("asset", ""), "ruleId": it.get("ruleId", ""),
                "v": it.get("v", ""), "result": it.get("result", ""), "status": it.get("status", ""), "was": it.get("was") or {}}
@@ -401,6 +624,25 @@ def update(p, client, check):
                 items.append(row)
                 continue
             it = dict(it, assetId=a)
+        # a review after a move or a STIG's assignment: written only once that is done (never half of it elsewhere)
+        after = []
+        if it.get("moved_asset"):
+            row["moved_asset"] = str(it["moved_asset"])
+            after.append((moved.get(str(it["moved_asset"])), "asset not moved", "its asset %s was not moved" % it.get("asset", "")))
+        if it.get("assign_stig"):
+            row["assign_stig"] = str(it["assign_stig"])
+            after.append((assigned.get((str(it.get("collectionId", "")), str(it.get("assetId", "")), str(it["assign_stig"]))),
+                          "STIG not assigned", "%s was not assigned to %s" % (it["assign_stig"], it.get("asset", ""))))
+        if any(not x[0] for x in after):
+            x = [x for x in after if not x[0]][0]
+            row.update(state=x[1], why=x[2] + " - not written")
+            items.append(row)
+            continue
+        if any(x[0] == "check" for x in after):
+            why = bad_item(it)
+            row.update(state="bad" if why else "would write", why=why)
+            items.append(row)
+            continue
         why = bad_item(it)
         if why:
             row.update(state="bad", why=why)

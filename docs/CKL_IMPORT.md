@@ -6,7 +6,9 @@ take, and it works for any checklist: Evaluate-STIG's, one a person filled in ST
 
 It can also stand in for **STIG Manager Watcher** (0.76.0): on a schedule, the checklists your scanners drop on the
 share written at once, each host's asset found in whichever collection has it, a host in none created in a staging
-collection, and each file moved to `imported/<date>/` once it is in STIG Manager - [As STIG Manager Watcher](#as-stig-manager-watcher-0760).
+collection, and each file moved to `imported/<date>/` once it is in STIG Manager. Since 1.26.0 each host goes to its
+own collection (Windows, Linux, VMware) -
+[Switching over from STIG Manager Watcher](#switching-over-from-stig-manager-watcher).
 
 **Why VMware's checklists need it.** VMware's (Broadcom's) STIG profiles are InSpec profiles. Their results become a CKL
 through MITRE's SAF CLI (HDF to CKL), and that CKL carries the profile's own name as its STIG id (*VMware Aria
@@ -100,17 +102,18 @@ earlier run of the same approved plan created is used (1.24.0).
 assets; each review read again first and left when a person changed it since; read back after; Check mode writes
 nothing; run twice, nothing the second time. [STIG_DRIFT.md](STIG_DRIFT.md#updating-stig-manager-with-an-approval).
 
-## As STIG Manager Watcher (0.76.0)
+## Switching over from STIG Manager Watcher
 
-STIG Manager Watcher watches a folder and imports what lands in it. This job does the same on a schedule, with what it
-does on top: VMware's InSpec checklists matched by their rules, an asset looked for in every collection, a review
-written only if STIG Manager still has it as read, never over Accepted, and a report of each run.
+STIG Manager Watcher watches a folder and imports what lands in it. This job does the same on a schedule, and more:
+VMware's InSpec checklists matched by their rules, each host's asset looked for in every collection, a new host created
+in **its** collection (Windows, Linux, VMware - `stigman_ckl_import_routes`), a review written only if STIG Manager
+still has it as read, never over Accepted, and a report of each run.
 
 ```workflow
-[Scanners: Evaluate-STIG, InSpec + SAF CLI, STIG Viewer]  write CKL / CKLB files to the share (any sub-folders)
+[Scanners: Evaluate-STIG, InSpec + SAF CLI, STIG Viewer]  CKL / CKLB files on the share (any sub-folders)
    |  every 30 minutes
    v
-[STIG Manager - import checklists]  each host's asset wherever it is (Ops, Lab ...); none: created in Watcher
+[STIG Manager - import checklists]  each host to its collection (routes); new: created there
    |  once all of a file is in STIG Manager
    v
 [imported/2026-11-06/ on the share]  never read again
@@ -120,11 +123,40 @@ Its Variables:
 
 ```yaml
 stigman_ckl_import_src: '\\fileserver.yourdomain.mil\stig\ckl'
-stigman_ckl_import_collection: Watcher          # the staging collection: a host found nowhere is created here
-stigman_ckl_import_collections: ['*']           # where a host's asset is looked for: every collection the client reads
-stigman_ckl_import_auto: existing               # existing: written at once where the asset is there; all: new assets too
-stigman_ckl_import_move: true                   # the files done with moved to imported/<date>/
+stigman_ckl_import_collection: Staging          # the staging collection: a host no route fits
+stigman_ckl_import_collections: ['*']           # where a host's asset is looked for
+stigman_ckl_import_routes:                      # the first rule that fits a host wins
+  - {collection: Windows, stigs: ['*Windows_Server*']}
+  - {collection: Linux, stigs: ['RHEL_*']}
+  - {collection: VMware, names: ['esx*', 'vc*']}
+stigman_ckl_import_auto: existing               # written at once where the asset is
+stigman_ckl_import_move: true                   # files done with: to imported/<date>/
 ```
+
+### The switch-over, step by step
+
+1. **Grants.** Give the client of the template's *STIG Manager API* credential the grants in the table below.
+2. **Routes.** Write `stigman_ckl_import_routes` for your collections
+   ([Routes](#routes---stigman_ckl_import_routes)).
+3. **Try it.** Launch the template once with Job type **Check**. Its report lists each checklist, its collection and
+   asset, the moves and the new assets. Nothing is written.
+4. **Schedule it** ([Schedule](#schedule)), with `stigman_ckl_import_auto` as you choose (next section).
+5. **Turn Watcher off** once a scheduled run has imported a scan the way you want
+   ([Turning Watcher off](#turning-watcher-off)).
+
+### Grants, per collection
+
+The client that writes (the template's *STIG Manager API* credential with `auto`; *STIG Manager - update*'s after an
+approval):
+
+| Collection | Grant | Why |
+|---|---|---|
+| The staging collection | **Manage** | new assets are created there; moves out of it |
+| Each route's collection | **Manage** | new assets created there; moves into it |
+| Every other collection searched | **Full** | reviews written there |
+
+The check's client may read only: **Full** everywhere it looks. Reading the staging collection's grants (who would
+lose an asset that moves) needs **Manage** there; without it the update checks that before it moves.
 
 ### Written at once - `stigman_ckl_import_auto`
 
@@ -175,6 +207,63 @@ all: a host only there is created in the staging collection - give the client a 
 are in. The update checks again before it writes (`GET /user`): a review in a collection where its client has less
 than Full, or a new asset where it has less than Manage, is refused (*no grant*) and the job fails.
 
+### Routes - `stigman_ckl_import_routes`
+
+An ordered list of rules. The **first** rule that fits a host wins. A rule names a `collection` (its name or id) and
+any of:
+
+| Key | Fits | Example |
+|---|---|---|
+| `stigs` | the installed STIG its checklist matched: its id or title | `['*Windows_Server*']` |
+| `names` | the host name or FQDN | `['esx*', 'vc*']` |
+| `roles` | the checklist's ROLE | `['Domain Controller']` |
+| `tech_areas` | the checklist's TECH_AREA | `['UNIX OS']` |
+
+`*` and `?`, any case; a list, or text with commas. Each key given must fit; one value of a key is enough.
+
+- **A new host:** created in its rule's collection, with the STIGs its checklists matched, at that collection's
+  revision.
+- **A host only in the staging collection:** moved to its rule's collection (next section).
+- **A host in any other collection:** written there - **never moved** out of it, whatever its rule says.
+- **No rule fits:** the staging collection, as before.
+- **Two checklists of one host fit two rules** (a server's Windows and IIS STIGs): the first rule in the list wins,
+  and the report says the other fits too.
+- **A rule's collection the client cannot read:** nothing is created or moved there, and the report says so.
+
+A rule's collection is always searched for the host's asset, so a host already there is never created again.
+
+### Moves out of the staging collection - `stigman_ckl_import_route_move`
+
+A host whose asset is only in the staging collection, and whose rule names another collection, is planned as a
+**MOVE**. It is done by the update after the approval, or at once with `stigman_ckl_import_auto: all`. Its reviews are
+written in the new collection after it.
+
+**A move keeps** the asset's reviews and their history, its STIGs, metadata and labels. **It loses** what a Restricted
+grant in the staging collection gave: a user or group given that asset there would no longer see it. Tested on STIG
+Manager 1.6.18; a label is matched by name in the new collection, or made there.
+
+- **Held for a person:** an asset a Restricted grant in the staging collection reaches is **not moved**. The report
+  lists it under *Not moved - a person decides*, with who would lose it. Its reviews are written in the staging
+  collection, and its file stays (the next run lists it again).
+- **Checked again before it moves:** still in the staging collection; the same name, FQDN, STIGs and labels; no review
+  changed since the check; no asset of its name in the new collection; Manage in both. Anything else: *changed since*,
+  not moved, its reviews not written - run the import again. The job fails, so it shows red.
+- **At another revision:** the new collection may use another revision of a STIG. The plan says how many reviews will
+  not show there (kept: they show again at the old revision).
+- `stigman_ckl_import_route_move: none`: never moved; written in the staging collection.
+
+### STIGs assigned - `stigman_ckl_import_assign_stigs`
+
+An asset that is there without the STIG its checklist matched: listed by default (*assign it yourself*). With `true`
+the assignment is planned (**ASSIGN**), done with the approval (or at once with `auto: all`), then its reviews are
+written. Only that STIG is added; the asset's others stay. The client needs **Manage** there.
+
+### SRG checklists
+
+A checklist of an SRG (a Security Requirements Guide) installed in STIG Manager imports as a STIG's does: matched by its
+benchmark id or rules, a new asset created with it, its answers written. Tested on STIG Manager 1.6.18 with a General
+Purpose Operating System SRG.
+
 ### The files - `stigman_ckl_import_move`
 
 With `stigman_ckl_import_move: true`, a file is moved to `imported/<date>/` under the folder (its sub-folder kept:
@@ -195,6 +284,25 @@ writes nothing for those already in STIG Manager - fine for tens of files, slow 
 
 Every 15 to 60 minutes (the scanners' pace), **Concurrent jobs** off on the template or workflow. Each run is a
 report on the website and an email; with nothing new it stays green.
+
+### What Watcher does that this does not
+
+| Watcher | This job |
+|---|---|
+| Imports SCC's XCCDF results (`*.xml`) | Not yet: CKL and CKLB only (a sample SCC file makes it a later version) |
+| Imports the moment a file lands | Every run of the schedule (15 to 60 minutes) |
+| Leaves the collection's assets where it made them | Routes them to their collections, moves them out of staging |
+
+### Turning Watcher off
+
+You do this - the jobs never touch STIG Manager's containers or Keycloak:
+
+1. Stop Watcher (its service or container) on the host that runs it.
+2. In Keycloak, disable Watcher's client (realm *stigman*, *Clients*), or remove its grants in STIG Manager.
+3. Point the scanners at this job's share folder, if Watcher read another one.
+
+Watcher's own history stays in STIG Manager: the reviews it wrote are kept, and this job writes over them only where a
+checklist says something else (never over Accepted).
 
 ## Setting it up
 
@@ -235,6 +343,9 @@ STIG Manager's address, login and certificates are the STIG drift report's (`che
 | `stigman_ckl_import_patterns` | `["*.ckl", "*.cklb"]` | the files taken |
 | `stigman_ckl_import_recurse` | `true` | the sub-folders too |
 | `stigman_ckl_import_create_assets` | `true` | a host name with no asset: created once approved |
+| `stigman_ckl_import_routes` | `[]` | each host's collection: the first rule that fits |
+| `stigman_ckl_import_route_move` | `staging` | move an asset out of the staging collection to its rule's (`none`: never) |
+| `stigman_ckl_import_assign_stigs` | `false` | assign the matched STIG to an asset without it |
 | `stigman_ckl_import_benchmarks` | `{}` | a checklist's STIG id -> the installed STIG |
 | `stigman_ckl_import_min_match` | `0.8` | the share of the checklist's rules the STIG must have |
 | `stigman_ckl_import_overwrite_accepted` | `false` | write over Accepted reviews |
@@ -253,3 +364,11 @@ Keycloak (`tests/stig/run_stigman_real_test.sh`): two installed STIGs with DISA'
 person's, matched by the rules' versions; a new asset created with both STIGs; the InSpec answers written with InSpec as
 their result engine, the person's with none; an Accepted review left; as Watcher - Watcher, Ops and a Restricted
 collection (refused, from `GET /user`), written at once, created in Watcher, every file moved.
+
+1.26.0 - the routes: `tests/test_stig_ckl_import.py` (each rule key, the first rule wins, a new host at its collection's
+revision, a move, a move held by a Restricted grant, never out of another collection, the revision note, STIGs
+assigned, `auto: all` without Manage refused), `tests/test_stig.py` (the update's moves and assignments, each check
+before a move, workflow 37's report unchanged), `tests/stig/run_ckl_routes_test.sh` (against the stand-in STIG Manager,
+current ansible-core and 2.16) and STIG Manager 1.6.18 (`tests/stig/run_stigman_real_test.sh`): an asset moved out of
+Staging with its Accepted review, label, metadata and STIG kept; one a Restricted group reaches held; one changed after
+the check not moved; an SRG checklist creating its asset; a STIG assigned; Check mode moving nothing.
