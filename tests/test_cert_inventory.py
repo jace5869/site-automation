@@ -90,6 +90,13 @@ class Records(unittest.TestCase):
         self.assertEqual((r["location"], r["subject"], r["sans"], r["trust_store"], r["in_use"]),
                          ("x,y", 'CN=a,O="Smith, Jones"', "DNS:a; DNS:b", "true", ""))
 
+    def test_csv_never_a_formula(self):
+        """1.23.0: a value that starts with = + - @ (or a tab or CR) gets a leading quote: a spreadsheet shows it as text."""
+        recs = cf.cert_records([{"host": "a", "where": "=HYPERLINK(1)", "subject": "@SUM(1)", "days": 5, "issuer": "-1+2"}], "linux")
+        r = dict(zip(*list(csv.reader(io.StringIO(cf.cert_csv(recs))))[:2]))
+        self.assertEqual((r["location"], r["subject"], r["issuer"]), ("'=HYPERLINK(1)", "'@SUM(1)", "'-1+2"))
+        self.assertEqual(r["host"], "a")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=1)

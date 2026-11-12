@@ -108,9 +108,12 @@ class Check(unittest.TestCase):
             self.assertIn(want, text)
 
     def test_a_thousands_comma(self):
-        """1.23.0: "2,048 GB" is one disk of 2048 GB; "100,200" and "100, 200" are two disks."""
+        """1.23.0: "2,048 GB" is one disk of 2048 GB; a list of plain numbers ("80,100", "1,024") is a list, as is
+        "100,200 GB"."""
         for desc, disks, mem in (("disks: 2,048 GB\nmemory: 16,384 MB", [2048], 16), ("disks: 100,200\nmemory: 1,536 MB", [100, 200], 1.5),
-                                 ("disks: C: 100 GB, D: 1,500 GB", [100, 1500], None)):
+                                 ("disks: C: 100 GB, D: 1,500 GB", [100, 1500], None), ("disks: 80,100", [80, 100], None),
+                                 ("disks: 50,100,150", [50, 100, 150], None), ("disks: 100,200 GB", [100, 200], None),
+                                 ("disks: 1,024", [1, 24], None)):
             rec = dict(REC, description="vm_name: web01\ntemplate: rhel9\n" + desc, comments="", work_notes="")
             spec = d.vm_deploy_check(d.vm_deploy_spec(rec), rec, dict(RULES, max_disk_gb=4096))["spec"]
             self.assertEqual(spec["disks_gb"], disks, desc)

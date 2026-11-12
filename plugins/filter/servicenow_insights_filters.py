@@ -53,6 +53,8 @@ phone mobile device devices card reader smart smartcard certificate certificates
 mail time date name names site building room floor desk monday tuesday wednesday thursday friday saturday sunday morning
 afternoon evening today tomorrow yesterday week month year back down long short high low good bad fine okay will still also
 young brown white black green gray grey king bishop baker cook hunter carter mason porter smith miller page""".split())
+# what may follow a last name ("Mary Ann Jones Jr.")
+NAME_SUFFIXES = {"jr", "sr", "ii", "iii", "iv"}
 REQUEST_WORDS = re.compile(r"\b(install|new account|create (an )?account|access to|request(ing)? access|need(s)? access|add (me|user)|"
                            r"order|purchase|new (laptop|phone|monitor|keyboard|mouse|headset)|software request|license)\b", re.I)
 
@@ -435,17 +437,20 @@ def servicenow_insights_mask(r, opts=None):
     o = opts or {}
     items = (r or {}).get("items") or []
     keep = KEEP_WORDS | set(str(w).strip().lower() for w in (o.get("mask_keep") or []) if str(w).strip())
-    found = {}                 # real -> kind
+    found, exact = {}, set()   # real -> kind; the last names matched only as written (capitalised)
     for p in _people(items):
         found.setdefault(p, "PERSON")
-        parts = p.replace(",", " ").split()
-        if len(parts) >= 2:
-            first, last = parts[0], parts[-1]
-            if "," not in p:
-                found.setdefault("%s, %s" % (last, first), "PERSON")
-            # a name ServiceNow's people fields give is masked whatever the word (Page, Young, Smith ...)
-            if len(last) >= 2:
-                found.setdefault(last, "PERSON")
+        # "Last, First" or "First [Middle] Last [Jr.]"
+        parts = [x for x in p.split(",")[0].split() if x.rstrip(".").lower() not in NAME_SUFFIXES]
+        last = (" ".join(parts) if "," in p else parts[-1]) if len(parts) >= (1 if "," in p else 2) else ""
+        if "," not in p and last:
+            found.setdefault("%s, %s" % (last, parts[0]), "PERSON")
+        # a last name the people fields give is always masked; a short or word-like one (Do, Page) only as a name
+        if len(last) >= 2:
+            if len(last) <= 3 or last.lower() in COMMON_WORDS:
+                last = last if last[:1].isupper() else last.capitalize()
+                exact.add(last)
+            found.setdefault(last, "PERSON")
     for w in o.get("mask_names") or []:
         if str(w).strip():
             found.setdefault(str(w).strip(), "PERSON")
@@ -465,7 +470,7 @@ def servicenow_insights_mask(r, opts=None):
         pairs.append([real, "%s-%d" % (kind, counters[kind])])
         counts[kind] = counters[kind]
     pairs.sort(key=lambda p: -len(p[0]))
-    return {"pairs": pairs, "counts": counts}
+    return dict({"pairs": pairs, "counts": counts}, **({"exact": sorted(exact)} if exact else {}))
 
 
 _MASK_CACHE = []
@@ -494,7 +499,7 @@ def servicenow_insights_mask_more(mask, work_notes, opts=None):
         counts[kind] = counts.get(kind, 0) + 1
         pairs.append([real, "%s-%d" % (kind, counts[kind])])
     pairs.sort(key=lambda p: -len(p[0]))
-    return {"pairs": pairs, "counts": counts}
+    return dict({"pairs": pairs, "counts": counts}, **({"exact": mask["exact"]} if (mask or {}).get("exact") else {}))
 
 
 def _mask_parts(mask):
@@ -504,10 +509,12 @@ def _mask_parts(mask):
     for hit in _MASK_CACHE:
         if hit[0] is pairs:
             return hit[1:]
-    rx = re.compile(r"(?<![\w@.-])(?:%s)(?![\w@-]|\.\w)" % "|".join(re.escape(p[0]) for p in pairs), re.I) if pairs else None
+    exact = set((mask or {}).get("exact") or [])      # matched as written: "Do", "Page" as names, not "do", "page"
+    rx = re.compile(r"(?<![\w@.-])(?:%s)(?![\w@-]|\.\w)" % "|".join(("(?-i:%s)" if p[0] in exact else "%s") % re.escape(p[0])
+                                                              for p in pairs), re.I) if pairs else None
     fwd = dict((p[0].lower(), p[1]) for p in pairs)
     rev = dict((p[1], p[0]) for p in pairs)
-    words = set(w for p in pairs for w in _norm(p[0]).split())
+    words = set(w for p in pairs for w in _norm(p[0]).split()) - set(w for x in exact for w in _norm(x).split())
     _MASK_CACHE.insert(0, (pairs, rx, fwd, rev, words))
     del _MASK_CACHE[4:]
     return rx, fwd, rev, words

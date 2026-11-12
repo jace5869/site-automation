@@ -2635,7 +2635,7 @@ run "golden image check: a name no VM has" ok horizon_image_check.yml -e horizon
     && grep -q 'vCenter read: not run: no \\"VMware vCenter\\" credential is attached to the template' "$work/out.txt" \
     && echo "ok   - golden image check without a vCenter credential: says so, the job still green" \
     || { echo "FAIL - golden image check: no credential message"; grep -m2 -E 'ERROR|msg' "$work/out.txt"; fails=$((fails + 1)); }
-printf 'all:\n  hosts:\n    localhost: {ansible_connection: local, ansible_python_interpreter: %s}\n  children:\n    win:\n      hosts:\n        DC0_H0_VM1: {ansible_connection: winrm, ansible_host: 127.0.0.1, ansible_port: 1, ansible_user: u, ansible_password: p, ansible_winrm_transport: ntlm}\n' \
+printf 'all:\n  hosts:\n    localhost: {ansible_connection: local, ansible_python_interpreter: %s}\n  children:\n    win:\n      hosts:\n        DC0_H0_VM1: {ansible_connection: winrm, ansible_host: 127.0.0.1, ansible_port: 1, ansible_user: u, ansible_password: Qz7xKq9w, ansible_winrm_transport: ntlm}\n' \
     "$py" > "$work/inv-win.yml"
 INV="$work/inv-win.yml" run "golden image check: the Limit names the golden VM (its name from it), WinRM does not answer - the vCenter side still reports" ok \
     horizon_image_check.yml -l DC0_H0_VM1 -e ansible_python_interpreter="$py" \

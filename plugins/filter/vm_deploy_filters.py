@@ -287,8 +287,9 @@ def _gb(num, unit):
     return int(n) if n == int(n) else n
 
 
-# a thousands comma: one or two digits, then groups of three ("2,048 GB", "16,384 MB"); "100,200" stays two sizes
-_THOUSANDS = re.compile(r"(?<![\d.,])(\d{1,2})((?:,\d{3})+)(?![\d,])")
+# a thousands comma: one or two digits, then groups of three, a unit right after ("2,048 GB", "16,384 MB"); without a
+# unit it is a list ("80,100", "1,024": two sizes), as is "100,200 GB"
+_THOUSANDS = re.compile(r"(?<![\d.,])(\d{1,2})((?:,\d{3})+)(?![\d,])(?=\s*%s\b)" % _UNIT, re.I)
 
 
 def _sizes_gb(value):

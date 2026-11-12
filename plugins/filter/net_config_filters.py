@@ -12,18 +12,29 @@ PLATFORMS = {"ios": ".cfg", "panos": ".xml"}
 IOS_VOLATILE = re.compile(r"^(Building configuration\.\.\.|Current configuration\s*:.*|! Last configuration change at .*|"
                           r"! NVRAM config last updated at .*|! No configuration change since last restart.*|ntp clock-period \d+)\s*$")
 
-# a secret on an IOS line: everything after the keyword (its "level N" and encryption type digit kept). A bare "key"
-# is a secret too (crypto isakmp key, tacacs-server key, radius-server key), except where it names a command
-IOS_SECRET = re.compile(r"(?P<k>(?<![\w-])(?:password|secret|key-string|pre-shared-key|authentication-key|md5|"
-                        r"password-encrypt|server-private|wpa-psk|"
-                        r"(?<!crypto )key(?!\s+(?:chain|generate|zeroize|import|export|storage|pubkey-chain|config-key)\b))"
+# a secret on an IOS line: everything after the keyword (its "level N" and encryption type digit kept). Any
+# "xxx-password" or "xxx-secret" (IS-IS area-password, domain-password) is one; "service password-encryption" is not.
+# A bare "key" is a secret too (crypto isakmp key, tacacs-server key, radius-server key), except where it names a
+# command or a key chain's key number ("key 1"); "md5 key-chain NAME" keeps the chain's name
+IOS_SECRET = re.compile(r"(?P<k>(?<![\w-])(?:(?:[A-Za-z0-9]+-)*(?:password|secret)|key-string|pre-shared-key|"
+                        r"authentication-key|md5(?!\s+key-chain\b)|password-encrypt|server-private|wpa-psk|"
+                        r"(?<!crypto )key(?!\s+(?:chain|generate|zeroize|import|export|storage|pubkey-chain|config-key)\b)"
+                        r"(?!\s+\d+\s*$))"
                         r"(?![\w-])\s+)(?P<t>(?:level\s+\d+\s+)?(?:[0-9]{1,2}\s+)?)(?P<v>\S.*)$", re.I)
-# the SNMP community, and the community of a trap host or the passwords of an SNMPv3 user: what follows them
-IOS_SNMP = re.compile(r"^(?P<k>[-+]?\s*snmp-server\s+(?:community\s+|host\s+\S+\s+|user\s+\S+\s+\S+\s+(?:remote\s+\S+\s+(?:udp-port\s+\d+\s+)?)?v3\s+))"
-                      r"(?P<v>\S.*)$", re.I)
-# a PAN-OS element whose text is a secret (any tag that names a password, a key or a secret)
-PAN_SECRET = re.compile(r"(<(?P<t>[\w-]*(?:password|passwd|pwd|phash|secret|passphrase)|key|pre-shared-key|authkey|psk|"
-                        r"community|api-key|private-key)>)[^<]*(</(?P=t)>)", re.I)
+# the SNMP community (also as removed: "no snmp-server ..."), and the community of a trap host or the passwords of
+# an SNMPv3 user: what follows them
+IOS_SNMP = re.compile(r"^(?P<k>[-+]?\s*(?:no\s+)?snmp-server\s+(?:community\s+|host\s+\S+\s+|"
+                      r"user\s+\S+\s+\S+\s+(?:remote\s+\S+\s+(?:udp-port\s+\d+\s+)?)?v3\s+))(?P<v>\S.*)$", re.I)
+# the plain-text authentication of HSRP, VRRP and GLBP ("standby 1 authentication X", "vrrp 1 authentication text X")
+IOS_FHRP = re.compile(r"^(?P<k>[-+]?\s*(?:no\s+)?(?:standby|vrrp|glbp)\s+(?:\d+\s+)?authentication\s+(?:text\s+)?)"
+                      r"(?P<v>(?!md5\b)\S.*)$", re.I)
+# free text a person wrote - a description, a banner - is never masked
+IOS_TEXT = re.compile(r"^[-+]?\s*(?:no\s+)?(?:description|banner)\b", re.I)
+IOS_BANNER = re.compile(r"^[-+]?\s*banner\s+\S+\s+(?P<d>\^C|\S)(?P<r>.*)$", re.I)
+# a PAN-OS element whose text is a secret (any tag that names a password, a key or a secret; attributes allowed;
+# a body over several lines hidden line by line, the line count kept)
+PAN_SECRET = re.compile(r"(<(?P<t>[\w-]*(?:password|passwd|pwd|phash|secret|passphrase|key|psk)|community)"
+                        r"(?:\s[^<>]*)?>)([^<]*)(</(?P=t)>)", re.I)
 HIDDEN = "<hidden>"
 
 
@@ -59,20 +70,58 @@ def clean(text, platform):
     return "\n".join(lines) + "\n" if lines else ""
 
 
+def _hide_body(m):
+    """A secret element's body: <hidden> for each line it has (the indentation kept)."""
+    parts = m.group(3).split("\n")
+    return m.group(1) + "\n".join(HIDDEN if i == 0 else re.match(r"\s*", x).group() + HIDDEN
+                                  for i, x in enumerate(parts)) + m.group(4)
+
+
 def mask(line, platform=""):
-    """A line with its secret values hidden (for a diff that is shown, never for the backup)."""
+    """A line with its secret values hidden (for a diff that is shown, never for the backup). A PAN-OS text with a
+    whole element in it may span lines."""
     s = str(line)
     if platform != "ios":
-        s = PAN_SECRET.sub(lambda m: m.group(1) + HIDDEN + m.group(3), s)
+        s = PAN_SECRET.sub(_hide_body, s)
     if platform != "panos":
+        if IOS_TEXT.match(s):
+            return s
         m = IOS_SNMP.match(s)
         if m:
             # "community X RO": only X; a trap host or a v3 user: all that follows
             v = m.group("v").split(None, 1)
             rest = " " + v[1] if "community" in m.group("k").lower() and len(v) > 1 else ""
             return m.group("k") + HIDDEN + rest
+        m = IOS_FHRP.match(s)
+        if m:
+            return m.group("k") + HIDDEN
         s = IOS_SECRET.sub(lambda m: m.group("k") + m.group("t") + HIDDEN, s)
     return s
+
+
+def mask_lines(lines, platform=""):
+    """Every line of a configuration masked, knowing what one line alone cannot: an IOS banner's body is text (kept), a
+    PAN-OS element's body can span lines (hidden whole). As many lines out as in."""
+    lines = [str(x) for x in lines]
+    if platform == "panos":
+        return PAN_SECRET.sub(_hide_body, "\n".join(lines)).split("\n") if lines else []
+    out, end = [], None
+    for x in lines:
+        if end is not None:
+            out.append(x)
+            end = None if end in x else end
+            continue
+        b = IOS_BANNER.match(x)
+        if b and b.group("d") not in b.group("r"):
+            end = b.group("d")
+        out.append(mask(x, platform))
+    return out
+
+
+def _range(start, stop):
+    """A hunk's range as a unified diff writes it (difflib's own rule)."""
+    n = stop - start
+    return "%d" % (start + 1) if n == 1 else "%d,%d" % (start + 1 if n else start, n)
 
 
 def diff(old, new, platform="", max_lines=60, name="config"):
@@ -80,10 +129,17 @@ def diff(old, new, platform="", max_lines=60, name="config"):
     'truncated'}."""
     a = str(old or "").splitlines()
     b = str(new or "").splitlines()
-    out = list(difflib.unified_diff(a, b, "%s (before)" % name, "%s (now)" % name, n=2, lineterm=""))
-    added = sum(1 for x in out if x.startswith("+") and not x.startswith("+++"))
-    removed = sum(1 for x in out if x.startswith("-") and not x.startswith("---"))
-    shown = [mask(x, platform) for x in out[2:]]
+    # matched on the lines as they are, shown masked: a changed secret is still a changed line
+    ma, mb = mask_lines(a, platform), mask_lines(b, platform)
+    shown, added, removed = [], 0, 0
+    for group in difflib.SequenceMatcher(None, a, b).get_grouped_opcodes(2):
+        shown.append("@@ -%s +%s @@" % (_range(group[0][1], group[-1][2]), _range(group[0][3], group[-1][4])))
+        for tag, i1, i2, j1, j2 in group:
+            if tag == "equal":
+                shown += [" " + x for x in ma[i1:i2]]
+                continue
+            shown += ["-" + x for x in ma[i1:i2]] + ["+" + x for x in mb[j1:j2]]
+            removed, added = removed + i2 - i1, added + j2 - j1
     m = int(max_lines)
     return {"added": added, "removed": removed, "lines": shown[:m] if m > 0 else shown, "truncated": m > 0 and len(shown) > m}
 

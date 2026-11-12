@@ -193,6 +193,21 @@ class Masking(unittest.TestCase):
             m = F.servicenow_insights_mask(r, OPTS)
             self.assertNotIn(last, F.apply_mask(r["items"][0]["short_description"], m))
 
+    def test_a_short_or_word_like_last_name_only_as_a_name(self):
+        """1.23.0 b: "Do" and "Page" masked where written as a name, "do" and "page" kept (and kept in desc_key); the
+        full name in any case; "Last, First" masks the last name; a suffix is not a last name."""
+        r = {"items": [{"table": "incident", "caller": "Tran Do", "assigned_to": "Pat Page", "opened_by": "Smith, Kim",
+                        "resolved_by": "Mary Ann Jones Jr.", "short_description": "page file full - what do I do"}]}
+        m = F.servicenow_insights_mask(r, OPTS)
+        out = F.apply_mask("Do called; what do I do with the page file? pat page and TRAN DO agree. Smith wrote, Jones Jr. too", m)
+        for real in ("Do called", "pat page", "TRAN DO", "Smith", "Jones"):
+            self.assertNotIn(real, out)
+        for kept in ("what do I do", "the page file", "Jr."):
+            self.assertIn(kept, out)
+        self.assertEqual(F.desc_key("page file full - what do I do", m), "page file full what do i do")
+        self.assertNotIn("Jr.", [p[0] for p in m["pairs"]])
+        self.assertEqual(F.servicenow_insights_mask_more(m, {"work_notes": {}}, OPTS)["exact"], m["exact"])
+
     def test_keep_and_more_names(self):
         r = {"items": [{"table": "incident", "short_description": "Project Falcon down on sw7x"}]}
         m = F.servicenow_insights_mask(r, dict(OPTS, mask_names=["Project Falcon"], mask_keep=["sw7x"]))
