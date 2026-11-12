@@ -62,7 +62,114 @@ def _gb(b):
     return ("%.1f GB" % (b / 1073741824.0)) if abs(b) >= 1073741824.0 else ("%.0f MB" % (b / 1048576.0))
 
 
-def _fa_findings(add, base, host, fa, what):
+def _was_read(h):
+    """The node said something: reached and read over SSH, or (stats page only) its page answered with numbers."""
+    if h.get("page_only"):
+        return any((u.get("stats") or {}).get("up") for u in h.get("units") or [])
+    return bool(h.get("reachable", True) and not h.get("error"))
+
+
+def _shown(h):
+    """A node as the report names it: 'Node 1 (node01.example.mil)' with a friendly name (servicenow_node_label,
+    servicenow_node_labels, or its entry's name in servicenow_node_stats_pages), else its host."""
+    host = _s(h.get("host")) or "?"
+    label = _s(h.get("label"))
+    return "%s (%s)" % (label, host) if label and label.lower() != host.lower() else host
+
+
+def _same_host(a, b):
+    """Two names of one host: alike in any case; a short name and an FQDN that starts with it."""
+    a, b = _s(a).lower().rstrip("."), _s(b).lower().rstrip(".")
+    if not a or not b:
+        return False
+    if "." in a and "." in b or re.match(r"^[\d.]+$|:", a) or re.match(r"^[\d.]+$|:", b):
+        return a == b
+    return _short(a) == _short(b)
+
+
+def _page_url(url):
+    """(host, why not) of a servicenow_node_stats_pages URL: http or https, a host, no login written in it."""
+    u = _s(url)
+    m = re.match(r"^https?://([^/?#]*)", u, re.I)
+    if not m or not m.group(1):
+        return "", "its url must be the stats page's full address (https://node1.example.mil:16000/stats.do)"
+    rest = m.group(1)
+    if "@" in rest:
+        return "", "its url carries a login: leave it out (the ServiceNow API credential's is used, servicenow_node_stats_auth)"
+    host = rest[1:].split("]")[0] if rest.startswith("[") else rest.rsplit(":", 1)[0] if ":" in rest else rest
+    return (host, "") if host else ("", "its url names no host")
+
+
+def sn_node_pages_plan(entries, hosts=None):
+    """servicenow_node_stats_pages [{name, url}] and the front-end nodes read over SSH (hosts: [{host, hostname}] or
+    names) -> {read: [{name, url, host}] to read from the AAP side, ssh: [{name, url, host, node}] entries whose host is
+    one of those nodes (read once, over SSH; the entry's name is its friendly name), errors: [text] - an entry that is
+    not {name, url}, a url that is not a page's address, two entries of one address}."""
+    out = {"read": [], "ssh": [], "errors": []}
+    if entries in (None, "", [], {}):
+        return out
+    if not isinstance(entries, (list, tuple)):
+        out["errors"].append("servicenow_node_stats_pages is not a list: write it as [{name: \"Node 1\", url: "
+                             "\"https://node1.example.mil:16000/stats.do\"}]")
+        return out
+    known = []
+    for h in hosts or []:
+        known.append((h.get("host"), [h.get("host"), h.get("hostname")]) if isinstance(h, dict) else (h, [h]))
+    seen = {}
+    for i, e in enumerate(entries, 1):
+        if not isinstance(e, dict) or not _s(e.get("url")):
+            out["errors"].append("servicenow_node_stats_pages, entry %d: needs name and url ({name: \"Node 1\", url: "
+                                 "\"https://node1.example.mil:16000/stats.do\"})" % i)
+            continue
+        url = _s(e.get("url"))
+        host, why = _page_url(url)
+        name = _s(e.get("name")) or host
+        if why:
+            out["errors"].append("servicenow_node_stats_pages, entry %d (%s): %s" % (i, name or "no name", why))
+            continue
+        if url.lower() in seen:
+            out["errors"].append("servicenow_node_stats_pages, entry %d (%s): the same url as entry %d - each node once" % (
+                i, name, seen[url.lower()]))
+            continue
+        seen[url.lower()] = i
+        node = next((k for k, names in known if any(_same_host(host, n) for n in names)), None)
+        (out["ssh"] if node else out["read"]).append(dict({"name": name, "url": url, "host": host}, **({"node": node} if node else {})))
+    return out
+
+
+def sn_node_pages(read, opts=None):
+    """What kind pages of site_servicenow_node read -> nodes in the shape the nodes themselves give, marked page_only:
+    one "unit" each (the stats page), nothing of the unit, log, disk, memory or fapolicyd."""
+    out = []
+    for r in read or []:
+        st = dict(r.get("stats") or {})
+        out.append({"host": r.get("host") or "?", "hostname": "", "label": _s(r.get("name")), "page_only": True, "reachable": True,
+                    "error": "", "page_url": r.get("url") or "", "missing": [], "looked_for": [], "disk": [], "memory": {},
+                    "fapolicyd": {},
+                    "units": [{"unit": "stats page", "env": "", "page_only": True, "active": "active" if st.get("up") else "not read",
+                               "sub": "", "enabled": "", "since": "", "node_dir": "", "port": r.get("port") or 0,
+                               "port_from": "servicenow_node_stats_pages", "stats": st, "log": {}}]})
+    return out
+
+
+def sn_node_labels(nodes, labels=None, plan=None):
+    """Each node with its friendly name as label: what it has (its host variable servicenow_node_label), else
+    servicenow_node_labels {host: label} (the inventory name, in any case, or its short name), else the name of its
+    entry in servicenow_node_stats_pages."""
+    lab = {}
+    for k, v in (labels or {}).items() if isinstance(labels, dict) else []:
+        if _s(v):
+            lab[_s(k).lower()] = _s(v)
+    by_entry = {_s(e.get("node")).lower(): _s(e.get("name")) for e in (plan or {}).get("ssh") or [] if _s(e.get("name"))}
+    out = []
+    for h in nodes or []:
+        host = _s(h.get("host")).lower()
+        label = _s(h.get("label")) or lab.get(host) or lab.get(_short(host)) or by_entry.get(host) or ""
+        out.append(dict(h, label=label))
+    return out
+
+
+def _fa_findings(add, base, host, fa, what, shown=None):
     """fapolicyd: its denials while it runs - warning, a denial of what this host runs (critical_paths) critical;
     inactive is no finding (said in the table)."""
     if not fa or not fa.get("installed") or fa.get("active") != "active":
@@ -71,7 +178,7 @@ def _fa_findings(add, base, host, fa, what):
     crit = [g for g in gs if g.get("critical")]
     if crit:
         add(base + "fapolicyd-critical", "critical",
-            "fapolicyd denied %s on %s %d time(s) %s: %s" % (what, host, sum(g["count"] for g in crit), fa.get("since", "today"),
+            "fapolicyd denied %s on %s %d time(s) %s: %s" % (what, shown or host, sum(g["count"] for g in crit), fa.get("since", "today"),
                                                            "; ".join("%s -> %s (%dx)" % (g["exe"], g["path"], g["count"]) for g in crit[:3])),
             "on %s: ausearch -m FANOTIFY -ts %s -i | tail -40; fapolicyd-cli --list; a rule or trust entry for it is a change: "
             "your decision" % (host, fa.get("since", "today")))
@@ -79,7 +186,7 @@ def _fa_findings(add, base, host, fa, what):
     if rest:
         add(base + "fapolicyd", "warning",
             "fapolicyd denied %d program(s) or file(s) on %s %d time(s) %s; the most: %s" % (
-                len(rest), host, sum(g["count"] for g in rest), fa.get("since", "today"),
+                len(rest), shown or host, sum(g["count"] for g in rest), fa.get("since", "today"),
                 "; ".join("%s -> %s (%dx)" % (g["exe"], g["path"], g["count"]) for g in rest[:3])),
             "on %s: ausearch -m FANOTIFY -ts %s -i | tail -40" % (host, fa.get("since", "today")))
 
@@ -122,6 +229,83 @@ def _cluster_for(h, u, cluster):
     return mine[0] if len(mine) == 1 and len(units) == 1 else None
 
 
+_NO_ROLE = ("the ServiceNow API credential's login was sent, and the node still showed no numbers: the page wants a login "
+            "this account cannot use here - single sign-on, or an account without access to the UI or to stats.do. In "
+            "ServiceNow: give that account a role that may read stats.do, then run again. Or try the XML page: "
+            "servicenow_node_stats_url: \"https://{fqdn}:{port}/xmlstats.do\"")
+
+
+def _login_sent(st):
+    """The login was already sent to this stats page (a tried line says so): the hint never suggests sending it."""
+    return any("(with the login)" in _s(t) for t in (st or {}).get("tried") or [])
+
+
+def _page_findings(add, base, h, shown, o):
+    """A node read by its stats page only (servicenow_node_stats_pages): not reached is a finding that names the entry
+    and what was tried - never green having read nothing; read: its memory, semaphores and scheduler as any node's."""
+    u = (h.get("units") or [{}])[0]
+    st = u.get("stats") or {}
+    url = h.get("page_url") or st.get("url") or "?"
+    ub = base + "page%s:" % (u.get("port") or "")       # two listed pages on one host: each its own findings
+    who = "%s (its stats page only)" % shown
+    t_all = st.get("tried") or []
+    t_show = t_all if len(t_all) <= 14 else t_all[:8] + ["... %d more" % (len(t_all) - 14)] + t_all[-6:]
+    tried = "\n".join("# tried: " + t for t in t_show)
+    code = int(st.get("status") or 0)
+    if not st.get("up") and code in (-1, 0) and not t_all and _s(st.get("why")).startswith("not asked"):
+        add(ub + "stats-unread", "warning", "the stats page of the ServiceNow node %s was not asked at %s: %s" % (
+            shown, url, _s(st.get("why"))[11:]),
+            "servicenow_node_stats_pages: its url with https://, or servicenow_node_stats_auth auto or none")
+        return
+    if not st.get("up") and code in (-1, 0):
+        add(ub + "stats-down", "critical", "the stats page of the ServiceNow node %s did not answer at %s (%s): the node is "
+            "down, or the AAP side cannot reach that address" % (shown, url, _s(st.get("why"))[:120] or "no answer"),
+            "%s\nfrom the execution environment: curl -sS -o /dev/null -w '%%{http_code}' %s\nservicenow_node_stats_pages "
+            "(its url); a firewall between AAP and the node's port" % (tried, url))
+        return
+    if not st.get("up") and st.get("login_refused"):
+        add(ub + "stats-unread", "warning", "the stats page of the ServiceNow node %s wants a login this account cannot give "
+            "(the API account needs a role that may read stats.do)" % shown, "%s\n%s" % (tried, _NO_ROLE))
+        return
+    if not st.get("up"):
+        said = "\n# the last answer began: %s" % (st.get("body") or "(empty)")
+        add(ub + "stats-unread", "warning", "the stats page of the ServiceNow node %s was not read at %s (the last answer: "
+            "HTTP %s)" % (shown, url, code),
+            "%s%s\nservicenow_node_stats_pages (its url: the page that shows the numbers, /stats.do or /xmlstats.do); %s" % (
+                tried, said, _NO_ROLE if _login_sent(st) else
+                "servicenow_node_stats_auth (the ServiceNow API login: basic, only over HTTPS)"))
+        return
+    _stats_findings(add, ub, who, h.get("host") or "?", st.get("url") or url, st, o)
+
+
+def _stats_findings(add, ub, who, host, url, st, o):
+    """What a stats page that was read says: JVM memory, semaphores queued in every read, the scheduler's queue."""
+    pct = st.get("mem_pct")
+    if pct is not None and pct >= float(o.get("mem_warn", 85)):
+        crit = pct >= float(o.get("mem_critical", 95))
+        add(ub + "memory", "critical" if crit else "warning",
+            "the ServiceNow node %s uses %s%% of its JVM memory (%s of %s MB; %s at %s%%): it slows, then fails "
+            "with OutOfMemory" % (who, pct, _n(st.get("mem_used"), "%.0f"), _n(st.get("mem_max"), "%.0f"),
+                                 "critical" if crit else "warning", "%g" % float(o.get("mem_critical", 95) if crit else o.get("mem_warn", 85))),
+            "on %s: curl -sS %s | grep -i memory; the heap: -Xmx in the node's wrapper or glide.properties; "
+            "a node restart in a quiet window frees it (your decision)" % (host, url))
+    qs = [q for q in st.get("sem_queued_samples") or [] if q is not None]
+    if qs and min(qs) > 0:
+        crit = min(qs) >= float(o.get("sem_queue_critical", 10))
+        add(ub + "semaphores", "critical" if crit else "warning",
+            "the ServiceNow node %s has transactions waiting for a semaphore in every read (%s; %s in use): "
+            "users wait" % (who, ", ".join("%g" % q for q in qs), _n(st.get("sem_in_use"))),
+            "on %s: curl -sS %s (Semaphore Sets); ServiceNow: Active Transactions (All Nodes) - a long one "
+            "holds a semaphore" % (host, url))
+    sq = st.get("sched_queue")
+    if sq is not None and sq > float(o.get("sched_queue_warn", 50)):
+        add(ub + "scheduler", "warning",
+            "the ServiceNow node %s has %g scheduled job(s) waiting for its %s worker(s) (warning above %s): "
+            "jobs run late" % (who, sq, _n(st.get("sched_workers")), "%g" % float(o.get("sched_queue_warn", 50))),
+            "ServiceNow: System Scheduler > Scheduled Jobs > Today's Scheduled Jobs (State Queued); "
+            "sys_trigger, Next action in the past")
+
+
 def sn_node_findings(nodes, cluster=None, opts=None):
     """Every front-end node and cluster problem as a finding {check, id, severity, summary, hint}.
     nodes: [{host, hostname, reachable, error, units, missing, disk, memory}]; opts: the thresholds, inventory (every
@@ -136,24 +320,28 @@ def sn_node_findings(nodes, cluster=None, opts=None):
     hours = o.get("log_hours", 24)
     for h in nodes or []:
         host = h.get("host") or "?"
-        about[0] = host
+        shown = _shown(h)                   # its friendly name beside the host; ids and commands keep the host
+        about[0] = shown
         base = "servicenow:node:%s:" % host
+        if h.get("page_only"):
+            _page_findings(add, base, h, shown, o)
+            continue
         if not h.get("reachable", True):
-            add(base + "unreachable", "critical", "ServiceNow node host %s could not be reached: %s" % (host, _s(h.get("error"))[:200] or "unreachable"),
+            add(base + "unreachable", "critical", "ServiceNow node host %s could not be reached: %s" % (shown, _s(h.get("error"))[:200] or "unreachable"),
                 "ansible %s -m ping" % host)
             continue
         if h.get("error"):
-            add(base + "check-error", "warning", "the ServiceNow node check could not run on %s: %s" % (host, _s(h.get("error"))[:200]),
+            add(base + "check-error", "warning", "the ServiceNow node check could not run on %s: %s" % (shown, _s(h.get("error"))[:200]),
                 "sudo -l on %s (the check reads the node's logs as root); ansible %s -m ping -b" % (host, host))
             continue
         if not h.get("units"):
             add(base + "no-unit", "critical", "no ServiceNow node unit found on %s (looked for %s)" % (
-                host, ", ".join(x.replace(".service", "") for x in h.get("looked_for") or []) or "snc_*.service"),
+                shown, ", ".join(x.replace(".service", "") for x in h.get("looked_for") or []) or "snc_*.service"),
                 "on %s: systemctl list-unit-files 'snc_*'; ls %s (servicenow_node_units)" % (host, o.get("home", "/glide")))
-        _fa_findings(add, base, host, h.get("fapolicyd"), "the ServiceNow node's java or install folder")
+        _fa_findings(add, base, host, h.get("fapolicyd"), "the ServiceNow node's java or install folder", shown)
         for u in h.get("units") or []:
             un = u.get("unit") or "?"
-            who = "%s on %s" % (un, host)
+            who = "%s on %s" % (un, shown)
             ub = base + un + ":"
             st = u.get("stats") or {}
             lg = u.get("log") or {}
@@ -175,36 +363,17 @@ def sn_node_findings(nodes, cluster=None, opts=None):
                 if not st.get("up") and int(st.get("status") or 0) in (-1, 0) and port:
                     add(ub + "stats-down", "critical", "the ServiceNow node %s runs, but its stats page answers on no address "
                         "(port %s)" % (who, port), "%s\non %s: ss -ltnp | grep %s; tail -100 %s" % (tried, host, port, logf))
+                elif not st.get("up") and st.get("login_refused"):
+                    add(ub + "stats-unread", "warning", "the stats page of %s wants a login this account cannot give "
+                        "(the API account needs a role that may read stats.do)" % who, "%s\n%s" % (tried, _NO_ROLE))
                 elif not st.get("up"):
                     add(ub + "stats-unread", "warning", "the stats page of %s was not read (port %s; the last answer: %s)" % (
                         who, port or "?", ("HTTP %s" % st["status"]) if int(st.get("status") or 0) > 0 else (_s(st.get("why"))[:120] or "none")),
-                        "%s%s\nservicenow_node_stats_url: \"https://{fqdn}:{port}/stats.do\" forces one; servicenow_node_port; "
-                        "servicenow_node_stats_auth (the ServiceNow API login: basic)" % (tried, said))
+                        "%s%s\nservicenow_node_stats_url: \"https://{fqdn}:{port}/stats.do\" forces one; servicenow_node_port; %s" % (
+                            tried, said, _NO_ROLE if _login_sent(st) else
+                            "servicenow_node_stats_auth (the ServiceNow API login: basic)"))
                 else:
-                    pct = st.get("mem_pct")
-                    if pct is not None and pct >= float(o.get("mem_warn", 85)):
-                        crit = pct >= float(o.get("mem_critical", 95))
-                        add(ub + "memory", "critical" if crit else "warning",
-                            "the ServiceNow node %s uses %s%% of its JVM memory (%s of %s MB; %s at %s%%): it slows, then fails "
-                            "with OutOfMemory" % (who, pct, _n(st.get("mem_used"), "%.0f"), _n(st.get("mem_max"), "%.0f"),
-                                                 "critical" if crit else "warning", "%g" % float(o.get("mem_critical", 95) if crit else o.get("mem_warn", 85))),
-                            "on %s: curl -sS %s | grep -i memory; the heap: -Xmx in the node's wrapper or glide.properties; "
-                            "a node restart in a quiet window frees it (your decision)" % (host, url))
-                    qs = [q for q in st.get("sem_queued_samples") or [] if q is not None]
-                    if qs and min(qs) > 0:
-                        crit = min(qs) >= float(o.get("sem_queue_critical", 10))
-                        add(ub + "semaphores", "critical" if crit else "warning",
-                            "the ServiceNow node %s has transactions waiting for a semaphore in every read (%s; %s in use): "
-                            "users wait" % (who, ", ".join("%g" % q for q in qs), _n(st.get("sem_in_use"))),
-                            "on %s: curl -sS %s (Semaphore Sets); ServiceNow: Active Transactions (All Nodes) - a long one "
-                            "holds a semaphore" % (host, url))
-                    sq = st.get("sched_queue")
-                    if sq is not None and sq > float(o.get("sched_queue_warn", 50)):
-                        add(ub + "scheduler", "warning",
-                            "the ServiceNow node %s has %g scheduled job(s) waiting for its %s worker(s) (warning above %s): "
-                            "jobs run late" % (who, sq, _n(st.get("sched_workers")), "%g" % float(o.get("sched_queue_warn", 50))),
-                            "ServiceNow: System Scheduler > Scheduled Jobs > Today's Scheduled Jobs (State Queued); "
-                            "sys_trigger, Next action in the past")
+                    _stats_findings(add, ub, who, host, url, st, o)
             # one short sentence each; the log's own line in the hint (the card's code box) and the Node log errors table
             ex_of = lambda kind: max((g for g in lg.get("groups") or [] if kind in g.get("kinds", [])),
                                      key=lambda g: g.get("count", 0), default={})
@@ -236,12 +405,12 @@ def sn_node_findings(nodes, cluster=None, opts=None):
                 crit = pct >= float(o.get("disk_critical", 95))
                 add(base + "disk:" + d.get("path", "?"), "critical" if crit else "warning",
                     "%s: %s is %s%% full (%s GB free): the node stops when it cannot write its logs and attachments" % (
-                        host, d.get("path"), d.get("used_pct"), d.get("free_gb")),
+                        shown, d.get("path"), d.get("used_pct"), d.get("free_gb")),
                     "on %s: df -h %s; du -xsh %s/*/logs 2>/dev/null | sort -h | tail" % (host, d.get("path"), o.get("home", "/glide")))
         mem = h.get("memory") or {}
         if mem.get("swap_total_mb") and float(mem.get("swap_used_pct") or 0) >= float(o.get("swap_warn", 50)):
             add(base + "swap", "warning", "%s uses %s%% of its swap (%s MB available of %s MB memory): the JVM is slow when "
-                "swapped out" % (host, mem.get("swap_used_pct"), mem.get("available_mb"), mem.get("total_mb")),
+                "swapped out" % (shown, mem.get("swap_used_pct"), mem.get("available_mb"), mem.get("total_mb")),
                 "on %s: free -m; ps -eo pid,rss,cmd --sort=-rss | head" % host)
     if o.get("cluster_read"):
         inv = {_short(x) for x in o.get("inventory") or []}
@@ -270,12 +439,22 @@ def sn_node_findings(nodes, cluster=None, opts=None):
                     "the cluster node %s is online but its host is not in the inventory group %s: it is not checked" % (
                         c["system_id"], o.get("group", "servicenow_nodes")),
                     "add %s to the group %s" % (c["host"], o.get("group", "servicenow_nodes")))
+        runs = {}                          # host -> its node units' names: another instance's node shows by them
+        for h in nodes or []:
+            us = [] if h.get("page_only") else sorted(
+                {_s(u.get("unit")).replace(".service", "") for u in h.get("units") or [] if u.get("unit")})
+            for n in _names(h):
+                runs[n] = us
         for x in sorted({_short(x) for x in o.get("inventory") or []}):
             about[0] = x
             if x not in seen:
+                us = runs.get(x) or []
                 add("servicenow:cluster-missing:%s" % x, "warning",
-                    "%s is in the inventory group %s, but not in the instance's cluster (sys_cluster_state): not a node "
-                    "of this instance, or it never started" % (x, o.get("group", "servicenow_nodes")),
+                    "%s%s is in the inventory group %s, but not in the instance's cluster (sys_cluster_state): a node of "
+                    "another instance, or it never started" % (x, (" (runs %s)" % ", ".join(us)) if us else "",
+                                                               o.get("group", "servicenow_nodes")),
+                    "a node of another instance: one job template per instance - its own group (servicenow_nodes_group) "
+                    "and its own ServiceNow credential - or servicenow_cluster_check: false\n"
                     "ServiceNow: sys_cluster_state.list; on %s: systemctl status 'snc_*'" % x)
     return f
 
@@ -288,7 +467,7 @@ def sn_node_sections(nodes, cluster=None, hosts=None, opts=None):
     secs, rows, rs = [], [], []
     for h in nodes or []:
         if not h.get("reachable", True) or h.get("error"):
-            rows.append([h.get("host") or "?", "-", "NOT REACHED" if not h.get("reachable", True) else "not read"] + ["-"] * 7)
+            rows.append([_shown(h), "-", "-", "NOT REACHED" if not h.get("reachable", True) else "not read"] + ["-"] * 7)
             rs.append("critical" if not h.get("reachable", True) else "warning")
             continue
         for u in h.get("units") or []:
@@ -306,7 +485,16 @@ def sn_node_sections(nodes, cluster=None, hosts=None, opts=None):
                     or (st.get("sched_queue") or 0) > float(o.get("sched_queue_warn", 50)) or int(lg.get("semaphore") or 0) > 0
                     or int(lg.get("severe") or 0) >= int(o.get("severe_warn", 100)) or int(lg.get("slow") or 0) >= int(o.get("slow_tx_warn", 200)))
             boot = u.get("enabled") in ("enabled", "static", "alias", "generated", "indirect")
-            rows.append([h.get("host") or "?", "%s :%s" % ((u.get("unit") or "?").replace(".service", ""), u.get("port") or "-"),
+            po = bool(u.get("page_only"))        # read by its stats page only: no unit, no log
+            if po:
+                bad = (not st.get("up") and int(st.get("status") or 0) in (-1, 0)) or (st.get("mem_pct") or 0) >= float(o.get("mem_critical", 95)) \
+                    or (c is not None and c["status"] != "online")
+                warn = (not st.get("up") or (st.get("mem_pct") or 0) >= float(o.get("mem_warn", 85)) or (qs and min(qs) > 0)
+                        or (st.get("sched_queue") or 0) > float(o.get("sched_queue_warn", 50)))
+            # which address gave the numbers: the node's own name, 127.0.0.1 on it, or its listed page
+            rows.append([_shown(h), "%s :%s" % ((u.get("unit") or "?").replace(".service", ""), u.get("port") or "-"),
+                         (st.get("answered") or "-") if st.get("up") else "-",
+                         ("stats page only" if st.get("up") else "NOT READ (stats page only)") if po else
                          ("running" if u.get("active") == "active" else (u.get("active") or "?").upper())
                          + (", at boot" if boot else ", NOT AT BOOT"),
                          ("%s, %s min ago" % (c["status"], int(c["age_min"])) if c and c["age_min"] is not None else c["status"] if c else "-"),
@@ -314,16 +502,16 @@ def sn_node_sections(nodes, cluster=None, hosts=None, opts=None):
                          "%s / %s" % (_n(st.get("sem_in_use")), ", ".join("%g" % q for q in qs) or "-") if st.get("up") else "-",
                          "%s / %s" % (_n(st.get("sched_workers")), _n(st.get("sched_queue"))) if st.get("up") else "-",
                          _n(st.get("transactions")) if st.get("up") else "-", st.get("uptime") or "-",
-                         "%d / %d / %d / %d" % (int(lg.get("severe") or 0), int(lg.get("oom") or 0), int(lg.get("semaphore") or 0),
+                         "stats page only" if po else "%d / %d / %d / %d" % (int(lg.get("severe") or 0), int(lg.get("oom") or 0), int(lg.get("semaphore") or 0),
                                                  int(lg.get("slow") or 0))
                          if lg.get("files") else (lg.get("why") or "-")[:60]])
             rs.append("critical" if bad else "warning" if warn else "")
         if not h.get("units"):
-            rows.append([h.get("host") or "?", "-", "NO NODE UNIT (%s)" % ", ".join(x.replace(".service", "") for x in h.get("looked_for") or [])
+            rows.append([_shown(h), "-", "-", "NO NODE UNIT (%s)" % ", ".join(x.replace(".service", "") for x in h.get("looked_for") or [])
                          or "NO NODE UNIT"] + ["-"] * 7)
             rs.append("critical")
     if rows:
-        secs.append({"title": "Front-end nodes", "columns": ["Host", "Node :port", "State", "Cluster", "JVM memory",
+        secs.append({"title": "Front-end nodes", "columns": ["Host", "Node :port", "Stats page answered at", "State", "Cluster", "JVM memory",
                                                               "Semaphores in use / queued", "Scheduler workers / queue",
                                                               "Active transactions", "Uptime",
                                                               "Log %s h: SEVERE / OOM / semaphore / slow" % o.get("log_hours", 24)],
@@ -333,6 +521,10 @@ def sn_node_sections(nodes, cluster=None, hosts=None, opts=None):
     for h in list(nodes or []) + [dict(d.get("result") or {}, host=d.get("host"), _db=d) for d in dbs]:
         d = h.get("_db")
         if d is None and (not h.get("reachable", True) or h.get("error")):
+            continue
+        if d is None and h.get("page_only"):
+            hr.append([h.get("host") or "?", "front-end node", "stats page only", "-", "-", "stats page only", "-"])
+            hs.append("")
             continue
         mem = h.get("memory") or {}
         fa = h.get("fapolicyd") or {}
@@ -452,14 +644,16 @@ def sn_node_sections(nodes, cluster=None, hosts=None, opts=None):
                      "rows": cr, "row_status": cs})
     # the key figures beside the findings' counts, and the nodes' table above the findings (what the run is about)
     units = [u for h in nodes or [] for u in h.get("units") or []]
-    reached = [h for h in nodes or [] if h.get("reachable", True) and not h.get("error")]
+    reached = [h for h in nodes or [] if _was_read(h)]
     boxes = []
     if nodes:
         run = sum(1 for u in units if u.get("active") == "active")
         none = sum(1 for h in reached if not h.get("units"))
+        pages = sum(1 for h in nodes if h.get("page_only"))
         boxes.append({"label": "Nodes running", "value": "%d of %d" % (run, len(units) + none),
                       "status": "critical" if run < len(units) + none or len(reached) < len(nodes) else "ok",
-                      "note": "%d of %d host(s) read" % (len(reached), len(nodes))})
+                      "note": "%d of %d host(s) read" % (len(reached), len(nodes))
+                              + ((", %d by the stats page only" % pages) if pages else "")})
     if dbs:
         read = [d for d in dbs if d.get("reached", True)]
         db = ((dbs[0].get("result") or {}).get("db") or {})
@@ -534,11 +728,13 @@ def sn_node_status(nodes, cluster=None, opts=None):
     """One line for the job's output."""
     o = opts or {}
     hs = nodes or []
-    units = [(h.get("host"), u) for h in hs for u in h.get("units") or []]
-    line = "Nodes: %s" % (", ".join("%s %s %s" % (_short(h), u.get("unit", "?").replace(".service", ""),
+    units = [(_s(h.get("label")) or _s(h.get("host")) if h.get("page_only") else _short(h.get("host")), u)
+             for h in hs for u in h.get("units") or []]
+    line = "Nodes: %s" % (", ".join("%s %s %s" % (h, u.get("unit", "?").replace(".service", ""),
+                                                   ("read" if (u.get("stats") or {}).get("up") else "NOT READ") if u.get("page_only") else
                                                    "running" if u.get("active") == "active" else (u.get("active") or "?").upper())
                                     for h, u in units) or "none read")
-    line += "; hosts read: %d of %d" % (sum(1 for h in hs if h.get("reachable", True) and not h.get("error")), len(hs))
+    line += "; hosts read: %d of %d" % (sum(1 for h in hs if _was_read(h)), len(hs))
     if o.get("cluster_read"):
         line += "; cluster: %d of %d online" % (sum(1 for c in cluster or [] if c["status"] == "online"), len(cluster or []))
     off = sorted({_short(h.get("host")) for h in hs if (h.get("fapolicyd") or {}).get("installed")
@@ -575,4 +771,5 @@ def sn_db_status(dbs):
 class FilterModule(object):
     def filters(self):
         return {"sn_node_cluster": sn_node_cluster, "sn_node_findings": sn_node_findings, "sn_node_sections": sn_node_sections,
-                "sn_node_status": sn_node_status, "sn_db_findings": sn_db_findings, "sn_db_status": sn_db_status}
+                "sn_node_status": sn_node_status, "sn_node_pages_plan": sn_node_pages_plan, "sn_node_pages": sn_node_pages,
+                "sn_node_labels": sn_node_labels, "sn_db_findings": sn_db_findings, "sn_db_status": sn_db_status}

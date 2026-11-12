@@ -37,6 +37,7 @@
       ansible.builtin.set_fact:
         servicenow_node_result: >-
           {{ {'host': inventory_hostname, 'hostname': _snn.hostname | default(''), 'reachable': true, 'error': '',
+              'label': servicenow_node_label | default('', true) | string | trim,
               'units': _snn.units | default([]), 'missing': _snn.missing | default([]), 'looked_for': _snn.looked_for | default([]),
               'fapolicyd': _snn.fapolicyd | default({}), 'disk': _snn.disk | default([]), 'memory': _snn.memory | default({})} }}
   rescue:
@@ -44,5 +45,6 @@
       ansible.builtin.set_fact:
         servicenow_node_result: >-
           {{ {'host': inventory_hostname, 'hostname': '', 'reachable': true, 'units': [], 'missing': [], 'disk': [], 'memory': {},
+              'label': servicenow_node_label | default('', true) | string | trim,
               'error': ((ansible_failed_result.msg | default('', true) | string ~ ' ' ~ ansible_failed_result.module_stderr | default('') | string)
                         | trim | replace('\n', ' ') or 'the check gave no answer') | truncate(300)} }}

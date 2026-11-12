@@ -1,0 +1,217 @@
+{
+"sections": [
+{
+"boxes": [
+{
+"label": "Nodes running",
+"note": "4 of 5 host(s) read, 2 by the stats page only",
+"status": "critical",
+"value": "4 of 5"
+}
+],
+"columns": [
+"Host",
+"Node :port",
+"Stats page answered at",
+"State",
+"Cluster",
+"JVM memory",
+"Semaphores in use / queued",
+"Scheduler workers / queue",
+"Active transactions",
+"Uptime",
+"Log 24 h: SEVERE / OOM / semaphore / slow"
+],
+"row_status": [
+"critical",
+"critical",
+"critical",
+"",
+"critical"
+],
+"rows": [
+[
+"Production node 1 (node01-application.corp.example.mil)",
+"snc_prod :16000",
+"node01-application.corp.example.mil:16000",
+"running, at boot",
+"-",
+"97.4% (3990 / 4096 MB)",
+"2 / 12, 14, 13",
+"8 / 70",
+"3",
+"1 Days",
+"140 / 0 / 0 / 0"
+],
+[
+"Production node 3 (node03-application.corp.example.mil)",
+"snc_prod :16000",
+"127.0.0.1:16000 as servicenow-production.corp.example.mil",
+"running, at boot",
+"-",
+"97.4% (3990 / 4096 MB)",
+"2 / 12, 14, 13",
+"8 / 70",
+"3",
+"1 Days",
+"140 / 0 / 0 / 0"
+],
+[
+"Production node 4 (node04-application.corp.example.mil)",
+"snc_prod :16000",
+"node04-application.corp.example.mil:16000",
+"running, at boot",
+"-",
+"97.4% (3990 / 4096 MB)",
+"2 / 12, 14, 13",
+"8 / 70",
+"3",
+"1 Days",
+"140 / 0 / 0 / 0"
+],
+[
+"Disaster recovery node 1 (node21-application.dr.example.mil)",
+"stats page :16000",
+"node21-application.dr.example.mil:16000",
+"stats page only",
+"-",
+"29.3% (1200 / 4096 MB)",
+"2 / 0, 0, 0",
+"8 / 1",
+"3",
+"1 Days",
+"stats page only"
+],
+[
+"Disaster recovery node 2 (node22-application.dr.example.mil)",
+"stats page :16000",
+"-",
+"NOT READ (stats page only)",
+"-",
+"-",
+"-",
+"-",
+"-",
+"1 Days",
+"stats page only"
+]
+],
+"title": "Front-end nodes",
+"top": true
+},
+{
+"columns": [
+"Host",
+"Role",
+"Disk used",
+"Memory available",
+"Swap used",
+"fapolicyd",
+"Database check"
+],
+"row_status": [
+"",
+"",
+"",
+"",
+""
+],
+"rows": [
+[
+"node01-application.corp.example.mil",
+"front-end node",
+"/glide 40.0% (120.0 GB free)",
+"12000 MB of 32000 MB",
+"0.0% of 4096 MB",
+"-",
+"-"
+],
+[
+"node03-application.corp.example.mil",
+"front-end node",
+"/glide 40.0% (120.0 GB free)",
+"12000 MB of 32000 MB",
+"0.0% of 4096 MB",
+"-",
+"-"
+],
+[
+"node04-application.corp.example.mil",
+"front-end node",
+"/glide 40.0% (120.0 GB free)",
+"12000 MB of 32000 MB",
+"0.0% of 4096 MB",
+"-",
+"-"
+],
+[
+"node21-application.dr.example.mil",
+"front-end node",
+"stats page only",
+"-",
+"-",
+"stats page only",
+"-"
+],
+[
+"node22-application.dr.example.mil",
+"front-end node",
+"stats page only",
+"-",
+"-",
+"stats page only",
+"-"
+]
+],
+"title": "Node and database hosts"
+},
+{
+"columns": [
+"Host",
+"Node",
+"Kind",
+"Count",
+"Longest",
+"Last",
+"Message"
+],
+"row_status": [
+"",
+"",
+""
+],
+"rows": [
+[
+"node01-application.corp.example.mil",
+"snc_prod",
+"SEVERE",
+140,
+"-",
+"2026-11-09 11:00:00",
+"Transaction cancelled"
+],
+[
+"node03-application.corp.example.mil",
+"snc_prod",
+"SEVERE",
+140,
+"-",
+"2026-11-09 11:00:00",
+"Transaction cancelled"
+],
+[
+"node04-application.corp.example.mil",
+"snc_prod",
+"SEVERE",
+140,
+"-",
+"2026-11-09 11:00:00",
+"Transaction cancelled"
+]
+],
+"title": "Node log errors (the most frequent, last 24 h)"
+}
+],
+"status": "info",
+"title": "sn_node_sections (its tables, inside a findings report)"
+}

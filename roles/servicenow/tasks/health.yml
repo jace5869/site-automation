@@ -177,6 +177,32 @@
     - (servicenow_cluster_check | string | lower) in ['true', 'yes', '1', 'on']
       or ((servicenow_cluster_check | string | lower) == 'auto' and _sn_nodes_on | bool and _sn_node_group | length > 0)
 
+# servicenow_node_stats_pages (1.32.0): nodes AAP does not log in to, each asked at its own listed address from here.
+# An entry whose host is a node of the group is read once, over SSH (its name is that node's friendly name).
+- name: ServiceNow health | which listed stats pages are read from here (servicenow_node_stats_pages)
+  ansible.builtin.set_fact:
+    _sn_pages_plan: >-
+      {{ (servicenow_node_stats_pages | sn_node_pages_plan(_sn_node_group)) if _sn_nodes_on | bool and servicenow_node_stats | bool
+         else {'read': [], 'ssh': [], 'errors': []} }}
+
+- name: ServiceNow health | the listed stats pages (read-only, no SSH to those nodes)
+  site_servicenow_node:
+    kind: pages
+    pages: "{{ _sn_pages_plan.read }}"
+    samples: "{{ servicenow_node_stats_samples | int }}"
+    interval: "{{ servicenow_node_stats_interval | float }}"
+    timeout: "{{ servicenow_node_stats_timeout | int }}"
+    stats_auth: "{{ servicenow_node_stats_auth }}"
+    validate_certs: "{{ servicenow_node_validate_certs | bool }}"
+    fapolicyd: false
+    # the ServiceNow API credential's login, for a stats page that asks for one: only over HTTPS, only to the listed host
+    stats_user: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') if servicenow_node_stats_auth != 'none' else '' }}"
+    stats_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') if servicenow_node_stats_auth != 'none' else '' }}"
+  register: _sn_pages
+  failed_when: false               # not read: a finding per entry below, never a green run that read nothing
+  check_mode: false                # only reads
+  when: _sn_pages_plan.read | length > 0
+
 - name: ServiceNow health | the front-end nodes, as they and the cluster see them
   ansible.builtin.set_fact:
     _sn_nodes: >-
@@ -184,9 +210,19 @@
       {%- for h in _sn_node_hosts -%}
       {%-   set _ = out.append(hostvars[h].servicenow_node_result | default({'host': h, 'hostname': '', 'reachable': true, 'units': [],
                                 'missing': [], 'disk': [], 'memory': {},
+                                'label': hostvars[h].servicenow_node_label | default('', true) | string | trim,
                                 'error': 'its host was not read (sudo refused, or the play did not reach it)'})) -%}
       {%- endfor -%}
-      {{ out }}
+      {#- the listed pages after them; the module itself not run (no Python here): each entry not read, said why -#}
+      {%- set read = _sn_pages.pages | default([]) -%}
+      {%- if _sn_pages_plan.read | length > 0 and read | length == 0 -%}
+      {%-   set read = [] -%}
+      {%-   for e in _sn_pages_plan.read -%}
+      {%-     set _ = read.append(e | combine({'port': 0, 'stats': {'up': false, 'status': -1, 'tried': [], 'sem_queued_samples': [],
+                                    'why': (_sn_pages.msg | default('the read did not run', true) | string | replace('\n', ' ')) | truncate(160)}})) -%}
+      {%-   endfor -%}
+      {%- endif -%}
+      {{ (out + (read | sn_node_pages)) | sn_node_labels(servicenow_node_labels, _sn_pages_plan) }}
     _sn_cluster_rows: >-
       {{ (_sn_cluster.json.result | default([]) if _sn_cluster.status | default(0) == 200 else [])
          | sn_node_cluster({'now': _sn_epoch | int}) }}
@@ -198,7 +234,8 @@
           'slow_tx_warn': servicenow_node_slow_tx_warn | int, 'sem_wait_ms': servicenow_node_semaphore_wait_ms | int,
           'disk_warn': servicenow_node_disk_warn_pct | float, 'disk_critical': servicenow_node_disk_critical_pct | float,
           'swap_warn': servicenow_node_swap_warn_pct | float, 'stale_minutes': servicenow_cluster_stale_minutes | float,
-          'cluster_read': _sn_cluster.status | default(0) == 200, 'inventory': _sn_node_group, 'group': servicenow_nodes_group,
+          'cluster_read': _sn_cluster.status | default(0) == 200,
+          'inventory': _sn_node_group + (_sn_pages_plan.read | map(attribute='host') | list), 'group': servicenow_nodes_group,
           'outside': _sn_outside, 'db_paths': servicenow_db_paths | name_list, 'fill_warn': servicenow_db_fill_warn_days | float,
           'fill_critical': servicenow_db_fill_critical_days | float, 'fapolicyd_since': servicenow_fapolicyd_since} }}
 
@@ -275,7 +312,7 @@
     # servicenow_node only when nodes or database hosts were there to read: a run with the Windows inventory clears none of
     # their tickets
     site_checks_run: >-
-      {{ (site_checks_run + (['servicenow_node'] if _sn_node_hosts | length > 0 or _sn_db_rows | length > 0
+      {{ (site_checks_run + (['servicenow_node'] if _sn_node_hosts | length > 0 or _sn_pages_plan.read | length > 0 or _sn_db_rows | length > 0
                                 or _sn_cluster.status | default(0) == 200 else [])
           + (_sn_db_rows | map(attribute='checks') | flatten)) | unique | list }}
     site_checks_failed: "{{ _sn_db_rows | map(attribute='failed') | flatten | unique | list }}"

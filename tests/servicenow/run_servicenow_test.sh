@@ -452,8 +452,8 @@ expect "self-hosted bad: a retired node" 'the cluster node node09:prod_16000 is 
 expect "self-hosted bad: ...said as one" 'and it is not in the inventory group: a retired node'
 PLAYBOOK=playbooks/servicenow_health.yml scenario "self-hosted: the stats page refused, sys_cluster_state refused - said" 2 \
     $((port + 42)) api goodpw -i "$work/inv-403.yml" -e "$HOSTOK"
-expect "self-hosted refused: the stats page" 'the stats page of snc_prod.service on node01.yoursite.mil was not read (port '
-expect "self-hosted refused: ...the last answer" 'the last answer: HTTP 403)'
+expect "self-hosted refused: the stats page" 'the stats page of snc_prod.service on node01.yoursite.mil wants a login this account cannot give'
+expect "self-hosted refused: ...and what the account needs" '(the API account needs a role that may read stats.do)'
 expect "self-hosted refused: ...what was tried, in the hint" '# tried: http://127.0.0.1:'
 expect "self-hosted refused: ...asked again with the login (refused: 403)" '(with the login) -> 403'
 deny "self-hosted refused: the login's password is never shown" 'goodpw'
@@ -490,7 +490,7 @@ expect "no group, a Limit: both read" 'Nodes: node01 snc_prod running, node12 sn
 PLAYBOOK=playbooks/servicenow_health.yml scenario "self-hosted: no group and no Limit with part nodes - a clear failure, nothing read" 2 \
     $((port + 40)) api goodpw -i "$work/inv-nogroup.yml" -e "$HOSTOK" -e servicenow_health_part=nodes
 expect "no group, no Limit: why" "servicenow_nodes_group 'servicenow_nodes' is not a group in this job's inventory, and there is no Limit naming the nodes: no front-end nodes, so the job would read nothing"
-expect "no group, no Limit: the fix" 'Fix: add the group servicenow_nodes, set servicenow_nodes_group to one of those groups, or put the nodes in the Limit'
+expect "no group, no Limit: the fix" 'Fix: add the group servicenow_nodes, set servicenow_nodes_group to one of those groups, put the nodes in the Limit (node01,node03), or list their stats pages in servicenow_node_stats_pages'
 deny "no group, no Limit: no host read" 'Nodes: '
 PLAYBOOK=playbooks/servicenow_health.yml scenario "self-hosted: servicenow_nodes_group naming a group not in the inventory - a clear failure" 2 \
     $((port + 40)) api goodpw -i "$work/inv-well.yml" -e "$HOSTOK" -e servicenow_health_part=nodes -e servicenow_nodes_group=snow_app
@@ -503,6 +503,84 @@ expect "no database group: named" "servicenow_db_group 'servicenow_db_hosts' is 
 PLAYBOOK=playbooks/servicenow_health.yml scenario "self-hosted: servicenow_health_part mids and no MID Server hosts' group - a clear failure" 2 \
     $((port + 40)) api goodpw -i "$work/inv-well.yml" -e "$HOSTOK" -e servicenow_health_part=mids
 expect "no MID group: named" "servicenow_mid_hosts_group 'servicenow_mid_hosts' is not a group in this job's inventory, and servicenow_health_part is mids"
+
+# ---- 1.32.0: the node's own address, a friendly name per node, and nodes read by their stats page only -------------
+# The instance's address (glide.servlet.uri) is another address of this host here, the node's port on it answering with
+# another node's numbers (memory nearly full): it must never be asked - the node's own page on 127.0.0.1 is read.
+make_home "$work/glide-lb" prod_16000 $((port + 34)) well
+printf 'glide.servlet.uri = http://127.0.0.2:%s/\n' $((port + 34)) >> "$work/glide-lb/nodes/prod_16000/conf/glide.properties"
+python3 "$nd/statsmock.py" $((port + 34)) xml bind=127.0.0.2 MEMUSED=3990 >/dev/null 2>&1 &
+pids+=("$!")
+for _ in $(seq 1 50); do
+    python3 -c "import socket,sys; s=socket.socket(); sys.exit(s.connect_ex(('127.0.0.2',$((port + 34)))))" && break
+    sleep 0.1
+done
+start_stats $((port + 34)) xml
+mkpy node01lb SNNODE_HOME="$work/glide-lb" SNNODE_UNITS=snc_prod:active:enabled SNNODE_FAPOLICYD=active
+nodeinv "$work/inv-lb.yml" "$(hostline node01 node01lb "servicenow_node_home: $work/glide-lb, servicenow_node_label: Node 1")" ""
+webrow() {   # webrow DIR: the Front-end nodes rows of the report written there (its first page), one per line, cells joined with " | "
+    python3 - "$1" <<'EOPY'
+import glob, json, os, sys
+for f in sorted(glob.glob(os.path.join(sys.argv[1], "**", "*.json"), recursive=True)):
+    if os.path.basename(f) == "index.json":
+        continue
+    for s in json.load(open(f)).get("report", {}).get("sections", []):
+        if s.get("title") == "Front-end nodes":
+            print("columns: " + " | ".join(str(c) for c in s["columns"]))
+            for r in s["rows"]:
+                print("row: " + " | ".join(str(c) for c in r))
+            sys.exit(0)             # the page and its "latest" copy hold the same: one is enough
+EOPY
+}
+mkdir -p "$work/web-lb" "$work/web-pages"
+PLAYBOOK=playbooks/servicenow_health.yml scenario "own address: the instance's address answers with other numbers - never asked, the node's own page read" 0 \
+    $((port + 43)) api goodpw -i "$work/inv-lb.yml" -e "$HOSTOK" -e "{\"report_web_dest\": \"$work/web-lb\"}"
+deny "own address: the other node's memory is not this node's" 'JVM memory'
+deny "own address: the instance's address in no line" "127.0.0.2:$((port + 34))"
+webrow "$work/web-lb" > "$work/rows.txt"
+if grep -qF "row: Node 1 (node01.yoursite.mil) | snc_prod :$((port + 34)) | 127.0.0.1:$((port + 34)) (http) | running, at boot" "$work/rows.txt" \
+   && grep -qF "| Stats page answered at |" "$work/rows.txt"; then echo "ok   - own address: the report says which address answered, the friendly name beside the host"
+else echo "FAIL - own address: the report's row"; cat "$work/rows.txt"; fails=$((fails + 1)); fi
+# a friendly name: the host variable (above), or servicenow_node_labels by host - in the findings too
+PLAYBOOK=playbooks/servicenow_health.yml scenario "friendly names: servicenow_node_labels, in the findings beside the host" 2 \
+    $((port + 42)) api goodpw -i "$work/inv-403.yml" -e "$HOSTOK" -e '{"servicenow_node_labels": {"node01": "Node 1"}}'
+expect "friendly names: the finding names both" 'the stats page of snc_prod.service on Node 1 (node01.yoursite.mil) wants a login this account cannot give'
+# servicenow_node_stats_pages: nodes AAP does not log in to, each asked at its own listed address from here. node01 is
+# also a node of the group: read once, over SSH (the entry's name is its friendly name).
+dead=$((port + 39))
+PAGES="{\"servicenow_node_stats_pages\": [
+  {\"name\": \"Node 21\", \"url\": \"http://127.0.0.1:$((port + 30))/xmlstats.do\"},
+  {\"name\": \"Node 22\", \"url\": \"http://127.0.0.1:$((port + 32))/xmlstats.do\"},
+  {\"name\": \"Node 23\", \"url\": \"http://127.0.0.1:$dead/stats.do\"},
+  {\"name\": \"First node\", \"url\": \"https://node01.yoursite.mil:$((port + 30))/stats.do\"}]}"
+PLAYBOOK=playbooks/servicenow_health.yml scenario "stats pages: three nodes by their stats page only, one of the group over SSH" 2 \
+    $((port + 43)) api goodpw -i "$work/inv-one.yml" -e "$HOSTOK" -e "$PAGES" -e servicenow_cluster_check=false -e "{\"report_web_dest\": \"$work/web-pages\"}"
+expect "stats pages: said which are read from here, which over SSH" '3 node(s) read by the stats page only, from the AAP side: Node 21, Node 22, Node 23 - not these, read over SSH instead: First node'
+expect "stats pages: the same thresholds - memory" 'servicenow_node: the ServiceNow node Node 22 (127.0.0.1) (its stats page only) uses '
+expect "stats pages: an entry that does not answer is a finding that names it" "[CRITICAL] servicenow_node: the stats page of the ServiceNow node Node 23 (127.0.0.1) did not answer at http://127.0.0.1:$dead/stats.do"
+expect "stats pages: the status line" 'hosts read: 3 of 4'
+webrow "$work/web-pages" > "$work/rows.txt"
+if [ "$(grep -c '^row: ' "$work/rows.txt")" = 4 ] && [ "$(grep -c '^row: First node (node01.yoursite.mil) | snc_prod ' "$work/rows.txt")" = 1 ] \
+   && grep -qF "row: Node 21 (127.0.0.1) | stats page :$((port + 30)) | 127.0.0.1:$((port + 30)) (http) | stats page only" "$work/rows.txt" \
+   && grep -qF "row: Node 23 (127.0.0.1) | stats page :$dead | - | NOT READ (stats page only)" "$work/rows.txt"; then
+    echo "ok   - stats pages: four rows - node01 once (over SSH, named by its entry), the others say stats page only"
+else echo "FAIL - stats pages: the report's rows"; cat "$work/rows.txt"; fails=$((fails + 1)); fi
+# no node of the inventory at all: the listed pages are the nodes
+{ echo "all:"; echo "  hosts:"; echo "    localhost: {ansible_connection: local, ansible_python_interpreter: $PY}"; } > "$work/inv-none.yml"
+ONE="{\"servicenow_node_stats_pages\": [{\"name\": \"Node 21\", \"url\": \"http://127.0.0.1:$((port + 30))/xmlstats.do\"}]}"
+PLAYBOOK=playbooks/servicenow_health.yml scenario "stats pages: no node in the inventory - the listed page is the node" 0 \
+    $((port + 43)) api goodpw -i "$work/inv-none.yml" -e "$HOSTOK" -e "$ONE" -e servicenow_health_part=nodes
+expect "stats pages only: the node's line" 'Nodes: Node 21 stats page read; hosts read: 1 of 1'
+expect "stats pages only: the check ran" 'HEALTHY. Checks run: servicenow_node"'
+NONE="{\"servicenow_node_stats_pages\": [{\"name\": \"Node 23\", \"url\": \"http://127.0.0.1:$dead/stats.do\"}]}"
+PLAYBOOK=playbooks/servicenow_health.yml scenario "stats pages: the one listed page does not answer - never green having read nothing" 2 \
+    $((port + 43)) api goodpw -i "$work/inv-none.yml" -e "$HOSTOK" -e "$NONE" -e servicenow_health_part=nodes
+expect "stats pages unread: the finding" "the stats page of the ServiceNow node Node 23 (127.0.0.1) did not answer at http://127.0.0.1:$dead/stats.do"
+expect "stats pages unread: the line" 'hosts read: 0 of 1'
+PLAYBOOK=playbooks/servicenow_health.yml scenario "stats pages: an entry without a url - a clear failure, nothing read" 2 \
+    $((port + 43)) api goodpw -i "$work/inv-none.yml" -e "$HOSTOK" -e '{"servicenow_node_stats_pages": [{"name": "Node 21"}]}' -e servicenow_health_part=nodes
+expect "stats pages wrong: why" 'servicenow_node_stats_pages, entry 1: needs name and url'
+deny "stats pages wrong: nothing read" 'Nodes: '
 
 if [ "$fails" -gt 0 ]; then echo "$fails check(s) failed"; exit 1; fi
 echo "all ServiceNow test-ticket, tickets, VM request pickup and ServiceNow health checks (MID Servers, self-hosted nodes) passed"

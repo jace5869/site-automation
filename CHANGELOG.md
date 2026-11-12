@@ -1,5 +1,59 @@
 # Changelog
 
+## 1.32.0 — 2026-11-12
+
+**Updating without scripts:** paste `site-automation-1.32.0-changed-since-1.29.0.zip` as it is (from an older version,
+its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`. Set up: step 94, optional (friendly names for the nodes; nodes AAP does not log in to). Read
+**Behaviour changes** below before you update.
+
+**ServiceNow health, self-hosted: each node's own stats page, and only its own** (docs/SERVICENOW_SETUP.md,
+"Self-hosted instance").
+
+- **Each node is asked at its own address.** In turn: the node's own name (its inventory name, then its FQDN), then
+  127.0.0.1, then 127.0.0.1 with a name as the Host header. The instance's address (`glide.servlet.uri`) is no longer
+  asked: a load balancer hands it to any node, so the numbers read there were not that node's.
+- **Which address answered**, per node: the *Front-end nodes* table has a short *Stats page answered at* column
+  (`127.0.0.1:16000 (http)`).
+- **A friendly name per node** (optional): the host variable `servicenow_node_label: Node 1`, or
+  `servicenow_node_labels: {node01.yoursite.mil: Node 1}`. Shown beside the host - *Node 1 (node01.yoursite.mil)* - in
+  the *Front-end nodes* table, the findings and the *Start here* cards. The tickets' keys do not change.
+- **Nodes AAP does not log in to** (optional, off by default): `servicenow_node_stats_pages`, a list of
+  `{name: "Node 1", url: "https://node01.yoursite.mil:16000/stats.do"}`. Each page is read from the AAP side, no SSH:
+  the same numbers, reads and thresholds. Their rows say *stats page only* for the unit, the log, the disk and
+  fapolicyd. A host that is also a node of the group is read once, over SSH. An entry that does not answer is a
+  finding that names it and what was tried - the job never ends green having read nothing.
+- **A stats page behind the instance's login.** A node that answers its normal web page in place of the numbers is
+  now asked again with the login (`servicenow_node_stats_auth: auto`). When the login is refused too, the finding
+  says it plainly: *the stats page wants a login this account cannot give (the API account needs a role that may
+  read stats.do)* - not the start of an HTML page. Its hint no longer suggests `servicenow_node_stats_auth: basic`
+  when the login was already sent: it says what the page wants (single sign-on, or an account with access to the UI
+  or to `stats.do`) and that the XML page can be tried,
+  `servicenow_node_stats_url: "https://{fqdn}:{port}/xmlstats.do"`.
+- **A node of another instance in the group.** *X is in the inventory group, but not in the instance's cluster* now
+  names the units the node runs - *node05 (runs snc_dev)* - so you see it belongs to another instance. The hint: one
+  job template per instance (its own group, its own ServiceNow credential), or `servicenow_cluster_check: false`.
+
+**Behaviour changes:**
+
+- The instance's address is no longer asked for a node's stats page, and the login is no longer sent to it. A
+  `servicenow_node_stats_url` that names the instance's address is still asked, without the login: name the node
+  (`{fqdn}` or `{host}`) to have the login sent.
+- `servicenow_node_stats_auth: auto` now also sends the login when the node answers its normal web page (HTTP 200,
+  an HTML page with no numbers) - as before only over HTTPS to the node's own name, or to 127.0.0.1.
+- A stats page that refuses the login is worded *wants a login this account cannot give*; it was *was not read
+  (... the last answer: HTTP 403)*. The finding's key is the same, so its ticket stays.
+- The *Front-end nodes* table has one more column, and its first is the friendly name beside the host when one is set.
+- No setting changed its name or default. `servicenow_node_stats_url` still forces one address.
+
+Tests: tests/test_servicenow_node.py (OwnAddress - a listener at the "instance's address" with other numbers is never
+read, fails on 1.29.0; the normal web page asks for the login too, fails on 1.29.0; Labels, StatsPagesPlan, StatsPages;
+the login already sent is not suggested again; the units named for a node of another instance) and
+tests/servicenow/run_servicenow_test.sh (current ansible-core and 2.16: own address, friendly names, stats pages -
+read, not answering, an entry without a url, no node in the inventory), tests/test_report_fit.py (the wider table fits).
+
+SA_VERSION 1.32.0; the PDFs at 1.32.0.
+
 ## 1.29.0 — 2026-11-12
 
 **Updating without scripts:** paste `site-automation-1.29.0-changed-since-1.28.0.zip` as it is (from an older version,
@@ -107,7 +161,7 @@ tests/stig/run_stigman_real_test.sh against STIG Manager 1.6.18 (not in CI).
 
 SA_VERSION 1.26.0; the PDFs at 1.26.0.
 
-**To do, if you have not yet: what 0.20.0 to 1.29.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.29.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing).** In order; each step works without
+**To do, if you have not yet: what 0.20.0 to 1.32.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.32.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.32.0 step 94).** In order; each step works without
 the ones after it. Steps 89 and 90 belong to 1.23.0, which is not in this release.
 
 1. **Your logo** (0.20.0). A PNG with a transparent background, about 160 px tall and under 100 KB, in
@@ -803,6 +857,24 @@ the ones after it. Steps 89 and 90 belong to 1.23.0, which is not in this releas
     3. Launch it once with Job type **Check**: its report lists each host's collection, the moves and the new assets.
     4. Schedule it (every 15 to 60 minutes, **Concurrent jobs** off), then turn Watcher off yourself.
     Details: docs/CKL_IMPORT.md, "Switching over from STIG Manager Watcher".
+94. **ServiceNow health, self-hosted: names for the nodes, and nodes AAP does not log in to** (1.32.0) - both
+    optional; without them the job reads the nodes as before.
+    1. A friendly name per node: in the inventory, on each node, `servicenow_node_label: Node 1` - or in the
+       Variables of *ServiceNow health - nodes*:
+       ```yaml
+       servicenow_node_labels:
+         node01.yoursite.mil: Node 1
+         node03.yoursite.mil: Node 3
+       ```
+    2. Only for nodes AAP cannot log in to: list each node's own stats page in the same Variables. The execution
+       environment must reach that port.
+       ```yaml
+       servicenow_node_stats_pages:
+         - {name: "Node 5", url: "https://node05.yoursite.mil:16000/stats.do"}
+       ```
+    3. Run it. The *Front-end nodes* table shows each name beside its host, and *Stats page answered at* says which
+       address answered. A listed node's row says *stats page only*.
+    Details: docs/SERVICENOW_SETUP.md, "Self-hosted instance".
 
 ## 1.24.0 — 2026-11-11
 

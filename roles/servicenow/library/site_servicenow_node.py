@@ -33,14 +33,15 @@ options:
   log_max_mb: {description: At most this much of the end of each log file is read., type: int, default: 200}
   log_groups: {description: The most frequent messages kept., type: int, default: 10}
   timeout: {description: Seconds per request to the stats page., type: int, default: 10}
-  host_name: {description: "The node's name in the inventory: a Host header and an address to try for the stats page.", type: str, default: ''}
+  host_name: {description: "The node's name in the inventory: with its FQDN, the addresses asked for the stats page before 127.0.0.1. The instance's address (glide.servlet.uri) is never asked - only sent as a Host header to 127.0.0.1.", type: str, default: ''}
   stats_url: {description: "The stats page's address, forced ({port} and {host} filled in; '' = try the ways in turn).", type: str, default: ''}
   sem_wait_ms: {description: "A slow transaction's semaphore wait from this many ms is a semaphore problem.", type: int, default: 1000}
   stats_auth: {description: "auto - the ServiceNow API login when every way without it is refused (401/403, a redirect, a login page); none; basic - from the start. Sent only over HTTPS to the node's own name, or to 127.0.0.1. A redirect is never followed.", type: str, default: auto}
   validate_certs: {description: "Check the stats page's HTTPS certificate and name (the host's trust store). false = not checked.", type: bool, default: true}
   stats_user: {description: The ServiceNow API account (SN_USERNAME)., type: str, default: ''}
   stats_password: {description: Its password (SN_PASSWORD); never in the result., type: str, default: '', no_log: true}
-  kind: {description: "node (a front-end node) or db (the database host).", type: str, default: node}
+  kind: {description: "node (a front-end node), db (the database host) or pages (the stats pages of the option pages, read from where this runs).", type: str, default: node}
+  pages: {description: "kind pages: [{name, url}] - each node's stats page by its own address, read without SSH to the node (the login only over HTTPS to that address's host; no redirect followed).", type: list, elements: dict, default: []}
   paths: {description: "More paths whose filesystems are reported (the database's: /database).", type: list, elements: str, default: []}
   fapolicyd: {description: Read fapolicyd's state and today's denials., type: bool, default: true}
   fapolicyd_since: {description: "ausearch -ts: from when the denials are read.", type: str, default: today}
@@ -58,12 +59,13 @@ RETURN = r'''
 hostname: {description: The node's own name., type: str}
 units:
   description: "[{unit, env, active, sub, enabled, since, node_dir, port, port_from, stats: {status, page, why, up, node_id,
-                 uptime, started, mem_used, mem_max, mem_pct, sem_in_use, sem_available, sem_queued, sem_queued_samples,
+                 answered, uptime, started, mem_used, mem_max, mem_pct, sem_in_use, sem_available, sem_queued, sem_queued_samples,
                  sem_sets, sched_workers, sched_queue, transactions, found}, log: {files, hours, severe, oom, semaphore,
                  groups: [{message, count, kinds, last}], why}}]"
   type: list
 disk: {description: "[{path, size_gb, used_pct, free_gb}] - the install folder's filesystem and /'s (once when the same).", type: list}
 memory: {description: "{total_mb, available_mb, available_pct, swap_total_mb, swap_used_pct}", type: dict}
+pages: {description: "kind pages: [{name, url, host, port, stats}] - stats as a unit's.", type: list}
 missing: {description: "The units asked for that are not installed here (not judged: a box runs one of them).", type: list}
 looked_for: {description: The units looked for ([] = every snc_*.service)., type: list}
 fapolicyd: {description: "{installed, active, enabled, since, denials, groups: [{exe, path, count, critical}], why}", type: dict}
@@ -360,12 +362,17 @@ def parse_stats(text):
 
 
 LOGIN = re.compile(r"login\.do|j_security_check|name=[\"']user_name[\"']|<title>\s*Log ?in", re.I)
+# the instance's normal web page where the stats were asked for (an SSO-style login page names none of the above):
+# with servicenow_node_stats_auth auto it counts as asking for a login too (1.32.0)
+WEBPAGE = re.compile(r"^\s*(<!DOCTYPE\s+html|<html[\s>])", re.I)
 
 
-def stats_bases(port, names, forced=""):
-    """The ways to ask the node, in order: [(url_base, Host header or '')]. The node's own name first (https, then
-    http: the stats page may answer only there), then 127.0.0.1 (http, https - a TLS connector answers plain HTTP with
-    400), then 127.0.0.1 with the name as the Host header. forced (servicenow_node_stats_url: {fqdn}, {host}, {port}):
+def stats_bases(port, names, forced="", header_names=None):
+    """The ways to ask the node, in order: [(url_base, Host header or '')]. The node's own names first - names: its
+    inventory name and its FQDN (https, then http: the stats page may answer only there) - then 127.0.0.1 (http, https -
+    a TLS connector answers plain HTTP with 400), then 127.0.0.1 with a name as the Host header: its own names, then
+    header_names (the instance's name, glide.servlet.uri's host). The instance's name is never an address that is asked
+    (1.32.0): behind a load balancer it reaches any node. forced (servicenow_node_stats_url: {fqdn}, {host}, {port}):
     that one only."""
     names = [n for n in dict.fromkeys(names or []) if n and n not in ("localhost", "127.0.0.1")]
     fqdn = next((n for n in names if "." in n), names[0] if names else "127.0.0.1")
@@ -375,16 +382,17 @@ def stats_bases(port, names, forced=""):
     for n in names:
         out += [("https://%s:%d" % (n, port), ""), ("http://%s:%d" % (n, port), "")]
     out += [("http://127.0.0.1:%d" % port, ""), ("https://127.0.0.1:%d" % port, "")]
-    for n in names:
+    for n in list(dict.fromkeys(names + [h for h in header_names or [] if h and h not in ("localhost", "127.0.0.1")])):
         out += [("http://127.0.0.1:%d" % port, n), ("https://127.0.0.1:%d" % port, n)]
     return out
 
 
-def may_send_login(url, names):
-    """The ServiceNow login goes only to this node: over HTTPS to its own name, or to 127.0.0.1."""
-    rest = re.sub(r"^[a-z]+://", "", url).split("/")[0]
-    host = rest.rsplit(":", 1)[0] if ":" in rest else rest
-    return host == "127.0.0.1" or (url.startswith("https://") and host in (names or []))
+def may_send_login(url, names, local=True):
+    """The ServiceNow login goes only to this node: over HTTPS to one of names (its own names; a listed stats page's
+    host), or to 127.0.0.1 (local false - a page read from the AAP side: never). Never to the instance's address."""
+    host = _url_host(url)
+    return (local and host == "127.0.0.1") or (url.lower().startswith("https://")
+                                               and host.lower() in [str(n).lower() for n in names or [] if n])
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -486,25 +494,37 @@ def fetch(url, host, timeout, login=None, validate=True):
         return -1, str(r)
 
 
-def read_stats(port, pages, samples, interval, timeout, host_names=None, forced="", auth="auto", login=None, validate=True):
+def answered_at(base, host=""):
+    """The address that answered, short, for the report's cell: 'node01.example.mil:16000', '127.0.0.1:16000', or
+    '127.0.0.1:16000 as sn.example.mil' (a Host header). Plain HTTP is said."""
+    m = re.match(r"^([a-z]+)://([^/]+)", base or "", re.I)
+    if not m:
+        return base or ""
+    return m.group(2) + ((" as %s" % host) if host else "") + (" (http)" if m.group(1).lower() == "http" else "")
+
+
+def read_stats(port, pages, samples, interval, timeout, host_names=None, forced="", auth="auto", login=None, validate=True,
+               header_names=None, local=True):
     """The stats page, read samples times: the first way (stats_bases) and page that answers 200 with numbers on it is
     used for every read. auth auto: when none answered with numbers and one asked for a login (401 / 403, a redirect,
     a login page), the ways are asked again with the ServiceNow API login (basic; only where may_send_login); basic: with it
     from the start; none: never. Not read: what was tried (never the login), the last status and the start of the
     last answer. A redirect is never followed (the login is not sent on): it is a failed try that says where it
-    pointed. HTTPS is checked unless validate is false."""
+    pointed. HTTPS is checked unless validate is false. header_names: names sent only as a Host header to 127.0.0.1
+    (the instance's); local false (a listed page read from the AAP side): no login to 127.0.0.1. answered: the address
+    that answered, short, for the report."""
     st = {"status": 0, "page": "", "url": "", "why": "", "up": False, "sem_queued_samples": [], "tried": [], "body": "",
-          "login": False}
+          "login": False, "answered": "", "login_refused": False}
     if not port and not forced:
         st["why"] = "no port: set servicenow_node_port, or glide.servlet.port in the node's glide.properties"
         return st
     names = [n for n in host_names or [] if n]
-    ways = [(b, h, pg) for b, h in stats_bases(port, names, forced) for pg in ([""] if forced else pages)]
+    ways = [(b, h, pg) for b, h in stats_bases(port, names, forced, header_names) for pg in ([""] if forced else pages)]
     login = login if login and login[0] and login[1] else None
 
     def attempt(base, host, page, use_login):
         url = base + page
-        lg = login if use_login and may_send_login(url, names) else None
+        lg = login if use_login and may_send_login(url, names, local) else None
         if use_login and not lg:
             return None
         code, body = fetch(url, host, timeout, lg, validate)
@@ -532,8 +552,12 @@ def read_stats(port, pages, samples, interval, timeout, host_names=None, forced=
                     got, chosen = parse_stats(body), (base, host, page, use_login)
                     break
                 # a redirect (to login.do, an SSO page) is asked for a login too: never followed
-                if code in (401, 403) or 300 <= code < 400 or (code == 200 and LOGIN.search(body)):
+                wants = code in (401, 403) or 300 <= code < 400 or (code == 200 and LOGIN.search(body)) \
+                    or (code == 200 and auth == "auto" and WEBPAGE.match(body or ""))
+                if wants:
                     needs_login = True
+                if use_login and (wants or (code == 200 and WEBPAGE.match(body or ""))):
+                    st["login_refused"] = True     # asked with the login, and still no stats: this account may not read them
                 st["status"] = code
                 st["why"] = ("%s%s: %s" % (base + page, (" (Host: %s)" % host) if host else "",
                                            ("HTTP %s%s" % (code, (", " + body) if 300 <= code < 400 else ""))
@@ -544,12 +568,57 @@ def read_stats(port, pages, samples, interval, timeout, host_names=None, forced=
                 break
         if got is None:
             st["status"] = last_http if last_http else -1       # -1: nothing answered at all (the node is down)
+            if not st["tried"] and ways:                        # basic: the login may go to none of the addresses
+                st["why"] = ("not asked: with servicenow_node_stats_auth basic the login is sent only over HTTPS to the "
+                             "node's own name%s, and no address here is one" % (", or to 127.0.0.1 on it" if local else ""))
             break
         st.update(got)
         st.update({"page": chosen[2], "url": chosen[0] + chosen[2], "host_header": chosen[1], "login": chosen[3],
-                   "why": "", "up": True, "status": 200, "body": ""})
+                   "why": "", "up": True, "status": 200, "body": "", "answered": answered_at(chosen[0], chosen[1]),
+                   "login_refused": False})
         st["sem_queued_samples"].append(got["sem_queued"])
     return st
+
+
+def own_names(*names):
+    """The node's own names, in order, once each (not localhost): its inventory name, its FQDN."""
+    return [n for n in dict.fromkeys(str(x or "").strip() for x in names) if n and n not in ("localhost", "127.0.0.1")]
+
+
+def page_port(url):
+    """The port of a URL (443 for https, 80 for http when none is written; 0 when it cannot be told)."""
+    m = re.match(r"^(https?)://(?:[^/@]*@)?(\[[^\]]*\]|[^/:]*)(?::(\d+))?", url or "", re.I)
+    if not m:
+        return 0
+    return int(m.group(3)) if m.group(3) else (443 if m.group(1).lower() == "https" else 80)
+
+
+def read_pages(entries, samples, interval, timeout, auth="auto", login=None, validate=True):
+    """servicenow_node_stats_pages, read from where this runs (the AAP side), no SSH to the nodes: each entry {name,
+    url} asked at its own URL only, the same way a node's page is (the same numbers, samples, no redirect followed);
+    the login only over HTTPS and only to the entry's own host. The entries are read side by side (each waits between
+    its samples). -> [{name, url, host, port, stats}] in the entries' order; an entry not read: stats.up false with
+    what was tried."""
+    import threading
+    out = [None] * len(entries or [])
+
+    def one(i, e):
+        url = str((e or {}).get("url") or "").strip()
+        host = _url_host(url)
+        try:
+            st = read_stats(page_port(url), [""], samples, interval, timeout, [host], url, auth, login, validate, local=False)
+        except Exception as err:            # noqa: BLE001 - one entry's failure is its own finding, the others are read
+            st = {"status": -1, "why": str(err)[:200], "up": False, "sem_queued_samples": [], "tried": [], "body": "",
+                  "url": "", "page": "", "login": False, "answered": "", "login_refused": False}
+        out[i] = {"name": str((e or {}).get("name") or "").strip() or host, "url": url, "host": host, "port": page_port(url),
+                  "stats": st}
+
+    threads = [threading.Thread(target=one, args=(i, e)) for i, e in enumerate(entries or [])]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    return out
 
 
 # ---- the log --------------------------------------------------------------------------------------------------
@@ -923,7 +992,8 @@ def main():
         samples=dict(type="int", default=3), interval=dict(type="float", default=5),
         log_hours=dict(type="float", default=24), log_glob=dict(type="str", default="localhost_log*"),
         log_max_mb=dict(type="int", default=200), log_groups=dict(type="int", default=10),
-        timeout=dict(type="int", default=10), kind=dict(type="str", default="node", choices=["node", "db"]),
+        timeout=dict(type="int", default=10), kind=dict(type="str", default="node", choices=["node", "db", "pages"]),
+        pages=dict(type="list", elements="dict", default=[]),
         host_name=dict(type="str", default=""), stats_url=dict(type="str", default=""),
         stats_auth=dict(type="str", default="auto", choices=["auto", "none", "basic"]),
         stats_user=dict(type="str", default=""), stats_password=dict(type="str", default="", no_log=True),
@@ -936,6 +1006,11 @@ def main():
         db_history_file=dict(type="str", default=""), db_history_keep_days=dict(type="int", default=60)),
         supports_check_mode=True)
     p = module.params
+    if p["kind"] == "pages":
+        got = read_pages(p["pages"], p["samples"], p["interval"], p["timeout"], p["stats_auth"],
+                         (p["stats_user"], p["stats_password"]), p["validate_certs"])
+        module.exit_json(changed=False, pages=got, msg="; ".join("%s %s" % (x["name"], "read" if x["stats"]["up"] else "not read")
+                                                                  for x in got) or "no stats page listed")
     home = p["home"].rstrip("/") or "/"
     fa = fapolicyd(p["fapolicyd_since"], p["fapolicyd_critical"]) if p["fapolicyd"] else {}
     if p["kind"] == "db":
@@ -955,9 +1030,12 @@ def main():
         port, port_from = port_for(u, env, p["port"], ndir, home, show)
         active = show.get("ActiveState", "") == "active"
         uri = properties(os.path.join(ndir, "conf", "glide.properties")).get("glide.servlet.uri", "")
-        names = [p["host_name"], socket.getfqdn(), re.sub(r"^[a-z]+://", "", uri).split("/")[0].split(":")[0]]
+        # asked at the node's own names only; the instance's name (behind a load balancer: any node) only as a Host
+        # header on 127.0.0.1
+        names = own_names(p["host_name"], socket.getfqdn())
         st = read_stats(port, p["stats_pages"], p["samples"], p["interval"], p["timeout"], names, p["stats_url"],
-                        p["stats_auth"], (p["stats_user"], p["stats_password"]), p["validate_certs"]) if p["stats"] and active else \
+                        p["stats_auth"], (p["stats_user"], p["stats_password"]), p["validate_certs"],
+                        header_names=[_url_host(uri)] if uri else []) if p["stats"] and active else \
             {"status": 0, "why": "not read: the unit is not running" if p["stats"] else "not read (servicenow_node_stats false)",
              "up": False, "sem_queued_samples": []}
         units.append({"unit": u, "env": env, "active": show.get("ActiveState", "unknown"), "sub": show.get("SubState", ""),

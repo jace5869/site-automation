@@ -13,6 +13,16 @@
       {{ (query('ansible.builtin.inventory_hostnames', ansible_limit) | reject('equalto', 'localhost') | list)
          if ansible_limit | default('', true) | length > 0 else [] }}
     _snc_nodes: "{{ _servicenow_node_hosts }}"
+    # servicenow_node_stats_pages: the nodes read by their stats page only, from the AAP side (1.32.0)
+    _snc_pages: "{{ servicenow_node_stats_pages | sn_node_pages_plan(_servicenow_node_hosts) }}"
+  run_once: true
+
+- name: ServiceNow health | servicenow_node_stats_pages is a list of {name, url}
+  ansible.builtin.assert:
+    that: _snc_pages.errors | length == 0
+    fail_msg: "{{ _snc_pages.errors | join('; ') }}. Nothing was read."
+    quiet: true
+  when: servicenow_check_nodes | bool and _snc_part != 'mids'
   run_once: true
 
 - name: ServiceNow health | servicenow_health_part is all, mids or nodes
@@ -24,14 +34,15 @@
 
 - name: ServiceNow health | front-end nodes to read (servicenow_health_part nodes)
   ansible.builtin.assert:
-    that: _snc_nodes | length > 0
+    that: _snc_nodes | length > 0 or _snc_pages.read | length > 0
     fail_msg: >-
       servicenow_nodes_group '{{ servicenow_nodes_group }}'
       {{ 'is not a group' if servicenow_nodes_group not in groups else 'has no hosts' }} in this job's inventory, and
       {{ ("the Limit '" ~ ansible_limit ~ "' names no front-end node (only MID Server or database hosts)")
          if _snc_in_limit | length > 0 else 'there is no Limit naming the nodes' }}: no front-end nodes, so the job would read nothing. Groups in this inventory: {{ _snc_groups }}.
       Hosts: {{ groups['all'] | sort | join(', ') | truncate(400) }}. Fix: add the group servicenow_nodes, set
-      servicenow_nodes_group to one of those groups, or put the nodes in the Limit (node01,node03).
+      servicenow_nodes_group to one of those groups, put the nodes in the Limit (node01,node03), or list their stats
+      pages in servicenow_node_stats_pages.
     quiet: true
   when: servicenow_check_nodes | bool and _snc_part == 'nodes'
   run_once: true
@@ -69,4 +80,14 @@
       {{ (_snc_nodes | length) ~ ' front-end node(s) ' ~ ('(the group ' ~ servicenow_nodes_group ~ ')' if groups[servicenow_nodes_group] | default([]) | length > 0
          else '(the Limit: no group ' ~ servicenow_nodes_group ~ ' in this inventory)') ~ ': ' ~ (_snc_nodes | sort | join(', ') | truncate(400)) }}
   when: _snc_part != 'mids' and servicenow_check_nodes | bool and _snc_nodes | length > 0
+  run_once: true
+
+- name: ServiceNow health | the nodes read by their stats page only (servicenow_node_stats_pages)
+  ansible.builtin.debug:
+    msg: >-
+      {{ (_snc_pages.read | length) ~ ' node(s) read by the stats page only, from the AAP side: '
+         ~ (_snc_pages.read | map(attribute='name') | join(', ') | truncate(400))
+         ~ ((' - not these, read over SSH instead: ' ~ (_snc_pages.ssh | map(attribute='name') | join(', ') | truncate(300)))
+            if _snc_pages.ssh | length > 0 else '') }}
+  when: _snc_part != 'mids' and servicenow_check_nodes | bool and (_snc_pages.read | length > 0 or _snc_pages.ssh | length > 0)
   run_once: true

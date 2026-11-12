@@ -4,7 +4,9 @@
 the semaphore queue per read in turn (the last one kept). Like a real node's connector, lower case options:
 tls=CERT.pem - HTTPS on the port, and a plain HTTP request answered 400 with an empty body (Tomcat's TLS connector);
 host=NAME - only a request whose Host is NAME is answered, others 400 (a node that wants its own name);
-auth=USER:PASSWORD - basic auth, else 401."""
+auth=USER:PASSWORD - basic auth, else 401; bind=ADDRESS - listens there, not on 127.0.0.1 (another address of this
+host: what a load balancer's address would be); ui=USER:PASSWORD - without that login the instance's normal web page
+(HTTP 200, no login form on it), with it the stats; ui=never - that page whatever is sent."""
 import base64
 import os
 import socket
@@ -18,7 +20,7 @@ vals = {"MEMUSED": "1200.0", "ACTIVE": "3", "SEMAVAIL": "14", "SEMUSE": "2", "SE
 opts = {}
 for kv in sys.argv[3:]:
     k, v = kv.split("=", 1)
-    if k in ("tls", "host", "auth"):
+    if k in ("tls", "host", "auth", "bind", "ui"):
         opts[k] = v
     else:
         vals[k.upper()] = v
@@ -51,6 +53,15 @@ class H(BaseHTTPRequestHandler):
             return
         if opts.get("auth") and self.headers.get("Authorization") != "Basic " + base64.b64encode(opts["auth"].encode()).decode():
             self.bare(401, {"WWW-Authenticate": 'Basic realm="ServiceNow"'})
+            return
+        if opts.get("ui") and self.headers.get("Authorization") != "Basic " + base64.b64encode(opts["ui"].encode()).decode():
+            page = (b'<!DOCTYPE html><html lang="en" class=" ltr " data-doctype="true" dir="ltr">'
+                    b"<head><title>ServiceNow</title></head><body><div id=\"sso\"></div></body></html>")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(page)))
+            self.end_headers()
+            self.wfile.write(page)
             return
         if kind == "403":
             self.send_response(403)
@@ -88,4 +99,4 @@ class Server(ThreadingHTTPServer):
         return sock, addr
 
 
-Server(("127.0.0.1", port), H).serve_forever()
+Server((opts.get("bind") or "127.0.0.1", port), H).serve_forever()

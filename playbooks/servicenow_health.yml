@@ -17,6 +17,10 @@
 #     (roles/check_mariadb, the "MariaDB monitor" credential), /database and the data dir's disk, the database's size
 #     against it, its largest schemas and tables, its growth; only with front-end nodes (servicenow_check_db auto), so an
 #     inventory that has that group for its Health check is not read here before
+#     Each node's stats page is asked at the node's own name (its inventory name, its FQDN), then 127.0.0.1 on it -
+#     never at the instance's address, which a load balancer hands to any node. A friendly name per node:
+#     servicenow_node_label (a host variable) or servicenow_node_labels. Nodes AAP cannot log in to:
+#     servicenow_node_stats_pages [{name, url}] reads their stats pages from the AAP side (the stats page only).
 #   - fapolicyd on every node and the database host: active? today's denials, by program and path
 # It writes ONE thing: the database's size, kept for its growth in a small JSON file on the database host
 # (servicenow_db_history_file, under /var/lib/site-health; not in Check mode; servicenow_db_history: false = none).
@@ -114,6 +118,7 @@
         servicenow_host_unreached: "{{ ((_snh_reach.msg | default('', true) | string | trim | replace('\n', ' ')) or 'unreachable') | truncate(300) }}"
         servicenow_node_result: >-
           {{ {'host': inventory_hostname, 'hostname': '', 'reachable': false, 'units': [], 'missing': [], 'disk': [], 'memory': {},
+              'label': servicenow_node_label | default('', true) | string | trim,
               'error': ((_snh_reach.msg | default('', true) | string | trim | replace('\n', ' ')) or 'unreachable') | truncate(300)} }}
       when: _snh_reach.unreachable | default(false) or 'reached' not in _snh_reach.stdout | default('')
 

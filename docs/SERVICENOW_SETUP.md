@@ -393,22 +393,66 @@ servicenow_db_hosts:         # the database host (servicenow_db_group) - already
   in its `logs` folder, its port `glide.servlet.port` in its `conf/glide.properties`.
 - **The stats page**, read from the node itself. The port: `servicenow_node_port` (a number, or per unit
   `{snc_prod: 16000, snc_test: 16001}`), else `glide.servlet.port` in the node's `conf/glide.properties` (that key
-  only), else the unit's command line (`-Dglide.servlet.port`), else the port the unit's java listens on. It is
-  asked for in turn - `https://<the node's name>:<port>`, `http://` on it, `http://127.0.0.1`, `https://127.0.0.1`
-  (a TLS connector answers plain HTTP with 400), then 127.0.0.1 with the node's name as the Host header; each
-  `/xmlstats.do`, then `/stats.do` - until one answers with the numbers. Or force one:
-  `servicenow_node_stats_url: "https://{fqdn}:{port}/stats.do"`. A page that asks for a login (401, 403, a login page)
-  is asked again with the ServiceNow API credential's login (basic auth; `servicenow_node_stats_auth: auto`, or
-  `basic` from the start, `none` never) - sent only over HTTPS to the node's own name or to 127.0.0.1, and never
-  shown. A redirect (to login.do, an SSO page) is not followed, so the login never goes on to another address: that
-  try fails and says where it pointed. HTTPS is checked - the certificate and the name, with the node's own trust
-  store (`servicenow_node_validate_certs: true`): a self-signed certificate, or one from a CA the node does not trust,
-  needs that CA in the node's trust store, or the setting false. Plain HTTP on 127.0.0.1 is read as before. Not read: the finding says the port and the last answer, and lists what was tried and how the answer began. The numbers are found by their names on the page (memory max and in use, the
-  semaphore sets' in use and queue depth, the scheduler's workers and queue, active transactions,
-  uptime, the node's ID). A page that answers but holds none of them is said, and a field it
-  cannot find is shown as `-`. The page is read 3 times, 5 seconds apart
-  (`servicenow_node_stats_samples`, `_interval`): a semaphore queue counts only when it is there
-  in every read.
+  only), else the unit's command line (`-Dglide.servlet.port`), else the port the unit's java listens on.
+  - **Where it is asked**, in turn, until one answers with the numbers: `https://<the node's own name>:<port>`,
+    `http://` on it (its inventory name, then its FQDN), `http://127.0.0.1`, `https://127.0.0.1` (a TLS connector
+    answers plain HTTP with 400), then 127.0.0.1 with a name as the Host header (the node's, then the
+    instance's); each `/xmlstats.do`, then `/stats.do`.
+  - **The instance's address is never asked** (`glide.servlet.uri`): a load balancer hands it to any node, so its
+    numbers are not this node's. The report's *Stats page answered at* column says which address answered, per node.
+  - **Or force one address:** `servicenow_node_stats_url: "https://{fqdn}:{port}/stats.do"`.
+  - **A page that asks for a login** (401, 403, a login page - or, with `auto`, the instance's normal web page in
+    place of the numbers) is asked again with the ServiceNow API credential's login (basic auth;
+    `servicenow_node_stats_auth: auto`, or `basic` from the start, `none` never). The login is sent only over HTTPS
+    to the node's own name (its inventory name or FQDN) or to 127.0.0.1, and never shown.
+  - **The login refused too** (the web page again, 401 or 403): the finding says *the stats page wants a login this
+    account cannot give (the API account needs a role that may read stats.do)*. The page wants single sign-on, or
+    the account has no access to the UI or to `stats.do`. Give the account that role, or try the XML page:
+    `servicenow_node_stats_url: "https://{fqdn}:{port}/xmlstats.do"`.
+  - **A redirect** (to login.do, an SSO page) is not followed, so the login never goes on to another address: that
+    try fails and says where it pointed.
+  - **HTTPS is checked** - the certificate and the name, with the node's own trust store
+    (`servicenow_node_validate_certs: true`): a self-signed certificate, or one from a CA the node does not trust,
+    needs that CA in the node's trust store, or the setting false. Plain HTTP on 127.0.0.1 is read as before.
+  - **Not read:** the finding says the port and the last answer, and lists what was tried and how the answer began.
+  - **The numbers** are found by their names on the page (memory max and in use, the semaphore sets' in use and
+    queue depth, the scheduler's workers and queue, active transactions, uptime, the node's ID). A page that
+    answers but holds none of them is said, and a field it cannot find is shown as `-`. The page is read 3 times,
+    5 seconds apart (`servicenow_node_stats_samples`, `_interval`): a semaphore queue counts only when it is there
+    in every read.
+
+**A friendly name per node** (optional). The report shows it beside the host - *Node 1 (node01.yoursite.mil)* - in
+the *Front-end nodes* table, the findings and the *Start here* cards. Either way:
+
+- on the node, in the inventory: the host variable `servicenow_node_label: Node 1`;
+- or by host, in the template's Variables:
+
+  ```yaml
+  servicenow_node_labels:
+    node01.yoursite.mil: Node 1
+    node03: Node 3            # the inventory name, or its short name
+  ```
+
+The host variable wins. The host stays in every line, and the tickets' keys do not change.
+
+**Nodes AAP does not log in to** (optional, off by default): list each node's own stats page, and the job reads it
+from the AAP side - no SSH to that node.
+
+```yaml
+servicenow_node_stats_pages:
+  - {name: "Node 1", url: "https://node01.yoursite.mil:16000/stats.do"}
+  - {name: "Node 3", url: "https://node03.yoursite.mil:16000/stats.do"}
+```
+
+- The same numbers, the same 3 reads and the same thresholds as a node read over SSH.
+- A redirect is never followed. The login goes only over HTTPS, and only to the host the entry names.
+- The unit, the log, the disk and fapolicyd of such a node are not read: its rows say *stats page only*.
+- A host that is also a node of `servicenow_nodes` is read once, over SSH; the entry's name becomes its friendly name.
+- An entry that does not answer is a finding that names the entry and what was tried (critical: not reached;
+  warning: answered, but not read). The job never ends green having read nothing.
+- The execution environment must reach each address: the node's port open from AAP, and the node's CA trusted there
+  (or `servicenow_node_validate_certs: false`).
+- With no node in the inventory at all, the listed pages are the nodes (`servicenow_health_part: nodes`).
 
 | Finding | Severity | Setting |
 |---|---|---|
@@ -417,6 +461,8 @@ servicenow_db_hosts:         # the database host (servicenow_db_group) - already
 | a node unit that does not start at boot | warning | |
 | its stats page not answering while the unit runs | critical | |
 | the stats page refused (HTTP 401/403), no port found, nothing on it recognised | warning | `servicenow_node_port` |
+| the stats page wants a login the API account cannot give | warning | `servicenow_node_stats_auth`, `servicenow_node_stats_url` |
+| a listed stats page (`servicenow_node_stats_pages`) not reached | critical | `servicenow_node_stats_pages` |
 | JVM memory in use 85 % of its max (95 %: critical) | warning | `servicenow_node_mem_warn_pct`, `_critical_pct` |
 | transactions queued for a semaphore in every read (10 or more: critical) | warning | `servicenow_node_semaphore_queue_critical` |
 | more than 50 scheduled jobs waiting for a worker | warning | `servicenow_node_scheduler_queue_warn` |
@@ -447,9 +493,14 @@ when the inventory has front-end nodes (`servicenow_cluster_check: auto`; `true`
 | a node online, but its last heartbeat older than 10 minutes (hung) | critical | `servicenow_cluster_stale_minutes` |
 | an online node whose host is not in `servicenow_nodes` (not checked) | warning | |
 | an offline node not in the inventory (a retired node's record, which can be deleted) | warning | |
-| a host of `servicenow_nodes` not in the cluster | warning | |
+| a host of `servicenow_nodes` not in the cluster (the finding names the units it runs) | warning | `servicenow_cluster_check` |
 
 A table the account cannot read is said in the job's output, not counted as a problem.
+
+**Two instances** (say production and development): a node that runs `snc_dev` is not in the cluster of the
+production instance, and the finding says so - *node05 (runs snc_dev) is in the inventory group ..., but not in the
+instance's cluster*. Use one job template per instance: its own group (`servicenow_nodes_group`) and its own
+ServiceNow credential. Or `servicenow_cluster_check: false`.
 
 **fapolicyd**, on every node and the database host (as root, read-only): is it active, and what did it deny
 today (`ausearch -m FANOTIFY -ts today`), grouped by the program and the path denied - a table in the report.

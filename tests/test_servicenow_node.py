@@ -40,7 +40,8 @@ def unit(name="snc_prod.service", env="prod", active="active", enabled="enabled"
     st = {"status": status, "page": "/xmlstats.do" if up else "", "why": why, "up": up, "node_id": node_id, "uptime": "1 Days",
           "mem_used": mem[0], "mem_max": mem[1], "mem_pct": round(100.0 * mem[0] / mem[1], 1) if up else None,
           "sem_in_use": 2.0, "sem_queued": semq[-1] if semq else None, "sem_queued_samples": list(semq) if up else [],
-          "sched_workers": 8.0, "sched_queue": schedq, "transactions": 3.0}
+          "sched_workers": 8.0, "sched_queue": schedq, "transactions": 3.0,
+          "answered": "127.0.0.1:%d (http)" % port if up else ""}
     return {"unit": name, "env": env, "active": active, "sub": "running" if active == "active" else "dead", "enabled": enabled,
             "node_dir": "/glide/nodes/%s_%d" % (env, port), "port": port, "port_from": "glide.properties", "stats": st,
             "log": {"dir": "/glide/nodes/%s_%d/logs" % (env, port), "files": ["localhost_log.2026-11-09.txt"], "hours": 24,
@@ -240,6 +241,60 @@ class StatsWays(unittest.TestCase):
         self.assertTrue(nm.may_send_login("https://node01.invalid:3306/x", ["node01.invalid"]))
         self.assertFalse(nm.may_send_login("http://node01.invalid:3306/x", ["node01.invalid"]))        # not over plain HTTP
         self.assertFalse(nm.may_send_login("https://elsewhere.invalid:3306/x", ["node01.invalid"]))
+
+    def test_the_normal_web_page_asks_for_the_login_too(self):
+        # 1.32.0: HTTP 200 with the instance's own web page (an SSO-style page: no login form on it) - auto sends the login
+        port = self.serve("ui=svc_aap:S3cret-pw!")
+        st = nm.read_stats(port, ["/xmlstats.do"], 1, 0, 5, ["node01.invalid"], login=("svc_aap", "S3cret-pw!"))
+        self.assertTrue(st["up"] and st["login"], st)
+        self.assertIn("http://127.0.0.1:%d/xmlstats.do (with the login) -> 200" % port, st["tried"])
+        self.assertFalse(st["login_refused"])
+        self.assertNotIn("S3cret", json.dumps(st))
+        # none: never; and a page that is not HTML is not taken for one
+        st = nm.read_stats(port, ["/xmlstats.do"], 1, 0, 5, ["node01.invalid"], auth="none", login=("svc_aap", "S3cret-pw!"))
+        self.assertFalse(st["up"])
+        self.assertFalse([t for t in st["tried"] if "with the login" in t])
+        self.assertTrue(nm.WEBPAGE.match('<!DOCTYPE html><html lang="en">'))
+        self.assertTrue(nm.WEBPAGE.match("\n <html>"))
+        self.assertFalse(nm.WEBPAGE.match('<?xml version="1.0"?><xmlstats>'))
+        self.assertFalse(nm.WEBPAGE.match("Servlet statistics"))
+
+    def test_a_login_this_account_cannot_give_is_said_plainly(self):
+        for opt in ("ui=never", "auth=other:pw"):
+            port = self.serve(opt)
+            st = nm.read_stats(port, ["/xmlstats.do"], 1, 0, 5, ["node01.invalid"], login=("svc_aap", "S3cret-pw!"))
+            self.assertFalse(st["up"])
+            self.assertTrue(st["login_refused"], (opt, st))
+            u = unit(up=False, status=st["status"], port=port)
+            u["stats"] = dict(st)
+            f = nf.sn_node_findings([node(units=[u])], [], {})
+            self.assertEqual([(x["severity"], x["id"].rsplit(":", 1)[1]) for x in f], [("warning", "stats-unread")])
+            self.assertIn("wants a login this account cannot give (the API account needs a role that may read stats.do)", f[0]["summary"])
+            self.assertNotIn("DOCTYPE", f[0]["summary"] + f[0]["hint"])
+            self.assertIn("(with the login)", f[0]["hint"])
+            # the login was sent: the hint does not suggest sending it, it says what else to try
+            self.assertNotIn("servicenow_node_stats_auth (the ServiceNow API login: basic", f[0]["hint"])
+            self.assertIn("single sign-on, or an account without access to the UI or to stats.do", f[0]["hint"])
+            self.assertIn('servicenow_node_stats_url: "https://{fqdn}:{port}/xmlstats.do"', f[0]["hint"])
+        # a listed page (read from the AAP side): the same words
+        got = nm.read_pages([{"name": "Node 1", "url": "http://127.0.0.1:%d/xmlstats.do" % port}], 1, 0, 5)
+        self.assertFalse(got[0]["stats"]["login_refused"])            # plain HTTP: the login was never sent, so not refused
+
+    def test_the_login_already_sent_is_not_suggested_again(self):
+        # servicenow_node_stats_auth basic, the answer a page that is neither stats nor a web page this check knows
+        for sent, want in ((True, "single sign-on"), (False, "servicenow_node_stats_auth (the ServiceNow API login: basic")):
+            u = unit(up=False, status=200)
+            u["stats"].update(body="{}", tried=["https://node01.yoursite.mil:16000/stats.do%s -> 200" % (" (with the login)" if sent else "")])
+            f = nf.sn_node_findings([node(units=[u])], [], {})
+            self.assertIn("was not read", f[0]["summary"])
+            self.assertIn(want, f[0]["hint"])
+            self.assertEqual("servicenow_node_stats_auth (the ServiceNow API login: basic" in f[0]["hint"], not sent)
+            self.assertEqual("xmlstats.do" in f[0]["hint"], sent)
+            h = {"host": "127.0.0.1", "page_only": True, "label": "Node 21", "reachable": True, "page_url": "https://node21.yoursite.mil:16000/stats.do",
+                 "units": [dict(u, port=16000)]}
+            f = nf.sn_node_findings([h], [], {})
+            self.assertIn(want, f[0]["hint"])
+            self.assertEqual("servicenow_node_stats_auth (the ServiceNow API login: basic" in f[0]["hint"], not sent)
 
     def test_https_is_checked_by_default(self):
         ctx = nm.context()
@@ -514,6 +569,21 @@ class Cluster(unittest.TestCase):
             ("servicenow:cluster:node01:test_16001", "critical"),
             ("servicenow:cluster:node03:prod_16000", "warning")])        # offline and not in the inventory: a retired record
 
+    def test_missing_names_the_units_another_instance(self):
+        # the group's nodes run snc_dev, the credential's instance is another: the finding shows it, the hint says what to do
+        c = nf.sn_node_cluster([crow("node31:test_16000")], {"now": NOW})
+        o = {"cluster_read": True, "inventory": ["node01.yoursite.mil", "node06.yoursite.mil"], "group": "servicenow_nodes"}
+        n1 = node(units=[dict(unit(), unit="snc_dev.service"), dict(unit(), unit="snc_dev2.service")])
+        n2 = dict(node(units=[]), host="node06.yoursite.mil", hostname="node06")
+        f = {x["id"]: x for x in nf.sn_node_findings([n1, n2], c, o) if "cluster-missing" in x["id"]}
+        self.assertEqual(sorted(f), ["servicenow:cluster-missing:node01", "servicenow:cluster-missing:node06"])
+        one = f["servicenow:cluster-missing:node01"]
+        self.assertIn("node01 (runs snc_dev, snc_dev2) is in the inventory group servicenow_nodes, but not in the instance's "
+                      "cluster (sys_cluster_state): a node of another instance, or it never started", one["summary"])
+        self.assertIn("one job template per instance - its own group (servicenow_nodes_group) and its own ServiceNow credential", one["hint"])
+        self.assertIn("servicenow_cluster_check: false", one["hint"])
+        self.assertIn("node06 is in the inventory group", f["servicenow:cluster-missing:node06"]["summary"])   # no unit read: none named
+
     def test_not_read_nothing_said(self):
         self.assertEqual(nf.sn_node_findings([], [], {"cluster_read": False, "inventory": ["node01"]}), [])
 
@@ -521,7 +591,7 @@ class Cluster(unittest.TestCase):
         h = node(units=[unit(), unit("snc_test.service", "test", port=16001, node_id="node01:test_16001")])
         c = nf.sn_node_cluster([crow("node01:prod_16000"), crow("node01:test_16001", "offline", 60)], {"now": NOW})
         rows = nf.sn_node_sections([h], c, [], {"cluster_read": True, "inventory": ["node01.yoursite.mil"]})[0]["rows"]
-        self.assertEqual([r[3] for r in rows], ["online, 1 min ago", "offline, 60 min ago"])
+        self.assertEqual([r[4] for r in rows], ["online, 1 min ago", "offline, 60 min ago"])
 
 
 class Sections(unittest.TestCase):
@@ -532,8 +602,9 @@ class Sections(unittest.TestCase):
         self.assertEqual([s["title"] for s in secs], ["Front-end nodes", "Node and database hosts", "Node log errors (the most frequent, last 24 h)"])
         front = secs[0]
         self.assertEqual(len(front["columns"]), len(front["rows"][0]))
-        self.assertEqual(front["rows"][0][:3], ["node01.yoursite.mil", "snc_prod :16000", "running, at boot"])
-        self.assertEqual(front["rows"][0][4], "29.3% (1200 / 4096 MB)")
+        self.assertEqual(front["rows"][0][:4], ["node01.yoursite.mil", "snc_prod :16000", "127.0.0.1:16000 (http)", "running, at boot"])
+        self.assertEqual(front["columns"][2], "Stats page answered at")
+        self.assertEqual(front["rows"][0][5], "29.3% (1200 / 4096 MB)")
         self.assertEqual(front["row_status"], ["warning"])         # 140 SEVERE lines >= 100
         self.assertEqual(secs[1]["rows"][1], ["snowdb01.yoursite.mil", "database", "-", "-", "-", "-", "none"])
         self.assertEqual(secs[2]["rows"][0][2:4], ["SEVERE", 140])
@@ -729,6 +800,290 @@ class StatsRedirect(unittest.TestCase):
         code, body = nm.fetch("http://127.0.0.1:%d/stats.do" % self.node.server_port, "", 5, ("svc_aap", "S3cret-pw!"))
         self.assertEqual((code, body), (302, "sent to %s/stats.do (not followed)" % self.to))
         self.assertEqual(_Recorder.got, [])
+
+
+class OwnAddress(unittest.TestCase):
+    """1.32.0: a node's stats page is asked at the node's own names and 127.0.0.1 only - never at the instance's
+    address (glide.servlet.uri), which a load balancer hands to any node."""
+    procs = []
+
+    @classmethod
+    def tearDownClass(cls):
+        for p in cls.procs:
+            p.kill()
+
+    def serve(self, port, addr, *opts):
+        self.procs.append(subprocess.Popen([sys.executable, os.path.join(NODE, "statsmock.py"), str(port), "xml", "bind=" + addr] + list(opts)))
+        for _ in range(50):
+            with socket.socket() as c:
+                if c.connect_ex((addr, port)) == 0:
+                    return
+            time.sleep(0.1)
+        self.fail("the fake node did not start on %s" % addr)
+
+    def test_the_instance_address_is_never_read(self):
+        # the node's own page on 127.0.0.1; on 127.0.0.2, the same port, "the instance's address": another node's numbers
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()
+        self.serve(port, "127.0.0.1")
+        self.serve(port, "127.0.0.2", "MEMUSED=3990")
+        # as the module's main asks: the inventory name and the FQDN its own names, glide.servlet.uri's host apart
+        names = nm.own_names("node01.invalid", "node01.invalid")
+        self.assertEqual(names, ["node01.invalid"])
+        st = nm.read_stats(port, ["/xmlstats.do", "/stats.do"], 1, 0, 5, names, header_names=[nm._url_host("http://127.0.0.2:%d/" % port)])
+        self.assertTrue(st["up"], st)
+        self.assertEqual(st["mem_used"], 1200.0)                      # this node's, not the 3990 behind the instance's address
+        self.assertEqual(st["url"], "http://127.0.0.1:%d/xmlstats.do" % port)
+        self.assertEqual(st["answered"], "127.0.0.1:%d (http)" % port)
+        self.assertFalse([t for t in st["tried"] if "://127.0.0.2" in t], st["tried"])
+
+    def test_no_way_asks_the_instance_name(self):
+        ways = nm.stats_bases(16000, ["node01", "node01.corp.example.mil"], header_names=["sn.example.mil"])
+        self.assertFalse([b for b, _h in ways if "sn.example.mil" in b], ways)
+        self.assertEqual([h for b, h in ways if h], ["node01", "node01", "node01.corp.example.mil", "node01.corp.example.mil",
+                                                    "sn.example.mil", "sn.example.mil"])
+        self.assertTrue(all(b.split("://")[1] == "127.0.0.1:16000" for b, h in ways if h))
+        # the node's own name is first
+        self.assertEqual(ways[0], ("https://node01:16000", ""))
+        # as before: one forced address is the only one asked
+        self.assertEqual(nm.stats_bases(16000, ["node01"], "https://{host}:{port}/stats.do", ["sn.example.mil"]),
+                         [("https://node01:16000/stats.do", "")])
+
+    def test_login_only_to_its_own_names_or_127(self):
+        own = ["node01", "node01.corp.example.mil"]
+        self.assertTrue(nm.may_send_login("https://NODE01.corp.example.mil:16000/stats.do", own))
+        self.assertTrue(nm.may_send_login("http://127.0.0.1:16000/stats.do", own))
+        self.assertFalse(nm.may_send_login("https://sn.example.mil:16000/stats.do", own))          # the instance's address
+        self.assertFalse(nm.may_send_login("https://sn.example.mil/stats.do", own))
+        self.assertFalse(nm.may_send_login("http://node01:16000/stats.do", own))                    # never over plain HTTP
+        # a listed page, read from the AAP side: 127.0.0.1 there is not the node
+        self.assertFalse(nm.may_send_login("http://127.0.0.1:16000/stats.do", ["127.0.0.1"], local=False))
+        self.assertTrue(nm.may_send_login("https://node01.corp.example.mil:16000/stats.do", ["node01.corp.example.mil"], local=False))
+
+    def test_answered_at(self):
+        self.assertEqual(nm.answered_at("https://node01.corp.example.mil:16000"), "node01.corp.example.mil:16000")
+        self.assertEqual(nm.answered_at("http://127.0.0.1:16000"), "127.0.0.1:16000 (http)")
+        self.assertEqual(nm.answered_at("https://127.0.0.1:16000", "sn.example.mil"), "127.0.0.1:16000 as sn.example.mil")
+        self.assertEqual(nm.answered_at("https://node01.corp.example.mil:16000/stats.do"), "node01.corp.example.mil:16000")
+        self.assertEqual((nm.page_port("https://node01.corp.example.mil/stats.do"), nm.page_port("http://node01/x"),
+                          nm.page_port("https://node01:16000/stats.do"), nm.page_port("node01")), (443, 80, 16000, 0))
+
+
+class Labels(unittest.TestCase):
+    """A friendly name per node, beside its host: servicenow_node_label, servicenow_node_labels, a listed entry's name."""
+    def test_where_the_label_comes_from(self):
+        nodes = [node(), node("node06.yoursite.mil", label="Second"), node("node03.yoursite.mil"), node("node04.yoursite.mil")]
+        plan = {"ssh": [{"name": "Node three", "url": "https://node03.yoursite.mil:16000/stats.do", "host": "node03.yoursite.mil",
+                         "node": "node03.yoursite.mil"}]}
+        got = nf.sn_node_labels(nodes, {"NODE01.yoursite.mil": "Node 1", "node06": "not this", "node04": " Node 4 "}, plan)
+        self.assertEqual([h["label"] for h in got], ["Node 1", "Second", "Node three", "Node 4"])
+        self.assertEqual([h["label"] for h in nf.sn_node_labels([node()], None, None)], [""])
+        self.assertEqual([h["label"] for h in nf.sn_node_labels([node()], "Node 1", {})], [""])       # not a map: no label
+
+    def test_shown_beside_the_host(self):
+        g = [{"message": "Transaction cancelled", "count": 140, "kinds": ["SEVERE"], "last": "2026-11-09 11:00:00"}]
+        n = node(units=[unit(active="failed", severe=140, groups=g)], label="Node 1")
+        f = nf.sn_node_findings([n], [], {})
+        self.assertTrue(f)
+        for x in f:                                                    # the friendly name and the host, in every finding
+            self.assertIn("Node 1 (node01.yoursite.mil)", x["summary"], x)
+            self.assertEqual(x["subject"], "Node 1 (node01.yoursite.mil)")
+            self.assertIn(":node:node01.yoursite.mil:", x["id"])       # the id is the host's: a label added later closes no ticket
+        secs = nf.sn_node_sections([n], [], [], {})
+        self.assertEqual(secs[0]["rows"][0][0], "Node 1 (node01.yoursite.mil)")
+        self.assertEqual(nf.sn_node_findings([node(units=[unit(active="failed")])], [], {})[0]["subject"], "node01.yoursite.mil")
+        # a host not reached: named with its label too
+        f = nf.sn_node_findings([node(label="Node 1", reachable=False, error="timed out", units=[])], [], {})
+        self.assertIn("Node 1 (node01.yoursite.mil)", f[0]["summary"])
+        self.assertEqual(nf.sn_node_sections([node(label="node01.yoursite.mil")], [], [], {})[0]["rows"][0][0], "node01.yoursite.mil")
+
+    def test_report_fit_document(self):
+        """The Front-end nodes table at its widest - friendly names beside long host names, the address that answered
+        with a Host header, nodes read by their stats page only (read and not read): its document is
+        tests/fixtures/report_fit/sn_node_sections_pages.json (python3 tests/report_fit_docs.py --named), that
+        tests/test_report_fit.py renders."""
+        g = [{"message": "Transaction cancelled", "count": 140, "kinds": ["SEVERE"], "last": "2026-11-09 11:00:00"}]
+        nodes = []
+        for i in (1, 3, 4):
+            u = unit(severe=140, groups=g, mem=(3990.0, 4096.0), semq=(12, 14, 13), schedq=70)
+            u["stats"]["answered"] = ("127.0.0.1:16000 as servicenow-production.corp.example.mil" if i == 3
+                                      else "node%02d-application.corp.example.mil:16000" % i)
+            nodes.append(node("node%02d-application.corp.example.mil" % i, units=[u], label="Production node %d" % i))
+        st = unit()["stats"]
+        pages = nf.sn_node_pages([
+            {"name": "Disaster recovery node 1", "host": "node21-application.dr.example.mil", "port": 16000,
+             "url": "https://node21-application.dr.example.mil:16000/stats.do",
+             "stats": dict(st, answered="node21-application.dr.example.mil:16000")},
+            {"name": "Disaster recovery node 2", "host": "node22-application.dr.example.mil", "port": 16000,
+             "url": "https://node22-application.dr.example.mil:16000/stats.do",
+             "stats": dict(unit(up=False, status=-1)["stats"], tried=["https://node22-application.dr.example.mil:16000/stats.do -> timed out"])}])
+        secs = nf.sn_node_sections(nodes + pages, [], [], {})
+        front = [x for x in secs if x["title"] == "Front-end nodes"][0]
+        self.assertEqual(len(front["columns"]), 11)
+        self.assertEqual([r[0] for r in front["rows"]][3:], ["Disaster recovery node 1 (node21-application.dr.example.mil)",
+                                                            "Disaster recovery node 2 (node22-application.dr.example.mil)"])
+        self.assertEqual([r[3] for r in front["rows"]][3:], ["stats page only", "NOT READ (stats page only)"])
+
+
+class StatsPagesPlan(unittest.TestCase):
+    """servicenow_node_stats_pages: which entries are read from the AAP side, which over SSH, which are refused."""
+    E = [{"name": "Node 1", "url": "https://node01.corp.example.mil:16000/stats.do"},
+         {"name": "Node 2", "url": "https://node06.corp.example.mil:16000/stats.do"}]
+
+    def test_off_by_default(self):
+        for nothing in (None, "", [], {}):
+            self.assertEqual(nf.sn_node_pages_plan(nothing, ["node01"]), {"read": [], "ssh": [], "errors": []})
+
+    def test_a_node_of_the_group_is_read_once_over_ssh(self):
+        plan = nf.sn_node_pages_plan(self.E, ["node01", "node09.corp.example.mil"])
+        self.assertEqual([(e["name"], e["node"]) for e in plan["ssh"]], [("Node 1", "node01")])
+        self.assertEqual([(e["name"], e["host"]) for e in plan["read"]], [("Node 2", "node06.corp.example.mil")])
+        plan = nf.sn_node_pages_plan(self.E, ["NODE06.corp.example.mil"])
+        self.assertEqual([e["name"] for e in plan["ssh"]], ["Node 2"])
+        # another domain's node01 is another host
+        self.assertEqual(len(nf.sn_node_pages_plan(self.E, ["node01.example.mil"])["read"]), 2)
+        self.assertEqual(plan["errors"], [])
+
+    def test_refused(self):
+        bad = ["https://node01.corp.example.mil:16000/stats.do", {"name": "Node 1"}, {"name": "Node 2", "url": "node06:16000/stats.do"},
+               {"name": "Node 3", "url": "https://svc_aap:pw@node03.corp.example.mil:16000/stats.do"}, self.E[0], dict(self.E[0], name="again")]
+        plan = nf.sn_node_pages_plan(bad, [])
+        self.assertEqual(len(plan["errors"]), 5, plan["errors"])
+        self.assertEqual([e["name"] for e in plan["read"]], ["Node 1"])
+        self.assertIn("entry 1: needs name and url", plan["errors"][0])
+        self.assertIn("entry 3 (Node 2): its url must be the stats page's full address", plan["errors"][2])
+        self.assertIn("carries a login", plan["errors"][3])
+        self.assertNotIn("pw@", " ".join(plan["errors"]))
+        self.assertIn("the same url as entry 5", plan["errors"][4])
+        self.assertIn("is not a list", nf.sn_node_pages_plan({"name": "x", "url": "y"}, [])["errors"][0])
+
+
+class StatsPages(unittest.TestCase):
+    """servicenow_node_stats_pages read from where the job runs: the same numbers, no redirect followed, the login
+    only over HTTPS to the listed host, and never green having read nothing."""
+    procs = []
+
+    @classmethod
+    def setUpClass(cls):
+        cls.d = tempfile.mkdtemp()
+        cls.cert = os.path.join(cls.d, "node.pem")
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=127.0.0.1", "-days", "1",
+                        "-keyout", cls.cert, "-out", cls.cert], check=True, capture_output=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        for p in cls.procs:
+            p.kill()
+
+    def free(self):
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()
+        return port
+
+    def serve(self, *opts):
+        port = self.free()
+        self.procs.append(subprocess.Popen([sys.executable, os.path.join(NODE, "statsmock.py"), str(port), "xml"] + list(opts)))
+        for _ in range(50):
+            with socket.socket() as c:
+                if c.connect_ex(("127.0.0.1", port)) == 0:
+                    return port
+            time.sleep(0.1)
+        self.fail("the fake node did not start")
+
+    def test_read_and_judged_as_a_node(self):
+        well, full, dead = self.serve(), self.serve("MEMUSED=3990", "SEMQ=3", "SCHEDQ=70"), self.free()
+        entries = [{"name": "Node 1", "url": "http://127.0.0.1:%d/xmlstats.do" % well},
+                   {"name": "Node 2", "url": "http://127.0.0.1:%d/xmlstats.do" % full},
+                   {"name": "Node 3", "url": "http://127.0.0.1:%d/xmlstats.do" % dead}]
+        got = nm.read_pages(entries, 2, 0, 5)
+        self.assertEqual([(g["name"], g["host"], g["port"], g["stats"]["up"]) for g in got],
+                         [("Node 1", "127.0.0.1", well, True), ("Node 2", "127.0.0.1", full, True), ("Node 3", "127.0.0.1", dead, False)])
+        self.assertEqual(got[0]["stats"]["mem_used"], 1200.0)
+        self.assertEqual(got[0]["stats"]["answered"], "127.0.0.1:%d (http)" % well)
+        self.assertEqual(len(got[1]["stats"]["sem_queued_samples"]), 2)                # the same samples
+        self.assertEqual(got[2]["stats"]["tried"][0].split(" -> ")[0], entries[2]["url"])   # only its own address was asked
+        self.assertEqual(len(got[2]["stats"]["tried"]), 1)
+        nodes = nf.sn_node_labels(nf.sn_node_pages(got), {}, {})
+        f = nf.sn_node_findings(nodes, [], {})
+        self.assertEqual({(x["id"].split(":", 3)[3], x["severity"]) for x in f},
+                         {("page%d:memory" % full, "critical"), ("page%d:scheduler" % full, "warning"),
+                          ("page%d:semaphores" % full, "warning"), ("page%d:stats-down" % dead, "critical")})
+        down = [x for x in f if x["id"].endswith("stats-down")][0]
+        self.assertIn("Node 3 (127.0.0.1)", down["summary"])                          # names the entry ...
+        self.assertIn("did not answer at " + entries[2]["url"], down["summary"])
+        self.assertIn("# tried: " + entries[2]["url"], down["hint"])                  # ... and what was tried
+        self.assertEqual(down["subject"], "Node 3 (127.0.0.1)")
+        secs = nf.sn_node_sections(nodes, [], [], {})
+        front = secs[0]
+        self.assertEqual([len(r) for r in front["rows"]], [len(front["columns"])] * 3)
+        self.assertEqual([r[0] for r in front["rows"]], ["Node 1 (127.0.0.1)", "Node 2 (127.0.0.1)", "Node 3 (127.0.0.1)"])
+        self.assertEqual([r[3] for r in front["rows"]], ["stats page only", "stats page only", "NOT READ (stats page only)"])
+        self.assertEqual([r[2] for r in front["rows"]], ["127.0.0.1:%d (http)" % well, "127.0.0.1:%d (http)" % full, "-"])
+        self.assertEqual(front["rows"][0][-1], "stats page only")                      # the log: not read, said
+        self.assertEqual(front["row_status"], ["", "critical", "critical"])
+        hosts = [s for s in secs if s["title"] == "Node and database hosts"][0]
+        self.assertEqual(hosts["rows"][0][2], "stats page only")
+        line = nf.sn_node_status(nodes, [], {})
+        self.assertIn("hosts read: 2 of 3", line)
+        self.assertIn("NOT READ", line)
+
+    def test_never_green_having_read_nothing(self):
+        got = nm.read_pages([{"name": "Node 1", "url": "http://127.0.0.1:%d/stats.do" % self.free()}], 1, 0, 3)
+        f = nf.sn_node_findings(nf.sn_node_pages(got), [], {})
+        self.assertEqual([x["severity"] for x in f], ["critical"])
+        # the module itself not run on the AAP side: the role hands each entry on as not read - still a finding
+        f = nf.sn_node_findings(nf.sn_node_pages([{"name": "Node 1", "url": "https://node01.corp.example.mil:16000/stats.do",
+                                                   "host": "node01.corp.example.mil", "port": 0,
+                                                   "stats": {"up": False, "status": -1, "tried": [], "why": "the read did not run"}}]), [], {})
+        self.assertEqual([(x["severity"], x["id"].rsplit(":", 1)[1]) for x in f], [("critical", "stats-down")])
+        self.assertIn("Node 1 (node01.corp.example.mil)", f[0]["summary"])
+        self.assertIn("the read did not run", f[0]["summary"])
+
+    def test_login_only_over_https_to_the_listed_host(self):
+        plain = self.serve("auth=svc_aap:S3cret-pw!")
+        got = nm.read_pages([{"name": "Node 1", "url": "http://127.0.0.1:%d/xmlstats.do" % plain}], 1, 0, 5, "auto", ("svc_aap", "S3cret-pw!"))
+        st = got[0]["stats"]
+        self.assertFalse(st["up"])                                     # plain HTTP: the login is not sent, even to 127.0.0.1
+        self.assertEqual(st["status"], 401)
+        self.assertFalse(st["login"])
+        self.assertNotIn("S3cret", json.dumps(got))
+        f = nf.sn_node_findings(nf.sn_node_pages(got), [], {})
+        self.assertEqual([(x["severity"], x["id"].rsplit(":", 1)[1]) for x in f], [("warning", "stats-unread")])
+        tls = self.serve("tls=" + self.cert, "auth=svc_aap:S3cret-pw!")
+        got = nm.read_pages([{"name": "Node 1", "url": "https://127.0.0.1:%d/xmlstats.do" % tls}], 1, 0, 5, "auto", ("svc_aap", "S3cret-pw!"),
+                            validate=False)
+        self.assertTrue(got[0]["stats"]["up"] and got[0]["stats"]["login"], got)
+        self.assertEqual(got[0]["stats"]["answered"], "127.0.0.1:%d" % tls)
+        self.assertNotIn("S3cret", json.dumps(got))
+
+    def test_redirect_not_followed(self):
+        _Recorder.got = []
+        other = HTTPServer(("127.0.0.1", 0), _Recorder)
+        to = "http://127.0.0.1:%d/idp/login" % other.server_port
+        nd = HTTPServer(("127.0.0.1", 0), _redirector(to))
+        for srv in (other, nd):
+            threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            e = [{"name": "Node 1", "url": "http://127.0.0.1:%d/stats.do" % nd.server_port}]
+            got = nm.read_pages(e, 1, 0, 5, "auto", ("svc_aap", "S3cret-pw!"))
+            basic = nm.read_pages(e, 1, 0, 5, "basic", ("svc_aap", "S3cret-pw!"))
+        finally:
+            for srv in (nd, other):
+                srv.shutdown()
+                srv.server_close()
+        self.assertEqual(_Recorder.got, [])
+        self.assertEqual((got[0]["stats"]["up"], got[0]["stats"]["status"]), (False, 302))
+        self.assertIn("(not followed)", got[0]["stats"]["why"])
+        # basic, plain HTTP: the login may not go there, so the page is not asked at all - said, a finding
+        self.assertEqual(basic[0]["stats"]["tried"], [])
+        f = nf.sn_node_findings(nf.sn_node_pages(basic), [], {})
+        self.assertEqual([(x["severity"], x["id"].rsplit(":", 1)[1]) for x in f], [("warning", "stats-unread")])
+        self.assertIn("was not asked at http://127.0.0.1:", f[0]["summary"])
+        self.assertIn("only over HTTPS", f[0]["summary"])
 
 
 if __name__ == "__main__":
