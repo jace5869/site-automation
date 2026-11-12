@@ -184,8 +184,23 @@ Copy-Item -LiteralPath $es -Destination (Join-Path $drives 'Evaluate-STIG-old') 
 $f = Scan @{ evaluate = ''; search = @($drives); save = $false } -Acl @{}
 Check 'found in two places: none is picked, both named' ($f -and -not $f.scanned -and $f.why -match 'found in 2 places' -and $f.why.Contains($hitScript) -and $f.why -match 'win_check_stig_evaluate') $f
 Remove-Item -LiteralPath (Join-Path $drives 'Evaluate-STIG-old') -Recurse -Force
-$f = Scan @{ evaluate = ''; search = @($drives); save = $false }
-Check 'found where its permissions are not known to be safe (a temporary folder; no ACLs off Windows): not run' ($f -and -not $f.scanned -and $f.why -match 'not run as SYSTEM' -and $f.why.Contains($hitScript)) $f
+if ($onWindows -and ((& whoami.exe /groups) -match 'S-1-16-12288')) {
+    # the folder's real permissions, set here (the temporary folder's own depend on the account the test runs as - the
+    # built-in Administrator's are LA, SYSTEM and the Administrators only, which is safe): only SYSTEM and the
+    # Administrators - run; the Users may change it - not run
+    & icacls.exe $drives /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /T /C /Q | Out-Null
+    & icacls.exe $drives /setowner '*S-1-5-32-544' /T /C /Q | Out-Null
+    $f = Scan @{ evaluate = ''; search = @($drives); save = $false }
+    Check 'found where only SYSTEM and the Administrators can change it (real permissions): run' ($f -and $f.scanned -and $f.evaluate -eq $hitScript) $f
+    & icacls.exe $hit /grant '*S-1-5-32-545:(OI)(CI)M' /T /C /Q | Out-Null
+    $f = Scan @{ evaluate = ''; search = @($drives); save = $false }
+    Check 'found where the Users may change it (real permissions): not run, names them' ($f -and -not $f.scanned -and $f.why -match 'not run as SYSTEM' -and $f.why -match 'BU' -and $f.why.Contains($hitScript)) $f
+    & icacls.exe $hit /remove:g '*S-1-5-32-545' /T /C /Q | Out-Null
+}
+else {
+    $f = Scan @{ evaluate = ''; search = @($drives); save = $false }
+    Check 'found where its permissions are not known to be safe (no ACLs off Windows, or not an administrator): not run' ($f -and -not $f.scanned -and $f.why -match 'not run as SYSTEM' -and $f.why.Contains($hitScript)) $f
+}
 $f = Scan @{ evaluate = $hit; save = $false } -Acl @{ $hit = 'O:BAG:SYD:AI(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIID;0x1301bf;;;AU)' }
 Check 'win_check_stig_evaluate names it: run as it is' ($f -and $f.scanned -and $f.found_by -eq 'win_check_stig_evaluate') $f
 # its own folder: one that is there and that others can change is refused; the job's account may own it
