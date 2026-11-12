@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.28.0 — 2026-11-12
+
+**Updating without scripts:** paste `site-automation-1.28.0-changed-since-1.24.0.zip` as it is (from an older version,
+its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`. Nothing to set up.
+
+**Fix:**
+
+- **A True or False cell stopped the report website copy on ansible-core 2.16.** A report with a table cell that is
+  exactly `True` or `False` (the VM deploy report's PXE line, for one) failed to publish its page in the atlas and
+  brief looks: on 2.16 Ansible turns a template piece that reads exactly True or False - or starts with `[` or `{` -
+  into a Python value. A cell such as `[1,2]` or `{1:2}` could also come out changed (`[1, 2]`). Every cell now comes
+  out as the text the report gave, in every look; ansible-core 2.19 and later were not affected.
+
+Tests: tests/test_report_cells.py renders each look (the email's, command, portal, glass, atlas, brief) through
+Ansible's own templating - cells of True, False, None, numbers, `{...}` and `[...]` in every kind of column, a status
+chip, a summary tile and a line - on ansible-core 2.22 and 2.16 (tests/test_report_fit.py renders with plain Jinja and
+cannot see this).
+
 ## 1.24.0 — 2026-11-11
 
 **Updating without scripts:** paste `site-automation-1.24.0-changed-since-1.23.0.zip` as it is (from an older version,

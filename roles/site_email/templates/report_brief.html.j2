@@ -58,6 +58,11 @@
 <span class="nb">{{ w | e }}</span>
 {%- elif w | length > 12 -%}
 <span class="lw">{{ w | e }}</span>
+{%- elif w[:1] in ['[', '{'] or w in ['True', 'False'] -%}
+{#- 1.28.0: its first character as a character reference - on ansible-core 2.16 a macro's output of exactly True or
+    False, or one starting with [ or {, comes back a Python value (keep('True') a bool, keep('[1,2]') a list written
+    [1, 2]); the page shows the same text -#}
+{{ {'[': '&#91;', '{': '&#123;', 'T': '&#84;', 'F': '&#70;'}[w[:1]] }}{{ w[1:] | e }}
 {%- else -%}
 {{ w | e }}
 {%- endif -%}
