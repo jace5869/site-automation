@@ -282,9 +282,13 @@ def _form_findings(add, ub, who, st, tried):
             "login is not tried on the nodes after it" % (who, why[:160] or "no answer"), "%s\n%s" % (tried, _FORM_HINT))
     elif form == "no_page":
         add(ub + "stats-unread", "warning", "the stats page of %s was not read: no login form was found to log in with (%s)" % (
-            who, why[:200] or "side_door.do did not answer"),
-            "%s\nservicenow_node_stats_auth form needs the instance's local login page on the node's own address: "
-            "https://<node>:<port>/side_door.do must show the user name and password form. Nothing was sent" % tried)
+            who, why[:240] or "side_door.do did not answer"),
+            ("%s\nthe instance's local login is switched off or redirected (side_door.do and login.do show no login "
+             "form): ask the ServiceNow admins, or read this instance's nodes with servicenow_node_stats_auth basic. "
+             "Nothing was sent" if "shows no login form" in why else
+             "%s\nservicenow_node_stats_auth form needs the instance's local login page on the node's own address: "
+             "https://<node>:<port>/side_door.do or /login.do must show the user name and password form. Nothing was "
+             "sent") % tried)
     elif form == "no_numbers":
         add(ub + "stats-unread", "warning", "the node stats login was accepted on %s, but its stats page still showed no "
             "numbers: that account may not read stats.do" % who,

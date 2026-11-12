@@ -560,33 +560,57 @@ def _where(headers, host=False):
     return ((("%s://%s" % (m.group(1), m.group(2).rsplit("@", 1)[-1])) if m else "") + path)[:200 if host else 120]
 
 
-def form_login(origin, host, timeout, creds, validate, tried):
-    """One login through the local login page of origin (scheme://host:port): GET side_door.do for its sysparm_ck (a
-    hidden input), POST login.do with the user name, the password and that sysparm_ck. No redirect is followed: an
-    answer 302 to login_redirect.do is the login accepted; anything else is refused (never asked twice).
-    -> (state, said, jar): state 'in'; 'refused' (the POST was sent, and not accepted); 'none' (no login form here:
-    nothing was sent). tried gets a line per request - never the password, the sysparm_ck or a cookie."""
-    jar = {}
-    code, body, hdrs = ask(origin + "/side_door.do", host, timeout, None, validate)
+USER_INPUT = re.compile(r"<input[^>]*\bname\s*=\s*[\"']user_name[\"'][^>]*>", re.I)
+
+
+def login_page(origin, page, host, timeout, validate, jar, tried):
+    """GET one page that may show the login form (side_door.do, login.do) -> (kind, ck, said). kind: 'ck' (the form
+    with its hidden sysparm_ck), 'form' (the user name form, no sysparm_ck on it), 'none' (it answered: a redirect -
+    never followed - or a page with no login form), 'dead' (no answer). Its cookies go to jar, a line to tried."""
+    code, body, hdrs = ask(origin + page, host, timeout, None, validate, cookies=jar or None)
     hs = (" (Host: %s)" % host) if host else ""
     if code != 200:
         said = body[:80] if code == -1 else "HTTP %s%s" % (code, (" to " + _where(hdrs)) if 300 <= code < 400 else "")
-        tried.append("%s/side_door.do%s -> %s" % (origin, hs, said))
-        return "none", "%s/side_door.do%s: %s" % (origin, hs, said), jar
+        tried.append("%s%s%s -> %s" % (origin, page, hs, said))
+        return ("dead" if code == -1 else "none"), "", said
     keep_cookies(hdrs, jar)
     tag = CK_INPUT.search(body or "")
     m = re.search(r"\bvalue\s*=\s*[\"']([^\"']+)[\"']", tag.group(0)) if tag else None
-    if not m:
-        tried.append("%s/side_door.do%s -> 200, no sysparm_ck on it" % (origin, hs))
-        return "none", "%s/side_door.do%s answered, but with no login form on it (no sysparm_ck)" % (origin, hs), jar
-    tried.append("%s/side_door.do%s -> 200" % (origin, hs))
-    code, body, hdrs = ask(origin + "/login.do", host, timeout, None, validate, cookies=jar,
-                           data={"user_name": creds[0], "user_password": creds[1], "sys_action": "sysverb_login",
-                                 "sysparm_ck": m.group(1)})
+    if m:
+        tried.append("%s%s%s -> 200" % (origin, page, hs))
+        return "ck", m.group(1), "HTTP 200"
+    if USER_INPUT.search(body or ""):
+        tried.append("%s%s%s -> 200, the login form with no sysparm_ck on it" % (origin, page, hs))
+        return "form", "", "HTTP 200, the login form with no sysparm_ck"
+    tried.append("%s%s%s -> 200, no login form on it" % (origin, page, hs))
+    return "none", "", "HTTP 200, no login form on it"
+
+
+def form_login(origin, host, timeout, creds, validate, tried):
+    """One login through the local login page of origin (scheme://host:port): GET side_door.do for its sysparm_ck (a
+    hidden input), POST login.do with the user name, the password and that sysparm_ck. When side_door.do does not
+    show the form (1.36.0: on some instances it answers a redirect to navpage.do), login.do is read once for it; a
+    login form with no sysparm_ck on it is posted without one. No redirect is followed: an answer 302 to
+    login_redirect.do is the login accepted; anything else is refused (never asked twice, one POST at most).
+    -> (state, said, jar): state 'in'; 'refused' (the POST was sent, and not accepted); 'none' (no login form here:
+    nothing was sent). tried gets a line per request - never the password, the sysparm_ck or a cookie."""
+    jar = {}
+    hs = (" (Host: %s)" % host) if host else ""
+    kind, ck, said = login_page(origin, "/side_door.do", host, timeout, validate, jar, tried)
+    if kind == "dead":
+        return "none", "%s/side_door.do%s: %s" % (origin, hs, said), jar
+    if kind != "ck":
+        kind2, ck, said2 = login_page(origin, "/login.do", host, timeout, validate, jar, tried)
+        if kind2 not in ("ck", "form") and kind != "form":
+            return "none", "%s%s shows no login form: side_door.do -> %s; login.do -> %s" % (origin, hs, said, said2), jar
+    data = {"user_name": creds[0], "user_password": creds[1], "sys_action": "sysverb_login"}
+    if ck:
+        data["sysparm_ck"] = ck
+    code, body, hdrs = ask(origin + "/login.do", host, timeout, None, validate, cookies=jar, data=data)
     keep_cookies(hdrs, jar)
     where = _where(hdrs) if 300 <= code < 400 else ""
     said = body[:80] if code == -1 else "HTTP %s%s" % (code, (" to " + where) if where else "")
-    tried.append("%s/login.do%s (the node stats login) -> %s" % (origin, hs, said))
+    tried.append("%s/login.do%s (the node stats login%s) -> %s" % (origin, hs, "" if ck else ", no sysparm_ck", said))
     if 300 <= code < 400 and "login_redirect.do" in where:
         return "in", said, jar
     return "refused", said, jar
@@ -623,7 +647,7 @@ def read_stats_form(st, ways, names, local, samples, interval, timeout, creds, v
     than one unit or page - keeps the session a call opened, a later call for the same address reads in it and sends
     no login (1.36.0), and the caller closes them all with form_close(). Without sessions: one login per call, closed
     here. Never a second try: the first of the node's own addresses (may_send_login: HTTPS to its own name, or
-    127.0.0.1) whose side_door.do shows a login form gets it; then the samples there with the session's cookies, and
+    127.0.0.1) whose side_door.do - or, when that shows none, login.do - shows a login form gets it; then the samples there with the session's cookies, and
     logout.do whatever happened. st.form: in, refused, no_numbers (logged in, no numbers), no_page (no login form on
     any address), not_asked (no credential, no address the login may go to), skipped (skip: where it was refused
     before - nothing is sent). st.form_logout: why the session was not closed. No redirect is followed."""
@@ -666,10 +690,11 @@ def read_stats_form(st, ways, names, local, samples, interval, timeout, creds, v
                 if lock:
                     lock.release()
             state, said, jar = rec["state"], rec["said"], rec["jar"]
-            if state == "none":
-                st["why"] = st["why"] or said
-                m = re.search(r"HTTP (\d+)", said)
-                st["status"] = int(m.group(1)) if m else (st["status"] or -1)
+            if state == "none":                 # an address that answered (no form on it) says more than a dead one
+                if not st["why"] or ("shows no login form" in said and "shows no login form" not in st["why"]):
+                    st["why"] = said
+                    m = re.search(r"HTTP (\d+)", said)
+                    st["status"] = int(m.group(1)) if m else (st["status"] or -1)
                 continue
             rec["sts"].append(st)
             if state != "in":

@@ -429,6 +429,8 @@ logged-in session: single sign-on is in front, and the API login (basic auth) is
 then does what a browser does, on the node's own address:
 
 1. it reads `side_door.do` (the instance's local login page) for the form's hidden `sysparm_ck`;
+   when that page shows no form (some instances answer it with a redirect to `navpage.do`), it reads `login.do`
+   once for the form;
 2. it sends the user name and password to `login.do`, once;
 3. it reads the stats page in that session (3 reads, as always);
 4. it logs out (`logout.do`), also when a read failed.
@@ -458,6 +460,9 @@ What to know:
   - A node with one instance: one login.
   - A node whose units answer on one port: one login, and the units share the session.
   - A node with two instances on two ports: one login each.
+- **No login form on `side_door.do` and on `login.do`:** the instance's local login is switched off or redirected.
+  Nothing is sent. Ask the ServiceNow admins, or read this instance's nodes with
+  `servicenow_node_stats_auth: basic`.
 - **Never a second try.** The first node is asked alone. When its login is refused, the other nodes and the listed
   stats pages send none in that run, so a wrong password costs one failed login, not one per node.
 - **The login is refused** when `login.do` answers anything but the redirect to `login_redirect.do`: a wrong
@@ -521,7 +526,7 @@ servicenow_node_stats_pages:
 | the stats page refused (HTTP 401/403), no port found, nothing on it recognised | warning | `servicenow_node_port` |
 | the stats page wants a login the API account cannot give | warning | `servicenow_node_stats_auth`, `servicenow_node_stats_url` |
 | `form`: the node stats login refused (the other nodes: not read, the login is not tried again) | warning | the *ServiceNow node stats login* credential |
-| `form`: no login form on `side_door.do`; logged in and still no numbers; no credential on the template | warning | `servicenow_node_stats_auth` |
+| `form`: no login form on `side_door.do` or `login.do`; logged in and still no numbers; no credential on the template | warning | `servicenow_node_stats_auth` |
 | `form`: the session was not closed (`logout.do` failed) | warning | |
 | a listed stats page (`servicenow_node_stats_pages`) not reached | critical | `servicenow_node_stats_pages` |
 | JVM memory in use 85 % of its max (95 %: critical) | warning | `servicenow_node_mem_warn_pct`, `_critical_pct` |

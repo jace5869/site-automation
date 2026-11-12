@@ -613,7 +613,8 @@ deny "stats pages wrong: nothing read" 'Nodes: '
 # node stats login's own credential (SN_STATS_USERNAME / SN_STATS_PASSWORD), one login per node, the first node alone
 # first; refused there: the others (and the listed pages) send none. Each fake node writes its requests to a log.
 start_stats $((port + 35)) html form=stats_reader:St4ts-pw9 log="$work/form35.log"
-start_stats $((port + 36)) html form=stats_reader:St4ts-pw9 log="$work/form36.log"
+# 1.36.0: this node answers side_door.do with a redirect to navpage.do (a real instance did): login.do is read for the form
+start_stats $((port + 36)) html form=stats_reader:St4ts-pw9 formmode=dev log="$work/form36.log"
 start_stats $((port + 37)) html form=stats_reader:St4ts-pw9 log="$work/form37.log"
 make_home "$work/glide-f1" prod_16000 $((port + 35)) well
 make_home "$work/glide-f2" prod_16000 $((port + 36)) well
@@ -640,6 +641,10 @@ if [ "$(grep -c '^GET /logout.do session=yes' "$work/form35.log")" = 1 ] && [ "$
    && [ "$(sed -n 1p "$work/form36.log")" = "GET /side_door.do" ]; then
     echo "ok   - form login: each session closed (logout.do), no redirect followed"
 else echo "FAIL - form login: the nodes' request logs"; cat "$work/form35.log" "$work/form36.log"; fails=$((fails + 1)); fi
+if [ "$(sed -n 1,3p "$work/form36.log" | tr '\n' '|')" = "GET /side_door.do|GET /login.do|POST /login.do user=stats_reader ck=ok -> in|" ] \
+   && [ "$(grep -c '^GET /login.do' "$work/form36.log")" = 1 ] && ! grep -q '^GET /login.do' "$work/form35.log"; then
+    echo "ok   - form login: side_door.do redirects on one node - login.do read once for the form, there only"
+else echo "FAIL - form login: side_door.do redirects - the node's request log"; cat "$work/form36.log"; fails=$((fails + 1)); fi
 deny "form login: the password is never shown" 'St4ts-pw9'
 rm -f "$work"/form3?.log
 SN_STATS_USERNAME=stats_reader SN_STATS_PASSWORD=St4ts-pw9 PLAYBOOK=playbooks/servicenow_health.yml \

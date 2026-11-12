@@ -43,6 +43,14 @@ patch job's reason.
   and its port. 1.32.0 said "one login per node" and sent one per unit: a node whose two units answer on one port got
   two logins. Now the units share the session, and it is closed once (`logout.do`) when the node is read. A node with
   two instances on two ports gets one login each. Two listed stats pages on one host and port share one login too.
+- **The node stats login: `side_door.do` that shows no form** (seen on a real instance: `side_door.do` answered
+  *HTTP 302 to /navpage.do*, and the finding said *no login form was found*). The check now reads `login.do` on the
+  same node and port, once, for the form and its `sysparm_ck`, then sends the login as before. A login form with no
+  `sysparm_ck` on it is sent without one. Still one login per node address, never a second try, no redirect
+  followed, the same rule for where the login may go. The *tried* lines name both pages. When neither page shows a
+  form, nothing is sent and the finding's hint says: *the instance's local login is switched off or redirected
+  (side_door.do and login.do show no login form): ask the ServiceNow admins, or read this instance's nodes with
+  servicenow_node_stats_auth basic*.
 - **A line about a redirect shows its page only.** The *tried* lines and the findings showed where a redirect pointed
   with all that followed the `?` - `logout_redirect.do?sysparm_token=...`. Now: `HTTP 302 to /logout_redirect.do`;
   an answer that points to another host says that host, never a login written in the address.
@@ -90,6 +98,8 @@ also run on Python 3.6.
   that carries a login was refused before and still is. Write the page's address only.
 - **ServiceNow health: lines about a redirect are shorter** (the page, without what follows the `?`). A rule that
   matched the old text of a finding needs the new one.
+- **`servicenow_node_stats_auth: form`: a node whose `side_door.do` shows no login form is now asked `login.do`**
+  (one more read), and gets the login when the form is there. Before, such a node was not read (a warning).
 - **`servicenow_node_stats_auth: form`: fewer logins** in the instance's login history when a node's units share a
   port - one per node address and run, not one per unit.
 
@@ -104,9 +114,11 @@ matrix in every written form, the five texts with a bracket never closed, and 60
 quotes, curly quotes, `[` `]` `-` `#` `*` `?` and line breaks: every name 1.22.0 read is read, and every VM it matched
 still matches), tests/test_servicenow_node.py (two units of one address: one login, one logout; two listed pages of one
 address: one login; no query of a redirect in any line; the host named is the host asked - `#@`, a backslash, a blank
-and a login refused), tests/servicenow/run_servicenow_test.sh (current ansible-core and 2.16: two units of one node on
-one port - one login, both units read in it, one logout; the fake node's redirects carry a token in the query, never
-printed, `-vvv` too); tests/test_servicenow_node.py was also run on Python 3.6.8 with OpenSSL 1.1.1k (all 91 pass);
+and a login refused; `side_door.do` that redirects and `login.do` with the form: logged in, one POST; the same with no
+`sysparm_ck` on the form; neither page with a form: the hint, nothing sent), tests/servicenow/run_servicenow_test.sh
+(current ansible-core and 2.16: two units of one node on one port - one login, both units read in it, one logout;
+one of the two nodes redirects `side_door.do` - read through `login.do`; the fake node's redirects carry a token in the query, never
+printed, `-vvv` too); tests/test_servicenow_node.py was also run on Python 3.6.8 with OpenSSL 1.1.1k (all 94 pass);
 tests/test_availability.py and
 tests/test_ad_reader.py (`Python36Cert`: a refused certificate with no `ssl.SSLCertVerificationError` - said, never a
 traceback; a name that does not match; they fail on 1.33.0).

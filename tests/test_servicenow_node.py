@@ -1358,6 +1358,52 @@ class FormLogin(unittest.TestCase):
         self.assertEqual(dead["form"], "no_page")
         self.assertEqual(len(self.findings(dead)), 1)
 
+    def test_side_door_redirects_login_do_shows_the_form(self):
+        # 1.36.0 (a real instance): side_door.do answers 302 to navpage.do - login.do is read once for the form
+        port, log = self.serve("formmode=dev")
+        st = self.read(port)
+        self.assertEqual((st["up"], st["form"]), (True, "in"))
+        lines = self.said(log)
+        self.assertEqual(lines[:3], ["GET /side_door.do", "GET /login.do", "POST /login.do user=stats_reader ck=ok -> in"])
+        self.assertEqual(len([x for x in lines if x.startswith("POST")]), 1)
+        self.assertEqual(len([x for x in lines if x == "GET /login.do"]), 1)
+        self.assertEqual(lines[-1], "GET /logout.do session=yes")
+        tried = " | ".join(st["tried"])
+        self.assertIn("/side_door.do -> HTTP 302 to /navpage.do", tried)
+        self.assertIn("/login.do -> 200", tried)
+        self.assertNotIn(self.PW, json.dumps(st))
+        self.assertEqual(self.findings(st), [])
+        st = self.read(port, ("stats_reader", "Wr0ng-pw!"))     # refused there: still one POST, never a second page
+        self.assertEqual(st["form"], "refused")
+        self.assertEqual(len([x for x in self.said(log) if x.startswith("POST")]), 2)
+
+    def test_login_do_form_without_a_sysparm_ck(self):
+        port, log = self.serve("formmode=devnock")
+        st = self.read(port)
+        self.assertEqual((st["up"], st["form"]), (True, "in"))
+        lines = self.said(log)
+        self.assertEqual(lines[:3], ["GET /side_door.do", "GET /login.do", "POST /login.do user=stats_reader ck=none -> in"])
+        self.assertEqual(len([x for x in lines if x.startswith("POST")]), 1)
+        self.assertIn("(the node stats login, no sysparm_ck) -> HTTP 302 to /login_redirect.do", " | ".join(st["tried"]))
+        self.assertNotIn(self.PW, json.dumps(st))
+
+    def test_neither_page_shows_a_form_the_hint(self):
+        port, log = self.serve("formmode=sso")
+        st = self.read(port)
+        self.assertEqual((st["up"], st["form"], st["status"]), (False, "no_page", 302))
+        lines = self.said(log)                                  # each of the node's addresses: both pages once, no more
+        self.assertEqual(lines, ["GET /side_door.do", "GET /login.do"] * (len(lines) // 2))    # nothing sent, no logout
+        self.assertIn("side_door.do -> HTTP 302 to /login_with_sso.do; login.do -> HTTP 302 to /login_with_sso.do", st["why"])
+        f = self.findings(st)
+        self.assertEqual(len(f), 1)
+        self.assertIn("side_door.do", f[0]["summary"])
+        self.assertIn("login.do", f[0]["summary"])
+        hint = f[0]["hint"].replace("\n", " ")
+        self.assertIn("the instance's local login is switched off or redirected (side_door.do and login.do show no login "
+                      "form): ask the ServiceNow admins, or read this instance's nodes with servicenow_node_stats_auth basic", hint)
+        dead = self.findings(self.read(self.free()))            # nothing listens: not that hint (no page answered)
+        self.assertNotIn("switched off", dead[0]["hint"])
+
     def test_logout_that_fails_is_a_warning(self):
         port, _log = self.serve("formmode=nologout")
         st = self.read(port)
