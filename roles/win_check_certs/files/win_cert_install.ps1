@@ -49,7 +49,9 @@ function Invoke-Native([string] $Exe, [string[]] $Arguments) {
 }
 # ---- end of the common part --------------------------------------------------------------------
 # ---- who besides SYSTEM and the Administrators can change a file or folder (keep identical where it is used) ----
-# Read from its SDDL (Get-Acl): SIDs, the same in every language, and no .NET methods (Constrained Language too).
+# Read from its SDDL (Get-Acl): SIDs, the same in every language, and no .NET methods (Constrained Language too). Windows
+# writes some accounts as an alias (LA: the built-in Administrator, DA: Domain Admins ...): each is compared as its SID,
+# which Windows itself gives (ConvertFrom-SddlString); the report names it as the SDDL does.
 # Allowed: SYSTEM, the Administrators, TrustedInstaller, and the SIDs given. A CREATOR OWNER or OWNER RIGHTS entry
 # gives nobody else anything here (the owner is checked); an inherit-only entry is not for the item itself.
 $SDDL_RIGHTS = @{ GA = 268435456; GX = 536870912; GW = 1073741824; GR = 2147483648; FA = 2032127; FR = 1179785; FW = 1180054; FX = 1179817
@@ -69,14 +71,30 @@ function Get-SddlRights([string] $Text) {
     }
     return $n
 }
-# '' when the owner is allowed and no allow entry gives anyone else one of the $Mask rights; else who (SIDs)
+# an SDDL account (an alias such as LA, or a SID) as its SID; the alias itself where Windows cannot say (off Windows)
+$SDDL_SID = @{}
+function Get-SddlSid([string] $Token) {
+    if ($Token -match '^S-1-') { return $Token }
+    if (-not $SDDL_SID.ContainsKey($Token)) {
+        $SDDL_SID[$Token] = $Token
+        if (Get-Command -Name ConvertFrom-SddlString -ErrorAction SilentlyContinue) {
+            try {
+                $sid = [string](ConvertFrom-SddlString -Sddl ('O:' + $Token) -ErrorAction Stop).RawDescriptor.Owner.Value
+                if ($sid -match '^S-1-') { $SDDL_SID[$Token] = $sid }
+            }
+            catch { }
+        }
+    }
+    return $SDDL_SID[$Token]
+}
+# '' when the owner is allowed and no allow entry gives anyone else one of the $Mask rights; else who (as the SDDL names them)
 function Get-SddlOthers([string] $Sddl, [int64] $Mask, [string[]] $Allowed) {
     $ok = @($ADMIN_SIDS) + @($Allowed | Where-Object { $_ })
     $o = [regex]::Match($Sddl, '^O:(S-1-[0-9-]+|[A-Z][A-Z])')
     if (-not $o.Success) { return 'its owner could not be read' }
     if ($Sddl -match 'D:[A-Z]*NO_ACCESS_CONTROL') { return 'it has no access list: everyone can change it' }
     $who = @()
-    if ($ok -notcontains $o.Groups[1].Value) { $who += @('owner ' + $o.Groups[1].Value) }
+    if ($ok -notcontains $o.Groups[1].Value -and $ok -notcontains (Get-SddlSid $o.Groups[1].Value)) { $who += @('owner ' + $o.Groups[1].Value) }
     $d = [regex]::Match($Sddl, 'D:[A-Z]*((?:\([^)]*\))*)')
     if (-not $d.Success) { return 'its access list could not be read' }
     foreach ($ace in [regex]::Matches($d.Groups[1].Value, '\(([^)]*)\)')) {
@@ -86,7 +104,8 @@ function Get-SddlOthers([string] $Sddl, [int64] $Mask, [string[]] $Allowed) {
         $flags = @()
         for ($i = 0; $i + 1 -lt $p[1].Length; $i += 2) { $flags += @($p[1].Substring($i, 2)) }
         if ($flags -contains 'IO') { continue }
-        if ($ok -contains $p[5] -or @('CO', 'S-1-3-0', 'OW', 'S-1-3-4') -contains $p[5]) { continue }
+        $sid = Get-SddlSid $p[5]
+        if ($ok -contains $p[5] -or $ok -contains $sid -or @('CO', 'S-1-3-0', 'OW', 'S-1-3-4') -contains $sid) { continue }
         if ((Get-SddlRights $p[2]) -band $Mask) { $who += @($p[5] + ' (' + $p[2] + ')') }
     }
     return ($who -join ', ')

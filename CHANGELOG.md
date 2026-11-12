@@ -97,6 +97,9 @@ reports that were wrong.
 **Windows.**
 - STIG drift: see Behaviour changes. A script named by a scheduled task that runs as SYSTEM is used as before (only an
   administrator can make one); one named by another account's task gets the same permission check.
+- The permission check (STIG drift, certificate renewal and install) compares each account by its SID: an account the
+  folder's permissions name by an alias (the built-in Administrator is LA, Domain Admins DA) is the SID Windows gives
+  for it, so a job running as the built-in Administrator uses the folders it made.
 - Trust stores: a JKS cacerts is rewritten only when it was read to its end and its integrity digest matches the
   keystore password given; otherwise it is listed as not removed, unchanged.
 - Patching: the services check also runs after a restart that was only pending, with nothing to install.
