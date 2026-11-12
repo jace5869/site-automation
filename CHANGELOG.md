@@ -23,6 +23,7 @@ its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inve
 - **When CPU ready is low on every VM**, the report says so first: fewer vCPUs free capacity for other VMs, they do not
   make anything faster.
 - The *Why* column is shorter: the numbers already in the other columns are left out of it.
+- In the email, the report's tiles come 4 to a row, so its 10 tiles do not widen the email.
 
 New settings, with their defaults: `vm_rightsize_grow_days: 3`, `vm_rightsize_year_near_pts: 10`,
 `vm_rightsize_conf_days: 21`, `vm_rightsize_conf_margin_pts: 10`, `vm_rightsize_conf_mem_large_gb: 32`,

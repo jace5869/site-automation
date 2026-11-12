@@ -522,5 +522,6 @@
 "value": 1
 }
 ],
+"summary_per_row": 4,
 "title": "VM right-sizing: 7 too big, 2 too small of 14 VMs"
 }

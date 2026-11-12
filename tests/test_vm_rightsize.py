@@ -313,6 +313,7 @@ class Reliable(unittest.TestCase):
         watch = [x for x in d["sections"] if x["title"] == "Watch: busy on a few days"][0]
         self.assertEqual([r[0] for r in watch["rows"]], ["watch1"])
         self.assertIn({"label": "Watch", "value": 1}, d["summary"])
+        self.assertEqual(d["summary_per_row"], 4)                                 # up to 10 tiles: 4 a row in the email (1.31.0b)
         sheet = f.vm_rightsize_xlsx(sized)[0]
         row = [r for r in sheet["rows"] if r[4] == "low1"][0]
         self.assertEqual((row[sheet["columns"].index("Confidence")], row[sheet["columns"].index("Confidence because")]),
