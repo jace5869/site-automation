@@ -39,8 +39,9 @@ Not flagged:
 
 On a command line, a tool's own password option counts wherever a shell starts the tool - after `$(`, a backquote,
 `(`, `;`, `|`, `&&`, inside a quoted string (`ssh db01 'mysql ...'`) - up to the end of that command or line (a line
-ending in `\` goes on). A quoted string is one word of the command around it (`mysql -e "select count(*)" -p...`). A
-Windows tool's switch counts with `/` or `-`, in any case.
+ending in `\` goes on). A quoted string is one word of the command around it (`mysql -e "select count(*)" -p...`); a
+backslash works as in a shell (`ssh h "mysql -e \"select 1\" -p..."`). A Windows tool's switch counts with `/` or `-`,
+in any case.
 
 The audit hides on suspicion: a value it cannot tell from a secret is not shown, and it may call a setting a secret
 that is none. A false "not shown" costs a look in AAP; a shown secret cannot be taken back.
@@ -54,7 +55,8 @@ template. Shown, though they may be a secret:
 - a secret inside free text under a plain name (a kickstart's `rootpw --plaintext ...`, snmpd's `rocommunity ...`);
 - a password option of a tool not in the audit's list, a password given as a plain argument (`net use \\fs01\share
   PASSWORD /user:svc`), a host named like one of the tools (`mysql -h curl ...`);
-- a glued `-p` of letters only outside mysql (`-pabcdef` reads as flags, like `rsync -prltDvz`).
+- a glued `-p` of letters only outside mysql (`-pabcdef` reads as flags, like `rsync -prltDvz`), and `sqlcmd -P 1` (`-p1`
+  is sqlcmd's statistics switch).
 
 ## The report
 

@@ -436,6 +436,37 @@ class Judge(unittest.TestCase):
             with self.subTest(value=v):
                 self.assertFalse(m.is_secret("cmd", v), v)
 
+    def test_backslashes_and_long_words(self):
+        """1.24.0h: a backslash as POSIX has it (inside "..." \\" is a plain quote, the inside handed on without the
+        backslash; inside '...' nothing is special), Windows paths kept; and a long word read in linear time."""
+        hide = [  # (value, what must never be seen)
+            ('ssh h "mysql -e \\"select 1\\" -p2024Hx1"', "2024Hx1"), ('bash -c "mysql -e \\"select 1\\" -p2024Hx2"', "2024Hx2"),
+            ('ssh h "mysql -e \\"select 1\\" -p2024Hx3; echo done"', "2024Hx3"), ('mysql -e "select \\"x\\"" -p2024Hx4', "2024Hx4"),
+            ("echo 'it'\\''s' ; mysql -pHxfive", "Hxfive"), ('"C:\\Program Files\\MySQL\\bin\\mysql.exe" -uroot -pHxsix', "Hxsix"),
+            ("C:\\tools\\sqlcmd.exe -PHx7", "Hx7"), ("mysqldump \\\n  -pHxeight app", "Hxeight"),
+        ]
+        for i, (v, expect) in enumerate(hide):
+            with self.subTest(value=v):
+                n = "cmd%d" % i
+                recs = [{"kind": "job", "id": j, "name": "Job %d" % j, "extra_vars": json.dumps({n: v})} for j in range(3)]
+                templates, settings = m.audit(recs, {"repeat_min": 3})
+                self.assertIn("secret", dict((x["setting"], x) for x in settings)[n]["why"])
+                self.assertNotIn(expect, json.dumps([templates, settings]))
+        self.assertEqual(m.shell_words('ssh h "mysql -e \\"select 1\\" -pX"'), (["ssh", "h", 'mysql -e "select 1" -pX'],
+                                                                              ['mysql -e "select 1" -pX']))
+        self.assertEqual(m.shell_words("echo 'it'\\''s'")[0], ["echo", "it's"])
+        self.assertEqual(m.shell_words("echo 'a\\\\b'")[0], ["echo", "a\\\\b"])              # inside '...' nothing is special
+        # 200 KB of one word: linear (it was quadratic from 1.24.0b on: 40 KB took 27 s)
+        for w in ("QUJD" * 50000, "A" * 200000, "node." * 40000, "a=b " * 50000, "x:" * 100000, "-a " * 66000):
+            t = time.time()
+            self.assertFalse(m.is_secret("blob", w))
+            self.assertLess(time.time() - t, 1.0, w[:12])
+        t = time.time()
+        recs = [{"kind": "job", "id": j, "name": "Job %d" % j,
+                 "extra_vars": json.dumps({"blob1": "QUJD" * 5000, "blob2": "A" * 20000, "blob3": "node." * 4000})} for j in range(3)]
+        m.audit(recs, {"repeat_min": 3})
+        self.assertLess(time.time() - t, 2.0)
+
     def test_repeat_min(self):
         _, settings = m.audit(records(), dict(OPTS, repeat_min=0))
         self.assertNotIn("check_disk_warn_pct", [x["setting"] for x in settings])
