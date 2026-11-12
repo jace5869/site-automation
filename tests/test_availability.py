@@ -326,5 +326,45 @@ class History(unittest.TestCase):
         self.assertEqual((out["previous"], out["periods"][0]["pct"]), (None, None))
 
 
+class Python36Cert(unittest.TestCase):
+    """1.36.0: the same care as the ServiceNow node check (1.32.1) for the checks that run on the AAP side - a Python
+    without ssl.SSLCertVerificationError (3.6) says a refused certificate, and never a traceback."""
+    VERIFY = "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed (_ssl.c:897)"
+
+    def as_python36(self, fn):
+        import ssl
+        saved = getattr(ssl, "SSLCertVerificationError", None)
+        if saved is not None:
+            delattr(ssl, "SSLCertVerificationError")
+        try:
+            return fn()
+        finally:
+            if saved is not None:
+                ssl.SSLCertVerificationError = saved
+
+    def test_a_refused_certificate_is_said(self):
+        import ssl
+        for mod in (P, SM):
+            err = URLError(ssl.SSLError(1, self.VERIFY))
+            got = self.as_python36(lambda: mod.reason(err))
+            self.assertIn("its certificate is not trusted", got, mod.__name__)
+            self.assertIn("CERTIFICATE_VERIFY_FAILED", got, mod.__name__)
+            self.assertTrue(mod.is_cert_error(ssl.SSLError(1, self.VERIFY)))
+            self.assertFalse(mod.is_cert_error(OSError("connection refused")))
+
+    def test_the_current_python_keeps_its_message(self):
+        import ssl
+        if not hasattr(ssl, "SSLCertVerificationError"):
+            self.skipTest("this Python has no ssl.SSLCertVerificationError")
+        e = ssl.SSLCertVerificationError(1, self.VERIFY)
+        e.verify_message = "unable to get local issuer certificate"
+        for mod in (P, SM):
+            self.assertEqual(mod.reason(URLError(e)), "its certificate is not trusted (unable to get local issuer certificate)")
+
+    def test_another_failure_is_not_a_certificate(self):
+        for mod in (P, SM):
+            self.assertNotIn("certificate", self.as_python36(lambda: mod.reason(URLError(ConnectionRefusedError()))))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

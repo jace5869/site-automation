@@ -41,7 +41,7 @@ def setUpModule():
     # a root, an intermediate it signs, and leaves the intermediate signs - one from a CSR (the renewal's)
     ossl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "root.key", "-out", "root.crt", "-days", "400",
          "-subj", "/C=US/O=U.S. Government/OU=DoD/OU=PKI/CN=TEST ROOT CA 3",
-         "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign,cRLSign")
+         "-addext", "keyUsage=critical,keyCertSign,cRLSign")
     ossl("req", "-new", "-newkey", "rsa:2048", "-nodes", "-keyout", "int.key", "-out", "int.csr",
          "-subj", "/C=US/O=U.S. Government/OU=DoD/OU=PKI/CN=TEST ID CA-70")
     with open(os.path.join(W, "ca.ext"), "w") as fh:
@@ -70,7 +70,7 @@ def setUpModule():
     ossl("crl2pkcs7", "-nocrl", "-certfile", "int.crt", "-certfile", "root.crt", "-outform", "DER", "-out", "bundle.p7b")
     ossl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "fake.key", "-out", "fake.crt", "-days", "300",
          "-subj", "/C=US/O=U.S. Government/OU=DoD/OU=PKI/CN=TEST ID CA-70",
-         "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign,cRLSign")
+         "-addext", "keyUsage=critical,keyCertSign,cRLSign")
     ossl("crl2pkcs7", "-nocrl", "-certfile", "fake.crt", "-certfile", "root.crt", "-outform", "DER", "-out", "fake-bundle.p7b")
     old_int()
 

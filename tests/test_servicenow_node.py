@@ -188,7 +188,7 @@ class StatsWays(unittest.TestCase):
         cls.d = tempfile.mkdtemp()
         cls.cert = os.path.join(cls.d, "node.pem")
         subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=node01.yoursite.mil", "-days", "1",
-                        "-keyout", cls.cert, "-out", cls.cert], check=True, capture_output=True)
+                        "-keyout", cls.cert, "-out", cls.cert], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     @classmethod
     def tearDownClass(cls):
@@ -312,9 +312,9 @@ class StatsWays(unittest.TestCase):
     def test_https_read_when_its_certificate_is_trusted(self):
         cert = os.path.join(self.d, "ip.pem")
         subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=127.0.0.1", "-days", "1",
-                        "-addext", "subjectAltName=IP:127.0.0.1", "-addext", "basicConstraints=critical,CA:TRUE",
+                        "-addext", "subjectAltName=IP:127.0.0.1", 
                         "-addext", "keyUsage=critical,digitalSignature,keyCertSign",
-                        "-keyout", cert, "-out", cert], check=True, capture_output=True)
+                        "-keyout", cert, "-out", cert], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         port = self.serve("tls=" + cert)
         before = os.environ.get("SSL_CERT_FILE")
         os.environ["SSL_CERT_FILE"] = cert            # the host's trust store, for this test: that certificate
@@ -348,9 +348,9 @@ class StatsWays(unittest.TestCase):
 def _ca_and_cert(d, tag, name):
     """A local CA and a server certificate for name signed by it (key and certificate in one file): (ca.pem, server.pem)."""
     ca, cakey, key, csr, crt, ext = (os.path.join(d, "%s-%s" % (tag, f)) for f in ("ca.pem", "ca.key", "srv.key", "srv.csr", "srv.crt", "ext"))
-    run = lambda *a: subprocess.run(list(a), check=True, capture_output=True)      # noqa: E731
+    run = lambda *a: subprocess.run(list(a), check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)      # noqa: E731
     run("openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=Test CA %s" % tag, "-days", "1",
-        "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign,cRLSign",
+        "-addext", "keyUsage=critical,keyCertSign,cRLSign",
         "-keyout", cakey, "-out", ca)
     run("openssl", "req", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=%s" % name, "-keyout", key, "-out", csr)
     with open(ext, "w") as f:
@@ -1037,7 +1037,7 @@ class StatsPages(unittest.TestCase):
         cls.d = tempfile.mkdtemp()
         cls.cert = os.path.join(cls.d, "node.pem")
         subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=127.0.0.1", "-days", "1",
-                        "-keyout", cls.cert, "-out", cls.cert], check=True, capture_output=True)
+                        "-keyout", cls.cert, "-out", cls.cert], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     @classmethod
     def tearDownClass(cls):
@@ -1167,7 +1167,7 @@ class FormLogin(unittest.TestCase):
         cls.d = tempfile.mkdtemp()
         cls.cert = os.path.join(cls.d, "node.pem")
         subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=127.0.0.1", "-days", "1",
-                        "-keyout", cls.cert, "-out", cls.cert], check=True, capture_output=True)
+                        "-keyout", cls.cert, "-out", cls.cert], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     @classmethod
     def tearDownClass(cls):

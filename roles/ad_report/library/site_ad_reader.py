@@ -239,6 +239,16 @@ def raw_all(e, name):
     return list((e.get("raw_attributes") or {}).get(name) or [])
 
 
+# ssl.SSLCertVerificationError is Python 3.7+. On an older Python a refused certificate is an ssl.SSLError
+# "CERTIFICATE_VERIFY_FAILED", or an ssl.CertificateError for a name that does not match: never name the class directly.
+_CERT_ERRORS = tuple(x for x in (getattr(ssl, "SSLCertVerificationError", None), getattr(ssl, "CertificateError", None)) if x)
+
+
+def is_cert_error(err):
+    """True when err is a refused certificate, on any Python 3."""
+    return isinstance(err, _CERT_ERRORS) or "CERTIFICATE_VERIFY_FAILED" in str(err)
+
+
 def short_err(e):
     s = str(getattr(e, "message", "") or e)
     return re.sub(r"\s+", " ", s).strip()[:300] or e.__class__.__name__
@@ -629,12 +639,9 @@ class Reader(object):
                     with ctx.wrap_socket(s, server_hostname=fqdn):
                         pass
                 out["trusted"] = True
-            except ssl.SSLCertVerificationError as e:
+            except (OSError, ssl.SSLError, socket.timeout) + _CERT_ERRORS as e:
                 out["trusted"] = False
-                out["trust_error"] = short_err(getattr(e, "verify_message", "") or e)
-            except (OSError, ssl.SSLError, socket.timeout) as e:
-                out["trusted"] = False
-                out["trust_error"] = short_err(e)
+                out["trust_error"] = short_err((getattr(e, "verify_message", "") or e) if is_cert_error(e) else e)
         return out
 
     # -- Kerberos ------------------------------------------------------------------------------------------------------------

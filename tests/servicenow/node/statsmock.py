@@ -20,7 +20,15 @@ import socket
 import ssl
 import sys
 from urllib.parse import parse_qs
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
+try:
+    from http.server import ThreadingHTTPServer
+except ImportError:                        # Python 3.6 (the node tests are run there too: a RHEL 8 node's Python)
+    from http.server import HTTPServer
+    from socketserver import ThreadingMixIn
+
+    class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+        daemon_threads = True
 
 here = os.path.dirname(os.path.abspath(__file__))
 port, kind = int(sys.argv[1]), sys.argv[2]

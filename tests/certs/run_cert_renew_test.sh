@@ -41,7 +41,7 @@ q() { openssl "$@" 2>/dev/null; }
 
 # ---- a test CA, and the certificates it signs ----
 q req -x509 -newkey rsa:2048 -nodes -keyout ca.key -out ca.crt -days 25 -subj "/C=US/O=U.S. Government/OU=DoD/OU=PKI/CN=TEST ROOT CA 3" \
-    -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign
+    -addext keyUsage=critical,keyCertSign,cRLSign
 sign() {  # sign NAME DAYS KEYOPTS SUBJECT SAN [CA]  -> pki/NAME.crt
     local name="$1" days="$2" keyopt="$3" subj="$4" san="$5" ca="${6:-ca}" ext=()
     [ -n "$san" ] && ext=(-addext "subjectAltName=$san")
@@ -62,13 +62,12 @@ printf '%s\n' '[ca]' 'default_ca = d' '[d]' 'database = ca.idx' 'new_certs_dir =
     'copy_extensions = copy' 'preserve = yes' '[p]' 'countryName = optional' 'organizationName = optional' 'commonName = supplied' > ca.cnf
 q ca -batch -config ca.cnf -cert ca.crt -keyfile ca.key -in old01.csr -out pki/old01.crt -notext \
     -startdate "$(date -u -d '-40 days' +%y%m%d%H%M%SZ)" -enddate "$(date -u -d '-5 days +1 hour' +%y%m%d%H%M%SZ)"
-q req -x509 -newkey rsa:2048 -nodes -keyout katca.key -out katca.crt -days 300 -subj "/C=US/ST=North Carolina/O=Katello/OU=SomeOrgUnit/CN=sat.example.mil" \
-    -addext basicConstraints=critical,CA:TRUE
+q req -x509 -newkey rsa:2048 -nodes -keyout katca.key -out katca.crt -days 300 -subj "/C=US/ST=North Carolina/O=Katello/OU=SomeOrgUnit/CN=sat.example.mil"
 sign proxy01 15 "-newkey rsa:2048" "/C=US/O=Test/CN=proxy01.example.mil" "" katca && mv pki/proxy01.crt sat/proxy01.crt
 q req -x509 -newkey rsa:2048 -nodes -keyout self.key -out pki/self.crt -days 15 -subj "/CN=self01.example.mil"
 q req -x509 -newkey rsa:2048 -nodes -keyout lh.key -out pki/lh.crt -days 15 -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
 q req -x509 -newkey rsa:2048 -nodes -keyout root.key -out pki/root.crt -days 15 -subj "/C=US/O=Test/CN=Test Root CA" \
-    -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign
+    -addext keyUsage=critical,keyCertSign,cRLSign
 # postfix's placeholder, made as its package does at install (self-signed, CN = the host's name)
 q genrsa -out ph.key 2048
 q req -new -key ph.key -x509 -sha256 -days 15 -set_serial 4242 -out ph/postfix.pem \

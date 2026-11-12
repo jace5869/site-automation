@@ -56,6 +56,24 @@ patch job's reason.
 - **The test** `tests/servicenow/run_servicenow_test.sh` takes its first port from `SN_TEST_PORT` (default 18270;
   it uses 44 ports from there) and stops at once, naming the ports in use, when one is taken.
 
+**A refused certificate on an older Python, the AAP-side checks** (the same care as 1.32.1 took for the ServiceNow
+nodes). Three checks named a class that Python 3.6 does not have (`ssl.SSLCertVerificationError`) and would stop with
+a traceback where a certificate is refused. They now say it on any Python 3:
+
+- Active Directory health, a domain controller's LDAPS certificate (`roles/ad_report/library/site_ad_reader.py`):
+  *trusted: no*, with why.
+- Availability, a web address (`roles/api_availability/library/site_http_probe.py`) and STIG Manager health
+  (`roles/stigman_health/library/site_stigman_health.py`): *its certificate is not trusted (...)*.
+- Nothing changes on the Python of a current execution environment.
+- Left as they are, AAP side only and Python 3.7 or newer: `ssl.TLSVersion` in
+  `roles/net_certs/library/site_net_certs.py`, and `capture_output` in
+  `roles/pki_bundle/library/site_pki_bundle.py`.
+
+**The tests' own CAs on OpenSSL 1.1.1** (RHEL 8). The tests made a CA with `openssl req -x509 -addext
+basicConstraints=...`; OpenSSL 1.1.1 then writes that extension twice and refuses the CA. They leave it to
+`req -x509` now (it writes `CA:TRUE` itself, on 1.1.1 and on 3). `tests/test_servicenow_node.py` and its fake node
+also run on Python 3.6.
+
 **Behaviour changes**
 
 - **A line that starts with `#` in a list of names given as text is left out** (a survey answer, an extra variable):
@@ -88,7 +106,10 @@ still matches), tests/test_servicenow_node.py (two units of one address: one log
 address: one login; no query of a redirect in any line; the host named is the host asked - `#@`, a backslash, a blank
 and a login refused), tests/servicenow/run_servicenow_test.sh (current ansible-core and 2.16: two units of one node on
 one port - one login, both units read in it, one logout; the fake node's redirects carry a token in the query, never
-printed, `-vvv` too).
+printed, `-vvv` too); tests/test_servicenow_node.py was also run on Python 3.6.8 with OpenSSL 1.1.1k (all 91 pass);
+tests/test_availability.py and
+tests/test_ad_reader.py (`Python36Cert`: a refused certificate with no `ssl.SSLCertVerificationError` - said, never a
+traceback; a name that does not match; they fail on 1.33.0).
 
 ## 1.33.0 — 2026-11-12
 

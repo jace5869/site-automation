@@ -69,7 +69,7 @@ def setUpModule():
     os.makedirs(os.path.join(W, "keys"))
     os.makedirs(os.path.join(W, "noconf"))
     ossl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "root.key", "-out", "root.crt", "-days", "400", "-subj", "/CN=TEST ROOT",
-         "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign,cRLSign")
+         "-addext", "keyUsage=critical,keyCertSign,cRLSign")
     ossl("req", "-new", "-newkey", "rsa:2048", "-nodes", "-keyout", "int.key", "-out", "int.csr", "-subj", "/CN=TEST INT")
     write("ca.ext", "basicConstraints=critical,CA:TRUE,pathlen:0\nkeyUsage=critical,keyCertSign,cRLSign\n")
     ossl("x509", "-req", "-in", "int.csr", "-CA", "root.crt", "-CAkey", "root.key", "-CAcreateserial", "-days", "390", "-out", "int.crt", "-extfile", "ca.ext")

@@ -50,7 +50,7 @@ def write(name, data):
 
 def root(name, cn):
     ossl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", name + ".key", "-out", name + ".crt", "-days", "400",
-         "-subj", SUBJ + cn, "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign,cRLSign")
+         "-subj", SUBJ + cn, "-addext", "keyUsage=critical,keyCertSign,cRLSign")
 
 
 def signed(name, cn, by, ext):

@@ -56,13 +56,22 @@ from urllib.request import HTTPSHandler, Request, build_opener
 
 from ansible.module_utils.basic import AnsibleModule
 
+# ssl.SSLCertVerificationError is Python 3.7+. On an older Python a refused certificate is an ssl.SSLError
+# "CERTIFICATE_VERIFY_FAILED", or an ssl.CertificateError for a name that does not match: never name the class directly.
+_CERT_ERRORS = tuple(x for x in (getattr(ssl, "SSLCertVerificationError", None), getattr(ssl, "CertificateError", None)) if x)
+
+
+def is_cert_error(err):
+    """True when err is a refused certificate, on any Python 3."""
+    return isinstance(err, _CERT_ERRORS) or "CERTIFICATE_VERIFY_FAILED" in str(err)
+
 
 def reason(e):
     if isinstance(e, HTTPError):
         return "HTTP %d" % e.code
     r = getattr(e, "reason", e)
-    if isinstance(r, ssl.SSLCertVerificationError):
-        return "its certificate is not trusted (%s)" % (r.verify_message or r)
+    if is_cert_error(r):
+        return "its certificate is not trusted (%s)" % (getattr(r, "verify_message", "") or r)
     if isinstance(r, (socket.timeout, TimeoutError)):
         return "no answer in time"
     if isinstance(r, ConnectionRefusedError):
