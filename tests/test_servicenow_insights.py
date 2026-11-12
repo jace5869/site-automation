@@ -575,7 +575,8 @@ class Page(unittest.TestCase):
         self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt; &amp; more", h)
         self.assertNotIn('id="teams"', h)
         self.assertIn('href="../latest.html"', h)
-        self.assertEqual(h.count("<script"), 2)                  # the file's tag and the page's own copy, nothing else
+        self.assertEqual(h.count("<script"), 3)                  # the file's tag, the page's own copy and its rows (pp-data), nothing else
+        self.assertEqual(h.count('<script type="application/json" id="pp-data">'), 1)
         self.assertIn('<a class="team lv0" href="../latest.html" data-n="all assignment groups all assignment groups" data-c="" title="All assignment groups">'
                       'All assignment groups</a>', h)                     # the site's page, from a team's: a plain link
         self.assertIn('<span class="pk-v">Other · VDI</span>', h)                             # the picker says where
@@ -1749,6 +1750,121 @@ class PageFits(unittest.TestCase):
         self.assertIn("Open now (was)", h)
         self.assertNotIn(">Change tasks open<", h)
         self.assertRegex(h, r'<b>[\d,]+</b> <span class="mut">\([\d,]+\)</span>')
+
+
+class PagePeriods(unittest.TestCase):
+    """1.39.0: the period bar on the All page and on every unit's and team's page - the page's own rows, the window as
+    written until a period is chosen; At a glance and the opened and resolved chart worked out by the Custom view's script
+    (the same figs()), the rest marked whole window; the period in the address (#p=1m), Back to the one before; under
+    require-trusted-types-for 'script'; it fits at 1280 px and on a phone."""
+
+    PROBE = ('<script>var V=[];document.addEventListener("securitypolicyviolation",function(e){V.push(e.violatedDirective)});'
+             'addEventListener("error",function(e){V.push(String(e.message))});'
+             'function tv(k){var t=document.querySelector("#glance .tile[data-pp="+k+"]");return [].slice.call(t.querySelectorAll(".v")).filter(function(x){return !x.hidden})'
+             '.map(function(x){return x.firstChild.textContent}).join("|")}'
+             'addEventListener("load",function(){setTimeout(function(){var D=document,o={};try{o.h0=location.hash;o.t0=tv("opened");o.b0=tv("backlog");'
+             'o.say=!D.getElementById("ppsay").hidden;o.whole=[].slice.call(D.querySelectorAll("#glance .tile[data-pp=\'-\'] .chip.ppw")).filter(function(x){return !x.hidden}).length;'
+             'o.notes=[].slice.call(D.querySelectorAll("section.card .sh .chip.ppw")).filter(function(x){return !x.hidden}).length;o.chart=!!D.querySelector("#ppflow .cvsvg");'
+             'D.querySelector("#ppbar button.cvpd[data-name=\'3m\']").click();o.h3=location.hash;o.t3=tv("opened");history.back();'
+             'setTimeout(function(){o.hb=location.hash;o.tb=tv("opened");D.querySelector("#ppbar button.cvpd[data-name=\'all\']").click();o.ta=tv("opened");o.ha=location.hash;'
+             'o.v=V;D.title="R "+JSON.stringify(o)},300)}catch(e){V.push("thrown: "+e.message);o.v=V;D.title="R "+JSON.stringify(o)}},300)})</script></body>')
+    CSP = '<head><meta http-equiv="Content-Security-Policy" content="require-trusted-types-for \'script\'">'
+
+    def chrome(self, h, frag="", width=1280, probe=None):
+        import shutil
+        b = shutil.which("google-chrome") or shutil.which("chromium")
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "p.html")
+            with open(path, "w") as fh:
+                fh.write(h.replace("<head>", self.CSP, 1).replace("</head>", PageFits.FONTS, 1).replace("</body>", probe or self.PROBE))
+            out = subprocess.run([b, "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars", "--virtual-time-budget=6000",
+                                  "--window-size=%d,900" % width, "--dump-dom", "file://" + path + frag], capture_output=True, text=True, timeout=120).stdout
+        t = re.search(r"<title>R (.*?)</title>", out)
+        self.assertTrue(t, out[-500:])
+        return t.group(1).replace("&quot;", '"').replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+
+    def want(self, m, key, name):
+        """The figures custom_figures works out from the page's own rows for a period: incidents and requests opened, open at its end."""
+        d, _ = P.page_rows(m, m["scopes"][key])
+        p = [x for x in d["periods"] if x["name"] == name][0]
+        f = F.custom_figures(d, range(len(d["groups"])), (p["a"], p["b"]))
+        return "{:,}".format(f["incidents"] + f["requests"]), "{:,}".format(f["backlog"][0])
+
+    def test_rows_of_each_page(self):
+        m = site()["model"]
+        h = P.servicenow_insights_page(m, "all", OPTS)
+        self.assertIn('<div class="cvres ppbar" id="ppbar">', h)
+        self.assertIn('<select id="pppsel">', h)
+        self.assertIn('<script type="application/json" id="pp-data">', h)
+        self.assertLess(h.index('id="ppbar"'), h.index('id="glance"'))
+        for k in ("opened", "backlog", "median", "sla", "-"):
+            self.assertIn('data-pp="%s"' % k, h)
+        team = m["teams"][0]
+        d, _ = P.page_rows(m, m["scopes"][team])
+        self.assertEqual(d["groups"], [team])
+        self.assertEqual(d["n"], sum(1 for g in m["rows"]["full"]["cols"]["g"] if m["rows"]["full"]["groups"][g] == team))
+        self.assertIn('id="pp-data"', P.servicenow_insights_page(m, team, OPTS))
+        # off, and too many rows for a page: said, no rows carried
+        self.assertNotIn('id="ppbar"', P.servicenow_insights_page(m, "all", dict(OPTS, page_periods=False)))
+        x = site()
+        m2 = F.servicenow_insights_model(x["r"], None, x["mask"], dict(OPTS, custom_view_max_rows=50))
+        h2 = P.servicenow_insights_page(m2, "all", OPTS)
+        self.assertNotIn('id="pp-data"', h2)
+        self.assertRegex(h2, r'<p class="ppnone mut">Periods: not on this page - [\d,]+ tickets are more than servicenow_insights_custom_view_max_rows \(50\)\.</p>')
+        # the window before cut for a page that fits without it: the window's rows, the periods that need it said
+        n_t = P.page_rows(m, m["scopes"][team])[0]["n"]
+        m3 = F.servicenow_insights_model(x["r"], None, x["mask"], dict(OPTS, custom_view_max_rows=n_t - 1))
+        d3, _ = P.page_rows(m3, m3["scopes"][team])
+        self.assertLess(d3["n"], n_t)
+        self.assertFalse(any(o_ is not None and o_ < 0 for o_ in d3["cols"]["d"]))
+        self.assertIn("the window before is over servicenow_insights_custom_view_max_rows", d3["left_line"])
+
+    def test_the_split_and_the_map(self):
+        x = site(sites=True)
+        m = F.servicenow_insights_model(x["r"], None, x["mask"], dict(PARENTS_OPTS, split_label="BLUE", split_pattern="*- nova"))
+        sp = set(m["split"]["groups"])
+        mv = F.servicenow_insights_variant(m, "in")
+        din, _ = P.page_rows(mv, mv["scopes"]["all"], "in")
+        dout, _ = P.page_rows(F.servicenow_insights_variant(m, "out"), F.servicenow_insights_variant(m, "out")["scopes"]["all"], "out")
+        self.assertTrue(din["groups"] and set(din["groups"]) <= sp)
+        self.assertFalse(set(dout["groups"]) & sp)
+        self.assertEqual(din["n"] + dout["n"], m["rows"]["full"]["n"])
+        # the org map's All page: the Custom view's rows serve the bar too - carried once
+        import test_insights_org as O
+        mo = O.model()
+        h = P.servicenow_insights_page(mo, "all", {"links": page_links(mo)})
+        self.assertIn('id="ppbar"', h)
+        self.assertIn('id="cv-data"', h)
+        self.assertNotIn('id="pp-data"', h)
+
+    def test_in_a_browser(self):
+        m = site()["model"]
+        team = m["teams"][0]
+        for key in ("all", team):
+            got = json.loads(self.chrome(P.servicenow_insights_page(m, key, OPTS), "#p=1m"))
+            self.assertEqual(got["v"], [], (key, got))
+            self.assertEqual(got["h0"], "#p=1m")
+            self.assertEqual((got["t0"], got["b0"]), self.want(m, key, "1m"), (key, got))
+            self.assertTrue(got["say"] and got["chart"])
+            self.assertEqual(got["whole"], 4, got)                 # reopened, changes, hand-offs, close notes: the window's, said so
+            self.assertGreater(got["notes"], 10)
+            self.assertEqual((got["h3"], got["t3"]), ("#p=3m", self.want(m, key, "3m")[0]))
+            self.assertEqual((got["hb"], got["tb"]), ("#p=1m", got["t0"]))        # Back
+            w = re.search(r'<div class="tile" data-pp="opened"><span class="eyebrow">Tickets</span><span class="v">([\d,]+)', P.servicenow_insights_page(m, key, OPTS)).group(1)
+            self.assertEqual((got["ta"], got["ha"]), (w, ""))               # the window: the page as written
+        # without a hash: the window, nothing marked
+        got = json.loads(self.chrome(P.servicenow_insights_page(m, "all", OPTS)))
+        self.assertEqual((got["h0"], got["say"], got["whole"], got["notes"]), ("", False, 0, 0))
+
+    def test_it_fits(self):
+        m = site()["model"]
+        for key in ("all", m["teams"][0]):
+            for look in ("", "brief"):
+                h = P.servicenow_insights_page(m, key, dict(OPTS, look=look))
+                for width in (1280, 390):
+                    got = self.chrome(h, "#p=1m", width, PageFits.PROBE)
+                    out = [x for x in got.split("; ") if width == 1280 or x.startswith("page")]
+                    self.assertEqual(out, ["page 0"], (key, look or "atlas", width, got))
 
 
 class TicketStore(unittest.TestCase):

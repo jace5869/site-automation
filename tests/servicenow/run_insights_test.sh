@@ -119,6 +119,10 @@ check "the site's page: every section, links to the teams, ticket links into Ser
     'Reopen not used here' 'Came back' 'Response met' 'Resolution met' 'No SLA' 'P4 Incident Response' 'Act on first' 'SLA at risk now' \
     'How incidents ended' 'Priority set by hand' 'id="categories"' 'id="satisfaction"' 'Time in each state' 'The numbers as a table' \
     'Backlog age and flow' 'Ping-pong' 'id="afterhours"' 'id="workload"' 'data-tab="p1"' 'No drafts: ACT (GenAI) writes them' '!cid:' '!<!--site-report-logo-->'
+# 1.39.0: the period bar on the site's page and a team's, each with its own rows
+check "the period bar on the site's page and a team's, each page's rows" "$top/latest.html" \
+    '<div class="cvres ppbar" id="ppbar">' '<script type="application/json" id="pp-data">' 'data-pp="opened"' 'id="ppfrom"' 'id="ppflow"'
+check "  ... a team's page" "$top/ops/other/windows/latest.html" '<div class="cvres ppbar" id="ppbar">' '<script type="application/json" id="pp-data">'
 # 1.16.0: the user's word is SLA - no page, email or job line says SLO (the pages' data blocks aside: keys, never shown)
 n=$(find "$top" -name '*.html' -exec sed 's#<script type="application/json"[^>]*>.*</script>##' {} + | cat - "$work/out.txt" "$work"/mail/*.eml 2>/dev/null | grep -ciwE 'slos?')
 [ "$n" = 0 ] && echo "ok   -   ... no page, email or job line says SLO" || { echo "FAIL - SLO said $n times"; fails=$((fails + 1)); }
@@ -553,7 +557,9 @@ check "  ... the periods (1.10.0): the ones set, calendar titles, weeks from Sun
 run "a week that starts on no day: said" fail "{$NOW, $NOACT, \"servicenow_insights_hierarchy_source\": \"map\", \"servicenow_insights_hierarchy_map\": $orgmap,
       \"servicenow_insights_week_start\": \"someday\"}" 'servicenow_insights_week_start: someday is not a day'
 check "  ... the split by the map's level: SPLIT's page says where the Custom view is" "$t8/latest-split.html" \
-    '<b>Custom view:</b> on the <a href="latest.html">All page</a>.' '!id="cv-data"' 'aria-current="page">SPLIT</a>'
+    '<b>Custom view:</b> on the <a href="latest.html">All page</a>.' '!id="cv-data"' 'aria-current="page">SPLIT</a>' \
+    'id="ppbar"' '<script type="application/json" id="pp-data">'
+check "  ... All: the period bar takes the Custom view's rows, carried once (1.39.0)" "$t8/latest.html" 'id="ppbar"' '!id="pp-data"'
 check "  ... a unit four levels down: its breadcrumbs, its Custom view link" "$t8/sitea/split/operations/eucs/latest.html" \
     '<a href="../../../latest.html">SITEA</a>' '<b>EUCS</b>' 'href="../../../../latest.html#cv=' 'Custom view of this group'
 

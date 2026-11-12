@@ -53,6 +53,7 @@
       unmapped_bucket: "{{ servicenow_insights_unmapped_bucket | default('Unknown', true) | string | trim }}"
       custom_view: "{{ servicenow_insights_custom_view | bool }}"
       custom_view_max_rows: "{{ servicenow_insights_custom_view_max_rows | int }}"
+      page_periods: "{{ servicenow_insights_page_periods | bool }}"
       custom_view_presets: "{{ servicenow_insights_custom_view_presets | default({}, true) }}"
       periods: "{{ servicenow_insights_periods | default(['all', 'this_month', '1m', '2m', '3m', '6m', '9m', '12m', '1w', '2w', '4w'], true) }}"
       week_start: "{{ servicenow_insights_week_start | default('mon', true) | string | trim | lower }}"

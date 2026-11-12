@@ -360,8 +360,50 @@ they link to the All page.
 | `servicenow_insights_custom_view_max_rows` | `30000` | its tickets carried in the page at most |
 | `servicenow_insights_custom_view_presets` | `{}` | more quick choices: `{name: {levels: [...]}}` or `{name: {pattern: "..."}}` |
 | `servicenow_insights_split_by` | `both` | with the map, the split by `pattern`, by `level` (the label one of the group's levels), or `both` |
-| `servicenow_insights_periods` | `[all, this_month, 1m, 2m, 3m, 6m, 9m, 12m, 1w, 2w, 4w]` | the Custom view's periods (1.10.0): `all`, `this_month`, `1m` to `12m`, `1w` to `8w` (1.16.0) |
+| `servicenow_insights_periods` | `[all, this_month, 1m, 2m, 3m, 6m, 9m, 12m, 1w, 2w, 4w]` | the periods of the Custom view and of every page (1.10.0): `all`, `this_month`, `1m` to `12m`, `1w` to `8w` (1.16.0) |
 | `servicenow_insights_week_start` | `mon` | the day a week starts on, for the weeks |
+
+## Periods on every page (1.39.0)
+
+The All page and every site's, unit's and team's page have a period bar at the top. It has the Custom view's buttons,
+from / to and phone select. No groups to tick: each page takes its own tickets. A split's page takes its half's.
+
+The page opens on *The window*, exactly as written. A period chosen changes:
+
+- **At a glance**: tickets, open now (or at the period's end), the median time to resolve, response and resolution
+  met, first-contact resolution and unable to resolve. Each is compared with the period before, as in the Custom view.
+- **Keeping up**: its first chart, as opened and incidents resolved per day, week or month.
+
+Everything else stays on the window and says *whole window* in its heading while a period is chosen. These tiles do
+too: reopened, changes successful, reassigned 3+ times and the close notes. The rows do not carry what they need.
+
+| Section | With a period |
+|---|---|
+| At a glance | follows, except the four tiles above |
+| Keeping up | the first chart follows, the rest is the window |
+| Every other section | the window: *whole window* |
+
+The address keeps the period: `#p=3m`, or `#p=2026-10-05_2026-10-18` for a from / to. *Copy link* copies it, and
+Back goes to the period before.
+
+The bar works with or without the map. Each page carries its own tickets as rows, about 52 bytes a ticket. On the
+made-up site of the tests (1,952 tickets with the window before):
+
+| Page | Before | With the bar |
+|---|---|---|
+| All, no map | 340 KB | 458 KB |
+| A team of 1,018 tickets | 250 KB | 319 KB |
+| All, with the map | 466 KB | 475 KB |
+
+With the map, the All page's bar uses the Custom view's rows, so they are carried once. A page's rows follow
+`servicenow_insights_custom_view_max_rows`, each page on its own. Over it with the window before, the page carries the
+window's rows and says which periods are left out. Over it with the window alone, the page says so and has no bar.
+
+```yaml
+servicenow_insights_page_periods: true          # false = no bar, the pages as before
+```
+
+The email and the workbook do not change.
 
 ## ACT (GenAI), and what never reaches it
 
