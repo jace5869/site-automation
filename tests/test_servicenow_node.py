@@ -365,6 +365,48 @@ def _ca_and_cert(d, tag, name):
     return ca, srv
 
 
+class Python36Cert(unittest.TestCase):
+    """1.32.1: a node's platform Python can be 3.6 (RHEL 8): no ssl.SSLCertVerificationError, a refused certificate
+    is an ssl.SSLError "CERTIFICATE_VERIFY_FAILED" without verify_message / verify_code. It is said, never a traceback."""
+    VERIFY = "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed (_ssl.c:897)"
+
+    def as_python36(self, fn):
+        saved = getattr(ssl, "SSLCertVerificationError", None)
+        if saved is not None:
+            delattr(ssl, "SSLCertVerificationError")
+        try:
+            return fn()
+        finally:
+            if saved is not None:
+                ssl.SSLCertVerificationError = saved
+
+    def test_untrusted_said_not_a_traceback(self):
+        from urllib.error import URLError
+        err = URLError(ssl.SSLError(1, self.VERIFY))
+
+        class Opener(object):
+            def open(self, req, timeout=None):
+                raise err
+        real = nm.opener
+        nm.opener = lambda validate, server_name="": Opener()
+        try:
+            code, body, headers = self.as_python36(lambda: nm.ask("https://node01.example.mil:16000/stats.do", "", 5))
+        finally:
+            nm.opener = real
+        self.assertEqual(code, -1)
+        self.assertIsNone(headers)
+        self.assertIn("not trusted", body)
+        self.assertIn("servicenow_node_validate_certs", body)
+
+    def test_name_mismatch_on_python36(self):
+        msg = nm.cert_message(ValueError("hostname 'node01.example.mil' doesn't match 'other.example.mil'"), "node01.example.mil")
+        self.assertIn("does not name node01.example.mil", msg)
+
+    def test_is_cert_error(self):
+        self.assertTrue(nm.is_cert_error(ssl.SSLError(1, self.VERIFY)))
+        self.assertFalse(nm.is_cert_error(OSError("connection refused")))
+
+
 class StatsNamedCert(unittest.TestCase):
     """A TLS-only node whose certificate (from a CA the host trusts) names a name that does not resolve: read on
     127.0.0.1 with that name as the Host, the handshake saying it (SNI) and the certificate checked against it."""

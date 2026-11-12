@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.32.1 — 2026-11-12
+
+**Updating without scripts:** paste `site-automation-1.32.1-changed-since-1.32.0.zip` as it is (from an older version,
+its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`. Nothing to set up.
+
+**ServiceNow health, self-hosted: a refused certificate on a node with Python 3.6.**
+
+- A node whose platform Python is 3.6 (RHEL 8) stopped the node check with a traceback when the stats page's HTTPS
+  certificate was refused (Python 3.6 has no `ssl.SSLCertVerificationError`). It is now said as before: *its
+  certificate is not trusted (...): add its CA to the host's trust store, or set servicenow_node_validate_certs
+  false*, and the next address is tried.
+- A name that does not match the certificate is said as such on Python 3.6 too.
+
+Tests: tests/test_servicenow_node.py `Python36Cert` (an untrusted certificate with no `ssl.SSLCertVerificationError`:
+said, never a traceback; a name mismatch; fails on 1.32.0), run on Python 3.6 as well.
+
+SA_VERSION 1.32.1; the PDFs at 1.32.1.
+
 ## 1.32.0 — 2026-11-12
 
 **Updating without scripts:** paste `site-automation-1.32.0-changed-since-1.29.0.zip` as it is (from an older version,

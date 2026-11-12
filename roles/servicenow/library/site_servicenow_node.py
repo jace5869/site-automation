@@ -455,14 +455,24 @@ _NAME_MISMATCH = (62, 64)                 # X509_V_ERR_HOSTNAME_MISMATCH, X509_V
 _UNTRUSTED = (2, 18, 19, 20, 21)          # unable to get the issuer, self-signed (in the chain), no local issuer, ...
 
 
+# ssl.SSLCertVerificationError is Python 3.7+; a node's platform Python can be 3.6 (RHEL 8), where a refused
+# certificate is an ssl.SSLError "CERTIFICATE_VERIFY_FAILED", or an ssl.CertificateError for a name that does not match.
+_CERT_ERRORS = tuple(x for x in (getattr(ssl, "SSLCertVerificationError", None), getattr(ssl, "CertificateError", None)) if x)
+
+
+def is_cert_error(err):
+    """True when err is a refused certificate, on any Python 3."""
+    return isinstance(err, _CERT_ERRORS) or "CERTIFICATE_VERIFY_FAILED" in str(err)
+
+
 def cert_message(err, name):
     """What a certificate the check refused means, and what to do (name: what it was checked against)."""
-    why = err.verify_message or str(err)
+    why = getattr(err, "verify_message", None) or str(err)
     code = getattr(err, "verify_code", None)
-    if code in _NAME_MISMATCH or "mismatch" in why.lower():
+    if code in _NAME_MISMATCH or "mismatch" in why.lower() or "doesn't match" in why.lower():
         return ("the certificate does not name %s: give the node one that does (its name, or glide.servlet.uri's host), "
                 "or set servicenow_node_validate_certs false" % name)
-    if code in _UNTRUSTED:
+    if code in _UNTRUSTED or (code is None and "CERTIFICATE_VERIFY_FAILED" in why):     # Python 3.6: no verify_code
         return ("its certificate is not trusted (%s): add its CA to the host's trust store, or set "
                 "servicenow_node_validate_certs false" % why)
     return "its certificate is not accepted (%s): renew or replace it, or set servicenow_node_validate_certs false" % why
@@ -500,7 +510,7 @@ def ask(url, host, timeout, login=None, validate=True, cookies=None, data=None):
         return e.code, body, e.headers
     except (URLError, socket.timeout, OSError, ValueError, ssl.SSLError) as e:
         r = getattr(e, "reason", e)
-        if isinstance(r, ssl.SSLCertVerificationError):
+        if is_cert_error(r):
             return -1, cert_message(r, server_name or _url_host(url)), None
         return -1, str(r), None
 
