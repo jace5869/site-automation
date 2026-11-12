@@ -203,6 +203,7 @@ th .ar{opacity:.5;font-size:10px}
 td{padding:8px 12px;border-bottom:1px solid var(--line-2);vertical-align:middle}
 tr:last-child td{border-bottom:0}
 td.n,th.n{text-align:right;padding-left:8px;padding-right:8px}
+.two th,.two td{padding-left:8px;padding-right:8px}
 td .ib{display:inline-block;height:8px;border-radius:0 4px 4px 0;background:var(--s2);vertical-align:middle}
 td .ib.b{background:var(--s1)}
 td.wrapc{min-width:220px}
@@ -237,7 +238,7 @@ tr.team td{background:var(--surface-2);font-weight:700}
 tr.selrow td{background:var(--accent-soft)}
 .teamlink{border:0;background:none;padding:0;font-weight:700;color:var(--accent);cursor:pointer;text-align:left;white-space:normal;border-bottom:1px dotted var(--accent)}
 .teamlink:hover{border-bottom-style:solid}
-.score{display:inline-flex;align-items:center;gap:6px}
+.score{display:inline-flex;flex-wrap:wrap;align-items:center;gap:2px 6px}
 .score .qbar{width:70px;height:7px}
 .fair{font-size:12px;color:var(--muted);max-width:110ch}
 .cap ul,.fair ul,.callout ul{margin:3px 0 0;padding-left:18px}.cap li,.fair li,.callout li{margin:1px 0}
@@ -267,7 +268,7 @@ td.wrap{white-space:normal;overflow-wrap:anywhere;min-width:110px}
 .tw td[data-l]::before{content:attr(data-l);display:inline-block;min-width:40%;margin-right:8px;color:var(--muted);font-size:11px;letter-spacing:.6px;text-transform:uppercase;font-weight:700}
 .tw td:empty{display:none}}
 .c-crit{color:var(--crit)} .c-warn{color:var(--warn)} .c-good{color:var(--good)}
-.inl{display:inline-flex;align-items:center;gap:8px}
+.inl{display:inline-flex;flex-wrap:wrap;align-items:center;gap:4px 8px}
 .acth{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}
 .src.none{background:var(--surface-2);color:var(--muted);border:1px solid var(--line-2)}
 .sup{display:inline-block;min-width:18px;text-align:center;font-size:10.5px;font-weight:800;color:var(--good);background:var(--good-bg);border-radius:6px;padding:0 4px;margin-left:4px}
@@ -677,13 +678,14 @@ def _slug(name):
     return s[:80].rstrip("-") or "all"
 
 
-def tk(num, url):
+def tk(num, url, pre=None):
     """A ticket number as a link into ServiceNow (1.18.0: nav_to.do, the form in ServiceNow's own frame), url its address;
-    '' = the number alone."""
+    '' = the number alone. pre: {prefix: table} the run learned from its records and servicenow_insights_ticket_prefixes
+    (1.30.0: an instance's own prefixes), before TABLE_OF."""
     if not num:
         return '<span class="mut">—</span>'
     m = re.match(r"^([A-Z]+)\d+$", str(num))
-    table = TABLE_OF.get(m.group(1)) if m else None
+    table = ((pre or {}).get(m.group(1)) or TABLE_OF.get(m.group(1))) if m else None
     if not url or not table:
         return '<span class="mono">%s</span>' % e(num)
     uri = quote("%s.do?sysparm_query=number=%s" % (table, num), safe="")
@@ -696,7 +698,10 @@ def ticket_base(m, o):
     if o.get("ticket_links", True) in (False, "false", "False", 0):
         return ""
     b = str(o.get("ticket_base") or "").strip() or str(m.get("url") or "").strip()
-    if b and not re.match(r"^https?://", b, re.I):
+    s = re.match(r"^(https?)://", b, re.I)
+    if s:
+        b = s.group(1).lower() + b[len(s.group(1)):]        # 1.30.0: HTTPS://SN.EXAMPLE.MIL as https://SN.EXAMPLE.MIL
+    elif b:
         b = "https://" + b
     return b.rstrip("/") if re.match(r"^https?://[\w.-]+(:\d+)?(/[\w./-]*)?$", b) else ""
 
@@ -1109,6 +1114,7 @@ def servicenow_insights_page(model, key="all", opts=None):
     multi = lvl != "team"                                                   # more than one group's tickets
     win = m.get("window") or {}
     url = ticket_base(m, o)                 # the ticket links (1.18.0)
+    pre = m.get("prefixes") or {}           # the instance's own prefixes (1.30.0)
     old_days = int(o.get("old_days") or 30)
     reopen_used = bool(m.get("reopen_used"))
     links = o.get("links") or {}           # team -> href (and "all"), relative to this page
@@ -1321,18 +1327,19 @@ def servicenow_insights_page(model, key="all", opts=None):
             rows.append((search_attr(t["team"], t["top"][0]), [
                 td(name), td('<span class="inl">%s<span class="chip %s">%s</span></span>' % (spark(t["series"], "var(--warn)" if up else "var(--s1)", 84 if not two else 56, 26),
                                                                                          "warn" if up else "good", "Falling behind" if up else "Keeping up")),
-                td("<b>%s</b> %s" % (n(t["backlog"][0]), delta(t["backlog"][0], t["backlog"][1])), "n nw", t["backlog"][0]),
+                # 1.30.0: Open now with what it was, as the email has it - the table fits 1280 px
+                td('<b>%s</b> <span class="mut">(%s)</span>' % (n(t["backlog"][0]), n(t["backlog"][1])), "n nw", t["backlog"][0]),
                 td(n(t["old"]), "n" + (" c-warn b" if t["old"] >= 20 else ""), t["old"]), td(fh(t["median_h"]), "n", t["median_h"] or 0),
                 ] + ([sla_cell(t.get("resp"))] if two else []) + [sla_cell(t["sla"]),
                 td('<span class="score">%s<span class="sm mut">%d%% good</span></span>' % (qbar(t["quality"]), t["quality"][0]))] +
-                ([td(n(t.get("ct_closed") or 0), "n", t.get("ct_closed") or 0), td(n(t.get("ct_open") or 0), "n", t.get("ct_open") or 0)] if ctc else []) +
+                ([td("%s / %s" % (n(t.get("ct_closed") or 0), n(t.get("ct_open") or 0)), "n nw", t.get("ct_closed") or 0)] if ctc else []) +
                 [td('%s <span class="mut num">%s</span>' % (e(t["top"][0]), n(t["top"][1])), "wrap")]))
         one = {"Sites": "Site", "Directorates": "Directorate", "Units": "Unit", "Units and teams": "Unit or team"}.get(kind, "Team")
         body.append(section("teams", "%s side by side" % kind, "each %s has its own page with every section of this report" % one.lower(),
-                            table([(one, "", "name"), ("Backlog over the period", "", ""), ("Open now", "n", "open"), ("Over %d days" % old_days, "n", "old"),
+                            table([(one, "", "name"), ("Backlog over the period", "", ""), ("Open now (was)", "n", "open"), ("Over %d days" % old_days, "n", "old"),
                                    ("Median fix", "n", "fix")] + ([("Response", "n", "resp"), ("Resolution", "n", "sla")] if two else [("SLA met", "n", "sla")]) +
                                   [("Close notes", "", "")] +
-                                  ([("Change tasks closed", "n", "ctc"), ("Change tasks open", "n", "cto")] if ctc else []) + [("Top issue", "", "")], rows, sortable=True) +
+                                  ([("Change tasks closed / open", "n", "ctc")] if ctc else []) + [("Top issue", "", "")], rows, sortable=True) +
                             '<div class="fair">Click a %s for its page, or a column\'s name to sort by it. Each backlog line has its own scale: compare Open now for size.%s</div>' % (
                                 one.lower(), ("<ul>%s%s</ul>" % ("<li>Response and Resolution: the share of SLAs met.</li>" if two else "",
                                                                  "<li>Change tasks are counted on their own, not in the backlog, Open now or the SLAs.</li>" if ctc else ""))
@@ -1357,16 +1364,16 @@ def servicenow_insights_page(model, key="all", opts=None):
          "note": "resolved in the period · reviewed by leadership"},
         {"label": "Resolved, not closed after %g days" % (cl.get("days") or 7), "value": n(cl.get("count") or 0), "flag": bool(cl.get("count")),
          "note": "closing after %g days is automatic: these did not close" % (cl.get("days") or 7)}]
-    hrows_ = [(search_attr(x["number"], x["what"], x["group"]), [td(tk(x["number"], url)), td(e(x["what"]), "wide"), td(n(x["hops"]), "n"),
+    hrows_ = [(search_attr(x["number"], x["what"], x["group"]), [td(tk(x["number"], url, pre)), td(e(x["what"]), "wide"), td(n(x["hops"]), "n"),
                                                                 td(glink(x["group"]), "nw"), td(e("%g" % x["age"]), "n", x["age"]), td(e(x["priority"]), "nw")])
               for x in hp.get("rows") or []]
-    lrows_ = [(search_attr(x["number"], x["what"], x["group"]), [td(tk(x["number"], url)), td(e(x["what"]), "wide"), td(glink(x["group"]), "nw"),
+    lrows_ = [(search_attr(x["number"], x["what"], x["group"]), [td(tk(x["number"], url, pre)), td(e(x["what"]), "wide"), td(glink(x["group"]), "nw"),
                                                                 td(e(x["since"]), "num nw"), td(n(x["days"]), "n", x["days"])])
               for x in hd.get("late") or []]
-    rrows_ = [(search_attr(x["number"], x["what"], x["group"], x["note"]), [td(tk(x["number"], url)), td(glink(x["group"]), "nw"), td(e(x["what"]), "wide"),
+    rrows_ = [(search_attr(x["number"], x["what"], x["group"], x["note"]), [td(tk(x["number"], url, pre)), td(glink(x["group"]), "nw"), td(e(x["what"]), "wide"),
                                                                            td(e(x["resolved"]), "num nw"), td(e(x["note"]) or '<span class="mut">no close note</span>', "wide")])
               for x in cd.get("review_rows") or []]
-    crows_ = [(search_attr(x["number"], x["group"]), [td(tk(x["number"], url)), td(glink(x["group"]), "nw"), td(e(x["resolved"]), "num nw"),
+    crows_ = [(search_attr(x["number"], x["group"]), [td(tk(x["number"], url, pre)), td(glink(x["group"]), "nw"), td(e(x["resolved"]), "num nw"),
                                                      td(e("%g" % x["days"]), "n", x["days"]), td(e(x.get("state") or ""), "nw")])
               for x in cl.get("rows") or []]
 
@@ -1380,7 +1387,7 @@ def servicenow_insights_page(model, key="all", opts=None):
                         block("SLA at risk now", "Open incidents past %g%% of their SLA time, or breached and still open. Worst first." % (rk.get("pct") or 75),
                               [("Incident", "", ""), ("Priority", "", ""), ("SLA", "", ""), ("Used", "n", ""), ("Left", "n", ""), ("Group", "", ""), ("Assigned to", "", "")],
                               [(search_attr(x["number"], x["sla"], x["group"], x["assignee"]), [
-                                  td(tk(x["number"], url)), td(e(x["priority"]), "nw"), td(e(x["sla"])),
+                                  td(tk(x["number"], url, pre)), td(e(x["priority"]), "nw"), td(e(x["sla"])),
                                   td(('<b class="c-crit">%s</b>' % pct(x["pct"], 0)) if x["breached"] else pct(x["pct"], 0), "n", x["pct"] or 0),
                                   td("breached" if x["breached"] else fh(x["left_h"]), "n nw", x["left_h"] if x["left_h"] is not None else -1),
                                   td(glink(x["group"]), "nw"), td(e(x["assignee"]), "nw")]) for x in rk.get("rows") or []],
@@ -1608,8 +1615,8 @@ def servicenow_insights_page(model, key="all", opts=None):
     mrow = []
     for x in s["majors"]:
         mrow.append((search_attr(x["number"], x["what"], x["change"], x["problem"], x["group"]), [
-            td(tk(x["number"], url)), td(e(x["opened"]), "num nw"), td('<span class="chip %s">%s</span>' % ("crit" if x["priority"] == "P1" else "warn", e(x["priority"]))),
-            td(e(x["what"]), "wide"), td(glink(x["group"]), "nw"), td(fh(x["hours"]), "n"), td(tk(x["change"], url)), td(tk(x["problem"], url))]))
+            td(tk(x["number"], url, pre)), td(e(x["opened"]), "num nw"), td('<span class="chip %s">%s</span>' % ("crit" if x["priority"] == "P1" else "warn", e(x["priority"]))),
+            td(e(x["what"]), "wide"), td(glink(x["group"]), "nw"), td(fh(x["hours"]), "n"), td(tk(x["change"], url, pre)), td(tk(x["problem"], url, pre))]))
     body.append(section("severity", "Severity", "incidents by priority · P1 and P2 listed one by one",
                         table([("Priority", "", ""), ("Incidents", "n", ""), ("", "", ""), ("Median to resolve", "n", "")] +
                               ([("Response target", "n", "")] if rtargets else []) + ([("Response met", "n", "")] if two else []) +
@@ -1736,7 +1743,7 @@ def servicenow_insights_page(model, key="all", opts=None):
                 search_attr(i["name"], " ".join(i["cis"]), " ".join(steps), " ".join(i["examples"])), i["rank"], e(i["name"]), mv_chip(i["mv"]),
                 src[0], src[1], tags, "%.1f" % (i["share"] or 0), i["cum"], main, 100.0 * i["count"] / mx, spark(i["weekly"]), n(i["count"]),
                 ("was %s" % n(i["prev"])) if win.get("compare") else "incidents", fh(i["median_h"]), src[0], src[1], e(copy), stepl, e(i["fix"].get("why") or ""), dis,
-                ('<span class="mono">%s</span>' % e(", ".join(i["cis"]))) if i["cis"] else "—", ", ".join(tk(x, url) for x in i["examples"]) or "—",
+                ('<span class="mono">%s</span>' % e(", ".join(i["cis"]))) if i["cis"] else "—", ", ".join(tk(x, url, pre) for x in i["examples"]) or "—",
                 qbar(i["quality"], "160px"), i["quality"][2], spark(i["weekly"], "var(--s1)", 160, 34),
                 ("<dt>About</dt><dd>%s</dd>" % e(i["about"])) if i.get("about") else ""))
     if not iss:
@@ -1759,7 +1766,7 @@ def servicenow_insights_page(model, key="all", opts=None):
     for p in s["problems"]:
         if p["problem"]:
             st = p["problem_state"] or ""
-            rec = tk(p["problem"], url) + (' <span class="chip crit">%s, incidents continue</span>' % e(st or "Resolved") if p["continues"] else
+            rec = tk(p["problem"], url, pre) + (' <span class="chip crit">%s, incidents continue</span>' % e(st or "Resolved") if p["continues"] else
                                           (' <span class="chip">%s</span>' % e(st) if st else ""))
         else:
             rec = '<span class="chip warn">No problem record</span>'
@@ -1825,11 +1832,11 @@ def servicenow_insights_page(model, key="all", opts=None):
                 {"label": "Emergency", "value": pct(_p(ch["emergency"], ch["count"])), "note": "%d changes" % ch["emergency"]}]
     crow = []
     for x in ch["rows"]:
-        fol = "<br>".join("%s %s" % (tk(f[0], url), '<span class="chip info">Caused by</span>' if f[1] == "link" else '<span class="chip">Same CI</span>') for f in x["followed"][:6])
+        fol = "<br>".join("%s %s" % (tk(f[0], url, pre), '<span class="chip info">Caused by</span>' if f[1] == "link" else '<span class="chip">Same CI</span>') for f in x["followed"][:6])
         if len(x["followed"]) > 6:
             fol += '<br><span class="mut">and %d more</span>' % (len(x["followed"]) - 6)
         crow.append((search_attr(x["number"], x["what"], " ".join(f[0] for f in x["followed"])), [
-            td(tk(x["number"], url)), td(e(x["closed"]), "num nw"), td(e(x["what"]), "wrap"), td(glink(x["group"])),
+            td(tk(x["number"], url, pre)), td(e(x["closed"]), "num nw"), td(e(x["what"]), "wrap"), td(glink(x["group"])),
             td('<span class="chip %s">%s</span>' % ("crit" if x["outcome"] == "Failed" else "warn", e(x["outcome"]))), td(fol or '<span class="mut">none</span>', "lh")]))
     em = ch["by_group"]
     emerg = hbars([(sh(g["group"]), g["pct"] or 0, "%s<br><b>%d</b> of %d changes" % (e(g["group"]), g["emergency"], g["changes"])) for g in em],

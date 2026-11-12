@@ -23,6 +23,16 @@
   ansible.builtin.include_tasks: db_check.yml
   when: servicenow_insights_db_check | bool
 
+- name: Insights | servicenow_insights_ticket_prefixes - a prefix of letters, a table name (1.30.0)
+  ansible.builtin.assert:
+    that: _sni_bad_prefixes | length == 0
+    fail_msg: >-
+      servicenow_insights_ticket_prefixes: {{ _sni_bad_prefixes | join(', ') }} - each line PREFIX: table, the prefix
+      letters only (XINC), the table a-z, 0-9 and _ only (incident).
+    quiet: true
+  vars:
+    _sni_bad_prefixes: "{{ servicenow_insights_ticket_prefixes | default({}, true) | servicenow_insights_prefix_errors }}"
+
 - name: Insights | the ServiceNow API credential is attached
   ansible.builtin.assert:
     that: _sni_url | length > 0
@@ -57,6 +67,7 @@
       # the ticket numbers on the pages link into ServiceNow (1.18.0): at the address people use, else the API's instance
       ticket_links: "{{ servicenow_insights_ticket_links | bool }}"
       ticket_base: "{{ servicenow_insights_ticket_base | default('', true) | string | trim }}"
+      ticket_prefixes: "{{ servicenow_insights_ticket_prefixes | default({}, true) }}"
       survey_metrics: "{{ servicenow_insights_survey_metrics | servicenow_insights_name_list }}"
       survey_headline: "{{ servicenow_insights_survey_headline | default('', true) | string | trim }}"
       survey_grades: "{{ servicenow_insights_survey_grades | default({'good': 0.8, 'fair': 0.6}, true) }}"

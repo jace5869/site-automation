@@ -16,7 +16,7 @@ and simpler: the tiles and the main tables, a link to the page, and an Excel wor
 | Section | What it shows |
 |---|---|
 | **At a glance** | the tickets read, open now (and at the start), the median time to resolve an incident, SLAs met, reopened (or *came back*, below), bare close notes, changes successful, incidents reassigned 3+ times - each against the window before; then **What the period says**: three or four sentences, written by ACT from the tables (or made from the numbers without it) |
-| **Teams side by side** (the site's page) | one row per team: its backlog over the period (Keeping up / Falling behind), open now, open over 30 days, median fix, SLA met, its close notes, its change tasks closed and open (1.2.0), its top issue - the team's name opens its own page |
+| **Teams side by side** (the site's page) | one row per team: its backlog over the period (Keeping up / Falling behind), open now with what it was, open over 30 days, median fix, SLA met, its close notes, its change tasks closed / open (1.2.0), its top issue - the team's name opens its own page |
 | **Act on first** (1.7.0) | what the process says to look at, as tiles and lists (the first 10 rows, the rest folded): **SLA at risk now** (open incidents past 75% of their SLA, or breached and still open - worst first), **open over 3 hops**, **Awaiting Caller over 6 business days**, **No Resolution Provided** in the period (each for leadership's review, the close note's start with names and numbers replaced), **resolved, not closed after 7 days** - below |
 | **Hops, on hold and resolution codes** (1.7.0) | per group: over the hop limit and the hops each group took, on hold now (no reason, Awaiting Caller too long), on hold by reason and business days, the resolution codes to look at and reopened |
 | **How incidents ended** (1.7.0) | the outcome mix (Fixed, Workaround, Duplicate, Known Error, No Resolution Provided) per group against the window before, **unable to resolve**, first-contact resolution (and the service desk's), reopened within 7 days |
@@ -54,8 +54,8 @@ The changes' tasks (`change_task`, read with GET like the rest) have figures of 
   the **wait** - from when the change's other tasks were all closed (a change with one task: from the change's *actual
   start*, else its *planned start*) to that last task's close. The 5 teams that held up the most changes, how often, and
   their median wait;
-- the **Teams side by side** table has *Change tasks closed* and *Change tasks open*, the email one column *Change
-  tasks closed / open* (1.18.0, so it fits); the **All-stars**
+- the **Teams side by side** table has one column *Change tasks closed / open*, on the page and in the email (1.30.0,
+  so it fits 1280 px); the **All-stars**
   count them in *Closed*, with a *Change tasks* column (their time is the change's plan, so *Median to resolve* leaves
   them out);
 - the workbook has a **Change tasks** sheet: every change task opened, closed or open in the window, its change, group,
@@ -94,10 +94,20 @@ resolved by, and the report says so under *Not read*.
 ```yaml
 servicenow_insights_ticket_links: true          # false = the numbers alone
 servicenow_insights_ticket_base: ""             # the address people open ServiceNow at; "" = the API credential's
+servicenow_insights_ticket_prefixes: {}         # PREFIX: table, for a prefix no record read carries (1.30.0)
 ```
 
 Set `servicenow_insights_ticket_base` when people reach ServiceNow at another address than the API's. An address that
 is not a web address is ignored: the numbers then show without links.
+
+Since 1.30.0 a number's table comes from the records read, so your instance's own prefixes link too. A number seen
+only in another ticket's field (a change or a problem) uses the same prefixes. For a prefix no record read carries, name
+it in `servicenow_insights_ticket_prefixes`:
+
+```yaml
+servicenow_insights_ticket_prefixes:
+  XINC: incident
+```
 
 **Sorting (1.18.0).** A table sorts as the report website does ([WEB_REPORTS.md](WEB_REPORTS.md)). A number sorts as a
 number, an IP address by its four parts, *host2* before *host10*. An empty cell or a lone dash goes last both ways. The

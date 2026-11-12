@@ -1754,6 +1754,38 @@ def _count(d, k, n=1):
     d[k] = d.get(k, 0) + n
 
 
+def ticket_prefixes(setting):
+    """servicenow_insights_ticket_prefixes (1.30.0) -> ({PREFIX: table}, the entries refused): a prefix of letters only (any
+    case), a table name of a-z, 0-9 and _ only."""
+    good, bad = {}, []
+    for k, v in sorted((setting or {}).items(), key=lambda kv: str(kv[0])) if isinstance(setting, dict) else []:
+        if re.match(r"^[A-Za-z]+$", str(k)) and re.match(r"^[a-z0-9_]+$", str(v or "")):
+            good[str(k).upper()] = str(v)
+        else:
+            bad.append("%s: %s" % (k, v))
+    if setting and not isinstance(setting, dict):
+        bad.append(str(setting))
+    return good, bad
+
+
+def servicenow_insights_prefix_errors(setting):
+    """The servicenow_insights_ticket_prefixes entries refused (1.30.0): [] = all good."""
+    return ticket_prefixes(setting)[1]
+
+
+def prefix_map(items, opts=None):
+    """{prefix: table} for the ticket links (1.30.0): learned from the records read (an instance may number its incidents
+    other than INC), then servicenow_insights_ticket_prefixes for a prefix no record read carried."""
+    out = {}
+    for it in items or []:
+        m = re.match(r"^([A-Z]+)\d+$", str(it.get("number") or ""))
+        if m and it.get("table"):
+            out.setdefault(m.group(1), it["table"])
+    for k, v in ticket_prefixes((opts or {}).get("ticket_prefixes"))[0].items():
+        out.setdefault(k, v)
+    return out
+
+
 def servicenow_insights_model(r, state=None, mask=None, opts=None):
     """Everything the report shows, for the site (scopes.all) and each team (scopes[team]) - see docs/SERVICENOW_INSIGHTS.md."""
     o = opts or {}
@@ -2793,7 +2825,7 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
                 custom["left_line"] = periods_left_line(custom.get("left"), (
                     "the window before is over servicenow_insights_custom_view_max_rows (%s)" % "{:,}".format(mx)) if custom.get("no_compare") else (
                     "servicenow_insights_compare is false" if not win.get("compare") else "the window before was not read whole this run"))
-    model = {"window": win, "url": r.get("url") or "", "teams": teams, "scopes": scopes, "reopen_used": reopen_used,
+    model = {"window": win, "url": r.get("url") or "", "prefixes": prefix_map(r.get("items"), o), "teams": teams, "scopes": scopes, "reopen_used": reopen_used,
              "tree": tree, "pages": pages, "scope_ids": ids, "hier": hier, "org": org, "custom": custom,
              "org_bad": org_map(o.get("hierarchy_map"))[1] if org_is_map(o) else [],
              "org_bucket": (" ".join(str(o.get("unmapped_bucket") or UNKNOWN).split()) or UNKNOWN) if org_is_map(o) else "",
@@ -3731,6 +3763,7 @@ class FilterModule(object):
             "servicenow_insights_mask_more": servicenow_insights_mask_more, "servicenow_insights_cut_lines": cut_lines, "servicenow_insights_fix_evidence": servicenow_insights_fix_evidence,
                 "servicenow_insights_fix_task": servicenow_insights_fix_task, "servicenow_insights_fix_merge": servicenow_insights_fix_merge,
                 "servicenow_insights_teams": servicenow_insights_teams, "servicenow_insights_model": servicenow_insights_model,
+                "servicenow_insights_prefix_errors": servicenow_insights_prefix_errors,
                 "servicenow_insights_summary_evidence": servicenow_insights_summary_evidence,
                 "servicenow_insights_summary_task": servicenow_insights_summary_task,
                 "servicenow_insights_summary_merge": servicenow_insights_summary_merge, "servicenow_insights_finish": servicenow_insights_finish,

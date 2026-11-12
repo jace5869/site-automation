@@ -179,7 +179,7 @@ the hosts that did not report. The ServiceNow weekly activity report has none: i
 
 - **standard** (the default): the header band in the report's colour, number boxes under it - as
   described above. Since 1.18.0 the boxes go four to a row, as in portal and glass, so a report with many
-  numbers fits an 800 px window.
+  numbers fits an 800 px window. Since 1.30.0 the four are one width.
 - **command**: a dark header with your logo, a small line of text above the title
   (`report_email_header_text`, default `Site automation report`) and the status as a label beside it;
   under it **the job's last runs** as a strip of bars, oldest first, this run last and outlined. A

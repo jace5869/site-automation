@@ -561,6 +561,10 @@ class Page(unittest.TestCase):
         self.assertEqual(B({"url": "https://api.example.mil"}, {"ticket_links": False}), "")
         self.assertEqual(B({"url": "https://api.example.mil"}, {"ticket_base": "javascript:alert(1)"}), "")
         self.assertEqual(B({"url": "https://api.example.mil"}, {"ticket_base": 'https://sn.example.mil/"><b>'}), "")
+        # 1.30.0: the scheme in any case
+        self.assertEqual(B({"url": "https://api.example.mil"}, {"ticket_base": "HTTPS://SN.EXAMPLE.MIL"}), "https://SN.EXAMPLE.MIL")
+        self.assertEqual(B({"url": "Http://sn:8080/"}, {}), "http://sn:8080")
+        self.assertEqual(B({"url": "https://api.example.mil"}, {"ticket_base": "JAVASCRIPT:alert(1)"}), "")
         m = site()["model"]
         h = P.servicenow_insights_page(m, "all", {"ticket_base": "https://sn.example.mil:8443/"})
         self.assertIn('href="https://sn.example.mil:8443/nav_to.do?uri=incident.do%3Fsysparm_query%3Dnumber%3DINC', h)
@@ -570,6 +574,30 @@ class Page(unittest.TestCase):
         self.assertIn('<span class="mono">INC', h)
         self.assertIn("mono", P.tk("XYZ1", "https://sn"))
         self.assertTrue(re.search("—", P.tk("", "https://sn")))
+
+    def test_own_prefixes(self):
+        # 1.30.0: an instance numbering its incidents XINC... - the table learned from the records read
+        r = json.loads(json.dumps(site()["r"]))
+        for it in r["items"]:
+            if it["table"] == "incident":
+                it["number"] = "X" + it["number"]
+        m = F.servicenow_insights_model(r, None, F.servicenow_insights_mask(r, OPTS), OPTS)
+        self.assertEqual(m["prefixes"].get("XINC"), "incident")
+        h = P.servicenow_insights_page(m, "all", {})
+        self.assertIn('href="https://sn.example.mil/nav_to.do?uri=incident.do%3Fsysparm_query%3Dnumber%3DXINC', h)
+        self.assertNotIn('<span class="mono">XINC', h)
+        # a prefix no record carries and no setting names: the number alone; the setting names it
+        self.assertEqual(P.tk("XPRB0001", "https://sn", m["prefixes"]), '<span class="mono">XPRB0001</span>')
+        pre = F.prefix_map(r["items"], {"ticket_prefixes": {"xprb": "problem"}})
+        self.assertIn('href="https://sn/nav_to.do?uri=problem.do%3Fsysparm_query%3Dnumber%3DXPRB0001"', P.tk("XPRB0001", "https://sn", pre))
+        self.assertEqual(F.prefix_map([{"table": "incident", "number": "XINC1"}], {"ticket_prefixes": {"XINC": "problem"}}), {"XINC": "incident"})
+        self.assertIn("CHG0031001", P.tk("CHG0031001", "https://sn", pre))
+        # the setting checked: letters, a table name
+        self.assertEqual(F.servicenow_insights_prefix_errors({"XINC": "incident", "xy": "u_table_2"}), [])
+        self.assertEqual(F.servicenow_insights_prefix_errors({"X1": "incident", "XINC": "incident.do?x", "Y": ""}),
+                         ["X1: incident", "XINC: incident.do?x", "Y: "])
+        self.assertEqual(F.servicenow_insights_prefix_errors(["XINC"]), ["['XINC']"])
+        self.assertEqual(F.servicenow_insights_prefix_errors(None), [])
 
 
 
@@ -1319,7 +1347,7 @@ class ChangeTasks(unittest.TestCase):
         self.assertIn("td.wrap{white-space:normal;overflow-wrap:anywhere", P.CSS)
         self.assertIn('.tw thead{display:none}', P.CSS)
         self.assertIn('<td data-l="Top issue" class="wrap">', h)
-        self.assertIn('<td data-l="Change tasks closed" class="n" data-v="2">2</td>', h)
+        self.assertIn('<td data-l="Change tasks closed / open" class="n nw" data-v="2">2 / 1</td>', h)     # one column (1.30.0)
         self.assertNotIn('<td data-l="" ', h)
 
     def test_refused(self):
@@ -1613,6 +1641,77 @@ class EmailFits(unittest.TestCase):
                 out = subprocess.run([b, "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars", "--virtual-time-budget=3000",
                                       "--window-size=800,900", "--dump-dom", "file://" + path], capture_output=True, text=True, timeout=120).stdout
                 self.assertIn("<title>R 800 800</title>", out, tpl)
+
+    def test_tiles_and_lines(self):
+        """1.30.0: the standard look's boxes four equal columns (the 4th took the rest of the width); portal's "3.32 of 4" on one
+        line; an item under another ("  - INC...") indented without its dash, in every email look."""
+        import shutil
+        import jinja2
+        b = shutil.which("google-chrome") or shutil.which("chromium")
+        doc = F.servicenow_insights_doc(site(surveys=True)["model"], "all", OPTS)
+        self.assertTrue(any(re.match(r"^\d\.\d\d of \d$", str(t["value"])) for t in doc["summary"]), doc["summary"])
+        doc["sections"].append({"title": "Act on", "lines": ["SLA at risk: 1", "  - INC0041200 P2, 80% used"]})
+        env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(HERE, "..", "roles", "site_email", "templates")), autoescape=False)
+        probe = ('<script>addEventListener("load",function(){var t=[].slice.call(document.querySelectorAll("td[width=\'25%\'] > table"))'
+                 '.map(function(x){return Math.round(x.getBoundingClientRect().width)});var v=[].slice.call(document.querySelectorAll("div"))'
+                 '.filter(function(d){return /^\\d\\.\\d\\d of \\d$/.test(d.textContent)})[0];var lh=parseFloat(getComputedStyle(v).fontSize)*1.6;'
+                 'document.title="R "+(new Set(t).size)+" "+t.length+" "+(v.getBoundingClientRect().height<lh)})</script></body>')
+        with tempfile.TemporaryDirectory() as d:
+            for tpl in ("report.html.j2", "report_command.html.j2", "report_portal.html.j2", "report_glass.html.j2"):
+                h = env.get_template(tpl).render(_report=doc, _email_footer="AAP job 9", _email_logo_cid="", _email_runs=[],
+                                                 report_email_header_text="Site automation report")
+                self.assertIn(">INC0041200 P2, 80% used</li>", h, tpl)
+                self.assertNotIn("- INC0041200", h, tpl)
+                if tpl not in ("report.html.j2", "report_portal.html.j2"):
+                    continue
+                path = os.path.join(d, tpl + ".html")
+                with open(path, "w") as fh:
+                    fh.write(h.replace("</body>", probe))
+                out = subprocess.run([b, "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars", "--virtual-time-budget=3000",
+                                      "--window-size=800,900", "--dump-dom", "file://" + path], capture_output=True, text=True, timeout=120).stdout
+                got = re.search(r"<title>R (\d+) (\d+) (\w+)</title>", out)
+                self.assertTrue(got, (tpl, out[-300:]))
+                if tpl == "report.html.j2":
+                    self.assertEqual(got.group(1), "1", (tpl, "the boxes are not one width"))
+                    self.assertEqual(int(got.group(2)) % 4, 0, tpl)
+                self.assertEqual(got.group(3), "true", (tpl, "the satisfaction value wraps"))
+
+
+@unittest.skipUnless(any(__import__("shutil").which(b) for b in ("google-chrome", "chromium")), "no headless browser here")
+class PageFits(unittest.TestCase):
+    """1.30.0: every table of every page fits its box at 1280 px with DejaVu (the fonts a Linux browser falls back to, wider
+    than Segoe UI) in both looks - Teams / Directorates / Sites side by side (Open now (was), Change tasks closed / open in one
+    column each, the backlog's chip under its line when short of room), Failed or backed out, the Leaderboard."""
+
+    PROBE = ('<script>addEventListener("load",function(){setTimeout(function(){var o=[];[].slice.call(document.querySelectorAll(".tw"))'
+             '.forEach(function(t){var d=t.scrollWidth-t.clientWidth;if(d>1){var s=t.closest("section");var h=t.closest(".fig");'
+             'o.push((s?s.id:"")+"/"+(h&&h.querySelector("h3")?h.querySelector("h3").textContent:"")+" +"+d)}});'
+             'o.push("page "+(document.documentElement.scrollWidth-innerWidth));document.title="R "+o.join("; ")},300)})</script></body>')
+    FONTS = '<style>*{font-family:"DejaVu Sans" !important}code,pre,.num{font-family:"DejaVu Sans Mono" !important}</style></head>'
+
+    def test_1280(self):
+        import shutil
+        b = shutil.which("google-chrome") or shutil.which("chromium")
+        with tempfile.TemporaryDirectory() as d:
+            for nm, x, o in (("flat", site(), OPTS), ("sites", site(sites=True), HIER_OPTS)):
+                m = x["model"]
+                keys = ["all"] + [p["key"] for p in m["pages"] if p["level"] != "team"][:3] + [p["key"] for p in m["pages"] if p["level"] == "team"][:2]
+                for look in ("", "brief"):
+                    for k in keys:
+                        h = P.servicenow_insights_page(m, k, dict(o, look=look))
+                        path = os.path.join(d, "p.html")
+                        with open(path, "w") as fh:
+                            fh.write(h.replace("</head>", self.FONTS, 1).replace("</body>", self.PROBE))
+                        out = subprocess.run([b, "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars", "--virtual-time-budget=4000",
+                                              "--window-size=1280,900", "--dump-dom", "file://" + path], capture_output=True, text=True, timeout=120).stdout
+                        self.assertIn("<title>R page 0</title>", out, (nm, k, look or "atlas", re.findall(r"<title>(.*?)</title>", out)))
+
+    def test_the_merged_columns(self):
+        m = site()["model"]
+        h = P.servicenow_insights_page(m, "all", OPTS)
+        self.assertIn("Open now (was)", h)
+        self.assertNotIn(">Change tasks open<", h)
+        self.assertRegex(h, r'<b>[\d,]+</b> <span class="mut">\([\d,]+\)</span>')
 
 
 class TicketStore(unittest.TestCase):
@@ -2154,7 +2253,7 @@ class PyMySQLLoginBug(unittest.TestCase):
     def go(self, fails):
         import site_insights_db as D
         fake = self.Fake(fails)
-        with mock.patch.object(D, "pymysql", fake):
+        with mock.patch.object(D, "pymysql", fake, create=True):        # create: CI's Python has no PyMySQL
             try:
                 return D.connect_plain({"host": "db"}), fake
             except RuntimeError as e:

@@ -165,8 +165,7 @@ servicenow_insights_months: 6
 
 ## TEAM LEADS (1.15.0): each group's manager in ServiceNow (sys_user_group.manager, read with the
 ## groups). Show it on the team's page and email as "Group manager: NAME", and in the Manager column
-## of the teams sheet and of a site's or directorate's list of teams (1.18.0) - nothing when the
-## group has no manager.
+## of the workbook's Teams sheet only (1.18.0) - nothing when the group has no manager.
 # servicenow_insights_show_lead: true
 
 ## Email these teams' pages to their manager: group names or patterns (fnmatch, any case, as
@@ -182,6 +181,11 @@ servicenow_insights_months: 6
 ## The address people open ServiceNow at, when it is not the API's (e.g.
 ## https://servicenow.example.mil). '' = the ServiceNow API credential's instance.
 # servicenow_insights_ticket_base: ""
+
+## A ticket number's table comes from the records read (1.30.0): an instance's own prefixes link
+## too. This names a prefix no record read carries, as PREFIX: table (e.g. XINC: incident). {} = the
+## records and the usual prefixes only.
+# servicenow_insights_ticket_prefixes: {}
 
 ## The tables read: incident, sc_req_item (requested items: the most requested services), sc_task
 ## (catalog tasks: the All-stars count their closures), change_request, change_task (1.2.0: the

@@ -118,7 +118,9 @@
 {%- if s.lines | default([]) %}
 <ul style="margin:6px 0 8px 0;padding-left:20px;">
 {%- for l in s.lines if l | trim %}
-<li style="margin:2px 0;">{{ l | e }}</li>
+{#- 1.30.0: an item under the one above ("  - ..." in the text email) is indented, no dash #}
+{%- set _sub = l[:1] == ' ' and l.lstrip()[:2] == '- ' %}
+<li style="margin:2px 0;{{ ' margin-left:18px;list-style-type:circle;' if _sub else '' }}">{{ (l.lstrip()[2:] if _sub else l) | e }}</li>
 {%- endfor %}
 </ul>
 {%- endif %}

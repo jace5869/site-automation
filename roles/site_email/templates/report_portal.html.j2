@@ -88,7 +88,8 @@
 <td width="25%" valign="top" style="padding:0 {{ '0' if loop.index == 4 else '6px' }} 0 {{ '0' if loop.first else '6px' }};">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="width:100%;background:#ffffff;border:2px solid {{ pal[ts].fg if hi else edge }};border-radius:18px;box-shadow:0 6px 22px rgba(15,70,52,.08);"><tr><td style="padding:14px 16px 16px 16px;">
 <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:{{ pal[ts].fg if hi else label }};">{{ t.label | e }}</div>
-<div style="{{ mono }}font-size:{{ '30px' if v | length <= 9 else '18px' }};color:{{ ink }};margin-top:8px;line-height:1.1;word-break:break-word;">{{ v | e }}</div>
+{#- 1.30.0: 8 to 10 characters ("4.36 of 5") in 22px, so a quarter of 800 px holds them on one line #}
+<div style="{{ mono }}font-size:{{ '30px' if v | length <= 7 else ('22px' if v | length <= 10 else '18px') }};color:{{ ink }};margin-top:8px;line-height:1.1;{{ 'white-space:nowrap;' if v | length <= 12 else 'word-break:break-word;' }}">{{ v | e }}</div>
 {%- if t.note | default('') %}
 <div style="font-size:12px;color:{{ muted }};margin-top:6px;">{{ t.note | e }}</div>
 {%- endif %}
@@ -187,7 +188,9 @@
 {%- if s.lines | default([]) %}
 <ul style="margin:8px 0 0 0;padding-left:20px;color:#33413c;">
 {%- for l in s.lines if l | trim %}
-<li style="margin:2px 0;">{{ l | e }}</li>
+{#- 1.30.0: an item under the one above ("  - ..." in the text email) is indented, no dash #}
+{%- set _sub = l[:1] == ' ' and l.lstrip()[:2] == '- ' %}
+<li style="margin:2px 0;{{ ' margin-left:18px;list-style-type:circle;' if _sub else '' }}">{{ (l.lstrip()[2:] if _sub else l) | e }}</li>
 {%- endfor %}
 </ul>
 {%- endif %}
