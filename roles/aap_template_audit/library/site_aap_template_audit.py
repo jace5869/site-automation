@@ -109,19 +109,26 @@ GLUED_P = re.compile(r"(?:^|\s)-p([^\s\d:/$][^\s]*)")
 P_OPTIONS = frozenset(("print", "print0", "printf", "prune", "perm", "pubout", "pthread", "progress", "pattern"))
 # a command's own password option, only after that command (mysql -p2024x, sqlcmd -P X, ldapsearch -w X, smbclient
 # -U user%X, ipmitool -P X, redis-cli -a X, winrs -p:X, sshpass -p X, curl -u user:X): (option, the value's kind) -
-# any (the value), colon (user:password), percent (user%password); the value after a space or joined to it
+# any (the value), colon (user:password), percent (user%password); the value after a space or joined to it. Windows
+# tools (loose: True) take a switch with / or - in any case (winrs /p:X, sqlcmd /P X): their options in lower case
 TOOL_OPTIONS = (
-    (re.compile(r"^(?:mysql\w*|mariadb(?:-\w+)?)$"), (("-p", "any"), ("--password", "any"))),
-    (re.compile(r"^(?:curl|wget)$"), (("-u", "colon"), ("--user", "colon"), ("--proxy-user", "colon"))),
-    (re.compile(r"^sqlcmd$"), (("-P", "any"),)),
-    (re.compile(r"^ldap\w+$"), (("-w", "any"),)),
-    (re.compile(r"^(?:smbclient|smbcacls|smbget|rpcclient|net)$"), (("-U", "percent"), ("--user", "percent"))),
-    (re.compile(r"^ipmitool$"), (("-P", "any"),)),
-    (re.compile(r"^redis-cli$"), (("-a", "any"),)),
-    (re.compile(r"^winrs$"), (("-p:", "any"), ("-password:", "any"))),
-    (re.compile(r"^sshpass$"), (("-p", "any"),)),
+    (re.compile(r"^(?:mysql\w*|mariadb(?:-\w+)?)$"), (("-p", "any"), ("--password", "any")), False),
+    (re.compile(r"^(?:curl|wget)$"), (("-u", "colon"), ("--user", "colon"), ("--proxy-user", "colon")), False),
+    (re.compile(r"^sqlcmd$"), (("-p", "any"),), True),
+    (re.compile(r"^ldap\w+$"), (("-w", "any"),), False),
+    (re.compile(r"^(?:smbclient|smbcacls|smbget|rpcclient)$"), (("-U", "percent"), ("--user", "percent")), False),
+    (re.compile(r"^net$"), (("-u", "percent"), ("--user", "percent")), True),
+    (re.compile(r"^ipmitool$"), (("-P", "any"),), False),
+    (re.compile(r"^redis-cli$"), (("-a", "any"),), False),
+    (re.compile(r"^winrs$"), (("-p:", "any"), ("-password:", "any")), True),
+    (re.compile(r"^sshpass$"), (("-p", "any"),), False),
 )
-COMMAND_END = frozenset(("|", "||", "&&", ";", "&"))
+# a script's words as a shell splits them (1.24.0f): at ; | & ( ) ` $( - each a word of its own that ends a command
+# (N=$(mysql ...), cd /tmp;mysql ..., echo x|mysql ...) - and at a quote that opens a word (ssh db01 'mysql ...'): a word
+# of its own too, but the command goes on (mysql -e 'select 1' -pX, mysql -p 'X')
+SHELL_WORD = re.compile(r"""\$\(|[;|&()`]|(?<![^\s;|&()`])['"]|[^\s;|&()`]+""")
+SIGNS = set(";|&()`$")
+QUOTES = ("'", '"')
 # a value that is an HTTP Authorization header's credentials (Basic <base64>, Bearer <token>), alone or after its name
 AUTH_VALUE = re.compile(r"(?:^|authorization\"?\s*[:=]\s*\"?)(?:basic|bearer|token|negotiate|digest)\s+[A-Za-z0-9+/=._~-]{8,}", re.I)
 # a PEM private key (RSA, EC, OPENSSH, ENCRYPTED ...)
@@ -329,24 +336,37 @@ def _tool_value(kind, value):
     return True
 
 
+def shell_words(s):
+    """A text's words as a shell splits them: a line goes on after a \\ at its end; a new line (as ;), each of ; | & ( ) `
+    $( and a quote that opens a word are words of their own. Pure."""
+    words = []
+    for line in re.sub(r"\\\r?\n", " ", str(s or "")).splitlines():
+        words += SHELL_WORD.findall(line) + [";"]
+    return words
+
+
 def _tool_secret(s):
-    """A command's own password option, after that command word, up to the next | ; && (TOOL_OPTIONS): mysql -pXXXX
-    (any value - mysql's port is -P), curl -u svc:XXXX or -usvc:XXXX, smbclient -U svc%XXXX, sqlcmd -P XXXX ... Pure."""
-    words, options = s.split(), ()
-    for i, w in enumerate(words):
-        if w in COMMAND_END or w.endswith(";"):
+    """A command's own password option, after that command word, up to the end of its command (TOOL_OPTIONS): mysql
+    -pXXXX (any value - mysql's port is -P), curl -u svc:XXXX or -usvc:XXXX, smbclient -U svc%XXXX, sqlcmd -P XXXX ...
+    The command word anywhere a shell starts one: N=$(mysql ...), ssh db01 'mysql ...', cd /tmp;mysql ... Pure."""
+    words, options, loose = [w for w in shell_words(s) if w not in QUOTES], (), False
+    for i, raw in enumerate(words):
+        if set(raw) <= SIGNS:
             options = ()
             continue
+        w = raw.strip("\"'")
         name = w.rsplit("/", 1)[-1].rsplit("\\", 1)[-1].lower()
         name = name[:-4] if name.endswith(".exe") else name
-        found = next((o for rx, o in TOOL_OPTIONS if rx.match(name)), None)
+        found = next(((o, lz) for rx, o, lz in TOOL_OPTIONS if rx.match(name)), None)
         if found is not None:
-            options = found
+            options, loose = found
             continue
+        key = (("-" + w[1:]) if w[:1] in "/-" else w).lower() if loose else w
         for opt, kind in options:
-            if w == opt or (w.startswith(opt + "=") and opt.startswith("--")):
-                value = words[i + 1] if w == opt and i + 1 < len(words) else w[len(opt) + 1:]
-            elif w.startswith(opt) and not opt.startswith("--") and len(w) > len(opt):
+            if key == opt or (key.startswith(opt + "=") and opt.startswith("--")):
+                nxt = words[i + 1] if i + 1 < len(words) else ""
+                value = ("" if set(nxt) <= SIGNS else nxt) if key == opt else w[len(opt) + 1:]
+            elif key.startswith(opt) and not opt.startswith("--") and len(key) > len(opt):
                 value = w[len(opt):]
             else:
                 continue

@@ -40,8 +40,11 @@ Known limits: the audit finds secrets by their name and by their shape; it canno
 reads the template. Shown, though they may be a secret: a name ending in pass of 5 letters or fewer (`xpass`), a
 password-like value under a plain name (`Passw0rd`), an AWS access key ID (`AKIA...`, only an ID), a Bearer token
 under 8 characters, a secret inside free text under a plain name (a kickstart's `rootpw --plaintext ...`, snmpd's
-`rocommunity ...`), a tool's own password option for a tool not in its list, and a glued `-p` of letters only outside
-mysql (`-pabcdef` reads as flags, like `rsync -prltDvz`).
+`rocommunity ...`), a tool's own password option for a tool not in its list, a glued `-p` of letters only outside
+mysql (`-pabcdef` reads as flags, like `rsync -prltDvz`), a password given as a plain argument (`net use \\fs01\share
+PASSWORD /user:svc`), and a host named like one of the tools (`mysql -h curl ...`). A tool's option counts wherever a
+shell starts the command - after `$(`, a backquote, `(`, `;`, `|`, `&&`, inside quotes (`ssh db01 'mysql ...'`) - up to
+the end of that command or line (a line ending in `\` goes on); a Windows tool's switch with `/` or `-`, in any case.
 A file name (`report.html.j2`, `logo.png`) is no address.
 
 ## The report
