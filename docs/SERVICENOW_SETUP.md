@@ -453,16 +453,24 @@ Set it up:
 
 What to know:
 
-- **One login per node per run.** Each run shows as one UI login per node in the instance's login history
-  (hourly: 24 a day per node).
+- **One login per node address per run.** A node address is the node and its port. Each run shows as one UI login
+  per address in the instance's login history (hourly: 24 a day).
+  - A node with one instance: one login.
+  - A node whose units answer on one port: one login, and the units share the session.
+  - A node with two instances on two ports: one login each.
 - **Never a second try.** The first node is asked alone. When its login is refused, the other nodes and the listed
   stats pages send none in that run, so a wrong password costs one failed login, not one per node.
 - **The login is refused** when `login.do` answers anything but the redirect to `login_redirect.do`: a wrong
   password, a locked account, a page that asks one more step (a code, a new password). The finding says the status
   and where the answer pointed - never the page.
-- **Where the login goes:** only over HTTPS to the node's own name, or to 127.0.0.1 on the node; for a listed stats
-  page only over HTTPS to the host the entry names. The certificate is checked. No redirect is followed.
-- **What is kept:** nothing. The session's cookies and the `sysparm_ck` live in memory for that node's read; they,
+- **Where the login goes:**
+  - over HTTPS to the node's own name;
+  - or to 127.0.0.1 on the node, also over plain HTTP - it never leaves the node;
+  - for a listed stats page: only over HTTPS to the host the entry names.
+
+  Over HTTPS the certificate is checked. No redirect is followed, and a line about one shows only its page, never
+  what follows the `?`.
+- **What is kept:** nothing. The session's cookies and the `sysparm_ck` live in memory until the node is read; they,
   and the password, are in no result, log or report.
 - **`auto` never picks `form`**, and `form` never uses the API account.
 - **The logout failed:** a warning. The session stays open until the instance's session timeout.
@@ -492,6 +500,10 @@ servicenow_node_stats_pages:
 
 - The same numbers, the same 3 reads and the same thresholds as a node read over SSH.
 - A redirect is never followed. The login goes only over HTTPS, and only to the host the entry names.
+- The `url` is plain: `https://host:port/page`. One that carries a login (`user@`), a `#`, a backslash or a blank
+  is refused before anything is read, and the message names the entry.
+- With `servicenow_node_stats_auth: form`, two entries on one address (the same host and port, two
+  pages) share one login.
 - The unit, the log, the disk and fapolicyd of such a node are not read: its rows say *stats page only*.
 - A host that is also a node of `servicenow_nodes` is read once, over SSH; the entry's name becomes its friendly name.
 - An entry that does not answer is a finding that names the entry and what was tried (critical: not reached;

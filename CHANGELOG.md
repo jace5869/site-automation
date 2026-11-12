@@ -36,6 +36,26 @@ patch job's reason.
 - The warnings of the check above name only the names as you wrote them (`name_list(true)`), not the second reading
   of the same text.
 
+**ServiceNow health, self-hosted - follow-ups to 1.32.0** (docs/SERVICENOW_SETUP.md, "The node stats login" and
+"Nodes AAP does not log in to"):
+
+- **The node stats login: one login per node address** (`servicenow_node_stats_auth: form`). An address is the node
+  and its port. 1.32.0 said "one login per node" and sent one per unit: a node whose two units answer on one port got
+  two logins. Now the units share the session, and it is closed once (`logout.do`) when the node is read. A node with
+  two instances on two ports gets one login each. Two listed stats pages on one host and port share one login too.
+- **A line about a redirect shows its page only.** The *tried* lines and the findings showed where a redirect pointed
+  with all that followed the `?` - `logout_redirect.do?sysparm_token=...`. Now: `HTTP 302 to /logout_redirect.do`;
+  an answer that points to another host says that host, never a login written in the address.
+- **A listed stats page's `url` is read one way** (`servicenow_node_stats_pages`). A `url` such as
+  `https://node03.yoursite.mil#@node04.yoursite.mil/stats.do` showed one host in the report and asked another. The
+  plan and the report now take the host from the same reading (`urlsplit`), and a `url` that is not plain is refused
+  (below).
+- **Where the form login goes, said in full:** over HTTPS to the node's own name, or to 127.0.0.1 on the node, also
+  over plain HTTP. 1.32.0 did that and its text said "only over HTTPS". The docs, the credential type's words and
+  setup step 94 now say it. A listed stats page: only over HTTPS, as before.
+- **The test** `tests/servicenow/run_servicenow_test.sh` takes its first port from `SN_TEST_PORT` (default 18270;
+  it uses 44 ports from there) and stops at once, naming the ports in use, when one is taken.
+
 **Behaviour changes**
 
 - **A line that starts with `#` in a list of names given as text is left out** (a survey answer, an extra variable):
@@ -47,6 +67,13 @@ patch job's reason.
 - **Restart, shut down, VLAN change and the snapshot cleanup read every VM's name once per vCenter** before they act
   (`vmware_protected_check: true`, the default), and may print warning lines they did not print before. No job fails
   or acts differently because of them. `vmware_protected_check: false` gives the old behaviour.
+- **A `servicenow_node_stats_pages` entry whose `url` has a `#`, a backslash or a blank in it is refused**: the job
+  stops before it reads anything and names the entry (*its url must be plain - https://host:port/page*). A `url`
+  that carries a login was refused before and still is. Write the page's address only.
+- **ServiceNow health: lines about a redirect are shorter** (the page, without what follows the `?`). A rule that
+  matched the old text of a finding needs the new one.
+- **`servicenow_node_stats_auth: form`: fewer logins** in the instance's login history when a node's units share a
+  port - one per node address and run, not one per unit.
 
 Tests: tests/vmware/run_vmware_test.sh (vcsim, current ansible-core and 2.16: a typo warns and a correct name does not,
 in the artifacts too; a pattern that matches nothing warns, one that matches does not; a group not in the inventory;
@@ -57,7 +84,12 @@ the check off), tests/test_vmware_modules.py (which names and patterns match no 
 test_name_list_keeps_what_1_22_0_read; NameListNeverFewer - 1.22.0's name_list kept in the test as the reference: the
 matrix in every written form, the five texts with a bracket never closed, and 6000 random texts made of `,` `;`
 quotes, curly quotes, `[` `]` `-` `#` `*` `?` and line breaks: every name 1.22.0 read is read, and every VM it matched
-still matches).
+still matches), tests/test_servicenow_node.py (two units of one address: one login, one logout; two listed pages of one
+address: one login; no query of a redirect in any line; the host named is the host asked - `#@`, a backslash, a blank
+and a login refused), tests/servicenow/run_servicenow_test.sh (current ansible-core and 2.16: two units of one node on
+one port - one login, both units read in it, one logout; the fake node's redirects carry a token in the query, never
+printed, `-vvv` too).
+
 ## 1.33.0 — 2026-11-12
 
 **Updating without scripts:** paste `site-automation-1.33.0-changed-since-1.32.1.zip` as it is (from an older version,
@@ -1058,7 +1090,8 @@ the ones after it. Steps 89 and 90 belong to 1.23.0, which is not in this releas
        ```yaml
        servicenow_node_stats_auth: form
        ```
-       Each run is one UI login per node in the instance's login history.
+       Each run is one UI login per node address (node and port) in the instance's login history. The login goes
+       over HTTPS to the node's own name, or to 127.0.0.1 on the node, also over plain HTTP.
     4. Run it. The *Front-end nodes* table shows each name beside its host, and *Stats page answered at* says which
        address answered. A listed node's row says *stats page only*.
     Details: docs/SERVICENOW_SETUP.md, "Self-hosted instance".

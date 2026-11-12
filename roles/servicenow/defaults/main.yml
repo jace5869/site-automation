@@ -157,8 +157,9 @@ servicenow_node_stats_url: ""
 # the check logs in through the instance's local login page on the node's own address (side_door.do, login.do), reads
 # the stats page in that session and logs out (logout.do). Its own credential, "ServiceNow node stats login"
 # (SN_STATS_USERNAME / SN_STATS_PASSWORD) - a dedicated local account that may only read stats.do, never the API
-# account. One login per node per run; refused on the first node: not tried on the others. The session's cookies
-# stay in memory. docs/SERVICENOW_SETUP.md, "The node stats login".
+# account. One login per node address (node and port) per run - units on one port share the session; refused on the
+# first node: not tried on the others. The login goes over HTTPS to the node's own name, or to 127.0.0.1 on the node,
+# also over plain HTTP. The session's cookies stay in memory. docs/SERVICENOW_SETUP.md, "The node stats login".
 servicenow_node_stats_auth: auto
 # A friendly name per node, shown beside its host in the report ("Node 1 (node01.corp.example.mil)"): the host variable
 # servicenow_node_label on the node ("Node 1"), or here by host: {node01.corp.example.mil: Node 1, node03: Node 3}
@@ -168,7 +169,8 @@ servicenow_node_labels: {}
 #   servicenow_node_stats_pages:
 #     - {name: "Node 1", url: "https://node01.corp.example.mil:16000/stats.do"}
 # The same numbers, samples and thresholds as a node read over SSH; a redirect is never followed; the login goes only
-# over HTTPS and only to the listed host. Such a node's unit, log, disk and fapolicyd are not read: its rows say
+# over HTTPS and only to the listed host. The url is plain - https://host:port/page: one that carries a login, a "#",
+# a backslash or a blank is refused. Such a node's unit, log, disk and fapolicyd are not read: its rows say
 # "stats page only". An entry whose host is a node of servicenow_nodes_group is read once, over SSH (its name becomes
 # that node's friendly name). An entry that does not answer is a finding that names it and what was tried.
 servicenow_node_stats_pages: []

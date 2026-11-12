@@ -5,16 +5,43 @@
 # (servicenow_tickets.yml) with a finding: open, update on the next run, resolve once it clears.
 # Then the VM request pickup (vm_deploy_poll.yml) against it and a fake AAP API (aapmock.py).
 #   bash tests/servicenow/run_servicenow_test.sh            (ANSIBLE_PLAYBOOK=... to pick one)
+#   SN_TEST_PORT=28270 bash tests/servicenow/run_servicenow_test.sh   another port base: the test listens on the
+#   base to base+43 (127.0.0.1; base+34 also on 127.0.0.2) and stops at once when one of them is in use.
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
 ap="${ANSIBLE_PLAYBOOK:-ansible-playbook}"
 work="$(mktemp -d)"
-port=18270
+port="${SN_TEST_PORT:-18270}"
 fails=0
 pids=()
 cleanup() { for p in "${pids[@]}"; do kill "$p" 2>/dev/null; done; rm -rf "$work"; }
 trap cleanup EXIT
+
+# every port the test listens on must be free before anything starts: a stand-in that cannot bind would leave the
+# scenarios talking to whatever listens there
+case "$port" in ''|*[!0-9]*) echo "ABORT - SN_TEST_PORT must be a port number (got: $port)"; exit 1;; esac
+if [ "$port" -lt 1024 ] || [ "$port" -gt 65491 ]; then echo "ABORT - SN_TEST_PORT must be 1024 to 65491 (got: $port)"; exit 1; fi
+busy="$(python3 - "$port" <<'PY'
+import socket
+import sys
+base = int(sys.argv[1])
+for p in range(base, base + 44):
+    for addr in ("127.0.0.1",) + (("127.0.0.2",) if p == base + 34 else ()):
+        s = socket.socket()
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)     # as the stand-ins bind: a port just let go is free
+        try:
+            s.bind((addr, p))
+        except OSError:
+            print("%s:%d" % (addr, p))
+        finally:
+            s.close()
+PY
+)"
+if [ -n "$busy" ]; then
+    echo "ABORT - in use: $(echo $busy) - the test needs ports $port to $((port + 43)); free them or pick another base: SN_TEST_PORT=$((port + 1000 > 65491 ? 28270 : port + 1000))"
+    exit 1
+fi
 
 start_mock() {   # start_mock PORT [ENV=VALUE ...]
     local p="$1"; shift
@@ -624,6 +651,23 @@ deny "form login -vvv: no session store cookie" 'glide_session_store'
 if grep -qE 'sysparm_ck[^a-z ]{1,6}[0-9a-f]{20}|(sess|pre)[0-9a-f]{16}' "$work/out.txt"; then
     echo "FAIL - form login -vvv: a sysparm_ck or a cookie value is printed"; fails=$((fails + 1))
 else echo "ok   - form login -vvv: no sysparm_ck value, no cookie value"; fi
+deny "form login -vvv: no query of a redirect target (a token there stays with the node)" 't0ken'
+# two instances of one node behind one address (both units on one port): one session for the address, used by both units
+rm -f "$work"/form3?.log
+make_home "$work/glide-f3" prod_16000 $((port + 37)) well
+make_home "$work/glide-f3" test_16001 $((port + 37)) well
+mkpy nodef3 SNNODE_HOME="$work/glide-f3" SNNODE_UNITS=snc_prod:active:enabled,snc_test:active:enabled SNNODE_FAPOLICYD=active
+nodeinv "$work/inv-form3.yml" "$(hostline node06 nodef3 "servicenow_node_home: $work/glide-f3")" ""
+SN_STATS_USERNAME=stats_reader SN_STATS_PASSWORD=St4ts-pw9 PLAYBOOK=playbooks/servicenow_health.yml \
+    scenario "form login: two units of one node on one address - both read" 0 \
+    $((port + 43)) api goodpw -i "$work/inv-form3.yml" -e "$HOSTOK" -e "$FORM" -vvv
+expect "form login, one address: the second unit says the session is used again" 'the session this run opened here is used (one login per node address)'
+if [ "$(posts "$work/form37.log")" = 1 ] && [ "$(grep -c '^GET /logout.do session=yes' "$work/form37.log")" = 1 ] \
+   && [ "$(grep -c '^GET /stats.do session=yes' "$work/form37.log")" = 6 ]; then
+    echo "ok   - form login, one address: one login, both units read in it (3 reads each), one logout"
+else echo "FAIL - form login, one address: the node's request log"; cat "$work/form37.log"; fails=$((fails + 1)); fi
+deny "form login, one address: no password, -vvv too" 'St4ts-pw9'
+deny "form login, one address: no query of a redirect target" 't0ken'
 # a wrong password: one login on the first node, none on the second, none on a listed page; said once per node
 rm -f "$work"/form3?.log
 FPAGE="{\"servicenow_node_stats_pages\": [{\"name\": \"Node 27\", \"url\": \"https://127.0.0.1:$((port + 37))/stats.do\"}]}"
@@ -637,6 +681,7 @@ formlogs "form login refused: one login in the whole run" 1 0
 if [ ! -e "$work/form36.log" ] && [ ! -e "$work/form37.log" ]; then echo "ok   - form login refused: the other nodes were sent nothing at all"
 else echo "FAIL - form login refused: the other nodes were asked"; cat "$work"/form36.log "$work"/form37.log 2>/dev/null; fails=$((fails + 1)); fi
 deny "form login refused: the password is never shown, -vvv too" 'Wr0ng-pw9'
+deny "form login refused: no query of a redirect target" 't0ken'
 # no "ServiceNow node stats login" credential on the template: said, nothing sent - the API login is never used for it
 rm -f "$work"/form3?.log
 PLAYBOOK=playbooks/servicenow_health.yml scenario "form login: no node stats login credential - said, nothing sent" 2 \

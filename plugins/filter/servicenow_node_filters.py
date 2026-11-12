@@ -27,6 +27,7 @@ __metaclass__ = type
 
 import datetime
 import re
+from urllib.parse import urlsplit
 
 
 def _s(v):
@@ -88,14 +89,26 @@ def _same_host(a, b):
 
 
 def _page_url(url):
-    """(host, why not) of a servicenow_node_stats_pages URL: http or https, a host, no login written in it."""
+    """(host, why not) of a servicenow_node_stats_pages URL: http or https, a host, no login written in it. Read with
+    urlsplit(), as the request that asks it is (1.36.0): the host named here is the host that is asked - a url whose
+    host could be read two ways ('#', a backslash, a blank, a login) is refused."""
     u = _s(url)
-    m = re.match(r"^https?://([^/?#]*)", u, re.I)
-    if not m or not m.group(1):
-        return "", "its url must be the stats page's full address (https://node1.example.mil:16000/stats.do)"
-    rest = m.group(1)
-    if "@" in rest:
+    full = "its url must be the stats page's full address (https://node1.example.mil:16000/stats.do)"
+    try:
+        sp = urlsplit(u)
+        sp.port
+    except ValueError:
+        return "", full
+    if sp.scheme.lower() not in ("http", "https") or not sp.netloc:
+        return "", full
+    plain = "its url must be plain - https://host:port/page - with no #, no backslash and no blank in it"
+    if "#" in u or "\\" in u or re.search(r"\s", u):
+        return "", plain
+    if re.match(r"^https?://[^/]*@", u, re.I):
         return "", "its url carries a login: leave it out (the ServiceNow API credential's is used, servicenow_node_stats_auth)"
+    if not re.match(r"^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9._-]+)(:\d{1,5})?$", sp.netloc):
+        return "", plain
+    rest = sp.netloc
     host = rest[1:].split("]")[0] if rest.startswith("[") else rest.rsplit(":", 1)[0] if ":" in rest else rest
     return (host, "") if host else ("", "its url names no host")
 

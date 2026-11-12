@@ -1001,6 +1001,31 @@ class StatsPagesPlan(unittest.TestCase):
         self.assertIn("the same url as entry 5", plan["errors"][4])
         self.assertIn("is not a list", nf.sn_node_pages_plan({"name": "x", "url": "y"}, [])["errors"][0])
 
+    def test_the_host_named_is_the_host_asked(self):
+        """1.36.0: a url is read with urlsplit(), as the request is - 'https://a#@b/' goes to a, and showed b."""
+        tricky = ["https://node03.corp.example.mil#@node04.corp.example.mil:16000/stats.do",
+                  "https://node03.corp.example.mil:16000#@node04.corp.example.mil/stats.do",
+                  "https://node03.corp.example.mil\\@node04.corp.example.mil:16000/stats.do",
+                  "https://node03.corp.example.mil:16000/stats.do#@node04.corp.example.mil",
+                  "https://node03.corp.example.mil :16000/stats.do", "https://node03.corp.example.mil:port/stats.do",
+                  "https://node03.corp.example.mil?@node04.corp.example.mil/stats.do"]
+        plan = nf.sn_node_pages_plan([{"name": "N%d" % i, "url": u} for i, u in enumerate(tricky)], ["node04"])
+        self.assertEqual((plan["read"], plan["ssh"], len(plan["errors"])), ([], [], len(tricky)), plan)
+        for u in tricky:
+            self.assertTrue(nm.page_url_why(u), u)
+            if "\\" not in u:                # (a backslash: urlsplit() and the request agree on the other host - refused)
+                self.assertNotEqual(nm._url_host(u), "node04.corp.example.mil", u)      # the host urlsplit() reads
+        ok = "https://Node03.corp.example.mil:16000/stats.do?x=1"
+        self.assertEqual((nm.page_url_why(ok), nm._url_host(ok), nm.page_port(ok)), ("", "Node03.corp.example.mil", 16000))
+        self.assertEqual(nf.sn_node_pages_plan([{"name": "n", "url": ok}], [])["read"][0]["host"], "Node03.corp.example.mil")
+        self.assertEqual((nm._url_host("http://[2001:db8::7]:8080/stats.do"), nm.page_port("http://[2001:db8::7]/s")), ("2001:db8::7", 80))
+        self.assertEqual((nm.page_port("https://node03/s"), nm.page_port("node03:16000/s"), nm.page_port("https://node03:x/")), (443, 0, 0))
+        self.assertEqual(nm._origin("HTTPS://u:p@node03.example.mil:16000/stats.do?a#b"), "https://node03.example.mil:16000")
+        # a listed page with such a url is not asked at all (the module, called without the plan)
+        got = nm.read_pages([{"name": "N", "url": tricky[0]}], 1, 0, 2, "auto", ("svc_aap", "pw"), False)
+        self.assertEqual((got[0]["stats"]["up"], got[0]["stats"]["tried"]), (False, []))
+        self.assertIn("not asked: its url must be plain", got[0]["stats"]["why"])
+
 
 class StatsPages(unittest.TestCase):
     """servicenow_node_stats_pages read from where the job runs: the same numbers, no redirect followed, the login
@@ -1199,6 +1224,75 @@ class FormLogin(unittest.TestCase):
         self.nothing_secret(st)
         self.assertEqual(self.findings(st), [])
 
+    def test_units_of_one_address_share_one_session(self):
+        """1.36.0: one login per node address and run - a second unit read at the same node:port reads in the session
+        the first one opened; one logout at the end, said to both."""
+        port, log = self.serve()
+        sessions = {}
+        a = self.read(port, samples=1, sessions=sessions)
+        b = self.read(port, samples=1, sessions=sessions)
+        self.assertEqual(len(sessions), 1)
+        self.assertFalse([x for x in self.said(log) if "logout" in x])         # still open: the caller closes it
+        nm.form_close(sessions, 5, True)
+        self.assertEqual(sessions, {})
+        lines = self.said(log)
+        self.assertEqual([x for x in lines if x.startswith("POST")], ["POST /login.do user=stats_reader ck=ok -> in"])
+        self.assertEqual(len([x for x in lines if "side_door" in x]), 1)
+        self.assertEqual([x for x in lines if "logout" in x], ["GET /logout.do session=yes"])
+        self.assertEqual(lines[-1], "GET /logout.do session=yes")
+        self.assertEqual(len([x for x in lines if x == "GET /stats.do session=yes"]), 2)
+        for st in (a, b):
+            self.assertEqual((st["up"], st["form"]), (True, "in"))
+            self.assertIn("/logout.do -> HTTP 302 to /logout_redirect.do", st["tried"][-1])
+        self.assertFalse([x for x in a["tried"] if "the session this run opened here is used" in x])
+        self.assertTrue([x for x in b["tried"] if "the session this run opened here is used (one login per node address)" in x])
+        self.assertFalse([x for x in b["tried"] if "login.do" in x])
+        self.nothing_secret(a, b)
+        # a refused login is kept too: the same address gets no second POST
+        port, log = self.serve()
+        sessions = {}
+        a = self.read(port, ("stats_reader", "Wr0ng-pw!"), sessions=sessions)
+        b = self.read(port, ("stats_reader", "Wr0ng-pw!"), sessions=sessions)
+        nm.form_close(sessions, 5, True)
+        self.assertEqual((a["form"], b["form"]), ("refused", "refused"))
+        self.assertEqual(len([x for x in self.said(log) if x.startswith("POST")]), 1)
+        self.assertEqual(len([x for x in self.said(log) if "logout" in x]), 1)
+
+    def test_two_listed_pages_of_one_address_one_login(self):
+        port, log = self.serve()
+        e = [{"name": "Node 1", "url": "http://127.0.0.1:%d/stats.do" % port}, {"name": "Node 1 again", "url": "http://127.0.0.1:%d/xmlstats.do" % port}]
+        orig, nm.may_send_login = nm.may_send_login, lambda url, names, local=True: True     # the fake node speaks plain HTTP
+        try:
+            got = nm.read_pages(e, 1, 0, 5, "form", None, False, form=self.WHO)
+        finally:
+            nm.may_send_login = orig
+        lines = self.said(log)
+        self.assertEqual(len([x for x in lines if x.startswith("POST")]), 1, lines)
+        self.assertEqual(len([x for x in lines if "logout" in x]), 1, lines)
+        self.assertEqual(lines[-1], "GET /logout.do session=yes")
+        self.assertTrue(got[0]["stats"]["up"], got[0]["stats"])
+        self.nothing_secret(got)
+
+    def test_no_query_of_a_redirect_in_any_line(self):
+        """1.36.0: where a redirect pointed is said without its query, everywhere (the fake node's redirects all carry
+        sysparm_token=...)."""
+        port, log = self.serve()
+        seen = [self.read(port), self.read(port, ("stats_reader", "Wr0ng-pw!"))]
+        for auth in ("auto", "basic", "none"):                  # no session: the stats page answers with a redirect
+            seen.append(nm.read_stats(port, ["/stats.do"], 1, 0, 5, ["node01.example.invalid"], "", auth, ("svc_aap", "pw"), True))
+        port2, _log = self.serve("formmode=norole")             # logged in, the stats page still redirects
+        seen.append(self.read(port2))
+        port3, _log = self.serve("formmode=sso")                # side_door.do redirects
+        seen.append(self.read(port3))
+        text = json.dumps(seen)
+        self.assertIn("logout_redirect.do", text)
+        self.assertIn("sent to http://127.0.0.1:%d/logout_redirect.do (not followed)" % port, text)
+        self.assertIn("/logout.do -> HTTP 302 to /logout_redirect.do", text)
+        for word in ("t0ken", "sysparm_token", "sysparm_url", "sysparm_stack", "navpage", "?"):
+            self.assertNotIn(word, text)
+        for st in seen:
+            self.assertEqual(self.findings(st) and [f for f in self.findings(st) if "t0ken" in json.dumps(f)], [])
+
     def test_without_the_session_the_node_refuses(self):
         port, log = self.serve()
         for auth in ("auto", "basic", "none"):                  # form is never chosen by auto: no login page is asked
@@ -1330,6 +1424,20 @@ class FormLogin(unittest.TestCase):
             def get(self, name):
                 return "https://node01.example.mil:16000/login_redirect.do?sysparm_stack=no&token=t0ken"
         self.assertEqual(nm._where(Loc()), "/login_redirect.do")   # the path only: a query may carry a token
+        self.assertEqual(nm._where(Loc(), True), "https://node01.example.mil:16000/login_redirect.do")
+
+        class Odd(object):
+            def __init__(self, loc):
+                self.loc = loc
+
+            def get(self, name):
+                return self.loc
+        for loc, path, full in (("/logout_redirect.do?sysparm_token=t0ken", "/logout_redirect.do", "/logout_redirect.do"),
+                                ("https://u:pw@sso.example.mil/a/b?SAMLRequest=x#frag", "/a/b", "https://sso.example.mil/a/b"),
+                                ("https://sso.example.mil?token=t", "", "https://sso.example.mil"),
+                                ("login.do#t0ken", "login.do", "login.do"), ("", "", "")):
+            self.assertEqual((nm._where(Odd(loc)), nm._where(Odd(loc), True)), (path, full), loc)
+        self.assertEqual((nm._where(None), nm._where(None, True)), ("", ""))
 
 
 if __name__ == "__main__":

@@ -3,7 +3,8 @@
 # answer stats.do only in a logged-in session: single sign-on in front, no basic auth). The check logs in at the node's
 # own address through the instance's local login page (side_door.do), reads the stats page and logs out.
 # A dedicated LOCAL account of the instance with only a role that may read stats.do - not a person's account, not an
-# admin, not the ServiceNow API account. Each run is one UI login per node in the instance's login history.
+# admin, not the ServiceNow API account. Each run is one UI login per node address (node and port) in the instance's
+# login history. The login goes over HTTPS to the node's own name, or to 127.0.0.1 on the node, also over plain HTTP.
 # docs/SERVICENOW_SETUP.md, "The node stats login".
 inputs:
   fields:

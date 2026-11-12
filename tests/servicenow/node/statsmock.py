@@ -105,12 +105,12 @@ class H(BaseHTTPRequestHandler):
                 self.bare(500)
                 return True
             sessions.discard(jar.get("JSESSIONID"))
-            self.bare(302, {"Location": self.here() + "/logout_redirect.do?sysparm_url=navpage.do"})
+            self.bare(302, {"Location": self.here() + "/logout_redirect.do?sysparm_url=navpage.do&sysparm_token=t0ken-in-a-query"})
             return True
         ok = jar.get("JSESSIONID") in sessions and jar.get("glide_session_store") and mode != "norole"
         note("GET %s session=%s" % (path, "yes" if jar.get("JSESSIONID") in sessions else "no"))
         if not ok:
-            self.bare(302, {"Location": self.here() + "/logout_redirect.do?sysparm_url=navpage.do"})
+            self.bare(302, {"Location": self.here() + "/logout_redirect.do?sysparm_url=navpage.do&sysparm_token=t0ken-in-a-query"})
             return True
         return False
 
@@ -136,7 +136,7 @@ class H(BaseHTTPRequestHandler):
         sid = "sess" + secrets.token_hex(8)
         sessions.add(sid)
         self.send_response(302)
-        self.send_header("Location", self.here() + "/login_redirect.do?sysparm_stack=no")
+        self.send_header("Location", self.here() + "/login_redirect.do?sysparm_stack=no&sysparm_token=t0ken-in-a-query")
         self.send_header("Set-Cookie", "JSESSIONID=%s; Path=/; HttpOnly; Secure" % sid)
         self.send_header("Set-Cookie", "glide_session_store=%s; Path=/; HttpOnly" % secrets.token_hex(16))
         self.send_header("Content-Length", "0")
