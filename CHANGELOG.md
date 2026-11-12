@@ -1,5 +1,49 @@
 # Changelog
 
+## 1.31.0 — 2026-11-12
+
+**Updating without scripts:** paste `site-automation-1.31.0-changed-since-1.29.0.zip` as it is (from an older version,
+its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`. Nothing to set up: the new settings have defaults.
+
+**The VM right-sizing report is a more reliable source of truth** (docs/VMWARE.md, "The VM right-sizing report"):
+
+- **More vCPUs or memory only from a pattern in the last 30 days**: 85% CPU (90% active memory) or more at the 95th
+  percentile, and busy on 3 separate days or more (`vm_rightsize_grow_days`). Busy on fewer days: listed under *Watch:
+  busy on a few days*, not grown. Ballooned or swapped memory is still said on its own.
+- **The year's busiest day never adds vCPUs or memory**: it only holds a cut back, and the reason says how many days of
+  the year were within 10 points of it (`vm_rightsize_year_near_pts`) - a one-off, or a pattern such as month end.
+- **A day above 100% is left out** as suspect (the next busiest day is used) and said in the reason. A day's average is
+  a percent of the vCPUs or memory the VM had that day - the docs say what that means when they changed.
+- **A confidence for each suggestion** - High, Medium or Low, from its doubts (few days of history, a suspect day, the
+  busiest day holding the cut back, a close call, less memory for a large VM with little active memory) - in the page,
+  the email, the workbook (with its doubts), the job's output and artifacts, and what ACT reads. The most certain come
+  first in *Too big* and *Too small*. Less memory for a VM of 32 GB or more with 10% or less active says to check the
+  application's own memory setting (database, Java) first.
+- **When CPU ready is low on every VM**, the report says so first: fewer vCPUs free capacity for other VMs, they do not
+  make anything faster.
+- The *Why* column is shorter: the numbers already in the other columns are left out of it.
+
+New settings, with their defaults: `vm_rightsize_grow_days: 3`, `vm_rightsize_year_near_pts: 10`,
+`vm_rightsize_conf_days: 21`, `vm_rightsize_conf_margin_pts: 10`, `vm_rightsize_conf_mem_large_gb: 32`,
+`vm_rightsize_conf_mem_low_pct: 10`. Every existing setting keeps its name and default; `vm_rightsize_year: false`
+still works (no busiest day: nothing held back).
+
+**Behaviour changes:**
+
+- **Fewer growth suggestions than before.** A VM is no longer *Too small* because of its busiest day of the year, a
+  value above 100%, or one or two busy days in the last 30: it stays *About right* (and is listed under *Watch* when it
+  was busy on a day or two). Reductions are as before, held back by the year's busiest day as before.
+- The size tables have a new *Confidence* column; the workbook has *Confidence*, *Confidence because*, *Watch*, *CPU busy
+  days* and *Memory busy days* columns; the job's output line reads `web01: Too big (High) - vCPUs 8 → 4, ...`; the
+  artifact's changes carry a `confidence`.
+
+Tests: tests/test_vm_rightsize.py - the reported case (9% at the 95th percentile, 14% peak, a busiest day of 118%: no
+growth), busiest days of 88 to 98% that add nothing, growth only on 3 busy days or more (watch below that), a suspect
+day left out and the next one holding the cut, a suspect value that changes nothing still said and still a doubt, the
+confidence of each kind of doubt, the most certain first, the CPU ready note, and the module's busy days and the
+year's busiest days.
+
 ## 1.29.0 — 2026-11-12
 
 **Updating without scripts:** paste `site-automation-1.29.0-changed-since-1.28.0.zip` as it is (from an older version,

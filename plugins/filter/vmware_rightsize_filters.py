@@ -7,7 +7,11 @@ Suggestions only: nothing is changed.
 CPU is measured by the hypervisor itself, so its suggestions are firm. Memory is not: vCenter sees the memory a guest
 touched recently (active memory), not what the guest needs - so a memory suggestion keeps a lot of headroom
 (vm_rightsize_mem_headroom_pct), never cuts more than vm_rightsize_mem_max_cut_pct at once, and is marked as the less
-certain one."""
+certain one.
+
+1.31.0: more vCPUs or memory only from the last days and only from a pattern - busy on vm_rightsize_grow_days separate
+days or more (fewer: watch); the year's busiest day only holds a cut back (a day above 100% left out as suspect, and
+how many days came near it said); each suggestion has a confidence (High, Medium, Low) from its doubts."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
@@ -15,8 +19,11 @@ import math
 
 DEFAULTS = {"min_days": 7, "cpu_target_pct": 70, "cpu_high_pct": 85, "ready_warn_pct": 5, "min_vcpus": 2, "cpu_max_cut_pct": 50,
             "min_vcpus_windows": 2, "mem_headroom_pct": 100, "mem_high_pct": 90, "min_mem_gb": 2, "min_mem_gb_windows": 4,
-            "mem_max_cut_pct": 50, "min_change_pct": 25, "disk_warn_pct": 90, "taken_mb": 100, "max_rows": 500, "days": 30}
+            "mem_max_cut_pct": 50, "min_change_pct": 25, "disk_warn_pct": 90, "taken_mb": 100, "max_rows": 500, "days": 30,
+            "grow_days": 3, "year_near_pts": 10, "conf_days": 21, "conf_margin_pts": 10, "conf_mem_large_gb": 32,
+            "conf_mem_low_pct": 10}
 TOO_BIG, TOO_SMALL, RIGHT, UNKNOWN = "Too big", "Too small", "About right", "Not enough history"
+CONFIDENCE = ("High", "Medium", "Low")                  # 0 doubts, 1, 2 or more (1.31.0)
 
 
 def _o(opts):
@@ -53,6 +60,43 @@ def _pct(x):
     return "-" if x is None else ("%g%%" % round(float(x), 1))
 
 
+def _busiest(st, k, o):
+    """The year's busiest day of cpu or mem that is plausible: {value, date, near (days within year_near_pts of it), more
+    (the list was full: near or more), suspect: (date, value) of the highest above 100% left out, or None}. From
+    year_<k>_top (1.31.0), else year_<k>_day alone."""
+    top = st.get("year_%s_top" % k)
+    if top is None:
+        top = [[st.get("year_%s_date" % k) or "", st["year_%s_day" % k]]] if st.get("year_%s_day" % k) is not None else []
+    top = [(str(d), float(v)) for d, v in top if v is not None]
+    bad = [x for x in top if x[1] > 100]
+    good = sorted((x for x in top if x[1] <= 100), key=lambda x: -x[1])
+    out = {"value": None, "date": "", "near": 0, "more": False, "suspect": max(bad, key=lambda x: x[1]) if bad else None}
+    if good:
+        out.update(value=good[0][1], date=good[0][0], near=sum(1 for x in good if x[1] >= good[0][1] - o["year_near_pts"]),
+                   more=len(top) >= 31 and all(x[1] >= good[0][1] - o["year_near_pts"] for x in good))
+    return out
+
+
+def _suspect(what, yb, after):
+    """'a 118% day (2026-02-28) left out: above 100%' after the CPU or memory reason; on its own with 'CPU: '."""
+    t = "a %s day (%s) left out: above 100%%" % (_pct(yb["suspect"][1]), yb["suspect"][0])
+    return t if after else "%s: %s" % (what, t)
+
+
+def _near(yb, o):
+    """'a one-off', or how many days of the year were near the busiest one."""
+    if yb["near"] <= 1:
+        return "a one-off"
+    return "%d%s days within %d points" % (yb["near"], "+" if yb["more"] else "", o["year_near_pts"])
+
+
+def _busy_days(days, high):
+    """(days at high or more, days) of the last days' busiest 2-hour averages ([[date, %]]); (None, 0) when not read."""
+    if days is None:
+        return None, 0
+    return sum(1 for _, v in days if v is not None and float(v) >= high), len(days)
+
+
 def rightsize(vm, opts=None):
     """One VM -> {verdict, cpu: {now, suggested, change}, mem: {...}, why: [..], notes: [..], taken, disk, ...}.
     change: 'down', 'up' or '' (none)."""
@@ -60,7 +104,7 @@ def rightsize(vm, opts=None):
     st = vm.get("stats") or {}
     cpus, mem_gb = int(vm.get("cpus") or 0), round(float(vm.get("memory_mb") or 0) / 1024.0, 1)
     win = bool(vm.get("windows"))
-    out = {"name": vm.get("name", ""), "verdict": RIGHT, "why": [], "notes": [],
+    out = {"name": vm.get("name", ""), "verdict": RIGHT, "why": [], "notes": [], "watch": [], "doubts": [], "confidence": "",
            "cpu": {"now": cpus, "suggested": cpus, "change": ""}, "mem": {"now": _num(mem_gb), "suggested": _num(mem_gb), "change": ""},
            "taken": False, "disk": None, "freed_vcpus": 0, "freed_gb": 0}
 
@@ -94,64 +138,115 @@ def rightsize(vm, opts=None):
         out["verdict"] = UNKNOWN
         out["why"].append("%s day(s) of statistics in vCenter (vm_rightsize_min_days: %d)" % (_num(days), o["min_days"]))
         return out
+    doubts = []                                          # why a suggestion is less certain: its confidence (1.31.0)
+    if days < o["conf_days"]:
+        doubts.append("%s days of history" % _num(days))
 
-    # CPU: the busiest 5% of the time left out (the 95th percentile), or the year's busiest day when that was busier
+    # CPU: growth only from the last days - busy (the 95th percentile at cpu_high_pct or more) on grow_days separate days
+    # or more; the year's busiest day (a value above 100% left out) only holds a cut back
     p95, peak = float(st["cpu_p95"]), st.get("cpu_max")
-    day = st.get("year_cpu_day")
+    yb = _busiest(st, "cpu", o)
+    day = yb["value"]
+    why_at = len(out["why"])
+    floor = int(o["min_vcpus_windows"] if win else o["min_vcpus"])
+    half = int(math.ceil(cpus * (1 - o["cpu_max_cut_pct"] / 100.0) - 1e-9))
+
+    def want(pct):
+        return int(math.ceil(cpus * pct / 100.0 / (o["cpu_target_pct"] / 100.0) - 1e-9))
+
+    def vcpus_for(pct):
+        n = max(want(pct), floor, half, 1)
+        return n + (n % 2 if n > 2 else 0)                # an even number from 4 up: how vCPUs are usually given
     use = max(p95, float(day or 0))
     used_vcpus = cpus * use / 100.0
-    floor = int(o["min_vcpus_windows"] if win else o["min_vcpus"])
-    want = int(math.ceil(used_vcpus / (o["cpu_target_pct"] / 100.0) - 1e-9))
-    half = int(math.ceil(cpus * (1 - o["cpu_max_cut_pct"] / 100.0) - 1e-9))
-    need = max(want, floor, half, 1)
-    need += need % 2 if need > 2 else 0                  # an even number from 4 up: how vCPUs are usually given
+    need, need_p95 = vcpus_for(use), vcpus_for(p95)
+    busy = _busy_days(st.get("cpu_days"), o["cpu_high_pct"])
     ready = st.get("ready_p95")
-    if use >= o["cpu_high_pct"]:
-        sug = max(need, cpus + 1)
+    cpu_doubts = []
+    if p95 >= o["cpu_high_pct"] and busy[0] is not None and busy[0] >= o["grow_days"]:
+        sug = max(vcpus_for(p95), cpus + 1)
         sug += sug % 2 if sug > 2 else 0
         out["cpu"].update(suggested=sug, change="up")
-        out["why"].append("CPU: busy - %s of its %d vCPUs (95th percentile)%s" % (
-            _pct(p95), cpus, "" if day is None or day <= p95 else ", %s on its busiest day (%s)" % (_pct(day), st.get("year_cpu_date"))))
+        out["why"].append("CPU: busy on %d of %d days" % busy)
+        if p95 < o["cpu_high_pct"] + o["conf_margin_pts"] and busy[0] * 2 < busy[1]:
+            cpu_doubts.append("CPU just over the line")
         if ready is not None and ready >= o["ready_warn_pct"]:
             out["notes"].append("It also waits for a physical CPU (CPU ready %s): check the ESXi host's load before adding vCPUs." % _pct(ready))
+    elif p95 >= o["cpu_high_pct"]:
+        out["watch"].append("CPU")
+        out["why"].append("CPU: busy on %d day(s): watch, not enough to grow" % busy[0] if busy[0] is not None else
+                          "CPU: busy, its busy days not read: watch")
     elif need < cpus:
         out["cpu"].update(suggested=need, change="down")
-        out["why"].append("CPU: about %s of %d vCPUs used (95th percentile %s%s)%s" % (
-            _num(round(used_vcpus, 1)), cpus, _pct(p95), "" if day is None or day <= p95 else "; %s on its busiest day, %s" % (
-                _pct(day), st.get("year_cpu_date")), "; at most %d%% fewer at once" % o["cpu_max_cut_pct"] if half > max(want, floor) else ""))
+        out["why"].append("CPU: about %s of %d vCPUs used%s" % (_num(round(used_vcpus, 1)), cpus,
+                                                               "; at most %d%% fewer at once" % o["cpu_max_cut_pct"]
+                                                               if half > max(want(use), floor) else ""))
+        if need > need_p95:
+            out["why"].append("sized for its busiest day, %s on %s (%s)" % (_pct(day), yb["date"], _near(yb, o)))
+            cpu_doubts.append("held by its busiest day")
+        if o["cpu_target_pct"] - p95 < o["conf_margin_pts"]:
+            cpu_doubts.append("CPU close to the target")
         if ready is not None and ready >= o["ready_warn_pct"]:
             out["notes"].append("It waits for a physical CPU (CPU ready %s): fewer vCPUs usually wait less." % _pct(ready))
     elif ready is not None and ready >= o["ready_warn_pct"]:
         out["notes"].append("It waits for a physical CPU (CPU ready %s): the ESXi host is busy." % _pct(ready))
     if out["cpu"]["change"] == "down" and peak is not None and cpus * float(peak) / 100.0 > out["cpu"]["suggested"]:
-        out["notes"].append("At its peak it used about %s vCPUs, more than %d: short bursts would be slower." % (
-            _num(round(cpus * float(peak) / 100.0, 1)), out["cpu"]["suggested"]))
-    if day is not None and day > p95 and out["cpu"]["change"] != "up":
-        out["notes"].append("Its busiest day of the year (%s, %s CPU) is sized for." % (st.get("year_cpu_date"), _pct(day)))
+        out["notes"].append("Peak about %s vCPUs: short bursts would be slower." % _num(round(cpus * float(peak) / 100.0, 1)))
+    if day is not None and day > p95 and out["cpu"]["change"] == "" and need_p95 < cpus <= need:
+        out["notes"].append("Kept for its busiest day of the year, %s CPU on %s (%s)." % (_pct(day), yb["date"], _near(yb, o)))
+    if yb["suspect"]:                                    # said after the CPU reason, or alone
+        out["why"].append(_suspect("CPU", yb, len(out["why"]) > why_at))
 
-    # memory: active memory (what the guest touched lately) with a lot of headroom - the less certain suggestion
-    mp95, mday = st.get("mem_p95"), st.get("year_mem_day")
+    # memory: active memory (what the guest touched lately) with a lot of headroom - the less certain suggestion; growth
+    # as for CPU (mem_high_pct on grow_days days or more); ballooned or swapped memory is said on its own (above)
+    mp95 = st.get("mem_p95")
+    mem_doubts = []
     if mp95 is not None and mem_gb > 0:
-        muse = max(float(mp95), float(mday or 0))
-        active = mem_gb * muse / 100.0
+        mp95 = float(mp95)
+        myb = _busiest(st, "mem", o)
+        mwhy_at = len(out["why"])
         mfloor = o["min_mem_gb_windows"] if win else o["min_mem_gb"]
-        if muse >= o["mem_high_pct"]:
-            sug = mem_size(mem_gb * 1.25)
-            out["mem"].update(suggested=_num(sug), change="up")
-            out["why"].append("memory: active memory at %s of its %s GB (95th percentile)" % (_pct(muse), _num(mem_gb)))
+        mbusy = _busy_days(st.get("mem_days"), o["mem_high_pct"])
+        if mp95 >= o["mem_high_pct"] and mbusy[0] is not None and mbusy[0] >= o["grow_days"]:
+            out["mem"].update(suggested=_num(mem_size(mem_gb * 1.25)), change="up")
+            out["why"].append("memory: nearly all active on %d of %d days" % mbusy)
+            if mp95 < o["mem_high_pct"] + o["conf_margin_pts"] and mbusy[0] * 2 < mbusy[1]:
+                mem_doubts.append("memory just over the line")
+        elif mp95 >= o["mem_high_pct"]:
+            out["watch"].append("memory")
+            out["why"].append("memory: busy on %d day(s): watch, not enough to grow" % mbusy[0] if mbusy[0] is not None else
+                              "memory: busy, its busy days not read: watch")
         else:
-            need, cut = active * (1 + o["mem_headroom_pct"] / 100.0), mem_gb * (1 - o["mem_max_cut_pct"] / 100.0)
-            sug = mem_size(max(need, mfloor, cut))
+            muse = max(mp95, float(myb["value"] or 0))
+            active = mem_gb * muse / 100.0
+            cut = mem_gb * (1 - o["mem_max_cut_pct"] / 100.0)
+
+            def gb_for(pct):
+                return mem_size(max(mem_gb * pct / 100.0 * (1 + o["mem_headroom_pct"] / 100.0), mfloor, cut))
+            sug = gb_for(muse)
             if sug <= mem_gb * (1 - o["min_change_pct"] / 100.0) and mem_gb - sug >= 2:
                 out["mem"].update(suggested=_num(sug), change="down")
-                out["why"].append("memory: about %s of %s GB active (95th percentile %s), plus %d%% headroom%s" % (
-                    _num(round(active, 1)), _num(mem_gb), _pct(mp95), o["mem_headroom_pct"],
-                    "; at most %d%% less at once" % o["mem_max_cut_pct"] if cut > max(need, mfloor) else ""))
-
+                out["why"].append("memory: about %s GB active, plus %d%%%s" % (
+                    _num(round(active, 1)), o["mem_headroom_pct"], "; at most %d%% less at once" % o["mem_max_cut_pct"]
+                    if cut > max(active * (1 + o["mem_headroom_pct"] / 100.0), mfloor) else ""))
+                if sug > gb_for(mp95):
+                    out["why"].append("sized for its busiest memory day, %s on %s (%s)" % (_pct(myb["value"]), myb["date"], _near(myb, o)))
+                    mem_doubts.append("memory held by its busiest day")
+                if mem_gb >= o["conf_mem_large_gb"] and mp95 <= o["conf_mem_low_pct"]:
+                    mem_doubts.append("large VM, little active memory")
+                    out["notes"].append("Check the application's own memory setting (database, Java) first: active memory understates those.")
+        if myb["suspect"]:                              # a doubt whenever the VM changes, even when it changed nothing
+            out["why"].append(_suspect("memory", myb, len(out["why"]) > mwhy_at))
+            mem_doubts.insert(0, "a suspect memory day left out")
+    if yb["suspect"]:
+        cpu_doubts.insert(0, "a suspect CPU day left out")
+    if out["cpu"]["change"] or out["mem"]["change"]:
+        doubts += cpu_doubts + mem_doubts
+        out["doubts"] = doubts
+        out["confidence"] = CONFIDENCE[min(len(doubts), 2)]
     mpeak = st.get("mem_max")
     if out["mem"]["change"] == "down" and mpeak is not None and mem_gb * float(mpeak) / 100.0 > out["mem"]["suggested"]:
-        out["notes"].append("At its peak about %s GB was active, more than %s GB: check it before giving less." % (
-            _num(round(mem_gb * float(mpeak) / 100.0, 1)), out["mem"]["suggested"]))
+        out["notes"].append("Peak about %s GB active: check it before giving less." % _num(round(mem_gb * float(mpeak) / 100.0, 1)))
     if "up" in (out["cpu"]["change"], out["mem"]["change"]):
         out["verdict"] = TOO_SMALL
     elif "down" in (out["cpu"]["change"], out["mem"]["change"]):
@@ -166,11 +261,13 @@ def rightsize(vm, opts=None):
 
 
 def vm_rightsize(vms, opts=None):
-    """Every VM (site_vmware_rightsize's vms) -> [VM with its 'size': rightsize()], too small first, then the most
-    freed, then by name."""
+    """Every VM (site_vmware_rightsize's vms) -> [VM with its 'size': rightsize()], too small first, then too big - each
+    the most certain first (High, Medium, Low), then the most freed - then by name."""
     out = [dict(v, size=rightsize(v, opts)) for v in vms or []]
     order = {TOO_SMALL: 0, TOO_BIG: 1, RIGHT: 2, UNKNOWN: 3}
-    return sorted(out, key=lambda v: (order[v["size"]["verdict"]], -(v["size"]["freed_vcpus"] * 4 + v["size"]["freed_gb"]),
+    sure = {c: i for i, c in enumerate(CONFIDENCE)}
+    return sorted(out, key=lambda v: (order[v["size"]["verdict"]], sure.get(v["size"]["confidence"], 3),
+                                      -(v["size"]["freed_vcpus"] * 4 + v["size"]["freed_gb"]),
                                       str(v.get("vcenter", "")).lower(), str(v.get("name", "")).lower()))
 
 
@@ -192,10 +289,11 @@ def _used(st, k):
 def _size_row(v, multi):
     s, st = v["size"], v.get("stats") or {}
     return [v.get("name", ""), _where(v, multi), _change(s["cpu"]), _used(st, "cpu"), _pct(st.get("ready_p95")), _change(s["mem"]),
-            _used(st, "mem"), "; ".join(s["why"] + [n for n in s["notes"] if not n.startswith("Memory taken back")])]
+            _used(st, "mem"), s["confidence"], "; ".join(s["why"] + [n for n in s["notes"] if not n.startswith("Memory taken back")])]
 
 
-SIZE_COLS = ["VM", "Cluster", "vCPUs", "CPU used (95th % / peak)", "CPU ready", "Memory (GB)", "Active memory (95th % / peak)", "Why"]
+SIZE_COLS = ["VM", "Cluster", "vCPUs", "CPU used (95th % / peak)", "CPU ready", "Memory (GB)", "Active memory (95th % / peak)",
+             "Confidence", "Why"]
 
 
 def _table(title, text, rows, status, max_rows, columns=None, row_status=None, cell=None):
@@ -212,11 +310,12 @@ def _table(title, text, rows, status, max_rows, columns=None, row_status=None, c
 
 
 def _cells(v, o):
-    """Colour the cells that change (amber up, green down) and CPU ready from vm_rightsize_ready_warn_pct (amber)."""
+    """Colour the cells that change (amber up, green down), CPU ready from vm_rightsize_ready_warn_pct (amber) and the
+    confidence (High green, Low amber)."""
     s, ready = v["size"], (v.get("stats") or {}).get("ready_p95")
     col = {"up": "warning", "down": "ok", "": ""}
     return ["", "", col[s["cpu"]["change"]], "", "warning" if ready is not None and ready >= o["ready_warn_pct"] else "",
-            col[s["mem"]["change"]], "", ""]
+            col[s["mem"]["change"]], "", {"High": "ok", "Low": "warning"}.get(s["confidence"], ""), ""]
 
 
 def vm_rightsize_doc(result, sized, opts=None):
@@ -230,6 +329,8 @@ def vm_rightsize_doc(result, sized, opts=None):
     by = {k: [v for v in sized if v["size"]["verdict"] == k] for k in (TOO_SMALL, TOO_BIG, RIGHT, UNKNOWN)}
     taken = [v for v in sized if v["size"]["taken"]]
     full = [v for v in sized if (v["size"]["disk"] or {}).get("full")]
+    watch = [v for v in sized if v["size"]["watch"]]
+    readies = [(v.get("stats") or {}).get("ready_p95") for v in sized if v["size"]["verdict"] != UNKNOWN]
     vcpus = sum(v["size"]["freed_vcpus"] for v in sized)
     gb = _num(sum(v["size"]["freed_gb"] for v in sized)) or 0
     grow_c = sum(v["size"]["cpu"]["suggested"] - v["size"]["cpu"]["now"] for v in by[TOO_SMALL] if v["size"]["cpu"]["change"] == "up")
@@ -241,9 +342,14 @@ def vm_rightsize_doc(result, sized, opts=None):
     sections = []
     if r.get("notes"):
         sections.append({"title": "What vCenter's statistics could not give", "status": "warning", "lines": list(r["notes"])})
+    if by[TOO_BIG] and readies and all(x is not None and x < o["ready_warn_pct"] for x in readies):
+        sections.append({"title": "Before you resize", "lines": [
+            "CPU ready is low on every VM (at most %s): none waits for a physical CPU. Fewer vCPUs free capacity for other "
+            "VMs; they do not make anything faster." % _pct(max(readies))]})
     if by[TOO_SMALL]:
-        sections.append(_table("Too small", "CPU busy most of the time, or active memory near all it has. More vCPUs or memory "
-                               "suggested (amber).%s" % (" Together: %d vCPUs and %s GB more." % (grow_c, grow_m) if grow_c or grow_m else ""),
+        sections.append(_table("Too small", "CPU busy, or active memory near all it has, on %d days or more of the last %d. More "
+                               "vCPUs or memory suggested (amber), the most certain first.%s" % (
+                                   o["grow_days"], days, " Together: %d vCPUs and %s GB more." % (grow_c, grow_m) if grow_c or grow_m else ""),
                                [_size_row(v, multi) for v in by[TOO_SMALL]], "warning", mx,
                                row_status=["warning"] * len(by[TOO_SMALL]), cell=[_cells(v, o) for v in by[TOO_SMALL]]))
     if taken:
@@ -260,8 +366,17 @@ def vm_rightsize_doc(result, sized, opts=None):
     if by[TOO_BIG]:
         sections.append(_table("Too big", "More vCPUs or memory than they use: the suggested size (green) still leaves room - "
                                "CPU sized to %d%% busy, memory to its active memory plus %d%%. Together they free %d vCPUs and "
-                               "%s GB of memory for other VMs." % (o["cpu_target_pct"], o["mem_headroom_pct"], vcpus, gb),
+                               "%s GB of memory for other VMs. The most certain first." % (o["cpu_target_pct"], o["mem_headroom_pct"], vcpus, gb),
                                [_size_row(v, multi) for v in by[TOO_BIG]], "", mx, cell=[_cells(v, o) for v in by[TOO_BIG]]))
+    if watch:
+        rows = [[v.get("name", ""), _where(v, multi), "%s" % v["size"]["cpu"]["now"], _used(v.get("stats") or {}, "cpu"),
+                 "%s" % v["size"]["mem"]["now"], _used(v.get("stats") or {}, "mem"),
+                 "; ".join(w for w in v["size"]["why"] if "watch" in w)] for v in watch]
+        sections.append(_table("Watch: busy on a few days", "Busy (%d%% CPU, %d%% active memory or more) on fewer than %d days of the "
+                               "last %d: not enough to grow (vm_rightsize_grow_days). Suggested when it happens on more days."
+                               % (o["cpu_high_pct"], o["mem_high_pct"], o["grow_days"], days), rows, "", mx,
+                               columns=["VM", "Cluster", "vCPUs", "CPU used (95th % / peak)", "Memory (GB)",
+                                        "Active memory (95th % / peak)", "Why"]))
     if full:
         rows = [[v.get("name", ""), _where(v, multi), v["size"]["disk"]["path"], "%s%%" % v["size"]["disk"]["used_pct"],
                  "%s GB" % _num(v["size"]["disk"]["free_gb"]), "%s GB" % _num(v["size"]["disk"]["capacity_gb"])] for v in full]
@@ -278,16 +393,27 @@ def vm_rightsize_doc(result, sized, opts=None):
                                cell=[_cells(v, o) for v in by[RIGHT]]))
     sections.append({"title": "How the suggestions are worked out", "lines": [
         "From vCenter's own statistics of the last %d days (%s) - the hypervisor's measurements, nothing from inside the guests - "
-        "and each VM's busiest day of the last year (daily averages)." % (days, avg),
-        "CPU: the busiest 5%% of the time is left out (the 95th percentile), or the year's busiest day is used when it was busier; "
-        "vCPUs are suggested so that use would be about %d%%, never more than %d%% fewer at once, at least %d (Windows %d). %d%% "
-        "or more is too small." % (o["cpu_target_pct"], o["cpu_max_cut_pct"], o["min_vcpus"], o["min_vcpus_windows"], o["cpu_high_pct"]),
+        "and each VM's busiest days of the last year (daily averages)." % (days, avg),
+        "CPU: the busiest 5%% of the time is left out (the 95th percentile); vCPUs are suggested so that use would be about %d%%, "
+        "never more than %d%% fewer at once, at least %d (Windows %d)." % (o["cpu_target_pct"], o["cpu_max_cut_pct"], o["min_vcpus"],
+                                                                         o["min_vcpus_windows"]),
+        "More vCPUs or memory only from the last %d days: %d%% CPU (%d%% active memory) or more at the 95th percentile, and on "
+        "%d separate days or more (a day counts when its busiest 2-hour average got there). Fewer days: watch." % (
+            days, o["cpu_high_pct"], o["mem_high_pct"], o["grow_days"]),
+        "The year's busiest day never adds: it only holds a cut back, and the reason says how many days of the year were "
+        "within %d points of it (a one-off, or a pattern such as month end). A day above 100%% is left out as suspect. A "
+        "day's average is a percent of the vCPUs (or memory) the VM had that day: vCPUs added since make it read high, which "
+        "only holds a cut back; vCPUs removed since make it read low." % o["year_near_pts"],
+        "Confidence: High with no doubt, Medium with one, Low with two or more. A doubt: fewer than %d days of history, a "
+        "suspect day left out, the busiest day holding the cut back, the 95th percentile within %d points of the line it "
+        "crossed (for growth: busy on fewer than half the days), or less memory for a VM of %d GB or more with %d%% or less active (check the application's own memory "
+        "setting first)." % (o["conf_days"], o["conf_margin_pts"], o["conf_mem_large_gb"], o["conf_mem_low_pct"]),
         "CPU ready is the time a VM waited for a physical CPU: %d%% or more is said. It often means too many vCPUs, or a busy host."
         % o["ready_warn_pct"],
         "Memory (the less certain one): vCenter sees the memory a guest touched in the last minutes (active memory), not what it needs "
         "- file caches and databases want more. So the suggestion is its active memory plus %d%%, never more than %d%% less at once, "
-        "at least %d GB (Windows %d), and only when it is %d%% and 2 GB smaller or more. Active memory at %d%% or more is too small."
-        % (o["mem_headroom_pct"], o["mem_max_cut_pct"], o["min_mem_gb"], o["min_mem_gb_windows"], o["min_change_pct"], o["mem_high_pct"]),
+        "at least %d GB (Windows %d), and only when it is %d%% and 2 GB smaller or more."
+        % (o["mem_headroom_pct"], o["mem_max_cut_pct"], o["min_mem_gb"], o["min_mem_gb_windows"], o["min_change_pct"]),
         ] + list(r.get("info") or []) + [
         "Suggestions only: nothing was changed. Check a VM's own peaks (month end, patching, backups) before resizing it; removing "
         "vCPUs or memory needs the VM shut down."]})
@@ -303,6 +429,8 @@ def vm_rightsize_doc(result, sized, opts=None):
         summary.append({"label": UNKNOWN, "value": len(by[UNKNOWN])})
     if taken:
         summary.append({"label": "Memory taken back", "value": len(taken), "status": "warning"})
+    if watch:
+        summary.append({"label": "Watch", "value": len(watch)})
     if full:
         summary.append({"label": "Disks nearly full", "value": len(full), "status": "warning"})
     return {"title": "VM right-sizing: %d too big, %d too small of %d VM%s" % (len(by[TOO_BIG]), len(by[TOO_SMALL]), n, "" if n == 1 else "s"),
@@ -316,12 +444,14 @@ def vm_rightsize_doc(result, sized, opts=None):
 
 def vm_rightsize_xlsx(sized, opts=None):
     """The email's workbook: every VM with every number, and every guest disk."""
-    rows, disks = [], []
+    rows, disks, o = [], [], _o(opts)
     for v in sorted(sized or [], key=lambda v: (str(v.get("vcenter", "")).lower(), str(v.get("cluster", "")).lower(), str(v.get("name", "")).lower())):
         s, st = v["size"], v.get("stats") or {}
         d = s["disk"] or {}
+        cb, mb = _busy_days(st.get("cpu_days"), o["cpu_high_pct"]), _busy_days(st.get("mem_days"), o["mem_high_pct"])
         rows.append([v.get("vcenter", ""), v.get("datacenter", ""), v.get("cluster", ""), v.get("esxi_host", ""), v.get("name", ""),
-                     v.get("guest_os", ""), s["verdict"], s["cpu"]["now"], s["cpu"]["suggested"], st.get("cpu_avg"), st.get("cpu_p95"),
+                     v.get("guest_os", ""), s["verdict"], s["confidence"], "; ".join(s["doubts"]), "Watch" if s["watch"] else "",
+                     cb[0], mb[0], s["cpu"]["now"], s["cpu"]["suggested"], st.get("cpu_avg"), st.get("cpu_p95"),
                      st.get("cpu_max"), st.get("ready_p95"), st.get("year_cpu_day"), st.get("year_cpu_date") or "", s["mem"]["now"],
                      s["mem"]["suggested"], st.get("mem_p95"), st.get("mem_max"), st.get("year_mem_day"),
                      _num((st.get("consumed_mb_avg") or 0) / 1024.0) if st.get("consumed_mb_avg") is not None else None,
@@ -332,7 +462,8 @@ def vm_rightsize_xlsx(sized, opts=None):
             disks.append([v.get("vcenter", ""), v.get("name", ""), x.get("path", ""), x.get("capacity_gb"), x.get("free_gb"),
                           round(100.0 * (1 - float(x.get("free_gb") or 0) / cap), 1) if cap else None])
     return [{"name": "Right-sizing",
-             "columns": ["vCenter", "Datacenter", "Cluster", "ESXi host", "VM", "Guest OS", "Verdict", "vCPUs", "Suggested vCPUs",
+             "columns": ["vCenter", "Datacenter", "Cluster", "ESXi host", "VM", "Guest OS", "Verdict", "Confidence",
+                         "Confidence because", "Watch", "CPU busy days", "Memory busy days", "vCPUs", "Suggested vCPUs",
                          "CPU avg %", "CPU 95th %", "CPU peak %", "CPU ready 95th %", "Busiest day CPU %", "Busiest day", "Memory (GB)",
                          "Suggested memory (GB)", "Active memory 95th %", "Active memory peak %", "Busiest day memory %",
                          "Consumed memory avg (GB)", "Ballooned peak (MB)", "Swapped peak (MB)", "Days of history", "Fullest disk",
@@ -344,15 +475,16 @@ def vm_rightsize_xlsx(sized, opts=None):
 def vm_rightsize_change(v):
     """One VM's suggestion, short (the job's artifacts)."""
     s = v["size"]
-    return {"vcenter": v.get("vcenter", ""), "name": v.get("name", ""), "verdict": s["verdict"],
+    return {"vcenter": v.get("vcenter", ""), "name": v.get("name", ""), "verdict": s["verdict"], "confidence": s["confidence"],
             "vcpus": [s["cpu"]["now"], s["cpu"]["suggested"]], "memory_gb": [s["mem"]["now"], s["mem"]["suggested"]]}
 
 
 def vm_rightsize_lines(sized):
     """A line per VM to change, for the job's output: 'web01 (vc01): Too big - vCPUs 8 → 4, memory 32 → 16 GB'."""
     multi = len(set(v.get("vcenter") for v in sized or [])) > 1
-    return ["%s%s: %s - vCPUs %s, memory %s GB" % (v.get("name", ""), " (%s)" % _short(v.get("vcenter")) if multi else "", v["size"]["verdict"],
-                                                   _change(v["size"]["cpu"]), _change(v["size"]["mem"]))
+    return ["%s%s: %s (%s) - vCPUs %s, memory %s GB" % (v.get("name", ""), " (%s)" % _short(v.get("vcenter")) if multi else "",
+                                                        v["size"]["verdict"], v["size"]["confidence"], _change(v["size"]["cpu"]),
+                                                        _change(v["size"]["mem"]))
             for v in sized or [] if v["size"]["verdict"] in (TOO_SMALL, TOO_BIG)]
 
 
@@ -370,21 +502,26 @@ def vm_rightsize_evidence(items, sized, opts=None):
     o = _o(opts)
     by = {(v.get("vcenter", ""), v.get("name", "")): v for v in sized or []}
     L = ["VM right-sizing from vCenter's statistics of the last %d days (the hypervisor's measurements; no data from inside the "
-         "guests). Percentages are of what the VM has. CPU sized to about %d%% busy at the 95th percentile (or the year's busiest "
-         "day); memory = active memory (what the guest touched in the last minutes - it understates real need) plus %d%%, never "
-         "more than %d%% less at once." % (o["days"], o["cpu_target_pct"], o["mem_headroom_pct"], o["mem_max_cut_pct"]), ""]
+         "guests). Percentages are of what the VM has. CPU sized to about %d%% busy at the 95th percentile; the year's busiest "
+         "day (a value above 100%% left out as suspect) only holds a cut back; more vCPUs or memory only when busy on %d separate "
+         "days or more of the last %d. Memory = active memory (what the guest touched in the last minutes - it understates real "
+         "need) plus %d%%, never more than %d%% less at once. The job's confidence: High with no doubt, Medium with one, Low with "
+         "two or more." % (o["days"], o["cpu_target_pct"], o["grow_days"], o["days"], o["mem_headroom_pct"], o["mem_max_cut_pct"]), ""]
     for it in items or []:
         v = by.get((it.get("vcenter", ""), it.get("name", "")))
         if v is None:
             continue
         s, st = v["size"], v.get("stats") or {}
-        L.append("%s VM %s (%s; guest %s): job says %s. vCPUs %s -> %s; CPU avg %s, 95th %s, peak %s, ready 95th %s, busiest day "
-                 "%s (%s). Memory %s GB -> %s GB; active 95th %s, peak %s, busiest day %s; consumed avg %s MB; ballooned peak %s MB; "
-                 "swapped peak %s MB; %s days of history. Job's reasons: %s"
-                 % (it["id"], v.get("name", ""), v.get("cluster") or "-", v.get("guest_os") or "-", s["verdict"], s["cpu"]["now"],
+        cb, mb = _busy_days(st.get("cpu_days"), o["cpu_high_pct"]), _busy_days(st.get("mem_days"), o["mem_high_pct"])
+        L.append("%s VM %s (%s; guest %s): job says %s, confidence %s%s. vCPUs %s -> %s; CPU avg %s, 95th %s, peak %s, ready 95th %s, "
+                 "busy on %s of %s days, busiest day %s (%s). Memory %s GB -> %s GB; active 95th %s, peak %s, busy on %s days, busiest "
+                 "day %s; consumed avg %s MB; ballooned peak %s MB; swapped peak %s MB; %s days of history. Job's reasons: %s"
+                 % (it["id"], v.get("name", ""), v.get("cluster") or "-", v.get("guest_os") or "-", s["verdict"], s["confidence"] or "-",
+                    " (%s)" % "; ".join(s["doubts"]) if s["doubts"] else "", s["cpu"]["now"],
                     s["cpu"]["suggested"], _pct(st.get("cpu_avg")), _pct(st.get("cpu_p95")), _pct(st.get("cpu_max")),
-                    _pct(st.get("ready_p95")), _pct(st.get("year_cpu_day")), st.get("year_cpu_date") or "-", s["mem"]["now"],
-                    s["mem"]["suggested"], _pct(st.get("mem_p95")), _pct(st.get("mem_max")), _pct(st.get("year_mem_day")),
+                    _pct(st.get("ready_p95")), "-" if cb[0] is None else cb[0], cb[1], _pct(st.get("year_cpu_day")),
+                    st.get("year_cpu_date") or "-", s["mem"]["now"], s["mem"]["suggested"], _pct(st.get("mem_p95")),
+                    _pct(st.get("mem_max")), "-" if mb[0] is None else mb[0], _pct(st.get("year_mem_day")),
                     st.get("consumed_mb_avg"), st.get("balloon_mb_max"), st.get("swapped_mb_max"), st.get("days"),
                     "; ".join(s["why"] + s["notes"]) or "-"))
     return "\n".join(L)
@@ -433,7 +570,8 @@ def vm_rightsize_act_section(items, sized, parsed=None, opts=None):
         ok = rec.lower().startswith("agree")
         agree += ok
         c = a.get("confidence")
-        job = ("%s; %s" % ("vCPUs " + _change(v["size"]["cpu"]), "memory " + _change(v["size"]["mem"]) + " GB")) if v else ""
+        job = ("%s; %s; %s" % ("vCPUs " + _change(v["size"]["cpu"]), "memory " + _change(v["size"]["mem"]) + " GB",
+                                v["size"]["confidence"] or "-")) if v else ""
         rows.append([it["id"], it.get("name", ""), it.get("verdict", ""), job, rec or "?", a.get("reasoning", ""),
                      ("%d%%" % c) if c is not None else ""])
         cells.append(["", "", "", "", "ok" if ok else ("warning" if rec else ""), "",
@@ -442,7 +580,7 @@ def vm_rightsize_act_section(items, sized, parsed=None, opts=None):
             "text": "ACT (an AI assistant) read the same numbers and reviewed the job's suggestion: %d of %d agreed. Where it "
                     "adjusts one, read its reasoning; the job's own math is in the tables above. Confidence is ACT's own (green "
                     "80+, amber 50-79, red under 50)." % (agree, len(items or [])),
-            "columns": ["#", "VM", "Job says", "Job's size", "ACT's recommendation", "Reasoning", "Confidence"],
+            "columns": ["#", "VM", "Job says", "Job's size (its confidence)", "ACT's recommendation", "Reasoning", "Confidence"],
             "rows": rows, "cell_status": cells}]
     # asked in batches: a line per batch, each its own sentences on a line - not one paragraph
     lines = [x for x in (pa.get("overall_lines") or [pa.get("overall")]) if x]

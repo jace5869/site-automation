@@ -18,7 +18,9 @@ description:
     memory), mem.consumed, mem.vmmemctl (ballooned) - and mem.swapped where level 2 keeps it.
   - The last I(days) days from the past-month interval (2-hour averages, kept 30 days), else the past-week one (30
     minutes, 7 days); the busiest day of the last I(year_days) days from the past-year interval (daily averages).
-  - Returns each VM's numbers summed up (average, 95th percentile, peak), not the samples.
+  - Returns each VM's numbers summed up (average, 95th percentile, peak), each day's busiest 2-hour average of the last
+    days (cpu_days, mem_days: how many separate days were busy) and the year's busiest days (year_cpu_top,
+    year_mem_top: up to 31, the busiest first - a value above 100% is the report's to judge), not the samples.
   - vCenter's address and account come from VMWARE_HOST, VMWARE_USER, VMWARE_PASSWORD (and VMWARE_PORT); vcenters
     adds more vCenters (the same account). A read-only vCenter role is enough. Changes nothing.
 options:
@@ -47,7 +49,8 @@ vms:
             stats: {interval: 7200, days: 30.0, samples: 360, cpu_avg: 8.1, cpu_p95: 21.4, cpu_max: 55.0, ready_avg: 0.4,
                     ready_p95: 1.1, mem_avg: 9.0, mem_p95: 14.2, mem_max: 31.0, consumed_mb_avg: 15800, balloon_mb_max: 0,
                     swapped_mb_max: null, year_cpu_day: 30.2, year_cpu_date: "2026-03-31", year_mem_day: 18.0,
-                    year_mem_date: "2026-03-31"}}]
+                    year_mem_date: "2026-03-31", cpu_days: [["2026-10-14", 41.2]], mem_days: [["2026-10-14", 16.0]],
+                    year_cpu_top: [["2026-03-31", 30.2]], year_mem_top: [["2026-03-31", 18.0]]}}]
 not_checked: {description: "VMs not checked: {off, templates}.", type: dict, returned: success}
 vcenters: {description: Each vCenter and whether it was read (ok), or why not (error)., type: list, returned: success}
 notes: {description: "What vCenter's statistics could not give: a gap in the report (intervals off, a level-1 counter missing, VMs not read).", type: list, returned: success}
@@ -92,8 +95,29 @@ def _r(x, n=1):
     return None if x is None else round(float(x), n)
 
 
-def summarize(samples, interval, cpus):
-    """{our name: [values]} of one VM (vCenter's units: hundredths of a percent, milliseconds, KB) -> its stats."""
+def daily_max(values, times):
+    """Samples (hundredths of a percent) with their times -> [[date 'YYYY-MM-DD', that day's highest in %]], by date (UTC):
+    how many separate days were busy, not only how busy (1.31.0)."""
+    days = {}
+    for t, v in zip(times or [], values or []):
+        if v is None or v < 0 or t is None:
+            continue
+        d = t.strftime("%Y-%m-%d")
+        days[d] = max(days.get(d, v), v)
+    return [[d, _r(days[d] / 100.0)] for d in sorted(days)]
+
+
+def top_days(values, times, n=31):
+    """Daily averages (hundredths of a percent) with their dates -> the n highest [[date, %]], the highest first (the
+    report counts the days near the busiest, and leaves out a value above 100%)."""
+    got = [(v, t) for t, v in zip(times or [], values or []) if v is not None and v >= 0 and t is not None]
+    got.sort(key=lambda x: (-x[0], x[1]))
+    return [[t.strftime("%Y-%m-%d"), _r(v / 100.0)] for v, t in got[:n]]
+
+
+def summarize(samples, interval, cpus, times=None):
+    """{our name: [values]} of one VM (vCenter's units: hundredths of a percent, milliseconds, KB) -> its stats; with the
+    samples' times, each day's busiest 2-hour average too (cpu_days, mem_days)."""
     def good(k):
         return [float(x) for x in samples.get(k) or [] if x is not None and x >= 0]
     cpu, mem = [x / 100.0 for x in good("cpu")], [x / 100.0 for x in good("mem")]
@@ -108,7 +132,8 @@ def summarize(samples, interval, cpus):
             "consumed_mb_avg": _r(sum(consumed) / len(consumed) / 1024.0, 0) if consumed else None,
             "balloon_mb_max": _r(max(balloon) / 1024.0, 0) if balloon else None,
             "balloon_mb_avg": _r(sum(balloon) / len(balloon) / 1024.0, 0) if balloon else None,
-            "swapped_mb_max": _r(max(swapped) / 1024.0, 0) if swapped else None}
+            "swapped_mb_max": _r(max(swapped) / 1024.0, 0) if swapped else None,
+            "cpu_days": daily_max(samples.get("cpu"), times), "mem_days": daily_max(samples.get("mem"), times)}
 
 
 def busiest_day(values, times):
@@ -286,11 +311,12 @@ def _read(content, p, now, vcenter):
 
     out = []
     for v, e in vms:
-        vals, _ = got["days"].get(v._moId, ({}, []))
-        st = summarize(vals, interval or 7200, e["cpus"])
+        vals, times = got["days"].get(v._moId, ({}, []))
+        st = summarize(vals, interval or 7200, e["cpus"], times)
         yv, yt = got["year"].get(v._moId, ({}, []))
         st["year_cpu_day"], st["year_cpu_date"] = busiest_day(yv.get("cpu"), yt)
         st["year_mem_day"], st["year_mem_date"] = busiest_day(yv.get("mem"), yt)
+        st["year_cpu_top"], st["year_mem_top"] = top_days(yv.get("cpu"), yt), top_days(yv.get("mem"), yt)
         e["stats"], e["vcenter"] = st, vcenter
         out.append(e)
     if any(level.get(k, 1) > 1 for k in ("swapped",)) and not any(x["stats"]["swapped_mb_max"] is not None for x in out):

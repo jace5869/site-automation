@@ -15,7 +15,7 @@ System Center Orchestrator):
 | VM - datastore report | `playbooks/vm_datastore_report.yml` | read-only: every datastore's capacity, free space, used and provisioned %; the ones at 85 / 90 % used listed apart |
 | VM - inventory report | `playbooks/vm_inventory_report.yml` | read-only: every VM of every vCenter, by vCenter and folder - power, the ESXi host it runs on, cluster, guest OS, IP address, vCPUs, memory - and the count; the VMs without encryption, EFI or a vTPM; the hardware versions and VMware Tools; the email attaches every VM as an Excel workbook ("The VM inventory report") |
 | VM - VMware Tools inventory | `playbooks/vm_tools_report.yml` | read-only: every VM's VMware Tools version and status (current, upgrade available, not installed, not running, guest managed), hardware version and guest OS, by vCenter and folder; the Tools versions, hardware versions and guest OSes in use with how many VMs each; the email attaches every VM as an Excel workbook ("The VMware Tools inventory") |
-| VM - right-sizing report | `playbooks/vm_rightsizing_report.yml` | read-only: every powered-on VM's vCPUs and memory next to what vCenter's statistics say it used (30 days, and its busiest day of the year) - too big, about right or too small, with a suggested size; memory the host took back, guest disks nearly full; optional ACT review. Suggestions only ("The VM right-sizing report") |
+| VM - right-sizing report | `playbooks/vm_rightsizing_report.yml` | read-only: every powered-on VM's vCPUs and memory next to what vCenter's statistics say it used (30 days, and its busiest days of the year) - too big, about right or too small, with a suggested size and how sure it is (High, Medium, Low); memory the host took back, guest disks nearly full; optional ACT review. Suggestions only ("The VM right-sizing report") |
 | VMware - version report | `playbooks/vmware_version_report.yml` | read-only: the version and build of each vCenter and every ESXi host, the builds in use and how many hosts run each, the hosts by vCenter and cluster; amber when a host is newer than its vCenter; the email attaches every host as an Excel workbook ("The VMware version report") |
 | VMware - hardware inventory | `playbooks/vmware_hardware_report.yml` | read-only: every ESXi host's vendor, model, serial number, BIOS version and date, CPUs, memory, ESXi build, image profile, NICs and storage adapters with their drivers, the drivers and firmware its hardware status shows, and every VIB; the models in use with their BIOS versions; the email attaches all of it as an Excel workbook ("The VMware hardware inventory") |
 | VM - snapshot report | `playbooks/vm_snapshot_report.yml` | read-only: every snapshot of every VM - name, when taken and by whom, age, size, folder - oldest first; the ones 5 days or older listed apart |
@@ -335,15 +335,24 @@ statistics only - the hypervisor's measurements, no login to the guests - so it 
 credential, and it changes nothing: the suggestions are for you to act on, at a time you choose.
 
 What it reads, per VM: the last 30 days of vCenter's past-month statistics (2-hour averages) - CPU used, CPU ready,
-active memory, consumed, ballooned and swapped memory - and its busiest day of the last year (daily averages), so a
+active memory, consumed, ballooned and swapped memory - and its busiest days of the last year (daily averages), so a
 month-end or yearly peak keeps its size. Statistics level 1, vCenter's default, is enough (swapped memory needs level
 2; the report says when something is missing). VMware Tools' guest disks are read too.
 
 How it decides (each number is a setting below):
 
-- **CPU** (firm: the hypervisor measures it). The busiest 5% of the time is left out (the 95th percentile), or the
-  year's busiest day is used when that was busier; vCPUs are suggested so that use would be about 70%, an even number
-  from 4 up, never fewer than 2, never more than half fewer at once. 85% or more is too small.
+- **CPU** (firm: the hypervisor measures it). The busiest 5% of the time is left out (the 95th percentile); vCPUs are
+  suggested so that use would be about 70%, an even number from 4 up, never fewer than 2, never more than half fewer at
+  once.
+- **More vCPUs or memory** only from the last 30 days, and only from a pattern: 85% CPU (90% active memory) or more at
+  the 95th percentile, **and** busy on 3 separate days or more (`vm_rightsize_grow_days`; a day counts when its busiest
+  2-hour average got there). Busy on fewer days: the VM is listed under *Watch: busy on a few days* - not enough to
+  grow; ballooned or swapped memory is said on its own.
+- **The year's busiest day never adds**: it only holds a cut back (a month-end peak keeps the vCPUs it needs), and the
+  reason says how many days of the year were within 10 points of it (`vm_rightsize_year_near_pts`) - *a one-off*, or a
+  pattern. A day above 100% is not a real reading: it is left out (the next busiest is used) and said in the reason.
+  A day's average is a percent of the vCPUs (or memory) the VM had **that day**: vCPUs added since then make an old day
+  read high, which only holds a cut back; vCPUs removed since make it read low.
 - **CPU ready** is time the VM waited for a physical CPU. 5% or more is said: on a VM that is too big it usually means
   too many vCPUs; on a busy one, a busy host - check the host before adding vCPUs.
 - **Memory** (the less certain one). vCenter sees the memory a guest touched in the last minutes (active memory), not
@@ -353,15 +362,25 @@ How it decides (each number is a setting below):
 - **Memory taken back**: a VM the host ballooned or swapped (100 MB or more), or one with a memory limit below its
   size, is listed apart - that is its host or the limit, not the VM's size.
 - Fewer than 7 days of statistics (a new VM): **not enough history**, no suggestion.
+- **Confidence** of each suggestion: *High* with no doubt, *Medium* with one, *Low* with two or more. A doubt: fewer than
+  21 days of history (`vm_rightsize_conf_days`); a suspect day left out; the year's busiest day holding the cut back;
+  the 95th percentile within 10 points of the line it crossed - the 70% target for a cut, the 85% / 90% mark for growth
+  when it was busy on fewer than half the days (`vm_rightsize_conf_margin_pts`); less memory for a VM of 32 GB or more with 10% or less active
+  (`vm_rightsize_conf_mem_large_gb`, `vm_rightsize_conf_mem_low_pct`) - active memory understates what databases and
+  Java hold, so check the application's own memory setting first. Start with the *High* ones.
+- When CPU ready is low on every VM, the report says so first: fewer vCPUs then free capacity for other VMs - they do
+  not make anything faster.
 
 The email (and the page on the report website's VMware tab) has the counts on top - VMs checked, too big, too small,
 about right, the vCPUs and memory the suggestions would free - then the tables: *Too small* (amber), *Memory taken
-back by the host*, *Too big* (the suggested size in green, the most freed first), *Guest disks nearly full*, *Not
-enough history*, *About right*, and *How the suggestions are worked out*. The workbook it attaches,
-`vm-right-sizing-report_2026-10-28.xlsx`, has every VM with every number (average, 95th percentile and peak CPU, CPU
-ready, active memory, the busiest day, ballooned and swapped memory, the fullest disk) on one sheet and every guest
-disk on another, to sort and filter. The job's output lists each VM to change: `web01: Too big - vCPUs 8 → 4, memory
-32 → 16 GB`; the job artifact `vm_rightsize` has the counts and the changes.
+back by the host*, *Too big* (the suggested size in green; each the most certain first, then the most freed), *Watch:
+busy on a few days*, *Guest disks nearly full*, *Not enough history*, *About right*, and *How the suggestions are
+worked out*. Each size table has a *Confidence* column. The workbook it attaches,
+`vm-right-sizing-report_2026-10-28.xlsx`, has every VM with every number (confidence and why, busy days, average,
+95th percentile and peak CPU, CPU ready, active memory, the busiest day, ballooned and swapped memory, the fullest
+disk) on one sheet and every guest disk on another, to sort and filter. The job's output lists each VM to change:
+`web01: Too big (High) - vCPUs 8 → 4, memory 32 → 16 GB`; the job artifact `vm_rightsize` has the counts and the
+changes, each with its confidence.
 
 Before you resize a VM: check its own peaks the statistics may not show (patching, backups, a yearly job older than a
 year), and plan the change - removing vCPUs or memory needs the VM shut down, and adding them too unless CPU / memory
@@ -369,8 +388,8 @@ hot add is on (the report says so).
 
 **ACT's review** (`vm_rightsize_act: true`, an ACT model key credential on the template, as for the capacity
 planning): ACT reads the same numbers and the job's suggestion for each VM to change (too small first, then the most
-freed, at most `vm_rightsize_act_max_items`) and answers *Agree* or *Adjust* with its own size, its reasoning and a
-confidence; it often knows that a name or guest OS means a database or Java and keeps more memory. Its review comes
+freed, at most `vm_rightsize_act_max_items`) - with the job's own confidence and its doubts - and answers *Agree* or
+*Adjust* with its own size, its reasoning and a confidence of its own; it often knows that a name or guest OS means a database or Java and keeps more memory. Its review comes
 after the job's own tables, as a table with a line per VM, and then ACT's short summary (a line per batch it was asked
 in). Names are masked before anything reaches the model.
 
@@ -381,20 +400,24 @@ template's Variables (`aap/extra_vars/vm_rightsizing_report.yml` has them all):
 | Setting | Default | |
 |---|---|---|
 | `vm_rightsize_days` | `30` | days of history (at most 30: what vCenter keeps of 2-hour averages) |
-| `vm_rightsize_year` | `true` | also each VM's busiest day of the last year |
+| `vm_rightsize_year` | `true` | also each VM's busiest days of the last year (they only hold a cut back) |
+| `vm_rightsize_year_near_pts` | `10` | days of the year within this many points of the busiest are counted in the reason |
 | `vm_rightsize_min_days` | `7` | fewer days of statistics = not enough history |
 | `vm_rightsize_clusters` / `vm_rightsize_vms` / `vm_rightsize_exclude` | `[]` | only the VMs of these clusters / only these VMs / never these VMs (names, `*` and `?`) |
 | `vm_rightsize_cpu_target_pct` | `70` | vCPUs suggested for about this % busy (95th percentile) |
-| `vm_rightsize_cpu_high_pct` | `85` | CPU at this % or more = too small |
+| `vm_rightsize_cpu_high_pct` | `85` | CPU at this % or more (and on `vm_rightsize_grow_days` days) = too small |
+| `vm_rightsize_grow_days` | `3` | more vCPUs or memory only when busy on this many separate days of the last 30 or more |
 | `vm_rightsize_cpu_max_cut_pct` | `50` | never more than this % fewer vCPUs at once |
 | `vm_rightsize_min_vcpus` / `vm_rightsize_min_vcpus_windows` | `2` / `2` | never fewer vCPUs |
 | `vm_rightsize_ready_warn_pct` | `5` | CPU ready at this % or more is said |
 | `vm_rightsize_mem_headroom_pct` | `100` | memory suggested = active memory plus this % |
-| `vm_rightsize_mem_high_pct` | `90` | active memory at this % or more = too small |
+| `vm_rightsize_mem_high_pct` | `90` | active memory at this % or more (and on `vm_rightsize_grow_days` days) = too small |
 | `vm_rightsize_mem_max_cut_pct` | `50` | never more than this % less memory at once |
 | `vm_rightsize_min_change_pct` | `25` | a smaller memory size only when this % (and 2 GB) smaller or more |
 | `vm_rightsize_min_mem_gb` / `vm_rightsize_min_mem_gb_windows` | `2` / `4` | never less memory (GB) |
 | `vm_rightsize_taken_mb` | `100` | ballooned or swapped memory from this many MB is said |
+| `vm_rightsize_conf_days` / `vm_rightsize_conf_margin_pts` | `21` / `10` | confidence: fewer days of history, or the 95th percentile within this many points of its line, is a doubt |
+| `vm_rightsize_conf_mem_large_gb` / `vm_rightsize_conf_mem_low_pct` | `32` / `10` | confidence: less memory for a VM this large with this little active is a doubt |
 | `vm_rightsize_disk_warn_pct` | `90` | guest disks this % used or more are listed |
 | `vm_rightsize_max_rows` | `500` | rows per table in the email (the workbook has every VM) |
 | `vm_rightsize_xlsx` | `true` | `false` = no workbook attached |

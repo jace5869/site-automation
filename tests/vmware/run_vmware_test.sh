@@ -476,10 +476,15 @@ run "VMware Tools inventory, one table of every VM" ok vm_tools_report.yml -e vm
 VMWARE_PORT=$port "$py" "$here/vcsim.py" size DC0_H0_VM1 16 65536 || { echo "FAIL - vcsim size"; fails=$((fails + 1)); }
 # (the busiest day of the year left out here: vcsim's are random)
 run "VM right-sizing report: a VM with 16 vCPUs is too big, at most half fewer at once" ok vm_rightsizing_report.yml -e vm_rightsize_year=false \
-    -- "VM right-sizing: 1 too big, 0 too small of " '"vm_rightsize"' '"VMs checked": ' "DC0_H0_VM1: Too big - vCPUs 16 → 8, memory "
+    -- "VM right-sizing: 1 too big, 0 too small of " '"vm_rightsize"' '"VMs checked": ' "DC0_H0_VM1: Too big (" ") - vCPUs 16 → 8, memory " \
+       '"confidence": '
+# 1.31.0: growth only when busy on vm_rightsize_grow_days separate days or more (vcsim's days are all alike)
 run "VM right-sizing report: one VM, CPU busy from 1% (a test threshold): too small" ok vm_rightsizing_report.yml \
     -e '{"vm_rightsize_vms": ["DC0_H0_VM1"], "vm_rightsize_cpu_high_pct": 1}' -- "0 too big, 1 too small of 1 VM" \
-       "DC0_H0_VM1: Too small - vCPUs 16 → 18, memory "
+       "DC0_H0_VM1: Too small (" ") - vCPUs 16 → 18, memory "
+run "VM right-sizing report: growth asked on more busy days than vCenter keeps: watch, not grown" ok vm_rightsizing_report.yml \
+    -e '{"vm_rightsize_vms": ["DC0_H0_VM1"], "vm_rightsize_cpu_high_pct": 1, "vm_rightsize_grow_days": 400}' \
+    -- "0 too big, 0 too small of 1 VM" '"Watch": 1' '"changes": []'
 run "VM right-sizing report: more days asked than vCenter has: not enough history, no suggestion" ok vm_rightsizing_report.yml \
     -e vm_rightsize_min_days=60 -- "0 too big, 0 too small of " '"Not enough history": ' '"changes": []'
 run "VM right-sizing report: a VM left out, a cluster that matches nothing" ok vm_rightsizing_report.yml \

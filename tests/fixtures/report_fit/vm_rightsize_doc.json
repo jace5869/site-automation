@@ -1,11 +1,29 @@
 {
 "sections": [
 {
+"lines": [
+"CPU ready is low on every VM (at most 0.2%): none waits for a physical CPU. Fewer vCPUs free capacity for other VMs; they do not make anything faster."
+],
+"title": "Before you resize"
+},
+{
 "cell_status": [
 [
 "",
 "",
 "warning",
+"",
+"",
+"warning",
+"",
+"ok",
+""
+],
+[
+"",
+"",
+"warning",
+"",
 "",
 "",
 "",
@@ -21,25 +39,39 @@
 "CPU ready",
 "Memory (GB)",
 "Active memory (95th % / peak)",
+"Confidence",
 "Why"
 ],
 "row_status": [
+"warning",
 "warning"
 ],
 "rows": [
 [
-"busy",
-"vc01 / CL1",
+"busy02",
+"CL1",
 "8 \u2192 12",
 "90% / 135%",
 "0.2%",
+"16 \u2192 20",
+"95% / 114%",
+"High",
+"CPU: busy on 30 of 30 days; memory: nearly all active on 30 of 30 days; Adding vCPUs and memory needs the VM shut down (hot add is off)."
+],
+[
+"busy01",
+"CL1",
+"8 \u2192 12",
+"97% / 145.5%",
+"0.2%",
 "16",
-"50% / 60%",
-"CPU: busy - 90% of its 8 vCPUs (95th percentile); Adding vCPUs needs the VM shut down (hot add is off)."
+"60% / 72%",
+"Medium",
+"CPU: busy on 30 of 30 days; a 118% day (2026-03-31) left out: above 100%; Adding vCPUs needs the VM shut down (hot add is off)."
 ]
 ],
 "status": "warning",
-"text": "CPU busy most of the time, or active memory near all it has. More vCPUs or memory suggested (amber). Together: 4 vCPUs and 0 GB more.",
+"text": "CPU busy, or active memory near all it has, on 3 days or more of the last 30. More vCPUs or memory suggested (amber), the most certain first. Together: 8 vCPUs and 4 GB more.",
 "title": "Too small"
 },
 {
@@ -57,8 +89,8 @@
 ],
 "rows": [
 [
-"bal",
-"vc02 / CL1",
+"bal01",
+"CL1",
 "esx01",
 "1024 MB",
 "-",
@@ -80,6 +112,73 @@
 "",
 "ok",
 "",
+"ok",
+""
+],
+[
+"",
+"",
+"ok",
+"",
+"",
+"",
+"",
+"ok",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok",
+"",
+"ok",
+""
+],
+[
+"",
+"",
+"ok",
+"",
+"",
+"ok",
+"",
+"",
+""
+],
+[
+"",
+"",
+"ok",
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok",
+"",
+"warning",
+""
+],
+[
+"",
+"",
+"ok",
+"",
+"",
+"ok",
+"",
+"warning",
 ""
 ]
 ],
@@ -91,22 +190,123 @@
 "CPU ready",
 "Memory (GB)",
 "Active memory (95th % / peak)",
+"Confidence",
 "Why"
 ],
 "rows": [
 [
-"web01",
-"vc01 / CL1",
+"w01",
+"CL1",
 "8 \u2192 4",
 "10% / 15%",
 "0.2%",
-"32 \u2192 16",
+"16 \u2192 8",
 "10% / 12%",
-"CPU: about 0.8 of 8 vCPUs used (95th percentile 10%); at most 50% fewer at once; memory: about 3.2 of 32 GB active (95th percentile 10%), plus 100% headroom; at most 50% less at once"
+"High",
+"CPU: about 0.8 of 8 vCPUs used; at most 50% fewer at once; memory: about 1.6 GB active, plus 100%; at most 50% less at once"
+],
+[
+"watch02",
+"CL1",
+"4 \u2192 2",
+"20% / 30%",
+"0.2%",
+"24",
+"95% / 114%",
+"High",
+"CPU: about 0.8 of 4 vCPUs used; memory: busy on 1 day(s): watch, not enough to grow"
+],
+[
+"batch01",
+"CL1",
+"4",
+"40% / 60%",
+"0.2%",
+"16 \u2192 10",
+"30% / 36%",
+"High",
+"memory: about 4.8 GB active, plus 100%"
+],
+[
+"app07-reporting-prod",
+"CL1",
+"8 \u2192 4",
+"9% / 13.5%",
+"0.2%",
+"16 \u2192 8",
+"20% / 24%",
+"Medium",
+"CPU: about 0.7 of 8 vCPUs used; at most 50% fewer at once; a 118% day (2026-03-31) left out: above 100%; memory: about 3.2 GB active, plus 100%; at most 50% less at once"
+],
+[
+"c16",
+"CL1",
+"16 \u2192 14",
+"61% / 91.5%",
+"0.2%",
+"16",
+"60% / 72%",
+"Medium",
+"CPU: about 9.8 of 16 vCPUs used; Peak about 14.6 vCPUs: short bursts would be slower."
+],
+[
+"db01-finance",
+"CL1",
+"4",
+"40% / 60%",
+"0.2%",
+"64 \u2192 32",
+"5% / 6%",
+"Low",
+"memory: about 3.2 GB active, plus 100%; at most 50% less at once; Check the application's own memory setting (database, Java) first: active memory understates those."
+],
+[
+"rep01",
+"CL1",
+"8 \u2192 6",
+"9% / 13.5%",
+"0.2%",
+"16 \u2192 8",
+"20% / 24%",
+"Low",
+"CPU: about 3.2 of 8 vCPUs used; sized for its busiest day, 40% on 2026-03-31 (3 days within 10 points); a 118% day (2026-02-28) left out: above 100%; memory: about 3.2 GB active, plus 100%; at most 50% less at once"
 ]
 ],
-"text": "More vCPUs or memory than they use: the suggested size (green) still leaves room - CPU sized to 70% busy, memory to its active memory plus 100%. Together they free 4 vCPUs and 16 GB of memory for other VMs.",
+"text": "More vCPUs or memory than they use: the suggested size (green) still leaves room - CPU sized to 70% busy, memory to its active memory plus 100%. Together they free 14 vCPUs and 62 GB of memory for other VMs. The most certain first.",
 "title": "Too big"
+},
+{
+"columns": [
+"VM",
+"Cluster",
+"vCPUs",
+"CPU used (95th % / peak)",
+"Memory (GB)",
+"Active memory (95th % / peak)",
+"Why"
+],
+"rows": [
+[
+"watch02",
+"CL1",
+"4",
+"20% / 30%",
+"24",
+"95% / 114%",
+"memory: busy on 1 day(s): watch, not enough to grow"
+],
+[
+"watch01",
+"CL1",
+"8",
+"90% / 135%",
+"16",
+"60% / 72%",
+"CPU: busy on 2 day(s): watch, not enough to grow"
+]
+],
+"text": "Busy (85% CPU, 90% active memory or more) on fewer than 3 days of the last 30: not enough to grow (vm_rightsize_grow_days). Suggested when it happens on more days.",
+"title": "Watch: busy on a few days"
 },
 {
 "columns": [
@@ -122,9 +322,9 @@
 ],
 "rows": [
 [
-"disk",
-"vc01 / CL1",
-"C:\\",
+"disk01",
+"CL1",
+"/var/lib/pgsql",
 "97.0%",
 "3 GB",
 "100 GB"
@@ -144,8 +344,8 @@
 ],
 "rows": [
 [
-"new",
-"vc01 / CL1",
+"new01",
+"CL1",
 "4",
 "16",
 "2 day(s) of statistics in vCenter (vm_rightsize_min_days: 7)"
@@ -164,6 +364,18 @@
 "",
 "",
 "",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
 ""
 ],
 [
@@ -174,9 +386,11 @@
 "",
 "",
 "",
+"",
 ""
 ],
 [
+"",
 "",
 "",
 "",
@@ -195,38 +409,53 @@
 "CPU ready",
 "Memory (GB)",
 "Active memory (95th % / peak)",
+"Confidence",
 "Why"
 ],
 "rows": [
 [
-"disk",
-"vc01 / CL1",
+"bal01",
+"CL1",
 "2",
 "40% / 60%",
 "0.2%",
 "8",
 "40% / 48%",
+"",
 ""
 ],
 [
-"ok01",
-"vc01 / CL1",
+"disk01",
+"CL1",
 "2",
 "40% / 60%",
 "0.2%",
 "8",
 "40% / 48%",
+"",
 ""
 ],
 [
-"bal",
-"vc02 / CL1",
+"mem01",
+"CL1",
 "2",
 "40% / 60%",
 "0.2%",
+"32",
+"8% / 9.6%",
+"",
+"memory: a 104% day (2026-02-27) left out: above 100%"
+],
+[
+"watch01",
+"CL1",
 "8",
-"40% / 48%",
-""
+"90% / 135%",
+"0.2%",
+"16",
+"60% / 72%",
+"",
+"CPU: busy on 2 day(s): watch, not enough to grow"
 ]
 ],
 "text": "Sized for what they use.",
@@ -234,42 +463,45 @@
 },
 {
 "lines": [
-"From vCenter's own statistics of the last 30 days (2-hour averages) - the hypervisor's measurements, nothing from inside the guests - and each VM's busiest day of the last year (daily averages).",
-"CPU: the busiest 5% of the time is left out (the 95th percentile), or the year's busiest day is used when it was busier; vCPUs are suggested so that use would be about 70%, never more than 50% fewer at once, at least 2 (Windows 2). 85% or more is too small.",
+"From vCenter's own statistics of the last 30 days (2-hour averages) - the hypervisor's measurements, nothing from inside the guests - and each VM's busiest days of the last year (daily averages).",
+"CPU: the busiest 5% of the time is left out (the 95th percentile); vCPUs are suggested so that use would be about 70%, never more than 50% fewer at once, at least 2 (Windows 2).",
+"More vCPUs or memory only from the last 30 days: 85% CPU (90% active memory) or more at the 95th percentile, and on 3 separate days or more (a day counts when its busiest 2-hour average got there). Fewer days: watch.",
+"The year's busiest day never adds: it only holds a cut back, and the reason says how many days of the year were within 10 points of it (a one-off, or a pattern such as month end). A day above 100% is left out as suspect. A day's average is a percent of the vCPUs (or memory) the VM had that day: vCPUs added since make it read high, which only holds a cut back; vCPUs removed since make it read low.",
+"Confidence: High with no doubt, Medium with one, Low with two or more. A doubt: fewer than 21 days of history, a suspect day left out, the busiest day holding the cut back, the 95th percentile within 10 points of the line it crossed (for growth: busy on fewer than half the days), or less memory for a VM of 32 GB or more with 10% or less active (check the application's own memory setting first).",
 "CPU ready is the time a VM waited for a physical CPU: 5% or more is said. It often means too many vCPUs, or a busy host.",
-"Memory (the less certain one): vCenter sees the memory a guest touched in the last minutes (active memory), not what it needs - file caches and databases want more. So the suggestion is its active memory plus 100%, never more than 50% less at once, at least 2 GB (Windows 4), and only when it is 25% and 2 GB smaller or more. Active memory at 90% or more is too small.",
+"Memory (the less certain one): vCenter sees the memory a guest touched in the last minutes (active memory), not what it needs - file caches and databases want more. So the suggestion is its active memory plus 100%, never more than 50% less at once, at least 2 GB (Windows 4), and only when it is 25% and 2 GB smaller or more.",
 "Suggestions only: nothing was changed. Check a VM's own peaks (month end, patching, backups) before resizing it; removing vCPUs or memory needs the VM shut down."
 ],
 "title": "How the suggestions are worked out"
 }
 ],
 "status": "warning",
-"subtitle": "vCPUs and memory next to what vCenter's statistics of the last 30 days say each VM uses - vc01, vc02; 3 powered off and 1 templates not checked - suggestions only, nothing was changed",
+"subtitle": "vCPUs and memory next to what vCenter's statistics of the last 30 days say each VM uses - vc01; 0 powered off and 0 templates not checked - suggestions only, nothing was changed",
 "summary": [
 {
 "label": "VMs checked",
-"value": 6
+"value": 14
 },
 {
 "label": "Too big",
-"value": 1
+"value": 7
 },
 {
 "label": "Too small",
 "status": "warning",
-"value": 1
+"value": 2
 },
 {
 "label": "About right",
-"value": 3
-},
-{
-"label": "vCPUs to free",
 "value": 4
 },
 {
+"label": "vCPUs to free",
+"value": 14
+},
+{
 "label": "Memory to free (GB)",
-"value": 16
+"value": 62
 },
 {
 "label": "Not enough history",
@@ -281,10 +513,14 @@
 "value": 1
 },
 {
+"label": "Watch",
+"value": 2
+},
+{
 "label": "Disks nearly full",
 "status": "warning",
 "value": 1
 }
 ],
-"title": "VM right-sizing: 1 too big, 1 too small of 6 VMs"
+"title": "VM right-sizing: 7 too big, 2 too small of 14 VMs"
 }
