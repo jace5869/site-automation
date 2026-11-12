@@ -54,6 +54,11 @@
 ## e.g. [AAP01, VCSA01, DC*] (* and ? allowed)
 # vmware_protected_vms: []
 
+## restart, shut down, VLAN, snapshot cleanup: a protected name (or exclude) that matches no VM in
+## vCenter, and a protected group not in the inventory, is a warning line - one read of every VM's
+## name per vCenter; never a failure. false = not checked
+# vmware_protected_check: true
+
 ## A VM powered on for less than this is not judged (a VM still starting has no heartbeat yet).
 # vm_watch_min_up_minutes: 15
 

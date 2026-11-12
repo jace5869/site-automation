@@ -1,5 +1,63 @@
 # Changelog
 
+## 1.36.0 — 2026-11-12
+
+**Updating without scripts:** paste `site-automation-1.36.0-changed-since-1.33.0.zip` as it is (from an older version,
+its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`. Nothing to set up. Read **Behaviour changes** below before you update.
+
+**VMware: a protected name that matches no VM is said.** A typo in `vmware_protected_vms` protects nothing, and nothing
+said so. Restart, shut down, VLAN change and the snapshot cleanup now read every VM's name in each vCenter they use -
+one property-collector read per vCenter, no call per VM (`roles/vmware_vm/library/site_vmware_protected_check.py`,
+`roles/vmware_vm/tasks/protected_check.yml`) - and each protected name or pattern that matches none is a warning line
+in the job's output, its artifacts and on top of its report: *Protected name matches no VM: VCSA1 - check the
+spelling*. The snapshot cleanup's `vm_snapshot_cleanup_exclude_vms` the same way (*Excluded name matches no VM*), and a
+`vmware_protected_groups` group that is not in the inventory (*Protected group not in this inventory*; `aap` and
+`aap_hosts` are not said). A VM on a vCenter the job did not read is said with that vCenter. Never a failure, never
+changes what the job does; when the names cannot be read: *Could not check the protected names* once, and the job
+goes on. A dry run (Check) says it too. `vmware_protected_check: false` turns it off (default on). docs/VMWARE.md,
+"Name the AAP VM". In the Variables files of restart, shut down and VLAN change (`aap/extra_vars/vm_reboot.yml`,
+`vm_shutdown.yml`, `vm_vlan.yml`) the words above `vmware_vcenters` now say what the list does there: it is used only
+by this check (`scripts/gen_template_vars.py`, `NARROW`).
+
+**Names given as text: every way they are written** (`name_list`, every setting read as a list of names). More forms
+are read: Word, Outlook and Teams curly quotes; `;` separates (a name with one is read whole too); a quoted name keeps
+its commas (`"Server, Main"`); a quote never closed is dropped; a list written as text may have more after it
+(`[a, b], VCSA01`) and brackets inside its patterns (`[VCSA01, vm[0-9]*]`); a quote inside a name stays
+(`'O'Brien-VM'`). A name in brackets (`[Test] VM01`) matches itself (it was read as a character class), also in the
+patch job's reason.
+
+- **A `[` that is not closed on its line is a plain character.** The names after it are still read one by one:
+  `vm[0-9*, AAP01, VCSA01` gives three names, `web[12, AAP01` two, and a `[` on one line never joins the lines under
+  it.
+- **Never fewer names than 1.22.0.** Every name 1.22.0 read from a text still counts, beside the names read the new
+  way: the old reading is kept in `name_list` and its names are added. So a VM a text protected in 1.22.0 is
+  protected in 1.36.0, whatever the text looks like. The one exception is a line that starts with `#` (below).
+- The warnings of the check above name only the names as you wrote them (`name_list(true)`), not the second reading
+  of the same text.
+
+**Behaviour changes**
+
+- **A line that starts with `#` in a list of names given as text is left out** (a survey answer, an extra variable):
+  it is a commented-out line. 1.22.0 read it as a name (`#VCSA01`). This is the safe side for an exclude list, and no
+  VM name starts with `#` in practice; a `#` inside a name stays part of it (`Build #3`). A YAML list is used as it is.
+- **A list of names given as text may now give more names than before, never fewer** (see above). A protect or exclude
+  list can therefore match a VM it did not match in 1.22.0 - e.g. `"Server, Main"` now also protects the VM named
+  `Server, Main`. Nothing is unprotected by the update.
+- **Restart, shut down, VLAN change and the snapshot cleanup read every VM's name once per vCenter** before they act
+  (`vmware_protected_check: true`, the default), and may print warning lines they did not print before. No job fails
+  or acts differently because of them. `vmware_protected_check: false` gives the old behaviour.
+
+Tests: tests/vmware/run_vmware_test.sh (vcsim, current ansible-core and 2.16: a typo warns and a correct name does not,
+in the artifacts too; a pattern that matches nothing warns, one that matches does not; a group not in the inventory;
+the check off; the snapshot cleanup's exclude; a VM only on the second vCenter - not said when the job reads both,
+said when it reads one; all in Check), tests/test_vmware_protect.py (the read failing: said once, the job goes on;
+the check off), tests/test_vmware_modules.py (which names and patterns match no VM), tests/test_filters.py
+(test_name_list_every_way_a_name_is_written; test_name_list_a_bracket_never_closed_is_a_plain_character;
+test_name_list_keeps_what_1_22_0_read; NameListNeverFewer - 1.22.0's name_list kept in the test as the reference: the
+matrix in every written form, the five texts with a bracket never closed, and 6000 random texts made of `,` `;`
+quotes, curly quotes, `[` `]` `-` `#` `*` `?` and line breaks: every name 1.22.0 read is read, and every VM it matched
+still matches).
 ## 1.33.0 — 2026-11-12
 
 **Updating without scripts:** paste `site-automation-1.33.0-changed-since-1.32.1.zip` as it is (from an older version,
@@ -281,7 +339,7 @@ tests/stig/run_stigman_real_test.sh against STIG Manager 1.6.18 (not in CI).
 
 SA_VERSION 1.26.0; the PDFs at 1.26.0.
 
-**To do, if you have not yet: what 0.20.0 to 1.33.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.33.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing).** In order; each step works without
+**To do, if you have not yet: what 0.20.0 to 1.36.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.36.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.36.0 nothing).** In order; each step works without
 the ones after it. Steps 89 and 90 belong to 1.23.0, which is not in this release.
 
 1. **Your logo** (0.20.0). A PNG with a transparent background, about 160 px tall and under 100 KB, in

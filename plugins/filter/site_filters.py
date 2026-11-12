@@ -1001,37 +1001,192 @@ def human_size(gb):
     return "%.0f MB" % (gb * 1024)
 
 
-def name_list(value):
-    """A list of names as a setting may give it: a list as it is, or text - separated by commas, tabs or line breaks
-    ("AAP01, VCSA01", one per line, or "AAP01" alone). Not by spaces: "File Server 01" is one name. Never the
+# a name's quotes: the opening one -> the ones that close it (Word's, Outlook's and Teams' curly quotes too)
+NAME_QUOTES = {'"': '"\u201d', "'": "'\u2019", "\u201c": '\u201d"', "\u2018": "\u2019'"}
+NAME_SEPARATORS = ",;\t\r\n"
+
+
+def _name_quote_end(t, i):
+    """The index of the quote that closes the one at t[i]: the first closing quote followed - after spaces - by a separator,
+    a "]" or the end (a quote inside a name, O'Brien, does not close it); -1: never closed."""
+    closers = NAME_QUOTES[t[i]]
+    for j in range(i + 1, len(t)):
+        if t[j] in closers:
+            rest = t[j + 1:].lstrip(" ")
+            if not rest or rest[0] in NAME_SEPARATORS or rest[0] == "]":
+                return j
+    return -1
+
+
+def _name_list_end(t, i):
+    """t[i] is "[": the index of its "]" - brackets inside counted (a pattern's [0-9]), a quoted name inside skipped - when
+    only spaces, a separator or the end follow it: a list written as text. -1 when not ("[Test] VM01" is a name)."""
+    depth, j, start = 0, i, True
+    while j < len(t):
+        c = t[j]
+        if start and c in NAME_QUOTES:
+            e = _name_quote_end(t, j)
+            if e > 0:
+                j, start = e + 1, False
+                continue
+        if c == "[":
+            depth += 1
+        elif c == "]":
+            depth -= 1
+            if depth == 0:
+                rest = t[j + 1:].lstrip(" ")
+                return j if not rest or rest[0] in NAME_SEPARATORS else -1
+        start = c in NAME_SEPARATORS + " [" or (start and c == "-")
+        j += 1
+    return -1
+
+
+def _name_class_end(t, i):
+    """t[i] is "[" inside a name: the index of the "]" that closes it on the same line (brackets inside counted) - a
+    pattern's "[0-9]", "[Test] VM01". -1: never closed there - then the "[" is a plain character and the separators
+    after it still separate ("vm[0-9*, AAP01" is two names)."""
+    depth = 0
+    for j in range(i, len(t)):
+        c = t[j]
+        if c in "\r\n":
+            return -1
+        if c == "[":
+            depth += 1
+        elif c == "]":
+            depth -= 1
+            if depth == 0:
+                return j
+    return -1
+
+
+def _name_clean(w):
+    """One name as written: no YAML item dash, no quotes around it (each pair, as often as there are)."""
+    w = w.strip()
+    if w.startswith("- ") or w == "-":
+        w = w[1:].strip()
+    while len(w) >= 2 and w[0] in NAME_QUOTES and w[-1] in NAME_QUOTES[w[0]]:
+        w = w[1:-1].strip()
+    return w
+
+
+def _name_text(t, out):
+    """The names of text (its commented-out lines left out already) into out: chunks between commas, tabs and line
+    breaks; in a chunk, names between semicolons - and the chunk whole too when it has one (a VM's name may)."""
+    state = {"parts": [], "cur": "", "raw": ""}
+
+    def chunk_done():
+        parts = state["parts"] + [state["cur"]]
+        for x in parts:
+            x = _name_clean(x)
+            if x:
+                out.append(x)
+        whole = _name_clean(state["raw"])
+        if len(parts) > 1 and whole and whole not in out:
+            out.append(whole)
+        state.update(parts=[], cur="", raw="")
+    i, start = 0, True
+    while i < len(t):
+        c = t[i]
+        if start and c == " ":
+            state["raw"] += c
+            i += 1
+            continue
+        if start and c == "-" and (i + 1 == len(t) or t[i + 1] == " ") and not state["parts"]:   # "- AAP01": a YAML line
+            i += 1
+            continue
+        if start and c == "[" and not state["parts"]:
+            e = _name_list_end(t, i)
+            if e > 0:                                       # "[a, b]": its names
+                _name_text(t[i + 1:e], out)
+                i = e + 1
+                continue
+        if start and c in NAME_QUOTES:
+            e = _name_quote_end(t, i)
+            if e > 0:                                       # a quoted name: as it is, separators and all
+                state["cur"] = t[i + 1:e].replace("''", "'") if c == "'" else t[i + 1:e]
+                state["raw"] += t[i:e + 1]
+                i, start = e + 1, False
+                continue
+            i += 1                                          # a quote never closed: dropped
+            continue
+        if c in NAME_SEPARATORS:
+            if c == ";":
+                state["parts"].append(state["cur"])
+                state["cur"] = ""
+                state["raw"] += c
+            else:
+                chunk_done()
+            start = True
+            i += 1
+            continue
+        if c == "[":
+            e = _name_class_end(t, i)
+            if e > 0:                                       # "vm[0-9]*", "[Test] VM01": the brackets and what is in them
+                state["cur"] += t[i:e + 1]
+                state["raw"] += t[i:e + 1]
+                i, start = e + 1, False
+                continue
+        state["cur"] += c                                   # a "[" never closed too: a plain character
+        state["raw"] += c
+        start = False
+        i += 1
+    chunk_done()
+
+
+def _name_plain(text, out):
+    """The names of text as 1.22.0 read it - cut at every comma, tab and line break, whatever quotes or brackets say -
+    added to out when not there yet (a line that starts with "#" left out). A name 1.22.0 read is never lost to how the
+    text is written: '"a, AAP01, b"' is the one name it says and, as before, AAP01 too."""
+    t = text.strip()
+    lines = t.split("\n")
+    said = [not x.strip().startswith("#") for x in lines]
+    if t.startswith("[") and t.endswith("]"):
+        lines = t[1:-1].split("\n")
+    for line, keep in zip(lines, said):
+        for w in re.split(r"[,\t\r]+", line) if keep else []:
+            w = w.strip()
+            if w.startswith("- ") or w == "-":
+                w = w[1:].strip()
+            while len(w) >= 2 and w[0] == w[-1] and w[0] in "\"'":
+                w = w[1:-1].strip()
+            if w and w not in out:
+                out.append(w)
+
+
+def name_list(value, written=False):
+    """A list of names as a setting may give it: a list as it is, or text - separated by commas, semicolons, tabs or line
+    breaks ("AAP01, VCSA01", one per line, or "AAP01" alone). Not by spaces: "File Server 01" is one name. Never the
     letters of one name, and never a name lost to how it was written: text that is a list as YAML or JSON writes it
-    ("[AAP01, VCSA01]", "- AAP01" lines, '"AAP01"' in quotes) gives its names."""
+    ("[AAP01, VCSA01]", "- AAP01" lines) gives its names; a quoted name is one name, its commas too ('"Server, Main"'),
+    Word's curly quotes as well; a quote that is never closed is dropped; a pattern's brackets ("vm[0-9]*") stay in it,
+    and "[Test] VM01" is a name; a "[" that is never closed is a plain character. A "#" is part of a name; only a line
+    that starts with "#" (a commented-out line) is left out. A name with ";" in it is read whole too. After these, the
+    names 1.22.0 read from the same text and these do not have (_name_plain): what was protected stays protected.
+    written=True: without those - the names as they were meant, for a message about one of them."""
     if value is None:
         return []
-    if isinstance(value, str):
-        t = value.strip()
-        if t.startswith("[") and t.endswith("]"):       # a list written as text: [AAP01, "VCSA01"]
-            t = t[1:-1]
-        out = []
-        for w in re.split(r"[,\t\r\n]+", t):
-            w = w.strip()
-            if w.startswith("- ") or w == "-":         # a YAML list's line: - AAP01
-                w = w[1:].strip()
-            while len(w) >= 2 and w[0] == w[-1] and w[0] in "\"'":   # a quoted name
-                w = w[1:-1].strip()
-            if w:
-                out.append(w)
-        return out
     if isinstance(value, dict):
         raise ValueError("a list of names, not a mapping: %r" % (value,))
-    return [str(w).strip() for w in value if str(w).strip()]
+    if not isinstance(value, str):
+        return [str(w).strip() for w in value if str(w).strip()]
+    out = []
+    _name_text("\n".join(x for x in value.strip().split("\n") if not x.strip().startswith("#")), out)
+    if not written:
+        _name_plain(value, out)
+    return out
+
+
+def _name_fits(name, pattern):
+    """A name and one pattern, any case: the name itself first (a name in brackets, "[Test] VM01", matches itself), else
+    * ? [0-9] as wildcards."""
+    n, p = str(name or "").lower(), str(pattern).lower()
+    return n == p or fnmatch.fnmatchcase(n, p)
 
 
 def name_matches(name, patterns):
-    """Does a name match one of these (case-insensitive; * and ? wildcards, e.g. DC*)? patterns: a list, or
-    text as name_list reads it."""
-    n = str(name or "").lower()
-    return any(fnmatch.fnmatchcase(n, str(p).lower()) for p in name_list(patterns))
+    """Does a name match one of these (case-insensitive; the name itself, or * and ? wildcards, e.g. DC*)? patterns: a
+    list, or text as name_list reads it."""
+    return any(_name_fits(name, p) for p in name_list(patterns))
 
 
 def snapshot_name_words(words):
@@ -1463,7 +1618,7 @@ def patch_protected(host, hostvars=None, vm_name="", protected_groups=None, prot
     for setting, pats in (("vmware_protected_vms", protected_vms), ("vm_snapshot_cleanup_exclude_vms", keep_vms)):
         hit = [n for n in names if name_matches(n, pats)]
         if hit:
-            pat = [p for p in name_list(pats) if any(fnmatch.fnmatchcase(n.lower(), p.lower()) for n in hit)]
+            pat = [p for p in name_list(pats) if any(_name_fits(n, p) for n in hit)]
             why.append("%s matches %s (%s)" % (hit[0], setting, ", ".join(pat)))
     if not why:
         return {"reason": "", "allowed": False}

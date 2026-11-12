@@ -40,6 +40,11 @@
 ## way)
 # vmware_vcenter_fail_unread: false
 
+## restart, shut down, VLAN, snapshot cleanup: a protected name (or exclude) that matches no VM in
+## vCenter, and a protected group not in the inventory, is a warning line - one read of every VM's
+## name per vCenter; never a failure. false = not checked
+# vmware_protected_check: true
+
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no
 ## email. Set it on each TEMPLATE (its Variables, or a survey): in all.yml every report job emails.

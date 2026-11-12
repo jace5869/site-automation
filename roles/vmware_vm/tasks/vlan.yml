@@ -17,6 +17,9 @@
 - name: VMware | never the AAP server or a protected VM
   ansible.builtin.include_tasks: guard.yml
 
+- name: VMware | a protected name that matches no VM (vmware_protected_check)
+  ansible.builtin.include_tasks: protected_check.yml
+
 - name: VMware | each VM has that adapter, and the adapters before it can be passed unchanged
   ansible.builtin.assert:
     that:

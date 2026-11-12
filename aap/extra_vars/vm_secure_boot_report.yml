@@ -24,6 +24,11 @@
 ## Check vCenter's certificate. false only if the execution environment does not trust your CA yet.
 # vmware_validate_certs: true
 
+## restart, shut down, VLAN, snapshot cleanup: a protected name (or exclude) that matches no VM in
+## vCenter, and a protected group not in the inventory, is a warning line - one read of every VM's
+## name per vCenter; never a failure. false = not checked
+# vmware_protected_check: true
+
 ## Only the VMs in this vCenter folder ("" = every VM, or the ones in vm_names).
 # vm_secure_boot_folder: ""
 

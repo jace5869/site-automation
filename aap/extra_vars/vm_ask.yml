@@ -35,6 +35,11 @@
 ## way)
 # vmware_vcenter_fail_unread: false
 
+## restart, shut down, VLAN, snapshot cleanup: a protected name (or exclude) that matches no VM in
+## vCenter, and a protected group not in the inventory, is a warning line - one read of every VM's
+## name per vCenter; never a failure. false = not checked
+# vmware_protected_check: true
+
 ## ---- VM - ask a question (playbooks/vm_ask.yml, docs/VM_ASK.md) ---- the question, in plain words
 ## (the survey's Textarea), e.g. "all VMs with dbv in the name", "VMs on datastores under 10% free"
 # vm_ask_question: ""

@@ -6,6 +6,9 @@
 - name: VMware | never the AAP server or a protected VM
   ansible.builtin.include_tasks: guard.yml
 
+- name: VMware | a protected name that matches no VM (vmware_protected_check)
+  ansible.builtin.include_tasks: protected_check.yml
+
 - name: VMware | can be restarted
   ansible.builtin.include_tasks: power_check.yml
   vars:

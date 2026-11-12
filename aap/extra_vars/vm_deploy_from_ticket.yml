@@ -43,6 +43,11 @@ report_email_to: approvers@yoursite.mil           # the approver reads the plan 
 ## [vc01.yoursite.mil, vc02.yoursite.mil]
 # vmware_vcenters: []
 
+## restart, shut down, VLAN, snapshot cleanup: a protected name (or exclude) that matches no VM in
+## vCenter, and a protected group not in the inventory, is a warning line - one read of every VM's
+## name per vCenter; never a failure. false = not checked
+# vmware_protected_check: true
+
 ## ---- Deploy a VM from a ServiceNow ticket (playbooks/vm_deploy_from_ticket.yml) ---- The ticket
 ## (survey answer): INC..., TASK..., SCTASK..., RITM..., CHG... - or your instance's own prefixes
 ## (INCN..., CHGN...): the job asks ServiceNow which table a ticket is in. The ticket says what to

@@ -567,6 +567,15 @@ ONLY = {"vm_snapshot_cleanup_email_only_if_deleted": ("vm_snapshot_cleanup.yml",
         # one launch only - a template that keeps it would replace the secrets on every deploy
         "stigman_replace_secrets": ()}
 
+# a setting a job reads in one task file only: what it is for THERE, in place of the role's general words
+# (name -> (the one task file, the words))
+NARROW = {"vmware_vcenters": ("protected_check.yml",
+                              "Several vCenters: this job acts on the credential's vCenter only. The list is used here "
+                              "only by the protected-name check (vmware_protected_check), which also reads the VM names "
+                              "of these vCenters (names, or name:port, same account) before it says that a protected "
+                              "name matches no VM. docs/VMWARE.md, \"Several vCenters\". e.g. "
+                              "[vc01.yoursite.mil, vc02.yoursite.mil]")}
+
 INCLUDE_ROLE = re.compile(r"(?:include_role|import_role):\s*\n((?:[ \t]+\S.*\n?){1,4})")
 ROLE_NAME = re.compile(r"^\s*name:\s*[\"']?([^\"'\s]+)", re.M)
 TASKS_FROM = re.compile(r"^\s*tasks_from:\s*[\"']?([^\"'\s]+)", re.M)
@@ -676,6 +685,15 @@ def used_settings(playbook, files, settings):
         used |= more
 
 
+def narrow(name, files):
+    """The words of NARROW when the one task file is the only file of this job that reads the setting."""
+    if name not in NARROW:
+        return None
+    readers = {os.path.basename(p) for p, _ in files
+               if name in words("\n".join(line for line in read(p).splitlines() if not line.lstrip().startswith("#")))}
+    return NARROW[name][1] if readers == {NARROW[name][0]} else None
+
+
 def comment(text, indent="## "):
     text = re.sub(r"\s+", " ", text).strip()
     return [indent + t for t in textwrap.wrap(text, WIDTH - len(indent))] if text else []
@@ -722,7 +740,7 @@ def render(playbook, settings):
         out.append("# ---- %s %s" % (title, "-" * max(3, WIDTH - 8 - len(title))))
         for n in names:
             s = settings[n]
-            out += comment(" ".join(d for d in s["doc"] if d.strip()))
+            out += comment(narrow(n, files) or " ".join(d for d in s["doc"] if d.strip()))
             out += ["# " + line for line in s["lines"]]
             out.append("")
     return "\n".join(out).rstrip() + "\n"
