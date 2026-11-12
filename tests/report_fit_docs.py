@@ -21,7 +21,10 @@ SKIP = re.compile(r":(report_act_off|report_notice|vm_vcenter_report|_report|ser
 # a filter's document from one test, under a name of its own - a report's parts the biggest document of the filter has not
 # (1.26.0: the checklist import's routes, moves and assignments; the update's Moves and STIG assignments)
 NAMED = (("test_stig_ckl_import.py", "RouteReport.test_report_fit_document", "stig_ckl_filters.py:stig_ckl_report", "stig_ckl_report_routes"),
-         ("test_stig.py", "UpdateReportMoves.test_report_fit_document", "stig_filters.py:stig_update_report", "stig_update_report_moves"))
+         ("test_stig.py", "UpdateReportMoves.test_report_fit_document", "stig_filters.py:stig_update_report", "stig_update_report_moves"),
+         # 1.33.0: the VMware health report's "How it was read" (a host's clock not read, the read times)
+         ("test_vmware_modules.py", "HealthReadSpeed.test_the_report_says_what_was_not_read", "vmware_health_filters.py:vm_health_report",
+          "vm_health_report_read"))
 
 # run inside each test file's process: keep the biggest document each filter function returns
 CHILD = r"""
