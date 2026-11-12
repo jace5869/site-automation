@@ -114,7 +114,7 @@ P_OPTIONS = frozenset(("print", "print0", "printf", "prune", "perm", "pubout", "
 TOOL_OPTIONS = (
     (re.compile(r"^(?:mysql\w*|mariadb(?:-\w+)?)$"), (("-p", "any"), ("--password", "any")), False),
     (re.compile(r"^(?:curl|wget)$"), (("-u", "colon"), ("--user", "colon"), ("--proxy-user", "colon")), False),
-    (re.compile(r"^sqlcmd$"), (("-p", "any"),), True),
+    (re.compile(r"^sqlcmd$"), (("-p", "not1"),), True),
     (re.compile(r"^ldap\w+$"), (("-w", "any"),), False),
     (re.compile(r"^(?:smbclient|smbcacls|smbget|rpcclient)$"), (("-U", "percent"), ("--user", "percent")), False),
     (re.compile(r"^net$"), (("-u", "percent"), ("--user", "percent")), True),
@@ -123,12 +123,11 @@ TOOL_OPTIONS = (
     (re.compile(r"^winrs$"), (("-p:", "any"), ("-password:", "any")), True),
     (re.compile(r"^sshpass$"), (("-p", "any"),), False),
 )
-# a script's words as a shell splits them (1.24.0f): at ; | & ( ) ` $( - each a word of its own that ends a command
-# (N=$(mysql ...), cd /tmp;mysql ..., echo x|mysql ...) - and at a quote that opens a word (ssh db01 'mysql ...'): a word
-# of its own too, but the command goes on (mysql -e 'select 1' -pX, mysql -p 'X')
-SHELL_WORD = re.compile(r"""\$\(|[;|&()`]|(?<![^\s;|&()`])['"]|[^\s;|&()`]+""")
-SIGNS = set(";|&()`$")
-QUOTES = ("'", '"')
+# a script's words as a shell splits them (1.24.0g): ; | & ( ) ` $( and a new line are signs that end a command
+# (N=$(mysql ...), cd /tmp;mysql ..., echo x|mysql ...); a quoted string ('...' or "...", glued too: -p"a b") is one
+# word of the command around it, whatever signs it holds (mysql -e "select count(*)" -pX), and is read again as a
+# command line of its own (ssh db01 'mysql ...', bash -c '...')
+SIGNS = set(";|&()`")
 # a value that is an HTTP Authorization header's credentials (Basic <base64>, Bearer <token>), alone or after its name
 AUTH_VALUE = re.compile(r"(?:^|authorization\"?\s*[:=]\s*\"?)(?:basic|bearer|token|negotiate|digest)\s+[A-Za-z0-9+/=._~-]{8,}", re.I)
 # a PEM private key (RSA, EC, OPENSSH, ENCRYPTED ...)
@@ -329,6 +328,8 @@ def _glued_p(glued):
 def _tool_value(kind, value):
     if not value or value.startswith("-"):
         return False
+    if kind == "not1":                                   # sqlcmd -p1: statistics in colon format, -P X the password
+        return value != "1"
     if kind == "colon":
         return bool(re.match(r"^[^:]+:.", value))
     if kind == "percent":
@@ -337,24 +338,52 @@ def _tool_value(kind, value):
 
 
 def shell_words(s):
-    """A text's words as a shell splits them: a line goes on after a \\ at its end; a new line (as ;), each of ; | & ( ) `
-    $( and a quote that opens a word are words of their own. Pure."""
-    words = []
-    for line in re.sub(r"\\\r?\n", " ", str(s or "")).splitlines():
-        words += SHELL_WORD.findall(line) + [";"]
-    return words
+    """(words, quoted): a text's words as a shell splits them - each sign (; | & ( ) ` $( and a new line, as ;) a word of
+    its own; a quoted string part of the word it is in (its quotes off), however many signs it holds; an unclosed one
+    runs to the end; a \\ at a line's end goes on - and the quoted strings' insides, each to read as a command line of
+    its own (with an unclosed quote, the whole text without it as well: a typo hides nothing). Pure."""
+    t = re.sub(r"\\\r?\n", " ", str(s or ""))
+    words, quoted, cur, i, n = [], [], None, 0, len(t)
+
+    def end():
+        if cur is not None:
+            words.append(cur)
+        return None
+    while i < n:
+        c = t[i]
+        if c in "'\"":
+            j = t.find(c, i + 1)
+            if j < 0:                                    # unclosed: to the end - the text read again without it too
+                quoted.append(t[:i] + t[i + 1:])
+                j = n
+            quoted.append(t[i + 1:j])
+            cur = (cur or "") + t[i + 1:j]
+            i = j + 1
+        elif c.isspace() and c not in "\r\n":
+            cur = end()
+            i += 1
+        elif c in "\r\n" or c in SIGNS or t.startswith("$(", i):
+            cur = end()
+            words.append(";" if c in "\r\n" else ("$(" if c == "$" else c))
+            i += 2 if c == "$" else 1
+        else:
+            cur = (cur or "") + c
+            i += 1
+    end()
+    return words, quoted
 
 
-def _tool_secret(s):
+def _tool_secret(s, depth=0):
     """A command's own password option, after that command word, up to the end of its command (TOOL_OPTIONS): mysql
     -pXXXX (any value - mysql's port is -P), curl -u svc:XXXX or -usvc:XXXX, smbclient -U svc%XXXX, sqlcmd -P XXXX ...
-    The command word anywhere a shell starts one: N=$(mysql ...), ssh db01 'mysql ...', cd /tmp;mysql ... Pure."""
-    words, options, loose = [w for w in shell_words(s) if w not in QUOTES], (), False
-    for i, raw in enumerate(words):
-        if set(raw) <= SIGNS:
+    The command word anywhere a shell starts one: N=$(mysql ...), cd /tmp;mysql ..., and inside a quoted string read as
+    a command line of its own (ssh db01 'mysql ...'). Pure."""
+    words, quoted = shell_words(s)
+    options, loose = (), False
+    for i, w in enumerate(words):
+        if w in SIGNS or w == "$(" or w == ";":
             options = ()
             continue
-        w = raw.strip("\"'")
         name = w.rsplit("/", 1)[-1].rsplit("\\", 1)[-1].lower()
         name = name[:-4] if name.endswith(".exe") else name
         found = next(((o, lz) for rx, o, lz in TOOL_OPTIONS if rx.match(name)), None)
@@ -365,14 +394,14 @@ def _tool_secret(s):
         for opt, kind in options:
             if key == opt or (key.startswith(opt + "=") and opt.startswith("--")):
                 nxt = words[i + 1] if i + 1 < len(words) else ""
-                value = ("" if set(nxt) <= SIGNS else nxt) if key == opt else w[len(opt) + 1:]
+                value = ("" if nxt in SIGNS or nxt in ("$(", ";") else nxt) if key == opt else w[len(opt) + 1:]
             elif key.startswith(opt) and not opt.startswith("--") and len(key) > len(opt):
                 value = w[len(opt):]
             else:
                 continue
-            if _tool_value(kind, value.strip("\"'")):
+            if _tool_value(kind, value):
                 return True
-    return False
+    return depth < 3 and any(_tool_secret(q, depth + 1) for q in quoted if q.strip())
 
 
 def _named_secret(name, value):

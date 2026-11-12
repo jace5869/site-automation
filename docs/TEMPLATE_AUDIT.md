@@ -25,27 +25,36 @@ enclaves - the addresses, the credentials, the paths - goes in that AAP's `all.y
 [ENCLAVES.md](ENCLAVES.md) lists what to change when you set up the next enclave's AAP. `aap_template_audit_per_enclave`
 names more settings that differ by enclave (none by default: the addresses are what point to it).
 
-Not flagged: settings that belong to one template - who gets its report (`report_email_to`, `report_email_cc`,
-`report_email_also`), when it fails (`site_fail_on`), what it runs on (`target`); see
-`aap_template_audit_per_template`. They are still flagged when they are a secret, or the same in many templates.
-A setting whose name is a rule or a place for a password (`check_accounts_pw_max_days: 60`,
-`vcenter_password_file`) is no secret, nor is true / false under a password's name (but its value is not shown either).
-Nor is a credential's name or id under a credential's setting (`incident_docs_draft_credential: AAP - SOP draft`,
-`tenable_scan_credentials: [12, 15]` or `["ssh-linux"]`; a single word on its own may be a password: it is), a limit
-(`max_tokens: 4096`), or a sentence of plain words
-(`Change the password: see the runbook`).
+Not flagged:
+
+- settings that belong to one template - who gets its report (`report_email_to`, `report_email_cc`,
+  `report_email_also`), when it fails (`site_fail_on`), what it runs on (`target`); see
+  `aap_template_audit_per_template`. Still flagged when they are a secret, or the same in many templates;
+- a rule or a place for a password (`check_accounts_pw_max_days: 60`, `vcenter_password_file`), and true / false
+  under a password's name (its value is not shown either);
+- a credential's name or id under a credential's setting (`incident_docs_draft_credential: AAP - SOP draft`,
+  `tenable_scan_credentials: [12, 15]` or `["ssh-linux"]`; a single word on its own may be a password: it is);
+- a limit (`max_tokens: 4096`) and a sentence of plain words (`Change the password: see the runbook`);
+- a file name as an address (`report.html.j2`, `logo.png`).
+
+On a command line, a tool's own password option counts wherever a shell starts the tool - after `$(`, a backquote,
+`(`, `;`, `|`, `&&`, inside a quoted string (`ssh db01 'mysql ...'`) - up to the end of that command or line (a line
+ending in `\` goes on). A quoted string is one word of the command around it (`mysql -e "select count(*)" -p...`). A
+Windows tool's switch counts with `/` or `-`, in any case.
+
 The audit hides on suspicion: a value it cannot tell from a secret is not shown, and it may call a setting a secret
 that is none. A false "not shown" costs a look in AAP; a shown secret cannot be taken back.
-Known limits: the audit finds secrets by their name and by their shape; it cannot find every one - a reviewer still
-reads the template. Shown, though they may be a secret: a name ending in pass of 5 letters or fewer (`xpass`), a
-password-like value under a plain name (`Passw0rd`), an AWS access key ID (`AKIA...`, only an ID), a Bearer token
-under 8 characters, a secret inside free text under a plain name (a kickstart's `rootpw --plaintext ...`, snmpd's
-`rocommunity ...`), a tool's own password option for a tool not in its list, a glued `-p` of letters only outside
-mysql (`-pabcdef` reads as flags, like `rsync -prltDvz`), a password given as a plain argument (`net use \\fs01\share
-PASSWORD /user:svc`), and a host named like one of the tools (`mysql -h curl ...`). A tool's option counts wherever a
-shell starts the command - after `$(`, a backquote, `(`, `;`, `|`, `&&`, inside quotes (`ssh db01 'mysql ...'`) - up to
-the end of that command or line (a line ending in `\` goes on); a Windows tool's switch with `/` or `-`, in any case.
-A file name (`report.html.j2`, `logo.png`) is no address.
+
+Known limits - the audit finds secrets by their name and their shape, not every one; a reviewer still reads the
+template. Shown, though they may be a secret:
+
+- a name ending in pass of 5 letters or fewer (`xpass`);
+- a password-like value under a plain name (`Passw0rd`), an AWS access key ID (`AKIA...`), a Bearer token under 8
+  characters;
+- a secret inside free text under a plain name (a kickstart's `rootpw --plaintext ...`, snmpd's `rocommunity ...`);
+- a password option of a tool not in the audit's list, a password given as a plain argument (`net use \\fs01\share
+  PASSWORD /user:svc`), a host named like one of the tools (`mysql -h curl ...`);
+- a glued `-p` of letters only outside mysql (`-pabcdef` reads as flags, like `rsync -prltDvz`).
 
 ## The report
 
