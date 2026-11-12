@@ -18,9 +18,19 @@ description:
   - tls false (the default) - plain TCP. caching_sha2_password then needs the cryptography library.
   - tls true - the server's certificate must be signed by the CA (ca_file, else the EE's trust store) and name the host.
     A session that is not encrypted is refused.
+  - mode check (1.15.0) - read only, nothing made or written (the reader account is enough) - the server's version, the
+    account and whether it may write, the tables and views there or missing, and what is held per instance and period.
+  - After a write, what the database holds is read back (held - a SELECT, not the rows sent).
+  - mode tickets_load (1.17.0) - the ticket store's rows of this instance (insights_ticket) written to path, for the read.
+  - mode tickets_save (1.17.0) - the rows the read wrote to path upserted; the tickets done more than 800 days ago deleted,
+    and (1.17.0b) those the light read did not see that were last updated more than 800 days ago.
+  - The ticket store's and the ACT cache's three tables (1.17.0b) - when they are missing and cannot be made (no CREATE
+    grant, or create false), the figures are read and written as before; tickets_load and act_load are ok false, with
+    one warning naming the tables (warn_tables).
   - A database that cannot be reached is a warning and ok false - unless required is true, then the task fails.
 options:
-  mode: {description: read or write., type: str, choices: [read, write], required: true}
+  mode: {description: "read, write, check; tickets_load, tickets_save (1.17.0, the ticket store); act_load, act_save (the ACT cache).", type: str,
+         choices: [read, write, check, tickets_load, tickets_save, act_load, act_save], required: true}
   host: {description: The database server., type: str, required: true}
   port: {description: "Its port (the report database's: 3309).", type: int, default: 3309}
   database: {description: The schema (database) name., type: str, required: true}
@@ -38,6 +48,11 @@ options:
   metrics: {description: "read: the metrics wanted.", type: list, elements: str, default: []}
   job: {description: "write: the AAP job, kept on the run row.", type: str, default: ""}
   required: {description: "true: a database that cannot be reached fails the task.", type: bool, default: false}
+  path: {description: "tickets_load, tickets_save (1.17.0): the file the ticket store's rows are written to or read from.", type: path, default: ""}
+  cache_key: {description: "act_load, act_save (1.17.0): the provider, the model and the prompt's hash.", type: str, default: ""}
+  clear: {description: "act_load: nothing held is given; act_save: everything held of the instance deleted first (servicenow_insights_act_cache_clear).", type: bool, default: false}
+  warn: {description: "false: a database not reached is not warned of here (the figures' read warns once, later).", type: bool, default: true}
+  warn_tables: {description: "tickets_load, act_load (1.17.0b): warn when the store's three tables are missing and cannot be made.", type: bool, default: true}
 '''
 
 RETURN = r'''
@@ -49,14 +64,23 @@ created: {description: The tables and views were made this run., type: bool}
 schema_version: {description: The schema's version., type: int}
 replaced: {description: "write: a run of the same window was there and was replaced.", type: bool}
 written: {description: "write: {runs, nodes, figures}.", type: dict}
+store: {description: "tickets_load, tickets_save (1.17.0): {held (rows of this instance now), saved, pruned}.", type: dict}
+act: {description: "act_load (1.17.0): {issues, classes}; act_save: {issues (written), classes (held now)}.", type: dict}
 rows: {description: "read: [[month, window_end, node, variant, metric, value, partial]].", type: list}
 months: {description: "write: the calendar months written (the month so far marked).", type: list}
 tickets: {description: "write: each month's tickets and rows, in words (the backfill's progress).", type: str}
 kept: {description: "write: months not written - their complete figures are kept over a partial run's.", type: list}
 months_kept: {description: "read: the months with a run of this instance and period.", type: int}
+run_id: {description: "write: the first run written (the window's).", type: int}
+held: {description: "write, check: [{source, period, runs, months, complete, first, last, newest}] - read back from insights_run.", type: list}
+version: {description: "check: the server's version.", type: str}
+account: {description: "check: the account as the server knows it, and can_write (INSERT granted).", type: dict}
+objects: {description: "check: {present: [...], missing: [...]} - the tables and views.", type: dict}
+store_missing: {description: "1.17.0b: the ticket store's and the ACT cache's tables that are not there (and could not be made).", type: list}
 '''
 
 import datetime
+import json
 import os
 import re
 import ssl
@@ -100,6 +124,19 @@ CREATE = [
     "CREATE TABLE IF NOT EXISTS insights_figure (run_id BIGINT UNSIGNED NOT NULL, variant VARCHAR(8) NOT NULL DEFAULT '', "
     "node VARCHAR(255) NOT NULL, metric VARCHAR(64) NOT NULL, label VARCHAR(190) NOT NULL DEFAULT '', value DOUBLE NOT NULL, "
     "PRIMARY KEY (run_id, variant, node, metric, label), KEY by_metric (metric, node)) " + TABLE_OPTS,
+    # 1.17.0, the ticket store (servicenow_insights_incremental): a row per ticket - its numbers, times, codes, flags and
+    # group, and its follow-up reads' results; never its text, its people or its CI (the light read gives those each run)
+    "CREATE TABLE IF NOT EXISTS insights_ticket (source VARCHAR(190) NOT NULL, sys_id VARCHAR(64) NOT NULL, tbl VARCHAR(40) NOT NULL, "
+    "number VARCHAR(40) NOT NULL DEFAULT '', updated_on DATETIME NULL, active TINYINT NOT NULL DEFAULT 1, opened_at DATETIME NULL, "
+    "done_at DATETIME NULL, grp VARCHAR(255) NOT NULL DEFAULT '', code VARCHAR(8) NOT NULL, fields JSON NOT NULL, follow JSON NOT NULL, "
+    "written_at DATETIME NOT NULL, PRIMARY KEY (source, sys_id), KEY by_done (source, done_at)) " + TABLE_OPTS,
+    # 1.17.0, the ACT cache: each description's issue (its key as a SHA-256, never the words) and the issues - by ACT's short
+    # name, masked (the one text the database holds); cache_key: the provider, the model and the prompt's hash
+    "CREATE TABLE IF NOT EXISTS insights_act_issue (source VARCHAR(190) NOT NULL, cache_key VARCHAR(190) NOT NULL, issue_no INT NOT NULL, "
+    "label VARCHAR(80) NOT NULL, kind VARCHAR(16) NOT NULL DEFAULT 'incident', self_service TINYINT NOT NULL DEFAULT 0, "
+    "written_at DATETIME NOT NULL, PRIMARY KEY (source, cache_key, issue_no)) " + TABLE_OPTS,
+    "CREATE TABLE IF NOT EXISTS insights_act_class (source VARCHAR(190) NOT NULL, cache_key VARCHAR(190) NOT NULL, key_hash CHAR(64) NOT NULL, "
+    "issue_no INT NOT NULL, written_at DATETIME NOT NULL, PRIMARY KEY (source, cache_key, key_hash)) " + TABLE_OPTS,
 ]
 RUN_COLS = "r.run_id, r.source, r.period, r.window_start AS period_start, r.window_end AS period_end, r.month, r.partial"
 NODE_COLS = "n.node, n.variant, n.label, n.level, n.depth, n.parent"
@@ -119,7 +156,11 @@ VIEWS = [
 ] + ["CREATE VIEW insights_v_%s AS SELECT %s, %s, %s %s GROUP BY r.run_id, n.run_id, n.variant, n.node" % (
      name, RUN_COLS, NODE_COLS, ", ".join("MAX(CASE WHEN f.metric = '%s' THEN f.value END) AS %s" % (k, k) for k in keys), FIGURES_JOIN)
      for name, keys in FIGURE_SETS]
-OBJECTS = (["schema_version", "insights_run", "insights_node", "insights_figure", "insights_v_month_run", "insights_v_latest_run",
+# 1.17.0: the ticket store's and the ACT cache's tables. A 1.16.0 database whose writer cannot make them (no CREATE grant,
+# or servicenow_insights_db_create false) keeps its figures: the store and the cache are off until they are made.
+STORE_TABLES = ("insights_ticket", "insights_act_issue", "insights_act_class")
+OBJECTS = (["schema_version", "insights_run", "insights_node", "insights_figure", "insights_ticket", "insights_act_issue", "insights_act_class",
+            "insights_v_month_run", "insights_v_latest_run",
             "insights_v_labelled"] + ["insights_v_" + name for name, _ in FIGURE_SETS])
 
 
@@ -194,10 +235,7 @@ def connect(p):
     if ctx is not None:
         conn = pymysql.connect(ssl=ctx, **kw)
     else:
-        try:                    # PyMySQL 1.1+ would use TLS unchecked when the server offers it: plain TCP, as asked
-            conn = pymysql.connect(ssl_disabled=True, **kw)
-        except TypeError:       # an older PyMySQL: plain TCP is its default
-            conn = pymysql.connect(**kw)
+        conn = connect_plain(kw)
     cur = conn.cursor()
     cur.execute("SHOW SESSION STATUS WHERE Variable_name IN ('Ssl_version', 'Ssl_cipher')")
     st = dict((str(k), str(v or "")) for k, v in cur.fetchall())
@@ -205,6 +243,29 @@ def connect(p):
         conn.close()
         raise RuntimeError("the session is not encrypted - the server must offer TLS")
     return conn, ("%s %s" % (st.get("Ssl_version", ""), st.get("Ssl_cipher", ""))) if st.get("Ssl_cipher") else "none"
+
+
+PYMYSQL_AUTH_BUG = ("PyMySQL %s has a bug in the caching_sha2_password login over plain TCP (1.2.1 to 1.2.3: \"'NoneType' "
+                    "object has no attribute 'is_auth_switch_request'\"). Launch again: the second login usually works. "
+                    "The lasting fix: PyMySQL 1.2.4 or later in the execution environment (ee/*/requirements.txt). First error: %s")
+
+
+def connect_plain(kw):
+    """Plain TCP. PyMySQL 1.2.1 to 1.2.3 raise AttributeError on the first caching_sha2_password login after the server's
+    password cache is empty (a restart, FLUSH PRIVILEGES); the server has accepted the login by then, so the second takes
+    the fast path. One more try, never more."""
+    def once():
+        try:                    # PyMySQL 1.1+ would use TLS unchecked when the server offers it: plain TCP, as asked
+            return pymysql.connect(ssl_disabled=True, **kw)
+        except TypeError:       # an older PyMySQL: plain TCP is its default
+            return pymysql.connect(**kw)
+    try:
+        return once()
+    except AttributeError as first:
+        try:
+            return once()
+        except AttributeError:
+            raise RuntimeError(PYMYSQL_AUTH_BUG % (getattr(pymysql, "VERSION_STRING", "?"), first))
 
 
 def auth_plugin(conn):
@@ -223,31 +284,53 @@ def auth_plugin(conn):
 
 
 def schema(conn, create, read_only=False):
-    """(version, created): the tables when they are not there (and create is true)."""
+    """(version, created, store): the tables when they are not there (and create is true). store (1.17.0b): {missing:
+    the store's tables still not there, error: why they could not be made} - the figures go on without them."""
     cur = conn.cursor()
     cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN (%s)" % (
         ", ".join(["%s"] * len(OBJECTS))), OBJECTS)
     have = set(str(x[0]) for x in cur.fetchall())
+    core = [o for o in OBJECTS if o not in have and o not in STORE_TABLES]
+    store = {"missing": [o for o in STORE_TABLES if o not in have], "error": ""}
     created = False
-    if len(have) < len(OBJECTS):
+    if core:
         if not create and read_only:
-            return 0, False                     # nothing kept yet
+            return 0, False, store              # nothing kept yet
         if not create:
             raise RuntimeError("the tables are not there (servicenow_insights_db_create: false) - make them once, docs/REPORT_DATABASE.md")
         for name, sql in zip(OBJECTS, CREATE + VIEWS):     # only what is missing: no DROP grant needed
-            if name not in have:
+            if name in core:
                 cur.execute(sql)
         created = True
+    if store["missing"] and create:
+        for name, sql in zip(OBJECTS, CREATE + VIEWS):
+            if name in store["missing"]:
+                try:
+                    cur.execute(sql)
+                except Exception as e:      # noqa: BLE001 - no CREATE grant: the figures go on, the store is off
+                    store["error"] = short_error(e)
+                    break
+                store["missing"].remove(name)
+                created = True
     cur.execute("SELECT version FROM schema_version WHERE component = %s", (COMPONENT,))
     r = cur.fetchone()
     if r is None:
         cur.execute("INSERT INTO schema_version (component, version, applied_at) VALUES (%s, %s, UTC_TIMESTAMP())", (COMPONENT, SCHEMA_VERSION))
         conn.commit()
-        return SCHEMA_VERSION, created
+        return SCHEMA_VERSION, created, store
     if int(r[0]) > SCHEMA_VERSION:
         raise RuntimeError("the schema is version %s, newer than this release knows (%s) - update site-automation" % (r[0], SCHEMA_VERSION))
     conn.commit()
-    return int(r[0]), created
+    return int(r[0]), created, store
+
+
+def store_tables_say(store, create):
+    """The one warning when the store's tables are missing (1.17.0b)."""
+    why = (" and this account cannot make them (%s)" % store["error"]) if store.get("error") else (
+        "" if create else " (servicenow_insights_db_create: false)")
+    return ("the tables insights_ticket, insights_act_issue and insights_act_class are not there%s - the ticket store and the ACT cache "
+            "are off this run, the figures are written as before. Make the three tables once (docs/REPORT_DATABASE.md, Making the "
+            "tables by hand), or grant the writer CREATE on the database" % why)
 
 
 def write_run(cur, rows, job):
@@ -264,7 +347,7 @@ def write_run(cur, rows, job):
                 (run["source"], run["period"], we))
     r = cur.fetchone()
     if r and partial and not int(r[1]):
-        return False, True, 0, 0
+        return False, True, 0, 0, 0
     if r:
         run_id = int(r[0])
         cur.execute("UPDATE insights_run SET window_start = %s, month = %s, partial = %s, data_end = %s, written_at = UTC_TIMESTAMP(), "
@@ -285,7 +368,7 @@ def write_run(cur, rows, job):
     for i in range(0, len(figs), 2000):
         cur.executemany("INSERT INTO insights_figure (run_id, variant, node, metric, label, value) VALUES (%s, %s, %s, %s, %s, %s)",
                         figs[i:i + 2000])
-    return bool(r), False, len(nodes), len(figs)
+    return bool(r), False, len(nodes), len(figs), run_id
 
 
 def write(conn, p):
@@ -293,10 +376,16 @@ def write(conn, p):
     rows = p["rows"] or {}
     runs = rows.get("runs") if "runs" in rows else [rows]
     cur = conn.cursor()
-    out = {"replaced": False, "written": {"runs": 0, "nodes": 0, "figures": 0}, "months": [], "kept": [], "tickets": ""}
+    out = {"replaced": False, "written": {"runs": 0, "nodes": 0, "figures": 0}, "months": [], "kept": [], "tickets": "", "run_id": 0,
+           "cut": []}
     said = []
     for one in runs or []:
-        replaced, skipped, nn, nf = write_run(cur, one, str(p["job"])[:64])
+        if one.get("cut"):          # 1.16.0: records cut (servicenow_insights_max_records) - incomplete, never written
+            run = one.get("run") or {}
+            out["cut"].append(run.get("month") if run.get("period") == "month" else "the window")
+            continue
+        replaced, skipped, nn, nf, rid = write_run(cur, one, str(p["job"])[:64])
+        out["run_id"] = out["run_id"] or rid
         run = one.get("run") or {}
         if skipped:
             out["kept"].append(run.get("month"))
@@ -313,6 +402,45 @@ def write(conn, p):
                 run.get("month"), t.get("incidents", 0), t.get("requests", 0), t.get("items", 0), nn, nf,
                 ", replaced" if replaced else ""))
     out["tickets"] = "; ".join(said)
+    conn.commit()
+    out["held"] = held(conn)            # read back: what the database holds now, not what was sent
+    return out
+
+
+def held(conn):
+    """What insights_run holds, per instance and period: [{source, period, runs, months, complete, first, last, newest}]."""
+    cur = conn.cursor()
+    cur.execute("SELECT source, period, COUNT(*), COUNT(DISTINCT month), COUNT(DISTINCT CASE WHEN partial = 0 THEN month END), "
+                "MIN(month), MAX(month), MAX(written_at) FROM insights_run GROUP BY source, period ORDER BY source, period")
+    out = [{"source": str(a), "period": str(b), "runs": int(c), "months": int(d), "complete": int(e), "first": str(f or ""), "last": str(g or ""),
+            "newest": h.strftime("%Y-%m-%d %H:%M:%S UTC") if h else ""} for a, b, c, d, e, f, g, h in cur.fetchall()]
+    conn.commit()
+    return out
+
+
+def check(conn):
+    """Read only (the reader account is enough): the server, the account, the objects, what is held."""
+    cur = conn.cursor()
+    cur.execute("SELECT VERSION(), CURRENT_USER()")
+    version, account = cur.fetchone()
+    grants = []
+    try:
+        cur.execute("SHOW GRANTS FOR CURRENT_USER()")
+        grants = [str(x[0]) for x in cur.fetchall()]
+    except Exception:           # noqa: BLE001 - not allowed: unknown
+        pass
+    can_write = any(re.search(r"\b(INSERT|ALL PRIVILEGES)\b", g) for g in grants) if grants else None
+    cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN (%s)" % (
+        ", ".join(["%s"] * len(OBJECTS))), OBJECTS)
+    have = set(str(x[0]) for x in cur.fetchall())
+    out = {"version": str(version), "account": {"name": str(account), "can_write": can_write},
+           "objects": {"present": [o for o in OBJECTS if o in have], "missing": [o for o in OBJECTS if o not in have]}, "held": [], "schema_version": 0}
+    if "schema_version" in have:
+        cur.execute("SELECT version FROM schema_version WHERE component = %s", (COMPONENT,))
+        r = cur.fetchone()
+        out["schema_version"] = int(r[0]) if r else 0
+    if "insights_run" in have:
+        out["held"] = held(conn)
     conn.commit()
     return out
 
@@ -346,47 +474,179 @@ def short_error(e):
     return str(e).strip() or e.__class__.__name__
 
 
+# 1.17.0: a ticket done more than this long ago is out of every window a run can ask (12 months and the 12 before)
+TICKET_KEEP_DAYS = 800
+
+
+def _dt(text):
+    try:
+        return ts(text) if str(text or "").strip() else None
+    except ValueError:
+        return None
+
+
+def tickets_load(conn, p):
+    """The rows the database holds for this instance -> the file at path ({rows: {sys_id: {u, c, i, f}}}), for the read."""
+    cur = conn.cursor()
+    cur.execute("SELECT sys_id, updated_on, code, fields, follow FROM insights_ticket WHERE source = %s", (p["source"],))
+    rows = {}
+    for sid, upd, code, fields, follow in cur.fetchall():
+        try:
+            rows[str(sid)] = {"u": upd.strftime("%Y-%m-%d %H:%M:%S") if upd else "", "c": str(code),
+                              "i": json.loads(fields) if isinstance(fields, (str, bytes)) else fields,
+                              "f": json.loads(follow) if isinstance(follow, (str, bytes)) else follow}
+        except ValueError:
+            continue
+    conn.commit()
+    with open(p["path"], "w") as f:
+        json.dump({"rows": rows}, f)
+    return {"store": {"held": len(rows), "saved": 0, "pruned": 0}}
+
+
+def tickets_save(conn, p, chunk=500):
+    """The rows the read wrote to path, upserted by (source, sys_id); the tickets done more than TICKET_KEEP_DAYS ago
+    deleted, and (1.17.0b) the ones the light read did not see (deleted in ServiceNow, moved out of the report while open:
+    no done_at) last updated more than TICKET_KEEP_DAYS ago."""
+    t0 = datetime.datetime.now()
+    with open(p["path"]) as f:
+        got = json.load(f) or {}
+    rows = got.get("rows") or []
+    cur = conn.cursor()
+    sql = ("INSERT INTO insights_ticket (source, sys_id, tbl, number, updated_on, active, opened_at, done_at, grp, code, fields, follow, written_at) "
+           "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE tbl = VALUES(tbl), "
+           "number = VALUES(number), updated_on = VALUES(updated_on), active = VALUES(active), opened_at = VALUES(opened_at), "
+           "done_at = VALUES(done_at), grp = VALUES(grp), code = VALUES(code), fields = VALUES(fields), follow = VALUES(follow), "
+           "written_at = VALUES(written_at)")
+    for i in range(0, len(rows), chunk):
+        cur.executemany(sql, [(p["source"], r["s"], r["t"], str(r.get("n") or "")[:40], _dt(r.get("u")), 1 if r.get("a") else 0,
+                               _dt(r.get("o")), _dt(r.get("d")), str(r.get("g") or "")[:255], str(r["c"]), json.dumps(r["i"]),
+                               json.dumps(r.get("f") or {})) for r in rows[i:i + chunk]])
+    cur.execute("DELETE FROM insights_ticket WHERE source = %s AND done_at < UTC_TIMESTAMP() - INTERVAL %d DAY" % ("%s", TICKET_KEEP_DAYS),
+                (p["source"],))
+    pruned = int(cur.rowcount or 0)
+    if "seen" in got:           # the light read's tickets (a file without them: this prune waits for the next run)
+        seen = set(str(x) for x in got.get("seen") or [])
+        cur.execute("SELECT sys_id FROM insights_ticket WHERE source = %%s AND updated_on < UTC_TIMESTAMP() - INTERVAL %d DAY" % TICKET_KEEP_DAYS,
+                    (p["source"],))
+        gone = [str(x[0]) for x in cur.fetchall() if str(x[0]) not in seen]
+        for i in range(0, len(gone), chunk):
+            part = gone[i:i + chunk]
+            cur.execute("DELETE FROM insights_ticket WHERE source = %%s AND sys_id IN (%s)" % ", ".join(["%s"] * len(part)), [p["source"]] + part)
+            pruned += int(cur.rowcount or 0)
+    cur.execute("SELECT COUNT(*) FROM insights_ticket WHERE source = %s", (p["source"],))
+    held = int(cur.fetchone()[0])
+    conn.commit()
+    return {"store": {"held": held, "saved": len(rows), "pruned": pruned, "seconds": round((datetime.datetime.now() - t0).total_seconds(), 1)}}
+
+
+def act_load(conn, p):
+    """The ACT cache of this instance and cache key -> {issues: [{no, label, kind, self_service}], classes: {key hash: no}}
+    (clear: nothing - the run asks everything, act_save then replaces it)."""
+    if p["clear"]:
+        return {"act": {"issues": [], "classes": {}}}
+    cur = conn.cursor()
+    cur.execute("SELECT issue_no, label, kind, self_service FROM insights_act_issue WHERE source = %s AND cache_key = %s ORDER BY issue_no",
+                (p["source"], p["cache_key"]))
+    issues = [{"no": int(a), "label": str(b), "kind": str(c), "self_service": bool(d)} for a, b, c, d in cur.fetchall()]
+    cur.execute("SELECT key_hash, issue_no FROM insights_act_class WHERE source = %s AND cache_key = %s", (p["source"], p["cache_key"]))
+    classes = dict((str(a), int(b)) for a, b in cur.fetchall())
+    conn.commit()
+    return {"act": {"issues": issues, "classes": classes}}
+
+
+def act_save(conn, p, chunk=500):
+    """This run's issues and description keys (rows: {issues, classes}) into the ACT cache: upserted; another cache key's
+    rows of this instance (another model or prompt), and with clear everything held before, deleted first - the deletes
+    and the writes in one transaction (a failure leaves the cache as it was). act_cache.yml sends clear only when ACT
+    answered every grouping question (1.17.0b)."""
+    rows = p["rows"] or {}
+    cur = conn.cursor()
+    for t in ("insights_act_issue", "insights_act_class"):
+        if p["clear"]:
+            cur.execute("DELETE FROM %s WHERE source = %%s" % t, (p["source"],))
+        else:
+            cur.execute("DELETE FROM %s WHERE source = %%s AND cache_key <> %%s" % t, (p["source"], p["cache_key"]))
+    cur.executemany("INSERT INTO insights_act_issue (source, cache_key, issue_no, label, kind, self_service, written_at) VALUES "
+                    "(%s, %s, %s, %s, %s, %s, UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE label = VALUES(label), kind = VALUES(kind), "
+                    "self_service = VALUES(self_service), written_at = VALUES(written_at)",
+                    [(p["source"], p["cache_key"], int(x["no"]), str(x["label"])[:80], str(x.get("kind") or "incident")[:16],
+                      1 if x.get("self_service") else 0) for x in rows.get("issues") or []])
+    cl = rows.get("classes") or []
+    for i in range(0, len(cl), chunk):
+        cur.executemany("INSERT INTO insights_act_class (source, cache_key, key_hash, issue_no, written_at) VALUES (%s, %s, %s, %s, UTC_TIMESTAMP()) "
+                        "ON DUPLICATE KEY UPDATE issue_no = VALUES(issue_no), written_at = VALUES(written_at)",
+                        [(p["source"], p["cache_key"], str(h)[:64], int(n)) for h, n in cl[i:i + chunk]])
+    cur.execute("SELECT COUNT(*) FROM insights_act_class WHERE source = %s AND cache_key = %s", (p["source"], p["cache_key"]))
+    held = int(cur.fetchone()[0])
+    conn.commit()
+    return {"act": {"issues": len(rows.get("issues") or []), "classes": held}}
+
+
 def main():
     module = AnsibleModule(
         argument_spec=dict(
-            mode=dict(type="str", required=True, choices=["read", "write"]), host=dict(type="str", required=True),
+            mode=dict(type="str", required=True, choices=["read", "write", "check", "tickets_load", "tickets_save", "act_load", "act_save"]), host=dict(type="str", required=True),
             port=dict(type="int", default=3309), database=dict(type="str", required=True), user=dict(type="str", required=True),
             password=dict(type="str", required=True, no_log=True), tls=dict(type="bool", default=False), ca_file=dict(type="str", default=""),
             connect_timeout=dict(type="int", default=10), create=dict(type="bool", default=True), rows=dict(type="dict"),
             source=dict(type="str", default=""), period=dict(type="str", default="month"), month=dict(type="str", default=""),
             months=dict(type="int", default=12), metrics=dict(type="list", elements="str", default=[]),
-            job=dict(type="str", default=""), required=dict(type="bool", default=False),
+            job=dict(type="str", default=""), required=dict(type="bool", default=False), path=dict(type="path", default=""),
+            warn=dict(type="bool", default=True), cache_key=dict(type="str", default=""), clear=dict(type="bool", default=False),
+            warn_tables=dict(type="bool", default=True),
         ),
         supports_check_mode=True)
     p = module.params
     where = "%s:%s/%s" % (p["host"], p["port"], p["database"])
     res = {"changed": False, "ok": False, "error": "", "tls": "", "auth": "", "created": False, "schema_version": 0,
-           "replaced": False, "written": {"runs": 0, "nodes": 0, "figures": 0}, "months": [], "kept": [], "tickets": "", "rows": [], "months_kept": 0, "where": where}
+           "replaced": False, "written": {"runs": 0, "nodes": 0, "figures": 0}, "months": [], "kept": [], "tickets": "", "rows": [], "months_kept": 0, "where": where,
+           "run_id": 0, "held": [], "version": "", "account": {}, "objects": {}, "store": {"held": 0, "saved": 0, "pruned": 0},
+           "act": {"issues": [], "classes": {}}, "store_missing": []}
 
     def give_up(msg):
         res["error"] = msg
         if p["required"]:
             module.fail_json(msg="The report database %s: %s (servicenow_insights_db_required: true)" % (where, msg), **res)
-        module.warn("The report database %s: %s - the report is whole, the history not %s this run (servicenow_insights_db_required: false)" % (
-            where, msg, "read" if p["mode"] == "read" else "written"))
+        if p["warn"]:
+            module.warn("The report database %s: %s - the report is whole, the history not %s this run (servicenow_insights_db_required: false)" % (
+                where, msg, "read" if p["mode"] in ("read", "check") else "written"))
         module.exit_json(**res)
 
     if not HAS_PYMYSQL:
         give_up("PyMySQL is not in this execution environment (pip install PyMySQL; the all-in-one EE has it)")
-    if p["mode"] == "write" and module.check_mode:
+    if p["mode"] in ("write", "tickets_save", "act_save") and module.check_mode:
         res.update(ok=True, error="check mode: nothing written")
         module.exit_json(**res)
     conn = None
     try:
         conn, res["tls"] = connect(p)
         res["auth"] = auth_plugin(conn)
-        res["schema_version"], res["created"] = schema(conn, p["create"] and not module.check_mode, p["mode"] == "read")
+        if p["mode"] == "check":            # 1.15.0: nothing made, nothing written
+            res.update(check(conn))
+            res["ok"] = True
+            module.exit_json(**res)
+        res["schema_version"], res["created"], store = schema(conn, p["create"] and not module.check_mode, p["mode"] in ("read", "tickets_load", "act_load"))
+        res["store_missing"] = store["missing"]
+        if store["missing"] and res["schema_version"] and p["mode"] in ("tickets_load", "tickets_save", "act_load", "act_save"):
+            res["error"] = store_tables_say(store, p["create"] and not module.check_mode)
+            if p["warn_tables"] and p["mode"] in ("tickets_load", "act_load"):
+                module.warn("The report database %s: %s." % (where, res["error"]))
+            res["changed"] = res["created"]
+            module.exit_json(**res)
         if p["mode"] == "write":
             res.update(write(conn, p))
+        elif p["mode"] == "tickets_save":
+            res.update(tickets_save(conn, p))
+        elif p["mode"] == "tickets_load":
+            res.update(tickets_load(conn, p) if res["schema_version"] else {})
+        elif p["mode"] == "act_save":
+            res.update(act_save(conn, p))
+        elif p["mode"] == "act_load":
+            res.update(act_load(conn, p) if res["schema_version"] else {"act": {"issues": [], "classes": {}}})
         elif res["schema_version"]:
             res.update(read(conn, p))
         res["ok"] = True
-        res["changed"] = p["mode"] == "write" or res["created"]
+        res["changed"] = p["mode"] in ("write", "tickets_save", "act_save") or res["created"]
     except ssl.SSLError as e:
         give_up("TLS: %s - the server's certificate must be signed by the CA and name %s" % (short_error(e), p["host"]))
     except Exception as e:      # unreachable, refused, a login or grant missing: one line, the job goes on

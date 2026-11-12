@@ -5,6 +5,7 @@ questions and answers merged, the model on a made-up site - tests/servicenow/ins
 workbook, the links between pages) and plugins/filter/servicenow_insights_page.py (the page: every section, no placeholder,
 no unescaped text). Needs ansible-core importable.
     python3 tests/test_servicenow_insights.py"""
+import copy
 import datetime
 import json
 import os
@@ -13,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "plugins", "filter"))
@@ -21,24 +23,28 @@ sys.path.insert(0, os.path.join(HERE, "servicenow"))
 import servicenow_insights_filters as F  # noqa: E402
 import servicenow_insights_page as P  # noqa: E402
 import site_servicenow_insights as rd  # noqa: E402
+import servicenow_insights_history as H  # noqa: E402
+import snmock  # noqa: E402
 
 NOW = datetime.datetime(2026, 11, 1, 6, 0, tzinfo=rd.UTC)
 OPTS = {"bare_chars": 20, "bare_phrases": ["fixed", "done", "resolved", "resolved per user", "see work notes", "rebooted", "n/a",
                                             "user confirmed", "completed"], "act": False, "kb_min": 50, "hierarchy_source": "names"}
 _SITE = {}
 _SITES = {}
+_SURVEYS = {}
 HIER_OPTS = dict(OPTS, directorates=["CODEX"], suffix_directorates=["NOVA"])                      # the names (OPTS: hierarchy_source names)
 PARENTS_OPTS = dict(OPTS, hierarchy_source="parents")
 
 
-def site(sites=False):
+def site(sites=False, surveys=False):
     """The made-up site (insights_seed.py), read as the module reads it - once. sites: its groups named as three sites with
-    directorates (--sites, 0.97.0)."""
-    _SITE = _SITES if sites else globals()["_SITE"]
+    directorates (--sites, 0.97.0); surveys: two surveys, one retired, on different scales (--surveys, 1.16.0)."""
+    _SITE = _SURVEYS if surveys else (_SITES if sites else globals()["_SITE"])
     if not _SITE:
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "seed.json")
-            subprocess.check_call([sys.executable, os.path.join(HERE, "servicenow", "insights_seed.py"), path, "0.4"] + (["--sites"] if sites else []),
+            subprocess.check_call([sys.executable, os.path.join(HERE, "servicenow", "insights_seed.py"), path, "0.4"] + (["--sites"] if sites else [])
+                                  + (["--surveys"] if surveys else []),
                                   stdout=subprocess.DEVNULL)
             with open(path) as fh:
                 seed = json.load(fh)
@@ -46,6 +52,7 @@ def site(sites=False):
         since, until = rd.sn_time(win["prev_since"]), rd.sn_time(win["until"])
         items, audit, members, notes, gtree = [], {}, {}, {}, {}
         slas, states, first, survey, paused, running = {}, {}, {}, [], {}, {}   # 1.7.0: as the module reads them
+        questions = {}                                                         # 1.16.0
         for r in seed:
             t = r.get("_table")
             if t == "task_sla":
@@ -61,7 +68,13 @@ def site(sites=False):
                 try:
                     survey.append([r["instance.trigger_id"], r["metric"], float(r["actual_value"]), r["instance.taken_on"]])
                 except ValueError:
-                    pass
+                    continue
+                st = (r.get("metric.metric_type.state") or "").lower()
+                questions.setdefault(r["metric"], {"name": r.get("metric.name") or r["metric"], "survey": r.get("metric.metric_type.name", ""),
+                                                   "state": "retired" if "retired" in st or r.get("metric.metric_type.active") == "false" else
+                                                   ("active" if st or r.get("metric.metric_type.active") else ""),
+                                                   "datatype": r.get("metric.datatype", ""), "min": float(r["metric.min"]) if r.get("metric.min") else None,
+                                                   "max": float(r["metric.max"]) if r.get("metric.max") else None, "template": ""})
                 continue
             if t == "metric_instance":
                 if r["definition"] == "Incident State Duration":
@@ -92,7 +105,8 @@ def site(sites=False):
                       "tables": [{"table": "incident", "read": 10, "kept": 10, "more": False, "error": ""}],
                       "sla": {"source": "task_sla", "asked": "auto", "error": "", "note": "", "records": slas, "paused": paused, "paused_error": "",
                               "open": running, "open_cut": []},
-                      "first_assigned": first, "first_assigned_error": "", "states": states, "states_error": "", "survey": survey, "survey_error": ""}
+                      "first_assigned": first, "first_assigned_error": "", "states": states, "states_error": "", "survey": survey, "survey_error": "",
+                      "survey_questions": questions}
         _SITE["mask"] = F.servicenow_insights_mask(_SITE["r"], OPTS)
         _SITE["work_notes"] = {"work_notes": dict((k, sorted(v, reverse=True)) for k, v in notes.items()), "work_notes_error": ""}
         _SITE["model"] = F.servicenow_insights_model(_SITE["r"], None, _SITE["mask"], HIER_OPTS if sites else OPTS)
@@ -133,7 +147,7 @@ class Reader(unittest.TestCase):
         s, u = rd.sn_time("2026-05-01 00:00:00"), rd.sn_time("2026-11-01 00:00:00")
         q = rd.table_query("incident", ["g5"], [], s, u)
         self.assertEqual(q, "assignment_groupINg5^opened_at>=2026-04-30 00:00:00^ORclosed_at>=2026-04-30 00:00:00^ORactive=true"
-                            "^ORresolved_at>=2026-04-30 00:00:00^opened_at<=2026-11-02 00:00:00^ORDERBYopened_at")
+                            "^ORresolved_at>=2026-04-30 00:00:00^opened_at<=2026-11-02 00:00:00^ORDERBYDESCopened_at")
         self.assertNotIn("resolved_at", rd.table_query("sc_req_item", [], [], s, u))
         self.assertTrue(rd.table_query("change_request", [], ["Ops - Linux"], s, u).startswith("assignment_group.nameINOps - Linux^"))
 
@@ -480,7 +494,7 @@ class Page(unittest.TestCase):
         for sid in ("glance", "teams", "keepingup", "severity", "issues", "problems", "handoffs", "requests", "changes", "notes", "allstars", "kb", "method"):
             self.assertIn('id="%s"' % sid, h)
         self.assertIn('href="ops/other/windows/latest.html"', h)
-        self.assertIn("https://sn.example.mil/incident.do?sysparm_query=number=INC", h)
+        self.assertIn("https://sn.example.mil/nav_to.do?uri=incident.do%3Fsysparm_query%3Dnumber%3DINC", h)
         self.assertIn("<!--site-report-logo-->", h)
         self.assertIn("AAP job 7", h)
         self.assertNotRegex(h, r"\b(PERSON|HOST|PHONE)-\d+\b")
@@ -539,9 +553,51 @@ class Page(unittest.TestCase):
 
     def test_ticket_links(self):
         self.assertEqual(P.tk("CHG0031001", "https://sn/"), '<a class="tk" target="_blank" rel="noopener" '
-                                                            'href="https://sn/change_request.do?sysparm_query=number=CHG0031001">CHG0031001</a>')
+                                                            'href="https://sn/nav_to.do?uri=change_request.do%3Fsysparm_query%3Dnumber%3DCHG0031001">CHG0031001</a>')
+        # 1.18.0: where they go - the API's instance, the address people use, or none
+        B = P.ticket_base
+        self.assertEqual(B({"url": "https://api.example.mil"}, {}), "https://api.example.mil")
+        self.assertEqual(B({"url": "https://api.example.mil"}, {"ticket_base": "sn.example.mil/"}), "https://sn.example.mil")
+        self.assertEqual(B({"url": "https://api.example.mil"}, {"ticket_links": False}), "")
+        self.assertEqual(B({"url": "https://api.example.mil"}, {"ticket_base": "javascript:alert(1)"}), "")
+        self.assertEqual(B({"url": "https://api.example.mil"}, {"ticket_base": 'https://sn.example.mil/"><b>'}), "")
+        # 1.30.0: the scheme in any case
+        self.assertEqual(B({"url": "https://api.example.mil"}, {"ticket_base": "HTTPS://SN.EXAMPLE.MIL"}), "https://SN.EXAMPLE.MIL")
+        self.assertEqual(B({"url": "Http://sn:8080/"}, {}), "http://sn:8080")
+        self.assertEqual(B({"url": "https://api.example.mil"}, {"ticket_base": "JAVASCRIPT:alert(1)"}), "")
+        m = site()["model"]
+        h = P.servicenow_insights_page(m, "all", {"ticket_base": "https://sn.example.mil:8443/"})
+        self.assertIn('href="https://sn.example.mil:8443/nav_to.do?uri=incident.do%3Fsysparm_query%3Dnumber%3DINC', h)
+        h = P.servicenow_insights_page(m, "all", {"ticket_links": False})
+        self.assertNotIn("nav_to.do", h)
+        self.assertNotIn('class="tk"', h)
+        self.assertIn('<span class="mono">INC', h)
         self.assertIn("mono", P.tk("XYZ1", "https://sn"))
         self.assertTrue(re.search("—", P.tk("", "https://sn")))
+
+    def test_own_prefixes(self):
+        # 1.30.0: an instance numbering its incidents XINC... - the table learned from the records read
+        r = json.loads(json.dumps(site()["r"]))
+        for it in r["items"]:
+            if it["table"] == "incident":
+                it["number"] = "X" + it["number"]
+        m = F.servicenow_insights_model(r, None, F.servicenow_insights_mask(r, OPTS), OPTS)
+        self.assertEqual(m["prefixes"].get("XINC"), "incident")
+        h = P.servicenow_insights_page(m, "all", {})
+        self.assertIn('href="https://sn.example.mil/nav_to.do?uri=incident.do%3Fsysparm_query%3Dnumber%3DXINC', h)
+        self.assertNotIn('<span class="mono">XINC', h)
+        # a prefix no record carries and no setting names: the number alone; the setting names it
+        self.assertEqual(P.tk("XPRB0001", "https://sn", m["prefixes"]), '<span class="mono">XPRB0001</span>')
+        pre = F.prefix_map(r["items"], {"ticket_prefixes": {"xprb": "problem"}})
+        self.assertIn('href="https://sn/nav_to.do?uri=problem.do%3Fsysparm_query%3Dnumber%3DXPRB0001"', P.tk("XPRB0001", "https://sn", pre))
+        self.assertEqual(F.prefix_map([{"table": "incident", "number": "XINC1"}], {"ticket_prefixes": {"XINC": "problem"}}), {"XINC": "incident"})
+        self.assertIn("CHG0031001", P.tk("CHG0031001", "https://sn", pre))
+        # the setting checked: letters, a table name
+        self.assertEqual(F.servicenow_insights_prefix_errors({"XINC": "incident", "xy": "u_table_2"}), [])
+        self.assertEqual(F.servicenow_insights_prefix_errors({"X1": "incident", "XINC": "incident.do?x", "Y": ""}),
+                         ["X1: incident", "XINC: incident.do?x", "Y: "])
+        self.assertEqual(F.servicenow_insights_prefix_errors(["XINC"]), ["['XINC']"])
+        self.assertEqual(F.servicenow_insights_prefix_errors(None), [])
 
 
 
@@ -821,7 +877,7 @@ class SlaTargets(unittest.TestCase):
 
 
 class YourSlos(unittest.TestCase):
-    """1.7.0: met or missed from task_sla (Response and Resolution by the SLA's name; no SLA = No SLO), else the targets in
+    """1.7.0: met or missed from task_sla (Response and Resolution by the SLA's name; no SLA = No SLA), else the targets in
     business hours (07:30-16:30 Mon-Fri, holidays, a shift past midnight) with a response target (opened to first assigned)."""
     BH = {"days": ["mon", "tue", "wed", "thu", "fri"], "start": "07:30", "end": "16:30", "holidays": ["2026-12-25"]}
     U = datetime.timezone.utc
@@ -882,6 +938,20 @@ class YourSlos(unittest.TestCase):
         F.apply_slas(xs, r, o)
         self.assertEqual([(x["_resp"], x["_resol"], x["_no_slo"]) for x in xs], [(True, True, False), (False, False, False), (None, None, True)])
 
+    def test_never_says_slo(self):
+        """1.16.0: the user's word is SLA - no page (both looks, every scope), email, workbook or job line says SLO."""
+        word = re.compile(r"\bslos?\b", re.I)
+        for x in (site(), site(sites=True)):
+            m = x["model"]
+            for look in ("atlas", "brief"):
+                for k in ["all"] + [p_["key"] for p_ in m["pages"]]:
+                    h = P.servicenow_insights_page(m, k, dict(OPTS, look=look))
+                    self.assertFalse(word.findall(re.sub(r'<script type="application/json"[^>]*>.*?</script>', "", h, flags=re.S)), (look, k))
+            for k in ["all"] + [p_["key"] for p_ in m["pages"]]:
+                self.assertFalse(word.findall(json.dumps(F.servicenow_insights_doc(m, k, OPTS))), k)
+            self.assertFalse(word.findall(json.dumps(F.servicenow_insights_xlsx(m, x["r"], None, x["mask"], OPTS), default=str)))
+            self.assertFalse(word.findall(" ".join(F.not_read_lines(m))))
+
     def test_the_site(self):
         m = site()["model"]
         s = m["scopes"]["all"]
@@ -897,7 +967,7 @@ class YourSlos(unittest.TestCase):
         p5 = next(p for p in s["prio"] if p["value"] == "5")
         self.assertEqual((p5["label"], p5["sla"]), ("5 - Exempt", None))
         html = P.servicenow_insights_page(m, "all", OPTS)
-        for t in ("Response met", "Resolution met", "No SLO", "Your SLOs", "P4 Incident Response", "ServiceNow&#x27;s SLAs (task_sla)"):
+        for t in ("Response met", "Resolution met", "No SLA", "Your SLAs", "P4 Incident Response", "ServiceNow&#x27;s SLAs (task_sla)"):
             self.assertIn(t, html)
         doc = F.servicenow_insights_doc(m, "all", OPTS)
         self.assertEqual([x["label"] for x in doc["summary"]][4:6], ["Response met", "Resolution met"])
@@ -1096,8 +1166,9 @@ class ModuleReads(unittest.TestCase):
         self.assertIn("definition.name=Incident State Duration", api.calls[-1][1]["sysparm_query"])
         win = rd.window(6, 0, "2026-10-31", True, "", NOW)
         self.assertEqual((rd.duration("1970-01-02 03:30:00"), rd.duration("")), (99000, None))
-        sv, err = rd.read_survey(api, win)
+        sv, qs, err = rd.read_survey(api, win)
         self.assertEqual(sv, [["i1", "Overall satisfaction", 4.0, "2026-10-22 10:00:00"]])
+        self.assertEqual(qs["Overall satisfaction"]["name"], "Overall satisfaction")
         self.assertTrue(all(p.startswith("api/now/table/") for p, _ in api.calls))
 
     def test_refused_task_sla_falls_back_to_the_targets(self):
@@ -1245,7 +1316,10 @@ class ChangeTasks(unittest.TestCase):
         m = self.model(r)
         doc = F.servicenow_insights_doc(m, "all", OPTS)
         sec = dict((s_["title"], s_) for s_ in doc["sections"])
-        self.assertEqual(sec["Teams side by side"]["columns"][8:10], ["Change tasks closed", "Change tasks open"])
+        tm = sec["Teams side by side"]
+        self.assertEqual(tm["columns"][7:9], ["Change tasks closed / open", "Top issue"])         # 1.18.0: one column, the email fits
+        self.assertTrue(all(re.match(r"^[\d,]+ / [\d,]+$", row[7]) for row in tm["rows"]), tm["rows"])
+        self.assertTrue(all(re.match(r"^[\d,]+ \([\d,]+\)$", row[2]) for row in tm["rows"]), tm["rows"])
         ct = sec["Change tasks"]
         self.assertEqual(ct["lines"][:2], ["Closed: 4 (the window before: 0), median 4.8 days to close",
                                            "  - by the planned end 2, after it 1, with no planned end 1"])
@@ -1273,7 +1347,7 @@ class ChangeTasks(unittest.TestCase):
         self.assertIn("td.wrap{white-space:normal;overflow-wrap:anywhere", P.CSS)
         self.assertIn('.tw thead{display:none}', P.CSS)
         self.assertIn('<td data-l="Top issue" class="wrap">', h)
-        self.assertIn('<td data-l="Change tasks closed" class="n" data-v="2">2</td>', h)
+        self.assertIn('<td data-l="Change tasks closed / open" class="n nw" data-v="2">2 / 1</td>', h)     # one column (1.30.0)
         self.assertNotIn('<td data-l="" ', h)
 
     def test_refused(self):
@@ -1286,13 +1360,927 @@ class ChangeTasks(unittest.TestCase):
         doc = F.servicenow_insights_doc(m, "all", OPTS)
         titles = [s_["title"] for s_ in doc["sections"]]
         self.assertNotIn("Change tasks", titles)
-        self.assertNotIn("Change tasks closed", next(s_ for s_ in doc["sections"] if s_["title"] == "Teams side by side")["columns"])
+        self.assertNotIn("Change tasks closed / open", next(s_ for s_ in doc["sections"] if s_["title"] == "Teams side by side")["columns"])
         h = P.servicenow_insights_page(m, "all", {"links": page_links(m)})
         self.assertNotIn("Change tasks", h)
         self.assertNotIn("Change tasks", [s_["name"] for s_ in F.servicenow_insights_xlsx(m, self.r(refused=True), None, {"pairs": [], "counts": {}}, OPTS)])
         self.assertEqual((m["scopes"][self.NWK]["stars"]["awards"][0]["what"], m["scopes"][self.NWK]["stars"]["awards"][0]["stat"]),
                          ("Most resolved", "1 tickets resolved"))
         self.assertEqual(self.model(self.r(refused=True))["scopes"]["all"]["counts"], self.model(self.r(tasks=False))["scopes"]["all"]["counts"])
+
+
+class Surveys(unittest.TestCase):
+    """1.16.0: never one average across survey questions of different scales. Each question on its own scale (ServiceNow's
+    min and max, else as observed), grouped by its survey; a retired survey its own block; questions that are not ratings
+    (a 0/1, a 0 to 100) read but not shown as one; the headline - the active survey's overall on one scale - on the tile,
+    in the email and the history; each average graded Good / Fair / Low by its share of the scale."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.x = site(surveys=True)
+        cls.m = cls.x["model"]
+        cls.sv = cls.m["scopes"]["all"]["survey"]
+
+    def test_the_questions(self):
+        plan = F.survey_questions(self.x["r"]["survey"], self.x["r"]["survey_questions"], OPTS, *rd_window(self.x))
+        q = dict(((v["survey"], v["name"]), v) for v in plan["questions"].values())
+        self.assertTrue(all(q[("Service desk survey", "Q%d" % i)]["rating"] and q[("Service desk survey", "Q%d" % i)]["scale"] == [1.0, 4.0, "read"]
+                            for i in range(1, 5)))
+        self.assertTrue(all(q[("Legacy survey", "Q%d" % i)]["rating"] and q[("Legacy survey", "Q%d" % i)]["state"] == "retired" for i in range(1, 5)))
+        self.assertFalse(q[("Legacy survey", "Q5")]["rating"])                       # 0 to 100
+        self.assertFalse(q[("Service desk survey", "Contacted again")]["rating"])     # yes / no
+        self.assertTrue(q[("Service desk survey", "Overall satisfaction")]["rating"])
+        named = F.survey_questions(self.x["r"]["survey"], self.x["r"]["survey_questions"], dict(OPTS, survey_metrics=["q5"]), *rd_window(self.x))
+        self.assertTrue(next(v for v in named["questions"].values() if v["name"] == "Q5")["rating"])
+        # the answers alone, the datatype not read: whole numbers 0 to 10 with 3 or more values
+        bare = [["i%d" % i, "k", v, "2026-10-01 10:00:00"] for i, v in enumerate([1, 2, 3, 4, 4])]
+        self.assertTrue(F.survey_questions(bare, {}, OPTS, *rd_window(self.x))["questions"]["k"]["rating"])
+        for vals in ([0, 1, 1, 0], [12, 30, 45], [1.5, 2.5, 3.5]):
+            rows = [["i%d" % i, "k", v, "2026-10-01 10:00:00"] for i, v in enumerate(vals)]
+            self.assertFalse(F.survey_questions(rows, {}, OPTS, *rd_window(self.x))["questions"]["k"]["rating"], vals)
+
+    def test_the_headline_and_the_blocks(self):
+        sv = self.sv
+        # the active survey's questions are on two scales: its most-answered rating question is the headline, never their mean
+        self.assertEqual((sv["survey"], sv["state"]), ("Service desk survey", "active"))
+        self.assertTrue(sv["label"].startswith("Service desk survey · "), sv["label"])
+        self.assertIn(sv["scale"][:2], ([1.0, 4.0], [1.0, 5.0]))
+        b = sv["blocks"]
+        self.assertEqual([(x["survey"], x["state"]) for x in b], [("Service desk survey", "active"), ("Legacy survey", "retired")])
+        self.assertFalse(b[0]["one_scale"])                  # Q1 to Q4 on 1 to 4 and Overall satisfaction on 1 to 5: each on its own
+        self.assertTrue(b[1]["one_scale"] and b[1]["overall"])
+        self.assertEqual(b[1]["scale"][:2], [1.0, 5.0])
+        self.assertEqual(sv["questions_n"], 9)
+
+    def test_the_mixed_mean_nowhere(self):
+        w = rd_window(self.x)
+        vals = [v for k_, q, v, t_ in self.x["r"]["survey"] if F._in(F._t(t_), w[0], w[1])]
+        mixed = "%.2f" % (sum(vals) / len(vals))
+        rated = set(round(v, 2) for v in [self.sv["avg"]] + [b["main"]["avg"] for b in self.sv["blocks"]] if v is not None)
+        self.assertNotIn(round(sum(vals) / len(vals), 2), rated)
+        h = P.servicenow_insights_page(self.m, "all", OPTS)
+        self.assertNotIn(">%s" % mixed, h)
+        self.assertNotIn(mixed, json.dumps(F.servicenow_insights_doc(self.m, "all", OPTS)))
+        import servicenow_insights_history as H
+        rows = H.servicenow_insights_db_rows(self.m, {})
+        fig = dict((f[2], f[4]) for f in rows["figures"] if f[0] == "all" and f[1] == "")
+        self.assertEqual((fig["survey_avg"], fig["survey_scale_max"]), (self.sv["avg"], self.sv["scale"][1]))
+        self.assertEqual(fig["survey_questions"], 9)
+
+    def test_the_page(self):
+        h = P.servicenow_insights_page(self.m, "all", OPTS)
+        sec = re.search(r'<section class="card" id="satisfaction">.*?</section>', h, re.S).group(0)
+        self.assertIn('<h3 class="subh">Legacy survey <span class="chip">retired</span></h3>', sec)
+        self.assertLess(sec.index("Service desk survey</h3>"), sec.index("Legacy survey <span"))
+        self.assertRegex(sec, r'<span class="v">\d\.\d\d of \d <span class="chip (good|warn|crit)">(Good|Fair|Low)</span>')
+        self.assertIn("<th class=\"n\" data-sort=\"avg\">Average</th><th data-sort=\"grade\">Grade</th>", sec)
+        self.assertIn("Retired in ServiceNow: its answers are history, never blended with the active survey.", sec)
+        for tab in re.findall(r"<h3>By month · .*?</table>", sec, re.S):         # every average on its scale, even in a mixed survey
+            self.assertFalse(re.findall(r'data-l="Average" class="n" data-v="[\d.]+">\d\.\d\d<', tab), tab[:200])
+        self.assertNotIn(">Q5<", sec)
+        self.assertNotIn("Contacted again", sec)
+        how = re.search(r"<b>The surveys read</b>.*?</details>", h, re.S).group(0)
+        self.assertIn("Service desk survey - Q1 - ", how)
+        self.assertRegex(how, r"Legacy survey \(retired\) - Q5 - \d+ answers - read, not shown as a rating \(datatype numericscale, up to 100; "
+                              r"values \d+ to 100\): name it in servicenow_insights_survey_metrics to show it")
+        self.assertIn("1 to 4", how)
+
+    def test_the_email(self):
+        doc = F.servicenow_insights_doc(self.m, "all", OPTS)
+        t = next(x for x in doc["summary"] if x["label"] == "Satisfaction")
+        self.assertRegex(t["value"], r"^\d\.\d\d of \d$")
+        self.assertIn(t["status"], ("ok", "warning", "critical"))
+        self.assertTrue(t["note"].startswith(self.sv["grade"] + " · "), t["note"])
+
+    def test_the_grades(self):
+        g = F.survey_grade
+        sc = [1.0, 4.0, "read"]
+        self.assertEqual([g(3.4, sc, 5), g(3.39, sc, 5), g(2.8, sc, 5), g(2.79, sc, 5)], ["Good", "Fair", "Fair", "Low"])
+        self.assertEqual([g(8.0, [0.0, 10.0, "read"], 9), g(5.99, [0.0, 10.0, "observed"], 9)], ["Good", "Low"])   # a 0-based scale
+        self.assertEqual(g(3.9, sc, 4), "")                              # under survey_min_answers (5)
+        self.assertEqual(g(3.9, sc, 2, {"survey_min_answers": 2}), "Good")
+        self.assertEqual((g(3.9, None, 50), g(3.9, [4.0, 4.0, "observed"], 50)), ("", ""))     # no scale known: no grade
+        self.assertEqual(g(3.0, sc, 9, {"survey_grades": {"good": 0.9, "fair": 0.5}}), "Fair")
+        few = P.servicenow_insights_page(self.m, "all", dict(OPTS))
+        self.assertIn('<span class="mut">—</span>', few)                   # a month or group under 5 answers: no grade
+
+    def test_the_headline_setting(self):
+        x = self.x
+        def head(name):
+            return F.survey_questions(x["r"]["survey"], x["r"]["survey_questions"], dict(OPTS, survey_headline=name), *rd_window(x))
+        p = head("Legacy survey")
+        self.assertEqual((p["headline"]["label"], p["headline"]["scale"][:2]), ("Legacy survey", [1.0, 5.0]))
+        p = head("q2")
+        self.assertEqual((p["headline"]["label"], p["headline"]["survey"]), ("Service desk survey · Q2", "Service desk survey"))
+        p = head("Nothing  Like It")
+        self.assertEqual(p["headline_missing"], "Nothing Like It")           # said back as typed (1.17.0, the tester), spaces made one
+        self.assertIn("servicenow_insights_survey_headline: Nothing Like It is not a survey or rating question read - the default instead",
+                      F.survey_read_lines(p, {"survey_headline": "Nothing  Like It"}))
+
+    @unittest.skipUnless(any(__import__("shutil").which(b) for b in ("google-chrome", "chromium")), "no headless browser here")
+    def test_tables_fit(self):
+        import shutil
+        b = shutil.which("google-chrome") or shutil.which("chromium")
+        h = P.servicenow_insights_page(self.m, "all", OPTS)
+        probe = ('<script>addEventListener("load",function(){var s=document.getElementById("satisfaction"),w=[].slice.call(s.querySelectorAll(".tw"))'
+                 '.filter(function(t){return t.scrollWidth>t.clientWidth+1}).length;document.title="R "+w+" "+(document.documentElement.scrollWidth>innerWidth+1)})</script></body>')
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "all.html")
+            with open(path, "w") as fh:
+                fh.write(h.replace("</body>", probe))
+            for wd in (1366, 390):
+                out = subprocess.run([b, "--headless=new", "--disable-gpu", "--no-sandbox", "--virtual-time-budget=3000", "--window-size=%d,900" % wd,
+                                      "--dump-dom", "file://" + path], capture_output=True, text=True, timeout=120).stdout
+                self.assertIn("<title>R 0 false</title>", out, wd)
+
+
+def rd_window(x):
+    w = x["r"]["window"]
+    return rd.sn_time(w["since"]), rd.sn_time(w["until"])
+
+
+@unittest.skipUnless(any(__import__("shutil").which(b) for b in ("google-chrome", "chromium")), "no headless browser here")
+class TrustedTypes(unittest.TestCase):
+    """1.16.0: the page's script under Content-Security-Policy require-trusted-types-for 'script' - no HTML sink: a tooltip
+    shown (its <br> and <b> as nodes, its text as text) and a column sorted, with no violation and no error; a from / to
+    that can not be shown says why beside the fields."""
+
+    def test_no_sink(self):
+        import shutil
+        self.assertNotIn("innerHTML", P.SCRIPT)
+        self.assertNotIn("insertAdjacentHTML", P.SCRIPT)
+        b = shutil.which("google-chrome") or shutil.which("chromium")
+        import test_insights_org as O                       # the org map's All page: the Custom view and its from / to
+        m = O.model()
+        h = P.servicenow_insights_page(m, "all", {"links": page_links(m)})
+        self.assertIn('id="cvfrom"', h)
+        csp = '<meta http-equiv="Content-Security-Policy" content="require-trusted-types-for \'script\'">'
+        probe = ('<script>var V=[];document.addEventListener("securitypolicyviolation",function(e){V.push(e.violatedDirective)});'
+                 'addEventListener("error",function(e){V.push(String(e.message))});'
+                 'addEventListener("load",function(){setTimeout(function(){var D=document,t=D.querySelector("[data-t]"),out={};'
+                 'try{t.dispatchEvent(new MouseEvent("mousemove",{clientX:20,clientY:20,bubbles:true}));var tp=D.getElementById("tip");'
+                 'out.tip=!tp.hidden;out.br=tp.querySelectorAll("br").length;out.b=tp.querySelectorAll("b").length;out.text=tp.textContent;'
+                 'var th=D.querySelector("th[data-sort]");th.click();th.click();out.arrows=th.querySelectorAll(".ar").length;out.ar=th.textContent;'
+                 'var f=D.getElementById("cvfrom"),g=D.getElementById("cvto");if(f){f.value="2026-10-10";g.value="2026-10-01";D.getElementById("cvft").click();'
+                 'out.back=D.getElementById("cvftmsg").textContent;f.value="2020-01-01";g.value="2020-01-05";D.getElementById("cvft").click();'
+                 'out.out=D.getElementById("cvftmsg").textContent}}catch(e){V.push("thrown: "+e.message)}'
+                 'out.v=V;D.title="R "+JSON.stringify(out)},300)})</script>')
+        page = h.replace("<head>", "<head>" + csp, 1).replace("</body>", probe + "</body>")
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "all.html")
+            with open(path, "w") as fh:
+                fh.write(page)
+            out = subprocess.run([b, "--headless=new", "--disable-gpu", "--no-sandbox", "--virtual-time-budget=4000", "--dump-dom", "file://" + path],
+                                 capture_output=True, text=True, timeout=120).stdout
+        got = json.loads(re.search(r"<title>R (.*?)</title>", out).group(1).replace("&quot;", '"').replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">"))
+        self.assertEqual(got["v"], [], got)
+        self.assertTrue(got["tip"])
+        self.assertGreaterEqual(got["br"] + got["b"], 1, got)
+        self.assertNotIn("<", got["text"])
+        self.assertEqual(got["arrows"], 1)
+        self.assertTrue(got["ar"][-1] in "\u25b2\u25bc", got["ar"])       # one arrow, made as a node
+        self.assertEqual(got.get("back"), "From must be before To", got)
+        # the window as the fields show it (1.17.0, the tester): its last day, the To field's max - not the day after its end
+        lo, hi = re.search(r'id="cvto" min="([\d-]+)" max="([\d-]+)"', h).groups()
+        self.assertEqual(got.get("out"), "Outside this report's window: %s to %s" % (lo, hi), got)
+
+
+
+class Senders(unittest.TestCase):
+    """1.18.0: under Who sends this team its tickets, of how many - "N of M tickets, from 8 of P people"."""
+
+    def test_of_how_many(self):
+        m, seen, more = site()["model"], 0, False
+        for t in m["teams"]:
+            st = m["scopes"][t].get("stars") or {}
+            op, of = st.get("openers") or [], st.get("openers_of") or {}
+            if not op:
+                continue
+            self.assertGreaterEqual(of["tickets"], sum(p["opened"] for p in op))
+            self.assertGreaterEqual(of["people"], len(op))
+            self.assertLessEqual(len(op), 8)
+            h = P.servicenow_insights_page(m, t, OPTS)
+            line = '<div class="cap of">%s of %s tickets, from %d of %s people.</div>' % (
+                "{:,}".format(sum(p["opened"] for p in op)), "{:,}".format(of["tickets"]), len(op), "{:,}".format(of["people"]))
+            self.assertIn(line, h)
+            self.assertLess(h.index("Who sends this team its tickets"), h.index(line))
+            seen += 1
+            if len(op) == 8:
+                more = True
+        self.assertTrue(seen and more)                  # some team with more senders than shown
+
+
+@unittest.skipUnless(__import__("shutil").which("node"), "no node here")
+class InsightsSort(unittest.TestCase):
+    """1.18.0: the page's sort key is the website's (site_report.js 1.20.0): a lone number as that number, IPv4 by its
+    octets, versions and host2 before host10, numbers before text, an empty cell or a lone dash last both ways."""
+
+    def key_js(self):
+        a = P.SCRIPT.index("/*sortkey")
+        return P.SCRIPT[a:P.SCRIPT.index("/*sortkey end*/")]
+
+    def order(self, vals, asc=True):
+        js = self.key_js() + ("var v=%s;v.sort(function(a,b){return scmp(skey(a),skey(b),%s)});console.log(JSON.stringify(v))" % (json.dumps(vals), "true" if asc else "false"))
+        return json.loads(subprocess.run(["node", "-e", js], capture_output=True, text=True, check=True).stdout)
+
+    def test_the_key(self):
+        self.assertEqual(self.order(["192.0.2.10", "192.0.2.9", "198.51.100.1", "192.0.2.100"]), ["192.0.2.9", "192.0.2.10", "192.0.2.100", "198.51.100.1"])
+        self.assertEqual(self.order(["8.0.10", "8.0.2"]), ["8.0.2", "8.0.10"])
+        self.assertEqual(self.order(["host10", "host2", "Host1"]), ["Host1", "host2", "host10"])
+        self.assertEqual(self.order(["1,200", "950", "-3", "12.5%", "2.5%"]), ["-3", "2.5%", "12.5%", "950", "1,200"])
+        self.assertEqual(self.order(["b", "", "—", "3", "a", "-"]), ["3", "a", "b", "", "—", "-"])
+        self.assertEqual(self.order(["b", "", "-", "3", "a"], asc=False), ["b", "a", "3", "", "-"])      # empty last either way
+
+    @unittest.skipUnless(any(__import__("shutil").which(b) for b in ("google-chrome", "chromium")), "no headless browser here")
+    def test_the_first_click(self):
+        """A first click sorts ascending; on a column already in order, descending - so the click always shows."""
+        import shutil
+        b = shutil.which("google-chrome") or shutil.which("chromium")
+        rows = [("192.0.2.10", "3"), ("192.0.2.9", "1"), ("—", "2"), ("198.51.100.1", "4")]
+        body = "".join("<tr><td>%s</td><td>%s</td></tr>" % rw for rw in rows)
+        page = ('<!DOCTYPE html><html><head><meta http-equiv="Content-Security-Policy" content="require-trusted-types-for \'script\'"></head><body>'
+                '<table><thead><tr><th data-sort="ip">IP</th><th data-sort="n">N</th></tr></thead><tbody>%s</tbody></table><div id="tip" hidden></div>'
+                '<script>%s</script><script>addEventListener("load",function(){setTimeout(function(){var D=document,out={},'
+                'col=function(i){return [].map.call(D.querySelectorAll("tbody tr"),function(r){return r.cells[i].textContent})};'
+                'var h=D.querySelectorAll("th");h[0].click();out.a=col(0);h[0].click();out.d=col(0);h[1].click();out.n1=col(1);'
+                'D.title="R "+JSON.stringify(out)},200)})</script></body></html>') % (body, P.SCRIPT)
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "s.html")
+            with open(path, "w") as fh:
+                fh.write(page)
+            out = subprocess.run([b, "--headless=new", "--disable-gpu", "--no-sandbox", "--virtual-time-budget=3000", "--dump-dom", "file://" + path],
+                                 capture_output=True, text=True, timeout=120).stdout
+        got = json.loads(re.search(r"<title>R (.*?)</title>", out).group(1).replace("&quot;", '"'))
+        self.assertEqual(got["a"], ["192.0.2.9", "192.0.2.10", "198.51.100.1", "—"])
+        self.assertEqual(got["d"], ["198.51.100.1", "192.0.2.10", "192.0.2.9", "—"])          # the dash last both ways
+        # N is 4 3 1 2 after IP descending: not in order, so the first click sorts it ascending
+        self.assertEqual(got["n1"], ["1", "2", "3", "4"])
+
+
+@unittest.skipUnless(any(__import__("shutil").which(b) for b in ("google-chrome", "chromium")), "no headless browser here")
+class EmailFits(unittest.TestCase):
+    """1.18.0: the insights email fits a window 800 px wide in the standard, command and portal looks - the standard look's
+    tiles four to a row (as portal and glass), the teams' table in 10 columns at most. (glass: its cells' padding, every report.)"""
+
+    def test_800(self):
+        import shutil
+        import jinja2
+        b = shutil.which("google-chrome") or shutil.which("chromium")
+        x = site()
+        doc = F.servicenow_insights_doc(x["model"], "all", OPTS)
+        self.assertGreater(len(doc["summary"]), 5)
+        env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(HERE, "..", "roles", "site_email", "templates")), autoescape=False)
+        probe = '<script>addEventListener("load",function(){document.title="R "+document.documentElement.scrollWidth+" "+innerWidth})</script></body>'
+        with tempfile.TemporaryDirectory() as d:
+            for tpl in ("report.html.j2", "report_command.html.j2", "report_portal.html.j2"):
+                h = env.get_template(tpl).render(_report=doc, _email_footer="AAP job 9", _email_logo_cid="", _email_runs=[],
+                                                 report_email_header_text="Site automation report")
+                path = os.path.join(d, tpl + ".html")
+                with open(path, "w") as fh:
+                    fh.write(h.replace("</body>", probe))
+                out = subprocess.run([b, "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars", "--virtual-time-budget=3000",
+                                      "--window-size=800,900", "--dump-dom", "file://" + path], capture_output=True, text=True, timeout=120).stdout
+                self.assertIn("<title>R 800 800</title>", out, tpl)
+
+    def test_tiles_and_lines(self):
+        """1.30.0: the standard look's boxes four equal columns (the 4th took the rest of the width); portal's "3.32 of 4" on one
+        line; an item under another ("  - INC...") indented without its dash, in every email look."""
+        import shutil
+        import jinja2
+        b = shutil.which("google-chrome") or shutil.which("chromium")
+        doc = F.servicenow_insights_doc(site(surveys=True)["model"], "all", OPTS)
+        self.assertTrue(any(re.match(r"^\d\.\d\d of \d$", str(t["value"])) for t in doc["summary"]), doc["summary"])
+        doc["sections"].append({"title": "Act on", "lines": ["SLA at risk: 1", "  - INC0041200 P2, 80% used"]})
+        env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(HERE, "..", "roles", "site_email", "templates")), autoescape=False)
+        probe = ('<script>addEventListener("load",function(){var t=[].slice.call(document.querySelectorAll("td[width=\'25%\'] > table"))'
+                 '.map(function(x){return Math.round(x.getBoundingClientRect().width)});var v=[].slice.call(document.querySelectorAll("div"))'
+                 '.filter(function(d){return /^\\d\\.\\d\\d of \\d$/.test(d.textContent)})[0];var lh=parseFloat(getComputedStyle(v).fontSize)*1.6;'
+                 'document.title="R "+(new Set(t).size)+" "+t.length+" "+(v.getBoundingClientRect().height<lh)})</script></body>')
+        with tempfile.TemporaryDirectory() as d:
+            for tpl in ("report.html.j2", "report_command.html.j2", "report_portal.html.j2", "report_glass.html.j2"):
+                h = env.get_template(tpl).render(_report=doc, _email_footer="AAP job 9", _email_logo_cid="", _email_runs=[],
+                                                 report_email_header_text="Site automation report")
+                self.assertIn(">INC0041200 P2, 80% used</li>", h, tpl)
+                self.assertNotIn("- INC0041200", h, tpl)
+                if tpl not in ("report.html.j2", "report_portal.html.j2"):
+                    continue
+                path = os.path.join(d, tpl + ".html")
+                with open(path, "w") as fh:
+                    fh.write(h.replace("</body>", probe))
+                out = subprocess.run([b, "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars", "--virtual-time-budget=3000",
+                                      "--window-size=800,900", "--dump-dom", "file://" + path], capture_output=True, text=True, timeout=120).stdout
+                got = re.search(r"<title>R (\d+) (\d+) (\w+)</title>", out)
+                self.assertTrue(got, (tpl, out[-300:]))
+                if tpl == "report.html.j2":
+                    self.assertEqual(got.group(1), "1", (tpl, "the boxes are not one width"))
+                    self.assertEqual(int(got.group(2)) % 4, 0, tpl)
+                self.assertEqual(got.group(3), "true", (tpl, "the satisfaction value wraps"))
+
+
+@unittest.skipUnless(any(__import__("shutil").which(b) for b in ("google-chrome", "chromium")), "no headless browser here")
+class PageFits(unittest.TestCase):
+    """1.30.0: every table of every page fits its box at 1280 px with DejaVu (the fonts a Linux browser falls back to, wider
+    than Segoe UI) in both looks - Teams / Directorates / Sites side by side (Open now (was), Change tasks closed / open in one
+    column each, the backlog's chip under its line when short of room), Failed or backed out, the Leaderboard."""
+
+    PROBE = ('<script>addEventListener("load",function(){setTimeout(function(){var o=[];[].slice.call(document.querySelectorAll(".tw"))'
+             '.forEach(function(t){var d=t.scrollWidth-t.clientWidth;if(d>1){var s=t.closest("section");var h=t.closest(".fig");'
+             'o.push((s?s.id:"")+"/"+(h&&h.querySelector("h3")?h.querySelector("h3").textContent:"")+" +"+d)}});'
+             'o.push("page "+(document.documentElement.scrollWidth-innerWidth));document.title="R "+o.join("; ")},300)})</script></body>')
+    FONTS = '<style>*{font-family:"DejaVu Sans" !important}code,pre,.num{font-family:"DejaVu Sans Mono" !important}</style></head>'
+
+    def test_1280(self):
+        import shutil
+        b = shutil.which("google-chrome") or shutil.which("chromium")
+        with tempfile.TemporaryDirectory() as d:
+            for nm, x, o in (("flat", site(), OPTS), ("sites", site(sites=True), HIER_OPTS)):
+                m = x["model"]
+                keys = ["all"] + [p["key"] for p in m["pages"] if p["level"] != "team"][:3] + [p["key"] for p in m["pages"] if p["level"] == "team"][:2]
+                for look in ("", "brief"):
+                    for k in keys:
+                        h = P.servicenow_insights_page(m, k, dict(o, look=look))
+                        path = os.path.join(d, "p.html")
+                        with open(path, "w") as fh:
+                            fh.write(h.replace("</head>", self.FONTS, 1).replace("</body>", self.PROBE))
+                        out = subprocess.run([b, "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars", "--virtual-time-budget=4000",
+                                              "--window-size=1280,900", "--dump-dom", "file://" + path], capture_output=True, text=True, timeout=120).stdout
+                        self.assertIn("<title>R page 0</title>", out, (nm, k, look or "atlas", re.findall(r"<title>(.*?)</title>", out)))
+
+    def test_the_merged_columns(self):
+        m = site()["model"]
+        h = P.servicenow_insights_page(m, "all", OPTS)
+        self.assertIn("Open now (was)", h)
+        self.assertNotIn(">Change tasks open<", h)
+        self.assertRegex(h, r'<b>[\d,]+</b> <span class="mut">\([\d,]+\)</span>')
+
+
+class TicketStore(unittest.TestCase):
+    """1.17.0: the ticket store - a run that reads in full only the tickets that changed gives the same answer as a full
+    read (the items, the follow-up reads, the window, the cut), over new, changed, reopened, deleted, moved, closed then
+    updated, a text edited without sys_updated_on moving and stale rows; the rows never hold text, people or the CI."""
+
+    class Api(object):
+        url = "https://sn.example.mil"
+
+        def __init__(self, recs):
+            self.recs, self.calls = recs, []
+
+        def get(self, path, params):
+            parts = path.split("/")
+            q, table = params.get("sysparm_query", ""), parts[3]
+            self.calls.append((table, params.get("sysparm_fields", ""), q))
+            rows = [x for x in self.recs if (x.get("_table") or "incident") == table and snmock.matches(x, q)]
+            if parts[2] == "stats":
+                return {"result": {"stats": {"count": str(len(rows))}}}
+            if "ORDERBYDESCopened_at" in q:
+                rows.sort(key=lambda x: x.get("opened_at") or "", reverse=True)
+            show = snmock.show_all if params.get("sysparm_display_value") == "all" else (lambda x: x)
+            rows = [snmock.pick(show(x), params.get("sysparm_fields")) for x in rows]
+            off, lim = int(params.get("sysparm_offset", 0)), int(params.get("sysparm_limit", 10000))
+            return {"result": rows[off:off + lim]}
+
+    TABLES = ["incident", "sc_req_item", "sc_task", "change_request", "change_task", "problem"]
+
+    @classmethod
+    def setUpClass(cls):
+        with tempfile.TemporaryDirectory() as d:
+            subprocess.run([sys.executable, os.path.join(HERE, "servicenow", "insights_seed.py"), os.path.join(d, "s.json"), "0.25"],
+                           check=True, capture_output=True)
+            with open(os.path.join(d, "s.json")) as f:
+                cls.recs = json.load(f)
+        cls.win = rd.window(6, 0, "2026-10-31", True, "", rd.datetime.datetime(2026, 11, 1, 6, 0, tzinfo=rd.UTC))
+
+    def read(self, recs, store=None, cap=20000, groups=None):
+        api = self.Api(recs)
+        return rd.read_all(api, groups or [], self.TABLES, self.win, cap, first_assigned=True, store=store), api
+
+    def rows(self, res, store):
+        return dict((x["s"], {"u": x["u"], "c": x["c"], "i": x["i"], "f": x["f"]}) for x in rd.store_save(res, store))
+
+    def changed(self):
+        recs = copy.deepcopy(self.recs)
+        inc = [x for x in recs if (x.get("_table") or "incident") == "incident" and str(x.get("opened_at", "")) >= "2026-06"]
+        closed = [x for x in inc if x.get("state") == "7"]
+        bump = "2026-10-31 23:00:00"
+        inc[0].update(short_description="Changed text now", priority="1", sys_updated_on=bump)
+        closed[0].update(state="2", active="true", closed_at="", resolved_at="", reopen_count="1", sys_updated_on=bump)
+        other = [x for x in inc if x.get("assignment_group") != inc[5].get("assignment_group")][0]["assignment_group"]
+        inc[5].update(assignment_group=other, sys_updated_on=bump)
+        recs.remove(inc[7])
+        closed[1].update(close_notes="Replaced the token, then confirmed with the user.", sys_updated_on=bump)
+        closed[2]["short_description"] = "Quietly edited"
+        recs.append(dict(copy.deepcopy(inc[2]), sys_id="s-INC9999999", number="INC9999999", opened_at="2026-10-30 10:00:00", sys_updated_on=bump))
+        return recs, closed[3]["sys_id"]
+
+    def same(self, a, b):
+        for k in sorted(set(a) | set(b)):
+            if k != "store":
+                self.assertEqual(json.dumps(a.get(k)), json.dumps(b.get(k)), k)
+
+    def test_incremental_is_full(self):
+        st = rd.Reuse({})
+        first, _ = self.read(self.recs, st)
+        rows = self.rows(first, st)
+        self.assertEqual(len(rows), len(first["items"]))
+        recs, stale = self.changed()
+        rows[stale]["u"] = "2020-01-01 00:00:00"            # a database restored from an older backup
+        rows[stale]["i"]["priority"] = "STALE"
+        full, af = self.read(recs)
+        st2 = rd.Reuse(rows)
+        inc, ai = self.read(recs, st2)
+        self.same(full, inc)
+        self.assertGreater(len(st2.fresh), len(full["items"]) * 0.9)
+        self.assertNotIn(stale, st2.fresh)
+        self.assertLess(len(ai.calls), len(af.calls))
+        self.assertTrue(any("sys_idIN" in q for _t, _f, q in ai.calls))            # the changed ones, by sys_id
+        light = [f for t, f, q in ai.calls if t == "incident" and "ORDERBYDESC" in q]
+        self.assertTrue(light and all("reopen_count" not in f and "sys_updated_on" in f and "assignment_group" in f for f in light), light)
+
+    def test_a_renamed_group(self):
+        """1.17.0b: a group renamed in ServiceNow between two runs, its tickets untouched (sys_updated_on the same): the run
+        that reuses the store shows the new name everywhere, as a full read - one team, not two. The store keeps the
+        group's sys_id, never its name; the hand-off paths as sys_audit keeps them (sys_ids), named each run."""
+        recs = copy.deepcopy(self.recs)
+        for x in recs:
+            if x.get("_table") == "sys_audit":
+                for f in ("oldvalue", "newvalue"):
+                    x[f] = next((g["sys_id"] for g in snmock.GROUPS if g["name"] == x[f]), x[f])
+        saved = copy.deepcopy(snmock.GROUPS)
+        try:
+            st = rd.Reuse({})
+            first, _ = self.read(recs, st)
+            rows = self.rows(first, st)
+            self.assertIn("Ops - Windows", set(it["group"] for it in first["items"]))
+            self.assertNotIn('"Ops - Windows"', json.dumps(rows))
+            snmock.rename({"Ops - Windows": "Ops - Windows Servers"}, recs)
+            full, _ = self.read(recs)
+            st2 = rd.Reuse(rows)
+            inc, _ = self.read(recs, st2)
+            self.same(full, inc)
+            self.assertGreater(len(st2.fresh), len(full["items"]) * 0.9)
+            names = set(it["group"] for it in inc["items"])
+            self.assertIn("Ops - Windows Servers", names)
+            self.assertNotIn("Ops - Windows", names)
+            self.assertIn("Ops - Windows Servers", json.dumps(inc["audit"]))
+            self.assertNotIn('"Ops - Windows"', json.dumps(inc["audit"]))
+        finally:
+            snmock.GROUPS[:] = saved
+
+    def test_the_rows_hold_no_text_people_or_ci(self):
+        st = rd.Reuse({})
+        res, _ = self.read(self.recs, st)
+        for r in rd.store_save(res, st):
+            self.assertFalse(set(r["i"]) & set(rd.LIGHT_KEYS), r["i"])
+            blob = json.dumps(r)
+            kept = set(json.dumps(v) for v in r["i"].values())           # a request's description may be its catalog item's name
+            for it in [x for x in res["items"] if x["sys_id"] == r["s"]]:
+                for k in ("short_description", "close_notes", "assigned_to", "caller", "cmdb_ci"):
+                    if len(str(it.get(k) or "")) > 12 and json.dumps(it[k]) not in kept:      # a whole value, as JSON writes it
+                        self.assertNotIn(json.dumps(it[k]), blob, (k, it[k]))
+
+    def test_open_tickets_follow_ups_read_again(self):
+        st = rd.Reuse({})
+        res, _ = self.read(self.recs, st)
+        rows = self.rows(res, st)
+        st2 = rd.Reuse(rows)
+        again, api = self.read(self.recs, st2)
+        self.same(res, again)
+        asked = " ".join(q for t, _f, q in api.calls if t == "task_sla")
+        opened = [it["sys_id"] for it in again["items"] if rd.is_open(it) and it["table"] == "incident" and not it.get("done_at")]
+        self.assertTrue(opened and all(s in asked for s in opened[:5]))               # the open ones always
+        self.assertFalse(st2.closed & set(opened))
+
+    def test_a_cut_run_keeps_nothing(self):
+        st = rd.Reuse({})
+        with tempfile.TemporaryDirectory() as d:
+            store, why = rd.store_load(os.path.join(d, "none.json"))
+            self.assertEqual(why, "the database holds no tickets yet")
+            res, _ = self.read(self.recs, store, cap=30)
+            self.assertTrue(res["cut"])                                       # the window itself cut
+            out = os.path.join(d, "out.json")
+            got = rd.store_finish(res, store, why, out)["store"]
+            self.assertEqual(got["not_saved"], "the window's records were cut (servicenow_insights_max_records)")
+            self.assertFalse(os.path.exists(out))                             # nothing of a cut run kept
+            self.assertEqual((got["mode"], got["saved"]), ("full", 0))
+            st = rd.Reuse({})
+            whole, _ = self.read(self.recs, st)
+            self.assertEqual(rd.store_finish(whole, st, why, out)["store"]["saved"], len(whole["items"]))
+            with open(out) as f:
+                kept = json.load(f)
+            self.assertEqual(len(kept["rows"]), len(whole["items"]))
+            self.assertEqual(kept["seen"], sorted(it["sys_id"] for it in whole["items"]))     # 1.17.0b: for the prune
+        self.assertEqual(rd.store_load("/nonexistent", full_refresh=True)[1], "servicenow_insights_full_refresh")
+
+    def test_rows_of_another_format_read_again(self):
+        st = rd.Reuse({})
+        res, _ = self.read(self.recs, st)
+        rows = self.rows(res, st)
+        for v in rows.values():
+            v["c"] = "0"
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "held.json")
+            with open(p, "w") as f:
+                json.dump({"rows": rows}, f)
+            store, why = rd.store_load(p)
+        self.assertEqual((store.rows, why), ({}, "the database holds no tickets yet"))
+
+    def test_the_line(self):
+        L = H.servicenow_insights_store_line
+        r = {"store": {"mode": "incremental", "why": "", "from_sn": 4, "from_db": 2249, "saved": 4, "not_saved": ""}}
+        self.assertEqual(L(r, {"ok": True, "store": {"saved": 4, "seconds": 0.4}})["line"],
+                         "Tickets: 2,253 - 4 read from ServiceNow (new or changed), 2,249 from the report database; 4 written to the report database in 0 s.")
+        r = {"store": {"mode": "full", "why": "the database holds no tickets yet", "from_sn": 9, "from_db": 0, "saved": 0,
+                       "not_saved": "the records were cut (servicenow_insights_max_records)"}}
+        self.assertEqual(L(r)["page"], "9 tickets - all read from ServiceNow - a full read (the database holds no tickets yet); nothing written: "
+                                       "the records were cut (servicenow_insights_max_records).")
+        self.assertEqual(L({}), {"line": "", "page": ""})
+        self.assertIn("Check mode: nothing written", L(r, {}, True)["line"])
+
+
+class StoreTables(unittest.TestCase):
+    """1.17.0b: a 1.16.0 database whose writer cannot make the three new tables (no CREATE grant, or create false): the
+    figures go on (read and write), the store and the ACT cache are off with one warning naming them."""
+
+    class Conn(object):
+        def __init__(self, have, deny=False):
+            self.have, self.deny, self.sql = set(have), deny, []
+
+        def cursor(self):
+            return self
+
+        def execute(self, sql, args=None):
+            self.sql.append(sql)
+            self.last = sql
+            if sql.startswith("CREATE"):
+                if self.deny:
+                    raise Exception(1142, "CREATE command denied to user 'w'@'%' for table 'insights_ticket'")
+                self.have.add(sql.split()[5] if "IF NOT EXISTS" in sql else sql.split()[2])
+
+        def fetchall(self):
+            return [(x,) for x in self.have]
+
+        def fetchone(self):
+            return (1,)
+
+        def commit(self):
+            pass
+
+    def setUp(self):
+        import site_insights_db as D
+        self.D = D
+        self.old = [o for o in D.OBJECTS if o not in D.STORE_TABLES]          # a 1.16.0 database
+
+    def test_no_create_grant(self):
+        for ro in (False, True):                                               # write; read, tickets_load, act_load
+            c = self.Conn(self.old, deny=True)
+            v, made, store = self.D.schema(c, True, ro)
+            self.assertEqual((v, made), (1, False))
+            self.assertEqual(store["missing"], list(self.D.STORE_TABLES))
+            self.assertIn("CREATE command denied", store["error"])
+            say = self.D.store_tables_say(store, True)
+            self.assertIn("insights_ticket, insights_act_issue and insights_act_class", say)
+            self.assertIn("grant the writer CREATE", say)
+            self.assertIn("the figures are written as before", say)
+
+    def test_create_false(self):
+        for ro in (False, True):
+            c = self.Conn(self.old)
+            v, made, store = self.D.schema(c, False, ro)
+            self.assertEqual((v, made, store["missing"]), (1, False, list(self.D.STORE_TABLES)))
+            self.assertFalse(any(x.startswith("CREATE") for x in c.sql))
+            self.assertIn("(servicenow_insights_db_create: false)", self.D.store_tables_say(store, False))
+
+    def test_made_when_allowed(self):
+        c = self.Conn(self.old)
+        v, made, store = self.D.schema(c, True)
+        self.assertEqual((v, made, store), (1, True, {"missing": [], "error": ""}))
+        self.assertEqual(sum(1 for x in c.sql if x.startswith("CREATE")), 3)
+        # a database without the figures' tables: they are made first, as before; create false is still an error
+        c = self.Conn([])
+        self.assertEqual(self.D.schema(c, True)[:2], (1, True))
+        with self.assertRaises(RuntimeError):
+            self.D.schema(self.Conn([]), False)
+        self.assertEqual(self.D.schema(self.Conn([]), False, True)[:2], (0, False))
+
+
+class ActCache(unittest.TestCase):
+    """1.17.0: the ACT cache - each description's issue kept by its key's hash; the issues by ACT's short name, masked
+    (the one text the database holds); only new descriptions asked; another model or prompt, another cache."""
+
+    MASK = {"pairs": [["Dana Whitfield", "PERSON-1"], ["Whitfield", "PERSON-2"], ["prn01-fl3", "HOST-1"]], "counts": {}}
+
+    def test_the_label_is_masked(self):
+        L = F.act_label_for_store
+        for name, want in (("Account locked out / password reset", "Account locked out / password reset"),
+                           ("Windows 11 upgrade fails", "Windows 11 upgrade fails"), ("Wi-Fi drops on floor 3", "Wi-Fi drops on floor 3"),
+                           ("VPN drops for Dana Whitfield at 198.51.100.9 on wks-1001", "VPN drops for [person] at [ip] on [host]"),
+                           ("Printer prn01-fl3 jams", "Printer [host] jams"), ("Mail to jo.smith@example.mil bounces", "Mail to [email] bounces"),
+                           ("Call (703) 555-0101", "Call [phone]"), ("PERSON-1's account", "[person]'s account")):
+            self.assertEqual(L(name, self.MASK), want, name)
+        self.assertEqual(len(L("x" * 200, self.MASK)), 80)
+
+    def test_rows_and_back(self):
+        x = site()
+        st = dict(F.servicenow_insights_state(), issues=[{"name": "Printer offline", "about": "a", "kind": "incident", "self_service": False},
+                                                         {"name": "VPN drops for Dana Whitfield", "about": "", "kind": "incident", "self_service": True}])
+        keys = sorted(set(F.desc_key(it.get("short_description")) for it in x["r"]["items"] if it["table"] == "incident"))[:6]
+        st["classes"] = dict((k, "Printer offline" if i % 2 else "VPN drops for Dana Whitfield") for i, k in enumerate(keys) if k)
+        rows = F.servicenow_insights_act_cache_rows(st, self.MASK)
+        self.assertEqual([i["label"] for i in rows["issues"]], ["Printer offline", "VPN drops for [person]"])
+        self.assertTrue(all(len(h) == 64 and not set(h) - set("0123456789abcdef") for h, _n in rows["classes"]))
+        self.assertNotIn(keys[1], json.dumps(rows))                                  # the words never, the hash only
+        cached = {"issues": rows["issues"], "classes": dict((h, n) for h, n in rows["classes"])}
+        back = F.servicenow_insights_act_cached(F.servicenow_insights_state(), x["r"], None, cached, OPTS)
+        self.assertEqual([i["name"] for i in back["issues"]], ["Printer offline", "VPN drops for [person]"])
+        self.assertTrue(back["cached"] >= 1)
+        left = F.servicenow_insights_descriptions(x["r"], None, OPTS, back)
+        self.assertFalse(set(d["key"] for d in left) & set(back["classes"]))           # those placed are not asked
+        self.assertEqual(len(left) + len(back["classes"]), len(F.servicenow_insights_descriptions(x["r"], None, OPTS)))
+        again = F.servicenow_insights_act_cache_rows(back, self.MASK)                  # an issue keeps its number
+        self.assertEqual([(i["no"], i["label"]) for i in again["issues"]], [(i["no"], i["label"]) for i in rows["issues"]])
+
+    def test_the_key(self):
+        K = F.servicenow_insights_act_cache_key
+        a = K(OPTS, "genai", "model-a")
+        self.assertNotEqual(a, K(OPTS, "genai", "model-b"))
+        self.assertNotEqual(a, K(dict(OPTS, act_max_issues=12), "genai", "model-a"))       # another prompt
+        self.assertEqual(a, K(dict(OPTS), "genai", "model-a"))
+
+
+class RecordsCut(unittest.TestCase):
+    """1.16.0: a table over servicenow_insights_max_records keeps its NEWEST records (opened_at descending), then reads
+    the older records that count in the window (open, or done in it): the window whole, the one before cut - no compare,
+    said. That read capped too: the window cut - a banner on every page and first in the email, the job's warning, and no
+    incomplete month written to the report database."""
+
+    class Api(object):
+        """The Table API on a list of incidents (snmock's own query rules), and the Aggregate API's count."""
+
+        def __init__(self, recs, stats=True):
+            import snmock
+            self.match, self.recs, self.stats, self.url, self.calls = snmock.matches, recs, stats, "https://sn.example.mil", []
+
+        def get(self, path, params):
+            self.calls.append((path, dict(params)))
+            q = params.get("sysparm_query", "")
+            if path == "api/now/stats/incident":
+                if not self.stats:
+                    raise rd.SnError("GET api/now/stats/incident: 403 no access")
+                return {"result": {"stats": {"count": str(sum(1 for r in self.recs if self.match(r, q)))}}}
+            if path != "api/now/table/incident":
+                return {"result": []}
+            rows = sorted([r for r in self.recs if self.match(r, q)], key=lambda r: r["opened_at"], reverse="ORDERBYDESC" in q)
+            off, lim = int(params.get("sysparm_offset", 0)), int(params.get("sysparm_limit", 10000))
+            return {"result": rows[off:off + lim]}
+
+    @staticmethod
+    def recs():
+        """Window 2026-05-01 to 2026-11-01, the window before from 2025-11-01: 4 opened each month, from November 2025 to
+        October 2026, each closed 3 days later - and one opened in 2025-11 still open (the backlog)."""
+        out = []
+        for i in range(12):
+            y, mo = (2025, 11 + i) if i < 2 else (2026, i - 1)
+            for d in (3, 9, 15, 21):
+                op = "%04d-%02d-%02d 10:00:00" % (y, mo, d)
+                cl = "%04d-%02d-%02d 10:00:00" % (y, mo, d + 3)
+                out.append({"sys_id": "s%03d" % len(out), "number": "INC%07d" % len(out), "opened_at": op, "closed_at": cl,
+                            "resolved_at": cl, "active": "false", "state": "7", "assignment_group": "Ops - Linux", "priority": "4"})
+        out.append({"sys_id": "old", "number": "INC9999999", "opened_at": "2025-11-02 08:00:00", "closed_at": "", "resolved_at": "",
+                    "active": "true", "state": "2", "assignment_group": "Ops - Linux", "priority": "3"})
+        return out
+
+    def read(self, cap, recs=None, compare=True, stats=True):
+        win = rd.window(6, 0, "2026-10-31", compare, "", NOW)
+        api = self.Api(recs or self.recs(), stats)
+        with mock.patch.object(rd, "read_slas", return_value=({}, {}, "")), mock.patch.object(rd, "read_states", return_value=({}, "")), \
+                mock.patch.object(rd, "read_survey", return_value=([], {}, "")):
+            return rd.read_all(api, [], ["incident"], win, cap, audit=False, members=False, group_parents=False), api
+
+    def test_whole(self):
+        r, api = self.read(1000)
+        t = r["tables"][0]
+        self.assertEqual((t["read"], t["more"], r["cut"], r.get("compare_cut")), (49, False, [], None))
+        self.assertTrue(r["window"]["compare"])
+        self.assertIn("^ORDERBYDESCopened_at", api.calls[0][1]["sysparm_query"])
+
+    def test_the_window_before_cut(self):
+        r, api = self.read(30)                     # 24 opened in the window, 6 of the 25 before kept
+        t = r["tables"][0]
+        self.assertTrue(t["more"])
+        self.assertFalse(t.get("window_cut"))
+        self.assertEqual(t["total"], 49)
+        self.assertEqual(t["cut"][:10], "2026-03-15")      # the oldest opened_at kept
+        nums = set(it["number"] for it in r["items"])
+        self.assertIn("INC9999999", nums)                  # the backlog's old ticket: read by the second read
+        self.assertTrue(all(it["opened_at"] >= "2026-05-01" for it in r["items"] if it["number"] != "INC9999999" and it["opened_at"] < "2026-03-15"))
+        self.assertEqual(r["cut"], [])
+        self.assertEqual(r["compare_cut"], ["incident"])
+        self.assertFalse(r["window"]["compare"])
+        self.assertEqual(r["window"]["prev_since"], r["window"]["since"])
+        older = [c for c in api.calls if "opened_at<=2026-03-15" in c[1].get("sysparm_query", "")]
+        self.assertEqual(len(older), 1)
+        self.assertIn("active=true^ORclosed_at>=2026-04-30 00:00:00^ORresolved_at>=2026-04-30 00:00:00", older[0][1]["sysparm_query"])
+
+    def test_the_window_cut(self):
+        r, _api = self.read(10)
+        t = r["tables"][0]
+        self.assertTrue(t["window_cut"])
+        self.assertEqual(t["read"], 19)                     # 10 + 10, the cut's own record read twice, counted once
+        self.assertEqual(t["cut"][:10], "2026-06-09")      # where the second read stopped
+        self.assertEqual(r["cut"], [t])
+        self.assertFalse(r["window"]["compare"])           # a cut drops the compare, the window cut too
+        self.assertNotIn("compare_cut", r)                 # said as the window cut, not as no compare
+        line = F.cut_lines(r)
+        self.assertEqual(line, ["incident: only the newest 19 of 49 read, back to 2026-06-09. Figures in this report are incomplete: "
+                                "raise servicenow_insights_max_records."])
+        r2, _ = self.read(10, stats=False)
+        self.assertEqual(F.cut_lines(r2), ["incident: only the newest 19 read, back to 2026-06-09, and there are more. Figures in this "
+                                           "report are incomplete: raise servicenow_insights_max_records."])
+
+    def test_said_on_every_page_and_first_in_the_email(self):
+        r, _ = self.read(10)
+        m = F.servicenow_insights_model(r, None, {}, OPTS)
+        self.assertEqual(len(m["cut"]), 1)
+        h = P.servicenow_insights_page(m, "all", OPTS)
+        self.assertIn('<div class="callout cutbar" role="alert"><b>Records cut: some figures are incomplete.</b>', h)
+        self.assertLess(h.index("cutbar"), h.index('id="glance"') if 'id="glance"' in h else len(h))
+        for k in [p_["key"] for p_ in m["pages"]]:
+            self.assertIn("cutbar", P.servicenow_insights_page(m, k, OPTS), k)
+        doc = F.servicenow_insights_doc(m, "all", OPTS)
+        self.assertEqual(doc["sections"][0]["title"], "Records cut: some figures are incomplete")
+        self.assertEqual(doc["sections"][0]["lines"], m["cut"])
+        self.assertFalse([x for x in F.not_read_lines(m) if x.startswith("incident:")])     # said once, in the banner
+
+    def test_no_compare_said(self):
+        r, _ = self.read(30)
+        m = F.servicenow_insights_model(r, None, {}, OPTS)
+        self.assertEqual(m["cut"], [])
+        self.assertIn("no compare this run. The window's figures are whole.", m["compare_cut"])
+        h = P.servicenow_insights_page(m, "all", OPTS)
+        self.assertIn("<b>No compare this run.</b>", h)
+        self.assertNotIn("role=\"alert\"", h)
+        self.assertEqual(F.servicenow_insights_doc(m, "all", OPTS)["sections"][0]["title"], "No compare this run")
+        self.assertIn("the window before cut at 2026-03-15: no compare", " ".join(F.not_read_lines(m)))
+
+    def test_never_an_incomplete_month_in_the_database(self):
+        """The tester's finding: a ticket opened before the cut and resolved in a later month is missing from that month too,
+        so a window cut writes nothing - no run, no month, no figure."""
+        import servicenow_insights_history as H
+        r, _ = self.read(10)
+        m = F.servicenow_insights_model(r, None, {}, OPTS)
+        runs = H.servicenow_insights_db_runs(r, m, OPTS)["runs"]
+        self.assertTrue(runs and all(x.get("cut") for x in runs))
+        self.assertEqual(H.servicenow_insights_backfill_months(r), [])
+        self.assertEqual(H.servicenow_insights_backfill_months(r, True), ["2026-05", "2026-06", "2026-07", "2026-08", "2026-09", "2026-10"])
+        st = H.servicenow_insights_db_status({"on": True, "host": "db", "port": 3309, "database": "site_reports", "read": {"ok": True},
+                                              "write": {"ok": True, "months": [], "cut": ["the window", "2026-05"], "written": {"runs": 0}, "held": []}})
+        self.assertFalse(st["written"])
+        self.assertIn("NOT written - the records were cut (servicenow_insights_max_records): an incomplete run is never written;", st["line"])
+        self.assertEqual(st["page"], "Not written this run: the records were cut (servicenow_insights_max_records). An incomplete run is never written.")
+        r0, _ = self.read(1000)
+        self.assertFalse([x for x in H.servicenow_insights_db_runs(r0, F.servicenow_insights_model(r0, None, {}, OPTS), OPTS)["runs"] if x.get("cut")])
+        r1, _ = self.read(30)                                # the window before cut only: the window's runs written
+        self.assertFalse([x for x in H.servicenow_insights_db_runs(r1, F.servicenow_insights_model(r1, None, {}, OPTS), OPTS)["runs"] if x.get("cut")])
+
+    def test_the_testers_august(self):
+        """The tester's repro: 30 incidents opened 2026-03-03 to 03-09, resolved 2026-08-14, and newer ones after them. Whole,
+        August has them; a cap that cuts the window (its second read too) leaves them out - and nothing is written."""
+        import servicenow_insights_history as H
+        recs = [{"sys_id": "m%02d" % i, "number": "INC1%06d" % i, "opened_at": "2026-03-0%d 10:%02d:00" % (3 + i % 7, i), "closed_at": "2026-08-14 10:00:00",
+                 "resolved_at": "2026-08-14 10:00:00", "active": "false", "state": "7", "assignment_group": "Ops - Linux", "priority": "4"} for i in range(30)]
+        recs += [{"sys_id": "n%03d" % i, "number": "INC2%06d" % i, "opened_at": "2026-%02d-%02d 09:00:00" % (5 + i // 25, 1 + i % 25),
+                  "closed_at": "2026-%02d-%02d 12:00:00" % (5 + i // 25, 1 + i % 25), "resolved_at": "2026-%02d-%02d 12:00:00" % (5 + i // 25, 1 + i % 25),
+                  "active": "false", "state": "7", "assignment_group": "Ops - Linux", "priority": "4"} for i in range(150)]
+        whole, _ = self.read(1000, recs)
+        aug = lambda r: sum(1 for it in r["items"] if it["number"].startswith("INC1"))   # noqa: E731
+        self.assertEqual(aug(whole), 30)
+        cut, _ = self.read(60, recs)
+        self.assertTrue(cut["tables"][0]["window_cut"])
+        self.assertLess(aug(cut), 30)
+        m = F.servicenow_insights_model(cut, None, {}, OPTS)
+        self.assertTrue(all(x.get("cut") for x in H.servicenow_insights_db_runs(cut, m, OPTS)["runs"]))
+
+    def test_ties_at_the_cut(self):
+        """The tester's second finding: 20 incidents opened in the same second, the cap falling among them - every one read
+        (the second read takes the cut's own second, opened_at<=); more in one second than the cap - a window cut, said."""
+        recs = [{"sys_id": "t%02d" % i, "number": "INC3%06d" % i, "opened_at": "2026-08-01 10:00:00", "closed_at": "2026-08-02 10:00:00",
+                 "resolved_at": "2026-08-02 10:00:00", "active": "false", "state": "7", "assignment_group": "Ops - Linux", "priority": "4"} for i in range(20)]
+        recs += [{"sys_id": "u%02d" % i, "number": "INC4%06d" % i, "opened_at": "2026-09-%02d 10:00:00" % (1 + i), "closed_at": "2026-09-%02d 12:00:00" % (1 + i),
+                  "resolved_at": "2026-09-%02d 12:00:00" % (1 + i), "active": "false", "state": "7", "assignment_group": "Ops - Linux", "priority": "4"} for i in range(25)]
+        r, _ = self.read(30, recs)                          # 25 newer, then 5 of the 20 tied: the second read takes all 20
+        t = r["tables"][0]
+        self.assertTrue(t["more"])
+        self.assertFalse(t.get("window_cut"))
+        self.assertEqual(len([it for it in r["items"] if it["number"].startswith("INC3")]), 20)
+        r, _ = self.read(10, recs)                          # 20 in one second, a cap of 10: never silent
+        self.assertTrue(r["tables"][0]["window_cut"])
+        self.assertTrue(F.cut_lines(r))
+
+    def test_exactly_at_the_cap(self):
+        """The tester's third finding: a table of exactly max_records is not cut - one more than the cap is asked for -
+        and so for the second read."""
+        recs = self.recs()                                   # 49
+        for cap, more in ((48, True), (49, False), (50, False)):         # cap - 1, cap, cap + 1
+            r, api = self.read(cap, recs)
+            self.assertEqual(r["tables"][0]["more"], more, cap)
+            self.assertEqual(api.calls[0][1]["sysparm_limit"], min(1000, cap + 1))
+        # the second read at its own edge: 10 in October fill the first read; K in June (the window's older ones) and the cut's
+        # own record make the second read K + 1 - K = 9: exactly the cap, whole; K = 10: one more, the window cut
+        def recs2(k):
+            mk = lambda i, op, cl: {"sys_id": "s%03d" % i, "number": "INC6%06d" % i, "opened_at": op, "closed_at": cl, "resolved_at": cl,   # noqa: E731
+                                    "active": "false", "state": "7", "assignment_group": "Ops - Linux", "priority": "4"}
+            out = [mk(i, "2026-10-%02d 10:00:00" % (1 + i), "2026-10-%02d 12:00:00" % (1 + i)) for i in range(10)]
+            out += [mk(100 + i, "2026-06-%02d 10:00:00" % (1 + i), "2026-06-%02d 12:00:00" % (1 + i)) for i in range(k)]
+            return out + [mk(200 + i, "2026-01-%02d 10:00:00" % (1 + i), "2026-01-%02d 12:00:00" % (1 + i)) for i in range(5)]
+        for k, cut in ((9, False), (10, True)):
+            r, _ = self.read(10, recs2(k))
+            self.assertTrue(r["tables"][0]["more"])
+            self.assertEqual(bool(r["tables"][0].get("window_cut")), cut, k)
+
+    def test_the_window_edge(self):
+        """Records exactly on the window's first second: opened at it counts as opened in the window, resolved at it as
+        resolved in it - and one second before, in the window before."""
+        e = [{"sys_id": "e1", "number": "INC5000001", "opened_at": "2026-05-01 00:00:00", "closed_at": "2026-05-02 00:00:00", "resolved_at": "2026-05-02 00:00:00",
+              "active": "false", "state": "7", "assignment_group": "Ops - Linux", "priority": "4"},
+             {"sys_id": "e2", "number": "INC5000002", "opened_at": "2026-04-20 00:00:00", "closed_at": "2026-05-01 00:00:00", "resolved_at": "2026-05-01 00:00:00",
+              "active": "false", "state": "7", "assignment_group": "Ops - Linux", "priority": "4"},
+             {"sys_id": "e3", "number": "INC5000003", "opened_at": "2026-04-30 23:59:59", "closed_at": "2026-04-30 23:59:59", "resolved_at": "2026-04-30 23:59:59",
+              "active": "false", "state": "7", "assignment_group": "Ops - Linux", "priority": "4"}]
+        r, _ = self.read(1000, e)
+        m = F.servicenow_insights_model(r, None, {}, OPTS)
+        c = m["scopes"]["all"]["counts"]
+        self.assertEqual((c["incidents"], c["resolved"]), (1, 2))          # e1 opened at the first second; e1 and e2 resolved in the window
+        self.assertEqual(c["incidents_prev"], 2)                           # e2 and e3 opened in the window before
+
+    def test_the_module_writes_none_of_them(self):
+        import site_insights_db as D
+
+        class Cur(object):
+            def __init__(self):
+                self.sql = []
+
+            def execute(self, sql, args=None):
+                self.sql.append(sql)
+
+        runs = {"runs": [{"run": {"period": "6m", "month": "2026-10"}, "cut": True}, {"run": {"period": "month", "month": "2026-05"}, "cut": True}]}
+        cur = Cur()
+        conn = mock.Mock()
+        conn.cursor.return_value = cur
+        with mock.patch.object(D, "held", return_value=[]):
+            out = D.write(conn, {"rows": runs, "job": "1"})
+        self.assertEqual(out["cut"], ["the window", "2026-05"])
+        self.assertEqual(out["written"]["runs"], 0)
+        self.assertFalse([x for x in cur.sql if x.lstrip().upper().startswith(("INSERT", "DELETE"))])
+
+
+class PyMySQLLoginBug(unittest.TestCase):
+    """1.16.0: PyMySQL 1.2.1 to 1.2.3 raise AttributeError ('NoneType' ... 'is_auth_switch_request') on the first
+    caching_sha2_password login over plain TCP after the server's cache is empty: one more try, never more, then the
+    plain-words error naming 1.2.4."""
+
+    class Fake:
+        VERSION_STRING = "1.2.3"
+
+        def __init__(self, fails):
+            self.fails, self.calls = fails, []
+
+        def connect(self, **kw):
+            self.calls.append(kw)
+            if len(self.calls) <= self.fails:
+                raise AttributeError("'NoneType' object has no attribute 'is_auth_switch_request'")
+            return "conn"
+
+    def go(self, fails):
+        import site_insights_db as D
+        fake = self.Fake(fails)
+        with mock.patch.object(D, "pymysql", fake, create=True):        # create: CI's Python has no PyMySQL
+            try:
+                return D.connect_plain({"host": "db"}), fake
+            except RuntimeError as e:
+                return e, fake
+
+    def test_first_login_fails_second_works(self):
+        got, fake = self.go(1)
+        self.assertEqual(got, "conn")
+        self.assertEqual(len(fake.calls), 2)
+        self.assertTrue(all(c.get("ssl_disabled") is True for c in fake.calls))
+
+    def test_twice_said_once(self):
+        got, fake = self.go(5)
+        self.assertEqual(len(fake.calls), 2)                     # never more than one retry
+        self.assertIsInstance(got, RuntimeError)
+        for w in ("PyMySQL 1.2.3 has a bug", "1.2.1 to 1.2.3", "Launch again", "PyMySQL 1.2.4 or later", "is_auth_switch_request"):
+            self.assertIn(w, str(got))
+
+    def test_no_bug_one_login(self):
+        got, fake = self.go(0)
+        self.assertEqual((got, len(fake.calls)), ("conn", 1))
+
+    def test_tls_path_untouched(self):
+        import site_insights_db as D
+        src = open(D.__file__).read()
+        self.assertIn("conn = pymysql.connect(ssl=ctx, **kw)", src)
+        self.assertEqual(src.count("conn = connect_plain(kw)"), 1)
 
 
 class History(unittest.TestCase):
@@ -1347,7 +2335,8 @@ class History(unittest.TestCase):
             if len(d) > 25:
                 self.assertNotIn(d, text)
         names = set(f[2] for x in self.runs["runs"] for f in x["figures"])
-        known = sum((list(v) for _n, v in self.D.FIGURE_SETS), []) + ["outcome", "aging_bdays", "category", "hot_ci"]
+        known = sum((list(v) for _n, v in self.D.FIGURE_SETS), []) + ["outcome", "aging_bdays", "category", "hot_ci",
+                                                                      "survey_scale_max", "survey_questions"]    # 1.16.0: figures, in no view
         self.assertEqual(sorted(names - set(known)), [])
 
     def test_the_calendar_months(self):
@@ -1413,10 +2402,10 @@ class History(unittest.TestCase):
         month = self.runs["runs"][-1]
         part = dict(month, run=dict(month["run"], partial=True))
         c = Cur((3, 0))
-        self.assertEqual(D.write_run(c, part, "9"), (False, True, 0, 0))                  # complete there: kept
+        self.assertEqual(D.write_run(c, part, "9"), (False, True, 0, 0, 0))                  # complete there: kept
         self.assertEqual(len(c.sql), 1)
         c = Cur((3, 1))
-        replaced, skipped, nn, nf = D.write_run(c, month, "9")
+        replaced, skipped, nn, nf, _rid = D.write_run(c, month, "9")
         self.assertEqual((replaced, skipped, nn, nf), (True, False, len(month["nodes"]), len(month["figures"])))
         self.assertTrue(c.sql[1].startswith("UPDATE insights_run SET") and c.sql[2].startswith("DELETE FROM insights_figure"))
         c = Cur(None)
@@ -1468,10 +2457,10 @@ class History(unittest.TestCase):
         self.assertIn('<a href="#trend">Trends', h)
         self.assertLess(h.index('id="glance"'), h.index('id="trend"'))
         self.assertEqual(sec.count("<svg"), 2)                                              # two scales, never two axes on one
-        self.assertIn('<div class="legend"><span><i style="background:var(--st1)"></i>SLO met</span>', sec)
+        self.assertIn('<div class="legend"><span><i style="background:var(--st1)"></i>SLA met</span>', sec)
         self.assertIn("<summary>The months as a table</summary>", sec)
-        self.assertIn('data-t="Sep 2026&lt;br&gt;SLO met &lt;b&gt;92.0%', sec)                  # each month's values on hover
-        self.assertIn("Aug 2026&lt;br&gt;SLO met &lt;b&gt;no run", sec)                         # a month without one: a gap
+        self.assertIn('data-t="Sep 2026&lt;br&gt;SLA met &lt;b&gt;92.0%', sec)                  # each month's values on hover
+        self.assertIn("Aug 2026&lt;br&gt;SLA met &lt;b&gt;no run", sec)                         # a month without one: a gap
         self.assertIn('stroke-dasharray="5 4"', sec)                                          # into the month so far
         self.assertIn("Oct 2026 (so far)", sec)
         self.assertIn("4 months so far · each point a calendar month · dashed: the month so far", sec)
@@ -1482,7 +2471,7 @@ class History(unittest.TestCase):
         one = P.servicenow_insights_page(H.servicenow_insights_trend(self.m, self.hist(["2026-10"]), {}), "all", {"links": links})
         sec1 = one[one.index('id="trend"'):]
         self.assertIn("1 month so far: the line starts next month.", sec1)
-        self.assertIn('<span class="eyebrow">SLO met</span><span class="v">90.0%</span>', sec1)
+        self.assertIn('<span class="eyebrow">SLA met</span><span class="v">90.0%</span>', sec1)
         self.assertNotIn("<svg", sec1[:sec1.index("</section>")])
         none = P.servicenow_insights_page(H.servicenow_insights_trend(self.m, {"ok": True, "rows": []}, {}), "all", {"links": links})
         self.assertNotIn('id="trend"', none)                                                   # no month: nothing
@@ -1501,14 +2490,24 @@ class History(unittest.TestCase):
         self.assertNotIn("ACT is off", P.servicenow_insights_page(on, "all", {"links": page_links(self.m)}))
 
     def test_the_tasks(self):
-        """Read before the pages (the trend is on them), written after; not written when not read; Check writes nothing; the
-        backfill before the normal read, ending the play."""
+        """Read before the pages (the trend is on them), written before them too since 1.15.0 (each page says it was
+        written); not written when not read; Check writes nothing; the backfill before the normal read, ending the play; the
+        check (1.15.0) before the ServiceNow credential is asked for, ending the play."""
         def read(*p):
             with open(os.path.join(HERE, "..", *p)) as f:
                 return f.read()
         main = read("roles", "servicenow_insights", "tasks", "main.yml")
         self.assertLess(main.index("include_tasks: db.yml"), main.index("servicenow_insights_page('all'"))
-        self.assertLess(main.index("servicenow_insights_page(_sni_team"), main.index("include_tasks: db_write.yml"))
+        self.assertLess(main.index("include_tasks: db.yml"), main.index("include_tasks: db_write.yml"))
+        self.assertLess(main.index("include_tasks: db_write.yml"), main.index("servicenow_insights_db_status"))
+        self.assertLess(main.index("servicenow_insights_db_status"), main.index("servicenow_insights_page(_sni_team"))
+        self.assertLess(main.index("include_tasks: db_check.yml"), main.index("the ServiceNow API credential is attached"))
+        self.assertLess(main.index("(_sni_t | servicenow_insights_timing).line"), main.index("msg: \"{{ _sni_db_say.line }}\""))
+        self.assertEqual(main.count("'db': _sni_db_say if servicenow_insights_db | bool else {}"), 3)   # every page's opts
+        chk = read("roles", "servicenow_insights", "tasks", "db_check.yml")
+        self.assertIn("mode: check", chk)
+        self.assertIn("create: false", chk)
+        self.assertIn("meta: end_play", chk)
         self.assertLess(main.index("the settings the report uses"), main.index("backfill.yml"))
         self.assertLess(main.index("backfill.yml"), main.index("Insights | read the window"))
         db = read("roles", "servicenow_insights", "tasks", "db.yml") + read("roles", "servicenow_insights", "tasks", "db_write.yml")
@@ -1612,11 +2611,12 @@ class PagesInOneGo(unittest.TestCase):
         t = {"start": 0, "read": 600, "act_a": 900, "model": 960, "act_b": 1020, "finish": 1030, "db": 1040}
         r = F.servicenow_insights_timing(t)
         self.assertEqual(r["rows"], [["ServiceNow reads", 600.0], ["ACT", 360.0], ["The report worked out", 70.0],
-                                     ["Trends (the report database)", 10.0]])
+                                     ["The report database (read and written)", 10.0]])
         self.assertEqual(r["line"], "Time: ServiceNow reads 10.0 min, ACT 6.0 min, The report worked out 70 s, "
-                                    "Trends (the report database) 10 s - 17.3 min in all")
+                                    "The report database (read and written) 10 s - 17.3 min in all")
         r = F.servicenow_insights_timing(dict(t, pages=1640, end=1650))
-        self.assertEqual(r["rows"][-2:], [["Pages and email", 600.0], ["The report database written", 10.0]])
+        self.assertEqual(r["rows"][-1:], [["Pages and email", 600.0]])
+        self.assertEqual(r["total"], 1650.0)
         self.assertEqual(F.servicenow_insights_timing({})["line"], "Time: not measured")
         h = P.servicenow_insights_page(self.m, "all", {"timing": F.servicenow_insights_timing(t)["rows"]})
         self.assertIn("<b>Time this run</b> <span class=\"mut\">17.3 min before the pages</span>", h)
@@ -1631,7 +2631,7 @@ class PagesInOneGo(unittest.TestCase):
         self.assertLess(main.index("servicenow_insights_page('all'"), main.index("tasks_from: pages.yml"))        # after the All page
         self.assertIn("report_web_copy | default(false) | bool and report_web_host | default('', true)", main)
         # the leads' emails after the pages, linking them; the lead's address beats report_email_to (an extra variable too)
-        self.assertLess(main.index("tasks_from: pages.yml"), main.index("each team lead's email (servicenow_insights_team_email_to), linking"))
+        self.assertLess(main.index("tasks_from: pages.yml"), main.index("each team lead's email (servicenow_insights_email_leads, servicenow_insights_team_email_to), linking"))
         self.assertEqual(main.count("_report_email_to_override:"), 2)
         self.assertNotIn("    report_email_to:", main)
         self.assertIn("_report_web_url: >-", main)
@@ -1643,6 +2643,249 @@ class PagesInOneGo(unittest.TestCase):
         pages = read("roles", "site_email", "tasks", "pages.yml")
         self.assertIn("servicenow_insights_pages(_pages_chunk", pages)
         self.assertIn("not _web_copy | default(false) | bool and not _web_win | default(false) | bool", pages)
+
+class TeamLeads(unittest.TestCase):
+    """1.15.0: each group's manager in ServiceNow (sys_user_group.manager, dot-walked in the groups' own read) - "Group manager:
+    NAME" on the team's page and email (servicenow_insights_show_lead), the team's page emailed to the lead
+    (servicenow_insights_email_leads: names, patterns, all; servicenow_insights_team_email_to wins); never in the history."""
+
+    class Api(object):
+        def __init__(self, groups, deny_manager=False, hide_person=False):
+            self.calls, self.groups, self.deny, self.hide, self.url = [], groups, deny_manager, hide_person, "https://sn.example.mil"
+
+        def get(self, path, params):
+            self.calls.append(params["sysparm_fields"])
+            if self.deny and "manager" in params["sysparm_fields"]:
+                raise rd.SnError("GET %s: HTTP 403: ACL Exception: manager" % path)
+            v = lambda x: {"value": x, "display_value": x}                       # noqa: E731
+            want = params["sysparm_query"][8:].split(",")
+            out = []
+            for g in self.groups:
+                if g["sys_id"] not in want:
+                    continue
+                row = dict((k, v(g.get(k, ""))) for k in ("sys_id", "name", "parent", "active", "type"))
+                if "manager" in params["sysparm_fields"]:
+                    m = g.get("m") or {}
+                    row.update({"manager": v(m.get("id", "")), "manager.name": v("" if self.hide else m.get("name", "")),
+                                "manager.active": v(m.get("active", "true"))})
+                    if "manager.email" in params["sysparm_fields"]:       # only the fields asked, as ServiceNow
+                        row["manager.email"] = v("" if self.hide else m.get("email", ""))
+                out.append(row)
+            return {"result": out}
+
+    GROUPS = [{"sys_id": "g1", "name": "Ops - Windows", "parent": "g0", "active": "true", "m": {"id": "u1", "name": "Pat Lee", "email": "pat.lee@example.mil"}},
+              {"sys_id": "g2", "name": "Ops - Network", "parent": "g0", "active": "true", "m": {"id": "u2", "name": "Sam Ray", "email": "", "active": "true"}},
+              {"sys_id": "g3", "name": "Ops - Linux", "parent": "g0", "active": "true", "m": {"id": "u3", "name": "Kim Old", "email": "kim@example.mil",
+                                                                                               "active": "false"}},
+              {"sys_id": "g0", "name": "Ops", "parent": "", "active": "true", "m": {"id": "u9", "name": "Top Boss", "email": "boss@example.mil"}}]
+
+    def test_read_with_the_groups(self):
+        api = self.Api(self.GROUPS)
+        mgr = {}
+        tree, err = rd.read_group_tree(api, ["g1", "g2", "g3"], managers=mgr)
+        self.assertEqual((err, sorted(tree)), ("", ["g0", "g1", "g2", "g3"]))
+        self.assertEqual(len(api.calls), 2)                                        # the two levels, no call per group
+        self.assertTrue(all(c.endswith(",manager,manager.name,manager.active,manager.email") for c in api.calls), api.calls)
+        got, err = rd.manager_names(mgr, ["g1", "g2", "g3"], {"g1": "Ops - Windows", "g2": "Ops - Network", "g3": "Ops - Linux"})
+        self.assertEqual(err, "")
+        self.assertEqual(got, {"Ops - Windows": {"name": "Pat Lee", "email": "pat.lee@example.mil", "active": True},
+                               "Ops - Network": {"name": "Sam Ray", "email": "", "active": True},
+                               "Ops - Linux": {"name": "Kim Old", "email": "kim@example.mil", "active": False}})   # the parent's not asked
+        # without the managers: never a person's field
+        api = self.Api(self.GROUPS)
+        rd.read_group_tree(api, ["g1"])
+        self.assertTrue(all("manager" not in c for c in api.calls))
+        # 1.18.0: the name without the email - nobody's leads to email
+        api, mgr = self.Api(self.GROUPS), {}
+        rd.read_group_tree(api, ["g1"], managers=mgr, emails=False)
+        self.assertTrue(api.calls and all("manager.name" in c and "email" not in c for c in api.calls), api.calls)
+        got, err = rd.manager_names(mgr, ["g1"], {"g1": "Ops - Windows"})
+        self.assertEqual((got, err), ({"Ops - Windows": {"name": "Pat Lee", "email": "", "active": True}}, ""))
+
+    def test_not_readable(self):
+        api = self.Api(self.GROUPS, deny_manager=True)                            # the manager refused: the groups still read
+        mgr = {}
+        tree, err = rd.read_group_tree(api, ["g1"], managers=mgr)
+        self.assertEqual((err, sorted(tree)), ("", ["g0", "g1"]))
+        got, err = rd.manager_names(mgr, ["g1"], {"g1": "Ops - Windows"})
+        self.assertEqual(got, {})
+        self.assertIn("HTTP 403", err)
+        self.assertIn("the groups were read without them", err)
+        mgr = {}
+        rd.read_group_tree(self.Api(self.GROUPS, hide_person=True), ["g1"], managers=mgr)   # sys_user hidden: names empty
+        got, err = rd.manager_names(mgr, ["g1"], {"g1": "Ops - Windows"})
+        self.assertEqual(got, {})
+        self.assertIn("needs read on sys_user", err)
+
+    def model(self, managers=None, err="", **o):
+        r = dict(site()["r"], managers=managers if managers is not None else self.leads(), managers_error=err)
+        return F.servicenow_insights_model(r, None, site()["mask"], dict(OPTS, **o))
+
+    def leads(self):
+        teams = [p["key"] for p in site()["model"]["pages"] if p["level"] == "team"]
+        self.__class__.teams = teams
+        return {teams[0]: {"name": "Pat Lee", "email": "pat.lee@example.mil", "active": True},
+                teams[1]: {"name": "Kim Old", "email": "kim@example.mil", "active": False},
+                teams[2]: {"name": "Sam Ray", "email": "", "active": True}}
+
+    def test_on_the_page_and_email(self):
+        m = self.model()
+        t0, t1 = self.teams[0], self.teams[1]
+        h = P.servicenow_insights_page(m, t0, OPTS)
+        self.assertIn('<div class="sub lead">Group manager: <b>Pat Lee</b></div>', h)
+        self.assertLess(h.index("<h1>"), h.index("Group manager:"))
+        self.assertLess(h.index("Group manager:"), h.index("</header>"))              # near the title
+        self.assertIn("Group manager: <b>Kim Old (inactive in ServiceNow)</b>", P.servicenow_insights_page(m, t1, OPTS))
+        doc = F.servicenow_insights_doc(m, t0, OPTS)
+        self.assertTrue(doc["subtitle"].endswith(" · Group manager: Pat Lee"), doc["subtitle"])
+        nolead = [t for t in self.teams if t not in self.leads()][0]                # no manager: nothing
+        self.assertNotIn("Group manager", P.servicenow_insights_page(m, nolead, OPTS))
+        self.assertNotIn("Group manager", F.servicenow_insights_doc(m, nolead, OPTS)["subtitle"])
+        for k in [p["key"] for p in m["pages"] if p["level"] != "team"] + ["all"]:  # the sites' and directorates' pages: nothing
+            self.assertNotIn("Group manager", P.servicenow_insights_page(m, k, OPTS), k)
+        off = self.model(show_lead=False)
+        self.assertNotIn("Group manager", P.servicenow_insights_page(off, t0, OPTS))
+        self.assertNotIn("Group manager", F.servicenow_insights_doc(off, t0, OPTS)["subtitle"])
+
+    def test_split_and_map(self):
+        x = site(sites=True)
+        teams = [p["key"] for p in x["model"]["pages"] if p["level"] == "team"]
+        r = dict(x["r"], managers={teams[0]: {"name": "Pat Lee", "email": "p@example.mil", "active": True}})
+        m = F.servicenow_insights_model(r, None, x["mask"], dict(PARENTS_OPTS, split_label="BLUE", split_pattern="*"))
+        self.assertIn("Group manager: <b>Pat Lee</b>", P.servicenow_insights_page(m, teams[0], dict(PARENTS_OPTS, variant="in")))
+        omap = dict(OPTS, hierarchy_source="map", hierarchy_map={teams[0]: ["SITEA", "Ops"]})
+        m = F.servicenow_insights_model(r, None, x["mask"], omap)
+        tp = [p for p in m["pages"] if p["level"] == "team" and p["key"] == teams[0]]
+        self.assertTrue(tp)
+        self.assertIn("Group manager: <b>Pat Lee</b>", P.servicenow_insights_page(m, teams[0], omap))
+        for p in m["pages"]:
+            if p["level"] != "team":
+                self.assertNotIn("Group manager", P.servicenow_insights_page(m, p["key"], omap), p["key"])
+
+    def test_not_read_said_once(self):
+        m = self.model(managers={}, err="GET api/now/table/sys_user_group: HTTP 403: ACL - the groups were read without them")
+        nr = [x for x in F.not_read_lines(m) if "team leads" in x]
+        self.assertEqual(len(nr), 1)
+        self.assertIn("sys_user_group.manager (the team leads): GET", nr[0])
+        h = P.servicenow_insights_page(m, "all", dict(OPTS, not_read=F.not_read_lines(m)))
+        self.assertEqual(h.count("the team leads"), 1)
+        got = F.servicenow_insights_lead_mail(m, "all", {})
+        self.assertEqual(got["to"], {})
+        self.assertEqual(len(got["lines"]), 1)
+        self.assertIn("Team leads not emailed: the managers were not read", got["lines"][0])
+
+    def test_who_is_emailed(self):
+        m = self.model()
+        t = self.teams
+        self.assertEqual(F.servicenow_insights_lead_mail(m, [], {}), {"to": {}, "lines": []})       # the default: nobody
+        got = F.servicenow_insights_lead_mail(m, "all", {})
+        self.assertEqual(got["to"], {t[0]: ["pat.lee@example.mil"]})
+        self.assertIn("%s: not emailed - the manager Kim Old is inactive" % t[1], got["lines"])
+        self.assertIn("%s: not emailed - the manager Sam Ray has no email address" % t[2], got["lines"])
+        self.assertIn("%s: not emailed - no manager in ServiceNow" % t[3], got["lines"])
+        pat = t[0][:3].upper() + "*"                                               # a pattern, any case
+        got = F.servicenow_insights_lead_mail(m, [pat], {})
+        self.assertIn(t[0], got["to"])
+        self.assertEqual(F.servicenow_insights_lead_mail(m, [t[0].lower()], {})["to"], {t[0]: ["pat.lee@example.mil"]})
+        # named in both: servicenow_insights_team_email_to wins; one of its teams the pattern does not name: kept
+        got = F.servicenow_insights_lead_mail(m, [t[0], t[1]], {t[0]: ["other@example.mil"], t[4]: "x@example.mil"})
+        self.assertEqual(got["to"], {t[0]: ["other@example.mil"], t[4]: ["x@example.mil"]})
+        self.assertEqual(got["lines"], ["%s: not emailed - the manager Kim Old is inactive" % t[1]])
+        got = F.servicenow_insights_lead_mail(m, ["No such team*"], {})
+        self.assertEqual(got["lines"], ["Team leads: servicenow_insights_email_leads matches no team page (no such team*)"])
+        # the shown line off: the emails still go
+        self.assertEqual(F.servicenow_insights_lead_mail(self.model(show_lead=False), "all", {})["to"], {t[0]: ["pat.lee@example.mil"]})
+
+    def test_the_workbook_column(self):
+        """1.18.0: Manager on the Teams sheet, as the team page shows it; empty without one or with the line off. The site's
+        list of teams on the page has no Manager column: it does not fit at 1280 px (the line stays on each team's page)."""
+        x, m = site(), self.model()
+        t = self.teams
+        def sheet(mm, o):
+            wb = F.servicenow_insights_xlsx(mm, x["r"], None, x["mask"], dict(OPTS, **o))
+            sh = [w for w in wb if w["name"] == "Teams"][0]
+            i = sh["columns"].index("Manager")
+            self.assertEqual(sh["columns"][i - 1], "Team")
+            return dict((row[i - 1], row[i]) for row in sh["rows"])
+        got = sheet(m, {})
+        self.assertEqual(got[t[0]], "Pat Lee")
+        self.assertEqual(got[t[1]], "Kim Old (inactive in ServiceNow)")
+        self.assertEqual(got[t[3]], "")
+        self.assertEqual(set(sheet(self.model(show_lead=False), {"show_lead": False}).values()), {""})
+        self.assertNotIn("<th>Manager</th>", P.servicenow_insights_page(m, "all", OPTS))
+
+    def test_never_in_the_history(self):
+        import servicenow_insights_history as H
+        m = self.model()
+        rows = json.dumps(H.servicenow_insights_db_rows(m, OPTS))
+        for nm in ("Pat Lee", "Kim Old", "Sam Ray", "pat.lee@example.mil"):
+            self.assertNotIn(nm, rows)
+        self.assertNotIn("Pat Lee", json.dumps(F.servicenow_insights_artifact(m)))
+
+    def test_the_tasks(self):
+        with open(os.path.join(HERE, "..", "roles", "servicenow_insights", "tasks", "main.yml")) as f:
+            main = f.read()
+        self.assertIn("managers: \"{{ servicenow_insights_show_lead | bool or servicenow_insights_email_leads", main)
+        self.assertIn("manager_email: \"{{ servicenow_insights_email_leads | default([], true) | length > 0 }}\"", main)    # 1.18.0
+        self.assertEqual(main.count("_sni_leads.to[_sni_team] | default([])"), 3)  # both ways: the per-page loop and after pages.yml
+        self.assertNotIn("servicenow_insights_team_email_to[", main)
+        self.assertLess(main.index("servicenow_insights_lead_mail("), main.index("tasks_from: pages.yml"))
+
+
+class IsItWriting(unittest.TestCase):
+    """1.15.0: the report database's one line - written (read back) or why not - in the job and on the page; the check's lines."""
+
+    W = {"ok": True, "run_id": 41, "months": ["2026-10", "2026-11 (so far)"], "written": {"runs": 3, "nodes": 30, "figures": 4210},
+         "held": [{"source": "sn.example.mil", "period": "month", "runs": 13, "months": 13, "complete": 12, "first": "2025-11", "last": "2026-11", "newest": "x"},
+                  {"source": "sn.example.mil", "period": "6m", "runs": 25, "months": 13, "complete": 13, "first": "2025-11", "last": "2026-10", "newest": "x"},
+                  {"source": "other.example.mil", "period": "month", "runs": 4, "months": 4, "complete": 4, "first": "2024-01", "last": "2024-04", "newest": "x"}]}
+    BASE = {"on": True, "host": "db.example.mil", "port": 3309, "database": "site_reports", "check": False, "read": {"ok": True},
+            "source": "sn.example.mil", "not_read": ""}
+
+    def setUp(self):
+        import servicenow_insights_history as H
+        self.H = H
+
+    def test_written(self):
+        r = self.H.servicenow_insights_db_status(dict(self.BASE, write=self.W))
+        self.assertTrue(r["written"])
+        self.assertEqual(r["line"], "Report database db.example.mil:3309/site_reports: written - run 41, 2 months (2026-10, 2026-11 (so far)), "
+                                    "4,210 figures; the database now holds 38 runs, first month 2025-11, last month 2026-11")
+        self.assertNotIn("db.example.mil", r["page"])                               # the page: without the host
+        self.assertIn("The database holds 38 runs of this instance, months 2025-11 to 2026-11.", r["page"])
+
+    def test_why_not(self):
+        S = self.H.servicenow_insights_db_status
+        self.assertEqual(S(dict(self.BASE, on=False))["line"], "Report database db.example.mil:3309/site_reports: NOT written - servicenow_insights_db is false")
+        self.assertEqual(S(dict(self.BASE, host=""))["line"], "Report database: NOT written - no Report database credential on the job template")
+        self.assertEqual(S(dict(self.BASE, check=True, write={"skipped": True}))["line"].split(" - ", 1)[1], "Check mode")
+        self.assertEqual(S(dict(self.BASE, read={"ok": False, "error": "Can't connect (MySQL error 2003)"}, write={"skipped": True}))["line"].split(" - ", 1)[1],
+                         "not reached or refused: Can't connect (MySQL error 2003)")
+        self.assertEqual(S(dict(self.BASE, write={"ok": False, "error": "INSERT command denied"}))["line"].split(" - ", 1)[1], "refused: INSERT command denied")
+        self.assertEqual(S(dict(self.BASE, not_read="ServiceNow was not read"))["page"], "Not written this run: ServiceNow was not read.")
+
+    def test_on_the_page(self):
+        m = site()["model"]
+        r = self.H.servicenow_insights_db_status(dict(self.BASE, write=self.W))
+        h = P.servicenow_insights_page(m, "all", dict(OPTS, db=r))
+        self.assertIn('<p class="dbline"><b>Report database.</b> Written this run: run 41', h)
+        self.assertLess(h.index('id="method"'), h.index("Report database.</b>"))  # under How this was made
+        no = self.H.servicenow_insights_db_status(dict(self.BASE, host=""))
+        self.assertIn('<div class="callout"><b>Report database.</b> Not written this run: no Report database credential', P.servicenow_insights_page(m, "all", dict(OPTS, db=no)))
+        self.assertNotIn("Report database.</b>", P.servicenow_insights_page(m, "all", OPTS))
+
+    def test_the_check(self):
+        L = self.H.servicenow_insights_db_check_lines
+        res = {"ok": True, "version": "8.4.3", "tls": "none", "account": {"name": "report_reader@%", "can_write": False}, "schema_version": 1,
+               "objects": {"present": ["a"] * 12, "missing": []}, "held": self.W["held"][:1]}
+        got = L(res, "db.example.mil:3309/site_reports")
+        self.assertEqual(got[0], "Report database db.example.mil:3309/site_reports: reached - MySQL 8.4.3, TLS none, as report_reader@% (reads only)")
+        self.assertEqual(got[1], "Tables and views: all 12 there, schema version 1")
+        self.assertEqual(got[2], "Held: sn.example.mil, period month - 13 runs, 13 months (12 complete), 2025-11 to 2026-11, newest written x")
+        got = L(dict(res, objects={"present": [], "missing": ["insights_run"]}, held=[]), "h")
+        self.assertEqual(got[1:], ["Tables and views: 0 there, missing insights_run", "Held: nothing yet - no run has been written"])
+        self.assertEqual(L({"ok": False, "error": "Access denied"}, "h"), ["Report database h: NOT reached - Access denied"])
+
 
 if __name__ == "__main__":
     unittest.main()

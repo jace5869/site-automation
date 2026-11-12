@@ -9,6 +9,7 @@ __metaclass__ = type
 
 import bisect
 import datetime
+import hashlib
 import functools
 import fnmatch
 import json
@@ -201,7 +202,7 @@ def business_hours(a, b, spec, tz):
 
 def _target_entry(it, o):
     """The ticket's entry in servicenow_insights_sla_targets (by table, then priority, "*" for the rest; a catalog item's
-    own in servicenow_insights_sla_items): a number (resolution hours), {response, resolution}, None (no SLO: none set on
+    own in servicenow_insights_sla_items): a number (resolution hours), {response, resolution}, None (no SLA: none set on
     purpose) - or NO_TARGET (the table or priority not there: ServiceNow's Made SLA counts)."""
     items = (o or {}).get("sla_items") or {}
     if it.get("table") == "sc_req_item" and it.get("cat_item") in items:
@@ -218,7 +219,7 @@ def _none(v):
 
 
 def sla_target(it, o):
-    """Your resolution target for a ticket, in hours - or None (none set: ServiceNow's Made SLA counts, or no SLO)."""
+    """Your resolution target for a ticket, in hours - or None (none set: ServiceNow's Made SLA counts, or no SLA)."""
     v = _target_entry(it, o)
     if v is NO_TARGET or _none(v):
         return None
@@ -563,10 +564,12 @@ def _in(dt, a, b):
     return dt is not None and a is not None and b is not None and a <= dt < b
 
 
-def servicenow_insights_descriptions(r, mask=None, opts=None):
+def servicenow_insights_descriptions(r, mask=None, opts=None, state=None):
     """The incidents' descriptions ACT groups: one per key (the most frequent first, at most act_max_descriptions), with
-    how many incidents have it and their most common category. -> [{id, key, text (masked), count, category}]."""
+    how many incidents have it and their most common category. -> [{id, key, text (masked), count, category}]. state
+    (1.17.0): the keys it already places (the ACT cache) are not asked again."""
     o = opts or {}
+    placed = (state or {}).get("classes") or {}
     since, until, prev = _window(r)
     agg = {}
     for it in (r or {}).get("items") or []:
@@ -581,7 +584,7 @@ def servicenow_insights_descriptions(r, mask=None, opts=None):
         a["count"] += 1
         cat = category_issue(it)
         a["cats"][cat] = a["cats"].get(cat, 0) + 1
-    rows = sorted(agg.values(), key=lambda a: (-a["count"], a["key"]))[:int(_o(o, "act_max_descriptions", 2000))]
+    rows = sorted([a for a in agg.values() if a["key"] not in placed], key=lambda a: (-a["count"], a["key"]))[:int(_o(o, "act_max_descriptions", 2000))]
     out = []
     for i, a in enumerate(rows):
         out.append({"id": "D%d" % (i + 1), "key": a["key"], "text": apply_mask(a["first"], mask)[:200], "count": a["count"],
@@ -679,9 +682,10 @@ def servicenow_insights_classify_task(opts=None):
     ] + (["", str(o["extra"])] if o.get("extra") else []))
 
 
-def servicenow_insights_classify_merge(state, raw, batch, opts=None, ran=True, reason="", model=""):
+def servicenow_insights_classify_merge(state, raw, batch, opts=None, ran=True, reason="", model="", mask=None):
     """One batch's answer into the state: its new issues (up to act_max_issues; past that, the closest ... Other), each
-    description's issue. A batch not answered leaves its descriptions to their category."""
+    description's issue. A batch not answered leaves its descriptions to their category. An issue's name as the ACT
+    cache keeps it (1.17.0, act_label_for_store: masked), so a run with the cache shows the same."""
     o = opts or {}
     st = json.loads(json.dumps(state or servicenow_insights_state()))
     st["asked"] = int(st.get("asked") or 0) + 1
@@ -698,7 +702,7 @@ def servicenow_insights_classify_merge(state, raw, batch, opts=None, ran=True, r
     for x in obj.get("new_issues") or obj.get("issues") or []:
         if not isinstance(x, dict):
             continue
-        n = _clean(x.get("name"), 80)
+        n = act_label_for_store(_clean(x.get("name"), 80), mask)
         if not n or _norm(n) in names or len(st["issues"]) >= cap:
             continue
         st["issues"].append({"name": n, "about": _clean(x.get("about"), 200),
@@ -710,7 +714,7 @@ def servicenow_insights_classify_merge(state, raw, batch, opts=None, ran=True, r
         if not isinstance(x, dict):
             continue
         key = by_id.get(str(x.get("id") or "").strip())
-        n = _clean(x.get("issue"), 80)
+        n = act_label_for_store(_clean(x.get("issue"), 80), mask)
         if not key or not n:
             continue
         hit = names.get(_norm(n))
@@ -734,6 +738,82 @@ def _assign(r, state, mask, opts=None):
         n = classes.get(desc_key(it.get("short_description"), mask)) if classes else None
         out[it["sys_id"]] = n or category_issue(it)
     return out
+
+
+# ---- the ACT cache (1.17.0): each description's issue kept in the report database, asked again only when new --------
+
+def act_key_hash(key):
+    """A description's key (desc_key) as the database holds it: its SHA-256, never the words."""
+    return hashlib.sha256(str(key or "").encode("utf-8")).hexdigest()
+
+
+def act_label_for_store(name, mask=None):
+    """The one text the report database holds (1.17.0): ACT's short name for an issue - masked as the page masks (the
+    people, hosts and addresses this run knows), then what the name itself holds (an email or IP address, a phone number, a
+    host name), the placeholders as their kind ([person], [host] ...), at most 80 characters. Every stored label goes
+    through here."""
+    t = PLACEHOLDER.sub(lambda m: "[%s]" % m.group(1).lower(), apply_mask(name, mask))
+    found = {}
+    _scan(t, found, KEEP_WORDS)
+    for real in sorted(found, key=len, reverse=True):
+        t = t.replace(real, "[%s]" % found[real].lower())
+    return " ".join(t.split())[:80]
+
+
+def servicenow_insights_act_cache_key(opts=None, provider="", model=""):
+    """What the cache is good for: the provider, the model and the grouping prompt (its hash) - another of any of them,
+    and every description is asked again."""
+    task = servicenow_insights_classify_task(opts)
+    return "%s|%s|%s" % (str(provider or "").strip(), str(model or "").strip(), hashlib.sha256(task.encode("utf-8")).hexdigest()[:12])
+
+
+def servicenow_insights_act_cached(state, r, mask, cached, opts=None):
+    """The state with what the ACT cache holds (site_insights_db act_load: {issues: [{no, label, kind, self_service}],
+    classes: {key hash: no}}): its issues first ("about" not kept), and each of this run's description keys it
+    places. -> state with cache_nos {issue name: no} and cached (keys placed from the cache)."""
+    st = json.loads(json.dumps(state or servicenow_insights_state()))
+    c = cached if isinstance(cached, dict) else {}
+    by_no = {}
+    for x in c.get("issues") or []:
+        n = _clean(x.get("label"), 80)
+        if n and _norm(n) not in set(_norm(i["name"]) for i in st["issues"]):
+            st["issues"].append({"name": n, "about": "", "kind": "request" if x.get("kind") == "request" else "incident",
+                                 "self_service": bool(x.get("self_service"))})
+        if n:
+            by_no[int(x.get("no") or 0)] = n
+    st["cache_nos"] = dict((v, k) for k, v in by_no.items())
+    classes, hit = c.get("classes") or {}, 0
+    if classes:
+        since, until, prev = _window(r)
+        for it in (r or {}).get("items") or []:
+            if it.get("table") != "incident" or not _in(_t(it.get("opened_at")), prev or since, until):
+                continue
+            k = desc_key(it.get("short_description"), mask)
+            if k and k not in st["classes"]:
+                no = classes.get(act_key_hash(k))
+                if no is not None and int(no) in by_no:
+                    st["classes"][k] = by_no[int(no)]
+                    hit += 1
+    st["cached"] = hit
+    return st
+
+
+def servicenow_insights_act_cache_rows(state, mask=None):
+    """What the ACT cache keeps after this run (site_insights_db act_save): {issues: [{no, label, kind, self_service}],
+    classes: [[key hash, no]]} - an issue keeps its number; a new one takes the next. Never a description, a note or a
+    fix: the keys as hashes, the issues by ACT's short name (act_label_for_store)."""
+    st = state or {}
+    nos = dict(st.get("cache_nos") or {})
+    nxt = max(list(nos.values()) + [0]) + 1
+    issues = []
+    for x in st.get("issues") or []:
+        if x["name"] not in nos:
+            nos[x["name"]] = nxt
+            nxt += 1
+        issues.append({"no": nos[x["name"]], "label": act_label_for_store(x["name"], mask), "kind": x.get("kind") or "incident",
+                       "self_service": bool(x.get("self_service"))})
+    classes = [[act_key_hash(k), nos[n]] for k, n in sorted((st.get("classes") or {}).items()) if n in nos]
+    return {"issues": issues, "classes": classes}
 
 
 # ---- fixes: what each top issue's tickets say was done --------------------------------------------------------
@@ -859,6 +939,7 @@ def servicenow_insights_fix_task(opts=None):
         "- support: for each step, how many of the notes show it (0 when you added it);",
         "- source: \"tickets\" when the notes show every step, \"mixed\" when you had to fill gaps, \"suggested\" when the notes say "
         "too little and the steps are your likely fix (they will be marked: not verified);",
+        "- about: one short sentence on what the issue is, as a manager reads it (no ticket numbers, hosts or people);",
         "- why: one sentence on where the steps come from and how much the notes agree;",
         "- disagree: true when the notes show clearly different fixes for the same issue (the fix is not known);",
         "- tickets: how many tickets the steps worked on, as the close notes and work notes show (0 when they do not say);",
@@ -874,7 +955,7 @@ def servicenow_insights_fix_task(opts=None):
         "",
         "End your answer with exactly one JSON object between a line %s and a line %s, nothing else between them:" % (MARK_BEGIN, MARK_END),
         MARK_BEGIN,
-        '{"items": [{"id": "I1", "steps": ["...", "..."], "support": [12, 3], "source": "tickets", "why": "...", "disagree": false, '
+        '{"items": [{"id": "I1", "steps": ["...", "..."], "support": [12, 3], "source": "tickets", "about": "...", "why": "...", "disagree": false, '
         '"tickets": 14, "workaround": null, "kb": {"title": "...", "symptoms": "...", "cause": "...", "steps": ["..."], "tickets": 14}}]}',
         MARK_END,
     ] + (["", str(o["extra"])] if o.get("extra") else []))
@@ -927,6 +1008,7 @@ def servicenow_insights_fix_merge(state, raw, batch, opts=None, ran=True, reason
         wa = x.get("workaround")
         wa = _clean(wa, 300) if wa and str(wa).strip().lower() not in ("null", "none", "false") else ""
         st["fixes"][names[str(x["id"])]] = {"steps": steps, "support": support, "source": src, "why": _clean(x.get("why"), 400),
+                                            "about": _clean(x.get("about"), 200),
                                             "disagree": str(x.get("disagree")).strip().lower() in ("true", "1", "yes"), "kb": kb,
                                             "tickets": _int(x.get("tickets")), "workaround": wa, "read": read[str(x["id"])]}
     return st
@@ -1235,8 +1317,8 @@ def custom_rows(items, since, until, groups, opts=None, base=None, tz=None, spec
     """The Custom view's data (1.8.0): one compact row per incident and requested item open at the window's start or after
     - columns, so 20,000 tickets stay small - from which the page works out the figures for any choice of groups: g the
     group's index in groups (-1: none), t 0 incident / 1 requested item, p the priority, o / d opened / done in seconds from
-    the window's start (d null: open), s made_sla (the resolution SLO) 1 / 0 / -1; and the 1.7.0 fields where the tickets
-    have them: resp (the response SLO) and noslo 1 / 0 / -1, hops (reassignment_count; incidents), hold (on hold now), r7
+    the window's start (d null: open), s made_sla (the resolution SLA) 1 / 0 / -1; and the 1.7.0 fields where the tickets
+    have them: resp (the response SLA) and noslo 1 / 0 / -1, hops (reassignment_count; incidents), hold (on hold now), r7
     (reopened within 7 days), out (the outcome's index in outcomes; -1 not resolved), risk (1 at risk, 2 breached).
     1.10.0: from base on (the window before's start, for the periods' compare), and 1.9.0's where the tickets have them:
     tis (the time in each state, tenths of hours: new, progress, hold, resolved; null not measured), ob (the opened day's
@@ -1307,6 +1389,7 @@ def custom_rows(items, since, until, groups, opts=None, base=None, tz=None, spec
             bdo[od] = _bd_ord(od, set(cal["days"]), cal["hol"]) - cal["base"]
         cols["ob"].append(bdo[od])
     unable = set(str(u).lower() for u in name_list(o.get("unable_outcomes") or ["Known Error", "No Resolution Provided"]))
+    plan = period_plan(since, until, base, tz, o)
     return {"groups": list(groups), "n": len(flow), "until": int((until - since).total_seconds()), "cols": cols,
             "hop_limit": int(_o(o, "hop_limit", 3)), "outcomes": names, "unable": [i for i, n_ in enumerate(names) if n_.lower() in unable],
             "calendar": {"d0": cal["d0"], "mid": cal["mid"], "bo": cal["bo"],
@@ -1314,7 +1397,7 @@ def custom_rows(items, since, until, groups, opts=None, base=None, tz=None, spec
             "periods": [dict(p, a=int((p["a"] - since).total_seconds()), b=int((p["b"] - since).total_seconds()),
                              ca=int((p["ca"] - since).total_seconds()) if p["ca"] else None,
                              cb=int((p["cb"] - since).total_seconds()) if p["cb"] else None)
-                        for p in period_bounds(since, until, base, tz, o)]}
+                        for p in plan[0]], "left": plan[1]}
 
 
 def custom_presets(hier, groups, split=None, opts=None):
@@ -1372,8 +1455,8 @@ def custom_figures(data, sel, period=None):
             sla_ok += c["s"][i]
     out = {"incidents": inc, "requests": req, "resolved": res, "backlog": [bl, bl0], "median_h": _r1(_median(hrs)),
            "sla": _r1(_pct(sla_ok, sla_n))}
-    # the 1.7.0 figures, where the rows carry them - as scope_model: the response SLO met of what was done in the period
-    # (no SLO left out), done with no SLO, incidents open now over the hop limit (and the share of those resolved), on hold
+    # the 1.7.0 figures, where the rows carry them - as scope_model: the response SLA met of what was done in the period
+    # (no SLA left out), done with no SLA, incidents open now over the hop limit (and the share of those resolved), on hold
     # now, unable to resolve and first-contact resolution of the incidents resolved
     rs, ns, hop, hres, hold, una, fcr = [0, 0], 0, 0, 0, 0, 0, 0
     lim, unable = int(data.get("hop_limit", 3)), set(data.get("unable") or [])
@@ -1434,9 +1517,21 @@ def custom_figures(data, sel, period=None):
     return out
 
 
-PERIODS = ("all", "this_month", "1m", "2m", "2w", "1w")
-PERIOD_LABELS = {"all": "The window", "this_month": "This month", "1m": "Last month", "2m": "Last 2 months", "2w": "Last 2 weeks",
-                 "1w": "Last week"}
+PERIODS = ("all", "this_month", "1m", "2m", "3m", "6m", "9m", "12m", "1w", "2w", "4w")     # the default (1.16.0)
+PERIOD_LABELS = {"all": "The window", "this_month": "This month"}
+PERIOD_MAX = {"m": 12, "w": 8}
+
+
+def period_name(nm):
+    """'all', 'this_month', Nm (1 to 12 months) or Nw (1 to 8 weeks) -> (kind '' / 'm' / 'w', N, label) - else ValueError."""
+    if nm in PERIOD_LABELS:
+        return "", 0, PERIOD_LABELS[nm]
+    m = re.match(r"^(\d{1,2})([mw])$", nm)
+    if not m or not 1 <= int(m.group(1)) <= PERIOD_MAX[m.group(2)]:
+        raise ValueError("servicenow_insights_periods: %s is not a period - all, this_month, 1m to 12m (calendar months) or 1w to 8w "
+                         "(weeks)" % nm)
+    k, unit = int(m.group(1)), "month" if m.group(2) == "m" else "week"
+    return m.group(2), k, ("Last %s" % unit) if k == 1 else ("Last %d %ss" % (k, unit))
 MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")
 
 
@@ -1466,13 +1561,20 @@ def period_title(a, b, tz):
 
 
 def period_bounds(since, until, prev, tz, opts=None):
-    """The Custom view's periods (1.10.0): calendar months and Mon-Sun weeks, not rolling days. -> [{name, label, title,
-    a, b, ca, cb, ctitle}] as datetimes; ca / cb None when the period before is not in the data (prev: where the rows
-    start). A period that does not fit the window is left out.
+    """The Custom view's periods - the periods alone (period_plan)."""
+    return period_plan(since, until, prev, tz, opts)[0]
+
+
+def period_plan(since, until, prev, tz, opts=None):
+    """The Custom view's periods (1.10.0; any Nm and Nw since 1.16.0): calendar months and Mon-Sun weeks, not rolling
+    days. -> ([{name, label, kind, n, title, a, b, ca, cb, ctitle}] as datetimes, [{name, why}] left out). prev: where the
+    rows start. all and this_month: ca / cb None when the period before is not in the rows.
       all         the window, against the window before
       this_month  the report end's month so far, against the same days of the month before
-      1m, 2m      the last whole calendar month(s) up to the report end, against the one(s) before
-      1w, 2w      the last whole weeks (servicenow_insights_week_start: mon), against the one(s) before"""
+      Nm          the last N whole calendar months (1 to 12) up to the report end, against the N before
+      Nw          the last N whole weeks (1 to 8; servicenow_insights_week_start: mon), against the N before
+    Nm and Nw need their own length and the length before it in the rows - never a button with partial figures. One
+    that does not fit is left out: why 'window' (longer than the window) or 'before' (the period before not in the rows)."""
     o = opts or {}
     names = [str(x).strip().lower() for x in name_list(o.get("periods") or list(PERIODS))]
     wk = str(o.get("week_start") or "mon").strip().lower()[:3]
@@ -1482,37 +1584,64 @@ def period_bounds(since, until, prev, tz, opts=None):
     end = until.astimezone(tz)
     last = (until - datetime.timedelta(seconds=1)).astimezone(tz).date()
     at_mid = end.time() == datetime.time(0)
-    out = []
+    out, left = [], []
     for nm in names:
-        if nm not in PERIODS:
-            raise ValueError("servicenow_insights_periods: %s is not one of %s" % (nm, ", ".join(PERIODS)))
+        kind, k, label = period_name(nm)
         if nm == "all":
             a, b, ca, cb = since, until, prev, since
         elif nm == "this_month":
             a, b = _midnight(_month(last), tz), until
             ca = _midnight(_month(last, -1), tz)
             cb = min((ca.replace(tzinfo=None) + (end.replace(tzinfo=None) - a.replace(tzinfo=None))).replace(tzinfo=tz), a)
-        elif nm in ("1m", "2m"):
-            k = int(nm[0])
+        elif kind == "m":
             bd = end.date() if at_mid and end.day == 1 else _month(last)
             b = _midnight(bd, tz)
             a, ca, cb = _midnight(_month(bd, -k), tz), _midnight(_month(bd, -2 * k), tz), _midnight(_month(bd, -k), tz)
         else:
-            k = int(nm[0])
             d = end.date()
             x = d - datetime.timedelta(days=(d.weekday() - ws) % 7)
             b = _midnight(x, tz)
             a, ca, cb = _midnight(x - datetime.timedelta(days=7 * k), tz), _midnight(x - datetime.timedelta(days=14 * k), tz), \
                 _midnight(x - datetime.timedelta(days=7 * k), tz)
+        if any(x["name"] == nm for x in out + left):
+            continue
         if a < since or b > until or b <= a:
+            if kind:
+                left.append({"name": nm, "why": "window"})
             continue
         if ca is None or ca < prev or cb <= ca:
+            if kind:
+                left.append({"name": nm, "why": "before"})
+                continue
             ca = cb = None
-        out.append({"name": nm, "label": PERIOD_LABELS[nm], "a": a, "b": b, "ca": ca, "cb": cb, "title": period_title(a, b, tz),
+        out.append({"name": nm, "label": label, "kind": kind, "n": k, "a": a, "b": b, "ca": ca, "cb": cb, "title": period_title(a, b, tz),
                     "ctitle": period_title(ca, cb, tz) if ca else ""})
     # a report that ends with its month: this month is last month - one button
     lm = [(p["a"], p["b"]) for p in out if p["name"] == "1m"]
-    return [p for p in out if not (p["name"] == "this_month" and (p["a"], p["b"]) in lm)]
+    return [p for p in out if not (p["name"] == "this_month" and (p["a"], p["b"]) in lm)], left
+
+
+def periods_left_line(left, why_before=""):
+    """The muted line under the period buttons (1.16.0): what was left out and why - '9 and 12 months need a longer window:
+    servicenow_insights_months.' why_before: what keeps the period before out of the rows."""
+    def names(xs):
+        out = []
+        for unit, kind in (("month", "m"), ("week", "w")):
+            ns = [int(x["name"][:-1]) for x in xs if x["name"].endswith(kind)]
+            if ns:
+                ns = sorted(set(ns))
+                out.append("%s %s%s" % (" and ".join([", ".join(str(n) for n in ns[:-1]), str(ns[-1])]) if len(ns) > 1 else str(ns[0]),
+                                        unit, "" if ns == [1] else "s"))
+        return " and ".join(out)
+    parts = []
+    w = [x for x in left or [] if x["why"] == "window"]
+    b = [x for x in left or [] if x["why"] == "before"]
+    if w:
+        parts.append("%s need%s a longer window: servicenow_insights_months." % (names(w), "s" if names(w) in ("1 month", "1 week") else ""))
+    if b:
+        parts.append("%s need%s the period before as well: %s." % (names(b), "s" if names(b) in ("1 month", "1 week") else "",
+                                                                    why_before or "the window before is not in this page"))
+    return " ".join(parts)
 
 
 def _bd_ord(d, days, hol):
@@ -1625,6 +1754,38 @@ def _count(d, k, n=1):
     d[k] = d.get(k, 0) + n
 
 
+def ticket_prefixes(setting):
+    """servicenow_insights_ticket_prefixes (1.30.0) -> ({PREFIX: table}, the entries refused): a prefix of letters only (any
+    case), a table name of a-z, 0-9 and _ only."""
+    good, bad = {}, []
+    for k, v in sorted((setting or {}).items(), key=lambda kv: str(kv[0])) if isinstance(setting, dict) else []:
+        if re.match(r"^[A-Za-z]+$", str(k)) and re.match(r"^[a-z0-9_]+$", str(v or "")):
+            good[str(k).upper()] = str(v)
+        else:
+            bad.append("%s: %s" % (k, v))
+    if setting and not isinstance(setting, dict):
+        bad.append(str(setting))
+    return good, bad
+
+
+def servicenow_insights_prefix_errors(setting):
+    """The servicenow_insights_ticket_prefixes entries refused (1.30.0): [] = all good."""
+    return ticket_prefixes(setting)[1]
+
+
+def prefix_map(items, opts=None):
+    """{prefix: table} for the ticket links (1.30.0): learned from the records read (an instance may number its incidents
+    other than INC), then servicenow_insights_ticket_prefixes for a prefix no record read carried."""
+    out = {}
+    for it in items or []:
+        m = re.match(r"^([A-Z]+)\d+$", str(it.get("number") or ""))
+        if m and it.get("table"):
+            out.setdefault(m.group(1), it["table"])
+    for k, v in ticket_prefixes((opts or {}).get("ticket_prefixes"))[0].items():
+        out.setdefault(k, v)
+    return out
+
+
 def servicenow_insights_model(r, state=None, mask=None, opts=None):
     """Everything the report shows, for the site (scopes.all) and each team (scopes[team]) - see docs/SERVICENOW_INSIGHTS.md."""
     o = opts or {}
@@ -1663,6 +1824,7 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
     codes = [str(c).strip() for c in name_list(o.get("scrutiny_codes") or ["Duplicate", "Known Error", "No Resolution Provided"]) if str(c).strip()]
     review_code = str(o.get("review_code") or "No Resolution Provided").strip().lower()
     survey_rows = [x for x in r.get("survey") or [] if isinstance(x, (list, tuple)) and len(x) >= 4]
+    survey_plan = survey_questions(survey_rows, r.get("survey_questions") or {}, o, since, until)
     risk_pct = float(_o(o, "sla_risk_pct", 75))
     open_slas = (r.get("sla") or {}).get("open") or {}
     omap = dict((" ".join(str(k).split()).lower(), str(v)) for k, v in (o.get("outcome_map") or OUTCOME_MAP).items())
@@ -2037,7 +2199,9 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
                                "median_h": _r1(_median(hours.get(n, []))), "quality": q, "fix": fx, "tags": tags,
                                "cis": _top(ci.get(n, {}), 3), "examples": [it.get("number") for it in newest],
                                "main_group": main, "main_share": round(_pct(g.get(main, 0), x["cur"]) or 0) if main else 0,
-                               "weekly": wkly.get(n, [0] * len(weeks)), "kind": d.get("kind") or "incident", "about": d.get("about") or ""})
+                               "weekly": wkly.get(n, [0] * len(weeks)), "kind": d.get("kind") or "incident",
+                               # 1.17.0: the fix question's sentence first - the same with the ACT cache (which keeps no "about")
+                               "about": (fx or {}).get("about") or d.get("about") or ""})
         misfiled = [r_ for r_ in issue_rows if r_["kind"] == "request"]
         if not act_ran:
             misfiled = []
@@ -2374,20 +2538,11 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
                                      "median_h": _r1(_median(v["h"])) if person_metrics else None} for k_, v in wl.items()],
                                    key=lambda e: (-e["open"], -e["resolved"], e["person"]))[:20]}
 
-        # E. the surveys: the average answer, per month, per team
+        # E. the surveys (1.16.0): each question on its own scale, by survey - never one average across scales; the
+        # headline (a survey's overall on one scale, or one question) for the tile, the email and the history
         mine_ids = set(x["sys_id"] for x in inc)
-        sv_now = [v for k_, mtr, v, t_ in survey_rows if k_ in mine_ids and _in(_t(t_), since, until)]
-        sv_prev = [v for k_, mtr, v, t_ in survey_rows if k_ in mine_ids and _in(_t(t_), prev, since)]
-        sv_mon, sv_grp = {}, {}
         grp_of = dict((x["sys_id"], x.get("group") or "(no group)") for x in inc)
-        for k_, mtr, v, t_ in survey_rows:
-            if k_ in mine_ids and _in(_t(t_), since, until):
-                sv_mon.setdefault(_t(t_).astimezone(tz).strftime("%Y-%m"), []).append(v)
-                sv_grp.setdefault(grp_of.get(k_), []).append(v)
-        survey = {"n": len(sv_now), "avg": _r2(_avg(sv_now)), "prev": _r2(_avg(sv_prev)), "prev_n": len(sv_prev),
-                  "months": [[k_, _r2(_avg(v)), len(v)] for k_, v in sorted(sv_mon.items())],
-                  "by_group": sorted([{"group": g, "avg": _r2(_avg(v)), "n": len(v)} for g, v in sv_grp.items()], key=lambda e: (-e["n"], e["group"]))[:12],
-                  "metrics": sorted(set(mtr for k_, mtr, v, t_ in survey_rows if k_ in mine_ids))}
+        survey = survey_scope(survey_plan, survey_rows, mine_ids, grp_of, since, until, prev, tz, o)
 
         lvl = level or ("all" if allscope else "team")
         sc = {"key": key or ("all" if allscope else team), "name": name or ("All assignment groups" if allscope else team),
@@ -2431,11 +2586,13 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
         return names, False
 
     def senders(team, roster):
-        """Who opens the team's tickets (Opened by, on the tickets assigned to it): [{name, opened, from, member, end_user}]."""
-        cnt, own = {}, {}
+        """Who opens the team's tickets (Opened by, on the tickets assigned to it): ([{name, opened, from, member, end_user}],
+        {tickets, people}) - the first 8, and of how many (1.18.0: the tickets in the period, the people who opened them)."""
+        cnt, own, all_n = {}, {}, 0
         for x in inc_all + by_table.get("sc_req_item", []):
             if (x.get("group") or "") != team or not _in(_t(x.get("opened_at")), since, until):
                 continue
+            all_n += 1
             who = str(x.get("opened_by") or "").strip()
             if not who:
                 continue
@@ -2448,7 +2605,7 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
             end_user = (not member) and own.get(who, 0) * 2 > c and who not in work
             rows.append({"name": who, "opened": c, "from": team if member else ("" if end_user else home.get(who, "")),
                          "member": member, "end_user": end_user})
-        return rows
+        return rows, {"tickets": all_n, "people": len(cnt)}
 
     def stars(team):
         weight = float(_o(o, "bare_weight", 0.5))
@@ -2510,11 +2667,12 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
         tr = sum(p["resolved"] for p in rows)
         team_q = [round(sum(p["quality"][k] * p["resolved"] for p in rows) / tr) if tr else 0 for k in range(3)]
         reps = [p for p in rows if p["repeat"] is not None]
+        op_rows, op_of = senders(team, roster)
         return {"people": rows[:25], "awards": awards,
                 "total": {"resolved": tr + sum(outside.values()), "quality": team_q, "ctask": sum(p["ctask"] for p in rows),
                           "repeat": _r1(sum(p["repeat"] for p in reps) / len(reps)) if reps else None},
                 "members_known": known, "members": len(roster), "outside": {"count": sum(outside.values()), "names": _top(outside, 3)},
-                "openers": senders(team, roster), "more": max(0, len(rows) - 25), "ctasks": ct_read}
+                "openers": op_rows, "openers_of": op_of, "more": max(0, len(rows) - 25), "ctasks": ct_read}
 
     # sites, directorates and teams (0.97.0): every group with tickets has its place; a site or directorate with tickets
     # has a page, a team when it is one of the teams (team_min, teams_max, or named)
@@ -2663,7 +2821,11 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
                 data = custom_rows(items, since, until, gl, o, since, tz, bh_spec)
                 data["no_compare"] = True
             custom = data if data["n"] <= mx else {"skipped": data["n"], "max": mx}
-    model = {"window": win, "url": r.get("url") or "", "teams": teams, "scopes": scopes, "reopen_used": reopen_used,
+            if custom.get("cols"):          # 1.16.0: one muted line under the period buttons - what was left out, and why
+                custom["left_line"] = periods_left_line(custom.get("left"), (
+                    "the window before is over servicenow_insights_custom_view_max_rows (%s)" % "{:,}".format(mx)) if custom.get("no_compare") else (
+                    "servicenow_insights_compare is false" if not win.get("compare") else "the window before was not read whole this run"))
+    model = {"window": win, "url": r.get("url") or "", "prefixes": prefix_map(r.get("items"), o), "teams": teams, "scopes": scopes, "reopen_used": reopen_used,
              "tree": tree, "pages": pages, "scope_ids": ids, "hier": hier, "org": org, "custom": custom,
              "org_bad": org_map(o.get("hierarchy_map"))[1] if org_is_map(o) else [],
              "org_bucket": (" ".join(str(o.get("unmapped_bucket") or UNKNOWN).split()) or UNKNOWN) if org_is_map(o) else "",
@@ -2676,12 +2838,13 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
              "reopened_n": reopened, "incidents_n": len(inc_win), "short": short_names(group_names),
              "members_read": members_known, "members_error": str(r.get("members_error") or ""),
              "tables": r.get("tables") or [], "groups": r.get("groups") or [], "audit_error": r.get("audit_error") or "",
+             "cut": cut_lines(r), "compare_cut": compare_cut_line(r.get("compare_cut")), "surveys_read": survey_read_lines(survey_plan, o),
              "audit_read": bool(audit) or not r.get("audit_error"), "lookup_note": r.get("lookup_note") or "",
              "audit_source": r.get("audit_source") or ("sys_audit" if audit else ""), "audit_note": r.get("audit_note") or "",
              "act": {"on": bool(o.get("act")), "ran": act_ran, "asked": int(state.get("asked") or 0), "answered": int(state.get("answered") or 0),
                      "errors": list(state.get("errors") or [])[:20], "model": state.get("model") or "", "provider": state.get("provider") or "",
                      "issues": len(state.get("issues") or []), "fixes": len(state.get("fixes") or {}), "reason": str(o.get("act_reason") or ""),
-                     "work_notes": dict(state.get("work_notes") or {})},
+                     "work_notes": dict(state.get("work_notes") or {}), "cached": int(state.get("cached") or 0)},
              "mask": dict(mask.get("counts") or {}), "summaries_by": "rules",
              "slo": {"source": sla_src, "asked": sla_r.get("asked") or "", "note": sla_r.get("note") or "", "response_measured": resp_measured,
                      "open_cut": list(sla_r.get("open_cut") or []),
@@ -2693,6 +2856,13 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
                          "survey_read": "survey_error" in r and not r.get("survey_error"), "hop_limit": hop_limit}}
     for k, s in scopes.items():
         s["summary"] = rule_summary(s, model, o)
+    # 1.15.0: the team lead - the group's manager in ServiceNow (sys_user_group.manager), on the team's page and email only
+    model["leads"] = dict((g, dict(m)) for g, m in (r.get("managers") or {}).items() if isinstance(m, dict) and m.get("name"))
+    model["leads_error"] = str(r.get("managers_error") or "")
+    if o.get("show_lead", True) not in (False, "false", "False", 0):
+        for k, s in scopes.items():
+            if s.get("level") == "team" and model["leads"].get(s.get("team")):
+                s["lead"] = lead_label(model["leads"][s["team"]])
     # the split (0.97.0): every page's figures again for the groups that match servicenow_insights_split_pattern (the group
     # or a parent team below the root) and for the rest - worked out here, so the page only switches between them
     label, pat = str(o.get("split_label") or "").strip(), str(o.get("split_pattern") or "").strip().lower()
@@ -2717,6 +2887,49 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
     return model
 
 
+def lead_label(m):
+    """A team lead as the page and the email show it: the name, and (inactive) when ServiceNow has the account inactive."""
+    return m["name"] + ("" if m.get("active", True) else " (inactive in ServiceNow)")
+
+
+def _lead_patterns(want):
+    """servicenow_insights_email_leads: a list of group names or patterns (fnmatch, any case), or "all"."""
+    if isinstance(want, str):
+        want = [] if not want.strip() else (["*"] if want.strip().lower() == "all" else [x for x in re.split(r"[,\n]", want)])
+    pats = [" ".join(str(x).split()).lower() for x in want or [] if str(x or "").strip()]
+    return ["*" if x == "all" else x for x in pats]
+
+
+def servicenow_insights_lead_mail(model, email_leads=None, team_email_to=None):
+    """Who gets each team's own email (1.15.0) -> {to: {team: [addresses]}, lines: [the job output's lines]}. A team that
+    servicenow_insights_email_leads names (a name, a pattern, or "all") goes to its manager in ServiceNow - not when the group
+    has no manager, the manager is inactive or has no email (a line each); servicenow_insights_team_email_to wins for a team
+    it names. Only the teams with a page."""
+    m = model or {}
+    teams = [p["key"] for p in m.get("pages") or [] if p.get("level") == "team"]
+    pats, leads, to, lines = _lead_patterns(email_leads), m.get("leads") or {}, {}, []
+    fixed = dict((k, v) for k, v in (team_email_to or {}).items() if v)
+    picked = [t for t in teams if any(fnmatch.fnmatchcase(t.lower(), x) for x in pats)] if pats else []
+    if picked and m.get("leads_error"):
+        lines.append("Team leads not emailed: the managers were not read (%s)" % m["leads_error"])
+        picked = []
+    for t in picked:
+        if t in fixed:
+            continue
+        ld = leads.get(t)
+        why = ("no manager in ServiceNow" if not ld else "the manager %s is inactive" % ld["name"] if not ld.get("active", True)
+               else "the manager %s has no email address" % ld["name"] if not ld.get("email") else "")
+        if why:
+            lines.append("%s: not emailed - %s" % (t, why))
+        else:
+            to[t] = [ld["email"]]
+    for t, v in fixed.items():
+        to[t] = [v] if isinstance(v, str) else list(v)
+    if pats and not picked and not m.get("leads_error"):
+        lines.append("Team leads: servicenow_insights_email_leads matches no team page (%s)" % ", ".join(pats))
+    return {"to": to, "lines": lines}
+
+
 def masked_excerpt(text, mask, n=160):
     """A close note's start for leadership's list: the names, phone numbers, addresses and hosts the mask knows replaced by
     [person], [phone] ... - never the mask's own placeholders."""
@@ -2724,6 +2937,170 @@ def masked_excerpt(text, mask, n=160):
     t = EMAIL.sub("[email]", PHONE.sub("[phone]", t))
     t = " ".join(t.split())
     return t if len(t) <= n else t[:n - 1].rsplit(" ", 1)[0] + "…"
+
+
+def survey_grade(avg, scale, n, opts=None):
+    """1.16.0: Good / Fair / Low by the share of the scale, (avg - min) / (max - min): at or above grades.good (0.8) Good, at
+    or above grades.fair (0.6) Fair, else Low. '' with fewer than survey_min_answers (5) answers or no scale known."""
+    o = opts or {}
+    if avg is None or not scale or scale[1] is None or scale[0] is None or scale[1] <= scale[0]:
+        return ""
+    if int(n or 0) < int(_o(o, "survey_min_answers", 5)):
+        return ""
+    g = o.get("survey_grades") or {}
+    good, fair = float(g.get("good", 0.8)), float(g.get("fair", 0.6))
+    share = (float(avg) - scale[0]) / float(scale[1] - scale[0])
+    share = round(share, 9)                                      # 0.8 exactly is Good, not lost to a float's last digit
+    return "Good" if share >= good else ("Fair" if share >= fair else "Low")
+
+
+def _scale_label(sc):
+    if not sc:
+        return ""
+    f = lambda x: ("%d" % x) if float(x) == int(x) else ("%g" % x)    # noqa: E731
+    return "%s to %s%s" % (f(sc[0]), f(sc[1]), ", as observed" if sc[2] == "observed" else "")
+
+
+def survey_questions(rows, meta, opts, since, until):
+    """1.16.0: every question read -> {questions: {key: {...}}, surveys: [...], headline: {...}}. A question is a rating
+    when ServiceNow says so (datatype scale, numericscale or template, its max 10 or less), or - its datatype not read -
+    when every answer is a whole number from 0 to 10 with 3 or more values; a question named in
+    servicenow_insights_survey_metrics always. Its scale: ServiceNow's min and max (a template's values), else the answers'
+    (as observed). A survey retired in ServiceNow keeps its own block, never blended with the active one."""
+    o = opts or {}
+    named = set(str(x).strip().lower() for x in name_list(o.get("survey_metrics") or []) if str(x).strip())
+    qs = {}
+    for k_, key, v, t_ in rows:
+        q = qs.setdefault(key, {"vals": [], "n": 0})
+        q["vals"].append(v)
+        if _in(_t(t_), since, until):
+            q["n"] += 1
+    out = {}
+    for key, q in qs.items():
+        m = meta.get(key) or {}
+        name = m.get("name") or str(key)
+        dt = str(m.get("datatype") or "").lower()
+        lo, hi = min(q["vals"]), max(q["vals"])
+        rmin, rmax = m.get("min"), m.get("max")
+        read = rmin is not None and rmax is not None and rmax > rmin
+        observed = [lo, hi, "observed"] if hi > lo else None
+        scale = [rmin, rmax, "read"] if read else observed
+        if name.lower() in named:
+            rating, why = True, "named"
+        elif dt:
+            top = rmax if read else hi
+            rating = dt in ("scale", "numericscale", "template") and top is not None and top <= 10
+            why = "datatype %s%s" % (dt, "" if rating else (", up to %g" % top if top is not None and top > 10 else ""))
+        else:
+            whole = all(float(x) == int(x) for x in q["vals"])
+            rating = whole and lo >= 0 and hi <= 10 and len(set(q["vals"])) >= 3
+            why = "the answers"
+        out[key] = {"key": key, "name": name, "survey": m.get("survey") or "", "state": m.get("state") or "", "datatype": dt,
+                    "n": q["n"], "lo": lo, "hi": hi, "scale": scale, "rating": rating, "why": why}
+    surveys = {}
+    for q in sorted(out.values(), key=lambda q: (_nat(q["survey"]), _nat(q["name"]))):
+        sv = surveys.setdefault((q["survey"], q["state"]), {"survey": q["survey"], "state": q["state"], "keys": [], "other": []})
+        (sv["keys"] if q["rating"] else sv["other"]).append(q["key"])
+    blocks = []
+    for sv in surveys.values():
+        if not sv["keys"]:
+            continue
+        scales = set(tuple(out[k]["scale"][:2]) for k in sv["keys"] if out[k]["scale"])
+        sv["one_scale"] = len(scales) == 1 and all(out[k]["scale"] for k in sv["keys"])
+        sv["scale"] = out[sv["keys"][0]]["scale"] if sv["one_scale"] else None
+        main = max(sv["keys"], key=lambda k: (out[k]["n"], -sv["keys"].index(k)))
+        sv["main"] = sv["keys"] if sv["one_scale"] else [main]
+        sv["main_label"] = (sv["survey"] or "Survey") if sv["one_scale"] and len(sv["keys"]) > 1 else out[main]["name"]
+        sv["n"] = sum(out[k]["n"] for k in sv["keys"])
+        blocks.append(sv)
+    blocks.sort(key=lambda b: (b["state"] == "retired", -b["n"], _nat(b["survey"])))
+    head = None
+    typed = " ".join(str(o.get("survey_headline") or "").split())        # said back as typed (1.17.0); matched in any case
+    want = typed.lower()
+    if want:
+        for b in blocks:
+            if b["survey"].lower() == want:
+                head = {"keys": b["main"], "label": b["main_label"] if b["one_scale"] else "%s · %s" % (b["survey"] or "Survey", b["main_label"]),
+                        "scale": b["scale"] if b["one_scale"] else out[b["main"][0]]["scale"], "survey": b["survey"], "state": b["state"]}
+                break
+        if head is None:
+            cand = sorted([q for q in out.values() if q["rating"] and q["name"].lower() == want],
+                          key=lambda q: (q["state"] == "retired", -q["n"]))
+            if cand:
+                q = cand[0]
+                head = {"keys": [q["key"]], "label": ("%s · %s" % (q["survey"], q["name"])) if q["survey"] else q["name"], "scale": q["scale"],
+                        "survey": q["survey"], "state": q["state"]}
+    if head is None and blocks:
+        b = blocks[0]                       # the active survey with the most answers (a retired one only when none is active)
+        head = {"keys": b["main"], "label": b["main_label"] if b["one_scale"] and len(b["keys"]) > 1 else
+                ("%s · %s" % (b["survey"], b["main_label"]) if b["survey"] else b["main_label"]),
+                "scale": b["scale"] if b["one_scale"] else out[b["main"][0]]["scale"], "survey": b["survey"], "state": b["state"]}
+    other = [out[k] for sv in surveys.values() for k in sv["other"]]
+    return {"questions": out, "blocks": blocks, "headline": head, "other": other,
+            "headline_missing": typed if want and head is not None and want not in (head["label"].lower(), (head["survey"] or "").lower())
+            and not any(out[k]["name"].lower() == want for k in head["keys"]) else ""}
+
+
+def survey_read_lines(plan, opts=None):
+    """1.16.0: How this was made - every question read: survey (its state) - question - answers in the window - scale; the
+    ones not shown as a rating said so, with how to show one."""
+    out = []
+    qs = plan.get("questions") or {}
+    for q in sorted(qs.values(), key=lambda q: (q["state"] == "retired", _nat(q["survey"]), not q["rating"], _nat(q["name"]))):
+        who = "%s%s" % (q["survey"] or "(survey not read)", " (retired)" if q["state"] == "retired" else "")
+        if q["rating"]:
+            out.append("%s - %s - %d answers - %s" % (who, q["name"], q["n"], _scale_label(q["scale"]) if q["scale"] else "scale not known: no grade"))
+        else:
+            out.append("%s - %s - %d answers - read, not shown as a rating (%s; values %g to %g): name it in "
+                       "servicenow_insights_survey_metrics to show it" % (who, q["name"], q["n"], q["why"], q["lo"], q["hi"]))
+    h = plan.get("headline")
+    if h:
+        out.append("The headline (the tile, the email, the history): %s, %s%s" % (h["label"], _scale_label(h["scale"]) if h["scale"] else "scale not known",
+                                                                              " - servicenow_insights_survey_headline" if (opts or {}).get("survey_headline") and not plan.get("headline_missing") else ""))
+    if plan.get("headline_missing"):
+        out.append("servicenow_insights_survey_headline: %s is not a survey or rating question read - the default instead" % plan["headline_missing"])
+    return out
+
+
+def survey_scope(plan, rows, mine_ids, grp_of, since, until, prev, tz, opts):
+    """1.16.0: a scope's satisfaction - the headline's figures (tile, email, history), each survey's block (its questions,
+    by month and by group, each graded on its own scale), the questions read that are not ratings."""
+    o = opts or {}
+    qs = plan["questions"]
+    mine = [x for x in rows if x[0] in mine_ids]
+
+    def fig(keys, scale):
+        ks = set(keys)
+        now = [v for k_, q, v, t_ in mine if q in ks and _in(_t(t_), since, until)]
+        before = [v for k_, q, v, t_ in mine if q in ks and _in(_t(t_), prev, since)]
+        mon, grp = {}, {}
+        for k_, q, v, t_ in mine:
+            if q in ks and _in(_t(t_), since, until):
+                mon.setdefault(_t(t_).astimezone(tz).strftime("%Y-%m"), []).append(v)
+                grp.setdefault(grp_of.get(k_), []).append(v)
+        avg = _r2(_avg(now))
+        return {"n": len(now), "avg": avg, "prev": _r2(_avg(before)), "prev_n": len(before), "grade": survey_grade(avg, scale, len(now), o),
+                "months": [[k_, _r2(_avg(v)), len(v), survey_grade(_avg(v), scale, len(v), o)] for k_, v in sorted(mon.items())],
+                "by_group": sorted([{"group": g, "avg": _r2(_avg(v)), "n": len(v), "grade": survey_grade(_avg(v), scale, len(v), o)}
+                                    for g, v in grp.items()], key=lambda e: (-e["n"], e["group"]))[:12]}
+    h = plan.get("headline")
+    out = dict(fig(h["keys"], h["scale"]) if h else fig([], None), label=h["label"] if h else "", scale=h["scale"] if h else None,
+               survey=h["survey"] if h else "", state=h["state"] if h else "", blocks=[], not_rating=[],
+               questions_n=sum(len(b["keys"]) for b in plan["blocks"]),
+               metrics=sorted(set(qs[q]["name"] for k_, q, v, t_ in mine if q in qs)))
+    for b in plan["blocks"]:
+        msc = b["scale"] if b["one_scale"] else qs[b["main"][0]]["scale"]
+        main = fig(b["main"], msc)
+        if not main["n"] and not any(x[1] in b["keys"] for x in mine):
+            continue
+        out["blocks"].append({"survey": b["survey"], "state": b["state"], "scale": b["scale"], "one_scale": b["one_scale"],
+                              "main_label": b["main_label"], "main": main, "main_scale": msc, "overall": len(b["keys"]) > 1 and b["one_scale"],
+                              "questions": [dict(fig([k], qs[k]["scale"]), name=qs[k]["name"], scale=qs[k]["scale"]) for k in b["keys"]]})
+    for q in plan["other"]:
+        n_ = sum(1 for k_, k, v, t_ in mine if k == q["key"] and _in(_t(t_), since, until))
+        if n_:
+            out["not_rating"].append({"survey": q["survey"], "name": q["name"], "n": n_, "lo": q["lo"], "hi": q["hi"], "why": q["why"]})
+    return out
 
 
 def _avg(vals):
@@ -2930,6 +3307,12 @@ def servicenow_insights_doc(model, key="all", opts=None):
                ] + ([{"label": "Response met", "value": pf(s["resp"][0])}, {"label": "Resolution met", "value": pf(s["sla"][0])}] if two else
                     [{"label": "SLAs met", "value": pf(s["sla"][0])}]) + [
                {"label": "Close notes that say what was done", "value": "%d%%" % s["quality"][0]}]
+    sv = s.get("survey") or {}
+    if sv.get("n") and sv.get("avg") is not None:          # 1.16.0: the headline survey on its scale, graded - the word always there
+        top = (sv.get("scale") or [None, None])[1]
+        summary.append({"label": "Satisfaction", "value": ("%.2f of %g" % (sv["avg"], top)) if top is not None else "%.2f" % sv["avg"],
+                        "status": {"Good": "ok", "Fair": "warning", "Low": "critical"}.get(sv.get("grade"), ""),
+                        "note": " · ".join(x for x in (sv.get("grade") or "", sv.get("label") or "", "%d answers" % sv["n"]) if x)})
     secs = [{"title": "What the period says" + (" (written by ACT)" if s.get("summary_by") == "act" else ""), "lines": s["summary"] or ["(nothing to say)"]}]
     # 1.7.0: what to act on first - the counts, and the first of each list
     hp, hd, cd, cl = s.get("hops") or {}, s.get("hold") or {}, s.get("codes") or {}, s.get("closure") or {}
@@ -2959,12 +3342,15 @@ def servicenow_insights_doc(model, key="all", opts=None):
     if side:
         kind = (s.get("side") or {}).get("kind") or "Teams"
         ctc = s.get("ctasks") is not None                 # change_task read (1.2.0): its two columns
-        secs.append({"title": "%s side by side" % kind, "columns": [kind[:-1] if kind != "Directorates" else "Directorate", "Incidents", "Open now", "Was", "Over %d days" % int(_o(o, "old_days", 30)),
-                                                               "Median fix"] + (["Response met", "Resolution met"] if two else ["SLA met"]) + ["Bare notes"] +
-                                (["Change tasks closed", "Change tasks open"] if ctc else []) + ["Top issue"],
-                     "rows": [[t.get("label") or t["team"], t["incidents"], t["backlog"][0], t["backlog"][1], t["old"], fmt_hours(t["median_h"])] +
+        # 1.18.0: Open now with what it was, and the change tasks closed / open, each in one column - the table fits an
+        # email 800 px wide (it was 12 columns)
+        secs.append({"title": "%s side by side" % kind, "columns": [kind[:-1] if kind != "Directorates" else "Directorate", "Incidents", "Open now (was)",
+                                                               "Over %d days" % int(_o(o, "old_days", 30)), "Median fix"] +
+                                (["Response met", "Resolution met"] if two else ["SLA met"]) + ["Bare notes"] +
+                                (["Change tasks closed / open"] if ctc else []) + ["Top issue"],
+                     "rows": [[t.get("label") or t["team"], t["incidents"], "{:,} ({:,})".format(t["backlog"][0], t["backlog"][1]), t["old"], fmt_hours(t["median_h"])] +
                               ([pf(t.get("resp"))] if two else []) + [pf(t["sla"]), "%d%%" % t["quality"][2]] +
-                              ([t.get("ct_closed") or 0, t.get("ct_open") or 0] if ctc else []) +
+                              (["{:,} / {:,}".format(t.get("ct_closed") or 0, t.get("ct_open") or 0)] if ctc else []) +
                               [("%s (%d)" % (t["top"][0], t["top"][1])) if t["top"][0] else ""] for t in side],
                      "row_status": ["warning" if t["backlog"][0] > t["backlog"][1] * 1.05 and t["backlog"][0] - t["backlog"][1] >= 5 else ""
                                     for t in side]})
@@ -2974,11 +3360,11 @@ def servicenow_insights_doc(model, key="all", opts=None):
         secs.append({"title": "Top incident issues", "columns": ["#", "Rank", "Issue", "Incidents", "Was", "Median fix", "Bare notes", "Fix"],
                      "rows": [[i["rank"], i["mv"]["text"], i["name"], i["count"], i["prev"], fmt_hours(i["median_h"]), "%d%%" % i["quality"][2],
                                src.get(i["fix"]["source"], "")] for i in s["issues"][:n]]})
-    # 1.7.0: by priority with your SLOs, the priority set by hand, the categories
+    # 1.7.0: by priority with your SLAs, the priority set by hand, the categories
     if s["prio"]:
         secs.append({"title": "By priority", "text": "Met or missed: %s." % {"task_sla": "ServiceNow's SLAs (task_sla)", "targets": "your targets, " + (
                          slo.get("business_hours") or "calendar hours"), "made_sla": "ServiceNow's Made SLA"}.get(slo.get("source") or "targets", ""),
-                     "columns": ["Priority", "Incidents", "Median to resolve"] + (["Response met", "Resolution met"] if two else ["SLA met"]) + ["No SLO"],
+                     "columns": ["Priority", "Incidents", "Median to resolve"] + (["Response met", "Resolution met"] if two else ["SLA met"]) + ["No SLA"],
                      "rows": [[p["label"], p["count"], fmt_hours(p["median_h"])] + ([pf(p.get("resp"))] if two else []) + [pf(p["sla"]), p.get("no_slo") or 0]
                               for p in s["prio"]]})
     mx = s.get("matrix") or {}
@@ -3057,10 +3443,14 @@ def servicenow_insights_doc(model, key="all", opts=None):
     nr = not_read_lines(model)
     if nr:
         secs.append({"title": "Not read", "status": "warning", "lines": nr})
+    if model.get("cut"):                    # 1.16.0: first, before every section
+        secs.insert(0, {"title": "Records cut: some figures are incomplete", "status": "critical", "lines": list(model["cut"])})
+    elif model.get("compare_cut"):
+        secs.insert(0, {"title": "No compare this run", "status": "warning", "lines": [model["compare_cut"]]})
     secs.append({"title": "Read", "lines": ["%s: %d record(s) kept of %d read" % (t["table"], t["kept"], t["read"]) for t in model.get("tables") or [] if not t.get("error")] +
                  ["Window: %s, compared with %s (%s)" % (win.get("label"), win.get("prev_label") or "nothing", win.get("time_zone") or "UTC")] +
                  ["ACT: %s" % act_line(model)]})
-    return {"title": title, "subtitle": "%s - %s" % (s["name"], win.get("label") or ""), "status": status, "summary": summary, "sections": secs,
+    return {"title": title, "subtitle": "%s - %s%s" % (s["name"], win.get("label") or "", (" · Group manager: " + s["lead"]) if s.get("lead") else ""), "status": status, "summary": summary, "sections": secs,
             "footer": "ServiceNow %s" % (model.get("url") or "")}
 
 
@@ -3076,14 +3466,34 @@ def act_line(model):
         a.get("issues", 0), a.get("fixes", 0), ("; not answered: " + "; ".join(a["errors"][:3])) if a.get("errors") else "")
 
 
+def cut_lines(r):
+    """1.16.0: a table over servicenow_insights_max_records keeps its newest records. The window cut too (the read of its
+    older records capped as well): one line a table, for the top of every page and the email. The date is where the read
+    stopped: a ticket opened before it is missing from every month it counts in (resolved, open, ...)."""
+    out = []
+    for t in (r or {}).get("tables") or []:
+        if t.get("window_cut"):
+            tot, n_ = t.get("total"), "{:,}".format(int(t.get("read") or 0))
+            out.append("%s: only the newest %s read, back to %s%s. Figures in this report are incomplete: raise "
+                       "servicenow_insights_max_records." % (t["table"], ("%s of %s" % (n_, "{:,}".format(int(tot)))) if tot else n_,
+                                                             str(t.get("cut") or "")[:10], "" if tot else ", and there are more"))
+    return out
+
+
+def compare_cut_line(cc):
+    return ("The window before was cut (%s: more than servicenow_insights_max_records): no compare this run. The window's "
+            "figures are whole." % ", ".join(cc)) if cc else ""
+
+
 def not_read_lines(model):
     out = []
     for t in model.get("tables") or []:
         if t.get("error"):
             out.append("%s: %s%s" % (t["table"], t["error"], " - the change tasks are left out (their columns, Held up by, the workbook's sheet)"
                                      if t["table"] == "change_task" else ""))
-        elif t.get("more"):
-            out.append("%s: more than the first %d records - raise servicenow_insights_max_records, or shorten the window" % (t["table"], t["read"]))
+        elif t.get("more") and not t.get("window_cut"):
+            out.append("%s: more than servicenow_insights_max_records - the newest kept, the window before cut at %s: no compare" % (
+                t["table"], str(t.get("cut") or "")[:10]))
     for g in model.get("groups") or []:
         if g.get("found") is False:
             out.append("assignment group %s is not in ServiceNow" % g["name"])
@@ -3096,6 +3506,8 @@ def not_read_lines(model):
     if model.get("members_error"):
         out.append("sys_user_grmember (the teams' members): %s - each leaderboard lists everyone the team's tickets were assigned to or "
                    "resolved by instead" % model["members_error"])
+    if model.get("leads_error"):
+        out.append("sys_user_group.manager (the team leads): %s - no Group manager line, no lead emailed" % model["leads_error"])
     if model.get("group_tree_error"):
         out.append("sys_user_group (the groups' parents, for the sites and directorates): %s - placed by their names instead"
                    % model["group_tree_error"])
@@ -3150,7 +3562,7 @@ def servicenow_insights_xlsx(model, r=None, state=None, mask=None, opts=None):
                                                 "Resolved", "Hours to resolve", "Reassignments", "Reopened", "Made SLA", "SLA target (hours)", "Close code",
                                                 "Close note grade", "Close notes", "Caused by", "Problem",
                                                 # 1.7.0
-                                                "Response met", "No SLO", "SLAs", "Impact", "Urgency", "Priority by the matrix"],
+                                                "Response met", "No SLA", "SLAs", "Impact", "Urgency", "Priority by the matrix"],
                "rows": [[x.get("number"), x.get("short_description"), issues_of.get(x["sys_id"]) or category_issue(x), x.get("category"),
                          x.get("subcategory"), x.get("priority"), x.get("state"),
                          place(x.get("group"), "site"), place(x.get("group"), "dir"), place(x.get("group"), "by"),
@@ -3180,7 +3592,7 @@ def servicenow_insights_xlsx(model, r=None, state=None, mask=None, opts=None):
                              "" if c["official"] is None else ("yes" if c["official"] else "no")] for c in cats.get("rows") or []]})
     pr = s.get("prio") or []
     sheets.append({"name": "Priorities", "columns": ["Priority", "Incidents", "Median hours", "Response target (hours)", "Response met %",
-                                                     "Resolution target (hours)", "Resolution met %", "No SLO"],
+                                                     "Resolution target (hours)", "Resolution met %", "No SLA"],
                    "rows": [[p["label"], p["count"], p["median_h"], p.get("resp_target_h"), p.get("resp"), p.get("target_h"), p["sla"], p.get("no_slo")]
                             for p in pr]})
     sheets.append({"name": "Changes failed", "columns": ["Change", "Closed", "What", "Group", "Outcome", "Followed by"],
@@ -3221,10 +3633,14 @@ def servicenow_insights_xlsx(model, r=None, state=None, mask=None, opts=None):
                            "", "", "", "", "", "", ""])
     sheets.append({"name": "People", "columns": ["Team", "Person", "In the team", "Closed", "Of them change tasks", "Score", "Median hours", "Good notes %",
                                                  "Bare notes %", "Reopened %" if model.get("reopen_used") else "Came back %", "Opened"], "rows": people})
-    sheets.append({"name": "Teams", "columns": ["Site", "Directorate", "Team", "Incidents", "Open now", "Open at the start", "Over old days", "Median hours", "SLA met %",
-                                                "Bare notes %", "Change tasks closed", "Change tasks open", "Top issue"],
-                   "rows": [[place(t["team"], "site"), place(t["team"], "dir"), t["team"], t["incidents"], t["backlog"][0], t["backlog"][1], t["old"],
-                             t["median_h"], t["sla"], t["quality"][2], t.get("ct_closed"), t.get("ct_open"), t["top"][0]] for t in s.get("teams") or []]})
+    # Manager (1.18.0): the group's manager as its team page shows it (servicenow_insights_show_lead); empty without one
+    show = o.get("show_lead", True) not in (False, "false", "False", 0)
+    lead_of = lambda g: lead_label(model["leads"][g]) if show and (model.get("leads") or {}).get(g) else ""     # noqa: E731
+    sheets.append({"name": "Teams", "columns": ["Site", "Directorate", "Team", "Manager", "Incidents", "Open now", "Open at the start", "Over old days", "Median hours",
+                                                "SLA met %", "Bare notes %", "Change tasks closed", "Change tasks open", "Top issue"],
+                   "rows": [[place(t["team"], "site"), place(t["team"], "dir"), t["team"], lead_of(t["team"]), t["incidents"],
+                             t["backlog"][0], t["backlog"][1], t["old"], t["median_h"], t["sla"], t["quality"][2], t.get("ct_closed"), t.get("ct_open"), t["top"][0]]
+                            for t in s.get("teams") or []]})
     sc = model.get("scopes") or {}
     lv = [(k, v) for k, v in sc.items() if v.get("level") in ("site", "dir")]
     if lv:
@@ -3262,8 +3678,8 @@ def servicenow_insights_artifact(model):
 
 
 TIMING = (("ServiceNow reads", (("start", "read"),)), ("ACT", (("read", "act_a"), ("model", "act_b"))),
-          ("The report worked out", (("act_a", "model"), ("act_b", "finish"))), ("Trends (the report database)", (("finish", "db"),)),
-          ("Pages and email", (("db", "pages"),)), ("The report database written", (("pages", "end"),)))
+          ("The report worked out", (("act_a", "model"), ("act_b", "finish"))), ("The report database (read and written)", (("finish", "db"),)),
+          ("Pages and email", (("db", "pages"),)))
 
 
 def servicenow_insights_timing(t):
@@ -3333,7 +3749,10 @@ def servicenow_insights_variant(model, variant=""):
 class FilterModule(object):
     def filters(self):
         return {"servicenow_insights_mask": servicenow_insights_mask, "servicenow_insights_descriptions": servicenow_insights_descriptions,
+                "servicenow_insights_act_cache_key": servicenow_insights_act_cache_key, "servicenow_insights_act_cached": servicenow_insights_act_cached,
+                "servicenow_insights_act_cache_rows": servicenow_insights_act_cache_rows,
                 "servicenow_insights_batches": servicenow_insights_batches, "servicenow_insights_state": servicenow_insights_state,
+                "servicenow_insights_lead_mail": servicenow_insights_lead_mail,
                 "servicenow_insights_classify_evidence": servicenow_insights_classify_evidence,
                 "servicenow_insights_classify_task": servicenow_insights_classify_task,
                 "servicenow_insights_classify_merge": servicenow_insights_classify_merge,
@@ -3341,9 +3760,10 @@ class FilterModule(object):
             "servicenow_insights_fix_ids": servicenow_insights_fix_ids,
             "servicenow_insights_fix_work_notes": servicenow_insights_fix_work_notes,
             "servicenow_insights_work_notes_state": servicenow_insights_work_notes_state,
-            "servicenow_insights_mask_more": servicenow_insights_mask_more, "servicenow_insights_fix_evidence": servicenow_insights_fix_evidence,
+            "servicenow_insights_mask_more": servicenow_insights_mask_more, "servicenow_insights_cut_lines": cut_lines, "servicenow_insights_fix_evidence": servicenow_insights_fix_evidence,
                 "servicenow_insights_fix_task": servicenow_insights_fix_task, "servicenow_insights_fix_merge": servicenow_insights_fix_merge,
                 "servicenow_insights_teams": servicenow_insights_teams, "servicenow_insights_model": servicenow_insights_model,
+                "servicenow_insights_prefix_errors": servicenow_insights_prefix_errors,
                 "servicenow_insights_summary_evidence": servicenow_insights_summary_evidence,
                 "servicenow_insights_summary_task": servicenow_insights_summary_task,
                 "servicenow_insights_summary_merge": servicenow_insights_summary_merge, "servicenow_insights_finish": servicenow_insights_finish,

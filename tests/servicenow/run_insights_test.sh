@@ -9,7 +9,7 @@
 # work notes (sys_journal_field, GET only, masked - what only they hold too), the page says what each fix was read from; the
 # work notes refused (403): said, the fixes from the close notes; off: not read. 1.2.0: the change tasks (change_task, GET
 # only) - the teams' columns, Held up by, the leaderboards' own column; refused (403): said, the rest whole, green.
-# 1.7.0: task_sla read (Response and Resolution met, No SLO, SLA at risk now, act on first, how incidents ended, the
+# 1.7.0: task_sla read (Response and Resolution met, No SLA, SLA at risk now, act on first, how incidents ended, the
 # categories, the surveys); task_sla refused: the targets in business hours, a response from the metric Assigned to, said.
 # 1.9.0: the time in each state (the state metric), the backlog's age and flow, quality and hot spots, after hours, workload.
 #   bash tests/servicenow/run_insights_test.sh            (ANSIBLE_PLAYBOOK=... to pick one)
@@ -115,10 +115,13 @@ check "the change tasks on the site's page: the teams' columns, Held up by, the 
 check "the site's page: every section, links to the teams, ticket links into ServiceNow" "$top/latest.html" \
     'ServiceNow ticket insights' 'id="teams"' 'id="keepingup"' 'id="severity"' 'id="issues"' 'id="problems"' 'id="handoffs"' \
     'id="requests"' 'id="changes"' 'id="notes"' 'id="allstars"' 'id="kb"' 'id="method"' 'href="ops/other/windows/latest.html"' 'Teams side by side' \
-    "http://127.0.0.1:$port/incident.do?sysparm_query=number=INC" 'grouped by their category' 'From the numbers' \
-    'Reopen not used here' 'Came back' 'Response met' 'Resolution met' 'No SLO' 'P4 Incident Response' 'Act on first' 'SLA at risk now'
-    'How incidents ended' 'Priority set by hand' 'id="categories"' 'id="satisfaction"' 'Time in each state' 'The numbers as a table'
+    "http://127.0.0.1:$port/nav_to.do?uri=incident.do%3Fsysparm_query%3Dnumber%3DINC" 'grouped by their category' 'From the numbers' \
+    'Reopen not used here' 'Came back' 'Response met' 'Resolution met' 'No SLA' 'P4 Incident Response' 'Act on first' 'SLA at risk now' \
+    'How incidents ended' 'Priority set by hand' 'id="categories"' 'id="satisfaction"' 'Time in each state' 'The numbers as a table' \
     'Backlog age and flow' 'Ping-pong' 'id="afterhours"' 'id="workload"' 'data-tab="p1"' 'No drafts: ACT (GenAI) writes them' '!cid:' '!<!--site-report-logo-->'
+# 1.16.0: the user's word is SLA - no page, email or job line says SLO (the pages' data blocks aside: keys, never shown)
+n=$(find "$top" -name '*.html' -exec sed 's#<script type="application/json"[^>]*>.*</script>##' {} + | cat - "$work/out.txt" "$work"/mail/*.eml 2>/dev/null | grep -ciwE 'slos?')
+[ "$n" = 0 ] && echo "ok   -   ... no page, email or job line says SLO" || { echo "FAIL - SLO said $n times"; fails=$((fails + 1)); }
 check "a team's page: that team, linked back to the site's" "$top/ops/other/windows/latest.html" \
     'Ops - Windows ·' '!id="teams"' 'href="../../../latest.html"' 'All-stars' 'Most closed' 2>/dev/null || \
 check "a team's page: that team, linked back to the site's" "$top/ops/other/windows/latest.html" 'href="../../../latest.html"' 'Most closed' '!id="teams"'
@@ -243,12 +246,12 @@ assert inc("siteb/latest.html") == inc("siteb/latest-blue.html") + inc("siteb/la
 PYJ
 keys=$("$py" -c "import json,sys; print(' '.join(sorted(r['key'] for r in json.load(open(sys.argv[1]))['reports'])))" "$work/site5/index.json")
 [ "$keys" = "servicenow-ticket-insights/latest.html" ] && echo "ok   -   ... one line on the index" || { echo "FAIL - the index: $keys"; fails=$((fails + 1)); }
-"$py" - "$work/log.jsonl" <<'PYJ' && echo "ok   -   ... sys_user_group read with GET only, no person's field" || { echo "FAIL - the groups' requests"; fails=$((fails + 1)); }
+"$py" - "$work/log.jsonl" <<'PYJ' && echo "ok   -   ... sys_user_group read with GET only, the team lead's name the only person's field (no email: no leads to mail)" || { echo "FAIL - the groups' requests"; fails=$((fails + 1)); }
 import json, sys
 rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
 g = [r for r in rows if r["path"].endswith("/sys_user_group") and r["query"].get("sysparm_query", "").startswith("sys_idIN")]
 assert g and all(r["method"] == "GET" for r in g)
-assert all(r["query"]["sysparm_fields"] == "sys_id,name,parent,active,type" for r in g), g[0]["query"]
+assert all(r["query"]["sysparm_fields"] == "sys_id,name,parent,active,type,manager,manager.name,manager.active" for r in g), g[0]["query"]
 PYJ
 run "  ... again with servicenow_insights_split_teams false: the teams' split pages gone, the rest kept" ok \
     "{$NOW, $NOACT, \"servicenow_insights_hierarchy_source\": \"parents\", \"report_web_dest\": \"$work/site5\", \"servicenow_insights_team_min\": 5,
@@ -307,7 +310,7 @@ INS_ENV="SN_HOST=" run "no credential" fail "{$NOW}" 'it sets SN_HOST, SN_USERNA
 run "months 0: said" fail "{$NOW, $NOACT, \"servicenow_insights_months\": 0}" 'servicenow_insights_months must be 1 or more'
 run "the last 60 days instead (servicenow_insights_days)" ok "{$NOW, $NOACT, \"servicenow_insights_days\": 60}" 'Window: 2026-09-02 to 2026-10-31'
 
-# ---- 1.7.0: your SLOs - task_sla refused: your targets in business hours instead, said; the surveys refused -------------
+# ---- 1.7.0: your SLAs - task_sla refused: your targets in business hours instead, said; the surveys refused -------------
 mock SNMOCK_NO_TABLES=task_sla,asmt_metric_result
 mkdir -p "$work/site8"
 run "task_sla refused: the targets in business hours (a response from the metric Assigned to), said; the surveys refused, said" ok \
@@ -371,6 +374,156 @@ a, b = got.values()
 assert a == b, [(k, a[k][-300:], b[k][-300:]) for k in a if a[k] != b[k]]
 EOPY
 
+# ---- 1.16.0: the surveys - each on its own scale, by survey (one retired), graded; questions that are no rating left out ---
+"$py" "$here/insights_seed.py" "$work/seed-sv.json" 0.5 --surveys >/dev/null
+mock SNMOCK_SEED="$work/seed-sv.json"
+mkdir -p "$work/sv1" "$work/sv2" "$work/sv3"
+rm -f "$work"/mail/*.eml
+run "two surveys, the same question names, one retired, different scales: each its own, graded, never blended" ok \
+    "{$NOW, $NOACT, $MAIL, \"report_email_to\": [\"ops@example.mil\"], \"report_web_dest\": \"$work/sv1\"}" 'Satisfaction'
+p="$work/sv1/servicenow-ticket-insights/latest.html"
+check "  ... the page: the active survey first, the retired one marked, every average with its scale and grade" "$p" \
+    '<h3 class="subh">Service desk survey</h3>' '<h3 class="subh">Legacy survey <span class="chip">retired</span></h3>' \
+    'Retired in ServiceNow: its answers are history, never blended with the active survey.' ' of 4' ' of 5' \
+    '<b>The surveys read</b>' 'Legacy survey (retired) - Q5 - ' 'read, not shown as a rating (datatype numericscale, up to 100;' \
+    'Service desk survey - Contacted again - ' 'name it in servicenow_insights_survey_metrics to show it'
+"$py" - "$work/seed-sv.json" "$p" "$work"/mail/*.eml <<'PYS' && echo "ok   -   ... the plain mean of every answer nowhere: not on the page, not in the email" || { echo "FAIL - the mixed mean shown"; fails=$((fails + 1)); }
+import email, json, re, sys
+from email import policy
+recs = json.load(open(sys.argv[1]))
+vals = []
+for r in recs:
+    if r.get("_table") == "asmt_metric_result" and "2026-05-01" <= r["instance.taken_on"] < "2026-11-01":
+        try:
+            vals.append(float(r["actual_value"]))
+        except ValueError:
+            pass
+mixed = "%.2f" % (sum(vals) / len(vals))
+page = open(sys.argv[2]).read()
+sat = re.search(r'<section class="card" id="satisfaction">.*?</section>', page, re.S).group(0)
+assert ">" + mixed + " " not in sat and ">" + mixed + "<" not in sat, mixed
+m = email.message_from_bytes(open(sys.argv[3], "rb").read(), policy=policy.default)
+body = m.get_body(("plain",)).get_content()
+assert re.search(r"Satisfaction\W+\d\.\d\d of \d", body), body[:1500]
+assert mixed + " " not in body.split("Satisfaction", 1)[1][:200]
+PYS
+run "servicenow_insights_survey_types: one survey only, by name" ok \
+    "{$NOW, $NOACT, \"servicenow_insights_survey_types\": [\"Legacy survey\"], \"report_web_dest\": \"$work/sv2\"}"
+check "  ... only the Legacy survey's answers read" "$work/sv2/servicenow-ticket-insights/latest.html" \
+    '<h3 class="subh">Legacy survey <span class="chip">retired</span></h3>' '!<h3 class="subh">Service desk survey</h3>'
+"$py" - "$work/log.jsonl" <<'PYQ' && echo "ok   -   ... asked by survey (metric.metric_type.nameIN), GET only" || { echo "FAIL - the survey's query"; fails=$((fails + 1)); }
+import json, sys
+rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
+a = [r for r in rows if r["path"].endswith("/asmt_metric_result")]
+assert a and all(r["method"] == "GET" for r in a)
+assert a[-1]["query"]["sysparm_query"].endswith("^metric.metric_type.nameINLegacy survey"), a[-1]["query"]
+PYQ
+run "servicenow_insights_survey_metrics [Q1]: both surveys' Q1, each in its own survey's block" ok \
+    "{$NOW, $NOACT, \"servicenow_insights_survey_metrics\": [\"Q1\"], \"report_web_dest\": \"$work/sv3\"}"
+check "  ... the two Q1 apart" "$work/sv3/servicenow-ticket-insights/latest.html" \
+    '<h3 class="subh">Service desk survey</h3>' '<h3 class="subh">Legacy survey <span class="chip">retired</span></h3>' \
+    'Service desk survey - Q1 - ' 'Legacy survey (retired) - Q1 - ' '!- Q2 - '
+mock
+
+# ---- 1.16.0: more records than servicenow_insights_max_records - the newest kept; the window before cut: no compare; the
+# window cut: on every page, first in the email, the job's warning ----------------------------------------------------------
+mock
+mkdir -p "$work/cut1" "$work/cut2"
+run "max_records 1000: the newest kept, the window whole - the window before cut: no compare, said" ok \
+    "{$NOW, $NOACT, \"servicenow_insights_max_records\": 1000, \"report_web_dest\": \"$work/cut1\"}" \
+    'The window before was cut (incident' 'no compare this run' '!WARNING - records cut, some' '!Records cut'
+"$py" - "$work/log.jsonl" <<'PYJ' && echo "ok   -   ... newest first (ORDERBYDESCopened_at), the window's older records read after the cut, the count asked" || { echo "FAIL - the capped reads"; fails=$((fails + 1)); }
+import json, sys
+rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
+inc = [r for r in rows if r["path"].endswith("/table/incident")]
+assert inc and all(r["query"]["sysparm_query"].endswith("^ORDERBYDESCopened_at") for r in inc), inc[0]["query"]
+assert any("^opened_at<" in r["query"]["sysparm_query"] and r["query"]["sysparm_query"].startswith("active=true^ORclosed_at>=") for r in inc)
+assert any(r["path"].endswith("/stats/incident") for r in rows)
+PYJ
+check "  ... the All page: No compare this run, no banner" "$work/cut1/servicenow-ticket-insights/latest.html" \
+    '<b>No compare this run.</b>' 'figures are whole.' '!role="alert"'
+rm -f "$work"/mail/*.eml
+run "max_records 300: the window itself cut - the banner, first in the email, the job's warning" ok \
+    "{$NOW, $NOACT, $MAIL, \"report_email_to\": [\"ops@example.mil\"], \"servicenow_insights_max_records\": 300, \"report_web_dest\": \"$work/cut2\"}" \
+    'WARNING - records cut, some figures are incomplete:' 'incident: only the newest ' 'read, back to 2026-' \
+    'Figures in this report are incomplete: raise servicenow_insights_max_records.' 'Records cut: some figures are incomplete'
+n=$(grep -rl 'class="callout cutbar" role="alert"' "$work/cut2/servicenow-ticket-insights" --include=latest.html | wc -l)
+t=$(find "$work/cut2/servicenow-ticket-insights" -name latest.html | wc -l)
+[ "$n" -gt 1 ] && [ "$n" = "$t" ] && echo "ok   -   ... the banner on every page ($n of $t)" || { echo "FAIL - the banner on $n of $t pages"; fails=$((fails + 1)); }
+"$py" - "$work"/mail/*.eml <<'PYM' && echo "ok   -   ... the email: Records cut before every section" || { echo "FAIL - the email's Records cut"; fails=$((fails + 1)); }
+import email, sys
+from email import policy
+m = email.message_from_bytes(open(sys.argv[1], "rb").read(), policy=policy.default)
+t = m.get_body(("plain",)).get_content()
+i = t.index("Records cut: some figures are incomplete")
+assert "incident: only the newest " in t[i:i + 2000] and "Figures in this report are incomplete" in t[i:i + 2000]
+assert "Not read" not in t or t.index("Not read") > i
+assert t.index("At a glance") > i if "At a glance" in t else True
+PYM
+
+# ---- 1.15.0: the team leads from ServiceNow (sys_user_group.manager) - the page's line, emailed by pattern, both ways --------
+MGRS='{"Ops - Windows": {"name": "Pat Lee", "email": "pat.lee@example.mil"}, "Ops - Linux": {"name": "Kim Old", "email": "kim@example.mil", "active": "false"},
+       "Ops - VDI": {"name": "Sam Ray", "email": "sam.ray@example.mil"}, "Ops - Service Desk": {"name": "Dee Desk", "email": "dee@example.mil"}}'
+mock SNMOCK_GROUP_MANAGERS="$MGRS"
+ELEADS='"servicenow_insights_email_leads": ["ops - w*", "Ops - Linux", "Ops - Network", "Ops - VDI"], "servicenow_insights_team_email_to": {"Ops - VDI": ["vdi-list@example.mil"]}'
+for n in 40 0; do
+    rm -f "$work"/mail/*.eml
+    mkdir -p "$work/mgr$n" "$work/mmail$n"
+    run "team leads from ServiceNow, pages $n per call: a pattern, no manager, inactive, both settings on one group" ok \
+        "{$NOW, $NOACT, $MAIL, $ELEADS, \"report_email_to\": [\"ops@example.mil\"], \"report_web_dest\": \"$work/mgr$n\",
+          \"report_web_url\": \"https://reports.example.mil/r\", \"servicenow_insights_pages_per_call\": $n}" \
+        'Ops - Linux: not emailed - the manager Kim Old is inactive' 'Ops - Network: not emailed - no manager in ServiceNow' \
+        '!Ops - VDI: not emailed' '!Ops - Service Desk: not emailed'
+    mv "$work"/mail/*.eml "$work/mmail$n/" 2>/dev/null
+    t="$work/mgr$n/servicenow-ticket-insights/ops/other"
+    check "  ... the team's page says its lead; none without a manager, none on the All page" "$t/windows/latest.html" \
+        '<div class="sub lead">Group manager: <b>Pat Lee</b></div>'
+    check "  ... inactive said" "$t/linux/latest.html" 'Group manager: <b>Kim Old (inactive in ServiceNow)</b>'
+    check "  ... no manager: nothing" "$t/network/latest.html" '!Group manager'
+    check "  ... the All page: nothing" "$work/mgr$n/servicenow-ticket-insights/latest.html" '!Group manager'
+done
+"$py" - "$work/mmail40" "$work/mmail0" <<'EOPY' && echo "ok   -   ... the lead To alone, the list for both settings, the Group manager line in the email; the same both ways" || { echo "FAIL - the team leads from ServiceNow"; fails=$((fails + 1)); }
+import email, glob, re, sys
+from email import policy
+def mails(d):
+    out = {}
+    for f in sorted(glob.glob(d + "/*.eml")):
+        raw = open(f, "rb").read()
+        to = re.search(rb"^X-Envelope-To: (.*)$", raw, re.M).group(1).decode().strip()
+        m = email.message_from_bytes(raw.split(b"\n", 4)[-1] if raw.startswith(b"X-") else raw, policy=policy.default)
+        out.setdefault(to, []).append((m["To"], m.get_body(("plain",)).get_content()))
+    return out
+norm = lambda b: re.sub(r"\d{4}-\d{2}-\d{2}[ T_]\d{2}:?\d{2}(:\d{2})?( ?[A-Z]{2,5})?", "T", b)
+got = {}
+for d in sys.argv[1:]:
+    m = mails(d)
+    assert sorted(m) == ["ops@example.mil", "pat.lee@example.mil", "vdi-list@example.mil"], (d, sorted(m))
+    lee, vdi = m["pat.lee@example.mil"], m["vdi-list@example.mil"]
+    assert len(lee) == 1 and lee[0][0] == "pat.lee@example.mil", (d, lee[0][0])
+    assert "Group manager: Pat Lee" in lee[0][1] and "In a browser: https://reports.example.mil/r/servicenow-ticket-insights/ops/other/windows/latest.html" in lee[0][1], lee[0][1][:600]
+    assert len(vdi) == 1 and "Group manager: Sam Ray" in vdi[0][1], vdi[0][1][:400]        # team_email_to won: the list, not Sam
+    assert "Group manager" not in m["ops@example.mil"][0][1]
+    got[d] = dict((k, norm(v[0][1])) for k, v in m.items())
+a, b = got.values()
+assert a == b, [(k, a[k][-300:], b[k][-300:]) for k in a if a[k] != b[k]]
+EOPY
+"$py" - "$work/log.jsonl" <<'PYJ' && echo "ok   -   ... with leads to mail, their email asked too" || { echo "FAIL - the leads' email not asked"; fails=$((fails + 1)); }
+import json, sys
+rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
+g = [r for r in rows if r["path"].endswith("/sys_user_group") and r["query"].get("sysparm_query", "").startswith("sys_idIN")]
+assert g and all(r["query"]["sysparm_fields"].endswith(",manager,manager.name,manager.active,manager.email") for r in g), g[0]["query"]
+PYJ
+mock SNMOCK_GROUP_MANAGERS="$MGRS" SNMOCK_NO_MANAGER=1
+rm -f "$work"/mail/*.eml
+run "the managers refused: said once, nobody emailed, the job green" ok \
+    "{$NOW, $NOACT, $MAIL, \"servicenow_insights_email_leads\": \"all\", \"report_email_to\": [\"ops@example.mil\"]}" \
+    'sys_user_group.manager (the team leads): GET' 'Team leads not emailed: the managers were not read' '!Group manager: '
+if ls "$work"/mail/*.eml >/dev/null 2>&1 && [ "$(grep -l '^X-Envelope-To: ops@example.mil' "$work"/mail/*.eml | wc -l)" = "$(ls "$work"/mail/*.eml | wc -l)" ]; then
+    echo "ok   -   ... only the All page's email"
+else
+    echo "FAIL - the managers refused: a lead was emailed"; fails=$((fails + 1))
+fi
+
 # ---- the org map (1.8.0): management's own tree, any depth; the Custom view and its periods (1.10.0) -----------------
 mock SNMOCK_SEED="$work/seed3.json"
 mkdir -p "$work/site8"
@@ -394,8 +547,8 @@ check "  ... All: the Custom view and its rows, the tree at any depth, the unmap
     '<b>The org map</b>' 'SITE-C - CODEX - Linux (' 'Add them to servicenow_insights_hierarchy_map.' '!<b>Sites, directorates and teams</b>' \
     'class="cvp" data-name="SPLIT"' 'class="cvp" data-name="non-SPLIT"' 'class="cvp" data-name="SITEB only"' 'href="latest-split.html">SPLIT</a>'
 check "  ... the periods (1.10.0): the ones set, calendar titles, weeks from Sunday, a from / to" "$t8/latest.html" \
-    'class="cvpd" data-name="all"' 'class="cvpd" data-name="1m" aria-pressed="false" title="October 2026, compared with September 2026"' \
-    'class="cvpd" data-name="1w" aria-pressed="false" title="2026-10-25 to 2026-10-31, compared with 2026-10-18 to 2026-10-24"' \
+    'class="cvpd" data-name="all"' 'class="cvpd num" data-name="1m" aria-pressed="false" title="Last month: October 2026, compared with September 2026"' \
+    'class="cvpd num" data-name="1w" aria-pressed="false" title="Last week: 2026-10-25 to 2026-10-31, compared with 2026-10-18 to 2026-10-24"' \
     '!data-name="2m"' 'id="cvfrom" min="2025-11-01" max="2026-10-31"' '"periods":[{"name":"all"' 'Time in each state' 'Open over 10 business days'
 run "a week that starts on no day: said" fail "{$NOW, $NOACT, \"servicenow_insights_hierarchy_source\": \"map\", \"servicenow_insights_hierarchy_map\": $orgmap,
       \"servicenow_insights_week_start\": \"someday\"}" 'servicenow_insights_week_start: someday is not a day'

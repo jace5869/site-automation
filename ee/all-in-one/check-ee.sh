@@ -37,6 +37,12 @@ from pymysql._auth import sha2_rsa_encrypt
 k = rsa.generate_private_key(public_exponent=65537, key_size=2048).public_key().public_bytes(s.Encoding.PEM, s.PublicFormat.SubjectPublicKeyInfo)
 assert len(sha2_rsa_encrypt(b'x', b'0' * 20, k)) == 256" 2>&1); then yes "MySQL login without TLS (caching_sha2_password: PyMySQL's RSA step)"
   else no "MySQL login without TLS (PyMySQL's RSA step: ${err##*$'\n'}) - use TLS for the report database (REPORT_DATABASE.md)"; fi
+  # PyMySQL 1.2.1 to 1.2.3: the first caching_sha2_password login over plain TCP after a server restart fails (1.16.0)
+  v=$($py -c 'import pymysql; print(pymysql.VERSION_STRING)' 2>/dev/null)
+  case "$v" in
+    1.2.1|1.2.2|1.2.3) no "PyMySQL $v: its first MySQL login after a server restart fails ('is_auth_switch_request') - build the EE again from the current ee/ files (PyMySQL>=1.2.4)" ;;
+    *) yes "PyMySQL ${v:-?}: not 1.2.1 to 1.2.3 (the login bug)" ;;
+  esac
 fi
 echo "== Collections"
 have=$(ansible-galaxy collection list 2>/dev/null)

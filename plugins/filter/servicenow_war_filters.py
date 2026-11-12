@@ -158,6 +158,14 @@ def servicenow_war_lines(r, opts=None):
     return {"completed": done, "in_progress": prog}
 
 
+def war_cut_line(t):
+    """1.16.0: a table cut at servicenow_war_max_records - the newest kept; a ticket opened before the cut is not read
+    (one completed this week too)."""
+    return ("%s: only the newest %s records read%s. Tickets opened before that are not read, so the completed, opened and "
+            "open counts can be short: raise servicenow_war_max_records, or narrow the week." % (
+                t["table"], "{:,}".format(_n(t.get("read"))), (", back to %s" % t["cut"]) if t.get("cut") else ""))
+
+
 def servicenow_war_report(r, opts=None):
     """site_servicenow_war's result -> roles/site_email's _report. opts: title, old_days, max_rows, notes_chars, time_zone,
     act (ACT's version of the WAR follows the one-line-per-task version: that one says so). The order: the results, the
@@ -210,7 +218,9 @@ def servicenow_war_report(r, opts=None):
                      "note": "open the longest"},
                     {"label": "Worked on, still open", "value": len(touched), "note": "updated this week"},
                     {"label": "Cancelled", "value": len(cancelled), "note": "not counted as completed"}]
-                   + ([{"label": "Not read", "value": len(bad_tables), "status": "critical"}] if bad_tables else []),
+                   + ([{"label": "Not read", "value": len(bad_tables), "status": "critical"}] if bad_tables else [])
+                   + ([{"label": "Records cut", "value": len(cut_tables), "status": "critical", "note": "some figures are incomplete"}]
+                      if cut_tables else []),
         "sections": [],
         "footer": "ServiceNow at %s. The week: %s. A task counts for the assignment group it has now: one moved to another group "
                   "since is not here. Completed = resolved (an incident, a problem) or closed in the week, on the record's own "
@@ -223,6 +233,10 @@ def servicenow_war_report(r, opts=None):
         secs.append({"title": "Not run", "status": "critical", "lines": [r.get("error") or "ServiceNow could not be read"]
                      + (["%s: %s" % (t["table"], t["error"]) for t in bad_tables])})
         return report
+
+    # 1.16.0: a table over servicenow_war_max_records keeps its newest records - said first, before everything
+    if cut_tables:
+        secs.append({"title": "Records cut: some figures are incomplete", "status": "critical", "lines": [war_cut_line(t) for t in cut_tables]})
 
     # 1. the week in numbers, per type
     by_type = {}
@@ -335,7 +349,6 @@ def servicenow_war_report(r, opts=None):
                                            % (", ".join(sorted(set(str(x.get("state") or "cancelled") for x in cancelled))).lower(), note)})
     # 6. what was not read
     nr = ["%s: %s" % (t["table"], t["error"]) for t in bad_tables]
-    nr += ["%s: more than the first %d records - raise servicenow_war_max_records, or narrow the week" % (t["table"], _n(t.get("read"))) for t in cut_tables]
     nr += ["assignment group %s is not in ServiceNow (its exact name, as the group list shows it)" % g for g in missing_groups]
     nr += ["user %s is not in ServiceNow (a user name or the full name)" % u for u in missing_users]
     if r.get("lookup_note"):

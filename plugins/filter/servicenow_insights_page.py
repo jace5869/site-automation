@@ -14,6 +14,10 @@ import html
 import json
 import math
 import re
+try:
+    from urllib.parse import quote
+except ImportError:                    # Python 2 (ansible-core's sanity)
+    from urllib import quote
 
 TABLE_OF = {"INC": "incident", "RITM": "sc_req_item", "REQ": "sc_request", "SCTASK": "sc_task", "CHG": "change_request",
             "CTASK": "change_task", "PRB": "problem", "PTASK": "problem_task"}
@@ -77,6 +81,7 @@ button,input,select{font:inherit;color:inherit}
 .logo{width:38px;height:38px;border-radius:9px;background:var(--accent);color:var(--on-accent);display:grid;place-items:center;font-weight:800;font-size:13px;letter-spacing:.5px;flex:none}
 .brand h1{font-size:18px;margin:0;line-height:1.2;text-wrap:balance}
 .brand .sub{color:var(--muted);font-size:12.5px}
+.brand .sub.lead{color:var(--fg-2);margin-top:2px}.brand .sub.lead b{color:var(--fg);font-weight:600}
 .tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .sel{padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);font-weight:600;font-size:13px;max-width:230px}
 .search{position:relative}
@@ -132,6 +137,7 @@ section.card{background:var(--surface);border:1px solid var(--line);border-radiu
 .chip.crit{background:var(--crit-bg);border-color:transparent;color:var(--crit)}
 .chip.warn{background:var(--warn-bg);border-color:transparent;color:var(--warn)}
 .chip.good{background:var(--good-bg);border-color:transparent;color:var(--good)}
+.svline{font-size:13px;margin:-6px 0 10px}
 .chip.info{background:var(--info-bg);border-color:transparent;color:var(--info)}
 .mv{display:inline-block;min-width:38px;text-align:center;font-size:11px;font-weight:800;padding:1px 6px;border-radius:6px;font-variant-numeric:tabular-nums;white-space:nowrap}
 .mv.up{background:var(--warn-bg);color:var(--warn)} .mv.down{background:var(--good-bg);color:var(--good)}
@@ -197,10 +203,12 @@ th .ar{opacity:.5;font-size:10px}
 td{padding:8px 12px;border-bottom:1px solid var(--line-2);vertical-align:middle}
 tr:last-child td{border-bottom:0}
 td.n,th.n{text-align:right;padding-left:8px;padding-right:8px}
+.two th,.two td{padding-left:8px;padding-right:8px}
 td .ib{display:inline-block;height:8px;border-radius:0 4px 4px 0;background:var(--s2);vertical-align:middle}
 td .ib.b{background:var(--s1)}
 td.wrapc{min-width:220px}
 .callout{display:flex;gap:12px;align-items:flex-start;border:1px solid var(--line);border-left:4px solid var(--warn);border-radius:10px;padding:11px 14px;background:var(--warn-bg);font-size:13px}
+.dbline{font-size:13px;margin:12px 0 0;color:var(--fg-2)}.dbline b{color:var(--fg)}
 .callout b{color:var(--warn)}
 .empty{color:var(--muted);font-size:13px;padding:10px 2px}
 
@@ -230,7 +238,7 @@ tr.team td{background:var(--surface-2);font-weight:700}
 tr.selrow td{background:var(--accent-soft)}
 .teamlink{border:0;background:none;padding:0;font-weight:700;color:var(--accent);cursor:pointer;text-align:left;white-space:normal;border-bottom:1px dotted var(--accent)}
 .teamlink:hover{border-bottom-style:solid}
-.score{display:inline-flex;align-items:center;gap:6px}
+.score{display:inline-flex;flex-wrap:wrap;align-items:center;gap:2px 6px}
 .score .qbar{width:70px;height:7px}
 .fair{font-size:12px;color:var(--muted);max-width:110ch}
 .cap ul,.fair ul,.callout ul{margin:3px 0 0;padding-left:18px}.cap li,.fair li,.callout li{margin:1px 0}
@@ -260,7 +268,7 @@ td.wrap{white-space:normal;overflow-wrap:anywhere;min-width:110px}
 .tw td[data-l]::before{content:attr(data-l);display:inline-block;min-width:40%;margin-right:8px;color:var(--muted);font-size:11px;letter-spacing:.6px;text-transform:uppercase;font-weight:700}
 .tw td:empty{display:none}}
 .c-crit{color:var(--crit)} .c-warn{color:var(--warn)} .c-good{color:var(--good)}
-.inl{display:inline-flex;align-items:center;gap:8px}
+.inl{display:inline-flex;flex-wrap:wrap;align-items:center;gap:4px 8px}
 .acth{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}
 .src.none{background:var(--surface-2);color:var(--muted);border:1px solid var(--line-2)}
 .sup{display:inline-block;min-width:18px;text-align:center;font-size:10.5px;font-weight:800;color:var(--good);background:var(--good-bg);border-radius:6px;padding:0 4px;margin-left:4px}
@@ -431,7 +439,12 @@ function init(){
 var D=document;D.documentElement.classList.add("js-on");
 D.querySelectorAll("[data-t]>title").forEach(function(t){t.remove()});
 var tip=D.getElementById("tip");
-function showTip(ev,h){tip.innerHTML=h;tip.hidden=false;var x=ev.clientX+14,y=ev.clientY+14,w=tip.offsetWidth,hh=tip.offsetHeight;if(x+w>innerWidth-8)x=ev.clientX-w-14;if(y+hh>innerHeight-8)y=ev.clientY-hh-14;tip.style.left=x+"px";tip.style.top=y+"px"}
+/* 1.16.0: no HTML sink (a Trusted Types policy allows none) - the tooltip's own few tags, <br> and <b>, made as nodes */
+function tipFill(el,h){el.textContent="";var re=/<br>|<b>|<\/b>/g,m,last=0,b=null;
+ function txt(t){t=t.replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&#x27;|&#39;/g,"'").replace(/&amp;/g,"&");if(t)(b||el).appendChild(D.createTextNode(t))}
+ while((m=re.exec(h))){txt(h.slice(last,m.index));last=re.lastIndex;if(m[0]==="<br>"){b=null;el.appendChild(D.createElement("br"))}else if(m[0]==="<b>"){b=D.createElement("b");el.appendChild(b)}else b=null}
+ txt(h.slice(last))}
+function showTip(ev,h){tipFill(tip,h);tip.hidden=false;var x=ev.clientX+14,y=ev.clientY+14,w=tip.offsetWidth,hh=tip.offsetHeight;if(x+w>innerWidth-8)x=ev.clientX-w-14;if(y+hh>innerHeight-8)y=ev.clientY-hh-14;tip.style.left=x+"px";tip.style.top=y+"px"}
 D.querySelectorAll("[data-t]").forEach(function(r){r.addEventListener("mousemove",function(ev){showTip(ev,r.getAttribute("data-t"))});r.addEventListener("mouseleave",function(){tip.hidden=true})});
 var q=D.getElementById("q"),hits=D.getElementById("hits");
 function search(){var t=q.value.trim().toLowerCase(),k=0;D.querySelectorAll("[data-search]").forEach(function(el){var m=!t||el.getAttribute("data-search").indexOf(t)>=0;el.classList.toggle("hide",!m);if(t&&m){k++;if(el.tagName==="DETAILS")el.open=true}});hits.textContent=t?(k+" match"+(k===1?"":"es")):""}
@@ -441,10 +454,27 @@ D.querySelectorAll("[data-copy]").forEach(function(b){b.addEventListener("click"
  function ok(){b.textContent="Copied";b.classList.add("done");setTimeout(function(){b.textContent="Copy";b.classList.remove("done")},1600)}
  function fb(){var t=D.createElement("textarea");t.value=text;D.body.appendChild(t);t.select();try{D.execCommand("copy");ok()}catch(e){}t.remove()}
  try{navigator.clipboard.writeText(text).then(ok,fb)}catch(e){fb()}})});
-D.querySelectorAll("th[data-sort]").forEach(function(th){th.style.cursor="pointer";th.addEventListener("click",function(){var tb=th.closest("table").tBodies[0],i=Array.prototype.indexOf.call(th.parentNode.children,th),dir=th.getAttribute("data-dir")==="desc"?"asc":"desc";
- th.parentNode.querySelectorAll("th").forEach(function(h){h.removeAttribute("data-dir");var a=h.querySelector(".ar");if(a)a.remove()});th.setAttribute("data-dir",dir);th.insertAdjacentHTML("beforeend",' <span class="ar">'+(dir==="asc"?"\u25b2":"\u25bc")+"</span>");
- var rows=Array.prototype.slice.call(tb.rows);function val(r){var c=r.cells[i];if(!c)return"";var v=c.getAttribute("data-v");if(v===null)v=c.textContent.trim();var f=parseFloat(String(v).replace(/,/g,""));return isNaN(f)?String(v).toLowerCase():f}
- rows.sort(function(a,b){var x=val(a),y=val(b);var r=(typeof x==="number"&&typeof y==="number")?x-y:String(x).localeCompare(String(y));return dir==="asc"?r:-r});rows.forEach(function(r){tb.appendChild(r)})})});
+/*sortkey: the website's sort (site_report.js 1.20.0) - a lone number (a sign, thousands separators, a decimal point, a % after it) is that number;
+ other text in parts, its numbers as numbers (IPv4 by octets, 8.0.2 before 8.0.10, host2 before host10); numbers before text; empty or a lone dash last both ways*/
+var NUM=/^[-+]?(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)\s*%?$/;
+function skey(v){v=String(v==null?"":v).replace(/\s+/g," ").trim();if(!v||/^[-\u2013\u2014]$/.test(v))return null;if(NUM.test(v))return[parseFloat(v.replace(/[,%\s]/g,""))];
+ var k=[],re=/\d+(?:[.,]\d+)*/g,m,at=0,low=v.toLowerCase();
+ while((m=re.exec(low))){if(m.index>at)k.push(low.slice(at,m.index));var s=m[0];
+  if(/^\d{1,3}(?:,\d{3})+(?:\.\d+)?$/.test(s)||/^\d+\.\d+$/.test(s))k.push(parseFloat(s.replace(/,/g,"")));else s.split(/([.,])/).forEach(function(x,j){k.push(j%2?x:parseInt(x,10))});
+  at=m.index+s.length}
+ if(at<low.length)k.push(low.slice(at));k.raw=low;return k}
+function kcmp(x,y){for(var j=0;j<x.length&&j<y.length;j++){var a=x[j],b=y[j],na=typeof a==="number",nb=typeof b==="number";if(na!==nb)return na?-1:1;if(a<b)return-1;if(a>b)return 1}
+ return x.length-y.length||((x.raw||"")<(y.raw||"")?-1:(x.raw||"")>(y.raw||"")?1:0)}
+function scmp(x,y,asc){if(x===null||y===null)return(x===null)-(y===null);var r=kcmp(x,y);return asc?r:-r}
+/*sortkey end*/
+function cval(c){if(!c)return"";var v=c.getAttribute("data-v");return v===null?c.textContent:v}
+/* a heading's click sorts by its column, the next the other way; the first click on a column already in order (as the rows stand, not all the same) sorts it the other way */
+D.querySelectorAll("th[data-sort]").forEach(function(th){th.style.cursor="pointer";th.addEventListener("click",function(){var tb=th.closest("table").tBodies[0],i=Array.prototype.indexOf.call(th.parentNode.children,th),
+ s=th.getAttribute("data-dir"),asc=s!=="asc",now=[].map.call(tb.rows,function(r){return skey(cval(r.cells[i]))}),inc=true,diff=false;
+ for(var j=1;j<now.length;j++){var c=scmp(now[j-1],now[j],true);if(c>0)inc=false;if(c<0&&now[j]!==null)diff=true}
+ if(!s&&inc&&diff)asc=false;var dir=asc?"asc":"desc";
+ th.parentNode.querySelectorAll("th").forEach(function(h){h.removeAttribute("data-dir");var a=h.querySelector(".ar");if(a)a.remove()});th.setAttribute("data-dir",dir);var ar=D.createElement("span");ar.className="ar";ar.textContent=(dir==="asc"?" \u25b2":" \u25bc");th.appendChild(ar);
+ var by=[].map.call(tb.rows,function(r){return[r,skey(cval(r.cells[i]))]});by.sort(function(a,b){return scmp(a[1],b[1],asc)});by.forEach(function(x){tb.appendChild(x[0])})})});
 D.querySelectorAll(".tab").forEach(function(b){b.addEventListener("click",function(){var id=b.getAttribute("data-tab");D.querySelectorAll(".tab").forEach(function(x){x.setAttribute("aria-selected",x===b?"true":"false")});
  D.querySelectorAll(".tabs~.panel").forEach(function(p){p.classList.toggle("on",p.id===id)})})});
 /* the team picker and the side bar's filter (0.96.0); t opens the picker, / goes to the search, Esc closes */
@@ -509,7 +539,7 @@ if(cvd&&cvt){var CV=JSON.parse(cvd.textContent),C=CV.cols,W=CV.until,LIM=CV.hop_
   for(var i=0;i<C.g.length;i++){if(!sel[C.g[i]])continue;var o=C.o[i],d=C.d[i],t=C.t[i],din=d!==null&&d>=a&&d<b,on=o<=b&&(d===null||d>b);
    if(o>=a&&o<b){if(t===0)f.inc++;else f.req++}if(t===0&&din){f.res++;if(d>=o)f.h.push((d-o)/3600)}if(on)f.bl++;if(o<=a&&(d===null||d>a))f.bl0++;
    if(din&&(C.s[i]===0||C.s[i]===1)){f.sn++;f.so+=C.s[i]}
-   /* the 1.7.0 figures, as scope_model: response met of what was done (no SLO left out), open over the hop limit, on hold now, unable, first contact */
+   /* the 1.7.0 figures, as scope_model: response met of what was done (no SLA left out), open over the hop limit, on hold now, unable, first contact */
    if(din&&C.resp&&(C.resp[i]===0||C.resp[i]===1)){f.rn++;f.ro+=C.resp[i]}if(din&&C.noslo&&C.noslo[i]===1)f.ns++;
    if(t===0&&C.hops){var ov=C.hops[i]>LIM+1;if(on&&ov)f.hop++;if(din){if(ov)f.hres++;if(C.hops[i]===0)f.fcr++}}
    if(t===0&&on&&C.hold&&C.hold[i]===1)f.hold++;if(t===0&&din&&C.out&&UN[C.out[i]])f.una++;
@@ -537,14 +567,14 @@ if(cvd&&cvt){var CV=JSON.parse(cvd.textContent),C=CV.cols,W=CV.until,LIM=CV.hop_
  function dl(v,p,lg,pts){if(v===null||v===undefined||p===null||p===undefined)return null;var d=pts?v-p:(p?(v-p)/p*100:0);
   if(Math.abs(d)<0.05)return["no change","flat"];var up=d>0;return[(up?"\u25b2 ":"\u25bc ")+Math.abs(d).toFixed(pts?1:0)+(pts?" pts":"%"),(up?!lg:lg)?"good":"bad"]}
  function setx(id,x){var el=D.getElementById("cv-"+id+"-x");if(!el)return;el.textContent=x?x[0]:"";el.className=x?"delta "+x[1]:""}
- var pbs=[].slice.call(D.querySelectorAll("button.cvpd")),cf=D.getElementById("cvfrom"),ct=D.getElementById("cvto");
+ var pbs=[].slice.call(D.querySelectorAll("button.cvpd")),cf=D.getElementById("cvfrom"),ct=D.getElementById("cvto"),psel=D.getElementById("cvpsel");
  var P0=P.filter(function(x){return x.name==="all"})[0]||P[0]||{name:"",a:0,b:W,ca:null,cb:null,title:"",ctitle:""},per=P0;
  function pick(name){var p=P.filter(function(x){return x.name===name})[0];if(!p)return null;
-  pbs.forEach(function(x){x.setAttribute("aria-pressed",x.getAttribute("data-name")===name?"true":"false")});
+  pbs.forEach(function(x){x.setAttribute("aria-pressed",x.getAttribute("data-name")===name?"true":"false")});if(psel)psel.value=name;
   if(cf&&MID.length){cf.value=iso(kidx(p.a));ct.value=iso(kidx(p.b-1))}return p}
  function range(fr,to){var i=kof(fr),j=kof(to);if(isNaN(i)||isNaN(j)||j<i||i<0||i>=MID.length)return null;j=Math.min(j,MID.length-1);
   var a=MID[i],b=j+1<MID.length?Math.min(MID[j+1],W):W;if(b<=a)return null;var n=j-i+1,ca=i-n>=0?MID[i-n]:null;
-  pbs.forEach(function(x){x.setAttribute("aria-pressed","false")});
+  pbs.forEach(function(x){x.setAttribute("aria-pressed","false")});if(psel)psel.value="";
   return {name:iso(i)+"_"+iso(kidx(b-1)),a:a,b:b,ca:ca,cb:ca===null?null:a,title:iso(i)+" to "+iso(kidx(b-1)),ctitle:ca===null?"":iso(i-n)+" to "+iso(i-1)}}
  /* opened and incidents resolved in the period: per day up to a month, per week up to 4 months, else per month */
  function lbl(dt,u){var m=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][+dt.slice(5,7)-1];return u==="month"?m+" "+dt.slice(2,4):m+" "+(+dt.slice(8))}
@@ -572,7 +602,7 @@ if(cvd&&cvt){var CV=JSON.parse(cvd.textContent),C=CV.cols,W=CV.until,LIM=CV.hop_
   set("resolved",nf(f.res),c?"was "+nf(c.res):"");setx("resolved",c&&dl(f.res,c.res,false,false));
   setl("backlog",f.now?"Open now":"Open at the period's end");set("backlog",nf(f.bl),"was "+nf(f.bl0)+" at the start");setx("backlog",dl(f.bl,f.bl0,true,false));
   set("median",fh(rr(f.med)),c&&c.med!==null?"was "+fh(rr(c.med)):"");setx("median",c&&dl(rr(f.med),rr(c.med),true,false));
-  set("sla",pc(rr(f.sla)),"incidents and requests"+(C.noslo&&f.ns?" \u00b7 "+nf(f.ns)+" with no SLO":""));setx("sla",c&&dl(rr(f.sla),rr(c.sla),false,true));
+  set("sla",pc(rr(f.sla)),"incidents and requests"+(C.noslo&&f.ns?" \u00b7 "+nf(f.ns)+" with no SLA":""));setx("sla",c&&dl(rr(f.sla),rr(c.sla),false,true));
   if(C.resp){set("resp",pc(rr(f.resp)),"incidents and requests");setx("resp",c&&dl(rr(f.resp),rr(c.resp),false,true))}
   if(C.hops){var went=f.hres?pp(f.hres,f.res)+" of those resolved went over":"none of those resolved went over";
    set("hops",f.now?nf(f.hop):"\u2014",f.now?went:"known now only \u00b7 "+went);
@@ -598,7 +628,15 @@ if(cvd&&cvt){var CV=JSON.parse(cvd.textContent),C=CV.cols,W=CV.until,LIM=CV.hop_
   res.hidden=false;var hv=(cvp?"preset:"+encodeURIComponent(cvp):enc(idx))+(per!==P0&&per.name?"&p="+encodeURIComponent(per.name):"");
   if(push!==false)try{history.replaceState(null,"","#cv="+hv)}catch(e){location.hash="cv="+hv}}
  pbs.forEach(function(x){x.addEventListener("click",function(){var p=pick(x.getAttribute("data-name"));if(p){per=p;apply()}})});
- var cvft=D.getElementById("cvft");if(cvft)cvft.addEventListener("click",function(){var r=range(cf.value,ct.value);if(r){per=r;apply()}});
+ if(psel)psel.addEventListener("change",function(){var p=pick(psel.value);if(p){per=p;apply()}});
+ /* 1.16.0: a from / to that can not be shown says why, beside the fields - no dialog */
+ function ftsay(t){var el=D.getElementById("cvftmsg");if(el)el.textContent=t||""}
+ /* the window as the fields show it: its first and last day (not the day after its end) */
+ function outside(){return "Outside this report's window: "+(cf.min||iso(0))+" to "+(ct.max||iso(MID.length-1))}
+ var cvft=D.getElementById("cvft");if(cvft)cvft.addEventListener("click",function(){var i=kof(cf.value),j=kof(ct.value);
+  if(isNaN(i)||isNaN(j)){ftsay("Pick both dates");return}if(j<i){ftsay("From must be before To");return}
+  if(i<0||i>=MID.length||j<0){ftsay(outside());return}
+  var r=range(cf.value,ct.value);if(r){ftsay("");per=r;apply()}else ftsay(outside())});
  if(P0.name)pick(P0.name);
  function tick(idx){var want={};idx.forEach(function(i){want[i]=1});all.forEach(function(b){b.checked=!!want[+b.getAttribute("data-g")]});tally()}
  pres.forEach(function(x){x.addEventListener("click",function(){tick(dec(x.getAttribute("data-idx")));press(x.getAttribute("data-name"));apply()})});
@@ -640,15 +678,32 @@ def _slug(name):
     return s[:80].rstrip("-") or "all"
 
 
-def tk(num, url):
-    """A ticket number as a link into ServiceNow."""
+def tk(num, url, pre=None):
+    """A ticket number as a link into ServiceNow (1.18.0: nav_to.do, the form in ServiceNow's own frame), url its address;
+    '' = the number alone. pre: {prefix: table} the run learned from its records and servicenow_insights_ticket_prefixes
+    (1.30.0: an instance's own prefixes), before TABLE_OF."""
     if not num:
         return '<span class="mut">—</span>'
     m = re.match(r"^([A-Z]+)\d+$", str(num))
-    table = TABLE_OF.get(m.group(1)) if m else None
+    table = ((pre or {}).get(m.group(1)) or TABLE_OF.get(m.group(1))) if m else None
     if not url or not table:
         return '<span class="mono">%s</span>' % e(num)
-    return '<a class="tk" target="_blank" rel="noopener" href="%s/%s.do?sysparm_query=number=%s">%s</a>' % (e(url.rstrip("/")), table, e(num), e(num))
+    uri = quote("%s.do?sysparm_query=number=%s" % (table, num), safe="")
+    return '<a class="tk" target="_blank" rel="noopener" href="%s/nav_to.do?uri=%s">%s</a>' % (e(url.rstrip("/")), uri, e(num))
+
+
+def ticket_base(m, o):
+    """Where the ticket links go (1.18.0): servicenow_insights_ticket_base (the address people open ServiceNow at), else the
+    API's instance; '' with servicenow_insights_ticket_links false or an address that is not one."""
+    if o.get("ticket_links", True) in (False, "false", "False", 0):
+        return ""
+    b = str(o.get("ticket_base") or "").strip() or str(m.get("url") or "").strip()
+    s = re.match(r"^(https?)://", b, re.I)
+    if s:
+        b = s.group(1).lower() + b[len(s.group(1)):]        # 1.30.0: HTTPS://SN.EXAMPLE.MIL as https://SN.EXAMPLE.MIL
+    elif b:
+        b = "https://" + b
+    return b.rstrip("/") if re.match(r"^https?://[\w.-]+(:\d+)?(/[\w./-]*)?$", b) else ""
 
 
 def delta(now, prev, lower_good=True, pts=False):
@@ -986,6 +1041,16 @@ def heatmap(heat):
     return "".join(out), cap
 
 
+GRADE_CLS = {"Good": "good", "Fair": "warn", "Low": "crit"}
+
+
+def _scale_label(sc):
+    if not sc:
+        return "not known"
+    f = lambda x: ("%d" % x) if float(x) == int(x) else ("%g" % x)    # noqa: E731
+    return "%s to %s%s" % (f(sc[0]), f(sc[1]), ", as observed" if sc[2] == "observed" else "")
+
+
 def tiles(rows, cls="tiles"):
     out = ['<div class="%s">' % cls]
     for t in rows:
@@ -1048,7 +1113,8 @@ def servicenow_insights_page(model, key="all", opts=None):
     is_all = lvl == "all"
     multi = lvl != "team"                                                   # more than one group's tickets
     win = m.get("window") or {}
-    url = m.get("url") or ""
+    url = ticket_base(m, o)                 # the ticket links (1.18.0)
+    pre = m.get("prefixes") or {}           # the instance's own prefixes (1.30.0)
     old_days = int(o.get("old_days") or 30)
     reopen_used = bool(m.get("reopen_used"))
     links = o.get("links") or {}           # team -> href (and "all"), relative to this page
@@ -1133,13 +1199,15 @@ def servicenow_insights_page(model, key="all", opts=None):
     teamnav = ""
     head.append(
         '<header class="bar gut"><div class="wrap"><div class="brand">%s<div style="min-width:0"><h1>ServiceNow ticket insights</h1>'
-        '<div class="sub">%s · %s (%s) · generated %s%s</div></div></div>'
+        '<div class="sub">%s · %s (%s) · generated %s%s</div>%s</div></div>'
         '<div class="tools">%s<label class="search" for="q"><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5" '
         'fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M11 11l3.5 3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>'
         '<input id="q" type="search" placeholder="Search issues, tickets, CIs…" aria-label="Search the report"></label>'
         '<span class="hits" id="hits" aria-live="polite"></span><button class="btn js" id="expand" type="button">Expand all</button></div></div></header>' % (
             logo, e(s["name"]), e(win.get("label") or ""), e(span), e(o.get("generated") or ""),
-            (" · AAP job %s" % e(o["job"])) if o.get("job") and str(o["job"]) != "local" else "", menu))
+            (" · AAP job %s" % e(o["job"])) if o.get("job") and str(o["job"]) != "local" else "",
+            # 1.15.0: the team's manager in ServiceNow (servicenow_insights_show_lead)
+            ('<div class="sub lead">Group manager: <b>%s</b></div>' % e(s["lead"])) if s.get("lead") else "", menu))
 
     side = s.get("side") or ({"kind": "Teams", "rows": s.get("teams") or []} if is_all else {})
     toc = ([("custom", "Custom view", "")] if is_all and not variant and m.get("org") else []) + [("glance", "At a glance", "")]
@@ -1197,7 +1265,7 @@ def servicenow_insights_page(model, key="all", opts=None):
           ] + ([{"label": "Response met", "value": pct(s["resp"][0]), "delta": delta(s["resp"][0], s["resp"][1], False, True),
                  "note": "incidents and requests · " + src_note},
                 {"label": "Resolution met", "value": pct(s["sla"][0]), "delta": delta(s["sla"][0], s["sla"][1], False, True),
-                 "note": ("%s with no SLO, not counted" % n(s["no_slo"][0])) if s["no_slo"][0] else "every ticket done had an SLO"}] if two else
+                 "note": ("%s with no SLA, not counted" % n(s["no_slo"][0])) if s["no_slo"][0] else "every ticket done had an SLA"}] if two else
                [{"label": "SLAs met", "value": pct(s["sla"][0]), "delta": delta(s["sla"][0], s["sla"][1], False, True),
                  "note": "incidents and requests · " + src_note}]) + [
           {"label": "Incidents reopened" if reopen_used else "Came back within %d days" % int(o.get("repeat_days") or 14),
@@ -1234,7 +1302,7 @@ def servicenow_insights_page(model, key="all", opts=None):
                 ('<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.3" fill="currentColor" opacity=".2"/><path d="M4.7 8.4l2.1 2.1 4.5-4.7" '
                  'fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>'),
                 "Falling behind" if behind else "Keeping up", n(sr_), n(so_), pct(_p(sr_, so_)), e(win.get("label") or span),
-                n(b[1]), n(b[0]), pct(s["sla"][0]), "resolution SLO" if two else "SLA"))
+                n(b[1]), n(b[0]), pct(s["sla"][0]), "resolution SLA" if two else "SLA"))
     if is_all and not variant:
         body.append(custom_view(m, o))                       # the org map's Custom view (1.8.0)
     elif variant and m.get("org") and links.get("all"):      # a split's page: none here - where it is
@@ -1259,20 +1327,21 @@ def servicenow_insights_page(model, key="all", opts=None):
             rows.append((search_attr(t["team"], t["top"][0]), [
                 td(name), td('<span class="inl">%s<span class="chip %s">%s</span></span>' % (spark(t["series"], "var(--warn)" if up else "var(--s1)", 84 if not two else 56, 26),
                                                                                          "warn" if up else "good", "Falling behind" if up else "Keeping up")),
-                td("<b>%s</b> %s" % (n(t["backlog"][0]), delta(t["backlog"][0], t["backlog"][1])), "n nw", t["backlog"][0]),
+                # 1.30.0: Open now with what it was, as the email has it - the table fits 1280 px
+                td('<b>%s</b> <span class="mut">(%s)</span>' % (n(t["backlog"][0]), n(t["backlog"][1])), "n nw", t["backlog"][0]),
                 td(n(t["old"]), "n" + (" c-warn b" if t["old"] >= 20 else ""), t["old"]), td(fh(t["median_h"]), "n", t["median_h"] or 0),
                 ] + ([sla_cell(t.get("resp"))] if two else []) + [sla_cell(t["sla"]),
                 td('<span class="score">%s<span class="sm mut">%d%% good</span></span>' % (qbar(t["quality"]), t["quality"][0]))] +
-                ([td(n(t.get("ct_closed") or 0), "n", t.get("ct_closed") or 0), td(n(t.get("ct_open") or 0), "n", t.get("ct_open") or 0)] if ctc else []) +
+                ([td("%s / %s" % (n(t.get("ct_closed") or 0), n(t.get("ct_open") or 0)), "n nw", t.get("ct_closed") or 0)] if ctc else []) +
                 [td('%s <span class="mut num">%s</span>' % (e(t["top"][0]), n(t["top"][1])), "wrap")]))
         one = {"Sites": "Site", "Directorates": "Directorate", "Units": "Unit", "Units and teams": "Unit or team"}.get(kind, "Team")
         body.append(section("teams", "%s side by side" % kind, "each %s has its own page with every section of this report" % one.lower(),
-                            table([(one, "", "name"), ("Backlog over the period", "", ""), ("Open now", "n", "open"), ("Over %d days" % old_days, "n", "old"),
+                            table([(one, "", "name"), ("Backlog over the period", "", ""), ("Open now (was)", "n", "open"), ("Over %d days" % old_days, "n", "old"),
                                    ("Median fix", "n", "fix")] + ([("Response", "n", "resp"), ("Resolution", "n", "sla")] if two else [("SLA met", "n", "sla")]) +
                                   [("Close notes", "", "")] +
-                                  ([("Change tasks closed", "n", "ctc"), ("Change tasks open", "n", "cto")] if ctc else []) + [("Top issue", "", "")], rows, sortable=True) +
+                                  ([("Change tasks closed / open", "n", "ctc")] if ctc else []) + [("Top issue", "", "")], rows, sortable=True) +
                             '<div class="fair">Click a %s for its page, or a column\'s name to sort by it. Each backlog line has its own scale: compare Open now for size.%s</div>' % (
-                                one.lower(), ("<ul>%s%s</ul>" % ("<li>Response and Resolution: the share of SLOs met.</li>" if two else "",
+                                one.lower(), ("<ul>%s%s</ul>" % ("<li>Response and Resolution: the share of SLAs met.</li>" if two else "",
                                                                  "<li>Change tasks are counted on their own, not in the backlog, Open now or the SLAs.</li>" if ctc else ""))
                                 if two or ctc else "")))
 
@@ -1295,16 +1364,16 @@ def servicenow_insights_page(model, key="all", opts=None):
          "note": "resolved in the period · reviewed by leadership"},
         {"label": "Resolved, not closed after %g days" % (cl.get("days") or 7), "value": n(cl.get("count") or 0), "flag": bool(cl.get("count")),
          "note": "closing after %g days is automatic: these did not close" % (cl.get("days") or 7)}]
-    hrows_ = [(search_attr(x["number"], x["what"], x["group"]), [td(tk(x["number"], url)), td(e(x["what"]), "wide"), td(n(x["hops"]), "n"),
+    hrows_ = [(search_attr(x["number"], x["what"], x["group"]), [td(tk(x["number"], url, pre)), td(e(x["what"]), "wide"), td(n(x["hops"]), "n"),
                                                                 td(glink(x["group"]), "nw"), td(e("%g" % x["age"]), "n", x["age"]), td(e(x["priority"]), "nw")])
               for x in hp.get("rows") or []]
-    lrows_ = [(search_attr(x["number"], x["what"], x["group"]), [td(tk(x["number"], url)), td(e(x["what"]), "wide"), td(glink(x["group"]), "nw"),
+    lrows_ = [(search_attr(x["number"], x["what"], x["group"]), [td(tk(x["number"], url, pre)), td(e(x["what"]), "wide"), td(glink(x["group"]), "nw"),
                                                                 td(e(x["since"]), "num nw"), td(n(x["days"]), "n", x["days"])])
               for x in hd.get("late") or []]
-    rrows_ = [(search_attr(x["number"], x["what"], x["group"], x["note"]), [td(tk(x["number"], url)), td(glink(x["group"]), "nw"), td(e(x["what"]), "wide"),
+    rrows_ = [(search_attr(x["number"], x["what"], x["group"], x["note"]), [td(tk(x["number"], url, pre)), td(glink(x["group"]), "nw"), td(e(x["what"]), "wide"),
                                                                            td(e(x["resolved"]), "num nw"), td(e(x["note"]) or '<span class="mut">no close note</span>', "wide")])
               for x in cd.get("review_rows") or []]
-    crows_ = [(search_attr(x["number"], x["group"]), [td(tk(x["number"], url)), td(glink(x["group"]), "nw"), td(e(x["resolved"]), "num nw"),
+    crows_ = [(search_attr(x["number"], x["group"]), [td(tk(x["number"], url, pre)), td(glink(x["group"]), "nw"), td(e(x["resolved"]), "num nw"),
                                                      td(e("%g" % x["days"]), "n", x["days"]), td(e(x.get("state") or ""), "nw")])
               for x in cl.get("rows") or []]
 
@@ -1318,7 +1387,7 @@ def servicenow_insights_page(model, key="all", opts=None):
                         block("SLA at risk now", "Open incidents past %g%% of their SLA time, or breached and still open. Worst first." % (rk.get("pct") or 75),
                               [("Incident", "", ""), ("Priority", "", ""), ("SLA", "", ""), ("Used", "n", ""), ("Left", "n", ""), ("Group", "", ""), ("Assigned to", "", "")],
                               [(search_attr(x["number"], x["sla"], x["group"], x["assignee"]), [
-                                  td(tk(x["number"], url)), td(e(x["priority"]), "nw"), td(e(x["sla"])),
+                                  td(tk(x["number"], url, pre)), td(e(x["priority"]), "nw"), td(e(x["sla"])),
                                   td(('<b class="c-crit">%s</b>' % pct(x["pct"], 0)) if x["breached"] else pct(x["pct"], 0), "n", x["pct"] or 0),
                                   td("breached" if x["breached"] else fh(x["left_h"]), "n nw", x["left_h"] if x["left_h"] is not None else -1),
                                   td(glink(x["group"]), "nw"), td(e(x["assignee"]), "nw")]) for x in rk.get("rows") or []],
@@ -1546,14 +1615,14 @@ def servicenow_insights_page(model, key="all", opts=None):
     mrow = []
     for x in s["majors"]:
         mrow.append((search_attr(x["number"], x["what"], x["change"], x["problem"], x["group"]), [
-            td(tk(x["number"], url)), td(e(x["opened"]), "num nw"), td('<span class="chip %s">%s</span>' % ("crit" if x["priority"] == "P1" else "warn", e(x["priority"]))),
-            td(e(x["what"]), "wide"), td(glink(x["group"]), "nw"), td(fh(x["hours"]), "n"), td(tk(x["change"], url)), td(tk(x["problem"], url))]))
+            td(tk(x["number"], url, pre)), td(e(x["opened"]), "num nw"), td('<span class="chip %s">%s</span>' % ("crit" if x["priority"] == "P1" else "warn", e(x["priority"]))),
+            td(e(x["what"]), "wide"), td(glink(x["group"]), "nw"), td(fh(x["hours"]), "n"), td(tk(x["change"], url, pre)), td(tk(x["problem"], url, pre))]))
     body.append(section("severity", "Severity", "incidents by priority · P1 and P2 listed one by one",
                         table([("Priority", "", ""), ("Incidents", "n", ""), ("", "", ""), ("Median to resolve", "n", "")] +
                               ([("Response target", "n", "")] if rtargets else []) + ([("Response met", "n", "")] if two else []) +
                               ([("Resolution target" if two else "SLA target", "n", "")] if targets else []) +
-                              [("Resolution met" if two else "SLA met", "n", "")] + ([("No SLO", "n", "")] if noslo else []), prow, empty="No incidents in the period.") +
-                        ('<div class="fair">Met or missed: %s.%s</div>' % (e(src_note), " No SLO: done tickets with no SLA attached, left out of the percentages." if noslo else "")) +
+                              [("Resolution met" if two else "SLA met", "n", "")] + ([("No SLA", "n", "")] if noslo else []), prow, empty="No incidents in the period.") +
+                        ('<div class="fair">Met or missed: %s.%s</div>' % (e(src_note), " No SLA: done tickets with no SLA attached, left out of the percentages." if noslo else "")) +
                         mx_html +
                         '<div class="fig"><h3>P1 and P2 incidents in the period</h3>%s</div>' % table(
                             [("Incident", "", ""), ("Opened", "", ""), ("Priority", "", ""), ("What happened", "", ""), ("Group", "", ""), ("To resolve", "n", ""),
@@ -1586,21 +1655,54 @@ def servicenow_insights_page(model, key="all", opts=None):
                                                                                             ("Mostly in", "", "")],
                                         crow, tid="catTable", empty="No incidents in the period.", sortable=True)))
 
-    # ---- satisfaction (1.7.0): the incident surveys, best-effort
+    # ---- satisfaction (1.7.0; 1.16.0: each survey on its own scale, graded): the incident surveys, best-effort
     sv = s.get("survey") or {}
-    if pr.get("survey_read") or sv.get("n"):
-        mrows = [("", [td(e(mo)), td("<b>%s</b>" % ("%.2f" % a_ if a_ is not None else "—"), "n"), td(n(c_), "n")]) for mo, a_, c_ in sv.get("months") or []]
-        grows = [(search_attr(g["group"]), [td(glink(g["group"])), td("%.2f" % g["avg"] if g["avg"] is not None else "—", "n", g["avg"] or 0), td(n(g["n"]), "n", g["n"])])
-                 for g in sv.get("by_group") or []]
-        sat_tiles = [{"label": "Average answer", "value": ("%.2f" % sv["avg"]) if sv.get("avg") is not None else "—",
+    if pr.get("survey_read") or sv.get("n") or sv.get("blocks"):
+        def num(v, sc=None):
+            if v is None:
+                return "—"
+            top = sc[1] if sc else None
+            return ("%.2f of %s" % (v, ("%d" % top) if top is not None and float(top) == int(top) else ("%g" % top))) if top is not None else "%.2f" % v
+
+        def grade(g):
+            return ('<span class="chip %s">%s</span>' % (GRADE_CLS[g], g)) if g else '<span class="mut">—</span>'
+
+        def gtable(rows, first, scale, sortable=False, tid=""):
+            rws = [(search_attr(r_[0]) if first == "Group" else "",
+                    [td(glink(r_[0]) if first == "Group" else e(r_[0])), td(num(r_[1], scale), "n", r_[1] if r_[1] is not None else -1),
+                     td(grade(r_[3]), "", r_[3] or ""), td(n(r_[2]), "n", r_[2])]) for r_ in rows]
+            return table([(first, "", "name"), ("Average", "n", "avg"), ("Grade", "", "grade"), ("Answers", "n", "n")], rws, tid=tid,
+                         sortable=sortable, empty="No answers in the period.")
+        sc = sv.get("scale")
+        sat_tiles = [{"label": "Average answer", "value": e(num(sv.get("avg"), sc)) + ((" " + grade(sv["grade"])) if sv.get("grade") else ""),
                       "delta": delta(sv.get("avg"), sv.get("prev"), False) if win.get("compare") and sv.get("prev") is not None else "",
-                      "note": "%s answers%s" % (n(sv.get("n") or 0), (" · was %.2f" % sv["prev"]) if sv.get("prev") is not None else "")}]
-        body.append(section("satisfaction", "Satisfaction", "the incident surveys' answers in the period · %s" % (e(", ".join(sv.get("metrics") or [])) or "no answers"),
-                            tiles(sat_tiles) + '<div class="two"><div class="fig"><h3>By month</h3>%s</div><div class="fig"><h3>By group</h3>%s</div></div>' % (
-                                table([("Month", "", ""), ("Average", "n", ""), ("Answers", "n", "")], mrows, empty="No answers in the period."),
-                                table([("Group", "", "name"), ("Average", "n", "avg"), ("Answers", "n", "n")], grows, sortable=True, empty="No answers in the period.")) +
-                            '<div class="cap">The average of the answers that are numbers, on the survey\'s own scale. '
-                            'servicenow_insights_survey_metrics names which (all by default).</div>'))
+                      "note": e("%s · %s answers%s" % (sv.get("label") or "the survey", n(sv.get("n") or 0),
+                                                      (" · was %.2f" % sv["prev"]) if sv.get("prev") is not None else ""))}]
+        blocks_html = ""
+        for b_ in sv.get("blocks") or []:
+            mn = b_["main"]
+            bsc = b_.get("main_scale")
+            head_ = '<h3 class="subh">%s%s</h3><p class="mut svline">%s</p>' % (
+                e(b_["survey"] or "Survey"), ' <span class="chip">retired</span>' if b_["state"] == "retired" else "",
+                e(("Scale %s. " % _scale_label(b_["scale"])) if b_["one_scale"] else "Its questions are on different scales: each on its own. ") +
+                (("Overall %s, %s answers. " % (num(mn["avg"], b_["scale"]), n(mn["n"]))) if b_["overall"] else "") +
+                ("Retired in ServiceNow: its answers are history, never blended with the active survey. " if b_["state"] == "retired" else ""))
+            qrows = [(q["name"], q["avg"], q["n"], q["grade"]) for q in b_["questions"]]
+            qtab = table([("Question", "", ""), ("Average", "n", ""), ("Grade", "", ""), ("Answers", "n", "")],
+                         [("", [td(e(r_[0]) + ('<span class="mut"> · %s</span>' % e(_scale_label(q["scale"])) if not b_["one_scale"] else "")),
+                                td(num(r_[1], q["scale"]), "n", r_[1] if r_[1] is not None else -1), td(grade(r_[3])), td(n(r_[2]), "n", r_[2])])
+                          for r_, q in zip(qrows, b_["questions"])], empty="No answers in the period.") if len(b_["questions"]) > 1 else ""
+            mlab = b_["main_label"]
+            blocks_html += head_ + qtab + '<div class="two"><div class="fig"><h3>By month · %s</h3>%s</div><div class="fig"><h3>By group · %s</h3>%s</div></div>' % (
+                e(mlab), gtable([(m_[0], m_[1], m_[2], m_[3]) for m_ in mn["months"]], "Month", bsc),
+                e(mlab), gtable([(g["group"], g["avg"], g["n"], g["grade"]) for g in mn["by_group"]], "Group", bsc, sortable=True))
+        if not sv.get("blocks"):
+            blocks_html = '<p class="mut">No answers in the period.</p>'
+        body.append(section("satisfaction", "Satisfaction", "the incident surveys' answers in the period · %s" % (
+                                e(", ".join(sorted(set((b_["survey"] or "Survey") for b_ in sv.get("blocks") or [])))) or "no answers"),
+                            tiles(sat_tiles) + blocks_html +
+                            '<div class="cap">Each survey on its own scale, graded Good, Fair or Low by the share of the scale '
+                            '(servicenow_insights_survey_grades). Under %d answers: no grade.</div>' % int(o.get("survey_min_answers") or 5)))
 
     # ---- issues
     top_n = int(o.get("top_issues") or 10)
@@ -1641,7 +1743,7 @@ def servicenow_insights_page(model, key="all", opts=None):
                 search_attr(i["name"], " ".join(i["cis"]), " ".join(steps), " ".join(i["examples"])), i["rank"], e(i["name"]), mv_chip(i["mv"]),
                 src[0], src[1], tags, "%.1f" % (i["share"] or 0), i["cum"], main, 100.0 * i["count"] / mx, spark(i["weekly"]), n(i["count"]),
                 ("was %s" % n(i["prev"])) if win.get("compare") else "incidents", fh(i["median_h"]), src[0], src[1], e(copy), stepl, e(i["fix"].get("why") or ""), dis,
-                ('<span class="mono">%s</span>' % e(", ".join(i["cis"]))) if i["cis"] else "—", ", ".join(tk(x, url) for x in i["examples"]) or "—",
+                ('<span class="mono">%s</span>' % e(", ".join(i["cis"]))) if i["cis"] else "—", ", ".join(tk(x, url, pre) for x in i["examples"]) or "—",
                 qbar(i["quality"], "160px"), i["quality"][2], spark(i["weekly"], "var(--s1)", 160, 34),
                 ("<dt>About</dt><dd>%s</dd>" % e(i["about"])) if i.get("about") else ""))
     if not iss:
@@ -1664,7 +1766,7 @@ def servicenow_insights_page(model, key="all", opts=None):
     for p in s["problems"]:
         if p["problem"]:
             st = p["problem_state"] or ""
-            rec = tk(p["problem"], url) + (' <span class="chip crit">%s, incidents continue</span>' % e(st or "Resolved") if p["continues"] else
+            rec = tk(p["problem"], url, pre) + (' <span class="chip crit">%s, incidents continue</span>' % e(st or "Resolved") if p["continues"] else
                                           (' <span class="chip">%s</span>' % e(st) if st else ""))
         else:
             rec = '<span class="chip warn">No problem record</span>'
@@ -1730,11 +1832,11 @@ def servicenow_insights_page(model, key="all", opts=None):
                 {"label": "Emergency", "value": pct(_p(ch["emergency"], ch["count"])), "note": "%d changes" % ch["emergency"]}]
     crow = []
     for x in ch["rows"]:
-        fol = "<br>".join("%s %s" % (tk(f[0], url), '<span class="chip info">Caused by</span>' if f[1] == "link" else '<span class="chip">Same CI</span>') for f in x["followed"][:6])
+        fol = "<br>".join("%s %s" % (tk(f[0], url, pre), '<span class="chip info">Caused by</span>' if f[1] == "link" else '<span class="chip">Same CI</span>') for f in x["followed"][:6])
         if len(x["followed"]) > 6:
             fol += '<br><span class="mut">and %d more</span>' % (len(x["followed"]) - 6)
         crow.append((search_attr(x["number"], x["what"], " ".join(f[0] for f in x["followed"])), [
-            td(tk(x["number"], url)), td(e(x["closed"]), "num nw"), td(e(x["what"]), "wrap"), td(glink(x["group"])),
+            td(tk(x["number"], url, pre)), td(e(x["closed"]), "num nw"), td(e(x["what"]), "wrap"), td(glink(x["group"])),
             td('<span class="chip %s">%s</span>' % ("crit" if x["outcome"] == "Failed" else "warn", e(x["outcome"]))), td(fol or '<span class="mut">none</span>', "lh")]))
     em = ch["by_group"]
     emerg = hbars([(sh(g["group"]), g["pct"] or 0, "%s<br><b>%d</b> of %d changes" % (e(g["group"]), g["emergency"], g["changes"])) for g in em],
@@ -1876,10 +1978,10 @@ def servicenow_insights_page(model, key="all", opts=None):
                 ('<dt>Not read in the map</dt><dd>%s <span class="mut">(no level given)</span></dd>' % lst(m.get("org_bad"))) if m.get("org_bad") else "",
                 "".join('<dt>No page</dt><dd>%s<br><span class="mut">%s. Its tickets are in %s.</span></dd>' % (e(g), e(why[:1].upper() + why[1:]), e(where))
                     for g, why, where in m.get("hier_folded") or [])))
-    # the SLOs (1.7.0): where met or missed came from, the SLA definitions by kind, the business hours
+    # the SLAs (1.7.0): where met or missed came from, the SLA definitions by kind, the business hours
     defs = slo.get("definitions") or []
     kinds = (("response", "Response"), ("resolution", "Resolution"), ("other", "Other (not counted)"))
-    slo_html = ('<details class="notes"%s><summary><b>Your SLOs</b> <span class="mut">%s</span></summary><dl class="kv"><dt>Met or missed</dt><dd>%s</dd>%s'
+    slo_html = ('<details class="notes"%s><summary><b>Your SLAs</b> <span class="mut">%s</span></summary><dl class="kv"><dt>Met or missed</dt><dd>%s</dd>%s'
                 '<dt>Business hours</dt><dd>%s</dd>%s</dl></details>' % (
                     " open" if defs else "", e(src_note),
                     e(src_note) + (("<br>" + e(slo["note"])) if slo.get("note") else ""),
@@ -1892,8 +1994,16 @@ def servicenow_insights_page(model, key="all", opts=None):
                     if sla_src == "targets" else ""))
     tm = [r_ for r_ in o.get("timing") or [] if isinstance(r_, (list, tuple)) and len(r_) == 2]     # the run's time, so far (1.14.0)
     time_html = ('<details class="notes"><summary><b>Time this run</b> <span class="mut">%s before the pages</span></summary><dl class="kv">%s</dl>'
-                 '<p class="mut">The pages, the email and the report database come after: the job output has the whole run.</p></details>' % (
+                 '<p class="mut">The pages and the email come after: the job output has the whole run.</p></details>' % (
                      e(fmin(sum(x for _l, x in tm))), "".join("<dt>%s</dt><dd>%s</dd>" % (e(lb), e(fmin(x))) for lb, x in tm))) if tm else ""
+    dbs = o.get("db") or {}               # is it writing? (1.15.0): this run's write, read back from the report database
+    svr = m.get("surveys_read") or []
+    survey_html = ('<details class="notes"><summary><b>The surveys read</b> <span class="mut">%d question%s: survey - question - answers - scale</span>'
+                   '</summary><ul>%s</ul></details>' % (len(svr), "" if len(svr) == 1 else "s", "".join("<li>%s</li>" % e(x) for x in svr))) if svr else ""
+    db_html = (('<p class="dbline"><b>Report database.</b> %s</p>' if dbs.get("written") else '<div class="callout"><b>Report database.</b> %s</div>')
+               % e(dbs.get("page") or "")) if dbs.get("page") else ""
+    if o.get("store_line"):               # the ticket store (1.17.0): how many came from ServiceNow, how many from the database
+        db_html += '<p class="dbline"><b>Tickets.</b> %s</p>' % e(o["store_line"])
     body.append(section("method", "How this was made", "", '<div class="method"><div><div class="eyebrow">Read from ServiceNow (read only)</div><dl class="kv">%s'
                         '<dt>Window</dt><dd>%s (%s)</dd><dt>Compared with</dt><dd>%s</dd><dt>Reopen</dt><dd>%s</dd></dl></div>'
                         '<div><div class="eyebrow">Replaced before GenAI, put back after</div><dl class="kv">%s</dl></div>'
@@ -1904,12 +2014,14 @@ def servicenow_insights_page(model, key="all", opts=None):
                               ("not used: %s of %s incidents reopened, so the report counts the tickets that came back" % (n(m.get("reopened_n")), n(m.get("incidents_n"))))),
                             "".join("<dt>%s</dt><dd class=\"num\">%s</dd>" % (lbl, n(mk.get(kk, 0))) for kk, lbl in
                                     (("PERSON", "Names"), ("PHONE", "Phone numbers"), ("EMAIL", "Email addresses"), ("HOST", "Host names"), ("IP", "IP addresses"), ("ID", "10-digit IDs"))),
-                            e(("%d of %d answered" % (a.get("answered", 0), a.get("asked", 0))) if a.get("ran") or a.get("asked") else
+                            e(("%d of %d answered" % (a.get("answered", 0), a.get("asked", 0)) + (
+                                "; %s descriptions placed from the ACT cache, not asked again" % n(a["cached"]) if a.get("cached") else ""))
+                              if a.get("ran") or a.get("asked") else
                               ("off" if not a.get("on") else "did not run: %s" % (a.get("reason") or "no answer"))),
                             e(("%d, grouped by ACT" % a.get("issues", 0)) if a.get("ran") else "the incidents' category / subcategory"),
                             e(str(a.get("fixes", 0)) if a.get("ran") else "none: the most common close notes are shown"),
                             e("by ACT" if s.get("summary_by") == "act" else "from the numbers"),
-                            (('<div class="callout"><b>Not read.</b> %s</div>' % e("; ".join(nr))) if nr else "") + place_html + slo_html + time_html)))
+                            (('<div class="callout"><b>Not read.</b> %s</div>' % e("; ".join(nr))) if nr else "") + db_html + place_html + slo_html + survey_html + time_html)))
 
     # the script: loaded from the website (site-insights.js beside the index, written by site_report_web, the address made relative to
     # this page there) and carried in the page too; whichever runs first does the work
@@ -1925,6 +2037,12 @@ def servicenow_insights_page(model, key="all", opts=None):
         bc = '<div class="where">%s<nav class="split" aria-label="Which groups">%s</nav></div>' % (bc, "".join(
             '<a href="%s"%s>%s</a>' % (e(vl.get(v_, "")), ' aria-current="page"' if v_ == variant else "", e(lab))
             for v_, lab in (("", "All"), ("in", sp["label"]), ("out", "non-" + sp["label"])) if vl.get(v_) is not None))
+    cut = m.get("cut") or []                 # 1.16.0: records cut by servicenow_insights_max_records - first on every page
+    if cut:
+        bc += '<div class="callout cutbar" role="alert"><b>Records cut: some figures are incomplete.</b><ul>%s</ul></div>' % "".join(
+            "<li>%s</li>" % e(x) for x in cut)
+    elif m.get("compare_cut"):
+        bc += '<div class="callout cutbar"><b>No compare this run.</b> %s</div>' % e(m["compare_cut"])
     out = head + ['<div class="gut"><div class="wrap layout">'] + nav + ["<main>", teamnav, bc] + body + [
         '</main></div></div><footer class="gut foot"><div class="wrap">%s</div></footer><div class="tip" id="tip" hidden></div>'
         '<script src="%s"></script><script id="site-report-js" data-file="%s">\n%s\n</script></body></html>' % (
@@ -1986,6 +2104,11 @@ def stars_panel(team, st, reopen_used, idx, titled):
                           td('<span class="ib b" style="width:%.1f%%"></span>' % (100.0 * p["opened"] / mx), "barc")]))
     opener = table([("Opened by", "", ""), ("From", "", ""), ("Tickets", "n", ""), ("", "", "")], orow,
                    empty="No ticket was opened for this team in the period.")
+    of = st.get("openers_of") or {}
+    if op and of.get("tickets"):              # 1.18.0: of how many - the tickets in the period, the people who opened them
+        shown = sum(p["opened"] for p in op)
+        opener = '<div class="cap of">%s of %s tickets, from %s of %s people.</div>%s' % (
+            n(shown), n(of["tickets"]), n(len(op)), n(of.get("people") or len(op)), opener)
     return ('<div class="panel%s" id="p%d" data-team="%s">%s<div class="awards">%s</div><div class="two"><div class="fig"><h3>Leaderboard</h3>%s%s</div>'
             '<div class="fig"><h3>Who sends this team its tickets</h3><div class="cap">Who opened the tickets assigned to this team in the period. '
             'From = the group that person works tickets in (an end user opens their own).</div>%s</div></div></div>') % (
@@ -2029,7 +2152,14 @@ ORG_CSS = """
 .cvpre{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 14px 0}
 .cvpre button{font:inherit;font-size:13px;padding:4px 12px;border:1px solid var(--line);border-radius:999px;background:var(--surface-2);color:var(--fg);cursor:pointer}
 .cvpre button[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);font-weight:700}
-.cvper{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 12px}
+.cvper{display:flex;flex-direction:column;align-items:flex-start;gap:8px;margin:0 0 12px}
+.cvpbtn{display:flex;flex-direction:column;gap:6px}
+.cvprow{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.cvplab{font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--fg-2);min-width:58px}
+.cvres .cvper button.cvpd.num{min-width:36px;padding:4px 10px;font-variant-numeric:tabular-nums;text-align:center}
+.cvpsel{display:none;font-size:13px}.cvpsel select{font:inherit;font-size:14px;padding:5px 8px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--fg);color-scheme:inherit}
+.cvleft{font-size:12px;margin:0}.cvftmsg{font-size:12px}
+@media (max-width:640px){.cvpbtn{display:none}.cvpsel{display:inline-flex;align-items:center;gap:8px}}
 .cvres .cvper button.cvpd{border-radius:999px;padding:4px 12px}
 .cvres .cvper button.cvpd[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);font-weight:700}
 .cvft{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px 8px}.cvft label{font-size:13px;color:var(--fg-2)}
@@ -2144,12 +2274,26 @@ def custom_view(m, o):
     cal = c.get("calendar") or {}
     pbar = ""
     if pers:
-        pbar = ('<div class="cvper js" role="group" aria-label="Period"><span class="mut">Period:</span>%s'
-                '<span class="cvft"><label>From <input type="date" id="cvfrom" min="%s" max="%s"></label>'
-                '<label>to <input type="date" id="cvto" min="%s" max="%s"></label><button type="button" id="cvft">Show</button></span></div>') % (
-            "".join('<button type="button" class="cvpd" data-name="%s" aria-pressed="false" title="%s">%s</button>' % (
-                e(p_["name"]), e(p_["title"] + ((", compared with " + p_["ctitle"]) if p_.get("ctitle") else "")), e(p_["label"])) for p_ in pers),
-            e(cal.get("d0", "")), e(cal.get("last", "")), e(cal.get("d0", "")), e(cal.get("last", "")))
+        # 1.16.0: two short labeled rows - The window and This month, then Months (1 2 3 6 9 12) / Weeks (1 2 4) by their
+        # number, the full label in the title and for screen readers; the from / to after. A phone: one select instead.
+        def tip(p_):
+            return p_["title"] + ((", compared with " + p_["ctitle"]) if p_.get("ctitle") else "")
+
+        def btn(p_, short):
+            return ('<button type="button" class="cvpd%s" data-name="%s" aria-pressed="false" title="%s: %s" aria-label="%s">%s</button>' % (
+                " num" if short else "", e(p_["name"]), e(p_["label"]), e(tip(p_)), e(p_["label"]), e(str(p_["n"]) if short else p_["label"])))
+        plain = [p_ for p_ in pers if not p_.get("kind")]
+        rows = [('Months', [p_ for p_ in pers if p_.get("kind") == "m"]), ('Weeks', [p_ for p_ in pers if p_.get("kind") == "w"])]
+        rows_html = "".join('<div class="cvprow" role="group" aria-label="%s"><span class="cvplab">%s</span>%s</div>' % (
+            lab, lab, "".join(btn(p_, True) for p_ in ps)) for lab, ps in rows if ps)
+        sel = ('<label class="cvpsel"><span class="mut">Period</span> <select id="cvpsel">%s<option value="" disabled>From / to below</option>'
+               '</select></label>') % "".join('<option value="%s">%s</option>' % (e(p_["name"]), e(p_["label"])) for p_ in pers)
+        left = ('<p class="cvleft mut">%s</p>' % e(c["left_line"])) if c.get("left_line") else ""
+        pbar = ('<div class="cvper js" role="group" aria-label="Period">%s<div class="cvpbtn"><div class="cvprow cvpfirst">%s</div>%s</div>'
+                '<div class="cvft"><label>From <input type="date" id="cvfrom" min="%s" max="%s"></label>'
+                '<label>to <input type="date" id="cvto" min="%s" max="%s"></label><button type="button" id="cvft">Show</button><span class="mut cvftmsg" id="cvftmsg" aria-live="polite"></span></div>%s</div>') % (
+            sel, "".join(btn(p_, False) for p_ in plain), rows_html,
+            e(cal.get("d0", "")), e(cal.get("last", "")), e(cal.get("d0", "")), e(cal.get("last", "")), left)
     chart = ('<div class="fig cvch"><h3>Opened and resolved</h3><div class="legend"><span><i style="background:var(--s1)"></i>Opened</span>'
              '<span><i style="background:var(--s2)"></i>Incidents resolved</span></div><div id="cvchart"></div></div>')
     res = ('<div class="cvres" id="cvres" hidden><div class="cvhead"><b id="cvlab"></b><span class="mut" id="cvpt"></span>'

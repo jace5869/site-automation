@@ -15,3 +15,5 @@ mssql-python           # Microsoft's SQL Server driver, for your own Python (imp
 jmespath               # the json_query filter
 dnspython              # the community.general.dig lookup
 smbprotocol            # the report website on an SMB share (report_web_dest \\server\share): Kerberos through pyspnego
+PyMySQL>=1.2.4         # ansible.mysql brings PyMySQL, any version: 1.2.1 to 1.2.3 break the first MySQL 8.4 login over plain
+                       # TCP after the server restarts ('NoneType' ... 'is_auth_switch_request'; REPORT_DATABASE.md)

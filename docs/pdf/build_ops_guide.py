@@ -22,7 +22,7 @@ REPO = os.environ.get("SITE_AUTOMATION_DIR") or (
     os.path.dirname(os.path.dirname(_HERE)) if os.path.isfile(os.path.join(_HERE, "..", "START_HERE.md"))
     else sys.exit("build_ops_guide.py: cannot find the site-automation repository; "
                   "run the script from <repo>/docs/pdf or set SITE_AUTOMATION_DIR=<repo>"))
-SA_VERSION = "1.33.0"
+SA_VERSION = "1.38.0"
 DOCS = [  # (file, chapter title)
     ("docs/START_HERE.md", "Start here: the pieces and how they fit"),
     ("docs/SETUP_AAP.md", "Setting up AAP, step by step"),
@@ -375,6 +375,13 @@ def wrap_code(text):
             out.append(line)
             continue
         indent = len(line) - len(line.lstrip())
+        # 1.30.0: a comment that wraps keeps its # on each line, so the block pasted stays YAML (or shell)
+        c = re.search(r"(?:^|\s)(#+\s?)", line)
+        if c and not line[:c.start(1)].count('"') % 2 and not line[:c.start(1)].count("'") % 2 and c.start(1) <= 78:
+            col, mark = c.start(1), c.group(1)
+            body = textwrap.wrap(line[c.end(1):], 98 - col - len(mark), break_on_hyphens=False) or [""]
+            out += [line[:col] + mark + body[0]] + [" " * col + mark + b for b in body[1:]]
+            continue
         out += textwrap.wrap(line, 98, subsequent_indent=" " * (indent + 2), break_on_hyphens=False)
     return "\n".join(out)
 

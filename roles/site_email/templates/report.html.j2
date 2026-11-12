@@ -43,13 +43,13 @@
 </td></tr>
 {%- if r.summary | default([]) %}
 <tr><td style="padding:16px 20px 4px 20px;">
-{#- a report may ask for its tiles in rows of summary_per_row (1.31.0b: the right-sizing report's 10 tiles in one row
-    widened the email); without it one row, as before #}
-{%- for chunk in r.summary | batch(r.summary_per_row | default(r.summary | length, true) | int) %}
-<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+{#- 1.30.0: four or more boxes - four equal columns over the width (a short last row keeps them: empty cells) #}
+{%- set _four = r.summary | length >= 4 %}
+<table role="presentation" cellpadding="0" cellspacing="0" border="0"{% if _four %} width="100%" style="width:100%;table-layout:fixed;"{% endif %}>
+{%- for chunk in r.summary | batch(4) %}<tr>
 {%- for t in chunk %}
-<td style="padding:0 8px 8px 0;vertical-align:top;">
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #d1d5db;border-top:4px solid {{ colour[t.status | default('')] | default('#6b7280') }};min-width:120px;">
+<td{% if _four %} width="25%"{% endif %} style="padding:0 8px 8px 0;vertical-align:top;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0"{% if _four %} width="100%"{% endif %} style="border:1px solid #d1d5db;border-top:4px solid {{ colour[t.status | default('')] | default('#6b7280') }};{{ 'width:100%;' if _four else 'min-width:120px;' }}">
 <tr><td style="padding:8px 12px;">
 <div style="font-size:22px;font-weight:bold;color:{{ colour[t.status | default('')] | default('#111827') }};">{{ t.value | string | e }}</div>
 <div style="font-size:12px;color:#4b5563;">{{ t.label | e }}</div>
@@ -59,8 +59,9 @@
 </td></tr></table>
 </td>
 {%- endfor %}
-</tr></table>
-{%- endfor %}
+{%- if _four %}{% for _ in range(4 - chunk | length) %}<td width="25%" style="padding:0 8px 8px 0;"></td>{% endfor %}{% endif %}
+</tr>
+{%- endfor %}</table>
 </td></tr>
 {%- endif %}
 {%- for s in r.sections | default([]) %}
@@ -104,7 +105,9 @@
 {%- if s.lines | default([]) %}
 <ul style="margin:6px 0 8px 0;padding-left:20px;">
 {%- for l in s.lines if l | trim %}
-<li style="margin:2px 0;">{{ l | e }}</li>
+{#- 1.30.0: an item under the one above ("  - ..." in the text email) is indented, no dash #}
+{%- set _sub = l[:1] == ' ' and l.lstrip()[:2] == '- ' %}
+<li style="margin:2px 0;{{ ' margin-left:18px;list-style-type:circle;' if _sub else '' }}">{{ (l.lstrip()[2:] if _sub else l) | e }}</li>
 {%- endfor %}
 </ul>
 {%- endif %}

@@ -92,6 +92,11 @@
   ansible.builtin.debug:
     msg: "{{ (_war_doc | report_text).splitlines() }}"
 
+- name: WAR | WARNING - records cut by servicenow_war_max_records (the report says so first)
+  ansible.builtin.debug:
+    msg: "{{ ['WARNING - records cut, some figures are incomplete:'] + (_war_doc.sections | selectattr('title', 'equalto', 'Records cut: some figures are incomplete') | map(attribute='lines') | first) }}"
+  when: "_war_doc.sections | default([]) | selectattr('title', 'equalto', 'Records cut: some figures are incomplete') | list | length > 0"
+
 - name: WAR | the week as job artifacts (servicenow_war)
   ansible.builtin.set_stats:
     data:

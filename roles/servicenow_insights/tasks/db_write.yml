@@ -1,7 +1,7 @@
 ---
-# THE HISTORY (1.13.0, docs/REPORT_DATABASE.md), after the pages: this run's figures (db.yml worked them out) written, each
-# calendar month replacing what an older run wrote for it - a complete month never by a month so far. Not written when
-# the database was not read (one warning is enough), nor in Check.
+# THE HISTORY (1.13.0, docs/REPORT_DATABASE.md), before the pages since 1.15.0 (so each page says it was written): this
+# run's figures (db.yml worked them out) written, each calendar month replacing what an older run wrote for it - a
+# complete month never by a month so far. Not written when the database was not read (one warning is enough), nor in Check.
 - name: Insights | write this run's figures to {{ _sni_db.host }}:{{ _sni_db.port }}/{{ _sni_db.database }}
   site_insights_db:
     mode: write

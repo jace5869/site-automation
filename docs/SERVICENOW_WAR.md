@@ -22,7 +22,8 @@ ACT (GenAI) from the same tables. It runs on the AAP side with the **ServiceNow 
 | **For the WAR (written by ACT)** (optional, right after it) | the other version: a summary of two or three sentences, then accomplishments, in progress, what deserves attention - written by GenAI from the tables, one plain sentence per bullet with the ticket numbers. Both versions are there; the lead picks the one to paste |
 | **SLA breached or close to breaching** | the tasks whose SLA ran past its time (red: the open ones first, then the week's completed ones that breached) and those with an SLA still running at 75% of its time or more (amber; `servicenow_war_sla_warn_percent`): the SLA, the time used, the breach time - after the WAR and ACT's version of it: the week's results come first. ACT is told about them for *what deserves attention* |
 | **Cancelled this week** | at the bottom: the tasks closed in the week as *Canceled*, *Closed Skipped* or *Closed Incomplete* (`servicenow_war_cancelled_states`): when, what, who had it, how long it was open, the close notes. Not counted as completed, not in the WAR lines, not among ACT's accomplishments |
-| **Not read** | a table the account cannot read, a group or user ServiceNow does not know, a table cut at `servicenow_war_max_records` |
+| **Not read** | a table the account cannot read, a group or user ServiceNow does not know |
+| **Records cut** (1.16.0) | first, before every section: a table over `servicenow_war_max_records`. The newest records are kept; the oldest tickets still open are left out |
 | **Read** | per table, the records read and kept |
 | The workbook | every task with every column on one sheet (dates, the link to the record, close notes whole, your own fields; the untouched backlog too), then Completed, Opened, Open at the end, Cancelled, By person, By type |
 
@@ -199,7 +200,7 @@ sort is made in the job on the records' UTC timestamps.
 | *Not read*: `the assignment groups were not looked up (...): matched by name instead` | no read on `sys_user_group` | fine as it is; or give the account read on it, so a wrong name is caught |
 | *Not read*: `task_sla (the SLAs): ... HTTP 403` | the API account cannot read the SLAs | give it read on `task_sla` (the `itil` role has it), or `servicenow_war_sla: false` |
 | An SLA you see in ServiceNow is not in the report | it is not breached and under 75% of its time, or it was cancelled | lower `servicenow_war_sla_warn_percent`; the workbook has every task's SLA |
-| *Not read*: `incident: more than the first 5000 records` | a big backlog | raise `servicenow_war_max_records`, or `servicenow_war_period: dates` for a shorter week |
+| *Records cut*: `incident: only the newest 5000 records read` | a big backlog: the newest are kept, the oldest still open are left out (1.16.0) | raise `servicenow_war_max_records`, or `servicenow_war_period: dates` for a shorter week |
 | `the window ends (...) before it starts (...)` | `servicenow_war_until` before `servicenow_war_since` | swap them |
 | the dates are a few hours off | `report_time_zone` is empty (UTC) or not a zone the execution environment knows | set it (`America/New_York`); the subtitle says when the zone is unknown |
 | a task closed in the week is not under *Completed* | it was cancelled, skipped or closed incomplete: it is under *Cancelled this week* | that is the point; `servicenow_war_cancelled_states` says which states count as cancelled (`[]`: none) |

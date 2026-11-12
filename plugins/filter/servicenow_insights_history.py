@@ -14,7 +14,7 @@ SCHEMA_VERSION = 1
 # the node row's typed columns (the long table has them too, so a query needs only one of them)
 NODE_COLUMNS = ("incidents", "requests", "resolved", "backlog", "sla_met_pct", "median_resolve_h")
 # what the page's trend draws, in this order: (metric, label, kind) - kind pct (one chart) or count (the other)
-TREND = (("sla_met_pct", "SLO met", "pct"), ("response_met_pct", "Response met", "pct"), ("fcr_pct", "First contact", "pct"),
+TREND = (("sla_met_pct", "SLA met", "pct"), ("response_met_pct", "Response met", "pct"), ("fcr_pct", "First contact", "pct"),
          ("incidents", "Incidents", "count"), ("backlog", "Open at the end", "count"),
          ("median_resolve_h", "Median time to resolve (h)", "hours"), ("reopen_pct", "Reopened", "pct"))
 TREND_METRICS = [t[0] for t in TREND]
@@ -93,9 +93,11 @@ def scope_figures(s):
         put("filed_%s_pct" % k, _get(s, "quality_t", k))
     put("after_hours_pct", _get(s, "after", "pct"))
     sv = s.get("survey") or {}
-    if sv.get("n"):
+    if sv.get("n") and sv.get("scale"):     # 1.16.0: the headline on its scale (a row without survey_scale_max: before, mixed)
         put("survey_avg", sv.get("avg"))
         put("survey_n", sv.get("n"))
+        put("survey_scale_max", sv["scale"][1])
+        put("survey_questions", sv.get("questions_n"))
     lc = s.get("lifecycle") or {}
     if lc.get("measured"):
         for k in ("new", "progress", "hold", "resolved"):
@@ -266,12 +268,26 @@ def servicenow_insights_db_runs(r, model, opts=None, mask=None):
     runs = [servicenow_insights_db_rows(model, opts)]
     for mw in month_windows((r or {}).get("window")):
         runs.append(month_run(r, mw, opts, mask))
+    # 1.16.0: a table cut inside the window (servicenow_insights_max_records): every figure can be short - a ticket opened
+    # before the cut and resolved in a later month is missing there too. Nothing of the run is written: every run marked
+    if _cut_at(r) is not None:
+        for x in runs:
+            x["cut"] = True
     return {"runs": runs}
 
 
-def servicenow_insights_backfill_months(r):
-    """The complete calendar months a backfill read holds, oldest first ('YYYY-MM')."""
-    return [mo for mo, _a, _b, partial in month_windows((r or {}).get("window")) if not partial]
+def _cut_at(r):
+    """1.16.0: where a table's records were cut inside the window (servicenow_insights_max_records): the latest such cut,
+    naive UTC - or None."""
+    cuts = [_parse(t.get("cut")) for t in (r or {}).get("tables") or [] if t.get("window_cut") and _parse(t.get("cut"))]
+    return max(cuts).replace(tzinfo=None) if cuts else None
+
+
+def servicenow_insights_backfill_months(r, cut=False):
+    """The complete calendar months a backfill read holds, oldest first ('YYYY-MM'). A read cut inside its window (1.16.0):
+    none of them - every month can be short; cut=True: the months left out so."""
+    cut_read = _cut_at(r) is not None
+    return [mo for mo, a, _b, partial in month_windows((r or {}).get("window")) if not partial and cut_read == bool(cut)]
 
 
 def _parse(ts):
@@ -351,8 +367,112 @@ def servicenow_insights_trend(model, history=None, opts=None, runs=None):
     return m
 
 
+def db_source(r, o=None):
+    """The run key's source (the instance) of what the module read: db_source, else the instance's host."""
+    return str((o or {}).get("db_source") or "").strip() or source_of((r or {}).get("url"))
+
+
+def servicenow_insights_db_status(st):
+    """Is it writing? (1.15.0) - the report database's one line, from st: {on, host, port, database, check (Check mode),
+    read (site_insights_db read's result), write (write's result, or the backfill's last), source, not_read (why the run
+    read nothing)} -> {written, line (the job's last lines: with the host), page (How this was made: without it), held}.
+    What the database holds comes from the write's read-back (a SELECT), never from the rows sent."""
+    st = st or {}
+    where = "%s:%s/%s" % (st.get("host"), st.get("port"), st.get("database")) if st.get("host") else ""
+    head = "Report database %s" % where if where else "Report database"
+    w, rd = st.get("write") or {}, st.get("read") or {}
+    why = ""
+    if not st.get("on"):
+        why = "servicenow_insights_db is false"
+    elif not where:
+        why = "no Report database credential on the job template"
+    elif st.get("not_read"):
+        why = st["not_read"]
+    elif st.get("check"):
+        why = "Check mode"
+    elif rd and not rd.get("ok"):
+        why = "not reached or refused: %s" % (rd.get("error") or "no answer")
+    elif not w or w.get("skipped"):
+        why = "not reached"
+    elif not w.get("ok"):
+        why = "refused: %s" % (w.get("error") or "no answer")
+    if why:
+        return {"written": False, "line": "%s: NOT written - %s" % (head, why), "page": "Not written this run: %s." % why, "held": {}}
+    src = str(st.get("source") or "")
+    rows = [h for h in w.get("held") or [] if not src or h.get("source") == src]
+    runs = sum(int(h.get("runs") or 0) for h in rows)
+    first = min([h["first"] for h in rows if h.get("first")] or [""])
+    last = max([h["last"] for h in rows if h.get("last")] or [""])
+    months = [str(m) for m in w.get("months") or []]
+    wr = w.get("written") or {}
+    did = "run %s, %d month%s%s, %s figures" % (w.get("run_id") or "?", len(months), "" if len(months) == 1 else "s",
+                                                (" (%s)" % ", ".join(months)) if months else "", "{:,}".format(int(wr.get("figures") or 0)))
+    now = "the database now holds %d runs, first month %s, last month %s" % (runs, first or "-", last or "-")
+    cut = [str(x) for x in w.get("cut") or []]      # 1.16.0: incomplete (records cut), not written
+    cs = ("; NOT written, the records cut (servicenow_insights_max_records): %s" % ", ".join(cut)) if cut else ""
+    if cut and not wr.get("runs"):
+        return {"written": False, "line": "%s: NOT written - the records were cut (servicenow_insights_max_records): an incomplete run is never "
+                                          "written; %s" % (head, now),
+                "page": "Not written this run: the records were cut (servicenow_insights_max_records). An incomplete run is never written.",
+                "held": {"runs": runs, "first": first, "last": last}}
+    return {"written": True, "line": "%s: written - %s%s; %s" % (head, did, cs, now),
+            "page": "Written this run: %s%s. The database holds %d runs of this instance, months %s to %s." % (did, cs, runs, first or "-", last or "-"),
+            "held": {"runs": runs, "first": first, "last": last}}
+
+
+def servicenow_insights_db_check_lines(res, where=""):
+    """servicenow_insights_db_check (1.15.0): what site_insights_db's check found, in lines."""
+    r = res or {}
+    if not r.get("ok"):
+        return ["Report database %s: NOT reached - %s" % (where, r.get("error") or "no answer")]
+    acc = r.get("account") or {}
+    ob = r.get("objects") or {}
+    cw = acc.get("can_write")
+    out = ["Report database %s: reached - MySQL %s, TLS %s, as %s (%s)" % (
+               where, r.get("version"), r.get("tls") or "none", acc.get("name"),
+               "may write" if cw else ("reads only" if cw is False else "its grants not readable")),
+           ("Tables and views: all %d there, schema version %s" % (len(ob.get("present") or []), r.get("schema_version")) if not ob.get("missing")
+            else "Tables and views: %d there, missing %s" % (len(ob.get("present") or []), ", ".join(ob["missing"])))]
+    held = r.get("held") or []
+    if not held:
+        out.append("Held: nothing yet - no run has been written")
+    for h in held:
+        out.append("Held: %s, period %s - %d runs, %d months (%d complete), %s to %s, newest written %s" % (
+            h["source"], h["period"], h["runs"], h["months"], h["complete"], h["first"] or "-", h["last"] or "-", h["newest"] or "-"))
+    return out
+
+
+def servicenow_insights_store_line(r, w=None, check=False):
+    """How this run read the tickets (1.17.0, the ticket store): {line (the job's), page (How this was made)} - '' when the
+    ticket store was not used. r: the read's answer (its store); w: tickets_save's."""
+    st = (r or {}).get("store") or {}
+    if not st:
+        return {"line": "", "page": ""}
+    n = "{:,}".format(int(st.get("from_sn") or 0) + int(st.get("from_db") or 0))
+    if st.get("mode") == "incremental":
+        core = "%s read from ServiceNow (new or changed), %s from the report database" % (
+            "{:,}".format(int(st.get("from_sn") or 0)), "{:,}".format(int(st.get("from_db") or 0)))
+    else:
+        core = "all read from ServiceNow - a full read (%s)" % (st.get("why") or "every ticket")
+    w = w or {}
+    if check:
+        tail = "Check mode: nothing written"
+    elif st.get("not_saved"):
+        tail = "nothing written: " + st["not_saved"]
+    elif not int(st.get("saved") or 0):
+        tail = "nothing to write"
+    elif w.get("ok"):
+        ws = w.get("store") or {}
+        tail = "%s written to the report database in %.0f s" % ("{:,}".format(int(ws.get("saved") or 0)), float(ws.get("seconds") or 0))
+    else:
+        tail = "not written: " + str(w.get("error") or "the report database was not reached")
+    return {"line": "Tickets: %s - %s; %s." % (n, core, tail), "page": "%s tickets - %s; %s." % (n, core, tail)}
+
+
 class FilterModule(object):
     def filters(self):
         return {"servicenow_insights_db_rows": servicenow_insights_db_rows, "servicenow_insights_db_runs": servicenow_insights_db_runs,
                 "servicenow_insights_month_run": month_run, "servicenow_insights_backfill_months": servicenow_insights_backfill_months,
-                "servicenow_insights_trend": servicenow_insights_trend}
+                "servicenow_insights_trend": servicenow_insights_trend, "servicenow_insights_db_status": servicenow_insights_db_status,
+                "servicenow_insights_db_check_lines": servicenow_insights_db_check_lines, "servicenow_insights_db_source": db_source,
+                "servicenow_insights_store_line": servicenow_insights_store_line}

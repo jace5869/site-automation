@@ -6,7 +6,7 @@ incidents), problems, the assignment history (sys_audit) of incidents passed bet
 0.96.0: what was tried - the printers' restart a workaround used again and again; an address, a host and a phone number in
 them that appear nowhere else), change tasks (1.2.0: one to four per change, the network team's often closed last and late,
 some without a planned end, a few changes still open with open tasks past their planned end). Deterministic.
-    insights_seed.py OUT.json [SCALE] [--sites]      (SCALE 1 = about 1,500 incidents in the 6-month window)
+    insights_seed.py OUT.json [SCALE] [--sites] [--surveys]      (SCALE 1 = about 1,500 incidents in the 6-month window)
 --sites (0.97.0): the same records with the groups named as three made-up sites with their directorates - SITEA's staff
 codes J6 and j63, SITEB's NOVA (the suffix) and an Other, SITE-C (a hyphen in it) with the named directorate CODEX."""
 import datetime
@@ -90,6 +90,39 @@ def when(day_frac):
 
 SITES = {SD: "SITEA - J6 - Service Desk", WIN: "SITEA - j63 - Windows", VDI: "SITEB - Ops - VDI - nova", LNX: "SITE-C - CODEX - Linux",
          NET: "SITEB - Network"}
+
+
+SURVEY_SD = ("Service desk survey", "true", "published")
+SURVEY_OLD = ("Legacy survey", "false", "retired")
+
+
+def survey_q(name, survey, datatype, lo, hi, key=None):
+    """An answer's question, dot-walked as the module reads it (1.16.0): asmt_metric and its asmt_metric_type."""
+    return {"metric": key or name, "metric.name": name, "metric.datatype": datatype, "metric.min": str(lo), "metric.max": str(hi),
+            "metric.metric_type": survey[0], "metric.metric_type.name": survey[0], "metric.metric_type.active": survey[1],
+            "metric.metric_type.state": survey[2]}
+
+
+def more_surveys(recs):
+    """--surveys (1.16.0): the active Service desk survey asks Q1 to Q4 on 1 to 4 and a yes / no (0 / 1); the Legacy survey,
+    retired at the end of May 2026, asked Q1 to Q4 on 1 to 5 and Q5 on 0 to 100 - one plain average of them all would be
+    meaningless. Its own random numbers: the other records stay as they were."""
+    rnd = random.Random(1160)
+    out = []
+    for rec in [x for x in recs if x.get("_table") == "incident" and x.get("resolved_at")]:
+        if rnd.random() > .3:
+            continue
+        taken = (datetime.datetime.strptime(rec["resolved_at"], "%Y-%m-%d %H:%M:%S") + datetime.timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
+        base = {"_table": "asmt_metric_result", "instance.trigger_table": "incident", "instance.trigger_id": "s-" + rec["number"], "instance.taken_on": taken}
+        if taken >= "2026-06-01":
+            for i in range(1, 5):
+                out.append(dict(base, actual_value=str(rnd.choice([2, 3, 3, 4, 4, 4])), **survey_q("Q%d" % i, SURVEY_SD, "numericscale", 1, 4, "am-sd-q%d" % i)))
+            out.append(dict(base, actual_value=str(rnd.choice([0, 0, 1])), **survey_q("Contacted again", SURVEY_SD, "boolean", 0, 1, "am-sd-again")))
+        else:
+            for i in range(1, 5):
+                out.append(dict(base, actual_value=str(rnd.choice([3, 4, 4, 5, 5])), **survey_q("Q%d" % i, SURVEY_OLD, "numericscale", 1, 5, "am-old-q%d" % i)))
+            out.append(dict(base, actual_value=str(rnd.choice([40, 60, 75, 80, 90, 100])), **survey_q("Q5", SURVEY_OLD, "numericscale", 0, 100, "am-old-q5")))
+    return out
 
 
 def main():
@@ -285,7 +318,7 @@ def main():
     # 1.7.0: their own random numbers (R4), so every record above stays as it was - impact and urgency (one in ten set by hand
     # against the 3 x 3 matrix), resolution codes, incidents on hold now (a reason, or none; on hold since from the state
     # metric for half, from their SLA's pause for the rest), resolved and never closed, hops over the limit, the SLAs
-    # (task_sla: a response and a resolution, some breached; P5 none - no SLO; a cancelled one; an Other), the metric
+    # (task_sla: a response and a resolution, some breached; P5 none - no SLA; a cancelled one; an Other), the metric
     # Assigned to, survey answers
     R4 = random.Random(17)
     pairs = {"1": [("1", "1")], "2": [("1", "2"), ("2", "1")], "3": [("1", "3"), ("2", "2"), ("3", "1")], "4": [("2", "3"), ("3", "2")], "5": [("3", "3")]}
@@ -362,9 +395,10 @@ def main():
         if R4.random() < .1:
             taken = t(datetime.datetime.strptime(rec["resolved_at"], "%Y-%m-%d %H:%M:%S") + datetime.timedelta(days=1))
             recs.append({"_table": "asmt_metric_result", "instance.trigger_table": "incident", "instance.trigger_id": "s-" + rec["number"],
-                         "instance.taken_on": taken, "metric": "Overall satisfaction", "actual_value": str(R4.choice([3, 4, 4, 5, 5, 5]))})
+                         "instance.taken_on": taken, "metric": "Overall satisfaction", "actual_value": str(R4.choice([3, 4, 4, 5, 5, 5])),
+                         **survey_q("Overall satisfaction", SURVEY_SD, "numericscale", 1, 5)})
             recs.append({"_table": "asmt_metric_result", "instance.trigger_table": "incident", "instance.trigger_id": "s-" + rec["number"],
-                         "instance.taken_on": taken, "metric": "Comments", "actual_value": "Thanks"})
+                         "instance.taken_on": taken, "metric": "Comments", "actual_value": "Thanks", **survey_q("Comments", SURVEY_SD, "string", 0, 0)})
     for rec in [x for x in recs if x.get("_table") == "sc_req_item" and x.get("closed_at")]:
         if R4.random() < .9:
             bad = rec.get("made_sla") == "false"
@@ -426,6 +460,10 @@ def main():
         if x.get("_table") not in ("sys_audit", "sys_user_group", "metric_instance") and x.get("number"):
             x["sys_id"] = "s-" + x["number"]
     recs.sort(key=lambda x: x.get("opened_at") or x.get("sys_created_on") or "")
+    # every ticket has a sys_updated_on, as in ServiceNow (1.17.0, the ticket store): its last date where the seed set none
+    for x in recs:
+        if x.get("number") and not x.get("sys_updated_on"):
+            x["sys_updated_on"] = max(str(x.get(k) or "") for k in ("opened_at", "sys_created_on", "resolved_at", "closed_at", "work_end", "end_date"))
     if "--sites" in sys.argv:              # the groups renamed only: every record as it was otherwise
         for x in recs:
             for k in ("assignment_group", "group", "oldvalue", "newvalue", "value"):
@@ -439,6 +477,8 @@ def main():
                 ("g-sd", SITES[SD], "gsa6", "true", ""), ("g-win", SITES[WIN], "gsa", "true", ""), ("g-vdi", SITES[VDI], "gsb", "true", ""),
                 ("g-net", SITES[NET], "gbcs", "false", ""), ("g-lnx", SITES[LNX], "gcl", "true", "")]
         recs += [{"_table": "sys_user_group", "sys_id": k, "name": n, "parent": p, "active": a, "type": ty} for k, n, p, a, ty in tree]
+    if "--surveys" in sys.argv:            # 1.16.0: two surveys, the same question names, one retired, different scales
+        recs += more_surveys(recs)
     with open(out_path, "w") as fh:
         json.dump(recs, fh)
     print("%d records (%d incidents) -> %s" % (len(recs), sum(1 for x in recs if x.get("_table") == "incident"), out_path))

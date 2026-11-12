@@ -2,7 +2,10 @@
 """A scripted GenAI model for the ticket insights test (run_insights_test.sh): answers the three questions the job asks -
 grouping a batch of incident descriptions into issues (by keywords), the fixes of the top issues (one marked suggested,
 a knowledge article draft where there are enough incidents, a placeholder from the evidence in its why), what each scope's
-numbers say - in the BEGIN/END_ACT_ANALYSIS JSON. Every request's messages are appended to $FAKE_MODEL_LOG (the test looks
+numbers say - in the BEGIN/END_ACT_ANALYSIS JSON. FAKE_MODEL_LEAKY_LABEL=1: the VPN issue named with a person, an IP
+address and a host (the ACT cache must store it masked, 1.17.0). FAKE_MODEL_FAIL_FILE (1.17.0b): while that file is
+there (its first line N), the grouping questions after the first N get an answer with no analysis in it - ACT failing
+mid-run; each grouping question adds a line to it. Every request's messages are appended to $FAKE_MODEL_LOG (the test looks
 for real names there: there must be none).
     fake_insights_model.py PORT"""
 import http.server
@@ -32,6 +35,8 @@ def answer(text):
         for d, _, _, desc in re.findall(r"^(D\d+) \| (\d+) \| ([^|]*) \| (.*)$", text, re.M):
             hit = next((i for i in ISSUES if re.search(i[0], desc, re.I)), None)
             name = hit[1] if hit else "Other / unclear"
+            if hit and hit[0] == r"vpn" and os.environ.get("FAKE_MODEL_LEAKY_LABEL"):      # 1.17.0: a name ACT should never give
+                name = "VPN drops for Dana Whitfield at 198.51.100.9 on wks-1001"
             items.append({"id": d, "issue": name})
             if hit and name not in known and name not in [x["name"] for x in new]:
                 new.append({"name": name, "about": "Users report: %s." % name.lower(), "kind": hit[2], "self_service": hit[3]})
@@ -46,6 +51,7 @@ def answer(text):
             out.append({"id": iid, "steps": ["Check the %s first." % name.split(" /")[0].lower(), "Apply the usual fix and confirm with the user."],
                         "tickets": 23 if wn else 0, "workaround": "Restarting the Print Spooler, again and again (the work notes)." if wn else None,
                         "support": [0, 0] if sug else [9, 4], "source": "suggested" if sug else "tickets",
+                        "about": "Users report: %s." % name.lower(),
                         "why": "From the close notes; most were on %s." % (ph.group(0) if ph else "one host"), "disagree": "VPN" in name,
                         "kb": None if sug or int(count) < 50 else {"title": "Fix: %s" % name, "symptoms": "The user sees %s." % name.lower(),
                                                                   "cause": "The usual cause.", "steps": ["Step one.", "Step two."]}})
@@ -75,6 +81,14 @@ class Model(http.server.BaseHTTPRequestHandler):
             with open(os.environ["FAKE_MODEL_LOG"], "a") as fh:
                 fh.write(text + "\n=====\n")
         content = "Here is the analysis.\n\nBEGIN_ACT_ANALYSIS\n%s\nEND_ACT_ANALYSIS\n" % json.dumps(answer(text), indent=1)
+        ff = os.environ.get("FAKE_MODEL_FAIL_FILE", "")
+        if ff and os.path.exists(ff) and "Group IT service desk incidents" in text:
+            with open(ff) as fh:
+                lines = fh.read().splitlines()
+            with open(ff, "a") as fh:
+                fh.write("asked\n")
+            if len(lines) - 1 >= int(lines[0] or 0):
+                content = "The model is overloaded. Try again later."
         out = json.dumps({"choices": [{"message": {"content": content}}]}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")

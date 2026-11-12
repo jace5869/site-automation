@@ -1,0 +1,30 @@
+---
+# IS IT WRITING? (1.15.0, docs/REPORT_DATABASE.md): servicenow_insights_db_check: true - the report database checked with
+# the job's "Report database" credential, read only (the reader account is enough): the server's version, the account,
+# the tables and views, the runs and months held per instance, the newest write. No ServiceNow read, no pages, no email;
+# the play ends here. Not reached: the job fails.
+- name: Insights check | the report database's login
+  ansible.builtin.include_tasks: db_login.yml
+
+- name: Insights check | read {{ _sni_db.host }}:{{ _sni_db.port }}/{{ _sni_db.database }} (nothing made or written)
+  site_insights_db:
+    mode: check
+    host: "{{ _sni_db.host }}"
+    port: "{{ _sni_db.port | int }}"
+    database: "{{ _sni_db.database }}"
+    user: "{{ _sni_db.user }}"
+    password: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PASSWORD') }}"
+    tls: "{{ _sni_db.tls | bool }}"
+    ca_file: "{{ _sni_db.ca_file }}"
+    connect_timeout: "{{ servicenow_insights_db_timeout | int }}"
+    create: false
+    required: true
+  register: _sni_dbc
+  check_mode: false             # only reads
+
+- name: Insights check | what the report database holds
+  ansible.builtin.debug:
+    msg: "{{ _sni_dbc | servicenow_insights_db_check_lines(_sni_db.host ~ ':' ~ _sni_db.port ~ '/' ~ _sni_db.database) }}"
+
+- name: Insights check | the play ends here (no ServiceNow read, no pages, no email)
+  ansible.builtin.meta: end_play

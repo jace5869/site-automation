@@ -432,7 +432,7 @@ def table_query(group_ids, user_ids, since, until, margin_days=1, group_names=No
     q = "^OR".join(who)
     q += "^opened_at<=" + u
     q += "^closed_at>=" + s + "^ORclosed_atISEMPTY^ORsys_updated_on>=" + s
-    q += "^ORDERBYopened_at"
+    q += "^ORDERBYDESCopened_at"          # newest first (1.16.0): a table over max_records keeps the week's own records
     return q
 
 
@@ -515,6 +515,9 @@ def read_week(api, groups, users, tables, win, extra_fields=None, max_records=50
             res["tables"].append(entry)
             continue
         entry["read"], entry["more"] = len(rows), more
+        if more:                    # 1.16.0: where the read stopped (newest first) - a ticket opened before it is not read
+            ts = [x for x in (sn_time(_vd(r_, "opened_at")[0]) for r_ in rows) if x]
+            entry["cut"] = min(ts).strftime("%Y-%m-%d") if ts else ""
         found = []
         for rec in rows:
             it = normalize(rec, t, api.url, extra_fields)

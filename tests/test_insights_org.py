@@ -270,9 +270,12 @@ class ThePeriods(unittest.TestCase):
         # 2026-11-01 is a Sunday: the last whole Mon-Sun week is Oct 19-25, not the week Nov 1 ends
         self.assertEqual((p["1w"]["title"], p["1w"]["ctitle"]), ("2026-10-19 to 2026-10-25", "2026-10-12 to 2026-10-18"))
         self.assertEqual((p["2w"]["title"], p["2w"]["ctitle"]), ("2026-10-12 to 2026-10-25", "2026-09-28 to 2026-10-11"))
-        self.assertEqual([p[k]["label"] for k in F.PERIODS if k in p], ["The window", "Last month", "Last 2 months", "Last 2 weeks", "Last week"])
-        self.assertEqual([x["label"] for x in self.b((2026, 11, 10)).values()],
-                         ["The window", "This month", "Last month", "Last 2 months", "Last 2 weeks", "Last week"])
+        self.assertEqual([p[k]["label"] for k in F.PERIODS if k in p], ["The window", "Last month", "Last 2 months", "Last 3 months",
+                                                                         "Last 6 months", "Last week", "Last 2 weeks", "Last 4 weeks"])
+        self.assertEqual((p["6m"]["title"], p["6m"]["ctitle"]), ("May to October 2026", "November 2025 to April 2026"))
+        self.assertEqual((p["4w"]["title"], p["4w"]["ctitle"]), ("2026-09-28 to 2026-10-25", "2026-08-31 to 2026-09-27"))
+        self.assertEqual([x["label"] for x in self.b((2026, 11, 10)).values()],       # June to November 10: 6 months do not fit
+                         ["The window", "This month", "Last month", "Last 2 months", "Last 3 months", "Last week", "Last 2 weeks", "Last 4 weeks"])
 
     def test_a_window_that_ends_now(self):
         p = self.b((2026, 11, 10, 15, 30))                                # a Tuesday afternoon
@@ -298,12 +301,16 @@ class ThePeriods(unittest.TestCase):
         self.assertEqual((q["all"]["ca"], q["1m"]["ctitle"]), (None, "September 2026"))
         u = datetime.datetime(2026, 11, 10, tzinfo=self.NY)
         nine = u - datetime.timedelta(days=9)                             # 2026-11-01 to 11-09: one whole week, no whole month
-        short = F.period_bounds(nine, u, nine, self.NY, {"periods": "all, 1m, 1w"})
-        self.assertEqual([x["name"] for x in short], ["all", "1w"])
+        short, left = F.period_plan(nine, u, nine, self.NY, {"periods": "all, 1m, 1w"})
+        self.assertEqual([x["name"] for x in short], ["all"])            # 1.16.0: 1w without the week before - left out, said
+        self.assertEqual(left, [{"name": "1m", "why": "window"}, {"name": "1w", "why": "before"}])
+        self.assertEqual(short[0]["ca"], None)                            # the window keeps its button without a compare
         self.assertEqual([x["name"] for x in F.period_bounds(u - datetime.timedelta(days=7), u, u, self.NY, {"periods": "1w"})], [])
-        self.assertEqual(short[1]["ca"], None)
-        with self.assertRaises(ValueError):
-            F.period_bounds(u - datetime.timedelta(days=7), u, u, self.NY, {"periods": ["fortnight"]})
+        for bad in ("fortnight", "13m", "9w", "0m", "1d"):
+            with self.assertRaises(ValueError) as e:
+                F.period_bounds(u - datetime.timedelta(days=7), u, u, self.NY, {"periods": [bad]})
+            self.assertEqual(str(e.exception), "servicenow_insights_periods: %s is not a period - all, this_month, 1m to 12m (calendar "
+                                               "months) or 1w to 8w (weeks)" % bad)
         with self.assertRaises(ValueError):
             F.period_bounds(u - datetime.timedelta(days=7), u, u, self.NY, {"week_start": "someday"})
 
@@ -352,6 +359,53 @@ def browser():
         if shutil.which(b):
             return shutil.which(b)
     return None
+
+
+class PeriodButtons(unittest.TestCase):
+    """1.16.0: any Nm and Nw; two short labeled rows (Months, Weeks) after The window and This month, the number on the
+    button and the full label in its title and aria-label; one select on a phone; what the page's tickets can not cover
+    left out, in one muted line - the window too short, or the window before over the row cap."""
+
+    def test_the_rows(self):
+        m = model()
+        c = m["custom"]
+        self.assertEqual([p["name"] for p in c["periods"]], ["all", "1m", "2m", "3m", "6m", "1w", "2w", "4w"])
+        h = P.servicenow_insights_page(m, "all", {"links": T.page_links(m)})
+        bar = h[h.index('<div class="cvper js"'):h.index('<div class="tiles">')]
+        self.assertIn('<div class="cvprow cvpfirst"><button type="button" class="cvpd" data-name="all" aria-pressed="false" '
+                      'title="The window: May to October 2026, compared with November 2025 to April 2026" aria-label="The window">The window</button></div>', bar)
+        self.assertIn('<div class="cvprow" role="group" aria-label="Months"><span class="cvplab">Months</span>', bar)
+        self.assertIn('<button type="button" class="cvpd num" data-name="3m" aria-pressed="false" title="Last 3 months: August to October 2026, '
+                      'compared with May to July 2026" aria-label="Last 3 months">3</button>', bar)
+        self.assertIn('<div class="cvprow" role="group" aria-label="Weeks"><span class="cvplab">Weeks</span>', bar)
+        self.assertIn('aria-label="Last 4 weeks">4</button>', bar)
+        self.assertLess(bar.index("Months"), bar.index("Weeks"))
+        self.assertLess(bar.index("Weeks</span>"), bar.index('id="cvfrom"'))       # the from / to after the buttons
+        sel = bar[bar.index('<select id="cvpsel">'):bar.index("</select>")]
+        self.assertEqual(re.findall(r'<option value="([^"]*)"', sel), [p["name"] for p in c["periods"]] + [""])
+        self.assertIn('<p class="cvleft mut">9 and 12 months need a longer window: servicenow_insights_months.</p>', bar)
+        self.assertIn("@media (max-width:640px){.cvpbtn{display:none}.cvpsel{display:inline-flex", h)
+
+    def test_the_row_cap_said(self):
+        n = model()["custom"]["n"]
+        m = model(custom_view_max_rows=n - 1)
+        c = m["custom"]
+        if not c.get("no_compare"):
+            self.skipTest("the window alone is over the cap too")
+        self.assertEqual([p["name"] for p in c["periods"] if p.get("kind")], ["1m", "2m", "3m", "1w", "2w", "4w"])
+        self.assertIn("6 months need the period before as well: the window before is over servicenow_insights_custom_view_max_rows (%s)."
+                      % "{:,}".format(n - 1), c["left_line"])
+        self.assertIn("9 and 12 months need a longer window", c["left_line"])
+
+    def test_any_names_in_any_order(self):
+        m = model(periods=["12m", "all", "8w", "5m", "1w"])
+        self.assertEqual([p["name"] for p in m["custom"]["periods"]], ["all", "8w", "5m", "1w"])     # in the order given
+        self.assertEqual(m["custom"]["left_line"], "12 months need a longer window: servicenow_insights_months.")
+        h = P.servicenow_insights_page(m, "all", {"links": T.page_links(m)})
+        self.assertIn('aria-label="Last 5 months">5</button>', h)
+        self.assertIn('aria-label="Last 8 weeks">8</button>', h)
+        with self.assertRaises(ValueError):
+            model(periods=["all", "14m"])
 
 
 @unittest.skipUnless(browser(), "no headless browser here")
@@ -414,8 +468,8 @@ class TheScript(unittest.TestCase):
             want = F.custom_figures(c, idx, tuple(s_))
             for f in ("incidents", "requests", "resolved", "backlog", "no_slo", "hops_open", "hold", "aging", "tis_n"):
                 self.assertEqual(g[f], want[f], (s_, f))
-            for f in ("median_h", "sla", "resp", "hops_done_pct", "fcr", "unable"):
-                self.assertAlmostEqual(g[f] or 0, want[f] or 0, delta=0.051, msg=(s_, f))
+            for f in ("median_h", "sla", "resp", "hops_done_pct", "fcr", "unable"):     # a tie (91.25): Python rounds it half
+                self.assertAlmostEqual(g[f] or 0, want[f] or 0, delta=0.101, msg=(s_, f))  # to even, the script half up
             for k_ in want["tis"]:
                 self.assertAlmostEqual(g["tis"][k_] or 0, want["tis"][k_] or 0, delta=0.051, msg=(s_, k_))
         w = got["week"]

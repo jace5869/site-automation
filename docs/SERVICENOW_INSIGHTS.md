@@ -16,7 +16,7 @@ and simpler: the tiles and the main tables, a link to the page, and an Excel wor
 | Section | What it shows |
 |---|---|
 | **At a glance** | the tickets read, open now (and at the start), the median time to resolve an incident, SLAs met, reopened (or *came back*, below), bare close notes, changes successful, incidents reassigned 3+ times - each against the window before; then **What the period says**: three or four sentences, written by ACT from the tables (or made from the numbers without it) |
-| **Teams side by side** (the site's page) | one row per team: its backlog over the period (Keeping up / Falling behind), open now, open over 30 days, median fix, SLA met, its close notes, its change tasks closed and open (1.2.0), its top issue - the team's name opens its own page |
+| **Teams side by side** (the site's page) | one row per team: its backlog over the period (Keeping up / Falling behind), open now with what it was, open over 30 days, median fix, SLA met, its close notes, its change tasks closed / open (1.2.0), its top issue - the team's name opens its own page |
 | **Act on first** (1.7.0) | what the process says to look at, as tiles and lists (the first 10 rows, the rest folded): **SLA at risk now** (open incidents past 75% of their SLA, or breached and still open - worst first), **open over 3 hops**, **Awaiting Caller over 6 business days**, **No Resolution Provided** in the period (each for leadership's review, the close note's start with names and numbers replaced), **resolved, not closed after 7 days** - below |
 | **Hops, on hold and resolution codes** (1.7.0) | per group: over the hop limit and the hops each group took, on hold now (no reason, Awaiting Caller too long), on hold by reason and business days, the resolution codes to look at and reopened |
 | **How incidents ended** (1.7.0) | the outcome mix (Fixed, Workaround, Duplicate, Known Error, No Resolution Provided) per group against the window before, **unable to resolve**, first-contact resolution (and the service desk's), reopened within 7 days |
@@ -26,15 +26,15 @@ and simpler: the tiles and the main tables, a link to the page, and an Excel wor
 | **After hours** (1.9.0) | incidents opened outside the core hours, per group, for staffing |
 | **Workload** (1.9.0) | per person: open now and resolved in the period. Each person's time to resolve only with `servicenow_insights_person_metrics: true` |
 | **Keeping up** | opened and resolved per week, the backlog at the end of each week, the age of what is open now (0-5, 6-15, 16-30, over 30 days), a heatmap of when incidents are opened (weekday by hour), the weeks as a table |
-| **Severity** | incidents per priority - its name (1 - Critical ... 5 - Exempt), count, median to resolve, Response met and Resolution met (1.7.0), No SLO -, the **priority set by hand** (impact x urgency, the 3 x 3 matrix) per group, then every P1 and P2: when, what, the group, the change that caused it, its problem record |
-| **Categories** (1.7.0) | incidents per category (against the window before), their median time to resolve and SLOs met, the group they are mostly in; a data-quality line - no category, Other, off your official list (named) |
-| **Satisfaction** (1.7.0) | the incident surveys' average answer, by month and by group (when the surveys are read) |
+| **Severity** | incidents per priority - its name (1 - Critical ... 5 - Exempt), count, median to resolve, Response met and Resolution met (1.7.0), No SLA -, the **priority set by hand** (impact x urgency, the 3 x 3 matrix) per group, then every P1 and P2: when, what, the group, the change that caused it, its problem record |
+| **Categories** (1.7.0) | incidents per category (against the window before), their median time to resolve and SLAs met, the group they are mostly in; a data-quality line - no category, Other, off your official list (named) |
+| **Satisfaction** (1.7.0) | the incident surveys, each on its own scale, by survey: the average graded Good, Fair or Low, by month and by group (1.16.0, see *Satisfaction*) |
 | **Top incident issues** | the issues ranked, with their rank against the window before (▲ ▼ New), their share and the cumulative share, a weekly trend, the median time to fix; open one for its **fix action** (with a Copy button), where the fix comes from - **From the tickets**, **Partly from tickets** or **Suggested by ACT** (not verified) -, the CIs it was seen on, example tickets (links into ServiceNow), its close-note quality, and the flags *KB candidate*, *Self-service candidate*, *Problem candidate*; a fix the close notes disagree on is said |
 | **Problem candidates** | 3 or more incidents of one issue on one CI within 30 days: the counts, the group, the problem record - or *No problem record*, or *Resolved, incidents continue* |
 | **Passed between groups** | incidents reassigned 3 or more times, the paths they took (a group the ticket came back to in amber), the most common issue on each path and the time it added. The groups are shown by their short names - the name without the parts every group shares, such as a site prefix or a contract suffix; rest on one for the full name |
 | **Most requested services** | the catalog items ranked (▲ ▼ against the window before), the median time to fulfil, SLA met, the trend; and **requests opened as incidents** (an install, an account, access - things the catalog offers), when ACT ran |
 | **Changes** | success rate, failed or backed out, followed by an incident, emergency share; each failed or backed-out change with the incidents that followed it - **Caused by** (linked in ServiceNow) or **Same CI** (on its CI within 72 hours, not linked) - and the emergency changes by group; then **Change tasks** (1.2.0, below) |
-| **All-stars** | each team: the awards (Most resolved - *Most closed* when the change tasks are read -, Best close notes, Fastest to resolve, Fixed for good), the leaderboard - the team's members (ServiceNow's group membership), each with closed (incidents resolved, catalog tasks and change tasks closed), change tasks (how many of them were change tasks, 1.2.0), median to resolve (without the change tasks), close notes, reopened or came back; a member with nothing closed is listed too -, the team's total, and **who sends this team its tickets**: Opened by on the tickets assigned to it, with the group each opener works tickets in (or *end user*) |
+| **All-stars** | each team: the awards (Most resolved - *Most closed* when the change tasks are read -, Best close notes, Fastest to resolve, Fixed for good), the leaderboard - the team's members (ServiceNow's group membership), each with closed (incidents resolved, catalog tasks and change tasks closed), change tasks (how many of them were change tasks, 1.2.0), median to resolve (without the change tasks), close notes, reopened or came back; a member with nothing closed is listed too -, the team's total, and **who sends this team its tickets**: Opened by on the tickets assigned to it, with the group each opener works tickets in (or *end user*), the first 8 and of how many (1.18.0: *312 of 540 tickets, from 8 of 61 people*) |
 | **Close notes** (after the All-stars) | one line: how many close notes say what was done, are vague, or are a stock phrase or empty; open it for Good / Thin / Bare per group and the most common bare notes word for word |
 | **Knowledge article drafts** | for the issues with enough incidents and a fix the close notes agree on: symptoms, cause, resolution, with a Copy button - drafts to review, never written to ServiceNow |
 | **How this was made** | what was read, the window, what was replaced before GenAI, how ACT did |
@@ -54,7 +54,8 @@ The changes' tasks (`change_task`, read with GET like the rest) have figures of 
   the **wait** - from when the change's other tasks were all closed (a change with one task: from the change's *actual
   start*, else its *planned start*) to that last task's close. The 5 teams that held up the most changes, how often, and
   their median wait;
-- the **Teams side by side** table and the email have *Change tasks closed* and *Change tasks open*; the **All-stars**
+- the **Teams side by side** table has one column *Change tasks closed / open*, on the page and in the email (1.30.0,
+  so it fits 1280 px); the **All-stars**
   count them in *Closed*, with a *Change tasks* column (their time is the change's plan, so *Median to resolve* leaves
   them out);
 - the workbook has a **Change tasks** sheet: every change task opened, closed or open in the window, its change, group,
@@ -86,6 +87,31 @@ list with 0. A ticket with a bare close note counts half (`servicenow_insights_b
 does not win. Awards need at least `servicenow_insights_star_min` tickets resolved. There is no "worst" list. When the
 account cannot read `sys_user_grmember`, each leaderboard lists everyone the team's tickets were assigned to or
 resolved by, and the report says so under *Not read*.
+
+**Ticket links (1.18.0).** Each ticket number opens the ticket in ServiceNow, in a new tab. The link goes through
+`nav_to.do`, so the ticket shows inside ServiceNow's own frame.
+
+```yaml
+servicenow_insights_ticket_links: true          # false = the numbers alone
+servicenow_insights_ticket_base: ""             # the address people open ServiceNow at; "" = the API credential's
+servicenow_insights_ticket_prefixes: {}         # PREFIX: table, for a prefix no record read carries (1.30.0)
+```
+
+Set `servicenow_insights_ticket_base` when people reach ServiceNow at another address than the API's. An address that
+is not a web address is ignored: the numbers then show without links.
+
+Since 1.30.0 a number's table comes from the records read, so your instance's own prefixes link too. A number seen
+only in another ticket's field (a change or a problem) uses the same prefixes. For a prefix no record read carries, name
+it in `servicenow_insights_ticket_prefixes`:
+
+```yaml
+servicenow_insights_ticket_prefixes:
+  XINC: incident
+```
+
+**Sorting (1.18.0).** A table sorts as the report website does ([WEB_REPORTS.md](WEB_REPORTS.md)). A number sorts as a
+number, an IP address by its four parts, *host2* before *host10*. An empty cell or a lone dash goes last both ways. The
+first click sorts ascending. On a column already in that order it sorts descending, so the click always shows.
 
 **Without the page's script.** The page carries a little script (search, sorting, Copy, the tooltips on the charts, the
 team menu). A report web server whose Content-Security-Policy blocks inline scripts does not run it; since 0.88.0 the
@@ -139,7 +165,8 @@ of 0.88.0 to 0.96.0, `{template}/<team>/latest.html`, are no longer written or l
 Where each assignment group belongs comes from `servicenow_insights_hierarchy_source`:
 
 **parents** (the default): ServiceNow's own group tree - the job reads `sys_user_group` (GET only: `sys_id`, `name`,
-`parent`, `active`, `type` of the groups the tickets name and their parents, never a manager or a person). The **site**
+`parent`, `active`, `type` of the groups the tickets name and their parents; a person's field only for the team leads,
+below). The **site**
 is the root group at the top (shown by its name's first ` - ` part: a root *SITEA - J6* shows as SITEA); the
 **directorate** is the group one below the root (a group right under the root has the root as its directorate - *J6*,
 or *(site direct)* when the root is just the site's name); the **team** is the group (a team under a team is still a
@@ -266,21 +293,29 @@ the period before it. They follow the calendar, not a count of days back from to
 |---|---|---|
 | **The window** (`all`) | the report's whole window | the window before |
 | **This month** (`this_month`) | the report end's month so far | the same days of the month before |
-| **Last month** (`1m`) | the last whole calendar month | the month before it |
-| **Last 2 months** (`2m`) | the last two whole calendar months | the two before them |
-| **Last week** (`1w`) | the last whole week, Monday to Sunday | the week before |
-| **Last 2 weeks** (`2w`) | the last two whole weeks | the two before them |
+| **Months** `1m` to `12m` | the last N whole calendar months | the N months before them |
+| **Weeks** `1w` to `8w` | the last N whole weeks, Monday to Sunday | the N weeks before them |
 | **From / to** | any days you pick | the same number of days just before |
 
+The default is `[all, this_month, 1m, 2m, 3m, 6m, 9m, 12m, 1w, 2w, 4w]` (1.16.0).
+
+- The buttons sit in two short rows, *Months* and *Weeks*, each showing its number (1, 2, 3 ...). The window and
+  This month come first, the from / to after. On a phone the buttons become one list to pick from.
 - Each button's tooltip, and the heading of the result, give the real dates: "October 2026, compared with
   September 2026".
 - When the report ends on a month's last day, This month is Last month, so only Last month shows.
-- A period that does not fit the window is left out. Its compare is left out when the window before is not carried.
+- A month or week period needs its own length and the length before it in the page's tickets. One that does not fit is
+  left out, never shown with partial figures. One muted line under the buttons says what and why:
+  - *9 and 12 months need a longer window: servicenow_insights_months.*
+  - *... need the period before as well: ...* when the window before is not carried (the row cap below, or
+    `servicenow_insights_compare: false`).
+- A name that is not a period stops the job: `servicenow_insights_periods: 13m is not a period - all, this_month, 1m to
+  12m (calendar months) or 1w to 8w (weeks)`.
 - The address keeps the period too: `#cv=0-3,7&p=1m`, or `&p=2026-10-05_2026-10-18` for a from / to.
 
 What each figure means for a period:
 
-- **Opened, resolved, the SLOs, the median time to resolve**: the tickets opened, or done, in the period.
+- **Opened, resolved, the SLAs, the median time to resolve**: the tickets opened, or done, in the period.
 - **Open at the period's end**: the backlog on its last day, with the start's number beside it. For a period that ends
   now, the tile says *Open now*.
 - **On hold now** and **Open over N hops**: ServiceNow only says how a ticket is now. For a period that ends earlier,
@@ -300,8 +335,8 @@ block the browser never runs. So a strict Content-Security-Policy, a share or an
 The rows include the window before, so every period can be compared. At most `servicenow_insights_custom_view_max_rows`
 tickets (30,000) are carried:
 
-- Over that with the window before, only the window's own tickets are carried. The periods then have no compare, and
-  the page says so.
+- Over that with the window before, only the window's own tickets are carried. The window then has no compare, and
+  the month and week periods that need the window before are left out, said under the buttons.
 - Over that with the window alone, the page says so and has no Custom view.
 
 ### The split with the map
@@ -325,8 +360,8 @@ they link to the All page.
 | `servicenow_insights_custom_view_max_rows` | `30000` | its tickets carried in the page at most |
 | `servicenow_insights_custom_view_presets` | `{}` | more quick choices: `{name: {levels: [...]}}` or `{name: {pattern: "..."}}` |
 | `servicenow_insights_split_by` | `both` | with the map, the split by `pattern`, by `level` (the label one of the group's levels), or `both` |
-| `servicenow_insights_periods` | `[all, this_month, 1m, 2m, 2w, 1w]` | the Custom view's period buttons, in order (1.10.0) |
-| `servicenow_insights_week_start` | `mon` | the day a week starts on, for `1w` and `2w` |
+| `servicenow_insights_periods` | `[all, this_month, 1m, 2m, 3m, 6m, 9m, 12m, 1w, 2w, 4w]` | the Custom view's periods (1.10.0): `all`, `this_month`, `1m` to `12m`, `1w` to `8w` (1.16.0) |
+| `servicenow_insights_week_start` | `mon` | the day a week starts on, for the weeks |
 
 ## ACT (GenAI), and what never reaches it
 
@@ -340,7 +375,8 @@ nothing large goes in one question:
 1. **The issues.** The incidents' short descriptions, one per distinct description with its count (the most frequent
    first, at most `servicenow_insights_act_max_descriptions`), `servicenow_insights_act_batch` per question. Each question
    carries the issues defined so far, so the same issue keeps its name from batch to batch (at most
-   `servicenow_insights_act_max_issues`).
+   `servicenow_insights_act_max_issues`). With the report database on, a description asked before is placed from the
+   ACT cache and not asked again (1.17.0).
 2. **The fixes.** The top `servicenow_insights_act_fix_issues` issues, `servicenow_insights_act_fix_batch` per question,
    each with its close notes that say something (`servicenow_insights_act_notes`) and, since 0.96.0, its **work notes** -
    what was tried while the tickets were open (below): the steps (those that resolved tickets first, not what was tried
@@ -382,9 +418,14 @@ model's time (`servicenow_insights_act_model_timeout`). Schedule it monthly, ove
 **Where this run's time went (1.14.0).** The job's last lines say it by phase, for example:
 
 ```text
-Time: ServiceNow reads 78 s, ACT 1 s, The report worked out 8 s, Trends (the report database) 0 s, Pages and email 3 s,
-The report database written 0 s - 89 s in all
+Time: ServiceNow reads 78 s, ACT 1 s, The report worked out 8 s, The report database (read and written) 0 s,
+Pages and email 3 s - 89 s in all
+Report database db.yoursite.mil:3309/site_reports: written - run 41, 2 months (2026-10, 2026-11 (so far)), 4,210 figures;
+the database now holds 38 runs, first month 2025-11, last month 2026-11
 ```
+
+The last line says whether this run's figures reached the report database (1.15.0): see
+[REPORT_DATABASE.md](REPORT_DATABASE.md), *Is it writing?*.
 
 *How this was made* on the page has the same split, up to the pages (they are written after it is made).
 
@@ -420,13 +461,13 @@ The **ServiceNow API** credential you already have works ([SERVICENOW_SETUP.md](
 | Table | What | The role that reads it |
 |---|---|---|
 | `incident`, `sc_req_item`, `sc_task`, `change_request`, `change_task` (1.2.0), `problem` | the tickets | `itil`; `change_task` refused (403): said under *Not read*, the change tasks left out |
-| `sys_user_group` | the groups named in `servicenow_insights_groups`; since 0.97.0 the tickets' groups and their parents (sites and directorates) | `itil`; refused, the sites come from the names (or `servicenow_insights_use_group_parents: false`) |
+| `sys_user_group` | the groups named in `servicenow_insights_groups`; since 0.97.0 the tickets' groups and their parents (sites and directorates); since 1.15.0 each group's `manager` with its name and active flag (the team leads), and its email only when `servicenow_insights_email_leads` names a team (1.18.0) | `itil`; refused, the sites come from the names (or `servicenow_insights_use_group_parents: false`); the manager refused, said under *Not read*, no Group manager line |
 | `sys_audit` | the assignment history of incidents passed between groups (the paths) | `itil` on most instances; refused, the paths come from `metric_instance` (below) |
 | `metric_instance` | the same history from the out-of-box incident metric *Assignment Group* (0.97.0), when `sys_audit` is refused or `servicenow_insights_handoff_source: metric` | read on `metric_instance` (`itil` on most instances); both refused, the report shows the counts without the paths and says which table it could not read |
 | `sys_user_grmember` | the members of the groups the tickets name (the teams' leaderboards) | `itil` on most instances; else the report says so and each leaderboard lists everyone the team's tickets were assigned to or resolved by (or `servicenow_insights_members: false`) |
 | `task_sla` (1.7.0) | the SLAs of the incidents and requested items done in the window (and the one before), and of the incidents open now: met or missed, at risk now, on hold since (the SLA's pause) | `itil`; refused (403), the report says so under *Not read* and counts met or missed from your targets |
 | `metric_instance` (1.7.0) | the metric *Incident State Duration* (`servicenow_insights_state_metric`: the time on hold, reopened within 7 days) and the metric *Assigned to* (the response, with your targets) | as above; not there, the page says what it could not measure |
-| `asmt_metric_result` (1.7.0) | the incident surveys' answers (best-effort; `servicenow_insights_survey: false` = not read) | read on the assessment tables (`asmt_metric_result`, through `asmt_assessment_instance`); refused, said under *Not read*, no satisfaction figures |
+| `asmt_metric_result` (1.7.0) | the incident surveys' answers, with each question's survey, state and scale dot-walked (1.16.0; best-effort; `servicenow_insights_survey: false` = not read) | read on the assessment tables (`asmt_metric_result`, through `asmt_assessment_instance`); refused, said under *Not read*, no satisfaction figures |
 | `sys_journal_field` | the work notes of the top issues' incidents, for ACT's fixes (0.96.0; only with ACT) | read on `sys_journal_field` - `itil` reads the work notes of the incidents it can read on most instances; where an ACL on `sys_journal_field` refuses it (403), ask the ServiceNow admin for a read ACL on `sys_journal_field` for the account's role (the work notes of incidents only is enough), or set `servicenow_insights_act_work_notes: false`; refused, the report says so and the fixes come from the close notes |
 
 A table the account cannot read is listed under *Not read* and the rest is reported; take a table out of
@@ -453,11 +494,42 @@ A table the account cannot read is listed under *Not read* and the rest is repor
    or quarterly with `servicenow_insights_months: 3`. For ACT on the monthly run, add `servicenow_insights_act: true` to
    that schedule's Variables.
 
-To email a team lead their team's page as well: `servicenow_insights_team_email_to: {"Ops - Windows": [lead@yoursite.mil]}`.
+To email a team lead their team's page as well, see [Team leads](#team-leads-1150) below.
 
-## Your SLOs, priorities and categories
+## Team leads (1.15.0)
 
-The page and the email count **met or missed** from your SLOs. `servicenow_insights_sla_source` says where from:
+The team lead is the group's **Manager** in ServiceNow (`sys_user_group.manager`). The job reads it with the groups it
+already reads: no extra call per group. A team's page shows **Group manager: NAME** under the title. Its email shows it after
+the window.
+
+- No manager in ServiceNow: no line.
+- An inactive manager: the name, then *(inactive in ServiceNow)*.
+- Site, directorate and unit pages: no line, in every hierarchy source. Their list of teams has no Manager column: it
+  would not fit at 1280 px (1.18.0).
+- The workbook's **Teams** sheet has a **Manager** column (1.18.0), empty for a team without one.
+- The manager's email address is read only when `servicenow_insights_email_leads` names a team (1.18.0).
+- The account may not read the manager (403), or the person's name comes back empty: said once under *Not read*. The rest
+  of the report is whole.
+
+To email a team's page to its lead, name the teams:
+
+```yaml
+servicenow_insights_email_leads: ["Ops - Windows", "ops - net*"]   # names or patterns, any case; or "all"
+servicenow_insights_show_lead: true                                # the Group manager line; false = off (the emails still go)
+```
+
+- `[]` (the default) emails nobody.
+- A pattern works as in `servicenow_insights_split_pattern` (`*` any text, `?` one character).
+- A manager who is inactive, or has no email address, gets nothing. The job output says so, one line per team.
+- `servicenow_insights_team_email_to: {"Ops - Windows": [lead@yoursite.mil]}` still works. For a team named in both, it
+  wins: the email goes to its addresses, not to the manager.
+
+Each lead's email goes **To** the lead alone. `report_email_to` does not get it, even as an extra variable. The email
+links the team's page on the report website. The report database keeps no name: the lead is never written there.
+
+## Your SLAs, priorities and categories
+
+The page and the email count **met or missed** from your SLAs. `servicenow_insights_sla_source` says where from:
 
 | Source | Where met or missed comes from |
 |---|---|
@@ -471,7 +543,7 @@ With `task_sla`, each SLA definition is a Response or a Resolution by its name:
 - **Response**: the name has one of `servicenow_insights_sla_response_match` (`[response]`, any case).
 - **Resolution**: the name has one of `servicenow_insights_sla_resolution_match` (`[resolution, resolve]`).
 - **Other**: any other definition. It is shown by name under *How this was made* and not counted.
-- **No SLO**: a ticket with no SLA attached (your P5s, say). It is counted, but left out of the percentages.
+- **No SLA**: a ticket with no SLA attached (your P5s, say). It is counted, but left out of the percentages.
 
 Met or missed counts the incidents and requested items **done in the window**. The tiles show **Response met** and
 **Resolution met** (with `task_sla`, or a response target), else one *SLAs met*. Severity has them per priority, the
@@ -484,7 +556,7 @@ to resolved (incidents) or closed (requested items), by table and priority.
 
 - A number is the resolution target.
 - A mapping adds a response target: opened to first assigned to a person (the metric *Assigned to*).
-- `none` is no SLO for that priority, and `"*"` is every priority not listed.
+- `none` is no SLA for that priority, and `"*"` is every priority not listed.
 
 ```yaml
 servicenow_insights_sla_targets:
@@ -493,7 +565,7 @@ servicenow_insights_sla_targets:
     "2": {response: 0.5, resolution: 9}
     "3": {response: 4, resolution: 27}
     "4": {response: 9, resolution: 45}
-    "5": none                                  # no SLO for P5
+    "5": none                                  # no SLA for P5
   sc_req_item: {"*": 45}
 servicenow_insights_sla_items: {"New account / onboarding": 18}     # a catalog item's own target, beating its priority's
 servicenow_insights_business_hours: {days: [mon, tue, wed, thu, fri], start: "07:30", end: "16:30", holidays: ["2026-12-25"]}
@@ -520,6 +592,41 @@ servicenow_insights_business_hours: {days: [mon, tue, wed, thu, fri], start: "07
   in Other.
 - Without a list, every category is shown as it is.
 - Without ACT, the issues stay the incidents' category / subcategory.
+
+## Satisfaction (1.16.0)
+
+The page never averages questions on different scales together. Each survey has its own block, each question its own
+scale.
+
+- **The scale** comes from ServiceNow: the question's min and max, or its template's values. When those can not be read,
+  the answers' lowest and highest are used and the page says *as observed*.
+- **A rating** is a question ServiceNow calls a scale (scale, numericscale, template) up to 10. When that can not be read,
+  every answer must be a whole number from 0 to 10, with 3 or more different answers.
+- **Not a rating**: a yes / no, a 0 to 100 score, a count. Read, but not shown as a rating. *How this was made* lists it,
+  under *The surveys read*. To show one anyway, name it in `servicenow_insights_survey_metrics`.
+- **A retired survey** keeps its own block, marked *retired*. Months before a switch of surveys show the old survey's
+  figures on its own scale.
+- **The headline** (the tile, the email, the report database): the active survey with the most answers. Its overall
+  average when all its rating questions share one scale, else its most-answered question.
+
+Every average reads *3.46 of 4* with a grade: **Good**, **Fair** or **Low**, by its share of the scale:
+(average - lowest) / (highest - lowest).
+
+| Scale | Good from | Fair from |
+|---|---|---|
+| 1 to 4 | 3.4 | 2.8 |
+| 1 to 5 | 4.2 | 3.4 |
+| 0 to 10 | 8 | 6 |
+
+Under 5 answers, the average shows with no grade, so one answer does not paint a team.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `servicenow_insights_survey_metrics` | `[]` | the questions read, by name; a named question is always a rating |
+| `servicenow_insights_survey_types` | `[]` | the surveys read, by name: questions named Q1 in two surveys stay apart |
+| `servicenow_insights_survey_headline` | `""` | a survey or a question for the headline |
+| `servicenow_insights_survey_grades` | `{good: 0.8, fair: 0.6}` | the shares of the scale for Good and Fair |
+| `servicenow_insights_survey_min_answers` | `5` | fewer answers: no grade |
 
 ## What to act on first
 
@@ -586,6 +693,20 @@ or team.
 Fill the past year once with `servicenow_insights_backfill_months: 12`, as a separate launch. Setup, the backfill, the
 tables and what is never stored: [REPORT_DATABASE.md](REPORT_DATABASE.md).
 
+### Only what changed is read (1.17.0)
+
+With the report database on, it also keeps each ticket's fields (never its text, people or CI). The names
+ServiceNow shows, such as a group's, are read every run, so a renamed group shows its new name. Each run then reads in
+full only the tickets that changed, and makes the follow-up reads only for those and the open ones. The pages, the email
+and the workbook are the same as a full read's. The first run reads everything and fills the store.
+
+- The job's last lines say how: *Tickets: 2,253 - 4 read from ServiceNow (new or changed), 2,249 from the report
+  database*.
+- `servicenow_insights_full_refresh: true` on a launch reads everything again.
+- With ACT on, each description's issue is kept too: only new descriptions go to ACT. The fixes are asked every run.
+
+What is kept, and how to remove it: [REPORT_DATABASE.md](REPORT_DATABASE.md), *The ticket store and the ACT cache*.
+
 ## The window
 
 | Setting | Default | What |
@@ -593,10 +714,37 @@ tables and what is never stored: [REPORT_DATABASE.md](REPORT_DATABASE.md).
 | `servicenow_insights_months` | 6 | the last N calendar months, up to now (a run on 1 November with until 31 October: 1 May - 31 October) |
 | `servicenow_insights_days` | 0 | > 0: the last N days instead |
 | `servicenow_insights_until` | "" | the last day (through its end), e.g. `2026-10-31`; "" = now |
-| `servicenow_insights_compare` | true | the window before (the same months, or days) is read too, for the ▲ ▼ and the tiles' changes |
-| `servicenow_insights_max_records` | 20000 | at most this many records per table; more is said (shorten the window, or name the groups) |
+| `servicenow_insights_compare` | true | the window before (the same months, or days) is read too, for the up and down arrows and the tiles' changes |
+| `servicenow_insights_max_records` | 20000 | at most this many records per table, the newest kept (see below). 20000 needs about 0.4 GB in the EE; 100000 about 1.5 GB and 4 minutes more |
 
 Weekly charts use whole weeks (Monday to Sunday, in `report_time_zone`).
+
+### More records than the cap (1.16.0)
+
+A table over `servicenow_insights_max_records` keeps its newest records. Then the job reads the older ones that still
+count in the window: open now, or closed or resolved in it. So the window is whole first.
+
+- **Only the window before is cut.** The figures are whole. There is no compare this run: no up or down arrows, and
+  every page says *No compare this run* at the top.
+- **The window itself is cut** (that second read hit the cap too). Every page and the email start with *Records cut:
+  some figures are incomplete*, for example *incident: only the newest 40,000 of 52,310 read, back to 2026-06-03.
+  Figures in this report are incomplete: raise servicenow_insights_max_records.* The job ends with a WARNING line, and
+  there is no compare.
+- The date is where the read stopped. A ticket opened before it is missing from every month it counts in, a later one
+  too (resolved in August, open at the end).
+- So a cut window writes nothing to the report database: no run, no month. The rows already there stay as they were.
+  The job's *Report database* line says so.
+- The cap counts exactly: a table of exactly `servicenow_insights_max_records` records is not cut.
+
+What to raise: the job's line names the table and how many there were. Set `servicenow_insights_max_records` above that
+number, in the template's Variables. Measured on the test site (6 tables, 100,000 incidents in 13 months):
+
+| `servicenow_insights_max_records` | Memory in the EE | Time added |
+|---|---|---|
+| 20000 | about 0.4 GB | - |
+| 100000 | about 1.5 GB while it reads, 0.7 GB for the report | about 4 minutes |
+
+Before 1.16.0 a capped table kept its oldest records, so the newest months looked empty.
 
 ## Every setting
 

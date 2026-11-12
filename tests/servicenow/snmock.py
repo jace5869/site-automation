@@ -43,7 +43,8 @@ instance's nodes; SNMOCK_NO_TABLES=sys_cluster_state: 403).
 The weekly activity report: SNMOCK_SEED=<file.json> (records to start with, each with its _table and dates), problem_task and
 problem tables, sysparm_display_value=all ({"value", "display_value"} per field), sysparm_offset, the query operators <=, <, >,
 ISEMPTY, ISNOTEMPTY, !=, aINb,c on a reference (by name or sys_id) and ^OR (joins the condition before it); sys_user_group
-nameINa,b and sys_user user_nameINa,b^ORnameINa,b; SNMOCK_NO_GROUPS=1: sys_user_group answers 403; SNMOCK_NO_TABLES=a,b:
+nameINa,b and sys_user user_nameINa,b^ORnameINa,b; SNMOCK_NO_GROUPS=1: sys_user_group answers 403; SNMOCK_GROUP_MANAGERS
+(JSON {group: {name, email, active}}): the groups' managers, dot-walked; SNMOCK_NO_MANAGER=1: asking for them answers 403; SNMOCK_NO_TABLES=a,b:
 reading those tables answers 403. task_sla: the seed's records with _table task_sla (task = the task's sys_id, sla = its name,
 stage, has_breached, business_percentage, planned_end_time ...), read with taskINa,b and stage!=cancelled; not part of task.
 The ticket insights: the seed may hold sc_req_item, problem, sys_user_grmember (user, group: names) and sys_audit records (tablename, fieldname, documentkey =
@@ -51,6 +52,8 @@ the incident's sys_id, oldvalue, newvalue, sys_created_on), read with documentke
 (element work_notes, name incident, element_id, value, sys_created_on) for the work notes, read with element_idINa,b.
 metric_instance (definition, table, id = the incident's sys_id, value = a group, start, end): the hand-off paths' second
 source, read with definition.name=Assignment Group^table=incident^idINa,b.
+SNMOCK_GROUP_RENAME={"old": "new"}: groups renamed (the records show the new name, sys_updated_on unchanged);
+SNMOCK_AUDIT_IDS=1: sys_audit's assignment_group values as the groups' sys_ids, as ServiceNow keeps them.
 Usage: snmock.py PORT   (requests appended to $SNMOCK_LOG as JSON lines)
 """
 import base64
@@ -126,6 +129,19 @@ def seed():
             rec.setdefault("state", "1")
             rec.setdefault("work_notes_list", [])
             INCIDENTS[rec["sys_id"]] = rec
+    rename(json.loads(os.environ.get("SNMOCK_GROUP_RENAME") or "{}"), INCIDENTS.values())
+
+
+def rename(ren, recs):
+    """SNMOCK_GROUP_RENAME={"old": "new"} (1.17.0b): groups renamed in ServiceNow. A record points at its group by sys_id, so
+    it shows the new name and its sys_updated_on does not move; sys_audit holds sys_ids, so its paths show the new name
+    too. metric_instance keeps the name it recorded."""
+    for g in GROUPS:
+        g["name"] = ren.get(g["name"], g["name"])
+    for rec in recs:
+        for f in ("assignment_group", "group", "oldvalue", "newvalue"):
+            if rec.get("_table") != "metric_instance" and rec.get(f) in ren:
+                rec[f] = ren[rec[f]]
 APPROVAL_LABEL = {"approved": "Approved", "requested": "Requested", "not requested": "Not Yet Requested", "rejected": "Rejected"}
 
 
@@ -188,6 +204,8 @@ def _cond(rec, cond):
         return str(rec.get(field, "")).lower().startswith(value.lower())
     if "IN" in cond and "=" not in cond:
         field, _, value = cond.partition("IN")
+        if "." in field and field in rec:             # a dot-walked field the seed keeps (asmt_metric_result's metric.name)
+            return str(rec.get(field) or "") in _in_set(value)
         field = field[:-5] if field.endswith(".name") else field
         vals = _in_set(value)
         if str(rec.get(field, "") or "") in vals:
@@ -286,11 +304,23 @@ def show(rec, disp, links=True):
             out[field] = "".join("%s (%s)\n%s\n\n" % (head, label, text) for _, head, text in ents)
         else:
             out[field] = ""
+    if rec.get("_table") == "sys_audit" and rec.get("fieldname") == "assignment_group" and os.environ.get("SNMOCK_AUDIT_IDS") == "1":
+        for f in ("oldvalue", "newvalue"):            # 1.17.0b: as ServiceNow keeps them - the groups' sys_ids
+            out[f] = next((g["sys_id"] for g in GROUPS if g["name"] == out.get(f)), out.get(f))
     if disp:
         out["state"] = state_label(rec)
         if out.get("approval"):
             out["approval"] = APPROVAL_LABEL.get(out["approval"], out["approval"])
     return out
+
+
+def group_manager(m):
+    """The ticket insights' team leads (1.15.0): a group's manager dot-walked - SNMOCK_GROUP_MANAGERS={"group": {"name",
+    "email", "active"}}; a group not there has none."""
+    if not m:
+        return {"manager": "", "manager.name": "", "manager.email": "", "manager.active": ""}
+    return {"manager": "u-" + m["name"].lower().replace(" ", "-"), "manager.name": m["name"], "manager.email": m.get("email", ""),
+            "manager.active": m.get("active", "true")}
 
 
 def pick(rec, fields):
@@ -367,6 +397,11 @@ class H(BaseHTTPRequestHandler):
                 return fail("Operation Failed", "ACL Exception: no read access to ecc_queue", 403)
             return 200, {"result": [{"groupby_fields": [{"field": "agent", "value": "mid.server." + k}], "stats": {"count": str(v)}}
                                     for k, v in sorted(mid_data().get("queue", {}).items())]}
+        if parts[:3] == ["api", "now", "stats"] and len(parts) == 4 and parts[3] in PREFIX:   # the Aggregate API: a count
+            if os.environ.get("SNMOCK_NO_STATS") == "1":
+                return fail("Operation Failed", "ACL Exception: no read access to the Aggregate API", 403)
+            n = sum(1 for i in INCIDENTS.values() if i.get("_table", "incident") == parts[3] and matches(i, q.get("sysparm_query", "")))
+            return 200, {"result": {"stats": {"count": str(n)}}}
         if parts[:3] != ["api", "now", "table"] or len(parts) < 4:
             return 404, {"error": {"message": "Requested URI does not represent any resource"}}
         table = parts[3]
@@ -378,7 +413,12 @@ class H(BaseHTTPRequestHandler):
             query = q.get("sysparm_query", "")
             if query.startswith("sys_idIN"):             # sys_idINa,b (the ticket insights' group parents)
                 want = query[8:].split("^")[0].split(",")
-                return 200, {"result": [dict({"parent": "", "type": ""}, **g) for g in GROUPS if g["sys_id"] in want]}
+                fields = q.get("sysparm_fields", "")
+                if "manager" in fields and os.environ.get("SNMOCK_NO_MANAGER") == "1":
+                    return fail("Operation Failed", "ACL Exception: no read access to sys_user_group.manager", 403)
+                mgr = json.loads(os.environ.get("SNMOCK_GROUP_MANAGERS") or "{}")
+                return 200, {"result": [dict({"parent": "", "type": ""}, **dict(g, **(dict((k, v) for k, v in group_manager(mgr.get(g["name"])).items() if k in fields.split(",")) if "manager" in fields else {})))
+                                        for g in GROUPS if g["sys_id"] in want]}
             if query.startswith("nameIN"):               # nameINa,b (the weekly activity report)
                 want = query[6:].split(",")
                 return 200, {"result": [g for g in GROUPS if g["name"] in want]}
@@ -428,6 +468,8 @@ class H(BaseHTTPRequestHandler):
             return 400, {"error": {"message": "Invalid table " + table}}
         if method == "GET" and not sys_id:
             rows = [i for i in INCIDENTS.values() if i.get("_table", "incident") == table and matches(i, q.get("sysparm_query", ""))]
+            if "ORDERBYopened_at" in q.get("sysparm_query", "") or "ORDERBYDESCopened_at" in q.get("sysparm_query", ""):
+                rows.sort(key=lambda i: i.get("opened_at") or "")   # by the field, as ServiceNow does
             if "ORDERBYDESC" in q.get("sysparm_query", ""):
                 rows.reverse()                                  # newest first
             offset = int(q.get("sysparm_offset", "0"))

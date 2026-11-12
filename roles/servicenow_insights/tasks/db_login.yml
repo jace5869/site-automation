@@ -16,13 +16,15 @@
     msg: >-
       servicenow_insights_db is true, but the job template has no "Report database" credential
       (aap/credential_types/report_database.yml): nothing read or written. docs/REPORT_DATABASE.md.
-  when: _sni_db.host | length == 0
+  when: _sni_db.host | length == 0 and not servicenow_insights_db_check | bool
 
 - name: Insights | the Report database credential is attached (servicenow_insights_db_required, the backfill)
   ansible.builtin.assert:
     that: _sni_db.host | length > 0
-    fail_msg: >-
-      {{ 'servicenow_insights_backfill_months' if servicenow_insights_backfill_months | int > 0 else 'servicenow_insights_db_required is true' }}
-      and the job template has no "Report database" credential.
+    fail_msg: '{{ _sni_db_why }} and the job template has no "Report database" credential.'
     quiet: true
-  when: servicenow_insights_db_required | bool or servicenow_insights_backfill_months | int > 0
+  vars:
+    _sni_db_why: >-
+      {{ 'servicenow_insights_db_check' if servicenow_insights_db_check | bool else 'servicenow_insights_backfill_months'
+      if servicenow_insights_backfill_months | int > 0 else 'servicenow_insights_db_required is true' }}
+  when: servicenow_insights_db_required | bool or servicenow_insights_backfill_months | int > 0 or servicenow_insights_db_check | bool

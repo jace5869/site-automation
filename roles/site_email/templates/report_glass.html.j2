@@ -294,7 +294,9 @@ body>table:first-of-type{position:relative;z-index:1;background:transparent !imp
 {%- if s.lines | default([]) %}
 <ul style="margin:10px 0 0 0;padding-left:22px;color:{{ ink }};">
 {%- for l in s.lines if l | trim %}
-<li style="margin:3px 0;">{{ l | e }}</li>
+{#- 1.30.0: an item under the one above ("  - ..." in the text email) is indented, no dash #}
+{%- set _sub = l[:1] == ' ' and l.lstrip()[:2] == '- ' %}
+<li style="margin:3px 0;{{ ' margin-left:18px;list-style-type:circle;' if _sub else '' }}">{{ (l.lstrip()[2:] if _sub else l) | e }}</li>
 {%- endfor %}
 </ul>
 {%- endif %}
