@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.29.0 — 2026-11-12
+
+**Updating without scripts:** paste `site-automation-1.29.0-changed-since-1.28.0.zip` as it is (from an older version,
+its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`. Nothing to set up.
+
+**The template audit hides a few more secrets** (docs/TEMPLATE_AUDIT.md):
+
+- a name=value whose name starts with a digit (`2FA_SECRET=...`, `1PASSWORD=...`) or is longer than 64 characters, a
+  URL with a password whose scheme is longer than 32, a command-line option name longer than 64;
+- a PEM private key whose label has many or long words, and PGP's `-----BEGIN PGP PRIVATE KEY BLOCK-----`;
+- a list written as YAML text that starts with a comment line, a `%YAML` directive, or `-` and a tab - its values are
+  not shown (as a list starting with `- ` or `---` already was).
+
+A setting's text is read in one pass: 200 KB of any text takes well under a second. Known limits: quotes nested more
+than 3 levels.
+
+Tests: tests/test_template_audit.py - each case above, the lists written as YAML text (with `---`, `--- # comment`, a
+comment line, `%YAML`, `-` and a tab), and 200 KB texts of the slowest shapes, each under a second.
+
 ## 1.28.0 — 2026-11-12
 
 **Updating without scripts:** paste `site-automation-1.28.0-changed-since-1.24.0.zip` as it is (from an older version,
