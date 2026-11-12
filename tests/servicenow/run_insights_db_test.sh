@@ -9,8 +9,11 @@
 # reader sees the views. Without cryptography and a cold cache: said in words. 1.15.0, is it writing?: the job's last line
 # (read back after the write, or why not) and the page's How this was made; servicenow_insights_db_check as the writer
 # and the reader (read only, no ServiceNow read, no pages), not reached or no credential: failed.
-# The container has a fixed name and port and is removed by name. Skipped (exit 0) when no container runtime or image.
+# The container's name and the ports come from variables (today's values the defaults); the container is removed by
+# its name. Skipped (exit 0) when no container runtime or image.
 #   bash tests/servicenow/run_insights_db_test.sh      (INSIGHTS_DB_TEST_IMAGE=..., INSIGHTS_DB_TEST_RUNTIME=docker, ANSIBLE_PLAYBOOK=...)
+#   INSIGHTS_DB_TEST_NAME=..., INSIGHTS_DB_TEST_PORT=18562, INSIGHTS_DB_TEST_SN_PORT=18563, INSIGHTS_DB_TEST_SMTP_PORT=18564,
+#   INSIGHTS_DB_TEST_MODEL_PORT=18565: another name and ports, to run beside another copy
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
@@ -21,7 +24,7 @@ py="${INSIGHTS_DB_TEST_PYTHON:-$(head -1 "$(command -v "$ap")" | sed -e 's/^#! *
 image="${INSIGHTS_DB_TEST_IMAGE:-docker.io/library/mysql:8.4}"
 dbport="${INSIGHTS_DB_TEST_PORT:-18562}"
 port="${INSIGHTS_DB_TEST_SN_PORT:-18563}"
-name="sa-insights-db-test"
+name="${INSIGHTS_DB_TEST_NAME:-sa-insights-db-test}"
 rt=${INSIGHTS_DB_TEST_RUNTIME:-$(command -v podman || command -v docker || true)}
 [ -n "$rt" ] || { echo "skip - no podman or docker"; exit 0; }
 "$py" -c "import pymysql, cryptography" 2>/dev/null || { echo "skip - PyMySQL and cryptography are not installed for $py (pip install PyMySQL cryptography)"; exit 0; }

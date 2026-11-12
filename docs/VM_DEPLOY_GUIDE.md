@@ -1073,6 +1073,16 @@ the workflow again (the pickup does not take a ticket twice).
   hard disk`, `a 200 GB data disk`, `D drive 200gb`); a numbered disk or a drive letter says which
   (`Disk 2: 200 GB`, `D: 200GB`). Two sizes for disk 1, or only added disks, are a question (a `disks_gb:`
   line answers it - or GenAI, when it is on).
+- **Sizes in a list (1.44.0):** `,`, `/`, `+` and `and` between sizes make a list: `Disks: 80/100 GB` is
+  80 GB and 100 GB. A number without a unit takes the next one's (`1/2 TB` = 1 TB and 2 TB). A size on a
+  disk line that the words cannot place is a question, never the template's disk.
+- **A comma in a number (1.44.0):** `2,048 GB` is one size when it is within `vm_deploy_max_disk_gb`
+  (2048 when not set). Over it, `60,100 GB` is a question: one disk, or 60 GB and 100 GB? Write
+  `disks_gb: 60, 100` (or `80/100 GB`) for two disks. `3,000 GB` is one disk the limit refuses, and
+  `80,100` without a unit is a list.
+- **A disk line (1.44.0):** `Disk:` and `Disks:` take only disk sizes. A date (`by 11/12/2026`), a
+  version (`version 8/9`) and memory (`16/32 GB RAM`, `memory: 16 GB`) on the line are left out. Any
+  other number without a unit there is a question.
 - **CPUs:** sockets x cores per socket is the number of vCPUs (`2 sockets, 4 cores per socket` = 8);
   `2 sockets` alone = 2. Sockets and cores that do not add up (`2 sockets, 4 cores`: 4 or 8?) are a question.
 - **The folder** the words name must exist in the datacenter (and be in `vm_deploy_folders`, when set):

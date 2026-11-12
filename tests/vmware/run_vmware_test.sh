@@ -35,6 +35,7 @@ engine="${CONTAINER_ENGINE:-$(command -v podman || command -v docker)}"
 port="${VCSIM_PORT:-18989}"
 image="docker.io/vmware/vcsim:v0.52.0"
 name="vcsim-site-test-$$"
+vc_pw="Vk7mRw2Tq"              # the vCenter password the jobs get (vcsim takes any); distinctive, so no_log never masks a word
 name2="vcsim-site-test2-$$"      # a second vCenter (several vCenters, one report)
 name3="vcsim-site-test3-$$"      # a third: 2 datacenters (the health report)
 port2=$((port + 7))
@@ -82,7 +83,7 @@ run() {
     local tname="$1" want="$2" pb="$3"; shift 3
     local args=() texts=() seen=0
     for a in "$@"; do if [ "$a" = "--" ]; then seen=1; elif [ $seen -eq 0 ]; then args+=("$a"); else texts+=("$a"); fi; done
-    (cd "$repo" && VMWARE_HOST=127.0.0.1 VMWARE_PORT=${RUN_PORT:-$port} VMWARE_USER=user VMWARE_PASSWORD=pass \
+    (cd "$repo" && VMWARE_HOST=127.0.0.1 VMWARE_PORT=${RUN_PORT:-$port} VMWARE_USER=user VMWARE_PASSWORD="$vc_pw" \
         ANSIBLE_COLLECTIONS_PATH="$cols" ANSIBLE_STDOUT_CALLBACK=default ANSIBLE_NOCOLOR=1 ANSIBLE_LOCALHOST_WARNING=False \
         ANSIBLE_DEPRECATION_WARNINGS=False ANSIBLE_SHOW_CUSTOM_STATS=True \
         "$ap" -i "${INV:-$work/inv.yml}" "playbooks/$pb" -e vmware_validate_certs=false \

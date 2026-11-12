@@ -21,10 +21,12 @@ IOS_SECRET = re.compile(r"(?P<k>(?<![\w-])(?:(?:[A-Za-z0-9]+-)*(?:password|secre
                         r"(?<!crypto )key(?!\s+(?:chain|generate|zeroize|import|export|storage|pubkey-chain|config-key)\b)"
                         r"(?!\s+\d+\s*$))"
                         r"(?![\w-])\s+)(?P<t>(?:level\s+\d+\s+)?(?:[0-9]{1,2}\s+)?)(?P<v>\S.*)$", re.I)
-# the SNMP community (also as removed: "no snmp-server ..."), and the community of a trap host or the passwords of
-# an SNMPv3 user: what follows them
-IOS_SNMP = re.compile(r"^(?P<k>[-+]?\s*(?:no\s+)?snmp-server\s+(?:community\s+|host\s+\S+\s+|"
-                      r"user\s+\S+\s+\S+\s+(?:remote\s+\S+\s+(?:udp-port\s+\d+\s+)?)?v3\s+))(?P<v>\S.*)$", re.I)
+# the SNMP community (also as removed: "no snmp-server ..."; "snmp mib community-map X", "snmp-server community-map
+# X"), and the community of a trap host or the passwords of an SNMPv3 user ("... v3 ...", NX-OS "... auth ..." after
+# any group words: "user U auth-group G v3 auth sha X"): what follows them; contact and location lines stay as written
+IOS_SNMP = re.compile(r"^(?P<k>[-+]?\s*(?:no\s+)?(?:snmp\s+mib\s+community-map\s+|snmp-server\s+(?:community(?:-map)?\s+|"
+                      r"host\s+\S+\s+|user\s+\S+\s+\S+\s+(?:remote\s+\S+\s+(?:udp-port\s+\d+\s+)?)?v3\s+|"
+                      r"user\s+\S+\s+(?:(?!auth(?![\w-]))\S+\s+){0,8}?auth\s+)))(?P<v>\S.*)$", re.I)
 # the plain-text authentication of HSRP, VRRP and GLBP ("standby 1 authentication X", "vrrp 1 authentication text X")
 IOS_FHRP = re.compile(r"^(?P<k>[-+]?\s*(?:no\s+)?(?:standby|vrrp|glbp)\s+(?:\d+\s+)?authentication\s+(?:text\s+)?)"
                       r"(?P<v>(?!md5\b)\S.*)$", re.I)
@@ -33,7 +35,7 @@ IOS_TEXT = re.compile(r"^[-+]?\s*(?:no\s+)?(?:description|banner)\b", re.I)
 IOS_BANNER = re.compile(r"^[-+]?\s*banner\s+\S+\s+(?P<d>\^C|\S)(?P<r>.*)$", re.I)
 # a PAN-OS element whose text is a secret (any tag that names a password, a key or a secret; attributes allowed;
 # a body over several lines hidden line by line, the line count kept)
-PAN_SECRET = re.compile(r"(<(?P<t>[\w-]*(?:password|passwd|pwd|phash|secret|passphrase|key|psk)|community)"
+PAN_SECRET = re.compile(r"(<(?P<t>[\w-]*(?:password|passwd|pwd|phash|secret|passphrase|key|psk)|community|[\w-]*community-string)"
                         r"(?:\s[^<>]*)?>)([^<]*)(</(?P=t)>)", re.I)
 HIDDEN = "<hidden>"
 

@@ -236,8 +236,6 @@ _CPS = [re.compile(r"(?<![\w.])(\d{1,3})[^\S\r\n]*cores?[^\S\r\n]*(?:per|/|each|
 _MEM = [re.compile(r"(?<![\w.])(?P<n>\d{1,6}(?:\.\d+)?)[^\S\r\n]*(?P<u>%s)\b[^\S\r\n]*(?:of[^\S\r\n]+)?(?:ram|memory|mem)\b" % _UNIT, re.I),
         re.compile(r"\b(?:ram|memory|mem)[^\S\r\n]*(?:\((?P<lu>gb|gib|mb|mib)\)[^\S\r\n]*)?(?:size)?[^\S\r\n]*(?:of|:|=|-|is)?[^\S\r\n]*"
                    r"(?P<n>\d{1,6}(?:\.\d+)?)[^\S\r\n]*(?P<u>%s)?\b" % _UNIT, re.I)]
-_DISK = re.compile(r"(?<![\w.])(\d{1,5}(?:\.\d+)?)[^\S\r\n]*(?:gigabytes?|gigs?|gib|gb|g|terabytes?|tib|tb)\b[^\S\r\n]*(?:of[^\S\r\n]+)?(?:[a-z]+[^\S\r\n]+){0,2}?"
-                   r"(?:disks?|drives?|storage|volumes?|hdds?|ssds?|space)\b", re.I)
 # disks: a disk word with sizes after it - "storage 180gb and 50gb", "disks: 100 GB, 200 GB" - a list,
 # disk 1 first; the size before the word (_DISK) is one disk: "180gb hard disk", "50gb second hard disk"
 _H = r"[^\S\r\n]"
@@ -247,8 +245,12 @@ _SZ = r"\d{1,5}(?:\.\d+)?%s*%s\b" % (_H, _DU)
 _DWORD = r"(?:hard%s+)?(?:disks?|drives?|volumes?|hdds?|ssds?)\b" % _H
 _SZW = r"%s(?:%s+%s)?" % (_SZ, _H, _DWORD)
 _DSEP = r"%s*(?:,%s*(?:and%s+)?|\+|&|/|and|plus)%s*(?:an?%s+)?" % (_H, _H, _H, _H, _H)
-_DISK_LIST = re.compile(r"\b(?:disks?|drives?|storage|volumes?|hdds?|ssds?)\b%s*(?:sizes?%s*)?(?:of|:|=|-)?%s*(%s(?:%s%s)*)"
-                        % (_H, _H, _H, _SZW, _DSEP, _SZW), re.I)
+_BARE = r"\d{1,5}(?:\.\d+)?(?![\d.]|%s*%s\b)" % (_H, _DU)
+_DISK_LIST = re.compile(r"\b(?:disks?|drives?|storage|volumes?|hdds?|ssds?)\b%s*(?:sizes?%s*)?(?:of|:|=|-)?%s*((?:%s%s)*%s(?:%s%s)*)"
+                        % (_H, _H, _H, _BARE, _DSEP, _SZW, _DSEP, _SZW), re.I)
+# sizes before the disk word: "180gb hard disk", "80GB / 100GB disks", "80/100 GB of storage"
+_DISK = re.compile(r"(?<![\w.])(?:(?:%s|%s)%s)*\d{1,5}(?:\.\d+)?%s*%s\b%s*(?:of%s+)?(?:[a-z]+%s+){0,2}?"
+                   r"(?:disks?|drives?|storage|volumes?|hdds?|ssds?|space)\b" % (_SZ, _BARE, _DSEP, _H, _DU, _H, _H, _H), re.I)
 # sizes each with its disk word, one after the other: "a 180GB disk and a 50GB disk" - disk 1 first
 _DISK_SEQ = re.compile(r"(?<![\w.])%s%s+%s(?:%s%s%s+%s)+" % (_SZ, _H, _DWORD, _DSEP, _SZ, _H, _DWORD), re.I)
 _ONE_SZ = re.compile(r"(\d{1,5}(?:\.\d+)?)%s*(%s)?\b" % (_H, _DU), re.I)
@@ -258,12 +260,17 @@ _DISK_NO = re.compile(r"\b(?:hard%s+)?(?:disks?|drives?|hdds?|ssds?|volumes?)%s*
 _DRIVE = re.compile(r"(?<![\w])([c-z])(?::[\\/]?|%s+drive)%s*(?:[:=\-]|is)?%s*[\\/]?%s*(%s)" % (_H, _H, _H, _H, _SZ), re.I)
 # drive letters right after a disk word, the size in GB when no unit is written: "HDD'S C: /120",
 # "Disks: C: 100, D: 200" (_DRIVE_N one drive, _DRIVE_SEP between two)
-_DISK_RUN = re.compile(r"\b(?:hard%s+)?(?:disks?|drives?|hdds?|ssds?|storage|volumes?)(?:['\u2019]?s)?%s*[:=\-]?%s*(?=[c-z]:)" % (_H, _H, _H), re.I)
+_DISK_RUN = re.compile(r"\b(?:hard%s+)?(?:disks?|drives?|hdds?|ssds?|storage|volumes?)\b(?:['\u2019]s\b)?%s*[:=\-]?%s*(?=[c-z]:)" % (_H, _H, _H), re.I)
 _DRIVE_N = re.compile(r"([c-z]):%s*[\\/]?%s*(\d{1,5}(?:\.\d+)?)(?!\d)(?:%s*(%s)\b)?(?!%s*%%)" % (_H, _H, _H, _UNIT, _H), re.I)
 _DRIVE_SEP = re.compile(r"%s*(?:[,;&+/]|and\b)?%s*" % (_H, _H), re.I)
 # "Disk (GB): 100, 200": sizes without a unit, the unit in the name
 _DISK_GB = re.compile(r"\b(?:disks?|drives?|storage|hdds?)%s*\((?:gb|gib)\)%s*(?:[:=\-]|is)?%s*(\d{1,5}(?:%s*(?:,|\+|&|/|and)%s*\d{1,5})*)"
                       % (_H, _H, _H, _H, _H), re.I)
+# a size on a line with a disk word that no pattern above placed - a question, never silence; not memory ("16 GB RAM")
+_STRAY = re.compile(r"(?<![\w.])(?:(?:%s|%s)%s)*%s" % (_SZ, _BARE, _DSEP, _SZ), re.I)
+_DWORDS = re.compile(r"\b(?:disks?|drives?|storage|volumes?|hdds?|ssds?)\b", re.I)
+_MEM_BEFORE = re.compile(r"\b(?:ram|memory|mem)\b[^,;\d]*$", re.I)
+_MEM_AFTER = re.compile(r"%s*(?:of%s+)?(?:ram|memory|mem)\b" % (_H, _H), re.I)
 _ADDED = re.compile(r"\b(?:second|2nd|third|3rd|fourth|4th|additional|extra|another|data|added|secondary|more)\b"
                     r"|(?<![\w])[d-z](?::|%s+drive)" % _H, re.I)
 _FIRST = re.compile(r"\b(?:first|1st|primary|system|os|boot|root|c:|c%s+drive)" % _H, re.I)
@@ -287,25 +294,129 @@ def _gb(num, unit):
     return int(n) if n == int(n) else n
 
 
-# a thousands comma: one or two digits, then groups of three, a unit right after ("2,048 GB", "16,384 MB"); without a
-# unit it is a list ("80,100", "1,024": two sizes), as is "100,200 GB"
+# a thousands comma: one or two digits, then groups of three, a unit right after ("2,048 GB", "16,384 MB"). A disk size
+# is one number only within the cap (vm_deploy_max_disk_gb; 2048 when none); over it a question, never a guess
+# ("60,100 GB": one disk of 60100 GB, or 60 and 100?). Without a unit it is a list ("80,100", "1,024"), as is "100,200 GB"
 _THOUSANDS = re.compile(r"(?<![\d.,])(\d{1,2})((?:,\d{3})+)(?![\d,])(?=\s*%s\b)" % _UNIT, re.I)
 
 
+def _thousands(text):
+    """'2,048 GB' -> '2048 GB': the thousands commas _THOUSANDS reads as one number (_thousands_asks first, for disks)."""
+    return _THOUSANDS.sub(lambda m: m.group(1) + m.group(2).replace(",", ""), text)
+
+
+def _thousands_asks(text, cap_gb=None):
+    """The 'N,NNN unit' sizes over the cap in a text -> [(start, end, question)]: one disk that big, or a list?"""
+    cap, out = float(cap_gb or 2048), []
+    for m in _THOUSANDS.finditer(text):
+        u = re.match(r"\s*(%s)\b" % _UNIT, text[m.end():], re.I)
+        whole, parts = m.group(1) + m.group(2).replace(",", ""), [m.group(1)] + m.group(2).split(",")[1:]
+        if _gb(whole, u.group(1)) <= cap:
+            continue
+        said, big, most = "%s %s" % (m.group(0), u.group(1)), "%s %s" % (whole, u.group(1)), int(cap) if cap == int(cap) else cap
+        gb = [_gb(x, u.group(1)) for x in parts]
+        if min(gb) <= 0:                        # "3,000 GB": no list has a disk of 0 GB - one disk, over the cap
+            q = "'%s' is one disk of %s: more than vm_deploy_max_disk_gb (%s GB)" % (said, big, most)
+        else:
+            q = ("'%s': one disk of %s, or disks of %s and %s %s? write a line 'disks_gb: %s' for the disks, in GB (one disk of "
+                 "%s is more than vm_deploy_max_disk_gb, %s GB)" % (said, big, ", ".join(parts[:-1]), parts[-1], u.group(1),
+                                                                     ", ".join(str(x) for x in gb), big, most))
+        out.append((m.start(), m.end() + u.end(), q))
+    return out
+
+
+def _list_gb(words, bare_gb=False):
+    """The sizes in a list's words, in GB: a number without a unit takes the next one's ('80/100 GB' -> [80, 100]);
+    the last ones without any are GB when bare_gb, else left out."""
+    found = _ONE_SZ.findall(words)
+    out, unit = [], None
+    for n, u in reversed(found):
+        unit = u or unit
+        if unit or bare_gb:
+            out.append(_gb(n, unit))
+    return out[::-1]
+
+
+# "1/2 TB": the unit after the slash given to the bare number before it
+_SLASH_UNIT = re.compile(r"(?<![\w.])(\d+(?:\.\d+)?)(\s*/\s*\d+(?:\.\d+)?\s*(%s)\b)" % _UNIT, re.I)
+
+
 def _sizes_gb(value):
-    """'100GB, 1TB' -> [100, 1024]; '16384 MB' -> [16]; '2,048 GB' -> [2048]; [100, 200] -> [100, 200]: every size of a
-    value, in GB."""
+    """'100GB, 1TB' -> [100, 1024]; '16384 MB' -> [16]; '2,048 GB' -> [2048]; '60,100 GB' -> [60100] (a cap refuses it);
+    '1/2 TB' -> [1024, 2048] (a number joined by "/" takes the next one's unit; '100, 1 TB' -> [100, 1024]);
+    [100, 200] -> [100, 200]: every size of a value, in GB."""
     text = " ".join(str(x) for x in value) if isinstance(value, (list, tuple)) else str(value)
-    text = _THOUSANDS.sub(lambda m: m.group(1) + m.group(2).replace(",", ""), text)
+    text = _thousands(text)
+    while True:
+        joined = _SLASH_UNIT.sub(lambda m: m.group(1) + m.group(3) + m.group(2), text)
+        if joined == text:
+            break
+        text = joined
     return [_gb(n, u) for n, u in re.findall(r"(\d+(?:\.\d+)?)\s*(%s|%s)?\b" % (_UNIT, _DU), text, re.I)]
 
 
-def _disk_words(text):
+# a disk key's line ("Disks: 80/100 GB, 16/32 GB RAM"): the list at its start - a number without a unit takes the next
+# one's, plain numbers at the line's end are GB ("disks: 100, 200") - then the sizes with a unit after it. Never memory
+# ("16/32 GB RAM", "memory: 16 GB"), a date ("by 11/12/2026") or a version ("version 8/9"); another plain number is a question
+_LN_SZ = re.compile(r"(?<![\w.])(\d{1,2}(?:,\d{3})+(?=%s*%s\b)|\d{1,6}(?:\.\d+)?)(?:%s*(%s)\b)?" % (_H, _UNIT, _H, _UNIT), re.I)
+_LN_SEP = re.compile(r"%s*(?:[,;+&/]|\band\b)?%s*" % (_H, _H), re.I)
+_LN_DATE = re.compile(r"(?<![\w.])\d{1,2}/\d{1,2}/\d{2,4}(?![\w/])")
+_LN_REST = re.compile(r"(?<![\w.,/])(\d{1,2}(?:,\d{3})+(?=%s*%s\b)|\d{1,6}(?:\.\d+)?(?:%s*/%s*\d{1,6}(?:\.\d+)?)*)(?![\d/])(?:%s*(%s)\b)?"
+                      % (_H, _UNIT, _H, _H, _H, _UNIT), re.I)
+_LN_NOT = re.compile(r"\b(?:by|before|after|until|due|on|from|version|ver|rhel|release|windows|win|server|sp|build|kb)\W*$", re.I)
+_LN_OTHER = re.compile(r"%s*(?:x%s*)?(?:v-?cpus?|cpus?|v-?cores?|cores?|sockets?|processors?|nics?|users?|%%)" % (_H, _H), re.I)
+_LN_DRIVE = re.compile(r"(?<![\w])[c-z]:%s*[\\/]?%s*$" % (_H, _H), re.I)
+
+
+def _disk_line(value):
+    """A disk key's value -> (its disk sizes as a 'disks_gb' text, a question or ''): 'Disks: 80/100 GB, 16/32 GB RAM'
+    -> '80 GB, 100 GB'; 'Disk: 100 GB, by 11/12/2026' -> '100 GB'; 'C: 100, D: 200' -> '100, 200'; a 'N,NNN GB' is
+    kept as written (vm_deploy_check weighs it against the cap)."""
+    text = _NOISE.sub(" ", str(value))
+    sizes, bare, pos = [], [], 0
+    while not _LN_DATE.match(text, pos):
+        m = _LN_SZ.match(text, pos)
+        if not m:
+            break
+        bare.append(m)
+        if m.group(2):
+            if not _MEM_AFTER.match(text, m.end()):
+                sizes += ["%s %s" % (x.group(1), m.group(2)) for x in bare]
+            bare = []
+        pos = _LN_SEP.match(text, m.end()).end()
+    if bare and not text[bare[-1].end():].strip(" .;,"):
+        sizes += [x.group(1) for x in bare]
+    elif bare:
+        pos = bare[0].start()                   # more words after them: weighed below, one by one
+    ask = []
+    for m in _LN_REST.finditer(text, pos):
+        before = text[:m.start()]
+        if m.group(2):
+            if not (_MEM_BEFORE.search(before) or _MEM_AFTER.match(text, m.end())):
+                sizes += ["%s %s" % (x.strip(), m.group(2)) for x in m.group(1).split("/")]
+        elif _LN_DRIVE.search(before) and "/" not in m.group(1):
+            sizes.append(m.group(1))
+        elif not (_LN_DATE.fullmatch(m.group(1)) or _LN_NOT.search(before) or _LN_OTHER.match(text, m.end())
+                  or _MEM_BEFORE.search(before) or _MEM_AFTER.match(text, m.end())):
+            ask.append(m.group(1))
+    if ask:
+        return "", ("the disk line '%s' has numbers the job cannot place (%s): write a line 'disks_gb: <disk 1 in GB>, <each extra "
+                    "disk in GB>' (e.g. 'disks_gb: 100, 200')" % (" ".join(str(value).split()), ", ".join("'%s'" % x for x in ask)))
+    return ", ".join(sizes), ""
+
+
+def _disk_words(text, cap_gb=None):
     """The disks a text asks for in words -> (disks_gb or None, the words, a question or ''). Never a
     guess: 'storage 180gb and 50gb' (a list after a disk word) = disk 1, then added disks; one size before
     a disk word is disk 1 ('180gb hard disk', 'a 100 GB system disk') or an added disk when the words say
     so ('50gb second hard disk', 'a 200 GB data disk'). Two sizes for disk 1, or only added disks (disk
-    1's size is not said), are a question. ('', '', '') when the text names no disk size."""
+    1's size is not said), are a question, as is a size on a disk line that none of these place, or a
+    'N,NNN GB' over the cap. (None, '', '') when the text names no disk size."""
+    for start, end, q in _thousands_asks(text, cap_gb):
+        line0, eol = text.rfind("\n", 0, start) + 1, (text.find("\n", end) + 1 or len(text) + 1) - 1
+        if _DWORDS.search(text, line0, eol) and not (_MEM_BEFORE.search(text[line0:start]) or _MEM_AFTER.match(text, end)):
+            return None, "'%s'" % text[start:end].strip(), q
+    text = _thousands(text)
     found = []                                  # (start, end, words, sizes, kind: list / first / added / None)
 
     def add(m, sizes, kind):
@@ -329,7 +440,18 @@ def _disk_words(text):
         add(m, [_gb(n, "gb") for n in re.findall(r"\d+", m.group(1))], "list")
     for rx, kind in ((_DISK_LIST, "list"), (_DISK_SEQ, "list"), (_DISK, None)):
         for m in rx.finditer(text):
-            add(m, [_gb(a, b) for a, b in _ONE_SZ.findall(m.group(0)) if b or rx is _DISK_LIST], kind)
+            add(m, _list_gb(m.group(0), rx is _DISK_LIST), kind)
+    stray = []
+    for m in _STRAY.finditer(text):
+        line0, eol = text.rfind("\n", 0, m.start()) + 1, (text.find("\n", m.end()) + 1 or len(text) + 1) - 1
+        if any(s_ <= m.start() < e for s_, e, _, _, _ in found) or not _DWORDS.search(text, line0, eol):
+            continue
+        if not (_MEM_BEFORE.search(text[line0:m.start()]) or _MEM_AFTER.match(text, m.end())):
+            stray.append(m.group(0).strip())
+    if stray:
+        said = ", ".join("'%s'" % w for w in stray)
+        return None, said, ("the ticket gives disk sizes the job cannot place (%s): write a line 'disks_gb: <disk 1 in GB>, <each "
+                            "extra disk in GB>' (e.g. 'disks_gb: 100, 200')" % said)
     if not found:
         return None, "", ""
     found.sort()
@@ -658,7 +780,7 @@ def vm_deploy_words(record, opts=None):
             if m:
                 st.setdefault(x, m.group(0))
         out["site"] = st
-        dval, dwords, dq = _disk_words(text)
+        dval, dwords, dq = _disk_words(text, o.get("max_disk_gb"))
         if dwords:
             out["disks"] = {"value": dval, "words": dwords, "question": dq}
         return dict((k, v) for k, v in out.items() if v)
@@ -1008,6 +1130,14 @@ def vm_deploy_spec(record, defaults=None, proposal=None, words=None, parent=None
         it comes in a later piece"""
         if piece < w_at.get(k, -1):
             return
+        if k == "disks_gb":                     # "Disk: 100 GB, by 11/12/2026": the sizes only, or a question
+            said, q = _disk_line(v)
+            if q:
+                spec.pop(k, None)
+                sources.pop(k, None)
+                wq[k] = "%s - in %s" % (q, where)
+                return
+            v = said or v
         spec[k], sources[k] = v, where
         if k in vms_at and piece > vms_at[k]:
             for one in vms.values():
@@ -1314,9 +1444,15 @@ def _check_one(parsed, record=None, opts=None):
         if spec.get(k) and o.get(lk) and not _allowed(spec[k], o[lk]):
             problems.append("%s %r is not in vm_deploy_%s (%s)" % (k, spec[k], lk, ", ".join(o[lk])))
     if "disks_gb" in spec:
-        sizes = [int(x) for x in _sizes_gb(spec["disks_gb"])]
-        spec["disks_gb"] = sizes
-        if not sizes or min(sizes) <= 0:
+        # "60,100 GB" over the cap: a question (one disk or two?), never a guess
+        said = " ".join(str(x) for x in spec["disks_gb"]) if isinstance(spec["disks_gb"], (list, tuple)) else str(spec["disks_gb"])
+        asks = [q for _, _, q in _thousands_asks(said, o.get("max_disk_gb"))]
+        sizes = [] if asks else [int(x) for x in _sizes_gb(spec["disks_gb"])]
+        if asks:
+            problems += asks
+        else:
+            spec["disks_gb"] = sizes
+        if not asks and (not sizes or min(sizes) <= 0):
             problems.append("disks_gb %r: give the sizes in GB, the first disk first (e.g. 'disks_gb: 100, 200')" % (spec["disks_gb"],))
         if o.get("max_disks") and len(sizes) > int(o["max_disks"]):
             problems.append("%d disks is more than vm_deploy_max_disks (%s)" % (len(sizes), o["max_disks"]))

@@ -123,6 +123,50 @@ class Filters(unittest.TestCase):
         self.assertFalse([x for x in d["lines"] if "KEY" in x], d["lines"])
         self.assertIn("+    <hidden>", d["lines"])
 
+
+    def test_mask_every_snmp_community_form(self):
+        """1.44.0: the community of a community map (IOS "snmp mib community-map", "snmp-server community-map"), an
+        NX-OS SNMP user's passwords and PAN-OS community-string - hidden; the other snmp lines kept."""
+        hidden = {
+            "snmp mib community-map TOPSECRET context C": "snmp mib community-map <hidden> context C",
+            "snmp mib community-map TOPSECRET engineid 800000090300 security-name S":
+                "snmp mib community-map <hidden> engineid 800000090300 security-name S",
+            "no snmp mib community-map TOPSECRET": "no snmp mib community-map <hidden>",
+            "+snmp mib community-map TOPSECRET context C": "+snmp mib community-map <hidden> context C",
+            "snmp-server community-map TOPSECRET context C": "snmp-server community-map <hidden> context C",
+            "snmp-server community TOPSECRET group network-operator": "snmp-server community <hidden> group network-operator",
+            "snmp-server user svc_x network-admin auth sha TOPSECRET priv aes-128 TOPSECRET":
+                "snmp-server user svc_x network-admin auth <hidden>",
+            "snmp-server user svc_x auth md5 TOPSECRET": "snmp-server user svc_x auth <hidden>",
+            "snmp-server user svc_x grp remote 192.0.2.9 v3 auth md5 TOPSECRET": "snmp-server user svc_x grp remote 192.0.2.9 v3 <hidden>",
+        }
+        for line, want in hidden.items():
+            self.assertEqual(f.mask(line, "ios"), want, line)
+        for line in ("snmp-server group G v3 priv", "snmp-server user svc_x network-admin", "snmp-server contact ops",
+                     "snmp-server location rack 4", "snmp-server enable traps", "snmp mib bulkstat object-list L"):
+            self.assertEqual(f.mask(line, "ios"), line)
+        self.assertEqual(f.mask("<community-string>TOPSECRET</community-string>", "panos"), "<community-string><hidden></community-string>")
+        d = f.diff("snmp mib community-map OLDX context C\n", "snmp mib community-map NEWX context C\n", "ios")
+        self.assertFalse([x for x in d["lines"] if "OLDX" in x or "NEWX" in x], d["lines"])
+
+    def test_mask_snmp_user_groups_and_pan_community_tags(self):
+        """1.44.0 round b: an NX-OS SNMP user hides all after "auth" however many group words come before it
+        ("auth-group G v3" too); PAN-OS hides any tag ending in community-string; contact and location stay readable."""
+        hidden = {
+            "snmp-server user svc_x auth-group G v3 auth sha TOPSECRET priv aes-128 TOPSECRET":
+                "snmp-server user svc_x auth-group G v3 auth <hidden>",
+            "snmp-server user svc_x g1 g2 g3 g4 g5 auth md5 TOPSECRET": "snmp-server user svc_x g1 g2 g3 g4 g5 auth <hidden>",
+            "no snmp-server user svc_x auth-group G auth sha TOPSECRET": "no snmp-server user svc_x auth-group G auth <hidden>",
+        }
+        for line, want in hidden.items():
+            self.assertEqual(f.mask(line, "ios"), want, line)
+        for line in ("snmp-server contact ops auth desk", "snmp-server location rack 4 auth room", "snmp-server user svc_x auth-group G"):
+            self.assertEqual(f.mask(line, "ios"), line)
+        for tag in ("snmp-community-string", "community-string", "community"):
+            self.assertEqual(f.mask("<%s>TOPSECRET</%s>" % (tag, tag), "panos"), "<%s><hidden></%s>" % (tag, tag))
+        for keep in ("<contact>ops</contact>", "<location>rack 4</location>"):
+            self.assertEqual(f.mask(keep, "panos"), keep)
+
     def test_diff(self):
         d = f.diff("a\nb\nc\n", "a\nc\nsnmp-server community new RO\n", "ios", 60, "rtr01")
         self.assertEqual((d["added"], d["removed"], d["truncated"]), (1, 1, False))
