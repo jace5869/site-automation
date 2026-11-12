@@ -106,6 +106,8 @@ jobs:
           python tests/test_template_audit.py
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_template_audit.py
           python tests/test_report_web.py
+          python tests/test_report_cells.py
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_report_cells.py
           python tests/test_vm_inventory.py
           python tests/test_esxi_network.py
           python tests/test_vm_rightsize.py
