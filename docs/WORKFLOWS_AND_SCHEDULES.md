@@ -537,7 +537,7 @@ stigman_ckl_import_move: true               # files done with moved to imported/
 The check then writes what is for assets that are there itself, and fails on purpose (`NEEDS APPROVAL`) only when a
 new host waits to be created - the approval and step 3 as above. Its *STIG Manager API* credential is then the client
 that writes (Full in the collections, as step 3's). With `stigman_ckl_import_auto: all` no approval is ever asked: run
-the plain template on the schedule, no workflow. [CKL_IMPORT.md](CKL_IMPORT.md#as-stig-manager-watcher-0760).
+the plain template on the schedule, no workflow. [CKL_IMPORT.md](CKL_IMPORT.md#switching-over-from-stig-manager-watcher).
 
 Everything else - how a checklist's asset and STIG are found, what is written: [CKL_IMPORT.md](CKL_IMPORT.md).
 

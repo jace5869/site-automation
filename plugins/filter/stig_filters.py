@@ -1365,13 +1365,17 @@ def stig_update_report(items, check=False, error="", planned=0, source=""):
     source: import - the plan is workflow 40's (the checklist import), not the STIG recheck's."""
     items = items or []
     news = [i for i in items if i.get("kind") == "create"]
-    revs = [i for i in items if i.get("kind") != "create"]
+    firsts = [i for i in items if i.get("kind") in ("move", "assign")]      # the checklist import's (1.26.0), done before reviews
+    revs = [i for i in items if i.get("kind") not in ("create", "move", "assign")]
     n = dict((k, len([i for i in revs if i.get("state") == k])) for k in (
         "written", "would write", "already so", "changed since", "has attachments", "rejected", "error", "bad", "not as written", "no grant",
-        "asset not created"))
+        "asset not created", "asset not moved", "STIG not assigned"))
     # a new asset made by someone else since the check is left, and its reviews not written: a failure, as in the job (1.24.0)
     nbad = len([i for i in news if i.get("state") in ("bad", "error", "no grant", "there since the check")])
-    bad = sum(n[k] for k in UPDATE_BAD) + nbad
+    # a move or an assignment not done leaves its reviews unwritten: a failure too
+    fok = ("moved", "would move", "there from an earlier run", "assigned", "would assign", "already so")
+    fbad = len([i for i in firsts if i.get("state") not in fok])
+    bad = sum(n[k] for k in UPDATE_BAD) + nbad + fbad + n["asset not moved"] + n["STIG not assigned"]
     status = "critical" if (error or bad) else "warning" if n["changed since"] else "ok"
     chip = {"written": "ok", "would write": "info", "already so": "ok", "changed since": "warning", "has attachments": "info"}
     word = lambda h: ("%s (%s)" % (SM_WORD.get(h.get("result"), h.get("result")), h.get("status") or "-")) if (h or {}).get("result") else "no review"
@@ -1384,6 +1388,14 @@ def stig_update_report(items, check=False, error="", planned=0, source=""):
         "STIG Manager update: %d review(s) written" % n["written"])
     if news:
         title += ", %d asset(s) %s" % (made, "would be created" if check else "created")
+    moves = [i for i in firsts if i.get("kind") == "move"]
+    if moves:
+        title += ", %d asset(s) %s" % (len([i for i in moves if i.get("state") in ("moved", "would move", "there from an earlier run")]),
+                                       "would be moved" if check else "moved")
+    assigns = [i for i in firsts if i.get("kind") == "assign"]
+    if assigns:
+        title += ", %d STIG(s) %s" % (len([i for i in assigns if i.get("state") in ("assigned", "would assign", "already so")]),
+                                      "would be assigned" if check else "assigned")
     if bad:
         title += ", %d not" % bad
     sections = []
@@ -1405,6 +1417,15 @@ def stig_update_report(items, check=False, error="", planned=0, source=""):
                     "The hosts the check found no asset for: created only if still not there (an asset of the host's made since "
                     "the check is left, nothing is written to it and the job fails; one this plan made on an earlier run is used), with the host's STIG, then the scan's answers written as "
                     "its reviews and read back. Its reviews are counted here; one not written is also listed below."})
+    if firsts:
+        sections.append({"title": "Moves and STIG assignments", "status": "critical" if fbad else "ok",
+            "columns": ["Host", "Asset", "What", "Result", "Why"],
+            "rows": [[i.get("host", ""), i.get("asset", ""), ("from %s to %s" % (i.get("from", ""), i.get("collection", ""))) if i.get("kind") == "move"
+                      else "%s in %s" % (i.get("benchmark", ""), i.get("collection", "")), i.get("state", ""), i.get("why", "")] for i in firsts],
+            "row_status": ["ok" if i.get("state") in fok else "critical" for i in firsts],
+            "text": "Done before the reviews, each checked again first. A move keeps the asset's reviews and their history, its STIGs, "
+                    "metadata and labels; a Restricted grant in the collection it leaves loses it - an asset such a grant reaches is not "
+                    "moved (a person decides). The reviews of an asset not moved, or of a STIG not assigned, are not written."})
     if rows:
         sections.append({"title": "Each review of the plan", "status": status,
                          "columns": ["Host", "Asset", "Rule", "Read by the check", "STIG Manager before", "Written as", "Result", "Why"],
@@ -1413,8 +1434,9 @@ def stig_update_report(items, check=False, error="", planned=0, source=""):
                                  "Manager since the check is left as it is, and so is one with attachments (evidence a person "
                                  "attached stays with its result). A written review was read back. STIG Manager keeps each "
                                  "review's history: what it was is there too. No collection, user or other review was changed, nor "
-                                 "an asset that was there."})
-    elif not error and not news:
+                                 "an asset that was there" + ("." if not firsts else
+                                                              " - but the moves and STIG assignments above, each as the approval allowed it.")})
+    elif not error and not news and not firsts:
         sections.append({"title": "Nothing to write", "status": "ok", "lines": ["The check's plan has no review (%d)." % planned]})
     return {"title": title, "status": status, "subtitle": "The reviews approved in workflow 40 (the checklist import)" if source == "import" else
                                                      "The reviews approved in workflow 37 (the STIG recheck)",
@@ -1425,8 +1447,10 @@ def stig_update_report(items, check=False, error="", planned=0, source=""):
                         {"label": "Has attachments (left)", "value": n["has attachments"]},
                         {"label": "Not written", "value": bad, "status": "critical" if bad else "ok"}],
             "sections": sections,
-            "footer": "STIG Manager: GET and POST of these reviews only%s (playbooks/stigman_update.yml)." % (
-                ", and POST /assets for the new assets" if news else "")}
+            "footer": "STIG Manager: GET and POST of these reviews only%s%s%s (playbooks/stigman_update.yml)." % (
+                ", and POST /assets for the new assets" if news else "",
+                ", PATCH /assets/{id} for the moves (its collection only)" if [i for i in firsts if i.get("kind") == "move"] else "",
+                ", PUT /assets/{id}/stigs/{benchmark} for the STIGs assigned" if [i for i in firsts if i.get("kind") == "assign"] else "")}
 
 class FilterModule(object):
     def filters(self):

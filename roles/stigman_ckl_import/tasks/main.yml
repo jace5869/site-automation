@@ -15,11 +15,14 @@
       - check_stig_stigman_api | default('') | length > 0
       - stigman_ckl_import_auto in ['none', 'existing', 'all']
       - stigman_ckl_import_collections is sequence and stigman_ckl_import_collections is not string
+      - stigman_ckl_import_routes is sequence and stigman_ckl_import_routes is not string
+      - stigman_ckl_import_route_move in ['staging', 'none']
     fail_msg: >-
       Set stigman_ckl_import_src (the share's folder: \\fileserver\stig\ckl), stigman_ckl_import_collection (the STIG Manager
       collection) and check_stig_stigman_api (all.yml, as for the STIG drift report), and attach the "STIG Manager API"
       credential (read-only is enough, unless stigman_ckl_import_auto) and the "Windows file share" credential;
-      stigman_ckl_import_auto is none, existing or all; stigman_ckl_import_collections a list ([] or ['*'] or names).
+      stigman_ckl_import_auto is none, existing or all; stigman_ckl_import_collections a list ([] or ['*'] or names);
+      stigman_ckl_import_routes a list of rules ({collection: ..., stigs: [...]}); stigman_ckl_import_route_move staging or none.
       docs/CKL_IMPORT.md. Nothing read.
     quiet: true
 
@@ -49,6 +52,9 @@
     auto: "{{ stigman_ckl_import_auto }}"
     move_to: "{{ stigman_ckl_import_move_to }}"
     create_assets: "{{ stigman_ckl_import_create_assets | bool }}"
+    routes: "{{ stigman_ckl_import_routes }}"
+    route_move: "{{ stigman_ckl_import_route_move }}"
+    assign_stigs: "{{ stigman_ckl_import_assign_stigs | bool }}"
     benchmarks: "{{ stigman_ckl_import_benchmarks }}"
     min_match: "{{ stigman_ckl_import_min_match | float }}"
     candidates: "{{ stigman_ckl_import_candidates | int }}"
@@ -69,9 +75,10 @@
   ansible.builtin.debug:
     msg: "{{ _ci.checklists | stig_ckl_lines(_ci.collections | default([]) | length > 1) or 'no checklist read' }}"
 
+# the moves and assignments (1.26.0) are set aside for the attachments check, a moving asset's reviews read where it is now
 - name: Import checklists | the plan
   ansible.builtin.set_fact:
-    _stig_update_plan: "{{ _ci.plan }}"
+    _stig_update_plan: "{{ _ci.plan | stig_ckl_for_attachments }}"
     _stig_att: {}
     _stig_att_split: {}
     _su: {"items": [], "error": ""}
@@ -85,6 +92,10 @@
   when: >-
     _stig_update_plan | rejectattr('new_asset', 'defined') | rejectattr('kind', 'eq', 'create') | list | length > 0
     and check_stig_update_skip_attachments | default(true) | bool
+
+- name: Import checklists | the moves and assignments first, then the reviews (each moving asset's to where it goes)
+  ansible.builtin.set_fact:
+    _stig_update_plan: "{{ _stig_update_plan | stig_ckl_after_attachments(_ci.plan, _stig_att.error | default('')) }}"
 
 - name: Import checklists | what is written at once (stigman_ckl_import_auto), what waits for the approval
   ansible.builtin.set_fact:
@@ -165,7 +176,9 @@
          ~ (_bad | map(attribute='line') | zip(_bad | map(attribute='why')) | map('join', ': ') | join('; ')) }}
       {{- (' - and ' ~ _ci_wait | length ~ ' item(s) wait for the approval (in the report)') if _ci_wait and stigman_ckl_import_workflow | bool else '' }}
   vars:
-    _bad: "{{ _su['items'] | default([]) | selectattr('state', 'in', ['rejected', 'error', 'bad', 'not as written', 'no grant']) | list }}"
+    _bad: "{{ _su['items'] | default([]) | selectattr('state', 'in', ['rejected', 'error', 'bad', 'not as written', 'no grant',
+                                                                     'there since the check', 'asset not created', 'held',
+                                                                     'asset not moved', 'STIG not assigned']) | list }}"
   when: (_su.error | default('') | length > 0) or _bad | length > 0
 
 - name: Import checklists | NEEDS APPROVAL

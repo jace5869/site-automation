@@ -8,6 +8,7 @@ report sections (plugins/filter/stig_filters.py).
     python tests/test_stig.py
 """
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -1074,14 +1075,21 @@ class Update(unittest.TestCase):
 
     def test_writes_only_reviews(self):
         """The module's only requests: the token, GET of one review (and of its metadata keys, for its attachments), POST of
-        an asset's reviews; GET /user - the client's own grants (0.76.0, the checklist import's items)."""
+        an asset's reviews; GET /user - the client's own grants (0.76.0, the checklist import's items); POST /assets (0.72.0, a
+        new asset); 1.26.0, the checklist import's: GET /assets/{id}, GET of the staging collection's grants and their access
+        lists, PATCH /assets/{id} with its collectionId only (a move), PUT /assets/{id}/stigs/{benchmark} (an assignment)."""
         with open(os.path.join(ROOT, "roles", "stigman_update", "library", "site_stigman_update.py")) as f:
             src = f.read()
-        self.assertEqual(sorted(set(re.findall(r'"%s(/[^"]*)"', src))), ["/assets?%s", "/collections/%s/reviews/%s", "/collections/%s/reviews/%s/%s",
-                                                                        "/collections/%s/reviews/%s/%s/metadata/keys", "/user"])
+        self.assertEqual(sorted(set(re.findall(r'"%s(/[^"]*)"', src))),
+                         ["/assets/%s?%s", "/assets?%s", "/collections/%s/grants", "/collections/%s/grants/%s/acl", "/collections/%s/reviews/%s",
+                          "/collections/%s/reviews/%s/%s", "/collections/%s/reviews/%s/%s/metadata/keys", "/user"],
+                         "1.26.0: GET of an asset, and of the staging collection's grants and their access lists (a move)")
         self.assertEqual(re.findall(r'get_method = lambda: "?(\w+)"?', src), ["method", "POST"])
-        self.assertEqual(re.findall(r'_send\("(\w+)", "([^"]+)"', src), [("POST", "/assets?projection=stigs")], "0.72.0: a new asset only")
-        for word in ("DELETE", "PATCH", "PUT", "/users", "/grants", "/stigs"):
+        self.assertEqual(re.findall(r'_send\("(\w+)", "([^"]+)"', src),
+                         [("POST", "/assets?projection=stigs"), ("PATCH", "/assets/%s"), ("PUT", "/assets/%s/stigs/%s")],
+                         "0.72.0: a new asset; 1.26.0: the checklist import's moves and STIG assignments")
+        self.assertEqual(re.findall(r'_send\("PATCH", .*?, (\{[^}]*\})\)', src), ['{"collectionId": dest}'], "a move changes the collection only")
+        for word in ("DELETE", "/users", "/collections/%s/stigs", "/collections/%s/labels", "/metadata/keys/%s"):
             self.assertNotIn(word, src)
 
 
@@ -1206,6 +1214,381 @@ class NewAsset(unittest.TestCase):
         # not a plan item the check gives
         bad = [dict(p[0], collectionId="7/../users")] + p[1:]
         self.assertEqual([i["state"] for i in smu.update({"plan": bad}, C(), False)], ["bad"] + ["asset not created"] * 3)
+
+
+class SM(object):
+    """STIG Manager for the checklist import's moves and assignments (1.26.0): its assets by id (vc01, 51, in Staging;
+    rhel01, 81, in Linux), the client's grants, who a Restricted grant in a collection gives an asset to, what was sent."""
+    COLS = {"5": "Staging", "7": "Windows", "8": "Linux", "9": "VMware"}
+
+    def __init__(self, grants=None, who=(), others=None):
+        self.db = {"51": {"assetId": "51", "name": "vc01", "fqdn": "vc01.example.mil", "collection": {"collectionId": "5", "name": "Staging"},
+                          "stigs": [{"benchmarkId": "VMW_vSphere_8-0_ESXi_STIG", "revisionStr": "V2R2"}],
+                          "labels": [{"labelId": "L-web", "name": "web"}], "statusStats": {"maxTs": "2026-11-01T08:00:00Z"}},
+                   "81": {"assetId": "81", "name": "rhel01", "fqdn": "", "collection": {"collectionId": "8", "name": "Linux"},
+                          "stigs": [{"benchmarkId": "VMW_vSphere_8-0_ESXi_STIG", "revisionStr": "V2R2"}], "labels": [],
+                          "statusStats": {"maxTs": None}}}
+        self.g = dict(grants) if grants is not None else {"5": 3, "8": 3, "9": 3}
+        self.who, self.others = list(who), dict(others or {})
+        self.sent, self.posts, self.db_reviews, self.asked = [], [], {}, []
+
+    def grants(self):
+        return dict(self.g)
+
+    def asset(self, a):
+        self.asked.append("asset " + a)
+        if a not in self.db:
+            raise smu.NotFound("HTTP 404 from /assets/" + a)
+        return json.loads(json.dumps(self.db[a]))
+
+    def restricted(self, c, asset):
+        self.asked.append("restricted %s %s" % (c, asset["assetId"]))
+        return list(self.who)
+
+    def assets(self, c):
+        return [a for a in self.db.values() if a["collection"]["collectionId"] == c] + self.others.get(c, [])
+
+    def _send(self, method, path, body):
+        self.sent.append((method, path, body))
+        a = self.db[path.split("/")[2]]
+        if method == "PATCH":
+            a["collection"] = {"collectionId": body["collectionId"], "name": self.COLS[body["collectionId"]]}
+            return json.loads(json.dumps(a))
+        if method == "PUT":
+            a["stigs"].append({"benchmarkId": path.split("/")[4], "revisionStr": "V1R1"})
+            return a["stigs"]
+        raise AssertionError(method)
+
+    def review(self, c, a, rule):
+        self.asked.append("review %s %s %s" % (c, a, rule))
+        return self.db_reviews.get((c, a, rule))
+
+    def attachments(self, c, a, rule):
+        return (0, [])
+
+    def write(self, c, a, reviews):
+        self.posts.append((c, a, [r["ruleId"] for r in reviews]))
+        for r in reviews:
+            self.db_reviews[(c, a, r["ruleId"])] = {"result": r["result"], "status": {"label": r["status"]}, "ts": "now"}
+        return {"rejected": []}
+
+
+def review_of(c, a, n, **kw):
+    """A review of the checklist import's plan."""
+    return dict({"kind": "import", "import": True, "auto": True, "collectionId": c, "assetId": a, "asset": "vc01", "host": "vc01",
+                 "ruleId": "SV-%dr1_rule" % n, "v": "V-%d" % n, "result": "pass", "status": "submitted",
+                 "was": {"result": "", "status": "", "ts": ""}, "detail": "x", "engine": None, "line": "vc01 V-%d" % n}, **kw)
+
+
+def move_plan(**kw):
+    """vc01 (51) from Staging (5) to VMware (9), as the import planned it - then its two reviews."""
+    mv = dict({"kind": "move", "import": True, "auto": True, "host": "vc01", "label": "vc01", "asset": "vc01", "assetId": "51",
+               "collection": "VMware", "collectionId": "9", "from": "Staging", "fromId": "5", "fqdn": "vc01.example.mil",
+               "stigs": ["VMW_vSphere_8-0_ESXi_STIG"], "labels": ["web"], "maxTs": "2026-11-01T08:00:00Z", "route": 1, "hidden": [],
+               "files": ["vc01.ckl"], "line": "MOVE vc01 from Staging to VMware (route 1)"}, **kw)
+    return [mv] + [review_of("9", "51", n, moved_asset="51", readFrom="5") for n in (1, 2)]
+
+
+def assign_plan(c="8", a="81", moved="", name="rhel01"):
+    """RHEL 9 assigned to an asset - then its review."""
+    return [{"kind": "assign", "import": True, "auto": True, "host": name, "label": name, "asset": name, "assetId": a,
+             "collection": SM.COLS[c], "collectionId": c, "benchmark": "RHEL_9_STIG", "revision": "V2R9", "moved_asset": moved,
+             "files": [name + ".cklb"], "line": "ASSIGN RHEL_9_STIG V2R9 to %s in %s" % (name, SM.COLS[c])},
+            review_of(c, a, 7, assign_stig="RHEL_9_STIG", asset=name, host=name, **({"moved_asset": moved} if moved else {}))]
+
+
+class MoveAndAssign(unittest.TestCase):
+    """1.26.0, the checklist import's moves (PATCH /assets/{id}) and STIG assignments (PUT /assets/{id}/stigs/{benchmark}):
+    each read again and done only if still as the check read it; the reviews after one not done are never written."""
+
+    def run_plan(self, plan, c, check=False):
+        return [(i.get("kind", "import"), i["state"]) for i in smu.update({"plan": plan}, c, check)]
+
+    def test_moved_then_its_reviews(self):
+        c = SM()
+        items = smu.update({"plan": move_plan()}, c, False)
+        self.assertEqual([(i.get("kind", "import"), i["state"]) for i in items], [("move", "moved"), ("import", "written"), ("import", "written")])
+        self.assertEqual(c.sent, [("PATCH", "/assets/51", {"collectionId": "9"})])
+        self.assertEqual(c.posts, [("9", "51", ["SV-1r1_rule", "SV-2r1_rule"])], "written where it is now")
+        self.assertIn("restricted 5 51", c.asked)
+        self.assertEqual(items[0]["why"], smu.MOVE_WORDS % "Staging")
+        self.assertEqual((items[0]["from"], items[0]["collection"], items[0]["assetId"]), ("Staging", "VMware", "51"))
+        # STIG Manager does not say it is there: an error, its reviews not written
+        c = SM()
+        c._send = lambda m, p, b: {"collection": {"collectionId": "5"}}
+        self.assertEqual(self.run_plan(move_plan(), c), [("move", "error"), ("import", "asset not moved"), ("import", "asset not moved")])
+
+    def test_changed_since_the_check(self):
+        """Each thing the check read of the asset, changed since: not moved, its reviews not written anywhere."""
+        changes = (("collection", {"collectionId": "7", "name": "Windows"}, "it is in Windows now"),
+                   ("name", "vc01-old", "its name is vc01-old now"),
+                   ("fqdn", "vc01.other.example.mil", "its FQDN is vc01.other.example.mil now"),
+                   ("fqdn", "", "its FQDN is empty now"),
+                   ("stigs", [{"benchmarkId": "VMW_vSphere_8-0_ESXi_STIG"}, {"benchmarkId": "RHEL_9_STIG"}],
+                    "its STIGs are RHEL_9_STIG, VMW_vSphere_8-0_ESXi_STIG now"),
+                   ("stigs", [], "its STIGs are none now"),
+                   ("labels", [{"labelId": "L-web", "name": "web"}, {"labelId": "L-db", "name": "db"}], "its labels are db, web now"),
+                   ("labels", [], "its labels are none now"),
+                   ("statusStats", {"maxTs": "2026-11-11T09:00:00Z"}, "a review of it changed since (2026-11-11T09:00:00Z)"),
+                   ("statusStats", {}, "a review of it changed since (none now)"))
+        for key, value, said in changes:
+            c = SM()
+            c.db["51"][key] = value
+            items = smu.update({"plan": move_plan()}, c, False)
+            self.assertEqual([i["state"] for i in items], ["changed since", "asset not moved", "asset not moved"], key)
+            self.assertEqual(items[0]["why"], "%s since the check - not moved, and its reviews not written: run the import again" % said)
+            self.assertEqual((c.sent, c.posts), ([], []), key)
+            self.assertFalse([x for x in c.asked if x.startswith("review")], "its reviews not even read")
+            self.assertEqual(items[1]["why"], "its asset vc01 was not moved - not written")
+        # gone from STIG Manager
+        c = SM()
+        del c.db["51"]
+        self.assertEqual(self.run_plan(move_plan(), c), [("move", "changed since"), ("import", "asset not moved"), ("import", "asset not moved")])
+        # read but not readable
+        c = SM()
+        c.asset = lambda a: (_ for _ in ()).throw(RuntimeError("HTTP 500"))
+        self.assertEqual(self.run_plan(move_plan()[:1], c), [("move", "error")])
+
+    def test_held_for_a_person(self):
+        c = SM(who=["the user auditor1", "the group auditors"])
+        items = smu.update({"plan": move_plan()}, c, False)
+        self.assertEqual([i["state"] for i in items], ["held", "asset not moved", "asset not moved"])
+        self.assertEqual(items[0]["why"], "not moved - a person decides: the user auditor1, the group auditors would lose it (a Restricted grant "
+                                          "in Staging)")
+        self.assertEqual((c.sent, c.posts), ([], []))
+        # the grants could not be read: not moved either
+        c = SM()
+        c.restricted = lambda col, a: (_ for _ in ()).throw(RuntimeError("HTTP 403"))
+        self.assertEqual(self.run_plan(move_plan()[:1], c), [("move", "error")])
+        self.assertEqual(c.sent, [])
+
+    def test_restricted_acl_as_the_import_reads_it(self):
+        """The update's acl_covers is the import's: default access, a rule by asset, label, STIG (each given), access none not."""
+        sys.path.insert(0, os.path.join(ROOT, "roles", "stigman_ckl_import", "library"))
+        import site_ckl_import as ci
+        a = {"assetId": "51", "labels": [{"labelId": "L-web", "name": "web"}], "stigs": [{"benchmarkId": "RHEL_9_STIG"}]}
+        for acl, covers in (({"defaultAccess": "r"}, True), ({}, False), ({"acl": [{"asset": {"assetId": "51"}, "access": "r"}]}, True),
+                            ({"acl": [{"asset": {"assetId": "51"}, "access": "none"}]}, False),
+                            ({"acl": [{"label": {"labelId": "L-web"}, "access": "rw"}]}, True),
+                            ({"acl": [{"label": {"labelId": "L-db"}, "access": "rw"}]}, False),
+                            ({"acl": [{"benchmarkId": "RHEL_9_STIG", "access": "r"}]}, True),
+                            ({"acl": [{"benchmarkId": "RHEL_8_STIG", "access": "r"}]}, False),
+                            ({"acl": [{"asset": {"assetId": "51"}, "benchmarkId": "RHEL_8_STIG", "access": "r"}]}, False),
+                            ({"acl": [{"asset": {"assetId": "52"}, "access": "r"}]}, False)):
+            self.assertEqual((smu.acl_covers(acl, a), ci.acl_covers(acl, a)), (covers, covers), acl)
+        self.assertTrue(smu.acl_covers({"acl": [{"label": {"labelId": "L-web"}, "access": "r"}]}, {"assetId": "51", "labelIds": ["L-web"]}),
+                        "labelIds, as STIG Manager may give them")
+        for g, who in (({"user": {"username": "auditor1"}}, "the user auditor1"), ({"userGroup": {"name": "auditors"}}, "the group auditors"),
+                       ({"user": {"userId": "21"}}, "the user 21")):
+            self.assertEqual((smu.grant_who(g), ci.grant_who(g)), (who, who))
+
+    def test_there_since_the_check(self):
+        c = SM(others={"9": [{"assetId": "99", "name": "VC01"}]})       # someone made one of its name in VMware
+        items = smu.update({"plan": move_plan()}, c, False)
+        self.assertEqual([i["state"] for i in items], ["there since the check", "asset not moved", "asset not moved"])
+        self.assertEqual(items[0]["why"], "VMware has an asset VC01 now - not moved, and its reviews not written: run the import again")
+        self.assertEqual((c.sent, c.posts), ([], []))
+
+    def test_no_grant(self):
+        for grants, said in (({"5": 2, "9": 3}, "Full in Staging"), ({"5": 3, "9": 2}, "Full in VMware"),
+                             ({"5": 3}, "no grant in VMware"), ({"5": 1, "9": 1}, "Restricted in Staging, Restricted in VMware")):
+            c = SM(grants)
+            items = smu.update({"plan": move_plan()}, c, False)
+            self.assertEqual([i["state"] for i in items], ["no grant", "asset not moved", "asset not moved"], grants)
+            self.assertEqual(items[0]["why"], "the client has %s - moving an asset needs Manage in both collections - not moved" % said)
+            self.assertEqual((c.sent, c.posts, c.asked), ([], [], []), "nothing read, nothing sent")
+        # the grants not read: STIG Manager decides
+        c = SM()
+        c.grants = lambda: (_ for _ in ()).throw(RuntimeError("HTTP 500"))
+        self.assertEqual(self.run_plan(move_plan()[:1], c), [("move", "moved")])
+
+    def test_there_from_an_earlier_run(self):
+        c = SM()
+        c.db["51"]["collection"] = {"collectionId": "9", "name": "VMware"}       # an earlier run moved it, then stopped
+        c.db_reviews[("9", "51", "SV-1r1_rule")] = {"result": "pass", "status": {"label": "submitted"}, "ts": "t1"}
+        items = smu.update({"plan": move_plan()}, c, False)
+        self.assertEqual([i["state"] for i in items], ["there from an earlier run", "already so", "written"])
+        self.assertEqual(items[0]["why"], "in VMware already (an earlier run of this plan) - its reviews written there")
+        self.assertEqual((c.sent, c.posts), ([], [("9", "51", ["SV-2r1_rule"])]))
+
+    def test_check_mode(self):
+        c = SM()
+        items = smu.update({"plan": move_plan() + assign_plan()}, c, True)
+        self.assertEqual([(i.get("kind", "import"), i["state"]) for i in items],
+                         [("move", "would move"), ("assign", "would assign"), ("import", "would write"), ("import", "would write"),
+                          ("import", "would write")])
+        self.assertEqual((c.sent, c.posts), ([], []))
+        self.assertEqual(c.db["51"]["collection"]["collectionId"], "5")
+        # a refusal is said in check mode too
+        c = SM(who=["the user auditor1"])
+        self.assertEqual(self.run_plan(move_plan(), c, True), [("move", "held"), ("import", "asset not moved"), ("import", "asset not moved")])
+
+    def test_assign(self):
+        c = SM()
+        items = smu.update({"plan": assign_plan()}, c, False)
+        self.assertEqual([(i.get("kind", "import"), i["state"]) for i in items], [("assign", "assigned"), ("import", "written")])
+        self.assertEqual(c.sent, [("PUT", "/assets/81/stigs/RHEL_9_STIG", None)], "no body")
+        self.assertEqual(c.posts, [("8", "81", ["SV-7r1_rule"])])
+        self.assertEqual((items[0]["benchmark"], items[0]["collection"]), ("RHEL_9_STIG", "Linux"))
+        # already so (a person, or an earlier run): not sent again, its reviews written
+        c = SM()
+        c.db["81"]["stigs"].append({"benchmarkId": "RHEL_9_STIG", "revisionStr": "V2R9"})
+        self.assertEqual(self.run_plan(assign_plan(), c), [("assign", "already so"), ("import", "written")])
+        self.assertEqual(c.sent, [])
+        # check mode
+        c = SM()
+        self.assertEqual(self.run_plan(assign_plan(), c, True), [("assign", "would assign"), ("import", "would write")])
+        self.assertEqual((c.sent, c.posts), ([], []))
+        # no Manage: not assigned, its review not written
+        c = SM({"8": 2})
+        items = smu.update({"plan": assign_plan()}, c, False)
+        self.assertEqual([i["state"] for i in items], ["no grant", "STIG not assigned"])
+        self.assertEqual(items[0]["why"], "the client has Full in Linux - assigning a STIG needs Manage - not assigned")
+        self.assertEqual(items[1]["why"], "RHEL_9_STIG was not assigned to rhel01 - not written")
+        self.assertEqual((c.sent, c.posts), ([], []))
+        # moved to another collection since: not assigned
+        c = SM()
+        c.db["81"]["collection"] = {"collectionId": "7", "name": "Windows"}
+        items = smu.update({"plan": assign_plan()}, c, False)
+        self.assertEqual([i["state"] for i in items], ["changed since", "STIG not assigned"])
+        self.assertEqual((c.sent, c.posts), ([], []))
+        # STIG Manager does not list it after: an error, its review not written
+        c = SM()
+        c._send = lambda m, p, b: [{"benchmarkId": "VMW_vSphere_8-0_ESXi_STIG"}]
+        self.assertEqual(self.run_plan(assign_plan(), c), [("assign", "error"), ("import", "STIG not assigned")])
+
+    def test_assign_after_a_move(self):
+        plan = move_plan() + assign_plan("9", "51", "51", "vc01")
+        c = SM()
+        items = smu.update({"plan": plan}, c, False)
+        self.assertEqual([(i.get("kind", "import"), i["state"]) for i in items],
+                         [("move", "moved"), ("assign", "assigned"), ("import", "written"), ("import", "written"), ("import", "written")])
+        self.assertEqual(c.sent, [("PATCH", "/assets/51", {"collectionId": "9"}), ("PUT", "/assets/51/stigs/RHEL_9_STIG", None)])
+        self.assertEqual(c.posts, [("9", "51", ["SV-1r1_rule", "SV-2r1_rule", "SV-7r1_rule"])])
+        # the move not done: the assignment waits for it - not assigned, nothing written
+        c = SM(who=["the user auditor1"])
+        items = smu.update({"plan": plan}, c, False)
+        self.assertEqual([(i.get("kind", "import"), i["state"]) for i in items],
+                         [("move", "held"), ("assign", "asset not moved"), ("import", "asset not moved"), ("import", "asset not moved"),
+                          ("import", "asset not moved")])
+        self.assertEqual(items[1]["why"], "its move was not done - not assigned")
+        self.assertEqual((c.sent, c.posts), ([], []))
+
+    def test_twice_or_not_a_plan_item(self):
+        c = SM()
+        self.assertEqual(self.run_plan(move_plan() + move_plan()[:1], c), [("move", "moved"), ("move", "bad"), ("import", "written"), ("import", "written")])
+        self.assertEqual(len(c.sent), 1)
+        for bad in (dict(move_plan()[0], fromId="9"), dict(move_plan()[0], assetId="51/../users"), dict(move_plan()[0], collectionId="")):
+            self.assertEqual(self.run_plan([bad], SM()), [("move", "bad")], bad)
+        self.assertEqual(self.run_plan([dict(assign_plan()[0], benchmark="")], SM()), [("assign", "bad")])
+        a = assign_plan()
+        self.assertEqual(self.run_plan(a + a[:1], SM()), [("assign", "assigned"), ("assign", "bad"), ("import", "written")])
+
+
+def _base_update_report():
+    """stig_update_report as 69bbcff (1.24.0, before the moves) had it: the file STIG_FILTERS_BASE names (a copy of its
+    plugins/filter/stig_filters.py), else git show of it in this clone; None when neither is there (a shallow clone)."""
+    import importlib.util
+    path = os.environ.get("STIG_FILTERS_BASE", "")
+    if not path:
+        try:
+            src = subprocess.check_output(["git", "-C", ROOT, "show", "69bbcff:plugins/filter/stig_filters.py"], stderr=subprocess.DEVNULL)
+        except (OSError, subprocess.CalledProcessError):
+            return None
+        path = os.path.join(tempfile.mkdtemp(), "stig_filters_69bbcff.py")
+        with open(path, "wb") as f:
+            f.write(src)
+    spec = importlib.util.spec_from_file_location("stig_filters_69bbcff", path)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m.stig_update_report
+
+
+def w37(state, n=1, **kw):
+    """A row of the update's items, as workflow 37's plan gives it."""
+    return dict({"n": n, "line": "web01 RHEL_9_STIG V-%d" % n, "host": "web01", "asset": "web01", "ruleId": "SV-%dr1_rule" % n, "v": "V-%d" % n,
+                 "result": "pass", "status": "submitted", "was": {"result": "fail", "status": "accepted", "ts": "t0"}, "state": state,
+                 "why": "" if state in ("written", "would write", "already so") else "why: " + state}, **kw)
+
+
+def w37_new(state, name="web02"):
+    return {"n": 0, "kind": "create", "line": "NEW ASSET %s" % name, "host": name, "asset": name, "collection": "RHEL Servers",
+            "fqdn": name + ".example.mil", "benchmark": "RHEL_9_STIG", "revision": "V2R7", "assetId": "88", "state": state,
+            "why": "" if state == "created" else "why: " + state}
+
+
+W37_STATES = ("written", "would write", "already so", "changed since", "has attachments", "rejected", "error", "bad", "not as written", "no grant")
+W37_REVIEWS = [w37(s, n, before={"result": "fail", "status": "accepted", "ts": "t0"}) for n, s in enumerate(W37_STATES, 1)]
+W37_NEW = ([w37_new(s, "web%02d" % n) for n, s in enumerate(("created", "would create", "there since the check", "there from an earlier run",
+                                                               "bad", "error", "no grant"), 2)]
+           + [w37("written", 20, new_asset="web02", asset="web02"), w37("asset not created", 21, new_asset="web04", asset="web04"),
+              w37("rejected", 22, new_asset="web02", asset="web02"), w37("would write", 23, new_asset="web03", asset="web03")])
+# (items, check, error, planned, source): workflow 37's - every review state, new assets in each state, check mode, an error
+W37_CASES = [(W37_REVIEWS, False, "", 10, ""), (W37_REVIEWS + W37_NEW, False, "", 14, ""), (W37_NEW, True, "", 4, ""),
+             ([w37("would write", 1), w37("already so", 2), w37_new("would create"), w37("would write", 3, new_asset="web02")], True, "", 3, ""),
+             ([w37("changed since", 1), w37("written", 2)], False, "", 2, ""), ([], False, "no token for the client stigman-update", 4, ""),
+             ([], False, "", 0, ""), (W37_REVIEWS[:3], False, "HTTP 500 from /user", 3, ""), (W37_REVIEWS + W37_NEW, False, "", 14, "import"),
+             ([w37("written", 1), w37("written", 2, new_asset="web02"), w37_new("created")], False, "", 2, "import")]
+# the SHA-256 of 69bbcff's stig_update_report of each case, in order (json, keys sorted) - _base_update_report shows any change
+W37_BEFORE = "e4870560b30b33debc0900e2d71a035d26594379585b9e366b470a6c80c30d25"
+
+
+class UpdateReportMoves(unittest.TestCase):
+    """stig_update_report (1.26.0): the moves and STIG assignments in a section; workflow 37's report exactly as before."""
+
+    def test_workflow_37_as_before(self):
+        got = [sf.stig_update_report(*case) for case in W37_CASES]
+        base = _base_update_report()
+        if base is not None:
+            for case, mine in zip(W37_CASES, got):
+                self.assertEqual(mine, base(*case), case[1:])
+        self.assertEqual(hashlib.sha256(json.dumps(got, sort_keys=True).encode()).hexdigest(), W37_BEFORE)
+        self.assertNotIn("Moves and STIG assignments", json.dumps(got))
+
+    def test_moves_and_assignments(self):
+        mv = {"n": 0, "kind": "move", "line": "MOVE vc01", "host": "vc01", "asset": "vc01", "collection": "VMware", "from": "Staging", "assetId": "51"}
+        asg = {"n": 3, "kind": "assign", "line": "ASSIGN", "host": "rhel01", "asset": "rhel01", "collection": "Linux", "benchmark": "RHEL_9_STIG",
+               "assetId": "81"}
+        revs = [w37("written", 1, host="vc01", asset="vc01", moved_asset="51"), w37("written", 2, host="vc01", asset="vc01", moved_asset="51"),
+                w37("written", 7, host="rhel01", asset="rhel01", assign_stig="RHEL_9_STIG")]
+        ok = [dict(mv, state="moved", why="it keeps its reviews"), dict(asg, state="assigned", why="")] + revs
+        r = sf.stig_update_report(ok, source="import")
+        self.assertEqual((r["title"], r["status"]), ("STIG Manager update: 3 review(s) written, 1 asset(s) moved, 1 STIG(s) assigned", "ok"))
+        s = [x for x in r["sections"] if x["title"] == "Moves and STIG assignments"][0]
+        self.assertEqual(s["rows"], [["vc01", "vc01", "from Staging to VMware", "moved", "it keeps its reviews"],
+                                     ["rhel01", "rhel01", "RHEL_9_STIG in Linux", "assigned", ""]])
+        self.assertEqual((s["status"], s["row_status"]), ("ok", ["ok", "ok"]))
+        self.assertEqual(dict((x["label"], x["value"]) for x in r["summary"])["Not written"], 0)
+        # there from an earlier run, already so: done
+        r = sf.stig_update_report([dict(mv, state="there from an earlier run"), dict(asg, state="already so")] + revs, source="import")
+        self.assertEqual((r["title"], r["status"]), ("STIG Manager update: 3 review(s) written, 1 asset(s) moved, 1 STIG(s) assigned", "ok"))
+        # a move held or changed since, an assignment not done: not done - counted with its reviews, critical
+        for state in ("held", "changed since", "there since the check", "no grant", "error", "bad"):
+            items = [dict(mv, state=state), dict(asg, state="no grant")] + [dict(i, state="asset not moved") for i in revs[:2]] + \
+                    [dict(revs[2], state="STIG not assigned")]
+            r = sf.stig_update_report(items, source="import")
+            self.assertEqual((r["title"], r["status"]), ("STIG Manager update: 0 review(s) written, 0 asset(s) moved, 0 STIG(s) assigned, 5 not",
+                                                         "critical"), state)
+            s = [x for x in r["sections"] if x["title"] == "Moves and STIG assignments"][0]
+            self.assertEqual((s["status"], s["row_status"]), ("critical", ["critical", "critical"]))
+            each = [x for x in r["sections"] if x["title"] == "Each review of the plan"][0]
+            self.assertEqual([x[6] for x in each["rows"]], ["asset not moved", "asset not moved", "STIG not assigned"])
+            self.assertEqual(dict((x["label"], x["value"]) for x in r["summary"])["Not written"], 5)
+        # check mode
+        r = sf.stig_update_report([dict(mv, state="would move"), dict(asg, state="would assign")] + [dict(i, state="would write") for i in revs],
+                                  True, source="import")
+        self.assertEqual((r["title"], r["status"]), ("STIG Manager update (Check): 3 review(s) would be written, 1 asset(s) would be moved, "
+                                                     "1 STIG(s) would be assigned", "ok"))
+        # a move with no review after it: its section, not "Nothing to write"
+        r = sf.stig_update_report([dict(mv, state="moved")], source="import")
+        self.assertEqual([x["title"] for x in r["sections"]], ["Moves and STIG assignments"])
+        # from the update itself
+        items = smu.update({"plan": move_plan() + assign_plan()}, SM(), False)
+        r = sf.stig_update_report(items, source="import")
+        self.assertEqual(r["title"], "STIG Manager update: 3 review(s) written, 1 asset(s) moved, 1 STIG(s) assigned")
+        items = smu.update({"plan": move_plan() + assign_plan()}, SM(who=["the user auditor1"]), False)
+        self.assertEqual(sf.stig_update_report(items, source="import")["title"],
+                         "STIG Manager update: 1 review(s) written, 0 asset(s) moved, 1 STIG(s) assigned, 3 not")
 
 
 class Attachments(unittest.TestCase):

@@ -69,6 +69,15 @@ class Fake(ci.Client):
             return self.d["stigs"]
         if path == "/user":
             return self.d.get("user", {"userId": "1"})
+        parts = path.split("/")
+        # 1.26.0: a collection's grants and a grant's access list (STIG Manager gives them to Manage only: grants_error)
+        if len(parts) in (4, 6) and parts[1] == "collections" and parts[3] == "grants":
+            if self.d.get("grants_error"):
+                raise RuntimeError("HTTP 403 from %s: User has insufficient privilege to complete this request." % path)
+            if len(parts) == 4:
+                return self.d.get("grants", {}).get(parts[2], [])
+            if parts[5] == "acl":
+                return self.d.get("acl", {}).get((parts[2], parts[4]), {"defaultAccess": "none", "acl": []})
         raise AssertionError("not asked for: " + path)
 
     def rules(self, bench, rev):
@@ -78,12 +87,14 @@ class Fake(ci.Client):
         return self.d["rules"][(bench, rev)]
 
     def reviews(self, c, a, bench):
+        self.calls.append("reviews %s %s %s" % (c, a, bench))       # where they are read (1.26.0: a moving asset's in staging)
         return self.d["reviews"].get(a, [])
 
 
 def params(**kw):
     p = {"collection": "VMware", "collections": [], "auto": "none", "create_assets": True, "benchmarks": {}, "min_match": 0.8, "candidates": 25, "search_all": False,
-         "other_revision": False, "overwrite_accepted": False, "status": "submitted", "detail_max": 8000, "day": "2026-11-05"}
+         "other_revision": False, "overwrite_accepted": False, "status": "submitted", "detail_max": 8000, "day": "2026-11-05",
+         "routes": [], "route_move": "staging", "assign_stigs": False}
     p.update(kw)
     return p
 
@@ -478,7 +489,7 @@ def run_many(d, collections=("*",), files=None, **kw):
     files = files if files is not None else [{"name": "vrops01/apache.ckl", "data": fixture(), "modified": "2026-11-05 10:00 UTC"}]
     f = Fake(d)
     out = ci.plan_all(params(collection="Watcher", collections=list(collections), **kw), f, copy.deepcopy(files))
-    return out + (f,)
+    return out[:5] + (f,)            # (1.26.0 adds the routes and the moves held: run_routes)
 
 
 class Collections(unittest.TestCase):
@@ -727,6 +738,507 @@ class Report(unittest.TestCase):
         # the write failed: said first
         r = cf.stig_ckl_report(res, wait, [], True, 200, "existing", auto, {"items": [], "error": "no token for the client x"})
         self.assertEqual((r["status"], r["sections"][0]["title"]), ("critical", "Nothing written at once"))
+
+
+# ---- 1.26.0: routes - a host's collection by its STIG, name, role; moved out of staging; a STIG assigned -----------------
+ESXI = "VMW_vSphere_8-0_ESXi_STIG"
+
+
+def rhel_rules():
+    """STIG Manager's rules of RHEL 9 V2R9 (three)."""
+    return [{"ruleId": "SV-2570%02dr1_rule" % n, "groupId": "V-2570%02d" % n, "version": "RHEL-09-0000%02d" % n,
+             "severity": "medium", "title": "RHEL rule %d" % n} for n in (1, 2, 3)]
+
+
+def routed():
+    """Staging (the staging collection), Windows, Linux, VMware - no assets yet; the Aria STIG at V1R1 and V1R2, RHEL 9
+    at V2R9; GET /user gives no grants (not known: nothing refused for them), no collection has grants."""
+    d = data()
+    d["collections"] = [{"collectionId": "5", "name": "Staging"}, {"collectionId": "7", "name": "Windows"},
+                        {"collectionId": "8", "name": "Linux"}, {"collectionId": "9", "name": "VMware"}]
+    d["assets"] = {"5": [], "7": [], "8": [], "9": []}
+    d["collection_stigs"] = {"5": [], "7": [], "8": [], "9": []}
+    d["rules"][(ARIA, "V1R2")] = aria_rules("r2")
+    d["rules"][("RHEL_9_STIG", "V2R9")] = rhel_rules()
+    return d
+
+
+def give(d, roles):
+    """The client's grants (GET /user): {collectionId: roleId}."""
+    d["user"] = {"userId": "1", "collectionGrants": [{"roleId": r, "collection": {"collectionId": c}} for c, r in roles.items()]}
+
+
+def aria(name="vc01", role="", tech=""):
+    """The Aria Apache CKL for another host, with its ROLE and TECH_AREA."""
+    raw = host(name).replace(b"<ROLE>None</ROLE>", b"<ROLE>" + role.encode() + b"</ROLE>")
+    return raw.replace(b"<TECH_AREA>\n</TECH_AREA>", b"<TECH_AREA>" + tech.encode() + b"</TECH_AREA>")
+
+
+def rhel(name="rhel01", role="", tech=""):
+    """A RHEL 9 CKLB (STIG Viewer 3): Not a Finding, Open, Not Applicable - its role and technology_area."""
+    rules = [{"rule_id": r["ruleId"], "group_id": r["groupId"], "rule_version": r["version"], "severity": "medium", "rule_title": r["title"],
+              "status": st, "finding_details": "Found by the scan."} for r, st in zip(rhel_rules(), ("not_a_finding", "open", "not_applicable"))]
+    return json.dumps({"title": "Evaluate-STIG", "cklb_version": "1.0",
+                       "target_data": {"host_name": name, "fqdn": name + ".example.mil", "ip_address": "192.0.2.51", "role": role,
+                                       "technology_area": tech},
+                       "stigs": [{"stig_id": "RHEL_9_STIG", "stig_name": "Red Hat Enterprise Linux 9 STIG", "version": "2",
+                                  "release_info": "Release: 9 Benchmark Date: 30 Sep 2026", "rules": rules}]}).encode()
+
+
+def ckfile(name, raw):
+    return {"name": name, "data": raw, "modified": "2026-11-10 10:00 UTC"}
+
+
+def staged(aid="51", name="vc01", stigs=((ARIA, "V1R1"),), labels=("web",), ts="2026-11-01T08:00:00Z"):
+    """An asset as GET /assets gives it (projections stigs, statusStats), with its labels."""
+    a = asset(aid, name, *stigs)
+    a.update(fqdn=name + ".example.mil", labels=[{"labelId": "L-" + x, "name": x} for x in labels], statusStats={"maxTs": ts})
+    return a
+
+
+def run_routes(d, files, routes, **kw):
+    """plan_all with routes -> (checklists, plan, left, staging, searched, routes, held, the Fake)."""
+    f = Fake(d)
+    kw.setdefault("collection", "Staging")
+    out = ci.plan_all(params(routes=routes, **kw), f, copy.deepcopy(files))
+    return tuple(out) + (f,)
+
+
+VC = [ckfile("vc01.ckl", aria("vc01", "Member Server", "Web Server"))]
+TO_VMWARE = [{"collection": "VMware", "stigs": "VMW_*"}]
+
+
+class Routes(unittest.TestCase):
+    """stigman_ckl_import_routes: where a host's asset is created, or moved to out of the staging collection."""
+
+    def where(self, routes, files=VC, d=None):
+        """The collections the plan creates the host's asset in."""
+        plan = run_routes(d or routed(), files, routes)[1]
+        return [p["collection"] for p in plan if p["kind"] == "create"]
+
+    def test_rules_in_order_each_key_must_fit(self):
+        # the first rule in the list's order wins
+        self.assertEqual(self.where([{"collection": "Windows", "names": ["vc*"]}, {"collection": "VMware", "names": ["vc01"]}]), ["Windows"])
+        self.assertEqual(self.where([{"collection": "VMware", "names": ["vc01"]}, {"collection": "Windows", "names": ["vc*"]}]), ["VMware"])
+        # stigs: the matched installed STIG's benchmark id or its title, any case - never the checklist's own STIG id
+        for pat in (["vmw_aria_*"], ["*Aria Operations 8.x Apache Server Security*"], ["RHEL_*", "VMW_Aria_Operations_8-x_Apache_STIG"]):
+            self.assertEqual(self.where([{"collection": "VMware", "stigs": pat}]), ["VMware"], pat)
+        self.assertEqual(self.where([{"collection": "VMware", "stigs": ["*Apache Profile"]}]), ["Staging"], "the checklist's STIG id")
+        # names: the host name or its FQDN
+        for pat in (["VC01"], ["vc01.example.mil"], ["*.EXAMPLE.MIL"]):
+            self.assertEqual(self.where([{"collection": "VMware", "names": pat}]), ["VMware"], pat)
+        self.assertEqual(self.where([{"collection": "VMware", "names": ["esx*", "vc01.yoursite.mil"]}]), ["Staging"])
+        # roles and tech_areas: a CKL's ROLE and TECH_AREA
+        self.assertEqual(self.where([{"collection": "Windows", "roles": ["member*"]}]), ["Windows"])
+        self.assertEqual(self.where([{"collection": "Windows", "tech_areas": ["WEB SERVER"]}]), ["Windows"])
+        self.assertEqual(self.where([{"collection": "Windows", "roles": ["domain controller"]}]), ["Staging"])
+        self.assertEqual(self.where([{"collection": "Windows", "tech_areas": ["unix*"]}]), ["Staging"])
+        # a CKLB's role and technology_area
+        rh = [ckfile("rhel01.cklb", rhel("rhel01", "Member Server", "UNIX OS"))]
+        self.assertEqual(self.where([{"collection": "Linux", "roles": ["member server"], "tech_areas": ["unix*"]}], rh), ["Linux"])
+        self.assertEqual(self.where([{"collection": "Linux", "tech_areas": ["windows*"]}], rh), ["Staging"])
+        self.assertEqual(self.where([{"collection": "Linux", "roles": ["workstation"]}], rh), ["Staging"])
+        # each key given must fit: the STIG fits, the name does not - the next rule
+        self.assertEqual(self.where([{"collection": "VMware", "stigs": ["VMW_*"], "names": ["esx*"]}, {"collection": "Linux"}]), ["Linux"])
+        self.assertEqual(self.where([{"collection": "VMware", "stigs": ["VMW_*"], "names": ["vc*"], "roles": ["member*"],
+                                      "tech_areas": ["web*"]}]), ["VMware"])
+        # text: patterns separated by commas or lines, never cut at a space
+        self.assertEqual(self.where([{"collection": "VMware", "names": "esx01, vc01"}]), ["VMware"])
+        self.assertEqual(self.where([{"collection": "VMware", "names": "esx01\nvc01"}]), ["VMware"])
+        self.assertEqual(self.where([{"collection": "Windows", "tech_areas": "Domain Controller,Web Server"}]), ["Windows"])
+        self.assertEqual(self.where([{"collection": "Windows", "tech_areas": "Domain Controller Web"}]), ["Staging"])
+        rts = ci.read_routes([{"collection": "VMware", "stigs": ["VMW_*"], "names": "esx01, vc01"}, {"collection": "9"}], routed()["collections"])
+        self.assertEqual([(r["n"], r["want"], r["text"], r["collection"], r["names"]) for r in rts],
+                         [(1, "VMware", "stigs VMW_*; names esx01, vc01", {"collectionId": "9", "name": "VMware"}, ["esx01", "vc01"]),
+                          (2, "9", "every host", {"collectionId": "9", "name": "VMware"}, [])])
+        # no rule fits: the staging collection, no route said
+        cks, plan, left, st, searched, rts, held, f = run_routes(routed(), VC, [{"collection": "VMware", "names": ["esx*"]}])
+        self.assertEqual((plan[0]["collection"], plan[0]["route"], cks[0]["route"]), ("Staging", 0, ""))
+        self.assertNotIn("(route", plan[0]["line"])
+        cks, plan, left, st, searched, rts, held, f = run_routes(routed(), VC, TO_VMWARE)
+        self.assertEqual((plan[0]["route"], cks[0]["route"]), (1, "route 1 (stigs VMW_*) -> VMware"))
+        self.assertIn("in VMware (route 1) with", plan[0]["line"])
+
+    def test_two_stigs_two_routes_the_first_rule_wins(self):
+        files = [ckfile("rhel01.ckl", aria("rhel01")), ckfile("rhel01.cklb", rhel("rhel01"))]
+        routes = [{"collection": "Linux", "stigs": "RHEL_*"}, {"collection": "VMware", "stigs": "VMW_*"}]
+        cks, plan, left, st, searched, rts, held, f = run_routes(routed(), files, routes)
+        new = [p for p in plan if p["kind"] == "create"]
+        self.assertEqual([(p["collection"], sorted(p["benchmarks"])) for p in new], [("Linux", sorted([ARIA, "RHEL_9_STIG"]))])
+        self.assertEqual(set(p["collectionId"] for p in plan), {"8"}, "both checklists' reviews: one asset, in Linux")
+        self.assertEqual(set(c["route"] for c in cks), {"route 1 (stigs RHEL_*) -> Linux; it fits route 2 (VMware, by %s) too - the first "
+                                                         "rule in the list wins" % ARIA})
+        cks, plan, left, st, searched, rts, held, f = run_routes(routed(), files, routes[::-1])
+        self.assertEqual(set(p["collectionId"] for p in plan), {"9"})
+        self.assertEqual(set(c["route"] for c in cks), {"route 1 (stigs VMW_*) -> VMware; it fits route 2 (Linux, by RHEL_9_STIG) too - the "
+                                                         "first rule in the list wins"})
+        # a later rule to the same collection is not another route
+        cks = run_routes(routed(), files, [routes[0], dict(routes[1], collection="Linux")])[0]
+        self.assertEqual(set(c["route"] for c in cks), {"route 1 (stigs RHEL_*) -> Linux"})
+
+    def test_new_host_in_its_routes_collection_at_its_revision(self):
+        d = routed()
+        d["collection_stigs"]["9"] = [{"benchmarkId": ARIA, "revisionStr": "V1R2"}]      # VMware has V1R2, the staging one none
+        cks, plan, left, st, searched, rts, held, f = run_routes(d, VC, TO_VMWARE)
+        self.assertEqual(searched, ["VMware", "Staging"], "a route's collection is searched too")
+        new = plan[0]
+        self.assertEqual((new["kind"], new["collection"], new["collectionId"], new["revision"], new["route"]), ("create", "VMware", "9", "V1R2", 1))
+        self.assertEqual([(p["collectionId"], p["revision"], p["ruleId"], p["new_asset"]) for p in plan[1:]],
+                         [("9", "V1R2", "SV-26000%dr2_rule" % n, "vc01") for n in (1, 2, 5)])
+        self.assertEqual((cks[0]["collection"], cks[0]["new"], cks[0]["revision"]), ("VMware", True, "V1R2"))
+        # no route: the staging collection's (none: the newest installed, V1R1)
+        plan = run_routes(d, VC, [])[1]
+        self.assertEqual((plan[0]["collection"], plan[0]["revision"], plan[1]["ruleId"]), ("Staging", "V1R1", "SV-260001r1_rule"))
+
+    def test_a_route_to_a_collection_not_read(self):
+        cks, plan, left, st, searched, rts, held, f = run_routes(routed(), VC, [{"collection": "Secret", "stigs": "VMW_*"}])
+        err = "the client cannot read the collection Secret (route 1) - nothing is created or moved there"
+        self.assertEqual(rts, [{"n": 1, "want": "Secret", "text": "stigs VMW_*", "error": err}])
+        self.assertEqual(plan, [], "nothing created - not in the staging collection either")
+        self.assertEqual((cks[0]["state"], cks[0]["why"]), ("no asset", "no asset vc01 yet, and " + err))
+        self.assertEqual([x["kind"] for x in left], ["no_asset"] * 3)
+        self.assertEqual(searched, ["Staging"])
+        # what read_routes refuses
+        for routes, said in (([{"stigs": "VMW_*"}], "stigman_ckl_import_routes, rule 1: no collection"),
+                             (["VMware"], "stigman_ckl_import_routes, rule 1: no collection"),
+                             ([{"collection": " "}], "stigman_ckl_import_routes, rule 1: no collection"),
+                             ([{"collection": "VMware"}, {"collection": "Linux", "hosts": "rhel*"}],
+                              "stigman_ckl_import_routes, rule 2: hosts is not a rule's key (collection, stigs, names, roles, tech_areas)")):
+            with self.assertRaises(ci.Fail) as e:
+                run_routes(routed(), VC, routes)
+            self.assertTrue(str(e.exception).startswith(said), str(e.exception))
+
+    def test_an_asset_only_in_staging_is_moved_to_its_route(self):
+        d = routed()
+        d["assets"]["5"] = [staged()]
+        d["reviews"]["51"] = [{"ruleId": "SV-260001r1_rule", "result": "fail", "status": {"label": "saved"}, "ts": "2026-11-01T08:00:00Z"}]
+        cks, plan, left, st, searched, rts, held, f = run_routes(d, VC, TO_VMWARE)
+        mv = plan[0]
+        self.assertEqual(dict((k, mv[k]) for k in ("kind", "assetId", "asset", "fromId", "from", "collectionId", "collection", "fqdn", "stigs",
+                                                   "labels", "maxTs", "route", "files", "reviews", "auto", "import")),
+                         {"kind": "move", "assetId": "51", "asset": "vc01", "fromId": "5", "from": "Staging", "collectionId": "9",
+                          "collection": "VMware", "fqdn": "vc01.example.mil", "stigs": [ARIA], "labels": ["web"], "maxTs": "2026-11-01T08:00:00Z",
+                          "route": 1, "files": ["vc01.ckl"], "reviews": 3, "auto": False, "import": True})
+        self.assertEqual(mv["hidden"], ["the Restricted grants in Staging are checked when it is moved (reading them needs Manage)"],
+                         "GET /user gave no grants: the update checks them")
+        self.assertTrue(mv["line"].startswith("MOVE vc01 from Staging to VMware (route 1)") and mv["line"].endswith(" - then 3 review(s)"), mv["line"])
+        revs = plan[1:]
+        self.assertEqual(set((p["kind"], p["collectionId"], p["assetId"], p["moved_asset"], p["readFrom"], p["auto"]) for p in revs),
+                         {("import", "9", "51", "51", "5", False)})
+        self.assertEqual([(p["ruleId"], p["was"]["result"]) for p in revs][0], ("SV-260001r1_rule", "fail"), "its review, read in staging")
+        self.assertIn("reviews 5 51 " + ARIA, f.calls)
+        self.assertNotIn("reviews 9 51 " + ARIA, f.calls)
+        self.assertEqual((cks[0]["collection"], cks[0]["assetId"], cks[0]["moving"], cks[0]["moved_from"], cks[0]["state"]),
+                         ("VMware", "51", "51", "Staging", "planned"))
+        self.assertIn("[moved from Staging first]", cf.stig_ckl_lines(cks)[0])
+        self.assertEqual((held, rts[0]["error"]), ([], ""))
+        # auto: existing - a moving asset waits for the approval; all - the move and its reviews at once
+        plan = run_routes(d, VC, TO_VMWARE, auto="existing")[1]
+        self.assertEqual([(p["kind"], p["auto"]) for p in plan], [("move", False)] + [("import", False)] * 3)
+        plan = run_routes(d, VC, TO_VMWARE, auto="all")[1]
+        self.assertEqual([(p["kind"], p["auto"]) for p in plan], [("move", True)] + [("import", True)] * 3)
+        self.assertIn("no approval", plan[1]["comment"])
+
+    def test_route_move_none(self):
+        d = routed()
+        d["assets"]["5"] = [staged()]
+        cks, plan, left, st, searched, rts, held, f = run_routes(d, VC, TO_VMWARE, route_move="none")
+        self.assertEqual([p["kind"] for p in plan], ["import"] * 3)
+        self.assertEqual(set((p["collectionId"], p["assetId"], "moved_asset" in p, "readFrom" in p) for p in plan), {("5", "51", False, False)})
+        self.assertEqual(cks[0]["route"], "route 1 (stigs VMW_*) -> VMware - not moved (stigman_ckl_import_route_move: none) - written in Staging")
+        self.assertNotIn("moving", cks[0])
+
+    def restricted(self, acl11, roles=None, **kw):
+        """vc01 (51, label web) only in the staging collection, routed to VMware; the client's grants (Manage in both); the
+        staging collection's grants: auditor1 Restricted (its access list: acl11), the group auditors Restricted (default none),
+        admin1 Full (it reaches every asset - not a Restricted grant)."""
+        d = routed()
+        d["assets"]["5"] = [staged(), staged("52", "esx01", labels=("db",))]
+        give(d, roles or {"5": 3, "7": 2, "8": 2, "9": 3})
+        d["grants"] = {"5": [{"grantId": "11", "roleId": 1, "user": {"userId": "21", "username": "auditor1"}},
+                             {"grantId": "12", "roleId": 1, "userGroup": {"userGroupId": "31", "name": "auditors"}},
+                             {"grantId": "13", "roleId": 2, "user": {"userId": "22", "username": "admin1"}}]}
+        d["acl"] = {("5", "11"): acl11, ("5", "13"): {"defaultAccess": "rw", "acl": []}}
+        d.update(kw)
+        return run_routes(d, VC, TO_VMWARE)
+
+    def test_a_restricted_grant_in_staging_holds_the_move(self):
+        reach = [{"defaultAccess": "r", "acl": []},
+                 {"defaultAccess": "none", "acl": [{"asset": {"assetId": "51", "name": "vc01"}, "access": "r"}]},
+                 {"acl": [{"label": {"labelId": "L-web", "name": "web"}, "access": "rw"}]},
+                 {"acl": [{"benchmarkId": ARIA, "access": "r"}]},
+                 {"acl": [{"asset": {"assetId": "52"}, "access": "r"}, {"asset": {"assetId": "51"}, "benchmarkId": ARIA, "access": "rw"}]}]
+        for acl in reach:
+            cks, plan, left, st, searched, rts, held, f = self.restricted(acl)
+            self.assertEqual([p["kind"] for p in plan], ["import"] * 3, acl)
+            self.assertEqual(set((p["collectionId"], p["assetId"], "moved_asset" in p) for p in plan), {("5", "51", False)}, "its reviews: in staging")
+            why = "the user auditor1 would lose vc01 (a Restricted grant in Staging) - move it in STIG Manager yourself, or take it out of that grant"
+            self.assertEqual(held, [{"asset": "vc01", "assetId": "51", "from": "Staging", "to": "VMware", "route": 1, "who": ["the user auditor1"],
+                                     "files": ["vc01.ckl"], "why": why}], acl)
+            self.assertEqual(cks[0]["route"], "route 1 (stigs VMW_*) -> VMware - not moved - a person decides: " + why)
+            self.assertIn("/collections/5/grants/11/acl", f.calls)
+        # an access list that does not reach it (none, another asset, label or STIG): moved, the grants read - no note
+        miss = [{"defaultAccess": "none", "acl": []},
+                {"acl": [{"asset": {"assetId": "51"}, "access": "none"}]},
+                {"acl": [{"label": {"labelId": "L-web"}, "access": "none"}, {"benchmarkId": ARIA, "access": "none"}]},
+                {"acl": [{"asset": {"assetId": "52"}, "access": "r"}]},
+                {"acl": [{"label": {"labelId": "L-db"}, "access": "rw"}]},
+                {"acl": [{"benchmarkId": "RHEL_9_STIG", "access": "r"}]},
+                {"acl": [{"asset": {"assetId": "51"}, "benchmarkId": "RHEL_9_STIG", "access": "r"}]},
+                {"acl": [{"asset": {"assetId": "51"}, "label": {"labelId": "L-db"}, "access": "r"}]}]
+        for acl in miss:
+            cks, plan, left, st, searched, rts, held, f = self.restricted(acl)
+            self.assertEqual(held, [], acl)
+            self.assertEqual([(p["kind"], p["hidden"]) for p in plan if p["kind"] == "move"], [("move", [])], acl)
+            self.assertEqual(set(p["collectionId"] for p in plan), {"9"})
+        # a group's grant, by its default access
+        cks, plan, left, st, searched, rts, held, f = self.restricted({"defaultAccess": "r"}, acl={("5", "11"): {"defaultAccess": "r"},
+                                                                                                   ("5", "12"): {"defaultAccess": "r"}})
+        self.assertEqual(held[0]["who"], ["the user auditor1", "the group auditors"])
+        # the client without Manage in staging: the grants not read - moved, said to be checked at the move
+        cks, plan, left, st, searched, rts, held, f = self.restricted(reach[0], {"5": 2, "7": 2, "8": 2, "9": 3})
+        self.assertEqual((held, [c for c in f.calls if "/grants" in c]), ([], []))
+        self.assertEqual(plan[0]["hidden"], ["the Restricted grants in Staging are checked when it is moved (reading them needs Manage)"])
+        # the grants could not be read: as not read
+        cks, plan, left, st, searched, rts, held, f = self.restricted(reach[0], grants_error=True)
+        self.assertEqual((held, plan[0]["kind"]), ([], "move"))
+        self.assertIn("checked when it is moved", plan[0]["hidden"][0])
+
+    def test_an_asset_in_another_collection_is_never_moved(self):
+        d = routed()
+        d["assets"]["7"] = [staged("71", "vc01")]                # in Windows; its route: VMware
+        cks, plan, left, st, searched, rts, held, f = run_routes(d, VC, TO_VMWARE, collections=["Windows"])
+        self.assertEqual([p["kind"] for p in plan], ["import"] * 3)
+        self.assertEqual(set((p["collectionId"], p["assetId"]) for p in plan), {("7", "71")})
+        self.assertEqual(cks[0]["route"], "route 1 (stigs VMW_*) -> VMware - its asset is in Windows: written there, never moved out of it")
+        # a copy in staging too: still written in Windows, nothing moved
+        d["assets"]["5"] = [staged()]
+        cks, plan, left, st, searched, rts, held, f = run_routes(d, VC, TO_VMWARE, collections=["Windows"])
+        self.assertEqual(set((p["kind"], p["collectionId"]) for p in plan), {("import", "7")})
+        self.assertEqual([c["state"] for c in cks], ["planned", "in staging too"])
+        # in its route's collection already: found there (a route's collection is searched), written there
+        d = routed()
+        d["assets"]["9"] = [staged("91", "vc01")]
+        cks, plan, left, st, searched, rts, held, f = run_routes(d, VC, TO_VMWARE)
+        self.assertEqual(set((p["kind"], p["collectionId"], p["assetId"]) for p in plan), {("import", "9", "91")})
+        self.assertEqual(cks[0]["route"], "route 1 (stigs VMW_*) -> VMware")
+
+    def test_a_move_to_another_revision_says_the_reviews_not_shown(self):
+        d = routed()
+        d["assets"]["5"] = [staged()]
+        d["collection_stigs"]["9"] = [{"benchmarkId": ARIA, "revisionStr": "V1R2"}]
+        d["reviews"]["51"] = [{"ruleId": "SV-260001r1_rule", "ruleIds": ["SV-260001r1_rule", "SV-260001r2_rule"], "result": "pass",
+                               "status": {"label": "submitted"}, "ts": "t1"},        # its rule is in V1R2 too: shown there
+                              {"ruleId": "SV-260002r1_rule", "result": "fail", "status": {"label": "submitted"}, "ts": "t2"},
+                              {"ruleId": "SV-260009r1_rule", "result": "pass", "status": {"label": "accepted"}, "ts": "t3"}]
+        plan = run_routes(d, VC, TO_VMWARE)[1]
+        note = "2 review(s) of %s not shown at V1R2 there (kept: shown at V1R1)" % ARIA
+        self.assertEqual(plan[0]["hidden"][0], note)
+        self.assertIn("; " + note, plan[0]["line"])
+        self.assertEqual(set(p["revision"] for p in plan[1:]), {"V1R2"}, "its reviews: at the destination's revision")
+        self.assertIn("rules %s V1R2" % ARIA, run_routes(d, VC, TO_VMWARE)[-1].calls)
+        # the same revision there: no such note
+        d["collection_stigs"]["9"] = [{"benchmarkId": ARIA, "revisionStr": "V1R1"}]
+        plan = run_routes(d, VC, TO_VMWARE)[1]
+        self.assertFalse([h for h in plan[0]["hidden"] if "not shown" in h])
+
+    def test_assign_stigs(self):
+        d = routed()
+        d["assets"]["9"] = [asset("91", "vc01", (ESXI, "V2R2"))]
+        d["collection_stigs"]["9"] = [{"benchmarkId": ARIA, "revisionStr": "V1R2"}]
+        cks, plan, left, st, searched, rts, held, f = run_routes(d, VC, [], collections=["VMware"], assign_stigs=True, auto="existing")
+        a = plan[0]
+        self.assertEqual(dict((k, a[k]) for k in ("kind", "assetId", "asset", "collectionId", "collection", "benchmark", "revision", "moved_asset",
+                                                  "files", "reviews", "auto")),
+                         {"kind": "assign", "assetId": "91", "asset": "vc01", "collectionId": "9", "collection": "VMware", "benchmark": ARIA,
+                          "revision": "V1R2", "moved_asset": "", "files": ["vc01.ckl"], "reviews": 3, "auto": False})
+        self.assertEqual(a["line"], "ASSIGN %s V1R2 to vc01 in VMware - then 3 review(s)" % ARIA)
+        self.assertEqual(set((p["assign_stig"], p["assetId"], p["collectionId"], p["revision"], p["auto"]) for p in plan[1:]),
+                         {(ARIA, "91", "9", "V1R2", False)}, "auto existing: a review of a STIG assigned first waits")
+        self.assertEqual((cks[0]["state"], cks[0]["assigning"]), ("planned", ARIA))
+        self.assertEqual(left, [])
+        self.assertIn("[%s assigned first]" % ARIA, cf.stig_ckl_lines(cks)[0])
+        # false: as before - left for a person
+        cks, plan, left, st, searched, rts, held, f = run_routes(d, VC, [], collections=["VMware"])
+        self.assertEqual((plan, cks[0]["state"]), ([], "no STIG on the asset"))
+        self.assertTrue(cks[0]["why"].endswith("then run this again (stigman_ckl_import_assign_stigs: false)"), cks[0]["why"])
+        self.assertEqual([x["kind"] for x in left], ["no_stig"] * 3)
+        # moved and assigned: an asset in staging without the STIG, routed to VMware
+        d = routed()
+        d["assets"]["5"] = [staged(stigs=((ESXI, "V2R2"),))]
+        plan = run_routes(d, VC, TO_VMWARE, assign_stigs=True)[1]
+        self.assertEqual([p["kind"] for p in plan], ["move", "assign", "import", "import", "import"])
+        self.assertEqual((plan[0]["stigs"], plan[0]["reviews"]), ([ESXI], 3))
+        self.assertEqual((plan[1]["collectionId"], plan[1]["assetId"], plan[1]["moved_asset"]), ("9", "51", "51"))
+        self.assertEqual(set((p["collectionId"], p["moved_asset"], p["readFrom"], p["assign_stig"]) for p in plan[2:]), {("9", "51", "5", ARIA)})
+
+    def test_auto_all_needs_manage(self):
+        """stigman_ckl_import_auto: all writes at once - a create, move or assignment where the client has no Manage is
+        refused at the plan, not left to fail in the update."""
+        d = routed()
+        give(d, {"5": 3, "7": 2, "8": 2, "9": 2})
+        cks, plan, left, st, searched, rts, held, f = run_routes(d, VC, TO_VMWARE, auto="all")
+        self.assertEqual(plan, [])
+        self.assertEqual((cks[0]["state"], cks[0]["collection"], cks[0]["new"]), ("no grant", "VMware", True))
+        self.assertEqual(cks[0]["why"], "vc01 is not created: stigman_ckl_import_auto: all writes at once, and the client has Full in VMware - "
+                                        "that needs Manage: give it Manage there, or let the approval write it")
+        self.assertEqual(set(x["kind"] for x in left), {"grant"})
+        self.assertEqual(cf.STATE_CHIP["no grant"], "critical")
+        # Manage there: created
+        give(d, {"5": 3, "7": 2, "8": 2, "9": 3})
+        plan = run_routes(d, VC, TO_VMWARE, auto="all")[1]
+        self.assertEqual((plan[0]["kind"], plan[0]["collection"], plan[0]["auto"]), ("create", "VMware", True))
+        # a move: Full in either - not moved, its reviews written in staging
+        d["assets"]["5"] = [staged()]
+        for roles, has in (({"5": 3, "7": 2, "8": 2, "9": 2}, "Full in VMware"), ({"5": 2, "7": 2, "8": 2, "9": 3}, "Full in Staging")):
+            give(d, roles)
+            cks, plan, left, st, searched, rts, held, f = run_routes(d, VC, TO_VMWARE, auto="all")
+            self.assertEqual(set((p["kind"], p["collectionId"], p["auto"], "moved_asset" in p) for p in plan), {("import", "5", True, False)}, roles)
+            self.assertIn(" - not moved: stigman_ckl_import_auto: all writes at once, and the client has %s - that needs Manage" % has, cks[0]["route"])
+            self.assertTrue(cks[0]["route"].endswith(" - written in Staging"), cks[0]["route"])
+        # an assignment: Full there - left for a person, said why
+        d = routed()
+        d["assets"]["9"] = [asset("91", "vc01", (ESXI, "V2R2"))]
+        give(d, {"5": 3, "7": 2, "8": 2, "9": 2})
+        cks, plan, left, st, searched, rts, held, f = run_routes(d, VC, [], collections=["VMware"], assign_stigs=True, auto="all")
+        self.assertEqual((plan, cks[0]["state"]), ([], "no STIG on the asset"))
+        self.assertIn("the client has Full in VMware - that needs Manage", cks[0]["why"])
+
+    def test_no_routes_plan_as_before(self):
+        """No routes: the plan is the one 69bbcff (1.24.0) made - checklists, plan items, what is left, the collections; the
+        SHA-256 of them as 69bbcff gave them. A create item says route 0 and a checklist route '' and move_refused '' (taken out first)."""
+        d = multi()
+        d["assets"]["7"] = [asset("71", "vrops01", (ARIA, "V1R1"))]
+        d["assets"]["8"] = [asset("81", "vrops01.example.mil", (ARIA, "V1R2"))]
+        d["assets"]["9"] = [asset("91", "VROPS01", ("RHEL_9_STIG", "V2R9"))]
+        d["assets"]["5"] = [asset("51", "vrops01", (ARIA, "V1R1"))]
+        d["reviews"]["71"] = [{"ruleId": "SV-260001r1_rule", "result": "pass", "status": {"label": "submitted"}, "ts": "t1"},
+                              {"ruleId": "SV-260002r1_rule", "result": "pass", "status": {"label": "accepted"}, "ts": "t2"}]
+        files = [{"name": "vrops01.ckl", "data": fixture(), "modified": "1"}, {"name": "vrops03.ckl", "data": host("vrops03"), "modified": "1"}]
+        out = ci.plan_all(params(collection="Watcher", collections=["*"]), Fake(d), copy.deepcopy(files))
+        cks, plan, left, st, searched = copy.deepcopy(out[:5])
+        self.assertEqual([c.pop("route", "") for c in cks], [""] * len(cks))
+        self.assertEqual([c.pop("move_refused", "") for c in cks], [""] * len(cks))
+        self.assertEqual([p.pop("route", 0) for p in plan if p["kind"] == "create"], [0])
+        self.assertEqual([(p["kind"], p["collection"], p.get("ruleId", "")) for p in plan][:2],
+                         [("create", "Watcher", ""), ("import", "Watcher", "SV-260001r1_rule")])
+        self.assertEqual(hashlib.sha256(json.dumps([cks, plan, left, st, searched], sort_keys=True).encode()).hexdigest(), BEFORE_ROUTES)
+        self.assertEqual(out[5:], ([], []), "no routes read, no move held")
+
+
+BEFORE_ROUTES = "96cca559c0a41064946db892e111922e60944905a06a72313e0cac8c6fcf8925"     # 69bbcff's plan_all, the same data
+
+
+class RouteReport(unittest.TestCase):
+    """The check's report with routes (stig_ckl_report), the files done with (stig_ckl_settled), the attachments check."""
+
+    def ci(self, **kw):
+        """vc01 moved from Staging to VMware, esx01 held (a Restricted grant has it), rhel01 in Linux without RHEL 9 (assigned);
+        a third route to a collection the client cannot read."""
+        d = routed()
+        d["assets"]["5"] = [staged(), staged("52", "esx01", labels=("db",))]
+        d["assets"]["8"] = [asset("81", "rhel01", (ESXI, "V2R2"))]
+        give(d, {"5": 3, "7": 2, "8": 3, "9": 3})
+        d["grants"] = {"5": [{"grantId": "11", "roleId": 1, "user": {"username": "auditor1"}}]}
+        d["acl"] = {("5", "11"): {"acl": [{"asset": {"assetId": "52"}, "access": "r"}]}}
+        d.update(kw)
+        files = VC + [ckfile("esx01.ckl", aria("esx01")), ckfile("rhel01.cklb", rhel("rhel01"))]
+        routes = [{"collection": "VMware", "stigs": "VMW_*"}, {"collection": "Linux", "stigs": "RHEL_*"}, {"collection": "Secret"}]
+        cks, plan, left, st, searched, rts, held, f = run_routes(d, files, routes, assign_stigs=True)
+        return {"files": [{"name": x["name"], "sha256": "s", "checklists": 1} for x in files], "checklists": cks, "plan": plan, "left": left,
+                "collection": st, "collections": searched, "routes": rts, "held": held, "source": "/ckl", "error": ""}
+
+    def test_report(self):
+        res = self.ci()
+        plan = res["plan"]
+        self.assertEqual([p["kind"] for p in plan][:2], ["move", "assign"])
+        r = cf.stig_ckl_report(res, plan, [], True, 200)
+        self.assertEqual(r["title"], "Checklist import: 9 review(s) to write, 1 to move, 1 STIG(s) to assign, 1 move(s) for a person")
+        self.assertEqual(r["status"], "warning")
+        s = r["sections"][0]
+        self.assertEqual(s["title"], "Approve writes these reviews to STIG Manager and moves 1 asset, assigns 1 STIG")
+        self.assertEqual(s["rows"][0][:3], ["MOVE", "VMware / vc01", ARIA])
+        self.assertTrue(s["rows"][0][5].startswith("from Staging (route 1), then its 3 review(s)"), s["rows"][0][5])
+        self.assertEqual(s["rows"][1][:3], ["ASSIGN", "Linux / rhel01", "RHEL_9_STIG V2R9"])
+        self.assertEqual(s["rows"][1][5], "the STIG assigned to it, then its 3 review(s)")
+        self.assertIn("VMware / vc01 (moved first)", [x[1] for x in s["rows"]])
+        self.assertIn(" MOVE: an asset only in the staging collection", s["text"])
+        self.assertIn(" ASSIGN: the STIG its checklist matched", s["text"])
+        t = dict((x["title"], x) for x in r["sections"])
+        p = t["Not moved - a person decides (1)"]
+        self.assertEqual(p["status"], "warning")
+        self.assertEqual(p["rows"][0][:4], ["esx01", "Staging", "VMware (route 1)", "the user auditor1"])
+        rt = t["Routes (3)"]
+        self.assertEqual(rt["status"], "critical", "a route's collection not read")
+        self.assertEqual(rt["rows"][0], ["1", "VMware", "stigs VMW_*", "-"])
+        self.assertEqual(rt["rows"][2][:3], ["3", "Secret", "every host"])
+        self.assertTrue(rt["rows"][2][3].startswith("the client cannot read the collection Secret (route 3)"))
+        each = t["Each checklist"]
+        vc = [x for x in each["rows"] if x[0] == "vc01.ckl"][0]
+        self.assertIn("Route: route 1 (stigs VMW_*) -> VMware; it fits route 3 (Secret, by %s) too" % ARIA, vc[10])
+        tiles = dict((x["label"], x) for x in r["summary"])
+        self.assertEqual((tiles["To move"]["value"], tiles["To move"]["note"]), (1, "1 for a person"))
+        # nothing held, every route read: the tile says where from, the routes are ok
+        res = self.ci(acl={})
+        res["routes"] = [x for x in res["routes"] if not x["error"]]
+        r = cf.stig_ckl_report(res, res["plan"], [], True, 200)
+        self.assertEqual(r["title"], "Checklist import: 9 review(s) to write, 2 to move, 1 STIG(s) to assign")
+        tiles = dict((x["label"], x) for x in r["summary"])
+        self.assertEqual((tiles["To move"]["value"], tiles["To move"]["note"]), (2, "out of Staging"))
+        self.assertEqual([x["status"] for x in r["sections"] if x["title"].startswith("Routes")], ["ok"])
+        self.assertFalse([x for x in r["sections"] if x["title"].startswith("Not moved")])
+        # no routes, nothing moved: no tile, no section
+        r = cf.stig_ckl_report(dict(res, routes=[], held=[]), [p for p in res["plan"] if p["kind"] != "move"], [], True, 200)
+        self.assertNotIn("To move", [x["label"] for x in r["summary"]])
+
+    def test_settled(self):
+        base = {"files": [{"name": n, "sha256": n, "checklists": 1} for n in ("h.ckl", "m.ckl")], "checklists": [], "left": [],
+                "held": [{"asset": "esx01", "to": "VMware", "why": "the user auditor1 would lose esx01", "files": ["h.ckl"]}]}
+        got = dict((x["name"], x) for x in cf.stig_ckl_settled(base))
+        self.assertEqual((got["h.ckl"]["move"], got["m.ckl"]["move"]), (False, True))
+        self.assertEqual(got["h.ckl"]["why"], "the move of esx01 to VMware waits for a person: the user auditor1 would lose esx01")
+
+        def done(kind, state, review="written"):
+            auto = [{"kind": kind, "files": ["m.ckl"], "line": kind.upper()}, {"kind": "import", "file": "m.ckl", "files": ["m.ckl"]}]
+            su = {"items": [{"n": 0, "kind": kind, "state": state, "line": kind.upper()}, {"n": 1, "state": review}], "error": ""}
+            return dict((x["name"], x["move"]) for x in cf.stig_ckl_settled(dict(base, held=[]), [], auto, su))["m.ckl"]
+        for state in ("moved", "there from an earlier run"):
+            self.assertTrue(done("move", state), state)
+        for state in ("held", "changed since", "there since the check", "no grant", "error", "would move"):
+            self.assertFalse(done("move", state, "asset not moved"), state)
+        for state in ("assigned", "already so"):
+            self.assertTrue(done("assign", state), state)
+        for state in ("would assign", "no grant", "changed since", "asset not moved", "error"):
+            self.assertFalse(done("assign", state, "STIG not assigned"), state)
+        self.assertFalse(done("move", "moved", "changed since"), "moved, a review not written: the file stays")
+
+    def test_attachments_round_trip(self):
+        """The attachments check gets the reviews only, a moving asset's read where it is now (staging); after it the moves
+        and assignments come first, the kept reviews go where they were planned again, a review of a STIG being assigned
+        (not checked: nothing to read there yet) after them; the check not done: nothing."""
+        mv = {"kind": "move", "assetId": "51", "fromId": "5", "collectionId": "9", "line": "MOVE"}
+        asg = {"kind": "assign", "assetId": "81", "collectionId": "8", "benchmark": "RHEL_9_STIG", "line": "ASSIGN"}
+        moving = [{"kind": "import", "collectionId": "9", "assetId": "51", "moved_asset": "51", "readFrom": "5", "ruleId": "SV-26000%dr1_rule" % n}
+                  for n in (1, 2)]
+        assigned = {"kind": "import", "collectionId": "8", "assetId": "81", "assign_stig": "RHEL_9_STIG", "ruleId": "SV-257001r1_rule"}
+        plain = {"kind": "import", "collectionId": "7", "assetId": "71", "ruleId": "SV-260005r1_rule"}
+        new = [{"kind": "create", "collectionId": "9", "asset": "vc02"}, {"kind": "import", "collectionId": "9", "new_asset": "vc02", "ruleId": "SV-1"}]
+        plan = [mv, asg] + new + moving + [assigned, plain]
+        keep = copy.deepcopy(plan)
+        fa = cf.stig_ckl_for_attachments(plan)
+        self.assertEqual(plan, keep, "the plan itself is not changed")
+        self.assertEqual([(p.get("kind"), p["collectionId"], p.get("moveTo")) for p in fa],
+                         [("create", "9", None), ("import", "9", None), ("import", "5", "9"), ("import", "5", "9"), ("import", "7", None)])
+        # the check leaves out the second moving review (it has attachments): the rest back as planned
+        kept = [p for p in fa if p.get("ruleId") != "SV-260002r1_rule"]
+        back = cf.stig_ckl_after_attachments(kept, plan)
+        self.assertEqual(back, [mv, asg] + new + [moving[0], plain, assigned])
+        self.assertFalse([p for p in back if "moveTo" in p])
+        self.assertEqual(cf.stig_ckl_after_attachments(fa, plan, "HTTP 500 from /collections/5/reviews"), [])
+        self.assertEqual(cf.stig_ckl_after_attachments(cf.stig_ckl_for_attachments(new), new), new, "no moves: as before")
+        fm = cf.FilterModule().filters()
+        self.assertIs(fm["stig_ckl_for_attachments"], cf.stig_ckl_for_attachments)
+        self.assertIs(fm["stig_ckl_after_attachments"], cf.stig_ckl_after_attachments)
 
 
 if __name__ == "__main__":
