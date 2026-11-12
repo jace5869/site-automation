@@ -56,7 +56,8 @@ template. Shown, though they may be a secret:
 - a password option of a tool not in the audit's list, a password given as a plain argument (`net use \\fs01\share
   PASSWORD /user:svc`), a host named like one of the tools (`mysql -h curl ...`);
 - a glued `-p` of letters only outside mysql (`-pabcdef` reads as flags, like `rsync -prltDvz`), and `sqlcmd -P 1` (`-p1`
-  is sqlcmd's statistics switch).
+  is sqlcmd's statistics switch);
+- a command inside quotes inside quotes more than 3 levels deep (`ssh a "ssh b 'bash -c \"...\"'"` is 3).
 
 ## The report
 

@@ -98,11 +98,16 @@ NOT_SECRET_NAME = re.compile(r"^(max|min|num)_|_(file|path|dir|name|names|id|ids
                              r"expires?|expiry|policy|rotation|field|header|check|checks|warn|crit|min|max|"
                              r"count|counts|version|ver|total|limit|limits|size|retries|attempts|tries)$", re.I)
 # a URL with a password in it (mysql://svc:<password>@db01)
-URL_PASSWORD = re.compile(r"(?<![a-z0-9+.-])[a-z][a-z0-9+.-]{0,31}://[^\s/?#@:]*:[^\s/?#]+@", re.I)
+URL_PASSWORD = re.compile(r"[a-z][a-z0-9+.-]{0,31}://[^\s/?#@:]*:[^\s/?#]+@", re.I)
 # name=value or name: value in a text (Server=db01;Uid=svc;Pwd=...), the name in quotes or not
-TEXT_SETTING = re.compile(r"""(?<![\w.])([A-Za-z][\w.-]{0,63})["']?\s*[:=]\s*["']?[^\s"',;]""")
+TEXT_SETTING = re.compile(r"""([A-Za-z][\w.-]{0,63})["']?\s*[:=]\s*["']?[^\s"',;]""")
+# ... read from each = or : back to its name - the last 64 characters of it, from its first letter there - so a long
+# text is read once (text_names)
+SETTING_SEP = re.compile(r"[:=]")
+SETTING_VALUE = re.compile(r"""\s*["']?[^\s"',;]""")
+NAME_END = re.compile(r"[A-Za-z][\w.-]{0,63}$")
 # a command line's option and its value after a space (--password X, -p X)
-CLI_OPTION = re.compile(r"(?:^|\s)(--?)([A-Za-z][\w-]{0,63})(?:\s+|=)([\"']?)([^\s\"']+)")
+CLI_OPTION = re.compile(r"(?:^|\s)(--?)([A-Za-z][\w-]*)(?:\s+|=)([\"']?)([^\s\"']+)")
 # -p with a value joined to it (tool -pS3cret!) - a password when it has a digit or a sign in it, but not a port
 # (-p8080:80), a variable (-p$SSH_PORT) or one of these single-dash options (find -print0, openssl -pubout)
 GLUED_P = re.compile(r"(?:^|\s)-p([^\s\d:/$][^\s]*)")
@@ -128,6 +133,7 @@ TOOL_OPTIONS = (
 # word of the command around it, whatever signs it holds (mysql -e "select count(*)" -pX), and is read again as a
 # command line of its own (ssh db01 'mysql ...', bash -c '...')
 SIGNS = set(";|&()`")
+TOOL_HINT = re.compile(r"mysql|mariadb|curl|wget|sqlcmd|ldap|smb|rpcclient|net|ipmitool|redis-cli|winrs|sshpass")
 # its tokens: a '...' string, a "..." string (\\" inside it no end), a backslash and the character after it, spaces, a new
 # line, a sign, and a run of other characters - each matched once, so a long text is read in one pass
 SHELL_TOKEN = re.compile(r"""(?P<sq>'(?P<sqb>[^']*)(?P<sqe>'?))|(?P<dq>"(?P<dqb>(?:[^"\\]|\\.)*)(?P<dqe>"?))|(?P<esc>\\.)"""
@@ -137,10 +143,14 @@ OUT_ESCAPE = set(" \t\"'\\$`;|&()<>")
 # a value that is an HTTP Authorization header's credentials (Basic <base64>, Bearer <token>), alone or after its name
 AUTH_VALUE = re.compile(r"(?:^|authorization\"?\s*[:=]\s*\"?)(?:basic|bearer|token|negotiate|digest)\s+[A-Za-z0-9+/=._~-]{8,}", re.I)
 # a PEM private key (RSA, EC, OPENSSH, ENCRYPTED ...)
-PEM_KEY = re.compile(r"-----BEGIN (?:[A-Z0-9]{1,16} ){0,4}PRIVATE KEY-----")
+PEM_KEY = re.compile(r"-----BEGIN [A-Z0-9 ]{0,80}PRIVATE KEY(?: BLOCK)?-----")
+# a text that may be YAML without a colon (1.29.0): a list item ("- ", "-" and a tab or a new line), the document
+# marker "---" alone or with a comment after it, a comment line, a %YAML directive, [ or { - not -----BEGIN or -a
+YAML_START = re.compile(r"-(?:\s|$)|---(?:\s|$)|[\[{#%]")
+LIST_TAB = re.compile(r"(?m)^([ ]*)-\t")
 # a sentence of plain words (Change the password: see the runbook) - prose, not a name=value text
 PROSE_WORD = re.compile(r"""^["'(]?[A-Za-z]+(?:'[a-z]+)?[.,:;!?)"']*$""")
-URL = re.compile(r"^[a-z][a-z0-9+.-]{0,31}://[^\s/]+", re.I)
+URL = re.compile(r"^[a-z][a-z0-9+.-]*://[^\s/]+", re.I)
 IPV4 = re.compile(r"^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:/\d{1,2})?(?::\d+)?$")
 IPV6 = re.compile(r"^\[?(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}\]?(?:/\d{1,3})?$", re.I)
 # a host name: two labels or more, the last letters only (aap01.yoursite.mil); a file name (report.html.j2) is not one
@@ -188,11 +198,16 @@ def _value(v):
             d = json.loads(t)
         except Exception:                            # not JSON (or too deep): YAML may read it
             d = None
-    if d is None and yaml is not None and (":" in t or t[0] in "-[{") and not prose(t):   # a sentence with a colon: a text
+    if d is None and yaml is not None and (":" in t or YAML_START.match(t)) and not prose(t):   # a sentence with a colon: a text
         try:
             d = yaml.safe_load(t)
         except Exception:                            # not YAML either: it stays a text
             d = None
+        if d is None and LIST_TAB.search(t):         # "-<tab>item": YAML takes no tab there, a person may write one
+            try:
+                d = yaml.safe_load(LIST_TAB.sub(r"\1- ", t))
+            except Exception:
+                d = None
     return d if isinstance(d, (dict, list)) else v
 
 
@@ -322,7 +337,21 @@ def secret_text(s):
     if prose(s):
         return False
     return bool(AUTH_VALUE.search(s.strip())) or any(_cli_secret(*m[:2], m[3]) for m in CLI_OPTION.findall(s)) or any(
-        _glued_p(g) for g in GLUED_P.findall(s)) or _tool_secret(s) or (("=" in s or ":" in s) and any(secret_name(k) for k in TEXT_SETTING.findall(s)))
+        _glued_p(g) for g in GLUED_P.findall(s)) or _tool_secret(s) or any(secret_name(k) for k in set(text_names(s)))
+
+
+def text_names(s):
+    """The names of a text's name=value and name: value (TEXT_SETTING), each read back from its = or :. Linear. Pure."""
+    for m in SETTING_SEP.finditer(s):
+        j = m.start()
+        while j > 0 and s[j - 1].isspace():               # each run of spaces walked once: by the sign after it
+            j -= 1
+        j -= 1 if j > 0 and s[j - 1] in "\"'" else 0
+        if j == 0 or not (s[j - 1].isalnum() or s[j - 1] in "_.-") or not SETTING_VALUE.match(s, m.end()):
+            continue
+        name = NAME_END.search(s, max(0, j - 64), j)
+        if name:
+            yield name.group()
 
 
 def _glued_p(glued):
@@ -384,6 +413,8 @@ def _tool_secret(s, depth=0):
     -pXXXX (any value - mysql's port is -P), curl -u svc:XXXX or -usvc:XXXX, smbclient -U svc%XXXX, sqlcmd -P XXXX ...
     The command word anywhere a shell starts one: N=$(mysql ...), cd /tmp;mysql ..., and inside a quoted string read as
     a command line of its own (ssh db01 'mysql ...'). Pure."""
+    if not TOOL_HINT.search(re.sub(r"""["'\\\\]""", "", s).lower()):      # none of the tools named: nothing to split
+        return False
     words, quoted = shell_words(s)
     options, loose = (), False
     for i, w in enumerate(words):

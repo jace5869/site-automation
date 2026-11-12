@@ -457,7 +457,11 @@ class Judge(unittest.TestCase):
         self.assertEqual(m.shell_words("echo 'it'\\''s'")[0], ["echo", "it's"])
         self.assertEqual(m.shell_words("echo 'a\\\\b'")[0], ["echo", "a\\\\b"])              # inside '...' nothing is special
         # 200 KB of one word: linear (it was quadratic from 1.24.0b on: 40 KB took 27 s)
-        for w in ("QUJD" * 50000, "A" * 200000, "node." * 40000, "a=b " * 50000, "x:" * 100000, "-a " * 66000):
+        n = 200000                                            # 1.24.0i: the tester's worst inputs too
+        for w in ("QUJD" * 50000, "A" * 200000, "node." * 40000, "a=b " * 50000, "x:" * 100000, "-a " * 66000,
+                  "-" * n, "=" * n, ":" * n, "/" * n, "@" * n, "." * n, " " * n, "x: " + " " * n, " =" * 100000,
+                  "-----BEGIN" * 20000, "-----BEGIN " + "A " * 99990, "://" * 66000, "a://b:" * 33000, "u:p@" * 50000,
+                  "a" * n + "=1", "--" + "a" * n + " x"):
             t = time.time()
             self.assertFalse(m.is_secret("blob", w))
             self.assertLess(time.time() - t, 1.0, w[:12])
@@ -466,6 +470,45 @@ class Judge(unittest.TestCase):
                  "extra_vars": json.dumps({"blob1": "QUJD" * 5000, "blob2": "A" * 20000, "blob3": "node." * 4000})} for j in range(3)]
         m.audit(recs, {"repeat_min": 3})
         self.assertLess(time.time() - t, 2.0)
+
+    def test_long_names_and_pem_labels(self):
+        """1.24.0i: the bounds of h kept, the look-behinds gone - a name led by a digit, a name of 65 characters or more
+        (read on its last 64), a URL scheme of 33 or more, a long option name, a PEM label of many words, and PGP's key
+        block are secrets as in g."""
+        long_name = "A" * 64 + "_PASSWORD"
+        hide = [  # (value, what must never be seen)
+            ("2FA_SECRET=Hx1", "Hx1"), ("1PASSWORD=Hx2", "Hx2"), ("export %s=Hx3" % long_name, "Hx3"),
+            ("DB_HOST=db01 %s=Hx4" % long_name, "Hx4"), ("%s='Hx5 x'" % long_name, "Hx5"),
+            ("a" * 40 + "+svc.scheme://svc:Hx6@db01.example.mil", "Hx6"), ("--" + "a" * 70 + "-password Hx7", "Hx7"),
+            ("-----BEGIN ONE TWO THREE FOUR FIVE PRIVATE KEY-----\nHx8", "Hx8"),
+            ("-----BEGIN ABCDEFGHIJKLMNOPQRS PRIVATE KEY-----\nHx9", "Hx9"), ("-----BEGIN PGP PRIVATE KEY BLOCK-----\nHx10", "Hx10"),
+        ]
+        for i, (v, expect) in enumerate(hide):
+            with self.subTest(value=v[:40]):
+                n = "blob%d" % i
+                recs = [{"kind": "job", "id": j, "name": "Job %d" % j, "extra_vars": json.dumps({n: v})} for j in range(3)]
+                templates, settings = m.audit(recs, {"repeat_min": 3})
+                self.assertIn("secret", dict((x["setting"], x) for x in settings)[n]["why"])
+                self.assertNotIn(expect, json.dumps([templates, settings]))
+        self.assertEqual(list(m.text_names('a = b; "c": d, e:f=g')), ["a", "c", "e", "f"])
+
+    def test_yaml_lists_as_text(self):
+        """1.29.0: a text tried as YAML when it starts like YAML without a colon - a list item ("- ", "-" and a tab or a
+        new line), the document marker (--- alone or with a comment), a comment line, a %YAML directive - its list
+        then never shown; -----BEGIN, -a and plain texts as they were."""
+        hide = ["---\n- --password\n- Hx1", "--- # args\n- --password\n- Hx2", "---\n- svc_ansible\n- Hx3!",
+                "# args\n- --password\n- Hx4", "-\t--password\n-\tHx5", "%YAML 1.2\n---\n- --password\n- Hx6", "-\n  Hx7"]
+        for i, v in enumerate(hide):
+            with self.subTest(value=v):
+                n = "app_args%d" % i
+                self.assertIsInstance(m._value(v), list)
+                recs = [{"kind": "job", "id": j, "name": "Job %d" % j, "extra_vars": json.dumps({n: v})} for j in range(3)]
+                templates, settings = m.audit(recs, {"repeat_min": 3})
+                s = dict((x["setting"], x) for x in settings)[n]
+                self.assertEqual(s["value"], "(same; not shown)")
+                self.assertNotIn("Hx%d" % (i + 1), json.dumps([templates, settings]))
+        for v in ("-----BEGIN x", "-a -b", "# just a comment", "%d items", "---", "--- not a list"):
+            self.assertIsInstance(m._value(v), str, v)
 
     def test_repeat_min(self):
         _, settings = m.audit(records(), dict(OPTS, repeat_min=0))
