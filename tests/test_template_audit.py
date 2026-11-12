@@ -409,8 +409,32 @@ class Judge(unittest.TestCase):
         for v in show:
             with self.subTest(value=v):
                 self.assertFalse(m.is_secret("cmd", v), v)
-        self.assertEqual(m.shell_words("N=$(mysql -pX);ls 'a b'|wc"),
-                         ["N=$", "(", "mysql", "-pX", ")", ";", "ls", "'", "a", "b'", "|", "wc", ";"])
+        self.assertEqual(m.shell_words("N=$(mysql -pX);ls 'a b'|wc"),           # 1.24.0g: a quoted string is one word
+                         (["N=", "$(", "mysql", "-pX", ")", ";", "ls", "a b", "|", "wc"], ["a b"]))
+
+    def test_quoted_strings(self):
+        """1.24.0g: a quoted string is one word of the command around it - its ( ) | ; & never end that command - and a
+        command line of its own; sqlcmd -p1 (statistics) is no password."""
+        hide = [  # (value, what must never be seen)
+            ('mysql -e "select count(*) from t" -p2024Hx1', "2024Hx1"), ("mysql -e 'select a|b' -pHxtwo", "Hxtwo"),
+            ("ldapsearch -x -b dc=example '(uid=bob)' -D cn=admin -w Hx3", "Hx3"),
+            ("ldapsearch -x '(&(uid=bob)(cn=x))' -w Hxfour", "Hxfour"), ("mysql -e 'use db; select 1' -p2024Hx5", "2024Hx5"),
+            ("mysql -e 'select 1' -pHxsix", "Hxsix"), ("mysql -p 'Hxseven'", "Hxseven"), ('mysql -p"Hx eight"', "Hx eight"),
+            ("curl -d '{\"a\":1}' -u svc:Hx9 https://api.example.mil/x", "Hx9"), ("ssh db01 'mysql -uroot -p9Hx10!'", "9Hx10!"),
+            ("bash -c 'cd /tmp; mysql -uroot -p2024Hx11'", "2024Hx11"), ("mysql -e 'unclosed -p2024Hx12", "2024Hx12"),
+        ]
+        show = ["ldapsearch '(cn=-w x)'", "redis-cli 'get -a'", "sqlcmd -p", "sqlcmd -S db01 -p1 -Q go", "net use /persistent:yes",
+                "net user /domain"]
+        for i, (v, expect) in enumerate(hide):
+            with self.subTest(value=v):
+                n = "cmd%d" % i
+                recs = [{"kind": "job", "id": j, "name": "Job %d" % j, "extra_vars": json.dumps({n: v})} for j in range(3)]
+                templates, settings = m.audit(recs, {"repeat_min": 3})
+                self.assertIn("secret", dict((x["setting"], x) for x in settings)[n]["why"])
+                self.assertNotIn(expect, json.dumps([templates, settings]))
+        for v in show:
+            with self.subTest(value=v):
+                self.assertFalse(m.is_secret("cmd", v), v)
 
     def test_repeat_min(self):
         _, settings = m.audit(records(), dict(OPTS, repeat_min=0))
