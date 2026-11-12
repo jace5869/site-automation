@@ -1,5 +1,5 @@
 ---
-# A PROTECTED NAME THAT MATCHES NO VM IS SAID (1.36.0): a typo in vmware_protected_vms protects nothing, and nothing
+# A PROTECTED NAME THAT MATCHES NO VM IS SAID (1.42.0): a typo in vmware_protected_vms protects nothing, and nothing
 # else would say so. Every VM's name is read once per vCenter (library/site_vmware_protected_check.py: one
 # property-collector call each, no call per VM) and each protected name - and the job's own VM-name excludes - that
 # matches none, a pattern too, is one warning line in the job's output and its report; a vmware_protected_groups group

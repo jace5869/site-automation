@@ -74,7 +74,7 @@ class Protected(unittest.TestCase):
                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=300)
         return r.returncode, r.stdout
 
-    # ---- 1.36.0: a protected name that matches no VM is said (protected_check.yml) - never a failure ----
+    # ---- 1.42.0: a protected name that matches no VM is said (protected_check.yml) - never a failure ----
     def test_check_read_fails_said_once_job_goes_on(self):
         prot = {"groups": ["aap", "aap_hosts", "dcs"], "ids": [], "names": ["VCSA01"], "aap_known": True}
         rc, out = self.run_tasks("protected_check.yml", {"_vm_prot": prot, "vmware_protected_vms": ["VCSA01"],

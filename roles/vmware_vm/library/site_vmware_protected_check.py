@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-"""The protected names checked against vCenter (1.36.0): every VM's name read once per vCenter (one property-collector
+"""The protected names checked against vCenter (1.42.0): every VM's name read once per vCenter (one property-collector
 call each, no call per VM), and each protected or excluded name - or pattern - that matches none of them said. A typo
 in vmware_protected_vms protects nothing: this says so. Reads only."""
 from __future__ import absolute_import, division, print_function

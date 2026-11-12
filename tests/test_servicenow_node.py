@@ -1002,7 +1002,7 @@ class StatsPagesPlan(unittest.TestCase):
         self.assertIn("is not a list", nf.sn_node_pages_plan({"name": "x", "url": "y"}, [])["errors"][0])
 
     def test_the_host_named_is_the_host_asked(self):
-        """1.36.0: a url is read with urlsplit(), as the request is - 'https://a#@b/' goes to a, and showed b."""
+        """1.42.0: a url is read with urlsplit(), as the request is - 'https://a#@b/' goes to a, and showed b."""
         tricky = ["https://node03.corp.example.mil#@node04.corp.example.mil:16000/stats.do",
                   "https://node03.corp.example.mil:16000#@node04.corp.example.mil/stats.do",
                   "https://node03.corp.example.mil\\@node04.corp.example.mil:16000/stats.do",
@@ -1225,7 +1225,7 @@ class FormLogin(unittest.TestCase):
         self.assertEqual(self.findings(st), [])
 
     def test_units_of_one_address_share_one_session(self):
-        """1.36.0: one login per node address and run - a second unit read at the same node:port reads in the session
+        """1.42.0: one login per node address and run - a second unit read at the same node:port reads in the session
         the first one opened; one logout at the end, said to both."""
         port, log = self.serve()
         sessions = {}
@@ -1274,7 +1274,7 @@ class FormLogin(unittest.TestCase):
         self.nothing_secret(got)
 
     def test_no_query_of_a_redirect_in_any_line(self):
-        """1.36.0: where a redirect pointed is said without its query, everywhere (the fake node's redirects all carry
+        """1.42.0: where a redirect pointed is said without its query, everywhere (the fake node's redirects all carry
         sysparm_token=...)."""
         port, log = self.serve()
         seen = [self.read(port), self.read(port, ("stats_reader", "Wr0ng-pw!"))]
@@ -1359,7 +1359,7 @@ class FormLogin(unittest.TestCase):
         self.assertEqual(len(self.findings(dead)), 1)
 
     def test_side_door_redirects_login_do_shows_the_form(self):
-        # 1.36.0 (a real instance): side_door.do answers 302 to navpage.do - login.do is read once for the form
+        # 1.42.0 (a real instance): side_door.do answers 302 to navpage.do - login.do is read once for the form
         port, log = self.serve("formmode=dev")
         st = self.read(port)
         self.assertEqual((st["up"], st["form"]), (True, "in"))

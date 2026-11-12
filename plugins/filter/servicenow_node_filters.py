@@ -90,7 +90,7 @@ def _same_host(a, b):
 
 def _page_url(url):
     """(host, why not) of a servicenow_node_stats_pages URL: http or https, a host, no login written in it. Read with
-    urlsplit(), as the request that asks it is (1.36.0): the host named here is the host that is asked - a url whose
+    urlsplit(), as the request that asks it is (1.42.0): the host named here is the host that is asked - a url whose
     host could be read two ways ('#', a backslash, a blank, a login) is refused."""
     u = _s(url)
     full = "its url must be the stats page's full address (https://node1.example.mil:16000/stats.do)"

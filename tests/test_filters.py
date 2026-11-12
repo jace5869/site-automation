@@ -782,7 +782,7 @@ class NameLists(unittest.TestCase):
             self.assertTrue(f.name_matches("vcsa01", text), text)
 
     def test_name_list_every_way_a_name_is_written(self):
-        # 1.36.0: each form gives its names (written=True: the names as they were meant); nothing that 1.22.0 (6f1d106)
+        # 1.42.0: each form gives its names (written=True: the names as they were meant); nothing that 1.22.0 (6f1d106)
         # read is lost - name_list itself has that reading's names after these (NameListNeverFewer below)
         def L(text):
             return f.name_list(text, written=True)
@@ -1638,7 +1638,7 @@ class EmailRecipients(unittest.TestCase):
         self.assertEqual(f.email_also_refused(None), [])
 
 
-# 1.22.0's name_list and name_matches (6f1d106), as the reference: 1.36.0's may never protect fewer VMs for the same text
+# 1.22.0's name_list and name_matches (6f1d106), as the reference: 1.42.0's may never protect fewer VMs for the same text
 def _ref_name_list(value):
     if value is None:
         return []
@@ -1665,7 +1665,7 @@ def _ref_name_matches(name, patterns):
 
 
 class NameListNeverFewer(unittest.TestCase):
-    """The tester's matrix (1.36.0): patterns with * ? [0-9] [Vv] [!x] [a-c], names with spaces, quotes, #, ; and brackets,
+    """The tester's matrix (1.42.0): patterns with * ? [0-9] [Vv] [!x] [a-c], names with spaces, quotes, #, ; and brackets,
     each written every way - alone and all together. Every VM 6f1d106's reading protected is still protected."""
     ITEMS = [("VCSA01", ["VCSA01", "vcsa01"]), ("DC*", ["DC01", "dc-backup"]), ("web?", ["web1"]), ("vm[0-9]*", ["vm1", "vm42x"]),
              ("[Vv]CSA*", ["VCSA02", "vCSA9"]), ("db[!x]1", ["dba1"]), ("app[a-c]", ["appb"]), ("File Server 01", ["File Server 01"]),

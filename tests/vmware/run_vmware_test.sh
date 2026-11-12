@@ -124,7 +124,7 @@ INV="$work/inv-noaap.yml" run "inventory without the aap group and no protected 
 INV="$work/inv-noaap.yml" run "...but with the AAP VM named in vmware_protected_vms it runs" ok vm_reboot.yml -e vm_names=DC0_H0_VM1 \
     -e '{"vmware_protected_vms": ["DC0_H0_VM0"]}' -- "Restart requested for (operating system restart through VMware Tools): DC0_H0_VM1"
 run "snapshots and notes are allowed on the AAP VM (they do not stop it)" ok vm_notes.yml -e vm_names=DC0_H0_VM0 -e vm_notes=x
-# 1.36.0: a protected name that matches no VM is said (vmware_protected_check) - never a failure
+# 1.42.0: a protected name that matches no VM is said (vmware_protected_check) - never a failure
 run "a protected name with a typo: said as a warning, the restart goes on (Check)" ok vm_reboot.yml --check -e vm_names=DC0_H0_VM1 \
     -e '{"vmware_protected_vms": ["DC0_H0_VM0", "DC0_H0_VMX"]}' \
     -- "WARNING: Protected name matches no VM: DC0_H0_VMX - check the spelling" "Would restart"
@@ -817,7 +817,7 @@ while t.info.state not in ("success", "error"):
 assert t.info.state == "success", t.info.error
 EOPY
 echo "ok   - vCenter 2: a snapshot old-b on its own DC0_C0_RP0_VM1"
-# 1.36.0: a protected VM that is only on the second vCenter matches when the job reads both
+# 1.42.0: a protected VM that is only on the second vCenter matches when the job reads both
 VMWARE_PORT=$port2 "$py" - <<'EOPY' || { echo "ABORT - rename on the second vCenter"; exit 1; }
 import os, time
 from pyVim.connect import SmartConnect

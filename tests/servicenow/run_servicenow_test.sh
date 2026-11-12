@@ -613,7 +613,7 @@ deny "stats pages wrong: nothing read" 'Nodes: '
 # node stats login's own credential (SN_STATS_USERNAME / SN_STATS_PASSWORD), one login per node, the first node alone
 # first; refused there: the others (and the listed pages) send none. Each fake node writes its requests to a log.
 start_stats $((port + 35)) html form=stats_reader:St4ts-pw9 log="$work/form35.log"
-# 1.36.0: this node answers side_door.do with a redirect to navpage.do (a real instance did): login.do is read for the form
+# 1.42.0: this node answers side_door.do with a redirect to navpage.do (a real instance did): login.do is read for the form
 start_stats $((port + 36)) html form=stats_reader:St4ts-pw9 formmode=dev log="$work/form36.log"
 start_stats $((port + 37)) html form=stats_reader:St4ts-pw9 log="$work/form37.log"
 make_home "$work/glide-f1" prod_16000 $((port + 35)) well

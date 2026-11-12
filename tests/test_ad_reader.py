@@ -640,7 +640,7 @@ class Mode(unittest.TestCase):
 
 
 class Python36Cert(unittest.TestCase):
-    """1.36.0: a Python without ssl.SSLCertVerificationError (3.6): a domain controller's LDAPS certificate the trust
+    """1.42.0: a Python without ssl.SSLCertVerificationError (3.6): a domain controller's LDAPS certificate the trust
     store refuses is said as not trusted, never a traceback."""
     VERIFY = "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed (_ssl.c:897)"
 

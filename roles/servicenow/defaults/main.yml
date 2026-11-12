@@ -155,7 +155,7 @@ servicenow_node_stats_url: ""
 # and says where it pointed.
 # form (1.32.0; never chosen by auto) = nodes behind single sign-on that answer stats.do only in a logged-in session:
 # the check logs in through the instance's local login page on the node's own address (side_door.do - or login.do when
-# side_door.do shows no form, 1.36.0 - then one POST to login.do), reads
+# side_door.do shows no form, 1.42.0 - then one POST to login.do), reads
 # the stats page in that session and logs out (logout.do). Its own credential, "ServiceNow node stats login"
 # (SN_STATS_USERNAME / SN_STATS_PASSWORD) - a dedicated local account that may only read stats.do, never the API
 # account. One login per node address (node and port) per run - units on one port share the session; refused on the

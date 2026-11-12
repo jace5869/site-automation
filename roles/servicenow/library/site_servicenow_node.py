@@ -444,7 +444,7 @@ def opener(validate=True, server_name=""):
 
 def _netloc(url):
     """The host[:port] of a URL as urlsplit() reads it - what the request goes to - without a login written in it
-    ('' when it cannot be read). 1.36.0: 'https://a#@b/' goes to a, and a is what is shown."""
+    ('' when it cannot be read). 1.42.0: 'https://a#@b/' goes to a, and a is what is shown."""
     try:
         return urlsplit(url if "://" in (url or "") else "//" + (url or "")).netloc.rsplit("@", 1)[-1]
     except ValueError:
@@ -553,7 +553,7 @@ def keep_cookies(headers, jar):
 def _where(headers, host=False):
     """Where a redirect points, for a message: its path only - never its query or what follows a # (a query may carry
     a token: logout_redirect.do?sysparm_token=...), never a login written in it. host true: scheme://host[:port] in
-    front, when the redirect names one. Every line that says where a redirect pointed is made here (1.36.0)."""
+    front, when the redirect names one. Every line that says where a redirect pointed is made here (1.42.0)."""
     loc = ((headers.get("Location") or "") if headers is not None else "").strip()
     path = re.sub(r"^[a-z][a-z0-9+.-]*://[^/?#]*", "", loc, flags=re.I).split("?")[0].split("#")[0]
     m = re.match(r"^([a-z][a-z0-9+.-]*)://([^/?#]*)", loc, re.I) if host else None
@@ -589,7 +589,7 @@ def login_page(origin, page, host, timeout, validate, jar, tried):
 def form_login(origin, host, timeout, creds, validate, tried):
     """One login through the local login page of origin (scheme://host:port): GET side_door.do for its sysparm_ck (a
     hidden input), POST login.do with the user name, the password and that sysparm_ck. When side_door.do does not
-    show the form (1.36.0: on some instances it answers a redirect to navpage.do), login.do is read once for it; a
+    show the form (1.42.0: on some instances it answers a redirect to navpage.do), login.do is read once for it; a
     login form with no sysparm_ck on it is posted without one. No redirect is followed: an answer 302 to
     login_redirect.do is the login accepted; anything else is refused (never asked twice, one POST at most).
     -> (state, said, jar): state 'in'; 'refused' (the POST was sent, and not accepted); 'none' (no login form here:
@@ -645,7 +645,7 @@ def read_stats_form(st, ways, names, local, samples, interval, timeout, creds, v
     """servicenow_node_stats_auth form: the stats page read in a session of the instance's local login page. One login
     per node address (scheme://host:port, with its Host header) and run: sessions - given by a caller that reads more
     than one unit or page - keeps the session a call opened, a later call for the same address reads in it and sends
-    no login (1.36.0), and the caller closes them all with form_close(). Without sessions: one login per call, closed
+    no login (1.42.0), and the caller closes them all with form_close(). Without sessions: one login per call, closed
     here. Never a second try: the first of the node's own addresses (may_send_login: HTTPS to its own name, or
     127.0.0.1) whose side_door.do - or, when that shows none, login.do - shows a login form gets it; then the samples there with the session's cookies, and
     logout.do whatever happened. st.form: in, refused, no_numbers (logged in, no numbers), no_page (no login form on

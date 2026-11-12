@@ -327,7 +327,7 @@ class History(unittest.TestCase):
 
 
 class Python36Cert(unittest.TestCase):
-    """1.36.0: the same care as the ServiceNow node check (1.32.1) for the checks that run on the AAP side - a Python
+    """1.42.0: the same care as the ServiceNow node check (1.32.1) for the checks that run on the AAP side - a Python
     without ssl.SSLCertVerificationError (3.6) says a refused certificate, and never a traceback."""
     VERIFY = "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed (_ssl.c:897)"
 

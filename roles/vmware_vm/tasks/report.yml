@@ -7,7 +7,7 @@
 # sheets of the workbook the email attaches (roles/site_email/library/site_xlsx.py);
 # _vm_report_no_email (true = no email) with _vm_report_no_email_why (said instead); _vm_vcenters,
 # the vCenters the job read (a site_vmware_* module's 'vcenters'): the ones not read are listed in
-# red on top (the job fails at its end: vcenters_read.yml); _vm_prot_warn (protected_check.yml, 1.36.0: a protected
+# red on top (the job fails at its end: vcenters_read.yml); _vm_prot_warn (protected_check.yml, 1.42.0: a protected
 # name that matches no VM): warning lines after the job's own, and a section on top of its report.
 - name: VMware | the result as job artifacts (vm_report)
   ansible.builtin.set_stats:
