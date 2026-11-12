@@ -124,7 +124,7 @@ Its Variables:
 ```yaml
 stigman_ckl_import_src: '\\fileserver.yourdomain.mil\stig\ckl'
 stigman_ckl_import_collection: Staging          # the staging collection: a host no route fits
-stigman_ckl_import_collections: ['*']           # where a host's asset is looked for
+stigman_ckl_import_collections: ['*']           # where a host's asset is looked for (with routes: always all)
 stigman_ckl_import_routes:                      # the first rule that fits a host wins
   - {collection: Windows, stigs: ['*Windows_Server*']}
   - {collection: Linux, stigs: ['RHEL_*']}
@@ -153,10 +153,13 @@ approval):
 |---|---|---|
 | The staging collection | **Manage** | new assets are created there; moves out of it |
 | Each route's collection | **Manage** | new assets created there; moves into it |
-| Every other collection searched | **Full** | reviews written there |
+| Every other collection the client reads | **Full** | reviews written there; with routes every collection it reads is searched |
 
 The check's client may read only: **Full** everywhere it looks. Reading the staging collection's grants (who would
 lose an asset that moves) needs **Manage** there; without it the update checks that before it moves.
+
+With `stigman_ckl_import_auto: all` these grants are checked before anything is written: one too low stops the whole
+run, naming the collection and the grant it needs - nothing half done.
 
 ### Written at once - `stigman_ckl_import_auto`
 
@@ -215,7 +218,7 @@ any of:
 | Key | Fits | Example |
 |---|---|---|
 | `stigs` | the installed STIG its checklist matched: its id or title | `['*Windows_Server*']` |
-| `names` | the host name or FQDN | `['esx*', 'vc*']` |
+| `names` | the host name or FQDN, or its short name (`vc11` fits `vc11.example.mil`) | `['esx*', 'vc*']` |
 | `roles` | the checklist's ROLE | `['Domain Controller']` |
 | `tech_areas` | the checklist's TECH_AREA | `['UNIX OS']` |
 
@@ -225,12 +228,16 @@ any of:
   revision.
 - **A host only in the staging collection:** moved to its rule's collection (next section).
 - **A host in any other collection:** written there - **never moved** out of it, whatever its rule says.
-- **No rule fits:** the staging collection, as before.
+- **No rule fits:** the staging collection, as before; the checklist's line says *no route fits*.
 - **Two checklists of one host fit two rules** (a server's Windows and IIS STIGs): the first rule in the list wins,
   and the report says the other fits too.
-- **A rule's collection the client cannot read:** nothing is created or moved there, and the report says so.
+- **A rule whose collection is not there** (a typo, a collection the client has no grant in, more than one given) or
+  whose values are not names: **the job stops before anything is read or written**, naming the rule.
 
-A rule's collection is always searched for the host's asset, so a host already there is never created again.
+With routes, **every collection the client reads** is searched for the host's asset, whatever
+`stigman_ckl_import_collections` says: a host anywhere is written where it is - never created again, never moved but
+out of the staging collection. A collection where the client has only Restricted then stops the run (a host there
+would look new): give it Full there, or no grant at all.
 
 ### Moves out of the staging collection - `stigman_ckl_import_route_move`
 

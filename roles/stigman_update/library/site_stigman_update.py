@@ -15,34 +15,34 @@ DOCUMENTATION = r'''
 module: site_stigman_update
 short_description: Write the approved reviews to STIG Manager, each only if unchanged since it was read
 description:
-  - Gets a token from C(token_url) with the client credentials grant (a client with the scope stig-manager:collection
-    and a grant in the collections that lets it write reviews).
-  - For each review of C(plan) - grouped by collection and asset - reads the review again; one that changed since the
-    check read it (its result, status or time) is left as it is (state C(changed since)).
-  - Writes the rest of an asset's reviews in one POST /collections/{collectionId}/reviews/{assetId} - result, detail,
-    comment (null keeps the review's own), resultEngine, status - and reads each again after.
-  - A review with attachments in STIG Manager (its metadata key C(artifacts): the files a person attached as evidence)
+  - "Gets a token from C(token_url) with the client credentials grant (a client with the scope stig-manager:collection
+    and a grant in the collections that lets it write reviews)."
+  - "For each review of C(plan) - grouped by collection and asset - reads the review again; one that changed since the
+    check read it (its result, status or time) is left as it is (state C(changed since))."
+  - "Writes the rest of an asset's reviews in one POST /collections/{collectionId}/reviews/{assetId} - result, detail,
+    comment (null keeps the review's own), resultEngine, status - and reads each again after."
+  - "A review with attachments in STIG Manager (its metadata key C(artifacts): the files a person attached as evidence)
     is left as it is (state C(has attachments)) - unless C(skip_attachments) is false. Read again just before the
-    write, so one attached after the check is left too.
-  - A plan item C(kind=create) (a host with no asset) - its collection's assets read again: one of the host's names (the
+    write, so one attached after the check is left too."
+  - "A plan item C(kind=create) (a host with no asset) - its collection's assets read again: one of the host's names (the
     asset's name or FQDN, or their short names) there by now - created by a person since the check - is left, and
     its reviews are not written (state C(there since the check), which fails the job); one with the plan's name and the
     description this job gives it was made by an earlier run of the same plan (state C(there from an earlier run)): its
     reviews are written to it, each read again first as any asset's; else POST /assets (name, FQDN, the STIG; the Manage
     grant) and the reviews of the plan with C(new_asset) its name are written to it (none to read again: it is new),
-    then read back in one GET.
-  - The checklist import's items (0.76.0: it may look in several collections) - the client's grants read (GET /user): a
+    then read back in one GET."
+  - "The checklist import's items (0.76.0: it may look in several collections) - the client's grants read (GET /user): a
     review is written only where it has Full or more (state C(no grant) where it has Restricted or none), a new asset
-    created only where it has Manage or more.
-  - The checklist import's moves (1.26.0, C(kind=move) - an asset only in the staging collection, to its route's
+    created only where it has Manage or more."
+  - "The checklist import's moves (1.26.0, C(kind=move) - an asset only in the staging collection, to its route's
     collection) - the asset read again (GET /assets/{id}) and moved (PATCH /assets/{id} with the destination's
     collectionId) only if it is still as the check read it (in the staging collection, its name, FQDN, STIGs, labels, no
     review since), no Restricted grant in the staging collection reaches it (state C(held)), no asset of its name is in the
     destination, and the client has Manage in both. Its reviews are written after it, to the destination - none when it is
-    not moved. A move keeps the asset's reviews and their history, STIGs, metadata and labels.
-  - The checklist import's assignments (C(kind=assign) - a STIG its checklist matched, on an asset that is there) - PUT
-    /assets/{id}/stigs/{benchmark} (Manage), only if the asset is still in that collection; its reviews after it.
-  - In check mode reads, and writes nothing (state C(would write), C(would create), C(would move), C(would assign)).
+    not moved. A move keeps the asset's reviews and their history, STIGs, metadata and labels."
+  - "The checklist import's assignments (C(kind=assign) - a STIG its checklist matched, on an asset that is there) - PUT
+    /assets/{id}/stigs/{benchmark} (Manage), only if the asset is still in that collection; its reviews after it."
+  - "In check mode reads, and writes nothing (state C(would write), C(would create), C(would move), C(would assign))."
 options:
   api: {description: "STIG Manager's API (https://stigman.example.mil/api).", type: str, required: true}
   token_url: {description: The Keycloak token endpoint., type: str, required: true}

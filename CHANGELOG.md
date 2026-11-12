@@ -13,12 +13,16 @@ checklists - and now puts each host in **its** collection: Windows servers in on
 vCenter in a third.
 
 - **Routes** (`stigman_ckl_import_routes`): an ordered list of rules, the first that fits a host wins. A rule names a
-  collection and any of `stigs` (the installed STIG its checklist matched, by id or title), `names` (host name or FQDN),
-  `roles` and `tech_areas` (the checklist's). A new host is created in its rule's collection, at that collection's
-  revision. A host no rule fits goes to the staging collection, as before. A rule's collection is searched for the
-  host's asset too, so a host there is never created again. Two checklists of one host that fit two rules: the first
-  rule in the list wins, and the report says so. A rule's collection the client cannot read: nothing is created or moved
-  there, said.
+  collection and any of `stigs` (the installed STIG its checklist matched, by id or title), `names` (host name or FQDN,
+  or its short name - `vc11` fits `vc11.example.mil`), `roles` and `tech_areas` (the checklist's). A new host is created
+  in its rule's collection, at that collection's revision. A host no rule fits goes to the staging collection, as
+  before, and its line says *no route fits*. With routes, **every collection the client reads is searched** for the
+  host's asset (whatever `stigman_ckl_import_collections` says): a host anywhere is written where it is, never created
+  again, never moved but out of the staging collection. Two checklists of one host that fit two rules: the first rule
+  in the list wins, and the report says so. **A rule whose collection is not there** (a typo, a collection the client
+  has no grant in, or more than one collection given) or whose values are not names (`stigs: 5`) **stops the job
+  before anything is read or written**, naming the rule and the collection; so does `stigman_ckl_import_routes` that
+  is not a list of rules.
 - **Moves out of the staging collection** (`stigman_ckl_import_route_move: staging`, the default; `none` = never): an
   asset only in the staging collection is planned as a MOVE to its rule's collection - done after the approval, or at
   once only with `stigman_ckl_import_auto: all` - and its reviews are written there after it. A move keeps the asset's
@@ -31,10 +35,17 @@ vCenter in a third.
 - **STIGs assigned** (`stigman_ckl_import_assign_stigs`, default `false`): an asset that is there without the STIG its
   checklist matched - `true` plans the assignment (ASSIGN), done with the approval or at once with `auto: all`, then its
   reviews. Only that STIG is added.
-- **`auto: all` checks the grants first:** where the client has less than Manage, a create, move or assignment there is
-  refused before anything is written (a refused move: written in the staging collection instead), said in the report.
+- **`auto: all` checks every grant first:** with routes, the client needs Manage in the staging collection and in every
+  route's collection (it creates and moves assets there at once) - one too low (Full in Linux, or in the staging
+  collection) stops the job before anything is read or written, naming the collection and the grant needed. Without
+  routes, a create or a STIG assignment the run would do where the client has less than Manage stops it the same way,
+  before anything is written; a run with none writes its reviews as before.
 - **SRG checklists**: a checklist of an SRG installed in STIG Manager matches, creates its asset and writes, as a
   STIG's does (tested on STIG Manager 1.6.18).
+- **Behaviour changes:** with routes set, every collection the client reads is searched, whatever
+  `stigman_ckl_import_collections` says. With `auto: all` and no routes, a new host where the client has only Full now
+  stops the whole run before anything is written (before: that host was refused, the rest written). Wording: the line of an asset without the STIG its checklist matched now ends
+  *(stigman_ckl_import_assign_stigs: false)* - the setting that would assign it.
 - **Not in this release:** SCC's XCCDF results (`*.xml`), the one thing Watcher takes that the import does not. A sample
   SCC result file from your site would make it a later version.
 - The update's report (*STIG Manager - update*) has a *Moves and STIG assignments* section; workflow 37's report is
@@ -717,7 +728,8 @@ the ones after it.
     Details: docs/REPORT_DATABASE.md.
 93. **The checklist import in place of STIG Manager Watcher** (1.26.0) - only when you switch.
     1. In STIG Manager, give the import's client **Manage** in the staging collection and in each collection your routes
-       name; **Full** in every other collection it searches.
+       name; **Full** in every other collection it can read (with routes every one is searched; a Restricted
+       grant in one stops the run).
     2. Add to the Variables of *STIG Manager - import checklists* (your collections' names):
        ```yaml
        stigman_ckl_import_routes:

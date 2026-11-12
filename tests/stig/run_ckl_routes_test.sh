@@ -4,7 +4,7 @@
 # end to end - the check (playbooks/stigman_ckl_import.yml), the job after the approval (playbooks/stigman_update.yml) and the
 # written-at-once runs (stigman_ckl_import_auto: all), on this box as a plain user against the stand-in Keycloak + STIG
 # Manager (tests/stig/stigman_mock.py). Collections: Staging (the staging one), Windows, Linux, VMware, Lab (no grant: the
-# client cannot read it). Installed STIGs: Windows_Server_2022_STIG, RHEL_9_STIG, VMW_vSphere_8-0_ESXi_STIG,
+# client cannot read it), Ops (read, no route goes there). Installed STIGs: Windows_Server_2022_STIG, RHEL_9_STIG, VMW_vSphere_8-0_ESXi_STIG,
 # VMW_vSphere_8-0_vCenter_STIG, IIS_10-0_Server_STIG - the checklists are tests/stig/ckl/inspec_apache.ckl with the host
 # name, the STIG id and the rule versions set (one Not a Finding, one Open, one Not Applicable, one Not Reviewed each).
 # The routes: 1 Windows (stigs "*Windows_Server*"), 2 Linux (stigs "RHEL_*"), 3 VMware (names "esx*,vc*"). In order:
@@ -13,10 +13,13 @@
 #  3. the asset changed after the check (a label, a review): the update says changed since, no PATCH, its reviews not written.
 #  4. a Restricted grant in Staging that reaches the asset: held for a person (who), nothing moved, the file stays.
 #  5. stigman_ckl_import_route_move: none - no move, the reviews written in Staging.
-#  6. auto all, the client has only Full in Linux: the move and the new asset refused before anything is written; Manage: done.
+#  6. auto all, the client has only Full in Linux (or in Staging): the job fails, nothing written, no file moved; Manage: done.
 #  7. stigman_ckl_import_assign_stigs: an asset without the matched STIG - false: listed; true: ASSIGN (PUT), then its reviews.
 #  8. one host, two checklists that fit different routes: the first rule in the list wins, and the report says so.
-#  9. a route to a collection the client cannot read: nothing created or moved there, said.
+#  9. a route to a collection the client cannot read (or a typo, or not one name): the job fails before any write, no file moved.
+# 10. routes set, stigman_ckl_import_collections: [] - a host in Ops (no route goes there) is found, written there: never
+#     created again, never moved.
+# 11. stigman_ckl_import_routes not a list of rules (a mapping, text, a list of names, an empty item): the job fails, nothing read.
 #   bash tests/stig/run_ckl_routes_test.sh        (ANSIBLE_PLAYBOOK=... to pick one; STIG_KEEP=FILE keeps the last output)
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -44,10 +47,11 @@ rules = dict((b, [{"ruleId": "SV-%dr1_rule" % (base + n), "groupId": "V-%d" % (b
                    "title": "%s rule %d" % (b, n)} for n in (1, 2, 5, 7, 9)]) for b, (pre, base, _r, _t) in stigs.items())
 json.dump({"secret": "s3cret", "client": "autostig", "writers": ["stigwrite"], "managers": ["stigwrite"],
            "collections": [{"collectionId": "1", "name": "Staging"}, {"collectionId": "2", "name": "Windows"},
-                           {"collectionId": "3", "name": "Linux"}, {"collectionId": "4", "name": "VMware"}, {"collectionId": "5", "name": "Lab"}],
-           "assets": {"1": [], "2": [], "3": [], "4": [], "5": []}, "reviews": {},
+                           {"collectionId": "3", "name": "Linux"}, {"collectionId": "4", "name": "VMware"}, {"collectionId": "5", "name": "Lab"},
+                           {"collectionId": "6", "name": "Ops"}],
+           "assets": {"1": [], "2": [], "3": [], "4": [], "5": [], "6": []}, "reviews": {},
            # the check's client reads (Manage in Staging: it reads its Restricted grants), the update's writes; Lab: neither
-           "grants": {"autostig": {"1": 3, "2": 2, "3": 2, "4": 2}, "stigwrite": {"1": 3, "2": 3, "3": 3, "4": 3}},
+           "grants": {"autostig": {"1": 3, "2": 2, "3": 2, "4": 2, "6": 2}, "stigwrite": {"1": 3, "2": 3, "3": 3, "4": 3, "6": 3}},
            "titles": dict((b, s[3]) for b, s in stigs.items()), "latest": dict((b, s[2]) for b, s in stigs.items()), "rules": rules},
           open(sys.argv[1], "w"))
 PY
@@ -288,26 +292,34 @@ play stigman_ckl_import.yml "5. route_move none, auto all: no move, rhel05's rev
 sent "... no PATCH: only its reviews, in Staging" '^POST /api/collections/1/reviews/15$'
 held "... rhel05 in Staging with its 3 reviews" 'assert [c for c, a in where("rhel05")] == ["1"] and len(revs("15")) == 3, (where("rhel05"), revs("15"))'
 
-# ==== 6. auto all: the client needs Manage where it creates or moves ==========================================================
+# ==== 6. auto all: the client needs Manage in Staging and every route's collection - one too low stops it all ==================
+# 1.26.0 tester fix: every grant a create or a move needs is checked before the first write (before: rhel06 not moved and
+# rhel07 not created, rhel06's reviews written in Staging - a half-done run)
 fresh "d['assets']['1'] = [{'assetId': '16', 'name': 'rhel06', 'fqdn': 'rhel06.example.mil', 'stigs': [{'benchmarkId': 'RHEL_9_STIG', 'revisionStr': 'V2R5'}]}]
 d['grants']['stigwrite']['3'] = 2"
 s="$work/s6"; ckl "$s/rhel06.ckl" rhel06 "$rhel" RHEL-09; ckl "$s/rhel07.ckl" rhel07 "$rhel" RHEL-09
 s6="{\"stigman_ckl_import_src\": \"$s\", \"stigman_ckl_import_routes\": $routes, \"stigman_ckl_import_move\": true, \"stigman_ckl_import_auto\": \"all\"}"
-play stigman_ckl_import.yml "6. auto all, only Full in Linux: rhel06 not moved, rhel07 not created - needs Manage, said" ok -e "$s6" -e "$writer" -- \
-    "not moved: stigman_ckl_import_auto: all writes at once, and the client has Full in Linux - that needs Manage" \
-    "rhel07 is not created: stigman_ckl_import_auto: all writes at once, and the client has Full in Linux - that needs Manage" \
-    "written - Staging/rhel06 $rhel RHEL-09-000001" "!MOVE rhel06" "!NEW ASSET rhel07" "rhel07.ckl - LEFT"
+need="Nothing planned: stigman_ckl_import_auto: all creates and moves assets at once, so the client needs Manage in the staging collection and every route's collection - it has"
+nothing6() {  # what a refused auto-all run leaves: nothing sent, both files where they were, STIG Manager as it was
+    sent "... nothing sent: no PATCH, PUT or POST"
+    [ -e "$s/rhel06.ckl" ] && [ -e "$s/rhel07.ckl" ] && [ ! -e "$s/imported" ] && echo "ok   - ... no file moved" \
+        || { echo "FAIL - a file was moved although nothing was planned"; fails=$((fails + 1)); }
+    held "... rhel06 in Staging without a review, no rhel07" 'assert [c for c, a in where("rhel06")] == ["1"] and revs("16") == {} and where("rhel07") == [], (where("rhel06"), revs("16"))'
+}
+play stigman_ckl_import.yml "6. auto all, only Full in Linux: the job fails before anything is written" fail -e "$s6" -e "$writer" -- \
+    "$need Full in Linux: nothing written. Give it Manage there, or stigman_ckl_import_auto: existing (the approval then creates and moves)" \
+    "!written - " "!MOVE rhel06" "!NEW ASSET rhel07"
 if report | "$py" -c 'import json, sys; r = json.load(sys.stdin)
-t = dict((x["title"].split(" (")[0], x) for x in r["sections"])
-rows = t["Not written"]["rows"]
-assert rows and all(x[6] == "No grant" and "needs Manage" in x[7] for x in rows if x[1].endswith("rhel07")), rows
-assert len([x for x in rows if x[1].endswith("rhel07")]) == 3, rows'
-then echo "ok   - ... the report: rhel07's answers not written - No grant, needs Manage"; else echo "FAIL - the grant refusal in the report"; fails=$((fails + 1)); fi
-sent "... nothing sent to Linux, no asset made, nothing moved - only rhel06's reviews in Staging" '^POST /api/collections/1/reviews/16$'
-[ -e "$s/rhel06.ckl" ] && echo "ok   - ... rhel06.ckl stays (its route's move is not done: the next run moves it)" \
-    || { echo "FAIL - rhel06.ckl moved to imported although rhel06 was not moved to its route's collection"; fails=$((fails + 1)); }
-[ -e "$s/imported/$day/rhel06.ckl" ] && ckl "$s/rhel06.ckl" rhel06 "$rhel" RHEL-09        # (so the next run reads it either way)
-edit "d['grants']['stigwrite']['3'] = 3"
+s = r["sections"][0]
+assert (s["title"], s["status"], r["status"]) == ("Nothing planned", "critical", "critical"), (s["title"], s["status"], r["status"])
+assert "it has Full in Linux: nothing written" in s["lines"][0], s["lines"]'
+then echo "ok   - ... the report: Nothing planned, why"; else echo "FAIL - the refused auto all in the report"; fails=$((fails + 1)); fi
+nothing6
+edit "d['grants']['stigwrite']['3'] = 3; d['grants']['stigwrite']['1'] = 2"
+play stigman_ckl_import.yml "6. auto all, only Full in Staging (Manage in Linux): the job fails before anything is written" fail -e "$s6" -e "$writer" -- \
+    "$need Full in Staging: nothing written" "!written - " "!MOVE rhel06" "!NEW ASSET rhel07"
+nothing6
+edit "d['grants']['stigwrite']['1'] = 3"
 play stigman_ckl_import.yml "6. ... with Manage in Linux: rhel06 moved, rhel07 created in Linux and written at once, the files moved" ok -e "$s6" -e "$writer" -- \
     "moved - MOVE rhel06 from Staging to Linux (route 2)" "created - NEW ASSET rhel07 (rhel07.example.mil) in Linux (route 2)" \
     "its reviews: written 3" "moved - rhel06.ckl - imported/$day/" "moved - rhel07.ckl - imported/$day/rhel07.ckl" "!NEEDS APPROVAL -"
@@ -358,21 +370,72 @@ play stigman_ckl_import.yml "8. the rules the other way round: in Linux (rule 1)
     "NEW ASSET win02 (win02.example.mil) in Linux (route 1)" "it fits route 2 (Windows, by $win) too - the first rule in the list wins"
 sent "... nothing sent"
 
-# ==== 9. a route to a collection the client cannot read =====================================================================
+# ==== 9. a route to a collection the client cannot read: the job fails before any write ======================================
+# 1.26.0 tester fix: before, lab01 was left (no asset), lab02 written in Staging and its file moved - the route never done
 fresh "d['assets']['1'] = [{'assetId': '19', 'name': 'lab02', 'fqdn': '', 'stigs': [{'benchmarkId': 'RHEL_9_STIG', 'revisionStr': 'V2R5'}]}]"
 s="$work/s9"; ckl "$s/lab01.ckl" lab01 "$rhel" RHEL-09; ckl "$s/lab02.ckl" lab02 "$rhel" RHEL-09
+nothing9() {
+    sent "... nothing sent: no PATCH, PUT or POST"
+    [ -e "$s/lab01.ckl" ] && [ -e "$s/lab02.ckl" ] && [ ! -e "$s/imported" ] && echo "ok   - ... no file moved" \
+        || { echo "FAIL - a file was moved although nothing was planned"; fails=$((fails + 1)); }
+    held "... lab02 in Staging without a review, no lab01" 'assert [c for c, a in where("lab02")] == ["1"] and revs("19") == {} and where("lab01") == [], (where("lab02"), revs("19"))'
+}
+s9() { echo "{\"stigman_ckl_import_src\": \"$s\", \"stigman_ckl_import_routes\": $1, \"stigman_ckl_import_move\": true, \"stigman_ckl_import_auto\": \"all\"}"; }
 r9="[{\"collection\": \"Lab\", \"names\": [\"lab*\"]}, {\"collection\": \"Linux\", \"stigs\": [\"RHEL_*\"]}]"
-play stigman_ckl_import.yml "9. a route to Lab (no grant): lab01 not created, lab02 not moved - said" 2 \
-    -e "{\"stigman_ckl_import_src\": \"$s\", \"stigman_ckl_import_routes\": $r9}" -e "$wf" -- \
-    "no asset lab01 yet, and the client cannot read the collection Lab (route 1) - nothing is created or moved there" \
-    "!NEW ASSET lab01" "!MOVE lab02" "!in Linux (route" "Staging/lab02 $rhel RHEL-09-000001: no review -> Not a Finding"
+play stigman_ckl_import.yml "9. a route to Lab (no grant), auto all: the job fails before anything is written" fail -e "$(s9 "$r9")" -e "$writer" -- \
+    "Nothing planned: stigman_ckl_import_routes, rule 1: no collection Lab that the client can read (it reads: Linux, Ops, Staging, VMware, Windows) - check the name, or give the client a grant there; nothing planned" \
+    "!written - " "!NEW ASSET lab01" "!MOVE lab02"
 if report | "$py" -c 'import json, sys; r = json.load(sys.stdin)
-t = dict((x["title"].split(" (")[0], x) for x in r["sections"])
-assert t["Routes"]["status"] == "critical" and "cannot read the collection Lab" in t["Routes"]["rows"][0][3], t["Routes"]
-assert t["Routes"]["rows"][1][3] == "-", t["Routes"]["rows"]'
-then echo "ok   - ... the report: the Lab route's problem in Routes"; else echo "FAIL - the unreadable route in the report"; fails=$((fails + 1)); fi
-sent "... nothing sent"
+s = r["sections"][0]
+assert (s["title"], s["status"]) == ("Nothing planned", "critical") and "no collection Lab" in s["lines"][0], s'
+then echo "ok   - ... the report: Nothing planned, the rule and why"; else echo "FAIL - the unreadable route in the report"; fails=$((fails + 1)); fi
+nothing9
 grep -q '^GET /api/collections/5\|collectionId=5' "$work/sm.log" && { echo "FAIL - Lab was read"; fails=$((fails + 1)); } || echo "ok   - ... Lab never read"
+play stigman_ckl_import.yml "9. a typo (Linx) in the check of workflow 40: the job fails, no plan handed on" fail \
+    -e "{\"stigman_ckl_import_src\": \"$s\", \"stigman_ckl_import_routes\": [{\"collection\": \"Linx\", \"stigs\": \"RHEL_*\"}]}" -e "$wf" -- \
+    "Nothing planned: stigman_ckl_import_routes, rule 1: no collection Linx that the client can read" "!\"stigman_update_plan\": [" "!NEEDS APPROVAL -"
+nothing9
+play stigman_ckl_import.yml "9. a rule's collection that is a list of names: the job fails before anything is written" fail \
+    -e "$(s9 '[{"collection": ["Linux"]}]')" -e "$writer" -- \
+    "Nothing planned: stigman_ckl_import_routes, rule 1: collection is one collection's name or id, not ['Linux'] - nothing planned" "!written - "
+nothing9
+play stigman_ckl_import.yml "9. a rule's stigs that is a number: the job fails before anything is written" fail \
+    -e "$(s9 '[{"collection": "Linux", "stigs": 5}]')" -e "$writer" -- \
+    "Nothing planned: stigman_ckl_import_routes, rule 1: stigs is a list of names or patterns (or text with commas), not 5 - nothing planned"
+nothing9
+
+# ==== 10. routes set: every collection read is searched - a host in Ops is written there ======================================
+# 1.26.0 tester fix: with stigman_ckl_import_collections: [] only Staging and the routes' collections were searched - rhel10
+# would have been created again in Linux, web10 in Staging
+fresh "d['assets']['6'] = [{'assetId': '20', 'name': 'rhel10', 'fqdn': 'rhel10.example.mil', 'stigs': [{'benchmarkId': 'RHEL_9_STIG', 'revisionStr': 'V2R5'}]},
+                       {'assetId': '21', 'name': 'web10', 'fqdn': 'web10.example.mil', 'stigs': [{'benchmarkId': 'IIS_10-0_Server_STIG', 'revisionStr': 'V3R1'}]}]"
+s="$work/s10"; ckl "$s/rhel10.ckl" rhel10 "$rhel" RHEL-09; ckl "$s/web10.ckl" web10 "$iis" IIST-SV
+s10="{\"stigman_ckl_import_src\": \"$s\", \"stigman_ckl_import_routes\": $routes, \"stigman_ckl_import_collections\": [], \"stigman_ckl_import_move\": true}"
+play stigman_ckl_import.yml "10. the check: rhel10 and web10 found in Ops - their reviews there, nothing created or moved" 2 -e "$s10" -e "$wf" -- \
+    "Ops/rhel10 $rhel RHEL-09-000001: no review -> Not a Finding" "Ops/web10 $iis IIST-SV-000001: no review -> Not a Finding" \
+    "[route 2 (stigs RHEL_*) -> Linux - its asset is in Ops: written there, never moved out of it]" "[no route fits - written where it is: Ops]" \
+    "!NEW ASSET" "!MOVE "
+sent "... the check sent nothing"
+play stigman_ckl_import.yml "10. auto all: written in Ops at once, nothing created or moved, the files done with moved" ok -e "$s10" \
+    -e '{"stigman_ckl_import_auto": "all"}' -e "$writer" -- \
+    "written - Ops/rhel10 $rhel RHEL-09-000001" "written - Ops/web10 $iis IIST-SV-000005" "moved - rhel10.ckl - imported/$day/rhel10.ckl" \
+    "!created - " "!MOVE "
+sent "... only the reviews, in Ops" '^POST /api/collections/6/reviews/2[01]$'
+held "... rhel10 and web10 only in Ops, 3 reviews each - none in Linux or Staging" '
+assert where("rhel10") == [("6", where("rhel10")[0][1])] and [c for c, a in where("web10")] == ["6"], (where("rhel10"), where("web10"))
+assert len(revs("20")) == 3 and len(revs("21")) == 3 and d["assets"]["3"] == [] and d["assets"]["1"] == [], (revs("20"), d["assets"])'
+
+# ==== 11. stigman_ckl_import_routes not a list of rules: the job fails before anything is read ================================
+s="$work/s11"; ckl "$s/rhel11.ckl" rhel11 "$rhel" RHEL-09
+for r11 in '{"collection": "Linux"}' '"Linux"' '["Linux"]' '[null]' '[{"collection": "Linux"}, "VMware"]'; do
+    fresh
+    play stigman_ckl_import.yml "11. stigman_ckl_import_routes: $r11 - the job fails, nothing read" fail \
+        -e "{\"stigman_ckl_import_src\": \"$s\", \"stigman_ckl_import_routes\": $r11}" -e "$wf" -- \
+        "stigman_ckl_import_routes is a list of rules, each a mapping - {collection: <its name or id>, stigs: [...], names: [...]} - not" \
+        "Nothing read or written." "!Nothing planned" "!\"stigman_update_plan\": ["
+    [ ! -s "$work/sm.log" ] && echo "ok   - ... STIG Manager not asked" || { echo "FAIL - STIG Manager asked: $(head -3 "$work/sm.log" | tr '\n' ';')"; fails=$((fails + 1)); }
+done
+[ -e "$s/rhel11.ckl" ] && [ ! -e "$s/imported" ] && echo "ok   - ... the file stays" || { echo "FAIL - rhel11.ckl moved"; fails=$((fails + 1)); }
 
 echo
 if [ $fails -eq 0 ]; then echo "all checklist routing scenarios passed"; else echo "$fails checklist routing scenario(s) FAILED"; exit 1; fi
