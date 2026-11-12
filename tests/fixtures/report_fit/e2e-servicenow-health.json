@@ -9,7 +9,7 @@
 "next": "Look further:",
 "status": "critical",
 "subject": "node01.yoursite.mil",
-"title": "fapolicyd denied the ServiceNow node's java or install folder on node01.yoursite.mil 1 time(s) today: /usr/lib/jvm/java-17-openjdk/bin/java -> /tmp/tmp.v6aGuAIS9v/glide-bad/nodes/prod_16000/lib/glide-extra.jar (1x)"
+"title": "fapolicyd denied the ServiceNow node's java or install folder on node01.yoursite.mil 1 time(s) today: /usr/lib/jvm/java-17-openjdk/bin/java -> /tmp/tmp.bupkJ4OvuX/glide-bad/nodes/prod_16000/lib/glide-extra.jar (1x)"
 },
 {
 "code": "on node01.yoursite.mil: curl -sS http://127.0.0.1:18302/xmlstats.do | grep -i memory; the heap: -Xmx in the node's wrapper or glide.properties; a node restart in a quiet window frees it (your decision)",
@@ -20,7 +20,7 @@
 "title": "the ServiceNow node snc_prod.service on node01.yoursite.mil uses 97.4% of its JVM memory (3990 of 4096 MB; critical at 95%): it slows, then fails with OutOfMemory"
 },
 {
-"code": "# java.lang.OutOfMemoryError: Java heap space\ngrep -n OutOfMemory /tmp/tmp.v6aGuAIS9v/glide-bad/nodes/prod_16000/logs/localhost_log.2026-11-11.txt | tail",
+"code": "# java.lang.OutOfMemoryError: Java heap space\ngrep -n OutOfMemory /tmp/tmp.bupkJ4OvuX/glide-bad/nodes/prod_16000/logs/localhost_log.2026-11-12.txt | tail",
 "meta": "ServiceNow node",
 "next": "Look further:",
 "status": "critical",
@@ -41,7 +41,7 @@
 "next": "Look further:",
 "status": "critical",
 "subject": "node01:prod_16000",
-"title": "the cluster node node01:prod_16000 says online, but its last heartbeat was 30 minutes ago (2026-11-11 09:07:39 UTC; more than 10): it may be hung"
+"title": "the cluster node node01:prod_16000 says online, but its last heartbeat was 30 minutes ago (2026-11-12 05:28:45 UTC; more than 10): it may be hung"
 },
 {
 "code": "ServiceNow: sys_cluster_state.list; on node03: systemctl status 'snc_*'",
@@ -49,7 +49,7 @@
 "next": "Look further:",
 "status": "critical",
 "subject": "node03:prod_16000",
-"title": "the cluster node node03:prod_16000 is offline (last heartbeat 2026-11-10 23:37:39 UTC)"
+"title": "the cluster node node03:prod_16000 is offline (last heartbeat 2026-11-11 19:58:45 UTC)"
 }
 ],
 "status": "critical",
@@ -66,7 +66,7 @@
 },
 {
 "label": "Database",
-"note": "0% of /tmp, 32.5% used",
+"note": "0% of /tmp, 56.2% used",
 "status": "critical",
 "value": "0 MB"
 },
@@ -80,6 +80,7 @@
 "columns": [
 "Host",
 "Node :port",
+"Stats page answered at",
 "State",
 "Cluster",
 "JVM memory",
@@ -97,6 +98,7 @@
 [
 "node01.yoursite.mil",
 "snc_prod :18302",
+"127.0.0.1:18302 (http)",
 "running, at boot",
 "online, 30 min ago",
 "97.4% (3990 / 4096 MB)",
@@ -108,6 +110,7 @@
 ],
 [
 "node03.yoursite.mil",
+"-",
 "-",
 "NO NODE UNIT (snc_prod, snc_test, snc_dev)",
 "-",
@@ -133,7 +136,7 @@
 [
 "CRITICAL",
 "servicenow_node",
-"fapolicyd denied the ServiceNow node's java or install folder on node01.yoursite.mil 1 time(s) today: /usr/lib/jvm/java-17-openjdk/bin/java -> /tmp/tmp.v6aGuAIS9v/glide-bad/nodes/prod_16000/lib/glide-extra.jar (1x)",
+"fapolicyd denied the ServiceNow node's java or install folder on node01.yoursite.mil 1 time(s) today: /usr/lib/jvm/java-17-openjdk/bin/java -> /tmp/tmp.bupkJ4OvuX/glide-bad/nodes/prod_16000/lib/glide-extra.jar (1x)",
 "on node01.yoursite.mil: ausearch -m FANOTIFY -ts today -i | tail -40; fapolicyd-cli --list; a rule or trust entry for it is a change: your decision"
 ],
 [
@@ -146,7 +149,7 @@
 "CRITICAL",
 "servicenow_node",
 "the ServiceNow node snc_prod.service on node01.yoursite.mil ran out of memory 1 time(s) in the last 24 h",
-"# java.lang.OutOfMemoryError: Java heap space\ngrep -n OutOfMemory /tmp/tmp.v6aGuAIS9v/glide-bad/nodes/prod_16000/logs/localhost_log.2026-11-11.txt | tail"
+"# java.lang.OutOfMemoryError: Java heap space\ngrep -n OutOfMemory /tmp/tmp.bupkJ4OvuX/glide-bad/nodes/prod_16000/logs/localhost_log.2026-11-12.txt | tail"
 ],
 [
 "CRITICAL",
@@ -157,13 +160,13 @@
 [
 "CRITICAL",
 "servicenow_node",
-"the cluster node node01:prod_16000 says online, but its last heartbeat was 30 minutes ago (2026-11-11 09:07:39 UTC; more than 10): it may be hung",
+"the cluster node node01:prod_16000 says online, but its last heartbeat was 30 minutes ago (2026-11-12 05:28:45 UTC; more than 10): it may be hung",
 "on node01: the node's stats page and its localhost log"
 ],
 [
 "CRITICAL",
 "servicenow_node",
-"the cluster node node03:prod_16000 is offline (last heartbeat 2026-11-10 23:37:39 UTC)",
+"the cluster node node03:prod_16000 is offline (last heartbeat 2026-11-11 19:58:45 UTC)",
 "ServiceNow: sys_cluster_state.list; on node03: systemctl status 'snc_*'"
 ],
 [
@@ -175,13 +178,13 @@
 [
 "CRITICAL",
 "servicenow_node",
-"snowdb01.yoursite.mil: at the database's growth (3.2 GB a day over 3.0 days) /tmp is full in 2 days (9.5 GB free)",
+"snowdb01.yoursite.mil: at the database's growth (2.1 GB a day over 3.0 days) /tmp is full in 2 days (6.2 GB free)",
 "the report's Largest tables (sys_audit, syslog, attachments: their table cleanup and archive rules); grow /tmp"
 ],
 [
 "CRITICAL",
 "servicenow_node",
-"fapolicyd denied the database server or its data on snowdb01.yoursite.mil 1 time(s) today: /usr/sbin/mariadbd -> /tmp/tmp.v6aGuAIS9v/database/data/ibtmp1 (1x)",
+"fapolicyd denied the database server or its data on snowdb01.yoursite.mil 1 time(s) today: /usr/sbin/mariadbd -> /tmp/tmp.bupkJ4OvuX/database/data/ibtmp1 (1x)",
 "on snowdb01.yoursite.mil: ausearch -m FANOTIFY -ts today -i | tail -40; fapolicyd-cli --list; a rule or trust entry for it is a change: your decision"
 ],
 [
@@ -206,18 +209,18 @@
 "WARNING",
 "servicenow_node",
 "the ServiceNow node snc_prod.service on node01.yoursite.mil logged 4 semaphore problem(s) in the last 24 h (a queue, a limit exceeded, or a wait of 1000 ms or more)",
-"# Default semaphore queue depth 23 exceeded, transaction waited 30003 ms\ngrep -inE 'semaphore.*(queue|exceeded|timed out)|semaphore wait: [0-9]{4,}' /tmp/tmp.v6aGuAIS9v/glide-bad/nodes/prod_16000/logs/localhost_log.2026-11-11.txt | tail"
+"# Default semaphore queue depth 23 exceeded, transaction waited 30003 ms\ngrep -inE 'semaphore.*(queue|exceeded|timed out)|semaphore wait: [0-9]{4,}' /tmp/tmp.bupkJ4OvuX/glide-bad/nodes/prod_16000/logs/localhost_log.2026-11-12.txt | tail"
 ],
 [
 "WARNING",
 "servicenow_node",
 "the ServiceNow node snc_prod.service on node01.yoursite.mil logged 144 SEVERE line(s) in the last 24 h (the most frequent 140 times)",
-"# Transaction cancelled: maximum execution time exceeded for /api/now/table/incident (user \u2026)\ngrep -c SEVERE /tmp/tmp.v6aGuAIS9v/glide-bad/nodes/prod_16000/logs/localhost_log.2026-11-11.txt; the report's Node log errors table"
+"# Transaction cancelled: maximum execution time exceeded for /api/now/table/incident (user \u2026)\ngrep -c SEVERE /tmp/tmp.bupkJ4OvuX/glide-bad/nodes/prod_16000/logs/localhost_log.2026-11-12.txt; the report's Node log errors table"
 ],
 [
 "WARNING",
 "servicenow_node",
-"the cluster node node09:prod_16000 is offline (last heartbeat 2026-11-05 03:37:39 UTC), and it is not in the inventory group: a retired node's record?",
+"the cluster node node09:prod_16000 is offline (last heartbeat 2026-11-05 23:58:45 UTC), and it is not in the inventory group: a retired node's record?",
 "ServiceNow: sys_cluster_state.list - a node that is gone for good: its record can be deleted (your decision)"
 ],
 [
@@ -249,27 +252,27 @@
 [
 "node01.yoursite.mil",
 "front-end node",
-"/tmp/tmp.v6aGuAIS9v/glide-bad 32.5% (9.5 GB free); / 3.9% (1828.6 GB free)",
-"14553 MB of 28797 MB",
-"0.0% of 8191 MB",
+"/tmp/tmp.bupkJ4OvuX/glide-bad 56.2% (6.2 GB free); / 4.2% (1824.0 GB free)",
+"11949 MB of 28797 MB",
+"26.9% of 8191 MB",
 "active: 3 denial(s) today",
 "-"
 ],
 [
 "node03.yoursite.mil",
 "front-end node",
-"/tmp/tmp.v6aGuAIS9v/glide03 32.5% (9.5 GB free); / 3.9% (1828.6 GB free)",
-"14523 MB of 28797 MB",
-"0.0% of 8191 MB",
+"/tmp/tmp.bupkJ4OvuX/glide03 56.1% (6.2 GB free); / 4.2% (1824.0 GB free)",
+"11980 MB of 28797 MB",
+"26.9% of 8191 MB",
 "active: 0 denial(s) today",
 "-"
 ],
 [
 "snowdb01.yoursite.mil",
 "database",
-"/tmp/tmp.v6aGuAIS9v/database 32.5% (9.5 GB free); / 3.9% (1828.6 GB free)",
-"14602 MB of 28797 MB",
-"0.0% of 8191 MB",
+"/tmp/tmp.bupkJ4OvuX/database 56.2% (6.2 GB free); / 4.2% (1824.0 GB free)",
+"11655 MB of 28797 MB",
+"26.9% of 8191 MB",
 "active: 1 denial(s) today",
 "1: MariaDB refused the login of monitor (the MariaDB monitor credential) in container snowdb: Access denied for user..."
 ]
@@ -292,11 +295,11 @@
 "rows": [
 [
 "snowdb01.yoursite.mil",
-"/tmp/tmp.v6aGuAIS9v/database/data",
+"/tmp/tmp.bupkJ4OvuX/database/data",
 "0 MB (data, indexes and InnoDB's files; from the data dir's files)",
-"/tmp: 4.6 GB used, 9.5 GB free (32.5%)",
+"/tmp: 7.9 GB used, 6.2 GB free (56.2%)",
 "0.0%",
-"+9.5 GB since the last run (2026-11-08 09:37 UTC); +3.2 GB a day over 3.0 days",
+"+6.2 GB since the last run (2026-11-09 05:58 UTC); +2.1 GB a day over 3.0 days",
 "2 days"
 ]
 ],
@@ -382,7 +385,7 @@
 [
 "node01.yoursite.mil",
 "/usr/lib/jvm/java-17-openjdk/bin/java",
-"/tmp/tmp.v6aGuAIS9v/glide-bad/nodes/prod_16000/lib/glide-extra.jar",
+"/tmp/tmp.bupkJ4OvuX/glide-bad/nodes/prod_16000/lib/glide-extra.jar",
 1
 ],
 [
@@ -394,7 +397,7 @@
 [
 "snowdb01.yoursite.mil",
 "/usr/sbin/mariadbd",
-"/tmp/tmp.v6aGuAIS9v/database/data/ibtmp1",
+"/tmp/tmp.bupkJ4OvuX/database/data/ibtmp1",
 1
 ]
 ],
@@ -423,7 +426,7 @@
 "OutOfMemory, SEVERE",
 1,
 "-",
-"2026-11-11 10:35:39",
+"2026-11-12 06:56:45",
 "java.lang.OutOfMemoryError: Java heap space"
 ],
 [
@@ -432,7 +435,7 @@
 "semaphore",
 4,
 "-",
-"2026-11-11 10:29:09",
+"2026-11-12 06:50:15",
 "Default semaphore queue depth 23 exceeded, transaction waited 30003 ms"
 ],
 [
@@ -441,7 +444,7 @@
 "SEVERE",
 140,
 "-",
-"2026-11-11 09:50:29",
+"2026-11-12 06:11:35",
 "Transaction cancelled: maximum execution time exceeded for /api/now/table/incident (user \u2026)"
 ],
 [
@@ -450,7 +453,7 @@
 "SEVERE",
 3,
 "-",
-"2026-11-11 09:39:39",
+"2026-11-12 06:00:45",
 "Invalid query detected, please check logs for details [Unknown field sys_id2 in table incident]"
 ]
 ],
@@ -476,7 +479,7 @@
 "node01:prod_16000",
 "node01_prod_16000_id",
 "online",
-"2026-11-11 09:07:39 UTC (30 min ago)",
+"2026-11-12 05:28:45 UTC (30 min ago)",
 "any",
 "yes"
 ],
@@ -484,7 +487,7 @@
 "node03:prod_16000",
 "node03_prod_16000_id",
 "offline",
-"2026-11-10 23:37:39 UTC (600 min ago)",
+"2026-11-11 19:58:45 UTC (600 min ago)",
 "any",
 "yes"
 ],
@@ -492,7 +495,7 @@
 "node09:prod_16000",
 "node09_prod_16000_id",
 "offline",
-"2026-11-05 03:37:39 UTC (9000 min ago)",
+"2026-11-05 23:58:45 UTC (9000 min ago)",
 "any",
 "NO"
 ],
@@ -500,7 +503,7 @@
 "node12:test_16001",
 "node12_test_16001_id",
 "online",
-"2026-11-11 09:36:39 UTC (1 min ago)",
+"2026-11-12 05:57:45 UTC (1 min ago)",
 "any",
 "NO"
 ]
@@ -530,7 +533,7 @@
 },
 {
 "label": "Database",
-"note": "0% of /tmp, 32.5% used",
+"note": "0% of /tmp, 56.2% used",
 "status": "critical",
 "value": "0 MB"
 },
