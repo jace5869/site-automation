@@ -205,7 +205,10 @@ the hosts that did not report. The ServiceNow weekly activity report has none: i
   see-through: every text stays on a surface solid enough to read as on paper (the lightest text is at
   least 4.5:1 against what is behind it). The inbox shows the subtitle and the warning and critical
   numbers as the line under the subject; with the report website (`report_web_dest`) the email ends with
-  an **Open the full report** button. On a phone the tiles go two by two and wide tables scroll sideways.
+  an **Open the full report** button. On a phone the tiles go two by two, and a table of up to 8 columns
+  scrolls sideways in its card. A table of 9 columns or more becomes one block per row under 861 px, its
+  cells as *LABEL value* pairs (1.46.0). A table of 11 columns or more has tighter cells, so it fits a 1280
+  px window; classic Outlook shows the table as it is.
   Mail programs that draw transparency, rounded corners and shadows show the glass; the others (classic
   desktop Outlook) show the same layout with solid white cards and square corners. On the report website
   (`report_web_theme: glass`) the page adds what a browser draws and a mail program does not: the blur behind

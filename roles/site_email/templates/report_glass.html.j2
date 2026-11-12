@@ -105,6 +105,17 @@
   .g-strip .g-cur{width:15px !important;}
 }
 @media (max-width:340px){.g-tile{width:100% !important;}}
+{#- 1.46.0: a table of 9 columns or more is wider than an 800 px window: below 861 px each row is a block of LABEL value
+    pairs (the labels hidden in a wide window and in classic Outlook); a mail program without these rules shows the table #}
+@media (max-width:860px){
+  .g-stack,.g-stack>tbody,.g-stack tr{display:block !important;width:auto !important;}
+  .g-stack tr{padding:8px 10px 4px 10px !important;border-bottom:1px solid #edf2f6;}
+  .g-stack tr:last-child{border-bottom:0;}
+  .g-stack tr.g-head{display:none !important;}
+  .g-stack td{display:inline-block !important;padding:0 16px 6px 0 !important;border:0 !important;white-space:normal !important;overflow-wrap:anywhere;max-width:100%;box-sizing:border-box;}
+  .g-stack td.g-none{display:none !important;}
+  .g-stack .g-lab{display:inline !important;}
+}
 </style>
 {%- if web %}
 <style>
@@ -257,10 +268,13 @@ body>table:first-of-type{position:relative;z-index:1;background:transparent !imp
 {%- if s.rows | default([]) %}
 <div class="g-scroll" style="margin-top:12px;">
 <table role="presentation" class="g-paper" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="width:100%;{{ paper }}"><tr><td style="padding:2px 4px;">
-<table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;font-size:14px;">
-<tr>
+{#- 1.46.0: 9 columns or more stack in a narrow window (above); 11 or more a tighter padding, so the widest fit a 1280 px window #}
+{%- set stack = s.columns | length >= 9 %}
+{%- set pad = '9px 7px' if s.columns | length >= 11 else '9px 12px' %}
+<table width="100%" cellpadding="0" cellspacing="0" border="0"{{ ' class="g-stack"' if stack else '' }} style="border-collapse:collapse;font-size:14px;">
+<tr{{ ' class="g-head"' if stack else '' }}>
 {%- for c in s.columns %}
-<th align="left" style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:{{ label }};padding:10px 12px;border-bottom:1px solid {{ line }};">{{ c | e }}</th>
+<th align="left" style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:{{ label }};padding:{{ '10px 7px' if s.columns | length >= 11 else '10px 12px' }};border-bottom:1px solid {{ line }};">{{ c | e }}</th>
 {%- endfor %}
 </tr>
 {%- for row in s.rows %}
@@ -276,10 +290,11 @@ body>table:first-of-type{position:relative;z-index:1;background:transparent !imp
 {%- set cst = cs[loop.index0] if cs | length > loop.index0 else '' %}
 {%- set text = ('' if cell is none else cell) | string %}
 {%- set cellbd = '' if last else 'border-bottom:1px solid #edf2f6;' %}
+{%- set lab = ('<span class="g-lab" style="display:none;mso-hide:all;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:' ~ label ~ ';">' ~ (s.columns[loop.index0] if s.columns | length > loop.index0 else '') | e ~ '&nbsp;</span>') if stack else '' %}
 {%- if cst and cst in pal %}
-<td style="padding:9px 12px;{{ cellbd }}vertical-align:top;"><span style="display:inline-block;border-radius:999px;background:{{ pal[cst].bg }};border:1px solid {{ pal[cst].bd }};color:{{ pal[cst].fg }};font-weight:600;padding:1px 10px;">{{ text | report_cell_html if s.wrap | default(false) else text | e }}</span></td>
+<td{{ ' class="g-none"' if stack and not text | trim else '' }} style="padding:{{ pad }};{{ cellbd }}vertical-align:top;">{{ lab }}<span style="display:inline-block;border-radius:999px;background:{{ pal[cst].bg }};border:1px solid {{ pal[cst].bd }};color:{{ pal[cst].fg }};font-weight:600;padding:1px 10px;">{{ text | report_cell_html if s.wrap | default(false) else text | e }}</span></td>
 {%- else %}
-<td style="padding:9px 12px;{{ cellbd }}vertical-align:top;color:{{ ink }};">{{ text | report_cell_html if s.wrap | default(false) else text | e }}</td>
+<td{{ ' class="g-none"' if stack and not text | trim else '' }} style="padding:{{ pad }};{{ cellbd }}vertical-align:top;color:{{ ink }};">{{ lab }}{{ text | report_cell_html if s.wrap | default(false) else text | e }}</td>
 {%- endif %}
 {%- endfor %}
 </tr>
