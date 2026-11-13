@@ -239,6 +239,31 @@ class Ago(unittest.TestCase):
         self.assertEqual(sf._run_ago("2026-10-05T00:00:00Z", now), "0 min ago")
 
 
+class TimeZone(unittest.TestCase):
+    """1.49.0: the strip's past runs in report_time_zone; without one, AAP's UTC time as before."""
+    def test_past_runs_in_the_zone(self):
+        runs = past(("successful", "ok", 1), ("successful", "ok", 2))
+        runs[0]["finished"] = "2026-07-01T22:30:12.5Z"
+        runs[1]["finished"] = "2026-11-13T04:37:00Z"
+        bars = sf.report_runs(runs, REPORT, zone="Europe/Berlin")
+        self.assertEqual([b["when"] for b in bars], ["2026-07-02 00:30 CEST", "2026-11-13 05:37 CET", "this run"])
+        self.assertTrue(bars[1]["text"].startswith("2026-11-13 05:37 CET - Deleted 2"))
+        for zone in ("", "UTC", "Mars/Olympus_Mons"):                    # none, or not known here: as before
+            self.assertEqual(sf.report_runs(runs, REPORT, zone=zone), sf.report_runs(runs, REPORT), zone)
+        self.assertEqual(sf.report_runs(runs, REPORT)[1]["when"], "2026-11-13 04:37")
+
+    def test_now_for_the_footer(self):
+        import datetime
+        now = datetime.datetime(2026, 11, 13, 4, 37, tzinfo=datetime.timezone.utc)
+        self.assertEqual(sf.report_time_now("Europe/Berlin", now), "2026-11-13 05:37 CET")
+        self.assertEqual(sf.report_time_now("Europe/Berlin", now.replace(month=7)), "2026-07-13 06:37 CEST")
+        self.assertEqual(sf.report_time_now("", now), "")                # no time zone: the caller's line as before
+        self.assertEqual(sf.report_time_now("UTC", now), "")
+        self.assertEqual(sf.report_time_now("Mars/Olympus_Mons", now), "2026-11-13 04:37 UTC")   # not known here: UTC
+        self.assertEqual(sf.report_time_local("2026-11-13 04:37 UTC", "Europe/Berlin"), "2026-11-13 05:37 CET")
+        self.assertEqual(sf.report_time_local("2026-11-13 04:37 UTC", ""), "2026-11-13 04:37 UTC")
+
+
 class PortalLook(unittest.TestCase):
     """roles/site_email/templates/report_portal.html.j2, rendered with plain Jinja and site_filters.report_cell_html."""
 

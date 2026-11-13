@@ -135,6 +135,11 @@ _spec = importlib.util.spec_from_file_location(
     "site_banner", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_banner.py"))
 _banner = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_banner)
+# the times a report shows, in report_time_zone (1.49.0), shared the same way (there: ansible.module_utils.site_time)
+_spec = importlib.util.spec_from_file_location(
+    "site_time", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_time.py"))
+_time = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_time)
 ACT_OFF = "ACT is off (site_act_enabled false)."
 
 
@@ -1863,6 +1868,20 @@ def _plain_number(v):
     return float(t) if "." in t else int(t)
 
 
+def report_time_now(zone, now=None):
+    """Now in report_time_zone, for a report's footer and "generated" line (1.49.0): 'Europe/Berlin' ->
+    '2026-11-13 05:37 CET'. '' for no time zone ("" or UTC: the caller then prints the time as before); a name not
+    known in this execution environment: UTC's, '2026-11-13 04:37 UTC'. now = a datetime with a time zone, for tests."""
+    tz, note = _time.zone(zone)
+    return _time.stamp(tz, now) if tz is not None or note else ""
+
+
+def report_time_local(text, zone):
+    """A time the report website stores ('2026-11-13 04:37 UTC') as report_time_zone shows it ('2026-11-13 05:37
+    CET'); as it is without a time zone, with one not known here, or when it is not such a time."""
+    return _time.local(text, _time.zone(zone)[0])
+
+
 def report_headline(report):
     """What the next runs keep of this report (the job artifact site_report_run, roles/site_email): its
     status, and its first summary value that is a plain number with that value's label."""
@@ -1892,13 +1911,15 @@ def _run_ago(finished, now):
     return "%d days ago" % (mins // (24 * 60))
 
 
-def report_runs(past, report, runs=14, height=36, now=None):
+def report_runs(past, report, runs=14, height=36, now=None, zone=""):
     """The strip of past runs at the top of a report: past (site_report_history's runs, oldest first) and this
     report, as at most runs bars, oldest first, this run last. Each: status (the report's, else how the job
     ended - one that failed is red), height in pixels (its headline number against the highest; 4 when it
     is 0; half when it is not known; all half when no run has a number), text (when, the number, the
     status), ago (how long ago it finished, '' for this run; now = a naive UTC datetime, for tests) and
-    current."""
+    current. zone (report_time_zone, 1.49.0): when in that time zone, '2026-10-21 08:01 CEST' - without one (or one
+    not known here) AAP's UTC time as before, '2026-10-21 06:01'."""
+    tz = _time.zone(zone)[0]
     runs = max(1, int(runs))
     bars = []
     for j in (past or [])[-(runs - 1):] if runs > 1 else []:
@@ -1909,7 +1930,7 @@ def report_runs(past, report, runs=14, height=36, now=None):
         st = rep.get("status") if rep.get("status") in _REPORT_STATUSES else _RUN_STATUS.get(job, "unknown")
         if job in ("failed", "error") and st in ("ok", "info"):
             st = "critical"
-        when = str(j.get("finished") or "")[:16].replace("T", " ")
+        when = _time.local(str(j.get("finished") or "")[:16].replace("T", " "), tz)
         bars.append({"status": st, "value": _plain_number(rep.get("value")), "label": str(rep.get("label") or ""),
                      "when": when or "job %s" % j.get("id"), "ago": _run_ago(j.get("finished"), now), "current": False})
     cur = report_headline(report)
@@ -2253,6 +2274,7 @@ class FilterModule(object):
                 "human_size": human_size, "name_matches": name_matches, "name_list": name_list,
                 "report_text": report_text, "report_notice": report_notice, "report_cards_html": report_cards_html, "report_cell_html": report_cell_html, "findings_report": findings_report,
                 "report_headline": report_headline, "report_runs": report_runs,
+                "report_time_now": report_time_now, "report_time_local": report_time_local,
                 "image_size": image_size, "email_recipients": email_recipients, "email_also_refused": email_also_refused,
                 "report_web_files": report_web_files, "site_web_win_error": site_web_win_error,
                 "report_page_unpack": report_page_unpack, "report_xlsx_sheets": report_xlsx_sheets}

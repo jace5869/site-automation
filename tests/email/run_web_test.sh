@@ -182,6 +182,27 @@ check "index.html: the brief look - a plain title and line, the counts as chips,
     && grep -q '<h1>Reports</h1><p class=\"say\">1 report &middot; last run ' \"\$i\" && grep -q '<div class=\"tally\"><span class=\"chip s-warning\">' \"\$i\" \
     && ! grep -q 'needs action' \"\$i\" && grep -q 'width=\"48\" height=\"64\"' \"\$i\" \
     && grep -q '<div class=\"grp a1\"><b>Certificates</b>' \"\$i\" && grep -q 'class=\"seg\" id=\"theme\"' \"\$i\" && ! grep -Eq '<link|src=\"https?:|@import' \"\$i\""
+# ---- report_time_zone (1.49.0): the website's times in it - the run above, written without one, too ---------------
+run "report_time_zone Europe/Berlin: a second run of the brief site" ok \
+    "{\"report_web_dest\": \"$work/brief\", \"report_web_theme\": \"brief\", \"report_time_zone\": \"Europe/Berlin\", \"awx_job_id\": 908, $lin}"
+check "index.html: both runs (the one from before too), last run and updated in CET or CEST, no UTC left" bash -c "i='$work/brief/index.html' \
+    && [ \"\$(grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2} CES?T</a>' \"\$i\" | wc -l)\" = 3 ] \
+    && grep -Eq 'last run [0-9-]{10} [0-9:]{5} CES?T' \"\$i\" && grep -Eq '<span>updated [0-9-]{10} [0-9:]{5} CES?T</span>' \"\$i\" \
+    && ! grep -Eq '[0-9]{2}:[0-9]{2} UTC' \"\$i\""
+check "index.json keeps UTC: generated, each line's when and its runs'" "$py" -c 'import json, re, sys
+j = json.load(open(sys.argv[1]))
+r = j["reports"][0]
+whens = [j["generated"], r["when"]] + [x["when"] for x in r["runs"]]
+assert len(whens) == 4 and all(re.match(r"^\d{4}-\d\d-\d\d \d\d:\d\d UTC$", w) for w in whens), whens
+assert [str(x["job"]) for x in r["runs"]] == ["908", "907"], r' "$work/brief/index.json"
+check "the page: its footer line in CET or CEST" bash -c "p=\"\$(ls '$work'/brief/linux-certificate-trust-report/*_job-908.html)\" \
+    && grep -Eq '[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2} CES?T\.' \"\$p\""
+run "report_time_zone not a time zone: UTC, said once, the job ok" ok \
+    "{\"report_web_dest\": \"$work/brief\", \"report_web_theme\": \"brief\", \"report_time_zone\": \"Mars/Olympus_Mons\", \"awx_job_id\": 909, $lin}" "Published: $work/brief/"
+check "the warning names it, once" bash -c "[ \"\$(tr -s '\n ' '  ' < '$work/out.txt' \
+    | grep -oF 'report_time_zone Mars/Olympus_Mons is not a time zone this execution environment knows' | wc -l)\" = 1 ]"
+check "index.html: UTC again, all 3 runs" bash -c "i='$work/brief/index.html' \
+    && [ \"\$(grep -oE '[0-9]{2}:[0-9]{2} UTC</a>' \"\$i\" | wc -l)\" = 4 ] && ! grep -Eq 'CES?T' \"\$i\""
 mkdir -p "$work/glass"
 run "the glass look: the page gets the blur, icons and a plain print" ok "{\"report_web_dest\": \"$work/glass\", \"report_web_theme\": \"glass\", $aapjob}"
 check "the logo inside it (at most 80 px tall), the blur, line icons, print, phone rules, no cid:" bash -c "p=\"\$(ls '$work'/glass/linux-certificate-trust-report/*_job-907.html)\" \
