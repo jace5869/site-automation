@@ -12,6 +12,7 @@ aap_email_question_playbooks:
   - aap_template_audit.yml
   - tenable_scan.yml
   - act_fix_approved.yml
+  - act_old_copies.yml
   - ad_health_report.yml
   - ad_lockout.yml
   - cert_report.yml

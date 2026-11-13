@@ -33,6 +33,11 @@
         name: site_findings
         tasks_from: os_guard.yml
 
+    - name: ACT | old copies on this host (ACT on or off; roles/site_act/tasks/old_copies.yml)
+      ansible.builtin.include_role:
+        name: site_act
+        tasks_from: old_copies.yml
+
     - name: The first job's results reached this job
       ansible.builtin.assert:
         that: act_triage is defined and act_triage is mapping

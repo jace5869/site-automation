@@ -159,6 +159,8 @@ class EveryCaller(unittest.TestCase):
                 continue
             if kind == "site_act" and detail in GUARDED:
                 continue                                  # site_act checks the switch itself
+            if kind == "site_act" and detail == "old_copies.yml":
+                continue                                  # asks no model: the old copies on the host, ACT on or off
             # env.yml then ACT run here, act_triage, ACT's playbooks: the file checks the switch before it asks
             if kind == "site_act" and detail == "env.yml" or kind in ("act_triage", "act_playbook"):
                 if kind == "act_playbook" and not SWITCH.search(" ".join(conds)):
@@ -168,6 +170,12 @@ class EveryCaller(unittest.TestCase):
                 continue
             bad.append("%s: site_act %s - not a way in this test knows" % (f, detail))
         self.assertEqual(bad, [], "\n".join(bad))
+
+    def test_old_copies_asks_no_model(self):
+        """roles/site_act/tasks/old_copies.yml runs ACT on or off (1.53.0): it never includes ACT, a key or a model call."""
+        s = text(os.path.join(SITE_ACT, "old_copies.yml"))
+        for word in ("name: act_triage", "include_tasks", "env.yml", "run.yml", "_KEY", "ansible.builtin.uri"):
+            self.assertNotIn(word, s)
 
     def test_act_triage_has_the_switch_in_its_when(self):
         """act_triage outside site_act: its when (or its block's) names the switch, or a fact set from it in the file."""

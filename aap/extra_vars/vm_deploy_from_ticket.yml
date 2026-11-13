@@ -551,7 +551,7 @@ report_email_to: approvers@yoursite.mil           # the approver reads the plan 
 #   - {tab: Windows, match: ["Windows*", "Active Directory*", "AD *", "ACT for Windows*"]}
 #   - {tab: Network and storage, match: ["Network*", "NetApp*", "ONTAP*", "Cisco UCS*", "UCS*"]}
 #   - {tab: Linux, match: ["Linux*", "Health check*", "Troubleshoot*", "Patch*", "Database*", "Service watch*", "POA&M*", "STIG*", "Evaluate-STIG*",
-#                          "Log analysis*", "fapolicyd*", "Apply approved*", "Mail relay*"]}
+#                          "Log analysis*", "fapolicyd*", "Apply approved*", "Mail relay*", "ACT - *"]}
 #   - {tab: ServiceNow and AAP, match: ["ServiceNow*", "AAP *", "Report website*"]}
 
 ## your own {names}, e.g. {site: "{{ site_code }}"} for "{site}/{template}/..."

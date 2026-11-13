@@ -19,6 +19,11 @@
         name: site_act
         tasks_from: env.yml
 
+    - name: ACT | old copies on this host (ACT on or off; roles/site_act/tasks/old_copies.yml)
+      ansible.builtin.include_role:
+        name: site_act
+        tasks_from: old_copies.yml
+
     # this job is ACT's own playbook: with ACT off nothing is read or asked, the job ends green (the job "fapolicyd"
     # reads the denials without ACT)
     - name: Fapolicyd denials | ACT is off (site_act_enabled false) - nothing read, nothing asked

@@ -1,0 +1,92 @@
+---
+# Old copies of ACT on this host (1.53.0), ACT on or off: each path of site_act_old_bins that is not missing and not a
+# link into /opt/act is linked to the installed ACT (site_act_old_bin: link, the old one kept in /opt/act/old first),
+# deleted (kept first) or only reported. root's and each /home user's saved genai.model is reported when it is not the
+# job's (site_act_fix_user_model: true rewrites that one key). Check mode changes nothing and says what it would do.
+# Once per host per run; never on Windows, network devices or the AAP side (a local connection); never fails the job.
+
+- name: ACT | old copies - the setting
+  ansible.builtin.assert:
+    that: site_act_old_bin in ['link', 'delete', 'report']
+    fail_msg: "site_act_old_bin is link, delete or report, not {{ site_act_old_bin }}"
+    quiet: true
+  run_once: true
+
+- name: ACT | old copies on this host (site_act_old_bins)
+  when:
+    - not (_site_act_old_done | default(false) | bool)
+    # local: the AAP side (the execution environment, or the controller in a test) - it has no ACT of this kind
+    - (ansible_connection | default('ssh')) not in ['local', 'winrm', 'psrp', 'network_cli', 'httpapi', 'netconf']
+    - (ansible_shell_type | default('sh')) not in ['powershell', 'cmd']
+  vars:
+    _old_dir: "{{ act_triage_dest_dir | default('/opt/act') }}"
+    _old_model: "{{ site_act_model or (site_act_models | default({})).genai | default('') }}"
+  block:
+    - name: ACT | old copies - what is there
+      site_act_old_copies:
+        paths: "{{ site_act_old_bins }}"
+        action: "{{ site_act_old_bin }}"
+        target: "{{ _old_dir }}/act"
+        backup_dir: "{{ _old_dir }}/old"
+        job_model: "{{ _old_model }}"
+        fix_user_model: "{{ site_act_fix_user_model | bool }}"
+        apply: false
+      become: true
+      check_mode: false                   # only looks
+      register: _site_act_old_seen
+      failed_when: false
+
+    - name: ACT | old copies - is the installed ACT to come first
+      ansible.builtin.set_fact:
+        _site_act_old_install: >-
+          {{ site_act_old_bin == 'link' and not (_site_act_old_seen.target_there | default(true) | bool)
+             and _site_act_old_seen.copies | default([]) | selectattr('kind', 'in', ['file', 'link'])
+                 | selectattr('why', 'match', '^the installed ACT') | list | length > 0 }}
+
+    # a copy to link, and ACT not installed here yet: the jobs' ACT first (as act_triage installs it), so the link works
+    - name: ACT | old copies - the install folder (as act_triage makes it)
+      ansible.builtin.file:
+        path: "{{ _old_dir }}"
+        state: directory
+        mode: "0755"
+      become: true
+      when: _site_act_old_install | bool
+
+    - name: ACT | old copies - the installed ACT, to link to
+      ansible.builtin.copy:
+        src: "{{ role_path }}/../../vendor/act/act"
+        dest: "{{ _old_dir }}/act"
+        mode: "0755"
+      become: true
+      when: _site_act_old_install | bool
+
+    - name: ACT | old copies - {{ site_act_old_bin }}
+      site_act_old_copies:
+        paths: "{{ site_act_old_bins }}"
+        action: "{{ site_act_old_bin }}"
+        target: "{{ _old_dir }}/act"
+        backup_dir: "{{ _old_dir }}/old"
+        job_model: "{{ _old_model }}"
+        fix_user_model: "{{ site_act_fix_user_model | bool }}"
+        installing: "{{ _site_act_old_install | bool }}"
+      become: true
+      register: _site_act_old
+      failed_when: false
+      when: _site_act_old_seen.copies | default([]) | rejectattr('action', 'equalto', 'none') | list | length > 0
+            or _site_act_old_seen.users | default([]) | rejectattr('state', 'equalto', 'ok') | list | length > 0
+
+    - name: ACT | old copies - for the report (once per host)
+      ansible.builtin.set_fact:
+        _site_act_old_done: true
+        site_act_old_copies:
+          lines: >-
+            {{ (_site_act_old.lines | default(_site_act_old_seen.lines | default([])))
+               if not (_site_act_old.failed | default(false) or _site_act_old_seen.failed | default(false))
+               else ['could not look for old copies of ACT: ' ~ (_site_act_old.msg | default(_site_act_old_seen.msg | default('')))] }}
+          changed: "{{ _site_act_old.changed | default(false) }}"
+          check: "{{ ansible_check_mode }}"
+
+    - name: ACT | old copies - what was found and done
+      ansible.builtin.debug:
+        msg: "{{ site_act_old_copies.lines }}"
+      when: site_act_old_copies.lines | length > 0

@@ -112,6 +112,7 @@ report_banner_html / report_banner_text / report_banner_subject
                    an HTML page or email with the banner at the top and bottom of its body; a plain-text report
                    with it as the first and last line; an email subject with "(TEXT) " before it.
 report_act_off     a report with "ACT is off (site_act_enabled false)." as its last section, when off.
+report_act_old     a report with the old copies of ACT the job found or changed on its hosts (1.53.0), as one section.
 """
 import base64
 import csv
@@ -141,6 +142,7 @@ _spec = importlib.util.spec_from_file_location(
 _time = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_time)
 ACT_OFF = "ACT is off (site_act_enabled false)."
+ACT_OLD = "ACT old copies"
 
 
 def from_csv(text, delimiter=","):
@@ -1810,6 +1812,19 @@ def report_act_off(report, off=False):
     return r
 
 
+def report_act_old(report, lines=None):
+    """The report with what roles/site_act/tasks/old_copies.yml found or did on each host ("web01: /usr/local/bin/act was
+    an old copy (ACT 0.4.2): linked to ...") as one section, last, once (roles/site_email); as it is with no lines."""
+    if not lines:
+        return report
+    r = dict(report or {})
+    sections = list(r.get("sections") or [])
+    if any(isinstance(s, dict) and s.get("title") == ACT_OLD for s in sections):
+        return r
+    r["sections"] = sections + [{"title": ACT_OLD, "status": "info", "lines": [str(x) for x in lines]}]
+    return r
+
+
 def report_text(report, footer="", runs=None):
     """A report (roles/site_email: title, subtitle, summary, sections with columns/rows or lines,
     footer) as plain text, tables in aligned columns. runs: the strip of past runs (report_runs), as one line."""
@@ -2262,6 +2277,7 @@ class FilterModule(object):
     def filters(self):
         return {"report_banner": report_banner, "report_banner_hosts": report_banner_hosts, "report_banner_html": report_banner_html, "report_banner_text": report_banner_text,
                 "report_banner_subject": report_banner_subject, "report_act_off": report_act_off,
+                "report_act_old": report_act_old,
                 "from_csv": from_csv, "days_until": days_until, "site_result": site_result,
                 "podman_discovery": podman_discovery, "podman_run_as": podman_run_as,
                 "watch_targets": watch_targets, "watch_fix_commands": watch_fix_commands,

@@ -105,6 +105,7 @@ jobs:
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_vmware_protect.py
           python tests/test_aap_ee.py
           python tests/test_report_db_setup.py
+          python tests/test_act_old_copies.py
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_aap_ee.py
           python tests/test_template_audit.py
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_template_audit.py
@@ -224,6 +225,13 @@ jobs:
         run: |
           bash tests/incident/run_incident_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/incident/run_incident_test.sh
+      - name: ACT old copies - an old act linked, kept, the saved model reported; UBI 9 and UBI 8 (Python 3.6) containers (current ansible-core and 2.16)
+        env:
+          ACT_TEST_COLLECTIONS: /home/runner/.ansible/collections
+        run: |
+          bash tests/galaxy_install.sh -r tests/patch/requirements.yml
+          bash tests/act/run_act_old_copies_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/act/run_act_old_copies_test.sh
       - name: Disk space report and the tmp cleanup - UBI 9 containers, web01's /tmp on a real filesystem (current ansible-core and 2.16)
         env:
           DISK_TEST_COLLECTIONS: /home/runner/.ansible/collections

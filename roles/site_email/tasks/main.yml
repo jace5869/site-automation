@@ -71,6 +71,7 @@
 
 # the banner (report_banner): the job's hosts - the play's, the Limit's and target's - say the enclave when site_enclave
 # is empty. ACT off (site_act_enabled false) in a job that would have asked it (a host has _site_act_off): one line.
+# The old copies of ACT the job found or changed (roles/site_act/tasks/old_copies.yml): a line each, "host: what".
 - name: Email | the classification banner (report_banner, site_enclave), and ACT off (site_act_enabled)
   ansible.builtin.set_fact:
     _banner: >-
@@ -84,6 +85,14 @@
       {{ not site_act_enabled | default(true) | bool
          and ((ansible_play_hosts_all + [inventory_hostname, 'localhost']) | unique | select('in', hostvars) | map('extract', hostvars)
               | map(attribute='_site_act_off', default=false) | map('bool') | select | list | length > 0) }}
+    _act_old: >-
+      {%- set out = [] -%}
+      {%- for h in (ansible_play_hosts_all + [inventory_hostname]) | unique | select('in', hostvars) | sort -%}
+      {%-   for line in (hostvars[h].site_act_old_copies | default({})).lines | default([]) -%}
+      {%-     set _ = out.append(h ~ ': ' ~ line) -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out }}
 
 - name: Email | the banner - {{ _banner.text if _banner.on else 'none' }} ({{ _banner.why }})
   ansible.builtin.debug:
@@ -101,7 +110,8 @@
       {{ (_report_web if _report_web | default({}, true) and _report is defined and report_web_theme | default('atlas') | string | trim | lower in ['atlas', 'brief']
           else _report if _report is defined else
           {'title': _report_subject | default('Report'), 'status': 'info',
-           'sections': [{'title': 'Report', 'lines': (_report_body | default('')).splitlines()}]}) | report_act_off(_act_off | bool) }}
+           'sections': [{'title': 'Report', 'lines': (_report_body | default('')).splitlines()}]}) | report_act_off(_act_off | bool)
+          | report_act_old(_act_old) }}
     _email_any: "{{ _email_to | length > 0 or (report_web_dest | default('') | string | trim | length > 0 and not _report_web_skip | default(false) | bool) }}"
     # set below when the website copy still failed (report_web_required: false); '' again for each report of a play
     _web_failed: ""
@@ -437,9 +447,11 @@
         cc: "{{ _email_cc }}"
         subject: "{{ _email_subject }}"
         body: >-
-          {{ (_report | report_notice(_email_notice) | report_act_off(_act_off | bool) | report_text(_email_footer ~ _email_web_line, _email_runs | default([]))
+          {{ (_report | report_notice(_email_notice) | report_act_off(_act_off | bool) | report_act_old(_act_old)
+              | report_text(_email_footer ~ _email_web_line, _email_runs | default([]))
               if _report is defined else
               ((_email_notice ~ '\n\n') if _email_notice else '') ~ _report_body ~ (('\n\nACT is off (site_act_enabled false).') if _act_off | bool else '')
+              ~ (('\n\nACT old copies:\n' ~ (_act_old | join('\n'))) if _act_old | length > 0 else '')
               ~ '\n\n--\n' ~ _email_footer ~ _email_web_line) | report_banner_text(_banner) }}
         html: "{{ lookup('ansible.builtin.template', _email_template) | report_banner_html(_banner) if _email_html | bool else omit }}"
         images: "{{ [{'cid': _email_logo_cid, 'path': _email_logo_file}] if _email_html | bool and _email_logo_cid else [] }}"

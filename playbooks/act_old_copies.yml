@@ -1,0 +1,81 @@
+---
+# ACT - find and replace old copies (1.53.0): the same look every job that can run ACT on a host does
+# (roles/site_act/tasks/old_copies.yml), on its own, across the fleet at once - no triage, no model asked.
+# An `act` someone put on a host by hand (/usr/local/bin/act) runs instead of the jobs' ACT (/opt/act/act) when a person
+# types act, with its own saved model. Each one found is linked to the jobs' ACT (the old one kept in /opt/act/old
+# first), deleted or only reported; a link into /opt/act is left alone. root's and each /home user's saved model is
+# reported when it is not the jobs'. ONE report of every host: emailed (report_email_to) and on the report website.
+#   target                   the hosts (default: all) - or a Limit of hosts
+#   site_act_old_bin         link (the default) | delete | report
+#   site_act_old_bins        where to look (default [/usr/local/bin/act])
+#   site_act_fix_user_model  true = a user's saved genai.model set to the jobs' model (a backup beside it)
+# Run it in Check first: it says what it would do and changes nothing. docs/ADDING_ACT.md, "Old copies of ACT".
+- name: Target check (stops with a clear message when target matches no host)
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: The target leaves at least one host to run on
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: target_check.yml
+      vars:
+        _target_pattern: "{{ target | default('all') }}"
+
+- name: ACT - find and replace old copies
+  hosts: "{{ target | default('all') }}"
+  gather_facts: false
+  become: true
+  pre_tasks:
+    - name: Linux hosts only (Windows servers have no ACT of this kind)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+
+    - name: A host that cannot be reached is listed and left out - the job is not failed for it (site_unreachable_fails)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: reach.yml
+  tasks:
+    - name: ACT | old copies on this host (ACT on or off; roles/site_act/tasks/old_copies.yml)
+      ansible.builtin.include_role:
+        name: site_act
+        tasks_from: old_copies.yml
+
+# on the hosts, once on the AAP side (run_once, delegated to localhost): a Limit of hosts needs no localhost
+- name: ACT - old copies, the report
+  hosts: "{{ target | default('all') }}"
+  gather_facts: false
+  tasks:
+    - name: ACT | old copies - email the report, publish it (report_email_to, report_web_dest)
+      ansible.builtin.include_role:
+        name: site_email
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+        _old_rows: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts_all | sort -%}
+          {%-   for line in (hostvars[h].site_act_old_copies | default({})).lines | default([]) -%}
+          {%-     set _ = out.append([h, line]) -%}
+          {%-   endfor -%}
+          {%- endfor -%}
+          {{ out }}
+        _old_clean: >-
+          {{ ansible_play_hosts | select('in', hostvars) | map('extract', hostvars)
+             | selectattr('site_act_old_copies', 'defined') | map(attribute='site_act_old_copies')
+             | rejectattr('lines') | list | length }}
+        _old_status: "{{ 'warning' if _old_rows | length > 0 else 'ok' }}"
+        _report: >-
+          {{ {'title': site_report_title | default('ACT old copies', true), 'status': _old_status,
+              'subtitle': ('Check: nothing was changed. ' if ansible_check_mode else '')
+                          ~ 'Old copies of ACT at ' ~ (site_act_old_bins | default(['/usr/local/bin/act']) | join(', '))
+                          ~ ', and the saved models of the users.',
+              'summary': [{'label': 'Hosts with something to say', 'value': _old_rows | map('first') | unique | list | length},
+                          {'label': 'Hosts with nothing old', 'value': _old_clean | int},
+                          {'label': 'Not reached', 'value': (ansible_play_hosts_all | length) - (ansible_play_hosts | length)}],
+              'sections': [{'title': 'ACT old copies', 'status': _old_status, 'columns': ['Host', 'What'], 'rows': _old_rows}]} }}
+      when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0

@@ -378,6 +378,62 @@ everything in one question. Each job has its own setting too: `vm_alarm_act_batc
 If a step fails, the message after `HTTP 400` is the gateway's reason: copy it exactly when you ask
 its owner for help, but remove the key and host names first.
 
+## Old copies of ACT
+
+The jobs install ACT at `/opt/act/act` and pass it their own model. An `act` put on a host by hand, such as
+`/usr/local/bin/act`, runs instead when a person types `act`. It also reads that person's saved model in
+`~/.config/act/config.json`.
+
+Since 1.53.0 every job that can run ACT on a host looks for old copies, with ACT on or off. That is the runbooks
+(`use_act`), Service watch, fapolicyd, fapolicyd denials and the two approved-fix jobs. Each host is looked at once
+per run.
+
+| What is at `/usr/local/bin/act` | What the job does |
+|---|---|
+| Nothing | nothing |
+| A link to `/opt/act/act`, or into `/opt/act` | nothing |
+| An old file, or a link elsewhere | `site_act_old_bin`: link (the default), delete or report |
+
+- **link** keeps the old one in `/opt/act/old` (0700, root) as `act.<UTC time>.<sha256, first 8>`. Then it links
+  `/usr/local/bin/act` to `/opt/act/act`. When ACT is not installed on the host yet, it installs it first.
+- **delete** keeps the old one the same way, then removes it.
+- **report** only says it.
+- A host whose `python3` is older than 3.8 is not linked: typing `act` would fail there. The job says so.
+- The job output and the report's *ACT old copies* section say what was found, with the old ACT version.
+- In Check the job changes nothing and says what it would do.
+
+**Saved models.** root's and each `/home` user's `~/.config/act/config.json` is read for `genai.model` only. The key
+is never read out, printed or copied. A saved model that is not the jobs' is reported:
+
+```text
+web01: user jdoe's saved model is gemini-4-argon: `act` uses it when typed; the jobs pass their own.
+```
+
+`site_act_fix_user_model: true` rewrites that one key to the jobs' model. A backup goes beside the file, and its mode
+and owner are kept.
+
+**Across the fleet at once:** the job *ACT - find and replace old copies* (`playbooks/act_old_copies.yml`) does the
+same look on its own, with one report. Run it as Check first.
+
+**Your own install playbook.** If it copies ACT to `/usr/local/bin/act`, make it link instead:
+
+```yaml
+- name: act on the PATH, the jobs' ACT
+  ansible.builtin.file:
+    src: /opt/act/act
+    dest: /usr/local/bin/act
+    state: link
+```
+
+A copy there would be an old copy at the next job, and the two would undo each other.
+
+Out of scope:
+
+- Jobs that run ACT only on the AAP side: the VMware alarms, capacity and right-sizing analyses, VM deploy and
+  *VM - ask a question*, ticket insights and the ticket review, the outage documents, the log analysis. The
+  execution environment has no `/usr/local/bin/act`.
+- The copy of ACT inside the VMware ask container.
+
 ## ACT for vCenter alarms (it runs on the AAP side)
 
 `VM - alarms ACT analysis` ([VMWARE.md](VMWARE.md), "Alarms") uses ACT differently from the
