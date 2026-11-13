@@ -54,15 +54,13 @@
 "columns": [
 "Team",
 "Incidents",
-"Open now",
-"Was",
+"Open now (was)",
 "Over 30 days",
 "Median fix",
 "Response met",
 "Resolution met",
 "Bare notes",
-"Change tasks closed",
-"Change tasks open",
+"Change tasks closed / open",
 "Top issue"
 ],
 "row_status": [
@@ -76,71 +74,61 @@
 [
 "Linux",
 25,
-2,
-1,
+"2 (1)",
 2,
 "1.5 h",
 "100.0%",
 "93.1%",
 "20%",
-10,
-1,
+"10 / 1",
 "Software / Operating system (24)"
 ],
 [
 "Network",
 62,
-8,
-2,
+"8 (2)",
 4,
 "4.0 h",
 "92.6%",
 "92.2%",
 "50%",
-10,
-5,
+"10 / 5",
 "Network / VPN (40)"
 ],
 [
 "Service Desk",
 339,
-41,
-14,
+"41 (14)",
 23,
 "1.6 h",
 "91.5%",
 "94.2%",
 "42%",
-2,
-0,
+"2 / 0",
 "Account / Password (103)"
 ],
 [
 "VDI",
 80,
-5,
-2,
+"5 (2)",
 3,
 "3.5 h",
 "90.3%",
 "90.2%",
 "54%",
-12,
-1,
+"12 / 1",
 "Software / VDI (77)"
 ],
 [
 "Windows",
 182,
-24,
-2,
+"24 (2)",
 11,
 "2.8 h",
 "88.6%",
 "88.9%",
 "43%",
-4,
-1,
+"4 / 1",
 "Hardware / Smart card (41)"
 ]
 ],
@@ -268,7 +256,7 @@
 "Median to resolve",
 "Response met",
 "Resolution met",
-"No SLO"
+"No SLA"
 ],
 "rows": [
 [
@@ -314,6 +302,111 @@
 ],
 "text": "Met or missed: ServiceNow's SLAs (task_sla).",
 "title": "By priority"
+},
+{
+"columns": [
+"Tier",
+"Incidents",
+"Requests",
+"Open now",
+"Median to resolve",
+"Response met",
+"Resolution met",
+"No SLA"
+],
+"rows": [
+[
+"Tier 1",
+0,
+0,
+0,
+"\u2014",
+"\u2014",
+"\u2014",
+0
+],
+[
+"VIP",
+0,
+0,
+0,
+"\u2014",
+"\u2014",
+"\u2014",
+0
+],
+[
+"Not VIP",
+688,
+345,
+80,
+"5.8 h",
+"91.0%",
+"92.1%",
+84
+]
+],
+"text": "Opened in the window, by the VIP tier of who they were raised for. Fewer than 5 tickets: counts only. The VIP tiers were not read: GET api/now/table/sys_user: HTTP 403 Forbidden - the account needs read on sys_user. Every ticket counts as Not VIP.",
+"title": "VIP tickets"
+},
+{
+"columns": [
+"Unit",
+"Tier 1",
+"VIP",
+"Open now",
+"Response met",
+"Resolution met",
+"Median to resolve"
+],
+"rows": [
+[
+"Linux",
+0,
+0,
+0,
+"\u2014",
+"\u2014",
+"\u2014"
+],
+[
+"Network",
+0,
+0,
+0,
+"\u2014",
+"\u2014",
+"\u2014"
+],
+[
+"Service Desk",
+0,
+0,
+0,
+"\u2014",
+"\u2014",
+"\u2014"
+],
+[
+"VDI",
+0,
+0,
+0,
+"\u2014",
+"\u2014",
+"\u2014"
+],
+[
+"Windows",
+0,
+0,
+0,
+"\u2014",
+"\u2014",
+"\u2014"
+]
+],
+"title": "VIP tickets by unit"
 },
 {
 "columns": [
@@ -1067,6 +1160,12 @@
 {
 "label": "Close notes that say what was done",
 "value": "47%"
+},
+{
+"label": "Satisfaction",
+"note": "Good \u00b7 Service desk survey \u00b7 Overall satisfaction \u00b7 72 answers",
+"status": "ok",
+"value": "4.36 of 5"
 }
 ],
 "title": "Ticket insights for All assignment groups: 688 incidents, 345 requests, top issue Account / Password (112), backlog 80 (\u25b2 281.0%)"

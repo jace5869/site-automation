@@ -158,6 +158,8 @@ if [ -n "$eml" ] && "$py" - "$eml" <<'EOPY'
 import email, email.policy, re, sys
 m = email.message_from_binary_file(open(sys.argv[1], "rb"), policy=email.policy.default)
 h = m.get_body(preferencelist=("html",)).get_content()
+h = re.sub(r'<span class="(?:sa|g)-lab"[^>]*>[^<]*</span>', "", h)         # 1.55.0's column labels and long-word
+h = re.sub(r'<span class="(?:sa|g)-brk">([^<]*)</span>', r"\1", h)         # spans: a cell reads as before
 ok = (re.search(r'bgcolor="#b45309"[^>]*>expires within 30 days<', h)          # the TLS port, 20 days
       and re.search(r'bgcolor="#1d4ed8"[^>]*>expires within 60 days<', h)       # the JKS, 45 days
       and ">Found but not checked" in h and "locked.p12" in h and "needs its password" in h

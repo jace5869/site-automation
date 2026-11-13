@@ -1,14 +1,6 @@
 {
 "sections": [
 {
-"lines": [
-"3 user(s) with two containers of one kind - FSLogix uses one; the other is space, or a lost profile",
-"1 folder(s) or container(s) outside the expected naming - FSLogix will not find them"
-],
-"status": "warning",
-"title": "Problems"
-},
-{
 "columns": [
 "Share",
 "Containers",
@@ -24,12 +16,12 @@
 "rows": [
 [
 "\\\\fs.example.mil\\profiles",
-10,
-"10 MB",
+40000,
+"3906.2 GB",
 "500.0 GB",
 "50.0%",
-"9.8 GB",
-"ok"
+"35156.2 GB",
+"the containers could still grow by 35156.2 GB, more than is free"
 ]
 ],
 "text": "Free space as the file server reports it. Could still grow: what the containers may take before each reaches its cap.",
@@ -62,63 +54,8 @@
 "File",
 "Why"
 ],
-"rows": [
-[
-"asmith",
-"S-1-5-21-1-2-3-1002",
-"profile",
-"1 MB",
-"2026-09-20 14:13 UTC",
-"S-1-5-21-1-2-3-1002_asmith\\Profile_asmith.vhdx",
-"another profile container for asmith: S-1-5-21-1-2-3-1777_asmith\\Profile_asmith.vhdx - another SID: the account may have been made again"
-],
-[
-"asmith",
-"S-1-5-21-1-2-3-1777",
-"profile",
-"1 MB",
-"2026-09-20 14:13 UTC",
-"S-1-5-21-1-2-3-1777_asmith\\Profile_asmith.vhdx",
-"another profile container for asmith: S-1-5-21-1-2-3-1002_asmith\\Profile_asmith.vhdx - another SID: the account may have been made again"
-],
-[
-"eve",
-"S-1-5-21-1-2-3-1008",
-"profile",
-"1 MB",
-"2026-09-20 14:13 UTC",
-"S-1-5-21-1-2-3-1008_eve\\Profile_eve.vhd",
-"another profile container for eve: S-1-5-21-1-2-3-1008_eve\\Profile_eve.vhdx - in the same folder (.vhd and .vhdx?)"
-],
-[
-"eve",
-"S-1-5-21-1-2-3-1008",
-"profile",
-"1 MB",
-"2026-09-20 14:13 UTC",
-"S-1-5-21-1-2-3-1008_eve\\Profile_eve.vhdx",
-"another profile container for eve: S-1-5-21-1-2-3-1008_eve\\Profile_eve.vhd - in the same folder (.vhd and .vhdx?)"
-],
-[
-"jdoe",
-"S-1-5-21-1-2-3-1001",
-"profile",
-"1 MB",
-"2026-09-20 14:13 UTC",
-"S-1-5-21-1-2-3-1001_jdoe\\Profile_jdoe.vhdx",
-"another profile container for jdoe: jdoe_S-1-5-21-1-2-3-1001\\Profile_jdoe.vhdx"
-],
-[
-"jdoe",
-"S-1-5-21-1-2-3-1001",
-"profile",
-"1 MB",
-"2026-09-20 14:13 UTC",
-"jdoe_S-1-5-21-1-2-3-1001\\Profile_jdoe.vhdx",
-"another profile container for jdoe: S-1-5-21-1-2-3-1001_jdoe\\Profile_jdoe.vhdx"
-]
-],
-"status": "warning",
+"rows": [],
+"status": "ok",
 "text": "Two folders for one SID or one name (FlipFlopProfileDirectoryName changed, an account made again), or a .vhd and a .vhdx in one folder. FSLogix uses one; the newest is usually the one in use.",
 "title": "Two containers for one user"
 },
@@ -128,14 +65,8 @@
 "Folder",
 "Why"
 ],
-"rows": [
-[
-"folder",
-"jdoe_S-1-5-21-1-2-3-1001",
-"the folder's name is not %sid%_%username% - it is %username%_%sid% (FlipFlopProfileDirectoryName): FSLogix set as now will not find it"
-]
-],
-"status": "warning",
+"rows": [],
+"status": "ok",
 "text": "Folders: %sid%_%username%. Containers: Profile_%username% or ODFC_%username% (.vhd or .vhdx), and the documented differencing disks.",
 "title": "Outside the expected naming"
 },
@@ -184,116 +115,216 @@
 ],
 "rows": [
 [
-"jdoe",
-"S-1-5-21-1-2-3-1001",
+"svc_x0",
+"S-1-5-21-1-2-3-0",
 "profile",
-"1 MB",
-"0.1%",
+"100 MB",
+"10.0%",
 "2026-09-20 14:13 UTC",
 "",
-"S-1-5-21-1-2-3-1001_jdoe\\Profile_jdoe.vhdx"
+"S-1-5-21-1-2-3-0_svc_x0\\Profile_svc_x0.vhdx"
 ],
 [
-"jdoe",
-"S-1-5-21-1-2-3-1001",
-"profile",
-"1 MB",
-"0.1%",
-"2026-09-20 14:13 UTC",
-"",
-"jdoe_S-1-5-21-1-2-3-1001\\Profile_jdoe.vhdx"
-],
-[
-"asmith",
-"S-1-5-21-1-2-3-1777",
-"profile",
-"1 MB",
-"0.1%",
-"2026-09-20 14:13 UTC",
-"",
-"S-1-5-21-1-2-3-1777_asmith\\Profile_asmith.vhdx"
-],
-[
-"asmith",
-"S-1-5-21-1-2-3-1002",
-"profile",
-"1 MB",
-"0.1%",
-"2026-09-20 14:13 UTC",
-"",
-"S-1-5-21-1-2-3-1002_asmith\\Profile_asmith.vhdx"
-],
-[
-"eve",
-"S-1-5-21-1-2-3-1008",
-"profile",
-"1 MB",
-"0.1%",
-"2026-09-20 14:13 UTC",
-"",
-"S-1-5-21-1-2-3-1008_eve\\Profile_eve.vhd"
-],
-[
-"eve",
-"S-1-5-21-1-2-3-1008",
-"profile",
-"1 MB",
-"0.1%",
-"2026-09-20 14:13 UTC",
-"",
-"S-1-5-21-1-2-3-1008_eve\\Profile_eve.vhdx"
-],
-[
-"fay",
-"S-1-5-21-1-2-3-1009",
-"profile",
-"1 MB",
-"0.1%",
-"2026-09-20 14:13 UTC",
-"",
-"S-1-5-21-1-2-3-1009_fay\\Profile_fay.vhdx"
-],
-[
-"fay",
-"S-1-5-21-1-2-3-1009",
+"svc_x0",
+"S-1-5-21-1-2-3-0",
 "odfc",
-"1 MB",
-"0.1%",
+"100 MB",
+"10.0%",
 "2026-09-20 14:13 UTC",
 "",
-"S-1-5-21-1-2-3-1009_fay\\ODFC_fay.vhdx"
+"S-1-5-21-1-2-3-0_svc_x0\\ODFC_svc_x0.vhdx"
 ],
 [
-"fay",
-"S-1-5-21-1-2-3-1009",
-"odfc session",
-"1 MB",
-"0.1%",
+"svc_x1",
+"S-1-5-21-1-2-3-1",
+"profile",
+"100 MB",
+"10.0%",
 "2026-09-20 14:13 UTC",
 "",
-"S-1-5-21-1-2-3-1009_fay\\ODFC-fay-SESSION-0.vhdx"
+"S-1-5-21-1-2-3-1_svc_x1\\Profile_svc_x1.vhdx"
 ],
 [
-"fay",
-"S-1-5-21-1-2-3-1009",
-"odfc session",
-"1 MB",
-"0.1%",
+"svc_x1",
+"S-1-5-21-1-2-3-1",
+"odfc",
+"100 MB",
+"10.0%",
 "2026-09-20 14:13 UTC",
 "",
-"S-1-5-21-1-2-3-1009_fay\\ODFC-fay-SESSION-1.vhdx"
+"S-1-5-21-1-2-3-1_svc_x1\\ODFC_svc_x1.vhdx"
+],
+[
+"svc_x2",
+"S-1-5-21-1-2-3-2",
+"profile",
+"100 MB",
+"10.0%",
+"2026-09-20 14:13 UTC",
+"",
+"S-1-5-21-1-2-3-2_svc_x2\\Profile_svc_x2.vhdx"
+],
+[
+"svc_x2",
+"S-1-5-21-1-2-3-2",
+"odfc",
+"100 MB",
+"10.0%",
+"2026-09-20 14:13 UTC",
+"",
+"S-1-5-21-1-2-3-2_svc_x2\\ODFC_svc_x2.vhdx"
+],
+[
+"svc_x3",
+"S-1-5-21-1-2-3-3",
+"profile",
+"100 MB",
+"10.0%",
+"2026-09-20 14:13 UTC",
+"",
+"S-1-5-21-1-2-3-3_svc_x3\\Profile_svc_x3.vhdx"
+],
+[
+"svc_x3",
+"S-1-5-21-1-2-3-3",
+"odfc",
+"100 MB",
+"10.0%",
+"2026-09-20 14:13 UTC",
+"",
+"S-1-5-21-1-2-3-3_svc_x3\\ODFC_svc_x3.vhdx"
+],
+[
+"svc_x4",
+"S-1-5-21-1-2-3-4",
+"profile",
+"100 MB",
+"10.0%",
+"2026-09-20 14:13 UTC",
+"",
+"S-1-5-21-1-2-3-4_svc_x4\\Profile_svc_x4.vhdx"
+],
+[
+"svc_x4",
+"S-1-5-21-1-2-3-4",
+"odfc",
+"100 MB",
+"10.0%",
+"2026-09-20 14:13 UTC",
+"",
+"S-1-5-21-1-2-3-4_svc_x4\\ODFC_svc_x4.vhdx"
+],
+[
+"svc_x5",
+"S-1-5-21-1-2-3-5",
+"profile",
+"100 MB",
+"10.0%",
+"2026-09-20 14:13 UTC",
+"",
+"S-1-5-21-1-2-3-5_svc_x5\\Profile_svc_x5.vhdx"
+],
+[
+"svc_x5",
+"S-1-5-21-1-2-3-5",
+"odfc",
+"100 MB",
+"10.0%",
+"2026-09-20 14:13 UTC",
+"",
+"S-1-5-21-1-2-3-5_svc_x5\\ODFC_svc_x5.vhdx"
+],
+[
+"svc_x6",
+"S-1-5-21-1-2-3-6",
+"profile",
+"100 MB",
+"10.0%",
+"2026-09-20 14:13 UTC",
+"",
+"S-1-5-21-1-2-3-6_svc_x6\\Profile_svc_x6.vhdx"
+],
+[
+"svc_x6",
+"S-1-5-21-1-2-3-6",
+"odfc",
+"100 MB",
+"10.0%",
+"2026-09-20 14:13 UTC",
+"",
+"S-1-5-21-1-2-3-6_svc_x6\\ODFC_svc_x6.vhdx"
+],
+[
+"svc_x7",
+"S-1-5-21-1-2-3-7",
+"profile",
+"100 MB",
+"10.0%",
+"2026-09-20 14:13 UTC",
+"",
+"S-1-5-21-1-2-3-7_svc_x7\\Profile_svc_x7.vhdx"
+],
+[
+"svc_x7",
+"S-1-5-21-1-2-3-7",
+"odfc",
+"100 MB",
+"10.0%",
+"2026-09-20 14:13 UTC",
+"",
+"S-1-5-21-1-2-3-7_svc_x7\\ODFC_svc_x7.vhdx"
+],
+[
+"svc_x8",
+"S-1-5-21-1-2-3-8",
+"profile",
+"100 MB",
+"10.0%",
+"2026-09-20 14:13 UTC",
+"",
+"S-1-5-21-1-2-3-8_svc_x8\\Profile_svc_x8.vhdx"
+],
+[
+"svc_x8",
+"S-1-5-21-1-2-3-8",
+"odfc",
+"100 MB",
+"10.0%",
+"2026-09-20 14:13 UTC",
+"",
+"S-1-5-21-1-2-3-8_svc_x8\\ODFC_svc_x8.vhdx"
+],
+[
+"svc_x9",
+"S-1-5-21-1-2-3-9",
+"profile",
+"100 MB",
+"10.0%",
+"2026-09-20 14:13 UTC",
+"",
+"S-1-5-21-1-2-3-9_svc_x9\\Profile_svc_x9.vhdx"
+],
+[
+"svc_x9",
+"S-1-5-21-1-2-3-9",
+"odfc",
+"100 MB",
+"10.0%",
+"2026-09-20 14:13 UTC",
+"",
+"S-1-5-21-1-2-3-9_svc_x9\\ODFC_svc_x9.vhdx"
 ]
 ],
 "text": "In use: yes = a differencing disk written lately (Microsoft documents RW.VHDX and %computername%_ODFC.VHDX next to the container while it is used); likely = the container or its lock file written in the last 30 minutes (an inference).",
 "title": "Largest containers"
 }
 ],
-"status": "warning",
-"subtitle": "10 container(s) of 4 user(s) in 6 folder(s) on 1 share(s); read from directory listings only - no container opened",
+"status": "ok",
+"subtitle": "40000 container(s) of 20000 user(s) in 20000 folder(s) on 1 share(s); read from directory listings only - no container opened",
 "summary": [
 {
 "label": "Containers",
-"value": 10
+"value": 40000
 },
 {
 "label": "Over the cap",
@@ -307,13 +338,13 @@
 },
 {
 "label": "Two for one user",
-"status": "warning",
-"value": 3
+"status": "ok",
+"value": 0
 },
 {
 "label": "Naming",
-"status": "warning",
-"value": 1
+"status": "ok",
+"value": 0
 },
 {
 "label": "Stale",
@@ -330,5 +361,5 @@
 "value": 0
 }
 ],
-"title": "Horizon FSLogix profiles: 10 container(s), all within limits"
+"title": "Horizon FSLogix profiles: 40000 container(s), all within limits"
 }

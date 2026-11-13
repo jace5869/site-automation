@@ -206,13 +206,26 @@ the hosts that did not report. The ServiceNow weekly activity report has none: i
   least 4.5:1 against what is behind it). The inbox shows the subtitle and the warning and critical
   numbers as the line under the subject; with the report website (`report_web_dest`) the email ends with
   an **Open the full report** button. On a phone the tiles go two by two, and a table of up to 8 columns
-  scrolls sideways in its card. A table of 9 columns or more becomes one block per row under 861 px, its
-  cells as *LABEL value* pairs (1.46.0). A table of 11 columns or more has tighter cells, so it fits a 1280
-  px window; classic Outlook shows the table as it is.
+  scrolls sideways in its card.
   Mail programs that draw transparency, rounded corners and shadows show the glass; the others (classic
   desktop Outlook) show the same layout with solid white cards and square corners. On the report website
   (`report_web_theme: glass`) the page adds what a browser draws and a mail program does not: the blur behind
   the cards, line icons, and a plain print.
+
+**Wide tables in a narrow window (1.55.0; glass since 1.46.0).** Every look fits a 1280 px and an 800 px window.
+Below 861 px a wide table changes so the email does not scroll sideways:
+
+- A table of 9 columns or more becomes one block per row, each cell a *LABEL value* pair. An empty cell is left out.
+  The labels cannot be selected, so a copied cell is its value alone.
+- A table with a word of 25 characters or more (a path, a host name) breaks that word at the edge. In glass a table
+  of 7 or 8 columns is also snug: headings without letter spacing, less padding.
+- In glass a table of 9 columns or more with such a word stacks at every width, so it fits the card. The break is
+  CSS only: a copied name is the name as it is.
+- A table of 11 columns or more has tighter cells at every width.
+
+These rules are a `<style>` block that an email gets only when one of its tables needs it. Classic desktop Outlook
+ignores the block and the hidden labels (`mso-hide:all`), so it shows the table as before, wider than the window when
+it must be. A mail program that drops the block shows the table as before too.
 
 The report website has a look of its own, **atlas** - its default since 0.43.0: light and dark with a switch,
 status chips with check marks, tables that sort and filter ([WEB_REPORTS.md](WEB_REPORTS.md), "The look") - or,

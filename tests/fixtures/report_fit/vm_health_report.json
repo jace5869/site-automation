@@ -717,7 +717,7 @@
 ]
 ],
 "status": "critical",
-"text": "Every host, by datacenter and cluster. Hardware: the sensors and hardware status that are not green. Clock: the host's clock against vCenter's (+ ahead, - behind; ? = vCenter would not say) - the host writes its own logs by it.",
+"text": "Every host, by datacenter and cluster. Hardware: the sensors and hardware status that are not green. Clock: the host's clock against vCenter's (+ ahead, - behind; ? = vCenter would not say; not read = no answer in time) - the host writes its own logs by it.",
 "title": "Hosts"
 },
 {

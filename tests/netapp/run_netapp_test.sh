@@ -62,9 +62,11 @@ run "the report: every kind of problem found, coloured, three clusters (one refu
        "lun_unmapped" "lun_off" "cluster1.example.mil" "Clock vs AAP" "reduced detail - ONTAP refused a field" '"ontap_health"' "emailed"
 eml="$(ls "$work/mail"/*.eml 2>/dev/null | head -1)"
 html="$work/mail.html"
-[ -n "$eml" ] && "$py" -c 'import email, email.policy, sys
+# the html without 1.55.0's column labels and long-word spans, so a cell reads as before
+[ -n "$eml" ] && "$py" -c 'import email, email.policy, re, sys
 m = email.message_from_binary_file(open(sys.argv[1], "rb"), policy=email.policy.default)
-open(sys.argv[2], "w").write(m.get_body(preferencelist=("html",)).get_content())
+h = re.sub(r"<span class=\"(?:sa|g)-lab\"[^>]*>[^<]*</span>", "", m.get_body(preferencelist=("html",)).get_content())
+open(sys.argv[2], "w").write(re.sub(r"<span class=\"(?:sa|g)-brk\">([^<]*)</span>", r"\1", h))
 print(m["Subject"])' "$eml" "$html" > "$work/subject.txt"
 if [ -n "$eml" ] && grep -q "^\[AAP\] NetApp ONTAP health report: .* critical, .* warning on 3 cluster(s)" "$work/subject.txt" \
    && grep -q 'bgcolor="#b91c1c"[^>]*>DOWN<' "$html" && grep -q 'bgcolor="#15803d"[^>]*>UP<' "$html" \

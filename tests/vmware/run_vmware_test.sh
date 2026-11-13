@@ -548,11 +548,13 @@ run "secure boot report emailed (and still sent when the job is marked failed)" 
 eml="$(ls "$work/mail"/*.eml 2>/dev/null | head -1)"
 # the body as a mail client shows it (decoded), one line per line
 body="$work/body.txt"
-getpart() {  # getpart plain|html EML
-    "$py" -c 'import email, email.policy, sys
+getpart() {  # getpart plain|html EML; html without 1.55.0's column labels and long-word spans, so a cell reads as before
+    "$py" -c 'import email, email.policy, re, sys
 m = email.message_from_binary_file(open(sys.argv[2], "rb"), policy=email.policy.default)
 b = m.get_body(preferencelist=(sys.argv[1],))
-print(b.get_content() if b is not None and b.get_content_subtype() == sys.argv[1] else "")' "$1" "$2"
+t = b.get_content() if b is not None and b.get_content_subtype() == sys.argv[1] else ""
+t = re.sub(r"<span class=\"(?:sa|g)-lab\"[^>]*>[^<]*</span>", "", t)
+print(re.sub(r"<span class=\"(?:sa|g)-brk\">([^<]*)</span>", r"\1", t))' "$1" "$2"
 }
 [ -n "$eml" ] && getpart plain "$eml" > "$body" && getpart html "$eml" > "$work/body.html"
 if [ -n "$eml" ] && grep -q "Subject: \[AAP\] VMware secure boot report: 6 VM(s) to fix" "$eml" \

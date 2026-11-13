@@ -83,6 +83,28 @@
 {%- macro gap(h) -%}
 <tr><td height="{{ h }}" style="height:{{ h }}px;line-height:{{ h }}px;font-size:0;mso-line-height-rule:exactly;">&nbsp;</td></tr>
 {%- endmacro -%}
+{#- 1.55.0: in a window under 861 px a table of 7 or 8 columns, or one under 9 with a word of 25 characters or more,
+    is snug: its headings without letter spacing, less padding, a long word broken (9 columns or more stack, 1.46.0).
+    A table of 9 columns or more with such a word stacks at every width (g-wst): as a table it would not fit the 900 px
+    card. The rules come only when a table needs them, so any other email is as before; classic Outlook ignores them.
+    fit.k: one letter per section - S stacks, W stacks at every width, L snug, - neither. -#}
+{%- set fit = namespace(k='') -%}
+{%- for s in r.sections | default([]) -%}
+{%- set f = namespace(long=false) -%}
+{%- if s.columns is defined and s.rows | default([]) -%}
+{%- for row in s.rows if not f.long -%}{%- for cell in row if not f.long -%}
+{%- if (('' if cell is none else cell) | string).split() | map('length') | max | default(0) >= 25 %}{% set f.long = true %}{% endif -%}
+{%- endfor -%}{%- endfor -%}
+{%- endif -%}
+{%- set fit.k = fit.k ~ (('W' if f.long else 'S') if s.columns is defined and s.rows | default([]) and s.columns | length >= 9 else ('L' if f.long or (s.columns is defined and s.rows | default([]) and s.columns | length >= 7) else '-')) -%}
+{%- endfor -%}
+{#- 1.55.0: in a table that breaks long words (fit.k L or W), each word of 25 characters or more in a span that may
+    break below 861 px (a W table's cells break anyway); shorter words keep their width. A span, never a character: a copied cell is its text. -#}
+{%- macro brk(v) -%}
+{%- for w in (('' if v is none else v) | string).split(' ') -%}
+{{ ' ' if not loop.first else '' }}{% if w | length >= 25 %}<span class="g-brk">{{ w | e }}</span>{% else %}{{ w | e }}{% endif %}
+{%- endfor -%}
+{%- endmacro -%}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -121,6 +143,26 @@
   .g-stack .g-lab{display:inline !important;}
 }
 </style>
+{%- if 'L' in fit.k or 'W' in fit.k %}
+<style>
+{%- if 'W' in fit.k %}
+.g-wst,.g-wst>tbody,.g-wst tr{display:block !important;width:auto !important;}
+.g-wst tr{padding:8px 10px 4px 10px !important;border-bottom:1px solid #edf2f6;}
+.g-wst tr:last-child{border-bottom:0;}
+.g-wst tr.g-head{display:none !important;}
+.g-wst td{display:inline-block !important;padding:0 16px 6px 0 !important;border:0 !important;white-space:normal !important;overflow-wrap:anywhere;max-width:100%;box-sizing:border-box;}
+.g-wst td.g-none{display:none !important;}
+.g-wst .g-lab{display:inline !important;}
+{%- endif %}
+{%- if 'L' in fit.k %}
+@media (max-width:860px){
+  .g-long th{letter-spacing:0 !important;padding-left:6px !important;padding-right:6px !important;}
+  .g-long td{padding-left:6px !important;padding-right:6px !important;}
+  .g-brk{overflow-wrap:anywhere;}
+}
+{%- endif %}
+</style>
+{%- endif %}
 {%- if web %}
 <style>
 {#- the web copy only: the blur needs something behind the cards - soft coloured shapes, fixed to the window; a plain print #}
@@ -274,8 +316,9 @@ body>table:first-of-type{position:relative;z-index:1;background:transparent !imp
 <table role="presentation" class="g-paper" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="width:100%;{{ paper }}"><tr><td style="padding:2px 4px;">
 {#- 1.46.0: 9 columns or more stack in a narrow window (above); 11 or more a tighter padding, so the widest fit a 1280 px window #}
 {%- set stack = s.columns | length >= 9 %}
+{%- set gk = fit.k[loop.index0] %}
 {%- set pad = '9px 7px' if s.columns | length >= 11 else '9px 12px' %}
-<table width="100%" cellpadding="0" cellspacing="0" border="0"{{ ' class="g-stack"' if stack else '' }} style="border-collapse:collapse;font-size:14px;">
+<table width="100%" cellpadding="0" cellspacing="0" border="0"{{ (' class="g-stack g-wst"' if gk == 'W' else ' class="g-stack"') if stack else (' class="g-long"' if gk == 'L' else '') }} style="border-collapse:collapse;font-size:14px;">
 <tr{{ ' class="g-head"' if stack else '' }}>
 {%- for c in s.columns %}
 <th align="left" style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:{{ label }};padding:{{ '10px 7px' if s.columns | length >= 11 else '10px 12px' }};border-bottom:1px solid {{ line }};">{{ c | e }}</th>
@@ -294,11 +337,11 @@ body>table:first-of-type{position:relative;z-index:1;background:transparent !imp
 {%- set cst = cs[loop.index0] if cs | length > loop.index0 else '' %}
 {%- set text = ('' if cell is none else cell) | string %}
 {%- set cellbd = '' if last else 'border-bottom:1px solid #edf2f6;' %}
-{%- set lab = ('<span class="g-lab" style="display:none;mso-hide:all;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:' ~ label ~ ';">' ~ (s.columns[loop.index0] if s.columns | length > loop.index0 else '') | e ~ '&nbsp;</span>') if stack else '' %}
+{%- set lab = ('<span class="g-lab" style="display:none;mso-hide:all;-webkit-user-select:none;user-select:none;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:' ~ label ~ ';">' ~ (s.columns[loop.index0] if s.columns | length > loop.index0 else '') | e ~ '&nbsp;</span>') if stack else '' %}
 {%- if cst and cst in pal %}
-<td{{ ' class="g-none"' if stack and not text | trim else '' }} style="padding:{{ pad }};{{ cellbd }}vertical-align:top;">{{ lab }}<span style="display:inline-block;border-radius:999px;background:{{ pal[cst].bg }};border:1px solid {{ pal[cst].bd }};color:{{ pal[cst].fg }};font-weight:600;padding:1px 10px;">{{ text | report_cell_html if s.wrap | default(false) else text | e }}</span></td>
+<td{{ ' class="g-none"' if stack and not text | trim else '' }} style="padding:{{ pad }};{{ cellbd }}vertical-align:top;">{{ lab }}<span style="display:inline-block;border-radius:999px;background:{{ pal[cst].bg }};border:1px solid {{ pal[cst].bd }};color:{{ pal[cst].fg }};font-weight:600;padding:1px 10px;">{{ text | report_cell_html if s.wrap | default(false) else (brk(text) if gk in 'LW' else text | e) }}</span></td>
 {%- else %}
-<td{{ ' class="g-none"' if stack and not text | trim else '' }} style="padding:{{ pad }};{{ cellbd }}vertical-align:top;color:{{ ink }};">{{ lab }}{{ text | report_cell_html if s.wrap | default(false) else text | e }}</td>
+<td{{ ' class="g-none"' if stack and not text | trim else '' }} style="padding:{{ pad }};{{ cellbd }}vertical-align:top;color:{{ ink }};">{{ lab }}{{ text | report_cell_html if s.wrap | default(false) else (brk(text) if gk in 'LW' else text | e) }}</td>
 {%- endif %}
 {%- endfor %}
 </tr>
