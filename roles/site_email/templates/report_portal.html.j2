@@ -45,12 +45,46 @@
 {%- macro gap(h) -%}
 <tr><td height="{{ h }}" style="height:{{ h }}px;line-height:{{ h }}px;font-size:0;mso-line-height-rule:exactly;">&nbsp;</td></tr>
 {%- endmacro -%}
+{#- 1.55.0: in a window under 861 px a table of 9 columns or more stacks (each row a block of LABEL value pairs) and a
+    table with a word of 25 characters or more breaks that word; the rules come only when a table needs them, so any
+    other email is as before. Classic Outlook ignores the rules and shows the table. fit.k: one letter per section -
+    S stacks, L breaks long words, - neither. -#}
+{%- set fit = namespace(k='') -%}
+{%- for s in r.sections | default([]) -%}
+{%- set f = namespace(long=false) -%}
+{%- if s.columns is defined and s.rows | default([]) and s.columns | length < 9 -%}
+{%- for row in s.rows if not f.long -%}{%- for cell in row if not f.long -%}
+{%- if (('' if cell is none else cell) | string).split() | map('length') | max | default(0) >= 25 %}{% set f.long = true %}{% endif -%}
+{%- endfor -%}{%- endfor -%}
+{%- endif -%}
+{%- set fit.k = fit.k ~ ('S' if s.columns is defined and s.rows | default([]) and s.columns | length >= 9 else ('L' if f.long else '-')) -%}
+{%- endfor -%}
+{#- 1.55.0: in a table that breaks long words (fit.k L), each word of 25 characters or more in a span that may break
+    below 861 px; shorter words keep their width. A span, never a character: a copied cell is its text. -#}
+{%- macro brk(v) -%}
+{%- for w in (('' if v is none else v) | string).split(' ') -%}
+{{ ' ' if not loop.first else '' }}{% if w | length >= 25 %}<span class="sa-brk">{{ w | e }}</span>{% else %}{{ w | e }}{% endif %}
+{%- endfor -%}
+{%- endmacro -%}
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ r.title | e }}</title>
+{%- if 'S' in fit.k or 'L' in fit.k %}
+<style>
+@media (max-width:860px){
+  .sa-stack,.sa-stack>tbody,.sa-stack tr{display:block !important;width:auto !important;}
+  .sa-stack tr{padding:6px 8px 2px 8px !important;border-bottom:1px solid #eef3f1;}
+  .sa-stack tr.sa-head{display:none !important;}
+  .sa-stack td{display:inline-block !important;border:0 !important;padding:3px 8px !important;margin:0 4px 4px 0;max-width:100%;box-sizing:border-box;}
+  .sa-stack td.sa-none{display:none !important;}
+  .sa-stack .sa-lab{display:inline !important;-webkit-user-select:none;user-select:none;}
+  .sa-stack td,.sa-brk{overflow-wrap:anywhere;}
+}
+</style>
+{%- endif %}
 </head>
 <body style="margin:0;padding:0;background:#e7f1ee;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#e7f1ee" style="background:#e7f1ee;background-image:linear-gradient(160deg,#d9f0e7 0%,#e5eff4 55%,#dde8f2 100%);">
@@ -155,10 +189,13 @@
 {%- if s.cards is defined %}{{ s.cards | report_cards_html(ink, muted, accent) }}{% endif %}
 {%- if s.columns is defined %}
 {%- if s.rows | default([]) %}
-<table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;font-size:13px;margin-top:8px;">
-<tr>
+{%- set k = fit.k[loop.index0] %}
+{#- 1.55.0: 11 columns or more a tighter padding #}
+{%- set pad = '7px 8px 7px 0' if s.columns | length >= 11 else '7px 12px 7px 0' %}
+<table width="100%"{{ ' class="sa-stack"' if k == 'S' else (' class="sa-long"' if k == 'L' else '') }} cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;font-size:13px;margin-top:8px;">
+<tr{{ ' class="sa-head"' if k == 'S' else '' }}>
 {%- for c in s.columns %}
-<th align="left" style="font-size:10px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:{{ label }};padding:8px 12px 8px 0;border-bottom:1px solid {{ line }};">{{ c | e }}</th>
+<th align="left" style="font-size:10px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:{{ label }};padding:{{ '8px 8px 8px 0' if s.columns | length >= 11 else '8px 12px 8px 0' }};border-bottom:1px solid {{ line }};">{{ c | e }}</th>
 {%- endfor %}
 </tr>
 {%- for row in s.rows %}
@@ -172,10 +209,11 @@
 {%- for cell in row %}
 {%- set cst = cs[loop.index0] if cs | length > loop.index0 else '' %}
 {%- set text = ('' if cell is none else cell) | string %}
+{%- set lab = ('<span class="sa-lab" style="display:none;mso-hide:all;font-size:10px;font-weight:bold;letter-spacing:.5px;text-transform:uppercase;">' ~ (s.columns[loop.index0] if s.columns | length > loop.index0 else '') | e ~ '&nbsp;</span>') if k == 'S' else '' %}
 {%- if cst and cst in pal %}
-<td style="padding:7px 12px 7px 0;border-bottom:1px solid #eef3f1;vertical-align:top;"><span style="display:inline-block;border-radius:999px;background:{{ pal[cst].bg }};border:1px solid {{ pal[cst].bd }};color:{{ pal[cst].fg }};font-weight:600;padding:1px 9px;">{{ text | report_cell_html if s.wrap | default(false) else text | e }}</span></td>
+<td{{ ' class="sa-none"' if k == 'S' and not ('' if cell is none else cell) | string | trim else '' }} style="padding:{{ pad }};border-bottom:1px solid #eef3f1;vertical-align:top;">{{ lab }}<span style="display:inline-block;border-radius:999px;background:{{ pal[cst].bg }};border:1px solid {{ pal[cst].bd }};color:{{ pal[cst].fg }};font-weight:600;padding:1px 9px;">{{ text | report_cell_html if s.wrap | default(false) else (brk(text) if k == 'L' else text | e) }}</span></td>
 {%- else %}
-<td style="padding:7px 12px 7px 0;border-bottom:1px solid #eef3f1;vertical-align:top;color:{{ ink }};">{{ text | report_cell_html if s.wrap | default(false) else text | e }}</td>
+<td{{ ' class="sa-none"' if k == 'S' and not ('' if cell is none else cell) | string | trim else '' }} style="padding:{{ pad }};border-bottom:1px solid #eef3f1;vertical-align:top;color:{{ ink }};">{{ lab }}{{ text | report_cell_html if s.wrap | default(false) else (brk(text) if k == 'L' else text | e) }}</td>
 {%- endif %}
 {%- endfor %}
 </tr>

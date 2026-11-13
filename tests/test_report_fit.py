@@ -294,19 +294,17 @@ class EmailTiles(unittest.TestCase):
 # the emails of the glass look that still scroll at 1280 px: tables of 9 to 16 columns wider than glass's 900 px frame
 # even with every long word wrapped (1.45.0, left for a glass change of its own). The test fails when one fits too.
 EMAIL_KNOWN = set()                     # 1.46.0: the six glass emails of 1.45.0 fit (a wide table tighter, or stacked)
-# 1.46.0: these glass emails (tables of 9 to 16 columns) fit an 800 px window too
-GLASS_800 = ("ontap_hardware_doc", "vm_health_report", "vm_health_report_read", "sn_node_sections", "sn_node_sections_pages",
-             "ucs_inventory_doc")
 EMAIL_LOOKS = {"standard": "report.html.j2", "command": "report_command.html.j2", "portal": "report_portal.html.j2",
                "glass": "report_glass.html.j2"}
 
 
 class EmailFit(unittest.TestCase):
-    def test_every_email_fits_at_1280(self):
+    def test_every_email_fits_at_1280_and_800(self):
         """1.45.0: every report's email, in each email look (standard, command, portal, glass), with its values as tested
         and long, never scrolls sideways at 1280 px, light and dark. Fit tests only the website's looks (atlas, brief)
         and EmailTiles only the right-sizing email: a Checklist import email 227 px too wide (a 10-column table of long
-        collection, STIG and host names) passed both. EMAIL_KNOWN: those that do not fit yet."""
+        collection, STIG and host names) passed both. EMAIL_KNOWN: those that do not fit yet. 1.55.0: at 800 px too
+        (380 of 1376 scrolled on int-9: wide tables, long words; see test_a_wide_table_stacks_in_every_look)."""
         b = _browser()
         if not b:
             self.skipTest("no headless browser here")
@@ -325,66 +323,93 @@ class EmailFit(unittest.TestCase):
                             o.write(env.get_template(tpl).render(_report=dd, _email_footer="AAP job 9",
                                                                  report_email_header_text="Site automation report"))
                         pages.append(p)
-            got = measure(b, d, pages, 1280)
+            got = dict(((w, k), r) for w in (1280, 800) for k, r in measure(b, d, pages, w).items())
         wide = dict((k, r["page"]) for k, r in got.items() if r["page"])
-        bad = ["%s at 1280 px: the email scrolls sideways (+%d px)" % (k, px) for k, px in sorted(wide.items())
+        bad = ["%s at %d px: the email scrolls sideways (+%d px)" % (k, w, px) for (w, k), px in sorted(wide.items())
                if k.rsplit(" ", 1)[0].replace("-long.html", "").replace(".html", "") not in EMAIL_KNOWN]
         self.assertEqual(bad, [], "\n".join(bad[:40]))
-        fits = sorted(k for k in EMAIL_KNOWN if not any(x.startswith(k + ".html") or x.startswith(k + "-long.html") for x in wide))
+        fits = sorted(k for k in EMAIL_KNOWN if not any(x.startswith(k + ".html") or x.startswith(k + "-long.html") for _, x in wide))
         self.assertEqual(fits, [], "these emails fit now - take them out of EMAIL_KNOWN")
-        print("ok: %d emails (%d documents, 4 looks, as tested and long) fit at 1280 px, light and dark; %d known not to"
+        print("ok: %d emails (%d documents, 4 looks, as tested and long) fit at 1280 and 800 px, light and dark; %d known not to"
               % (len(pages), len(docs), len(EMAIL_KNOWN)), file=sys.stderr)
 
-    def test_glass_wide_tables_fit_at_800(self):
-        """1.46.0: glass's ONTAP hardware, VMware health (and its read copy), ServiceNow nodes (and its pages copy) and UCS
-        inventory emails, as tested and long, never scroll sideways at 800 px, light and dark: below 861 px a table of 9
-        columns or more is a block of LABEL value pairs per row."""
+    def test_a_wide_table_stacks_in_every_look(self):
+        """1.55.0 (glass 1.46.0): a table of 9 columns or more carries a stack class and a hidden, unselectable label in
+        each cell (shown below 861 px; mso-hide for classic Outlook), an empty cell hidden there; 11 or more a tighter
+        padding. Under 9 columns a word of 25 characters or more makes the table long (broken below 861 px); in glass
+        7 or 8 columns too (snug headings). The rules come only with such a table: a report of narrow tables and short
+        words is the email it was, with no style block in standard, command and portal."""
+        env = EmailTiles()._env()
+
+        def sec(n, word="v"):
+            return {"title": "%d columns %s" % (n, word[:4]), "columns": ["Col %d" % i for i in range(n)],
+                    "rows": [[word + str(i) if i != 2 else "" for i in range(n)]]}
+        long_word = "vsphere-management-cluster-east.example.mil"
+        doc = {"title": "Stack test", "status": "ok", "summary": [],
+               "sections": [sec(6), sec(6, long_word), sec(8), sec(9), sec(11)]}
+        narrow = {"title": "Narrow", "status": "ok", "summary": [], "sections": [sec(4), sec(6)]}
+        marks = {"glass": ("g-stack", "g-head", "g-none", "g-lab", "g-long"), "other": ("sa-stack", "sa-head", "sa-none", "sa-lab", "sa-long")}
+        pads = {"standard": ("5px 8px", "5px 5px"), "command": ("5px 8px", "5px 5px"), "portal": ("7px 12px 7px 0", "7px 8px 7px 0"),
+                "glass": ("9px 12px", "9px 7px")}
+        for look, tpl in EMAIL_LOOKS.items():
+            stack, head, none, lab, long_ = marks["glass" if look == "glass" else "other"]
+            h = env.get_template(tpl).render(_report=doc, _email_footer="AAP job 9", report_email_header_text="x")
+            parts = re.split(r"\b(?:6|8|9|11) columns ", h)
+            six, six_long, eight, nine, eleven = parts[1:6]
+            for part in (six, six_long, eight):
+                self.assertNotIn(stack, part, look)
+                self.assertNotIn(lab, part, look)
+                self.assertIn("padding:%s;" % pads[look][0], part, look)
+            self.assertNotIn(long_, six, look)
+            self.assertIn('class="%s"' % long_, six_long, look)
+            self.assertEqual('class="%s"' % long_ in eight, look == "glass", look)
+            for part, pad in ((nine, pads[look][0]), (eleven, pads[look][1])):
+                self.assertIn('class="%s"' % stack, part, look)
+                self.assertIn('<tr class="%s">' % head, part, look)
+                self.assertIn('<td class="%s"' % none, part, look)
+                self.assertIn("padding:%s;" % pad, part, look)
+                self.assertIn('<span class="%s" style="display:none;mso-hide:all;' % lab, part, look)
+            self.assertIn("@media (max-width:860px)", h, look)
+            self.assertIn("user-select:none", h, look)
+            o = env.get_template(tpl).render(_report=narrow, _email_footer="AAP job 9", report_email_header_text="x")
+            for m in ("sa-", "g-long", 'class="g-stack"', 'class="g-lab"'):
+                self.assertNotIn(m, o, look)
+            if look != "glass":
+                self.assertNotIn("<style", o, look)
+
+    def test_a_stacked_cell_copies_its_value(self):
+        """1.55.0: below 861 px a stacked cell shows its column's label; the label is not selectable, so a cell copied
+        out of a stacked table is its value alone, byte for byte (each look, at 800 and 1280 px). In glass a table with a
+        word of 25 characters or more stacks at every width (g-wst), so it fits the 900 px card. No soft hyphen,
+        zero-width character or <wbr> in the email; the long name whole in a span with a class and no style of its own,
+        so classic Outlook (which ignores the class's rules) shows it as it is."""
         b = _browser()
         if not b:
             self.skipTest("no headless browser here")
         env = EmailTiles()._env()
+        values = ["app01.vsphere-management.example.mil", "2026-11-12 06:00", "192.0.2.10", "svc_x", "SITEA", "C:\\Temp\\a b.log",
+                  "ok", "16,384 GB", "/var/lib/site-automation"]
+        doc = {"title": "Copy test", "status": "ok", "summary": [],
+               "sections": [{"title": "Nine", "columns": ["Column %d" % i for i in range(9)], "rows": [values]}]}
+        probe = ('<script>addEventListener("load",function(){var s=getSelection(),r=document.createRange(),o=[];'
+                 '[].forEach.call(document.querySelectorAll("td"),function(td){var l=td.querySelector(":scope>.sa-lab,:scope>.g-lab");if(!l)return;'
+                 'o.push([getComputedStyle(l).display]);r.selectNodeContents(td);s.removeAllRanges();'
+                 's.addRange(r);o[o.length-1].push(s.toString())});var p=document.createElement("pre");p.id="out";'
+                 'p.textContent=JSON.stringify(o);document.body.appendChild(p)})</script></body>')
         with tempfile.TemporaryDirectory() as d:
-            pages = []
-            for name in GLASS_800:
-                with open(os.path.join(DOCS, name + ".json")) as fh:
-                    doc = json.load(fh)
-                for kind, dd in (("", doc), ("-long", long_doc(doc))):
-                    p = "glass-%s%s.html" % (name, kind)
-                    with open(os.path.join(d, p), "w") as o:
-                        o.write(env.get_template("report_glass.html.j2").render(_report=dd, _email_footer="AAP job 9",
-                                                                              report_email_header_text="Site automation report"))
-                    pages.append(p)
-            got = measure(b, d, pages, 800)
-        bad = ["%s at 800 px: the email scrolls sideways (+%d px)" % (k, r["page"]) for k, r in sorted(got.items()) if r["page"]]
-        self.assertEqual(bad, [], "\n".join(bad))
-
-    def test_glass_stacks_only_a_wide_table(self):
-        """1.46.0: in glass, a table of 9 columns or more carries g-stack and a hidden label in each cell (shown below
-        861 px; mso-hide for classic Outlook), an empty cell g-none; 11 or more a tighter padding; 8 columns as before.
-        The other looks have none of it."""
-        env = EmailTiles()._env()
-
-        def sec(n):
-            return {"title": "%d columns" % n, "columns": ["Col %d" % i for i in range(n)], "rows": [["v%d" % i if i != 2 else "" for i in range(n)]]}
-        doc = {"title": "Stack test", "status": "ok", "summary": [], "sections": [sec(8), sec(9), sec(11)]}
-        h = env.get_template("report_glass.html.j2").render(_report=doc, _email_footer="AAP job 9", report_email_header_text="x")
-        parts = h.split(">8 columns")[1].split(">9 columns")
-        eight, rest = parts[0], parts[1].split(">11 columns")
-        nine, eleven = rest[0], rest[1]
-        self.assertNotIn("g-stack", eight)
-        self.assertNotIn("g-lab", eight)
-        self.assertIn("padding:9px 12px;", eight)
-        for part, pad in ((nine, "9px 12px"), (eleven, "9px 7px")):
-            self.assertIn('class="g-stack"', part)
-            self.assertIn('<tr class="g-head">', part)
-            self.assertIn('<td class="g-none"', part)
-            self.assertIn("padding:%s;" % pad, part)
-            self.assertIn('<span class="g-lab" style="display:none;mso-hide:all;', part)
-        self.assertIn("@media (max-width:860px)", h)
-        for look, tpl in EMAIL_LOOKS.items():
-            if look != "glass":
-                o = env.get_template(tpl).render(_report=doc, _email_footer="AAP job 9", report_email_header_text="x")
-                self.assertFalse("g-stack" in o or "g-lab" in o, look)
+            for look, tpl in EMAIL_LOOKS.items():
+                h = env.get_template(tpl).render(_report=doc, _email_footer="AAP job 9", report_email_header_text="x")
+                self.assertFalse(re.search("[\u00ad\u200b-\u200d\u2060\ufeff]|<wbr", h), look)
+                if look == "glass":
+                    self.assertIn('<span class="g-brk">%s</span>' % values[0], h)
+                    self.assertIn('class="g-stack g-wst"', h)
+                page = os.path.join(d, look + ".html")
+                with open(page, "w", encoding="utf-8") as f:
+                    f.write(h.replace("</body>", probe))
+                for w, shown in ((760, "inline"), (1240, "inline" if look == "glass" else "none")):   # 800 and 1280 px
+                    got, err = _run(b, page, w, 60)
+                    self.assertEqual([g[0] for g in got or []], [shown] * 9, (look, w, err))
+                    self.assertEqual([g[1].strip().encode("utf-8") for g in got], [v.encode("utf-8") for v in values], (look, w))
 
     def test_a_long_word_wraps_in_a_cell(self):
         """1.45.0: report_cell_html - a token of 21 characters or more takes a <wbr> after each _ . / \\ - and comma;

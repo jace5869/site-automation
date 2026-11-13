@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.55.0 — 2026-11-13
+
+**Updating without scripts:** paste `site-automation-1.55.0-changed-since-1.50.0.zip` as it is (from an older version,
+its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`. Nothing to set up.
+
+**Every email look fits an 800 px window.** On 1.50.0, 372 of 1392 test emails scrolled sideways at 800 px (light and
+dark, as tested and with long values): standard 102, command 102, portal 100, glass 68. At 1280 px 4 did (the
+checklist import's plan in glass). Now none does at either width.
+
+- Standard, command and portal stack a table of 9 columns or more below 861 px, as glass has since 1.46.0. Each row
+  is a block of *LABEL value* pairs, an empty cell left out. A table of 11 columns or more has tighter cells.
+- In every look, a table under 9 columns with a word of 25 characters or more breaks that word below 861 px (CSS
+  only: the word is whole in the email). In glass a table of 7 or 8 columns is also snug there (headings without
+  letter spacing, less padding).
+- In glass a table of 9 columns or more with such a word stacks at every width: as a table it would not fit the
+  card at 1280 px (the checklist import's plan).
+- The column labels cannot be selected, so a cell copied from a stacked table is its value alone. There are no
+  invisible characters, and `<wbr>` is still only in a section with `wrap: true`.
+- The rules are a `<style>` block that an email gets only when one of its tables needs it. Any other email is byte for
+  byte as in 1.50.0. Classic desktop Outlook ignores the block and the labels, and shows the table as before.
+- At 390 px fewer emails scroll (1256 to 1130), none newly.
+
+**Files:** `roles/site_email/templates/report.html.j2`, `report_command.html.j2`, `report_portal.html.j2`,
+`report_glass.html.j2`, `docs/EMAIL_REPORTS.md`. **Tests:** `test_report_fit.py` (every email in every look at 1280
+and 800 px; which tables stack, break long words or are snug in each look; a report of narrow tables as before; a
+stacked cell copied at 800 and 1280 px is its value, no inserted character), `test_report_cells.py`; the email checks of
+`run_vmware_test.sh`, `run_netapp_test.sh` and `run_certs_test.sh` read a cell without its label. The report_fit
+documents regenerated (`tests/report_fit_docs.py`). SA_VERSION 1.55.0; the PDFs at 1.55.0.
+
+
 ## 1.50.0 — 2026-11-13
 
 **Updating without scripts:** paste `site-automation-1.50.0-changed-since-1.47.0.zip` as it is (from an older version,
@@ -1618,7 +1649,7 @@ tests/stig/run_stigman_real_test.sh against STIG Manager 1.6.18 (not in CI).
 
 SA_VERSION 1.26.0; the PDFs at 1.26.0.
 
-**To do, if you have not yet: what 0.20.0 to 1.50.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.50.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing, 1.39.0 nothing, 1.41.0 nothing, 1.42.0 nothing, 1.43.0 nothing, 1.44.0 nothing, 1.45.0 nothing, 1.46.0 nothing, 1.47.0 nothing, 1.48.0 nothing, 1.49.0 nothing, 1.50.0 step 97).** In order; each step works without
+**To do, if you have not yet: what 0.20.0 to 1.55.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.55.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing, 1.39.0 nothing, 1.41.0 nothing, 1.42.0 nothing, 1.43.0 nothing, 1.44.0 nothing, 1.45.0 nothing, 1.46.0 nothing, 1.47.0 nothing, 1.48.0 nothing, 1.49.0 nothing, 1.50.0 step 97, 1.55.0 nothing).** In order; each step works without
 the ones after it. There is no step 90.
 
 1. **Your logo** (0.20.0). A PNG with a transparent background, about 160 px tall and under 100 KB, in

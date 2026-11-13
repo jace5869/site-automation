@@ -59,7 +59,7 @@ def cells(page):
     """The text of each table cell of the two sections (tags out, entities read, spaces as one)."""
     out = []
     for td in re.findall(r"<td\b[^>]*>((?:(?!<td\b).)*?)</td>", page, re.S):     # the innermost: a layout cell holds a table
-        td = re.sub(r'<span class="g-lab"[^>]*>.*?</span>', "", td)    # 1.46.0: glass's column label, hidden in a wide window
+        td = re.sub(r'<span class="(?:g|sa)-lab"[^>]*>.*?</span>', "", td)    # 1.46.0, 1.55.0: a column label, hidden in a wide window
         t = re.sub(r"<[^>]+>", "", td)
         out.append(" ".join(html.unescape(t).split()))
     return out

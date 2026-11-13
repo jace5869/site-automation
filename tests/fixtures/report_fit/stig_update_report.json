@@ -1,6 +1,102 @@
 {
-"footer": "STIG Manager: GET and POST of these reviews only (playbooks/stigman_update.yml).",
+"footer": "STIG Manager: GET and POST of these reviews only, and POST /assets for the new assets (playbooks/stigman_update.yml).",
 "sections": [
+{
+"columns": [
+"Host",
+"Asset",
+"FQDN",
+"Collection",
+"STIG",
+"Result",
+"Its reviews",
+"Why"
+],
+"row_status": [
+"ok",
+"info",
+"critical",
+"ok",
+"critical",
+"critical",
+"critical"
+],
+"rows": [
+[
+"web02",
+"web02",
+"web02.example.mil",
+"RHEL Servers",
+"RHEL_9_STIG V2R7",
+"created",
+"rejected 1, written 1",
+""
+],
+[
+"web03",
+"web03",
+"web03.example.mil",
+"RHEL Servers",
+"RHEL_9_STIG V2R7",
+"would create",
+"would write 1",
+"why: would create"
+],
+[
+"web04",
+"web04",
+"web04.example.mil",
+"RHEL Servers",
+"RHEL_9_STIG V2R7",
+"there since the check",
+"asset not created 1",
+"why: there since the check"
+],
+[
+"web05",
+"web05",
+"web05.example.mil",
+"RHEL Servers",
+"RHEL_9_STIG V2R7",
+"there from an earlier run",
+"none",
+"why: there from an earlier run"
+],
+[
+"web06",
+"web06",
+"web06.example.mil",
+"RHEL Servers",
+"RHEL_9_STIG V2R7",
+"bad",
+"none",
+"why: bad"
+],
+[
+"web07",
+"web07",
+"web07.example.mil",
+"RHEL Servers",
+"RHEL_9_STIG V2R7",
+"error",
+"none",
+"why: error"
+],
+[
+"web08",
+"web08",
+"web08.example.mil",
+"RHEL Servers",
+"RHEL_9_STIG V2R7",
+"no grant",
+"none",
+"why: no grant"
+]
+],
+"status": "critical",
+"text": "The hosts the check found no asset for: created only if still not there (an asset of the host's made since the check is left, nothing is written to it and the job fails; one this plan made on an earlier run is used), with the host's STIG, then the scan's answers written as its reviews and read back. Its reviews are counted here; one not written is also listed below.",
+"title": "New assets"
+},
 {
 "columns": [
 "Host",
@@ -13,29 +109,139 @@
 "Why"
 ],
 "row_status": [
+"ok",
+"info",
+"ok",
+"warning",
+"info",
 "critical",
-"ok"
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical"
 ],
 "rows": [
 [
-"",
-"",
-"SV-260001r1_rule",
-"no review",
-"-",
-"Not a Finding (submitted)",
-"no grant",
-"the client has Restricted in Ops - the import writes only where it needs Full or more (a Restricted grant reaches only the assets given to it)"
-],
-[
-"",
-"",
-"SV-260001r1_rule",
-"no review",
-"no review",
+"web01",
+"web01",
+"V-1",
+"Open (accepted)",
+"Open (accepted)",
 "Not a Finding (submitted)",
 "written",
 ""
+],
+[
+"web01",
+"web01",
+"V-2",
+"Open (accepted)",
+"Open (accepted)",
+"Not a Finding (submitted)",
+"would write",
+""
+],
+[
+"web01",
+"web01",
+"V-3",
+"Open (accepted)",
+"Open (accepted)",
+"Not a Finding (submitted)",
+"already so",
+""
+],
+[
+"web01",
+"web01",
+"V-4",
+"Open (accepted)",
+"Open (accepted)",
+"Not a Finding (submitted)",
+"changed since",
+"why: changed since"
+],
+[
+"web01",
+"web01",
+"V-5",
+"Open (accepted)",
+"Open (accepted)",
+"Not a Finding (submitted)",
+"has attachments",
+"why: has attachments"
+],
+[
+"web01",
+"web01",
+"V-6",
+"Open (accepted)",
+"Open (accepted)",
+"Not a Finding (submitted)",
+"rejected",
+"why: rejected"
+],
+[
+"web01",
+"web01",
+"V-7",
+"Open (accepted)",
+"Open (accepted)",
+"Not a Finding (submitted)",
+"error",
+"why: error"
+],
+[
+"web01",
+"web01",
+"V-8",
+"Open (accepted)",
+"Open (accepted)",
+"Not a Finding (submitted)",
+"bad",
+"why: bad"
+],
+[
+"web01",
+"web01",
+"V-9",
+"Open (accepted)",
+"Open (accepted)",
+"Not a Finding (submitted)",
+"not as written",
+"why: not as written"
+],
+[
+"web01",
+"web01",
+"V-10",
+"Open (accepted)",
+"Open (accepted)",
+"Not a Finding (submitted)",
+"no grant",
+"why: no grant"
+],
+[
+"web01",
+"web04",
+"V-21",
+"Open (accepted)",
+"-",
+"Not a Finding (submitted)",
+"asset not created",
+"why: asset not created"
+],
+[
+"web01",
+"web02",
+"V-22",
+"Open (accepted)",
+"-",
+"Not a Finding (submitted)",
+"rejected",
+"why: rejected"
 ]
 ],
 "status": "critical",
@@ -49,26 +255,31 @@
 {
 "label": "Written",
 "status": "ok",
-"value": 1
+"value": 2
+},
+{
+"label": "New assets",
+"status": "ok",
+"value": 2
 },
 {
 "label": "Already so",
-"value": 0
+"value": 1
 },
 {
 "label": "Changed since the check",
-"status": "ok",
-"value": 0
+"status": "warning",
+"value": 1
 },
 {
 "label": "Has attachments (left)",
-"value": 0
+"value": 1
 },
 {
 "label": "Not written",
 "status": "critical",
-"value": 1
+"value": 11
 }
 ],
-"title": "STIG Manager update: 1 review(s) written, 1 not"
+"title": "STIG Manager update: 2 review(s) written, 2 asset(s) created, 11 not"
 }
