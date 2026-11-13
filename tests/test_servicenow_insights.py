@@ -1221,6 +1221,103 @@ class ModuleReads(unittest.TestCase):
         self.assertEqual((sla["source"], sla["records"]), ("made_sla", {}))
 
 
+class SlaPages(unittest.TestCase):
+    """1.47.0 (review): task_sla read page by page in a fixed order - a ticket's 21st SLA counts; a later page that fails is
+    said and nothing of that read is used or kept; a duration of 0 and of 31 days or more read right."""
+
+    class Api(object):
+        def __init__(self, rows, fail_after=None):
+            self.rows, self.fail_after, self.calls, self.url = rows, fail_after, [], "https://sn.example.mil"
+
+        def get(self, path, params):
+            self.calls.append((path, dict(params)))
+            if path != "api/now/table/task_sla":
+                return {"result": []}
+            off, lim = int(params.get("sysparm_offset", 0)), int(params["sysparm_limit"])
+            if self.fail_after is not None and off >= self.fail_after:
+                raise rd.SnError("GET %s: HTTP 500: Internal Server Error" % path)
+            rows = list(self.rows)
+            if "ORDERBYtask^ORDERBYsys_id" in params["sysparm_query"]:
+                rows.sort(key=lambda x: (x["task"]["value"], x["sys_id"]["value"]))
+            return {"result": rows[off:off + lim]}
+
+    @staticmethod
+    def sla_rows(n, breach_at, task="i1"):
+        v = lambda x: {"value": x, "display_value": x}                           # noqa: E731
+        return [{"sys_id": v("r%02d" % k), "task": v(task), "sla": v("P3 Incident Resolution %d" % k), "stage": v("completed"),
+                 "has_breached": v("true" if k == breach_at else "false"), "business_duration": v("1970-01-01 02:00:00")}
+                for k in range(n, 0, -1)]                                        # newest first: the order is the query's
+
+    ITEMS = [{"table": "incident", "sys_id": "i1", "done_at": "2026-10-10 10:00:00", "state": "Resolved", "active": False}]
+
+    def outcome(self, sla):
+        items = copy.deepcopy(self.ITEMS)
+        F.apply_slas(items, {"sla": sla}, {})
+        return items[0]["_resol"]
+
+    def test_the_21st_record_breached_is_missed(self):
+        win = rd.window(6, 0, "2026-10-31", True, "", NOW)
+        api = self.Api(self.sla_rows(21, 21))
+        got, err = rd.read_task_sla(api, ["i1"])
+        self.assertEqual((err, len(got["i1"]), sum(x["breached"] for x in got["i1"])), ("", 21, 1))
+        self.assertEqual([c[1]["sysparm_offset"] for c in api.calls], [0, 20])
+        self.assertTrue(all(c[1]["sysparm_query"].endswith("^ORDERBYtask^ORDERBYsys_id") for c in api.calls))
+        sla, _, _ = rd.read_slas(self.Api(self.sla_rows(21, 21)), self.ITEMS, win, "auto")
+        self.assertEqual((sla["source"], self.outcome(sla)), ("task_sla", False))
+        # the ticket store: the first run reads and keeps all 21; a store from before 1.47.0 (task_sla2) is read again
+        st = rd.Reuse({})
+        sla, _, _ = rd.read_slas(self.Api(self.sla_rows(21, 21)), self.ITEMS, win, "auto", store=st)
+        self.assertEqual((self.outcome(sla), len(st.got["i1"]["sla"]["v"]), st.got["i1"]["sla"]["m"]), (False, 21, "task_sla3"))
+        old = rd.Reuse({"i1": {"f": {"sla": {"m": "task_sla2", "v": [{"name": "P3 Incident Resolution", "breached": False}]}}}})
+        old.closed.add("i1")
+        api = self.Api(self.sla_rows(21, 21))
+        sla, _, _ = rd.read_slas(api, self.ITEMS, win, "auto", store=old)
+        self.assertEqual((self.outcome(sla), len(api.calls)), (False, 2))
+        # kept as task_sla3: the next run reuses it and asks nothing of task_sla for it but the probe
+        kept = rd.Reuse({"i1": {"f": {"sla": st.got["i1"]["sla"]}}})
+        kept.closed.add("i1")
+        sla, _, _ = rd.read_slas(self.Api(self.sla_rows(21, 21)), self.ITEMS, win, "auto", store=kept)
+        self.assertEqual(self.outcome(sla), False)
+
+    def test_an_exact_page(self):
+        api = self.Api(self.sla_rows(20, 0))
+        got, err = rd.read_task_sla(api, ["i1"])
+        self.assertEqual((err, len(got["i1"]), [c[1]["sysparm_offset"] for c in api.calls]), ("", 20, [0, 20]))
+        api = self.Api(self.sla_rows(40, 40))
+        got, err = rd.read_task_sla(api, ["i1"])
+        self.assertEqual((err, len(got["i1"]), sum(x["breached"] for x in got["i1"]), len(api.calls)), ("", 40, 1, 3))
+
+    def test_a_later_page_that_fails(self):
+        win = rd.window(6, 0, "2026-10-31", True, "", NOW)
+        got, err = rd.read_task_sla(self.Api(self.sla_rows(21, 21), fail_after=20), ["i1"])
+        self.assertEqual(got, {})
+        self.assertIn("HTTP 500", err)
+        self.assertIn("page 2, after 20 records: none of them used", err)
+        sla, _, _ = rd.read_slas(self.Api(self.sla_rows(21, 21), fail_after=20), self.ITEMS, win, "auto")
+        self.assertEqual((sla["source"], sla["records"]), ("targets", {}))
+        self.assertIn("page 2", sla["note"])
+        self.assertIsNone(self.outcome(dict(sla, source="task_sla")))       # never "met" from a part
+        st = rd.Reuse({})
+        sla, _, _ = rd.read_slas(self.Api(self.sla_rows(21, 21), fail_after=20), self.ITEMS, win, "auto", store=st)
+        self.assertEqual((sla["source"], st.got), ("targets", {}))          # nothing kept for the next run
+
+    def test_durations(self):
+        self.assertEqual([rd.duration(x) for x in ("1970-01-01 00:00:00", "1970-01-02 03:30:00", "1970-01-31 23:59:59",
+                                                    "1970-02-01 00:00:00", "1970-03-15 12:00:00", "", None, "soon", "1970-13-01 00:00:00",
+                                                    "1969-12-31 23:00:00")],
+                         [0, 99000, 2678399, 2678400, 6350400, None, None, None, None, None])
+        v = lambda x: {"value": x, "display_value": x}                           # noqa: E731
+        base = {"sys_id": v("r1"), "task": v("i1"), "sla": v("P3 Incident Resolution"), "stage": v("completed"), "has_breached": v("false")}
+        for bd, d, want in (("1970-01-01 00:00:00", "1970-01-03 00:00:00", 0), ("", "1970-01-03 00:00:00", 172800),
+                            (None, "1970-02-02 00:00:00", 2764800), ("1970-02-01 00:00:00", "1970-03-01 00:00:00", 2678400),
+                            ("not a time", "1970-01-01 01:00:00", 3600), ("garbage", "", None)):
+            row = dict(base, duration=v(d))
+            if bd is not None:
+                row["business_duration"] = v(bd)
+            got, _ = rd.read_task_sla(self.Api([row]), ["i1"])
+            self.assertEqual(got["i1"][0]["elapsed_s"], want, (bd, d))
+
+
 class ChangeTasks(unittest.TestCase):
     """1.2.0: change_task read (GET), each team's change tasks - opened, closed by the planned end or after it, open now and
     how old, the time to close - rolled up at every level; counted in the leaderboards (Closed, their own column) and the

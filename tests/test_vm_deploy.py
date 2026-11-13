@@ -180,6 +180,27 @@ class Check(unittest.TestCase):
         p = d.vm_deploy_spec(rec)
         self.assertEqual((p["spec"]["disks_gb"], p["questions"]), ("100, 50", []))
 
+    def test_a_disk_line_with_no_disk_size_is_a_question(self):
+        """1.47.0 (review): a disk line whose numbers are all a date, a version or memory never becomes disks - it
+        is a question that stops the deploy, also over a default; a ticket with no disk line is unchanged."""
+        for desc in ("Disk: by 11/12", "Disk: 16 GB RAM", "Disks: version 8/9", "Disk: TBD"):
+            rec = dict(REC, description="vm_name: web01\ntemplate: rhel9\n" + desc, comments="", work_notes="")
+            for defaults in (None, {"disks_gb": [60]}):
+                p = d.vm_deploy_spec(rec, defaults)
+                got = d.vm_deploy_check(p, rec, dict(RULES, max_disk_gb=2048))
+                self.assertNotIn("disks_gb", p["spec"], desc)
+                self.assertTrue(any("gives no disk size" in x for x in got["problems"]), (desc, got["problems"]))
+        rec = dict(REC, description="vm_name: web01\nDisk: by 11/12", comments="disks_gb: 100", work_notes="")
+        self.assertEqual(d.vm_deploy_spec(rec)["questions"], [])
+        for desc, want in (("Disk: 100 GB, by 11/12", [100]), ("Disks: 80/100 GB, 16/32 GB RAM", [80, 100])):
+            rec = dict(REC, description="vm_name: web01\ntemplate: rhel9\n" + desc, comments="", work_notes="")
+            got = d.vm_deploy_check(d.vm_deploy_spec(rec), rec, dict(RULES, max_disk_gb=2048))
+            self.assertEqual((got["spec"]["disks_gb"], [x for x in got["problems"] if "disk" in x]), (want, []), desc)
+        rec = dict(REC, description="vm_name: web01\ntemplate: rhel9\n", comments="", work_notes="")
+        p = d.vm_deploy_spec(rec)
+        got = d.vm_deploy_check(p, rec, dict(RULES, max_disk_gb=2048))
+        self.assertEqual(("disks_gb" in p["spec"], p["questions"], [x for x in got["problems"] if "disk" in x]), (False, [], []))
+
     def test_a_long_line_is_quick(self):
         """1.23.0: a ticket line of thousands of spaces is read in well under a second."""
         import time

@@ -1132,6 +1132,9 @@ def vm_deploy_spec(record, defaults=None, proposal=None, words=None, parent=None
             return
         if k == "disks_gb":                     # "Disk: 100 GB, by 11/12/2026": the sizes only, or a question
             said, q = _disk_line(v)
+            if not q and not said:              # "Disk: by 11/12", "Disk: 16 GB RAM": a disk line with no disk size
+                q = ("the disk line '%s' gives no disk size: write a line 'disks_gb: <disk 1 in GB>, <each extra disk in "
+                     "GB>' (e.g. 'disks_gb: 100, 200')" % " ".join(str(v).split()))
             if q:
                 spec.pop(k, None)
                 sources.pop(k, None)

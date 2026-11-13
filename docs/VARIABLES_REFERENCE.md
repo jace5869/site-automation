@@ -169,7 +169,7 @@ File: `roles/aap_template_audit/defaults/main.yml`
 | `aap_template_audit_per_template` | `[report_email_to, report_email_cc, report_email_also, site_fail_on, target]` | Settings that belong in a template (who gets its report, what it runs on): never flagged as site-wide or as an address - still flagged when they are a secret, or the same in many templates |
 | `aap_template_audit_ignore` | `[]` | settings never flagged |
 | `aap_template_audit_ca_path` | (empty) | a CA file for AAP's HTTPS certificate ("" = what the execution environment trusts) |
-| `aap_template_audit_fail` | `false` | true = the job fails when something is flagged (for a workflow's ticket step) |
+| `aap_template_audit_fail` | `false` | true = the job fails when something is flagged or a part was not read (for a workflow's ticket step) |
 
 ## ad_lockout
 

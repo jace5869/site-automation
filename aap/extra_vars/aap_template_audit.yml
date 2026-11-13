@@ -50,7 +50,8 @@
 ## a CA file for AAP's HTTPS certificate ("" = what the execution environment trusts)
 # aap_template_audit_ca_path: ""
 
-## true = the job fails when something is flagged (for a workflow's ticket step)
+## true = the job fails when something is flagged or a part was not read (for a workflow's ticket
+## step)
 # aap_template_audit_fail: false
 
 # ---- site_email - usually in all.yml -------------------------------------------------------------

@@ -465,6 +465,10 @@ class H(BaseHTTPRequestHandler):
             return 200, {"result": mid_data().get("cluster", [])}
         if table == "task_sla" and method == "GET" and not sys_id:
             rows = [i for i in INCIDENTS.values() if i.get("_table") == "task_sla" and matches(i, q.get("sysparm_query", ""))]
+            if "ORDERBYtask" in q.get("sysparm_query", ""):                  # 1.47.0: read page by page, in a fixed order
+                rows.sort(key=lambda i: (str(i.get("task", "")), str(i.get("sys_id", ""))))
+            offset = int(q.get("sysparm_offset", "0"))
+            rows = rows[offset:offset + int(q.get("sysparm_limit", "10000"))]
             num = dict((i["sys_id"], i.get("number", "")) for i in INCIDENTS.values())
             shown = [dict((k, {"value": v, "display_value": num.get(v, v) if k == "task" else v}) for k, v in i.items() if not k.startswith("_"))
                      for i in rows]

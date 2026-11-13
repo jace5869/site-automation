@@ -547,12 +547,90 @@ class Judge(unittest.TestCase):
         self.assertEqual(st["templates"], 10)
 
 
+class ReviewFixes(unittest.TestCase):
+    """1.47.0 (review): a part not read is never "nothing to move"; mixed-type keys never stop the audit; a nested password
+    repeated, and a URL's user:password, never shown (0.99.0 showed them)."""
+    CLEAN = {"kind": "job", "id": 1, "name": "Clean", "extra_vars": "check_disk_warn_pct: 90\n", "settings": 1}
+
+    def test_incomplete_is_never_clean(self):
+        templates, settings = m.audit([self.CLEAN], OPTS)
+        part = ["the job templates: job_templates/ could not be read (HTTP 500): A server error occurred."]
+        r = f.template_audit_report({"templates": templates, "settings": settings, "problems": part})
+        self.assertEqual((r["status"], r["title"]),
+                         ("warning", "AAP template variables audit (incomplete: 1 part not read): nothing to move in what was read"))
+        self.assertEqual(dict((x["label"], (x["value"], x.get("status"))) for x in r["summary"])["Not read"], (1, "warning"))
+        self.assertEqual(r["sections"][0]["title"], "Not read")
+        # findings already made keep their severity
+        templates, settings = m.audit(records(), OPTS)
+        r = f.template_audit_report({"templates": templates, "settings": settings, "problems": part})
+        self.assertEqual(r["status"], "critical")
+        self.assertRegex(r["title"], r"^AAP template variables audit \(incomplete: 1 part not read\): \d+ settings in 9 templates to move$")
+        # nothing read at all: as before
+        bad = f.template_audit_report({"problems": part})
+        self.assertEqual((bad["status"], bad["title"]), ("critical", "AAP template variables audit: AAP could not be read"))
+        ok = f.template_audit_report({"templates": templates[-1:], "settings": [], "problems": []})
+        self.assertNotIn("incomplete", ok["title"])
+
+    def test_mixed_keys(self):
+        mixed = {"kind": "job", "id": 2, "name": "Mixed", "extra_vars": "routes:\n  443: one\n  default: two\n"}
+        templates, settings = m.audit([mixed, self.CLEAN], OPTS)
+        self.assertEqual([(t["name"], t["error"], t["settings"]) for t in templates], [("Mixed", "", 1), ("Clean", "", 1)])
+        a, b = {443: "one", "default": "two"}, {"default": "two", 443: "one"}
+        self.assertEqual(m.fingerprint(a), m.fingerprint(b))                         # a mapping's order does not count
+        self.assertNotEqual(m.fingerprint({443: "one"}), m.fingerprint({"443": "one"}))
+        self.assertNotEqual(m.fingerprint(1), m.fingerprint(True))
+        self.assertNotEqual(m.fingerprint(1), m.fingerprint("1"))
+        self.assertEqual(m.shown({443: "a", "b": 1, "443": "x"}), '{443: "a", "443": "x", "b": 1}')
+        # repeated in 3 templates: the same; a dict is still never shown, a secret inside still a secret
+        three = [dict(mixed, id=i, name="M%d" % i) for i in range(3)]
+        three += [{"kind": "job", "id": 9, "name": "S%d" % i, "extra_vars": "svc:\n  8443: a\n  password: Pine-4-Cone\n"} for i in range(3)]
+        templates, settings = m.audit(three, OPTS)
+        s = dict((x["setting"], x) for x in settings)
+        self.assertEqual((s["routes"]["same"], s["routes"]["value"], s["svc"]["why"], s["svc"]["value"]),
+                         (3, "(same; not shown)", ["secret"], ""))
+        self.assertNotIn("Pine-4-Cone", json.dumps([templates, settings]))
+        # a value that cannot be weighed: its template says so, the others are audited
+        real = m.classify
+
+        def boom(name, value, *a):
+            if name == "routes":
+                raise RecursionError("too deep")
+            return real(name, value, *a)
+        m.classify = boom
+        try:
+            templates, settings = m.audit([mixed, self.CLEAN, records()[2]], OPTS)
+        finally:
+            m.classify = real
+        self.assertEqual(templates[0]["error"], "routes could not be checked (RecursionError)")
+        self.assertIn("vcenter_password", [x["setting"] for x in settings])
+        r = f.template_audit_report({"templates": templates, "settings": settings, "problems": []})
+        self.assertIn("Its Variables could not be read: routes could not be checked", json.dumps(r))
+
+    LEAK_PW, URL_PW = "Synth-Pw-7731!", "Synth-Url-Pw-55"
+    LEAKY = [{"kind": "job", "id": 30 + i, "name": "Svc %d" % i,
+              "extra_vars": "service:\n  password: Synth-Pw-7731!\n"
+                            "service_url: https://svc_aap:Synth-Url-Pw-55@app01.example.mil/api\n"} for i in range(3)]
+
+    def test_nested_password_and_url_password_never_shown(self):
+        """0.99.0: three templates with the same nested service.password showed it in By setting's Value (fixed in 1.24.0,
+        8584dff); a URL with user:password@host showed whole (fixed in 1.24.0, 91359fe). The module's result, the report
+        and the artifacts hold neither."""
+        templates, settings = m.audit(self.LEAKY, OPTS)
+        s = dict((x["setting"], x) for x in settings)
+        self.assertEqual(("secret" in s["service"]["why"], "secret" in s["service_url"]["why"], s["service"]["value"], s["service_url"]["value"]), (True, True, "", ""))
+        out = json.dumps([templates, settings]) + json.dumps(f.template_audit_report({"templates": templates, "settings": settings,
+                                                                                      "problems": []}), default=str)
+        out += json.dumps(f.template_audit_stats({"templates": templates, "settings": settings}))
+        for v in (self.LEAK_PW, self.URL_PW, "svc_aap:"):
+            self.assertNotIn(v, out, v)
+
+
 class FakeAap(object):
     """Job templates 11-19 over pages of 3, workflow 101, surveys of 16 and 101; any write is logged (there must be none)."""
 
     def __init__(self):
         self.jobs, self.workflows, self.writes, self.page_size = copy.deepcopy(JOBS), copy.deepcopy(WORKFLOWS), [], 3
-        self.refuse_survey = False
+        self.refuse_survey, self.fail_page = False, None
         fake = self
 
         class H(BaseHTTPRequestHandler):
@@ -596,6 +674,8 @@ class FakeAap(object):
 
     def page(self, items, qs, path):
         p = int(qs.get("page", "1"))
+        if self.fail_page is not None and p >= self.fail_page:
+            return 500, {"detail": "A server error occurred."}
         chunk = items[(p - 1) * self.page_size:p * self.page_size]
         nxt = ("%s?page=%d&page_size=%s" % (path, p + 1, qs.get("page_size", "25"))) if p * self.page_size < len(items) else None
         return 200, {"count": len(items), "next": nxt, "results": copy.deepcopy(chunk)}
@@ -687,6 +767,68 @@ class AgainstFakeAap(unittest.TestCase):
         self.assertNotEqual(out.returncode, 0)
         self.assertIn("AAP refused the login (HTTP 401)", out.stdout)
         self.assertEqual(self.aap.writes, [])
+
+    def test_a_later_page_that_fails(self):
+        """1.47.0 (review): page 1 read, page 2 refused - the report says incomplete (never "nothing to move"), the job
+        passes; aap_template_audit_fail fails it after the report."""
+        self.aap.jobs = [_jt(41, "Clean one", "check_disk_warn_pct: 90\n"), _jt(42, "Never read", "ansible_user: admin\n")]
+        self.aap.workflows, self.aap.page_size, self.aap.fail_page = [], 1, 2
+        recs, problems = m.read(self.api, {"exclude": [], "workflows": True, "project": ""})
+        self.assertEqual(([r["id"] for r in recs], len(problems)), ([41], 1))
+        self.assertIn("could not be read (HTTP 500)", problems[0])
+        web = os.path.join(self.tmp, "web")
+        os.makedirs(web)
+        title = "AAP template variables audit (incomplete: 1 part not read): nothing to move in what was read"
+        out = self.run_pb({"report_web_dest": web})
+        self.assertEqual(out.returncode, 0, out.stdout[-3000:])
+        self.assertIn(title, out.stdout)
+        page = "".join(open(p, encoding="utf-8").read() for p in glob.glob(os.path.join(web, "**", "*.html"), recursive=True))
+        self.assertIn("incomplete: 1 part not read", page)
+        self.assertIn("Not read", page)
+        out = self.run_pb({"aap_template_audit_fail": True})
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn(title, out.stdout)
+        self.assertLess(out.stdout.index("Template audit | " + title), out.stdout.index("see the report above"))
+        self.assertEqual(self.aap.writes, [])
+
+    def test_mixed_keys_and_secrets_end_to_end(self):
+        """1.47.0 (review): mixed-type keys next to a clean template, and 0.99.0's two disclosures (a nested password in 3
+        templates, a URL's user:password) - the job output, the website and the email hold no secret."""
+        self.aap.jobs = ([_jt(51, "Mixed keys", "routes:\n  443: one\n  default: two\n"), _jt(52, "Clean one", "check_disk_warn_pct: 90\n")]
+                         + [_jt(r["id"], r["name"], r["extra_vars"]) for r in ReviewFixes.LEAKY])
+        self.aap.workflows = []
+        web = os.path.join(self.tmp, "web")
+        os.makedirs(web)
+        out, mtext = self.with_mail({"report_web_dest": web})
+        self.assertEqual(out.returncode, 0, out.stdout[-3000:])
+        self.assertIn("in 3 templates to move", out.stdout)
+        self.assertIn("Clean one (ID 52)", out.stdout)
+        self.assertNotIn("TypeError", out.stdout + out.stderr)
+        everything = out.stdout + out.stderr + mtext + "".join(open(p, encoding="utf-8").read() for p in
+                                                               glob.glob(os.path.join(web, "**", "*"), recursive=True) if os.path.isfile(p))
+        self.assertIn("service_url", everything)
+        for s in (ReviewFixes.LEAK_PW, ReviewFixes.URL_PW, "svc_aap:"):
+            self.assertNotIn(s, everything, s)
+
+    def with_mail(self, extra):
+        smtp = os.path.join(REPO, "tests", "email", "fake_smtp.py")
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()
+        mail = os.path.join(self.tmp, "mail")
+        p = subprocess.Popen([sys.executable, smtp, str(port), mail])
+        try:
+            time.sleep(1)
+            out = self.run_pb(dict(extra, report_email_to=["ops@example.mil"], report_email_from="aap@example.mil",
+                                   report_email_smtp_host="127.0.0.1", report_email_smtp_port=port, report_email_security="none"))
+        finally:
+            p.kill()
+            p.wait()
+        msgs = glob.glob(os.path.join(mail, "*.eml"))
+        self.assertEqual(len(msgs), 1, out.stdout[-3000:])
+        with open(msgs[0]) as fh:
+            return out, fh.read()
 
     def test_email(self):
         smtp = os.path.join(REPO, "tests", "email", "fake_smtp.py")

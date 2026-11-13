@@ -685,37 +685,64 @@ def manager_names(mgr, gids, names):
 
 
 def duration(text):
-    """A ServiceNow duration's value ('1970-01-02 03:30:00' = 1 day 3.5 hours) -> seconds, or None."""
-    m = re.match(r"^1970-01-(\d{2}) (\d{2}):(\d{2}):(\d{2})", str(text or "").strip())
-    if not m:
+    """A ServiceNow duration's value, a date after the epoch ('1970-01-02 03:30:00' = 1 day 3.5 hours, '1970-02-01
+    00:00:00' = 31 days, '1970-01-01 00:00:00' = 0) -> seconds, or None when it is empty or not such a date."""
+    try:
+        t = datetime.datetime.strptime(str(text or "").strip()[:19], "%Y-%m-%d %H:%M:%S")
+    except ValueError:
         return None
-    return (int(m.group(1)) - 1) * 86400 + int(m.group(2)) * 3600 + int(m.group(3)) * 60 + int(m.group(4))
+    s = calendar.timegm(t.timetuple())
+    return s if s >= 0 else None
 
 
-def read_task_sla(api, ids, chunk=100, stats=None):
-    """The SLAs of these tickets (task_sla, GET; cancelled left out) -> ({task sys_id: [{name, stage, breached, percent,
-    elapsed_s (1.43.0: business time where ServiceNow has it, else the clock's)}]}, error).
+TASK_SLA_PAGES = 500                                    # one chunk's pages at most: a server that ignores the offset ends
+
+
+def _elapsed(x):
+    """An SLA's elapsed time: business time where ServiceNow has it (0 is a value), else the clock's (1.47.0)."""
+    b = duration(_vd(x, "business_duration")[0])
+    return b if b is not None else duration(_vd(x, "duration")[0])
+
+
+def _task_sla_rows(api, part):
+    """Every task_sla record of these tickets, page by page in a fixed order (1.47.0: a ticket's 21st SLA is read too) ->
+    (rows, error). A page that fails is an error for them all: a part never counts as met."""
+    rows, offset, limit = [], 0, 20 * len(part)
+    for page in range(1, TASK_SLA_PAGES + 1):
+        try:
+            r = api.get("api/now/table/task_sla", {"sysparm_query": "taskIN" + ",".join(part) + "^stage!=cancelled^ORDERBYtask^ORDERBYsys_id",
+                                                   "sysparm_fields": "task,sla,stage,has_breached,business_percentage,percentage,start_time,end_time,pause_time,"
+                                                                     "business_time_left,planned_end_time,business_duration,duration",
+                                                   "sysparm_display_value": "all", "sysparm_exclude_reference_link": "true",
+                                                   "sysparm_limit": limit, "sysparm_offset": offset})
+        except SnError as e:
+            text = str(e)
+            if "HTTP 403" in text or "HTTP 401" in text:
+                text += " - the account needs read on task_sla (the itil role has it)"
+            if page > 1:
+                text += " (page %d, after %d records: none of them used)" % (page, len(rows))
+            return [], text
+        got = r.get("result") if isinstance(r, dict) else None
+        if not isinstance(got, list):
+            return [], "GET api/now/table/task_sla: no result list in the answer" + (" (page %d)" % page if page > 1 else "")
+        rows += got
+        if len(got) < limit:
+            return rows, ""
+        offset += len(got)
+    return [], "GET api/now/table/task_sla: more than %d pages for %d tickets - not used" % (TASK_SLA_PAGES, len(part))
+
+
+def read_task_sla(api, ids, chunk=100):
+    """The SLAs of these tickets (task_sla, GET; cancelled left out; every page, 1.47.0) -> ({task sys_id: [{name, stage,
+    breached, percent, elapsed_s (1.43.0: business time where ServiceNow has it, else the clock's)}]}, error).
     Breached: has_breached, or the stage breached; percent: business time where ServiceNow has it, else the clock's."""
     out = {}
     ids = [str(x) for x in ids if str(x or "").strip()]
     for i in range(0, len(ids), chunk):
         part = ids[i:i + chunk]
-        try:
-            r = api.get("api/now/table/task_sla", {"sysparm_query": "taskIN" + ",".join(part) + "^stage!=cancelled",
-                                                   "sysparm_fields": "task,sla,stage,has_breached,business_percentage,percentage,start_time,end_time,pause_time,"
-                                                                     "business_time_left,planned_end_time,business_duration,duration",
-                                                   "sysparm_display_value": "all", "sysparm_exclude_reference_link": "true",
-                                                   "sysparm_limit": 20 * len(part)})
-        except SnError as e:
-            text = str(e)
-            if "HTTP 403" in text or "HTTP 401" in text:
-                text += " - the account needs read on task_sla (the itil role has it)"
-            return {}, text
-        rows = r.get("result") if isinstance(r, dict) else None
-        if not isinstance(rows, list):
-            return {}, "GET api/now/table/task_sla: no result list in the answer"
-        if stats is not None and len(rows) >= 20 * len(part):
-            stats["more"] = True                         # a page full: some tickets' SLAs may be cut
+        rows, err = _task_sla_rows(api, part)
+        if err:
+            return {}, err
         for x in rows:
             stage_v, stage_d = _vd(x, "stage")
             if stage_v.strip().lower() == "cancelled":
@@ -733,7 +760,7 @@ def read_task_sla(api, ids, chunk=100, stats=None):
                 "percent": pct, "paused_at": str(_vd(x, "pause_time")[0] or "") if stage_v.strip().lower() == "paused" else "",
                 "running": stage_v.strip().lower() in ("in_progress", "paused"), "left_s": duration(_vd(x, "business_time_left")[0]),
                 "planned_end": str(_vd(x, "planned_end_time")[0] or ""),
-                "elapsed_s": duration(_vd(x, "business_duration")[0]) or duration(_vd(x, "duration")[0])})
+                "elapsed_s": _elapsed(x)})
     return out, ""
 
 
@@ -865,7 +892,7 @@ def read_slas(api, items, win, source="auto", first_assigned=False, max_records=
             and since <= sn_time(it["done_at"]) <= until]
     if sla["source"] == "task_sla":
         ids = [it["sys_id"] for it in done]
-        sla["records"], sla["error"] = store.get("sla", ids, "task_sla2", lambda xs: read_task_sla(api, xs)) if store is not None else read_task_sla(api, ids)
+        sla["records"], sla["error"] = store.get("sla", ids, "task_sla3", lambda xs: read_task_sla(api, xs)) if store is not None else read_task_sla(api, ids)
         sla["records"] = by_key(sla["records"])
         if sla["error"]:
             sla["source"] = "targets"
@@ -879,10 +906,7 @@ def read_slas(api, items, win, source="auto", first_assigned=False, max_records=
         sla["open_cut"] = [int(max_records), len(opened)]
         opened = opened[-int(max_records):]
     if opened and not (sla["error"] and "HTTP 40" in sla["error"]):
-        st = {}
-        recs, sla["paused_error"] = read_task_sla(api, [it["sys_id"] for it in opened], stats=st)
-        if st.get("more") and not sla["open_cut"]:
-            sla["open_cut"] = [len(opened), len(opened)]
+        recs, sla["paused_error"] = read_task_sla(api, [it["sys_id"] for it in opened])
         sla["open"] = by_key(dict((k, [x for x in xs if x.get("running")]) for k, xs in recs.items()))
         for k, xs in recs.items():
             ts = sorted(x["paused_at"] for x in xs if x.get("paused_at"))
