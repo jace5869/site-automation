@@ -220,6 +220,7 @@ jobs:
         env:
           DISK_TEST_COLLECTIONS: /home/runner/.ansible/collections
         run: |
+          bash tests/galaxy_install.sh -r tests/patch/requirements.yml   # containers.podman (the patch step installed it before the split)
           bash tests/disk/test_tmp_clean.sh
           bash tests/disk/run_disk_report_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/disk/run_disk_report_test.sh
