@@ -8,12 +8,14 @@
   a vCenter SSO service in opts.services not started              critical
   the test domain account cannot log in                           critical
   the STS signing certificate expired / within crit / warn days   critical / critical / warning   (health report only)
-  an OCSP responder: no answer, not successful, stale, not good    opts.ocsp_severity (critical)
-  a CRL: no download, not a CRL, not the CA's, stale, lists the test certificate   opts.crl_severity (warning; health report only)"""
+  ... within twice the warn days                                  low (1.56.0: worth knowing, nothing to do now)
+  an OCSP responder: no answer, not successful, stale, not good    opts.ocsp_severity (critical; or warning, low)
+  a CRL: no download, not a CRL, not the CA's, stale, lists the test certificate   opts.crl_severity (warning; health report only)
+A low problem is listed (with the word), never counts in the title or status, and is never a watch condition."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
-RANK = {"critical": 0, "warning": 1, "info": 2}
+RANK = {"critical": 0, "warning": 1, "low": 2, "info": 3}
 
 
 def _o(opts):
@@ -52,6 +54,8 @@ def _problems(sso, opts, now_only):
                     sev, what = "critical", "expires in %d day(s) (%s)" % (d, c.get("expires", ""))
                 elif d <= o["sts_warn_days"]:
                     sev, what = "warning", "expires in %d days (%s)" % (d, c.get("expires", ""))
+                elif d <= 2 * o["sts_warn_days"]:
+                    sev, what = "low", "expires in %d days (%s)" % (d, c.get("expires", ""))
                 else:
                     continue
                 out.append((sev, n, "sso-sts", "%s:%s" % (n, c.get("subject", "")),
@@ -70,6 +74,8 @@ def _problems(sso, opts, now_only):
                         "Check the CRL server and the network path to it (proxy, firewall, DNS) from the AAP node and from vCenter; "
                         "a stale CRL is the CA's to publish again."))
     out.sort(key=lambda p: (RANK.get(p[0], 9), p[1], p[3]))
+    if now_only:            # the watch: what is down now - a low one wakes nobody
+        out = [p for p in out if p[0] != "low"]
     return out
 
 
@@ -87,7 +93,8 @@ def vcenter_sso_conditions(sso, opts=None):
 
 
 def _status(ps):
-    return "critical" if any(p[0] == "critical" for p in ps) else ("warning" if ps else "ok")
+    """The worst of the problems; low ones (1.56.0) count as ok."""
+    return "critical" if any(p[0] == "critical" for p in ps) else ("warning" if any(p[0] != "low" for p in ps) else "ok")
 
 
 def vcenter_sso_doc(doc, sso, opts=None):
@@ -99,7 +106,7 @@ def vcenter_sso_doc(doc, sso, opts=None):
     rows, rs = [], []
     for v in (sso or {}).get("vcenters") or []:
         mine = [p for p in ps if p[1] == v.get("name") and p[2] not in ("ocsp", "crl")]
-        st = _status(mine)
+        st = _status(mine) if _status(mine) != "ok" or not mine else "low"
         svc = ", ".join("%s %s" % (s["name"], (s.get("state") or "?").lower()) for s in v.get("services") or [] if s.get("found")) or "-"
         sts = ", ".join("%s (%d days)" % (c.get("expires", ""), int(c.get("days", 0))) for c in v.get("sts") or []) or "not read"
         prov = ", ".join("%s%s" % (p.get("name") or p.get("type") or "?", " (default)" if p.get("default") else "") for p in v.get("providers") or []) or "-"
@@ -128,7 +135,7 @@ def vcenter_sso_doc(doc, sso, opts=None):
                      x.get("why", "") if what and not x.get("ok") else ""])
         rs.append(st)
     if rows:
-        sec = {"title": "Single sign-on and OCSP", "status": _status(ps) if ps else "ok",
+        sec = {"title": "Single sign-on and OCSP", "status": (_status(ps) if _status(ps) != "ok" else "low") if ps else "ok",
                "columns": ["Status", "vCenter / responder", "SSO services", "STS signing certificate", "Identity providers", "Test login / answer time", "Notes"],
                "rows": rows, "row_status": rs,
                "text": "Single sign-on is how every user and job logs in to vCenter: its services, the certificate that signs its tokens, its identity "
@@ -138,9 +145,10 @@ def vcenter_sso_doc(doc, sso, opts=None):
         at = 1 if secs and secs[0].get("title") == "Needs attention" else 0
         secs.insert(at, sec)
         d["sections"] = secs
-    if ps:
-        crit = len([p for p in ps if p[0] == "critical"])
-        warn = len(ps) - crit
+    real = [p for p in ps if p[0] != "low"]
+    if real:
+        crit = len([p for p in real if p[0] == "critical"])
+        warn = len(real) - crit
         d["title"] = "%s - single sign-on: %s" % (d.get("title", "VMware health report"),
                                                   ", ".join(x for x in ("%d critical" % crit if crit else "", "%d warning(s)" % warn if warn else "") if x))
         order = ["ok", "info", "warning", "critical"]

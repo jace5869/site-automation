@@ -186,7 +186,9 @@ servicenow_node_mem_warn_pct: 85                   # JVM memory used of its max 
 servicenow_node_mem_critical_pct: 95               # ... -> critical
 servicenow_node_semaphore_queue_critical: 10       # transactions queued for a semaphore in every read: warning; this many -> critical
 servicenow_node_scheduler_queue_warn: 50           # scheduled jobs waiting for a worker -> warning above this
-servicenow_node_semaphore_wait_ms: 1000            # a slow transaction that waited this long for its semaphore is a semaphore problem
+servicenow_node_semaphore_wait_ms: 1000            # the older name of servicenow_node_semaphore_warn_ms (still read)
+servicenow_node_semaphore_warn_ms: "{{ servicenow_node_semaphore_wait_ms }}"  # a slow transaction that waited this long for its semaphore -> warning (the node short of threads)
+servicenow_node_semaphore_crit_ms: 10000           # ... this long -> critical. A slow transaction that only waited for its own session (semaphore wait under 100 ms) is Low
 servicenow_node_slow_tx_warn: 200                  # slow transactions ("waited excessive time to run") in the log's hours -> warning
 servicenow_node_log_hours: 24                      # how far back the node's localhost log is read
 servicenow_node_log_glob: "localhost_log*"         # the log files in the node's logs folder

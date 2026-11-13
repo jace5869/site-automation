@@ -1,0 +1,148 @@
+{
+"sections": [
+{
+"boxes": [
+{
+"label": "Nodes running",
+"note": "1 of 1 host(s) read",
+"status": "ok",
+"value": "1 of 1"
+}
+],
+"columns": [
+"Host",
+"Node :port",
+"Stats page answered at",
+"State",
+"Cluster",
+"JVM memory",
+"Semaphores in use / queued",
+"Scheduler workers / queue",
+"Active transactions",
+"Uptime",
+"Log 24 h: SEVERE / OOM / semaphore / slow"
+],
+"row_status": [
+""
+],
+"rows": [
+[
+"node01.yoursite.mil",
+"snc_prod :16000",
+"127.0.0.1:16000 (http)",
+"running, at boot",
+"-",
+"29.3% (1200 / 4096 MB)",
+"2 / 0, 0, 0",
+"8 / 1",
+"3",
+"1 Days",
+"0 / 0 / 0 / 0"
+]
+],
+"title": "Front-end nodes",
+"top": true
+},
+{
+"columns": [
+"Host",
+"Role",
+"Disk used",
+"Memory available",
+"Swap used",
+"fapolicyd",
+"Database check"
+],
+"row_status": [
+""
+],
+"rows": [
+[
+"node01.yoursite.mil",
+"front-end node",
+"/glide 40.0% (120.0 GB free)",
+"12000 MB of 32000 MB",
+"0.0% of 4096 MB",
+"-",
+"-"
+]
+],
+"title": "Node and database hosts"
+},
+{
+"columns": [
+"Level",
+"Node",
+"Kind",
+"Count",
+"Last",
+"Message"
+],
+"lines": [
+"Low - session wait: one person's own requests waited for each other (a browser sends several at once, and a session runs them one at a time). It is not the node short of threads; nothing to do unless one page is slow for everyone."
+],
+"row_status": [
+"critical",
+"warning",
+"",
+"low",
+"low",
+"low"
+],
+"rows": [
+[
+"Critical",
+"node01.yoursite.mil snc_prod",
+"slow transaction (semaphore wait)",
+"2, longest 45210 ms",
+"2026-11-13 10:15:00",
+"GlideServlet:Transaction waited excessive time to run: 45210ms, semaphore wait: 42000ms, session wait: 0ms - transaction: #5004 /incident_list.do, user: \u2026"
+],
+[
+"Warning",
+"node01.yoursite.mil snc_prod",
+"SEVERE, script error",
+12,
+"2026-11-13 10:15:00",
+"checkDCSupportsTLS: Cannot convert null to an object (script checkDCSupportsTLS, first 2026-11-13 08:01:00)"
+],
+[
+"-",
+"node01.yoursite.mil snc_prod",
+"SEVERE",
+7,
+"2026-11-13 10:15:00",
+"Invalid query detected, please check logs for details [Unknown field sys_id1 in table incident]"
+],
+[
+"Low",
+"node01.yoursite.mil snc_prod",
+"slow transaction (session wait)",
+40,
+"2026-11-13 10:15:00",
+"40 slow session(s) on /api/now/ui/page_timing/section_0/with/a/longer/path, worst 9100 ms, median 3100 ms"
+],
+[
+"Low",
+"node01.yoursite.mil snc_prod",
+"slow transaction (session wait)",
+39,
+"2026-11-13 10:15:00",
+"39 slow session(s) on /api/now/ui/page_timing/section_1/with/a/longer/path, worst 9101 ms, median 3100 ms"
+],
+[
+"Low",
+"node01.yoursite.mil snc_prod",
+"slow transaction (session wait)",
+38,
+"2026-11-13 10:15:00",
+"38 slow session(s) on /api/now/ui/page_timing/section_2/with/a/longer/path, worst 9102 ms, median 3100 ms"
+]
+],
+"title": "Node log errors (the most frequent, last 24 h)",
+"wrap": true
+}
+],
+"status": "info",
+"title": "sn_node_sections (its tables, inside a findings report)"
+}

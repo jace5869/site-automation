@@ -361,7 +361,7 @@
 "",
 "",
 "warning",
-"ok",
+"low",
 "ok",
 ""
 ],
@@ -398,7 +398,7 @@
 ],
 "row_status": [
 "critical",
-"",
+"low",
 ""
 ],
 "rows": [
@@ -428,7 +428,7 @@
 "120%",
 "+300.0 GB / month",
 "51 days (2026-11-11)",
-"102 days (2027-01-01)",
+"102 days (2027-01-01) - Low",
 "204 days (2027-04-13)",
 "good (R2 1.00, 30 days)"
 ],
@@ -680,7 +680,7 @@
 ]
 ],
 "status": "critical",
-"text": "Every host: state (blue: in maintenance, red: not connected - neither counts as capacity), cores, CPU and memory used now, VMs. Hosts much fuller than their neighbours mean DRS is off or limited.",
+"text": "Every host: state (Low: in maintenance, red: not connected - neither counts as capacity), cores, CPU and memory used now, VMs. Hosts much fuller than their neighbours mean DRS is off or limited.",
 "title": "Hosts per cluster"
 }
 ],

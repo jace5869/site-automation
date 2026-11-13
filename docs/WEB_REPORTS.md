@@ -81,7 +81,7 @@ Since 0.53.0:
 - **Headings that stay at the top** of a long table while you scroll it, rows striped, and the row under the
   pointer marked.
 - **Status chips with icons and their word**, never colour alone: a check mark for OK, ! for a warning, x for
-  critical.
+  critical, a down arrow for **Low** (1.56.0: worth knowing, nothing to do now - plum, between warning and info).
   - **Where they appear:** the tables' Severity and Status columns, a cell that says PASSED or FAILED, the sections' and
     the cards' status, and a coloured edge on the header and on each tile that needs a look.
   - **Contrast:** every text colour is at least 4.5:1 against what it is on, in light and in dark (most over 7:1).

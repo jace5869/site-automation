@@ -4,7 +4,7 @@ One job, `playbooks/ad_health_report.yml`, reads every domain controller (DC) in
 inventory and emails one report for the whole domain: what is broken first, then replication, DNS,
 time and SYSVOL, then **what changed** in the last 24 hours (privileged groups, accounts, Group
 Policy, schema and configuration). Each row is coloured: red = critical, amber = warning,
-green = OK, blue = for your information.
+green = OK, Low = worth knowing, nothing to do now (1.56.0), blue = for your information.
 
 **It only reads.** Each DC runs a PowerShell script over WinRM (the same way the Windows health
 check does) that queries Active Directory, runs `dcdiag` tests that only read, `repadmin
@@ -40,11 +40,11 @@ changes, accounts created / deleted, GPO changes). Then, in this order:
 | **dcdiag** | the failed tests and what dcdiag said. `SystemLog` is skipped by default (the Events section covers it) | red Connectivity, Advertising, NetLogons, Replications, SysVolCheck, Services, KnowsOfRoleHolders, RidManager, MachineAccount; amber the others |
 | **DNS** | dcdiag's DNS tests that only read (basic, forwarders, delegation, record registration), and the SRV records `_ldap` / `_kerberos` (`dc._msdcs`) and `_ldap._tcp.gc`: every DC must be registered | red record missing; amber a DC not registered, a DNS test failed |
 | **Time** | each DC's source, stratum, last sync, offset: a DC against the PDC emulator, the PDC against its NTP source | red the PDC on its own clock, 60 s off; amber 5 s off, no sync for 24 h |
-| **Events** | the Directory Service, DFS Replication and DNS Server logs, and the Netlogon, KDC, time and Group Policy entries of the System log: the events that matter on a DC, with what they mean (2042, 1388 / 1988 lingering objects, 2087, DFSR 2213 / 4012, LDAP signing 2887, Netlogon 5719 ...), and every other error in blue | per event |
-| **Clients in no site** | client addresses in no AD subnet (`netlogon.log` NO_CLIENT_SITE), and subnets linked to no site | amber |
-| **Certificates (LDAPS and Kerberos)** | the newest LDAPS and KDC certificate of each DC | amber 30 days, red 7 days; blue none |
+| **Events** | the Directory Service, DFS Replication and DNS Server logs, and the Netlogon, KDC, time and Group Policy entries of the System log: the events that matter on a DC, with what they mean (2042, 1388 / 1988 lingering objects, 2087, DFSR 2213 / 4012, LDAP signing 2887, Netlogon 5719 ...), and every other error as Low | per event; Low: 2886, 2889, DFSR 5014, 5807 and any other error |
+| **Clients in no site** | client addresses in no AD subnet (`netlogon.log` NO_CLIENT_SITE), and subnets linked to no site | amber from `ad_no_client_site_warn` addresses; fewer: Low |
+| **Certificates (LDAPS and Kerberos)** | the newest LDAPS and KDC certificate of each DC | amber 30 days, red 7 days; Low: none |
 | **Trusts** | every trust; outbound and two-way trusts verified (`nltest /sc_verify`) | red does not verify |
-| **Sites** | each site, its DCs and subnets | blue no DC or no subnet |
+| **Sites** | each site, its DCs and subnets | Low: no DC or no subnet |
 | **Privileged group changes** | members added to or removed from Domain / Enterprise / Schema Admins, Administrators, Account / Server / Print / Backup Operators, Group Policy Creator Owners, Key Admins, Cert Publishers, DnsAdmins (and your own): when, which DC, **by whom** | amber (`ad_privileged_change_severity`) |
 | **Privileged groups** | their direct members now | amber a group in `ad_groups_should_be_empty` with a member |
 | **Users, groups and computers created or deleted** | when, where, by whom | blue |
@@ -142,8 +142,8 @@ Ready to paste, with every setting switched off: [aap/extra_vars/ad_health_repor
 | `ad_security_events` | `true` | read the Security log for "by whom" |
 | `ad_privileged_groups_extra` | `[DnsAdmins]` | more groups to watch (names or SIDs) |
 | `ad_groups_should_be_empty` | `[]` | groups that must have no member, e.g. `[Schema Admins]` |
-| `ad_privileged_change_severity` | `warning` | a privileged group change: `warning`, `critical` or `info` |
-| `ad_schema_change_severity` / `ad_dc_change_severity` | `warning` / `info` | the schema changed; a DC added or removed |
+| `ad_privileged_change_severity` | `warning` | a privileged group change: `critical`, `warning`, `low` or `info` |
+| `ad_schema_change_severity` / `ad_dc_change_severity` | `warning` / `info` | the schema changed; a DC added or removed (`critical`, `warning`, `low` or `info`) |
 | `ad_dcdiag_skip` | `[SystemLog]` | dcdiag tests to skip |
 | `ad_dcdiag_dns` | `true` | also dcdiag's DNS tests that only read |
 | `ad_trust_verify` | `true` | verify outbound and two-way trusts |

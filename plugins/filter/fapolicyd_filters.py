@@ -390,8 +390,11 @@ def fapolicyd_fix_report(hostvars_list, names, title="", check=False):
     for h in read:
         j = ((h["apply"] or {}).get("journal") or []) or (h.get("journal") if h.get("active") != "active" or h.get("fixes") else [])
         if j:
-            secs.append({"title": "%s: fapolicyd's journal" % h["host"], "status": "critical" if h.get("active") != "active" else "info",
-                         "text": "fapolicyd's own lines this boot that say something went wrong (journalctl -u fapolicyd -b)"
+            # 1.56.0: while fapolicyd runs, its complaints are Low (worth knowing, nothing to do now)
+            up = h.get("active") == "active"
+            secs.append({"title": "%s: fapolicyd's journal" % h["host"], "status": "low" if up else "critical",
+                         "text": ("Low - fapolicyd runs. " if up else "")
+                                 + "fapolicyd's own lines this boot that say something went wrong (journalctl -u fapolicyd -b)"
                                  + (", after this run's fix" if (h["apply"] or {}).get("journal") else "") + ".",
                          "lines": [x[:400] for x in j]})
     if missing:
@@ -667,10 +670,10 @@ def fapolicyd_rules_job_report(hostvars_list, names, since="today", title="", ch
     if blocks:
         rows, rs = [], []
         for hn, g in sorted(blocks, key=lambda x: (x[1]["kind"] != "denied", -x[1]["count"], x[0])):
-            rows.append([hn, "blocked" if g["kind"] == "denied" else "would be (permissive)", g["exe"] or "?", g["path"] or "?", g["perm"],
+            rows.append([hn, "blocked" if g["kind"] == "denied" else "Low - would be (permissive)", g["exe"] or "?", g["path"] or "?", g["perm"],
                          g["count"], g.get("last", ""), ("%s. %s" % (g["rule_no"], g["rule"])) if g.get("rule") else (g.get("rule_no") or "?"),
                          g.get("where", ""), g.get("change") or g.get("note") or "-"])
-            rs.append("warning" if g["kind"] == "denied" else "info")
+            rs.append("warning" if g["kind"] == "denied" else "low")      # 1.56.0: would-be blocks are Low
         secs.append({"title": "What fapolicyd blocked", "status": "warning",
                      "text": "Since %s: the program, the file, how often, the rule (its text only for blocks since the rules last "
                              "changed - an older block's number may point at another rule now), where the file is, and the change "
@@ -694,8 +697,10 @@ def fapolicyd_rules_job_report(hostvars_list, names, since="today", title="", ch
     for h in read:
         j = (h["apply"] or {}).get("journal") or []
         if j:
-            secs.append({"title": "%s: fapolicyd's journal" % h["host"], "status": "critical" if (h["apply"] or {}).get("state") in bad_states else "info",
-                         "text": "fapolicyd's own lines after this run's change.", "lines": [x[:400] for x in j]})
+            bad = (h["apply"] or {}).get("state") in bad_states
+            secs.append({"title": "%s: fapolicyd's journal" % h["host"], "status": "critical" if bad else "low",
+                         "text": ("" if bad else "Low - fapolicyd runs. ") + "fapolicyd's own lines after this run's change.",
+                         "lines": [x[:400] for x in j]})
     if missing:
         secs.append({"title": "fapolicyd not installed", "lines": ["%d host(s), not looked at: %s" % (len(missing), ", ".join(sorted(missing)))]})
     if unread:

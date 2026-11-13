@@ -135,7 +135,7 @@ mails=$(ls "$work/mail" 2>/dev/null | wc -l)
 if [ "$mails" -ge 1 ]; then
     m=$(ls "$work/mail"/* | head -1); decoded "$m"; m="$work/mail.txt"
     if grep -q "1. Remove now - a compromised CA is trusted" "$m" && grep -q "2. Remove next - a distrusted root is still trusted" "$m" \
-       && grep -q "3. Then update - built-in roots" "$m" && grep -q "4. Listed only - your decision" "$m" \
+       && grep -q "3. Then update - built-in roots" "$m" && grep -q "4. Listed only (Low) - your decision" "$m" \
        && grep -q "Everything read - every trust store and program" "$m" && grep -q "COMPROMISED CA TRUSTED" "$m" && grep -q "Subject: .*Trust store report" "$m"; then echo "ok   - the email: remove now, remove next, update, listed, then the proof; the subject"
     else echo "FAIL - the email's content"; grep -i "subject\|trust store" "$m" | head -5; fails=$((fails + 1)); fi
 else echo "FAIL - no email arrived"; fails=$((fails + 1)); fi

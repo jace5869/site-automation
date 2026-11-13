@@ -444,7 +444,8 @@
 },
 {
 "label": "Failed sign-ins",
-"status": "info",
+"note": "Low",
+"status": "low",
 "value": 12
 },
 {

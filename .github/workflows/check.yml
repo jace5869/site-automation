@@ -129,6 +129,11 @@ jobs:
           python tests/test_yaml_regex.py
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_yaml_regex.py
           python tests/test_report_time.py
+          python tests/test_low_servicenow.py
+          python tests/test_low_ad.py
+          python tests/test_low_vmware.py
+          python tests/test_low_misc.py
+          python tests/test_low_security.py
           python tests/test_idm_inventory.py
           ANSIBLE_INVENTORY=/tmp/ac216/bin/ansible-inventory python tests/test_idm_inventory.py
       - name: The docs - every playbook in docs/JOB_TEMPLATES.md with its how-to; workflow drawings no wider than 88

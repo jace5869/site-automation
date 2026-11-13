@@ -16,7 +16,7 @@ __metaclass__ = type
 
 import re
 
-RANK = {"critical": 0, "warning": 1, "info": 2, "ok": 3}
+RANK = {"critical": 0, "warning": 1, "low": 2, "info": 3, "ok": 4}   # 1.56.0 low: worth knowing, nothing to do now
 LABEL = {"vmotion": "vMotion", "vsan": "vSAN", "management": "management", "vSphereProvisioning": "provisioning",
          "faultToleranceLogging": "FT logging", "vSphereReplication": "replication", "target": "target"}
 
@@ -153,7 +153,7 @@ def _problems(read, o):
                         "jumbo frames end to end, else 1500."))
                 nets = set(_net(v.get("ip"), v.get("mask")) for _, v in have if v.get("ip"))
                 if len(nets) > 1:
-                    out.append(("info", vc, "cluster " + name, "the %s adapters are on %d different subnets (%s)" % (
+                    out.append(("low", vc, "cluster " + name, "the %s adapters are on %d different subnets (%s)" % (
                         _svc(svc), len(nets), ", ".join(sorted(nets))),
                         "Fine when the network is routed on purpose: then their network stack (vMotion's) needs its gateway. "
                         "Otherwise an address or mask is wrong."))
@@ -233,7 +233,7 @@ def esxi_net_doc(net, opts=None):
     real = [p for p in ps if p[0] in ("critical", "warning")]
     if ps:
         sections.append({"title": "Needs attention" if real else "Notes", "status": "critical" if any(p[0] == "critical" for p in ps)
-                         else ("warning" if real else "info"),
+                         else ("warning" if real else "low" if any(p[0] == "low" for p in ps) else "info"),
                          "columns": ["Status", "Where"] + (["vCenter"] if multi else []) + ["Problem", "Fix"],
                          "rows": [[p[0].upper(), p[2]] + ([_short(p[1])] if multi else []) + [p[3], p[4]] for p in ps],
                          "row_status": [p[0] for p in ps]})

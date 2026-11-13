@@ -568,7 +568,9 @@ def ad_lockout_report(finds, dcs, unlocks=None, sources=None, opts=None):
     status = "warning" if n_locked else ("info" if any(a["unlocked"] for a in accounts) else "ok")
     srcs_all = set(s["source"] for a in accounts for s in a["sources"] if s["bad"] or s["after"] or s["lockouts"])
     summary = [{"label": "Locked out", "value": n_locked, "status": "warning" if n_locked else "ok"},
-               {"label": "Failed sign-ins", "value": sum(a["bad"] + a["after"] for a in accounts), "status": "info" if any(a["bad"] for a in accounts) else "ok"},
+               # 1.56.0: failed sign-ins (typos, an old password somewhere) are Low: worth knowing, nothing to do now
+               dict({"label": "Failed sign-ins", "value": sum(a["bad"] + a["after"] for a in accounts), "status": "low" if any(a["bad"] for a in accounts) else "ok"},
+                    **({"note": "Low"} if any(a["bad"] for a in accounts) else {})),
                {"label": "Source computers", "value": len(srcs_all), "status": "info" if srcs_all else "ok"},
                {"label": "DCs read", "value": "%d of %d" % (len(read), len(dcs or [])), "status": "ok" if len(read) == len(dcs or []) else "critical"}]
     report = {"title": title, "status": status, "summary": summary, "sections": sections,

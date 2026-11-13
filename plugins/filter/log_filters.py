@@ -19,9 +19,10 @@ import math
 import re
 import time
 
-LEVELS = ("critical", "error", "warning")
-LEVEL_RANK = {"critical": 0, "error": 1, "warning": 2, "": 3}
-LEVEL_STATUS = {"critical": "critical", "error": "critical", "warning": "warning"}
+# 1.56.0 low: a line its own source marks notice, info or debug - worth knowing, nothing to do now
+LEVELS = ("critical", "error", "warning", "low")
+LEVEL_RANK = {"critical": 0, "error": 1, "warning": 2, "low": 3, "": 4}
+LEVEL_STATUS = {"critical": "critical", "error": "critical", "warning": "warning", "low": "low"}
 MARK_BEGIN, MARK_END = "BEGIN_ACT_ANALYSIS", "END_ACT_ANALYSIS"
 SOURCE_LABEL = {"linux": "Linux", "windows": "Windows", "vcsa": "vCenter appliance", "vcenter": "vCenter (API)",
                 "esxi": "ESXi (through vCenter)"}
@@ -212,15 +213,17 @@ def log_signature(message):
 
 
 def log_level(level, message=""):
-    """critical / error / warning from what the source says (a journal priority, an ESXi or vCenter level
-    word), else from the line's words."""
+    """critical / error / warning / low from what the source says (a journal priority, an ESXi or vCenter level
+    word; 1.56.0: notice, info and debug are low), else from the line's words (a line with no level stays warning)."""
     lv = str(level if level is not None else "").strip().lower()
     if lv in ("0", "1", "2", "emerg", "emergency", "alert", "crit", "critical", "cr", "fatal", "panic"):
         return "critical"
     if lv in ("3", "err", "error", "er", "errors"):
         return "error"
-    if lv in ("4", "warn", "warning", "wa", "5", "6", "7", "notice", "info", "no", "in"):
+    if lv in ("4", "warn", "warning", "wa"):
         return "warning"
+    if lv in ("5", "6", "7", "notice", "info", "no", "in", "debug", "db"):
+        return "low"
     m = str(message or "")
     if _CRIT_WORDS.search(m):
         return "critical"
@@ -442,7 +445,8 @@ def log_analysis(hosts, opts=None):
             "lines": lines, "ignored": ignored, "outside": outside, "not_read": sum(1 for h in host_rows if _unread(h)),
             "critical": sum(1 for g in pats if g["level"] == "critical"),
             "error": sum(1 for g in pats if g["level"] == "error"),
-            "warning": sum(1 for g in pats if g["level"] == "warning")}
+            "warning": sum(1 for g in pats if g["level"] == "warning"),
+            "low": sum(1 for g in pats if g["level"] == "low")}
 
 
 def _where(p):
@@ -488,13 +492,15 @@ def log_act_task(problems, opts=None):
     """The task (prompt) for ACT. opts: what, window, hours, question, extra."""
     o = opts or {}
     ids = ", ".join(p["id"] for p in problems or [])
+    low = any(p.get("severity") == "low" for p in problems or [])
     q = " ".join(str(o.get("question") or "").split())
     return "\n".join([
         "Log analysis for an operations team (%s)." % (o.get("what") or "servers"),
         "You cannot run any commands in this task, and none are needed: the evidence piped to you was read from the logs "
-        "of %s (only the warning, error and critical lines, grouped: lines that differ only in numbers, times, addresses "
+        "of %s (only the warning, error and critical lines%s, grouped: lines that differ only in numbers, times, addresses "
         "and names are one pattern, counted across hosts). Base every conclusion on that evidence and quote the lines that "
-        "support it." % (o.get("window") or "the last %s hours" % _hours(o.get("hours", 24))),
+        "support it." % (o.get("window") or "the last %s hours" % _hours(o.get("hours", 24)),
+                         ", and LOW ones: lines their own source marks notice, info or debug" if low else ""),
     ] + (["", "The team asks: \"%s\". Answer that first in overall: which patterns relate to it, and whether the logs show "
               "its cause (say so plainly if they do not)." % q] if q else []) + [
         "",
@@ -569,6 +575,8 @@ def log_report(data, parsed=None, opts=None):
     model = " ".join(x for x in (o.get("provider"), o.get("model")) if x)
     subtitle = ("The warning, error and critical log lines of %s on %s, grouped into patterns (the same line with other "
                 "numbers, times and names is one pattern)." % (window, o.get("what") or "the hosts"))
+    if d.get("low"):
+        subtitle += " Low: %d pattern(s) of lines their own source marks notice, info or debug - worth knowing, nothing to do now." % d["low"]
     if with_act:
         subtitle += " ACT%s analyzed the top %d: likely causes, not certain ones - check before you change anything." % (
             " (" + model + ")" if model else "", len(ps))
@@ -580,6 +588,8 @@ def log_report(data, parsed=None, opts=None):
                {"label": "Critical", "value": d.get("critical", 0), "status": "critical" if d.get("critical") else "ok"},
                {"label": "Error", "value": d.get("error", 0), "status": "critical" if d.get("error") else "ok"},
                {"label": "Warning", "value": d.get("warning", 0), "status": "warning" if d.get("warning") else "ok"}]
+    if d.get("low"):
+        summary.append({"label": "Low", "value": d["low"], "status": "low", "note": "notice / info / debug"})
     if with_act:
         summary += [{"label": "High confidence (80+)", "value": sum(1 for c in confs if c >= 80), "status": "ok"},
                     {"label": "Medium (50-79)", "value": sum(1 for c in confs if 50 <= c < 80), "status": "warning"},

@@ -27,8 +27,9 @@
     'warning':  {'bar': '#e0951f', 'fg': '#9a5300', 'bg': '#fff1dc', 'bd': '#f4d29c', 'glass': 'rgba(255,241,220,.80)', 'word': 'Warning', 'hint': 'Needs attention', 'icon': '!'},
     'critical': {'bar': '#dc4a4a', 'fg': '#b42318', 'bg': '#fde8e8', 'bd': '#f5bfbf', 'glass': 'rgba(253,232,232,.80)', 'word': 'Critical', 'hint': 'Action required', 'icon': '&#215;'},
     'info':     {'bar': '#3b82f6', 'fg': '#1d4ed8', 'bg': '#e5eefe', 'bd': '#bcd0fa', 'glass': 'rgba(229,238,254,.78)', 'word': 'Info', 'hint': 'For your information', 'icon': 'i'},
+    'low':      {'bar': '#a347a6', 'fg': '#88358e', 'bg': '#f6e9f6', 'bd': '#e6c6e8', 'glass': 'rgba(246,233,246,.80)', 'word': 'Low', 'hint': 'Worth knowing', 'icon': '&#8595;'},
     'unknown':  {'bar': '#9aa8b6', 'fg': '#4a5868', 'bg': '#eef2f6', 'bd': '#d4dce5', 'glass': 'rgba(238,242,246,.78)', 'word': 'Unknown', 'hint': 'Not known', 'icon': '?'}} -%}
-{%- set tint = {'ok': '#ebf8f1', 'warning': '#fff6e8', 'critical': '#fdeeee', 'info': '#eef4fe', 'unknown': '#f3f6f9'} -%}
+{%- set tint = {'ok': '#ebf8f1', 'warning': '#fff6e8', 'critical': '#fdeeee', 'info': '#eef4fe', 'unknown': '#f3f6f9', 'low': '#fbf3fb'} -%}
 {%- set st = r.status | default('info') if r.status | default('info') in pal else 'info' -%}
 {%- set ink = '#0f2236' -%}
 {%- set muted = '#4a5d71' -%}

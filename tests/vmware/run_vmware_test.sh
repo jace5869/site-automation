@@ -691,7 +691,8 @@ if [ "$(nmail)" = $((n0 + 1)) ] && subject "$eml" | grep -q "^\[AAP\] VMware ala
    && grep -q 'bgcolor="#fef3c7"' "$work/al.html" && grep -q 'bgcolor="#b45309"[^>]*>WARNING<' "$work/al.html" \
    && grep -q ">DC0_C0_H2<" "$work/al.html" && grep -q ">disconnected<" "$work/al.html" \
    && grep -Eq "^CRITICAL +DC0_C0_H2 +disconnected" "$work/al.txt" && grep -Eq "^WARNING +user +192.0.2.99 +DC0_C0_H0 +3 " "$work/al.txt" \
-   && grep -Eq "^INFO +Host +DC0_C0_H0 +Host error +1 +0 .* cleared +DC0_C0 +DC0" "$work/al.txt" && grep -q 'bgcolor="#dbeafe"' "$work/al.html"; then
+   && grep -Eq "^LOW +Host +DC0_C0_H0 +Host error +1 +0 .* cleared +DC0_C0 +DC0" "$work/al.txt" && grep -q 'bgcolor="#f5e8f6"' "$work/al.html"; then
+    # 1.56.0: an alarm that fired and cleared since is Low (was Info, blue)
     echo "ok   -   ...the email: red and amber rows, the severity cells filled, a text copy"
 else
     echo "FAIL -   ...alarms email"; head -40 "$work/al.txt"; fails=$((fails + 1))

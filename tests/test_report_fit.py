@@ -296,6 +296,7 @@ class EmailTiles(unittest.TestCase):
 EMAIL_KNOWN = set()                     # 1.46.0: the six glass emails of 1.45.0 fit (a wide table tighter, or stacked)
 # 1.46.0: these glass emails (tables of 9 to 16 columns) fit an 800 px window too
 GLASS_800 = ("ontap_hardware_doc", "vm_health_report", "vm_health_report_read", "sn_node_sections", "sn_node_sections_pages",
+             "sn_node_sections_low",
              "ucs_inventory_doc")
 EMAIL_LOOKS = {"standard": "report.html.j2", "command": "report_command.html.j2", "portal": "report_portal.html.j2",
                "glass": "report_glass.html.j2"}

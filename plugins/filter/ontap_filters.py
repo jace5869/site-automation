@@ -8,7 +8,7 @@ __metaclass__ = type
 import datetime
 import re
 
-RANK = {"critical": 0, "warning": 1, "unknown": 2, "info": 3, "ok": 4, "": 5}
+RANK = {"critical": 0, "warning": 1, "unknown": 2, "low": 3, "info": 4, "ok": 5, "": 6}     # low: 1.56.0
 
 
 # ---- small helpers --------------------------------------------------------------------------------
@@ -142,9 +142,9 @@ def as_bool(v):
 
 
 ALERT_SEV = {"fatal": "critical", "critical": "critical", "major": "critical", "minor": "warning", "degraded": "warning",
-             "warning": "warning", "information": "info", "informational": "info", "other": "info", "unknown": "unknown"}
+             "warning": "warning", "information": "low", "informational": "low", "other": "low", "unknown": "unknown"}   # 1.56.0: info -> low
 EMS_SEV = {"emergency": "critical", "alert": "critical", "error": "warning"}
-BATTERY = {"battery_ok": "ok", "battery_fully_charged": "ok", "battery_partially_discharged": "warning",
+BATTERY = {"battery_ok": "ok", "battery_fully_charged": "ok", "battery_partially_discharged": "low",   # 1.56.0: charges by itself
            "battery_near_end_of_life": "warning", "battery_over_charged": "warning", "battery_unknown": "unknown",
            "battery_fully_discharged": "critical", "battery_at_end_of_life": "critical", "battery_not_present": "critical"}
 SECTION_KEYS = {"nodes": ["nodes", "failover"], "health": ["subsystems"], "alerts": ["alerts"], "ems": ["ems", "ldap"],
@@ -192,7 +192,7 @@ class _Report(object):
                 s["column_titles"] = [titles.get(c, c) for c in columns]
             s.update({"columns": columns, "rows": [r[0] for r in shown],
                       "cell_status": [[x or "" for x in r[1]] for r in shown],
-                      "row_status": [r[2] if r[2] in ("critical", "warning", "info", "unknown") else "" for r in shown]})
+                      "row_status": [r[2] if r[2] in ("critical", "warning", "low", "info", "unknown") else "" for r in shown]})
             s["text"] = text
         else:
             s["text"] = (about + " " + none_text).strip()
@@ -374,7 +374,7 @@ def ontap_report(collected, opts=None):
             cells = [c["_name"], n.get("name"), st.upper(), uptime_text(n.get("uptime")) if st == "up" or n.get("uptime") else "-",
                      n.get("model", ""), g(n, "version.full", ""),
                      poss_txt + (" (%s)" % f.get("state_description") if f.get("state_description") and poss is False else ""),
-                     spst or "?", (bat or "?").replace("battery_", "").replace("_", " "),
+                     spst or "?", (bat or "?").replace("battery_", "").replace("_", " ") + (" (Low)" if BATTERY.get(bat) == "low" else ""),
                      ("%+d s" % drift) if drift is not None else "?"]
             sts = ["", "", s_st, "", "", "", "ok" if poss else ("warning" if poss is False else ""),
                    "ok" if spst == "online" else ("warning" if spst else ""), BATTERY.get(bat, "") if bat else "", d_st]
@@ -409,7 +409,8 @@ def ontap_report(collected, opts=None):
         for a in _recs(c, "alerts"):
             sev = ALERT_SEV.get(str(a.get("perceived_severity", "")).lower(), "warning")
             pairs.append((RANK.get(sev, 9), len(pairs),
-                          _row([c["_name"], a.get("node", ""), str(a.get("perceived_severity", "?")).upper(), a.get("subsystem") or a.get("monitor", ""),
+                          _row([c["_name"], a.get("node", ""), str(a.get("perceived_severity", "?")).upper() + (" (Low)" if sev == "low" else ""),
+                                a.get("subsystem") or a.get("monitor", ""),
                                 a.get("alert_id", ""), a.get("alerting_resource", ""), time_text(a.get("indication_time"))], ["", "", sev]),
                           _row([c["_name"], a.get("node", ""), a.get("alert_id", ""), a.get("probable_cause", ""), a.get("corrective_actions", "")])))
             R.problem(c["_name"], "health alert", a.get("node", ""), sev, "%s: %s" % (a.get("alert_id", ""), a.get("probable_cause", "")))
@@ -538,10 +539,10 @@ def ontap_report(collected, opts=None):
             elif st in ("reconstructing", "copy", "pending", "maintenance", "unfail") or ct in ("maintenance", "unknown", "unsupported"):
                 sv = "warning"
             elif ct == "unassigned":
-                sv = "info"
+                sv = "low"                                  # 1.56.0: worth knowing (was info)
             else:
                 continue
-            rows.append(_row([c["_name"], d.get("name"), st.upper() or "?", ct, node, shelf_names.get(g(d, "shelf.uid"), ""),
+            rows.append(_row([c["_name"], d.get("name"), st.upper() or "?", ct + (" (Low)" if sv == "low" else ""), node, shelf_names.get(g(d, "shelf.uid"), ""),
                               d.get("bay", ""), d.get("model", ""), d.get("serial_number", "")], ["", "", sv]))
             R.problem(c["_name"], "disk", d.get("name"), sv, "disk %s (%s)" % (st, ct))
         mn = int(o.get("min_spares", 1))
@@ -557,7 +558,7 @@ def ontap_report(collected, opts=None):
             spares.append(_row([c["_name"], node, pn["spare"], pn["shared"], pn["total"], note], ["", "", sv]))
             R.problem(c["_name"], "spares", node, sv, note)
     R.table("Disks: failed, rebuilding or unassigned", "Disks that are broken (red), rebuilding, copying or in maintenance "
-            "(amber), or not assigned to a node (blue).", ["Cluster", "Disk", "State", "Container", "Node", "Shelf", "Bay", "Model",
+            "(amber), or not assigned to a node (Low).", ["Cluster", "Disk", "State", "Container", "Node", "Shelf", "Bay", "Model",
                                                           "Serial"], rows, "No failed or rebuilding disk.", _notes(cs, SECTION_KEYS["disks"]))
     R.table("Spare disks", "Spare disks per node (by home node): ONTAP rebuilds a failed disk onto a spare.",
             ["Cluster", "Node", "Spares", "Partitioned (shared)", "Disks", "Note"], spares, "No disk was read.")
@@ -847,8 +848,8 @@ def ontap_report(collected, opts=None):
             if svm not in doms:
                 dst, dc_txt = "", "?"
             elif not v["all"]:
-                # nothing listed: the discovery has not run, or finds nothing - for information, with where to look
-                dst, dc_txt = "info", "none listed"
+                # nothing listed: the discovery has not run, or finds nothing - Low (1.56.0), with where to look
+                dst, dc_txt = "low", "none listed (Low)"
                 hint = "no DC listed - vserver cifs domain discovered-servers discovery-mode show -vserver %s; then %s (a change: run it in a quiet window)" % (svm, reset)
             else:
                 parts = (["%d OK" % len(v["ok"])] if v["ok"] else []) + \
@@ -871,7 +872,7 @@ def ontap_report(collected, opts=None):
                 hints.append("%s / %s: %s" % (c["_name"], svm, hint))
             rows.append(_row([c["_name"], svm, s.get("name"), g(s, "ad_domain.fqdn", ""), "yes" if en else ("NO" if en is False else "?"),
                               dc_txt, "; ".join(v["bad_text"])], ["", "", "", "", est, dst, "warning" if v["bad"] else ""],
-                             worst([x for x in (est, dst) if x in ("critical", "warning")]) or ("info" if dst == "info" else "")))
+                             worst([x for x in (est, dst) if x in ("critical", "warning")]) or (dst if dst in ("info", "low") else "")))
             parts = []
             if en is False:
                 parts.append("the CIFS server is DISABLED")

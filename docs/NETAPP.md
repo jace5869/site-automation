@@ -18,11 +18,11 @@ certificates). Then, in this order:
 | Section | What it shows | Colours |
 |---|---|---|
 | **Clusters** | each cluster (the address it was read at under its name): ONTAP version, system health, nodes up, space used on its aggregates, NTP servers. A cluster that could not be read is listed in red with the reason | health, nodes, space |
-| **Nodes** | state, uptime (days hours:minutes), model, version, whether the partner could take over (storage failover), service processor, NVRAM battery, the node's clock against the AAP server's | green UP / red DOWN, and each status |
+| **Nodes** | state, uptime (days hours:minutes), model, version, whether the partner could take over (storage failover), service processor, NVRAM battery, the node's clock against the AAP server's | green UP / red DOWN, and each status (a battery partially discharged is Low: it charges by itself) |
 | **Volumes** | volumes 85 % full or more, and volumes offline or restricted, with their aggregate, state, type, size, available, used %. Volumes under 50 GB (`ontap_volume_min_gb`) are left out, full or not online - root volumes and other small ones run full by design; the table says how many | amber 85 %, red 90 %, red offline |
 | **System health** | ONTAP's health monitors (`system health subsystem show`) that are not OK | amber degraded |
 | **Hardware: controllers and shelves** | each controller and disk shelf: power supplies, fans, temperature, failed parts (FRUs) | red failed |
-| **Disks** | broken disks; disks rebuilding, copying or in maintenance; unassigned disks | red / amber / blue |
+| **Disks** | broken disks; disks rebuilding, copying or in maintenance; unassigned disks | red / amber / Low |
 | **Spare disks** | spare disks per node (a failed disk is rebuilt onto a spare) | red none, amber few |
 | **Network interfaces (LIFs)** | LIFs down, not on their home port (the home port under the one it is on), or disabled | red / amber / blue |
 | **Ports down** | enabled Ethernet and FC ports that are not up | red in use, blue no cable / not used |
@@ -35,11 +35,11 @@ certificates). Then, in this order:
 | **SnapMirror transfers** | the same relationships in the same order: last transfer, progress, progress updated, policy | blue running |
 | **Cluster and SVM peers** | cluster peers not available, SVM peers not peered | red / amber |
 | **SVMs not running** | stopped storage VMs (a stopped DR destination is normal: blue) | red |
-| **CIFS (SMB) servers** | each CIFS server: enabled or not, and its domain controllers in one cell (`2 OK · 12 not contacted`, `1 not reachable`) with the ones not reachable named; under the table, the `vserver` commands for the SVMs where no DC is OK, none is listed or one is not reachable | red stopped, or ONTAP tried every DC it lists and reached none; amber a DC not reachable (said when preferred); blue every DC not contacted, or none listed - ONTAP's normal state, never a finding |
+| **CIFS (SMB) servers** | each CIFS server: enabled or not, and its domain controllers in one cell (`2 OK · 12 not contacted`, `1 not reachable`) with the ones not reachable named; under the table, the `vserver` commands for the SVMs where no DC is OK, none is listed or one is not reachable | red stopped, or ONTAP tried every DC it lists and reached none; amber a DC not reachable (said when preferred); blue every DC not contacted - ONTAP's normal state, never a finding; Low none listed |
 | **CIFS domain controllers** | every server ONTAP lists for each SVM, one row per DC and type: address, type (DC / LDAP / KDC), preference (preferred / favored / adequate), state (OK, *not contacted*, or what ONTAP said), the nodes when they differ; not reachable first. Folded on the website when it is long (click its title) | amber not reachable; blue not contacted |
 | **LUNs** | LUNs not mapped to any host (forgotten?) and LUNs not online | amber / red |
 | **Certificates expiring** | certificates expiring within 60 days or expired | amber 60 days, red 14 days |
-| **Health alerts** | what the health monitors raised (`system health alert show`): node, severity, subsystem, alert, resource, since | red critical / major, amber minor |
+| **Health alerts** | what the health monitors raised (`system health alert show`): node, severity, subsystem, alert, resource, since | red critical / major, amber minor, Low information / other |
 | **Health alerts: cause and what to do** | each alert above, in the same order: probable cause, corrective action | - |
 | **Error events (last 24 h)** | ONTAP's event log (EMS): emergency, alert and error events, the same event on the same node counted once. On a cluster where no SVM has an LDAP client configured, events with "ldap" in their name are left out (`ontap_ems_ignore_ldap`), and so are the names in `ontap_ems_ignore`; the section says how many | red alert / emergency, amber error |
 
@@ -236,7 +236,7 @@ Set them in the template's Variables, or in `playbooks/group_vars/all.yml` for e
 | `... reduced detail - ONTAP refused a field ...` | this ONTAP version does not know a field; the job asked again with fewer | nothing: the section is still shown, a column may say `?`. Send the line to the people who maintain this repository |
 | CIFS *DCs* `2 OK · 12 not contacted`, or `14 not contacted` with no DC OK (blue) | ONTAP lists **every** DC of the domain and marks those it has not needed to probe `undetermined` (`vserver cifs domain discovered-servers show`) - other sites, preference *adequate*, or every DC while CIFS works: ONTAP's normal state | nothing (1.6.1; 1.6.0 showed red when no DC was OK). To see them: `vserver cifs domain discovered-servers show -vserver <svm>`; to make ONTAP probe them again: `vserver cifs domain discovered-servers reset-servers -vserver <svm>` - a change, run it in a quiet window |
 | CIFS `dc2 (unavailable)` (amber), or `ONTAP reports no DC it is connected to - it tried them and reached none` (red) | ONTAP tried that DC and could not reach it; red: it tried every DC it lists and reached none - the SVM cannot authenticate users | `vserver cifs domain discovered-servers show -vserver <svm>`, then the DC, DNS (`vserver services name-service dns check -vserver <svm>`) and the route from the SVM's LIFs; then `reset-servers` (above) |
-| CIFS *DCs* `none listed` (blue) | ONTAP lists no DC for the SVM: the discovery has not run, or finds none | `vserver cifs domain discovered-servers discovery-mode show -vserver <svm>`, then `reset-servers` (above) |
+| CIFS *DCs* `none listed (Low)` | ONTAP lists no DC for the SVM: the discovery has not run, or finds none | `vserver cifs domain discovered-servers discovery-mode show -vserver <svm>`, then `reset-servers` (above) |
 | `CRC counters need ONTAP 9.11 or later` | older ONTAP has no CRC counter in its REST API | nothing: receive errors are still shown |
 | SnapMirror is empty, but you have relationships | they are read on the destination cluster | add the destination cluster to `ontap_clusters` |
 | An aggregate you know is missing | root aggregates are not returned by ONTAP's REST API | by design: root aggregates are not listed |

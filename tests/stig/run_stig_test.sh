@@ -147,8 +147,8 @@ run "the same fails on the next run: still drifted (they passed in an earlier sc
 sleep 1
 run "check_stig_ignore_rules: a rule left out is never a finding, it is counted" fail -e "$sm_on" -e '{"check_stig_ignore_rules": ["V-257821", "RHEL-09-215040"]}' -- \
     "[WARNING] stig: 1 STIG rule STIG Manager has as Not a Finding or Not Applicable fails now: V-257985 CAT II" "left out 2" "!DRIFT V-257821" "!CRITICAL"
-run "check_stig_disagree_severity must be none, warning or critical" fail -e check_stig_disagree_severity=high -- \
-    "check_stig_disagree_severity must be none, warning or critical (it is high)"
+run "check_stig_disagree_severity must be none, low, warning or critical" fail -e check_stig_disagree_severity=high -- \
+    "check_stig_disagree_severity must be none, low, warning or critical (it is high)"
 sleep 1
 
 echo '{"audit_rules_privileged_commands_su": "fail"}' > "$work/results.json"

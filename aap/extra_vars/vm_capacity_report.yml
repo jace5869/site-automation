@@ -79,7 +79,7 @@
 ## red, and the target of the storage runway
 # vm_capacity_storage_crit_pct: 90
 
-## a runway shorter than this is amber
+## a runway shorter than this is amber; up to twice this, Low (worth knowing)
 # vm_capacity_runway_warn_days: 90
 
 ## and red

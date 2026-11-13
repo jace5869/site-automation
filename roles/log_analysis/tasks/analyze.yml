@@ -72,7 +72,7 @@
         {%-   set _ = out.append(p | combine((_la_parsed.by_id | default({}))[p.id] | default({}))) -%}
         {%- endfor -%}
         {{ {'title': _la_doc.title, 'window': _la_window, 'hosts': _la.hosts, 'lines': _la.lines, 'patterns': out,
-            'critical': _la.critical, 'error': _la.error, 'warning': _la.warning, 'ignored': _la.ignored, 'not_read': _la.not_read,
+            'critical': _la.critical, 'error': _la.error, 'warning': _la.warning, 'low': _la.low | default(0), 'ignored': _la.ignored, 'not_read': _la.not_read,
             'question': log_analysis_question, 'act': {'asked': log_analysis_act | bool, 'ran': _la_ran | bool,
             'reason': '' if _la_ran | bool else _la_reason, 'overall': _la_parsed.overall | default('')},
             'dry_run': ansible_check_mode} }}

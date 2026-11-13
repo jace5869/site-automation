@@ -26,8 +26,8 @@ checklist - run the **STIG recheck** ([below](#the-stig-recheck)): only those ru
 |---|---|---|
 | **Drifted** | the scan fails a rule that STIG Manager has as **Not a Finding** (or **Not Applicable**), and the rule **passed on this host in an earlier scan** | yes: CAT I **critical**, CAT II and III **warning** (`check_stig_severity`) - every run until the host is fixed or the review changes |
 | **New fail** | the scan fails a rule that **passed in an earlier scan** (and STIG Manager does not have it Open, nor as Not a Finding - that is drift) | yes, the same severities |
-| Disagree | the scan fails a rule STIG Manager has as **Not a Finding**, and it has **failed in every scan of the host** - nothing moved that the job saw | no: report only (`check_stig_disagree_severity`: `warning` or `critical` makes it a finding). Below: "When OpenSCAP and DISA's checks do not line up" |
-| Fixed, still Open | the scan passes a rule STIG Manager still has **Open** - the checklist is behind | no: report only. Update the review (and close its POA&M item) |
+| Disagree | the scan fails a rule STIG Manager has as **Not a Finding**, and it has **failed in every scan of the host** - nothing moved that the job saw | no: report only (`check_stig_disagree_severity`: `low` lists it as a Low finding, `warning` or `critical` makes it a finding). Below: "When OpenSCAP and DISA's checks do not line up" |
+| Fixed, still Open | the scan passes a rule STIG Manager still has **Open** - the checklist is behind | no: report only, shown as **Low**. Update the review (and close its POA&M item) |
 | Left out | a rule in `check_stig_ignore_rules` fails | no: listed, so the list is seen |
 | No review | the scan fails a rule STIG Manager has no review for | no: report only |
 | By hand | a rule the checklist has a review of that the scan gives no result for (DISA's manual checks) | no: counted per host |
@@ -598,7 +598,7 @@ you are most likely to set:
 | `check_stig_tailoring` / `_src` | empty | your site's tailoring file (on the host / in your repository) |
 | `check_stig_datastream` / `_src` | the host's SSG | another datastream - newer content, or a DISA SCAP benchmark |
 | `check_stig_severity` | CAT I critical, II and III warning | the finding's severity by CAT |
-| `check_stig_disagree_severity` | `none` | a rule STIG Manager has as Not a Finding that never passed on the host: `none` = report only, or `warning` / `critical` |
+| `check_stig_disagree_severity` | `none` | a rule STIG Manager has as Not a Finding that never passed on the host: `none` = report only, `low` = a Low finding (listed, never fails), or `warning` / `critical` |
 | `check_stig_ignore_rules` | `[]` | rules OpenSCAP gets wrong at your site (SV-, V-, STIG id or SCAP check name): never a finding, listed as left out |
 | `check_stig_stigman_statuses` | saved, submitted, accepted | the reviews that count as the checklist |
 | `check_stig_dir`, `check_stig_keep` | `/var/lib/site-automation/stig`, 10 | where the scans are kept, and how many |

@@ -1508,7 +1508,8 @@ def vm_pick_reboot_plan(picked, picks, vcenters_read, power_mode="guest"):
 def cert_report_section(certs, warn_days=30, notice_days=60):
     """Every certificate found (check_certs / win_check_certs inventory: days, expires, host, subject,
     where) as the certificate report's table, soonest expiry first, coloured: expired red, within
-    warn_days amber, within notice_days blue, the rest plain. The Days left and Status cells in full colour."""
+    warn_days amber, within notice_days Low (1.56.0; blue before), the rest plain. The Days left and Status cells in full
+    colour."""
     warn, notice = int(warn_days), max(int(notice_days), int(warn_days))
     rows, rs, cs = [], [], []
     for c in sorted(certs or [], key=lambda x: x.get("days", 0)):
@@ -1520,7 +1521,7 @@ def cert_report_section(certs, warn_days=30, notice_days=60):
         elif d <= warn:
             st, text = "warning", "expires within %d days" % warn
         elif d <= notice:
-            st, text = "info", "expires within %d days" % notice
+            st, text = "low", "Low: expires within %d days" % notice
         else:
             st, text = "", "ok"
         rows.append([d, c.get("expires", ""), c.get("host", ""), c.get("subject", ""), c.get("where", ""), text])
@@ -1528,7 +1529,7 @@ def cert_report_section(certs, warn_days=30, notice_days=60):
         cs.append([st, "", "", "", "", st or "ok"])
     out = {"title": "All certificates, soonest expiry first", "columns": ["Days left", "Expires", "Host", "Subject", "Where", "Status"],
            "rows": rows, "row_status": rs, "cell_status": cs,
-           "text": "Red = expired, amber = expires within %d days, blue = within %d days." % (warn, notice)}
+           "text": "Red = expired, amber = expires within %d days, Low = within %d days (worth knowing, nothing to do now)." % (warn, notice)}
     if any(x == "critical" for x in rs):
         out["status"] = "critical"
     elif any(x == "warning" for x in rs):
@@ -1676,6 +1677,8 @@ def _cell(v):
 # "Start here" cards (a section's cards): per status the bar on the left, the chip's colours and the card's tint
 CARD_PAL = {"critical": ("#d64545", "#b42318", "#fdeaea", "#f5c4c4", "#fdf5f5", "Critical"),
             "warning": ("#d98a1c", "#9a5806", "#fdf2df", "#f3d6a6", "#fdf9f1", "Warning"),
+            # 1.56.0 low: worth knowing, nothing to do now - always with the word "Low" (never the colour alone)
+            "low": ("#a347a6", "#88358e", "#f6e9f6", "#e6c6e8", "#fcf6fc", "Low"),
             "info": ("#4f86d9", "#1d4ed8", "#e6effd", "#c3d5f7", "#f4f8fe", "Info"),
             "ok": ("#2f9e72", "#13734f", "#e3f5ec", "#bfe6d3", "#f3faf6", "OK")}
 
@@ -1853,7 +1856,7 @@ def report_text(report, footer="", runs=None):
 
 # the strip of past runs (report_email_theme: command): a job's own end, when its report did not say
 _RUN_STATUS = {"successful": "ok", "failed": "critical", "error": "critical", "canceled": "unknown"}
-_REPORT_STATUSES = ("ok", "warning", "critical", "info", "unknown")
+_REPORT_STATUSES = ("ok", "warning", "critical", "info", "unknown", "low")
 
 
 def _plain_number(v):
@@ -2062,6 +2065,8 @@ def findings_cards(by_host, missing=None, max_cards=6):
     found = []
     for h in sorted(by_host or {}):
         for f in by_host.get(h) or []:
+            if str(f.get("severity")) == "low":       # 1.56.0: worth knowing, nothing to do now - no card
+                continue
             found.append((0 if str(f.get("severity")) == "critical" else 1, h, f))
     found.sort(key=lambda x: (x[0], x[1]))
     cards = []
@@ -2096,18 +2101,22 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None):
     hosts = sorted(by_host)
     missing = sorted(missing or [])
     single = len(hosts) + len(missing) <= 1
-    rows, bad, crit, warn = [], [], 0, 0
+    rows, bad, crit, warn, low = [], [], 0, 0, 0
     for h in hosts:
         fs = by_host.get(h) or []
-        if fs:
+        # 1.56.0: a low finding (worth knowing, nothing to do now) is listed, never makes the host or the report amber
+        if any(str(f.get("severity") or "warning") != "low" for f in fs):
             bad.append(h)
         for f in fs:
             sev = str(f.get("severity") or "warning")
-            crit += sev == "critical"
-            warn += sev != "critical"
+            if sev == "low":
+                low += 1
+            else:
+                crit += sev == "critical"
+                warn += sev != "critical"
             row = [sev.upper(), f.get("check", ""), f.get("summary", ""), f.get("hint", "")]
             rows.append(row if single else [h] + row)
-    rows.sort(key=lambda r: (0 if "CRITICAL" in r[:2] else 1, r[0]))
+    rows.sort(key=lambda r: (0 if "CRITICAL" in r[:2] else 2 if "LOW" in r[:2] else 1, r[0]))
     n = len(rows)
     if n:
         t = "%s: %d finding(s)" % (title, n) + ("" if single else " on %d of %d host(s)" % (len(bad), len(hosts)))
@@ -2121,6 +2130,8 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None):
                                  {"label": "Healthy", "value": len(hosts) - len(bad), "status": "ok", "note": "no findings"},
                                  box("With findings", len(bad), "warning", "hosts to look at")]
     summary += [box("Critical", crit, "critical", "act now"), box("Warning", warn, "warning", "plan a fix")]
+    if low:
+        summary.append(box("Low", low, "low", "worth knowing"))
     if missing:
         summary.append(box("Did not report", len(missing), "warning", "health unknown"))
     top = [s for s in extra or [] if s.get("top")]
@@ -2129,7 +2140,7 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None):
         t = "%s: %s" % (title, head["headline"]) + ((" - %d finding(s)" % n) if n else "")
         if missing:
             t += ", %d host(s) did not report" % len(missing)
-        order = {"critical": 0, "warning": 1, "info": 2, "ok": 3}
+        order = {"critical": 0, "warning": 1, "low": 2, "info": 3, "ok": 4}
         status = min(status, head.get("headline_status") or status, key=lambda x: order.get(x, 2))
         if head.get("summary_only"):
             summary = [box("Did not report", len(missing), "warning", "health unknown")] if missing else []
@@ -2150,6 +2161,8 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None):
         sections.append({"title": "Findings", "status": status,
                          "columns": ([] if single else ["Host"]) + ["Severity", "Check", "Finding", "Look further"],
                          "rows": rows})
+        if low:
+            sections[-1]["row_status"] = ["low" if "LOW" in r[:2] else "" for r in rows]
     if missing:
         sections.append({"title": "Did not report", "status": "warning",
                          "text": "Unreachable, or the job failed on them before the checks ran: their health is unknown.",

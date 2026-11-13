@@ -220,9 +220,9 @@ File: `roles/ad_report/defaults/main.yml`
 | `ad_changes_max` | `500` | look at most at this many changed objects per kind (created, changed accounts, GPO links) |
 | `ad_privileged_groups_extra` | `[DnsAdmins]` | Privileged groups watched besides the built-in ones (Domain / Enterprise / Schema Admins, Administrators, Account / Server / Print / Backup Operators, Group Policy Creator Owners, Key Admins, Cert Publishers): names or SIDs of this domain's groups. |
 | `ad_groups_should_be_empty` | `[]` | privileged groups that must have no member, e.g. [Schema Admins] - amber when they have one |
-| `ad_privileged_change_severity` | `warning` | a member added to / removed from a privileged group: warning, critical or info |
-| `ad_schema_change_severity` | `warning` | the schema version changed: warning, critical or info |
-| `ad_dc_change_severity` | `info` | a domain controller added or removed: warning, critical or info |
+| `ad_privileged_change_severity` | `warning` | a member added to / removed from a privileged group: critical, warning, low or info |
+| `ad_schema_change_severity` | `warning` | the schema version changed: critical, warning, low or info |
+| `ad_dc_change_severity` | `info` | a domain controller added or removed: critical, warning, low or info |
 | `ad_dcdiag_skip` | `[SystemLog]` | ---- What is read on each DC --------------------------------------------------------------------- dcdiag tests to skip (SystemLog fails on any error in the System log: the Events table covers it) |
 | `ad_dcdiag_dns` | `true` | also dcdiag's DNS tests that only read (basic, forwarders, delegation, record registration) |
 | `ad_trust_verify` | `true` | verify outbound and two-way trusts (nltest /sc_verify) |
@@ -257,7 +257,7 @@ File: `roles/api_availability/defaults/main.yml`
 | `availability_pause_seconds` | `2` | seconds between two tries of one address |
 | `availability_timeout` | `10` | seconds a try may take; no answer by then = a bad try |
 | `availability_slow_ms` | `3000` | an answer slower than this (median of the tries), in milliseconds -> warning |
-| `availability_node_down` | `warning` | One node (one server behind the service's address) that does not answer while the address still does: warning, or critical to fail the job for it too. Every node down with no service address set: critical. |
+| `availability_node_down` | `warning` | One node (one server behind the service's address) that does not answer while the address still does: warning, or critical to fail the job for it too, or low (listed as Low: the service reads up). Every node down with no service address set: critical. |
 | `availability_fail_on` | `[critical]` | The job shows FAILED (a workflow's "On failure" path) when a run finds a condition of these severities. |
 | `availability_report_on` | `[critical]` | The report is emailed (report_email_to) and published (report_web_dest) only when a run finds a condition of these severities - [critical, warning] also for slow, flaky or one node down; a clean run is one line in the job output. |
 | `availability_report_recovery` | `true` | also a report when the service answers again after a failed run ("UP again") |
@@ -325,7 +325,7 @@ File: `roles/check_certs/defaults/main.yml`
 | Setting | Default | What it does |
 |---|---|---|
 | `check_certs_warn_days` | `30` | a certificate expiring within this many days -> warning (and amber in the certificate report) |
-| `check_certs_notice_days` | `60` | the certificate report colours these blue (an early heads-up; not a finding) |
+| `check_certs_notice_days` | `60` | the certificate report shows these as Low (an early heads-up; not a finding) |
 | `check_certs_crit_days` | `14` | within this many days (or expired) -> critical |
 | `check_certs_files` | `[]` | Certificate files (PEM) to check. Globs work. Every certificate in a file is checked (a chain file with an expiring intermediate is a problem too). e.g. [/etc/stigman/*.crt, /etc/pki/tls/certs/server.crt] |
 | `check_certs_discover` | `true` | Also look for certificates in the usual places. Files with many certificates are CA bundles (hundreds of roots, noisy) and are skipped unless listed in check_certs_files. Text (PEM) and binary (DER) certificates are both read; the names in any case (.crt, .CRT, .Pem ...). |
@@ -656,7 +656,7 @@ File: `roles/check_stig/defaults/main.yml`
 | `check_stig_stigman_statuses` | `[saved, submitted, accepted]` | the reviews that count as the checklist (a rejected review does not); [accepted] = only what was accepted |
 | `check_stig_stigman_missing_severity` | `warning` | a host not found in STIG Manager (or its collection not readable): warning; critical; or none = listed in the report only |
 | `check_stig_severity` | `{high: critical, medium: warning, low: warning}` | ---- Findings ------------------------------------------------------------------------------------------------ the finding for a drifted or new fail, by the rule's CAT (high = CAT I) |
-| `check_stig_disagree_severity` | `none` | a rule STIG Manager has as Not a Finding that has failed in every scan of the host (never passed, so nothing moved that the job saw): none = listed in the report only; warning or critical = a finding |
+| `check_stig_disagree_severity` | `none` | a rule STIG Manager has as Not a Finding that has failed in every scan of the host (never passed, so nothing moved that the job saw): none = listed in the report only; low = a Low finding (listed, never fails the job); warning or critical = a finding |
 | `check_stig_ignore_rules` | `[]` | rules OpenSCAP is known to get wrong at your site: never a finding, listed in the report as left out. SV-257985, V-257985, RHEL-09-255045 or the SCAP rule's name (sshd_disable_root_login); per group or host too |
 | `check_stig_list_max` | `200` | at most this many rows in the report's tables of rules left out and of fails STIG Manager has no review for |
 | `check_stig_recheck` | `[open, not_reviewed]` | ---- The STIG recheck (playbooks/stig_recheck.yml, win_stig_recheck.yml) ---------------------------------------- what STIG Manager has for a rule that the recheck checks again: open (a review of Open that counts), not_reviewed (no review that counts, or Not Reviewed); the rest is left to the STIG drift report |
@@ -689,7 +689,7 @@ File: `roles/check_trust/defaults/main.yml`
 | Setting | Default | What it does |
 |---|---|---|
 | `check_trust_extra` | `[]` | More certificates to look for, besides the shipped list: name, sha256 (the certificate's fingerprint, with or without colons), spki_sha256 (its public key, optional), kind (root / intermediate), severity (critical / warning / notice), why. Get the fingerprints with: openssl x509 -in the.pem -noout -fingerprint -sha256… (all of it: the role file) |
-| `check_trust_severity` | `{}` | another severity for a listed name: {"AAA Certificate Services": warning} once you decide to blocklist it; notice = listed only, no finding |
+| `check_trust_severity` | `{}` | another severity for a listed name: {"AAA Certificate Services": warning} once you decide to blocklist it; notice (or low) = listed only, no finding, shown as Low |
 | `check_trust_software_severity` | `warning` | the finding for a program below the fixed version (a Go program, Node, NSS): warning or critical |
 | `check_trust_bundles` | `[/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem, /etc/pki/ca-trust/extracted/openssl/c…` | The system: the CA bundles every OpenSSL / Go / Python client reads (the ones that exist are read), p11-kit's live view (trust extract: what NSS and GnuTLS clients see, and the blocklist), the blocklist folders. the system CA bundles (RHEL, Debian / Ubuntu, Alpine, SUSE); the same file under two names is read once |
 | `check_trust_blocklist_dirs` | `[/etc/pki/ca-trust/source/blocklist, /usr/share/pki/ca-trust-source/blocklist]` | p11-kit blocklist folders: a certificate there is distrusted (listed as blocked, no finding) |
@@ -1077,7 +1077,7 @@ File: `roles/net_certs/defaults/main.yml`
 | `net_cert_only` | `[]` | only these devices (names, wildcards), e.g. ['sw01*'] - to try the renewal on one |
 | `net_cert_warn_days` | `30` | ---- what is due ---- a certificate expiring within this many days is due: a warning incident (amber in the report) |
 | `net_cert_crit_days` | `7` | within this many days (or expired): critical |
-| `net_cert_notice_days` | `60` | the report colours these blue (a heads-up, no incident) |
+| `net_cert_notice_days` | `60` | the report shows these as Low (a heads-up, no incident) |
 | `net_cert_unanswered_finding` | `false` | true = an inventory device whose port gives no certificate gets an incident too (a warning) |
 | `net_cert_cisco_csr` | `false` | On: for a due certificate of an inventory host with ansible_network_os cisco.ios.ios (and its network_cli credential on the job template), the job makes a key on the device (crypto key generate rsa, not exportable), a trustpoint <prefix>-<expiry> (enrollment terminal) and its CSR (crypto pki enroll), and attaches the… (all of it: the role file) |
 | `net_cert_cisco_key_bits` | `2048` | the new RSA key (2048, 3072, 4096) |
@@ -1151,7 +1151,7 @@ File: `roles/net_perf/defaults/main.yml`
 | `net_perf_ocsp` | `[]` | ---- OCSP responders (asked from every host) ---------------------------------------------------------------- Simplest: site_ocsp_certs (below) - a certificate the responder knows, its OCSP address and issuer read from it. net_perf_ocsp, when set, is used instead: a url alone - an OCSP request about a made-up certific… (all of it: the role file) |
 | `site_ocsp_certs` | `[]` | certificates the OCSP responders know (PEM files from playbooks/), for net_perf_ocsp and vm_sso_ocsp when those are empty, e.g. [files/ocsp/test-user.pem] |
 | `net_perf_ocsp_warn_ms` | `2000` | an OCSP answer slower than this -> warning |
-| `net_perf_ocsp_severity` | `critical` | an OCSP responder that fails: critical (smart card logins fail) or warning |
+| `net_perf_ocsp_severity` | `critical` | an OCSP responder that fails: critical (smart card logins fail), warning, or low (listed only) |
 | `net_perf_nics` | `true` | ---- Interfaces (drops and errors since the last run) --------------------------------------------------------- read the interfaces' counters (/sys/class/net/*/statistics) |
 | `net_perf_nic_exclude` | `"^(lo\|veth\|virbr\|docker\|podman\|cni\|flannel\|vnet\|tap\|tun)"` | interfaces left out (regular expression) |
 | `net_perf_sysfs` | `/sys/class/net` | where the kernel shows the interfaces and their counters |
@@ -1392,7 +1392,9 @@ File: `roles/servicenow/defaults/main.yml`
 | `servicenow_node_mem_critical_pct` | `95` | ... -> critical |
 | `servicenow_node_semaphore_queue_critical` | `10` | transactions queued for a semaphore in every read: warning; this many -> critical |
 | `servicenow_node_scheduler_queue_warn` | `50` | scheduled jobs waiting for a worker -> warning above this |
-| `servicenow_node_semaphore_wait_ms` | `1000` | a slow transaction that waited this long for its semaphore is a semaphore problem |
+| `servicenow_node_semaphore_wait_ms` | `1000` | the older name of servicenow_node_semaphore_warn_ms (still read) |
+| `servicenow_node_semaphore_warn_ms` | `"{{ servicenow_node_semaphore_wait_ms }}"` | a slow transaction that waited this long for its semaphore -> warning (the node short of threads) |
+| `servicenow_node_semaphore_crit_ms` | `10000` | ... this long -> critical. A slow transaction that only waited for its own session (semaphore wait under 100 ms) is Low |
 | `servicenow_node_slow_tx_warn` | `200` | slow transactions ("waited excessive time to run") in the log's hours -> warning |
 | `servicenow_node_log_hours` | `24` | how far back the node's localhost log is read |
 | `servicenow_node_log_glob` | `"localhost_log*"` | the log files in the node's logs folder |
@@ -1756,7 +1758,7 @@ File: `roles/stigman_health/defaults/main.yml`
 | `stigman_health_ca_path` | (empty) | a CA bundle on the AAP side to check them with (the DoD roots); empty = the execution environment's |
 | `stigman_health_timeout` | `20` | seconds per request |
 | `stigman_health_slow_ms` | `2000` | an answer slower than this, in milliseconds -> warning |
-| `stigman_health_node_down` | `critical` | a node that does not answer, or is not "available" (warning = only the address counts) |
+| `stigman_health_node_down` | `critical` | a node that does not answer, or is not "available" (warning = only the address counts; low = listed as Low) |
 | `stigman_health_conn_warn_pct` | `80` | the database's connections in use, % of max_connections -> warning |
 | `stigman_health_conn_crit_pct` | `95` | -> critical |
 | `stigman_health_restart_minutes` | `60` | a node or the database restarted less than this ago -> warning |
@@ -2115,14 +2117,14 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_watch_sso` | `true` | the watch also asks: is single sign-on down now (vm_sso_*, below)? false = not asked |
 | `vm_sso` | `true` | ---- Single sign-on and OCSP (vCenter 8.0): the health report (playbooks/vm_health_report.yml) and the watch ---- vCenter's SSO services, the STS signing certificate (health report only), the identity providers, a login by a test domain account (the "vCenter SSO test account" credential), and the OCSP responders smart… (all of it: the role file) |
 | `vm_sso_services` | `[sts, lookupsvc, trustmanagement, vmdird, vmafdd]` | SSO services that must be started (as vCenter's and the appliance's service lists name them; one not listed is skipped) |
-| `vm_sso_sts_warn_days` | `60` | the STS signing certificate expires within this many days -> warning |
+| `vm_sso_sts_warn_days` | `60` | the STS signing certificate expires within this many days -> warning; within twice that -> Low |
 | `vm_sso_sts_crit_days` | `14` | ... within this many -> critical (expired: critical) |
 | `vm_sso_test_user` | (empty) | the test domain account; empty = the "vCenter SSO test account" credential's (VMWARE_SSO_TEST_USER); none = no login test |
 | `vm_sso_ocsp` | `[]` | The OCSP responders. Simplest: site_ocsp_certs (below) - a certificate the responder knows, its OCSP address and its issuer read from the certificate itself. vm_sso_ocsp, when set, is used instead: [{url: http://ocsp.example.mil}] asks only that it answers; with cert (a PEM file from playbooks/, e.g. files/ocsp/test-u… (all of it: the role file) |
 | `site_ocsp_certs` | `[]` | certificates the OCSP responders know (PEM files from playbooks/), for vm_sso_ocsp and net_perf_ocsp when those are empty, e.g. [files/ocsp/test-user.pem] |
-| `vm_sso_ocsp_severity` | `critical` | an OCSP responder that fails: critical (smart card logins fail) or warning |
+| `vm_sso_ocsp_severity` | `critical` | an OCSP responder that fails: critical (smart card logins fail), warning, or low (listed only) |
 | `vm_sso_crl` | `true` | The CRL of each certificate above (its CRL Distribution Point, or crl_url in a vm_sso_ocsp entry; crl: false skips one), in the health report only - from the AAP node: downloaded, issued and signed by the CA, not past its next update, not listing the test certificate. vCenter falls back to the CRL when OCSP does not a… (all of it: the role file) |
-| `vm_sso_crl_severity` | `warning` | a CRL that fails: warning (OCSP still answers smart card logins) or critical |
+| `vm_sso_crl_severity` | `warning` | a CRL that fails: warning (OCSP still answers smart card logins), critical, or low (listed only) |
 | `vm_sso_crl_timeout` | `120` | seconds for one CRL download (DoD CRLs are tens of MB) |
 | `vm_sso_crl_max_mb` | `200` | a CRL larger than this is not read |
 | `vm_sso_timeout` | `30` | seconds per request |
@@ -2169,7 +2171,7 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_capacity_horizon_months` | `12` | Hosts recommended per cluster (of its average host size) to keep memory and CPU at their targets with those hosts failed: now, and at the current growth within this many months. |
 | `vm_capacity_storage_warn_pct` | `85` | datastore used %: amber |
 | `vm_capacity_storage_crit_pct` | `90` | red, and the target of the storage runway |
-| `vm_capacity_runway_warn_days` | `90` | a runway shorter than this is amber |
+| `vm_capacity_runway_warn_days` | `90` | a runway shorter than this is amber; up to twice this, Low (worth knowing) |
 | `vm_capacity_runway_crit_days` | `30` | and red |
 | `vm_capacity_include_local_datastores` | `false` | a host's own (not shared) datastores count too |
 | `vm_capacity_max_rows` | `100` | rows per table (problems first); the artifacts have all |
@@ -2302,7 +2304,7 @@ File: `roles/win_check_certs/defaults/main.yml`
 | Setting | Default | What it does |
 |---|---|---|
 | `win_check_certs_warn_days` | `30` | a certificate expiring within this many days -> warning (amber in the certificate report) |
-| `win_check_certs_notice_days` | `60` | the certificate report colours these blue (an early heads-up; not a finding) |
+| `win_check_certs_notice_days` | `60` | the certificate report shows these as Low (an early heads-up; not a finding) |
 | `win_check_certs_crit_days` | `7` | within this many days -> critical |
 | `win_check_certs_expired_report_days` | `30` | an expired certificate NOT in use is a finding for this many days after it expired; older ones only in the report |
 | `win_check_certs_stores` | `['Cert:\LocalMachine\My', 'Cert:\LocalMachine\WebHosting', 'Cert:\LocalMachine\Remote Des…` | the machine certificate stores read |

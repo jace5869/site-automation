@@ -230,7 +230,7 @@ run "session cleanup: report only" ok horizon_session_cleanup.yml '{"horizon_ses
 mock
 run "sessions: an old client, a pending launch, a session on a broken desktop, long ones, PCoIP, users named" ok horizon_sessions_report.yml \
     '{"horizon_client_min_versions": {"WINDOWS": "8.10"}, "horizon_session_long_hours": 24}' \
-    'Horizon sessions: 10 session(s), 4 to look at' 'CORP\\bwayne  WINDOWS  8.9.0    8.10' 'CORP\\cclark  fin-003  IC-Finance' \
+    'Horizon sessions: 10 session(s), 2 to look at' 'Low - worth knowing' 'CORP\\bwayne  WINDOWS  8.9.0    8.10' 'CORP\\cclark  fin-003  IC-Finance' \
     'w11-006  IC-Win11  AGENT_UNREACHABLE  disconnected' 'Long sessions (2)' '1 session(s) on a protocol other than BLAST' \
     'Users with two or more desktop sessions (3)' 'WINDOWS 8.12.0'
 run "sessions: no baseline - the versions in use, still green" ok horizon_sessions_report.yml '{"horizon_session_protocols": []}' \

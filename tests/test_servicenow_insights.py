@@ -1604,7 +1604,7 @@ class Surveys(unittest.TestCase):
         doc = F.servicenow_insights_doc(self.m, "all", OPTS)
         t = next(x for x in doc["summary"] if x["label"] == "Satisfaction")
         self.assertRegex(t["value"], r"^\d\.\d\d of \d$")
-        self.assertIn(t["status"], ("ok", "warning", "critical"))
+        self.assertEqual(t["status"], {"Good": "ok", "Fair": "low", "Low": "critical"}[self.sv["grade"]])   # 1.56.0: Fair is low
         self.assertTrue(t["note"].startswith(self.sv["grade"] + " · "), t["note"])
 
     def test_the_grades(self):

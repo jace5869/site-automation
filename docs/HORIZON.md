@@ -410,6 +410,9 @@ A setting that differs is red (`DRIFT`); one Horizon did not give is amber (`NOT
   desktop.
 - **Long sessions** (started `horizon_session_long_hours`, 72, ago or more), **users with two or more
   desktop sessions**, and sessions on a protocol other than `horizon_session_protocols` (`[BLAST]`).
+- Since 1.56.0 an **old client** and **another protocol** are **Low** (worth knowing, nothing for the
+  administrator to do now): a *Low - worth knowing* section, not a warning, and they do not fail the job
+  with `horizon_health_fail`.
 
 ## Logon times report
 
@@ -464,6 +467,8 @@ the cap (`horizon_fslogix_size_mb`, FSLogix's SizeInMBs, 30000), when it was las
 it is in use. It flags containers near the cap (85 %) or over it (95 %), stale ones
 (`horizon_fslogix_stale_days`, 90: space to reclaim, once you know the user left), two containers for
 one user, folders with no container, a differencing disk left behind, and names FSLogix would not find.
+Since 1.56.0 stale containers, folders with no container and files that belong to no container are
+**Low**: worth knowing, nothing to do now (the word Low is in the tile, the section and the row).
 It gives each share's free space (amber under 15 %, red under 5 %).
 
 With FlipFlopProfileDirectoryName set: `horizon_fslogix_folder_pattern: "%username%_%sid%"`. The size
@@ -529,11 +534,11 @@ the host's maintenance mode: run `IcMaint.cmd -vc <vcenter> -uid <user> -hostNam
 
 | Template | Schedule (suggested) | Red when |
 |---|---|---|
-| Horizon - health report | every day 06:00 | a Connection Server, service, gateway or vCenter link down; a certificate within `horizon_cert_crit_days` (7) or not valid; the event database not connected; the license expired; a pool that stopped provisioning or whose image failed; a datastore under `horizon_datastore_crit_pct` (5 %) free. Amber: a self-signed Connection Server certificate, a configuration backup older than `horizon_backup_max_hours` (26), an ESXi host not connected, a datastore under 15 % free, a new image held, agents of two versions in a pool, desktops left on an older image, 169.254 or duplicate addresses |
+| Horizon - health report | every day 06:00 | a Connection Server, service, gateway or vCenter link down; a certificate within `horizon_cert_crit_days` (7) or not valid; the event database not connected; the license expired; a pool that stopped provisioning or whose image failed; a datastore under `horizon_datastore_crit_pct` (5 %) free. Amber: a self-signed Connection Server certificate, a configuration backup older than `horizon_backup_max_hours` (26), an ESXi host not connected, a datastore under 15 % free, a new image held, desktops left on an older image, 169.254 or duplicate addresses. Low (1.56.0, never amber): agents of two versions in a pool, a pool disabled, provisioning off |
 | Horizon - events report | every day 06:10 | the event database could not be read. Amber: a user with 5 or more failed logons, error events |
 | Horizon - capacity report | every Monday 07:00 | a pool at `horizon_capacity_crit_pct` (95 %) in use, or with no free desktop (amber at 80 %, or fewer free desktops than its spares) |
 | Horizon - settings report | every Monday 07:10 | a setting that differs from `horizon_settings_baseline` |
-| Horizon - sessions report | every day 07:30 | never red. Amber: old clients, pending sessions, sessions on broken desktops, other protocols |
+| Horizon - sessions report | every day 07:30 | never red. Amber: pending sessions, sessions on broken desktops. Low (1.56.0): old clients, other protocols |
 | Horizon - internal VMs report | every Monday 07:30 | an internal VM inaccessible, orphaned or disconnected. Amber: probably left over |
 | Horizon - FSLogix profiles report | every Monday 07:20 | a container at `horizon_fslogix_crit_pct` (95 %) of its cap, a share under 5 % free or not readable. Amber: 85 %, two containers for one user, odd names, a differencing disk left behind |
 | Horizon - logon times report | every day 10:00 (after the morning logons) | a pool's 95th percentile logon at `horizon_logon_crit_s` (120 s); amber at 60 s |

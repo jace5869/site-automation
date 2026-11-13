@@ -18,8 +18,8 @@
 "value": 4
 },
 {
-"label": "Listed only",
-"status": "info",
+"label": "Listed only (Low)",
+"status": "low",
 "value": 1
 }
 ],
@@ -247,7 +247,7 @@
 {
 "cell_status": [
 [
-"info",
+"low",
 "",
 "",
 "",
@@ -262,7 +262,7 @@
 "What to do"
 ],
 "row_status": [
-"info"
+"low"
 ],
 "rows": [
 [
@@ -274,8 +274,8 @@
 ]
 ],
 "status": "ok",
-"text": "Notice-level: Sectigo's AAA Certificate Services cross-signed the eight intermediates, but it is not compromised, is in every trust store and most public certificates chain to it. No finding, no ticket. check_trust_severity: {\"AAA Certificate Services\": warning} when you decide to blocklist it.",
-"title": "4. Listed only - your decision",
+"text": "Low - notice-level: Sectigo's AAA Certificate Services cross-signed the eight intermediates, but it is not compromised, is in every trust store and most public certificates chain to it. No finding, no ticket. check_trust_severity: {\"AAA Certificate Services\": warning} when you decide to blocklist it.",
+"title": "4. Listed only (Low) - your decision",
 "top": true
 },
 {
@@ -361,12 +361,12 @@
 "warning"
 ],
 [
-"info",
+"low",
 "",
 "",
 "",
 "",
-"info"
+"low"
 ],
 [
 "",
@@ -420,7 +420,7 @@
 "warning",
 "warning",
 "warning",
-"info",
+"low",
 "ok",
 "ok",
 "ok",
@@ -513,7 +513,7 @@
 "certificate file",
 "",
 "1 certificate: AAA Certificate Services [notice]",
-"notice"
+"Low"
 ],
 [
 "web01.example.mil",
@@ -549,7 +549,7 @@
 ]
 ],
 "status": "critical",
-"text": "The proof of what was looked at. Red = holds a compromised CA, amber = holds a root that was dropped (or a program below the version that fixed it), blue = a notice-level certificate (listed only), green = nothing of the list in it, or blocked. The count is how many certificates the store holds.",
+"text": "The proof of what was looked at. Red = holds a compromised CA, amber = holds a root that was dropped (or a program below the version that fixed it), Low = a notice-level certificate (listed only), green = nothing of the list in it, or blocked. The count is how many certificates the store holds.",
 "title": "Everything read - every trust store and program, worst first"
 },
 {

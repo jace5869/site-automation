@@ -128,7 +128,7 @@
 ## not listed is skipped)
 # vm_sso_services: [sts, lookupsvc, trustmanagement, vmdird, vmafdd]
 
-## the STS signing certificate expires within this many days -> warning
+## the STS signing certificate expires within this many days -> warning; within twice that -> Low
 # vm_sso_sts_warn_days: 60
 
 ## ... within this many -> critical (expired: critical)
@@ -148,7 +148,7 @@
 ## files/ocsp/test-user.pem, issuer: files/ocsp/issuing-ca.pem}]
 # vm_sso_ocsp: []
 
-## an OCSP responder that fails: critical (smart card logins fail) or warning
+## an OCSP responder that fails: critical (smart card logins fail), warning, or low (listed only)
 # vm_sso_ocsp_severity: critical
 
 ## The CRL of each certificate above (its CRL Distribution Point, or crl_url in a vm_sso_ocsp entry;
@@ -157,7 +157,7 @@
 ## to the CRL when OCSP does not answer, or uses it alone when set so. false = no CRL check
 # vm_sso_crl: true
 
-## a CRL that fails: warning (OCSP still answers smart card logins) or critical
+## a CRL that fails: warning (OCSP still answers smart card logins), critical, or low (listed only)
 # vm_sso_crl_severity: warning
 
 ## seconds for one CRL download (DoD CRLs are tens of MB)

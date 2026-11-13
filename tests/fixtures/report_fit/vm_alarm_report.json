@@ -370,7 +370,7 @@
 "row_status": [
 "critical",
 "critical",
-"info",
+"low",
 ""
 ],
 "rows": [
@@ -401,7 +401,7 @@
 "CL1",
 "vc01 / DC1",
 "connected",
-"yes",
+"yes - Low",
 "8.0.2 (1)",
 "Dell R750",
 0,
@@ -419,7 +419,7 @@
 0
 ]
 ],
-"text": "Red = not connected or a critical alarm, amber = a warning alarm, blue = in maintenance mode.",
+"text": "Red = not connected or a critical alarm, amber = a warning alarm, Low = in maintenance mode.",
 "title": "All hosts"
 }
 ],

@@ -97,13 +97,13 @@
 ## privileged groups that must have no member, e.g. [Schema Admins] - amber when they have one
 # ad_groups_should_be_empty: []
 
-## a member added to / removed from a privileged group: warning, critical or info
+## a member added to / removed from a privileged group: critical, warning, low or info
 # ad_privileged_change_severity: warning
 
-## the schema version changed: warning, critical or info
+## the schema version changed: critical, warning, low or info
 # ad_schema_change_severity: warning
 
-## a domain controller added or removed: warning, critical or info
+## a domain controller added or removed: critical, warning, low or info
 # ad_dc_change_severity: info
 
 ## ---- What is read on each DC

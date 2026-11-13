@@ -26,7 +26,10 @@ NAMED = (("test_stig_ckl_import.py", "RouteReport.test_report_fit_document", "st
          ("test_servicenow_node.py", "Labels.test_report_fit_document", "servicenow_node_filters.py:sn_node_sections", "sn_node_sections_pages"),
          # 1.33.0: the VMware health report's "How it was read" (a host's clock not read, the read times)
          ("test_vmware_modules.py", "HealthReadSpeed.test_the_report_says_what_was_not_read", "vmware_health_filters.py:vm_health_report",
-          "vm_health_report_read"))
+          "vm_health_report_read"),
+         # 1.56.0: the Low level - the node log with every level, a findings report with Low rows and a Low box
+         ("test_low_servicenow.py", "Fit.test_report_fit_document", "servicenow_node_filters.py:sn_node_sections", "sn_node_sections_low"),
+         ("test_low_servicenow.py", "Fit.test_findings_report_fit_document", "site_filters.py:findings_report", "findings_report_low"))
 
 # run inside each test file's process: keep the biggest document each filter function returns
 CHILD = r"""

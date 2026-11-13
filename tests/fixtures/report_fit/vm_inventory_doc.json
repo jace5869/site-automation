@@ -130,7 +130,7 @@
 ""
 ],
 [
-"info",
+"low",
 "",
 ""
 ],
@@ -188,7 +188,7 @@
 1
 ],
 [
-"VMware Tools upgrade available",
+"VMware Tools upgrade available - Low",
 1,
 1
 ],
@@ -228,7 +228,7 @@
 ],
 [
 "",
-"info",
+"low",
 "",
 "",
 "",
@@ -266,7 +266,7 @@
 ],
 [
 "bios01",
-"upgrade available",
+"upgrade available - Low",
 "11.2.5",
 "vc01",
 "DC1 / Linux",
@@ -382,17 +382,20 @@
 },
 {
 "label": "Not encrypted",
-"status": "info",
+"note": "Low",
+"status": "low",
 "value": 3
 },
 {
 "label": "Without EFI",
-"status": "info",
+"note": "Low",
+"status": "low",
 "value": 1
 },
 {
 "label": "Without vTPM",
-"status": "info",
+"note": "Low",
+"status": "low",
 "value": 2
 }
 ],

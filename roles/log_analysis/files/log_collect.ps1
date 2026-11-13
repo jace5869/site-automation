@@ -52,7 +52,7 @@ $maxChars = [int](Get-Setting 'max_line_chars' 400)
 $match = [string](Get-Setting 'match' 'error|fail|fatal|crit|panic|denied|refused|timed out|timeout|unable to|cannot|exception|warn')
 $providers = @(Get-Setting 'providers' @() | ForEach-Object { [string]$_ } | Where-Object { $_ })
 $providersOnly = [bool](Get-Setting 'providers_only' $false)
-$levelName = @{ 1 = 'critical'; 2 = 'error'; 3 = 'warning' }
+$levelName = @{ 1 = 'critical'; 2 = 'error'; 3 = 'warning'; 4 = 'low'; 5 = 'low' }   # 1.56.0: information, verbose -> low
 $entries = @()
 $sources = @()
 $seenEvent = @{}
@@ -83,7 +83,7 @@ function Read-Events([string] $Log, [hashtable] $Filter) {
         $msg = [string]$e.Message
         if (-not $msg) { $msg = '(no message text)' }
         $lv = $levelName[[int]$e.Level]
-        if (-not $lv) { $lv = 'warning' }            # information, verbose, audit (asked for by provider or ID)
+        if (-not $lv) { $lv = 'warning' }            # audit and the rest (asked for by provider or ID)
         $script:entries += @(@{ source = $Log; time = (Get-Utc $e.TimeCreated); level = $lv; app = [string]$e.ProviderName
                                 message = (Get-Clean ('Event ' + $e.Id + ': ' + $msg)) })
         $script:counts[$Log] = 1 + [int]$script:counts[$Log]

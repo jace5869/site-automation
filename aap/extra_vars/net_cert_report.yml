@@ -55,7 +55,7 @@
 ## within this many days (or expired): critical
 # net_cert_crit_days: 7
 
-## the report colours these blue (a heads-up, no incident)
+## the report shows these as Low (a heads-up, no incident)
 # net_cert_notice_days: 60
 
 ## true = an inventory device whose port gives no certificate gets an incident too (a warning)

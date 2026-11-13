@@ -48,7 +48,7 @@
 },
 {
 "label": "Fixed, still Open",
-"note": "update STIG Manager",
+"note": "Low - update STIG Manager",
 "status": "ok",
 "value": 0
 },
@@ -350,7 +350,7 @@
 },
 {
 "label": "Fixed, still Open",
-"note": "update STIG Manager",
+"note": "Low - update STIG Manager",
 "status": "ok",
 "value": 0
 },

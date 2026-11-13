@@ -18,7 +18,7 @@
 ## a certificate expiring within this many days -> warning (and amber in the certificate report)
 # check_certs_warn_days: 30
 
-## the certificate report colours these blue (an early heads-up; not a finding)
+## the certificate report shows these as Low (an early heads-up; not a finding)
 # check_certs_notice_days: 60
 
 ## within this many days (or expired) -> critical

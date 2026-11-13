@@ -66,7 +66,8 @@ stigman_health_api: https://stigman.yoursite.mil/api
 ## an answer slower than this, in milliseconds -> warning
 # stigman_health_slow_ms: 2000
 
-## a node that does not answer, or is not "available" (warning = only the address counts)
+## a node that does not answer, or is not "available" (warning = only the address counts; low =
+## listed as Low)
 # stigman_health_node_down: critical
 
 ## the database's connections in use, % of max_connections -> warning

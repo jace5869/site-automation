@@ -237,8 +237,15 @@
 ## scheduled jobs waiting for a worker -> warning above this
 # servicenow_node_scheduler_queue_warn: 50
 
-## a slow transaction that waited this long for its semaphore is a semaphore problem
+## the older name of servicenow_node_semaphore_warn_ms (still read)
 # servicenow_node_semaphore_wait_ms: 1000
+
+## a slow transaction that waited this long for its semaphore -> warning (the node short of threads)
+# servicenow_node_semaphore_warn_ms: "{{ servicenow_node_semaphore_wait_ms }}"
+
+## ... this long -> critical. A slow transaction that only waited for its own session (semaphore
+## wait under 100 ms) is Low
+# servicenow_node_semaphore_crit_ms: 10000
 
 ## slow transactions ("waited excessive time to run") in the log's hours -> warning
 # servicenow_node_slow_tx_warn: 200

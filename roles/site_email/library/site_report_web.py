@@ -136,11 +136,12 @@ from ansible.module_utils.six.moves.urllib.parse import quote
 from ansible.module_utils.six.moves.urllib.request import Request, build_opener, HTTPRedirectHandler, HTTPSHandler
 
 IMAGE_TYPES = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif'}
-RANK = {'critical': 0, 'warning': 1, 'unknown': 2, 'info': 3, 'ok': 4}
+RANK = {'critical': 0, 'warning': 1, 'unknown': 2, 'low': 3, 'info': 4, 'ok': 5}
 PAL = {
     'ok': ('#13734f', '#e3f5ec', '#bfe6d3', 'Successful'),
     'warning': ('#9a5806', '#fdf2df', '#f3d6a6', 'Warning'),
     'critical': ('#b42318', '#fdeaea', '#f5c4c4', 'Critical'),
+    'low': ('#88358e', '#f6e9f6', '#e6c6e8', 'Low'),            # 1.56.0: worth knowing, nothing to do now
     'info': ('#1d4ed8', '#e6effd', '#c3d5f7', 'Info'),
     'unknown': ('#4b5753', '#eef2f1', '#d5ddda', 'Unknown')}
 IN_USE = (errno.EACCES, errno.EBUSY, errno.EPERM, errno.ETXTBSY)    # a mounted share's file open in a browser
@@ -840,7 +841,7 @@ ATLAS_LIGHT = """--ink:#111827;--muted:#4b5563;--label:#374151;--accent:#0b7352;
 --code:#f1f4f7;--bar:rgba(255,255,255,.82);--shadow:0 1px 2px rgba(16,24,40,.05),0 6px 20px rgba(16,24,40,.06);--glow1:rgba(16,163,113,.14);--glow2:rgba(59,130,246,.10);
 --ok:#0a6b45;--ok-bg:#e6f5ed;--ok-bd:#9ad3b6;--warning:#8a4b00;--warning-bg:#fdf1dc;
 --warning-bd:#eec27c;--critical:#b42318;--critical-bg:#fdeceb;--critical-bd:#f0a59c;--info:#1d4ed8;
---info-bg:#e9effd;--info-bd:#a9c0f5;--unknown:#4b5563;--unknown-bg:#eef1f4;--unknown-bd:#c9d1da;
+--info-bg:#e9effd;--info-bd:#a9c0f5;--low:#88358e;--low-bg:#f7ebf7;--low-bd:#dfb5e1;--unknown:#4b5563;--unknown-bg:#eef1f4;--unknown-bd:#c9d1da;
 --critical-row:#fff6f5;--warning-row:#fffaf0;color-scheme:light;"""
 ATLAS_DARK = """--ink:#e6edf3;--muted:#9aa7b4;--label:#c2ccd6;--accent:#3ecf98;--accent-ink:#04221a;
 --accent-soft:#12302a;--bg:#0b0f14;--bg2:#0e141b;--card:#121820;--card-solid:#121820;
@@ -848,7 +849,7 @@ ATLAS_DARK = """--ink:#e6edf3;--muted:#9aa7b4;--label:#c2ccd6;--accent:#3ecf98;-
 --code:#0d1319;--bar:rgba(14,19,26,.84);--shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.30);--glow1:rgba(62,207,152,.13);--glow2:rgba(96,140,255,.11);
 --ok:#4fd69a;--ok-bg:rgba(79,214,154,.12);--ok-bd:rgba(79,214,154,.36);--warning:#f2b450;--warning-bg:rgba(242,180,80,.12);
 --warning-bd:rgba(242,180,80,.38);--critical:#ff8a80;--critical-bg:rgba(255,138,128,.12);--critical-bd:rgba(255,138,128,.40);--info:#8ab4ff;
---info-bg:rgba(138,180,255,.12);--info-bd:rgba(138,180,255,.36);--unknown:#a8b3bf;--unknown-bg:rgba(168,179,191,.11);--unknown-bd:rgba(168,179,191,.30);
+--info-bg:rgba(138,180,255,.12);--info-bd:rgba(138,180,255,.36);--low:#c168d5;--low-bg:rgba(193,104,213,.12);--low-bd:rgba(193,104,213,.38);--unknown:#a8b3bf;--unknown-bg:rgba(168,179,191,.11);--unknown-bd:rgba(168,179,191,.30);
 --critical-row:rgba(255,138,128,.06);--warning-row:rgba(242,180,80,.05);color-scheme:dark;"""
 ATLAS_STYLE = """:root{%(light)s}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){%(dark)s}}
@@ -868,9 +869,9 @@ a{color:var(--accent)}
 .s-ok{color:var(--ok);background:var(--ok-bg);border-color:var(--ok-bd)}
 .s-warning{color:var(--warning);background:var(--warning-bg);border-color:var(--warning-bd)}
 .s-critical{color:var(--critical);background:var(--critical-bg);border-color:var(--critical-bd)}
-.s-info{color:var(--info);background:var(--info-bg);border-color:var(--info-bd)}
+.s-info{color:var(--info);background:var(--info-bg);border-color:var(--info-bd)}.s-low{color:var(--low);background:var(--low-bg);border-color:var(--low-bd)}
 .s-unknown{color:var(--unknown);background:var(--unknown-bg);border-color:var(--unknown-bd)}
-.c-ok{color:var(--ok)}.c-warning{color:var(--warning)}.c-critical{color:var(--critical)}.c-info{color:var(--info)}.c-unknown{color:var(--unknown)}
+.c-ok{color:var(--ok)}.c-warning{color:var(--warning)}.c-critical{color:var(--critical)}.c-info{color:var(--info)}.c-low{color:var(--low)}.c-unknown{color:var(--unknown)}
 .hero{padding:22px clamp(18px,2.4vw,30px);position:relative;overflow:hidden}
 .hero:before{content:"";position:absolute;left:0;right:0;top:0;height:4px;background:var(--accent)}
 .hero:after{content:"";position:absolute;right:-120px;top:-160px;width:520px;height:420px;border-radius:50%%;background:radial-gradient(closest-side,var(--glow1),transparent);pointer-events:none}
@@ -942,6 +943,7 @@ ATLAS_ICON = {
                'stroke-linecap="round"/><circle cx="8" cy="11.4" r=".95" fill="currentColor"/></svg>',
     'critical': '<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.3" fill="currentColor" opacity=".2"/>'
                 '<path d="M5.5 5.5l5 5M10.5 5.5l-5 5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>',
+    'low': '<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.3" fill="currentColor" opacity=".2"/><path d="M5.2 6.6L8 9.4l2.8-2.8" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     'info': '<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.3" fill="currentColor" opacity=".2"/>'
             '<path d="M8 7.2v4.2" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><circle cx="8" cy="4.8" r="1" fill="currentColor"/></svg>',
     'unknown': '<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.3" fill="currentColor" opacity=".2"/>'
@@ -1053,7 +1055,7 @@ BRIEF_LIGHT = """--ink:#182027;--muted:#545c63;--label:#363e45;--accent:#00704e;
 --zebra:rgba(24,32,39,.02);--hover:rgba(0,112,78,.06);--code:rgba(24,32,39,.04);--bar:rgba(244,248,246,.8);
 --ok:#0e6538;--ok-bg:rgba(14,101,56,0.1);--ok-bd:rgba(14,101,56,0.2);--warning:#844b0b;
 --warning-bg:rgba(132,75,11,0.1);--warning-bd:rgba(132,75,11,0.2);--critical:#a82823;
---critical-bg:rgba(168,40,35,0.1);--critical-bd:rgba(168,40,35,0.2);--info:#2b58b1;--info-bg:rgba(43,88,177,0.1);
+--critical-bg:rgba(168,40,35,0.1);--critical-bd:rgba(168,40,35,0.2);--info:#2b58b1;--info-bg:rgba(43,88,177,0.1);--low:#88358e;--low-bg:rgba(136,53,142,0.1);--low-bd:rgba(136,53,142,0.2);
 --info-bd:rgba(43,88,177,0.2);--unknown:#545c63;--unknown-bg:rgba(84,92,99,0.1);--unknown-bd:rgba(84,92,99,0.2);
 --critical-row:rgba(168,40,35,0.04);--warning-row:rgba(132,75,11,0.045);color-scheme:light;"""
 BRIEF_DARK = """--ink:#e0e0e0;--muted:#a3a3a3;--label:#bdbdbd;--accent:#7fcbac;--accent-ink:#0f1f19;
@@ -1063,7 +1065,7 @@ BRIEF_DARK = """--ink:#e0e0e0;--muted:#a3a3a3;--label:#bdbdbd;--accent:#7fcbac;-
 --code:rgba(0,0,0,.22);--bar:rgba(18,18,18,.82);--ok:#87c79c;--ok-bg:rgba(135,199,156,0.12);
 --ok-bd:rgba(135,199,156,0.22);--warning:#dcb671;--warning-bg:rgba(220,182,113,0.12);
 --warning-bd:rgba(220,182,113,0.22);--critical:#f0968f;--critical-bg:rgba(240,150,143,0.12);
---critical-bd:rgba(240,150,143,0.22);--info:#8fb3ec;--info-bg:rgba(143,179,236,0.12);--info-bd:rgba(143,179,236,0.22);
+--critical-bd:rgba(240,150,143,0.22);--info:#8fb3ec;--info-bg:rgba(143,179,236,0.12);--low:#c168d5;--low-bg:rgba(193,104,213,0.12);--low-bd:rgba(193,104,213,0.22);--info-bd:rgba(143,179,236,0.22);
 --unknown:#b0b0b0;--unknown-bg:rgba(176,176,176,0.12);--unknown-bd:rgba(176,176,176,0.22);
 --critical-row:rgba(240,150,143,0.05);--warning-row:rgba(220,182,113,0.05);color-scheme:dark;"""
 # the style, its tokens and tab rules put in with replace (no % or {} to escape)
@@ -1087,9 +1089,9 @@ a{color:var(--accent);text-underline-offset:2px}
 .s-ok{color:var(--ok);background:var(--ok-bg);border-color:var(--ok-bd)}
 .s-warning{color:var(--warning);background:var(--warning-bg);border-color:var(--warning-bd)}
 .s-critical{color:var(--critical);background:var(--critical-bg);border-color:var(--critical-bd)}
-.s-info{color:var(--info);background:var(--info-bg);border-color:var(--info-bd)}
+.s-info{color:var(--info);background:var(--info-bg);border-color:var(--info-bd)}.s-low{color:var(--low);background:var(--low-bg);border-color:var(--low-bd)}
 .s-unknown{color:var(--unknown);background:var(--unknown-bg);border-color:var(--unknown-bd)}
-.c-ok{color:var(--ok)}.c-warning{color:var(--warning)}.c-critical{color:var(--critical)}.c-info{color:var(--info)}.c-unknown{color:var(--unknown)}
+.c-ok{color:var(--ok)}.c-warning{color:var(--warning)}.c-critical{color:var(--critical)}.c-info{color:var(--info)}.c-low{color:var(--low)}.c-unknown{color:var(--unknown)}
 /* the top: the site's logo and name, the switch */
 .top{display:flex;align-items:center;gap:16px;padding:16px 0;border-bottom:1px solid var(--edge)}
 .logo{display:block;border-radius:9px;height:auto;max-height:60px;width:auto}
@@ -1215,7 +1217,7 @@ def index_brief(reports, index, header_text, logo, generated, tabs=(), js='', tz
     say = ('%s &middot; last run %s' % (_plural(len(reports), 'report', 'reports'), e(local_time(last, tz))) if last else _plural(len(reports), 'report', 'reports')) \
         if reports else 'No reports yet. A report job writes its page here when it runs.'
     tally = ''.join('<span class="chip s-%s">%s<b>%d</b> %s</span>' % (k, ATLAS_ICON.get(k, ''), counts[k], label)
-                    for k, label in (('critical', 'Critical'), ('warning', 'Warning'), ('ok', 'Successful'), ('info', 'Info'), ('unknown', 'Unknown'))
+                    for k, label in (('critical', 'Critical'), ('warning', 'Warning'), ('low', 'Low'), ('ok', 'Successful'), ('info', 'Info'), ('unknown', 'Unknown'))
                     if counts[k])
     of = [area(r.get('name') or r.get('key'), tabs) for r in reports]
     order = [str(t.get('tab')) for t in tabs or []]               # report_web_tabs' order, then A to Z, Other last

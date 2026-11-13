@@ -11,7 +11,7 @@
 # without colons), spki_sha256 (its public key, optional), kind (root / intermediate), severity (critical /
 # warning / notice), why. Get the fingerprints with: openssl x509 -in the.pem -noout -fingerprint -sha256
 check_trust_extra: []                    # e.g. [{name: "Old Corp Root CA", sha256: "AB:CD:...", kind: root, severity: warning, why: "retired January 2026"}] (a date in quotes, "2026-01-31", never bare: YAML would make it a date)
-check_trust_severity: {}                 # another severity for a listed name: {"AAA Certificate Services": warning} once you decide to blocklist it; notice = listed only, no finding
+check_trust_severity: {}                 # another severity for a listed name: {"AAA Certificate Services": warning} once you decide to blocklist it; notice (or low) = listed only, no finding, shown as Low
 check_trust_software_severity: warning   # the finding for a program below the fixed version (a Go program, Node, NSS): warning or critical
 
 # The system: the CA bundles every OpenSSL / Go / Python client reads (the ones that exist are read), p11-kit's

@@ -60,7 +60,7 @@ credential the check still runs; the table says why there are no percentages.
 | `availability_pause_seconds` | `2` | between two tries |
 | `availability_timeout` | `10` | seconds a try may take |
 | `availability_slow_ms` | `3000` | median slower than this: warning |
-| `availability_node_down` | `warning` | one node down while the address answers; `critical` fails the job |
+| `availability_node_down` | `warning` | one node down while the address answers; `critical` fails the job; `low` lists it as Low (the service reads up) |
 | `availability_fail_on` | `[critical]` | the job fails for these |
 | `availability_report_on` | `[critical]` | an email and the web page for these |
 | `availability_report_recovery` | `true` | a report when it is back after a failed run |

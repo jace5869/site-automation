@@ -12,11 +12,11 @@ __metaclass__ = type
 import re
 
 POWER = {"poweredOn": "on", "poweredOff": "off", "suspended": "suspended"}
-# vCenter's guest.toolsVersionStatus2 -> (in words, how it looks: '' fine, info an upgrade waits, warning to look at)
+# vCenter's guest.toolsVersionStatus2 -> (in words, how it looks: '' fine, low an upgrade waits (1.56.0: was info), warning to look at)
 STATUS = {
     "guestToolsCurrent": ("current", ""),
-    "guestToolsNeedUpgrade": ("upgrade available", "info"),
-    "guestToolsSupportedOld": ("upgrade available (older, supported)", "info"),
+    "guestToolsNeedUpgrade": ("upgrade available", "low"),
+    "guestToolsSupportedOld": ("upgrade available (older, supported)", "low"),
     "guestToolsSupportedNew": ("newer than the host's (supported)", ""),
     "guestToolsTooOld": ("too old (not supported)", "warning"),
     "guestToolsTooNew": ("too new for the host (not supported)", "warning"),
@@ -97,7 +97,7 @@ def _state(v):
         st = "guestToolsNotInstalled"
     words, look = STATUS.get(st, (st or "?", ""))
     if not st and v.get("tools") == "toolsOld":
-        words, look = "upgrade available", "info"
+        words, look = "upgrade available", "low"
     on = v.get("power") == "poweredOn"
     if not on and look == "warning":
         look = ""                                   # a VM that is off: nothing to fix while it is off (its status still said)
@@ -160,7 +160,7 @@ def vm_tools_doc(vms, vcenters=None, opts=None):
     read = [s.get("name", "") for s in vcenters or [] if not s.get("error")] or sorted(set(v.get("vcenter", "") for v in allv))
     states = [(v, _state(v)) for v in allv]
     look = [v for v, (w, lk) in states if lk == "warning"]
-    upgrade = [v for v, (w, lk) in states if lk == "info"]
+    upgrade = [v for v, (w, lk) in states if lk == "low"]
     current = [v for v in allv if v.get("tools_status") == "guestToolsCurrent"]
     none = [v for v in allv if v.get("tools_status") == "guestToolsNotInstalled" or (not v.get("tools_status") and v.get("tools") == "toolsNotInstalled")]
     none_ids = set(id(v) for v in none)
@@ -215,11 +215,12 @@ def vm_tools_doc(vms, vcenters=None, opts=None):
     cols = ["VM", "Power", "Guest OS", "VMware Tools", "Tools status", "Hardware version"]
 
     def row(v):
-        return [v.get("name", ""), _power(v), _os(v), _version(v), _state(v)[0], _hw(v)]
+        w, lk = _state(v)
+        return [v.get("name", ""), _power(v), _os(v), _version(v), "%s - Low" % w if lk == "low" else w, _hw(v)]
 
     def cells(v):
         lk = _state(v)[1]
-        return ["", "", "", "", lk if lk in ("warning", "info") else "", ""]
+        return ["", "", "", "", lk if lk in ("warning", "low") else "", ""]
     shown = 0
     folders = {}
     for v in allv:
@@ -256,7 +257,7 @@ def vm_tools_doc(vms, vcenters=None, opts=None):
     if bad:
         title += " - %d vCenter%s not read" % (len(bad), "" if len(bad) == 1 else "s")
     summary = [{"label": "VMs", "value": len(allv)}, {"label": "Tools current", "value": len(current)},
-               {"label": "Upgrade available", "value": len(upgrade), "status": "info" if upgrade else ""},
+               dict({"label": "Upgrade available", "value": len(upgrade)}, **({"status": "low", "note": "Low"} if upgrade else {"status": ""})),
                {"label": "Guest managed", "value": len(managed)},
                {"label": "No Tools", "value": len(none), "status": "warning" if set(id(v) for v in look) & none_ids else ""},
                {"label": "Not running (on)", "value": len(not_running), "status": "warning" if not_running else ""},

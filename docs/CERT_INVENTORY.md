@@ -24,7 +24,7 @@ writes nothing (the default). A Check run (dry run) writes nothing either.
 | `subject`, `issuer` | `CN=web01.example.mil,O=Example,C=US` | |
 | `sans` | `DNS:web01.example.mil; IP:192.0.2.10` | its names (a list in the JSON) |
 | `not_after`, `days` | `2027-01-31`, `103` | when it expires; days left when it was read (negative: expired) |
-| `status` | `warning` | expired, critical, warning, notice, ok - the report's own days (warn, crit, notice) |
+| `status` | `warning` | expired, critical, warning, notice, ok - the report's own days (warn, crit, notice). `notice` stays the stored word; the certificate reports show it as **Low** (1.56.0) |
 | `tier` | `ca-signed` | **root** (a self-signed CA that signs certificates, or one a host trusts), **intermediate** (a CA signed by another), **ca-signed** (issued by a CA), **self-signed** |
 | `trust_store` | `false` | true: a certificate the host trusts (Trusted Root, the trust store), not its own |
 | `in_use` | `true` | bound to a service (an https binding, WinRM, a port, vCenter, a device); empty: not known |

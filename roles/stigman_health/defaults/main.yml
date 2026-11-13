@@ -28,7 +28,7 @@ stigman_health_validate_certs: true      # check the HTTPS certificates of STIG 
 stigman_health_ca_path: ""               # a CA bundle on the AAP side to check them with (the DoD roots); empty = the execution environment's
 stigman_health_timeout: 20               # seconds per request
 stigman_health_slow_ms: 2000             # an answer slower than this, in milliseconds -> warning
-stigman_health_node_down: critical       # a node that does not answer, or is not "available" (warning = only the address counts)
+stigman_health_node_down: critical       # a node that does not answer, or is not "available" (warning = only the address counts; low = listed as Low)
 stigman_health_conn_warn_pct: 80         # the database's connections in use, % of max_connections -> warning
 stigman_health_conn_crit_pct: 95         # -> critical
 stigman_health_restart_minutes: 60       # a node or the database restarted less than this ago -> warning

@@ -21,7 +21,7 @@ IN_USE = ("CONNECTED", "DISCONNECTED", "UNASSIGNED_USER_CONNECTED", "UNASSIGNED_
 OK_STATUS = ("OK", "UP", "RUNNING", "CONNECTED", "FULLY_ACCESSIBLE", "AVAILABLE", "GREEN", "VALID", "ACTIVE", "ACCESSIBLE")
 MACHINE_ACTIONS = ("recover", "reset", "restart", "remove", "rebuild")
 INSTANT = ("INSTANT_CLONE", "INSTANT_CLONE_ENGINE")
-SEV = {"critical": 0, "warning": 1, "info": 2, "ok": 3}
+SEV = {"critical": 0, "warning": 1, "low": 2, "info": 3, "ok": 4}   # 1.56.0 low: worth knowing, nothing to do now
 # states a desktop passes through by itself - a problem only when it stays in one (horizon_stuck_hours)
 STUCK_STATES = ["PROVISIONING", "CUSTOMIZING", "DELETING", "MAINTENANCE", "WAITING_FOR_AGENT", "VALIDATING", "IN_PROGRESS",
                 "AGENT_ERR_STARTUP_IN_PROGRESS", "AGENT_ERROR_STARTUP_IN_PROGRESS", "DISABLE_IN_PROGRESS"]
@@ -956,7 +956,8 @@ def hz_health(data, opts=None):
             if m["agent"]:
                 vers[m["agent"]] = vers.get(m["agent"], 0) + 1
         if len(vers) > 1:
-            add("warning", "Pool", p["name"], "Horizon Agent of %d versions: %s" % (len(vers), ", ".join(
+            # 1.56.0: low - common half way through an agent upgrade; the next push brings them together
+            add("low", "Pool", p["name"], "Horizon Agent of %d versions: %s" % (len(vers), ", ".join(
                 "%s (%d)" % kv for kv in sorted(vers.items(), key=lambda kv: -kv[1]))))
         blocked = [m["name"] for m in ms if m["state"] == "BLOCKED_AGENT_VERSION"]
         if blocked:
@@ -980,13 +981,13 @@ def hz_health(data, opts=None):
                 "provisioning %s: %s%s" % ("on" if p["provisioning"] else "STOPPED", p["last_error"],
                                            (" (%s)" % _when(p["last_error_ms"])) if p["last_error_ms"] else ""))
         if not p["enabled"]:
-            add("info", "Pool", p["name"], "the pool is disabled")
+            add("low", "Pool", p["name"], "the pool is disabled")
         if p["pending_state"] == "READY_HELD":
             add("warning", "Pool", p["name"], "a new image is ready but held: promote it or cancel it (Horizon Console, the pool's Summary)")
         elif p["pending_state"] in ("PUBLISHING", "PENDING") and p["pending_progress"] >= 0:
             add("info", "Pool", p["name"], "image push %s: %d%%" % (p["pending_state"].lower(), p["pending_progress"]))
         if not p["provisioning"] and not p["last_error"] and p["type"] == "AUTOMATED":
-            add("info", "Pool", p["name"], "provisioning is off (left off after a maintenance?)")
+            add("low", "Pool", p["name"], "provisioning is off (left off after a maintenance?)")
         add_pool_desktops(p)
     ips = {}
     for m in data.get("machines") or []:
@@ -1364,25 +1365,27 @@ def hz_sessions_report(data, opts=None):
     for s in sess:
         proto[s["protocol"].upper() or "?"] = proto.get(s["protocol"].upper() or "?", 0) + 1
     other = [[who(s), where(s)[0], s["protocol"] or "?"] for s in sess if protos and s["protocol"] and s["protocol"].upper() not in protos]
-    probs = []
+    probs, low = [], []
+    # 1.56.0: an old client and another protocol are low - worth knowing, nothing for the admin to do now
     if old:
-        probs.append("%d session(s) from a Horizon Client older than the baseline (horizon_client_min_versions)" % len(old))
+        low.append("%d session(s) from a Horizon Client older than the baseline (horizon_client_min_versions)" % len(old))
     if pending:
         probs.append("%d session(s) pending for %g minutes or more: a launch that never finished - log it off (Horizon - user help)" % (len(pending), pend_min))
     if on_broken:
         probs.append("%d session(s) on a broken desktop: the user may be stuck - log off, then the desktops check fixes the desktop" % len(on_broken))
     if other:
-        probs.append("%d session(s) on a protocol other than %s" % (len(other), ", ".join(protos)))
+        low.append("%d session(s) on a protocol other than %s" % (len(other), ", ".join(protos)))
     nw = len(probs)
     report = {"title": "Horizon sessions: %d session(s)%s" % (len(sess), (", %d to look at" % nw) if nw else ""),
               "subtitle": ", ".join("%s %d" % kv for kv in sorted(proto.items(), key=lambda kv: -kv[1])) or "no session",
               "status": "warning" if nw else "ok",
               "summary": [{"label": "Sessions", "value": len(sess)},
-                          {"label": "Old clients", "value": len(old), "status": "warning" if old else "ok"},
+                          dict({"label": "Old clients", "value": len(old), "status": "low" if old else "ok"}, **({"note": "Low"} if old else {})),
                           {"label": "Pending", "value": len(pending), "status": "warning" if pending else "ok"},
                           {"label": "On broken desktops", "value": len(on_broken), "status": "warning" if on_broken else "ok"},
                           {"label": "Two or more desktops", "value": len(dups)}],
-              "sections": ([{"title": "Problems", "lines": probs, "status": "warning"}] if probs else []) + [
+              "sections": ([{"title": "Problems", "lines": probs, "status": "warning"}] if probs else [])
+              + ([{"title": "Low - worth knowing", "lines": low, "status": "low"}] if low else []) + [
                   {"title": "Old Horizon Clients", "columns": ["User", "Client", "Version", "Baseline", "Client machine"], "rows": old[:mx],
                    "text": "" if mins else "No baseline: set horizon_client_min_versions, e.g. {WINDOWS: '8.13', '*': '8.12'}."},
                   {"title": "Pending sessions", "columns": ["User", "Desktop", "Pool", "Started", "Minutes"], "rows": pending[:mx]},
@@ -1393,7 +1396,7 @@ def hz_sessions_report(data, opts=None):
                   {"title": "Client versions", "columns": ["Client", "Sessions"],
                    "rows": [[k, v] for k, v in sorted(versions.items(), key=lambda kv: (-kv[1], kv[0]))]},
                   {"title": "Other protocols", "columns": ["User", "Desktop", "Protocol"], "rows": other[:mx]}]}
-    return {"report": report, "warning": nw, "critical": 0, "old_clients": len(old), "pending": len(pending),
+    return {"report": report, "warning": nw, "low": len(low), "critical": 0, "old_clients": len(old), "pending": len(pending),
             "on_broken": len(on_broken), "long": len(long_rows), "duplicates": len(dups), "unnamed": sorted(unnamed)}
 
 

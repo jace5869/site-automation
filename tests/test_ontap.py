@@ -390,7 +390,7 @@ class Cifs(unittest.TestCase):
 
     def test_none_listed_is_information(self):
         sec, p, dcs = self.report([])
-        self.assertEqual((sec["rows"][0][5], sec["cell_status"][0][5], p), ("none listed", "info", []))
+        self.assertEqual((sec["rows"][0][5], sec["cell_status"][0][5], p), ("none listed (Low)", "low", []))   # 1.56.0: info -> low
         self.assertIn("c1 / svm1: no DC listed - vserver cifs domain discovered-servers discovery-mode show -vserver svm1", sec["lines"][0])
         self.assertEqual(dcs["text"], dcs["text"].strip())
         self.assertNotIn("rows", dcs)

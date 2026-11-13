@@ -43,7 +43,7 @@
         # form: the node stats login's own account (never the API account; never in the result)
         form_user: "{{ lookup('ansible.builtin.env', 'SN_STATS_USERNAME') if _snn_form | bool else '' }}"
         form_password: "{{ lookup('ansible.builtin.env', 'SN_STATS_PASSWORD') if _snn_form | bool else '' }}"
-        sem_wait_ms: "{{ servicenow_node_semaphore_wait_ms | int }}"
+        sem_wait_ms: "{{ servicenow_node_semaphore_warn_ms | int }}"
       register: _snn_a
       check_mode: false                  # it only reads: a dry run (Check) shows the real result
       when: _snn_first | bool

@@ -1,5 +1,136 @@
 # Changelog
 
+## 1.56.0 — 2026-11-13
+
+**Nothing to set up.** Two new settings have defaults (`servicenow_node_semaphore_warn_ms`,
+`servicenow_node_semaphore_crit_ms`); a site's own `servicenow_node_semaphore_wait_ms` keeps working.
+
+**A "Low" level in the reports.** Low is worth knowing and needs nothing now; it would not wake anyone. It sits below
+warning and above ok, and reports sort critical, warning, low, info, ok.
+
+- **Always with the word.** Low shows as "Low" (a chip, a Severity cell, a tile's note), never by its colour alone.
+  Its colour is a calm plum, distinct from info blue and the status colours, in light and dark and in every look
+  (report, command, portal, glass, atlas, brief). It passes the palette check against each look's status colours.
+- **Never amber.** A Low row or finding gets no Start here card. A report whose worst row is Low reads ok: the title
+  stays honest. Nothing moves below what an explicit setting says: every "-> warning at N" keeps its meaning.
+- **Settings that take a severity name accept `low`** (defaults unchanged): `ad_privileged_change_severity`,
+  `ad_schema_change_severity`, `ad_dc_change_severity`, `vm_sso_ocsp_severity`, `vm_sso_crl_severity`,
+  `net_perf_ocsp_severity`, `check_trust_severity`, `check_stig_disagree_severity`, `availability_node_down`,
+  `stigman_health_node_down`.
+- Docs: EMAIL_REPORTS.md, WEB_REPORTS.md, and the doc of each report below.
+
+**ServiceNow health: the node log rated.** Each grouped message of a node's log gets a Level.
+
+- **Slow transactions:** a semaphore wait of `servicenow_node_semaphore_warn_ms` (1000) or more is a warning (the node
+  short of threads), of `servicenow_node_semaphore_crit_ms` (10000) or more critical. A transaction that only waited
+  for its own session (semaphore wait under 100 ms) is Low, one row per page with its IDs taken out: "N slow
+  session(s) on /path, worst M ms, median K ms".
+- **SEVERE script errors** ("checkDCSupportsTLS: Cannot convert null to an object") are a warning, with the script's
+  name, how often, the first and last time, and where to look: System Logs > All, filtered on that name; System
+  Definition > Scheduled Jobs that ran then.
+- **The Node log errors table:** Level first, critical, then warning, the others, Low at the bottom with one line
+  saying what session wait is. The host and its node share a column, the count and the longest run share a cell, so
+  the table fits a glass email at 800 px.
+- Docs: SERVICENOW_SETUP.md. Who did it is still never shown.
+
+**Behaviour changes** (every row that moved; "was" is the level before):
+
+- ServiceNow health:
+  - A slow transaction that only waited for its session (semaphore wait under 100 ms): Low, was a plain row.
+  - A slow transaction with a semaphore wait of 100 to 999 ms that waited mostly for its session: a plain "slow
+    transaction", was "session wait".
+  - A semaphore wait of 10000 ms or more: critical, was warning.
+  - A SEVERE script error: warning (a row and a card per node), was a plain row.
+  - `servicenow_node_slow_tx_warn` (200, unchanged) counts the slow transactions without the session waits; the card
+    names those: "plus N session wait(s), Low".
+- AD health:
+  - Event 2886 (LDAP signing not required): Low, was info.
+  - Event 2889 (an unsigned or clear-text LDAP bind): Low, was info.
+  - DFS Replication event 5014 (a connection interrupted, usually recovers): Low, was info.
+  - Event 5807 (clients from addresses in no AD site): Low, was info.
+  - Any other error event (not in the list of known events): Low, was info.
+  - Clients in no site, fewer than `ad_no_client_site_warn`: Low, was info (from that number on: still a warning).
+  - A DC with no LDAPS or no KDC certificate: Low, was info.
+  - A site with no DC of this domain, or with no subnet: Low, was info.
+- AD account lockout:
+  - The "Failed sign-ins" tile, when there were failed sign-ins: Low, was info.
+- Certificate reports (Linux, Windows, network devices, vCenter):
+  - A certificate in the notice window (beyond the warn days): Low ("Low: expires within N days"), was info.
+- Certificate inventory:
+  - A certificate in the notice window: shown as Low; the stored status stays `notice`.
+- fapolicyd reports:
+  - "Would be blocked (permissive)" rows: Low, was info.
+  - fapolicyd's journal lines while it runs: Low, was info.
+- Trust store reports (Linux, Windows, VMware):
+  - A notice-level certificate (listed only): Low, was info ("notice"). Still no finding.
+- STIG drift:
+  - "Fixed on the host, still Open in STIG Manager": Low, was info.
+- ONTAP health:
+  - Health alerts of severity information or other: Low, was info.
+  - An NVRAM battery partially discharged: Low and no finding, was a warning. Near end of life stays a warning.
+  - A disk not assigned to a node: Low, was info.
+  - A CIFS server with no domain controller listed: Low, was info. Every DC "not contacted" stays info.
+- VMware capacity planning:
+  - A host in maintenance mode: Low, was info.
+  - More hosts recommended within the months, none now: Low, was warning.
+  - Trend fit poor (R² under 0.5): Low, was warning.
+  - Provisioned over 150 % (thin disks): Low, was warning.
+  - Hosts usable below the total, when every host not usable is connected and in maintenance: Low, was warning.
+  - New: a runway between `vm_capacity_runway_warn_days` and twice that: Low, was ok.
+- VMware right-sizing:
+  - "Watch: busy on a few days": Low, was a plain section.
+  - The confidence "Low" cell: Low, was warning.
+- VMware snapshot report and snapshot cleanup:
+  - Snapshots older than N days but held back (never deleted automatically): Low, was a plain section.
+- VMware health report:
+  - A host in maintenance mode: Low, was info.
+  - HA admission control off: Low, was info.
+  - DRS in manual mode: Low, was info.
+  - New: the STS signing certificate between `vm_sso_sts_warn_days` and twice that: Low, was not shown.
+- VMware alarms report:
+  - An alarm that fired in the window and cleared since: Low, was info (in the job artifact `vm_alarms.alarms_fired`
+    too: severity `low`, was `info`).
+  - A host in maintenance mode (All hosts): Low, was info.
+- VM inventory:
+  - The security tiles (Not encrypted, Without EFI, Without vTPM): Low, was info. The security cells stay warning.
+  - VMware Tools "upgrade available": Low, was info.
+- VMware Tools inventory:
+  - VMware Tools "upgrade available": Low, was info.
+- ESXi network check:
+  - vMotion or vSAN adapters of a cluster on different subnets: Low, was info.
+- Horizon health:
+  - A pool with desktops on two or more Horizon Agent versions: Low, was warning.
+  - A pool that is disabled: Low, was info.
+  - A pool with provisioning off: Low, was info.
+- Horizon sessions:
+  - Sessions from a Horizon Client older than the baseline: Low, was warning.
+  - Sessions on a protocol other than `horizon_session_protocols`: Low, was warning. With `horizon_health_fail`, these
+    two no longer fail the job.
+- Horizon FSLogix profiles:
+  - A stale container: Low, was info.
+  - A folder with no container: Low, was info.
+  - A lock or differencing file that belongs to no container: Low, was info.
+- Log analysis:
+  - A line its source marks notice, info or debug (journal priority 5 to 7): Low, was warning.
+  - A Windows information or verbose event of a listed provider or event ID: Low, was warning.
+- Mail relay unused addresses:
+  - An unused subnet (listed only, never removed): Low, was warning.
+- ServiceNow ticket insights (the email):
+  - The backlog grew by 5 % and by 5 or more: Low, was warning.
+  - Satisfaction graded Fair: Low, was warning.
+  - The priority set by hand on 10 % or more: Low, was warning.
+  - A category not on the official list: Low, was warning.
+- Cisco UCS inventory:
+  - Major and minor faults: Low, was plain. Critical faults stay a warning.
+
+Not changed, on purpose: pending reboots (ESXi, Linux, Windows), the VM security cells, right-sizing "Too big", the
+log analysis lines with no level, a host that lost its connection and is back, Tenable's own severities, snapshots
+older than N days ("To delete").
+
+Tests: `tests/test_low_servicenow.py`, `test_low_ad.py`, `test_low_vmware.py`, `test_low_misc.py`,
+`test_low_security.py`; report_fit documents `sn_node_sections_low` and `findings_report_low` (every look, 1280 and
+800 px); the ServiceNow e2e reads slow sessions, a 42 s semaphore wait and a script error.
+
 ## 1.50.0 — 2026-11-13
 
 **Updating without scripts:** paste `site-automation-1.50.0-changed-since-1.47.0.zip` as it is (from an older version,

@@ -21,7 +21,7 @@ net_cert_only: []                        # only these devices (names, wildcards)
 
 net_cert_warn_days: 30                   # a certificate expiring within this many days is due: a warning incident (amber in the report)
 net_cert_crit_days: 7                    # within this many days (or expired): critical
-net_cert_notice_days: 60                 # the report colours these blue (a heads-up, no incident)
+net_cert_notice_days: 60                 # the report shows these as Low (a heads-up, no incident)
 net_cert_unanswered_finding: false       # true = an inventory device whose port gives no certificate gets an incident too (a warning)
 
 # ---- the renewal: Cisco IOS / IOS-XE, a CSR made on the device (off: an incident only, for every device) ----

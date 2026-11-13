@@ -108,7 +108,7 @@ class Report(unittest.TestCase):
     def test_faults_and_notes(self):
         f = sec(self.d, "Faults (critical, major)")
         self.assertEqual([r[1:4] for r in f["rows"]], [["critical", "F0369", "chassis-1/psu-4"], ["major", "F0283", "chassis-1/blade-3"]])
-        self.assertEqual(f["row_status"], ["warning", ""])
+        self.assertEqual(f["row_status"], ["warning", "low"])                 # 1.56.0: a major fault is low
         self.assertEqual(sec(self.d, "Not all read")["lines"],
                          ["UCS-DC1: could not read equipmentFex - error 103: class equipmentFex is not a valid class"])
         none = ucs.ucs_inventory_doc(self.c, {"severities": []})
@@ -126,7 +126,7 @@ class Report(unittest.TestCase):
         f = sec(ucs.ucs_inventory_doc(c), "Faults (critical, major)")
         self.assertEqual([r[2] for r in f["rows"]], ["F0283", "F0369", "F0999"])
         self.assertEqual([r[5] for r in f["rows"]], ["2026-11-02 09:30:00", "2026-10-20 08:00:00", ""])
-        self.assertEqual(f["row_status"], ["", "warning", ""])
+        self.assertEqual(f["row_status"], ["low", "warning", "low"])
         self.assertIn("the newest first", f["text"])
         cut = sec(ucs.ucs_inventory_doc(c, {"max_rows": 1}), "Faults (critical, major)")
         self.assertEqual([r[2] for r in cut["rows"]], ["F0283"])

@@ -88,14 +88,21 @@
 ""
 ],
 [
-"warning",
+"low",
 "",
 "",
 "",
 ""
 ],
 [
-"info",
+"low",
+"",
+"",
+"",
+""
+],
+[
+"low",
 "",
 "",
 "",
@@ -122,8 +129,9 @@
 "warning",
 "warning",
 "warning",
-"warning",
-"info"
+"low",
+"low",
+"low"
 ],
 "rows": [
 [
@@ -160,13 +168,6 @@
 "vSphere Cluster Services (vCLS) in retreat mode: DRS is not working and HA works less well",
 "Retreat mode is set by hand: vCenter > Configure > Settings > Advanced Settings, config.vcls.clusters.domain-CL3.enabled. When the work it was set for is done, set it to true.",
 "DC2"
-],
-[
-"WARNING",
-"Cluster CL1",
-"HA can survive 0 host failure(s) now; admission control reserves 1",
-"Add capacity or power off / move VMs (see the capacity report).",
-"DC1"
 ],
 [
 "WARNING",
@@ -218,7 +219,21 @@
 "DC2"
 ],
 [
-"INFO",
+"LOW",
+"Cluster CL1",
+"HA admission control is off: after a host failure there may be no room to restart its VMs",
+"Cluster > Configure > vSphere Availability > Edit > Admission Control.",
+"DC1"
+],
+[
+"LOW",
+"Cluster CL1",
+"DRS is manual: its recommendations wait for someone to apply them",
+"Cluster > Configure > vSphere DRS > Edit: fully automated, if nothing needs it manual.",
+"DC1"
+],
+[
+"LOW",
 "Host esx03",
 "In maintenance mode",
 "Exit maintenance mode when the work on it is done.",
@@ -226,7 +241,7 @@
 ]
 ],
 "status": "critical",
-"text": "Red = critical (broken now), amber = warning (fix soon), blue = info (worth knowing, not broken).",
+"text": "Red = critical (broken now), amber = warning (fix soon), Low = worth knowing (nothing to do now), blue = info (not broken).",
 "title": "Needs attention"
 },
 {
@@ -279,7 +294,7 @@
 1,
 1,
 0,
-"4 critical, 6 warning, 1 info"
+"4 critical, 5 warning, 3 low"
 ],
 [
 "CRITICAL",
@@ -377,13 +392,13 @@
 "CL1",
 "DC1",
 "2 of 3",
-"on, reserves 1 host(s); 1 host agent(s) not OK",
-"on (fully automated), score 97%, 2 waiting",
+"on, admission control off; 1 host agent(s) not OK",
+"on (manual), score 97%, 2 waiting",
 "normal",
 "10%",
 "67%",
 0,
-"2 critical, 2 warning, 1 info"
+"2 critical, 1 warning, 3 low"
 ],
 [
 "CRITICAL",
@@ -464,12 +479,12 @@
 ""
 ],
 [
-"info",
+"low",
 "",
 "",
 "",
 "",
-"info",
+"low",
 "",
 "",
 "",
@@ -579,7 +594,7 @@
 "row_status": [
 "critical",
 "critical",
-"info",
+"low",
 "critical",
 "critical",
 "",
@@ -620,12 +635,12 @@
 0
 ],
 [
-"INFO",
+"LOW",
 "esx03",
 "CL1",
 "DC1",
 "connected",
-"yes",
+"yes - Low",
 "not configured",
 "green",
 "10%",
@@ -717,7 +732,7 @@
 ]
 ],
 "status": "critical",
-"text": "Every host, by datacenter and cluster. Hardware: the sensors and hardware status that are not green. Clock: the host's clock against vCenter's (+ ahead, - behind; ? = vCenter would not say) - the host writes its own logs by it.",
+"text": "Every host, by datacenter and cluster. Hardware: the sensors and hardware status that are not green. Clock: the host's clock against vCenter's (+ ahead, - behind; ? = vCenter would not say; not read = no answer in time) - the host writes its own logs by it.",
 "title": "Hosts"
 },
 {
@@ -775,7 +790,7 @@
 {
 "label": "HA problems",
 "status": "critical",
-"value": 4
+"value": 3
 },
 {
 "label": "DRS problems",
@@ -793,5 +808,5 @@
 "value": 1
 }
 ],
-"title": "VMware health report: 5 critical, 8 warning(s) - 2 datacenter(s), 4 cluster(s), 8 host(s)"
+"title": "VMware health report: 5 critical, 7 warning(s) - 2 datacenter(s), 4 cluster(s), 8 host(s)"
 }

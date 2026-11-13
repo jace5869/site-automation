@@ -105,7 +105,7 @@ play "the share listed: over and near the cap, stale, two for jdoe, empty folder
     '\\\\127.0.0.1\\profiles as svc_fx: 6 folder(s), 8 file(s),' " free of " \
     "Horizon FSLogix profiles: 2 over or near the cap" \
     "those users get errors when it fills: jdoe (profile, 97.0%)" \
-    '"Near the cap: 1"' '"Two for one user: 1"' '"Stale: 2 (50 MB to reclaim)"' \
+    '"Near the cap: 1"' '"Two for one user: 1"' '"Stale: 2 (Low - 50 MB to reclaim)"' \
     "another profile container for jdoe: jdoe_S-1-5-21-1-2-3-1001\\\\Profile_jdoe.vhdx" \
     "it is %username%_%sid% (FlipFlopProfileDirectoryName)" \
     "no container in it - empty" \

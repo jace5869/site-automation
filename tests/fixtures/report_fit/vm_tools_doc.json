@@ -215,7 +215,7 @@
 "",
 "",
 "",
-"info",
+"low",
 ""
 ]
 ],
@@ -257,7 +257,7 @@
 "on",
 "Red Hat Enterprise Linux 9.4 (64-bit)",
 "12.2.0",
-"upgrade available",
+"upgrade available - Low",
 "vmx-19"
 ]
 ],
@@ -339,7 +339,8 @@
 },
 {
 "label": "Upgrade available",
-"status": "info",
+"note": "Low",
+"status": "low",
 "value": 1
 },
 {

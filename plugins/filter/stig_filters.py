@@ -303,7 +303,7 @@ def stig_compare(scan, stigman=None, host="", severity=None, statuses=None, stig
                                 "note": "Something changed on the host since they passed (the scans are kept on the host, check_stig_dir). "
                                         "STIG Manager has no Not a Finding for them, so they are not drift from the checklist - but they are new."
                                         + where + (again if cmd else "")})
-    if out["disagree"] and disagree_severity in ("warning", "critical"):
+    if out["disagree"] and disagree_severity in ("warning", "critical", "low"):     # low: listed, no card, not amber (1.56.0)
         g = out["disagree"]
         cmd = check_command(scan, g[0])
         out["findings"].append({"check": "stig", "id": "stig:disagree" + tag, "severity": disagree_severity,
@@ -340,7 +340,7 @@ def stig_host_row(c):
     else:
         smtxt = "not used"
     status = "critical" if any(f["severity"] == "critical" for f in c["findings"]) else (
-        "warning" if c["findings"] else "ok")
+        "warning" if any(f["severity"] != "low" for f in c["findings"]) else "ok")      # a Low finding alone: ok
     tool = ("(SSG " + c["ssg_version"] + ")") if c.get("ssg_version") else ("(Evaluate-STIG)" if c.get("scanner") == "Evaluate-STIG" else "")
     if c.get("scanner_before"):
         tool += " - first scan with it, after %s: not compared with the earlier scans" % c["scanner_before"]
@@ -446,13 +446,16 @@ def stig_report_sections(results, list_max=200):
     un_rows, un_rs, un_cs = _rows(results, "unreviewed", lambda c, r: [
         _who(c), _rule_label(r), CAT.get(r.get("severity"), r.get("severity", "")), r["title"], "FAIL"],
         lambda r: ["", "", r["level"], "", "critical"])
-    disagree_found = any(f["id"] == "stig:disagree" for c in results for f in c.get("findings") or [])
+    dsev = [f["severity"] for c in results for f in c.get("findings") or [] if f["id"] == "stig:disagree"]
+    disagree_low = bool(dsev) and all(x == "low" for x in dsev)        # check_stig_disagree_severity: low (1.56.0)
+    disagree_found = bool(dsev) and not disagree_low
     not_scanned = [c for c in results if not c.get("scanned")]
     worst = lambda rs: "critical" if "critical" in rs else "warning"
     boxes = [_box("Drifted", len(drift_rows), worst(drift_rs), "passed before, now fails its Not a Finding"),
              _box("New fails", len(new_rows), worst(new_rs), "passed in an earlier scan"),
-             _box("Disagree", len(dis_rows), "warning" if disagree_found else "info", "never passed here, Not a Finding: look once"),
-             _box("Fixed, still Open", len(fo_rows), "info", "update STIG Manager"),
+             _box("Disagree", len(dis_rows), "warning" if disagree_found else "low" if disagree_low else "info",
+                  ("Low - " if disagree_low else "") + "never passed here, Not a Finding: look once"),
+             _box("Fixed, still Open", len(fo_rows), "low", "Low - update STIG Manager"),        # 1.56.0: info -> low
              _box("Not scanned", len(not_scanned), "warning", "no result for these hosts")]
     if drift_rows:
         sections.append({"title": "1. Drifted - the host fails what STIG Manager has as Not a Finding", "columns": cols + ["Scan now", "Last passed", "STIG Manager"],
@@ -469,19 +472,21 @@ def stig_report_sections(results, list_max=200):
                                  "Open, they leave this table."})
     if dis_rows:
         sections.append({"title": "3. The scan and the checklist disagree - look at each once", "columns": cols + ["Scan now", "STIG Manager", "The scan's check"],
-                         "rows": dis_rows, "row_status": dis_rs if disagree_found else ["info"] * len(dis_rows), "cell_status": dis_cs,
-                         "status": worst(dis_rs) if disagree_found else "info",
+                         "rows": dis_rows, "row_status": dis_rs if disagree_found else ["low" if disagree_low else "info"] * len(dis_rows),
+                         "cell_status": dis_cs, "status": worst(dis_rs) if disagree_found else "low" if disagree_low else "info",
                          "text": "The checklist has these as Not a Finding, and they have failed in every scan of the host: nothing moved that "
                                  "this job saw. Either the host was like this before its first scan, or the scanner checks the rule another way "
                                  "than DISA's check text (OpenSCAP's check, or what Evaluate-STIG found, is the last column; the scan's report "
                                  "on the host shows more). For each: fix the host, set the review to Open, or - the scanner is wrong for your "
                                  "site - add the rule to check_stig_ignore_rules. "
                                  + ("They are findings here (check_stig_disagree_severity)." if disagree_found
+                                    else "They are Low findings here: listed, nothing fails (check_stig_disagree_severity: low)." if disagree_low
                                     else "Report only (check_stig_disagree_severity: warning makes them findings).")})
     if fo_rows:
+        # 1.56.0: Low (was info) - the checklist is behind, the host is fine
         sections.append({"title": "4. Fixed on the host, still Open in STIG Manager - the checklist is behind", "columns": cols + ["Scan now", "STIG Manager"],
-                         "rows": fo_rows, "row_status": ["info"] * len(fo_rows), "cell_status": fo_cs, "status": "info",
-                         "text": "No finding: the host passes. Update these reviews in STIG Manager (and close their POA&M items)."})
+                         "rows": fo_rows, "row_status": ["low"] * len(fo_rows), "cell_status": fo_cs, "status": "low",
+                         "text": "Low - no finding: the host passes. Update these reviews in STIG Manager (and close their POA&M items)."})
     if not (drift_rows or new_rows) and results:
         gone = (" %d host%s could not be scanned (below)." % (len(not_scanned), "" if len(not_scanned) == 1 else "s") if not_scanned else "")
         if dis_rows:
@@ -493,8 +498,10 @@ def stig_report_sections(results, list_max=200):
                     % (len(dis_rows), "" if len(dis_rows) == 1 else "s", hosts, "" if hosts == 1 else "s",
                        "it has" if len(dis_rows) == 1 else "they have")
                     + ("They are findings (check_stig_disagree_severity)." if disagree_found
+                       else "They are Low findings: listed, nothing fails (check_stig_disagree_severity: low)." if disagree_low
                        else "Report only: check_stig_disagree_severity: warning (or critical) makes them findings that fail the job."))
-            sections.append({"title": "No drift - but the scan and the checklist disagree", "status": "warning" if disagree_found else "info",
+            sections.append({"title": "No drift - but the scan and the checklist disagree",
+                             "status": "warning" if disagree_found else "low" if disagree_low else "info",
                              "lines": [line + gone]})
         else:
             sections.append({"title": "No drift", "status": "ok",
@@ -508,8 +515,8 @@ def stig_report_sections(results, list_max=200):
         sections[0]["start_here"] = cards
         sections[0]["start_here_text"] = ("The CAT I rules that moved: drifted from the checklist, or failing since they passed. CAT II and III "
                                           "are in the tables below%s." % (", with %d more CAT I" % more if more else ""))
-    order = {"critical": 0, "warning": 1, "info": 2, "ok": 3}
-    hosts = sorted(results, key=lambda c: (order.get(c["row"]["status"], 3), _who(c)))
+    order = {"critical": 0, "warning": 1, "low": 2, "info": 3, "ok": 4}
+    hosts = sorted(results, key=lambda c: (order.get(c["row"]["status"], 4), _who(c)))
     hrs = [c["row"]["status"] for c in hosts]
     sections.append({"title": "Every host - the scan, STIG Manager, the counts", "status": "critical" if "critical" in hrs else ("warning" if "warning" in hrs else "ok"),
                      "columns": ["Host", "STIG (scan)", "STIG Manager (collection / asset)", "Pass", "Fail", "Drifted", "New", "Disagree",

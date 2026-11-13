@@ -133,8 +133,10 @@
       {%-   set _ = sections.append({'title': 'Approved but not deleted', 'columns': ['VM', 'Snapshot', 'Why'], 'rows': rows}) -%}
       {%- endif -%}
       {%- if _vm_sc.held -%}
-      {%-   set _ = sections.append({'title': 'Old, but held back (never deleted automatically)', 'columns': cols + ['Why'],
-                                     'rows': _vm_sc.held | map('vm_snap_row', _vm_sn_multi) | list}) -%}
+      {#- 1.56.0: Low - worth knowing, nothing to do now (as in the snapshot report) #}
+      {%-   set _ = sections.append({'title': 'Old, but held back (never deleted automatically)', 'status': 'low', 'columns': cols + ['Why'],
+                                     'rows': _vm_sc.held | map('vm_snap_row', _vm_sn_multi) | list, 'row_status': ['low'] * (_vm_sc.held | length),
+                                     'text': 'Low - worth knowing, nothing to do now: the cleanup leaves these alone.'}) -%}
       {%- endif -%}
       {{ {'title': _vm_report_subject | trim,
           'status': 'critical' if _vm_sc_failed else ('ok' if _vm_sc.delete | bool else 'info'),
@@ -142,7 +144,7 @@
           'summary': ([{'label': 'Deleted', 'value': _vm_sc_done | length, 'status': 'ok'}, {'label': 'Space freed', 'value': _vm_sc_gb, 'status': 'ok'},
                        {'label': 'Failed', 'value': _vm_sc_failed | length, 'status': 'critical' if _vm_sc_failed else 'ok'}]
                       if _vm_sc.delete | bool else [{'label': 'Would delete', 'value': _vm_sc.todo | length}])
-                     + ([{'label': 'Held back', 'value': _vm_sc.held | length}] if _vm_sc.held else []),
+                     + ([{'label': 'Held back', 'value': _vm_sc.held | length, 'status': 'low', 'note': 'Low: never deleted automatically'}] if _vm_sc.held else []),
           'sections': sections} }}
 
 - name: VMware | what was deleted, as job artifacts (vm_snapshot_cleanup)

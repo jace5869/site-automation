@@ -266,7 +266,7 @@ class Sections(unittest.TestCase):
         self.assertTrue(all(x.get("top") for x in s[:4]))
         self.assertEqual([(x["label"], x["value"], x["status"]) for x in s[0]["boxes"]],
                          [("Drifted", 1, "critical"), ("New fails", 1, "warning"), ("Disagree", 1, "info"),
-                          ("Fixed, still Open", 1, "info"), ("Not scanned", 1, "warning")])
+                          ("Fixed, still Open", 1, "low"), ("Not scanned", 1, "warning")])
         self.assertTrue(all(x.get("note") for x in s[0]["boxes"]), "every tile says what it means")
         self.assertEqual(s[4]["rows"][0][0], "web01", "worst first: the critical host before the one not scanned")
         self.assertEqual(len(s[4]["rows"][0]), len(s[4]["columns"]))

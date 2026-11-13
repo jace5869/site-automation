@@ -847,7 +847,8 @@ def mail_relay_unused(relays, opts=None):
             verdict, st = "in use" + ((" (%d address(es) in it)" % len(recent)) if k == 1 else ""), ""
             used += 1
         elif k == 1:
-            verdict, st = "UNUSED subnet - listed only, not removed", "warning"
+            # 1.56.0: low - listed only, nothing happens to it; worth knowing
+            verdict, st = "Low: UNUSED subnet - listed only, not removed", "low"
             unused_nets.append(w)
         else:
             verdict, st = "UNUSED", "warning"

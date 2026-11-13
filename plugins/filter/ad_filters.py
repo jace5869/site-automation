@@ -9,7 +9,8 @@ __metaclass__ = type
 import datetime
 import re
 
-RANK = {"critical": 0, "warning": 1, "unknown": 2, "info": 3, "ok": 4, "": 5}
+# 1.56.0 low: worth knowing, nothing to do now (never a problem, never the report's status)
+RANK = {"critical": 0, "warning": 1, "unknown": 2, "low": 3, "info": 4, "ok": 5, "": 6}
 
 # dcdiag tests whose failure means the DC is not doing its job (the others are amber)
 DCDIAG_CRITICAL = {"connectivity", "advertising", "netlogons", "replications", "sysvolcheck", "services",
@@ -42,16 +43,16 @@ EVENTS = {
     ("Directory Service", 1084): ("warning", "an inbound change could not be applied"),
     ("Directory Service", 1645): ("warning", "the DC could not register a Kerberos service principal name"),
     ("Directory Service", 2089): ("warning", "a partition has not been backed up within the backup latency interval"),
-    ("Directory Service", 2886): ("info", "LDAP signing is not required: unsigned binds are accepted"),
+    ("Directory Service", 2886): ("low", "LDAP signing is not required: unsigned binds are accepted"),
     ("Directory Service", 2887): ("warning", "clients made unsigned or clear-text LDAP binds (this event counts them; 2889 names them when diagnostic logging is on)"),
-    ("Directory Service", 2889): ("info", "a client made an unsigned or clear-text LDAP bind"),
+    ("Directory Service", 2889): ("low", "a client made an unsigned or clear-text LDAP bind"),
     ("DFS Replication", 2213): ("critical", "DFSR stopped replicating SYSVOL after an unexpected shutdown and waits for a manual resume"),
     ("DFS Replication", 4012): ("critical", "DFSR stopped replicating SYSVOL: the DC was disconnected longer than MaxOfflineTimeInDays"),
     ("DFS Replication", 2104): ("critical", "DFSR failed to recover from an internal database error"),
     ("DFS Replication", 4614): ("warning", "SYSVOL waits for its initial synchronization (it is not shared until then)"),
     ("DFS Replication", 5002): ("warning", "DFSR could not reach a replication partner"),
     ("DFS Replication", 5008): ("warning", "DFSR could not reach a replication partner"),
-    ("DFS Replication", 5014): ("info", "a DFSR connection was interrupted (usually recovers by itself)"),
+    ("DFS Replication", 5014): ("low", "a DFSR connection was interrupted (usually recovers by itself)"),
     ("DNS Server", 4000): ("critical", "the DNS server could not open Active Directory: AD-integrated zones are not loaded"),
     ("DNS Server", 4004): ("critical", "the DNS server could not enumerate its AD-integrated zones"),
     ("DNS Server", 4015): ("critical", "the DNS server got a critical error from Active Directory"),
@@ -60,7 +61,7 @@ EVENTS = {
     ("System", 5722): ("warning", "a computer's secure channel failed (its machine password)"),
     ("System", 5723): ("warning", "a computer with no account in the domain tried to log on"),
     ("System", 5805): ("warning", "a computer's secure channel failed (access denied)"),
-    ("System", 5807): ("info", "clients connected from IP addresses in no AD site (the netlogon.log lists them)"),
+    ("System", 5807): ("low", "clients connected from IP addresses in no AD site (the netlogon.log lists them)"),
     ("System", 7): ("warning", "the KDC could not find a principal name"),
     ("System", 19): ("warning", "the KDC has no suitable certificate for smart card logon"),
     ("System", 26): ("warning", "the KDC could not agree on an encryption type with a client"),
@@ -210,7 +211,7 @@ class _Report(object):
         if shown:
             s.update({"columns": columns, "rows": [r[0] for r in shown],
                       "cell_status": [[x or "" for x in r[1]] for r in shown],
-                      "row_status": [r[2] if r[2] in ("critical", "warning", "info", "unknown") else "" for r in shown]})
+                      "row_status": [r[2] if r[2] in ("critical", "warning", "low", "info", "unknown") else "" for r in shown]})
             s["text"] = text
         else:
             s["text"] = (about + " " + none_text).strip()
@@ -224,7 +225,12 @@ class _Report(object):
 
 def _sev(o, key, default):
     v = str(o.get(key) or default).lower()
-    return v if v in ("critical", "warning", "info") else default
+    return v if v in ("critical", "warning", "low", "info") else default
+
+
+def _low(text, st):
+    """A cell's text with the word Low after it when its status is low (never the colour alone)."""
+    return "%s (Low)" % text if st == "low" else text
 
 
 # ---- the report -------------------------------------------------------------------------------------
@@ -678,7 +684,7 @@ def ad_report(dcs, domains, opts=None):
             continue
         for e in x["data"].get("events") or []:
             k = (e.get("log"), int(e.get("id", 0)))
-            sv, what = EVENTS.get(k, ("info" if int(e.get("level", 2)) > 1 else "warning", ""))
+            sv, what = EVENTS.get(k, ("low" if int(e.get("level", 2)) > 1 else "warning", ""))
             if k not in EVENTS and int(e.get("level", 2)) == 1:
                 sv = "warning"
             rows.append(_row([x["_name"], "%s / %s" % (e.get("log", ""), e.get("source", "")) if e.get("source") else e.get("log", ""),
@@ -687,7 +693,7 @@ def ad_report(dcs, domains, opts=None):
             R.problem(x["_domain"], "event", x["_name"], sv, "%s %s x%s: %s" % (e.get("log"), e.get("id"), e.get("count"), what or str(e.get("message", ""))[:200]))
     R.table("Events (last %s h)" % _hours(ev_h), "The Directory Service, DFS Replication and DNS Server logs, and the Netlogon, KDC, "
             "time and Group Policy entries of the System log: the events that matter on a DC (with what they mean) and every "
-            "other error (blue, for information). The same event on the same DC is counted once.",
+            "other error (Low: worth knowing, nothing to do now). The same event on the same DC is counted once.",
             ["DC", "Log / source", "ID", "Severity", "Count", "Last", "What it means / last message"], rows, "No such event.")
 
     # ---- 10. clients in no site ---------------------------------------------------------------------------------------------
@@ -700,8 +706,8 @@ def ad_report(dcs, domains, opts=None):
         cnt = int(n.get("distinct") or len(n.get("clients") or []))
         if not cnt:
             continue
-        st = "warning" if cnt >= ncs else "info"
-        rows.append(_row([x["_name"], cnt, n.get("count", ""), ", ".join(n.get("clients") or [])[:600]], ["", st]))
+        st = "warning" if cnt >= ncs else "low"
+        rows.append(_row([x["_name"], _low(cnt, st), n.get("count", ""), ", ".join(n.get("clients") or [])[:600]], ["", st]))
         R.problem(x["_domain"], "sites", x["_name"], st, "%d client address(es) are in no AD subnet: they may log on at a DC in another site" % cnt)
     for d in doms:
         nos = d["data"].get("subnets_without_site") or []
@@ -722,7 +728,7 @@ def ad_report(dcs, domains, opts=None):
         for p in ("ldaps", "kdc"):
             mine = [c for c in certs if p in (c.get("purposes") or [])]
             if not mine:
-                rows.append(_row([x["_name"], p.upper(), "none", "", ""], ["", "", "info"], "info"))
+                rows.append(_row([x["_name"], p.upper(), "none (Low)", "", ""], ["", "", "low"], "low"))
                 continue
             c = max(mine, key=lambda c: parse_time(c.get("not_after")) or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc))
             t = parse_time(c.get("not_after"))
@@ -733,7 +739,7 @@ def ad_report(dcs, domains, opts=None):
             R.problem(x["_domain"], "certificate", x["_name"], st, "the %s certificate %s %s" % (
                 p.upper(), c.get("subject", ""), "has EXPIRED" if days is not None and days < 0 else "expires in %d day(s)" % int(days or 0)))
     R.table("Certificates (LDAPS and Kerberos)", "The newest certificate each DC has for LDAPS (server authentication) and for "
-            "the KDC (smart card / PKINIT logons). Amber %s days, red %s days before it expires; blue: none (that service "
+            "the KDC (smart card / PKINIT logons). Amber %s days, red %s days before it expires; Low: none (that service "
             "is not available on the DC)." % (_hours(cw), _hours(cc)),
             ["DC", "For", "Subject", "Expires", "Days left"], rows, "No DC was read.")
 
@@ -758,11 +764,12 @@ def ad_report(dcs, domains, opts=None):
     rows = []
     for d in doms:
         for s in d["data"].get("sites") or []:
-            st = "info" if not s.get("subnets") or not s.get("dcs") else ""
+            st = "low" if not s.get("subnets") or not s.get("dcs") else ""
             if st or len(d["data"].get("sites") or []) <= int(o.get("sites_list_max", 25)):
-                rows.append(_row([d["data"]["dns"], s.get("name", ""), s.get("dcs", 0), s.get("subnets", 0)],
-                                 ["", "", "info" if not s.get("dcs") else "", "info" if not s.get("subnets") else ""], st))
-    R.table("Sites", "AD sites, the DCs of this domain in each and their subnets (blue: no DC of this domain, or no subnet - "
+                dst, sst = "low" if not s.get("dcs") else "", "low" if not s.get("subnets") else ""
+                rows.append(_row([d["data"]["dns"], s.get("name", ""), _low(s.get("dcs", 0), dst), _low(s.get("subnets", 0), sst)],
+                                 ["", "", dst, sst], st))
+    R.table("Sites", "AD sites, the DCs of this domain in each and their subnets (Low: no DC of this domain, or no subnet - "
             "clients are never placed in a site without one).",
             ["Domain", "Site", "DCs", "Subnets"], rows, "No site was read.")
 
@@ -775,7 +782,7 @@ def ad_report(dcs, domains, opts=None):
             for c in g.get("changes") or []:
                 add = c.get("action") == "added"
                 by = who(SEC_ADD if add else SEC_REMOVE, member=c.get("member"), group=g.get("sam"), at=c.get("time"))
-                rows.append(_row([time_text(c.get("time")), d["data"]["dns"], g.get("name"), c.get("action", "").upper(), short(c.get("member")),
+                rows.append(_row([time_text(c.get("time")), d["data"]["dns"], g.get("name"), _low(c.get("action", "").upper(), priv_sev), short(c.get("member")),
                                   c.get("dc", ""), by or "-"], ["", "", "", priv_sev], priv_sev))
                 R.problem(d["data"]["dns"], "privileged", g.get("name"), priv_sev, "%s %s %s%s" % (
                     short(c.get("member")), c.get("action"), "to" if add else "from", " " + g.get("name") + (" by " + by if by else "")))
@@ -880,7 +887,7 @@ def ad_report(dcs, domains, opts=None):
         sh = age_hours(sch.get("changed"), now)
         if sh is not None and sh <= hours:
             st = _sev(o, "schema_change_severity", "warning")
-            rows.append(_row([time_text(sch.get("changed")), data["dns"], "schema", "version %s" % sch.get("version"), "CHANGED"], ["", "", "", "", st], st))
+            rows.append(_row([time_text(sch.get("changed")), data["dns"], "schema", "version %s" % sch.get("version"), _low("CHANGED", st)], ["", "", "", "", st], st))
             R.problem(data["dns"], "schema", "objectVersion", st, "the schema version changed to %s" % sch.get("version"))
         for s in sch.get("new_objects") or []:
             rows.append(_row([time_text(s.get("time")), data["dns"], s.get("class", ""), s.get("name", ""), "ADDED TO SCHEMA"], ["", "", "", "", "info"], "info"))
@@ -890,7 +897,7 @@ def ad_report(dcs, domains, opts=None):
             if c.get("class") == "nTDSDSA" and c.get("change") in ("created", "deleted"):
                 st = _sev(o, "dc_change_severity", "info")
                 R.problem(data["dns"], "config", c.get("name"), st, "domain controller %s was %s" % (c.get("name"), "added" if c.get("change") == "created" else "removed"))
-            rows.append(_row([time_text(c.get("time")), data["dns"], cls, c.get("name", ""), str(c.get("change", "")).upper()], ["", "", "", "", st], st))
+            rows.append(_row([time_text(c.get("time")), data["dns"], cls, c.get("name", ""), _low(str(c.get("change", "")).upper(), st)], ["", "", "", "", st], st))
         for t in data.get("trusts") or []:
             if (age_hours(t.get("created"), now) or 1e9) <= hours:
                 rows.append(_row([time_text(t.get("created")), data["dns"], "trust", t.get("name", ""), "CREATED"], ["", "", "", "", "warning"]))
@@ -948,7 +955,7 @@ def ad_report(dcs, domains, opts=None):
                {"label": "Services down", "value": count("service"), "status": st_of("service")},
                {"label": "SYSVOL / GPO", "value": count("sysvol", "gpo"), "status": st_of("sysvol", "gpo")},
                {"label": "FSMO / DNS / time", "value": count("fsmo", "dns", "time"), "status": st_of("fsmo", "dns", "time")},
-               {"label": "Privileged changes", "value": n_priv, "status": priv_sev if n_priv and priv_sev in ("warning", "critical") else ("info" if n_priv else "ok")},
+               dict({"label": "Privileged changes", "value": n_priv, "status": priv_sev if n_priv and priv_sev in ("warning", "critical", "low") else ("info" if n_priv else "ok")}, **({"note": "Low"} if n_priv and priv_sev == "low" else {})),
                {"label": "Accounts created / deleted", "value": n_obj, "status": "info" if n_obj else "ok"},
                {"label": "GPO changes", "value": n_gpo, "status": "info" if n_gpo else "ok"}]
     report = {"title": title, "status": "critical" if crit else ("warning" if warn else "ok"),
@@ -1288,7 +1295,7 @@ def ad_reader_report(reader, opts=None):
     rows = []
     for g in groups:
         for c in g.get("changes") or []:
-            rows.append(_row([time_text(c.get("time")), g.get("name"), str(c.get("action", "")).upper(), short(c.get("member_dn") or c.get("member")),
+            rows.append(_row([time_text(c.get("time")), g.get("name"), _low(str(c.get("action", "")).upper(), priv_sev), short(c.get("member_dn") or c.get("member")),
                               c.get("dc", ""), "not known (needs the event logs)"], ["", "", priv_sev], priv_sev))
             R.problem(dom, "privileged", g.get("name"), priv_sev, "%s %s %s %s (on %s)" % (
                 c.get("member"), c.get("action"), "to" if c.get("action") == "added" else "from", g.get("name"), c.get("dc") or "?"))
@@ -1388,7 +1395,7 @@ def ad_reader_report(reader, opts=None):
                {"label": "FSMO / DNS / clock", "value": count("fsmo", "dns", "time"), "status": st_of("fsmo", "dns", "time")},
                {"label": "Kerberos", "value": count("kerberos"), "status": st_of("kerberos")},
                {"label": "Certificates", "value": count("certificate"), "status": st_of("certificate")},
-               {"label": "Privileged changes", "value": n_priv, "status": priv_sev if n_priv and priv_sev in ("warning", "critical") else ("info" if n_priv else "ok")},
+               dict({"label": "Privileged changes", "value": n_priv, "status": priv_sev if n_priv and priv_sev in ("warning", "critical", "low") else ("info" if n_priv else "ok")}, **({"note": "Low"} if n_priv and priv_sev == "low" else {})),
                {"label": "Accounts created", "value": n_obj, "status": "info" if n_obj else "ok"},
                {"label": "Locked out now", "value": len(r.get("locked_out") or []), "status": "info" if r.get("locked_out") else "ok"},
                {"label": "Not run (needs admin)", "value": "dcdiag, repadmin, services ...", "status": "unknown"}]

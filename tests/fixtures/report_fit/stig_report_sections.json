@@ -12,7 +12,7 @@
 "label": "New fails",
 "note": "passed in an earlier scan",
 "status": "warning",
-"value": 1
+"value": 2
 },
 {
 "label": "Disagree",
@@ -22,15 +22,15 @@
 },
 {
 "label": "Fixed, still Open",
-"note": "update STIG Manager",
-"status": "info",
+"note": "Low - update STIG Manager",
+"status": "low",
 "value": 1
 },
 {
 "label": "Not scanned",
 "note": "no result for these hosts",
-"status": "warning",
-"value": 1
+"status": "ok",
+"value": 0
 }
 ],
 "cell_status": [
@@ -94,6 +94,15 @@
 "",
 "critical",
 "unknown"
+],
+[
+"",
+"",
+"warning",
+"",
+"",
+"critical",
+"unknown"
 ]
 ],
 "columns": [
@@ -106,6 +115,7 @@
 "STIG Manager"
 ],
 "row_status": [
+"warning",
 "warning"
 ],
 "rows": [
@@ -114,6 +124,15 @@
 "V-257883 (RHEL-09-412035)",
 "CAT II",
 "RHEL 9 must automatically exit interactive command shell user sessions after 10 minutes of inactivity.",
+"t",
+"FAIL",
+"no review"
+],
+[
+"web01",
+"V-257985 (RHEL-09-255045)",
+"CAT II",
+"RHEL 9 must not permit direct logons to the root account using remote access through SSH.",
 "t",
 "FAIL",
 "no review"
@@ -184,7 +203,7 @@
 "STIG Manager"
 ],
 "row_status": [
-"info"
+"low"
 ],
 "rows": [
 [
@@ -196,8 +215,8 @@
 "Open (saved, 2026-09-01)"
 ]
 ],
-"status": "info",
-"text": "No finding: the host passes. Update these reviews in STIG Manager (and close their POA&M items).",
+"status": "low",
+"text": "Low - no finding: the host passes. Update these reviews in STIG Manager (and close their POA&M items).",
 "title": "4. Fixed on the host, still Open in STIG Manager - the checklist is behind",
 "top": true
 },
@@ -217,8 +236,7 @@
 "The report on the host"
 ],
 "row_status": [
-"critical",
-"warning"
+"critical"
 ],
 "rows": [
 [
@@ -228,26 +246,12 @@
 "5",
 "4",
 "1",
-"1",
+"2",
 "1",
 "1",
 "0",
-"1",
+"0",
 "/var/lib/site-automation/stig/x_report.html"
-],
-[
-"web02",
-"not scanned: no content",
-"",
-"",
-"",
-"",
-"",
-"",
-"",
-"",
-"",
-""
 ]
 ],
 "status": "critical",
@@ -261,37 +265,8 @@
 "",
 "warning",
 "",
-"critical",
-"unknown"
-]
+"critical"
 ],
-"columns": [
-"Host",
-"STIG rule",
-"CAT",
-"Title",
-"Scan now",
-"STIG Manager"
-],
-"row_status": [
-"info"
-],
-"rows": [
-[
-"web01",
-"V-257985 (RHEL-09-255045)",
-"CAT II",
-"RHEL 9 must not permit direct logons to the root account using remote access through SSH.",
-"FAIL",
-"no review"
-]
-],
-"status": "info",
-"text": "Never a finding: the scan fails these, and check_stig_ignore_rules says the scanner is known to get them wrong here. Take a rule off the list when its check is fixed (a newer scap-security-guide or Evaluate-STIG).",
-"title": "Left out on purpose - check_stig_ignore_rules"
-},
-{
-"cell_status": [
 [
 "",
 "",
@@ -308,6 +283,7 @@
 "Scan now"
 ],
 "row_status": [
+"info",
 "info"
 ],
 "rows": [
@@ -316,6 +292,13 @@
 "V-257883 (RHEL-09-412035)",
 "CAT II",
 "RHEL 9 must automatically exit interactive command shell user sessions after 10 minutes of inactivity.",
+"FAIL"
+],
+[
+"web01",
+"V-257985 (RHEL-09-255045)",
+"CAT II",
+"RHEL 9 must not permit direct logons to the root account using remote access through SSH.",
 "FAIL"
 ]
 ],

@@ -47,7 +47,7 @@ bigger sweep - a `/16` by mistake would take hours. Try the group first; sweep t
 ## What is due
 
 `net_cert_warn_days` (30): due - an incident (warning); `net_cert_crit_days` (7) or expired: critical;
-`net_cert_notice_days` (60): blue in the report, no incident. `net_cert_only: ['sw01*']` limits a run to some
+`net_cert_notice_days` (60): Low in the report, no incident. `net_cert_only: ['sw01*']` limits a run to some
 devices - to try the renewal on one. `net_cert_unanswered_finding: true` opens an incident for an inventory
 device whose port gives no certificate (off: listed under *No certificate read*).
 

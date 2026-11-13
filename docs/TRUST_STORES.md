@@ -31,7 +31,7 @@ and cross-signed by Sectigo's *AAA Certificate Services*. All sixteen are revoke
 | the 8 intermediates (16 certificates, `EM DV / OV / EV TLS CA - G3B / G3C`, `EM OV CS CA - G3B / G3C`) | **critical** | anything that trusts one accepts certificates anyone can sign |
 | `emSign ECC Root CA - G3` | warning | it cross-signs the issuer of the compromised intermediates; removed by Mozilla (NSS 3.131.1), Chrome, certifi 2026.10.19, webpki-roots 1.0.10, curl's bundle. A store that still has it accepts the compromised chains |
 | `emSign Root TLS CA - G3`, `emSign Root CS CA - G3` | warning | the direct issuers (Microsoft's root store only) |
-| `AAA Certificate Services` | notice | Sectigo's root that cross-signed all eight. It is in nearly every trust store and many unrelated certificates chain to it. Red Hat's advisory says to blocklist it: decide first what breaks. *Notice* = in the report, no finding, no ticket - `check_trust_severity: {"AAA Certificate Services": warning}` once you decide |
+| `AAA Certificate Services` | notice | Sectigo's root that cross-signed all eight. It is in nearly every trust store and many unrelated certificates chain to it. Red Hat's advisory says to blocklist it: decide first what breaks. *Notice* = in the report as *Low*, no finding, no ticket (`low` in `check_trust_severity` means the same) - `check_trust_severity: {"AAA Certificate Services": warning}` once you decide |
 
 Every certificate is matched by its SHA-256 fingerprint **and by its public key**: a certificate not on
 the list but carrying one of the compromised keys - a cross-sign nobody listed - is a hit too (shown as
@@ -98,10 +98,10 @@ The email is laid out in the order to act, then the proof:
    clear: the system trust, Java, certifi, an application's file, vCenter, ESXi
 3. **Then update** - what cannot be edited: Node's built-in roots, a container's image, Go programs,
    NSS, below the version that fixed it
-4. **Listed only** - notice-level, nothing to do until you decide (AAA Certificate Services)
+4. **Listed only (Low)** - notice-level, nothing to do until you decide (AAA Certificate Services)
 5. *Removed* - when the removal ran: what was done, each backup
 6. **Everything read** - every store and program on every host with what it holds, worst first: also
-   the ones that hold nothing (green) and the ones with only a notice-level certificate (blue). The
+   the ones that hold nothing (green) and the ones with only a notice-level certificate (Low). The
    count is how many certificates the store holds, not a problem count.
 7. *Not read* - what could not be opened
 

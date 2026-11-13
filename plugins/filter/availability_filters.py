@@ -54,7 +54,8 @@ def availability_judge(probes, opts=None):
         add("critical", "down", "%s does not answer on any of its %d nodes" % (service, len(nodes)), "")
     sevs = {f["severity"] for f in findings}
     down = any(int(p.get("good", 0)) == 0 for p in svc + deps) or (nodes and not svc and all(int(p.get("good", 0)) == 0 for p in nodes))
-    status = "down" if down or "critical" in sevs else ("degraded" if findings else "up")
+    # 1.56.0: availability_node_down low - listed as Low, the service still reads up
+    status = "down" if down or "critical" in sevs else ("degraded" if sevs - {"low"} else "up")
     return {"status": status, "findings": findings}
 
 
@@ -93,6 +94,8 @@ def availability_sections(probes, history=None, opts=None):
         med, mx = p.get("ms_median"), p.get("ms_max")
         if n == 0:
             st, res = (node_down if p.get("group") == "node" else "critical"), "DOWN"
+            if st == "low":
+                res = "DOWN (Low)"
         elif n < total or (med is not None and int(med) > slow):
             st, res = "warning", ("FLAKY" if n < total else "SLOW")
         else:

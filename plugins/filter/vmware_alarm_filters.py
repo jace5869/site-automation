@@ -17,7 +17,8 @@ try:
 except ImportError:                             # Python before 3.9: UTC only
     zoneinfo = None
 
-RANK = {"critical": 0, "warning": 1, "unknown": 2, "info": 3, "ok": 4, "": 5}
+# 1.56.0 low: worth knowing, nothing to do now (an alarm cleared since, a host in maintenance) - never the report's status
+RANK = {"critical": 0, "warning": 1, "unknown": 2, "low": 3, "info": 4, "ok": 5, "": 6}
 PLURAL = {"vcenter": "vCenter", "datacenter": "datacenters", "cluster": "clusters", "host": "hosts", "datastore": "datastores",
           "vm": "VMs", "network": "networks"}
 TYPE_LABEL = {"vcenter": "vCenter", "datacenter": "Datacenter", "cluster": "Cluster", "host": "Host",
@@ -178,7 +179,7 @@ def vm_alarm_groups(data, opts=None):
 def vm_alarm_history(data, opts=None):
     """The alarms that fired in the window (alarm_changes), one row per alarm and object: how many
     times it turned red and yellow, when first and last, and how it is now - still on (its severity)
-    or cleared since (info). Still-on ones first, then newest first."""
+    or cleared since (low - 1.56.0, was info). Still-on ones first, then newest first."""
     d = data or {}
     now = {}
     for a in d.get("alarms") or []:
@@ -203,7 +204,7 @@ def vm_alarm_history(data, opts=None):
         if a is not None:
             g["now"], g["severity"] = a.get("status", ""), a.get("severity", "")
         else:
-            g["now"], g["severity"] = "cleared", "info"
+            g["now"], g["severity"] = "cleared", "low"
         out.append(g)
     out.sort(key=lambda x: x["last"], reverse=True)
     out.sort(key=lambda x: RANK.get(x["severity"], 9))
@@ -215,7 +216,7 @@ def _table(rows, status_col=0):
     out, rs, cs = [], [], []
     for st, cells in rows:
         out.append(cells)
-        rs.append(st if st in ("critical", "warning", "info", "unknown") else "")
+        rs.append(st if st in ("critical", "warning", "low", "info", "unknown") else "")
         c = [""] * len(cells)
         if status_col is not None and st:
             c[status_col] = st
@@ -262,7 +263,7 @@ def vm_alarm_report(data, opts=None):
     other_n = sum(x["count"] for x in g["other"])
     events_on = float(d.get("window_hours") or 0) > 0
     fired = vm_alarm_history(d) if events_on else []
-    cleared = [x for x in fired if x["severity"] == "info"]
+    cleared = [x for x in fired if x["severity"] == "low"]
 
     parts = ["%d critical, %d warning alarm(s)" % (len(crit), len(warn)) if alarms else "no triggered alarms"]
     if notconn:
@@ -294,8 +295,9 @@ def vm_alarm_report(data, opts=None):
     ]
     if events_on:
         summary += [
-            {"label": "Alarms fired (%s h)" % hours, "value": len(fired),
-             "status": _worst([x["severity"] for x in fired if x["severity"] != "info"]) or ("info" if fired else "ok")},
+            dict({"label": "Alarms fired (%s h)" % hours, "value": len(fired),
+                  "status": _worst([x["severity"] for x in fired if x["severity"] not in ("info", "low")]) or ("low" if fired else "ok")},
+                 **({"note": "Low: all cleared since"} if fired and len(cleared) == len(fired) else {})),
             {"label": "Failed logins", "value": login_n, "status": _worst([x["severity"] for x in g["logins"]]) or "ok"},
             {"label": "VM events to check", "value": len(vm_bad), "status": _worst([e.get("severity") for e in vm_bad]) or "ok"},
             {"label": "Other errors / warnings", "value": other_n, "status": _worst([x["severity"] for x in g["other"]]) or "ok"},
@@ -324,11 +326,11 @@ def vm_alarm_report(data, opts=None):
                               x["red"], x["yellow"], _tt(x["first"], tz), _tt(x["last"], tz),
                               "cleared" if x["now"] == "cleared" else "still %s" % x["now"], x["cluster"], _dc(x, multi)]) for x in fired],
             ("Every alarm that turned yellow or red in the last %s h: still on (red / amber, also in the table above), "
-             "or cleared since (blue) - an alarm that comes and goes is worth a look too." % hours
+             "or cleared since (Low) - an alarm that comes and goes is worth a look too." % hours
              + (" Only the newest %s alarm changes were read (vm_alarm_max_alarm_changes)." % o.get("max_alarm_changes", "")
                 if d.get("alarm_changes_capped") else ""))
             if fired else "No alarm fired in the last %s h." % hours,
-            _worst([x["severity"] for x in fired if x["severity"] != "info"]), max_rows=max_rows))
+            _worst([x["severity"] for x in fired if x["severity"] not in ("info", "low")]), max_rows=max_rows))
     sections.append(_section(
         "Host connection", ["Severity", "Host", "State now", "Maintenance", "Connection events", _col("Last event", tz), "Last message",
                             "Cluster", "Datacenter"],
@@ -382,14 +384,15 @@ def vm_alarm_report(data, opts=None):
     for h in hosts:
         sevs = al_by.get((h.get("vcenter", ""), h.get("moid")), [])
         st = ("critical" if h.get("connection") not in ("connected", "") or "critical" in sevs else
-              "warning" if "warning" in sevs else "info" if h.get("maintenance") else "")
-        cells = [h.get("name"), h.get("cluster"), _dc(h, multi), h.get("connection"), "yes" if h.get("maintenance") else "no",
+              "warning" if "warning" in sevs else "low" if h.get("maintenance") else "")
+        cells = [h.get("name"), h.get("cluster"), _dc(h, multi), h.get("connection"), "yes - Low" if h.get("maintenance") else "no",
                  ("%s (%s)" % (h.get("version"), h.get("build"))) if h.get("version") else "", " ".join(x for x in (h.get("vendor"), h.get("model")) if x),
                  len(sevs), ev_by.get((h.get("vcenter", ""), h.get("name")), 0)]
         rows.append((st, cells))
     s = _section("All hosts", ["Host", "Cluster", "Datacenter", "Connection", "Maintenance", "ESXi", "Hardware", "Alarms",
                                "Errors / warnings (%s h)" % hours if events_on else "Errors / warnings"],
-                 rows, "Red = not connected or a critical alarm, amber = a warning alarm, blue = in maintenance mode.",
+                 rows, "Red = not connected or a critical alarm, amber = a warning alarm, %s = in maintenance mode."
+                 % ("Low" if any(h.get("maintenance") for h in hosts) else "blue"),
                  max_rows=0, status_col=None)
     for i, (st, _) in enumerate(rows):            # colour the Connection cell of a host that is not connected
         if "cell_status" in s and hosts[i].get("connection") not in ("connected", ""):

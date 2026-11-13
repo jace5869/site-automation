@@ -456,15 +456,20 @@ if [ "$(python3 -c "import json; print(len(json.load(open('$work/dbhist-well.jso
 else echo "FAIL - self-hosted well: the history was not written"; fails=$((fails + 1)); fi
 PLAYBOOK=playbooks/servicenow_health.yml scenario "self-hosted: memory, semaphores, the scheduler, the log, no unit, fapolicyd, the cluster, the database full soon" 2 \
     $((port + 41)) api goodpw -i "$work/inv-bad.yml" -e "$HOSTOK" \
-    -e "{\"servicenow_db_history_file\": \"$work/dbhist-bad.json\", \"servicenow_db_datadir\": \"$dd\"}"
+    -e "{\"servicenow_db_history_file\": \"$work/dbhist-bad.json\", \"servicenow_db_datadir\": \"$dd\", \"servicenow_node_slow_tx_warn\": 1}"
 expect "self-hosted bad: no unit of the three" 'no ServiceNow node unit found on node03.yoursite.mil (looked for snc_prod, snc_test, snc_dev)'
 expect "self-hosted bad: JVM memory" 'uses 97.4% of its JVM memory (3990 of 4096 MB'
 expect "self-hosted bad: semaphores queued in every read" 'has transactions waiting for a semaphore in every read (3, 3, 3; 2 in use)'
 expect "self-hosted bad: the scheduler" 'has 70 scheduled job(s) waiting for its 8 worker(s)'
 expect "self-hosted bad: OutOfMemory" 'ran out of memory 1 time(s) in the last 24 h'
 expect "self-hosted bad: ...its line in the hint" '# java.lang.OutOfMemoryError: Java heap space'
-expect "self-hosted bad: semaphore problems" 'logged 4 semaphore problem(s) in the last 24 h'
-expect "self-hosted bad: SEVERE lines grouped" 'logged 144 SEVERE line(s) in the last 24 h (the most frequent 140 times)'
+expect "self-hosted bad: semaphore problems, a 42 s wait critical" 'logged 5 semaphore problem(s) in the last 24 h'
+expect "self-hosted bad: ...the wait said" 'a transaction waited 42000 ms for a semaphore: the node is short of threads'
+expect "self-hosted bad: SEVERE lines grouped" 'logged 146 SEVERE line(s) in the last 24 h (the most frequent 140 times)'
+expect "self-hosted bad: a SEVERE script error, its script named" 'logged 2 SEVERE script error(s) in the last 24 h (checkDCSupportsTLS: 2 time(s)'
+expect "self-hosted bad: ...where to look" 'System Logs > All, filtered on checkDCSupportsTLS'
+# the slow transactions without the session waits count toward servicenow_node_slow_tx_warn (1 here); the waits are named
+expect "self-hosted bad: slow transactions, the session waits named as Low" 'logged 1 slow transaction(s) in the last 24 h (the longest ran 45210 ms), plus 3 session wait(s), Low'
 expect "self-hosted bad: ...the line in the hint, without who" '# Transaction cancelled: maximum execution time exceeded for /api/now/table/incident (user …)'
 expect "self-hosted bad: fapolicyd denied the node's java" "[CRITICAL] servicenow_node: fapolicyd denied the ServiceNow node's java or install folder on node01.yoursite.mil 1 time(s) today"
 expect "self-hosted bad: fapolicyd's other denials, grouped" '[WARNING] servicenow_node: fapolicyd denied 1 program(s) or file(s) on node01.yoursite.mil 2 time(s) today; the most: /usr/bin/bash -> /home/admin/tools/collect.sh (2x)'

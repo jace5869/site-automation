@@ -98,8 +98,8 @@ class Report(unittest.TestCase):
         linux = sec(d, "vc01 - DC1 / Linux")
         self.assertEqual(linux["columns"], ["VM", "Power", "Guest OS", "VMware Tools", "Tools status", "Hardware version"])
         self.assertEqual([r[0] for r in linux["rows"]], ["bare01", "off01", "web01", "web02"])
-        self.assertEqual(linux["rows"][3][3:], ["12.2.0", "upgrade available", "vmx-19"])
-        self.assertEqual(linux["cell_status"][3][4], "info")
+        self.assertEqual(linux["rows"][3][3:], ["12.2.0", "upgrade available - Low", "vmx-19"])
+        self.assertEqual(linux["cell_status"][3][4], "low")                    # 1.56.0: an upgrade waits = Low
         self.assertEqual(linux["cell_status"][0][4], "warning")
         self.assertEqual(linux["cell_status"][1][4], "")
         flat = tf.vm_tools_doc(VMS, READ, {"by_folder": False, "templates": True, "max_rows": 3})
@@ -120,7 +120,7 @@ class Report(unittest.TestCase):
 
     def test_older_vcenter_without_the_version_status(self):
         old = vm("x", status="", tools="toolsOld")
-        self.assertEqual(tf._state(old), ("upgrade available", "info"))
+        self.assertEqual(tf._state(old), ("upgrade available", "low"))
         none = vm("y", status="", tools_version="", tools="toolsNotInstalled")
         self.assertEqual(tf._state(none), ("not installed", "warning"))
 
