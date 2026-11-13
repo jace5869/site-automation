@@ -32,6 +32,10 @@ documents regenerated (`tests/report_fit_docs.py`). SA_VERSION 1.55.0; the PDFs 
 
 ## 1.54.0 — 2026-11-13
 
+**Updating without scripts:** paste `site-automation-1.54.0-changed-since-1.50.0.zip` as it is (from an older version,
+its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`.
+
 **Nothing to set up.** With `report_time_zone` set (1.49.0), the times inside the reports follow it too.
 
 **Times inside the reports in your time zone.** 1.49.0 put the website's index, the strip of past runs and the footer
@@ -241,8 +245,6 @@ of block, the two files and nothing else, nginx's folders refused, a setting can
 kind when nginx is installed), tests/test_aap_keycloak_check.py (the script against a fake HTTPS server: a good
 setup and each mistake of the table; the new lines Card CAs, AAP login, LDAP sync and Groups; no proxy is used;
 the settings file is read, not run; shellcheck; the guide has every step it names).
-
-
 
 ## 1.50.0 — 2026-11-13
 
