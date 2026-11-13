@@ -119,6 +119,7 @@ def seed():
     path = os.environ.get("SNMOCK_SEED", "")
     if not path:
         return
+    seen = {}
     with open(path) as fh:
         for rec in json.load(fh):
             rec = dict(rec)
@@ -126,7 +127,10 @@ def seed():
                 GROUPS.append(dict((k, v) for k, v in rec.items() if not k.startswith("_")))
                 continue
             rec.setdefault("_table", "incident")
-            rec.setdefault("sys_id", uuid.uuid4().hex)
+            if "sys_id" not in rec:                     # 1.47.0: the same record, the same sys_id each start (as ServiceNow keeps it)
+                key = json.dumps(rec, sort_keys=True)
+                seen[key] = seen.get(key, 0) + 1
+                rec["sys_id"] = uuid.uuid5(uuid.NAMESPACE_OID, "%s#%d" % (key, seen[key])).hex
             rec.setdefault("state", "1")
             rec.setdefault("work_notes_list", [])
             INCIDENTS[rec["sys_id"]] = rec
