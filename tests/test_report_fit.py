@@ -68,6 +68,9 @@ def render(look, doc):
     import jinja2
     env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(REPO, "roles", "site_email", "templates")),
                              autoescape=False)
+    sys.path.insert(0, os.path.join(REPO, "plugins", "filter"))
+    import site_filters as sf
+    env.filters.update(report_sparkline=sf.report_sparkline, report_runway_bar=sf.report_runway_bar)   # 1.57.0: the runway board
     return env.get_template("report_%s.html.j2" % look).render(
         _report=doc, _email_footer="AAP job 9", _page_logo_cid="", _page_runs=[],
         report_email_header_text="Site automation report")

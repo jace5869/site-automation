@@ -1,0 +1,50 @@
+{#- 1.57.0: a runway board (s.board, plugins/filter/capacity_filters.py board_sections) for the report website's atlas and
+    brief looks, included by both in a section's body; the email looks show the same section as a table. A row per
+    cluster (or datastore): its first limit, then each resource's used % over the trend window (report_sparkline) above
+    its runway bar (report_runway_bar), and "Since last month" under it. Every hover tip (data-tip; site-report.js shows
+    it on hover, keyboard focus and a tap) says only what the page shows elsewhere: the bar's words, the numbers table
+    below. Uses the including look's chip and icon macros. -#}
+{%- set bd = s.board %}
+{%- set store = bd.kind | default('') == 'datastores' %}
+{%- set res = ['Storage'] if store else ['CPU', 'Memory', 'Storage'] %}
+{%- set bwords = {'critical': 'Critical', 'warning': 'Warning', 'low': 'Low', 'ok': 'OK'} %}
+<p class="hint"><span class="mouse"><b>Hover</b> a line, a bar or a chip for details; <b>Tab</b> to a line and use the arrow keys.</span><span class="touch"><b>Tap</b> a line, a bar or a chip for details.</span> The numbers table below has the same values.</p>
+<div class="bdw"><table class="bd{{ ' bd-ds' if store else '' }}">
+<thead><tr><th>{{ 'Datastore' if store else 'Cluster' }}</th><th>{{ 'Runway' if store else 'First limit' }}</th>
+{%- for k in res %}<th>{{ k }} used</th>{% endfor %}</tr></thead>
+<tbody>
+{%- for row in bd.rows %}
+{%- set f = row.first %}
+{%- set cells = {} %}{% for c in row.cells %}{% set _ = cells.update({c.res: c}) %}{% endfor %}
+<tr class="r-{{ row.band }}">
+<td class="cn"><b>{{ row.name | e }}</b>{% if store and row.clusters | default([]) %}<span class="sub">{{ row.clusters | join(', ') | e }}</span>{% endif %}</td>
+<td>
+{#- the Low band's chip: the look's s-low chip (1.56.0's Low tokens) with a down arrow and the word -#}
+{%- set bk = row.band if row.band in bwords else 'ok' %}
+<span class="tipped" tabindex="0" data-tip="{{ (f.tip.split('\n')[1] if f else 'Not growing towards a limit') | e }}">
+{%- if bk == 'low' %}<span class="chip s-low sh"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v9M4.5 8.5L8 12l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Low</span></span>
+{%- else %}{{ chip(bk, bwords[bk]) }}{% endif %}</span>
+{%- if f %}
+<div class="fl tipped" tabindex="0" data-tip="{{ row.name | e }}: what moved the forecast&#10;{{ row.since | e }}">{% if f.days == 0 %}{{ f.res | e }}: {{ f.limit | e }} reached{% else %}{{ f.res | e }} in {{ '%.1f' | format(f.days / 30.4) if f.days < 3650 else '10+ years' }}{{ ' months' if f.days < 3650 else '' }}{% if f.when %}, around <b>{{ f.when | e }}</b>{% endif %}{% endif %}</div>
+{%- if f.moved.kind in ['sooner', 'later'] %}
+<div class="mv {{ 'out' if f.moved.kind == 'later' else 'in' }}">{{ f.moved.text | e }}</div>
+{%- elif f.moved.kind == 'none' %}
+<div class="mv nf">no forecast a month ago</div>
+{%- endif %}
+{%- else %}
+<div class="fl">Not growing</div>
+{%- endif %}
+</td>
+{%- for k in res %}
+{%- set c = cells[k] | default(none) %}
+<td>{% if c %}<div class="cell" data-l="{{ k }}">
+{%- if c.series | length > 1 %}{{ c.series | report_sparkline({'label': row.name ~ ' ' ~ k | lower ~ ' used', 'lines': c.lines}) }}{% else %}<span class="nohist">not enough history</span>{% endif %}
+<div class="cv"><span><b>{{ '?' if c.now_pct is none else '%.0f' | format(c.now_pct) }}%</b> now</span><span class="c-{{ c.band if c.band in bwords else 'ok' }}">{{ c.label | e }}</span></div>
+<span class="rw tipped" tabindex="0" data-tip="{{ c.tip | e }}">{{ c.days | report_runway_bar({'warn': bd.warn | default(90), 'crit': bd.crit | default(30)}) }}</span>
+</div>{% else %}<span class="nohist">-</span>{% endif %}</td>
+{%- endfor %}
+</tr>
+<tr class="dt"><td></td><td colspan="{{ res | length + 1 }}"><span class="why">Since last month: {{ row.since | e }}</span></td></tr>
+{%- endfor %}
+</tbody></table></div>
+<p class="legend">{{ bd.legend | e }}</p>

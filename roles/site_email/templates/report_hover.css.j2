@@ -1,0 +1,88 @@
+{#- 1.57.0: the hover layer's and the runway board's CSS, in the atlas and brief looks' <style> (hover_look: atlas or
+    brief). The tip is one element site-report.js makes (.tt); without the script the page reads the same. --spark: one
+    hue per look, checked with the dataviz palette validator against the look's card in light and dark (3:1 or more).
+    The Low band (--rwlow text, --rwlow-bar the bar): 1.56.0's Low tokens of the look (--low, --low-bg, --low-bd); the bar
+    the Low palette's bar step (site_filters), the same in every look. -#}
+{%- set hl %}--spark:{{ '#2b58b1' if hover_look == 'brief' else '#2563eb' }};--rwlow:var(--low);--rwlow-bar:#a347a6;--rwlow-bg:var(--low-bg);--rwlow-bd:var(--low-bd);{% endset %}
+{%- set hd %}--spark:#4b8df8;--rwlow:var(--low);--rwlow-bar:#c168d5;--rwlow-bg:var(--low-bg);--rwlow-bd:var(--low-bd);{% endset %}
+:root{ {{- hl -}} }
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){ {{- hd -}} }}
+:root[data-theme="dark"]{ {{- hd -}} }
+:root:has(#theme-light:checked){ {{- hl -}} }
+:root:has(#theme-dark:checked){ {{- hd -}} }
+.tt{position:fixed;z-index:80;left:0;top:0;max-width:min(360px,calc(100vw - 16px));background:var(--ink);color:var(--card-solid);font-size:12.5px;
+  line-height:1.45;padding:8px 11px;border-radius:9px;box-shadow:0 6px 24px rgba(0,0,0,.28);pointer-events:none;font-variant-numeric:tabular-nums;white-space:normal}
+.tt[hidden]{display:none}
+.tt .tt-h{font-weight:700;margin-bottom:2px}
+.js [data-tip]{cursor:help}
+.js .bar[data-tip]:hover:after{display:none}
+.tipped:focus-visible,svg.spark:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+.hint{display:none;font-size:13px;color:var(--muted);margin:0 0 12px;gap:6px;flex-wrap:wrap}
+.js .hint{display:flex}
+.hint b{color:var(--ink);font-weight:600}
+@media (hover:none){.hint .mouse{display:none}}
+@media (hover:hover){.hint .touch{display:none}}
+svg.spark{display:block;overflow:visible;cursor:crosshair;touch-action:pan-y}
+svg.spark .ln{fill:none;stroke:var(--spark);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+svg.spark .ref{stroke:var(--muted);stroke-opacity:.6;stroke-dasharray:3 3}
+svg.spark .last{fill:var(--spark);stroke:var(--card-solid);stroke-width:2}
+svg.spark .hg{stroke:var(--ink);stroke-opacity:.55;stroke-width:1;stroke-dasharray:2 2}
+svg.spark .hd{fill:var(--card-solid);stroke:var(--spark);stroke-width:2.5}
+svg.rwb{display:block;overflow:visible}
+.rw-critical{fill:var(--critical-bg);stroke:var(--critical-bd);stroke-width:.5}
+.rw-warning{fill:var(--warning-bg);stroke:var(--warning-bd);stroke-width:.5}
+.rw-low{fill:var(--rwlow-bg);stroke:var(--rwlow-bd);stroke-width:.5}
+.rw-ok{fill:var(--ok-bg);stroke:var(--ok-bd);stroke-width:.5}
+.rf-critical{fill:var(--critical)}.rf-warning{fill:var(--warning)}.rf-low{fill:var(--rwlow-bar)}.rf-ok{fill:var(--ok)}
+circle.rf-critical,circle.rf-warning,circle.rf-low,circle.rf-ok{stroke:var(--card-solid);stroke-width:1.5}
+.chip.s-low{color:var(--rwlow);background:var(--rwlow-bg);border-color:var(--rwlow-bd)}
+.bdw{overflow-x:auto;margin:4px 0 0}
+table.bd{width:100%;border-collapse:collapse;font-size:13.5px}
+table.bd th{position:static;background:none;border-radius:0;text-align:left;font-size:11.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--label);padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+table.bd td{padding:10px 10px 4px;vertical-align:middle;border-top:1px solid var(--line);white-space:normal;line-height:1.4;background:none}
+table.bd tbody tr:nth-child(even) td,table.bd tbody tr:hover td{background:none}
+table.bd tr.dt td{border-top:0;padding:0 10px 10px}
+table.bd td.cn{white-space:nowrap}
+table.bd td.cn .sub{display:block;font-size:12px;color:var(--muted);white-space:normal}
+table.bd tr.r-critical td:first-child{box-shadow:inset 3px 0 0 var(--critical)}
+table.bd tr.r-warning td:first-child{box-shadow:inset 3px 0 0 var(--warning)}
+table.bd tr.r-low td:first-child{box-shadow:inset 3px 0 0 var(--rwlow-bar)}
+table.bd .cell{width:150px}
+table.bd .cv{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:12.5px;color:var(--muted);margin:3px 0 2px;white-space:nowrap;font-variant-numeric:tabular-nums}
+table.bd .cv b{color:var(--ink);font-size:14px}
+table.bd .cv span:last-child{font-weight:700}
+table.bd .rw{display:inline-block;line-height:0;padding:3px 0}
+table.bd .fl{font-size:13px;margin-top:5px;color:var(--ink);width:fit-content;border-bottom:1px dotted var(--muted);padding-bottom:1px}
+table.bd .mv{font-size:12.5px;margin-top:3px;font-weight:600}
+.c-low{color:var(--rwlow)}
+table.bd .mv.in{color:var(--critical)}table.bd .mv.out{color:var(--ok)}table.bd .mv.nf{color:var(--muted);font-weight:400}
+table.bd .why{color:var(--muted);font-size:12.5px}
+table.bd .nohist{color:var(--muted);font-size:12.5px}
+.legend{color:var(--muted);font-size:12.5px;margin:10px 0 0}
+{#- a narrower window (800 px): the lines and bars a little shorter, so the board fits its card -#}
+@media (max-width:900px){
+  table.bd .cell{width:128px}
+  table.bd svg.spark,table.bd svg.rwb{width:128px;height:auto}
+  table.bd th,table.bd td{padding-left:8px;padding-right:8px}
+}
+{%- if hover_look == 'brief' %}
+{#- brief: its own type and room - the tip a card like its run bars' (no dark box), names and figures in its display
+    face, its table headings, more air, thinner edges -#}
+.tt{background:var(--card-solid);color:var(--ink);border:1px solid var(--edge);border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.14);font-size:13px;padding:8px 12px}
+.tt .tt-h{font-family:var(--display);font-weight:650;font-size:14px;letter-spacing:-.01em}
+table.bd{font-size:14px}
+table.bd th{font-size:11px;letter-spacing:.08em;padding:10px 12px 8px;border-bottom:1px solid var(--edge)}
+table.bd td{padding:14px 12px 4px}
+table.bd tr.dt td{padding:2px 12px 14px}
+table.bd td.cn b{font-family:var(--display);font-size:16px;font-weight:650;letter-spacing:-.01em}
+table.bd .cv{font-size:13px}
+table.bd .cv b{font-family:var(--display);font-size:16px;font-weight:650;letter-spacing:-.01em}
+table.bd .fl{font-size:14px}
+table.bd .fl b{font-weight:650}
+table.bd .why,.legend,.hint{font-size:13px}
+table.bd tr.r-critical td:first-child{box-shadow:inset 2px 0 0 var(--critical)}
+table.bd tr.r-warning td:first-child{box-shadow:inset 2px 0 0 var(--warning)}
+table.bd tr.r-low td:first-child{box-shadow:inset 2px 0 0 var(--rwlow-bar)}
+@media (max-width:900px){table.bd th,table.bd td{padding-left:8px;padding-right:8px}}
+{%- endif %}
+@media print{.tt,.hint{display:none !important}}

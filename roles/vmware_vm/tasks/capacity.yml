@@ -31,6 +31,7 @@
           'storage_crit_pct': vm_capacity_storage_crit_pct | float, 'runway_warn_days': vm_capacity_runway_warn_days | float,
           'runway_crit_days': vm_capacity_runway_crit_days | float,
           'include_local_datastores': vm_capacity_include_local_datastores | bool, 'max_rows': vm_capacity_max_rows | int,
+          'top_datastores': vm_capacity_top_datastores | int,
           'datacenter': vmware_datacenter | default('', true),
           'time_zone': report_time_zone | default('', true) | string,
           'clusters': (vm_capacity_clusters | replace(',', ' ')).split() if vm_capacity_clusters is string else vm_capacity_clusters} }}
@@ -68,11 +69,16 @@
           {{ _vm_cap['items'][: vm_capacity_act_max_items | int] | vm_capacity_act_section(_ea_parsed,
                _vm_cap_opts | combine({'ran': _ea_ran | bool, 'reason': _ea_reason, 'raw': _ea_raw})) }}
 
+# ACT's estimate before "Hosts per cluster" (act_at), on the website as in the email; the website (the atlas and brief
+# looks) has the runway board with its lines and hover where the email has tables (1.57.0)
 - name: VMware | the report to print and email
   ansible.builtin.set_fact:
     _vm_cap_doc: >-
-      {{ _vm_cap.report | combine({'sections': _vm_cap.report.sections[:4] + (_vm_cap_act_sections | default([]))
-                                              + _vm_cap.report.sections[4:]}) }}
+      {{ _vm_cap.report | combine({'sections': _vm_cap.report.sections[:_vm_cap.act_at] + (_vm_cap_act_sections | default([]))
+                                              + _vm_cap.report.sections[_vm_cap.act_at:]}) }}
+    _vm_cap_web_doc: >-
+      {{ _vm_cap.web | combine({'sections': _vm_cap.web.sections[:_vm_cap.act_at] + (_vm_cap_act_sections | default([]))
+                                           + _vm_cap.web.sections[_vm_cap.act_at:]}) }}
 
 - name: VMware | capacity planning report
   ansible.builtin.include_tasks: report.yml
@@ -81,6 +87,9 @@
     _vm_report_subject: "{{ _vm_cap_doc.title }}"
     _vm_report_lines: "{{ (_vm_cap_doc | report_text).splitlines() }}"
     _vm_report_doc: "{{ _vm_cap_doc }}"
+    _vm_report_web_doc: "{{ _vm_cap_web_doc }}"
+    # the workbook (report_email_xlsx): every datastore on its runway sheet, where the page has the first vm_capacity_top_datastores
+    _vm_report_xlsx: "{{ _vm_cap_doc | report_xlsx_sheets | vm_capacity_sheets(_vm_cap.sheet) if report_email_xlsx | default(false) | bool else [] }}"
 
 - name: VMware | the numbers as job artifacts (vm_capacity)
   ansible.builtin.set_stats:

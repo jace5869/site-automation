@@ -315,6 +315,261 @@ def datastore_status(d, o):
     return worst([level(d["pct"], sw, sc), runway_status(d["days_crit"], warn_d, crit_d)])
 
 
+# ---- the runway board (1.57.0): used % over the trend window, the runway's band, and how the forecast moved -----------
+MONTH = 30.4
+BACK = 30                                    # "since last month": the same fit on the samples up to this many days ago
+
+
+def band(days, warn, crit):
+    """The band of a runway: critical, warning (as runway_status: at most crit / warn days), low (at most twice the warn
+    days: worth knowing, nothing to do now), ok (further out, or not growing)."""
+    if days is None:
+        return "ok"
+    return "critical" if days <= crit else ("warning" if days <= warn else ("low" if days <= 2 * warn else "ok"))
+
+
+def band_status(b):
+    """The status a band shows as: the band itself, Low included (1.56.0's Low status; never the report's status by itself)."""
+    return b
+
+
+def band_text(b, warn, crit):
+    """'Low (3-6 months)': the band and its edges in months, as the legend says it."""
+    w, c = warn / MONTH, crit / MONTH
+    m = lambda x: ("%.0f" % x) if abs(x - round(x)) < 0.1 else ("%.1f" % x)         # noqa: E731
+    return {"critical": "Critical (%s month%s or less)" % (m(c), "" if m(c) == "1" else "s"), "warning": "Warning (%s-%s months)" % (m(c), m(w)),
+            "low": "Low (%s-%s months)" % (m(w), m(2 * w)), "ok": "OK (over %s months)" % m(2 * w)}[b]
+
+
+def month_year(ts):
+    """Seconds -> 'Jan 2027'."""
+    return datetime.datetime.fromtimestamp(ts, datetime.timezone.utc).strftime("%b %Y")
+
+
+def day_text(ts):
+    """Seconds -> 'Mon 2 Nov 2026'."""
+    d = datetime.datetime.fromtimestamp(ts, datetime.timezone.utc)
+    return "%s %d %s" % (d.strftime("%a"), d.day, d.strftime("%b %Y"))
+
+
+def months_text(days):
+    """Days -> '8.8 months', '10+ years'; None -> 'not growing'."""
+    if days is None:
+        return "not growing"
+    if days >= 3650:
+        return "10+ years"
+    return "%.1f months" % (days / MONTH)
+
+
+def daily(samples, start, end):
+    """The last sample of each UTC day from start to end (seconds): [[seconds, value], ...] in time order."""
+    by = {}
+    for t, v in sorted((float(t), v) for t, v in samples or [] if v is not None):
+        if start <= t <= end:
+            by[int(t // DAY)] = (t, float(v))
+    return [[t, v] for _, (t, v) in sorted(by.items())]
+
+
+def summed(histories):
+    """Several datastores' daily used space as one: each day the sum, only the days every one of them has."""
+    days = None
+    per = []
+    for h in histories:
+        m = {int(float(t) // DAY): (float(t), float(v)) for t, v in h or [] if v is not None}
+        per.append(m)
+        days = set(m) if days is None else days & set(m)
+    return [[max(p[k][0] for p in per), sum(p[k][1] for p in per)] for k in sorted(days or ())]
+
+
+def as_pct(series, cap):
+    """[[seconds, value]] -> [[seconds, % of cap]], one decimal."""
+    if not cap or cap <= 0:
+        return []
+    return [[t, round(100.0 * v / cap, 1)] for t, v in series]
+
+
+def then_forecast(samples, target, o, now_ts):
+    """The forecast a month ago: the same straight line fitted on the samples up to BACK days ago (the same window
+    length), its runway from the value then -> {'days', 'date' (seconds or None), 'trend'}, or None when there were too
+    few samples then (no forecast a month ago)."""
+    cut = now_ts - BACK * DAY
+    past = sorted((float(t), float(v)) for t, v in samples or [] if v is not None and float(t) <= cut)
+    t = trend(past, float(o.get("trend_days", 90)), cut, int(o.get("min_samples", 7)))
+    if not t or not past:
+        return None
+    d = days_until(past[-1][1], t["slope"], target)
+    return {"days": d, "date": cut + d * DAY if d is not None else None, "trend": t}
+
+
+def moved(days_now, then, now_ts):
+    """How the runway moved since last month -> {'kind': sooner | later | same | none, 'days' (the date moved, + later),
+    'text', 'was'}. Within half a month counts as no change."""
+    if then is None:
+        return {"kind": "none", "days": None, "text": "no forecast a month ago", "was": ""}
+    near = then["date"] is not None and days_now is not None and abs(now_ts + days_now * DAY - then["date"]) < 45 * DAY
+    was = (day_text(then["date"])[4:] if near else month_year(then["date"])) if then["date"] is not None and then["days"] < 3650 else (
+        "not growing" if then["days"] is None else "10+ years")
+    if days_now is None and then["days"] is None:
+        return {"kind": "same", "days": 0, "text": "no change - not growing", "was": was}
+    if days_now is None or then["days"] is None:
+        k = "later" if days_now is None else "sooner"
+        return {"kind": k, "days": None, "was": was,
+                "text": "not growing now - a month ago %s" % was if days_now is None else "growing now - a month ago not growing"}
+    diff = (now_ts + days_now * DAY - then["date"]) / DAY
+    if abs(diff) < MONTH / 2 or (days_now >= 3650 and then["days"] >= 3650):
+        return {"kind": "same", "days": int(round(diff)), "text": "no change - was %s a month ago" % was, "was": was}
+    m = abs(diff) / MONTH
+    amount = ("%d months" % round(m)) if m >= 1.5 else ("1 month" if m >= 0.95 else "%d days" % round(abs(diff)))
+    k = "sooner" if diff < 0 else "later"
+    return {"kind": k, "days": int(round(diff)), "was": was,
+            "text": "%s %s - was %s a month ago" % (amount, "sooner" if k == "sooner" else "further out", was)}
+
+
+def step_in(series):
+    """The biggest one-day jump of a used % series when it is a step (3 points or more, and five times the usual daily
+    change): (seconds, points), else None."""
+    if len(series) < 8:
+        return None
+    d = [(series[i][0], series[i][1] - series[i - 1][1]) for i in range(1, len(series))]
+    usual = sorted(abs(x) for _, x in d)[len(d) // 2]
+    t, big = max(d, key=lambda x: abs(x[1]))
+    return (t, big) if abs(big) >= 3 and abs(big) >= 5 * max(usual, 0.1) else None
+
+
+def board_cell(res, series, days, slope_txt, fit, limit, lines, then, o, now_ts, who):
+    """One resource of a cluster (or a datastore) on the board: its used % line, runway, band and what moved."""
+    warn_d, crit_d = float(o.get("runway_warn_days", 90)), float(o.get("runway_crit_days", 30))
+    b = band(days, warn_d, crit_d)
+    mv = moved(days, then, now_ts)
+    now_pct = series[-1][1] if series else None
+    when = month_year(now_ts + days * DAY) if days is not None and days < 3650 else ""
+    runway = ("%s reached" % limit) if days == 0 else (
+        "%s to %s, around %s" % (months_text(days), limit, when) if when else "%s (limit %s)" % (months_text(days), limit))
+    tip = [runway, band_text(b, warn_d, crit_d)]
+    if slope_txt:
+        tip.append(slope_txt + ((", fit R2 %.2f" % fit["r2"]) if fit else ""))
+    tip.append("Since last month: " + mv["text"])
+    return {"res": res, "series": series, "now_pct": now_pct, "days": days, "band": b, "status": band_status(b),
+            "label": "reached" if days == 0 else ("not growing" if days is None else ("24+ mo" if days >= 2 * 365 else "%.1f mo" % (days / MONTH))),
+            "runway": runway, "when": when, "limit": limit, "lines": lines, "moved": mv,
+            "tip": "%s %s: %s" % (who, res.lower(), "\n".join(tip)), "slope_txt": slope_txt, "fit": fit}
+
+
+def first_cell(cells):
+    """The cell whose limit comes first: the fewest days, a reached one first; None when none is growing."""
+    known = [c for c in cells if c["days"] is not None]
+    return min(known, key=lambda c: c["days"]) if known else None
+
+
+def since_line(first, cells):
+    """'Since last month:' in plain words - only what the numbers show: how the first limit's forecast moved, its growth a
+    month and the fit, a step on a date."""
+    if not first:
+        return "nothing is growing towards a limit"
+    p = ["%s: %s" % (first["res"].lower(), first["moved"]["text"])]
+    if first["slope_txt"]:
+        p.append("%s%s" % (first["slope_txt"], (" (fit R2 %.2f)" % first["fit"]["r2"]) if first["fit"] else ""))
+    st = step_in(first["series"])
+    if st:
+        p.append("a step of %+.0f points on %s" % (st[1], datetime.datetime.fromtimestamp(st[0], datetime.timezone.utc).strftime("%d %b").lstrip("0")))
+    return "; ".join(p)
+
+
+def runway_board(N, data, o):
+    """The board: a row per cluster (CPU, memory, storage) and per shared datastore, each with its used % over the trend
+    window, runway, band and how the forecast moved since last month."""
+    d = data or {}
+    now_ts = N["now"].timestamp()
+    wd = float(o.get("trend_days", 90))
+    start = now_ts - wd * DAY
+    mt, ct = float(o.get("mem_target_pct", 80)), float(o.get("cpu_target_pct", 80))
+    sw, sc = float(o.get("storage_warn_pct", 85)), float(o.get("storage_crit_pct", 90))
+    raw_c = {(c.get("name"), c.get("vcenter", ""), c.get("datacenter", "")): c for c in d.get("clusters") or []}
+    raw_d = {(x.get("name"), x.get("vcenter", ""), x.get("datacenter", "")): x for x in d.get("datastores") or []}
+    counted = [x for x in N["datastores"] if x["shared"] or o.get("include_local_datastores")]
+    rows = []
+    for n in N["clusters"]:
+        rc = raw_c.get((n["name"], n["vcenter"], n["datacenter"])) or {}
+        h = rc.get("history") or {}
+        cells = []
+        for res, key, cap, used_n1, tgt, days, t, fmt in (("CPU", "cpu", n["cpu"], n["cpu_n1"], ct, n["cpu_days"], n["cpu_trend"], ghz),
+                                                           ("Memory", "mem", n["mem"], n["mem_n1"], mt, n["mem_days"], n["mem_trend"], size)):
+            target = used_n1 * tgt / 100.0
+            line_pct = round(100.0 * target / cap, 1) if cap else None
+            lim = limit_text(tgt, n["failover_hosts"])
+            then = then_forecast(h.get(key), target, o, now_ts) if n["survives"] else None
+            cells.append(board_cell(res, as_pct(daily(h.get(key), start, now_ts), cap), days,
+                                    _per_month(t["slope"], fmt).replace(" / month", " a month") if t else "", t, lim,
+                                    [line_pct] if line_pct else [], then, o, now_ts, n["label"]))
+        mine = [x for x in counted if n["name"] in x["clusters"] and x["vcenter"] == n["vcenter"] and x["datacenter"] == n["datacenter"]]
+        st = n["storage"]
+        hist = summed([(raw_d.get((x["name"], x["vcenter"], x["datacenter"])) or {}).get("history") for x in mine]) if mine else []
+        if mine and st["capacity"]:
+            tgt = st["capacity"] * sc / 100.0
+            t = trend(hist, wd, now_ts, int(o.get("min_samples", 7)))
+            cells.append(board_cell("Storage", as_pct(daily(hist, start, now_ts), st["capacity"]), st["days_crit"],
+                                    _per_month(st["slope"]).replace(" / month", " a month") if st["slope"] is not None else "", t,
+                                    "%d%%" % int(sc), [sw, sc], then_forecast(hist, tgt, o, now_ts), o, now_ts, n["label"]))
+        first = first_cell(cells)
+        rows.append({"kind": "cluster", "name": n["label"], "cells": cells, "first": first,
+                     "band": first["band"] if first else "ok", "status": first["status"] if first else "ok",
+                     "since": since_line(first, cells)})
+    stores = []
+    for x in counted:
+        rx = raw_d.get((x["name"], x["vcenter"], x["datacenter"])) or {}
+        c = board_cell("Storage", as_pct(daily(rx.get("history"), start, now_ts), x["capacity"]), x["days_crit"],
+                       _per_month(x["slope"]).replace(" / month", " a month") if x["slope"] is not None else "", x["trend"],
+                       "%d%%" % int(sc), [sw, sc], then_forecast(rx.get("history"), x["capacity"] * sc / 100.0, o, now_ts), o, now_ts, x["label"])
+        stores.append({"kind": "datastore", "name": x["label"], "clusters": x["clusters"], "cells": [c], "first": c if c["days"] is not None else None,
+                       "band": c["band"], "status": c["status"], "since": since_line(c if c["days"] is not None else None, [c])})
+    key = lambda r: (r["first"]["days"] if r["first"] else 99999, r["name"])            # noqa: E731
+    return {"clusters": sorted(rows, key=key), "datastores": sorted(stores, key=key)}
+
+
+def board_tiles(B):
+    """The four tiles over the board: first to fill, moved closer, the biggest move, moved further out."""
+    rows = B["clusters"]
+    firsts = [r for r in rows if r["first"]]
+    tiles = []
+    if firsts:
+        r = firsts[0]
+        f = r["first"]
+        was = (" (was %s)" % f["moved"]["was"]) if f["moved"]["kind"] in ("sooner", "later") and f["moved"]["was"] else ""
+        tiles.append({"label": "First to fill", "value": r["name"], "status": f["status"],
+                      "note": ("%s %s reached" % (f["res"].lower(), f["limit"])) if f["days"] == 0 else
+                      "%s, %s%s" % (f["res"].lower(), f["when"] or months_text(f["days"]), was),
+                      "tip": "%s fills first: %s at %s%%, %s. %s." % (r["name"], f["res"].lower(), "?" if f["now_pct"] is None else "%.0f" % f["now_pct"],
+                                                                        f["runway"], f["moved"]["text"][:1].upper() + f["moved"]["text"][1:])})
+    else:
+        tiles.append({"label": "First to fill", "value": "none", "status": "ok", "note": "nothing is growing towards a limit",
+                      "tip": "No cluster's CPU, memory or storage is growing towards its limit."})
+    def near(r):
+        f, then_d = r["first"], r["first"]["moved"]["days"]
+        return f["days"] is not None and (f["days"] < 730 or (then_d is not None and f["days"] - then_d < 730))
+    closer = [r for r in firsts if r["first"]["moved"]["kind"] == "sooner" and near(r)]
+    further = [r for r in firsts if r["first"]["moved"]["kind"] == "later" and near(r)]
+    names = lambda rs: ", ".join(r["name"] for r in rs[:4]) + (" and %d more" % (len(rs) - 4) if len(rs) > 4 else "")   # noqa: E731
+    tiles.append({"label": "Moved closer", "value": len(closer), "status": "warning" if closer else "",
+                  "note": "of %d cluster(s) since last month" % len(rows),
+                  "tip": ("%d of %d cluster(s) fill sooner than last month's forecast: %s." % (len(closer), len(rows), names(closer)))
+                  if closer else "No cluster fills sooner than last month's forecast."})
+    big = [r for r in closer + further if r["first"]["moved"]["days"] is not None]
+    if big:
+        r = max(big, key=lambda r: abs(r["first"]["moved"]["days"]))
+        f = r["first"]
+        m = abs(f["moved"]["days"]) / MONTH
+        tiles.append({"label": "Biggest move", "value": ("%d months" % round(m)) if m >= 1.5 else ("%d days" % abs(f["moved"]["days"])),
+                      "note": "%s %s, %s" % (r["name"], f["res"].lower(), "sooner" if f["moved"]["kind"] == "sooner" else "further out"),
+                      "tip": "The biggest move: %s %s, %s." % (r["name"], f["res"].lower(), f["moved"]["text"])})
+    else:
+        tiles.append({"label": "Biggest move", "value": "none", "note": "no forecast moved since last month",
+                      "tip": "No cluster's first limit within two years moved by half a month or more since last month."})
+    tiles.append({"label": "Moved further out", "value": len(further), "note": names(further) if further else "of %d cluster(s)" % len(rows),
+                  "tip": ("%d cluster(s) fill later than last month's forecast: %s." % (len(further), names(further)))
+                  if further else "No cluster fills later than last month's forecast."})
+    return tiles
+
+
 def capacity_numbers(data, opts=None):
     """Everything the report and ACT use: {'clusters': [...], 'datastores': [...], 'overall': {...}}."""
     d, o = data or {}, opts or {}
@@ -376,6 +631,105 @@ def capacity_numbers(data, opts=None):
     overall["mem_days"] = days_until(overall["mem_used"], mem_slope, overall["mem_n1"] * mt)
     overall["cpu_days"] = days_until(overall["cpu_used"], cpu_slope, overall["cpu_n1"] * ct)
     return {"now": now, "clusters": cls, "datastores": dss, "overall": overall, "multi": multi, "vcenters": vcenters_of(d)}
+
+
+def ago(series, now_ts, days):
+    """The used % of a series days ago (its sample nearest that day, within 3 days), as text; '-' without one."""
+    want = now_ts - days * DAY
+    near = [p for p in series if abs(p[0] - want) <= 3 * DAY]
+    return "-" if not near else "%.0f%%" % min(near, key=lambda p: abs(p[0] - want))[1]
+
+
+def cell_text(c):
+    """A board cell for the email: '58% now, 7.5 mo'."""
+    return "%s now, %s" % ("?" if c["now_pct"] is None else "%.0f%%" % c["now_pct"], c["label"])
+
+
+def first_text(r):
+    """The first-limit cell: 'Memory in 4.2 months, around Mar 2027 (to 80% N-1)'."""
+    f = r["first"]
+    if not f:
+        return "none: not growing"
+    if f["days"] == 0:
+        return "%s: %s reached" % (f["res"], f["limit"])
+    return "%s in %s%s (to %s)" % (f["res"], months_text(f["days"]), (", around " + f["when"]) if f["when"] else "", f["limit"])
+
+
+def board_sections(B, o, now, top):
+    """The board's sections -> (email, web, all datastores as a sheet): the email's are tables (the used % 90, 60 and 30
+    days ago and now in "The numbers behind the lines" instead of lines); the website's carry the board (its lines, bars
+    and hover: roles/site_email/templates/report_board.html.j2) and the same numbers table."""
+    now_ts = now.timestamp()
+    warn_d, crit_d = float(o.get("runway_warn_days", 90)), float(o.get("runway_crit_days", 30))
+    sc = int(float(o.get("storage_crit_pct", 90)))
+    legend = ("Line: used %% each day for the last %d days (dashed: the limit the runway runs to - the target with a host down "
+              "for CPU and memory, %d%% and %d%% for storage; the dot is today). Bar: the runway at today's growth - %s, %s, %s, %s."
+              % (int(float(o.get("trend_days", 90))), int(float(o.get("storage_warn_pct", 85))), sc,
+                 band_text("critical", warn_d, crit_d), band_text("warning", warn_d, crit_d), band_text("low", warn_d, crit_d),
+                 band_text("ok", warn_d, crit_d)))
+    text = ("Each cluster's first limit - CPU, memory (with a host down) or storage - and how its forecast moved since last month: the "
+            "same straight line fitted on the samples up to %d days ago. Results first; the tables below have the detail." % BACK)
+    worst_of = lambda rs: worst([r["status"] for r in rs if r["status"] in ("critical", "warning")])   # noqa: E731
+
+    def email_rows(rows, store):
+        out = []
+        for r in rows:
+            c = {x["res"]: x for x in r["cells"]}
+            if store:
+                x = r["cells"][0]
+                out.append(_row([r["name"], ", ".join(r["clusters"]), cell_text(x), first_text(r) if r["first"] else x["runway"], r["since"]],
+                                ["", "", x["status"], x["status"], ""], r["status"]))
+            else:
+                out.append(_row([r["name"], first_text(r), r["since"]] + [cell_text(c[k]) if k in c else "-" for k in ("CPU", "Memory", "Storage")],
+                                ["", r["status"], ""] + [c[k]["status"] if k in c else "" for k in ("CPU", "Memory", "Storage")], r["status"]))
+        return out
+    stores = B["datastores"][:top]
+    more = len(B["datastores"]) - len(stores)
+    ds_text = ("Each shared datastore, the one that reaches %d%% first on top: its used %% now, its runway and how it moved since "
+               "last month.%s" % (sc, (" The first %d of %d; the workbook has all (vm_capacity_top_datastores)." % (len(stores), len(B["datastores"])))
+                                  if more > 0 else ""))
+    nums = []
+    for r in B["clusters"] + B["datastores"]:
+        for c in r["cells"]:
+            nums.append([r["name"], c["res"] if r["kind"] == "cluster" else "Datastore"] + [ago(c["series"], now_ts, k) for k in (90, 60, 30)]
+                        + ["-" if c["now_pct"] is None else "%.0f%%" % c["now_pct"]])
+    ncols = ["Cluster or datastore", "Resource", "90 days ago", "60 days ago", "30 days ago", "Now"]
+    ntext = "The used % behind each line: 90, 60 and 30 days ago and now (the sample nearest each day)."
+    numbers = {"title": "The numbers behind the lines", "columns": ncols, "rows": nums, "text": ntext} if nums else \
+        {"title": "The numbers behind the lines", "text": ntext + " No cluster or datastore."}
+    email = [_section("Runway: the first limit per cluster", text + " Each resource: its used % now and its runway.",
+                      ["Cluster", "First limit", "Since last month", "CPU", "Memory", "Storage"], email_rows(B["clusters"], False), "No cluster.",
+                      keep_order=True),
+             _section("Runway: datastores", ds_text, ["Datastore", "Clusters", "Used now, runway", "To %d%%" % sc, "Since last month"],
+                      email_rows(stores, True), "No shared datastore.", keep_order=True),
+             numbers]
+    web = [{"title": email[0]["title"], "text": text, "board": {"rows": B["clusters"], "legend": legend, "kind": "clusters", "warn": warn_d, "crit": crit_d}},
+           {"title": email[1]["title"], "text": ds_text, "board": {"rows": stores, "legend": legend, "kind": "datastores", "warn": warn_d, "crit": crit_d}},
+           numbers]
+    for w, rs in ((web[0], B["clusters"]), (web[1], stores)):
+        if worst_of(rs):
+            w["status"] = worst_of(rs)
+        if not rs:
+            w.pop("board")
+            w["text"] = (w["text"] + (" No cluster." if w is web[0] else " No shared datastore.")).strip()
+    sheet = {"name": email[1]["title"], "columns": ["Datastore", "Clusters", "Used now, runway", "To %d%%" % sc, "Since last month"],
+             "rows": [x[0] for x in email_rows(B["datastores"], True)]}
+    return email, web, sheet
+
+
+def headline(B):
+    """'PROD memory 80% N-1 around Mar 2027, 3 months sooner than last month' - the first limit, '' when none is growing."""
+    rows = [r for r in B["clusters"] if r["first"]]
+    if not rows:
+        return ""
+    r = rows[0]
+    f = r["first"]
+    if f["days"] == 0:
+        return "%s %s at %s now" % (r["name"], f["res"].lower(), f["limit"])
+    mv = f["moved"]
+    tail = {"sooner": ", %s than last month" % mv["text"].split(" - ")[0], "later": ", %s than last month" % mv["text"].split(" - ")[0].replace("further out", "later")}
+    return "%s %s reaches %s around %s%s" % (r["name"], f["res"].lower(), f["limit"], f["when"] or months_text(f["days"]),
+                                     tail.get(mv["kind"], "") if mv["days"] is not None else "")
 
 
 # ---- the report ----------------------------------------------------------------------------------
@@ -584,8 +938,10 @@ def vm_capacity_report(data, opts=None):
         parts.append("%d of %d cluster(s) short on CPU or memory" % (len(bad_c), len(cls)))
     if bad_d:
         parts.append("%d datastore(s) at %s%% or within %d days of %s%%" % (len(bad_d), int(sw), int(warn_d), int(sc)))
-    title = "vSphere capacity planning: " + ("; ".join(parts) if parts else
-                                             "all %d cluster(s) and their datastores have room for %d+ days" % (len(cls), int(warn_d)))
+    B = runway_board(N, d, o)
+    hl = headline(B)
+    title = "vSphere capacity planning: " + (hl + "; " if hl else "") + ("; ".join(parts) if parts else
+                                                                       "all %d cluster(s) and their datastores have room for %d+ days" % (len(cls), int(warn_d)))
     status = "critical" if any(n["status"] == "critical" for n in cls) or any(x["status"] == "critical" for x in bad_d) else (
         "warning" if parts else "ok")
     summary = [{"label": "Clusters", "value": len(cls)},
@@ -608,6 +964,13 @@ def vm_capacity_report(data, opts=None):
                      "Usage now is still shown." % o.get("min_samples", 7))
     if notes:
         sections.append({"title": "Notes", "lines": notes})
+    # 1.57.0: the runway board first (results first), its four tiles before the others; ACT's estimate goes in before
+    # "Hosts per cluster" (act_at), as before
+    b_email, b_web, b_sheet = board_sections(B, o, now, int(o.get("top_datastores") or 10))
+    summary = board_tiles(B) + summary
+    act_at = len(b_email) + 4
+    web = {"title": title, "status": status, "summary": summary, "sections": b_web + sections}
+    sections = b_email + sections
     report = {"title": title, "status": status, "summary": summary, "sections": sections,
               "subtitle": "%s - read %s%s%s" % (vc_text, _tm.local(now.strftime("%Y-%m-%d %H:%M UTC"), _tm.zone(o.get("time_zone"))[0]),
                                                            " - datacenter " + o["datacenter"] if o.get("datacenter") else "",
@@ -615,7 +978,14 @@ def vm_capacity_report(data, opts=None):
               "footer": "Estimates from a straight line over the last %s days of vCenter's daily statistics: a guide for planning, not a "
                         "promise. Cluster runways run to %s - %d%% of what is left with %d host(s) down - not to full hosts. Read-only."
                         % (int(float(o.get("trend_days", 90))), limit_text(mt, fail), int(mt), fail)}
-    return {"report": report, "numbers": _plain(N), "items": items}
+    web.update({k: v for k, v in report.items() if k not in web})
+    return {"report": report, "web": web, "numbers": _plain(N), "items": items, "act_at": act_at, "sheet": b_sheet}
+
+
+def vm_capacity_sheets(sheets, full):
+    """The workbook's sheets with the datastores' runway sheet replaced by every datastore (the page shows the first
+    vm_capacity_top_datastores)."""
+    return [full if full and s.get("name") == full.get("name") else s for s in sheets or []]
 
 
 def _plain(N):
@@ -799,5 +1169,5 @@ class FilterModule(object):
     def filters(self):
         return {"vm_capacity_report": vm_capacity_report, "vm_capacity_evidence": vm_capacity_evidence,
                 "vm_capacity_act_task": vm_capacity_act_task, "vm_capacity_act_section": vm_capacity_act_section,
-                "capacity_compare": compare, "vm_capacity_names": vm_capacity_names,
+                "capacity_compare": compare, "vm_capacity_names": vm_capacity_names, "vm_capacity_sheets": vm_capacity_sheets,
                 "capacity_trend": trend}
