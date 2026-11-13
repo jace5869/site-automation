@@ -74,9 +74,11 @@ One report, on the report website and by email like the others (`report_email_to
 - **Nothing to move**: the templates with nothing flagged, by name.
 
 The colour: red when a secret is in a template's Variables, amber for anything else, green when nothing is flagged.
+When a part could not be read (a page of templates, a survey), the title says *incomplete: N parts not read* and the
+report is never green: *nothing to move in what was read* at best (1.47.0).
 The job's artifact `aap_template_audit` has the counts and the flagged settings' names (no values). The job does not
-fail on what it finds unless `aap_template_audit_fail: true` (for a workflow's ticket step); it fails when AAP cannot
-be read.
+fail on what it finds unless `aap_template_audit_fail: true` (for a workflow's ticket step): then it fails on a flagged
+setting or a part not read, after the report. It fails when AAP cannot be read at all.
 
 ## Set it up in AAP
 
@@ -107,7 +109,7 @@ The main ones; every setting with its default: [VARIABLES_REFERENCE.md](VARIABLE
 | `aap_template_audit_per_template` | `report_email_to`, `report_email_cc`, `report_email_also`, `site_fail_on`, `target` | settings that belong in a template: never site-wide or an address |
 | `aap_template_audit_ignore` | `[]` | settings never flagged |
 | `aap_template_audit_ca_path` | `""` | a CA file for AAP's HTTPS certificate |
-| `aap_template_audit_fail` | `false` | `true` = the job fails when something is flagged |
+| `aap_template_audit_fail` | `false` | `true` = the job fails when something is flagged or a part was not read |
 
 ## When something goes wrong
 
@@ -116,5 +118,7 @@ The main ones; every setting with its default: [VARIABLES_REFERENCE.md](VARIABLE
 | `No AAP connection: attach a credential of type "Red Hat Ansible Automation Platform"` | the template has no AAP credential: add one (an auditor is enough) |
 | `AAP refused the login (HTTP 401)` | the credential's user name and password, or its token, are wrong or expired |
 | `the survey of job template X (ID n) could not be read (HTTP 403)` | the AAP user may not read that template's survey: give it Auditor on the organization |
+| the title says *incomplete: 1 part not read* | a page of templates or a survey could not be read (*Not read* says which): what was read is reported, the rest was not checked. Run it again; if it stays, check AAP's API |
+| a template's section says *Its Variables could not be read: X could not be checked* | one setting's value could not be weighed (1.47.0): the other settings and templates were audited; look at that setting in AAP |
 | a template's section says *Its Variables could not be read: not YAML or JSON* | the template's Variables box does not parse: open it in AAP and fix it (AAP keeps a box it cannot use as it is) |
 | a setting flagged that belongs where it is | add it to `aap_template_audit_per_template` (still checked for secrets) or `aap_template_audit_ignore` |

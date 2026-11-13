@@ -1082,7 +1082,9 @@ the workflow again (the pickup does not take a ticket twice).
   `80,100` without a unit is a list.
 - **A disk line (1.44.0):** `Disk:` and `Disks:` take only disk sizes. A date (`by 11/12/2026`), a
   version (`version 8/9`) and memory (`16/32 GB RAM`, `memory: 16 GB`) on the line are left out. Any
-  other number without a unit there is a question.
+  other number without a unit there is a question. A disk line with no disk size left (`Disk: by 11/12`,
+  `Disk: 16 GB RAM`) is a question too (1.47.0), and the VM is not built until a `disks_gb:` line answers
+  it. A ticket with no disk line is unchanged: the template's disks.
 - **CPUs:** sockets x cores per socket is the number of vCPUs (`2 sockets, 4 cores per socket` = 8);
   `2 sockets` alone = 2. Sockets and cores that do not add up (`2 sockets, 4 cores`: 4 or 8?) are a question.
 - **The folder** the words name must exist in the datacenter (and be in `vm_deploy_folders`, when set):

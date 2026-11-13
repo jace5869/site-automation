@@ -1,5 +1,43 @@
 # Changelog
 
+## 1.47.0 — 2026-11-13
+
+**Updating without scripts:** paste `site-automation-1.47.0-changed-since-1.44.0.zip` as it is (from an older version,
+its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`. Nothing to set up.
+
+**Fixes from a code review of 0.99.0 to 1.44.0.**
+
+- **VM deploy: a disk line with no disk size is a question.** `Disk: by 11/12`, `Disk: 16 GB RAM` and
+  `Disks: version 8/9` no longer become disks of 11 and 12, 16, or 8 and 9 GB: the ticket is asked for a `disks_gb:`
+  line and the VM is not built until one answers. `Disk: 100 GB, by 11/12` is still 100 GB; a ticket with no disk
+  line is unchanged.
+- **Ticket insights: every page of task_sla.** A ticket with more than 20 SLA records (the 21st breached) was read
+  as met. task_sla is now read page by page in a fixed order (task, then sys_id). A page that fails after the first
+  is said under *Not read* (which page, after how many records) and nothing of that read is used or kept: the
+  report counts from your targets, as for a refused read.
+- **Ticket insights: SLA elapsed time.** A business duration of 0 stays 0 (it was replaced by the clock's
+  duration), and a duration of 31 days or more is read (it was empty). The clock's duration is used only when the
+  business duration is missing or not a time. The ticket store reads each closed ticket's SLAs once more, so the
+  VIP section's SLA definitions get the right elapsed time.
+- **AAP template audit: a part not read is never "nothing to move".** When a page of templates or a survey cannot
+  be read, the title says *incomplete: N parts not read*, a *Not read* tile is added, and the report is amber at
+  best. The findings already made keep their colour. `aap_template_audit_fail: true` now also fails on a part not
+  read, after the report is out.
+- **AAP template audit: keys of mixed types.** A setting such as `routes: {443: one, default: two}` stopped the
+  whole audit (TypeError). Values are now compared in a form that keeps each type (`443` and `"443"` differ; the
+  order of a mapping does not count). A value that still cannot be weighed is said in its template's section; the
+  others are audited.
+- **Checked again: the 0.99.0 template audit disclosures stay fixed.** A nested `service: {password: ...}` in three
+  templates (fixed in 1.24.0) and a URL's `user:password@host` (fixed in 1.24.0) are not shown in the module's
+  result, the job output, the website, the email or the artifact. Tests for both.
+
+Files: plugins/filter/vm_deploy_filters.py, roles/servicenow_insights/library/site_servicenow_insights.py,
+roles/aap_template_audit/library/site_aap_template_audit.py, plugins/filter/template_audit_filters.py,
+roles/aap_template_audit/tasks/main.yml and defaults, aap/extra_vars/aap_template_audit.yml, docs TEMPLATE_AUDIT,
+VM_DEPLOY_GUIDE, VARIABLES_REFERENCE. Tests: test_vm_deploy, test_servicenow_insights (SlaPages), test_template_audit
+(ReviewFixes; the fake AAP with a page that fails), tests/servicenow/snmock.py (task_sla paged).
+
 ## 1.45.0 (built as 1.45.0) — 2026-11-12
 
 **Updating without scripts:** paste `site-automation-1.45.0-changed-since-1.44.0.zip` as it is (from an older version,
@@ -1464,7 +1502,7 @@ tests/stig/run_stigman_real_test.sh against STIG Manager 1.6.18 (not in CI).
 
 SA_VERSION 1.26.0; the PDFs at 1.26.0.
 
-**To do, if you have not yet: what 0.20.0 to 1.45.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.45.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing, 1.39.0 nothing, 1.41.0 nothing, 1.42.0 nothing, 1.43.0 nothing, 1.44.0 nothing, 1.45.0 nothing).** In order; each step works without
+**To do, if you have not yet: what 0.20.0 to 1.47.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.47.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing, 1.39.0 nothing, 1.41.0 nothing, 1.42.0 nothing, 1.43.0 nothing, 1.44.0 nothing, 1.45.0 nothing, 1.47.0 nothing).** In order; each step works without
 the ones after it. There is no step 90.
 
 1. **Your logo** (0.20.0). A PNG with a transparent background, about 160 px tall and under 100 KB, in

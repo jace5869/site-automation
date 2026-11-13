@@ -119,6 +119,7 @@ def seed():
     path = os.environ.get("SNMOCK_SEED", "")
     if not path:
         return
+    seen = {}
     with open(path) as fh:
         for rec in json.load(fh):
             rec = dict(rec)
@@ -126,7 +127,10 @@ def seed():
                 GROUPS.append(dict((k, v) for k, v in rec.items() if not k.startswith("_")))
                 continue
             rec.setdefault("_table", "incident")
-            rec.setdefault("sys_id", uuid.uuid4().hex)
+            if "sys_id" not in rec:                     # 1.47.0: the same record, the same sys_id each start (as ServiceNow keeps it)
+                key = json.dumps(rec, sort_keys=True)
+                seen[key] = seen.get(key, 0) + 1
+                rec["sys_id"] = uuid.uuid5(uuid.NAMESPACE_OID, "%s#%d" % (key, seen[key])).hex
             rec.setdefault("state", "1")
             rec.setdefault("work_notes_list", [])
             INCIDENTS[rec["sys_id"]] = rec
@@ -465,6 +469,10 @@ class H(BaseHTTPRequestHandler):
             return 200, {"result": mid_data().get("cluster", [])}
         if table == "task_sla" and method == "GET" and not sys_id:
             rows = [i for i in INCIDENTS.values() if i.get("_table") == "task_sla" and matches(i, q.get("sysparm_query", ""))]
+            if "ORDERBYtask" in q.get("sysparm_query", ""):                  # 1.47.0: read page by page, in a fixed order
+                rows.sort(key=lambda i: (str(i.get("task", "")), str(i.get("sys_id", ""))))
+            offset = int(q.get("sysparm_offset", "0"))
+            rows = rows[offset:offset + int(q.get("sysparm_limit", "10000"))]
             num = dict((i["sys_id"], i.get("number", "")) for i in INCIDENTS.values())
             shown = [dict((k, {"value": v, "display_value": num.get(v, v) if k == "task" else v}) for k, v in i.items() if not k.startswith("_"))
                      for i in rows]

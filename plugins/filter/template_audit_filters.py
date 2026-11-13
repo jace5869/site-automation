@@ -50,10 +50,16 @@ def template_audit_report(res, opts=None):
         status = "critical" if secrets else "warning"
         title = "AAP template variables audit: %d setting%s in %d template%s to move" % (
             len(settings), "" if len(settings) == 1 else "s", len(flagged), "" if len(flagged) == 1 else "s")
+    elif problems:
+        status, title = "warning", "AAP template variables audit: nothing to move in what was read"
     else:
         status, title = "ok", "AAP template variables audit: nothing to move"
+    if problems and templates:                  # 1.47.0: a part read is never a clean bill
+        title = title.replace("AAP template variables audit: ", "AAP template variables audit (incomplete: %s not read): " % _n(len(problems), "part"), 1)
     summary = [{"label": "Job templates", "value": len(jobs)}, {"label": "Workflows", "value": len(templates) - len(jobs)},
                {"label": "With something to move", "value": len(flagged), "status": status if flagged else "ok"}]
+    if problems:
+        summary.append({"label": "Not read", "value": len(problems), "status": "critical" if not templates else "warning"})
     for k, label in COUNTS:
         if counts[k] or k in ("connection", "secret", "site_wide", "repeated"):
             summary.append({"label": label, "value": counts[k],

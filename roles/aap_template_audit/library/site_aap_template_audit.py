@@ -545,14 +545,46 @@ def suggest(name, why):
     return ""
 
 
+def _canon(v):
+    """A value as plain JSON that keeps each type (1.47.0): the key 443 and the key "443" differ, 1 and true and "1"
+    differ, and a mapping's order does not count - its keys of any type sorted by their own canonical form."""
+    if isinstance(v, dict):
+        items = [(json.dumps(_canon(k), separators=(",", ":")), _canon(x)) for k, x in v.items()]
+        return ["d", [[k, x] for k, x in sorted(items, key=lambda kx: kx[0])]]
+    if isinstance(v, (list, tuple)):
+        return ["l", [_canon(x) for x in v]]
+    if isinstance(v, bool):
+        return ["b", v]
+    if isinstance(v, int):
+        return ["i", str(v)]
+    if isinstance(v, float):
+        return ["f", repr(v)]
+    if v is None:
+        return ["n"]
+    if isinstance(v, str):
+        return ["s", v]
+    return ["o", type(v).__name__, str(v)]
+
+
 def fingerprint(value):
-    """Compares two values without keeping them."""
-    return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()
+    """Compares two values without keeping them: the same for the same value, whatever a mapping's order or its keys'
+    types (1.47.0: '443: x' next to 'default: y' was a TypeError)."""
+    return hashlib.sha256(json.dumps(_canon(value), separators=(",", ":")).encode()).hexdigest()
+
+
+def _text(v):
+    """A value as JSON text for the report; a mapping's keys of mixed types in a fixed order (1.47.0)."""
+    if isinstance(v, dict):
+        items = sorted(v.items(), key=lambda kx: (str(kx[0]), type(kx[0]).__name__))
+        return "{" + ", ".join("%s: %s" % (json.dumps(k) if isinstance(k, str) else _text(k), _text(x)) for k, x in items) + "}"
+    if isinstance(v, (list, tuple)):
+        return "[" + ", ".join(_text(x) for x in v) + "]"
+    return json.dumps(v, default=str)
 
 
 def shown(value):
     """A value as the report shows it, cut. Never called for a secret, or for a value hidden() keeps out."""
-    s = value if isinstance(value, str) else json.dumps(value, sort_keys=True, default=str)
+    s = value if isinstance(value, str) else _text(value)
     s = " ".join(s.split())
     return s if len(s) <= CUT else s[:CUT - 3] + "..."
 
@@ -571,15 +603,20 @@ def audit(records, opts):
              "settings": len(d), "ask_variables": bool(rec.get("ask_variables")),
              "survey": {str(q.get("variable")): str(q.get("type") or "") for q in rec.get("survey") or [] if q.get("variable")},
              "error": err, "flags": []}
-        for name in sorted(d, key=str):
+        for name in sorted(d, key=lambda k: (str(k), type(k).__name__)):
             n, v = str(name), d[name]
             if n in ign:
                 continue
-            why, sug = classify(n, v, sw, pe, pt)
-            if "secret" in why:
+            try:
+                why, sug = classify(n, v, sw, pe, pt)
+                one = None if "secret" in why else (fingerprint(v), None if hidden(n, v) else shown(v))
+            except Exception as e:                  # a value this audit cannot weigh: said for its template, the rest go on
+                t["error"] = "; ".join(x for x in (t["error"], "%s could not be checked (%s)" % (n, type(e).__name__)) if x)
+                continue
+            if one is None:
                 secrets.add(n)
             else:
-                seen.setdefault(n, {}).setdefault(fingerprint(v), []).append((len(templates), None if hidden(n, v) else shown(v)))
+                seen.setdefault(n, {}).setdefault(one[0], []).append((len(templates), one[1]))
             if why:
                 t["flags"].append({"setting": n, "why": why, "suggestion": sug, "note": ""})
         templates.append(t)
