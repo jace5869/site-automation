@@ -143,6 +143,7 @@ jobs:
           python tests/test_low_vmware.py
           python tests/test_low_misc.py
           python tests/test_low_security.py
+          python tests/test_patch_age.py
           python tests/test_idm_inventory.py
           ANSIBLE_INVENTORY=/tmp/ac216/bin/ansible-inventory python tests/test_idm_inventory.py
           python tests/test_aap_keycloak_check.py
@@ -436,6 +437,8 @@ jobs:
         run: bash tests/windows/patch_sim/run_patch_sim.sh
       - name: Windows trust removal only from the trust store report, simulated
         run: bash tests/windows/trust_sim/run_trust_sim.sh
+      - name: Windows patch age in the health report, simulated (stand-in Get-HotFix)
+        run: bash tests/windows/patch_age_sim/run_patch_age_sim.sh
       - name: No private keys or obvious secrets committed
         run: |
           # the header alone: a real key has its base64 on the NEXT line (git grep looks at one line at a time)

@@ -418,3 +418,23 @@ net_perf_targets: [{name: Gateway, host: GATEWAY-ADDRESS}, {name: DC01, host: DC
 ## A notice in the job output when a project settings file (playbooks/group_vars/*.yml) defines a
 ## setting: it wins over AAP's inventory Variables box. false = no notice.
 # site_settings_notice: true
+
+## ---- Patch age (1.61.0): a section of the health reports ----------------------------------------
+## When the patching check ran: days since each host's last update, by host group. Late: Linux
+## check_patching_max_age_days, Windows win_check_patching_warn_days (critical from
+## win_check_patching_crit_days). Changes no finding. inventory groups, in order: a host goes in the
+## first one it is in, else Other; [] = its first group
+# patch_age_groups: []
+
+## due soon (Low) = late within this many days
+# patch_age_due_days: 7
+
+## the oldest hosts listed
+# patch_age_oldest: 10
+
+## "% on time" over 12 weeks from this template's earlier runs (AAP job history; report_history's
+## credential)
+# patch_age_history: true
+
+## how many earlier runs to read (at most 50)
+# patch_age_history_runs: 50

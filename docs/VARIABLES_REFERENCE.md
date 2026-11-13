@@ -1717,6 +1717,11 @@ File: `roles/site_findings/defaults/main.yml`
 | `site_check_role_prefix` | `"{{ 'win_check_' if site_os == 'windows' else 'check_' }}"` | check_ (Linux) or win_check_ (Windows): set by the playbook from site_os |
 | `site_windows_connections` | `[winrm, psrp, ansible.builtin.winrm, ansible.builtin.psrp]` | How a host is recognized as Windows: its connection, or its shell (Windows OpenSSH). |
 | `site_settings_notice` | `true` | A notice in the job output when a project settings file (playbooks/group_vars/*.yml) defines a setting: it wins over AAP's inventory Variables box. false = no notice. |
+| `patch_age_groups` | `[]` | ---- Patch age (1.61.0): a section of the health reports ---------------------------------------- When the patching check ran: days since each host's last update, by host group. Late: Linux check_patching_max_age_days, Windows win_check_patching_warn_days (critical from win_check_patching_crit_days). Changes no findin… (all of it: the role file) |
+| `patch_age_due_days` | `7` | due soon (Low) = late within this many days |
+| `patch_age_oldest` | `10` | the oldest hosts listed |
+| `patch_age_history` | `true` | "% on time" over 12 weeks from this template's earlier runs (AAP job history; report_history's credential) |
+| `patch_age_history_runs` | `50` | how many earlier runs to read (at most 50) |
 
 ## stigman_ckl_import
 
@@ -2023,6 +2028,8 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_ask_xlsx` | `true` | attach every row of the answer as an Excel workbook (.xlsx) to the email |
 | `vm_versions_max_rows` | `2000` | ---- VMware version report (playbooks/vmware_version_report.yml) ---- ESXi hosts listed in the email and the page at most (the workbook always has every host) |
 | `vm_versions_xlsx` | `true` | attach every vCenter and ESXi host as an Excel workbook (.xlsx) to the email |
+| `patch_age_esxi_late_days` | `35` | 1.61.0 ESXi patch age in the version report: days since each host's last update, by cluster. vCenter has no read-only "last update" date: it comes from this report's earlier runs (when the host's build changed; AAP job history, report_history's credential) and the host's boot time (an update needs a restart). A build… (all of it: the role file) |
+| `patch_age_esxi` | `true` | the patch age section in the version report (false = none) |
 | `vm_hardware_vibs` | `true` | ---- VMware hardware inventory (playbooks/vmware_hardware_report.yml) ---- also read every installed VIB of each host (the workbook's VIBs sheet; one call per host) |
 | `vm_hardware_max_rows` | `2000` | ESXi hosts listed in the email and the page at most (the workbook always has every host) |
 | `vm_hardware_xlsx` | `true` | attach every host, NIC, storage adapter, software component and VIB as an Excel workbook |

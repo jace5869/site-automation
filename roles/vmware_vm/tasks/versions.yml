@@ -14,31 +14,62 @@
   register: _vm_ver_read
   check_mode: false
 
+- name: VMware | earlier runs, for the ESXi patch age (their vm_versions artifact, from the AAP job history)
+  ansible.builtin.include_role:
+    name: site_email
+    tasks_from: history_artifacts.yml
+  vars:
+    _hist_artifacts: [vm_versions, patch_age]
+    _hist_runs: "{{ patch_age_history_runs | default(50) }}"
+  when: patch_age_esxi | bool and patch_age_history | default(true) | bool
+
+- name: VMware | ESXi patch age (1.61.0)
+  ansible.builtin.set_fact:
+    _vm_patch_age: >-
+      {{ _vm_ver_read.hosts | patch_age_esxi(_site_hist_runs | default([]), {'late_after': patch_age_esxi_late_days | int})
+         | patch_age_sections({'due_days': patch_age_due_days | default(7) | int, 'what': 'ESXi', 'setting': 'patch_age_esxi_late_days',
+                               'oldest': patch_age_oldest | default(10) | int}, _site_hist_runs | default([]))
+         if patch_age_esxi | bool else {} }}
+
 - name: VMware | the report
   ansible.builtin.set_fact:
     _vm_ver_doc: >-
-      {{ _vm_ver_read.vcenter_info | vm_versions_doc(_vm_ver_read.hosts, _vm_ver_read.vcenters,
-           {'max_rows': vm_versions_max_rows | int}) }}
+      {%- set d = _vm_ver_read.vcenter_info | vm_versions_doc(_vm_ver_read.hosts, _vm_ver_read.vcenters,
+                    {'max_rows': vm_versions_max_rows | int}) -%}
+      {{ d | combine({'summary': d.summary + _vm_patch_age.boxes, 'sections': d.sections + _vm_patch_age.sections})
+         if _vm_patch_age.sections is defined else d }}
+    _vm_ver_web: >-
+      {%- set d = _vm_ver_read.vcenter_info | vm_versions_doc(_vm_ver_read.hosts, _vm_ver_read.vcenters,
+                    {'max_rows': vm_versions_max_rows | int}) -%}
+      {{ d | combine({'summary': d.summary + _vm_patch_age.boxes, 'sections': d.sections + _vm_patch_age.web_sections})
+         if _vm_patch_age.web_sections is defined else {} }}
 
 - name: VMware version report
   ansible.builtin.include_tasks: report.yml
   vars:
     _vm_vcenters: "{{ _vm_ver_read.vcenters }}"
     _vm_report_doc: "{{ _vm_ver_doc }}"
+    _vm_report_web_doc: "{{ _vm_ver_web }}"
     _vm_report_subject: "{{ _vm_ver_doc.title }}"
     _vm_report_lines: >-
       {{ [_vm_ver_doc.subtitle]
          + (_vm_ver_doc.summary | map(attribute='label') | zip(_vm_ver_doc.summary | map(attribute='value'))
             | map('join', ': ') | list)
-         + (_vm_ver_read.vcenter_info | vm_versions_lines(_vm_ver_read.hosts)) }}
-    _vm_report_xlsx: "{{ _vm_ver_read.vcenter_info | vm_versions_xlsx(_vm_ver_read.hosts) if vm_versions_xlsx | bool else [] }}"
+         + (_vm_ver_read.vcenter_info | vm_versions_lines(_vm_ver_read.hosts)) + _vm_patch_age.lines | default([])
+         + ([('% on time, 12 weeks: no history - ' ~ _site_hist_why)] if _vm_patch_age.lines is defined and _site_hist_why | default('') else []) }}
+    _vm_report_xlsx: >-
+      {{ (_vm_ver_read.vcenter_info | vm_versions_xlsx(_vm_ver_read.hosts)) + ([_vm_patch_age.sheet] if _vm_patch_age.sheet is defined else [])
+         if vm_versions_xlsx | bool else [] }}
 
 - name: VMware | the versions as job artifacts (vm_versions)
   ansible.builtin.set_stats:
     data:
       vm_versions: >-
         {{ {'vcenters': _vm_ver_read.vcenter_info, 'esxi_builds': _vm_ver_read.hosts | vm_versions_builds,
-            'counts': _vm_ver_doc.summary | items2dict(key_name='label', value_name='value')} }}
+            'counts': _vm_ver_doc.summary | items2dict(key_name='label', value_name='value'),
+            'esxi_hosts': _vm_ver_read.hosts | patch_age_esxi_artifact} }}
+      # 1.61.0: the ESXi patch age per cluster, for the next runs' "% on time"
+      patch_age: "{{ _vm_patch_age.artifact | default({}) }}"
 
 - name: VMware | every vCenter was read
   ansible.builtin.include_tasks: vcenters_read.yml

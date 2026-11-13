@@ -1,0 +1,33 @@
+---
+# 1.61.0: this job template's earlier runs with some of their job artifacts (site_report_history's artifacts), for a report
+# that keeps its own history (patch age: patch_age; the VMware version report: vm_versions). Read only, from AAP, with the
+# same "Red Hat Ansible Automation Platform" credential as the strip of past runs (report_history). Never fails the job.
+# Input: _hist_artifacts (names), _hist_runs (how many runs, at most 50). Output: _site_hist_runs (oldest first; [] without
+# AAP, outside AAP or with report_history: false) and _site_hist_why (why there are none, '' when AAP answered).
+- name: History | this job's earlier runs, from AAP ({{ _hist_artifacts | join(', ') }})
+  site_report_history:
+    job_id: "{{ awx_job_id | default(tower_job_id) | int }}"
+    template_id: "{{ awx_job_template_id | default(tower_job_template_id) | int }}"
+    runs: "{{ _hist_runs | default(50) | int }}"
+    ca_path: "{{ report_history_aap_ca_path }}"
+    artifacts: "{{ _hist_artifacts }}"
+  register: _site_hist
+  check_mode: false                      # read only
+  delegate_to: localhost
+  run_once: true
+  become: false
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  when:
+    - report_history | bool
+    - (awx_job_id | default(tower_job_id | default(''))) | string | length > 0
+    - (awx_job_template_id | default(tower_job_template_id | default(''))) | string | length > 0
+
+- name: History | the runs
+  ansible.builtin.set_fact:
+    _site_hist_runs: "{{ _site_hist.runs | default([]) if _site_hist.ok | default(false) else [] }}"
+    _site_hist_why: >-
+      {{ _site_hist.why | default('') if _site_hist is not skipped
+         else ('report_history is false' if not report_history | bool else 'not run from AAP (no awx_job_id or awx_job_template_id)') }}
+  run_once: true

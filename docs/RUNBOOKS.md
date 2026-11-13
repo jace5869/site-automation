@@ -289,6 +289,26 @@ on every host, and vCenter and ESXi.
 | `no package has been updated for 60 days` | older than `check_patching_max_age_days` | patch |
 | `cannot check for updates` | dnf cannot reach its repositories (Satellite, mirror) | repository configuration, network, subscription |
 
+**Patch age by group** (1.61.0): when the patching check runs, the report adds the days since each host's last update,
+by host group. It changes no finding and does not fail the job.
+
+| Status | Means |
+|---|---|
+| Late | no update for more than `check_patching_max_age_days` (35) days |
+| Due soon (Low) | late within `patch_age_due_days` (7) days |
+| On time | the rest |
+| No data | the check could not read the last update |
+
+- **The email**: three boxes (*Patching late*, *Patching due soon*, *Oldest update*), the table *Patch age by group*
+  (hosts, on time, due soon, late, the oldest, "% on time" over 12 weeks) and the 10 oldest hosts. The workbook
+  (`report_email_xlsx: true`) has a sheet with every host.
+- **The website** (atlas and brief looks): the same, plus one square per host, the darker the older. Hover a square for
+  its host and days.
+- **Groups**: `patch_age_groups` lists inventory groups in order (`[SITEA-linux-web, SITEA-linux-db]`); a host goes in
+  the first one it is in, else *Other*. Empty (the default): each host's first inventory group.
+- **% on time, 12 weeks**: from this template's earlier runs (their `patch_age` job artifact), read from AAP with the
+  credential of the strip of past runs (`report_history`). The first run shows this run only.
+
 <a id="mariadb"></a>
 
 **All settings** of this check, with their defaults: [check_patching](VARIABLES_REFERENCE.md#check_patching).

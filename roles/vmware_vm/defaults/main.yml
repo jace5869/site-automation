@@ -133,6 +133,12 @@ vm_ask_xlsx: true                        # attach every row of the answer as an 
 
 vm_versions_max_rows: 2000               # ESXi hosts listed in the email and the page at most (the workbook always has every host)
 vm_versions_xlsx: true                   # attach every vCenter and ESXi host as an Excel workbook (.xlsx) to the email
+# 1.61.0 ESXi patch age in the version report: days since each host's last update, by cluster. vCenter has no read-only
+# "last update" date: it comes from this report's earlier runs (when the host's build changed; AAP job history, report_history's
+# credential) and the host's boot time (an update needs a restart). A build unchanged in the history: "at least N days" - late
+# once N is over the limit, else "not known yet" (Low). Due soon (Low): patch_age_due_days (7) before late.
+patch_age_esxi_late_days: 35             # an ESXi host with no update for more days than this is late
+patch_age_esxi: true                     # the patch age section in the version report (false = none)
 
 # ---- VMware hardware inventory (playbooks/vmware_hardware_report.yml) ----
 

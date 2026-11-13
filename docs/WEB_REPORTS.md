@@ -85,6 +85,8 @@ Since 0.53.0:
   - **Where they appear:** the tables' Severity and Status columns, a cell that says PASSED or FAILED, the sections' and
     the cards' status, and a coloured edge on the header and on each tile that needs a look.
   - **Contrast:** every text colour is at least 4.5:1 against what it is on, in light and in dark (most over 7:1).
+- **Squares** (1.61.0, patch age): one square per host in one blue, the darker the more days, with a legend; hover a
+  square for its host and value. The tables below have the same numbers.
 - **Start here cards** with a **Copy** button for their command. The health check's healthy hosts each get a check
   mark, under *Every check passed* and the checks run.
 - **Copy** on every number tile (its line: *Completed: 3 (resolved or closed)*) and on every section: all of it, with

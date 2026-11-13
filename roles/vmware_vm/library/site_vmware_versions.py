@@ -11,7 +11,8 @@ short_description: Read the version and build of each vCenter and every ESXi hos
 description:
   - For the credential's vCenter and each of vcenters - its product name, version and build as vCenter says them - and
     for every ESXi host it manages - datacenter, cluster (none for a standalone host), version, build, the product name,
-    connection state and maintenance mode. A host that is not connected may have no version: it is said empty.
+    connection state, maintenance mode and boot time (boot, epoch seconds; 1.61.0 patch age: an ESXi update needs a
+    restart, so the last update is no newer than it). A host that is not connected may have no version: it is said empty.
   - vCenter's address and account come from VMWARE_HOST, VMWARE_USER, VMWARE_PASSWORD (and VMWARE_PORT), as a
     "VMware vCenter" credential in AAP gives them; vcenters adds more vCenters (the same account). Changes nothing.
 options:
@@ -33,12 +34,15 @@ hosts:
   type: list
   returned: success
   sample: [{name: esx01.example.mil, vcenter: vc01.example.mil, datacenter: DC1, cluster: PROD-CL01,
-            product: VMware ESXi 8.0.3 build-24022510, version: 8.0.3, build: "24022510", state: connected, maintenance: false}]
+            product: VMware ESXi 8.0.3 build-24022510, version: 8.0.3, build: "24022510", state: connected, maintenance: false,
+            boot: 1790000000}]
 vcenters:
   description: Each vCenter and whether it was read (ok), or why not (error).
   type: list
   returned: success
 '''
+
+import calendar
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.site_vcenters import each_vcenter
@@ -49,11 +53,19 @@ try:
 except ImportError:
     HAS_PYVMOMI = False
 
-PROPS = ["name", "parent", "summary.config.product", "runtime.connectionState", "runtime.inMaintenanceMode"]
+PROPS = ["name", "parent", "summary.config.product", "runtime.connectionState", "runtime.inMaintenanceMode", "runtime.bootTime"]
 
 
 def _s(x):
     return "" if x is None else str(x)
+
+
+def _epoch(dt):
+    """A boot time (a datetime) -> epoch seconds; None when vCenter has none (a host not connected)."""
+    try:
+        return calendar.timegm(dt.utctimetuple()) if dt is not None else None
+    except Exception:                           # noqa: BLE001
+        return None
 
 
 def _where(parent, seen):
@@ -93,7 +105,7 @@ def _read(content, p, vcenter):
             out.append({"name": _s(pr.get("name")), "vcenter": vcenter, "datacenter": dc, "cluster": cluster,
                         "product": _s(getattr(prod, "fullName", "")), "version": _s(getattr(prod, "version", "")),
                         "build": _s(getattr(prod, "build", "")), "state": _s(pr.get("runtime.connectionState")),
-                        "maintenance": bool(pr.get("runtime.inMaintenanceMode"))})
+                        "maintenance": bool(pr.get("runtime.inMaintenanceMode")), "boot": _epoch(pr.get("runtime.bootTime"))})
     finally:
         view.Destroy()
     return info, out

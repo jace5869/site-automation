@@ -18,3 +18,14 @@
     tasks_from: win_result.yml
   vars:
     _win_check: patching
+
+# 1.61.0: the report's "Patch age by group" section (roles/site_findings/tasks/patch_age.yml) reads this, per host. Windows
+# is late from win_check_patching_warn_days on (its finding's warning), critical from win_check_patching_crit_days.
+- name: Windows patching | this host's patch age, for the report's patch age section
+  ansible.builtin.set_fact:
+    site_patch_age: >-
+      {%- set f = (win_facts | default({})).patching | default({}) -%}
+      {{ {'last': f.last_update | default('') | string, 'days': f.days_since_update | default(none),
+          'restart': f.reboot_pending | default([]) | length > 0,
+          'late_after': win_check_patching_warn_days | int - 1, 'crit_from': win_check_patching_crit_days | int,
+          'setting': 'win_check_patching_warn_days'} }}

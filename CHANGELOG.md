@@ -1,5 +1,54 @@
 # Changelog
 
+## 1.61.0 — 2026-11-13
+
+**Updating without scripts:** paste `site-automation-1.61.0-changed-since-1.50.0.zip` as it is (from an older version,
+its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`.
+
+**Nothing to set up.** New settings have defaults: `patch_age_groups`, `patch_age_due_days`, `patch_age_oldest`,
+`patch_age_history`, `patch_age_history_runs`, `patch_age_esxi_late_days`, `patch_age_esxi`. No new job template.
+
+**Patch age: a section of the Linux and Windows health reports.** When the patching check runs, the report adds the
+days since each host's last update, by host group. Nothing is removed: the boxes, Start here and every section stay.
+It changes no finding and does not fail the job.
+
+- **Status:** late after `check_patching_max_age_days` (Linux, 35) or from `win_check_patching_warn_days` (Windows, 35;
+  critical from `win_check_patching_crit_days`, 60). Due soon (Low) = late within `patch_age_due_days` (7). Then on time,
+  or no data.
+- **The email:** three boxes (*Patching late*, *Patching due soon*, *Oldest update*), *Patch age by group* and the 10
+  oldest hosts. The workbook (`report_email_xlsx: true`) gets a sheet with every host.
+- **The website** (atlas and brief): the same, plus one square per host in one blue, the darker the older; hover for
+  the host and its days. The steps pass the palette check (next steps 15 apart; the lightest keep a thin edge).
+- **Groups:** `patch_age_groups`, inventory groups in order, the first match wins, else *Other*. Empty: each host's
+  first inventory group.
+- **% on time, 12 weeks:** first run of the last 12 weeks -> this run, from this template's earlier runs (the new job
+  artifact `patch_age`, read from AAP with the strip of past runs' credential). The first run shows this run only.
+- Docs: RUNBOOKS.md (patching), WINDOWS.md, WEB_REPORTS.md.
+
+**ESXi patch age in the VMware version report**, by cluster, the same tables and squares. Late after
+`patch_age_esxi_late_days` (35). vCenter has no read-only "last update" date, so it comes from the report's own runs:
+
+- a build change between two runs gives a real date (the boot the new build came with);
+- no change: "at least N days" (the oldest run with this build, or the host's earliest boot with it). Late when N is
+  over the limit; under it **Not known yet** (Low, never counted as on time) until the build changes or 35 days of
+  history are there. A reboot without a new build changes nothing.
+- The `vm_versions` artifact adds `esxi_hosts` (each host's build and boot time); the job adds `patch_age`.
+- Docs: VMWARE.md (The VMware version report).
+
+**Behaviour changes**
+
+- Health reports (Linux, Windows): a report whose job ran the patching check has the boxes and two sections above. The
+  findings, the title and the status are as before.
+- VMware version report: three or four more boxes, two more sections (three on the website), a *Patch age* sheet in the
+  workbook, `esxi_hosts` in the `vm_versions` artifact. The status is as before.
+- `findings_report`: a lower extra section's `boxes` join the summary boxes (before: only a top section's).
+- `site_report_history`: a new option, `artifacts`, returns named job artifacts with each run.
+
+**Tests:** `tests/test_patch_age.py`; report fit documents `patch_age_sections` and `patch_age_web` (also at 800 px in
+glass); the findings e2e (email, job output, the brief page); a Windows simulation under pwsh
+(`tests/windows/patch_age_sim`); the vcsim version report.
+
 ## 1.59.0 — 2026-11-13
 
 **Updating without scripts:** paste `site-automation-1.59.0-changed-since-1.50.0.zip` as it is (from an older version,
@@ -7,7 +56,7 @@ its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inve
 `poam/poam.csv`.
 
 **Nothing to set up.** Optional: an hourly About to breach run of the same template, steps a to c in
-[docs/SERVICENOW_INSIGHTS.md](docs/SERVICENOW_INSIGHTS.md), "Every hour, with the same template". To do: 1.59.0 nothing.
+[docs/SERVICENOW_INSIGHTS.md](docs/SERVICENOW_INSIGHTS.md), "Every hour, with the same template". To do: 1.59.0 nothing, 1.61.0 nothing.
 
 **Ticket insights: About to breach, first on every page.** The shift lead's queue: the tickets whose SLA breaches within
 the next 8 business hours, least time left first, and whether breaches go up or down.
@@ -149,6 +198,7 @@ its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inve
 tiles, the email and the workbook), `test_report_hover.py` (the helpers' markup, no inline script, none of it in an email,
 and a real Chrome under that policy: hover, Tab and the arrow keys, Esc; atlas and brief), `tests/report_fit_docs.py`
 (a report's website version as a fixture of its own: `vm_capacity_report_web`). SA_VERSION 1.57.0; the PDFs at 1.57.0.
+
 
 ## 1.56.0 — 2026-11-13
 
@@ -2151,7 +2201,7 @@ tests/stig/run_stigman_real_test.sh against STIG Manager 1.6.18 (not in CI).
 
 SA_VERSION 1.26.0; the PDFs at 1.26.0.
 
-**To do, if you have not yet: what 0.20.0 to 1.59.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.59.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing, 1.39.0 nothing, 1.41.0 nothing, 1.42.0 nothing, 1.43.0 nothing, 1.44.0 nothing, 1.45.0 nothing, 1.46.0 nothing, 1.47.0 nothing, 1.48.0 nothing, 1.49.0 nothing, 1.50.0 step 97, 1.51.0 step 95, 1.52.0 step 96, 1.53.0 step 98, 1.54.0 nothing, 1.55.0 nothing, 1.56.0 nothing, 1.57.0 nothing, 1.58.0 nothing, 1.59.0 nothing).** In order; each step works without
+**To do, if you have not yet: what 0.20.0 to 1.61.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.61.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing, 1.39.0 nothing, 1.41.0 nothing, 1.42.0 nothing, 1.43.0 nothing, 1.44.0 nothing, 1.45.0 nothing, 1.46.0 nothing, 1.47.0 nothing, 1.48.0 nothing, 1.49.0 nothing, 1.50.0 step 97, 1.51.0 step 95, 1.52.0 step 96, 1.53.0 step 98, 1.54.0 nothing, 1.55.0 nothing, 1.56.0 nothing, 1.57.0 nothing, 1.58.0 nothing, 1.59.0 nothing).** In order; each step works without
 the ones after it. There is no step 90.
 
 1. **Your logo** (0.20.0). A PNG with a transparent background, about 160 px tall and under 100 KB, in

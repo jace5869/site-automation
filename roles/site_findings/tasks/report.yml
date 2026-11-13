@@ -95,6 +95,11 @@
       {{ out }}
   run_once: true
 
+- name: Report | patch age, when the patching check ran (a section of the report; 1.61.0)
+  ansible.builtin.include_tasks: patch_age.yml
+  when: >-
+    'patching' in (ansible_play_hosts | map('extract', hostvars) | map(attribute='site_checks_run', default=[]) | flatten)
+
 - name: Report | email the report, publish it (report_email_to, report_web_dest) - once for the job, from the AAP side, before any host fails
   ansible.builtin.include_role:
     name: site_email
@@ -111,7 +116,17 @@
          | findings_report(site_report_title | default(ansible_play_name),
                            ansible_play_hosts_all | difference(ansible_play_hosts),
                            ansible_play_hosts | map('extract', hostvars) | map(attribute='site_checks_run', default=[]) | flatten | unique | list,
-                           site_report_sections | default([])) }}
+                           site_report_sections | default([]) + _patch_age.sections | default([])) }}
+    # the website's copy (atlas, brief): patch age's squares too; the workbook (report_email_xlsx): every host's patch age
+    _report_web: >-
+      {{ (dict(ansible_play_hosts | zip(ansible_play_hosts | map('extract', hostvars) | map(attribute='site_findings', default=[])))
+          | findings_report(site_report_title | default(ansible_play_name),
+                            ansible_play_hosts_all | difference(ansible_play_hosts),
+                            ansible_play_hosts | map('extract', hostvars) | map(attribute='site_checks_run', default=[]) | flatten | unique | list,
+                            site_report_sections | default([]) + _patch_age.web_sections))
+         if _patch_age.web_sections is defined else {} }}
+    _report_xlsx: >-
+      {{ (_report | report_xlsx_sheets) + [_patch_age.sheet] if _patch_age.sheet is defined and report_email_xlsx | default(false) | bool else [] }}
   run_once: true
   when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0
 

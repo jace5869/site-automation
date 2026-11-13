@@ -82,6 +82,16 @@
       {%- endif -%}
       {{ f }}
 
+# 1.61.0: the report's "Patch age by group" section (roles/site_findings/tasks/patch_age.yml) reads this, per host
+- name: Patching | this host's patch age, for the report's patch age section
+  ansible.builtin.set_fact:
+    site_patch_age: >-
+      {%- set last = _patch_v.last_update | default('0') | int -%}
+      {{ {'last': ('%Y-%m-%d' | strftime(last, utc=true)) if last > 0 else '',
+          'days': (((_patch_v.now | default('0') | int) - last) / 86400) | int if last > 0 else none,
+          'restart': _patch_findings | selectattr('id', 'equalto', 'patch:reboot') | list | length > 0,
+          'late_after': check_patching_max_age_days | int, 'crit_from': 0, 'setting': 'check_patching_max_age_days'} }}
+
 - name: Patching | add them to this host's findings
   ansible.builtin.set_fact:
     site_findings: "{{ site_findings | default([]) + _patch_findings }}"

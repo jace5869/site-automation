@@ -493,6 +493,9 @@ A few defaults worth knowing:
 - **certs**: warning 30 days before expiry, critical 7 days before. Old expired certificates
   that nothing uses are listed in the report, not raised as findings.
 - **patching**: warning when the last update is 35 days old, critical at 60 days.
+  The report then adds **Patch age by group** (1.61.0): late from `win_check_patching_warn_days` (35), critical from
+  `win_check_patching_crit_days` (60), due soon (Low) 7 days before (`patch_age_due_days`). How to read it:
+  [RUNBOOKS.md](RUNBOOKS.md#patching).
 
 **All settings**, with their defaults: [win_check_accounts](VARIABLES_REFERENCE.md#win_check_accounts), [win_check_audit](VARIABLES_REFERENCE.md#win_check_audit), [win_check_certs](VARIABLES_REFERENCE.md#win_check_certs), [win_check_disk](VARIABLES_REFERENCE.md#win_check_disk), [win_check_eventlog](VARIABLES_REFERENCE.md#win_check_eventlog), [win_check_network](VARIABLES_REFERENCE.md#win_check_network), [win_check_patching](VARIABLES_REFERENCE.md#win_check_patching), [win_check_performance](VARIABLES_REFERENCE.md#win_check_performance), [win_check_security](VARIABLES_REFERENCE.md#win_check_security), [win_check_services](VARIABLES_REFERENCE.md#win_check_services), [win_check_time](VARIABLES_REFERENCE.md#win_check_time).
 
