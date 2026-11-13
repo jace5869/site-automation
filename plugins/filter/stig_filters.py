@@ -1452,6 +1452,29 @@ def stig_update_report(items, check=False, error="", planned=0, source=""):
                 ", PATCH /assets/{id} for the moves (its collection only)" if [i for i in firsts if i.get("kind") == "move"] else "",
                 ", PUT /assets/{id}/stigs/{benchmark} for the STIGs assigned" if [i for i in firsts if i.get("kind") == "assign"] else "")}
 
+def stig_fixed_open(results, read_at="", max_rows=500):
+    """What the STIG drift report keeps for the STIG compliance scorecard (1.58.0; the job's artifact stig_fixed_open): the
+    rules the scan passes and STIG Manager still has Open, and the assets that were scanned and found in STIG Manager -
+    so the scorecard also knows which hosts have none. -> {v: 1, read_at, assets: [[collection, asset]], rows: [[host,
+    collection, asset, SV-number, category, title, scanned]], more: the rows left out over max_rows}"""
+    assets, rows = [], []
+    for c in results or []:
+        sm = (c.get("stigman") or {}) if isinstance(c, dict) else {}
+        if not sm or not c.get("scanned") or sm.get("status") != "found" or not sm.get("collection") or not sm.get("asset"):
+            continue
+        pair = [str(sm["collection"]), str(sm["asset"])]
+        if pair not in assets:
+            assets.append(pair)
+        when = str(c.get("checklist_time") or read_at or "")
+        for r in c.get("fixed_open") or []:
+            key = str(r.get("key") or "")
+            if key.startswith("SV-"):
+                rows.append([str(c.get("host") or ""), pair[0], pair[1], re.sub(r"^(SV-\d+).*$", r"\1", key),
+                             CAT.get(r.get("severity"), str(r.get("severity") or "")), " ".join(str(r.get("title") or "").split())[:160], when])
+    cap = max(0, int(max_rows))
+    return {"v": 1, "read_at": str(read_at or ""), "assets": assets, "rows": rows[:cap], "more": max(0, len(rows) - cap)}
+
+
 class FilterModule(object):
     def filters(self):
         return {"stig_compare": stig_compare, "stig_report_sections": stig_report_sections, "stig_lines": stig_lines,
@@ -1460,4 +1483,4 @@ class FilterModule(object):
                 "stig_update_plan": stig_update_plan, "stig_update_sections": stig_update_sections, "stig_update_lines": stig_update_lines,
                 "stig_update_item_lines": stig_update_item_lines,
                 "stig_update_report": stig_update_report, "stig_update_attachments": stig_update_attachments, "stig_recheck_headline": recheck_headline,
-                "stig_answers_why": answers_why, "stig_answers_used": answers_used}
+                "stig_answers_why": answers_why, "stig_answers_used": answers_used, "stig_fixed_open": stig_fixed_open}

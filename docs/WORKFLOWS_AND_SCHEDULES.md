@@ -523,6 +523,14 @@ written into STIG Manager after a person approves them.
   with nothing to write it stays green. Approve, and step 3 creates the new assets listed and writes exactly those reviews.
   Deny, and nothing is written.
 - **Schedule:** on demand, after new checklists are on the share.
+- **Survey (optional, 1.58.0):** `What should this run do?`, variable `stigman_ckl_import_mode`, Multiple Choice
+  (single select) with `import`, `import and scorecard` and `scorecard`, default `import`. Put the same question on
+  the check template and on the workflow. The workflow hands its answer to the check.
+  - `import`: as above.
+  - `import and scorecard`: the same, with the STIG compliance scorecard first in the check's report. An empty folder
+    is then not an error: the check ends ok.
+  - `scorecard`: the folder is not read. The check ends ok, nothing waits for an approval, step 3 does not run.
+  - [CKL_IMPORT.md](CKL_IMPORT.md#the-stig-compliance-scorecard-1580).
 
 **As STIG Manager Watcher (0.76.0)** - the same workflow on a schedule, every 15 to 60 minutes, **Concurrent jobs** off.
 On the check template's Variables, besides `stigman_ckl_import_workflow: true`:

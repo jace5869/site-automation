@@ -255,7 +255,8 @@ database anything: the job reads it and draws the lines into each page.
 | `insights_ticket` | 1.17.0: one row per ticket - its fields less its text, people and CI, and its follow-up reads (*The ticket store*) |
 | `insights_act_class` | 1.17.0: each description's issue, the description as a hash (*The ACT cache*) |
 | `insights_act_issue` | 1.17.0: each issue's number, name (masked), kind and self-service (*The ACT cache*) |
-| `schema_version` | The schema's version, per component (`servicenow_insights`: 1) |
+| `schema_version` | The schema's version, per component (`servicenow_insights`: 1; 1.58.0 `stig_scorecard`: 1) |
+| `stig_scorecard_point` | 1.58.0: one row per run and STIG Manager collection - its open findings (*The STIG scorecard's points*) |
 | `insights_v_service`, `_volume`, `_process`, `_lifecycle`, `_quality` | A row per run and node, a column per figure of that set |
 | `insights_v_labelled` | The figures with an item: outcomes, categories, backlog age, hot CIs |
 | `insights_v_month_run` | The newest run of each month, per instance and period |
@@ -690,6 +691,69 @@ GROUP BY r.run_id, n.run_id, n.variant, n.node;
 INSERT INTO schema_version (component, version, applied_at) VALUES ('servicenow_insights', 1, UTC_TIMESTAMP());
 ```
 <!-- end of the statements -->
+
+## The STIG scorecard's points (1.58.0)
+
+The STIG compliance scorecard ([CKL_IMPORT.md](CKL_IMPORT.md#the-stig-compliance-scorecard-1580)) can keep its points
+here too. AAP keeps a job for 120 days by default; the database keeps a point for `stigman_scorecard_db_keep_days` (800).
+
+1. Add the **Report database** credential (the writer's) to the template *STIG Manager - import checklists*.
+2. Launch it with the survey choice `scorecard`. The first run makes the table `stig_scorecard_point` and writes its point.
+3. Read the end of the job output, or *How the scorecard counts* in the report. The first run says
+   `Earlier points: 0 from AAP's job history, 0 from the report database.` The next day's run counts 1.
+
+| | |
+|---|---|
+| What a run writes | a row per collection: when it was read, the job, the collection's id and name, its assets, CAT I, CAT II and CAT III open, and its open rules with their hosts (JSON) |
+| How much | a row is a few kilobytes: about 100 bytes per open rule and host. 4 collections read daily for 800 days: 3,200 rows |
+| What a run deletes | the rows older than `stigman_scorecard_db_keep_days` |
+| When the database is down | one warning in the job output. The scorecard goes on with AAP's job history. The job stays green |
+| A dry run (Check) | reads, writes nothing |
+| Turning it off | `stigman_scorecard_db: false`, or take the credential off the template |
+| Removing it | `DROP TABLE stig_scorecard_point;` and `DELETE FROM schema_version WHERE component = 'stig_scorecard';` |
+
+The key is the collection's id and the time it was read. A job launched again for the same time writes the same rows
+again, not new ones. The table holds host names and rule ids, as STIG Manager has them. It holds no review text.
+
+**By hand.** If the writer may not create tables, set `stigman_scorecard_db_create: false` and make the table once as
+root, in `site_reports`. The writer then needs SELECT, INSERT, UPDATE and DELETE. The first statement is the one of
+*Making the tables by hand*; it may run again.
+
+<!-- the statements: site_stig_scorecard_db.ddl(), word for word (tests/test_stig_scorecard.py checks it) -->
+```sql
+CREATE TABLE IF NOT EXISTS schema_version (
+  component VARCHAR(64) NOT NULL PRIMARY KEY,
+  version INT NOT NULL,
+  applied_at DATETIME NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS stig_scorecard_point (
+  read_at DATETIME NOT NULL,
+  job BIGINT NOT NULL DEFAULT 0,
+  collection VARCHAR(64) NOT NULL,
+  collection_name VARCHAR(255) NOT NULL DEFAULT '',
+  assets INT NOT NULL DEFAULT 0,
+  cat1 INT NOT NULL DEFAULT 0,
+  cat2 INT NOT NULL DEFAULT 0,
+  cat3 INT NOT NULL DEFAULT 0,
+  rules MEDIUMTEXT NOT NULL,
+  PRIMARY KEY (collection, read_at),
+  KEY stig_scorecard_point_read_at (read_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+INSERT INTO schema_version (component, version, applied_at) VALUES ('stig_scorecard', 1, UTC_TIMESTAMP());
+```
+<!-- end of the scorecard statements -->
+
+| Setting | Default | What it does |
+|---|---|---|
+| `stigman_scorecard_db` | `true` | Keep the points here when the template has the credential |
+| `stigman_scorecard_db_create` | `true` | Make the table on the first run |
+| `stigman_scorecard_db_keep_days` | `800` | Delete older points. `0`: never |
 
 ## TLS (optional)
 

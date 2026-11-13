@@ -70,3 +70,25 @@ stigman_ckl_import_auto: none
 # and the next run takes it again. false = the share is only read.
 stigman_ckl_import_move: false
 stigman_ckl_import_move_to: imported        # the folder under stigman_ckl_import_src (never read)
+# What this job does (1.58.0) - a survey choice on the job template and on workflow 40:
+#   import                 as before: the checklists read, the reviews planned. No scorecard.
+#   import and scorecard   the same, and the STIG compliance scorecard first in the report. A drop folder with no
+#                          checklist is not an error then: one line, and the job ends ok.
+#   scorecard              the scorecard alone: the folder is not read, nothing is planned, nothing is written.
+stigman_ckl_import_mode: import
+# The STIG compliance scorecard (stigman_ckl_import_mode "import and scorecard" or "scorecard"). It reads STIG Manager
+# with the same "STIG Manager API" credential - GET requests only, never a write. docs/CKL_IMPORT.md, the scorecard.
+stigman_scorecard_collections: []           # the collections on it, by name or id ([] = every collection the client reads)
+stigman_scorecard_top: 5                    # "Top rules open across hosts": this many rules
+stigman_scorecard_weeks: 8                  # the trend line and "The numbers behind the lines": this many weeks
+stigman_scorecard_cat2_warn: 0              # a collection with this many CAT II open or more: Warning (0 = off)
+# The earlier runs' points come from AAP's job history (a "Red Hat Ansible Automation Platform" credential on the job
+# template). With a "Report database" credential they are kept in its table stig_scorecard_point too - a longer history
+# than AAP keeps its jobs (docs/REPORT_DATABASE.md). The only thing the scorecard writes.
+stigman_scorecard_db: true                  # false = the report database is not used, even with its credential
+stigman_scorecard_db_create: true           # make the table on the first run (false: make it by hand, docs/REPORT_DATABASE.md)
+stigman_scorecard_db_keep_days: 800         # rows older than this are deleted (0 = never)
+# "Fixed on the host, still Open in STIG Manager": what the newest jobs of these job templates (by name) found, no older
+# than stigman_scorecard_drift_days. [] = that part is left empty.
+stigman_scorecard_drift_templates: ["STIG drift report", "Windows STIG drift report"]
+stigman_scorecard_drift_days: 14            # a scan older than this many days is not used

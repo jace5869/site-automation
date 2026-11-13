@@ -21,6 +21,10 @@ DATA.json: {"secret": "...", "collections": [{"collectionId": "1", "name": "..."
 An asset may carry "labels": [{"labelId", "name"}]; GET /api/assets gives each its statusStats.maxTs (its reviews' latest ts).
 1.26.0: PATCH /api/assets/A {"collectionId"} moves it (Manage in both; a name in the destination: a duplicate error, as
 STIG Manager); PUT /api/assets/A/stigs/B assigns a STIG (Manage; at the collection's revision).
+1.58.0, the scorecard's reads: GET /api/collections/C/findings?aggregator=ruleId&projection=assets (the reviews with the
+result fail, a row per rule: ruleId, title, severity, version, assetCount, assets) and
+GET /api/collections/C/metrics/summary/collection (assets: how many) - "no_metrics": true answers that one 404 (an older
+STIG Manager), "no_findings": ["<collectionId>"] answers the findings of those 403.
 Re-read on every request, so a test can change it between runs. Every request is written to LOG (method, path); a write's
 body to LOG.writes, one JSON line each. Writes (playbooks/stigman_update.yml): GET /api/collections/C/reviews/A/RULE and
 POST /api/collections/C/reviews/A only - DATA.json is updated as STIG Manager would; POST /api/assets (a new asset, with its
@@ -206,6 +210,33 @@ class H(BaseHTTPRequestHandler):
                 rows = [dict(r, stigs=[{"benchmarkId": r.get("benchmarkId") or (q.get("benchmarkId") or [""])[0],
                                         "revisionStr": r.get("revision") or "", "isDefault": not r.get("revision")}]) for r in rows]
             return self.send(200, [dict((k, v) for k, v in r.items() if k != "revision") for r in rows])
+        if len(parts) == 5 and parts[1:3] == ["api", "collections"] and parts[4] == "findings":
+            if self.role(d, parts[3]) < 1 or parts[3] in d.get("no_findings", []):
+                return self.send(403, {"error": "User has insufficient privilege to complete this request."})
+            if q.get("aggregator") != ["ruleId"]:
+                return self.send(400, {"error": "this test API aggregates findings by ruleId only"})
+            rows = {}
+            for a in d["assets"].get(parts[3], []):
+                for r in d["reviews"].get(a["assetId"], []):
+                    if r.get("result") != "fail" or r.get("revision"):
+                        continue
+                    rule = r.get("rule") or {}
+                    f = rows.setdefault(r["ruleId"], {"ruleId": r["ruleId"], "title": rule.get("title", ""), "severity": rule.get("severity", "medium"),
+                                                      "version": rule.get("version", ""), "assetCount": 0, "assets": []})
+                    f["assetCount"] += 1
+                    f["assets"].append({"assetId": a["assetId"], "name": a["name"]})
+            if "assets" not in q.get("projection", []):
+                for f in rows.values():
+                    del f["assets"]
+            return self.send(200, [rows[k] for k in sorted(rows)])
+        if len(parts) == 7 and parts[1:3] == ["api", "collections"] and parts[4:] == ["metrics", "summary", "collection"]:
+            if d.get("no_metrics"):
+                return self.send(404, {"error": "not here: " + u.path})
+            col = [c for c in d["collections"] if c["collectionId"] == parts[3]]
+            if not col or self.role(d, parts[3]) < 1:
+                return self.send(403, {"error": "User has insufficient privilege to complete this request."})
+            return self.send(200, {"collectionId": parts[3], "name": col[0]["name"], "assets": len(d["assets"].get(parts[3], [])),
+                                   "metrics": {"findings": {}}})
         if len(parts) == 5 and parts[1:3] == ["api", "collections"] and parts[4] == "stigs":
             benches = sorted(set(st["benchmarkId"] for a in d["assets"].get(parts[3], []) for st in a.get("stigs", [])))
             return self.send(200, [{"benchmarkId": b, "revisionStr": self.revision(d, parts[3], b)} for b in benches])

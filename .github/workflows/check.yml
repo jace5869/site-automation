@@ -93,6 +93,7 @@ jobs:
           python tests/test_trust.py
           python tests/test_stig.py
           python tests/test_stig_ckl_import.py
+          python tests/test_stig_scorecard.py
           python tests/test_sso.py
           python tests/test_net_perf.py
           python tests/test_vm_net_drops.py
@@ -278,6 +279,10 @@ jobs:
         run: |
           bash tests/stig/run_ckl_routes_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_ckl_routes_test.sh
+      - name: The STIG compliance scorecard in the checklist import's report (a stand-in STIG Manager and AAP; scorecard reads no folder, GET only)
+        run: |
+          bash tests/stig/run_scorecard_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_scorecard_test.sh
       - name: The sso check against fake sssd, realm, Kerberos and adcli tools (current ansible-core and 2.16)
         run: |
           bash tests/sso/run_sso_test.sh
@@ -466,6 +471,10 @@ jobs:
           docker pull -q mysql:8.4
           INSIGHTS_DB_TEST_RUNTIME=docker INSIGHTS_DB_TEST_IMAGE=mysql:8.4 bash tests/servicenow/run_insights_db_test.sh
           INSIGHTS_DB_TEST_RUNTIME=docker INSIGHTS_DB_TEST_IMAGE=mysql:8.4 ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/servicenow/run_insights_db_test.sh
+      - name: The STIG compliance scorecard's points in a real MySQL 8.4 (the table, the weeks read back, never a failed job; current ansible-core and 2.16)
+        run: |
+          SCORECARD_DB_TEST_RUNTIME=docker SCORECARD_DB_TEST_IMAGE=mysql:8.4 bash tests/stig/run_scorecard_db_test.sh
+          SCORECARD_DB_TEST_RUNTIME=docker SCORECARD_DB_TEST_IMAGE=mysql:8.4 ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_scorecard_db_test.sh
 
   windows-update-script:
     name: update-from-release.ps1 on Windows (PowerShell 5.1 and 7)

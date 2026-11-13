@@ -12,6 +12,11 @@
 # handed on (set_stats stigman_update_plan) and the job fails on purpose (NEEDS APPROVAL); after the approval,
 # playbooks/stigman_update.yml writes the reviews and creates the new assets. Credentials: STIG Manager API (read-only is
 # enough), Windows file share. docs/CKL_IMPORT.md; docs/WORKFLOWS_AND_SCHEDULES.md, 40.
+# 1.58.0, the survey choice stigman_ckl_import_mode: "import" (the default) is the above; "import and scorecard" puts the
+# STIG compliance scorecard first in the report (each collection's open findings, the week's change, the top rules -
+# GET requests only) and a folder with no checklist is then not an error; "scorecard" is the scorecard alone - no folder
+# read, nothing planned, nothing written. Last week's numbers: a "Red Hat Ansible Automation Platform" credential (AAP's
+# job history), and a "Report database" credential for a longer history.
 #
 #   ansible-playbook playbooks/stigman_ckl_import.yml -e stigman_ckl_import_src='\\fileserver\stig\ckl' -e stigman_ckl_import_collection='VMware'
 - name: STIG Manager - import checklists

@@ -40,7 +40,7 @@ you change ([SETUP_AAP.md](SETUP_AAP.md#step-9-the-other-job-templates)).
 | Windows STIG recheck | `playbooks/win_stig_recheck.yml` | Report | [STIG_DRIFT.md](STIG_DRIFT.md#the-stig-recheck) |
 | Evaluate-STIG - update | `playbooks/evaluate_stig_update.yml` | Change (Check first) | [EVALUATE_STIG_UPDATE.md](EVALUATE_STIG_UPDATE.md) |
 | STIG Manager - update | `playbooks/stigman_update.yml` | Change (STIG Manager's reviews), only as workflow 37's (and 40's) step after the approval | [STIG_DRIFT.md](STIG_DRIFT.md#updating-stig-manager-with-an-approval) |
-| STIG Manager - import checklists | `playbooks/stigman_ckl_import.yml` | Report (reads only); workflow 40's check; on a schedule as STIG Manager Watcher (`stigman_ckl_import_auto`: writes) | [CKL_IMPORT.md](CKL_IMPORT.md) |
+| STIG Manager - import checklists | `playbooks/stigman_ckl_import.yml` | Report (reads only); workflow 40's check; on a schedule as STIG Manager Watcher (`stigman_ckl_import_auto`: writes); the STIG compliance scorecard (survey `stigman_ckl_import_mode`) | [CKL_IMPORT.md](CKL_IMPORT.md) |
 | STIG Manager - health | `playbooks/stigman_health.yml` | Watch (daily, or after a change) | [STIGMAN_HEALTH.md](STIGMAN_HEALTH.md#set-it-up) |
 | STIG Manager - availability | `playbooks/stigman_availability.yml` | Watch (every 5 to 15 minutes) | [STIGMAN_HEALTH.md](STIGMAN_HEALTH.md#set-it-up), [AVAILABILITY.md](AVAILABILITY.md) |
 | STIG Manager - deploy | `playbooks/stigman_deploy.yml` | Setup or test | workflow 10: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#10-stig-manager-deploy-with-checks) |

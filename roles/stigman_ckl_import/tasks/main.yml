@@ -6,12 +6,15 @@
 # the workflow's approval, then playbooks/stigman_update.yml writes it. 0.76.0, a STIG Manager Watcher's job: with
 # stigman_ckl_import_auto the plan's reviews of assets that are there (existing) - or all of it (all) - written here at
 # once (stigman_update's write.yml), only the rest to the approval; with stigman_ckl_import_move the files done with
-# moved to stigman_ckl_import_move_to/<date>/.
+# moved to stigman_ckl_import_move_to/<date>/. 1.58.0, stigman_ckl_import_mode: "import and scorecard" puts the STIG
+# compliance scorecard (scorecard.yml - GET requests only) first in the report, and a folder with no checklist is then
+# not an error; "scorecard" reads no folder, plans nothing and writes nothing. "import" (the default) is as before.
 - name: Import checklists | where they are, the collection, STIG Manager
   ansible.builtin.assert:
     that:
-      - stigman_ckl_import_src | length > 0
-      - stigman_ckl_import_collection | length > 0
+      - stigman_ckl_import_mode | string | trim | lower in ['import', 'import and scorecard', 'scorecard']
+      - stigman_ckl_import_mode | string | trim | lower == 'scorecard' or stigman_ckl_import_src | length > 0
+      - stigman_ckl_import_mode | string | trim | lower == 'scorecard' or stigman_ckl_import_collection | length > 0
       - check_stig_stigman_api | default('') | length > 0
       - stigman_ckl_import_auto in ['none', 'existing', 'all']
       - stigman_ckl_import_collections is sequence and stigman_ckl_import_collections is not string
@@ -21,9 +24,17 @@
       collection) and check_stig_stigman_api (all.yml, as for the STIG drift report), and attach the "STIG Manager API"
       credential (read-only is enough, unless stigman_ckl_import_auto) and the "Windows file share" credential;
       stigman_ckl_import_auto is none, existing or all; stigman_ckl_import_collections a list ([] or ['*'] or names);
-      stigman_ckl_import_route_move staging or none.
+      stigman_ckl_import_route_move staging or none; stigman_ckl_import_mode import, "import and scorecard" or scorecard
+      (scorecard alone needs no folder and no collection).
       docs/CKL_IMPORT.md. Nothing read.
     quiet: true
+
+- name: Import checklists | what this run does (stigman_ckl_import_mode)
+  ansible.builtin.set_fact:
+    _ci_mode: "{{ stigman_ckl_import_mode | string | trim | lower }}"
+    # the scorecard alone never reads, moves or changes the drop folder, also with stigman_ckl_import_move
+    _ci_move: "{{ stigman_ckl_import_move | bool and stigman_ckl_import_mode | string | trim | lower != 'scorecard' }}"
+    _ci_empty: false
 
 # a mapping, a list of names or an empty item is not a list of rules: said in our words, before anything is read
 - name: Import checklists | stigman_ckl_import_routes is a list of rules
@@ -78,14 +89,37 @@
     day: "{{ now(utc=true).strftime('%Y-%m-%d') }}"
   register: _ci
   check_mode: false             # only reads
+  when: _ci_mode != 'scorecard'
+
+# the scorecard alone: the folder is not read, so nothing is planned and nothing can be written or moved
+- name: Import checklists | scorecard only - no folder read, nothing planned (stigman_ckl_import_mode)
+  ansible.builtin.set_fact:
+    _ci: {files: [], checklists: [], plan: [], left: [], collection: {}, collections: [], routes: [], held: [], account: '',
+          source: '', error: '', empty: false}
+  when: _ci_mode == 'scorecard'
+
+# with the scorecard, a drop folder that is there and holds no checklist is a quiet week, not an error (a folder that
+# is not there, or a share that refuses the account, stays one)
+- name: Import checklists | no checklists this run - not an error with the scorecard (stigman_ckl_import_mode)
+  ansible.builtin.set_fact:
+    _ci: "{{ _ci | combine({'error': ''}) }}"
+    _ci_empty: true
+  when: _ci_mode == 'import and scorecard' and _ci.empty | default(false) | bool
+
+- name: Import checklists | no checklists to import this run
+  ansible.builtin.debug:
+    msg: "No checklists to import this run ({{ stigman_ckl_import_src }})"
+  when: _ci_empty | bool
 
 - name: Import checklists | the files
   ansible.builtin.debug:
     msg: "{{ _ci | stig_ckl_file_lines }}"
+  when: _ci_mode != 'scorecard' and not _ci_empty | bool
 
 - name: Import checklists | each checklist
   ansible.builtin.debug:
     msg: "{{ _ci.checklists | stig_ckl_lines(_ci.collections | default([]) | length > 1) or 'no checklist read' }}"
+  when: _ci_mode != 'scorecard' and not _ci_empty | bool
 
 # the moves and assignments (1.26.0) are set aside for the attachments check, a moving asset's reviews read where it is now
 - name: Import checklists | the plan
@@ -120,6 +154,7 @@
       {{ (_ci_auto | stig_update_lines | map('regex_replace', '^', 'AT ONCE: ') | list)
          + (_ci_wait | stig_update_lines | map('regex_replace', '^', ('TO APPROVE: ' if _ci_auto else '')) | list)
          or 'nothing to write to STIG Manager' }}
+  when: _ci_mode != 'scorecard' and not _ci_empty | bool
 
 - name: Import checklists | write at once, no approval (stigman_ckl_import_auto)
   ansible.builtin.include_role:
@@ -133,7 +168,7 @@
   ansible.builtin.set_fact:
     _ci_settled: >-
       {{ _ci | stig_ckl_settled(_ci_wait, _ci_auto, _su, _stig_att_split | default({}), _stig_att.error | default('')) }}
-  when: stigman_ckl_import_move | bool
+  when: _ci_move | bool
 
 - name: Import checklists | move the files done with to {{ stigman_ckl_import_move_to }}/<date>/ (stigman_ckl_import_move)
   site_ckl_import:
@@ -149,23 +184,50 @@
     move_to: "{{ stigman_ckl_import_move_to }}"
     day: "{{ now(utc=true).strftime('%Y-%m-%d') }}"
   register: _ci_mv
-  when: stigman_ckl_import_move | bool and _ci_settled | selectattr('move') | list | length > 0
+  when: _ci_move | bool and _ci_settled | selectattr('move') | list | length > 0
 
 - name: Import checklists | the files moved, the files left
   ansible.builtin.debug:
     msg: "{{ _ci_mv.moved | default([]) | stig_ckl_move_lines(_ci_settled, _ci_mv.error | default('')) }}"
-  when: stigman_ckl_import_move | bool
+  when: _ci_move | bool
+
+- name: Import checklists | the STIG compliance scorecard (stigman_ckl_import_mode)
+  ansible.builtin.include_tasks: scorecard.yml
+  when: _ci_mode != 'import'
+
+# the scorecard's tiles and sections first, then the import's report as it is (the scorecard alone: without it)
+- name: Import checklists | the report - the scorecard first, then the import's
+  ansible.builtin.set_fact:
+    _sc_join: "{{ _sc | stig_scorecard_join(_ci_rep, _ci_mode, stigman_ckl_import_src, _ci_empty | bool) }}"
+  vars:
+    _ci_rep: >-
+      {{ _ci | stig_ckl_report(_ci_wait, site_report_sections, stigman_ckl_import_workflow | bool, stigman_ckl_import_list_max | int,
+                               stigman_ckl_import_auto, _ci_auto, _su, ansible_check_mode,
+                               (_ci_mv.moved | default([]) + ([{'name': '-', 'state': 'error', 'why': _ci_mv.error}] if _ci_mv.error | default('') else []))
+                               if _ci_move | bool else none,
+                               _ci_settled | default([]) if _ci_move | bool else none, stigman_ckl_import_move_to) }}
+  when: _ci_mode != 'import'
+
+- name: Import checklists | the report (with the scorecard - the web page with its trend lines, the workbook always)
+  ansible.builtin.include_role:
+    name: site_email
+  vars:
+    _report: "{{ _sc_join.report }}"
+    _report_web: "{{ _sc_join.web }}"
+    _report_xlsx: "{{ _sc_join.xlsx }}"
+  when: _ci_mode != 'import'
 
 - name: Import checklists | the report
   ansible.builtin.include_role:
     name: site_email
+  when: _ci_mode == 'import'
   vars:
     _report: >-
       {{ _ci | stig_ckl_report(_ci_wait, site_report_sections, stigman_ckl_import_workflow | bool, stigman_ckl_import_list_max | int,
                                stigman_ckl_import_auto, _ci_auto, _su, ansible_check_mode,
                                (_ci_mv.moved | default([]) + ([{'name': '-', 'state': 'error', 'why': _ci_mv.error}] if _ci_mv.error | default('') else []))
-                               if stigman_ckl_import_move | bool else none,
-                               _ci_settled | default([]) if stigman_ckl_import_move | bool else none, stigman_ckl_import_move_to) }}
+                               if _ci_move | bool else none,
+                               _ci_settled | default([]) if _ci_move | bool else none, stigman_ckl_import_move_to) }}
 
 - name: Import checklists | hand the plan to the approval step and the job after it (set_stats stigman_update_plan)
   ansible.builtin.set_stats:
@@ -204,3 +266,10 @@
   vars:
     _new: "{{ _ci_wait | selectattr('kind', 'eq', 'create') | list }}"
     _reviews: "{{ _ci_wait | rejectattr('kind', 'eq', 'create') | list }}"
+
+# the scorecard could not be read: said last, so an approval that waits is asked for first. Not on workflow 40's check -
+# a failed check asks for an approval, and there is nothing to approve: the report says it (Action required).
+- name: Import checklists | the scorecard was not read
+  ansible.builtin.fail:
+    msg: "The STIG compliance scorecard was not read: {{ _sc.error }}"
+  when: _ci_mode != 'import' and not _sc.ok and not stigman_ckl_import_workflow | bool

@@ -1,5 +1,74 @@
 # Changelog
 
+## 1.58.0 — 2026-11-13
+
+**Updating without scripts:** paste `site-automation-1.58.0-changed-since-1.47.0.zip` as it is (from an older version,
+its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`. Nothing must be set up: without the new survey question every run is as before.
+
+**A STIG compliance scorecard in the checklist import's report.** One page for the weekly meeting: where the open
+findings are, and whether the week made them fewer. It is a part of the report of *STIG Manager - import checklists*,
+not a job of its own. It reads STIG Manager with GET requests only.
+
+**A new launch choice, `stigman_ckl_import_mode`** (the survey question `What should this run do?`, on the job
+template and on workflow 40):
+
+| Choice | The share's folder | The report | Written to STIG Manager |
+|---|---|---|---|
+| `import` (default) | read | the import's, as before | as before |
+| `import and scorecard` | read | the scorecard first, then the import's | the same as `import` |
+| `scorecard` | not read | the scorecard alone | nothing |
+
+- **A run with nothing to import.** With `import and scorecard` a folder with no checklist is not an error. The report
+  says `No checklists to import this run (<the folder>)` and the job ends ok. A folder that is not there, or a share
+  that refuses the account, still fails. With `import` an empty folder fails as before.
+- **`stigman_ckl_import_move`** works as before with `import` and `import and scorecard`. `scorecard` never reads,
+  moves or changes the folder, also with `stigman_ckl_import_move: true`.
+- **`scorecard` in workflow 40:** the check ends ok with nothing to approve. The approval and the write do not run.
+- **What the page shows:** the title (`STIG compliance: 4 CAT I open; 4 findings closed this week`), the tiles, three
+  *Start here* cards, *By collection* (open by category, the change this week, a trend line, a status), *Top 5 rules
+  open across hosts*, *Fixed on the host, still Open in STIG Manager*, and the numbers behind the lines as a table.
+- **Nothing that was there is removed.** The import's own tiles and sections follow the scorecard, unchanged.
+- **The email** is the short form: the tiles, the collections, the top rules, the link. The workbook is always
+  attached, with six sheets.
+- **Last week's numbers** come from the points earlier runs kept. They are read from AAP's job history (a *Red Hat
+  Ansible Automation Platform* credential on the template) and from the report database (a *Report database*
+  credential; the new table `stig_scorecard_point`, made on the first run). With neither, the page shows what is
+  open now and the week's tiles show `-`.
+- **Fixed on the host, still open:** the last scans of *STIG drift report* and *Windows STIG drift report* now hand
+  on which rules they found fixed (`stig_fixed_open` in the job's artifacts). The scorecard lists those STIG Manager
+  still has Open. The part is marked **Low**.
+- **The report database never fails the job.** Down, a wrong password or a read-only account: one warning in the
+  report, the job green.
+- **To turn it on:** the numbered steps are in
+  [docs/CKL_IMPORT.md](docs/CKL_IMPORT.md#the-stig-compliance-scorecard-1580). Without a survey, set
+  `stigman_ckl_import_mode: scorecard` in the template's Variables.
+
+New settings, all with defaults (`roles/stigman_ckl_import/defaults/main.yml`):
+
+| Setting | Default | What it does |
+|---|---|---|
+| `stigman_ckl_import_mode` | `import` | what a run does: `import`, `import and scorecard` or `scorecard` |
+| `stigman_scorecard_collections` | `[]` | only these collections, by name or id (`[]` = all the client reads) |
+| `stigman_scorecard_top` | `5` | this many rules in *Top rules open across hosts* |
+| `stigman_scorecard_weeks` | `8` | this many weeks in the trend line and its table |
+| `stigman_scorecard_cat2_warn` | `0` | a warning from this many CAT II open in a collection (`0` = off) |
+| `stigman_scorecard_db` | `true` | `false` = the report database is not used, even with its credential |
+| `stigman_scorecard_db_create` | `true` | make the table on the first run |
+| `stigman_scorecard_db_keep_days` | `800` | rows older than this are deleted (`0` = never) |
+| `stigman_scorecard_drift_templates` | the two drift reports | whose last scans are read for the fixed part |
+| `stigman_scorecard_drift_days` | `14` | a scan older than this many days is not used |
+
+- The report tables have a new column kind, `spark`: a small trend line on the website, left out of the email.
+- Docs: CKL_IMPORT.md (the chapter above), REPORT_DATABASE.md (the table), STIG_DRIFT.md, SETUP_AAP.md,
+  WORKFLOWS_AND_SCHEDULES.md, JOB_TEMPLATES.md, VARIABLES_REFERENCE.md.
+- Tests: `tests/test_stig_scorecard.py` (the count, the week's change, the history from AAP and the database with no
+  point counted twice, the report). `tests/stig/run_scorecard_test.sh` runs the playbook in the three modes against a
+  stand-in STIG Manager and a stand-in AAP: `scorecard` reads no folder and sends only GET requests, an empty folder
+  ends ok, workflow 40's check has nothing to approve. `tests/stig/run_scorecard_db_test.sh` keeps the points in a
+  real MySQL 8.4. Both on ansible-core 2.16 and the current one.
+- Not proven on a real site: the shape of a real STIG Manager's findings, and a real AAP's job history.
+
 ## 1.50.0 — 2026-11-13
 
 **Updating without scripts:** paste `site-automation-1.50.0-changed-since-1.47.0.zip` as it is (from an older version,

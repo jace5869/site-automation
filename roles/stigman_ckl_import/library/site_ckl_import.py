@@ -143,6 +143,10 @@ error:
   description: Why nothing could be planned (the share, the token, the collection), in plain words ('' = read).
   type: str
   returned: always
+empty:
+  description: The folder was read and holds no checklist - error says so (1.58.0; a folder that is not there is not "empty").
+  type: bool
+  returned: always
 '''
 
 import datetime
@@ -175,6 +179,10 @@ STOP = set("stig stigs security technical implementation guide profile inspec co
 
 class Fail(Exception):
     pass
+
+
+class Empty(Fail):
+    """The folder is there and holds no checklist (1.58.0: not an error with stigman_ckl_import_mode "import and scorecard")."""
 
 
 # ---- the files -------------------------------------------------------------------------------------------------------
@@ -313,7 +321,7 @@ def read_files(p):
     share = smb_path(p["src"])
     listed = from_share(p, *share) if share else from_folder(p)
     if not listed:
-        raise Fail("no checklist (%s) in %s" % (", ".join(p["patterns"]), p["src"]))
+        raise Empty("no checklist (%s) in %s" % (", ".join(p["patterns"]), p["src"]))
     if len(listed) > p["max_files"]:
         raise Fail("%d files in %s - over stigman_ckl_import_max_files (%d)" % (len(listed), p["src"], p["max_files"]))
     out = []
@@ -1347,7 +1355,7 @@ def main():
         module.exit_json(changed=any(m["state"] == "moved" for m in moved), moved=moved, error="")
     out = {"changed": False, "files": [], "checklists": [], "plan": [], "left": [], "collection": {}, "collections": [], "routes": [],
            "held": [], "account": account,
-           "source": p["src"], "error": ""}
+           "source": p["src"], "error": "", "empty": False}
     try:
         if not p["collection"].strip():
             raise Fail("no collection (stigman_ckl_import_collection)")
@@ -1367,6 +1375,7 @@ def main():
             raise Fail("STIG Manager could not be read: %s" % e)
     except Fail as e:
         out["error"] = str(e)
+        out["empty"] = isinstance(e, Empty)
     for f in out["files"]:
         f.pop("data", None)
     module.exit_json(**out)

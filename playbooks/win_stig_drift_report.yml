@@ -65,6 +65,18 @@
              | map(attribute='check_stig_results') | flatten(levels=1) | stig_report_sections(check_stig_list_max | default(200) | int) }}
       run_once: true
 
+    # 1.58.0: kept with the job, for the STIG compliance scorecard (playbooks/stigman_ckl_import.yml) - "Fixed on the host,
+    # still Open in STIG Manager". Nothing is written anywhere else.
+    - name: The rules that pass here and are still Open in STIG Manager, for the scorecard (set_stats stig_fixed_open)
+      ansible.builtin.set_stats:
+        data:
+          stig_fixed_open: >-
+            {{ ansible_play_hosts | map('extract', hostvars) | selectattr('check_stig_results', 'defined')
+               | map(attribute='check_stig_results') | flatten(levels=1) | list | stig_fixed_open(now(utc=true).strftime('%Y-%m-%dT%H:%M:%SZ')) }}
+        per_host: false
+        aggregate: false
+      run_once: true
+
   post_tasks:
     - name: Report (fails the hosts with drift or new fails)
       ansible.builtin.include_role:

@@ -1,0 +1,1568 @@
+{
+"counts": {
+"assets": 13,
+"cat1": 4,
+"cat2": 15,
+"cat3": 3,
+"closed": 4,
+"collections": 3,
+"compared": true,
+"fixed": 0,
+"not_read": 0,
+"opened": 2,
+"rules": 10,
+"weekly_points": 8
+},
+"error": "",
+"lines": [
+"STIG compliance: 4 CAT I open; 4 findings closed this week",
+"CAT I open: 4",
+"CAT II open: 15",
+"CAT III open: 3",
+"Closed this week: 4 (since 6 Nov)",
+"Opened this week: 2 (since 6 Nov)",
+"Fixed on host, still open: - (Low)",
+"SITEA - RHEL 9: CAT I 1, CAT II 8, CAT III 2, \u25bc Better: 4 closed, 1 opened",
+"SITEA - VMware: CAT I 0, CAT II 3, CAT III 0, \u25ac Same: 0 closed, none opened",
+"SITEA - Windows Server: CAT I 3, CAT II 4, CAT III 1, \u25b2 Worse: 0 closed, 1 opened"
+],
+"notes": {
+"collapsed": true,
+"lines": [
+"A finding is a rule Open on an asset, as STIG Manager has it now. Nothing is written to STIG Manager.",
+"Since last week: this run against the run of 6 to 8 days ago, rule by rule. Closed is the hosts a rule is open on fewer, opened the hosts it is open on more.",
+"A rule closed on one host and opened on another in the same week counts as neither.",
+"A collection that was not in last week's run is \"New here\" and is not in the week's totals.",
+"Fixed on the host, still Open: the STIG drift reports' last scans against this run's Open findings.",
+"Compared with the run of 2026-11-06 06:02 UTC."
+],
+"title": "How the scorecard counts"
+},
+"ok": true,
+"sections": [
+{
+"cards": [
+{
+"chip": "CAT I first",
+"meta": "2 collections",
+"next": "Start with SV-254247 (WN22-00-000110): Windows Server 2022 must be maintained at a supported servicing level. Open on 2 hosts.",
+"status": "critical",
+"subject": "3 on SITEA - Windows Server, 1 on SITEA - RHEL 9",
+"title": "4 CAT I on 2 collections"
+},
+{
+"chip": "This week",
+"meta": "since 6 Nov",
+"status": "ok",
+"subject": "SITEA - RHEL 9 improved most (4 closed, 1 opened). SITEA - Windows Server got worse most (1 opened, 0 closed).",
+"title": "4 closed, 2 opened"
+},
+{
+"chip": "Paperwork, not hosts",
+"meta": "Low",
+"status": "info",
+"subject": "It fills once a STIG drift report has run.",
+"title": "No scan results to compare with"
+}
+],
+"status": "critical",
+"title": "Start here"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"critical",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"critical",
+"",
+"",
+"",
+"",
+""
+]
+],
+"column_titles": [
+"",
+"The assets in the collection",
+"Rule and asset pairs of severity high",
+"Severity medium",
+"Severity low",
+"This run against the run of 6 to 8 days ago, rule by rule",
+"Open findings (CAT I, II and III), one point a week",
+""
+],
+"columns": [
+"Collection",
+"Assets",
+"CAT I open",
+"CAT II open",
+"CAT III open",
+"Since last week",
+"Open, 8 weeks",
+"Status"
+],
+"keep_case": true,
+"kinds": [
+"wrap",
+"num",
+"num",
+"num",
+"num",
+"wrap",
+"",
+""
+],
+"row_status": [
+"critical",
+"",
+"critical"
+],
+"rows": [
+[
+"SITEA - RHEL 9",
+6,
+1,
+8,
+2,
+"\u25bc Better\n4 closed, 1 opened",
+"20 \u2192 11",
+"CAT I open"
+],
+[
+"SITEA - VMware",
+3,
+0,
+3,
+0,
+"\u25ac Same\n0 closed, none opened",
+"3 \u2192 3",
+"OK"
+],
+[
+"SITEA - Windows Server",
+4,
+3,
+4,
+1,
+"\u25b2 Worse\n0 closed, 1 opened",
+"7 \u2192 8",
+"CAT I open"
+]
+],
+"status": "critical",
+"tips": [
+[
+"",
+"",
+"",
+"",
+"",
+"SITEA - RHEL 9 since 6 Nov\nClosed 4:\n  SV-257985 on 3 hosts\n  SV-258036 on 1 host\nOpened 1:\n  SV-257842 on 1 host",
+"",
+"CAT I open: at least one CAT I finding is open in this collection. It stays red until fixed."
+],
+[
+"",
+"",
+"",
+"",
+"",
+"SITEA - VMware since 6 Nov\nClosed: none\nOpened: none",
+"",
+"OK: no CAT I open, and no worse than last week."
+],
+[
+"",
+"",
+"",
+"",
+"",
+"SITEA - Windows Server since 6 Nov\nClosed: none\nOpened 1:\n  SV-254247 on 1 host",
+"",
+"CAT I open: at least one CAT I finding is open in this collection. It stays red until fixed."
+]
+],
+"title": "By collection (3)",
+"wrap": true
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"critical",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"critical",
+"",
+"",
+""
+],
+[
+"",
+"critical",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Rule",
+"Category",
+"What it checks",
+"Hosts open",
+"Where"
+],
+"kinds": [
+"wrap",
+"",
+"wrap",
+"num",
+"wrap"
+],
+"row_status": [
+"",
+"",
+"",
+"critical",
+"",
+"",
+"critical",
+"critical",
+"",
+""
+],
+"rows": [
+[
+"SV-258036 (RHEL-09-291010)",
+"CAT II",
+"RHEL 9 must have the USBGuard package installed.",
+5,
+"SITEA - RHEL 9 (5)"
+],
+[
+"SV-254269 (WN22-00-000330)",
+"CAT II",
+"Windows Server 2022 must have a host-based firewall.",
+4,
+"SITEA - Windows Server (4)"
+],
+[
+"SV-257985 (RHEL-09-255045)",
+"CAT II",
+"RHEL 9 must not allow a root login over SSH.",
+3,
+"SITEA - RHEL 9 (3)"
+],
+[
+"SV-254247 (WN22-00-000110)",
+"CAT I",
+"Windows Server 2022 must be maintained at a supported servicing level.",
+2,
+"SITEA - Windows Server (2)"
+],
+[
+"SV-256375 (ESXI-70-000001)",
+"CAT II",
+"Access to the ESXi host must be limited by lockdown mode.",
+2,
+"SITEA - VMware (2)"
+],
+[
+"SV-257842 (RHEL-09-215075)",
+"CAT III",
+"RHEL 9 must not have the tuned package installed.",
+2,
+"SITEA - RHEL 9 (2)"
+],
+[
+"SV-254239 (WN22-00-000030)",
+"CAT I",
+"Windows Server 2022 passwords for the built-in account must change.",
+1,
+"SITEA - Windows Server (1)"
+],
+[
+"SV-257777 (RHEL-09-211010)",
+"CAT I",
+"RHEL 9 must be a vendor-supported release.",
+1,
+"SITEA - RHEL 9 (1)"
+],
+[
+"SV-256379 (ESXI-70-000005)",
+"CAT II",
+"The ESXi host must enforce an unlock timeout of 15 minutes.",
+1,
+"SITEA - VMware (1)"
+],
+[
+"SV-254285 (WN22-AC-000010)",
+"CAT III",
+"Windows Server 2022 account lockout duration must be 15 minutes.",
+1,
+"SITEA - Windows Server (1)"
+]
+],
+"status": "critical",
+"text": "The rules open on the most hosts, in every collection read. Fixing one of these closes the most findings.",
+"tips": [
+[
+"",
+"",
+"",
+"SV-258036 is open on 5 hosts\nrhel01, rhel03, rhel04, rhel05, rhel06\nThe workbook lists every host.",
+""
+],
+[
+"",
+"",
+"",
+"SV-254269 is open on 4 hosts\nwin01, win03, win04, win05\nThe workbook lists every host.",
+""
+],
+[
+"",
+"",
+"",
+"SV-257985 is open on 3 hosts\nrhel01, rhel03, rhel05\nThe workbook lists every host.",
+""
+],
+[
+"",
+"CAT I: the most severe category. Fix these first.",
+"",
+"SV-254247 is open on 2 hosts\nwin03, win04\nThe workbook lists every host.",
+""
+],
+[
+"",
+"",
+"",
+"SV-256375 is open on 2 hosts\nesx01, esx02\nThe workbook lists every host.",
+""
+],
+[
+"",
+"",
+"",
+"SV-257842 is open on 2 hosts\nrhel03, rhel07\nThe workbook lists every host.",
+""
+],
+[
+"",
+"CAT I: the most severe category. Fix these first.",
+"",
+"SV-254239 is open on 1 host\nwin03\nThe workbook lists every host.",
+""
+],
+[
+"",
+"CAT I: the most severe category. Fix these first.",
+"",
+"SV-257777 is open on 1 host\nrhel04\nThe workbook lists every host.",
+""
+],
+[
+"",
+"",
+"",
+"SV-256379 is open on 1 host\nesx01\nThe workbook lists every host.",
+""
+],
+[
+"",
+"",
+"",
+"SV-254285 is open on 1 host\nwin01\nThe workbook lists every host.",
+""
+]
+],
+"title": "The rules open across hosts (10)",
+"wrap": true
+},
+{
+"lines": [
+"No scan results to compare with: no STIG drift report job of the last days kept its results (stigman_scorecard_drift_templates, stigman_scorecard_drift_days).",
+"This part fills once a STIG drift report (workflow 37's check) has run on 1.58.0 or later."
+],
+"status": "info",
+"title": "Fixed on the host, still Open in STIG Manager (0)"
+},
+{
+"columns": [
+"Collection",
+"25 Sep",
+"2 Oct",
+"9 Oct",
+"16 Oct",
+"23 Oct",
+"30 Oct",
+"6 Nov",
+"13 Nov"
+],
+"kinds": [
+"wrap",
+"num",
+"num",
+"num",
+"num",
+"num",
+"num",
+"num",
+"num"
+],
+"rows": [
+[
+"SITEA - RHEL 9",
+20,
+19,
+18,
+17,
+16,
+15,
+14,
+11
+],
+[
+"SITEA - VMware",
+"-",
+"-",
+"-",
+"-",
+3,
+3,
+3,
+3
+],
+[
+"SITEA - Windows Server",
+7,
+7,
+7,
+7,
+7,
+7,
+7,
+8
+]
+],
+"text": "One point a week: the last run of each week, the weeks ending on this run's weekday. A dash: no run that week.",
+"title": "The numbers behind the lines (open findings per week)",
+"wrap": true
+}
+],
+"status": "critical",
+"subtitle": "Read 2026-11-13 06:00 UTC; 3 collections, 13 assets; compared with 6 Nov",
+"tiles": [
+{
+"label": "CAT I open",
+"status": "critical",
+"tip": "CAT I: the most severe category. 3 on SITEA - Windows Server, 1 on SITEA - RHEL 9.",
+"value": 4
+},
+{
+"label": "CAT II open",
+"status": "warning",
+"tip": "CAT II: medium severity. 15 open across 3 collections.",
+"value": 15
+},
+{
+"label": "CAT III open",
+"tip": "CAT III: low severity. 3 open across 3 collections.",
+"value": 3
+},
+{
+"label": "Closed this week",
+"note": "since 6 Nov",
+"status": "ok",
+"tip": "Hosts a rule was Open on on 6 Nov and is not now.",
+"value": 4
+},
+{
+"label": "Opened this week",
+"note": "since 6 Nov",
+"tip": "Hosts a rule was not Open on on 6 Nov and is now.",
+"value": 2
+},
+{
+"label": "Fixed on host, still open",
+"note": "Low",
+"status": "info",
+"tip": "Low: fixed on the host, still Open in STIG Manager. Nothing to do on the host; the next checklist import closes it.",
+"value": "-"
+}
+],
+"title": "STIG compliance: 4 CAT I open; 4 findings closed this week",
+"web": [
+{
+"cards": [
+{
+"chip": "CAT I first",
+"meta": "2 collections",
+"next": "Start with SV-254247 (WN22-00-000110): Windows Server 2022 must be maintained at a supported servicing level. Open on 2 hosts.",
+"status": "critical",
+"subject": "3 on SITEA - Windows Server, 1 on SITEA - RHEL 9",
+"title": "4 CAT I on 2 collections"
+},
+{
+"chip": "This week",
+"meta": "since 6 Nov",
+"status": "ok",
+"subject": "SITEA - RHEL 9 improved most (4 closed, 1 opened). SITEA - Windows Server got worse most (1 opened, 0 closed).",
+"title": "4 closed, 2 opened"
+},
+{
+"chip": "Paperwork, not hosts",
+"meta": "Low",
+"status": "info",
+"subject": "It fills once a STIG drift report has run.",
+"title": "No scan results to compare with"
+}
+],
+"status": "critical",
+"title": "Start here"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"critical",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"critical",
+"",
+"",
+"",
+"",
+""
+]
+],
+"column_titles": [
+"",
+"The assets in the collection",
+"Rule and asset pairs of severity high",
+"Severity medium",
+"Severity low",
+"This run against the run of 6 to 8 days ago, rule by rule",
+"Open findings (CAT I, II and III), one point a week",
+""
+],
+"columns": [
+"Collection",
+"Assets",
+"CAT I open",
+"CAT II open",
+"CAT III open",
+"Since last week",
+"Open, 8 weeks",
+"Status"
+],
+"keep_case": true,
+"kinds": [
+"wrap",
+"num",
+"num",
+"num",
+"num",
+"wrap",
+"spark",
+""
+],
+"row_status": [
+"critical",
+"",
+"critical"
+],
+"rows": [
+[
+"SITEA - RHEL 9",
+6,
+1,
+8,
+2,
+"\u25bc Better\n4 closed, 1 opened",
+"SITEA - RHEL 9, open findings: 20 in the week to 25 Sep, 11 now; by week: 20, 19, 18, 17, 16, 15, 14, 11",
+"CAT I open"
+],
+[
+"SITEA - VMware",
+3,
+0,
+3,
+0,
+"\u25ac Same\n0 closed, none opened",
+"SITEA - VMware, open findings: 3 in the week to 23 Oct, 3 now; by week: 3, 3, 3, 3",
+"OK"
+],
+[
+"SITEA - Windows Server",
+4,
+3,
+4,
+1,
+"\u25b2 Worse\n0 closed, 1 opened",
+"SITEA - Windows Server, open findings: 7 in the week to 25 Sep, 8 now; by week: 7, 7, 7, 7, 7, 7, 7, 8",
+"CAT I open"
+]
+],
+"sparks": [
+{
+"data_points": [
+{
+"label": "Week to 25 Sep",
+"text": "20 open: CAT I 1, CAT II 18, CAT III 1",
+"x": 4.0,
+"y": 4.0
+},
+{
+"label": "Week to 2 Oct",
+"text": "19 open: CAT I 1, CAT II 17, CAT III 1; -1 since the point before",
+"x": 18.6,
+"y": 6.4
+},
+{
+"label": "Week to 9 Oct",
+"text": "18 open: CAT I 1, CAT II 16, CAT III 1; -1 since the point before",
+"x": 33.1,
+"y": 8.9
+},
+{
+"label": "Week to 16 Oct",
+"text": "17 open: CAT I 1, CAT II 15, CAT III 1; -1 since the point before",
+"x": 47.7,
+"y": 11.3
+},
+{
+"label": "Week to 23 Oct",
+"text": "16 open: CAT I 1, CAT II 14, CAT III 1; -1 since the point before",
+"x": 62.3,
+"y": 13.8
+},
+{
+"label": "Week to 30 Oct",
+"text": "15 open: CAT I 1, CAT II 13, CAT III 1; -1 since the point before",
+"x": 76.9,
+"y": 16.2
+},
+{
+"label": "Week to 6 Nov",
+"text": "14 open: CAT I 1, CAT II 12, CAT III 1; -1 since the point before",
+"x": 91.4,
+"y": 18.7
+},
+{
+"label": "Week to 13 Nov",
+"text": "11 open: CAT I 1, CAT II 8, CAT III 2; -3 since the point before",
+"x": 106.0,
+"y": 26.0
+}
+],
+"h": 30,
+"label": "SITEA - RHEL 9, open findings: 20 in the week to 25 Sep, 11 now; by week: 20, 19, 18, 17, 16, 15, 14, 11",
+"last": [
+106.0,
+26.0
+],
+"lines": [],
+"mark": null,
+"points": "4.0,4.0 18.6,6.4 33.1,8.9 47.7,11.3 62.3,13.8 76.9,16.2 91.4,18.7 106.0,26.0",
+"w": 110
+},
+{
+"data_points": [
+{
+"label": "Week to 23 Oct",
+"text": "3 open: CAT I 0, CAT II 3, CAT III 0",
+"x": 62.3,
+"y": 15.0
+},
+{
+"label": "Week to 30 Oct",
+"text": "3 open: CAT I 0, CAT II 3, CAT III 0; no change since the point before",
+"x": 76.9,
+"y": 15.0
+},
+{
+"label": "Week to 6 Nov",
+"text": "3 open: CAT I 0, CAT II 3, CAT III 0; no change since the point before",
+"x": 91.4,
+"y": 15.0
+},
+{
+"label": "Week to 13 Nov",
+"text": "3 open: CAT I 0, CAT II 3, CAT III 0; no change since the point before",
+"x": 106.0,
+"y": 15.0
+}
+],
+"h": 30,
+"label": "SITEA - VMware, open findings: 3 in the week to 23 Oct, 3 now; by week: 3, 3, 3, 3",
+"last": [
+106.0,
+15.0
+],
+"lines": [],
+"mark": null,
+"points": "62.3,15.0 76.9,15.0 91.4,15.0 106.0,15.0",
+"w": 110
+},
+{
+"data_points": [
+{
+"label": "Week to 25 Sep",
+"text": "7 open: CAT I 2, CAT II 4, CAT III 1",
+"x": 4.0,
+"y": 26.0
+},
+{
+"label": "Week to 2 Oct",
+"text": "7 open: CAT I 2, CAT II 4, CAT III 1; no change since the point before",
+"x": 18.6,
+"y": 26.0
+},
+{
+"label": "Week to 9 Oct",
+"text": "7 open: CAT I 2, CAT II 4, CAT III 1; no change since the point before",
+"x": 33.1,
+"y": 26.0
+},
+{
+"label": "Week to 16 Oct",
+"text": "7 open: CAT I 2, CAT II 4, CAT III 1; no change since the point before",
+"x": 47.7,
+"y": 26.0
+},
+{
+"label": "Week to 23 Oct",
+"text": "7 open: CAT I 2, CAT II 4, CAT III 1; no change since the point before",
+"x": 62.3,
+"y": 26.0
+},
+{
+"label": "Week to 30 Oct",
+"text": "7 open: CAT I 2, CAT II 4, CAT III 1; no change since the point before",
+"x": 76.9,
+"y": 26.0
+},
+{
+"label": "Week to 6 Nov",
+"text": "7 open: CAT I 2, CAT II 4, CAT III 1; no change since the point before",
+"x": 91.4,
+"y": 26.0
+},
+{
+"label": "Week to 13 Nov",
+"text": "8 open: CAT I 3, CAT II 4, CAT III 1; +1 since the point before",
+"x": 106.0,
+"y": 4.0
+}
+],
+"h": 30,
+"label": "SITEA - Windows Server, open findings: 7 in the week to 25 Sep, 8 now; by week: 7, 7, 7, 7, 7, 7, 7, 8",
+"last": [
+106.0,
+4.0
+],
+"lines": [],
+"mark": null,
+"points": "4.0,26.0 18.6,26.0 33.1,26.0 47.7,26.0 62.3,26.0 76.9,26.0 91.4,26.0 106.0,4.0",
+"w": 110
+}
+],
+"status": "critical",
+"tips": [
+[
+"",
+"",
+"",
+"",
+"",
+"SITEA - RHEL 9 since 6 Nov\nClosed 4:\n  SV-257985 on 3 hosts\n  SV-258036 on 1 host\nOpened 1:\n  SV-257842 on 1 host",
+"",
+"CAT I open: at least one CAT I finding is open in this collection. It stays red until fixed."
+],
+[
+"",
+"",
+"",
+"",
+"",
+"SITEA - VMware since 6 Nov\nClosed: none\nOpened: none",
+"",
+"OK: no CAT I open, and no worse than last week."
+],
+[
+"",
+"",
+"",
+"",
+"",
+"SITEA - Windows Server since 6 Nov\nClosed: none\nOpened 1:\n  SV-254247 on 1 host",
+"",
+"CAT I open: at least one CAT I finding is open in this collection. It stays red until fixed."
+]
+],
+"title": "By collection (3)",
+"wrap": true
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"critical",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"critical",
+"",
+"",
+""
+],
+[
+"",
+"critical",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Rule",
+"Category",
+"What it checks",
+"Hosts open",
+"Where"
+],
+"kinds": [
+"wrap",
+"",
+"wrap",
+"num",
+"wrap"
+],
+"row_status": [
+"",
+"",
+"",
+"critical",
+"",
+"",
+"critical",
+"critical",
+"",
+""
+],
+"rows": [
+[
+"SV-258036 (RHEL-09-291010)",
+"CAT II",
+"RHEL 9 must have the USBGuard package installed.",
+5,
+"SITEA - RHEL 9 (5)"
+],
+[
+"SV-254269 (WN22-00-000330)",
+"CAT II",
+"Windows Server 2022 must have a host-based firewall.",
+4,
+"SITEA - Windows Server (4)"
+],
+[
+"SV-257985 (RHEL-09-255045)",
+"CAT II",
+"RHEL 9 must not allow a root login over SSH.",
+3,
+"SITEA - RHEL 9 (3)"
+],
+[
+"SV-254247 (WN22-00-000110)",
+"CAT I",
+"Windows Server 2022 must be maintained at a supported servicing level.",
+2,
+"SITEA - Windows Server (2)"
+],
+[
+"SV-256375 (ESXI-70-000001)",
+"CAT II",
+"Access to the ESXi host must be limited by lockdown mode.",
+2,
+"SITEA - VMware (2)"
+],
+[
+"SV-257842 (RHEL-09-215075)",
+"CAT III",
+"RHEL 9 must not have the tuned package installed.",
+2,
+"SITEA - RHEL 9 (2)"
+],
+[
+"SV-254239 (WN22-00-000030)",
+"CAT I",
+"Windows Server 2022 passwords for the built-in account must change.",
+1,
+"SITEA - Windows Server (1)"
+],
+[
+"SV-257777 (RHEL-09-211010)",
+"CAT I",
+"RHEL 9 must be a vendor-supported release.",
+1,
+"SITEA - RHEL 9 (1)"
+],
+[
+"SV-256379 (ESXI-70-000005)",
+"CAT II",
+"The ESXi host must enforce an unlock timeout of 15 minutes.",
+1,
+"SITEA - VMware (1)"
+],
+[
+"SV-254285 (WN22-AC-000010)",
+"CAT III",
+"Windows Server 2022 account lockout duration must be 15 minutes.",
+1,
+"SITEA - Windows Server (1)"
+]
+],
+"status": "critical",
+"text": "The rules open on the most hosts, in every collection read. Fixing one of these closes the most findings.",
+"tips": [
+[
+"",
+"",
+"",
+"SV-258036 is open on 5 hosts\nrhel01, rhel03, rhel04, rhel05, rhel06\nThe workbook lists every host.",
+""
+],
+[
+"",
+"",
+"",
+"SV-254269 is open on 4 hosts\nwin01, win03, win04, win05\nThe workbook lists every host.",
+""
+],
+[
+"",
+"",
+"",
+"SV-257985 is open on 3 hosts\nrhel01, rhel03, rhel05\nThe workbook lists every host.",
+""
+],
+[
+"",
+"CAT I: the most severe category. Fix these first.",
+"",
+"SV-254247 is open on 2 hosts\nwin03, win04\nThe workbook lists every host.",
+""
+],
+[
+"",
+"",
+"",
+"SV-256375 is open on 2 hosts\nesx01, esx02\nThe workbook lists every host.",
+""
+],
+[
+"",
+"",
+"",
+"SV-257842 is open on 2 hosts\nrhel03, rhel07\nThe workbook lists every host.",
+""
+],
+[
+"",
+"CAT I: the most severe category. Fix these first.",
+"",
+"SV-254239 is open on 1 host\nwin03\nThe workbook lists every host.",
+""
+],
+[
+"",
+"CAT I: the most severe category. Fix these first.",
+"",
+"SV-257777 is open on 1 host\nrhel04\nThe workbook lists every host.",
+""
+],
+[
+"",
+"",
+"",
+"SV-256379 is open on 1 host\nesx01\nThe workbook lists every host.",
+""
+],
+[
+"",
+"",
+"",
+"SV-254285 is open on 1 host\nwin01\nThe workbook lists every host.",
+""
+]
+],
+"title": "The rules open across hosts (10)",
+"wrap": true
+},
+{
+"lines": [
+"No scan results to compare with: no STIG drift report job of the last days kept its results (stigman_scorecard_drift_templates, stigman_scorecard_drift_days).",
+"This part fills once a STIG drift report (workflow 37's check) has run on 1.58.0 or later."
+],
+"status": "info",
+"title": "Fixed on the host, still Open in STIG Manager (0)"
+},
+{
+"columns": [
+"Collection",
+"25 Sep",
+"2 Oct",
+"9 Oct",
+"16 Oct",
+"23 Oct",
+"30 Oct",
+"6 Nov",
+"13 Nov"
+],
+"kinds": [
+"wrap",
+"num",
+"num",
+"num",
+"num",
+"num",
+"num",
+"num",
+"num"
+],
+"rows": [
+[
+"SITEA - RHEL 9",
+20,
+19,
+18,
+17,
+16,
+15,
+14,
+11
+],
+[
+"SITEA - VMware",
+"-",
+"-",
+"-",
+"-",
+3,
+3,
+3,
+3
+],
+[
+"SITEA - Windows Server",
+7,
+7,
+7,
+7,
+7,
+7,
+7,
+8
+]
+],
+"text": "One point a week: the last run of each week, the weeks ending on this run's weekday. A dash: no run that week.",
+"title": "The numbers behind the lines (open findings per week)",
+"wrap": true
+}
+],
+"xlsx": [
+{
+"columns": [
+"Collection",
+"Assets",
+"CAT I open",
+"CAT II open",
+"CAT III open",
+"Since last week",
+"Open now",
+"Status"
+],
+"name": "By collection",
+"rows": [
+[
+"SITEA - RHEL 9",
+6,
+1,
+8,
+2,
+"\u25bc Better: 4 closed, 1 opened",
+11,
+"CAT I open"
+],
+[
+"SITEA - VMware",
+3,
+0,
+3,
+0,
+"\u25ac Same: 0 closed, none opened",
+3,
+"OK"
+],
+[
+"SITEA - Windows Server",
+4,
+3,
+4,
+1,
+"\u25b2 Worse: 0 closed, 1 opened",
+8,
+"CAT I open"
+]
+]
+},
+{
+"columns": [
+"Rule",
+"STIG ID",
+"Category",
+"What it checks",
+"Hosts open",
+"Where"
+],
+"name": "Rules across hosts",
+"rows": [
+[
+"SV-258036",
+"RHEL-09-291010",
+"CAT II",
+"RHEL 9 must have the USBGuard package installed.",
+5,
+"SITEA - RHEL 9 (5)"
+],
+[
+"SV-254269",
+"WN22-00-000330",
+"CAT II",
+"Windows Server 2022 must have a host-based firewall.",
+4,
+"SITEA - Windows Server (4)"
+],
+[
+"SV-257985",
+"RHEL-09-255045",
+"CAT II",
+"RHEL 9 must not allow a root login over SSH.",
+3,
+"SITEA - RHEL 9 (3)"
+],
+[
+"SV-254247",
+"WN22-00-000110",
+"CAT I",
+"Windows Server 2022 must be maintained at a supported servicing level.",
+2,
+"SITEA - Windows Server (2)"
+],
+[
+"SV-256375",
+"ESXI-70-000001",
+"CAT II",
+"Access to the ESXi host must be limited by lockdown mode.",
+2,
+"SITEA - VMware (2)"
+],
+[
+"SV-257842",
+"RHEL-09-215075",
+"CAT III",
+"RHEL 9 must not have the tuned package installed.",
+2,
+"SITEA - RHEL 9 (2)"
+],
+[
+"SV-254239",
+"WN22-00-000030",
+"CAT I",
+"Windows Server 2022 passwords for the built-in account must change.",
+1,
+"SITEA - Windows Server (1)"
+],
+[
+"SV-257777",
+"RHEL-09-211010",
+"CAT I",
+"RHEL 9 must be a vendor-supported release.",
+1,
+"SITEA - RHEL 9 (1)"
+],
+[
+"SV-256379",
+"ESXI-70-000005",
+"CAT II",
+"The ESXi host must enforce an unlock timeout of 15 minutes.",
+1,
+"SITEA - VMware (1)"
+],
+[
+"SV-254285",
+"WN22-AC-000010",
+"CAT III",
+"Windows Server 2022 account lockout duration must be 15 minutes.",
+1,
+"SITEA - Windows Server (1)"
+]
+]
+},
+{
+"columns": [
+"Collection",
+"Rule",
+"STIG ID",
+"Category",
+"What it checks",
+"Hosts open",
+"Open on"
+],
+"name": "Open rules by collection",
+"rows": [
+[
+"SITEA - RHEL 9",
+"SV-257777",
+"RHEL-09-211010",
+"CAT I",
+"RHEL 9 must be a vendor-supported release.",
+1,
+"rhel04"
+],
+[
+"SITEA - RHEL 9",
+"SV-258036",
+"RHEL-09-291010",
+"CAT II",
+"RHEL 9 must have the USBGuard package installed.",
+5,
+"rhel01, rhel03, rhel04, rhel05, rhel06"
+],
+[
+"SITEA - RHEL 9",
+"SV-257985",
+"RHEL-09-255045",
+"CAT II",
+"RHEL 9 must not allow a root login over SSH.",
+3,
+"rhel01, rhel03, rhel05"
+],
+[
+"SITEA - RHEL 9",
+"SV-257842",
+"RHEL-09-215075",
+"CAT III",
+"RHEL 9 must not have the tuned package installed.",
+2,
+"rhel03, rhel07"
+],
+[
+"SITEA - VMware",
+"SV-256375",
+"ESXI-70-000001",
+"CAT II",
+"Access to the ESXi host must be limited by lockdown mode.",
+2,
+"esx01, esx02"
+],
+[
+"SITEA - VMware",
+"SV-256379",
+"ESXI-70-000005",
+"CAT II",
+"The ESXi host must enforce an unlock timeout of 15 minutes.",
+1,
+"esx01"
+],
+[
+"SITEA - Windows Server",
+"SV-254247",
+"WN22-00-000110",
+"CAT I",
+"Windows Server 2022 must be maintained at a supported servicing level.",
+2,
+"win03, win04"
+],
+[
+"SITEA - Windows Server",
+"SV-254239",
+"WN22-00-000030",
+"CAT I",
+"Windows Server 2022 passwords for the built-in account must change.",
+1,
+"win03"
+],
+[
+"SITEA - Windows Server",
+"SV-254269",
+"WN22-00-000330",
+"CAT II",
+"Windows Server 2022 must have a host-based firewall.",
+4,
+"win01, win03, win04, win05"
+],
+[
+"SITEA - Windows Server",
+"SV-254285",
+"WN22-AC-000010",
+"CAT III",
+"Windows Server 2022 account lockout duration must be 15 minutes.",
+1,
+"win01"
+]
+]
+},
+{
+"columns": [
+"Collection",
+"Rule",
+"Category",
+"Change",
+"Hosts open before",
+"Hosts open now"
+],
+"name": "Since last week",
+"rows": [
+[
+"SITEA - RHEL 9",
+"SV-257985",
+"CAT II",
+"Closed",
+6,
+3
+],
+[
+"SITEA - RHEL 9",
+"SV-258036",
+"CAT II",
+"Closed",
+6,
+5
+],
+[
+"SITEA - RHEL 9",
+"SV-257842",
+"CAT III",
+"Opened",
+1,
+2
+],
+[
+"SITEA - Windows Server",
+"SV-254247",
+"CAT I",
+"Opened",
+1,
+2
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection",
+"Rule",
+"Category",
+"What it checks",
+"Scan (UTC)"
+],
+"name": "Fixed on host, still open",
+"rows": []
+},
+{
+"columns": [
+"Collection",
+"25 Sep",
+"2 Oct",
+"9 Oct",
+"16 Oct",
+"23 Oct",
+"30 Oct",
+"6 Nov",
+"13 Nov"
+],
+"name": "Open per week",
+"rows": [
+[
+"SITEA - RHEL 9",
+20,
+19,
+18,
+17,
+16,
+15,
+14,
+11
+],
+[
+"SITEA - VMware",
+"-",
+"-",
+"-",
+"-",
+3,
+3,
+3,
+3
+],
+[
+"SITEA - Windows Server",
+7,
+7,
+7,
+7,
+7,
+7,
+7,
+8
+]
+]
+}
+]
+}
