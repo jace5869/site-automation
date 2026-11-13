@@ -2910,6 +2910,12 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
                          "survey_read": "survey_error" in r and not r.get("survey_error"), "hop_limit": hop_limit}}
     for k, s in scopes.items():
         s["summary"] = rule_summary(s, model, o)
+    # 1.59.0: about to breach - each page's own groups (the All page: every group read)
+    if (r.get("breach") or {}).get("asked"):
+        model["breach_read"] = {"error": str(r["breach"].get("error") or ""), "breached_error": str(r["breach"].get("breached_error") or "")}
+        for k, s in scopes.items():
+            s["breach"] = breach_model(r["breach"], dict(o, time_zone=win.get("time_zone")),
+                                       None if s.get("groups_of") is None else set(s["groups_of"]))
     # 1.15.0: the team lead - the group's manager in ServiceNow (sys_user_group.manager), on the team's page and email only
     model["leads"] = dict((g, dict(m)) for g, m in (r.get("managers") or {}).items() if isinstance(m, dict) and m.get("name"))
     model["leads_error"] = str(r.get("managers_error") or "")
@@ -2933,6 +2939,9 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
         model["variants"] = {}
         for v in ("in", "out"):
             rv = dict(r, items=[it for it in r.get("items") or [] if (it.get("group") in sgroups) == (v == "in")])
+            if r.get("breach"):
+                rv["breach"] = _breach_r(r, set(sgroups) if v == "in" else set(
+                    x.get("group") for x in (r["breach"].get("open") or []) + (r["breach"].get("breached") or []) if x.get("group") not in sgroups))
             mv = servicenow_insights_model(rv, state, mask, dict(o, split_pattern="", split_label="",
                                                                  _fixed={"teams": teams, "hier": hier, "folded": folded, "unassigned": una}))
             model["variants"][v] = mv["scopes"]
@@ -3409,6 +3418,278 @@ def servicenow_insights_finish(model, mask=None):
 
 # ---- the email's report, the workbook, the artifact ---------------------------------------------------------------
 
+# ---- about to breach (1.59.0) -----------------------------------------------------------------------------------------
+
+BREACH_BANDS = (1, 4)                 # the tiles' bands in business hours; the window (servicenow_breach_window_hours) is the last
+
+
+def breach_bands(window_h):
+    w = float(window_h or 8)
+    return [float(b) for b in BREACH_BANDS if b < w] + [w]
+
+
+def fmt_left(h):
+    """Business time left in words: 24 min, 1 h 36 min, 7 h 06 min."""
+    m = int(round(max(0.0, float(h or 0)) * 60))
+    return ("%d min" % m) if m < 60 else ("%d h %02d min" % (m // 60, m % 60))
+
+
+def fmt_band(b):
+    return ("%d h" % b) if float(b) == int(b) else ("%g h" % b)
+
+
+def servicenow_insights_breach_horizon(window_h, business_hours_setting=None):
+    """The clock hours ahead the running SLAs are read (site_servicenow_insights breach_horizon_hours): the window itself in
+    calendar hours; with business hours, the whole business days it takes and 4 days more (a weekend, a holiday). The report
+    keeps only those within the window of business time."""
+    w = float(window_h or 8)
+    spec = business_hours_spec(business_hours_setting or {})
+    if spec is None:
+        return w
+    per_day = (((spec[2] - spec[1]) % 1440) or 1440) / 60.0
+    return float((int(-(-w // per_day)) + 4) * 24)
+
+
+def _breach_at(pe, now, tz):
+    """When an SLA breaches: 08:24 today, else Mon 16 Nov 08:24 (local)."""
+    if pe is None:
+        return ""
+    lt = pe.astimezone(tz)
+    return lt.strftime("%H:%M") if lt.date() == now.astimezone(tz).date() else lt.strftime("%a %d %b %H:%M")
+
+
+def _span(a, b):
+    """7-13 Nov, 31 Oct - 6 Nov."""
+    if a.month == b.month:
+        return "%d-%d %s" % (a.day, b.day, b.strftime("%b"))
+    return "%d %s - %d %s" % (a.day, a.strftime("%b"), b.day, b.strftime("%b"))
+
+
+def breach_model(b, opts=None, groups=None):
+    """1.59.0, about to breach: the SLAs running now whose business time left is within servicenow_breach_window_hours -
+    one row per ticket (its SLA with the least time left), least time left first - with the tiles (within 1 h, 4 h, the
+    window; breached today), and the breached SLAs of the last servicenow_breach_days by day (a 7-day average each day),
+    the last three weeks side by side. Time left: ServiceNow's business time left (the SLA's own schedule), else the hours
+    to its planned end in servicenow_insights_business_hours (as the SLA at risk list). groups: only those (a page's
+    groups); None = every group. None when the read was not asked."""
+    o = opts or {}
+    b = b or {}
+    if not b.get("asked"):
+        return None
+    tz = _tz(b.get("time_zone") or o.get("time_zone"))
+    now = _t(b.get("now")) or datetime.datetime.now(UTC)
+    spec = business_hours_spec(o.get("business_hours"))
+    win_h = float(_o(o, "breach_window_hours", 8))
+    bands = breach_bands(win_h)
+    days_n = max(7, int(_o(o, "breach_days", 30)))
+    keep = (lambda g: True) if groups is None else (lambda g: g in groups)          # noqa: E731
+    best = {}
+    for x in b.get("open") or []:
+        if not keep(x.get("group")):
+            continue
+        pe = _t(x.get("planned_end"))
+        if x.get("left_s") is not None:
+            left = x["left_s"] / 3600.0
+        elif pe is not None:
+            left = business_hours(now, pe, spec, tz) if pe > now else 0.0
+        else:
+            continue
+        if left is None or left > win_h:
+            continue
+        row = dict(x, left_h=round(left, 4), left=fmt_left(left), band=next(bb for bb in bands if left <= bb),
+                   nobody=bool(x.get("group")) and not x.get("assignee"), at=_breach_at(pe, now, tz),
+                   kind=x.get("target") or sla_kind(x.get("sla"), o))
+        k = x.get("task_id") or x.get("number")
+        if k not in best or (row["left_h"], row.get("planned_end") or "") < (best[k]["left_h"], best[k].get("planned_end") or ""):
+            best[k] = row
+    queue = sorted(best.values(), key=lambda x: (x["left_h"], x.get("planned_end") or "", x.get("number") or ""))
+    today = now.astimezone(tz).date()
+    first = today - datetime.timedelta(days=days_n - 1)
+    lead = first - datetime.timedelta(days=6)
+    per = {}
+    for x in b.get("breached") or []:
+        pe = _t(x.get("planned_end"))
+        if pe is None or pe > now or not keep(x.get("group")):
+            continue
+        d = pe.astimezone(tz).date()
+        if d < lead or d > today:
+            continue
+        e_ = per.setdefault(d, {"n": 0, "response": 0, "resolution": 0, "other": 0, "groups": {}})
+        e_["n"] += 1
+        e_[x.get("target") or sla_kind(x.get("sla"), o)] += 1
+        _count(e_["groups"], x.get("group") or "(no group)")
+
+    def cnt(d, k="n"):
+        return (per.get(d) or {}).get(k, 0)
+
+    points = []
+    for i in range(days_n):
+        d = first + datetime.timedelta(days=i)
+        points.append({"date": d.isoformat(), "n": cnt(d), "avg7": round(sum(cnt(d - datetime.timedelta(days=k)) for k in range(7)) / 7.0, 2),
+                       "resolution": cnt(d, "resolution"), "response": cnt(d, "response")})
+    weeks = []
+    for w in range(3):
+        end = today - datetime.timedelta(days=7 * w)
+        start = end - datetime.timedelta(days=6)
+        if start < lead:
+            break
+        ds = [start + datetime.timedelta(days=i) for i in range(7)]
+        gs = {}
+        for d in ds:
+            for g, c_ in ((per.get(d) or {}).get("groups") or {}).items():
+                _count(gs, g, c_)
+        top = _top(gs, 1)[0] if gs else ""
+        weeks.append({"label": ("Last 7 days (%s)" % _span(start, end)) if w == 0 else _span(start, end), "from": start.isoformat(), "to": end.isoformat(),
+                      "n": sum(cnt(d) for d in ds), "resolution": sum(cnt(d, "resolution") for d in ds), "response": sum(cnt(d, "response") for d in ds),
+                      "other": sum(cnt(d, "other") for d in ds), "worst": top, "worst_n": gs.get(top, 0) if top else 0, "groups": gs})
+    tiles = []
+    for i, bb in enumerate(bands):
+        inb = [x for x in queue if x["left_h"] <= bb]
+        note = ""
+        if i == 0:
+            nb = sum(1 for x in inb if x["nobody"])
+            note = ("%d not assigned to anyone" % nb) if nb else "every one assigned"
+        elif i < len(bands) - 1:
+            note = "incl. the %d above" % sum(1 for x in queue if x["left_h"] <= bands[i - 1])
+        else:
+            note = "the rest of the window" if len(bands) > 1 else ""
+        tiles.append({"key": "h%g" % bb, "label": "Breach within %s" % fmt_band(bb) if i == 0 else "Within %s" % fmt_band(bb), "value": len(inb),
+                      "note": note, "status": "critical" if i == 0 and inb else ("warning" if i == 1 and inb else ("low" if inb else "ok"))})
+    tiles.append({"key": "today", "label": "Breached today", "value": cnt(today), "note": "SLAs past their planned end today",
+                  "status": "warning" if cnt(today) else "ok"})
+    n1 = sum(1 for x in queue if x["left_h"] <= bands[0])
+    one = lambda k, word: "%d %s%s" % (k, word, "" if k == 1 else "s")             # noqa: E731
+    if not queue:
+        head = "Nothing breaches in the next %s business hours" % ("%g" % win_h)
+    elif n1:
+        head = "%s breach%s within %s" % (one(n1, "ticket"), "es" if n1 == 1 else "", "the hour" if bands[0] == 1 else fmt_band(bands[0]))
+    else:
+        head = "%s breach%s within %s business hours" % (one(len(queue), "ticket"), "es" if len(queue) == 1 else "", "%g" % win_h)
+    lines = []
+    if len(weeks) >= 2:
+        a_, b_ = weeks[0]["n"], weeks[1]["n"]
+        head += "; breaches %s" % (("down from %d to %d this week" % (b_, a_)) if a_ < b_ else ("up from %d to %d this week" % (b_, a_)) if a_ > b_
+                                   else "the same as the week before (%d)" % a_)
+        lines.append("Last 7 days %d breaches, the 7 days before %d (%s%d)." % (a_, b_, "+" if a_ >= b_ else "-", abs(a_ - b_)))
+        lines.append("Response SLAs: %d breached in the last 7 days, %d the week before." % (weeks[0]["response"], weeks[1]["response"]))
+        if weeks[0]["worst"]:
+            lines.append("%s has %d of the last 7 days' %d (the week before %d of %d)." % (
+                weeks[0]["worst"], weeks[0]["worst_n"], a_, weeks[1]["groups"].get(weeks[0]["worst"], 0), b_))
+    if points:
+        a0, a1 = points[0]["avg7"], points[-1]["avg7"]
+        lines.insert(0, "7-day average %.1f a day, %s %.1f on %s." % (
+            a1, "down from" if a1 < a0 else "up from" if a1 > a0 else "the same as", a0, first.strftime("%d %b").lstrip("0")))
+    if b.get("breached_error"):
+        lines = ["The breached SLAs were not read: %s. No trend." % b["breached_error"]]
+        points, weeks = [], []
+        tiles[-1].update(value=None, note="not read", status="")
+    notes = []
+    if b.get("open_more"):
+        notes.append("More running SLAs than servicenow_insights_max_records: the queue may be missing some.")
+    if b.get("breached_more"):
+        notes.append("More breached SLAs than servicenow_insights_max_records: the oldest days are short.")
+    if b.get("vip_error"):
+        notes.append("The VIP tiers were not read: %s." % b["vip_error"])
+    vt = list(b.get("vip_tiers") or [])
+    return {"on": True, "error": str(b.get("error") or ""), "window_h": win_h, "bands": bands, "head": head, "lines": lines, "notes": notes,
+            "tiles": tiles, "queue": queue, "points": points, "weeks": weeks, "days": days_n, "today": today.isoformat(),
+            "read_at": now.astimezone(tz).strftime("%d %b %Y %H:%M ") + (now.astimezone(tz).tzname() or ""),
+            "vip_tiers": vt, "business_hours": business_hours_label(o.get("business_hours"), b.get("time_zone") or o.get("time_zone") or ""),
+            "max_rows": int(_o(o, "breach_max_rows", 50)),
+            "breached": [dict(x, at=_t(x.get("planned_end")).astimezone(tz).strftime("%Y-%m-%d %H:%M"), kind=x.get("target") or sla_kind(x.get("sla"), o))
+                         for x in b.get("breached") or [] if keep(x.get("group")) and _t(x.get("planned_end")) and lead <= _t(x["planned_end"]).astimezone(tz).date() <= today
+                         and _t(x["planned_end"]) <= now] if groups is None else []}
+
+
+BREACH_EMAIL_ROWS = 25
+
+
+def breach_email(bm, rows_max=BREACH_EMAIL_ROWS):
+    """1.59.0: the email's About to breach - the tiles as one row, the queue (no description: the email leaves the site),
+    the weeks side by side. Numbers only: the web page draws the line."""
+    if not bm:
+        return []
+    if bm.get("error"):
+        return [{"title": "About to breach", "status": "warning", "text": "The running SLAs were not read: %s." % bm["error"]}]
+    q = bm.get("queue") or []
+    bands = bm.get("bands") or [8.0]
+    st = {0: "critical", 1: "warning"} if len(bands) == 3 else {0: "critical"}
+    t = bm.get("tiles") or []
+    out = [{"title": "About to breach", "status": "critical" if t and t[0]["value"] else ("warning" if q else "ok"),
+            "text": "%s. The next %g business hours, read %s." % (bm.get("head") or "", bm.get("window_h", 8), bm.get("read_at") or ""),
+            "columns": [x["label"] for x in t], "rows": [["—" if x["value"] is None else x["value"] for x in t]]}]
+    if q:
+        more = len(q) - rows_max
+        out.append({"title": "About to breach, least time left first",
+                    "text": " ".join(['"nobody": a group but no person.'] + (["%d more on the web page and in the workbook." % more] if more > 0 else [])),
+                    "columns": ["Time left", "Ticket", "Prio", "Group", "Assigned to", "SLA used", "Breaches at"],
+                    "rows": [[x.get("left"), x.get("number"), ("P" + x["priority_value"]) if x.get("priority_value") else x.get("priority") or "",
+                              x.get("group") or "", "nobody" if x.get("nobody") else x.get("assignee") or "",
+                              ("%d%%" % round(x["pct"])) if x.get("pct") is not None else "", x.get("at")] for x in q[:rows_max]],
+                    "row_status": [st.get(bands.index(x["band"]) if x.get("band") in bands else -1, "") for x in q[:rows_max]]})
+    if bm.get("weeks") or bm.get("lines"):
+        out.append({"title": "Breaches, last %d days" % int(bm.get("days") or 30), "text": " ".join(bm.get("lines") or []),
+                    "columns": ["Week", "Breached", "Resolution", "Response", "Worst group"],
+                    "rows": [[w["label"], w["n"], w["resolution"], w["response"], ("%s (%d)" % (w["worst"], w["worst_n"])) if w["worst"] else ""]
+                             for w in bm.get("weeks") or []]})
+    return out
+
+
+def breach_xlsx(bm):
+    """1.59.0: the workbook's sheets - every ticket about to breach, every day's breaches, every breached SLA read."""
+    if not bm or bm.get("error"):
+        return []
+    vt = bm.get("vip_tiers") or []
+    out = [{"name": "About to breach", "columns": ["Time left (business hours)", "Time left", "Ticket", "Priority", "Short description", "Group", "Assigned to",
+                                                  "SLA", "Kind", "SLA used %", "Breaches at"] + (["VIP"] if vt else []),
+            "rows": [[round(x["left_h"], 2), x["left"], x.get("number"), x.get("priority"), x.get("short"), x.get("group"),
+                      "nobody" if x.get("nobody") else x.get("assignee") or "", x.get("sla"), x.get("kind"), x.get("pct"), x.get("at")] +
+                     ([vt[x["vip"]] if x.get("vip") is not None and x["vip"] < len(vt) else ""] if vt else []) for x in bm.get("queue") or []]}]
+    if bm.get("points"):
+        out.append({"name": "Breaches by day", "columns": ["Day", "Breached", "Resolution", "Response", "7-day average"],
+                    "rows": [[p_["date"], p_["n"], p_.get("resolution", ""), p_.get("response", ""), p_["avg7"]] for p_ in bm["points"]]})
+    if bm.get("breached"):
+        out.append({"name": "Breached SLAs", "columns": ["Breached at", "Ticket", "Priority", "Group", "Assigned to", "SLA", "Kind"],
+                    "rows": [[x["at"], x.get("number"), x.get("priority"), x.get("group"), x.get("assignee"), x.get("sla"), x.get("kind")]
+                             for x in sorted(bm["breached"], key=lambda x: x["at"], reverse=True)]})
+    return out
+
+
+def servicenow_insights_breach_only(r, opts=None):
+    """1.59.0, servicenow_insights_mode breach: the About to breach of every group read (the module's breach_only answer)."""
+    r = r or {}
+    if not r.get("breach"):
+        return {"on": True, "error": str(r.get("error") or "ServiceNow was not read"), "queue": [], "tiles": []}
+    return breach_model(r["breach"], opts)
+
+
+def servicenow_insights_breach_doc(bm, opts=None):
+    """1.59.0, servicenow_insights_mode breach: the email and the website's index line - the tiles as the summary, then the
+    queue and the weeks (breach_email)."""
+    bm = bm or {}
+    t = bm.get("tiles") or []
+    secs = breach_email(bm)
+    status = secs[0]["status"] if secs else "info"
+    return {"title": "About to breach: %s" % (bm.get("head") or bm.get("error") or "ServiceNow was not read"),
+            "subtitle": "The next %g business hours, read %s" % (bm.get("window_h", 8), bm.get("read_at") or ""),
+            "status": status, "summary": [{"label": x["label"], "value": "—" if x["value"] is None else x["value"], "note": x["note"],
+                                            "status": {"critical": "critical", "warning": "warning"}.get(x["status"], "")} for x in t],
+            "sections": secs[1:] if len(secs) > 1 and not bm.get("error") else secs}
+
+
+def servicenow_insights_breach_xlsx(bm):
+    return breach_xlsx(bm)
+
+
+def _breach_r(r, groups):
+    """r's breach rows of these groups only (the split's halves)."""
+    b = (r or {}).get("breach")
+    if not b:
+        return None
+    return dict(b, open=[x for x in b.get("open") or [] if x.get("group") in groups],
+                breached=[x for x in b.get("breached") or [] if x.get("group") in groups])
+
+
 def _scope(model, key):
     return (model or {}).get("scopes", {}).get(key or "all") or (model or {}).get("scopes", {}).get("all")
 
@@ -3445,7 +3726,8 @@ def servicenow_insights_doc(model, key="all", opts=None):
         summary.append({"label": "Satisfaction", "value": ("%.2f of %g" % (sv["avg"], top)) if top is not None else "%.2f" % sv["avg"],
                         "status": {"Good": "ok", "Fair": "warning", "Low": "critical"}.get(sv.get("grade"), ""),
                         "note": " · ".join(x for x in (sv.get("grade") or "", sv.get("label") or "", "%d answers" % sv["n"]) if x)})
-    secs = [{"title": "What the period says" + (" (written by ACT)" if s.get("summary_by") == "act" else ""), "lines": s["summary"] or ["(nothing to say)"]}]
+    secs = breach_email(s.get("breach")) + [
+        {"title": "What the period says" + (" (written by ACT)" if s.get("summary_by") == "act" else ""), "lines": s["summary"] or ["(nothing to say)"]}]
     # 1.7.0: what to act on first - the counts, and the first of each list
     hp, hd, cd, cl = s.get("hops") or {}, s.get("hold") or {}, s.get("codes") or {}, s.get("closure") or {}
     if hp or hd or cd or cl:
@@ -3840,7 +4122,7 @@ def servicenow_insights_xlsx(model, r=None, state=None, mask=None, opts=None):
     if wl.get("person_metrics"):
         sheets.append({"name": "Workload", "columns": ["Person", "Group", "Open now", "Resolved", "Median hours to resolve"],
                        "rows": [[x["person"], x["group"], x["open"], x["resolved"], x["median_h"]] for x in wl.get("rows") or []]})
-    return sheets
+    return sheets + breach_xlsx(s.get("breach"))                # 1.59.0
 
 
 def servicenow_insights_artifact(model):
@@ -3942,6 +4224,11 @@ class FilterModule(object):
                 "servicenow_insights_teams": servicenow_insights_teams, "servicenow_insights_model": servicenow_insights_model,
                 "servicenow_insights_prefix_errors": servicenow_insights_prefix_errors,
                 "servicenow_insights_vip_errors": servicenow_insights_vip_errors,
+                # 1.59.0: about to breach
+                "servicenow_insights_breach_horizon": servicenow_insights_breach_horizon,
+                "servicenow_insights_breach_only": servicenow_insights_breach_only,
+                "servicenow_insights_breach_doc": servicenow_insights_breach_doc,
+                "servicenow_insights_breach_xlsx": servicenow_insights_breach_xlsx,
                 "servicenow_insights_summary_evidence": servicenow_insights_summary_evidence,
                 "servicenow_insights_summary_task": servicenow_insights_summary_task,
                 "servicenow_insights_summary_merge": servicenow_insights_summary_merge, "servicenow_insights_finish": servicenow_insights_finish,

@@ -84,6 +84,8 @@ jobs:
           python tests/test_tenable_scan.py
           python tests/test_servicenow_war.py
           python tests/test_servicenow_insights.py
+          python tests/test_servicenow_breach.py
+          python tests/test_act_old_email.py
           python tests/test_insights_org.py
           python tests/test_disk_report.py
           python tests/test_availability.py
@@ -455,10 +457,12 @@ jobs:
           pip install ansible-core pyvmomi vmware-vcenter
           bash tests/galaxy_install.sh -r tests/vmware/requirements.yml
           python -m venv /tmp/ac216 && /tmp/ac216/bin/pip -q install 'ansible-core==2.16.*'
-      - name: ServiceNow ticket insights against a fake ServiceNow with a year of a made-up site, and a scripted GenAI model (current ansible-core and 2.16)
+      - name: ServiceNow ticket insights against a fake ServiceNow with a year of a made-up site, and a scripted GenAI model; About to breach (current ansible-core and 2.16)
         run: |
           bash tests/servicenow/run_insights_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/servicenow/run_insights_test.sh
+          bash tests/servicenow/run_breach_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/servicenow/run_breach_test.sh
       - name: Ticket insights' history in a real MySQL 8.4 (docker; plain TCP, caching_sha2_password) - the backfill, the months, the trends (current ansible-core and 2.16)
         run: |
           pip install PyMySQL cryptography

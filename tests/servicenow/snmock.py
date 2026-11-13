@@ -150,6 +150,20 @@ def rename(ren, recs):
 APPROVAL_LABEL = {"approved": "Approved", "requested": "Requested", "not requested": "Not Yet Requested", "rejected": "Rejected"}
 
 
+def sla_walked(rec):
+    """1.59.0: a task_sla record with the dot-walked fields the about-to-breach read asks (task.number, task.assignment_group ...:
+    its ticket's; task.active; sla.target - response or resolution by the SLA's name, or the seed's _target)."""
+    t = INCIDENTS.get(rec.get("task")) or {}
+    out = dict(rec)
+    for f in ("number", "short_description", "priority", "assignment_group", "assigned_to"):
+        out["task." + f] = t.get(f, "")
+    out["task.sys_class_name"] = t.get("_table", "incident") if t else ""
+    out["task.active"] = "false" if not t or closed(t) else "true"
+    name = str(rec.get("sla") or "").lower()
+    out["sla.target"] = rec.get("_target") or ("response" if "response" in name else "resolution" if ("resolution" in name or "resolve" in name) else "")
+    return out
+
+
 def closed(rec):
     """An incident is closed when Resolved, Closed or Canceled; the other tables when Closed (3, 4, 7)."""
     return rec.get("state") in (("6", "7", "8") if rec.get("_table", "incident") == "incident" else ("3", "4", "7"))
@@ -210,7 +224,8 @@ def _cond(rec, cond):
     if "IN" in cond and "=" not in cond:
         field, _, value = cond.partition("IN")
         if "." in field and field in rec:             # a dot-walked field the seed keeps (asmt_metric_result's metric.name)
-            return str(rec.get(field) or "") in _in_set(value)
+            vals = _in_set(value)                     # 1.59.0: a reference also by the sys_id of what it names (task.assignment_group)
+            return str(rec.get(field) or "") in vals or any(_same(rec.get(field, ""), v) for v in vals)
         field = field[:-5] if field.endswith(".name") else field
         vals = _in_set(value)
         if str(rec.get(field, "") or "") in vals:
@@ -468,9 +483,11 @@ class H(BaseHTTPRequestHandler):
         if table == "sys_cluster_state" and method == "GET":
             return 200, {"result": mid_data().get("cluster", [])}
         if table == "task_sla" and method == "GET" and not sys_id:
-            rows = [i for i in INCIDENTS.values() if i.get("_table") == "task_sla" and matches(i, q.get("sysparm_query", ""))]
+            rows = [i for i in (sla_walked(x) for x in INCIDENTS.values() if x.get("_table") == "task_sla") if matches(i, q.get("sysparm_query", ""))]
             if "ORDERBYtask" in q.get("sysparm_query", ""):                  # 1.47.0: read page by page, in a fixed order
                 rows.sort(key=lambda i: (str(i.get("task", "")), str(i.get("sys_id", ""))))
+            elif "ORDERBYplanned_end_time" in q.get("sysparm_query", ""):    # 1.59.0: about to breach
+                rows.sort(key=lambda i: (str(i.get("planned_end_time", "")), str(i.get("sys_id", ""))))
             offset = int(q.get("sysparm_offset", "0"))
             rows = rows[offset:offset + int(q.get("sysparm_limit", "10000"))]
             num = dict((i["sys_id"], i.get("number", "")) for i in INCIDENTS.values())

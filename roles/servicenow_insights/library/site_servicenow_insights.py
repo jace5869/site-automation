@@ -65,6 +65,12 @@ options:
   survey: {description: "Read the incident surveys' results (asmt_metric_result, GET; best-effort): the window's and the window before's.", type: bool, default: true}
   survey_metrics: {description: "The survey metrics read, by name ([] = every metric whose answer is a number).", type: list, elements: str, default: []}
   survey_types: {description: "The surveys read, by name (asmt_metric_type; [] = every survey; 1.16.0).", type: list, elements: str, default: []}
+  breach: {description: "1.59.0 - also read the about-to-breach SLAs (task_sla: running, planned end within breach_horizon_hours; and
+      those breached in the last breach_days).", type: bool, default: false}
+  breach_only: {description: "1.59.0 - read only the groups and the about-to-breach SLAs (servicenow_insights_mode breach).", type: bool, default: false}
+  breach_horizon_hours: {description: "Clock hours ahead the running SLAs' planned end is read (the report keeps its business-time window).",
+      type: float, default: 72}
+  breach_days: {description: "Days back the breached SLAs are read (the trend's days and the week before its first 7-day average).", type: int, default: 36}
 author: site automation
 '''
 
@@ -100,6 +106,9 @@ survey_error: {description: "Why the surveys were not read ('' = read, or not as
 vip: {description: "1.43.0 - {tiers: [labels], of: {sys_user sys_id: tier index} (VIP people only), asked (people), error, hidden
   (the columns no record carried: not readable by the account, or not on sys_user)}.", type: dict}
 survey_questions: {description: "1.16.0 - each question read (its key in survey): name, survey, state, datatype, min, max.", type: dict}
+breach: {description: "1.59.0 - {asked, now, open: [rows], breached: [rows], open_more, breached_more, error, breached_error, days, horizon_h,
+  time_zone, vip_error, vip_hidden, vip_tiers}; a row: sla_id, task_id, number, short, priority, priority_value, group, group_id, assignee,
+  table, sla, target (response, resolution, ''), pct, left_s (business time left, None = none), planned_end (UTC text), vip.", type: dict}
 '''
 
 import calendar
@@ -777,6 +786,123 @@ def read_task_sla(api, ids, chunk=100):
     return out, ""
 
 
+# ---- about to breach (1.59.0) --------------------------------------------------------------------------------------
+
+BREACH_FIELDS = ["sys_id", "task", "task.number", "task.short_description", "task.priority", "task.assignment_group", "task.assigned_to",
+                 "task.sys_class_name", "sla", "sla.target", "stage", "has_breached", "business_percentage", "percentage",
+                 "business_time_left", "time_left", "planned_end_time"]
+
+
+def _sla_query_rows(api, query, max_records=20000):
+    """Every task_sla record of a query, page by page in a fixed order (as 1.47.0's _task_sla_rows) -> (rows, more, error).
+    Each record once by its sys_id; a page with nothing new means the server ignores the offset: said, nothing used."""
+    rows, offset, seen, want = [], 0, set(), int(max_records) + 1
+    for page in range(1, TASK_SLA_PAGES + 1):
+        limit = min(PAGE, want - len(rows))
+        try:
+            r = api.get("api/now/table/task_sla", {"sysparm_query": query, "sysparm_fields": ",".join(BREACH_FIELDS),
+                                                   "sysparm_display_value": "all", "sysparm_exclude_reference_link": "true",
+                                                   "sysparm_limit": limit, "sysparm_offset": offset})
+        except SnError as e:
+            text = str(e)
+            if "HTTP 403" in text or "HTTP 401" in text:
+                text += " - the account needs read on task_sla (the itil role has it)"
+            return [], False, text + ((" (page %d, after %d records: none of them used)" % (page, len(rows))) if page > 1 else "")
+        got = r.get("result") if isinstance(r, dict) else None
+        if not isinstance(got, list):
+            return [], False, "GET api/now/table/task_sla: no result list in the answer"
+        new = 0
+        for x in got:
+            sid = str(_vd(x, "sys_id")[0] or "") if isinstance(x, dict) else ""
+            if sid and sid in seen:
+                continue
+            seen.add(sid)
+            rows.append(x)
+            new += 1
+        if len(got) < limit or len(rows) >= want:
+            return rows[:int(max_records)], len(rows) > int(max_records), ""
+        if not new:
+            return [], False, "GET api/now/table/task_sla: page %d repeats records already read (the server ignores sysparm_offset) - not used" % page
+        offset += len(got)
+    return [], False, "GET api/now/table/task_sla: more than %d pages - not used" % TASK_SLA_PAGES
+
+
+def _pct_of(x):
+    for f in ("business_percentage", "percentage"):
+        try:
+            return round(float(str(_vd(x, f)[0]).replace(",", "").strip()), 1)
+        except ValueError:
+            continue
+    return None
+
+
+def breach_row(x):
+    """One task_sla record as the about-to-breach section keeps it. left_s: ServiceNow's business time left (the SLA's own
+    schedule), None when it has none; the report then counts it in servicenow_insights_business_hours."""
+    d = lambda f: " ".join(_vd(x, f)[1].split())          # noqa: E731
+    v = lambda f: _vd(x, f)[0]                            # noqa: E731
+    target = v("sla.target").strip().lower()
+    return {"sla_id": v("sys_id"), "task_id": v("task"), "number": d("task.number") or v("task.number"),
+            "short": d("task.short_description"), "priority": d("task.priority"), "priority_value": _prio(v("task.priority") or d("task.priority")),
+            "group": d("task.assignment_group"), "group_id": v("task.assignment_group"), "assignee": d("task.assigned_to"),
+            "table": v("task.sys_class_name").strip(), "sla": d("sla") or v("sla"), "target": target if target in ("response", "resolution") else "",
+            "pct": _pct_of(x), "left_s": duration(v("business_time_left")), "planned_end": str(v("planned_end_time") or "")}
+
+
+def breach_scope(gids, gnames):
+    if gids:
+        return "task.assignment_groupIN" + ",".join(gids) + "^"
+    if gnames:
+        return "task.assignment_group.nameIN" + ",".join(gnames) + "^"
+    return ""
+
+
+def read_breach(api, gids, gnames, now, horizon_hours=72.0, days=36, max_records=20000):
+    """1.59.0, about to breach: the SLAs running now (active, not breached, in progress - paused ones do not run down) whose
+    planned end is within horizon_hours of clock time (the report keeps those within servicenow_breach_window_hours of
+    business time), and the SLAs that breached in the last days (has_breached, their planned end in those days) - of the
+    groups, or every group. A day of margin each way: ServiceNow reads a literal date in the API account's zone."""
+    out = {"asked": True, "now": now.strftime("%Y-%m-%d %H:%M:%S"), "open": [], "breached": [], "open_more": False, "breached_more": False,
+           "error": "", "breached_error": "", "days": int(days), "horizon_h": float(horizon_hours)}
+    scope = breach_scope(gids, gnames)
+    end = (now + datetime.timedelta(hours=float(horizon_hours), days=1)).strftime("%Y-%m-%d %H:%M:%S")
+    rows, out["open_more"], out["error"] = _sla_query_rows(
+        api, scope + "active=true^has_breached=false^stage=in_progress^task.active=true^planned_end_time<=" + end +
+        "^ORDERBYplanned_end_time^ORDERBYsys_id", max_records)
+    out["open"] = [breach_row(x) for x in rows]
+    since = (now - datetime.timedelta(days=int(days) + 1)).strftime("%Y-%m-%d %H:%M:%S")
+    rows, out["breached_more"], out["breached_error"] = _sla_query_rows(
+        api, scope + "has_breached=true^stage!=cancelled^planned_end_time>=" + since + "^ORDERBYplanned_end_time^ORDERBYsys_id", max_records)
+    out["breached"] = [breach_row(x) for x in rows]
+    return out
+
+
+def read_breach_vip(api, rows, fields, people="caller", chunk=100):
+    """1.59.0: the VIP tier of who each ticket about to breach was raised for (an incident's caller, a requested item's
+    requested for; opened_by too with caller_and_opened_by) - read_vip on those people -> (sets row["vip"], error, hidden)."""
+    want = {"incident": ["caller_id"], "sc_req_item": ["requested_for"]}
+    who = {}
+    for t, cols in want.items():
+        ids = sorted(set(r_["task_id"] for r_ in rows if r_.get("table") == t and r_.get("task_id")))
+        cols = cols + (["opened_by"] if people == "caller_and_opened_by" else [])
+        for i in range(0, len(ids), chunk):
+            part = ids[i:i + chunk]
+            try:
+                r = api.get("api/now/table/%s" % t, {"sysparm_query": "sys_idIN" + ",".join(part), "sysparm_fields": ",".join(["sys_id"] + cols),
+                                                     "sysparm_display_value": "all", "sysparm_exclude_reference_link": "true", "sysparm_limit": len(part)})
+            except SnError as e:
+                return str(e), []
+            for x in (r.get("result") if isinstance(r, dict) else None) or []:
+                who[_vd(x, "sys_id")[0]] = [p for p in (_vd(x, c)[0] for c in cols) if p]
+    tiers, err, hidden = read_vip(api, [p for ps in who.values() for p in ps], fields)
+    if err:
+        return err, []
+    for r_ in rows:
+        hits = [tiers[p] for p in who.get(r_.get("task_id"), []) if p in tiers]
+        r_["vip"] = min(hits) if hits else None
+    return "", hidden
+
+
 def read_first_assigned(api, ids, chunk=100):
     """When each incident was first assigned to a person (metric_instance, the out-of-box metric "Assigned to"; GET) ->
     ({sys_id: UTC text}, error)."""
@@ -1057,9 +1183,10 @@ def by_key(d):
 
 def read_all(api, groups, tables, win, max_records=20000, audit=True, handoff_min=3, members=True, group_parents=True, handoff_source="auto",
              sla_source="auto", first_assigned=False, state_metric="Incident State Duration", survey=True, survey_metrics=None, managers=False, survey_types=None,
-             store=None, manager_email=True, vip_fields=None, vip_people="caller"):
+             store=None, manager_email=True, vip_fields=None, vip_people="caller", breach=None):
     """store (1.17.0): None - every record read in full (and nothing kept); a Reuse - its tickets reused where fresh
-    (store.rows empty: a full read that fills the store)."""
+    (store.rows empty: a full read that fills the store). breach (1.59.0): {now, horizon_hours, days, max_records} - the
+    about-to-breach SLAs too (read_breach)."""
     since, until = sn_time(win["prev_since"]), sn_time(win["until"])
     inc = store is not None and bool(store.rows)
     res = {"ok": False, "error": "", "window": win, "groups": [], "tables": [], "items": [], "audit": {}, "audit_error": "",
@@ -1173,7 +1300,19 @@ def read_all(api, groups, tables, win, max_records=20000, audit=True, handoff_mi
                       "asked": len(people), "error": err, "hidden": hidden, "people": list(keys)}
     res["survey"], res["survey_questions"], res["survey_error"] = read_survey(api, win, survey_metrics, types=survey_types) \
         if survey and "incident" in [str(t) for t in tables or []] else ([], {}, "")
+    if breach:
+        res["breach"] = breach_read(api, gids, gnames, breach, vip_fields, vip_people)
     return res
+
+
+def breach_read(api, gids, gnames, b, vip_fields=None, vip_people="caller"):
+    """1.59.0: read_breach, with the VIP tier of the running ones when the tiers are asked."""
+    out = read_breach(api, gids, gnames, b["now"], b.get("horizon_hours") or 72, b.get("days") or 36, b.get("max_records") or 20000)
+    out["time_zone"] = b.get("time_zone") or ""
+    if vip_fields and out["open"]:
+        out["vip_error"], out["vip_hidden"] = read_breach_vip(api, out["open"], vip_fields, str(vip_people or "caller").strip().lower())
+        out["vip_tiers"] = [str(f.get("label") or f.get("column") or "").strip() for f in vip_fields]
+    return out
 
 
 def store_load(path, full_refresh=False):
@@ -1252,6 +1391,8 @@ def main():
             vip_fields=dict(type="list", elements="dict", default=[]),
             vip_people=dict(type="str", default="caller", choices=["caller", "caller_and_opened_by"]),
             store_in=dict(type="path", default=""), store_out=dict(type="path", default=""), full_refresh=dict(type="bool", default=False),
+            breach=dict(type="bool", default=False), breach_only=dict(type="bool", default=False),
+            breach_horizon_hours=dict(type="float", default=72), breach_days=dict(type="int", default=36),
         ),
         supports_check_mode=True)
     p = module.params
@@ -1276,11 +1417,31 @@ def main():
     if url and not url.startswith("http"):
         url = "https://" + url
     api = Api(url, p["username"], p["password"], p["validate_certs"], p["ca_path"], p["timeout"])
+    breach = {"now": now or datetime.datetime.now(UTC), "horizon_hours": p["breach_horizon_hours"], "days": p["breach_days"],
+              "max_records": p["max_records"], "time_zone": p["time_zone"]} if p["breach"] or p["breach_only"] else None
+    if p["breach_only"]:             # 1.59.0, servicenow_insights_mode breach: the groups and the about-to-breach SLAs, nothing else
+        res = {"ok": False, "error": "", "window": win, "groups": [], "url": url, "lookup_note": ""}
+        try:
+            g, gerr = lookup_groups(api, p["groups"])
+            res["groups"] = g
+            gids = [x["sys_id"] for x in g if x.get("sys_id")]
+            gnames = [x["name"] for x in g] if gerr and p["groups"] else []
+            if gerr and p["groups"]:
+                res["lookup_note"] = "the assignment groups were not looked up (%s): matched by name instead" % gerr
+            if p["groups"] and not gids and not gnames:
+                res["error"] = "none of the assignment groups is in ServiceNow: %s" % ", ".join(x["name"] for x in g)
+            else:
+                res["breach"] = breach_read(api, gids, gnames, breach, p["vip_fields"], p["vip_people"])
+                res["ok"] = not res["breach"]["error"]
+                res["error"] = res["breach"]["error"]
+        except SnError as e:
+            res["error"] = str(e)
+        module.exit_json(changed=False, **res)
     store, why_full = store_load(p["store_in"], p["full_refresh"]) if p["store_in"] else (None, "")
     try:
         res = read_all(api, p["groups"], p["tables"], win, p["max_records"], p["audit"], p["handoff_min"], p["members"], p["group_parents"], p["handoff_source"],
                        p["sla_source"], p["first_assigned"], p["state_metric"], p["survey"], p["survey_metrics"], p["managers"], p["survey_types"],
-                       store, p["manager_email"], p["vip_fields"], p["vip_people"])
+                       store, p["manager_email"], p["vip_fields"], p["vip_people"], breach)
     except SnError as e:
         res = {"ok": False, "error": str(e), "window": win, "groups": [], "tables": [], "items": [], "audit": {}, "audit_error": "",
                "members": {}, "members_error": "", "lookup_note": "", "url": url}
