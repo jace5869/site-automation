@@ -42,8 +42,19 @@ to the host and run it as root, with the AAP execution nodes' addresses:
 AAP_SOURCES="192.0.2.21 192.0.2.22" bash report-db-setup.sh
 ```
 
-It is safe to run again: each step checks first. What was tested: the 1.16.0 tester ran it on a test host, as root and
-rootless, twice; CI runs `bash -n` and ShellCheck (`tests/test_report_db_setup.py`). Every name below is the one it uses:
+The image `localhost/mysql:8.4` must be on the host first. It is never pulled from Docker Hub (1.50.0):
+
+- Load and tag it once, as [ENCLAVES.md](ENCLAVES.md#5-images-for-an-air-gapped-enclave) shows.
+- Without it the script stops at step 2. Nothing is changed, and it prints the steps.
+- `IMAGE=` names another image, such as your enclave's registry. `PULL=1` lets the script pull it from there.
+
+It is safe to run again: each step checks first. What was tested:
+
+- The 1.16.0 tester ran it on a test host, as root and rootless, twice.
+- CI runs `bash -n`, ShellCheck, and the script against a podman that runs nothing (`tests/test_report_db_setup.py`).
+- 1.50.0's image step ran with rootless podman 5.8: a missing image, a loaded one, and `PULL=1` from a registry.
+
+Every name below is the one it uses:
 
 | What | Name |
 |---|---|
@@ -62,12 +73,16 @@ The commands under each step are what the script does, for doing it by hand.
 
    ```bash
    mkdir -p /var/lib/report-db
-   podman run -d --name report-db -p 3309:3306 \
+   podman run -d --name report-db --pull=never -p 3309:3306 \
      -v /var/lib/report-db:/var/lib/mysql:Z \
      --env-file /root/report-db.container.env \
      -e MYSQL_DATABASE=site_reports \
-     docker.io/library/mysql:8.4
+     localhost/mysql:8.4
    ```
+
+   The image comes from the host itself, never from Docker Hub (1.50.0). Load and tag it once:
+   [ENCLAVES.md](ENCLAVES.md#5-images-for-an-air-gapped-enclave). Without it the script stops before it changes
+   anything, and prints the steps.
 
    The script runs the same container as the systemd unit `report-db`, so it starts with the host. Check it:
 
@@ -730,6 +745,7 @@ with a few hundred groups adds a few MB a month. The ticket store holds about 2 
 | `... the server wants TLS` | The server requires TLS | Tick **Use TLS** on the credential |
 | `... 'NoneType' object has no attribute 'is_auth_switch_request'` | A bug in PyMySQL 1.2.1 to 1.2.3: the first login after the database restarts fails. Since 1.16.0 the job tries once more by itself | Launch again: it works. The lasting fix: build the EE again from the current `ee/` files (PyMySQL 1.2.4 or later) |
 | Another application on the host lost its database after the firewall step | The firewall reload dropped podman's network rules | `podman network reload --all` on the host. Nothing needs a restart |
+| `STOPPED: the image localhost/mysql:8.4 is not on this host` | The setup script found no image. Nothing was changed | Load and tag it (the steps it printed), then run the script again |
 | `kept complete: 2026-10` | A run ending inside a month met that month already complete | Nothing: the complete month is kept |
 
 `servicenow_insights_db_required: true` turns the warnings into a failed job.

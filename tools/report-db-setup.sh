@@ -4,7 +4,7 @@
 #
 # What it does, in order (safe to run again: each step checks first and skips what is already there):
 #   1. checks: root, podman, the port is free
-#   2. pulls the image (TLS verification off, as this network needs)
+#   2. the image is on this host (never pulled unless PULL=1): a missing one stops here, nothing changed, with the steps
 #   3. makes the data folder and the passwords file (/root/report-db.env, readable by root only)
 #   4. starts the container and waits until MySQL answers
 #   5. creates the database and two accounts: report_writer (AAP writes) and report_reader (read only)
@@ -15,7 +15,10 @@
 # Usage, as root:
 #   AAP_SOURCES="192.0.2.21 192.0.2.22" bash report-db-setup.sh
 # Settings (environment variables, all optional except AAP_SOURCES for the firewall):
-#   IMAGE        the MySQL image             (default docker.io/library/mysql:8.4)
+#   IMAGE        the MySQL image, on this host (default localhost/mysql:8.4; one setting per enclave)
+#   UPSTREAM     where it comes from         (default docker.io/library/mysql:8.4; said in the steps when IMAGE is missing)
+#   PULL=1       pull IMAGE when it is missing: only for an enclave whose registry this host reaches
+#   TLS_VERIFY   with PULL=1: false for a registry whose certificate podman does not trust (default true)
 #   NAME         the container's name        (default report-db)
 #   PORT         the port on this host       (default 3309; 3306 and 3307 may already be used by other databases)
 #   DATA_DIR     where the data lives        (default /var/lib/report-db)
@@ -25,7 +28,10 @@
 #   SKIP_SYSTEMD=1 / SKIP_FIREWALL=1   leave those steps out
 set -euo pipefail
 
-IMAGE="${IMAGE:-docker.io/library/mysql:8.4}"
+IMAGE="${IMAGE:-localhost/mysql:8.4}"
+UPSTREAM="${UPSTREAM:-docker.io/library/mysql:8.4}"
+PULL="${PULL:-0}"
+TLS_VERIFY="${TLS_VERIFY:-true}"
 NAME="${NAME:-report-db}"
 PORT="${PORT:-3309}"
 DATA_DIR="${DATA_DIR:-/var/lib/report-db}"
@@ -39,6 +45,18 @@ SKIP_FIREWALL="${SKIP_FIREWALL:-0}"
 say()  { printf '\n== %s\n' "$*"; }
 ok()   { printf '   ok: %s\n' "$*"; }
 die()  { printf '\nSTOPPED: %s\n' "$*" >&2; exit 1; }
+# the image is not here: how to bring it in (an air-gapped host pulls nothing)
+no_image() {
+  local tar
+  tar="$(basename "${UPSTREAM%%:*}")-${UPSTREAM##*:}.tar"
+  printf '\nSTOPPED: the image %s is not on this host. Nothing was changed.\n' "$IMAGE" >&2
+  printf 'Its upstream image: %s. Bring it in:\n' "$UPSTREAM" >&2
+  printf '  On a connected machine:\n    podman pull %s\n    podman save -o %s %s\n' "$UPSTREAM" "$tar" "$UPSTREAM" >&2
+  printf '  Copy %s to this host, then as root:\n    podman load -i %s\n' "$tar" "$tar" >&2
+  [ "$UPSTREAM" = "$IMAGE" ] || printf '    podman tag %s %s\n' "$UPSTREAM" "$IMAGE" >&2
+  printf 'Then run this script again. (A host that reaches a registry with it: IMAGE=<its name> PULL=1.)\n' >&2
+  exit 1
+}
 
 # ---- 1. checks --------------------------------------------------------------
 say "1. Checks"
@@ -57,12 +75,20 @@ else
 fi
 
 # ---- 2. the image -----------------------------------------------------------
-if [ "$EXISTS" = 0 ]; then
-  say "2. Pull $IMAGE (TLS verification off)"
+# before anything is changed. An existing container keeps the image it runs (the start-at-boot unit gets that one).
+UNIT_IMAGE="$IMAGE"
+if [ "$EXISTS" = 1 ]; then
+  UNIT_IMAGE=$(podman ps -a --filter "name=^${NAME}\$" --format '{{.Image}}' | head -n 1)
+  [ "$UNIT_IMAGE" = "$IMAGE" ] || ok "$NAME runs $UNIT_IMAGE - kept (IMAGE is $IMAGE; see step 6)"
+else
+  say "2. The image $IMAGE"
   if podman image exists "$IMAGE"; then
-    ok "already here"
+    ok "on this host"
+  elif [ "$PULL" = 1 ]; then
+    podman pull --tls-verify="$TLS_VERIFY" "$IMAGE" || no_image
+    ok "pulled (PULL=1)"
   else
-    podman pull --tls-verify=false "$IMAGE"
+    no_image
   fi
 fi
 
@@ -98,7 +124,7 @@ CT_ENV="${ENV_FILE%.env}.container.env"
 # ---- 4. the container -----------------------------------------------------------
 if [ "$EXISTS" = 0 ]; then
   say "4. Start $NAME on port $PORT"
-  podman run -d --name "$NAME" \
+  podman run -d --name "$NAME" --pull=never \
     -p "$PORT:3306" \
     -v "$DATA_DIR:/var/lib/mysql:Z" \
     --env-file "$CT_ENV" \
@@ -139,18 +165,30 @@ if [ "$SKIP_SYSTEMD" = 1 ]; then
   say "6. Start at boot - skipped (SKIP_SYSTEMD=1)"
 elif [ -f "/etc/containers/systemd/$NAME.container" ] || [ -f "/etc/systemd/system/container-$NAME.service" ]; then
   say "6. Start at boot - already set up"
+  # a unit from before 1.50.0 names the pulled image: it keeps working while that image is here. Never restarted here.
+  q="/etc/containers/systemd/$NAME.container"
+  if [ -f "$q" ] && ! grep -qx "Image=$IMAGE" "$q"; then
+    old=$(sed -n 's/^Image=//p' "$q")
+    ok "the unit names $old, not $IMAGE - kept, nothing restarted. To switch, at a quiet time:"
+    printf '     podman tag %s %s\n' "$old" "$IMAGE"
+    printf '     in %s: Image=%s (podman 4.6 or newer: Pull=never under it)\n' "$q" "$IMAGE"
+    printf '     systemctl daemon-reload; systemctl restart %s   (the database is down a few seconds)\n' "$NAME"
+  fi
 else
   say "6. Start at boot"
   podver=$(podman --version | awk '{print $3}')
   if [ -d /etc/containers/systemd ] && printf '%s\n4.4.0\n' "$podver" | sort -V -C -r 2>/dev/null; then
+    # Pull=never: podman 4.6 and newer know it (4.4 and 4.5 refuse the unit); the container runs --pull=never anyway
+    PULL_LINE=""
+    if printf '%s\n4.6.0\n' "$podver" | sort -V -C -r 2>/dev/null; then PULL_LINE=$'Pull=never\n'; fi
     cat > "/etc/containers/systemd/$NAME.container" <<UNIT
 [Unit]
 Description=Report history database (MySQL) for site-automation
 
 [Container]
 ContainerName=$NAME
-Image=$IMAGE
-PublishPort=$PORT:3306
+Image=$UNIT_IMAGE
+${PULL_LINE}PublishPort=$PORT:3306
 Volume=$DATA_DIR:/var/lib/mysql:Z
 EnvironmentFile=$CT_ENV
 HealthCmd=mysqladmin ping -h 127.0.0.1 --silent

@@ -58,6 +58,131 @@ class SetupScript(unittest.TestCase):
             self.assertEqual(m.group(2), '"$NAME"', m.group(0))
 
 
+# a podman that runs nothing: it logs each call, knows the images in $FAKE_IMAGES (one a line), and pull adds one
+FAKE_PODMAN = r"""#!/bin/sh
+echo "$*" >> "$FAKE_LOG"
+case "$1 $2" in
+  "--version "*) echo "podman version 5.2.0" ;;
+  "container exists") [ -n "$FAKE_CT" ]; exit $? ;;
+  "ps -a") echo "$FAKE_CT" ;;
+  "image exists") grep -qxF "$3" "$FAKE_IMAGES"; exit $? ;;
+  "pull "*) for a; do last="$a"; done; echo "$last" >> "$FAKE_IMAGES" ;;
+  "exec -i") cat >/dev/null ;;
+esac
+exit 0
+"""
+
+
+class TheImage(unittest.TestCase):
+    """1.50.0: the image is taken from this host. Missing: stops before anything is changed, with the steps."""
+
+    def run_script(self, images, **env):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        bindir = os.path.join(d, "bin")
+        os.mkdir(bindir)
+        with open(os.path.join(bindir, "podman"), "w") as f:
+            f.write(FAKE_PODMAN)
+        os.chmod(os.path.join(bindir, "podman"), 0o755)
+        with open(os.path.join(d, "images"), "w") as f:
+            f.write("".join(i + "\n" for i in images))
+        e = dict(os.environ, PATH=bindir + os.pathsep + os.environ["PATH"], FAKE_LOG=os.path.join(d, "log"),
+                 FAKE_IMAGES=os.path.join(d, "images"), ALLOW_NON_ROOT="1", SKIP_SYSTEMD="1", SKIP_FIREWALL="1",
+                 PORT="1", DATA_DIR=os.path.join(d, "data"), ENV_FILE=os.path.join(d, "report-db.env"),
+                 NAME="sa-test-db")
+        for k in ("IMAGE", "UPSTREAM", "PULL"):
+            e.pop(k, None)
+        e.update(env)
+        r = subprocess.run(["bash", SCRIPT], capture_output=True, text=True, env=e, timeout=120, stdin=subprocess.DEVNULL)
+        log = read(e["FAKE_LOG"]) if os.path.exists(e["FAKE_LOG"]) else ""
+        return r, log, d
+
+    def test_the_defaults(self):
+        s = read(SCRIPT)
+        self.assertIn('IMAGE="${IMAGE:-localhost/mysql:8.4}"', s)
+        self.assertIn('UPSTREAM="${UPSTREAM:-docker.io/library/mysql:8.4}"', s)
+        self.assertNotRegex(s, r"podman pull [^\n]*tls-verify=false")
+        unit = s[s.index("[Container]"):s.index("[Service]")]
+        self.assertIn("Image=$UNIT_IMAGE\n${PULL_LINE}PublishPort=", unit)
+        self.assertRegex(s, r'podman run -d --name "\$NAME" --pull=never')
+
+    def test_pull_never_in_the_unit_from_podman_4_6(self):
+        # Quadlet in podman 4.4 and 4.5 refuses a unit with a key it does not know (Pull= came in 4.6)
+        s = read(SCRIPT)
+        i = s.index('    PULL_LINE=""')
+        code = s[i:s.index("\n", s.index("then PULL_LINE=", i)) + 1]
+        for ver, want in (("4.4.1", ""), ("4.5.2", ""), ("4.6.0", "Pull=never\n"), ("5.2.0", "Pull=never\n")):
+            r = subprocess.run(["bash", "-c", "podver=%s\n%s printf '%%s' \"$PULL_LINE\"" % (ver, code)],
+                               capture_output=True, text=True)
+            self.assertEqual(r.stdout, want, (ver, r.stderr))
+
+    def test_missing_stops_with_the_steps(self):
+        r, log, d = self.run_script([])
+        self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+        err = r.stderr
+        self.assertIn("the image localhost/mysql:8.4 is not on this host. Nothing was changed.", err)
+        self.assertIn("podman pull docker.io/library/mysql:8.4", err)
+        self.assertIn("podman save -o mysql-8.4.tar docker.io/library/mysql:8.4", err)
+        self.assertIn("podman load -i mysql-8.4.tar", err)
+        self.assertIn("podman tag docker.io/library/mysql:8.4 localhost/mysql:8.4", err)
+        # nothing made, nothing pulled, nothing run
+        self.assertFalse(os.path.exists(os.path.join(d, "data")))
+        self.assertFalse(os.path.exists(os.path.join(d, "report-db.env")))
+        self.assertFalse(os.path.exists(os.path.join(d, "report-db.container.env")))
+        self.assertNotRegex(log, r"(?m)^(pull|run|create|start) ")
+
+    def test_an_enclave_name(self):
+        r, log, d = self.run_script([], IMAGE="registry.enclave-a.example.mil/mysql:8.4")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("podman tag docker.io/library/mysql:8.4 registry.enclave-a.example.mil/mysql:8.4", r.stderr)
+        self.assertNotRegex(log, r"(?m)^pull ")
+
+    def test_here_it_works(self):
+        r, log, d = self.run_script(["localhost/mysql:8.4"])
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("ok: on this host", r.stdout)
+        self.assertNotRegex(log, r"(?m)^pull ")
+        run = [ln for ln in log.splitlines() if ln.startswith("run ")]
+        self.assertEqual(len(run), 1, log)
+        self.assertIn("--pull=never", run[0])
+        self.assertTrue(run[0].endswith(" localhost/mysql:8.4"), run[0])
+        self.assertTrue(os.path.isdir(os.path.join(d, "data")))
+
+    def test_pull_only_when_asked(self):
+        r, log, d = self.run_script([], PULL="1", IMAGE="registry.enclave-a.example.mil/mysql:8.4")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("pull --tls-verify=true registry.enclave-a.example.mil/mysql:8.4", log)
+        run = [ln for ln in log.splitlines() if ln.startswith("run ")]
+        self.assertTrue(run and run[0].endswith(" registry.enclave-a.example.mil/mysql:8.4"), log)
+
+    def test_a_running_install_keeps_its_image(self):
+        # a container from before 1.50.0 on the pulled image: kept, no image check, nothing pulled, run or stopped
+        r, log, d = self.run_script([], FAKE_CT="docker.io/library/mysql:8.4")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("runs docker.io/library/mysql:8.4 - kept (IMAGE is localhost/mysql:8.4", r.stdout)
+        self.assertNotRegex(log, r"(?m)^(pull|run|stop|rm|image) ")
+
+    def test_an_old_unit_is_kept_and_the_switch_said(self):
+        s = read(SCRIPT)
+        step = s[s.index('elif [ -f "/etc/containers/systemd/$NAME.container" ]'):s.index("else\n  say \"6. Start at boot\"")]
+        step = "if false; then :\n" + step + "fi\n"
+        with tempfile.TemporaryDirectory() as d:
+            q = os.path.join(d, "report-db.container")
+            unit = "[Container]\nContainerName=report-db\nImage=docker.io/library/mysql:8.4\n"
+            with open(q, "w") as f:
+                f.write(unit)
+            code = ('say() { echo "== $*"; }; ok() { echo "ok: $*"; }; NAME=report-db; IMAGE=localhost/mysql:8.4; '
+                    'SKIP_SYSTEMD=0\n' + step.replace("/etc/containers/systemd", d))
+            r = subprocess.run(["bash", "-c", code], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("the unit names docker.io/library/mysql:8.4, not localhost/mysql:8.4 - kept, nothing restarted", r.stdout)
+            self.assertIn("podman tag docker.io/library/mysql:8.4 localhost/mysql:8.4", r.stdout)
+            self.assertIn("Pull=never", r.stdout)
+            self.assertEqual(read(q), unit)                                    # the unit itself is not touched
+            self.assertNotIn("systemctl restart", s[s.index("# ---- 6."):s.index("# ---- 7.")].replace(
+                "systemctl restart %s   (the database is down", ""))
+
+
 class TheDoc(unittest.TestCase):
 
     def test_points_at_the_script(self):
