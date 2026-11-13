@@ -109,7 +109,7 @@ if tool == "rpm":
     if args[:1] == ["-V"]:
         # coreutils' ls changed since it was installed - until dnf reinstall puts it back
         if args[1].startswith("coreutils") and not os.path.exists(os.path.join(work, "state", name + ".reinstalled")):
-            print("S.5....T.    /usr/bin/ls"); sys.exit(1)
+            print("S.5....T.    " + os.path.realpath("/usr/bin/ls")); sys.exit(1)
         sys.exit(0)
     sys.exit(1)
 if tool == "dnf":
