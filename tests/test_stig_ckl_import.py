@@ -229,6 +229,51 @@ class Plan(unittest.TestCase):
         cks, plan, left, _ = run(d, overwrite_accepted=True)
         self.assertEqual([p["ruleId"] for p in plan], ["SV-260002r1_rule", "SV-260005r1_rule"])
 
+    def test_attachments_win_over_overwrite_accepted(self):
+        """stigman_ckl_import_overwrite_accepted: true puts an Accepted review in the plan - and the write still leaves a
+        review that has attachments as it is (stigman_update's guard, skip_attachments, on by default)."""
+        d = data()
+        d["assets"]["5"] = [{"assetId": "41", "name": "VROPS01", "fqdn": "vrops01.example.mil", "stigs": [{"benchmarkId": ARIA, "revisionStr": "V1R1"}]}]
+        d["reviews"]["41"] = [{"ruleId": "SV-260001r1_rule", "result": "pass", "status": {"label": "submitted"}, "ts": "t1"},
+                              {"ruleId": "SV-260002r1_rule", "result": "pass", "status": {"label": "accepted"}, "ts": "t2"},
+                              {"ruleId": "SV-260005r1_rule", "result": "fail", "status": {"label": "saved"}, "ts": "t3"}]
+        _, plan, left, _ = run(d, overwrite_accepted=True)
+        self.assertEqual([(x["ruleId"], x["was"]["status"]) for x in plan], [("SV-260002r1_rule", "accepted"), ("SV-260005r1_rule", "saved")])
+        self.assertNotIn("accepted", [x["kind"] for x in left])
+
+        class C(object):
+            def __init__(self):
+                self.db, self.posts = dict((r["ruleId"], dict(r)) for r in d["reviews"]["41"]), []
+
+            def grants(self):
+                return {"5": 4}
+
+            def review(self, c, a, rule):
+                return self.db.get(rule)
+
+            def attachments(self, c, a, rule):
+                return (1, ["poam.pdf"]) if rule == "SV-260002r1_rule" else (0, [])
+
+            def write(self, c, a, reviews):
+                self.posts.append((a, [r["ruleId"] for r in reviews]))
+                for r in reviews:
+                    self.db[r["ruleId"]] = {"result": r["result"], "status": {"label": r["status"]}, "ts": "t9"}
+                return {"rejected": []}
+
+            def asset_reviews(self, c, a):
+                return dict((k, smu.held(v)) for k, v in self.db.items())
+        c = C()
+        items = smu.update({"plan": plan}, c, False)                        # the guard is on when nothing says otherwise
+        self.assertEqual([(i["ruleId"], i["state"]) for i in items], [("SV-260002r1_rule", "has attachments"), ("SV-260005r1_rule", "written")])
+        self.assertIn("1 attachment(s) in STIG Manager: poam.pdf - left as it is", items[0]["why"])
+        self.assertEqual(c.posts, [("41", ["SV-260005r1_rule"])], "the Accepted review with an attachment is in no write")
+        self.assertEqual((c.db["SV-260002r1_rule"]["result"], c.db["SV-260002r1_rule"]["status"]["label"]), ("pass", "accepted"))
+        c = C()
+        self.assertEqual(smu.update({"plan": plan, "skip_attachments": True}, c, False)[0]["state"], "has attachments")
+        self.assertEqual(c.posts, [("41", ["SV-260005r1_rule"])])
+        with open(os.path.join(ROOT, "roles", "stigman_update", "defaults", "main.yml")) as f:
+            self.assertIn('stigman_update_skip_attachments: "{{ check_stig_update_skip_attachments | default(true) }}"', f.read())
+
     def test_asset_without_the_stig_is_left_for_a_person(self):
         d = data()
         d["assets"]["5"] = [{"assetId": "41", "name": "vrops01", "stigs": [{"benchmarkId": "VMW_vSphere_8-0_ESXi_STIG", "revisionStr": "V2R2"}]}]

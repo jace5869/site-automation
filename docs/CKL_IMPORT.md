@@ -82,6 +82,8 @@ hundreds). The reviews are written to the STIG's revision the asset has - else t
 | the same result | - | no (*Already so*) |
 | Not Reviewed | - | never |
 
+Attachments win: a review with attachments is never written, even with `stigman_ckl_import_overwrite_accepted: true`.
+
 - **Detail:** the checklist's finding details (InSpec: *passed :: TEST ...*); a checklist with none gets the file's name
   and its answer. Cut at `stigman_ckl_import_detail_max` (8000).
 - **Comment:** the checklist's comments, then the job's line: *Imported from the checklist vrops01/apache.ckl (VMware Aria
