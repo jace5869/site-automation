@@ -81,13 +81,21 @@ on1 samba-tool group addmembers "Domain Admins" leaver > /dev/null
 on1 samba-tool domain passwordsettings set --account-lockout-threshold=5 > /dev/null
 on1 sa-dc-admin recycle-bin > /dev/null
 made_at=$(date +%s)
+# DC01's replication service answering before the join asks it for the partitions (1.48.0)
+for i in $(seq 1 30); do
+    on1 samba-tool drs bind dc01 -U Administrator --password="$pass_admin" > /dev/null 2>&1 && break
+    [ "$i" = 30 ] && { echo "DC01's replication service did not answer"; exit 1; }
+    sleep 2
+done
 
 echo "starting DC02 (samba-tool domain join)"
+joined_from=$(date +%s)
 R run -d --name "$dc2" --hostname dc02 --network "$net" --ip "$subnet.12" --dns "$subnet.11" \
     -e SA_ROLE=join -e SA_IP="$subnet.12" -e SA_ADMIN_PASS="$pass_admin" -v "$work/certs:/sa-certs:ro,z" \
     -p "127.0.0.1:$p_ldap2:389" -p "127.0.0.1:$p_ldaps2:636" -p "127.0.0.1:$p_krb2:88" -p "127.0.0.1:$p_krb2:88/udp" \
     "$image" > /dev/null || exit 1
-wait_for "$dc2" 150 "$p_ldap2"
+wait_for "$dc2" 240 "$p_ldap2"            # the join: up to 3 tries (tests/ad/samba/start.sh)
+echo "DC02 joined and serving after $(( $(date +%s) - joined_from )) s$(R logs "$dc2" 2>&1 | grep -c 'the join failed (try' | sed 's/^0$//; s/^[1-9].*/, after a failed try/')"
 # DC02's DNS records (its own update cannot sign them here), then replication both ways, so each DC has its partner -
 # again until the domain is settled: every partition of each DC has the other in its repsFrom, with no failure, and DNS
 # (DC01's) has both DCs in every SRV record. The cases start only then: a domain still settling after the join made a
