@@ -216,23 +216,6 @@ jobs:
         run: |
           bash tests/incident/run_incident_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/incident/run_incident_test.sh
-      - name: VMware jobs against vcsim, the vCenter simulator (current ansible-core and 2.16)
-        env:
-          VMWARE_COLLECTIONS: /home/runner/.ansible/collections
-        run: |
-          bash tests/vmware/run_vmware_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/vmware/run_vmware_test.sh
-      - name: Patch hosts with the VMware snapshot before patching - UBI 9 containers patched with dnf, their VMs in vcsim (current ansible-core and 2.16)
-        env:
-          VMWARE_COLLECTIONS: /home/runner/.ansible/collections
-          PATCH_TEST_COLLECTIONS: /home/runner/.ansible/collections
-        run: |
-          bash tests/galaxy_install.sh -r tests/patch/requirements.yml
-          /tmp/ac216/bin/pip -q install pyvmomi requests
-          bash tests/patch/run_patch_snapshot_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/patch/run_patch_snapshot_test.sh
-          bash tests/patch/run_patch_not_ready_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/patch/run_patch_not_ready_test.sh
       - name: Disk space report and the tmp cleanup - UBI 9 containers, web01's /tmp on a real filesystem (current ansible-core and 2.16)
         env:
           DISK_TEST_COLLECTIONS: /home/runner/.ansible/collections
@@ -244,12 +227,6 @@ jobs:
         run: |
           bash tests/availability/run_availability_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/availability/run_availability_test.sh
-      - name: VMware ask, the service's vCenter read against vcsim (current ansible-core and 2.16)
-        run: |
-          bash tests/vmware_ask/run_vmware_ask_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/vmware_ask/run_vmware_ask_test.sh
-          bash tests/vmware_ask/run_secrets_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/vmware_ask/run_secrets_test.sh
       - name: Log analysis, this runner as a Linux host with made-up logs (stand-in journalctl and podman, fake ACT; current ansible-core and 2.16)
         run: |
           bash tests/logs/run_log_test.sh
@@ -338,17 +315,6 @@ jobs:
         run: |
           bash tests/servicenow/run_war_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/servicenow/run_war_test.sh
-      - name: ServiceNow ticket insights against a fake ServiceNow with a year of a made-up site, and a scripted GenAI model (current ansible-core and 2.16)
-        run: |
-          bash tests/servicenow/run_insights_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/servicenow/run_insights_test.sh
-      - name: Ticket insights' history in a real MySQL 8.4 (docker; plain TCP, caching_sha2_password) - the backfill, the months, the trends (current ansible-core and 2.16)
-        run: |
-          pip install PyMySQL cryptography
-          /tmp/ac216/bin/pip -q install PyMySQL cryptography
-          docker pull -q mysql:8.4
-          INSIGHTS_DB_TEST_RUNTIME=docker INSIGHTS_DB_TEST_IMAGE=mysql:8.4 bash tests/servicenow/run_insights_db_test.sh
-          INSIGHTS_DB_TEST_RUNTIME=docker INSIGHTS_DB_TEST_IMAGE=mysql:8.4 ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/servicenow/run_insights_db_test.sh
       - name: Certificate report finding TLS ports and keystores by itself (in a private namespace)
         run: |
           # Ubuntu 24.04's AppArmor stops unprivileged user namespaces (unshare -rnp); allow them on this runner
@@ -435,6 +401,70 @@ jobs:
           # the header alone: a real key has its base64 on the NEXT line (git grep looks at one line at a time)
           if git grep -nE -e '-----BEGIN [A-Z ]*PRIVATE KEY-----' -e 'AKIA[0-9A-Z]{16}' -- . ':!vendor'; then
             echo "secret-looking content found"; exit 1; fi
+
+  vmware-vcsim:
+    # 1.50.0: its own job - the one job's steps passed GitHub's 6 hours a job (vcsim alone is about 2 hours)
+    name: VMware jobs against vcsim (vCenter simulator), patching with snapshots, VMware ask
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ansible-core, the VMware collection and its Python libraries, and ansible-core 2.16 beside it
+        run: |
+          pip install ansible-core pyvmomi vmware-vcenter
+          bash tests/galaxy_install.sh -r tests/vmware/requirements.yml
+          python -m venv /tmp/ac216 && /tmp/ac216/bin/pip -q install 'ansible-core==2.16.*'
+      - name: VMware jobs against vcsim, the vCenter simulator (current ansible-core and 2.16)
+        env:
+          VMWARE_COLLECTIONS: /home/runner/.ansible/collections
+        run: |
+          bash tests/vmware/run_vmware_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/vmware/run_vmware_test.sh
+      - name: Patch hosts with the VMware snapshot before patching - UBI 9 containers patched with dnf, their VMs in vcsim (current ansible-core and 2.16)
+        env:
+          VMWARE_COLLECTIONS: /home/runner/.ansible/collections
+          PATCH_TEST_COLLECTIONS: /home/runner/.ansible/collections
+        run: |
+          bash tests/galaxy_install.sh -r tests/patch/requirements.yml
+          /tmp/ac216/bin/pip -q install pyvmomi requests
+          bash tests/patch/run_patch_snapshot_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/patch/run_patch_snapshot_test.sh
+          bash tests/patch/run_patch_not_ready_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/patch/run_patch_not_ready_test.sh
+      - name: VMware ask, the service's vCenter read against vcsim (current ansible-core and 2.16)
+        run: |
+          bash tests/vmware_ask/run_vmware_ask_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/vmware_ask/run_vmware_ask_test.sh
+          bash tests/vmware_ask/run_secrets_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/vmware_ask/run_secrets_test.sh
+
+  servicenow-insights:
+    # 1.50.0: its own job (about 1.5 hours), beside the others
+    name: ServiceNow ticket insights and its history database
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ansible-core, the VMware collection and its Python libraries, and ansible-core 2.16 beside it
+        run: |
+          pip install ansible-core pyvmomi vmware-vcenter
+          bash tests/galaxy_install.sh -r tests/vmware/requirements.yml
+          python -m venv /tmp/ac216 && /tmp/ac216/bin/pip -q install 'ansible-core==2.16.*'
+      - name: ServiceNow ticket insights against a fake ServiceNow with a year of a made-up site, and a scripted GenAI model (current ansible-core and 2.16)
+        run: |
+          bash tests/servicenow/run_insights_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/servicenow/run_insights_test.sh
+      - name: Ticket insights' history in a real MySQL 8.4 (docker; plain TCP, caching_sha2_password) - the backfill, the months, the trends (current ansible-core and 2.16)
+        run: |
+          pip install PyMySQL cryptography
+          /tmp/ac216/bin/pip -q install PyMySQL cryptography
+          docker pull -q mysql:8.4
+          INSIGHTS_DB_TEST_RUNTIME=docker INSIGHTS_DB_TEST_IMAGE=mysql:8.4 bash tests/servicenow/run_insights_db_test.sh
+          INSIGHTS_DB_TEST_RUNTIME=docker INSIGHTS_DB_TEST_IMAGE=mysql:8.4 ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/servicenow/run_insights_db_test.sh
 
   windows-update-script:
     name: update-from-release.ps1 on Windows (PowerShell 5.1 and 7)

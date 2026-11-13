@@ -10,6 +10,8 @@ its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inve
 to c in [docs/ENCLAVES.md](docs/ENCLAVES.md#5-images-for-an-air-gapped-enclave), section 5. A report database that
 already runs needs nothing now. To do: 1.50.0 step 97.
 
+**CI (no change for a site): the checks in three jobs.** The vCenter simulator tests (about 2 hours) and the ticket insights tests (about 1.5 hours) run in jobs of their own beside the rest: in one job they passed GitHub's 6 hours a job once the AD reader test (1.48.0) ran through.
+
 **The report database's MySQL comes from the host, never from Docker Hub.** The enclaves are air-gapped and differ,
 so `tools/report-db-setup.sh` now starts MySQL from an image already on the host, the same way in every enclave.
 
