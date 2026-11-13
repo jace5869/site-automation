@@ -150,7 +150,51 @@ follows the banner).
   ([EXECUTION_ENVIRONMENT.md](EXECUTION_ENVIRONMENT.md));
 - the project's source control address in AAP.
 
-## 5. Check it
+## 5. Images for an air-gapped enclave
+
+The report database's MySQL (`tools/report-db-setup.sh`) is started from an image already on the host. Since 1.50.0
+the script never pulls it from Docker Hub. You bring the image in once, the same way in every enclave.
+
+| Local name (the default) | Used by | Upstream image |
+|---|---|---|
+| `localhost/mysql:8.4` | the report database | `docker.io/library/mysql:8.4` |
+
+STIG Manager's stack and VMware ask are not changed by this.
+
+**a. On a connected machine**, pull and save the image:
+
+```bash
+podman pull docker.io/library/mysql:8.4
+podman save -o mysql-8.4.tar docker.io/library/mysql:8.4
+```
+
+**b. Carry the file in** the way your enclave allows.
+
+**c. On the report database host**, as root, load and tag it:
+
+```bash
+podman load -i mysql-8.4.tar
+podman tag docker.io/library/mysql:8.4 localhost/mysql:8.4
+podman images localhost/mysql
+```
+
+**When the image is missing**, the script stops at its step 2, before it changes anything. It prints these steps.
+
+**One setting per enclave.** An enclave whose hosts reach its own registry can name it and allow the pull:
+
+```bash
+IMAGE=registry.enclave-b.example.mil/library/mysql:8.4 PULL=1 AAP_SOURCES="192.0.2.21" bash report-db-setup.sh
+```
+
+ENCLAVE-A loads the image by hand and sets nothing. Without `PULL=1` the script never pulls.
+
+**A database set up before 1.50.0** keeps running as it is. Its container and unit still name
+`docker.io/library/mysql:8.4`, and that image is on the host.
+
+- The script keeps the container's image and restarts nothing.
+- When its unit names another image than `IMAGE`, it says so and prints the commands to switch by hand.
+
+## 6. Check it
 
 1. *AAP - template variables audit* ([TEMPLATE_AUDIT.md](TEMPLATE_AUDIT.md)): nothing in a template's Variables
    that belongs in `all.yml` or a credential.
