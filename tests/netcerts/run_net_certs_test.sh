@@ -135,7 +135,7 @@ if "$py" -c "import paramiko" 2>/dev/null && (cd "$repo" && ansible-galaxy colle
     for _ in $(seq 1 100); do (exec 3<>"/dev/tcp/127.0.0.2/$ssh") 2>/dev/null && break; sleep 0.1; done
     run ciscoreal.txt sn playbooks/net_cert_renew.yml -e net_cert_cisco_csr=true
     [ $? -eq 0 ] && ok "net_cert_cisco_csr: the renewal ran" || { bad "net_cert_cisco_csr: exit"; tail -30 ciscoreal.txt | sed 's/^/       /'; }
-    tp="SA-RENEW-$(date -u -d '+10 days' +%Y%m%d)"
+    tp="SA-RENEW-$(date -u -d '+10 days 1 hour' +%Y%m%d)"   # the stand-in's expiry: 10 days and 1 hour from now (tls_servers.py)
     has "...on rtr01: a new key, the trustpoint with the old certificate's subject and names, crypto pki enroll answered" ios.log \
         "config| crypto key generate rsa general-keys label $tp modulus 2048" "config| crypto pki trustpoint $tp" \
         "tp| subject-name O=Test Net,CN=rtr01.example.mil" "tp| subject-alt-name rtr01.example.mil" "tp| rsakeypair $tp" \
