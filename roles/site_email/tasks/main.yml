@@ -180,10 +180,10 @@
 - name: Email | the strip of past runs
   ansible.builtin.set_fact:
     _email_runs: >-
-      {{ _email_hist.runs | report_runs(_report | default(_web_report), report_history_runs | int, _bar_tops[_email_theme] | default(36))
+      {{ _email_hist.runs | report_runs(_report | default(_web_report), report_history_runs | int, _bar_tops[_email_theme] | default(36), zone=report_time_zone | default('', true) | string | trim)
          if _email_hist.ok | default(false) else [] }}
     _web_runs: >-
-      {{ _email_hist.runs | report_runs(_web_report, report_history_runs | int, _bar_tops[_web_theme] | default(36))
+      {{ _email_hist.runs | report_runs(_web_report, report_history_runs | int, _bar_tops[_web_theme] | default(36), zone=report_time_zone | default('', true) | string | trim)
          if _email_hist.ok | default(false) else [] }}
     _email_logo_cid: "{{ 'site-report-logo' if _email_logo_file | length > 0 and (_email_logo_size | default([0]))[0] > 0 else '' }}"
     _email_template: >-
@@ -202,7 +202,7 @@
     _email_footer: >-
       AAP job {{ awx_job_id | default(tower_job_id | default('(command line)')) }}{{ (' (' ~ awx_job_template_name ~ ')') if awx_job_template_name is defined else '' }},
       started by {{ awx_user_name | default(tower_user_name | default(lookup('ansible.builtin.env', 'USER') or 'unknown')) }},
-      {{ now(fmt='%Y-%m-%d %H:%M %Z') | trim }}.
+      {{ (report_time_zone | default('', true) | string | report_time_now) or (now(fmt='%Y-%m-%d %H:%M %Z') | trim) }}.
     _email_subject: >-
       {{ ((report_email_subject_prefix ~ ' ' if report_email_subject_prefix else '') ~ (_report.title if _report is defined else _report_subject))
          | report_banner_subject(_banner) }}
@@ -279,6 +279,7 @@
     logo_size: "{{ _web_logo_size if _web_logo_cid | bool else [] }}"
     header_text: "{{ report_email_header_text | default('Site automation report') }}"
     theme: "{{ _web_theme }}"
+    time_zone: "{{ report_time_zone | default('', true) | string | trim }}"
     json: "{{ report_web_json | bool }}"
     history: "{{ report_web_history | int }}"
     delete_old: "{{ report_web_delete_old | bool }}"

@@ -29,7 +29,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(REPO, "plugins", "filter"))
 sys.path.insert(0, os.path.join(REPO, "roles", "site_email", "library"))
-for _name in ("site_aap", "site_report_page", "site_banner"):   # as Ansible gives them to the modules (ansible.cfg: module_utils)
+for _name in ("site_aap", "site_report_page", "site_banner", "site_time"):   # as Ansible gives them to the modules (ansible.cfg: module_utils)
     _spec = importlib.util.spec_from_file_location("ansible.module_utils." + _name, os.path.join(REPO, "plugins", "module_utils", _name + ".py"))
     _mod = importlib.util.module_from_spec(_spec)
     sys.modules["ansible.module_utils." + _name] = _mod
@@ -897,7 +897,7 @@ class Retries(unittest.TestCase):
 # (Python, with m the module) runs before main() - a target that changes the folder half-way, say
 BOOT = ("import importlib.util, json, os, sys\n"
         "args, module, utils, patch = sys.argv[1:5]\n"
-        "for n in ('site_aap', 'site_report_page', 'site_banner'):\n"
+        "for n in ('site_aap', 'site_report_page', 'site_banner', 'site_time'):\n"
         "    sp = importlib.util.spec_from_file_location('ansible.module_utils.' + n, os.path.join(utils, n + '.py'))\n"
         "    u = importlib.util.module_from_spec(sp)\n"
         "    sys.modules['ansible.module_utils.' + n] = u\n"
@@ -1192,6 +1192,115 @@ class NoRedirect(unittest.TestCase):
         self.assertTrue(r.get("failed"), r)
         self.assertIn(self.to, r["msg"])
         self.assertEqual(self.seen, [])
+
+
+class TimeZone(unittest.TestCase):
+    """1.49.0: with report_time_zone the index page shows its times in that time zone, each with its abbreviation -
+    what is stored (when, index.json, the order of the runs) stays UTC, and '' is the page as it was."""
+    tm = sys.modules["ansible.module_utils.site_time"]
+    shown = staticmethod(getattr(tm, "local"))
+
+    def reports(self):
+        return [{"key": "vm/latest.html", "name": "VMware - VM health report", "title": "VM health", "status": "warning",
+                 "latest": "vm/latest.html", "page": "vm/3.html", "when": "2026-11-13 04:37 UTC", "job": 4651,
+                 "runs": [{"page": "vm/3.html", "status": "warning", "when": "2026-11-13 04:37 UTC", "job": 4651, "title": "VM health"},
+                          {"page": "vm/2.html", "status": "ok", "when": "2026-07-13 22:30 UTC", "job": 4000, "title": "VM health"},
+                          {"page": "vm/1.html", "status": "ok", "when": "", "job": 3999, "title": "VM health"}]}]
+
+    def test_winter_and_summer_time(self):
+        tz, note = self.tm.zone("Europe/Berlin")
+        self.assertEqual(note, "")
+        self.assertEqual(self.shown("2026-11-13 04:37 UTC", tz), "2026-11-13 05:37 CET")
+        self.assertEqual(self.shown("2026-07-13 04:37 UTC", tz), "2026-07-13 06:37 CEST")        # summer time, as on that day
+        self.assertEqual(self.shown("2026-07-13 22:30 UTC", tz), "2026-07-14 00:30 CEST")        # the day too
+        self.assertEqual(self.shown("2026-10-21 06:01", tz), "2026-10-21 08:01 CEST")            # the strip's, no UTC word
+        self.assertEqual(self.shown("2026-11-13 04:37 UTC", self.tm.zone("America/New_York")[0]), "2026-11-12 23:37 EST")
+        for text in ("this run", "", "now", "job 12", "2026-02-31 04:37 UTC", None):               # not a time: as it is
+            self.assertEqual(self.shown(text, tz), text)
+
+    def test_no_time_zone_is_the_text_as_stored(self):
+        for name in ("", "  ", None, "UTC", "utc", "Etc/UTC", "GMT", "Z"):
+            self.assertEqual(self.tm.zone(name), (None, ""), name)
+        self.assertEqual(self.shown("2026-11-13 04:37 UTC"), "2026-11-13 04:37 UTC")
+        for look in ("portal", "atlas", "brief"):
+            args = (self.reports(), "site/index.html", "HQ", None, "2026-11-13 04:38 UTC", (), look)
+            self.assertEqual(rw.index_html(*args), rw.index_html(*args, js="", tz=None), look)
+            self.assertIn("2026-11-13 04:37 UTC", rw.index_html(*args))
+
+    def test_a_name_not_known_is_utc_with_a_note(self):
+        tz, note = self.tm.zone("Mars/Olympus_Mons")
+        self.assertIsNone(tz)
+        self.assertIn("report_time_zone Mars/Olympus_Mons is not a time zone this execution environment knows", note)
+        self.assertIn("tzdata", note)
+        self.assertIn("UTC", note)
+        saved, self.tm.zoneinfo = self.tm.zoneinfo, None                # a Python without zoneinfo (before 3.9)
+        try:
+            tz, note = self.tm.zone("Europe/Berlin")
+        finally:
+            self.tm.zoneinfo = saved
+        self.assertIsNone(tz)
+        self.assertIn("no zoneinfo", note)
+
+    def test_index_page_in_each_look(self):
+        tz = self.tm.zone("Europe/Berlin")[0]
+        for look in ("portal", "atlas", "brief"):
+            html = rw.index_html(self.reports(), "site/index.html", "HQ", None, "2026-11-13 04:38 UTC", (), look, "", tz)
+            self.assertEqual(html.count("2026-11-13 05:37 CET"), 4 if look == "brief" else 2, look)   # the line, its newest run (brief: "last run" and its square too)
+            self.assertIn("2026-11-13 05:37 CET</a> (newest)", html.replace(' <span style="color:#5b6b66;font-size:12px;">', " ").replace("</span>", ""))
+            self.assertIn("2026-07-14 00:30 CEST", html)
+            self.assertIn("updated 2026-11-13 05:38 CET", html)
+            self.assertIn(">this run</a>", html)                         # a run without a time, as before
+            self.assertNotIn(" UTC", html, look)
+        brief = rw.index_html(self.reports(), "index.html", "HQ", None, "now", (), "brief", "", tz)
+        self.assertIn("last run 2026-11-13 05:37 CET", brief)
+        self.assertIn('title="2026-07-14 00:30 CEST - Successful - VM health"', brief)
+
+    def run_twice(self, **second):
+        dest = tempfile.mkdtemp()
+        self.assertTrue(run_module(web_args(dest))["published"])        # a run from before the update: no time_zone
+        with open(os.path.join(dest, "index.html")) as f:
+            self.assertIn("2026-10-01 06:00 UTC", f.read())
+        args = web_args(dest, page="vm/2026-11-13_0437_job-2.html", **second)
+        args["entry"] = dict(args["entry"], when="2026-11-13 04:37 UTC", job=2)
+        out = run_module(args)
+        self.assertTrue(out["published"])
+        with open(os.path.join(dest, "index.html")) as f:
+            html = f.read()
+        with open(os.path.join(dest, "index.json")) as f:
+            doc = json.load(f)
+        return out, html, doc
+
+    def test_module_shows_older_runs_in_the_zone_and_stores_utc(self):
+        for look in ("portal", "atlas", "brief"):
+            out, html, doc = self.run_twice(time_zone="Europe/Berlin", theme=look)
+            self.assertIn("2026-11-13 05:37 CET", html)
+            self.assertIn("2026-10-01 08:00 CEST", html)                 # written before the update, shown local too
+            self.assertNotIn(" UTC", html, look)
+            self.assertNotIn("report_time_zone", json.dumps(out.get("warnings") or []))
+            line = doc["reports"][0]
+            self.assertEqual([x["when"] for x in line["runs"]], ["2026-11-13 04:37 UTC", "2026-10-01 06:00 UTC"])
+            self.assertEqual(line["when"], "2026-11-13 04:37 UTC")
+            self.assertRegex(doc["generated"], r"^\d{4}-\d\d-\d\d \d\d:\d\d UTC$")
+            self.assertNotIn("CET", json.dumps(doc))
+
+    def test_module_unknown_zone_is_utc_said_once(self):
+        out, html, doc = self.run_twice(time_zone="Mars/Olympus_Mons")
+        said = json.dumps(out.get("warnings") or [])                    # 2.16: texts; 2.22: a summary of each
+        self.assertEqual(said.count("report_time_zone Mars/Olympus_Mons is not a time zone this execution environment knows"), 1, said)
+        self.assertIn("2026-11-13 04:37 UTC", html)
+        self.assertIn("2026-10-01 06:00 UTC", html)
+
+    def test_module_empty_zone_writes_the_same_bytes(self):
+        stamp = re.compile(r"updated \d{4}-\d\d-\d\d \d\d:\d\d UTC")
+        for look in ("portal", "atlas", "brief"):
+            a = self.run_twice(theme=look)                                # no time_zone at all, as before 1.49.0
+            b = self.run_twice(theme=look, time_zone="")
+            c = self.run_twice(theme=look, time_zone="UTC")
+            self.assertEqual(len(stamp.findall(a[1])), 1, look)
+            self.assertEqual(stamp.sub("updated", a[1]), stamp.sub("updated", b[1]), look)
+            self.assertEqual(stamp.sub("updated", a[1]), stamp.sub("updated", c[1]), look)
+            self.assertEqual(dict(a[2], generated=""), dict(b[2], generated=""))
+            self.assertNotIn("report_time_zone", json.dumps(b[0].get("warnings") or []))
 
 
 if __name__ == "__main__":

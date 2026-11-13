@@ -15,6 +15,7 @@
            'doc_opts': _pages_doc_opts, 'logo_img': '<img class="logoimg" src="cid:site-report-logo" alt="">' if _pages_logo | bool else '',
            'act_off': _act_off | default(false) | bool,
            'runs_past': _email_hist.runs if _email_hist.ok | default(false) else none,
+           'runs_zone': report_time_zone | default('', true) | string | trim,
            'runs_n': report_history_runs | int, 'runs_top': _bar_tops[_web_theme] | default(36)}) }}
     footer: "{{ _email_footer | default('') }}"
     images: "{{ [{'cid': 'site-report-logo', 'path': _email_logo_file}] if _pages_logo | bool else [] }}"

@@ -464,7 +464,7 @@
     _sni_page_opts: >-
       {{ _sni_opts | combine({'links': _sni_web | servicenow_insights_links(_sni_file.page, _sni_job.v), 'variant': _sni_job.v,
                               'variant_links': _sni_web | servicenow_insights_variant_links(_sni_team, _sni_file.page),
-                              'generated': now(fmt='%Y-%m-%d %H:%M %Z') | trim, 'job': awx_job_id | default(tower_job_id | default('local')),
+                              'generated': (report_time_zone | default('', true) | string | report_time_now) or (now(fmt='%Y-%m-%d %H:%M %Z') | trim), 'job': awx_job_id | default(tower_job_id | default('local')),
                               'footer': 'AAP job ' ~ awx_job_id | default(tower_job_id | default('(command line)')) ~ ' - ServiceNow ' ~ _sni_url,
                               'header_text': report_email_header_text | default('Site automation report'),
                               'not_read': _sni_model | servicenow_insights_not_read, 'timing': (_sni_t | servicenow_insights_timing).rows,
@@ -492,7 +492,7 @@
     _sni_page_opts: >-
       {{ _sni_opts | combine({'links': _sni_web | servicenow_insights_links(_sni_web.all.page),
                               'variant_links': _sni_web | servicenow_insights_variant_links('all', _sni_web.all.page),
-                              'generated': now(fmt='%Y-%m-%d %H:%M %Z') | trim, 'job': awx_job_id | default(tower_job_id | default('local')),
+                              'generated': (report_time_zone | default('', true) | string | report_time_now) or (now(fmt='%Y-%m-%d %H:%M %Z') | trim), 'job': awx_job_id | default(tower_job_id | default('local')),
                               'footer': 'AAP job ' ~ awx_job_id | default(tower_job_id | default('(command line)')) ~ ' - ServiceNow ' ~ _sni_url,
                               'header_text': report_email_header_text | default('Site automation report'),
                               'not_read': _sni_model | servicenow_insights_not_read, 'timing': (_sni_t | servicenow_insights_timing).rows,
@@ -512,7 +512,7 @@
     _pages_web: "{{ _sni_web }}"
     _pages_doc_opts: "{{ _sni_opts }}"
     _pages_opts: >-
-      {{ _sni_opts | combine({'generated': now(fmt='%Y-%m-%d %H:%M %Z') | trim, 'job': awx_job_id | default(tower_job_id | default('local')),
+      {{ _sni_opts | combine({'generated': (report_time_zone | default('', true) | string | report_time_now) or (now(fmt='%Y-%m-%d %H:%M %Z') | trim), 'job': awx_job_id | default(tower_job_id | default('local')),
                               'footer': 'AAP job ' ~ awx_job_id | default(tower_job_id | default('(command line)')) ~ ' - ServiceNow ' ~ _sni_url,
                               'header_text': report_email_header_text | default('Site automation report'),
                               'not_read': _sni_model | servicenow_insights_not_read, 'timing': (_sni_t | servicenow_insights_timing).rows,

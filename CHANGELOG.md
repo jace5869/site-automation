@@ -1,5 +1,47 @@
 # Changelog
 
+## 1.49.0 — 2026-11-13
+
+**Updating without scripts:** paste `site-automation-1.49.0-changed-since-1.47.0.zip` as it is (from an older version,
+its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`. Nothing to set up; with `report_time_zone` set, the website shows that zone.
+
+**The report website: its times in your time zone.** With `report_time_zone: Europe/Berlin` the list of earlier runs
+still said `2026-11-13 04:37 UTC (newest) job 4651`, an hour off. `report_time_zone` reached only the VMware health and
+alarms reports. Now every time the website shows is in that zone, with its abbreviation: `2026-11-13 05:37 CET`.
+
+- **Where:** the index page in every look (each template's line, its earlier runs, the run squares, *last run*,
+  *updated*), each report page's footer line, and the strip of past runs at the top of a report.
+- **Runs from before the update too.** What is stored stays UTC (`index.json`: `generated`, each `when`), so the order
+  of the runs and the "is this run newer" check are as they were. A time is converted when a page is written: the
+  next run of any template shows every earlier run in your zone.
+- **Summer time by date.** A run in July shows `CEST`, one in November `CET`, in the same list.
+- **A name that is not a time zone** (or an execution environment with no time zone data: the `tzdata` package, or a
+  Python before 3.9) never fails a job. The website stays in UTC, and the job that writes the index says so once:
+  `The report website: report_time_zone Mars/Olympus_Mons is not a time zone this execution environment knows ...`.
+- **The copy job** (`report_web_copy`) uses its own template's `report_time_zone` for the index it writes: set it
+  where the report jobs get theirs (group_vars), not on one template.
+- **Not set** (`report_time_zone: ""`, the default, or `UTC`): every page is byte for byte as before.
+
+**Behaviour changes** (only with `report_time_zone` set):
+
+- The footer line of every report (`... · job 4651 · 2026-11-13 05:37 CET.`) is in that zone, in the email and
+  on the page. It was the execution environment's clock with no zone name.
+- The strip of past runs is in that zone, in the email too (`2026-10-21 08:01 CEST - ok`). It was UTC with no name.
+- The ticket insights pages' *generated* line is in that zone.
+
+**Still UTC** (said as UTC in the text; not changed here): the *Read ... UTC* subtitle and the *(UTC)* columns of the
+AD, lockout, capacity, ONTAP, log, outage watch, VM created and snapshot reports, the Horizon, mail relay, network
+backup and ServiceNow test stamps, and the snapshot note. The ticket insights and weekly activity windows and the
+VMware health and alarms reports have followed `report_time_zone` since they were added.
+
+Files: plugins/module_utils/site_time.py (new), roles/site_email/library/site_report_web.py (`time_zone`),
+plugins/filter/site_filters.py (`report_runs` zone, `report_time_now`, `report_time_local`),
+plugins/filter/servicenow_insights_page.py, roles/site_email/tasks/main.yml, pages.yml, copy_page.yml and defaults,
+roles/servicenow_insights/tasks/main.yml, aap/extra_vars (the `report_time_zone` block, by gen_template_vars), docs
+WEB_REPORTS (*Times in your time zone*). Tests: test_report_web (TimeZone), test_report_history
+(TimeZone), tests/email/run_web_test.sh (a second run with a zone, a name that is none), current ansible-core and 2.16.
+
 ## 1.48.0 — 2026-11-13
 
 **Updating without scripts:** paste `site-automation-1.48.0-changed-since-1.47.0.zip` as it is (from an older version,
@@ -16,6 +58,7 @@ round until it failed.
 - Now the DCs have no DNS forwarder. A name outside the domain gets NXDOMAIN at once, and the join takes about 8 s.
 - The join is tried up to 3 times. The test waits for the first DC's replication service before it starts.
 - The test prints how long DC02 took to join. The cases and checks are the same.
+
 
 ## 1.47.0 — 2026-11-13
 

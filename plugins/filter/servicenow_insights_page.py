@@ -2562,7 +2562,7 @@ def servicenow_insights_pages(model, jobs, web, opts=None, extra=None):
         o = dict(opts or {}, links=F.web_links(web, page, v), variant=v, variant_links=F.variant_links(web, key, page))
         h = servicenow_insights_page(model, key, o).replace("<!--site-report-logo-->", x.get("logo_img") or "")
         rep = SF.report_act_off(F.servicenow_insights_doc(F.servicenow_insights_variant(model, v), key, x.get("doc_opts") or opts), bool(x.get("act_off")))
-        runs = SF.report_runs(x["runs_past"], rep, int(x.get("runs_n") or 14), int(x.get("runs_top") or 36)) if x.get("runs_past") is not None else []
+        runs = SF.report_runs(x["runs_past"], rep, int(x.get("runs_n") or 14), int(x.get("runs_top") or 36), zone=x.get("runs_zone") or "") if x.get("runs_past") is not None else []
         out.append({"page": page, "html": h, "report": rep, "runs": runs})
     return out
 

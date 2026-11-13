@@ -2845,7 +2845,7 @@ class PagesInOneGo(unittest.TestCase):
         # the module run as Ansible runs it: its arguments in a file, the repo's module_utils as ansible.cfg gives them
         boot = ("import importlib.util, os, runpy, sys\n"
                 "args, module, utils = sys.argv[1:4]\n"
-                "for n in ('site_aap', 'site_report_page', 'site_banner'):\n"
+                "for n in ('site_aap', 'site_report_page', 'site_banner', 'site_time'):\n"
                 "    sp = importlib.util.spec_from_file_location('ansible.module_utils.' + n, os.path.join(utils, n + '.py'))\n"
                 "    m = importlib.util.module_from_spec(sp)\n"
                 "    sys.modules['ansible.module_utils.' + n] = m\n"

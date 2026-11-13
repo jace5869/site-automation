@@ -317,6 +317,38 @@ without scripts, opened from a share or from a web server.
 - Per template: `report_web_history: 30` on one template's Variables keeps 30 runs of that report only - with the
   copy job too (the report job's setting is kept with its report).
 
+### Times in your time zone
+
+Out of the box every time on the website is UTC: `2026-11-13 04:37 UTC`. To show your own time zone, set
+`report_time_zone` in `all.yml` (1.49.0; the same setting the VMware and ServiceNow reports already use):
+
+```yaml
+report_time_zone: Europe/Berlin        # a name as `timedatectl list-timezones` prints it
+```
+
+From the next run of any report, the website shows that time zone with its abbreviation:
+
+| Where | Before | With `report_time_zone: Europe/Berlin` |
+|---|---|---|
+| the index: each report's last run, and its runs | `2026-11-13 04:37 UTC` | `2026-11-13 05:37 CET` |
+| the index: *updated*, and *last run* (the brief look) | `2026-11-13 04:38 UTC` | `2026-11-13 05:38 CET` |
+| a report page: the strip of past runs | `2026-11-12 04:36` | `2026-11-12 05:36 CET` |
+| a report page and its email: the footer line | the execution environment's clock | `2026-11-13 05:37 CET` |
+
+- **Summer time is per date.** A run in July shows `CEST`, one in November `CET`, side by side in one list.
+- **Older runs change too.** The index is drawn again by every run, so the runs written before you set it show
+  your time zone from the next run on. Nothing has to be converted.
+- **What is stored stays UTC:** `index.json`, each run's `.json`, the file names (`2026-11-13_0437_job-4651.html`)
+  and the order of the runs. Your own tools that read them need no change.
+- **A report page shows what its own run wrote.** Pages written before the setting keep their footer line; the
+  index's list of them is in your time zone.
+- **The copy job** (below) draws the index too: `report_time_zone` in `all.yml` reaches it and the report jobs
+  alike. Set on one template only, the next job without it draws the index in UTC again.
+- **A name the execution environment does not know** (misspelt, or no `tzdata` package in the image): the times
+  stay UTC and the job says so once - `report_time_zone ... is not a time zone this execution environment knows`.
+  The job never fails for it.
+- `report_time_zone: ""` (the default) or `UTC`: every page exactly as before.
+
 ### Changing the names
 
 Every name is a setting, with `{names}` filled in (`roles/site_email/defaults/main.yml`):
@@ -376,7 +408,8 @@ Each run's `.json` (and `latest.json`):
 playbook"). `runs` is the strip of last runs (with an AAP credential on the template). `index.json`:
 `{"generated": "...", "reports": [{"key", "name", "title", "status", "when", "job", "page", "latest", "runs"}, ...]}`,
 worst first; `runs` is that report's last runs on the website, newest first: `[{"page", "status", "when", "job", "title"}]`
-(`report_web_history` of them).
+(`report_web_history` of them). Every `when` and `generated` here is UTC, also with `report_time_zone` set (only the
+pages show your time zone); the strip's `runs[].when` is the text the page shows.
 
 ## Where the files go
 
@@ -670,6 +703,7 @@ variable (`{{ site_report_url }}`) - for a Teams post or a ServiceNow work note.
 | `uploading ...: HTTP 405` | The server does not take `PUT` at that address (nginx: `dav_methods PUT DELETE MKCOL;` in that location) |
 | `[WARNING]: The report website: an older run's ... could not be deleted` | The account may write but not delete there: Modify on the folder, `DELETE` on an upload address - or `report_web_delete_old: false` |
 | `[WARNING]: The report website: index.html was not written - it stayed open somewhere` | The index (or a `latest.html`) was open in a browser - Edge, from the share - the whole time; the next run writes it. Close that tab; a file open for longer: an editor, or a backup holding it |
+| `[WARNING]: The report website: report_time_zone ... is not a time zone this execution environment knows` | A misspelt name (`timedatectl list-timezones` prints them: `Europe/Berlin`, `America/New_York`), or an execution environment without the `tzdata` package. The website shows UTC until it is fixed; nothing else changes |
 | `uploading ...: HTTP 413` | The page is bigger than the server allows (nginx: `client_max_body_size`) |
 | `Message stream modified` on a share, now and then | Kerberos's KRB_AP_ERR_MODIFIED - most often a file server's machine password that just changed (a NetApp SVM rotates it) while AD replicates: tried again by itself (`report_web_retries`). Every time: an alias or address in `report_web_dest`, or a duplicate SPN - [REPORT_SHARE.md](REPORT_SHARE.md#when-something-fails) |
 | `WARNING - The report website copy failed: ...` (the job green) | Not published after the retries, or a real error: the email carries the same line at the top. The reason's own row here; `report_web_required: true` makes it fail the job |

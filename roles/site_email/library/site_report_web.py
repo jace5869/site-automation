@@ -86,6 +86,7 @@ options:
   smb_port: {description: The share's port., type: int, default: 445}
   footer: {description: With keep - the email's footer line (the AAP job, who started it, when) for the copied page., type: str, default: ''}
   theme: {description: "The website's look (report_web_theme) - atlas and brief draw the index page in it too; the others, in the portal look.", type: str, default: portal}
+  time_zone: {description: "The time zone the index page shows its times in (report_time_zone, 1.49.0; a name as timedatectl list-timezones prints them): 2026-11-13 05:37 CET. What is stored (when, the JSON) stays UTC. '' = UTC; a name not known here = UTC, with a warning.", type: str, default: ''}
   retries: {description: "Tries again after a failure that passes (report_web_retries); 0 = none.", type: int, default: 3}
   retry_delay: {description: Seconds between two tries (report_web_retry_delay)., type: int, default: 30}
   required: {description: "false = a publish that still fails after the retries returns published false and error, not a failure (report_web_required).", type: bool, default: true}
@@ -129,6 +130,7 @@ import time
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.site_banner import COLOURS, OTHER, colour_of, ink, inject as banner_inject
 from ansible.module_utils.site_report_page import KEEP_AT_LEAST, pack
+from ansible.module_utils.site_time import local as local_time, zone as zone_of
 from ansible.module_utils.six.moves.urllib.error import HTTPError, URLError
 from ansible.module_utils.six.moves.urllib.parse import quote
 from ansible.module_utils.six.moves.urllib.request import Request, build_opener, HTTPRedirectHandler, HTTPSHandler
@@ -757,12 +759,12 @@ INDEX_PAGE = """<!DOCTYPE html>
 """
 
 
-def index_html(reports, index, header_text, logo, generated, tabs=(), theme='portal', js=''):
+def index_html(reports, index, header_text, logo, generated, tabs=(), theme='portal', js='', tz=None):
     """The index page: a tab per area (All first), every report's line - worst first - opening to its last runs."""
     if theme == 'atlas':
-        return index_atlas(reports, index, header_text, logo, generated, tabs, js)
+        return index_atlas(reports, index, header_text, logo, generated, tabs, js, tz)
     if theme == 'brief':
-        return index_brief(reports, index, header_text, logo, generated, tabs, js)
+        return index_brief(reports, index, header_text, logo, generated, tabs, js, tz)
     e = htmllib.escape
     counts = dict((k, 0) for k in PAL)
     for r in reports:
@@ -784,7 +786,7 @@ def index_html(reports, index, header_text, logo, generated, tabs=(), theme='por
         latest = r.get('latest') or r.get('page') or ''
         name = '<a href="%s" style="color:#0f6b4f;font-weight:700;text-decoration:none;">%s</a>' % (
             _href(index, latest), e(r.get('name') or r.get('key') or '')) if latest else e(r.get('name') or '')
-        run = e(r.get('when') or '')
+        run = e(local_time(r.get('when') or '', tz))
         if r.get('page'):
             run = '<a href="%s" style="color:#45534e;">%s</a>' % (_href(index, r['page']), run or 'this run')
         runs = _runs(r)
@@ -793,7 +795,7 @@ def index_html(reports, index, header_text, logo, generated, tabs=(), theme='por
             '<a href="%s" style="color:#0f6b4f;font-weight:600;">%s</a>%s</td>'
             '<td style="padding:5px 12px 5px 0;white-space:nowrap;color:#45534e;font-size:13px;">%s</td>'
             '<td style="padding:5px 0;color:#5b6b66;font-size:13px;min-width:200px;">%s</td></tr>'
-            % (_pill(x.get('status'), True), _href(index, x['page']), e(x.get('when') or 'this run'),
+            % (_pill(x.get('status'), True), _href(index, x['page']), e(local_time(x.get('when'), tz) or 'this run'),
                ' <span style="color:#5b6b66;font-size:12px;">(newest)</span>' if not i else '', _job(x.get('job')),
                e(x.get('title') or '')) for i, x in enumerate(runs))
         rows.append(
@@ -823,7 +825,7 @@ def index_html(reports, index, header_text, logo, generated, tabs=(), theme='por
     logo_img = ('<td style="padding-right:14px;width:%dpx;"><img src="%s" width="%d" height="%d" alt="" style="display:block;"></td>'
                 % (logo[1], logo[0], logo[1], logo[2])) if logo else ''
     return INDEX_PAGE % {
-        'header': e(header_text), 'card': card, 'logo': logo_img, 'n': len(reports), 'generated': e(generated), 'tiles': tiles,
+        'header': e(header_text), 'card': card, 'logo': logo_img, 'n': len(reports), 'generated': e(local_time(generated, tz)), 'tiles': tiles,
         'style': INDEX_STYLE % ''.join(rules),
         'tabs': (''.join(t[0] for t in tabs) + '\n<div class="bar">' + ''.join(t[1] for t in tabs) + '</div>\n') if reports else '',
         'th': 'font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#45534e;',
@@ -975,7 +977,7 @@ def _chip(status, text=None):
     return '<span class="chip s-%s">%s<span>%s</span></span>' % (k, ATLAS_ICON[k], htmllib.escape(text or PAL[k][3]))
 
 
-def index_atlas(reports, index, header_text, logo, generated, tabs=(), js=''):
+def index_atlas(reports, index, header_text, logo, generated, tabs=(), js='', tz=None):
     """The index page in the atlas look: the header card with the light / auto / dark switch, a tile per status, a tab
     per area (All first; radio buttons and their labels, no script), every report's line - worst first - opening to its
     last runs."""
@@ -998,13 +1000,13 @@ def index_atlas(reports, index, header_text, logo, generated, tabs=(), js=''):
     for r, a in zip(reports, of):
         latest = r.get('latest') or r.get('page') or ''
         name = ('<a href="%s">%s</a>' % (_href(index, latest), e(r.get('name') or r.get('key') or ''))) if latest else e(r.get('name') or '')
-        run = e(r.get('when') or '')
+        run = e(local_time(r.get('when') or '', tz))
         if r.get('page'):
             run = '<a href="%s">%s</a>' % (_href(index, r['page']), run or 'this run')
         runs = _runs(r)
         lines = ''.join(
             '<tr><td>%s</td><td class="when"><a href="%s">%s</a>%s</td><td class="job">%s</td><td class="tt">%s</td></tr>'
-            % (_chip(x.get('status')), _href(index, x['page']), e(x.get('when') or 'this run'), ' (newest)' if not i else '',
+            % (_chip(x.get('status')), _href(index, x['page']), e(local_time(x.get('when'), tz) or 'this run'), ' (newest)' if not i else '',
                _job(x.get('job')), e(x.get('title') or '')) for i, x in enumerate(runs))
         rows.append(
             '<details class="r a%d"><summary>%s<span class="st">%s</span><span class="nm">%s<div class="t">%s</div></span>'
@@ -1033,7 +1035,7 @@ def index_atlas(reports, index, header_text, logo, generated, tabs=(), js=''):
             '<span>Every report&#39;s last runs &middot; %(n)d report(s) &middot; updated %(generated)s</span></div>'
             '<div class="tools">%(switch)s</div></div></header>\n'
             '<div class="tiles">%(tiles)s</div>\n%(tabs)s<div class="card list">\n%(rows)s\n</div>\n</div>\n%(script)s\n</body>\n</html>\n') % {
-        'header': e(header_text), 'early': ATLAS_EARLY + ('\n' + script_tag(index, js) if js else ''), 'logo': logo_img, 'n': len(reports), 'generated': e(generated),
+        'header': e(header_text), 'early': ATLAS_EARLY + ('\n' + script_tag(index, js) if js else ''), 'logo': logo_img, 'n': len(reports), 'generated': e(local_time(generated, tz)),
         'style': ATLAS_STYLE % {'light': ATLAS_LIGHT, 'dark': ATLAS_DARK, 'tabs': ''.join(rules)},
         'switch': ATLAS_SWITCH, 'tiles': tiles,
         'tabs': (''.join(inputs) + '\n<div class="bar">' + ''.join(labels) + '</div>\n') if reports else '',
@@ -1185,14 +1187,14 @@ def first_step(report):
     return None
 
 
-def _squares(index, r, n=5):
+def _squares(index, r, n=5, tz=None):
     """A line's last runs as small squares, oldest to newest (the newest ringed), each a link to its page."""
     e = htmllib.escape
     runs = _runs(r)[:n]
     return '<span class="sqs" aria-label="The last %d run%s">%s</span>' % (len(runs), '' if len(runs) == 1 else 's', ''.join(
         '<a class="sq c-%s%s" href="%s" title="%s"></a>' % (
             x.get('status') if x.get('status') in PAL else 'unknown', ' now' if not i else '', _href(index, x['page']),
-            e('%s - %s%s' % (x.get('when') or 'a run', PAL.get(x.get('status'), PAL['unknown'])[3],
+            e('%s - %s%s' % (local_time(x.get('when'), tz) or 'a run', PAL.get(x.get('status'), PAL['unknown'])[3],
                             (' - ' + str(x.get('title'))) if x.get('title') else '')))
         for i, x in reversed(list(enumerate(runs)))))
 
@@ -1201,7 +1203,7 @@ def _plural(n, one, many):
     return '%d %s' % (n, one if n == 1 else many)
 
 
-def index_brief(reports, index, header_text, logo, generated, tabs=(), js=''):
+def index_brief(reports, index, header_text, logo, generated, tabs=(), js='', tz=None):
     """The index page in the brief look: a plain title and one line (how many reports, the last run, the counts as
     small chips), then every report by area (a tab per area, radio buttons - no script), each line opening to its
     first step (a report that needs action) and its last runs. Calm on purpose: the list is the page."""
@@ -1210,7 +1212,7 @@ def index_brief(reports, index, header_text, logo, generated, tabs=(), js=''):
     for r in reports:
         counts[r.get('status') if r.get('status') in PAL else 'unknown'] += 1
     last = max([str(r.get('when') or '') for r in reports] or [''])
-    say = ('%s &middot; last run %s' % (_plural(len(reports), 'report', 'reports'), e(last)) if last else _plural(len(reports), 'report', 'reports')) \
+    say = ('%s &middot; last run %s' % (_plural(len(reports), 'report', 'reports'), e(local_time(last, tz))) if last else _plural(len(reports), 'report', 'reports')) \
         if reports else 'No reports yet. A report job writes its page here when it runs.'
     tally = ''.join('<span class="chip s-%s">%s<b>%d</b> %s</span>' % (k, ATLAS_ICON.get(k, ''), counts[k], label)
                     for k, label in (('critical', 'Critical'), ('warning', 'Warning'), ('ok', 'Successful'), ('info', 'Info'), ('unknown', 'Unknown'))
@@ -1229,7 +1231,7 @@ def index_brief(reports, index, header_text, logo, generated, tabs=(), js=''):
         for r in mine:
             latest = r.get('latest') or r.get('page') or ''
             name = ('<a href="%s">%s</a>' % (_href(index, latest), e(r.get('name') or r.get('key') or ''))) if latest else e(r.get('name') or '')
-            run = e(r.get('when') or '')
+            run = e(local_time(r.get('when') or '', tz))
             if r.get('page'):
                 run = '<a href="%s">%s</a>' % (_href(index, r['page']), run or 'this run')
             runs = _runs(r)
@@ -1245,12 +1247,12 @@ def index_brief(reports, index, header_text, logo, generated, tabs=(), js=''):
                                                                   else 'Open the report')) if latest else '')
             lines = ''.join(
                 '<tr><td>%s</td><td class="when"><a href="%s">%s</a>%s</td><td class="job">%s</td><td class="tt">%s</td></tr>'
-                % (_chip(x.get('status')), _href(index, x['page']), e(x.get('when') or 'this run'), ' (newest)' if not i else '',
+                % (_chip(x.get('status')), _href(index, x['page']), e(local_time(x.get('when'), tz) or 'this run'), ' (newest)' if not i else '',
                    _job(x.get('job')), e(x.get('title') or '')) for i, x in enumerate(runs))
             rows.append(
                 '<details class="r a%d"><summary>%s<span class="st">%s</span><span class="nm">%s<div class="t">%s</div></span>%s'
                 '<span class="lr">%s%s &middot; %d run%s</span></summary><div class="runs">%s<table>%s</table></div></details>'
-                % (tab[a], caret, _chip(r.get('status')), name, e(r.get('title') or ''), _squares(index, r), run,
+                % (tab[a], caret, _chip(r.get('status')), name, e(r.get('title') or ''), _squares(index, r, tz=tz), run,
                    (' &middot; ' + _job(r.get('job'))) if _job(r.get('job')) else '', len(runs), '' if len(runs) == 1 else 's', step_html,
                    lines or '<tr><td>No page of its runs listed.</td></tr>'))
     # All, then the areas; a dot on an area with a Critical or a Warning
@@ -1273,7 +1275,7 @@ def index_brief(reports, index, header_text, logo, generated, tabs=(), js=''):
             '<meta name="viewport" content="width=device-width, initial-scale=1">\n<meta name="color-scheme" content="light dark">\n'
             '<title>' + e(header_text) + ' - reports</title>\n' + ATLAS_EARLY + ('\n' + script_tag(index, js) if js else '') +
             '\n<style>\n' + style + '</style>\n</head>\n<body>\n<div class="wrap">\n'
-            '<header class="top">' + logo_img + '<div class="brand">' + e(header_text) + '<span>updated ' + e(generated) +
+            '<header class="top">' + logo_img + '<div class="brand">' + e(header_text) + '<span>updated ' + e(local_time(generated, tz)) +
             '</span></div><div class="tools">' + ATLAS_SWITCH + '</div></header>\n'
             '<section class="hero"><h1>Reports</h1><p class="say">' + say + '</p>' +
             ('<div class="tally">' + tally + '</div>' if tally else '') + '</section>\n' + every +
@@ -1429,6 +1431,7 @@ def main():
             drop=dict(type='list', elements='str', default=[]),
             sub_pages=dict(type='list', elements='str', default=[]),
             pages=dict(type='list', elements='dict', default=[]),
+            time_zone=dict(type='str', default=''),
             retries=dict(type='int', default=3),
             retry_delay=dict(type='int', default=30),
             required=dict(type='bool', default=True),
@@ -1462,6 +1465,11 @@ def main():
         module.exit_json(changed=False, published=False, error=why, retried=[], written=[], **urls)
     if p['keep']:
         keep(module, p, page, latest, index, urls, where, bs)
+    # the index page's times in report_time_zone (1.49.0) - only as they are shown: when, the JSON and the order of the
+    # runs stay UTC. A name not known here: UTC, said once
+    tz, tz_note = zone_of(p['time_zone'])
+    if tz_note and index:
+        module.warn('The report website: %s' % tz_note)
     if module.check_mode and not smb:
         module.exit_json(changed=False, written=[], msg='Dry run (Check): the report would be published at %s'
                          % (urls['url'] or _place(where, page or str((p['pages'][0] or {}).get('page') or ''), bs)), **urls)
@@ -1593,7 +1601,7 @@ def main():
             index_text = json.dumps({'generated': generated, 'reports': reports, 'banner': top}, indent=2, sort_keys=True,
                                     default=str) + '\n'
             put(_json_name(index), index_text, 'application/json; charset=utf-8')
-            put(index, banner_inject(index_html(reports, index, p['header_text'], logo, generated, p['tabs'], p['theme'], index_js),
+            put(index, banner_inject(index_html(reports, index, p['header_text'], logo, generated, p['tabs'], p['theme'], index_js, tz),
                                      top),
                 'text/html; charset=utf-8', True)
             # the pages of the runs that fell off this template's line - after the index, which no longer lists them
