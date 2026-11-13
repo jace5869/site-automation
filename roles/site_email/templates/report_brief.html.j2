@@ -112,6 +112,7 @@ var d=localStorage.getItem('site-report-density');if(d==='compact')document.docu
   --critical-bg:rgba(168,40,35,0.1);--critical-bd:rgba(168,40,35,0.2);--info:#2b58b1;--info-bg:rgba(43,88,177,0.1);
   --info-bd:rgba(43,88,177,0.2);--low:#88358e;--low-bg:rgba(136,53,142,0.1);--low-bd:rgba(136,53,142,0.2);--low-row:rgba(136,53,142,0.045);--unknown:#545c63;--unknown-bg:rgba(84,92,99,0.1);--unknown-bd:rgba(84,92,99,0.2);
   --critical-row:rgba(168,40,35,0.04);--warning-row:rgba(132,75,11,0.045);--shadow:0 1px 2px rgba(24,32,39,.04);
+  --q1:#e1f0ff;--q2:#9dc1ee;--q3:#5591dd;--q4:#2063b0;--q5:#0e3a6d;--q-edge:rgba(14,58,109,.22);
   color-scheme:light;
 {%- endset %}
 {%- set dark %}
@@ -125,6 +126,7 @@ var d=localStorage.getItem('site-report-density');if(d==='compact')document.docu
   --critical-bd:rgba(240,150,143,0.22);--info:#8fb3ec;--info-bg:rgba(143,179,236,0.12);--info-bd:rgba(143,179,236,0.22);--low:#c168d5;--low-bg:rgba(193,104,213,0.12);--low-bd:rgba(193,104,213,0.22);--low-row:rgba(193,104,213,0.05);
   --unknown:#b0b0b0;--unknown-bg:rgba(176,176,176,0.12);--unknown-bd:rgba(176,176,176,0.22);
   --critical-row:rgba(240,150,143,0.05);--warning-row:rgba(220,182,113,0.05);--shadow:0 1px 2px rgba(0,0,0,.25);
+  --q1:#1d3b61;--q2:#2863ab;--q3:#4f91e2;--q4:#97c1f7;--q5:#dff0ff;--q-edge:rgba(223,240,255,.18);
   color-scheme:dark;
 {%- endset %}
 :root{ {{- light -}} }
@@ -228,6 +230,18 @@ h1.big{margin-top:12px}
 .body{padding:2px 0 6px}
 .body>p{margin:0 0 14px;color:var(--muted);max-width:86ch;text-wrap:pretty}
 .sec.band{border-top:0;background:var(--card-strong);border-radius:18px;padding:0 clamp(16px,2vw,28px) clamp(14px,1.6vw,22px)}
+/* the squares (a section's squares, 1.61.0 patch age): one square a host, one hue - the darker, the more days; its host and
+   days on hover (title). Sequential steps checked with the dataviz validator: next steps 15 apart (normal vision), 14.5 (CVD);
+   the light steps keep a thin edge (their contrast with the card is low), and the tables below hold the same numbers. */
+.sq-legend{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;color:var(--muted);font-size:13px;margin:0 0 10px}
+.sq-legend span{display:inline-flex;align-items:center;gap:6px}
+.sq{display:inline-block;width:14px;height:14px;border-radius:3px;box-shadow:inset 0 0 0 1px var(--q-edge);flex:none}
+.sq.q1{background:var(--q1)}.sq.q2{background:var(--q2)}.sq.q3{background:var(--q3)}.sq.q4{background:var(--q4)}.sq.q5{background:var(--q5)}
+.sq.q0{background:repeating-linear-gradient(135deg,var(--q-edge) 0 2px,transparent 2px 5px)}
+.sq-row{display:grid;grid-template-columns:minmax(110px,190px) minmax(0,1fr) auto;gap:12px;align-items:center;padding:9px 0;border-top:1px solid var(--line)}
+.sq-row:first-child{border-top:0}
+.sq-name{min-width:0;overflow-wrap:anywhere}.sq-name b{display:block;font-weight:650}.sq-name small{color:var(--muted);font-size:12.5px}
+.sq-cells{display:flex;flex-wrap:wrap;gap:4px;min-width:0}.sq-cells .sq{width:18px;height:18px}
 ul.lines{margin:2px 0 0;padding:0;list-style:none;max-width:140ch}
 ul.lines li{position:relative;padding:8px 0 8px 22px;border-top:1px solid var(--line);overflow-wrap:anywhere;white-space:pre-line}
 ul.lines li:first-child{border-top:0}
@@ -594,6 +608,9 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
 </article>
 {%- endfor %}
 </div>
+{%- endif %}
+{%- if s.squares is defined %}
+{% include 'report_squares.html.j2' %}
 {%- endif %}
 {%- if s.columns is defined %}
 {%- if s.rows | default([]) %}

@@ -474,6 +474,22 @@ attaches every vCenter and host as an Excel workbook (`vmware-version-report_202
 sheet of ESXi hosts); the job output has a line per vCenter (`vc01.example.mil: vCenter 8.0.3 build 24322831; ESXi
 8.0.3 build 24022510 (12)`); the artifact `vm_versions` has the vCenters, the builds in use and the counts.
 
+**ESXi patch age** (1.61.0): the days since each host's last update, by cluster. The same tables as the health
+reports' patch age ([RUNBOOKS.md](RUNBOOKS.md#patching)), and squares per host on the website. Late: more than
+`patch_age_esxi_late_days` (35) days; due soon (Low) 7 days before (`patch_age_due_days`).
+
+vCenter has no read-only "last update" date. The report works it out from its own earlier runs (the `vm_versions`
+artifact, read from AAP with the strip of past runs' credential) and each host's boot time:
+
+| What the history shows | Last update |
+|---|---|
+| the host's build changed between two runs | the boot time the new build came with (else the first run that saw it): a real date |
+| the build did not change | at least since the oldest run with this build, or the host's earliest boot with it (an update needs a restart) |
+
+"At least N days" is **late** when N is over the limit. Under the limit it is **Not known yet** (Low), never on time:
+the date is known once the build changes, or after 35 days of history. A reboot without a new build changes nothing.
+`patch_age_esxi: false` leaves the section out.
+
 Set it up: a template *VMware - version report*, playbook `playbooks/vmware_version_report.yml`, the VMware vCenter
 credential (read-only is enough), the execution environment of your other VMware jobs, no Limit, no survey;
 `report_email_to` on its Variables, and a schedule (monthly, or after patching). On the report website it is on the

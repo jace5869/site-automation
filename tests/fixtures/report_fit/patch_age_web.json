@@ -1,0 +1,598 @@
+{
+"footer": "Checks run: patching",
+"sections": [
+{
+"cards": [
+{
+"code": "rpm -qa --last | head -10",
+"meta": "Patching",
+"next": "Look further:",
+"status": "warning",
+"subject": "web00.corp.example.mil",
+"title": "no package has been updated for 77 days (limit 35)"
+}
+],
+"status": "warning",
+"text": "What to act on first: critical, then warning. Every finding is in the tables below.",
+"title": "Start here"
+},
+{
+"columns": [
+"Severity",
+"Check",
+"Finding",
+"Look further"
+],
+"rows": [
+[
+"WARNING",
+"patching",
+"no package has been updated for 77 days (limit 35)",
+"rpm -qa --last | head -10"
+]
+],
+"status": "warning",
+"title": "Findings"
+},
+{
+"squares": {
+"groups": [
+{
+"cells": [
+{
+"q": "q4",
+"tip": "esx05.corp.example.mil: at least 50 days - Late"
+},
+{
+"q": "q4",
+"tip": "esx04.corp.example.mil: at least 41 days - Late"
+},
+{
+"q": "q3",
+"tip": "esx03.corp.example.mil: at least 32 days - Not known yet"
+},
+{
+"q": "q2",
+"tip": "esx02.corp.example.mil: at least 23 days - Not known yet"
+},
+{
+"q": "q1",
+"tip": "esx01.corp.example.mil: at least 14 days - Not known yet"
+},
+{
+"q": "q1",
+"tip": "esx00.corp.example.mil: at least 5 days - Not known yet"
+}
+],
+"name": "CL-SITEA-PROD",
+"status": "warning",
+"sub": "6 hosts",
+"word": "2 late"
+},
+{
+"cells": [
+{
+"q": "q5",
+"tip": "web25.corp.example.mil: 77 days (2026-10-01) - Late"
+},
+{
+"q": "q5",
+"tip": "web24.corp.example.mil: 74 days (2026-10-01) - Late"
+},
+{
+"q": "q5",
+"tip": "web23.corp.example.mil: 71 days (2026-10-01) - Late"
+},
+{
+"q": "q5",
+"tip": "web22.corp.example.mil: 68 days (2026-10-01) - Late"
+},
+{
+"q": "q5",
+"tip": "web21.corp.example.mil: 65 days (2026-10-01) - Late"
+},
+{
+"q": "q5",
+"tip": "web20.corp.example.mil: 62 days (2026-10-01) - Late"
+},
+{
+"q": "q4",
+"tip": "web19.corp.example.mil: 59 days (2026-10-01) - Late"
+},
+{
+"q": "q4",
+"tip": "web18.corp.example.mil: 56 days (2026-10-01) - Late"
+},
+{
+"q": "q4",
+"tip": "web17.corp.example.mil: 53 days (2026-10-01) - Late"
+},
+{
+"q": "q4",
+"tip": "web16.corp.example.mil: 50 days (2026-10-01) - Late"
+},
+{
+"q": "q4",
+"tip": "web15.corp.example.mil: 47 days (2026-10-01) - Late"
+},
+{
+"q": "q4",
+"tip": "web14.corp.example.mil: 44 days (2026-10-01) - Late"
+},
+{
+"q": "q4",
+"tip": "web13.corp.example.mil: 41 days (2026-10-01) - Late"
+},
+{
+"q": "q4",
+"tip": "web12.corp.example.mil: 38 days (2026-10-01) - Late"
+},
+{
+"q": "q3",
+"tip": "web11.corp.example.mil: 35 days (2026-10-01) - Due soon"
+},
+{
+"q": "q3",
+"tip": "web10.corp.example.mil: 32 days (2026-10-01) - Due soon"
+},
+{
+"q": "q3",
+"tip": "web09.corp.example.mil: 29 days (2026-10-01) - Due soon"
+},
+{
+"q": "q2",
+"tip": "web08.corp.example.mil: 26 days (2026-10-01) - On time"
+},
+{
+"q": "q2",
+"tip": "web07.corp.example.mil: 23 days (2026-10-01) - On time"
+},
+{
+"q": "q2",
+"tip": "web06.corp.example.mil: 20 days (2026-10-01) - On time"
+},
+{
+"q": "q2",
+"tip": "web05.corp.example.mil: 17 days (2026-10-01) - On time"
+},
+{
+"q": "q1",
+"tip": "web04.corp.example.mil: 14 days (2026-10-01) - On time"
+},
+{
+"q": "q1",
+"tip": "web03.corp.example.mil: 11 days (2026-10-01) - On time"
+},
+{
+"q": "q1",
+"tip": "web02.corp.example.mil: 8 days (2026-10-01) - On time"
+},
+{
+"q": "q1",
+"tip": "web01.corp.example.mil: 5 days (2026-10-01) - On time"
+},
+{
+"q": "q1",
+"tip": "web00.corp.example.mil: 2 days (2026-10-01) - On time"
+}
+],
+"name": "SITEA-linux-web",
+"status": "warning",
+"sub": "26 hosts",
+"word": "14 late"
+},
+{
+"cells": [
+{
+"q": "q5",
+"tip": "app00.corp.example.mil: 70 days (2026-10-01) - Late"
+},
+{
+"q": "q3",
+"tip": "app03.corp.example.mil: 34 days (2026-10-01) - Due soon"
+},
+{
+"q": "q2",
+"tip": "app01.corp.example.mil: 20 days (2026-10-01) - On time"
+},
+{
+"q": "q0",
+"tip": "app02.corp.example.mil: no data"
+}
+],
+"name": "SITEB-windows-app-servers",
+"status": "critical",
+"sub": "4 hosts",
+"word": "1 late"
+}
+],
+"label": "Days since the last update:",
+"legend": [
+{
+"q": "q1",
+"text": "0-14 days"
+},
+{
+"q": "q2",
+"text": "15-28 days"
+},
+{
+"q": "q3",
+"text": "29-35 days (due soon)"
+},
+{
+"q": "q4",
+"text": "36-60 days (late)"
+},
+{
+"q": "q5",
+"text": "61+ days (late)"
+},
+{
+"q": "q0",
+"text": "no data"
+}
+]
+},
+"status": "critical",
+"text": "One square = one host, oldest first; the darker, the longer since its last update. Hover a square for its host.",
+"title": "Patch age at a glance"
+},
+{
+"boxes": [
+{
+"label": "Patching late",
+"note": "no update for 36 days or more",
+"status": "critical",
+"value": 17
+},
+{
+"label": "Patching due soon",
+"note": "late within 7 days",
+"status": "low",
+"value": 4
+},
+{
+"label": "Oldest update",
+"note": "web25.corp.example.mil",
+"status": "warning",
+"value": "77 days"
+},
+{
+"label": "Patch date not known yet",
+"note": "build unchanged in the history",
+"status": "low",
+"value": 4
+}
+],
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"critical"
+]
+],
+"columns": [
+"Group",
+"Hosts",
+"On time",
+"Due soon",
+"Late",
+"Not known yet",
+"No data",
+"Oldest (days)",
+"% on time, 12 weeks",
+"Status"
+],
+"row_status": [
+"warning",
+"warning",
+"critical"
+],
+"rows": [
+[
+"CL-SITEA-PROD",
+6,
+"-",
+"-",
+2,
+4,
+"-",
+"at least 50",
+"0%",
+"2 late"
+],
+[
+"SITEA-linux-web",
+26,
+9,
+3,
+14,
+"-",
+"-",
+77,
+"77% \u2192 35%",
+"14 late"
+],
+[
+"SITEB-windows-app-servers",
+4,
+1,
+1,
+1,
+"-",
+1,
+70,
+"33%",
+"1 late"
+]
+],
+"status": "critical",
+"text": "Days since each host's last update, by host group (patch_age_groups): late = no update for 36 days or more (check_patching_max_age_days); due soon (Low) = late within 7 days (patch_age_due_days); critical from 60 days.",
+"title": "Patch age by group"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"warning"
+]
+],
+"columns": [
+"Host",
+"Group",
+"Last update",
+"Days",
+"Restart pending",
+"Status"
+],
+"lines": [
+"Not known yet (Low): the update date is known once the build changes, or after 35 days of history.",
+"No data (1): app02.corp.example.mil - the last update could not be read."
+],
+"row_status": [
+"warning",
+"warning",
+"warning",
+"critical",
+"warning",
+"warning",
+"warning",
+"warning",
+"warning",
+"warning"
+],
+"rows": [
+[
+"web25.corp.example.mil",
+"SITEA-linux-web",
+"2026-10-01",
+77,
+"no",
+"Late"
+],
+[
+"web24.corp.example.mil",
+"SITEA-linux-web",
+"2026-10-01",
+74,
+"no",
+"Late"
+],
+[
+"web23.corp.example.mil",
+"SITEA-linux-web",
+"2026-10-01",
+71,
+"no",
+"Late"
+],
+[
+"app00.corp.example.mil",
+"SITEB-windows-app-servers",
+"2026-10-01",
+70,
+"no",
+"Late"
+],
+[
+"web22.corp.example.mil",
+"SITEA-linux-web",
+"2026-10-01",
+68,
+"no",
+"Late"
+],
+[
+"web21.corp.example.mil",
+"SITEA-linux-web",
+"2026-10-01",
+65,
+"no",
+"Late"
+],
+[
+"web20.corp.example.mil",
+"SITEA-linux-web",
+"2026-10-01",
+62,
+"no",
+"Late"
+],
+[
+"web19.corp.example.mil",
+"SITEA-linux-web",
+"2026-10-01",
+59,
+"no",
+"Late"
+],
+[
+"web18.corp.example.mil",
+"SITEA-linux-web",
+"2026-10-01",
+56,
+"no",
+"Late"
+],
+[
+"web17.corp.example.mil",
+"SITEA-linux-web",
+"2026-10-01",
+53,
+"no",
+"Late"
+]
+],
+"status": "critical",
+"title": "Patch age: the 10 oldest hosts"
+}
+],
+"status": "warning",
+"summary": [
+{
+"label": "Critical",
+"note": "act now",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Warning",
+"note": "plan a fix",
+"status": "warning",
+"value": 1
+},
+{
+"label": "Patching late",
+"note": "no update for 36 days or more",
+"status": "critical",
+"value": 17
+},
+{
+"label": "Patching due soon",
+"note": "late within 7 days",
+"status": "low",
+"value": 4
+},
+{
+"label": "Oldest update",
+"note": "web25.corp.example.mil",
+"status": "warning",
+"value": "77 days"
+},
+{
+"label": "Patch date not known yet",
+"note": "build unchanged in the history",
+"status": "low",
+"value": 4
+}
+],
+"title": "Health check: 1 finding(s)"
+}

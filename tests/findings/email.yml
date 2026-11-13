@@ -10,8 +10,13 @@
     - name: The findings, as the check roles leave them (facts, so every host's are in hostvars)
       ansible.builtin.set_fact:
         site_findings: "{{ fs[inventory_hostname] | default([]) }}"
-        site_checks_run: [disk, services]
+        site_checks_run: "{{ ck | default(['disk', 'services']) }}"
         site_act_result: {}
+
+    - name: The patching check's patch age (1.61.0), as roles/check_patching leaves it
+      ansible.builtin.set_fact:
+        site_patch_age: "{{ pa[inventory_hostname] }}"
+      when: pa is defined and inventory_hostname in pa
 
     - name: Report
       ansible.builtin.include_role:

@@ -1,0 +1,14 @@
+{#- A section's squares (1.61.0, patch age), in the atlas and brief looks only (a web page; an email gets the tables):
+    s.squares = {label, legend: [{q, text}], groups: [{name, sub, status, word, cells: [{q, tip}]}]}; q is q1 to q5 (the
+    darker, the more) or q0 (no data); tip, the host and its value, shows on hover. The status is a chip with its word. #}
+{%- set sq = s.squares %}
+<div class="sq-legend"><span>{{ sq.label | default('') | e }}</span>
+{%- for l in sq.legend | default([]) %}<span><i class="sq {{ l.q | e }}" aria-hidden="true"></i>{{ l.text | e }}</span>{% endfor %}</div>
+<div class="sq-grid">
+{%- for g in sq.groups | default([]) %}
+{%- set gs = g.status if g.status in words else 'unknown' %}
+<div class="sq-row"><div class="sq-name"><b>{{ g.name | e }}</b><small>{{ g.sub | default('') | e }}</small></div>
+<div class="sq-cells" role="list" aria-label="{{ g.name | e }}">{% for c in g.cells | default([]) %}<i class="sq {{ c.q | e }}" role="listitem" title="{{ c.tip | e }}" aria-label="{{ c.tip | e }}"></i>{% endfor %}</div>
+<div class="sq-st">{{ chip(gs, g.word | default(chipword[gs])) }}</div></div>
+{%- endfor %}
+</div>

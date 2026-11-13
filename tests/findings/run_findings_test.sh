@@ -95,4 +95,47 @@ femail pass 'no report_email_to: one "No email" line, no error' -e '{"site_fail_
 [ "$(grep -c 'No email: report_email_to is not set' "$work/out.txt")" = 1 ] && echo "ok   - ...printed once, not per host" \
   || { echo "FAIL - no-email line count"; bad=$((bad + 1)); }
 
+# ---- 1.61.0 patch age: a section when the patching check ran (groups from the inventory; the website gets the squares) ----
+cat > "$work/inv.yml" <<EOI
+all:
+  vars:
+    ansible_python_interpreter: /nonexistent/python3
+  children:
+    SITEA-linux-web: {hosts: {web01: {ansible_connection: local}, web02: {ansible_connection: local}}}
+    SITEA-linux-db: {hosts: {db01: {ansible_connection: local}}}
+EOI
+pa='{"ck": ["patching"], "pa": {"web01": {"last": "2026-09-01", "days": 61, "restart": true, "late_after": 35, "crit_from": 0, "setting": "check_patching_max_age_days"},
+                                "web02": {"last": "2026-10-10", "days": 30, "restart": false, "late_after": 35, "crit_from": 0},
+                                "db01": {"last": "2026-11-01", "days": 5, "restart": false, "late_after": 35, "crit_from": 0}}}'
+mkdir -p "$work/reports"
+femail pass 'patch age: the patching check ran - the report has its section (site_fail_on: [] - green)' \
+  -e "$mail" -e "$pa" -e '{"site_fail_on": []}' -e "{\"report_web_dest\": \"$work/reports\", \"report_web_theme\": \"brief\"}"
+python3 - "$(ls -t "$work"/mail/*.eml | head -1)" > "$work/parts.txt" <<'PY'
+import email, email.policy, sys
+m = email.message_from_binary_file(open(sys.argv[1], "rb"), policy=email.policy.default)
+print("SUBJECT:", m["Subject"])
+print(m.get_body(preferencelist=("plain",)).get_content())
+print("HTML:", m.get_body(preferencelist=("html",)).get_content())
+PY
+grep -q 'SUBJECT: \[AAP\] Health check: 1 finding(s) on 1 of 3 host(s)' "$work/parts.txt" \
+  && grep -q '^Patch age by group' "$work/parts.txt" \
+  && grep -Eq '^SITEA-linux-web +2 +- +1 +1 +61 +0% +1 late$' "$work/parts.txt" \
+  && grep -Eq '^SITEA-linux-db +1 +1 +- +- +5 +100% +On time$' "$work/parts.txt" \
+  && grep -Eq '^web01 +SITEA-linux-web +2026-09-01 +61 +yes +Late$' "$work/parts.txt" \
+  && grep -q 'Patching late' "$work/parts.txt" && ! grep -q 'sq-legend' "$work/parts.txt" \
+  && echo "ok   - ...the email: Patch age by group (inventory groups), the oldest hosts, the Patching late box; no squares" \
+  || { echo "FAIL - patch age email"; grep -A12 'Patch age' "$work/parts.txt" | head -30; bad=$((bad + 1)); }
+grep -q 'Patch age: 3 host(s) - 1 on time, 1 due soon, 1 late; oldest 61 days (web01)' "$work/out.txt" \
+  && grep -q '% on time, 12 weeks: no history - not run from AAP' "$work/out.txt" \
+  && echo "ok   - ...the job output: the counts, and why there is no history (not run from AAP)" \
+  || { echo "FAIL - patch age job output"; grep -A3 'Patch age' "$work/out.txt" | head; bad=$((bad + 1)); }
+page=$(grep -rl --include='*.html' 'Patch age at a glance' "$work/reports" 2>/dev/null | grep -v -e index -e latest | head -1)
+[ -n "$page" ] && grep -q '<div class="sq-legend"><span>Days since the last update:</span>' "$page" \
+  && grep -q 'title="web01: 61 days (2026-09-01) - Late"' "$page" && grep -q '>Patch age at a glance<' "$page" \
+  && echo "ok   - ...the website (brief): the squares, a host's days on hover" \
+  || { echo "FAIL - patch age web page ($page)"; bad=$((bad + 1)); }
+femail pass 'patch age: no section when the patching check did not run' -e "$mail" -e "$pa" -e '{"site_fail_on": [], "ck": ["disk"]}'
+grep -E -q 'Patch age: [0-9]|Patch age \| ' "$work/out.txt" && { echo "FAIL - a patch age section without the patching check"; grep -E -m3 'Patch age: [0-9]|Patch age \| ' "$work/out.txt"; bad=$((bad + 1)); } \
+  || echo "ok   - ...none"
+
 [ $bad -eq 0 ] && echo 'all checks passed' || { echo "$bad failed"; exit 1; }

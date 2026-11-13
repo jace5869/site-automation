@@ -43,6 +43,17 @@
 ## attach every vCenter and ESXi host as an Excel workbook (.xlsx) to the email
 # vm_versions_xlsx: true
 
+## 1.61.0 ESXi patch age in the version report: days since each host's last update, by cluster.
+## vCenter has no read-only "last update" date: it comes from this report's earlier runs (when the
+## host's build changed; AAP job history, report_history's credential) and the host's boot time (an
+## update needs a restart). A build unchanged in the history: "at least N days" - late once N is
+## over the limit, else "not known yet" (Low). Due soon (Low): patch_age_due_days (7) before late.
+## an ESXi host with no update for more days than this is late
+# patch_age_esxi_late_days: 35
+
+## the patch age section in the version report (false = none)
+# patch_age_esxi: true
+
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no
 ## email. Set it on each TEMPLATE (its Variables, or a survey): in all.yml every report job emails.
@@ -321,3 +332,17 @@
 ## error; each report says "ACT is off (site_act_enabled false)" in one line and the job stays green
 ## (an enclave without a model). Usually in all.yml (docs/ENCLAVES.md).
 # site_act_enabled: true
+
+# ---- site_findings - usually in all.yml ----------------------------------------------------------
+## due soon (Low) = late within this many days
+# patch_age_due_days: 7
+
+## the oldest hosts listed
+# patch_age_oldest: 10
+
+## "% on time" over 12 weeks from this template's earlier runs (AAP job history; report_history's
+## credential)
+# patch_age_history: true
+
+## how many earlier runs to read (at most 50)
+# patch_age_history_runs: 50

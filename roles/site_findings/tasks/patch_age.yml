@@ -1,0 +1,41 @@
+---
+# PATCH AGE (1.61.0): a section of the Linux and Windows health reports, when the patching check ran - days since each host's
+# last update (the patching check's site_patch_age), by host group (patch_age_groups): squares per host on the website, the
+# groups with "% on time" over 12 weeks (this template's earlier runs: their patch_age artifact, from AAP), the 10 oldest
+# hosts. Read only. It changes no finding and does not decide the job's pass or fail. plugins/filter/patch_age_filters.py
+- name: Patch age | earlier runs (AAP job history)
+  ansible.builtin.include_role:
+    name: site_email
+    tasks_from: history_artifacts.yml
+  vars:
+    _hist_artifacts: [patch_age]
+    _hist_runs: "{{ patch_age_history_runs }}"
+  when: patch_age_history | bool
+
+- name: Patch age | the section
+  ansible.builtin.set_fact:
+    _patch_age: >-
+      {%- set hosts = [] -%}
+      {%- for h in ansible_play_hosts if 'patching' in hostvars[h].site_checks_run | default([]) -%}
+      {%-   set a = hostvars[h].site_patch_age | default({}) -%}
+      {%-   set _ = hosts.append(dict(a, host=h, group=hostvars[h].group_names | default([]) | patch_age_group(patch_age_groups))) -%}
+      {%- endfor -%}
+      {%- set first = (hosts | selectattr('setting', 'defined') | list + [{}]) | first -%}
+      {{ hosts | patch_age_sections({'due_days': patch_age_due_days | int, 'what': 'Windows' if site_os == 'windows' else 'Linux',
+                                     'setting': first.setting | default(''), 'oldest': patch_age_oldest | int},
+                                    _site_hist_runs | default([])) }}
+  run_once: true
+
+- name: Patch age | for the next runs (job artifact patch_age)
+  ansible.builtin.set_stats:
+    data:
+      patch_age: "{{ _patch_age.artifact }}"
+    per_host: false
+    aggregate: false
+  run_once: true
+  when: _patch_age.artifact is defined
+
+- name: Patch age | by group
+  ansible.builtin.debug:
+    msg: "{{ _patch_age.lines | default(['No host ran the patching check.']) + ([('% on time, 12 weeks: no history - ' ~ _site_hist_why)] if _site_hist_why | default('') else []) }}"
+  run_once: true

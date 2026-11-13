@@ -1,5 +1,50 @@
 # Changelog
 
+## 1.61.0 — 2026-11-13
+
+**Nothing to set up.** New settings have defaults: `patch_age_groups`, `patch_age_due_days`, `patch_age_oldest`,
+`patch_age_history`, `patch_age_history_runs`, `patch_age_esxi_late_days`, `patch_age_esxi`. No new job template.
+
+**Patch age: a section of the Linux and Windows health reports.** When the patching check runs, the report adds the
+days since each host's last update, by host group. Nothing is removed: the boxes, Start here and every section stay.
+It changes no finding and does not fail the job.
+
+- **Status:** late after `check_patching_max_age_days` (Linux, 35) or from `win_check_patching_warn_days` (Windows, 35;
+  critical from `win_check_patching_crit_days`, 60). Due soon (Low) = late within `patch_age_due_days` (7). Then on time,
+  or no data.
+- **The email:** three boxes (*Patching late*, *Patching due soon*, *Oldest update*), *Patch age by group* and the 10
+  oldest hosts. The workbook (`report_email_xlsx: true`) gets a sheet with every host.
+- **The website** (atlas and brief): the same, plus one square per host in one blue, the darker the older; hover for
+  the host and its days. The steps pass the palette check (next steps 15 apart; the lightest keep a thin edge).
+- **Groups:** `patch_age_groups`, inventory groups in order, the first match wins, else *Other*. Empty: each host's
+  first inventory group.
+- **% on time, 12 weeks:** first run of the last 12 weeks -> this run, from this template's earlier runs (the new job
+  artifact `patch_age`, read from AAP with the strip of past runs' credential). The first run shows this run only.
+- Docs: RUNBOOKS.md (patching), WINDOWS.md, WEB_REPORTS.md.
+
+**ESXi patch age in the VMware version report**, by cluster, the same tables and squares. Late after
+`patch_age_esxi_late_days` (35). vCenter has no read-only "last update" date, so it comes from the report's own runs:
+
+- a build change between two runs gives a real date (the boot the new build came with);
+- no change: "at least N days" (the oldest run with this build, or the host's earliest boot with it). Late when N is
+  over the limit; under it **Not known yet** (Low, never counted as on time) until the build changes or 35 days of
+  history are there. A reboot without a new build changes nothing.
+- The `vm_versions` artifact adds `esxi_hosts` (each host's build and boot time); the job adds `patch_age`.
+- Docs: VMWARE.md (The VMware version report).
+
+**Behaviour changes**
+
+- Health reports (Linux, Windows): a report whose job ran the patching check has the boxes and two sections above. The
+  findings, the title and the status are as before.
+- VMware version report: three or four more boxes, two more sections (three on the website), a *Patch age* sheet in the
+  workbook, `esxi_hosts` in the `vm_versions` artifact. The status is as before.
+- `findings_report`: a lower extra section's `boxes` join the summary boxes (before: only a top section's).
+- `site_report_history`: a new option, `artifacts`, returns named job artifacts with each run.
+
+**Tests:** `tests/test_patch_age.py`; report fit documents `patch_age_sections` and `patch_age_web` (also at 800 px in
+glass); the findings e2e (email, job output, the brief page); a Windows simulation under pwsh
+(`tests/windows/patch_age_sim`); the vcsim version report.
+
 ## 1.56.0 — 2026-11-13
 
 **Nothing to set up.** Two new settings have defaults (`servicenow_node_semaphore_warn_ms`,

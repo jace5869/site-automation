@@ -521,7 +521,8 @@ run "VMware hardware inventory with vm_hardware_vibs false: the VIBs not asked f
 # ---- VMware version report (read-only; vcsim says vCenter 6.5.0, its hosts ESXi 8.0.2: newer than their vCenter) ----------
 run "VMware version report: vCenter and every ESXi host with version and build; hosts newer than their vCenter: amber" ok \
     vmware_version_report.yml -- "VMware versions: 1 vCenter, " "newer than their vCenter" "127.0.0.1: vCenter 6.5.0 build " \
-       "; ESXi 8.0.2 build " '"vm_versions"' '"esxi_builds": ' '"ESXi newer than its vCenter": '
+       "; ESXi 8.0.2 build " '"vm_versions"' '"esxi_builds": ' '"ESXi newer than its vCenter": ' \
+       '"esxi_hosts": ' '"patch_age": ' "Patch age: " " not known yet; oldest " "% on time, 12 weeks: no history - "
 run "VMware version report: one datacenter that is not there - no hosts, still a report" ok vmware_version_report.yml \
     -e vmware_datacenter=nope -- "VMware versions: 1 vCenter, 0 ESXi hosts on 0 builds" "; no ESXi hosts"
 

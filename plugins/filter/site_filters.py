@@ -2090,8 +2090,8 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None):
     """The result of a check run (site_findings on every host) as a report for roles/site_email:
     title with the counts, summary boxes, one findings table (critical first), the hosts that did
     not report, any extra sections the playbook adds (e.g. every certificate), the healthy hosts. An extra
-    section with top: true goes ABOVE the findings table (what to act on first), and its boxes (label, value,
-    status) join the summary boxes. A top section's start_here (cards, [] = none) and start_here_text replace the
+    section with top: true goes ABOVE the findings table (what to act on first). An extra section's boxes (label, value,
+    status), top or not, join the summary boxes. A top section's start_here (cards, [] = none) and start_here_text replace the
     "Start here" cards made from the findings: a report that knows better what comes first (the STIG drift
     report: its CAT I rules). A top section's headline (and headline_status) says what the run found when its own
     findings are not that - the STIG recheck, report only, whose open rules are no finding of the job's: the title
@@ -2144,7 +2144,7 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None):
         status = min(status, head.get("headline_status") or status, key=lambda x: order.get(x, 2))
         if head.get("summary_only"):
             summary = [box("Did not report", len(missing), "warning", "health unknown")] if missing else []
-    for s in top:
+    for s in extra or []:                     # a top section's boxes, and a lower one's (1.61.0: patch age)
         summary += list(s.get("boxes") or [])
     sections = list(top)
     own = [s for s in top if "start_here" in s]
