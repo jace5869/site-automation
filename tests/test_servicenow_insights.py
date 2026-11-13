@@ -1288,6 +1288,24 @@ class SlaPages(unittest.TestCase):
         got, err = rd.read_task_sla(api, ["i1"])
         self.assertEqual((err, len(got["i1"]), sum(x["breached"] for x in got["i1"]), len(api.calls)), ("", 40, 1, 3))
 
+    def test_a_server_that_ignores_the_offset_and_records_that_shift(self):
+        """int-9 (tester's LOW 1 and 2): a full page of records already read stops at page 2 with a reason (not 500
+        pages); a record seen on two pages (the list shifted between reads) is counted once."""
+        class NoOffset(self.Api):
+            def get(self, path, params):
+                return super(NoOffset, self).get(path, dict(params, sysparm_offset=0))
+        api = NoOffset(self.sla_rows(20, 0))
+        got, err = rd.read_task_sla(api, ["i1"])
+        self.assertEqual((got, len(api.calls)), ({}, 2))
+        self.assertIn("page 2 repeats records already read (the server ignores sysparm_offset)", err)
+
+        class Shift(self.Api):
+            def get(self, path, params):
+                off = int(params.get("sysparm_offset", 0))
+                return super(Shift, self).get(path, dict(params, sysparm_offset=max(0, off - 1)))   # one record read twice
+        got, err = rd.read_task_sla(Shift(self.sla_rows(25, 25)), ["i1"])
+        self.assertEqual((err, len(got["i1"]), sum(x["breached"] for x in got["i1"])), ("", 25, 1))
+
     def test_a_later_page_that_fails(self):
         win = rd.window(6, 0, "2026-10-31", True, "", NOW)
         got, err = rd.read_task_sla(self.Api(self.sla_rows(21, 21), fail_after=20), ["i1"])

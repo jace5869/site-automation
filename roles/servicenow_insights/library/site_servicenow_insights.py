@@ -706,13 +706,15 @@ def _elapsed(x):
 
 def _task_sla_rows(api, part):
     """Every task_sla record of these tickets, page by page in a fixed order (1.47.0: a ticket's 21st SLA is read too) ->
-    (rows, error). A page that fails is an error for them all: a part never counts as met."""
-    rows, offset, limit = [], 0, 20 * len(part)
+    (rows, error). A page that fails is an error for them all: a part never counts as met. Each record once, by its
+    sys_id (records that move between two page reads are not counted twice); a full page with no record not seen
+    before means the server ignores the offset: said at once, not after TASK_SLA_PAGES pages."""
+    rows, offset, limit, seen = [], 0, 20 * len(part), set()
     for page in range(1, TASK_SLA_PAGES + 1):
         try:
             r = api.get("api/now/table/task_sla", {"sysparm_query": "taskIN" + ",".join(part) + "^stage!=cancelled^ORDERBYtask^ORDERBYsys_id",
-                                                   "sysparm_fields": "task,sla,stage,has_breached,business_percentage,percentage,start_time,end_time,pause_time,"
-                                                                     "business_time_left,planned_end_time,business_duration,duration",
+                                                   "sysparm_fields": "sys_id,task,sla,stage,has_breached,business_percentage,percentage,start_time,end_time,"
+                                                                     "pause_time,business_time_left,planned_end_time,business_duration,duration",
                                                    "sysparm_display_value": "all", "sysparm_exclude_reference_link": "true",
                                                    "sysparm_limit": limit, "sysparm_offset": offset})
         except SnError as e:
@@ -725,9 +727,20 @@ def _task_sla_rows(api, part):
         got = r.get("result") if isinstance(r, dict) else None
         if not isinstance(got, list):
             return [], "GET api/now/table/task_sla: no result list in the answer" + (" (page %d)" % page if page > 1 else "")
-        rows += got
+        new = 0
+        for x in got:
+            sid = str(_vd(x, "sys_id")[0] or "") if isinstance(x, dict) else ""
+            if sid and sid in seen:
+                continue
+            if sid:
+                seen.add(sid)
+            rows.append(x)
+            new += 1
         if len(got) < limit:
             return rows, ""
+        if not new:
+            return [], ("GET api/now/table/task_sla: page %d repeats records already read (the server ignores sysparm_offset)"
+                        " - not used" % page)
         offset += len(got)
     return [], "GET api/now/table/task_sla: more than %d pages for %d tickets - not used" % (TASK_SLA_PAGES, len(part))
 
