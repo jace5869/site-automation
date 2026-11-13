@@ -1612,6 +1612,9 @@ File: `roles/site_act/defaults/main.yml`
 | `site_act_batch` | `5` | The jobs where ACT reads evidence (the VMware alarms analysis and capacity planning, the log analysis) ask it about this many items per question: a long answer about many items is what a gateway or proxy cuts off, or what runs past site_act_model_timeout. 15 items are 3 questions of 5, in one report. 0 = all in one qu… (all of it: the role file) |
 | `site_act_extra_instructions` | (empty) | anything ACT should know about this site |
 | `site_act_evidence_text` | (empty) | extra evidence (troubleshoot.yml passes what it collected) |
+| `site_act_old_bins` | `[/usr/local/bin/act]` | Old copies of ACT on the hosts (1.53.0): an `act` someone put there by hand runs instead of the one the jobs install (/opt/act/act) when a person types act, with its own saved model. Every job that can run ACT on a host looks, ACT on or off, once per host (roles/site_act/tasks/old_copies.yml; the job "ACT - find and r… (all of it: the role file) |
+| `site_act_old_bin` | `link` | link = keep the old one in /opt/act/old (0700), then link it to /opt/act/act; delete = keep it, then remove it; report = only say it |
+| `site_act_fix_user_model` | `false` | true = a user's saved genai.model (~/.config/act/config.json) set to the job's model |
 
 ## site_email
 

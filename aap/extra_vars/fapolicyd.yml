@@ -346,7 +346,7 @@
 #   - {tab: Windows, match: ["Windows*", "Active Directory*", "AD *", "ACT for Windows*"]}
 #   - {tab: Network and storage, match: ["Network*", "NetApp*", "ONTAP*", "Cisco UCS*", "UCS*"]}
 #   - {tab: Linux, match: ["Linux*", "Health check*", "Troubleshoot*", "Patch*", "Database*", "Service watch*", "POA&M*", "STIG*", "Evaluate-STIG*",
-#                          "Log analysis*", "fapolicyd*", "Apply approved*", "Mail relay*"]}
+#                          "Log analysis*", "fapolicyd*", "Apply approved*", "Mail relay*", "ACT - *"]}
 #   - {tab: ServiceNow and AAP, match: ["ServiceNow*", "AAP *", "Report website*"]}
 
 ## your own {names}, e.g. {site: "{{ site_code }}"} for "{site}/{template}/..."
@@ -466,6 +466,20 @@
 ## GENAI_TIMEOUT; ACT's own default, 90, is too short for a long analysis or a busy provider). Every
 ## ACT job uses it: the runbooks' use_act, the VMware alarms and capacity analyses, service watch.
 # site_act_model_timeout: 600
+
+## Old copies of ACT on the hosts (1.53.0): an `act` someone put there by hand runs instead of the
+## one the jobs install (/opt/act/act) when a person types act, with its own saved model. Every job
+## that can run ACT on a host looks, ACT on or off, once per host
+## (roles/site_act/tasks/old_copies.yml; the job "ACT - find and replace old copies" on its own).
+## where an old act may be; missing, or a link into /opt/act, is left alone
+# site_act_old_bins: [/usr/local/bin/act]
+
+## link = keep the old one in /opt/act/old (0700), then link it to /opt/act/act; delete = keep it,
+## then remove it; report = only say it
+# site_act_old_bin: link
+
+## true = a user's saved genai.model (~/.config/act/config.json) set to the job's model
+# site_act_fix_user_model: false
 
 # ---- site_findings - usually in all.yml ----------------------------------------------------------
 ## A host that cannot be reached (switched off, no network, ssh or WinRM refused, its login refused)

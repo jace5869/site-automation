@@ -54,6 +54,14 @@ aap_ee_project: "Site automation"             # your site-automation project's n
 # aap_ee_image: hub.example.mil/site-ee-all:3
 """),
     "act_fix_approved.yml": ("Apply approved ACT fix", "Machine", LINUX_CHECKS, ""),
+    "act_old_copies.yml": ("ACT - find and replace old copies", "Machine", "", """\
+## An act put on a host by hand (/usr/local/bin/act) runs instead of the jobs' ACT when a person types act. Run it as
+## Check first: it says what it would do. Every job that can run ACT on a host does the same look (ACT on or off)
+# site_act_old_bin: link                    # link (the old one kept in /opt/act/old) | delete (kept first) | report
+# site_act_old_bins: [/usr/local/bin/act]   # where to look; a link into /opt/act is left alone
+# site_act_fix_user_model: false            # true = a user's saved genai.model set to the jobs' model (a backup beside it)
+# report_email_to: [ops@yoursite.mil]
+"""),
     "ad_health_report.yml": ("Active Directory health report", "Machine (Windows)", "", ""),
     "ad_lockout.yml": ("Active Directory - account lockout", "Machine (Windows)", "", """\
 ## The survey asks for the account (ad_lockout_user, not required: empty = every account locked out now)

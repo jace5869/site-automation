@@ -18,6 +18,10 @@
 {%- if _act_off | default(false) and 'ACT is off (site_act_enabled false).' not in (r.sections | default([]) | map(attribute='text', default='') | list) -%}
 {%- set r = dict(r, sections=(r.sections | default([])) + [{'title': 'ACT', 'status': 'info', 'text': 'ACT is off (site_act_enabled false).'}]) -%}
 {%- endif -%}
+{#- the old copies of ACT the job found or changed on its hosts (1.53.0): one section, once -#}
+{%- if _act_old | default([]) and 'ACT old copies' not in (r.sections | default([]) | map(attribute='title', default='') | list) -%}
+{%- set r = dict(r, sections=(r.sections | default([])) + [{'title': 'ACT old copies', 'status': 'info', 'lines': _act_old}]) -%}
+{%- endif -%}
 {#- the web copy (report_web_dest) passes its own _page_logo_cid, _page_logo_size and _page_runs; an email links its web copy (_email_web_url) -#}
 {%- set web = _page_runs is defined -%}
 {%- set logo_cid = _page_logo_cid | default(_email_logo_cid | default('')) -%}

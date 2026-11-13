@@ -1,5 +1,47 @@
 # Changelog
 
+## 1.53.0 — 2026-11-13
+
+**Updating without scripts:** paste `site-automation-1.53.0-changed-since-1.47.0.zip` as it is (from an older version,
+its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`.
+
+**To set up: step 98**, the job *ACT - find and replace old copies*, run once as Check, then as Run. To do: 1.53.0
+step 98.
+
+**Old copies of ACT are linked to the jobs' ACT.** An `act` put on a host by hand (`/usr/local/bin/act`) ran
+instead of the jobs' ACT (`/opt/act/act`) when a person typed `act`, with its own saved model. The jobs were not
+affected: they run `/opt/act/act` with their own model.
+
+- **A behaviour change: link by default.** Every job that can run ACT on a host now looks, with ACT on or off,
+  once per host. That is Health check, Database health and Troubleshoot (`use_act` or not), Service watch and its
+  approved fix, fapolicyd, fapolicyd denials and Apply approved ACT fix.
+- **What it does** (`site_act_old_bin`):
+  - **link** (the default): the old one is kept in `/opt/act/old` (0700, root) as `act.<UTC time>.<sha256, first 8>`,
+    then `/usr/local/bin/act` links to `/opt/act/act`. ACT is installed there first when it is not yet.
+  - **delete**: kept the same way, then removed.
+  - **report**: only said.
+- **Left alone:** nothing there, or a link to `/opt/act/act` or into `/opt/act`. Your own install playbook may link
+  there: the two never undo each other.
+- **Not linked** where `python3` is older than 3.8 (typing `act` would fail there). The job says so.
+- **Saved models.** root's and each `/home` user's `~/.config/act/config.json` is read for `genai.model` only. The
+  key is never read out, printed or copied. A model that is not the jobs' is reported.
+  `site_act_fix_user_model: true` rewrites that one key, with a backup beside it, the mode and owner kept.
+- **Said once per host** in the job output and in the report's *ACT old copies* section, with the old version.
+  Check changes nothing and says what it would do.
+- **New settings** (roles/site_act): `site_act_old_bins` (`[/usr/local/bin/act]`), `site_act_old_bin` (`link`),
+  `site_act_fix_user_model` (`false`).
+- **The new job** *ACT - find and replace old copies* (`playbooks/act_old_copies.yml`) does the same look on its own,
+  across the fleet, with one report.
+- Out of scope: jobs that run ACT only on the AAP side (the VMware alarms, capacity and right-sizing analyses, VM
+  deploy, VM - ask a question, ticket insights, the ticket review, the outage documents, the log analysis), and the
+  copy of ACT inside the VMware ask container.
+- Docs: ADDING_ACT.md ("Old copies of ACT"), JOB_TEMPLATES.md, VARIABLES_REFERENCE.md, `aap/extra_vars`.
+- Tests: `tests/test_act_old_copies.py` (every case of the module; every job that can run ACT on a host reaches the
+  check, ACT on or off), `tests/test_act_switch.py` (the check asks no model), `tests/act/run_act_old_copies_test.sh`
+  (UBI containers: Check, link, `act --version`, the backup, the report, ACT off, report, delete, the saved model;
+  Python 3.6 on ansible-core 2.16; the key never in the output).
+
 ## 1.47.0 — 2026-11-13
 
 **Updating without scripts:** paste `site-automation-1.47.0-changed-since-1.44.0.zip` as it is (from an older version,
@@ -1502,7 +1544,7 @@ tests/stig/run_stigman_real_test.sh against STIG Manager 1.6.18 (not in CI).
 
 SA_VERSION 1.26.0; the PDFs at 1.26.0.
 
-**To do, if you have not yet: what 0.20.0 to 1.47.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.47.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing, 1.39.0 nothing, 1.41.0 nothing, 1.42.0 nothing, 1.43.0 nothing, 1.44.0 nothing, 1.45.0 nothing, 1.47.0 nothing).** In order; each step works without
+**To do, if you have not yet: what 0.20.0 to 1.53.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.53.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing, 1.39.0 nothing, 1.41.0 nothing, 1.42.0 nothing, 1.43.0 nothing, 1.44.0 nothing, 1.45.0 nothing, 1.47.0 nothing, 1.53.0 step 98).** In order; each step works without
 the ones after it. There is no step 90.
 
 1. **Your logo** (0.20.0). A PNG with a transparent background, about 160 px tall and under 100 KB, in
@@ -2242,6 +2284,15 @@ the ones after it. There is no step 90.
     4. Run it. The *Front-end nodes* table shows each name beside its host, and *Stats page answered at* says which
        address answered. A listed node's row says *stats page only*.
     Details: docs/SERVICENOW_SETUP.md, "Self-hosted instance".
+98. **ACT - find and replace old copies** (1.53.0) - once, across the fleet. Every job that can run ACT on a host now
+    links an old `/usr/local/bin/act` to the jobs' ACT by itself; this job does it everywhere at once.
+    1. A job template *ACT - find and replace old copies*: playbook `playbooks/act_old_copies.yml`, the Machine
+       credential, your Linux inventory. Variables: `aap/extra_vars/act_old_copies.yml`.
+    2. Launch it with Job type **Check**. Its report lists each old copy and what would be done.
+    3. Launch it with Job type **Run**. Each old copy is kept in `/opt/act/old`, then linked to `/opt/act/act`.
+    4. Only to keep the old copies as they are: `site_act_old_bin: report` in `all.yml`.
+    5. Your own install playbook: if it copies ACT to `/usr/local/bin/act`, make it a link to `/opt/act/act`.
+    Details: docs/ADDING_ACT.md, "Old copies of ACT".
 
 ## 1.24.0 — 2026-11-11
 

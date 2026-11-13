@@ -29,6 +29,7 @@ you change ([SETUP_AAP.md](SETUP_AAP.md#step-9-the-other-job-templates)).
 | Patch hosts | `playbooks/patch_hosts.yml` | Workflow step | [SETUP_AAP.md](SETUP_AAP.md#patch-hosts), workflows 3 and 4: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#3-patch-with-checks) |
 | Linux - disk space report | `playbooks/disk_report.yml` | Report | [DISK_SPACE.md](DISK_SPACE.md#set-it-up), workflow 42: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#42-disk-space-and-the-tmp-cleanup-with-an-approval) |
 | Linux - tmp cleanup | `playbooks/tmp_cleanup.yml` | After an approval (on its own: Check, then `tmp_cleanup_confirm`) | [DISK_SPACE.md](DISK_SPACE.md#what-the-cleanup-deletes) |
+| ACT - find and replace old copies | `playbooks/act_old_copies.yml` | Change (Check first); every job that can run ACT on a host does it too | [ADDING_ACT.md](ADDING_ACT.md#old-copies-of-act) |
 | Apply approved ACT fix | `playbooks/act_fix_approved.yml` | After an approval | [SETUP_AAP.md](SETUP_AAP.md#apply-approved-act-fix), workflow 5: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#5-fix-with-approval-act) |
 | Database health - MariaDB / MySQL | `playbooks/database_health.yml` | Watch | [MARIADB.md](MARIADB.md#the-short-version), workflow 8: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#8-database-watch-mariadb-and-mysql-hourly) |
 | Service watch - check | `playbooks/service_watch.yml` | Workflow step | [SERVICE_WATCH_DEMO.md](SERVICE_WATCH_DEMO.md#part-5-aap-setup), the workflow: [Part 6](SERVICE_WATCH_DEMO.md#part-6-the-workflow) |

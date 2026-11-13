@@ -35,6 +35,11 @@
       ansible.builtin.include_role:
         name: site_findings
         tasks_from: reach.yml
+
+    - name: ACT | old copies on this host (ACT on or off; roles/site_act/tasks/old_copies.yml)
+      ansible.builtin.include_role:
+        name: site_act
+        tasks_from: old_copies.yml
   roles:
     - role: troubleshoot
   post_tasks:
