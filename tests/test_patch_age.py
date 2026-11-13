@@ -112,6 +112,34 @@ class Sections(unittest.TestCase):
         first = self.doc(self.fleet())["sections"][1]["lines"]
         self.assertIn("% on time, 12 weeks: no earlier run in AAP's job history yet - the trend starts with the next run.", first)
 
+    def test_the_12_week_line_on_the_website_only(self):
+        """int-11: a Trend column beside "% on time, 12 weeks" on the website - every run of the 12 weeks, then this one;
+        fewer than 2 points: no line. The email's table stays as it was."""
+        runs = [run(120, {"SITEA-linux-web": [5, 1]}), run(80, {"SITEA-linux-web": [5, 4]}), run(10, {"SITEA-linux-web": [5, 5]}), run(5)]
+        r = self.doc(self.fleet(), runs)
+        mail, web = r["sections"][0], r["web_sections"][1]
+        self.assertNotIn("Trend", mail["columns"])
+        self.assertNotIn("sparks", mail)
+        at = web["columns"].index("Trend")
+        self.assertEqual(web["columns"][at - 1], "% on time, 12 weeks")
+        self.assertEqual(web["kinds"][at], "spark")
+        self.assertEqual([len(x) for x in web["rows"]], [len(web["columns"])] * len(web["rows"]))
+        self.assertEqual([len(x) for x in web["cell_status"]], [len(web["columns"])] * len(web["rows"]))
+        self.assertEqual(web["rows"][1][at - 1], "80% → 40%")                     # the number stays
+        self.assertEqual(web["sparks"][0], {})                                     # one point: no line
+        self.assertEqual(web["rows"][0][at], "")
+        sp = web["sparks"][1]
+        self.assertEqual([p["text"] for p in sp["data_points"]], ["80% on time", "100% on time", "40% on time"])
+        self.assertEqual(sp["data_points"][-1]["label"], "Fri 6 Nov 2026")
+        self.assertEqual(sp["name"], "SITEA-linux-web")
+        self.assertEqual(web["rows"][1][at], sp["label"])
+        self.assertIn("80%, 100%, 40%", sp["label"])
+        xs = [p["x"] for p in sp["data_points"]]
+        self.assertEqual(xs, sorted(xs))
+        self.assertEqual(xs[-1], pa.SPARK_W - pa.SPARK_PAD)
+        self.assertEqual(sp["last"], [sp["data_points"][-1]["x"], sp["data_points"][-1]["y"]])
+        self.assertEqual(self.doc(self.fleet())["web_sections"][1], self.doc(self.fleet())["sections"][0])   # no history: as the email
+
     def test_windows_critical_and_rule(self):
         r = pa.patch_age_sections([win("app01.corp.example.mil", 61), win("app02.corp.example.mil", 10)],
                                   {"what": "Windows", "now": NOW, "setting": "win_check_patching_warn_days"})

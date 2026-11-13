@@ -198,6 +198,14 @@ class Outputs(unittest.TestCase):
         self.assertEqual(h.count('<span class="chip info">VIP</span>'), 1)
         pts = json.loads(re.search(r'class="breach-trend" data-points="([^"]+)"', h).group(1).replace("&quot;", '"'))
         self.assertEqual(pts, self.m["points"])                # the hook (1.57.0's sparkline) - the same values as the table
+        svg = h.split('class="breach-trend"')[1].split("</svg>")[0]     # int-11: the line, its hover the page's own tip
+        self.assertIn('role="img"', svg)
+        self.assertIn("Breaches each day, last 30 days: %s." % ", ".join(str(p["n"]) for p in pts), svg)
+        self.assertEqual(svg.count('class="hit"'), len(pts))
+        self.assertEqual(svg.count("data-t="), len(pts))
+        self.assertIn("Breached <b>%d</b><br>7-day average <b>%.1f</b>" % (pts[-1]["n"], pts[-1]["avg7"]),
+                      svg.replace("&lt;", "<").replace("&gt;", ">"))
+        self.assertEqual(svg.count('class="bt-a"'), 1)
         days = re.findall(r"<tr><td[^>]*>(\w+ \d+)</td><td[^>]*>(\d+)</td><td[^>]*>([\d.]+)</td></tr>", h.split("Every day's number")[1])
         self.assertEqual(len(days), 30)
         self.assertEqual(days[0][1:], ("2", "%.1f" % (13 / 7.0)))

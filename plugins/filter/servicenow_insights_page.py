@@ -245,7 +245,9 @@ tr.selrow td{background:var(--accent-soft)}
 .brhead{font-size:17px;margin:0 0 12px}
 .ubar{display:inline-block;width:64px;height:7px;border-radius:4px;background:var(--line-2);vertical-align:middle;overflow:hidden}
 .ubar>span{display:block;height:100%}.ubar .u-crit{background:var(--crit)}.ubar .u-warn{background:var(--warn)}.ubar .u-info{background:var(--info)}
-.c-info{color:var(--info)}.brl{margin:6px 0 12px;padding-left:20px}.brl li{margin:2px 0}.breach-trend:empty{display:none}
+.c-info{color:var(--info)}.brl{margin:6px 0 12px;padding-left:20px}.brl li{margin:2px 0}.breach-trend{display:block;width:100%;max-width:640px;height:auto;margin:4px 0 2px}
+.breach-trend .bt-d{fill:var(--s1);fill-opacity:.32}.breach-trend .bt-a{fill:none;stroke:var(--s1);stroke-width:2;stroke-linejoin:round}
+.breach-trend .bt-l{fill:var(--s1);stroke:var(--surface);stroke-width:2}
 .brsla{display:block;font-size:11px;color:var(--muted)}.brnum{margin-top:10px}.brnum summary{cursor:pointer;font-size:13px;color:var(--fg-2)}
 .cap ul,.fair ul,.callout ul{margin:3px 0 0;padding-left:18px}.cap li,.fair li,.callout li{margin:1px 0}
 
@@ -1294,10 +1296,8 @@ def breach_section(bm, url, pre, title_note=""):
         trend = ['<div class="fig"><h3>Breaches, last %d days</h3>' % int(bm.get("days") or 30)]
         if bm.get("lines"):
             trend.append('<ul class="brl">%s</ul>' % "".join("<li>%s</li>" % e(x) for x in bm["lines"]))
-        # TODO(1.57.0 merge): the shared sparkline helper draws this line - every day's breaches and its 7-day average;
-        # until then the hook only carries the points (the numbers table below has the same values)
         if pts:
-            trend.append('<div class="breach-trend" data-points="%s" aria-hidden="true"></div>' % e(json.dumps(pts, separators=(",", ":"))))
+            trend.append(breach_trend(pts, int(bm.get("days") or 30)))
         if wk:
             trend.append(table([("Week", "", ""), ("Breached", "n", ""), ("Resolution", "n", ""), ("Response", "n", ""), ("Worst group", "", "")],
                                [("", [td(e(w["label"])), td(n(w["n"]), "n"), td(n(w["resolution"]), "n"), td(n(w["response"]), "n"),
@@ -1310,6 +1310,46 @@ def breach_section(bm, url, pre, title_note=""):
         out.append("".join(trend))
     return section("breach", "About to breach", "the next %g business hours · read %s%s" % (bm.get("window_h", 8), e(bm.get("read_at") or ""), title_note),
                    "".join(out))
+
+
+def breach_trend(pts, days):
+    """int-11: every day's breaches (bars) and their 7-day average (the line), one hue (--s1). This page loads its own
+    script (site-insights.js), not the report website's site-report.js, so the hover is its own: a hit area a day with
+    data-t (the page's tip) and a <title> where no script runs. The numbers table under it has the same values; the
+    points stay in data-points."""
+    W, H, L, R, T, B = 640, 104, 30, 8, 10, 20
+    hi = max([p_["n"] for p_ in pts] + [p_["avg7"] for p_ in pts] + [1])
+    cw = (W - L - R) / float(len(pts))
+
+    def x(i):
+        return L + (i + 0.5) * cw
+
+    def y(v):
+        return T + (1 - v / float(hi)) * (H - T - B)
+
+    avg = ["%s%.1f %.1f" % ("L" if i else "M", x(i), y(p_["avg7"])) for i, p_ in enumerate(pts)]
+    label = "Breaches each day, last %d days: %s. The 7-day average from %.1f to %.1f." % (
+        days, ", ".join(str(p_["n"]) for p_ in pts), pts[0]["avg7"], pts[-1]["avg7"])
+    out = ['<svg class="breach-trend" data-points="%s" viewBox="0 0 %d %d" width="100%%" role="img" aria-label="%s">' % (
+        e(json.dumps(pts, separators=(",", ":"))), W, H, e(label)),
+        '<line class="grid" x1="%d" x2="%d" y1="%.1f" y2="%.1f"/><text x="%d" y="%.1f" text-anchor="end">0</text>' % (
+            L, W - R, y(0), y(0), L - 6, y(0) + 4),
+        '<line class="grid" x1="%d" x2="%d" y1="%.1f" y2="%.1f" stroke-dasharray="2 3"/><text x="%d" y="%.1f" text-anchor="end">%s</text>' % (
+            L, W - R, y(hi), y(hi), L - 6, y(hi) + 4, n(hi) if float(hi).is_integer() else "%.1f" % hi),
+        '<text x="%.1f" y="%d" text-anchor="start">%s</text><text x="%.1f" y="%d" text-anchor="end">%s</text>' % (
+            L, H - 4, e(short_date(pts[0]["date"])), W - R, H - 4, e(short_date(pts[-1]["date"])))]
+    bw = max(1.0, cw * 0.62)
+    for i, p_ in enumerate(pts):
+        if p_["n"]:
+            out.append('<rect class="bt-d" x="%.1f" y="%.1f" width="%.1f" height="%.1f" rx="1"/>' % (
+                x(i) - bw / 2, y(p_["n"]), bw, y(0) - y(p_["n"])))
+    out.append('<path class="bt-a" d="%s"/><circle class="bt-l" cx="%.1f" cy="%.1f" r="4"/>' % (" ".join(avg), x(len(pts) - 1), y(pts[-1]["avg7"])))
+    for i, p_ in enumerate(pts):
+        attr, title = tip("%s<br>Breached <b>%s</b><br>7-day average <b>%.1f</b>" % (e(short_date(p_["date"])), n(p_["n"]), p_["avg7"]))
+        out.append('<rect class="hit" x="%.1f" y="0" width="%.1f" height="%d" fill="transparent"%s>%s</rect>' % (L + i * cw, cw, H - B, attr, title))
+    out.append("</svg>")
+    out.append('<div class="fair">The bars are each day\'s breaches and the line their 7-day average. Point at a day for its numbers.</div>')
+    return "".join(out)
 
 
 def servicenow_insights_breach_page(bm, opts=None):

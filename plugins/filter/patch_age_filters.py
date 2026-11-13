@@ -14,7 +14,8 @@ Status of a host:
   no data     the check could not read the last update
 
 History: each run publishes patch_age (per group: hosts with data, on time); "% on time, 12 weeks" is the first run of
-the last 12 weeks -> this run. ESXi has no read-only "last update" date in vCenter: patch_age_esxi works it out from
+the last 12 weeks -> this run. On the website (atlas, brief) a Trend column beside it draws every run of those weeks
+as a line with a hover (int-11; two points at least, else no line); the email keeps the number. ESXi has no read-only "last update" date in vCenter: patch_age_esxi works it out from
 the version report's own runs (when the host's build changed) and the host's boot time (an ESXi update needs a restart).
 """
 from __future__ import absolute_import, division, print_function
@@ -25,6 +26,7 @@ import re
 import time
 
 WEEKS = 12
+SPARK_W, SPARK_H, SPARK_PAD = 120, 30, 4         # the Trend column's line, as the other reports' (1.52.0, 1.58.0)
 WORD = {"critical": "Late", "late": "Late", "unknown": "Not known yet", "due": "Due soon", "ontime": "On time", "nodata": "No data"}
 LEVEL = {"critical": "critical", "late": "warning", "unknown": "low", "due": "low", "ontime": "ok", "nodata": ""}
 RANK = {"critical": 0, "late": 1, "unknown": 2, "due": 3, "nodata": 4, "ontime": 5}
@@ -109,6 +111,56 @@ def _first_pct(group, runs, now):
     return None
 
 
+def _series(group, runs, now, now_pct):
+    """The group's % on time in every run of the last 12 weeks, oldest first, then this run: [(epoch, %)]."""
+    since, out = now - WEEKS * 7 * 86400, []
+    for r in runs or []:
+        t = _epoch((r or {}).get("finished"))
+        g = (((r or {}).get("artifacts") or {}).get("patch_age") or {}).get("groups") or {}
+        if t is None or t < since or t >= now or group not in g:
+            continue
+        try:
+            p = _pct(int(g[group][1]), int(g[group][0]))
+        except (TypeError, ValueError, IndexError, KeyError):
+            continue
+        if p is not None:
+            out.append((t, p))
+    out.sort(key=lambda x: x[0])
+    if now_pct is not None:
+        out.append((now, now_pct))
+    return out
+
+
+def _day(epoch):
+    """A run's day for the hover: Mon 2 Nov 2026."""
+    g = time.gmtime(epoch)
+    return "%s %d %s" % (time.strftime("%a", g), g.tm_mday, time.strftime("%b %Y", g))
+
+
+def spark(points, now, name):
+    """[(epoch, %)] -> the Trend column's line (the atlas and brief looks draw it; site-report.js its hover): {w, h,
+    points, last, lines, mark, label, name, data_points}; {} with fewer than 2 points. x by time over the 12 weeks, y
+    from the lowest value to the highest."""
+    if len(points) < 2:
+        return {}
+    since = now - WEEKS * 7 * 86400
+    vals = [p[1] for p in points]
+    lo, hi = min(vals), max(vals)
+    if hi == lo:
+        lo, hi = lo - 1, hi + 1
+    inner_w, inner_h = SPARK_W - 2.0 * SPARK_PAD, SPARK_H - 2.0 * SPARK_PAD
+    pts, data = [], []
+    for t, v in points:
+        x = round(SPARK_PAD + max(0.0, min(1.0, (t - since) / float(now - since))) * inner_w, 1)
+        y = round(SPARK_PAD + (1.0 - (v - lo) / float(hi - lo)) * inner_h, 1)
+        pts.append((x, y))
+        data.append({"x": x, "y": y, "label": _day(t), "text": "%d%% on time" % v})
+    label = "%s, %% on time: %d%% on %s to %d%% now, %d runs: %s" % (
+        name, vals[0], _date(points[0][0]), vals[-1], len(vals), ", ".join("%d%%" % v for v in vals))
+    return {"w": SPARK_W, "h": SPARK_H, "points": " ".join("%s,%s" % q for q in pts), "last": list(pts[-1]), "lines": [],
+            "mark": None, "label": label, "name": name, "data_points": data}
+
+
 def _trend(first, now_pct):
     """'93% -> 90%'; '90%' with no earlier run; '-' when no host of the group has data."""
     if now_pct is None:
@@ -163,7 +215,7 @@ def patch_age_sections(hosts, opts=None, runs=None):
     unknown_col, nodata_col = tot["unknown"] > 0, tot["nodata"] > 0
     cols = ["Group", "Hosts", "On time", "Due soon", "Late"] + (["Not known yet"] if unknown_col else []) \
         + (["No data"] if nodata_col else []) + ["Oldest (days)", "%% on time, %d weeks" % WEEKS, "Status"]
-    rows, rs, cs, art = [], [], [], {}
+    rows, rs, cs, art, sparks = [], [], [], {}, []
     for g, mine, n in groups:
         with_data = len(mine) - n["nodata"]
         pct = _pct(n["ontime"], with_data)
@@ -177,6 +229,7 @@ def patch_age_sections(hosts, opts=None, runs=None):
             + [("at least %d" % oldest if any(h["at_least"] and h["days"] == oldest for h in known) else oldest) if oldest is not None else "-",
                _trend(_first_pct(g, runs, now), pct), word]
         rows.append(row)
+        sparks.append(spark(_series(g, runs, now, pct), now, g))
         rs.append(st if st in ("critical", "warning", "low") else "")
         cs.append([""] * (len(row) - 1) + [st])
     worst = min([LEVEL[h["st"]] for h in hs if LEVEL[h["st"]] in ("critical", "warning", "low")] or ["ok"],
@@ -254,7 +307,14 @@ def patch_age_sections(hosts, opts=None, runs=None):
         boxes[2]["value"] + ((" (%s)" % oldest_all["host"]) if oldest_all else ""))]
     out_lines += ["  %s: %s" % (r[0], r[-1]) for r in rows]
     by_group["boxes"] = boxes                    # findings_report adds them to the report's boxes
-    return {"sections": [by_group, old], "web_sections": [squares, by_group, old], "boxes": boxes, "status": worst,
+    web_group = by_group
+    if any(sparks):                              # the website: a Trend column after "% on time, 12 weeks" (no line: blank)
+        at = len(cols) - 1
+        web_group = dict(by_group, columns=cols[:at] + ["Trend"] + cols[at:],
+                         kinds=[""] * at + ["spark", ""], sparks=sparks,
+                         rows=[r[:at] + [sp.get("label", "")] + r[at:] for r, sp in zip(rows, sparks)],
+                         cell_status=[c[:at] + [""] + c[at:] for c in cs])
+    return {"sections": [by_group, old], "web_sections": [squares, web_group, old], "boxes": boxes, "status": worst,
             "artifact": dict(counts, groups=art, late_after=late), "sheet": sheet, "lines": out_lines, "counts": counts}
 
 

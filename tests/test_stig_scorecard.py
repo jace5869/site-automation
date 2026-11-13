@@ -366,7 +366,7 @@ class Scorecard(unittest.TestCase):
         self.assertEqual(tile(d, "CAT I open")["status"], "critical")
         self.assertEqual(tile(d, "Closed this week")["status"], "ok")
         self.assertNotIn("status", tile(d, "Opened this week"))                       # fewer opened than closed
-        self.assertEqual((tile(d, "Fixed on host, still open")["status"], tile(d, "Fixed on host, still open")["note"]), ("info", "Low"))
+        self.assertEqual((tile(d, "Fixed on host, still open")["status"], tile(d, "Fixed on host, still open")["note"]), ("low", "Low"))
         self.assertEqual(d["counts"], {"cat1": 4, "cat2": 15, "cat3": 3, "assets": 13, "closed": 4, "opened": 2, "collections": 3, "not_read": 0,
                                        "fixed": 2, "weekly_points": 8, "compared": True, "rules": 10})
 
@@ -387,7 +387,7 @@ class Scorecard(unittest.TestCase):
         self.assertEqual((cards[1]["title"], cards[1]["status"], cards[1]["meta"]), ("4 closed, 2 opened", "ok", "since 6 Nov"))
         self.assertEqual(cards[1]["subject"], "SITEA - RHEL 9 improved most (4 closed, 1 opened). SITEA - Windows Server got worse most "
                                               "(1 opened, 0 closed).")
-        self.assertEqual((cards[2]["title"], cards[2]["status"], cards[2]["meta"]), ("2 fixed, still open", "info", "Low"))
+        self.assertEqual((cards[2]["title"], cards[2]["status"], cards[2]["meta"]), ("2 fixed, still open", "low", "Low"))
 
     def test_by_collection(self):
         s = section(self.doc, "By collection")
@@ -469,11 +469,12 @@ class Scorecard(unittest.TestCase):
 
     def test_fixed_on_the_host_still_open(self):
         s = section(self.doc, "Fixed on the host")
-        self.assertEqual(s["status"], "info")
+        self.assertEqual(s["status"], "low")
         self.assertEqual([(r[0], r[1], r[2], r[3], r[5], r[6]) for r in s["rows"]],
                          [("rhel01.example.mil", RHEL, "SV-257985", "CAT II", "12 Nov", "Low"),
                           ("win03.corp.example.mil", WIN, "SV-254239", "CAT I", "12 Nov", "Low")])
-        self.assertEqual(s["cell_status"], [["", "", "", "", "", "", "info"]] * 2)     # TODO 1.56.0: the level "low"
+        self.assertEqual(s["cell_status"], [["", "", "", "", "", "", "low"]] * 2)      # 1.56.0's level, with the word Low
+        self.assertEqual(s["row_status"], ["low", "low"])
         self.assertNotIn("critical", json.dumps(s))                                  # paperwork: never red
 
     def test_no_scan_results_and_none_fixed(self):
@@ -482,11 +483,15 @@ class Scorecard(unittest.TestCase):
         self.assertEqual(s["title"], "Fixed on the host, still Open in STIG Manager (0)")
         self.assertIn("stigman_scorecard_drift_templates", s["lines"][0])
         self.assertEqual(tile(d, "Fixed on host, still open")["value"], "-")
+        self.assertNotIn("status", tile(d, "Fixed on host, still open"))           # nothing to compare: no colour
+        self.assertEqual(section(d, "Start here")["cards"][2]["status"], "info")
         d = card(opts={"fixed": {"jobs": [{"job": 1, "assets": 6}], "rows": [], "why": []}})
         self.assertEqual(section(d, "Fixed on the host")["lines"],
                          ["None: every rule the last scans (1 job, 6 assets) found passing is closed in STIG Manager too."])
         self.assertEqual(tile(d, "Fixed on host, still open")["value"], 0)
         self.assertEqual(section(d, "Start here")["cards"][2]["title"], "Nothing fixed and still open")
+        self.assertEqual(section(d, "Start here")["cards"][2]["status"], "ok")      # Low only when there is one
+        self.assertEqual(tile(d, "Fixed on host, still open")["status"], "ok")
 
     def test_a_long_list_of_fixed_rows_is_cut_with_the_rest_in_the_workbook(self):
         rows = [["rhel0%d.example.mil" % i, RHEL, "rhel0%d" % i, "SV-258036", "CAT II", "t", NOW] for i in (1, 3, 4, 5, 6)]

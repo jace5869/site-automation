@@ -307,7 +307,8 @@ by host group. It changes no finding and does not fail the job.
 - **Groups**: `patch_age_groups` lists inventory groups in order (`[SITEA-linux-web, SITEA-linux-db]`); a host goes in
   the first one it is in, else *Other*. Empty (the default): each host's first inventory group.
 - **% on time, 12 weeks**: from this template's earlier runs (their `patch_age` job artifact), read from AAP with the
-  credential of the strip of past runs (`report_history`). The first run shows this run only.
+  credential of the strip of past runs (`report_history`). The first run shows this run only. On the website (atlas,
+  brief) a Trend column beside it draws every run of the 12 weeks as a line, from the second run on.
 
 <a id="mariadb"></a>
 

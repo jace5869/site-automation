@@ -393,7 +393,8 @@ tr.r-info td:first-child{box-shadow:inset 3px 0 0 var(--info)}
 tr.r-low td{background:var(--low-row)}tr.r-low td:first-child{box-shadow:inset 3px 0 0 var(--low)}
 tr.r-critical:hover td,tr.r-warning:hover td{background:var(--hover)}
 /* a Trend column (a section's sparks, its kind spark - 1.52.0): one small line per row, one hue (--spark, not a status
-   colour), the dashed lines the report's two levels, the upright line a change, the dot the last run */
+   colour), the dashed lines the report's two levels, the upright line a change, the dot the last run; with data_points
+   (int-11) it hovers as report_sparkline's does: site-report.js adds the guide and dot, the tip the value and day */
 th.k-spark{white-space:nowrap}
 td.k-spark{white-space:nowrap;vertical-align:middle;width:136px}
 svg.spark{display:block;width:120px;height:30px;overflow:visible}
@@ -698,7 +699,7 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
 {%- set cst = cst or (rs if rs in words and lbl | lower in ['status', 'severity', 'result'] and text | trim else '') %}
 {%- if kd == 'spark' %}
 {%- set sp = (s.sparks[ri] if s.sparks is defined and s.sparks | length > ri else {}) | default({}, true) %}
-<td class="k-spark" data-l="{{ lbl | e }}" data-v="{{ text | e }}">{% if sp.points is defined %}<svg class="spark" viewBox="0 0 {{ sp.w }} {{ sp.h }}" width="{{ sp.w }}" height="{{ sp.h }}" role="img" aria-label="{{ sp.label | e }}"><title>{{ sp.label | e }}</title>{% for y in sp.lines | default([]) %}<line class="lv" x1="0" x2="{{ sp.w }}" y1="{{ y }}" y2="{{ y }}"/>{% endfor %}{% if sp.mark is defined and sp.mark is not none %}<line class="mk" x1="{{ sp.mark }}" x2="{{ sp.mark }}" y1="0" y2="{{ sp.h }}"/>{% endif %}<polyline class="ln" points="{{ sp.points }}"/><circle class="pt" cx="{{ sp.last[0] }}" cy="{{ sp.last[1] }}" r="4"/></svg>{% endif %}</td>
+<td class="k-spark" data-l="{{ lbl | e }}" data-v="{{ text | e }}">{% if sp.points is defined %}{% set dp = [] %}{% for p in sp.data_points | default([]) %}{% set _ = dp.append([p.x, p.y, p.label, p.text]) %}{% endfor %}<svg class="spark" viewBox="0 0 {{ sp.w }} {{ sp.h }}" width="{{ sp.w }}" height="{{ sp.h }}" role="img" aria-label="{{ sp.label | e }}"{% if dp %} tabindex="0" data-label="{{ sp.name | default('') | e }}" data-points='{{ dp | tojson }}'>{% else %}><title>{{ sp.label | e }}</title>{% endif %}{% for y in sp.lines | default([]) %}<line class="lv" x1="0" x2="{{ sp.w }}" y1="{{ y }}" y2="{{ y }}"/>{% endfor %}{% if sp.mark is defined and sp.mark is not none %}<line class="mk" x1="{{ sp.mark }}" x2="{{ sp.mark }}" y1="0" y2="{{ sp.h }}"/>{% endif %}<polyline class="ln" points="{{ sp.points }}"/><circle class="pt" cx="{{ sp.last[0] }}" cy="{{ sp.last[1] }}" r="4"/></svg>{% endif %}</td>
 {%- elif cst %}
 <td data-l="{{ lbl | e }}" data-v="{{ text | e }}"{% if kd == 'wrap' and text | length > 12 %} class="k-wrap"{% elif text | length <= 32 %} class="nw{{ " k-rc" if kd == "num" else "" }}"{% else %} class="k-mid"{% endif %}>{{ chip(cst, text | capitalize if text.isupper() and not text.startswith('CAT ') and not s.keep_case | default(false) else text) }}</td>
 {%- elif lbl | lower in ['look further', 'command', 'hint', 'next step'] %}

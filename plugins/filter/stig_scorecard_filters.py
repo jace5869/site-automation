@@ -25,7 +25,7 @@ CATS = (1, 2, 3)
 CAT_WORD = {1: "CAT I", 2: "CAT II", 3: "CAT III"}
 TIP_IDS = 10                    # a hover lists this many rule ids, then "N more"
 XLSX_CELL = 30000               # a workbook cell holds 32767 characters
-WORST = {"critical": 3, "warning": 2, "ok": 1, "info": 0, "": 0}
+WORST = {"critical": 4, "warning": 3, "low": 2, "ok": 1, "info": 0, "": 0}
 
 
 # ---- small helpers --------------------------------------------------------------------------------
@@ -232,7 +232,7 @@ def spark(points, heads, name):
     label = "%s, open findings: %d in the week to %s, %d now; by week: %s" % (
         name, vals[0], heads[points[0][0]], vals[-1], ", ".join(str(v) for v in vals))
     return {"w": SPARK_W, "h": SPARK_H, "points": " ".join("%s,%s" % q for q in pts), "last": list(pts[-1]), "lines": [],
-            "mark": None, "label": label, "data_points": data}
+            "mark": None, "label": label, "name": name, "data_points": data}
 
 
 # ---- fixed on the host, still Open ---------------------------------------------------------------------
@@ -415,7 +415,7 @@ def stig_scorecard(read, point, runs, opts=None):
     else:
         top_sec = {"title": "The rules open across hosts (0)", "status": "ok", "lines": ["No finding is open in the collections read."]}
 
-    # ---- fixed on the host, still Open in STIG Manager (1.56.0's level "low" is not in this base: "info" and the word Low)
+    # ---- fixed on the host, still Open in STIG Manager (1.56.0's level "low", with the word Low; info when there are none)
     fx = o.get("fixed") if isinstance(o.get("fixed"), dict) else {}
     fixed = fixed_rows(fx, read)
     scans = fx.get("jobs") or []
@@ -423,12 +423,13 @@ def stig_scorecard(read, point, runs, opts=None):
                 "behind. The next checklist import (workflow 40) closes them.")
     fix_sec = {"title": "Fixed on the host, still Open in STIG Manager (%d)" % len(fixed), "status": "info"}
     if fixed:
-        fix_sec.update({"text": fix_text, "columns": ["Host", "Collection", "Rule", "Category", "What it checks", "Scan passed", "Status"],
+        fix_sec.update({"status": "low", "text": fix_text, "columns": ["Host", "Collection", "Rule", "Category", "What it checks", "Scan passed", "Status"],
                         "column_titles": ["", "", "", "", "", "The day of the scan that found the rule passing", ""],
                         "kinds": ["wrap", "wrap", "", "", "wrap", "", ""],
                         "rows": [[r[0], r[1], r[2], r[3], r[4], day_word(parse_time(r[5])) if parse_time(r[5]) else r[5], "Low"]
                                  for r in fixed[:list_max]],
-                        "cell_status": [["", "", "", "", "", "", "info"]] * min(len(fixed), list_max),      # TODO 1.56.0: the level "low"
+                        "cell_status": [["", "", "", "", "", "", "low"]] * min(len(fixed), list_max),
+                        "row_status": ["low"] * min(len(fixed), list_max),
                         "tips": [["", "", "%s passes in the scan of %s; STIG Manager still has it Open." % (r[2], r[5]), "", "", "",
                                   "Low: fixed on the host, still Open in STIG Manager. Nothing to do on the host; the next "
                                   "checklist import closes it."] for r in fixed[:list_max]],
@@ -462,7 +463,7 @@ def stig_scorecard(read, point, runs, opts=None):
         {"label": "Opened this week", "value": tot["opened"] if base else "-",
          "status": "warning" if base and tot["opened"] > tot["closed"] else "", "note": since_word or "no run last week",
          "tip": ("Hosts a rule was not Open on on %s and is now." % day_word(base["_t"])) if base else "No run 6 to 8 days ago to compare with."},
-        {"label": "Fixed on host, still open", "value": len(fixed) if (fixed or scans) else "-", "status": "info", "note": "Low",
+        {"label": "Fixed on host, still open", "value": len(fixed) if (fixed or scans) else "-", "status": "low" if fixed else ("ok" if scans else ""), "note": "Low",
          "tip": "Low: fixed on the host, still Open in STIG Manager. Nothing to do on the host; the next checklist import closes it."}]
     for t in tiles:
         if not t.get("status"):
@@ -495,11 +496,11 @@ def stig_scorecard(read, point, runs, opts=None):
         cards.append({"status": "info", "chip": "This week", "title": "No run last week to compare with",
                       "subject": "The change needs a run 6 to 8 days ago. It starts with the run a week from now."})
     if fixed:
-        cards.append({"status": "info", "chip": "Paperwork, not hosts", "meta": "Low", "title": "%d fixed, still open" % len(fixed),
+        cards.append({"status": "low", "chip": "Paperwork, not hosts", "meta": "Low", "title": "%d fixed, still open" % len(fixed),
                       "subject": "The hosts pass; STIG Manager has not caught up.",
                       "next": "The next checklist import (workflow 40) closes them."})
     else:
-        cards.append({"status": "info", "chip": "Paperwork, not hosts", "meta": "Low",
+        cards.append({"status": "ok" if scans else "info", "chip": "Paperwork, not hosts", "meta": "Low",
                       "title": "Nothing fixed and still open" if scans else "No scan results to compare with",
                       "subject": "STIG Manager agrees with the last scans." if scans else "It fills once a STIG drift report has run."})
     card_sec = {"title": "Start here", "status": cards[0]["status"] if c1 else _worst_of([c["status"] for c in cards[:2]]) or "ok", "cards": cards}

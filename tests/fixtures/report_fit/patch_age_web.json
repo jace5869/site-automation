@@ -276,21 +276,24 @@
 "",
 "",
 "",
-"warning"
-],
-[
-"",
-"",
-"",
-"",
-"",
-"",
-"",
-"",
 "",
 "warning"
 ],
 [
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
 "",
 "",
 "",
@@ -313,7 +316,21 @@
 "No data",
 "Oldest (days)",
 "% on time, 12 weeks",
+"Trend",
 "Status"
+],
+"kinds": [
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"spark",
+""
 ],
 "row_status": [
 "warning",
@@ -331,6 +348,7 @@
 "-",
 "at least 50",
 "0%",
+"",
 "2 late"
 ],
 [
@@ -343,6 +361,7 @@
 "-",
 77,
 "77% \u2192 35%",
+"SITEA-linux-web, % on time: 77% on 2026-10-07 to 35% now, 2 runs: 77%, 35%",
 "14 late"
 ],
 [
@@ -355,8 +374,40 @@
 1,
 70,
 "33%",
+"",
 "1 late"
 ]
+],
+"sparks": [
+{},
+{
+"data_points": [
+{
+"label": "Wed 7 Oct 2026",
+"text": "77% on time",
+"x": 76.0,
+"y": 4.0
+},
+{
+"label": "Fri 6 Nov 2026",
+"text": "35% on time",
+"x": 116.0,
+"y": 26.0
+}
+],
+"h": 30,
+"label": "SITEA-linux-web, % on time: 77% on 2026-10-07 to 35% now, 2 runs: 77%, 35%",
+"last": [
+116.0,
+26.0
+],
+"lines": [],
+"mark": null,
+"name": "SITEA-linux-web",
+"points": "76.0,4.0 116.0,26.0",
+"w": 120
+},
+{}
 ],
 "status": "critical",
 "text": "Days since each host's last update, by host group (patch_age_groups): late = no update for 36 days or more (check_patching_max_age_days); due soon (Low) = late within 7 days (patch_age_due_days); critical from 60 days.",

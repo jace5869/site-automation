@@ -442,7 +442,6 @@
 {
 "label": "Fixed on host, still open",
 "note": "Low",
-"status": "info",
 "tip": "Low: fixed on the host, still Open in STIG Manager. Nothing to do on the host; the next checklist import closes it.",
 "value": "-"
 },

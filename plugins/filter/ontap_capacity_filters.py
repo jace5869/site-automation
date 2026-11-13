@@ -64,6 +64,12 @@ def day(t):
     return datetime.datetime.fromtimestamp(t, tz=datetime.timezone.utc).strftime("%Y-%m-%d")
 
 
+def tip_day(t):
+    """A run's day for the hover: Mon 2 Nov 2026."""
+    d = datetime.datetime.fromtimestamp(t, tz=datetime.timezone.utc)
+    return "%s %d %s" % (d.strftime("%a"), d.day, d.strftime("%b %Y"))
+
+
 def num(v):
     return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
 
@@ -302,7 +308,8 @@ def volume_story(points, opts=None):
 def spark(values, since, now, lines, change_t=None, what=""):
     """[(t, y)] -> the sparkline's geometry (the atlas and brief looks draw it as an inline SVG): {w, h, points ('x,y
     x,y'), last [x, y], lines [y of each dashed level], mark (x of the change, or None), label (the values in words, for
-    aria-label and the hover)}. x by time across the window, so a gap is a gap; y from the lowest of the values and the
+    aria-label), name and data_points (per point drawn: x, y, label - its day - and text - its value: site-report.js's
+    hover, int-11)}. x by time across the window, so a gap is a gap; y from the lowest of the values and the
     levels to the highest, so the line is read against the levels."""
     if not values:
         return {}
@@ -326,6 +333,7 @@ def spark(values, since, now, lines, change_t=None, what=""):
         return round(SPARK_PAD + (1.0 - (v - lo) / (hi - lo)) * inner_h, 1)
 
     pts = [(x(t), y(v)) for t, v in vals]
+    data = [{"x": p[0], "y": p[1], "label": tip_day(t), "text": f1(v) + "%"} for p, (t, v) in zip(pts, vals)]
     label = "%s: %s on %s" % (what or "Trend", f1(values[-1][1]), day(values[-1][0]))
     if len(values) > 1:
         label = "%s: %s on %s to %s on %s, %d runs" % (what or "Trend", f1(values[0][1]), day(values[0][0]), f1(values[-1][1]),
@@ -334,7 +342,8 @@ def spark(values, since, now, lines, change_t=None, what=""):
         if len(weekly) > 2:
             label += "; by week: " + ", ".join(f1(w) for w in weekly)
     return {"w": SPARK_W, "h": SPARK_H, "points": " ".join("%s,%s" % q for q in pts), "last": list(pts[-1]),
-            "lines": [y(v) for v in lines], "mark": x(change_t) if change_t is not None else None, "label": label}
+            "lines": [y(v) for v in lines], "mark": x(change_t) if change_t is not None else None, "label": label,
+            "name": what or "Trend", "data_points": data}
 
 
 def weeks(values, since, now):

@@ -560,7 +560,6 @@
 {
 "label": "Fixed on host, still open",
 "note": "Low",
-"status": "info",
 "tip": "Low: fixed on the host, still Open in STIG Manager. Nothing to do on the host; the next checklist import closes it.",
 "value": "-"
 }
@@ -756,6 +755,7 @@
 ],
 "lines": [],
 "mark": null,
+"name": "SITEA - RHEL 9",
 "points": "4.0,4.0 18.6,6.4 33.1,8.9 47.7,11.3 62.3,13.8 76.9,16.2 91.4,18.7 106.0,26.0",
 "w": 110
 },
@@ -794,6 +794,7 @@
 ],
 "lines": [],
 "mark": null,
+"name": "SITEA - VMware",
 "points": "62.3,15.0 76.9,15.0 91.4,15.0 106.0,15.0",
 "w": 110
 },
@@ -856,6 +857,7 @@
 ],
 "lines": [],
 "mark": null,
+"name": "SITEA - Windows Server",
 "points": "4.0,26.0 18.6,26.0 33.1,26.0 47.7,26.0 62.3,26.0 76.9,26.0 91.4,26.0 106.0,4.0",
 "w": 110
 }
