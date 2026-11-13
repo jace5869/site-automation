@@ -170,6 +170,7 @@ read only or acting ([HORIZON.md](HORIZON.md#step-3-the-job-templates)).
 | Mail relay - format the whitelist | `playbooks/mail_relay_format.yml` | On demand (Check first) | [MAIL_RELAY.md](MAIL_RELAY.md#format-the-list-one-address-per-line) |
 | NetApp ONTAP health report | `playbooks/ontap_health_report.yml` | Report | [NETAPP.md](NETAPP.md#set-it-up) |
 | NetApp ONTAP hardware inventory | `playbooks/ontap_hardware_report.yml` | Report | [NETAPP.md](NETAPP.md#the-hardware-inventory) |
+| NetApp ONTAP - capacity trends | `playbooks/ontap_capacity_trends.yml` | Report | [NETAPP.md](NETAPP.md#capacity-trends) |
 | Cisco UCS inventory | `playbooks/ucs_inventory_report.yml` | Report | [UCS.md](UCS.md#set-it-up) |
 
 ## Tenable.sc (ACAS)

@@ -118,6 +118,7 @@ jobs:
           python tests/test_vm_hardware.py
           python tests/test_vm_tools.py
           python tests/test_ontap_hardware.py
+          python tests/test_ontap_capacity.py
           python tests/test_ucs_inventory.py
           python tests/test_incident_docs.py
           python tests/test_evaluate_stig_update.py
@@ -208,6 +209,10 @@ jobs:
         run: |
           bash tests/netapp/run_netapp_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/netapp/run_netapp_test.sh
+      - name: NetApp ONTAP capacity trends against a fake ONTAP and a fake AAP job history (current ansible-core and 2.16)
+        run: |
+          bash tests/netapp/run_capacity_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/netapp/run_capacity_test.sh
       - name: Cisco UCS inventory against a fake UCS Manager XML API (current ansible-core and 2.16)
         run: |
           bash tests/ucs/run_ucs_test.sh
@@ -349,6 +354,10 @@ jobs:
           docker pull -q mysql:8.4
           INSIGHTS_DB_TEST_RUNTIME=docker INSIGHTS_DB_TEST_IMAGE=mysql:8.4 bash tests/servicenow/run_insights_db_test.sh
           INSIGHTS_DB_TEST_RUNTIME=docker INSIGHTS_DB_TEST_IMAGE=mysql:8.4 ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/servicenow/run_insights_db_test.sh
+      - name: NetApp ONTAP capacity trends' points in a real MySQL 8.4 (docker) - the table, the history, a database that is down (current ansible-core and 2.16)
+        run: |
+          CAPACITY_DB_TEST_RUNTIME=docker CAPACITY_DB_TEST_IMAGE=mysql:8.4 bash tests/netapp/run_capacity_db_test.sh
+          CAPACITY_DB_TEST_RUNTIME=docker CAPACITY_DB_TEST_IMAGE=mysql:8.4 ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/netapp/run_capacity_db_test.sh
       - name: Certificate report finding TLS ports and keystores by itself (in a private namespace)
         run: |
           # Ubuntu 24.04's AppArmor stops unprivileged user namespaces (unshare -rnp); allow them on this runner

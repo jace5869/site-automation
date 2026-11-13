@@ -1,5 +1,50 @@
 # Changelog
 
+## 1.52.0 — 2026-11-13
+
+**Updating without scripts:** paste `site-automation-1.52.0-changed-since-1.47.0.zip` as it is (from an older version,
+its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`. Set up: step 96 (a new job template, *NetApp ONTAP - capacity trends*, on a daily schedule).
+
+**NetApp ONTAP capacity trends: how fast the aggregates and volumes fill, and which fill again.**
+
+- **A new report, `playbooks/ontap_capacity_trends.yml`.** Read-only, the health report's account and credential.
+  The health report says how full a volume is today. This one says how fast it fills and when it is full.
+- **Each run adds one point.** The size and used space of every cluster, aggregate and volume. Run it daily. Runs 1
+  and 2 show today's sizes and say *a trend needs 3*; from run 3 there are rates and days to full.
+- **Clusters and aggregates.** Per cluster: growth over 30 days and the months until 85% used. Per aggregate: growth
+  in GB a day and the days until `ontap_aggr_crit_pct`, soonest first. Amber within 90 days, red within 30.
+- **Volumes filling again.** A volume that is over `ontap_volume_warn_pct` again within `ontap_volume_again_days` (7)
+  of being over it, after it was cleaned or made larger. And a volume that reaches `ontap_volume_crit_pct` within
+  `ontap_volume_fast_days` (30). The row says what changed (`resized 4.0 TB to 4.4 TB`, `used space dropped 13%`),
+  the peak before it, and the rate since the change.
+- **Fastest growing volumes** (`ontap_capacity_top`, 5), whatever their used %, and **Snapshot space**: the volumes
+  whose snapshots are near or over their reserve (`ontap_snapshot_reserve_warn_pct` / `_crit_pct`).
+- **Trend lines on the report website** (atlas and brief looks, light and dark): used % over the window, with the
+  amber and red levels and a mark where a volume was cleaned or resized. *The numbers* has the same week by week.
+  The email has the tables and a workbook with every volume and every point.
+- **Where the history comes from.** AAP's job history: add a **Red Hat Ansible Automation Platform** credential
+  (Organization Auditor is enough); it reaches as far back as AAP keeps its jobs. And, optional, the report
+  database: add the **Report database** credential and the points are kept in a new table, `ontap_capacity_point`,
+  for `ontap_capacity_db_keep_days` (800). Neither can fail the job. *How this was made* says what was used.
+- **Ten new settings**, all with defaults: `ontap_capacity_days` (30), `ontap_volume_again_days` (7),
+  `ontap_volume_fast_days` (30), `ontap_capacity_top` (5), `ontap_capacity_runs_max` (400), `ontap_capacity_db`
+  (true), `ontap_capacity_db_create` (true), `ontap_capacity_db_timeout` (10), `ontap_capacity_db_keep_days` (800),
+  `ontap_capacity_fail` (false). No existing setting changes; the health report and the inventory are unchanged.
+- **Not proven:** a real ONTAP cluster, a real AAP's job history, a real execution environment with PyMySQL. The
+  tests use a fake ONTAP REST API, a fake AAP and a real MySQL 8.4.
+
+Files: `playbooks/ontap_capacity_trends.yml`, `roles/ontap_report/tasks/capacity.yml`,
+`roles/ontap_report/library/site_ontap_capacity_history.py`, `site_ontap_capacity_db.py`,
+`plugins/filter/ontap_capacity_filters.py`, `plugins/module_utils/site_report_db.py`,
+`roles/ontap_report/defaults/main.yml`, `vars/main.yml`, `roles/site_email/templates/report_atlas.html.j2`,
+`report_brief.html.j2`, `docs/NETAPP.md` (*Capacity trends*), `docs/REPORT_DATABASE.md`, `docs/JOB_TEMPLATES.md`,
+`docs/VARIABLES_REFERENCE.md`, `aap/extra_vars/ontap_capacity_trends.yml`, `README.md`.
+
+Tests: `tests/test_ontap_capacity.py` (66), `tests/netapp/run_capacity_test.sh` (fake ONTAP, fake AAP job history),
+`tests/netapp/run_capacity_db_test.sh` (MySQL 8.4 in a container), `tests/test_report_fit.py` (two new documents,
+every look, 1280 and phone width).
+
 ## 1.47.0 — 2026-11-13
 
 **Updating without scripts:** paste `site-automation-1.47.0-changed-since-1.44.0.zip` as it is (from an older version,
@@ -1502,7 +1547,7 @@ tests/stig/run_stigman_real_test.sh against STIG Manager 1.6.18 (not in CI).
 
 SA_VERSION 1.26.0; the PDFs at 1.26.0.
 
-**To do, if you have not yet: what 0.20.0 to 1.47.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.47.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing, 1.39.0 nothing, 1.41.0 nothing, 1.42.0 nothing, 1.43.0 nothing, 1.44.0 nothing, 1.45.0 nothing, 1.47.0 nothing).** In order; each step works without
+**To do, if you have not yet: what 0.20.0 to 1.52.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.52.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing, 1.39.0 nothing, 1.41.0 nothing, 1.42.0 nothing, 1.43.0 nothing, 1.44.0 nothing, 1.45.0 nothing, 1.47.0 nothing, 1.52.0 step 96).** In order; each step works without
 the ones after it. There is no step 90.
 
 1. **Your logo** (0.20.0). A PNG with a transparent background, about 160 px tall and under 100 KB, in
@@ -2242,6 +2287,20 @@ the ones after it. There is no step 90.
     4. Run it. The *Front-end nodes* table shows each name beside its host, and *Stats page answered at* says which
        address answered. A listed node's row says *stats page only*.
     Details: docs/SERVICENOW_SETUP.md, "Self-hosted instance".
+
+96. **NetApp ONTAP capacity trends** (1.52.0) - a new job template; nothing changes until you make it.
+    1. **Templates > Create template > Create job template:** name `NetApp ONTAP - capacity trends`, playbook
+       `playbooks/ontap_capacity_trends.yml`, any inventory, credentials **NetApp ONTAP read-only** and **Red Hat
+       Ansible Automation Platform** (its user needs Organization Auditor, no more). Leave Limit empty.
+    2. Variables, when `ontap_clusters` is not in `all.yml` already:
+       ```yaml
+       ontap_clusters: [cluster1.yoursite.mil, cluster2.yoursite.mil]
+       ```
+    3. Launch it. The title says `run 1 - a trend needs 3`, and the tables show today's sizes.
+    4. **Schedules > Create schedule:** every day. From the third run the report has rates and days to full.
+    5. Optional, for a history longer than AAP keeps its jobs: add the **Report database** credential. The next
+       run makes the table `ontap_capacity_point`; *How this was made* says `holds 1 run`.
+    Details: docs/NETAPP.md, "Capacity trends".
 
 ## 1.24.0 — 2026-11-11
 

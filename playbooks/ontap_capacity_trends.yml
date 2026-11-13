@@ -1,0 +1,18 @@
+---
+# NETAPP ONTAP CAPACITY TRENDS. Read-only (GET requests to each cluster's REST API): how full the clusters, aggregates and
+# volumes are, and where they are going - growth a day, the days until an aggregate reaches 90%, the volumes that fill
+# again after they were cleaned or made larger, the fastest growing volumes, and the snapshots' space. Every run adds one
+# point; the trend comes from the earlier runs' points, read from AAP's job history and (with a "Report database"
+# credential) the report database. Run it daily, on a schedule. Emailed (report_email_to) with the points as an Excel
+# workbook, and on the report website (report_web_dest) with a trend line per row.
+# Runs on the AAP side: attach a "NetApp ONTAP" credential, set ontap_clusters; no Limit. docs/NETAPP.md
+#   ansible-playbook playbooks/ontap_capacity_trends.yml -e '{"ontap_clusters": ["cluster1.example.mil"]}'
+- name: NetApp ONTAP capacity trends
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: NetApp ONTAP capacity trends
+      ansible.builtin.include_role:
+        name: ontap_report
+        tasks_from: capacity.yml

@@ -158,3 +158,27 @@ _ontap_hw_queries:
              transceiver.form_factor, transceiver.manufacturer, transceiver.part_number]
     fallback_fields: [name, node.name, wwpn, state, speed.maximum]
     max: 20000
+
+# NetApp ONTAP - capacity trends (tasks/capacity.yml): each cluster's aggregates and volumes, sizes only - one point of
+# the trend per run. cluster_history is ONTAP's own cluster-wide capacity history (ONTAP 9.17.1 and later; no such history
+# per aggregate or volume in the REST API): an older ONTAP answers "not found", and the report says so and goes on.
+_ontap_cap_queries:
+  - key: cluster
+    path: /api/cluster
+    fields: [name, uuid, version.full]
+    fallback_fields: [name, version.full]
+  - key: aggregates
+    path: /api/storage/aggregates
+    fields: [name, uuid, node.name, state, space.block_storage.size, space.block_storage.used]
+  - key: volumes
+    path: /api/storage/volumes
+    fields: [name, uuid, svm.name, state, type, is_svm_root, space.size, space.used, space.snapshot.used,
+             space.snapshot.reserve_percent]
+    query: {is_constituent: "false"}
+    max: 50000
+  - key: cluster_history
+    path: /api/storage/cluster/metrics
+    fields: [timestamp, status, size, used_space]
+    query: {interval: 1y}
+    fallback_query: {}
+    max: 5000
