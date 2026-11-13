@@ -1,0 +1,693 @@
+{
+"sections": [
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"critical",
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Cluster",
+"Size TB",
+"Used TB",
+"Used %",
+"Growth GB / 30 days",
+"Reaches 85% in (months)"
+],
+"kinds": [
+"wrap",
+"num",
+"num",
+"num",
+"num",
+"num"
+],
+"lines": [
+"cluster3.example.mil: could not be read - cannot resolve cluster3.example.mil (DNS)"
+],
+"row_status": [
+"",
+"",
+"critical"
+],
+"rows": [
+[
+"cluster1",
+"140.0",
+"100.8",
+"72.0",
+"3035.9",
+"6.1"
+],
+[
+"cluster2",
+"48.0",
+"33.2",
+"69.2",
+"1107.4",
+"6.9"
+],
+[
+"cluster3.example.mil",
+"-",
+"-",
+"-",
+"-",
+"-"
+]
+],
+"status": "critical",
+"text": "Each cluster's space: the sum of its aggregates. Growth is the used space's slope over the runs of the last 30 days; the months are until 85% used at that rate.",
+"title": "Clusters"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"warning",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Aggregate",
+"Cluster",
+"Size TB",
+"Used % now",
+"Growth GB/day",
+"Days to 90%"
+],
+"kinds": [
+"wrap",
+"wrap",
+"num",
+"num",
+"num",
+"num"
+],
+"row_status": [
+"critical",
+"warning",
+"",
+"",
+""
+],
+"rows": [
+[
+"aggr2_node04",
+"cluster1",
+"40.0",
+"87.4",
+"73.8",
+"14"
+],
+[
+"aggr1_node05",
+"cluster2",
+"24.0",
+"83.5",
+"36.9",
+"43"
+],
+[
+"aggr1_node03",
+"cluster1",
+"40.0",
+"73.0",
+"27.4",
+"254"
+],
+[
+"aggr_sas_node03",
+"cluster1",
+"60.0",
+"61.0",
+"0.0",
+"-"
+],
+[
+"aggr1_node06",
+"cluster2",
+"24.0",
+"55.0",
+"0.0",
+"-"
+]
+],
+"status": "critical",
+"text": "Amber: 85% used or more now, or 90% within 90 days at this rate. Red: 90% within 30 days. A dash under the days: not growing.",
+"title": "Aggregates"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"warning",
+"warning",
+"",
+"",
+""
+],
+[
+"",
+"",
+"warning",
+"warning",
+"",
+"",
+""
+],
+[
+"",
+"",
+"warning",
+"",
+"",
+"",
+""
+]
+],
+"column_titles": [
+"Volume",
+"Cluster / SVM",
+"Why",
+"Used % now",
+"What changed, and the peak used % before it with its date",
+"Fill GB/day (the runs after the last change)",
+"Days to full (100%) at that rate"
+],
+"columns": [
+"Volume",
+"Cluster / SVM",
+"Why",
+"Used % now",
+"What changed",
+"Fill GB/day",
+"Days to full"
+],
+"kinds": [
+"wrap",
+"wrap",
+"wrap",
+"num",
+"wrap",
+"num",
+"num"
+],
+"row_status": [
+"warning",
+"warning",
+"warning"
+],
+"rows": [
+[
+"vol_home",
+"cluster1 / svm1",
+"Back again, filling fast",
+"87.8",
+"used space dropped 13%, from 91.1% on 2026-11-08",
+"45.1",
+"5.5"
+],
+[
+"vol_scans",
+"cluster1 / svm1",
+"Back again",
+"85.1",
+"used space dropped 3%, from 87.2% on 2026-11-08",
+"1.9",
+"119"
+],
+[
+"vol_vdi_profiles",
+"cluster1 / svm2",
+"Filling fast",
+"84.0",
+"-",
+"16.4",
+"30"
+]
+],
+"status": "warning",
+"text": "Back again: 85% used or more now and also within the last 7 days, with a drop below it in between. Filling fast: reaches 90% within 30 days at its rate. What changed says only what the numbers show, with the peak used % before it. The rate is over the runs after the change.",
+"title": "Volumes filling again"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"warning",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Volume",
+"Cluster / SVM",
+"Size TB",
+"Used % now",
+"Growth GB/day",
+"Days to full"
+],
+"kinds": [
+"wrap",
+"wrap",
+"num",
+"num",
+"num",
+"num"
+],
+"lines": [
+"1 of 9 volumes have fewer than 3 runs after their last change: no rate yet."
+],
+"row_status": [
+"",
+"",
+"",
+"",
+""
+],
+"rows": [
+[
+"vol_home",
+"cluster1 / svm1",
+"2.0",
+"87.8",
+"45.1",
+"5.5"
+],
+[
+"vol_backup",
+"cluster1 / svm2",
+"8.0",
+"58.0",
+"21.9",
+"157"
+],
+[
+"vol_vdi_profiles",
+"cluster1 / svm2",
+"3.0",
+"84.0",
+"16.4",
+"30"
+],
+[
+"vol_projects",
+"cluster1 / svm1",
+"4.4",
+"77.5",
+"4.5",
+"225"
+],
+[
+"vol_ctx",
+"cluster2 / svm3",
+"1.0",
+"66.0",
+"2.1",
+"170"
+]
+],
+"text": "The 5 volumes whose used space grows fastest, whatever their used %. Volumes of 50 GB or more (ontap_volume_min_gb).",
+"title": "Fastest growing volumes"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"warning",
+"warning"
+],
+[
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"Volume",
+"Cluster / SVM",
+"Reserve GB",
+"Reserve used % now",
+"Note"
+],
+"kinds": [
+"wrap",
+"wrap",
+"num",
+"num",
+"wrap"
+],
+"row_status": [
+"warning",
+""
+],
+"rows": [
+[
+"vol_db_logs",
+"cluster1 / svm2",
+"51.2",
+"130.0",
+"Spills into the volume"
+],
+[
+"vol_home",
+"cluster1 / svm1",
+"409.6",
+"85.0",
+"Near its reserve"
+]
+],
+"status": "warning",
+"text": "Volumes whose snapshots use 80% of their snapshot reserve or more. Over 100% the snapshots take space from the volume itself. Volumes without a reserve are left out.",
+"title": "Snapshot space"
+},
+{
+"collapsed": true,
+"columns": [
+"What",
+"Name",
+"Cluster",
+"10-16",
+"10-23",
+"10-30",
+"11-06",
+"11-13"
+],
+"kinds": [
+"",
+"wrap",
+"wrap",
+"num",
+"num",
+"num",
+"num",
+"num"
+],
+"rows": [
+[
+"Cluster",
+"cluster1",
+"cluster1",
+"70.0",
+"70.4",
+"70.9",
+"71.4",
+"72.0"
+],
+[
+"Cluster",
+"cluster2",
+"cluster2",
+"67.1",
+"67.6",
+"68.2",
+"68.7",
+"69.2"
+],
+[
+"Aggregate",
+"aggr2_node04",
+"cluster1",
+"82.3",
+"83.5",
+"84.8",
+"86.1",
+"87.4"
+],
+[
+"Aggregate",
+"aggr1_node05",
+"cluster2",
+"79.3",
+"80.3",
+"81.3",
+"82.4",
+"83.5"
+],
+[
+"Aggregate",
+"aggr1_node03",
+"cluster1",
+"71.1",
+"71.5",
+"72.0",
+"72.5",
+"73.0"
+],
+[
+"Aggregate",
+"aggr_sas_node03",
+"cluster1",
+"61.0",
+"61.0",
+"61.0",
+"61.0",
+"61.0"
+],
+[
+"Aggregate",
+"aggr1_node06",
+"cluster2",
+"55.0",
+"55.0",
+"55.0",
+"55.0",
+"55.0"
+],
+[
+"Volume",
+"vol_home",
+"cluster1",
+"88.8",
+"89.5",
+"90.2",
+"90.9",
+"87.8"
+],
+[
+"Volume",
+"vol_scans",
+"cluster1",
+"86.3",
+"86.6",
+"86.8",
+"87.1",
+"85.1"
+],
+[
+"Volume",
+"vol_vdi_profiles",
+"cluster1",
+"69.0",
+"72.7",
+"76.5",
+"80.2",
+"84.0"
+],
+[
+"Volume",
+"vol_backup",
+"cluster1",
+"50.5",
+"52.3",
+"54.2",
+"56.1",
+"58.0"
+],
+[
+"Volume",
+"vol_projects",
+"cluster1",
+"83.2",
+"83.5",
+"83.9",
+"76.8",
+"77.5"
+],
+[
+"Volume",
+"vol_ctx",
+"cluster2",
+"60.4",
+"61.7",
+"63.1",
+"64.6",
+"66.0"
+],
+[
+"Snapshot reserve",
+"vol_db_logs",
+"cluster1",
+"88.0",
+"98.5",
+"109.0",
+"119.5",
+"130.0"
+],
+[
+"Snapshot reserve",
+"vol_home",
+"cluster1",
+"71.0",
+"74.5",
+"78.0",
+"81.5",
+"85.0"
+]
+],
+"text": "The used % behind every trend above, the last value read in each week ending on the date (month-day, UTC). Empty: no run then. The workbook has every point.",
+"title": "The numbers"
+},
+{
+"collapsed": true,
+"lines": [
+"31 runs in the last 30 days (ontap_capacity_days), this one included: 30 from AAP's job history, 0 from the report database.",
+"The oldest point: 2026-10-14 06:00 UTC.",
+"A rate is the slope of the used space over the runs (for a volume: the runs after its last change). It needs 3 runs.",
+"A change is a size that changed by more than 1%, or used space that fell by 5% of the size or more, between two runs.",
+"For a volume that is back again, the change is its drop below 85% (ontap_volume_warn_pct)."
+],
+"title": "How this was made"
+}
+],
+"status": "critical",
+"subtitle": "Read 2026-11-13 06:00 UTC - 31 runs in the last 30 days",
+"summary": [
+{
+"label": "Clusters read",
+"status": "critical",
+"value": "2 of 3"
+},
+{
+"label": "Aggregates 85%+",
+"status": "warning",
+"value": 1
+},
+{
+"label": "Aggregates full in 90 days",
+"note": "reach 90%",
+"status": "critical",
+"value": 2
+},
+{
+"label": "Fastest growth (GB/day)",
+"note": "vol_home",
+"status": "info",
+"value": "45.1"
+},
+{
+"label": "Snapshots over reserve",
+"status": "warning",
+"value": 1
+},
+{
+"label": "Volumes filling fast",
+"note": "90% within 30 days",
+"status": "warning",
+"value": 2
+},
+{
+"label": "Volumes back again",
+"note": "over 85% again within 7 days",
+"status": "warning",
+"value": 2
+}
+],
+"title": "NetApp ONTAP capacity trends: 2 aggregates full within 90 days, 2 volumes back again, 2 filling fast"
+}

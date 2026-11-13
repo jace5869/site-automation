@@ -5,7 +5,8 @@ how they moved, month by month, in a **Trends** section. ServiceNow stays the re
 
 It is MySQL 8.4 LTS in its own podman container, `report-db`, on the STIG Manager host, apart from STIG Manager's own
 database.
-Ticket insights is its first user (1.13.0). Since 1.17.0 it also keeps each ticket's fields, so a run reads only what
+Ticket insights is its first user (1.13.0). *NetApp ONTAP - capacity trends* is the second (1.52.0, optional:
+*The capacity trends' points*). Since 1.17.0 it also keeps each ticket's fields, so a run reads only what
 changed (*The ticket store and the ACT cache*).
 
 ## What it keeps
@@ -255,7 +256,8 @@ database anything: the job reads it and draws the lines into each page.
 | `insights_ticket` | 1.17.0: one row per ticket - its fields less its text, people and CI, and its follow-up reads (*The ticket store*) |
 | `insights_act_class` | 1.17.0: each description's issue, the description as a hash (*The ACT cache*) |
 | `insights_act_issue` | 1.17.0: each issue's number, name (masked), kind and self-service (*The ACT cache*) |
-| `schema_version` | The schema's version, per component (`servicenow_insights`: 1) |
+| `schema_version` | The schema's version, per component (`servicenow_insights`: 1; `ontap_capacity`: 1) |
+| `ontap_capacity_point` | 1.52.0: the capacity trends' points (*The capacity trends' points*) |
 | `insights_v_service`, `_volume`, `_process`, `_lifecycle`, `_quality` | A row per run and node, a column per figure of that set |
 | `insights_v_labelled` | The figures with an item: outcomes, categories, backlog age, hot CIs |
 | `insights_v_month_run` | The newest run of each month, per instance and period |
@@ -690,6 +692,72 @@ GROUP BY r.run_id, n.run_id, n.variant, n.node;
 INSERT INTO schema_version (component, version, applied_at) VALUES ('servicenow_insights', 1, UTC_TIMESTAMP());
 ```
 <!-- end of the statements -->
+
+## The capacity trends' points (1.52.0)
+
+*NetApp ONTAP - capacity trends* ([NETAPP.md](NETAPP.md#capacity-trends)) can keep its points here too. AAP keeps a
+job for 120 days by default; the database keeps a point for `ontap_capacity_db_keep_days` (800).
+
+1. Add the **Report database** credential (the writer's) to the template *NetApp ONTAP - capacity trends*.
+2. Launch it. The first run makes the table `ontap_capacity_point` and writes its point.
+3. Open the report, section *How this was made*. It says `The report database (...) holds 1 run`.
+
+| | |
+|---|---|
+| What a run writes | a row per cluster, aggregate and volume: when it was read, the job, names, size and used bytes; for a volume its snapshot reserve and the snapshots' bytes |
+| How much | a row is about 200 bytes. 500 volumes read daily for 800 days: about 400,000 rows |
+| What a run deletes | the rows older than `ontap_capacity_db_keep_days` |
+| When the database is down | one warning in the job output. The report goes on with AAP's job history. The job stays green |
+| A dry run (Check) | reads, writes nothing |
+| Turning it off | `ontap_capacity_db: false`, or take the credential off the template |
+| Removing it | `DROP TABLE ontap_capacity_point;` and `DELETE FROM schema_version WHERE component = 'ontap_capacity';` |
+
+The key is the cluster, the kind (`cluster`, `aggregate`, `volume`), the object's UUID and the time it was read. A job
+launched again for the same time writes the same rows again, not new ones.
+
+**By hand.** If the writer may not create tables, set `ontap_capacity_db_create: false` and make the table once as
+root, in `site_reports`. The writer then needs SELECT, INSERT, UPDATE and DELETE. The first statement is the one of
+*Making the tables by hand*; it may run again.
+
+<!-- the statements: site_ontap_capacity_db.ddl(), word for word (tests/test_ontap_capacity.py checks it) -->
+```sql
+CREATE TABLE IF NOT EXISTS schema_version (
+  component VARCHAR(64) NOT NULL PRIMARY KEY,
+  version INT NOT NULL,
+  applied_at DATETIME NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS ontap_capacity_point (
+  read_at DATETIME NOT NULL,
+  job BIGINT NOT NULL DEFAULT 0,
+  cluster VARCHAR(64) NOT NULL,
+  cluster_name VARCHAR(255) NOT NULL DEFAULT '',
+  kind VARCHAR(16) NOT NULL,
+  uuid VARCHAR(64) NOT NULL,
+  name VARCHAR(255) NOT NULL DEFAULT '',
+  svm VARCHAR(255) NOT NULL DEFAULT '',
+  size_b BIGINT UNSIGNED NOT NULL,
+  used_b BIGINT UNSIGNED NOT NULL,
+  reserve_pct DECIMAL(6,2) NULL,
+  snap_used_b BIGINT UNSIGNED NULL,
+  PRIMARY KEY (cluster, kind, uuid, read_at),
+  KEY ontap_capacity_point_read_at (read_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+INSERT INTO schema_version (component, version, applied_at) VALUES ('ontap_capacity', 1, UTC_TIMESTAMP());
+```
+<!-- end of the capacity statements -->
+
+| Setting | Default | What it does |
+|---|---|---|
+| `ontap_capacity_db` | `true` | Keep the points here when the template has the credential |
+| `ontap_capacity_db_create` | `true` | Make the table on the first run |
+| `ontap_capacity_db_timeout` | `10` | Seconds to connect |
+| `ontap_capacity_db_keep_days` | `800` | Delete older points. `0`: never |
 
 ## TLS (optional)
 

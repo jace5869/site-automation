@@ -209,6 +209,10 @@ net_perf_targets: [{name: Gateway, host: GATEWAY-ADDRESS}, {name: DC01, host: DC
 """),
     "ontap_health_report.yml": ("NetApp ONTAP health report", "NetApp ONTAP", "", ""),
     "ontap_hardware_report.yml": ("NetApp ONTAP hardware inventory", "NetApp ONTAP", "", ""),
+    "ontap_capacity_trends.yml": ("NetApp ONTAP - capacity trends",
+                                  "NetApp ONTAP, Red Hat Ansible Automation Platform (optional: Report database)", "", """\
+## Run it every day on a schedule: each run adds one point, a trend needs 3 (docs/NETAPP.md, "Capacity trends")
+"""),
     "ucs_inventory_report.yml": ("Cisco UCS inventory", "Cisco UCS Manager", "", """\
 ## Each domain's UCS Manager address (the fabric interconnects' cluster address); put it in all.yml if you like
 ucs_domains: [ucs01.yoursite.mil]

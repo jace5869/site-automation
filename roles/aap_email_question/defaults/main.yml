@@ -51,6 +51,7 @@ aap_email_question_playbooks:
   - net_config_backup.yml
   - net_config_load.yml
   - ontap_health_report.yml
+  - ontap_capacity_trends.yml
   - ontap_hardware_report.yml
   - pki_bundle_check.yml
   - ucs_inventory_report.yml

@@ -2,7 +2,9 @@
 
 One job, `playbooks/ontap_health_report.yml`, reads every NetApp ONTAP cluster you list and emails
 one report: what is broken first, then capacity, protection and services. A second, *NetApp ONTAP hardware inventory*,
-lists their hardware - models, serial numbers, firmware ([The hardware inventory](#the-hardware-inventory)). Each row is coloured: red
+lists their hardware - models, serial numbers, firmware ([The hardware inventory](#the-hardware-inventory)). A third,
+*NetApp ONTAP - capacity trends*, says how fast the aggregates and volumes fill and which fill again
+([Capacity trends](#capacity-trends)). Each row is coloured: red
 = critical, amber = warning, green = OK, blue = for your information.
 
 **It only reads.** It sends GET requests to each cluster's REST API (the same API System Manager
@@ -189,6 +191,149 @@ schedule (monthly). On the report website it is on the *Network and storage* tab
 The connection settings (`ontap_clusters`, `ontap_validate_certs`, `ontap_ca_path`, `ontap_timeout`,
 `ontap_tls_legacy`) are the health report's: set them once in `all.yml` for both.
 
+## Capacity trends
+
+*NetApp ONTAP - capacity trends* (`playbooks/ontap_capacity_trends.yml`) says where the space is going. The health
+report says how full a volume is today. This one says how fast it fills, when it will be full, and which volumes fill
+again after they were cleaned or made larger. Read-only: GET requests to the REST API, the same account and credential
+as the health report.
+
+**Each run adds one point**: the size and the used space of every cluster, aggregate and volume. The trend comes
+from the points of the earlier runs. Run it every day, on a schedule.
+
+| Runs so far | What the report shows |
+|---|---|
+| 1 or 2 | today's sizes and used %, no rate, no days. The title says *run 1 - a trend needs 3* |
+| 3 or more | rates, days to full, trend lines |
+| `ontap_capacity_days` (30) of daily runs | the full window |
+
+### What it shows
+
+At the top, the counts: clusters read, aggregates over `ontap_aggr_warn_pct`, aggregates full within 90 days, the
+fastest growth, snapshots over their reserve, volumes filling fast, volumes back again. Then:
+
+| Section | Rows | Columns |
+|---|---|---|
+| **Clusters** | every cluster | size, used, used %, growth in GB over 30 days, months until 85% used |
+| **Aggregates** | every aggregate, soonest full first | size, used % now, growth GB/day, days to `ontap_aggr_crit_pct` (90%) |
+| **Volumes filling again** | volumes back again or filling fast | why, used % now, what changed, fill GB/day, days to full |
+| **Fastest growing volumes** | the `ontap_capacity_top` (5) fastest, whatever their used % | size, used % now, growth GB/day, days to full |
+| **Snapshot space** | volumes whose snapshots are near or over their reserve | reserve GB, reserve used % now (may pass 100%), a note |
+| **The numbers** | every row above | its used % week by week - the numbers behind the trend lines |
+| **How this was made** | | the runs used, where they came from, the oldest point, the settings |
+
+On the report website every row has a **trend line**: its used % over the window. The dashed lines are the amber
+and red levels, the dot is this run, and a thin upright line marks a change. The email has the same tables without the
+lines, a link to the page, and a workbook.
+
+**The words in the Volumes filling again table:**
+
+- **Back again** - the volume is over `ontap_volume_warn_pct` (85%) now, was over it within the last
+  `ontap_volume_again_days` (7), and was below it in between. Somebody made room, and the room is gone.
+- **Filling fast** - at its rate, the volume reaches `ontap_volume_crit_pct` (90%) within `ontap_volume_fast_days`
+  (30).
+- **What changed** - only what the numbers show: `resized 4.0 TB to 4.4 TB`, `used space dropped 13%`, or both, and
+  the peak used % before the change with its date. The report does not guess why.
+- **Fill GB/day** and **Days to full** - counted over the runs after the last change, not over the whole window. A
+  volume cleaned five days ago is measured over those five days.
+
+**Colours.** An aggregate is amber at `ontap_aggr_warn_pct` now, or when it reaches `ontap_aggr_crit_pct` within 90
+days at its rate; red when it reaches it within 30 days. A snapshot row is amber over
+`ontap_snapshot_reserve_warn_pct` and red over `ontap_snapshot_reserve_crit_pct`. Over 100% the snapshots take space
+from the volume itself. A cluster that could not be read is red; the others are still in.
+
+**Left out:** an SVM's root volume, and volumes smaller than `ontap_volume_min_gb` (50 GB). Root aggregates are not
+returned by ONTAP's REST API.
+
+The workbook (`netapp-ontap-capacity-trends_2026-11-13.xlsx`) has a sheet per table, plus:
+
+| Sheet | What |
+|---|---|
+| Volumes | every volume: size, used, used %, runs, growth GB/day, days to full, why, what changed, the earlier peak |
+| Points | every point behind the tables: when it was read, what, name, size bytes, used bytes, used % |
+
+### Where the earlier points come from
+
+| Source | Needs | How far back |
+|---|---|---|
+| AAP's job history | a **Red Hat Ansible Automation Platform** credential on the template | as long as AAP keeps its jobs (*Cleanup Job Details*, 120 days by default) |
+| The report database | a **Report database** credential on the template ([REPORT_DATABASE.md](REPORT_DATABASE.md)) | `ontap_capacity_db_keep_days` (800) |
+
+- With both, each run is counted once. *How this was made* says how many came from each.
+- With neither, every report shows this run alone. It says so, and says which credential is missing.
+- The report database is optional. Neither source can fail the job: a database that is down is one warning in the
+  job output, and the report goes on with AAP's history.
+- The AAP user only reads: **Organization Auditor** on the template's organization is enough.
+- Every run keeps its point as the job artifact `ontap_capacity`. That is what the next runs read from AAP.
+
+### Set it up
+
+1. **Templates > Create template > Create job template:**
+   - Name: `NetApp ONTAP - capacity trends`
+   - Inventory: any (the job runs on the AAP side)
+   - Project: site-automation. Playbook: `playbooks/ontap_capacity_trends.yml`
+   - Execution environment: any with Python 3
+   - Credentials: **NetApp ONTAP read-only** and **Red Hat Ansible Automation Platform** (the one the other reports
+     use for their strip of past runs)
+   - Variables (leave out `ontap_clusters` when it is in `all.yml`):
+     ```yaml
+     ontap_clusters: [cluster1.yoursite.mil, cluster2.yoursite.mil]
+     report_email_to: storage-team@yoursite.mil
+     ```
+   - Leave Limit empty. No survey. Save.
+2. **Launch it once.** The title says `run 1 - a trend needs 3`. The tables show today's sizes. The job output ends
+   with the same report.
+3. **Schedules > Create schedule:** every day, e.g. 06:00 (set **your** time zone). On the fourth day at the latest
+   the report has rates and days to full.
+4. **Optional - a longer history.** Add the **Report database** credential to the template. The next run makes the
+   table `ontap_capacity_point` and keeps its point there. *How this was made* then says
+   `The report database (...) holds 1 run`. The execution environment needs PyMySQL, as for ticket insights.
+5. **Check the sources.** Open the report, section *How this was made*. It should say
+   `N runs in the last 30 days (ontap_capacity_days), this one included: N-1 from AAP's job history, ...`.
+
+A dry run (Check) reads the clusters and the history and prints the same report. It sends no email and writes no point
+to the report database.
+
+On the report website the report is on the *Network and storage* tab.
+
+### Settings
+
+| Setting | Default | |
+|---|---|---|
+| `ontap_capacity_days` | `30` | the window: trend lines, rates and days come from the runs of the last this-many days |
+| `ontap_volume_again_days` | `7` | *Back again*: over `ontap_volume_warn_pct` now and within this many days, below it in between |
+| `ontap_volume_fast_days` | `30` | *Filling fast*: reaches `ontap_volume_crit_pct` within this many days at its rate |
+| `ontap_capacity_top` | `5` | the fastest growing volumes listed |
+| `ontap_capacity_runs_max` | `400` | earlier runs read at most. More in the window: evenly spread ones are used |
+| `ontap_capacity_db` | `true` | keep the points in the report database when the template has its credential. `false` = never |
+| `ontap_capacity_db_create` | `true` | make the table on the first run. `false` = made by hand ([REPORT_DATABASE.md](REPORT_DATABASE.md#the-capacity-trends-points-1520)) |
+| `ontap_capacity_db_timeout` | `10` | seconds to wait for the report database |
+| `ontap_capacity_db_keep_days` | `800` | the database's points older than this are deleted. `0` = never |
+| `ontap_capacity_fail` | `false` | `true` = the job is marked failed when a cluster could not be read (the report still goes out) |
+
+The levels are the health report's: `ontap_aggr_warn_pct` / `_crit_pct`, `ontap_volume_warn_pct` / `_crit_pct`,
+`ontap_volume_min_gb`, `ontap_snapshot_reserve_warn_pct` / `_crit_pct`, and `ontap_report_max_rows` for the rows of a
+table. So are the connection settings (`ontap_clusters`, `ontap_validate_certs`, `ontap_ca_path`, `ontap_timeout`,
+`ontap_tls_legacy`). Set them once in `all.yml` for the three jobs.
+
+### When something is not as expected
+
+| You see | It means | Do |
+|---|---|---|
+| `run 1 - a trend needs 3`, run after run | the earlier runs are not found | open *How this was made*: it names the reason |
+| `AAP's job history: no AAP connection: attach a credential of type "Red Hat Ansible Automation Platform"` | the template has no AAP credential | add it (step 1) |
+| `AAP's job history: The AAP user ... cannot see this template's jobs` or `AAP refused the list ... (HTTP 403)` | the credential's user has no role on the template | give it **Organization Auditor** on the template's organization |
+| `Not run by AAP: no job history to read.` | the playbook ran from a command line | nothing: with the report database it still has a history |
+| A warning `the report database ... the capacity trends report goes on with AAP's job history` | the database is down, or its login was refused | [REPORT_DATABASE.md](REPORT_DATABASE.md#when-something-goes-wrong). The report is complete without it while AAP has the jobs |
+| `the table ontap_capacity_point is not there (ontap_capacity_db_create: false)` | nobody made the table | make it by hand ([REPORT_DATABASE.md](REPORT_DATABASE.md#the-capacity-trends-points-1520)), or set `ontap_capacity_db_create: true` |
+| A volume is missing | it is an SVM's root volume, or smaller than `ontap_volume_min_gb` | lower `ontap_volume_min_gb` |
+| `N of M volumes have fewer than 3 runs after their last change: no rate yet.` | a new volume, or one cleaned or resized in the last two runs | nothing: the rate comes with the third run after the change |
+| The days to full jump from one day to the next | few runs after a change: three points make a rough rate | read the trend line; the rate settles as runs are added |
+| A cluster's line says `could not be read` | as in the health report | Troubleshooting, below |
+
+**What it is not.** A rate is a straight line through the used space of the runs. It does not know about a monthly
+job, a migration next week or a quota. Read the days to full as "at this rate", and look at the trend line beside it.
+
 ## Settings
 
 Set them in the template's Variables, or in `playbooks/group_vars/all.yml` for every run.
@@ -252,3 +397,6 @@ Set them in the template's Variables, or in `playbooks/group_vars/all.yml` for e
 - The CLI commands it reads through REST (system health, storage failover, SnapMirror progress)
   are ONTAP `show` commands at admin level, which the `readonly` role may run.
 - It reports; it changes nothing. Fixes are done in System Manager or the ONTAP CLI.
+- Capacity trends was tested against the same fake ONTAP API, a fake AAP job history and a real MySQL 8.4. It was not
+  run against a real cluster or a real AAP. It counts from its own points; it does not read ONTAP's own performance
+  history.

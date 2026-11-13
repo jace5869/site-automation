@@ -47,3 +47,15 @@ ontap_report_fail: false
 ontap_hardware_max_rows: 2000            # controllers, shelves and disk models listed in the email and the page at most (the workbook always has all)
 ontap_hardware_xlsx: true                # attach every controller, shelf, shelf module, disk and port as an Excel workbook (.xlsx) to the email
 ontap_hardware_fail: false               # true = mark the job FAILED when a cluster could not be read (the report still goes out), for workflows
+
+# ---- NetApp ONTAP capacity trends (playbooks/ontap_capacity_trends.yml) ---- each run adds one point; run it daily
+ontap_capacity_days: 30                  # the window: the trend lines, rates and days-to-full come from the runs of the last this-many days
+ontap_volume_again_days: 7               # "back again": a volume over ontap_volume_warn_pct now that was over it within this many days, and below it in between
+ontap_volume_fast_days: 30               # "filling fast": a volume that reaches ontap_volume_crit_pct within this many days at its rate
+ontap_capacity_top: 5                    # the fastest growing volumes listed (whatever their used %)
+ontap_capacity_runs_max: 400             # read at most this many earlier runs (from AAP's job history, and from the report database)
+ontap_capacity_db: true                  # keep the points in the report database too, when the job template has a "Report database" credential (a longer history than AAP keeps its jobs); no credential = not used
+ontap_capacity_db_create: true           # make the table ontap_capacity_point on the first run; false = an admin makes it (docs/REPORT_DATABASE.md)
+ontap_capacity_db_timeout: 10            # seconds to wait for the report database's connection
+ontap_capacity_db_keep_days: 800         # delete the database's points older than this many days (0 = never)
+ontap_capacity_fail: false               # true = mark the job FAILED when a cluster could not be read (the report still goes out), for workflows

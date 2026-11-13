@@ -61,6 +61,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | Mail relay - format the whitelist | `playbooks/mail_relay_format.yml` | [mail_relay_format.yml](mail_relay_format.yml) |
 | Mail relay - unused addresses plan | `playbooks/mail_relay_unused.yml` | [mail_relay_unused.yml](mail_relay_unused.yml) |
 | Mail relay - whitelist plan | `playbooks/mail_relay_plan.yml` | [mail_relay_plan.yml](mail_relay_plan.yml) |
+| NetApp ONTAP - capacity trends | `playbooks/ontap_capacity_trends.yml` | [ontap_capacity_trends.yml](ontap_capacity_trends.yml) |
 | NetApp ONTAP hardware inventory | `playbooks/ontap_hardware_report.yml` | [ontap_hardware_report.yml](ontap_hardware_report.yml) |
 | NetApp ONTAP health report | `playbooks/ontap_health_report.yml` | [ontap_health_report.yml](ontap_health_report.yml) |
 | Network config backup | `playbooks/net_config_backup.yml` | [net_config_backup.yml](net_config_backup.yml) |

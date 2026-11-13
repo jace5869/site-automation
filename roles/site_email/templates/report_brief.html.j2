@@ -101,7 +101,7 @@ var d=localStorage.getItem('site-report-density');if(d==='compact')document.docu
     white, 65% white in light), borders 8%, chips tinted 10-12% of their colour; solid fallbacks (--card-solid, --th)
     where a surface sits over moving content - and written in hex and rgba (a browser before 2023 draws no oklch). Every text colour 5.4:1 or better on every surface. #}
 {%- set light %}
-  --ink:#182027;--muted:#545c63;--label:#363e45;--accent:#00704e;--accent-ink:#f7fbf9;--accent-soft:rgba(0,112,78,.11);
+  --ink:#182027;--spark:#6a4fc9;--muted:#545c63;--label:#363e45;--accent:#00704e;--accent-ink:#f7fbf9;--accent-soft:rgba(0,112,78,.11);
   --bg:#f4f8f6;--bg2:#eef2f0;--glow:rgba(0,112,78,.06);--card:rgba(255,255,255,.65);--card-solid:#fbfdfc;
   --card-strong:rgba(24,32,39,.035);--th:#f3f5f5;--edge:rgba(24,32,39,.08);--line:rgba(24,32,39,.05);
   --zebra:rgba(24,32,39,.02);--hover:rgba(0,112,78,.06);--code:rgba(24,32,39,.04);--bar:rgba(244,248,246,.8);
@@ -113,7 +113,7 @@ var d=localStorage.getItem('site-report-density');if(d==='compact')document.docu
   color-scheme:light;
 {%- endset %}
 {%- set dark %}
-  --ink:#e0e0e0;--muted:#a3a3a3;--label:#bdbdbd;--accent:#7fcbac;--accent-ink:#0f1f19;
+  --ink:#e0e0e0;--spark:#8f7cf0;--muted:#a3a3a3;--label:#bdbdbd;--accent:#7fcbac;--accent-ink:#0f1f19;
   --accent-soft:rgba(127,203,172,.11);--bg:#121212;--bg2:#161616;--glow:rgba(127,203,172,.05);
   --card:rgba(255,255,255,.05);--card-solid:#1e1e1e;--card-strong:rgba(255,255,255,.06);--th:#2c2c2c;
   --edge:rgba(255,255,255,.08);--line:rgba(255,255,255,.05);--zebra:rgba(255,255,255,.02);--hover:rgba(127,203,172,.07);
@@ -356,7 +356,7 @@ tbody tr:first-child td{border-top:0}
 tbody tr:nth-child(even) td{background:var(--zebra)}
 tbody tr:hover td{background:var(--hover)}
 tbody tr:last-child td:first-child{border-bottom-left-radius:11px}tbody tr:last-child td:last-child{border-bottom-right-radius:11px}
-td.k-num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+td.k-num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}td.k-rc{text-align:right;font-variant-numeric:tabular-nums}
 td.k-nw,td.nw{white-space:nowrap}
 td.k-mid{min-width:16ch}td.k-mid .w{white-space:nowrap}
 td.k-wrap{overflow-wrap:break-word}td.k-wrap .w{white-space:nowrap}
@@ -375,6 +375,15 @@ tr.r-warning td{background:var(--warning-row)}tr.r-warning td:first-child{box-sh
 tr.r-ok td:first-child{box-shadow:inset 3px 0 0 var(--ok)}
 tr.r-info td:first-child{box-shadow:inset 3px 0 0 var(--info)}
 tr.r-critical:hover td,tr.r-warning:hover td{background:var(--hover)}
+/* a Trend column (a section's sparks, its kind spark - 1.52.0): one small line per row, one hue (--spark, not a status
+   colour), the dashed lines the report's two levels, the upright line a change, the dot the last run */
+th.k-spark{white-space:nowrap}
+td.k-spark{white-space:nowrap;vertical-align:middle;width:136px}
+svg.spark{display:block;width:120px;height:30px;overflow:visible}
+.spark .ln{fill:none;stroke:var(--spark);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.spark .lv{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3;opacity:.6}
+.spark .mk{stroke:var(--ink);stroke-width:1;opacity:.75}
+.spark .pt{fill:var(--spark);stroke:var(--card-solid);stroke-width:4;paint-order:stroke}
 .none{color:var(--muted);padding:4px 0}
 footer{margin-top:48px;padding-top:18px;border-top:1px solid var(--edge);color:var(--muted);font-size:13px;line-height:1.7}
 /* a compact table (a section's compact: true, 1.11.0 - many short columns, the VM inventory's): tighter cells, small chips
@@ -644,6 +653,7 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
 </tr></thead>
 <tbody>
 {%- for row in s.rows %}
+{%- set ri = loop.index0 %}
 {%- set rs = (s.row_status[loop.index0] if s.row_status is defined and s.row_status | length > loop.index0 else '') | default('', true) %}
 {%- set cs = (s.cell_status[loop.index0] if s.cell_status is defined and s.cell_status | length > loop.index0 else []) | default([], true) %}
 <tr{% if rs in words %} class="r-{{ rs }}"{% endif %}>
@@ -660,8 +670,11 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
 {%- set cst = cst if cst in words else cellword.get(text | trim | lower, '') %}
 {#- a Status or Severity column of a row with its status: that status's chip (upper case - FAIL - as Fail; a STIG CAT I stays, and a section's keep_case: EFI, BIOS) #}
 {%- set cst = cst or (rs if rs in words and lbl | lower in ['status', 'severity', 'result'] and text | trim else '') %}
-{%- if cst %}
-<td data-l="{{ lbl | e }}" data-v="{{ text | e }}"{% if kd == 'wrap' and text | length > 12 %} class="k-wrap"{% elif text | length <= 32 %} class="nw"{% else %} class="k-mid"{% endif %}>{{ chip(cst, text | capitalize if text.isupper() and not text.startswith('CAT ') and not s.keep_case | default(false) else text) }}</td>
+{%- if kd == 'spark' %}
+{%- set sp = (s.sparks[ri] if s.sparks is defined and s.sparks | length > ri else {}) | default({}, true) %}
+<td class="k-spark" data-l="{{ lbl | e }}" data-v="{{ text | e }}">{% if sp.points is defined %}<svg class="spark" viewBox="0 0 {{ sp.w }} {{ sp.h }}" width="{{ sp.w }}" height="{{ sp.h }}" role="img" aria-label="{{ sp.label | e }}"><title>{{ sp.label | e }}</title>{% for y in sp.lines | default([]) %}<line class="lv" x1="0" x2="{{ sp.w }}" y1="{{ y }}" y2="{{ y }}"/>{% endfor %}{% if sp.mark is defined and sp.mark is not none %}<line class="mk" x1="{{ sp.mark }}" x2="{{ sp.mark }}" y1="0" y2="{{ sp.h }}"/>{% endif %}<polyline class="ln" points="{{ sp.points }}"/><circle class="pt" cx="{{ sp.last[0] }}" cy="{{ sp.last[1] }}" r="4"/></svg>{% endif %}</td>
+{%- elif cst %}
+<td data-l="{{ lbl | e }}" data-v="{{ text | e }}"{% if kd == 'wrap' and text | length > 12 %} class="k-wrap"{% elif text | length <= 32 %} class="nw{{ " k-rc" if kd == "num" else "" }}"{% else %} class="k-mid"{% endif %}>{{ chip(cst, text | capitalize if text.isupper() and not text.startswith('CAT ') and not s.keep_case | default(false) else text) }}</td>
 {%- elif lbl | lower in ['look further', 'command', 'hint', 'next step'] %}
 <td class="lk" data-l="{{ lbl | e }}" data-v="{{ text | e }}">{% if text | trim %}<span class="cv"><span class="cmd">{{ breakable(text) }}</span><button class="ccopy" type="button" hidden title="Copy" aria-label="Copy the command">{{ copyicons() }}</button></span>{% endif %}</td>
 {%- elif kd == 'path' %}

@@ -1,0 +1,135 @@
+---
+# NETAPP ONTAP CAPACITY TRENDS (playbooks/ontap_capacity_trends.yml). Read-only on the clusters: the collector sends GET
+# requests only (roles/ontap_report/library/site_ontap_collect.py; what it reads: _ontap_cap_queries in
+# roles/ontap_report/vars/main.yml). Each run adds one point (the sizes and used space of every cluster, aggregate and
+# volume of ontap_volume_min_gb or more), published as the job artifact ontap_capacity. The trend comes from the earlier
+# runs' points: read from AAP's job history (site_ontap_capacity_history), and from the report database when the job
+# template has a "Report database" credential (site_ontap_capacity_db - the only thing this job writes). The report
+# (plugins/filter/ontap_capacity_filters.py) is printed, emailed (report_email_to) with the points as an Excel workbook
+# and put on the report website with a trend line per row. Green unless ontap_capacity_fail.
+- name: NetApp | read the clusters' capacity (GET requests only)
+  site_ontap_collect:
+    clusters: "{{ (ontap_clusters | replace(',', ' ')).split() if ontap_clusters is string else ontap_clusters }}"
+    queries: "{{ _ontap_cap_queries }}"
+    validate_certs: "{{ ontap_validate_certs | bool }}"
+    ca_path: "{{ ontap_ca_path | default(omit, true) }}"
+    timeout: "{{ ontap_timeout | int }}"
+    tls_legacy: "{{ ontap_tls_legacy | bool }}"
+  register: _ontap_cap_read
+  check_mode: false                     # it only reads: a dry run (Check) shows the real report
+
+- name: NetApp | this run's point
+  ansible.builtin.set_fact:
+    _ontap_cap_point: "{{ _ontap_cap_read | ontap_capacity_points({'volume_min_gb': ontap_volume_min_gb | float}) }}"
+    _ontap_cap_job: "{{ (awx_job_id | default(tower_job_id | default(0))) | int }}"
+    _ontap_cap_template: "{{ (awx_job_template_id | default(tower_job_template_id | default(0))) | int }}"
+    _ontap_cap_db_host: "{{ lookup('ansible.builtin.env', 'REPORT_DB_HOST') | trim if ontap_capacity_db | bool else '' }}"
+
+# ---- the report database: the earlier points read back, this run's kept (never fails the job) ----
+- name: NetApp | the report database - the earlier runs' points, and this run's kept (ontap_capacity_db)
+  site_ontap_capacity_db:
+    host: "{{ _ontap_cap_db_host }}"
+    port: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PORT') | default('3309', true) | int }}"
+    database: "{{ lookup('ansible.builtin.env', 'REPORT_DB_NAME') | default('site_reports', true) | trim }}"
+    user: "{{ lookup('ansible.builtin.env', 'REPORT_DB_USER') | trim }}"
+    password: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PASSWORD') }}"
+    tls: "{{ lookup('ansible.builtin.env', 'REPORT_DB_TLS') | default('false', true) | bool }}"
+    ca_file: "{{ lookup('ansible.builtin.env', 'REPORT_DB_CA_FILE') | trim }}"
+    connect_timeout: "{{ ontap_capacity_db_timeout | int }}"
+    create: "{{ ontap_capacity_db_create | bool }}"
+    read_at: "{{ _ontap_cap_point.read_at }}"
+    job: "{{ _ontap_cap_job | int }}"
+    rows: "{{ _ontap_cap_point | ontap_capacity_db_rows }}"
+    days: "{{ ontap_capacity_days | float }}"
+    max_runs: "{{ ontap_capacity_runs_max | int }}"
+    keep_days: "{{ ontap_capacity_db_keep_days | int }}"
+  register: _ontap_cap_db
+  when: _ontap_cap_db_host | length > 0
+
+# ---- AAP's job history: the artifact ontap_capacity of this template's earlier jobs (never fails the job) ----
+- name: NetApp | this template's earlier runs' points, from AAP's job history
+  site_ontap_capacity_history:
+    job_id: "{{ _ontap_cap_job | int }}"
+    template_id: "{{ _ontap_cap_template | int }}"
+    days: "{{ ontap_capacity_days | float }}"
+    max_runs: "{{ ontap_capacity_runs_max | int }}"
+    skip_jobs: "{{ _ontap_cap_db.jobs | default([]) }}"      # the database gave these already
+    ca_path: "{{ report_history_aap_ca_path | default('') }}"
+  register: _ontap_cap_aap
+  check_mode: false                     # read only
+  when: _ontap_cap_job | int > 0 and _ontap_cap_template | int > 0
+
+# one dict expression each: on ansible-core 2.16 the values of a YAML dict would arrive as strings
+- name: NetApp | the runs of the last {{ ontap_capacity_days }} days, each once
+  ansible.builtin.set_fact:
+    _ontap_cap_runs: >-
+      {{ _ontap_cap_point | ontap_capacity_runs(_ontap_cap_aap.runs | default([]), _ontap_cap_db.runs | default([]),
+                                                {'days': ontap_capacity_days | float, 'job': _ontap_cap_job | int}) }}
+
+- name: NetApp | the report
+  ansible.builtin.set_fact:
+    _ontap_cap: >-
+      {{ _ontap_cap_read | ontap_capacity(_ontap_cap_point, _ontap_cap_runs.runs, {
+           'days': ontap_capacity_days | float,
+           'aggr_warn_pct': ontap_aggr_warn_pct | float, 'aggr_crit_pct': ontap_aggr_crit_pct | float,
+           'volume_warn_pct': ontap_volume_warn_pct | float, 'volume_crit_pct': ontap_volume_crit_pct | float,
+           'volume_min_gb': ontap_volume_min_gb | float,
+           'snap_warn_pct': ontap_snapshot_reserve_warn_pct | float, 'snap_crit_pct': ontap_snapshot_reserve_crit_pct | float,
+           'again_days': ontap_volume_again_days | float, 'fast_days': ontap_volume_fast_days | float,
+           'top': ontap_capacity_top | int, 'max_rows': ontap_report_max_rows | int,
+           'counts': _ontap_cap_runs.counts,
+           'history_notes': [
+             ("AAP's job history: " ~ _ontap_cap_aap.why ~ '.') if _ontap_cap_aap.why | default('') | length > 0
+             else ('Not run by AAP: no job history to read.' if _ontap_cap_aap is skipped else ''),
+             ('The report database: ' ~ _ontap_cap_db.error ~ '.') if _ontap_cap_db.error | default('') | length > 0
+             else ('The report database (' ~ _ontap_cap_db.where ~ ') holds ' ~ _ontap_cap_db.held.runs ~ (' run' if _ontap_cap_db.held.runs | int == 1 else ' runs') ~ ', the oldest of '
+                   ~ (_ontap_cap_db.held.oldest | default('') | replace('T', ' '))[:16] ~ ' UTC (kept ' ~ ontap_capacity_db_keep_days ~ ' days, ontap_capacity_db_keep_days).'
+                   if _ontap_cap_db.ok | default(false) and _ontap_cap_db.held.runs | default(0) | int > 0
+                   else ('The report database is not used: ontap_capacity_db is false.' if not ontap_capacity_db | bool
+                         else ('The report database is not used: the job template has no "Report database" credential (docs/REPORT_DATABASE.md). AAP keeps its jobs for the days of its "Cleanup Job Details" schedule.'
+                               if _ontap_cap_db is skipped else '')))]}) }}
+
+- name: NetApp | the report to print and email
+  ansible.builtin.set_fact:
+    _ontap_doc: "{{ _ontap_cap.report }}"
+
+- name: NetApp | {{ _ontap_doc.title }}
+  ansible.builtin.debug:
+    msg: "{{ (_ontap_doc | report_text).splitlines() }}"
+
+- name: NetApp | in short
+  ansible.builtin.debug:
+    msg: "{{ _ontap_cap.lines }}"
+
+- name: NetApp | this run's point and the counts as job artifacts (ontap_capacity - the next runs read it; ontap_report)
+  ansible.builtin.set_stats:
+    data:
+      ontap_capacity: "{{ _ontap_cap_point | dict2items | rejectattr('key', 'equalto', 'names') | list | items2dict }}"
+      ontap_capacity_counts: "{{ _ontap_cap.counts }}"
+      ontap_report:
+        subject: "{{ _ontap_doc.title }}"
+        lines: "{{ (_ontap_doc | report_text).splitlines() }}"
+
+- name: NetApp | email it, publish it (report_email_to, report_web_dest)
+  ansible.builtin.include_role:
+    name: site_email
+  vars:
+    _report: "{{ _ontap_doc | combine({'footer': _ontap_cap_footer}) }}"
+    _report_web: "{{ _ontap_cap.web | combine({'footer': _ontap_cap_footer}) }}"
+    _report_xlsx: "{{ _ontap_cap.xlsx }}"
+    _ontap_cap_footer: "Read-only: GET requests to the ONTAP REST API."
+  when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0
+
+- name: NetApp | no email
+  ansible.builtin.debug:
+    msg: "No email: report_email_to is not set (docs/EMAIL_REPORTS.md)."
+  when: report_email_to | default([]) | length == 0 and report_email_also | default([]) | length == 0
+
+- name: NetApp | every cluster was read
+  ansible.builtin.assert:
+    that: _ontap_cap_read.clusters | rejectattr('reachable') | list | length == 0
+    fail_msg: >-
+      Not read: {{ _ontap_cap_read.clusters | rejectattr('reachable') | map(attribute='address') | join(', ') }} (the report
+      above says why, and covers the others). ontap_capacity_fail: false (the default) keeps the job green.
+    quiet: true
+  when: ontap_capacity_fail | bool
