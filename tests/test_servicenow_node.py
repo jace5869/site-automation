@@ -99,7 +99,7 @@ class Log(unittest.TestCase):
         subprocess.run([sys.executable, os.path.join(NODE, "make_logs.py"), self.d, "bad"], check=True)
         lg = nm.read_log(self.d, "localhost_log*", 24, 200, 10)
         self.assertEqual(lg["files"], ["localhost_log.%s.txt" % datetime.date.today().isoformat()])   # the 40-day-old file left out
-        self.assertEqual((lg["severe"], lg["oom"], lg["semaphore"]), (144, 1, 4))   # the line before the window left out
+        self.assertEqual((lg["severe"], lg["oom"], lg["semaphore"]), (146, 1, 5))   # the line before the window left out
         first = lg["groups"][0]
         self.assertEqual((first["message"], first["kinds"]), ("java.lang.OutOfMemoryError: Java heap space", ["OutOfMemory", "SEVERE"]))
         sem = [g for g in lg["groups"] if g["kinds"] == ["semaphore"]]
@@ -158,8 +158,8 @@ class Log(unittest.TestCase):
                          [("slow", "the ServiceNow node snc_prod.service on node01.yoursite.mil logged 250 slow transaction(s) in "
                                    "the last 24 h (the longest ran 45210 ms)")])
         rows = nf.sn_node_sections([node(units=[unit(groups=lg["groups"])])], [], [], {})[-1]["rows"]
-        self.assertIn(["node01.yoursite.mil", "snc_prod", "slow transaction (session wait)", 3, "8120 ms, session wait 8100 ms"],
-                      [r[:5] for r in rows])
+        # 1.56.0: the session waits are Low, one row per path, at the bottom
+        self.assertEqual(rows[-1][:4], ["Low", "node01.yoursite.mil snc_prod", "slow transaction (session wait)", "3, longest 8120 ms"])
 
     def test_key(self):
         a = nm.key_of("GlideServlet:Transaction waited excessive time to run: 3295ms, semaphore wait: 0ms - transaction: #12 "
@@ -649,7 +649,8 @@ class Sections(unittest.TestCase):
         self.assertEqual(front["rows"][0][5], "29.3% (1200 / 4096 MB)")
         self.assertEqual(front["row_status"], ["warning"])         # 140 SEVERE lines >= 100
         self.assertEqual(secs[1]["rows"][1], ["snowdb01.yoursite.mil", "database", "-", "-", "-", "-", "none"])
-        self.assertEqual(secs[2]["rows"][0][2:4], ["SEVERE", 140])
+        self.assertEqual(secs[2]["rows"][0][1:4], ["node01.yoursite.mil snc_prod", "SEVERE", 140])   # 1.56.0: Level first ("-": not rated)
+        self.assertEqual(secs[2]["rows"][0][0], "-")
         self.assertTrue(front["top"])
         self.assertEqual([(b["label"], b["value"], b["status"]) for b in front["boxes"]],
                          [("Nodes running", "1 of 1", "ok"), ("Database", "1 of 1 read", "ok")])

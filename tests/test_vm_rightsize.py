@@ -309,10 +309,10 @@ class Reliable(unittest.TestCase):
         big = [x for x in d["sections"] if x["title"] == "Too big"][0]
         self.assertEqual(big["columns"][-2:], ["Confidence", "Why"])
         self.assertEqual([r[-2] for r in big["rows"]], ["High", "Low"])
-        self.assertEqual([c[-2] for c in big["cell_status"]], ["ok", "warning"])
+        self.assertEqual([c[-2] for c in big["cell_status"]], ["ok", "low"])          # 1.56.0: confidence Low is the Low level
         watch = [x for x in d["sections"] if x["title"] == "Watch: busy on a few days"][0]
         self.assertEqual([r[0] for r in watch["rows"]], ["watch1"])
-        self.assertIn({"label": "Watch", "value": 1}, d["summary"])
+        self.assertIn({"label": "Watch", "value": 1, "status": "low", "note": "Low: busy on a few days"}, d["summary"])   # 1.56.0
         self.assertNotIn("summary_per_row", d)                                    # the email puts 4 a row by itself (1.30.0)
         sheet = f.vm_rightsize_xlsx(sized)[0]
         row = [r for r in sheet["rows"] if r[4] == "low1"][0]

@@ -126,6 +126,8 @@ def stigman_health_sections(keycloak, targets, opts=None):
         state = st.get("currentState") or ("answers (no /op/state)" if cf.get("status") == 200 else (st.get("why") or "no answer"))
         bad = not answered or st.get("currentState") not in (None, "available") or us.get("status", 0) not in (0, 200)
         sev = ("critical" if t.get("kind") == "service" else o["node_down"]) if bad else ""
+        if sev == "low":                    # stigman_health_node_down: low (1.56.0) - the word, never the colour alone
+            state += " (Low)"
         if not sev and max([x for x in (st.get("ms"), cf.get("ms"), us.get("ms")) if x is not None] or [0]) > slow:
             sev = "warning"
         rows.append([t.get("name", ""), t.get("url", ""), t.get("kind", ""), state, _smh_up(st.get("db")), _smh_up(st.get("oidc")),

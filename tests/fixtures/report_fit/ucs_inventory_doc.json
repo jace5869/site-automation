@@ -72,7 +72,7 @@
 4,
 2,
 1,
-2,
+1,
 "read-only"
 ]
 ],
@@ -401,19 +401,29 @@
 "Acknowledged"
 ],
 "row_status": [
-"",
+"low",
+"low",
 "warning",
-""
+"low"
 ],
 "rows": [
 [
 "UCS-DC1",
-"major",
-"F0283",
-"chassis-1/blade-3",
-"DIMM 4 on server 1/3 operability: degraded",
-"2026-11-02 09:30:00",
-"yes"
+"minor",
+"F0998",
+"chassis-1/blade-2",
+"made up",
+"2026-11-01 08:00:00",
+""
+],
+[
+"UCS-DC1",
+"minor",
+"F0727",
+"switch-A/slot-1/switch-ether/port-49",
+"Port 1/49 on fabric interconnect A oper state: link-down",
+"2026-11-01 01:00:00",
+""
 ],
 [
 "UCS-DC1",
@@ -421,21 +431,21 @@
 "F0369",
 "chassis-1/psu-4",
 "Power supply 4 in chassis 1 power: failed",
-"2026-10-20 08:00:00",
+"2026-10-30 08:15:00",
 ""
 ],
 [
 "UCS-DC1",
 "major",
-"F0999",
-"chassis-1/blade-1",
-"no time",
-"",
-""
+"F0283",
+"chassis-1/blade-3",
+"DIMM 4 on server 1/3 operability: degraded",
+"2026-10-28 10:00:00",
+"yes"
 ]
 ],
-"text": "UCS Manager's own fault list, the newest first (Since). Acknowledged: someone in UCS Manager marked it seen.",
-"title": "Faults (critical, major)"
+"text": "UCS Manager's own fault list, the newest first (Since). Acknowledged: someone in UCS Manager marked it seen. Low (the tinted rows): major and minor faults - worth knowing, nothing to do now.",
+"title": "Faults (critical, major, minor)"
 },
 {
 "lines": [

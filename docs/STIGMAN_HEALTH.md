@@ -108,7 +108,7 @@ login in well under a second.
 | `stigman_health_hosts` | `true` | `false` = the API only (no SSH, whatever the Limit) |
 | `stigman_health_appinfo` | `true` | ask `/op/appinfo` (an admin client) |
 | `stigman_health_slow_ms` | `2000` | slower answers: warning |
-| `stigman_health_node_down` | `critical` | a node down or not `available`; `warning` = only the address counts |
+| `stigman_health_node_down` | `critical` | a node down or not `available`; `warning` = only the address counts; `low` = listed as Low |
 | `stigman_health_conn_warn_pct` / `_crit_pct` | `80` / `95` | the database's connections in use |
 | `stigman_health_restart_minutes` | `60` | restarted more recently: warning |
 | `stigman_health_version` | (empty) | the version every node must run |

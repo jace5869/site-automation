@@ -18,8 +18,8 @@
 {#- the web copy (report_web_dest) passes its own _page_logo_cid, _page_logo_size and _page_runs; an email links its web copy (_email_web_url) -#}
 {%- set logo_cid = _page_logo_cid | default(_email_logo_cid | default('')) -%}
 {%- set logo_size = _page_logo_size | default(_email_logo_size | default([0, 0])) -%}
-{%- set colour = {'ok': '#15803d', 'warning': '#b45309', 'critical': '#b91c1c', 'info': '#1d4ed8', 'unknown': '#6b7280'} -%}
-{%- set tint = {'ok': '#dcfce7', 'warning': '#fef3c7', 'critical': '#fee2e2', 'info': '#dbeafe', 'unknown': '#f3f4f6'} -%}
+{%- set colour = {'ok': '#15803d', 'warning': '#b45309', 'critical': '#b91c1c', 'info': '#1d4ed8', 'unknown': '#6b7280', 'low': '#88358e'} -%}
+{%- set tint = {'ok': '#dcfce7', 'warning': '#fef3c7', 'critical': '#fee2e2', 'info': '#dbeafe', 'unknown': '#f3f4f6', 'low': '#f5e8f6'} -%}
 {%- set st = r.status | default('info') if r.status | default('info') in colour else 'info' -%}
 {%- set navy = '#0b1a2e' -%}
 {%- set accent = '#5eead4' -%}

@@ -19,20 +19,20 @@
 "warning"
 ],
 [
-"info",
+"low",
 "",
 "",
 "",
 "",
-"info"
+"low"
 ],
 [
-"info",
+"low",
 "",
 "",
 "",
 "",
-"info"
+"low"
 ],
 [
 "",
@@ -54,8 +54,8 @@
 "row_status": [
 "critical",
 "warning",
-"info",
-"info",
+"low",
+"low",
 ""
 ],
 "rows": [
@@ -81,7 +81,7 @@
 "web01",
 "CN=web01",
 "/etc/pki/tls/certs/web01.crt",
-"expires within 60 days"
+"Low: expires within 60 days"
 ],
 [
 60,
@@ -89,7 +89,7 @@
 "app03",
 "CN=app03",
 "/etc/app3.crt",
-"expires within 60 days"
+"Low: expires within 60 days"
 ],
 [
 200,
@@ -101,7 +101,7 @@
 ]
 ],
 "status": "critical",
-"text": "Red = expired, amber = expires within 30 days, blue = within 60 days.",
+"text": "Red = expired, amber = expires within 30 days, Low = within 60 days (worth knowing, nothing to do now).",
 "title": "All certificates, soonest expiry first"
 }
 ],

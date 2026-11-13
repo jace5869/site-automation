@@ -699,10 +699,10 @@ class Snapshots(unittest.TestCase):
                  {"days": 60, "expires": "2026-12-07", "host": "app03", "subject": "CN=app03", "where": "/etc/app3.crt"}]
         s = f.cert_report_section(certs, 30, 60)
         self.assertEqual([r[0] for r in s["rows"]], [-3, 30, 45, 60, 200])                    # soonest first
-        self.assertEqual(s["row_status"], ["critical", "warning", "info", "info", ""])
-        self.assertEqual([c[0] for c in s["cell_status"]], ["critical", "warning", "info", "info", ""])
-        self.assertEqual([r[5] for r in s["rows"]], ["EXPIRED", "expires within 30 days", "expires within 60 days",
-                                                      "expires within 60 days", "ok"])
+        self.assertEqual(s["row_status"], ["critical", "warning", "low", "low", ""])        # 1.56.0: the notice window is Low
+        self.assertEqual([c[0] for c in s["cell_status"]], ["critical", "warning", "low", "low", ""])
+        self.assertEqual([r[5] for r in s["rows"]], ["EXPIRED", "expires within 30 days", "Low: expires within 60 days",
+                                                      "Low: expires within 60 days", "ok"])
         self.assertEqual(s["status"], "critical")
         self.assertNotIn("status", f.cert_report_section(certs[2:3]))
         self.assertEqual(f.cert_report_section([])["rows"], [])
@@ -1126,7 +1126,7 @@ class VmwareAlarms(unittest.TestCase):
         self.assertEqual(sec["Host connection"]["rows"][0][:3], ["CRITICAL", "esx02", "notResponding"])
         self.assertEqual(sec["Virtual machine events"]["row_status"], ["warning", "info"])
         hosts = sec["All hosts"]
-        self.assertEqual(hosts["row_status"], ["critical", "critical", "info"])      # critical alarm, not connected, maintenance
+        self.assertEqual(hosts["row_status"], ["critical", "critical", "low"])       # critical alarm, not connected, maintenance (1.56.0: Low)
         self.assertEqual(hosts["cell_status"][1][3], "critical")                     # its Connection cell
         self.assertEqual(hosts["rows"][0][7:], [1, 5])                               # 1 alarm, 5 warning/critical events
         self.assertEqual(sec["Configuration issues"]["rows"][0][3], "SSH for the host has been enabled")
@@ -1358,7 +1358,7 @@ class VmHealth(unittest.TestCase):
         self.assertIn(("esx08", "SSH for the host has been enabled"), warn)
         self.assertIn(("esx02", "Memory 95% used"), crit)
         self.assertTrue(any(o == "esx08" and pr.startswith("Alarm: Host memory usage") for o, pr in warn))
-        self.assertIn(("esx03", "In maintenance mode"), info)
+        self.assertIn(("esx03", "In maintenance mode"), {(o, pr) for s, o, pr in ps if s == "low"})   # 1.56.0: Low
         # a host in maintenance: its HA agent is not configured, as expected - not a problem
         self.assertFalse(any(o == "esx03" and "HA" in pr for s, o, pr in ps))
         # one-host cluster: HA and DRS off are fine; a host of a cluster without HA has no HA problem
@@ -1380,11 +1380,11 @@ class VmHealth(unittest.TestCase):
         ps = [(s, pr) for s, pr, _ in vh.cluster_problems(c, [_hl_host("a", "CLP"), _hl_host("b", "CLP")], {})]
         self.assertIn(("warning", "HA failover capacity below what is reserved: memory 10% left, 25% reserved"), ps)
         self.assertIn(("warning", "DRS could not apply 3 recommendation(s)"), ps)
-        self.assertIn(("info", "DRS is manual: its recommendations wait for someone to apply them"), ps)
+        self.assertIn(("low", "DRS is manual: its recommendations wait for someone to apply them"), ps)      # 1.56.0: Low
         off = _hl_cluster("CLX", ha={"admission": "off", "host_monitoring": "disabled"})
         ps = [(s, pr) for s, pr, _ in vh.cluster_problems(off, [_hl_host("a", "CLX"), _hl_host("b", "CLX")], {})]
         self.assertIn(("warning", "vSphere HA host monitoring is off: a failed host is not noticed"), ps)
-        self.assertTrue(any(s == "info" and pr.startswith("HA admission control is off") for s, pr in ps))
+        self.assertTrue(any(s == "low" and pr.startswith("HA admission control is off") for s, pr in ps))   # 1.56.0: Low
         # retreat mode without DRS is a warning; a red cluster with nothing to explain it says so
         r = _hl_cluster("CLR", drs_on=False, vcls_retreat=True, status="red", hosts=1)
         ps = [(s, pr) for s, pr, _ in vh.cluster_problems(r, [_hl_host("a", "CLR")], {})]
@@ -1424,7 +1424,8 @@ class VmHealth(unittest.TestCase):
         self.assertEqual((hs["esx04"][0][7], hs["esx04"][1][7]), ("1 red, 1 yellow", "critical"))
         self.assertEqual((hs["esx02"][0][9], hs["esx02"][1][9]), ("95%", "critical"))
         self.assertEqual(hs["esx08"][0][2], "(standalone)")
-        self.assertEqual(hs["esx03"][0][0], "INFO")
+        self.assertEqual(hs["esx03"][0][0], "LOW")                       # 1.56.0: in maintenance is Low
+        self.assertEqual((hs["esx03"][0][5], hs["esx03"][1][5]), ("yes - Low", "low"))
         dcs = {row[1]: row for row in sec["Datacenters"]["rows"]}
         self.assertEqual(dcs["DC1"][:8], ["CRITICAL", "DC1", 2, 5, 3, 1, 1, 0])
         self.assertIn("CRITICAL", f.report_text(r))
@@ -1473,14 +1474,14 @@ class VmAlarmHistory(unittest.TestCase):
         got = [(x["vcenter"], x["moid"], x["alarm"], x["red"], x["yellow"], x["now"], x["severity"]) for x in h]
         self.assertEqual(got, [
             (vc, "host-2", "Host CPU usage", 0, 1, "yellow", "warning"),              # still on: first
-            ("vc02.example.mil", "host-1", "Host connection and power state", 1, 0, "cleared", "info"),
-            (vc, "host-1", "Host connection and power state", 2, 0, "cleared", "info")])   # went green-only host-3: left out
+            ("vc02.example.mil", "host-1", "Host connection and power state", 1, 0, "cleared", "low"),   # 1.56.0: cleared is Low
+            (vc, "host-1", "Host connection and power state", 2, 0, "cleared", "low")])   # went green-only host-3: left out
         self.assertEqual((h[2]["first"], h[2]["last"]), ("2026-10-13T01:00:00Z", "2026-10-13T04:00:00Z"))
         r = va.vm_alarm_report(d)
         self.assertIn("2 alarm(s) fired and cleared", r["title"])
         sec = {s["title"]: s for s in r["sections"]}["Alarms that fired in the last 24 h"]
         self.assertEqual(sec["rows"][0][8], "still yellow")
-        self.assertEqual(sec["row_status"], ["warning", "info", "info"])
+        self.assertEqual(sec["row_status"], ["warning", "low", "low"])
         self.assertEqual({x["label"]: x["value"] for x in r["summary"]}["Alarms fired (24 h)"], 3)
         # no events read: no such section
         quiet = va.vm_alarm_report(dict(d, window_hours=0))

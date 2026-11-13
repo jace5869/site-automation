@@ -208,8 +208,8 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 # check_stig_severity: {high: critical, medium: warning, low: warning}
 
 ## a rule STIG Manager has as Not a Finding that has failed in every scan of the host (never passed,
-## so nothing moved that the job saw): none = listed in the report only; warning or critical = a
-## finding
+## so nothing moved that the job saw): none = listed in the report only; low = a Low finding
+## (listed, never fails the job); warning or critical = a finding
 # check_stig_disagree_severity: none
 
 ## rules OpenSCAP is known to get wrong at your site: never a finding, listed in the report as left

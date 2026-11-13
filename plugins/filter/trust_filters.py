@@ -6,19 +6,21 @@ __metaclass__ = type
 
 import os
 
-ORDER = {"critical": 0, "warning": 1, "notice": 2}
+ORDER = {"critical": 0, "warning": 1, "notice": 2}       # "low" in check_trust_severity is notice (1.56.0)
 KIND = {"system": "system CA bundle", "p11-kit": "p11-kit trust", "p11-kit-blocklist": "p11-kit blocklist", "blocklist": "blocklist folder",
         "java": "Java cacerts", "python": "Python certifi", "node": "Node built-in roots", "container": "podman container",
         "file": "certificate file", "vcenter": "vCenter trusted roots", "esxi": "ESXi trusted CAs",
         "nssdb": "NSS database", "winstore": "Windows certificate store"}
 SOFTWARE = {"go": "Go program", "node": "Node.js", "nss": "NSS", "ca-certificates": "ca-certificates package"}
-LABEL = {"critical": "COMPROMISED CA TRUSTED", "warning": "distrusted root still trusted", "notice": "notice", "blocked": "blocked", "": "ok"}
-COLOUR = {"critical": "critical", "warning": "warning", "notice": "info", "blocked": "ok", "": "ok"}
+# 1.56.0: a notice-level certificate (listed only, no finding) shows as Low
+LABEL = {"critical": "COMPROMISED CA TRUSTED", "warning": "distrusted root still trusted", "notice": "Low", "blocked": "blocked", "": "ok"}
+COLOUR = {"critical": "critical", "warning": "warning", "notice": "low", "blocked": "ok", "": "ok"}
 
 
 def _sev(h, overrides):
     s = (overrides or {}).get(h.get("name"))
-    return str(s or h.get("severity") or "warning").lower()
+    s = str(s or h.get("severity") or "warning").lower()
+    return "notice" if s == "low" else s
 
 
 def _name(h):
@@ -291,7 +293,7 @@ def _item_table(title, items, status, text):
     rows = [[i["host"], i["where"], i["what"] + ((" " + i["version"]) if i.get("version") else ""), ", ".join(i["names"]), i["fix"]] for i in items]
     return {"title": title, "columns": ["Host", "Where", "What", "Certificate / program", "What to do"],
             "rows": rows, "row_status": [status] * len(rows), "cell_status": [[status, "", "", "", ""] for _ in rows],
-            "status": status if status != "info" else "ok", "text": text}
+            "status": status if status not in ("info", "low") else "ok", "text": text}
 
 
 def trust_report_sections(results, vmware=None, removed=None, overrides=None):
@@ -318,7 +320,7 @@ def trust_report_sections(results, vmware=None, removed=None, overrides=None):
     boxes = [{"label": "Remove now", "value": len(now), "status": "critical" if now else "ok"},
              {"label": "Remove next", "value": len(nxt), "status": "warning" if nxt else "ok"},
              {"label": "Then update", "value": len(upd), "status": "warning" if upd else "ok"},
-             {"label": "Listed only", "value": len(note), "status": "info" if note else "ok"}]
+             {"label": "Listed only (Low)", "value": len(note), "status": "low" if note else "ok"}]
     if now:
         sections.append(_item_table("1. Remove now - a compromised CA is trusted", now, "critical",
                                     "These stores hold one of the compromised intermediates: anything using them accepts certificates anyone can sign. "
@@ -332,8 +334,8 @@ def trust_report_sections(results, vmware=None, removed=None, overrides=None):
                                     "Nothing to remove here: the roots are built into the program or the image. Update or rebuild; they stay in this list "
                                     "until then."))
     if note:
-        sections.append(_item_table("4. Listed only - your decision", note, "info",
-                                    "Notice-level: Sectigo's AAA Certificate Services cross-signed the eight intermediates, but it is not compromised, is in "
+        sections.append(_item_table("4. Listed only (Low) - your decision", note, "low",
+                                    "Low - notice-level: Sectigo's AAA Certificate Services cross-signed the eight intermediates, but it is not compromised, is in "
                                     "every trust store and most public certificates chain to it. No finding, no ticket. check_trust_severity: "
                                     "{\"AAA Certificate Services\": warning} when you decide to blocklist it."))
     if not (now or nxt or upd) and (results or vm.get("stores")):
@@ -348,14 +350,14 @@ def trust_report_sections(results, vmware=None, removed=None, overrides=None):
         sections[0]["boxes"] = boxes
         if now:
             sections[0]["text"] = "%d store%s on %d host%s. " % (len(now), "" if len(now) == 1 else "s", hosts_of(now), "" if hosts_of(now) == 1 else "s") + sections[0]["text"]
-    order = {"critical": 0, "warning": 1, "info": 2, "ok": 3}
-    pairs = sorted(zip(rows, rs), key=lambda x: (order.get(x[1], 3), x[0][0], x[0][1]))
+    order = {"critical": 0, "warning": 1, "low": 2, "info": 3, "ok": 4}
+    pairs = sorted(zip(rows, rs), key=lambda x: (order.get(x[1], 4), x[0][0], x[0][1]))
     rows, rs = [p[0] for p in pairs], [p[1] for p in pairs]
     if results is not None:
         sections.append({"title": "Everything read - every trust store and program, worst first", "columns": ["Host", "Where", "What", "Version", "Holds", "Status"],
                          "rows": rows, "row_status": rs, "cell_status": [[s if s != "ok" else "", "", "", "", "", s] for s in rs],
                          "text": "The proof of what was looked at. Red = holds a compromised CA, amber = holds a root that was dropped (or a program below the "
-                                 "version that fixed it), blue = a notice-level certificate (listed only), green = nothing of the list in it, or blocked. "
+                                 "version that fixed it), Low = a notice-level certificate (listed only), green = nothing of the list in it, or blocked. "
                                  "The count is how many certificates the store holds.",
                          "status": "critical" if "critical" in rs else ("warning" if "warning" in rs else "ok")})
     if vm.get("stores") or vm.get("not_read") or vm.get("vcenters"):

@@ -26,8 +26,9 @@
     'warning':  {'bar': '#d98a1c', 'fg': '#9a5806', 'bg': '#fdf2df', 'bd': '#f3d6a6', 'word': 'Warning', 'icon': '!'},
     'critical': {'bar': '#d64545', 'fg': '#b42318', 'bg': '#fdeaea', 'bd': '#f5c4c4', 'word': 'Critical', 'icon': '&#215;'},
     'info':     {'bar': '#4f86d9', 'fg': '#1d4ed8', 'bg': '#e6effd', 'bd': '#c3d5f7', 'word': 'Info', 'icon': 'i'},
+    'low':      {'bar': '#a347a6', 'fg': '#88358e', 'bg': '#f6e9f6', 'bd': '#e6c6e8', 'word': 'Low', 'icon': '&#8595;'},
     'unknown':  {'bar': '#a3afab', 'fg': '#4b5753', 'bg': '#eef2f1', 'bd': '#d5ddda', 'word': 'Unknown', 'icon': '?'}} -%}
-{%- set tint = {'ok': '#e9f7f0', 'warning': '#fdf5e6', 'critical': '#fdeeee', 'info': '#ecf2fd', 'unknown': '#f2f5f4'} -%}
+{%- set tint = {'ok': '#e9f7f0', 'warning': '#fdf5e6', 'critical': '#fdeeee', 'info': '#ecf2fd', 'unknown': '#f2f5f4', 'low': '#fbf3fb'} -%}
 {%- set st = r.status | default('info') if r.status | default('info') in pal else 'info' -%}
 {%- set ink = '#0f1f1a' -%}
 {%- set muted = '#5b6b66' -%}

@@ -332,7 +332,7 @@ class ReportTest(unittest.TestCase):
         self.assertIn("permissive on 1", r["title"])
         self.assertEqual(r["status"], "critical")
         self.assertEqual(s["Changes to approve"]["lines"][0], "trust file: /opt/app/tool size 51 sha256 " + SHA)
-        self.assertEqual(s["What fapolicyd blocked"]["rows"][1][1], "would be (permissive)")
+        self.assertEqual(s["What fapolicyd blocked"]["rows"][1][1], "Low - would be (permissive)")   # 1.56.0
         self.assertIn("c", s["fapolicyd not installed"]["lines"][0])
 
 

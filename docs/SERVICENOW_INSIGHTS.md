@@ -695,6 +695,19 @@ servicenow_insights_business_hours: {days: [mon, tue, wed, thu, fri], start: "07
 - Without a list, every category is shown as it is.
 - Without ACT, the issues stay the incidents' category / subcategory.
 
+### Low in the email (1.56.0)
+
+These are **Low** in the email: worth knowing, nothing to do now. They never make the report amber.
+
+| What | Shown as |
+|---|---|
+| the backlog grew by 5 % and by 5 or more (the whole scope, or a group's row) | the Open now tile ("Low: grew from N at the start"), the group's row |
+| satisfaction graded Fair | the Satisfaction tile (the survey's own grade Low stays red) |
+| the priority set by hand on 10 % or more | the section, starting "Low:" |
+| a category not on the official list | its row, and "Low" in the data-quality line |
+
+The web page shows them as before.
+
 ## Satisfaction (1.16.0)
 
 The page never averages questions on different scales together. Each survey has its own block, each question its own

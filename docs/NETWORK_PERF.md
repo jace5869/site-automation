@@ -25,7 +25,7 @@ like every other report.
 | `netperf:tcp:<target>` | critical / warning | the target's port refuses every connect / some of them |
 | `netperf:slower:<target>` | warning | `net_perf_slower_factor` (2x) the host's usual, and at least `net_perf_slower_min_ms` (5) more |
 | `netperf:drops:<interface>` | warning | dropped packets (in + out) from `net_perf_drops_warn_per_hour` (100), or errors from `net_perf_errors_warn_per_hour` (10), per hour since the last run |
-| `netperf:ocsp:<name>` | `net_perf_ocsp_severity` (critical) | the responder does not answer, answers not successful, says the test certificate is not good, or its answer is stale |
+| `netperf:ocsp:<name>` | `net_perf_ocsp_severity` (critical; or warning, low: listed only) | the responder does not answer, answers not successful, says the test certificate is not good, or its answer is stale |
 | `netperf:ocsp-slow:<name>` | warning | it answers, slower than `net_perf_ocsp_warn_ms` (2000) |
 | `netperf:iperf:<server>` | warning | on the client of a pair: below the pair's `min_mbps`, or the test did not run |
 

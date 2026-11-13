@@ -17,7 +17,8 @@ _spec = importlib.util.spec_from_file_location(
 _tm = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_tm)
 
-RANK = {"critical": 0, "warning": 1, "unknown": 2, "info": 3, "ok": 4, "": 5}
+# 1.56.0 low: worth knowing, nothing to do now (always with the word "Low"; never the report's status by itself)
+RANK = {"critical": 0, "warning": 1, "unknown": 2, "low": 3, "info": 4, "ok": 5, "": 6}
 DAY = 86400.0
 
 
@@ -175,9 +176,21 @@ def fit_text(t):
 
 
 def runway_status(days, warn, crit):
+    """critical up to crit days, warning up to warn days, low (1.56.0: worth knowing) up to twice warn days, else ok."""
     if days is None:
         return "ok"
-    return "critical" if days <= crit else ("warning" if days <= warn else "ok")
+    return "critical" if days <= crit else ("warning" if days <= warn else ("low" if days <= 2 * warn else "ok"))
+
+
+def _lw(text, st):
+    """A cell's text with the word Low when its status is low (never the colour alone)."""
+    return "%s - Low" % text if st == "low" else text
+
+
+def _maint_only(n):
+    """Every host of the cluster that is not usable is connected and in maintenance (on purpose, not a fault)."""
+    off = [h for h in n.get("hosts") or [] if not (h.get("connection") == "connected" and not h.get("maintenance"))]
+    return bool(off) and all(h.get("maintenance") and h.get("connection") == "connected" for h in off)
 
 
 def level(p, warn, crit):
@@ -274,7 +287,7 @@ def cluster_status(n, o):
     st["vcpu"] = level(n["vcpu_ratio"], float(o.get("vcpu_per_core_max", 4)), float(o.get("vcpu_per_core_max", 4)) * 1.5)
     st["mem_days"] = runway_status(n["mem_days"], warn_d, crit_d)
     st["cpu_days"] = runway_status(n["cpu_days"], warn_d, crit_d)
-    st["hosts"] = "warning" if n["hosts_usable"] < n["hosts_total"] else "ok"
+    st["hosts"] = ("low" if _maint_only(n) else "warning") if n["hosts_usable"] < n["hosts_total"] else "ok"
     return st, worst(st.values())
 
 
@@ -399,7 +412,7 @@ def _section(title, text, columns, rows, none_text, max_rows=0, keep_order=False
     s = {"title": title}
     if rows:
         s.update({"columns": columns, "rows": [r[0] for r in rows], "cell_status": [r[1] for r in rows],
-                  "row_status": [r[2] if r[2] in ("critical", "warning", "info", "unknown") else "" for r in rows],
+                  "row_status": [r[2] if r[2] in ("critical", "warning", "low", "info", "unknown") else "" for r in rows],
                   "text": text + (" The first %d of %d are shown; the artifacts (vm_capacity) have all." % (max_rows, len(rows) + more) if more else "")})
     else:
         s["text"] = (text + " " + none_text).strip()
@@ -432,20 +445,22 @@ def vm_capacity_report(data, opts=None):
     s = ov["storage"]
     rows = [
         _row(["CPU", ghz(ov["cpu"]), ghz(ov["cpu_used"]), pct_text(ov["cpu_pct"]), pct_text(ov["cpu_n1_pct"]),
-              _per_month(ov["cpu_slope"], ghz), runway_to(ov["cpu_days"], limit_text(ct, fail), now)],
+              _per_month(ov["cpu_slope"], ghz), _lw(runway_to(ov["cpu_days"], limit_text(ct, fail), now), runway_status(ov["cpu_days"], warn_d, crit_d))],
              ["", "", "", level(ov["cpu_pct"], ct, 100), level(ov["cpu_n1_pct"], ct, 100), "", runway_status(ov["cpu_days"], warn_d, crit_d)]),
         _row(["Memory", size(ov["mem"]), size(ov["mem_used"]), pct_text(ov["mem_pct"]), pct_text(ov["mem_n1_pct"]),
-              _per_month(ov["mem_slope"]), runway_to(ov["mem_days"], limit_text(mt, fail), now)],
+              _per_month(ov["mem_slope"]), _lw(runway_to(ov["mem_days"], limit_text(mt, fail), now), runway_status(ov["mem_days"], warn_d, crit_d))],
              ["", "", "", level(ov["mem_pct"], mt, 100), level(ov["mem_n1_pct"], mt, 100), "", runway_status(ov["mem_days"], warn_d, crit_d)]),
         _row(["Hosts", "%d usable of %d" % (ov["hosts_usable"], ov["hosts"]), "", "", "", "",
-              ("%d recommended now, %d within %d months" % (ov["hosts_now"], ov["hosts_later"], ov["horizon_months"]))
+              _lw("%d recommended now, %d within %d months" % (ov["hosts_now"], ov["hosts_later"], ov["horizon_months"]),
+                  "" if ov["hosts_now"] else "low")
               if ov["hosts_later"] else "none recommended within %d months" % ov["horizon_months"]],
-             ["", "", "", "", "", "", "critical" if ov["hosts_now"] else ("warning" if ov["hosts_later"] else "ok")]),
+             ["", "", "", "", "", "", "critical" if ov["hosts_now"] else ("low" if ov["hosts_later"] else "ok")]),
         _row(["vCPUs", "%d cores" % ov["cores"], "%d vCPUs" % ov["vcpus_on"], "%s per core" % (ov["vcpu_ratio"] if ov["vcpu_ratio"] is not None else "?"),
               "", "%+.1f VMs / month" % ov["net_per_month"], "room for about %d more average VMs" % ov["fit"]],
              ["", "", "", level(ov["vcpu_ratio"], rmax, rmax * 1.5)]),
         _row(["Storage (shared datastores)", size(s["capacity"]), size(s["used"]), pct_text(s["pct"]), "",
-              _per_month(s["slope"]), runway_text(s["days_crit"], now) + " to %s%%; full: %s" % (int(sc), runway_text(s["days_full"], now))],
+              _per_month(s["slope"]), _lw(runway_text(s["days_crit"], now) + " to %s%%; full: %s" % (int(sc), runway_text(s["days_full"], now)),
+                                          runway_status(s["days_crit"], warn_d, crit_d))],
              ["", "", "", level(s["pct"], sw, sc), "", "", runway_status(s["days_crit"], warn_d, crit_d)]) if s["capacity"] else
         _row(["Storage (shared datastores)", "-", "-", "-", "", "", "no shared datastore"]),
     ]
@@ -463,17 +478,18 @@ def vm_capacity_report(data, opts=None):
         c = n["status_cells"]
         avg = n["avg"]
         avg_txt = ("%.1f vCPU, %s" % (avg["vcpu"], size(avg["mem_configured"]))) if avg["vcpu"] else "-"
-        rows.append(_row([n["label"], dc_label(n, multi), "%d of %d" % (n["hosts_usable"], n["hosts_total"]), pct_text(n["cpu_pct"]),
+        rows.append(_row([n["label"], dc_label(n, multi), _lw("%d of %d" % (n["hosts_usable"], n["hosts_total"]), c["hosts"]), pct_text(n["cpu_pct"]),
                           pct_text(n["mem_pct"]),
                           (pct_text(n["mem_n1_pct"]) if n["survives"] else "cannot lose a host") if n["failover_hosts"] else "standalone",
                           n["vcpu_ratio"] if n["vcpu_ratio"] is not None else "?", n["vms_on"], avg_txt,
                           _per_month(n["mem_trend"]["slope"]) if n["mem_trend"] else "not enough history",
-                          runway_to(n["mem_days"], limit_text(mt, n["failover_hosts"]), now),
+                          _lw(runway_to(n["mem_days"], limit_text(mt, n["failover_hosts"]), now), c["mem_days"]),
                           ("%d (%s)" % (n["fit"], n["limit"])) if n["fit"] is not None else "?",
-                          hosts_text(n), "%+d / %d" % (n["added"], -n["removed"]) if (n["added"] or n["removed"]) else "0"],
+                          _lw(hosts_text(n), "low" if n["hosts_later"] and not n["hosts_now"] else ""),
+                          "%+d / %d" % (n["added"], -n["removed"]) if (n["added"] or n["removed"]) else "0"],
                          ["", "", c["hosts"], c["cpu"], c["mem"], c["n1"], c["vcpu"], "", "", "", c["mem_days"],
                           "critical" if n["fit"] == 0 and n["vms_on"] else ("warning" if (n["fit"] or 0) < 5 and n["vms_on"] else "ok"),
-                          "critical" if n["hosts_now"] else ("warning" if n["hosts_later"] else "ok")], n["status"]))
+                          "critical" if n["hosts_now"] else ("low" if n["hosts_later"] else "ok")], n["status"]))
     sections.append(_section("Clusters: CPU and memory", "Per cluster: hosts usable (connected, not in maintenance), CPU and memory used now, "
                              "memory used if the biggest %d host(s) fail (the cluster must still run everything: amber from %s%%, red at "
                              "100%%), vCPUs per physical core (amber from %s), VMs powered on and their average size, memory growth, the "
@@ -494,10 +510,11 @@ def vm_capacity_report(data, opts=None):
         st = n["storage"]
         if not st["datastores"]:
             continue
-        rows.append(_row([n["label"], st["datastores"], size(st["capacity"]), size(st["free"]), pct_text(st["pct"]), pct_text(st["prov_pct"]),
-                          _per_month(st["slope"]), runway_text(st["days_warn"], now), runway_text(st["days_full"], now)],
-                         ["", "", "", "", level(st["pct"], sw, sc), "warning" if (st["prov_pct"] or 0) > 150 else "", "",
-                          runway_status(st["days_warn"], warn_d, crit_d), runway_status(st["days_full"], warn_d, crit_d)]))
+        over = "low" if (st["prov_pct"] or 0) > 150 else ""          # thin overcommit: worth knowing (1.56.0: was warning)
+        rw, rf = runway_status(st["days_warn"], warn_d, crit_d), runway_status(st["days_full"], warn_d, crit_d)
+        rows.append(_row([n["label"], st["datastores"], size(st["capacity"]), size(st["free"]), pct_text(st["pct"]), _lw(pct_text(st["prov_pct"]), over),
+                          _per_month(st["slope"]), _lw(runway_text(st["days_warn"], now), rw), _lw(runway_text(st["days_full"], now), rf)],
+                         ["", "", "", "", level(st["pct"], sw, sc), over, "", rw, rf]))
     sections.append(_section("Clusters: storage", "Per cluster, its shared datastores together: capacity, free, used %%, provisioned %% "
                              "(thin disks counted at their full size: over 100%% means overcommitted), growth, and the days until %s%% and "
                              "until full at that growth." % int(sw),
@@ -509,13 +526,14 @@ def vm_capacity_report(data, opts=None):
     for x in sorted(dss, key=lambda x: (x["days_crit"] if x["days_crit"] is not None else 99999, -(x["pct"] or 0))):
         if not (x["shared"] or o.get("include_local_datastores")):
             continue
+        over = "low" if (x["prov_pct"] or 0) > 150 else ""
+        poor = "low" if x["trend"] and x["trend"]["r2"] < 0.5 else ""   # a rough runway: worth knowing (1.56.0: was warning)
+        rw, rc, rf = (runway_status(x[k], warn_d, crit_d) for k in ("days_warn", "days_crit", "days_full"))
         rows.append(_row([x["label"], (vc_short(x["vcenter"]) + ": " if multi else "") + ", ".join(x["clusters"]), x["pod"], x["type"],
                           size(x["capacity"]), size(x["free"]), pct_text(x["pct"]),
-                          pct_text(x["prov_pct"]), _per_month(x["slope"]), runway_text(x["days_warn"], now), runway_text(x["days_crit"], now),
-                          runway_text(x["days_full"], now), fit_text(x["trend"])],
-                         ["", "", "", "", "", "", level(x["pct"], sw, sc), "warning" if (x["prov_pct"] or 0) > 150 else "", "",
-                          runway_status(x["days_warn"], warn_d, crit_d), runway_status(x["days_crit"], warn_d, crit_d),
-                          runway_status(x["days_full"], warn_d, crit_d), "warning" if x["trend"] and x["trend"]["r2"] < 0.5 else ""], x["status"]))
+                          _lw(pct_text(x["prov_pct"]), over), _per_month(x["slope"]), _lw(runway_text(x["days_warn"], now), rw),
+                          _lw(runway_text(x["days_crit"], now), rc), _lw(runway_text(x["days_full"], now), rf), _lw(fit_text(x["trend"]), poor)],
+                         ["", "", "", "", "", "", level(x["pct"], sw, sc), over, "", rw, rc, rf, poor], x["status"]))
     sections.append(_section("Datastores: runway", "Each shared datastore, the ones that reach %s%% first on top: growth fitted on vCenter's "
                              "daily used space, the days (and date) until %s%%, %s%% and full, and how well a straight line fits the history "
                              "(poor = jumps: snapshots deleted, VMs moved - the runway is a rough guide then)." % (int(sc), int(sw), int(sc)),
@@ -527,13 +545,13 @@ def vm_capacity_report(data, opts=None):
     rows = []
     for n in cls:
         for h in n["hosts"]:
-            state = "MAINTENANCE" if h.get("maintenance") else str(h.get("connection", "")).upper()
-            hst = "info" if h.get("maintenance") else ("ok" if h.get("connection") == "connected" else "critical")
+            state = "MAINTENANCE - Low" if h.get("maintenance") else str(h.get("connection", "")).upper()
+            hst = "low" if h.get("maintenance") else ("ok" if h.get("connection") == "connected" else "critical")
             mp = pct(h.get("mem_used_bytes"), h.get("mem_bytes"))
             cp = pct(h.get("cpu_used_mhz"), h.get("cpu_mhz"))
             rows.append(_row([n["label"], h.get("name"), state, h.get("cores"), pct_text(cp), size(h.get("mem_bytes")), pct_text(mp), h.get("vms_on", 0)],
                              ["", "", hst, "", level(cp, 80, 90), "", level(mp, 85, 95)], hst if hst != "ok" else worst([level(cp, 80, 90), level(mp, 85, 95)])))
-    sections.append(_section("Hosts per cluster", "Every host: state (blue: in maintenance, red: not connected - neither counts as capacity), "
+    sections.append(_section("Hosts per cluster", "Every host: state (Low: in maintenance, red: not connected - neither counts as capacity), "
                              "cores, CPU and memory used now, VMs. Hosts much fuller than their neighbours mean DRS is off or limited.",
                              ["Cluster", "Host", "State", "Cores", "CPU used", "Memory", "Memory used", "VMs on"],
                              sorted(rows, key=lambda r: (r[0][0], r[0][1])), "No host.", max_rows * 3, keep_order=True))
@@ -571,7 +589,9 @@ def vm_capacity_report(data, opts=None):
     status = "critical" if any(n["status"] == "critical" for n in cls) or any(x["status"] == "critical" for x in bad_d) else (
         "warning" if parts else "ok")
     summary = [{"label": "Clusters", "value": len(cls)},
-               {"label": "Hosts usable", "value": "%d of %d" % (ov["hosts_usable"], ov["hosts"]), "status": "ok" if ov["hosts_usable"] == ov["hosts"] else "warning"},
+               dict({"label": "Hosts usable", "value": "%d of %d" % (ov["hosts_usable"], ov["hosts"]),
+                     "status": "ok" if ov["hosts_usable"] == ov["hosts"] else ("low" if all(_maint_only(n) or n["hosts_usable"] == n["hosts_total"] for n in cls) else "warning")},
+                    **({"note": "Low: in maintenance"} if ov["hosts_usable"] < ov["hosts"] and all(_maint_only(n) or n["hosts_usable"] == n["hosts_total"] for n in cls) else {})),
                {"label": "VMs powered on", "value": ov["vms_on"]},
                {"label": "Memory used", "value": pct_text(ov["mem_pct"]), "status": level(ov["mem_pct"], mt, 100) or "ok"},
                {"label": "Memory after host failure", "value": pct_text(ov["mem_n1_pct"]), "status": level(ov["mem_n1_pct"], mt, 100) or "ok"},
@@ -579,8 +599,9 @@ def vm_capacity_report(data, opts=None):
                 "status": level(ov["vcpu_ratio"], rmax, rmax * 1.5) or "ok"},
                {"label": "Room for more VMs", "value": "~%d" % ov["fit"]},
                {"label": "Storage used", "value": pct_text(s["pct"]), "status": level(s["pct"], sw, sc) or "ok"},
-               {"label": "Storage runway to %s%%" % int(sc), "value": days_text(s["days_crit"]) if s["capacity"] else "-",
-                "status": runway_status(s["days_crit"], warn_d, crit_d)}]
+               dict({"label": "Storage runway to %s%%" % int(sc), "value": days_text(s["days_crit"]) if s["capacity"] else "-",
+                     "status": runway_status(s["days_crit"], warn_d, crit_d)},
+                    **({"note": "Low: within %d days" % int(2 * warn_d)} if runway_status(s["days_crit"], warn_d, crit_d) == "low" else {}))]
     notes = list(d.get("notes") or [])
     if not any(n["mem_trend"] for n in cls) and not any(x["trend"] for x in dss):
         notes.append("No trend: vCenter has fewer than %s daily samples (a new vCenter, or its statistics level or interval was changed). "

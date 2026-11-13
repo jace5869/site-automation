@@ -533,7 +533,9 @@ servicenow_node_stats_pages:
 | transactions queued for a semaphore in every read (10 or more: critical) | warning | `servicenow_node_semaphore_queue_critical` |
 | more than 50 scheduled jobs waiting for a worker | warning | `servicenow_node_scheduler_queue_warn` |
 | OutOfMemory in the node's log in the last 24 hours | critical | `servicenow_node_log_hours` |
-| semaphore problems: a semaphore queue, a limit exceeded or a wait timed out, or a slow transaction that waited 1000 ms or more for its semaphore | warning | `servicenow_node_semaphore_wait_ms` |
+| semaphore problems: a semaphore queue, a limit exceeded or a wait timed out, or a slow transaction that waited 1000 ms or more for its semaphore | warning | `servicenow_node_semaphore_warn_ms` (older name `_wait_ms`) |
+| a slow transaction that waited 10000 ms or more for its semaphore (the node short of threads) | critical | `servicenow_node_semaphore_crit_ms` |
+| SEVERE script errors (`checkDCSupportsTLS: Cannot convert null to an object`): the script, how often, first and last time | warning | |
 | 200 or more slow transactions ("waited excessive time to run") | warning | `servicenow_node_slow_tx_warn` |
 | 100 or more SEVERE lines (the most frequent message shown) | warning | `servicenow_node_severe_warn` |
 | the install folder's or `/`'s filesystem 85 % used (95 %: critical) | warning | `servicenow_node_disk_warn_pct`, `_critical_pct` |
@@ -545,9 +547,23 @@ The log lines are grouped by their message, as the AAP health check groups its c
 numbers, transaction and session IDs, IDs in paths, numbers taken out): the report's **Node log errors** table lists
 the most frequent (`servicenow_node_log_groups`, 10). A slow transaction is one of three kinds: *semaphore wait* (it
 waited for one of the node's semaphores - the only kind that is a semaphore problem), *session wait* (its session
-wait about its whole run: one user's own requests queued behind each other) or *slow transaction*; the table gives
-each group's longest run and session wait. Who did it is never shown: a user name in a log line becomes `user: …` in
-the report and the email.
+wait about its whole run and a semaphore wait under 100 ms: one user's own requests queued behind each other) or
+*slow transaction*; the table gives each group's longest run and session wait. Who did it is never shown: a user name
+in a log line becomes `user: …` in the report and the email.
+
+Since 1.56.0 each row has a **Level**:
+
+| Level | Lines |
+|---|---|
+| Critical | OutOfMemory; a semaphore wait of `servicenow_node_semaphore_crit_ms` (10000) or more |
+| Warning | semaphore problems; a semaphore wait of `servicenow_node_semaphore_warn_ms` (1000) or more; SEVERE script errors |
+| Low | session wait only: one row per page (IDs taken out), "N slow session(s) on /path, worst M ms, median K ms" |
+| - | anything else, as before |
+
+Critical rows come first, then warning, then the others, and Low at the bottom with one line saying what session wait
+is. Low is worth knowing and needs nothing now: it gets no Start here card and never makes the report warning.
+A SEVERE script error names its script when the line does; its card says where to look: *System Logs > All*,
+filtered on that name, and *System Definition > Scheduled Jobs* that ran at its first time.
 
 **The cluster**, from the API (GET `sys_cluster_state`: `system_id`, `node_id`, `status`,
 `most_recent_message`, `schedulers`; the API account needs read on that table - admin, or an ACL). Read

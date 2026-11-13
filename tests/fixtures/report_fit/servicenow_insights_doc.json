@@ -65,10 +65,10 @@
 ],
 "row_status": [
 "",
-"warning",
-"warning",
+"low",
+"low",
 "",
-"warning"
+"low"
 ],
 "rows": [
 [
@@ -132,6 +132,7 @@
 "Hardware / Smart card (41)"
 ]
 ],
+"text": "Low (the tinted rows): the backlog grew by 5 % and by 5 or more - worth knowing, nothing to do now.",
 "title": "Teams side by side"
 },
 {
@@ -1141,8 +1142,8 @@
 },
 {
 "label": "Open now",
-"note": "was 21 at the start",
-"status": "warning",
+"note": "Low: grew from 21 at the start",
+"status": "low",
 "value": 80
 },
 {

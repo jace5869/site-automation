@@ -3,7 +3,7 @@
 # served by TLS endpoints (what a browser or client actually sees).
 
 check_certs_warn_days: 30                # a certificate expiring within this many days -> warning (and amber in the certificate report)
-check_certs_notice_days: 60                # the certificate report colours these blue (an early heads-up; not a finding)
+check_certs_notice_days: 60                # the certificate report shows these as Low (an early heads-up; not a finding)
 check_certs_crit_days: 14                # within this many days (or expired) -> critical
 
 # Certificate files (PEM) to check. Globs work. Every certificate in a file is checked (a chain

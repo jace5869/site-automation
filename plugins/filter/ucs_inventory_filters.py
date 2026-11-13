@@ -464,7 +464,11 @@ def ucs_inventory_doc(collected, opts=None):
                "columns": ["Domain", "Severity", "Code", "Component", "Description", "Since", "Acknowledged"],
                "rows": [[f["_d"].name, _s(f.get("severity")), _s(f.get("code")), _fault_where(f), _s(f.get("descr")),
                          _s(f.get("created"))[:19].replace("T", " "), "yes" if _s(f.get("ack")) == "yes" else ""] for f in part],
-               "row_status": ["warning" if _s(f.get("severity")) == "critical" else "" for f in part]}
+               # 1.56.0: major and minor faults are low - UCS Manager's own lower faults, worth knowing
+               "row_status": ["warning" if _s(f.get("severity")) == "critical" else
+                              "low" if _s(f.get("severity")) in ("major", "minor") else "" for f in part]}
+        if "low" in sec["row_status"]:
+            sec["text"] += " Low (the tinted rows): major and minor faults - worth knowing, nothing to do now."
         if len(faults) > len(part):
             sec["text"] += " %d more not listed (ucs_inventory_max_rows: %d)." % (len(faults) - len(part), o["max_rows"])
         sections.append(sec)

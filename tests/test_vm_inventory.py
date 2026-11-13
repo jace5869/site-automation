@@ -130,7 +130,7 @@ class Security(unittest.TestCase):
         self.assertEqual(s["rows"][0][-1], "15")                                       # vmx-15 -> 15
         tiles = {t["label"]: t for t in d["summary"]}
         self.assertEqual([tiles[k]["value"] for k in ("Not encrypted", "Without EFI", "Without vTPM")], [3, 1, 2])
-        self.assertEqual(tiles["Not encrypted"]["status"], "info")
+        self.assertEqual((tiles["Not encrypted"]["status"], tiles["Not encrypted"]["note"]), ("low", "Low"))   # 1.56.0: Low
         self.assertEqual(d["status"], "ok")                                            # a report, never a warning
 
     def test_skip_off_and_templates(self):
@@ -152,12 +152,12 @@ class Security(unittest.TestCase):
         self.assertEqual(s["rows"], [["Hardware version 21 - ESXi 8.0 U2 and later", 2, 2], ["Hardware version 19 - ESXi 7.0 U2 and later", 2, 1],
                                      ["Hardware version 15 - ESXi 6.7 U2 and later", 1, 1],
                                      ["VMware Tools not running", 1, 1], ["VMware Tools not installed", 1, 0],
-                                     ["VMware Tools unsupported", 1, 1], ["VMware Tools upgrade available", 1, 1],
+                                     ["VMware Tools unsupported", 1, 1], ["VMware Tools upgrade available - Low", 1, 1],
                                      ["VMware Tools current", 1, 1]])
-        self.assertEqual([c[0] for c in s["cell_status"][3:]], ["warning", "", "warning", "info", "ok"])   # off, not installed: no chip
+        self.assertEqual([c[0] for c in s["cell_status"][3:]], ["warning", "", "warning", "low", "ok"])   # off, not installed: no chip
         fix = self.section(d, "VMware Tools to upgrade or not running")
         self.assertEqual([(r[0], r[1], r[2]) for r in fix["rows"]],                    # powered on only, the worst first
-                         [("efi01", "not running", "12.3.5"), ("old01", "unsupported", "10.3.10"), ("bios01", "upgrade available", "11.2.5")])
+                         [("efi01", "not running", "12.3.5"), ("old01", "unsupported", "10.3.10"), ("bios01", "upgrade available - Low", "11.2.5")])
         self.assertEqual(inv.vm_tools_version_text("2147483647"), "guest managed")
         self.assertEqual(inv.vm_tools_version_text(""), "")
 
@@ -173,7 +173,7 @@ class Security(unittest.TestCase):
         self.assertTrue(t["compact"] and t["keep_case"])
         row = dict(zip(t["columns"], t["rows"][[r[0] for r in t["rows"]].index("bios01")]))
         self.assertEqual([row[k] for k in ("ESXi host", "Enc", "EFI", "SB", "vTPM", "HW", "Tools", "Tools ver.")],
-                         ["esx01", "no", "BIOS", "off", "no", "15", "upgrade available", "11.2.5"])   # the host short
+                         ["esx01", "no", "BIOS", "off", "no", "15", "upgrade available - Low", "11.2.5"])   # the host short
         self.assertEqual(folders(email)[0]["columns"], ["VM", "Power", "ESXi host", "Cluster", "Guest OS", "IP address", "vCPUs",
                                                         "Memory (GB)"])                # the email: the lean list
         self.assertEqual(self.section(web, "VMs without encryption, EFI or vTPM")["columns"][:5], ["VM", "Enc", "Firmware", "SB", "vTPM"])

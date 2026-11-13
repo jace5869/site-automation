@@ -276,7 +276,7 @@ class Filters(unittest.TestCase):
               "vcenters": [{"name": "vc01.example.mil", "ok": True, "error": ""}, {"name": "vc02.example.mil", "ok": False, "error": "refused the login"}]}
         secs = tf.trust_report_sections([r], vm)
         self.assertEqual([s["title"] for s in secs], ["1. Remove now - a compromised CA is trusted", "2. Remove next - a distrusted root is still trusted",
-                                                      "3. Then update - built-in roots and programs with their own trust logic", "4. Listed only - your decision",
+                                                      "3. Then update - built-in roots and programs with their own trust logic", "4. Listed only (Low) - your decision",
                                                       "Everything read - every trust store and program, worst first",
                                                       "VMware - everything read: vCenter's trusted roots and each ESXi host's trusted CAs", "Not read"])
         self.assertEqual([x[1] for x in secs[0]["rows"]], ["/opt/app/certs/bundle.pem"])

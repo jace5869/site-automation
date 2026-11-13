@@ -167,7 +167,7 @@
 "",
 "ok",
 "",
-"warning",
+"low",
 ""
 ],
 [
@@ -178,7 +178,7 @@
 "",
 "ok",
 "",
-"warning",
+"low",
 ""
 ]
 ],
@@ -285,6 +285,10 @@
 "Active memory (95th % / peak)",
 "Why"
 ],
+"row_status": [
+"low",
+"low"
+],
 "rows": [
 [
 "watch02",
@@ -305,7 +309,8 @@
 "CPU: busy on 2 day(s): watch, not enough to grow"
 ]
 ],
-"text": "Busy (85% CPU, 90% active memory or more) on fewer than 3 days of the last 30: not enough to grow (vm_rightsize_grow_days). Suggested when it happens on more days.",
+"status": "low",
+"text": "Low - worth knowing, nothing to do now. Busy (85% CPU, 90% active memory or more) on fewer than 3 days of the last 30: not enough to grow (vm_rightsize_grow_days). Suggested when it happens on more days.",
 "title": "Watch: busy on a few days"
 },
 {
@@ -514,6 +519,8 @@
 },
 {
 "label": "Watch",
+"note": "Low: busy on a few days",
+"status": "low",
 "value": 2
 },
 {

@@ -130,7 +130,7 @@ class Numbers(unittest.TestCase):
         self.assertEqual(ds["ds_prod"]["prov_pct"], 120.0)
         self.assertEqual(ds["ds_prod"]["days_warn"], 51)          # (8.5 TB - 8 TB) / 10 GB a day
         self.assertEqual(ds["ds_prod"]["days_crit"], 102)
-        self.assertEqual(ds["ds_prod"]["status"], "ok")
+        self.assertEqual(ds["ds_prod"]["status"], "low")          # 1.56.0: 102 days, within twice the 90 warn days
         self.assertFalse(ds["local1"]["shared"])
         ov = self.N["overall"]
         self.assertEqual(ov["storage"]["capacity"], 20 * TB)      # the local datastore is not counted
@@ -157,7 +157,7 @@ class Limits(unittest.TestCase):
         data["datastores"] = []
         rep = cf.vm_capacity_report(data, OPTS)["report"]
         cell = rep["sections"][1]["rows"][0][10]
-        self.assertTrue(cell.endswith(") to 80%"), cell)
+        self.assertTrue(cell.endswith(") to 80% - Low"), cell)         # 154 days: within twice the 90 warn days (1.56.0)
         self.assertNotIn("N-", cell)
 
 
@@ -191,13 +191,14 @@ class Report(unittest.TestCase):
         self.assertEqual(comp["rows"][1][10], "not growing (limit 80% N-1)")                                           # LAB
         self.assertIn("not to 100% of what is installed", rep["sections"][0]["text"])
         self.assertIn("Cluster runways run to 80% N-1 - 80% of what is left with 1 host(s) down - not to full hosts", rep["footer"])
-        self.assertEqual([i["job_limit"] for i in r["items"]], ["memory 80% N-1", "memory 80% N-1", "", "90% full", ""])
+        # 1.56.0: ds_prod (102 days, Low) sorts before the ok ones
+        self.assertEqual([i["job_limit"] for i in r["items"]], ["memory 80% N-1", "memory 80% N-1", "90% full", "", ""])
         self.assertEqual([i["id"] for i in r["items"]], ["P1", "P2", "P3", "P4", "P5"])
         self.assertEqual((r["items"][1]["kind"], r["items"][1]["name"], r["items"][1]["job_days"]), ("cluster", "PROD", 0))
         json.dumps(r["numbers"])                                                               # artifacts must be JSON
         ev = cf.vm_capacity_evidence(r, OPTS)
         self.assertIn("P2 cluster PROD", ev)
-        self.assertIn("P4 datastore ds_prod", ev)
+        self.assertIn("P3 datastore ds_prod", ev)
         self.assertNotIn("local1", ev)
         task = cf.vm_capacity_act_task(r["items"], OPTS)
         self.assertIn("estimate_days", task)
@@ -233,16 +234,16 @@ class Report(unittest.TestCase):
         answer = ("BEGIN_ACT_ANALYSIS\n" + json.dumps({"overall": "Add a host to PROD now.", "items": [
             {"id": "P2", "estimate": "now", "estimate_days": 0, "recommendation": "add one 512 GB host", "reasoning": "117 % after a failure",
              "confidence": 90},
-            {"id": "P4", "estimate": "in about 2 months", "estimate_days": "55", "recommendation": "grow ds_prod", "reasoning": "10 GB a day",
+            {"id": "P3", "estimate": "in about 2 months", "estimate_days": "55", "recommendation": "grow ds_prod", "reasoning": "10 GB a day",
              "confidence": 65}]}) + "\nEND_ACT_ANALYSIS")
         parsed = va.act_analysis_parse(answer, r["items"])
-        self.assertEqual(parsed["by_id"]["P4"]["estimate_days"], 55)
+        self.assertEqual(parsed["by_id"]["P3"]["estimate_days"], 55)
         self.assertEqual(parsed["by_id"]["P2"]["recommendation"], "add one 512 GB host")
         secs = cf.vm_capacity_act_section(r["items"], parsed, dict(OPTS, ran=True))
         self.assertEqual(secs[0]["lines"], ["Add a host to PROD now."])
         t = secs[1]
         p2 = [row for row in t["rows"] if row[0] == "P2"][0]
-        p4 = [row for row in t["rows"] if row[0] == "P4"][0]
+        p4 = [row for row in t["rows"] if row[0] == "P3"][0]
         self.assertEqual((p2[2], p2[3], p2[4]), ("0 days (memory 80% N-1)", "0 days", "agree"))
         self.assertEqual((p4[2], p4[3], p4[4]), ("102 days (90% full)", "55 days", "GenAI 47 days sooner"))
         no = cf.vm_capacity_act_section(r["items"], {}, {"ran": False, "reason": "no key"})

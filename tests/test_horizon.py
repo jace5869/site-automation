@@ -407,7 +407,7 @@ class Gaps(unittest.TestCase):
         t = " | ".join("%s %s" % (p["severity"], p["text"]) for p in h["problems"])
         for want in ("warning it serves its own self-signed certificate", "critical 3 GB free of 98 GB (3%)", "warning 10 GB free of 98 GB (10%)",
                      "warning NOT_RESPONDING (vCenter vc)", "warning its last configuration backup was 40 hours ago",
-                     "warning a new image is ready but held", "warning Horizon Agent of 2 versions: 8.12 (2), 8.11 (1)",
+                     "warning a new image is ready but held", "low Horizon Agent of 2 versions: 8.12 (2), 8.11 (1)",
                      "blocked for their agent version: d-4", "not in use still on an older image after the push: d-1",
                      "1 with a 169.254 address", "the same IP address on two or more desktops: 192.0.2.5 (d-2, d-3)"):
             self.assertIn(want, t)
@@ -492,7 +492,7 @@ class Batch2(unittest.TestCase):
                                                       "long_hours": 72, "protocols": ["blast"]})
         self.assertEqual((r["old_clients"], r["pending"], r["on_broken"], r["long"], r["duplicates"]), (1, 1, 1, 1, 1))
         self.assertEqual(r["unnamed"], ["S-1", "S-2", "S-3"])
-        self.assertEqual(r["warning"], 4)
+        self.assertEqual((r["warning"], r["low"]), (2, 2))                   # 1.56.0: old client, other protocol are low
         r = f.hz_sessions_report(data([IC], ms, ss, ad_users=[{"id": "S-1", "login_name": "jdoe", "domain": "CORP"}]), {"now": NOW})
         self.assertNotIn("S-1", r["unnamed"])
         self.assertEqual(r["old_clients"], 0)                                     # no baseline

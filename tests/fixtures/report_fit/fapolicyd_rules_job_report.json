@@ -84,7 +84,7 @@
 ],
 "row_status": [
 "warning",
-"info"
+"low"
 ],
 "rows": [
 [
@@ -101,7 +101,7 @@
 ],
 [
 "b",
-"would be (permissive)",
+"Low - would be (permissive)",
 "/usr/bin/bash",
 "/opt/app/tool",
 "execute",

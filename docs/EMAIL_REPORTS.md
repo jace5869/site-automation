@@ -177,6 +177,11 @@ health checks, the certificate reports, database health and the other findings r
 findings there (critical first, at most six; every finding stays in the tables below) and a *Not checked* card for
 the hosts that did not report. The ServiceNow weekly activity report has none: it summarizes the week's work.
 
+**Low** (1.56.0) is a level below warning: worth knowing, nothing to do now, it would not wake anyone. A Low row says
+"Low" in its own words (a Severity cell, a tile's note) and is tinted plum, never by colour alone. It gets no Start
+here card and never makes a report amber: a report whose worst row is Low reads green. Reports sort critical, warning,
+low, info, ok. Which rows are Low: CHANGELOG 1.56.0, "Behaviour changes".
+
 ## The look: standard, command, portal or glass, your logo, the last runs
 
 `report_email_theme` picks one of four looks, for every report job at once when it is in `all.yml`:

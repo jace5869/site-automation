@@ -17,7 +17,12 @@ Two jobs read logs and have ACT (GenAI) explain what they show. Both are read-on
 2. **Group, on the AAP side.** Each line becomes a pattern: the line with its numbers, times, IP
    addresses, IDs and quoted values taken out. The same pattern on five hosts is **one** row, "on 5
    hosts, 212 lines, first 07:02, last 07:58". Patterns are ranked: critical, then error, then
-   warning; within a level, the most hosts and then the most lines first.
+   warning, then **Low**; within a level, the most hosts and then the most lines first.
+   Since 1.56.0 a line its own source marks **notice, info or debug** (a journal priority 5 to 7 when
+   `log_analysis_units_priority` reads that low, a Windows information or verbose event of a listed
+   provider or event ID) is **Low**: worth knowing, nothing to do now. It is listed, never makes the
+   report amber, and has its own Low tile. A line with no level that matched `log_analysis_match` stays
+   a warning.
 3. **Explain.** ACT gets the top `log_analysis_max_items` (30) patterns, with up to three example
    lines each, and answers for each: the **likely cause**, the **evidence**, the **fix**, and a
    **confidence** from 0 to 100. It is told to say when a pattern is harmless noise and to name the

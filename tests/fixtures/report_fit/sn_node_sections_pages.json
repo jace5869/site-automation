@@ -167,11 +167,10 @@
 },
 {
 "columns": [
-"Host",
+"Level",
 "Node",
 "Kind",
 "Count",
-"Longest",
 "Last",
 "Message"
 ],
@@ -182,34 +181,32 @@
 ],
 "rows": [
 [
-"node01-application.corp.example.mil",
-"snc_prod",
+"-",
+"node01-application.corp.example.mil snc_prod",
 "SEVERE",
 140,
-"-",
 "2026-11-09 11:00:00",
 "Transaction cancelled"
 ],
 [
-"node03-application.corp.example.mil",
-"snc_prod",
+"-",
+"node03-application.corp.example.mil snc_prod",
 "SEVERE",
 140,
-"-",
 "2026-11-09 11:00:00",
 "Transaction cancelled"
 ],
 [
-"node04-application.corp.example.mil",
-"snc_prod",
+"-",
+"node04-application.corp.example.mil snc_prod",
 "SEVERE",
 140,
-"-",
 "2026-11-09 11:00:00",
 "Transaction cancelled"
 ]
 ],
-"title": "Node log errors (the most frequent, last 24 h)"
+"title": "Node log errors (the most frequent, last 24 h)",
+"wrap": true
 }
 ],
 "status": "info",

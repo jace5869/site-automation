@@ -28,7 +28,9 @@ try:
 except ImportError:                             # Python before 3.9: UTC only
     zoneinfo = None
 
-RANK = {"critical": 0, "warning": 1, "unknown": 2, "info": 3, "ok": 4, "": 5}
+# 1.56.0 low: worth knowing, nothing to do now - listed (with the word), never a cluster's, host's or the report's status by itself
+RANK = {"critical": 0, "warning": 1, "unknown": 2, "low": 3, "info": 4, "ok": 5, "": 6}
+QUIET = ("info", "low")
 ALARM_SEV = {"red": "critical", "yellow": "warning"}
 STATUS_SEV = {"red": "critical", "yellow": "warning"}
 HA_LABEL = {"master": "primary", "connectedToMaster": "secondary", "election": "electing a primary",
@@ -202,7 +204,7 @@ def host_problems(h, cluster, o):
         if h.get("standby") in ("in", "entering") or power == "standBy":
             out.append(("info", "In standby (DPM powered it down)", "Nothing to do: DRS powers it on when the cluster needs it."))
     if h.get("maintenance"):
-        out.append(("info", "In maintenance mode", "Exit maintenance mode when the work on it is done."))
+        out.append(("low", "In maintenance mode", "Exit maintenance mode when the work on it is done."))
     ha_on = bool(cluster and (cluster.get("ha") or {}).get("enabled"))
     st = h.get("ha_state") or ""
     if ha_on and _up(h) and st and HA_SEV.get(st, "warning") != "ok":
@@ -274,7 +276,7 @@ def cluster_problems(c, hosts, o):
                         "Cluster > Configure > vSphere Availability > Edit > Failures and responses: Enable Host Monitoring."))
         adm = ha.get("admission")
         if adm == "off":
-            out.append(("info", "HA admission control is off: after a host failure there may be no room to restart its VMs",
+            out.append(("low", "HA admission control is off: after a host failure there may be no room to restart its VMs",
                         "Cluster > Configure > vSphere Availability > Edit > Admission Control."))
         lvl, want = ha.get("failover_level_now"), int(ha.get("admission_hosts") or 0)
         if adm == "hosts" and lvl is not None and want and int(lvl) < want:
@@ -303,7 +305,7 @@ def cluster_problems(c, hosts, o):
                         "Cluster > Configure > vSphere DRS > Edit: turn it on (vm_health_require_drs: false where DRS is not licensed)."))
     else:
         if drs.get("behavior") == "manual":
-            out.append(("info", "DRS is manual: its recommendations wait for someone to apply them",
+            out.append(("low", "DRS is manual: its recommendations wait for someone to apply them",
                         "Cluster > Configure > vSphere DRS > Edit: fully automated, if nothing needs it manual."))
         if int(drs.get("recommendations") or 0):
             out.append(("warning", "%d DRS recommendation(s) waiting" % int(drs["recommendations"]),
@@ -396,7 +398,7 @@ def _sev_count(ps):
     c = {}
     for p in ps:
         c[p[0]] = c.get(p[0], 0) + 1
-    return ", ".join("%d %s" % (c[s], s) for s in ("critical", "warning", "info") if c.get(s)) or "-"
+    return ", ".join("%d %s" % (c[s], s) for s in ("critical", "warning", "low", "info") if c.get(s)) or "-"
 
 
 def _section(title, columns, rows, text="", max_rows=0):
@@ -408,8 +410,8 @@ def _section(title, columns, rows, text="", max_rows=0):
     if not rows:
         return {"title": title, "text": text} if text else {"title": title, "lines": ["None."]}
     s = {"title": title, "columns": columns, "rows": [r[1] for r in rows],
-         "row_status": [r[0] if r[0] in ("critical", "warning", "info", "unknown") else "" for r in rows],
-         "cell_status": [[x if x in ("critical", "warning", "info", "ok", "unknown") else "" for x in r[2]] for r in rows]}
+         "row_status": [r[0] if r[0] in ("critical", "warning", "low", "info", "unknown") else "" for r in rows],
+         "cell_status": [[x if x in ("critical", "warning", "low", "info", "ok", "unknown") else "" for x in r[2]] for r in rows]}
     if text:
         s["text"] = text
     st = _worst([r[0] for r in rows if r[0] in ("critical", "warning")])
@@ -451,8 +453,8 @@ def vm_health_report(data, opts=None):
         subtitle += " - not everything was read in time: see How it was read"
     summary = [
         {"label": "Datacenters", "value": len(dcs), "status": status},
-        {"label": "Clusters", "value": len(clusters), "status": _worst([p[0] for _, _, ps in clusters for p in ps if p[0] != "info"]) or "ok"},
-        {"label": "Hosts", "value": len(hosts), "status": _worst([p[0] for _, ps in hres for p in ps if p[0] != "info"]) or "ok"},
+        {"label": "Clusters", "value": len(clusters), "status": _worst([p[0] for _, _, ps in clusters for p in ps if p[0] not in QUIET]) or "ok"},
+        {"label": "Hosts", "value": len(hosts), "status": _worst([p[0] for _, ps in hres for p in ps if p[0] not in QUIET]) or "ok"},
         {"label": "Hosts not connected", "value": len(notconn), "status": "critical" if notconn else "ok"},
         {"label": "HA problems", "value": len(ha_bad), "status": _worst([p["severity"] for p in ha_bad]) or "ok"},
         {"label": "DRS problems", "value": len(drs_bad), "status": _worst([p["severity"] for p in drs_bad]) or "ok"},
@@ -468,7 +470,9 @@ def vm_health_report(data, opts=None):
         rows.append((p["severity"], [p["severity"].upper(), "%s %s" % (label[p["object_type"]], p["object"]), p["problem"], p["fix"], where],
                      [p["severity"], "", "", "", ""]))
     sections = [_section("Needs attention", ["Severity", "Object", "Problem", "What to do", "Where"], rows,
-                         "Red = critical (broken now), amber = warning (fix soon), blue = info (worth knowing, not broken)."
+                         ("Red = critical (broken now), amber = warning (fix soon), Low = worth knowing (nothing to do now), "
+                          "blue = info (not broken)." if any(r[0] == "low" for r in rows) else
+                          "Red = critical (broken now), amber = warning (fix soon), blue = info (worth knowing, not broken).")
                          if rows else "Nothing needs attention: HA and DRS work on every cluster, every host is connected "
                                       "and its hardware is green, and no alarm is triggered.", o["max_rows"])]
 
@@ -479,7 +483,7 @@ def vm_health_report(data, opts=None):
         cls = [x for x in clusters if (x[0].get("vcenter", ""), x[0].get("datacenter", "")) == key]
         hs = [x for x in hres if (x[0].get("vcenter", ""), x[0].get("datacenter", "")) == key]
         allp = ps + [p for _, _, cps in cls for p in cps] + [p for _, hps in hs for p in hps]
-        st = _worst([p[0] for p in allp if p[0] != "info"]) or "ok"
+        st = _worst([p[0] for p in allp if p[0] not in QUIET]) or "ok"
         up = len([h for h, _ in hs if _up(h)])
         nc = len([h for h, _ in hs if h.get("connection") not in ("connected", "")])
         rows.append((st, [st.upper(), _where(dc, multi, dc.get("name", "")), len(cls), len(hs), up,
@@ -494,7 +498,7 @@ def vm_health_report(data, opts=None):
     rows = []
     for c, hs, ps in clusters:
         hps = [p for h in hs for p in host_problems(h, c, o)]
-        st = _worst([p[0] for p in ps + hps if p[0] != "info"]) or "ok"
+        st = _worst([p[0] for p in ps + hps if p[0] not in QUIET]) or "ok"
         ha, drs = c.get("ha") or {}, c.get("drs") or {}
         n = len(hs)
         up = len([h for h in hs if _up(h)])
@@ -510,7 +514,7 @@ def vm_health_report(data, opts=None):
                              "off": ", admission control off"}.get(adm, "")
             if ha_hosts:
                 ha_txt += "; %d host agent(s) not OK" % len(ha_hosts)
-            ha_st = _worst([p[0] for p in ps if "HA" in p[1] and p[0] != "info"]
+            ha_st = _worst([p[0] for p in ps if "HA" in p[1] and p[0] not in QUIET]
                            + [HA_SEV.get(h["ha_state"], "warning") for h in ha_hosts]) or "ok"
         if not drs.get("enabled"):
             drs_txt, drs_st = "OFF", "warning" if o["require_drs"] and n >= 2 else ""
@@ -520,7 +524,7 @@ def vm_health_report(data, opts=None):
                 drs_txt += ", score %d%%" % int(drs["score"])
             if int(drs.get("recommendations") or 0):
                 drs_txt += ", %d waiting" % int(drs["recommendations"])
-            drs_st = _worst([p[0] for p in ps if ("DRS" in p[1] or "vCLS" in p[1]) and p[0] != "info"]) or "ok"
+            drs_st = _worst([p[0] for p in ps if ("DRS" in p[1] or "vCLS" in p[1]) and p[0] not in QUIET]) or "ok"
         retreat = c.get("vcls_retreat")
         vcls_txt, vcls_st = ("RETREAT MODE", "critical" if drs.get("enabled") else "warning") if retreat else (
             ("?", "") if retreat is None else ("normal", ""))
@@ -542,7 +546,8 @@ def vm_health_report(data, opts=None):
     # hosts
     rows = []
     for h, ps in sorted(hres, key=lambda x: (x[0].get("vcenter", ""), x[0].get("datacenter", ""), x[0].get("cluster") or "~", x[0].get("name", ""))):
-        st = _worst([p[0] for p in ps if p[0] != "info"]) or ("info" if any(p[0] == "info" for p in ps) else "ok")
+        st = _worst([p[0] for p in ps if p[0] not in QUIET]) or ("low" if any(p[0] == "low" for p in ps) else
+                                                                 "info" if any(p[0] == "info" for p in ps) else "ok")
         conn = h.get("connection", "")
         ha_state = h.get("ha_state") or ""
         c_ha = not h.get("standalone") and any(c.get("name") == h.get("cluster") and c.get("vcenter", "") == h.get("vcenter", "")
@@ -556,7 +561,7 @@ def vm_health_report(data, opts=None):
         hw_st = "critical" if any(s.get("state") == "red" for s in bad) else ("warning" if bad else "")
         cpu = _pct(h.get("cpu_used_mhz"), h.get("cpu_mhz")) if conn == "connected" else None
         mem = _pct(h.get("mem_used_mb"), h.get("mem_mb")) if conn == "connected" else None
-        maint = "yes" if h.get("maintenance") else ("standby" if h.get("standby") in ("in", "entering") else "no")
+        maint = "yes - Low" if h.get("maintenance") else ("standby" if h.get("standby") in ("in", "entering") else "no")
         clock_st = _worst([p[0] for p in _clock_problems(h, o)])
         rows.append((st, [st.upper(), h.get("name", ""), "(standalone)" if h.get("standalone") else h.get("cluster", ""),
                           _where(h, multi, h.get("datacenter", "")), CONN_LABEL.get(conn, conn), maint, ha_txt, hw_txt, _pct_text(cpu), _pct_text(mem),
@@ -564,7 +569,7 @@ def vm_health_report(data, opts=None):
                           ("not read" if h.get("clock_note") else _clock_cell(h.get("clock_offset_s"))) if conn == "connected" else "-",
                           ("%s (%s)" % (h.get("version"), h.get("build"))) if h.get("version") else "",
                           len([a for a in h.get("alarms") or [] if a.get("status") in ("red", "yellow")])],
-                     [st, "", "", "", "critical" if conn not in ("connected", "") else "", "info" if maint != "no" else "", ha_st, hw_st,
+                     [st, "", "", "", "critical" if conn not in ("connected", "") else "", "low" if h.get("maintenance") else ("info" if maint != "no" else ""), ha_st, hw_st,
                       _usage_sev(cpu, o["cpu_warn"], o["cpu_crit"]), _usage_sev(mem, o["mem_warn"], o["mem_crit"]), "", clock_st, "", ""]))
     sections.append(_section("Hosts", ["Status", "Host", "Cluster", "Datacenter", "Connection", "Maintenance", "HA agent", "Hardware",
                                        "CPU used", "Memory used", "Up (days)", "Clock", "ESXi", "Alarms"], rows,
@@ -574,7 +579,7 @@ def vm_health_report(data, opts=None):
 
     rows = []
     for v, ps in vres:
-        st = _worst([p[0] for p in ps if p[0] != "info"]) or "ok"
+        st = _worst([p[0] for p in ps if p[0] not in QUIET]) or "ok"
         rows.append((st, [st.upper(), v.get("vcenter", ""), v.get("name", "") or v.get("version", ""),
                           len([a for a in v.get("alarms") or [] if a.get("status") in ("red", "yellow")])], [st, "", "", ""]))
     sections.append(_section("vCenter", ["Status", "vCenter", "Version", "Alarms on vCenter itself"], rows, "", o["max_rows"]))

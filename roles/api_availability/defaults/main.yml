@@ -9,7 +9,7 @@ availability_pause_seconds: 2            # seconds between two tries of one addr
 availability_timeout: 10                 # seconds a try may take; no answer by then = a bad try
 availability_slow_ms: 3000               # an answer slower than this (median of the tries), in milliseconds -> warning
 # One node (one server behind the service's address) that does not answer while the address still does: warning, or
-# critical to fail the job for it too. Every node down with no service address set: critical.
+# critical to fail the job for it too, or low (listed as Low: the service reads up). Every node down with no service address set: critical.
 availability_node_down: warning
 # The job shows FAILED (a workflow's "On failure" path) when a run finds a condition of these severities.
 availability_fail_on: [critical]

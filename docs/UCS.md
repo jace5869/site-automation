@@ -33,7 +33,7 @@ Then, in this order:
 | **Server models** | each server model, how many servers, and the **BIOS** and **CIMC** versions they run with how many run each (`4.2(3d) (12), 4.2(1f) (2)`: two servers left behind by a firmware update), and their adapters' firmware | |
 | **Servers** | every blade (`chassis-1/blade-3`) and rack server (`rack-unit-1`): its name, **service profile**, model, **serial number**, CPUs (`2 x Intel(R) Xeon(R) Gold 6248 CPU @ 2.50GHz, 40 cores`), memory, BIOS, CIMC, adapters with their firmware, storage controllers with theirs, power, state | amber not operable |
 | **Firmware in use** | each component and model - UCS Manager, FI system and kernel, IO module, BIOS, CIMC, board controller, adapter, storage controller - and the firmware versions running on them, with how many of each | |
-| **Faults (critical, major)** | UCS Manager's own fault list, the newest first (Since; one without a time last, so `ucs_inventory_max_rows` keeps the newest): severity, code (`F0369`), the component, the description, since when, acknowledged or not (`ucs_inventory_fault_severities`) | amber critical |
+| **Faults (critical, major)** | UCS Manager's own fault list, the newest first (Since; one without a time last, so `ucs_inventory_max_rows` keeps the newest): severity, code (`F0369`), the component, the description, since when, acknowledged or not (`ucs_inventory_fault_severities`) | amber critical; Low (1.56.0): major and minor |
 | **Not all read** | a kind of object this UCS Manager did not give (an older version without it, or the account's role), the rest in | |
 
 Amber when something is not operable, HA is not ready or there is a critical fault; red when a domain could not be read

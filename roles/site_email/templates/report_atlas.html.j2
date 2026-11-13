@@ -26,15 +26,15 @@
 {%- set runs = _page_runs | default(_email_runs | default([])) -%}
 {%- set job_id = _page_job | default(awx_job_id | default(tower_job_id | default(''))) | string -%}
 {%- set job_name = _page_template | default(awx_job_template_name | default(tower_job_template_name | default(''))) | string -%}
-{%- set words = {'ok': 'All good', 'warning': 'Needs attention', 'critical': 'Action required', 'info': 'For information', 'unknown': 'Unknown'} -%}
-{%- set chipword = {'ok': 'OK', 'warning': 'Warning', 'critical': 'Critical', 'info': 'Info', 'unknown': 'Unknown'} -%}
+{%- set words = {'ok': 'All good', 'warning': 'Needs attention', 'critical': 'Action required', 'info': 'For information', 'unknown': 'Unknown', 'low': 'Worth knowing'} -%}
+{%- set chipword = {'ok': 'OK', 'warning': 'Warning', 'critical': 'Critical', 'info': 'Info', 'unknown': 'Unknown', 'low': 'Low'} -%}
 {#- a cell whose whole text is one of these words gets its chip (and icon) even without a cell_status -#}
 {%- set cellword = {'ok': 'ok', 'passed': 'ok', 'pass': 'ok', 'success': 'ok', 'successful': 'ok', 'healthy': 'ok', 'compliant': 'ok',
                     'valid': 'ok', 'up': 'ok', 'connected': 'ok',
                     'warning': 'warning', 'warn': 'warning', 'at risk': 'warning', 'expiring': 'warning', 'degraded': 'warning',
                     'critical': 'critical', 'failed': 'critical', 'fail': 'critical', 'error': 'critical', 'breached': 'critical',
                     'expired': 'critical', 'down': 'critical', 'unreachable': 'critical', 'not compliant': 'critical',
-                    'info': 'info', 'unknown': 'unknown'} -%}
+                    'info': 'info', 'unknown': 'unknown', 'low': 'low'} -%}
 {%- set st = r.status | default('info') if r.status | default('info') in words else 'info' -%}
 {%- macro icon(k) -%}
 {%- if k == 'ok' -%}
@@ -43,6 +43,8 @@
 <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.6l6.6 11.6H1.4z" fill="currentColor" opacity=".2" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 6v3.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="8" cy="11.4" r=".95" fill="currentColor"/></svg>
 {%- elif k == 'critical' -%}
 <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.3" fill="currentColor" opacity=".2"/><path d="M5.5 5.5l5 5M10.5 5.5l-5 5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+{%- elif k == 'low' -%}
+<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.3" fill="currentColor" opacity=".2"/><path d="M5.2 6.6L8 9.4l2.8-2.8" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
 {%- elif k == 'info' -%}
 <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.3" fill="currentColor" opacity=".2"/><path d="M8 7.2v4.2" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><circle cx="8" cy="4.8" r="1" fill="currentColor"/></svg>
 {%- else -%}
@@ -111,7 +113,7 @@ var d=localStorage.getItem('site-report-density');if(d==='compact')document.docu
   --ok:#0a6b45;--ok-bg:#e6f5ed;--ok-bd:#9ad3b6;
   --warning:#8a4b00;--warning-bg:#fdf1dc;--warning-bd:#eec27c;
   --critical:#b42318;--critical-bg:#fdeceb;--critical-bd:#f0a59c;
-  --info:#1d4ed8;--info-bg:#e9effd;--info-bd:#a9c0f5;
+  --info:#1d4ed8;--info-bg:#e9effd;--info-bd:#a9c0f5;--low:#88358e;--low-bg:#f7ebf7;--low-bd:#dfb5e1;--low-row:#fdf8fd;
   --unknown:#4b5563;--unknown-bg:#eef1f4;--unknown-bd:#c9d1da;
   --critical-row:#fff6f5;--warning-row:#fffaf0;
   color-scheme:light;
@@ -125,7 +127,7 @@ var d=localStorage.getItem('site-report-density');if(d==='compact')document.docu
   --ok:#4fd69a;--ok-bg:rgba(79,214,154,.12);--ok-bd:rgba(79,214,154,.36);
   --warning:#f2b450;--warning-bg:rgba(242,180,80,.12);--warning-bd:rgba(242,180,80,.38);
   --critical:#ff8a80;--critical-bg:rgba(255,138,128,.12);--critical-bd:rgba(255,138,128,.40);
-  --info:#8ab4ff;--info-bg:rgba(138,180,255,.12);--info-bd:rgba(138,180,255,.36);
+  --info:#8ab4ff;--info-bg:rgba(138,180,255,.12);--info-bd:rgba(138,180,255,.36);--low:#c168d5;--low-bg:rgba(193,104,213,.12);--low-bd:rgba(193,104,213,.38);--low-row:rgba(193,104,213,.05);
   --unknown:#a8b3bf;--unknown-bg:rgba(168,179,191,.11);--unknown-bd:rgba(168,179,191,.30);
   --critical-row:rgba(255,138,128,.06);--warning-row:rgba(242,180,80,.05);
   color-scheme:dark;
@@ -148,12 +150,12 @@ body{margin:0;color:var(--ink);font:15px/1.55 "Segoe UI Variable Text","Segoe UI
 a{color:var(--accent)}
 .mono,code,pre,td.lk,td.k-path{font-family:ui-monospace,"Cascadia Mono","Cascadia Code",Consolas,"SF Mono",Menlo,"DejaVu Sans Mono",monospace}
 .ic{width:15px;height:15px;flex:none;display:block}
-.c-ok{color:var(--ok)}.c-warning{color:var(--warning)}.c-critical{color:var(--critical)}.c-info{color:var(--info)}.c-unknown{color:var(--unknown)}
+.c-ok{color:var(--ok)}.c-warning{color:var(--warning)}.c-critical{color:var(--critical)}.c-info{color:var(--info)}.c-low{color:var(--low)}.c-unknown{color:var(--unknown)}
 .chip{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:2px 10px 2px 6px;font-size:12.5px;font-weight:650;line-height:1.5;white-space:nowrap;border:1px solid}
 .s-ok{color:var(--ok);background:var(--ok-bg);border-color:var(--ok-bd)}
 .s-warning{color:var(--warning);background:var(--warning-bg);border-color:var(--warning-bd)}
 .s-critical{color:var(--critical);background:var(--critical-bg);border-color:var(--critical-bd)}
-.s-info{color:var(--info);background:var(--info-bg);border-color:var(--info-bd)}
+.s-info{color:var(--info);background:var(--info-bg);border-color:var(--info-bd)}.s-low{color:var(--low);background:var(--low-bg);border-color:var(--low-bd)}
 .s-unknown{color:var(--unknown);background:var(--unknown-bg);border-color:var(--unknown-bd)}
 .card{background:var(--card);border:1px solid var(--edge);border-radius:16px;box-shadow:var(--shadow)}
 .wrap{max-width:1760px;margin:0 auto;padding:20px clamp(14px,2.6vw,40px) 48px}
@@ -238,7 +240,7 @@ ul.passed .ic{width:17px;height:17px}
 .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,380px),1fr));gap:14px}
 .todo{background:var(--card);border:1px solid var(--edge);border-radius:14px;padding:16px 18px 16px 20px;position:relative;overflow:hidden;color:var(--ink);display:flex;flex-direction:column}
 .todo:before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--unknown)}
-.todo.c-ok:before{background:var(--ok)}.todo.c-warning:before{background:var(--warning)}.todo.c-critical:before{background:var(--critical)}.todo.c-info:before{background:var(--info)}
+.todo.c-ok:before{background:var(--ok)}.todo.c-warning:before{background:var(--warning)}.todo.c-critical:before{background:var(--critical)}.todo.c-info:before{background:var(--info)}.todo.c-low:before{background:var(--low)}
 .todo .row1{display:flex;align-items:center;gap:8px;justify-content:space-between}
 .todo .meta{color:var(--muted);font-size:12.5px;text-align:right;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
 .todo h3{margin:12px 0 0;font-size:16px;line-height:1.38;text-wrap:balance}
@@ -365,6 +367,7 @@ tr.r-critical td{background:var(--critical-row)}tr.r-critical td:first-child{box
 tr.r-warning td{background:var(--warning-row)}tr.r-warning td:first-child{box-shadow:inset 3px 0 0 var(--warning)}
 tr.r-ok td:first-child{box-shadow:inset 3px 0 0 var(--ok)}
 tr.r-info td:first-child{box-shadow:inset 3px 0 0 var(--info)}
+tr.r-low td{background:var(--low-row)}tr.r-low td:first-child{box-shadow:inset 3px 0 0 var(--low)}
 tr.r-critical:hover td,tr.r-warning:hover td{background:var(--hover)}
 /* a Trend column (a section's sparks, its kind spark - 1.52.0): one small line per row, one hue (--spark, not a status
    colour), the dashed lines the report's two levels, the upright line a change, the dot the last run */
@@ -442,8 +445,8 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
   .tw td{border:0;padding:4px 14px;display:grid;grid-template-columns:minmax(90px,34%) minmax(0,1fr);gap:10px;align-items:start;background:none!important;overflow-wrap:break-word}
   .tw td:before{content:attr(data-l);font-family:"Segoe UI",system-ui,sans-serif;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--label);padding-top:3px}
   .tw td .chip{justify-self:start}
-  tr.r-critical td:first-child,tr.r-warning td:first-child,tr.r-ok td:first-child,tr.r-info td:first-child{box-shadow:none}
-  tr.r-critical{box-shadow:inset 4px 0 0 var(--critical)}tr.r-warning{box-shadow:inset 4px 0 0 var(--warning)}
+  tr.r-critical td:first-child,tr.r-warning td:first-child,tr.r-ok td:first-child,tr.r-info td:first-child,tr.r-low td:first-child{box-shadow:none}
+  tr.r-critical{box-shadow:inset 4px 0 0 var(--critical)}tr.r-warning{box-shadow:inset 4px 0 0 var(--warning)}tr.r-low{box-shadow:inset 4px 0 0 var(--low)}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important}html{scroll-behavior:auto}}
 @media (prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}}

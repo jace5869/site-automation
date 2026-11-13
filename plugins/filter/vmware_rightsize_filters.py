@@ -311,11 +311,11 @@ def _table(title, text, rows, status, max_rows, columns=None, row_status=None, c
 
 def _cells(v, o):
     """Colour the cells that change (amber up, green down), CPU ready from vm_rightsize_ready_warn_pct (amber) and the
-    confidence (High green, Low amber)."""
+    confidence (High green, Low: the Low level - 1.56.0, was amber)."""
     s, ready = v["size"], (v.get("stats") or {}).get("ready_p95")
     col = {"up": "warning", "down": "ok", "": ""}
     return ["", "", col[s["cpu"]["change"]], "", "warning" if ready is not None and ready >= o["ready_warn_pct"] else "",
-            col[s["mem"]["change"]], "", {"High": "ok", "Low": "warning"}.get(s["confidence"], ""), ""]
+            col[s["mem"]["change"]], "", {"High": "ok", "Low": "low"}.get(s["confidence"], ""), ""]
 
 
 def vm_rightsize_doc(result, sized, opts=None):
@@ -372,11 +372,12 @@ def vm_rightsize_doc(result, sized, opts=None):
         rows = [[v.get("name", ""), _where(v, multi), "%s" % v["size"]["cpu"]["now"], _used(v.get("stats") or {}, "cpu"),
                  "%s" % v["size"]["mem"]["now"], _used(v.get("stats") or {}, "mem"),
                  "; ".join(w for w in v["size"]["why"] if "watch" in w)] for v in watch]
-        sections.append(_table("Watch: busy on a few days", "Busy (%d%% CPU, %d%% active memory or more) on fewer than %d days of the "
-                               "last %d: not enough to grow (vm_rightsize_grow_days). Suggested when it happens on more days."
-                               % (o["cpu_high_pct"], o["mem_high_pct"], o["grow_days"], days), rows, "", mx,
+        sections.append(_table("Watch: busy on a few days", "Low - worth knowing, nothing to do now. Busy (%d%% CPU, %d%% active memory "
+                               "or more) on fewer than %d days of the last %d: not enough to grow (vm_rightsize_grow_days). Suggested "
+                               "when it happens on more days."
+                               % (o["cpu_high_pct"], o["mem_high_pct"], o["grow_days"], days), rows, "low", mx,
                                columns=["VM", "Cluster", "vCPUs", "CPU used (95th % / peak)", "Memory (GB)",
-                                        "Active memory (95th % / peak)", "Why"]))
+                                        "Active memory (95th % / peak)", "Why"], row_status=["low"] * len(rows)))
     if full:
         rows = [[v.get("name", ""), _where(v, multi), v["size"]["disk"]["path"], "%s%%" % v["size"]["disk"]["used_pct"],
                  "%s GB" % _num(v["size"]["disk"]["free_gb"]), "%s GB" % _num(v["size"]["disk"]["capacity_gb"])] for v in full]
@@ -430,7 +431,7 @@ def vm_rightsize_doc(result, sized, opts=None):
     if taken:
         summary.append({"label": "Memory taken back", "value": len(taken), "status": "warning"})
     if watch:
-        summary.append({"label": "Watch", "value": len(watch)})
+        summary.append({"label": "Watch", "value": len(watch), "status": "low", "note": "Low: busy on a few days"})
     if full:
         summary.append({"label": "Disks nearly full", "value": len(full), "status": "warning"})
     return {"title": "VM right-sizing: %d too big, %d too small of %d VM%s" % (len(by[TOO_BIG]), len(by[TOO_SMALL]), n, "" if n == 1 else "s"),

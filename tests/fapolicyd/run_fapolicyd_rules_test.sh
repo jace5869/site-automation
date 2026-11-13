@@ -244,7 +244,7 @@ grep -q "35-site-containers.rules" "$work/lines.txt" && bad "a line for the cont
 check "the report: blocked, would be blocked (permissive), permissive on 1 - critical" \
       '[(x["label"], x["value"]) for x in r["summary"]][:2] == [("Blocked", 8), ("Would be blocked (permissive)", 1)] and "permissive on 1" in r["title"] and r["status"] == "critical"'
 check "ra02's would-be block gets its trust entry; its allow_audit allow is not a block" \
-      'any(row[0] == "ra02.example.mil" and row[1] == "would be (permissive)" and row[3].endswith("/opt/app/tool2") for row in s["What fapolicyd blocked"]["rows"]) and not any("/srv/audited/" in row[3] for row in s["What fapolicyd blocked"]["rows"])'
+      'any(row[0] == "ra02.example.mil" and row[1] == "Low - would be (permissive)" and row[3].endswith("/opt/app/tool2") for row in s["What fapolicyd blocked"]["rows"]) and not any("/srv/audited/" in row[3] for row in s["What fapolicyd blocked"]["rows"])'
 check "for a person: the file in a user folder, the containers job's wildcard" \
       'any("/home/u/bin/x is in a folder users can write" in x for x in s["For a person"]["lines"]) and any("35-site-containers.rules" in x and "the containers job" in x for x in s["For a person"]["lines"]) and not any("/usr/bin/ls" in x or "tool3" in x or "tool4" in x for x in s["For a person"]["lines"])'
 sha3="$(sha256sum "$work/opt/app/tool3" | cut -d' ' -f1)"; size3="$(stat -c %s "$work/opt/app/tool3")"

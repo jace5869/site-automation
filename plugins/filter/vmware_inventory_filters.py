@@ -13,7 +13,7 @@ import re
 POWER = {"poweredOn": "on", "poweredOff": "off", "suspended": "suspended"}
 # vCenter's guest.toolsVersionStatus2 -> (in words, the chip): as in vmware_tools_filters.py, in the report's five words
 TOOLS = {"guestToolsCurrent": ("current", "ok"), "guestToolsSupportedNew": ("current", "ok"),
-         "guestToolsNeedUpgrade": ("upgrade available", "info"), "guestToolsSupportedOld": ("upgrade available", "info"),
+         "guestToolsNeedUpgrade": ("upgrade available", "low"), "guestToolsSupportedOld": ("upgrade available", "low"),   # 1.56.0: Low
          "guestToolsTooOld": ("unsupported", "warning"), "guestToolsTooNew": ("unsupported", "warning"),
          "guestToolsBlacklisted": ("unsupported", "warning"), "guestToolsUnmanaged": ("guest managed", "ok"),
          "guestToolsNotInstalled": ("not installed", "warning")}
@@ -115,6 +115,12 @@ def _tools(v):
     return words, chip
 
 
+def _tools_text(v):
+    """The Tools' status as a cell shows it: with the word Low when its chip is low (never the colour alone)."""
+    w, c = _tools(v)
+    return "%s - Low" % w if c == "low" else w
+
+
 def _sec(v):
     """[(text, chip)] for Encrypted, Firmware, Secure Boot, vTPM - each 'ok' or 'warning' (missing), never colour alone."""
     fw = str(v.get("firmware") or "").lower()
@@ -198,7 +204,7 @@ def vm_inventory_doc(vms, vcenters=None, opts=None):
         for label, n in (("Not encrypted", len([v for v in pool if not v.get("encrypted")])),
                          ("Without EFI", len([v for v in pool if str(v.get("firmware") or "").lower() == "bios"])),
                          ("Without vTPM", len([v for v in pool if v.get("vtpm") is False]))):
-            sec_tiles.append(dict({"label": label, "value": n}, **({"status": "info"} if n else {})))
+            sec_tiles.append(dict({"label": label, "value": n}, **({"status": "low", "note": "Low"} if n else {})))   # 1.56.0: was info
 
     # ---- hardware versions and VMware Tools ----
     hws = {}
@@ -216,9 +222,10 @@ def vm_inventory_doc(vms, vcenters=None, opts=None):
     for w in sorted(tls, key=lambda w: (TOOLS_ORDER.index(w) if w in TOOLS_ORDER else 99, w)):
         vs = tls[w]
         chip = [_tools(v)[1] for v in vs]
-        rows.append(["VMware Tools %s" % (w if w != "-" else "not known"), len(vs),
+        top = next((c for c in ("warning", "low", "info", "ok") if c in chip), "")
+        rows.append(["VMware Tools %s%s" % (w if w != "-" else "not known", " - Low" if top == "low" else ""), len(vs),
                      len([v for v in vs if v.get("power") == "poweredOn"])])
-        cst.append([next((c for c in ("warning", "info", "ok") if c in chip), ""), "", ""])
+        cst.append([top, "", ""])
     if allv:
         sections.append({"title": "Hardware versions and Tools",
                          "text": "How many VMs have each virtual hardware version (and the oldest ESXi that runs it), and "
@@ -237,7 +244,7 @@ def vm_inventory_doc(vms, vcenters=None, opts=None):
                "text": "Powered-on VMs whose VMware Tools need an upgrade, are not supported on their host, not installed "
                        "or not running.",
                "columns": heads,
-               "rows": [[v.get("name", ""), _tools(v)[0], vm_tools_version_text(v.get("tools_version")) or "-",
+               "rows": [[v.get("name", ""), _tools_text(v), vm_tools_version_text(v.get("tools_version")) or "-",
                          _short(v.get("vcenter")), vm_folder_label(v.get("folder")), v.get("guest_os") or "-", _hw(v)] for v in part],
                "cell_status": [["", _tools(v)[1], "", "", "", "", ""] for v in part]}
         if web:
@@ -258,7 +265,7 @@ def vm_inventory_doc(vms, vcenters=None, opts=None):
         if extra:
             sec = dict(zip(("Enc", "EFI", "SB", "vTPM"), _sec(v)))
             tl = _tools(v)
-            val = {"HW": (_hw(v), ""), "Tools": tl, "Tools ver.": (vm_tools_version_text(v.get("tools_version")) or "-", "")}
+            val = {"HW": (_hw(v), ""), "Tools": (_tools_text(v), tl[1]), "Tools ver.": (vm_tools_version_text(v.get("tools_version")) or "-", "")}
             x = [sec.get(s) or val[s] for s, _ in extra]
         return _row(v, web) + [t for t, _ in x], [""] * len(base) + [c for _, c in x]
 

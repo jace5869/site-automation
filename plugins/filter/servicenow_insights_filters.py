@@ -3427,14 +3427,16 @@ def servicenow_insights_doc(model, key="all", opts=None):
     def pf(v):
         return ("%.1f%%" % v) if v is not None else "—"
     behind = b[0] > b[1] * 1.05 and b[0] - b[1] >= 5
-    status = "info" if not c["incidents"] and not c["requests"] else ("warning" if behind or s["age"][3] else "ok")
+    # 1.56.0: a backlog that grew 5 % (and by 5 or more) is low - a trend to know, nothing to do tonight; never the status
+    status = "info" if not c["incidents"] and not c["requests"] else ("warning" if s["age"][3] else "ok")
     top = s["issues"][0] if s["issues"] else None
     title = "Ticket insights for %s: %s incidents, %s requests%s, backlog %d (%s)" % (
         s["name"], "{:,}".format(c["incidents"]), "{:,}".format(c["requests"]),
         (", top issue %s (%d)" % (top["name"], top["count"])) if top else "", b[0], _change(b[0], b[1]) or "no change")
     summary = [{"label": "Incidents", "value": c["incidents"], "note": "was %d" % c["incidents_prev"] if win.get("compare") else ""},
                {"label": "Requests", "value": c["requests"]},
-               {"label": "Open now", "value": b[0], "status": "warning" if behind else "", "note": "was %d at the start" % b[1]},
+               {"label": "Open now", "value": b[0], "status": "low" if behind else "",
+                "note": ("Low: grew from %d at the start" if behind else "was %d at the start") % b[1]},
                {"label": "Median time to resolve", "value": fmt_hours(s["median_h"][0])},
                ] + ([{"label": "Response met", "value": pf(s["resp"][0])}, {"label": "Resolution met", "value": pf(s["sla"][0])}] if two else
                     [{"label": "SLAs met", "value": pf(s["sla"][0])}]) + [
@@ -3443,7 +3445,7 @@ def servicenow_insights_doc(model, key="all", opts=None):
     if sv.get("n") and sv.get("avg") is not None:          # 1.16.0: the headline survey on its scale, graded - the word always there
         top = (sv.get("scale") or [None, None])[1]
         summary.append({"label": "Satisfaction", "value": ("%.2f of %g" % (sv["avg"], top)) if top is not None else "%.2f" % sv["avg"],
-                        "status": {"Good": "ok", "Fair": "warning", "Low": "critical"}.get(sv.get("grade"), ""),
+                        "status": {"Good": "ok", "Fair": "low", "Low": "critical"}.get(sv.get("grade"), ""),     # 1.56.0: Fair is low
                         "note": " · ".join(x for x in (sv.get("grade") or "", sv.get("label") or "", "%d answers" % sv["n"]) if x)})
     secs = [{"title": "What the period says" + (" (written by ACT)" if s.get("summary_by") == "act" else ""), "lines": s["summary"] or ["(nothing to say)"]}]
     # 1.7.0: what to act on first - the counts, and the first of each list
@@ -3484,8 +3486,10 @@ def servicenow_insights_doc(model, key="all", opts=None):
                               ([pf(t.get("resp"))] if two else []) + [pf(t["sla"]), "%d%%" % t["quality"][2]] +
                               (["{:,} / {:,}".format(t.get("ct_closed") or 0, t.get("ct_open") or 0)] if ctc else []) +
                               [("%s (%d)" % (t["top"][0], t["top"][1])) if t["top"][0] else ""] for t in side],
-                     "row_status": ["warning" if t["backlog"][0] > t["backlog"][1] * 1.05 and t["backlog"][0] - t["backlog"][1] >= 5 else ""
+                     "row_status": ["low" if t["backlog"][0] > t["backlog"][1] * 1.05 and t["backlog"][0] - t["backlog"][1] >= 5 else ""
                                     for t in side]})
+        if "low" in secs[-1]["row_status"]:
+            secs[-1]["text"] = "Low (the tinted rows): the backlog grew by 5 % and by 5 or more - worth knowing, nothing to do now."
     src = {"tix": "from the tickets", "mix": "partly from tickets", "ai": "suggested by ACT", "none": "no fix in the notes"}
     n = int(_o(o, "top_issues", 10))
     if s["issues"]:
@@ -3504,8 +3508,9 @@ def servicenow_insights_doc(model, key="all", opts=None):
         secs += vsec
     mx = s.get("matrix") or {}
     if mx.get("on") and mx.get("checked"):
-        secs.append({"title": "Priority set by hand", "status": "warning" if (mx.get("pct") or 0) >= 10 else "",
-                     "text": "%d of %d incidents (%s) have a priority the 3 x 3 matrix does not give for their impact and urgency. %d were set higher, %d lower." % (
+        many = (mx.get("pct") or 0) >= 10                     # 1.56.0: low - data quality, no outage
+        secs.append({"title": "Priority set by hand", "status": "low" if many else "",
+                     "text": ("Low: " if many else "") + "%d of %d incidents (%s) have a priority the 3 x 3 matrix does not give for their impact and urgency. %d were set higher, %d lower." % (
                          mx["off"], mx["checked"], pf(mx["pct"]), mx.get("higher") or 0, mx.get("lower") or 0),
                      "columns": ["Group", "Set by hand", "Of", "Share"],
                      "rows": [[g["group"], g["off"], g["of"], pf(g["pct"])] for g in mx.get("by_group") or []]})
@@ -3533,11 +3538,12 @@ def servicenow_insights_doc(model, key="all", opts=None):
         if cat.get("listed"):
             dq += ", %d not on the official list (%s)%s" % (cat["off_list"], pf(cat["off_pct"]),
                                                             (": " + ", ".join("%s (%d)" % (nm, c_) for nm, c_ in cat["off_names"])) if cat["off_names"] else "")
-        secs.append({"title": "Categories", "text": "Data quality: %s." % dq,
+        off_rows = any(x.get("official") is False for x in cat["rows"][:20])     # 1.56.0: low - data quality
+        secs.append({"title": "Categories", "text": "Data quality: %s." % dq + (" Low (the tinted rows): not on the official list." if off_rows else ""),
                      "columns": ["Category", "Incidents", "Share", "Median to resolve"] + (["Response met", "Resolution met"] if two else ["SLA met"]) + ["Mostly in"],
                      "rows": [[x["name"], x["count"], pf(x["share"]), fmt_hours(x["median_h"])] + ([pf(x.get("resp"))] if two else []) + [pf(x.get("resol")), x.get("team") or ""]
                               for x in cat["rows"][:20]],
-                     "row_status": ["warning" if x.get("official") is False else "" for x in cat["rows"][:20]]})
+                     "row_status": ["low" if x.get("official") is False else "" for x in cat["rows"][:20]]})
     if s["requests"]:
         secs.append({"title": "Most requested services", "columns": ["#", "Rank", "Catalog item", "Requests", "Was", "Median to fulfil", "SLA met"],
                      "rows": [[q["rank"], q["mv"]["text"], q["name"], q["count"], q["prev"],

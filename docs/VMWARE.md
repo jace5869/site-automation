@@ -300,7 +300,7 @@ Variables; on the report website it is on the VMware tab.
 | `vm_inventory_hidden_columns` | `[SB, Tools ver.]` | the website's VM tables: these columns start hidden - a header or its full name (`Secure Boot`), any column (`Cluster`); a list, or text with commas. `[]` = all shown |
 
 Green unless a vCenter could not be read (it is then listed in red on top, its VMs not counted): the counts of VMs
-without encryption, EFI or a vTPM are information (blue), never a warning. The counts are also the job artifact
+without encryption, EFI or a vTPM are **Low** (worth knowing, nothing to do now: the tile says "Low"), never a warning. The counts are also the job artifact
 `vm_inventory`. The account needs nothing more than for the rest of the report (Read-only on the VMs): VM Encryption's
 key ID, the boot options and the vTPM are read with the VM's other properties.
 
@@ -320,8 +320,8 @@ versions. Then:
   (`ESXi 8.0 U2 and later`), how many VMs;
 - **Guest OS** - each guest OS with the Tools and hardware versions its VMs have;
 - a table per vCenter and folder (`vc01 - DC1 / Linux / Web`, as in the VM inventory report), each VM with its power
-  state, guest OS, Tools version, Tools status and hardware version; an upgrade available in blue, a VM to look at in
-  amber.
+  state, guest OS, Tools version, Tools status and hardware version; an upgrade available is Low (the cell says
+  `upgrade available - Low`), a VM to look at in amber.
 
 **Tools status** is vCenter's own verdict for the ESXi host the VM runs on (`guest.toolsVersionStatus2`): *current*,
 *upgrade available*, *too old (not supported)* ... The report keeps no list of versions of its own. **Guest managed**:
@@ -370,8 +370,8 @@ How it decides (each number is a setting below):
   once.
 - **More vCPUs or memory** only from the last 30 days, and only from a pattern: 85% CPU (90% active memory) or more at
   the 95th percentile, **and** busy on 3 separate days or more (`vm_rightsize_grow_days`; a day counts when its busiest
-  2-hour average got there). Busy on fewer days: the VM is listed under *Watch: busy on a few days* - not enough to
-  grow; ballooned or swapped memory is said on its own.
+  2-hour average got there). Busy on fewer days: the VM is listed under *Watch: busy on a few days* (Low) - not
+  enough to grow; ballooned or swapped memory is said on its own.
 - **The year's busiest day never adds**: it only holds a cut back (a month-end peak keeps the vCPUs it needs), and the
   reason says how many days of the year were within 10 points of it (`vm_rightsize_year_near_pts`) - *a one-off*, or a
   pattern. A day above 100% is not a real reading: it is left out (the next busiest is used) and said in the reason.
@@ -641,7 +641,7 @@ Or launch it by hand.
 ### Run it
 
 1. Launch the workflow (or the schedule does). Answer the survey (or keep 5 days).
-2. The report runs and **emails the list**: what will be deleted, what is held back, and why.
+2. The report runs and **emails the list**: what will be deleted, what is held back (Low: never deleted automatically), and why.
 3. AAP waits at the approval. Open **Automation Execution > Administration > Workflow Approvals**
    (or the workflow job's view) > the approval > **Approve** or **Deny**.
 4. On **Approve**: the cleanup deletes the snapshots from that list that are still there, and still
@@ -884,7 +884,8 @@ hardware faults, triggered alarms). The subject says it in one line, e.g.
 |---|---|
 | **Red (critical)** | a host not connected to vCenter (or powered off); a host's HA agent isolated, partitioned, unreachable or in error; vCLS retreat mode on a cluster with DRS (DRS stops); a red hardware sensor; a red alarm; CPU or memory from 95 %; a host's clock 5 minutes or more off vCenter's |
 | **Amber (warning)** | HA or DRS off on a cluster of 2 or more hosts; HA host monitoring off; HA failover capacity below what admission control reserves; DRS recommendations waiting, or DRS faults; retreat mode without DRS; a yellow sensor; a host that needs a restart; a configuration issue (SSH on, ...); a yellow alarm; CPU from 85 %, memory from 90 %; a host's clock a minute or more off vCenter's, no NTP server set on it, or its NTP service stopped; vCenter's clock a minute or more off the AAP job's |
-| **Blue (info)** | a host in maintenance mode or standby; HA admission control off; DRS in manual mode - worth knowing, not broken |
+| **Low** | a host in maintenance mode; HA admission control off; DRS in manual mode - worth knowing, nothing to do now. Low never makes a cluster, a host or the report amber |
+| **Blue (info)** | a host in standby (DPM) - not broken |
 
 A one-host cluster without HA or DRS is fine, and so is a host in maintenance mode whose HA agent is
 not configured (that is what maintenance mode does).
@@ -987,8 +988,9 @@ and the **outage watch** asks every run whether SSO is down *now* (`vm_watch_sso
 | The credential's own login refused (single sign-on, or the credential) | critical | yes | yes |
 | The STS signing certificate expired, or expires within `vm_sso_sts_crit_days` (14) | critical | yes | - |
 | ... within `vm_sso_sts_warn_days` (60) | warning | yes | - |
-| An OCSP responder (`site_ocsp_certs` or `vm_sso_ocsp`) does not answer, answers not successful, stale, or not good, or its address or issuer could not be read from the certificate | `vm_sso_ocsp_severity` (critical) | yes | yes |
-| The CRL of a certificate there cannot be downloaded, is not a CRL, is not the CA's (issuer or signature), is stale (its next update passed), or lists the test certificate | `vm_sso_crl_severity` (warning) | yes | no |
+| ... within twice `vm_sso_sts_warn_days` (120) | low (listed, not counted) | yes | - |
+| An OCSP responder (`site_ocsp_certs` or `vm_sso_ocsp`) does not answer, answers not successful, stale, or not good, or its address or issuer could not be read from the certificate | `vm_sso_ocsp_severity` (critical; or warning, low) | yes | yes, not when low |
+| The CRL of a certificate there cannot be downloaded, is not a CRL, is not the CA's (issuer or signature), is stale (its next update passed), or lists the test certificate | `vm_sso_crl_severity` (warning; or critical, low) | yes | no |
 
 The section also lists each vCenter's identity providers. Only reads reach vCenter.
 
@@ -1155,13 +1157,13 @@ each of those problems, and say how sure it is. Neither changes anything.
 | Section | What is in it | Colour |
 |---|---|---|
 | Triggered alarms | the alarms vCenter shows now on vCenter itself, the datacenters, clusters and hosts: severity, object, alarm, since when, acknowledged by whom | red = critical, amber = warning |
-| Alarms that fired in the last 24 h | every alarm that turned yellow or red in the window, one row per alarm and object: how many times it went red and yellow, first and last change, and how it is now - still on, or cleared since (an alarm that comes and goes is worth a look too) | red / amber = still on, blue = cleared |
+| Alarms that fired in the last 24 h | every alarm that turned yellow or red in the window, one row per alarm and object: how many times it went red and yellow, first and last change, and how it is now - still on, or cleared since (an alarm that comes and goes is worth a look too) | red / amber = still on, Low = cleared |
 | Host connection | hosts not connected to vCenter now, and hosts that lost the connection in the last 24 h and came back | red / amber |
 | Failed logins | wrong user name or password: one row per user, source address and server, with the count and the first and last time | amber; red from 10 failures |
 | Virtual machine events | guest shutdowns and restarts, power-offs, resets, HA restarts and failures, and who did it | blue = someone did it, amber = HA or nobody, red = a failover or power-on failed |
 | Other errors and warnings | every other error and warning event; the same event on the same object counted once | red = error, amber = warning |
 | Configuration issues | what vCenter shows as configuration issues (SSH left on, HA problems, ...) | amber |
-| All hosts | every host: connection, maintenance mode, ESXi version and build, hardware, its alarms and its errors / warnings | red / amber / blue row |
+| All hosts | every host: connection, maintenance mode, ESXi version and build, hardware, its alarms and its errors / warnings | red / amber row; Low = in maintenance |
 
 On top: the counts in coloured boxes. The subject says the most important ones, e.g.
 `[AAP] VMware alarms report: 1 critical, 2 warning alarm(s), 47 failed login(s) (events: last 24 h)`.
@@ -1296,6 +1298,11 @@ reacts faster to a real change of rate). "Not growing" means the line is flat or
 **trend fit** (R²) says how straight the history is: poor means jumps (VMs moved, snapshots deleted,
 a datastore grown), and the runway is a rough guide then.
 
+**Low** (1.56.0) - worth knowing, nothing to do now, always with the word in the cell: a runway up to twice
+`vm_capacity_runway_warn_days`, hosts recommended *within* the months (none now), a poor trend fit, provisioned
+over 150 % (thin disks), a host in maintenance mode, and hosts usable below the total when the others are in
+maintenance. Low never makes a cluster, a datastore or the report amber.
+
 **What the cluster runway runs to:** `80% N-1`, written in every cell - 80 % of the memory (or
 CPU) left with one host down, not 100 % of what is installed. A cluster at 65 % used today can be at
 76 % with its biggest host taken out of the math, so `9 days (2026-11-06) to 80% N-1` means nine
@@ -1342,7 +1349,7 @@ runs no command (as in "The ACT analysis" above: the same key, URL, proxy and CA
 | `vm_capacity_mem_target_pct` / `_cpu_target_pct` | `80` / `80` | memory / CPU used at most this, with those hosts down |
 | `vm_capacity_vcpu_per_core_max` | `4` | vCPUs per physical core (amber from here) |
 | `vm_capacity_storage_warn_pct` / `_crit_pct` | `85` / `90` | datastore used % (the storage runway is to 90 %) |
-| `vm_capacity_runway_warn_days` / `_crit_days` | `90` / `30` | a runway shorter than this is amber / red |
+| `vm_capacity_runway_warn_days` / `_crit_days` | `90` / `30` | a runway shorter than this is amber / red; up to twice the warn days (180), Low |
 | `vm_capacity_horizon_months` | `12` | "hosts recommended within N months" |
 | `vm_capacity_trend_days` / `vm_capacity_history_days` | `90` / `120` | the days the trend is fitted on / read: 90 averages growth that comes in batches; 30 reacts faster to a real change of rate |
 | `vm_capacity_include_local_datastores` | `false` | count a host's own datastores too |

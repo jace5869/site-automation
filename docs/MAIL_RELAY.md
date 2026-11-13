@@ -163,7 +163,7 @@ The email's tables:
 | Table | What |
 |---|---|
 | How far back the logs go | each relay: its oldest and newest log line, how many days back, whether that covers the days asked, how many log files (or the journal) were read, any file it could not read |
-| Each address on the list | address, address or subnet, on which relays, its **last mail** (the newest message any relay accepted from it, or from an address inside the subnet - `never in the logs`), how many messages the logs hold, how often it connected, and the verdict: *in use*, **UNUSED**, *UNUSED subnet - listed only*, *kept* |
+| Each address on the list | address, address or subnet, on which relays, its **last mail** (the newest message any relay accepted from it, or from an address inside the subnet - `never in the logs`), how many messages the logs hold, how often it connected, and the verdict: *in use*, **UNUSED**, *Low: UNUSED subnet - listed only* (1.56.0: Low, worth knowing - nothing happens to it), *kept* |
 
 **Set it up:** a job template **Mail relay - unused addresses plan**, playbook `playbooks/mail_relay_unused.yml`,
 credential **Machine** (sudo on the relays: the logs are root's), Variables `mail_relay_group: <your group>`. Then the

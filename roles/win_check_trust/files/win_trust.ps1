@@ -74,7 +74,8 @@ foreach ($e in $known) {
 }
 function Get-Severity($e) {
     $n = [string]$e.name
-    if ($null -ne $overrides -and $null -ne $overrides.$n) { return ([string]$overrides.$n).ToLower() }
+    # 1.56.0: "low" is notice (listed only, no finding)
+    if ($null -ne $overrides -and $null -ne $overrides.$n) { $o = ([string]$overrides.$n).ToLower(); if ($o -eq 'low') { return 'notice' }; return $o }
     $s = [string]$e.severity
     if (-not $s) { return 'warning' }
     return $s.ToLower()

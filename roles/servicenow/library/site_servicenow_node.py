@@ -114,6 +114,16 @@ SEM_WAIT = re.compile(r"semaphore wait:?\s*(\d+)\s*ms", re.I)
 SESSION_WAIT = re.compile(r"session wait:?\s*(\d+)\s*ms", re.I)
 # who did it: not needed, and not shown (the node's log is people's activity)
 USER = re.compile(r"\buser\s*[:=]\s*[^,;)\]\n]+|\(user [^)]+\)", re.I)
+# the path of a slow transaction: "... - transaction: #5001 /api/now/ui/page_timing/<id>, user: ..."
+TX_PATH = re.compile(r"\btransaction:\s*(?:#\d+\s+)?([^\s,]+)", re.I)
+# a SEVERE script error: "checkDCSupportsTLS: Cannot convert null to an object" (the script's own name, then what the
+# script engine said), or the engine's own words anywhere in the line
+JS_ERR = re.compile(r"Cannot convert|is not defined|is not a function|Cannot read propert|Cannot set propert|"
+                    r"Cannot find function|TypeError|ReferenceError|SyntaxError|EcmaError|EvaluatorException|"
+                    r"JavaScriptException|org\.mozilla\.javascript|(?:undefined|null) (?:is not|has no)", re.I)
+SCRIPT_NAME = re.compile(r"^([A-Za-z_$][\w$]{2,}(?:\.[A-Za-z_$][\w$]*)*)\s*:\s")
+CAUSED_IN = re.compile(r"Caused by error in ([^\s,;]+?)(?: at line \d+|[\s,;]|$)")
+NOT_SCRIPT = {"Evaluator", "Exception", "Error", "Warning", "Transaction", "Caused", "Script", "Java", "Uncaught"}
 
 
 def no_user(text):
@@ -934,6 +944,34 @@ def key_of(msg):
     return re.sub(r"\s+", " ", k).strip()
 
 
+def tx_path(msg):
+    """The path of a slow transaction's line, ids taken out ("/api/now/ui/page_timing/<32 hex>" ->
+    "/api/now/ui/page_timing"); "" when the line names none."""
+    m = TX_PATH.search(msg)
+    if not m:
+        return ""
+    p = m.group(1)
+    p = re.sub(r"/(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\d+)(?=[/?]|$)", "", p, flags=re.I)
+    p = re.sub(r"([?&][^=&]+=)[^&]*", r"\1…", p)          # a query's values (ids, names): not shown
+    return p
+
+
+def script_of(msg):
+    """(a SEVERE line is a script error, the script's name or ""): "checkDCSupportsTLS: Cannot convert null to an object"
+    -> (True, "checkDCSupportsTLS"); "... Caused by error in sys_script_include.<id>.script at line 5" -> (True,
+    "sys_script_include.script"); any other line -> (False, "")."""
+    if not JS_ERR.search(msg):
+        return False, ""
+    c = CAUSED_IN.search(msg)
+    if c:
+        name = re.sub(r"\.(?:[0-9a-f]{32})(?=\.|$)", "", c.group(1), flags=re.I)
+        return True, name[:80]
+    m = SCRIPT_NAME.match(msg)
+    if m and m.group(1).split(".")[0] not in NOT_SCRIPT:
+        return True, m.group(1)[:80]
+    return True, ""
+
+
 def tail_lines(path, max_bytes):
     with open(path, "rb") as f:
         f.seek(0, 2)
@@ -948,12 +986,14 @@ def tail_lines(path, max_bytes):
 def read_log(logdir, pattern, hours, max_mb, top, now=None, sem_wait_ms=1000):
     """The node's log in the last hours: OutOfMemory, semaphore problems (a semaphore queue, exceeded, timed out; a
     slow transaction that waited sem_wait_ms or more for its semaphore), SEVERE lines, and slow transactions ("waited
-    excessive time to run" - their own kind, with the longest run), grouped by message."""
+    excessive time to run" - their own kind, with the longest run), grouped by message. 1.56.0: a slow transaction
+    that waited for its session alone (semaphore wait under 100 ms) is grouped by its path (session_ms: the waits,
+    for the median); a SEVERE script error carries its script's name; every group its first and last time."""
     now = now or time.time()
     since = now - hours * 3600.0
     since_s = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(since))
     lg = {"dir": logdir, "files": [], "hours": hours, "severe": 0, "oom": 0, "semaphore": 0, "slow": 0, "slow_max_ms": 0,
-          "slow_sem": 0, "sem_wait_ms": sem_wait_ms, "groups": [], "why": ""}
+          "slow_sem": 0, "slow_session": 0, "sem_wait_ms": sem_wait_ms, "groups": [], "why": ""}
     files = sorted((p for p in glob.glob(os.path.join(logdir, pattern)) if os.path.isfile(p)), key=os.path.getmtime)
     files = [p for p in files if os.path.getmtime(p) >= since]
     if not os.path.isdir(logdir):
@@ -970,7 +1010,8 @@ def read_log(logdir, pattern, hours, max_mb, top, now=None, sem_wait_ms=1000):
         first, cont = rec[0], rec[1:6]
         kinds = []
         text = "\n".join([first] + cont)
-        run_ms = session_ms = 0
+        run_ms = session_ms = sem = 0
+        script = ""
         if OOM.search(text):
             kinds.append("OutOfMemory")
         slow = SLOW.search(first)
@@ -983,8 +1024,9 @@ def read_log(logdir, pattern, hours, max_mb, top, now=None, sem_wait_ms=1000):
             if sem >= sem_wait_ms:
                 kinds.append("slow transaction (semaphore wait)")
                 lg["slow_sem"] += 1
-            elif run_ms and session_ms >= 0.8 * run_ms:
+            elif run_ms and session_ms >= 0.8 * run_ms and sem < 100:
                 kinds.append("slow transaction (session wait)")
+                lg["slow_session"] += 1
             else:
                 kinds.append("slow transaction")
             lg["slow"] += 1
@@ -993,6 +1035,9 @@ def read_log(logdir, pattern, hours, max_mb, top, now=None, sem_wait_ms=1000):
             kinds.append("semaphore")
         if SEVERE.search(first):
             kinds.append("SEVERE")
+            is_script, script = script_of(message_of(first))
+            if is_script:
+                kinds.append("script error")
         if not kinds:
             return
         lg["oom"] += "OutOfMemory" in kinds
@@ -1002,14 +1047,26 @@ def read_log(logdir, pattern, hours, max_mb, top, now=None, sem_wait_ms=1000):
         if "OutOfMemory" in kinds and not OOM.search(first):
             msg = next((c.strip() for c in cont if OOM.search(c)), msg)
         msg = no_user(msg)
-        k = "|".join(kinds) + "|" + key_of(msg)
-        g = groups.setdefault(k, {"message": msg[:400], "count": 0, "kinds": [], "last": "", "max_ms": 0, "max_session_ms": 0})
+        path = tx_path(msg) if "slow transaction (session wait)" in kinds else ""
+        k = "|".join(kinds) + "|" + (("path " + path) if path else key_of(msg))
+        g = groups.setdefault(k, {"message": msg[:400], "count": 0, "kinds": [], "first": "", "last": "", "max_ms": 0,
+                                  "max_session_ms": 0, "max_sem_ms": 0})
         g["count"] += 1
         g["max_ms"] = max(g["max_ms"], run_ms)
         g["max_session_ms"] = max(g["max_session_ms"], session_ms)
+        g["max_sem_ms"] = max(g["max_sem_ms"], sem)
         g["message"] = msg[:400]
-        g["last"] = TS.match(first).group(0) if TS.match(first) else ""
+        when = TS.match(first).group(0) if TS.match(first) else ""
+        g["first"] = g["first"] or when
+        g["last"] = when
         g["kinds"] = sorted(set(g["kinds"]) | set(kinds))
+        if path:
+            g["path"] = path
+            waits = g.setdefault("session_ms", [])
+            if len(waits) < 5000:                # the median of the first 5000 is the median
+                waits.append(session_ms)
+        if script:
+            g["script"] = script
 
     for p in files:
         lg["files"].append(os.path.basename(p))
@@ -1025,9 +1082,16 @@ def read_log(logdir, pattern, hours, max_mb, top, now=None, sem_wait_ms=1000):
             close(rec)
         except OSError as e:
             lg["why"] = "%s: %s" % (p, e)
-    order = {"OutOfMemory": 0, "semaphore": 1, "slow transaction (semaphore wait)": 1, "SEVERE": 2, "slow transaction": 3,
-             "slow transaction (session wait)": 3}
-    lg["groups"] = sorted(groups.values(), key=lambda g: (min(order[k] for k in g["kinds"]), -g["count"]))[:max(1, top)]
+    # kept: the worst first, the slow sessions (Low in the report) last, so they never push out a problem
+    order = {"OutOfMemory": 0, "semaphore": 1, "slow transaction (semaphore wait)": 1, "script error": 2, "SEVERE": 2,
+             "slow transaction": 3, "slow transaction (session wait)": 4}
+    kept = sorted(groups.values(), key=lambda g: (min(order[k] for k in g["kinds"]), -g["count"]))[:max(1, top)]
+    for g in kept:
+        waits = sorted(g.pop("session_ms", None) or [])
+        if waits:
+            n = len(waits)
+            g["median_session_ms"] = waits[n // 2] if n % 2 else (waits[n // 2 - 1] + waits[n // 2]) // 2
+    lg["groups"] = kept
     return lg
 
 

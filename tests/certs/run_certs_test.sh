@@ -161,7 +161,7 @@ h = m.get_body(preferencelist=("html",)).get_content()
 h = re.sub(r'<span class="(?:sa|g)-lab"[^>]*>[^<]*</span>', "", h)         # 1.55.0's column labels and long-word
 h = re.sub(r'<span class="(?:sa|g)-brk">([^<]*)</span>', r"\1", h)         # spans: a cell reads as before
 ok = (re.search(r'bgcolor="#b45309"[^>]*>expires within 30 days<', h)          # the TLS port, 20 days
-      and re.search(r'bgcolor="#1d4ed8"[^>]*>expires within 60 days<', h)       # the JKS, 45 days
+      and re.search(r'bgcolor="#88358e"[^>]*>Low: expires within 60 days<', h)  # the JKS, 45 days: Low (1.56.0)
       and ">Found but not checked" in h and "locked.p12" in h and "needs its password" in h
       and "SomeOrganization" not in h and "relay01.example.mil" in h
       # one row each for the two hosts: the placeholder, the locked PKCS12
@@ -172,7 +172,7 @@ ok = (re.search(r'bgcolor="#b45309"[^>]*>expires within 30 days<', h)          #
       and "bundle1.example.mil" not in h)
 sys.exit(0 if ok else 1)
 EOPY
-then echo "ok   - the email: amber 20 days, blue 45 days; under 'Found but not checked' the locked PKCS12, postfix's placeholder and the bundle of 11, one row for both hosts"
+then echo "ok   - the email: amber 20 days, Low 45 days; under 'Found but not checked' the locked PKCS12, postfix's placeholder and the bundle of 11, one row for both hosts"
 else echo "FAIL - the email"; fails=$((fails + 1)); fi
 grep -q "s3cret" out.txt mail/*.eml 2>/dev/null && { echo "FAIL - a password in the output"; fails=$((fails + 1)); } || echo "ok   - no password anywhere in the output or the email"
 if [ "$fails" -eq 0 ]; then echo "ok   - all certificate discovery scenarios passed"; else echo "$fails FAILED"; exit 1; fi

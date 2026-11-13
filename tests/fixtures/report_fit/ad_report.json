@@ -622,7 +622,7 @@
 ]
 ],
 "status": "critical",
-"text": "The Directory Service, DFS Replication and DNS Server logs, and the Netlogon, KDC, time and Group Policy entries of the System log: the events that matter on a DC (with what they mean) and every other error (blue, for information). The same event on the same DC is counted once.",
+"text": "The Directory Service, DFS Replication and DNS Server logs, and the Netlogon, KDC, time and Group Policy entries of the System log: the events that matter on a DC (with what they mean) and every other error (Low: worth knowing, nothing to do now). The same event on the same DC is counted once.",
 "title": "Events (last 24 h)"
 },
 {
@@ -680,7 +680,7 @@
 [
 "",
 "",
-"info",
+"low",
 "",
 ""
 ],
@@ -708,7 +708,7 @@
 ],
 "row_status": [
 "critical",
-"info",
+"low",
 "",
 ""
 ],
@@ -723,7 +723,7 @@
 [
 "DC02",
 "KDC",
-"none",
+"none (Low)",
 "",
 ""
 ],
@@ -743,7 +743,7 @@
 ]
 ],
 "status": "critical",
-"text": "The newest certificate each DC has for LDAPS (server authentication) and for the KDC (smart card / PKINIT logons). Amber 30 days, red 7 days before it expires; blue: none (that service is not available on the DC).",
+"text": "The newest certificate each DC has for LDAPS (server authentication) and for the KDC (smart card / PKINIT logons). Amber 30 days, red 7 days before it expires; Low: none (that service is not available on the DC).",
 "title": "Certificates (LDAPS and Kerberos)"
 },
 {
@@ -790,8 +790,8 @@
 [
 "",
 "",
-"info",
-"info"
+"low",
+"low"
 ],
 [
 "",
@@ -807,15 +807,15 @@
 "Subnets"
 ],
 "row_status": [
-"info",
+"low",
 ""
 ],
 "rows": [
 [
 "corp.test",
 "Branch",
-0,
-0
+"0 (Low)",
+"0 (Low)"
 ],
 [
 "corp.test",
@@ -824,7 +824,7 @@
 1
 ]
 ],
-"text": "AD sites, the DCs of this domain in each and their subnets (blue: no DC of this domain, or no subnet - clients are never placed in a site without one).",
+"text": "AD sites, the DCs of this domain in each and their subnets (Low: no DC of this domain, or no subnet - clients are never placed in a site without one).",
 "title": "Sites"
 },
 {

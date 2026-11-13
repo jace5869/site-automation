@@ -45,7 +45,7 @@ ODFC_DIFF_RE = re.compile(r"^(?P<computer>.+)_ODFC" + EXT + "$", re.I)          
 ODFC_SESSION_RE = re.compile(r"^ODFC-(?P<user>.+)-SESSION-(?P<n>\d+)" + EXT + "$", re.I)   # documented
 VHD_RE = re.compile(EXT + "$", re.I)
 AUX = (".lock", ".meta", ".metadata")                                           # Cloud Cache's (documented)
-SEV = {"critical": 0, "warning": 1, "info": 2}
+SEV = {"critical": 0, "warning": 1, "low": 2, "info": 3}   # 1.56.0 low: worth knowing, nothing to do now
 
 
 def _pattern(tpl, ext=""):
@@ -227,7 +227,7 @@ def hz_fslogix(scan, opts=None):
                         " - it is %s%s: FSLogix set as now will not find it" % (
                             other[0], " (FlipFlopProfileDirectoryName)" if other[0].startswith("%username%") else "")) if other else ""))
                 if not mine and not frec["error"]:
-                    _flag(frec, "info", "no_container",
+                    _flag(frec, "low", "no_container",
                           "no container in it - " + ("empty" if not frec["files"] and not fo.get("dirs") else
                                                      "only " + ", ".join((frec["files"] + ["%s\\" % d for d in fo.get("dirs") or []])[:6])))
             for x in ([] if top else odd):
@@ -254,7 +254,7 @@ def hz_fslogix(scan, opts=None):
             named = set(a["name"] for c in here for a in c["aux"] + c["diffs"])
             for x in diffs + aux:
                 if x["name"] not in named and mine:
-                    _flag(frec, "info", "other", "%s belongs to no container here" % x["name"])
+                    _flag(frec, "low", "other", "%s belongs to no container here" % x["name"])
 
     # each container judged
     for c in containers:
@@ -284,7 +284,7 @@ def hz_fslogix(scan, opts=None):
             c["in_use"] = "likely"
             c["in_use_why"] = "written %s ago%s (an inference)" % (_ago(age), (" - Cloud Cache lock file " + lock[0]) if lock else "")
         if age is not None and age >= stale_days * 86400:
-            _flag(c, "info", "stale", "not written for %s - %s to reclaim once you know %s has left" % (
+            _flag(c, "low", "stale", "not written for %s - %s to reclaim once you know %s has left" % (
                 _ago(age), _size(c["size"] + sum(d["size"] for d in c["diffs"])), c["user"] or "the user"))
 
     # two containers of one kind for one user (by SID, by name)
@@ -423,13 +423,18 @@ def _report(containers, folders, shares, o, t):
         {"title": "Differencing disks left behind", "columns": ["User", "SID", "File", "Why"],
          "rows": [[c["user"] or "?", c["sid"], "%s\\%s" % (c["folder"], c["file"]), _texts(c, ("diff_left",))] for c in left[:mx]],
          "status": "warning" if left else "ok"},
-        {"title": "Stale - space to reclaim", "columns": ["User", "SID", "Kind", "Size", "Last written", "File"],
+        # 1.56.0: stale containers and leftover folders/files are Low (worth knowing, nothing to do now) - the word in the text, the tile and the Why column
+        dict({"title": "Stale - space to reclaim", "columns": ["User", "SID", "Kind", "Size", "Last written", "File"],
          "rows": [[c["user"] or "?", c["sid"], c["kind"], _size(c["size"]), _when(c["last"], tz), "%s\\%s" % (c["folder"] or "(the share)", c["file"])]
                   for c in stale[:mx]],
          "text": "Not written for %g days or more: %s in all. Check in AD that the user has left before anyone removes one - this job removes nothing."
-                 % (t["stale"], _size(reclaim))},
-        {"title": "Folders with no container, other files", "columns": ["Folder", "Why"],
-         "rows": [[f["folder"] or "(the share)", _texts(f, ("no_container", "unread", "other"))] for f in empty[:mx]]},
+                 % (t["stale"], _size(reclaim))}, **({"status": "low", "row_status": ["low"] * len(stale[:mx]),
+                 "text": "Low: worth knowing, nothing to do now. Not written for %g days or more: %s in all. Check in AD that the user "
+                         "has left before anyone removes one - this job removes nothing." % (t["stale"], _size(reclaim))} if stale else {})),
+        dict({"title": "Folders with no container, other files", "columns": ["Folder", "Why"],
+              "rows": [[f["folder"] or "(the share)", ("" if _has(f, "unread") else "Low - ") + _texts(f, ("no_container", "unread", "other"))]
+                       for f in empty[:mx]]},
+             **({"row_status": ["" if _has(f, "unread") else "low" for f in empty[:mx]]} if any(not _has(f, "unread") for f in empty) else {})),
         {"title": "Largest containers", "columns": ["User", "SID", "Kind", "Size", "% of cap", "Last written", "In use", "File"],
          "rows": [_row(c, tz) for c in biggest[:min(mx, 20)]],
          "text": "In use: yes = a differencing disk written lately (Microsoft documents RW.VHDX and %%computername%%_ODFC.VHDX next to the "
@@ -444,7 +449,8 @@ def _report(containers, folders, shares, o, t):
                           {"label": "Near the cap", "value": len(near), "status": "warning" if near else "ok"},
                           {"label": "Two for one user", "value": n_dup, "status": "warning" if dup else "ok"},
                           {"label": "Naming", "value": len(naming), "status": "warning" if naming else "ok"},
-                          {"label": "Stale", "value": len(stale), "note": _size(reclaim) + " to reclaim"},
+                          dict({"label": "Stale", "value": len(stale), "note": _size(reclaim) + " to reclaim"},
+                               **({"status": "low", "note": "Low - %s to reclaim" % _size(reclaim)} if stale else {})),
                           {"label": "In use", "value": len(in_use)},
                           {"label": "Shares low", "value": len([s for s in shares if s["status"] != "ok"]),
                            "status": "critical" if any(s["status"] == "critical" for s in shares) else

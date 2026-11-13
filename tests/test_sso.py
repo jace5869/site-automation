@@ -93,7 +93,8 @@ class VcenterSso(unittest.TestCase):
         self.assertEqual(len(vf.vcenter_sso_problems(s)), 2)
 
     def test_sts_expiry_in_the_report_only(self):
-        for days, sev in ((-1, "critical"), (10, "critical"), (40, "warning"), (61, None)):
+        # 1.56.0: within twice the warn days (60) is Low; after that nothing
+        for days, sev in ((-1, "critical"), (10, "critical"), (40, "warning"), (61, "low"), (120, "low"), (121, None)):
             s = sso(vc={"sts": [{"subject": "CN=s", "expires": "x", "days": days}]})
             self.assertEqual([p["severity"] for p in vf.vcenter_sso_problems(s)], [sev] if sev else [], days)
             self.assertEqual(vf.vcenter_sso_conditions(s), [])

@@ -273,7 +273,7 @@ Every certificate is matched by its fingerprint and by its public key. [TRUST_ST
 | `no system CA bundle was read on this host` | none of `check_trust_bundles` exists here | name the host's bundle in `check_trust_bundles` |
 
 A certificate that is in the blocklist is *blocked*: no finding. *AAA Certificate Services* (Sectigo's
-root that cross-signed the compromised intermediates) is a **notice** by default - in the report, no
+root that cross-signed the compromised intermediates) is a **notice** by default - in the report as *Low*, no
 finding - because nearly everything chains to it; `check_trust_severity: {"AAA Certificate Services":
 warning}` once you decide to blocklist it. The **Trust store report** (below) shows every store read
 on every host, and vCenter and ESXi.
@@ -644,7 +644,7 @@ would block and clean up the rules; on the first quiet day it offers `permissive
 
 | The report shows | Means | Do |
 |---|---|---|
-| *Would be blocked (permissive)* | fapolicyd let it through and logged it | approve its change before enforcing |
+| *Low - would be (permissive)* | fapolicyd let it through and logged it (Low: nothing blocked now) | approve its change before enforcing |
 | *rolled back* (red) | fapolicyd failed after the change, or a program no longer started: all put back | its journal in the report |
 | *still down* (red) | it was down, the fixes are made, it still does not start | its journal; the next cause |
 | *refused* | a line the job never gives, `auto` where fapolicyd cannot, or a change that blocks more while enforcing | correct the line, or approve permissive first |
@@ -662,7 +662,7 @@ with a certificate inside `check_certs_warn_days`, so a workflow can open ticket
 (`site_fail_on: []` keeps it green: a report only).
 
 **Emailed** with `report_email_to` (Linux and Windows: `win_cert_report.yml`). In the email the table
-is coloured: **red** = expired, **amber** = expires within `check_certs_warn_days` (30), **blue** =
+is coloured: **red** = expired, **amber** = expires within `check_certs_warn_days` (30), **Low** =
 within `check_certs_notice_days` (60), the rest plain with a green "ok". Windows:
 `win_check_certs_warn_days` / `win_check_certs_notice_days`.
 

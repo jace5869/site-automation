@@ -1,0 +1,123 @@
+{
+"footer": "",
+"sections": [
+{
+"cards": [
+{
+"code": "openssl x509 -enddate -noout -in /etc/pki/tls/certs/www3.crt",
+"meta": "Certificate",
+"next": "Look further:",
+"status": "critical",
+"subject": "host03.corp.example.mil",
+"title": "certificate CN=www3.corp.example.mil EXPIRED"
+},
+{
+"code": "openssl x509 -enddate -noout -in /etc/pki/tls/certs/www0.crt",
+"meta": "Certificate",
+"next": "Look further:",
+"status": "warning",
+"subject": "host00.corp.example.mil",
+"title": "certificate CN=www0.corp.example.mil expires in 20 days"
+}
+],
+"status": "critical",
+"text": "What to act on first: critical, then warning. Every finding is in the tables below.",
+"title": "Start here"
+},
+{
+"columns": [
+"Host",
+"Severity",
+"Check",
+"Finding",
+"Look further"
+],
+"row_status": [
+"",
+"",
+"low",
+"low"
+],
+"rows": [
+[
+"host03.corp.example.mil",
+"CRITICAL",
+"certs",
+"certificate CN=www3.corp.example.mil EXPIRED",
+"openssl x509 -enddate -noout -in /etc/pki/tls/certs/www3.crt"
+],
+[
+"host00.corp.example.mil",
+"WARNING",
+"certs",
+"certificate CN=www0.corp.example.mil expires in 20 days",
+"openssl x509 -enddate -noout -in /etc/pki/tls/certs/www0.crt"
+],
+[
+"host01.corp.example.mil",
+"LOW",
+"certs",
+"certificate CN=www1.corp.example.mil expires within 90 days",
+"openssl x509 -enddate -noout -in /etc/pki/tls/certs/www1.crt"
+],
+[
+"host02.corp.example.mil",
+"LOW",
+"certs",
+"certificate CN=www2.corp.example.mil expires within 90 days",
+"openssl x509 -enddate -noout -in /etc/pki/tls/certs/www2.crt"
+]
+],
+"status": "critical",
+"title": "Findings"
+},
+{
+"passed": [
+"host01.corp.example.mil",
+"host02.corp.example.mil"
+],
+"passed_checks": [],
+"text": "host01.corp.example.mil, host02.corp.example.mil",
+"title": "Healthy (2)"
+}
+],
+"status": "critical",
+"summary": [
+{
+"label": "Hosts checked",
+"note": "reported this run",
+"value": 4
+},
+{
+"label": "Healthy",
+"note": "no findings",
+"status": "ok",
+"value": 2
+},
+{
+"label": "With findings",
+"note": "hosts to look at",
+"status": "warning",
+"value": 2
+},
+{
+"label": "Critical",
+"note": "act now",
+"status": "critical",
+"value": 1
+},
+{
+"label": "Warning",
+"note": "plan a fix",
+"status": "warning",
+"value": 1
+},
+{
+"label": "Low",
+"note": "worth knowing",
+"status": "low",
+"value": 2
+}
+],
+"title": "Certificates: 4 finding(s) on 2 of 4 host(s)"
+}

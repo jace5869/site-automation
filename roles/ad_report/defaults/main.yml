@@ -42,9 +42,9 @@ ad_changes_max: 500                      # look at most at this many changed obj
 # Key Admins, Cert Publishers): names or SIDs of this domain's groups.
 ad_privileged_groups_extra: [DnsAdmins]
 ad_groups_should_be_empty: []            # privileged groups that must have no member, e.g. [Schema Admins] - amber when they have one
-ad_privileged_change_severity: warning   # a member added to / removed from a privileged group: warning, critical or info
-ad_schema_change_severity: warning       # the schema version changed: warning, critical or info
-ad_dc_change_severity: info              # a domain controller added or removed: warning, critical or info
+ad_privileged_change_severity: warning   # a member added to / removed from a privileged group: critical, warning, low or info
+ad_schema_change_severity: warning       # the schema version changed: critical, warning, low or info
+ad_dc_change_severity: info              # a domain controller added or removed: critical, warning, low or info
 
 # ---- What is read on each DC ---------------------------------------------------------------------
 ad_dcdiag_skip: [SystemLog]              # dcdiag tests to skip (SystemLog fails on any error in the System log: the Events table covers it)

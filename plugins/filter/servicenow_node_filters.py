@@ -376,6 +376,41 @@ def _stats_findings(add, ub, who, host, url, st, o):
             "sys_trigger, Next action in the past")
 
 
+# 1.56.0: each grouped log message rated - critical, warning, low (worth knowing, nothing to do now) or "" (as before)
+LOG_RANK = {"critical": 0, "warning": 1, "": 2, "low": 3}
+LOG_WORD = {"critical": "Critical", "warning": "Warning", "low": "Low", "": "-"}
+SESSION_NOTE = ("Low - session wait: one person's own requests waited for each other (a browser sends several at once, and "
+                "a session runs them one at a time). It is not the node short of threads; nothing to do unless one page is "
+                "slow for everyone.")
+
+
+def _sem_ms(o):
+    """(warning, critical) semaphore wait in ms of a slow transaction: servicenow_node_semaphore_warn_ms (its older name
+    servicenow_node_semaphore_wait_ms) and servicenow_node_semaphore_crit_ms."""
+    warn = int(o.get("sem_warn_ms") or o.get("sem_wait_ms") or 1000)
+    return warn, max(warn, int(o.get("sem_crit_ms") or 10000))
+
+
+def _slow_n(lg):
+    """The slow transactions of a node's log that count toward servicenow_node_slow_tx_warn: not the session waits."""
+    return max(0, int(lg.get("slow") or 0) - int(lg.get("slow_session") or 0))
+
+
+def sn_log_level(g, opts=None):
+    """A node log group's level: critical (OutOfMemory; a semaphore wait of servicenow_node_semaphore_crit_ms or more),
+    warning (a semaphore problem; a SEVERE script error), low (slow transactions that only waited for their own
+    session), "" (anything else: as before 1.56.0)."""
+    kinds = set((g or {}).get("kinds") or [])
+    if "OutOfMemory" in kinds or ("slow transaction (semaphore wait)" in kinds
+                                   and int(g.get("max_sem_ms") or 0) >= _sem_ms(opts or {})[1]):
+        return "critical"
+    if kinds & {"semaphore", "slow transaction (semaphore wait)", "script error"}:
+        return "warning"
+    if kinds == {"slow transaction (session wait)"}:
+        return "low"
+    return ""
+
+
 def sn_node_findings(nodes, cluster=None, opts=None):
     """Every front-end node and cluster problem as a finding {check, id, severity, summary, hint}.
     nodes: [{host, hostname, reachable, error, units, missing, disk, memory}]; opts: the thresholds, inventory (every
@@ -455,8 +490,13 @@ def sn_node_findings(nodes, cluster=None, opts=None):
                     who, int(lg["oom"]), hours), "# %s\ngrep -n OutOfMemory %s | tail" % (_s(ex.get("message"))[:300], logf))
             if int(lg.get("semaphore") or 0):
                 ex = ex_of("semaphore") or ex_of("slow transaction (semaphore wait)")
-                add(ub + "log-semaphore", "warning", "the ServiceNow node %s logged %d semaphore problem(s) in the last %s h "
-                    "(a queue, a limit exceeded, or a wait of %s ms or more)" % (who, int(lg["semaphore"]), hours, lg.get("sem_wait_ms", 1000)),
+                warn_ms, crit_ms = _sem_ms(o)
+                worst = max([int(g.get("max_sem_ms") or 0) for g in lg.get("groups") or []] + [0])
+                add(ub + "log-semaphore", "critical" if worst >= crit_ms else "warning",
+                    "the ServiceNow node %s logged %d semaphore problem(s) in the last %s h "
+                    "(a queue, a limit exceeded, or a wait of %s ms or more)%s" % (
+                        who, int(lg["semaphore"]), hours, lg.get("sem_wait_ms", warn_ms),
+                        "; a transaction waited %d ms for a semaphore: the node is short of threads" % worst if worst >= crit_ms else ""),
                     "# %s\ngrep -inE 'semaphore.*(queue|exceeded|timed out)|semaphore wait: [0-9]{4,}' %s | tail" % (
                         _s(ex.get("message"))[:300], logf))
             if int(lg.get("severe") or 0) >= int(o.get("severe_warn", 100)):
@@ -464,11 +504,26 @@ def sn_node_findings(nodes, cluster=None, opts=None):
                 add(ub + "severe", "warning", "the ServiceNow node %s logged %d SEVERE line(s) in the last %s h (the most frequent "
                     "%d times)" % (who, int(lg["severe"]), hours, int(ex.get("count", 0))),
                     "# %s\ngrep -c SEVERE %s; the report's Node log errors table" % (_s(ex.get("message"))[:300], logf))
-            if int(lg.get("slow") or 0) >= int(o.get("slow_tx_warn", 200)):
-                ex = max((g for g in lg.get("groups") or [] if any(k.startswith("slow transaction") for k in g.get("kinds", []))),
-                         key=lambda g: g.get("count", 0), default={})
+            scripts = [g for g in lg.get("groups") or [] if "script error" in (g.get("kinds") or [])]
+            if scripts:
+                named = [g for g in scripts if g.get("script")]
+                top = max(named or scripts, key=lambda g: g.get("count", 0))
+                name = _s(top.get("script"))
+                when = ("%s to %s" % (top.get("first"), top.get("last")) if top.get("first") and top.get("first") != top.get("last")
+                        else top.get("last") or "")
+                add(ub + "script-errors", "warning", "the ServiceNow node %s logged %d SEVERE script error(s) in the last %s h%s" % (
+                    who, sum(int(g.get("count") or 0) for g in scripts), hours,
+                    " (%s: %d time(s)%s)" % (name, int(top.get("count") or 0), ", " + when if when else "") if name else ""),
+                    "# %s\nServiceNow: System Logs > All, filtered on %s; System Definition > Scheduled Jobs that ran at %s" % (
+                        _s(top.get("message"))[:300], name or "the message above", top.get("first") or top.get("last") or "that time"))
+            if _slow_n(lg) >= int(o.get("slow_tx_warn", 200)):
+                # 1.56.0: the session waits (Low) are not counted, only named
+                ex = max((g for g in lg.get("groups") or [] if any(k.startswith("slow transaction") for k in g.get("kinds", []))
+                          and sn_log_level(g, o) != "low"), key=lambda g: g.get("count", 0), default={})
+                sess = int(lg.get("slow_session") or 0)
                 add(ub + "slow", "warning", "the ServiceNow node %s logged %d slow transaction(s) in the last %s h (the longest ran "
-                    "%d ms)" % (who, int(lg["slow"]), hours, int(lg.get("slow_max_ms") or 0)),
+                    "%d ms)%s" % (who, _slow_n(lg), hours, int(lg.get("slow_max_ms") or 0),
+                                  ", plus %d session wait(s), Low" % sess if sess else ""),
                     "# %s\ngrep -c 'waited excessive time to run' %s; ServiceNow: System Logs > Transactions (slow ones)" % (
                         _s(ex.get("message"))[:300], logf))
         for d in h.get("disk") or []:
@@ -557,7 +612,7 @@ def sn_node_sections(nodes, cluster=None, hosts=None, opts=None):
             warn = (u.get("enabled") not in ("enabled", "static", "alias", "generated", "indirect") or not st.get("up")
                     or (st.get("mem_pct") or 0) >= float(o.get("mem_warn", 85)) or (qs and min(qs) > 0)
                     or (st.get("sched_queue") or 0) > float(o.get("sched_queue_warn", 50)) or int(lg.get("semaphore") or 0) > 0
-                    or int(lg.get("severe") or 0) >= int(o.get("severe_warn", 100)) or int(lg.get("slow") or 0) >= int(o.get("slow_tx_warn", 200)))
+                    or int(lg.get("severe") or 0) >= int(o.get("severe_warn", 100)) or _slow_n(lg) >= int(o.get("slow_tx_warn", 200)))
             boot = u.get("enabled") in ("enabled", "static", "alias", "generated", "indirect")
             po = bool(u.get("page_only"))        # read by its stats page only: no unit, no log
             if po:
@@ -685,21 +740,39 @@ def sn_node_sections(nodes, cluster=None, hosts=None, opts=None):
     if fr:
         secs.append({"title": "fapolicyd denials (%s)" % (o.get("fapolicyd_since") or "today"), "columns": ["Host", "Program", "Path denied", "Count"],
                      "rows": fr, "row_status": fst})
-    lr, ls = [], []
+    lr, ls, cnt = [], [], []
     for h in nodes or []:
         for u in h.get("units") or []:
             for g in (u.get("log") or {}).get("groups") or []:
-                lr.append([h.get("host") or "?", (u.get("unit") or "?").replace(".service", ""), ", ".join(g.get("kinds") or []), g.get("count", 0),
-                           ("%d ms%s" % (g["max_ms"], (", session wait %d ms" % g["max_session_ms"]) if g.get("max_session_ms") else ""))
-                           if g.get("max_ms") else "-", g.get("last") or "-", _s(g.get("message"))[:300]])
-                ls.append("critical" if "OutOfMemory" in g.get("kinds", []) else
-                          "warning" if {"semaphore", "slow transaction (semaphore wait)"} & set(g.get("kinds", [])) else "")
+                lv = sn_log_level(g, o)
+                n = int(g.get("count") or 0)
+                if lv == "low" and g.get("path"):
+                    # slow sessions, one row per path: how many, the worst and the median wait
+                    msg = "%d slow session(s) on %s, worst %d ms, median %d ms" % (
+                        n, g["path"], int(g.get("max_session_ms") or 0), int(g.get("median_session_ms") or g.get("max_session_ms") or 0))
+                else:
+                    msg = _s(g.get("message"))[:300]
+                    if g.get("script"):
+                        msg = "%s (script %s, first %s)" % (msg, g["script"], g.get("first") or "-")
+                # the count and the longest run in one cell: the table keeps 7 columns with Level (glass at 800 px)
+                longest = ("longest %d ms%s" % (g["max_ms"], (", session wait %d ms" % g["max_session_ms"])
+                                                if g.get("max_session_ms") and lv != "low" else "")) if g.get("max_ms") else ""
+                lr.append([LOG_WORD[lv], "%s %s" % (h.get("host") or "?", (u.get("unit") or "?").replace(".service", "")),
+                           ", ".join(g.get("kinds") or []), "%d, %s" % (n, longest) if longest else n, g.get("last") or "-", msg])
+                ls.append(lv)
+                cnt.append(n)
     if lr:
-        order = sorted(range(len(lr)), key=lambda i: ({"critical": 0, "warning": 1}.get(ls[i], 2), -int(lr[i][3])))
+        # critical, warning, the others, then low at the bottom; the most frequent first in each
+        order = sorted(range(len(lr)), key=lambda i: (LOG_RANK.get(ls[i], 2), -cnt[i]))
         top = order[:int(o.get("log_groups", 10))]
-        secs.append({"title": "Node log errors (the most frequent, last %s h)" % o.get("log_hours", 24),
-                     "columns": ["Host", "Node", "Kind", "Count", "Longest", "Last", "Message"],
-                     "rows": [lr[i] for i in top], "row_status": [ls[i] for i in top]})
+        sec = {"title": "Node log errors (the most frequent, last %s h)" % o.get("log_hours", 24),
+               # 1.56.0: Level first; the host and its node in one column, the count with the longest run, so the table keeps
+               # 7 columns (glass at 800 px); a long path or message wraps (wrap)
+               "columns": ["Level", "Node", "Kind", "Count", "Last", "Message"],
+               "rows": [lr[i] for i in top], "row_status": [ls[i] for i in top], "wrap": True}
+        if "low" in sec["row_status"]:
+            sec["lines"] = [SESSION_NOTE]
+        secs.append(sec)
     if o.get("cluster_read") and cluster:
         inv = {_short(x) for x in o.get("inventory") or []}
         for h in nodes or []:
@@ -847,4 +920,4 @@ class FilterModule(object):
     def filters(self):
         return {"sn_node_cluster": sn_node_cluster, "sn_node_findings": sn_node_findings, "sn_node_sections": sn_node_sections,
                 "sn_node_status": sn_node_status, "sn_node_pages_plan": sn_node_pages_plan, "sn_node_pages": sn_node_pages,
-                "sn_node_labels": sn_node_labels, "sn_db_findings": sn_db_findings, "sn_db_status": sn_db_status}
+                "sn_node_labels": sn_node_labels, "sn_log_level": sn_log_level, "sn_db_findings": sn_db_findings, "sn_db_status": sn_db_status}

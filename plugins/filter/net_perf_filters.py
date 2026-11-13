@@ -8,7 +8,7 @@ report's tables.
   netperf:tcp:<target>       a TCP connect failed (some or all tries)                                 warning / critical
   netperf:slower:<target>    the round trip slower_factor times the host's usual, and slower_min_ms more   warning
   netperf:drops:<nic>        drops or errors per hour from the thresholds                              warning
-  netperf:ocsp:<name>        no answer, not successful, not good, stale (ocsp_severity); slow (warning)
+  netperf:ocsp:<name>        no answer, not successful, not good, stale (ocsp_severity: critical, warning or low); slow (warning)
   netperf:iperf:<pair>       throughput below the pair's min_mbps, or the test failed                  warning"""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
@@ -263,7 +263,8 @@ def net_perf_report_sections(results, iperf=None, time_zone=""):
             j = x.get("judged") or {}
             nu, why = j.get("next_update") or "", j.get("why") or ""
             orows.append([r["host"], x["name"], x["url"], (j.get("status") or "-") + ((", certificate " + j["cert_status"]) if j.get("cert_status") else ""),
-                          _tm.local(nu, tz) or "-", "%d" % int(x.get("ms") or 0), why.replace(nu, _tm.local(nu, tz)) if nu else why])
+                          _tm.local(nu, tz) or "-", "%d" % int(x.get("ms") or 0),
+                          ("Low - " if x["status"] == "low" else "") + (why.replace(nu, _tm.local(nu, tz)) if nu else why)])   # the word, never the colour alone
             ors.append(x["status"])
     if orows:
         sections.append({"title": "OCSP responders - asked from each host", "status": worst(ors), "columns": ["From", "Responder", "URL", "Answer", "Next update", "ms", "Problem"],

@@ -134,6 +134,11 @@ jobs:
           python tests/test_report_zone.py
           python tests/test_report_zone_horizon.py
           python tests/test_report_zone_misc.py
+          python tests/test_low_servicenow.py
+          python tests/test_low_ad.py
+          python tests/test_low_vmware.py
+          python tests/test_low_misc.py
+          python tests/test_low_security.py
           python tests/test_idm_inventory.py
           ANSIBLE_INVENTORY=/tmp/ac216/bin/ansible-inventory python tests/test_idm_inventory.py
           python tests/test_aap_keycloak_check.py

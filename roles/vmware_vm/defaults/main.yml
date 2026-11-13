@@ -381,7 +381,7 @@ vm_watch_sso: true                       # the watch also asks: is single sign-o
 # domain account (the "vCenter SSO test account" credential), and the OCSP responders smart card logins depend on.
 vm_sso: true                             # read single sign-on in the health report (and in the watch, with vm_watch_sso); false = never
 vm_sso_services: [sts, lookupsvc, trustmanagement, vmdird, vmafdd]  # SSO services that must be started (as vCenter's and the appliance's service lists name them; one not listed is skipped)
-vm_sso_sts_warn_days: 60                 # the STS signing certificate expires within this many days -> warning
+vm_sso_sts_warn_days: 60                 # the STS signing certificate expires within this many days -> warning; within twice that -> Low
 vm_sso_sts_crit_days: 14                 # ... within this many -> critical (expired: critical)
 vm_sso_test_user: ""                     # the test domain account; empty = the "vCenter SSO test account" credential's (VMWARE_SSO_TEST_USER); none = no login test
 # The OCSP responders. Simplest: site_ocsp_certs (below) - a certificate the responder knows, its OCSP address and its
@@ -391,12 +391,12 @@ vm_sso_test_user: ""                     # the test domain account; empty = the 
 # from the certificate (its Authority Information Access: the OCSP address, and the issuer's download address).
 vm_sso_ocsp: []                          # e.g. [{cert: files/ocsp/test-user.pem}] or [{url: "http://ocsp.example.mil", cert: files/ocsp/test-user.pem, issuer: files/ocsp/issuing-ca.pem}]
 site_ocsp_certs: []                      # certificates the OCSP responders know (PEM files from playbooks/), for vm_sso_ocsp and net_perf_ocsp when those are empty, e.g. [files/ocsp/test-user.pem]
-vm_sso_ocsp_severity: critical           # an OCSP responder that fails: critical (smart card logins fail) or warning
+vm_sso_ocsp_severity: critical           # an OCSP responder that fails: critical (smart card logins fail), warning, or low (listed only)
 # The CRL of each certificate above (its CRL Distribution Point, or crl_url in a vm_sso_ocsp entry; crl: false skips one),
 # in the health report only - from the AAP node: downloaded, issued and signed by the CA, not past its next update, not
 # listing the test certificate. vCenter falls back to the CRL when OCSP does not answer, or uses it alone when set so.
 vm_sso_crl: true                         # false = no CRL check
-vm_sso_crl_severity: warning             # a CRL that fails: warning (OCSP still answers smart card logins) or critical
+vm_sso_crl_severity: warning             # a CRL that fails: warning (OCSP still answers smart card logins), critical, or low (listed only)
 vm_sso_crl_timeout: 120                  # seconds for one CRL download (DoD CRLs are tens of MB)
 vm_sso_crl_max_mb: 200                   # a CRL larger than this is not read
 vm_sso_timeout: 30                       # seconds per request
@@ -539,7 +539,7 @@ vm_capacity_vcpu_per_core_max: 4         # vCPUs per physical core (amber from h
 vm_capacity_horizon_months: 12
 vm_capacity_storage_warn_pct: 85         # datastore used %: amber
 vm_capacity_storage_crit_pct: 90         # red, and the target of the storage runway
-vm_capacity_runway_warn_days: 90         # a runway shorter than this is amber
+vm_capacity_runway_warn_days: 90         # a runway shorter than this is amber; up to twice this, Low (worth knowing)
 vm_capacity_runway_crit_days: 30         # and red
 vm_capacity_include_local_datastores: false   # a host's own (not shared) datastores count too
 vm_capacity_max_rows: 100                # rows per table (problems first); the artifacts have all

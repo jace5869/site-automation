@@ -79,7 +79,7 @@
 "title": "Hardware: controllers and shelves"
 },
 {
-"text": "Disks that are broken (red), rebuilding, copying or in maintenance (amber), or not assigned to a node (blue). No failed or rebuilding disk.",
+"text": "Disks that are broken (red), rebuilding, copying or in maintenance (amber), or not assigned to a node (Low). No failed or rebuilding disk.",
 "title": "Disks: failed, rebuilding or unassigned"
 },
 {
