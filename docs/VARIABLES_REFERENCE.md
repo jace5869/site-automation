@@ -1449,6 +1449,12 @@ File: `roles/servicenow_insights/defaults/main.yml`
 | `servicenow_insights_days` | `0` | > 0: the last N days instead of the months |
 | `servicenow_insights_until` | (empty) | the last day (through its end, 2026-10-31), "" = now |
 | `servicenow_insights_compare` | `true` | read the window before as well: the changes against it (the tiles, rank ▲▼) |
+| `servicenow_insights_mode` | `full` | WHAT A LAUNCH MAKES (1.59.0). full = the whole report, with About to breach at the top. breach = only About to breach: a quick read of the SLAs running now, its own page and email - for an hourly schedule of this same template (Prompt on launch for Variables, the schedule's extra variables servicenow_insights_mode: br… (all of it: the role file) |
+| `servicenow_insights_breach` | `true` | ABOUT TO BREACH (1.59.0): the SLAs running now (task_sla: not breached, not paused) with this many business hours or less left - ServiceNow's business time left on each SLA (its own schedule), else servicenow_insights_business_hours. Tiles within 1 h, 4 h and this window, and breached today; the breaches of the last s… (all of it: the role file) |
+| `servicenow_breach_window_hours` | `8` | business hours ahead: the tiles are 1 h, 4 h and this window |
+| `servicenow_breach_days` | `30` | the trend's days (each with its 7-day average), the last three weeks side by side |
+| `servicenow_breach_max_rows` | `50` | tickets in the page's queue; the workbook has every one |
+| `servicenow_breach_email_to` | `[]` | servicenow_insights_mode breach: who gets its email ([] = none, the page only - an hourly email to report_email_to would be too many). The page: {template}/about-to-breach/latest.html beside the full report's, written over each run. |
 | `servicenow_insights_groups` | `[]` | The assignment groups reported on, exactly as ServiceNow names them: empty = every group (the whole site). A list, or text with one name per line or separated by ; or ,. |
 | `servicenow_insights_team_pages` | `true` | Each team's own page (every section of the report for that team) on the report website, and the Teams side by side table on the site's page. The teams are the groups named above, else the groups with at least servicenow_insights_team_min tickets in the window, the busiest first, at most servicenow_insights_teams_max. |
 | `servicenow_insights_teams_max` | `60` | at most this many teams with their own page |

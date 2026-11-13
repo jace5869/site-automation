@@ -15,6 +15,7 @@ and simpler: the tiles and the main tables, a link to the page, and an Excel wor
 
 | Section | What it shows |
 |---|---|
+| **About to breach** (1.59.0) | first on every page: the tickets whose SLA breaches within 8 business hours, least time left first, and the breaches of the last 30 days. See *About to breach* below |
 | **At a glance** | the tickets read, open now (and at the start), the median time to resolve an incident, SLAs met, reopened (or *came back*, below), bare close notes, changes successful, incidents reassigned 3+ times - each against the window before; then **What the period says**: three or four sentences, written by ACT from the tables (or made from the numbers without it) |
 | **Teams side by side** (the site's page) | one row per team: its backlog over the period (Keeping up / Falling behind), open now with what it was, open over 30 days, median fix, SLA met, its close notes, its change tasks closed / open (1.2.0), its top issue - the team's name opens its own page |
 | **Act on first** (1.7.0) | what the process says to look at, as tiles and lists (the first 10 rows, the rest folded): **SLA at risk now** (open incidents past 75% of their SLA, or breached and still open - worst first), **open over 3 hops**, **Awaiting Caller over 6 business days**, **No Resolution Provided** in the period (each for leadership's review, the close note's start with names and numbers replaced), **resolved, not closed after 7 days** - below |
@@ -151,6 +152,64 @@ action word; **good** = says what was done (restarted, replaced, unlocked, added
 **What is not a hand-off.** *Passed between groups* reads incidents only. A change whose tasks go to different teams, or
 a requested item whose catalog tasks do, is work split up by design: those are separate records, each assigned to its
 team from the start, and nothing is counted.
+
+## About to breach (1.59.0)
+
+The shift lead's queue: what breaches next, and whether breaches go up or down. It is first on every page. Each page
+shows its own groups' tickets.
+
+| Part | What it shows |
+|---|---|
+| The line at the top | the headline: *3 tickets breach within the hour; breaches down from 16 to 13 this week* |
+| Tiles | breach within 1 h (and how many have nobody assigned), within 4 h, within 8 h, breached today |
+| The queue | one row per ticket, least time left first: time left, the ticket (a link), its priority and SLA under it, the description, the group, who it is assigned to (*nobody*: a group but no person), SLA used, when it breaches |
+| Breaches, last 30 days | a few lines, the last three weeks side by side (breached, resolution, response, the worst group), every day's number with its 7-day average |
+
+How it is worked out:
+
+- **Which SLAs.** Running now: not breached, in progress (a paused SLA does not run down), on a ticket still open.
+- **Time left.** ServiceNow's business time left on each SLA, by the SLA's own schedule. Where it has none, the hours to
+  its planned end in `servicenow_insights_business_hours` (calendar hours when that is `{}`).
+- **One row per ticket.** A ticket with a response and a resolution SLA shows the one with less time left.
+- **The breaches.** Every SLA that breached in the last 30 days, by the day of its planned end (`report_time_zone`).
+  ServiceNow keeps them, so the trend needs no report database and no run history. A cancelled SLA is left out.
+- **Colour is never alone.** The time left is written in each row, and each tile says its window.
+
+What is read: `task_sla`, GET only, page by page in a fixed order (as 1.47.0 reads it). The ticket's number, description,
+priority, group and assignee come dot-walked in the same read (`task.number` ...). The VIP tiers (`servicenow_insights_vip_fields`)
+mark a VIP ticket in the queue. The account needs read on `task_sla`, which the itil role has.
+
+The email has the tiles, the first 25 tickets without their descriptions (the email leaves the site) and the weeks. The
+workbook adds three sheets: *About to breach* (every ticket), *Breaches by day*, *Breached SLAs*.
+
+The 30-day line itself comes with the website's shared sparkline (1.57.0). Until then the page carries every day's
+number in a table under the weeks.
+
+### Every hour, with the same template
+
+`servicenow_insights_mode: breach` reads only this section: the groups and `task_sla`, not months of tickets. Its page is
+`{template}/about-to-breach/latest.html` beside the full report's, written over each run, off the website's index. It
+links to the full report.
+
+a. On the template *ServiceNow - ticket insights*, tick **Prompt on launch** for **Variables**.
+
+b. Add a schedule, every hour in the working day, with these variables:
+
+```yaml
+servicenow_insights_mode: breach
+servicenow_breach_email_to: [shift-leads@yoursite.mil]   # [] (the default) = the page only, no email
+```
+
+c. Keep the template's own schedule for the full report. It runs with `full`, the default.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `servicenow_insights_mode` | `full` | `full`: the whole report, About to breach first. `breach`: only About to breach |
+| `servicenow_insights_breach` | `true` | `false`: no About to breach section in the full report, and no `task_sla` read for it |
+| `servicenow_breach_window_hours` | `8` | business hours ahead. The tiles are 1 h, 4 h and this window |
+| `servicenow_breach_days` | `30` | the days of breaches |
+| `servicenow_breach_max_rows` | `50` | tickets in the page's queue. The workbook has every one |
+| `servicenow_breach_email_to` | `[]` | breach mode's email. The full report's goes to `report_email_to` as before |
 
 ## Sites, directorates and teams (0.97.0)
 

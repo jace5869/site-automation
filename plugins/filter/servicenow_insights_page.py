@@ -120,6 +120,7 @@ section.card{background:var(--surface);border:1px solid var(--line);border-radiu
 .delta{font-size:12px;font-weight:700;white-space:nowrap}
 .delta.good{color:var(--good)} .delta.bad{color:var(--crit)} .delta.flat{color:var(--muted)}
 .tile.flag{border-color:var(--warn);background:var(--warn-bg)}
+.tile.crit{border-color:var(--crit);background:var(--crit-bg)}.nw{white-space:nowrap}
 .tile.flag .v{color:var(--warn)}
 .mini{grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}
 .mini .tile .v{font-size:21px}
@@ -241,6 +242,11 @@ tr.selrow td{background:var(--accent-soft)}
 .score{display:inline-flex;flex-wrap:wrap;align-items:center;gap:2px 6px}
 .score .qbar{width:70px;height:7px}
 .fair{font-size:12px;color:var(--muted);max-width:110ch}
+.brhead{font-size:17px;margin:0 0 12px}
+.ubar{display:inline-block;width:64px;height:7px;border-radius:4px;background:var(--line-2);vertical-align:middle;overflow:hidden}
+.ubar>span{display:block;height:100%}.ubar .u-crit{background:var(--crit)}.ubar .u-warn{background:var(--warn)}.ubar .u-info{background:var(--info)}
+.c-info{color:var(--info)}.brl{margin:6px 0 12px;padding-left:20px}.brl li{margin:2px 0}.breach-trend:empty{display:none}
+.brsla{display:block;font-size:11px;color:var(--muted)}.brnum{margin-top:10px}.brnum summary{cursor:pointer;font-size:13px;color:var(--fg-2)}
 .cap ul,.fair ul,.callout ul{margin:3px 0 0;padding-left:18px}.cap li,.fair li,.callout li{margin:1px 0}
 
 .kb{border:1px solid var(--line);border-radius:12px;overflow:hidden}
@@ -1119,7 +1125,7 @@ def tiles(rows, cls="tiles"):
     out = ['<div class="%s">' % cls]
     for t in rows:
         out.append('<div class="tile%s"%s><span class="eyebrow">%s</span><span class="v">%s%s</span><span class="d">%s</span></div>' % (
-            " flag" if t.get("flag") else "", (' data-pp="%s"' % e(t["pp"])) if t.get("pp") else "", e(t["label"]), t["value"],
+            (" " + t["cls"]) if t.get("cls") else (" flag" if t.get("flag") else ""), (' data-pp="%s"' % e(t["pp"])) if t.get("pp") else "", e(t["label"]), t["value"],
             (" " + t["delta"]) if t.get("delta") else "", t.get("note") or ""))
     out.append("</div>")
     return "".join(out)
@@ -1225,6 +1231,113 @@ def vip_section(m, s, side, links, two):
     if any(r_["small"] for r_ in v["rows"]) or any(x["tickets"] < vmin for d_ in v["defs"] for x in d_["rows"]) or any(t["vip"]["small"] for t in urows):
         out.append('<div class="fair">A dash: fewer than %d tickets, so counts only.</div>' % vmin)
     return section("vip", "VIP tickets", "incidents and requests opened in the window, by the VIP tier of who they were raised for", "".join(out))
+
+
+# each band's colour (the text always says the time left): within 1 h, 4 h, the rest of the window - info stands in for Low
+BAND_CLS = {1: ["crit"], 2: ["crit", "info"], 3: ["crit", "warn", "info"]}
+
+
+def sla_line(x):
+    """The line under a ticket: its priority and its SLA (P2 · Request Fulfillment Resolution; P2 Incident Response alone)."""
+    p_ = ("P" + x["priority_value"]) if x.get("priority_value") else str(x.get("priority") or "")
+    sla = str(x.get("sla") or "")
+    return sla if p_ and sla.upper().startswith(p_.upper() + " ") else " · ".join(y for y in (p_, sla) if y)
+
+
+def breach_section(bm, url, pre, title_note=""):
+    """1.59.0: About to breach - the headline, the tiles, the queue (least time left first) and the breaches of the last
+    days (the weeks side by side, every day's number). The line of every day is a hook for now: data-points on an empty
+    element, drawn by the shared sparkline helper (1.57.0) once it is there - the numbers table carries the same values."""
+    if not bm:
+        return ""
+    if bm.get("error"):
+        return section("breach", "About to breach", "the SLAs running now", '<div class="fair">The running SLAs were not read: %s.</div>' % e(bm["error"]))
+    bands = bm.get("bands") or [8.0]
+    flag = {"critical": True, "warning": True}
+
+    def bcls(band):
+        cls = BAND_CLS.get(len(bands)) or BAND_CLS[3]
+        return cls[bands.index(band)] if band in bands else cls[-1]
+    tl = [{"label": t["label"], "value": "—" if t["value"] is None else n(t["value"]), "note": e(t["note"]),
+           "flag": t["value"] and flag.get(t["status"]), "cls": "crit" if t["value"] and t["status"] == "critical" else ""}
+          for t in bm.get("tiles") or []]
+    out = ['<p class="brhead"><b>%s.</b></p>' % e(bm.get("head") or ""), tiles(tl)]
+    q = bm.get("queue") or []
+    mx = int(bm.get("max_rows") or 50)
+    vt = bm.get("vip_tiers") or []
+    rows = []
+    for x in q[:mx]:
+        c_ = bcls(x.get("band"))
+        vip = (' <span class="chip info">%s</span>' % e(vt[x["vip"]])) if vt and x.get("vip") is not None and x["vip"] < len(vt) else ""
+        who = '<b class="c-warn">nobody</b>' if x.get("nobody") else (e(x.get("assignee")) or '<span class="mut">—</span>')
+        p_ = x.get("pct")
+        used = ('<span class="ubar" aria-hidden="true"><span class="u-%s" style="width:%d%%"></span></span> %s' % (c_, max(0, min(100, int(p_ or 0))), pct(p_, 0))
+                if p_ is not None else '<span class="mut">—</span>')
+        rows.append((search_attr(x.get("number"), x.get("short"), x.get("group"), x.get("assignee")),
+                     [td('<b class="c-%s nw">%s</b>' % (c_, e(x.get("left"))), "n", x.get("left_h")),
+                      td(tk(x.get("number"), url, pre) + vip + '<span class="brsla">%s</span>' % e(sla_line(x))),
+                      td(e(x.get("short"))),
+                      td(e(x.get("group"))), td(who), td(used, "", p_ if p_ is not None else -1),
+                      td(e(x.get("at")), "n")]))
+    out.append('<div class="fig"><h3>About to breach, least time left first <span class="chip">%s</span></h3>%s</div>' % (n(len(q)), table(
+        [("Time left", "n", "left"), ("Ticket", "", "num"), ("Short description", "", ""), ("Group", "", "grp"),
+         ("Assigned to", "", "who"), ("SLA used", "", "used"), ("Breaches at", "n", "")],
+        rows, empty="Nothing breaches in the next %g business hours." % bm.get("window_h", 8), sortable=True)))
+    cap = ["Time left counts business time only: ServiceNow's own on each SLA (its schedule), where it has none, %s." % e(bm.get("business_hours") or "calendar hours"),
+           "One row per ticket: its priority and the SLA with the least time left under it.", '"nobody": a group but no person.']
+    if len(q) > mx:
+        cap.append("%s more: the workbook lists every one (servicenow_breach_max_rows)." % n(len(q) - mx))
+    out.append('<div class="fair">%s</div>' % " ".join(cap + [e(x) for x in bm.get("notes") or []]))
+    wk = bm.get("weeks") or []
+    pts = bm.get("points") or []
+    if pts or bm.get("lines"):
+        trend = ['<div class="fig"><h3>Breaches, last %d days</h3>' % int(bm.get("days") or 30)]
+        if bm.get("lines"):
+            trend.append('<ul class="brl">%s</ul>' % "".join("<li>%s</li>" % e(x) for x in bm["lines"]))
+        # TODO(1.57.0 merge): the shared sparkline helper draws this line - every day's breaches and its 7-day average;
+        # until then the hook only carries the points (the numbers table below has the same values)
+        if pts:
+            trend.append('<div class="breach-trend" data-points="%s" aria-hidden="true"></div>' % e(json.dumps(pts, separators=(",", ":"))))
+        if wk:
+            trend.append(table([("Week", "", ""), ("Breached", "n", ""), ("Resolution", "n", ""), ("Response", "n", ""), ("Worst group", "", "")],
+                               [("", [td(e(w["label"])), td(n(w["n"]), "n"), td(n(w["resolution"]), "n"), td(n(w["response"]), "n"),
+                                      td(("%s (%d)" % (e(w["worst"]), w["worst_n"])) if w["worst"] else '<span class="mut">—</span>')]) for w in wk]))
+        if pts:
+            trend.append('<details class="brnum"><summary>Every day\'s number (%d days)</summary>%s</details>' % (len(pts), table(
+                [("Day", "", ""), ("Breached", "n", ""), ("7-day average", "n", "")],
+                [("", [td(e(short_date(p_["date"]))), td(n(p_["n"]), "n"), td("%.1f" % p_["avg7"], "n")]) for p_ in reversed(pts)])))
+        trend.append("</div>")
+        out.append("".join(trend))
+    return section("breach", "About to breach", "the next %g business hours · read %s%s" % (bm.get("window_h", 8), e(bm.get("read_at") or ""), title_note),
+                   "".join(out))
+
+
+def servicenow_insights_breach_page(bm, opts=None):
+    """1.59.0, servicenow_insights_mode breach: the About to breach section on a page of its own (the hourly run), in the
+    report's looks, with a link to the full report (opts links.full). opts: the page options (look, header_text, generated,
+    job, footer), url (ServiceNow's address for the ticket links), prefixes."""
+    o = opts or {}
+    bm = bm or {}
+    brief = str(o.get("look") or "").strip().lower() == "brief"
+    url = ticket_base({"url": o.get("url") or ""}, o)
+    logo = '<!--site-report-logo--><div class="logo" aria-hidden="true">%s</div>' % e(
+        "".join(w[0] for w in str(o.get("header_text") or "Site automation").split()[:2]).upper() or "SA")
+    full = (o.get("links") or {}).get("full") or ""
+    out = ['<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
+           '<meta name="generator" content="site-automation ticket insights"><title>%s</title><style>%s%s</style></head><body>' % (
+               e("About to breach – " + (bm.get("head") or "ServiceNow")), CSS + ORG_CSS, BRIEF_CSS if brief else ""),
+           '<header class="bar gut"><div class="wrap"><div class="brand">%s<div style="min-width:0"><h1>ServiceNow - about to breach</h1>'
+           '<div class="sub">%s · generated %s%s</div></div></div></header>' % (
+               logo, e(o.get("scope_label") or "All assignment groups"), e(o.get("generated") or ""),
+               (" · AAP job %s" % e(o["job"])) if o.get("job") and str(o["job"]) != "local" else ""),
+           '<div class="gut"><div class="wrap"><main>']
+    if full:
+        out.append('<p class="cvaway">The whole report, with every section: <a href="%s">ticket insights</a>.</p>' % e(full))
+    out.append(breach_section(bm, url, o.get("prefixes") or {}) or '<div class="callout">ServiceNow was not read.</div>')
+    out.append('</main></div></div><footer class="gut foot"><div class="wrap">%s</div></footer><div class="tip" id="tip" hidden></div>'
+               '<script src="%s"></script><script id="site-report-js" data-file="%s">\n%s\n</script></body></html>' % (
+                   e(o.get("footer") or ""), SCRIPT_FILE, SCRIPT_FILE, SCRIPT))
+    return "".join(out)
 
 
 def search_attr(*parts):
@@ -1339,7 +1452,8 @@ def servicenow_insights_page(model, key="all", opts=None):
             ('<div class="sub lead">Group manager: <b>%s</b></div>' % e(s["lead"])) if s.get("lead") else "", menu))
 
     side = s.get("side") or ({"kind": "Teams", "rows": s.get("teams") or []} if is_all else {})
-    toc = ([("custom", "Custom view", "")] if is_all and not variant and m.get("org") else []) + [("glance", "At a glance", "")]
+    toc = ([("breach", "About to breach", len((s.get("breach") or {}).get("queue") or []) or "")] if s.get("breach") else []) + (
+        [("custom", "Custom view", "")] if is_all and not variant and m.get("org") else []) + [("glance", "At a glance", "")]
     trend_html = trend_section(m, key or "all", variant)          # the history (1.13.0): None when it is off or empty
     if trend_html:
         toc.append(("trend", "Trends", ""))
@@ -1436,6 +1550,8 @@ def servicenow_insights_page(model, key="all", opts=None):
                  'fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>'),
                 "Falling behind" if behind else "Keeping up", n(sr_), n(so_), pct(_p(sr_, so_)), e(win.get("label") or span),
                 n(b[1]), n(b[0]), pct(s["sla"][0]), "resolution SLA" if two else "SLA"))
+    if s.get("breach"):                                      # 1.59.0: about to breach, at the top
+        body.append(breach_section(s["breach"], url, pre))
     if is_all and not variant:
         body.append(custom_view(m, o))                       # the org map's Custom view (1.8.0)
     elif variant and m.get("org") and links.get("all"):      # a split's page: none here - where it is
@@ -2577,4 +2693,4 @@ def servicenow_insights_chunks(jobs, size=40):
 class FilterModule(object):
     def filters(self):
         return {"servicenow_insights_page": servicenow_insights_page, "servicenow_insights_pages": servicenow_insights_pages,
-                "servicenow_insights_chunks": servicenow_insights_chunks}
+                "servicenow_insights_chunks": servicenow_insights_chunks, "servicenow_insights_breach_page": servicenow_insights_breach_page}

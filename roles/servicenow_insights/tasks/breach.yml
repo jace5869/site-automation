@@ -1,0 +1,82 @@
+---
+# ABOUT TO BREACH ONLY (1.59.0, servicenow_insights_mode breach): the groups (servicenow_insights_groups), the SLAs running now
+# and those breached in the last servicenow_breach_days - nothing else read, no ACT. Its own page beside the full report's
+# ({template}/about-to-breach/latest.html, written over each run, off the website's index: the full report keeps its line),
+# its email only to servicenow_breach_email_to, its workbook. Then the play ends.
+
+- name: Breach | read the running SLAs and the breaches of the last {{ servicenow_breach_days }} days from ServiceNow
+  site_servicenow_insights:
+    url: "{{ _sni_url }}"
+    username: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
+    password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    validate_certs: "{{ servicenow_validate_certs | default(true) | bool }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout | default(30) | int }}"
+    groups: "{{ _sni_groups }}"
+    time_zone: "{{ report_time_zone | default('', true) | string }}"
+    max_records: "{{ servicenow_insights_max_records | int }}"
+    now: "{{ servicenow_insights_now | default(omit, true) }}"
+    vip_fields: "{{ servicenow_insights_vip_fields | default([], true) }}"
+    vip_people: "{{ servicenow_insights_vip_people | default('caller', true) | string | trim | lower }}"
+    breach_only: true
+    breach_horizon_hours: "{{ servicenow_breach_window_hours | servicenow_insights_breach_horizon(servicenow_insights_business_hours | default({}, true)) }}"
+    breach_days: "{{ servicenow_breach_days | int + 6 }}"
+  register: _snb
+  check_mode: false               # only reads
+
+- name: Breach | the queue, the tiles, the days
+  ansible.builtin.set_fact:
+    _snb_model: "{{ _snb | servicenow_insights_breach_only(_sni_opts) }}"
+
+- name: Breach | the report
+  ansible.builtin.set_fact:
+    _snb_doc: "{{ _snb_model | servicenow_insights_breach_doc(_sni_opts) }}"
+
+- name: Breach | {{ _snb_doc.title }}
+  ansible.builtin.debug:
+    msg: "{{ (_snb_doc | report_text).splitlines() }}"
+
+- name: Breach | the numbers as job artifacts (servicenow_insights_breach)
+  ansible.builtin.set_stats:
+    data:
+      servicenow_insights_breach:
+        tiles: "{{ _snb_model.tiles | default([]) | map(attribute='value') | list }}"
+        queue: "{{ _snb_model.queue | default([]) | length }}"
+        weeks: "{{ _snb_model.weeks | default([]) | map(attribute='n') | list }}"
+        read_at: "{{ _snb_model.read_at | default('') }}"
+  when: _snb.ok | default(false) | bool
+
+- name: Breach | its page on the report website, its email (servicenow_breach_email_to), the workbook
+  ansible.builtin.include_role:
+    name: site_email
+  vars:
+    _snb_page: "{{ (report_web_latest | default('{template}/latest.html', true) or '{template}/latest.html') | dirname }}/about-to-breach/latest.html"
+    _report: "{{ _snb_doc }}"
+    _report_html: >-
+      {{ _snb_model | servicenow_insights_breach_page({'look': _sni_opts.look, 'header_text': report_email_header_text | default('Site automation report'),
+           'generated': (report_time_zone | default('', true) | string | report_time_now) or (now(fmt='%Y-%m-%d %H:%M %Z') | trim),
+           'job': awx_job_id | default(tower_job_id | default('local')), 'url': _snb.url | default(_sni_url),
+           'ticket_links': _sni_opts.ticket_links, 'ticket_base': _sni_opts.ticket_base,
+           'prefixes': servicenow_insights_ticket_prefixes | default({}, true),
+           'footer': 'AAP job ' ~ awx_job_id | default(tower_job_id | default('(command line)')) ~ ' - ServiceNow ' ~ _sni_url,
+           'links': {'full': (report_web_latest | default('{template}/latest.html', true)) | servicenow_insights_rel(_snb_page)}}) }}
+    _report_xlsx: "{{ _snb_model | servicenow_insights_breach_xlsx if servicenow_insights_xlsx | bool else [] }}"
+    _report_xlsx_name: "{{ (awx_job_template_name | default(tower_job_template_name | default('ticket-insights'))) ~ '-about-to-breach' }}"
+    _report_email_skip: "{{ servicenow_breach_email_to | default([], true) | length == 0 }}"
+    _report_email_to_override: "{{ servicenow_breach_email_to | default([], true) }}"
+    report_web_page: "{{ _snb_page }}"
+    report_web_latest: ""
+    report_web_index: ""
+  when: >-
+    _snb.ok | default(false) | bool and (report_web_dest | default('', true) | string | trim | length > 0
+    or servicenow_breach_email_to | default([], true) | length > 0)
+
+- name: Breach | ServiceNow read (servicenow_insights_fail)
+  ansible.builtin.assert:
+    that: _snb.ok | default(false) | bool
+    fail_msg: "{{ _snb.error | default('ServiceNow was not read') }} - servicenow_insights_fail: false makes this a report only."
+    quiet: true
+  when: servicenow_insights_fail | bool
+
+- name: Breach | the play ends here (servicenow_insights_mode breach)
+  ansible.builtin.meta: end_play

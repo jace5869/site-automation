@@ -1,0 +1,144 @@
+{
+"sections": [
+{
+"columns": [
+"Time left",
+"Ticket",
+"Prio",
+"Group",
+"Assigned to",
+"SLA used",
+"Breaches at"
+],
+"row_status": [
+"critical",
+"critical",
+"critical",
+"warning",
+"warning",
+""
+],
+"rows": [
+[
+"24 min",
+"XINC0041872",
+"P2",
+"Network Operations",
+"Admin C",
+"96%",
+"07:24"
+],
+[
+"42 min",
+"XINC0041901",
+"P3",
+"Service Desk Tier 2",
+"nobody",
+"93%",
+"07:42"
+],
+[
+"54 min",
+"XRITM0019220",
+"P3",
+"Virtualization",
+"Admin A",
+"91%",
+"07:54"
+],
+[
+"1 h 36 min",
+"XINC0041915",
+"P2",
+"Network Operations",
+"Admin B",
+"84%",
+"08:36"
+],
+[
+"2 h 18 min",
+"XINC0041930",
+"P3",
+"Service Desk Tier 2",
+"nobody",
+"78%",
+"09:18"
+],
+[
+"7 h 06 min",
+"XINC0041977",
+"P3",
+"Virtualization",
+"Admin A",
+"36%",
+"14:06"
+]
+],
+"text": "\"nobody\": a group but no person.",
+"title": "About to breach, least time left first"
+},
+{
+"columns": [
+"Week",
+"Breached",
+"Resolution",
+"Response",
+"Worst group"
+],
+"rows": [
+[
+"Last 7 days (7-13 Nov)",
+13,
+11,
+2,
+"Network Operations (13)"
+],
+[
+"31 Oct - 6 Nov",
+16,
+13,
+3,
+"Virtualization (6)"
+],
+[
+"24-30 Oct",
+21,
+16,
+5,
+"Network Operations (7)"
+]
+],
+"text": "7-day average 1.9 a day, down from 2.0 on 15 Oct. Last 7 days 13 breaches, the 7 days before 16 (-3). Response SLAs: 2 breached in the last 7 days, 3 the week before. Network Operations has 13 of the last 7 days' 13 (the week before 5 of 16).",
+"title": "Breaches, last 30 days"
+}
+],
+"status": "critical",
+"subtitle": "The next 8 business hours, read 13 Nov 2026 07:00 UTC",
+"summary": [
+{
+"label": "Breach within 1 h",
+"note": "1 not assigned to anyone",
+"status": "critical",
+"value": 3
+},
+{
+"label": "Within 4 h",
+"note": "incl. the 3 above",
+"status": "warning",
+"value": 5
+},
+{
+"label": "Within 8 h",
+"note": "the rest of the window",
+"status": "",
+"value": 6
+},
+{
+"label": "Breached today",
+"note": "SLAs past their planned end today",
+"status": "warning",
+"value": 2
+}
+],
+"title": "About to breach: 3 tickets breach within the hour; breaches down from 16 to 13 this week"
+}

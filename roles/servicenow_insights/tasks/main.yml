@@ -138,8 +138,25 @@
       mask_keep: "{{ servicenow_insights_mask_keep | servicenow_insights_name_list }}"
       extra: "{{ site_act_extra_instructions | default('') }}"
       provider: "{{ site_act_provider | default('') }}"
+      # 1.59.0: about to breach
+      breach_window_hours: "{{ servicenow_breach_window_hours | float }}"
+      breach_days: "{{ servicenow_breach_days | int }}"
+      breach_max_rows: "{{ servicenow_breach_max_rows | int }}"
+      time_zone: "{{ report_time_zone | default('', true) | string }}"
     _sni_state: "{{ {} | servicenow_insights_state }}"
     _sni_act_stop: ""
+
+- name: Insights | servicenow_insights_mode is full or breach
+  ansible.builtin.assert:
+    that: servicenow_insights_mode | string | trim | lower in ['full', 'breach']
+    fail_msg: "servicenow_insights_mode is full (the whole report) or breach (only About to breach), not {{ servicenow_insights_mode }}."
+    quiet: true
+
+# ABOUT TO BREACH ONLY (1.59.0): servicenow_insights_mode breach - the running SLAs, their page and email (breach.yml); the
+# play ends there
+- name: Insights | About to breach only (servicenow_insights_mode breach)
+  ansible.builtin.include_tasks: breach.yml
+  when: servicenow_insights_mode | string | trim | lower == 'breach'
 
 # THE BACKFILL (1.13.0): servicenow_insights_backfill_months > 0 - past calendar months read once and written to the report
 # database, nothing else (backfill.yml); the play ends there.
@@ -196,6 +213,10 @@
         store_in: "{{ (_sni_store | default({})).in | default('') }}"
         store_out: "{{ (_sni_store | default({})).out | default('') }}"
         full_refresh: "{{ servicenow_insights_full_refresh | bool }}"
+        # 1.59.0: the About to breach section's SLAs too
+        breach: "{{ servicenow_insights_breach | bool }}"
+        breach_horizon_hours: "{{ servicenow_breach_window_hours | servicenow_insights_breach_horizon(servicenow_insights_business_hours | default({}, true)) }}"
+        breach_days: "{{ servicenow_breach_days | int + 6 }}"
       register: _sni
       check_mode: false             # only reads (the tickets go to the database after it, store.yml)
 
