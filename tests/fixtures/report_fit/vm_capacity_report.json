@@ -1,6 +1,425 @@
 {
-"footer": "Estimates from a straight line over the last 30 days of vCenter's daily statistics: a guide for planning, not a promise. Cluster runways run to 80% N-1 - 80% of what is left with 1 host(s) down - not to full hosts. Read-only.",
+"footer": "Estimates from a straight line over the last 90 days of vCenter's daily statistics: a guide for planning, not a promise. Cluster runways run to 80% N-1 - 80% of what is left with 1 host(s) down - not to full hosts. Read-only.",
 "sections": [
+{
+"cell_status": [
+[
+"",
+"warning",
+"",
+"ok",
+"warning",
+"ok"
+],
+[
+"",
+"ok",
+"",
+"ok",
+"ok",
+"ok"
+],
+[
+"",
+"ok",
+"",
+"ok",
+"ok",
+""
+]
+],
+"columns": [
+"Cluster",
+"First limit",
+"Since last month",
+"CPU",
+"Memory",
+"Storage"
+],
+"row_status": [
+"warning",
+"",
+""
+],
+"rows": [
+[
+"LATER",
+"Memory in 2.3 months, around Nov 2026 (to 80% N-1)",
+"memory: 1 month further out - was 16 Oct 2026 a month ago; +114.7 GB a month (fit R2 0.94)",
+"3% now, not growing",
+"47% now, 2.3 mo",
+"40% now, 24+ mo"
+],
+[
+"SOON",
+"Storage in 4.1 months, around Jan 2027 (to 90%)",
+"storage: 6 months sooner - was Aug 2027 a month ago; +512.8 GB a month (fit R2 0.79); a step of +9 points on 12 Aug",
+"3% now, not growing",
+"42% now, 5.1 mo",
+"61% now, 4.1 mo"
+],
+[
+"NEW",
+"Memory in 8.0 months, around May 2027 (to 80% N-1)",
+"memory: no forecast a month ago; +60.0 GB a month (fit R2 1.00)",
+"3% now, not growing",
+"36% now, 8.0 mo",
+"-"
+]
+],
+"status": "warning",
+"text": "Each cluster's first limit - CPU, memory (with a host down) or storage - and how its forecast moved since last month: the same straight line fitted on the samples up to 30 days ago. Results first; the tables below have the detail. Each resource: its used % now and its runway.",
+"title": "Runway: the first limit per cluster"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"ok",
+"ok",
+""
+],
+[
+"",
+"",
+"ok",
+"ok",
+""
+],
+[
+"",
+"",
+"ok",
+"ok",
+""
+],
+[
+"",
+"",
+"ok",
+"ok",
+""
+],
+[
+"",
+"",
+"ok",
+"ok",
+""
+],
+[
+"",
+"",
+"ok",
+"ok",
+""
+],
+[
+"",
+"",
+"ok",
+"ok",
+""
+],
+[
+"",
+"",
+"ok",
+"ok",
+""
+],
+[
+"",
+"",
+"ok",
+"ok",
+""
+],
+[
+"",
+"",
+"ok",
+"ok",
+""
+]
+],
+"columns": [
+"Datastore",
+"Clusters",
+"Used now, runway",
+"To 90%",
+"Since last month"
+],
+"row_status": [
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+],
+"rows": [
+[
+"ds_step",
+"SOON",
+"61% now, 4.1 mo",
+"Storage in 4.1 months, around Jan 2027 (to 90%)",
+"storage: 6 months sooner - was Aug 2027 a month ago; +512.8 GB a month (fit R2 0.79); a step of +9 points on 12 Aug"
+],
+[
+"ds_00",
+"LATER",
+"40% now, 24+ mo",
+"Storage in 41.1 months, around Feb 2030 (to 90%)",
+"storage: no change - was 26 Feb 2030 a month ago; +122.9 GB a month (fit R2 1.00)"
+],
+[
+"ds_01",
+"LATER",
+"40% now, 24+ mo",
+"Storage in 41.1 months, around Feb 2030 (to 90%)",
+"storage: no change - was 26 Feb 2030 a month ago; +122.9 GB a month (fit R2 1.00)"
+],
+[
+"ds_02",
+"LATER",
+"40% now, 24+ mo",
+"Storage in 41.1 months, around Feb 2030 (to 90%)",
+"storage: no change - was 26 Feb 2030 a month ago; +122.9 GB a month (fit R2 1.00)"
+],
+[
+"ds_03",
+"LATER",
+"40% now, 24+ mo",
+"Storage in 41.1 months, around Feb 2030 (to 90%)",
+"storage: no change - was 26 Feb 2030 a month ago; +122.9 GB a month (fit R2 1.00)"
+],
+[
+"ds_04",
+"LATER",
+"40% now, 24+ mo",
+"Storage in 41.1 months, around Feb 2030 (to 90%)",
+"storage: no change - was 26 Feb 2030 a month ago; +122.9 GB a month (fit R2 1.00)"
+],
+[
+"ds_05",
+"LATER",
+"40% now, 24+ mo",
+"Storage in 41.1 months, around Feb 2030 (to 90%)",
+"storage: no change - was 26 Feb 2030 a month ago; +122.9 GB a month (fit R2 1.00)"
+],
+[
+"ds_06",
+"LATER",
+"40% now, 24+ mo",
+"Storage in 41.1 months, around Feb 2030 (to 90%)",
+"storage: no change - was 26 Feb 2030 a month ago; +122.9 GB a month (fit R2 1.00)"
+],
+[
+"ds_07",
+"LATER",
+"40% now, 24+ mo",
+"Storage in 41.1 months, around Feb 2030 (to 90%)",
+"storage: no change - was 26 Feb 2030 a month ago; +122.9 GB a month (fit R2 1.00)"
+],
+[
+"ds_08",
+"LATER",
+"40% now, 24+ mo",
+"Storage in 41.1 months, around Feb 2030 (to 90%)",
+"storage: no change - was 26 Feb 2030 a month ago; +122.9 GB a month (fit R2 1.00)"
+]
+],
+"text": "Each shared datastore, the one that reaches 90% first on top: its used % now, its runway and how it moved since last month. The first 10 of 13; the workbook has all (vm_capacity_top_datastores).",
+"title": "Runway: datastores"
+},
+{
+"columns": [
+"Cluster or datastore",
+"Resource",
+"90 days ago",
+"60 days ago",
+"30 days ago",
+"Now"
+],
+"rows": [
+[
+"LATER",
+"CPU",
+"3%",
+"3%",
+"3%",
+"3%"
+],
+[
+"LATER",
+"Memory",
+"32%",
+"39%",
+"46%",
+"47%"
+],
+[
+"LATER",
+"Storage",
+"36%",
+"37%",
+"39%",
+"40%"
+],
+[
+"SOON",
+"CPU",
+"3%",
+"3%",
+"3%",
+"3%"
+],
+[
+"SOON",
+"Memory",
+"31%",
+"32%",
+"34%",
+"42%"
+],
+[
+"SOON",
+"Storage",
+"51%",
+"51%",
+"61%",
+"61%"
+],
+[
+"NEW",
+"CPU",
+"3%",
+"3%",
+"3%",
+"3%"
+],
+[
+"NEW",
+"Memory",
+"-",
+"-",
+"-",
+"36%"
+],
+[
+"ds_step",
+"Datastore",
+"51%",
+"51%",
+"61%",
+"61%"
+],
+[
+"ds_00",
+"Datastore",
+"36%",
+"37%",
+"39%",
+"40%"
+],
+[
+"ds_01",
+"Datastore",
+"36%",
+"37%",
+"39%",
+"40%"
+],
+[
+"ds_02",
+"Datastore",
+"36%",
+"37%",
+"39%",
+"40%"
+],
+[
+"ds_03",
+"Datastore",
+"36%",
+"37%",
+"39%",
+"40%"
+],
+[
+"ds_04",
+"Datastore",
+"36%",
+"37%",
+"39%",
+"40%"
+],
+[
+"ds_05",
+"Datastore",
+"36%",
+"37%",
+"39%",
+"40%"
+],
+[
+"ds_06",
+"Datastore",
+"36%",
+"37%",
+"39%",
+"40%"
+],
+[
+"ds_07",
+"Datastore",
+"36%",
+"37%",
+"39%",
+"40%"
+],
+[
+"ds_08",
+"Datastore",
+"36%",
+"37%",
+"39%",
+"40%"
+],
+[
+"ds_09",
+"Datastore",
+"36%",
+"37%",
+"39%",
+"40%"
+],
+[
+"ds_10",
+"Datastore",
+"36%",
+"37%",
+"39%",
+"40%"
+],
+[
+"ds_11",
+"Datastore",
+"36%",
+"37%",
+"39%",
+"40%"
+]
+],
+"text": "The used % behind each line: 90, 60 and 30 days ago and now (the sample nearest each day).",
+"title": "The numbers behind the lines"
+},
 {
 "cell_status": [
 [
@@ -17,9 +436,9 @@
 "",
 "",
 "ok",
-"critical",
+"ok",
 "",
-"critical"
+"ok"
 ],
 [
 "",
@@ -28,7 +447,7 @@
 "",
 "",
 "",
-"critical"
+"warning"
 ],
 [
 "",
@@ -60,60 +479,60 @@
 ],
 "row_status": [
 "",
-"critical",
-"critical",
+"",
+"warning",
 "",
 ""
 ],
 "rows": [
 [
 "CPU",
-"640.0 GHz",
-"130.0 GHz",
-"20%",
-"32%",
-"+5.7 GHz / month",
-"1000 days (2029-06-17) to 80% N-1"
+"960.0 GHz",
+"240.0 GHz",
+"25%",
+"33%",
+"+0.0 GHz / month",
+"not growing (limit 80% N-1)"
 ],
 [
 "Memory",
-"3.5 TB",
-"2.4 TB",
-"70%",
-"108%",
-"+240.0 GB / month",
-"80% N-1 reached"
+"6.0 TB",
+"2.5 TB",
+"42%",
+"56%",
+"+243.9 GB / month",
+"136 days (2027-02-04) to 80% N-1"
 ],
 [
 "Hosts",
-"8 usable of 10",
+"12 usable of 12",
 "",
 "",
 "",
 "",
-"2 recommended now, 10 within 12 months"
+"0 recommended now, 6 within 12 months"
 ],
 [
 "vCPUs",
-"256 cores",
-"260 vCPUs",
-"1.02 per core",
+"384 cores",
+"240 vCPUs",
+"0.62 per core",
 "",
-"+10.0 VMs / month",
-"room for about 10 more average VMs"
+"+0.0 VMs / month",
+"room for about 52 more average VMs"
 ],
 [
 "Storage (shared datastores)",
-"40.0 TB",
-"27.0 TB",
-"68%",
+"130.0 TB",
+"54.9 TB",
+"42%",
 "",
-"+600.0 GB / month",
-"460 days (2027-12-25) to 90%; full: 665 days (2028-07-17)"
+"+1.9 TB / month",
+"959 days (2029-05-07) to 90%; full: 1160 days (2029-11-24)"
 ]
 ],
-"status": "critical",
-"text": "All 3 cluster(s) of vCenters vc01.example.mil, vc02.example.mil together: 10 hosts (8 usable), 70 VMs powered on. \"After host failure\" and \"N-1\" are the use with 1 host(s) of each cluster down (the cluster must still run everything): the CPU and memory runways run to 80% / 80% of what is left then, not to 100% of what is installed. Growth is fitted on vCenter's daily statistics of the last 30 days.",
+"status": "warning",
+"text": "All 3 cluster(s) of vCenter vc01 together: 12 hosts (12 usable), 120 VMs powered on. \"After host failure\" and \"N-1\" are the use with 1 host(s) of each cluster down (the cluster must still run everything): the CPU and memory runways run to 80% / 80% of what is left then, not to 100% of what is installed. Growth is fitted on vCenter's daily statistics of the last 90 days.",
 "title": "Overall"
 },
 {
@@ -121,33 +540,17 @@
 [
 "",
 "",
-"warning",
 "ok",
 "ok",
-"critical",
+"ok",
+"ok",
 "ok",
 "",
-"",
-"",
-"critical",
-"critical",
-"critical",
-""
-],
-[
 "",
 "",
 "warning",
 "ok",
-"ok",
-"critical",
-"ok",
-"",
-"",
-"",
-"critical",
-"critical",
-"critical",
+"warning",
 ""
 ],
 [
@@ -163,7 +566,23 @@
 "",
 "ok",
 "ok",
+"warning",
+""
+],
+[
+"",
+"",
 "ok",
+"ok",
+"ok",
+"ok",
+"ok",
+"",
+"",
+"",
+"ok",
+"ok",
+"warning",
 ""
 ]
 ],
@@ -184,61 +603,61 @@
 "VMs +/- (30 d)"
 ],
 "row_status": [
-"critical",
-"critical",
+"warning",
+"",
 ""
 ],
 "rows": [
 [
-"PROD (vc01 / DC1)",
-"vc01 / DC1",
-"3 of 4",
+"LATER",
+"DC1",
+"4 of 4",
 "25%",
-"78%",
-"117%",
-1.88,
-30,
-"4.0 vCPU, 50.0 GB",
-"+120.0 GB / month",
-"80% N-1 reached",
-"0 (memory)",
-"1 now (memory 59% on average then); 5 within 12 months",
-"+6 / -1"
-],
-[
-"PROD (vc02 / DC1)",
-"vc02 / DC1",
-"3 of 4",
-"25%",
-"78%",
-"117%",
-1.88,
-30,
-"4.0 vCPU, 50.0 GB",
-"+120.0 GB / month",
-"80% N-1 reached",
-"0 (memory)",
-"1 now (memory 59% on average then); 5 within 12 months",
-"+6 / -1"
-],
-[
-"LAB",
-"vc01 / DC1",
-"2 of 2",
-"6%",
-"20%",
-"39%",
-0.62,
-10,
-"2.0 vCPU, 20.0 GB",
-"+0 B / month",
-"not growing (limit 80% N-1)",
+"47%",
+"63%",
+0.83,
+40,
+"2.0 vCPU, 25.0 GB",
+"+114.7 GB / month",
+"69 days (2026-11-29) to 80% N-1",
 "10 (memory)",
-"none within 12 months",
+"none now; 3 within 12 months",
+"0"
+],
+[
+"SOON",
+"DC1",
+"4 of 4",
+"25%",
+"42%",
+"57%",
+0.83,
+40,
+"2.0 vCPU, 25.0 GB",
+"+69.2 GB / month",
+"155 days (2027-02-23) to 80% N-1",
+"16 (memory)",
+"none now; 2 within 12 months",
+"0"
+],
+[
+"NEW",
+"DC1",
+"4 of 4",
+"25%",
+"36%",
+"48%",
+0.83,
+40,
+"2.0 vCPU, 25.0 GB",
+"+60.0 GB / month",
+"244 days (2027-05-23) to 80% N-1",
+"26 (memory)",
+"none now; 1 within 12 months",
 "0"
 ]
 ],
-"status": "critical",
+"status": "warning",
 "text": "Per cluster: hosts usable (connected, not in maintenance), CPU and memory used now, memory used if the biggest 1 host(s) fail (the cluster must still run everything: amber from 80%, red at 100%), vCPUs per physical core (amber from 4.0), VMs powered on and their average size, memory growth, the memory runway (days until memory after a host failure reaches 80% - \"80% N-1\" - not until the hosts are full), how many more VMs of the average size fit (and what limits them), how many hosts of the cluster's average size are recommended to keep memory and CPU at 80% / 80% with a host down (now, and at the current growth within 12 months), and VMs added / removed in the last 30 days.",
 "title": "Clusters: CPU and memory"
 },
@@ -249,21 +668,10 @@
 "",
 "",
 "",
-"critical",
-"",
-"",
-"critical",
-"ok"
-],
-[
-"",
-"",
-"",
-"",
 "ok",
 "",
 "",
-"warning",
+"ok",
 "ok"
 ],
 [
@@ -290,46 +698,33 @@
 "Runway to full"
 ],
 "row_status": [
-"critical",
-"warning",
+"",
 ""
 ],
 "rows": [
 [
-"PROD (vc02 / DC1)",
-1,
-"20.0 TB",
-"2.0 TB",
-"90%",
-"110%",
-"+300.0 GB / month",
-"reached",
-"204 days (2027-04-13)"
-],
-[
-"PROD (vc01 / DC1)",
+"SOON",
 1,
 "10.0 TB",
-"2.0 TB",
-"80%",
-"120%",
-"+300.0 GB / month",
-"51 days (2026-11-11)",
-"204 days (2027-04-13)"
+"3.1 TB",
+"69%",
+"69%",
+"+512.8 GB / month",
+"95 days (2026-12-25)",
+"185 days (2027-03-25)"
 ],
 [
-"LAB",
-1,
-"10.0 TB",
-"9.0 TB",
-"10%",
-"10%",
-"?",
-"not growing",
-"not growing"
+"LATER",
+12,
+"120.0 TB",
+"72.0 TB",
+"40%",
+"40%",
+"+1.4 TB / month",
+"1124 days (2029-10-19)",
+"1499 days (2030-10-29)"
 ]
 ],
-"status": "critical",
 "text": "Per cluster, its shared datastores together: capacity, free, used %, provisioned % (thin disks counted at their full size: over 100% means overcommitted), growth, and the days until 85% and until full at that growth.",
 "title": "Clusters: storage"
 },
@@ -342,11 +737,11 @@
 "",
 "",
 "",
-"critical",
+"ok",
 "",
 "",
-"critical",
-"critical",
+"ok",
+"ok",
 "ok",
 ""
 ],
@@ -360,7 +755,157 @@
 "ok",
 "",
 "",
-"warning",
+"ok",
+"ok",
+"ok",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"ok",
+"",
+"",
+"ok",
+"ok",
+"ok",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"ok",
+"",
+"",
+"ok",
+"ok",
+"ok",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"ok",
+"",
+"",
+"ok",
+"ok",
+"ok",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"ok",
+"",
+"",
+"ok",
+"ok",
+"ok",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"ok",
+"",
+"",
+"ok",
+"ok",
+"ok",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"ok",
+"",
+"",
+"ok",
+"ok",
+"ok",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"ok",
+"",
+"",
+"ok",
+"ok",
+"ok",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"ok",
+"",
+"",
+"ok",
+"ok",
+"ok",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"ok",
+"",
+"",
+"ok",
+"ok",
+"ok",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"ok",
+"",
+"",
+"ok",
 "ok",
 "ok",
 ""
@@ -397,58 +942,217 @@
 "Trend fit"
 ],
 "row_status": [
-"critical",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
 "",
 ""
 ],
 "rows": [
 [
-"ds_prod (vc02 / DC1)",
-"vc02: PROD",
-"",
-"VMFS",
-"20.0 TB",
-"2.0 TB",
-"90%",
-"110%",
-"+300.0 GB / month",
-"reached",
-"reached",
-"204 days (2027-04-13)",
-"good (R2 1.00, 30 days)"
-],
-[
-"ds_prod (vc01 / DC1)",
-"vc01: PROD",
+"ds_step",
+"SOON",
 "",
 "VMFS",
 "10.0 TB",
-"2.0 TB",
-"80%",
-"120%",
-"+300.0 GB / month",
-"51 days (2026-11-11)",
-"102 days (2027-01-01)",
-"204 days (2027-04-13)",
-"good (R2 1.00, 30 days)"
+"3.1 TB",
+"69%",
+"69%",
+"+512.8 GB / month",
+"95 days (2026-12-25)",
+"125 days (2027-01-24)",
+"185 days (2027-03-25)",
+"fair (R2 0.79, 90 days)"
 ],
 [
-"ds_lab",
-"vc01: LAB",
+"ds_00",
+"LATER",
 "",
 "NFS",
 "10.0 TB",
-"9.0 TB",
-"10%",
-"10%",
-"+0 B / month",
-"not growing",
-"not growing",
-"not growing",
-"good (R2 1.00, 30 days)"
+"6.0 TB",
+"40%",
+"40%",
+"+122.9 GB / month",
+"1124 days (2029-10-19)",
+"1249 days (2030-02-21)",
+"1499 days (2030-10-29)",
+"good (R2 1.00, 90 days)"
+],
+[
+"ds_01",
+"LATER",
+"",
+"NFS",
+"10.0 TB",
+"6.0 TB",
+"40%",
+"40%",
+"+122.9 GB / month",
+"1124 days (2029-10-19)",
+"1249 days (2030-02-21)",
+"1499 days (2030-10-29)",
+"good (R2 1.00, 90 days)"
+],
+[
+"ds_02",
+"LATER",
+"",
+"NFS",
+"10.0 TB",
+"6.0 TB",
+"40%",
+"40%",
+"+122.9 GB / month",
+"1124 days (2029-10-19)",
+"1249 days (2030-02-21)",
+"1499 days (2030-10-29)",
+"good (R2 1.00, 90 days)"
+],
+[
+"ds_03",
+"LATER",
+"",
+"NFS",
+"10.0 TB",
+"6.0 TB",
+"40%",
+"40%",
+"+122.9 GB / month",
+"1124 days (2029-10-19)",
+"1249 days (2030-02-21)",
+"1499 days (2030-10-29)",
+"good (R2 1.00, 90 days)"
+],
+[
+"ds_04",
+"LATER",
+"",
+"NFS",
+"10.0 TB",
+"6.0 TB",
+"40%",
+"40%",
+"+122.9 GB / month",
+"1124 days (2029-10-19)",
+"1249 days (2030-02-21)",
+"1499 days (2030-10-29)",
+"good (R2 1.00, 90 days)"
+],
+[
+"ds_05",
+"LATER",
+"",
+"NFS",
+"10.0 TB",
+"6.0 TB",
+"40%",
+"40%",
+"+122.9 GB / month",
+"1124 days (2029-10-19)",
+"1249 days (2030-02-21)",
+"1499 days (2030-10-29)",
+"good (R2 1.00, 90 days)"
+],
+[
+"ds_06",
+"LATER",
+"",
+"NFS",
+"10.0 TB",
+"6.0 TB",
+"40%",
+"40%",
+"+122.9 GB / month",
+"1124 days (2029-10-19)",
+"1249 days (2030-02-21)",
+"1499 days (2030-10-29)",
+"good (R2 1.00, 90 days)"
+],
+[
+"ds_07",
+"LATER",
+"",
+"NFS",
+"10.0 TB",
+"6.0 TB",
+"40%",
+"40%",
+"+122.9 GB / month",
+"1124 days (2029-10-19)",
+"1249 days (2030-02-21)",
+"1499 days (2030-10-29)",
+"good (R2 1.00, 90 days)"
+],
+[
+"ds_08",
+"LATER",
+"",
+"NFS",
+"10.0 TB",
+"6.0 TB",
+"40%",
+"40%",
+"+122.9 GB / month",
+"1124 days (2029-10-19)",
+"1249 days (2030-02-21)",
+"1499 days (2030-10-29)",
+"good (R2 1.00, 90 days)"
+],
+[
+"ds_09",
+"LATER",
+"",
+"NFS",
+"10.0 TB",
+"6.0 TB",
+"40%",
+"40%",
+"+122.9 GB / month",
+"1124 days (2029-10-19)",
+"1249 days (2030-02-21)",
+"1499 days (2030-10-29)",
+"good (R2 1.00, 90 days)"
+],
+[
+"ds_10",
+"LATER",
+"",
+"NFS",
+"10.0 TB",
+"6.0 TB",
+"40%",
+"40%",
+"+122.9 GB / month",
+"1124 days (2029-10-19)",
+"1249 days (2030-02-21)",
+"1499 days (2030-10-29)",
+"good (R2 1.00, 90 days)"
+],
+[
+"ds_11",
+"LATER",
+"",
+"NFS",
+"10.0 TB",
+"6.0 TB",
+"40%",
+"40%",
+"+122.9 GB / month",
+"1124 days (2029-10-19)",
+"1249 days (2030-02-21)",
+"1499 days (2030-10-29)",
+"good (R2 1.00, 90 days)"
 ]
 ],
-"status": "critical",
 "text": "Each shared datastore, the ones that reach 90% first on top: growth fitted on vCenter's daily used space, the days (and date) until 85%, 90% and full, and how well a straight line fits the history (poor = jumps: snapshots deleted, VMs moved - the runway is a rough guide then).",
 "title": "Datastores: runway"
 },
@@ -507,16 +1211,6 @@
 [
 "",
 "",
-"critical",
-"",
-"ok",
-"",
-"ok",
-""
-],
-[
-"",
-"",
 "ok",
 "",
 "ok",
@@ -547,7 +1241,37 @@
 [
 "",
 "",
-"critical",
+"ok",
+"",
+"ok",
+"",
+"ok",
+""
+],
+[
+"",
+"",
+"ok",
+"",
+"ok",
+"",
+"ok",
+""
+],
+[
+"",
+"",
+"ok",
+"",
+"ok",
+"",
+"ok",
+""
+],
+[
+"",
+"",
+"ok",
 "",
 "ok",
 "",
@@ -571,164 +1295,211 @@
 "",
 "",
 "",
-"critical",
 "",
 "",
 "",
-"critical"
+"",
+"",
+"",
+""
 ],
 "rows": [
 [
-"LAB",
-"lab1",
-"CONNECTED",
-32,
-"6%",
-"256.0 GB",
-"20%",
-10
-],
-[
-"LAB",
-"lab2",
-"CONNECTED",
-32,
-"6%",
-"256.0 GB",
-"20%",
-10
-],
-[
-"PROD (vc01 / DC1)",
-"esx1",
+"LATER",
+"later-esx0",
 "CONNECTED",
 32,
 "25%",
 "512.0 GB",
-"78%",
+"47%",
 10
 ],
 [
-"PROD (vc01 / DC1)",
-"esx2",
+"LATER",
+"later-esx1",
 "CONNECTED",
 32,
 "25%",
 "512.0 GB",
-"78%",
+"47%",
 10
 ],
 [
-"PROD (vc01 / DC1)",
-"esx3",
+"LATER",
+"later-esx2",
 "CONNECTED",
 32,
 "25%",
 "512.0 GB",
-"78%",
+"47%",
 10
 ],
 [
-"PROD (vc01 / DC1)",
-"esx4",
-"NOTRESPONDING",
-32,
-"25%",
-"512.0 GB",
-"0%",
-10
-],
-[
-"PROD (vc02 / DC1)",
-"esx1",
+"LATER",
+"later-esx3",
 "CONNECTED",
 32,
 "25%",
 "512.0 GB",
-"78%",
+"47%",
 10
 ],
 [
-"PROD (vc02 / DC1)",
-"esx2",
+"NEW",
+"new-esx0",
 "CONNECTED",
 32,
 "25%",
 "512.0 GB",
-"78%",
+"36%",
 10
 ],
 [
-"PROD (vc02 / DC1)",
-"esx3",
+"NEW",
+"new-esx1",
 "CONNECTED",
 32,
 "25%",
 "512.0 GB",
-"78%",
+"36%",
 10
 ],
 [
-"PROD (vc02 / DC1)",
-"esx4",
-"NOTRESPONDING",
+"NEW",
+"new-esx2",
+"CONNECTED",
 32,
 "25%",
 "512.0 GB",
-"0%",
+"36%",
+10
+],
+[
+"NEW",
+"new-esx3",
+"CONNECTED",
+32,
+"25%",
+"512.0 GB",
+"36%",
+10
+],
+[
+"SOON",
+"soon-esx0",
+"CONNECTED",
+32,
+"25%",
+"512.0 GB",
+"42%",
+10
+],
+[
+"SOON",
+"soon-esx1",
+"CONNECTED",
+32,
+"25%",
+"512.0 GB",
+"42%",
+10
+],
+[
+"SOON",
+"soon-esx2",
+"CONNECTED",
+32,
+"25%",
+"512.0 GB",
+"42%",
+10
+],
+[
+"SOON",
+"soon-esx3",
+"CONNECTED",
+32,
+"25%",
+"512.0 GB",
+"42%",
 10
 ]
 ],
-"status": "critical",
 "text": "Every host: state (blue: in maintenance, red: not connected - neither counts as capacity), cores, CPU and memory used now, VMs. Hosts much fuller than their neighbours mean DRS is off or limited.",
 "title": "Hosts per cluster"
 }
 ],
-"status": "critical",
-"subtitle": "vCenters vc01.example.mil, vc02.example.mil - read 2026-09-21 14:13 UTC",
+"status": "warning",
+"subtitle": "vCenter vc01 - read 2026-09-21 14:13 UTC",
 "summary": [
+{
+"label": "First to fill",
+"note": "memory, Nov 2026 (was 16 Oct 2026)",
+"status": "warning",
+"tip": "LATER fills first: memory at 47%, 2.3 months to 80% N-1, around Nov 2026. 1 month further out - was 16 Oct 2026 a month ago.",
+"value": "LATER"
+},
+{
+"label": "Moved closer",
+"note": "of 3 cluster(s) since last month",
+"status": "warning",
+"tip": "1 of 3 cluster(s) fill sooner than last month's forecast: SOON.",
+"value": 1
+},
+{
+"label": "Biggest move",
+"note": "SOON storage, sooner",
+"tip": "The biggest move: SOON storage, 6 months sooner - was Aug 2027 a month ago.",
+"value": "6 months"
+},
+{
+"label": "Moved further out",
+"note": "LATER",
+"tip": "1 cluster(s) fill later than last month's forecast: LATER.",
+"value": 1
+},
 {
 "label": "Clusters",
 "value": 3
 },
 {
 "label": "Hosts usable",
-"status": "warning",
-"value": "8 of 10"
+"status": "ok",
+"value": "12 of 12"
 },
 {
 "label": "VMs powered on",
-"value": 70
+"value": 120
 },
 {
 "label": "Memory used",
 "status": "ok",
-"value": "70%"
+"value": "42%"
 },
 {
 "label": "Memory after host failure",
-"status": "critical",
-"value": "108%"
+"status": "ok",
+"value": "56%"
 },
 {
 "label": "vCPU per core",
 "status": "ok",
-"value": 1.02
+"value": 0.62
 },
 {
 "label": "Room for more VMs",
-"value": "~10"
+"value": "~52"
 },
 {
 "label": "Storage used",
 "status": "ok",
-"value": "68%"
+"value": "42%"
 },
 {
 "label": "Storage runway to 90%",
 "status": "ok",
-"value": "460 days"
+"value": "959 days"
 }
 ],
-"title": "vSphere capacity planning: 2 of 3 cluster(s) short on CPU or memory; 1 datastore(s) at 85% or within 90 days of 90%"
+"title": "vSphere capacity planning: LATER memory reaches 80% N-1 around Nov 2026, 1 month later than last month; 1 of 3 cluster(s) short on CPU or memory"
 }

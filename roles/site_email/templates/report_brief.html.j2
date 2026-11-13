@@ -460,6 +460,8 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
   .hero{padding-top:0}
   tr,.todo,.tile{break-inside:avoid}.tw.scroll{overflow:visible}.chip,.verdict,.todo:before,.tile:before,.meter{-webkit-print-color-adjust:exact;print-color-adjust:exact}
 }
+{%- set hover_look = 'brief' %}
+{%- include 'report_hover.css.j2' %}
 </style>
 </head>
 <body>
@@ -539,7 +541,7 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
 {%- for t in r.summary %}
 {%- set ts = t.status | default('') %}
 {%- set v = ('' if t.value is none else t.value) | string %}
-<div class="tile{{ ' hot-' ~ ts if ts in ['critical', 'warning'] and v not in ['0', ''] else '' }}">
+<div class="tile{{ ' hot-' ~ ts if ts in ['critical', 'warning'] and v not in ['0', ''] else '' }}{{ ' tipped' if t.tip | default('') else '' }}"{% if t.tip | default('') %} tabindex="0" data-tip="{{ t.tip | e }}"{% endif %}>
 <button class="tcopy" type="button" hidden title="Copy" aria-label="Copy {{ t.label | e }}" data-copy="{{ t.label | e }}: {{ v | e }}{{ (' (' ~ t.note ~ ')') | e if t.note | default('') else '' }}">{{ copyicons() }}</button>
 <div class="k">{% if ts in words %}<span class="c-{{ ts }}">{{ icon(ts) }}</span>{% endif %}{{ t.label | e }}</div>
 <div class="v{{ ' long' if v | length > 9 else '' }}{{ (' c-' ~ ts) if ts in ['critical', 'warning'] and v not in ['0', ''] else '' }}">{{ v | e }}</div>
@@ -591,6 +593,10 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
 </article>
 {%- endfor %}
 </div>
+{%- endif %}
+{#- 1.57.0: a runway board (the capacity report's website version) -#}
+{%- if s.board | default({}) %}
+{%- include 'report_board.html.j2' %}
 {%- endif %}
 {%- if s.columns is defined %}
 {%- if s.rows | default([]) %}

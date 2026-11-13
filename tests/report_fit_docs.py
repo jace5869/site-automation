@@ -49,16 +49,18 @@ def prof(frame, event, arg):
     fn = frame.f_code.co_filename
     if '/filter_plugins/' not in fn and '/plugins/filter/' not in fn:
         return
-    d = doc(arg, frame.f_code.co_name)
-    if d is None:
-        return
-    try:
-        d = json.loads(json.dumps(d, default=str))
-    except Exception:
-        return
     k = os.path.basename(fn) + ':' + frame.f_code.co_name
-    if k not in keep or rows(d) > rows(keep[k]):
-        keep[k] = d
+    # 1.57.0: a report's website version too (its 'web': the capacity report's runway board), as <function>_web
+    for kk, v in ((k, arg), (k + '_web', arg.get('web') if isinstance(arg, dict) and isinstance(arg.get('web'), dict) else None)):
+        d = doc(v, frame.f_code.co_name) if v is not None else None
+        if d is None:
+            continue
+        try:
+            d = json.loads(json.dumps(d, default=str))
+        except Exception:
+            continue
+        if kk not in keep or rows(d) > rows(keep[kk]):
+            keep[kk] = d
 sys.path.insert(0, os.path.dirname(test))
 sys.argv = [test] + sys.argv[3:]        # a test's name: that test only (NAMED)
 sys.setprofile(prof)

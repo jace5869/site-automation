@@ -121,6 +121,7 @@ import gzip
 import hashlib
 import importlib.util
 import json
+import math
 import io
 import os
 import re
@@ -1703,6 +1704,73 @@ def report_cell_html(value, min_len=_CELL_LONG):
     return "".join(out)
 
 
+def _spark_day(ts):
+    d = datetime.datetime.fromtimestamp(float(ts), datetime.timezone.utc)
+    return "%s %d %s" % (d.strftime("%a"), d.day, d.strftime("%b %Y"))
+
+
+def report_sparkline(points, opts=None):
+    """1.57.0: a sparkline for the report website (the atlas and brief looks; never an email): points [[seconds, value],
+    ...] -> an <svg> - one hue (the look's --spark), a 2 px line, the last point marked, dashed reference lines
+    (opts lines, e.g. [85, 90]); its aria-label carries every value, data-points each point's place, day and value for
+    site-report.js (a guide line and a dot follow the mouse or the arrow keys, the tip says the day and value). No script
+    in it: without site-report.js it is the static line, and the page's numbers table has the same values. opts: label
+    (what it shows), unit ('%'), lines, lo, hi, w, h; '' without points."""
+    import html as htmllib
+    o = opts or {}
+    pts = [(float(t), float(v)) for t, v in points or [] if v is not None]
+    if not pts:
+        return ""
+    w, h = int(o.get("w") or 150), int(o.get("h") or 40)
+    unit = str(o.get("unit", "%"))
+    vals = [v for _, v in pts]
+    lines = [float(x) for x in o.get("lines") or [] if x is not None]
+    lo = o.get("lo")
+    hi = o.get("hi")
+    if lo is None:
+        lo = max(0.0, 10 * math.floor((min(vals + lines) - 10) / 10.0)) if unit == "%" else min(vals + lines)
+    if hi is None:
+        hi = 100.0 if unit == "%" and max(vals + lines) <= 100 else max(vals + lines)
+    lo, hi = float(lo), float(hi)
+    hi = hi if hi > lo else lo + 1
+    t0, t1 = pts[0][0], pts[-1][0]
+    x = lambda t: 3 + (t - t0) * (w - 10) / ((t1 - t0) or 1)              # noqa: E731
+    y = lambda v: 3 + (hi - min(max(v, lo), hi)) * (h - 6) / (hi - lo)    # noqa: E731
+    fmt = (lambda v: "%.1f%%" % v) if unit == "%" else (lambda v: "%g %s" % (v, unit))   # noqa: E731
+    label = str(o.get("label") or "")
+    aria = "%s%s to %s: %s" % ((label + ", ") if label else "", _spark_day(t0), _spark_day(t1), ", ".join(fmt(v) for v in vals))
+    data = [[round(x(t), 1), round(y(v), 1), _spark_day(t), fmt(v)] for t, v in pts]
+    out = ['<svg class="spark" width="%d" height="%d" viewBox="0 0 %d %d" role="img" tabindex="0" aria-label="%s" data-label="%s" data-points="%s">'
+           % (w, h, w, h, htmllib.escape(aria, quote=True), htmllib.escape(label, quote=True),
+              htmllib.escape(json.dumps(data, separators=(",", ":")), quote=True))]
+    for lv in lines:
+        if lo < lv < hi:
+            out.append('<line class="ref" x1="0" x2="%d" y1="%.1f" y2="%.1f"/>' % (w, y(lv), y(lv)))
+    out.append('<polyline class="ln" points="%s"/>' % " ".join("%.1f,%.1f" % (x(t), y(v)) for t, v in pts))
+    out.append('<circle class="last" cx="%.1f" cy="%.1f" r="3.5"/></svg>' % (x(t1), y(pts[-1][1])))
+    return "".join(out)
+
+
+def report_runway_bar(days, opts=None):
+    """1.57.0: a runway as a bar for the report website: the bands (critical, warning, low, ok: opts crit and warn days,
+    low to twice warn) from now to opts max days (730), the runway filled to its point (past max: to the end). days None
+    (not growing): the whole bar, ok. The band names are classes the look colours (rw-critical ...); the words are in
+    the cell beside it and in its tip."""
+    o = opts or {}
+    w = int(o.get("w") or 150)
+    crit, warn, top = float(o.get("crit", 30)), float(o.get("warn", 90)), float(o.get("max", 730))
+    sx = lambda d: 2 + min(max(d, 0), top) * (w - 4) / top               # noqa: E731
+    band = "ok" if days is None else ("critical" if days <= crit else ("warning" if days <= warn else ("low" if days <= 2 * warn else "ok")))
+    at = sx(top if days is None else float(days))
+    out = ['<svg class="rwb" width="%d" height="14" viewBox="0 0 %d 14" aria-hidden="true">' % (w, w)]
+    for a, b, k in ((0, crit, "critical"), (crit, warn, "warning"), (warn, 2 * warn, "low"), (2 * warn, top, "ok")):
+        if sx(b) > sx(a):
+            out.append('<rect class="rw-%s" x="%.1f" y="4" width="%.1f" height="6"/>' % (k, sx(a), sx(b) - sx(a)))
+    out.append('<rect class="rf-%s" x="2" y="5.5" width="%.1f" height="3" rx="1.5"/>' % (band, max(at - 2, 0)))
+    out.append('<circle class="rf-%s" cx="%.1f" cy="7" r="4.5"/></svg>' % (band, at))
+    return "".join(out)
+
+
 def report_cards_html(cards, ink="#111827", muted="#4b5563", accent="#0f6b4f"):
     """A section's cards (roles/site_email: [{status, chip, meta, title, subject, next, code}]) as "Start here" cards in HTML a
     mail client draws (tables, every style inline): a coloured bar on the left, the status chip and the meta (what kind,
@@ -2273,6 +2341,7 @@ class FilterModule(object):
                 "site_correlation_id": site_correlation_id,
                 "human_size": human_size, "name_matches": name_matches, "name_list": name_list,
                 "report_text": report_text, "report_notice": report_notice, "report_cards_html": report_cards_html, "report_cell_html": report_cell_html, "findings_report": findings_report,
+                "report_sparkline": report_sparkline, "report_runway_bar": report_runway_bar,
                 "report_headline": report_headline, "report_runs": report_runs,
                 "report_time_now": report_time_now, "report_time_local": report_time_local,
                 "image_size": image_size, "email_recipients": email_recipients, "email_also_refused": email_also_refused,

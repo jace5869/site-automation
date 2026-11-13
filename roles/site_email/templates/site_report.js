@@ -254,5 +254,57 @@
     document.addEventListener('keydown',function(e){var a=document.activeElement,tag=a&&a.tagName||'';
       if(((e.key==='/'&&!e.ctrlKey&&!e.metaKey&&!e.altKey)||((e.ctrlKey||e.metaKey)&&(e.key==='k'||e.key==='K')))&&
          !/^(INPUT|TEXTAREA|SELECT)$/.test(tag)&&!(a&&a.isContentEditable)){e.preventDefault();find.focus();find.select()}})}
+  /* the hover layer (1.57.0): one tip (.tt, a tooltip the elements name with aria-describedby) for every element with
+     data-tip (its lines, the first in bold) and every sparkline (svg.spark with data-points: a guide and a dot on the
+     nearest day, its value and day in the tip; the arrow keys, Home and End step through the days). It shows on hover,
+     on keyboard focus and on a tap; Esc, a tap elsewhere, leaving it or scrolling hides it (the focused one's moves with
+     it); it stays inside the window.
+     An element's title is taken off (no second tip). Every tip says what the page has elsewhere - the line's numbers
+     are in the table under it */
+  var tips=all('[data-tip]'),sparks=all('svg.spark[data-points]');
+  if(tips.length||sparks.length){
+    var tt=document.createElement('div'),owner=null,NS='http://www.w3.org/2000/svg';
+    tt.className='tt';tt.id='site-tip';tt.setAttribute('role','tooltip');tt.hidden=true;document.body.appendChild(tt);
+    var place=function(x,y){var w=tt.offsetWidth,h=tt.offsetHeight,vw=document.documentElement.clientWidth,vh=window.innerHeight,
+        l=Math.min(Math.max(8,x-w/2),vw-w-8),t=y-h-12;if(t<8)t=Math.min(y+16,vh-h-8);
+      tt.style.transform='translate('+Math.round(Math.max(8,l))+'px,'+Math.round(Math.max(8,t))+'px)'};
+    var hide=function(){if(owner&&owner._off)owner._off();owner=null;tt.hidden=true};
+    var show=function(el,lines,x,y){if(owner&&owner!==el&&owner._off)owner._off();owner=el;tt.textContent='';
+      lines.forEach(function(l,i){var d=document.createElement('div');if(!i)d.className='tt-h';d.textContent=l;tt.appendChild(d)});
+      tt.hidden=false;place(x,y)};
+    var keyed=function(el){try{return el.matches(':focus-visible')}catch(e){return true}};
+    tips.forEach(function(el){if(!el.hasAttribute('tabindex'))el.tabIndex=0;el.removeAttribute('title');el.setAttribute('aria-describedby','site-tip');
+      var ln=function(){return el.getAttribute('data-tip').split('\n')};
+      var at=el._at=function(){var r=el.getBoundingClientRect();show(el,ln(),r.left+r.width/2,r.top)};
+      el.addEventListener('pointerenter',function(e){if(e.pointerType==='mouse')show(el,ln(),e.clientX,e.clientY)});
+      el.addEventListener('pointermove',function(e){if(e.pointerType==='mouse'&&owner===el)place(e.clientX,e.clientY)});
+      el.addEventListener('pointerleave',function(e){if(e.pointerType==='mouse'&&owner===el)hide()});
+      el.addEventListener('pointerup',function(e){if(e.pointerType!=='mouse'&&owner!==el)at()});
+      el.addEventListener('focus',function(){if(keyed(el))at()});
+      el.addEventListener('blur',function(){if(owner===el)hide()})});
+    sparks.forEach(function(svg){var d;try{d=JSON.parse(svg.getAttribute('data-points'))}catch(e){return}if(!d||!d.length)return;
+      var name=svg.getAttribute('data-label')||'',vb=svg.viewBox.baseVal,cur=-1,g=document.createElementNS(NS,'line'),dot=document.createElementNS(NS,'circle');
+      g.setAttribute('class','hg');g.setAttribute('y1','0');g.setAttribute('y2',String(vb.height));dot.setAttribute('class','hd');dot.setAttribute('r','4');
+      svg.setAttribute('aria-describedby','site-tip');
+      svg._off=function(){cur=-1;if(g.parentNode){svg.removeChild(g);svg.removeChild(dot)}};
+      svg._at=function(){at(cur<0?d.length-1:cur)};
+      var at=function(i){i=Math.max(0,Math.min(d.length-1,i));cur=i;var p=d[i],r;
+        g.setAttribute('x1',p[0]);g.setAttribute('x2',p[0]);dot.setAttribute('cx',p[0]);dot.setAttribute('cy',p[1]);
+        if(!g.parentNode){svg.appendChild(g);svg.appendChild(dot)}
+        r=svg.getBoundingClientRect();show(svg,[p[3],(name?name+', ':'')+p[2]],r.left+p[0]*r.width/vb.width,r.top+p[1]*r.height/vb.height)};
+      var near=function(e){var r=svg.getBoundingClientRect(),sx=(e.clientX-r.left)*vb.width/r.width,b=0;
+        d.forEach(function(p,i){if(Math.abs(p[0]-sx)<Math.abs(d[b][0]-sx))b=i});return b};
+      svg.addEventListener('pointermove',function(e){at(near(e))});
+      svg.addEventListener('pointerdown',function(e){at(near(e))});
+      svg.addEventListener('pointerleave',function(e){if(e.pointerType==='mouse'&&owner===svg)hide()});
+      svg.addEventListener('focus',function(){if(keyed(svg))at(d.length-1)});
+      svg.addEventListener('blur',function(){if(owner===svg)hide()});
+      svg.addEventListener('keydown',function(e){var k={ArrowLeft:cur-1,ArrowRight:cur+1,Home:0,End:d.length-1}[e.key];
+        if(k!==undefined){e.preventDefault();at(k)}})});
+    document.addEventListener('keydown',function(e){if(e.key==='Escape'&&!tt.hidden)hide()});
+    document.addEventListener('pointerdown',function(e){if(owner&&!owner.contains(e.target))hide()});
+    /* a scroll hides it - but the element with the keyboard's focus keeps it, moved with it (Tab scrolls to it) */
+    window.addEventListener('scroll',function(){if(tt.hidden)return;
+      if(owner&&owner===document.activeElement&&owner._at)owner._at();else hide()},{passive:true})}
   });
 })();

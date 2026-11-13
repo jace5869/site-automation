@@ -174,6 +174,21 @@ On Windows: F12 > Network > the page > Response Headers > `Content-Security-Poli
 Everything it uses works in Microsoft Edge and Chrome 2024 or later. An older Edge draws the page the same, without
 the balanced headings.
 
+### Hover and trend lines (1.57.0)
+
+Hover and trend lines need the atlas or brief look (`report_web_theme`); the email looks show the same numbers in tables.
+
+- **A tip on hover.** A tile, a chip or a bar that has more to say shows it in a small box: on hover, on keyboard focus
+  (Tab) and on a tap. Esc, a tap elsewhere or scrolling closes it. A tip never holds anything the page does not show
+  elsewhere.
+- **Trend lines.** A report with a history (the VMware capacity report's runway board) draws it as a thin line, today's
+  value marked, dashed lines at its limits. Move the mouse along it, or Tab to it and use the arrow keys: a guide and a
+  dot follow, and the tip says the day and the value. The table under it, "The numbers behind the lines", has the same
+  numbers.
+- **It works under a strict policy.** All of it is in `site-report.js`, the page's own script file (no inline script), so
+  a web server with `Content-Security-Policy: script-src 'self'` runs it. Without the script the page reads the same: the
+  lines are still drawn, and the tables have every value.
+
 ### The brief look (0.92.0; calm and soft since 0.94.0)
 
 `report_web_theme: brief` draws the same pages read like a morning brief. Everything above stays - the bar, the rail,

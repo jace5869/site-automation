@@ -1,5 +1,46 @@
 # Changelog
 
+## 1.57.0 — 2026-11-13
+
+**Updating without scripts:** paste `site-automation-1.57.0-changed-since-1.50.0.zip` as it is (from an older version,
+its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`. Nothing to set up.
+
+**Hover on the report website, and the VMware capacity report's runway board with its trend lines.**
+
+- **A tip on hover, for every report page** (the atlas and brief looks). A tile, chip or bar with more to say shows it
+  on hover, on keyboard focus (Tab) and on a tap. Esc, a tap elsewhere or scrolling closes it, and it stays inside the
+  window. A tip never holds anything the page does not show elsewhere.
+- **Trend lines.** One shared helper draws a history as a thin line in one colour, today marked, its limits dashed.
+  Every value is in its label for a screen reader. The mouse or the arrow keys move a guide along it, and the tip says
+  the day and the value.
+- **It all lives in `site-report.js`** (no inline script): it runs under `Content-Security-Policy: script-src 'self'`.
+  Without the script the page reads the same, and the tables have every value.
+- **The capacity report leads with the runway board.** The title names the first limit (`SITEA-VDI storage reaches 90%
+  around Jan 2027, 2 months sooner than last month`). Four tiles come first: First to fill, Moved closer, Biggest move,
+  Moved further out.
+- **One row per cluster:** its first limit and how it moved since last month. Then CPU, memory and storage, each a
+  90-day used % line above a runway bar: critical, warning, Low (up to twice the warn days) and OK. A line under it
+  says what moved it, only from the numbers. The band edges are the tables' own (at most 30 days is critical, at most
+  90 warning), so a bar never disagrees with its row; Low uses 1.56.0's Low colours.
+- **Since last month needs no stored history:** the same line, fitted on the samples up to 30 days ago, gives last
+  month's forecast. With too few samples then, the board says "no forecast a month ago".
+- **The datastores get the same board:** the first 10 on the page (`vm_capacity_top_datastores`), every one in the
+  workbook. "The numbers behind the lines" has the used % 90, 60 and 30 days ago and now.
+- **Nothing is removed.** The summary tiles and every section stay, and ACT's estimate keeps its place before "Hosts per
+  cluster". The email and the email looks on the website show the board as tables, with the numbers instead of lines.
+- New setting: `vm_capacity_top_datastores` (10).
+
+**Files:** `plugins/filter/capacity_filters.py`, `plugins/filter/site_filters.py` (`report_sparkline`,
+`report_runway_bar`), `roles/site_email/templates/site_report.js`, `report_board.html.j2`, `report_hover.css.j2`,
+`report_atlas.html.j2`, `report_brief.html.j2`, `roles/vmware_vm/tasks/capacity.yml`, `roles/vmware_vm/defaults/main.yml`,
+`docs/VMWARE.md`, `docs/WEB_REPORTS.md`, `docs/VARIABLES_REFERENCE.md`, `aap/extra_vars/vm_capacity_report.yml`.
+**Tests:** `test_capacity.py` (moved sooner, further out, no forecast a month ago; the band edges; a step change; the
+tiles, the email and the workbook), `test_report_hover.py` (the helpers' markup, no inline script, none of it in an email,
+and a real Chrome under that policy: hover, Tab and the arrow keys, Esc; atlas and brief), `tests/report_fit_docs.py`
+(a report's website version as a fixture of its own: `vm_capacity_report_web`). SA_VERSION 1.57.0; the PDFs at 1.57.0.
+
+
 ## 1.50.0 — 2026-11-13
 
 **Updating without scripts:** paste `site-automation-1.50.0-changed-since-1.47.0.zip` as it is (from an older version,
@@ -1618,7 +1659,7 @@ tests/stig/run_stigman_real_test.sh against STIG Manager 1.6.18 (not in CI).
 
 SA_VERSION 1.26.0; the PDFs at 1.26.0.
 
-**To do, if you have not yet: what 0.20.0 to 1.50.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.50.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing, 1.39.0 nothing, 1.41.0 nothing, 1.42.0 nothing, 1.43.0 nothing, 1.44.0 nothing, 1.45.0 nothing, 1.46.0 nothing, 1.47.0 nothing, 1.48.0 nothing, 1.49.0 nothing, 1.50.0 step 97).** In order; each step works without
+**To do, if you have not yet: what 0.20.0 to 1.57.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.57.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing, 1.39.0 nothing, 1.41.0 nothing, 1.42.0 nothing, 1.43.0 nothing, 1.44.0 nothing, 1.45.0 nothing, 1.46.0 nothing, 1.47.0 nothing, 1.48.0 nothing, 1.49.0 nothing, 1.50.0 step 97, 1.57.0 nothing).** In order; each step works without
 the ones after it. There is no step 90.
 
 1. **Your logo** (0.20.0). A PNG with a transparent background, about 160 px tall and under 100 KB, in

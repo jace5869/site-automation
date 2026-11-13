@@ -23,6 +23,7 @@ import vmware_alarm_filters as va  # noqa: E402
 import site_vmware_capacity as sc  # noqa: E402
 
 GB, TB, DAY = 1024 ** 3, 1024 ** 4, 86400
+B = 3                     # 1.57.0: the runway board's three sections come first
 NOW = 1790000000          # read_at below
 READ = "2026-09-21T14:13:20Z"
 
@@ -156,7 +157,7 @@ class Limits(unittest.TestCase):
                                  history={"mem": line(100 * GB, 1 * GB), "cpu": line(10000, 0)})]
         data["datastores"] = []
         rep = cf.vm_capacity_report(data, OPTS)["report"]
-        cell = rep["sections"][1]["rows"][0][10]
+        cell = rep["sections"][B + 1]["rows"][0][10]
         self.assertTrue(cell.endswith(") to 80%"), cell)
         self.assertNotIn("N-", cell)
 
@@ -174,22 +175,24 @@ class Report(unittest.TestCase):
     def test_report_and_items(self):
         r = cf.vm_capacity_report(DATA, OPTS)
         rep = r["report"]
-        self.assertEqual(rep["title"], "vSphere capacity planning: 1 of 2 cluster(s) short on CPU or memory")
+        # 1.57.0: the first limit leads (the runway board's headline), then what is short as before
+        self.assertEqual(rep["title"], "vSphere capacity planning: PROD memory at 80% N-1 now; 1 of 2 cluster(s) short on CPU or memory")
         self.assertEqual(rep["status"], "critical")
         titles = [s["title"] for s in rep["sections"]]
-        self.assertEqual(titles[:5], ["Overall", "Clusters: CPU and memory", "Clusters: storage", "Datastores: runway", "Hosts per cluster"])
-        comp = rep["sections"][1]
+        self.assertEqual(titles[:B], ["Runway: the first limit per cluster", "Runway: datastores", "The numbers behind the lines"])
+        self.assertEqual(titles[B:B + 5], ["Overall", "Clusters: CPU and memory", "Clusters: storage", "Datastores: runway", "Hosts per cluster"])
+        comp = rep["sections"][B + 1]
         self.assertEqual(comp["rows"][0][0], "PROD")
         self.assertEqual(comp["cell_status"][0][5], "critical")                               # memory after host failure
         self.assertEqual(comp["rows"][1][11], "10 (memory)")
         self.assertEqual(comp["rows"][0][12], "1 now (memory 59% on average then); 5 within 12 months")
-        self.assertEqual(rep["sections"][0]["rows"][2][6], "1 recommended now, 5 within 12 months")
+        self.assertEqual(rep["sections"][B + 0]["rows"][2][6], "1 recommended now, 5 within 12 months")
         # a cluster runway says what it runs to - the target with a host down, not full hosts
-        self.assertTrue(rep["sections"][0]["rows"][0][6].endswith(" to 80% N-1"), rep["sections"][0]["rows"][0][6])   # CPU overall
-        self.assertEqual(rep["sections"][0]["rows"][1][6], "80% N-1 reached")                                          # memory overall
+        self.assertTrue(rep["sections"][B + 0]["rows"][0][6].endswith(" to 80% N-1"), rep["sections"][B + 0]["rows"][0][6])   # CPU overall
+        self.assertEqual(rep["sections"][B + 0]["rows"][1][6], "80% N-1 reached")                                          # memory overall
         self.assertEqual(comp["rows"][0][10], "80% N-1 reached")                                                       # PROD
         self.assertEqual(comp["rows"][1][10], "not growing (limit 80% N-1)")                                           # LAB
-        self.assertIn("not to 100% of what is installed", rep["sections"][0]["text"])
+        self.assertIn("not to 100% of what is installed", rep["sections"][B + 0]["text"])
         self.assertIn("Cluster runways run to 80% N-1 - 80% of what is left with 1 host(s) down - not to full hosts", rep["footer"])
         self.assertEqual([i["job_limit"] for i in r["items"]], ["memory 80% N-1", "memory 80% N-1", "", "90% full", ""])
         self.assertEqual([i["id"] for i in r["items"]], ["P1", "P2", "P3", "P4", "P5"])
@@ -278,7 +281,7 @@ class TwoVcenters(unittest.TestCase):
     def test_report_and_items(self):
         r = cf.vm_capacity_report(self.d, OPTS)
         self.assertIn("vCenters vc01.example.mil, vc02.example.mil", r["report"]["subtitle"])
-        comp = r["report"]["sections"][1]
+        comp = r["report"]["sections"][B + 1]
         self.assertEqual(sorted(row[0] for row in comp["rows"]), ["LAB", "PROD (vc01 / DC1)", "PROD (vc02 / DC1)"])
         self.assertIn("vc02 / DC1", [row[1] for row in comp["rows"]])
         names = [i["name"] for i in r["items"]]
@@ -290,7 +293,7 @@ class TwoVcenters(unittest.TestCase):
 
     def test_one_vcenter_unchanged(self):
         r = cf.vm_capacity_report(DATA, OPTS)
-        self.assertEqual(sorted(row[0] for row in r["report"]["sections"][1]["rows"]), ["LAB", "PROD"])
+        self.assertEqual(sorted(row[0] for row in r["report"]["sections"][B + 1]["rows"]), ["LAB", "PROD"])
         self.assertTrue(r["report"]["subtitle"].startswith("vCenter vc01 - read"))
 
 
@@ -340,6 +343,131 @@ class ModuleParts(unittest.TestCase):
         cfg = ns(dasConfig=ns(enabled=True, admissionControlEnabled=True, admissionControlPolicy=ClusterFailoverLevelAdmissionControlPolicy()))
         self.assertEqual((sc.ha_policy(cfg)["kind"], sc.ha_policy(cfg)["hosts"]), ("hosts", 2))
         self.assertEqual(sc.ha_policy(None)["enabled"], False)
+
+
+# ---- 1.57.0: the runway board -------------------------------------------------------------------------------------
+def bent(start, rates, end=NOW):
+    """A daily history over sum(days): [(days, per_day), ...] one after the other, ending at end."""
+    total = sum(d for d, _ in rates)
+    out, v, i = [], float(start), 0
+    for d, per in rates:
+        for _ in range(d):
+            out.append([end - (total - i) * DAY, v])
+            v += per
+            i += 1
+    out.append([end, v])
+    return out
+
+
+def board_cluster(name, hist_mem, n=4, mem_gb=512):
+    used = hist_mem[-1][1] if hist_mem else 300 * GB
+    hs = [host("%s-esx%d" % (name.lower(), i), mem_gb, 0) for i in range(n)]
+    for h in hs:
+        h["mem_used_bytes"] = int(used / n)
+    return {"name": name, "datacenter": "DC1", "standalone": False, "ha": {"enabled": True, "kind": "hosts", "hosts": 1}, "hosts": hs,
+            "vms_on": 40, "vms_off": 0, "vcpus_on": 80, "mem_configured_on": 1000 * GB, "added": 0, "removed": 0,
+            "history": {"mem": hist_mem, "cpu": bent(10000, [(120, 0)])}}
+
+
+def board_data():
+    """SOON grows faster in the last month (its runway sooner than a month ago), LATER slower (further out), NEW has 20
+    days of history (no forecast a month ago); ds_step steps up 9 points on one day."""
+    return {"vcenter": "vc01", "read_at": READ, "history_days": 120, "events_days": 30, "notes": [],
+            "clusters": [board_cluster("SOON", bent(600 * GB, [(90, 1 * GB), (30, 6 * GB)])),
+                         board_cluster("LATER", bent(500 * GB, [(90, 5 * GB), (30, 0.5 * GB)])),
+                         board_cluster("NEW", bent(700 * GB, [(20, 2 * GB)]))],
+            "datastores": [{"name": "ds_step", "datacenter": "DC1", "clusters": ["SOON"], "hosts": 4, "shared": True, "pod": "", "type": "VMFS",
+                            "accessible": True, "capacity": 10 * TB, "free": 10 * TB - int(6.9 * TB), "uncommitted": 0,
+                            "history": [[t, v + (0.9 * TB if t >= NOW - 40 * DAY else 0)] for t, v in bent(5 * TB, [(120, 0.002 * TB)])]}]
+            + [{"name": "ds_%02d" % i, "datacenter": "DC1", "clusters": ["LATER"], "hosts": 4, "shared": True, "pod": "", "type": "NFS",
+                "accessible": True, "capacity": 10 * TB, "free": 6 * TB, "uncommitted": 0, "history": bent(3.5 * TB, [(120, 0.004 * TB)])}
+               for i in range(12)]}
+
+
+BOPTS = dict(OPTS, trend_days=90, top_datastores=10, horizon_months=12)
+
+
+class Board(unittest.TestCase):
+    def setUp(self):
+        self.r = cf.vm_capacity_report(board_data(), BOPTS)
+        self.rows = {r["name"]: r for s in self.r["web"]["sections"] if s.get("board") for r in s["board"]["rows"]}
+
+    def test_moved_sooner_further_and_no_forecast_a_month_ago(self):
+        mem = lambda name: [c for c in self.rows[name]["cells"] if c["res"] == "Memory"][0]   # noqa: E731
+        self.assertEqual(mem("SOON")["moved"]["kind"], "sooner")
+        self.assertIn("sooner - was", mem("SOON")["moved"]["text"])
+        self.assertEqual(mem("LATER")["moved"]["kind"], "later")
+        self.assertIn("further out - was", mem("LATER")["moved"]["text"])
+        self.assertEqual(mem("NEW")["moved"], {"kind": "none", "days": None, "text": "no forecast a month ago", "was": ""})
+        # the same line on the samples up to 30 days ago: its runway from the value then, dated from then
+        then = cf.then_forecast(board_data()["clusters"][0]["history"]["mem"], 1000 * GB, BOPTS, NOW)
+        self.assertAlmostEqual(then["trend"]["slope"], 1 * GB, delta=0.01 * GB)
+        self.assertEqual(then["date"], NOW - 30 * DAY + then["days"] * DAY)
+        self.assertIsNone(cf.then_forecast(bent(1, [(20, 1)]), 100, BOPTS, NOW))
+
+    def test_band_edges(self):
+        self.assertEqual([cf.band(d, 90, 30) for d in (0, 30, 31, 90, 91, 180, 181, None)],
+                         ["critical", "critical", "warning", "warning", "low", "low", "ok", "ok"])
+        self.assertEqual([cf.band(d, 90, 30) for d in (30, 90)], [cf.runway_status(d, 90, 30) for d in (30, 90)])  # as the tables
+        self.assertEqual(cf.band_status("low"), "ok")             # TODO(1.56.0): "low" once site_filters has it
+        self.assertEqual(cf.band_text("low", 90, 30), "Low (3-6 months)")
+        self.assertEqual(cf.band_text("critical", 30.4, 10), "Critical (0.3 months or less)")
+        self.assertEqual(cf.band_text("critical", 90, 30.4), "Critical (1 month or less)")
+
+    def test_a_step_change(self):
+        st = self.rows["ds_step"]["cells"][0]
+        step = cf.step_in(st["series"])
+        self.assertIsNotNone(step)
+        self.assertAlmostEqual(step[1], 9.0, delta=0.2)
+        self.assertIn("a step of +9 points on", self.rows["ds_step"]["since"])
+        self.assertIsNone(cf.step_in([[i * DAY, 50 + 0.1 * i] for i in range(60)]))      # steady growth: no step
+
+    def test_tiles_headline_and_the_email(self):
+        rep, web = self.r["report"], self.r["web"]
+        self.assertEqual([t["label"] for t in rep["summary"][:4]], ["First to fill", "Moved closer", "Biggest move", "Moved further out"])
+        self.assertEqual(rep["summary"][4]["label"], "Clusters")                 # the summary as before, after them
+        self.assertTrue(all(t["tip"] and "\n" not in t["tip"] for t in rep["summary"][:4]))   # one plain line each
+        first = rep["summary"][0]
+        self.assertTrue(rep["title"].startswith("vSphere capacity planning: %s " % first["value"]), rep["title"])
+        self.assertEqual(rep["summary"][1]["value"], 1)                         # SOON moved closer
+        self.assertEqual(rep["summary"][3]["value"], 1)                         # LATER further out
+        # the email: tables only (no board, no svg); the website: the board, and the same numbers table
+        self.assertFalse(any("board" in s for s in rep["sections"]))
+        self.assertNotIn("<svg", json.dumps(rep))
+        self.assertEqual([s["title"] for s in rep["sections"][:3]], [s["title"] for s in web["sections"][:3]])
+        self.assertEqual(rep["sections"][2], web["sections"][2])
+        self.assertEqual(rep["sections"][2]["columns"], ["Cluster or datastore", "Resource", "90 days ago", "60 days ago", "30 days ago", "Now"])
+        soon = [r for r in rep["sections"][2]["rows"] if r[:2] == ["SOON", "Memory"]][0]
+        self.assertEqual(soon[2:], ["%.0f%%" % (100.0 * (600 + 30) / 2048), "%.0f%%" % (100.0 * (600 + 60) / 2048),
+                                    "%.0f%%" % (100.0 * (600 + 90) / 2048), "%.0f%%" % (100.0 * (600 + 90 + 180) / 2048)])
+        # nothing existing removed: every section the report had is still there, ACT's place before "Hosts per cluster"
+        titles = [s["title"] for s in rep["sections"]]
+        for t in ("Overall", "Clusters: CPU and memory", "Clusters: storage", "Datastores: runway", "Hosts per cluster"):
+            self.assertIn(t, titles)
+        self.assertEqual(titles[self.r["act_at"]], "Hosts per cluster")
+        self.assertEqual(web["sections"][self.r["act_at"]]["title"], "Hosts per cluster")
+
+    def test_top_datastores_on_the_page_all_in_the_workbook(self):
+        rep = self.r["report"]
+        ds = [s for s in rep["sections"] if s["title"] == "Runway: datastores"][0]
+        self.assertEqual(len(ds["rows"]), 10)
+        self.assertIn("The first 10 of 13", ds["text"])
+        sheets = cf.vm_capacity_sheets([{"name": "Overall", "rows": [1]}, {"name": "Runway: datastores", "rows": ds["rows"]}], self.r["sheet"])
+        self.assertEqual(len(sheets[1]["rows"]), 13)
+        self.assertEqual(sheets[0], {"name": "Overall", "rows": [1]})
+
+    def test_without_history(self):
+        """vcsim: no daily statistics - no line, no forecast, the report as before"""
+        d = json.loads(json.dumps(DATA))
+        for c in d["clusters"]:
+            c["history"] = {}
+        for x in d["datastores"]:
+            x["history"] = []
+        r = cf.vm_capacity_report(d, OPTS)
+        self.assertTrue(r["report"]["title"].startswith("vSphere capacity planning: "))
+        b = [s for s in r["web"]["sections"] if s.get("board")][0]["board"]
+        self.assertTrue(all(len(c["series"]) == 0 for row in b["rows"] for c in row["cells"]))
+        self.assertTrue(all(c["moved"]["kind"] == "none" for row in b["rows"] for c in row["cells"]))
 
 
 if __name__ == "__main__":

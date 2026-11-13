@@ -1273,14 +1273,34 @@ the first run: nothing has to be collected first.
 
 ### What the report shows
 
+The top of the report (1.57.0) is the **runway board**: which limit each cluster reaches first, and how that forecast
+moved since last month. The title names the first limit (`SITEA-VDI storage reaches 90% around Jan 2027, 2 months sooner
+than last month`). Four tiles come first: **First to fill**, **Moved closer**, **Biggest move** and **Moved further out**.
+
 | Section | What it shows |
 |---|---|
+| **Runway: the first limit per cluster** | per cluster: its first limit (CPU, memory or storage, in months and around which month), how it moved since last month, and each resource's used % now with its runway; on the website a line of the used % each day for 90 days above a runway bar |
+| **Runway: datastores** | the same for each shared datastore, the one that reaches 90 % first on top: the first `vm_capacity_top_datastores` (10) on the page, every one in the workbook |
+| **The numbers behind the lines** | the used % 90, 60 and 30 days ago and now, per cluster and resource and per datastore |
 | **Overall** | all clusters together: CPU and memory capacity, used, used with a host down in each cluster, growth per month and the days until the target - written `to 80% N-1`: 80 % of what is left with a host down, not full hosts; hosts usable and **hosts recommended** (now, and within 12 months); vCPUs per core and room for more VMs; shared storage with its growth and runway |
 | **Clusters: CPU and memory** | per cluster: hosts usable, CPU and memory used, **memory used if the biggest host fails** (N-1: the cluster must still run everything), vCPUs per core, VMs and their average size, memory growth, **memory runway** (days and date until memory reaches `80% N-1`, the target with a host down - not until the hosts are full), **room for more VMs** of the average size (and what limits it), **hosts recommended**, VMs added / removed in the last 30 days |
 | **Clusters: storage** | per cluster, its shared datastores together: capacity, free, used, provisioned (thin disks at full size), growth, days until 85 % and until full |
 | **Datastores: runway** | each shared datastore, the one that fills first on top: growth, days (and date) until 85 %, 90 % and full, and how well a straight line fits its history |
 | **Math vs GenAI** (with `vm_capacity_act: true`) | for every item, the job's runway (the math) next to ACT's own estimate (GenAI), whether they agree, ACT's recommendation and reasoning, and its confidence |
 | **Hosts per cluster** | every host: state, cores, CPU and memory used, VMs - an unbalanced cluster shows here |
+
+**The bands of a runway:** critical (at most `vm_capacity_runway_crit_days`, 30), warning (at most
+`vm_capacity_runway_warn_days`, 90), **Low** (at most twice the warn days: worth knowing, nothing to do now) and OK. The
+edges are the tables' own: a runway of exactly 30 days is critical in both.
+
+**Since last month** needs no stored history. The job fits the same straight line on the samples up to 30 days ago (the
+same 90-day window), works out the runway from then and compares the two dates. With too few samples a month ago it says
+"no forecast a month ago"; the line under each cluster says only what the numbers show: the growth a month, the fit, a
+step on a day.
+
+**The website and the email:** the lines, the bars and the hover tips need the report website's atlas or brief look
+(`report_web_theme`, [WEB_REPORTS.md](WEB_REPORTS.md)). The email, and the website in the email looks, show the same board
+as a table with the numbers table under it; the workbook (`report_email_xlsx`) has every datastore.
 
 **Hosts recommended** is a count of hosts of the cluster's average size (cores, memory) that keeps
 memory and CPU at their targets (80 %) with one host down - for example `1 now (memory 59% on
@@ -1346,6 +1366,7 @@ runs no command (as in "The ACT analysis" above: the same key, URL, proxy and CA
 | `vm_capacity_horizon_months` | `12` | "hosts recommended within N months" |
 | `vm_capacity_trend_days` / `vm_capacity_history_days` | `90` / `120` | the days the trend is fitted on / read: 90 averages growth that comes in batches; 30 reacts faster to a real change of rate |
 | `vm_capacity_include_local_datastores` | `false` | count a host's own datastores too |
+| `vm_capacity_top_datastores` | `10` | datastores on the runway board (the first to fill first); the workbook has all |
 | `vm_capacity_act` | `false` | GenAI's estimate next to the math |
 | `vm_capacity_act_batch` | `site_act_batch` (5) | items per question to ACT: 30 items are six questions, each with the whole evidence (an estimate needs the overall numbers) and asking about its 5 items; `0` = all in one question |
 | `vm_capacity_fail` | `false` | `true` = the job shows failed when a cluster or datastore is critical |

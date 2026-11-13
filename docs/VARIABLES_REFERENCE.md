@@ -2173,6 +2173,7 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_capacity_runway_crit_days` | `30` | and red |
 | `vm_capacity_include_local_datastores` | `false` | a host's own (not shared) datastores count too |
 | `vm_capacity_max_rows` | `100` | rows per table (problems first); the artifacts have all |
+| `vm_capacity_top_datastores` | `10` | datastores on the runway board (first to fill first); the workbook and artifacts have all |
 | `vm_capacity_fail` | `false` | The job stays green: the report says what is short. true = mark it FAILED when a cluster or datastore is critical (for workflows). |
 | `vm_capacity_act` | `false` | GenAI: ACT reads the numbers and makes its own estimate, shown next to the job's (math vs GenAI). Needs an "ACT model key" credential on the template; the same site_act_* settings as the alarms analysis. ACT runs on the AAP side and runs no command. |
 | `vm_capacity_act_max_items` | `30` | items ACT estimates: everything overall, then clusters and datastores, problems first |
