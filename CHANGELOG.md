@@ -1,5 +1,104 @@
 # Changelog
 
+## 1.51.0 — 2026-11-13
+
+**Updating without scripts:** paste `site-automation-1.51.0-changed-since-1.47.0.zip` as it is (from an older version,
+its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`. Set up: step 95, optional (AAP behind STIG Manager's nginx with the Keycloak login). No job, role
+or setting changes.
+
+**AAP behind STIG Manager's nginx, logging in through Keycloak with the card: a guide and three scripts.**
+
+- **docs/AAP_KEYCLOAK.md - a checklist in seven parts.** For AAP 2.5 or later, containerized. Check first; the nginx
+  blocks; the gateway's settings behind a proxy (`gateway_main_url`, *Csrf trusted origins*); the Keycloak realm; the
+  authentication method in AAP field by field, the maps from Keycloak groups, and the local `admin` login kept as
+  the way in when Keycloak is down; the tests with a table of what to do when one fails; the way back.
+- **A realm of its own for AAP, made by a script: `tools/aap-keycloak-realm.py`.** The realm is `aap`
+  (`KEYCLOAK_REALM`), in the Keycloak you already run. It is not the realm STIG Manager uses.
+  - It makes the realm, the card login (a copy of the browser flow with *X509/Validate Username Form*), the client
+    for AAP (confidential, the gateway's redirect URI), the mappers (groups, audience) and the groups
+    (`AAP_GROUPS`).
+  - Without `--apply` it changes nothing and prints every change. With `--apply` it makes them. A second `--apply`
+    finds nothing to change. It never deletes.
+  - **It never touches another realm.** Every request goes to `/admin/realms/aap...`, plus the admin login and the
+    one request that makes the realm. Any other address is refused inside the script before it is sent. It stops
+    on a realm named in `KEYCLOAK_PROTECTED_REALMS` and on a realm of that name it did not make.
+  - It reaches Keycloak through the admin REST API or through `kcadm.sh` inside the Keycloak container, whichever
+    is there (`--via`). The admin password comes from a file or the prompt, never from the command line.
+  - `X509_IDENTITY` says what in the card names the person: `cn` (default), `edipi`, `upn` (the usual choice with
+    Active Directory) or `email`.
+  - **People.** Stock Keycloak has no step that makes a user at a first card login (tried). So the script makes
+    nobody by default and says so. Three ways in: Active Directory (below), a list (`AAP_USERS_FILE`), or
+    Keycloak's console.
+  - Python 3.6 or later, nothing to install.
+- **People from Active Directory: the members of one group, read-only** (`LDAP_URL`, `LDAP_GROUP_DN`).
+  - Keycloak reads the directory and never writes to it. Only a member of `LDAP_GROUP_DN` (the group your identity
+    tool fills) can log in. `LDAP_GROUP_NESTED=on` (default) counts a member of a group inside it.
+  - The card's Principal Name is matched to the account's `userPrincipalName` (`LDAP_CARD_ATTRIBUTE` names
+    another attribute). A member is taken in at the first card login: nothing to do per person.
+  - Keycloak syncs on a timer (`LDAP_SYNC_CHANGED_SECONDS`, `LDAP_SYNC_FULL_SECONDS`). `--sync` runs one now.
+  - `LDAP_TEAM_GROUPS`: the directory groups that go into the token, for AAP's team and organization maps.
+  - **A person taken out of the group is refused at the next card login** (tried). An open session lasts until
+    it ends: the guide says how to end it now.
+  - `ldaps://`, or `ldap://` with `LDAP_STARTTLS=on`. A plain `ldap://` address is refused.
+- **A realm you made by hand is kept.** The script makes what is missing and changes nothing that is there.
+  - A thing that is there another way is one line: `differs <thing>: <field> is X, settings say Y`.
+  - `--update-existing` changes those fields and no others. Nothing is ever deleted or renamed.
+  - Things are found by what they are, not by name: the LDAP federation, its group mapper, the client's *Group
+    Membership* mapper, a browser flow with the card step.
+  - `--apply` in a realm the script did not make needs `--adopt`, which adds one attribute to the realm (its mark).
+- **Another network with no internet: `--compare realm-export.json`.** It prints how the realm differs from the
+  export of a Keycloak that works. It only reads; nothing is imported. Secrets and ids are not compared.
+  - One settings file per network (`aap-keycloak.enclave-a.env`). `.gitignore` now holds `aap-keycloak*.env`.
+  - Neither script calls anything outside its settings, and a proxy in the environment is not used (tested).
+  - The guide has the part "Building it in an air-gapped enclave": a numbered checklist, with the lines that
+    carry the images over as files.
+- **The dry run prints the fields of AAP's authenticator** (*OIDC Provider URL*, *OIDC Key*, *Groups Claim*, the
+  callback), with your names in them, for step 5.3.
+- **The nginx blocks, written by a script for you to paste: `tools/aap-nginx-blocks.py`.** STIG Manager's nginx gets
+  more blocks only. No new container, no new image.
+  - Block A: the `server` block for AAP. Block B: the line that hands the card's certificate to Keycloak
+    (`KEYCLOAK_NGINX`: `lines`, `server` or `off`). Block C: the report website at `/reports/`, behind STIG
+    Manager's card check (only with `REPORT_WEB_FOLDER`).
+  - It writes `out/aap-nginx-blocks.conf` and `out/aap-nginx-steps.txt` and nothing else. It refuses a folder
+    where nginx's own files live. **No script writes nginx's file:** you paste, then `nginx -t`, then the reload.
+  - **The report website needs a mount, and that restarts STIG Manager's nginx** (some seconds). The steps give
+    the exact `Volume=` line. No restart is possible only when another web server already serves the folder
+    (`REPORTS_UPSTREAM`).
+- **Keycloak's start options are a change you make by hand** (guide, step 4.1): `spi-x509cert-lookup-provider=nginx`
+  and the header's name, so Keycloak reads the card from nginx. It restarts Keycloak. No script sets them.
+- **Close Keycloak's own port.** A caller that reaches Keycloak without nginx can send a made-up certificate
+  header, and Keycloak believes it (tried). The guide says how to check that only nginx reaches that port.
+- **`tools/aap-keycloak-check.sh` - a check that only reads.** PASS or FAIL for the two names in DNS, the
+  certificate, the gateway through nginx, the realm's `.well-known/openid-configuration`, the redirect URI, the
+  websocket's `Upgrade` headers, and a new *Card* line: the realm refuses a caller with no card. A FAIL names the
+  step of the guide. It writes no file. It reads the same `--settings` file.
+  - *Card CAs* (`CARD_CA_FILE`): nginx asks a card from the CAs of that file. The line names the file.
+  - *AAP login* (`AAP_TOKEN_FILE`): a WARN when an LDAP, RADIUS or TACACS+ method is enabled in AAP beside the
+    Keycloak one - a password login that bypasses the card. Guide, step 5.9.
+  - *LDAP sync* and *Groups* (`KEYCLOAK_ADMIN_PASSWORD_FILE`): the federation is on, read-only and filtered, its
+    last sync is not late; the tokens of a person (`CHECK_USER`) carry the groups claim. The admin login is the
+    one request that is not a GET; it changes nothing.
+- **One settings file for the three scripts:** `tools/aap-keycloak.env.example`. No password belongs in it.
+- **What was tried.** The realm script (both ways), the blocks and a card login through them, on Keycloak 26.0.6
+  behind nginx `stable`, with a test CA and test cards. The people from Active Directory, the hand-made realm and
+  `--compare`: against a test domain controller (Samba's) with made-up people. **Not tried:** a real AAP, a real
+  CAC, Microsoft's own Active Directory, StartTLS, other Keycloak versions. Do it first on a test AAP if you have
+  one.
+
+Files: docs/AAP_KEYCLOAK.md, tools/aap-keycloak-realm.py, tools/aap-nginx-blocks.py, tools/aap-keycloak-check.sh,
+tools/aap-keycloak.env.example, README.md (the docs table), .github/workflows/check.yml (the new tests),
+.gitignore (one line more: if you changed yours, add your lines again).
+Tests: tests/test_aap_keycloak_realm.py (a fake Keycloak admin API: the dry run changes nothing, one apply makes
+the realm, a second changes nothing, another realm is untouched, every request is under the realm; the same
+through a stand-in `kcadm.sh`; the password is never on a command line; the federation, its filter and mappers;
+a hand-made realm: `differs`, `--adopt`, `--update-existing`, nothing deleted; `--compare`; no call leaves the
+settings' addresses with a proxy set), tests/test_aap_nginx_blocks.py (each kind
+of block, the two files and nothing else, nginx's folders refused, a setting cannot add a line; `nginx -t` on every
+kind when nginx is installed), tests/test_aap_keycloak_check.py (the script against a fake HTTPS server: a good
+setup and each mistake of the table; the new lines Card CAs, AAP login, LDAP sync and Groups; no proxy is used;
+the settings file is read, not run; shellcheck; the guide has every step it names).
+
 ## 1.47.0 — 2026-11-13
 
 **Updating without scripts:** paste `site-automation-1.47.0-changed-since-1.44.0.zip` as it is (from an older version,
@@ -1502,7 +1601,7 @@ tests/stig/run_stigman_real_test.sh against STIG Manager 1.6.18 (not in CI).
 
 SA_VERSION 1.26.0; the PDFs at 1.26.0.
 
-**To do, if you have not yet: what 0.20.0 to 1.47.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.47.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing, 1.39.0 nothing, 1.41.0 nothing, 1.42.0 nothing, 1.43.0 nothing, 1.44.0 nothing, 1.45.0 nothing, 1.47.0 nothing).** In order; each step works without
+**To do, if you have not yet: what 0.20.0 to 1.51.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.51.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing, 1.39.0 nothing, 1.41.0 nothing, 1.42.0 nothing, 1.43.0 nothing, 1.44.0 nothing, 1.45.0 nothing, 1.47.0 nothing, 1.51.0 step 95).** In order; each step works without
 the ones after it. There is no step 90.
 
 1. **Your logo** (0.20.0). A PNG with a transparent background, about 160 px tall and under 100 KB, in
@@ -2242,6 +2341,37 @@ the ones after it. There is no step 90.
     4. Run it. The *Front-end nodes* table shows each name beside its host, and *Stats page answered at* says which
        address answered. A listed node's row says *stats page only*.
     Details: docs/SERVICENOW_SETUP.md, "Self-hosted instance".
+95. **AAP behind STIG Manager's nginx, with the Keycloak (CAC) login** (1.51.0) - optional; nothing changes until
+    you do it. For AAP 2.5 or later, containerized. From docs/AAP_KEYCLOAK.md:
+    1. Check first (part 1): the gateway answers, the nginx container and its file, Keycloak's start options, a DNS
+       record and a certificate for the new name (`aap.yoursite.mil`). Then your settings file:
+       ```bash
+       cp tools/aap-keycloak.env.example aap-keycloak.env
+       ```
+    2. nginx (part 2): make the blocks, keep a copy of nginx's file, paste the blocks by hand, test, reload:
+       ```bash
+       tools/aap-nginx-blocks.py --settings aap-keycloak.env
+       sudo podman exec <nginx> nginx -t
+       sudo podman exec <nginx> nginx -s reload
+       ```
+       With `REPORT_WEB_FOLDER` the report website is served at `/reports/`. Its mount restarts STIG Manager's
+       nginx once (some seconds).
+    3. AAP (part 3): `gateway_main_url=https://aap.yoursite.mil` in the installer's inventory, the installer again,
+       and the address in *Csrf trusted origins*.
+    4. Keycloak (part 4): the start options that let Keycloak read the card from nginx (by hand, it restarts
+       Keycloak), then the realm `aap`. The first line prints the changes, the second makes them:
+       ```bash
+       tools/aap-keycloak-realm.py --settings aap-keycloak.env
+       tools/aap-keycloak-realm.py --settings aap-keycloak.env --apply --secret-file ~/aap-client.secret
+       ```
+       Then the people: a list (`AAP_USERS_FILE`), Keycloak's console, or your directory (`LDAP_URL`).
+    5. AAP (part 5): an authentication method of type *Generic OIDC*, its callback address into the Keycloak
+       client (`AAP_REDIRECT_URI`), and the maps from Keycloak groups. The Local Database Authenticator stays on.
+    6. Check it, from your workstation - it should print only PASS lines:
+       ```bash
+       tools/aap-keycloak-check.sh --settings aap-keycloak.env
+       ```
+    Details: docs/AAP_KEYCLOAK.md (part 7 undoes it).
 
 ## 1.24.0 — 2026-11-11
 
