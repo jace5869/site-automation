@@ -17,7 +17,8 @@
     _hz_sess_opts: >-
       {{ {'client_min': horizon_client_min_versions | default({}, true), 'pending_minutes': horizon_session_pending_minutes | float,
           'long_hours': horizon_session_long_hours | float, 'protocols': horizon_session_protocols,
-          'max_rows': horizon_report_max_rows | int, 'now': horizon_now | default('')} }}
+          'max_rows': horizon_report_max_rows | int, 'now': horizon_now | default(''),
+          'time_zone': report_time_zone | default('', true) | string} }}
     _hz_main: "{{ _hz }}"
 
 - name: Horizon | the users the report names

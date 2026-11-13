@@ -131,6 +131,9 @@ jobs:
           python tests/test_yaml_regex.py
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_yaml_regex.py
           python tests/test_report_time.py
+          python tests/test_report_zone.py
+          python tests/test_report_zone_horizon.py
+          python tests/test_report_zone_misc.py
           python tests/test_idm_inventory.py
           ANSIBLE_INVENTORY=/tmp/ac216/bin/ansible-inventory python tests/test_idm_inventory.py
           python tests/test_aap_keycloak_check.py

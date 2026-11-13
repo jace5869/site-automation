@@ -33,4 +33,5 @@
   ansible.builtin.set_fact:
     _vm_sso_opts: >-
       {{ {'sts_warn_days': vm_sso_sts_warn_days | int, 'sts_crit_days': vm_sso_sts_crit_days | int,
-          'ocsp_severity': vm_sso_ocsp_severity, 'crl_severity': vm_sso_crl_severity} }}
+          'ocsp_severity': vm_sso_ocsp_severity, 'crl_severity': vm_sso_crl_severity,
+          'time_zone': report_time_zone | default('', true) | string} }}

@@ -18,6 +18,14 @@ import json
 import math
 import re
 import time
+import importlib.util
+import os
+
+# the times a report shows, in report_time_zone (1.54.0): plugins/module_utils/site_time.py, loaded as site_filters.py does
+_spec = importlib.util.spec_from_file_location(
+    "site_time", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_time.py"))
+_tm = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_tm)
 
 LEVELS = ("critical", "error", "warning")
 LEVEL_RANK = {"critical": 0, "error": 1, "warning": 2, "": 3}
@@ -160,10 +168,11 @@ def _utc_text(stamp, offset):
     return when.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def log_window(hours, since="", until="", now=None):
+def log_window(hours, since="", until="", now=None, zone=""):
     """The window to read: the last `hours` hours, or since .. until (UTC text such as '2026-10-23 08:00';
     until empty = now). -> {since_min, until_min (minutes before now; 0 = now), begin, end (ISO, end '' = now),
-    hours, label, error}."""
+    hours, label, error}. zone: report_time_zone (1.54.0) - the label in it, with the UTC times as they were typed:
+    '2026-10-23 10:00 CEST to 2026-10-23 12:00 CEST (2026-10-23 08:00 to 2026-10-23 10:00 UTC)'."""
     n = datetime.datetime.fromtimestamp(float(now) if now is not None else time.time(), tz=datetime.timezone.utc)
     iso = "%Y-%m-%dT%H:%M:%SZ"
     out = {"since_min": 0, "until_min": 0, "begin": "", "end": "", "hours": 0.0, "label": "", "error": ""}
@@ -195,10 +204,17 @@ def log_window(hours, since="", until="", now=None):
     out["begin"] = b.strftime(iso)
     out["end"] = e.strftime(iso) if e is not None else ""
     out["hours"] = round(((e or n) - b).total_seconds() / 3600.0, 2)
+    tz = _tm.zone(zone)[0]
     if str(since or "").strip():
         out["label"] = "%s to %s UTC" % (b.strftime("%Y-%m-%d %H:%M"), e.strftime("%Y-%m-%d %H:%M") if e else "now")
+        if tz is not None:
+            out["label"] = "%s to %s (%s)" % (_tm.local(b.strftime("%Y-%m-%d %H:%M UTC"), tz),
+                                              _tm.local(e.strftime("%Y-%m-%d %H:%M UTC"), tz) if e else "now", out["label"])
     else:
         out["label"] = "the last %s h%s" % (_hours(hours), " before %s UTC" % e.strftime("%Y-%m-%d %H:%M") if e else "")
+        if tz is not None and e is not None:
+            out["label"] = "the last %s h before %s (%s UTC)" % (_hours(hours), _tm.local(e.strftime("%Y-%m-%d %H:%M UTC"), tz),
+                                                                 e.strftime("%Y-%m-%d %H:%M"))
     return out
 
 
@@ -552,6 +568,7 @@ def log_report(data, parsed=None, opts=None):
     read = [h for h in hosts if not _unread(h)]
     n_pat = d.get("patterns", len(allp))
     window = o.get("window") or "the last %s h" % _hours(o.get("hours", 24))
+    tz = _tm.zone(o.get("time_zone"))[0]          # report_time_zone (1.54.0): the times shown; None = UTC as before
     if not allp:
         title = "%s: no warning or error in the logs of %d host(s)" % (name, len(read))
     elif asked and not ran:
@@ -617,8 +634,8 @@ def log_report(data, parsed=None, opts=None):
                          "lines": [x for x in str(o.get("raw") or "").splitlines() if x.strip()] or ["(empty)"]})
     if allp:
         shown = _capped(allp, o.get("max_rows"))
-        rows = [[p["id"], p["severity"].upper(), _where(p), _src(p), p["count"], _t(p.get("first")) or "-", _t(p.get("last")) or "-",
-                 p["problem"]] for p in shown]
+        rows = [[p["id"], p["severity"].upper(), _where(p), _src(p), p["count"], _tm.local(_t(p.get("first")), tz) or "-",
+                 _tm.local(_t(p.get("last")), tz) or "-", p["problem"]] for p in shown]
         text = ("P%d to %s (over log_analysis_max_items, %s) were not given to ACT." % (len(ps) + 1, allp[-1]["id"], o.get("max_items", 30))
                 if asked and len(allp) > len(ps) else "")
         if len(shown) < len(allp):

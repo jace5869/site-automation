@@ -148,6 +148,7 @@ horizon_push_base_vm: ""                 # the golden image VM, as vCenter names
 horizon_push_snapshot: ""                # its snapshot to push: the name, or the path when two have that name (e.g. /2026-10/2026-11)
 # When the push starts: "" = as soon as the approved push job runs; or a time - "2026-11-01 22:00" (UTC)
 # or with an offset, "2026-11-01T22:00-05:00". A time that has passed by the approval starts in a minute.
+# UTC also with report_time_zone set: the plan then shows it in that zone and as typed, "23:00 CET (22:00 UTC)".
 horizon_push_start: ""
 horizon_push_logoff_policy: WAIT_FOR_LOGOFF   # WAIT_FOR_LOGOFF (each desktop is replaced when its user logs off) or FORCE_LOGOFF (users are logged off)
 horizon_push_stop_on_first_error: true   # stop the push at the first desktop that fails

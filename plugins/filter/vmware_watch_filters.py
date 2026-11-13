@@ -22,6 +22,14 @@ __metaclass__ = type
 
 import fnmatch
 import re
+import importlib.util
+import os
+
+# the times a report shows, in report_time_zone (1.54.0): plugins/module_utils/site_time.py, loaded as site_filters.py does
+_spec = importlib.util.spec_from_file_location(
+    "site_time", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_time.py"))
+_tm = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_tm)
 
 RANK = {"critical": 0, "warning": 1, "info": 2, "ok": 3, "": 4}
 HA_CRITICAL = {"networkIsolated", "networkPartitionedFromMaster", "hostDown", "initializationError"}
@@ -302,9 +310,13 @@ def vm_watch_report(data, conditions, actions=None, opts=None):
     conf = d.get("confirm") or {}
     pr = d.get("probe") or {}
     tr = d.get("traffic") or {}
-    subtitle = ("Read %s UTC: %s; HA and storage events of the last %s minutes. A VM is hung only when it has no heartbeat AND "
+    read = "%s UTC" % d.get("read_at", "")           # as vCenter gives it, 2026-10-23T10:02:00Z; in report_time_zone (1.54.0)
+    tz = _tm.zone(o.get("time_zone"))[0]
+    if tz is not None and _tm.local(str(d.get("read_at") or "")[:16], tz) != str(d.get("read_at") or "")[:16]:
+        read = _tm.local(str(d.get("read_at"))[:16], tz)
+    subtitle = ("Read %s: %s; HA and storage events of the last %s minutes. A VM is hung only when it has no heartbeat AND "
                 "does not answer on the network, in each of %s check(s) %s seconds apart%s. Watch only: nothing was restarted."
-                % (d.get("read_at", ""), _counts(d), _num(d.get("window_minutes")), conf.get("checks", 1), _num(conf.get("seconds", 0)),
+                % (read, _counts(d), _num(d.get("window_minutes")), conf.get("checks", 1), _num(conf.get("seconds", 0)),
                    " AND vCenter saw it send no network packets" if tr.get("on") else ""))
     summary = [{"label": "Critical", "value": len(crit), "status": "critical" if crit else "ok"},
                {"label": "Warning", "value": len(warn), "status": "warning" if warn else "ok"},

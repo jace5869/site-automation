@@ -10,7 +10,8 @@
       {{ hostvars['localhost']._hzi_vc | default({'ran': false, 'why': 'the vCenter part did not run', 'name': horizon_image_vm})
          | hzi_report(hostvars['localhost']._hzi_guest | default({}),
                       {'snapshot_warn': horizon_image_snapshot_warn | int, 'hw_min': horizon_image_hw_min | int,
-                       'fslogix': horizon_image_fslogix | bool, 'guest': horizon_image_guest | bool}) }}
+                       'fslogix': horizon_image_fslogix | bool, 'guest': horizon_image_guest | bool,
+                       'time_zone': report_time_zone | default('', true) | string}) }}
 
 - name: Horizon image | report
   ansible.builtin.include_tasks: report.yml

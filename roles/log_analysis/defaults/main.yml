@@ -11,7 +11,8 @@
 # The last this-many hours ...
 log_analysis_hours: 24
 # ... or a fixed window, e.g. the outage: log_analysis_since "2026-10-23 08:00" and log_analysis_until
-# "2026-10-23 10:30" (UTC, as the report shows times). Since alone = from then until now.
+# "2026-10-23 10:30" - in UTC, also with report_time_zone set (the report shows the window in that zone and in UTC).
+# Since alone = from then until now.
 log_analysis_since: ""
 log_analysis_until: ""                    # the end of the fixed window (empty = now)
 

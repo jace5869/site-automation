@@ -6,7 +6,7 @@
     _la_hosts: >-
       {{ groups['all'] | map('extract', hostvars) | selectattr('log_analysis_result', 'defined')
          | map(attribute='log_analysis_result') | list }}
-    _la_window: "{{ log_analysis_hours | log_window(log_analysis_since, log_analysis_until) }}"
+    _la_window: "{{ log_analysis_hours | log_window(log_analysis_since, log_analysis_until, zone=report_time_zone | default('', true) | string) }}"
 
 - name: Logs | some host was targeted
   ansible.builtin.assert:

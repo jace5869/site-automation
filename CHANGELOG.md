@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.54.0 — 2026-11-13
+
+**Nothing to set up.** With `report_time_zone` set (1.49.0), the times inside the reports follow it too.
+
+**Times inside the reports in your time zone.** 1.49.0 put the website's index, the strip of past runs and the footer
+in `report_time_zone`. The reports that print their own UTC times now follow it as well, on the page and in the email:
+"Read 2026-11-13 05:37 CET" instead of "Read 2026-11-13 04:37 UTC".
+
+- **Which reports:** AD health (admin and reader mode), account lockout, VMware capacity, ONTAP health, log analysis,
+  VM outage watch, VM snapshots and snapshot cleanup, VMs created, Horizon (health, events, sessions, disconnected
+  sessions, logon times, broken desktops, golden image check, image push plan), FSLogix profiles, ServiceNow nodes,
+  mail relay unused addresses, network performance (OCSP) and vCenter SSO.
+- **Summer time is per date.** Each time says its own zone: a July row `CEST`, a November row `CET`.
+- **A column that said "(UTC)" drops it** ("Since (UTC)" is "Since"), because each cell carries its zone.
+- **Times you type stay UTC:** `log_analysis_since`, `log_analysis_until` and `horizon_push_start`. Their docs and
+  survey wording say so, and the report shows both: "2026-10-23 10:00 CEST to ... (2026-10-23 08:00 to ... UTC)".
+- **Stays UTC:** what is stored (artifacts, JSON), the job output, ticket text, the VM pick survey's list, the "By day"
+  table of VMs created (UTC days). The VMware health and alarms reports keep their own two-zone style.
+- **`report_time_zone: ""` (the default), `UTC` or a name the execution environment does not know:** every report
+  exactly as before, byte for byte.
+- For playbooks of your own: the Jinja filter `report_time_column` ("Taken (UTC)" -> "Taken" with a zone), and
+  `report_time_local` now also takes seconds and ISO times ("2026-07-13T04:37:09Z" -> "2026-07-13 06:37:09 CEST").
+- Docs: WEB_REPORTS.md ("Times in your time zone", the table of reports), LOG_ANALYSIS.md, HORIZON.md.
+- Tests: `tests/test_report_zone.py`, `test_report_zone_horizon.py`, `test_report_zone_misc.py` (each changed report
+  with CET, CEST, "" and an unknown zone).
+
 ## 1.53.0 — 2026-11-13
 
 **Updating without scripts:** paste `site-automation-1.53.0-changed-since-1.47.0.zip` as it is (from an older version,
@@ -185,6 +211,7 @@ of block, the two files and nothing else, nginx's folders refused, a setting can
 kind when nginx is installed), tests/test_aap_keycloak_check.py (the script against a fake HTTPS server: a good
 setup and each mistake of the table; the new lines Card CAs, AAP login, LDAP sync and Groups; no proxy is used;
 the settings file is read, not run; shellcheck; the guide has every step it names).
+
 
 ## 1.50.0 — 2026-11-13
 

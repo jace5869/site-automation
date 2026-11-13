@@ -8,6 +8,14 @@ __metaclass__ = type
 
 import datetime
 import math
+import importlib.util
+import os
+
+# the times a report shows, in report_time_zone (1.54.0): plugins/module_utils/site_time.py, loaded as site_filters.py does
+_spec = importlib.util.spec_from_file_location(
+    "site_time", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_time.py"))
+_tm = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_tm)
 
 RANK = {"critical": 0, "warning": 1, "unknown": 2, "info": 3, "ok": 4, "": 5}
 DAY = 86400.0
@@ -580,7 +588,7 @@ def vm_capacity_report(data, opts=None):
     if notes:
         sections.append({"title": "Notes", "lines": notes})
     report = {"title": title, "status": status, "summary": summary, "sections": sections,
-              "subtitle": "%s - read %s UTC%s%s" % (vc_text, now.strftime("%Y-%m-%d %H:%M"),
+              "subtitle": "%s - read %s%s%s" % (vc_text, _tm.local(now.strftime("%Y-%m-%d %H:%M UTC"), _tm.zone(o.get("time_zone"))[0]),
                                                            " - datacenter " + o["datacenter"] if o.get("datacenter") else "",
                                                            " - clusters " + ", ".join(o["clusters"]) if o.get("clusters") else ""),
               "footer": "Estimates from a straight line over the last %s days of vCenter's daily statistics: a guide for planning, not a "

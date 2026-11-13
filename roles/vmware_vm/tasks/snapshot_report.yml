@@ -44,20 +44,21 @@
       {%- endfor -%}
       {{ out }}
     _vm_report_doc: >-
-      {%- set cols = ['VM', 'Snapshot', 'Taken (UTC)', 'Taken by', 'Age (days)', 'Size', 'Folder', 'Description'] -%}
+      {%- set _rtz = report_time_zone | default('', true) | string -%}
+      {%- set cols = ['VM', 'Snapshot', 'Taken (UTC)' | report_time_column(_rtz), 'Taken by', 'Age (days)', 'Size', 'Folder', 'Description'] -%}
       {%- set sections = [] -%}
       {%- if _vm_sn.old -%}
       {%-   set _ = sections.append({'title': 'To delete: older than ' ~ _vm_sn_days ~ _vm_sn_named, 'status': 'warning', 'columns': cols,
-                                     'rows': _vm_sn.old | map('vm_snap_row', _vm_sn_multi) | list,
+                                     'rows': _vm_sn.old | map('vm_snap_row', _vm_sn_multi, _rtz) | list,
                                      'text': 'The snapshot cleanup deletes these (in the workflow: after the approval). Old snapshots slow the VM down and fill the datastore.'}) -%}
       {%- endif -%}
       {%- if _vm_sn.held -%}
       {%-   set _ = sections.append({'title': 'Older than ' ~ _vm_sn_days ~ ', held back (never deleted automatically)',
-                                     'columns': cols + ['Why'], 'rows': _vm_sn.held | map('vm_snap_row', _vm_sn_multi) | list,
+                                     'columns': cols + ['Why'], 'rows': _vm_sn.held | map('vm_snap_row', _vm_sn_multi, _rtz) | list,
                                      'text': 'The cleanup leaves these alone. The big ones are best deleted by hand, at a quiet time.'}) -%}
       {%- endif -%}
       {%- if _vm_sn.all -%}
-      {%-   set _ = sections.append({'title': 'All snapshots (any age), oldest first', 'columns': cols, 'rows': _vm_sn.all | map('vm_snap_row', _vm_sn_multi) | list,
+      {%-   set _ = sections.append({'title': 'All snapshots (any age), oldest first', 'columns': cols, 'rows': _vm_sn.all | map('vm_snap_row', _vm_sn_multi, _rtz) | list,
                                      'text': 'Taken by: from vCenter events; unknown = older than vCenter keeps its events (often 30 days).'}) -%}
       {%- else -%}
       {%-   set _ = sections.append({'title': 'Result', 'lines': ['No VM has a snapshot.']}) -%}

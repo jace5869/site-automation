@@ -48,7 +48,8 @@
            'cert_warn_days': ad_cert_warn_days | float, 'cert_crit_days': ad_cert_crit_days | float,
            'krbtgt_max_days': ad_krbtgt_max_days | float, 'rid_warn_pct': ad_rid_warn_pct | float, 'rid_crit_pct': ad_rid_crit_pct | float,
            'groups_should_be_empty': ad_groups_should_be_empty, 'privileged_change_severity': ad_privileged_change_severity,
-           'changes_max': ad_changes_max | int, 'max_rows': ad_report_max_rows | int, 'now': ad_report_now | default('')}) }}
+           'changes_max': ad_changes_max | int, 'max_rows': ad_report_max_rows | int, 'now': ad_report_now | default(''),
+           'time_zone': report_time_zone | default('', true) | string}) }}
   when: _ad_mode.mode == 'reader'
 
 # one dict expression: on ansible-core 2.16 the values of a YAML dict would arrive as strings
@@ -68,7 +69,8 @@
            'no_client_site_warn': ad_no_client_site_warn | int, 'groups_should_be_empty': ad_groups_should_be_empty,
            'privileged_change_severity': ad_privileged_change_severity, 'schema_change_severity': ad_schema_change_severity,
            'dc_change_severity': ad_dc_change_severity, 'dcdiag_skip': ad_dcdiag_skip, 'changes_max': ad_changes_max | int,
-           'max_rows': ad_report_max_rows | int, 'now': ad_report_now | default(''), 'mode_line': 'admin mode (WinRM on each DC)'}) }}
+           'max_rows': ad_report_max_rows | int, 'now': ad_report_now | default(''), 'mode_line': 'admin mode (WinRM on each DC)',
+           'time_zone': report_time_zone | default('', true) | string}) }}
   when: _ad_mode.mode == 'admin'
 
 - name: AD | the report to print and email

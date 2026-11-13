@@ -1644,14 +1644,15 @@ def vm_snap_vm_key(x):
     return "%s/%s" % (str(x.get("vcenter", "")).lower(), x.get("moid", ""))
 
 
-def vm_snap_row(x, multi=False):
+def vm_snap_row(x, multi=False, zone=""):
     """A snapshot as a row of the snapshot report's tables (with its 'reason' when it has one); with
-    several vCenters the folder starts with the vCenter ('vc02: /DC1/vm/Linux')."""
+    several vCenters the folder starts with the vCenter ('vc02: /DC1/vm/Linux'). zone: report_time_zone (1.54.0) -
+    'Taken' in it, '2026-10-14 10:12:33 CEST'; "" = UTC as before, '2026-10-14 08:12:33'."""
     x = x or {}
     folder = x.get("folder", "")
     if multi and x.get("vcenter"):
         folder = "%s: %s" % (vc_short(x["vcenter"]), folder)
-    row = [x.get("vm", ""), x.get("name", ""), str(x.get("created", "")).replace("T", " ").replace("Z", ""),
+    row = [x.get("vm", ""), x.get("name", ""), report_time_local(str(x.get("created", "")).replace("T", " ").replace("Z", ""), zone),
            x.get("taken_by") or "unknown", x.get("age_days", ""), human_size(x.get("size_gb")), folder,
            x.get("description", "")]
     return row + [x["reason"]] if "reason" in x else row
@@ -1895,6 +1896,12 @@ def report_time_local(text, zone):
     """A time the report website stores ('2026-11-13 04:37 UTC') as report_time_zone shows it ('2026-11-13 05:37
     CET'); as it is without a time zone, with one not known here, or when it is not such a time."""
     return _time.local(text, _time.zone(zone)[0])
+
+
+def report_time_column(name, zone):
+    """A time column's header (1.54.0): 'Taken (UTC)' as it is without report_time_zone (or one not known here);
+    with it 'Taken' - each cell then says its zone (report_time_local)."""
+    return _time.column(name, _time.zone(zone)[0])
 
 
 def report_headline(report):
@@ -2290,7 +2297,7 @@ class FilterModule(object):
                 "human_size": human_size, "name_matches": name_matches, "name_list": name_list,
                 "report_text": report_text, "report_notice": report_notice, "report_cards_html": report_cards_html, "report_cell_html": report_cell_html, "findings_report": findings_report,
                 "report_headline": report_headline, "report_runs": report_runs,
-                "report_time_now": report_time_now, "report_time_local": report_time_local,
+                "report_time_now": report_time_now, "report_time_local": report_time_local, "report_time_column": report_time_column,
                 "image_size": image_size, "email_recipients": email_recipients, "email_also_refused": email_also_refused,
                 "report_web_files": report_web_files, "site_web_win_error": site_web_win_error,
                 "report_page_unpack": report_page_unpack, "report_xlsx_sheets": report_xlsx_sheets}

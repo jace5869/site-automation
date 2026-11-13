@@ -32,6 +32,7 @@
           'runway_crit_days': vm_capacity_runway_crit_days | float,
           'include_local_datastores': vm_capacity_include_local_datastores | bool, 'max_rows': vm_capacity_max_rows | int,
           'datacenter': vmware_datacenter | default('', true),
+          'time_zone': report_time_zone | default('', true) | string,
           'clusters': (vm_capacity_clusters | replace(',', ' ')).split() if vm_capacity_clusters is string else vm_capacity_clusters} }}
 
 - name: VMware | the report

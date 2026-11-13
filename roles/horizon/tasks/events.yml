@@ -17,7 +17,7 @@
     _hz_ev: "{{ _hz | hz_events({'hours': horizon_events_hours | float, 'failed_warn': horizon_events_failed_warn | int,
                                   'failed_types': horizon_events_failed_types, 'error_severities': horizon_events_error_severities,
                                   'admin_modules': horizon_events_admin_modules, 'max_rows': horizon_report_max_rows | int,
-                                  'now': horizon_now | default('')}) }}"
+                                  'now': horizon_now | default(''), 'time_zone': report_time_zone | default('', true) | string}) }}"
 
 - name: Horizon | report
   ansible.builtin.include_tasks: report.yml

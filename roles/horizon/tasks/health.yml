@@ -42,7 +42,7 @@
                                       'license_warn_days': horizon_license_warn_days | int, 'max_rows': horizon_report_max_rows | int,
                                       'backup_max_hours': horizon_backup_max_hours | float,
                                       'ds_warn_pct': horizon_datastore_warn_pct | float, 'ds_crit_pct': horizon_datastore_crit_pct | float,
-                                      'now': horizon_now | default('')}) }}"
+                                      'now': horizon_now | default(''), 'time_zone': report_time_zone | default('', true) | string}) }}"
 
 - name: Horizon | report
   ansible.builtin.include_tasks: report.yml

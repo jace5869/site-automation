@@ -4,7 +4,7 @@
 # reported (analyze.yml). A host that is not connected, and a vCenter that could not be read, are listed.
 - name: Logs | the window, the words to look for, the lines to leave out
   ansible.builtin.set_fact:
-    _la_window: "{{ log_analysis_hours | log_window(log_analysis_since, log_analysis_until) }}"
+    _la_window: "{{ log_analysis_hours | log_window(log_analysis_since, log_analysis_until, zone=report_time_zone | default('', true) | string) }}"
     _la_vset: >-
       {{ {'match': log_analysis_match, 'match_extra': log_analysis_match_extra,
           'ignore': log_analysis_ignore, 'ignore_extra': log_analysis_ignore_extra} | log_settings({}, 'esxi') }}

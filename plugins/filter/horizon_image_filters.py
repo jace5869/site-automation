@@ -7,9 +7,17 @@ Standard library only."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import importlib.util
 import json
+import os
 import re
 from datetime import date
+
+# the times a report shows, in report_time_zone (1.54.0): plugins/module_utils/site_time.py, as site_filters.py loads it
+_spec = importlib.util.spec_from_file_location(
+    "site_time", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_time.py"))
+_tm = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_tm)
 
 MARK = "###SITE-JSON### "
 PASS, WARN, FAIL, INFO = "PASS", "WARN", "FAIL", "INFO"
@@ -283,7 +291,8 @@ def vcenter_checks(vc, opts=None):
     else:
         text = "%d snapshot(s); the current one, %s, is %d deep (%s)%s" % (
             _int(sn.get("count")), sn.get("current") or "?", _int(sn.get("current_depth")), " > ".join(_list(sn.get("chain"))) or "?",
-            (", taken " + _s(sn.get("current_created")).replace("T", " ").replace("Z", " UTC")) if sn.get("current_created") else "")
+            (", taken " + _tm.local(_s(sn.get("current_created")).replace("T", " ").replace("Z", " UTC"), _tm.zone(o.get("time_zone"))[0]))
+            if sn.get("current_created") else "")
         if warn_at and _int(sn.get("current_depth")) > warn_at:
             rows.append(_row(P, "Snapshots", WARN, text + "; more than horizon_image_snapshot_warn (%d)" % warn_at,
                              "Delete the old snapshots no pool uses any more (keep the last one or two): a long chain slows the push and the desktops."))

@@ -11,4 +11,5 @@
           'stuck_hours': horizon_stuck_hours | float, 'stuck_actions': horizon_fix_stuck_actions | default({}, true),
           'ghost_action': horizon_fix_ghost_action | default('', true), 'host_threshold': horizon_fix_host_threshold | int,
           'ad_gate': horizon_fix_ad_gate | bool, 'hold_error_kinds': horizon_fix_hold_error_kinds,
-          'error_kinds': horizon_clone_error_kinds | default({}, true), 'now': horizon_now | default('')} }}
+          'error_kinds': horizon_clone_error_kinds | default({}, true), 'now': horizon_now | default(''),
+          'time_zone': report_time_zone | default('', true) | string} }}

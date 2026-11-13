@@ -19,8 +19,9 @@ except ImportError:                                  # Python before 3.9
     zoneinfo = None
 
 UTC_NAMES = ("UTC", "Z", "ETC/UTC", "GMT")
-# a time as the website stores it - "2026-11-13 04:37 UTC" - and as the strip of past runs has it, "2026-11-13 04:37"
-STORED = re.compile(r"^(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d)( UTC)?$")
+# a time as the website stores it - "2026-11-13 04:37 UTC" - and as the strip of past runs has it, "2026-11-13 04:37";
+# as the reports print UTC times (1.54.0) also with seconds, "2026-10-05 03:52:47", and as ISO, "2026-10-05T03:52:47Z"
+STORED = re.compile(r"^(\d{4})-(\d\d)-(\d\d)[ T](\d\d):(\d\d)(?::(\d\d)(?:\.\d+)?)?(?: UTC|Z|\+00:00)?$")
 
 
 def zone(name):
@@ -40,18 +41,28 @@ def zone(name):
 
 
 def local(text, tz=None):
-    """A stored time as it is shown: '2026-11-13 04:37 UTC' -> '2026-11-13 05:37 CET' in tz (zone). Without a time
-    zone, and anything that is not such a time ('this run', '', a job number), as it is."""
+    """A stored time as it is shown: '2026-11-13 04:37 UTC' -> '2026-11-13 05:37 CET' in tz (zone); with seconds, as a
+    report reads them, '2026-10-05T03:52:47Z' -> '2026-10-05 05:52:47 CEST'. Without a time zone, and anything that is
+    not such a time ('this run', '', a job number), as it is."""
     if tz is None:
         return text
-    m = STORED.match(str(text or ""))
+    m = STORED.match(str(text or "").strip())
     if not m:
         return text
+    g = m.groups()
     try:
-        u = datetime.datetime(*[int(x) for x in m.groups()[:5]], tzinfo=datetime.timezone.utc)
-        return u.astimezone(tz).strftime("%Y-%m-%d %H:%M %Z").strip()
+        u = datetime.datetime(*[int(x) for x in g[:5]] + [int(g[5] or 0)], tzinfo=datetime.timezone.utc)
+        return u.astimezone(tz).strftime("%Y-%m-%d %H:%M" + (":%S" if g[5] else "") + " %Z").strip()
     except (ValueError, OverflowError):              # the 31st of a month with 30 days: as it is
         return text
+
+
+def column(name, tz=None):
+    """A time column's header (1.54.0): 'When (UTC)' as it is without a time zone; with one, 'When' - each time in the
+    column then says its own zone, CET or CEST by its date."""
+    if tz is None:
+        return name
+    return str(name).replace(" (UTC)", "")
 
 
 def stamp(tz=None, now=None):

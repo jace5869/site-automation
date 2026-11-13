@@ -10,6 +10,14 @@ __metaclass__ = type
 import datetime
 import fnmatch
 import re
+import importlib.util
+import os
+
+# the times a report shows, in report_time_zone (1.54.0): plugins/module_utils/site_time.py, loaded as site_filters.py does
+_spec = importlib.util.spec_from_file_location(
+    "site_time", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_time.py"))
+_tm = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_tm)
 
 # a name as the service desk types it: jdoe, CORP\jdoe, jdoe@corp.example.mil. The characters an
 # account name may not have (and none of LDAP's or XPath's special ones get through).
@@ -326,6 +334,13 @@ def ad_lockout_report(finds, dcs, unlocks=None, sources=None, opts=None):
     tg = ad_lockout_targets(finds, pick)
     asked = bool(o.get("asked"))
     now = parse_time(o.get("now")) or datetime.datetime.now(datetime.timezone.utc)
+    tz = _tm.zone(o.get("time_zone"))[0]          # report_time_zone (1.54.0): every time shown; None = UTC as before
+
+    def tt(v):                                    # a table cell: '2026-10-20 18:44' (UTC) or '2026-10-20 20:44 CEST'
+        return _tm.local(time_text(v), tz)
+
+    def ut(v, empty=""):                          # in a sentence: '2026-10-20 18:44 UTC' or '2026-10-20 20:44 CEST'
+        return _tm.local((time_text(v) or empty) + " UTC", tz)
     names = {}
     for x in dcs or []:
         for ip, nm in ((x.get("data") or {}).get("names") or {}).items():
@@ -375,13 +390,13 @@ def ad_lockout_report(finds, dcs, unlocks=None, sources=None, opts=None):
         elif o.get("unlock") and not locked:
             lines.append("Not locked out: nothing to unlock.")
         if locked and ul and ul.get("ok"):
-            lines.append("%s was locked out since %s UTC%s." % (who, time_text(acc.get("lockout_time")) or "?",
+            lines.append("%s was locked out since %s%s." % (who, ut(acc.get("lockout_time"), "?"),
                                                                (" (recorded by %s)" % locks[0]["dc"]) if locks else ""))
         elif locked:
-            lines.append("%s is LOCKED OUT since %s UTC%s." % (who, time_text(acc.get("lockout_time")) or "?",
+            lines.append("%s is LOCKED OUT since %s%s." % (who, ut(acc.get("lockout_time"), "?"),
                                                               (" (recorded by %s)" % locks[0]["dc"]) if locks else ""))
         else:
-            lines.append("%s is not locked out now%s." % (who, (", unlocked %s UTC by %s" % (time_text(unl[0]["time"]), unl[0]["by"] or "?")) if unl else ""))
+            lines.append("%s is not locked out now%s." % (who, (", unlocked %s by %s" % (ut(unl[0]["time"]), unl[0]["by"] or "?")) if unl else ""))
         pt = _policy_text(acc, find)
         if pt:
             lines.append(pt)
@@ -391,10 +406,10 @@ def ad_lockout_report(finds, dcs, unlocks=None, sources=None, opts=None):
             lines.append("Its password has EXPIRED: the user must change it before anything else works.")
         top_line = ""
         if top:
-            top_line = "Most bad passwords came from %s%s: %s%s in the last %s h, the last at %s UTC%s." % (
+            top_line = "Most bad passwords came from %s%s: %s%s in the last %s h, the last at %s%s." % (
                 _name(top), (" (%s)" % ", ".join(sorted(top["ips"]))) if top["ips"] and top["source"] not in top["ips"] else "",
                 _plural(top["bad"] + top["after"], "failed sign-in"), (", %s" % _plural(top["lockouts"], "lockout")) if top["lockouts"] else "",
-                _hours(hours), time_text(top["last"]), (", " + top["pace"]) if top["pace"] else "")
+                _hours(hours), ut(top["last"]), (", " + top["pace"]) if top["pace"] else "")
             lines.append(top_line)
             for s in [x for x in srcs if x["lockouts"] or x["bad"] or x["after"]][:3]:
                 lines += _source_hints(acc, s, o)
@@ -437,9 +452,9 @@ def ad_lockout_report(finds, dcs, unlocks=None, sources=None, opts=None):
 
         if asked:
             st_acc = "info" if rec["unlocked"] else ("warning" if locked else "")
-            facts = [["Name", acc.get("display") or "-"], ["Locked out", ("YES, since %s UTC" % time_text(acc.get("lockout_time"))) if locked else "no"],
+            facts = [["Name", acc.get("display") or "-"], ["Locked out", ("YES, since %s" % ut(acc.get("lockout_time"))) if locked else "no"],
                      ["Enabled", "yes" if acc.get("enabled", True) else "NO"],
-                     ["Password last set", (time_text(acc.get("password_set")) + " UTC") if acc.get("password_set") else "-"],
+                     ["Password last set", ut(acc.get("password_set")) if acc.get("password_set") else "-"],
                      ["Password", "EXPIRED" if acc.get("password_expired") else ("never expires" if acc.get("password_never_expires") else "valid")],
                      ["UPN", acc.get("upn") or "-"]]
             sections.append({"title": "%s: what to do" % who, "status": st_acc or "ok", "lines": lines})
@@ -451,7 +466,7 @@ def ad_lockout_report(finds, dcs, unlocks=None, sources=None, opts=None):
             for s in srcs[:max_rows]:
                 how = sorted(s["kinds"]) + [LOGON_TYPE.get(t, "logon type %d" % t) for t in sorted(s["logon_types"])]
                 stx = ", ".join("%s %s" % (v, k) for k, v in sorted(s["statuses"].items(), key=lambda kv: -kv[1]) if k)
-                rows.append([_name(s), ", ".join(sorted(s["ips"])) or "-", s["bad"], s["after"], s["lockouts"], time_text(s["first"]), time_text(s["last"]),
+                rows.append([_name(s), ", ".join(sorted(s["ips"])) or "-", s["bad"], s["after"], s["lockouts"], tt(s["first"]), tt(s["last"]),
                              s["pace"] or "-", "; ".join(how) + ((" - " + stx) if stx else ""), ", ".join(sorted(s["dcs"])),
                              s["inventory_host"] or ("-" if not s["source"] else "not in it")])
                 hot = s is top or s["lockouts"] > 0
@@ -470,12 +485,12 @@ def ad_lockout_report(finds, dcs, unlocks=None, sources=None, opts=None):
             if len(srcs) > max_rows:
                 sec["text"] += " The first %d of %d are shown; the job's artifacts (ad_lockout) have all." % (max_rows, len(srcs))
             sections.append(sec)
-            ev = [[time_text(r["time"]), r["dc"], "locked out", r["computer"] or "(not recorded)"] for r in locks] + \
-                 [[time_text(r["time"]), r["dc"], "unlocked", r["by"] or "?"] for r in unl]
+            ev = [[tt(r["time"]), r["dc"], "locked out", r["computer"] or "(not recorded)"] for r in locks] + \
+                 [[tt(r["time"]), r["dc"], "unlocked", r["by"] or "?"] for r in unl]
             ev.sort(key=lambda r: r[0], reverse=True)
             sections.append({"title": "%s: lockouts and unlocks (last %s h)" % (who, _hours(hours)),
                              "text": "Event 4740 (locked out, with the caller computer) and 4767 (unlocked, by whom)." + ("" if ev else " None."),
-                             **({"columns": ["When (UTC)", "DC", "What", "Computer / by"], "rows": ev[:max_rows],
+                             **({"columns": [_tm.column("When (UTC)", tz), "DC", "What", "Computer / by"], "rows": ev[:max_rows],
                                  "row_status": ["warning" if r[2] == "locked out" else "" for r in ev[:max_rows]],
                                  "cell_status": [["", "", "", ""] for _ in ev[:max_rows]]} if ev else {})})
             drows, dst = [], []
@@ -489,8 +504,8 @@ def ad_lockout_report(finds, dcs, unlocks=None, sources=None, opts=None):
                     dst.append("warning")
                     continue
                 drows.append([dcn + (" (PDC)" if is_pdc else ""), st.get("bad_pwd_count") if st.get("bad_pwd_count") is not None else "",
-                              (time_text(st.get("bad_password_time")) or "-"), "yes" if st.get("locked") else "no",
-                              time_text(st.get("last_logon")) or "-", ""])
+                              (tt(st.get("bad_password_time")) or "-"), "yes" if st.get("locked") else "no",
+                              tt(st.get("last_logon")) or "-", ""])
                 dst.append("warning" if st.get("bad_pwd_count") else "")
             sections.append({"title": "%s: on each domain controller" % who,
                              "text": "badPwdCount and the last bad password are NOT replicated: each DC counts the bad passwords it was "
@@ -511,7 +526,7 @@ def ad_lockout_report(finds, dcs, unlocks=None, sources=None, opts=None):
         rows, rs = [], []
         for acc, who, srcs, rec in overview:
             hot = [s for s in srcs if s["lockouts"] or s["bad"] or s["after"]]
-            rows.append([who, acc.get("display") or "", time_text(acc.get("lockout_time")), ", ".join(
+            rows.append([who, acc.get("display") or "", tt(acc.get("lockout_time")), ", ".join(
                 "%s (%d)" % (_name(s), s["bad"] + s["after"]) for s in hot[:3]) or "-", rec["bad"] + rec["after"],
                 rec["caller"] or "-"])
             rs.append("warning")
@@ -522,7 +537,7 @@ def ad_lockout_report(finds, dcs, unlocks=None, sources=None, opts=None):
             text += " %d are locked out; the latest %d are shown (ad_lockout_max_users)." % (total, len(rows))
         sec = {"title": "Locked out now", "text": text if rows else "No account is locked out."}
         if rows:
-            sec.update({"columns": ["Account", "Name", "Locked out since (UTC)", "Sources (failed sign-ins)", "Failed sign-ins (%s h)" % _hours(hours), "Lockout caller (4740)"],
+            sec.update({"columns": ["Account", "Name", _tm.column("Locked out since (UTC)", tz), "Sources (failed sign-ins)", "Failed sign-ins (%s h)" % _hours(hours), "Lockout caller (4740)"],
                         "rows": rows, "row_status": rs, "cell_status": [["warning", "", "", "", "", ""] for _ in rows], "status": "warning"})
         sections.insert(0, sec)
         for acc, who, srcs, rec in overview:
@@ -572,7 +587,7 @@ def ad_lockout_report(finds, dcs, unlocks=None, sources=None, opts=None):
                {"label": "Source computers", "value": len(srcs_all), "status": "info" if srcs_all else "ok"},
                {"label": "DCs read", "value": "%d of %d" % (len(read), len(dcs or [])), "status": "ok" if len(read) == len(dcs or []) else "critical"}]
     report = {"title": title, "status": status, "summary": summary, "sections": sections,
-              "subtitle": "Read %s UTC - the Security logs of the last %s h" % (now.strftime("%Y-%m-%d %H:%M"), _hours(hours))}
+              "subtitle": "Read %s - the Security logs of the last %s h" % (_tm.local(now.strftime("%Y-%m-%d %H:%M UTC"), tz), _hours(hours))}
     return {"report": report, "accounts": accounts, "check": check, "not_found": tg["not_found"],
             "dcs_read": len(read), "dcs_total": len(dcs or [])}
 
