@@ -8,6 +8,14 @@ __metaclass__ = type
 
 import datetime
 import re
+import importlib.util
+import os
+
+# the times a report shows, in report_time_zone (1.54.0): plugins/module_utils/site_time.py, loaded as site_filters.py does
+_spec = importlib.util.spec_from_file_location(
+    "site_time", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_time.py"))
+_tm = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_tm)
 
 RANK = {"critical": 0, "warning": 1, "unknown": 2, "info": 3, "ok": 4, "": 5}
 
@@ -238,6 +246,11 @@ def ad_report(dcs, domains, opts=None):
     now = datetime.datetime.now(datetime.timezone.utc)
     if o.get("now"):
         now = parse_time(o["now"]) or now
+    tz = _tm.zone(o.get("time_zone"))[0]          # report_time_zone (1.54.0): every time shown; None = UTC as before
+
+    def tt(v):
+        return _tm.local(time_text(v), tz)
+
     hours = float(o.get("hours", 24))
     dcs = [dict(x) for x in (dcs or [])]
     domains = [dict(x) for x in (domains or []) if x]
@@ -557,7 +570,7 @@ def ad_report(dcs, domains, opts=None):
             if fails:
                 why = "%d consecutive failure(s), last success %s: error %s" % (fails, age_text(ls_h) + " ago" if ls_h is not None else "never", err or "?")
             rows.append(_row([x["_name"], nc_name(r.get("nc")), r.get("source", ""), r.get("source_site", ""), fails,
-                              age_text(ls_h) if ls_h is not None else "never", time_text(r.get("last_failure")), err],
+                              age_text(ls_h) if ls_h is not None else "never", tt(r.get("last_failure")), err],
                              ["", "", "", "", "critical" if fails else "", st]))
             R.problem(x["_domain"], "replication", "%s <- %s (%s)" % (x["_name"], r.get("source"), nc_name(r.get("nc"))), st, why)
         q = x["data"].get("queue")
@@ -682,7 +695,7 @@ def ad_report(dcs, domains, opts=None):
             if k not in EVENTS and int(e.get("level", 2)) == 1:
                 sv = "warning"
             rows.append(_row([x["_name"], "%s / %s" % (e.get("log", ""), e.get("source", "")) if e.get("source") else e.get("log", ""),
-                              e.get("id", ""), sv.upper(), e.get("count", ""), time_text(e.get("last")), what or str(e.get("message", ""))[:300]],
+                              e.get("id", ""), sv.upper(), e.get("count", ""), tt(e.get("last")), what or str(e.get("message", ""))[:300]],
                              ["", "", "", sv]))
             R.problem(x["_domain"], "event", x["_name"], sv, "%s %s x%s: %s" % (e.get("log"), e.get("id"), e.get("count"), what or str(e.get("message", ""))[:200]))
     R.table("Events (last %s h)" % _hours(ev_h), "The Directory Service, DFS Replication and DNS Server logs, and the Netlogon, KDC, "
@@ -728,7 +741,7 @@ def ad_report(dcs, domains, opts=None):
             t = parse_time(c.get("not_after"))
             days = (t - now).total_seconds() / 86400.0 if t else None
             st = level(days, cw, cc, higher_is_worse=False)
-            rows.append(_row([x["_name"], p.upper(), c.get("subject", ""), time_text(c.get("not_after")),
+            rows.append(_row([x["_name"], p.upper(), c.get("subject", ""), tt(c.get("not_after")),
                               "EXPIRED" if days is not None and days < 0 else (int(days) if days is not None else "?")], ["", "", "", "", st]))
             R.problem(x["_domain"], "certificate", x["_name"], st, "the %s certificate %s %s" % (
                 p.upper(), c.get("subject", ""), "has EXPIRED" if days is not None and days < 0 else "expires in %d day(s)" % int(days or 0)))
@@ -747,7 +760,7 @@ def ad_report(dcs, domains, opts=None):
                 R.problem(d["data"]["dns"], "trust", t.get("name"), "critical", "the trust with %s does not verify: %s" % (t.get("name"), v))
             opts = [w for w, on in (("forest trust", t.get("forest")), ("selective auth", t.get("selective")), ("SID quarantine", t.get("quarantined"))) if on]
             rows.append(_row([d["data"]["dns"], t.get("name", ""), t.get("direction", ""), t.get("type", ""), ", ".join(opts) or "-",
-                              "OK" if v_st == "ok" else (v or "not verified (inbound only, or trust_verify off)"), time_text(t.get("changed"))],
+                              "OK" if v_st == "ok" else (v or "not verified (inbound only, or trust_verify off)"), tt(t.get("changed"))],
                              ["", "", "", "", "", v_st]))
     R.table("Trusts", "Every trust of each domain; outbound and two-way trusts are verified with nltest /sc_verify (red when the "
             "secure channel to the other domain fails).",
@@ -775,7 +788,7 @@ def ad_report(dcs, domains, opts=None):
             for c in g.get("changes") or []:
                 add = c.get("action") == "added"
                 by = who(SEC_ADD if add else SEC_REMOVE, member=c.get("member"), group=g.get("sam"), at=c.get("time"))
-                rows.append(_row([time_text(c.get("time")), d["data"]["dns"], g.get("name"), c.get("action", "").upper(), short(c.get("member")),
+                rows.append(_row([tt(c.get("time")), d["data"]["dns"], g.get("name"), c.get("action", "").upper(), short(c.get("member")),
                                   c.get("dc", ""), by or "-"], ["", "", "", priv_sev], priv_sev))
                 R.problem(d["data"]["dns"], "privileged", g.get("name"), priv_sev, "%s %s %s%s" % (
                     short(c.get("member")), c.get("action"), "to" if add else "from", " " + g.get("name") + (" by " + by if by else "")))
@@ -804,12 +817,12 @@ def ad_report(dcs, domains, opts=None):
         for c in d["data"].get("created") or []:
             ids = {4741} if c.get("class") == "computer" else ({4720} if c.get("class") == "user" else set())
             by = who(ids, target=c.get("name")) if ids else ""
-            rows.append(_row([time_text(c.get("time")), d["data"]["dns"], c.get("class", ""), c.get("name", ""), "CREATED",
+            rows.append(_row([tt(c.get("time")), d["data"]["dns"], c.get("class", ""), c.get("name", ""), "CREATED",
                               re.sub(r"^CN=[^,]+,", "", c.get("dn", "")), by or "-"], ["", "", "", "", "info"], "info"))
         for c in d["data"].get("deleted") or []:
             ids = {4743} if c.get("class") == "computer" else ({4726} if c.get("class") == "user" else set())
             by = who(ids, target=c.get("name")) if ids else ""
-            rows.append(_row([time_text(c.get("time")), d["data"]["dns"], c.get("class", ""), c.get("name", ""), "DELETED",
+            rows.append(_row([tt(c.get("time")), d["data"]["dns"], c.get("class", ""), c.get("name", ""), "DELETED",
                               c.get("parent", ""), by or "-"], ["", "", "", "", "info"], "info"))
     rows.sort(key=lambda r: r[0][0], reverse=True)
     R.table("Users, groups and computers created or deleted (last %s h)" % _hours(hours),
@@ -821,7 +834,7 @@ def ad_report(dcs, domains, opts=None):
         for c in d["data"].get("account_changes") or []:
             ids = {"enabled": {4722}, "disabled": {4725}, "unlocked": {4767}}.get(c.get("change"), set())
             by = who(ids, target=c.get("name")) if ids else ""
-            rows.append(_row([time_text(c.get("time")), d["data"]["dns"], c.get("class", ""), c.get("name", ""), str(c.get("change", "")).upper(),
+            rows.append(_row([tt(c.get("time")), d["data"]["dns"], c.get("class", ""), c.get("name", ""), str(c.get("change", "")).upper(),
                               c.get("dc", ""), by or "-"], ["", "", "", "", "info"], "info"))
     rows.sort(key=lambda r: r[0][0], reverse=True)
     lock = ["%s: locked out now: %s" % (d["data"]["dns"], ", ".join(d["data"].get("locked_out") or [])) for d in doms if d["data"].get("locked_out")]
@@ -838,13 +851,13 @@ def ad_report(dcs, domains, opts=None):
         for g in data.get("gpos") or []:
             cr, ch = age_hours(g.get("created"), now), age_hours(g.get("changed"), now)
             if cr is not None and cr <= hours:
-                rows.append(_row([time_text(g.get("created")), data["dns"], g.get("name", ""), "CREATED", g.get("ad_version", "")], ["", "", "", "info"], "info"))
+                rows.append(_row([tt(g.get("created")), data["dns"], g.get("name", ""), "CREATED", g.get("ad_version", "")], ["", "", "", "info"], "info"))
             elif ch is not None and ch <= hours:
-                rows.append(_row([time_text(g.get("changed")), data["dns"], g.get("name", ""), "CHANGED", g.get("ad_version", "")], ["", "", "", "info"], "info"))
+                rows.append(_row([tt(g.get("changed")), data["dns"], g.get("name", ""), "CHANGED", g.get("ad_version", "")], ["", "", "", "info"], "info"))
         for g in data.get("gpo_deleted") or []:
-            rows.append(_row([time_text(g.get("time")), data["dns"], g.get("name") or g.get("guid", ""), "DELETED", ""], ["", "", "", "info"], "info"))
+            rows.append(_row([tt(g.get("time")), data["dns"], g.get("name") or g.get("guid", ""), "DELETED", ""], ["", "", "", "info"], "info"))
         for lk in data.get("gpo_links") or []:
-            rows.append(_row([time_text(lk.get("time")), data["dns"], "links on " + short(lk.get("target")),
+            rows.append(_row([tt(lk.get("time")), data["dns"], "links on " + short(lk.get("target")),
                               "LINKS CHANGED", "now: " + (", ".join(gname.get(x, x) for x in lk.get("links") or []) or "none") + " (on %s)" % lk.get("dc", "")],
                              ["", "", "", "info"], "info"))
     rows.sort(key=lambda r: r[0][0], reverse=True)
@@ -880,20 +893,20 @@ def ad_report(dcs, domains, opts=None):
         sh = age_hours(sch.get("changed"), now)
         if sh is not None and sh <= hours:
             st = _sev(o, "schema_change_severity", "warning")
-            rows.append(_row([time_text(sch.get("changed")), data["dns"], "schema", "version %s" % sch.get("version"), "CHANGED"], ["", "", "", "", st], st))
+            rows.append(_row([tt(sch.get("changed")), data["dns"], "schema", "version %s" % sch.get("version"), "CHANGED"], ["", "", "", "", st], st))
             R.problem(data["dns"], "schema", "objectVersion", st, "the schema version changed to %s" % sch.get("version"))
         for s in sch.get("new_objects") or []:
-            rows.append(_row([time_text(s.get("time")), data["dns"], s.get("class", ""), s.get("name", ""), "ADDED TO SCHEMA"], ["", "", "", "", "info"], "info"))
+            rows.append(_row([tt(s.get("time")), data["dns"], s.get("class", ""), s.get("name", ""), "ADDED TO SCHEMA"], ["", "", "", "", "info"], "info"))
         for c in data.get("config_changes") or []:
             cls = {"nTDSDSA": "domain controller", "server": "server (site)", "crossRef": "partition"}.get(c.get("class"), c.get("class"))
             st = "info"
             if c.get("class") == "nTDSDSA" and c.get("change") in ("created", "deleted"):
                 st = _sev(o, "dc_change_severity", "info")
                 R.problem(data["dns"], "config", c.get("name"), st, "domain controller %s was %s" % (c.get("name"), "added" if c.get("change") == "created" else "removed"))
-            rows.append(_row([time_text(c.get("time")), data["dns"], cls, c.get("name", ""), str(c.get("change", "")).upper()], ["", "", "", "", st], st))
+            rows.append(_row([tt(c.get("time")), data["dns"], cls, c.get("name", ""), str(c.get("change", "")).upper()], ["", "", "", "", st], st))
         for t in data.get("trusts") or []:
             if (age_hours(t.get("created"), now) or 1e9) <= hours:
-                rows.append(_row([time_text(t.get("created")), data["dns"], "trust", t.get("name", ""), "CREATED"], ["", "", "", "", "warning"]))
+                rows.append(_row([tt(t.get("created")), data["dns"], "trust", t.get("name", ""), "CREATED"], ["", "", "", "", "warning"]))
                 R.problem(data["dns"], "trust", t.get("name"), "warning", "a trust with %s was created" % t.get("name"))
     rows.sort(key=lambda r: r[0][0], reverse=True)
     R.table("Schema and configuration changes (last %s h)" % _hours(hours), "Schema updates (the version and new classes and "
@@ -906,7 +919,7 @@ def ad_report(dcs, domains, opts=None):
         if k not in SEC_NOTABLE:
             continue
         sv, what = SEC_NOTABLE[k]
-        rows.append(_row([time_text(e.get("time")), e["_dc"], k, sv.upper(), what + ((" (" + e["target"] + ")") if e.get("target") else ""), e.get("by", "")],
+        rows.append(_row([tt(e.get("time")), e["_dc"], k, sv.upper(), what + ((" (" + e["target"] + ")") if e.get("target") else ""), e.get("by", "")],
                          ["", "", "", sv]))
         R.problem("", "security", e["_dc"], sv, "%s on %s by %s" % (what, e["_dc"], e.get("by") or "?"))
     rows.sort(key=lambda r: r[0][0], reverse=True)
@@ -952,7 +965,7 @@ def ad_report(dcs, domains, opts=None):
                {"label": "Accounts created / deleted", "value": n_obj, "status": "info" if n_obj else "ok"},
                {"label": "GPO changes", "value": n_gpo, "status": "info" if n_gpo else "ok"}]
     report = {"title": title, "status": "critical" if crit else ("warning" if warn else "ok"),
-              "subtitle": "Read %s UTC - changes of the last %s h%s" % (now.strftime("%Y-%m-%d %H:%M"), _hours(hours),
+              "subtitle": "Read %s - changes of the last %s h%s" % (_tm.local(now.strftime("%Y-%m-%d %H:%M UTC"), tz), _hours(hours),
                                                                          (" - " + o["mode_line"]) if o.get("mode_line") else ""),
               "summary": summary, "sections": R.sections}
     dc_sum = [{"dc": x["_name"], "domain": x["_domain"], "host": x.get("host"), "read": x["_ok"], "error": x.get("error", "")} for x in dcs]
@@ -999,6 +1012,11 @@ def ad_reader_report(reader, opts=None):
     R = _Report(o)
     r = dict(reader or {})
     now = parse_time(o.get("now")) or parse_time(r.get("read_at")) or datetime.datetime.now(datetime.timezone.utc)
+    tz = _tm.zone(o.get("time_zone"))[0]          # report_time_zone (1.54.0): every time shown; None = UTC as before
+
+    def tt(v):
+        return _tm.local(time_text(v), tz)
+
     hours = float(o.get("hours", 24))
     dom = r.get("domain") or "?"
     user = r.get("user") or "the job's account"
@@ -1016,7 +1034,7 @@ def ad_reader_report(reader, opts=None):
         R.problem(dom, "dc", dom, "critical", "Active Directory could not be read: " + why)
         R.sections.append({"title": "Not read", "status": "critical", "text": "Active Directory could not be read: %s." % why})
         report = {"title": "Active Directory health report: NOT READ (%s)" % dom, "status": "critical",
-                  "subtitle": "Read %s UTC - reader mode" % now.strftime("%Y-%m-%d %H:%M"),
+                  "subtitle": "Read %s - reader mode" % _tm.local(now.strftime("%Y-%m-%d %H:%M UTC"), tz),
                   "summary": [{"label": "DCs answering", "value": "0", "status": "critical"}], "sections": R.sections}
         return {"report": report, "problems": R.problems, "dcs": [], "domains": [{"domain": dom, "dcs": 0, "dcs_read": 0, "collector": ""}],
                 "critical": 1, "warning": 0}
@@ -1274,7 +1292,7 @@ def ad_reader_report(reader, opts=None):
                       % (name, ce.get("trust_error") or "?"))
         R.problem(dom, "certificate", name, st, "the LDAPS certificate of %s %s" % (
             name, "has EXPIRED" if days is not None and days < 0 else "expires in %d day(s)" % int(days or 0)))
-        rows.append(_row([name, ce.get("subject", ""), ce.get("issuer", ""), time_text(ce.get("not_after")),
+        rows.append(_row([name, ce.get("subject", ""), ce.get("issuer", ""), tt(ce.get("not_after")),
                           "EXPIRED" if days is not None and days < 0 else (int(days) if days is not None else "?"),
                           "not checked" if tr is None else ("yes" if tr else "NO: " + str(ce.get("trust_error") or ""))],
                          ["", "", "", "", st, t_st]))
@@ -1288,7 +1306,7 @@ def ad_reader_report(reader, opts=None):
     rows = []
     for g in groups:
         for c in g.get("changes") or []:
-            rows.append(_row([time_text(c.get("time")), g.get("name"), str(c.get("action", "")).upper(), short(c.get("member_dn") or c.get("member")),
+            rows.append(_row([tt(c.get("time")), g.get("name"), str(c.get("action", "")).upper(), short(c.get("member_dn") or c.get("member")),
                               c.get("dc", ""), "not known (needs the event logs)"], ["", "", priv_sev], priv_sev))
             R.problem(dom, "privileged", g.get("name"), priv_sev, "%s %s %s %s (on %s)" % (
                 c.get("member"), c.get("action"), "to" if c.get("action") == "added" else "from", g.get("name"), c.get("dc") or "?"))
@@ -1318,7 +1336,7 @@ def ad_reader_report(reader, opts=None):
                 R.problem(dom, "privileged", g.get("name"), priv_sev, "%s left %s since the last run" % (short(orig), g.get("name")))
         n_since = len(rows)
         R.table("Privileged groups since the last run", "The members now against the last run's (%s, %s): who joined or left in "
-                "between." % (prev.get("source") or "?", time_text(prev.get("read_at"))), ["Group", "Change", "Member"], rows, "No change.",
+                "between." % (prev.get("source") or "?", tt(prev.get("read_at"))), ["Group", "Change", "Member"], rows, "No change.",
                 keep_order=True)
     else:
         R.sections.append({"title": "Privileged groups since the last run", "status": "unknown",
@@ -1337,18 +1355,18 @@ def ad_reader_report(reader, opts=None):
         ["Group", "Members", "Direct members"], rows, "No group was read.", keep_order=True)
 
     # ---- 8. accounts ------------------------------------------------------------------------------------------------------------------
-    rows = [_row([time_text(x.get("time")), x.get("name", "")], ["", ""], "info") for x in r.get("locked_out") or []]
+    rows = [_row([tt(x.get("time")), x.get("name", "")], ["", ""], "info") for x in r.get("locked_out") or []]
     capped = ["Only the first %s locked-out accounts were looked at (ad_changes_max)." % o.get("changes_max", 500)] if r.get("locked_out_capped") else []
     R.table("Accounts locked out now", "Accounts whose lockoutTime is within the domain's lockout duration.", ["Locked out at", "Account"],
             rows, "None.", capped, keep_order=True)
-    rows = [_row([time_text(x.get("time")), x.get("class", ""), x.get("name", ""), re.sub(r"^CN=[^,]+,", "", x.get("dn", ""))], ["", "", "", ""], "info")
+    rows = [_row([tt(x.get("time")), x.get("class", ""), x.get("name", ""), re.sub(r"^CN=[^,]+,", "", x.get("dn", ""))], ["", "", "", ""], "info")
             for x in sorted(r.get("created") or [], key=lambda y: y.get("time", ""), reverse=True)]
     R.table("Users, groups and computers created (last %s h)" % _hours(hours), "New accounts (whenCreated) and where they are. Deleted "
             "ones are in the Deleted Objects container, which needs admin.", ["When", "Type", "Name", "Where"], rows, "None.",
             ["Only the first %s created accounts were looked at (ad_changes_max)." % o.get("changes_max", 500)] if r.get("created_capped") else [],
             keep_order=True)
     hw = r.get("account_changes_how") or []
-    rows = [_row([time_text(x.get("time")), x.get("class", ""), x.get("name", ""), str(x.get("change", "")).upper(), x.get("dc") or "-",
+    rows = [_row([tt(x.get("time")), x.get("class", ""), x.get("name", ""), str(x.get("change", "")).upper(), x.get("dc") or "-",
                   "replication metadata" if x.get("how") == "metadata" else "whenChanged (best effort)"], ["", "", "", "info"], "info")
             for x in r.get("account_changes") or []]
     notes = []
@@ -1393,8 +1411,8 @@ def ad_reader_report(reader, opts=None):
                {"label": "Locked out now", "value": len(r.get("locked_out") or []), "status": "info" if r.get("locked_out") else "ok"},
                {"label": "Not run (needs admin)", "value": "dcdiag, repadmin, services ...", "status": "unknown"}]
     report = {"title": title, "status": "critical" if crit else ("warning" if warn else "ok"),
-              "subtitle": "Read %s UTC - reader mode: LDAP, DNS and Kerberos from AAP as %s - changes of the last %s h" % (
-                  now.strftime("%Y-%m-%d %H:%M"), user, _hours(hours)),
+              "subtitle": "Read %s - reader mode: LDAP, DNS and Kerberos from AAP as %s - changes of the last %s h" % (
+                  _tm.local(now.strftime("%Y-%m-%d %H:%M UTC"), tz), user, _hours(hours)),
               "summary": summary, "sections": R.sections}
     dc_sum = [{"dc": d.get("name") or _dc_short(d.get("fqdn")), "domain": dom, "host": d.get("fqdn"), "read": bool((d.get("bind") or {}).get("ok")),
                "error": (d.get("bind") or {}).get("error", "")} for d in dcs if d.get("in_ad")]

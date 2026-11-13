@@ -32,7 +32,8 @@
     _hz_main: >-
       {{ _hz_main | combine({'raw': _hz_main.raw | combine(_hz.raw)}) if _hz_logon_ids | length > 0 else _hz_main }}
     _hz_logon_opts: >-
-      {{ {'warn_s': horizon_logon_warn_s | float, 'crit_s': horizon_logon_crit_s | float, 'max_rows': horizon_report_max_rows | int} }}
+      {{ {'warn_s': horizon_logon_warn_s | float, 'crit_s': horizon_logon_crit_s | float, 'max_rows': horizon_report_max_rows | int,
+          'time_zone': report_time_zone | default('', true) | string} }}
 
 - name: Horizon | the users the report names
   ansible.builtin.include_tasks: names.yml

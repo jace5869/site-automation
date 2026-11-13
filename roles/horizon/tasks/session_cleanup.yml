@@ -17,7 +17,8 @@
     _hz_session_opts: >-
       {{ {'protected_pools': horizon_protected_pools, 'hours': horizon_session_max_disconnected_hours | float,
           'max': horizon_session_cleanup_max | int, 'exclude_pools': horizon_session_cleanup_exclude_pools,
-          'exclude_users': horizon_session_cleanup_exclude_users, 'now': horizon_now | default('')} }}
+          'exclude_users': horizon_session_cleanup_exclude_users, 'now': horizon_now | default(''),
+          'time_zone': report_time_zone | default('', true) | string} }}
     _hz_main: "{{ _hz }}"
     _hz_sids: >-
       {%- set first = _hz | hz_sessions_old({'protected_pools': horizon_protected_pools, 'hours': horizon_session_max_disconnected_hours | float,

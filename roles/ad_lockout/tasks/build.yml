@@ -33,4 +33,5 @@
            'unlock': ad_lockout_unlock | bool, 'check_mode': ansible_check_mode,
            'check_sources': ad_lockout_check_sources | bool, 'check_max': ad_lockout_check_max | int,
            'exchange_servers': ad_lockout_exchange_servers, 'inventory': _adl_inventory,
-           'max_rows': ad_lockout_max_rows | int, 'now': ad_lockout_now | default('')}) }}
+           'max_rows': ad_lockout_max_rows | int, 'now': ad_lockout_now | default(''),
+           'time_zone': report_time_zone | default('', true) | string}) }}

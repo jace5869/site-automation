@@ -870,7 +870,7 @@ File: `roles/horizon/defaults/main.yml`
 | `horizon_push_pools` | `[]` | ---- Image push (the push plan -> approval -> the push job) ------------------------------------- the instant-clone pools to push to: names (a survey: one per line, or separated by commas) |
 | `horizon_push_base_vm` | (empty) | the golden image VM, as vCenter names it (or its path) |
 | `horizon_push_snapshot` | (empty) | its snapshot to push: the name, or the path when two have that name (e.g. /2026-10/2026-11) |
-| `horizon_push_start` | (empty) | When the push starts: "" = as soon as the approved push job runs; or a time - "2026-11-01 22:00" (UTC) or with an offset, "2026-11-01T22:00-05:00". A time that has passed by the approval starts in a minute. |
+| `horizon_push_start` | (empty) | When the push starts: "" = as soon as the approved push job runs; or a time - "2026-11-01 22:00" (UTC) or with an offset, "2026-11-01T22:00-05:00". A time that has passed by the approval starts in a minute. UTC also with report_time_zone set: the plan then shows it in that zone and as typed, "23:00 CET (22:00 UTC)". |
 | `horizon_push_logoff_policy` | `WAIT_FOR_LOGOFF` | WAIT_FOR_LOGOFF (each desktop is replaced when its user logs off) or FORCE_LOGOFF (users are logged off) |
 | `horizon_push_stop_on_first_error` | `true` | stop the push at the first desktop that fails |
 | `horizon_test_user` | (empty) | ---- API test (playbooks/horizon_api_test.yml) -------------------------------------------------- also look up this user (e.g. jdoe), as the user-help job does |
@@ -968,7 +968,7 @@ File: `roles/log_analysis/defaults/main.yml`
 | Setting | Default | What it does |
 |---|---|---|
 | `log_analysis_hours` | `24` | ---- the window ------------------------------------------------------------------------------------ The last this-many hours ... |
-| `log_analysis_since` | (empty) | ... or a fixed window, e.g. the outage: log_analysis_since "2026-10-23 08:00" and log_analysis_until "2026-10-23 10:30" (UTC, as the report shows times). Since alone = from then until now. |
+| `log_analysis_since` | (empty) | ... or a fixed window, e.g. the outage: log_analysis_since "2026-10-23 08:00" and log_analysis_until "2026-10-23 10:30" - in UTC, also with report_time_zone set (the report shows the window in that zone and in UTC). Since alone = from then until now. |
 | `log_analysis_until` | (empty) | the end of the fixed window (empty = now) |
 | `log_analysis_source` | `auto` | ---- what to read ------------------------------------------------------------------------------------ What a host is: auto (Windows when its connection is WinRM / PSRP, else Linux), linux, windows, or vcsa (a vCenter appliance over SSH: Linux, with the vcsa profile on). Set it per group in the inventory. |
 | `log_analysis_profiles` | `[]` | Profiles: one word switches on the logs of a product (roles/log_analysis/vars/main.yml): vcsa, mid_server, iis, sql_server, nginx, httpd, mariadb, podman, sssd, idm, auditd, aap. E.g. for a group of web servers: log_analysis_profiles: [nginx, sssd] |

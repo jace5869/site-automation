@@ -46,7 +46,8 @@
                                    'diff_left_hours': horizon_fslogix_diff_left_hours | float,
                                    'folder_pattern': horizon_fslogix_folder_pattern, 'profile_name': horizon_fslogix_profile_name,
                                    'odfc_name': horizon_fslogix_odfc_name, 'ignore': horizon_fslogix_ignore,
-                                   'max_rows': horizon_report_max_rows | int, 'now': horizon_now | default('')}) }}
+                                   'max_rows': horizon_report_max_rows | int, 'now': horizon_now | default(''),
+                                   'time_zone': report_time_zone | default('', true) | string}) }}
 
 - name: Horizon | report
   ansible.builtin.include_tasks: report.yml

@@ -286,7 +286,8 @@ on a FAIL. Run it before the image push workflow.
    - `horizon_push_base_vm`: text, required. The golden image VM as vCenter names it.
    - `horizon_push_snapshot`: text, required. The snapshot's name, or its path when two snapshots
      have that name.
-   - `horizon_push_start`: text, optional. Empty = once approved. Or `2026-11-01 22:00` (UTC).
+   - `horizon_push_start`: text, optional. Empty = once approved. Or `2026-11-01 22:00` (UTC, also
+     with `report_time_zone` set: the plan shows it in that zone and as typed).
    - `horizon_push_logoff_policy`: multiple choice, `WAIT_FOR_LOGOFF` (default) or `FORCE_LOGOFF`.
 2. Nodes: *Horizon - image push plan* → **Run on success** → **Approval** → **Run on success** →
    *Horizon - push the approved image*. The approval: name `Push this image?`, timeout e.g. 8 hours,

@@ -8,10 +8,18 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import fnmatch
+import importlib.util
 import json
+import os
 import re
 import time
 from datetime import datetime, timezone
+
+# the times a report shows, in report_time_zone (1.54.0): plugins/module_utils/site_time.py, as site_filters.py loads it
+_spec = importlib.util.spec_from_file_location(
+    "site_time", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_time.py"))
+_tm = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_tm)
 
 # a desktop's state that is a problem: it takes no user until someone fixes it
 BROKEN_STATES = ["AGENT_UNREACHABLE", "AGENT_ERR_DISABLED", "AGENT_ERR_INVALID_IP", "AGENT_ERR_NEED_REBOOT",
@@ -77,8 +85,14 @@ def _ms(v):
     return n
 
 
-def _when(ms):
-    return datetime.fromtimestamp(ms / 1000.0, timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if ms else ""
+def _when(ms, tz=None):
+    """Milliseconds -> '2026-11-01 22:00 UTC'; with tz (report_time_zone, _tz) as that zone shows it, '2026-11-01 23:00 CET'."""
+    return _tm.local(datetime.fromtimestamp(ms / 1000.0, timezone.utc).strftime("%Y-%m-%d %H:%M UTC"), tz) if ms else ""
+
+
+def _tz(o):
+    """opts time_zone (report_time_zone) -> its tzinfo; None for "" (UTC) and a name not known here (then UTC, as before)."""
+    return _tm.zone((o or {}).get("time_zone"))[0]
 
 
 def _parse_time(text):
@@ -314,7 +328,7 @@ def _hold(m, pool, action, kind, data, o, g, after=False):
     worded for the fix job - what changed since the check)."""
     if kind == "stuck" and not action:
         return ("stuck %s since %s: look at it in vCenter and in Horizon's events (horizon_fix_stuck_actions can fix it)"
-                % (m["state"].lower(), _when(m["maint_ms"] or m["created_ms"])))
+                % (m["state"].lower(), _when(m["maint_ms"] or m["created_ms"], _tz(o))))
     if kind == "ghost" and not action:
         return "vCenter has no such VM any more: remove it in Horizon Console (horizon_fix_ghost_action)"
     if action not in MACHINE_ACTIONS:
@@ -494,7 +508,8 @@ def hz_sessions_old(data, opts=None):
         elif len(out) >= cap:
             item["reason"] = "over horizon_session_cleanup_max (%d per run): the next run takes it" % cap
         (held if item["reason"] else out).append(item)
-    rows = [[x["user"], x["machine"], x["pool"], x["since"], "%.1f" % x["hours"]] for x in out]
+    tz = _tz(o)
+    rows = [[x["user"], x["machine"], x["pool"], _tm.local(x["since"], tz), "%.1f" % x["hours"]] for x in out]
     report = {"title": "Horizon disconnected sessions: %s" % (("%d to log off" % len(out)) if out else "none to log off"),
               "subtitle": "disconnected for %g hours or more; %d more disconnected for less" % (hours, recent),
               "status": "warning" if out else "ok",
@@ -708,8 +723,10 @@ def hz_datastores(data):
     return out
 
 
-def hz_push_start(text, now=None):
-    """When the push starts -> {ms, text, problem}: '' = as soon as the push job runs (after the approval)."""
+def hz_push_start(text, now=None, zone=""):
+    """When the push starts -> {ms, text, problem}: '' = as soon as the push job runs (after the approval). horizon_push_start
+    is typed in UTC (or with an offset); zone (report_time_zone, 1.54.0): the text shows it in that zone, then the UTC time
+    it was typed as - '2026-11-01 23:00 CET (2026-11-01 22:00 UTC)'. ms stays UTC."""
     t = str(text or "").strip()
     if not t:
         return {"ms": 0, "text": "as soon as the approved push job runs", "problem": ""}
@@ -717,9 +734,11 @@ def hz_push_start(text, now=None):
     if ms is None:
         return {"ms": 0, "text": t, "problem": "horizon_push_start %s is not a time: write it 2026-11-01 22:00 (UTC) or with an "
                                                "offset, 2026-11-01T22:00-05:00" % t}
+    tz = _tm.zone(zone)[0]
+    shown = _when(ms) if tz is None else "%s (%s)" % (_when(ms, tz), _when(ms))
     if ms < _now_ms(now):
-        return {"ms": ms, "text": _when(ms), "problem": "horizon_push_start %s is in the past" % _when(ms)}
-    return {"ms": ms, "text": _when(ms), "problem": ""}
+        return {"ms": ms, "text": shown, "problem": "horizon_push_start %s is in the past" % shown}
+    return {"ms": ms, "text": shown, "problem": ""}
 
 
 def hz_push_plan(pools, vm_picks, snap_picks, start, opts=None):
@@ -789,7 +808,7 @@ def hz_push_body(plan, now=None):
             "stop_on_first_error": bool((plan or {}).get("stop_on_first_error", True))}
 
 
-def _cert(rec, now, warn, crit):
+def _cert(rec, now, warn, crit, tz=None):
     c = rec.get("certificate") or {}
     if not c:
         return None
@@ -799,11 +818,11 @@ def _cert(rec, now, warn, crit):
     if to:
         days = int((to - now) // 86400000)             # whole days, rounded down: 10 hours ago is -1, expired
         if days < 0:
-            return ("critical", "its certificate expired %s" % _when(to))
+            return ("critical", "its certificate expired %s" % _when(to, tz))
         if days <= crit:
-            return ("critical", "its certificate expires in %d days (%s)" % (days, _when(to)))
+            return ("critical", "its certificate expires in %d days (%s)" % (days, _when(to, tz)))
         if days <= warn:
-            return ("warning", "its certificate expires in %d days (%s)" % (days, _when(to)))
+            return ("warning", "its certificate expires in %d days (%s)" % (days, _when(to, tz)))
     return None
 
 
@@ -828,6 +847,7 @@ def hz_health(data, opts=None):
     o = opts or {}
     now = _now_ms(o.get("now"))
     warn, crit = _int(o.get("cert_warn_days"), 30), _int(o.get("cert_crit_days"), 7)
+    tz = _tz(o)
     raw = data.get("raw") or {}
     probs = []
 
@@ -844,7 +864,7 @@ def hz_health(data, opts=None):
         for s in _g(c, "services", default=[]) or []:
             if isinstance(s, dict) and not _ok(s.get("status")):
                 add("critical", "Connection Server", name, "service %s is %s" % (s.get("service_name", "?"), s.get("status", "?")))
-        cert = _cert(c, now, warn, crit)
+        cert = _cert(c, now, warn, crit, tz)
         if cert:
             add(cert[0], "Connection Server", name, cert[1])
         if _g(c, "default_certificate", "certificate.default_certificate", default=False) is True:
@@ -855,7 +875,7 @@ def hz_health(data, opts=None):
                 add("warning", "Connection Server", name, "replication with %s: %s %s" % (
                     r.get("server_name", "?"), r.get("status", "?"), r.get("error", "") or ""))
         cs_rows.append([name, st, ver, _int(_g(c, "connection_count", default=0)), _int(_g(c, "tunnel_connection_count", default=0)),
-                        _when(_ms(_g(c, "certificate.valid_to")))])
+                        _when(_ms(_g(c, "certificate.valid_to")), tz)])
     if not raw.get("connection_servers") and "connection_servers" not in (data.get("errors") or {}):
         add("critical", "Connection Server", "-", "Horizon listed no Connection Server")
     for name, b in _backups(raw):
@@ -866,10 +886,10 @@ def hz_health(data, opts=None):
                 "Connection Servers > Backup: the frequency is Never)")
         elif st and not _ok(st) and st.upper() not in ("SUCCESS", "SUCCEEDED", "COMPLETED"):
             add("warning", "Connection Server", name, "its last configuration backup %s%s" % (
-                st.lower(), (" (%s)" % _when(last)) if last else ""))
+                st.lower(), (" (%s)" % _when(last, tz)) if last else ""))
         elif last and (now - last) / 3600000.0 > float(o.get("backup_max_hours") or 26):
             add("warning", "Connection Server", name, "its last configuration backup was %d hours ago (%s)" % (
-                (now - last) / 3600000, _when(last)))
+                (now - last) / 3600000, _when(last, tz)))
         elif not last and not b.get("backup_in_progress"):
             add("info", "Connection Server", name, "Horizon gave no time of its last configuration backup")
     gw_rows = []
@@ -878,7 +898,7 @@ def hz_health(data, opts=None):
         st = str(_g(g, "status", default="UNKNOWN"))
         if not _ok(st):
             add("critical" if st.upper() == "PROBLEM" else "warning", "Gateway", name, "status %s" % st)
-        cert = _cert(g, now, warn, crit)
+        cert = _cert(g, now, warn, crit, tz)
         if cert:
             add(cert[0], "Gateway", name, cert[1])
         gw_rows.append([name, st, str(_g(g, "details.type", "type", default="")), str(_g(g, "details.version", "version", default="")),
@@ -891,7 +911,7 @@ def hz_health(data, opts=None):
             if isinstance(c, dict) and not _ok(c.get("status")):
                 bad.append("%s: %s" % (c.get("name") or c.get("id") or "?", c.get("status")))
                 add("critical", "vCenter", name, "from Connection Server %s: %s" % (c.get("name") or c.get("id") or "?", c.get("status")))
-        cert = _cert(v, now, warn, crit)
+        cert = _cert(v, now, warn, crit, tz)
         if cert:
             add(cert[0], "vCenter", name, cert[1])
         for d in _g(v, "datastores", default=[]) or []:
@@ -944,11 +964,11 @@ def hz_health(data, opts=None):
         elif exp:
             days = int((exp - now) // 86400000)        # rounded down: expired 10 hours ago is expired
             if days < 0:
-                add("critical", "License", "-", "the license expired %s" % _when(exp))
+                add("critical", "License", "-", "the license expired %s" % _when(exp, tz))
             elif days <= _int(o.get("license_warn_days"), 60):
-                add("warning", "License", "-", "the license expires in %d days (%s)" % (days, _when(exp)))
+                add("warning", "License", "-", "the license expires in %d days (%s)" % (days, _when(exp, tz)))
         lic_rows.append([str(_g(li, "license_edition", "edition", default="")), str(_g(li, "usage_model", default="")),
-                         _when(exp) or "no expiry given"])
+                         _when(exp, tz) or "no expiry given"])
     def add_pool_desktops(p):
         ms = [m for m in data.get("machines") or [] if m["pool_id"] == p["id"]]
         vers = {}
@@ -978,7 +998,7 @@ def hz_health(data, opts=None):
         if p["last_error"]:
             add("warning" if p["provisioning"] else "critical", "Pool", p["name"],
                 "provisioning %s: %s%s" % ("on" if p["provisioning"] else "STOPPED", p["last_error"],
-                                           (" (%s)" % _when(p["last_error_ms"])) if p["last_error_ms"] else ""))
+                                           (" (%s)" % _when(p["last_error_ms"], tz)) if p["last_error_ms"] else ""))
         if not p["enabled"]:
             add("info", "Pool", p["name"], "the pool is disabled")
         if p["pending_state"] == "READY_HELD":
@@ -1116,6 +1136,7 @@ def hz_events(data, opts=None):
     audit-events API) over the last `hours` - failed logons by user (bad password, locked, not entitled...), the
     errors by type (launch failures, pools empty, provisioning errors...), and what administrators changed."""
     o = opts or {}
+    tz = _tz(o)
     now = _now_ms(o.get("now"))
     hours = float(o.get("hours") or 24)
     since = now - hours * 3600000
@@ -1141,7 +1162,7 @@ def hz_events(data, opts=None):
     fail_rows, fail_st = [], []
     for user, u in sorted(by_user.items(), key=lambda kv: (-kv[1]["n"], kv[0].lower())):
         fail_rows.append([user, u["n"], ", ".join("%s (%d)" % kv for kv in sorted(u["types"].items(), key=lambda kv: -kv[1])),
-                          ", ".join(sorted(u["clients"])[:3]), _when(u["last"])])
+                          ", ".join(sorted(u["clients"])[:3]), _when(u["last"], tz)])
         fail_st.append("warning" if u["n"] >= warn_n else "")
     failed_ids = set(id(e) for e in failed)
     errs = [e for e in evs if e["severity"] in sev and id(e) not in failed_ids]
@@ -1153,10 +1174,10 @@ def hz_events(data, opts=None):
             t["last"], t["msg"] = e["ms"], e["message"]
         if e["pool"]:
             t["pools"].add(names.get(e["pool"], e["pool"]))
-    err_rows = [[k, v["n"], ", ".join(sorted(v["pools"])[:4]), _when(v["last"]), v["msg"][:180]]
+    err_rows = [[k, v["n"], ", ".join(sorted(v["pools"])[:4]), _when(v["last"], tz), v["msg"][:180]]
                 for k, v in sorted(by_type.items(), key=lambda kv: (-kv[1]["n"], kv[0]))]
     admin = sorted([e for e in evs if e["module"].lower() in admin_mods], key=lambda e: -e["ms"])
-    admin_rows = [[_when(e["ms"]), e["user"], e["type"], e["message"][:200]] for e in admin]
+    admin_rows = [[_when(e["ms"], tz), e["user"], e["type"], e["message"][:200]] for e in admin]
     probs = []
     if "audit_events" in errors:
         probs.append(("critical", "the event database could not be read: %s" % errors["audit_events"]))
@@ -1308,6 +1329,7 @@ def hz_sessions_report(data, opts=None):
     broken desktop, sessions longer than horizon_session_long_hours, users with two or more desktop sessions, and the
     protocols in use against horizon_session_protocols."""
     o = opts or {}
+    tz = _tz(o)
     now = _now_ms(o.get("now"))
     names = dict(data.get("user_names") or {})
     machines = dict((m["id"], m) for m in data.get("machines") or [])
@@ -1343,7 +1365,7 @@ def hz_sessions_report(data, opts=None):
     for s in sess:
         if s["state"] == "PENDING" and s["start_ms"] and (now - s["start_ms"]) / 60000.0 >= pend_min:
             d, p = where(s)
-            pending.append([who(s), d, p, _when(s["start_ms"]), "%.0f" % ((now - s["start_ms"]) / 60000.0)])
+            pending.append([who(s), d, p, _when(s["start_ms"], tz), "%.0f" % ((now - s["start_ms"]) / 60000.0)])
     on_broken = []
     for s in sess:
         m = machines.get(s["machine_id"])
@@ -1354,7 +1376,7 @@ def hz_sessions_report(data, opts=None):
         for s in sorted(sess, key=lambda x: x["start_ms"] or now):
             if s["start_ms"] and (now - s["start_ms"]) / 3600000.0 >= long_h:
                 d, p = where(s)
-                long_rows.append([who(s), d, p, s["state"].lower(), _when(s["start_ms"]), "%.0f" % ((now - s["start_ms"]) / 3600000.0)])
+                long_rows.append([who(s), d, p, s["state"].lower(), _when(s["start_ms"], tz), "%.0f" % ((now - s["start_ms"]) / 3600000.0)])
     by_user = {}
     for s in sess:
         if s["type"] in ("", "DESKTOP"):
@@ -1437,6 +1459,7 @@ def hz_logon(data, opts=None):
     Desk's logon segments: the total and each phase - brokering, power-on, tunnel, protocol, profile, GPO, shell); per
     pool the median and the 95th percentile, and the slowest phase. Amber/red at horizon_logon_warn_s / crit_s (95th)."""
     o = opts or {}
+    tz = _tz(o)
     warn, crit = float(o.get("warn_s") or 60), float(o.get("crit_s") or 120)
     mx = _int(o.get("max_rows"), 50)
     raw = data.get("raw") or {}
@@ -1476,7 +1499,7 @@ def hz_logon(data, opts=None):
         if not (names.get(s.get("user_id")) or s.get("user")) and s.get("user_id"):
             unnamed.add(s["user_id"])
         rows.append([names.get(s.get("user_id")) or s.get("user") or s.get("user_id") or "?", m.get("name") or "?", pool,
-                     _when(s.get("start_ms") or 0), total, "%s %.0f s" % (slow[0], slow[1])])
+                     _when(s.get("start_ms") or 0, tz), total, "%s %.0f s" % (slow[0], slow[1])])
     pool_rows, st, nc, nw = [], [], 0, 0
     for pool, v in sorted(per_pool.items()):
         p50, p95 = _pct(v["totals"], 50), _pct(v["totals"], 95)

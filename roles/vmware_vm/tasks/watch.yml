@@ -75,7 +75,7 @@
   block:
     - name: VMware | the report
       ansible.builtin.set_fact:
-        _vm_w_doc: "{{ _vm_w | vm_watch_report(_vm_w_cond, _vm_w_actions) }}"
+        _vm_w_doc: "{{ _vm_w | vm_watch_report(_vm_w_cond, _vm_w_actions, {'time_zone': report_time_zone | default('', true) | string}) }}"
 
     - name: VMware | outage report
       ansible.builtin.include_tasks: report.yml

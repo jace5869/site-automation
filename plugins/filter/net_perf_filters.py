@@ -15,6 +15,14 @@ __metaclass__ = type
 
 import base64
 import datetime
+import importlib.util
+import os
+
+# the times a report shows, in report_time_zone (1.54.0): plugins/module_utils/site_time.py, loaded as site_filters.py does
+_spec = importlib.util.spec_from_file_location(
+    "site_time", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_time.py"))
+_tm = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_tm)
 
 try:
     from cryptography import x509
@@ -226,7 +234,10 @@ def _num(x, fmt="%.1f"):
     return "-" if x is None or x == "" else fmt % x
 
 
-def net_perf_report_sections(results, iperf=None):
+def net_perf_report_sections(results, iperf=None, time_zone=""):
+    """The report's tables. time_zone (report_time_zone, 1.54.0): the OCSP answers' next update in it ("" = UTC, as before);
+    the results themselves keep UTC."""
+    tz = _tm.zone(time_zone)[0]
     results = [r for r in results or [] if r]
     worst = lambda xs: "critical" if "critical" in xs else ("warning" if "warning" in xs else "ok")
     rows, rs = [], []
@@ -250,8 +261,9 @@ def net_perf_report_sections(results, iperf=None):
     for r in results:
         for x in r["ocsp"]:
             j = x.get("judged") or {}
+            nu, why = j.get("next_update") or "", j.get("why") or ""
             orows.append([r["host"], x["name"], x["url"], (j.get("status") or "-") + ((", certificate " + j["cert_status"]) if j.get("cert_status") else ""),
-                          j.get("next_update") or "-", "%d" % int(x.get("ms") or 0), j.get("why") or ""])
+                          _tm.local(nu, tz) or "-", "%d" % int(x.get("ms") or 0), why.replace(nu, _tm.local(nu, tz)) if nu else why])
             ors.append(x["status"])
     if orows:
         sections.append({"title": "OCSP responders - asked from each host", "status": worst(ors), "columns": ["From", "Responder", "URL", "Answer", "Next update", "ms", "Problem"],

@@ -15,7 +15,8 @@
   ansible.builtin.set_fact:
     _mr_unused: >-
       {{ _mr_unused_relays | mail_relay_unused({'days': mail_relay_unused_days | float, 'now': now(utc=true).timestamp(),
-           'keep': mail_relay_unused_keep, 'max': mail_relay_unused_max | int}) }}
+           'keep': mail_relay_unused_keep, 'max': mail_relay_unused_max | int,
+           'time_zone': report_time_zone | default('', true) | string}) }}
 
 - name: Mail relay | the decision
   ansible.builtin.set_fact:

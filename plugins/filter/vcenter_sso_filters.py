@@ -13,6 +13,15 @@
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import importlib.util
+import os
+
+# the times a report shows, in report_time_zone (1.54.0): plugins/module_utils/site_time.py, loaded as site_filters.py does
+_spec = importlib.util.spec_from_file_location(
+    "site_time", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_time.py"))
+_tm = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_tm)
+
 RANK = {"critical": 0, "warning": 1, "info": 2}
 
 
@@ -96,6 +105,12 @@ def vcenter_sso_doc(doc, sso, opts=None):
     d = dict(doc or {})
     o = _o(opts)
     ps = _problems(sso, o, False)
+    tz = _tm.zone(o.get("time_zone"))[0]                # report_time_zone (1.54.0): next updates in it in the table
+
+    def shown(x, text):
+        """A text of the table with the answer's next update in the report's time zone."""
+        nu = x.get("next_update") or ""
+        return text.replace(nu, _tm.local(nu, tz)) if nu and text else text
     rows, rs = [], []
     for v in (sso or {}).get("vcenters") or []:
         mine = [p for p in ps if p[1] == v.get("name") and p[2] not in ("ocsp", "crl")]
@@ -115,8 +130,8 @@ def vcenter_sso_doc(doc, sso, opts=None):
             what = "answers (%s)" % x.get("status")
         else:
             what = ""
-        rows.append([st.upper(), "OCSP " + x.get("url", ""), what or x.get("why", ""), "", "", "%d ms" % int(x.get("ms") or 0),
-                     x.get("why", "") if what and not x.get("ok") else ""])
+        rows.append([st.upper(), "OCSP " + x.get("url", ""), shown(x, what or x.get("why", "")), "", "", "%d ms" % int(x.get("ms") or 0),
+                     shown(x, x.get("why", "")) if what and not x.get("ok") else ""])
         rs.append(st)
     for x in (sso or {}).get("crl") or []:
         st = "ok" if x.get("ok") else o["crl_severity"]
@@ -124,8 +139,8 @@ def vcenter_sso_doc(doc, sso, opts=None):
         if x.get("entries") is not None:
             what = "%s certificate(s) listed, %.1f MB, next update %s" % (x["entries"], (x.get("size") or 0) / 1048576.0, x.get("next_update") or "-")
             what += "; the test certificate is not on it" if x.get("ok") else ""
-        rows.append([st.upper(), "CRL " + x.get("url", ""), what or x.get("why", ""), "", "", "%d ms" % int(x.get("ms") or 0),
-                     x.get("why", "") if what and not x.get("ok") else ""])
+        rows.append([st.upper(), "CRL " + x.get("url", ""), shown(x, what or x.get("why", "")), "", "", "%d ms" % int(x.get("ms") or 0),
+                     shown(x, x.get("why", "")) if what and not x.get("ok") else ""])
         rs.append(st)
     if rows:
         sec = {"title": "Single sign-on and OCSP", "status": _status(ps) if ps else "ok",

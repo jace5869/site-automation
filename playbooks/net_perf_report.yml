@@ -91,7 +91,7 @@
       ansible.builtin.set_fact:
         site_report_sections: >-
           {{ ansible_play_hosts | map('extract', hostvars) | selectattr('net_perf_result', 'defined') | map(attribute='net_perf_result') | list
-             | net_perf_report_sections(_np_iperf | default([])) }}
+             | net_perf_report_sections(_np_iperf | default([]), report_time_zone | default('', true) | string) }}
       run_once: true
 
   post_tasks:

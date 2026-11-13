@@ -57,7 +57,8 @@
            'act': log_analysis_act | bool, 'ran': _la_ran | bool, 'reason': _la_reason, 'raw': _la_raw,
            'provider': site_act_provider | default('') if log_analysis_act | bool else '', 'model': _la_model,
            'max_items': log_analysis_max_items | int, 'max_rows': log_analysis_max_rows | int,
-           'question': log_analysis_question, 'settings': _la_settings | default([])}) }}
+           'question': log_analysis_question, 'settings': _la_settings | default([]),
+           'time_zone': report_time_zone | default('', true) | string}) }}
 
 - name: Logs | {{ _la_doc.title }}
   ansible.builtin.debug:

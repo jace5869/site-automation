@@ -59,7 +59,7 @@
       {%- for vc, vm in _hz_vm_picks.items() if vm.id -%}
       {%-   set _ = snaps.update({vc: (_hz.raw['snapshots:' ~ vc] | default([])) | hz_pick(horizon_push_snapshot, 'snapshot')}) -%}
       {%- endfor -%}
-      {{ _hz_pp | hz_push_plan(_hz_vm_picks, snaps, horizon_push_start | hz_push_start(horizon_now | default('')),
+      {{ _hz_pp | hz_push_plan(_hz_vm_picks, snaps, horizon_push_start | hz_push_start(horizon_now | default(''), report_time_zone | default('', true) | string),
                             {'logoff_policy': horizon_push_logoff_policy, 'stop_on_first_error': horizon_push_stop_on_first_error | bool,
                              'datastores': _hz_ds}) }}
 

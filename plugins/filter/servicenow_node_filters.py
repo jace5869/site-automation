@@ -26,8 +26,16 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import datetime
+import importlib.util
+import os
 import re
 from urllib.parse import urlsplit
+
+# the times a report shows, in report_time_zone (1.54.0): plugins/module_utils/site_time.py, loaded as site_filters.py does
+_spec = importlib.util.spec_from_file_location(
+    "site_time", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_time.py"))
+_tm = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_tm)
 
 
 def _s(v):
@@ -526,8 +534,10 @@ def sn_node_findings(nodes, cluster=None, opts=None):
 def sn_node_sections(nodes, cluster=None, hosts=None, opts=None):
     """The report's tables: Front-end nodes (one row per node unit), Hosts (the node and database hosts), Node log
     errors (the most frequent messages) and, when read, the cluster (sys_cluster_state).
-    hosts: [{host, role, reached, problems, worst}] for the database hosts."""
+    hosts: [{host, role, reached, problems, worst}] for the database hosts. opts.time_zone (report_time_zone, 1.54.0): the
+    database's last run and the cluster's heartbeats in it ("" = UTC, as before)."""
     o = opts or {}
+    tz = _tm.zone(o.get("time_zone"))[0]
     secs, rows, rs = [], [], []
     for h in nodes or []:
         if not h.get("reachable", True) or h.get("error"):
@@ -635,7 +645,7 @@ def sn_node_sections(nodes, cluster=None, hosts=None, opts=None):
         sign = lambda b: ("+" if b >= 0 else "") + _gb(b)
         grow = []
         if hist.get("change_bytes") is not None:
-            grow.append("%s since the last run (%s)" % (sign(hist["change_bytes"]), hist.get("last_time")))
+            grow.append("%s since the last run (%s)" % (sign(hist["change_bytes"]), _tm.local(hist.get("last_time"), tz)))
         if hist.get("per_day_bytes") is not None:
             grow.append("%s a day over %s days" % (sign(hist["per_day_bytes"]), hist.get("days")))
         zr.append([d.get("host") or "?", (db.get("datadir") or "-") + ("" if db.get("datadir_under") is not False else "  (NOT under %s)"
@@ -698,7 +708,8 @@ def sn_node_sections(nodes, cluster=None, hosts=None, opts=None):
         stale = float(o.get("stale_minutes", 10))
         for c in cluster:
             cr.append([c["system_id"], c["node_id"] or "-", c["status"],
-                       "%s UTC (%s min ago)" % (c["last"], int(c["age_min"])) if c["age_min"] is not None else c["last"] or "-",
+                       "%s (%s min ago)" % (_tm.local(c["last"] + " UTC", tz), int(c["age_min"])) if c["age_min"] is not None
+                       else _tm.local(c["last"], tz) or "-",
                        c["schedulers"] or "-", ("yes" if c["host"] in inv else "NO") if inv else "-"])
             cs.append("critical" if c["status"] != "online" and (c["host"] in inv or not inv) else
                       "warning" if c["status"] != "online" or (inv and c["host"] not in inv) else

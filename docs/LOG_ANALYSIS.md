@@ -62,7 +62,7 @@ template, or as a **survey** answer. A list may be typed as `a, b` or one per li
 | Setting | Default | What |
 |---|---|---|
 | `log_analysis_hours` | `24` | the window: the last this-many hours |
-| `log_analysis_since`, `log_analysis_until` | empty | a fixed window, UTC, e.g. `2026-10-23 08:00` and `2026-10-23 10:30` ("what happened during the outage"). Since alone = until now |
+| `log_analysis_since`, `log_analysis_until` | empty | a fixed window, in UTC (also with `report_time_zone` set), e.g. `2026-10-23 08:00` and `2026-10-23 10:30` ("what happened during the outage"). Since alone = until now |
 | `log_analysis_question` | empty | what you want to know, in your words: ACT answers it first ("users report slow logins since 09:00"). A good survey box |
 | `log_analysis_profiles` | `[]` | one word switches on a product's logs (below) |
 | `log_analysis_profiles_extra` | `{}` | your own profiles, or a shipped one changed: `{stigman: {files: [/opt/stigman/logs/*.log], units: [stigman-api]}}` |
@@ -135,7 +135,8 @@ log_analysis_win_files_extra: ['E:\MID\*\agent\logs\agent0.log*']
    - Credentials: the Machine credential **and** ACT model key. **Prompt on launch** for the
      **Limit** (hosts only - since 0.32.0 a Limit needs no `localhost`; one with it works too), and a
      **survey** with `target` (the group), `log_analysis_question` (text, not
-     required), `log_analysis_since` / `log_analysis_until` (text, not required) and, if you like,
+     required), `log_analysis_since` / `log_analysis_until` (text, not required; say UTC in the question,
+     e.g. "From, in UTC (2026-10-23 08:00)") and, if you like,
      `log_analysis_profiles` (multiple choice).
    - Variables: `report_email_to: ops@yoursite.mil` (or empty, with `report_web_dest` only).
 3. **VM - vCenter log analysis** (`playbooks/vm_log_analysis.yml`): inventory, project and execution

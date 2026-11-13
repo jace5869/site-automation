@@ -4,9 +4,17 @@ relay's list - the mynetworks line of Postfix's main.cf (style main_cf) or a lis
 plan the approver sees and the change the approved job makes come from the same code. Only the list's own lines and
 the comment lines an add wrote are ever touched: every other byte of the file stays as it is."""
 import calendar
+import importlib.util
 import ipaddress
+import os
 import re
 import time
+
+# the times a report shows, in report_time_zone (1.54.0): plugins/module_utils/site_time.py, loaded as site_filters.py does
+_spec = importlib.util.spec_from_file_location(
+    "site_time", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_time.py"))
+_tm = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_tm)
 
 OCTET = r"(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])"
 SHAPE = re.compile(r"^(%s[.]){3}%s(/([0-9]|[12][0-9]|3[0-2]))?\Z" % (OCTET, OCTET))
@@ -770,7 +778,8 @@ def mail_relay_unused(relays, opts=None):
     """Which addresses on the relays' lists sent no mail in the last opts.days days, by every relay's logs together.
     relays: [{host, words (mail_relay_list_words), logs (site_mail_relay_clients), problem}]. opts: days, now (seconds),
     keep (addresses or subnets never proposed), max (the most proposed at once), accept_short (propose even when a
-    relay's logs do not go back days days). Only single addresses are proposed for removal; a subnet that sent nothing
+    relay's logs do not go back days days), time_zone (report_time_zone, 1.54.0: the cutoff and each address's last mail as
+    the report shows them; "" = UTC). Only single addresses are proposed for removal; a subnet that sent nothing
     is listed only. -> {cutoff, days, covered, coverage, rows, row_status, unused, unused_subnets, later, used,
     problems, notes}"""
     o = opts or {}
@@ -778,6 +787,7 @@ def mail_relay_unused(relays, opts=None):
     now = float(o.get("now") or 0)
     cutoff = now - days * 86400
     most = int(o.get("max") or 50)
+    tz = _tm.zone(o.get("time_zone"))[0]
     keep = []
     for k in o.get("keep") or []:
         try:
@@ -822,7 +832,7 @@ def mail_relay_unused(relays, opts=None):
     hosts = [r.get("host", "") for r in ok]
 
     def when(t):
-        return time_text(t) if t else ""
+        return _tm.local(time_text(t), tz) if t else ""
     rows, status, unused, unused_nets, used = [], [], [], [], 0
     for w in sorted(listed, key=lambda x: (_kind(x) == 0, _order(x) if _kind(x) else (0, 0), x)):
         on = "all" if sorted(set(listed[w])) == sorted(hosts) else ", ".join(sorted(set(listed[w])))
@@ -871,7 +881,7 @@ def mail_relay_unused(relays, opts=None):
     if unused_nets:
         notes.append("Subnets that sent nothing are listed, not removed: remove one with the Mail relay - remove an IP "
                      "workflow if it is no longer needed.")
-    return {"cutoff": time_text(cutoff), "days": int(days), "covered": covered, "coverage": coverage, "rows": rows,
+    return {"cutoff": _tm.local(time_text(cutoff), tz), "days": int(days), "covered": covered, "coverage": coverage, "rows": rows,
             "row_status": status, "unused": unused, "unused_subnets": unused_nets, "later": later, "used": used,
             "problems": [{"host": r.get("host", ""), "problem": r.get("problem", "")} for r in problems], "notes": notes}
 

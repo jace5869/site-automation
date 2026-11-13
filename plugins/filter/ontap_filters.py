@@ -7,6 +7,14 @@ __metaclass__ = type
 
 import datetime
 import re
+import importlib.util
+import os
+
+# the times a report shows, in report_time_zone (1.54.0): plugins/module_utils/site_time.py, loaded as site_filters.py does
+_spec = importlib.util.spec_from_file_location(
+    "site_time", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_time.py"))
+_tm = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_tm)
 
 RANK = {"critical": 0, "warning": 1, "unknown": 2, "info": 3, "ok": 4, "": 5}
 
@@ -304,6 +312,11 @@ def ontap_report(collected, opts=None):
     col = collected or {}
     R = _Report(o)
     now = parse_time(col.get("read_at")) or datetime.datetime.now(datetime.timezone.utc)
+    tz = _tm.zone(o.get("time_zone"))[0]          # report_time_zone (1.54.0): every time shown; None = UTC as before
+
+    def tt(v):
+        return _tm.local(time_text(v), tz)
+
     cs = []
     for c in col.get("clusters") or []:
         c = dict(c)
@@ -410,15 +423,15 @@ def ontap_report(collected, opts=None):
             sev = ALERT_SEV.get(str(a.get("perceived_severity", "")).lower(), "warning")
             pairs.append((RANK.get(sev, 9), len(pairs),
                           _row([c["_name"], a.get("node", ""), str(a.get("perceived_severity", "?")).upper(), a.get("subsystem") or a.get("monitor", ""),
-                                a.get("alert_id", ""), a.get("alerting_resource", ""), time_text(a.get("indication_time"))], ["", "", sev]),
+                                a.get("alert_id", ""), a.get("alerting_resource", ""), tt(a.get("indication_time"))], ["", "", sev]),
                           _row([c["_name"], a.get("node", ""), a.get("alert_id", ""), a.get("probable_cause", ""), a.get("corrective_actions", "")])))
             R.problem(c["_name"], "health alert", a.get("node", ""), sev, "%s: %s" % (a.get("alert_id", ""), a.get("probable_cause", "")))
     pairs.sort(key=lambda x: (x[0], x[1]))
     R.table("Health alerts", "What ONTAP's health monitors raised (system health alert show); the probable cause and what to do "
             "are in the next table, in the same order.",
-            ["Cluster", "Node", "Severity", "Subsystem", "Alert", "Resource", "Since (UTC)"],
+            ["Cluster", "Node", "Severity", "Subsystem", "Alert", "Resource", _tm.column("Since (UTC)", tz)],
             [x[2] for x in pairs], "No health alert.", _notes(cs, SECTION_KEYS["alerts"]), keep_order=True,
-            wrap=("Subsystem", "Resource", "Since (UTC)"))
+            wrap=("Subsystem", "Resource", _tm.column("Since (UTC)", tz)))
     if pairs:
         R.table("Health alerts: cause and what to do", "Each alert of the table above, in the same order: ONTAP's probable cause "
                 "and corrective action.", ["Cluster", "Node", "Alert", "Probable cause", "Corrective action"],
@@ -458,12 +471,12 @@ def ontap_report(collected, opts=None):
     rows = []
     for (cl, node, name), x in sorted(groups.items(), key=lambda kv: -kv[1]["n"]):
         sv = EMS_SEV[x["sev"]]
-        rows.append(_row([cl, node, x["sev"].upper(), name, x["n"], x["last"].astimezone(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M") if x["last"] else "?", x["msg"]],
+        rows.append(_row([cl, node, x["sev"].upper(), name, x["n"], _tm.local(x["last"].astimezone(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M"), tz) if x["last"] else "?", x["msg"]],
                          ["", "", sv]))
         R.problem(cl, "event", node, sv, "%s x%d: %s" % (name, x["n"], x["msg"][:200]))
     R.table("Error events (last %s h)" % _hours(hours), "ONTAP's event log (EMS): emergency, alert and error events, the same "
             "event on the same node counted once, most frequent first.",
-            ["Cluster", "Node", "Severity", "Event", "Count", "Last (UTC)", "Last message"], rows,
+            ["Cluster", "Node", "Severity", "Event", "Count", _tm.column("Last (UTC)", tz), "Last message"], rows,
             "No such event.", left_out + _notes(cs, SECTION_KEYS["ems"]))
 
     # ---- 6. controllers and shelves --------------------------------------------------------------------
@@ -783,8 +796,8 @@ def ontap_report(collected, opts=None):
             rows.append(_row([c["_name"], src, dst, "\n".join(x for x in (str(state).replace("_", " "), str(status).replace("_", " ")) if x),
                               "yes" if healthy else ("NO" if healthy is False else "?"), duration_text(lag) if lag is not None else "?",
                               reason], ["", "", "", m_st or ("info" if transferring else ""), h_st, l_st], sv))
-            xfers.append((RANK.get(sv, 9), len(xfers), _row([c["_name"], dst, time_text(last), human_bytes(prog) if prog not in (None, "") else "",
-                                                             time_text(upd), policy], None, "info" if transferring else "")))
+            xfers.append((RANK.get(sv, 9), len(xfers), _row([c["_name"], dst, tt(last), human_bytes(prog) if prog not in (None, "") else "",
+                                                             tt(upd), policy], None, "info" if transferring else "")))
             R.problem(c["_name"], "snapmirror", dst, sv, "; ".join(x for x in ("unhealthy" if healthy is False else "",
                                                                                 ("lag " + duration_text(lag)) if l_st in ("warning", "critical") else "",
                                                                                 state_l if m_st == "warning" else "", reason) if x))
@@ -798,9 +811,9 @@ def ontap_report(collected, opts=None):
     if xfers:
         R.table("SnapMirror transfers", "The same relationships, in the same order: the last transfer, the one running now (blue) - "
                 "its progress (the data moved so far) and when ONTAP last updated it - and the policy.",
-                ["Cluster", "Destination", "Last transfer (UTC)", "Progress", "Progress updated", "Policy"],
+                ["Cluster", "Destination", _tm.column("Last transfer (UTC)", tz), "Progress", "Progress updated", "Policy"],
                 [x[2] for x in sorted(xfers, key=lambda x: (x[0], x[1]))], "", keep_order=True,
-                wrap=("Last transfer (UTC)", "Progress", "Progress updated", "Policy"))
+                wrap=(_tm.column("Last transfer (UTC)", tz), "Progress", "Progress updated", "Policy"))
     rows = []
     for c in up:
         for p in _recs(c, "cluster_peers"):
@@ -933,12 +946,12 @@ def ontap_report(collected, opts=None):
             if ca and sv == "critical" and days >= 0:
                 sv = "warning"
             rows.append(_row([c["_name"], g(x, "svm.name") or x.get("scope", ""), x.get("name") or "", x.get("common_name", ""), x.get("type", ""),
-                              time_text(x.get("expiry_time")), "EXPIRED" if days < 0 else int(days)], ["", "", "", "", "", "", sv]))
+                              tt(x.get("expiry_time")), "EXPIRED" if days < 0 else int(days)], ["", "", "", "", "", "", sv]))
             R.problem(c["_name"], "certificate", x.get("common_name") or x.get("name"), sv,
                       "certificate %s" % ("EXPIRED" if days < 0 else "expires in %d day(s)" % int(days)))
     R.table("Certificates expiring", "Certificates that expire within %s days (amber) or %s days (red), or have expired. CA "
             "certificates are amber at most until they expire." % (_hours(cw), _hours(cc)),
-            ["Cluster", "SVM / scope", "Name", "Common name", "Type", "Expires (UTC)", "Days left"], rows,
+            ["Cluster", "SVM / scope", "Name", "Common name", "Type", _tm.column("Expires (UTC)", tz), "Days left"], rows,
             "No certificate expires within %s days." % _hours(cw), _notes(cs, SECTION_KEYS["certificates"]))
 
     # ---- title, summary --------------------------------------------------------------------------------
@@ -974,7 +987,7 @@ def ontap_report(collected, opts=None):
     at = next((i + 1 for i, s in enumerate(rest) if s["title"] == "Nodes"), 0)
     R.sections = rest[:at] + vols + rest[at:]
     report = {"title": title, "status": status,
-              "subtitle": "Read %s UTC%s" % (now.strftime("%Y-%m-%d %H:%M"), (" - " + vers) if vers else ""),
+              "subtitle": "Read %s%s" % (_tm.local(now.strftime("%Y-%m-%d %H:%M UTC"), tz), (" - " + vers) if vers else ""),
               "summary": summary, "sections": R.sections}
     return {"report": report, "problems": R.problems, "clusters": summaries,
             "critical": len(crit), "warning": len(warn)}

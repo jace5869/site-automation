@@ -349,6 +349,25 @@ From the next run of any report, the website shows that time zone with its abbre
   The job never fails for it.
 - `report_time_zone: ""` (the default) or `UTC`: every page exactly as before.
 
+**Inside the reports (1.54.0).** The reports that printed their own UTC times follow the setting too, on the web
+page and in the email: the "Read ..." line under the title, the times in the tables and the sentences. A column
+that said `(UTC)` loses it, and each time in it says its own zone, so a July row reads `CEST` next to a November
+row's `CET`.
+
+| Report | What follows the zone |
+|---|---|
+| AD health (admin and reader mode) | the "Read" line; every time in the tables |
+| Account lockout | the "Read" line; "locked out since", the lockouts and unlocks, the sources' first and last |
+| VMware capacity, VM outage watch | the "Read" line |
+| ONTAP health | the "Read" line; Since, Last, Last transfer, Expires |
+| Log analysis | the window; First seen, Last seen |
+| VM snapshots, snapshot cleanup, VMs created | Taken; Created, Deleted, the window (By day stays UTC days) |
+| Horizon (health, events, sessions, logon times, broken desktops, image check, push plan), FSLogix profiles | the times in the tables and the problems |
+| ServiceNow nodes, mail relay unused addresses, network performance (OCSP), vCenter SSO | the times in the tables |
+
+Stays UTC: what is stored (artifacts, JSON), the job output, ticket text, and the times you type in:
+`log_analysis_since` / `log_analysis_until` and `horizon_push_start` are UTC, and the report shows them in both.
+
 ### Changing the names
 
 Every name is a setting, with `{names}` filled in (`roles/site_email/defaults/main.yml`):

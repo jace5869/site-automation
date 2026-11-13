@@ -22,9 +22,17 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import fnmatch
+import importlib.util
+import os
 import re
 import time
 from datetime import datetime, timezone
+
+# the times a report shows, in report_time_zone (1.54.0): plugins/module_utils/site_time.py, as site_filters.py loads it
+_spec = importlib.util.spec_from_file_location(
+    "site_time", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_time.py"))
+_tm = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_tm)
 
 MB = 1024 * 1024
 GB = 1024 * MB
@@ -66,9 +74,10 @@ def _now(now):
     return n / 1000.0 if n > 1e11 else n
 
 
-def _when(t):
+def _when(t, tz=None):
+    """Seconds -> '2026-11-01 22:00 UTC'; with tz (report_time_zone, 1.54.0) as that zone shows it, '2026-11-01 23:00 CET'."""
     try:
-        return datetime.fromtimestamp(float(t), timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if t else ""
+        return _tm.local(datetime.fromtimestamp(float(t), timezone.utc).strftime("%Y-%m-%d %H:%M UTC"), tz) if t else ""
     except (TypeError, ValueError, OverflowError, OSError):
         return ""
 
@@ -321,7 +330,8 @@ def hz_fslogix(scan, opts=None):
             s["status"] = "warning" if s["status"] == "ok" else s["status"]
             s["why"] = (s["why"] + "; " if s["why"] else "") + "more folders than horizon_fslogix_max_folders: not all read"
 
-    return _report(containers, folders, shares, o, {"warn": warn_pct, "crit": crit_pct, "stale": stale_days, "mx": mx, "now": now})
+    return _report(containers, folders, shares, o, {"warn": warn_pct, "crit": crit_pct, "stale": stale_days, "mx": mx, "now": now,
+                                                     "tz": _tm.zone(o.get("time_zone"))[0]})
 
 
 def _has(rec, code):
@@ -333,14 +343,14 @@ def _texts(rec, codes=None):
                      if codes is None or f["code"] in codes)
 
 
-def _row(c):
-    return [c["user"] or "?", c["sid"], c["kind"], _size(c["size"]), "%s%%" % c["pct"], _when(c["last"]),
+def _row(c, tz=None):
+    return [c["user"] or "?", c["sid"], c["kind"], _size(c["size"]), "%s%%" % c["pct"], _when(c["last"], tz),
             (c["in_use"] + (" - " + c["in_use_why"] if c["in_use_why"] else "")) if c["in_use"] else "",
             "%s\\%s" % (c["folder"] or "(the share)", c["file"])]
 
 
 def _report(containers, folders, shares, o, t):
-    mx = t["mx"]
+    mx, tz = t["mx"], t.get("tz")
     worst = lambda r: min([SEV[f["severity"]] for f in r["flags"]] or [9])   # noqa: E731
     full = sorted([c for c in containers if _has(c, "full") or _has(c, "near")], key=lambda c: -c["pct"])
     stale = sorted([c for c in containers if _has(c, "stale")], key=lambda c: c["last"] or 0)
@@ -393,14 +403,14 @@ def _report(containers, folders, shares, o, t):
          "rows": share_rows, "row_status": share_st,
          "text": "Free space as the file server reports it. Could still grow: what the containers may take before each reaches its cap."},
         {"title": "Near or over the cap", "columns": ["User", "SID", "Kind", "Size", "% of cap", "Last written", "In use", "File"],
-         "rows": [_row(c) for c in full[:mx]], "row_status": ["critical" if _has(c, "full") else "warning" for c in full[:mx]],
+         "rows": [_row(c, tz) for c in full[:mx]], "row_status": ["critical" if _has(c, "full") else "warning" for c in full[:mx]],
          "status": "critical" if over else ("warning" if full else "ok"),
          "text": ("Size is the container file's size against the cap (SizeInMBs: %s profile, %s ODFC). A dynamic disk does not shrink "
                   "when files in it are deleted until FSLogix compacts it at sign-out; a fixed disk is always 100%%. Amber at %g%%, red at %g%%."
                   % (_size(_num(o.get("size_mb"), 30000) * MB), _size((_num(o.get("odfc_size_mb"), 0) or _num(o.get("size_mb"), 30000)) * MB),
                      t["warn"], t["crit"]))},
         {"title": "Two containers for one user", "columns": ["User", "SID", "Kind", "Size", "Last written", "File", "Why"],
-         "rows": [[c["user"] or "?", c["sid"], c["kind"], _size(c["size"]), _when(c["last"]), "%s\\%s" % (c["folder"] or "(the share)", c["file"]),
+         "rows": [[c["user"] or "?", c["sid"], c["kind"], _size(c["size"]), _when(c["last"], tz), "%s\\%s" % (c["folder"] or "(the share)", c["file"]),
                    _texts(c, ("duplicate",))] for c in dup[:mx]],
          "status": "warning" if dup else "ok",
          "text": "Two folders for one SID or one name (FlipFlopProfileDirectoryName changed, an account made again), or a .vhd "
@@ -414,14 +424,14 @@ def _report(containers, folders, shares, o, t):
          "rows": [[c["user"] or "?", c["sid"], "%s\\%s" % (c["folder"], c["file"]), _texts(c, ("diff_left",))] for c in left[:mx]],
          "status": "warning" if left else "ok"},
         {"title": "Stale - space to reclaim", "columns": ["User", "SID", "Kind", "Size", "Last written", "File"],
-         "rows": [[c["user"] or "?", c["sid"], c["kind"], _size(c["size"]), _when(c["last"]), "%s\\%s" % (c["folder"] or "(the share)", c["file"])]
+         "rows": [[c["user"] or "?", c["sid"], c["kind"], _size(c["size"]), _when(c["last"], tz), "%s\\%s" % (c["folder"] or "(the share)", c["file"])]
                   for c in stale[:mx]],
          "text": "Not written for %g days or more: %s in all. Check in AD that the user has left before anyone removes one - this job removes nothing."
                  % (t["stale"], _size(reclaim))},
         {"title": "Folders with no container, other files", "columns": ["Folder", "Why"],
          "rows": [[f["folder"] or "(the share)", _texts(f, ("no_container", "unread", "other"))] for f in empty[:mx]]},
         {"title": "Largest containers", "columns": ["User", "SID", "Kind", "Size", "% of cap", "Last written", "In use", "File"],
-         "rows": [_row(c) for c in biggest[:min(mx, 20)]],
+         "rows": [_row(c, tz) for c in biggest[:min(mx, 20)]],
          "text": "In use: yes = a differencing disk written lately (Microsoft documents RW.VHDX and %%computername%%_ODFC.VHDX next to the "
                  "container while it is used); likely = the container or its lock file written in the last %g minutes (an inference)."
                  % _num(o.get("in_use_minutes"), 30)}]

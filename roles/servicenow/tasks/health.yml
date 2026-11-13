@@ -243,7 +243,8 @@
           'cluster_read': _sn_cluster.status | default(0) == 200,
           'inventory': _sn_node_group + (_sn_pages_plan.read | map(attribute='host') | list), 'group': servicenow_nodes_group,
           'outside': _sn_outside, 'db_paths': servicenow_db_paths | name_list, 'fill_warn': servicenow_db_fill_warn_days | float,
-          'fill_critical': servicenow_db_fill_critical_days | float, 'fapolicyd_since': servicenow_fapolicyd_since} }}
+          'fill_critical': servicenow_db_fill_critical_days | float, 'fapolicyd_since': servicenow_fapolicyd_since,
+          'time_zone': report_time_zone | default('', true) | string} }}
 
 # one dict expression: on ansible-core 2.16 the values of a YAML dict would arrive as strings
 - name: ServiceNow health | the MID Servers, as the instance and their hosts see them

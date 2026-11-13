@@ -168,8 +168,10 @@
 ## abbreviation - "2026-11-13 05:37 CET", summer time as it was on that day - also for runs written
 ## before it was set. What is stored (index.json, a run's JSON, the file names) stays UTC. A name
 ## the execution environment does not know (or one without the tzdata package): UTC, with a warning
-## in the job output. docs/WEB_REPORTS.md, "Times in your time zone"; docs/VMWARE.md, "Times and
-## clocks"
+## in the job output. 1.54.0: also the times inside the reports that printed their own UTC (AD,
+## lockout, capacity, ONTAP, log analysis, outage watch, snapshots, Horizon and more); a "(UTC)"
+## column then says each cell's zone. Times you type stay UTC. docs/WEB_REPORTS.md, "Times in your
+## time zone"; docs/VMWARE.md, "Times and clocks"
 # report_time_zone: ""
 
 ## THE REPORT WEBSITE (docs/WEB_REPORTS.md): every report job also writes its report as a web page -
