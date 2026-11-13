@@ -1747,6 +1747,16 @@ File: `roles/stigman_ckl_import/defaults/main.yml`
 | `stigman_ckl_import_auto` | `none` | Written at once, no approval (0.76.0): none (everything waits for workflow 40's approval), existing (the reviews of assets that are there are written by this job; a new asset and its reviews wait for the approval) or all (the new assets too). The same rules as the approval's write: never over Accepted, never with atta… (all of it: the role file) |
 | `stigman_ckl_import_move` | `false` | Move each file done with - all of it in STIG Manager: written, the same already, or left for good (Accepted, not in the STIG, another revision) - to <stigman_ckl_import_move_to>/<date>/ under stigman_ckl_import_src, if not written again since it was read (the share's account then needs Modify). One that waits for the… (all of it: the role file) |
 | `stigman_ckl_import_move_to` | `imported` | the folder under stigman_ckl_import_src (never read) |
+| `stigman_ckl_import_mode` | `import` | What this job does (1.58.0) - a survey choice on the job template and on workflow 40: import as before: the checklists read, the reviews planned. No scorecard. import and scorecard the same, and the STIG compliance scorecard first in the report. A drop folder with no checklist is not an error then: one line, and the j… (all of it: the role file) |
+| `stigman_scorecard_collections` | `[]` | The STIG compliance scorecard (stigman_ckl_import_mode "import and scorecard" or "scorecard"). It reads STIG Manager with the same "STIG Manager API" credential - GET requests only, never a write. docs/CKL_IMPORT.md, the scorecard. the collections on it, by name or id ([] = every collection the client reads) |
+| `stigman_scorecard_top` | `5` | "Top rules open across hosts": this many rules |
+| `stigman_scorecard_weeks` | `8` | the trend line and "The numbers behind the lines": this many weeks |
+| `stigman_scorecard_cat2_warn` | `0` | a collection with this many CAT II open or more: Warning (0 = off) |
+| `stigman_scorecard_db` | `true` | The earlier runs' points come from AAP's job history (a "Red Hat Ansible Automation Platform" credential on the job template). With a "Report database" credential they are kept in its table stig_scorecard_point too - a longer history than AAP keeps its jobs (docs/REPORT_DATABASE.md). The only thing the scorecard write… (all of it: the role file) |
+| `stigman_scorecard_db_create` | `true` | make the table on the first run (false: make it by hand, docs/REPORT_DATABASE.md) |
+| `stigman_scorecard_db_keep_days` | `800` | rows older than this are deleted (0 = never) |
+| `stigman_scorecard_drift_templates` | `["STIG drift report", "Windows STIG drift report"]` | "Fixed on the host, still Open in STIG Manager": what the newest jobs of these job templates (by name) found, no older than stigman_scorecard_drift_days. [] = that part is left empty. |
+| `stigman_scorecard_drift_days` | `14` | a scan older than this many days is not used |
 
 ## stigman_health
 

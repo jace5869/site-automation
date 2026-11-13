@@ -377,6 +377,12 @@ stigman_ckl_import_collection: VMware
 # stigman_ckl_import_collections: ['*']
 # stigman_ckl_import_auto: existing
 # stigman_ckl_import_move: true
+## The STIG compliance scorecard (1.58.0). Make it a survey question on the template (and on workflow 40) - Multiple
+## Choice: import / import and scorecard / scorecard - or set it here. scorecard = the scorecard alone: no folder read,
+## nothing written. For last week's numbers attach a "Red Hat Ansible Automation Platform" credential
+# stigman_ckl_import_mode: import and scorecard
+## Only these collections on it (default: every collection the client reads)
+# stigman_scorecard_collections: ['SITEA - RHEL 9', 'SITEA - Windows Server 2022']
 """),
     "stigman_update.yml": ("STIG Manager - update", "STIG Manager API (the client that may write reviews)", "", """\
 ## Workflow 37's (and 40's) step after the approval: it writes the reviews the STIG recheck's (or the checklist import's) check listed (stigman_update_plan,

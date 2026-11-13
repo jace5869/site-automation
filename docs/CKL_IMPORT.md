@@ -10,6 +10,10 @@ collection, and each file moved to `imported/<date>/` once it is in STIG Manager
 own collection (Windows, Linux, VMware) -
 [Switching over from STIG Manager Watcher](#switching-over-from-stig-manager-watcher).
 
+Since 1.58.0 the same job can put a **STIG compliance scorecard** first in its report: how many findings are open in
+each collection, what closed and what opened this week, and the rules open on the most hosts -
+[The STIG compliance scorecard](#the-stig-compliance-scorecard-1580).
+
 **Why VMware's checklists need it.** VMware's (Broadcom's) STIG profiles are InSpec profiles. Their results become a CKL
 through MITRE's SAF CLI (HDF to CKL), and that CKL carries the profile's own name as its STIG id (*VMware Aria
 Operations 8.x Apache Profile*), rule ids with no revision (`SV-VRPE-8X-000001`), and often no host name. STIG Manager
@@ -77,6 +81,8 @@ hundreds). The reviews are written to the STIG's revision the asset has - else t
 | Not a Finding, Open, Not Applicable | another result | yes - unless the review is **Accepted** (`stigman_ckl_import_overwrite_accepted`) |
 | the same result | - | no (*Already so*) |
 | Not Reviewed | - | never |
+
+Attachments win: a review with attachments is never written, even with `stigman_ckl_import_overwrite_accepted: true`.
 
 - **Detail:** the checklist's finding details (InSpec: *passed :: TEST ...*); a checklist with none gets the file's name
   and its answer. Cut at `stigman_ckl_import_detail_max` (8000).
@@ -337,6 +343,107 @@ checklist says something else (never over Accepted).
 
 A dry run of the write: deny the approval, or launch *STIG Manager - update* with Job type **Check** on the check's plan.
 
+## The STIG compliance scorecard (1.58.0)
+
+One page for the weekly meeting: where the open findings are, and whether the week made them fewer. It is a part of
+this job's report, not a job of its own. It reads STIG Manager with GET requests only. It never writes there.
+
+The survey question **What should this run do?** (`stigman_ckl_import_mode`) picks what a run does:
+
+| Choice | The share's folder | The report | Written to STIG Manager |
+|---|---|---|---|
+| `import` (default) | read | the import's, as before | as before: after the approval, or at once with `stigman_ckl_import_auto` |
+| `import and scorecard` | read | the scorecard first, then the import's | the same as `import` |
+| `scorecard` | not read | the scorecard alone | nothing |
+
+With `import and scorecard` a folder with no checklist is a quiet week, not an error. The job says
+`No checklists to import this run (<the folder>)` and ends ok. A folder that is not there, or a share that refuses the
+account, still fails the job.
+
+`stigman_ckl_import_move` works as before with `import` and `import and scorecard`: the files done with move to
+`stigman_ckl_import_move_to/<date>/`, the files that wait for the approval stay. `scorecard` never reads, moves or
+changes the folder, also with `stigman_ckl_import_move: true`.
+
+### What the page shows
+
+The title is the answer: `STIG compliance: 4 CAT I open; 4 findings closed this week`.
+
+| Part | What it says |
+|---|---|
+| The tiles | CAT I, CAT II and CAT III open now; closed and opened this week; fixed on the host and still open |
+| **Start here** | three cards: the CAT I to start with, the week, and the paperwork left |
+| **By collection** | a row per collection: its assets, CAT I, CAT II and CAT III open, the change this week, a trend line, a status |
+| **Top 5 rules open across hosts** | the rules open on the most hosts, CAT I first (`stigman_scorecard_top`) |
+| **Fixed on the host, still Open in STIG Manager** | what the STIG drift reports' last scans found fixed, and STIG Manager still has Open |
+| **The numbers behind the lines** | the open findings per week, per collection: the trend lines as a table |
+| **How the scorecard counts** | the rules of the count, and where the earlier points came from |
+
+- A finding is a rule Open on an asset, as STIG Manager has it now.
+- The status of a collection: **CAT I open** (critical), **Worse** (a warning: more opened than closed this week),
+  else **OK**. `stigman_scorecard_cat2_warn` adds the warning **CAT II over N** from that many CAT II open.
+- A trend line needs two weekly points. The first run says `trend starts next week`.
+- The fixed-on-the-host part is marked **Low**: the host is fine, the review in STIG Manager is not written yet. The
+  STIG recheck (workflow 37) writes it.
+- The email is the short form: the tiles, the collections, the top rules, the link to the page. No trend lines.
+- The workbook is always attached. Its sheets: *By collection*, *Rules across hosts*, *Open rules by collection*,
+  *Since last week*, *Fixed on host, still open*, *Open per week*.
+
+### Where last week's numbers come from
+
+Each run keeps one small point: per collection its counts, and per rule the hosts it is open on. The next runs read the
+points back. There are two places, and both may be used:
+
+| Where | What it needs | How far back |
+|---|---|---|
+| AAP's job history | a **Red Hat Ansible Automation Platform** credential on the template (an AAP user with Organization Auditor) | as long as AAP keeps its jobs (120 days by default) |
+| The report database | a **Report database** credential on the template ([REPORT_DATABASE.md](REPORT_DATABASE.md#the-stig-scorecards-points-1580)) | `stigman_scorecard_db_keep_days` (800) |
+
+- *Since last week* compares this run with the run nearest to 7 days ago, no nearer than 6 days and no older than 8.
+  Run it weekly or daily: both work.
+- Closed and opened are counted rule by rule. A rule now open on fewer hosts closed that many; on more hosts, opened
+  that many. A rule closed on one host and opened on another in the same week counts as neither.
+- A collection that was not in last week's run is `New here`. It is not in the week's totals.
+- With neither credential the scorecard still shows what is open now. The week's tiles show `-`.
+- The report database's table is the only thing the scorecard writes. A database that is down is one warning; the
+  job stays green.
+
+### Turning it on
+
+1. Open the template *STIG Manager - import checklists*, tab **Survey**. Add a question:
+   - Question: `What should this run do?`
+   - Answer variable name: `stigman_ckl_import_mode`
+   - Answer type: **Multiple Choice (single select)**
+   - Choices, one per line:
+     ```text
+     import
+     import and scorecard
+     scorecard
+     ```
+   - Default answer: `import`. Required: on.
+2. Turn the survey **on** (the switch above the questions).
+3. Attach the **Red Hat Ansible Automation Platform** credential to the template. The **Report database** credential
+   too, if the site has one.
+4. Add the same question to workflow 40 (*Survey* tab of the workflow), if you use it. The workflow hands the answer to
+   its check.
+5. Launch the template and pick `scorecard`. The job output ends with the scorecard's lines:
+   ```text
+   STIG compliance: 4 CAT I open; 22 findings open
+   CAT I open: 4
+   ```
+6. Open the report. *How the scorecard counts* says `No run 6 to 8 days ago was found.` on the first run. A week later the
+   title names what closed.
+7. For the weekly meeting, add a schedule to the template with the answer `scorecard`, or `import and scorecard` on
+   the schedule you have.
+
+Without a survey the choice is a line in the template's Variables: `stigman_ckl_import_mode: scorecard`.
+
+| When | What happens |
+|---|---|
+| `scorecard`, in workflow 40 | the check ends ok. There is nothing to approve, and *STIG Manager - update* does not run |
+| STIG Manager cannot be read | the report says why (Action required) and the job fails. In workflow 40 the check stays green instead, so no approval is asked for nothing |
+| One collection cannot be read | it is listed with its error; the others are read |
+| A dry run (Check) | the real scorecard: it only reads. The report database is read, not written |
+
 ## Settings
 
 All in `roles/stigman_ckl_import/defaults/main.yml` ([VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md#stigman_ckl_import)).
@@ -362,8 +469,27 @@ STIG Manager's address, login and certificates are the STIG drift report's (`che
 | `stigman_ckl_import_other_revision` | `false` | write a rule of another revision |
 | `stigman_ckl_import_status` | `submitted` | the reviews' status |
 | `stigman_ckl_import_workflow` | `false` | workflow 40's check: hand the plan on, NEEDS APPROVAL |
+| `stigman_ckl_import_mode` | `import` | what a run does: `import`, `import and scorecard` or `scorecard` (the survey choice) |
+| `stigman_scorecard_collections` | `[]` | the collections on the scorecard, by name or id. `[]`: every collection the client reads |
+| `stigman_scorecard_top` | `5` | the rules listed in *Top rules open across hosts* |
+| `stigman_scorecard_weeks` | `8` | the weeks of the trend lines and of *The numbers behind the lines* |
+| `stigman_scorecard_cat2_warn` | `0` | a collection with this many CAT II open or more is a warning. `0`: off |
+| `stigman_scorecard_db` | `true` | keep the points in the report database when the template has its credential |
+| `stigman_scorecard_db_create` | `true` | make the table on the first run. `false`: made by hand |
+| `stigman_scorecard_db_keep_days` | `800` | the database's points older than this are deleted. `0`: never |
+| `stigman_scorecard_drift_templates` | the two STIG drift reports | the job templates, by name, whose last scans say what is fixed on the hosts. `[]`: that part stays empty |
+| `stigman_scorecard_drift_days` | `14` | a scan older than this is not used |
 
 ## Tested
+
+The scorecard (1.58.0): `tests/test_stig_scorecard.py` (the read, the point, the week's change rule by rule, the trend
+lines, the report's parts, AAP's job history, the database's rows and its statement) and
+`tests/stig/run_scorecard_test.sh` on current ansible-core and 2.16, against a stand-in STIG Manager and a stand-in AAP:
+`scorecard` reads no folder, moves no file with `stigman_ckl_import_move: true` and sends STIG Manager GET requests
+only; `import and scorecard` with an empty folder ends
+ok; `import` is as before. `tests/stig/run_scorecard_db_test.sh`: the points in a real MySQL 8.4 - the table made, the
+weeks read back, old rows deleted, a dry run, and a database that is down or refuses: one warning, the job green.
+Not proven against a real STIG Manager's findings and a real AAP's job history.
 
 `tests/test_stig_ckl_import.py` (reading CKL and CKLB, matching, the plan, the report; several collections, auto, which
 files are done with, the moves, the grants), `tests/stig/run_ckl_import_test.sh` (the check and the update against a

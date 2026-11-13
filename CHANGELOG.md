@@ -1,5 +1,74 @@
 # Changelog
 
+## 1.58.0 — 2026-11-13
+
+**Updating without scripts:** paste `site-automation-1.58.0-changed-since-1.50.0.zip` as it is (from an older version,
+its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`. Nothing must be set up: without the new survey question every run is as before.
+
+**A STIG compliance scorecard in the checklist import's report.** One page for the weekly meeting: where the open
+findings are, and whether the week made them fewer. It is a part of the report of *STIG Manager - import checklists*,
+not a job of its own. It reads STIG Manager with GET requests only.
+
+**A new launch choice, `stigman_ckl_import_mode`** (the survey question `What should this run do?`, on the job
+template and on workflow 40):
+
+| Choice | The share's folder | The report | Written to STIG Manager |
+|---|---|---|---|
+| `import` (default) | read | the import's, as before | as before |
+| `import and scorecard` | read | the scorecard first, then the import's | the same as `import` |
+| `scorecard` | not read | the scorecard alone | nothing |
+
+- **A run with nothing to import.** With `import and scorecard` a folder with no checklist is not an error. The report
+  says `No checklists to import this run (<the folder>)` and the job ends ok. A folder that is not there, or a share
+  that refuses the account, still fails. With `import` an empty folder fails as before.
+- **`stigman_ckl_import_move`** works as before with `import` and `import and scorecard`. `scorecard` never reads,
+  moves or changes the folder, also with `stigman_ckl_import_move: true`.
+- **`scorecard` in workflow 40:** the check ends ok with nothing to approve. The approval and the write do not run.
+- **What the page shows:** the title (`STIG compliance: 4 CAT I open; 4 findings closed this week`), the tiles, three
+  *Start here* cards, *By collection* (open by category, the change this week, a trend line, a status), *Top 5 rules
+  open across hosts*, *Fixed on the host, still Open in STIG Manager*, and the numbers behind the lines as a table.
+- **Nothing that was there is removed.** The import's own tiles and sections follow the scorecard, unchanged.
+- **The email** is the short form: the tiles, the collections, the top rules, the link. The workbook is always
+  attached, with six sheets.
+- **Last week's numbers** come from the points earlier runs kept. They are read from AAP's job history (a *Red Hat
+  Ansible Automation Platform* credential on the template) and from the report database (a *Report database*
+  credential; the new table `stig_scorecard_point`, made on the first run). With neither, the page shows what is
+  open now and the week's tiles show `-`.
+- **Fixed on the host, still open:** the last scans of *STIG drift report* and *Windows STIG drift report* now hand
+  on which rules they found fixed (`stig_fixed_open` in the job's artifacts). The scorecard lists those STIG Manager
+  still has Open. The part is marked **Low**.
+- **The report database never fails the job.** Down, a wrong password or a read-only account: one warning in the
+  report, the job green.
+- **To turn it on:** the numbered steps are in
+  [docs/CKL_IMPORT.md](docs/CKL_IMPORT.md#the-stig-compliance-scorecard-1580). Without a survey, set
+  `stigman_ckl_import_mode: scorecard` in the template's Variables.
+
+New settings, all with defaults (`roles/stigman_ckl_import/defaults/main.yml`):
+
+| Setting | Default | What it does |
+|---|---|---|
+| `stigman_ckl_import_mode` | `import` | what a run does: `import`, `import and scorecard` or `scorecard` |
+| `stigman_scorecard_collections` | `[]` | only these collections, by name or id (`[]` = all the client reads) |
+| `stigman_scorecard_top` | `5` | this many rules in *Top rules open across hosts* |
+| `stigman_scorecard_weeks` | `8` | this many weeks in the trend line and its table |
+| `stigman_scorecard_cat2_warn` | `0` | a warning from this many CAT II open in a collection (`0` = off) |
+| `stigman_scorecard_db` | `true` | `false` = the report database is not used, even with its credential |
+| `stigman_scorecard_db_create` | `true` | make the table on the first run |
+| `stigman_scorecard_db_keep_days` | `800` | rows older than this are deleted (`0` = never) |
+| `stigman_scorecard_drift_templates` | the two drift reports | whose last scans are read for the fixed part |
+| `stigman_scorecard_drift_days` | `14` | a scan older than this many days is not used |
+
+- The report tables have a new column kind, `spark`: a small trend line on the website, left out of the email.
+- Docs: CKL_IMPORT.md (the chapter above), REPORT_DATABASE.md (the table), STIG_DRIFT.md, SETUP_AAP.md,
+  WORKFLOWS_AND_SCHEDULES.md, JOB_TEMPLATES.md, VARIABLES_REFERENCE.md.
+- Tests: `tests/test_stig_scorecard.py` (the count, the week's change, the history from AAP and the database with no
+  point counted twice, the report). `tests/stig/run_scorecard_test.sh` runs the playbook in the three modes against a
+  stand-in STIG Manager and a stand-in AAP: `scorecard` reads no folder and sends only GET requests, an empty folder
+  ends ok, workflow 40's check has nothing to approve. `tests/stig/run_scorecard_db_test.sh` keeps the points in a
+  real MySQL 8.4. Both on ansible-core 2.16 and the current one.
+- Not proven on a real site: the shape of a real STIG Manager's findings, and a real AAP's job history.
+
 ## 1.57.0 — 2026-11-13
 
 **Updating without scripts:** paste `site-automation-1.57.0-changed-since-1.50.0.zip` as it is (from an older version,
@@ -2041,7 +2110,7 @@ tests/stig/run_stigman_real_test.sh against STIG Manager 1.6.18 (not in CI).
 
 SA_VERSION 1.26.0; the PDFs at 1.26.0.
 
-**To do, if you have not yet: what 0.20.0 to 1.57.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.57.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing, 1.39.0 nothing, 1.41.0 nothing, 1.42.0 nothing, 1.43.0 nothing, 1.44.0 nothing, 1.45.0 nothing, 1.46.0 nothing, 1.47.0 nothing, 1.48.0 nothing, 1.49.0 nothing, 1.50.0 step 97, 1.51.0 step 95, 1.52.0 step 96, 1.53.0 step 98, 1.54.0 nothing, 1.55.0 nothing, 1.56.0 nothing, 1.57.0 nothing).** In order; each step works without
+**To do, if you have not yet: what 0.20.0 to 1.58.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.58.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing, 1.39.0 nothing, 1.41.0 nothing, 1.42.0 nothing, 1.43.0 nothing, 1.44.0 nothing, 1.45.0 nothing, 1.46.0 nothing, 1.47.0 nothing, 1.48.0 nothing, 1.49.0 nothing, 1.50.0 step 97, 1.51.0 step 95, 1.52.0 step 96, 1.53.0 step 98, 1.54.0 nothing, 1.55.0 nothing, 1.56.0 nothing, 1.57.0 nothing, 1.58.0 nothing).** In order; each step works without
 the ones after it. There is no step 90.
 
 1. **Your logo** (0.20.0). A PNG with a transparent background, about 160 px tall and under 100 KB, in

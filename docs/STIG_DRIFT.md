@@ -579,6 +579,18 @@ Checklists you have as files - VMware's InSpec checklists, which STIG Manager's 
 profile's name), Evaluate-STIG's, a person's - go through the same approval and the same update: workflow 40,
 [CKL_IMPORT.md](CKL_IMPORT.md).
 
+### What the scorecard takes from this report (1.58.0)
+
+The STIG compliance scorecard ([CKL_IMPORT.md](CKL_IMPORT.md#the-stig-compliance-scorecard-1580)) has a part *Fixed on
+the host, still Open in STIG Manager*. It comes from here:
+
+- *STIG drift report* and *Windows STIG drift report* keep those rows with their job, as the artifact `stig_fixed_open`:
+  the host, its collection, the rule, its category, its title and the scan's time.
+- Nothing else changes in these reports. Nothing is written to STIG Manager or to a host.
+- The scorecard reads the newest job of each template named in `stigman_scorecard_drift_templates`, no older than
+  `stigman_scorecard_drift_days` (14). It lists only the rules STIG Manager still has Open on that host.
+- Templates with other names: put the names in `stigman_scorecard_drift_templates`.
+
 ## Settings
 
 Every one is in `roles/check_stig/defaults/main.yml` and docs/VARIABLES_REFERENCE.md. The ones

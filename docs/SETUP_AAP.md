@@ -401,9 +401,15 @@ approval. Reads only ([CKL_IMPORT.md](CKL_IMPORT.md)).
 | Inventory | any (it runs on the controller) |
 | Credentials | `STIG Manager API` (the read-only one; Full in the collection) and `Windows file share` (Read on the folder) |
 | Variables | `aap/extra_vars/stigman_ckl_import.yml`: `stigman_ckl_import_src`, `stigman_ckl_import_collection` |
+| Survey (optional, 1.58.0) | `What should this run do?` - variable `stigman_ckl_import_mode`, Multiple Choice (single select): `import`, `import and scorecard`, `scorecard`. Default `import` |
+| Credentials for the scorecard (optional) | `Red Hat Ansible Automation Platform` (last week's numbers from AAP's job history) and `Report database` (a longer history) |
 
 For workflow 40, make a copy, *STIG Manager - import checklists - check*, with `stigman_ckl_import_workflow: true` in its
 Variables.
+
+The STIG compliance scorecard (1.58.0) is the survey choice `import and scorecard` or `scorecard`: the open findings
+per collection, the week's change and the top rules, first in this job's report. It reads STIG Manager only.
+[CKL_IMPORT.md](CKL_IMPORT.md#the-stig-compliance-scorecard-1580).
 
 As STIG Manager Watcher (0.76.0: on a schedule, written at once, several collections, the files moved - `stigman_ckl_import_auto`,
 `stigman_ckl_import_collections`, `stigman_ckl_import_move`): the *STIG Manager API* credential is the client that writes

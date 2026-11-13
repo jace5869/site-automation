@@ -1,0 +1,102 @@
+---
+# The STIG compliance scorecard (1.58.0; stigman_ckl_import_mode "import and scorecard" or "scorecard"): each collection's
+# open findings read from STIG Manager with GET requests only (library/site_stig_scorecard.py - the same "STIG Manager
+# API" credential as the import, never a write). Each run keeps one compact point, as the job artifact stig_scorecard.
+# The change since last week and the trend come from the earlier runs' points: read from AAP's job history
+# (site_stig_scorecard_history), and from the report database when the job template has a "Report database" credential
+# (site_stig_scorecard_db - the only thing the scorecard writes). The report's part (plugins/filter/
+# stig_scorecard_filters.py) goes first in the checklist import's report (main.yml).
+- name: Scorecard | read each collection's open findings (GET requests only)
+  site_stig_scorecard:
+    api: "{{ check_stig_stigman_api | default('') }}"
+    token_url: "{{ check_stig_stigman_token_url | default('') or lookup('ansible.builtin.env', 'STIGMAN_TOKEN_URL') }}"
+    client_id: "{{ check_stig_stigman_client_id | default('') or lookup('ansible.builtin.env', 'STIGMAN_CLIENT_ID') }}"
+    client_secret: "{{ check_stig_stigman_client_secret | default('') or lookup('ansible.builtin.env', 'STIGMAN_CLIENT_SECRET') }}"
+    scope: "{{ check_stig_stigman_scope | default('') }}"
+    validate_certs: "{{ check_stig_stigman_validate_certs | default(true) | bool }}"
+    ca_path: "{{ check_stig_stigman_ca_path | default('') }}"
+    timeout: "{{ check_stig_stigman_timeout | default(60) | int }}"
+    collections: >-
+      {{ (stigman_scorecard_collections.split(',') | map('trim') | select | list) if stigman_scorecard_collections is string
+         else stigman_scorecard_collections }}
+  register: _sc_read
+  check_mode: false                     # it only reads: a dry run (Check) shows the real scorecard
+
+- name: Scorecard | this run's point
+  ansible.builtin.set_fact:
+    _sc_point: "{{ _sc_read | stig_scorecard_point }}"
+    _sc_job: "{{ (awx_job_id | default(tower_job_id | default(0))) | int }}"
+    _sc_template: "{{ (awx_job_template_id | default(tower_job_template_id | default(0))) | int }}"
+    _sc_days: "{{ [stigman_scorecard_weeks | int, 2] | max * 7 + 8 }}"
+    _sc_db_host: "{{ lookup('ansible.builtin.env', 'REPORT_DB_HOST') | trim if stigman_scorecard_db | bool else '' }}"
+
+# ---- the report database: the earlier points read back, this run's kept (never fails the job) ----
+- name: Scorecard | the report database - the earlier runs' points, and this run's kept (stigman_scorecard_db)
+  site_stig_scorecard_db:
+    host: "{{ _sc_db_host }}"
+    port: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PORT') | default('3309', true) | int }}"
+    database: "{{ lookup('ansible.builtin.env', 'REPORT_DB_NAME') | default('site_reports', true) | trim }}"
+    user: "{{ lookup('ansible.builtin.env', 'REPORT_DB_USER') | trim }}"
+    password: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PASSWORD') }}"
+    tls: "{{ lookup('ansible.builtin.env', 'REPORT_DB_TLS') | default('false', true) | bool }}"
+    ca_file: "{{ lookup('ansible.builtin.env', 'REPORT_DB_CA_FILE') | trim }}"
+    create: "{{ stigman_scorecard_db_create | bool }}"
+    point: "{{ _sc_point }}"
+    job: "{{ _sc_job | int }}"
+    days: "{{ _sc_days | float }}"
+    keep_days: "{{ stigman_scorecard_db_keep_days | int }}"
+  register: _sc_db
+  when: _sc_db_host | length > 0 and _sc_read.ok
+
+# ---- AAP's job history: the artifact stig_scorecard of this template's earlier jobs, and what the STIG drift reports'
+# newest jobs found fixed on the hosts (their artifact stig_fixed_open). Read only; never fails the job ----
+- name: Scorecard | this template's earlier runs' points and the drift reports' last scans, from AAP's job history
+  site_stig_scorecard_history:
+    job_id: "{{ _sc_job | int }}"
+    template_id: "{{ _sc_template | int }}"
+    days: "{{ _sc_days | float }}"
+    skip_jobs: "{{ _sc_db.jobs | default([]) }}"      # the database gave these already
+    drift_templates: "{{ stigman_scorecard_drift_templates }}"
+    drift_days: "{{ stigman_scorecard_drift_days | float }}"
+    ca_path: "{{ report_history_aap_ca_path | default('') }}"
+  register: _sc_aap
+  check_mode: false                     # read only
+  when: _sc_job | int > 0 and _sc_template | int > 0 and _sc_read.ok
+
+# one dict expression each: on ansible-core 2.16 the values of a YAML dict would arrive as strings
+- name: Scorecard | the runs of the last {{ stigman_scorecard_weeks }} weeks, each once
+  ansible.builtin.set_fact:
+    _sc_runs: >-
+      {{ _sc_point | stig_scorecard_runs(_sc_aap.runs | default([]), _sc_db.runs | default([]),
+                                         {'weeks': stigman_scorecard_weeks | int, 'job': _sc_job | int}) }}
+
+- name: Scorecard | the scorecard
+  ansible.builtin.set_fact:
+    _sc: >-
+      {{ _sc_read | stig_scorecard(_sc_point, _sc_runs.runs, {
+           'weeks': stigman_scorecard_weeks | int,
+           'top': stigman_scorecard_top | int,
+           'cat2_warn': stigman_scorecard_cat2_warn | int,
+           'list_max': stigman_ckl_import_list_max | int,
+           'api': check_stig_stigman_api | default(''),
+           'fixed': _sc_aap.fixed | default({}),
+           'history': [
+             "Earlier points: " ~ _sc_runs.counts.aap ~ " from AAP's job history, " ~ _sc_runs.counts.db ~ " from the report database.",
+             ("AAP's job history: " ~ _sc_aap.why) if _sc_aap.why | default('') else '',
+             "AAP's job history: not read (the job is not run by AAP)." if _sc_aap is skipped and _sc_read.ok else '',
+             ("The report database: " ~ _sc_db.error) if _sc_db.error | default('') else '',
+           ] | select | list}) }}
+
+- name: Scorecard | the numbers
+  ansible.builtin.debug:
+    msg: "{{ _sc.lines }}"
+
+# the point is kept with the job: the next runs read it back. A later job of a workflow gets it as an extra variable it
+# does not use.
+- name: Scorecard | keep this run's point with the job (set_stats stig_scorecard)
+  ansible.builtin.set_stats:
+    data:
+      stig_scorecard: "{{ _sc_point }}"
+    per_host: false
+    aggregate: false
+  when: _sc_read.ok
