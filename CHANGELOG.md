@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.48.0 — 2026-11-13
+
+**Updating without scripts:** paste `site-automation-1.48.0-changed-since-1.47.0.zip` as it is (from an older version,
+its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`. Nothing to set up: only a test changed.
+
+**CI: the AD reader-mode test's second DC joins again.** The test's DCs (tests/ad/samba) asked themselves for names
+outside the test domain. Samba's Kerberos client looks the realm up in DNS on every new connection
+(`_kerberos.example.mil`, `_kerberos.mil`). The first DC forwarded those to `127.0.0.1`, itself, so each one went
+round until it failed.
+
+- Each new connection to the first DC took about 30 s. The join makes several, so it took 2 to 4 minutes.
+- On GitHub's runners the join then often failed on the DNS partitions ("Join failed - cleaning up").
+- Now the DCs have no DNS forwarder. A name outside the domain gets NXDOMAIN at once, and the join takes about 8 s.
+- The join is tried up to 3 times. The test waits for the first DC's replication service before it starts.
+- The test prints how long DC02 took to join. The cases and checks are the same.
+
 ## 1.44.0 (built as 1.44.0) — 2026-11-12
 
 **Updating without scripts:** paste `site-automation-1.44.0-changed-since-1.43.0.zip` as it is (from an older version,
