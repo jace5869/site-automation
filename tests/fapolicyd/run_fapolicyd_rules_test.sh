@@ -103,7 +103,7 @@ if tool == "rpm":
         u, g = os.environ["FAKE_FA_USER"], os.environ["FAKE_FA_GROUP"]
         print("-rw-r--r-- %s %s /etc/fapolicyd/fapolicyd.trust\ndrwxr-x--- %s %s /etc/fapolicyd/trust.d" % (u, g, u, g)); sys.exit(0)
     if args[:1] == ["-qf"]:
-        if args[1] in ("/usr/bin/ls",):
+        if args[1] in ("/usr/bin/ls", os.path.realpath("/usr/bin/ls")):  # a link on some runners (Rust coreutils)
             print("coreutils-8.32-35.el9.x86_64"); sys.exit(0)
         print("file %s is not owned by any package" % args[1]); sys.exit(1)
     if args[:1] == ["-V"]:
@@ -248,7 +248,7 @@ check "ra02's would-be block gets its trust entry; its allow_audit allow is not 
 check "for a person: the file in a user folder, the containers job's wildcard" \
       'any("/home/u/bin/x is in a folder users can write" in x for x in s["For a person"]["lines"]) and any("35-site-containers.rules" in x and "the containers job" in x for x in s["For a person"]["lines"]) and not any("/usr/bin/ls" in x or "tool3" in x or "tool4" in x for x in s["For a person"]["lines"])'
 sha3="$(sha256sum "$work/opt/app/tool3" | cut -d' ' -f1)"; size3="$(stat -c %s "$work/opt/app/tool3")"
-R="reinstall package: coreutils-8.32-35.el9.x86_64 (/usr/bin/ls does not match it)"
+R="reinstall package: coreutils-8.32-35.el9.x86_64 ($(readlink -f /usr/bin/ls) does not match it)"
 U="trust update: $work/opt/app/tool3 size $size3 sha256 $sha3"
 L="reload trust database (fapolicyd-cli --update)"
 grep -qxF "$R" "$work/lines.txt" && grep -qxF "$U" "$work/lines.txt" && grep -qxF "$L" "$work/lines.txt" \
