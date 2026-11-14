@@ -73,7 +73,7 @@ foreach ($clm in @($false, $true)) {
     $bad = @()
     $want = @(
         'System|error|Event 7031: The snc_mid service',
-        'System|warning|Event 7036: The snc_mid service',
+        'System|low|Event 7036: The snc_mid service',          # 1.56.0: information -> low
         'Application|warning|Event 1000: Faulting application',
         'Security|warning|Event 4625: An account failed')
     foreach ($w in $want) { if (-not @($got | Where-Object { $_.StartsWith($w) }).Count) { $bad += "missing $w" } }
