@@ -2,7 +2,7 @@
 
 ## 1.61.0 — 2026-11-13
 
-**Updating without scripts:** paste `site-automation-1.61.0-changed-since-1.50.0.zip` as it is (from an older version,
+**Updating without scripts:** paste `site-automation-1.61.0-changed-since-1.55.0.zip` as it is (from an older version,
 its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
 `poam/poam.csv`.
 
@@ -51,7 +51,7 @@ glass); the findings e2e (email, job output, the brief page); a Windows simulati
 
 ## 1.59.0 — 2026-11-13
 
-**Updating without scripts:** paste `site-automation-1.59.0-changed-since-1.50.0.zip` as it is (from an older version,
+**Updating without scripts:** paste `site-automation-1.59.0-changed-since-1.55.0.zip` as it is (from an older version,
 its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
 `poam/poam.csv`.
 
@@ -92,7 +92,7 @@ the next 8 business hours, least time left first, and whether breaches go up or 
 
 ## 1.58.0 — 2026-11-13
 
-**Updating without scripts:** paste `site-automation-1.58.0-changed-since-1.50.0.zip` as it is (from an older version,
+**Updating without scripts:** paste `site-automation-1.58.0-changed-since-1.55.0.zip` as it is (from an older version,
 its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
 `poam/poam.csv`. Nothing must be set up: without the new survey question every run is as before.
 
@@ -161,7 +161,7 @@ New settings, all with defaults (`roles/stigman_ckl_import/defaults/main.yml`):
 
 ## 1.57.0 — 2026-11-13
 
-**Updating without scripts:** paste `site-automation-1.57.0-changed-since-1.50.0.zip` as it is (from an older version,
+**Updating without scripts:** paste `site-automation-1.57.0-changed-since-1.55.0.zip` as it is (from an older version,
 its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
 `poam/poam.csv`. Nothing to set up.
 
@@ -202,7 +202,7 @@ and a real Chrome under that policy: hover, Tab and the arrow keys, Esc; atlas a
 
 ## 1.56.0 — 2026-11-13
 
-**Updating without scripts:** paste `site-automation-1.56.0-changed-since-1.50.0.zip` as it is (from an older version,
+**Updating without scripts:** paste `site-automation-1.56.0-changed-since-1.55.0.zip` as it is (from an older version,
 its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
 `poam/poam.csv`.
 
