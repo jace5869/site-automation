@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """1.64.0 the certificate expiry timeline (plugins/filter/cert_timeline_filters.py): the bands from a report's own days,
 a host's row (its inventory group, cert_timeline_groups, a vCenter report's clusters), a certificate's short name, who
-renews it, the marks (one per row and day, their labels on two sides without touching), what is left out (trust stores,
+renews it, the marks (one per row and day, close ones as one, their labels on two sides without touching), what is left out (trust stores,
 a date not read, a certificate found twice), the renew list, the numbers, the workbook's Timeline sheet, the job output,
 cert_timeline_doc for the reports with a document of their own, and the timeline in the atlas and brief looks.
     python3 tests/test_cert_timeline.py"""
@@ -51,6 +51,16 @@ def fleet():
     return f, hg
 
 
+def dense():
+    """Ten systems with most of their certificates in the first weeks, a day or two apart (tester-2's page, int-13)."""
+    f = []
+    for g in range(10):
+        for i in range(7):
+            f.append(cert("app%d%d" % (g, i), "svc%d%d.example.mil" % (g, i), g + 2 * i + (i // 4) * 9 - 1, group="System %d" % (g + 1)))
+        f.append(cert("app%d9" % g, "late%d.example.mil" % g, 70 + 4 * g, group="System %d" % (g + 1)))
+    return f
+
+
 def made(certs=None, **kw):
     f, hg = fleet()
     return ct.cert_timeline(f if certs is None else certs, dict(OPTS, host_groups=hg, **kw))
@@ -92,7 +102,7 @@ class Timeline(unittest.TestCase):
         f, _ = fleet()
         r = made(f + [cert("web01", "unread.example.mil", ct.UNREAD), dict(cert("web03", "portal.example.mil", 19), where="port 443")])
         self.assertEqual(r["counts"], {"critical": 3, "warning": 3, "low": 6, "ok": 8, "window": 20, "days": 120, "certificates": 21,
-                                       "trust": 1, "unread": 1})
+                                       "trust": 1, "unread": 1, "later": 0})
         self.assertEqual(r["status"], "critical")
         names = [row[1] for row in r["sections"][0]["rows"]]
         self.assertNotIn("Example Root CA", names)
@@ -179,6 +189,57 @@ class Timeline(unittest.TestCase):
         self.assertEqual((len(ex), ex[0]["at"]), (1, 0.0))
         self.assertEqual(ex[0]["tip"].split("\n")[:2], ["2 certificates expired",
                                                          "b.example.mil on web03.corp.example.mil, expired 40 days ago - Certificate renewal - CSRs"])
+
+
+    def test_marks_close_together_are_one(self):
+        # ten days in a row: apart they would sit on each other (tester-2, int-13) - one mark with the number, at the
+        # first date, in the worst one's colour, and its tip has each certificate with its own date
+        cs = [cert("web%02d" % i, "app%02d.example.mil" % i, 9 + i, group="Web servers") for i in range(1, 11)]
+        m = line(made(cs))["groups"][0]["marks"]
+        self.assertEqual([(x["at"], x["n"], x["status"]) for x in m], [(8.33, 8, "critical"), (15.0, 2, "warning")])
+        self.assertEqual(m[0]["label"], "app01.example.mil +7")
+        tip = m[0]["tip"].split("\n")
+        self.assertEqual(tip[0], "8 certificates: 23 Nov to Mon 30 Nov 2026")
+        self.assertEqual(tip[1], "app01.example.mil on web01.corp.example.mil, 23 Nov (10 days) - Certificate renewal - CSRs")
+        self.assertEqual(tip[-1], "and 2 more: the renew list below")
+        self.assertEqual(m[1]["tip"].split("\n")[0], "2 certificates: 1 Dec to Wed 02 Dec 2026")
+        # an expired one and the days after it: one mark at today
+        ex = line(made([cert("web01", "a.example.mil", -2, group="Web"), cert("web03", "b.example.mil", 0, group="Web"),
+                        cert("web04", "c.example.mil", 5, group="Web")]))["groups"][0]["marks"]
+        self.assertEqual((len(ex), ex[0]["at"], ex[0]["n"]), (1, 0.0, 3))
+        self.assertEqual(ex[0]["tip"].split("\n"), [
+            "3 certificates: expired, and up to Wed 18 Nov 2026",
+            "a.example.mil on web01.corp.example.mil, expired 2 days ago - Certificate renewal - CSRs",
+            "b.example.mil on web03.corp.example.mil, today - Certificate renewal - CSRs",
+            "c.example.mil on web04.corp.example.mil, 18 Nov (5 days) - Certificate renewal - CSRs"])
+        # no two marks of a row nearer than a mark is wide, on the narrow track: the fleet, and a year of single days
+        for certs, kw in ((None, {}), (dense(), {}), ([cert("h%03d" % d, "h%03d.example.mil" % d, d, group="All") for d in range(-3, 366, 2)], {"days": 365})):
+            for g in line(made(certs, **kw))["groups"]:
+                at = [x["at"] * ct.TRACK_NARROW / 100.0 for x in g["marks"]]
+                self.assertTrue(all(b - a >= ct.MARK_PX - 0.1 for a, b in zip(at, at[1:])), (g["name"], at))   # at: two decimals
+                self.assertEqual(sum(x["n"] for x in g["marks"]), int(g["sub"].split()[0]))
+
+    def test_a_window_shorter_than_the_notice_days(self):
+        # cert_timeline_days below the report's notice days (tester-2, int-13): the renew list keeps what is not OK and
+        # expires after the window, and says so; its boxes and the sheet go with the list, the timeline with the window
+        r = made(days=21)
+        s = r["sections"][0]
+        self.assertEqual([x[5] for x in s["rows"]], [-3, 6, 11, 19, 23, 27, 34, 38, 44, 47, 52, 58])
+        self.assertIn(" 8 of the list expire after the timeline's 21 days (cert_timeline_days). ", s["text"])
+        self.assertEqual([b["value"] for b in r["boxes"]], [3, 6, 6])
+        self.assertEqual((r["counts"]["window"], r["counts"]["later"], r["web_sections"][0]["count"]), (4, 8, 4))
+        self.assertEqual([x[0] for x in r["sheet"]["rows"]], [x[5] for x in s["rows"]])
+        self.assertEqual(r["lines"][1], "  After the 21 days, in the renew list: 8 certificate(s)")
+        # nothing in the window, a Low one after it: it is in the list, and the status is not from the window alone
+        low = made([cert("web01", "git.example.mil", 45)], days=30)
+        self.assertEqual((low["status"], [x[1] for x in low["sections"][0]["rows"]]), ("ok", ["git.example.mil"]))
+        self.assertEqual(low["boxes"][2]["value"], 1)
+        self.assertEqual(line(low)["none"], "No certificate expires within 30 days.")
+        warn = made([cert("web01", "git.example.mil", 25)], days=14)
+        self.assertEqual((warn["status"], warn["sections"][0]["row_status"]), ("warning", ["warning"]))
+        # and with nothing that is not OK, the line names the notice days, the days the list goes by
+        none = made([cert("web01", "far.example.mil", 300)], days=30)
+        self.assertEqual(none["sections"][0]["lines"][0], "Nothing to renew: no certificate expires within 60 days.")
 
 
 class Lists(unittest.TestCase):

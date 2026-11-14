@@ -2741,7 +2741,7 @@ grep -qE "INC0012301|INC0011000" "$work/out.txt" && { echo "FAIL -   ...a ticket
 grep -vq '"method": "GET"' "$work/wsn.jsonl" && { echo "FAIL -   ...the review wrote to ServiceNow"; fails=$((fails + 1)); } \
     || echo "ok   -   ...ServiceNow was only read (GET)"
 kill "$wsn_pid" 2>/dev/null; wait "$wsn_pid" 2>/dev/null
-SNMOCK_SEED="$work/review-seed.json" SNMOCK_NO_TABLES=sys_journal_field "$py" "$repo/tests/servicenow/snmock.py" "$wsn_port" >/dev/null 2>&1 &
+SNMOCK_SEED="$work/review-seed.json" SNMOCK_LOG="$work/wsn2.jsonl" SNMOCK_NO_TABLES=sys_journal_field "$py" "$repo/tests/servicenow/snmock.py" "$wsn_port" >/dev/null 2>&1 &
 wsn_pid=$!
 for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$wsn_port") 2>/dev/null && break; sleep 0.1; done
 SN_USERNAME=ro run "outage review, a read-only account that may not read the work notes: the ticket, and what is missing" ok vm_outage_watch.yml \

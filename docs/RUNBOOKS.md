@@ -700,8 +700,10 @@ not fail the job. `cert_timeline: false` leaves it out.
 
 How to read the timeline:
 
-- **A mark** is one certificate at its expiry date. A number in a mark: that many on the same day. An expired
-  certificate sits at today.
+- **A mark** is one certificate at its expiry date. An expired certificate sits at today.
+- **A number in a mark**: that many certificates close together, on one day or on days so near that their marks
+  would sit on each other. The mark is at the first one's date and wears the worst one's colour. Its tip has each
+  certificate with its own date.
 - **The bands** behind the marks are the report's own days. Each band has its word and its days above the axis.
 
   | Band | Linux | Windows |
@@ -712,7 +714,7 @@ How to read the timeline:
   | OK | later | later |
 
 - **Status is never colour alone.** Each mark carries its level's icon (or its number), each row its worst level as a
-  word, each band its word.
+  word under its name (*Worst: Critical*), each band its word.
 - **Hover a mark**, or Tab to it: the certificate, the host, the issuer, the expiry date and who renews it. A mark of
   many names the first six.
 - **Names beside the marks**: only where they fit without touching. Every name is in the list below the timeline.
@@ -722,8 +724,9 @@ How to read the timeline:
 
 *Certificates to renew, soonest first* lists what is Critical, Warning or Low: level, certificate, system, host, expiry
 date, days left and **Renewed by** (the template *Certificate renewal - CSRs*; Windows: *Windows certificate renewal -
-CSRs*). Left out, as they are not renewed on the host: trust store certificates. A certificate whose date could not be
-read stays in the report's own table.
+CSRs*). With `cert_timeline_days` below the report's notice days the list still has all of them, and says how many
+expire after the timeline's days. Left out, as they are not renewed on the host: trust store certificates. A
+certificate whose date could not be read stays in the report's own table.
 
 **Found by itself** (the report only; `cert_report_discover: false` turns it off):
 

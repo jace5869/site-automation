@@ -30,6 +30,9 @@ TIP_NAMES = 6                                    # a mark of many certificates n
 # the label fit: a track this wide at an 800 px window (the narrow labels) and at 1280 px (the wide ones too), a
 # label's width from its characters. Both on the careful side: a label too many would sit on its neighbour.
 TRACK_NARROW, TRACK_WIDE, CHAR_PX, LABEL_GAP, LABEL_MAX = 420, 700, 6.8, 8, 22
+# marks closer than this on the narrow track would sit on each other (a mark is 20 px, one with a number up to 28):
+# they are one mark with their number, at the soonest date, and its tip has each certificate with its date
+MARK_PX = 28
 CN_RE = re.compile(r"(?:^|[,/])\s*CN\s*=\s*([^,/]+)", re.I)
 
 
@@ -138,16 +141,25 @@ def _labels(marks, track):
 
 
 def _tip(day, cs):
-    """A mark's hover lines: one certificate - its name, host, issuer, expiry and who renews it; many - the day and names."""
+    """A mark's hover lines: one certificate - its name, host, issuer, expiry and who renews it; many - the day (or the
+    days, each certificate with its own) and the names."""
     c = cs[0]
     when = "%s (%s)" % (_fmt(day) if day is not None else c["expires"], _when(c)) if c["days"] >= 0 else \
         "%s (%s)" % (c["expires"], _when(c))
     if len(cs) == 1:
         return "\n".join([c["name"], "Host: %s" % c["host"], "Issuer: %s" % (c["issuer"] or "not read"),
                           "Expires: %s" % when, "Renewed by: %s" % c["renew"]])
-    head = ("%d certificates expired" % len(cs)) if c["days"] < 0 else "%d certificates expire %s" % (len(cs), when)
-    lines = [head] + ["%s on %s%s - %s" % (x["name"], x["host"], (", %s" % _when(x)) if x["days"] < 0 else "", x["renew"])
-                      for x in cs[:TIP_NAMES]]
+    last = cs[-1]
+    if max(last["days"], 0) != max(c["days"], 0):    # several days in one mark (apart, they would sit on each other)
+        def date(x, how="%d %b"):
+            return _fmt(_day(x["expires"]), how).lstrip("0") if _day(x["expires"]) is not None else x["expires"]
+        head = "%d certificates: %s %s" % (len(cs), "expired, and up to" if c["days"] < 0 else date(c) + " to", date(last, "%a %d %b %Y"))
+        lines = [head] + ["%s on %s, %s - %s" % (x["name"], x["host"], _when(x) if x["days"] <= 0 else "%s (%s)" % (date(x), _when(x)),
+                                                 x["renew"]) for x in cs[:TIP_NAMES]]
+    else:
+        head = ("%d certificates expired" % len(cs)) if c["days"] < 0 else "%d certificates expire %s" % (len(cs), when)
+        lines = [head] + ["%s on %s%s - %s" % (x["name"], x["host"], (", %s" % _when(x)) if x["days"] < 0 else "", x["renew"])
+                          for x in cs[:TIP_NAMES]]
     if len(cs) > TIP_NAMES:
         lines.append("and %d more: the renew list below" % (len(cs) - TIP_NAMES))
     return "\n".join(lines)
@@ -192,9 +204,13 @@ def cert_timeline(certs, opts=None):
     cs.sort(key=lambda c: (c["days"], c["group"].lower(), c["host"].lower(), c["name"].lower()))
     inside = [c for c in cs if c["days"] <= span]
     n = dict((b, len([c for c in inside if c["band"] == b])) for b in BANDS)
-    todo = [c for c in inside if c["band"] != "ok"]
+    # the renew list, its boxes and the status: all that is not OK - with cert_timeline_days below the report's own
+    # days, some of it expires after the window (m: its numbers; n: the window's, for the timeline)
+    todo = [c for c in cs if c["band"] != "ok"]
+    later = len([c for c in todo if c["days"] > span])
+    m = dict((b, len([c for c in todo if c["band"] == b])) for b in BANDS)
     after = next((c for c in cs if c["band"] == "ok"), None)
-    status = "critical" if n["critical"] else "warning" if n["warning"] else "ok"
+    status = "critical" if m["critical"] else "warning" if m["warning"] else "ok"
 
     def setting(key, default):
         return ("%d days (%s)" % (default, o[key])) if o.get(key) else "%d days" % default
@@ -208,7 +224,7 @@ def cert_timeline(certs, opts=None):
         names.sort(key=lambda g: (groups.index(g) if g in groups else len(groups), g == "Other"))
     if len(names) > ROWS:
         keep = names[:ROWS - 1]
-        for c in inside:
+        for c in cs:
             if c["group"] not in keep:
                 c["group"] = "Other"
         names = [g for g in keep if g != "Other"] + ["Other"]
@@ -218,13 +234,17 @@ def cert_timeline(certs, opts=None):
         by_day = {}
         for c in mine:
             by_day.setdefault(max(c["days"], 0), []).append(c)
-        marks = []
+        marks, near = [], []                          # near: [the first day, its certificates and those of the days beside it]
         for d in sorted(by_day):
-            b = by_day[d]
+            if near and (d - near[-1][0]) * TRACK_NARROW / float(span) < MARK_PX:
+                near[-1][1].extend(by_day[d])
+            else:
+                near.append([d, list(by_day[d])])
+        for d, b in near:
             day = _day(b[0]["expires"]) if b[0]["days"] >= 0 else None
             label = _short(b[0]["name"]) if len(b) == 1 else "%s +%d" % (_short(b[0]["name"], LABEL_MAX - 4), len(b) - 1)
-            marks.append({"at": round(100.0 * d / span, 2), "status": b[0]["band"], "n": len(b), "label": label,
-                          "tip": _tip(day, b), "side": "", "show": ""})
+            marks.append({"at": round(100.0 * d / span, 2), "status": min((c["band"] for c in b), key=lambda x: RANK[x]),
+                          "n": len(b), "label": label, "tip": _tip(day, b), "side": "", "show": ""})
         for i in _labels(marks, TRACK_NARROW):
             marks[i]["show"] = "n"
         for i in _labels(marks, TRACK_WIDE):
@@ -246,7 +266,8 @@ def cert_timeline(certs, opts=None):
     what = (str(o.get("what")) + " ") if o.get("what") else ""
     line = {"title": "Certificates: the next %d days" % span, "top": True, "status": status, "count": len(inside),
             "text": "Every %scertificate that expires within %d days (cert_timeline_days), a row per system. "
-                    "A mark is one certificate at its expiry date; a number in it, that many on the same day." % (what, span),
+                    "A mark is one certificate at its expiry date. A number in a mark: that many close together, at the first one's "
+                    "date; its tip has each with its date." % (what, span),
             "timeline": {"days": span, "label": "%sertificates by expiry date, the next %d days" % ((what + "c") if what else "C", span),
                          "week": round(100.0 * 7 / span, 4), "bands": bands, "ticks": ticks, "groups": rows,
                          "none": "" if rows else "No certificate expires within %d days." % span}}
@@ -256,6 +277,8 @@ def cert_timeline(certs, opts=None):
     if n["ok"]:
         note.append("%d more expire%s within %d days and %s OK: the workbook's Timeline sheet has %s." % (
             n["ok"], "s" if n["ok"] == 1 else "", span, "is" if n["ok"] == 1 else "are", "it" if n["ok"] == 1 else "them"))
+    if later:
+        note.append("%d of the list expire%s after the timeline's %d days (cert_timeline_days)." % (later, "s" if later == 1 else "", span))
     if after:
         note.append("Next after the list: %s, in %d days." % (
             after["host"] if after["name"] == _host_short(after["host"]) else "%s on %s" % (after["name"], after["host"]), after["days"]))
@@ -280,21 +303,23 @@ def cert_timeline(certs, opts=None):
     def box(label, value, st, text):
         return {"label": label, "value": value, "status": st if value else "ok", "note": text}
 
-    boxes = [box("Expire in %d days" % crit, n["critical"], "critical",
+    boxes = [box("Expire in %d days" % crit, m["critical"], "critical",
                  ("the first %s%s" % ("" if todo[0]["days"] < 0 else "expires " if todo[0]["days"] == 0 else "in ", _when(todo[0])))
-                 if n["critical"] else "or expired: none"),
-             box("Expire in %d days" % warn, n["critical"] + n["warning"], "warning", "critical and warning"),
-             box("Low: %d to %d days" % (warn + 1, notice), n["low"], "low", "worth knowing")]
+                 if m["critical"] else "or expired: none"),
+             box("Expire in %d days" % warn, m["critical"] + m["warning"], "warning", "critical and warning"),
+             box("Low: %d to %d days" % (warn + 1, notice), m["low"], "low", "worth knowing")]
     sheet = {"name": "Timeline",
              "columns": ["Days left", "Expires", "Band", "Certificate", "System", "Host", "Where", "Issuer", "Renewed by", "Subject"],
              "rows": [[c["days"], c["expires"], WORD[c["band"]], c["name"], c["group"], c["host"], c["where"], c["issuer"],
-                       c["renew"], c["subject"]] for c in inside]}
+                       c["renew"], c["subject"]] for c in inside + [c for c in todo if c["days"] > span]]}
     renew_list["boxes"] = boxes
     out = ["Certificate timeline, the next %d days: %d certificate(s) - %d critical, %d warning, %d Low, %d OK%s" % (
         span, len(inside), n["critical"], n["warning"], n["low"], n["ok"], ("; soonest: " + names3) if names3 else "")]
+    if later:
+        out.append("  After the %d days, in the renew list: %d certificate(s)" % (span, later))
     for r in rows:
         out.append("  %s: %s, %s" % (r["name"], r["sub"], r["word"]))
-    counts = dict(n, window=len(inside), days=span, certificates=len(cs), trust=trust, unread=unread)
+    counts = dict(n, window=len(inside), days=span, certificates=len(cs), trust=trust, unread=unread, later=later)
     return {"sections": [renew_list], "web_sections": [line, renew_list], "boxes": boxes, "sheet": sheet, "lines": out,
             "counts": counts, "status": status}
 

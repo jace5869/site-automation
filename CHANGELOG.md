@@ -104,15 +104,17 @@ expires next, above their tables. Nothing is removed: the boxes, Start here and 
 finding, no incident and no CSR, and does not fail the job.
 
 - **The website** (atlas and brief): the next `cert_timeline_days` (120) on one axis, a row per system, a mark at each
-  expiry date, today on the left. A number in a mark: that many on the same day. Names sit beside the marks where they
-  fit.
+  expiry date, today on the left. Marks that would sit on each other are one mark with their number, at the first
+  one's date; its tip has each certificate with its date. Names sit beside the marks where they fit. Each row says its
+  worst level under its name.
 - **The bands** are each report's own days: Critical, Warning, Low, OK, each with its word and its days above the axis
   (Linux `check_certs_crit_days` / `_warn_days` / `_notice_days`; Windows `win_check_certs_*`; network devices
   `net_cert_*`; vCenter `vmware_cert_crit_days` / `vmware_cert_warn_days`).
 - **Hover a mark**, or Tab to it: the certificate, the host, the issuer, the expiry date and who renews it. It uses
   1.57.0's tip in `site-report.js`, so it runs under `script-src 'self'`.
 - **The email** (and the other looks): three boxes and the table *Certificates to renew, soonest first*, with a
-  *Renewed by* column. No timeline there.
+  *Renewed by* column. No timeline there. The list is everything Critical, Warning or Low, also with
+  `cert_timeline_days` below the report's notice days: it then says how many expire after the timeline's days.
 - **The workbook** (`report_email_xlsx: true`): a *Timeline* sheet with every certificate in the window.
 - **Rows:** `cert_timeline_groups`, inventory groups in order, the first match wins, else *Other*. Empty: each host's
   first inventory group. vCenter: *vCenter*, then a row per cluster. Over 8 rows, the last share *Other*.

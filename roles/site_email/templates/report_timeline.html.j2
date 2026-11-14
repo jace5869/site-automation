@@ -1,8 +1,8 @@
 {#- A section's timeline (1.64.0, the certificate reports), in the atlas and brief looks only (a web page; an email gets the
     renew list): s.timeline = {days, label, week (a week's width, %), bands: [{status, word, from, to (%), text, count}],
-    ticks: [{at (%), text, wide}], groups: [{name, sub, marks: [{at (%), status, n, label, side (a above, b below), show
+    ticks: [{at (%), text, wide}], groups: [{name, sub, word (its worst level, said), marks: [{at (%), status, n, label, side (a above, b below), show
     (n always, w a wide window only), tip}]}], none}. A mark is one certificate at its expiry date - its level is its
-    icon and its colour, a number is that many on one day; its lines show on hover, focus and tap (data-tip, the hover
+    icon and its colour, a number is that many close together (the worst's colour); its lines show on hover, focus and tap (data-tip, the hover
     layer of site-report.js; without the script its title). Made by the cert_timeline filter. #}
 {%- set tl = s.timeline %}
 {%- if tl.groups | default([]) %}
@@ -16,7 +16,7 @@
 {%- for t in tl.ticks | default([]) %}{% if t.at > 0 %}<i class="tl-wk{{ ' w' if t.wide | default(false) else '' }}" style="left:{{ t.at }}%"></i>{% endif %}{% endfor %}
 <i class="tl-now"></i></div>
 {%- for g in tl.groups %}
-<div class="tl-row"><div class="tl-name"><b>{{ g.name | e }}</b><small>{{ g.sub | default('') | e }}</small></div>
+<div class="tl-row"><div class="tl-name"><b>{{ g.name | e }}</b><small>{{ g.sub | default('') | e }}{% if g.word | default('') %}<br>Worst: {{ g.word | e }}{% endif %}</small></div>
 <div class="tl-track" role="list" aria-label="{{ g.name | e }}">
 {%- for m in g.marks | default([]) %}
 {%- set st = m.status if m.status in ['critical', 'warning', 'low', 'ok'] else 'ok' %}

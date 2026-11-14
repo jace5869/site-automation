@@ -459,6 +459,49 @@ class RealChromeTimelineBrief(RealChromeTimeline):
     TPL = "report_brief.html.j2"
 
 
+class RealChromeTimelineDense(RealChromeTimeline):
+    """Certificates a day or two apart (tester-2, int-13): marks that would sit on each other are one mark, so no mark
+    hides another and the mouse reaches every one - at a wide window and at 800 px."""
+    test_6_hovering_a_mark_shows_the_certificate = test_7_the_keyboard_reaches_each_mark = None
+
+    @classmethod
+    def web(cls):
+        r = tct.made(tct.dense())
+        return {"title": "Certificate report", "status": r["status"], "summary": r["boxes"], "sections": r["web_sections"]}
+
+    def test_8_no_mark_covers_another(self):
+        boxes = ("[...document.querySelectorAll('.tl-track')].map(t => [...t.querySelectorAll('.tl-m')].map(m => "
+                 "{const r = m.getBoundingClientRect(); return [r.left, r.right]}))")
+        on_top = ("[...document.querySelectorAll(%s)].filter(m => {m.scrollIntoView({block: 'center', behavior: 'instant'}); "
+                  "const r = m.getBoundingClientRect(); return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)"
+                  ".closest('.tl-m') !== m}).length" % json.dumps(self.SEL))
+        try:
+            for width in (1366, 800):
+                self.c.call("Emulation.setDeviceMetricsOverride", width=width, height=1000, deviceScaleFactor=1, mobile=False)
+                rows = self.c.js(boxes)
+                self.assertEqual(len(rows), 8, width)                          # ten systems: seven rows and Other
+                self.assertGreater(max(len(r) for r in rows), 2, width)
+                for r in rows:
+                    for a, b in zip(r, r[1:]):
+                        self.assertGreaterEqual(b[0] - a[1], 2, (width, r))    # the ring's two pixels stay free
+                self.assertEqual(self.c.js(on_top), 0, width)
+            many = self.c.js("[...document.querySelectorAll('.tl-m.n')].map(m => [m.textContent.trim(), m.getAttribute('data-tip').split('\\n')[0]])")
+            self.assertTrue(any(re.match(r"^\d+ certificates: \d+ \w+ to \w+ \d+ \w+ \d+$", t) for _, t in many), many)
+            self.assertTrue(all(t.startswith(n + " certificates") for n, t in many), many)
+            x, y = self.at(".tl-m.n")                                          # and its tip opens, with a line per certificate
+            self.c.mouse(5, 5)
+            self.c.mouse(x, y)
+            tip = self.c.js(TIP)
+            self.assertEqual(tip, self.c.js("document.querySelector('.tl-m.n').getAttribute('data-tip').split('\\n')"))
+            self.assertGreater(len(tip), 2)
+        finally:
+            self.c.call("Emulation.clearDeviceMetricsOverride")
+
+
+class RealChromeTimelineDenseBrief(RealChromeTimelineDense):
+    TPL = "report_brief.html.j2"
+
+
 @unittest.skipUnless(_browser(), "no headless browser here")
 class RealChromeOutage(RealChrome):
     """1.66.0: the outage time line's marks (their data-tip) under the same policy - hover, the keyboard, Esc."""
@@ -516,6 +559,7 @@ class RealChromeOutageBrief(RealChromeOutage):
     TPL = "report_brief.html.j2"
 
 
+@unittest.skipUnless(_browser(), "no headless browser here")
 class RealChromeBreach(unittest.TestCase):
     """Ticket insights' About to breach line: its page loads site-insights.js (served beside it, script-src 'self'); a
     day's hit area shows that day's numbers in the page's own tip."""
