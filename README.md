@@ -16,7 +16,7 @@ Every job follows the same rules:
 - **Nothing automatic restarts.** No reboot or service restart unless you set `automatic_restarts: true`, and the AAP
   server and vendor appliances are never patched, restarted or changed.
 - **Every report reaches people.** Emailed (green or red), a page on the report website, an Excel workbook where a
-  table is long; ServiceNow incidents opened, updated and resolved for the findings when you turn that on.
+  table is long (with Excel's own trend lines where a table has a history); ServiceNow incidents opened, updated and resolved for the findings when you turn that on.
 - **Levels in plain words.** Rows sort critical, warning, Low, info, ok. Low is worth knowing but needs nothing now: it
   always shows the word, never only a colour, and never turns a report amber. On the website (atlas and brief looks)
   tiles and trend lines show their numbers on hover or keyboard focus.

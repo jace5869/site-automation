@@ -2,7 +2,7 @@
 
 ## 1.62.0 — 2026-11-14
 
-**Updating without scripts:** paste `site-automation-1.62.0-changed-since-1.55.0.zip` as it is (from an older version,
+**Updating without scripts:** paste `site-automation-1.62.0-changed-since-1.61.0.zip` as it is (from an older version,
 its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
 `poam/poam.csv`. Nothing to set up. To do: 1.62.0 nothing.
 
