@@ -1,5 +1,58 @@
 # Changelog
 
+## 1.63.0 — 2026-11-14
+
+**Updating without scripts:** paste `site-automation-1.63.0-changed-since-1.61.0.zip` as it is (from an older version,
+its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`.
+
+**To set up, for reader mode on Windows: step 99, one read-only right.** A domain admin grants *Monitor Active
+Directory Replication* to the job's account, steps 1 to 4 in
+[docs/ACTIVE_DIRECTORY.md](docs/ACTIVE_DIRECTORY.md), "Reading replication data". Admin mode needs nothing. New
+settings have defaults: `ad_repl_low_hours`, `ad_repl_matrix`, `ad_repl_matrix_max_dcs`, `ad_repl_trend_days`,
+`ad_repl_history`, `ad_repl_history_runs`, `ad_repl_db`, `ad_repl_db_create`, `ad_repl_db_timeout`,
+`ad_repl_db_keep_days`. No new job template.
+
+**Why replication was not read.** In reader mode the job reads each DC's replication state over LDAP as a plain user.
+Windows leaves that state out of the answer, with no error, unless the account holds *Monitor Active Directory
+Replication* (`DS-Replication-Monitor-Topology`) on the partition ([MS-ADTS] 3.1.1.4.4). A plain user never does.
+
+- The report now says it in one line. It names the right, the DCs and the doc section. It is never a finding.
+- The *Replication* box says **Not read** instead of 0. The title no longer says *healthy* when replication was not read.
+- A right granted on some partitions only: one line names the partitions with nothing readable.
+- The reader also asks `msDS-NCReplCursors`, which the same right opens.
+- The new doc section has the steps: a group, the grant (dsacls, PowerShell or the GUI), the check, and how to take it
+  away. The right only shows replication status. It allows no write and no password or secret.
+
+**The replication matrix: sections of the AD health report**, in admin and reader mode. Nothing is removed: the boxes,
+*Inbound replication* and every other section stay.
+
+- **The website** (atlas and brief): every pair of DCs, grouped by AD site. Each cell is how long ago the pair last
+  replicated, with its status icon. Hover for the partition, last success, last failure and error. The worst pair is
+  a card on top, with the next step and a command. More than `ad_repl_matrix_max_dcs` (12) DCs: site x site.
+- **The bands:** OK, Low after `ad_repl_low_hours` (4 h, one schedule missed), amber after `ad_repl_warn_hours`, red
+  after `ad_repl_crit_hours`. A failing link is amber, and red once it is that old.
+- **Links that need a look:** each late pair, worst first, with the numbers. The email has this table, not the matrix.
+- **The trend:** each site's worst replication age by day over `ad_repl_trend_days` (14), a line per site. It comes
+  from this template's earlier runs (the new job artifact `ad_repl`), then the report database if the template has its
+  credential (table `ad_repl_point`). Fewer than two days: no line, and the table says so.
+- **The workbook** (`report_email_xlsx: true`): the late links, *Replication* (every link, each partition) and
+  *Replication by site* (a column a day).
+- Docs: ACTIVE_DIRECTORY.md (the matrix, *Reading replication data*), REPORT_DATABASE.md (the trend's points).
+
+**Behaviour changes**
+
+- AD health report: three more sections on the website, one more in the email, two more sheets in the workbook, the
+  job artifact `ad_repl`. The findings, the status and pass or fail are as before.
+- Reader mode: replication not read says the right instead of `not read (needs admin)`.
+- The report website's atlas and brief looks draw a section's `matrix` (`report_matrix.html.j2`).
+
+**Tests:** `tests/test_ad_repl.py` (the bands, matrix, cards, late links, trend, workbook, the database's points, both
+looks); `tests/test_ad_reader.py` (the refused read, partitions not granted, the cursors); `tests/ad/run_ad_test.sh`
+(admin mode: the page, the email, the workbook); `tests/ad/run_ad_reader_test.sh` (Samba: the matrix read, then the
+replication attributes denied to the account as Windows does, then given back); report fit documents `ad_repl_web`,
+`ad_repl_email` and `ad_repl_forest`. Not tested: a real Windows DC (the right's effect is from Microsoft's spec).
+
 ## 1.62.0 — 2026-11-14
 
 **Updating without scripts:** paste `site-automation-1.62.0-changed-since-1.61.0.zip` as it is (from an older version,
@@ -2228,7 +2281,7 @@ tests/stig/run_stigman_real_test.sh against STIG Manager 1.6.18 (not in CI).
 
 SA_VERSION 1.26.0; the PDFs at 1.26.0.
 
-**To do, if you have not yet: what 0.20.0 to 1.62.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.62.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing, 1.39.0 nothing, 1.41.0 nothing, 1.42.0 nothing, 1.43.0 nothing, 1.44.0 nothing, 1.45.0 nothing, 1.46.0 nothing, 1.47.0 nothing, 1.48.0 nothing, 1.49.0 nothing, 1.50.0 step 97, 1.51.0 step 95, 1.52.0 step 96, 1.53.0 step 98, 1.54.0 nothing, 1.55.0 nothing, 1.56.0 nothing, 1.57.0 nothing, 1.58.0 nothing, 1.59.0 nothing, 1.61.0 nothing, 1.62.0 nothing).** In order; each step works without
+**To do, if you have not yet: what 0.20.0 to 1.63.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.63.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing, 1.39.0 nothing, 1.41.0 nothing, 1.42.0 nothing, 1.43.0 nothing, 1.44.0 nothing, 1.45.0 nothing, 1.46.0 nothing, 1.47.0 nothing, 1.48.0 nothing, 1.49.0 nothing, 1.50.0 step 97, 1.51.0 step 95, 1.52.0 step 96, 1.53.0 step 98, 1.54.0 nothing, 1.55.0 nothing, 1.56.0 nothing, 1.57.0 nothing, 1.58.0 nothing, 1.59.0 nothing, 1.61.0 nothing, 1.62.0 nothing, 1.63.0 step 99).** In order; each step works without
 the ones after it. There is no step 90.
 
 1. **Your logo** (0.20.0). A PNG with a transparent background, about 160 px tall and under 100 KB, in
@@ -3036,6 +3089,15 @@ the ones after it. There is no step 90.
     4. Only to keep the old copies as they are: `site_act_old_bin: report` in `all.yml`.
     5. Your own install playbook: if it copies ACT to `/usr/local/bin/act`, make it a link to `/opt/act/act`.
     Details: docs/ADDING_ACT.md, "Old copies of ACT".
+
+99. **AD health: reading replication data** (1.63.0) - reader mode on Windows only. A domain admin grants one read-only
+    right, *Monitor Active Directory Replication*, to the job's account. It allows no write and no secret.
+    1. A group, e.g. `AD Replication Readers`, with the job's account in it.
+    2. The right for the group on the five partitions: the domain, Configuration, Schema, DomainDnsZones and
+       ForestDnsZones (dsacls, PowerShell or the GUI).
+    3. Run the AD health report: *Inbound replication* has no grey *not read* rows, and the matrix is filled in.
+    4. To take it away: the account out of the group.
+    Details and the commands: docs/ACTIVE_DIRECTORY.md, "Reading replication data".
 
 ## 1.24.0 — 2026-11-11
 

@@ -977,7 +977,7 @@ def ad_report(dcs, domains, opts=None):
               "summary": summary, "sections": R.sections}
     dc_sum = [{"dc": x["_name"], "domain": x["_domain"], "host": x.get("host"), "read": x["_ok"], "error": x.get("error", "")} for x in dcs]
     return {"report": report, "problems": R.problems, "dcs": dc_sum, "domains": summaries,
-            "critical": len(crit), "warning": len(warn)}
+            "critical": len(crit), "warning": len(warn), "repl": _repl_admin(dcs, doms, now)}
 
 
 def ps_error(stderr):
@@ -997,6 +997,10 @@ LEVELS = {0: "2000", 1: "2003 interim", 2: "2003", 3: "2008", 4: "2008 R2", 5: "
 NOT_RUN = ("dcdiag, repadmin (the replication queue, backups), the DC services, SYSVOL and DFSR, the disks, the event logs, "
            "w32tm and the Security log (who made a change)")
 NEEDS_ADMIN = "not read (needs admin)"
+# 1.63.0: what the reader says when Windows gave no replication state (site_ad_reader's REPL_NOT_GRANTED)
+REPL_RIGHT = "Monitor Active Directory Replication"
+REPL_NOT_GRANTED = 'not read: the account lacks "%s"' % REPL_RIGHT
+REPL_DOC = 'docs/ACTIVE_DIRECTORY.md, "Reading replication data"'
 ROLE_SHORT = {"PDC emulator": "PDC", "RID master": "RID", "Infrastructure master": "Infra", "Schema master": "Schema",
               "Domain naming master": "Naming"}
 
@@ -1200,7 +1204,7 @@ def ad_reader_report(reader, opts=None):
             "answers on LDAP from here.", ["Role", "Holder", "A DC in AD", "Answers"], rows, "No role holder was read.", keep_order=True)
 
     # ---- 4. replication -----------------------------------------------------------------------------------------------------
-    rows, ok_links, sources, not_read = [], 0, set(), []
+    rows, ok_links, sources, not_read, not_granted = [], 0, set(), [], {}
     for d in dcs:
         if not d.get("in_ad") or not (d.get("bind") or {}).get("ok"):
             continue
@@ -1212,10 +1216,12 @@ def ad_reader_report(reader, opts=None):
                      for c in rp["cursors"] if c.get("partner") and c.get("last_sync")]
         if rp.get("source"):
             sources.add(rp["source"])
+        for nc in rp.get("not_granted") or []:
+            not_granted.setdefault(nc_name(nc), []).append(name)
         if not links:
-            if rp.get("why") == NEEDS_ADMIN:
+            if rp.get("why") in (NEEDS_ADMIN, REPL_NOT_GRANTED):
                 not_read.append(name)
-                rows.append(_row([name, "(all)", "", "", "", NEEDS_ADMIN, ""], [""] * 5 + ["unknown"], "unknown"))
+                rows.append(_row([name, "(all)", "", "", "", 'not read: needs "%s"' % REPL_RIGHT, ""], [""] * 5 + ["unknown"], "unknown"))
             continue
         for ln in links:
             fails = int(ln.get("failures") or 0)
@@ -1242,12 +1248,21 @@ def ad_reader_report(reader, opts=None):
                              ["", "", "", "critical" if fails else "", st]))
             R.problem(dom, "replication", "%s <- %s (%s)" % (name, _dc_short(ln.get("partner")), nc_name(ln.get("nc"))), st, why)
     src = ", ".join(sorted(sources)) or "nothing readable"
+    # 1.63.0: replication not read is said in one line - the right and where - never as a replication failure
+    repl_lines = []
+    if not_read:
+        repl_lines.append('Replication not read on %s: %s lacks "%s" on the partitions (see %s).' % (
+            ", ".join(not_read), user, REPL_RIGHT, REPL_DOC))
+    partial = sorted(k for k, v in not_granted.items() if [n for n in v if n not in not_read])
+    if partial:
+        repl_lines.append('Nothing readable on %s: "%s" is not granted there, or the partition has no other copy (see %s).' % (
+            ", ".join(partial), REPL_RIGHT, REPL_DOC))
     R.table("Inbound replication", "Each DC's inbound replication from each partner, for every partition, as far as %s may read it "
             "(here: %s - on each DC's own copy of the partition head; no repadmin). Only links with a problem are listed: amber after "
             "%s h without success or a failing link that succeeded recently, red after %s h or longer than the tombstone lifetime. "
             "%d link(s) are healthy.%s" % (user, src, _hours(rw), _hours(rc), ok_links,
-                                            (" Grey: %s - the account may not read its replication state." % ", ".join(not_read)) if not_read else ""),
-            ["DC", "Partition", "From", "Failures", "Last success", "Last error", "Why"], rows, "No link has a problem.")
+                                            (" Grey: not read." if not_read else "")),
+            ["DC", "Partition", "From", "Failures", "Last success", "Last error", "Why"], rows, "No link has a problem.", repl_lines)
 
     # ---- 5. DNS -------------------------------------------------------------------------------------------------------------
     rows = []
@@ -1402,14 +1417,18 @@ def ad_reader_report(reader, opts=None):
     def st_of(*areas):
         return worst([p["severity"] for p in R.problems if p["area"] in areas]) or "ok"
     n_ans = len([d for d in in_ad if (d.get("bind") or {}).get("ok")])
+    repl_blind = bool(not_read) and len(not_read) >= n_ans          # no DC's replication state was read
     if crit or warn:
         title = "Active Directory health report: %d critical, %d warning (%s)" % (len(crit), len(warn), dom)
+    elif repl_blind:
+        title = "Active Directory health report: no problem found, replication not read (%s)" % dom
     else:
         title = "Active Directory health report: all %d domain controller(s) healthy (%s)" % (len(in_ad), dom)
     n_priv = sum(len(g.get("changes") or []) for g in groups) + n_since
     n_obj = len(r.get("created") or [])
     summary = [{"label": "DCs answering", "value": "%d of %d" % (n_ans, len(in_ad)), "status": "ok" if n_ans == len(in_ad) else "critical"},
-               {"label": "Replication problems", "value": count("replication"), "status": st_of("replication")},
+               ({"label": "Replication problems", "value": count("replication"), "status": st_of("replication")}
+                if not repl_blind else {"label": "Replication", "value": "Not read", "status": "unknown", "note": 'needs "%s"' % REPL_RIGHT}),
                {"label": "FSMO / DNS / clock", "value": count("fsmo", "dns", "time"), "status": st_of("fsmo", "dns", "time")},
                {"label": "Kerberos", "value": count("kerberos"), "status": st_of("kerberos")},
                {"label": "Certificates", "value": count("certificate"), "status": st_of("certificate")},
@@ -1425,7 +1444,79 @@ def ad_reader_report(reader, opts=None):
                "error": (d.get("bind") or {}).get("error", "")} for d in dcs if d.get("in_ad")]
     return {"report": report, "problems": R.problems, "dcs": dc_sum,
             "domains": [{"domain": dom, "forest": r.get("forest", ""), "dcs": len(in_ad), "dcs_read": n_ans, "collector": r.get("read_from")}],
-            "critical": len(crit), "warning": len(warn)}
+            "critical": len(crit), "warning": len(warn), "repl": _repl_reader(dcs, now, tsl)}
+
+
+# ---- 1.63.0: every replication link, for the replication matrix (plugins/filter/ad_repl_filters.py) ----------------------
+def _repl_admin(dcs, doms, now):
+    """Admin mode: each DC's repadmin /showrepl rows -> {dcs: [{name, site, read, why}], links: [{to, frm, nc, last_success,
+    last_attempt, last_failure, failures, error}], source, now, tombstone_days}. A DC AD knows but the job did not read is
+    in dcs (read false): its column has no data, never a guess."""
+    seen = {}
+    for d in doms:
+        for x in d["data"].get("dcs") or []:
+            n = short(x.get("name")).upper()
+            if n and n not in seen:
+                seen[n] = {"name": n, "site": str(x.get("site") or ""), "read": False, "why": "not in the inventory: not read"}
+    links = []
+    for x in dcs:
+        n = x["_name"]
+        data = x.get("data") or {}
+        rec = seen.setdefault(n, {"name": n, "site": str(data.get("site") or ""), "read": False, "why": ""})
+        rec["site"] = rec["site"] or str(data.get("site") or "")
+        errs = [e for e in data.get("errors") or [] if str(e).startswith("repadmin /showrepl")]
+        if not x["_ok"]:
+            rec.update(read=False, why="not reached: %s" % (x.get("error") or "no answer"))
+            continue
+        rec.update(read=not errs, why=errs[0] if errs else "")
+        for r in data.get("repl") or []:
+            frm = short(r.get("source")).upper()
+            if not frm:
+                continue
+            if frm not in seen:
+                seen[frm] = {"name": frm, "site": str(r.get("source_site") or ""), "read": False, "why": "not in the inventory: not read"}
+            links.append({"to": n, "frm": frm, "nc": nc_name(r.get("nc")), "last_success": r.get("last_success") or "",
+                          "last_attempt": "", "last_failure": r.get("last_failure") or "", "failures": int(r.get("failures") or 0),
+                          "error": str(r.get("status") or "").strip() if int(r.get("failures") or 0) else ""})
+    tsl = min([d["data"].get("tombstone_days") or 60 for d in doms] or [60])
+    return {"dcs": list(seen.values()), "links": links, "source": "repadmin /showrepl", "now": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "tombstone_days": tsl}
+
+
+def _repl_reader(dcs, now, tsl):
+    """Reader mode: each DC's own partition heads (site_ad_reader's repl) -> as _repl_admin. With no link readable, the
+    up-to-dateness cursors stand in (when each DC's changes last arrived), the DC itself left out."""
+    out, links, sources = [], [], set()
+    for d in dcs:
+        if not d.get("in_ad"):
+            continue
+        name = d.get("name") or _dc_short(d.get("fqdn"))
+        rp = d.get("repl") or {}
+        rec = {"name": name, "site": str(d.get("site") or ""), "read": False, "why": ""}
+        out.append(rec)
+        if not (d.get("bind") or {}).get("ok"):
+            rec["why"] = "not reached: %s" % ((d.get("bind") or {}).get("error") or "no answer")
+            continue
+        if rp.get("why") in (NEEDS_ADMIN, REPL_NOT_GRANTED):
+            rec["why"] = 'not read: needs "%s"' % REPL_RIGHT
+            continue
+        rec["read"] = True
+        if rp.get("source"):
+            sources.add(rp["source"])
+        got = rp.get("links") or []
+        if not got:
+            got = [{"nc": c.get("nc"), "partner": c.get("partner"), "last_success": c.get("last_sync"), "failures": 0, "result": 0}
+                   for c in rp.get("cursors") or [] if c.get("partner") and c.get("last_sync")]
+        for ln in got:
+            frm = _dc_short(ln.get("partner"))
+            if not frm or frm == name:
+                continue
+            fails = int(ln.get("failures") or 0)
+            links.append({"to": name, "frm": frm, "nc": nc_name(ln.get("nc")), "last_success": ln.get("last_success") or "",
+                          "last_attempt": ln.get("last_attempt") or "", "last_failure": (ln.get("last_attempt") or "") if fails else "",
+                          "failures": fails, "error": str(ln.get("result") or "") if fails else ""})
+    return {"dcs": out, "links": links, "source": ", ".join(sorted(sources)), "now": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "tombstone_days": tsl or 60}
 
 
 def ad_mode(dcs, wanted):

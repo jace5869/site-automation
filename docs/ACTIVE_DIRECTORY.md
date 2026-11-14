@@ -35,6 +35,9 @@ changes, accounts created / deleted, GPO changes). Then, in this order:
 | **Domains** | each domain: functional levels, schema version, DCs checked / in AD, the PDC emulator, tombstone lifetime, Recycle Bin, RID pool left, the oldest partition's last backup, the krbtgt password's age, the SYSVOL migration state | amber Recycle Bin off, krbtgt older than 180 days, FRS; red RID pool under 2 %, backup older than 30 days or the tombstone lifetime |
 | **Domain controllers** | each DC: site, OS, GC / RODC, the FSMO roles it holds, LDAP answering (and synchronized), DC services not running, dcdiag's failed tests, SYSVOL, its clock, the least free space of its database, log and SYSVOL volumes, uptime. A DC in AD that is not in the inventory is listed in blue | red unreachable, LDAP down, not synchronized, a DC service stopped |
 | **Operations masters (FSMO)** | who holds each role, whether that holder still exists as a DC, whether it answers on LDAP | red holder gone or not answering |
+| **Replication matrix** (1.63.0) | on the website: every pair of DCs, grouped by site, with how long ago the pair last replicated. The worst pair on top, with what to do. Hover a cell for the partition, times and error. Past `ad_repl_matrix_max_dcs` DCs: site x site | per pair, as below; Low from `ad_repl_low_hours` (4 h) |
+| **Replication links that need a look** (1.63.0) | each pair past `ad_repl_low_hours`, worst first, with the numbers. The email has this table instead of the matrix | as below, with Low |
+| **Replication trend** (1.63.0) | on the website: each site's worst replication age by day over `ad_repl_trend_days` (14), a line per site. From the template's earlier runs | as the site's worst pair |
 | **Inbound replication** | links with a problem only (`repadmin /showrepl` on each DC): partition, partner, failures, last success, last error with what the code means | amber 6 h without success, red 24 h, a failing link, or longer than the tombstone lifetime; amber 50+ requests in the queue |
 | **Replication from every DC (up-to-dateness)** | how long ago each DC's latest change reached the DC that read the domain (`repadmin /showutdvec /latency`): this also catches a DC that is **not in the inventory** and stopped replicating | amber 6 h, red 24 h |
 | **dcdiag** | the failed tests and what dcdiag said. `SystemLog` is skipped by default (the Events section covers it) | red Connectivity, Advertising, NetLogons, Replications, SysVolCheck, Services, KnowsOfRoleHolders, RidManager, MachineAccount; amber the others |
@@ -62,6 +65,22 @@ only when *Audit Security Group Management*, *Audit User Account Management* and
 Account Management* are on (the DISA STIG asks for all three), and that DC is in the inventory.
 
 The job's artifacts (`ad_health`) have every finding, for a workflow or ServiceNow.
+
+### The replication matrix
+
+It works in both modes: admin mode reads repadmin, reader mode reads each DC's own copy (*Reading replication data*).
+A row is the DC replicating **from**, a column the DC replicating **to**. A cell is the worst partition of that pair.
+
+- **The bands.** OK, then Low after `ad_repl_low_hours` (one site link schedule missed), amber after
+  `ad_repl_warn_hours`, red after `ad_repl_crit_hours`. A failing link is amber, and red once it is that old.
+- **Not partners** is a dot. A DC whose own state was not read shows **?** in its column.
+- **The trend** needs two days of runs. It reads this template's earlier jobs in AAP, with the same "Red Hat Ansible
+  Automation Platform" credential as the strip of past runs. The report database can keep the points too
+  ([REPORT_DATABASE.md](REPORT_DATABASE.md)). Until then the table says so.
+- **The workbook** (`report_email_xlsx`) has two more sheets: *Replication* (every link, each partition) and
+  *Replication by site* (each site's worst age, a column a day).
+
+The matrix and the trend are on the report website only (the atlas and brief looks). The email has the late links.
 
 ## Before you start
 
@@ -149,6 +168,13 @@ Ready to paste, with every setting switched off: [aap/extra_vars/ad_health_repor
 | `ad_trust_verify` | `true` | verify outbound and two-way trusts |
 | `ad_repl_warn_hours` / `_crit_hours` | `6` / `24` | a replication link without success for this long (keep warn above your inter-site schedule) |
 | `ad_repl_queue_warn` | `50` | requests in a DC's inbound replication queue |
+| `ad_repl_low_hours` | `4` | Low in the replication matrix after this long (one schedule missed). `0`: no Low |
+| `ad_repl_matrix` | `true` | the replication matrix, late links and trend sections |
+| `ad_repl_matrix_max_dcs` | `12` | more DCs than this: the matrix is site x site |
+| `ad_repl_trend_days` | `14` | the trend's days |
+| `ad_repl_history` / `ad_repl_history_runs` | `true` / `50` | read the trend from this many earlier runs in AAP |
+| `ad_repl_db` / `ad_repl_db_create` | `true` / `true` | keep the trend in the report database, when the template has its credential |
+| `ad_repl_db_timeout` / `ad_repl_db_keep_days` | `10` / `400` | seconds to connect; delete older points (`0`: never) |
 | `ad_time_warn_seconds` / `_crit_seconds` | `5` / `60` | a DC's clock offset |
 | `ad_time_sync_warn_hours` | `24` | no time sync for this long |
 | `ad_disk_warn_pct` / `_crit_pct` | `15` / `5` | free % of the database, log and SYSVOL volumes |
@@ -214,7 +240,7 @@ granted**. Nothing runs on a DC and nothing is written to AD.
 | **Kerberos** | each DC's KDC: a **ticket (TGT)** from it with `kinit` (the Windows EE has it) - else an **AS-REQ** it must answer (`ad_reader_kerberos`) | red no answer; amber the KDC answers but gives no ticket |
 | **FSMO roles** | `fSMORoleOwner` of the five objects: the holder is still a DC, and answers | red |
 | **DNS** | the SRV records `_ldap._tcp.dc._msdcs`, `_kerberos._tcp.dc._msdcs`, `_ldap._tcp`, `_kerberos._tcp`, `_ldap._tcp.gc._msdcs`: every DC (every GC) registered; each DC's A record, against the inventory's address | red a record missing; amber a DC not registered or a different address |
-| **Replication** | each DC's own copy of each partition head, as far as a plain user may read it: `msDS-NCReplInboundNeighbors` (Windows builds it), else `repsFrom` (each partner, last success, consecutive failures, last error), else `replUpToDateVector` (when each partner's changes last arrived). The report says which it could read | amber 6 h, red 24 h (`ad_repl_warn_hours` / `_crit_hours`), as admin mode; **grey "not read (needs admin)"** when the account may read none of them - never a guess |
+| **Replication** | each DC's own copy of each partition head, as far as a plain user may read it: `msDS-NCReplInboundNeighbors` (Windows builds it), else `repsFrom` (each partner, last success, consecutive failures, last error), else `msDS-NCReplCursors` or `replUpToDateVector` (when each partner's changes last arrived). The report says which it could read | amber 6 h, red 24 h (`ad_repl_warn_hours` / `_crit_hours`), as admin mode. **Grey, not read** when the account may read none of them: one line names the right (*Reading replication data*), never a guess |
 | **Privileged groups** | the same groups and `ad_privileged_groups_extra` / `ad_groups_should_be_empty`: their members now; when a member was added or removed and on which DC from `msDS-ReplValueMetaData`, when the account may read it; and who joined or left **since the last run** | amber (`ad_privileged_change_severity`) |
 | **Accounts** | locked out now (`lockoutTime` within the lockout duration; a lockout *until an administrator unlocks it* never runs out); created in the last `ad_report_hours` (`whenCreated`); enabled / disabled / locked / unlocked - when and on which DC from the replication metadata of `userAccountControl` and `lockoutTime`, else `whenChanged` (**best effort**, labelled so) | blue |
 
@@ -235,7 +261,8 @@ container) and anything else the account may not read are listed under *Not read
 ### The account
 
 A **plain domain user**. It needs nothing granted: reader mode reads only what any authenticated
-user may read, and what the account may not is said as *not read*. Make one for the job (e.g. `svc_aap_adreader`), and put it in the template's
+user may read, and what the account may not is said as *not read*. Replication is the exception on
+Windows: grant one read-only right for it (*Reading replication data*, below). Make one for the job (e.g. `svc_aap_adreader`), and put it in the template's
 **Machine** credential (user name `svc_aap_adreader@CORP.EXAMPLE.MIL` or `CORP\svc_aap_adreader`).
 Reader mode binds with it - a **simple bind over LDAPS**, else StartTLS on 389; never in clear text.
 The certificate must be trusted by the EE (your CA in `ee/*/ca`) and name the DC before the password
@@ -250,6 +277,93 @@ an FQDN; each DC's rootDSE, read on 389 without a bind (no password sent); the E
 certificate), else `<short name>.<domain>`. *How this was read* says where the domain came from; only when all of
 these fail, the report says to set `ad_reader_domain`. The EE must reach the DCs on 389,
 636 and 88, and a DNS server that has the domain's records (`ad_reader_dns_servers`, else the EE's).
+
+### Reading replication data
+
+On Windows a plain user sees no replication state. The DC leaves it out of the answer and gives no error. The
+report then says **Replication not read** and names the right the account lacks.
+
+One right fixes it: **Monitor Active Directory Replication** (`DS-Replication-Monitor-Topology`). It is granted
+on the head of each partition, to a group the job's account is in. No Domain Admins, no write rights.
+
+| It allows | It does not allow |
+|---|---|
+| each DC's replication partners, last success, failures and last error | reading passwords, hashes or any other secret |
+| when each DC's changes last reached each other DC | writing, moving or deleting anything in AD |
+| `repadmin /showrepl` run as that account | starting replication (that is *Replication Synchronization*) |
+| | copying the directory: never grant *Replicating Directory Changes* (DCSync) |
+
+Nothing else a plain user may read gives each link's state. Admin mode reads it with repadmin and needs none of
+this, but it needs a logon to the DCs.
+
+The steps, for a domain admin. The example names are placeholders: use your domain's.
+
+1. **Make a group** and put the job's account in it.
+
+   ```powershell
+   New-ADGroup -Name "AD Replication Readers" -GroupScope Global -GroupCategory Security `
+     -Path "OU=Groups,DC=corp,DC=example,DC=mil"
+   Add-ADGroupMember -Identity "AD Replication Readers" -Members svc_aap_adreader
+   ```
+
+2. **Grant the right on each partition.** There are five: the domain, Configuration, Schema, DomainDnsZones
+   and ForestDnsZones. A Domain Admin grants it on the domain and DomainDnsZones. An Enterprise Admin grants
+   it on the other three. The permission replicates to every DC by itself. Use a, b or c.
+
+   a. With dsacls, in an elevated prompt on a DC or a machine with RSAT:
+
+   ```text
+   dsacls "DC=corp,DC=example,DC=mil" /G "CORP\AD Replication Readers:CA;Monitor Active Directory Replication"
+   dsacls "CN=Configuration,DC=corp,DC=example,DC=mil" /G "CORP\AD Replication Readers:CA;Monitor Active Directory Replication"
+   dsacls "CN=Schema,CN=Configuration,DC=corp,DC=example,DC=mil" /G "CORP\AD Replication Readers:CA;Monitor Active Directory Replication"
+   dsacls "DC=DomainDnsZones,DC=corp,DC=example,DC=mil" /G "CORP\AD Replication Readers:CA;Monitor Active Directory Replication"
+   dsacls "DC=ForestDnsZones,DC=corp,DC=example,DC=mil" /G "CORP\AD Replication Readers:CA;Monitor Active Directory Replication"
+   ```
+
+   b. With PowerShell, every partition the DC holds in one go:
+
+   ```powershell
+   Import-Module ActiveDirectory
+   $sid   = (Get-ADGroup "AD Replication Readers").SID
+   $right = [guid]"f98340fb-7c5b-4cdb-a00b-2ebdfa115a96"   # Monitor Active Directory Replication
+   foreach ($nc in (Get-ADRootDSE).namingContexts) {
+       $acl = Get-Acl "AD:\$nc"
+       $acl.AddAccessRule((New-Object System.DirectoryServices.ActiveDirectoryAccessRule $sid, "ExtendedRight", "Allow", $right))
+       Set-Acl "AD:\$nc" $acl
+   }
+   ```
+
+   c. In the GUI. For the domain: *Active Directory Users and Computers* > **View > Advanced Features** >
+   right-click the domain > **Properties > Security > Advanced > Add**. Select the group, set **Applies to:
+   This object only**, tick **Monitor active directory replication**, then OK. For the other four: *ADSI Edit*
+   > **Connect to** Configuration, Schema, or a distinguished name such as `DC=DomainDnsZones,DC=corp,DC=example,DC=mil`.
+   Right-click its top entry and do the same under **Properties > Security > Advanced**.
+
+3. **Check it worked.**
+
+   a. The permission is there. The group shows with *Monitor Active Directory Replication*:
+
+   ```text
+   dsacls "DC=corp,DC=example,DC=mil" | findstr /i /c:"AD Replication Readers"
+   ```
+
+   b. Run the AD health job. *Inbound replication* has no grey *not read* rows, its text names
+   `msDS-NCReplInboundNeighbors`, and the *Replication matrix* is filled in.
+
+   c. As the account, if you like: `runas /netonly /user:CORP\svc_aap_adreader "repadmin /showrepl dc01"`.
+
+4. **Take it away.** Take the account out of the group, and the report goes back to *not read*:
+
+   ```powershell
+   Remove-ADGroupMember -Identity "AD Replication Readers" -Members svc_aap_adreader
+   ```
+
+   To remove the right itself, run this on each of the five partitions, then delete the group. It removes every
+   permission the group has there, and it has only this one.
+
+   ```text
+   dsacls "DC=corp,DC=example,DC=mil" /R "CORP\AD Replication Readers"
+   ```
 
 ### Since the last run
 
@@ -287,7 +401,8 @@ the user jobs run as). `ad_reader_history: false` keeps no list at all.
 |---|---|---|
 | **NOT READ** with `the bind was refused - invalidCredentials ... data 52e` | the password is wrong (775: locked out, 533: disabled) | fix the Machine credential |
 | **NOT READ** with `certificate verify failed` | the EE does not trust the DCs' LDAPS certificate | add your CA to `ee/*/ca` and rebuild the EE, or set `ad_reader_ca_file` |
-| Replication **not read (needs admin)** in grey | the account may read none of the replication attributes on that DC | expected for a plain user on some domains; admin mode reads it with repadmin |
+| **Replication not read**: the account lacks *Monitor Active Directory Replication* | Windows shows a plain user no replication state | grant the right: *Reading replication data* |
+| *Nothing readable on Configuration* (or another partition) | the right is granted on some partitions only | grant it on that one too |
 | *Privileged group changes*: **not read (needs admin)** | the account may not read `msDS-ReplValueMetaData` | the *since the last run* table still lists who joined or left |
 | Kerberos **answers; no TGT** | the KDC answers but refused the account a ticket (its password, locked out, expired) | the error says which |
 

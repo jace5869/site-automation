@@ -1,0 +1,806 @@
+{
+"sections": [
+{
+"cards": [
+{
+"chip": "Critical",
+"code": "repadmin /replicate DC06 DC03 DC=corp,DC=example,DC=mil",
+"meta": "Worst pair",
+"next": "Check the network and firewall between DC03 and DC06 (TCP 135 and the RPC ports), then replicate again.",
+"status": "critical",
+"subject": "SITEA \u2192 SPLIT, corp.example.mil, last success 2026-11-11 04:40, error 1722 - the RPC server is unavailable (DC down, firewall, DNS)",
+"title": "DC03 \u2194 DC06: 2 d"
+},
+{
+"chip": "Warning",
+"meta": "Also late (2)",
+"next": "Check that DC04 finds DC06 in DNS (its _msdcs alias), then replicate again.",
+"status": "warning",
+"subject": "8524 - DNS lookup failure: the partner's name or CNAME does not resolve",
+"title": "DC06 \u2192 DC04: 10 h"
+},
+{
+"chip": "On time",
+"meta": "Everything else",
+"next": "Under 4.0 h without a success: OK. Lows: 1.",
+"status": "info",
+"subject": "",
+"title": "12 of 16 links on time"
+}
+],
+"matrix": {
+"axis": "From \u2193 To \u2192",
+"cols": [
+{
+"name": "DC01",
+"site": "SITEA"
+},
+{
+"name": "DC02",
+"site": "SITEA"
+},
+{
+"name": "DC03",
+"site": "SITEA"
+},
+{
+"name": "DC04",
+"site": "SITEB"
+},
+{
+"name": "DC05",
+"site": "SITEB"
+},
+{
+"name": "DC06",
+"site": "SPLIT"
+}
+],
+"groups": [
+{
+"n": 3,
+"name": "SITEA"
+},
+{
+"n": 2,
+"name": "SITEB"
+},
+{
+"n": 1,
+"name": "SPLIT"
+}
+],
+"legend": [
+{
+"st": "ok",
+"text": "up to 4.0 h without success"
+},
+{
+"st": "low",
+"text": "4.0 h (a schedule missed)"
+},
+{
+"st": "warning",
+"text": "6.0 h, or failing"
+},
+{
+"st": "critical",
+"text": "24.0 h, or failing that long"
+},
+{
+"st": "unknown",
+"text": "the DC's replication state was not read"
+}
+],
+"mode": "dc",
+"rows": [
+{
+"cells": [
+{
+"st": "self",
+"text": "",
+"tip": ""
+},
+{
+"st": "ok",
+"text": "30 m",
+"tip": "DC01 (SITEA) \u2192 DC02 (SITEA)\nOK: on time\nPartition: Configuration (the worst of 2)\nLast success: 2026-11-13 04:30, 30 min ago"
+},
+{
+"st": "ok",
+"text": "6 m",
+"tip": "DC01 (SITEA) \u2192 DC03 (SITEA)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:54, 6 min ago"
+},
+{
+"st": "ok",
+"text": "41 m",
+"tip": "DC01 (SITEA) \u2192 DC04 (SITEB)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:19, 41 min ago"
+},
+{
+"st": "none",
+"text": "",
+"tip": "DC01 \u2192 DC05\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "DC01 \u2192 DC06\nNot replication partners"
+}
+],
+"first": true,
+"name": "DC01",
+"site": "SITEA",
+"span": 3
+},
+{
+"cells": [
+{
+"st": "ok",
+"text": "3 m",
+"tip": "DC02 (SITEA) \u2192 DC01 (SITEA)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:57, 3 min ago"
+},
+{
+"st": "self",
+"text": "",
+"tip": ""
+},
+{
+"st": "ok",
+"text": "5 m",
+"tip": "DC02 (SITEA) \u2192 DC03 (SITEA)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:55, 5 min ago"
+},
+{
+"st": "none",
+"text": "",
+"tip": "DC02 \u2192 DC04\nNot replication partners"
+},
+{
+"st": "ok",
+"text": "38 m",
+"tip": "DC02 (SITEA) \u2192 DC05 (SITEB)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:22, 38 min ago"
+},
+{
+"st": "none",
+"text": "",
+"tip": "DC02 \u2192 DC06\nNot replication partners"
+}
+],
+"first": false,
+"name": "DC02",
+"site": "SITEA",
+"span": 3
+},
+{
+"cells": [
+{
+"st": "ok",
+"text": "7 m",
+"tip": "DC03 (SITEA) \u2192 DC01 (SITEA)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:53, 7 min ago"
+},
+{
+"st": "ok",
+"text": "4 m",
+"tip": "DC03 (SITEA) \u2192 DC02 (SITEA)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:56, 4 min ago"
+},
+{
+"st": "self",
+"text": "",
+"tip": ""
+},
+{
+"st": "none",
+"text": "",
+"tip": "DC03 \u2192 DC04\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "DC03 \u2192 DC05\nNot replication partners"
+},
+{
+"st": "critical",
+"text": "2 d",
+"tip": "DC03 (SITEA) \u2192 DC06 (SPLIT)\nCritical: 14 failure(s) in a row\nPartition: corp.example.mil\nLast success: 2026-11-11 04:40, 2 days ago\nLast failure: 2026-11-13 04:58\nError: 1722 - the RPC server is unavailable (DC down, firewall, DNS) (14 failure(s))"
+}
+],
+"first": false,
+"name": "DC03",
+"site": "SITEA",
+"span": 3
+},
+{
+"cells": [
+{
+"st": "ok",
+"text": "52 m",
+"tip": "DC04 (SITEB) \u2192 DC01 (SITEA)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:08, 52 min ago"
+},
+{
+"st": "none",
+"text": "",
+"tip": "DC04 \u2192 DC02\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "DC04 \u2192 DC03\nNot replication partners"
+},
+{
+"st": "self",
+"text": "",
+"tip": ""
+},
+{
+"st": "ok",
+"text": "9 m",
+"tip": "DC04 (SITEB) \u2192 DC05 (SITEB)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:51, 9 min ago"
+},
+{
+"st": "low",
+"text": "4 h",
+"tip": "DC04 (SITEB) \u2192 DC06 (SPLIT)\nLow: no success for 4.2 h (a schedule missed)\nPartition: corp.example.mil\nLast success: 2026-11-13 00:50, 4.2 h ago"
+}
+],
+"first": true,
+"name": "DC04",
+"site": "SITEB",
+"span": 2
+},
+{
+"cells": [
+{
+"st": "none",
+"text": "",
+"tip": "DC05 \u2192 DC01\nNot replication partners"
+},
+{
+"st": "ok",
+"text": "47 m",
+"tip": "DC05 (SITEB) \u2192 DC02 (SITEA)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:13, 47 min ago"
+},
+{
+"st": "none",
+"text": "",
+"tip": "DC05 \u2192 DC03\nNot replication partners"
+},
+{
+"st": "ok",
+"text": "11 m",
+"tip": "DC05 (SITEB) \u2192 DC04 (SITEB)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:49, 11 min ago"
+},
+{
+"st": "self",
+"text": "",
+"tip": ""
+},
+{
+"st": "none",
+"text": "",
+"tip": "DC05 \u2192 DC06\nNot replication partners"
+}
+],
+"first": false,
+"name": "DC05",
+"site": "SITEB",
+"span": 2
+},
+{
+"cells": [
+{
+"st": "none",
+"text": "",
+"tip": "DC06 \u2192 DC01\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "DC06 \u2192 DC02\nNot replication partners"
+},
+{
+"st": "critical",
+"text": "2 d",
+"tip": "DC06 (SPLIT) \u2192 DC03 (SITEA)\nCritical: 14 failure(s) in a row\nPartition: corp.example.mil\nLast success: 2026-11-11 04:40, 2 days ago\nLast failure: 2026-11-13 04:58\nError: 1722 - the RPC server is unavailable (DC down, firewall, DNS) (14 failure(s))"
+},
+{
+"st": "warning",
+"text": "10 h",
+"tip": "DC06 (SPLIT) \u2192 DC04 (SITEB)\nWarning: 3 failure(s) in a row\nPartition: corp.example.mil\nLast success: 2026-11-12 19:00, 10.0 h ago\nLast failure: 2026-11-13 04:58\nError: 8524 - DNS lookup failure: the partner's name or CNAME does not resolve (3 failure(s))"
+},
+{
+"st": "none",
+"text": "",
+"tip": "DC06 \u2192 DC05\nNot replication partners"
+},
+{
+"st": "self",
+"text": "",
+"tip": ""
+}
+],
+"first": true,
+"name": "DC06",
+"site": "SPLIT",
+"span": 1
+}
+]
+},
+"status": "critical",
+"text": "Each cell: how long ago the row's DC last replicated to the column's DC (its worst partition). Grouped by AD site. Hover a cell for the partition, last success, last failure and error.",
+"title": "Replication matrix"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"low"
+]
+],
+"columns": [
+"From",
+"To",
+"Partition",
+"Last success",
+"Last error",
+"Status"
+],
+"row_status": [
+"critical",
+"critical",
+"warning",
+"low"
+],
+"rows": [
+[
+"DC03 (SITEA)",
+"DC06 (SPLIT)",
+"corp.example.mil",
+"2 days ago",
+"1722 - the RPC server is unavailable (DC down, firewall, DNS) (14 failure(s))",
+"Critical"
+],
+[
+"DC06 (SPLIT)",
+"DC03 (SITEA)",
+"corp.example.mil",
+"2 days ago",
+"1722 - the RPC server is unavailable (DC down, firewall, DNS) (14 failure(s))",
+"Critical"
+],
+[
+"DC06 (SPLIT)",
+"DC04 (SITEB)",
+"corp.example.mil",
+"10.0 h ago",
+"8524 - DNS lookup failure: the partner's name or CNAME does not resolve (3 failure(s))",
+"Warning"
+],
+[
+"DC04 (SITEB)",
+"DC06 (SPLIT)",
+"corp.example.mil",
+"4.2 h ago",
+"no success for 4.2 h (a schedule missed)",
+"Low"
+]
+],
+"status": "critical",
+"text": "Each pair of DCs that replicate, the worst partition, worst first. 16 link(s) between 6 DCs in 3 site(s): 12 on time, 1 Low, 1 warning, 2 critical.",
+"title": "Replication links that need a look"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"",
+"critical"
+]
+],
+"columns": [
+"Site",
+"Worst age, 14 days",
+"Now",
+"Since last week",
+"Status"
+],
+"kinds": [
+"",
+"spark",
+"",
+"",
+""
+],
+"row_status": [
+"critical",
+"warning",
+"critical"
+],
+"rows": [
+[
+"SITEA",
+"SITEA, the worst replication age by day: 16 min, 16 min, 15 min, 15 min, 14 min, 13 min, 13 min, 12 min, 12 min, 11 min, 10 min, 10 min, 9 min, 2 days",
+"2 d",
+"13 min \u2192 2 days",
+"Critical"
+],
+[
+"SITEB",
+"SITEB, the worst replication age by day: 18 min, 18 min, 18 min, 18 min, 18 min, 18 min, 18 min, 18 min, 18 min, 18 min, 18 min, 18 min, 18 min, 10.0 h",
+"10 h",
+"18 min \u2192 10.0 h",
+"Warning"
+],
+[
+"SPLIT",
+"SPLIT, the worst replication age by day: 42 min, 42 min, 42 min, 42 min, 42 min, 42 min, 42 min, 42 min, 42 min, 42 min, 42 min, 42 min, 42 min, 2 days",
+"2 d",
+"42 min \u2192 2 days",
+"Critical"
+]
+],
+"sparks": [
+{
+"data_points": [
+{
+"label": "Sat 31 Oct 2026",
+"text": "worst 16 min",
+"x": 12.0,
+"y": 25.9
+},
+{
+"label": "Sun 1 Nov 2026",
+"text": "worst 16 min",
+"x": 20.0,
+"y": 25.9
+},
+{
+"label": "Mon 2 Nov 2026",
+"text": "worst 15 min",
+"x": 28.0,
+"y": 25.9
+},
+{
+"label": "Tue 3 Nov 2026",
+"text": "worst 15 min",
+"x": 36.0,
+"y": 25.9
+},
+{
+"label": "Wed 4 Nov 2026",
+"text": "worst 14 min",
+"x": 44.0,
+"y": 25.9
+},
+{
+"label": "Thu 5 Nov 2026",
+"text": "worst 13 min",
+"x": 52.0,
+"y": 25.9
+},
+{
+"label": "Fri 6 Nov 2026",
+"text": "worst 13 min",
+"x": 60.0,
+"y": 25.9
+},
+{
+"label": "Sat 7 Nov 2026",
+"text": "worst 12 min",
+"x": 68.0,
+"y": 25.9
+},
+{
+"label": "Sun 8 Nov 2026",
+"text": "worst 12 min",
+"x": 76.0,
+"y": 25.9
+},
+{
+"label": "Mon 9 Nov 2026",
+"text": "worst 11 min",
+"x": 84.0,
+"y": 25.9
+},
+{
+"label": "Tue 10 Nov 2026",
+"text": "worst 10 min",
+"x": 92.0,
+"y": 25.9
+},
+{
+"label": "Wed 11 Nov 2026",
+"text": "worst 10 min",
+"x": 100.0,
+"y": 25.9
+},
+{
+"label": "Thu 12 Nov 2026",
+"text": "worst 9 min",
+"x": 108.0,
+"y": 25.9
+},
+{
+"label": "Fri 13 Nov 2026",
+"text": "worst 2 days",
+"x": 116.0,
+"y": 5.0
+}
+],
+"h": 30,
+"label": "SITEA, the worst replication age by day: 16 min, 16 min, 15 min, 15 min, 14 min, 13 min, 13 min, 12 min, 12 min, 11 min, 10 min, 10 min, 9 min, 2 days",
+"last": [
+116.0,
+5.0
+],
+"lines": [
+23.4
+],
+"mark": null,
+"name": "SITEA",
+"points": "12.0,25.9 20.0,25.9 28.0,25.9 36.0,25.9 44.0,25.9 52.0,25.9 60.0,25.9 68.0,25.9 76.0,25.9 84.0,25.9 92.0,25.9 100.0,25.9 108.0,25.9 116.0,5.0",
+"w": 120
+},
+{
+"data_points": [
+{
+"label": "Sat 31 Oct 2026",
+"text": "worst 18 min",
+"x": 12.0,
+"y": 25.4
+},
+{
+"label": "Sun 1 Nov 2026",
+"text": "worst 18 min",
+"x": 20.0,
+"y": 25.4
+},
+{
+"label": "Mon 2 Nov 2026",
+"text": "worst 18 min",
+"x": 28.0,
+"y": 25.4
+},
+{
+"label": "Tue 3 Nov 2026",
+"text": "worst 18 min",
+"x": 36.0,
+"y": 25.4
+},
+{
+"label": "Wed 4 Nov 2026",
+"text": "worst 18 min",
+"x": 44.0,
+"y": 25.4
+},
+{
+"label": "Thu 5 Nov 2026",
+"text": "worst 18 min",
+"x": 52.0,
+"y": 25.4
+},
+{
+"label": "Fri 6 Nov 2026",
+"text": "worst 18 min",
+"x": 60.0,
+"y": 25.4
+},
+{
+"label": "Sat 7 Nov 2026",
+"text": "worst 18 min",
+"x": 68.0,
+"y": 25.4
+},
+{
+"label": "Sun 8 Nov 2026",
+"text": "worst 18 min",
+"x": 76.0,
+"y": 25.4
+},
+{
+"label": "Mon 9 Nov 2026",
+"text": "worst 18 min",
+"x": 84.0,
+"y": 25.4
+},
+{
+"label": "Tue 10 Nov 2026",
+"text": "worst 18 min",
+"x": 92.0,
+"y": 25.4
+},
+{
+"label": "Wed 11 Nov 2026",
+"text": "worst 18 min",
+"x": 100.0,
+"y": 25.4
+},
+{
+"label": "Thu 12 Nov 2026",
+"text": "worst 18 min",
+"x": 108.0,
+"y": 25.4
+},
+{
+"label": "Fri 13 Nov 2026",
+"text": "worst 10.0 h",
+"x": 116.0,
+"y": 5.0
+}
+],
+"h": 30,
+"label": "SITEB, the worst replication age by day: 18 min, 18 min, 18 min, 18 min, 18 min, 18 min, 18 min, 18 min, 18 min, 18 min, 18 min, 18 min, 18 min, 10.0 h",
+"last": [
+116.0,
+5.0
+],
+"lines": [
+13.4
+],
+"mark": null,
+"name": "SITEB",
+"points": "12.0,25.4 20.0,25.4 28.0,25.4 36.0,25.4 44.0,25.4 52.0,25.4 60.0,25.4 68.0,25.4 76.0,25.4 84.0,25.4 92.0,25.4 100.0,25.4 108.0,25.4 116.0,5.0",
+"w": 120
+},
+{
+"data_points": [
+{
+"label": "Sat 31 Oct 2026",
+"text": "worst 42 min",
+"x": 12.0,
+"y": 25.7
+},
+{
+"label": "Sun 1 Nov 2026",
+"text": "worst 42 min",
+"x": 20.0,
+"y": 25.7
+},
+{
+"label": "Mon 2 Nov 2026",
+"text": "worst 42 min",
+"x": 28.0,
+"y": 25.7
+},
+{
+"label": "Tue 3 Nov 2026",
+"text": "worst 42 min",
+"x": 36.0,
+"y": 25.7
+},
+{
+"label": "Wed 4 Nov 2026",
+"text": "worst 42 min",
+"x": 44.0,
+"y": 25.7
+},
+{
+"label": "Thu 5 Nov 2026",
+"text": "worst 42 min",
+"x": 52.0,
+"y": 25.7
+},
+{
+"label": "Fri 6 Nov 2026",
+"text": "worst 42 min",
+"x": 60.0,
+"y": 25.7
+},
+{
+"label": "Sat 7 Nov 2026",
+"text": "worst 42 min",
+"x": 68.0,
+"y": 25.7
+},
+{
+"label": "Sun 8 Nov 2026",
+"text": "worst 42 min",
+"x": 76.0,
+"y": 25.7
+},
+{
+"label": "Mon 9 Nov 2026",
+"text": "worst 42 min",
+"x": 84.0,
+"y": 25.7
+},
+{
+"label": "Tue 10 Nov 2026",
+"text": "worst 42 min",
+"x": 92.0,
+"y": 25.7
+},
+{
+"label": "Wed 11 Nov 2026",
+"text": "worst 42 min",
+"x": 100.0,
+"y": 25.7
+},
+{
+"label": "Thu 12 Nov 2026",
+"text": "worst 42 min",
+"x": 108.0,
+"y": 25.7
+},
+{
+"label": "Fri 13 Nov 2026",
+"text": "worst 2 days",
+"x": 116.0,
+"y": 5.0
+}
+],
+"h": 30,
+"label": "SPLIT, the worst replication age by day: 42 min, 42 min, 42 min, 42 min, 42 min, 42 min, 42 min, 42 min, 42 min, 42 min, 42 min, 42 min, 42 min, 2 days",
+"last": [
+116.0,
+5.0
+],
+"lines": [
+23.4
+],
+"mark": null,
+"name": "SPLIT",
+"points": "12.0,25.7 20.0,25.7 28.0,25.7 36.0,25.7 44.0,25.7 52.0,25.7 60.0,25.7 68.0,25.7 76.0,25.7 84.0,25.7 92.0,25.7 100.0,25.7 108.0,25.7 116.0,5.0",
+"w": 120
+}
+],
+"text": "The worst inbound replication age of each site, by day, over 14 days: this template's earlier runs (AAP job history), then this run. The dashed line is 6.0 h (ad_repl_warn_hours): a flat line under it is healthy.",
+"title": "Replication trend: worst age per site"
+},
+{
+"text": "-",
+"title": "Inbound replication"
+}
+],
+"status": "critical",
+"summary": [
+{
+"label": "Replication problems",
+"status": "critical",
+"value": 4
+}
+],
+"title": "Active Directory health report: 2 critical, 1 warning (corp.example.mil)"
+}

@@ -229,6 +229,16 @@ File: `roles/ad_report/defaults/main.yml`
 | `ad_repl_warn_hours` | `6` | ---- Thresholds: at or above "warn" = amber, at or above "crit" = red ------------------------------ a replication link with no success for this long (inter-site schedules: keep above their interval) |
 | `ad_repl_crit_hours` | `24` | no success for this long (or a failing link) -> red |
 | `ad_repl_queue_warn` | `50` | replication requests waiting in a DC's inbound queue |
+| `ad_repl_low_hours` | `4` | no success for this long -> Low in the replication matrix (one site link schedule missed; 0 = no Low) |
+| `ad_repl_matrix` | `true` | ---- Replication matrix (1.63.0): DC x DC on the report website, the late links in the email, every link in the workbook ---- false = no replication matrix sections (the Inbound replication table stays) |
+| `ad_repl_matrix_max_dcs` | `12` | more DCs than this: the matrix is site x site, each cell the worst link (12 fit 800 px) |
+| `ad_repl_trend_days` | `14` | each site's worst replication age over this many days (a line on the website) |
+| `ad_repl_history` | `true` | the trend from this template's earlier runs (AAP job history: the "Red Hat Ansible Automation Platform" credential) |
+| `ad_repl_history_runs` | `50` | how many earlier runs to read from AAP (at most 50: a daily job keeps 14 days with 14) |
+| `ad_repl_db` | `true` | keep the points in the report database too, when the job template has a "Report database" credential; no credential = not used |
+| `ad_repl_db_create` | `true` | make the table ad_repl_point on the first run; false = an admin makes it (docs/REPORT_DATABASE.md) |
+| `ad_repl_db_timeout` | `10` | seconds to wait for the report database's connection |
+| `ad_repl_db_keep_days` | `400` | delete the database's points older than this many days (0 = never) |
 | `ad_time_warn_seconds` | `5` | a DC's clock against the PDC emulator (the PDC: against its NTP source) |
 | `ad_time_crit_seconds` | `60` | clock offset -> red (Kerberos fails at 300) |
 | `ad_time_sync_warn_hours` | `24` | Windows Time last synchronized longer ago than this |

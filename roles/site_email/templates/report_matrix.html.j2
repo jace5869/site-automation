@@ -1,0 +1,37 @@
+{#- A section's matrix (1.63.0, the AD replication matrix), in the atlas and brief looks only (an email gets the table of
+    late links): s.matrix = {mode (dc | site), groups: [{name, n}] (the column sites), cols: [{name, site}], rows: [{name,
+    site, first, span, cells: [{st, text, tip}]}], legend: [{st, text}], axis}. A cell's status is its icon, its word in the
+    legend and its colour; its text the age; its tip (data-tip, site-report.js) the pair, partition, times and error.
+    st self: the DC itself (hatched); none: not partners (a dot). Tokens of the look (.s-*), so light and dark follow. #}
+{%- set mx = s.matrix %}
+<div class="rm-legend">
+{%- for l in mx.legend | default([]) %}<span>{{ chip(l.st, chipword[l.st] if l.st != 'unknown' else 'Not read') }} {{ l.text | e }}</span>{% endfor %}
+{%- if mx.mode == 'dc' %}<span><i class="rm-dot" aria-hidden="true">&middot;</i> not replication partners</span>{% endif %}</div>
+<div class="rm-wrap"><table class="rm rm-{{ mx.mode | e }}" aria-label="{{ s.title | e }}">
+{%- set n = mx.cols | length %}
+<colgroup>{% if mx.mode == 'dc' %}<col class="rm-cs">{% endif %}<col class="rm-cn">{% for c in mx.cols %}<col>{% endfor %}</colgroup>
+<thead>
+{%- if mx.mode == 'dc' %}
+<tr class="rm-gr"><td colspan="2"></td>{% for g in mx.groups %}<th scope="colgroup" colspan="{{ g.n }}"><span>{{ g.name | e }}</span></th>{% endfor %}</tr>
+{%- endif %}
+<tr><th class="rm-ax" scope="col" colspan="{{ 2 if mx.mode == 'dc' else 1 }}">{{ mx.axis | e }}</th>{% for c in mx.cols %}<th scope="col" class="rm-h">{{ c.name | e }}</th>{% endfor %}</tr>
+</thead>
+<tbody>
+{%- for row in mx.rows %}
+<tr{% if row.first %} class="rm-first"{% endif %}>
+{%- if mx.mode == 'dc' and row.first %}<th scope="rowgroup" rowspan="{{ row.span }}" class="rm-site"><span>{{ row.site | e }}</span></th>{% endif %}
+<th scope="row" class="rm-dc">{{ row.name | e }}</th>
+{%- for c in row.cells %}
+{%- if c.st == 'self' %}
+<td class="rm-c rm-self" aria-label="{{ row.name | e }} itself"></td>
+{%- elif c.st == 'none' %}
+<td class="rm-c rm-none" data-tip="{{ c.tip | e }}" aria-label="{{ c.tip | replace('\n', ': ') | e }}"><i aria-hidden="true">&middot;</i></td>
+{%- else %}
+{%- set k = c.st if c.st in words else 'unknown' %}
+<td class="rm-c s-{{ k }}" data-tip="{{ c.tip | e }}" aria-label="{{ chipword[k] if k != 'unknown' else 'Not read' }}, {{ c.text | e }}: {{ c.tip | replace('\n', '; ') | e }}">{{ icon(k) }}<span>{{ c.text | e }}</span></td>
+{%- endif %}
+{%- endfor %}
+</tr>
+{%- endfor %}
+</tbody>
+</table></div>

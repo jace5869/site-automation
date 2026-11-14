@@ -93,6 +93,11 @@ EPOCH_1601 = datetime.datetime(1601, 1, 1, tzinfo=datetime.timezone.utc)
 PAGED_RESULTS = "1.2.840.113556.1.4.319"            # the LDAP paged-results control: its cookie asks for the next page
 PAGE_SIZE = 500
 NEEDS_ADMIN = "not read (needs admin)"
+# 1.63.0: Windows leaves the replication state out of an LDAP answer (no error) unless the account may read repsFrom /
+# replUpToDateVector or holds this control access right on the partition's head ([MS-ADTS] 3.1.1.4.4) - a plain user
+# holds neither. The right only shows replication status: docs/ACTIVE_DIRECTORY.md, "Reading replication data".
+REPL_RIGHT = "Monitor Active Directory Replication"
+REPL_NOT_GRANTED = 'not read: the account lacks "%s"' % REPL_RIGHT
 # replPropertyMetaData attribute IDs (ATTRTYP) in the fixed prefix table every DC shares (1.2.840.113556.1.4.x = 0x9xxxx)
 ATTID = {0x00090008: "userAccountControl", 0x00090296: "lockoutTime"}
 UF_ACCOUNTDISABLE, UF_SERVER_TRUST, UF_PARTIAL_SECRETS = 0x2, 0x2000, 0x4000000
@@ -320,6 +325,13 @@ def parse_neighbor_xml(s):
             "last_success": iso(xml_time(f.get("ftimeLastSyncSuccess"))), "last_attempt": iso(xml_time(f.get("ftimeLastSyncAttempt"))),
             "failures": int(f.get("cNumConsecutiveSyncFailures") or 0), "result": int(f.get("dwLastSyncResult") or 0),
             "address": f.get("pszSourceDsaAddress", "")}
+
+
+def parse_cursor_xml(s):
+    """msDS-NCReplCursors (DS_REPL_CURSOR XML) -> {invocation_id, partner_dn, last_sync} - every DC whose changes reached this one."""
+    f = xml_fields(s)
+    return {"invocation_id": f.get("uuidSourceDsaInvocationID", ""), "partner_dn": f.get("pszSourceDsaDN", ""),
+            "last_sync": iso(xml_time(f.get("ftimeLastSyncSuccess")))}
 
 
 def parse_value_meta_xml(s):
@@ -995,19 +1007,25 @@ class Reader(object):
         return dc
 
     def read_repl(self, c, out):
-        """{source, links: [{nc, partner, last_success, last_attempt, failures, result}], cursors, why}. msDS-NCReplInboundNeighbors
-        (Windows builds it), else repsFrom, else replUpToDateVector (when each partner's changes last arrived)."""
+        """{source, links: [{nc, partner, last_success, last_attempt, failures, result}], cursors, why, not_granted}.
+        msDS-NCReplInboundNeighbors (Windows builds it), else repsFrom, else msDS-NCReplCursors or replUpToDateVector (when
+        each DC's changes last arrived). Windows gives none of them without the right (REPL_RIGHT) and says nothing: a
+        partition with nothing at all is named in not_granted - every one of them when the account may read none."""
         ncs = [n for n in out.get("naming_contexts") or [] if n]
-        res = {"source": "", "links": [], "cursors": [], "why": ""}
-        seen_any = False
+        res = {"source": "", "links": [], "cursors": [], "why": "", "not_granted": []}
+        seen_any, cur_src = False, ""
         for nc in ncs:
             try:
-                e = self.base(c, nc, ["msDS-NCReplInboundNeighbors", "repsFrom", "replUpToDateVector"])
+                e = self.base(c, nc, ["msDS-NCReplInboundNeighbors", "repsFrom", "msDS-NCReplCursors", "replUpToDateVector"])
             except LookupError:
                 continue
             nbr = raw_all(e, "msDS-NCReplInboundNeighbors")
             reps = raw_all(e, "repsFrom")
+            curs = raw_all(e, "msDS-NCReplCursors")
             utd = raw_all(e, "replUpToDateVector")
+            if not (nbr or reps or curs or utd):
+                res["not_granted"].append(nc)
+                continue
             if nbr:
                 res["source"] = res["source"] or "msDS-NCReplInboundNeighbors"
                 for v in nbr:
@@ -1024,8 +1042,14 @@ class Reader(object):
                         continue
                     res["links"].append(self._link(nc, x))
                 seen_any = True
-            if utd:
-                seen_any = True
+            if curs:
+                seen_any, cur_src = True, cur_src or "msDS-NCReplCursors"
+                for v in curs:
+                    cur = parse_cursor_xml(v)
+                    name = self.dsa_name.get(cur["partner_dn"].lower()) or self.dsa_name.get(cur["invocation_id"].lower(), "")
+                    res["cursors"].append({"nc": nc, "partner": name, "invocation_id": cur["invocation_id"], "last_sync": cur["last_sync"]})
+            elif utd:
+                seen_any, cur_src = True, cur_src or "replUpToDateVector"
                 for v in utd:
                     try:
                         for cur in parse_utd(v):
@@ -1034,9 +1058,11 @@ class Reader(object):
                     except (ValueError, struct.error) as err:
                         self.errors.append("replUpToDateVector on %s: %s" % (nc, err))
         if not res["source"] and res["cursors"]:
-            res["source"] = "replUpToDateVector"
+            res["source"] = cur_src
         if not seen_any:
-            res["why"] = NEEDS_ADMIN if len(out.get("dcs_ad") or []) > 1 else "one DC: no partner"
+            res["why"] = REPL_NOT_GRANTED if len(out.get("dcs_ad") or []) > 1 else "one DC: no partner"
+            if res["why"] != REPL_NOT_GRANTED:
+                res["not_granted"] = []
         return res
 
     def _link(self, nc, x):

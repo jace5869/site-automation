@@ -256,9 +256,10 @@ database anything: the job reads it and draws the lines into each page.
 | `insights_ticket` | 1.17.0: one row per ticket - its fields less its text, people and CI, and its follow-up reads (*The ticket store*) |
 | `insights_act_class` | 1.17.0: each description's issue, the description as a hash (*The ACT cache*) |
 | `insights_act_issue` | 1.17.0: each issue's number, name (masked), kind and self-service (*The ACT cache*) |
-| `schema_version` | The schema's version, per component (`servicenow_insights`: 1; `ontap_capacity`: 1; 1.58.0 `stig_scorecard`: 1) |
+| `schema_version` | The schema's version, per component (`servicenow_insights`: 1; `ontap_capacity`: 1; 1.58.0 `stig_scorecard`: 1; 1.63.0 `ad_repl`: 1) |
 | `ontap_capacity_point` | 1.52.0: the capacity trends' points (*The capacity trends' points*) |
 | `stig_scorecard_point` | 1.58.0: one row per run and STIG Manager collection - its open findings (*The STIG scorecard's points*) |
+| `ad_repl_point` | 1.63.0: one row per run and AD site - its worst replication age (*The replication trend's points*) |
 | `insights_v_service`, `_volume`, `_process`, `_lifecycle`, `_quality` | A row per run and node, a column per figure of that set |
 | `insights_v_labelled` | The figures with an item: outcomes, categories, backlog age, hot CIs |
 | `insights_v_month_run` | The newest run of each month, per instance and period |
@@ -822,6 +823,65 @@ INSERT INTO schema_version (component, version, applied_at) VALUES ('stig_scorec
 | `stigman_scorecard_db` | `true` | Keep the points here when the template has the credential |
 | `stigman_scorecard_db_create` | `true` | Make the table on the first run |
 | `stigman_scorecard_db_keep_days` | `800` | Delete older points. `0`: never |
+
+## The replication trend's points (1.63.0)
+
+The *Active Directory health report* ([ACTIVE_DIRECTORY.md](ACTIVE_DIRECTORY.md)) draws each AD site's worst
+replication age over 14 days. AAP's job history is enough for that. The database is optional: it keeps the points
+when AAP's history is short (an hourly run, a cleaned job list).
+
+1. Add the **Report database** credential (the writer's) to the template *Active Directory health report*.
+2. Launch it. The first run makes the table `ad_repl_point` and writes its points.
+3. The job output shows `ad_repl_point` made, and the next run's trend counts the point.
+
+| | |
+|---|---|
+| What a run writes | a row per AD site: when it was read, the job, the site's name, its worst replication age in hours and its status |
+| How much | a row is under 100 bytes. 5 sites read daily for 400 days: 2,000 rows |
+| What a run deletes | the rows older than `ad_repl_db_keep_days` |
+| When the database is down | one warning in the job output. The trend goes on with AAP's job history. The job stays green |
+| A dry run (Check) | reads, writes nothing |
+| Turning it off | `ad_repl_db: false`, or take the credential off the template |
+| Removing it | `DROP TABLE ad_repl_point;` and `DELETE FROM schema_version WHERE component = 'ad_repl';` |
+
+The key is the site and the time it was read. The table holds site names only: no DC, account or error text.
+
+**By hand.** If the writer may not create tables, set `ad_repl_db_create: false` and make the table once as root, in
+`site_reports`. The writer then needs SELECT, INSERT, UPDATE and DELETE. The first statement is the one of *Making the
+tables by hand*; it may run again.
+
+<!-- the statements: site_ad_repl_db.ddl(), word for word (tests/test_ad_repl.py checks it) -->
+```sql
+CREATE TABLE IF NOT EXISTS schema_version (
+  component VARCHAR(64) NOT NULL PRIMARY KEY,
+  version INT NOT NULL,
+  applied_at DATETIME NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS ad_repl_point (
+  read_at DATETIME NOT NULL,
+  job BIGINT NOT NULL DEFAULT 0,
+  site VARCHAR(255) NOT NULL,
+  worst_hours DECIMAL(10,2) NULL,
+  status VARCHAR(16) NOT NULL DEFAULT '',
+  PRIMARY KEY (site, read_at),
+  KEY ad_repl_point_read_at (read_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+INSERT INTO schema_version (component, version, applied_at) VALUES ('ad_repl', 1, UTC_TIMESTAMP());
+```
+<!-- end of the replication statements -->
+
+| Setting | Default | What it does |
+|---|---|---|
+| `ad_repl_db` | `true` | Keep the points here when the template has the credential |
+| `ad_repl_db_create` | `true` | Make the table on the first run |
+| `ad_repl_db_timeout` | `10` | Seconds to connect |
+| `ad_repl_db_keep_days` | `400` | Delete older points. `0`: never |
 
 ## TLS (optional)
 

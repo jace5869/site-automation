@@ -64,6 +64,7 @@ jobs:
           python tests/test_fapolicyd_rules.py
           python tests/test_ad.py
           python tests/test_ad_reader.py
+          python tests/test_ad_repl.py
           python tests/test_ad_lockout.py
           python tests/test_mariadb_perf.py
           python tests/test_capacity.py

@@ -73,9 +73,19 @@
            'time_zone': report_time_zone | default('', true) | string}) }}
   when: _ad_mode.mode == 'admin'
 
+- name: AD | the replication matrix (1.63.0)
+  ansible.builtin.include_tasks: repl.yml
+  when: ad_repl_matrix | bool and _ad.repl is defined
+
+# the email: the late links before Inbound replication; the website (atlas, brief): the matrix, the late links and the
+# trend there; the workbook (report_email_xlsx): the report's tables and every link
 - name: AD | the report to print and email
   ansible.builtin.set_fact:
-    _ad_doc: "{{ _ad.report }}"
+    _ad_doc: "{{ _ad.report | ad_repl_insert(_ad_repl.sections | default([])) }}"
+    _ad_web: "{{ _ad.report | ad_repl_insert(_ad_repl.web_sections) if _ad_repl.web_sections is defined else {} }}"
+    _ad_xlsx: >-
+      {{ (_ad.report | ad_repl_insert(_ad_repl.sections) | report_xlsx_sheets) + _ad_repl.sheets
+         if _ad_repl.sheets is defined and report_email_xlsx | default(false) | bool else [] }}
 
 - name: AD | report
   ansible.builtin.include_tasks: report.yml

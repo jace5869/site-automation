@@ -1,0 +1,415 @@
+{
+"sections": [
+{
+"cards": [
+{
+"chip": "Warning",
+"code": "repadmin /showrepl SITEB-DC02",
+"meta": "Worst pair",
+"next": "No error: the link may only replicate on a schedule. Check the site link's schedule.",
+"status": "warning",
+"subject": "SITEB-DATACENTER-NORTH \u2192 SITEB-DATACENTER-NORTH, corp.example.mil, last success 2026-11-12 19:00",
+"title": "SITEB-DC03 \u2192 SITEB-DC02: 10 h"
+},
+{
+"chip": "Warning",
+"meta": "Also late (1)",
+"next": "No error: the link may only replicate on a schedule. Check the site link's schedule.",
+"status": "warning",
+"subject": "no success for 10.0 h",
+"title": "SITEB-DC04 \u2192 SITEB-DC02: 10 h"
+},
+{
+"chip": "On time",
+"meta": "Everything else",
+"next": "Under 4.0 h without a success: OK. Lows: 0.",
+"status": "info",
+"subject": "",
+"title": "72 of 74 links on time"
+}
+],
+"matrix": {
+"axis": "From site \u2193 To site \u2192",
+"cols": [
+{
+"name": "SITEA-HEADQUARTERS-MAIN (4)",
+"site": "SITEA-HEADQUARTERS-MAIN"
+},
+{
+"name": "SITEB-DATACENTER-NORTH (4)",
+"site": "SITEB-DATACENTER-NORTH"
+},
+{
+"name": "SITEC (4)",
+"site": "SITEC"
+},
+{
+"name": "SITED (4)",
+"site": "SITED"
+},
+{
+"name": "SPLIT (4)",
+"site": "SPLIT"
+}
+],
+"groups": [],
+"legend": [
+{
+"st": "ok",
+"text": "up to 4.0 h without success"
+},
+{
+"st": "low",
+"text": "4.0 h (a schedule missed)"
+},
+{
+"st": "warning",
+"text": "6.0 h, or failing"
+},
+{
+"st": "critical",
+"text": "24.0 h, or failing that long"
+},
+{
+"st": "unknown",
+"text": "the DC's replication state was not read"
+}
+],
+"mode": "site",
+"note": "20 DCs: more than ad_repl_matrix_max_dcs (12), so each cell is a site's worst link to another site.",
+"rows": [
+{
+"cells": [
+{
+"st": "ok",
+"text": "40 m",
+"tip": "SITEA-HEADQUARTERS-MAIN \u2192 SITEA-HEADQUARTERS-MAIN: 10 link(s), 0 late\nWorst: SITEA-DC02 (SITEA-HEADQUARTERS-MAIN) \u2192 SITEA-DC01 (SITEA-HEADQUARTERS-MAIN)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:20, 40 min ago"
+},
+{
+"st": "ok",
+"text": "33 m",
+"tip": "SITEA-HEADQUARTERS-MAIN \u2192 SITEB-DATACENTER-NORTH: 3 link(s), 0 late\nWorst: SITEA-DC04 (SITEA-HEADQUARTERS-MAIN) \u2192 SITEB-DC01 (SITEB-DATACENTER-NORTH)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:27, 33 min ago"
+},
+{
+"st": "none",
+"text": "",
+"tip": "SITEA-HEADQUARTERS-MAIN \u2192 SITEC\nNo replication link"
+},
+{
+"st": "none",
+"text": "",
+"tip": "SITEA-HEADQUARTERS-MAIN \u2192 SITED\nNo replication link"
+},
+{
+"st": "none",
+"text": "",
+"tip": "SITEA-HEADQUARTERS-MAIN \u2192 SPLIT\nNo replication link"
+}
+],
+"first": false,
+"name": "SITEA-HEADQUARTERS-MAIN (4)",
+"site": "",
+"span": 1
+},
+{
+"cells": [
+{
+"st": "ok",
+"text": "40 m",
+"tip": "SITEB-DATACENTER-NORTH \u2192 SITEA-HEADQUARTERS-MAIN: 3 link(s), 0 late\nWorst: SITEB-DC01 (SITEB-DATACENTER-NORTH) \u2192 SITEA-DC03 (SITEA-HEADQUARTERS-MAIN)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:20, 40 min ago"
+},
+{
+"st": "warning",
+"text": "10 h",
+"tip": "SITEB-DATACENTER-NORTH \u2192 SITEB-DATACENTER-NORTH: 10 link(s), 2 late\nWorst: SITEB-DC03 (SITEB-DATACENTER-NORTH) \u2192 SITEB-DC02 (SITEB-DATACENTER-NORTH)\nWarning: no success for 10.0 h\nPartition: corp.example.mil\nLast success: 2026-11-12 19:00, 10.0 h ago"
+},
+{
+"st": "none",
+"text": "",
+"tip": "SITEB-DATACENTER-NORTH \u2192 SITEC\nNo replication link"
+},
+{
+"st": "none",
+"text": "",
+"tip": "SITEB-DATACENTER-NORTH \u2192 SITED\nNo replication link"
+},
+{
+"st": "ok",
+"text": "37 m",
+"tip": "SITEB-DATACENTER-NORTH \u2192 SPLIT: 3 link(s), 0 late\nWorst: SITEB-DC04 (SITEB-DATACENTER-NORTH) \u2192 SPLIT-DC01 (SPLIT)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:23, 37 min ago"
+}
+],
+"first": false,
+"name": "SITEB-DATACENTER-NORTH (4)",
+"site": "",
+"span": 1
+},
+{
+"cells": [
+{
+"st": "none",
+"text": "",
+"tip": "SITEC \u2192 SITEA-HEADQUARTERS-MAIN\nNo replication link"
+},
+{
+"st": "none",
+"text": "",
+"tip": "SITEC \u2192 SITEB-DATACENTER-NORTH\nNo replication link"
+},
+{
+"st": "ok",
+"text": "44 m",
+"tip": "SITEC \u2192 SITEC: 10 link(s), 0 late\nWorst: SITEC-DC03 (SITEC) \u2192 SITEC-DC04 (SITEC)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:16, 44 min ago"
+},
+{
+"st": "ok",
+"text": "45 m",
+"tip": "SITEC \u2192 SITED: 3 link(s), 0 late\nWorst: SITEC-DC04 (SITEC) \u2192 SITED-DC01 (SITED)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:15, 45 min ago"
+},
+{
+"st": "ok",
+"text": "40 m",
+"tip": "SITEC \u2192 SPLIT: 3 link(s), 0 late\nWorst: SITEC-DC01 (SITEC) \u2192 SPLIT-DC03 (SPLIT)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:20, 40 min ago"
+}
+],
+"first": false,
+"name": "SITEC (4)",
+"site": "",
+"span": 1
+},
+{
+"cells": [
+{
+"st": "none",
+"text": "",
+"tip": "SITED \u2192 SITEA-HEADQUARTERS-MAIN\nNo replication link"
+},
+{
+"st": "none",
+"text": "",
+"tip": "SITED \u2192 SITEB-DATACENTER-NORTH\nNo replication link"
+},
+{
+"st": "ok",
+"text": "40 m",
+"tip": "SITED \u2192 SITEC: 3 link(s), 0 late\nWorst: SITED-DC01 (SITED) \u2192 SITEC-DC03 (SITEC)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:20, 40 min ago"
+},
+{
+"st": "ok",
+"text": "48 m",
+"tip": "SITED \u2192 SITED: 10 link(s), 0 late\nWorst: SITED-DC03 (SITED) \u2192 SITED-DC04 (SITED)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:12, 48 min ago"
+},
+{
+"st": "none",
+"text": "",
+"tip": "SITED \u2192 SPLIT\nNo replication link"
+}
+],
+"first": false,
+"name": "SITED (4)",
+"site": "",
+"span": 1
+},
+{
+"cells": [
+{
+"st": "none",
+"text": "",
+"tip": "SPLIT \u2192 SITEA-HEADQUARTERS-MAIN\nNo replication link"
+},
+{
+"st": "ok",
+"text": "40 m",
+"tip": "SPLIT \u2192 SITEB-DATACENTER-NORTH: 3 link(s), 0 late\nWorst: SPLIT-DC01 (SPLIT) \u2192 SITEB-DC03 (SITEB-DATACENTER-NORTH)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:20, 40 min ago"
+},
+{
+"st": "ok",
+"text": "41 m",
+"tip": "SPLIT \u2192 SITEC: 3 link(s), 0 late\nWorst: SPLIT-DC04 (SPLIT) \u2192 SITEC-DC01 (SITEC)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:19, 41 min ago"
+},
+{
+"st": "none",
+"text": "",
+"tip": "SPLIT \u2192 SITED\nNo replication link"
+},
+{
+"st": "ok",
+"text": "40 m",
+"tip": "SPLIT \u2192 SPLIT: 10 link(s), 0 late\nWorst: SPLIT-DC02 (SPLIT) \u2192 SPLIT-DC01 (SPLIT)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:20, 40 min ago"
+}
+],
+"first": false,
+"name": "SPLIT (4)",
+"site": "",
+"span": 1
+}
+]
+},
+"status": "warning",
+"text": "Each cell: how long ago the row's DC last replicated to the column's DC (its worst partition). Grouped by AD site. Hover a cell for the partition, last success, last failure and error. 20 DCs: more than ad_repl_matrix_max_dcs (12), so each cell is a site's worst link to another site.",
+"title": "Replication matrix"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"warning"
+]
+],
+"columns": [
+"From",
+"To",
+"Partition",
+"Last success",
+"Last error",
+"Status"
+],
+"row_status": [
+"warning",
+"warning"
+],
+"rows": [
+[
+"SITEB-DC03 (SITEB-DATACENTER-NORTH)",
+"SITEB-DC02 (SITEB-DATACENTER-NORTH)",
+"corp.example.mil",
+"10.0 h ago",
+"no success for 10.0 h",
+"Warning"
+],
+[
+"SITEB-DC04 (SITEB-DATACENTER-NORTH)",
+"SITEB-DC02 (SITEB-DATACENTER-NORTH)",
+"corp.example.mil",
+"10.0 h ago",
+"no success for 10.0 h",
+"Warning"
+]
+],
+"status": "warning",
+"text": "Each pair of DCs that replicate, the worst partition, worst first. 74 link(s) between 20 DCs in 5 site(s): 72 on time, 0 Low, 2 warning, 0 critical.",
+"title": "Replication links that need a look"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"ok"
+]
+],
+"columns": [
+"Site",
+"Worst age, 14 days",
+"Now",
+"Since last week",
+"Status"
+],
+"kinds": [
+"",
+"spark",
+"",
+"",
+""
+],
+"row_status": [
+"",
+"warning",
+"",
+"",
+""
+],
+"rows": [
+[
+"SITEA-HEADQUARTERS-MAIN",
+"",
+"40 m",
+"1 day(s) of history: no line yet",
+"OK"
+],
+[
+"SITEB-DATACENTER-NORTH",
+"",
+"10 h",
+"1 day(s) of history: no line yet",
+"Warning"
+],
+[
+"SITEC",
+"",
+"44 m",
+"1 day(s) of history: no line yet",
+"OK"
+],
+[
+"SITED",
+"",
+"48 m",
+"1 day(s) of history: no line yet",
+"OK"
+],
+[
+"SPLIT",
+"",
+"40 m",
+"1 day(s) of history: no line yet",
+"OK"
+]
+],
+"sparks": [
+{},
+{},
+{},
+{},
+{}
+],
+"text": "The worst inbound replication age of each site, by day, over 14 days: this template's earlier runs (AAP job history), then this run. The dashed line is 6.0 h (ad_repl_warn_hours): a flat line under it is healthy.",
+"title": "Replication trend: worst age per site"
+}
+],
+"status": "warning",
+"summary": [],
+"title": "Active Directory health report (corp.example.mil)"
+}

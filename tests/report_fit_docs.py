@@ -35,7 +35,12 @@ NAMED = (("test_stig_ckl_import.py", "RouteReport.test_report_fit_document", "st
          ("test_patch_age.py", "Looks.test_report_fit_document", "site_filters.py:findings_report", "patch_age_web"),
          # int-11: the STIG scorecard with rows in "Fixed on the host, still Open" (Low; report_fit draws it in every look)
          ("test_stig_scorecard.py", "Scorecard.test_fixed_on_the_host_still_open", "stig_scorecard_filters.py:stig_scorecard",
-          "stig_scorecard_fixed"))
+          "stig_scorecard_fixed"),
+         # 1.63.0: the AD replication matrix - the website's copy (matrix, late links, trend), the email's, a forest past
+         # ad_repl_matrix_max_dcs (site x site, long site names)
+         ("test_ad_repl.py", "Fit.test_report_fit_web", "ad_repl_filters.py:ad_repl_insert", "ad_repl_web"),
+         ("test_ad_repl.py", "Fit.test_report_fit_email", "ad_repl_filters.py:ad_repl_insert", "ad_repl_email"),
+         ("test_ad_repl.py", "Fit.test_report_fit_forest", "ad_repl_filters.py:ad_repl_insert", "ad_repl_forest"))
 
 # run inside each test file's process: keep the biggest document each filter function returns
 CHILD = r"""

@@ -58,6 +58,29 @@ run "a broken domain: red, the unreachable DC listed, the job stays green" ok '{
 run "emailed, HTML and plain text" ok "$mail" \
     '[AAP] Active Directory health report: ' 'Content-Type: text/html' 'X-Envelope-To: ad-team@example.mil' \
     'emailed \"[AAP] Active Directory health report:'
+# 1.63.0: the replication matrix - on the website (atlas) DC x DC; the email has the late links, not the matrix; the
+# workbook every link; the trend says it has no history outside AAP; the artifact ad_repl for the next runs
+mkdir -p "$work/web"
+run "the replication matrix: on the website; the late links in the email; every link in the workbook" ok \
+    "$(echo "$mail" | sed 's/}$//'), \"report_web_dest\": \"$work/web\", \"report_email_xlsx\": true}" \
+    'Replication links that need a look' 'link(s) between 3 DCs' 'DC01 (HQ)  DC02 (HQ)  Configuration  never' 'not run from AAP'
+page="$(find "$work/web" -name latest.html | head -1)"
+if [ -z "$page" ] || ! grep -q '<table class="rm rm-dc"' "$page" || ! grep -q 'data-tip="DC02 (' "$page"; then
+    echo "FAIL - the matrix is not on the website's page ($page)"; fails=$((fails + 1))
+else echo "ok   - the matrix on the website's page"; fi
+if grep -l 'class="rm rm-' "$work"/mail/*.eml >/dev/null 2>&1; then echo "FAIL - the matrix is in the email"; fails=$((fails + 1)); fi
+"$py" - "$work/mail" <<'PY' || fails=$((fails + 1))
+import email, glob, io, sys, zipfile
+m = email.message_from_binary_file(open(sorted(glob.glob(sys.argv[1] + "/*.eml"))[-1], "rb"))
+att = [p for p in m.walk() if (p.get_filename() or "").endswith(".xlsx")]
+names = zipfile.ZipFile(io.BytesIO(att[0].get_payload(decode=True))).read("xl/workbook.xml").decode()
+for want in ('name="Replication links that need a l', 'name="Replication"', 'name="Replication by site"'):
+    if want not in names:
+        print("FAIL - the workbook has no sheet %s" % want); sys.exit(1)
+print("ok   - the workbook: the late links, every link, each site by day")
+PY
+run "ad_repl_matrix: false - no matrix sections, Inbound replication as before" ok '{"ad_repl_matrix": false}' 'Inbound replication'
+grep -q 'Replication links that need a look' "$work/out.txt" && { echo "FAIL - ad_repl_matrix: false still has the sections"; fails=$((fails + 1)); }
 run "ad_report_fail: a critical finding fails the job" fail '{"ad_report_fail": true}' \
     'ad_report_fail: false makes this a report only'
 run "a dry run (Check) shows the same report" ok '{}' 'Inbound replication'

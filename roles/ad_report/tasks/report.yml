@@ -23,10 +23,14 @@
     # site_email finds the enclave from the play's hosts, the Limit's and target's: the play is on the AAP side, so the
     # DCs come in as target (as when the report ran on them, before 1.4.0)
     target: "{{ _ad_dc_pattern }}"
-    _report: >-
-      {{ _ad_doc | combine({'footer': 'Read-only: LDAP reads, dcdiag, repadmin, w32tm and the event logs on each domain controller.'
-                            if _ad_mode.mode | default('admin') == 'admin' else
-                            'Read-only, reader mode: LDAP, DNS and Kerberos from the AAP side as a plain domain user.'}) }}
+    _ad_footer: >-
+      {{ 'Read-only: LDAP reads, dcdiag, repadmin, w32tm and the event logs on each domain controller.'
+         if _ad_mode.mode | default('admin') == 'admin' else
+         'Read-only, reader mode: LDAP, DNS and Kerberos from the AAP side as a plain domain user.' }}
+    _report: "{{ _ad_doc | combine({'footer': _ad_footer}) }}"
+    # the website's copy (atlas, brief): the replication matrix and its trend too (1.63.0); the workbook: every link
+    _report_web: "{{ _ad_web | combine({'footer': _ad_footer}) if _ad_web | default({}, true) else {} }}"
+    _report_xlsx: "{{ _ad_xlsx | default([]) }}"
   when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0
 
 - name: AD | no email

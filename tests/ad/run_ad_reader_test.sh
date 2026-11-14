@@ -303,6 +303,34 @@ on1 samba-tool user disable gone > /dev/null
 run "the accounts: disabled (replication metadata, on DC01), locked out now" ok '{"ad_health_mode": "reader", "ad_report_hours": 0.015}' \
     'gone    DISABLED    DC01     replication metadata' 'Accounts locked out now (1)' 'lockme'
 
+# 1.63.0: the replication matrix in reader mode - both DCs' links read, on time
+run "the replication matrix (reader): both DCs' links read, on time" ok '{"ad_health_mode": "reader"}' \
+    'Replication links that need a look' 'Every link replicates on time.' 'link(s) between 2 DCs in 1 site(s)' '!Replication not read'
+
+# 1.63.0: replication refused, as Windows does for a plain user - a stand-in: read property on repsFrom, repsTo and
+# replUpToDateVector denied to svc_aap_adreader on every partition head of both DCs. One line names the right; no
+# finding; the tile says Not read. Then the deny taken away: read again.
+# the attributes' schemaIDGUIDs (AD's, Microsoft's schema reference): repsFrom, repsTo, replUpToDateVector - a deny on
+# these only; a deny with no GUID would hide every attribute
+sid=$(on1 samba-tool user show svc_aap_adreader --attributes=objectSid 2>/dev/null | awk '/^objectSid:/{print $2}')
+[ -n "$sid" ] || { echo "FAIL - the reader's SID was not read"; fails=$((fails + 1)); }
+deny=""
+for g in bf967a1d-0de6-11d0-a285-00aa003049e2 bf967a1e-0de6-11d0-a285-00aa003049e2 bf967a16-0de6-11d0-a285-00aa003049e2; do
+    deny="$deny(OD;;RP;$g;;$sid)"
+done
+ncs="$nc CN=Configuration,$nc CN=Schema,CN=Configuration,$nc DC=DomainDnsZones,$nc DC=ForestDnsZones,$nc"
+acl() {  # acl set|delete: the deny ACEs on every partition head, on each DC's own copy
+    local x d
+    for d in on1 on2; do for x in $ncs; do "$d" samba-tool dsacl "$1" --objectdn="$x" --sddl="$deny" > /dev/null 2>&1; done; done
+}
+acl set
+run "replication refused (a stand-in for Windows): the right named once, no finding, the tile Not read" ok '{"ad_health_mode": "reader"}' \
+    'Replication not read on DC01, DC02: svc_aap_adreader@corp.example.mil lacks \"Monitor Active Directory Replication\" on the partitions' \
+    'docs/ACTIVE_DIRECTORY.md, \"Reading replication data\"' 'not read: needs \"Monitor Active Directory Replication\"' \
+    'Replication: Not read' 'no problem found, replication not read' '!consecutive failure' '!held by nobody'
+acl delete
+run "  ...the deny taken away: read again" ok '{"ad_health_mode": "reader"}' 'here: repsFrom' '!Replication not read'
+
 # replication failing: DC02 stopped, DC01 tries again
 R stop -t 2 "$dc2" > /dev/null
 on1 samba-tool drs replicate dc01 dc02 "$nc" -U Administrator --password="$pass_admin" > /dev/null 2>&1

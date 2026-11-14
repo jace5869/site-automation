@@ -398,18 +398,37 @@ class Report(unittest.TestCase):
         self.assertIn("40 consecutive failure(s), last success 2 days ago: error 1722 (the RPC server is unavailable", p[0][1])
 
     def test_replication_not_readable_is_grey(self):
-        """A DC whose replication state the account may not read: a grey row, said once - never a finding, never a guess."""
+        """A DC whose replication state the account may not read: a grey row, the missing right named once with the doc's
+        section - never a finding, never a guess (1.63.0). The tile says Not read, not 0; the title does not say healthy."""
         r = reader()
         for d in r["dcs"]:
-            d["repl"] = {"source": "", "links": [], "cursors": [], "why": "not read (needs admin)"}
+            d["repl"] = {"source": "", "links": [], "cursors": [], "not_granted": [NC],
+                         "why": 'not read: the account lacks "Monitor Active Directory Replication"'}
         out = judge(r)
         self.assertEqual(out["problems"], [])
         s = section(out, "Inbound replication")
         self.assertEqual(s["row_status"], ["unknown", "unknown"])
-        self.assertEqual([row[5] for row in s["rows"]], ["not read (needs admin)"] * 2)
+        self.assertEqual([row[5] for row in s["rows"]], ['not read: needs "Monitor Active Directory Replication"'] * 2)
         self.assertIn("here: nothing readable", s["text"])
-        self.assertIn("Grey: DC01, DC02 - the account may not read its replication state.", s["text"])
+        self.assertIn("Grey: not read.", s["text"])
+        self.assertEqual(s["lines"], ['Replication not read on DC01, DC02: svc_aap_adreader@CORP.EXAMPLE.MIL lacks "Monitor Active '
+                                      'Directory Replication" on the partitions (see docs/ACTIVE_DIRECTORY.md, "Reading replication data").'])
         self.assertNotIn("status", s)
+        tile = [b for b in out["report"]["summary"] if b["label"].startswith("Replication")][0]
+        self.assertEqual((tile["label"], tile["value"], tile["status"]), ("Replication", "Not read", "unknown"))
+        self.assertEqual(out["report"]["title"], "Active Directory health report: no problem found, replication not read (corp.example.mil)")
+        # a reader of 1.4.0 to 1.61.0 said it the old way: read the same
+        for d in r["dcs"]:
+            d["repl"] = {"source": "", "links": [], "cursors": [], "why": "not read (needs admin)"}
+        self.assertEqual(section(judge(r), "Inbound replication")["row_status"], ["unknown", "unknown"])
+
+    def test_replication_some_partitions_not_granted(self):
+        """The right granted on the domain only: the links read are judged, the partitions with nothing are named."""
+        r = reader()
+        r["dcs"][0]["repl"]["not_granted"] = ["CN=Configuration,DC=corp,DC=example,DC=mil"]
+        s = section(judge(r), "Inbound replication")
+        self.assertEqual(s["lines"], ['Nothing readable on Configuration: "Monitor Active Directory Replication" is not granted there, '
+                                      'or the partition has no other copy (see docs/ACTIVE_DIRECTORY.md, "Reading replication data").'])
 
     def test_cursors_when_no_links(self):
         """Only replUpToDateVector readable: when each partner's changes last arrived, judged the same way."""
@@ -699,6 +718,50 @@ class Python36Cert(unittest.TestCase):
         import ssl
         self.assertTrue(M.is_cert_error(ssl.SSLError(1, self.VERIFY)))
         self.assertFalse(M.is_cert_error(OSError("connection refused")))
+
+
+class ReadReplication(unittest.TestCase):
+    """1.63.0: what read_repl makes of each partition head's answer. Windows leaves the replication state out of the
+    answer, with no error, when the account lacks "Monitor Active Directory Replication" ([MS-ADTS] 3.1.1.4.4): a
+    stand-in for that refused read, for the right granted on some partitions only, and for msDS-NCReplCursors."""
+    CFG = "CN=Configuration," + NC
+
+    def read(self, heads, dcs=2):
+        r = M.Reader({})
+        r.dsa_name = {"cn=ntds settings,cn=dc02,cn=servers,cn=site-a,cn=sites," + self.CFG.lower(): "dc02.corp.example.mil",
+                      DC01_INV: "dc01.corp.example.mil"}
+        r.base = lambda c, dn, attrs: {"raw_attributes": heads.get(dn, {})}
+        try:
+            return r.read_repl(None, {"naming_contexts": [NC, self.CFG], "dcs_ad": [{}] * dcs})
+        finally:
+            r.close()
+
+    def nbr(self, nc):
+        return xml("DS_REPL_NEIGHBOR", pszNamingContext=nc, pszSourceDsaDN="CN=NTDS Settings,CN=DC02,CN=Servers,CN=Site-A,CN=Sites," + self.CFG,
+                   ftimeLastSyncSuccess="2026-11-10T07:00:00Z", ftimeLastSyncAttempt="2026-11-10T07:00:00Z",
+                   dwLastSyncResult="0", cNumConsecutiveSyncFailures="0").encode()
+
+    def test_refused_everywhere(self):
+        res = self.read({})
+        self.assertEqual(res["why"], 'not read: the account lacks "Monitor Active Directory Replication"')
+        self.assertEqual(res["not_granted"], [NC, self.CFG])
+        self.assertEqual((res["links"], res["cursors"], res["source"]), ([], [], ""))
+
+    def test_one_dc_is_not_refused(self):
+        res = self.read({}, dcs=1)
+        self.assertEqual((res["why"], res["not_granted"]), ("one DC: no partner", []))
+
+    def test_granted_on_the_domain_only(self):
+        res = self.read({NC: {"msDS-NCReplInboundNeighbors": [self.nbr(NC)]}})
+        self.assertEqual((res["why"], res["not_granted"], res["source"]), ("", [self.CFG], "msDS-NCReplInboundNeighbors"))
+        self.assertEqual([(x["partner"], x["last_success"]) for x in res["links"]], [("dc02.corp.example.mil", "2026-11-10T07:00:00Z")])
+
+    def test_cursors(self):
+        cur = xml("DS_REPL_CURSOR", uuidSourceDsaInvocationID=DC01_INV, ftimeLastSyncSuccess="2026-11-10T06:30:00Z").encode()
+        res = self.read({NC: {"msDS-NCReplCursors": [cur]}, self.CFG: {"msDS-NCReplCursors": [cur]}})
+        self.assertEqual((res["why"], res["not_granted"], res["source"]), ("", [], "msDS-NCReplCursors"))
+        self.assertEqual(res["cursors"][0], {"nc": NC, "partner": "dc01.corp.example.mil", "invocation_id": DC01_INV,
+                                             "last_sync": "2026-11-10T06:30:00Z"})
 
 
 if __name__ == "__main__":

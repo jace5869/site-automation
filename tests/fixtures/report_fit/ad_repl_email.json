@@ -1,0 +1,103 @@
+{
+"sections": [
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"low"
+]
+],
+"columns": [
+"From",
+"To",
+"Partition",
+"Last success",
+"Last error",
+"Status"
+],
+"lines": [
+"SITEA: worst now 2 days, a week ago 9 min.",
+"SITEB: worst now 10.0 h, a week ago 18 min.",
+"SPLIT: worst now 2 days, a week ago 42 min."
+],
+"row_status": [
+"critical",
+"critical",
+"warning",
+"low"
+],
+"rows": [
+[
+"DC03 (SITEA)",
+"DC06 (SPLIT)",
+"corp.example.mil",
+"2 days ago",
+"1722 - the RPC server is unavailable (DC down, firewall, DNS) (14 failure(s))",
+"Critical"
+],
+[
+"DC06 (SPLIT)",
+"DC03 (SITEA)",
+"corp.example.mil",
+"2 days ago",
+"1722 - the RPC server is unavailable (DC down, firewall, DNS) (14 failure(s))",
+"Critical"
+],
+[
+"DC06 (SPLIT)",
+"DC04 (SITEB)",
+"corp.example.mil",
+"10.0 h ago",
+"8524 - DNS lookup failure: the partner's name or CNAME does not resolve (3 failure(s))",
+"Warning"
+],
+[
+"DC04 (SITEB)",
+"DC06 (SPLIT)",
+"corp.example.mil",
+"4.2 h ago",
+"no success for 4.2 h (a schedule missed)",
+"Low"
+]
+],
+"status": "critical",
+"text": "Each pair of DCs that replicate, the worst partition, worst first. 16 link(s) between 6 DCs in 3 site(s): 12 on time, 1 Low, 1 warning, 2 critical.",
+"title": "Replication links that need a look"
+},
+{
+"text": "-",
+"title": "Inbound replication"
+}
+],
+"status": "critical",
+"summary": [],
+"title": "Active Directory health report (corp.example.mil)"
+}
