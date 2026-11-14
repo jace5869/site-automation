@@ -190,8 +190,9 @@ names = zipfile.ZipFile(io.BytesIO(book[0].get_content())).read("xl/workbook.xml
 errs = []
 if "Certificates to renew, soonest first" not in h: errs.append("the email lacks the renew list")
 if 'class="tl' in h: errs.append("the email has the timeline")
-# the same certificate on both hosts, one day: one mark of 2
-if not any(t.startswith("2 certificates expire ") and "tls8443.example.mil on web01.example.mil - Certificate renewal - CSRs" in t for t in tips):
+# the same certificate on both hosts, one day: in one mark (with any other certificate close by), a line each, with the renew job
+if not any(re.match(r"\d+ certificates", t) and re.search(r"(?m)^tls8443\.example\.mil on web01\.example\.mil, .* - Certificate renewal - CSRs$", t)
+           and re.search(r"(?m)^tls8443\.example\.mil on web02\.example\.mil, ", t) for t in tips):
     errs.append("no mark of the TLS port's certificate with its host and renew job: %r" % tips[:3])
 if any("TEST ROOT CA 9" in t for t in tips): errs.append("a trust store certificate on the timeline")
 if "Certificates to renew, soonest first" not in w: errs.append("the page lacks the renew list")
