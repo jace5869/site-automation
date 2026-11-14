@@ -15,15 +15,17 @@ description:
     to 60 characters).
   - Without path, the workbook is written to a new temporary file, returned as path (delete it when it is sent).
   - A sheet may have trend lines (sparklines) - Excel's own, one line in a cell drawn from cells of the sheet (Excel 2010
-    and later; LibreOffice). The numbers stay in cells, so sort, filter and copy work as before.
+    and later; LibreOffice). The numbers stay in cells, so sort, filter and copy work as before: the filter takes each
+    row's hidden points, so a sort moves them with their row.
   - Check mode writes nothing.
 options:
   sheets:
     description: "[{name, columns: [names], rows: [[values]], sparklines}] - a sheet name is cut to Excel's 31 characters, without
       : \\ / ? * [ ], made unique. sparklines (optional): [{column, points | from | down}] - column: the column the lines are in (a
-      name; one not in columns is added at the end); points: [[numbers] per row] - each row's points in hidden columns right of
-      the table (None: a gap); from: [first, last] - each row's own cells from column first to last; down: a column - one line over
-      its cells, top to bottom, in the first row. A row with fewer than 2 numbers gets no line."
+      name; one not in columns is added at the end); points: [[numbers] per row, oldest first] - each row's points in hidden
+      columns right of the table, inside the filter, a shorter list padded at the front (None: a gap); from: [first, last] - each row's own cells from column first to last; down: a
+      column - one line over its cells, top to bottom, in the first row (drawn from a hidden copy after the filter, so a sort
+      leaves it in the table's order). A row with fewer than 2 numbers gets no line."
     type: list
     elements: dict
     required: true
@@ -150,19 +152,23 @@ def _col(columns, want):
 
 def spark_plan(columns, rows, sparklines=None):
     """A sheet's trend lines laid out -> {columns (with each line's column), rows, helper: [[values] per row] (the hidden
-    points right of the table), helper_heads, spark_cols (indexes), lines: [[group, (col, row), (c1, r1, c2, r2)]]} - rows
-    and columns 0-based in the table's data (row 0: the first under the column names)."""
+    points right of the table), helper_heads, spark_cols (indexes), lines: [[group, (col, row), (c1, r1, c2, r2)]], width
+    (the table's), filter (the columns the filter and a sort take: the table and each row's hidden points)} - rows and
+    columns 0-based in the table's data (row 0: the first under the column names). A down line's points are a hidden copy
+    of its column after the filter, so a sort leaves the line in the table's order."""
     columns = list(columns or [])
     rows = [list(r) if isinstance(r, (list, tuple)) else [r] for r in rows or []]
     specs = [x for x in sparklines or [] if isinstance(x, dict) and x.get("column") not in (None, "")]
     if not specs or not columns:
+        width = max([len(columns)] + [len(r) for r in rows])
         return {"columns": columns, "rows": rows, "helper": [[] for r in rows], "helper_heads": [], "spark_cols": [], "lines": [],
-                "width": max([len(columns)] + [len(r) for r in rows])}
+                "width": width, "filter": width}
     for x in specs:
         if _col(columns, x["column"]) is None:
             columns.append(u"%s" % x["column"])
     width = max([len(columns)] + [len(r) for r in rows])
     helper, heads, lines, spark_cols = [[] for r in rows], [], [], []
+    downs = []
     for g, x in enumerate(specs):
         at = _col(columns, x["column"])
         spark_cols.append(at)
@@ -175,24 +181,32 @@ def spark_plan(columns, rows, sparklines=None):
             heads += [u"%s %d" % (x["column"], i + 1) for i in range(n)]
             for i, r in enumerate(helper):
                 p = pts[i] if i < len(pts) else []
-                r += [v if _number(v) else None for v in p] + [None] * (n - len(p))
-                filled = [k for k, v in enumerate(p) if _number(v)]
-                if len(filled) >= 2:
-                    lines.append([g, (at, i), (start + filled[0], i, start + filled[-1], i)])
+                # fewer than 2 numbers: no points, so its line draws nothing - here or on any row a sort moves it to
+                keep = len([v for v in p if _number(v)]) >= 2
+                r += [None] * (n - len(p)) + [v if keep and _number(v) else None for v in p]     # the last point at the right
+            # a line on every row over the whole block: a sort moves the points, never the lines
+            if any(v is not None for r in helper for v in r[start - width:]):
+                lines += [[g, (at, i), (start, i, start + n - 1, i)] for i in range(len(rows))]
         elif x.get("from"):
             a, b = _col(columns, x["from"][0]), _col(columns, x["from"][-1])
             if a is None or b is None:
                 continue
             a, b = min(a, b), max(a, b)
-            for i, r in enumerate(rows):
-                if len([v for v in r[a:b + 1] if _number(v)]) >= 2:
-                    lines.append([g, (at, i), (a, i, b, i)])
+            if any(len([v for v in r[a:b + 1] if _number(v)]) >= 2 for r in rows):
+                lines += [[g, (at, i), (a, i, b, i)] for i in range(len(rows))]     # every row: a sort moves the cells
         elif x.get("down") not in (None, ""):
             c = _col(columns, x["down"])
             if c is not None and rows and len([r[c] for r in rows if c < len(r) and _number(r[c])]) >= 2:
-                lines.append([g, (at, 0), (c, 0, c, len(rows) - 1)])
+                downs.append((g, at, c))
+    filt = width + len(heads)
+    for g, at, c in downs:
+        start = width + len(heads)
+        heads.append(u"%s %d" % (columns[at], len(heads) + 1))
+        for r, h in zip(rows, helper):
+            h += [r[c] if c < len(r) and _number(r[c]) else None]
+        lines.append([g, (at, 0), (start, 0, start, len(rows) - 1)])
     return {"columns": columns, "rows": rows, "helper": helper if heads else [[] for r in rows], "helper_heads": heads,
-            "spark_cols": spark_cols, "lines": lines, "width": width}
+            "spark_cols": spark_cols, "lines": lines, "width": width, "filter": filt}
 
 
 def _spark_xml(name, plan, top):
@@ -246,7 +260,8 @@ def sheet_xml(columns, rows, banner=None, sparklines=None, name="Sheet1"):
                                                ''.join(cell('%s%d' % (col_name(width + i), n), v) for i, v in enumerate(h) if v is not None)))
     out.append('</sheetData>')
     if columns and rows:
-        out.append('<autoFilter ref="A%d:%s%d"/>' % (1 + top, col_name(width - 1), n))
+        # the filter (and so a sort) takes each row's hidden points too: a sort moves a row with its points
+        out.append('<autoFilter ref="A%d:%s%d"/>' % (1 + top, col_name(max(plan["filter"], width) - 1), n))
     if top and width > 1:
         out.append('<mergeCells count="1"><mergeCell ref="A1:%s1"/></mergeCells>' % col_name(width - 1))
     out.append(_spark_xml(name, plan, top))
@@ -272,7 +287,7 @@ def write_xlsx(path, sheets, banner=None):
                                for i, n in enumerate(names)),
                        '<definedNames>%s</definedNames>' % ''.join(
                            '<definedName name="_xlnm._FilterDatabase" localSheetId="%d" hidden="1">\'%s\'!$A$%d:$%s$%d</definedName>'
-                           % (i, escape(n.replace("'", "''")), 1 + top, col_name(max(spark_plan(s.get("columns"), s.get("rows"), s.get("sparklines"))["width"]
+                           % (i, escape(n.replace("'", "''")), 1 + top, col_name(max(spark_plan(s.get("columns"), s.get("rows"), s.get("sparklines"))["filter"]
                                                                                 if s.get("sparklines") else len(s.get("columns") or []), 1) - 1),
                               len(s.get("rows") or []) + 1 + top)
                            for i, (n, s) in enumerate(zip(names, sheets)) if s.get("columns") and s.get("rows"))

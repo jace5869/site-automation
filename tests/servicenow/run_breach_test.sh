@@ -121,10 +121,12 @@ shared = z.read("xl/sharedStrings.xml").decode() if "xl/sharedStrings.xml" in z.
 for t in ("XINC0041872", "XINC0041977", "VPN drops every 20 minutes"):
     assert t in shared, t
 assert "XINC0040998" not in shared and "XINC0040999" not in shared
-# 1.62.0: Breaches by day's 30 days as one Excel sparkline, in the first day's Trend cell
+# 1.62.0: Breaches by day's 30 days as one Excel sparkline, in the first day's Trend cell, from a hidden copy of
+# Breached (G) after the filter (A:F), so a sort leaves the days in order
 day = z.read("xl/worksheets/sheet2.xml").decode()
 rows = len(re.findall(r"<row ", day)) - 1
-assert re.findall(r"<xm:f>([^<]+)</xm:f><xm:sqref>([^<]+)</xm:sqref>", day) == [("'Breaches by day'!B2:B%d" % (rows + 1), "F2")], day[-600:]
+assert re.findall(r"<xm:f>([^<]+)</xm:f><xm:sqref>([^<]+)</xm:sqref>", day) == [("'Breaches by day'!G2:G%d" % (rows + 1), "F2")], day[-600:]
+assert '<autoFilter ref="A1:F%d"/>' % (rows + 1) in day, day[-600:]
 PYX
 rm -f "$work"/mail/*.eml
 

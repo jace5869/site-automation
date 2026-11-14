@@ -280,12 +280,14 @@ workbook is made with Python's standard library: nothing to add to the execution
 workbook; a dry run (Check) makes none.
 
 **Trend lines (1.62.0).** A table with a history gets a *Trend* column: Excel's own sparkline, one small line per row,
-the last point marked. The numbers stay in their own cells, so sort, filter and copy work as before. A row with one
-point has no line yet.
+the last point marked. The numbers stay in cells, and the filter takes each row's hidden points too, so a sort moves
+a line's points with its row. A row with one point draws no line yet.
 
-- Where: NetApp ONTAP capacity trends, VMware capacity, the STIG scorecard, About to breach, patch age.
-- A line's points sit in hidden columns right of the table: unhide them to see the numbers. *About to breach* draws
-  its one line from the *Breached* column.
+- Where: NetApp ONTAP capacity trends, VMware capacity, the STIG scorecard, About to breach, patch age, AD
+  replication by site.
+- A line's points sit in hidden columns right of the table, inside the filter: unhide them to see the numbers. A
+  shorter history sits at the right, its last point under the latest run.
+- *About to breach* draws its one line from a hidden copy of the *Breached* column. A sort leaves it in day order.
 - It needs Excel 2010 or later, or LibreOffice. No images, no macros.
 
 ## The classification banner
