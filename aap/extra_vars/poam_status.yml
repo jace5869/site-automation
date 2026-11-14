@@ -380,3 +380,17 @@
 
 ## how many earlier runs to read (at most 50)
 # patch_age_history_runs: 50
+
+## ---- Certificate timeline (1.64.0): a section of the certificate reports ------------------------
+## Linux, Windows, network devices, vCenter: the next cert_timeline_days on one axis on the report
+## website (the atlas and brief looks), the renew list in the email, a Timeline sheet in the
+## workbook. The levels are each report's own days. Changes no finding. false = the reports as
+## before 1.64.0
+# cert_timeline: true
+
+## how far ahead the timeline and its sheet look (14 or more)
+# cert_timeline_days: 120
+
+## inventory groups, in order, a row each: a host goes in the first one it is in, else Other; [] =
+## its first group
+# cert_timeline_groups: []

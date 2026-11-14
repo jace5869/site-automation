@@ -1619,6 +1619,20 @@ Two jobs, with the same settings:
 | `VMware - certificate report` | `playbooks/vmware_cert_report.yml` | VMware vCenter | **the report only**: every certificate, soonest expiry first, and for each one due what the renewal would do. Never ServiceNow, never a CSR - even with the ServiceNow credential attached. Printed and emailed |
 | `VMware - certificate renewal` | `playbooks/vmware_cert_renew.yml` | VMware vCenter, ServiceNow API | the same report, **and** an incident and a CSR for each certificate due (below) |
 
+**The expiry timeline** (1.64.0, the report template): what expires next, above the report's tables. It changes no
+incident, no CSR and no status. `cert_timeline: false` leaves it out.
+
+- **The website** (atlas and brief looks): the next `cert_timeline_days` (120) on one axis. Rows: *vCenter*, then a row
+  per cluster, and *ESXi hosts* for a host in no cluster. Hover a mark for the certificate, its issuer, its expiry date
+  and who renews it.
+- **The email**: three boxes and the table *Certificates to renew, soonest first*. The workbook
+  (`report_email_xlsx: true`) gets a *Timeline* sheet.
+- **The bands**: critical from `vmware_cert_crit_days` (7), warning from `vmware_cert_warn_days` (30), Low up to twice
+  the warning days (60 or more).
+- **Renewed by**: *VMware - certificate renewal (a CSR)*. A VMCA certificate: *by hand in vCenter*, unless
+  `vmware_cert_vmca_csr: true`.
+- How to read it: [RUNBOOKS.md](RUNBOOKS.md#certificate-report-playbookscert_reportyml).
+
 **No inventory of hosts.** Both run on the AAP side and talk to vCenter only: each host's certificate is
 read through vCenter, and its CSR is made through vCenter's API - no SSH, no ESXi account. vCenter's own
 certificate is read on its address, port 443. The template needs an inventory picked (any one); leave

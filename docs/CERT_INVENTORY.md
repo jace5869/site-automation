@@ -13,6 +13,9 @@ a dashboard (Power BI, Excel, Grafana ...). Turn it on in the template's Variabl
 Two ways, each on by itself - **files** (CSV and JSON) and a **SQL Server table**. A report with neither
 writes nothing (the default). A Check run (dry run) writes nothing either.
 
+The inventory is rows for a dashboard, with no page of its own. The expiry timeline (1.64.0) is in the four reports
+above, on the report website: [RUNBOOKS.md](RUNBOOKS.md#certificate-report-playbookscert_reportyml).
+
 ## What each certificate has
 
 | Field | Example | What it is |

@@ -235,6 +235,11 @@ found too:
 weekly health check reads only those stores. To list what a server has, on the server:
 `Get-ChildItem Cert:\LocalMachine -Recurse | Where-Object NotAfter -lt (Get-Date).AddDays(60) | Format-List PSParentPath, Subject, NotAfter, HasPrivateKey`.
 
+**The expiry timeline** (1.64.0): the next `cert_timeline_days` (120) on one axis on the report website, the table
+*Certificates to renew, soonest first* in the email, a *Timeline* sheet in the workbook. The bands are
+`win_check_certs_crit_days` (7), `win_check_certs_warn_days` (30) and `win_check_certs_notice_days` (60).
+How to read it: [RUNBOOKS.md](RUNBOOKS.md#certificate-report-playbookscert_reportyml). `cert_timeline: false` leaves it out.
+
 ### Windows certificate renewal - CSRs
 
 With `cert_renew_servicenow: catalog` the CSRs are ordered from your PKI's catalog item instead of going on

@@ -33,6 +33,9 @@ NAMED = (("test_stig_ckl_import.py", "RouteReport.test_report_fit_document", "st
          # 1.61.0: patch age - the by-group table with every column, the oldest hosts; the website's copy with the squares
          ("test_patch_age.py", "Looks.test_report_fit_document", "patch_age_filters.py:patch_age_sections", "patch_age_sections"),
          ("test_patch_age.py", "Looks.test_report_fit_document", "site_filters.py:findings_report", "patch_age_web"),
+         # 1.64.0: the certificate timeline - the email's renew list, the website's page with the timeline above it
+         ("test_cert_timeline.py", "Looks.test_report_fit_document", "cert_timeline_filters.py:cert_timeline", "cert_timeline"),
+         ("test_cert_timeline.py", "Looks.test_report_fit_document", "site_filters.py:findings_report", "cert_timeline_web"),
          # int-11: the STIG scorecard with rows in "Fixed on the host, still Open" (Low; report_fit draws it in every look)
          ("test_stig_scorecard.py", "Scorecard.test_fixed_on_the_host_still_open", "stig_scorecard_filters.py:stig_scorecard",
           "stig_scorecard_fixed"),

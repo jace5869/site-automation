@@ -7,6 +7,7 @@ own script file (script-src 'self'): hovering a sparkline shows its day and valu
 arrow keys), a runway bar's tip is its data-tip, Esc hides it.
 int-11: the Trend column (a section's sparks: ONTAP capacity 1.52.0, the STIG scorecard 1.58.0, patch age 1.61.0) hovers
 the same way, and ticket insights' breach line (its own page and script, site-insights.js) shows its day's numbers.
+1.64.0: the certificate timeline's marks (data-tip): hover, Tab from mark to mark, Esc.
   python3 tests/test_report_hover.py      (the Chrome part skips without google-chrome or chromium)"""
 import base64
 import http.server
@@ -37,6 +38,7 @@ import servicenow_insights_filters as snf  # noqa: E402
 import servicenow_insights_page as snp  # noqa: E402
 import stig_scorecard_filters as ssf  # noqa: E402
 import test_capacity as tc  # noqa: E402
+import test_cert_timeline as tct  # noqa: E402
 import test_servicenow_breach as tsb  # noqa: E402
 from test_report_fit import EmailTiles, _browser  # noqa: E402
 
@@ -275,10 +277,13 @@ class RealChrome(unittest.TestCase):
     TPL = "report_atlas.html.j2"
 
     @classmethod
+    def web(cls):
+        return doc()[0]
+
+    @classmethod
     def setUpClass(cls):
         cls.dir = tempfile.mkdtemp()
-        web, _ = doc()
-        h = render(cls.TPL, web)
+        h = render(cls.TPL, cls.web())
         with open(os.path.join(cls.dir, "page.html"), "w") as f:
             f.write(h)
         shutil.copy(os.path.join(REPO, "roles", "site_email", "templates", "site_report.js"), os.path.join(cls.dir, "site-report.js"))
@@ -400,6 +405,59 @@ class RealChromeBrief(RealChrome):
 
 
 @unittest.skipUnless(_browser(), "no headless browser here")
+class RealChromeTimeline(RealChrome):
+    """1.64.0: the certificate timeline's marks (their data-tip) under the same policy - hover, the keyboard, Esc."""
+    test_2_hovering_a_sparkline_shows_the_day_and_value = test_3_keyboard_focus_shows_it_too = None
+    test_4_a_runway_bar_and_a_tile = test_5_a_trend_column_line = None
+    SEL = ".tl-track .tl-m[data-tip]"
+
+    @classmethod
+    def web(cls):
+        r = tct.made()
+        return {"title": "Certificate report", "status": r["status"], "summary": r["boxes"], "sections": r["web_sections"]}
+
+    def test_6_hovering_a_mark_shows_the_certificate(self):
+        n = self.c.js("document.querySelectorAll(%s).length" % json.dumps(self.SEL))
+        self.assertEqual(n, 18)
+        for i in (0, 4, n - 1):                                               # one expired, two on one day, the last row's last
+            x, y = self.at(self.SEL, i)
+            self.c.mouse(5, 5)
+            self.c.mouse(x, y)
+            want = self.c.js("document.querySelectorAll(%s)[%d].getAttribute('data-tip').split('\\n')" % (json.dumps(self.SEL), i))
+            self.assertEqual(self.c.js(TIP), want, i)
+            box = self.c.js("(() => {const r = document.getElementById('site-tip').getBoundingClientRect(); "
+                            "return [r.left, r.right, document.documentElement.clientWidth]})()")
+            self.assertGreaterEqual(box[0], 0, i)
+            self.assertLessEqual(box[1], box[2], i)
+        self.assertEqual(self.c.js("document.querySelectorAll(%s)[0].getAttribute('data-tip').split('\\n')[0]" % json.dumps(self.SEL)),
+                         "old-intranet.example.mil")
+        self.c.mouse(5, 5)
+        self.assertIsNone(self.c.js(TIP))
+        self.assertFalse(self.c.js("[...document.querySelectorAll('[data-tip]')].some(e => e.hasAttribute('title'))"))
+
+    def test_7_the_keyboard_reaches_each_mark(self):
+        self.c.js("document.activeElement && document.activeElement.blur(); window.scrollTo(0, 0)")
+        seen = []
+        for _ in range(300):
+            self.c.key("Tab", "Tab", 9)
+            if self.c.js("document.activeElement.matches(%s)" % json.dumps(self.SEL)):
+                tip = self.c.js(TIP)
+                self.assertEqual(tip, self.c.js("document.activeElement.getAttribute('data-tip').split('\\n')"))
+                seen.append(tip[0])
+            elif seen:
+                break
+        self.assertEqual(len(seen), 18, "Tab did not stop at every mark")
+        self.assertEqual(seen[0], "old-intranet.example.mil")                 # the first row's first mark: document order
+        self.c.js("document.querySelector(%s).focus()" % json.dumps(self.SEL))
+        self.assertIsNotNone(self.c.js(TIP))
+        self.c.key("Escape", "Escape", 27)
+        self.assertIsNone(self.c.js(TIP))
+
+
+class RealChromeTimelineBrief(RealChromeTimeline):
+    TPL = "report_brief.html.j2"
+
+
 class RealChromeBreach(unittest.TestCase):
     """Ticket insights' About to breach line: its page loads site-insights.js (served beside it, script-src 'self'); a
     day's hit area shows that day's numbers in the page's own tip."""

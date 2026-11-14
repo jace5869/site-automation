@@ -117,3 +117,14 @@
       ansible.builtin.include_role:
         name: site_findings
         tasks_from: report.yml
+      vars:
+        # 1.64.0: the timeline and the renew list, with this report's own days (cert_timeline: false = without)
+        site_cert_timeline:
+          warn: "{{ check_certs_warn_days | default(30) | int }}"
+          crit: "{{ check_certs_crit_days | default(14) | int }}"
+          notice: "{{ check_certs_notice_days | default(60) | int }}"
+          warn_name: check_certs_warn_days
+          crit_name: check_certs_crit_days
+          notice_name: check_certs_notice_days
+          renew: "Certificate renewal - CSRs"
+          what: Linux

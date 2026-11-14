@@ -1,0 +1,1620 @@
+{
+"boxes": [
+{
+"label": "Expire in 14 days",
+"note": "old-intranet.example.mil, vc01, long-service-name-01.apps.ex",
+"status": "critical",
+"value": 5
+},
+{
+"label": "Expire in 30 days",
+"note": "critical and warning",
+"status": "warning",
+"value": 12
+},
+{
+"label": "Low: 31 to 60 days",
+"note": "worth knowing",
+"status": "low",
+"value": 8
+}
+],
+"counts": {
+"certificates": 29,
+"critical": 5,
+"days": 120,
+"low": 8,
+"ok": 8,
+"trust": 1,
+"unread": 0,
+"warning": 7,
+"window": 28
+},
+"lines": [
+"Certificate timeline, the next 120 days: 28 certificate(s) - 5 critical, 7 warning, 8 Low, 8 OK; soonest: old-intranet.example.mil (expired 3 days ago), vc01 (6 days), long-service-name-01.apps.example.mil (7 days)",
+"  Web servers: 6 certificates, Critical",
+"  vCenter and ESXi: 5 certificates, Critical",
+"  SITEA-application-servers-production: 8 certificates, Critical",
+"  Domain controllers: 3 certificates, Critical",
+"  Network devices: 3 certificates, Warning",
+"  Storage and backup: 3 certificates, Low"
+],
+"sections": [
+{
+"boxes": [
+{
+"label": "Expire in 14 days",
+"note": "old-intranet.example.mil, vc01, long-service-name-01.apps.ex",
+"status": "critical",
+"value": 5
+},
+{
+"label": "Expire in 30 days",
+"note": "critical and warning",
+"status": "warning",
+"value": 12
+},
+{
+"label": "Low: 31 to 60 days",
+"note": "worth knowing",
+"status": "low",
+"value": 8
+}
+],
+"cell_status": [
+[
+"critical",
+"",
+"",
+"",
+"",
+"critical",
+""
+],
+[
+"critical",
+"",
+"",
+"",
+"",
+"critical",
+""
+],
+[
+"critical",
+"",
+"",
+"",
+"",
+"critical",
+""
+],
+[
+"critical",
+"",
+"",
+"",
+"",
+"critical",
+""
+],
+[
+"critical",
+"",
+"",
+"",
+"",
+"critical",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+"",
+"warning",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+"",
+"warning",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+"",
+"warning",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+"",
+"warning",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+"",
+"warning",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+"",
+"warning",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+"",
+"warning",
+""
+],
+[
+"low",
+"",
+"",
+"",
+"",
+"low",
+""
+],
+[
+"low",
+"",
+"",
+"",
+"",
+"low",
+""
+],
+[
+"low",
+"",
+"",
+"",
+"",
+"low",
+""
+],
+[
+"low",
+"",
+"",
+"",
+"",
+"low",
+""
+],
+[
+"low",
+"",
+"",
+"",
+"",
+"low",
+""
+],
+[
+"low",
+"",
+"",
+"",
+"",
+"low",
+""
+],
+[
+"low",
+"",
+"",
+"",
+"",
+"low",
+""
+],
+[
+"low",
+"",
+"",
+"",
+"",
+"low",
+""
+]
+],
+"columns": [
+"Level",
+"Certificate",
+"System",
+"Host",
+"Expires",
+"Days left",
+"Renewed by"
+],
+"row_status": [
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"warning",
+"warning",
+"warning",
+"warning",
+"warning",
+"warning",
+"warning",
+"low",
+"low",
+"low",
+"low",
+"low",
+"low",
+"low",
+"low"
+],
+"rows": [
+[
+"Critical",
+"old-intranet.example.mil",
+"Web servers",
+"web01.corp.example.mil",
+"2026-11-10 Tue",
+-3,
+"Certificate renewal - CSRs"
+],
+[
+"Critical",
+"vc01",
+"vCenter and ESXi",
+"vc01.corp.example.mil",
+"2026-11-19 Thu",
+6,
+"Certificate renewal - CSRs"
+],
+[
+"Critical",
+"long-service-name-01.apps.example.mil",
+"SITEA-application-servers-production",
+"app01.corp.example.mil",
+"2026-11-20 Fri",
+7,
+"Certificate renewal - CSRs"
+],
+[
+"Critical",
+"ldaps.dc01.corp.example.mil",
+"Domain controllers",
+"dc01.corp.example.mil",
+"2026-11-24 Tue",
+11,
+"Certificate renewal - CSRs"
+],
+[
+"Critical",
+"long-service-name-02.apps.example.mil",
+"SITEA-application-servers-production",
+"app02.corp.example.mil",
+"2026-11-24 Tue",
+11,
+"Certificate renewal - CSRs"
+],
+[
+"Warning",
+"long-service-name-03.apps.example.mil",
+"SITEA-application-servers-production",
+"app03.corp.example.mil",
+"2026-11-28 Sat",
+15,
+"Certificate renewal - CSRs"
+],
+[
+"Warning",
+"long-service-name-04.apps.example.mil",
+"SITEA-application-servers-production",
+"app04.corp.example.mil",
+"2026-12-02 Wed",
+19,
+"Certificate renewal - CSRs"
+],
+[
+"Warning",
+"portal.example.mil",
+"Web servers",
+"web03.corp.example.mil",
+"2026-12-02 Wed",
+19,
+"Certificate renewal - CSRs"
+],
+[
+"Warning",
+"vpn.example.mil",
+"Network devices",
+"fw-edge-01.corp.example.mil",
+"2026-12-06 Sun",
+23,
+"Certificate renewal - CSRs"
+],
+[
+"Warning",
+"long-service-name-05.apps.example.mil",
+"SITEA-application-servers-production",
+"app05.corp.example.mil",
+"2026-12-06 Sun",
+23,
+"Certificate renewal - CSRs"
+],
+[
+"Warning",
+"long-service-name-06.apps.example.mil",
+"SITEA-application-servers-production",
+"app06.corp.example.mil",
+"2026-12-10 Thu",
+27,
+"Certificate renewal - CSRs"
+],
+[
+"Warning",
+"wiki.example.mil",
+"Web servers",
+"web03.corp.example.mil",
+"2026-12-10 Thu",
+27,
+"Certificate renewal - CSRs"
+],
+[
+"Low",
+"long-service-name-07.apps.example.mil",
+"SITEA-application-servers-production",
+"app07.corp.example.mil",
+"2026-12-14 Mon",
+31,
+"Certificate renewal - CSRs"
+],
+[
+"Low",
+"nas01",
+"Storage and backup",
+"nas01.corp.example.mil",
+"2026-12-17 Thu",
+34,
+"Certificate renewal - CSRs"
+],
+[
+"Low",
+"long-service-name-08.apps.example.mil",
+"SITEA-application-servers-production",
+"app08.corp.example.mil",
+"2026-12-18 Fri",
+35,
+"Certificate renewal - CSRs"
+],
+[
+"Low",
+"ldaps.dc03.corp.example.mil",
+"Domain controllers",
+"dc03.corp.example.mil",
+"2026-12-21 Mon",
+38,
+"Certificate renewal - CSRs"
+],
+[
+"Low",
+"esx07",
+"vCenter and ESXi",
+"esx07.corp.example.mil",
+"2026-12-27 Sun",
+44,
+"Certificate renewal - CSRs"
+],
+[
+"Low",
+"backup01",
+"Storage and backup",
+"backup01.corp.example.mil",
+"2026-12-30 Wed",
+47,
+"Certificate renewal - CSRs"
+],
+[
+"Low",
+"sso.example.mil",
+"Web servers",
+"web05.corp.example.mil",
+"2027-01-04 Mon",
+52,
+"Certificate renewal - CSRs"
+],
+[
+"Low",
+"sw-core-01",
+"Network devices",
+"sw-core-01.corp.example.mil",
+"2027-01-10 Sun",
+58,
+"Certificate renewal - CSRs"
+]
+],
+"status": "critical",
+"text": "Critical: 14 days or less, or expired (check_certs_crit_days). Warning: up to 30 days (check_certs_warn_days). Low: up to 60 days (check_certs_notice_days), nothing to do now. 8 more expire within 120 days and are OK: the workbook's Timeline sheet has them. Next after the list: esx11.corp.example.mil, in 63 days. Not listed: 1 trust store certificate (not renewed on the host).",
+"title": "Certificates to renew, soonest first",
+"top": true
+}
+],
+"sheet": {
+"columns": [
+"Days left",
+"Expires",
+"Band",
+"Certificate",
+"System",
+"Host",
+"Where",
+"Issuer",
+"Renewed by",
+"Subject"
+],
+"name": "Timeline",
+"rows": [
+[
+-3,
+"2026-11-10",
+"Critical",
+"old-intranet.example.mil",
+"Web servers",
+"web01.corp.example.mil",
+"/etc/pki/tls/certs/old-intranet.crt",
+"CN=Example Issuing CA 1",
+"Certificate renewal - CSRs",
+"CN=old-intranet.example.mil"
+],
+[
+6,
+"2026-11-19",
+"Critical",
+"vc01",
+"vCenter and ESXi",
+"vc01.corp.example.mil",
+"/etc/pki/tls/certs/vc01.crt",
+"CN=Example Issuing CA 1",
+"Certificate renewal - CSRs",
+"CN=vc01.corp.example.mil"
+],
+[
+7,
+"2026-11-20",
+"Critical",
+"long-service-name-01.apps.example.mil",
+"SITEA-application-servers-production",
+"app01.corp.example.mil",
+"/etc/pki/tls/certs/long-service-name-01.crt",
+"CN=Example Issuing CA 1,OU=PKI,O=Example,C=US",
+"Certificate renewal - CSRs",
+"CN=long-service-name-01.apps.example.mil"
+],
+[
+11,
+"2026-11-24",
+"Critical",
+"ldaps.dc01.corp.example.mil",
+"Domain controllers",
+"dc01.corp.example.mil",
+"/etc/pki/tls/certs/ldaps.crt",
+"CN=Example Issuing CA 1",
+"Certificate renewal - CSRs",
+"CN=ldaps.dc01.corp.example.mil"
+],
+[
+11,
+"2026-11-24",
+"Critical",
+"long-service-name-02.apps.example.mil",
+"SITEA-application-servers-production",
+"app02.corp.example.mil",
+"/etc/pki/tls/certs/long-service-name-02.crt",
+"CN=Example Issuing CA 1,OU=PKI,O=Example,C=US",
+"Certificate renewal - CSRs",
+"CN=long-service-name-02.apps.example.mil"
+],
+[
+15,
+"2026-11-28",
+"Warning",
+"long-service-name-03.apps.example.mil",
+"SITEA-application-servers-production",
+"app03.corp.example.mil",
+"/etc/pki/tls/certs/long-service-name-03.crt",
+"CN=Example Issuing CA 1,OU=PKI,O=Example,C=US",
+"Certificate renewal - CSRs",
+"CN=long-service-name-03.apps.example.mil"
+],
+[
+19,
+"2026-12-02",
+"Warning",
+"long-service-name-04.apps.example.mil",
+"SITEA-application-servers-production",
+"app04.corp.example.mil",
+"/etc/pki/tls/certs/long-service-name-04.crt",
+"CN=Example Issuing CA 1,OU=PKI,O=Example,C=US",
+"Certificate renewal - CSRs",
+"CN=long-service-name-04.apps.example.mil"
+],
+[
+19,
+"2026-12-02",
+"Warning",
+"portal.example.mil",
+"Web servers",
+"web03.corp.example.mil",
+"/etc/pki/tls/certs/portal.crt",
+"CN=Example Issuing CA 1",
+"Certificate renewal - CSRs",
+"CN=portal.example.mil"
+],
+[
+23,
+"2026-12-06",
+"Warning",
+"vpn.example.mil",
+"Network devices",
+"fw-edge-01.corp.example.mil",
+"/etc/pki/tls/certs/vpn.crt",
+"CN=Example Issuing CA 1",
+"Certificate renewal - CSRs",
+"CN=vpn.example.mil"
+],
+[
+23,
+"2026-12-06",
+"Warning",
+"long-service-name-05.apps.example.mil",
+"SITEA-application-servers-production",
+"app05.corp.example.mil",
+"/etc/pki/tls/certs/long-service-name-05.crt",
+"CN=Example Issuing CA 1,OU=PKI,O=Example,C=US",
+"Certificate renewal - CSRs",
+"CN=long-service-name-05.apps.example.mil"
+],
+[
+27,
+"2026-12-10",
+"Warning",
+"long-service-name-06.apps.example.mil",
+"SITEA-application-servers-production",
+"app06.corp.example.mil",
+"/etc/pki/tls/certs/long-service-name-06.crt",
+"CN=Example Issuing CA 1,OU=PKI,O=Example,C=US",
+"Certificate renewal - CSRs",
+"CN=long-service-name-06.apps.example.mil"
+],
+[
+27,
+"2026-12-10",
+"Warning",
+"wiki.example.mil",
+"Web servers",
+"web03.corp.example.mil",
+"/etc/pki/tls/certs/wiki.crt",
+"CN=Example Issuing CA 1",
+"Certificate renewal - CSRs",
+"CN=wiki.example.mil"
+],
+[
+31,
+"2026-12-14",
+"Low",
+"long-service-name-07.apps.example.mil",
+"SITEA-application-servers-production",
+"app07.corp.example.mil",
+"/etc/pki/tls/certs/long-service-name-07.crt",
+"CN=Example Issuing CA 1,OU=PKI,O=Example,C=US",
+"Certificate renewal - CSRs",
+"CN=long-service-name-07.apps.example.mil"
+],
+[
+34,
+"2026-12-17",
+"Low",
+"nas01",
+"Storage and backup",
+"nas01.corp.example.mil",
+"/etc/pki/tls/certs/nas01.crt",
+"CN=Example Issuing CA 1",
+"Certificate renewal - CSRs",
+"CN=nas01.corp.example.mil"
+],
+[
+35,
+"2026-12-18",
+"Low",
+"long-service-name-08.apps.example.mil",
+"SITEA-application-servers-production",
+"app08.corp.example.mil",
+"/etc/pki/tls/certs/long-service-name-08.crt",
+"CN=Example Issuing CA 1,OU=PKI,O=Example,C=US",
+"Certificate renewal - CSRs",
+"CN=long-service-name-08.apps.example.mil"
+],
+[
+38,
+"2026-12-21",
+"Low",
+"ldaps.dc03.corp.example.mil",
+"Domain controllers",
+"dc03.corp.example.mil",
+"/etc/pki/tls/certs/ldaps.crt",
+"CN=Example Issuing CA 1",
+"Certificate renewal - CSRs",
+"CN=ldaps.dc03.corp.example.mil"
+],
+[
+44,
+"2026-12-27",
+"Low",
+"esx07",
+"vCenter and ESXi",
+"esx07.corp.example.mil",
+"/etc/pki/tls/certs/esx07.crt",
+"CN=Example Issuing CA 1",
+"Certificate renewal - CSRs",
+"CN=esx07.corp.example.mil"
+],
+[
+47,
+"2026-12-30",
+"Low",
+"backup01",
+"Storage and backup",
+"backup01.corp.example.mil",
+"/etc/pki/tls/certs/backup01.crt",
+"CN=Example Issuing CA 1",
+"Certificate renewal - CSRs",
+"CN=backup01.corp.example.mil"
+],
+[
+52,
+"2027-01-04",
+"Low",
+"sso.example.mil",
+"Web servers",
+"web05.corp.example.mil",
+"/etc/pki/tls/certs/sso.crt",
+"CN=Example Issuing CA 1",
+"Certificate renewal - CSRs",
+"CN=sso.example.mil"
+],
+[
+58,
+"2027-01-10",
+"Low",
+"sw-core-01",
+"Network devices",
+"sw-core-01.corp.example.mil",
+"/etc/pki/tls/certs/sw-core-01.crt",
+"CN=Example Issuing CA 1",
+"Certificate renewal - CSRs",
+"CN=sw-core-01.corp.example.mil"
+],
+[
+63,
+"2027-01-15",
+"OK",
+"esx11",
+"vCenter and ESXi",
+"esx11.corp.example.mil",
+"/etc/pki/tls/certs/esx11.crt",
+"CN=Example Issuing CA 1",
+"Certificate renewal - CSRs",
+"CN=esx11.corp.example.mil"
+],
+[
+63,
+"2027-01-15",
+"OK",
+"esx12",
+"vCenter and ESXi",
+"esx12.corp.example.mil",
+"/etc/pki/tls/certs/esx12.crt",
+"CN=Example Issuing CA 1",
+"Certificate renewal - CSRs",
+"CN=esx12.corp.example.mil"
+],
+[
+78,
+"2027-01-30",
+"OK",
+"git.example.mil",
+"Web servers",
+"web01.corp.example.mil",
+"/etc/pki/tls/certs/git.crt",
+"CN=Example Issuing CA 1",
+"Certificate renewal - CSRs",
+"CN=git.example.mil"
+],
+[
+78,
+"2027-01-30",
+"OK",
+"api.example.mil",
+"Web servers",
+"web04.corp.example.mil",
+"/etc/pki/tls/certs/api.crt",
+"CN=Example Issuing CA 1",
+"Certificate renewal - CSRs",
+"CN=api.example.mil"
+],
+[
+92,
+"2027-02-13",
+"OK",
+"kdc.dc03.corp.example.mil",
+"Domain controllers",
+"dc03.corp.example.mil",
+"/etc/pki/tls/certs/kdc.crt",
+"CN=Example Issuing CA 1",
+"Certificate renewal - CSRs",
+"CN=kdc.dc03.corp.example.mil"
+],
+[
+101,
+"2027-02-22",
+"OK",
+"esx04",
+"vCenter and ESXi",
+"esx04.corp.example.mil",
+"/etc/pki/tls/certs/esx04.crt",
+"CN=Example Issuing CA 1",
+"Certificate renewal - CSRs",
+"CN=esx04.corp.example.mil"
+],
+[
+110,
+"2027-03-03",
+"OK",
+"lb01",
+"Network devices",
+"lb01.corp.example.mil",
+"/etc/pki/tls/certs/lb01.crt",
+"CN=Example Issuing CA 1",
+"Certificate renewal - CSRs",
+"CN=lb01.corp.example.mil"
+],
+[
+115,
+"2027-03-08",
+"OK",
+"catalog.backup01.corp.example.mil",
+"Storage and backup",
+"backup01.corp.example.mil",
+"/etc/pki/tls/certs/catalog.crt",
+"CN=Example Issuing CA 1",
+"Certificate renewal - CSRs",
+"CN=catalog.backup01.corp.example.mil"
+]
+]
+},
+"status": "critical",
+"web_sections": [
+{
+"count": 28,
+"status": "critical",
+"text": "Every certificate that expires within 120 days (cert_timeline_days), a row per system. A mark is one certificate at its expiry date; a number in it, that many on the same day.",
+"timeline": {
+"bands": [
+{
+"count": 5,
+"from": 0.0,
+"status": "critical",
+"text": "14 days or less, or expired",
+"to": 11.67,
+"word": "Critical"
+},
+{
+"count": 7,
+"from": 11.67,
+"status": "warning",
+"text": "15 to 30 days",
+"to": 25.0,
+"word": "Warning"
+},
+{
+"count": 8,
+"from": 25.0,
+"status": "low",
+"text": "31 to 60 days",
+"to": 50.0,
+"word": "Low"
+},
+{
+"count": 8,
+"from": 50.0,
+"status": "ok",
+"text": "more than 60 days",
+"to": 100.0,
+"word": "OK"
+}
+],
+"days": 120,
+"groups": [
+{
+"marks": [
+{
+"at": 0.0,
+"label": "old-intranet.exampl...",
+"n": 1,
+"show": "n",
+"side": "b",
+"status": "critical",
+"tip": "old-intranet.example.mil\nHost: web01.corp.example.mil\nIssuer: CN=Example Issuing CA 1\nExpires: 2026-11-10 (expired 3 days ago)\nRenewed by: Certificate renewal - CSRs"
+},
+{
+"at": 15.83,
+"label": "portal.example.mil",
+"n": 1,
+"show": "n",
+"side": "a",
+"status": "warning",
+"tip": "portal.example.mil\nHost: web03.corp.example.mil\nIssuer: CN=Example Issuing CA 1\nExpires: Wed 02 Dec 2026 (19 days)\nRenewed by: Certificate renewal - CSRs"
+},
+{
+"at": 22.5,
+"label": "wiki.example.mil",
+"n": 1,
+"show": "",
+"side": "",
+"status": "warning",
+"tip": "wiki.example.mil\nHost: web03.corp.example.mil\nIssuer: CN=Example Issuing CA 1\nExpires: Thu 10 Dec 2026 (27 days)\nRenewed by: Certificate renewal - CSRs"
+},
+{
+"at": 43.33,
+"label": "sso.example.mil",
+"n": 1,
+"show": "w",
+"side": "a",
+"status": "low",
+"tip": "sso.example.mil\nHost: web05.corp.example.mil\nIssuer: CN=Example Issuing CA 1\nExpires: Mon 04 Jan 2027 (52 days)\nRenewed by: Certificate renewal - CSRs"
+},
+{
+"at": 65.0,
+"label": "git.example.mil +1",
+"n": 2,
+"show": "n",
+"side": "b",
+"status": "ok",
+"tip": "2 certificates expire Sat 30 Jan 2027 (78 days)\ngit.example.mil on web01.corp.example.mil - Certificate renewal - CSRs\napi.example.mil on web04.corp.example.mil - Certificate renewal - CSRs"
+}
+],
+"name": "Web servers",
+"status": "critical",
+"sub": "6 certificates",
+"word": "Critical"
+},
+{
+"marks": [
+{
+"at": 5.0,
+"label": "vc01",
+"n": 1,
+"show": "n",
+"side": "b",
+"status": "critical",
+"tip": "vc01\nHost: vc01.corp.example.mil\nIssuer: CN=Example Issuing CA 1\nExpires: Thu 19 Nov 2026 (6 days)\nRenewed by: Certificate renewal - CSRs"
+},
+{
+"at": 36.67,
+"label": "esx07",
+"n": 1,
+"show": "n",
+"side": "a",
+"status": "low",
+"tip": "esx07\nHost: esx07.corp.example.mil\nIssuer: CN=Example Issuing CA 1\nExpires: Sun 27 Dec 2026 (44 days)\nRenewed by: Certificate renewal - CSRs"
+},
+{
+"at": 52.5,
+"label": "esx11 +1",
+"n": 2,
+"show": "n",
+"side": "b",
+"status": "ok",
+"tip": "2 certificates expire Fri 15 Jan 2027 (63 days)\nesx11 on esx11.corp.example.mil - Certificate renewal - CSRs\nesx12 on esx12.corp.example.mil - Certificate renewal - CSRs"
+},
+{
+"at": 84.17,
+"label": "esx04",
+"n": 1,
+"show": "n",
+"side": "a",
+"status": "ok",
+"tip": "esx04\nHost: esx04.corp.example.mil\nIssuer: CN=Example Issuing CA 1\nExpires: Mon 22 Feb 2027 (101 days)\nRenewed by: Certificate renewal - CSRs"
+}
+],
+"name": "vCenter and ESXi",
+"status": "critical",
+"sub": "5 certificates",
+"word": "Critical"
+},
+{
+"marks": [
+{
+"at": 5.83,
+"label": "long-service-name-0...",
+"n": 1,
+"show": "n",
+"side": "b",
+"status": "critical",
+"tip": "long-service-name-01.apps.example.mil\nHost: app01.corp.example.mil\nIssuer: CN=Example Issuing CA 1,OU=PKI,O=Example,C=US\nExpires: Fri 20 Nov 2026 (7 days)\nRenewed by: Certificate renewal - CSRs"
+},
+{
+"at": 9.17,
+"label": "long-service-name-0...",
+"n": 1,
+"show": "n",
+"side": "a",
+"status": "critical",
+"tip": "long-service-name-02.apps.example.mil\nHost: app02.corp.example.mil\nIssuer: CN=Example Issuing CA 1,OU=PKI,O=Example,C=US\nExpires: Tue 24 Nov 2026 (11 days)\nRenewed by: Certificate renewal - CSRs"
+},
+{
+"at": 12.5,
+"label": "long-service-name-0...",
+"n": 1,
+"show": "",
+"side": "",
+"status": "warning",
+"tip": "long-service-name-03.apps.example.mil\nHost: app03.corp.example.mil\nIssuer: CN=Example Issuing CA 1,OU=PKI,O=Example,C=US\nExpires: Sat 28 Nov 2026 (15 days)\nRenewed by: Certificate renewal - CSRs"
+},
+{
+"at": 15.83,
+"label": "long-service-name-0...",
+"n": 1,
+"show": "",
+"side": "",
+"status": "warning",
+"tip": "long-service-name-04.apps.example.mil\nHost: app04.corp.example.mil\nIssuer: CN=Example Issuing CA 1,OU=PKI,O=Example,C=US\nExpires: Wed 02 Dec 2026 (19 days)\nRenewed by: Certificate renewal - CSRs"
+},
+{
+"at": 19.17,
+"label": "long-service-name-0...",
+"n": 1,
+"show": "",
+"side": "",
+"status": "warning",
+"tip": "long-service-name-05.apps.example.mil\nHost: app05.corp.example.mil\nIssuer: CN=Example Issuing CA 1,OU=PKI,O=Example,C=US\nExpires: Sun 06 Dec 2026 (23 days)\nRenewed by: Certificate renewal - CSRs"
+},
+{
+"at": 22.5,
+"label": "long-service-name-0...",
+"n": 1,
+"show": "",
+"side": "",
+"status": "warning",
+"tip": "long-service-name-06.apps.example.mil\nHost: app06.corp.example.mil\nIssuer: CN=Example Issuing CA 1,OU=PKI,O=Example,C=US\nExpires: Thu 10 Dec 2026 (27 days)\nRenewed by: Certificate renewal - CSRs"
+},
+{
+"at": 25.83,
+"label": "long-service-name-0...",
+"n": 1,
+"show": "",
+"side": "",
+"status": "low",
+"tip": "long-service-name-07.apps.example.mil\nHost: app07.corp.example.mil\nIssuer: CN=Example Issuing CA 1,OU=PKI,O=Example,C=US\nExpires: Mon 14 Dec 2026 (31 days)\nRenewed by: Certificate renewal - CSRs"
+},
+{
+"at": 29.17,
+"label": "long-service-name-0...",
+"n": 1,
+"show": "",
+"side": "",
+"status": "low",
+"tip": "long-service-name-08.apps.example.mil\nHost: app08.corp.example.mil\nIssuer: CN=Example Issuing CA 1,OU=PKI,O=Example,C=US\nExpires: Fri 18 Dec 2026 (35 days)\nRenewed by: Certificate renewal - CSRs"
+}
+],
+"name": "SITEA-application-servers-production",
+"status": "critical",
+"sub": "8 certificates",
+"word": "Critical"
+},
+{
+"marks": [
+{
+"at": 9.17,
+"label": "ldaps.dc01.corp.exa...",
+"n": 1,
+"show": "n",
+"side": "b",
+"status": "critical",
+"tip": "ldaps.dc01.corp.example.mil\nHost: dc01.corp.example.mil\nIssuer: CN=Example Issuing CA 1\nExpires: Tue 24 Nov 2026 (11 days)\nRenewed by: Certificate renewal - CSRs"
+},
+{
+"at": 31.67,
+"label": "ldaps.dc03.corp.exa...",
+"n": 1,
+"show": "n",
+"side": "a",
+"status": "low",
+"tip": "ldaps.dc03.corp.example.mil\nHost: dc03.corp.example.mil\nIssuer: CN=Example Issuing CA 1\nExpires: Mon 21 Dec 2026 (38 days)\nRenewed by: Certificate renewal - CSRs"
+},
+{
+"at": 76.67,
+"label": "kdc.dc03.corp.examp...",
+"n": 1,
+"show": "n",
+"side": "b",
+"status": "ok",
+"tip": "kdc.dc03.corp.example.mil\nHost: dc03.corp.example.mil\nIssuer: CN=Example Issuing CA 1\nExpires: Sat 13 Feb 2027 (92 days)\nRenewed by: Certificate renewal - CSRs"
+}
+],
+"name": "Domain controllers",
+"status": "critical",
+"sub": "3 certificates",
+"word": "Critical"
+},
+{
+"marks": [
+{
+"at": 19.17,
+"label": "vpn.example.mil",
+"n": 1,
+"show": "n",
+"side": "b",
+"status": "warning",
+"tip": "vpn.example.mil\nHost: fw-edge-01.corp.example.mil\nIssuer: CN=Example Issuing CA 1\nExpires: Sun 06 Dec 2026 (23 days)\nRenewed by: Certificate renewal - CSRs"
+},
+{
+"at": 48.33,
+"label": "sw-core-01",
+"n": 1,
+"show": "n",
+"side": "a",
+"status": "low",
+"tip": "sw-core-01\nHost: sw-core-01.corp.example.mil\nIssuer: CN=Example Issuing CA 1\nExpires: Sun 10 Jan 2027 (58 days)\nRenewed by: Certificate renewal - CSRs"
+},
+{
+"at": 91.67,
+"label": "lb01",
+"n": 1,
+"show": "n",
+"side": "b",
+"status": "ok",
+"tip": "lb01\nHost: lb01.corp.example.mil\nIssuer: CN=Example Issuing CA 1\nExpires: Wed 03 Mar 2027 (110 days)\nRenewed by: Certificate renewal - CSRs"
+}
+],
+"name": "Network devices",
+"status": "warning",
+"sub": "3 certificates",
+"word": "Warning"
+},
+{
+"marks": [
+{
+"at": 28.33,
+"label": "nas01",
+"n": 1,
+"show": "n",
+"side": "b",
+"status": "low",
+"tip": "nas01\nHost: nas01.corp.example.mil\nIssuer: CN=Example Issuing CA 1\nExpires: Thu 17 Dec 2026 (34 days)\nRenewed by: Certificate renewal - CSRs"
+},
+{
+"at": 39.17,
+"label": "backup01",
+"n": 1,
+"show": "n",
+"side": "a",
+"status": "low",
+"tip": "backup01\nHost: backup01.corp.example.mil\nIssuer: CN=Example Issuing CA 1\nExpires: Wed 30 Dec 2026 (47 days)\nRenewed by: Certificate renewal - CSRs"
+},
+{
+"at": 95.83,
+"label": "catalog.backup01.co...",
+"n": 1,
+"show": "n",
+"side": "b",
+"status": "ok",
+"tip": "catalog.backup01.corp.example.mil\nHost: backup01.corp.example.mil\nIssuer: CN=Example Issuing CA 1\nExpires: Mon 08 Mar 2027 (115 days)\nRenewed by: Certificate renewal - CSRs"
+}
+],
+"name": "Storage and backup",
+"status": "low",
+"sub": "3 certificates",
+"word": "Low"
+}
+],
+"label": "Certificates by expiry date, the next 120 days",
+"none": "",
+"ticks": [
+{
+"at": 0.0,
+"text": "Today",
+"wide": false
+},
+{
+"at": 11.67,
+"text": "27 Nov",
+"wide": true
+},
+{
+"at": 23.33,
+"text": "11 Dec",
+"wide": false
+},
+{
+"at": 35.0,
+"text": "25 Dec",
+"wide": true
+},
+{
+"at": 46.67,
+"text": "8 Jan",
+"wide": false
+},
+{
+"at": 58.33,
+"text": "22 Jan",
+"wide": true
+},
+{
+"at": 70.0,
+"text": "5 Feb",
+"wide": false
+},
+{
+"at": 81.67,
+"text": "19 Feb",
+"wide": true
+},
+{
+"at": 93.33,
+"text": "5 Mar",
+"wide": false
+}
+],
+"week": 5.8333
+},
+"title": "Certificates: the next 120 days",
+"top": true
+},
+{
+"boxes": [
+{
+"label": "Expire in 14 days",
+"note": "old-intranet.example.mil, vc01, long-service-name-01.apps.ex",
+"status": "critical",
+"value": 5
+},
+{
+"label": "Expire in 30 days",
+"note": "critical and warning",
+"status": "warning",
+"value": 12
+},
+{
+"label": "Low: 31 to 60 days",
+"note": "worth knowing",
+"status": "low",
+"value": 8
+}
+],
+"cell_status": [
+[
+"critical",
+"",
+"",
+"",
+"",
+"critical",
+""
+],
+[
+"critical",
+"",
+"",
+"",
+"",
+"critical",
+""
+],
+[
+"critical",
+"",
+"",
+"",
+"",
+"critical",
+""
+],
+[
+"critical",
+"",
+"",
+"",
+"",
+"critical",
+""
+],
+[
+"critical",
+"",
+"",
+"",
+"",
+"critical",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+"",
+"warning",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+"",
+"warning",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+"",
+"warning",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+"",
+"warning",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+"",
+"warning",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+"",
+"warning",
+""
+],
+[
+"warning",
+"",
+"",
+"",
+"",
+"warning",
+""
+],
+[
+"low",
+"",
+"",
+"",
+"",
+"low",
+""
+],
+[
+"low",
+"",
+"",
+"",
+"",
+"low",
+""
+],
+[
+"low",
+"",
+"",
+"",
+"",
+"low",
+""
+],
+[
+"low",
+"",
+"",
+"",
+"",
+"low",
+""
+],
+[
+"low",
+"",
+"",
+"",
+"",
+"low",
+""
+],
+[
+"low",
+"",
+"",
+"",
+"",
+"low",
+""
+],
+[
+"low",
+"",
+"",
+"",
+"",
+"low",
+""
+],
+[
+"low",
+"",
+"",
+"",
+"",
+"low",
+""
+]
+],
+"columns": [
+"Level",
+"Certificate",
+"System",
+"Host",
+"Expires",
+"Days left",
+"Renewed by"
+],
+"row_status": [
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"warning",
+"warning",
+"warning",
+"warning",
+"warning",
+"warning",
+"warning",
+"low",
+"low",
+"low",
+"low",
+"low",
+"low",
+"low",
+"low"
+],
+"rows": [
+[
+"Critical",
+"old-intranet.example.mil",
+"Web servers",
+"web01.corp.example.mil",
+"2026-11-10 Tue",
+-3,
+"Certificate renewal - CSRs"
+],
+[
+"Critical",
+"vc01",
+"vCenter and ESXi",
+"vc01.corp.example.mil",
+"2026-11-19 Thu",
+6,
+"Certificate renewal - CSRs"
+],
+[
+"Critical",
+"long-service-name-01.apps.example.mil",
+"SITEA-application-servers-production",
+"app01.corp.example.mil",
+"2026-11-20 Fri",
+7,
+"Certificate renewal - CSRs"
+],
+[
+"Critical",
+"ldaps.dc01.corp.example.mil",
+"Domain controllers",
+"dc01.corp.example.mil",
+"2026-11-24 Tue",
+11,
+"Certificate renewal - CSRs"
+],
+[
+"Critical",
+"long-service-name-02.apps.example.mil",
+"SITEA-application-servers-production",
+"app02.corp.example.mil",
+"2026-11-24 Tue",
+11,
+"Certificate renewal - CSRs"
+],
+[
+"Warning",
+"long-service-name-03.apps.example.mil",
+"SITEA-application-servers-production",
+"app03.corp.example.mil",
+"2026-11-28 Sat",
+15,
+"Certificate renewal - CSRs"
+],
+[
+"Warning",
+"long-service-name-04.apps.example.mil",
+"SITEA-application-servers-production",
+"app04.corp.example.mil",
+"2026-12-02 Wed",
+19,
+"Certificate renewal - CSRs"
+],
+[
+"Warning",
+"portal.example.mil",
+"Web servers",
+"web03.corp.example.mil",
+"2026-12-02 Wed",
+19,
+"Certificate renewal - CSRs"
+],
+[
+"Warning",
+"vpn.example.mil",
+"Network devices",
+"fw-edge-01.corp.example.mil",
+"2026-12-06 Sun",
+23,
+"Certificate renewal - CSRs"
+],
+[
+"Warning",
+"long-service-name-05.apps.example.mil",
+"SITEA-application-servers-production",
+"app05.corp.example.mil",
+"2026-12-06 Sun",
+23,
+"Certificate renewal - CSRs"
+],
+[
+"Warning",
+"long-service-name-06.apps.example.mil",
+"SITEA-application-servers-production",
+"app06.corp.example.mil",
+"2026-12-10 Thu",
+27,
+"Certificate renewal - CSRs"
+],
+[
+"Warning",
+"wiki.example.mil",
+"Web servers",
+"web03.corp.example.mil",
+"2026-12-10 Thu",
+27,
+"Certificate renewal - CSRs"
+],
+[
+"Low",
+"long-service-name-07.apps.example.mil",
+"SITEA-application-servers-production",
+"app07.corp.example.mil",
+"2026-12-14 Mon",
+31,
+"Certificate renewal - CSRs"
+],
+[
+"Low",
+"nas01",
+"Storage and backup",
+"nas01.corp.example.mil",
+"2026-12-17 Thu",
+34,
+"Certificate renewal - CSRs"
+],
+[
+"Low",
+"long-service-name-08.apps.example.mil",
+"SITEA-application-servers-production",
+"app08.corp.example.mil",
+"2026-12-18 Fri",
+35,
+"Certificate renewal - CSRs"
+],
+[
+"Low",
+"ldaps.dc03.corp.example.mil",
+"Domain controllers",
+"dc03.corp.example.mil",
+"2026-12-21 Mon",
+38,
+"Certificate renewal - CSRs"
+],
+[
+"Low",
+"esx07",
+"vCenter and ESXi",
+"esx07.corp.example.mil",
+"2026-12-27 Sun",
+44,
+"Certificate renewal - CSRs"
+],
+[
+"Low",
+"backup01",
+"Storage and backup",
+"backup01.corp.example.mil",
+"2026-12-30 Wed",
+47,
+"Certificate renewal - CSRs"
+],
+[
+"Low",
+"sso.example.mil",
+"Web servers",
+"web05.corp.example.mil",
+"2027-01-04 Mon",
+52,
+"Certificate renewal - CSRs"
+],
+[
+"Low",
+"sw-core-01",
+"Network devices",
+"sw-core-01.corp.example.mil",
+"2027-01-10 Sun",
+58,
+"Certificate renewal - CSRs"
+]
+],
+"status": "critical",
+"text": "Critical: 14 days or less, or expired (check_certs_crit_days). Warning: up to 30 days (check_certs_warn_days). Low: up to 60 days (check_certs_notice_days), nothing to do now. 8 more expire within 120 days and are OK: the workbook's Timeline sheet has them. Next after the list: esx11.corp.example.mil, in 63 days. Not listed: 1 trust store certificate (not renewed on the host).",
+"title": "Certificates to renew, soonest first",
+"top": true
+}
+]
+}

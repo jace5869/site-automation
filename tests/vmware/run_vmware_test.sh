@@ -2178,6 +2178,11 @@ run "the certificate REPORT, every host, the days raised, the ServiceNow credent
        "open an incident, and make a CSR on the host" "open an incident, and make a CSR on vCenter" "The report only: nothing was sent to ServiceNow"
 [ "$(sent_since csn "$n1" GET /)$(sent_since csn "$n1" POST /)$(sent_since csn "$n1" PATCH /)" = 000 ] && ! grep -q "make the CSRs" "$work/out.txt" \
     && echo "ok   -   ...not one request to ServiceNow, no CSR" || { echo "FAIL -   ...the report talked to ServiceNow"; fails=$((fails + 1)); }
+run "...its timeline (cert_timeline_days raised to reach the simulator's certificates): vCenter and each cluster a row" ok vmware_cert_report.yml \
+    -e vmware_cert_warn_days=30000 -e cert_timeline_days=30000 \
+    -- "Certificate timeline, the next 30000 days: " "vCenter: 1 certificate, Warning" "DC0_C0: 3 certificates, Warning" "ESXi hosts: 1 certificate, Warning"
+run "...cert_timeline: false: the report as before" ok vmware_cert_report.yml -e vmware_cert_warn_days=30000 -e cert_timeline=false -- "VMware certificate report: "
+grep -q "Certificate timeline" "$work/out.txt" && { echo "FAIL -   ...cert_timeline: false still made the timeline"; fails=$((fails + 1)); } || echo "ok   -   ...no timeline line"
 run "...the report of one host, 30 days" ok vmware_cert_report.yml -e vmware_cert_only=DC0_H0 -- "VMware certificate report: 0 due within 30 days, of 1"
 run "...the certificate inventory files (cert_inventory_files): vCenter and every host, with fingerprints and tier" ok vmware_cert_report.yml \
     -e cert_inventory_files=true -e "cert_inventory_dir=$work/inventory" -- "certificates (vmware) in $work/inventory/vmware-certificates.csv"

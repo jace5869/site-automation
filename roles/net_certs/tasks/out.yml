@@ -9,6 +9,26 @@
                                 {'warn_days': net_cert_warn_days | int, 'check_mode': ansible_check_mode,
                                  'report_only': _net_report_only | default(false)}) }}
 
+# 1.64.0: the timeline and the renew list, in the report job (cert_timeline: false = without)
+- name: Network certs | the certificate timeline
+  ansible.builtin.set_fact:
+    _net_timeline: >-
+      {%- set hg = {} -%}
+      {%- for c in _net.certs if c.host in hostvars -%}{%- set _ = hg.update({c.host: hostvars[c.host].group_names | default([])}) -%}{%- endfor -%}
+      {{ _net.certs | cert_timeline({'days': cert_timeline_days | default(120) | int, 'groups': cert_timeline_groups | default([]),
+                                     'host_groups': hg, 'other': 'Network devices', 'today': now(utc=true).strftime('%Y-%m-%d'),
+                                     'warn': net_cert_warn_days | int, 'crit': net_cert_crit_days | int, 'notice': net_cert_notice_days | int,
+                                     'warn_name': 'net_cert_warn_days', 'crit_name': 'net_cert_crit_days', 'notice_name': 'net_cert_notice_days',
+                                     'what': 'network device', 'renew': 'Network device certificate renewal',
+                                     'renew_words': {'cisco': 'Network device certificate renewal (a CSR on the device)',
+                                                     'ticket': 'by hand on the device (Network device certificate renewal opens the incident)'}}) }}
+  when: _net_report_only | default(false) | bool and cert_timeline | default(true) | bool
+
+- name: Network certs | the next {{ cert_timeline_days | default(120) }} days
+  ansible.builtin.debug:
+    msg: "{{ _net_timeline.lines }}"
+  when: _net_timeline is defined
+
 - name: Network certs | {{ _net_doc.title }}
   ansible.builtin.debug:
     msg: "{{ (_net_doc | report_text).splitlines() }}"
@@ -29,7 +49,11 @@
   ansible.builtin.include_role:
     name: site_email
   vars:
-    _report: "{{ _net_doc }}"
+    _report: "{{ _net_doc | cert_timeline_doc(_net_timeline | default({})) }}"
+    _report_web: "{{ _net_doc | cert_timeline_doc(_net_timeline, true) if _net_timeline is defined else {} }}"
+    _report_xlsx: >-
+      {{ (_net_doc | cert_timeline_doc(_net_timeline) | report_xlsx_sheets) + [_net_timeline.sheet]
+         if _net_timeline is defined and report_email_xlsx | default(false) | bool else [] }}
   when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0
 
 - name: Network certs | no email

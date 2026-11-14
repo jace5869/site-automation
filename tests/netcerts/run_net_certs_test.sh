@@ -74,6 +74,9 @@ has "the report: 3 due of 4 read, each device and port, the closed port listed" 
     "https://127.0.0.1:$sw" "ups01.example.mil" "refused"
 has "the report: what the renewal would do - the incident only, Cisco CSRs off" report.txt \
     "the report only - Network device certificate renewal opens its incident"
+has "the report: the timeline of the next 120 days - three devices, by inventory group, soonest first" report.txt \
+    "Certificate timeline, the next 120 days: 3 certificate(s) - 1 critical, 2 warning, 0 Low, 0 OK; soonest: pr01 (expired 3 days ago), rtr01 (10 days), sw01 (20 days)" \
+    "net_cert_devices: 3 certificates, Critical"
 [ "$(writes)" = 0 ] && ok "the report sent nothing to ServiceNow" || bad "the report wrote to ServiceNow"
 "$py" - "$work/inventory/net-certificates.json" <<'EOPY' && ok "the inventory file: 4 certificates, source net, in use, fingerprints, self-signed" || bad "the inventory file (above)"
 import json, sys

@@ -394,3 +394,11 @@
 ## error; each report says "ACT is off (site_act_enabled false)" in one line and the job stays green
 ## (an enclave without a model). Usually in all.yml (docs/ENCLAVES.md).
 # site_act_enabled: true
+
+# ---- site_findings - usually in all.yml ----------------------------------------------------------
+## ---- Certificate timeline (1.64.0): a section of the certificate reports ------------------------
+## Linux, Windows, network devices, vCenter: the next cert_timeline_days on one axis on the report
+## website (the atlas and brief looks), the renew list in the email, a Timeline sheet in the
+## workbook. The levels are each report's own days. Changes no finding. false = the reports as
+## before 1.64.0
+# cert_timeline: true

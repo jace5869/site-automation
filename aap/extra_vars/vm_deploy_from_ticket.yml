@@ -679,3 +679,11 @@ report_email_to: approvers@yoursite.mil           # the approver reads the plan 
 
 ## anything ACT should know about this site
 # site_act_extra_instructions: ""
+
+# ---- site_findings - usually in all.yml ----------------------------------------------------------
+## ---- Certificate timeline (1.64.0): a section of the certificate reports ------------------------
+## Linux, Windows, network devices, vCenter: the next cert_timeline_days on one axis on the report
+## website (the atlas and brief looks), the renew list in the email, a Timeline sheet in the
+## workbook. The levels are each report's own days. Changes no finding. false = the reports as
+## before 1.64.0
+# cert_timeline: true

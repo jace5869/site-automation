@@ -632,6 +632,10 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
 {%- if s.matrix is defined %}
 {% include 'report_matrix.html.j2' %}
 {%- endif %}
+{#- 1.64.0: a timeline (the certificate reports' website version) -#}
+{%- if s.timeline is defined %}
+{% include 'report_timeline.html.j2' %}
+{%- endif %}
 {%- if s.columns is defined %}
 {%- if s.rows | default([]) %}
 {#- each column's kind, from what it holds (its first 300 rows): pct - every value a percentage up to 100 (drawn as a

@@ -1,0 +1,22 @@
+---
+# CERTIFICATE TIMELINE (1.64.0): a section of the Linux and Windows certificate reports (site_cert_timeline: the report's
+# own days and its renew job, from the playbook) - on the website the next cert_timeline_days on one axis, a row per host
+# group (cert_timeline_groups); in the email the renew list; in the workbook a Timeline sheet. Read only. It changes no
+# finding and does not decide the job's pass or fail. plugins/filter/cert_timeline_filters.py
+- name: Certificate timeline | the section
+  ansible.builtin.set_fact:
+    _cert_timeline: >-
+      {%- set rows = [] -%}
+      {%- set hg = {} -%}
+      {%- for h in ansible_play_hosts -%}
+      {%-   set _ = hg.update({h: hostvars[h].group_names | default([])}) -%}
+      {%-   for c in hostvars[h].check_certs_inventory | default([]) -%}{%- set _ = rows.append(c) -%}{%- endfor -%}
+      {%- endfor -%}
+      {{ rows | cert_timeline(site_cert_timeline | combine({'days': cert_timeline_days | int, 'groups': cert_timeline_groups,
+                                                           'host_groups': hg, 'today': now(utc=true).strftime('%Y-%m-%d')})) }}
+  run_once: true
+
+- name: Certificate timeline | the next {{ cert_timeline_days }} days
+  ansible.builtin.debug:
+    msg: "{{ _cert_timeline.lines }}"
+  run_once: true

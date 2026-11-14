@@ -32,7 +32,7 @@ cleanup() { for p in "${pids[@]}"; do kill "$p" 2>/dev/null; done; rm -rf "$work
 trap cleanup EXIT
 fails=0
 ip link set lo up
-mkdir -p "$work/ks" "$work/mail" "$work/disc/relay" "$work/home/alice" "$work/anchors"
+mkdir -p "$work/ks" "$work/mail" "$work/disc/relay" "$work/home/alice" "$work/anchors" "$work/web" "$work/web-off"
 cd "$work" || exit 1
 openssl req -x509 -newkey rsa:2048 -nodes -keyout tls.key -out tls.crt -days 20 -subj /CN=tls8443.example.mil 2>/dev/null
 openssl s_server -accept 8443 -cert tls.crt -key tls.key -quiet </dev/null >/dev/null 2>&1 & pids+=($!)
@@ -72,7 +72,8 @@ vars="{\"check_certs_discover_dirs\": [\"$work/disc\"], \"check_certs_discover_k
        \"check_certs_discover_extra_dirs\": [\"$work/home\"], \"check_certs_trust_dirs\": [\"$work/anchors\"], \"cert_renew_skip_hosts\": \"WEB02\",
        \"report_email_to\": \"certs@example.mil\", \"report_email_from\": \"aap@example.mil\", \"report_email_smtp_host\": \"127.0.0.1\",
        \"report_email_smtp_port\": 2525, \"report_email_security\": \"none\",
-       \"cert_inventory_files\": true, \"cert_inventory_dir\": \"$work/inventory\"}"
+       \"cert_inventory_files\": true, \"cert_inventory_dir\": \"$work/inventory\",
+       \"report_web_dest\": \"$work/web\", \"report_email_xlsx\": true}"
 (cd "$repo" && ANSIBLE_NOCOLOR=1 ANSIBLE_LOCALHOST_WARNING=False ANSIBLE_DEPRECATION_WARNINGS=False ANSIBLE_STDOUT_CALLBACK=default ANSIBLE_SHOW_CUSTOM_STATS=1 \
     "$ap" -i "$work/inv.yml" playbooks/cert_report.yml -e "$vars") > out.txt 2>&1
 rc=$?
@@ -147,7 +148,8 @@ grep -q "9000" out.txt && { echo "FAIL - the plain HTTP port was reported"; fail
 # a host whose only expiring certificate is in the trust store: green with the default site_fail_on, no finding
 (cd "$repo" && ANSIBLE_NOCOLOR=1 ANSIBLE_LOCALHOST_WARNING=False ANSIBLE_DEPRECATION_WARNINGS=False ANSIBLE_STDOUT_CALLBACK=default ANSIBLE_SHOW_CUSTOM_STATS=1 \
     "$ap" -i "$work/inv.yml" playbooks/cert_report.yml --limit web01.example.mil -e check_certs_discover=false -e check_certs_discover_ports=false \
-    -e check_certs_discover_keystores=false -e "{\"check_certs_trust_dirs\": [\"$work/anchors\"]}") > trust.txt 2>&1
+    -e check_certs_discover_keystores=false -e cert_timeline=false -e report_web_dest="$work/web-off" \
+    -e "{\"check_certs_trust_dirs\": [\"$work/anchors\"]}") > trust.txt 2>&1
 rc=$?
 if [ $rc -eq 0 ] && grep -q "Test_Root_CA_9 (trust store)" trust.txt && ! grep -q '"status": "findings"' trust.txt \
    && grep -q '"status": "findings"' out.txt; then          # (the first run, with findings, says so the same way)
@@ -174,5 +176,32 @@ sys.exit(0 if ok else 1)
 EOPY
 then echo "ok   - the email: amber 20 days, Low 45 days; under 'Found but not checked' the locked PKCS12, postfix's placeholder and the bundle of 11, one row for both hosts"
 else echo "FAIL - the email"; fails=$((fails + 1)); fi
+# 1.64.0: the timeline on the website, the renew list in the email, the Timeline sheet in the workbook
+check "the timeline in the job output" "Certificate timeline, the next 120 days:"
+page="$(grep -rl 'class="tl"' web --include='*.html' 2>/dev/null | head -1)"
+if [ -n "$eml" ] && [ -n "$page" ] && "$py" - "$eml" "$page" <<'EOPY'
+import email, email.policy, html, io, re, sys, zipfile
+m = email.message_from_binary_file(open(sys.argv[1], "rb"), policy=email.policy.default)
+h = m.get_body(preferencelist=("html",)).get_content()
+w = open(sys.argv[2]).read()
+tips = [html.unescape(t) for t in re.findall(r'class="tl-m[^>]*data-tip="([^"]*)"', w)]
+book = [a for a in m.iter_attachments() if (a.get_filename() or "").endswith(".xlsx")]
+names = zipfile.ZipFile(io.BytesIO(book[0].get_content())).read("xl/workbook.xml").decode() if book else ""
+errs = []
+if "Certificates to renew, soonest first" not in h: errs.append("the email lacks the renew list")
+if 'class="tl' in h: errs.append("the email has the timeline")
+# the same certificate on both hosts, one day: one mark of 2
+if not any(t.startswith("2 certificates expire ") and "tls8443.example.mil on web01.example.mil - Certificate renewal - CSRs" in t for t in tips):
+    errs.append("no mark of the TLS port's certificate with its host and renew job: %r" % tips[:3])
+if any("TEST ROOT CA 9" in t for t in tips): errs.append("a trust store certificate on the timeline")
+if "Certificates to renew, soonest first" not in w: errs.append("the page lacks the renew list")
+if 'name="Timeline"' not in names: errs.append("the workbook has no Timeline sheet: %s" % re.findall(r'name="([^"]*)"', names))
+if errs: print("\n".join(errs))
+sys.exit(1 if errs else 0)
+EOPY
+then echo "ok   - the timeline: marks on the website with host and renew job, no trust store certificate; the email has the renew list, the workbook a Timeline sheet"
+else echo "FAIL - the timeline (page: ${page:-none})"; fails=$((fails + 1)); fi
+if grep -q "Certificate timeline" trust.txt || grep -rqs 'class="tl"\|Certificates to renew' web-off; then echo "FAIL - cert_timeline: false still made the timeline"; fails=$((fails + 1))
+else echo "ok   - cert_timeline: false: the report without the timeline and the renew list"; fi
 grep -q "s3cret" out.txt mail/*.eml 2>/dev/null && { echo "FAIL - a password in the output"; fails=$((fails + 1)); } || echo "ok   - no password anywhere in the output or the email"
 if [ "$fails" -eq 0 ]; then echo "ok   - all certificate discovery scenarios passed"; else echo "$fails FAILED"; exit 1; fi

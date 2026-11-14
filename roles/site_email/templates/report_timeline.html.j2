@@ -1,0 +1,34 @@
+{#- A section's timeline (1.64.0, the certificate reports), in the atlas and brief looks only (a web page; an email gets the
+    renew list): s.timeline = {days, label, week (a week's width, %), bands: [{status, word, from, to (%), text, count}],
+    ticks: [{at (%), text, wide}], groups: [{name, sub, marks: [{at (%), status, n, label, side (a above, b below), show
+    (n always, w a wide window only), tip}]}], none}. A mark is one certificate at its expiry date - its level is its
+    icon and its colour, a number is that many on one day; its lines show on hover, focus and tap (data-tip, the hover
+    layer of site-report.js; without the script its title). Made by the cert_timeline filter. #}
+{%- set tl = s.timeline %}
+{%- if tl.groups | default([]) %}
+<p class="hint"><span class="mouse"><b>Hover</b> a mark for the certificate, its host, issuer and who renews it; <b>Tab</b> moves from mark to mark.</span><span class="touch"><b>Tap</b> a mark for the certificate, its host, issuer and who renews it.</span> The renew list below has the same certificates.</p>
+<div class="tl-legend"><span><i class="tl-today" aria-hidden="true"></i>Today</span>
+{%- for b in tl.bands | default([]) %}<span><i class="tl-m tl-{{ b.status | e }}" aria-hidden="true">{{ icon(b.status) }}</i><b>{{ b.word | e }}</b> {{ b.text | e }}: {{ b.count | default(0) }}</span>{% endfor %}</div>
+<div class="tl" role="group" aria-label="{{ tl.label | default('Timeline') | e }}">
+<div class="tl-plot">
+<div class="tl-bg" aria-hidden="true">
+{%- for b in tl.bands | default([]) %}<i class="tl-band tl-{{ b.status | e }}" style="left:{{ b.from }}%;width:{{ (b.to - b.from) | round(2) }}%"></i>{% endfor %}
+{%- for t in tl.ticks | default([]) %}{% if t.at > 0 %}<i class="tl-wk{{ ' w' if t.wide | default(false) else '' }}" style="left:{{ t.at }}%"></i>{% endif %}{% endfor %}
+<i class="tl-now"></i></div>
+{%- for g in tl.groups %}
+<div class="tl-row"><div class="tl-name"><b>{{ g.name | e }}</b><small>{{ g.sub | default('') | e }}</small></div>
+<div class="tl-track" role="list" aria-label="{{ g.name | e }}">
+{%- for m in g.marks | default([]) %}
+{%- set st = m.status if m.status in ['critical', 'warning', 'low', 'ok'] else 'ok' %}
+{%- set w = ((m.label | length) * 6.8) | round(0, 'ceil') | int %}
+<i class="tl-m tl-{{ st }}{{ ' n' if m.n | default(1) > 1 else '' }}" role="listitem" style="left:{{ m.at }}%" data-tip="{{ m.tip | e }}" title="{{ m.tip | e }}" aria-label="{{ chipword[st] }}: {{ m.tip | replace('\n', ', ') | e }}">{% if m.n | default(1) > 1 %}{{ m.n }}{% else %}{{ icon(st) }}{% endif %}</i>
+{%- if m.show | default('') %}<span class="tl-l {{ 'a' if m.side == 'a' else 'b' }}{{ ' w' if m.show == 'w' else '' }}" aria-hidden="true" style="left:clamp(0px,calc({{ m.at }}% - {{ (w / 2) | int }}px),calc(100% - {{ w }}px));width:{{ w }}px">{{ m.label | e }}</span>{% endif %}
+{%- endfor %}
+</div></div>
+{%- endfor %}
+</div>
+<div class="tl-axis" aria-hidden="true">{% for t in tl.ticks | default([]) %}<span class="{{ 'w' if t.wide | default(false) else '' }}" style="left:{{ t.at }}%">{{ t.text | e }}</span>{% endfor %}</div>
+</div>
+{%- elif tl.none | default('') %}
+<p>{{ tl.none | e }}</p>
+{%- endif %}

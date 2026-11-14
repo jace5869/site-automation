@@ -87,6 +87,10 @@ Since 0.53.0:
   - **Contrast:** every text colour is at least 4.5:1 against what it is on, in light and in dark (most over 7:1).
 - **Squares** (1.61.0, patch age): one square per host in one blue, the darker the more days, with a legend; hover a
   square for its host and value. The tables below have the same numbers.
+- **The certificate timeline** (1.64.0, the certificate reports): the next `cert_timeline_days` (120) on one axis, a row
+  per system, a mark at each expiry date with its level's icon, the bands Critical / Warning / Low / OK named above the
+  axis. Hover a mark, or Tab to it, for the certificate. The list below it has every name. The other looks show the
+  list without the timeline.
 - **Start here cards** with a **Copy** button for their command. The health check's healthy hosts each get a check
   mark, under *Every check passed* and the checks run.
 - **Copy** on every number tile (its line: *Completed: 3 (resolved or closed)*) and on every section: all of it, with

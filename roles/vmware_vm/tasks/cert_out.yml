@@ -10,11 +10,34 @@
                                      {'warn_days': (_vcert_warn_in | default(vmware_cert_warn_days)) | int, 'check_mode': ansible_check_mode,
                                       'tickets': cert_csr_tickets | default({}), 'report_only': _vcert_report_only | default(false)}) }}
 
+# 1.64.0: the timeline and the renew list, in the report job (cert_timeline: false = without)
+- name: VMware certs | the certificate timeline
+  ansible.builtin.set_fact:
+    _vcert_timeline: >-
+      {{ _vcert.certs | cert_timeline({'days': cert_timeline_days | default(120) | int, 'today': now(utc=true).strftime('%Y-%m-%d'),
+                                       'warn': (_vcert_warn_in | default(vmware_cert_warn_days)) | int, 'crit': vmware_cert_crit_days | int,
+                                       'notice': [(_vcert_warn_in | default(vmware_cert_warn_days)) | int * 2, 60] | max,
+                                       'warn_name': 'vmware_cert_warn_days', 'crit_name': 'vmware_cert_crit_days',
+                                       'what': 'vCenter and ESXi', 'renew': 'VMware - certificate renewal (a CSR)',
+                                       'renew_words': {'csr': 'VMware - certificate renewal (a CSR)',
+                                                       'vmca': 'VMware - certificate renewal (a CSR)' if vmware_cert_vmca_csr | default(false) | bool
+                                                               else 'by hand in vCenter (VMCA; VMware - certificate renewal opens the incident)'}}) }}
+  when: _vcert_report_only | default(false) | bool and cert_timeline | default(true) | bool
+
+- name: VMware certs | the next {{ cert_timeline_days | default(120) }} days
+  ansible.builtin.debug:
+    msg: "{{ _vcert_timeline.lines }}"
+  when: _vcert_timeline is defined
+
 - name: VMware certs | report
   ansible.builtin.include_tasks: report.yml
   vars:
     _vm_vcenters: "{{ _vcert_read.vcenters }}"
-    _vm_report_doc: "{{ _vcert_doc }}"
+    _vm_report_doc: "{{ _vcert_doc | cert_timeline_doc(_vcert_timeline | default({})) }}"
+    _vm_report_web_doc: "{{ _vcert_doc | cert_timeline_doc(_vcert_timeline, true) if _vcert_timeline is defined else {} }}"
+    _vm_report_xlsx: >-
+      {{ (_vcert_doc | cert_timeline_doc(_vcert_timeline) | report_xlsx_sheets) + [_vcert_timeline.sheet]
+         if _vcert_timeline is defined and report_email_xlsx | default(false) | bool else [] }}
     _vm_report_subject: "{{ _vcert_doc.title }}"
     _vm_report_lines: "{{ (_vcert_doc | report_text).splitlines() }}"
 

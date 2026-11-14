@@ -59,6 +59,45 @@ table.bd .mv.in{color:var(--critical)}table.bd .mv.out{color:var(--ok)}table.bd 
 table.bd .why{color:var(--muted);font-size:12.5px}
 table.bd .nohist{color:var(--muted);font-size:12.5px}
 .legend{color:var(--muted);font-size:12.5px;margin:10px 0 0}
+{#- 1.64.0: the timeline (a section's timeline: the certificate reports). One axis, a row per system; the bands and the
+    marks wear the look's own status tokens (critical, warning, the Low bar, ok: no new colour), a mark's level is its icon
+    too. A mark is a disc of its level's colour with a ring of the card's colour, so two close ones stay apart. Under 1000 px: a narrower name column, every
+    second date and the labels kept for a wide window (.w) left out. -#}
+.tl{--tl-name:176px;margin:6px 0 0}
+.tl-legend{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;color:var(--muted);font-size:13px;margin:0 0 12px}
+.tl-legend span{display:inline-flex;align-items:center;gap:6px}
+.tl-legend b{color:var(--ink);font-weight:650}
+.tl-legend .tl-m{position:static;transform:none;box-shadow:none;width:16px;height:16px}
+.tl-today{display:inline-block;width:2px;height:14px;border-radius:2px;background:var(--ink)}
+.tl-plot{position:relative}
+.tl-bg{position:absolute;top:0;bottom:0;left:calc(var(--tl-name) + 12px);right:18px;pointer-events:none}
+.tl-band{position:absolute;top:0;bottom:0}
+.tl-band.tl-critical{background:var(--critical-bg)}.tl-band.tl-warning{background:var(--warning-bg)}
+.tl-band.tl-low{background:var(--rwlow-bg)}.tl-band.tl-ok{background:var(--ok-bg);opacity:.55}
+.tl-wk{position:absolute;top:0;bottom:0;width:1px;background:var(--line)}
+.tl-now{position:absolute;top:-5px;bottom:-5px;left:-1px;width:2px;border-radius:2px;background:var(--ink)}
+.tl-row{position:relative;display:grid;grid-template-columns:var(--tl-name) minmax(0,1fr);align-items:center;border-top:1px solid var(--line)}
+.tl-row:first-of-type{border-top:0}
+.tl-name{min-width:0;padding-right:10px;overflow-wrap:anywhere;line-height:1.3}
+.tl-name b{display:block;font-weight:650}.tl-name small{color:var(--muted);font-size:12.5px}
+.tl-track{position:relative;height:68px;margin:0 18px 0 12px}
+.tl-track:before{content:"";position:absolute;left:0;right:0;top:50%;height:1px;background:var(--edge)}
+.tl-m{position:absolute;top:50%;transform:translate(-50%,-50%);display:grid;place-items:center;width:20px;height:20px;border-radius:50%;
+  color:var(--card-solid);box-shadow:0 0 0 2px var(--card-solid);font-style:normal;line-height:1}
+.tl-m .ic{width:16px;height:16px}
+.tl-m.tl-critical{background:var(--critical)}.tl-m.tl-warning{background:var(--warning)}.tl-m.tl-low{background:var(--rwlow-bar)}.tl-m.tl-ok{background:var(--ok)}
+.tl-m.n{width:auto;min-width:22px;height:22px;padding:0 6px;border-radius:999px;font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums}
+.tl-track .tl-m:hover,.tl-track .tl-m:focus{z-index:2}
+.tl-track .tl-m.tl-critical{z-index:1}
+.tl-l{position:absolute;font-size:12px;line-height:15px;color:var(--ink);white-space:nowrap;text-align:center;overflow:hidden;pointer-events:none}
+.tl-l.a{bottom:calc(50% + 13px)}.tl-l.b{top:calc(50% + 13px)}
+.tl-axis{position:relative;height:24px;margin:0 18px 0 calc(var(--tl-name) + 12px);border-top:1px solid var(--edge)}
+.tl-axis span{position:absolute;top:6px;transform:translateX(-50%);font-size:12px;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+.tl-axis span:first-child{transform:none;color:var(--ink);font-weight:650}
+@media (max-width:1000px){
+  .tl{--tl-name:118px}
+  .tl-l.w,.tl-axis .w,.tl-wk.w{display:none}
+}
 {#- a narrower window (800 px): the lines and bars a little shorter, so the board fits its card -#}
 @media (max-width:900px){
   table.bd .cell{width:128px}
@@ -84,5 +123,8 @@ table.bd tr.r-critical td:first-child{box-shadow:inset 2px 0 0 var(--critical)}
 table.bd tr.r-warning td:first-child{box-shadow:inset 2px 0 0 var(--warning)}
 table.bd tr.r-low td:first-child{box-shadow:inset 2px 0 0 var(--rwlow-bar)}
 @media (max-width:900px){table.bd th,table.bd td{padding-left:8px;padding-right:8px}}
+.tl-name b{font-family:var(--display);font-size:16px;letter-spacing:-.01em}
+.tl-track{height:72px}
+.tl-axis span{font-size:11.5px;letter-spacing:.02em}
 {%- endif %}
 @media print{.tt,.hint{display:none !important}}

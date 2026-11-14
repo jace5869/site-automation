@@ -51,6 +51,17 @@ bigger sweep - a `/16` by mistake would take hours. Try the group first; sweep t
 devices - to try the renewal on one. `net_cert_unanswered_finding: true` opens an incident for an inventory
 device whose port gives no certificate (off: listed under *No certificate read*).
 
+**The expiry timeline** (1.64.0, the report template): the next `cert_timeline_days` (120) on one axis on the report
+website (atlas and brief looks), with the bands from the three settings above. `cert_timeline: false` leaves it out.
+
+- **Rows**: each device's first inventory group, or `cert_timeline_groups` in order. A swept address that is in no
+  inventory group goes under *Network devices*.
+- **The email**: three boxes and the table *Certificates to renew, soonest first*. The workbook
+  (`report_email_xlsx: true`) gets a *Timeline* sheet.
+- **Renewed by**: *Network device certificate renewal (a CSR on the device)* for a Cisco device with
+  `net_cert_cisco_csr`, else *by hand on the device*.
+- How to read it: [RUNBOOKS.md](RUNBOOKS.md#certificate-report-playbookscert_reportyml).
+
 Old devices speak old TLS (1.0, weak ciphers): the jobs accept it - only the certificate is read, nothing is
 sent. An expired, self-signed or untrusted certificate is read like any other.
 

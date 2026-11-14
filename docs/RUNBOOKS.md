@@ -688,6 +688,43 @@ is coloured: **red** = expired, **amber** = expires within `check_certs_warn_day
 within `check_certs_notice_days` (60), the rest plain with a green "ok". Windows:
 `win_check_certs_warn_days` / `win_check_certs_notice_days`.
 
+**The expiry timeline** (1.64.0): the report adds what expires next, above its tables. It changes no finding and does
+not fail the job. `cert_timeline: false` leaves it out.
+
+| Where | What you get |
+|---|---|
+| The website (atlas and brief looks) | the next `cert_timeline_days` (120) on one axis, a row per system, a mark at each expiry date, today on the left |
+| The email, and the other looks | three boxes and the table *Certificates to renew, soonest first* |
+| The workbook (`report_email_xlsx: true`) | a *Timeline* sheet: every certificate that expires within `cert_timeline_days` |
+| The job output | one line with the numbers and the three soonest, then a line per system |
+
+How to read the timeline:
+
+- **A mark** is one certificate at its expiry date. A number in a mark: that many on the same day. An expired
+  certificate sits at today.
+- **The bands** behind the marks are the report's own days. Each band has its word and its days above the axis.
+
+  | Band | Linux | Windows |
+  |---|---|---|
+  | Critical | `check_certs_crit_days` (14) or less, or expired | `win_check_certs_crit_days` (7) |
+  | Warning | up to `check_certs_warn_days` (30) | `win_check_certs_warn_days` (30) |
+  | Low | up to `check_certs_notice_days` (60) | `win_check_certs_notice_days` (60) |
+  | OK | later | later |
+
+- **Status is never colour alone.** Each mark carries its level's icon (or its number), each row its worst level as a
+  word, each band its word.
+- **Hover a mark**, or Tab to it: the certificate, the host, the issuer, the expiry date and who renews it. A mark of
+  many names the first six.
+- **Names beside the marks**: only where they fit without touching. Every name is in the list below the timeline.
+- **A row per system**: `cert_timeline_groups` lists inventory groups in order (`[SITEA-linux-web, SITEA-linux-db]`); a
+  host goes in the first one it is in, else *Other*. Empty (the default): each host's first inventory group. Over 8
+  rows, the ones that expire last share *Other*.
+
+*Certificates to renew, soonest first* lists what is Critical, Warning or Low: level, certificate, system, host, expiry
+date, days left and **Renewed by** (the template *Certificate renewal - CSRs*; Windows: *Windows certificate renewal -
+CSRs*). Left out, as they are not renewed on the host: trust store certificates. A certificate whose date could not be
+read stays in the report's own table.
+
 **Found by itself** (the report only; `cert_report_discover: false` turns it off):
 
 - **TLS ports:** every listening TCP port is asked once for its certificate, on the address it listens

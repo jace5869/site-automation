@@ -1732,6 +1732,9 @@ File: `roles/site_findings/defaults/main.yml`
 | `patch_age_oldest` | `10` | the oldest hosts listed |
 | `patch_age_history` | `true` | "% on time" over 12 weeks from this template's earlier runs (AAP job history; report_history's credential) |
 | `patch_age_history_runs` | `50` | how many earlier runs to read (at most 50) |
+| `cert_timeline` | `true` | ---- Certificate timeline (1.64.0): a section of the certificate reports ------------------------ Linux, Windows, network devices, vCenter: the next cert_timeline_days on one axis on the report website (the atlas and brief looks), the renew list in the email, a Timeline sheet in the workbook. The levels are each repor… (all of it: the role file) |
+| `cert_timeline_days` | `120` | how far ahead the timeline and its sheet look (14 or more) |
+| `cert_timeline_groups` | `[]` | inventory groups, in order, a row each: a host goes in the first one it is in, else Other; [] = its first group |
 
 ## stigman_ckl_import
 

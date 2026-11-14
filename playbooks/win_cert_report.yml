@@ -85,3 +85,14 @@
       ansible.builtin.include_role:
         name: site_findings
         tasks_from: report.yml
+      vars:
+        # 1.64.0: the timeline and the renew list, with this report's own days (cert_timeline: false = without)
+        site_cert_timeline:
+          warn: "{{ win_check_certs_warn_days | default(30) | int }}"
+          crit: "{{ win_check_certs_crit_days | default(7) | int }}"
+          notice: "{{ win_check_certs_notice_days | default(60) | int }}"
+          warn_name: win_check_certs_warn_days
+          crit_name: win_check_certs_crit_days
+          notice_name: win_check_certs_notice_days
+          renew: "Windows certificate renewal - CSRs"
+          what: Windows
