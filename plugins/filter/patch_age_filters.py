@@ -170,7 +170,7 @@ def _trend(first, now_pct):
 
 def patch_age_sections(hosts, opts=None, runs=None):
     """The section(s) of a report: {sections (email), web_sections (the squares first), boxes, status, artifact, sheet,
-    lines (job output), counts}. opts: due_days, what (e.g. 'Linux'), setting (the late setting's name), now (epoch,
+    group_sheet (the workbook's by-group table with its trend line), lines (job output), counts}. opts: due_days, what (e.g. 'Linux'), setting (the late setting's name), now (epoch,
     for tests), oldest (10)."""
     o = dict({"due_days": 7, "what": "", "setting": "check_patching_max_age_days", "now": None, "oldest": 10}, **(opts or {}))
     o["setting"] = o["setting"] or "check_patching_max_age_days"
@@ -215,7 +215,7 @@ def patch_age_sections(hosts, opts=None, runs=None):
     unknown_col, nodata_col = tot["unknown"] > 0, tot["nodata"] > 0
     cols = ["Group", "Hosts", "On time", "Due soon", "Late"] + (["Not known yet"] if unknown_col else []) \
         + (["No data"] if nodata_col else []) + ["Oldest (days)", "%% on time, %d weeks" % WEEKS, "Status"]
-    rows, rs, cs, art, sparks = [], [], [], {}, []
+    rows, rs, cs, art, sparks, series = [], [], [], {}, [], []
     for g, mine, n in groups:
         with_data = len(mine) - n["nodata"]
         pct = _pct(n["ontime"], with_data)
@@ -229,7 +229,8 @@ def patch_age_sections(hosts, opts=None, runs=None):
             + [("at least %d" % oldest if any(h["at_least"] and h["days"] == oldest for h in known) else oldest) if oldest is not None else "-",
                _trend(_first_pct(g, runs, now), pct), word]
         rows.append(row)
-        sparks.append(spark(_series(g, runs, now, pct), now, g))
+        series.append(_series(g, runs, now, pct))
+        sparks.append(spark(series[-1], now, g))
         rs.append(st if st in ("critical", "warning", "low") else "")
         cs.append([""] * (len(row) - 1) + [st])
     worst = min([LEVEL[h["st"]] for h in hs if LEVEL[h["st"]] in ("critical", "warning", "low")] or ["ok"],
@@ -314,8 +315,12 @@ def patch_age_sections(hosts, opts=None, runs=None):
                          kinds=[""] * at + ["spark", ""], sparks=sparks,
                          rows=[r[:at] + [sp.get("label", "")] + r[at:] for r, sp in zip(rows, sparks)],
                          cell_status=[c[:at] + [""] + c[at:] for c in cs])
+    # 1.62.0: the workbook's by-group sheet - the table, then its % on time over the 12 weeks as Excel's own line (2 runs or more)
+    group_sheet = {"name": by_group["title"], "columns": cols, "rows": rows,
+                   "sparklines": [{"column": "Trend", "points": [[v for t, v in x] if len(x) > 1 else [] for x in series]}]}
     return {"sections": [by_group, old], "web_sections": [squares, web_group, old], "boxes": boxes, "status": worst,
-            "artifact": dict(counts, groups=art, late_after=late), "sheet": sheet, "lines": out_lines, "counts": counts}
+            "artifact": dict(counts, groups=art, late_after=late), "sheet": sheet, "group_sheet": group_sheet, "lines": out_lines,
+            "counts": counts}
 
 
 def patch_age_esxi_artifact(hosts):

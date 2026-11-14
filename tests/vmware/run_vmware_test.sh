@@ -756,9 +756,32 @@ run "ACT analysis without an API key: says which credential, still emails the pr
 
 # ---- capacity planning (vcsim's statistics are generated: the checks are about the report, not its numbers) ----
 run "capacity planning: overall and per cluster, the disconnected host not counted, emailed" ok vm_capacity_report.yml -e "$mail" \
+    -e report_email_xlsx=true \
     -- "vSphere capacity planning: " "Overall" "Clusters: CPU and memory" "Clusters: storage" "Datastores: runway" "Hosts per cluster" \
        "DISCONNECTED" "2 of 3" "Memory after host failure" "LocalDS_0" '"vm_capacity"' "emailed"
 eml="$(lastmail)"
+# 1.62.0: the workbook's runway sheets with the board's lines as Excel sparklines, each from its own row's points
+"$py" - "$eml" <<'EOPY' && echo "ok   -   ...the workbook: the runway sheets with their trend columns, each line from its own row" \
+    || { echo "FAIL -   ...the capacity workbook's trend lines"; fails=$((fails + 1)); }
+import email, email.policy, io, re, sys, zipfile
+m = email.message_from_binary_file(open(sys.argv[1], "rb"), policy=email.policy.default)
+x = [p for p in m.iter_attachments() if (p.get_filename() or "").endswith(".xlsx")]
+z = zipfile.ZipFile(io.BytesIO(x[0].get_content()))
+names = re.findall(r'<sheet name="([^"]+)"', z.read("xl/workbook.xml").decode())
+sheet = lambda n: z.read("xl/worksheets/sheet%d.xml" % (names.index(n) + 1)).decode()   # noqa: E731
+heads = {"Runway- the first limit per clu": ["CPU trend", "Memory trend", "Storage trend"], "Runway- datastores": ["Trend"],
+         "The numbers behind the lines": ["Trend"]}
+n = 0
+for name, want in heads.items():
+    s = sheet(name)
+    for h in want:
+        assert "<t>%s</t>" % h in s, (name, h)
+    for f, at in re.findall(r"<xm:f>[^!]+!([A-Z]+\d+:[A-Z]+\d+)</xm:f><xm:sqref>([A-Z]+\d+)</xm:sqref>", s):
+        a, b = f.split(":")
+        assert re.sub("[A-Z]", "", a) == re.sub("[A-Z]", "", b) == re.sub("[A-Z]", "", at), (name, f, at)
+        n += 1
+print("    %d trend lines in the capacity workbook" % n)
+EOPY
 subject "$eml" | grep -q "^\[AAP\] vSphere capacity planning: " && getpart html "$eml" | grep -q ">Math vs GenAI" && { echo "FAIL -   ...no GenAI section without vm_capacity_act"; fails=$((fails + 1)); } \
     || echo "ok   -   ...the email, without a GenAI section unless asked"
 "$py" - "$work/act/act.json" <<'EOPY'

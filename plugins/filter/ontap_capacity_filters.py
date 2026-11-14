@@ -305,6 +305,19 @@ def volume_story(points, opts=None):
 
 
 # ---- the sparkline and the numbers behind it ---------------------------------------------------------------
+def thin(values, since, now):
+    """[(t, y)] -> at most SPARK_MAX of them: the last point of each of SPARK_MAX equal spans (the line on the page and in
+    the workbook)."""
+    vals = list(values or [])
+    if len(vals) > SPARK_MAX:
+        span = (now - since) / SPARK_MAX or 1.0
+        keep = {}
+        for t, y in vals:
+            keep[min(SPARK_MAX - 1, int((t - since) / span))] = (t, y)
+        vals = [keep[k] for k in sorted(keep)]
+    return vals
+
+
 def spark(values, since, now, lines, change_t=None, what=""):
     """[(t, y)] -> the sparkline's geometry (the atlas and brief looks draw it as an inline SVG): {w, h, points ('x,y
     x,y'), last [x, y], lines [y of each dashed level], mark (x of the change, or None), label (the values in words, for
@@ -313,13 +326,7 @@ def spark(values, since, now, lines, change_t=None, what=""):
     levels to the highest, so the line is read against the levels."""
     if not values:
         return {}
-    vals = values
-    if len(vals) > SPARK_MAX:                                    # the last point of each of SPARK_MAX equal spans
-        span = (now - since) / SPARK_MAX or 1.0
-        keep = {}
-        for t, y in vals:
-            keep[min(SPARK_MAX - 1, int((t - since) / span))] = (t, y)
-        vals = [keep[k] for k in sorted(keep)]
+    vals = thin(values, since, now)
     ys = [v[1] for v in vals] + list(lines)
     lo, hi = min(ys), max(ys)
     if hi - lo < 1e-9:
@@ -344,6 +351,17 @@ def spark(values, since, now, lines, change_t=None, what=""):
     return {"w": SPARK_W, "h": SPARK_H, "points": " ".join("%s,%s" % q for q in pts), "last": list(pts[-1]),
             "lines": [y(v) for v in lines], "mark": x(change_t) if change_t is not None else None, "label": label,
             "name": what or "Trend", "data_points": data}
+
+
+def xlsx_points(sp):
+    """A line's points as numbers, for the workbook's sparkline (1.62.0): its data_points' values ('71.4%' -> 71.4)."""
+    out = []
+    for d in (sp or {}).get("data_points") or []:
+        try:
+            out.append(float(str(d.get("text", "")).rstrip("%")))
+        except ValueError:
+            out.append(None)
+    return out
 
 
 def weeks(values, since, now):
@@ -720,9 +738,15 @@ def ontap_capacity(collected, point, runs, opts=None):
                   for v in sorted(vols, key=lambda v: (v["c"]["_name"], v["svm"], v["name"]))]},
         {"name": "Points", "columns": ["Read (UTC)", "Cluster", "What", "Name", "SVM", "Size bytes", "Used bytes", "Used %"],
          "rows": sorted(points_rows, key=lambda r: (r[2], r[1], r[3], r[0]))}]
+    # every volume's used % over the runs (the line's points: at most SPARK_MAX)
+    xlsx[0]["sparklines"] = [{"column": "Trend", "points": [[round(y, 1) for t, y in thin(v["vals"], since, now)]
+                                                           for v in sorted(vols, key=lambda v: (v["c"]["_name"], v["svm"], v["name"]))]}]
     for s in D.sections:
         if s.get("columns") and s["title"] not in ("The numbers",):
             xlsx.insert(len(xlsx) - 2, {"name": s["title"][:31], "columns": s["columns"], "rows": s["rows"]})
+            web = [w for w in D.web if w["title"] == s["title"] and w.get("sparks")]
+            if web and any(sp.get("data_points") for sp in web[0]["sparks"]):     # 1.62.0: the page's line, as Excel's own
+                xlsx[len(xlsx) - 3]["sparklines"] = [{"column": "Trend", "points": [xlsx_points(sp) for sp in web[0]["sparks"]]}]
     lines = [title] + ["%s: %s%s" % (t["label"], t["value"], " (%s)" % t["note"] if t.get("note") else "") for t in summary] + made[:2]
     return {"report": dict(base, sections=D.sections), "web": _capacity_web(base, D.web), "xlsx": xlsx, "lines": lines,
             "counts": {"clusters": len(cs), "read": len(up), "runs": len(runs), "volumes": len(vols), "aggr_warn": aggr_warn,

@@ -633,6 +633,11 @@ def capacity_numbers(data, opts=None):
     return {"now": now, "clusters": cls, "datastores": dss, "overall": overall, "multi": multi, "vcenters": vcenters_of(d)}
 
 
+def points(c):
+    """A board cell's line as the workbook's points: the used % each day ([] without a cell)."""
+    return [v for t, v in (c or {}).get("series") or []]
+
+
 def ago(series, now_ts, days):
     """The used % of a series days ago (its sample nearest that day, within 3 days), as text; '-' without one."""
     want = now_ts - days * DAY
@@ -656,7 +661,7 @@ def first_text(r):
 
 
 def board_sections(B, o, now, top):
-    """The board's sections -> (email, web, all datastores as a sheet): the email's are tables (the used % 90, 60 and 30
+    """The board's sections -> (email, web, all datastores as a sheet, the workbook's own sheets): the email's are tables (the used % 90, 60 and 30
     days ago and now in "The numbers behind the lines" instead of lines); the website's carry the board (its lines, bars
     and hover: roles/site_email/templates/report_board.html.j2) and the same numbers table."""
     now_ts = now.timestamp()
@@ -688,9 +693,10 @@ def board_sections(B, o, now, top):
     ds_text = ("Each shared datastore, the one that reaches %d%% first on top: its used %% now, its runway and how it moved since "
                "last month.%s" % (sc, (" The first %d of %d; the workbook has all (vm_capacity_top_datastores)." % (len(stores), len(B["datastores"])))
                                   if more > 0 else ""))
-    nums = []
+    nums, num_pts = [], []
     for r in B["clusters"] + B["datastores"]:
         for c in r["cells"]:
+            num_pts.append(points(c))
             nums.append([r["name"], c["res"] if r["kind"] == "cluster" else "Datastore"] + [ago(c["series"], now_ts, k) for k in (90, 60, 30)]
                         + ["-" if c["now_pct"] is None else "%.0f%%" % c["now_pct"]])
     ncols = ["Cluster or datastore", "Resource", "90 days ago", "60 days ago", "30 days ago", "Now"]
@@ -712,9 +718,16 @@ def board_sections(B, o, now, top):
         if not rs:
             w.pop("board")
             w["text"] = (w["text"] + (" No cluster." if w is web[0] else " No shared datastore.")).strip()
+    # 1.62.0: the board's lines in the workbook as Excel's own (sparklines), the used % each day; the cells as before
     sheet = {"name": email[1]["title"], "columns": ["Datastore", "Clusters", "Used now, runway", "To %d%%" % sc, "Since last month"],
-             "rows": [x[0] for x in email_rows(B["datastores"], True)]}
-    return email, web, sheet
+             "rows": [x[0] for x in email_rows(B["datastores"], True)],
+             "sparklines": [{"column": "Trend", "points": [points(r["cells"][0]) for r in B["datastores"]]}]}
+    own = [{"name": email[0]["title"], "columns": list(email[0]["columns"]), "rows": [x[0] for x in email_rows(B["clusters"], False)],
+            "sparklines": [{"column": "%s trend" % k, "points": [points(dict((x["res"], x) for x in r["cells"]).get(k)) for r in B["clusters"]]}
+                           for k in ("CPU", "Memory", "Storage")]}] if B["clusters"] else []
+    if nums:
+        own.append({"name": numbers["title"], "columns": ncols, "rows": nums, "sparklines": [{"column": "Trend", "points": num_pts}]})
+    return email, web, sheet, own
 
 
 def headline(B):
@@ -966,7 +979,7 @@ def vm_capacity_report(data, opts=None):
         sections.append({"title": "Notes", "lines": notes})
     # 1.57.0: the runway board first (results first), its four tiles before the others; ACT's estimate goes in before
     # "Hosts per cluster" (act_at), as before
-    b_email, b_web, b_sheet = board_sections(B, o, now, int(o.get("top_datastores") or 10))
+    b_email, b_web, b_sheet, b_own = board_sections(B, o, now, int(o.get("top_datastores") or 10))
     summary = board_tiles(B) + summary
     act_at = len(b_email) + 4
     web = {"title": title, "status": status, "summary": summary, "sections": b_web + sections}
@@ -979,7 +992,7 @@ def vm_capacity_report(data, opts=None):
                         "promise. Cluster runways run to %s - %d%% of what is left with %d host(s) down - not to full hosts. Read-only."
                         % (int(float(o.get("trend_days", 90))), limit_text(mt, fail), int(mt), fail)}
     web.update({k: v for k, v in report.items() if k not in web})
-    return {"report": report, "web": web, "numbers": _plain(N), "items": items, "act_at": act_at, "sheet": b_sheet}
+    return {"report": report, "web": web, "numbers": _plain(N), "items": items, "act_at": act_at, "sheet": b_sheet, "sheets": b_own}
 
 
 def vm_capacity_sheets(sheets, full):

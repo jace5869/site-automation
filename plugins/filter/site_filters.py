@@ -2348,12 +2348,18 @@ def report_page_unpack(text):
     return doc
 
 
-def report_xlsx_sheets(report):
+def report_xlsx_sheets(report, own=None):
     """A report's tables as the sheets of a workbook (report_email_xlsx; roles/site_email/library/site_xlsx.py): a sheet per
-    section with columns, named by its title; a report with no table: one sheet of its lines."""
+    section with columns, named by its title; a report with no table: one sheet of its lines. own: the report's own sheets
+    (1.62.0: a table with its trend lines, sparklines) - one named as a section's title takes its place, the others follow."""
     rep = report or {}
+    mine = [x for x in own or [] if isinstance(x, dict) and x.get("name")]
     sheets = [{"name": s.get("title") or "Table", "columns": list(s.get("columns") or []), "rows": list(s.get("rows") or [])}
               for s in rep.get("sections") or [] if isinstance(s, dict) and s.get("columns")]
+    if mine:
+        by = dict((x["name"], x) for x in mine)
+        sheets = [by.pop(x["name"], x) for x in sheets]
+        sheets += [x for x in mine if x["name"] in by]
     if sheets:
         return sheets
     return [{"name": "Report", "columns": [rep.get("title") or "Report"],

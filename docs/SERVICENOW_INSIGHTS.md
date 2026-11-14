@@ -180,7 +180,8 @@ priority, group and assignee come dot-walked in the same read (`task.number` ...
 mark a VIP ticket in the queue. The account needs read on `task_sla`, which the itil role has.
 
 The email has the tiles, the first 25 tickets without their descriptions (the email leaves the site) and the weeks. The
-workbook adds three sheets: *About to breach* (every ticket), *Breaches by day*, *Breached SLAs*.
+workbook adds three sheets: *About to breach* (every ticket), *Breaches by day*, *Breached SLAs*. *Breaches by day* has
+the 30 days as one Excel sparkline, in its first row's Trend cell (1.62.0).
 
 The page draws the last 30 days as bars, one a day, with the 7-day average as a line. Point at a day for its numbers,
 or Tab to the chart and use the arrow keys (Esc closes the tip).

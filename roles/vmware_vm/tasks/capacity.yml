@@ -88,8 +88,9 @@
     _vm_report_lines: "{{ (_vm_cap_doc | report_text).splitlines() }}"
     _vm_report_doc: "{{ _vm_cap_doc }}"
     _vm_report_web_doc: "{{ _vm_cap_web_doc }}"
-    # the workbook (report_email_xlsx): every datastore on its runway sheet, where the page has the first vm_capacity_top_datastores
-    _vm_report_xlsx: "{{ _vm_cap_doc | report_xlsx_sheets | vm_capacity_sheets(_vm_cap.sheet) if report_email_xlsx | default(false) | bool else [] }}"
+    # the workbook (report_email_xlsx): every datastore on its runway sheet, where the page has the first vm_capacity_top_datastores;
+    # the board's lines as Excel sparklines (1.62.0)
+    _vm_report_xlsx: "{{ _vm_cap_doc | report_xlsx_sheets(_vm_cap.sheets) | vm_capacity_sheets(_vm_cap.sheet) if report_email_xlsx | default(false) | bool else [] }}"
 
 - name: VMware | the numbers as job artifacts (vm_capacity)
   ansible.builtin.set_stats:

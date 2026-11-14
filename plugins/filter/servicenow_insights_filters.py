@@ -3647,7 +3647,9 @@ def breach_xlsx(bm):
                      ([vt[x["vip"]] if x.get("vip") is not None and x["vip"] < len(vt) else ""] if vt else []) for x in bm.get("queue") or []]}]
     if bm.get("points"):
         out.append({"name": "Breaches by day", "columns": ["Day", "Breached", "Resolution", "Response", "7-day average"],
-                    "rows": [[p_["date"], p_["n"], p_.get("resolution", ""), p_.get("response", ""), p_["avg7"]] for p_ in bm["points"]]})
+                    "rows": [[p_["date"], p_["n"], p_.get("resolution", ""), p_.get("response", ""), p_["avg7"]] for p_ in bm["points"]],
+                    # 1.62.0: the days' breaches as one Excel line, in the first day's row
+                    "sparklines": [{"column": "Trend", "down": "Breached"}]})
     if bm.get("breached"):
         out.append({"name": "Breached SLAs", "columns": ["Breached at", "Ticket", "Priority", "Group", "Assigned to", "SLA", "Kind"],
                     "rows": [[x["at"], x.get("number"), x.get("priority"), x.get("group"), x.get("assignee"), x.get("sla"), x.get("kind")]

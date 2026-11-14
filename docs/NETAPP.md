@@ -245,11 +245,12 @@ from the volume itself. A cluster that could not be read is red; the others are 
 **Left out:** an SVM's root volume, and volumes smaller than `ontap_volume_min_gb` (50 GB). Root aggregates are not
 returned by ONTAP's REST API.
 
-The workbook (`netapp-ontap-capacity-trends_2026-11-13.xlsx`) has a sheet per table, plus:
+The workbook (`netapp-ontap-capacity-trends_2026-11-13.xlsx`) has a sheet per table, each table with a line on the page
+also with its Trend line (an Excel sparkline, 1.62.0), plus:
 
 | Sheet | What |
 |---|---|
-| Volumes | every volume: size, used, used %, runs, growth GB/day, days to full, why, what changed, the earlier peak |
+| Volumes | every volume: size, used, used %, runs, growth GB/day, days to full, why, what changed, the earlier peak, a Trend line of its used % |
 | Points | every point behind the tables: when it was read, what, name, size bytes, used bytes, used % |
 
 ### Where the earlier points come from

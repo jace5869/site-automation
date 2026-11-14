@@ -386,7 +386,8 @@ The title is the answer: `STIG compliance: 4 CAT I open; 4 findings closed this 
   STIG recheck (workflow 37) writes it.
 - The email is the short form: the tiles, the collections, the top rules, the link to the page. No trend lines.
 - The workbook is always attached. Its sheets: *By collection*, *Rules across hosts*, *Open rules by collection*,
-  *Since last week*, *Fixed on host, still open*, *Open per week*.
+  *Since last week*, *Fixed on host, still open*, *Open per week*. *By collection* has the page's trend line as an Excel
+  sparkline: all open findings a week, a gap for a week without a run (1.62.0).
 
 ### Where last week's numbers come from
 

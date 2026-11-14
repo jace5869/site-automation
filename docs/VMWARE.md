@@ -488,7 +488,8 @@ artifact, read from AAP with the strip of past runs' credential) and each host's
 
 "At least N days" is **late** when N is over the limit. Under the limit it is **Not known yet** (Low), never on time:
 the date is known once the build changes, or after 35 days of history. A reboot without a new build changes nothing.
-`patch_age_esxi: false` leaves the section out.
+`patch_age_esxi: false` leaves the section out. The workbook has *Patch age by group* with its Trend line (1.62.0) and
+*Patch age*, every host.
 
 Set it up: a template *VMware - version report*, playbook `playbooks/vmware_version_report.yml`, the VMware vCenter
 credential (read-only is enough), the execution environment of your other VMware jobs, no Limit, no survey;
@@ -1299,7 +1300,7 @@ than last month`). Four tiles come first: **First to fill**, **Moved closer**, *
 |---|---|
 | **Runway: the first limit per cluster** | per cluster: its first limit (CPU, memory or storage, in months and around which month), how it moved since last month, and each resource's used % now with its runway; on the website a line of the used % each day for 90 days above a runway bar |
 | **Runway: datastores** | the same for each shared datastore, the one that reaches 90 % first on top: the first `vm_capacity_top_datastores` (10) on the page, every one in the workbook |
-| **The numbers behind the lines** | the used % 90, 60 and 30 days ago and now, per cluster and resource and per datastore |
+| **The numbers behind the lines** | the used % 90, 60 and 30 days ago and now, per cluster and resource and per datastore; in the workbook the lines too, as Excel sparklines (CPU, memory and storage trend per cluster, a trend per datastore and per row here; 1.62.0) |
 | **Overall** | all clusters together: CPU and memory capacity, used, used with a host down in each cluster, growth per month and the days until the target - written `to 80% N-1`: 80 % of what is left with a host down, not full hosts; hosts usable and **hosts recommended** (now, and within 12 months); vCPUs per core and room for more VMs; shared storage with its growth and runway |
 | **Clusters: CPU and memory** | per cluster: hosts usable, CPU and memory used, **memory used if the biggest host fails** (N-1: the cluster must still run everything), vCPUs per core, VMs and their average size, memory growth, **memory runway** (days and date until memory reaches `80% N-1`, the target with a host down - not until the hosts are full), **room for more VMs** of the average size (and what limits it), **hosts recommended**, VMs added / removed in the last 30 days |
 | **Clusters: storage** | per cluster, its shared datastores together: capacity, free, used, provisioned (thin disks at full size), growth, days until 85 % and until full |

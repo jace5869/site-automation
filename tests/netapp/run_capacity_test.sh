@@ -108,8 +108,17 @@ for sheet in ("Clusters", "Aggregates", "Volumes filling again", "Fastest growin
 cells = " ".join(z.read(n).decode() for n in z.namelist() if n.startswith("xl/"))
 for text in ("resized 4.0 TB to 4.4 TB", "vol_new", "vol_archive", "used space dropped 13%"):
     assert text in cells, text
+# 1.62.0: the page's lines as Excel sparklines, each from its row's points in hidden columns
+import re
+names = re.findall(r'<sheet name="([^"]+)"', book)
+def lines(sheet):
+    return re.findall(r"<xm:f>([^<]+)</xm:f><xm:sqref>([^<]+)</xm:sqref>", z.read("xl/worksheets/sheet%d.xml" % (names.index(sheet) + 1)).decode())
+for sheet in ("Clusters", "Aggregates", "Volumes filling again", "Fastest growing volumes", "Volumes"):
+    assert lines(sheet), sheet
+    assert 'hidden="1"' in z.read("xl/worksheets/sheet%d.xml" % (names.index(sheet) + 1)).decode(), sheet
+assert not lines("Points")
 PY
-then ok "  ...the email: the tables without trend lines, the link; the workbook with every volume and the points"
+then ok "  ...the email: the tables without trend lines, the link; the workbook with every volume and the points, its trend lines (sparklines)"
 else bad "  ...the email and its workbook"; fi
 page="$(grep -rl --include=*.html "NetApp ONTAP capacity trends" "$work/site" 2>/dev/null | grep "job-5000" | head -1)"
 n="$(grep -o '<svg class="spark"' "${page:-/dev/null}" | wc -l)"

@@ -296,6 +296,7 @@ def stig_scorecard(read, point, runs, opts=None):
 
     # ---- by collection
     rows, web_rows, rst, cst, sparks, tips, numbers, deltas, sheet_delta = [], [], [], [], [], [], [], [], []
+    week_open = []                                   # the workbook's line per row: open findings each week, None a week without a run
     tot = {"cat1": 0, "cat2": 0, "cat3": 0, "assets": 0, "closed": 0, "opened": 0}
     for c in good:
         p = by_id.get(str(c.get("id"))) or {}
@@ -327,6 +328,7 @@ def stig_scorecard(read, point, runs, opts=None):
         sp = spark(series, heads, c["name"]) if trend else {}
         at = dict((s[0], s[1]) for s in series)
         numbers.append([c["name"]] + [at.get(i, "-") for i in range(len(wk))])
+        week_open.append([at.get(i) for i in range(len(wk))] if trend else [])
         worse = bool(ch and ch["opened"] > ch["closed"])
         over2 = bool(cat2_warn and _n(c.get("cat2")) >= cat2_warn)
         st = "critical" if _n(c.get("cat1")) else ("warning" if worse or over2 else "")
@@ -350,6 +352,7 @@ def stig_scorecard(read, point, runs, opts=None):
         rst.append("warning")
         cst.append([""] * 8)
         sparks.append({})
+        week_open.append([])
         tips.append([""] * 7 + [str(c.get("error") or "")])
     missing = [str(m) for m in read.get("missing") or []]
     open_col = "Open, %d weeks" % len(wk) if trend else "Open"
@@ -540,7 +543,9 @@ def stig_scorecard(read, point, runs, opts=None):
 
     xlsx = [{"name": "By collection", "columns": columns[:6] + ["Open now", "Status"],
              "rows": [r[:5] + [r[5].replace("\n", ": ") if isinstance(r[5], str) else r[5]] +
-                      [(r[2] + r[3] + r[4]) if isinstance(r[2], int) else "-", r[7]] for r in rows]},
+                      [(r[2] + r[3] + r[4]) if isinstance(r[2], int) else "-", r[7]] for r in rows],
+             # 1.62.0: the page's line as Excel's own - all open findings a week (CAT I is mostly 0: a flat line says little)
+             "sparklines": [{"column": "Trend", "points": week_open}]},
             {"name": "Rules across hosts", "columns": ["Rule", "STIG ID", "Category", "What it checks", "Hosts open", "Where"],
              "rows": [[a["sv"], a["version"], CAT_WORD[a["cat"]], a["title"], a["hosts"],
                        ", ".join("%s (%d)" % w for w in sorted(a["where"], key=lambda w: (-w[1], w[0].lower())))] for a in ranked]},

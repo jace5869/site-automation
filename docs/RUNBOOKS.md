@@ -301,7 +301,8 @@ by host group. It changes no finding and does not fail the job.
 
 - **The email**: three boxes (*Patching late*, *Patching due soon*, *Oldest update*), the table *Patch age by group*
   (hosts, on time, due soon, late, the oldest, "% on time" over 12 weeks) and the 10 oldest hosts. The workbook
-  (`report_email_xlsx: true`) has a sheet with every host.
+  (`report_email_xlsx: true`) has a sheet with every host, and *Patch age by group* with a Trend line of its "% on
+  time", one point a run (an Excel sparkline, 1.62.0).
 - **The website** (atlas and brief looks): the same, plus one square per host, the darker the older. Hover a square for
   its host and days.
 - **Groups**: `patch_age_groups` lists inventory groups in order (`[SITEA-linux-web, SITEA-linux-db]`); a host goes in

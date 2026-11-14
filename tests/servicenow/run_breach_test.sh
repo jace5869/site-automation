@@ -109,7 +109,7 @@ if [ "$mails" = 1 ] && grep -q '^To: shift@example.mil' "$work"/mail/*.eml && ! 
     && grep -q 'about-to-breach.*\.xlsx' "$work"/mail/*.eml && ! grep -q 'VPN drops every' "$work"/mail/*.eml; then
     echo "ok   -   ... one email to servicenow_breach_email_to only, the workbook attached, no description in it"
 else echo "FAIL - the breach email ($mails)"; fails=$((fails + 1)); fi
-"$py" - "$work/mail" <<'PYX' && echo "ok   -   ... the workbook: every ticket, every day, every breached SLA" || { echo "FAIL - the workbook"; fails=$((fails + 1)); }
+"$py" - "$work/mail" <<'PYX' && echo "ok   -   ... the workbook: every ticket, every day, every breached SLA, the days' trend line" || { echo "FAIL - the workbook"; fails=$((fails + 1)); }
 import email, glob, io, sys, zipfile, re
 msg = email.message_from_binary_file(open(glob.glob(sys.argv[1] + "/*.eml")[0], "rb"))
 x = [p for p in msg.walk() if (p.get_filename() or "").endswith(".xlsx")][0]
@@ -121,6 +121,10 @@ shared = z.read("xl/sharedStrings.xml").decode() if "xl/sharedStrings.xml" in z.
 for t in ("XINC0041872", "XINC0041977", "VPN drops every 20 minutes"):
     assert t in shared, t
 assert "XINC0040998" not in shared and "XINC0040999" not in shared
+# 1.62.0: Breaches by day's 30 days as one Excel sparkline, in the first day's Trend cell
+day = z.read("xl/worksheets/sheet2.xml").decode()
+rows = len(re.findall(r"<row ", day)) - 1
+assert re.findall(r"<xm:f>([^<]+)</xm:f><xm:sqref>([^<]+)</xm:sqref>", day) == [("'Breaches by day'!B2:B%d" % (rows + 1), "F2")], day[-600:]
 PYX
 rm -f "$work"/mail/*.eml
 

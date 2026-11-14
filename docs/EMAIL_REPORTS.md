@@ -279,6 +279,15 @@ own workbook whatever the setting says - *VM - inventory report*: every VM on on
 workbook is made with Python's standard library: nothing to add to the execution environment. The website gets no
 workbook; a dry run (Check) makes none.
 
+**Trend lines (1.62.0).** A table with a history gets a *Trend* column: Excel's own sparkline, one small line per row,
+the last point marked. The numbers stay in their own cells, so sort, filter and copy work as before. A row with one
+point has no line yet.
+
+- Where: NetApp ONTAP capacity trends, VMware capacity, the STIG scorecard, About to breach, patch age.
+- A line's points sit in hidden columns right of the table: unhide them to see the numbers. *About to breach* draws
+  its one line from the *Breached* column.
+- It needs Excel 2010 or later, or LibreOffice. No images, no macros.
+
 ## The classification banner
 
 In a classified enclave every report carries its banner - at the top and bottom of every look and of the plain text,
