@@ -67,6 +67,23 @@ def view(repl=None, runs=None, **o):
     return rf.ad_repl_view(repl or forest(), runs or [], o)
 
 
+def big(n_sites, per_site):
+    """A made-up forest of n_sites sites of per_site DCs: two sites with long names (24 characters), DC names of 13 (a
+    NetBIOS name has 15 at most); each DC replicates from the next two (a ring), most on time, one pair never, one
+    failing, ages up to 400 days."""
+    sites = ["SITEA-HEADQUARTERS-MAIN%d" % (i + 1) if i < 2 else "SITE%02d" % (i + 1) for i in range(n_sites)]
+    dcs = [{"name": "HQSITE%02d-DC%02d" % (i + 1, j + 1), "site": s, "read": True, "why": ""}
+           for i, s in enumerate(sites) for j in range(per_site)]
+    links = []
+    for i, a in enumerate(dcs):
+        for k in (1, 2):
+            b = dcs[(i + k) % len(dcs)]
+            m = [4, 52, 3 * 60, 26 * 60, 3 * 24 * 60, 400 * 24 * 60][(i + k) % 6] if i % 7 else 30
+            links.append(link(a["name"], b["name"], None if i == 4 and k == 1 else m,
+                              *((5, "1722") if i == 2 and k == 2 else ())))
+    return {"dcs": dcs, "links": links, "now": NOW, "tombstone_days": 180}
+
+
 def cell(mx, frm, to):
     row = next(r for r in mx["rows"] if r["name"] == frm)
     return row["cells"][[c["name"] for c in mx["cols"]].index(to)]
@@ -89,6 +106,12 @@ class Bands(unittest.TestCase):
     def test_age_short(self):
         self.assertEqual([rf.age_short(h) for h in (0.05, 0.9, 4.2, 47.9, 50, None)], ["3 m", "54 m", "4 h", "47 h", "2 d", "never"])
 
+    def test_age_cell(self):
+        """A cell's age: 4 characters at most (never: —, the legend says what)."""
+        got = [rf.age_cell(h) for h in (0.05, 0.9, 4.2, 47.9, 50, 364.9 * 24, 800 * 24, None)]
+        self.assertEqual(got, ["3m", "54m", "4h", "47h", "2d", "364d", "2y", "—"])
+        self.assertTrue(all(len(x) <= 4 for x in got))
+
 
 class Matrix(unittest.TestCase):
     def test_counts_and_status(self):
@@ -106,10 +129,12 @@ class Matrix(unittest.TestCase):
                          [("DC01", True, 3), ("DC02", False, 3), ("DC03", False, 3), ("DC04", True, 2)])
         self.assertEqual(cell(mx, "DC01", "DC01")["st"], "self")
         self.assertEqual(cell(mx, "DC01", "DC05")["st"], "none")
-        self.assertEqual((cell(mx, "DC03", "DC06")["st"], cell(mx, "DC03", "DC06")["text"]), ("critical", "2 d"))
-        self.assertEqual((cell(mx, "DC06", "DC04")["st"], cell(mx, "DC06", "DC04")["text"]), ("warning", "10 h"))
-        self.assertEqual((cell(mx, "DC04", "DC06")["st"], cell(mx, "DC04", "DC06")["text"]), ("low", "4 h"))
-        self.assertEqual((cell(mx, "DC01", "DC02")["st"], cell(mx, "DC01", "DC02")["text"]), ("ok", "30 m"))   # its worst partition
+        self.assertEqual((cell(mx, "DC03", "DC06")["st"], cell(mx, "DC03", "DC06")["text"]), ("critical", "2d"))
+        self.assertEqual(cell(mx, "DC03", "DC06")["say"], "2 days ago")
+        self.assertEqual((cell(mx, "DC06", "DC04")["st"], cell(mx, "DC06", "DC04")["text"]), ("warning", "10h"))
+        self.assertEqual((cell(mx, "DC04", "DC06")["st"], cell(mx, "DC04", "DC06")["text"]), ("low", "4h"))
+        self.assertEqual((cell(mx, "DC01", "DC02")["st"], cell(mx, "DC01", "DC02")["text"]), ("ok", "30m"))   # its worst partition
+        self.assertEqual((mx["dense"], mx["never"]), (False, False))
         self.assertEqual([x["st"] for x in mx["legend"]], ["ok", "low", "warning", "critical", "unknown"])
 
     def test_the_hover(self):
@@ -139,11 +164,34 @@ class Matrix(unittest.TestCase):
         mx = v["web_sections"][0]["matrix"]
         self.assertEqual(mx["mode"], "site")
         self.assertEqual([c["name"] for c in mx["cols"]], ["SITEA (3)", "SITEB (2)", "SPLIT (1)"])
+        self.assertEqual([(c["key"], r["key"]) for c, r in zip(mx["cols"], mx["rows"])], [("1", "1"), ("2", "2"), ("3", "3")])
         a_split = mx["rows"][0]["cells"][2]
-        self.assertEqual((a_split["st"], a_split["text"]), ("critical", "2 d"))
+        self.assertEqual((a_split["st"], a_split["text"]), ("critical", "2d"))
         self.assertTrue(a_split["tip"].startswith("SITEA → SPLIT: 1 link(s), 1 late\nWorst: DC03 (SITEA) → DC06 (SPLIT)"))
         self.assertEqual(mx["rows"][2]["cells"][2]["st"], "none")       # SPLIT has one DC: no link inside it
         self.assertIn("6 DCs: more than ad_repl_matrix_max_dcs (4)", v["web_sections"][0]["text"])
+
+    def test_never_and_dense(self):
+        """12 DCs: dense (the icon over the age); a pair never replicated says — and the legend says what."""
+        mx = view(big(1, 12))["web_sections"][0]["matrix"]
+        self.assertEqual((mx["mode"], mx["dense"], mx["never"]), ("dc", True, True))
+        c = cell(mx, "HQSITE01-DC05", "HQSITE01-DC06")
+        self.assertEqual((c["text"], c["say"]), ("—", "never replicated"))
+        # ad_repl_matrix_max_dcs past what fits: site x site from FIT_COLS DCs on
+        self.assertEqual(view(big(2, 7), max_dcs=40)["web_sections"][0]["matrix"]["mode"], "site")
+
+    def test_past_what_fits_the_site_pairs_listed(self):
+        """More sites than FIT_COLS: no grid. The matrix section lists the site pairs, worst first, and says why."""
+        sec = view(big(20, 1))["web_sections"][0]
+        self.assertNotIn("matrix", sec)
+        self.assertTrue(sec["text"].startswith("20 sites: too many for a grid that fits the page, so each pair of sites is listed, "
+                                               "worst first. The workbook has every link."))
+        self.assertEqual(sec["columns"], ["From site", "To site", "Links", "Worst link", "Last success", "Status"])
+        self.assertEqual(sec["rows"][0][-1], "Critical")
+        self.assertEqual(sec["cell_status"][0][-1], "critical")
+        self.assertEqual(sec["cards"][0]["meta"], "Worst pair")
+        self.assertEqual(view(big(12, 2))["web_sections"][0]["matrix"]["mode"], "site")      # 12 still a grid
+        self.assertNotIn("matrix", view(big(13, 1))["web_sections"][0])
 
     def test_cards(self):
         cards = view()["web_sections"][0]["cards"]
@@ -311,18 +359,21 @@ class Looks(unittest.TestCase):
             h = T.render(look, self.doc(v["web_sections"]))
             self.assertIn('<table class="rm rm-dc"', h)
             self.assertEqual(h.count('class="rm-c '), 36)
+            self.assertIn('<tr class="rm-band"><th scope="rowgroup" colspan="7">SITEB</th></tr>', h)
             self.assertIn('<td class="rm-c s-critical" data-tip="DC03 (SITEA) → DC06 (SPLIT)\nCritical: 14 failure(s) in a row', h)
-            self.assertIn('<th scope="colgroup" colspan="3"><span>SITEA</span></th>', h)
-            self.assertIn('<th scope="rowgroup" rowspan="2" class="rm-site"><span>SITEB</span></th>', h)
+            self.assertIn('<th scope="colgroup" colspan="3" title="SITEA"><span>SITEA</span></th>', h)
             self.assertIn("table.rm{table-layout:fixed", h)
             self.assertIn("Worst pair", h)
             self.assertNotIn('<svg class="spark"', h)               # no runs: the trend's table, no line
-            self.assertIn('aria-label="Critical, 2 d: DC03 (SITEA)', h)
+            self.assertIn('aria-label="Critical, 2 days ago: DC03 (SITEA)', h)
+            self.assertIn('<span>2d</span></td>', h)
         h = T.render("brief", self.doc(view(runs=[run(d, {"SITEA": 0.2}) for d in (3, 2, 1)])["web_sections"]))
         self.assertEqual(h.count('<svg class="spark"'), 1)
         self.assertIn('data-label="SITEA"', h)
         site = T.render("atlas", self.doc(view(max_dcs=4)["web_sections"]))
-        self.assertIn('<table class="rm rm-site"', site)
+        self.assertIn('<table class="rm rm-site" style="min-width:240px"', site)
+        self.assertIn('<th scope="col" class="rm-h" title="SITEB (2)"><span aria-hidden="true">2</span><span class="rm-sr">SITEB (2)</span></th>', site)
+        self.assertIn('<th scope="row" class="rm-dc"><b class="rm-k">2</b> SITEB (2)</th>', site)
         self.assertNotIn('<tr class="rm-gr">', site)
 
     def test_not_in_an_email(self):
@@ -362,6 +413,80 @@ class Fit(unittest.TestCase):
         self.assertEqual(v["web_sections"][0]["matrix"]["mode"], "site")
         rf.ad_repl_insert({"title": "Active Directory health report (corp.example.mil)", "status": "warning", "summary": [],
                            "sections": []}, v["web_sections"])
+
+
+    def test_report_fit_dcs_12(self):
+        """12 DCs of two sites with long names (the band row), ages up to 400 days, a pair never replicated."""
+        self._doc(big(2, 6))
+
+    def test_report_fit_sites_15(self):
+        """Past FIT_COLS (12) sites: the site pairs listed."""
+        self._doc(big(15, 2))
+
+    def test_report_fit_sites_20(self):
+        self._doc(big(20, 2))
+
+    def _doc(self, r):
+        v = rf.ad_repl_view(r, [], {})
+        rf.ad_repl_insert({"title": "Active Directory health report (corp.example.mil)", "status": "critical", "summary": [],
+                           "sections": []}, v["web_sections"])
+
+
+class Cut(unittest.TestCase):
+    """No matrix cell or heading is cut or overflows its cell, at 1280 and 800 px, light and dark, atlas and brief: 6 and
+    12 DCs, 4 and 12 sites; 15 and 20 sites are a list."""
+    def test_nothing_cut(self):
+        import json
+        import tempfile
+        import test_report_fit as T
+        b = T._browser()
+        if not b:
+            self.skipTest("no headless browser here")
+        docs = {"dcs6": view(), "dcs12": view(big(2, 6)), "sites4": view(max_dcs=4), "sites15": view(big(15, 2)),
+                "sites12": view(big(12, 2)), "sites20": view(big(20, 2))}
+        bad, seen = [], 0
+        with tempfile.TemporaryDirectory() as d:
+            pages = []
+            for name, v in docs.items():
+                for look in ("atlas", "brief"):
+                    p = "%s-%s.html" % (look, name)
+                    with open(os.path.join(d, p), "w") as f:
+                        f.write(T.render(look, Looks().doc(v["web_sections"])))
+                    pages.append(p)
+            for w in (1280, 800):
+                h = os.path.join(d, "cut-%d.html" % w)
+                with open(h, "w") as f:
+                    f.write(CUT % {"w": w, "pages": json.dumps(pages)})
+                got, err = T._run(b, h, w, 120)
+                self.assertTrue(got, "no result at %d px: %s" % (w, err))
+                for k, r in sorted(got.items()):
+                    seen += r["cells"]
+                    if r["cut"] or r["scroll"] or r["page"]:
+                        bad.append("%s at %d px: scroll %d, page %d, cut %s" % (k, w, r["scroll"], r["page"], r["cut"][:5]))
+                    if k.split("-")[1].startswith(("sites15", "sites20")) and r["cells"]:
+                        bad.append("%s at %d px: past 12 sites drawn as a grid" % (k, w))
+        self.assertEqual(bad, [], "\n".join(bad))
+        self.assertGreater(seen, 3000)
+
+
+# in each frame: every matrix cell's and heading's content inside its box (a child past its edge, or more than it
+# shows), the matrix's box scrolling sideways, the page scrolling
+CUT = r"""<!doctype html><html><body><pre id="out"></pre><script>
+var P=%(pages)s,R={},n=0;
+P.forEach(function(p){['light','dark'].forEach(function(s){var f=document.createElement('iframe');
+ f.style.cssText='width:%(w)dpx;height:900px;border:0;display:block';
+ f.onload=function(){var d=f.contentDocument;d.documentElement.setAttribute('data-theme',s);
+  [].forEach.call(d.querySelectorAll('details'),function(x){x.open=true});f.contentWindow.dispatchEvent(new Event('resize'));
+  setTimeout(function(){var r={cut:[],cells:0,scroll:0,page:Math.max(0,d.documentElement.scrollWidth-d.documentElement.clientWidth)};
+   [].forEach.call(d.querySelectorAll('.rm-wrap'),function(w){r.scroll=Math.max(r.scroll,w.scrollWidth-w.clientWidth)});
+   [].forEach.call(d.querySelectorAll('table.rm td, table.rm th'),function(c){r.cells++;var b=c.getBoundingClientRect();
+     [].forEach.call(c.querySelectorAll('span:not(.rm-sr),svg,i,b'),function(x){var e=x.getBoundingClientRect();
+       if(e.width&&(e.right>b.right+0.5||e.left<b.left-0.5||e.bottom>b.bottom+0.5||e.top<b.top-0.5))
+         r.cut.push(c.textContent.trim().slice(0,30)+' '+Math.round(e.right-b.right))});
+     if(c.scrollWidth>c.clientWidth+1||c.scrollHeight>c.clientHeight+1)r.cut.push('more '+c.textContent.trim().slice(0,30))});
+   R[p+' '+s]=r;f.remove();if(++n===P.length*2)document.getElementById('out').textContent=JSON.stringify(R)},500)};
+ f.src=p;document.body.appendChild(f)})});
+</script></body></html>"""
 
 
 class FakeCursor(object):

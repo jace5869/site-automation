@@ -1,0 +1,1233 @@
+{
+"sections": [
+{
+"cards": [
+{
+"chip": "Critical",
+"code": "repadmin /showrepl HQSITE01-DC06 /errorsonly",
+"meta": "Worst pair",
+"next": "Do not force replication: remove the lingering objects first (repadmin /removelingeringobjects).",
+"status": "critical",
+"subject": "SITEA-HEADQUARTERS-MAIN1 \u2192 SITEA-HEADQUARTERS-MAIN1, corp.example.mil, last success 2025-10-09 05:00",
+"title": "HQSITE01-DC04 \u2192 HQSITE01-DC06: 400 d"
+},
+{
+"chip": "Critical",
+"meta": "Also late (10)",
+"next": "Do not force replication: remove the lingering objects first (repadmin /removelingeringobjects).",
+"status": "critical",
+"subject": "no success for longer than the tombstone lifetime (180 days)",
+"title": "HQSITE02-DC04 \u2192 HQSITE02-DC06: 400 d"
+},
+{
+"chip": "On time",
+"meta": "Everything else",
+"next": "Under 4.0 h without a success: OK. Lows: 0.",
+"status": "info",
+"subject": "",
+"title": "13 of 24 links on time"
+}
+],
+"matrix": {
+"axis": "From \u2193 To \u2192",
+"cols": [
+{
+"name": "HQSITE01-DC01",
+"site": "SITEA-HEADQUARTERS-MAIN1"
+},
+{
+"name": "HQSITE01-DC02",
+"site": "SITEA-HEADQUARTERS-MAIN1"
+},
+{
+"name": "HQSITE01-DC03",
+"site": "SITEA-HEADQUARTERS-MAIN1"
+},
+{
+"name": "HQSITE01-DC04",
+"site": "SITEA-HEADQUARTERS-MAIN1"
+},
+{
+"name": "HQSITE01-DC05",
+"site": "SITEA-HEADQUARTERS-MAIN1"
+},
+{
+"name": "HQSITE01-DC06",
+"site": "SITEA-HEADQUARTERS-MAIN1"
+},
+{
+"name": "HQSITE02-DC01",
+"site": "SITEA-HEADQUARTERS-MAIN2"
+},
+{
+"name": "HQSITE02-DC02",
+"site": "SITEA-HEADQUARTERS-MAIN2"
+},
+{
+"name": "HQSITE02-DC03",
+"site": "SITEA-HEADQUARTERS-MAIN2"
+},
+{
+"name": "HQSITE02-DC04",
+"site": "SITEA-HEADQUARTERS-MAIN2"
+},
+{
+"name": "HQSITE02-DC05",
+"site": "SITEA-HEADQUARTERS-MAIN2"
+},
+{
+"name": "HQSITE02-DC06",
+"site": "SITEA-HEADQUARTERS-MAIN2"
+}
+],
+"dense": true,
+"groups": [
+{
+"n": 6,
+"name": "SITEA-HEADQUARTERS-MAIN1"
+},
+{
+"n": 6,
+"name": "SITEA-HEADQUARTERS-MAIN2"
+}
+],
+"legend": [
+{
+"st": "ok",
+"text": "up to 4.0 h without success"
+},
+{
+"st": "low",
+"text": "4.0 h (a schedule missed)"
+},
+{
+"st": "warning",
+"text": "6.0 h, or failing"
+},
+{
+"st": "critical",
+"text": "24.0 h, or failing that long"
+},
+{
+"st": "unknown",
+"text": "the DC's replication state was not read"
+}
+],
+"mode": "dc",
+"never": true,
+"rows": [
+{
+"cells": [
+{
+"st": "self",
+"text": "",
+"tip": ""
+},
+{
+"say": "30 min ago",
+"st": "ok",
+"text": "30m",
+"tip": "HQSITE01-DC01 (SITEA-HEADQUARTERS-MAIN1) \u2192 HQSITE01-DC02 (SITEA-HEADQUARTERS-MAIN1)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:30, 30 min ago"
+},
+{
+"say": "30 min ago",
+"st": "ok",
+"text": "30m",
+"tip": "HQSITE01-DC01 (SITEA-HEADQUARTERS-MAIN1) \u2192 HQSITE01-DC03 (SITEA-HEADQUARTERS-MAIN1)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:30, 30 min ago"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC01 \u2192 HQSITE01-DC04\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC01 \u2192 HQSITE01-DC05\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC01 \u2192 HQSITE01-DC06\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC01 \u2192 HQSITE02-DC01\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC01 \u2192 HQSITE02-DC02\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC01 \u2192 HQSITE02-DC03\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC01 \u2192 HQSITE02-DC04\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC01 \u2192 HQSITE02-DC05\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC01 \u2192 HQSITE02-DC06\nNot replication partners"
+}
+],
+"first": true,
+"name": "HQSITE01-DC01",
+"site": "SITEA-HEADQUARTERS-MAIN1",
+"span": 6
+},
+{
+"cells": [
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC02 \u2192 HQSITE01-DC01\nNot replication partners"
+},
+{
+"st": "self",
+"text": "",
+"tip": ""
+},
+{
+"say": "3.0 h ago",
+"st": "ok",
+"text": "3h",
+"tip": "HQSITE01-DC02 (SITEA-HEADQUARTERS-MAIN1) \u2192 HQSITE01-DC03 (SITEA-HEADQUARTERS-MAIN1)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 02:00, 3.0 h ago"
+},
+{
+"say": "26.0 h ago",
+"st": "critical",
+"text": "26h",
+"tip": "HQSITE01-DC02 (SITEA-HEADQUARTERS-MAIN1) \u2192 HQSITE01-DC04 (SITEA-HEADQUARTERS-MAIN1)\nCritical: no success for 26.0 h\nPartition: corp.example.mil\nLast success: 2026-11-12 03:00, 26.0 h ago"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC02 \u2192 HQSITE01-DC05\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC02 \u2192 HQSITE01-DC06\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC02 \u2192 HQSITE02-DC01\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC02 \u2192 HQSITE02-DC02\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC02 \u2192 HQSITE02-DC03\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC02 \u2192 HQSITE02-DC04\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC02 \u2192 HQSITE02-DC05\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC02 \u2192 HQSITE02-DC06\nNot replication partners"
+}
+],
+"first": false,
+"name": "HQSITE01-DC02",
+"site": "SITEA-HEADQUARTERS-MAIN1",
+"span": 6
+},
+{
+"cells": [
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC03 \u2192 HQSITE01-DC01\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC03 \u2192 HQSITE01-DC02\nNot replication partners"
+},
+{
+"st": "self",
+"text": "",
+"tip": ""
+},
+{
+"say": "26.0 h ago",
+"st": "critical",
+"text": "26h",
+"tip": "HQSITE01-DC03 (SITEA-HEADQUARTERS-MAIN1) \u2192 HQSITE01-DC04 (SITEA-HEADQUARTERS-MAIN1)\nCritical: no success for 26.0 h\nPartition: corp.example.mil\nLast success: 2026-11-12 03:00, 26.0 h ago"
+},
+{
+"say": "3 days ago",
+"st": "critical",
+"text": "3d",
+"tip": "HQSITE01-DC03 (SITEA-HEADQUARTERS-MAIN1) \u2192 HQSITE01-DC05 (SITEA-HEADQUARTERS-MAIN1)\nCritical: 5 failure(s) in a row\nPartition: corp.example.mil\nLast success: 2026-11-10 05:00, 3 days ago\nLast failure: 2026-11-13 04:58\nError: 1722 - the RPC server is unavailable (DC down, firewall, DNS) (5 failure(s))"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC03 \u2192 HQSITE01-DC06\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC03 \u2192 HQSITE02-DC01\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC03 \u2192 HQSITE02-DC02\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC03 \u2192 HQSITE02-DC03\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC03 \u2192 HQSITE02-DC04\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC03 \u2192 HQSITE02-DC05\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC03 \u2192 HQSITE02-DC06\nNot replication partners"
+}
+],
+"first": false,
+"name": "HQSITE01-DC03",
+"site": "SITEA-HEADQUARTERS-MAIN1",
+"span": 6
+},
+{
+"cells": [
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC04 \u2192 HQSITE01-DC01\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC04 \u2192 HQSITE01-DC02\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC04 \u2192 HQSITE01-DC03\nNot replication partners"
+},
+{
+"st": "self",
+"text": "",
+"tip": ""
+},
+{
+"say": "3 days ago",
+"st": "critical",
+"text": "3d",
+"tip": "HQSITE01-DC04 (SITEA-HEADQUARTERS-MAIN1) \u2192 HQSITE01-DC05 (SITEA-HEADQUARTERS-MAIN1)\nCritical: no success for 3 days\nPartition: corp.example.mil\nLast success: 2026-11-10 05:00, 3 days ago"
+},
+{
+"say": "400 days ago",
+"st": "critical",
+"text": "1y",
+"tip": "HQSITE01-DC04 (SITEA-HEADQUARTERS-MAIN1) \u2192 HQSITE01-DC06 (SITEA-HEADQUARTERS-MAIN1)\nCritical: no success for longer than the tombstone lifetime (180 days)\nPartition: corp.example.mil\nLast success: 2025-10-09 05:00, 400 days ago"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC04 \u2192 HQSITE02-DC01\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC04 \u2192 HQSITE02-DC02\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC04 \u2192 HQSITE02-DC03\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC04 \u2192 HQSITE02-DC04\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC04 \u2192 HQSITE02-DC05\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC04 \u2192 HQSITE02-DC06\nNot replication partners"
+}
+],
+"first": false,
+"name": "HQSITE01-DC04",
+"site": "SITEA-HEADQUARTERS-MAIN1",
+"span": 6
+},
+{
+"cells": [
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC05 \u2192 HQSITE01-DC01\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC05 \u2192 HQSITE01-DC02\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC05 \u2192 HQSITE01-DC03\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC05 \u2192 HQSITE01-DC04\nNot replication partners"
+},
+{
+"st": "self",
+"text": "",
+"tip": ""
+},
+{
+"say": "never replicated",
+"st": "warning",
+"text": "\u2014",
+"tip": "HQSITE01-DC05 (SITEA-HEADQUARTERS-MAIN1) \u2192 HQSITE01-DC06 (SITEA-HEADQUARTERS-MAIN1)\nWarning: never replicated\nPartition: corp.example.mil\nLast success: never"
+},
+{
+"say": "4 min ago",
+"st": "ok",
+"text": "4m",
+"tip": "HQSITE01-DC05 (SITEA-HEADQUARTERS-MAIN1) \u2192 HQSITE02-DC01 (SITEA-HEADQUARTERS-MAIN2)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:56, 4 min ago"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC05 \u2192 HQSITE02-DC02\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC05 \u2192 HQSITE02-DC03\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC05 \u2192 HQSITE02-DC04\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC05 \u2192 HQSITE02-DC05\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC05 \u2192 HQSITE02-DC06\nNot replication partners"
+}
+],
+"first": false,
+"name": "HQSITE01-DC05",
+"site": "SITEA-HEADQUARTERS-MAIN1",
+"span": 6
+},
+{
+"cells": [
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC06 \u2192 HQSITE01-DC01\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC06 \u2192 HQSITE01-DC02\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC06 \u2192 HQSITE01-DC03\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC06 \u2192 HQSITE01-DC04\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC06 \u2192 HQSITE01-DC05\nNot replication partners"
+},
+{
+"st": "self",
+"text": "",
+"tip": ""
+},
+{
+"say": "4 min ago",
+"st": "ok",
+"text": "4m",
+"tip": "HQSITE01-DC06 (SITEA-HEADQUARTERS-MAIN1) \u2192 HQSITE02-DC01 (SITEA-HEADQUARTERS-MAIN2)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:56, 4 min ago"
+},
+{
+"say": "52 min ago",
+"st": "ok",
+"text": "52m",
+"tip": "HQSITE01-DC06 (SITEA-HEADQUARTERS-MAIN1) \u2192 HQSITE02-DC02 (SITEA-HEADQUARTERS-MAIN2)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:08, 52 min ago"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC06 \u2192 HQSITE02-DC03\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC06 \u2192 HQSITE02-DC04\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC06 \u2192 HQSITE02-DC05\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE01-DC06 \u2192 HQSITE02-DC06\nNot replication partners"
+}
+],
+"first": false,
+"name": "HQSITE01-DC06",
+"site": "SITEA-HEADQUARTERS-MAIN1",
+"span": 6
+},
+{
+"cells": [
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC01 \u2192 HQSITE01-DC01\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC01 \u2192 HQSITE01-DC02\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC01 \u2192 HQSITE01-DC03\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC01 \u2192 HQSITE01-DC04\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC01 \u2192 HQSITE01-DC05\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC01 \u2192 HQSITE01-DC06\nNot replication partners"
+},
+{
+"st": "self",
+"text": "",
+"tip": ""
+},
+{
+"say": "52 min ago",
+"st": "ok",
+"text": "52m",
+"tip": "HQSITE02-DC01 (SITEA-HEADQUARTERS-MAIN2) \u2192 HQSITE02-DC02 (SITEA-HEADQUARTERS-MAIN2)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:08, 52 min ago"
+},
+{
+"say": "3.0 h ago",
+"st": "ok",
+"text": "3h",
+"tip": "HQSITE02-DC01 (SITEA-HEADQUARTERS-MAIN2) \u2192 HQSITE02-DC03 (SITEA-HEADQUARTERS-MAIN2)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 02:00, 3.0 h ago"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC01 \u2192 HQSITE02-DC04\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC01 \u2192 HQSITE02-DC05\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC01 \u2192 HQSITE02-DC06\nNot replication partners"
+}
+],
+"first": true,
+"name": "HQSITE02-DC01",
+"site": "SITEA-HEADQUARTERS-MAIN2",
+"span": 6
+},
+{
+"cells": [
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC02 \u2192 HQSITE01-DC01\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC02 \u2192 HQSITE01-DC02\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC02 \u2192 HQSITE01-DC03\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC02 \u2192 HQSITE01-DC04\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC02 \u2192 HQSITE01-DC05\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC02 \u2192 HQSITE01-DC06\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC02 \u2192 HQSITE02-DC01\nNot replication partners"
+},
+{
+"st": "self",
+"text": "",
+"tip": ""
+},
+{
+"say": "30 min ago",
+"st": "ok",
+"text": "30m",
+"tip": "HQSITE02-DC02 (SITEA-HEADQUARTERS-MAIN2) \u2192 HQSITE02-DC03 (SITEA-HEADQUARTERS-MAIN2)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:30, 30 min ago"
+},
+{
+"say": "30 min ago",
+"st": "ok",
+"text": "30m",
+"tip": "HQSITE02-DC02 (SITEA-HEADQUARTERS-MAIN2) \u2192 HQSITE02-DC04 (SITEA-HEADQUARTERS-MAIN2)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:30, 30 min ago"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC02 \u2192 HQSITE02-DC05\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC02 \u2192 HQSITE02-DC06\nNot replication partners"
+}
+],
+"first": false,
+"name": "HQSITE02-DC02",
+"site": "SITEA-HEADQUARTERS-MAIN2",
+"span": 6
+},
+{
+"cells": [
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC03 \u2192 HQSITE01-DC01\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC03 \u2192 HQSITE01-DC02\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC03 \u2192 HQSITE01-DC03\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC03 \u2192 HQSITE01-DC04\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC03 \u2192 HQSITE01-DC05\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC03 \u2192 HQSITE01-DC06\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC03 \u2192 HQSITE02-DC01\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC03 \u2192 HQSITE02-DC02\nNot replication partners"
+},
+{
+"st": "self",
+"text": "",
+"tip": ""
+},
+{
+"say": "26.0 h ago",
+"st": "critical",
+"text": "26h",
+"tip": "HQSITE02-DC03 (SITEA-HEADQUARTERS-MAIN2) \u2192 HQSITE02-DC04 (SITEA-HEADQUARTERS-MAIN2)\nCritical: no success for 26.0 h\nPartition: corp.example.mil\nLast success: 2026-11-12 03:00, 26.0 h ago"
+},
+{
+"say": "3 days ago",
+"st": "critical",
+"text": "3d",
+"tip": "HQSITE02-DC03 (SITEA-HEADQUARTERS-MAIN2) \u2192 HQSITE02-DC05 (SITEA-HEADQUARTERS-MAIN2)\nCritical: no success for 3 days\nPartition: corp.example.mil\nLast success: 2026-11-10 05:00, 3 days ago"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC03 \u2192 HQSITE02-DC06\nNot replication partners"
+}
+],
+"first": false,
+"name": "HQSITE02-DC03",
+"site": "SITEA-HEADQUARTERS-MAIN2",
+"span": 6
+},
+{
+"cells": [
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC04 \u2192 HQSITE01-DC01\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC04 \u2192 HQSITE01-DC02\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC04 \u2192 HQSITE01-DC03\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC04 \u2192 HQSITE01-DC04\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC04 \u2192 HQSITE01-DC05\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC04 \u2192 HQSITE01-DC06\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC04 \u2192 HQSITE02-DC01\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC04 \u2192 HQSITE02-DC02\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC04 \u2192 HQSITE02-DC03\nNot replication partners"
+},
+{
+"st": "self",
+"text": "",
+"tip": ""
+},
+{
+"say": "3 days ago",
+"st": "critical",
+"text": "3d",
+"tip": "HQSITE02-DC04 (SITEA-HEADQUARTERS-MAIN2) \u2192 HQSITE02-DC05 (SITEA-HEADQUARTERS-MAIN2)\nCritical: no success for 3 days\nPartition: corp.example.mil\nLast success: 2026-11-10 05:00, 3 days ago"
+},
+{
+"say": "400 days ago",
+"st": "critical",
+"text": "1y",
+"tip": "HQSITE02-DC04 (SITEA-HEADQUARTERS-MAIN2) \u2192 HQSITE02-DC06 (SITEA-HEADQUARTERS-MAIN2)\nCritical: no success for longer than the tombstone lifetime (180 days)\nPartition: corp.example.mil\nLast success: 2025-10-09 05:00, 400 days ago"
+}
+],
+"first": false,
+"name": "HQSITE02-DC04",
+"site": "SITEA-HEADQUARTERS-MAIN2",
+"span": 6
+},
+{
+"cells": [
+{
+"say": "4 min ago",
+"st": "ok",
+"text": "4m",
+"tip": "HQSITE02-DC05 (SITEA-HEADQUARTERS-MAIN2) \u2192 HQSITE01-DC01 (SITEA-HEADQUARTERS-MAIN1)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:56, 4 min ago"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC05 \u2192 HQSITE01-DC02\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC05 \u2192 HQSITE01-DC03\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC05 \u2192 HQSITE01-DC04\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC05 \u2192 HQSITE01-DC05\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC05 \u2192 HQSITE01-DC06\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC05 \u2192 HQSITE02-DC01\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC05 \u2192 HQSITE02-DC02\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC05 \u2192 HQSITE02-DC03\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC05 \u2192 HQSITE02-DC04\nNot replication partners"
+},
+{
+"st": "self",
+"text": "",
+"tip": ""
+},
+{
+"say": "400 days ago",
+"st": "critical",
+"text": "1y",
+"tip": "HQSITE02-DC05 (SITEA-HEADQUARTERS-MAIN2) \u2192 HQSITE02-DC06 (SITEA-HEADQUARTERS-MAIN2)\nCritical: no success for longer than the tombstone lifetime (180 days)\nPartition: corp.example.mil\nLast success: 2025-10-09 05:00, 400 days ago"
+}
+],
+"first": false,
+"name": "HQSITE02-DC05",
+"site": "SITEA-HEADQUARTERS-MAIN2",
+"span": 6
+},
+{
+"cells": [
+{
+"say": "4 min ago",
+"st": "ok",
+"text": "4m",
+"tip": "HQSITE02-DC06 (SITEA-HEADQUARTERS-MAIN2) \u2192 HQSITE01-DC01 (SITEA-HEADQUARTERS-MAIN1)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:56, 4 min ago"
+},
+{
+"say": "52 min ago",
+"st": "ok",
+"text": "52m",
+"tip": "HQSITE02-DC06 (SITEA-HEADQUARTERS-MAIN2) \u2192 HQSITE01-DC02 (SITEA-HEADQUARTERS-MAIN1)\nOK: on time\nPartition: corp.example.mil\nLast success: 2026-11-13 04:08, 52 min ago"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC06 \u2192 HQSITE01-DC03\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC06 \u2192 HQSITE01-DC04\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC06 \u2192 HQSITE01-DC05\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC06 \u2192 HQSITE01-DC06\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC06 \u2192 HQSITE02-DC01\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC06 \u2192 HQSITE02-DC02\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC06 \u2192 HQSITE02-DC03\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC06 \u2192 HQSITE02-DC04\nNot replication partners"
+},
+{
+"st": "none",
+"text": "",
+"tip": "HQSITE02-DC06 \u2192 HQSITE02-DC05\nNot replication partners"
+},
+{
+"st": "self",
+"text": "",
+"tip": ""
+}
+],
+"first": false,
+"name": "HQSITE02-DC06",
+"site": "SITEA-HEADQUARTERS-MAIN2",
+"span": 6
+}
+]
+},
+"status": "critical",
+"text": "Each cell: how long ago the row's DC last replicated to the column's DC (its worst partition). Grouped by AD site. Hover a cell for the partition, last success, last failure and error.",
+"title": "Replication matrix"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"warning"
+]
+],
+"columns": [
+"From",
+"To",
+"Partition",
+"Last success",
+"Last error",
+"Status"
+],
+"row_status": [
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"warning"
+],
+"rows": [
+[
+"HQSITE01-DC04 (SITEA-HEADQUARTERS-MAIN1)",
+"HQSITE01-DC06 (SITEA-HEADQUARTERS-MAIN1)",
+"corp.example.mil",
+"400 days ago",
+"no success for longer than the tombstone lifetime (180 days)",
+"Critical"
+],
+[
+"HQSITE02-DC04 (SITEA-HEADQUARTERS-MAIN2)",
+"HQSITE02-DC06 (SITEA-HEADQUARTERS-MAIN2)",
+"corp.example.mil",
+"400 days ago",
+"no success for longer than the tombstone lifetime (180 days)",
+"Critical"
+],
+[
+"HQSITE02-DC05 (SITEA-HEADQUARTERS-MAIN2)",
+"HQSITE02-DC06 (SITEA-HEADQUARTERS-MAIN2)",
+"corp.example.mil",
+"400 days ago",
+"no success for longer than the tombstone lifetime (180 days)",
+"Critical"
+],
+[
+"HQSITE01-DC03 (SITEA-HEADQUARTERS-MAIN1)",
+"HQSITE01-DC05 (SITEA-HEADQUARTERS-MAIN1)",
+"corp.example.mil",
+"3 days ago",
+"1722 - the RPC server is unavailable (DC down, firewall, DNS) (5 failure(s))",
+"Critical"
+],
+[
+"HQSITE01-DC04 (SITEA-HEADQUARTERS-MAIN1)",
+"HQSITE01-DC05 (SITEA-HEADQUARTERS-MAIN1)",
+"corp.example.mil",
+"3 days ago",
+"no success for 3 days",
+"Critical"
+],
+[
+"HQSITE02-DC03 (SITEA-HEADQUARTERS-MAIN2)",
+"HQSITE02-DC05 (SITEA-HEADQUARTERS-MAIN2)",
+"corp.example.mil",
+"3 days ago",
+"no success for 3 days",
+"Critical"
+],
+[
+"HQSITE02-DC04 (SITEA-HEADQUARTERS-MAIN2)",
+"HQSITE02-DC05 (SITEA-HEADQUARTERS-MAIN2)",
+"corp.example.mil",
+"3 days ago",
+"no success for 3 days",
+"Critical"
+],
+[
+"HQSITE01-DC02 (SITEA-HEADQUARTERS-MAIN1)",
+"HQSITE01-DC04 (SITEA-HEADQUARTERS-MAIN1)",
+"corp.example.mil",
+"26.0 h ago",
+"no success for 26.0 h",
+"Critical"
+],
+[
+"HQSITE01-DC03 (SITEA-HEADQUARTERS-MAIN1)",
+"HQSITE01-DC04 (SITEA-HEADQUARTERS-MAIN1)",
+"corp.example.mil",
+"26.0 h ago",
+"no success for 26.0 h",
+"Critical"
+],
+[
+"HQSITE02-DC03 (SITEA-HEADQUARTERS-MAIN2)",
+"HQSITE02-DC04 (SITEA-HEADQUARTERS-MAIN2)",
+"corp.example.mil",
+"26.0 h ago",
+"no success for 26.0 h",
+"Critical"
+],
+[
+"HQSITE01-DC05 (SITEA-HEADQUARTERS-MAIN1)",
+"HQSITE01-DC06 (SITEA-HEADQUARTERS-MAIN1)",
+"corp.example.mil",
+"never",
+"never replicated",
+"Warning"
+]
+],
+"status": "critical",
+"text": "Each pair of DCs that replicate, the worst partition, worst first. 24 link(s) between 12 DCs in 2 site(s): 13 on time, 0 Low, 1 warning, 10 critical.",
+"title": "Replication links that need a look"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"critical"
+]
+],
+"columns": [
+"Site",
+"Worst age, 14 days",
+"Now",
+"Since last week",
+"Status"
+],
+"kinds": [
+"",
+"spark",
+"",
+"",
+""
+],
+"row_status": [
+"critical",
+"critical"
+],
+"rows": [
+[
+"SITEA-HEADQUARTERS-MAIN1",
+"",
+"400 d",
+"1 day(s) of history: no line yet",
+"Critical"
+],
+[
+"SITEA-HEADQUARTERS-MAIN2",
+"",
+"400 d",
+"1 day(s) of history: no line yet",
+"Critical"
+]
+],
+"sparks": [
+{},
+{}
+],
+"text": "The worst inbound replication age of each site, by day, over 14 days: this template's earlier runs (AAP job history), then this run. The dashed line is 6.0 h (ad_repl_warn_hours): a flat line under it is healthy.",
+"title": "Replication trend: worst age per site"
+}
+],
+"status": "critical",
+"summary": [],
+"title": "Active Directory health report (corp.example.mil)"
+}

@@ -13,7 +13,7 @@ Status of a link (the Inbound replication table's, with Low before amber):
   ok         the rest
 
 Web (atlas, brief): the worst pair as a card, DC x DC (grouped by site; site x site past ad_repl_matrix_max_dcs) with the
-age of the last success in each cell and a hover with the pair, partition, last success, last failure and error; the
+age of the last success in each cell (short: 52m, 3h, 2d, — never; past FIT_COLS sites the site pairs as a list) and a hover with the pair, partition, last success, last failure and error; the
 links that need a look; each site's worst inbound age over ad_repl_trend_days (a Trend column, from this template's
 earlier runs' ad_repl artifact). Email: the links that need a look and the numbers. Workbook: every link, and each site's
 worst age by day.
@@ -36,6 +36,8 @@ RANK = {"critical": 0, "warning": 1, "unknown": 2, "low": 3, "ok": 4}
 WORD = {"critical": "Critical", "warning": "Warning", "low": "Low", "ok": "OK", "unknown": "Not read"}
 SPARK_W, SPARK_H, SPARK_PAD = 120, 30, 4         # the Trend column's line, as the other reports' (1.52.0, 1.58.0, 1.61.0)
 NO_SITE = "(no site)"
+FIT_COLS = 12              # the most columns that fit 800 px with every name and age whole (the icon over the age)
+DENSE = 6                  # more columns than this: each cell's icon over its age
 
 
 def _epoch(v):
@@ -52,6 +54,19 @@ def age_short(hours):
     if hours < 48:
         return "%d h" % int(hours)
     return "%d d" % int(hours / 24)
+
+
+def age_cell(hours):
+    """A matrix cell's age, 4 characters at most: 4m, 52m, 3h, 2d, 364d, 2y; never: —."""
+    if hours is None:
+        return "—"
+    if hours < 1:
+        return "%dm" % max(0, int(round(hours * 60)))
+    if hours < 48:
+        return "%dh" % int(hours)
+    if hours < 365 * 24:
+        return "%dd" % int(hours / 24)
+    return "%dy" % int(hours / (365 * 24))
 
 
 def link_status(age_h, fails, o):
@@ -136,8 +151,13 @@ def _tip(p, site_of):
     return "\n".join(lines)
 
 
+def _say(age):
+    return ("%s ago" % _ad.age_text(age)) if age is not None else "never replicated"
+
+
 def _matrix(dcs, pairs, o, site_of):
-    """The matrix the atlas and brief looks draw (report_matrix.html.j2): DC x DC by site, or site x site past max_dcs."""
+    """The matrix the atlas and brief looks draw (report_matrix.html.j2): DC x DC by site, or site x site past max_dcs
+    (each column a number, its site in the row of that number); None past FIT_COLS sites (the list instead)."""
     sites = sorted(set(d["site"] or NO_SITE for d in dcs), key=lambda s: (s == NO_SITE, s.lower()))
     order = sorted(dcs, key=lambda d: (sites.index(d["site"] or NO_SITE), d["name"]))
     by_site = dict((s, [d for d in order if (d["site"] or NO_SITE) == s]) for s in sites)
@@ -147,7 +167,7 @@ def _matrix(dcs, pairs, o, site_of):
               {"st": "critical", "text": "%s, or failing that long" % _ad.age_text(o["crit"])},
               {"st": "unknown", "text": "the DC's replication state was not read"}]
     legend = [x for x in legend if x]
-    if len(order) <= o["max_dcs"]:
+    if len(order) <= min(o["max_dcs"], FIT_COLS):
         cols = [{"name": d["name"], "site": d["site"] or NO_SITE} for d in order]
         rows = []
         for d in order:
@@ -158,15 +178,18 @@ def _matrix(dcs, pairs, o, site_of):
                 if c["name"] == d["name"]:
                     cells.append({"st": "self", "text": "", "tip": ""})
                 elif not to["read"]:
-                    cells.append({"st": "unknown", "text": "?", "tip": "%s → %s\nNot read: %s" % (d["name"], c["name"], to["why"] or "no data")})
+                    cells.append({"st": "unknown", "text": "?", "say": "not read",
+                                  "tip": "%s → %s\nNot read: %s" % (d["name"], c["name"], to["why"] or "no data")})
                 elif (d["name"], c["name"]) in pairs:
                     p = pairs[(d["name"], c["name"])]
-                    cells.append({"st": p["st"], "text": age_short(p["age"]), "tip": _tip(p, site_of)})
+                    cells.append({"st": p["st"], "text": age_cell(p["age"]), "say": _say(p["age"]), "tip": _tip(p, site_of)})
                 else:
                     cells.append({"st": "none", "text": "", "tip": "%s → %s\nNot replication partners" % (d["name"], c["name"])})
             rows.append({"name": d["name"], "site": s, "first": by_site[s][0] is d, "span": len(by_site[s]), "cells": cells})
-        return {"mode": "dc", "groups": [{"name": s, "n": len(by_site[s])} for s in sites], "cols": cols, "rows": rows,
-                "legend": legend, "axis": "From ↓ To →"}
+        return _marks({"mode": "dc", "groups": [{"name": s, "n": len(by_site[s])} for s in sites], "cols": cols, "rows": rows,
+                       "legend": legend, "axis": "From ↓ To →"})
+    if len(sites) > FIT_COLS:
+        return None
     # site x site: each cell the worst pair from a DC of the row's site to a DC of the column's
     rows = []
     for a in sites:
@@ -175,7 +198,7 @@ def _matrix(dcs, pairs, o, site_of):
             ps = [p for (f, t), p in pairs.items() if (site_of.get(f) or NO_SITE) == a and (site_of.get(t) or NO_SITE) == b]
             unread = [d["name"] for d in by_site[b] if not d["read"]]
             if not ps:
-                cells.append({"st": "unknown" if unread else "none", "text": "?" if unread else "",
+                cells.append({"st": "unknown" if unread else "none", "text": "?" if unread else "", "say": "not read" if unread else "",
                               "tip": "%s → %s\n%s" % (a, b, ("Not read: " + ", ".join(unread)) if unread else "No replication link")})
                 continue
             ps.sort(key=lambda p: (RANK.get(p["st"], 9), -(p["age"] if p["age"] is not None else 1e9)))
@@ -184,11 +207,40 @@ def _matrix(dcs, pairs, o, site_of):
             tip = "%s → %s: %d link(s), %d late\nWorst: %s" % (a, b, len(ps), late, _tip(w, site_of))
             if unread:
                 tip += "\nNot read: " + ", ".join(unread)
-            cells.append({"st": w["st"], "text": age_short(w["age"]), "tip": tip})
-        rows.append({"name": "%s (%d)" % (a, len(by_site[a])), "site": "", "first": False, "span": 1, "cells": cells})
-    return {"mode": "site", "groups": [], "cols": [{"name": "%s (%d)" % (s, len(by_site[s])), "site": s} for s in sites],
-            "rows": rows, "legend": legend, "axis": "From site ↓ To site →",
-            "note": "%d DCs: more than ad_repl_matrix_max_dcs (%d), so each cell is a site's worst link to another site." % (len(order), o["max_dcs"])}
+            cells.append({"st": w["st"], "text": age_cell(w["age"]), "say": _say(w["age"]), "tip": tip})
+        rows.append({"name": "%s (%d)" % (a, len(by_site[a])), "key": str(len(rows) + 1), "site": "", "first": False, "span": 1,
+                     "cells": cells})
+    return _marks({"mode": "site", "groups": [], "rows": rows, "legend": legend, "axis": "From site ↓ To site →",
+                   "cols": [{"name": "%s (%d)" % (s, len(by_site[s])), "key": str(i + 1), "site": s} for i, s in enumerate(sites)],
+                   "note": "%d DCs: more than ad_repl_matrix_max_dcs (%d), so each cell is a site's worst link to another site. "
+                           "The columns are numbered: each number is the row's site." % (len(order), min(o["max_dcs"], FIT_COLS))})
+
+
+def _marks(mx):
+    """dense: the icon over the age (more than DENSE columns); never: a cell says — (the legend says what)."""
+    mx["dense"] = len(mx["cols"]) > DENSE
+    mx["never"] = any(c["text"] == "—" for r in mx["rows"] for c in r["cells"])
+    return mx
+
+
+def _site_list(pairs, site_of, top):
+    """Past FIT_COLS sites: each pair of sites that replicate, its worst link, worst first (the matrix section's table)."""
+    rows, rst = [], []
+    by = {}
+    for (f, t), p in pairs.items():
+        by.setdefault((site_of.get(f) or NO_SITE, site_of.get(t) or NO_SITE), []).append(p)
+    out = []
+    for (a, b), ps in by.items():
+        ps.sort(key=lambda p: (RANK.get(p["st"], 9), -(p["age"] if p["age"] is not None else 1e9)))
+        out.append((a, b, ps))
+    out.sort(key=lambda x: (RANK.get(x[2][0]["st"], 9), -(x[2][0]["age"] if x[2][0]["age"] is not None else 1e9), x[0], x[1]))
+    for a, b, ps in out[:top]:
+        w = ps[0]
+        late = len([p for p in ps if p["st"] != "ok"])
+        rows.append([a, b, ("%d (%d late)" % (len(ps), late)) if late else str(len(ps)), "%s → %s" % (w["frm"], w["to"]),
+                     ("%s ago" % _ad.age_text(w["age"])) if w["age"] is not None else "never", WORD[w["st"]]])
+        rst.append(w["st"])
+    return rows, rst, len(out)
 
 
 def _day(epoch):
@@ -350,11 +402,21 @@ def ad_repl_view(repl, runs=None, opts=None):
                       "title": "%d of %d links on time" % (count["ok"], len(pairs)), "subject": "",
                       "next": "Under %s without a success: OK. Lows: %d." % (_ad.age_text(oo["low"] or oo["warn"]), count["low"])})
     mx = _matrix(dcs, pairs, oo, site_of)
-    m_text = ("Each cell: how long ago the row's DC last replicated to the column's DC (its worst partition). Grouped by AD "
-              "site. Hover a cell for the partition, last success, last failure and error.")
-    if mx.get("note"):
-        m_text += " " + mx["note"]
-    matrix_sec = {"title": "Replication matrix", "text": m_text, "cards": cards, "matrix": mx}
+    if mx is not None:
+        m_text = ("Each cell: how long ago the row's DC last replicated to the column's DC (its worst partition). Grouped by AD "
+                  "site. Hover a cell for the partition, last success, last failure and error.")
+        if mx.get("note"):
+            m_text += " " + mx["note"]
+        matrix_sec = {"title": "Replication matrix", "text": m_text, "cards": cards, "matrix": mx}
+    else:
+        s_rows, s_rst, n_pairs = _site_list(pairs, site_of, top)
+        m_text = ("%d sites: too many for a grid that fits the page, so each pair of sites is listed, worst first. The "
+                  "workbook has every link." % len(sites))
+        if n_pairs > top:
+            m_text += " The first %d of %d pairs are shown." % (top, n_pairs)
+        matrix_sec = {"title": "Replication matrix", "text": m_text, "cards": cards,
+                      "columns": ["From site", "To site", "Links", "Worst link", "Last success", "Status"], "rows": s_rows,
+                      "row_status": [x if x != "ok" else "" for x in s_rst], "cell_status": [[""] * 5 + [x] for x in s_rst]}
     if status in ("critical", "warning"):
         matrix_sec["status"] = status
 

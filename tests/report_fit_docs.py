@@ -47,6 +47,10 @@ NAMED = (("test_stig_ckl_import.py", "RouteReport.test_report_fit_document", "st
          ("test_ad_repl.py", "Fit.test_report_fit_web", "ad_repl_filters.py:ad_repl_insert", "ad_repl_web"),
          ("test_ad_repl.py", "Fit.test_report_fit_email", "ad_repl_filters.py:ad_repl_insert", "ad_repl_email"),
          ("test_ad_repl.py", "Fit.test_report_fit_forest", "ad_repl_filters.py:ad_repl_insert", "ad_repl_forest"),
+         # int-13: 12 DCs with long site names (the band rows), 15 and 20 sites (past 12: the site pairs listed)
+         ("test_ad_repl.py", "Fit.test_report_fit_dcs_12", "ad_repl_filters.py:ad_repl_insert", "ad_repl_dcs_12"),
+         ("test_ad_repl.py", "Fit.test_report_fit_sites_15", "ad_repl_filters.py:ad_repl_insert", "ad_repl_sites_15"),
+         ("test_ad_repl.py", "Fit.test_report_fit_sites_20", "ad_repl_filters.py:ad_repl_insert", "ad_repl_sites_20"),
          # 1.65.0: the VMware cluster heat grid - the website's copy, the email's, a cluster of 40 hosts with long names
          ("test_vmware_heat.py", "Fit.test_report_fit_web", "vmware_heat_filters.py:vm_heat_insert", "vm_heat_web"),
          ("test_vmware_heat.py", "Fit.test_report_fit_email", "vmware_heat_filters.py:vm_heat_insert", "vm_heat_email"),
