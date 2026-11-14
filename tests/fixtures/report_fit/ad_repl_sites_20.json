@@ -1,0 +1,1693 @@
+{
+"sections": [
+{
+"cards": [
+{
+"chip": "Critical",
+"code": "repadmin /showrepl HQSITE03-DC02 /errorsonly",
+"meta": "Worst pair",
+"next": "Do not force replication: remove the lingering objects first (repadmin /removelingeringobjects).",
+"status": "critical",
+"subject": "SITEA-HEADQUARTERS-MAIN2 \u2192 SITE03, corp.example.mil, last success 2025-10-09 05:00",
+"title": "HQSITE02-DC02 \u2192 HQSITE03-DC02: 400 d"
+},
+{
+"chip": "Critical",
+"meta": "Also late (34)",
+"next": "Do not force replication: remove the lingering objects first (repadmin /removelingeringobjects).",
+"status": "critical",
+"subject": "no success for longer than the tombstone lifetime (180 days)",
+"title": "HQSITE05-DC02 \u2192 HQSITE06-DC02: 400 d"
+},
+{
+"chip": "On time",
+"meta": "Everything else",
+"next": "Under 4.0 h without a success: OK. Lows: 0.",
+"status": "info",
+"subject": "",
+"title": "45 of 80 links on time"
+}
+],
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok"
+]
+],
+"columns": [
+"From site",
+"To site",
+"Links",
+"Worst link",
+"Last success",
+"Status"
+],
+"row_status": [
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"warning",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+],
+"rows": [
+[
+"SITE05",
+"SITE06",
+"3 (3 late)",
+"HQSITE05-DC02 \u2192 HQSITE06-DC02",
+"400 days ago",
+"Critical"
+],
+[
+"SITE06",
+"SITE06",
+"1 (1 late)",
+"HQSITE06-DC01 \u2192 HQSITE06-DC02",
+"400 days ago",
+"Critical"
+],
+[
+"SITE08",
+"SITE09",
+"3 (2 late)",
+"HQSITE08-DC02 \u2192 HQSITE09-DC02",
+"400 days ago",
+"Critical"
+],
+[
+"SITE09",
+"SITE09",
+"1 (1 late)",
+"HQSITE09-DC01 \u2192 HQSITE09-DC02",
+"400 days ago",
+"Critical"
+],
+[
+"SITE12",
+"SITE12",
+"1 (1 late)",
+"HQSITE12-DC01 \u2192 HQSITE12-DC02",
+"400 days ago",
+"Critical"
+],
+[
+"SITE14",
+"SITE15",
+"3 (3 late)",
+"HQSITE14-DC02 \u2192 HQSITE15-DC02",
+"400 days ago",
+"Critical"
+],
+[
+"SITE17",
+"SITE18",
+"3 (3 late)",
+"HQSITE17-DC02 \u2192 HQSITE18-DC02",
+"400 days ago",
+"Critical"
+],
+[
+"SITE18",
+"SITE18",
+"1 (1 late)",
+"HQSITE18-DC01 \u2192 HQSITE18-DC02",
+"400 days ago",
+"Critical"
+],
+[
+"SITE20",
+"SITEA-HEADQUARTERS-MAIN1",
+"3 (3 late)",
+"HQSITE20-DC02 \u2192 HQSITE01-DC02",
+"400 days ago",
+"Critical"
+],
+[
+"SITEA-HEADQUARTERS-MAIN2",
+"SITE03",
+"3 (3 late)",
+"HQSITE02-DC02 \u2192 HQSITE03-DC02",
+"400 days ago",
+"Critical"
+],
+[
+"SITE11",
+"SITE12",
+"3 (1 late)",
+"HQSITE11-DC01 \u2192 HQSITE12-DC01",
+"3 days ago",
+"Critical"
+],
+[
+"SITE05",
+"SITE05",
+"1 (1 late)",
+"HQSITE05-DC01 \u2192 HQSITE05-DC02",
+"26.0 h ago",
+"Critical"
+],
+[
+"SITE07",
+"SITE08",
+"3 (1 late)",
+"HQSITE07-DC02 \u2192 HQSITE08-DC02",
+"26.0 h ago",
+"Critical"
+],
+[
+"SITE10",
+"SITE11",
+"3 (1 late)",
+"HQSITE10-DC02 \u2192 HQSITE11-DC02",
+"26.0 h ago",
+"Critical"
+],
+[
+"SITE11",
+"SITE11",
+"1 (1 late)",
+"HQSITE11-DC01 \u2192 HQSITE11-DC02",
+"26.0 h ago",
+"Critical"
+],
+[
+"SITE13",
+"SITE14",
+"3 (1 late)",
+"HQSITE13-DC02 \u2192 HQSITE14-DC02",
+"26.0 h ago",
+"Critical"
+],
+[
+"SITE14",
+"SITE14",
+"1 (1 late)",
+"HQSITE14-DC01 \u2192 HQSITE14-DC02",
+"26.0 h ago",
+"Critical"
+],
+[
+"SITE16",
+"SITE17",
+"3 (1 late)",
+"HQSITE16-DC02 \u2192 HQSITE17-DC02",
+"26.0 h ago",
+"Critical"
+],
+[
+"SITE17",
+"SITE17",
+"1 (1 late)",
+"HQSITE17-DC01 \u2192 HQSITE17-DC02",
+"26.0 h ago",
+"Critical"
+],
+[
+"SITE19",
+"SITE20",
+"3 (1 late)",
+"HQSITE19-DC02 \u2192 HQSITE20-DC02",
+"26.0 h ago",
+"Critical"
+],
+[
+"SITE20",
+"SITE20",
+"1 (1 late)",
+"HQSITE20-DC01 \u2192 HQSITE20-DC02",
+"26.0 h ago",
+"Critical"
+],
+[
+"SITEA-HEADQUARTERS-MAIN1",
+"SITEA-HEADQUARTERS-MAIN2",
+"3 (1 late)",
+"HQSITE01-DC02 \u2192 HQSITE02-DC02",
+"26.0 h ago",
+"Critical"
+],
+[
+"SITEA-HEADQUARTERS-MAIN2",
+"SITEA-HEADQUARTERS-MAIN2",
+"1 (1 late)",
+"HQSITE02-DC01 \u2192 HQSITE02-DC02",
+"26.0 h ago",
+"Critical"
+],
+[
+"SITE03",
+"SITE03",
+"1 (1 late)",
+"HQSITE03-DC01 \u2192 HQSITE03-DC02",
+"never",
+"Warning"
+],
+[
+"SITE04",
+"SITE05",
+"3",
+"HQSITE04-DC01 \u2192 HQSITE05-DC01",
+"3.0 h ago",
+"OK"
+],
+[
+"SITE03",
+"SITE04",
+"3",
+"HQSITE03-DC02 \u2192 HQSITE04-DC02",
+"52 min ago",
+"OK"
+],
+[
+"SITE04",
+"SITE04",
+"1",
+"HQSITE04-DC01 \u2192 HQSITE04-DC02",
+"52 min ago",
+"OK"
+],
+[
+"SITE06",
+"SITE07",
+"3",
+"HQSITE06-DC02 \u2192 HQSITE07-DC02",
+"52 min ago",
+"OK"
+],
+[
+"SITE07",
+"SITE07",
+"1",
+"HQSITE07-DC01 \u2192 HQSITE07-DC02",
+"52 min ago",
+"OK"
+],
+[
+"SITE09",
+"SITE10",
+"3",
+"HQSITE09-DC02 \u2192 HQSITE10-DC02",
+"52 min ago",
+"OK"
+],
+[
+"SITE10",
+"SITE10",
+"1",
+"HQSITE10-DC01 \u2192 HQSITE10-DC02",
+"52 min ago",
+"OK"
+],
+[
+"SITE12",
+"SITE13",
+"3",
+"HQSITE12-DC02 \u2192 HQSITE13-DC02",
+"52 min ago",
+"OK"
+],
+[
+"SITE13",
+"SITE13",
+"1",
+"HQSITE13-DC01 \u2192 HQSITE13-DC02",
+"52 min ago",
+"OK"
+],
+[
+"SITE15",
+"SITE16",
+"3",
+"HQSITE15-DC02 \u2192 HQSITE16-DC02",
+"52 min ago",
+"OK"
+],
+[
+"SITE16",
+"SITE16",
+"1",
+"HQSITE16-DC01 \u2192 HQSITE16-DC02",
+"52 min ago",
+"OK"
+],
+[
+"SITE19",
+"SITE19",
+"1",
+"HQSITE19-DC01 \u2192 HQSITE19-DC02",
+"52 min ago",
+"OK"
+],
+[
+"SITE08",
+"SITE08",
+"1",
+"HQSITE08-DC01 \u2192 HQSITE08-DC02",
+"30 min ago",
+"OK"
+],
+[
+"SITE15",
+"SITE15",
+"1",
+"HQSITE15-DC01 \u2192 HQSITE15-DC02",
+"30 min ago",
+"OK"
+],
+[
+"SITE18",
+"SITE19",
+"3",
+"HQSITE18-DC02 \u2192 HQSITE19-DC01",
+"30 min ago",
+"OK"
+],
+[
+"SITEA-HEADQUARTERS-MAIN1",
+"SITEA-HEADQUARTERS-MAIN1",
+"1",
+"HQSITE01-DC01 \u2192 HQSITE01-DC02",
+"30 min ago",
+"OK"
+]
+],
+"status": "critical",
+"text": "20 sites: too many for a grid that fits the page, so each pair of sites is listed, worst first. The workbook has every link.",
+"title": "Replication matrix"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"warning"
+]
+],
+"columns": [
+"From",
+"To",
+"Partition",
+"Last success",
+"Last error",
+"Status"
+],
+"row_status": [
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"critical",
+"warning"
+],
+"rows": [
+[
+"HQSITE02-DC02 (SITEA-HEADQUARTERS-MAIN2)",
+"HQSITE03-DC02 (SITE03)",
+"corp.example.mil",
+"400 days ago",
+"no success for longer than the tombstone lifetime (180 days)",
+"Critical"
+],
+[
+"HQSITE05-DC02 (SITE05)",
+"HQSITE06-DC02 (SITE06)",
+"corp.example.mil",
+"400 days ago",
+"no success for longer than the tombstone lifetime (180 days)",
+"Critical"
+],
+[
+"HQSITE06-DC01 (SITE06)",
+"HQSITE06-DC02 (SITE06)",
+"corp.example.mil",
+"400 days ago",
+"no success for longer than the tombstone lifetime (180 days)",
+"Critical"
+],
+[
+"HQSITE08-DC02 (SITE08)",
+"HQSITE09-DC02 (SITE09)",
+"corp.example.mil",
+"400 days ago",
+"no success for longer than the tombstone lifetime (180 days)",
+"Critical"
+],
+[
+"HQSITE09-DC01 (SITE09)",
+"HQSITE09-DC02 (SITE09)",
+"corp.example.mil",
+"400 days ago",
+"no success for longer than the tombstone lifetime (180 days)",
+"Critical"
+],
+[
+"HQSITE12-DC01 (SITE12)",
+"HQSITE12-DC02 (SITE12)",
+"corp.example.mil",
+"400 days ago",
+"no success for longer than the tombstone lifetime (180 days)",
+"Critical"
+],
+[
+"HQSITE14-DC02 (SITE14)",
+"HQSITE15-DC02 (SITE15)",
+"corp.example.mil",
+"400 days ago",
+"no success for longer than the tombstone lifetime (180 days)",
+"Critical"
+],
+[
+"HQSITE17-DC02 (SITE17)",
+"HQSITE18-DC02 (SITE18)",
+"corp.example.mil",
+"400 days ago",
+"no success for longer than the tombstone lifetime (180 days)",
+"Critical"
+],
+[
+"HQSITE18-DC01 (SITE18)",
+"HQSITE18-DC02 (SITE18)",
+"corp.example.mil",
+"400 days ago",
+"no success for longer than the tombstone lifetime (180 days)",
+"Critical"
+],
+[
+"HQSITE20-DC02 (SITE20)",
+"HQSITE01-DC02 (SITEA-HEADQUARTERS-MAIN1)",
+"corp.example.mil",
+"400 days ago",
+"no success for longer than the tombstone lifetime (180 days)",
+"Critical"
+],
+[
+"HQSITE02-DC01 (SITEA-HEADQUARTERS-MAIN2)",
+"HQSITE03-DC01 (SITE03)",
+"corp.example.mil",
+"3 days ago",
+"1722 - the RPC server is unavailable (DC down, firewall, DNS) (5 failure(s))",
+"Critical"
+],
+[
+"HQSITE02-DC02 (SITEA-HEADQUARTERS-MAIN2)",
+"HQSITE03-DC01 (SITE03)",
+"corp.example.mil",
+"3 days ago",
+"no success for 3 days",
+"Critical"
+],
+[
+"HQSITE05-DC01 (SITE05)",
+"HQSITE06-DC01 (SITE06)",
+"corp.example.mil",
+"3 days ago",
+"no success for 3 days",
+"Critical"
+],
+[
+"HQSITE05-DC02 (SITE05)",
+"HQSITE06-DC01 (SITE06)",
+"corp.example.mil",
+"3 days ago",
+"no success for 3 days",
+"Critical"
+],
+[
+"HQSITE08-DC02 (SITE08)",
+"HQSITE09-DC01 (SITE09)",
+"corp.example.mil",
+"3 days ago",
+"no success for 3 days",
+"Critical"
+],
+[
+"HQSITE11-DC01 (SITE11)",
+"HQSITE12-DC01 (SITE12)",
+"corp.example.mil",
+"3 days ago",
+"no success for 3 days",
+"Critical"
+],
+[
+"HQSITE14-DC01 (SITE14)",
+"HQSITE15-DC01 (SITE15)",
+"corp.example.mil",
+"3 days ago",
+"no success for 3 days",
+"Critical"
+],
+[
+"HQSITE14-DC02 (SITE14)",
+"HQSITE15-DC01 (SITE15)",
+"corp.example.mil",
+"3 days ago",
+"no success for 3 days",
+"Critical"
+],
+[
+"HQSITE17-DC01 (SITE17)",
+"HQSITE18-DC01 (SITE18)",
+"corp.example.mil",
+"3 days ago",
+"no success for 3 days",
+"Critical"
+],
+[
+"HQSITE17-DC02 (SITE17)",
+"HQSITE18-DC01 (SITE18)",
+"corp.example.mil",
+"3 days ago",
+"no success for 3 days",
+"Critical"
+],
+[
+"HQSITE20-DC01 (SITE20)",
+"HQSITE01-DC01 (SITEA-HEADQUARTERS-MAIN1)",
+"corp.example.mil",
+"3 days ago",
+"no success for 3 days",
+"Critical"
+],
+[
+"HQSITE20-DC02 (SITE20)",
+"HQSITE01-DC01 (SITEA-HEADQUARTERS-MAIN1)",
+"corp.example.mil",
+"3 days ago",
+"no success for 3 days",
+"Critical"
+],
+[
+"HQSITE01-DC02 (SITEA-HEADQUARTERS-MAIN1)",
+"HQSITE02-DC02 (SITEA-HEADQUARTERS-MAIN2)",
+"corp.example.mil",
+"26.0 h ago",
+"no success for 26.0 h",
+"Critical"
+],
+[
+"HQSITE02-DC01 (SITEA-HEADQUARTERS-MAIN2)",
+"HQSITE02-DC02 (SITEA-HEADQUARTERS-MAIN2)",
+"corp.example.mil",
+"26.0 h ago",
+"no success for 26.0 h",
+"Critical"
+],
+[
+"HQSITE05-DC01 (SITE05)",
+"HQSITE05-DC02 (SITE05)",
+"corp.example.mil",
+"26.0 h ago",
+"no success for 26.0 h",
+"Critical"
+],
+[
+"HQSITE07-DC02 (SITE07)",
+"HQSITE08-DC02 (SITE08)",
+"corp.example.mil",
+"26.0 h ago",
+"no success for 26.0 h",
+"Critical"
+],
+[
+"HQSITE10-DC02 (SITE10)",
+"HQSITE11-DC02 (SITE11)",
+"corp.example.mil",
+"26.0 h ago",
+"no success for 26.0 h",
+"Critical"
+],
+[
+"HQSITE11-DC01 (SITE11)",
+"HQSITE11-DC02 (SITE11)",
+"corp.example.mil",
+"26.0 h ago",
+"no success for 26.0 h",
+"Critical"
+],
+[
+"HQSITE13-DC02 (SITE13)",
+"HQSITE14-DC02 (SITE14)",
+"corp.example.mil",
+"26.0 h ago",
+"no success for 26.0 h",
+"Critical"
+],
+[
+"HQSITE14-DC01 (SITE14)",
+"HQSITE14-DC02 (SITE14)",
+"corp.example.mil",
+"26.0 h ago",
+"no success for 26.0 h",
+"Critical"
+],
+[
+"HQSITE16-DC02 (SITE16)",
+"HQSITE17-DC02 (SITE17)",
+"corp.example.mil",
+"26.0 h ago",
+"no success for 26.0 h",
+"Critical"
+],
+[
+"HQSITE17-DC01 (SITE17)",
+"HQSITE17-DC02 (SITE17)",
+"corp.example.mil",
+"26.0 h ago",
+"no success for 26.0 h",
+"Critical"
+],
+[
+"HQSITE19-DC02 (SITE19)",
+"HQSITE20-DC02 (SITE20)",
+"corp.example.mil",
+"26.0 h ago",
+"no success for 26.0 h",
+"Critical"
+],
+[
+"HQSITE20-DC01 (SITE20)",
+"HQSITE20-DC02 (SITE20)",
+"corp.example.mil",
+"26.0 h ago",
+"no success for 26.0 h",
+"Critical"
+],
+[
+"HQSITE03-DC01 (SITE03)",
+"HQSITE03-DC02 (SITE03)",
+"corp.example.mil",
+"never",
+"never replicated",
+"Warning"
+]
+],
+"status": "critical",
+"text": "Each pair of DCs that replicate, the worst partition, worst first. 80 link(s) between 40 DCs in 20 site(s): 45 on time, 0 Low, 1 warning, 34 critical.",
+"title": "Replication links that need a look"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"critical"
+]
+],
+"columns": [
+"Site",
+"Worst age, 14 days",
+"Now",
+"Since last week",
+"Status"
+],
+"kinds": [
+"",
+"spark",
+"",
+"",
+""
+],
+"row_status": [
+"critical",
+"",
+"critical",
+"critical",
+"",
+"critical",
+"critical",
+"",
+"critical",
+"critical",
+"",
+"critical",
+"critical",
+"",
+"critical",
+"critical",
+"",
+"critical",
+"critical",
+"critical"
+],
+"rows": [
+[
+"SITE03",
+"",
+"400 d",
+"1 day(s) of history: no line yet",
+"Critical"
+],
+[
+"SITE04",
+"",
+"52 m",
+"1 day(s) of history: no line yet",
+"OK"
+],
+[
+"SITE05",
+"",
+"26 h",
+"1 day(s) of history: no line yet",
+"Critical"
+],
+[
+"SITE06",
+"",
+"400 d",
+"1 day(s) of history: no line yet",
+"Critical"
+],
+[
+"SITE07",
+"",
+"52 m",
+"1 day(s) of history: no line yet",
+"OK"
+],
+[
+"SITE08",
+"",
+"26 h",
+"1 day(s) of history: no line yet",
+"Critical"
+],
+[
+"SITE09",
+"",
+"400 d",
+"1 day(s) of history: no line yet",
+"Critical"
+],
+[
+"SITE10",
+"",
+"52 m",
+"1 day(s) of history: no line yet",
+"OK"
+],
+[
+"SITE11",
+"",
+"26 h",
+"1 day(s) of history: no line yet",
+"Critical"
+],
+[
+"SITE12",
+"",
+"400 d",
+"1 day(s) of history: no line yet",
+"Critical"
+],
+[
+"SITE13",
+"",
+"52 m",
+"1 day(s) of history: no line yet",
+"OK"
+],
+[
+"SITE14",
+"",
+"26 h",
+"1 day(s) of history: no line yet",
+"Critical"
+],
+[
+"SITE15",
+"",
+"400 d",
+"1 day(s) of history: no line yet",
+"Critical"
+],
+[
+"SITE16",
+"",
+"52 m",
+"1 day(s) of history: no line yet",
+"OK"
+],
+[
+"SITE17",
+"",
+"26 h",
+"1 day(s) of history: no line yet",
+"Critical"
+],
+[
+"SITE18",
+"",
+"400 d",
+"1 day(s) of history: no line yet",
+"Critical"
+],
+[
+"SITE19",
+"",
+"52 m",
+"1 day(s) of history: no line yet",
+"OK"
+],
+[
+"SITE20",
+"",
+"26 h",
+"1 day(s) of history: no line yet",
+"Critical"
+],
+[
+"SITEA-HEADQUARTERS-MAIN1",
+"",
+"400 d",
+"1 day(s) of history: no line yet",
+"Critical"
+],
+[
+"SITEA-HEADQUARTERS-MAIN2",
+"",
+"26 h",
+"1 day(s) of history: no line yet",
+"Critical"
+]
+],
+"sparks": [
+{},
+{},
+{},
+{},
+{},
+{},
+{},
+{},
+{},
+{},
+{},
+{},
+{},
+{},
+{},
+{},
+{},
+{},
+{},
+{}
+],
+"text": "The worst inbound replication age of each site, by day, over 14 days: this template's earlier runs (AAP job history), then this run. The dashed line is 6.0 h (ad_repl_warn_hours): a flat line under it is healthy.",
+"title": "Replication trend: worst age per site"
+}
+],
+"status": "critical",
+"summary": [],
+"title": "Active Directory health report (corp.example.mil)"
+}

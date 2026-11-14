@@ -137,7 +137,8 @@
 ## table stays)
 # ad_repl_matrix: true
 
-## more DCs than this: the matrix is site x site, each cell the worst link (12 fit 800 px)
+## more DCs than this: the matrix is site x site, each cell the worst link (12 at most: what fits
+## 800 px)
 # ad_repl_matrix_max_dcs: 12
 
 ## each site's worst replication age over this many days (a line on the website)

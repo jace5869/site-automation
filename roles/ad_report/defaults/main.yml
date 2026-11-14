@@ -59,7 +59,7 @@ ad_repl_low_hours: 4                     # no success for this long -> Low in th
 
 # ---- Replication matrix (1.63.0): DC x DC on the report website, the late links in the email, every link in the workbook ----
 ad_repl_matrix: true                     # false = no replication matrix sections (the Inbound replication table stays)
-ad_repl_matrix_max_dcs: 12               # more DCs than this: the matrix is site x site, each cell the worst link (12 fit 800 px)
+ad_repl_matrix_max_dcs: 12               # more DCs than this: the matrix is site x site, each cell the worst link (12 at most: what fits 800 px)
 ad_repl_trend_days: 14                   # each site's worst replication age over this many days (a line on the website)
 ad_repl_history: true                    # the trend from this template's earlier runs (AAP job history: the "Red Hat Ansible Automation Platform" credential)
 ad_repl_history_runs: 50                 # how many earlier runs to read from AAP (at most 50: a daily job keeps 14 days with 14)

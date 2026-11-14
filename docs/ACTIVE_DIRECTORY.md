@@ -35,7 +35,7 @@ changes, accounts created / deleted, GPO changes). Then, in this order:
 | **Domains** | each domain: functional levels, schema version, DCs checked / in AD, the PDC emulator, tombstone lifetime, Recycle Bin, RID pool left, the oldest partition's last backup, the krbtgt password's age, the SYSVOL migration state | amber Recycle Bin off, krbtgt older than 180 days, FRS; red RID pool under 2 %, backup older than 30 days or the tombstone lifetime |
 | **Domain controllers** | each DC: site, OS, GC / RODC, the FSMO roles it holds, LDAP answering (and synchronized), DC services not running, dcdiag's failed tests, SYSVOL, its clock, the least free space of its database, log and SYSVOL volumes, uptime. A DC in AD that is not in the inventory is listed in blue | red unreachable, LDAP down, not synchronized, a DC service stopped |
 | **Operations masters (FSMO)** | who holds each role, whether that holder still exists as a DC, whether it answers on LDAP | red holder gone or not answering |
-| **Replication matrix** (1.63.0) | on the website: every pair of DCs, grouped by site, with how long ago the pair last replicated. The worst pair on top, with what to do. Hover a cell for the partition, times and error. Past `ad_repl_matrix_max_dcs` DCs: site x site | per pair, as below; Low from `ad_repl_low_hours` (4 h) |
+| **Replication matrix** (1.63.0) | on the website: every pair of DCs, grouped by site, with how long ago the pair last replicated. The worst pair on top, with what to do. Hover a cell for the partition, times and error. Past `ad_repl_matrix_max_dcs` DCs: site x site. Past 12 sites: the site pairs as a list | per pair, as below; Low from `ad_repl_low_hours` (4 h) |
 | **Replication links that need a look** (1.63.0) | each pair past `ad_repl_low_hours`, worst first, with the numbers. The email has this table instead of the matrix | as below, with Low |
 | **Replication trend** (1.63.0) | on the website: each site's worst replication age by day over `ad_repl_trend_days` (14), a line per site. From the template's earlier runs | as the site's worst pair |
 | **Inbound replication** | links with a problem only (`repadmin /showrepl` on each DC): partition, partner, failures, last success, last error with what the code means | amber 6 h without success, red 24 h, a failing link, or longer than the tombstone lifetime; amber 50+ requests in the queue |
@@ -73,7 +73,10 @@ A row is the DC replicating **from**, a column the DC replicating **to**. A cell
 
 - **The bands.** OK, then Low after `ad_repl_low_hours` (one site link schedule missed), amber after
   `ad_repl_warn_hours`, red after `ad_repl_crit_hours`. A failing link is amber, and red once it is that old.
+- **The ages** are short: `52m`, `3h`, `2d`. A pair that never replicated shows **—**.
 - **Not partners** is a dot. A DC whose own state was not read shows **?** in its column.
+- **Large forests.** Past `ad_repl_matrix_max_dcs` DCs (12 at most), each cell is a site's worst link to another site.
+  The columns are numbered. Past 12 sites the grid would not fit, so the site pairs are listed, worst first.
 - **The trend** needs two days of runs. It reads this template's earlier jobs in AAP, with the same "Red Hat Ansible
   Automation Platform" credential as the strip of past runs. The report database can keep the points too
   ([REPORT_DATABASE.md](REPORT_DATABASE.md)). Until then the table says so.
@@ -170,7 +173,7 @@ Ready to paste, with every setting switched off: [aap/extra_vars/ad_health_repor
 | `ad_repl_queue_warn` | `50` | requests in a DC's inbound replication queue |
 | `ad_repl_low_hours` | `4` | Low in the replication matrix after this long (one schedule missed). `0`: no Low |
 | `ad_repl_matrix` | `true` | the replication matrix, late links and trend sections |
-| `ad_repl_matrix_max_dcs` | `12` | more DCs than this: the matrix is site x site |
+| `ad_repl_matrix_max_dcs` | `12` | more DCs than this: the matrix is site x site (12 at most) |
 | `ad_repl_trend_days` | `14` | the trend's days |
 | `ad_repl_history` / `ad_repl_history_runs` | `true` / `50` | read the trend from this many earlier runs in AAP |
 | `ad_repl_db` / `ad_repl_db_create` | `true` / `true` | keep the trend in the report database, when the template has its credential |
