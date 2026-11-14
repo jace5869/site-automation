@@ -165,7 +165,10 @@ Replication* (`DS-Replication-Monitor-Topology`) on the partition ([MS-ADTS] 3.1
 
 - **The website** (atlas and brief): every pair of DCs, grouped by AD site. Each cell is how long ago the pair last
   replicated, with its status icon. Hover for the partition, last success, last failure and error. The worst pair is
-  a card on top, with the next step and a command. More than `ad_repl_matrix_max_dcs` (12) DCs: site x site.
+  a card on top, with the next step and a command. Ages are short (52m, 3h, 2d, 1y) and "—" means never, as the
+  legend says; no cell is cut at 1280 or 800 px. More than `ad_repl_matrix_max_dcs` DCs (12, also the most it takes):
+  site x site, the columns numbered and each row with its number and full name. More than 12 sites: no grid, the site
+  pairs as a list, worst first, with one line that points to the workbook.
 - **The bands:** OK, Low after `ad_repl_low_hours` (4 h, one schedule missed), amber after `ad_repl_warn_hours`, red
   after `ad_repl_crit_hours`. A failing link is amber, and red once it is that old.
 - **Links that need a look:** each late pair, worst first, with the numbers. The email has this table, not the matrix.

@@ -10,7 +10,7 @@
 {%- set n = mx.cols | length %}
 <div class="rm-legend">
 {%- for l in mx.legend | default([]) %}<span>{{ chip(l.st, chipword[l.st] if l.st != 'unknown' else 'Not read') }} {{ l.text | e }}</span>{% endfor %}
-<span>Ages: m minutes, h hours, d days</span>
+<span>Ages: m minutes, h hours, d days, y years</span>
 {%- if mx.never | default(false) %}<span><b class="rm-mk" aria-hidden="true">&mdash;</b> never replicated</span>{% endif %}
 {%- if mx.mode == 'dc' %}<span><i class="rm-dot" aria-hidden="true">&middot;</i> not replication partners</span>{% endif %}</div>
 <div class="rm-wrap"><table class="rm rm-{{ mx.mode | e }}{{ ' rm-dense' if mx.dense | default(false) else '' }}" style="min-width:{{ 120 + n * 40 }}px" aria-label="{{ s.title | e }}">
