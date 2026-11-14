@@ -2204,7 +2204,10 @@ run "the certificate REPORT, every host, the days raised, the ServiceNow credent
     && echo "ok   -   ...not one request to ServiceNow, no CSR" || { echo "FAIL -   ...the report talked to ServiceNow"; fails=$((fails + 1)); }
 run "...its timeline (cert_timeline_days raised to reach the simulator's certificates): vCenter and each cluster a row" ok vmware_cert_report.yml \
     -e vmware_cert_warn_days=30000 -e cert_timeline_days=30000 \
-    -- "Certificate timeline, the next 30000 days: " "vCenter: 1 certificate, Warning" "DC0_C0: 3 certificates, Warning" "ESXi hosts: 1 certificate, Warning"
+    -- "Certificate timeline, the next 30000 days: " "vCenter: 1 certificate, Warning" "  DC0_C0: " "ESXi hosts: 1 certificate, Warning"
+# DC0_C0_H2 may be disconnected by now (the alarms report's events): 2 or 3 certificates in the cluster's row
+grep -Eq '"  DC0_C0: [23] certificates, Warning"' "$work/out.txt" && echo "ok   -   ...the cluster's row: its certificates, Warning" \
+    || { echo "FAIL -   ...the cluster's row"; grep -F "DC0_C0: " "$work/out.txt" | head -3; fails=$((fails + 1)); }
 run "...cert_timeline: false: the report as before" ok vmware_cert_report.yml -e vmware_cert_warn_days=30000 -e cert_timeline=false -- "VMware certificate report: "
 grep -q "Certificate timeline" "$work/out.txt" && { echo "FAIL -   ...cert_timeline: false still made the timeline"; fails=$((fails + 1)); } || echo "ok   -   ...no timeline line"
 run "...the report of one host, 30 days" ok vmware_cert_report.yml -e vmware_cert_only=DC0_H0 -- "VMware certificate report: 0 due within 30 days, of 1"
