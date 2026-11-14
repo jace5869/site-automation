@@ -2094,6 +2094,29 @@ if grep -q "^Network drops and errors" "$work/hl.txt" && grep -q "[0-9]* host(s)
 else
     echo "FAIL -   ...network drops section"; sed -n '/^Network drops/,/^$/p' "$work/hl.txt" | head -20; fails=$((fails + 1))
 fi
+# 1.65.0: the cluster heat grid - on the website (atlas) a row per cluster and per datacenter's standalone hosts, a card
+# per host; the email the numbers and the Hosts not OK box, no grid; the workbook Clusters by day; the artifact vm_heat
+mkdir -p "$work/heatweb"
+RUN_PORT=$port3 run "health report: the cluster heat grid on the website, the numbers in the email and the workbook" ok vm_health_report.yml \
+    -e "$mail" -e "{\"report_web_dest\": \"$work/heatweb\", \"report_email_xlsx\": true}" \
+    -- '"vm_heat": {' "10 host(s): " "No run about a week ago: nothing marked new yet." "emailed"
+page="$(find "$work/heatweb" -name latest.html | head -1)"
+eml="$(lastmail)"
+if [ -n "$page" ] && [ "$(grep -o '<div class="hg-row">' "$page" | wc -l)" = 6 ] && [ "$(grep -o 'class="hg-h s-' "$page" | wc -l)" = 10 ] \
+   && grep -q 'class="hg-h s-critical" role="listitem" data-tip="DC0_C1_H1' "$page" \
+   && getpart plain "$eml" | grep -q "^Clusters: CPU and memory over 30 days" && getpart plain "$eml" | grep -q "^Hosts not OK: [0-9]" \
+   && ! getpart html "$eml" | grep -q 'class="hg-' \
+   && "$py" - "$eml" <<'PY'
+import email, io, sys, zipfile
+m = email.message_from_binary_file(open(sys.argv[1], "rb"))
+att = [p for p in m.walk() if (p.get_filename() or "").endswith(".xlsx")]
+sys.exit(0 if att and 'name="Clusters by day"' in zipfile.ZipFile(io.BytesIO(att[0].get_payload(decode=True))).read("xl/workbook.xml").decode() else 1)
+PY
+then
+    echo "ok   -   ...the grid on the website (6 rows, 10 cards), the numbers and the box in the email, Clusters by day in the workbook"
+else
+    echo "FAIL -   ...heat grid: page $page"; getpart plain "$eml" | grep -n "Hosts not OK\|Clusters: CPU" | head; fails=$((fails + 1))
+fi
 # the trust store report: vcsim has neither the certificate-management REST API nor ListCACertificates, so every
 # store is "not read" and the job fails saying so (a real vCenter answers both); no credential refused
 run "trust store report: nothing readable on vcsim - every store not read, the job fails and says so" fail vmware_trust_report.yml \

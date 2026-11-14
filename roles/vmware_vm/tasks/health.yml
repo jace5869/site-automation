@@ -82,13 +82,25 @@
               'max_rows': vm_health_max_rows | int,
               'known_down': _vm_hl_read.vcenters | selectattr('error') | map(attribute='name') | list} }}
 
+- name: VMware | the cluster heat grid (vm_heat, 1.65.0)
+  ansible.builtin.include_tasks: heat.yml
+  when: vm_heat | bool
+
+# the email: the heat grid's numbers and its boxes; the website (atlas, brief): the grid, the hosts not OK and the
+# numbers before Needs attention; the workbook (report_email_xlsx): the report's tables and the clusters by day
 - name: VMware | health report
   ansible.builtin.include_tasks: report.yml
   vars:
     _vm_vcenters: "{{ _vm_hl_read.vcenters }}"
     _vm_report_subject: "{{ _vm_hl_doc.title }}"
     _vm_report_lines: "{{ (_vm_hl_doc | report_text).splitlines() }}"
-    _vm_report_doc: "{{ _vm_hl_doc }}"
+    _vm_report_doc: >-
+      {{ _vm_hl_doc | vm_heat_insert(_vm_heat.sections, _vm_heat.boxes, 'Hosts') if (_vm_heat | default({})).sections is defined else _vm_hl_doc }}
+    _vm_report_web_doc: >-
+      {{ _vm_hl_doc | vm_heat_insert(_vm_heat.web_sections, _vm_heat.boxes) if (_vm_heat | default({})).web_sections is defined else {} }}
+    _vm_report_xlsx: >-
+      {{ (_vm_hl_doc | vm_heat_insert(_vm_heat.sections, _vm_heat.boxes, 'Hosts') | report_xlsx_sheets) + _vm_heat.sheets
+         if (_vm_heat | default({})).sheets is defined and report_email_xlsx | default(false) | bool else [] }}
 
 - name: VMware | the health as job artifacts (vm_health)
   ansible.builtin.set_stats:

@@ -1,0 +1,1108 @@
+{
+"sections": [
+{
+"heat": {
+"clusters": [
+{
+"cards": [
+{
+"body": "",
+"cpu": "41%",
+"mem": "61%",
+"name": "esx01",
+"new": false,
+"st": "ok",
+"tip": "esx01.corp.example.mil\nOK\nCPU 41% used, memory 61% used"
+},
+{
+"body": "",
+"cpu": "42%",
+"mem": "62%",
+"name": "esx02",
+"new": false,
+"st": "ok",
+"tip": "esx02.corp.example.mil\nOK\nCPU 42% used, memory 62% used"
+},
+{
+"body": "",
+"cpu": "43%",
+"mem": "93%",
+"name": "esx03",
+"new": true,
+"st": "warning",
+"tip": "esx03.corp.example.mil\nWarning: Memory 93% used\nCPU 43% used, memory 93% used\nNew since last week (it was OK)"
+},
+{
+"body": "",
+"cpu": "44%",
+"mem": "64%",
+"name": "esx04",
+"new": false,
+"st": "ok",
+"tip": "esx04.corp.example.mil\nOK\nCPU 44% used, memory 64% used"
+},
+{
+"body": "",
+"cpu": "45%",
+"mem": "65%",
+"name": "esx05",
+"new": false,
+"st": "ok",
+"tip": "esx05.corp.example.mil\nOK\nCPU 45% used, memory 65% used"
+},
+{
+"body": "",
+"cpu": "46%",
+"mem": "66%",
+"name": "esx06",
+"new": false,
+"st": "ok",
+"tip": "esx06.corp.example.mil\nOK\nCPU 46% used, memory 66% used"
+},
+{
+"body": "not responding",
+"cpu": "-",
+"mem": "-",
+"name": "esx07",
+"new": true,
+"st": "critical",
+"tip": "esx07.corp.example.mil\nCritical: Not responding to vCenter\nnot responding\nNew since last week (it was OK)"
+},
+{
+"body": "",
+"cpu": "48%",
+"mem": "68%",
+"name": "esx08",
+"new": false,
+"st": "ok",
+"tip": "esx08.corp.example.mil\nOK\nCPU 48% used, memory 68% used"
+}
+],
+"change": "esx03 new warning; esx07 new critical; memory 60% to 68%",
+"cpu": "44%",
+"cpu_points": [
+[
+1792040400,
+30.0
+],
+[
+1792126800,
+30.5
+],
+[
+1792213200,
+31.0
+],
+[
+1792299600,
+31.5
+],
+[
+1792386000,
+32.0
+],
+[
+1792472400,
+32.5
+],
+[
+1792558800,
+33.0
+],
+[
+1792645200,
+33.5
+],
+[
+1792731600,
+34.0
+],
+[
+1792818000,
+34.5
+],
+[
+1792904400,
+35.0
+],
+[
+1792990800,
+35.5
+],
+[
+1793077200,
+36.0
+],
+[
+1793163600,
+36.5
+],
+[
+1793250000,
+37.0
+],
+[
+1793336400,
+37.5
+],
+[
+1793422800,
+38.0
+],
+[
+1793509200,
+38.5
+],
+[
+1793595600,
+39.0
+],
+[
+1793682000,
+39.5
+],
+[
+1793768400,
+40.0
+],
+[
+1793854800,
+40.5
+],
+[
+1793941200,
+41.0
+],
+[
+1794027600,
+41.5
+],
+[
+1794114000,
+42.0
+],
+[
+1794200400,
+42.5
+],
+[
+1794286800,
+43.0
+],
+[
+1794373200,
+43.5
+],
+[
+1794459600,
+44.0
+],
+[
+1794546000,
+44.1
+]
+],
+"mem": "68%",
+"mem_points": [
+[
+1792040400,
+60.0
+],
+[
+1792126800,
+60.0
+],
+[
+1792213200,
+60.0
+],
+[
+1792299600,
+60.0
+],
+[
+1792386000,
+60.0
+],
+[
+1792472400,
+60.0
+],
+[
+1792558800,
+60.0
+],
+[
+1792645200,
+60.0
+],
+[
+1792731600,
+60.0
+],
+[
+1792818000,
+60.0
+],
+[
+1792904400,
+60.0
+],
+[
+1792990800,
+60.0
+],
+[
+1793077200,
+60.0
+],
+[
+1793163600,
+60.0
+],
+[
+1793250000,
+60.0
+],
+[
+1793336400,
+60.0
+],
+[
+1793422800,
+60.0
+],
+[
+1793509200,
+60.0
+],
+[
+1793595600,
+60.0
+],
+[
+1793682000,
+60.0
+],
+[
+1793768400,
+60.0
+],
+[
+1793854800,
+60.0
+],
+[
+1793941200,
+60.0
+],
+[
+1794027600,
+60.0
+],
+[
+1794114000,
+60.0
+],
+[
+1794200400,
+60.0
+],
+[
+1794286800,
+60.0
+],
+[
+1794373200,
+60.0
+],
+[
+1794459600,
+60.0
+],
+[
+1794546000,
+68.4
+]
+],
+"n": 8,
+"name": "SITEA-PROD",
+"status": "critical"
+},
+{
+"cards": [
+{
+"body": "",
+"cpu": "50%",
+"mem": "60%",
+"name": "esx09",
+"new": false,
+"st": "ok",
+"tip": "esx09.corp.example.mil\nOK\nCPU 50% used, memory 60% used"
+},
+{
+"body": "maintenance",
+"cpu": "50%",
+"mem": "60%",
+"name": "esx10",
+"new": true,
+"st": "low",
+"tip": "esx10.corp.example.mil\nLow: In maintenance mode\nmaintenance\nNew since last week (it was OK)"
+},
+{
+"body": "",
+"cpu": "50%",
+"mem": "60%",
+"name": "esx11",
+"new": false,
+"st": "ok",
+"tip": "esx11.corp.example.mil\nOK\nCPU 50% used, memory 60% used"
+},
+{
+"body": "",
+"cpu": "50%",
+"mem": "60%",
+"name": "esx12",
+"new": false,
+"st": "ok",
+"tip": "esx12.corp.example.mil\nOK\nCPU 50% used, memory 60% used"
+}
+],
+"change": "esx10 new low; esx12 back to OK (was warning)",
+"cpu": "50%",
+"cpu_points": [
+[
+1792040400,
+50.0
+],
+[
+1792126800,
+50.0
+],
+[
+1792213200,
+50.0
+],
+[
+1792299600,
+50.0
+],
+[
+1792386000,
+50.0
+],
+[
+1792472400,
+50.0
+],
+[
+1792558800,
+50.0
+],
+[
+1792645200,
+50.0
+],
+[
+1792731600,
+50.0
+],
+[
+1792818000,
+50.0
+],
+[
+1792904400,
+50.0
+],
+[
+1792990800,
+50.0
+],
+[
+1793077200,
+50.0
+],
+[
+1793163600,
+50.0
+],
+[
+1793250000,
+50.0
+],
+[
+1793336400,
+50.0
+],
+[
+1793422800,
+50.0
+],
+[
+1793509200,
+50.0
+],
+[
+1793595600,
+50.0
+],
+[
+1793682000,
+50.0
+],
+[
+1793768400,
+50.0
+],
+[
+1793854800,
+50.0
+],
+[
+1793941200,
+50.0
+],
+[
+1794027600,
+50.0
+],
+[
+1794114000,
+50.0
+],
+[
+1794200400,
+50.0
+],
+[
+1794286800,
+50.0
+],
+[
+1794373200,
+50.0
+],
+[
+1794459600,
+50.0
+],
+[
+1794546000,
+50.0
+]
+],
+"mem": "60%",
+"mem_points": [
+[
+1792040400,
+60.0
+],
+[
+1792126800,
+60.0
+],
+[
+1792213200,
+60.0
+],
+[
+1792299600,
+60.0
+],
+[
+1792386000,
+60.0
+],
+[
+1792472400,
+60.0
+],
+[
+1792558800,
+60.0
+],
+[
+1792645200,
+60.0
+],
+[
+1792731600,
+60.0
+],
+[
+1792818000,
+60.0
+],
+[
+1792904400,
+60.0
+],
+[
+1792990800,
+60.0
+],
+[
+1793077200,
+60.0
+],
+[
+1793163600,
+60.0
+],
+[
+1793250000,
+60.0
+],
+[
+1793336400,
+60.0
+],
+[
+1793422800,
+60.0
+],
+[
+1793509200,
+60.0
+],
+[
+1793595600,
+60.0
+],
+[
+1793682000,
+60.0
+],
+[
+1793768400,
+60.0
+],
+[
+1793854800,
+60.0
+],
+[
+1793941200,
+60.0
+],
+[
+1794027600,
+60.0
+],
+[
+1794114000,
+60.0
+],
+[
+1794200400,
+60.0
+],
+[
+1794286800,
+60.0
+],
+[
+1794373200,
+60.0
+],
+[
+1794459600,
+60.0
+],
+[
+1794546000,
+60.0
+]
+],
+"n": 4,
+"name": "SITEA-MGMT",
+"status": "low"
+},
+{
+"cards": [
+{
+"body": "",
+"cpu": "45%",
+"mem": "70%",
+"name": "esx25",
+"new": false,
+"st": "ok",
+"tip": "esx25.corp.example.mil\nOK\nCPU 45% used, memory 70% used"
+},
+{
+"body": "",
+"cpu": "45%",
+"mem": "70%",
+"name": "esx26",
+"new": false,
+"st": "ok",
+"tip": "esx26.corp.example.mil\nOK\nCPU 45% used, memory 70% used"
+},
+{
+"body": "",
+"cpu": "45%",
+"mem": "70%",
+"name": "esx27",
+"new": false,
+"st": "warning",
+"tip": "esx27.corp.example.mil\nWarning: Needs a restart (an update or a setting waits for it)\nCPU 45% used, memory 70% used"
+}
+],
+"change": "no change",
+"cpu": "45%",
+"cpu_points": [
+[
+1792040400,
+45.0
+],
+[
+1792126800,
+45.0
+],
+[
+1792213200,
+45.0
+],
+[
+1792299600,
+45.0
+],
+[
+1792386000,
+45.0
+],
+[
+1792472400,
+45.0
+],
+[
+1792558800,
+45.0
+],
+[
+1792645200,
+45.0
+],
+[
+1792731600,
+45.0
+],
+[
+1792818000,
+45.0
+],
+[
+1792904400,
+45.0
+],
+[
+1792990800,
+45.0
+],
+[
+1793077200,
+45.0
+],
+[
+1793163600,
+45.0
+],
+[
+1793250000,
+45.0
+],
+[
+1793336400,
+45.0
+],
+[
+1793422800,
+45.0
+],
+[
+1793509200,
+45.0
+],
+[
+1793595600,
+45.0
+],
+[
+1793682000,
+45.0
+],
+[
+1793768400,
+45.0
+],
+[
+1793854800,
+45.0
+],
+[
+1793941200,
+45.0
+],
+[
+1794027600,
+45.0
+],
+[
+1794114000,
+45.0
+],
+[
+1794200400,
+45.0
+],
+[
+1794286800,
+45.0
+],
+[
+1794373200,
+45.0
+],
+[
+1794459600,
+45.0
+],
+[
+1794546000,
+45.0
+]
+],
+"mem": "70%",
+"mem_points": [
+[
+1792040400,
+70.0
+],
+[
+1792126800,
+70.0
+],
+[
+1792213200,
+70.0
+],
+[
+1792299600,
+70.0
+],
+[
+1792386000,
+70.0
+],
+[
+1792472400,
+70.0
+],
+[
+1792558800,
+70.0
+],
+[
+1792645200,
+70.0
+],
+[
+1792731600,
+70.0
+],
+[
+1792818000,
+70.0
+],
+[
+1792904400,
+70.0
+],
+[
+1792990800,
+70.0
+],
+[
+1793077200,
+70.0
+],
+[
+1793163600,
+70.0
+],
+[
+1793250000,
+70.0
+],
+[
+1793336400,
+70.0
+],
+[
+1793422800,
+70.0
+],
+[
+1793509200,
+70.0
+],
+[
+1793595600,
+70.0
+],
+[
+1793682000,
+70.0
+],
+[
+1793768400,
+70.0
+],
+[
+1793854800,
+70.0
+],
+[
+1793941200,
+70.0
+],
+[
+1794027600,
+70.0
+],
+[
+1794114000,
+70.0
+],
+[
+1794200400,
+70.0
+],
+[
+1794286800,
+70.0
+],
+[
+1794373200,
+70.0
+],
+[
+1794459600,
+70.0
+],
+[
+1794546000,
+70.0
+]
+],
+"n": 3,
+"name": "SITEB-DMZ",
+"status": "warning"
+},
+{
+"cards": [
+{
+"body": "",
+"cpu": "30%",
+"mem": "60%",
+"name": "esx90",
+"new": false,
+"st": "ok",
+"tip": "esx90.corp.example.mil\nOK\nCPU 30% used, memory 60% used"
+}
+],
+"change": "no change",
+"cpu": "30%",
+"cpu_points": [
+[
+1794546000,
+30.0
+]
+],
+"mem": "60%",
+"mem_points": [
+[
+1794546000,
+60.0
+]
+],
+"n": 1,
+"name": "standalone hosts",
+"status": "ok"
+}
+],
+"days": 30,
+"legend": [
+{
+"st": "critical"
+},
+{
+"st": "warning"
+},
+{
+"st": "low"
+},
+{
+"st": "ok"
+}
+]
+},
+"lines": [
+"16 host(s): 1 Critical, 2 Warning, 1 Low, 12 OK. A week ago (2026-11-06): 0 critical, 2 warning, 0 Low."
+],
+"status": "critical",
+"text": "Every ESXi host as a card, a row per cluster. Each cluster's CPU and memory: the day's average over 30 days.",
+"title": "Every host, by cluster"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"critical",
+"",
+""
+],
+[
+"",
+"",
+"warning",
+"",
+""
+],
+[
+"",
+"",
+"warning",
+"",
+""
+],
+[
+"",
+"",
+"low",
+"",
+""
+]
+],
+"columns": [
+"Cluster",
+"Host",
+"Status",
+"Why",
+"Since"
+],
+"row_status": [
+"critical",
+"warning",
+"warning",
+"low"
+],
+"rows": [
+[
+"SITEA-PROD",
+"esx07.corp.example.mil",
+"Critical",
+"Not responding to vCenter",
+"new (was OK)"
+],
+[
+"SITEA-PROD",
+"esx03.corp.example.mil",
+"Warning",
+"Memory 93% used",
+"new (was OK)"
+],
+[
+"SITEB-DMZ",
+"esx27.corp.example.mil",
+"Warning",
+"Needs a restart (an update or a setting waits for it)",
+"same for 12 days"
+],
+[
+"SITEA-MGMT",
+"esx10.corp.example.mil",
+"Low",
+"In maintenance mode",
+"new (was OK)"
+]
+],
+"status": "critical",
+"text": "Worst first, and how long each has been so (this template's earlier runs).",
+"title": "Hosts that are not OK"
+},
+{
+"columns": [
+"Cluster",
+"CPU 30 days ago",
+"CPU now",
+"Change",
+"Memory 30 days ago",
+"Memory now",
+"Change"
+],
+"rows": [
+[
+"SITEA-PROD",
+"30%",
+"44%",
+"+14",
+"60%",
+"68%",
+"+8"
+],
+[
+"SITEA-MGMT",
+"50%",
+"50%",
+"+0",
+"60%",
+"60%",
+"+0"
+],
+[
+"SITEB-DMZ",
+"45%",
+"45%",
+"+0",
+"70%",
+"70%",
+"+0"
+],
+[
+"standalone hosts",
+"-",
+"30%",
+"",
+"-",
+"60%",
+""
+]
+],
+"text": "Each cluster's CPU and memory used, the first day of the 30 and now (the hosts running VMs). Change: in percentage points. ",
+"title": "Clusters: CPU and memory over 30 days"
+},
+{
+"text": "-",
+"title": "Needs attention"
+}
+],
+"status": "critical",
+"summary": [
+{
+"label": "Hosts not OK",
+"note": "a week ago 2: +3 new, -1 back to OK",
+"status": "critical",
+"value": 4
+},
+{
+"label": "Fastest change",
+"note": "CPU 30% to 44% in 30 days",
+"status": "info",
+"value": "SITEA-PROD"
+}
+],
+"title": "VMware health report: 1 critical, 2 warning(s) - 1 datacenter(s), 3 cluster(s), 16 host(s)"
+}

@@ -1,0 +1,31 @@
+{#- A section's heat grid (1.65.0, the VMware cluster heat grid), in the atlas and brief looks only (an email gets the
+    numbers): s.heat = {days, legend: [{st}], clusters: [{name, n, cpu, mem, cpu_points, mem_points, cards: [{name, st,
+    cpu, mem, body, new, tip}], change, status}]}. A card's status is its icon, its word (in the tip and the legend) and its
+    colour - never the colour alone; NEW is a word. The lines: report_sparkline (1.57.0), 0 to 100%, its hover from
+    site-report.js; fewer than 2 points: no line, said. Tokens of the look (.s-*), so light and dark follow. #}
+{%- set hx = s.heat %}
+<div class="hg">
+{%- for c in hx.clusters | default([]) %}
+<div class="hg-row">
+<div class="hg-cl"><b>{{ c.name | e }}</b><small>{{ c.n }} host{{ '' if c.n == 1 else 's' }} &middot; {{ hx.days }} days</small>
+{%- for m in [('CPU', c.cpu_points, c.cpu), ('Mem', c.mem_points, c.mem)] %}
+<div class="hg-sp"><span>{{ m[0] }}</span>
+{%- if m[1] | length > 1 %}{{ m[1] | report_sparkline({'label': c.name ~ ' ' ~ ('CPU' if m[0] == 'CPU' else 'memory') ~ ' used', 'lo': 0, 'hi': 100, 'w': 84, 'h': 22}) }}
+{%- else %}<i class="hg-no">no line yet</i>{% endif %}<b>{{ m[2] | e }}</b></div>
+{%- endfor %}
+</div>
+<div class="hg-hosts" role="list" aria-label="The hosts of {{ c.name | e }}">
+{%- for h in c.cards %}
+{%- set k = h.st if h.st in words else 'unknown' %}
+<div class="hg-h s-{{ k }}" role="listitem" data-tip="{{ h.tip | e }}" aria-label="{{ h.tip | replace('\n', '; ') | e }}">
+{%- if h.new %}<i class="hg-new">NEW</i>{% endif %}
+<b>{{ icon(k) }}<span>{{ h.name | e }}</span></b>
+{%- if h.body %}<small>{{ h.body | e }}</small>{% else %}<small>CPU {{ h.cpu | e }}</small><small>Mem {{ h.mem | e }}</small>{% endif %}
+</div>
+{%- endfor %}
+</div>
+<div class="hg-ch">{% if c.change %}<span class="hg-chl">Since last week</span>{{ c.change | e }}{% endif %}</div>
+</div>
+{%- endfor %}
+</div>
+<div class="hg-legend">{% for l in hx.legend | default([]) %}{{ chip(l.st, chipword[l.st]) }} {% endfor %}<span><i class="hg-new">NEW</i> not OK now, OK a week ago. Lines: the cluster's average each day, 0 to 100%.</span></div>

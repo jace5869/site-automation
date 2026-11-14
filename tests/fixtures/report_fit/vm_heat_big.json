@@ -1,0 +1,1495 @@
+{
+"sections": [
+{
+"heat": {
+"clusters": [
+{
+"cards": [
+{
+"body": "",
+"cpu": "41%",
+"mem": "61%",
+"name": "esx01",
+"new": false,
+"st": "ok",
+"tip": "esx01.corp.example.mil\nOK\nCPU 41% used, memory 61% used"
+},
+{
+"body": "",
+"cpu": "42%",
+"mem": "62%",
+"name": "esx02",
+"new": false,
+"st": "ok",
+"tip": "esx02.corp.example.mil\nOK\nCPU 42% used, memory 62% used"
+},
+{
+"body": "",
+"cpu": "43%",
+"mem": "93%",
+"name": "esx03",
+"new": true,
+"st": "warning",
+"tip": "esx03.corp.example.mil\nWarning: Memory 93% used\nCPU 43% used, memory 93% used\nNew since last week (it was OK)"
+},
+{
+"body": "",
+"cpu": "44%",
+"mem": "64%",
+"name": "esx04",
+"new": false,
+"st": "ok",
+"tip": "esx04.corp.example.mil\nOK\nCPU 44% used, memory 64% used"
+},
+{
+"body": "",
+"cpu": "45%",
+"mem": "65%",
+"name": "esx05",
+"new": false,
+"st": "ok",
+"tip": "esx05.corp.example.mil\nOK\nCPU 45% used, memory 65% used"
+},
+{
+"body": "",
+"cpu": "46%",
+"mem": "66%",
+"name": "esx06",
+"new": false,
+"st": "ok",
+"tip": "esx06.corp.example.mil\nOK\nCPU 46% used, memory 66% used"
+},
+{
+"body": "not responding",
+"cpu": "-",
+"mem": "-",
+"name": "esx07",
+"new": true,
+"st": "critical",
+"tip": "esx07.corp.example.mil\nCritical: Not responding to vCenter\nnot responding\nNew since last week (it was OK)"
+},
+{
+"body": "",
+"cpu": "48%",
+"mem": "68%",
+"name": "esx08",
+"new": false,
+"st": "ok",
+"tip": "esx08.corp.example.mil\nOK\nCPU 48% used, memory 68% used"
+}
+],
+"change": "esx03 new warning; esx07 new critical; memory 60% to 68%",
+"cpu": "44%",
+"cpu_points": [
+[
+1792040400,
+30.0
+],
+[
+1792126800,
+30.5
+],
+[
+1792213200,
+31.0
+],
+[
+1792299600,
+31.5
+],
+[
+1792386000,
+32.0
+],
+[
+1792472400,
+32.5
+],
+[
+1792558800,
+33.0
+],
+[
+1792645200,
+33.5
+],
+[
+1792731600,
+34.0
+],
+[
+1792818000,
+34.5
+],
+[
+1792904400,
+35.0
+],
+[
+1792990800,
+35.5
+],
+[
+1793077200,
+36.0
+],
+[
+1793163600,
+36.5
+],
+[
+1793250000,
+37.0
+],
+[
+1793336400,
+37.5
+],
+[
+1793422800,
+38.0
+],
+[
+1793509200,
+38.5
+],
+[
+1793595600,
+39.0
+],
+[
+1793682000,
+39.5
+],
+[
+1793768400,
+40.0
+],
+[
+1793854800,
+40.5
+],
+[
+1793941200,
+41.0
+],
+[
+1794027600,
+41.5
+],
+[
+1794114000,
+42.0
+],
+[
+1794200400,
+42.5
+],
+[
+1794286800,
+43.0
+],
+[
+1794373200,
+43.5
+],
+[
+1794459600,
+44.0
+],
+[
+1794546000,
+44.1
+]
+],
+"mem": "68%",
+"mem_points": [
+[
+1792040400,
+60.0
+],
+[
+1792126800,
+60.0
+],
+[
+1792213200,
+60.0
+],
+[
+1792299600,
+60.0
+],
+[
+1792386000,
+60.0
+],
+[
+1792472400,
+60.0
+],
+[
+1792558800,
+60.0
+],
+[
+1792645200,
+60.0
+],
+[
+1792731600,
+60.0
+],
+[
+1792818000,
+60.0
+],
+[
+1792904400,
+60.0
+],
+[
+1792990800,
+60.0
+],
+[
+1793077200,
+60.0
+],
+[
+1793163600,
+60.0
+],
+[
+1793250000,
+60.0
+],
+[
+1793336400,
+60.0
+],
+[
+1793422800,
+60.0
+],
+[
+1793509200,
+60.0
+],
+[
+1793595600,
+60.0
+],
+[
+1793682000,
+60.0
+],
+[
+1793768400,
+60.0
+],
+[
+1793854800,
+60.0
+],
+[
+1793941200,
+60.0
+],
+[
+1794027600,
+60.0
+],
+[
+1794114000,
+60.0
+],
+[
+1794200400,
+60.0
+],
+[
+1794286800,
+60.0
+],
+[
+1794373200,
+60.0
+],
+[
+1794459600,
+60.0
+],
+[
+1794546000,
+68.4
+]
+],
+"n": 8,
+"name": "SITEA-PROD",
+"status": "critical"
+},
+{
+"cards": [
+{
+"body": "",
+"cpu": "50%",
+"mem": "60%",
+"name": "esx09",
+"new": false,
+"st": "ok",
+"tip": "esx09.corp.example.mil\nOK\nCPU 50% used, memory 60% used"
+},
+{
+"body": "maintenance",
+"cpu": "50%",
+"mem": "60%",
+"name": "esx10",
+"new": true,
+"st": "low",
+"tip": "esx10.corp.example.mil\nLow: In maintenance mode\nmaintenance\nNew since last week (it was OK)"
+},
+{
+"body": "",
+"cpu": "50%",
+"mem": "60%",
+"name": "esx11",
+"new": false,
+"st": "ok",
+"tip": "esx11.corp.example.mil\nOK\nCPU 50% used, memory 60% used"
+},
+{
+"body": "",
+"cpu": "50%",
+"mem": "60%",
+"name": "esx12",
+"new": false,
+"st": "ok",
+"tip": "esx12.corp.example.mil\nOK\nCPU 50% used, memory 60% used"
+}
+],
+"change": "esx10 new low; esx12 back to OK (was warning)",
+"cpu": "50%",
+"cpu_points": [
+[
+1792040400,
+50.0
+],
+[
+1792126800,
+50.0
+],
+[
+1792213200,
+50.0
+],
+[
+1792299600,
+50.0
+],
+[
+1792386000,
+50.0
+],
+[
+1792472400,
+50.0
+],
+[
+1792558800,
+50.0
+],
+[
+1792645200,
+50.0
+],
+[
+1792731600,
+50.0
+],
+[
+1792818000,
+50.0
+],
+[
+1792904400,
+50.0
+],
+[
+1792990800,
+50.0
+],
+[
+1793077200,
+50.0
+],
+[
+1793163600,
+50.0
+],
+[
+1793250000,
+50.0
+],
+[
+1793336400,
+50.0
+],
+[
+1793422800,
+50.0
+],
+[
+1793509200,
+50.0
+],
+[
+1793595600,
+50.0
+],
+[
+1793682000,
+50.0
+],
+[
+1793768400,
+50.0
+],
+[
+1793854800,
+50.0
+],
+[
+1793941200,
+50.0
+],
+[
+1794027600,
+50.0
+],
+[
+1794114000,
+50.0
+],
+[
+1794200400,
+50.0
+],
+[
+1794286800,
+50.0
+],
+[
+1794373200,
+50.0
+],
+[
+1794459600,
+50.0
+],
+[
+1794546000,
+50.0
+]
+],
+"mem": "60%",
+"mem_points": [
+[
+1792040400,
+60.0
+],
+[
+1792126800,
+60.0
+],
+[
+1792213200,
+60.0
+],
+[
+1792299600,
+60.0
+],
+[
+1792386000,
+60.0
+],
+[
+1792472400,
+60.0
+],
+[
+1792558800,
+60.0
+],
+[
+1792645200,
+60.0
+],
+[
+1792731600,
+60.0
+],
+[
+1792818000,
+60.0
+],
+[
+1792904400,
+60.0
+],
+[
+1792990800,
+60.0
+],
+[
+1793077200,
+60.0
+],
+[
+1793163600,
+60.0
+],
+[
+1793250000,
+60.0
+],
+[
+1793336400,
+60.0
+],
+[
+1793422800,
+60.0
+],
+[
+1793509200,
+60.0
+],
+[
+1793595600,
+60.0
+],
+[
+1793682000,
+60.0
+],
+[
+1793768400,
+60.0
+],
+[
+1793854800,
+60.0
+],
+[
+1793941200,
+60.0
+],
+[
+1794027600,
+60.0
+],
+[
+1794114000,
+60.0
+],
+[
+1794200400,
+60.0
+],
+[
+1794286800,
+60.0
+],
+[
+1794373200,
+60.0
+],
+[
+1794459600,
+60.0
+],
+[
+1794546000,
+60.0
+]
+],
+"n": 4,
+"name": "SITEA-MGMT",
+"status": "low"
+},
+{
+"cards": [
+{
+"body": "",
+"cpu": "45%",
+"mem": "70%",
+"name": "esx25",
+"new": false,
+"st": "ok",
+"tip": "esx25.corp.example.mil\nOK\nCPU 45% used, memory 70% used"
+},
+{
+"body": "",
+"cpu": "45%",
+"mem": "70%",
+"name": "esx26",
+"new": false,
+"st": "ok",
+"tip": "esx26.corp.example.mil\nOK\nCPU 45% used, memory 70% used"
+},
+{
+"body": "",
+"cpu": "45%",
+"mem": "70%",
+"name": "esx27",
+"new": false,
+"st": "warning",
+"tip": "esx27.corp.example.mil\nWarning: Needs a restart (an update or a setting waits for it)\nCPU 45% used, memory 70% used"
+}
+],
+"change": "no change",
+"cpu": "45%",
+"cpu_points": [
+[
+1792040400,
+45.0
+],
+[
+1792126800,
+45.0
+],
+[
+1792213200,
+45.0
+],
+[
+1792299600,
+45.0
+],
+[
+1792386000,
+45.0
+],
+[
+1792472400,
+45.0
+],
+[
+1792558800,
+45.0
+],
+[
+1792645200,
+45.0
+],
+[
+1792731600,
+45.0
+],
+[
+1792818000,
+45.0
+],
+[
+1792904400,
+45.0
+],
+[
+1792990800,
+45.0
+],
+[
+1793077200,
+45.0
+],
+[
+1793163600,
+45.0
+],
+[
+1793250000,
+45.0
+],
+[
+1793336400,
+45.0
+],
+[
+1793422800,
+45.0
+],
+[
+1793509200,
+45.0
+],
+[
+1793595600,
+45.0
+],
+[
+1793682000,
+45.0
+],
+[
+1793768400,
+45.0
+],
+[
+1793854800,
+45.0
+],
+[
+1793941200,
+45.0
+],
+[
+1794027600,
+45.0
+],
+[
+1794114000,
+45.0
+],
+[
+1794200400,
+45.0
+],
+[
+1794286800,
+45.0
+],
+[
+1794373200,
+45.0
+],
+[
+1794459600,
+45.0
+],
+[
+1794546000,
+45.0
+]
+],
+"mem": "70%",
+"mem_points": [
+[
+1792040400,
+70.0
+],
+[
+1792126800,
+70.0
+],
+[
+1792213200,
+70.0
+],
+[
+1792299600,
+70.0
+],
+[
+1792386000,
+70.0
+],
+[
+1792472400,
+70.0
+],
+[
+1792558800,
+70.0
+],
+[
+1792645200,
+70.0
+],
+[
+1792731600,
+70.0
+],
+[
+1792818000,
+70.0
+],
+[
+1792904400,
+70.0
+],
+[
+1792990800,
+70.0
+],
+[
+1793077200,
+70.0
+],
+[
+1793163600,
+70.0
+],
+[
+1793250000,
+70.0
+],
+[
+1793336400,
+70.0
+],
+[
+1793422800,
+70.0
+],
+[
+1793509200,
+70.0
+],
+[
+1793595600,
+70.0
+],
+[
+1793682000,
+70.0
+],
+[
+1793768400,
+70.0
+],
+[
+1793854800,
+70.0
+],
+[
+1793941200,
+70.0
+],
+[
+1794027600,
+70.0
+],
+[
+1794114000,
+70.0
+],
+[
+1794200400,
+70.0
+],
+[
+1794286800,
+70.0
+],
+[
+1794373200,
+70.0
+],
+[
+1794459600,
+70.0
+],
+[
+1794546000,
+70.0
+]
+],
+"n": 3,
+"name": "SITEB-DMZ",
+"status": "warning"
+},
+{
+"cards": [
+{
+"body": "",
+"cpu": "30%",
+"mem": "40%",
+"name": "esx-siteb-prod-east-000",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-000.corp.example.mil\nOK\nCPU 30% used, memory 40% used"
+},
+{
+"body": "",
+"cpu": "31%",
+"mem": "41%",
+"name": "esx-siteb-prod-east-001",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-001.corp.example.mil\nOK\nCPU 31% used, memory 41% used"
+},
+{
+"body": "",
+"cpu": "32%",
+"mem": "42%",
+"name": "esx-siteb-prod-east-002",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-002.corp.example.mil\nOK\nCPU 32% used, memory 42% used"
+},
+{
+"body": "",
+"cpu": "33%",
+"mem": "43%",
+"name": "esx-siteb-prod-east-003",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-003.corp.example.mil\nOK\nCPU 33% used, memory 43% used"
+},
+{
+"body": "",
+"cpu": "34%",
+"mem": "44%",
+"name": "esx-siteb-prod-east-004",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-004.corp.example.mil\nOK\nCPU 34% used, memory 44% used"
+},
+{
+"body": "",
+"cpu": "35%",
+"mem": "45%",
+"name": "esx-siteb-prod-east-005",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-005.corp.example.mil\nOK\nCPU 35% used, memory 45% used"
+},
+{
+"body": "",
+"cpu": "36%",
+"mem": "46%",
+"name": "esx-siteb-prod-east-006",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-006.corp.example.mil\nOK\nCPU 36% used, memory 46% used"
+},
+{
+"body": "",
+"cpu": "37%",
+"mem": "47%",
+"name": "esx-siteb-prod-east-007",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-007.corp.example.mil\nOK\nCPU 37% used, memory 47% used"
+},
+{
+"body": "",
+"cpu": "38%",
+"mem": "48%",
+"name": "esx-siteb-prod-east-008",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-008.corp.example.mil\nOK\nCPU 38% used, memory 48% used"
+},
+{
+"body": "",
+"cpu": "39%",
+"mem": "49%",
+"name": "esx-siteb-prod-east-009",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-009.corp.example.mil\nOK\nCPU 39% used, memory 49% used"
+},
+{
+"body": "",
+"cpu": "40%",
+"mem": "50%",
+"name": "esx-siteb-prod-east-010",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-010.corp.example.mil\nOK\nCPU 40% used, memory 50% used"
+},
+{
+"body": "",
+"cpu": "41%",
+"mem": "51%",
+"name": "esx-siteb-prod-east-011",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-011.corp.example.mil\nOK\nCPU 41% used, memory 51% used"
+},
+{
+"body": "",
+"cpu": "42%",
+"mem": "52%",
+"name": "esx-siteb-prod-east-012",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-012.corp.example.mil\nOK\nCPU 42% used, memory 52% used"
+},
+{
+"body": "",
+"cpu": "43%",
+"mem": "53%",
+"name": "esx-siteb-prod-east-013",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-013.corp.example.mil\nOK\nCPU 43% used, memory 53% used"
+},
+{
+"body": "",
+"cpu": "44%",
+"mem": "54%",
+"name": "esx-siteb-prod-east-014",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-014.corp.example.mil\nOK\nCPU 44% used, memory 54% used"
+},
+{
+"body": "",
+"cpu": "45%",
+"mem": "55%",
+"name": "esx-siteb-prod-east-015",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-015.corp.example.mil\nOK\nCPU 45% used, memory 55% used"
+},
+{
+"body": "",
+"cpu": "46%",
+"mem": "56%",
+"name": "esx-siteb-prod-east-016",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-016.corp.example.mil\nOK\nCPU 46% used, memory 56% used"
+},
+{
+"body": "",
+"cpu": "47%",
+"mem": "57%",
+"name": "esx-siteb-prod-east-017",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-017.corp.example.mil\nOK\nCPU 47% used, memory 57% used"
+},
+{
+"body": "",
+"cpu": "48%",
+"mem": "58%",
+"name": "esx-siteb-prod-east-018",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-018.corp.example.mil\nOK\nCPU 48% used, memory 58% used"
+},
+{
+"body": "",
+"cpu": "49%",
+"mem": "59%",
+"name": "esx-siteb-prod-east-019",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-019.corp.example.mil\nOK\nCPU 49% used, memory 59% used"
+},
+{
+"body": "",
+"cpu": "50%",
+"mem": "60%",
+"name": "esx-siteb-prod-east-020",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-020.corp.example.mil\nOK\nCPU 50% used, memory 60% used"
+},
+{
+"body": "",
+"cpu": "51%",
+"mem": "61%",
+"name": "esx-siteb-prod-east-021",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-021.corp.example.mil\nOK\nCPU 51% used, memory 61% used"
+},
+{
+"body": "",
+"cpu": "52%",
+"mem": "62%",
+"name": "esx-siteb-prod-east-022",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-022.corp.example.mil\nOK\nCPU 52% used, memory 62% used"
+},
+{
+"body": "",
+"cpu": "53%",
+"mem": "63%",
+"name": "esx-siteb-prod-east-023",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-023.corp.example.mil\nOK\nCPU 53% used, memory 63% used"
+},
+{
+"body": "",
+"cpu": "54%",
+"mem": "64%",
+"name": "esx-siteb-prod-east-024",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-024.corp.example.mil\nOK\nCPU 54% used, memory 64% used"
+},
+{
+"body": "",
+"cpu": "55%",
+"mem": "65%",
+"name": "esx-siteb-prod-east-025",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-025.corp.example.mil\nOK\nCPU 55% used, memory 65% used"
+},
+{
+"body": "",
+"cpu": "56%",
+"mem": "66%",
+"name": "esx-siteb-prod-east-026",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-026.corp.example.mil\nOK\nCPU 56% used, memory 66% used"
+},
+{
+"body": "",
+"cpu": "57%",
+"mem": "67%",
+"name": "esx-siteb-prod-east-027",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-027.corp.example.mil\nOK\nCPU 57% used, memory 67% used"
+},
+{
+"body": "",
+"cpu": "58%",
+"mem": "68%",
+"name": "esx-siteb-prod-east-028",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-028.corp.example.mil\nOK\nCPU 58% used, memory 68% used"
+},
+{
+"body": "",
+"cpu": "59%",
+"mem": "69%",
+"name": "esx-siteb-prod-east-029",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-029.corp.example.mil\nOK\nCPU 59% used, memory 69% used"
+},
+{
+"body": "",
+"cpu": "60%",
+"mem": "70%",
+"name": "esx-siteb-prod-east-030",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-030.corp.example.mil\nOK\nCPU 60% used, memory 70% used"
+},
+{
+"body": "",
+"cpu": "61%",
+"mem": "71%",
+"name": "esx-siteb-prod-east-031",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-031.corp.example.mil\nOK\nCPU 61% used, memory 71% used"
+},
+{
+"body": "",
+"cpu": "62%",
+"mem": "72%",
+"name": "esx-siteb-prod-east-032",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-032.corp.example.mil\nOK\nCPU 62% used, memory 72% used"
+},
+{
+"body": "",
+"cpu": "63%",
+"mem": "73%",
+"name": "esx-siteb-prod-east-033",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-033.corp.example.mil\nOK\nCPU 63% used, memory 73% used"
+},
+{
+"body": "",
+"cpu": "64%",
+"mem": "74%",
+"name": "esx-siteb-prod-east-034",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-034.corp.example.mil\nOK\nCPU 64% used, memory 74% used"
+},
+{
+"body": "",
+"cpu": "65%",
+"mem": "75%",
+"name": "esx-siteb-prod-east-035",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-035.corp.example.mil\nOK\nCPU 65% used, memory 75% used"
+},
+{
+"body": "",
+"cpu": "66%",
+"mem": "76%",
+"name": "esx-siteb-prod-east-036",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-036.corp.example.mil\nOK\nCPU 66% used, memory 76% used"
+},
+{
+"body": "",
+"cpu": "67%",
+"mem": "77%",
+"name": "esx-siteb-prod-east-037",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-037.corp.example.mil\nOK\nCPU 67% used, memory 77% used"
+},
+{
+"body": "",
+"cpu": "68%",
+"mem": "78%",
+"name": "esx-siteb-prod-east-038",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-038.corp.example.mil\nOK\nCPU 68% used, memory 78% used"
+},
+{
+"body": "",
+"cpu": "69%",
+"mem": "79%",
+"name": "esx-siteb-prod-east-039",
+"new": false,
+"st": "ok",
+"tip": "esx-siteb-prod-east-039.corp.example.mil\nOK\nCPU 69% used, memory 79% used"
+}
+],
+"change": "no change",
+"cpu": "50%",
+"cpu_points": [
+[
+1794546000,
+49.5
+]
+],
+"mem": "60%",
+"mem_points": [
+[
+1794546000,
+59.5
+]
+],
+"n": 40,
+"name": "SITEB-PRODUCTION-COMPUTE-EAST",
+"status": "ok"
+},
+{
+"cards": [
+{
+"body": "",
+"cpu": "30%",
+"mem": "60%",
+"name": "esx90",
+"new": false,
+"st": "ok",
+"tip": "esx90.corp.example.mil\nOK\nCPU 30% used, memory 60% used"
+}
+],
+"change": "no change",
+"cpu": "30%",
+"cpu_points": [
+[
+1794546000,
+30.0
+]
+],
+"mem": "60%",
+"mem_points": [
+[
+1794546000,
+60.0
+]
+],
+"n": 1,
+"name": "standalone hosts",
+"status": "ok"
+}
+],
+"days": 30,
+"legend": [
+{
+"st": "critical"
+},
+{
+"st": "warning"
+},
+{
+"st": "low"
+},
+{
+"st": "ok"
+}
+]
+},
+"lines": [
+"56 host(s): 1 Critical, 2 Warning, 1 Low, 52 OK. A week ago (2026-11-06): 0 critical, 2 warning, 0 Low."
+],
+"status": "critical",
+"text": "Every ESXi host as a card, a row per cluster. Each cluster's CPU and memory: the day's average over 30 days.",
+"title": "Every host, by cluster"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"critical",
+"",
+""
+],
+[
+"",
+"",
+"warning",
+"",
+""
+],
+[
+"",
+"",
+"warning",
+"",
+""
+],
+[
+"",
+"",
+"low",
+"",
+""
+]
+],
+"columns": [
+"Cluster",
+"Host",
+"Status",
+"Why",
+"Since"
+],
+"row_status": [
+"critical",
+"warning",
+"warning",
+"low"
+],
+"rows": [
+[
+"SITEA-PROD",
+"esx07.corp.example.mil",
+"Critical",
+"Not responding to vCenter",
+"new (was OK)"
+],
+[
+"SITEA-PROD",
+"esx03.corp.example.mil",
+"Warning",
+"Memory 93% used",
+"new (was OK)"
+],
+[
+"SITEB-DMZ",
+"esx27.corp.example.mil",
+"Warning",
+"Needs a restart (an update or a setting waits for it)",
+"same for 12 days"
+],
+[
+"SITEA-MGMT",
+"esx10.corp.example.mil",
+"Low",
+"In maintenance mode",
+"new (was OK)"
+]
+],
+"status": "critical",
+"text": "Worst first, and how long each has been so (this template's earlier runs).",
+"title": "Hosts that are not OK"
+},
+{
+"columns": [
+"Cluster",
+"CPU 30 days ago",
+"CPU now",
+"Change",
+"Memory 30 days ago",
+"Memory now",
+"Change"
+],
+"rows": [
+[
+"SITEA-PROD",
+"30%",
+"44%",
+"+14",
+"60%",
+"68%",
+"+8"
+],
+[
+"SITEA-MGMT",
+"50%",
+"50%",
+"+0",
+"60%",
+"60%",
+"+0"
+],
+[
+"SITEB-DMZ",
+"45%",
+"45%",
+"+0",
+"70%",
+"70%",
+"+0"
+],
+[
+"SITEB-PRODUCTION-COMPUTE-EAST",
+"-",
+"50%",
+"",
+"-",
+"60%",
+""
+],
+[
+"standalone hosts",
+"-",
+"30%",
+"",
+"-",
+"60%",
+""
+]
+],
+"text": "Each cluster's CPU and memory used, the first day of the 30 and now (the hosts running VMs). Change: in percentage points. ",
+"title": "Clusters: CPU and memory over 30 days"
+}
+],
+"status": "critical",
+"summary": [
+{
+"label": "Hosts not OK",
+"note": "a week ago 2: +3 new, -1 back to OK",
+"status": "critical",
+"value": 4
+},
+{
+"label": "Fastest change",
+"note": "CPU 30% to 44% in 30 days",
+"status": "info",
+"value": "SITEA-PROD"
+}
+],
+"title": "VMware health report"
+}

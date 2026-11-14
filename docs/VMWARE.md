@@ -884,6 +884,9 @@ in [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md)).
 
 | Section | What is in it |
 |---|---|
+| Every host, by cluster (1.65.0) | on the website: the heat grid, below |
+| Hosts that are not OK (1.65.0) | on the website: each host not OK, worst first, and how long it has been so |
+| Clusters: CPU and memory over 30 days (1.65.0) | each cluster's CPU and memory used, the first day and now. The email has it too |
 | Needs attention | every problem found, most severe first: severity, the object (vCenter, datacenter, cluster or host), the problem, **what to do**, and where it is (datacenter / cluster) |
 | Datacenters | each datacenter with everything in it: clusters, hosts, hosts running VMs, in maintenance, not connected, its problems |
 | Clusters | each cluster: hosts running VMs, **vSphere HA** (on or OFF, what admission control reserves, host agents not OK), **DRS** (on or OFF, automation level, score, recommendations waiting), **vCLS** (normal or RETREAT MODE), CPU and memory used, alarms, problems |
@@ -936,6 +939,35 @@ not configured (that is what maintenance mode does).
 | `report_time_zone` | `""` (UTC only) | the times in that time zone too, e.g. `America/New_York` - best in `all.yml` (below) |
 | `vm_health_fail` | `false` | `true` = the job shows **failed** on a critical problem, for a workflow |
 | `vmware_datacenter` | (all) | one datacenter only |
+
+### The cluster heat grid
+
+On the report website (the atlas and brief looks) the health report opens with every host at a glance (1.65.0).
+
+- **A row per cluster.** Each host is a card: its status icon and word, CPU and memory used, or why there is no number
+  (not responding, maintenance). The status is the report's own: the host's worst problem.
+- **Each cluster's lines.** CPU and memory used over `vm_heat_days` (30), the day's average, 0 to 100 %. Hover for
+  the day and value. Fewer than two days: no line, and the row says so.
+- **Since last week.** Hosts new to the not-OK list (marked **NEW** on their card), hosts back to OK, and CPU or
+  memory that moved `vm_heat_change_pts` (5) points or more.
+- **Hosts that are not OK** with how long each has been so, and **the numbers behind the lines**.
+- **Boxes:** *Hosts not OK* (and a week ago), and the cluster whose CPU or memory moved most.
+
+The email keeps its tables and adds the numbers and the boxes, not the grid. The workbook (`report_email_xlsx: true`)
+adds *Clusters by day*, with an Excel trend line per row.
+
+The history is this template's earlier runs (the job artifact `vm_heat`), read with the same "Red Hat Ansible
+Automation Platform" credential as the strip of past runs. The report database keeps the points too when the template
+has its credential ([REPORT_DATABASE.md](REPORT_DATABASE.md)). Nothing more is read from vCenter.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `vm_heat` | `true` | the heat grid's sections |
+| `vm_heat_days` | `30` | the lines' days |
+| `vm_heat_change_pts` | `5` | a cluster's CPU or memory change in a week that is said |
+| `vm_heat_history` / `vm_heat_history_runs` | `true` / `50` | read the history from this many earlier runs in AAP |
+| `vm_heat_db` / `vm_heat_db_create` | `true` / `true` | keep the points in the report database, when the template has its credential |
+| `vm_heat_db_timeout` / `vm_heat_db_keep_days` | `10` / `400` | seconds to connect; delete older points (`0`: never) |
 
 **vCLS retreat mode** is read from vCenter's advanced settings
 (`config.vcls.clusters.<cluster id>.enabled = false`). If the account may not read them, the report

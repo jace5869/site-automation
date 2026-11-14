@@ -43,7 +43,11 @@ NAMED = (("test_stig_ckl_import.py", "RouteReport.test_report_fit_document", "st
          # ad_repl_matrix_max_dcs (site x site, long site names)
          ("test_ad_repl.py", "Fit.test_report_fit_web", "ad_repl_filters.py:ad_repl_insert", "ad_repl_web"),
          ("test_ad_repl.py", "Fit.test_report_fit_email", "ad_repl_filters.py:ad_repl_insert", "ad_repl_email"),
-         ("test_ad_repl.py", "Fit.test_report_fit_forest", "ad_repl_filters.py:ad_repl_insert", "ad_repl_forest"))
+         ("test_ad_repl.py", "Fit.test_report_fit_forest", "ad_repl_filters.py:ad_repl_insert", "ad_repl_forest"),
+         # 1.65.0: the VMware cluster heat grid - the website's copy, the email's, a cluster of 40 hosts with long names
+         ("test_vmware_heat.py", "Fit.test_report_fit_web", "vmware_heat_filters.py:vm_heat_insert", "vm_heat_web"),
+         ("test_vmware_heat.py", "Fit.test_report_fit_email", "vmware_heat_filters.py:vm_heat_insert", "vm_heat_email"),
+         ("test_vmware_heat.py", "Fit.test_report_fit_big", "vmware_heat_filters.py:vm_heat_insert", "vm_heat_big"))
 
 # run inside each test file's process: keep the biggest document each filter function returns
 CHILD = r"""

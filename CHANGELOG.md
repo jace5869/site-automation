@@ -1,5 +1,42 @@
 # Changelog
 
+## 1.65.0 — 2026-11-14
+
+**Updating without scripts:** paste `site-automation-1.65.0-changed-since-1.61.0.zip` as it is (from an older version,
+its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`.
+
+**Nothing to set up.** New settings have defaults: `vm_heat`, `vm_heat_days`, `vm_heat_change_pts`, `vm_heat_history`,
+`vm_heat_history_runs`, `vm_heat_db`, `vm_heat_db_create`, `vm_heat_db_timeout`, `vm_heat_db_keep_days`. No new job
+template. To do: 1.65.0 nothing.
+
+**The cluster heat grid: sections of the VM - health report** (mockup 02b). Nothing is removed: the boxes, *Needs
+attention* and every other section stay. Nothing more is read from vCenter.
+
+- **The website** (atlas and brief), first on the page: a row per cluster (and per datacenter's standalone hosts). Each
+  host is a card with its status icon and word, CPU and memory used, or why there is no number. The status is the
+  report's own: the host's worst problem.
+- **Each cluster's lines:** CPU and memory used over `vm_heat_days` (30), the day's average, with hover.
+- **Since last week:** hosts new to the not-OK list (marked NEW), hosts back to OK, CPU or memory moved by
+  `vm_heat_change_pts` (5) points or more.
+- **Hosts that are not OK** with how long each has been so, and the numbers behind the lines.
+- **Boxes:** *Hosts not OK* (and a week ago), and *Fastest change* (the cluster that moved most).
+- **The email** keeps its tables and adds the numbers and the boxes, not the grid. **The workbook**
+  (`report_email_xlsx: true`) adds *Clusters by day* with an Excel trend line per row (1.62.0).
+- **History:** this template's earlier runs (the new job artifact `vm_heat`), then the report database when the
+  template has its credential (table `vm_heat_point`, optional). Fewer than two days: no line, and the row says so.
+- Docs: VMWARE.md (*The cluster heat grid*), REPORT_DATABASE.md (*The heat grid's points*).
+
+**Behaviour changes**
+
+- VM - health report: three more sections on the website, one more in the email, two more boxes, one more sheet in the
+  workbook, the job artifact `vm_heat`. The findings, the status and pass or fail are as before.
+- The report website's atlas and brief looks draw a section's `heat` (`report_heat.html.j2`).
+
+**Tests:** `tests/test_vmware_heat.py` (the cards, NEW and back to OK, the lines, the tables, the boxes, the workbook's
+lines, both looks, the database's points); `tests/vmware/run_vmware_test.sh` (vcsim: the page, the email, the workbook);
+report fit documents `vm_heat_web`, `vm_heat_email` and `vm_heat_big`.
+
 ## 1.64.0 — 2026-11-14
 
 **Updating without scripts:** paste `site-automation-1.64.0-changed-since-1.61.0.zip` as it is (from an older version,
@@ -2325,7 +2362,7 @@ tests/stig/run_stigman_real_test.sh against STIG Manager 1.6.18 (not in CI).
 
 SA_VERSION 1.26.0; the PDFs at 1.26.0.
 
-**To do, if you have not yet: what 0.20.0 to 1.64.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.64.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing, 1.39.0 nothing, 1.41.0 nothing, 1.42.0 nothing, 1.43.0 nothing, 1.44.0 nothing, 1.45.0 nothing, 1.46.0 nothing, 1.47.0 nothing, 1.48.0 nothing, 1.49.0 nothing, 1.50.0 step 97, 1.51.0 step 95, 1.52.0 step 96, 1.53.0 step 98, 1.54.0 nothing, 1.55.0 nothing, 1.56.0 nothing, 1.57.0 nothing, 1.58.0 nothing, 1.59.0 nothing, 1.61.0 nothing, 1.62.0 nothing, 1.63.0 step 99, 1.64.0 nothing).** In order; each step works without
+**To do, if you have not yet: what 0.20.0 to 1.65.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.65.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing, 1.39.0 nothing, 1.41.0 nothing, 1.42.0 nothing, 1.43.0 nothing, 1.44.0 nothing, 1.45.0 nothing, 1.46.0 nothing, 1.47.0 nothing, 1.48.0 nothing, 1.49.0 nothing, 1.50.0 step 97, 1.51.0 step 95, 1.52.0 step 96, 1.53.0 step 98, 1.54.0 nothing, 1.55.0 nothing, 1.56.0 nothing, 1.57.0 nothing, 1.58.0 nothing, 1.59.0 nothing, 1.61.0 nothing, 1.62.0 nothing, 1.63.0 step 99, 1.64.0 nothing, 1.65.0 nothing).** In order; each step works without
 the ones after it. There is no step 90.
 
 1. **Your logo** (0.20.0). A PNG with a transparent background, about 160 px tall and under 100 KB, in

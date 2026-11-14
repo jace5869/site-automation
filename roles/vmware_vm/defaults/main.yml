@@ -331,6 +331,17 @@ vm_health_max_rows: 500                  # rows per table in the report (the art
 # The job stays green when it finds problems: the report and email say what. true = mark the job
 # FAILED when there is a critical problem (a host not connected, an HA agent isolated ...), for workflows.
 vm_health_fail: false
+# The cluster heat grid in the health report (1.65.0): on the report website every host as a card, a row per cluster, each
+# cluster's CPU and memory over vm_heat_days and what changed since last week; the email gets the numbers. docs/VMWARE.md
+vm_heat: true                            # false = no heat grid sections (the report's own tables stay)
+vm_heat_days: 30                         # each cluster's CPU and memory used over this many days (a line each on the website)
+vm_heat_change_pts: 5                    # a cluster's CPU or memory that moved this many percentage points in a week is said
+vm_heat_history: true                    # the lines and "since last week" from this template's earlier runs (AAP job history: the "Red Hat Ansible Automation Platform" credential)
+vm_heat_history_runs: 50                 # how many earlier runs to read from AAP (at most 50: a daily job keeps 30 days with 30)
+vm_heat_db: true                         # keep the points in the report database too, when the job template has a "Report database" credential; no credential = not used
+vm_heat_db_create: true                  # make the table vm_heat_point on the first run; false = an admin makes it (docs/REPORT_DATABASE.md)
+vm_heat_db_timeout: 10                   # seconds to wait for the report database's connection
+vm_heat_db_keep_days: 400                # delete the database's points older than this many days (0 = never)
 # Network drops and errors in the health report: packets dropped and network errors of every ESXi host (by physical NIC)
 # and powered-on VM (by virtual NIC), from vCenter's statistics. The past day needs vCenter's 5-minute statistics at
 # level 2 (the default is 1); at level 1 the last hour is read, and the report says so. docs/VMWARE.md

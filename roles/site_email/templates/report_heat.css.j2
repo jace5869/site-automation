@@ -1,0 +1,29 @@
+{#- 1.65.0: the heat grid's CSS (report_heat.html.j2), in the atlas and brief looks' <style>. Cards take the look's
+    status tokens (.s-ok, .s-low ...: text on tint 4.5:1 or better in both themes). A row: the cluster and its lines, the
+    cards (they wrap), what changed; under 1000 px what changed goes under the cards. -#}
+.hg-row{display:grid;grid-template-columns:minmax(150px,200px) minmax(0,1fr) minmax(150px,230px);gap:12px 18px;align-items:start;padding:14px 0;border-top:1px solid var(--line)}
+.hg-row:first-child{border-top:0;padding-top:4px}
+.hg-cl{min-width:0}.hg-cl>b{display:block;font-weight:700;overflow-wrap:anywhere}.hg-cl>small{display:block;color:var(--muted);font-size:12.5px;margin-bottom:6px}
+.hg-sp{display:grid;grid-template-columns:34px 84px auto;align-items:center;gap:6px;font-size:12.5px;color:var(--muted);min-height:24px}
+.hg-sp b{color:var(--ink);font-variant-numeric:tabular-nums}.hg-sp svg.spark{width:84px;height:22px}
+.hg-no{font-style:normal;font-size:11.5px}
+.hg-hosts{display:flex;flex-wrap:wrap;gap:6px;min-width:0}
+.hg-h{position:relative;min-width:88px;max-width:180px;min-height:58px;border:1px solid var(--line);border-radius:9px;padding:6px 8px;background:var(--card-strong);font-size:12px;line-height:1.35}
+.hg-h.s-ok{background:var(--card-strong);border-color:var(--line);color:var(--ink)}
+.hg-h.s-ok b .ic{color:var(--ok)}
+.hg-h.s-low{color:var(--low);background:var(--low-bg);border-color:var(--low-bd)}
+.hg-h.s-warning{color:var(--warning);background:var(--warning-bg);border-color:var(--warning-bd)}
+.hg-h.s-critical{color:var(--critical);background:var(--critical-bg);border-color:var(--critical-bd)}
+.hg-h>b{display:flex;align-items:flex-start;gap:4px;font-weight:700;min-width:0}.hg-h>b span{min-width:0;overflow-wrap:anywhere}
+.hg-h>b .ic{display:inline-block;width:13px;height:13px;flex:none;margin-top:2px}
+.hg-h>small{display:block;color:inherit;opacity:.85;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.hg-h.s-ok>small{color:var(--muted);opacity:1}
+.hg-h[data-tip]:hover,.hg-h[data-tip]:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.hg-new{position:absolute;top:-8px;right:6px;font-style:normal;font-size:10px;font-weight:800;letter-spacing:.04em;background:var(--ink);color:var(--card-solid);border-radius:4px;padding:0 4px;line-height:15px}
+.hg-legend .hg-new{position:static;display:inline-block;margin-right:4px}
+.hg-ch{font-size:13px;font-weight:600;overflow-wrap:anywhere}.hg-chl{display:block;font-size:11.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:2px}
+.hg-legend{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;color:var(--muted);font-size:13px;margin-top:10px}
+.hg-legend .chip{font-size:12px}
+@media (max-width:1000px){.hg-row{grid-template-columns:minmax(140px,180px) minmax(0,1fr)}.hg-ch{grid-column:1/-1}}
+@media (max-width:600px){.hg-row{grid-template-columns:minmax(0,1fr)}}
+@media print{.hg-h{print-color-adjust:exact;-webkit-print-color-adjust:exact}}

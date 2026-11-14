@@ -1,0 +1,228 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+"""The VMware cluster heat grid's points in the report database (MySQL; the "Report database" credential,
+docs/REPORT_DATABASE.md), for a longer history than AAP keeps its jobs: each cluster's CPU and memory used, and the
+hosts not OK, a run. One call a run (roles/vmware_vm/tasks/heat.yml): makes the table vm_heat_point when it is not there
+(vm_heat_db_create), reads the earlier runs of the window back, writes this run's rows, and deletes rows older than
+vm_heat_db_keep_days. Never fails the job: a database that is down, a login refused or a grant missing is one warning,
+and the report goes on with AAP's job history. Needs PyMySQL in the execution environment."""
+from __future__ import absolute_import, division, print_function
+__metaclass__ = type
+
+DOCUMENTATION = r'''
+module: site_vm_heat_db
+short_description: Keep and read back the VMware cluster heat grid's points in the report database
+description:
+  - Reads the runs between this run and days before it, oldest first, in the layout of AAP's job history runs with the
+    artifact vm_heat ({artifacts: {vm_heat: {read_at, clusters, hosts}}}).
+  - Writes this run's rows (a row per cluster; the hosts not OK in a row of their own, cluster '*') - not in check mode,
+    and not when write is false.
+  - Deletes rows older than keep_days (0 = never).
+  - The table is made on the first run (create); with create false and no table, nothing is read or written and error
+    says so. docs/REPORT_DATABASE.md has the statement for making it by hand.
+options:
+  host: {description: The database server., type: str, required: true}
+  port: {description: Its port., type: int, default: 3309}
+  database: {description: The database., type: str, required: true}
+  user: {description: The account., type: str, required: true}
+  password: {description: Its password., type: str, required: true}
+  tls: {description: Use TLS and check the server's certificate., type: bool, default: false}
+  ca_file: {description: The CA file the certificate is checked with., type: str, default: ''}
+  connect_timeout: {description: Seconds to wait for the connection., type: int, default: 10}
+  create: {description: Make the table when it is not there., type: bool, default: true}
+  write: {description: Write this run's rows., type: bool, default: true}
+  read_at: {description: "When this run read vCenter (2026-11-13T06:00:05Z).", type: str, required: true}
+  job: {description: This job's ID (0 outside AAP)., type: int, default: 0}
+  clusters: {description: "This run's points: {cluster key: [CPU %, memory %]} (the artifact vm_heat's clusters).", type: dict, default: {}}
+  hosts: {description: "The hosts not OK: {host key: critical | warning | low} (the artifact vm_heat's hosts).", type: dict, default: {}}
+  days: {description: How far back to read (vm_heat_days)., type: float, default: 30}
+  keep_days: {description: Delete rows older than this many days (0 = never)., type: int, default: 400}
+author: site automation
+'''
+
+RETURN = r'''
+ok: {description: The database answered and the table is there., type: bool}
+error: {description: Why not, when ok is false., type: str}
+runs: {description: "The earlier runs, oldest first: [{id: job, finished, artifacts: {vm_heat: {read_at, clusters, hosts}}}].", type: list}
+written: {description: Rows written this run., type: int}
+pruned: {description: Rows deleted (older than keep_days)., type: int}
+created: {description: The table was made this run., type: bool}
+'''
+
+import datetime
+import json
+import re
+
+from ansible.module_utils.basic import AnsibleModule
+from ansible.module_utils import site_report_db as db
+
+SCHEMA_VERSION = 1
+COMPONENT = "vm_heat"
+TABLE = "vm_heat_point"
+HOSTS_ROW = "*"                                         # the row of a run that holds its hosts not OK (JSON)
+CREATE = (
+    "CREATE TABLE IF NOT EXISTS vm_heat_point (read_at DATETIME NOT NULL, job BIGINT NOT NULL DEFAULT 0, "
+    "cluster VARCHAR(255) NOT NULL, cpu_pct DECIMAL(5,1) NULL, mem_pct DECIMAL(5,1) NULL, hosts MEDIUMTEXT NULL, "
+    "PRIMARY KEY (cluster, read_at), KEY vm_heat_point_read_at (read_at)) " + db.TABLE_OPTS)
+INSERT = ("INSERT INTO vm_heat_point (read_at, job, cluster, cpu_pct, mem_pct, hosts) VALUES (%s, %s, %s, %s, %s, %s) "
+          "ON DUPLICATE KEY UPDATE job = VALUES(job), cpu_pct = VALUES(cpu_pct), mem_pct = VALUES(mem_pct), hosts = VALUES(hosts)")
+
+
+def pretty(sql):
+    """A CREATE TABLE as docs/REPORT_DATABASE.md shows it: a column or key per line."""
+    head, rest = sql.split(" (", 1)
+    body, tail = rest.rsplit(") ", 1)
+    parts, depth, cur = [], 0, ""
+    for ch in body:
+        depth += {"(": 1, ")": -1}.get(ch, 0)
+        if ch == "," and depth == 0:
+            parts.append(cur.strip())
+            cur = ""
+        else:
+            cur += ch
+    return "%s (\n  %s\n) %s;" % (head, ",\n  ".join(parts + [cur.strip()]), tail)
+
+
+def ddl():
+    """The statements the first run sends, for making the table by hand (vm_heat_db_create: false). The doc carries this
+    text; a test keeps them alike."""
+    return "\n\n".join([pretty(db.SCHEMA_VERSION_TABLE), pretty(CREATE),
+                        "INSERT INTO schema_version (component, version, applied_at) VALUES ('%s', %d, UTC_TIMESTAMP());"
+                        % (COMPONENT, SCHEMA_VERSION)])
+
+
+def stamp(text):
+    """'2026-11-13T06:00:05Z' -> a datetime (UTC, naive: what the DATETIME column holds), or None."""
+    m = re.match(r"^(\d{4})-(\d\d)-(\d\d)[T ](\d\d):(\d\d):(\d\d)", str(text or ""))
+    return datetime.datetime(*[int(x) for x in m.groups()]) if m else None
+
+
+def schema(conn, create):
+    """(there, created): the table, made when it is not there and create is true; schema_version's row with it."""
+    cur = conn.cursor()
+    cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = %s", (TABLE,))
+    there = cur.fetchone() is not None
+    if not there:
+        if not create:
+            return False, False
+        cur.execute(db.SCHEMA_VERSION_TABLE)
+        cur.execute(CREATE)
+    cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'schema_version'")
+    if cur.fetchone() is not None:
+        cur.execute("SELECT version FROM schema_version WHERE component = %s", (COMPONENT,))
+        r = cur.fetchone()
+        if r is None and create:
+            cur.execute("INSERT INTO schema_version (component, version, applied_at) VALUES (%s, %s, UTC_TIMESTAMP())", (COMPONENT, SCHEMA_VERSION))
+        elif r is not None and int(r[0]) > SCHEMA_VERSION:
+            raise RuntimeError("the table %s is version %s, newer than this release knows (%s) - update site-automation" % (TABLE, r[0], SCHEMA_VERSION))
+    conn.commit()
+    return True, not there
+
+
+def read(conn, now, days):
+    """The runs in the days before now (not now's own), oldest first, as AAP history runs with the artifact vm_heat."""
+    cur = conn.cursor()
+    cur.execute("SELECT read_at, job, cluster, cpu_pct, mem_pct, hosts FROM vm_heat_point WHERE read_at >= %s AND read_at < %s "
+                "ORDER BY read_at, cluster", (now - datetime.timedelta(days=days, hours=2), now))
+    runs, at = [], None
+    for read_at, job, cluster, cpu, mem, hosts in cur.fetchall():
+        if read_at != at:
+            at = read_at
+            t = read_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+            runs.append({"id": int(job or 0), "finished": t, "artifacts": {"vm_heat": {"read_at": t, "clusters": {}, "hosts": {}}}})
+        a = runs[-1]["artifacts"]["vm_heat"]
+        if cluster == HOSTS_ROW:
+            try:
+                a["hosts"] = dict(json.loads(hosts or "{}"))
+            except (ValueError, TypeError):
+                pass
+        else:
+            a["clusters"][str(cluster)] = [None if cpu is None else float(cpu), None if mem is None else float(mem)]
+    return runs
+
+
+def _pct(v):
+    try:
+        return None if v is None else round(max(0.0, min(float(v), 9999.9)), 1)
+    except (TypeError, ValueError):
+        return None
+
+
+def write(conn, now, job, clusters, hosts):
+    rows = []
+    for key, v in sorted((clusters or {}).items()):
+        v = list(v) if isinstance(v, (list, tuple)) else []
+        rows.append((now, job, str(key)[:255], _pct(v[0] if v else None), _pct(v[1] if len(v) > 1 else None), None))
+    rows.append((now, job, HOSTS_ROW, None, None, json.dumps(dict((str(k), str(s)) for k, s in (hosts or {}).items()), sort_keys=True)))
+    conn.cursor().executemany(INSERT, rows)
+    return len(rows)
+
+
+def shut(conn):
+    try:
+        if conn is not None:
+            conn.close()
+    except Exception:           # noqa: BLE001
+        pass
+
+
+def main():
+    module = AnsibleModule(
+        argument_spec=dict(db.ARGS, create=dict(type="bool", default=True), write=dict(type="bool", default=True),
+                           read_at=dict(type="str", required=True), job=dict(type="int", default=0),
+                           clusters=dict(type="dict", default={}), hosts=dict(type="dict", default={}),
+                           days=dict(type="float", default=30), keep_days=dict(type="int", default=400)),
+        supports_check_mode=True)
+    p = module.params
+    where = "%s:%s/%s" % (p["host"], p["port"], p["database"])
+    res = {"changed": False, "ok": False, "error": "", "tls": "", "where": where, "runs": [], "written": 0, "pruned": 0, "created": False}
+
+    def give_up(msg):
+        res["error"] = msg
+        module.warn("The report database %s: %s - the heat grid's lines go on with AAP's job history "
+                    "(vm_heat_db: false turns the database off for it)" % (where, msg))
+        module.exit_json(**res)
+
+    if not db.HAS_PYMYSQL:
+        give_up(db.NO_PYMYSQL)
+    now = stamp(p["read_at"])
+    if now is None:
+        give_up("read_at is not a time: %r" % p["read_at"])
+    conn = None
+    try:
+        conn, res["tls"] = db.connect(p)
+        there, res["created"] = schema(conn, p["create"] and not module.check_mode)
+        if not there:
+            conn.close()
+            conn = None
+            give_up("the table %s is not there%s - make it once, docs/REPORT_DATABASE.md" % (
+                TABLE, " (check mode: nothing made)" if module.check_mode and p["create"] else " (vm_heat_db_create: false)"))
+        res["runs"] = read(conn, now, p["days"])
+        res["ok"] = True
+    except Exception as e:      # noqa: BLE001 - unreachable, refused, a grant missing: one line, the job goes on
+        res["runs"] = []
+        shut(conn)
+        give_up(db.explain(e, p))
+    try:                        # the earlier points are read: a write that fails loses this run's point only
+        if p["write"] and not module.check_mode:
+            res["written"] = write(conn, now, p["job"], p["clusters"], p["hosts"])
+            if p["keep_days"] > 0:
+                cur = conn.cursor()
+                res["pruned"] = int(cur.execute("DELETE FROM vm_heat_point WHERE read_at < %s",
+                                                (now - datetime.timedelta(days=p["keep_days"]),)) or 0)
+            conn.commit()
+        res["changed"] = bool(res["written"] or res["pruned"] or res["created"])
+    except Exception as e:      # noqa: BLE001 - a read-only account, a full disk: said, the report has the earlier points
+        try:
+            conn.rollback()
+        except Exception:       # noqa: BLE001
+            pass
+        res["written"], res["pruned"] = 0, 0
+        res["error"] = "this run's points were not kept: %s" % db.explain(e, p)
+        module.warn("The report database %s: %s - the heat grid has the earlier runs (%d read)" % (where, res["error"], len(res["runs"])))
+    shut(conn)
+    module.exit_json(**res)
+
+
+if __name__ == "__main__":
+    main()

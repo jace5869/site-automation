@@ -256,10 +256,11 @@ database anything: the job reads it and draws the lines into each page.
 | `insights_ticket` | 1.17.0: one row per ticket - its fields less its text, people and CI, and its follow-up reads (*The ticket store*) |
 | `insights_act_class` | 1.17.0: each description's issue, the description as a hash (*The ACT cache*) |
 | `insights_act_issue` | 1.17.0: each issue's number, name (masked), kind and self-service (*The ACT cache*) |
-| `schema_version` | The schema's version, per component (`servicenow_insights`: 1; `ontap_capacity`: 1; 1.58.0 `stig_scorecard`: 1; 1.63.0 `ad_repl`: 1) |
+| `schema_version` | The schema's version, per component (`servicenow_insights`: 1; `ontap_capacity`: 1; 1.58.0 `stig_scorecard`: 1; 1.63.0 `ad_repl`: 1; 1.65.0 `vm_heat`: 1) |
 | `ontap_capacity_point` | 1.52.0: the capacity trends' points (*The capacity trends' points*) |
 | `stig_scorecard_point` | 1.58.0: one row per run and STIG Manager collection - its open findings (*The STIG scorecard's points*) |
 | `ad_repl_point` | 1.63.0: one row per run and AD site - its worst replication age (*The replication trend's points*) |
+| `vm_heat_point` | 1.65.0: one row per run and cluster - its CPU and memory used; the hosts not OK (*The heat grid's points*) |
 | `insights_v_service`, `_volume`, `_process`, `_lifecycle`, `_quality` | A row per run and node, a column per figure of that set |
 | `insights_v_labelled` | The figures with an item: outcomes, categories, backlog age, hot CIs |
 | `insights_v_month_run` | The newest run of each month, per instance and period |
@@ -882,6 +883,66 @@ INSERT INTO schema_version (component, version, applied_at) VALUES ('ad_repl', 1
 | `ad_repl_db_create` | `true` | Make the table on the first run |
 | `ad_repl_db_timeout` | `10` | Seconds to connect |
 | `ad_repl_db_keep_days` | `400` | Delete older points. `0`: never |
+
+## The heat grid's points (1.65.0)
+
+The *VM - health report* ([VMWARE.md](VMWARE.md)) draws each cluster's CPU and memory over 30 days and says what
+changed since last week. AAP's job history is enough for a daily run. The database is optional: it keeps the points
+when AAP's history is short (more than one run a day, a cleaned job list).
+
+1. Add the **Report database** credential (the writer's) to the template *VM - health report*.
+2. Launch it. The first run makes the table `vm_heat_point` and writes its points.
+3. The job output shows the table made, and the next run's lines count the point.
+
+| | |
+|---|---|
+| What a run writes | a row per cluster (its CPU and memory used, in percent) and one row of the hosts not OK (`cluster` `*`, JSON) |
+| How much | a cluster's row is under 100 bytes. 20 clusters read daily for 400 days: 8,400 rows |
+| What a run deletes | the rows older than `vm_heat_db_keep_days` |
+| When the database is down | one warning in the job output. The grid goes on with AAP's job history. The job stays green |
+| A dry run (Check) | reads, writes nothing |
+| Turning it off | `vm_heat_db: false`, or take the credential off the template |
+| Removing it | `DROP TABLE vm_heat_point;` and `DELETE FROM schema_version WHERE component = 'vm_heat';` |
+
+The key is the cluster and the time it was read. The table holds cluster and host names and percentages only.
+
+**By hand.** If the writer may not create tables, set `vm_heat_db_create: false` and make the table once as root, in
+`site_reports`. The writer then needs SELECT, INSERT, UPDATE and DELETE. The first statement is the one of *Making the
+tables by hand*; it may run again.
+
+<!-- the statements: site_vm_heat_db.ddl(), word for word (tests/test_vmware_heat.py checks it) -->
+```sql
+CREATE TABLE IF NOT EXISTS schema_version (
+  component VARCHAR(64) NOT NULL PRIMARY KEY,
+  version INT NOT NULL,
+  applied_at DATETIME NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS vm_heat_point (
+  read_at DATETIME NOT NULL,
+  job BIGINT NOT NULL DEFAULT 0,
+  cluster VARCHAR(255) NOT NULL,
+  cpu_pct DECIMAL(5,1) NULL,
+  mem_pct DECIMAL(5,1) NULL,
+  hosts MEDIUMTEXT NULL,
+  PRIMARY KEY (cluster, read_at),
+  KEY vm_heat_point_read_at (read_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+INSERT INTO schema_version (component, version, applied_at) VALUES ('vm_heat', 1, UTC_TIMESTAMP());
+```
+<!-- end of the heat grid statements -->
+
+| Setting | Default | What it does |
+|---|---|---|
+| `vm_heat_db` | `true` | Keep the points here when the template has the credential |
+| `vm_heat_db_create` | `true` | Make the table on the first run |
+| `vm_heat_db_timeout` | `10` | Seconds to connect |
+| `vm_heat_db_keep_days` | `400` | Delete older points. `0`: never |
 
 ## TLS (optional)
 
