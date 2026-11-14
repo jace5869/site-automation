@@ -17,6 +17,9 @@ end; it is not built yet.
 |---|---|---|
 | VM - outage watch | `playbooks/vm_outage_watch.yml` | VMware vCenter (read-only is enough); no Limit |
 
+The same job also makes the **outage review**, a time line of an outage for the after-action report:
+[Review an outage](#review-an-outage-the-time-line).
+
 ## What it looks at
 
 Every vCenter of the job (the credential's, and `vmware_vcenters`), or one datacenter (`vmware_datacenter`).
@@ -130,6 +133,104 @@ Job artifacts, for the next step of a workflow:
 5. **Email** (optional): `report_email_to` on the job template. Only runs that find something at
    `vm_watch_report_on` (critical) send it.
 
+## Review an outage (the time line)
+
+After an outage, the same job draws what vCenter and ServiceNow recorded on one time line (1.66.0). It answers three
+questions for the after-action report:
+
+- **What showed first?** The first signal, and where it showed.
+- **How long until someone knew?** The time from the first signal to the ticket.
+- **How long was it down?** From "host not responding" to "connected again", per host.
+
+It is read-only. It reads vCenter's events and, with the ServiceNow API credential, the tickets (GET only). It changes
+nothing in either, opens no ticket and restarts nothing. There is no new job template.
+
+### Make a review
+
+1. Open the job template **VM - outage watch** and choose **Launch**. (Extra variables must be *Prompt on launch*.)
+2. Add one line to the extra variables:
+
+   ```yaml
+   vm_watch_review: true
+   ```
+
+   The review then covers the last `vm_watch_review_hours` (6).
+3. For an older outage, give its window instead, in `report_time_zone`:
+
+   ```yaml
+   vm_watch_review: true
+   vm_watch_review_from: "2026-11-12 01:00"
+   vm_watch_review_to: "2026-11-12 05:00"
+   ```
+
+4. For the tickets and ACT's notes: attach the **ServiceNow API** credential to the job template. Without it the two
+   lanes say *not read* and the rest is made as usual.
+5. Launch. The watch runs first, as always. Then the job output shows the review:
+
+   ```
+   Outage time line, 2026-11-11 21:45 CET to 2026-11-12 03:45 CET: 18 event(s);
+   first signal 12 Nov 01:41:10; esx03 down: 46 min; ticket after 93 min
+    1  12 Nov 01:41:10  Host events  esx03  Storage path redundancy lost  [Warning]
+    2  12 Nov 02:19:40  Host events  esx03  Host not responding  [Critical]
+   ```
+
+6. Read it by email (`report_email_to`) or on the report website (`report_web_dest`). A review is always reported,
+   also when nothing is down now.
+
+Leave `vm_watch_review` off on the schedule. A scheduled run that finds something down shows the time line of the last
+`vm_watch_review_hours` in its report by itself (`vm_watch_timeline`).
+
+### What the review shows
+
+| Part | What |
+|---|---|
+| The boxes | Window, Events, Host down, VMs restarted by HA, Signal to ticket |
+| The outage in short | the first signal, the ticket, the time down, when it was back - one line each |
+| What happened, in order (website: atlas, brief) | the time line: four lanes, a mark per event, a band while a host was down |
+| The events | every event as a table row: time, lane, where, what, level. **This table is the source**; the chart only draws it |
+| For the after-action report | lines to paste into the AAR job's survey, each named by its variable |
+| The watch's own sections | *Down or hung now* and the rest, below, as in every watch report |
+
+The four lanes:
+
+| Lane | What it holds |
+|---|---|
+| vCenter alarms | every alarm that changed its colour, and vSphere HA's cluster events (VMs restarted) |
+| Host events | a host lost and back, HA on the host, storage paths, device loss, VMFS heartbeat, uplinks, maintenance mode |
+| ServiceNow | the tickets the health workflows opened (`servicenow_correlation_prefix`), their work notes, when each was resolved |
+| ACT | ACT's analysis and review notes in those tickets |
+
+- **Hover a mark**, or Tab to it: the time, the lane, where and what. Marks that would overlap share one mark with
+  their count.
+- **Levels** are words and icons, never colour alone: Critical, Warning, Low, Note, Back to normal.
+- **Low:** a problem that cleared within `vm_watch_review_low_seconds` (120) is one Low event, "back after 40 s".
+- **The email** and the other looks have no chart: the boxes, the short list and the events table.
+- **The workbook** (`report_email_xlsx: true`): a *Timeline* sheet with every event.
+- **The job artifact** `vm_outage_review`: the numbers (first signal, ticket, seconds from signal to ticket, seconds
+  down, hosts down, VMs restarted by HA), for a later workflow step.
+
+### From the review to the AAR
+
+The AAR stays a document a person writes ([INCIDENT_DOCS.md](INCIDENT_DOCS.md)). The review gives it the facts:
+
+1. Open the review's section *For the after-action report*.
+2. Launch *Outage AAR - Word document*.
+3. Copy each line into the survey question of the same name: `incident_start`, `incident_end`, `incident_detection`,
+   `incident_root_cause`.
+4. Check the root cause before you paste it. It is ACT's reading of the ticket, not a finding.
+
+### When a part is missing
+
+| You see | What it means |
+|---|---|
+| *ServiceNow was not read: attach the ServiceNow API credential to the job template* | step 4 above; the vCenter lanes are complete |
+| *ServiceNow work notes: ... HTTP 403* | the ServiceNow account needs read on `sys_journal_field`; tickets still show |
+| A ticket opened by hand is missing | add its number: `vm_watch_review_tickets: [INC0012345]` |
+| *the oldest are left out* | more than `vm_watch_review_max_events` (2000) events in the window: shorten it |
+| *The outage time line was not made* in the job output | the read failed; the watch and its report went on without it |
+| No events at all | vCenter keeps events for a limited time (30 days by default): an older window is empty |
+| The window is refused | write the times as `2026-11-12 01:00`; the end must be after the start |
+
 ## Settings
 
 | Setting | Default | What |
@@ -151,6 +252,15 @@ Job artifacts, for the next step of a workflow:
 | `vm_watch_max_actions` | 5 | the most VMs one run would restart; beyond it, ticket only |
 | `vm_watch_fail_on` | [critical] | severities that make the job red; `[]` = always green |
 | `vm_watch_report_on` | [critical] | severities that make a report (email, web page); `[critical, warning]` for the warnings too |
+| `vm_watch_review` | false | true, at launch: make the outage review now, also when nothing is down |
+| `vm_watch_review_hours` | 6 | how far back the review looks (0.25 to 744) |
+| `vm_watch_review_from` | "" | an older outage: the window's start, in `report_time_zone`, e.g. `2026-11-12 01:00` |
+| `vm_watch_review_to` | "" | its end; empty = `vm_watch_review_hours` after the start, at most now |
+| `vm_watch_timeline` | true | the time line also in the report of a normal run that finds something down |
+| `vm_watch_review_low_seconds` | 120 | a problem cleared within this is one Low event; 0 = never joined |
+| `vm_watch_review_tickets` | [] | more tickets to show, by number |
+| `vm_watch_review_event_types` | [] | vCenter event types to read; empty = the built-in list |
+| `vm_watch_review_max_events` | 2000 | the most events per vCenter (the newest are kept) |
 
 Also used: `vmware_vcenters`, `vmware_datacenter`, `vmware_validate_certs`, `vmware_protected_vms`,
 `vmware_protected_groups`, `report_email_to`, `report_web_dest`, and the `servicenow_*` settings of the

@@ -1306,6 +1306,11 @@ in every check of the run. A clean run is one line, with no email. Watch only: i
 hung VMs a later phase would restart, so the false alarms can be counted first. Everything - what it
 reads, the settings, the workflow, the phase 2 plan - is in [VM_OUTAGE_WATCH.md](VM_OUTAGE_WATCH.md).
 
+**The outage review** (1.66.0): launched with `vm_watch_review: true`, the same job draws one time line of what
+vCenter and ServiceNow recorded - alarms, host events, tickets, ACT's notes - with the first signal, the time from
+it to the ticket, and how long a host was down. Read-only, no new job template:
+[Review an outage](VM_OUTAGE_WATCH.md#review-an-outage-the-time-line).
+
 ## Ask a question: plain words, read-only
 
 `playbooks/vm_ask.yml`, on demand. Someone types a question in the survey's box, for example *all VMs in the

@@ -2173,6 +2173,15 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_watch_fail_on` | `[critical]` | The job shows FAILED (a workflow's "On failure" path) when it finds a condition of these severities. |
 | `vm_watch_report_on` | `[critical]` | The report is emailed (report_email_to) and published (report_web_dest) only when it finds a condition of these severities; a clean run is one line in the job output. |
 | `vm_watch_sso` | `true` | the watch also asks: is single sign-on down now (vm_sso_*, below)? false = not asked |
+| `vm_watch_review` | `false` | The outage review (1.66.0): one time line of what vCenter and ServiceNow recorded - alarms, host events, tickets, ACT's notes - with the first signal, the time from it to the ticket, and how long a host was down. Read-only. true (a launch choice) = make the review now, also when nothing is down; the watch runs first,… (all of it: the role file) |
+| `vm_watch_review_hours` | `6` | the review looks back this many hours (0.25 to 744) |
+| `vm_watch_review_from` | (empty) | a review of an older outage: its window starts here, in report_time_zone (e.g. "2026-11-12 01:00") ... |
+| `vm_watch_review_to` | (empty) | ... and ends here ("" = vm_watch_review_hours after vm_watch_review_from, at most now) |
+| `vm_watch_timeline` | `true` | the time line also in the report a normal run sends when something is down; false = that report as before |
+| `vm_watch_review_low_seconds` | `120` | a problem that cleared within this many seconds is one Low event ("back after 40 s"), not two; 0 = never joined |
+| `vm_watch_review_tickets` | `[]` | more tickets to show by number (e.g. [INC0012345]: one opened by hand); the health workflows' tickets are found by themselves |
+| `vm_watch_review_event_types` | `[]` | vCenter event types to read; [] = the built-in list (hosts, HA, storage, uplinks, alarms) |
+| `vm_watch_review_max_events` | `2000` | at most this many events per vCenter (the newest are kept) |
 | `vm_sso` | `true` | ---- Single sign-on and OCSP (vCenter 8.0): the health report (playbooks/vm_health_report.yml) and the watch ---- vCenter's SSO services, the STS signing certificate (health report only), the identity providers, a login by a test domain account (the "vCenter SSO test account" credential), and the OCSP responders smart… (all of it: the role file) |
 | `vm_sso_services` | `[sts, lookupsvc, trustmanagement, vmdird, vmafdd]` | SSO services that must be started (as vCenter's and the appliance's service lists name them; one not listed is skipped) |
 | `vm_sso_sts_warn_days` | `60` | the STS signing certificate expires within this many days -> warning; within twice that -> Low |

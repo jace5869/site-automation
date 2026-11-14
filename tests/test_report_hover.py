@@ -39,6 +39,7 @@ import servicenow_insights_page as snp  # noqa: E402
 import stig_scorecard_filters as ssf  # noqa: E402
 import test_capacity as tc  # noqa: E402
 import test_cert_timeline as tct  # noqa: E402
+import test_outage_timeline as tot  # noqa: E402
 import test_servicenow_breach as tsb  # noqa: E402
 from test_report_fit import EmailTiles, _browser  # noqa: E402
 
@@ -455,6 +456,63 @@ class RealChromeTimeline(RealChrome):
 
 
 class RealChromeTimelineBrief(RealChromeTimeline):
+    TPL = "report_brief.html.j2"
+
+
+@unittest.skipUnless(_browser(), "no headless browser here")
+class RealChromeOutage(RealChrome):
+    """1.66.0: the outage time line's marks (their data-tip) under the same policy - hover, the keyboard, Esc."""
+    test_2_hovering_a_sparkline_shows_the_day_and_value = test_3_keyboard_focus_shows_it_too = None
+    test_4_a_runway_bar_and_a_tile = test_5_a_trend_column_line = None
+    SEL = ".ot-track .ot-m[data-tip]"
+
+    @classmethod
+    def web(cls):
+        return tot.ot.outage_timeline_doc(tot.WATCH, tot.made(), True, True)
+
+    def test_6_hovering_a_mark_shows_the_event(self):
+        n = self.c.js("document.querySelectorAll(%s).length" % json.dumps(self.SEL))
+        self.assertEqual(n, 18)
+        for i in (0, 7, n - 1):                                               # the first alarm, three marks at one time, the ACT lane's
+            x, y = self.at(self.SEL, i)
+            self.c.mouse(5, 5)
+            self.c.mouse(x, y)
+            want = self.c.js("document.querySelectorAll(%s)[%d].getAttribute('data-tip').split('\\n')" % (json.dumps(self.SEL), i))
+            self.assertEqual(self.c.js(TIP), want, i)
+            box = self.c.js("(() => {const r = document.getElementById('site-tip').getBoundingClientRect(); "
+                            "return [r.left, r.right, document.documentElement.clientWidth]})()")
+            self.assertGreaterEqual(box[0], 0, i)
+            self.assertLessEqual(box[1], box[2], i)
+        self.assertEqual(self.c.js("document.querySelectorAll(%s)[5].getAttribute('data-tip').split('\\n')" % json.dumps(self.SEL)),
+                         ["1  12 Nov 01:41:10 CET  Low", "Storage path redundancy degraded, back after 40 s - esx03"])
+        self.c.mouse(5, 5)
+        self.assertIsNone(self.c.js(TIP))
+        self.assertFalse(self.c.js("[...document.querySelectorAll('[data-tip]')].some(e => e.hasAttribute('title'))"))
+        # no mark lies over another: each one's middle is its own
+        self.assertEqual(self.c.js("[...document.querySelectorAll(%s)].filter(e => {const r = e.getBoundingClientRect(); "
+                                   "return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2).closest('.ot-m') !== e}).length"
+                                   % json.dumps(self.SEL)), 0)
+
+    def test_7_the_keyboard_reaches_each_mark(self):
+        self.c.js("document.activeElement && document.activeElement.blur(); window.scrollTo(0, 0)")
+        seen = []
+        for _ in range(300):
+            self.c.key("Tab", "Tab", 9)
+            if self.c.js("document.activeElement.matches(%s)" % json.dumps(self.SEL)):
+                tip = self.c.js(TIP)
+                self.assertEqual(tip, self.c.js("document.activeElement.getAttribute('data-tip').split('\\n')"))
+                seen.append(tip[0])
+            elif seen:
+                break
+        self.assertEqual(len(seen), 18, "Tab did not stop at every mark")
+        self.assertEqual(seen[0], "3  12 Nov 01:58:30 CET  Warning")          # the first lane's first mark: document order
+        self.c.js("document.querySelector(%s).focus()" % json.dumps(self.SEL))
+        self.assertIsNotNone(self.c.js(TIP))
+        self.c.key("Escape", "Escape", 27)
+        self.assertIsNone(self.c.js(TIP))
+
+
+class RealChromeOutageBrief(RealChromeOutage):
     TPL = "report_brief.html.j2"
 
 

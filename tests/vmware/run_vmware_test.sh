@@ -11,7 +11,8 @@
 # the certificate install (the "PKI" signs the ordered CSR on its request; held for vpxd.certmgmt.mode, approved, installed on the host);
 # the pick lists (the survey's choices written in a fake AAP, the picked snapshots deleted and VMs restarted, each checked again);
 # the outage watch (hung VMs by heartbeat and ping, protected ones, HA and storage events, a disconnected host, its
-# incidents opened and resolved in a fake ServiceNow);
+# incidents opened and resolved in a fake ServiceNow; the outage review and its time line - a window, the tickets
+# read from the fake ServiceNow (GET only), a refused login, the report a normal run sends);
 # the vCenter log analysis (vcsim hands out no logs: the job says so); the VM inventory report (and its workbook by email;
 # the VMs without encryption, EFI or vTPM, the website's columns); the VMware Tools inventory;
 # the ESXi network check (esxcli through vCenter - vcsim has no network diag ping: its answer is said); the VM right-sizing
@@ -2678,6 +2679,76 @@ run "outage watch: all paths down (not cleared), an HA restart, a VMFS heartbeat
     -- "all paths down on host DC0_C0_H0 (device naa.600a098038303053)" ", not cleared" \
        "VM DC0_C0_RP0_VM0: HA restarted the VM on another host" "VMFS heartbeat timed out on host DC0_C0_H1" ", cleared at"
 run "outage watch with vm_watch_window_minutes: 0 - no events read" ok vm_outage_watch.yml -e "$wt" -e vm_watch_window_minutes=0 -- "No outage"
+# 1.66.0, the outage review (vm_watch_review): the time line of what vCenter and ServiceNow recorded. vcsim dates a posted
+# event at the moment it is posted: DC0_C0_H1 is lost for 2 s (tests/test_outage_timeline.py has the times of a real night)
+VMWARE_PORT=$port "$py" "$here/vcsim.py" outage 2
+run "outage review, nothing down now: a report all the same - the short loss is one Low row, the job is green" ok vm_outage_watch.yml -e "$wt" \
+    -e vm_watch_window_minutes=0 -e vm_watch_review=true \
+    -- "Outage review: DC0_C0_H0: all paths down to a storage device" "Host not responding, back after 2 s  [Low]" "HA restarted 1 VM  [Warning]" \
+       "ServiceNow was not read: attach the ServiceNow API credential to the job template." "VM outage watch: nothing down" \
+       '"vm_outage_review": {' '"hosts_down": []' '"site_health_targets": []'
+run "outage review with vm_watch_review_low_seconds: 0 - the loss counts as time down, with its end" ok vm_outage_watch.yml -e "$wt" \
+    -e vm_watch_window_minutes=0 -e vm_watch_review=true -e vm_watch_review_low_seconds=0 \
+    -- "Outage review: DC0_C0_H0: all paths down to a storage device; 2 s down" "DC0_C0_H1 down: 2 s" "Host not responding  [Critical]" "Host connected again  [Back to normal]" '"down_s": 2'
+run "outage review of a named window with nothing in it (vm_watch_review_from, vm_watch_review_to)" ok vm_outage_watch.yml -e "$wt" \
+    -e vm_watch_window_minutes=0 -e '{"vm_watch_review": true, "vm_watch_review_from": "2026-11-12 01:00", "vm_watch_review_to": "2026-11-12 03:00"}' \
+    -e report_time_zone=Europe/Berlin -- "Outage review: no outage event in the window" "2026-11-12 01:00 CET to 03:00 CET: 0 event(s)"
+run "outage review: vm_watch_review_from is not a time - refused, with the form to write" fail vm_outage_watch.yml -e "$wt" \
+    -e '{"vm_watch_review": true, "vm_watch_review_from": "soon"}' \
+    -- "vm_watch_review_from is not a time like 2026-11-12 01:00: soon" "in report_time_zone"
+run "outage watch that reports (no review asked): the report carries the time line too (vm_watch_timeline)" fail vm_outage_watch.yml -e "$wt" \
+    -- "Outage time line, " "All paths down to a storage device  [Critical]" "VM outage watch: 1 critical, 2 warning"
+run "outage watch with vm_watch_timeline: false - the report as before" fail vm_outage_watch.yml -e "$wt" -e vm_watch_timeline=false \
+    -- "VM outage watch: 1 critical, 2 warning"
+grep -qF "Outage time line" "$work/out.txt" && { echo "FAIL -   ...no time line was asked for"; fails=$((fails + 1)); } || echo "ok   -   ...and no time line in it"
+# the tickets of the window, from a fake ServiceNow (GET only): the health workflows' ticket with its ACT analysis and a
+# work note, and one added by number; a ticket resolved two days ago and one of no health workflow are left out
+"$py" - "$work/review-seed.json" <<'EOPY'
+import datetime, json, sys
+now = datetime.datetime.now(datetime.timezone.utc)
+def t(minutes):
+    return (now - datetime.timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
+json.dump([
+    {"sys_id": "a1a1", "number": "INC0012345", "short_description": "[site-health] DC0_C0_H1: host not responding",
+     "description": "Host: DC0_C0_H1\nCheck: vm_watch\nSeverity: critical\n\nACT (GenAI) analysis - level 2, status ok:\n"
+                    "The host lost its storage paths before vCenter lost the host.\n",
+     "opened_at": t(0), "sys_created_on": t(0), "sys_updated_on": t(0), "state": "2", "active": "true",
+     "correlation_id": "site-health:1a2b3c4d:vm_watch"},
+    {"sys_id": "b3b3", "number": "INC0012300", "short_description": "users report slow logins", "opened_at": t(30),
+     "sys_created_on": t(30), "sys_updated_on": t(20), "state": "1", "active": "true", "correlation_id": ""},
+    {"sys_id": "c4c4", "number": "INC0012301", "short_description": "printer out of toner", "opened_at": t(30),
+     "sys_created_on": t(30), "sys_updated_on": t(20), "state": "1", "active": "true", "correlation_id": ""},
+    {"sys_id": "d5d5", "number": "INC0011000", "short_description": "[site-health] rhel01: disk full", "opened_at": t(3000),
+     "sys_created_on": t(3000), "sys_updated_on": t(2900), "resolved_at": t(2900), "state": "6", "active": "true",
+     "correlation_id": "site-health:9f8e7d6c:disk"},
+    {"_table": "sys_journal_field", "element": "work_notes", "name": "incident", "element_id": "a1a1",
+     "value": "On site, checking the cabling.", "sys_created_on": t(0)}], open(sys.argv[1], "w"))
+EOPY
+: > "$work/wsn.jsonl"
+SNMOCK_SEED="$work/review-seed.json" SNMOCK_LOG="$work/wsn.jsonl" "$py" "$repo/tests/servicenow/snmock.py" "$wsn_port" >/dev/null 2>&1 &
+wsn_pid=$!
+for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$wsn_port") 2>/dev/null && break; sleep 0.1; done
+export SN_HOST="http://127.0.0.1:$wsn_port" SN_USERNAME=api SN_PASSWORD=goodpw
+run "outage review with the ServiceNow API credential: the ticket, its ACT analysis and its work note on the time line" ok vm_outage_watch.yml \
+    -e "$wt" -e vm_watch_window_minutes=0 -e '{"vm_watch_review": true, "vm_watch_review_tickets": ["INC0012300"]}' \
+    -- "Ticket INC0012345 opened  [Critical]" "ACT analysis in INC0012345: The host lost its storage paths before vCenter lost the host.  [Note]" \
+       "Work note in INC0012345: On site, checking the cabling.  [Note]" "Ticket INC0012300 opened  [Warning]" '"ticket": "INC0012345"' "; ticket after "
+grep -qE "INC0012301|INC0011000" "$work/out.txt" && { echo "FAIL -   ...a ticket that is not the window's"; fails=$((fails + 1)); } \
+    || echo "ok   -   ...the other tickets are left out"
+grep -vq '"method": "GET"' "$work/wsn.jsonl" && { echo "FAIL -   ...the review wrote to ServiceNow"; fails=$((fails + 1)); } \
+    || echo "ok   -   ...ServiceNow was only read (GET)"
+kill "$wsn_pid" 2>/dev/null; wait "$wsn_pid" 2>/dev/null
+SNMOCK_SEED="$work/review-seed.json" SNMOCK_NO_TABLES=sys_journal_field "$py" "$repo/tests/servicenow/snmock.py" "$wsn_port" >/dev/null 2>&1 &
+wsn_pid=$!
+for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$wsn_port") 2>/dev/null && break; sleep 0.1; done
+SN_USERNAME=ro run "outage review, a read-only account that may not read the work notes: the ticket, and what is missing" ok vm_outage_watch.yml \
+    -e "$wt" -e vm_watch_window_minutes=0 -e vm_watch_review=true \
+    -- "Ticket INC0012345 opened  [Critical]" "ServiceNow work notes: GET api/now/table/sys_journal_field: HTTP 403" \
+       "the account needs read on sys_journal_field (the work notes)"
+SN_PASSWORD=wrongpw run "outage review, ServiceNow refuses the login: the review is made without the tickets, and says why" ok vm_outage_watch.yml \
+    -e "$wt" -e vm_watch_window_minutes=0 -e vm_watch_review=true -- "ServiceNow: not read: GET api/now/table/incident: HTTP 401" "Outage review: "
+unset SN_HOST SN_USERNAME SN_PASSWORD
+kill "$wsn_pid" 2>/dev/null
 VMWARE_PORT=$port "$py" "$here/vcsim.py" events >/dev/null
 run "outage watch: a host disconnected" fail vm_outage_watch.yml -e "$wt" -e vm_watch_window_minutes=0 \
     -- "ESXi host DC0_C0_H2 is disconnected (cluster DC0_C0): its VMs may be down"

@@ -121,7 +121,7 @@ VMware collection ([VMWARE.md](VMWARE.md#before-you-start)).
 | VM - alarms ACT analysis | `playbooks/vm_alarm_act_analysis.yml` | Report | [VMWARE.md](VMWARE.md#the-act-analysis) |
 | VM - ask a question | `playbooks/vm_ask.yml` | On demand | [VM_ASK.md](VM_ASK.md#set-it-up-in-aap) |
 | VMware ask - deploy | `playbooks/vmware_ask_deploy.yml` | Setup or test | [VMWARE_ASK.md](VMWARE_ASK.md#set-it-up) |
-| VM - outage watch | `playbooks/vm_outage_watch.yml` | Watch | [VM_OUTAGE_WATCH.md](VM_OUTAGE_WATCH.md#set-it-up), workflow 28: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#28-vm-outage-watch-every-5-to-15-minutes) |
+| VM - outage watch | `playbooks/vm_outage_watch.yml` | Watch | [VM_OUTAGE_WATCH.md](VM_OUTAGE_WATCH.md#set-it-up); the outage review, launched by hand with `vm_watch_review: true`: [the guide](VM_OUTAGE_WATCH.md#review-an-outage-the-time-line); workflow 28: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#28-vm-outage-watch-every-5-to-15-minutes) |
 | VM - vCenter log analysis | `playbooks/vm_log_analysis.yml` | On demand | [LOG_ANALYSIS.md](LOG_ANALYSIS.md#set-it-up-in-aap) |
 | VM - capacity planning | `playbooks/vm_capacity_report.yml` | Report | [VMWARE.md](VMWARE.md#set-it-up) |
 | VM - VMs created report | `playbooks/vm_created_report.yml` | Report | [VMWARE.md](VMWARE.md#set-up-the-report-every-friday-at-noon) |

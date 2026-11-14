@@ -1,5 +1,58 @@
 # Changelog
 
+## 1.66.0 — 2026-11-14
+
+**Updating without scripts:** paste `site-automation-1.66.0-changed-since-1.61.0.zip` as it is (from an older version,
+its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`.
+
+**Nothing to set up.** New settings have defaults: `vm_watch_review`, `vm_watch_review_hours`, `vm_watch_review_from`,
+`vm_watch_review_to`, `vm_watch_timeline`, `vm_watch_review_low_seconds`, `vm_watch_review_tickets`,
+`vm_watch_review_event_types`, `vm_watch_review_max_events`. No new job template. Optional: attach the *ServiceNow API*
+credential to *VM - outage watch*, for the tickets on the time line. To do: 1.66.0 nothing.
+
+**VM outage watch: the outage review.** After an outage, the same job draws what vCenter and ServiceNow recorded on
+one time line. Launch *VM - outage watch* with `vm_watch_review: true`. It is read-only: vCenter's events, and
+ServiceNow by GET only. Nothing is removed: the watch runs first and its sections stay.
+
+- **Three answers:** the first signal, the time from it to the ticket, and how long each host was down.
+- **The window:** the last `vm_watch_review_hours` (6), or `vm_watch_review_from` / `vm_watch_review_to` for an older
+  outage, in `report_time_zone`.
+- **The website** (atlas and brief): four lanes on one time axis - vCenter alarms, host events, ServiceNow, ACT. A mark
+  per event with its level's icon, a band while a host was down. Marks that would overlap share one mark with a count.
+- **Hover a mark**, or Tab to it: the time, the lane, where and what. It uses 1.57.0's tip in `site-report.js`.
+- **The events table is the source.** Every event is a row: time, lane, where, what, level. The chart only draws it.
+- **The email** (and the other looks): five boxes, *The outage in short* and the events table. No chart there.
+- **The workbook** (`report_email_xlsx: true`): a *Timeline* sheet with every event.
+- **For the after-action report:** the start, the end, the detection and ACT's reading of the root cause, each named
+  by the AAR survey's variable, to paste. The AAR stays a document a person writes.
+- **Low** (1.56.0): a problem that cleared within `vm_watch_review_low_seconds` (120) is one Low event, "back after
+  40 s".
+- **ServiceNow:** the tickets of the health workflows (`servicenow_correlation_prefix`), their work notes, and
+  `vm_watch_review_tickets` by number. Without the credential the two lanes say *not read*; the rest is made.
+- **A normal run** that finds something down shows the time line of the last `vm_watch_review_hours` in its report.
+  `vm_watch_timeline: false`: that report as before.
+- **The job artifact** `vm_outage_review`: the review's numbers, for a later workflow step.
+- **Colours:** the levels use each look's own status colours, no new colour. As in 1.64.0, as a set they do not pass
+  the palette check for colour-blind readers, so every mark has its icon and every row its word.
+- Docs: VM_OUTAGE_WATCH.md (*Review an outage*, numbered steps), INCIDENT_DOCS.md, VMWARE.md, WEB_REPORTS.md,
+  JOB_TEMPLATES.md.
+
+**Behaviour changes**
+
+- *VM - outage watch*, a run that reports (something down at `vm_watch_report_on`): the report has the time line's
+  sections above the watch's, five more boxes, a *Timeline* sheet in the workbook, more lines in the job output, and
+  one more read of vCenter's events. With the ServiceNow API credential attached, also two GETs to ServiceNow.
+- A clean run is as before: one read, one line, no report.
+- A time line that cannot be read never stops the watch: the report goes out without it, and the job output says so.
+- The findings, the status, the artifacts `vm_watch` and `site_health`, and what makes the job fail are as before.
+
+**Tests:** `tests/test_outage_timeline.py` (41); report fit documents `outage_review_web` and `outage_review_email`;
+the hover tests in a real browser (mouse and keyboard, atlas and brief); the outage watch block of
+`tests/vmware/run_vmware_test.sh` (a review, a named window, the tickets from a fake ServiceNow by GET only, a
+refused login, a normal run's report), on ansible-core 2.22 and 2.16. The workbook's sheet is checked in the unit
+tests only. Not run against a real vCenter's events or a real ServiceNow.
+
 ## 1.65.0 — 2026-11-14
 
 **Updating without scripts:** paste `site-automation-1.65.0-changed-since-1.61.0.zip` as it is (from an older version,
@@ -2362,7 +2415,7 @@ tests/stig/run_stigman_real_test.sh against STIG Manager 1.6.18 (not in CI).
 
 SA_VERSION 1.26.0; the PDFs at 1.26.0.
 
-**To do, if you have not yet: what 0.20.0 to 1.65.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.65.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing, 1.39.0 nothing, 1.41.0 nothing, 1.42.0 nothing, 1.43.0 nothing, 1.44.0 nothing, 1.45.0 nothing, 1.46.0 nothing, 1.47.0 nothing, 1.48.0 nothing, 1.49.0 nothing, 1.50.0 step 97, 1.51.0 step 95, 1.52.0 step 96, 1.53.0 step 98, 1.54.0 nothing, 1.55.0 nothing, 1.56.0 nothing, 1.57.0 nothing, 1.58.0 nothing, 1.59.0 nothing, 1.61.0 nothing, 1.62.0 nothing, 1.63.0 step 99, 1.64.0 nothing, 1.65.0 nothing).** In order; each step works without
+**To do, if you have not yet: what 0.20.0 to 1.66.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.66.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing, 1.39.0 nothing, 1.41.0 nothing, 1.42.0 nothing, 1.43.0 nothing, 1.44.0 nothing, 1.45.0 nothing, 1.46.0 nothing, 1.47.0 nothing, 1.48.0 nothing, 1.49.0 nothing, 1.50.0 step 97, 1.51.0 step 95, 1.52.0 step 96, 1.53.0 step 98, 1.54.0 nothing, 1.55.0 nothing, 1.56.0 nothing, 1.57.0 nothing, 1.58.0 nothing, 1.59.0 nothing, 1.61.0 nothing, 1.62.0 nothing, 1.63.0 step 99, 1.64.0 nothing, 1.65.0 nothing, 1.66.0 nothing).** In order; each step works without
 the ones after it. There is no step 90.
 
 1. **Your logo** (0.20.0). A PNG with a transparent background, about 160 px tall and under 100 KB, in

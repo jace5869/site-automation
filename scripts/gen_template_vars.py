@@ -490,6 +490,12 @@ report_email_to: approvers@yoursite.mil           # the approver reads the plan 
 # vm_watch_window_minutes: 15                    # the schedule's interval
 # vm_watch_probe_port: 0                         # e.g. 22 or 3389: also a TCP connect (needed when ICMP is blocked)
 # vm_watch_protect: []                           # e.g. [DC*, SQL*]: a ticket only, never a restart (phase 2)
+## The outage review (the time line): launch this job by hand with vm_watch_review: true - see docs/VM_OUTAGE_WATCH.md
+# vm_watch_review_hours: 6                       # the review looks back this many hours
+# vm_watch_review_from: "2026-11-12 01:00"       # an older outage: the window starts here (report_time_zone) ...
+# vm_watch_review_to: "2026-11-12 05:00"         # ... and ends here
+# vm_watch_review_tickets: [INC0012345]          # a ticket opened by hand, shown too
+# vm_watch_timeline: false                       # the report of a normal run without the time line
 """),
     "vm_deploy_poll.yml": ("VM - pick up deploy tickets", "ServiceNow API, Red Hat Ansible Automation Platform", "", """\
 vm_deploy_assignment_group: YOUR GROUP NAME       # REQUIRED: only this group's tickets are picked up

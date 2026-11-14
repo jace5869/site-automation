@@ -98,6 +98,53 @@ table.bd .nohist{color:var(--muted);font-size:12.5px}
   .tl{--tl-name:118px}
   .tl-l.w,.tl-axis .w,.tl-wk.w{display:none}
 }
+{#- 1.66.0: the outage time line (a section's outage: the VM outage watch's review). One time axis, a lane per source;
+    a mark is one row of The events - a pill of its level's colour (the look's own status tokens: critical, warning, the
+    Low bar, info, ok - no new colour) with the level's icon and the row's number, so the level is never the colour alone.
+    Up to three rows a lane (h1 to h3, r0 to r2) keep close marks apart. The shade is the time a host was down. Under
+    1000 px: a narrower name column, every second time (.w) left out. -#}
+.ot{--ot-name:150px;margin:6px 0 0}
+.ot-legend{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;color:var(--ink);font-size:13px;margin:0 0 12px}
+.ot-legend span{display:inline-flex;align-items:center;gap:6px}
+.ot-legend .ot-m{position:static;transform:none;box-shadow:none;width:18px;min-width:0;height:18px;padding:0;border-radius:50%}
+.ot-shade{display:inline-block;width:22px;height:14px;border-radius:3px;background:var(--critical-bg);border:1px solid var(--critical-bd)}
+.ot-over{margin:0 18px 4px 12px}
+.ot-strip{position:relative;height:22px;border-radius:5px;background:var(--line)}
+.ot-box{position:absolute;top:-3px;bottom:-3px;border:2px solid var(--ink);border-radius:5px;background:var(--card-solid)}
+.ot-t{position:absolute;top:4px;bottom:4px;width:3px;margin-left:-1px;border-radius:2px}
+.ot-t.ot-critical{background:var(--critical)}.ot-t.ot-warning{background:var(--warning)}.ot-t.ot-low{background:var(--rwlow-bar)}
+.ot-t.ot-info{background:var(--info)}.ot-t.ot-ok{background:var(--ok)}
+.ot-ends{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-top:5px;font-variant-numeric:tabular-nums}
+.ot-cap{color:var(--muted);font-size:13px;margin:2px 0 16px}
+.ot-plot{position:relative}
+.ot-bg{position:absolute;top:0;bottom:0;left:calc(var(--ot-name) + 12px);right:18px;pointer-events:none}
+.ot-band{position:absolute;top:0;bottom:0;background:var(--critical-bg);border-left:1px solid var(--critical-bd);border-right:1px solid var(--critical-bd)}
+.ot-band span{position:absolute;z-index:1;left:5px;max-width:calc(100% - 9px);padding:0 3px;background:var(--critical-bg);bottom:3px;font-style:normal;font-size:12px;line-height:14px;font-weight:650;color:var(--critical);white-space:nowrap;overflow:hidden}
+.ot-tk{position:absolute;top:0;bottom:0;width:1px;background:var(--line)}
+.ot-row{position:relative;display:grid;grid-template-columns:var(--ot-name) minmax(0,1fr);align-items:center;border-top:1px solid var(--line)}
+.ot-row:first-of-type{border-top:0}
+.ot-name{min-width:0;padding:8px 10px 8px 0;overflow-wrap:anywhere;line-height:1.3}
+.ot-name b{display:block;font-weight:650}.ot-name small{color:var(--muted);font-size:12.5px}
+.ot-track{position:relative;height:58px;margin:0 18px 0 12px}
+.ot-track.h2{height:84px}.ot-track.h3{height:112px}
+.ot-m{position:absolute;top:18px;transform:translate(-50%,0);display:inline-flex;align-items:center;gap:3px;height:22px;min-width:22px;padding:0 7px 0 3px;
+  border-radius:999px;color:var(--card-solid);box-shadow:0 0 0 2px var(--card-solid);font-style:normal;line-height:1;white-space:nowrap}
+.ot-track.h2 .ot-m,.ot-track.h3 .ot-m{top:16px}
+.ot-track .ot-m.r1{top:44px}.ot-track .ot-m.r2{top:72px}
+.ot-m .ic{width:16px;height:16px;flex:none}
+.ot-m b{font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums}
+.ot-m.ot-critical{background:var(--critical)}.ot-m.ot-warning{background:var(--warning)}.ot-m.ot-low{background:var(--rwlow-bar)}
+.ot-m.ot-info{background:var(--info)}.ot-m.ot-ok{background:var(--ok)}
+.ot-legend .ot-m{justify-content:center}
+.ot-track .ot-m:hover,.ot-track .ot-m:focus{z-index:2}
+.ot-axis{position:relative;height:26px;margin:0 18px 0 calc(var(--ot-name) + 12px);border-top:1px solid var(--edge)}
+.ot-axis span{position:absolute;top:6px;transform:translateX(-50%);font-size:12px;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+.ot-axis span:first-child{transform:none}
+.ot-axis em{position:absolute;top:6px;right:-14px;font-style:normal;font-size:12px;color:var(--muted)}
+@media (max-width:1000px){
+  .ot{--ot-name:118px}
+  .ot-axis .w,.ot-tk.w{display:none}
+}
 {#- a narrower window (800 px): the lines and bars a little shorter, so the board fits its card -#}
 @media (max-width:900px){
   table.bd .cell{width:128px}
@@ -126,5 +173,7 @@ table.bd tr.r-low td:first-child{box-shadow:inset 2px 0 0 var(--rwlow-bar)}
 .tl-name b{font-family:var(--display);font-size:16px;letter-spacing:-.01em}
 .tl-track{height:72px}
 .tl-axis span{font-size:11.5px;letter-spacing:.02em}
+.ot-name b{font-family:var(--display);font-size:16px;letter-spacing:-.01em}
+.ot-axis span,.ot-axis em{font-size:11.5px;letter-spacing:.02em}
 {%- endif %}
 @media print{.tt,.hint{display:none !important}}

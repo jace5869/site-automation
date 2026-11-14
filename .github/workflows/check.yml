@@ -148,6 +148,7 @@ jobs:
           python tests/test_low_security.py
           python tests/test_patch_age.py
           python tests/test_cert_timeline.py
+          python tests/test_outage_timeline.py
           python tests/test_idm_inventory.py
           ANSIBLE_INVENTORY=/tmp/ac216/bin/ansible-inventory python tests/test_idm_inventory.py
           python tests/test_aap_keycloak_check.py

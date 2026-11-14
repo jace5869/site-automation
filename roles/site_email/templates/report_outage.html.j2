@@ -1,0 +1,37 @@
+{#- A section's outage time line (1.66.0, the VM outage watch's review), in the atlas and brief looks only (a web page;
+    an email gets the cards and the events table): s.outage = {label, zone, legend: [{level, word}], band_word, lanes:
+    [{key, name, sub, rows (1 to 3), marks: [{x (%), row, level, label (the event's number, '3+1' = one more under it),
+    tip}]}], ticks: [{at (%), text, wide}], bands: [{from, to (%), text}], overview: {from, to (%), begin, end, text,
+    marks: [{at, level}]} or none, none}. A mark is one row of "The events" at its time: its level is its icon and its
+    colour, its number is the row's. Its lines show on hover, focus and tap (data-tip, the hover layer of
+    site-report.js; without the script its title). Made by the outage_timeline filter. #}
+{%- set ot = s.outage %}
+{%- if ot.lanes | default([]) and not ot.none | default('') %}
+<p class="hint"><span class="mouse"><b>Hover</b> a mark for the time and what happened; <b>Tab</b> moves from mark to mark.</span><span class="touch"><b>Tap</b> a mark for the time and what happened.</span> The number is the row in The events.</p>
+<div class="ot-legend">
+{%- for l in ot.legend | default([]) %}<span><i class="ot-m ot-{{ l.level | e }}" aria-hidden="true">{{ icon(l.level) }}</i>{{ l.word | e }}</span>{% endfor %}
+{%- if ot.bands | default([]) %}<span><i class="ot-shade" aria-hidden="true"></i>Shaded: {{ ot.band_word | e }}</span>{% endif %}</div>
+{%- if ot.overview %}
+<div class="ot-over" aria-hidden="true"><div class="ot-strip"><i class="ot-box" style="left:{{ ot.overview.from }}%;width:{{ (ot.overview.to - ot.overview.from) | round(2) }}%"></i>
+{%- for m in ot.overview.marks | default([]) %}<i class="ot-t ot-{{ m.level | e }}" style="left:{{ m.at }}%"></i>{% endfor %}</div>
+<div class="ot-ends"><span>{{ ot.overview.begin | e }}</span><span>{{ ot.overview.end | e }}</span></div></div>
+<p class="ot-cap">{{ ot.overview.text | e }}</p>
+{%- endif %}
+<div class="ot" role="group" aria-label="{{ ot.label | default('Outage time line') | e }}">
+<div class="ot-plot">
+<div class="ot-bg" aria-hidden="true">
+{%- for b in ot.bands | default([]) %}<i class="ot-band" style="left:{{ b.from }}%;width:{{ [(b.to - b.from) | round(2), 0.4] | max }}%">{% if ot.bands | length == 1 and b.to - b.from > 24 %}<span>{{ b.text | e }}</span>{% endif %}</i>{% endfor %}
+{%- for t in ot.ticks | default([]) %}<i class="ot-tk{{ ' w' if t.wide | default(false) else '' }}" style="left:{{ t.at }}%"></i>{% endfor %}</div>
+{%- for g in ot.lanes %}
+<div class="ot-row"><div class="ot-name"><b>{{ g.name | e }}</b><small>{{ g.sub | default('') | e }}</small></div>
+<div class="ot-track h{{ g.rows | default(1) }}" role="list" aria-label="{{ g.name | e }}">
+{%- for m in g.marks | default([]) %}
+{%- set st = m.level if m.level in ['critical', 'warning', 'low', 'info', 'ok'] else 'info' %}
+<i class="ot-m ot-{{ st }} r{{ m.row | default(0) }}" role="listitem" style="left:{{ m.x }}%" data-tip="{{ m.tip | e }}" title="{{ m.tip | e }}" aria-label="{{ m.tip | replace('\n', ', ') | e }}">{{ icon(st) }}<b>{{ m.label | e }}</b></i>
+{%- endfor %}
+</div></div>
+{%- endfor %}
+</div>
+<div class="ot-axis" aria-hidden="true">{% for t in ot.ticks | default([]) %}<span class="{{ 'w' if t.wide | default(false) else '' }}" style="left:{{ t.at }}%">{{ t.text | e }}</span>{% endfor %}<em>{{ ot.zone | default('') | e }}</em></div>
+</div>
+{%- endif %}

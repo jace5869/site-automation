@@ -91,6 +91,10 @@ Since 0.53.0:
   per system, a mark at each expiry date with its level's icon, the bands Critical / Warning / Low / OK named above the
   axis. Hover a mark, or Tab to it, for the certificate. The list below it has every name. The other looks show the
   list without the timeline.
+- **The outage time line** (1.66.0, the VM outage watch's review): four lanes - vCenter alarms, host events, ServiceNow,
+  ACT - on one time axis, a mark per event with its level's icon, a band while a host was down. Hover a mark, or Tab
+  to it, for the event. The events table below it is the source and has every row. The other looks show the table
+  without the chart. [VM_OUTAGE_WATCH.md](VM_OUTAGE_WATCH.md#review-an-outage-the-time-line)
 - **Start here cards** with a **Copy** button for their command. The health check's healthy hosts each get a check
   mark, under *Every check passed* and the checks run.
 - **Copy** on every number tile (its line: *Completed: 3 (resolved or closed)*) and on every section: all of it, with

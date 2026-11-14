@@ -18,6 +18,12 @@
 # vm_watch_window_minutes: 15                    # the schedule's interval
 # vm_watch_probe_port: 0                         # e.g. 22 or 3389: also a TCP connect (needed when ICMP is blocked)
 # vm_watch_protect: []                           # e.g. [DC*, SQL*]: a ticket only, never a restart (phase 2)
+## The outage review (the time line): launch this job by hand with vm_watch_review: true - see docs/VM_OUTAGE_WATCH.md
+# vm_watch_review_hours: 6                       # the review looks back this many hours
+# vm_watch_review_from: "2026-11-12 01:00"       # an older outage: the window starts here (report_time_zone) ...
+# vm_watch_review_to: "2026-11-12 05:00"         # ... and ends here
+# vm_watch_review_tickets: [INC0012345]          # a ticket opened by hand, shown too
+# vm_watch_timeline: false                       # the report of a normal run without the time line
 
 # ---- vmware_vm -----------------------------------------------------------------------------------
 ## certificates the OCSP responders know (PEM files from playbooks/), for vm_sso_ocsp and
@@ -117,6 +123,22 @@
 ## the watch also asks: is single sign-on down now (vm_sso_*, below)? false = not asked
 # vm_watch_sso: true
 
+## The outage review (1.66.0): one time line of what vCenter and ServiceNow recorded - alarms, host
+## events, tickets, ACT's notes - with the first signal, the time from it to the ticket, and how
+## long a host was down. Read-only. true (a launch choice) = make the review now, also when nothing
+## is down; the watch runs first, as always
+# vm_watch_review: false
+
+## a problem that cleared within this many seconds is one Low event ("back after 40 s"), not two; 0
+## = never joined
+# vm_watch_review_low_seconds: 120
+
+## vCenter event types to read; [] = the built-in list (hosts, HA, storage, uplinks, alarms)
+# vm_watch_review_event_types: []
+
+## at most this many events per vCenter (the newest are kept)
+# vm_watch_review_max_events: 2000
+
 ## ---- Single sign-on and OCSP (vCenter 8.0): the health report (playbooks/vm_health_report.yml)
 ## and the watch ---- vCenter's SSO services, the STS signing certificate (health report only), the
 ## identity providers, a login by a test domain account (the "vCenter SSO test account" credential),
@@ -168,6 +190,31 @@
 
 ## seconds per request
 # vm_sso_timeout: 30
+
+# ---- servicenow ----------------------------------------------------------------------------------
+## Findings at or above this severity get a ticket: critical | warning. A ticket already open stays
+## open while its finding is still there, even below this (the certificate renewal opens one for
+## every CSR)
+# servicenow_min_severity: warning
+
+## the table tickets are opened in (incident)
+# servicenow_table: incident
+
+## Every ticket from these playbooks carries a correlation ID starting with this, so the same
+## problem on the same host always updates the same ticket.
+# servicenow_correlation_prefix: site-health
+
+## check the instance's HTTPS certificate (see servicenow_ca_path)
+# servicenow_validate_certs: true
+
+## A CA bundle (PEM) for the instance's TLS certificate, when the execution environment does not
+## trust its CA (e.g. a DoD root CA): a path on the controller, such as a file you add to the
+## project: servicenow_ca_path: "{{ playbook_dir }}/files/ca/servicenow-ca.pem". Empty = the
+## execution environment's normal trust store. Prefer this over servicenow_validate_certs: false.
+# servicenow_ca_path: ""
+
+## seconds for one API request
+# servicenow_timeout: 30
 
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no

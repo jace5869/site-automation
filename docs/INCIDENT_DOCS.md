@@ -135,6 +135,10 @@ The email itself names the attachments, says what ACT did, and holds none of the
    changes nothing. `incident_docs_survey_state: absent` takes the questions out again.
 4. **Launch** *Outage AAR - Word document*, fill in the survey, and check the email.
 
+**The facts for the survey** (1.66.0): after a VMware outage, launch *VM - outage watch* with `vm_watch_review: true`.
+Its section *For the after-action report* has the start, the end, the detection and ACT's reading of the root cause,
+each named by its survey variable: [VM_OUTAGE_WATCH.md](VM_OUTAGE_WATCH.md#from-the-review-to-the-aar).
+
 ### The AAR job's survey
 
 | Question | Variable | Type |

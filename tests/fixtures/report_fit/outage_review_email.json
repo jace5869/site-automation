@@ -1,0 +1,545 @@
+{
+"footer": "AAP job 4714 - VM - outage watch",
+"sections": [
+{
+"cards": [
+{
+"chip": "First signal",
+"meta": "12 Nov 01:41:10 CET",
+"next": "Row 1 of the events. Host events lane.",
+"status": "low",
+"subject": "esx03",
+"title": "Storage path redundancy degraded, back after 40 s"
+},
+{
+"chip": "First signal to ticket",
+"meta": "93 min",
+"next": "Row 20 of the events.",
+"status": "warning",
+"subject": "esx03",
+"title": "INC0012345 opened at 12 Nov 03:14 CET"
+},
+{
+"chip": "Back to normal",
+"meta": "12 Nov 03:06:45 CET",
+"next": "Row 19 of the events, 86 min after the first signal.",
+"status": "ok",
+"subject": "esx03",
+"title": "Alarm back to green: Host storage path redundancy"
+}
+],
+"title": "The outage in short"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"",
+"",
+"",
+"low"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"warning"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"info"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"info"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"info"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok"
+]
+],
+"columns": [
+"#",
+"Time (CET)",
+"Source",
+"Where",
+"What happened",
+"Level"
+],
+"kinds": [
+"num",
+"",
+"",
+"",
+"wrap",
+""
+],
+"row_status": [
+"low",
+"warning",
+"warning",
+"critical",
+"critical",
+"critical",
+"critical",
+"warning",
+"warning",
+"warning",
+"warning",
+"warning",
+"warning",
+"warning",
+"",
+"",
+"",
+"",
+"",
+"critical",
+"",
+"",
+"",
+"",
+""
+],
+"rows": [
+[
+1,
+"12 Nov 01:41:10",
+"Host events",
+"esx03",
+"Storage path redundancy degraded, back after 40 s",
+"Low"
+],
+[
+2,
+"12 Nov 01:58:02",
+"Host events",
+"esx03",
+"Storage path redundancy lost",
+"Warning"
+],
+[
+3,
+"12 Nov 01:58:30",
+"vCenter alarms",
+"esx03",
+"Alarm yellow: Host storage path redundancy",
+"Warning"
+],
+[
+4,
+"12 Nov 02:19:04",
+"Host events",
+"esx03",
+"All paths down to a storage device",
+"Critical"
+],
+[
+5,
+"12 Nov 02:19:40",
+"Host events",
+"esx03",
+"Host not responding",
+"Critical"
+],
+[
+6,
+"12 Nov 02:19:55",
+"vCenter alarms",
+"esx03",
+"Alarm red: Host connection and power state",
+"Critical"
+],
+[
+7,
+"12 Nov 02:20:30",
+"Host events",
+"esx03",
+"HA: host failed",
+"Critical"
+],
+[
+8,
+"12 Nov 02:21:05",
+"vCenter alarms",
+"cluster1",
+"HA restarted 14 VMs",
+"Warning"
+],
+[
+9,
+"12 Nov 02:30:00",
+"Host events",
+"esx-production-cluster-node-03",
+"Datastore heartbeat timed out",
+"Warning"
+],
+[
+10,
+"12 Nov 02:31:00",
+"Host events",
+"esx-production-cluster-node-04",
+"Datastore heartbeat timed out",
+"Warning"
+],
+[
+11,
+"12 Nov 02:32:00",
+"Host events",
+"esx-production-cluster-node-05",
+"Datastore heartbeat timed out",
+"Warning"
+],
+[
+12,
+"12 Nov 02:33:00",
+"Host events",
+"esx-production-cluster-node-06",
+"Datastore heartbeat timed out",
+"Warning"
+],
+[
+13,
+"12 Nov 02:34:00",
+"Host events",
+"esx-production-cluster-node-07",
+"Datastore heartbeat timed out",
+"Warning"
+],
+[
+14,
+"12 Nov 02:35:00",
+"Host events",
+"esx-production-cluster-node-08",
+"Datastore heartbeat timed out",
+"Warning"
+],
+[
+15,
+"12 Nov 03:05:12",
+"Host events",
+"esx03",
+"Host connected again",
+"Back to normal"
+],
+[
+16,
+"12 Nov 03:05:40",
+"Host events",
+"esx03",
+"Storage paths are back",
+"Back to normal"
+],
+[
+17,
+"12 Nov 03:06:10",
+"Host events",
+"esx03",
+"Storage path redundancy is back",
+"Back to normal"
+],
+[
+18,
+"12 Nov 03:06:30",
+"vCenter alarms",
+"esx03",
+"Alarm back to green: Host connection and power state",
+"Back to normal"
+],
+[
+19,
+"12 Nov 03:06:45",
+"vCenter alarms",
+"esx03",
+"Alarm back to green: Host storage path redundancy",
+"Back to normal"
+],
+[
+20,
+"12 Nov 03:14:00",
+"ServiceNow",
+"esx03",
+"Ticket INC0012345 opened",
+"Critical"
+],
+[
+21,
+"12 Nov 03:14:00",
+"ACT",
+"esx03",
+"ACT analysis in INC0012345: The host lost every path to its storage device before vCenter lost the host. Check the fabric switch port of the host's second adapter.",
+"Note"
+],
+[
+22,
+"12 Nov 03:25:00",
+"ServiceNow",
+"esx03",
+"Work note in INC0012345: On site, checking the cabling of esx03.",
+"Note"
+],
+[
+23,
+"12 Nov 03:30:00",
+"ServiceNow",
+"esx03",
+"Work note in INC0012345: Checked the fabric switch: port 0/14 logs a loss of signal since 01:19 UTC; port 0/14 logs a loss of signal since 01:19\u2026",
+"Note"
+],
+[
+24,
+"12 Nov 03:35:00",
+"ServiceNow",
+"esx03",
+"INC0012345: the check passes again",
+"Back to normal"
+],
+[
+25,
+"12 Nov 03:40:00",
+"ServiceNow",
+"esx03",
+"Ticket INC0012345 resolved: Fibre channel cable of the second adapter reseated; paths back.",
+"Back to normal"
+]
+],
+"text": "Every mark of the time line is one row here, by its number. A problem that cleared within 2 min is one Low row (vm_watch_review_low_seconds).",
+"title": "The events"
+},
+{
+"lines": [
+"Start (incident_start): 2026-11-12 01:58 CET - Storage path redundancy lost on esx03",
+"End (incident_end): 2026-11-12 03:06 CET - Alarm back to green: Host storage path redundancy",
+"Detection (incident_detection): first signal at 12 Nov 01:41 (Host events: Storage path redundancy degraded, back after 40 s); ticket INC0012345 opened at 12 Nov 03:14, 93 min later",
+"Root cause (incident_root_cause): check it before you paste - ACT in INC0012345: The host lost every path to its storage device before vCenter lost the host. Check the fabric switch port of the host's second adapter.",
+"Follow-up: the ticket came 93 min after the first signal. The watch reports at vm_watch_report_on (now: critical) and a ticket opens at servicenow_min_severity (now: warning). Check that the watch's schedule and these two fit what this outage showed first."
+],
+"text": "Lines for the survey of the after-action report (Docs - incident documents). Each names its setting.",
+"title": "For the after-action report"
+},
+{
+"lines": [
+"Nothing is down or hung."
+],
+"status": "ok",
+"title": "Down or hung now"
+},
+{
+"collapsed": true,
+"lines": [
+"A host is down when vCenter says it is not responding."
+],
+"title": "How it judged"
+}
+],
+"status": "ok",
+"subtitle": "Review of 2026-11-11 21:45 CET to 2026-11-12 03:45 CET. Now: VM outage watch: nothing down now",
+"summary": [
+{
+"label": "Window",
+"note": "2026-11-11 21:45 CET to 2026-11-12 03:45 CET",
+"status": "info",
+"value": "6 h"
+},
+{
+"label": "Events",
+"note": "19 on the vCenter and host lanes",
+"status": "info",
+"value": 25
+},
+{
+"label": "Host down",
+"note": "esx03",
+"status": "critical",
+"value": "46 min"
+},
+{
+"label": "VMs restarted by HA",
+"note": "vSphere HA events",
+"status": "warning",
+"value": 14
+},
+{
+"label": "Signal to ticket",
+"note": "INC0012345, resolved 12 Nov 03:40",
+"status": "warning",
+"value": "93 min"
+}
+],
+"title": "Outage review: esx03: storage path redundancy lost; 46 min down, ticket after 93 min"
+}

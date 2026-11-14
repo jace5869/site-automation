@@ -7,6 +7,9 @@
 # reports it (report_email_to, report_web_dest). Always: the artifacts vm_watch, and site_health /
 # site_health_targets for the ServiceNow tickets job after it in a workflow (one ticket per condition,
 # noted - or resolved - once it clears). Fails on a condition of vm_watch_fail_on, after all that.
+# 1.66.0: vm_watch_review (a launch choice) makes the outage review after the watch - the time line of the last
+# vm_watch_review_hours, also when nothing is down now; a report that goes out anyway carries the time line too
+# (vm_watch_timeline). docs/VM_OUTAGE_WATCH.md
 - name: VMware | a vCenter credential is attached
   ansible.builtin.include_tasks: credential.yml
 
@@ -70,8 +73,74 @@
             | map('join', ' - not judged: ') | list) }}
   when: not _vm_w_report_it | bool
 
+# 1.66.0, the outage review's time line: what vCenter and ServiceNow recorded, in order. Read only when a report is
+# made anyway (vm_watch_timeline) or a review is asked for (vm_watch_review): a clean run stays one read and one line.
+# Read-only (vCenter's events; ServiceNow GET only, and only with its credential attached). A read that fails never
+# stops the watch: the report then goes out without the time line.
+- name: VMware | the outage review's window (vm_watch_review_hours, vm_watch_review_from, vm_watch_review_to)
+  ansible.builtin.set_fact:
+    _vm_w_review: "{{ vm_watch_review | bool }}"
+    _vm_w_tl: {}
+    _vm_w_win: >-
+      {{ (_vm_now | default(now().timestamp())) | outage_window(vm_watch_review_hours,
+           vm_watch_review_from if vm_watch_review | bool else '', vm_watch_review_to if vm_watch_review | bool else '',
+           report_time_zone | default('', true) | string) }}
+
+- name: VMware | the outage review's window is a stretch of time
+  ansible.builtin.assert:
+    that: _vm_w_win.error == ''
+    fail_msg: "{{ _vm_w_win.error }}. Write the times as 2026-11-12 01:00, in report_time_zone."
+    quiet: true
+  when: _vm_w_review | bool
+
+- name: VMware | the outage time line (vm_watch_review, vm_watch_timeline)
+  when: _vm_w_review | bool or (_vm_w_report_it | bool and vm_watch_timeline | bool)
+  block:
+    - name: VMware | vCenter's events of the window
+      site_vmware_outage_events:
+        datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+        vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+        validate_certs: "{{ vmware_validate_certs | bool }}"
+        begin: "{{ _vm_w_win.begin | float }}"
+        end: "{{ _vm_w_win.end | float }}"
+        event_types: "{{ vm_watch_review_event_types | name_list }}"
+        max_events: "{{ vm_watch_review_max_events | int }}"
+      register: _vm_w_ev
+      check_mode: false                  # read-only: a dry run (Check) reads and reports the same
+
+    - name: VMware | the tickets of the window (ServiceNow, GET only; skipped without the ServiceNow API credential)
+      site_outage_tickets:
+        table: "{{ servicenow_table | default('incident', true) }}"
+        prefix: "{{ servicenow_correlation_prefix | default('site-health', true) }}"
+        numbers: "{{ vm_watch_review_tickets | name_list }}"
+        begin: "{{ _vm_w_win.begin | float }}"
+        end: "{{ _vm_w_win.end | float }}"
+        validate_certs: "{{ servicenow_validate_certs | default(true) | bool }}"
+        ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+        timeout: "{{ servicenow_timeout | default(30) | int }}"
+      register: _vm_w_tk
+      check_mode: false                  # GET only
+      when: lookup('ansible.builtin.env', 'SN_HOST') | trim | length > 0
+
+    # one dict expression: on ansible-core 2.16 the values of a YAML dict would arrive as strings
+    - name: VMware | the time line
+      ansible.builtin.set_fact:
+        _vm_w_tl: >-
+          {{ _vm_w_ev.events | outage_timeline(_vm_w_tk.tickets | default([]),
+               {'begin': _vm_w_win.begin, 'end': _vm_w_win.end, 'fixed': vm_watch_review_from | string | trim | length > 0,
+                'time_zone': report_time_zone | default('', true) | string,
+                'low_seconds': vm_watch_review_low_seconds | float,
+                'tickets_asked': _vm_w_tk.asked | default(false), 'tickets_error': _vm_w_tk.error | default(''),
+                'notes_error': _vm_w_tk.notes_error | default(''), 'capped': _vm_w_ev.capped,
+                'report_on': vm_watch_report_on | name_list,
+                'min_severity': servicenow_min_severity | default('warning', true)}) }}
+  rescue:
+    - name: VMware | the time line was not made (the watch goes on without it)
+      ansible.builtin.debug:
+        msg: "The outage time line was not made: {{ ansible_failed_result.msg | default('the read failed') }}"
+
 - name: VMware | the outage report
-  when: _vm_w_report_it | bool
+  when: _vm_w_report_it | bool or _vm_w_review | bool
   block:
     - name: VMware | the report
       ansible.builtin.set_fact:
@@ -81,9 +150,19 @@
       ansible.builtin.include_tasks: report.yml
       vars:
         _vm_vcenters: "{{ _vm_w.vcenters }}"
-        _vm_report_subject: "{{ _vm_w_doc.title }}"
-        _vm_report_lines: "{{ (_vm_w_doc | report_text).splitlines() }}"
-        _vm_report_doc: "{{ _vm_w_doc }}"
+        _vm_report_subject: "{{ _vm_w_tl.title if _vm_w_review | bool and _vm_w_tl else _vm_w_doc.title }}"
+        _vm_report_lines: "{{ ((_vm_w_tl.lines + ['']) if _vm_w_tl else []) + (_vm_w_doc | report_text).splitlines() }}"
+        _vm_report_doc: "{{ _vm_w_doc | outage_timeline_doc(_vm_w_tl, false, _vm_w_review | bool) }}"
+        _vm_report_web_doc: "{{ _vm_w_doc | outage_timeline_doc(_vm_w_tl, true, _vm_w_review | bool) if _vm_w_tl else {} }}"
+        _vm_report_xlsx: >-
+          {{ (_vm_w_doc | outage_timeline_doc(_vm_w_tl, false, _vm_w_review | bool) | report_xlsx_sheets) + [_vm_w_tl.sheet]
+             if _vm_w_tl and report_email_xlsx | default(false) | bool else [] }}
+
+- name: VMware | the review's numbers as a job artifact (vm_outage_review)
+  ansible.builtin.set_stats:
+    data:
+      vm_outage_review: "{{ _vm_w_tl.numbers | combine({'window': _vm_w_tl.window, 'title': _vm_w_tl.title}) }}"
+  when: _vm_w_tl | length > 0
 
 # always (clean or not): the tickets job after this one in a workflow opens, updates and clears the tickets
 - name: VMware | the result as job artifacts (vm_watch; site_health for the ServiceNow tickets job)

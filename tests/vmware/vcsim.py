@@ -16,6 +16,9 @@
   vcsim.py watch   for the outage watch: HA restarted DC0_C0_RP0_VM0 on another host (a warning), all paths
                    down to a device on DC0_C0_H0 (not cleared: critical), a VMFS heartbeat that timed out on
                    DC0_C0_H1 and recovered (a warning)
+  vcsim.py outage [SECONDS]   for the outage review's time line (1.66.0): DC0_C0_H1 loses its connection and the
+                   alarm "Host connection and power state" turns red on it; SECONDS later (default 2) it is back
+                   and the alarm is green. vcsim dates each event at the moment it is posted
   vcsim.py health  for the health report, on a simulator started with -dc 2 -cluster 2 -host 2
                    -standalone-host 1: vSphere HA on for DC0_C0 (admission control off), DC1_C0 in vCLS
                    retreat mode, host DC0_C1_H1 disconnected, with vCenter's event of it (vcsim posts none; it
@@ -229,6 +232,32 @@ def watch():
                                        **where(h0 if type_id.startswith("esx.problem.storage") else h1)))
 
 
+def outage():
+    em = content.eventManager
+    hosts = {h.name: h for h in content.viewManager.CreateContainerView(content.rootFolder, [vim.HostSystem], True).view}
+    dc = content.rootFolder.childEntity[0]
+    h = hosts["DC0_C0_H1"]
+    alarms = content.alarmManager.GetAlarm(content.rootFolder) or []
+    alarm = next((a for a in alarms if a.info.name == "Host connection and power state"), alarms[0])
+
+    def about():
+        return dict(key=0, chainId=0, createdTime=datetime.datetime.now(datetime.timezone.utc), userName="",
+                    host=vim.event.HostEventArgument(name=h.name, host=h), datacenter=vim.event.DatacenterEventArgument(name=dc.name, datacenter=dc),
+                    computeResource=vim.event.ComputeResourceEventArgument(name=h.parent.name, computeResource=h.parent))
+
+    def turned(old, new):
+        ev = vim.event.AlarmStatusChangedEvent(alarm=vim.event.AlarmEventArgument(alarm=alarm, name=alarm.info.name),
+                                               source=vim.event.ManagedEntityEventArgument(entity=content.rootFolder, name="Datacenters"),
+                                               entity=vim.event.ManagedEntityEventArgument(entity=h, name=h.name), to=new, **about())
+        setattr(ev, "from", old)
+        em.PostEvent(ev)
+    em.PostEvent(vim.event.HostConnectionLostEvent(**about()))
+    turned("green", "red")
+    time.sleep(float(sys.argv[2]) if len(sys.argv) > 2 else 2)
+    em.PostEvent(vim.event.HostConnectedEvent(**about()))
+    turned("red", "green")
+
+
 def ask():
     """VM - ask a question: a restart inside DC0_H0_VM1, a vMotion of DC0_C0_RP0_VM0 from DC0_C0_H0, DC0_C0_RP0_VM1 powered off
     (an event only: it stays on). vcsim keeps its own time and user for a posted event: now, and the logged-in user."""
@@ -276,4 +305,4 @@ def snap():
 
 
 {"setup": setup, "state": state, "events": events, "health": health, "guest": guest, "snap": snap, "watch": watch, "size": size,
- "ask": ask, "folder": folder}[sys.argv[1]]()
+ "ask": ask, "folder": folder, "outage": outage}[sys.argv[1]]()

@@ -36,6 +36,9 @@ NAMED = (("test_stig_ckl_import.py", "RouteReport.test_report_fit_document", "st
          # 1.64.0: the certificate timeline - the email's renew list, the website's page with the timeline above it
          ("test_cert_timeline.py", "Looks.test_report_fit_document", "cert_timeline_filters.py:cert_timeline", "cert_timeline"),
          ("test_cert_timeline.py", "Looks.test_report_fit_document", "site_filters.py:findings_report", "cert_timeline_web"),
+         # 1.66.0: the outage review - the website's page with the time line, and the email's
+         ("test_outage_timeline.py", "Looks.test_report_fit_document", "outage_timeline_filters.py:outage_timeline_doc", "outage_review_web"),
+         ("test_outage_timeline.py", "Looks.test_report_fit_email", "outage_timeline_filters.py:outage_timeline_doc", "outage_review_email"),
          # int-11: the STIG scorecard with rows in "Fixed on the host, still Open" (Low; report_fit draws it in every look)
          ("test_stig_scorecard.py", "Scorecard.test_fixed_on_the_host_still_open", "stig_scorecard_filters.py:stig_scorecard",
           "stig_scorecard_fixed"),

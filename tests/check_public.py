@@ -37,8 +37,8 @@ DOMAINS = (
     "designsystem.digital.gov", "carbondesignsystem.com", "design-system.service.gov", "nngroup.com",
     "developer.mozilla.org",                                        # the design guidance the report website follows (docs/WEB_REPORTS.md)
 )
-# Dotted words of code, not host names (System.Net, $vm.guest.net ...).
-CODE = ("system.io", "system.net", "guest.net", "g.net")
+# Dotted words of code, not host names (System.Net, $vm.guest.net ...; vCenter's event types esx.problem.net.redundancy.lost).
+CODE = ("system.io", "system.net", "guest.net", "g.net", "esx.problem.net", "esx.clear.net")
 TLDS = "mil|gov|com|net|org|edu|us|io|local|lan|corp|internal|int|cloud|intra|priv|ai|dev|app"
 NAME = re.compile(r"(?<![\w.-])((?:[a-z0-9][a-z0-9_-]*\.)+(?:%s))(?![\w-])" % TLDS, re.I)
 IPV4 = re.compile(r"(?<![\w.])((?:\d{1,3}\.){3}\d{1,3})(?![\w.]|\.\d)")
