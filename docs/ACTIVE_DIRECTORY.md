@@ -78,7 +78,7 @@ A row is the DC replicating **from**, a column the DC replicating **to**. A cell
   Automation Platform" credential as the strip of past runs. The report database can keep the points too
   ([REPORT_DATABASE.md](REPORT_DATABASE.md)). Until then the table says so.
 - **The workbook** (`report_email_xlsx`) has two more sheets: *Replication* (every link, each partition) and
-  *Replication by site* (each site's worst age, a column a day).
+  *Replication by site* (each site's worst age, a column a day, and its *Trend* line as an Excel sparkline).
 
 The matrix and the trend are on the report website only (the atlas and brief looks). The email has the late links.
 

@@ -157,7 +157,10 @@ for text in ("SV-257985", "SV-254247", "rhel07", "Closed", "Opened"):
 import re
 sheet = z.read("xl/worksheets/sheet1.xml").decode()
 got = re.findall(r"<xm:f>'By collection'!([A-Z]+)(\d+):([A-Z]+)(\d+)</xm:f><xm:sqref>([A-Z]+)(\d+)</xm:sqref>", sheet)
-assert len(got) == 3 and all(a[1] == a[3] == a[5] for a in got), got
+# a line on every row, its points inside the filter (a sort moves them with the row)
+assert len(got) == len(re.findall(r"<row ", sheet)) - 1 and all(a[1] == a[3] == a[5] for a in got), got
+filt = re.search(r'<autoFilter ref="A\d+:([A-Z]+)\d+"/>', sheet).group(1)
+assert all(len(a[2]) < len(filt) or (len(a[2]) == len(filt) and a[2] <= filt) for a in got), (filt, got)
 assert 'hidden="1"' in sheet
 PY
 then ok "  ...the email: the tiles and tables, no trend line, the import's sections; the workbook with every rule and the weekly points, a trend line per collection"

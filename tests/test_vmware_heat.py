@@ -194,9 +194,10 @@ class Tables(unittest.TestCase):
         self.assertEqual(sh["sparklines"], [{"column": "Trend", "from": [sh["columns"][4], sh["columns"][-1]]}])
         self.assertEqual(sh["rows"][0][:3], ["SITEA-PROD", "CPU", 44.1])
         sys.path.insert(0, os.path.join(REPO, "roles", "site_email", "library"))
-        import site_xlsx                                                        # the lines drawn: one per row with 2 days or more
+        import site_xlsx                                                        # a line on every row (a sort moves the cells, not the lines)
         plan = site_xlsx.spark_plan(sh["columns"], sh["rows"], sh["sparklines"])
-        self.assertEqual(len(plan["lines"]), 6)
+        self.assertEqual(len(plan["lines"]), len(sh["rows"]))
+        self.assertEqual(len([r for r in sh["rows"] if len([v for v in r[4:] if v is not None]) >= 2]), 6)   # 6 draw a line
 
     def test_no_host(self):
         self.assertEqual(hf.vm_heat_view({"hosts": []}, [], {}), {})

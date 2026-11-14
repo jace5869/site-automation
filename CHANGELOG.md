@@ -171,7 +171,7 @@ Replication* (`DS-Replication-Monitor-Topology`) on the partition ([MS-ADTS] 3.1
   from this template's earlier runs (the new job artifact `ad_repl`), then the report database if the template has its
   credential (table `ad_repl_point`). Fewer than two days: no line, and the table says so.
 - **The workbook** (`report_email_xlsx: true`): the late links, *Replication* (every link, each partition) and
-  *Replication by site* (a column a day).
+  *Replication by site* (a column a day, and a *Trend* line per site in Excel).
 - Docs: ACTIVE_DIRECTORY.md (the matrix, *Reading replication data*), REPORT_DATABASE.md (the trend's points).
 
 **Behaviour changes**
@@ -195,7 +195,8 @@ its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inve
 
 **Trend lines in the workbooks.** The lines on the report website are now in the Excel workbooks too, as Excel's own
 sparklines. Each table with a history gets a *Trend* column: one small line per row in one blue, the last point marked,
-no axis. The numbers stay in their own cells, so sort, filter and copy work as before.
+no axis. The numbers stay in cells, and the filter takes each row's hidden points too, so a sort moves a line's
+points with its row.
 
 - **NetApp ONTAP capacity trends:** *Volumes* (every volume's used % over the runs) and each table with a line on the
   page (clusters, aggregates, volumes filling again, fastest growing, snapshot space).
@@ -203,18 +204,21 @@ no axis. The numbers stay in their own cells, so sort, filter and copy work as b
   (every datastore) and *The numbers behind the lines* get one per row. The used % each day, as on the board.
 - **STIG scorecard:** *By collection*, all open findings a week. CAT I is 0 for most collections, so its line would be
   flat; the total shows the trend. A week without a run is a gap.
-- **About to breach:** *Breaches by day*, the 30 days as one line in the first row.
+- **About to breach:** *Breaches by day*, the 30 days as one line in the first row. It reads a hidden copy of
+  *Breached*, so a sort leaves the days in order.
 - **Patch age:** *Patch age by group*, "% on time" one point a run over the 12 weeks. The VMware version report's
   workbook gets this sheet too (ESXi, by cluster), before *Patch age*.
-- A row with one point has no line yet. A line's points sit in hidden columns right of the table.
+- A row with one point draws no line yet. A line's points sit in hidden columns right of the table, inside the
+  filter. A shorter history sits at the right, its last point under the latest run.
 - Excel 2010 or later, or LibreOffice. No images, no macros. The email and the website are unchanged.
 - `roles/site_email/library/site_xlsx.py` (still Python 3.6 and the standard library only): a sheet's `sparklines` -
   each row's points (in a hidden block), a row's own cells (`from`), or one line down a column (`down`).
   `report_xlsx_sheets` takes a report's own sheets in place of its sections' (same name).
 - Docs: EMAIL_REPORTS.md ("Trend lines"), NETAPP.md, VMWARE.md, CKL_IMPORT.md, SERVICENOW_INSIGHTS.md, RUNBOOKS.md.
 
-**Tests:** `tests/test_xlsx_sparklines.py` (the XML, the ranges, a row with one point, the hidden block; openpyxl and
-LibreOffice open the file where they are installed; each report's sheets).
+**Tests:** `tests/test_xlsx_sparklines.py` (the XML, the ranges, a row with one point, the hidden block inside the
+filter, a sort keeps each row's points; openpyxl and LibreOffice open the file where they are installed; each report's
+sheets).
 
 ## 1.61.0 — 2026-11-13
 

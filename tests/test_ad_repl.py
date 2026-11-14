@@ -216,7 +216,9 @@ class Trend(unittest.TestCase):
         self.assertIn("SITEA: worst now 2 days, a week ago 9 min.", v["lines"])
         # the workbook's sheet by site: a column a day
         by_site = v["sheets"][1]
-        self.assertEqual((by_site["name"], by_site["columns"][0], len(by_site["columns"])), ("Replication by site", "Site", 15))
+        self.assertEqual((by_site["name"], by_site["columns"][:2], len(by_site["columns"])), ("Replication by site", ["Site", "Trend"], 16))
+        self.assertEqual(by_site["sparklines"], [{"column": "Trend", "from": [by_site["columns"][2], by_site["columns"][-1]]}])
+        self.assertEqual([r[:2] for r in by_site["rows"]], [["SITEA", ""], ["SITEB", ""], ["SPLIT", ""]])
 
     def test_too_few_points(self):
         t = view(runs=[], history_why="no earlier run yet: the line starts with the next runs")["web_sections"][2]
@@ -225,6 +227,7 @@ class Trend(unittest.TestCase):
         self.assertIn("No history: no earlier run yet", t["text"])
         old = view(runs=[run(20, {"SITEA": 9.0})])["web_sections"][2]    # outside the 14 days
         self.assertEqual(old["sparks"][0], {})
+        self.assertNotIn("sparklines", view(runs=[])["sheets"][1])        # one day: no line in the workbook
 
     def test_artifact(self):
         a = view()["artifact"]

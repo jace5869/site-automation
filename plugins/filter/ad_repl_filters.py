@@ -373,8 +373,10 @@ def ad_repl_view(repl, runs=None, opts=None):
     dates = sorted(set(d for v in by_day.values() for d in v))
     sheets = [{"name": "Replication", "columns": ["From", "From site", "To", "To site", "Partition", "Last success", "Hours since",
                                                   "Failures", "Last failure", "Last error", "Status", "Why"], "rows": sheet_rows},
-              {"name": "Replication by site", "columns": ["Site"] + dates,
-               "rows": [[s] + [by_day.get(s, {}).get(d, "") for d in dates] for s in sites]}]
+              {"name": "Replication by site", "columns": ["Site", "Trend"] + dates,
+               "rows": [[s, ""] + [by_day.get(s, {}).get(d, "") for d in dates] for s in sites]}]
+    if len(dates) > 1:                                    # the line in Excel, as Clusters by day (vmware_heat_filters)
+        sheets[1]["sparklines"] = [{"column": "Trend", "from": [dates[0], dates[-1]]}]
 
     lines = [nums] + ["%s → %s: %s (%s)" % (p["frm"], p["to"], WORD[p["st"]], p["why"]) for p in late[:10]] + t_lines
     return {"sections": [email_links], "web_sections": [matrix_sec, links_sec, trend_sec], "sheets": sheets,
