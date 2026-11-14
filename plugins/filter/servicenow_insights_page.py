@@ -247,7 +247,8 @@ tr.selrow td{background:var(--accent-soft)}
 .ubar>span{display:block;height:100%}.ubar .u-crit{background:var(--crit)}.ubar .u-warn{background:var(--warn)}.ubar .u-info{background:var(--info)}
 .c-info{color:var(--info)}.brl{margin:6px 0 12px;padding-left:20px}.brl li{margin:2px 0}.breach-trend{display:block;width:100%;max-width:640px;height:auto;margin:4px 0 2px}
 .breach-trend .bt-d{fill:var(--s1);fill-opacity:.32}.breach-trend .bt-a{fill:none;stroke:var(--s1);stroke-width:2;stroke-linejoin:round}
-.breach-trend .bt-l{fill:var(--s1);stroke:var(--surface);stroke-width:2}
+.breach-trend .bt-l{fill:var(--s1);stroke:var(--surface);stroke-width:2}.breach-trend .hit.on{fill:var(--s1);fill-opacity:.14}
+.breach-trend:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:6px}
 .brsla{display:block;font-size:11px;color:var(--muted)}.brnum{margin-top:10px}.brnum summary{cursor:pointer;font-size:13px;color:var(--fg-2)}
 .cap ul,.fair ul,.callout ul{margin:3px 0 0;padding-left:18px}.cap li,.fair li,.callout li{margin:1px 0}
 
@@ -455,6 +456,19 @@ function tipFill(el,h){el.textContent="";var re=/<br>|<b>|<\/b>/g,m,last=0,b=nul
  txt(h.slice(last))}
 function showTip(ev,h){tipFill(tip,h);tip.hidden=false;var x=ev.clientX+14,y=ev.clientY+14,w=tip.offsetWidth,hh=tip.offsetHeight;if(x+w>innerWidth-8)x=ev.clientX-w-14;if(y+hh>innerHeight-8)y=ev.clientY-hh-14;tip.style.left=x+"px";tip.style.top=y+"px"}
 D.querySelectorAll("[data-t]").forEach(function(r){r.addEventListener("mousemove",function(ev){showTip(ev,r.getAttribute("data-t"))});r.addEventListener("mouseleave",function(){tip.hidden=true})});
+/* int-11: the breach chart from the keyboard, as site-report.js's sparklines: Tab to it (the last day), the arrow keys,
+   Home and End across the days, each day's tip; Esc or leaving it hides the tip, a scroll moves it with the day */
+tip.setAttribute("role","tooltip");
+D.querySelectorAll("svg.breach-trend").forEach(function(svg){var hs=[].slice.call(svg.querySelectorAll("rect.hit[data-t]")),cur=-1;if(!hs.length)return;
+ svg.setAttribute("tabindex","0");svg.setAttribute("aria-describedby","tip");
+ function at(i){i=Math.max(0,Math.min(hs.length-1,i));if(cur>=0)hs[cur].classList.remove("on");cur=i;hs[i].classList.add("on");
+  var r=hs[i].getBoundingClientRect();showTip({clientX:r.left+r.width/2,clientY:r.top+r.height/3},hs[i].getAttribute("data-t"))}
+ function off(){if(cur>=0)hs[cur].classList.remove("on");cur=-1;tip.hidden=true}
+ svg.addEventListener("focus",function(){var k=true;try{k=svg.matches(":focus-visible")}catch(e){}if(k)at(hs.length-1)});
+ svg.addEventListener("blur",off);
+ svg.addEventListener("keydown",function(ev){var c=cur<0?hs.length-1:cur,k={ArrowLeft:c-1,ArrowRight:c+1,Home:0,End:hs.length-1}[ev.key];
+  if(k!==undefined){ev.preventDefault();at(cur<0&&ev.key!=="Home"?hs.length-1:k)}else if(ev.key==="Escape"&&cur>=0){ev.preventDefault();off()}});
+ window.addEventListener("scroll",function(){if(cur>=0&&D.activeElement===svg)at(cur)},{passive:true})});
 var q=D.getElementById("q"),hits=D.getElementById("hits");
 function search(){var t=q.value.trim().toLowerCase(),k=0;D.querySelectorAll("[data-search]").forEach(function(el){var m=!t||el.getAttribute("data-search").indexOf(t)>=0;el.classList.toggle("hide",!m);if(t&&m){k++;if(el.tagName==="DETAILS")el.open=true}});hits.textContent=t?(k+" match"+(k===1?"":"es")):""}
 if(q)q.addEventListener("input",search);
@@ -505,7 +519,7 @@ if(tf){tf.addEventListener("input",function(){var t=tf.value.trim().toLowerCase(
  tf.addEventListener("keydown",function(ev){if(ev.key==="Escape"){tf.value="";tf.dispatchEvent(new Event("input"));tf.blur()}else if(ev.key==="Enter"){var f=tl.filter(function(a){return !a.hidden})[0];if(f){ev.preventDefault();location.href=f.href}}})}
 var cur=D.querySelector(".toc a.team[aria-current]");if(cur&&toc&&toc.scrollHeight>toc.clientHeight)toc.scrollTop=Math.max(0,cur.offsetTop-toc.clientHeight/2);
 D.addEventListener("keydown",function(ev){var tg=ev.target,typing=/^(INPUT|TEXTAREA|SELECT)$/.test(tg.tagName)||tg.isContentEditable;
- if(ev.key==="Escape"){if(pk&&pk.open){pk.open=false;pk.querySelector("summary").focus()}return}
+ if(ev.key==="Escape"){tip.hidden=true;if(pk&&pk.open){pk.open=false;pk.querySelector("summary").focus()}return}
  if(typing||ev.ctrlKey||ev.metaKey||ev.altKey)return;
  if(ev.key==="/"&&q){ev.preventDefault();q.focus();q.select()}else if((ev.key==="t"||ev.key==="T")&&pk){ev.preventDefault();pk.open=true}});
 var links=[].slice.call(D.querySelectorAll(".toc a[href^='#']"));
@@ -1315,7 +1329,8 @@ def breach_section(bm, url, pre, title_note=""):
 def breach_trend(pts, days):
     """int-11: every day's breaches (bars) and their 7-day average (the line), one hue (--s1). This page loads its own
     script (site-insights.js), not the report website's site-report.js, so the hover is its own: a hit area a day with
-    data-t (the page's tip) and a <title> where no script runs. The numbers table under it has the same values; the
+    data-t (the page's tip) and a <title> where no script runs. The script makes the chart a Tab stop: the arrow keys,
+    Home and End step through the days, Esc hides the tip. The numbers table under it has the same values; the
     points stay in data-points."""
     W, H, L, R, T, B = 640, 104, 30, 8, 10, 20
     hi = max([p_["n"] for p_ in pts] + [p_["avg7"] for p_ in pts] + [1])
@@ -1348,7 +1363,8 @@ def breach_trend(pts, days):
         attr, title = tip("%s<br>Breached <b>%s</b><br>7-day average <b>%.1f</b>" % (e(short_date(p_["date"])), n(p_["n"]), p_["avg7"]))
         out.append('<rect class="hit" x="%.1f" y="0" width="%.1f" height="%d" fill="transparent"%s>%s</rect>' % (L + i * cw, cw, H - B, attr, title))
     out.append("</svg>")
-    out.append('<div class="fair">The bars are each day\'s breaches and the line their 7-day average. Point at a day for its numbers.</div>')
+    out.append('<div class="fair">The bars are each day\'s breaches and the line their 7-day average. Point at a day for its numbers, '
+               'or Tab to the chart and use the arrow keys.</div>')
     return "".join(out)
 
 

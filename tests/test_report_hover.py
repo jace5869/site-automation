@@ -443,6 +443,35 @@ class RealChromeBreach(unittest.TestCase):
         self.assertIn("7-day average %.1f" % last["avg7"], tip)
         self.assertFalse(self.c.js("!!document.querySelector('svg.breach-trend rect.hit title')"))   # the script took the titles off
 
+    def test_the_keyboard(self):
+        """Tab to the chart: the last day's tip; the arrow keys, Home and End step through the days; Esc hides it."""
+        pts = self.m["points"]
+        tip = "(() => {const t = document.getElementById('tip'); return t && !t.hidden ? t.textContent : null})()"
+        self.c.mouse(5, 5)
+        self.c.js("document.activeElement && document.activeElement.blur(); window.scrollTo(0, 0)")
+        for _ in range(300):
+            self.c.key("Tab", "Tab", 9)
+            if self.c.js("document.activeElement.matches('svg.breach-trend')"):
+                break
+        self.assertTrue(self.c.js("document.activeElement.matches('svg.breach-trend')"), "Tab never reached the chart")
+        self.assertEqual(self.c.js("document.getElementById('tip').getAttribute('role')"), "tooltip")
+        self.assertEqual(self.c.js("document.activeElement.getAttribute('aria-describedby')"), "tip")
+        day = lambda p: "Breached %d7-day average %.1f" % (p["n"], p["avg7"])       # noqa: E731
+        self.assertIn(day(pts[-1]), self.c.js(tip))
+        self.c.key("ArrowLeft", "ArrowLeft", 37)
+        self.assertIn(day(pts[-2]), self.c.js(tip))
+        self.assertEqual(self.c.js("[...document.querySelectorAll('svg.breach-trend rect.hit')].findIndex(r => r.classList.contains('on'))"),
+                         len(pts) - 2)                                               # the day is marked
+        self.c.key("Home", "Home", 36)
+        self.assertIn(day(pts[0]), self.c.js(tip))
+        self.c.key("End", "End", 35)
+        self.assertIn(day(pts[-1]), self.c.js(tip))
+        box = self.c.js("(() => {const r = document.getElementById('tip').getBoundingClientRect(); return [r.left, r.right, innerWidth]})()")
+        self.assertTrue(box[0] >= 0 and box[1] <= box[2], box)                       # inside the window
+        self.c.key("Escape", "Escape", 27)
+        self.assertIsNone(self.c.js(tip))
+        self.assertTrue(self.c.js("document.activeElement.matches('svg.breach-trend')"))   # the focus stays
+
 
 if __name__ == "__main__":
     unittest.main()

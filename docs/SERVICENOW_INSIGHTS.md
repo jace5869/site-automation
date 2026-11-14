@@ -182,7 +182,8 @@ mark a VIP ticket in the queue. The account needs read on `task_sla`, which the 
 The email has the tiles, the first 25 tickets without their descriptions (the email leaves the site) and the weeks. The
 workbook adds three sheets: *About to breach* (every ticket), *Breaches by day*, *Breached SLAs*.
 
-The page draws the last 30 days as bars, one a day, with the 7-day average as a line. Point at a day for its numbers.
+The page draws the last 30 days as bars, one a day, with the 7-day average as a line. Point at a day for its numbers,
+or Tab to the chart and use the arrow keys (Esc closes the tip).
 The same numbers are in the table "Every day's number" under the weeks.
 
 ### Every hour, with the same template
