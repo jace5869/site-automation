@@ -30,7 +30,8 @@ The portal starts only what the actions file lists, only with values its rules a
 3. **No template braces.** AAP renders Jinja in extra vars when a playbook reads them. So the portal refuses `{{`,
    `{%` and `{#` in every value - also with spaces or invisible characters between, and in look-alike (full-width)
    braces.
-4. **Only listed people.** `portal_requesters` (or an action's own `who`) says who may run an action.
+4. **Only the people you list, if you list any.** With `portal_requesters` empty (the default), anyone whose card
+   nginx accepts may start the listed actions. Fill `portal_requesters` (or an action's own `who`) to restrict it.
    `portal_approvers` says who may decide approvals here.
 5. **The portal's own AAP account.** It needs Execute on the listed workflows and templates, Approve on those with
    an approval node, and Read on `portal_inventory`. Nothing else (step 2).
@@ -126,6 +127,7 @@ It is the STIG Manager server. It needs to reach AAP on 443. Put it in your inve
 - **Playbook:** `playbooks/site_portal_deploy.yml`
 - **Credentials:** Machine (ssh and sudo on the server), the Red Hat Ansible Automation Platform credential of step 2;
   Container registry login (hosts) when the image needs a login to pull.
+- **Prompt on launch:** tick it next to **Job type**.
 - **Variables:** copy [`aap/extra_vars/site_portal_deploy.yml`](../aap/extra_vars/site_portal_deploy.yml) and set
   at least:
 
@@ -149,7 +151,8 @@ Actions and their state in AAP: act_triage - ok; ckl_import - ok; stig_recheck -
 ```
 
 An action that is not `ok` says why (*Workflow ... is not there*, *... does not take extra variables*). The portal
-runs without it; that action's page says *Off*. Its last task shows **the lines to add to nginx** (also in
+runs without it; that action's page says *Off*. The actions show Off until step 101 is done; run the deploy again
+after step 101. Its last task shows **the lines to add to nginx** (also in
 `/etc/site-portal/nginx-portal.conf` on the server).
 
 **After an update of this repository**, run the template again. It copies the service and restarts it only if
@@ -164,8 +167,9 @@ Once, by hand, on the STIG Manager server, with the file and the container name 
    just **above** its `location / {`. In vim: `:set backupcopy=yes`, the cursor on the line above, then
    `:r /etc/site-portal/nginx-portal.conf`. With nano: `sudo nano <the file>`, then Ctrl+R and the path.
 3. **Check the container sees them** - this must print `1`:
-   `sudo podman exec <nginx> grep -c 'location /portal/' /etc/nginx/conf.d/default.conf`. A `0`: the editor saved a
-   new file; put the copy back and edit again in place.
+   `sudo podman exec <nginx> grep -c 'location /portal/' <that file>`, with the file step 1 found, as the container
+   sees it (the right-hand side of its `->` line). A `0`: the editor saved a new file; put the copy back and edit
+   again in place.
 4. **Test it:** `sudo podman exec <nginx> nginx -t` must say *syntax is ok* and *test is successful*. Anything else:
    put the copy back, and nothing has changed.
 5. **Load it:** `sudo podman exec <nginx> nginx -s reload`. STIG Manager keeps working, and its sessions too.
@@ -465,12 +469,19 @@ and [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md). The ones you are likely to
 
 ## Taking it out
 
-1. Take the lines out of STIG Manager's nginx: put the copy back (step 5), `nginx -t`, `nginx -s reload`.
+1. Take the lines out of STIG Manager's nginx: delete the `/portal/` lines you added (step 5), then `nginx -t` and
+   `nginx -s reload`. Do not put the old copy back: it may undo changes made since.
 2. `sudo systemctl stop site-portal-app` (and `site-portal-nginx` with its own nginx).
 3. Remove `/etc/containers/systemd/site-portal-*`, then `sudo systemctl daemon-reload`.
 4. `sudo podman secret rm site-portal-aap-token`. Keep the volume `site-portal-data` (the log) as long as you need
    the record, then `sudo podman volume rm site-portal-data`.
-5. Remove `/etc/site-portal`. In AAP, remove the account's token, then the account.
+5. With its own nginx: remove the container `site-portal-nginx` and its image (`sudo podman rm` and
+   `sudo podman rmi`, by name), and the folder `/etc/site-portal/tls`.
+6. Remove the podman network `site-portal` (`sudo podman network rm site-portal`).
+7. Remove `/etc/site-portal`.
+8. In AAP: remove the job template `Site portal - deploy`, the portal account's roles on workflows 40, 44 and 45,
+   its token, then the account.
+9. Set `report_portal_url: ""` again, and run the report jobs again: the buttons go.
 
 ## Not yet
 
