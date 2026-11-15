@@ -1,0 +1,205 @@
+{
+"footer": "",
+"sections": [
+{
+"boxes": [
+{
+"label": "Drifted",
+"note": "passed before, now fails its Not a Finding",
+"status": "ok",
+"value": 0
+},
+{
+"label": "New fails",
+"note": "passed in an earlier scan",
+"status": "warning",
+"value": 2
+},
+{
+"label": "Disagree",
+"note": "never passed here, Not a Finding: look once",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Fixed, still Open",
+"note": "Low - update STIG Manager",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Not scanned",
+"note": "no result for these hosts",
+"status": "ok",
+"value": 0
+}
+],
+"cell_status": [
+[
+"",
+"",
+"warning",
+"",
+"",
+"critical",
+"unknown"
+],
+[
+"",
+"",
+"warning",
+"",
+"",
+"critical",
+"unknown"
+]
+],
+"columns": [
+"Host",
+"STIG rule",
+"CAT",
+"Title",
+"Last passed",
+"Scan now",
+"STIG Manager"
+],
+"row_status": [
+"warning",
+"warning"
+],
+"rows": [
+[
+"web01.example.mil",
+"V-257985 (RHEL-09-255045)",
+"CAT II",
+"RHEL 9 must not permit direct logons to the root account using remote access through SSH.",
+"2026-10-01",
+"FAIL",
+"no review"
+],
+[
+"database-server-long-name-02.example.mil",
+"V-257985 (RHEL-09-255045)",
+"CAT II",
+"RHEL 9 must not permit direct logons to the root account using remote access through SSH.",
+"2026-10-01",
+"FAIL",
+"no review"
+]
+],
+"start_here": [],
+"start_here_text": "The CAT I rules that moved: drifted from the checklist, or failing since they passed. CAT II and III are in the tables below.",
+"status": "warning",
+"text": "Something changed on the host since these passed (the scans are kept on the host, check_stig_dir). STIG Manager has no Not a Finding for them, so they are not drift from the checklist - but they are new. Once the review is Open, they leave this table.",
+"title": "2. New fails - passed in an earlier scan",
+"top": true
+},
+{
+"cell_links": {
+"column": 0,
+"title": "Recheck this host: opens the site portal, you check and press Run there",
+"urls": [
+"https://stigman.example.mil/portal/actions/stig_recheck?target=database-server-long-name-02.example.mil",
+"https://stigman.example.mil/portal/actions/stig_recheck?target=web01.example.mil"
+]
+},
+"columns": [
+"Host",
+"STIG (scan)",
+"STIG Manager (collection / asset)",
+"Pass",
+"Fail",
+"Drifted",
+"New",
+"Disagree",
+"Fixed, open",
+"By hand",
+"Left out",
+"The report on the host"
+],
+"row_status": [
+"warning",
+"warning"
+],
+"rows": [
+[
+"database-server-long-name-02.example.mil",
+"V2R9 ",
+"not used",
+"8",
+"1",
+"0",
+"1",
+"0",
+"0",
+"-",
+"0",
+"/var/lib/site-automation/stig/x_report.html"
+],
+[
+"web01.example.mil",
+"V2R9 ",
+"not used",
+"8",
+"1",
+"0",
+"1",
+"0",
+"0",
+"-",
+"0",
+"/var/lib/site-automation/stig/x_report.html"
+]
+],
+"status": "warning",
+"text": "Pass and Fail count STIG rules (several SCAP checks of one rule count once, one SCAP check of several rules counts for each); the rest are not applicable or not checked automatically. By hand: the rules the checklist has a review of that the scan gives no result for - DISA's manual checks (Evaluate-STIG: Not Reviewed), never compared by this job. Left out: fails of the rules in check_stig_ignore_rules. Each scan's report (OpenSCAP), results or checklist (Evaluate-STIG) and summary stay on the host. A host's name opens the site portal's Recheck for it.",
+"title": "Every host - the scan, STIG Manager, the counts"
+}
+],
+"status": "ok",
+"summary": [
+{
+"label": "Critical",
+"note": "act now",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Warning",
+"note": "plan a fix",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Drifted",
+"note": "passed before, now fails its Not a Finding",
+"status": "ok",
+"value": 0
+},
+{
+"label": "New fails",
+"note": "passed in an earlier scan",
+"status": "warning",
+"value": 2
+},
+{
+"label": "Disagree",
+"note": "never passed here, Not a Finding: look once",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Fixed, still Open",
+"note": "Low - update STIG Manager",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Not scanned",
+"note": "no result for these hosts",
+"status": "ok",
+"value": 0
+}
+],
+"title": "STIG drift report: no findings"
+}

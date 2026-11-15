@@ -1,0 +1,37 @@
+---
+# Read only, on the Linux host: the finding's own look command (its check wrote it), fapolicyd's state and today's
+# denials. Each command's exit code and output are kept as they are; none of them fails the job.
+- name: Triage | the finding's look command
+  ansible.builtin.shell: "{{ portal_finding.hint }}"        # noqa: command-instead-of-shell - the check's own command line
+  register: _pt_hint
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  timeout: "{{ portal_triage_command_timeout | int }}"
+  when: portal_triage_hint | bool and portal_finding.hint | default('') | length > 0
+
+- name: Triage | fapolicyd's state and today's denials
+  ansible.builtin.command:
+    argv: "{{ item }}"
+  loop:
+    - [systemctl, status, fapolicyd, --no-pager, --full, --lines, "20"]
+    - [ausearch, --message, FANOTIFY, --start, today, --interpret]
+  register: _pt_reads
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  timeout: "{{ portal_triage_command_timeout | int }}"
+
+- name: Triage | what was read
+  ansible.builtin.set_fact:
+    portal_triage_outputs: >-
+      {%- set out = [] -%}
+      {%- if _pt_hint is defined and _pt_hint is not skipped -%}
+      {%-   set _ = out.append({'cmd': portal_finding.hint, 'rc': _pt_hint.rc | default('?'),
+                               'out': ((_pt_hint.stdout | default('')) ~ '\n' ~ (_pt_hint.stderr | default(''))) | trim}) -%}
+      {%- endif -%}
+      {%- for r in _pt_reads.results | default([]) -%}
+      {%-   set _ = out.append({'cmd': r.item | join(' '), 'rc': r.rc | default('?'),
+                               'out': ((r.stdout | default('') | split('\n') | list)[-200:] | join('\n') ~ '\n' ~ (r.stderr | default('') or r.msg | default(''))) | trim}) -%}
+      {%- endfor -%}
+      {{ out }}

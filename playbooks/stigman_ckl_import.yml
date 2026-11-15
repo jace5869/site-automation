@@ -26,6 +26,17 @@
   vars:
     ansible_python_interpreter: "{{ ansible_playbook_python }}"
   tasks:
+    # 1.67.0: launched from the site portal (portal_requested_by, workflow 40): the mode it was sent is checked again,
+    # and who asked is in the output and the artifact portal_request - the approval still decides what is written.
+    - name: Site portal | check the request again (only when the portal launched this job)
+      ansible.builtin.include_role:
+        name: portal_request
+      vars:
+        portal_request_action: ckl_import
+        portal_request_spec:
+          stigman_ckl_import_mode: {kind: choice, values: [import, import and scorecard, scorecard], required: false}
+      when: portal_requested_by is defined
+
     - name: Read the checklists, match them to STIG Manager, list the reviews to write
       ansible.builtin.include_role:
         name: stigman_ckl_import

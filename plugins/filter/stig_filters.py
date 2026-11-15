@@ -65,6 +65,16 @@ def _details_short(r):
     return one[:SHORT_DETAILS].rsplit(" ", 1)[0] + " ... (in full: What Evaluate-STIG found, below)"
 
 
+def _portal():
+    """plugins/filter/portal_filters.py, by its path (Ansible loads filter files by path: they cannot import each other)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("portal_filters_for_stig",
+                                                  os.path.join(os.path.dirname(os.path.abspath(__file__)), "portal_filters.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def _who(c):
     """A result's name in the report: the host, or - a host with several STIGs (Windows) - the host and the STIG."""
     return c.get("label") or c["host"]
@@ -416,11 +426,13 @@ def stig_details_cards(results, list_max=200):
     return found[:int(list_max)], len(found)
 
 
-def stig_report_sections(results, list_max=200):
+def stig_report_sections(results, list_max=200, portal_url=""):
     """Every host's stig_compare result -> the report's sections: what moved (drift, new fails), where the scan and the
     checklist disagree, what the checklist is behind on, then every host, the rules left out, and the fails STIG
     Manager has no review for. Each table's CAT, scan and STIG Manager cells carry their status (cell_status): the
-    report website (atlas) draws them as chips with icons, the emails in their colours."""
+    report website (atlas) draws them as chips with icons, the emails in their colours. portal_url (1.67.0,
+    report_portal_url; the website's copy only): each host's row of "Every host" gets a Recheck link to the site portal
+    (workflow 45)."""
     results = [r for r in (results or []) if r]
     sections = []
     cols = ["Host", "STIG rule", "CAT", "Title"]
@@ -527,6 +539,11 @@ def stig_report_sections(results, list_max=200):
                              "has a review of that the scan gives no result for - DISA's manual checks (Evaluate-STIG: Not Reviewed), never "
                              "compared by this job. Left out: fails of the rules in check_stig_ignore_rules. Each scan's report (OpenSCAP), "
                              "results or checklist (Evaluate-STIG) and summary stay on the host."})
+    if portal_url:          # no room for a 14th column at 800 px: each host's name opens its Recheck
+        pf = _portal()
+        pf.add_cell_links(sections[-1], 0, [pf.portal_link(portal_url, "stig_recheck", {"target": c["host"]}) for c in hosts],
+                          "Recheck this host: opens the site portal, you check and press Run there",
+                          "A host's name opens the site portal's Recheck for it.")
     full = stig_details_cards(results, list_max)
     if full[0]:
         sections.append({"title": "What Evaluate-STIG found - in full", "status": "info", "cards": full[0],

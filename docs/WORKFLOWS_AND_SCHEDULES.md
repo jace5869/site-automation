@@ -549,6 +549,10 @@ the plain template on the schedule, no workflow. [CKL_IMPORT.md](CKL_IMPORT.md#s
 
 Everything else - how a checklist's asset and STIG are found, what is written: [CKL_IMPORT.md](CKL_IMPORT.md).
 
+**From the site portal (1.67.0):** its **Import checklists** button launches this workflow with
+`stigman_ckl_import_mode` and `portal_requested_by`. Give the workflow **Prompt on launch** for **Variables**. The
+approval still decides what is written. [SITE_PORTAL.md](SITE_PORTAL.md#aap-workflows).
+
 ### 33. STIG drift (weekly)
 
 Has a server moved away from its STIG checklist since it was reviewed?
@@ -861,6 +865,49 @@ own template's inventory, so leave the workflow's Inventory empty:
 ```
 
 **Schedule:** every day 06:00. It replaces workflows 1 and 12, and the first two steps of 7 (keep 7 for its CSR step).
+
+### 44. ACT - triage finding (on demand, from the site portal)
+
+The site portal's **Ask ACT** button: one fapolicyd or event-log finding of a report, explained by ACT. Read only.
+
+```workflow
+[ACT - triage finding]
+   |  Run always
+   v
+[Windows ACT - triage finding]
+```
+
+| Step | Template | Link |
+|---|---|---|
+| 1 | ACT - triage finding: `playbooks/act_triage_finding.yml`, the Linux machine credential | (start) |
+| 2 | Windows ACT - triage finding: the same playbook, the Windows machine credential, Variables `portal_triage_os: windows` | **Run always**, from 1 |
+
+- **Both templates and the workflow:** **Prompt on launch** for **Variables** and **Limit**. Both templates have the
+  *ACT model key* credential and a *Red Hat Ansible Automation Platform* credential (to read the reporting job).
+- **What the portal sends:** `target` (also the Limit), `report_job`, `finding_id` and `portal_requested_by`. Never
+  the finding's text: the job reads it from `report_job`'s artifact `site_health`.
+- **Each step takes its own kind:** fapolicyd findings (Linux) or event-log findings (Windows). The other step says
+  "Nothing to do here" and stays green, without connecting.
+- **Never applies a fix.** A fix ACT proposes stays a separate, approved job.
+- [SITE_PORTAL.md](SITE_PORTAL.md#aap-workflows).
+
+### 45. STIG - recheck one host (on demand, from the site portal)
+
+The site portal's **Recheck** button: the rules STIG Manager has Open or Not Reviewed, checked again on one host.
+
+```workflow
+[STIG recheck]
+   |  Run always
+   v
+[Windows STIG recheck]
+```
+
+- **The two templates** you have (*STIG recheck*, *Windows STIG recheck*), with **Prompt on launch** for
+  **Variables** and **Limit**. The workflow too.
+- **What the portal sends:** `target` (also the Limit) and `portal_requested_by`. Each step passes over a host of the
+  other kind without connecting.
+- Read only: STIG Manager is not written. Workflow 37 updates it after an approval.
+- [SITE_PORTAL.md](SITE_PORTAL.md#aap-workflows).
 
 ## VMware workflows
 

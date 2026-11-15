@@ -1,0 +1,145 @@
+{
+"footer": "",
+"sections": [
+{
+"cards": [
+{
+"code": "Get-WinEvent -ListLog Microsoft-Windows-PowerShell/Operational | Format-List *",
+"meta": "eventlog",
+"next": "Look further:",
+"status": "critical",
+"subject": "app-server-long-name-07.subdomain.example.mil",
+"title": "the Microsoft-Windows-PowerShell/Operational event log is full (mode Circular): new events are being lost"
+},
+{
+"code": "df -h /var",
+"meta": "Storage",
+"next": "Look further:",
+"status": "critical",
+"subject": "lin01.example.mil",
+"title": "92% full"
+},
+{
+"code": "h",
+"meta": "fapolicyd",
+"next": "Look further:",
+"status": "warning",
+"subject": "lin01.example.mil",
+"title": "3 denied"
+},
+{
+"code": "x",
+"meta": "eventlog",
+"next": "Look further:",
+"status": "warning",
+"subject": "win01.example.mil",
+"title": "41 errors"
+}
+],
+"status": "critical",
+"text": "What to act on first: critical, then warning. Every finding is in the tables below.",
+"title": "Start here"
+},
+{
+"columns": [
+"Host",
+"Severity",
+"Check",
+"Finding",
+"Look further",
+"ACT"
+],
+"kinds": [
+"",
+"",
+"",
+"",
+"",
+"link"
+],
+"links": [
+"https://stigman.example.mil/portal/actions/act_triage?finding_id=eventlog%3Afull%3AMicrosoft-Windows-PowerShell%2FOperational&report_job=1234567&target=app-server-long-name-07.subdomain.example.mil",
+"",
+"https://stigman.example.mil/portal/actions/act_triage?finding_id=fapolicyd%3Adenials&report_job=1234567&target=lin01.example.mil",
+"https://stigman.example.mil/portal/actions/act_triage?finding_id=eventlog%3Aerrors&report_job=1234567&target=win01.example.mil"
+],
+"rows": [
+[
+"app-server-long-name-07.subdomain.example.mil",
+"CRITICAL",
+"eventlog",
+"the Microsoft-Windows-PowerShell/Operational event log is full (mode Circular): new events are being lost",
+"Get-WinEvent -ListLog Microsoft-Windows-PowerShell/Operational | Format-List *",
+"Ask ACT"
+],
+[
+"lin01.example.mil",
+"CRITICAL",
+"disk",
+"92% full",
+"df -h /var",
+""
+],
+[
+"lin01.example.mil",
+"WARNING",
+"fapolicyd",
+"3 denied",
+"h",
+"Ask ACT"
+],
+[
+"win01.example.mil",
+"WARNING",
+"eventlog",
+"41 errors",
+"x",
+"Ask ACT"
+]
+],
+"status": "critical",
+"title": "Findings"
+},
+{
+"passed": [
+"lin02.example.mil"
+],
+"passed_checks": [],
+"text": "lin02.example.mil",
+"title": "Healthy (1)"
+}
+],
+"status": "critical",
+"summary": [
+{
+"label": "Hosts checked",
+"note": "reported this run",
+"value": 4
+},
+{
+"label": "Healthy",
+"note": "no findings",
+"status": "ok",
+"value": 1
+},
+{
+"label": "With findings",
+"note": "hosts to look at",
+"status": "warning",
+"value": 3
+},
+{
+"label": "Critical",
+"note": "act now",
+"status": "critical",
+"value": 2
+},
+{
+"label": "Warning",
+"note": "plan a fix",
+"status": "warning",
+"value": 2
+}
+],
+"title": "Windows health check: 4 finding(s) on 3 of 4 host(s)"
+}

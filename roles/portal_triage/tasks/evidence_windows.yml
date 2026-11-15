@@ -1,0 +1,35 @@
+---
+# Read only, on the Windows server (WinRM: raw runs PowerShell, no collection needed): the finding's own look command
+# (its check wrote it) and the last day's critical and error events. None of them fails the job.
+- name: Triage | the finding's look command
+  ansible.builtin.raw: "{{ portal_finding.hint }}"
+  register: _pt_hint
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  timeout: "{{ portal_triage_command_timeout | int }}"
+  when: portal_triage_hint | bool and portal_finding.hint | default('') | length > 0
+
+- name: Triage | the last day's critical and error events (System, Application)
+  ansible.builtin.raw: >-
+    Get-WinEvent -FilterHashtable @{LogName='System','Application'; Level=1,2; StartTime=(Get-Date).AddDays(-1)}
+    -MaxEvents 40 -ErrorAction SilentlyContinue | Format-List TimeCreated, LogName, ProviderName, Id, LevelDisplayName, Message
+    | Out-String -Width 220
+  register: _pt_events
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  timeout: "{{ portal_triage_command_timeout | int }}"
+
+- name: Triage | what was read
+  ansible.builtin.set_fact:
+    portal_triage_outputs: >-
+      {%- set out = [] -%}
+      {%- if _pt_hint is defined and _pt_hint is not skipped -%}
+      {%-   set _ = out.append({'cmd': portal_finding.hint, 'rc': _pt_hint.rc | default('?'),
+                               'out': ((_pt_hint.stdout | default('')) ~ '\n' ~ (_pt_hint.stderr | default(''))) | trim}) -%}
+      {%- endif -%}
+      {%- set _ = out.append({'cmd': 'Get-WinEvent: System and Application, critical and error, the last day (40 at most)',
+                              'rc': _pt_events.rc | default('?'),
+                              'out': ((_pt_events.stdout | default('')) ~ '\n' ~ (_pt_events.stderr | default('') or _pt_events.msg | default(''))) | trim}) -%}
+      {{ out }}

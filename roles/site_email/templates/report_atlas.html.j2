@@ -475,6 +475,9 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
 {%- set hover_look = 'atlas' %}
 {%- include 'report_hover.css.j2' %}
 {%- include 'report_matrix.css.j2' %}
+{%- if r.sections | default([]) | selectattr('links', 'defined') | list or r.sections | default([]) | selectattr('actions', 'defined') | list or r.sections | default([]) | selectattr('cell_links', 'defined') | list %}
+{% include 'report_portal.css.j2' %}
+{%- endif %}
 {%- include 'report_heat.css.j2' %}
 </style>
 </head>
@@ -653,6 +656,9 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
 <input class="filter" type="search" hidden placeholder="Filter these {{ s.rows | length }} rows" aria-label="Filter the rows of {{ s.title | e }}"><span class="shown"></span>
 {%- endif %}
 <span class="sp"></span>
+{%- for a in s.actions | default([]) if a.url | default('') %}
+<a class="btn pl" href="{{ a.url | e }}" target="_blank" rel="noopener" title="Opens the site portal: you check and press Run there"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3.5H3.5v9h9v-3M9.5 2.5h4v4M13.2 2.8 7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span>{{ a.label | e }}</span></a>
+{%- endfor %}
 {%- if s.columns | length > 1 %}
 <details class="cols"><summary class="btn" title="Show or hide columns"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8" y="2.5" width="12.4" height="11" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6 2.8v10.4M10 2.8v10.4" stroke="currentColor" stroke-width="1.4"/></svg><span>Columns</span></summary>
 <div class="menu" role="group" aria-label="The columns of {{ s.title | e }}">
@@ -683,7 +689,14 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
 {%- set cst = cst if cst in words else cellword.get(text | trim | lower, '') %}
 {#- a Status or Severity column of a row with its status: that status's chip (upper case - FAIL - as Fail; a STIG CAT I stays, and a section's keep_case: EFI, BIOS) #}
 {%- set cst = cst or (rs if rs in words and lbl | lower in ['status', 'severity', 'result'] and text | trim else '') %}
-{%- if kd == 'spark' %}
+{%- set cl = s.cell_links if s.cell_links is defined else none %}
+{%- set clu = (cl.urls[ri] if cl and loop.index0 == cl.column and cl.urls | length > ri else '') | default('', true) %}
+{%- if clu %}
+<td class="k-{{ kd }} k-cl" data-l="{{ lbl | e }}" data-v="{{ text | e }}"><a class="hl cv" href="{{ clu | e }}" target="_blank" rel="noopener" title="{{ cl.title | e }}">{{ breakable(text) }}<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3.5H3.5v9h9v-3M9.5 2.5h4v4M13.2 2.8 7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></a></td>
+{%- elif kd == 'link' %}
+{%- set url = (s.links[ri] if s.links is defined and s.links | length > ri else '') | default('', true) %}
+<td class="k-link" data-l="{{ lbl | e }}" data-v="{{ url | e }}">{% if url and text | trim %}<a class="btn pl" href="{{ url | e }}" target="_blank" rel="noopener" title="Opens the site portal: you check and press Run there"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3.5H3.5v9h9v-3M9.5 2.5h4v4M13.2 2.8 7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span>{{ text | e }}</span></a>{% endif %}</td>
+{%- elif kd == 'spark' %}
 {%- set sp = (s.sparks[ri] if s.sparks is defined and s.sparks | length > ri else {}) | default({}, true) %}
 <td class="k-spark" data-l="{{ lbl | e }}" data-v="{{ text | e }}">{% if sp.points is defined %}{% set dp = [] %}{% for p in sp.data_points | default([]) %}{% set _ = dp.append([p.x, p.y, p.label, p.text]) %}{% endfor %}<svg class="spark" viewBox="0 0 {{ sp.w }} {{ sp.h }}" width="{{ sp.w }}" height="{{ sp.h }}" role="img" aria-label="{{ sp.label | e }}"{% if dp %} tabindex="0" data-label="{{ sp.name | default('') | e }}" data-points='{{ dp | tojson }}'>{% else %}><title>{{ sp.label | e }}</title>{% endif %}{% for y in sp.lines | default([]) %}<line class="lv" x1="0" x2="{{ sp.w }}" y1="{{ y }}" y2="{{ y }}"/>{% endfor %}{% if sp.mark is defined and sp.mark is not none %}<line class="mk" x1="{{ sp.mark }}" x2="{{ sp.mark }}" y1="0" y2="{{ sp.h }}"/>{% endif %}<polyline class="ln" points="{{ sp.points }}"/><circle class="pt" cx="{{ sp.last[0] }}" cy="{{ sp.last[1] }}" r="4"/></svg>{% endif %}</td>
 {%- elif cst %}

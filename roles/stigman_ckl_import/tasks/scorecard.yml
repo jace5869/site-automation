@@ -79,6 +79,7 @@
            'cat2_warn': stigman_scorecard_cat2_warn | int,
            'list_max': stigman_ckl_import_list_max | int,
            'api': check_stig_stigman_api | default(''),
+           'portal': report_portal_url | default(''),
            'fixed': _sc_aap.fixed | default({}),
            'history': [
              "Earlier points: " ~ _sc_runs.counts.aap ~ " from AAP's job history, " ~ _sc_runs.counts.db ~ " from the report database.",

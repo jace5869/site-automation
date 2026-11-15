@@ -15,6 +15,7 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import datetime
+import os
 import re
 
 DAY = 86400.0
@@ -259,11 +260,22 @@ def fixed_rows(fixed, read):
 
 
 # ---- the scorecard ---------------------------------------------------------------------------------------
+def _portal():
+    """plugins/filter/portal_filters.py, by its path (Ansible loads filter files by path: they cannot import each other)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("portal_filters_for_stig",
+                                                  os.path.join(os.path.dirname(os.path.abspath(__file__)), "portal_filters.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def stig_scorecard(read, point, runs, opts=None):
     """The scorecard. read: site_stig_scorecard's result; point: stig_scorecard_point's; runs: stig_scorecard_runs' runs
     (this run's among them). opts: weeks (stigman_scorecard_weeks), top (stigman_scorecard_top), cat2_warn
     (stigman_scorecard_cat2_warn), fixed (site_stig_scorecard_history's), history (lines: where the earlier points came
-    from), api (STIG Manager's address), list_max. -> {ok, error, title, status, subtitle, tiles, sections (the email's and
+    from), api (STIG Manager's address), list_max, portal (1.67.0, report_portal_url: the website's copy gets an
+    Import checklists button and a Recheck link on each row fixed on the host, still Open). -> {ok, error, title, status, subtitle, tiles, sections (the email's and
     the other looks'), web (the same with the sparkline column), notes (the last section: how it is counted), xlsx, lines,
     counts}"""
     o = opts or {}
@@ -535,6 +547,14 @@ def stig_scorecard(read, point, runs, opts=None):
 
     sections = [card_sec, sec, top_sec, fix_sec] + ([num_sec] if num_sec else [])
     web = [card_sec, web_sec, top_sec, fix_sec] + ([num_sec] if num_sec else [])
+    if o.get("portal"):                       # 1.67.0, report_portal_url: the website's copy gets the site portal's links
+        pf = _portal()
+        web_sec = pf.add_section_link(dict(web_sec), "Import checklists", pf.portal_link(o["portal"], "ckl_import", {}))
+        web_fix = dict(fix_sec)
+        if fixed and fix_sec.get("rows"):
+            pf.add_link_column(web_fix, [pf.portal_link(o["portal"], "stig_recheck", {"target": r[0]}) for r in fixed[:list_max]],
+                               "Recheck")
+        web = [card_sec, web_sec, top_sec, web_fix] + ([num_sec] if num_sec else [])
 
     # ---- the workbook
     def cut(names):

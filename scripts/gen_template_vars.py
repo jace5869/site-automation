@@ -29,6 +29,11 @@ WIN_CHECKS = "win_check_*"
 # playbook -> the job template's name in the docs, its credentials, the check roles it may run
 # (run_check.yml picks them by name at run time), and the lines to fill in first
 TEMPLATES = {
+    "act_triage_finding.yml": ("ACT - triage finding", "Machine (Machine (Windows) on the Windows template), ACT model key, Red Hat Ansible Automation Platform", "", """\
+## Workflow 44 (the site portal's "Ask ACT"): two templates of this playbook. Prompt on launch: Variables and Limit.
+## The portal sends target, report_job, finding_id and portal_requested_by; the playbook checks them again.
+# portal_triage_os: windows        # on the Windows template only (event-log findings); linux (the default) = fapolicyd
+"""),
     "aap_email_question.yml": ("AAP - report email question", "Red Hat Ansible Automation Platform", "", """\
 ## Run it with Check first: it then only reads, and lists the templates and workflows it would change
 # aap_email_question_project: "Site automation"   # only the templates of your project (its name in AAP)

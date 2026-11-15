@@ -30,6 +30,7 @@
 #   - tenable_scan.yml
 #   - act_fix_approved.yml
 #   - act_old_copies.yml
+#   - act_triage_finding.yml
 #   - ad_health_report.yml
 #   - ad_lockout.yml
 #   - cert_report.yml

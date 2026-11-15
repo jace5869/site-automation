@@ -1,0 +1,66 @@
+---
+# ACT - triage finding, on the host the finding is about (playbooks/act_triage_finding.yml). The steps on the AAP side
+# (the request's check, reading the finding, ACT, the report) run once, delegated to localhost: a Limit of one host
+# needs no localhost in the inventory.
+- name: Triage | check the request (target, report_job, finding_id; who asked)
+  ansible.builtin.include_role:
+    name: portal_request
+    apply:
+      delegate_to: localhost
+      run_once: true
+      become: false
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    portal_request_action: act_triage
+    portal_request_always: true
+    portal_request_limit_from: target
+    portal_request_spec:
+      target: {kind: inventory_host}
+      report_job: {kind: text, max: 12, pattern: "[0-9]{1,12}"}
+      finding_id: {kind: text, max: 120, pattern: "(fapolicyd|eventlog):[A-Za-z0-9_.:-]{1,100}"}
+
+- name: Triage | which kind of finding, and is it this template's
+  ansible.builtin.set_fact:
+    _pt_kind: "{{ finding_id | portal_finding_kind }}"
+    _pt_mine: "{{ {'fapolicyd': 'linux', 'eventlog': 'windows'}[finding_id | portal_finding_kind] == portal_triage_os }}"
+
+- name: Triage | not this template's finding - the {{ 'Windows' if portal_triage_os == 'linux' else 'Linux' }} template looks at it
+  ansible.builtin.debug:
+    msg: >-
+      {{ finding_id }} is a{{ 'n event-log' if _pt_kind == 'eventlog' else ' fapolicyd' }} finding: the
+      {{ 'Windows' if _pt_kind == 'eventlog' else 'Linux' }} template of workflow 44 looks at it. Nothing to do here.
+  when: not _pt_mine | bool
+
+- name: Triage | nothing to do here
+  ansible.builtin.meta: end_host
+  when: not _pt_mine | bool
+
+- name: Triage | the finding, from the job that reported it
+  ansible.builtin.include_role:
+    name: portal_request
+    tasks_from: finding.yml
+    apply:
+      delegate_to: localhost
+      run_once: true
+      become: false
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _pf_job: "{{ report_job }}"
+    _pf_host: "{{ inventory_hostname }}"
+    _pf_id: "{{ finding_id }}"
+
+- name: Triage | read more on the host (read only)
+  ansible.builtin.include_tasks: "evidence_{{ portal_triage_os }}.yml"
+
+- name: Triage | ACT, the report, the artifact (on the AAP side)
+  ansible.builtin.include_tasks:
+    file: side.yml
+    apply:
+      delegate_to: localhost
+      run_once: true
+      become: false
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"

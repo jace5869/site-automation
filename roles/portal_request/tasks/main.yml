@@ -1,0 +1,49 @@
+---
+# The values the site portal sent, checked again here (1.67.0): the portal checked them, and AAP may be launched by
+# other ways too. Run once, on the AAP side: include it with apply {delegate_to: localhost, run_once: true}.
+# Output: portal_request ({action, requested_by, values}), and the job artifact portal_request.
+- name: Site portal | the values of this request
+  ansible.builtin.set_fact:
+    _portal_values: >-
+      {%- set d = {} -%}
+      {%- for k in portal_request_spec -%}{%- set _ = d.update({k: lookup('ansible.builtin.vars', k, default=none)}) -%}{%- endfor -%}
+      {{ d }}
+    _portal_by: "{{ portal_requested_by | default(none) }}"
+  when: portal_requested_by is defined or portal_request_always | bool
+
+- name: Site portal | check them again
+  ansible.builtin.set_fact:
+    _portal_problems: >-
+      {{ _portal_values | portal_check(portal_request_spec, groups['all'], ansible_limit | default(''),
+                                       portal_request_limit_from, _portal_by) }}
+  when: portal_requested_by is defined or portal_request_always | bool
+
+- name: Site portal | the request is refused
+  ansible.builtin.fail:
+    msg: >-
+      This job does not run what it was sent{{ ' (through the site portal)' if portal_requested_by is defined else '' }}:
+      {{ _portal_problems | join('; ') }}.
+  when: (portal_requested_by is defined or portal_request_always | bool) and _portal_problems | length > 0
+
+- name: Site portal | who asked
+  ansible.builtin.set_fact:
+    portal_request:
+      action: "{{ portal_request_action }}"
+      requested_by: "{{ _portal_by | default('', true) or '' }}"
+      values: "{{ _portal_values }}"
+  when: portal_requested_by is defined or portal_request_always | bool
+
+- name: Site portal | requested by
+  ansible.builtin.debug:
+    msg: >-
+      {{ ('Requested through the site portal by ' ~ portal_request.requested_by) if portal_request.requested_by
+         else 'Launched from AAP (not through the site portal)' }} - {{ portal_request.action }}:
+      {{ portal_request['values'] | dictsort | map('join', '=') | join(', ') }}
+  when: portal_requested_by is defined or portal_request_always | bool
+
+- name: Site portal | who asked, as the job artifact portal_request
+  ansible.builtin.set_stats:
+    data:
+      portal_request: "{{ portal_request }}"
+    per_host: false
+  when: portal_requested_by is defined or portal_request_always | bool

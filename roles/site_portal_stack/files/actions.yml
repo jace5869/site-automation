@@ -1,18 +1,41 @@
 ---
-# The site portal's actions (docs/SITE_PORTAL.md, "The actions"): what a person may start from a report page, after
-# the portal's confirm page. Only these can be launched, and only with the values their vars allow. The loader and
-# its rules: plugins/filter/site_portal_filters.py. The setting portal_actions (a dict of the same shape) replaces
-# this file.
-#
-# actions:
-#   <name>:                                   # lower case letters, digits and _
-#     title: Recheck this system
-#     aap: {type: workflow, name: "<the workflow's name in AAP>"}    # or type: job (a job template)
-#     vars:                                   # each key is the extra var's name
-#       target: {kind: inventory_host}        # a host of AAP's inventory portal_inventory
-#       mode: {kind: choice, values: [import, scorecard], default: import}
-#       report_job: {kind: text, max: 12, pattern: '[0-9]{1,12}'}
-#     limit_from: target                      # optional: the launch's limit
-#     approval: false                         # shown on the page; the workflow's approval node holds it
-#     who: any                                # optional: or a list of CNs; left out = portal_requesters
-actions: {}
+# The site portal's actions (1.67.0): what a person may launch from the portal, and the AAP job or workflow each one
+# launches. The portal (roles/site_portal_stack) loads this file when it starts; the setting portal_actions (the same
+# shape) replaces it. Each playbook checks the values again (roles/portal_request): keep both in step
+# (tests/test_portal.py compares them). docs/SITE_PORTAL.md, "Actions".
+#   title       what the confirm page and the job list call it
+#   aap         {type: workflow | job, name: the template's exact name in AAP}
+#   vars        each extra variable: kind inventory_host (a host of portal_inventory), choice (values), text (max,
+#               pattern: the whole value must match). The portal adds portal_requested_by (the person's certificate name).
+#   limit_from  the inventory_host variable that is also the job's Limit
+#   approval    true when the workflow waits for a person (its approval node decides; the page only says so)
+#   who         any, or a list of certificate names; left out = portal_requesters
+actions:
+  stig_recheck:
+    title: STIG recheck of one host
+    aap: {type: workflow, name: "STIG - recheck one host"}          # workflow 45: the Linux and the Windows recheck
+    vars:
+      target: {kind: inventory_host, label: Host}
+    limit_from: target
+    approval: false
+
+  ckl_import:
+    title: Import checklists into STIG Manager
+    aap: {type: workflow, name: "Checklists imported into STIG Manager"}   # workflow 40
+    vars:
+      stigman_ckl_import_mode:
+        kind: choice
+        label: What should this run do?
+        values: [import, import and scorecard, scorecard]
+        default: import
+    approval: true
+
+  act_triage:
+    title: Ask ACT about a finding
+    aap: {type: workflow, name: "ACT - triage finding"}             # workflow 44
+    vars:
+      target: {kind: inventory_host, label: Host}
+      report_job: {kind: text, label: AAP job of the report, max: 12, pattern: "[0-9]{1,12}"}
+      finding_id: {kind: text, label: Finding, max: 120, pattern: "(fapolicyd|eventlog):[A-Za-z0-9_.:-]{1,100}"}
+    limit_from: target
+    approval: false

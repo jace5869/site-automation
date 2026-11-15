@@ -2176,7 +2176,7 @@ def findings_cards(by_host, missing=None, max_cards=6):
     return cards, max(len(found) - int(max_cards), 0)
 
 
-def findings_report(by_host, title, missing=None, checks=None, extra=None):
+def findings_report(by_host, title, missing=None, checks=None, extra=None, portal=None):
     """The result of a check run (site_findings on every host) as a report for roles/site_email:
     title with the counts, summary boxes, one findings table (critical first), the hosts that did
     not report, any extra sections the playbook adds (e.g. every certificate), the healthy hosts. An extra
@@ -2186,8 +2186,11 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None):
     report: its CAT I rules). A top section's headline (and headline_status) says what the run found when its own
     findings are not that - the STIG recheck, report only, whose open rules are no finding of the job's: the title
     is the headline (not "no findings"), the status the worse of the two, and with summary_only its boxes are the
-    only ones (no Healthy / With findings boxes, no list of healthy hosts)."""
+    only ones (no Healthy / With findings boxes, no list of healthy hosts). portal (1.67.0, report_portal_url): {url,
+    job} - a fapolicyd or event-log finding gets an "Ask ACT" link to the site portal (workflow 44, by reference: this
+    job, the host, the finding's id); without it the report is as before."""
     by_host = by_host or {}
+    ask = _portal_asker(portal)
     hosts = sorted(by_host)
     missing = sorted(missing or [])
     single = len(hosts) + len(missing) <= 1
@@ -2205,8 +2208,9 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None):
                 crit += sev == "critical"
                 warn += sev != "critical"
             row = [sev.upper(), f.get("check", ""), f.get("summary", ""), f.get("hint", "")]
-            rows.append(row if single else [h] + row)
+            rows.append((row if single else [h] + row) + ([ask(h, f)] if ask else []))
     rows.sort(key=lambda r: (0 if "CRITICAL" in r[:2] else 2 if "LOW" in r[:2] else 1, r[0]))
+    links = [r.pop() for r in rows] if ask else []
     n = len(rows)
     if n:
         t = "%s: %d finding(s)" % (title, n) + ("" if single else " on %d of %d host(s)" % (len(bad), len(hosts)))
@@ -2251,6 +2255,8 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None):
         sections.append({"title": "Findings", "status": status,
                          "columns": ([] if single else ["Host"]) + ["Severity", "Check", "Finding", "Look further"],
                          "rows": rows})
+        if ask:
+            portal_module().add_link_column(sections[-1], links, "Ask ACT", header="ACT")
         if low:
             sections[-1]["row_status"] = ["low" if "LOW" in r[:2] else "" for r in rows]
     if missing:
@@ -2267,6 +2273,40 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None):
         sections.append({"title": "Result", "lines": ["No findings."]})
     return {"title": t, "status": status, "summary": summary, "sections": sections,
             "footer": ("Checks run: " + ", ".join(sorted(set(checks)))) if checks else ""}
+
+
+_PORTAL = []
+
+
+def portal_module():
+    """plugins/filter/portal_filters.py, loaded by its path (as ad_repl_filters loads ad_filters): Ansible loads filter
+    files by path, so they cannot import each other by name."""
+    if not _PORTAL:
+        import importlib.util
+        import os
+        spec = importlib.util.spec_from_file_location("portal_filters_for_reports",
+                                                      os.path.join(os.path.dirname(os.path.abspath(__file__)), "portal_filters.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _PORTAL.append(mod)
+    return _PORTAL[0]
+
+
+def _portal_asker(portal):
+    """(host, finding) -> the site portal's "Ask ACT" link for a fapolicyd or event-log finding ('' for another);
+    None without report_portal_url or outside AAP (no job to point at)."""
+    p = portal or {}
+    url, job = str(p.get("url") or "").strip(), str(p.get("job") or "").strip()
+    if not url or not job.isdigit():
+        return None
+    _pf = portal_module()
+
+    def ask(host, f):
+        fid = str(f.get("id") or "")
+        if _pf.portal_finding_kind(fid) != str(f.get("check") or ""):
+            return ""
+        return _pf.portal_link(url, "act_triage", {"target": host, "report_job": job, "finding_id": fid})
+    return ask
 
 
 def _web_value(value, lower=False):

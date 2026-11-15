@@ -54,7 +54,12 @@ NAMED = (("test_stig_ckl_import.py", "RouteReport.test_report_fit_document", "st
          # 1.65.0: the VMware cluster heat grid - the website's copy, the email's, a cluster of 40 hosts with long names
          ("test_vmware_heat.py", "Fit.test_report_fit_web", "vmware_heat_filters.py:vm_heat_insert", "vm_heat_web"),
          ("test_vmware_heat.py", "Fit.test_report_fit_email", "vmware_heat_filters.py:vm_heat_insert", "vm_heat_email"),
-         ("test_vmware_heat.py", "Fit.test_report_fit_big", "vmware_heat_filters.py:vm_heat_insert", "vm_heat_big"))
+         ("test_vmware_heat.py", "Fit.test_report_fit_big", "vmware_heat_filters.py:vm_heat_insert", "vm_heat_big"),
+         # 1.67.0: the site portal's buttons (report_portal_url) - Ask ACT on findings, Recheck on the drift report's
+         # hosts, Import checklists and Recheck on the scorecard
+         ("test_portal.py", "Fit.test_report_fit_findings", "site_filters.py:findings_report", "portal_findings_web"),
+         ("test_portal.py", "Fit.test_report_fit_drift", "site_filters.py:findings_report", "portal_drift_web"),
+         ("test_portal.py", "Fit.test_report_fit_scorecard", "stig_scorecard_filters.py:_scorecard_web", "portal_scorecard_web"))
 
 # run inside each test file's process: keep the biggest document each filter function returns
 CHILD = r"""
