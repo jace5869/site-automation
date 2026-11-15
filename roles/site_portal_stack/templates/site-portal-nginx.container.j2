@@ -1,0 +1,21 @@
+# Managed by Ansible (site_portal_stack) - do not edit on the host
+# portal_own_nginx: TLS and the cards' certificates (mTLS) in front of the portal
+[Unit]
+Description=Site portal - its nginx (TLS, the client certificates)
+Requires=site-portal-network.service
+After=site-portal-network.service site-portal-app.service
+
+[Container]
+ContainerName=site-portal-nginx
+Image={{ portal_nginx_image }}
+Network=site-portal.network
+PublishPort={{ portal_port }}:8443
+Volume={{ portal_config_dir }}/nginx/portal.conf:/etc/nginx/conf.d/default.conf:ro,Z
+Volume={{ portal_config_dir }}/tls:/etc/site-portal-tls:ro,Z
+
+[Service]
+Restart=always
+TimeoutStartSec=300
+
+[Install]
+WantedBy={{ 'default.target' if portal_scope == 'user' else 'multi-user.target' }}

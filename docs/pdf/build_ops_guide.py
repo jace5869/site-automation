@@ -22,7 +22,7 @@ REPO = os.environ.get("SITE_AUTOMATION_DIR") or (
     os.path.dirname(os.path.dirname(_HERE)) if os.path.isfile(os.path.join(_HERE, "..", "START_HERE.md"))
     else sys.exit("build_ops_guide.py: cannot find the site-automation repository; "
                   "run the script from <repo>/docs/pdf or set SITE_AUTOMATION_DIR=<repo>"))
-SA_VERSION = "1.66.0"
+SA_VERSION = "1.67.0"
 DOCS = [  # (file, chapter title)
     ("docs/START_HERE.md", "Start here: the pieces and how they fit"),
     ("docs/SETUP_AAP.md", "Setting up AAP, step by step"),
@@ -46,6 +46,7 @@ DOCS = [  # (file, chapter title)
     ("docs/VM_OUTAGE_WATCH.md", "VM outage watch: what is down or hung right now"),
     ("docs/VM_ASK.md", "VM - ask a question: vCenter in plain words, read-only"),
     ("docs/VMWARE_ASK.md", "VMware ask: the web page at STIG Manager's /ask/, the card's certificate, read-only"),
+    ("docs/SITE_PORTAL.md", "The site portal: the reports, the actions, the live job view and the approvals at /portal/"),
     ("docs/LOG_ANALYSIS.md", "Log analysis: the patterns in a group of servers' logs, explained by ACT"),
     ("docs/NETAPP.md", "NetApp ONTAP health report"),
     ("docs/NETWORK_CERTS.md", "Network device certificates: report and renewal"),

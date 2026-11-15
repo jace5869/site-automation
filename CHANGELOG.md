@@ -1,5 +1,53 @@
 # Changelog
 
+## 1.67.0 — 2026-11-15
+
+**To set up: step 100**, optional - nothing changes until you deploy it. New job template *Site portal - deploy*
+(`playbooks/site_portal_deploy.yml`). New settings have defaults: `portal_*` (roles/site_portal_stack). To do: 1.67.0
+step 100.
+
+**The site portal.** One web place for the reports and what people may start from them, behind STIG Manager's nginx at
+`/portal/`. People open it with their card; nginx's mTLS says who they are, as `/ask/` does.
+
+- **The report website** at `/portal/reports/`: the pages the report jobs write (`portal_reports_dir`), read-only.
+- **Actions.** A report's button opens `/portal/actions/<name>?<values>`: a confirm page that lists what will run,
+  where, and whether an approval follows. **Run** launches AAP's workflow or job template with the values, the
+  person's name as `portal_requested_by`, and the limit when the action sets one. Opening the link starts nothing.
+- **The live view** at `/portal/jobs/<id>`: status, steps, hosts, output, then the result's links and artifacts.
+  The server asks AAP; the browser never gets the token.
+- **Approvals** at `/portal/approvals`: the pending approvals of the listed workflows. Approve and Deny for the people
+  in `portal_approvers`. AAP records the decision as the portal's account; the portal's log keeps who decided.
+- **Every launch, refusal and decision** is a JSON line in the journal and in `portal-log.jsonl` (the volume
+  `site-portal-data`).
+- **Its own nginx** (`portal_own_nginx: true`): TLS and the cards on a server without STIG Manager.
+
+**What it may start.** Only what `roles/site_portal_stack/files/actions.yml` lists (or `portal_actions`), with the
+values its rules allow. One loader checks the file at deploy and at start (plugins/filter/site_portal_filters.py).
+
+- A var is a host of the AAP inventory `portal_inventory`, a choice of a list, or a text with a length and, when set,
+  a pattern. A value the action does not list is refused.
+- Template braces (`{{`, `{%`, `{#`) are refused in every value, also with spaces or invisible characters between
+  and in look-alike braces. AAP renders Jinja in extra vars when a playbook reads them.
+- The deploy reads AAP's `ALLOW_JINJA_IN_EXTRA_VARS` from the portal and warns when it is *Always*.
+- CSRF: a launch needs the portal page's own token, the portal's own Origin and a JSON body. At most
+  `portal_launches_per_hour` (20) launches per person.
+- The AAP token is a podman secret: not in a file, a unit, `podman inspect` or the log.
+- An action AAP would not take (no Prompt on launch for Variables, a name not found) is *Off*, with the reason. The
+  deploy lists each action's state.
+
+Docs: SITE_PORTAL.md (new: step 100, the actions, approvals, the log, security, its own nginx, removal), JOB_TEMPLATES,
+README, START_HERE, VARIABLES_REFERENCE; aap/extra_vars/site_portal_deploy.yml. The Ops Runbooks guide PDF at 1.67.0.
+
+**Behaviour changes:** none. `report_web_tabs`' default gains `Site portal*` on the *ServiceNow and AAP* tab, so
+the new template has a tab (it writes no report).
+
+**Tests:** `tests/test_site_portal.py` (21: the loader's rules, the braces, who, and the service against a stand-in
+AAP in one process; current ansible-core and 2.16, CI); `tests/site_portal/run_portal_test.sh` (40 checks, not in CI:
+rootless podman with Quadlet, a stand-in AAP API, an nginx with a test CA and client certificates standing in for STIG
+Manager's - the deploy, a launch, each refusal, CSRF, the live view, approve and deny, the log, the token; then its own
+nginx; ansible-core 2.22 and 2.16; screenshots by headless Chrome). Not run against a real AAP or a real STIG Manager,
+and not as root.
+
 ## 1.66.0 — 2026-11-14
 
 **Updating without scripts:** paste `site-automation-1.66.0-changed-since-1.61.0.zip` as it is (from an older version,
@@ -2424,7 +2472,7 @@ tests/stig/run_stigman_real_test.sh against STIG Manager 1.6.18 (not in CI).
 
 SA_VERSION 1.26.0; the PDFs at 1.26.0.
 
-**To do, if you have not yet: what 0.20.0 to 1.66.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.66.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing, 1.39.0 nothing, 1.41.0 nothing, 1.42.0 nothing, 1.43.0 nothing, 1.44.0 nothing, 1.45.0 nothing, 1.46.0 nothing, 1.47.0 nothing, 1.48.0 nothing, 1.49.0 nothing, 1.50.0 step 97, 1.51.0 step 95, 1.52.0 step 96, 1.53.0 step 98, 1.54.0 nothing, 1.55.0 nothing, 1.56.0 nothing, 1.57.0 nothing, 1.58.0 nothing, 1.59.0 nothing, 1.61.0 nothing, 1.62.0 nothing, 1.63.0 step 99, 1.64.0 nothing, 1.65.0 nothing, 1.66.0 nothing).** In order; each step works without
+**To do, if you have not yet: what 0.20.0 to 1.67.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.67.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing, 1.39.0 nothing, 1.41.0 nothing, 1.42.0 nothing, 1.43.0 nothing, 1.44.0 nothing, 1.45.0 nothing, 1.46.0 nothing, 1.47.0 nothing, 1.48.0 nothing, 1.49.0 nothing, 1.50.0 step 97, 1.51.0 step 95, 1.52.0 step 96, 1.53.0 step 98, 1.54.0 nothing, 1.55.0 nothing, 1.56.0 nothing, 1.57.0 nothing, 1.58.0 nothing, 1.59.0 nothing, 1.61.0 nothing, 1.62.0 nothing, 1.63.0 step 99, 1.64.0 nothing, 1.65.0 nothing, 1.66.0 nothing, 1.67.0 step 100).** In order; each step works without
 the ones after it. There is no step 90.
 
 1. **Your logo** (0.20.0). A PNG with a transparent background, about 160 px tall and under 100 KB, in
@@ -3241,6 +3289,23 @@ the ones after it. There is no step 90.
     3. Run the AD health report: *Inbound replication* has no grey *not read* rows, and the matrix is filled in.
     4. To take it away: the account out of the group.
     Details and the commands: docs/ACTIVE_DIRECTORY.md, "Reading replication data".
+
+100. **The site portal** (1.67.0) - optional; nothing changes until you deploy it. One web place at STIG Manager's
+    `/portal/`: the report website, the actions a report offers, the live job view and the approvals.
+    1. Look at STIG Manager's nginx: its container's name and podman network (with DNS), and its `server` block
+       (`ssl_verify_client`). Note the folder the report jobs write to on that server.
+    2. In AAP, an account of its own (`svc_site_portal`): Execute on each workflow and template the actions name,
+       Approve on those with an approval node, Read on the inventory a person's host must be in. A token of it, scope
+       Write, in a credential of type **Red Hat Ansible Automation Platform**.
+    3. Each listed template: Prompt on launch for Variables (and for Limit with `limit_from`).
+    4. A job template *Site portal - deploy*: `playbooks/site_portal_deploy.yml`, the Machine credential and the one
+       of step 2. Variables: `aap/extra_vars/site_portal_deploy.yml` (`portal_network`, `portal_image`,
+       `portal_reports_dir`, `portal_inventory`, `portal_approvers`). Launch it as Check, then Run: its end says
+       `AAP: answered` and each action `ok`.
+    5. Read the lines of `/etc/site-portal/nginx-portal.conf` into STIG Manager's `server` block, above its
+       `location /`; `nginx -t`; `nginx -s reload`.
+    6. Open `https://<STIG Manager>/portal/` with your card.
+    Details: docs/SITE_PORTAL.md, "Set it up" (and its own nginx, for a server without STIG Manager).
 
 ## 1.24.0 — 2026-11-11
 

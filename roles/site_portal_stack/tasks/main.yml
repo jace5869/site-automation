@@ -1,0 +1,576 @@
+---
+# Deploy / reconcile the site portal. Idempotent: a second run changes nothing. The AAP token arrives as an environment
+# variable from the AAP credential and is handed to podman as a secret over stdin: never on a command line, never in a
+# unit file or the settings file, never printed (no_log), never shown as a diff.
+# It makes only what is named site-portal*: behind STIG Manager's nginx, that nginx, its files, its network and every
+# other container are only read (the network's DNS address) - the nginx lines to add are written to a file for a
+# person to paste. With portal_own_nginx it also makes its own nginx container and network.
+
+- name: Stack | paths for this scope
+  ansible.builtin.set_fact:
+    _portal_quadlet_dir: >-
+      {{ (ansible_user_dir ~ '/.config/containers/systemd') if portal_scope == 'user'
+         else '/etc/containers/systemd' }}
+    _portal_systemctl: "{{ ['systemctl'] + (['--user'] if portal_scope == 'user' else []) }}"
+    _portal_net_name: "{{ 'site-portal' if portal_own_nginx | bool else portal_network }}"
+
+# ---------------------------------------------------------------- preflight
+- name: Preflight | AAP's address and the portal account's token are there (from the AAP credential)
+  ansible.builtin.assert:
+    that:
+      - portal_aap_url | trim | length > 0
+      - portal_aap_token | trim | length > 0
+    fail_msg: >-
+      Missing credentials. Attach a "Red Hat Ansible Automation Platform" credential of the portal's own account WITH A
+      TOKEN (OAuth token: AAP > Users > the account > Tokens) to the job template. docs/SITE_PORTAL.md, "The AAP account".
+    quiet: true
+  no_log: true
+
+- name: Preflight | the path, and the network or the own nginx's files
+  ansible.builtin.assert:
+    that:
+      - portal_path is match('^/[A-Za-z0-9_-]+/$')
+      - portal_own_nginx | bool or (portal_network | length > 0 and portal_network != 'podman')
+      - not portal_own_nginx | bool or (portal_cert_file | length > 0 and portal_key_file | length > 0 and portal_ca_file | length > 0)
+      - portal_reports_dir is match('^/')
+    fail_msg: >-
+      Set portal_path to a path like /portal/ and portal_reports_dir to the report folder (a full path). Behind STIG
+      Manager's nginx: portal_network = that nginx container's podman network (sudo podman ps --format
+      "{{ '{{' }}.Names{{ '}}' }} {{ '{{' }}.Networks{{ '}}' }}"; not podman's default network "podman"). With
+      portal_own_nginx: portal_cert_file, portal_key_file and portal_ca_file. docs/SITE_PORTAL.md
+    quiet: true
+
+- name: Preflight | podman version
+  ansible.builtin.command:
+    argv: [podman, version, --format, "{{ '{{' }}.Client.Version{{ '}}' }}"]
+  register: _portal_podman
+  changed_when: false
+  check_mode: false                       # only reads: a dry run needs the answer too
+
+- name: Preflight | podman supports Quadlet (4.4 or newer)
+  ansible.builtin.assert:
+    that: _portal_podman.stdout is version('4.4', '>=')
+    fail_msg: "podman {{ _portal_podman.stdout }} is too old for Quadlet; RHEL 9.2+/8.8+ ship 4.4 or newer."
+    quiet: true
+
+- name: Preflight | the report folder
+  ansible.builtin.stat:
+    path: "{{ portal_reports_dir }}"
+  register: _portal_reports
+
+- name: Preflight | the report folder is there
+  ansible.builtin.assert:
+    that: _portal_reports.stat.isdir | default(false)
+    fail_msg: >-
+      {{ portal_reports_dir }} (portal_reports_dir) is not a folder on {{ inventory_hostname }}: set it to the folder
+      the report jobs write the pages to on this host (report_web_dest's folder). docs/SITE_PORTAL.md
+    quiet: true
+
+- name: Preflight | the own nginx's files (portal_own_nginx)
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ [portal_cert_file, portal_key_file, portal_ca_file] + ([portal_crl_file] if portal_crl_file else []) }}"
+  register: _portal_tls_files
+  when: portal_own_nginx | bool
+
+- name: Preflight | they are there
+  ansible.builtin.assert:
+    that: _portal_tls_files.results | rejectattr('stat.exists') | list | length == 0
+    fail_msg: >-
+      Not on {{ inventory_hostname }}: {{ _portal_tls_files.results | rejectattr('stat.exists') | map(attribute='item') | join(', ') }}
+      (portal_cert_file, portal_key_file, portal_ca_file, portal_crl_file are paths on this server).
+    quiet: true
+  when: portal_own_nginx | bool
+
+# only read: the network is the reverse proxy's (made with it); its DNS address is the resolver in the nginx lines
+- name: Preflight | the reverse proxy's network
+  ansible.builtin.command:
+    argv: [podman, network, inspect, "{{ portal_network }}", --format,
+           "{{ '{{' }}.DNSEnabled{{ '}}' }} {{ '{{' }}range .Subnets{{ '}}' }}{{ '{{' }}.Gateway{{ '}}' }} {{ '{{' }}end{{ '}}' }}"]
+  register: _portal_net
+  changed_when: false
+  failed_when: false
+  check_mode: false                       # only reads
+  when: not portal_own_nginx | bool
+
+- name: Preflight | the network exists, with DNS (its nginx finds the service by name)
+  ansible.builtin.assert:
+    that:
+      - _portal_net.rc == 0
+      - (_portal_net.stdout.split() | first | default('')) == 'true'
+      - _r | length > 0
+    fail_msg: >-
+      {{ ('The podman network ' ~ portal_network ~ ' does not exist' ~ (' for this user (portal_scope: user)'
+          if portal_scope == 'user' else '') ~ ': ' ~ (_portal_net.stderr | trim)) if _portal_net.rc != 0
+         else ('The podman network ' ~ portal_network ~ ' has no DNS, so its nginx cannot find the service by name.') }}
+      Set portal_network to the network your reverse proxy's nginx container is on. docs/SITE_PORTAL.md
+    quiet: true
+  vars:
+    _r: "{{ _portal_net.stdout.split()[1:] | select('match', '^[0-9.]+$') | list }}"
+  when: not portal_own_nginx | bool
+
+- name: Preflight | the network's DNS address (the resolver in the nginx lines)
+  ansible.builtin.set_fact:
+    _portal_resolvers: "{{ _portal_net.stdout.split()[1:] | select('match', '^[0-9.]+$') | list }}"
+  when: not portal_own_nginx | bool
+
+# ---------------------------------------------------------------- the actions: one loader, the service's own
+- name: Actions | the file (or portal_actions)
+  ansible.builtin.set_fact:
+    _portal_actions_raw: >-
+      {{ portal_actions if portal_actions | length > 0
+         else ((lookup('ansible.builtin.file', role_path ~ '/files/actions.yml') | from_yaml).actions | default({}, true)) }}
+
+- name: Actions | checked (plugins/filter/site_portal_filters.py - the service loads them with the same rules)
+  ansible.builtin.set_fact:
+    _portal_check: "{{ _portal_actions_raw | site_portal_actions_check }}"
+
+- name: Actions | every entry is right
+  ansible.builtin.assert:
+    that: _portal_check.problems | length == 0
+    fail_msg: "The actions are not right - nothing was changed: {{ _portal_check.problems | join(' | ') }}"
+    quiet: true
+
+- name: Actions | an action that checks a host needs portal_inventory
+  ansible.builtin.assert:
+    that: portal_inventory | length > 0 or _host_vars | length == 0
+    fail_msg: >-
+      {{ _host_vars | join(', ') }} check a host against AAP's inventory: set portal_inventory to that inventory's name
+    quiet: true
+  vars:
+    _host_vars: >-
+      {{ _portal_check.actions | dict2items | map(attribute='value') | selectattr('vars') | map(attribute='vars')
+         | map('dict2items') | flatten | selectattr('value.kind', 'equalto', 'inventory_host') | map(attribute='key') | unique | list }}
+
+- name: Actions | none listed - the portal serves the reports and the approvals only
+  ansible.builtin.debug:
+    msg: >-
+      No action is listed (roles/site_portal_stack/files/actions.yml or portal_actions): the portal serves the report
+      website and the approvals; a report's Run link would answer "There is no action ...".
+  when: _portal_check.actions | length == 0
+
+# ---------------------------------------------------------------- directories, the service's files
+- name: Files | directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: "{{ _portal_quadlet_dir }}", mode: "0755"}
+    - {path: "{{ portal_config_dir }}", mode: "0750"}
+    - {path: "{{ portal_config_dir }}/app", mode: "0755"}
+    - {path: "{{ portal_config_dir }}/app/static", mode: "0755"}
+    - {path: "{{ portal_config_dir }}/trust.d", mode: "0750"}
+  loop_control:
+    label: "{{ item.path }}"
+  register: _portal_dirs
+
+- name: Files | the service, its pages, the actions' rules, AAP's client
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ portal_config_dir }}/app/{{ item.dest }}"
+    mode: "0644"
+  loop:
+    - {src: site_portal.py, dest: site_portal.py}
+    - {src: start.sh, dest: start.sh}
+    - {src: static/portal.js, dest: static/portal.js}
+    - {src: static/portal.css, dest: static/portal.css}
+    - {src: "{{ role_path }}/../../plugins/filter/site_portal_filters.py", dest: site_portal_filters.py}
+    - {src: "{{ role_path }}/../../plugins/module_utils/site_aap.py", dest: site_aap.py}
+  loop_control:
+    label: "{{ item.dest }}"
+  register: _portal_app_files
+
+# ---------------------------------------------------------------- the CAs the service trusts (AAP's certificate)
+- name: Trust | what this server trusts
+  ansible.builtin.stat:
+    path: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+  register: _portal_host_bundle
+  when: portal_trust_host_cas | bool
+
+- name: Trust | the server's CAs
+  ansible.builtin.copy:
+    src: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+    dest: "{{ portal_config_dir }}/trust.d/10-host.pem"
+    remote_src: true
+    mode: "0644"
+  # a dry run on a new server: trust.d is not there yet (the task above only said it would make it)
+  when: >-
+    portal_trust_host_cas | bool and _portal_host_bundle.stat.exists | default(false)
+    and not (ansible_check_mode and _portal_dirs.results[-1] is changed)
+
+- name: Trust | which CAs
+  ansible.builtin.find:
+    paths: "{{ portal_config_dir }}/trust.d"
+    patterns: "*.pem"
+  register: _portal_trust_parts
+  check_mode: false                       # only reads
+
+- name: Trust | one bundle for the service (SSL_CERT_FILE)
+  ansible.builtin.assemble:
+    src: "{{ portal_config_dir }}/trust.d"
+    dest: "{{ portal_config_dir }}/trust.pem"
+    regexp: '\.pem$'
+    mode: "0644"
+  register: _portal_trust
+  when: _portal_trust_parts.matched | int > 0
+
+- name: Trust | the image's own CAs only
+  ansible.builtin.file:
+    path: "{{ portal_config_dir }}/trust.pem"
+    state: absent
+  register: _portal_trust_gone
+  when: _portal_trust_parts.matched | int == 0
+
+# ---------------------------------------------------------------- registry login (optional)
+- name: Registry | log in (only when the registry credential is attached)
+  ansible.builtin.command:
+    argv: [podman, login, --username, "{{ lookup('ansible.builtin.env', 'REGISTRY_USERNAME') }}",
+           --password-stdin, "{{ lookup('ansible.builtin.env', 'REGISTRY_HOST') }}"]
+    stdin: "{{ lookup('ansible.builtin.env', 'REGISTRY_PASSWORD') }}"
+  changed_when: false
+  no_log: true
+  when: lookup('ansible.builtin.env', 'REGISTRY_PASSWORD') | length > 0
+
+# ---------------------------------------------------------------- the token: a podman secret
+# A label holds the SHA-256 of the value, so the role knows whether it changed without reading the secret back (as
+# roles/vmware_ask_stack). The service reads it at start.
+- name: Secret | current state
+  ansible.builtin.command:
+    argv: [podman, secret, inspect, site-portal-aap-token, --format, "{{ '{{' }}index .Spec.Labels \"site.sha256\"{{ '}}' }}"]
+  register: _portal_secret_state
+  changed_when: false
+  failed_when: false
+  check_mode: false                       # only reads the label
+
+- name: Secret | the old value removed first (podman before 4.7)
+  ansible.builtin.command:
+    argv: [podman, secret, rm, site-portal-aap-token]
+  when: >-
+    _portal_secret_state.rc == 0 and (_portal_secret_state.stdout | trim) != (portal_aap_token | trim | hash('sha256'))
+    and _portal_podman.stdout is version('4.7', '<')
+  changed_when: true
+  no_log: true
+
+- name: Secret | create or replace
+  ansible.builtin.command:
+    argv: >-
+      {{ ['podman', 'secret', 'create'] + (['--replace'] if _portal_podman.stdout is version('4.7', '>=') else [])
+         + ['--label', 'site.sha256=' ~ (portal_aap_token | trim | hash('sha256')), 'site-portal-aap-token', '-'] }}
+    stdin: "{{ portal_aap_token | trim }}"
+    stdin_add_newline: false
+  when: _portal_secret_state.rc != 0 or (_portal_secret_state.stdout | trim) != (portal_aap_token | trim | hash('sha256'))
+  changed_when: true                      # runs only when the secret is missing or differs
+  no_log: true
+  register: _portal_secret_set
+
+# ---------------------------------------------------------------- configuration
+# The settings and the actions as files (JSON), not in the unit: free text needs no quoting there
+- name: Config | the service's settings
+  ansible.builtin.copy:
+    dest: "{{ portal_config_dir }}/settings.json"
+    mode: "0644"
+    content: "{{ _settings | to_nice_json }}\n"
+  vars:
+    _settings:
+      PORTAL_PATH: "{{ portal_path }}"
+      PORTAL_TITLE: "{{ portal_title }}"
+      PORTAL_CLASSIFICATION: "{{ portal_classification }}"
+      PORTAL_DATA: /data
+      PORTAL_REPORTS: /reports
+      PORTAL_ACTIONS: /etc/site-portal/actions.json
+      PORTAL_AAP_URL: "{{ portal_aap_url | trim }}"
+      PORTAL_AAP_VERIFY: "{{ '1' if portal_aap_validate_certs | bool else '0' }}"
+      PORTAL_AAP_UI: "{{ portal_aap_ui | trim }}"
+      PORTAL_AAP_TIMEOUT: "{{ portal_aap_timeout | string }}"
+      PORTAL_INVENTORY: "{{ portal_inventory }}"
+      PORTAL_REQUESTERS: "{{ portal_requesters }}"
+      PORTAL_APPROVERS: "{{ portal_approvers }}"
+      PORTAL_LAUNCHES_PER_HOUR: "{{ portal_launches_per_hour | string }}"
+      PORTAL_JOB_EVENTS: "{{ portal_job_events | string }}"
+  register: _portal_settings_file
+
+- name: Config | the actions (the file, or portal_actions - as written, the service checks them again)
+  ansible.builtin.copy:
+    dest: "{{ portal_config_dir }}/actions.json"
+    mode: "0644"
+    content: "{{ {'actions': _portal_actions_raw} | to_nice_json(sort_keys=false) }}\n"   # the file's order: the confirm page's
+  register: _portal_actions_file
+
+# ---------------------------------------------------------------- its own nginx (portal_own_nginx)
+- name: Own nginx | its folders
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: "{{ portal_config_dir }}/nginx", mode: "0755"}
+    - {path: "{{ portal_config_dir }}/tls", mode: "0750"}
+  loop_control:
+    label: "{{ item.path }}"
+  when: portal_own_nginx | bool
+
+# copies, so the container's SELinux label (:Z) never changes the site's own files
+- name: Own nginx | the certificate, its key, the cards' CAs (and their CRL)
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ portal_config_dir }}/tls/{{ item.dest }}"
+    remote_src: true
+    mode: "{{ item.mode }}"
+  loop: >-
+    {{ [{'src': portal_cert_file, 'dest': 'server.pem', 'mode': '0644'}, {'src': portal_key_file, 'dest': 'server.key', 'mode': '0640'},
+        {'src': portal_ca_file, 'dest': 'ca.pem', 'mode': '0644'}]
+       + ([{'src': portal_crl_file, 'dest': 'crl.pem', 'mode': '0644'}] if portal_crl_file else []) }}
+  loop_control:
+    label: "{{ item.dest }}"
+  register: _portal_tls
+  when: portal_own_nginx | bool and not (ansible_check_mode and _portal_dirs is changed)
+
+- name: Own nginx | an old CRL removed (portal_crl_file empty now)
+  ansible.builtin.file:
+    path: "{{ portal_config_dir }}/tls/crl.pem"
+    state: absent
+  register: _portal_crl_gone
+  when: portal_own_nginx | bool and not portal_crl_file
+
+- name: Own nginx | its network's unit
+  ansible.builtin.template:
+    src: site-portal.network.j2
+    dest: "{{ _portal_quadlet_dir }}/site-portal.network"
+    mode: "0644"
+  register: _portal_net_unit
+  when: portal_own_nginx | bool
+
+- name: Own nginx | reload systemd so Quadlet makes the network's service  # noqa: no-handler (needed before the next task)
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+    scope: "{{ portal_scope }}"
+  when: portal_own_nginx | bool and _portal_net_unit is changed
+
+- name: Own nginx | is the network there
+  ansible.builtin.command:
+    argv: [podman, network, exists, site-portal]
+  register: _portal_own_net_there
+  changed_when: false
+  failed_when: false
+  check_mode: false                       # only reads
+  when: portal_own_nginx | bool
+
+# its unit runs once: when the network was removed by hand, it is still "active" - restarted, it makes it again
+- name: Own nginx | the network
+  ansible.builtin.systemd_service:
+    name: site-portal-network.service
+    state: "{{ 'started' if _portal_own_net_there.rc == 0 else 'restarted' }}"
+    scope: "{{ portal_scope }}"
+  ignore_errors: "{{ ansible_check_mode }}"
+  when: portal_own_nginx | bool
+
+- name: Own nginx | its DNS address
+  ansible.builtin.command:
+    argv: [podman, network, inspect, site-portal, --format,
+           "{{ '{{' }}range .Subnets{{ '}}' }}{{ '{{' }}.Gateway{{ '}}' }} {{ '{{' }}end{{ '}}' }}"]
+  register: _portal_own_net
+  changed_when: false
+  failed_when: false
+  check_mode: false                       # only reads
+  when: portal_own_nginx | bool
+
+- name: Own nginx | the resolver
+  ansible.builtin.set_fact:
+    _portal_resolvers: "{{ (_portal_own_net.stdout | default('')).split() | select('match', '^[0-9.]+$') | list or ['127.0.0.1'] }}"
+  when: portal_own_nginx | bool
+
+- name: Own nginx | its server
+  ansible.builtin.template:
+    src: nginx-portal-server.conf.j2
+    dest: "{{ portal_config_dir }}/nginx/portal.conf"
+    mode: "0644"
+  vars:
+    _portal_has_crl: "{{ portal_crl_file | length > 0 }}"
+  register: _portal_nginx_conf
+  when: portal_own_nginx | bool
+
+# behind STIG Manager's nginx: for a person to read into that nginx - the role never changes it
+- name: Config | the nginx lines to add (nginx-portal.conf)
+  ansible.builtin.template:
+    src: nginx-portal.conf.j2
+    dest: "{{ portal_config_dir }}/nginx-portal.conf"
+    mode: "0644"
+  when: not portal_own_nginx | bool
+
+# ---------------------------------------------------------------- units
+- name: Units | was each already running
+  ansible.builtin.command:
+    argv: "{{ _portal_systemctl + ['is-active', item] }}"
+  loop: [site-portal-app.service, site-portal-nginx.service]
+  register: _portal_pre
+  changed_when: false
+  failed_when: false
+  check_mode: false                       # only reads
+
+- name: Units | an own nginx no longer wanted is stopped
+  ansible.builtin.systemd_service:
+    name: site-portal-nginx.service
+    state: stopped
+    scope: "{{ portal_scope }}"
+  when: not portal_own_nginx | bool and _portal_pre.results[1].stdout in ['active', 'activating', 'reloading']
+
+- name: Units | Quadlet files
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "{{ _portal_quadlet_dir }}/{{ item }}"
+    mode: "0644"
+  loop: "{{ ['site-portal-data.volume', 'site-portal-app.container'] + (['site-portal-nginx.container'] if portal_own_nginx | bool else []) }}"
+  vars:
+    _portal_has_trust: "{{ _portal_trust_parts.matched | int > 0 }}"
+  register: _portal_units
+
+- name: Units | an own nginx no longer wanted
+  ansible.builtin.file:
+    path: "{{ _portal_quadlet_dir }}/{{ item }}"
+    state: absent
+  loop: [site-portal-nginx.container, site-portal.network]
+  register: _portal_units_gone
+  when: not portal_own_nginx | bool
+
+- name: Units | reload systemd so Quadlet regenerates the services  # noqa: no-handler (must run before the next task, not at the end)
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+    scope: "{{ portal_scope }}"
+  when: _portal_units is changed or _portal_units_gone is changed
+
+- name: Units | started
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: started
+    scope: "{{ portal_scope }}"
+  loop: "{{ ['site-portal-app.service'] + (['site-portal-nginx.service'] if portal_own_nginx | bool else []) }}"
+  # a dry run of a FIRST deployment has no units yet (their files were not written): "would start"
+  ignore_errors: "{{ ansible_check_mode }}"
+
+# Restart a service only when it was ALREADY running and its inputs changed (started just above: it has them already)
+- name: Units | restart the service (what it runs changed)
+  ansible.builtin.systemd_service:
+    name: site-portal-app.service
+    state: restarted
+    scope: "{{ portal_scope }}"
+  vars:
+    _changed: "{{ _portal_units.results | selectattr('changed') | map(attribute='item') | list }}"
+  when: >-
+    _portal_pre.results[0].stdout in ['active', 'activating', 'reloading']
+    and ('site-portal-app.container' in _changed or _portal_app_files is changed or _portal_settings_file is changed
+         or _portal_actions_file is changed or _portal_secret_set is changed or _portal_trust is changed
+         or _portal_trust_gone is changed)
+
+- name: Units | restart its nginx (its server or certificates changed)
+  ansible.builtin.systemd_service:
+    name: site-portal-nginx.service
+    state: restarted
+    scope: "{{ portal_scope }}"
+  vars:
+    _changed: "{{ _portal_units.results | selectattr('changed') | map(attribute='item') | list }}"
+  when: >-
+    portal_own_nginx | bool and _portal_pre.results[1].stdout in ['active', 'activating', 'reloading']
+    and ('site-portal-nginx.container' in _changed or _portal_nginx_conf is changed or _portal_tls is changed
+         or _portal_crl_gone is changed)
+
+- name: Firewall | is the portal's port open (own nginx)
+  ansible.builtin.command:
+    argv: [firewall-cmd, --permanent, --query-port, "{{ portal_port }}/tcp"]
+  register: _portal_fw
+  changed_when: false
+  failed_when: false
+  check_mode: false                       # only reads
+  when: portal_own_nginx | bool and portal_firewall | bool and portal_scope == 'system'
+
+# the permanent rule and the running one, each by itself: no firewall-cmd --reload (that would drop podman's own rules)
+- name: Firewall | open it
+  ansible.builtin.command:
+    argv: [firewall-cmd, "{{ item }}", --add-port, "{{ portal_port }}/tcp"]
+  loop: [--permanent, --zone=public]
+  changed_when: true
+  when: portal_own_nginx | bool and portal_firewall | bool and portal_scope == 'system' and _portal_fw.rc | default(0) != 0
+    and 'not running' not in (_portal_fw.stderr | default(''))
+
+# ---------------------------------------------------------------- verify
+- name: Verify | DRY RUN - nothing was changed or started, so there is nothing to verify
+  ansible.builtin.debug:
+    msg: >-
+      DRY RUN (Check mode): the tasks above marked "changed" are what a real run would change
+      (tick Show changes, or --diff, to see the file changes). Nothing was changed or restarted.
+  when: ansible_check_mode
+
+# inside the container (it publishes no port): the service answers, and what AAP said
+- name: Verify | the service answers
+  ansible.builtin.command:
+    argv: [podman, exec, site-portal-app, /bin/sh, -c,
+           "for p in python3.13 python3.12 python3.11 python3.9 python3; do command -v $p >/dev/null 2>&1 && exec $p -c 'import urllib.request;
+           print(urllib.request.urlopen(\"http://127.0.0.1:8080/healthz\", timeout=5).read().decode())'; done; exit 1"]
+  register: _portal_ready
+  until: _portal_ready.rc == 0
+  retries: "{{ portal_ready_retries }}"
+  delay: "{{ portal_ready_delay }}"
+  changed_when: false
+  when: not ansible_check_mode
+
+# in the container too: its network path to AAP and its token - each action's state, and whether AAP templates launch
+# values (ALLOW_JINJA_IN_EXTRA_VARS "always"; the default "template" treats them as data)
+- name: Verify | AAP from the portal - each action, and ALLOW_JINJA_IN_EXTRA_VARS
+  ansible.builtin.command:
+    argv: [podman, exec, site-portal-app, /bin/sh, /app/start.sh, --aap-check]
+  register: _portal_aap_check
+  changed_when: false
+  failed_when: false
+  when: not ansible_check_mode
+
+- name: Verify | what AAP said
+  ansible.builtin.set_fact:
+    _portal_aap: >-
+      {{ _out if _out is mapping else (_out | from_json) if (_out is string and _out is match('^[{]'))
+         else {'aap': 'the check gave no answer: ' ~ (_portal_aap_check.stderr | default('') | trim)[-300:]} }}
+  vars:
+    _out: "{{ _portal_aap_check.stdout | default('') | trim }}"   # ansible-core 2.16 makes it a dict already
+  when: not ansible_check_mode
+
+- name: Verify | WARNING - ALLOW_JINJA_IN_EXTRA_VARS is "always"
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: AAP's ALLOW_JINJA_IN_EXTRA_VARS is "always": every extra var a launch gets is templated. The portal refuses
+      template braces in every value, but set it back to "template" (Settings > Job settings), the default, which treats
+      launch values as data. docs/SITE_PORTAL.md, "Security".
+  when: not ansible_check_mode and _portal_aap.jinja | default('') == 'always'
+
+- name: Verify | ALLOW_JINJA_IN_EXTRA_VARS could not be read
+  ansible.builtin.debug:
+    msg: >-
+      ALLOW_JINJA_IN_EXTRA_VARS could not be read (HTTP {{ _portal_aap.jinja_http | default('-') }}: the portal's account may
+      not read AAP's settings, which is right for it). Check it once by hand: Settings > Job settings > "Run Jinja in extra
+      variables" must not be Always. docs/SITE_PORTAL.md, "Security".
+  when: not ansible_check_mode and _portal_aap.aap | default('') == 'ok' and _portal_aap.jinja_http | default(0) != 200
+    and portal_check_jinja | bool
+
+- name: Verify | the nginx lines to add
+  ansible.builtin.slurp:
+    src: "{{ portal_config_dir }}/nginx-portal.conf"
+  register: _portal_lines
+  when: not ansible_check_mode and not portal_own_nginx | bool
+
+- name: Verify | summary
+  when: not ansible_check_mode
+  ansible.builtin.debug:
+    msg: "{{ _head + _tail }}"
+  vars:
+    _head: >-
+      {{ ['The site portal is up ' ~ (('with its own nginx on port ' ~ portal_port) if portal_own_nginx | bool
+          else ('on the podman network ' ~ portal_network)) ~ '. AAP: ' ~ ('answered (the account ' ~ _portal_aap.account | default('') ~ ')'
+          if _portal_aap.aap | default('') == 'ok' else 'NOT REACHED - ' ~ _portal_aap.aap | default('')) ~ '. Every launch is in journalctl'
+          ~ (' --user' if portal_scope == 'user' else '') ~ ' -u site-portal-app and in the data volume (portal-log.jsonl).']
+         + (['Actions and their state in AAP: ' ~ (_acts | dict2items | map(attribute='key') | zip(_acts | dict2items
+              | map(attribute='value')) | map('join', ' - ') | join('; ')) ~ '.'] if _acts else ['No action is listed.']) }}
+    _acts: "{{ _portal_aap.actions | default({}) }}"
+    _tail: >-
+      {{ ['The portal: ' ~ portal_public_url] if portal_own_nginx | bool else
+         ['Once, by hand: read the lines of ' ~ portal_config_dir ~ '/nginx-portal.conf (below) into the server block of your'
+          ~ ' reverse proxy, above its location /, then sudo podman exec <nginx> nginx -t and sudo podman exec <nginx> nginx -s'
+          ~ ' reload. The portal is then ' ~ portal_public_url ~ ' (docs/SITE_PORTAL.md, "Add /portal/ to your nginx").',
+          (_portal_lines.content | b64decode).splitlines() | reject('match', '^#') | list] }}
