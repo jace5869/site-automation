@@ -80,6 +80,15 @@
 {%- macro keep(text) -%}
 {%- for ln in text.split('\n') -%}{{ '\n' if not loop.first else '' }}{%- for w in ln.split(' ') -%}{{ ' ' if not loop.first else '' }}{{ nbw(w) }}{%- endfor -%}{%- endfor -%}
 {%- endmacro -%}
+{#- 1.67.0: in a table with the portal's buttons (dots = True) a host name of more than 24 characters breaks after a
+    dot (a place for it, never inside a label); any other word as nbw -#}
+{%- macro dw(w, dots) -%}
+{%- if dots and w | length > 24 and '.' in w.strip('.') and w.split('.')[-1][:1].isalpha() -%}
+<span class="lw dw">{{ w.split('.') | map('e') | join('.<wbr>') }}</span>
+{%- else -%}
+{{ nbw(w) }}
+{%- endif -%}
+{%- endmacro -%}
 {#- a chip: up to 12 characters on one line (sh); a longer one wraps, at a width by its length (2 to 4 lines); a long
     word of it breaks after a _ before anywhere else (ERROR_NO_LOGON_ / SERVERS, 1.24.0c) -#}
 {%- macro chip(k, text) -%}
@@ -708,12 +717,12 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
 {%- elif kd == 'wrap' %}
 {#- a column the report says wraps (1.12.0): its lines kept, a word up to 16 characters kept whole (cluster1-01, AFF-A400),
     a longer one breaks at its hyphens rather than widen the table (na-cluster-site-a-prod) #}
-<td class="k-wrap" data-l="{{ lbl | e }}" data-v="{{ text | e }}"><span class="cv">{% for ln in text.split('\n') %}{% if not loop.first %}{{ '\n' }}{% endif %}{% for w in ln.split(' ') %}{{ ' ' if not loop.first else '' }}{% if w | length <= 16 %}<span class="w">{{ nbw(w) }}</span>{% else %}{{ nbw(w) }}{% endif %}{% endfor %}{% endfor %}</span></td>
+<td class="k-wrap" data-l="{{ lbl | e }}" data-v="{{ text | e }}"><span class="cv">{% for ln in text.split('\n') %}{% if not loop.first %}{{ '\n' }}{% endif %}{% for w in ln.split(' ') %}{{ ' ' if not loop.first else '' }}{% if w | length <= 16 %}<span class="w">{{ nbw(w) }}</span>{% else %}{{ dw(w, 'link' in kinds) }}{% endif %}{% endfor %}{% endfor %}</span></td>
 {%- elif kd == 'mid' %}
 {#- each word kept whole: a line breaks at a space, never at a hyphen inside an id (RHEL-09-412035) #}
-<td class="k-mid" data-l="{{ lbl | e }}"><span class="cv">{% for ln in text.split('\n') %}{{ '\n' if not loop.first else '' }}{% for w in ln.split(' ') %}{{ ' ' if not loop.first else '' }}{% if w | length <= 24 %}<span class="w">{{ nbw(w) }}</span>{% else %}{{ nbw(w) }}{% endif %}{% endfor %}{% endfor %}</span></td>
+<td class="k-mid" data-l="{{ lbl | e }}"><span class="cv">{% for ln in text.split('\n') %}{{ '\n' if not loop.first else '' }}{% for w in ln.split(' ') %}{{ ' ' if not loop.first else '' }}{% if w | length <= 24 %}<span class="w">{{ nbw(w) }}</span>{% else %}{{ dw(w, 'link' in kinds) }}{% endif %}{% endfor %}{% endfor %}</span></td>
 {%- else %}
-<td class="k-{{ kd }}" data-l="{{ lbl | e }}">{% set kv = text | e if kd in ['num', 'pct'] else keep(text) %}{% if '<' in kv %}<span class="cv">{{ kv }}</span>{% else %}{{ kv }}{% endif %}</td>
+<td class="k-{{ kd }}" data-l="{{ lbl | e }}">{% if 'link' in kinds and kd == 'long' and '\n' not in text and text | length > 24 %}<span class="cv">{% for w in text.split(' ') %}{{ ' ' if not loop.first else '' }}{{ dw(w, true) }}{% endfor %}</span>{% else %}{% set kv = text | e if kd in ['num', 'pct'] else keep(text) %}{% if '<' in kv %}<span class="cv">{{ kv }}</span>{% else %}{{ kv }}{% endif %}{% endif %}</td>
 {%- endif %}
 {%- endfor %}
 </tr>

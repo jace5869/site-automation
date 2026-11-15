@@ -369,6 +369,21 @@ class Pages(unittest.TestCase):
             self.assertIn('<a class="btn pl" href="%s/actions/ckl_import" target="_blank" rel="noopener"' % URL, h)
             self.assertIn("<span>Import checklists</span></a>", h)
 
+    def test_button_stays_on_one_line_and_a_long_host_breaks_after_a_dot(self):
+        """The Ask ACT button never wraps to Ask / ACT (800 px), and a long host name breaks after a dot, never inside a
+        label; a short one is as before."""
+        by = dict(BY_HOST)
+        by["app-server-long-name-07.subdomain.example.mil"] = [
+            {"check": "eventlog", "id": "eventlog:errors", "severity": "warning", "summary": "41 errors", "hint": "x"}]
+        doc = sf.findings_report(by, "Health check", portal={"url": URL, "job": "4711"})
+        for look in ("atlas", "brief"):
+            h = self.render(look, doc)
+            self.assertIn("td.k-link a.btn{padding:3px 9px;font-size:12.5px;line-height:1.25;white-space:nowrap}", h)
+            self.assertIn('app-server-long-name-07.<wbr>subdomain.<wbr>example.<wbr>mil</span>', h)
+            self.assertNotIn("lin01.<wbr>", h)
+            plain = self.render(look, sf.findings_report(by, "Health check"))
+            self.assertNotIn("lw dw", plain)
+
     def test_as_before_without_the_setting(self):
         plain = sf.findings_report(BY_HOST, "Health check")
         for look in ("atlas", "brief"):
