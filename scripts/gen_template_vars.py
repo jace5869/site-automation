@@ -400,6 +400,20 @@ vmware_ask_image: aap.example.mil/site-ee-all:1
 ## The page's address, as people open it
 vmware_ask_public_url: https://stigman.example.mil/ask/
 """),
+    "site_portal_deploy.yml": ("Site portal - deploy", "Machine, Red Hat Ansible Automation Platform (the portal's own account, with a token)", "", """\
+## The podman network of STIG Manager's nginx container (docs/SITE_PORTAL.md, step 1: sudo podman ps): the portal joins
+## it and sits behind that nginx at /portal/ - its mTLS (the card) says who it is; the job never changes STIG Manager
+portal_network: stigman
+## The site's execution environment image (any image with Python 3), from your automation hub
+portal_image: aap.example.mil/site-ee-all:1
+## The folder the report jobs write the pages to, on that server (served read-only at /portal/reports/)
+portal_reports_dir: /srv/reports
+## The AAP inventory an action's host must be in, and who may decide approvals here (the CN of each card)
+portal_inventory: Site hosts
+portal_approvers: [DOE.JANE.Q.1234567890]
+## The address people open
+portal_public_url: https://stigman.example.mil/portal/
+"""),
     "trust_report.yml": ("Trust store report", "Machine", "check_trust", """\
 ## Only the certificates this list names are looked for (roles/check_trust/vars/main.yml ships the October 2026
 ## eMudhra set); add your own in check_trust_extra, change a severity in check_trust_severity

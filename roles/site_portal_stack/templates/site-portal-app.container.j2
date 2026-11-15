@@ -1,0 +1,37 @@
+# Managed by Ansible (site_portal_stack) - do not edit on the host
+[Unit]
+Description=Site portal - the service (the report website, the actions, the jobs, the approvals)
+Wants=network-online.target
+After=network-online.target
+{% if portal_own_nginx | bool %}
+Requires=site-portal-network.service
+After=site-portal-network.service
+{% endif %}
+
+[Container]
+ContainerName=site-portal-app
+Image={{ portal_image }}
+# {{ 'its own nginx\'s network' if portal_own_nginx | bool else 'the reverse proxy\'s network (its nginx reaches the service by name)' }}; no port on the server
+Network={{ 'site-portal.network' if portal_own_nginx | bool else portal_network }}
+Volume={{ portal_config_dir }}/app:/app:ro,Z
+Volume={{ portal_config_dir }}/settings.json:/etc/site-portal/settings.json:ro,Z
+Volume={{ portal_config_dir }}/actions.json:/etc/site-portal/actions.json:ro,Z
+Volume=site-portal-data.volume:/data:U,Z
+# the report website, read-only
+Volume={{ portal_reports_dir }}:/reports:{{ portal_reports_mount }}
+Environment=PORTAL_SETTINGS=/etc/site-portal/settings.json
+{% if _portal_has_trust | bool %}
+# the CAs AAP's certificate is checked against (this server's)
+Volume={{ portal_config_dir }}/trust.pem:/etc/site-portal/trust.pem:ro,Z
+Environment=SSL_CERT_FILE=/etc/site-portal/trust.pem
+{% endif %}
+# the AAP token comes from a podman secret: not in this file, not in `podman inspect`
+Secret=site-portal-aap-token,type=env,target=PORTAL_AAP_TOKEN
+Exec=/bin/sh /app/start.sh
+
+[Service]
+Restart=always
+TimeoutStartSec=300
+
+[Install]
+WantedBy={{ 'default.target' if portal_scope == 'user' else 'multi-user.target' }}

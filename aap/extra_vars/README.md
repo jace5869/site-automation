@@ -84,6 +84,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | ServiceNow - weekly activity report | `playbooks/servicenow_war.yml` | [servicenow_war.yml](servicenow_war.yml) |
 | ServiceNow health | `playbooks/servicenow_health.yml` | [servicenow_health.yml](servicenow_health.yml) |
 | ServiceNow tickets | `playbooks/servicenow_tickets.yml` | [servicenow_tickets.yml](servicenow_tickets.yml) |
+| Site portal - deploy | `playbooks/site_portal_deploy.yml` | [site_portal_deploy.yml](site_portal_deploy.yml) |
 | SOP - Word document | `playbooks/incident_sop.yml` | [incident_sop.yml](incident_sop.yml) |
 | STIG drift report | `playbooks/stig_drift_report.yml` | [stig_drift_report.yml](stig_drift_report.yml) |
 | STIG Manager - availability | `playbooks/stigman_availability.yml` | [stigman_availability.yml](stigman_availability.yml) |

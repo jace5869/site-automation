@@ -1,0 +1,30 @@
+---
+# Deploy / reconcile the site portal: the report website at /portal/reports/, the actions a report offers (a confirm
+# page, then AAP's workflow or job template launched with the checked values and the person's name), the live view of
+# what was started, and the approvals - behind STIG Manager's nginx (its mTLS says who it is), or with an nginx of its
+# own (portal_own_nginx: true). docs/SITE_PORTAL.md. It never changes STIG Manager: the lines its nginx needs are
+# written to /etc/site-portal/nginx-portal.conf and shown at the end, for a person to add.
+#
+# AAP job template credentials: Machine (ssh + sudo), "Red Hat Ansible Automation Platform" (the portal's own account,
+# with a token: Execute on the listed workflows and templates, Approve on those with an approval node), and optionally
+# "Container registry login (hosts)". Nothing secret goes in variables.
+#
+#   ansible-playbook playbooks/site_portal_deploy.yml -l stigman01.example.mil
+- name: Target check (stops with a clear message when target matches no host)
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: The target leaves at least one host to run on
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: target_check.yml
+      vars:
+        _target_pattern: "{{ target | default('site_portal') }}"
+
+- name: Site portal
+  hosts: "{{ target | default('site_portal') }}"
+  become: true
+  gather_facts: true
+  gather_subset: [min]
+  roles:
+    - role: site_portal_stack

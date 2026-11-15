@@ -33,6 +33,7 @@ click at a time.
 | **VM outage watch** | Is something down or hung right now: hosts, HA, datastores, VMs on a question, hung VMs (no heartbeat AND no answer on the network). Quiet when clean; a report and a ServiceNow incident per problem when not. Watch only for now: it restarts nothing ([VM_OUTAGE_WATCH.md](VM_OUTAGE_WATCH.md)) | Every 5 to 15 minutes |
 | **VM - ask a question** | Ask vCenter in plain words: *all VMs with dbv in the name*, *VMs on datastores under 10% free*, *hosts in maintenance mode*. GenAI turns the question into a query the job checks; the job only reads, and refuses a question that asks for a change ([VM_ASK.md](VM_ASK.md)) | On demand |
 | **VMware ask** (a web page) | The same as a page at STIG Manager's /ask/: open it with your card, ask, the answer in seconds - for people without AAP. Read-only; who asked what is kept ([VMWARE_ASK.md](VMWARE_ASK.md)) | Set up once |
+| **Site portal** (a web page) | The reports and what to do about them in one place at STIG Manager's /portal/: open it with your card, press Run on a report's action, follow the job to its end, approve or deny. Only the listed actions ([SITE_PORTAL.md](SITE_PORTAL.md)) | Set up once |
 | **Log analysis** | Point it at a group of servers (Linux, Windows, a vCenter appliance) or at vCenter and its ESXi hosts: their log lines grouped into patterns, and ACT's likely cause, fix and confidence for each ([LOG_ANALYSIS.md](LOG_ANALYSIS.md)) | On demand, or daily |
 
 Every check is **read-only**. It looks and reports, and changes nothing. Patching changes servers,

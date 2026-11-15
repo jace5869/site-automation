@@ -1,0 +1,11 @@
+# Site portal - the lines to add to your reverse proxy's nginx (STIG Manager's), written by roles/site_portal_stack: it
+# never changes your nginx. Read them INTO its server { } block - the one with listen 443 ssl and ssl_verify_client
+# (on or optional) - above its location /. Then, with the nginx container's name:
+#   sudo podman exec <nginx> nginx -t    && sudo podman exec <nginx> nginx -s reload
+# (docs/SITE_PORTAL.md, "Add /portal/ to your nginx"). Nothing else in that block changes: STIG Manager stays as it is.
+#
+# The service is looked up when a request comes (the resolver and the variable), not when nginx starts: nginx starts,
+# and STIG Manager works, while the portal is down - /portal/ then answers 502 alone.
+# Who it is, is the client certificate this nginx verified: the two X-SSL-Client headers are set here on every request,
+# over anything the browser sent, and the portal refuses a request without SUCCESS.
+{% include 'portal-location.conf.j2' %}

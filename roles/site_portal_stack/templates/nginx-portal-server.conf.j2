@@ -1,0 +1,31 @@
+# Managed by Ansible (site_portal_stack) - do not edit on the host
+# portal_own_nginx: the portal's own server - TLS, and a card's certificate on every request (ssl_verify_client on)
+server {
+    listen 8443 ssl;
+    server_name {{ portal_server_name }};
+    ssl_certificate         /etc/site-portal-tls/server.pem;
+    ssl_certificate_key     /etc/site-portal-tls/server.key;
+    ssl_protocols           TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache       shared:portal:10m;
+    ssl_client_certificate  /etc/site-portal-tls/ca.pem;
+    ssl_verify_client       on;
+    ssl_verify_depth        {{ portal_verify_depth }};
+{% if _portal_has_crl | bool %}
+    ssl_crl                 /etc/site-portal-tls/crl.pem;
+{% endif %}
+    server_tokens off;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+
+    location = / {
+        absolute_redirect off;
+        return 302 {{ portal_path }};
+    }
+{% filter indent(4, first=true) %}
+{% include 'portal-location.conf.j2' %}
+{% endfilter %}
+
+    location / {
+        return 404;
+    }
+}

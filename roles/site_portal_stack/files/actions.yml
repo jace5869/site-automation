@@ -1,0 +1,18 @@
+---
+# The site portal's actions (docs/SITE_PORTAL.md, "The actions"): what a person may start from a report page, after
+# the portal's confirm page. Only these can be launched, and only with the values their vars allow. The loader and
+# its rules: plugins/filter/site_portal_filters.py. The setting portal_actions (a dict of the same shape) replaces
+# this file.
+#
+# actions:
+#   <name>:                                   # lower case letters, digits and _
+#     title: Recheck this system
+#     aap: {type: workflow, name: "<the workflow's name in AAP>"}    # or type: job (a job template)
+#     vars:                                   # each key is the extra var's name
+#       target: {kind: inventory_host}        # a host of AAP's inventory portal_inventory
+#       mode: {kind: choice, values: [import, scorecard], default: import}
+#       report_job: {kind: text, max: 12, pattern: '[0-9]{1,12}'}
+#     limit_from: target                      # optional: the launch's limit
+#     approval: false                         # shown on the page; the workflow's approval node holds it
+#     who: any                                # optional: or a list of CNs; left out = portal_requesters
+actions: {}
