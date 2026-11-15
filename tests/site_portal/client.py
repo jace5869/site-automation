@@ -64,7 +64,7 @@ def post(path, body, tok, origin):
 
 if step == "get":
     code, h, b = call(args[0], headers={"X-SSL-Client-S-DN": "CN=FORGED.NAME.9999999999", "X-SSL-Client-Verify": "SUCCESS"})
-    out = {"code": code, "location": h.get("Location", ""), "body": b[:600], "csp": h.get("Content-Security-Policy", "")}
+    out = {"code": code, "location": h.get("Location", ""), "body": b[:3000], "csp": h.get("Content-Security-Policy", "")}
     if args[0].startswith("/portal/api/"):
         try:
             out["json"] = json.loads(b)

@@ -23,10 +23,8 @@ body { margin: 0; color: var(--ink); background: var(--bg); font: var(--step)/1.
        letter-spacing: -0.005em; min-height: 100vh; display: flex; flex-direction: column; }
 a { color: var(--accent); text-underline-offset: 2px; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.banner { text-align: center; font: 700 12px/1.6 system-ui, sans-serif; letter-spacing: .08em; }
-.banner-u { background: #007a33; color: #fff; } .banner-cui { background: #502b85; color: #fff; }
-.banner-c { background: #0033a0; color: #fff; } .banner-s { background: #c8102e; color: #fff; }
-.banner-ts { background: #ff8c00; color: #000; } .banner-sci { background: #fce83a; color: #000; }
+/* the reports' banner (report_banner): its colours come from static/banner.css, made from report_banner_color */
+.banner { text-align: center; font: 700 12px/1.6 system-ui, sans-serif; letter-spacing: .08em; padding: 1px 8px; }
 header.top { display: flex; align-items: center; gap: 8px 24px; flex-wrap: wrap; padding: 14px 16px;
              max-width: 1120px; width: 100%; margin: 0 auto; border-bottom: 1px solid var(--line); }
 .home { font-weight: 700; color: var(--ink); text-decoration: none; letter-spacing: -0.02em; font-size: 1.1em; }
@@ -92,6 +90,7 @@ pre.out { background: var(--code-bg); border: 1px solid var(--line); border-radi
 #j-links li { overflow-wrap: anywhere; margin: 4px 0; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin: 12px 0; }
 .card h2 { margin: 0 0 4px; font-size: 1.1em; }
+.muted-line { color: var(--muted); font-size: .9em; margin: 10px 0 2px; }
 .card .facts { border: 0; padding: 4px 0; margin: 4px 0; background: transparent; }
 @media (prefers-reduced-motion: no-preference) {
   .chip.run .mark { animation: pulse 1.6s ease-in-out infinite; }

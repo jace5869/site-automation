@@ -177,6 +177,7 @@
     - {src: static/portal.css, dest: static/portal.css}
     - {src: "{{ role_path }}/../../plugins/filter/site_portal_filters.py", dest: site_portal_filters.py}
     - {src: "{{ role_path }}/../../plugins/module_utils/site_aap.py", dest: site_aap.py}
+    - {src: "{{ role_path }}/../../plugins/module_utils/site_time.py", dest: site_time.py}
   loop_control:
     label: "{{ item.dest }}"
   register: _portal_app_files
@@ -265,6 +266,16 @@
   register: _portal_secret_set
 
 # ---------------------------------------------------------------- configuration
+# The reports' banner, worked out as roles/site_email does (plugins/module_utils/site_banner.py), the portal's server as
+# the host held to site_enclave_classified_domains
+- name: Config | the banner (the reports' report_banner, report_banner_text, report_banner_color, site_enclave)
+  ansible.builtin.set_fact:
+    _portal_banner: >-
+      {{ {'banner': report_banner | default('auto'), 'text': report_banner_text | default('SECRET'),
+          'color': report_banner_color | default(''), 'subject': false, 'enclave': site_enclave | default(''),
+          'domains': site_enclave_classified_domains | default([]),
+          'hosts': [inventory_hostname] | report_banner_hosts(hostvars)} | report_banner }}
+
 # The settings and the actions as files (JSON), not in the unit: free text needs no quoting there
 - name: Config | the service's settings
   ansible.builtin.copy:
@@ -275,7 +286,9 @@
     _settings:
       PORTAL_PATH: "{{ portal_path }}"
       PORTAL_TITLE: "{{ portal_title }}"
-      PORTAL_CLASSIFICATION: "{{ portal_classification }}"
+      PORTAL_BANNER: "{{ {'on': _portal_banner.on, 'text': _portal_banner.text, 'bg': _portal_banner.bg, 'fg': _portal_banner.fg} }}"
+      PORTAL_TIME_ZONE: "{{ report_time_zone | default('') }}"
+      PORTAL_SELF_APPROVAL: "{{ '1' if portal_allow_self_approval | bool else '0' }}"
       PORTAL_DATA: /data
       PORTAL_REPORTS: /reports
       PORTAL_ACTIONS: /etc/site-portal/actions.json

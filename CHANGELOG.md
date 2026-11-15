@@ -20,6 +20,10 @@ step 100.
 - **Every launch, refusal and decision** is a JSON line in the journal and in `portal-log.jsonl` (the volume
   `site-portal-data`).
 - **Its own nginx** (`portal_own_nginx: true`): TLS and the cards on a server without STIG Manager.
+- **Not your own run:** an approver cannot decide a run they started through the portal (one muted line says so; the
+  refusal is logged). `portal_allow_self_approval: true` allows it.
+- **The banner and the times are the reports' own:** `report_banner`, `report_banner_text`, `report_banner_color`,
+  `site_enclave`; times in `report_time_zone`, 24 h (`2026-11-15 20:06 CET`), UTC when it is empty.
 
 **What it may start.** Only what `roles/site_portal_stack/files/actions.yml` lists (or `portal_actions`), with the
 values its rules allow. One loader checks the file at deploy and at start (plugins/filter/site_portal_filters.py).

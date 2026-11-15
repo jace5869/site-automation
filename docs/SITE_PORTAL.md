@@ -249,6 +249,9 @@ correct it; Run checks everything again.
 schedule, a person in AAP). Each shows who started it through the portal, with which values, and since when it waits.
 
 - **Approve** and **Deny** are there only for the people in `portal_approvers`. Others see the list.
+- **Not your own run.** An approver who started a run through the portal does not get Approve and Deny for it: one
+  muted line says another approver decides. The portal refuses such a decision and logs it.
+  `portal_allow_self_approval: true` allows it.
 - **AAP records the decision as the portal's own account.** The portal's log keeps who decided: the name on the
   card, the decision and the time. The page says so.
 - AAP's own approval page works as before.
@@ -267,6 +270,18 @@ sudo tail -5 "$(sudo podman volume inspect site-portal-data --format '{{.Mountpo
 
 A launch line holds the person (`user`), the action, the values, the job's id (`job_id`), the limit and the time
 (`at`, UTC). A decision line holds the approver, `approve` or `deny`, the approval's id and who had started it.
+
+## The banner and the times
+
+The portal uses the reports' own settings, so its pages and the report pages match:
+
+- **The banner** is the reports' banner: `report_banner` (`auto`: on in the classified enclave), `report_banner_text`
+  and `report_banner_color`, with `site_enclave` and `site_enclave_classified_domains` (the portal's server is the host
+  held to them). Off: no banner, as on the report pages. Set them once, in `all.yml`.
+- **The times** are in `report_time_zone`, 24 h, as the report pages show them: `2026-11-15 20:06 CET`. Empty: UTC,
+  `2026-11-15 19:06 UTC`. The log keeps UTC.
+
+Run the deploy again after you change one of them.
 
 ## Security
 
@@ -324,7 +339,7 @@ and [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md). The ones you are likely to
 | `portal_actions` | `{}` | the actions; `{}` = the role's `files/actions.yml` |
 | `portal_path` | `/portal/` | the path on nginx |
 | `portal_public_url` | `https://<the server>/portal/` | the address people open (said at the end) |
-| `portal_classification` | `U` | the banner: U, CUI, C, S, TS, SCI, NONE |
+| `portal_allow_self_approval` | false | true = an approver may decide a run they started themselves |
 | `portal_launches_per_hour` | 20 | one person's launches in an hour, at most |
 | `portal_aap_ui` | AAP's address | the address of AAP's pages, for the *Open in AAP* links |
 | `portal_own_nginx` | false | its own nginx (TLS, the cards) instead of STIG Manager's |

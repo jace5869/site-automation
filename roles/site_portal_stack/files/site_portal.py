@@ -37,9 +37,11 @@ APP = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, APP)
 import site_portal_filters as rules  # noqa: E402  the actions' loader and rules (the deploy checks with the same)
 import site_aap  # noqa: E402  AAP's API (the same client as the jobs' modules)
+import site_time  # noqa: E402  the reports' times in report_time_zone (the same as the report pages)
+from site_time import local as in_zone  # noqa: E402
 
-BANNERS = {"U": ("UNCLASSIFIED", "#007a33", "#fff"), "CUI": ("CUI", "#502b85", "#fff"), "C": ("CONFIDENTIAL", "#0033a0", "#fff"),
-           "S": ("SECRET", "#c8102e", "#fff"), "TS": ("TOP SECRET", "#ff8c00", "#000"), "SCI": ("TOP SECRET//SCI", "#fce83a", "#000")}
+HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
+AAP_TIME = re.compile(r"^(\d{4}-\d\d-\d\d)[T ](\d\d:\d\d)")
 BODY_MAX = 65536                    # a POST's body
 TOKEN_HOURS = 8                     # a page's token is good this long
 DONE = ("successful", "failed", "error", "canceled")
@@ -86,7 +88,7 @@ class Config(object):
         if e.get("PORTAL_SETTINGS"):
             with open(e["PORTAL_SETTINGS"]) as fh:
                 raw = json.load(fh)
-        e = dict({k: (v if isinstance(v, list) else str(v)) for k, v in raw.items()}, **e)
+        e = dict({k: (v if isinstance(v, (list, dict)) else str(v)) for k, v in raw.items()}, **e)
 
         def g(name, default=""):
             v = e.get(name)
@@ -108,7 +110,19 @@ class Config(object):
         self.per_hour = max(1, int(g("PORTAL_LAUNCHES_PER_HOUR", "20")))
         self.events = max(20, min(2000, int(g("PORTAL_JOB_EVENTS", "300"))))
         self.title = g("PORTAL_TITLE", "Site portal")
-        self.classification = g("PORTAL_CLASSIFICATION", "U").upper()
+        # the reports' banner (report_banner, report_banner_text, report_banner_color, site_enclave), as the deploy
+        # worked it out with plugins/module_utils/site_banner.py: {on, text, bg, fg}; off = no banner
+        try:
+            b = json.loads(g("PORTAL_BANNER", "{}")) if isinstance(g("PORTAL_BANNER", "{}"), str) else g("PORTAL_BANNER")
+        except ValueError:
+            b = {}
+        b = b if isinstance(b, dict) else {}
+        self.banner = {"on": flag(b.get("on")), "text": str(b.get("text") or "")[:120],
+                       "bg": b.get("bg") if HEX.match(str(b.get("bg") or "")) else "#4d4d4d",
+                       "fg": b.get("fg") if HEX.match(str(b.get("fg") or "")) else "#ffffff"}
+        # the reports' time zone (report_time_zone): times shown as the report pages show them, "2026-11-13 05:37 CET"
+        self.tz, self.tz_note = site_time.zone(g("PORTAL_TIME_ZONE"))
+        self.self_approval = flag(g("PORTAL_SELF_APPROVAL", "0"))
         self.aap_ui = g("PORTAL_AAP_UI", self.aap_url)                          # AAP's own pages, for the links
 
 
@@ -284,6 +298,15 @@ class Aap(object):
         return known
 
 
+def shown(cfg, iso):
+    """An AAP or log time (2026-11-15T19:06:30.123456Z) as the report pages show times: '2026-11-15 20:06 CET' in
+    report_time_zone, '2026-11-15 19:06 UTC' without one; '' for none."""
+    m = AAP_TIME.match(str(iso or ""))
+    if not m:
+        return ""
+    return in_zone("%s %s UTC" % m.groups(), cfg.tz)
+
+
 def clean(text, limit=None):
     t = ANSI.sub("", str(text or ""))
     return t if limit is None else t[-limit:]
@@ -453,7 +476,9 @@ class Portal(object):
                 "done": u.get("status") in DONE, "action": r.get("action", ""),
                 "action_title": self.actions.get(r.get("action"), {}).get("title", r.get("action", "")), "requested_by": r.get("user", ""),
                 "requested_at": r.get("at", ""), "values": r.get("values", {}) if rec else {}, "limit": r.get("limit", "") if rec else "",
-                "via": via if parent else None, "aap_link": self.ui_link(kind, jid)}
+                "via": via if parent else None, "aap_link": self.ui_link(kind, jid),
+                "started_text": shown(self.cfg, u.get("started")), "finished_text": shown(self.cfg, u.get("finished")),
+                "requested_at_text": shown(self.cfg, r.get("at"))}
         if kind == "workflow_job":
             code, nodes = self.aap.call("GET", "workflow_jobs/%d/workflow_nodes/?page_size=200&order_by=id" % jid)
             steps = []
@@ -502,8 +527,9 @@ class Portal(object):
             else "%s/#/jobs/%s/%d/output" % (base, part, jid)
 
     # -- approvals
-    def approvals(self):
-        """The pending approvals of the listed workflows -> (code, {approvals, note})."""
+    def approvals(self, cn=""):
+        """The pending approvals of the listed workflows -> (code, {approvals}). With the person: whether they may decide
+        each one (an approver, and not a run they started themselves - portal_allow_self_approval)."""
         wf_ids = {}
         for name, a in self.actions.items():
             if a["aap"]["type"] == "workflow":
@@ -529,8 +555,12 @@ class Portal(object):
                         "timeout": ap.get("approval_expiration") or "", "workflow_job": int(wid), "workflow": wj.get("name", ""),
                         "action": a["name"], "title": a["title"],
                         "requested_by": rec.get("user") or "", "values": rec.get("values") or {},
-                        "launched_in": "the portal" if rec else "AAP (a schedule or a person there)"})
-        return 200, {"approvals": out}
+                        "launched_in": "the portal" if rec else "AAP (a schedule or a person there)",
+                        "created_text": shown(self.cfg, ap.get("created")), "timeout_text": shown(self.cfg, ap.get("approval_expiration"))})
+        for a in out:
+            a["self"] = bool(cn) and a["requested_by"] == cn
+            a["may_decide"] = cn in self.cfg.approvers and not (a["self"] and not self.cfg.self_approval)
+        return 200, {"approvals": out, "self_approval": self.cfg.self_approval}
 
     def decide(self, cn, ip, aid, decision):
         if cn not in self.cfg.approvers:
@@ -542,6 +572,10 @@ class Portal(object):
         ap = next((x for x in listing["approvals"] if x["id"] == aid), None)
         if not ap:
             return 404, {"error": "Approval %d is not pending for a listed workflow (decided already, or timed out)." % aid}
+        if ap["requested_by"] == cn and not self.cfg.self_approval:
+            self.log.add({"event": "refused", "user": cn, "ip": ip, "approval": aid, "decision": decision,
+                          "why": "self-approval: the person started this run"})
+            return 403, {"error": "You started this run: another approver decides (portal_allow_self_approval: false)."}
         code, data = self.aap.call("POST", "workflow_approvals/%d/%s/" % (aid, decision), {})
         if code not in (200, 201, 202, 204):
             self.log.add({"event": "decision_failed", "user": cn, "ip": ip, "approval": aid, "decision": decision,
@@ -559,8 +593,7 @@ def esc(s):
 
 def shell(cfg, title, body, user="", token="", page="", data=None):
     """A page: the banner, the header with who, the body; its script is static/portal.js (no inline script)."""
-    label, bg, fg = BANNERS.get(cfg.classification, ("", "", ""))
-    banner = ('<div class="banner banner-%s">%s</div>' % (esc(cfg.classification.lower()), esc(label))) if label else ""
+    banner = ('<div class="banner">%s</div>' % esc(cfg.banner["text"])) if cfg.banner["on"] else ""
     nav = "".join('<a href="%s%s"%s>%s</a>' % (cfg.path, href, ' aria-current="page"' if page == key else "", esc(text))
                   for key, href, text in (("home", "", "Actions"), ("reports", "reports/", "Reports"),
                                           ("approvals", "approvals", "Approvals")))
@@ -570,10 +603,11 @@ def shell(cfg, title, body, user="", token="", page="", data=None):
         meta += '<meta name="portal-data" content="%s">' % esc(json.dumps(data))
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1">%s<title>%s - %s</title>'
-            '<link rel="stylesheet" href="%sstatic/portal.css"><script src="%sstatic/portal.js" defer></script></head>'
+            '<link rel="stylesheet" href="%sstatic/portal.css"><link rel="stylesheet" href="%sstatic/banner.css">'
+            '<script src="%sstatic/portal.js" defer></script></head>'
             '<body data-page="%s">%s<header class="top"><a class="home" href="%s">%s</a><nav>%s</nav>'
             '<span class="who">%s</span></header><main>%s</main>%s</body></html>'
-            % (meta, esc(title), esc(cfg.title), cfg.path, cfg.path, esc(page), banner, cfg.path, esc(cfg.title), nav,
+            % (meta, esc(title), esc(cfg.title), cfg.path, cfg.path, cfg.path, esc(page), banner, cfg.path, esc(cfg.title), nav,
                esc(user), body, banner))
 
 
@@ -590,14 +624,14 @@ def home_page(cfg, portal, cn):
     mine = [r for r in portal.log.read("launch") if r.get("user") == cn][-10:]
     recent = "".join('<tr><td class="num"><a href="%sjobs/%d">%d</a></td><td>%s</td><td>%s</td></tr>' % (
         cfg.path, int(r["job_id"]), int(r["job_id"]), esc(portal.actions.get(r.get("action"), {}).get("title", r.get("action"))),
-        esc(r.get("at", ""))) for r in reversed(mine))
+        esc(shown(cfg, r.get("at")))) for r in reversed(mine))
     body = ('<h1>What you can start</h1>'
             '<p class="lede">Each action asks you to confirm before it starts. The report pages link here with the values filled in.</p>'
             '%s<h2>You started</h2>%s'
             % (('<ul class="actions">%s</ul>' % "".join(rows)) if rows else
                '<p class="empty">No action is open to you here. portal_requesters and each action\'s who say who may run what.</p>',
-               ('<table class="list"><thead><tr><th class="num">Job</th><th>Action</th><th>When (UTC)</th></tr></thead><tbody>%s</tbody></table>'
-                % recent) if recent else '<p class="empty">Nothing yet.</p>'))
+               ('<table class="list"><thead><tr><th class="num">Job</th><th>Action</th><th>%s</th></tr></thead><tbody>%s</tbody></table>'
+                % (esc(site_time.column("When (UTC)", cfg.tz)), recent)) if recent else '<p class="empty">Nothing yet.</p>'))
     return shell(cfg, "Actions", body, cn, page="home")
 
 
@@ -669,7 +703,8 @@ def approvals_page(cfg, portal, cn):
             '<p class="note">AAP records each decision made here as the portal\'s own account. The portal\'s log keeps who decided: '
             'your name, the decision and the time.</p><p class="status" id="a-status" aria-live="polite">Asking AAP…</p>'
             '<div id="approvals" data-approver="%s"></div>'
-            % (" You may approve or deny." if approver else " You can see them; only the approvers (portal_approvers) may decide.",
+            % ((" You may approve or deny - not a run you started yourself." if not cfg.self_approval else " You may approve or deny.")
+               if approver else " You can see them; only the approvers (portal_approvers) may decide.",
                "1" if approver else "0"))
     return shell(cfg, "Approvals", body, cn, token=portal.token(cn), page="approvals")
 
@@ -742,6 +777,9 @@ def make_handler(cfg, portal, static_dir):
             path = u.path
             if path == "/healthz":
                 return self._send(200, {"ok": True, "actions": len(portal.actions), "aap": portal.aap.ready or "ok"})
+            if path == "/static/banner.css":            # the reports' banner colours (report_banner_color): no inline style
+                return self._send(200, ".banner{background:%s;color:%s}\n" % (cfg.banner["bg"], cfg.banner["fg"]),
+                                  "text/css; charset=utf-8", [("Cache-Control", "no-cache")])
             if path in ("/static/portal.js", "/static/portal.css"):
                 name = path.rsplit("/", 1)[1]
                 with open(os.path.join(static_dir, name), "rb") as fh:
@@ -772,7 +810,7 @@ def make_handler(cfg, portal, static_dir):
             if path == "/approvals":
                 return self._send(200, approvals_page(cfg, portal, cn), "text/html; charset=utf-8")
             if path == "/api/approvals":
-                code, data = portal.approvals()
+                code, data = portal.approvals(cn)
                 return self._send(code, data)
             if path == "/api/me":
                 return self._send(200, {"user": cn, "approver": cn in cfg.approvers,
@@ -838,6 +876,8 @@ def make_handler(cfg, portal, static_dir):
 
 def serve(cfg):
     portal = Portal(cfg)
+    if cfg.tz_note:
+        portal.log.add({"event": "note", "why": cfg.tz_note})
     why = portal.aap.connect()
     if why:
         portal.log.add({"event": "start", "aap": why})

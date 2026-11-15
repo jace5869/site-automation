@@ -91,6 +91,7 @@ chmod 0644 "$k"/*.key
 printf 'all:\n  hosts:\n    localhost: {ansible_connection: local, ansible_python_interpreter: %s}\n' "$py" > "$work/inv.yml"
 cat > "$work/vars.json" <<EOF
 {"target": "localhost", "ansible_become": false, "portal_scope": "user", "portal_config_dir": "$work/etc",
+ "report_banner": true, "report_banner_text": "CUI", "report_time_zone": "America/New_York",
  "portal_image": "$image", "portal_network": "$net", "portal_server_name": "localhost",
  "portal_public_url": "https://localhost:$port/portal/", "portal_reports_dir": "$work/reports",
  "portal_inventory": "Site hosts", "portal_approvers": ["APPROVER.ALEX.B.3456789012"], "portal_ready_delay": 2,
@@ -257,6 +258,13 @@ if [ "$(echo "$r" | jq_ 'd["code"]')" = 200 ] && grep -q "workflow_approvals/$ai
 else fail "approve by an approver" "$r"; fi
 r="$(c "$k/jdoe" wait "$wf")"
 [ "$(echo "$r" | jq_ 'd.get("status")')" = "successful" ] && pass "the approved workflow ran to the end" || fail "the approved workflow ran" "$r"
+# not your own run: the approver starts one, and may not decide it (portal_allow_self_approval: false)
+r="$(c "$k/appr" launch ckl_import '{"stigman_ckl_import_mode": "import"}')"
+wfs="$(echo "$r" | jq_ 'd["body"].get("job_id", "")')"
+aids="$(c "$k/appr" get /portal/api/approvals | jq_ '[(a["id"], a["may_decide"]) for a in d["json"]["approvals"] if a["workflow_job"] == '"${wfs:-0}"'][0]')"
+r="$(c "$k/appr" decide "$(echo "$aids" | tr -d '(),' | awk '{print $1}')" approve)"
+case "$aids:$r" in *"False)"*'"code": 403'*"You started this run"*) pass "not your own run: an approver may not decide a run they started";;
+    *) fail "not your own run" "$aids $r";; esac
 r="$(c "$k/jdoe" launch ckl_import '{}')"
 wf2="$(echo "$r" | jq_ 'd["body"].get("job_id", "")')"
 aid2="$(c "$k/appr" get /portal/api/approvals | jq_ '[a["id"] for a in d["json"]["approvals"] if a["workflow_job"] == '"${wf2:-0}"'][0]')"
@@ -277,7 +285,7 @@ dec = [(r["user"], r["decision"]) for r in recs if r["event"] == "decision" and 
 ref = [r.get("why", "") for r in recs if r["event"] == "refused"]
 assert ok, "the launch line"
 assert dec == [("APPROVER.ALEX.B.3456789012", "approve"), ("APPROVER.ALEX.B.3456789012", "deny")], dec
-for w in ("not on the action's list", "values", "not from a portal page", "not a listed action"):
+for w in ("not on the action's list", "values", "not from a portal page", "not a listed action", "self-approval"):
     assert any(x.startswith(w) for x in ref), (w, ref)
 assert any(r.get("why") == "not an approver" for r in recs if r["event"] == "refused")
 EOF
@@ -286,6 +294,13 @@ else fail "the log lines" "$(tail -8 "$work/log.jsonl")"; fi
 if podman logs site-portal-app 2>&1 | grep -q '"event": "launch"'; then pass "the journal has the same lines"; else fail "the journal's lines"; fi
 leak="$( (grep -rl "test-token-1670" "$work/etc" "$units" "$work/log.jsonl"; podman inspect site-portal-app | grep -c "test-token-1670" | grep -v '^0$') 2>/dev/null)"
 [ -z "$leak" ] && pass "the AAP token: not in a file, a unit, the log or podman inspect" || fail "the token leaked" "$leak"
+r="$(c "$k/jdoe" get /portal/)"; css="$(c "$k/jdoe" get /portal/static/banner.css)"; t="$(c "$k/jdoe" get "/portal/api/jobs/$job2")"
+if echo "$r" | grep -q 'class=\\"banner\\">CUI</div>' && echo "$css" | grep -q "#502b85" \
+    && echo "$t" | jq_ 'd["json"]["started_text"]' | grep -Eq '^[0-9-]{10} [0-9:]{5} E[SD]T$'; then
+    pass "the reports' banner (report_banner, its text and colour) and times in report_time_zone"
+else fail "the banner and the times" "$r
+$css
+$t"; fi
 
 # ---- the screenshots (a test-only server: one fixed person, the approver) ------------------------------------------------
 if [ -n "$(command -v google-chrome chromium chromium-browser 2>/dev/null | head -1)" ]; then

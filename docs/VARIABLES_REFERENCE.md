@@ -1751,12 +1751,12 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_path` | `/portal/` | the portal's path on the proxy |
 | `portal_public_url` | `"https://{{ portal_server_name }}{{ (':' ~ portal_port) if portal_own_nginx \| bool and po…` | the portal's address, as people open it (said at the end) |
 | `portal_title` | `Site portal` | the pages' title |
-| `portal_classification` | `U` | banner: U, CUI, C, S, TS, SCI, NONE |
 | `portal_reports_dir` | `/srv/reports` | the report website: the folder on this host the report jobs write the pages to (report_web_dest's folder, e.g. the folder STIG Manager's nginx serves /reports/ from). Read-only for the portal; served at /portal/reports/ |
 | `portal_reports_mount` | `ro,z` | how that folder is mounted: ro,z = read-only, SELinux label shared with other containers (a folder another container mounts with :Z, a private label, is relabeled by that container's next start - see docs/SITE_PORTAL.md, SELinux) |
 | `portal_requesters` | `[]` | ---- who may do what: the CN of each person's card certificate (LAST.FIRST.MI.1234567890) ------------------------------- who may run the actions (an action's own who overrides); [] = any person with a verified card |
 | `portal_approvers` | `[]` | who may approve or deny on /portal/approvals; [] = nobody (AAP's own page still works) |
 | `portal_launches_per_hour` | `20` | one person's launches in an hour, at most |
+| `portal_allow_self_approval` | `false` | true = an approver may approve or deny a run they started themselves |
 | `portal_actions` | `{}` | ---- the actions: {} = the role's files/actions.yml; a dict of the same shape here replaces it ----------------------- |
 | `portal_inventory` | (empty) | the AAP inventory whose hosts an action's inventory_host values must be (by name; required when an action has one) |
 | `portal_aap_url` | (worked out by the role; see its file) | ---- AAP: the "Red Hat Ansible Automation Platform" credential (its URL and a token of the portal's own account) ------ |

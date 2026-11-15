@@ -25,10 +25,9 @@ function chip(status) {
   c.querySelector(".mark").setAttribute("aria-hidden", "true");
   return c;
 }
-function when(iso) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  return isNaN(d) ? iso : d.toLocaleString();
+// times come from the service as the report pages show them (report_time_zone, 24 h): "2026-11-15 20:06 CET"
+function when(text) {
+  return text || "";
 }
 function took(sec) {
   if (sec === null || sec === undefined || sec === "") return "";
@@ -110,14 +109,14 @@ function jobPage() {
     document.title = (v.name || ("Job " + v.id)) + " - " + (STATUS[v.status] ? STATUS[v.status][2] : v.status);
     $("j-title").textContent = v.name || ("Job " + v.id);
     const st = $("j-status");
-    st.replaceChildren(chip(v.status), el("span", "", v.done ? " Finished " + when(v.finished) + (v.elapsed ? ", took " + took(v.elapsed) : "") + "."
-                                                       : v.started ? " Started " + when(v.started) + ". This page follows it." : " Waiting to start."));
+    st.replaceChildren(chip(v.status), el("span", "", v.done ? " Finished " + when(v.finished_text) + (v.elapsed ? ", took " + took(v.elapsed) : "") + "."
+                                                       : v.started ? " Started " + when(v.started_text) + ". This page follows it." : " Waiting to start."));
     st.className = "status";
     let link = "";
     if (v.aap_link) { link = el("a", "", "Open in AAP"); link.href = v.aap_link; link.rel = "noopener"; }
     const vals = Object.entries(v.values || {}).map(([k, x]) => k + ": " + (String(x).length > 120 ? String(x).slice(0, 120) + "…" : x)).join("; ");
     facts($("j-facts"), [["Job", v.id + (v.type === "workflow_job" ? " (workflow)" : "")], ["Action", v.action_title || v.action], ["Started by", v.requested_by],
-                         ["Asked", when(v.requested_at)], ["On", v.limit], ["Values", vals],
+                         ["Asked", when(v.requested_at_text)], ["On", v.limit], ["Values", vals],
                          ["Step of", v.via ? "workflow job " + v.via : ""], ["AAP", link]]);
     if (v.steps) {
       const sec = $("j-steps");
@@ -197,9 +196,12 @@ function approvalsPage() {
       wf.href = BASE + "jobs/" + a.workflow_job;
       const vals = Object.entries(a.values || {}).map(([k, x]) => k + ": " + (String(x).length > 200 ? String(x).slice(0, 200) + "…" : x)).join("; ");
       facts(dl, [["Step", a.name], ["Workflow", wf], ["Started by", a.requested_by || "not through the portal"], ["Started in", a.launched_in],
-                 ["Values", vals], ["Waiting since", when(a.created)], ["Times out", when(a.timeout)]]);
+                 ["Values", vals], ["Waiting since", when(a.created_text)], ["Times out", when(a.timeout_text)]]);
       card.append(dl);
-      if (approver) {
+      if (approver && !a.may_decide) {
+        card.append(el("p", "muted-line", "You started this run, so another approver decides (portal_allow_self_approval: false)."));
+      }
+      if (approver && a.may_decide) {
         const row = el("div", "go");
         const say = el("span", "state");
         say.setAttribute("aria-live", "polite");

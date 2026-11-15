@@ -194,7 +194,8 @@ class Live(unittest.TestCase):
                              "PORTAL_ACTIONS": os.path.join(cls.tmp, "actions.json"),
                              "PORTAL_AAP_URL": "http://127.0.0.1:%d" % cls.aap.server_address[1], "PORTAL_AAP_TOKEN": "fake-token",
                              "PORTAL_INVENTORY": "Site hosts", "PORTAL_APPROVERS": '["APPROVER.ALEX.B.3456789012"]',
-                             "PORTAL_REQUESTERS": "[]", "PORTAL_LAUNCHES_PER_HOUR": "6"})
+                             "PORTAL_REQUESTERS": "[]", "PORTAL_LAUNCHES_PER_HOUR": "6", "PORTAL_TIME_ZONE": "America/New_York",
+                             "PORTAL_BANNER": {"on": True, "text": "CUI", "bg": "#502b85", "fg": "#ffffff"}})
         sp.sys.stdout = open(os.devnull, "w")          # the journal's copy of each line
         cls.portal = sp.Portal(cls.cfg)
         cls.portal.aap.connect()
@@ -418,6 +419,45 @@ class Live(unittest.TestCase):
         codes = [self.post("/api/actions/stig_recheck", {"vars": {"target": "web03.example.mil"}})[0] for _ in range(7)]
         self.assertEqual(codes, [201] * 6 + [429])
         self.portal.recent.pop("DOE.JANE.Q.1234567890", None)
+
+    def test_12_not_your_own_run(self):
+        code, r = self.post("/api/actions/ckl_import", {"vars": {}}, dn=APPR)            # the approver starts one
+        self.assertEqual(code, 201, r)
+        wf = r["job_id"]
+        code, raw, _ = self.req("/api/approvals", dn=APPR)
+        a = [x for x in json.loads(raw)["approvals"] if x["workflow_job"] == wf][0]
+        self.assertEqual((a["self"], a["may_decide"]), (True, False))
+        code, r = self.post("/api/approvals/%d/approve" % a["id"], {}, dn=APPR)
+        self.assertEqual(code, 403)
+        self.assertIn("You started this run", r["error"])
+        self.assertTrue(any(x.get("why", "").startswith("self-approval") for x in self.log("refused")))
+        self.cfg.self_approval = True                                                   # portal_allow_self_approval: true
+        try:
+            code, raw, _ = self.req("/api/approvals", dn=APPR)
+            self.assertTrue([x for x in json.loads(raw)["approvals"] if x["workflow_job"] == wf][0]["may_decide"])
+            self.assertEqual(self.post("/api/approvals/%d/deny" % a["id"], {}, dn=APPR)[0], 200)
+        finally:
+            self.cfg.self_approval = False
+
+    def test_13_times_in_report_time_zone(self):
+        jid = self.post("/api/actions/stig_recheck", {"vars": {"target": "web03.example.mil"}})[1]["job_id"]
+        v = json.loads(self.req("/api/jobs/%d" % jid)[1])
+        self.assertRegex(v["requested_at_text"], r"^\d{4}-\d\d-\d\d \d\d:\d\d E[SD]T$")
+        code, raw, _ = self.req("/")
+        self.assertIn(b"<th>When</th>", raw)                                             # each time says its zone
+        self.assertEqual(sp.shown(sp.Config({}), "2026-11-15T19:06:30.123456Z"), "2026-11-15 19:06 UTC")
+        self.assertEqual(sp.shown(self.cfg, "2026-07-15T19:06:30Z"), "2026-07-15 15:06 EDT")
+        self.assertEqual(sp.shown(self.cfg, None), "")
+
+    def test_14_the_reports_banner(self):
+        code, raw, _ = self.req("/")
+        self.assertIn(b'<div class="banner">CUI</div>', raw)
+        code, css, h = self.req("/static/banner.css", dn=None)
+        self.assertEqual(css, b".banner{background:#502b85;color:#ffffff}\n")
+        off = sp.Config({"PORTAL_BANNER": '{"on": false, "text": "SECRET"}'})
+        self.assertNotIn('class="banner"', sp.shell(off, "T", "<h1>x</h1>"))
+        bad = sp.Config({"PORTAL_BANNER": {"on": True, "text": "X", "bg": "red;}*{x:y", "fg": "#fff"}})
+        self.assertEqual((bad.banner["bg"], bad.banner["fg"]), ("#4d4d4d", "#ffffff"))      # never CSS from a setting as is
 
     def test_11_log_file(self):
         path = os.path.join(self.cfg.data, "portal-log.jsonl")
