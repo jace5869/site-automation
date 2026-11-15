@@ -372,6 +372,12 @@ sudo tail -5 "$(sudo podman volume inspect site-portal-data --format '{{.Mountpo
 A launch line holds the person (`user`), the action, the values, the job's id (`job_id`), the limit and the time
 (`at`, UTC). A decision line holds the approver, `approve` or `deny`, the approval's id and who had started it.
 
+**Who may see a job.** A job's page at `/portal/jobs/<id>` shows its values, its output and its results. Only three
+kinds of people see it: the person who started it, the approvers (`portal_approvers`), and the people its action
+allows (its `who`, else `portal_requesters`). The same rule holds for each step of a workflow and for the approvals
+list. Anyone else gets *Not here*, the same answer as for a job that does not exist, so the page never says that a
+job number is in use.
+
 ## The banner and the times
 
 The portal uses the reports' own settings, so its pages and the report pages match:
@@ -389,7 +395,11 @@ Run the deploy again after you change one of them.
 - **The card, through nginx.** The two headers are set by nginx on every request; one the browser sends is replaced.
   The portal is reachable from the proxy's network only.
 - **A launch only from the portal's own page.** Run sends a JSON body, the page's token (this person's, 8 hours) and
-  the browser's Origin, which must be the portal's own address. A page of another site cannot start anything.
+  the browser's Origin. The Origin must be exactly the portal's own address, `https://` and its name (and port), with
+  no path. The body's type must be `application/json` (a `charset` after it is fine). A page of another site cannot
+  start anything.
+- **Jobs and approvals by person.** A job, its steps and its approval show only to the people *Who may see a job*
+  names. Anyone else gets the answer for a job that does not exist.
 - **Limits.** A request body of 64 KB at most. At most `portal_launches_per_hour` (20) launches per person an hour.
 - **AAP's setting `ALLOW_JINJA_IN_EXTRA_VARS`** must not be *Always*. The default, *Only On Template Definitions*,
   treats launch values as data. The deploy reads it from the portal and warns when it is *Always*. The portal's
