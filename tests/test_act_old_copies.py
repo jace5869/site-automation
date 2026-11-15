@@ -219,6 +219,7 @@ class Python36(unittest.TestCase):
 AAP_SIDE = {
     "playbooks/log_analysis.yml": "the analysis runs on localhost (delegate_to, run_once)",
     "playbooks/vm_log_analysis.yml": "on localhost",
+    "playbooks/act_triage_finding.yml": "ACT runs on localhost (roles/portal_triage/tasks/side.yml: delegate_to, run_once), evidence mode",
 }
 # roles that call ACT only on the AAP side (evidence_* tasks, localhost) or only name a setting
 AAP_SIDE_ROLES = {"vmware_vm", "servicenow_insights", "servicenow_war", "incident_docs", "log_analysis",

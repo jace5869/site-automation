@@ -1,0 +1,23 @@
+---
+# The finding a request names (1.67.0, ACT - triage finding): read from the site_health artifact of the job that
+# reported it - the portal sends only the reference (report_job, the host, finding_id). On the AAP side: include it
+# with apply {delegate_to: localhost, run_once: true}. Output: portal_finding (check, id, severity, summary, hint) and
+# portal_finding_job (id, name, finished, status). Stops the job, saying why, when the finding cannot be read.
+- name: Site portal | the finding, from the job that reported it
+  site_portal_finding:
+    job_id: "{{ _pf_job | int }}"
+    host: "{{ _pf_host }}"
+    finding_id: "{{ _pf_id }}"
+    ca_path: "{{ portal_request_aap_ca_path }}"
+  register: _pf
+  check_mode: false                      # read only
+
+- name: Site portal | the finding could not be read
+  ansible.builtin.fail:
+    msg: "The finding to look at could not be read: {{ _pf.why }}."
+  when: not _pf.ok | bool
+
+- name: Site portal | the finding
+  ansible.builtin.set_fact:
+    portal_finding: "{{ _pf.finding }}"
+    portal_finding_job: "{{ _pf.job }}"

@@ -1,5 +1,52 @@
 # Changelog
 
+## 1.67.0 — 2026-11-15
+
+<!-- part B (the AAP side and the report buttons); part A (the portal service, step 100) adds its own paragraphs. -->
+
+**To set up: step 101** (after step 100), the AAP side of the site portal. New settings have defaults:
+`report_portal_url` (`""`: no buttons), `portal_triage_os`, `portal_triage_hint`, `portal_triage_command_timeout`,
+`portal_triage_max_chars`, `portal_triage_report_chars`, `portal_triage_act_model_timeout`. New: workflows 44 and 45,
+job templates *ACT - triage finding* and *Windows ACT - triage finding*. To do: 1.67.0 steps 100 and 101.
+
+**The site portal: what it launches in AAP, and the report buttons.** Three actions, each checked again by the job
+it launches (docs/SITE_PORTAL.md, "Actions" and "AAP workflows"):
+
+- **`stig_recheck`:** workflow 45 *STIG - recheck one host*. The Linux and the Windows STIG recheck, the host also the
+  Limit. Each passes over a host of the other kind without connecting. Read only.
+- **`ckl_import`:** workflow 40, with its approval. The portal sends `stigman_ckl_import_mode`.
+- **`act_triage`:** workflow 44 *ACT - triage finding* (`playbooks/act_triage_finding.yml`), new. One fapolicyd or
+  event-log finding of a report, explained by ACT:
+  - The portal sends a reference: the host, the AAP job of the report and the finding's id. The job reads the finding
+    from that job's artifact `site_health`, so no free text reaches AAP and a finding cannot be made up.
+  - It reads more on the host, read only, and ACT answers on the AAP side in evidence mode: it runs no command.
+  - ACT's answer is in the job output, the artifact `act_triage_finding` and the report. A fix it proposes is never
+    applied here.
+- **Each job checks the values again** (`roles/portal_request`): a host of the inventory and the Limit, a choice of
+  its list, a text's length and form, no template in any value. Who asked (`portal_requested_by`) is printed and kept
+  in the artifact `portal_request`. A value that fails stops the job before it reads or changes anything.
+- **Report buttons** (`report_portal_url`):
+  - **Ask ACT** on fapolicyd and event-log findings.
+  - **Recheck** on the STIG drift report's hosts (the host's name is the link) and the scorecard's fixed-on-host rows.
+  - **Import checklists** on the scorecard.
+  - Each is a plain link to the portal's confirm page (a new tab), so the pages need no new script. Only on the
+    website, never in an email. Without the setting the pages are exactly as before.
+- **The portal's AAP account:** Execute on workflows 44, 45 and 40, Approve on workflow 40, nothing else.
+  `ALLOW_JINJA_IN_EXTRA_VARS` stays *Only On Template Definitions*.
+
+**Behaviour changes**
+
+- *STIG recheck*, *Windows STIG recheck* and *STIG Manager - import checklists*: launched by the portal
+  (`portal_requested_by`), they check its values first. Launched any other way, they run as before.
+- The health and STIG reports: with `report_portal_url` set, the website's copy is made with the buttons (one more
+  column on those tables). The emails are unchanged.
+
+**Tests:** `tests/test_portal.py` (24: the checks, the links, `actions.yml` in step with the playbooks, the finding
+by reference, ACT's prompt and report, the buttons, the pages unchanged without the setting);
+`tests/portal/run_portal_test.sh` (workflow 44's playbook with a fake AAP and a fake ACT, and the refusals; the recheck
+and the import checking the portal's values), on ansible-core 2.22 and 2.16. Every report fit document renders byte
+for byte as in 1.66.0 without the setting. Not run against a real AAP, a real portal or a Windows host.
+
 ## 1.66.0 — 2026-11-14
 
 **Updating without scripts:** paste `site-automation-1.66.0-changed-since-1.61.0.zip` as it is (from an older version,
@@ -2424,7 +2471,7 @@ tests/stig/run_stigman_real_test.sh against STIG Manager 1.6.18 (not in CI).
 
 SA_VERSION 1.26.0; the PDFs at 1.26.0.
 
-**To do, if you have not yet: what 0.20.0 to 1.66.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.66.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing, 1.39.0 nothing, 1.41.0 nothing, 1.42.0 nothing, 1.43.0 nothing, 1.44.0 nothing, 1.45.0 nothing, 1.46.0 nothing, 1.47.0 nothing, 1.48.0 nothing, 1.49.0 nothing, 1.50.0 step 97, 1.51.0 step 95, 1.52.0 step 96, 1.53.0 step 98, 1.54.0 nothing, 1.55.0 nothing, 1.56.0 nothing, 1.57.0 nothing, 1.58.0 nothing, 1.59.0 nothing, 1.61.0 nothing, 1.62.0 nothing, 1.63.0 step 99, 1.64.0 nothing, 1.65.0 nothing, 1.66.0 nothing).** In order; each step works without
+**To do, if you have not yet: what 0.20.0 to 1.67.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.67.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing, 1.39.0 nothing, 1.41.0 nothing, 1.42.0 nothing, 1.43.0 nothing, 1.44.0 nothing, 1.45.0 nothing, 1.46.0 nothing, 1.47.0 nothing, 1.48.0 nothing, 1.49.0 nothing, 1.50.0 step 97, 1.51.0 step 95, 1.52.0 step 96, 1.53.0 step 98, 1.54.0 nothing, 1.55.0 nothing, 1.56.0 nothing, 1.57.0 nothing, 1.58.0 nothing, 1.59.0 nothing, 1.61.0 nothing, 1.62.0 nothing, 1.63.0 step 99, 1.64.0 nothing, 1.65.0 nothing, 1.66.0 nothing, 1.67.0 steps 100 and 101).** In order; each step works without
 the ones after it. There is no step 90.
 
 1. **Your logo** (0.20.0). A PNG with a transparent background, about 160 px tall and under 100 KB, in
@@ -3241,6 +3288,24 @@ the ones after it. There is no step 90.
     3. Run the AD health report: *Inbound replication* has no grey *not read* rows, and the matrix is filled in.
     4. To take it away: the account out of the group.
     Details and the commands: docs/ACTIVE_DIRECTORY.md, "Reading replication data".
+101. **The site portal: the AAP side** (1.67.0) - after step 100 (the portal itself). docs/SITE_PORTAL.md, "AAP
+     workflows".
+     1. Two job templates of `playbooks/act_triage_finding.yml`: *ACT - triage finding* (the Linux machine credential)
+        and *Windows ACT - triage finding* (the Windows one, Variables `portal_triage_os: windows`). Both: the *ACT
+        model key* credential, a *Red Hat Ansible Automation Platform* credential (its user: Organization Auditor), and
+        **Prompt on launch** for **Variables** and **Limit**.
+     2. Workflow 44 *ACT - triage finding*: the Linux template, then (**Run always**) the Windows one. **Prompt on
+        launch** for **Variables** and **Limit**.
+     3. *STIG recheck* and *Windows STIG recheck*: **Prompt on launch** for **Variables** and **Limit**. Workflow 45
+        *STIG - recheck one host*: the first, then (**Run always**) the second; the same prompts.
+     4. Workflow 40: **Prompt on launch** for **Variables**.
+     5. The portal's AAP account (step 100): **Execute** on workflows 44, 45 and 40, **Approve** on workflow 40.
+        Nothing else.
+     6. AAP's job setting `ALLOW_JINJA_IN_EXTRA_VARS`: keep *Only On Template Definitions* (the default) or *Never*,
+        never *Always*.
+     7. In `all.yml`: `report_portal_url: https://<the portal's host>/portal`.
+     8. Check: on a health report page, **Ask ACT** on a fapolicyd finding opens the portal's confirm page; **Run**
+        starts workflow 44, and its report names you and gives ACT's answer.
 
 ## 1.24.0 — 2026-11-11
 

@@ -28,6 +28,23 @@
     # update are its lines above, and the report's title
     site_report_no_findings: REPORT ONLY - the open findings and STIG Manager's status updates are listed above
   pre_tasks:
+    # 1.67.0: launched from the site portal (portal_requested_by): the host it was sent is checked again (in this
+    # inventory, the job's Limit) and who asked is in the output and the artifact portal_request. Workflow 45.
+    - name: Site portal | check the request again (only when the portal launched this job)
+      ansible.builtin.include_role:
+        name: portal_request
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+        portal_request_action: stig_recheck
+        portal_request_spec: {target: {kind: inventory_host}}
+        portal_request_limit_from: target
+      when: portal_requested_by is defined
+
     - name: Linux hosts only (VMware has its own STIG tooling)
       ansible.builtin.include_role:
         name: site_findings

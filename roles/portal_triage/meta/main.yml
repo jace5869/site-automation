@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: portal_triage
+  description: ACT - triage finding (workflow 44) - one finding of an earlier health or fapolicyd job, read-only evidence from its host, ACT's answer.
+  license: MIT
+  min_ansible_version: "2.14"
+dependencies: []

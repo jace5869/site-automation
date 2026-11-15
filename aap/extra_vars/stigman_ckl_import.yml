@@ -36,6 +36,20 @@ stigman_ckl_import_collection: VMware
 ## Only these collections on it (default: every collection the client reads)
 # stigman_scorecard_collections: ['SITEA - RHEL 9', 'SITEA - Windows Server 2022']
 
+# ---- portal_request ------------------------------------------------------------------------------
+## Set by each playbook; do not set:
+# portal_request_spec: {}
+
+# portal_request_limit_from: ""
+
+## the action's name, for the job's lines and its artifact
+# portal_request_action: ""
+
+## true = check the values even when the portal did not launch the job (no portal_requested_by): a
+## playbook that only makes sense with them (ACT - triage finding). false = a job launched by hand
+## is not checked (STIG recheck).
+# portal_request_always: false
+
 # ---- stigman_ckl_import --------------------------------------------------------------------------
 ## the files taken (any case)
 # stigman_ckl_import_patterns: ["*.ckl", "*.cklb"]
@@ -386,6 +400,14 @@ stigman_ckl_import_collection: VMware
 ## line, the logo larger. Or one of the email looks: standard, command, portal or glass (as
 ## report_email_theme - the index page is then in the portal look).
 # report_web_theme: atlas
+
+## The site portal (1.67.0, docs/SITE_PORTAL.md): its address with /portal, e.g.
+## https://stigman.yoursite.mil/portal. Set, the report website's pages get its buttons: "Ask ACT"
+## on fapolicyd and event-log findings, "Recheck" on the STIG drift report's hosts and the
+## scorecard's fixed-on-host rows, "Import checklists" on the scorecard. Each opens the portal's
+## confirm page in a new tab: nothing runs until the person presses Run there. "" = no buttons, the
+## pages as before.
+# report_portal_url: ""
 
 ## The names inside the folder, with {names} filled in: {template} (the AAP template's name, lower
 ## case with dashes; the play's name outside AAP), {template_id}, {job} (the AAP job; local outside

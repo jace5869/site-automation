@@ -1,0 +1,41 @@
+---
+# ACT - TRIAGE FINDING (1.67.0, workflow 44; the site portal's "Ask ACT"). One finding of an earlier health or fapolicyd
+# job - named by a reference, never by its text: report_job (that AAP job's id), the host (target, also the Limit) and
+# finding_id (fapolicyd:denials, eventlog:disk-errors ...). The finding is read from that job's site_health artifact,
+# more is read on the host (read only: the finding's own look command, fapolicyd's state and denials, or the last
+# day's critical and error events), and ACT explains it in evidence mode - likely cause, fix, confidence - on the AAP
+# side: it runs no command and changes nothing. ACT's answer: the job artifact act_triage_finding, the report (emailed
+# with report_email_to, published with report_web_dest). A fix it proposes stays a separate, approved job.
+# Two templates of this playbook in workflow 44: the Linux one (portal_triage_os: linux, fapolicyd findings) and the
+# Windows one (portal_triage_os: windows, event-log findings), each with its machine credential, both with an "ACT
+# model key" credential and a "Red Hat Ansible Automation Platform" credential (to read the reporting job).
+# docs/SITE_PORTAL.md, "AAP workflows".
+#   ansible-playbook playbooks/act_triage_finding.yml -l web01.example.mil -e target=web01.example.mil \
+#     -e report_job=4711 -e finding_id=fapolicyd:denials
+- name: Target check (stops with a clear message when target matches no host)
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: The target leaves at least one host to run on
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: target_check.yml
+      vars:
+        _target_pattern: "{{ target | default('') }}"
+
+- name: ACT - triage finding
+  hosts: "{{ target | default('no-target-given') }}"     # without target the check above has stopped the job
+  gather_facts: false
+  become: "{{ portal_triage_os | default('linux') != 'windows' }}"
+  vars:
+    site_os: "{{ portal_triage_os | default('linux') }}"
+    site_report_title: ACT - triage finding
+  tasks:
+    - name: Linux or Windows hosts only, as this template is for
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+
+    - name: ACT - triage finding
+      ansible.builtin.include_role:
+        name: portal_triage

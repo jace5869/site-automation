@@ -60,6 +60,14 @@
           {{ ansible_play_hosts | map('extract', hostvars) | selectattr('check_stig_result', 'defined')
              | map(attribute='check_stig_result') | list | stig_report_sections(check_stig_list_max | default(200) | int) }}
       run_once: true
+    # 1.67.0 (report_portal_url): the website's copy - each host's Recheck link to the site portal (workflow 45)
+    - name: The tables for the report website, with the site portal's links
+      ansible.builtin.set_fact:
+        site_report_web_sections: >-
+          {{ ansible_play_hosts | map('extract', hostvars) | selectattr('check_stig_result', 'defined')
+             | map(attribute='check_stig_result') | list | stig_report_sections(check_stig_list_max | default(200) | int, report_portal_url) }}
+      run_once: true
+      when: report_portal_url | default('') | length > 0
 
     # 1.58.0: kept with the job, for the STIG compliance scorecard (playbooks/stigman_ckl_import.yml) - "Fixed on the host,
     # still Open in STIG Manager". Nothing is written anywhere else.
