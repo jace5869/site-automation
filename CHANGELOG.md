@@ -20,6 +20,8 @@ steps 100 and 101.
 - **Every launch, refusal and decision** is a JSON line in the journal and in `portal-log.jsonl` (the volume
   `site-portal-data`).
 - **Its own nginx** (`portal_own_nginx: true`): TLS and the cards on a server without STIG Manager.
+- **Who may see a job:** a job's page, its steps and its approval show only to the person who started it, the approvers
+  and the people its action allows; anyone else gets 404, as for a job number that does not exist.
 - **Not your own run:** an approver cannot decide a run they started through the portal (one muted line says so; the
   refusal is logged). `portal_allow_self_approval: true` allows it.
 - **The banner and the times are the reports' own:** `report_banner`, `report_banner_text`, `report_banner_color`,
