@@ -1320,7 +1320,7 @@ File: `roles/portal_request/defaults/main.yml`
 | Setting | Default | What it does |
 |---|---|---|
 | `portal_request_spec` | `{}` | Set by each playbook; do not set: |
-| `portal_request_limit_from` | (empty) |  |
+| `portal_request_limit_from` | (empty) | the value whose host is also the Limit ("" = none) |
 | `portal_request_action` | (empty) | the action's name, for the job's lines and its artifact |
 | `portal_request_always` | `false` | true = check the values even when the portal did not launch the job (no portal_requested_by): a playbook that only makes sense with them (ACT - triage finding). false = a job launched by hand is not checked (STIG recheck). |
 | `portal_request_aap_ca_path` | `"{{ report_history_aap_ca_path \| default('') }}"` | a CA file for AAP's own HTTPS certificate |

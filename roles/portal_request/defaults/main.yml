@@ -7,7 +7,7 @@
 
 # Set by each playbook; do not set:
 portal_request_spec: {}
-portal_request_limit_from: ""
+portal_request_limit_from: ""              # the value whose host is also the Limit ("" = none)
 portal_request_action: ""                  # the action's name, for the job's lines and its artifact
 # true = check the values even when the portal did not launch the job (no portal_requested_by): a playbook that only
 # makes sense with them (ACT - triage finding). false = a job launched by hand is not checked (STIG recheck).

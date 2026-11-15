@@ -22,6 +22,7 @@
 ## Set by each playbook; do not set:
 # portal_request_spec: {}
 
+## the value whose host is also the Limit ("" = none)
 # portal_request_limit_from: ""
 
 ## the action's name, for the job's lines and its artifact

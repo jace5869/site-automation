@@ -35,6 +35,7 @@ INTERNAL = {
     "act_triage_result": "what the vendored act_triage role leaves behind",
     "ad_lockout_now": "the tests' fixed clock (tests/ad)",
     "ad_report_now": "the tests' fixed clock (tests/ad)",
+    "portal_requested_by": "sent only by the site portal at launch; undefined means the portal did not launch the job",
     "horizon_now": "the tests' fixed clock (tests/horizon)",
     "servicenow_war_now": "the tests' fixed clock (tests/servicenow/run_war_test.sh)",
     "servicenow_insights_now": "the tests' fixed clock (tests/servicenow/run_insights_test.sh)",
