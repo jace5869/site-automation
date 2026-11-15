@@ -84,6 +84,7 @@ person() {  # name subject ca
 person jdoe "/C=US/O=Test Government/OU=PKI/OU=CONTRACTOR/CN=DOE.JANE.Q.1234567890" ca
 person rroe "/C=US/O=Test Government/OU=PKI/OU=USN/CN=ROE.RICHARD.A.2345678901" ca
 person appr "/C=US/O=Test Government/OU=PKI/OU=USA/CN=APPROVER.ALEX.B.3456789012" ca
+person ppoe "/C=US/O=Test Government/OU=PKI/OU=USAF/CN=POE.PAT.C.4567890123" ca
 person stranger "/C=US/O=Elsewhere/CN=STRANGER.SAM.0000000001" other-ca
 chmod 0644 "$k"/*.key
 
@@ -106,7 +107,7 @@ cat > "$work/vars.json" <<EOF
                            "report_job": {"kind": "text", "max": 12, "pattern": "[0-9]{1,12}", "label": "Report's job"},
                            "finding_id": {"kind": "text", "max": 120, "pattern": "(fapolicyd|eventlog):[A-Za-z0-9_.:-]{1,100}",
                                           "label": "Finding"}},
-                  "limit_from": "target", "who": ["DOE.JANE.Q.1234567890", "APPROVER.ALEX.B.3456789012"]}}}
+                  "limit_from": "target", "who": ["DOE.JANE.Q.1234567890", "APPROVER.ALEX.B.3456789012", "POE.PAT.C.4567890123"]}}}
 EOF
 deploy() {
     (cd "$repo" && CONTROLLER_HOST=http://portal-test-aap:8000 CONTROLLER_OAUTH_TOKEN=test-token-1670 ANSIBLE_NOCOLOR=1 \
@@ -213,6 +214,15 @@ if [ "$(echo "$r" | jq_ 'd["code"]')" = 201 ] && echo "$sent" | jq_ 'd["body"]' 
     pass "a launch: workflow 44, the values, portal_requested_by and the limit as AAP got them (job $job)"
 else fail "a launch" "$r
 $sent"; fi
+# who may see a job: its starter, the approvers, the people its action allows - anyone else 404, as for no such job
+codes=""
+for who_ in rroe jdoe appr ppoe; do
+    codes="$codes $who_:$(c "$k/$who_" get "/portal/jobs/$job" | jq_ 'd["code"]')/$(c "$k/$who_" get "/portal/api/jobs/$job" | jq_ 'd["code"]')"
+done
+nojob="$(c "$k/rroe" get /portal/api/jobs/999999 | jq_ 'd["code"]')"
+if [ "$codes" = " rroe:404/404 jdoe:200/200 appr:200/200 ppoe:200/200" ] && [ "$nojob" = 404 ]; then
+    pass "who may see a job: not on the action's who 404 (page and API, as no such job); its starter, an approver, an allowed person 200"
+else fail "who may see a job" "$codes (no such job: $nojob)"; fi
 n_before="$(grep -c '/launch/' "$work/aap/aap.jsonl")"
 r="$(c "$k/rroe" launch act_triage '{"target": "web01.example.mil", "report_job": "907", "finding_id": "eventlog:disk-errors"}')"
 case "$r" in *'"code": 403'*"not on the list"*) pass "a person not on the action's list: refused";; *) fail "a person not listed: refused" "$r";; esac

@@ -35,6 +35,7 @@ import fake_aap  # noqa: E402
 JDOE = "CN=DOE.JANE.Q.1234567890,OU=CONTRACTOR,OU=PKI,O=U.S. Government,C=US"
 RROE = "CN=ROE.RICHARD.A.2345678901,OU=USN,OU=PKI,O=U.S. Government,C=US"
 APPR = "CN=APPROVER.ALEX.B.3456789012,OU=USA,OU=PKI,O=U.S. Government,C=US"
+PPOE = "CN=POE.PAT.C.4567890123,OU=USAF,OU=PKI,O=U.S. Government,C=US"
 ACTIONS = {
     "stig_recheck": {"title": "Recheck this system", "aap": {"type": "job", "name": "Linux - recheck one host"},
                      "vars": {"target": {"kind": "inventory_host"}}, "limit_from": "target", "approval": False},
@@ -46,7 +47,7 @@ ACTIONS = {
                    "vars": {"target": {"kind": "inventory_host"},
                             "report_job": {"kind": "text", "max": 12, "pattern": "[0-9]{1,12}"},
                             "finding_id": {"kind": "text", "max": 120, "pattern": "(fapolicyd|eventlog):[A-Za-z0-9_.:-]{1,100}"}},
-                   "limit_from": "target", "approval": False, "who": ["DOE.JANE.Q.1234567890"]},
+                   "limit_from": "target", "approval": False, "who": ["DOE.JANE.Q.1234567890", "POE.PAT.C.4567890123"]},
     "no_prompts": {"title": "A template that takes nothing", "aap": {"type": "job", "name": "No prompts template"},
                    "vars": {"target": {"kind": "inventory_host"}}, "limit_from": "target"},
     "gone": {"title": "Not in AAP", "aap": {"type": "job", "name": "Nobody made this"}},
@@ -72,7 +73,7 @@ class Loader(unittest.TestCase):
         self.assertEqual(p, [])
         self.assertEqual(sorted(a), sorted(ACTIONS))
         self.assertEqual(a["ckl_import"]["vars"]["stigman_ckl_import_mode"]["default"], "import")
-        self.assertEqual(a["act_triage"]["who"], ["DOE.JANE.Q.1234567890"])
+        self.assertEqual(a["act_triage"]["who"], ["DOE.JANE.Q.1234567890", "POE.PAT.C.4567890123"])
         self.assertIsNone(a["stig_recheck"]["who"])
 
     def test_the_shipped_file_loads(self):
@@ -265,6 +266,7 @@ class Live(unittest.TestCase):
         self.assertIn('value="web01.example.mil"', t)
         self.assertIn("eventlog:disk-errors", t)
         self.assertIn("Workflow ACT - triage finding", t)
+        self.assertIn("<dt>Started as</dt><dd>DOE.JANE.Q.1234567890</dd>", t)        # the name only, not the variable's
         self.assertNotIn(' disabled>Run', t)
         code, raw, _ = self.req("/actions/act_triage?target=nothere.example.mil&report_job=907&finding_id=eventlog%3A%7B%7B7%7D%7D")
         t = raw.decode()
@@ -458,6 +460,50 @@ class Live(unittest.TestCase):
         self.assertNotIn('class="banner"', sp.shell(off, "T", "<h1>x</h1>"))
         bad = sp.Config({"PORTAL_BANNER": {"on": True, "text": "X", "bg": "red;}*{x:y", "fg": "#fff"}})
         self.assertEqual((bad.banner["bg"], bad.banner["fg"]), ("#4d4d4d", "#ffffff"))      # never CSS from a setting as is
+
+    def test_15_who_may_see_a_job(self):
+        jid = self.post("/api/actions/act_triage", {"vars": {"target": "web01.example.mil", "report_job": "907",
+                                                             "finding_id": "eventlog:disk-errors"}})[1]["job_id"]
+        nothing = json.loads(self.req("/api/jobs/999999")[1])["error"].replace("999999", "%d" % jid)
+        for dn in (RROE,):                                       # not on act_triage's who, not an approver, not its starter
+            code, raw, _ = self.req("/api/jobs/%d" % jid, dn=dn)
+            self.assertEqual((code, json.loads(raw)["error"]), (404, nothing))      # as a job that is not there
+            self.assertEqual(self.req("/jobs/%d" % jid, dn=dn)[0], 404)
+        for dn in (JDOE, APPR, PPOE):                            # the starter, an approver, a person its who allows
+            self.assertEqual(self.req("/api/jobs/%d" % jid, dn=dn)[0], 200, dn)
+            self.assertEqual(self.req("/jobs/%d" % jid, dn=dn)[0], 200, dn)
+        end = time.time() + 15
+        while time.time() < end and not json.loads(self.req("/api/jobs/%d" % jid)[1]).get("done"):
+            time.sleep(0.3)
+        child = json.loads(self.req("/api/jobs/%d" % jid)[1])["steps"][0]["job"]
+        self.assertEqual(self.req("/api/jobs/%d?via=%d" % (child, jid), dn=RROE)[0], 404)       # its steps too
+        self.assertEqual(self.req("/jobs/%d?via=%d" % (child, jid), dn=RROE)[0], 404)
+        self.assertEqual(self.req("/api/jobs/%d?via=%d" % (child, jid), dn=PPOE)[0], 200)
+        other = self.post("/api/actions/stig_recheck", {"vars": {"target": "web03.example.mil"}})[1]["job_id"]
+        self.assertEqual(self.req("/api/jobs/%d" % other, dn=RROE)[0], 200)       # stig_recheck: anyone (portal_requesters [])
+
+    def test_16_approvals_by_the_same_rule(self):
+        wf = self.post("/api/actions/ckl_import", {"vars": {}})[1]["job_id"]
+        seen = lambda dn: [a["workflow_job"] for a in json.loads(self.req("/api/approvals", dn=dn)[1])["approvals"]]  # noqa: E731
+        self.assertIn(wf, seen(RROE))                             # ckl_import: anyone may run it, so anyone sees it
+        self.portal.actions["ckl_import"]["who"] = ["DOE.JANE.Q.1234567890"]
+        try:
+            self.assertNotIn(wf, seen(RROE))
+            self.assertIn(wf, seen(JDOE))
+            self.assertIn(wf, seen(APPR))
+        finally:
+            self.portal.actions["ckl_import"]["who"] = None
+
+    def test_17_the_post_checks_are_exact(self):
+        body = {"vars": {"target": "web03.example.mil"}}
+        self.portal.recent.pop("DOE.JANE.Q.1234567890", None)
+        self.assertEqual(self.post("/api/actions/stig_recheck", body, ctype="application/json; charset=utf-8")[0], 201)
+        for ctype in ("application/jsonx", "application/json-patch+json", "text/plain; application/json"):
+            self.assertEqual(self.post("/api/actions/stig_recheck", body, ctype=ctype)[0], 403, ctype)
+        for origin in ("https://portal.example.mil/", "https://portal.example.mil/portal/x", "https://user@portal.example.mil",
+                       "https://portal.example.mil:8443", "https://portal.example.mil.evil.example.mil"):
+            self.assertEqual(self.post("/api/actions/stig_recheck", body, origin=origin)[0], 403, origin)
+        self.portal.recent.pop("DOE.JANE.Q.1234567890", None)
 
     def test_11_log_file(self):
         path = os.path.join(self.cfg.data, "portal-log.jsonl")

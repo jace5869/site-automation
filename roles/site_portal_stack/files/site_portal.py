@@ -451,18 +451,41 @@ class Portal(object):
     def launched(self):
         return {int(r["job_id"]): r for r in self.log.read("launch") if r.get("job_id") is not None}
 
-    def job(self, jid, via=None):
-        """-> (HTTP code, the job's view). Only what the portal started (or a step of it)."""
+    def may_see(self, cn, rec):
+        """Whether this person may see a run the portal started (its page, its output, its steps, its approval): the person
+        who started it, the approvers (portal_approvers), and the people its action allows (its who, else
+        portal_requesters). An action no longer listed: its starter and the approvers only."""
+        if not rec:
+            return False
+        if cn and (cn == rec.get("user") or cn in self.cfg.approvers):
+            return True
+        a = self.actions.get(rec.get("action"))
+        return bool(cn) and a is not None and rules.may_run(a, cn, self.cfg.requesters)
+
+    def visible(self, cn, jid, via=None):
+        """The launch record that lets this person see job jid (itself, or the workflow it is a step of - checked against
+        AAP by job()), or None. None for a job the portal did not start and for one this person may not see alike: the
+        answer never says which (404 for both)."""
+        mine = self.launched()
+        rec = mine.get(jid) if jid in mine else (mine.get(via) if via is not None else None)
+        return rec if self.may_see(cn, rec) else None
+
+    def job(self, jid, via=None, cn=None):
+        """-> (HTTP code, the job's view). Only what the portal started (or a step of it), and only for the people who
+        may see it (may_see) - for anyone else 404, as for a job the portal did not start."""
         mine = self.launched()
         rec = mine.get(jid)
         parent = None
+        nope = (404, {"error": "There is no job %d here." % jid})
+        if cn is not None and not self.visible(cn, jid, via):
+            return nope
         if rec is None:
             if via is None or via not in mine or mine[via].get("kind") != "workflow":
-                return 404, {"error": "The portal did not start job %d." % jid}
+                return nope
             code, nodes = self.aap.call("GET", "workflow_jobs/%d/workflow_nodes/?page_size=200" % via)
             ids = [((n.get("summary_fields") or {}).get("job") or {}).get("id") for n in (nodes.get("results") or [])] if code == 200 else []
             if jid not in ids:
-                return 404, {"error": "Job %d is not a step of %d." % (jid, via)}
+                return nope
             parent = mine[via]
         code, uj = self.aap.call("GET", "unified_jobs/?id=%d" % jid)
         rows = uj.get("results") or [] if code == 200 else []
@@ -551,6 +574,10 @@ class Portal(object):
                 continue
             a = wf_ids[int(wj["workflow_job_template"])]
             rec = mine.get(int(wid)) or {}
+            # whom it shows to: as a job page (may_see); a run started outside the portal: the approvers and the people
+            # its action allows
+            if cn and not (self.may_see(cn, rec) if rec else (cn in self.cfg.approvers or rules.may_run(a, cn, self.cfg.requesters))):
+                continue
             out.append({"id": ap.get("id"), "name": ap.get("name") or "", "created": ap.get("created") or "",
                         "timeout": ap.get("approval_expiration") or "", "workflow_job": int(wid), "workflow": wj.get("name", ""),
                         "action": a["name"], "title": a["title"],
@@ -672,7 +699,7 @@ def action_page(cfg, portal, cn, name, query):
     facts = [("Runs in AAP", "%s %s" % ("Workflow" if a["aap"]["type"] == "workflow" else "Job template", a["aap"]["name"])),
              ("On", target or ("the hosts the %s chooses" % ("workflow" if a["aap"]["type"] == "workflow" else "template"))),
              ("Approval", "Yes - an approver decides before it goes on" if a["approval"] else "No"),
-             ("Started as", "%s (sent as portal_requested_by)" % cn)]
+             ("Started as", cn)]
     dl = "".join("<div><dt>%s</dt><dd>%s</dd></div>" % (esc(k), esc(v)) for k, v in facts)
     can = allowed and not off
     body = ('<p class="crumb"><a href="%s">Actions</a></p><h1>%s</h1>%s%s<dl class="facts">%s</dl>'
@@ -761,13 +788,14 @@ def make_handler(cfg, portal, static_dir):
                               "text/html; charset=utf-8")
 
         def _same_origin(self):
-            """A POST from a page of this site: its Origin (or else its Referer) is this host."""
+            """A POST from a page of this site: its Origin is exactly https://<this host>[:port] (no path, no user), or -
+            a browser that sends none - its Referer is a page of this host."""
             host = (self.headers.get("Host") or "").strip().lower()
-            src = (self.headers.get("Origin") or "").strip()
-            if not src or src == "null":
-                src = self.headers.get("Referer") or ""
-            p = urllib.parse.urlsplit(src)
-            return bool(host) and p.scheme == "https" and p.netloc.lower() == host
+            origin = (self.headers.get("Origin") or "").strip()
+            if origin and origin != "null":
+                return bool(host) and bool(re.match(r"^https://[^/?#@\s]+$", origin)) and origin[len("https://"):].lower() == host
+            p = urllib.parse.urlsplit((self.headers.get("Referer") or "").strip())
+            return bool(host) and p.scheme == "https" and "@" not in p.netloc and p.netloc.lower() == host
 
         def do_HEAD(self):
             self.do_GET()
@@ -804,8 +832,11 @@ def make_handler(cfg, portal, static_dir):
                 q = urllib.parse.parse_qs(u.query)
                 via = int(q["via"][0]) if re.match(r"^\d{1,12}$", (q.get("via") or [""])[0]) else None
                 if m.group(1):
-                    code, view = portal.job(int(m.group(2)), via)
+                    code, view = portal.job(int(m.group(2)), via, cn)
                     return self._send(code, view)
+                if not portal.visible(cn, int(m.group(2)), via):        # as a job the portal did not start: 404
+                    return self._send(404, shell(cfg, "Not here", '<h1>Not here</h1><p class="lede">There is no job %d here.</p>'
+                                                 % int(m.group(2))), "text/html; charset=utf-8")
                 return self._send(200, job_page(cfg, portal, cn, int(m.group(2)), via), "text/html; charset=utf-8")
             if path == "/approvals":
                 return self._send(200, approvals_page(cfg, portal, cn), "text/html; charset=utf-8")
@@ -849,7 +880,7 @@ def make_handler(cfg, portal, static_dir):
                 return None
             # CSRF: a page of this site sent it (same origin), with this person's token, as JSON
             if not self._same_origin() or not portal.token_ok(cn, self.headers.get("X-Portal-Token")) \
-                    or not (self.headers.get("Content-Type") or "").startswith("application/json"):
+                    or (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/json":
                 portal.log.add({"event": "refused", "user": cn, "ip": self._ip(), "path": path, "why": "not from a portal page (CSRF check)"})
                 return self._send(403, {"error": "Refused: send it from the portal's page (reload the page and try again)."})
             try:
