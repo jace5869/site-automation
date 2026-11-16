@@ -398,7 +398,7 @@ per run.
   `/usr/local/bin/act` to `/opt/act/act`. When ACT is not installed on the host yet, it installs it first.
 - **delete** keeps the old one the same way, then removes it.
 - **report** only says it.
-- A host whose `python3` is older than 3.8 is not linked: typing `act` would fail there. The job says so.
+- A host whose `python3` is older than 3.6 is not linked: typing `act` would fail there. The job says so. (1.67.0: 3.6, was 3.8 - ACT 0.6.26 passes its tests on Python 3.6, the RHEL 8 default.)
 - The job output and the report's *ACT old copies* section say what was found, with the old ACT version.
 - In Check the job changes nothing and says what it would do.
 

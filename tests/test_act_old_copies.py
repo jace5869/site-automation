@@ -151,9 +151,9 @@ class Copies(Base):
 
     def test_python_too_old(self):
         self.write(self.act, OLD, 0o755)
-        r = self.run_it(py=(False, "python3 here is 3.6: not linked, as typing act would fail"))
+        r = self.run_it(py=(False, "python3 here is 3.5: not linked, as typing act would fail"))
         self.assertFalse(os.path.islink(self.act))
-        self.assertIn("python3 here is 3.6", r["lines"][0])
+        self.assertIn("python3 here is 3.5", r["lines"][0])
         r = self.run_it(action="delete", py=(False, "x"))                     # delete does not run it
         self.assertFalse(os.path.lexists(self.act))
 

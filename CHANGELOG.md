@@ -232,6 +232,10 @@ nothing, Response met up and the rest unchanged on the made-up site, the targets
 approval in `workflows.yml` behind the gate; `extra_data` checked), `tests/portal_setup/run_portal_setup_test.sh`
 (workflow 40 with the gate, the gate template) - ansible-core 2.22 and 2.16.
 
+**Old copies of ACT are linked on Python 3.6 too** (was 3.8: a RHEL 8 host with its default Python was skipped). ACT
+0.6.26 passes its whole test suite (316 tests) on Python 3.6; the 3.8 note was ACT's first version's and never checked
+again. A host whose `python3` is older than 3.6 is still left as it is, and the job says so. Nothing to set up.
+
 ## 1.66.0 — 2026-11-14
 
 **Updating without scripts:** paste `site-automation-1.66.0-changed-since-1.61.0.zip` as it is (from an older version,

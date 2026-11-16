@@ -96,7 +96,7 @@ def decide(found, action, target, target_there, python_ok):
 
 
 def python3_ok():
-    """Typing `act` runs it with the python3 on PATH; the new ACT needs 3.8 or newer."""
+    """Typing `act` runs it with the python3 on PATH; the new ACT needs 3.6 or newer."""
     env = dict(os.environ, PATH="/usr/local/bin:/usr/bin:/bin")
     try:
         p = subprocess.Popen(["python3", "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
@@ -104,14 +104,14 @@ def python3_ok():
         out, _ = p.communicate()
         ver = out.decode().strip()
     except (OSError, ValueError):
-        return False, "no python3 on this host: not linked (the new ACT needs Python 3.8 or newer)"
+        return False, "no python3 on this host: not linked (the new ACT needs Python 3.6 or newer)"
     try:
-        ok = tuple(int(x) for x in ver.split(".")) >= (3, 8)
+        ok = tuple(int(x) for x in ver.split(".")) >= (3, 6)
     except ValueError:
         ok = False
     if ok:
         return True, ""
-    return False, ("python3 here is %s: not linked, as typing act would fail (the new ACT needs 3.8 or newer)"
+    return False, ("python3 here is %s: not linked, as typing act would fail (the new ACT needs 3.6 or newer)"
                    % (ver or "unknown"))
 
 
