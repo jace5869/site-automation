@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: aap_workflow_gates
+  description: Put the gate step between each check and its approval in workflows built by hand (never deletes a node).
+  license: MIT
+  min_ansible_version: "2.14"
+dependencies: []

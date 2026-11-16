@@ -70,6 +70,16 @@ TEMPLATES = {
 # aap_health_focus_inventories: [8]                # these inventories always reported (db and api)
 # aap_url: https://aap01.yoursite.mil              # when the gateway refuses https://localhost
 """),
+    "aap_workflow_gates.yml": ("AAP - add workflow gates", "Red Hat Ansible Automation Platform (Admin on the workflows)", "", """\
+## Step 103: the gate into the workflows you built by hand (docs/WORKFLOWS_AND_SCHEDULES.md, "The gate"). Run it with
+## Check first. The gate template, made only if AAP has none: its project and inventory
+aap_gates_project: Site automation
+aap_gates_inventory: Site hosts
+## Only these workflows (names, ids or patterns; [] = every workflow)
+# aap_gates_workflows: ["Linux - fapolicyd*", "STIG Manager*"]
+## A check of your own: its playbook and the plan it hands on (set_stats)
+# aap_gates_checks: {our_check.yml: our_check_plan}
+"""),
     "aap_portal_setup.yml": ("AAP - set up portal actions", "Red Hat Ansible Automation Platform (Admin on the organization)", "", """\
 ## Run it with Check first: it then only reads, and lists field by field what it would make or change. It never deletes.
 ## Your site-automation project in AAP, and the inventory the templates run on

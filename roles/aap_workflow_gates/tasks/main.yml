@@ -1,0 +1,52 @@
+---
+# The gate into workflows built by hand (library/site_aap_workflow_gates.py). Runs on localhost with the "Red Hat Ansible
+# Automation Platform" credential's variables. A Check run only reads.
+- name: Gates | the gate template's spec (workflows.yml)
+  ansible.builtin.set_fact:
+    _wg_gate: >-
+      {{ (lookup('ansible.builtin.file', role_path ~ '/../site_portal_stack/files/workflows.yml') | from_yaml).templates
+         | selectattr('playbook', 'equalto', 'playbooks/workflow_gate.yml') | first }}
+
+- name: Gates | the workflows, read and gated
+  site_aap_workflow_gates:
+    workflows: "{{ aap_gates_workflows }}"
+    checks: "{{ aap_gates_checks }}"
+    gate: "{{ _wg_gate }}"
+    project: "{{ aap_gates_project }}"
+    inventory: "{{ aap_gates_inventory }}"
+    execution_environment: "{{ aap_gates_execution_environment }}"
+    ca_path: "{{ aap_gates_aap_ca_path }}"
+  register: _wg
+
+- name: Gates | each workflow - gated now, already gated, not a check->approval, unknown check
+  ansible.builtin.debug:
+    msg: >-
+      {%- set out = [] -%}
+      {%- set g = _wg.gate_template -%}
+      {%- if g.action -%}
+      {%-   set _ = out.append("Gate template '" ~ g.name ~ "': " ~ g.action) -%}
+      {%- endif -%}
+      {%- for w in _wg.workflows -%}
+      {%-   set _ = out.append(w.status | upper ~ ' - ' ~ w.name) -%}
+      {%-   for r in w.pairs -%}
+      {%-     set _ = out.append('    ' ~ r.check ~ ' (' ~ (r.playbook or '-') ~ ') -> ' ~ r.approval ~ ': ' ~ r.action
+                                 ~ ((' - workflow_gate_var: ' ~ r.var) if r.var and r.action in ['gated', 'would gate', 'already gated'] else '')
+                                 ~ ((' - ' ~ r.why) if r.why else '')) -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out or ['no workflow read'] }}
+
+- name: Gates | the table as a job artifact (aap_workflow_gates)
+  ansible.builtin.set_stats:
+    data:
+      aap_workflow_gates: "{{ dict(_wg.workflows | map(attribute='name') | zip(_wg.workflows | map(attribute='status'))) }}"
+
+- name: Gates | AAP could not be read, or a name matches nothing
+  ansible.builtin.fail:
+    msg: "{{ _wg.problems }}"
+  when: _wg.problems | length > 0
+
+- name: Gates | a workflow could not be gated
+  ansible.builtin.fail:
+    msg: "{{ _wg.workflows | selectattr('status', 'equalto', 'failed') | map(attribute='name') | list }}: see above."
+  when: _wg.workflows | selectattr('status', 'equalto', 'failed') | list | length > 0

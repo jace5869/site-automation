@@ -143,7 +143,36 @@ too, and Approve then ran the apply step with nothing to do. The gate step tells
 - **No plan:** the gate ends red with `The check failed for another reason - open the check job; nothing to approve.`
   The workflow ends there. Open the check job for the error.
 
-**Adding it to a workflow you built by hand:**
+**Your own workflows: the job does it (step 103).** The job *AAP - add workflow gates*
+(`playbooks/aap_workflow_gates.yml`) puts the gate into the workflows you built by hand, whatever their names.
+
+- It knows a check by its job template's **playbook**, never by its name. The table below says which plan each one
+  hands on.
+- It adds the gate node and its two links, then removes the one **Run on fail** link from the check to the approval.
+  Every other node and link stays, and no node is deleted.
+- A workflow already gated is left alone. Running it twice changes nothing.
+- A playbook it does not know before an approval is listed and left as it is. Name its plan in `aap_gates_checks`
+  (`{our_check.yml: our_check_plan}`) to have it gated too.
+- It makes the template *Workflow gate - has a plan* when AAP has none of that name.
+
+1. **Templates > Create template > Create job template:** `AAP - add workflow gates`, playbook
+   `playbooks/aap_workflow_gates.yml`, any inventory, the credential **Red Hat Ansible Automation Platform** of an AAP
+   user with **Admin** on the workflows. No Limit.
+2. **Variables:** copy `aap/extra_vars/aap_workflow_gates.yml`. Set `aap_gates_project` and `aap_gates_inventory` (they
+   make the gate template, if it is not there yet). Leave `aap_gates_workflows: []` for every workflow, or name some:
+
+```yaml
+aap_gates_workflows: ["Linux - fapolicyd*", "STIG Manager*"]   # names, ids or patterns (* and ?, any case)
+```
+
+3. Launch it with Job type **Check**. It writes nothing, and lists each workflow: *WOULD GATE*, *ALREADY GATED*,
+   *UNKNOWN CHECK*, *NOT A CHECK->APPROVAL*, *NO GATE (ACT'S FIX)*, with each check and its approval.
+4. Launch it with Job type **Run**. Success looks like this: each workflow it changed says *GATED NOW*, with the check,
+   the approval and the `workflow_gate_var` it set.
+5. Open one changed workflow in the visualizer: check → (on fail) *Workflow gate - has a plan* → (on success) the
+   approval.
+
+**Adding it to a workflow by hand** (the same, click by click):
 
 1. Make the job template once: **Name** `Workflow gate - has a plan`, **Playbook** `playbooks/workflow_gate.yml`, any
    inventory, no credential. Tick **Prompt on launch** next to **Variables**.

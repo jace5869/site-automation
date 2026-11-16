@@ -5,6 +5,7 @@ Runs ansible-playbook (ANSIBLE_PLAYBOOK for another ansible-core).
     python3 tests/test_workflow_gate.py"""
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -21,6 +22,8 @@ import site_aap  # noqa: E402
 sys.modules.setdefault("ansible.module_utils.site_aap", site_aap)
 ansible.module_utils.site_aap = site_aap
 import site_aap_portal_setup as S  # noqa: E402
+sys.path.insert(0, os.path.join(REPO, "roles", "aap_workflow_gates", "library"))
+import site_aap_workflow_gates as G  # noqa: E402
 
 NOT_A_PLAN = "The check failed for another reason - open the check job; nothing to approve."
 
@@ -68,25 +71,30 @@ class Spec(unittest.TestCase):
             return yaml.safe_load(f)
 
     def test_every_approval_behind_the_gate(self):
+        """No approval hangs straight off a check's failure: a check -> approval goes through the gate (failure, then
+        success). An approval after a plan job's success (the plan fails on an error, so the approval never comes) needs none."""
         sp = self.spec()
         self.assertEqual(S.check_spec(sp), [])
         gate = [t for t in sp["templates"] if t["name"] == "Workflow gate - has a plan"]
         self.assertEqual([(t["playbook"], t["credentials"], t["prompts"]) for t in gate], [("playbooks/workflow_gate.yml", [], {"variables": True})])
-        seen = 0
+        gated = 0
         for w in sp["workflows"]:
             nodes = dict((n["id"], n) for n in w["nodes"])
             for n in w["nodes"]:
                 if not n.get("approval"):
                     continue
-                seen += 1
                 parents = [(p["id"], link) for p in nodes.values() for link in ("success", "failure", "always") if n["id"] in (p.get(link) or [])]
-                self.assertEqual(len(parents), 1, (w["name"], parents))
-                g, link = nodes[parents[0][0]], parents[0][1]
-                self.assertEqual((g.get("template"), link), ("Workflow gate - has a plan", "success"), w["name"])
-                self.assertTrue(str((g.get("extra_data") or {}).get("workflow_gate_var") or ""), w["name"])
-                into = [(p["id"], link_) for p in nodes.values() for link_ in ("success", "failure", "always") if g["id"] in (p.get(link_) or [])]
-                self.assertEqual([x[1] for x in into], ["failure"], w["name"])
-        self.assertGreaterEqual(seen, 1)
+                self.assertTrue(parents, w["name"])
+                for pid, link in parents:
+                    g = nodes[pid]
+                    self.assertNotEqual(link, "failure", "%s: approval %s straight after a failure - put the gate between" % (w["name"], n["id"]))
+                    self.assertNotEqual(link, "always", "%s: approval %s after an always link" % (w["name"], n["id"]))
+                    if g.get("template") == "Workflow gate - has a plan":
+                        gated += 1
+                        self.assertTrue(str((g.get("extra_data") or {}).get("workflow_gate_var") or ""), w["name"])
+                        into = [link_ for p in nodes.values() for link_ in ("success", "failure", "always") if g["id"] in (p.get(link_) or [])]
+                        self.assertEqual(into, ["failure"], w["name"])
+        self.assertGreaterEqual(gated, 1)
 
     def test_extra_data_checked(self):
         sp = {"templates": [{"name": "T", "playbook": "playbooks/t.yml"}],
@@ -94,6 +102,46 @@ class Spec(unittest.TestCase):
                                                      {"id": "b", "approval": {"name": "ok?", "timeout": 60}, "extra_data": {"x": 1}}]}]}
         self.assertEqual(S.check_spec(sp), ["workflow 'W', node a: extra_data is a mapping, on a template's node",
                                             "workflow 'W', node b: extra_data is a mapping, on a template's node"])
+
+
+class AddGates(unittest.TestCase):
+    """AAP - add workflow gates (part I): its table of checks is the doc's, the gate template it makes is the setup job's."""
+
+    def test_the_fingerprint_is_the_setup_jobs(self):
+        want = {"name": "Workflow gate - has a plan", "description": "d", "job_type": "run", "project": 2, "playbook": "playbooks/workflow_gate.yml",
+                "inventory": 3, "ask_variables_on_launch": True, "ask_limit_on_launch": False, "become_enabled": False, "extra_vars": "",
+                "execution_environment": 5}
+        self.assertEqual(G.fingerprint(dict(want, extra=[])), S.fingerprint(dict(want, extra=[])))
+        self.assertEqual(G.MARK_TEXT, S.MARK_TEXT)
+
+    def test_the_checks_are_the_docs(self):
+        with open(os.path.join(REPO, "docs", "WORKFLOWS_AND_SCHEDULES.md")) as f:
+            doc = f.read()
+        sec = doc[doc.index("## The gate"):doc.index("## Linux workflows")]
+        for pb, var in G.CHECKS.items():
+            self.assertIn("`%s`" % var, sec, pb)
+            self.assertTrue(os.path.exists(os.path.join(REPO, "playbooks", pb)), pb)
+            with open(os.path.join(REPO, "playbooks", pb)) as f:
+                src = f.read()
+            roles = re.findall(r"name: ([a-z_]+)\n", src)
+            texts = [src]
+            for r in roles:
+                for dp, _d, fns in os.walk(os.path.join(REPO, "roles", r)):
+                    for fn in fns:
+                        if fn.endswith(".yml"):
+                            with open(os.path.join(dp, fn)) as f:
+                                texts.append(f.read())
+            self.assertTrue(any(re.search(r"set_stats:\s*\n\s*data:\s*\n(\s+[a-z_]+:.*\n)*?\s+%s:" % var, x) for x in texts),
+                            "%s does not set_stats %s" % (pb, var))
+        self.assertIn(G.GATE_PLAYBOOK, os.listdir(os.path.join(REPO, "playbooks")))
+
+    def test_which_workflows(self):
+        w = {"id": 7, "name": "Linux - fapolicyd (approval)"}
+        self.assertTrue(G.wanted([], w))
+        self.assertTrue(G.wanted(["linux - FAPOLICYD*"], w))
+        self.assertTrue(G.wanted([7], w) and G.wanted(["7"], w))
+        self.assertFalse(G.wanted(["Linux - fapolicyd"], w))           # a name is the whole name
+        self.assertEqual(G.playbook_file("playbooks/sub/x.yml"), "x.yml")
 
 
 if __name__ == "__main__":
