@@ -159,6 +159,25 @@ against a real AAP.
 nothing, Response met up and the rest unchanged on the made-up site, the targets, the trend's line, both captions),
 `tests/servicenow/run_insights_test.sh` (a group left out, a name that matches nothing) - ansible-core 2.22 and 2.16.
 
+**Workflows: the approval only when the check has a plan** (part H). To set up: re-run *AAP - set up portal actions*
+(step 102) for workflow 40; in a workflow you built by hand, add the gate step (docs/WORKFLOWS_AND_SCHEDULES.md,
+"The gate").
+
+- **Why.** A check that failed on an error (an empty folder, a share refused) went to the approval like one that failed
+  on purpose. Approve then ran the apply step with no plan (*No plan ... Nothing written*).
+- **The gate** (new template *Workflow gate - has a plan*, `playbooks/workflow_gate.yml`, no credential): between the
+  check (**on fail**) and the approval (**on success**). It goes on only when the check handed on a plan, named by
+  `workflow_gate_var` (e.g. `stigman_update_plan`). Otherwise it ends red: "The check failed for another reason - open
+  the check job; nothing to approve."
+- **Built in** workflow 40 by *AAP - set up portal actions* (a workflow node's `extra_data` in `workflows.yml`, new).
+  Documented for 29, 30, 36, 37, 39, 40 and the service watch, with the variable of each. Workflow 5 keeps its shape
+  (its apply step skips what was not approved).
+- **Behaviour change:** `report_web_tabs`' default gains `Workflow gate*` on the *ServiceNow and AAP* tab.
+
+**Tests (part H):** `tests/test_workflow_gate.py` (new: a plan goes on, none / empty ends it, no variable named; every
+approval in `workflows.yml` behind the gate; `extra_data` checked), `tests/portal_setup/run_portal_setup_test.sh`
+(workflow 40 with the gate, the gate template) - ansible-core 2.22 and 2.16.
+
 ## 1.66.0 — 2026-11-14
 
 **Updating without scripts:** paste `site-automation-1.66.0-changed-since-1.61.0.zip` as it is (from an older version,

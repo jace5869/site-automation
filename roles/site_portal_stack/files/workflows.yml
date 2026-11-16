@@ -12,7 +12,11 @@
 # workflows: [{number, name, description, prompts, extra_vars, nodes}]
 #   nodes        in order: {id, template: <a job template's name>} or {id, approval: {name, timeout (seconds), description}},
 #                each with success / failure / always: [node ids] (a node in two lists has two parents;
-#                all_parents_must_converge: true to wait for both)
+#                all_parents_must_converge: true to wait for both); extra_data: {..} on a template's node (the
+#                template prompts for Variables)
+# A check -> approval -> apply workflow has the gate between the check and its approval (1.67.0): [check] --failure-->
+# [gate: "Workflow gate - has a plan", extra_data {workflow_gate_var: <the check's artifact>}] --success--> [approval].
+# A check that failed on an error, with no plan, ends there and never reaches the approval.
 # Each developer's workflows in a block of their own, by number.
 
 templates:
@@ -50,6 +54,12 @@ templates:
     extra_vars: {stigman_ckl_import_workflow: true}
     description: Workflow 40's check (it fails on purpose when something waits for the approval)
 
+  - name: Workflow gate - has a plan
+    playbook: playbooks/workflow_gate.yml
+    credentials: []
+    prompts: {variables: true}
+    description: "Between a check and its approval: on only when the check handed on a plan (workflow_gate_var)"
+
   - name: STIG Manager - update
     playbook: playbooks/stigman_update.yml
     credentials: [stigman_api_writer]
@@ -63,7 +73,11 @@ workflows:
     description: Checklists written into STIG Manager after a person approves them
     prompts: {variables: true}
     nodes:
-      - {id: check, template: "STIG Manager - import checklists - check", failure: [approve]}
+      - {id: check, template: "STIG Manager - import checklists - check", failure: [gate]}
+      - id: gate
+        template: Workflow gate - has a plan
+        extra_data: {workflow_gate_var: stigman_update_plan}
+        success: [approve]
       - id: approve
         approval:
           name: Write the checklists' reviews (and the new assets) to STIG Manager?
@@ -88,5 +102,5 @@ workflows:
       - {id: linux, template: "STIG recheck", always: [windows]}
       - {id: windows, template: "Windows STIG recheck"}
 
-  # ---- 46-48: nuc-dev-2 (STIG fixes) - added in their own block
-  # ---- 49-51: nuc-dev-3 (Clean up, Restart, Allow this) - added in their own block
+  # ---- 46-48: nuc-dev-2 (STIG fixes) - added in their own block, each approval behind the gate as 40
+  # ---- 49-51: nuc-dev-3 (Clean up, Restart, Allow this) - added in their own block, each approval behind the gate

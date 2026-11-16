@@ -49,8 +49,8 @@ else fail "Check first" "$(writes) writes; $(grep -E "would be|skipped|fatal" "$
 # ---- the run: everything made
 setup -e '{"portal_setup_schedules": [{"name": "Recheck every 15 minutes", "target": "STIG - recheck one host", "every_minutes": 15}]}'
 rc=$?
-if [ $rc = 0 ] && [ "$(st 'len(s["job_templates"])')" = 5 ] && [ "$(st 'len(s["workflow_job_templates"])')" = 2 ]; then
-    pass "a run: 5 job templates and 2 workflows made (40's check is skipped without a share credential, so is 40)"
+if [ $rc = 0 ] && [ "$(st 'len(s["job_templates"])')" = 6 ] && [ "$(st 'len(s["workflow_job_templates"])')" = 2 ]; then
+    pass "a run: 6 job templates (the gate too) and 2 workflows made (40's check is skipped without a share credential, so is 40)"
 else fail "the run" "rc $rc; $(st 'sorted(x["name"] for x in s["job_templates"]+s["workflow_job_templates"])')
 $(grep -E "fatal|FAILED|msg" "$work/out.txt" | head -10)"; fi
 got="$(st '[(n["identifier"], [ [m["identifier"] for m in s["nodes"] if m["id"] in n["always"]] ]) for n in s["nodes"] if n["wf"] == [w for w in s["workflow_job_templates"] if w["name"] == "ACT - triage finding"][0]["id"]]')"
@@ -121,6 +121,11 @@ else fail "not ours / node changed" "$(grep -E "import checklists - check|rechec
 if grep -q "workflow 'Checklists imported into STIG Manager': made" "$work/out.txt"; then
     pass "workflow 40 made, on the template that was there (its approval node too)"
 else fail "workflow 40" "$(grep "Checklists" "$work/out.txt" | head -3)"; fi
+got="$(st '[(n["identifier"], [m["identifier"] for m in s["nodes"] if m["id"] in n["failure"]], [m["identifier"] for m in s["nodes"] if m["id"] in n["success"]], n["extra_data"]) for n in s["nodes"] if n["wf"] == [w for w in s["workflow_job_templates"] if w["name"] == "Checklists imported into STIG Manager"][0]["id"]]')"
+[ "$got" = "[('check', ['gate'], [], {}), ('gate', [], ['approve'], {'workflow_gate_var': 'stigman_update_plan'}), ('approve', [], ['update'], {}), ('update', [], [], {})]" ] \
+    && pass "workflow 40: check -> on failure -> the gate (workflow_gate_var) -> on success -> the approval -> update" || fail "40's gate" "$got"
+got="$(st '[(j["playbook"], j["ask_variables_on_launch"], j["credentials"]) for j in s["job_templates"] if j["name"] == "Workflow gate - has a plan"][0]')"
+[ "$got" = "('playbooks/workflow_gate.yml', True, [])" ] && pass "the gate template: its playbook, Variables on launch, no credential" || fail "gate template" "$got"
 got="$(st '[(a["name"][:20], a["timeout"]) for a in s["approvals"]]')"
 [ "$got" = "[('Write the checklists', 28800)]" ] && pass "its approval node: name and timeout" || fail "approval node" "$got"
 got="$(st 'sorted(r["name"] for u in s["users"] for rid in u["roles"] for r in s["roles"] if r["id"] == rid)')"

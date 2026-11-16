@@ -84,7 +84,7 @@ def node_view(s, n):
         ujt = {}
     return {"id": n["id"], "identifier": n["identifier"], "workflow_job_template": n["wf"], "all_parents_must_converge": n["converge"],
             "success_nodes": n["success"], "failure_nodes": n["failure"], "always_nodes": n["always"],
-            "summary_fields": {"unified_job_template": ujt}}
+            "extra_data": n.get("extra_data") or {}, "summary_fields": {"unified_job_template": ujt}}
 
 
 TPL_FIELDS = ("name", "description", "job_type", "project", "playbook", "inventory", "ask_variables_on_launch", "ask_limit_on_launch",
@@ -188,7 +188,11 @@ class H(BaseHTTPRequestHandler):
                 m = re.match(r"^workflow_job_templates/(\d+)/workflow_nodes/$", p)
                 if m:
                     n = {"id": new_id(s), "wf": int(m.group(1)), "identifier": b.get("identifier") or "", "converge": bool(b.get("all_parents_must_converge")),
-                         "unified_job_template": b.get("unified_job_template"), "approval": None, "success": [], "failure": [], "always": []}
+                         "unified_job_template": b.get("unified_job_template"), "approval": None, "success": [], "failure": [], "always": [],
+                         "extra_data": b.get("extra_data") or {}}
+                    jt = next((j for j in s["job_templates"] if j["id"] == n["unified_job_template"]), None)
+                    if n["extra_data"] and jt and not jt.get("ask_variables_on_launch"):     # as AAP: only a prompted field
+                        return self.send(400, {"extra_data": ["Variables are not allowed on launch for this template."]})
                     s["nodes"].append(n)
                     return self.send(201, {"id": n["id"]})
                 m = re.match(r"^workflow_job_template_nodes/(\d+)/create_approval_template/$", p)

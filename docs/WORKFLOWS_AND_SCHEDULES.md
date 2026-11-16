@@ -56,12 +56,12 @@ Approvals**, and in the workflow job's view.
 | Certificate report / Windows certificate report | a certificate expires soon | the findings | ServiceNow tickets (**always**) |
 | POA&M status | an item is overdue / due soon | the findings | ServiceNow tickets (**always**) |
 | STIG drift report | a host drifted from its checklist, or fails a rule it passed last time | the findings | ServiceNow tickets (**always**) |
-| STIG recheck - check (`check_stig_update_workflow: true`) | reviews to write to STIG Manager (NEEDS APPROVAL) | the reviews (`stigman_update_plan`) | an approval (**on fail**), then STIG Manager - update |
+| STIG recheck - check (`check_stig_update_workflow: true`) | reviews to write to STIG Manager (NEEDS APPROVAL) | the reviews (`stigman_update_plan`) | the gate (**on fail**), an approval, then STIG Manager - update |
 | Network performance report | loss, latency, a refused port, drops or an OCSP responder over its limits | the findings | ServiceNow tickets (**always**) |
 | Troubleshoot / Windows troubleshoot | never for findings (a look, not a verdict) | the findings | a health check, tickets if you want them |
 | Patch hosts / Windows patch | a host fails, or its services do not come back | - | a health check (**always**) |
 | Apply approved ACT fix | the problem is still there | the findings of the re-check | ServiceNow tickets (**always**) |
-| Service watch - check | a container is down (NEEDS APPROVAL) | the fix to approve | an approval (**on fail**) |
+| Service watch - check | a container is down (NEEDS APPROVAL) | the fix to approve (`service_watch_fix`) | the gate (**on fail**), then an approval |
 | ServiceNow tickets | problems exist (it opened or updated tickets) | - | - (the end) |
 
 ## Adding ACT to a workflow: what "on fail" means, and where `site_act` goes
@@ -117,6 +117,57 @@ simply `[Health check] --Run always--> [ServiceNow tickets]`.
 `site_findings` (start, your check), then `site_act`, then `site_findings` report. See
 [ADDING_ACT.md](ADDING_ACT.md), "Use ACT in a playbook of your own". Its job template then gets
 the same two survey questions, and it fits the same workflow.
+
+## The gate: the approval only when the check has a plan (1.67.0)
+
+A check fails **on purpose** when something waits for the approval. It can also fail on an **error**: an empty folder,
+a share refused, a host down. A **Run on fail** link cannot tell the two apart, so an error used to reach the approval
+too, and Approve then ran the apply step with nothing to do. The gate step tells them apart.
+
+```workflow
+[check]
+   |  Run on fail
+   v
+[Workflow gate - has a plan]  workflow_gate_var: the check's plan
+   |  Run on success
+   v
+[Approval]
+   |  Run on success
+   v
+[apply]
+```
+
+- **The gate** (`playbooks/workflow_gate.yml`) runs on the controller, with no credential. It reads the plan the check
+  handed on, named by `workflow_gate_var`.
+- **A plan** (a list or a mapping with something in it): the gate ends green, and the approval comes.
+- **No plan:** the gate ends red with `The check failed for another reason - open the check job; nothing to approve.`
+  The workflow ends there. Open the check job for the error.
+
+**Adding it to a workflow you built by hand:**
+
+1. Make the job template once: **Name** `Workflow gate - has a plan`, **Playbook** `playbooks/workflow_gate.yml`, any
+   inventory, no credential. Tick **Prompt on launch** next to **Variables**.
+2. In the workflow visualizer, remove the **Run on fail** link from the check to the approval.
+3. Hover over the check → **Add step and link** → *Job Template* `Workflow gate - has a plan`, link type **On fail**.
+   In the step's **Variables**, type the line from the table below, e.g. `workflow_gate_var: stigman_update_plan`.
+4. Hover over the gate → **Link** to the approval, link type **On success**. **Save**.
+
+| Workflow | `workflow_gate_var` |
+|---|---|
+| 29. Certificate install (and its Windows twin) | `cert_install_plan` |
+| 30. Fix broken desktops | `horizon_desktops_fix` |
+| 36. fapolicyd | `fapolicyd_workflow_plan` |
+| 37. STIG Manager updated (Linux and Windows) | `stigman_update_plan` |
+| 39. vCenter and ESXi certificate install | `vmware_cert_install_plan` |
+| 40. Checklists imported into STIG Manager | `stigman_update_plan` |
+| 11. Service watch (its approval) | `service_watch_fix` |
+| 46 to 51 (the site portal's fixes) | each its own, in `roles/site_portal_stack/files/workflows.yml` |
+
+- *AAP - set up portal actions* builds 40 (and the portal's workflows) with the gate already in place.
+- **Workflow 5 (ACT's fix) has no gate.** Its check hands on ACT's analysis for every host, a plan or not. Its apply
+  step skips every host with nothing approved, so Approve does no harm there.
+- The workflows whose approval follows a **Run on success** link (19, 26, 27, 31, 38, 41, 42) need no gate: a plan with
+  an error fails, and the approval never comes.
 
 ## Linux workflows
 
@@ -395,6 +446,9 @@ click: [NETWORK_CONFIG.md](NETWORK_CONFIG.md), "A load, with an approval".
 [Certificate install - check]
    |  Run on fail
    v
+[Workflow gate - has a plan]  workflow_gate_var: cert_install_plan
+   |  Run on success
+   v
 [Approval]
    |  Run on success
    v
@@ -404,8 +458,9 @@ click: [NETWORK_CONFIG.md](NETWORK_CONFIG.md), "A load, with an approval".
 | Step | Template | Link |
 |---|---|---|
 | 1 | Certificate install - check | (start) |
-| 2 | *Approval*: `Install the certificates the check listed?`, **Timeout** 8 hours. Description: `Open the check job: its READY lines say what each one changes.` | **Run on fail**, from 1 |
-| 3 | Certificate install - approved (the check's inventory, no Limit) | **Run on success**, from 2 |
+| 2 | Workflow gate - has a plan (`playbooks/workflow_gate.yml`, no credential, **Prompt on launch** for **Variables**): this step's Variables `workflow_gate_var: cert_install_plan` | **Run on fail**, from 1 |
+| 3 | *Approval*: `Install the certificates the check listed?`, **Timeout** 8 hours. Description: `Open the check job: its READY lines say what each one changes.` | **Run on success**, from 2 |
+| 4 | Certificate install - approved (the check's inventory, no Limit) | **Run on success**, from 3 |
 
 **Schedule:** every day 07:00, after workflow 7. The check reads each renewal's request in ServiceNow for the
 certificate the PKI put there and fails on purpose when one is ready (`NEEDS APPROVAL`); nothing ready, it stays
@@ -424,6 +479,9 @@ renewal's own; the schedule leaves it empty. Everything else - what stays for a 
 [fapolicyd - check]
    |  Run on fail
    v
+[Workflow gate - has a plan]  workflow_gate_var: fapolicyd_workflow_plan
+   |  Run on success
+   v
 [Approval]
    |  Run on success
    v
@@ -433,8 +491,9 @@ renewal's own; the schedule leaves it empty. Everything else - what stays for a 
 | Step | Template | Link |
 |---|---|---|
 | 1 | fapolicyd - check: Variables `fapolicyd_workflow: true`, `fapolicyd_since: yesterday`, and `fapolicyd_act: true` for ACT's explanation (the *ACT model key* credential) | (start) |
-| 2 | *Approval*: `Make the fapolicyd changes the check listed?`, **Timeout** 8 hours. Description: `Open the check job or its report: Changes to approve, and why.` | **Run on fail**, from 1 |
-| 3 | fapolicyd - approved (the same playbook, the check's inventory, `fapolicyd_workflow` not set) | **Run on success**, from 2 |
+| 2 | Workflow gate - has a plan (`playbooks/workflow_gate.yml`, no credential, **Prompt on launch** for **Variables**): this step's Variables `workflow_gate_var: fapolicyd_workflow_plan` | **Run on fail**, from 1 |
+| 3 | *Approval*: `Make the fapolicyd changes the check listed?`, **Timeout** 8 hours. Description: `Open the check job or its report: Changes to approve, and why.` | **Run on success**, from 2 |
+| 4 | fapolicyd - approved (the same playbook, the check's inventory, `fapolicyd_workflow` not set) | **Run on success**, from 3 |
 
 Both templates are `playbooks/fapolicyd.yml` with the *Machine* credential (sudo); tick **Prompt on launch** for
 **Limit** on both, and on the workflow, to run it on some hosts only. **Schedule:** every day 07:00. The check reads
@@ -465,6 +524,9 @@ The STIG recheck's "update the review", written to STIG Manager after a person a
 [STIG recheck - check]
    |  Run on fail
    v
+[Workflow gate - has a plan]  workflow_gate_var: stigman_update_plan
+   |  Run on success
+   v
 [Approval]
    |  Run on success
    v
@@ -474,8 +536,9 @@ The STIG recheck's "update the review", written to STIG Manager after a person a
 | Step | Template | Link |
 |---|---|---|
 | 1 | STIG recheck - check: the *STIG recheck* playbook (`playbooks/stig_recheck.yml`) with Variables `check_stig_update_workflow: true` | (start) |
-| 2 | *Approval*: `Write the reviews the check listed to STIG Manager?`, **Timeout** 8 hours. Description: `Open the check's report: Approve writes these reviews to STIG Manager.` | **Run on fail**, from 1 |
-| 3 | STIG Manager - update (`playbooks/stigman_update.yml`, its own *STIG Manager API* credential: the client that may write reviews) | **Run on success**, from 2 |
+| 2 | Workflow gate - has a plan (`playbooks/workflow_gate.yml`, no credential, **Prompt on launch** for **Variables**): this step's Variables `workflow_gate_var: stigman_update_plan` | **Run on fail**, from 1 |
+| 3 | *Approval*: `Write the reviews the check listed to STIG Manager?`, **Timeout** 8 hours. Description: `Open the check's report: Approve writes these reviews to STIG Manager.` | **Run on success**, from 2 |
+| 4 | STIG Manager - update (`playbooks/stigman_update.yml`, its own *STIG Manager API* credential: the client that may write reviews) | **Run on success**, from 3 |
 
 - **The check template:** a copy of *STIG recheck*, with the same inventory and credentials (the machine credential and
   the read-only *STIG Manager API*). Tick **Prompt on launch** for **Limit**.
@@ -505,6 +568,9 @@ written into STIG Manager after a person approves them.
 [STIG Manager - import checklists - check]
    |  Run on fail
    v
+[Workflow gate - has a plan]  workflow_gate_var: stigman_update_plan
+   |  Run on success
+   v
 [Approval]
    |  Run on success
    v
@@ -514,8 +580,9 @@ written into STIG Manager after a person approves them.
 | Step | Template | Link |
 |---|---|---|
 | 1 | STIG Manager - import checklists - check: the *STIG Manager - import checklists* playbook (`playbooks/stigman_ckl_import.yml`) with Variables `stigman_ckl_import_workflow: true` | (start) |
-| 2 | *Approval*: `Write the checklists' reviews (and the new assets) to STIG Manager?`, **Timeout** 8 hours. Description: `Open the check's report: Approve writes these reviews to STIG Manager.` | **Run on fail**, from 1 |
-| 3 | STIG Manager - update (`playbooks/stigman_update.yml`, workflow 37's template: the client that may write reviews, **Manage** to create assets) | **Run on success**, from 2 |
+| 2 | Workflow gate - has a plan (`playbooks/workflow_gate.yml`, no credential, **Prompt on launch** for **Variables**): this step's Variables `workflow_gate_var: stigman_update_plan` | **Run on fail**, from 1 |
+| 3 | *Approval*: `Write the checklists' reviews (and the new assets) to STIG Manager?`, **Timeout** 8 hours. Description: `Open the check's report: Approve writes these reviews to STIG Manager.` | **Run on success**, from 2 |
+| 4 | STIG Manager - update (`playbooks/stigman_update.yml`, workflow 37's template: the client that may write reviews, **Manage** to create assets) | **Run on success**, from 3 |
 
 - **The check template:** a copy of *STIG Manager - import checklists*, with the same credentials (the read-only *STIG
   Manager API* and *Windows file share*) and Variables (`stigman_ckl_import_src`, `stigman_ckl_import_collection`).
@@ -1019,6 +1086,9 @@ by email without tickets, one on `VMware - certificate report` ([VMWARE.md](VMWA
 [VMware - certificate install - check]
    |  Run on fail
    v
+[Workflow gate - has a plan]  workflow_gate_var: vmware_cert_install_plan
+   |  Run on success
+   v
 [Approval]
    |  Run on success
    v
@@ -1028,8 +1098,9 @@ by email without tickets, one on `VMware - certificate report` ([VMWARE.md](VMWA
 | Step | Template | Link |
 |---|---|---|
 | 1 | VMware - certificate install - check | (start) |
-| 2 | *Approval*: `Install the VMware certificates the check listed?`, **Timeout** 8 hours. Description: `Open the check job: its READY lines say what each one changes - vCenter's own may restart its services.` | **Run on fail**, from 1 |
-| 3 | VMware - certificate install - approved | **Run on success**, from 2 |
+| 2 | Workflow gate - has a plan (`playbooks/workflow_gate.yml`, no credential, **Prompt on launch** for **Variables**): this step's Variables `workflow_gate_var: vmware_cert_install_plan` | **Run on fail**, from 1 |
+| 3 | *Approval*: `Install the VMware certificates the check listed?`, **Timeout** 8 hours. Description: `Open the check job: its READY lines say what each one changes - vCenter's own may restart its services.` | **Run on success**, from 2 |
+| 4 | VMware - certificate install - approved | **Run on success**, from 3 |
 
 **Survey** on the workflow: `Request (RITM) with the issued certificate` -> `vmware_cert_install_ritm` (Text). Launch it
 with the RITM that *VMware - certificate request* printed, once the PKI has put the certificate on it. **Schedule**
@@ -1073,6 +1144,9 @@ credential ([HORIZON.md](HORIZON.md)).
 ```workflow
 [Horizon - desktops check]  horizon_desktops_mode: approval
    |  Run on fail
+   v
+[Workflow gate - has a plan]  workflow_gate_var: horizon_desktops_fix
+   |  Run on success
    v
 [Approval]
    |  Run on success
