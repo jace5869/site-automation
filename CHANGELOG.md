@@ -183,6 +183,11 @@ connection into their own error: the scorecard lists that collection with *no an
 check_stig_stigman_timeout)* and reads the others. Nothing to set up; for very large collections raise
 `check_stig_stigman_timeout` (60 s per request).
 
+**Timeouts.** A server that never answers, or drops the connection, no longer ends a module with a traceback in the
+ServiceNow insights and war room clients, the outage tickets, the hosts' networks (esxcli through vCenter) and the PAN-OS
+API. urllib raises both outside `URLError`. Each now reports it in its own error type, and a timeout names the setting:
+`no answer within 30 seconds (the setting timeout)`. Test: `tests/test_timeouts_sweep.py`.
+
 ## 1.66.0 — 2026-11-14
 
 **Updating without scripts:** paste `site-automation-1.66.0-changed-since-1.61.0.zip` as it is (from an older version,

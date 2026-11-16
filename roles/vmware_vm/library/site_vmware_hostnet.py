@@ -71,6 +71,7 @@ import concurrent.futures
 import datetime
 import fnmatch
 import re
+import socket
 import ssl
 import threading
 import time
@@ -78,6 +79,7 @@ import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape
 
 from ansible.module_utils.basic import AnsibleModule
+from ansible.module_utils.six.moves import http_client
 from ansible.module_utils.six.moves.urllib.error import HTTPError, URLError
 from ansible.module_utils.six.moves.urllib.request import Request, build_opener, HTTPSHandler
 from ansible.module_utils.site_vcenters import Skip, each_vcenter, host_port
@@ -278,6 +280,11 @@ class Esxcli(object):
         self.schemas = {}                               # host moid -> (the ping's parameters [(name, type, flag)] or None, why not)
         self.lock = threading.Lock()
 
+    def _why(self, e):
+        if isinstance(e, (socket.timeout, TimeoutError)) or "timed out" in str(e).lower():
+            return "no answer within %s seconds (the setting timeout)" % self.timeout
+        return str(e) or e.__class__.__name__
+
     def _soap(self, body):
         env = ('<?xml version="1.0" encoding="UTF-8"?><soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" '
                'xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
@@ -292,7 +299,9 @@ class Esxcli(object):
             text = e.read().decode("utf-8", "replace")
             raise EsxcliFault(soap_fault(text), body, text[:3000])
         except URLError as e:
-            raise EsxcliFault("vCenter did not answer: %s" % e.reason, body)
+            raise EsxcliFault("vCenter did not answer: %s" % self._why(e.reason), body)
+        except (OSError, http_client.HTTPException) as e:      # a read timeout, a dropped connection: outside URLError
+            raise EsxcliFault("vCenter did not answer: %s" % self._why(e), body)
 
     def executer(self, moid):
         if moid not in self.mme:
