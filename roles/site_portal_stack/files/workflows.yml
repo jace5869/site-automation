@@ -185,7 +185,11 @@ workflows:
     description: The old files of the tmp folders on one full filesystem, after a person approves the plan
     prompts: {variables: true, limit: true}
     nodes:
-      - {id: plan, template: "Disk - plan a clean up", success: [approve]}
+      - {id: plan, template: "Disk - plan a clean up", success: [gate]}
+      - id: gate
+        template: Workflow gate - has a plan
+        extra_data: {workflow_gate_var: disk_cleanup_plan}
+        success: [approve]
       - id: approve
         approval:
           name: Approve the clean up?
@@ -200,7 +204,11 @@ workflows:
     prompts: {variables: true, limit: true}
     nodes:
       - {id: look_linux, template: "Service - look (Linux)", success: [look_windows]}
-      - {id: look_windows, template: "Service - look (Windows)", success: [approve]}
+      - {id: look_windows, template: "Service - look (Windows)", success: [gate]}
+      - id: gate
+        template: Workflow gate - has a plan
+        extra_data: {workflow_gate_var: portal_service_plan}
+        success: [approve]
       - id: approve
         approval:
           name: Restart this service?
@@ -215,7 +223,11 @@ workflows:
     description: One fapolicyd denial allowed, after a person approves the one change for it
     prompts: {variables: true, limit: true}
     nodes:
-      - {id: check, template: "fapolicyd - allow this: check", success: [approve]}
+      - {id: check, template: "fapolicyd - allow this: check", success: [gate]}
+      - id: gate
+        template: Workflow gate - has a plan
+        extra_data: {workflow_gate_var: fapolicyd_workflow_plan}
+        success: [approve]
       - id: approve
         approval:
           name: Allow this program?

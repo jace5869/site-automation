@@ -369,9 +369,9 @@ Step 101 sets these up, after step 100 (the portal itself).
 | 44 *ACT - triage finding* | *ACT - triage finding*, then (**Run always**) *Windows ACT - triage finding* | Variables, Limit |
 | 45 *STIG - recheck one host* | *STIG recheck*, then (**Run always**) *Windows STIG recheck* | Variables, Limit |
 | 40 *Checklists imported into STIG Manager* | as it is | Variables |
-| 49 *Disk - clean up (approved)* | *Disk - plan a clean up*, the approval, *Disk - clean up one mount* | Variables, Limit |
-| 50 *Service - restart* | *Service - look* (Linux, then Windows), the approval, *Service - restart* (Linux, then Windows) | Variables, Limit |
-| 51 *fapolicyd - allow this* | *fapolicyd - allow this: check*, the approval, *fapolicyd - allow this: approved* | Variables, Limit |
+| 49 *Disk - clean up (approved)* | *Disk - plan a clean up*, the gate, the approval, *Disk - clean up one mount* | Variables, Limit |
+| 50 *Service - restart* | *Service - look* (Linux, then Windows), the gate, the approval, *Service - restart* (Linux, then Windows) | Variables, Limit |
+| 51 *fapolicyd - allow this* | *fapolicyd - allow this: check*, the gate, the approval, *fapolicyd - allow this: approved* | Variables, Limit |
 
 Each step template needs the same **Prompt on launch** as its workflow. Drawings and details:
 [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#44-act---triage-finding-on-demand-from-the-site-portal).

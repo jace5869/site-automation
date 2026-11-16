@@ -163,6 +163,9 @@ stats = json.JSONDecoder().raw_decode(text[i + 4:].lstrip())[0] if i > 0 else {}
 json.dump({"disk_cleanup_plan": stats.get("disk_cleanup_plan"), "disk_cleanup_plan_workflow": stats.get("disk_cleanup_plan_workflow")}, open(sys.argv[1] + "/plan.json", "w"))
 EOPY
 check "  ...the plan names this host and its folder, and the workflow" "$(cat "$work/plan.json")" "{\"disk_cleanup_plan\": {\"lin01.example.mil\": [\"$work/data/tmp\"]}, \"disk_cleanup_plan_workflow\": \"7\"}"
+gate=playbooks/workflow_gate.yml
+run "the gate (workflow 49): the plan the plan step handed on opens the way to the approval" ok "$gate" -e @"$work/plan.json" -e workflow_gate_var=disk_cleanup_plan -- "on to the approval"
+run "the gate (workflow 49): no plan - red, nothing to approve" fail "$gate" -e workflow_gate_var=disk_cleanup_plan -- "nothing to approve"
 run "disk plan: a mount no tmp folder is on - stops before an approval is asked" fail "$dpb" $(ref "disk_full:lin01.example.mil:/srv/data") -e "$by" -e "$dirs" -e awx_workflow_job_id=7 \
     -- "none of the tmp folders this clean up knows" "Disk - space request"
 run "disk plan: a Windows host is passed over by this Linux job (no connection)" ok "$dpb" -l win01.example.mil -e target=win01.example.mil -e report_job=4711 -e finding_id=disk_full:win01.example.mil:C: \
@@ -192,6 +195,16 @@ spb=playbooks/service_restart.yml
 sref() { echo "-l lin01.example.mil -e target=lin01.example.mil -e report_job=4711 -e finding_id=service_down:lin01.example.mil:$1"; }
 run "service look: status and the last log lines, read only (nothing restarted)" ok "$spb" $(sref httpd) -e "$by" -e portal_service_phase=look -- \
     "STATUS of httpd on lin01.example.mil" "made-up service" "made-up log line 3" "!Fixed - before:"
+svc="$LAST_OUT"
+"$py" - "$work" <<'EOPY' "$svc"
+import json, sys
+text = sys.argv[2]
+i = text.find("RUN:", text.find("CUSTOM STATS"))
+stats = json.JSONDecoder().raw_decode(text[i + 4:].lstrip())[0] if i > 0 else {}
+json.dump({"portal_service_plan": stats.get("portal_service_plan")}, open(sys.argv[1] + "/svcplan.json", "w"))
+EOPY
+check "  ...the look step hands on that one service as the plan (the gate's variable)" "$(cat "$work/svcplan.json")" '{"portal_service_plan": {"lin01.example.mil": "httpd"}}'
+run "the gate (workflow 50): the look step's plan opens the way to the approval" ok "$gate" -e @"$work/svcplan.json" -e workflow_gate_var=portal_service_plan -- "on to the approval"
 if grep -q restart "$work/systemctl.args" 2>/dev/null; then echo "FAIL - the look step restarted something"; fails=$((fails + 1)); else echo "ok   - the look step restarted nothing"; fi
 if ! grep -q "^-u httpd -n 30" "$work/journalctl.args"; then echo "FAIL - journalctl was not asked for 30 lines of httpd"; fails=$((fails + 1)); else echo "ok   - 30 log lines of that unit"; fi
 run "service restart: that one service, its state after the wait: fixed" ok "$spb" $(sref httpd) -e "$by" -e portal_service_phase=restart -e portal_restart_wait=1 -- \

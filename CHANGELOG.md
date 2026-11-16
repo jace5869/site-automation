@@ -161,6 +161,12 @@ up: step 101 (workflows 49, 50 and 51 and their templates; `docs/SITE_PORTAL.md`
   `disk_space_request.yml`, `portal_open_ticket.yml`; roles `portal_service`, `portal_ticket`; the filter
   `portal_action_modes`; `kinds: [any]` and `modes` in `actions.yml`.
 
+**The gate for 49 to 51.** Each approval of the part E workflows sits behind *Workflow gate - has a plan*, as 40 does:
+the plan step hands on its plan (`disk_cleanup_plan`, `portal_service_plan`, `fapolicyd_workflow_plan`), the gate asks for
+an approval only when it is there, and a plan step that failed ends the workflow, red, without one. Their checks end
+green with the plan, so the gate follows their success (`tests/test_workflow_gate.py` accepts that link as well as a
+failure). Re-run step 102 to bring 49 to 51 up to date.
+
 **Tests (part E):** `tests/test_portal_fix.py` (11); `tests/portal/run_portal_fix_test.sh` (the plan, clean up,
 service, space request and ticket jobs with a fake AAP, a fake ServiceNow and tmp folders of their own: the dry run
 sends 0 requests, the draft equals what live sends, live opens one and finds it again); `allow this` in

@@ -100,6 +100,18 @@ class Setup(unittest.TestCase):
                     self.assertIn(to, nodes, n)
             self.assertEqual(wf[n]["prompts"], {"variables": True, "limit": True})
 
+    def test_each_approval_is_behind_the_gate_with_its_plan(self):
+        """49 to 51: the gate's variable is the artifact the check sets (only with something to approve)."""
+        src = {"disk_cleanup_plan": "playbooks/disk_cleanup_plan.yml", "portal_service_plan": "roles/portal_service/tasks/main.yml",
+               "fapolicyd_workflow_plan": "playbooks/fapolicyd_allow.yml"}
+        for n, var in ((49, "disk_cleanup_plan"), (50, "portal_service_plan"), (51, "fapolicyd_workflow_plan")):
+            w = [x for x in self.w["workflows"] if x["number"] == n][0]
+            gates = [x for x in w["nodes"] if x.get("template") == "Workflow gate - has a plan"]
+            self.assertEqual([x["extra_data"] for x in gates], [{"workflow_gate_var": var}], n)
+            self.assertIn(var + ":", open(os.path.join(REPO, src[var])).read(), n)               # the check sets that artifact
+            approve = [x for x in w["nodes"] if "approval" in x][0]["id"]
+            self.assertEqual(gates[0]["success"], [approve], n)                                    # nothing else leads to the approval
+
     def test_the_templates(self):
         for name, t in self.templates.items():
             if t["playbook"] in ("playbooks/disk_cleanup_plan.yml", "playbooks/disk_cleanup.yml", "playbooks/service_restart.yml",
