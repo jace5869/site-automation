@@ -1,0 +1,70 @@
+"""1.67.0: '!' leaves a STIG Manager collection out of the scorecard and of the checklist import's search."""
+import importlib.util
+import os
+import unittest
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def load(path, name):
+    spec = importlib.util.spec_from_file_location(name, os.path.join(REPO, path))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+SC = load("roles/stigman_ckl_import/library/site_stig_scorecard.py", "site_stig_scorecard")
+CK = load("roles/stigman_ckl_import/library/site_ckl_import.py", "site_ckl_import")
+COLS = [{"collectionId": i, "name": n} for i, n in [(10, "Base"), (34, "Staging"), (48, "Big"), (50, "Linux"), (51, "Windows"),
+                                                   (31, "Archived STIGs")]]
+
+
+def names(cols):
+    return [c["name"] for c in cols]
+
+
+class Scorecard(unittest.TestCase):
+    def test_all_but(self):
+        out, missing = SC.wanted(COLS, ["*", "!48", "!archived*", "!34"])
+        self.assertEqual(names(out), ["Base", "Linux", "Windows"])
+        self.assertEqual(missing, [])
+
+    def test_only_exclusions_means_all_but(self):
+        self.assertEqual(names(SC.wanted(COLS, ["!48"])[0]), ["Base", "Staging", "Linux", "Windows", "Archived STIGs"])
+
+    def test_patterns_and_ids(self):
+        self.assertEqual(names(SC.wanted(COLS, ["lin*", "51"])[0]), ["Linux", "Windows"])
+
+    def test_a_typo_is_said(self):
+        self.assertEqual(SC.wanted(COLS, ["*", "!99", "!Nope"])[1], ["!99", "!Nope"])
+
+    def test_as_before(self):
+        self.assertEqual(len(SC.wanted(COLS, [])[0]), 6)
+        self.assertEqual(names(SC.wanted(COLS, ["Linux"])[0]), ["Linux"])
+
+
+class Import(unittest.TestCase):
+    def test_all_but_and_staging_last(self):
+        st, search = CK.pick_collections(COLS, ["*", "!48", "!31"], "Staging")
+        self.assertEqual(st["name"], "Staging")
+        self.assertEqual(names(search), ["Base", "Linux", "Windows", "Staging"])
+
+    def test_staging_is_always_searched(self):
+        _st, search = CK.pick_collections(COLS, ["*", "!34"], "Staging")
+        self.assertEqual(names(search)[-1], "Staging")
+
+    def test_only_exclusions_means_all_but(self):
+        _st, search = CK.pick_collections(COLS, ["!48"], "Staging")
+        self.assertNotIn("Big", names(search))
+        self.assertIn("Base", names(search))
+
+    def test_empty_is_staging_only(self):
+        self.assertEqual(names(CK.pick_collections(COLS, [], "Staging")[1]), ["Staging"])
+
+    def test_a_typo_stops_the_job(self):
+        with self.assertRaises(CK.Fail):
+            CK.pick_collections(COLS, ["*", "!Nope"], "Staging")
+
+
+if __name__ == "__main__":
+    unittest.main()

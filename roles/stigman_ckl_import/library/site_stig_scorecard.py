@@ -108,18 +108,32 @@ class Client(object):
 
 
 def wanted(cols, names):
-    """(the collections to read, the names not found): names are collection names or ids, any case; [] or ['*'] = all."""
+    """(the collections to read, the names not found): names are collection names or ids, any case, * and ? allowed;
+    [] or ['*'] = all. An entry starting with ! leaves that collection out (1.67.0): ['*', '!48', '!Archived*'] = all but those."""
+    import fnmatch
     names = [str(n).strip() for n in names or [] if str(n).strip()]
-    if not names or "*" in names:
-        return list(cols), []
-    out, missing = [], []
-    for n in names:
-        hit = [c for c in cols if str(c.get("name", "")).lower() == n.lower() or str(c.get("collectionId")) == n]
-        if not hit:
-            missing.append(n)
-        for c in hit:
-            if c not in out:
-                out.append(c)
+    skip = [n[1:].strip() for n in names if n.startswith("!")]
+    keep = [n for n in names if not n.startswith("!")]
+
+    def hits(n):
+        return [c for c in cols if fnmatch.fnmatchcase(str(c.get("name", "")).lower(), n.lower()) or str(c.get("collectionId")) == n]
+    missing = []
+    if not keep or "*" in keep:
+        out = list(cols)
+    else:
+        out = []
+        for n in keep:
+            h = hits(n)
+            if not h and not any(ch in n for ch in "*?["):
+                missing.append(n)
+            for c in h:
+                if c not in out:
+                    out.append(c)
+    for n in skip:
+        h = hits(n)
+        if not h and not any(ch in n for ch in "*?["):
+            missing.append("!" + n)
+        out = [c for c in out if c not in h]
     return out, missing
 
 

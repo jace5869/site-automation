@@ -471,7 +471,7 @@ STIG Manager's address, login and certificates are the STIG drift report's (`che
 | `stigman_ckl_import_status` | `submitted` | the reviews' status |
 | `stigman_ckl_import_workflow` | `false` | workflow 40's check: hand the plan on, NEEDS APPROVAL |
 | `stigman_ckl_import_mode` | `import` | what a run does: `import`, `import and scorecard` or `scorecard` (the survey choice) |
-| `stigman_scorecard_collections` | `[]` | the collections on the scorecard, by name or id. `[]`: every collection the client reads |
+| `stigman_scorecard_collections` | `[]` | the collections on the scorecard, by name or id, `*` and `?`. `[]`: every collection the client reads. `!` leaves one out (1.67.0): `['*', '!48', '!Archived*']` |
 | `stigman_scorecard_top` | `5` | the rules listed in *Top rules open across hosts* |
 | `stigman_scorecard_weeks` | `8` | the weeks of the trend lines and of *The numbers behind the lines* |
 | `stigman_scorecard_cat2_warn` | `0` | a collection with this many CAT II open or more is a warning. `0`: off |
