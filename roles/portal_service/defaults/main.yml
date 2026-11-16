@@ -1,0 +1,26 @@
+---
+# ---- Service - restart (1.67.0, workflow 50; the site portal's "Restart") ----------------------------------------------
+# One service-down finding of an earlier Linux or Windows health check (NOT service_watch's containers): read back from
+# that job's site_findings artifact (roles/finding_ref); what it shows on the host (status, the last log lines: read
+# only), and - after the approval - that one service restarted, never another, and read again. docs/SITE_PORTAL.md,
+# "Disk, services and fapolicyd".
+
+# The template's step: look (read only: status and the last log lines) or restart (the restart, 30 s later its status).
+portal_service_phase: look
+# The template's OS: linux (systemd, the Linux machine credential) or windows (the Windows machine credential). Workflow
+# 50 runs the template of each OS; each passes over the other's hosts without connecting.
+portal_service_os: linux
+# Services that are never restarted from here (compared without case, a Linux unit without .service). A request for one
+# of them is refused in the look step, before anyone is asked to approve.
+portal_restart_never:
+  - sshd
+  - sssd
+  - auditd
+  - firewalld
+  - WinRM
+  - Netlogon
+  - NTDS
+  - DNS
+portal_restart_wait: 30                    # seconds after the restart before its status is read again
+portal_service_log_lines: 30               # the last log lines shown (journalctl -n / the Windows event log)
+portal_service_command_timeout: 120        # seconds for each read or the restart

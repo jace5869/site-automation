@@ -1,0 +1,43 @@
+---
+# portal_ticket_mode: live. The existing roles/servicenow opens it (or finds the open one: the same correlation id, the
+# same ticket) - only with the "ServiceNow API" credential on the template, and only this one finding.
+- name: Ticket live | the ServiceNow API credential is on the template
+  ansible.builtin.assert:
+    that: lookup('ansible.builtin.env', 'SN_HOST') | trim | length > 0
+    fail_msg: >-
+      portal_ticket_mode is live, but the template has no ServiceNow API credential (SN_HOST is not set). Nothing was
+      sent. Attach the credential, or set portal_ticket_mode back to dry_run.
+    quiet: true
+
+- name: Ticket live | open it (or find the open one) - nothing else is touched
+  ansible.builtin.include_role:
+    name: servicenow
+    tasks_from: tickets.yml
+  vars:
+    _sn_health_in:
+      "{{ {_sn_item.host: {'findings': [{'check': _sn_item.check, 'id': _sn_item.id, 'severity': _sn_item.severity,
+                                         'summary': _sn_item.summary, 'hint': _sn_item.hint, 'note': _sn_item.note}],
+                           'job': _sn_item.job, 'time': _sn_item.time, 'checks': [], 'reach': false, 'act': {}}} }}"
+    _sn_targets_in: ["{{ _sn_item.host }}"]
+    servicenow_assignment_group: "{{ _pt_group }}"
+    servicenow_min_severity: warning
+    servicenow_note_repeats: false
+    servicenow_note_cleared: false
+    servicenow_resolve_cleared: false
+    servicenow_fail_when_findings: false
+
+- name: Ticket live | the ticket
+  ansible.builtin.set_fact:
+    _pt_opened: "{{ _sn_new.results | default([]) | selectattr('json', 'defined') | map(attribute='json.result.number') | list }}"
+    _pt_existing: "{{ _sn_found.results | default([]) | selectattr('json.result', 'defined') | selectattr('json.result') | map(attribute='json.result') | map('first') | map(attribute='number') | list }}"
+
+- name: Ticket live | the result, for the portal job page
+  ansible.builtin.include_role:
+    name: portal_result
+  vars:
+    portal_result_fixed: unknown
+    portal_result_read_only: true
+    portal_result_before: "{{ finding.title | truncate(120) }}"
+    portal_result_after: "{{ ('Ticket ' ~ (_pt_opened | first)) if _pt_opened else ('Already open: ' ~ (_pt_existing | first | default('?'))) }}"
+    portal_result_summary: >-
+      {{ ('Opened ' ~ (_pt_opened | first) ~ '.') if _pt_opened else ('This finding already has an open ticket, ' ~ (_pt_existing | first | default('?')) ~ ': no second one was opened.') }}

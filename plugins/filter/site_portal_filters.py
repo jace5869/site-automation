@@ -32,7 +32,8 @@ TEXT_MAX = 4000                    # a text var's max when it names none
 TEXT_CEILING = 20000               # no text var may allow more (the request's size limit holds the rest)
 HOST_MAX = 255
 RESERVED = ("portal_requested_by",)
-ACTION_KEYS = ("title", "aap", "vars", "limit_from", "approval", "who", "description", "kinds", "button", "when", "fixes")
+ACTION_KEYS = ("title", "aap", "vars", "limit_from", "approval", "who", "description", "kinds", "button", "when", "fixes", "modes")
+MODES = ("dry_run", "live", "off")
 KIND_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 BUTTON_MAX = 40
 VAR_KEYS = ("kind", "values", "max", "pattern", "label", "required", "default")
@@ -186,6 +187,11 @@ def check_actions(actions):
         if not isinstance(fixes, bool):
             problems.append("%s: fixes must be true or false" % where)
             fixes = True
+        # part E: the button's label by portal_ticket_mode (a mode with no label: no button) - the report jobs read it
+        modes = a.get("modes") or {}
+        if not isinstance(modes, dict) or not all(k in MODES and (v is None or (isinstance(v, str) and 0 < len(v) <= BUTTON_MAX and not templating(v)))
+                                                  for k, v in modes.items()):
+            problems.append("%s: modes must map dry_run, live or off to a short button label (or nothing: no button)" % where)
         out[name] = {"name": name, "title": title, "description": _text(a.get("description")).strip(),
                      "kinds": kinds, "button": button, "when": when, "fixes": fixes,
                      "aap": {"type": aap.get("type"), "name": _text(aap.get("name")).strip()}, "vars": clean_vars,

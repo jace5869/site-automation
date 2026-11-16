@@ -1,0 +1,182 @@
+---
+# FAPOLICYD - ALLOW THIS (1.67.0, workflow 51 "fapolicyd - allow this"; the site portal's "Allow this" on a
+# fapolicyd_deny finding). One denial of an earlier fapolicyd or health job - named by a reference, never by its text:
+# report_job (that AAP job's id), the host (target, also the Limit) and finding_id (fapolicyd_deny:<host>:<hash of the
+# program and the path>). The program and the path are read back from that job's site_findings artifact (roles/finding_ref).
+# The same path as the fapolicyd workflow (WORKFLOWS_AND_SCHEDULES.md, 36, playbooks/fapolicyd.yml), for that ONE denial:
+#   [check]     reads what fapolicyd blocked now (roles/fapolicyd_rules, read only) and picks the change for that program
+#               and path - the line the fapolicyd report gives it ("trust file: ... size ... sha256 ...", "allow rule:
+#               ...") - and hands it on (set_stats fapolicyd_workflow_plan, one line, this host). Never permissive,
+#               never another block's line.
+#   [Approval]  a person reads that line and approves, or denies it (security approval: the ISSO)
+#   [approved]  makes exactly that line (roles/fapolicyd_rules apply.yml: only where this run proposes it again; checked
+#               and put back when fapolicyd does not take it), then reads the blocks again: Fixed when the change is
+#               no longer proposed.
+# Linux only. Two templates of this playbook (portal_fapolicyd_phase: check, approved). docs/SITE_PORTAL.md, "Disk,
+# services and fapolicyd".
+#   ansible-playbook playbooks/fapolicyd_allow.yml -l web01.example.mil -e target=web01.example.mil \
+#     -e report_job=4711 -e finding_id=fapolicyd_deny:web01.example.mil:0123456789abcdef
+- name: Target check (stops with a clear message when target matches no host)
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: The target leaves at least one host to run on
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: target_check.yml
+      vars:
+        _target_pattern: "{{ target | default('') }}"
+
+- name: Fapolicyd - allow this
+  hosts: "{{ target | default('no-target-given') }}"     # without target the check above has stopped the job
+  gather_facts: false
+  become: true
+  vars:
+    site_os: linux
+    portal_fapolicyd_phase: check
+  pre_tasks:
+    - name: Linux hosts only
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+  tasks:
+    - name: Allow this | the request (target, report_job, finding_id; who asked)
+      ansible.builtin.include_role:
+        name: portal_request
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+        portal_request_action: fapolicyd_allow
+        portal_request_always: true
+        portal_request_limit_from: target
+        portal_request_spec:
+          target: {kind: inventory_host}
+          report_job: {kind: text, max: 12, pattern: "[0-9]{1,12}"}
+          finding_id: {kind: text, max: 200, pattern: "fapolicyd_deny:[A-Za-z0-9_.:/@-]{1,180}"}
+
+    - name: Allow this | the denial, from the job that reported it
+      ansible.builtin.include_role:
+        name: finding_ref
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+        finding_ref_host: "{{ inventory_hostname }}"
+        finding_ref_kinds: [fapolicyd_deny]
+
+    - name: Allow this | the program and the path of that one denial
+      ansible.builtin.set_fact:
+        _fal_prog: "{{ finding.data.program | default('') | string }}"
+        _fal_path: "{{ finding.data.path | default('') | string }}"
+
+    - name: Allow this | what fapolicyd blocks now
+      ansible.builtin.include_role:
+        name: fapolicyd_rules
+      vars:
+        fapolicyd_rules_approved: []
+        fapolicyd_rules_since: "{{ fapolicyd_since | default('today') }}"
+        fapolicyd_rules_dir: "{{ fapolicyd_dir | default('/etc/fapolicyd') }}"
+
+    - name: Allow this | the block of that program and path, and its change
+      ansible.builtin.set_fact:
+        _fal_blocks: >-
+          {{ _fr.blocks | default([])
+             | selectattr('path', 'equalto', _fal_path)
+             | selectattr('exe', 'in', [_fal_prog] + ([] if _fal_prog.startswith('/') else ['/usr/bin/' ~ _fal_prog, '/usr/sbin/' ~ _fal_prog]))
+             | list
+             if _fal_prog else [] }}
+        _fal_blocks_by_name: >-
+          {{ _fr.blocks | default([]) | selectattr('path', 'equalto', _fal_path)
+             | selectattr('exe', 'search', '(^|/)' ~ (_fal_prog | regex_escape) ~ '$') | list if _fal_prog else [] }}
+
+    - name: Allow this | the one line to approve
+      ansible.builtin.set_fact:
+        _fal_line: >-
+          {{ ((_fal_blocks if _fal_blocks | length > 0 else _fal_blocks_by_name) | map(attribute='change', default='') | select
+              | reject('match', '^(permissive|remove rule|rename)') | list | first | default('')) }}
+
+    - name: Allow this | nothing to allow
+      ansible.builtin.fail:
+        msg: >-
+          fapolicyd shows no block of {{ _fal_prog | truncate(80) }} opening {{ _fal_path | truncate(120) }} now, or it has
+          no change this job may make for it ({{ (_fr.by_hand | default([]) | select('search', _fal_prog | regex_escape) | list | first | default('a person decides by hand')) | truncate(200) }}).
+          Nothing was changed.
+      when: _fal_line | length == 0
+
+    - name: Allow this | the change to approve (one line, this denial's)
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: {{ _fal_line }}   (for {{ _fal_prog }} opening {{ _fal_path }})"
+
+    - name: Allow this | hand the one line on, for the approval and the approved job
+      ansible.builtin.set_stats:
+        data:
+          fapolicyd_workflow_plan: "{{ {inventory_hostname: [_fal_line]} }}"
+        per_host: false
+        aggregate: false
+      run_once: true
+      when: portal_fapolicyd_phase == 'check'
+
+    - name: Allow this | the approved line is this denial's own - and the one the plan gave
+      ansible.builtin.assert:
+        that:
+          - fapolicyd_workflow_plan is defined
+          - fapolicyd_workflow_plan.keys() | list == [inventory_hostname]
+          - fapolicyd_workflow_plan[inventory_hostname] == [_fal_line]
+        fail_msg: >-
+          Refused: the approved line is not the one change this denial gets now ({{ _fal_line }}), or it is not this
+          host's alone. Nothing was changed.
+        quiet: true
+      when: portal_fapolicyd_phase == 'approved'
+
+    - name: Allow this | make that one line
+      ansible.builtin.include_role:
+        name: fapolicyd_rules
+      vars:
+        fapolicyd_rules_approved: "{{ [_fal_line] }}"
+        fapolicyd_rules_since: "{{ fapolicyd_since | default('today') }}"
+        fapolicyd_rules_dir: "{{ fapolicyd_dir | default('/etc/fapolicyd') }}"
+        fapolicyd_rules_wait: "{{ fapolicyd_wait | default(30) }}"
+      when: portal_fapolicyd_phase == 'approved'
+
+    - name: Allow this | the change as it ended
+      ansible.builtin.set_fact:
+        _fal_apply: "{{ (_fr_apply | default({})).state | default('unchanged') }}"
+      when: portal_fapolicyd_phase == 'approved'
+
+    - name: Allow this | read the blocks again
+      ansible.builtin.include_role:
+        name: fapolicyd_rules
+      vars:
+        fapolicyd_rules_approved: []
+        fapolicyd_rules_since: "{{ fapolicyd_since | default('today') }}"
+        fapolicyd_rules_dir: "{{ fapolicyd_dir | default('/etc/fapolicyd') }}"
+      when: portal_fapolicyd_phase == 'approved'
+
+    - name: Allow this | is the change still proposed
+      ansible.builtin.set_fact:
+        _fal_still: "{{ _fal_line in (_fr.changes | default([]) | map(attribute='line') | list) }}"
+      when: portal_fapolicyd_phase == 'approved'
+
+    - name: Allow this | the result, for the portal job page
+      ansible.builtin.include_role:
+        name: portal_result
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+        portal_result_fixed: "{{ (_fal_apply in ['changed']) and not _fal_still | bool }}"
+        portal_result_before: "{{ _fal_prog | truncate(100) }} blocked opening {{ _fal_path | truncate(100) }}"
+        portal_result_after: "{{ _fal_apply }}; {{ 'the change is still proposed' if _fal_still | bool else 'the change is not proposed any more' }}"
+        portal_result_summary: >-
+          {{ _fal_line | truncate(200) }}: {{ _fal_apply }}.
+      when: portal_fapolicyd_phase == 'approved'

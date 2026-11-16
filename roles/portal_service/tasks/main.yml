@@ -1,0 +1,80 @@
+---
+# The request, the finding and the service of it - checked here, in both steps (playbooks/service_restart.yml). The
+# steps on the AAP side (the request's check, reading the finding) run once, delegated to localhost: a Limit of one host
+# needs no localhost in the inventory.
+- name: Service | the request (target, report_job, finding_id; who asked)
+  ansible.builtin.include_role:
+    name: portal_request
+    apply:
+      delegate_to: localhost
+      run_once: true
+      become: false
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    portal_request_action: service_restart
+    portal_request_always: true
+    portal_request_limit_from: target
+    portal_request_spec:
+      target: {kind: inventory_host}
+      report_job: {kind: text, max: 12, pattern: "[0-9]{1,12}"}
+      finding_id: {kind: text, max: 200, pattern: "service_down:[A-Za-z0-9_.:/@-]{1,180}"}
+
+- name: Service | the finding, from the job that reported it
+  ansible.builtin.include_role:
+    name: finding_ref
+    apply:
+      delegate_to: localhost
+      run_once: true
+      become: false
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    finding_ref_host: "{{ inventory_hostname }}"
+    finding_ref_kinds: [service_down]
+
+- name: Service | the service - its name from the finding, only a plain service name
+  ansible.builtin.set_fact:
+    _ps_name: "{{ finding.data.service | default('') | string }}"
+    _ps_os: "{{ finding.data.os | default(portal_service_os) | string }}"
+
+- name: Service | not this template's finding - the other OS's template looks at it
+  ansible.builtin.debug:
+    msg: "{{ finding.id }} is a {{ _ps_os }} service: the {{ _ps_os | capitalize }} template of workflow 50 handles it. Nothing to do here."
+  when: _ps_os != portal_service_os
+
+- name: Service | nothing to do here
+  ansible.builtin.meta: end_host
+  when: _ps_os != portal_service_os
+
+- name: Service | a plain name (a Linux unit or a Windows service), never one on the never-list, one that exists
+  ansible.builtin.assert:
+    that:
+      - _ps_name is match(('^[A-Za-z0-9_.@:-]{1,100}$' if portal_service_os == 'linux' else '^[A-Za-z0-9_.$-]{1,100}$'))
+      - (_ps_name | lower | regex_replace('[.]service$', '')) not in (portal_restart_never | map('lower') | list)
+      - finding.data.state | default('') != 'missing'
+    fail_msg: >-
+      {{ _ps_name | truncate(60) }} is not restarted from here: {{
+        'its name is not a plain service name' if _ps_name is not match(('^[A-Za-z0-9_.@:-]{1,100}$' if portal_service_os == 'linux' else '^[A-Za-z0-9_.$-]{1,100}$'))
+        else ('it is on the setting portal_restart_never (' ~ (portal_restart_never | join(', ')) ~ ')'
+              if (_ps_name | lower | regex_replace('[.]service$', '')) in (portal_restart_never | map('lower') | list)
+              else 'the check found it missing (not installed): there is nothing to restart') }}.
+      Nothing was changed.
+    quiet: true
+
+- name: Service | its status and the last log lines (read only)
+  ansible.builtin.include_tasks: "look_{{ portal_service_os }}.yml"
+  when: portal_service_phase == 'look'
+
+- name: Service | the plan for the approval - this one service (the workflow's gate needs it before it asks anyone)
+  ansible.builtin.set_stats:
+    data:
+      portal_service_plan: "{{ {inventory_hostname: _ps_name} }}"
+    per_host: false
+    aggregate: false
+  run_once: true
+  when: portal_service_phase == 'look'
+
+- name: Service | the restart, and its status after
+  ansible.builtin.include_tasks: "restart_{{ portal_service_os }}.yml"
+  when: portal_service_phase == 'restart'

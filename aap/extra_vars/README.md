@@ -31,10 +31,14 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | Certificate restore | `playbooks/cert_restore.yml` | [cert_restore.yml](cert_restore.yml) |
 | Cisco UCS inventory | `playbooks/ucs_inventory_report.yml` | [ucs_inventory_report.yml](ucs_inventory_report.yml) |
 | Database health - MariaDB / MySQL | `playbooks/database_health.yml` | [database_health.yml](database_health.yml) |
+| Disk - clean up one mount | `playbooks/disk_cleanup.yml` | [disk_cleanup.yml](disk_cleanup.yml) |
+| Disk - plan a clean up | `playbooks/disk_cleanup_plan.yml` | [disk_cleanup_plan.yml](disk_cleanup_plan.yml) |
+| Disk - space request | `playbooks/disk_space_request.yml` | [disk_space_request.yml](disk_space_request.yml) |
 | ESXi - network check | `playbooks/esxi_network_check.yml` | [esxi_network_check.yml](esxi_network_check.yml) |
 | ESXi - security settings | `playbooks/esxi_security.yml` | [esxi_security.yml](esxi_security.yml) |
 | Evaluate-STIG - update | `playbooks/evaluate_stig_update.yml` | [evaluate_stig_update.yml](evaluate_stig_update.yml) |
 | fapolicyd | `playbooks/fapolicyd.yml` | [fapolicyd.yml](fapolicyd.yml) |
+| fapolicyd - allow this | `playbooks/fapolicyd_allow.yml` | [fapolicyd_allow.yml](fapolicyd_allow.yml) |
 | fapolicyd denials | `playbooks/fapolicyd_denials.yml` | [fapolicyd_denials.yml](fapolicyd_denials.yml) |
 | Health check | `playbooks/health_check.yml` | [health_check.yml](health_check.yml) |
 | Horizon - API test | `playbooks/horizon_api_test.yml` | [horizon_api_test.yml](horizon_api_test.yml) |
@@ -77,6 +81,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | PKI - DoD bundle check | `playbooks/pki_bundle_check.yml` | [pki_bundle_check.yml](pki_bundle_check.yml) |
 | POA&M status | `playbooks/poam_status.yml` | [poam_status.yml](poam_status.yml) |
 | Report website - copy | `playbooks/report_web_copy.yml` | [report_web_copy.yml](report_web_copy.yml) |
+| Service - restart | `playbooks/service_restart.yml` | [service_restart.yml](service_restart.yml) |
 | Service watch - apply approved fix | `playbooks/service_fix_approved.yml` | [service_fix_approved.yml](service_fix_approved.yml) |
 | Service watch - check | `playbooks/service_watch.yml` | [service_watch.yml](service_watch.yml) |
 | ServiceNow - availability | `playbooks/servicenow_availability.yml` | [servicenow_availability.yml](servicenow_availability.yml) |
@@ -87,6 +92,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | ServiceNow health | `playbooks/servicenow_health.yml` | [servicenow_health.yml](servicenow_health.yml) |
 | ServiceNow tickets | `playbooks/servicenow_tickets.yml` | [servicenow_tickets.yml](servicenow_tickets.yml) |
 | Site portal - deploy | `playbooks/site_portal_deploy.yml` | [site_portal_deploy.yml](site_portal_deploy.yml) |
+| Site portal - open ticket | `playbooks/portal_open_ticket.yml` | [portal_open_ticket.yml](portal_open_ticket.yml) |
 | SOP - Word document | `playbooks/incident_sop.yml` | [incident_sop.yml](incident_sop.yml) |
 | STIG drift report | `playbooks/stig_drift_report.yml` | [stig_drift_report.yml](stig_drift_report.yml) |
 | STIG Manager - availability | `playbooks/stigman_availability.yml` | [stigman_availability.yml](stigman_availability.yml) |

@@ -56,6 +56,82 @@ templates:
     prompts: {variables: true}
     description: Workflows 37 and 40, after the approval
 
+  # ---- 49-51: nuc-dev-3 (Clean up, Restart, Allow this) and the space request and open ticket jobs (1.67.0 part E)
+  - name: Disk - plan a clean up
+    playbook: playbooks/disk_cleanup_plan.yml
+    credentials: [machine, aap]
+    prompts: {variables: true, limit: true}
+    become: true
+    description: Workflow 49's first step, read only - the tmp folders on the finding's mount and what they hold
+
+  - name: Disk - clean up one mount
+    playbook: playbooks/disk_cleanup.yml
+    credentials: [machine, aap]
+    prompts: {variables: true, limit: true}
+    become: true
+    description: Workflow 49's last step, after the approval - deletes what the plan lists, then reads the mount again
+
+  - name: Service - look (Linux)
+    playbook: playbooks/service_restart.yml
+    credentials: [machine, aap]
+    prompts: {variables: true, limit: true}
+    become: true
+    extra_vars: {portal_service_phase: look}
+    description: Workflow 50's look step for a Linux service, read only
+
+  - name: Service - look (Windows)
+    playbook: playbooks/service_restart.yml
+    credentials: [machine_windows, aap]
+    prompts: {variables: true, limit: true}
+    inventory: windows
+    extra_vars: {portal_service_phase: look, portal_service_os: windows}
+    description: Workflow 50's look step for a Windows service, read only
+
+  - name: Service - restart (Linux)
+    playbook: playbooks/service_restart.yml
+    credentials: [machine, aap]
+    prompts: {variables: true, limit: true}
+    become: true
+    extra_vars: {portal_service_phase: restart}
+    description: Workflow 50's restart of that one Linux service, after the approval
+
+  - name: Service - restart (Windows)
+    playbook: playbooks/service_restart.yml
+    credentials: [machine_windows, aap]
+    prompts: {variables: true, limit: true}
+    inventory: windows
+    extra_vars: {portal_service_phase: restart, portal_service_os: windows}
+    description: Workflow 50's restart of that one Windows service, after the approval
+
+  - name: "fapolicyd - allow this: check"
+    playbook: playbooks/fapolicyd_allow.yml
+    credentials: [machine, aap]
+    prompts: {variables: true, limit: true}
+    become: true
+    extra_vars: {portal_fapolicyd_phase: check}
+    description: Workflow 51's check, read only - the one change for that denial
+
+  - name: "fapolicyd - allow this: approved"
+    playbook: playbooks/fapolicyd_allow.yml
+    credentials: [machine, aap]
+    prompts: {variables: true, limit: true}
+    become: true
+    extra_vars: {portal_fapolicyd_phase: approved}
+    description: Workflow 51's last step, after the approval - makes that one line and reads the blocks again
+
+  - name: Disk - space request
+    playbook: playbooks/disk_space_request.yml
+    credentials: [machine, aap]
+    prompts: {variables: true, limit: true}
+    become: true
+    description: Writes a request for more space, read only, sends nothing
+
+  - name: Site portal - open ticket
+    playbook: playbooks/portal_open_ticket.yml
+    credentials: [aap]
+    prompts: {variables: true, limit: true}
+    description: A ServiceNow incident for one finding - a draft unless portal_ticket_mode is live (then add the ServiceNow API credential by hand)
+
 workflows:
   # ---- 40, 44, 45 (1.67.0 parts A and B)
   - number: 40
@@ -89,4 +165,47 @@ workflows:
       - {id: windows, template: "Windows STIG recheck"}
 
   # ---- 46-48: nuc-dev-2 (STIG fixes) - added in their own block
-  # ---- 49-51: nuc-dev-3 (Clean up, Restart, Allow this) - added in their own block
+  # ---- 49-51: nuc-dev-3 (Clean up, Restart, Allow this) (1.67.0 part E)
+  - number: 49
+    name: Disk - clean up (approved)
+    description: The old files of the tmp folders on one full filesystem, after a person approves the plan
+    prompts: {variables: true, limit: true}
+    nodes:
+      - {id: plan, template: "Disk - plan a clean up", success: [approve]}
+      - id: approve
+        approval:
+          name: Approve the clean up?
+          timeout: 86400
+          description: "Open the plan step's output: Approve deletes the old files it lists, on that one host."
+        success: [clean]
+      - {id: clean, template: "Disk - clean up one mount"}
+
+  - number: 50
+    name: Service - restart
+    description: One service that is down, restarted after a person approves it
+    prompts: {variables: true, limit: true}
+    nodes:
+      - {id: look_linux, template: "Service - look (Linux)", success: [look_windows]}
+      - {id: look_windows, template: "Service - look (Windows)", success: [approve]}
+      - id: approve
+        approval:
+          name: Restart this service?
+          timeout: 86400
+          description: "Open the look step's output (status and log lines): Approve restarts that one service."
+        success: [restart_linux]
+      - {id: restart_linux, template: "Service - restart (Linux)", success: [restart_windows]}
+      - {id: restart_windows, template: "Service - restart (Windows)"}
+
+  - number: 51
+    name: fapolicyd - allow this
+    description: One fapolicyd denial allowed, after a person approves the one change for it
+    prompts: {variables: true, limit: true}
+    nodes:
+      - {id: check, template: "fapolicyd - allow this: check", success: [approve]}
+      - id: approve
+        approval:
+          name: Allow this program?
+          timeout: 86400
+          description: "Open the check's output: Approve makes that one line (a trust entry or a rule) on that host. It changes a security control."
+        success: [approved]
+      - {id: approved, template: "fapolicyd - allow this: approved"}

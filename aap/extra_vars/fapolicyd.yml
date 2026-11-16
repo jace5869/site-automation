@@ -165,6 +165,21 @@
 ## -----------------------
 # portal_actions: {}
 
+# ---- portal_ticket -------------------------------------------------------------------------------
+## ---- Open ticket (1.67.0; the site portal's "Ticket (dry run)" / "Open ticket")
+## ------------------------------------- One finding of a report - any kind - as a ServiceNow
+## incident, the one roles/servicenow would open for it (its short description, its description with
+## the host, check, severity and evidence, its correlation id). A person asks for it in the portal;
+## nothing is opened unless you switch it on: dry_run (the default) builds the incident and shows it
+## - in the job output and the artifact ticket_draft - and contacts NOTHING: no ServiceNow call, no
+## credential needed. The portal's job page says "Dry run: nothing was sent". The button says
+## "Ticket (dry run)". off no button, and the job refuses to run. live opens the incident - only
+## with the "ServiceNow API" credential on the template - or, when that finding already has an open
+## ticket (its correlation id: the same finding, the same ticket), shows that ticket instead of a
+## second one. The button says "Open ticket". This site has not approved it: leave it on dry_run
+## until it does.
+# portal_ticket_mode: dry_run
+
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no
 ## email. Set it on each TEMPLATE (its Variables, or a survey): in all.yml every report job emails.
@@ -374,7 +389,7 @@
 #   - {tab: Windows, match: ["Windows*", "Active Directory*", "AD *", "ACT for Windows*"]}
 #   - {tab: Network and storage, match: ["Network*", "NetApp*", "ONTAP*", "Cisco UCS*", "UCS*"]}
 #   - {tab: Linux, match: ["Linux*", "Health check*", "Troubleshoot*", "Patch*", "Database*", "Service watch*", "POA&M*", "STIG*", "Evaluate-STIG*",
-#                          "Log analysis*", "fapolicyd*", "Apply approved*", "Mail relay*", "ACT - *"]}
+#                          "Log analysis*", "fapolicyd*", "Apply approved*", "Mail relay*", "ACT - *", "Disk - *", "Service - *"]}
 #   - {tab: ServiceNow and AAP, match: ["ServiceNow*", "AAP *", "Report website*", "Site portal*"]}
 
 ## your own {names}, e.g. {site: "{{ site_code }}"} for "{site}/{template}/..."

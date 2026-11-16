@@ -34,6 +34,32 @@ TEMPLATES = {
 ## The portal sends target, report_job, finding_id and portal_requested_by; the playbook checks them again.
 # portal_triage_os: windows        # on the Windows template only (event-log findings); linux (the default) = fapolicyd
 """),
+    "disk_cleanup_plan.yml": ("Disk - plan a clean up", "Machine, Red Hat Ansible Automation Platform", "", """\
+## Workflow 49 (the site portal's "Clean up"), step 1 - read only. Prompt on launch: Variables and Limit.
+## The portal sends target, report_job, finding_id and portal_requested_by; the playbook checks them again.
+"""),
+    "disk_cleanup.yml": ("Disk - clean up one mount", "Machine, Red Hat Ansible Automation Platform", "", """\
+## Workflow 49 (the site portal's "Clean up"), the last step, after the approval. Prompt on launch: Variables and Limit.
+## It carries out the plan of the workflow's own first step (the plan check of "Linux - tmp cleanup"), then reads the mount again.
+"""),
+    "service_restart.yml": ("Service - restart", "Machine (Machine (Windows) on the Windows templates), Red Hat Ansible Automation Platform", "", """\
+## Workflow 50 (the site portal's "Restart"): four templates of this playbook - look and restart, each for Linux and Windows.
+## Prompt on launch: Variables and Limit. Set on each template: portal_service_phase (look or restart) and portal_service_os.
+# portal_service_phase: look       # look = status and log lines (read only); restart = the restart, then its state 30 s later
+# portal_service_os: windows       # on the Windows templates; linux (the default)
+"""),
+    "fapolicyd_allow.yml": ("fapolicyd - allow this", "Machine, Red Hat Ansible Automation Platform", "", """\
+## Workflow 51 (the site portal's "Allow this"): two templates of this playbook, check and approved. Prompt on launch: Variables and Limit.
+# portal_fapolicyd_phase: approved   # on the approved template only; check (the default) reads and hands the one line on
+"""),
+    "disk_space_request.yml": ("Disk - space request", "Machine, Red Hat Ansible Automation Platform", "", """\
+## The site portal's "Space request": read only, no approval. It writes a request text and sends nothing. Prompt on launch: Variables and Limit.
+"""),
+    "portal_open_ticket.yml": ("Site portal - open ticket", "Red Hat Ansible Automation Platform (the ServiceNow API credential only for portal_ticket_mode: live)", "", """\
+## The site portal's "Ticket (dry run)" / "Open ticket": no approval. It runs on the AAP side and connects to no host. Prompt on launch: Variables and Limit.
+## portal_ticket_mode: dry_run (the default) builds the incident and sends NOTHING; off = no button; live = opens it (needs the ServiceNow API credential).
+# portal_ticket_mode: dry_run
+"""),
     "aap_email_question.yml": ("AAP - report email question", "Red Hat Ansible Automation Platform", "", """\
 ## Run it with Check first: it then only reads, and lists the templates and workflows it would change
 # aap_email_question_project: "Site automation"   # only the templates of your project (its name in AAP)

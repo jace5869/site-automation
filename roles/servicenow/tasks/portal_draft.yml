@@ -1,0 +1,33 @@
+---
+# The incident this role WOULD send for one finding, built and not sent - nothing is contacted, no credential is needed
+# (the site portal's "Ticket (dry run)", roles/portal_ticket). Input: _sn_item {host, check, id, severity, summary, hint,
+# note, job, time, act} and servicenow_assignment_group (the caller picks it). It is the same body tickets.yml posts for a
+# new ticket (tests/test_portal_ticket.py compares them). Output: the fact _sn_draft ({correlation_id, body}).
+- name: ServiceNow draft | the correlation id and the time
+  ansible.builtin.set_fact:
+    _sn_draft_cid: "{{ _sn_item.id | site_correlation_id(_sn_item.host, _sn_item.check, servicenow_correlation_prefix) }}"
+    _sn_now: "{{ now(utc=true).strftime('%Y-%m-%d %H:%M UTC') }}"
+
+- name: ServiceNow draft | the incident, as tickets.yml would post it
+  ansible.builtin.set_fact:
+    _sn_draft:
+      correlation_id: "{{ _sn_draft_cid }}"
+      body: >-
+        {%- set i = _sn_item -%}
+        {%- set nl = '\n' -%}
+        {%- set desc = 'Found by an automated check (Ansible Automation Platform' ~ ((', job ' ~ i.job) if i.job else '') ~ ', ' ~ (i.time or _sn_now) ~ ').' ~ nl ~ nl
+             ~ 'Host: ' ~ i.host ~ nl ~ 'Check: ' ~ i.check ~ nl ~ 'Severity: ' ~ i.severity ~ nl ~ 'Finding: ' ~ i.summary ~ nl
+             ~ (('Look further with: ' ~ i.hint ~ nl) if i.hint else '')
+             ~ (('Note: ' ~ i.note ~ nl) if i.note | default('') else '') -%}
+        {%- set b = {
+              'short_description': ('[' ~ servicenow_correlation_prefix ~ '] ' ~ i.host ~ ': ' ~ i.summary) | truncate(158),
+              'description': desc,
+              'urgency': servicenow_urgency[i.severity],
+              'impact': servicenow_impact[i.severity],
+              'correlation_id': _sn_draft_cid,
+              'correlation_display': servicenow_correlation_prefix} -%}
+        {%- if servicenow_assignment_group -%}{%- set _ = b.update({'assignment_group': servicenow_assignment_group}) -%}{%- endif -%}
+        {%- if servicenow_caller -%}{%- set _ = b.update({'caller_id': servicenow_caller}) -%}{%- endif -%}
+        {%- if servicenow_category -%}{%- set _ = b.update({'category': servicenow_category}) -%}{%- endif -%}
+        {%- if servicenow_set_ci | bool and i.host in groups['all'] -%}{%- set _ = b.update({'cmdb_ci': i.host}) -%}{%- endif -%}
+        {{ b | combine(servicenow_fields) }}

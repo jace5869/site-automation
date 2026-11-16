@@ -1,0 +1,130 @@
+---
+# DISK - SPACE REQUEST (1.67.0, the site portal's "Space request" on a disk_full finding where nothing can be cleaned:
+# a job template, no approval, read only). One full filesystem of an earlier health check - named by a reference, never
+# by its text: report_job (that AAP job's id), the host (target, also the Limit) and finding_id (disk_full:<host>:<mount>).
+# The numbers come from that job's site_findings artifact (roles/finding_ref); on a Linux host the health check's own
+# capacity history (check_disk_history_file) is read too, for the growth per week and the days to full. The job writes a
+# ready-to-copy request text - host, mount, size, used, % used, the growth when the history has it - into its output and
+# the job artifact disk_space_request. It SENDS NOTHING: no email, no ticket, nothing is changed on the host.
+# Linux or Windows (a Windows drive has no history here: the text has the numbers of the finding only).
+# docs/SITE_PORTAL.md, "Disk, services and fapolicyd".
+#   ansible-playbook playbooks/disk_space_request.yml -l web01.example.mil -e target=web01.example.mil \
+#     -e report_job=4711 -e finding_id=disk_full:web01.example.mil:/var
+- name: Target check (stops with a clear message when target matches no host)
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: The target leaves at least one host to run on
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: target_check.yml
+      vars:
+        _target_pattern: "{{ target | default('') }}"
+
+- name: Disk - space request
+  hosts: "{{ target | default('no-target-given') }}"     # without target the check above has stopped the job
+  gather_facts: false
+  tasks:
+    - name: Space request | the request (target, report_job, finding_id; who asked)
+      ansible.builtin.include_role:
+        name: portal_request
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+        portal_request_action: disk_space_request
+        portal_request_always: true
+        portal_request_limit_from: target
+        portal_request_spec:
+          target: {kind: inventory_host}
+          report_job: {kind: text, max: 12, pattern: "[0-9]{1,12}"}
+          finding_id: {kind: text, max: 200, pattern: "disk_full:[A-Za-z0-9_.:/@-]{1,180}"}
+
+    - name: Space request | the finding, from the job that reported it
+      ansible.builtin.include_role:
+        name: finding_ref
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+        finding_ref_host: "{{ inventory_hostname }}"
+        finding_ref_kinds: [disk_full]
+
+    - name: Space request | the capacity history on the host (Linux; read only)
+      ansible.builtin.slurp:
+        src: "{{ check_disk_history_file | default('/var/lib/site-health/disk-history.json') }}"
+      register: _sr_hist
+      failed_when: false
+      become: true
+      when: finding.data.os | default('linux') == 'linux'
+
+    - name: Space request | growth per week and days to full, when the history has at least a day
+      ansible.builtin.set_fact:
+        _sr_growth: >-
+          {%- set d = {} -%}
+          {%- set h = ((_sr_hist.content | default('e30=') | b64decode | from_json) if _sr_hist is defined and _sr_hist.content is defined else {}) -%}
+          {%- set samples = (h[finding.data.mount] | default([])) | sort(attribute='0') -%}
+          {%- if samples | length >= 2 and (samples[-1][0] | int) - (samples[0][0] | int) >= 72000 and (samples[-1][1] | int) > (samples[0][1] | int) -%}
+          {%-   set secs = (samples[-1][0] | int) - (samples[0][0] | int) -%}
+          {%-   set per_day = ((samples[-1][1] | int) - (samples[0][1] | int)) / secs * 86400 -%}
+          {%-   set _ = d.update({'per_week_b': (per_day * 7) | int, 'days_of_history': (secs / 86400) | round(1),
+                                  'days_to_full': ((finding.data.avail_b | default(0) | int) / per_day) | round(1) if finding.data.avail_b is defined else none}) -%}
+          {%- endif -%}
+          {{ d }}
+
+    - name: Space request | the text
+      ansible.builtin.set_fact:
+        _sr_text: >-
+          {%- set f = finding.data -%}
+          {%- set lines = ['Request: more space on ' ~ inventory_hostname ~ ', ' ~ f.mount,
+                           'Now: ' ~ f.pct ~ '% used'
+                           ~ ((' (' ~ ((f.size_b | int - f.avail_b | int) | filesizeformat(true)) ~ ' of ' ~ (f.size_b | int | filesizeformat(true))
+                               ~ ', ' ~ (f.avail_b | int | filesizeformat(true)) ~ ' free)') if f.size_b is defined and f.avail_b is defined else '')
+                           ~ '. The health check warns at ' ~ f.warn | default('?') ~ '% and is critical at ' ~ f.crit | default('?') ~ '%.'] -%}
+          {%- if _sr_growth | length > 0 -%}
+          {%-   set _ = lines.append('Growth: about ' ~ (_sr_growth.per_week_b | filesizeformat(true)) ~ ' a week (over '
+                                     ~ _sr_growth.days_of_history ~ ' days of history)'
+                                     ~ ((', full in about ' ~ _sr_growth.days_to_full ~ ' days') if _sr_growth.days_to_full is not none else '') ~ '.') -%}
+          {%- else -%}
+          {%-   set _ = lines.append('Growth: not known (the capacity history has less than a day, or none for this ' ~ ('drive' if f.os | default('linux') == 'windows' else 'mount') ~ ').') -%}
+          {%- endif -%}
+          {%- set _ = lines.append('Nothing in the tmp folders can be cleaned to make room. Reported by the health check, AAP job ' ~ finding_job.id ~ '.') -%}
+          {{ lines | join('\n') }}
+
+    - name: Space request | the request, ready to copy (nothing was sent)
+      ansible.builtin.debug:
+        msg: "{{ _sr_text.split('\n') }}"
+
+    - name: Space request | the request as the job artifact disk_space_request
+      ansible.builtin.set_stats:
+        data:
+          disk_space_request:
+            host: "{{ inventory_hostname }}"
+            mount: "{{ finding.data.mount }}"
+            text: "{{ _sr_text }}"
+            growth: "{{ _sr_growth }}"
+        per_host: false
+        aggregate: false
+      run_once: true
+
+    - name: Space request | the result, for the portal job page
+      ansible.builtin.include_role:
+        name: portal_result
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+        portal_result_fixed: unknown
+        portal_result_read_only: true
+        portal_result_before: "{{ finding.data.mount }} {{ finding.data.pct }}% used"
+        portal_result_after: "a request text was written; nothing was sent"
+        portal_result_summary: "The request for more space on {{ finding.data.mount }} is in the job output and the artifact disk_space_request. Nothing was sent."

@@ -1,0 +1,34 @@
+---
+# OPEN TICKET (1.67.0, the site portal's "Ticket (dry run)" / "Open ticket" on a finding of any kind; a job template, no
+# approval). One finding of an earlier report job - named by a reference, never by its text: report_job (that AAP job's
+# id), the host (target, also the Limit) and finding_id (<kind>:<host>:<key>). It runs on the AAP side only: it connects
+# to no host. portal_ticket_mode (roles/portal_ticket/defaults/main.yml): dry_run (the default) builds the ServiceNow
+# incident and shows it - the job output and the artifact ticket_draft - and contacts NOTHING; off refuses; live opens it
+# with the "ServiceNow API" credential (or shows the ticket the finding already has). docs/SITE_PORTAL.md, "Open ticket".
+#   ansible-playbook playbooks/portal_open_ticket.yml -l web01.example.mil -e target=web01.example.mil \
+#     -e report_job=4711 -e finding_id=disk_full:web01.example.mil:/var
+- name: Target check (stops with a clear message when target matches no host)
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: The target leaves at least one host to run on
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: target_check.yml
+      vars:
+        _target_pattern: "{{ target | default('') }}"
+
+- name: Open ticket
+  hosts: "{{ target | default('no-target-given') }}"     # without target the check above has stopped the job
+  gather_facts: false
+  tasks:
+    - name: Ticket | the finding and its incident
+      ansible.builtin.include_role:
+        name: portal_ticket
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"

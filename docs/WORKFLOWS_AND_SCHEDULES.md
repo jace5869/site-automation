@@ -909,6 +909,77 @@ The site portal's **Recheck** button: the rules STIG Manager has Open or Not Rev
 - Read only: STIG Manager is not written. Workflow 37 updates it after an approval.
 - [SITE_PORTAL.md](SITE_PORTAL.md#aap-workflows).
 
+### 49. Disk - clean up one full filesystem, from the site portal
+
+The site portal's **Clean up** button on a `disk_full` finding: the old files of the tmp folders on that one mount.
+
+```workflow
+[Disk - plan a clean up]
+   |  Run on success
+   v
+[Approval]
+   |  Run on success
+   v
+[Disk - clean up one mount]
+```
+
+| Step | Template | Link |
+|---|---|---|
+| 1 | Disk - plan a clean up: `playbooks/disk_cleanup_plan.yml` | (start) |
+| 2 | The approval | **Run on success**, from 1 |
+| 3 | Disk - clean up one mount: `playbooks/disk_cleanup.yml` | **Run on success**, from 2 |
+
+- **All templates and the workflow:** **Prompt on launch** for **Variables** and **Limit**. Machine credential (ssh and
+  sudo) and *Red Hat Ansible Automation Platform* (to read the reporting job).
+- **The plan** is the same plan as workflow 42's, and step 3 checks it the same way (it must come from this workflow, and
+  from this host alone).
+- Step 3 reads the mount again: the result says Fixed when it is under its warning level.
+- Linux only. [SITE_PORTAL.md](SITE_PORTAL.md#disk-services-and-fapolicyd).
+
+### 50. Service - restart one service, from the site portal
+
+The site portal's **Restart** button on a `service_down` finding.
+
+```workflow
+[Service - look (Linux)]
+   |  Run on success
+   v
+[Service - look (Windows)]
+   |  Run on success
+   v
+[Approval]
+   |  Run on success
+   v
+[Service - restart (Linux)]
+   |  Run on success
+   v
+[Service - restart (Windows)]
+```
+
+- **Four templates** of `playbooks/service_restart.yml`, with the Variables `portal_service_phase` (`look` or `restart`)
+  and `portal_service_os` (`linux` or `windows`). Each step passes over a host of the other OS without connecting. Every link is **Run on success**.
+- **Prompt on launch** for **Variables** and **Limit**, on the templates and the workflow.
+- A service on `portal_restart_never` is refused in the look step, before the approval.
+- [SITE_PORTAL.md](SITE_PORTAL.md#disk-services-and-fapolicyd).
+
+### 51. fapolicyd - allow one denial, from the site portal
+
+The site portal's **Allow this** button on a `fapolicyd_deny` finding. The path of workflow 36, for that one denial.
+
+```workflow
+[fapolicyd - allow this: check]
+   |  Run on success
+   v
+[Approval]
+   |  Run on success
+   v
+[fapolicyd - allow this: approved]
+```
+
+- **Two templates** of `playbooks/fapolicyd_allow.yml`; the second has the Variables `portal_fapolicyd_phase: approved`.
+- The check hands on one line (`fapolicyd_workflow_plan`, this host). The approved job refuses any other line.
+- [SITE_PORTAL.md](SITE_PORTAL.md#disk-services-and-fapolicyd).
+
 ## VMware workflows
 
 The VMware templates run on the AAP side against vCenter: no Limit, and each uses its own

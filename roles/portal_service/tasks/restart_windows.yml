@@ -1,0 +1,42 @@
+---
+# The restart of that one service (PowerShell through raw: no collection needed), 30 s later its state.
+- name: Service | restart {{ _ps_name }}
+  ansible.builtin.raw: "Restart-Service -Name '{{ _ps_name }}' -Force -ErrorAction Stop"
+  register: _ps_restart
+  changed_when: true
+  failed_when: false
+  timeout: "{{ portal_service_command_timeout | int }}"
+
+- name: Service | wait before reading it again
+  ansible.builtin.pause:
+    seconds: "{{ portal_restart_wait | int }}"
+  when: portal_restart_wait | int > 0 and not ansible_check_mode
+
+- name: Service | its status now
+  ansible.builtin.raw: "(Get-Service -Name '{{ _ps_name }}' -ErrorAction SilentlyContinue).Status"
+  register: _ps_after
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Service | the result
+  ansible.builtin.set_fact:
+    _ps_state_now: "{{ _ps_after.stdout | default('unknown', true) | trim }}"
+    _ps_active: "{{ (_ps_after.stdout | default('', true) | trim | lower) == 'running' }}"
+
+- name: Service | the result, for the portal job page
+  ansible.builtin.include_role:
+    name: portal_result
+    apply:
+      delegate_to: localhost
+      run_once: true
+      become: false
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    portal_result_fixed: "{{ _ps_active | bool }}"
+    portal_result_before: "{{ _ps_name }} {{ finding.data.state | default('stopped') }}"
+    portal_result_after: "{{ _ps_name }} {{ _ps_state_now }}"
+    portal_result_summary: >-
+      {{ _ps_name }} on {{ inventory_hostname }} was {{ finding.data.state | default('stopped') }}; after the restart
+      ({{ portal_restart_wait }} s) it is {{ _ps_state_now }}.

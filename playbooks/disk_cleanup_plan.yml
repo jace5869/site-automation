@@ -1,0 +1,120 @@
+---
+# DISK - PLAN A CLEAN UP (1.67.0, the first step of workflow 49 "Disk - clean up (approved)"; the site portal's
+# "Clean up" button on a disk_full finding). One full filesystem of an earlier health check - named by a reference, never
+# by its text: report_job (that AAP job's id), the host (target, also the Limit) and finding_id (disk_full:<host>:<mount>).
+# The mount and its thresholds are read back from that job's site_findings artifact (roles/finding_ref: this host's, of
+# kind disk_full, or the job stops before it touches anything). Linux only: a Windows drive is refused.
+# Read only. It lists which of the tmp folders (tmp_cleanup_dirs) are on that mount, what they hold older than their
+# limit (tmp_cleanup_keep and the age are the cleanup's own) and the space that would be freed. The folders it plans are
+# handed on (disk_cleanup_plan, disk_cleanup_plan_workflow - the same plan as workflow 42's, checked the same way by
+# "Linux - tmp cleanup"). A mount no tmp folder is on, or with nothing old in it, stops here: the workflow does not ask
+# for an approval of nothing. docs/SITE_PORTAL.md, "Disk, services and fapolicyd".
+#   ansible-playbook playbooks/disk_cleanup_plan.yml -l web01.example.mil -e target=web01.example.mil \
+#     -e report_job=4711 -e finding_id=disk_full:web01.example.mil:/tmp
+- name: Target check (stops with a clear message when target matches no host)
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: The target leaves at least one host to run on
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: target_check.yml
+      vars:
+        _target_pattern: "{{ target | default('') }}"
+
+- name: Disk - plan a clean up
+  hosts: "{{ target | default('no-target-given') }}"     # without target the check above has stopped the job
+  gather_facts: false
+  become: true
+  vars:
+    site_os: linux
+  pre_tasks:
+    - name: Linux hosts only (a Windows drive has no tmp cleanup)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+  tasks:
+    - name: Disk plan | the request (target, report_job, finding_id; who asked)
+      ansible.builtin.include_role:
+        name: portal_request
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+        portal_request_action: disk_cleanup
+        portal_request_always: true
+        portal_request_limit_from: target
+        portal_request_spec:
+          target: {kind: inventory_host}
+          report_job: {kind: text, max: 12, pattern: "[0-9]{1,12}"}
+          finding_id: {kind: text, max: 200, pattern: "disk_full:[A-Za-z0-9_.:/@-]{1,180}"}
+
+    - name: Disk plan | the finding, from the job that reported it
+      ansible.builtin.include_role:
+        name: finding_ref
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+        finding_ref_host: "{{ inventory_hostname }}"
+        finding_ref_kinds: [disk_full]
+
+    - name: Disk plan | Linux only - a Windows drive is not cleaned here
+      ansible.builtin.fail:
+        msg: >-
+          {{ finding.id }} is a {{ finding.data.os | default('?') }} disk finding. This clean up is for Linux hosts only
+          (the tmp folders): nothing was changed. Ask for more space with "Disk - space request" instead.
+      when: finding.data.os | default('linux') != 'linux'
+
+    - name: Disk plan | the tmp folders and what they hold
+      ansible.builtin.include_role:
+        name: tmp_cleanup
+        tasks_from: scan.yml
+
+    - name: Disk plan | the folders on the finding's mount, with something old in them
+      ansible.builtin.set_fact:
+        _dc_on_mount: "{{ _tmp_scan | selectattr('mount', 'equalto', finding.data.mount) | list }}"
+        _dc_plan: "{{ _tmp_scan | selectattr('mount', 'equalto', finding.data.mount) | selectattr('files', 'gt', 0) | list }}"
+
+    - name: Disk plan | no tmp folder is on this mount
+      ansible.builtin.fail:
+        msg: >-
+          {{ finding.data.mount }} is full ({{ finding.data.pct }}%), but none of the tmp folders this clean up knows
+          ({{ _tmp_scan | map(attribute='path') | join(', ') }}; tmp_cleanup_dirs) is on it: nothing to clean here,
+          nothing was changed. Ask for more space with "Disk - space request".
+      when: _dc_on_mount | length == 0
+
+    - name: Disk plan | nothing old enough to delete
+      ansible.builtin.fail:
+        msg: >-
+          {{ finding.data.mount }} is full ({{ finding.data.pct }}%); the tmp folders on it
+          ({{ _dc_on_mount | map(attribute='path') | join(', ') }}) hold nothing older than their limit
+          ({{ _dc_on_mount | map(attribute='days') | join(', ') }} days): nothing to clean here, nothing was changed.
+          Ask for more space with "Disk - space request".
+      when: _dc_plan | length == 0
+
+    - name: Disk plan | what would be deleted (nothing is)
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} {{ finding.data.mount }} ({{ finding.data.pct }}% full):
+          {% for c in _dc_plan %}{{ c.path }}: would delete {{ c.files }} file(s), {{ c.bytes | filesizeformat(true) }},
+          older than {{ c.days }} days{{ '; ' if not loop.last else '' }}{% endfor %}.
+          Total {{ _dc_plan | sum(attribute='bytes') | filesizeformat(true) }} freed.
+
+    - name: Disk plan | the plan, for the approval and the clean up (the same plan as workflow 42's)
+      ansible.builtin.set_stats:
+        data:
+          disk_cleanup_plan: "{{ {inventory_hostname: _dc_plan | map(attribute='path') | list} }}"
+          disk_cleanup_plan_workflow: "{{ awx_workflow_job_id | default('') | string }}"
+          disk_cleanup_summary: >-
+            {{ inventory_hostname }} {{ finding.data.mount }}: {{ _dc_plan | sum(attribute='files') }} file(s),
+            {{ _dc_plan | sum(attribute='bytes') | filesizeformat(true) }} older than the limit
+        per_host: false
+        aggregate: false
+      run_once: true

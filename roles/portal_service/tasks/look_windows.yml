@@ -1,0 +1,25 @@
+---
+# Read only (raw runs PowerShell, no collection needed): the service, and its last events in the System log.
+- name: Service | the service {{ _ps_name }}
+  ansible.builtin.raw: >-
+    Get-Service -Name '{{ _ps_name }}' -ErrorAction SilentlyContinue | Format-List Name, DisplayName, Status, StartType | Out-String -Width 200
+  register: _ps_status
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  timeout: "{{ portal_service_command_timeout | int }}"
+
+- name: Service | the last events about it
+  ansible.builtin.raw: >-
+    Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='Service Control Manager'} -MaxEvents 400 -ErrorAction SilentlyContinue
+    | Where-Object { $_.Message -like '*{{ _ps_name }}*' } | Select-Object -First {{ portal_service_log_lines | int }}
+    | Format-List TimeCreated, Id, LevelDisplayName, Message | Out-String -Width 200
+  register: _ps_log
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  timeout: "{{ portal_service_command_timeout | int }}"
+
+- name: Service | what it looks like
+  ansible.builtin.debug:
+    msg: "{{ ['STATUS of ' ~ _ps_name ~ ' on ' ~ inventory_hostname ~ ':'] + (_ps_status.stdout_lines | default([])) + ['', 'LAST ' ~ portal_service_log_lines ~ ' EVENTS:'] + (_ps_log.stdout_lines | default([])) }}"

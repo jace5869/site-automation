@@ -1,0 +1,18 @@
+---
+# ---- Open ticket (1.67.0; the site portal's "Ticket (dry run)" / "Open ticket") -------------------------------------
+# One finding of a report - any kind - as a ServiceNow incident, the one roles/servicenow would open for it (its short
+# description, its description with the host, check, severity and evidence, its correlation id). A person asks for it in
+# the portal; nothing is opened unless you switch it on:
+#   dry_run  (the default)  builds the incident and shows it - in the job output and the artifact ticket_draft - and
+#                           contacts NOTHING: no ServiceNow call, no credential needed. The portal's job page says
+#                           "Dry run: nothing was sent". The button says "Ticket (dry run)".
+#   off                     no button, and the job refuses to run.
+#   live                    opens the incident - only with the "ServiceNow API" credential on the template - or, when that
+#                           finding already has an open ticket (its correlation id: the same finding, the same ticket),
+#                           shows that ticket instead of a second one. The button says "Open ticket". This site has not
+#                           approved it: leave it on dry_run until it does.
+portal_ticket_mode: dry_run
+# The assignment group by finding kind (disk_full, service_down, fapolicyd_deny, stig_rule_fail, eventlog ...); a kind
+# not listed gets portal_ticket_group_default; empty = servicenow_assignment_group.
+portal_ticket_groups: {}
+portal_ticket_group_default: ""            # the group for a kind not in portal_ticket_groups ("" = servicenow_assignment_group)

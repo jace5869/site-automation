@@ -387,5 +387,68 @@ run ra04 -e '{"fapolicyd_approved": ["remove rule: 50-local.rules: allow perm=ex
     && ok "a line the job never gives (and one copied with a host name): nothing changed (exit 2)" || bad "refused: rc $rc" 30
 if ls -d /tmp/*.fapolicyd-rules "${TMPDIR:-/tmp}"/*.fapolicyd-rules >/dev/null 2>&1; then bad "a way-back folder was left behind"; else ok "no way-back folder left behind"; fi
 
+# ---- 1.67.0 part E: "fapolicyd - allow this" (playbooks/fapolicyd_allow.yml): one denial, the one change for it ---------------
+# a stand-in AAP serves the report job's site_findings (the denial of /opt/app/tool by bash on ra04, as the fapolicyd job
+# and the health check write it); the check hands on that one line, the approved job makes exactly it and reads again
+fkey="$(PYTHONDONTWRITEBYTECODE=1 "$py" -c 'import sys; sys.path.insert(0, sys.argv[1] + "/plugins/filter"); import finding_filters as f; print(f.finding_id("fapolicyd_deny", sys.argv[2], sys.argv[3] + "\n" + sys.argv[4]))' "$repo" ra04.example.mil /usr/bin/bash "$work/opt/app/tool")"
+fkey_other="$(PYTHONDONTWRITEBYTECODE=1 "$py" -c 'import sys; sys.path.insert(0, sys.argv[1] + "/plugins/filter"); import finding_filters as f; print(f.finding_id("fapolicyd_deny", sys.argv[2], sys.argv[3] + "\n" + sys.argv[4]))' "$repo" ra04.example.mil /usr/bin/bash /opt/app/nothing-here)"
+"$py" - "$work" "$fkey" "$fkey_other" <<'EOPY'
+import json, sys
+work, fid, fid2 = sys.argv[1:4]
+def e(i, prog, path):
+    return {"id": i, "kind": "fapolicyd_deny", "host": "ra04.example.mil", "title": "fapolicyd denied %s opening %s" % (prog, path), "severity": "warning",
+            "data": {"program": prog, "path": path, "count": 1}}
+json.dump({"site_findings": {"ra04.example.mil": [e(fid, "/usr/bin/bash", work + "/opt/app/tool"), e(fid2, "/usr/bin/bash", "/opt/app/nothing-here"),
+           {"id": "disk_full:ra04.example.mil:/", "kind": "disk_full", "host": "ra04.example.mil", "title": "/ is full", "severity": "critical", "data": {"mount": "/"}}]}},
+          open(work + "/fa-artifacts.json", "w"))
+EOPY
+"$py" "$repo/tests/findings/aap_artifacts.py" 18696 "$work/fa-artifacts.json" 4711 & aap_pid=$!
+for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/18696") 2>/dev/null && break; sleep 0.1; done
+runa() {  # runa NAME ok|fail [args...] -- TEXT... -> $work/out.txt
+    local name="$1" want="$2"; shift 2
+    local args=() texts=() seen=0 a
+    for a in "$@"; do if [ "$a" = "--" ]; then seen=1; elif [ $seen -eq 0 ]; then args+=("$a"); else texts+=("$a"); fi; done
+    (cd "$repo" && PATH="$work/bin:$PATH" FAKE_FA_WORK="$work" FAKE_FA_USER="$me" FAKE_FA_GROUP="$mygroup" FAKE_FA_HOST=ra04 \
+        ANSIBLE_ROLES_PATH="$repo/roles$([ -d "$repo/roles/portal_result" ] || echo ":$repo/tests/portal/stub_roles")" \
+        CONTROLLER_HOST=http://127.0.0.1:18696 CONTROLLER_OAUTH_TOKEN=made-up-token ANSIBLE_SHOW_CUSTOM_STATS=1 \
+        ANSIBLE_STDOUT_CALLBACK=default ANSIBLE_NOCOLOR=1 ANSIBLE_LOCALHOST_WARNING=False ANSIBLE_DEPRECATION_WARNINGS=False ANSIBLE_TIMEOUT=3 \
+        "$ap" -i "$work/inv.yml" playbooks/fapolicyd_allow.yml -l ra04.example.mil -e target=ra04.example.mil -e report_job=4711 -e "@$work/vars.json" \
+        -e '{"portal_requested_by": "CN=Pat Example"}' "${args[@]}") > "$work/out.txt" 2>&1
+    rc=$?
+    local okk=1 x
+    [ "$want" = ok ] && [ $rc -ne 0 ] && okk=0
+    [ "$want" = fail ] && [ $rc -eq 0 ] && okk=0
+    for x in "${texts[@]}"; do
+        if [ "${x:0:1}" = "!" ]; then grep -qF -- "${x:1}" "$work/out.txt" && { okk=0; echo "   unexpected: ${x:1}"; }
+        else grep -qF -- "$x" "$work/out.txt" || { okk=0; echo "   missing: $x"; }; fi
+    done
+    [ $okk -eq 1 ] && ok "$name" || bad "$name (rc $rc)" 30
+}
+shaT="$(sha256sum "$work/opt/app/tool" | cut -d' ' -f1)"; sizeT="$(stat -c %s "$work/opt/app/tool")"
+LT="trust file: $work/opt/app/tool size $sizeT sha256 $shaT"
+runa "allow this, check: the one line for that program and path - no other change is offered" ok -e "finding_id=$fkey" -e portal_fapolicyd_phase=check -- \
+    "ra04.example.mil: $LT" "fapolicyd_workflow_plan"
+"$py" - "$work/out.txt" "$work" <<'EOPY' && ok "  ...the artifact fapolicyd_workflow_plan is that one line, for ra04 alone" || bad "the plan artifact"
+import json, sys
+text = open(sys.argv[1]).read()
+i = text.find("RUN:", text.find("CUSTOM STATS"))
+stats = json.JSONDecoder().raw_decode(text[i + 4:].lstrip())[0]
+plan = stats["fapolicyd_workflow_plan"]
+assert list(plan) == ["ra04.example.mil"] and len(plan["ra04.example.mil"]) == 1 and plan["ra04.example.mil"][0].startswith("trust file: "), plan
+EOPY
+[ -e "$work/ra04/etc/trust.d/site-approved" ] && bad "the check wrote a trust file" || ok "  ...the check changed nothing (no trust file)"
+runa "allow this, approved with a plan that holds another line: refused, nothing changed" fail -e "finding_id=$fkey" -e portal_fapolicyd_phase=approved \
+    -e "{\"fapolicyd_workflow_plan\": {\"ra04.example.mil\": [\"$LT\", \"permissive: 1 -> 0\"]}}" -- "the approved line is not the one change this denial gets now"
+runa "allow this, approved with a plan for another host: refused" fail -e "finding_id=$fkey" -e portal_fapolicyd_phase=approved \
+    -e "{\"fapolicyd_workflow_plan\": {\"ra01.example.mil\": [\"$LT\"]}}" -- "not this host's alone"
+[ -e "$work/ra04/etc/trust.d/site-approved" ] && bad "a refused run wrote a trust file" || ok "  ...still no trust file"
+runa "allow this, approved: exactly that line is made, then the blocks are read again: fixed" ok -e "finding_id=$fkey" -e portal_fapolicyd_phase=approved \
+    -e "{\"fapolicyd_workflow_plan\": {\"ra04.example.mil\": [\"$LT\"]}}" -- ": Fixed - before:" "the change is not proposed any more"
+grep -q "$work/opt/app/tool " "$work/ra04/etc/trust.d/site-approved" && ok "  ...the trust entry is in the trust file, pinned to the file" || bad "no trust entry"
+runa "allow this: a denial with no block now - nothing to allow, nothing changed" fail -e "finding_id=$fkey_other" -e portal_fapolicyd_phase=check -- "shows no block of /usr/bin/bash opening /opt/app/nothing-here now"
+runa "allow this: a disk finding of the wrong kind is refused before anything is read" fail -e "finding_id=disk_full:ra04.example.mil:/" -e portal_fapolicyd_phase=check -- "is not in the expected form"
+runa "allow this: another host's finding" fail -e "finding_id=fapolicyd_deny:ra01.example.mil:h0123456789abcdef" -e portal_fapolicyd_phase=check -- "has no finding"
+kill "$aap_pid" 2>/dev/null
+
 if [ "$fails" -gt 0 ]; then echo "FAILED: $fails"; exit 1; fi
 echo "all fapolicyd rules scenarios passed"
