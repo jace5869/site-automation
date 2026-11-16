@@ -480,7 +480,7 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
   .tw tbody tr{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:6px 0;margin-bottom:8px}
   .tw td,.tw td.k-nw,.tw td.nw,.tw td.k-num,.tw td.nw .chip{white-space:normal;text-align:left;min-width:0}
   /* a word wider than the card breaks inside it (1.24.0b: wider fonts); a date, an address, a number stay whole */
-  .tw td .w{white-space:normal}
+  .tw td .w{white-space:normal}.tw td .clw,.tw td .clw>a{white-space:normal}
   .tw td .chip{min-width:0;max-width:100%}.tw td .chip>span{min-width:0;overflow-wrap:anywhere}
   .tw td{border:0;padding:4px 14px;display:grid;grid-template-columns:minmax(90px,34%) minmax(0,1fr);gap:10px;align-items:start;background:none!important;overflow-wrap:break-word}
   .tw td:before{content:attr(data-l);font-family:var(--sans);font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--label);padding-top:3px}
@@ -570,6 +570,10 @@ tr.xr[hidden]{display:none}
 tr.xr>td.xd{padding:2px 14px 14px 46px;background:var(--card-strong);white-space:normal}
 table.xt>tbody>tr:nth-child(even)>td{background:transparent}table.xt>tbody>tr:not(.xr):nth-child(4n+3)>td{background:var(--zebra)}
 .xt0{margin:8px 0 6px;font-size:13px;color:var(--muted)}
+.rtx{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:8px 16px;margin:10px 0 4px}
+.clw,.clw>a{white-space:nowrap}td.k-cl a.hl .ic{display:inline-block;width:12px;height:12px;margin-left:3px;vertical-align:-1px}.rtb{min-width:0}.rth{margin:0 0 4px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--label)}
+.rtx .code{margin-top:0;padding-top:0}.rtx pre{max-height:13.5em;overflow:auto}.rtx .copy{white-space:nowrap}
+@media print{.rtx pre{max-height:none;overflow:visible}}
 .catc{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;font-weight:600}
 .catc i,.cq{display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--cat);flex:none}
 .cn{display:inline-flex;align-items:center;gap:6px}
@@ -714,6 +718,7 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 </table></div>
 {%- endif %}
 {%- if t.more | default('') %}<p class="xt0">{{ t.more | e }}</p>{% endif %}
+{%- if t.texts | default([]) %}<div class="rtx">{% for b in t.texts %}<div class="rtb"><h3 class="rth">{{ b.label | e }}</h3><div class="code"><pre>{{ b.text | e }}</pre><button class="copy" type="button" hidden title="{{ b.title | e }}"{% if b.cmd %} data-copy="{{ b.cmd | e }}"{% endif %}>{{ b.button | e }}</button></div></div>{% endfor %}</div>{% endif %}
 {%- endmacro %}
 {%- for s in secs %}
 {%- set ss = s.status | default('') %}
@@ -888,7 +893,8 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 {%- set cl = s.cell_links if s.cell_links is defined else none %}
 {%- set clu = (cl.urls[ri] if cl and loop.index0 == cl.column and cl.urls | length > ri else '') | default('', true) %}
 {%- if clu %}
-<td class="k-{{ kd }} k-cl" data-l="{{ lbl | e }}" data-v="{{ text | e }}"><a class="hl cv" href="{{ clu | e }}" target="_blank" rel="noopener" title="{{ cl.title | e }}">{{ breakable(text) }}<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3.5H3.5v9h9v-3M9.5 2.5h4v4M13.2 2.8 7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></a></td>
+{%- set cpy = (cl.copies[ri] if cl.copies is defined and cl.copies | length > ri else '') | default('', true) %}
+<td class="k-{{ kd }} k-cl" data-l="{{ lbl | e }}" data-v="{{ text | e }}">{% if cpy %}<span class="clw">{% endif %}<a class="hl cv" href="{{ clu | e }}" target="_blank" rel="noopener" title="{{ (cl.titles[ri] if cl.titles is defined and cl.titles | length > ri else cl.title | default('')) | e }}">{% if kd == 'wrap' %}{% set ws = text.split(' ') %}{% for w in ws[:-1] %}<span class="w">{{ nbw(w) }}</span> <wbr>{% endfor %}{% if ws[-1] | length <= 16 %}<span class="w">{{ nbw(ws[-1]) }}<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3.5H3.5v9h9v-3M9.5 2.5h4v4M13.2 2.8 7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>{% else %}{{ dw(ws[-1], false) }}<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3.5H3.5v9h9v-3M9.5 2.5h4v4M13.2 2.8 7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>{% endif %}{% else %}{{ breakable(text) }}<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3.5H3.5v9h9v-3M9.5 2.5h4v4M13.2 2.8 7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>{% endif %}</a>{% if cpy %}<button class="ccopy" type="button" hidden title="Copy {{ cpy | e }}" aria-label="Copy {{ cpy | e }}" data-copy="{{ cpy | e }}">{{ copyicons() }}</button></span>{% endif %}</td>
 {%- elif kd == 'buttons' %}
 {#- 1.67.0 part C: a finding's buttons (the site portal's actions of its kind) - two shown, the rest under More #}
 {%- set bs = (s.buttons[ri] if s.buttons is defined and s.buttons | length > ri else []) | default([], true) %}

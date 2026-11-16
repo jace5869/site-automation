@@ -1226,6 +1226,255 @@ class Big(unittest.TestCase):
         self.assertEqual(f._scorecard_web(web, web["sections"])["title"], web["title"])   # the report fit document
 
 
+API = "https://stigman.example.mil/api"
+
+
+def with_texts(read=None, info=None):
+    """A read with the fixture's rule texts, as site_stig_scorecard gives them (1.68.0)."""
+    read = read or read_of()
+    t = dict((sv, {"rule": fx.RULES[sv][0], "check": c, "fix": x}) for sv, (c, x) in fx.TEXTS.items())
+    return dict(read, rule_texts=t, texts=info or {"asked": 10, "read": 9, "seconds": 0.4, "slow": False, "error": "", "missing": 1})
+
+
+class TextClient(object):
+    """STIG Manager's GET /stigs/rules/RULE?projection=check&projection=fix (1.68.0) as 1.6.18 answers it: check {system,
+    content}, fix {fixref, text}; an unknown rule: nothing. slow: seconds each takes; refuse: a 403; fail: rules that error."""
+    def __init__(self, slow=0.0, refuse=False, fail=()):
+        self.p = {"timeout": 60}
+        self.slow, self.refuse, self.fail, self.calls = slow, refuse, set(fail), []
+
+    def get(self, path, wait=None, **q):
+        import time as _t
+        self.calls.append((path, q.get("projection"), wait))
+        assert path.startswith("/stigs/rules/") and q.get("projection") == ["check", "fix"], (path, q)
+        if self.refuse:
+            raise RuntimeError("HTTP 403 from https://stigman.example.mil/api%s: insufficient privilege" % path)
+        rule = path.rsplit("/", 1)[1]
+        if rule in self.fail:
+            raise RuntimeError("HTTP 500 from https://stigman.example.mil/api%s: oops" % path)
+        if self.slow:
+            _t.sleep(min(self.slow, wait or self.slow))
+            if wait is not None and self.slow > wait:
+                raise RuntimeError("no answer from https://stigman.example.mil/api%s in time (a slow answer)" % path)
+        sv = next((k for k, v in fx.RULES.items() if v[0] == rule), None)
+        if sv not in fx.TEXTS:
+            return None                                          # 1.6.18: an unknown rule is a 200 with no body
+        return {"ruleId": rule, "check": {"system": "C-1", "content": fx.TEXTS[sv][0] + "  \r\n\n\n\n"},
+                "fix": {"fixref": "F-1", "text": fx.TEXTS[sv][1]}}
+
+
+class Links(unittest.TestCase):
+    """1.68.0: the names on the website open STIG Manager - its plain address: 1.6.18 has no links into a review (its page
+    reads any #... or ?... as a sign-in answer and stops)."""
+    def test_the_web_address_from_the_api(self):
+        for api, web in ((API, "https://stigman.example.mil/"), (API + "/", "https://stigman.example.mil/"),
+                         ("https://www.example.mil/stigman/api", "https://www.example.mil/stigman/"),
+                         ("https://stigman.example.mil:54000", "https://stigman.example.mil:54000/"),
+                         (API + "?x=1#y", "https://stigman.example.mil/"), ("", ""), ("stigman.example.mil/api", ""),
+                         ("ftp://stigman.example.mil/api", ""), ("https://bad host/api", "")):
+            self.assertEqual(f.stigman_web(api), web, api)
+            self.assertNotIn("#", web)
+            self.assertNotIn("?", web)
+
+    def doc(self, **opts):
+        return card(read=with_texts(), opts=dict({"api": API}, **opts))
+
+    def test_rules_hosts_and_collections_link_to_stig_manager(self):
+        d = self.doc()
+        fv = section(d, "Findings", "web")
+        cl = fv["cell_links"]
+        self.assertEqual((cl["column"], set(cl["urls"]), len(cl["urls"])), (1, {"https://stigman.example.mil/"}, len(fv["rows"])))
+        i = [r[1] for r in fv["rows"]].index("SV-257985 (RHEL-09-255045)")
+        self.assertEqual(cl["titles"][i], "Opens STIG Manager in a new tab. Then: SITEA - RHEL 9 > RHEL_9_STIG > SV-257985")
+        self.assertEqual(cl["copies"][i], "SV-257985")                         # the rule's number, for STIG Manager's filter
+        self.assertEqual(fv["text"], "Open a rule for its check text, fix text and hosts.")     # one short sentence: the link
+        self.assertEqual(section(d, "Hosts", "web")["text"], "Open a host for its open rules.")      # icon and tooltip say the rest
+        hv = section(d, "Hosts", "web")
+        i = [r[1] for r in hv["rows"]].index("rhel04")
+        self.assertEqual((hv["cell_links"]["column"], hv["cell_links"]["titles"][i]),
+                         (1, "Opens STIG Manager in a new tab. Then: SITEA - RHEL 9 > rhel04"))
+        self.assertNotIn("copies", hv["cell_links"])
+        bc = section(d, "By collection", "web")
+        i = [r[1] for r in bc["rows"]].index(VMW)
+        self.assertEqual((bc["cell_links"]["column"], bc["cell_links"]["titles"][i]), (1, "Opens STIG Manager in a new tab. Then: " + VMW))
+
+    def test_a_rule_in_two_collections_names_both(self):
+        s = fx.state(0)
+        s["1"]["SV-258036"] = ["esx01"]
+        fv = section(card(read=read_of(s), opts={"api": API}), "Findings", "web")
+        self.assertEqual(fv["cell_links"]["titles"][0], "Opens STIG Manager in a new tab. Then: SITEA - RHEL 9 or SITEA - VMware > RHEL_9_STIG > SV-258036")
+
+    def test_a_collection_not_read_has_no_link(self):
+        d = card(read=read_of(errors={"3": "HTTP 403 from https://stigman.example.mil/api/collections/3/findings: no grant"}),
+                 opts={"api": API})
+        bc = section(d, "By collection", "web")
+        self.assertEqual(bc["rows"][-1][1], WIN)
+        self.assertEqual(bc["cell_links"]["urls"][-1], "")
+
+    def test_no_api_no_links_and_the_email_has_none(self):
+        d = card()
+        self.assertFalse([s["title"] for s in d["web"] if s.get("cell_links")])
+        self.assertEqual(section(d, "Findings", "web")["text"], "Open a rule for the hosts it is open on.")
+        self.assertFalse([s["title"] for s in self.doc()["sections"] if s.get("cell_links") or "texts" in json.dumps(s.get("details"))])
+
+    def test_the_page(self):
+        """The atlas and brief looks: the name a link to STIG Manager in a new tab with its tooltip, the copy button of the
+        rule's number, a rule opened - its Check text and Fix text, each with its Copy button (the command lines)."""
+        if HERE not in sys.path:
+            sys.path.insert(0, HERE)
+        from test_report_fit import EmailTiles
+        web = f.stig_scorecard_join(self.doc(), None, "scorecard")["web"]
+        for tpl in ("report_atlas.html.j2", "report_brief.html.j2"):
+            h = EmailTiles()._env().get_template(tpl).render(_report=web, _email_footer="AAP job 9", report_email_header_text="x")
+            a = re.search(r'<span class="clw"><a class="hl cv" href="https://stigman.example.mil/" target="_blank" rel="noopener" '
+                          r'title="Opens STIG Manager in a new tab. Then: SITEA - RHEL 9 &gt; RHEL_9_STIG &gt; SV-257985">'
+                          r'(.*?)</a><button class="ccopy" type="button" hidden title="Copy SV-257985" aria-label="Copy SV-257985" '
+                          r'data-copy="SV-257985">.*?</button></span></td>', h)
+            self.assertTrue(a, tpl)
+            self.assertIn("SV-257985", re.sub(r"<[^>]+>", "", a.group(1)))
+            self.assertIn('title="Opens STIG Manager in a new tab. Then: SITEA - RHEL 9 &gt; rhel04">', h)
+            self.assertNotIn('href="https://stigman.example.mil/#', h)
+            self.assertNotIn('href="https://stigman.example.mil/?', h)
+            m = re.search(r'<h3 class="rth">Check text</h3><div class="code"><pre>Verify RHEL 9 does not allow a root login over SSH:'
+                          r'.*?</pre><button class="copy" type="button" hidden title="Copies the command line" '
+                          r'data-copy="sudo grep -ir PermitRootLogin /etc/ssh/sshd_config /etc/ssh/sshd_config.d/\*">Copy check</button>', h, re.S)
+            self.assertTrue(m, tpl)
+            self.assertIn('title="Copies the whole text: it has no command line">Copy fix</button>', h)   # SV-257777's fix
+            self.assertIn('data-copy="Set-NetFirewallProfile -Profile Domain,Private,Public -Enabled True">Copy fix</button>', h)
+            self.assertIn(".rtx{display:grid", h)
+
+
+    def test_report_fit_document(self):
+        """tests/report_fit_docs.py keeps this test's website document as stig_scorecard_links_web (1.68.0)."""
+        web = f.stig_scorecard_join(self.doc(), None, "scorecard")["web"]
+        self.assertEqual(f._scorecard_web(web, web["sections"])["title"], web["title"])
+        self.assertTrue(any(s.get("cell_links") for s in web["sections"]))
+
+
+class Commands(unittest.TestCase):
+    """1.68.0: Copy check and Copy fix copy the command lines of the text, without their prompt; none - the whole text."""
+    def test_the_fixtures_texts(self):
+        got = dict((sv, (f.commands_of(c), f.commands_of(x))) for sv, (c, x) in fx.TEXTS.items())
+        self.assertEqual(got["SV-257985"], ("sudo grep -ir PermitRootLogin /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*",
+                                            "sudo systemctl restart sshd.service"))          # not "PermitRootLogin no"
+        self.assertEqual(got["SV-257777"], ("cat /etc/redhat-release", ""))
+        self.assertEqual(got["SV-254269"], ("Get-NetFirewallProfile | Select-Object Name, Enabled",
+                                            "Set-NetFirewallProfile -Profile Domain,Private,Public -Enabled True"))
+        self.assertEqual(got["SV-256379"][1], "esxcli system settings advanced set -o /Security/AccountUnlockTime -i 900")
+        self.assertEqual(got["SV-254247"], ("", ""))                                         # "Run winver.exe" is prose
+
+    def test_prompts_and_what_is_no_command(self):
+        text = "\n".join(["Check it:", "$ sudo auditctl -l | grep execve", "# grep -i maxauthtries /etc/ssh/sshd_config",
+                          "# A comment in a file", "#comment", "$level = 2", "PS C:\\> Get-Service -Name W32Time",
+                          "C:\\> auditpol /get /category:*", "reg query HKLM\\SOFTWARE\\Policies /v X", "If it is, this is a finding."])
+        self.assertEqual(f.commands_of(text).split("\n"), ["sudo auditctl -l | grep execve", "grep -i maxauthtries /etc/ssh/sshd_config",
+                                                           "Get-Service -Name W32Time", "auditpol /get /category:*",
+                                                           "reg query HKLM\\SOFTWARE\\Policies /v X"])
+
+    def test_a_line_that_goes_on(self):
+        text = "$ sudo grubby --update-kernel=ALL \\\n--args=\"audit=1\"\n\nThen reboot."
+        self.assertEqual(f.commands_of(text), "sudo grubby --update-kernel=ALL \\\n--args=\"audit=1\"")
+
+    def test_the_blocks_and_their_buttons(self):
+        b = f._text_block({"check": fx.TEXTS["SV-257777"][0], "fix": fx.TEXTS["SV-257777"][1]})["texts"]
+        self.assertEqual([(x["label"], x["button"], x["cmd"], x["title"]) for x in b],
+                         [("Check text", "Copy check", "cat /etc/redhat-release", "Copies the command line"),
+                          ("Fix text", "Copy fix", "", "Copies the whole text: it has no command line")])
+        two = f._text_block({"fix": "$ a\n$ b"})["texts"]
+        self.assertEqual([(x["label"], x["title"]) for x in two], [("Fix text", "Copies the 2 command lines")])
+        self.assertIsNone(f._text_block({"check": " ", "fix": ""}))
+        self.assertIsNone(f._text_block(None))
+
+
+class Texts(unittest.TestCase):
+    """1.68.0: each open rule's check and fix text - read once per rule, the most hosts first, all within their own time."""
+    def cols(self):
+        return [c for c in read_of()["collections"]]
+
+    def test_once_per_rule_the_most_hosts_first(self):
+        s = fx.state(0)
+        s["1"]["SV-258036"] = ["esx01"]                                   # one rule in two collections: one read
+        cols = read_of(s)["collections"]
+        cl = TextClient()
+        got, info = sc.rule_texts(cl, cols, 60, workers=1)
+        paths = [p for p, pr, w in cl.calls]
+        self.assertEqual(len(paths), len(set(paths)))
+        self.assertEqual(paths[:3], ["/stigs/rules/SV-258036r1045099_rule", "/stigs/rules/SV-254269r958478_rule",
+                                     "/stigs/rules/SV-257985r1069364_rule"])
+        self.assertEqual((info["asked"], info["read"], info["missing"], info["slow"], info["error"]), (10, 9, 1, False, ""))
+        self.assertNotIn("SV-257842", got)                                # STIG Manager has no text for it
+        self.assertEqual(got["SV-257985"]["rule"], "SV-257985r1069364_rule")
+        self.assertEqual(got["SV-257985"]["check"], fx.TEXTS["SV-257985"][0])     # the line ends and empty lines tidied
+        self.assertTrue(all(w <= 60 for p, pr, w in cl.calls))
+
+    def test_the_answers_of_stig_manager_1_6(self):
+        self.assertEqual(sc.text_of({"check": {"system": "C", "content": "a"}, "fix": {"fixref": "F", "text": "b"}}), {"check": "a", "fix": "b"})
+        self.assertEqual(sc.text_of({"checks": [{"content": "a"}, {"content": "c"}], "fixes": [{"text": "b"}]}), {"check": "a\n\nc", "fix": "b"})
+        self.assertEqual(sc.text_of(None), {"check": "", "fix": ""})
+        self.assertTrue(sc.text_of({"fix": {"text": "x" * 9000}})["fix"].endswith("[... cut]"))
+
+    def test_too_slow_the_rest_have_none(self):
+        cl = TextClient(slow=0.4)
+        got, info = sc.rule_texts(cl, self.cols(), 1.5, workers=2)
+        self.assertTrue(info["slow"])
+        self.assertLess(info["read"], info["asked"])
+        self.assertLess(info["seconds"], 3.5)
+        self.assertIn("the time ran out (stigman_scorecard_text_timeout)", sc.text_line(info))
+
+    def test_no_scope_stops_at_once(self):
+        cl = TextClient(refuse=True)
+        got, info = sc.rule_texts(cl, self.cols(), 60, workers=1)
+        self.assertEqual((got, len(cl.calls)), ({}, 1))
+        self.assertIn("the client needs the scope stig-manager:stig:read", info["error"])
+
+    def test_one_rule_that_fails_is_one_without_text(self):
+        got, info = sc.rule_texts(TextClient(fail=["SV-258036r1045099_rule"]), self.cols(), 60)
+        self.assertEqual((info["read"], info["missing"], info["error"]), (8, 2, ""))
+
+    def test_no_time_or_no_rule(self):
+        self.assertEqual(sc.rule_texts(TextClient(), self.cols(), 0)[1]["slow"], True)
+        self.assertEqual(sc.rule_texts(TextClient(), [], 60), ({}, {"asked": 0, "read": 0, "seconds": 0.0, "slow": False, "error": "", "missing": 0}))
+        self.assertEqual(sc.text_line({"asked": 0}), "")
+        self.assertEqual(sc.text_line({"asked": 11, "read": 10, "seconds": 0.42, "missing": 1}),
+                         "Check and fix text: 10 of 11 rules in 0.4 s; 1 without text in STIG Manager")
+
+    def test_a_rule_opened_shows_them_then_its_hosts(self):
+        d = card(read=with_texts(), opts={"api": API})
+        fv = section(d, "Findings", "web")
+        i = [r[1] for r in fv["rows"]].index("SV-257985 (RHEL-09-255045)")
+        blocks, hosts = fv["details"][i]
+        self.assertEqual([b["label"] for b in blocks["texts"]], ["Check text", "Fix text"])
+        self.assertEqual([h for h, c in hosts["rows"]], ["rhel01", "rhel03", "rhel05"])
+        j = [r[1] for r in fv["rows"]].index("SV-257842 (RHEL-09-215075)")
+        self.assertEqual(sorted(fv["details"][j]), ["columns", "kinds", "more", "rows"])         # no text: its hosts only
+
+    def test_slow_or_not_read_says_it_in_one_line(self):
+        d = card(read=with_texts(info={"asked": 11, "read": 4, "slow": True, "error": "", "missing": 0}))
+        s = section(d, "Slow or not read", "web")
+        self.assertIn("Check and fix text too slow (stigman_scorecard_text_timeout): 7 of 11 rules without it.", s["lines"])
+        d = card(read=with_texts(info={"asked": 11, "read": 0, "slow": False, "missing": 0,
+                                       "error": "HTTP 403 from x - the client needs the scope stig-manager:stig:read"}))
+        self.assertIn("Check and fix text not read: HTTP 403 from x - the client needs the scope stig-manager:stig:read.",
+                      section(d, "Slow or not read", "web")["lines"])
+        self.assertFalse([s for s in card(read=with_texts())["web"] if s["title"].startswith("Slow or not read")])
+
+    def test_the_workbook_has_the_fix_text(self):
+        d = card(read=with_texts())
+        ws = next(x for x in d["xlsx"] if x["name"] == "Rules across hosts")
+        self.assertEqual(ws["columns"][-1], "Fix text")
+        row = next(r for r in ws["rows"] if r[0] == "SV-258036")
+        self.assertEqual(row[-1], fx.TEXTS["SV-258036"][1])
+        self.assertEqual(next(r for r in ws["rows"] if r[0] == "SV-257842")[-1], "")
+
+    def test_the_email_is_as_before(self):
+        a, b = card(read=with_texts(), opts={"api": API}), card(opts={"api": API})
+        self.assertEqual(json.dumps(a["sections"], sort_keys=True, default=str), json.dumps(b["sections"], sort_keys=True, default=str))
+        self.assertEqual(a["lines"], b["lines"])
+
+    def test_the_point_keeps_no_text(self):
+        self.assertNotIn("PermitRootLogin", json.dumps(f.stig_scorecard_point(with_texts())))
+
+
 class FakeCursor(object):
     """The table's rows; the statements the module sends, remembered."""
     def __init__(self, rows, tables=("stig_scorecard_point", "schema_version"), version=None, prows=(), hrows=()):

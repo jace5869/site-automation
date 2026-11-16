@@ -39,6 +39,10 @@ options:
                   type: int, default: 600}
   hosts_timeout: {description: "Seconds for a collection's rules' hosts (1.68.0 default 600). Longer: its counts and rules stay.",
                   type: int, default: 600}
+  texts: {description: "1.68.0: also read each open rule's check text and fix text (GET /stigs/rules/RULE, projections check and
+          fix; once per rule, the rules open on the most hosts first). false: not read.", type: bool, default: true}
+  text_timeout: {description: "Seconds for all the rules' texts together (1.68.0). Longer: the rules not read by then have no text.",
+                 type: int, default: 120}
 author: site automation
 '''
 
@@ -55,20 +59,27 @@ collections:
   type: list
 missing: {description: "The names of C(collections) that the client cannot read or that are not there.", type: list}
 timings: {description: "1.67.0: one line per collection - the seconds of each call (counts, assets, hosts).", type: list}
+rule_texts: {description: "1.68.0: {SV-257985: {rule (the rule id read), check, fix}} - each open rule's check text and fix text.", type: dict}
+texts: {description: "1.68.0: how the texts were read - {asked, read, seconds, slow (the time ran out), error ('' = read), missing
+        (rules STIG Manager had no text for)}.", type: dict}
 '''
 
 import json
 import re
 import ssl
+import threading
 import time
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible.module_utils.six.moves.urllib.parse import urlencode
+from ansible.module_utils.six.moves.urllib.parse import quote, urlencode
 from ansible.module_utils.six.moves.urllib.request import Request, urlopen
 from ansible.module_utils.six.moves.urllib.error import HTTPError, URLError
 
 SV_RE = re.compile(r"(SV-\d+)")
 CAT = {"high": 1, "medium": 2, "low": 3}
+TEXT_MAX = 8000                 # characters of a rule's check text or fix text kept (DISA's longest are about 5000)
+TEXT_RULES = 1000               # rules whose texts are read at most (the most hosts first)
+TEXT_WORKERS = 4                # requests at a time for the texts
 
 
 def sv_of(rule_id):
@@ -327,6 +338,107 @@ def read(p, client):
     return out, missing
 
 
+def _clean(t):
+    """A rule's text as STIG Manager keeps it: its line ends kept, the spaces at a line's end and the runs of empty lines
+    gone, capped at TEXT_MAX."""
+    lines = [ln.rstrip() for ln in str(t or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")]
+    t = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+    return t[:TEXT_MAX] + ("\n[... cut]" if len(t) > TEXT_MAX else "")
+
+
+def text_of(ans):
+    """GET /stigs/rules/RULE?projection=check&projection=fix -> {check, fix}: STIG Manager 1.6 gives check {system, content}
+    and fix {fixref, text}; a list of them (checks, fixes) is read too. An unknown rule: an empty answer, no text."""
+    a = ans if isinstance(ans, dict) else {}
+
+    def many(one, more, key):
+        xs = a.get(more) if isinstance(a.get(more), list) else ([a[one]] if isinstance(a.get(one), dict) else [])
+        return _clean("\n\n".join(str((x or {}).get(key) or "").strip() for x in xs if isinstance(x, dict) and (x or {}).get(key)))
+    return {"check": many("check", "checks", "content"), "fix": many("fix", "fixes", "text")}
+
+
+def rule_texts(client, cols, budget, most=TEXT_RULES, workers=TEXT_WORKERS):
+    """1.68.0: each open rule's check and fix text, once per rule (SV number: a rule open in two collections, or under two
+    revisions' ids, is read once), the rules open on the most hosts first. budget: seconds for them all - a request gets
+    what is left; when it runs out, the rules not read have no text. A 401 or 403 stops it (the client cannot read STIGs:
+    the scope stig-manager:stig:read). -> ({sv: {rule, check, fix}}, {asked, read, seconds, slow, error, missing})"""
+    hosts, first = {}, {}
+    for c in cols or []:
+        for r in c.get("rules") or []:
+            if isinstance(r, dict) and r.get("sv") and r.get("rule"):
+                hosts[r["sv"]] = hosts.get(r["sv"], 0) + int(r.get("count") or 0)
+                first.setdefault(r["sv"], r["rule"])
+    order = sorted(hosts, key=lambda sv: (-hosts[sv], sv))[:max(0, int(most))]
+    out, info = {}, {"asked": len(order), "read": 0, "seconds": 0.0, "slow": False, "error": "", "missing": 0}
+    if not order or budget <= 0:
+        info["slow"] = bool(order)
+        return out, info
+    start = time.time()
+    end = start + budget
+    todo = list(order)
+    lock = threading.Lock()
+
+    def work():
+        while True:
+            with lock:
+                if not todo or info["error"] or info["slow"]:
+                    return
+                sv = todo.pop(0)
+            left = end - time.time()
+            if left <= 0.5:
+                with lock:
+                    info["slow"] = True
+                return
+            try:
+                t = text_of(client.get("/stigs/rules/%s" % quote(first[sv], safe=""), wait=min(left, client.p["timeout"]),
+                                       projection=["check", "fix"]))
+            except RuntimeError as e:
+                with lock:
+                    if re.search(r"HTTP 40[13]\b", str(e)):
+                        info["error"] = "%s - the client needs the scope stig-manager:stig:read" % str(e)[:200]
+                    elif "in time" in str(e) and time.time() >= end - 1:
+                        info["slow"] = True
+                    else:
+                        info["missing"] += 1
+                continue
+            with lock:
+                if t["check"] or t["fix"]:
+                    out[sv] = dict(t, rule=first[sv])
+                else:
+                    info["missing"] += 1
+    threads = [threading.Thread(target=work) for i in range(max(1, min(int(workers), len(order))))]
+    for th in threads:
+        th.daemon = True                     # a request still waiting when the time is up is not waited for
+        th.start()
+    for th in threads:
+        th.join(max(0.1, end - time.time() + 1))
+    with lock:
+        if any(th.is_alive() for th in threads):
+            info["slow"] = True
+        info["read"] = len(out)
+        info["seconds"] = round(time.time() - start, 2)
+        return dict(out), dict(info)
+
+
+def text_line(info):
+    """The job output's line for the texts (1.68.0)."""
+    i = info or {}
+    if not i.get("asked"):
+        return ""
+    return "Check and fix text: %d of %d rules in %.1f s%s%s%s" % (
+        _int(i.get("read")), _int(i.get("asked")), float(i.get("seconds") or 0),
+        "; the time ran out (stigman_scorecard_text_timeout)" if i.get("slow") else "",
+        "; %d without text in STIG Manager" % _int(i.get("missing")) if i.get("missing") else "",
+        "; " + str(i["error"]) if i.get("error") else "")
+
+
+def _int(v):
+    try:
+        return int(v or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def timing_lines(cols):
     """One line per collection: where its counts came from and how long each call took (the slow one stands out)."""
     out = []
@@ -357,10 +469,12 @@ def main():
         hosts=dict(type="bool", default=True),
         hosts_timeout=dict(type="int", default=600),
         rules_timeout=dict(type="int", default=600),
+        texts=dict(type="bool", default=True),
+        text_timeout=dict(type="int", default=120),
     ), supports_check_mode=True)
     p = module.params
     res = {"changed": False, "ok": False, "error": "", "collections": [], "missing": [], "timings": [],
-           "read_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+           "rule_texts": {}, "texts": {}, "read_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     if not (p["api"] and p["token_url"] and p["client_id"] and p["client_secret"]):
         res["error"] = "no STIG Manager or no login for it (check_stig_stigman_api, the \"STIG Manager API\" credential)"
         module.exit_json(**res)
@@ -376,6 +490,10 @@ def main():
     except RuntimeError as e:
         res["error"] = "STIG Manager could not be read: %s" % e
         module.exit_json(**res)
+    if p["texts"]:                              # 1.68.0: the rules' check and fix text, after the counts (never fails the read)
+        res["rule_texts"], res["texts"] = rule_texts(client, [c for c in res["collections"] if not c.get("error")], p["text_timeout"])
+        if text_line(res["texts"]):
+            res["timings"].append(text_line(res["texts"]))
     res["ok"] = True
     module.exit_json(**res)
 

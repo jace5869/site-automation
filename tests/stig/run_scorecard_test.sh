@@ -10,6 +10,7 @@
 # not there fails in both); "scorecard" (no folder read, nothing planned, only GET requests); on workflow 40's check;
 # an older STIG Manager without the metrics; a collection that cannot be read; stigman_scorecard_collections,
 # stigman_scorecard_top, stigman_scorecard_weeks; AAP refusing the job list; STIG Manager not reached; a dry run.
+# 1.68.0: the names link to STIG Manager; each rule's check and fix text (read once; no scope; too slow; off).
 #   bash tests/stig/run_scorecard_test.sh        (ANSIBLE_PLAYBOOK=... to pick one; SCORECARD_TEST_KEEP=DIR keeps the pages)
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -190,6 +191,18 @@ if [ -n "$page" ] && [ "$(grep -o '<svg class="spark hu[0-9]"' "$page" | wc -l)"
    && grep -q 'data-fv="pf2"' "$page" && grep -q '<option value="c3">SITEA - Windows Server</option>' "$page"; then
     ok "  ...by platform: a line per platform, the Platform and Collection buttons, each collection opens"
 else bad "  ...the website page's platforms"; fi
+# 1.68.0: the names link to STIG Manager's plain address (no # or ?: 1.6.18's page would stop), the rule number's copy
+# button, a rule opened - its check and fix text with Copy check and Copy fix; each rule's text read once (9 have one)
+if [ -n "$page" ] && grep -qF "href=\"http://127.0.0.1:$port/\" target=\"_blank\" rel=\"noopener\" title=\"Opens STIG Manager in a new tab. Then: SITEA - RHEL 9 &gt; RHEL_9_STIG &gt; SV-257985\"" "$page" \
+   && grep -qF 'title="Opens STIG Manager in a new tab. Then: SITEA - Windows Server &gt; win03">' "$page" \
+   && grep -qF 'data-copy="SV-257985">' "$page" && grep -qF '<h3 class="rth">Check text</h3>' "$page" \
+   && grep -qF 'data-copy="sudo dnf install usbguard">Copy fix</button>' "$page" \
+   && grep -qF 'title="Copies the whole text: it has no command line">Copy fix</button>' "$page" \
+   && ! grep -qE "href=\"http://127.0.0.1:$port/(api/?)?[#?]" "$page" && grep -qF "Check and fix text: 9 of 10 rules in" "$work/out.txt" \
+   && [ "$(grep -c '^GET /api/stigs/rules/' "$work/sm.log")" = 10 ] && [ "$(grep '^GET /api/stigs/rules/' "$work/sm.log" | sort -u | wc -l)" = 10 ] \
+   && grep -q '^GET /api/stigs/rules/SV-257985r1069364_rule?projection=check&projection=fix$' "$work/sm.log"; then
+    ok "  ...the names open STIG Manager (its plain address), a rule opens to its check and fix text; each rule read once"
+else bad "  ...the links and the check and fix text: $(grep -F 'Check and fix text' "$work/out.txt" | head -1)"; fi
 
 # ---- 1.68.0: AAP's job history with 1.68.0 points (each host's counts, h): the week compared host by host ----------------
 "$py" "$here/scorecard_fixture.py" jobs "$work/jobs3.json" "$now" 8 v3
@@ -278,7 +291,7 @@ AAP_ENV="$AAP" run "scorecard: no folder read (it is not there), no collection n
     -- "STIG compliance: 4 CAT I open on 2 collections, 1 more than last week" "!would write" "!NEEDS APPROVAL - " \
        '"stig_scorecard"' '!"stigman_update_plan"'
 only_get "only GET requests reached STIG Manager"
-grep -q "/api/stigs\|/reviews\|/api/user" "$work/sm.log" && bad "  ...the import's reads were made" || ok "  ...none of the import's reads (STIGs, reviews, grants)"
+grep -qE "/api/stigs( |\?|$)|/reviews|/api/user" "$work/sm.log" && bad "  ...the import's reads were made" || ok "  ...none of the import's reads (STIGs, reviews, grants)"
 latest "$work/site" | "$py" -c '
 import json, sys
 r = json.load(sys.stdin)
@@ -350,6 +363,37 @@ n = [s for s in r["sections"] if s["title"].startswith("The numbers behind")][0]
 top = c["details"][0][0]                # 1.68.0: the website: a collection opens to its top rules (stigman_scorecard_top)
 assert top["text"] == "Its top open rules" and len(top["rows"]) == 2, top
 assert len(n["columns"]) == 4 and [x[0] for x in n["rows"] if not x[0].startswith("Platform ")] == ["SITEA - RHEL 9"], n["rows"]' && ok "  ...1 collection, 2 rules, 3 weeks" || bad "  ...the settings in the report"
+
+# 1.68.0: the rules' check and fix text - a client without the scope stig-manager:stig:read (403: it stops, said), and
+# STIG Manager slow on them (over stigman_scorecard_text_timeout: the rest without text, said); the rest whole, green
+"$py" -c 'import json, sys; d = json.load(open(sys.argv[1])); d["no_stig_read"] = ["autostig"]; json.dump(d, open(sys.argv[1], "w"))' "$work/sm.json"
+AAP_ENV="$AAP" run "a client without stig-manager:stig:read: no check or fix text, one line in Slow or not read; the rest whole" ok \
+    -e "$card" -e "$job" -- "STIG compliance: 4 CAT I open on 2 collections" "Check and fix text: 0 of 10 rules in" \
+       "the client needs the scope stig-manager:stig:read"
+latest "$work/site" | "$py" -c '
+import json, sys
+r = json.load(sys.stdin)
+s = [x for x in r["sections"] if x["title"].startswith("Slow or not read")]
+assert s and len(s[0]["lines"]) == 1 and s[0]["lines"][0].startswith("Check and fix text not read: HTTP 403 from "), s
+assert [x for x in r["sections"] if x["title"].startswith("Findings")][0]["rows"], "no Findings view"' \
+    && [ "$(grep -c '^GET /api/stigs/rules/' "$work/sm.log")" -le 4 ] && ok "  ...said once at the end; stopped at the first 403 (4 at a time), not asked for each rule" \
+    || bad "  ...the refused texts on the page ($(grep -c '^GET /api/stigs/rules/' "$work/sm.log") asked)"
+cp "$work/sm.keep" "$work/sm.json"
+"$py" -c 'import json, sys; d = json.load(open(sys.argv[1])); d["slow_text"] = 2; json.dump(d, open(sys.argv[1], "w"))' "$work/sm.json"
+t0=$(date +%s)
+AAP_ENV="$AAP" run "the check and fix text slow (over stigman_scorecard_text_timeout): the rest without text, said; green" ok \
+    -e "$card" -e "$job" -e '{"stigman_scorecard_text_timeout": 3}' \
+    -- "STIG compliance: 4 CAT I open on 2 collections" "the time ran out (stigman_scorecard_text_timeout)"
+latest "$work/site" | "$py" -c '
+import json, re, sys
+r = json.load(sys.stdin)
+s = [x for x in r["sections"] if x["title"].startswith("Slow or not read")]
+assert s and re.match(r"Check and fix text too slow \(stigman_scorecard_text_timeout\): \d+ of 10 rules without it\.$", s[0]["lines"][0]), s' \
+    && [ $(( $(date +%s) - t0 )) -lt 60 ] && ok "  ...said in one line; the job did not wait for every rule" || bad "  ...the slow texts on the page"
+cp "$work/sm.keep" "$work/sm.json"
+AAP_ENV="$AAP" run "stigman_scorecard_texts: false - no check or fix text asked" ok -e "$card" -e "$job" -e '{"stigman_scorecard_texts": false}' \
+    -- "STIG compliance: 4 CAT I open" "!Check and fix text"
+grep -q '/api/stigs/rules/' "$work/sm.log" && bad "  ...texts asked" || ok "  ...no text asked"
 
 # ---- what cannot be read ---------------------------------------------------------------------------------------------
 AAP_ENV="CONTROLLER_HOST=http://127.0.0.1:$((port + 2)) CONTROLLER_OAUTH_TOKEN=goodtoken" \

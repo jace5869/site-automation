@@ -8,13 +8,16 @@ DATA.json: {"secret": "...", "collections": [{"collectionId": "1", "name": "..."
                                        changed), served only with rules=all (projection=stigs: its revision, not
                                        the default), as STIG Manager does}]},
             "rules": {"<benchmarkId>": [{"ruleId": ..., "groupId": ..., "version": ..., "severity": ..., "title": ..., "check": optional,
-                                        "fix": optional (1.67.0: GET /api/stigs/B/revisions/R/rules/RULE)}]} (every revision),
+                                        "fix": optional (1.67.0: GET /api/stigs/B/revisions/R/rules/RULE;
+                                        1.68.0: GET /api/stigs/rules/RULE)}]} (every revision),
             "writers": ["<client>", ...] (optional: the clients that may write reviews - none: read-only),
             "managers": ["<client>", ...] (optional: the clients that may create assets - the Manage grant; none: no one),
             "grants": {"<client>": {"<collectionId>": roleId}} (optional: GET /api/user's collectionGrants - 1 Restricted, 2 Full,
                       3 Manage, 4 Owner - and what writes are allowed; else managers 3, others 2 in every collection;
                       GET /api/collections lists only those the client has a grant in, as STIG Manager),
             "latest": {"<benchmarkId>": "V2R8"} (optional: the newest revision; else V2R7),
+            "texts": [{"ruleId", "check", "fix"}] (optional, 1.68.0: more rules' texts for GET /api/stigs/rules/RULE only -
+                     their STIGs stay not installed),
             "titles": {"<benchmarkId>": "..."} (optional: the STIGs' titles in GET /api/stigs - the installed STIGs are the rules' keys),
             "reject_fail_without_comment": true (optional: a finding without a comment is rejected, as a collection may say),
             "collection_grants": {"<collectionId>": [{"grantId", "roleId", "user": {...} or "userGroup": {...}, "acl": {"defaultAccess",
@@ -168,18 +171,37 @@ class H(BaseHTTPRequestHandler):
         if u.path == "/api/stigs":
             return self.send(200, [{"benchmarkId": b, "title": d.get("titles", {}).get(b, b), "lastRevisionStr": d.get("latest", {}).get(b, "V2R7"),
                                     "ruleCount": len(rows)} for b, rows in sorted(d.get("rules", {}).items())])
-        if len(parts) == 8 and parts[1:3] == ["api", "stigs"] and parts[4] == "revisions" and parts[6] == "rules":
-            # 1.67.0: one rule's text (GET /stigs/B/revisions/R/rules/RULE, projections checks, fixes, detail) - its "check"
-            # and "fix" in DATA.json's rules (R: a revision or latest)
-            r = next((r for r in d.get("rules", {}).get(parts[3], []) if r.get("ruleId") == parts[7]), None)
-            if not r:
-                return self.send(404, {"error": "no rule " + parts[7]})
-            out = dict((k, r[k]) for k in ("ruleId", "groupId", "version", "severity", "title") if k in r)
+        by_rev = len(parts) == 8 and parts[1:3] == ["api", "stigs"] and parts[4] == "revisions" and parts[6] == "rules"
+        if by_rev or (len(parts) == 5 and parts[1:4] == ["api", "stigs", "rules"]):
+            # one rule's text: GET /stigs/B/revisions/R/rules/RULE (1.67.0) and GET /stigs/rules/RULE (1.68.0, the
+            # scorecard). Its "check" and "fix" in DATA.json's rules. As STIG Manager 1.6.18 (tried on the real one): the
+            # projections detail, ccis, check, fix, ruleIds, stigs only - another is a 400; check {system, content} and
+            # fix {fixref, text}; GET /stigs/rules/RULE of an unknown rule answers 200 with nothing. "slow_text": seconds
+            # each of these takes; "no_stig_read": [clients] answered 403 (no scope stig-manager:stig:read)
+            rid = parts[-1]
             proj = q.get("projection", [])
-            if "checks" in proj:
-                out["checks"] = [{"checkId": "C-" + parts[7], "content": r.get("check", "")}] if r.get("check") else []
-            if "fixes" in proj:
-                out["fixes"] = [{"fixId": "F-" + parts[7], "text": r.get("fix", "")}] if r.get("fix") else []
+            bad = [p for p in proj if p not in ("detail", "ccis", "check", "fix", "ruleIds", "stigs")]
+            if bad:
+                return self.send(400, {"error": "request/query/projection/%d must be equal to one of the allowed values: detail, ccis, "
+                                                "check, fix, ruleIds, stigs" % proj.index(bad[0])})
+            if self.client(d) in d.get("no_stig_read", []):
+                return self.send(403, {"error": "User has insufficient privilege to complete this request."})
+            if d.get("slow_text"):
+                time.sleep(float(d["slow_text"]))
+            rows = (d.get("rules", {}).get(parts[3], []) if by_rev else
+                    [r for rs in d.get("rules", {}).values() for r in rs] + list(d.get("texts", [])))
+            r = next((r for r in rows if r.get("ruleId") == rid), None)
+            if not r and by_rev:
+                return self.send(404, {"error": "no rule " + rid})
+            if not r:
+                self.send_response(200)
+                self.end_headers()
+                return
+            out = dict((k, r[k]) for k in ("ruleId", "groupId", "version", "severity", "title") if k in r)
+            if "check" in proj:
+                out["check"] = {"system": "C-" + rid, "content": r.get("check", "")}
+            if "fix" in proj:
+                out["fix"] = {"fixref": "F-" + rid, "text": r.get("fix", "")}
             if "detail" in proj:
                 out["detail"] = {"vulnDiscussion": r.get("discussion", "")}
             return self.send(200, out)

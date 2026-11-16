@@ -61,7 +61,9 @@ NAMED = (("test_stig_ckl_import.py", "RouteReport.test_report_fit_document", "st
          ("test_portal.py", "Fit.test_report_fit_drift", "site_filters.py:findings_report", "portal_drift_web"),
          ("test_portal.py", "Fit.test_report_fit_scorecard", "stig_scorecard_filters.py:_scorecard_web", "portal_scorecard_web"),
          # 1.68.0: the STIG scorecard of 400 assets - the Findings and Hosts views, rows that open, CAT colours
-         ("test_stig_scorecard.py", "Big.test_report_fit_document", "stig_scorecard_filters.py:_scorecard_web", "stig_scorecard_big_web"))
+         ("test_stig_scorecard.py", "Big.test_report_fit_document", "stig_scorecard_filters.py:_scorecard_web", "stig_scorecard_big_web"),
+         # 1.68.0: the scorecard's names as links to STIG Manager, the rule number's copy button, the rules' check and fix text
+         ("test_stig_scorecard.py", "Links.test_report_fit_document", "stig_scorecard_filters.py:_scorecard_web", "stig_scorecard_links_web"))
 
 # run inside each test file's process: keep the biggest document each filter function returns
 CHILD = r"""

@@ -480,6 +480,31 @@ III open. The next runs read the points back. There are two places, and both may
 - The report database's table is the only thing the scorecard writes. A database that is down is one warning; the
   job stays green.
 
+### Links to STIG Manager, check and fix text (1.68.0)
+
+On the website:
+
+- A rule's name in *Findings*, a host's name in *Hosts* and a collection's name in *By collection* open STIG Manager in
+  a new tab.
+- The link is STIG Manager's own address: `check_stig_stigman_api` without its `/api`. Its tooltip says where to look,
+  for example `SITEA - RHEL 9 > RHEL_9_STIG > SV-257985`.
+- STIG Manager 1.6 has no links to one review. Its page reads anything after `#` or `?` as a sign-in answer, and stops.
+  So the link opens its home page.
+- The copy button beside a rule's name copies its number (`SV-257985`). Paste it into the filter of STIG Manager's grid.
+- A rule opened shows its **Check text** and **Fix text**, then its hosts.
+- **Copy check** and **Copy fix** copy the command lines of that text, without the `$` or `#` prompt. A text with no
+  command line is copied whole. The button's tooltip says which.
+
+How the text is read:
+
+- One GET per rule: `/stigs/rules/<rule>?projection=check&projection=fix`. The client needs the scope
+  `stig-manager:stig:read`.
+- Each rule once, the rules open on the most hosts first. All of them together get `stigman_scorecard_text_timeout`
+  (120 seconds).
+- Too slow: the rules not read show no text. *Slow or not read* says how many, in one line. The job stays green.
+- The workbook's *Rules across hosts* has a *Fix text* column. The email is as before.
+- `stigman_scorecard_texts: false` reads no text.
+
 ### Turning it on
 
 1. Open the template *STIG Manager - import checklists*, tab **Survey**. Add a question:
@@ -552,6 +577,8 @@ STIG Manager's address, login and certificates are the STIG drift report's (`che
 | `stigman_scorecard_hosts` | `true` | list each open rule's hosts, a second call per collection. `false`: counts only (1.67.0) |
 | `stigman_scorecard_rules_timeout` | `180` | seconds for the rules per collection (1.66.2: the counts come first from STIG Manager's metrics); slower: that collection shows *Counts only* |
 | `stigman_scorecard_hosts_timeout` | `120` | seconds for a collection's host list. Slower: its counts are kept, its hosts not listed (1.67.0) |
+| `stigman_scorecard_texts` | `true` | read each open rule's check and fix text for the website and the workbook (1.68.0). `false`: none |
+| `stigman_scorecard_text_timeout` | `120` | seconds for all the rules' texts together. Slower: the rest have none, said in *Slow or not read* (1.68.0) |
 | `stigman_scorecard_db` | `true` | keep the points in the report database when the template has its credential |
 | `stigman_scorecard_db_create` | `true` | make the tables on the first run, and on a database of 1.58.0 to 1.66.x the platforms' table. `false`: made by hand |
 | `stigman_scorecard_db_keep_days` | `800` | the database's points older than this are deleted. `0`: never |

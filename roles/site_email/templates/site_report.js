@@ -107,8 +107,10 @@
      Outlook and Excel, the lines as a list); over plain http or from a share the old way, text only */
   function put(b,plain,html){
     var c=navigator.clipboard,s=b.querySelector('.t');
+    /* the button's own word comes back after Copied (1.68.0: Copy check, Copy fix) */
+    if(!b.hasAttribute('data-was'))b.setAttribute('data-was',(s?s.textContent:b.textContent).trim()||'Copy');var w=b.getAttribute('data-was');
     function ok(){b.classList.add('done');if(s)s.textContent='Copied';else if(!b.querySelector('.i1'))b.textContent='Copied';
-      setTimeout(function(){b.classList.remove('done');if(s)s.textContent='Copy';else if(!b.querySelector('.i1'))b.textContent='Copy'},1500)}
+      setTimeout(function(){b.classList.remove('done');if(s)s.textContent=w;else if(!b.querySelector('.i1'))b.textContent=w},1500)}
     function old(){var a=document.createElement('textarea');a.value=plain;a.setAttribute('readonly','');a.style.position='fixed';a.style.opacity='0';
       document.body.appendChild(a);a.select();try{if(document.execCommand('copy'))ok()}catch(e){}a.remove()}
     function txt(){if(c&&c.writeText)c.writeText(plain).then(ok,old);else old()}
@@ -142,10 +144,12 @@
           P.push(l.join('\n')+(code?'\n'+code:''));H.push(l.map(function(x){return '<p>'+esc(x)+'</p>'}).join('')+(code?'<pre>'+esc(code)+'</pre>':''))});return}
       var t=one(el);if(t){W.push(t);WH.push('<p>'+esc(t)+'</p>')}});
     return P.length?[P.join('\n\n'),H.join('')]:[W.join('\n\n'),WH.join('')]}
+  /* 1.68.0: a rule's check or fix text - its command lines (data-copy) when it has some, else the whole text */
   all('.code .copy').forEach(function(c){c.hidden=false;c.addEventListener('click',function(){
-    put(c,c.previousElementSibling.textContent,'')})});
+    put(c,c.hasAttribute('data-copy')?c.getAttribute('data-copy'):c.previousElementSibling.textContent,'')})});
   /* a command in a table (Look further, Command, Hint, Next step): its Copy button, the command alone */
-  all('.ccopy').forEach(function(c){c.hidden=false;c.addEventListener('click',function(){put(c,c.previousElementSibling.textContent.trim(),'')})});
+  all('.ccopy').forEach(function(c){c.hidden=false;c.addEventListener('click',function(){
+    put(c,c.hasAttribute('data-copy')?c.getAttribute('data-copy'):c.previousElementSibling.textContent.trim(),'')})});
   all('.tcopy').forEach(function(c){c.hidden=false;c.addEventListener('click',function(){put(c,c.getAttribute('data-copy'),'')})});
   all('.scopy').forEach(function(c){c.hidden=false;c.addEventListener('click',function(e){
     e.preventDefault();e.stopPropagation();var g=grab(c.closest('details').querySelector('.body'));put(c,g[0],g[1])})});

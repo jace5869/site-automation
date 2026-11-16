@@ -314,6 +314,62 @@ def _with_x(sec, details):
     return out
 
 
+def stigman_web(api):
+    """1.68.0: STIG Manager's own web page, from its API's address (check_stig_stigman_api): https://stigman.example.mil/api ->
+    https://stigman.example.mil/ ('' when it is no web address). Only the plain address: STIG Manager 1.6 has no links into
+    a review - its page reads any #... or ?... as the answer of a sign-in and stops with an error. A later STIG Manager with
+    such links changes this function only."""
+    a = str(api or "").strip().split("#")[0].split("?")[0].rstrip("/")
+    if not re.match(r"https?://[^\s\"'<>]+\Z", a):
+        return ""
+    return (a[:-4] if a.endswith("/api") else a) + "/"
+
+
+def stigman_link_tip(*path):
+    """A link's tooltip: where it goes, and where to look once there."""
+    return "Opens STIG Manager in a new tab. Then: %s" % " > ".join(str(p) for p in path if p)
+
+
+_PROMPT = re.compile(r"^\s*(?:\$\s+|(?:PS(?: [A-Za-z]:\\[^>]*)?|[A-Za-z]:\\[^>]*)>\s*)(\S.*)$")   # "$level = 1" is no prompt
+_ROOT = re.compile(r"^\s*#\s+([a-z/.][\w./-]*(?:\s.*)?)$")             # "# grep ..." (a root prompt), never "# A comment"
+_PS = re.compile(r"^\s*((?:Get|Set|New|Remove|Enable|Disable|Import|Export|Test|Install|Uninstall|Add|Start|Stop|Restart|Invoke|"
+                 r"Update|Clear|Register|Unregister)-[A-Z]\w+\b.*)$")
+_WORDS = re.compile(r"^\s*((?:sudo|auditpol|secedit|gpresult|esxcli|vim-cmd|reg (?:query|add|delete))\s.*)$")
+
+
+def commands_of(text):
+    """1.68.0: the command lines in a rule's check or fix text, for its Copy button: a line after a prompt ($, #, PS>,
+    C:\\>) without the prompt, a PowerShell line (Get-..., Set-...), a line starting with sudo, auditpol, secedit, gpresult,
+    esxcli, vim-cmd or reg query/add/delete; a line ending in \\ goes on with the next. '' when there is none (the button
+    then copies the whole text)."""
+    out, more = [], False
+    for ln in str(text or "").split("\n"):
+        if more:
+            out[-1] += "\n" + ln.rstrip()
+            more = ln.rstrip().endswith("\\")
+            continue
+        m = _PROMPT.match(ln) or _ROOT.match(ln) or _PS.match(ln) or _WORDS.match(ln)
+        if m:
+            out.append(m.group(1).rstrip())
+            more = out[-1].endswith("\\")
+    return "\n".join(out)
+
+
+def _text_block(t):
+    """1.68.0: a rule opened - its check text and fix text, each with its Copy button (the command lines, or the whole text)."""
+    out = []
+    for key, label, button in (("check", "Check text", "Copy check"), ("fix", "Fix text", "Copy fix")):
+        text = str((t or {}).get(key) or "").strip()
+        if not text:
+            continue
+        cmd = commands_of(text)
+        n = len(cmd.split("\n")) if cmd else 0
+        out.append({"label": label, "text": text, "button": button, "cmd": cmd,
+                    "title": ("Copies the command line" if n == 1 else "Copies the %d command lines" % n) if cmd else
+                             "Copies the whole text: it has no command line"})
+    return {"texts": out} if out else None
+
+
 def _day_year(v):
     """2 Oct 2025 ('-' when it is no time)."""
     t = parse_time(v)
@@ -608,6 +664,7 @@ def stig_scorecard(read, point, runs, opts=None):
     cat2_warn = _n(o.get("cat2_warn"))
     list_max = max(1, _n(o.get("list_max", 200)) or 200)
     host = re.sub(r"^https?://([^/:]+).*$", r"\1", str(o.get("api") or ""))
+    web_url = stigman_web(o.get("api"))              # 1.68.0: the names on the page open STIG Manager
     if not read.get("ok"):
         why = str(read.get("error") or "STIG Manager was not read")
         return {"ok": False, "error": why, "title": "STIG compliance: not read - %s" % why[:120], "status": "critical", "subtitle": "",
@@ -636,6 +693,8 @@ def stig_scorecard(read, point, runs, opts=None):
     n_points = len([1 for t, r in wk if r is not None])
     trend = n_points >= 2
     cols = [c for c in read.get("collections") or [] if isinstance(c, dict)]
+    texts = read.get("rule_texts") if isinstance(read.get("rule_texts"), dict) else {}     # 1.68.0: {sv: {rule, check, fix}}
+    tinfo = read.get("texts") if isinstance(read.get("texts"), dict) else {}
     good = [c for c in cols if not c.get("error")]
     bad = [c for c in cols if c.get("error")]
     by_id = dict((str(c.get("id")), c) for c in (point or {}).get("collections") or [] if isinstance(c, dict))
@@ -740,7 +799,13 @@ def stig_scorecard(read, point, runs, opts=None):
     # 1.68.0: what could not be read for the history (AAP's job history, the report database) is a not-read kind too
     hist = [str(x) for x in o.get("history") or [] if x and not str(x).startswith("Earlier points")]
     slow_lines += hist
-    slow_sec = ({"title": "Slow or not read (%d)" % (len(bad) + len(slow_r) + len(slow_h) + len(hist)),
+    # 1.68.0: the rules' check and fix text - not read (no scope), or the time ran out
+    asked, got = _n(tinfo.get("asked")), _n(tinfo.get("read"))
+    tx = (["Check and fix text not read: %s." % str(tinfo["error"]).rstrip(".")] if tinfo.get("error") else
+          ["Check and fix text too slow (stigman_scorecard_text_timeout): %d of %d rules without it." % (asked - got, asked)]
+          if tinfo.get("slow") and asked > got else [])
+    slow_lines += tx
+    slow_sec = ({"title": "Slow or not read (%d)" % (len(bad) + len(slow_r) + len(slow_h) + len(hist) + len(tx)),
                  "status": "warning" if bad else "info", "lines": slow_lines} if slow_lines else None)
     web_sec = dict(sec, rows=web_rows, row_tags=tags)
     if trend:
@@ -758,12 +823,13 @@ def stig_scorecard(read, point, runs, opts=None):
             if not isinstance(r, dict) or not r.get("sv"):
                 continue
             a = allr.setdefault(r["sv"], {"sv": r["sv"], "cat": r.get("cat") or 2, "version": r.get("version") or "", "title": r.get("title") or "",
-                                          "hosts": 0, "where": [], "names": [], "pf": set(), "col": set()})
+                                          "hosts": 0, "where": [], "names": [], "pf": set(), "col": set(), "paths": []})
             a["pf"].add(_key(_rule_platform(r, _asset_platforms(c, _platforms(cfg)), _platforms(cfg)), cfg))
             a["col"].add("c%s" % c.get("id"))
             a["cat"] = min(a["cat"], r.get("cat") or 2)
             a["hosts"] += _n(r.get("count"))
             a["where"].append((c["name"], _n(r.get("count"))))
+            a["paths"].append((c["name"], str(r.get("stig") or "")))
             a["names"] += [x for x in r.get("assets") or [] if x not in a["names"]]
     ranked = sorted(allr.values(), key=lambda a: (-a["hosts"], a["cat"], a["sv"]))
     top = ranked[:top_n]
@@ -965,6 +1031,9 @@ def stig_scorecard(read, point, runs, opts=None):
         web_sec["kinds"] = web_sec["kinds"][:3] + ["cat1", "cat2", "cat3"] + web_sec["kinds"][6:]
         web_sec["row_tags"] = [dict(t, id="col-%s" % _slug(c.get("id"))) for t, c in zip(web_sec["row_tags"], good)] + web_sec["row_tags"][len(good):]
         web_sec["text"] = "Open a collection for its top open rules and its worst hosts."
+        if web_url:                                 # 1.68.0: a collection's name opens STIG Manager
+            web_sec["cell_links"] = {"column": 1, "urls": [web_url] * len(good) + [""] * (len(web_sec["rows"]) - len(good)), "title": "",
+                                     "titles": [stigman_link_tip(c["name"]) for c in good]}
     if isinstance(pl_web.get("rows"), list) and pl_web.get("rows"):
         pl_web = dict(pl_web, kinds=pl_web["kinds"][:2] + ["cat1", "cat2", "cat3"] + pl_web["kinds"][5:])
 
@@ -980,9 +1049,11 @@ def stig_scorecard(read, point, runs, opts=None):
         plat = ", ".join(sorted(set(n for n in names if _key(n, cfg) in a["pf"])))
         f_rows.append(["", rule_word(a), CAT_WORD[a["cat"]], a["title"], plat, a["hosts"],
                        ", ".join("%s (%d)" % w for w in sorted(a["where"], key=lambda w: (-w[1], w[0].lower())))])
-        f_det.append({"columns": ["Host", "Collection"], "kinds": ["wrap", "wrap"], "rows": [list(x) for x in hl[:HOSTS_MAX]],
-                      "more": ("%d more hosts: the workbook lists every one." % (len(hl) - HOSTS_MAX)) if len(hl) > HOSTS_MAX else ""}
-                     if hl else {"text": "The hosts of this rule were not listed (stigman_scorecard_hosts)."})
+        hd = ({"columns": ["Host", "Collection"], "kinds": ["wrap", "wrap"], "rows": [list(x) for x in hl[:HOSTS_MAX]],
+               "more": ("%d more hosts: the workbook lists every one." % (len(hl) - HOSTS_MAX)) if len(hl) > HOSTS_MAX else ""}
+              if hl else {"text": "The hosts of this rule were not listed (stigman_scorecard_hosts)."})
+        tb = _text_block(texts.get(a["sv"]))          # 1.68.0: its check and fix text first, then its hosts
+        f_det.append([tb, hd] if tb else hd)
         f_tags.append({"pf": " ".join(sorted(a["pf"])), "col": " ".join(sorted(a["col"])), "cat": "k%d" % a["cat"],
                        "h": " ".join(sorted(set(x[0] for x in hl)))})
         f_st.append("")
@@ -992,6 +1063,14 @@ def stig_scorecard(read, point, runs, opts=None):
                 "kinds": ["x", "wrap", "", "wrap", "wrap", "num", "wrap"], "rows": f_rows, "details": f_det, "row_tags": f_tags,
                 "wrap": True, "keep_case": True, "hidden_columns": ["Where"],
                 "text": "Open a rule for the hosts it is open on."}
+    if texts:
+        find_sec["text"] = "Open a rule for its check text, fix text and hosts."
+    if web_url and f_rows:                          # 1.68.0: a rule's name opens STIG Manager; its button copies the rule's id
+        shown_r = ranked[:VIEW_MAX]
+        find_sec["cell_links"] = {"column": 1, "urls": [web_url] * len(f_rows), "title": "",
+                                  "titles": [stigman_link_tip(" or ".join(sorted(set(p[0] for p in a["paths"]), key=lambda x: x.lower())),
+                                                              next((p[1] for p in a["paths"] if p[1]), ""), a["sv"]) for a in shown_r],
+                                  "copies": [a["sv"] for a in shown_r]}
     if len(ranked) > VIEW_MAX:
         job_only.append("Findings: %d more rules than the page shows; the workbook lists every one." % (len(ranked) - VIEW_MAX))
     no_rules = [c["name"] for c in good if _open(c) and not rule_known.get(str(c.get("id")))]
@@ -1023,6 +1102,9 @@ def stig_scorecard(read, point, runs, opts=None):
                  "kinds": ["x", "wrap", "wrap", "wrap", "cat1", "cat2", "cat3", "num", "nw"], "rows": h_rows, "details": h_det,
                  "row_tags": h_tags, "wrap": True, "keep_case": True,
                  "text": "Open a host for its open rules."}
+    if web_url and h_rows:                          # 1.68.0: a host's name opens STIG Manager
+        hosts_sec["cell_links"] = {"column": 1, "urls": [web_url] * len(h_rows), "title": "",
+                                   "titles": [stigman_link_tip(c["name"], h) for c, h, stigs, cats, oldest, plats, rl in hv[:VIEW_MAX]]}
     if len(hv) > VIEW_MAX:
         job_only.append("Hosts: %d more hosts than the page shows; the workbook lists every one." % (len(hv) - VIEW_MAX))
     if not h_rows:
@@ -1138,9 +1220,10 @@ def stig_scorecard(read, point, runs, opts=None):
             {"name": "By platform", "columns": p_cols[:6] + ["Open now", "Status"],
              "rows": [r[:5] + [r[5].replace("\n", ": ") if isinstance(r[5], str) else r[5]] + [r[2] + r[3] + r[4], r[7]] for r in prow],
              "sparklines": [{"column": "Trend", "points": pweek}]},
-            {"name": "Rules across hosts", "columns": ["Rule", "STIG ID", "Category", "What it checks", "Hosts open", "Where"],
+            {"name": "Rules across hosts", "columns": ["Rule", "STIG ID", "Category", "What it checks", "Hosts open", "Where", "Fix text"],
              "rows": [[a["sv"], a["version"], CAT_WORD[a["cat"]], a["title"], a["hosts"],
-                       ", ".join("%s (%d)" % w for w in sorted(a["where"], key=lambda w: (-w[1], w[0].lower())))] for a in ranked]},
+                       ", ".join("%s (%d)" % w for w in sorted(a["where"], key=lambda w: (-w[1], w[0].lower()))),
+                       str((texts.get(a["sv"]) or {}).get("fix") or "")[:XLSX_CELL]] for a in ranked]},
             {"name": "Open rules by collection", "columns": ["Collection", "Rule", "STIG ID", "Category", "What it checks", "Hosts open", "Open on"],
              "rows": [[c["name"], r.get("sv", ""), r.get("version", ""), CAT_WORD.get(r.get("cat"), ""), r.get("title", ""), _n(r.get("count")),
                        cut(r.get("assets") or [])] for c in good for r in c.get("rules") or [] if isinstance(r, dict)]},

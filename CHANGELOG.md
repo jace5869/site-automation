@@ -6,6 +6,8 @@
 are 600 seconds now (a value set in a template stays). With the report database, the first run makes the table
 `stig_scorecard_host` (and `stig_scorecard_platform` on a database of before 1.67.0) and sets schema version 3. The rows
 kept before stay. With `stigman_scorecard_db_create: false`, run the statements of docs/REPORT_DATABASE.md once.
+`stigman_scorecard_texts` (true) and `stigman_scorecard_text_timeout` (120) are new: the check and fix text need the
+scorecard's client to have the scope `stig-manager:stig:read` (without it, one line says so and the rest works).
 
 <!-- G3: the STIG scorecard, fast on a big site, down to the host and the rule -->
 
@@ -35,6 +37,19 @@ kept before stay. With `stigman_scorecard_db_create: false`, run the statements 
   is 1.67.0's one end section; first-run notes, the platform filter's names and "N more" are in the job output.
 - The email stays short: At a glance, By platform, By collection, Fixed on the host, the numbers. The workbook has every
   rule and host (sheets Findings and Hosts).
+- **Links to STIG Manager.** On the website a rule's name (Findings), a host's name (Hosts) and a collection's name (By
+  collection) open STIG Manager in a new tab. Its tooltip says where to look:
+  `SITEA - RHEL 9 > RHEL_9_STIG > SV-257985`.
+  A button beside a rule's name copies its number for STIG Manager's filter. STIG Manager 1.6.18 has no links to one
+  review: its page reads any `#...` or `?...` as a sign-in answer and stops (its client code, and tried). So the link is
+  its plain address (`check_stig_stigman_api` without `/api`), set in one function for a later STIG Manager.
+- **Check and fix text.** A rule opened shows its Check text and Fix text, then its hosts. **Copy check** and **Copy
+  fix** copy the text's command lines without the prompt, or the whole text when it has none. Read once per rule, the
+  most hosts first, `GET /stigs/rules/<rule>?projection=check&projection=fix`, all within
+  `stigman_scorecard_text_timeout`. Too slow or no scope: no text, one line in *Slow or not read*. The workbook's *Rules
+  across hosts* gets a *Fix text* column. The email is as before.
+- **Fix:** "STIG - fix one rule" (workflow 47, 1.67.0) asked STIG Manager for the projections `checks` and `fixes`.
+  STIG Manager 1.6.18 answers those 400 (tried); it is `check` and `fix` now. The stand-in STIG Manager answers 400 too.
 
 **Docs (G3):** docs/CKL_IMPORT.md's scorecard section is rewritten short for the new page: the title and the line under
 it, the filters, At a glance, Findings and Hosts, *Slow or not read*, where the counts come from, the two timeouts (600
@@ -44,7 +59,9 @@ seconds), the week host by host and `Counts only`, the short email and the workb
 version 3 point, the week host by host, schema 3 and the move from 1 and 2, At a glance, the views, a 400-asset site),
 `tests/stig/run_scorecard_test.sh` (a stand-in STIG Manager with the metrics of 1.6.18; ansible-core 2.22 and 2.16), the
 report fit document `stig_scorecard_big_web` (400 assets). STIG Manager 1.6.18's metrics checked by hand (its
-container); next: the links into STIG Manager, and each rule's fix and check text.
+container). Links and texts: the web address, the command lines, the texts' read (slow, 403, an unknown rule), the
+page's links, buttons and blocks, the stand-in's rule texts in the scorecard e2e; STIG Manager 1.6.18's
+`/stigs/rules/<rule>` and its 400 on `checks` tried on its container. Not tried: a real STIG's long text on the page.
 
 ## 1.67.0 — 2026-11-15
 

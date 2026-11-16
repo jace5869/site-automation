@@ -1040,6 +1040,20 @@
 "wrap": true
 },
 {
+"cell_links": {
+"column": 1,
+"title": "",
+"titles": [
+"Opens STIG Manager in a new tab. Then: SITEA - RHEL 9",
+"Opens STIG Manager in a new tab. Then: SITEA - VMware",
+"Opens STIG Manager in a new tab. Then: SITEA - Windows Server"
+],
+"urls": [
+"https://stigman.example.mil/",
+"https://stigman.example.mil/",
+"https://stigman.example.mil/"
+]
+},
 "cell_status": [
 [
 "",
@@ -1628,6 +1642,46 @@
 },
 {
 "cat_cells": true,
+"cell_links": {
+"column": 1,
+"copies": [
+"SV-258036",
+"SV-254269",
+"SV-257985",
+"SV-254247",
+"SV-256375",
+"SV-257842",
+"SV-254239",
+"SV-257777",
+"SV-256379",
+"SV-254285"
+],
+"title": "",
+"titles": [
+"Opens STIG Manager in a new tab. Then: SITEA - RHEL 9 > RHEL_9_STIG > SV-258036",
+"Opens STIG Manager in a new tab. Then: SITEA - Windows Server > MS_Windows_Server_2022_STIG > SV-254269",
+"Opens STIG Manager in a new tab. Then: SITEA - RHEL 9 > RHEL_9_STIG > SV-257985",
+"Opens STIG Manager in a new tab. Then: SITEA - Windows Server > MS_Windows_Server_2022_STIG > SV-254247",
+"Opens STIG Manager in a new tab. Then: SITEA - VMware > VMW_vSphere_7-0_ESXi_STIG > SV-256375",
+"Opens STIG Manager in a new tab. Then: SITEA - RHEL 9 > RHEL_9_STIG > SV-257842",
+"Opens STIG Manager in a new tab. Then: SITEA - Windows Server > MS_Windows_Server_2022_STIG > SV-254239",
+"Opens STIG Manager in a new tab. Then: SITEA - RHEL 9 > RHEL_9_STIG > SV-257777",
+"Opens STIG Manager in a new tab. Then: SITEA - VMware > VMW_vSphere_7-0_ESXi_STIG > SV-256379",
+"Opens STIG Manager in a new tab. Then: SITEA - Windows Server > MS_Windows_Server_2022_STIG > SV-254285"
+],
+"urls": [
+"https://stigman.example.mil/",
+"https://stigman.example.mil/",
+"https://stigman.example.mil/",
+"https://stigman.example.mil/",
+"https://stigman.example.mil/",
+"https://stigman.example.mil/",
+"https://stigman.example.mil/",
+"https://stigman.example.mil/",
+"https://stigman.example.mil/",
+"https://stigman.example.mil/"
+]
+},
 "column_titles": [
 "",
 "",
@@ -2038,6 +2092,38 @@
 "wrap": true
 },
 {
+"cell_links": {
+"column": 1,
+"title": "",
+"titles": [
+"Opens STIG Manager in a new tab. Then: SITEA - Windows Server > win03",
+"Opens STIG Manager in a new tab. Then: SITEA - RHEL 9 > rhel04",
+"Opens STIG Manager in a new tab. Then: SITEA - Windows Server > win04",
+"Opens STIG Manager in a new tab. Then: SITEA - RHEL 9 > rhel03",
+"Opens STIG Manager in a new tab. Then: SITEA - VMware > esx01",
+"Opens STIG Manager in a new tab. Then: SITEA - RHEL 9 > rhel01",
+"Opens STIG Manager in a new tab. Then: SITEA - RHEL 9 > rhel05",
+"Opens STIG Manager in a new tab. Then: SITEA - Windows Server > win01",
+"Opens STIG Manager in a new tab. Then: SITEA - VMware > esx02",
+"Opens STIG Manager in a new tab. Then: SITEA - RHEL 9 > rhel06",
+"Opens STIG Manager in a new tab. Then: SITEA - Windows Server > win05",
+"Opens STIG Manager in a new tab. Then: SITEA - RHEL 9 > rhel07"
+],
+"urls": [
+"https://stigman.example.mil/",
+"https://stigman.example.mil/",
+"https://stigman.example.mil/",
+"https://stigman.example.mil/",
+"https://stigman.example.mil/",
+"https://stigman.example.mil/",
+"https://stigman.example.mil/",
+"https://stigman.example.mil/",
+"https://stigman.example.mil/",
+"https://stigman.example.mil/",
+"https://stigman.example.mil/",
+"https://stigman.example.mil/"
+]
+},
 "column_titles": [
 "",
 "",
@@ -2982,7 +3068,8 @@ null,
 "Category",
 "What it checks",
 "Hosts open",
-"Where"
+"Where",
+"Fix text"
 ],
 "name": "Rules across hosts",
 "rows": [
@@ -2992,7 +3079,8 @@ null,
 "CAT II",
 "RHEL 9 must have the USBGuard package installed.",
 5,
-"SITEA - RHEL 9 (5)"
+"SITEA - RHEL 9 (5)",
+""
 ],
 [
 "SV-254269",
@@ -3000,7 +3088,8 @@ null,
 "CAT II",
 "Windows Server 2022 must have a host-based firewall.",
 4,
-"SITEA - Windows Server (4)"
+"SITEA - Windows Server (4)",
+""
 ],
 [
 "SV-257985",
@@ -3008,7 +3097,8 @@ null,
 "CAT II",
 "RHEL 9 must not allow a root login over SSH.",
 3,
-"SITEA - RHEL 9 (3)"
+"SITEA - RHEL 9 (3)",
+""
 ],
 [
 "SV-254247",
@@ -3016,7 +3106,8 @@ null,
 "CAT I",
 "Windows Server 2022 must be maintained at a supported servicing level.",
 2,
-"SITEA - Windows Server (2)"
+"SITEA - Windows Server (2)",
+""
 ],
 [
 "SV-256375",
@@ -3024,7 +3115,8 @@ null,
 "CAT II",
 "Access to the ESXi host must be limited by lockdown mode.",
 2,
-"SITEA - VMware (2)"
+"SITEA - VMware (2)",
+""
 ],
 [
 "SV-257842",
@@ -3032,7 +3124,8 @@ null,
 "CAT III",
 "RHEL 9 must not have the tuned package installed.",
 2,
-"SITEA - RHEL 9 (2)"
+"SITEA - RHEL 9 (2)",
+""
 ],
 [
 "SV-254239",
@@ -3040,7 +3133,8 @@ null,
 "CAT I",
 "Windows Server 2022 passwords for the built-in account must change.",
 1,
-"SITEA - Windows Server (1)"
+"SITEA - Windows Server (1)",
+""
 ],
 [
 "SV-257777",
@@ -3048,7 +3142,8 @@ null,
 "CAT I",
 "RHEL 9 must be a vendor-supported release.",
 1,
-"SITEA - RHEL 9 (1)"
+"SITEA - RHEL 9 (1)",
+""
 ],
 [
 "SV-256379",
@@ -3056,7 +3151,8 @@ null,
 "CAT II",
 "The ESXi host must enforce an unlock timeout of 15 minutes.",
 1,
-"SITEA - VMware (1)"
+"SITEA - VMware (1)",
+""
 ],
 [
 "SV-254285",
@@ -3064,7 +3160,8 @@ null,
 "CAT III",
 "Windows Server 2022 account lockout duration must be 15 minutes.",
 1,
-"SITEA - Windows Server (1)"
+"SITEA - Windows Server (1)",
+""
 ]
 ]
 },

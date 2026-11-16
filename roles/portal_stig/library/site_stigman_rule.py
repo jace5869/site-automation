@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """One STIG rule's text from STIG Manager (read-only), for "STIG - fix one rule" (1.67.0, workflow 47): its title,
 severity, DISA's check text and fix text. A token from the Keycloak client (client credentials), then
-GET /stigs/{benchmarkId}/revisions/{revision}/rules/{ruleId} with the projections checks, fixes and detail. Runs on the
+GET /stigs/{benchmarkId}/revisions/{revision}/rules/{ruleId} with the projections check, fix and detail. Runs on the
 AAP side (delegated to localhost). Never writes. Standard library only."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
@@ -114,7 +114,7 @@ def main():
     path = "/stigs/%s/revisions/%s/rules/%s" % (quote(p["benchmark"], safe=""), quote(p["revision"] or "latest", safe=""),
                                                 quote(p["rule"], safe=""))
     try:
-        ans = client.get(path, projection=["detail", "checks", "fixes"])
+        ans = client.get(path, projection=["detail", "check", "fix"])     # 1.68.0: STIG Manager 1.6 answers checks or fixes 400
     except RuntimeError as e:
         module.exit_json(changed=False, rule={}, error="the rule %s of %s could not be read: %s" % (p["rule"], p["benchmark"], e))
     r = rule_of(ans, p["rule"])

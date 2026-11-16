@@ -36,8 +36,34 @@ RULES = {   # SV-number: (rule id, STIG ID, severity, title)
     "SV-256375": ("SV-256375r885906_rule", "ESXI-70-000001", "medium", "Access to the ESXi host must be limited by lockdown mode."),
     "SV-256379": ("SV-256379r885918_rule", "ESXI-70-000005", "medium", "The ESXi host must enforce an unlock timeout of 15 minutes."),
 }
+# 1.68.0: the rules' check and fix text (GET /api/stigs/rules/RULE): command lines after a prompt ($ or #), PowerShell
+# lines, a fix with no command line (copied whole); SV-257842 has none (STIG Manager answers nothing)
+TEXTS = {
+    "SV-257985": ("Verify RHEL 9 does not allow a root login over SSH:\n\n$ sudo grep -ir PermitRootLogin /etc/ssh/sshd_config "
+                  "/etc/ssh/sshd_config.d/*\n\nPermitRootLogin no\n\nIf PermitRootLogin is not \"no\", this is a finding.",
+                  "Add or edit this line in /etc/ssh/sshd_config.d/01-complianceascode-reinforce-os-defaults.conf:\n\n"
+                  "PermitRootLogin no\n\nRestart the SSH daemon:\n\n$ sudo systemctl restart sshd.service"),
+    "SV-258036": ("Verify USBGuard is installed:\n\n$ sudo dnf list --installed usbguard\n\nIf it is not installed, this is a finding.",
+                  "Install USBGuard:\n\n$ sudo dnf install usbguard"),
+    "SV-257777": ("Verify the release:\n\n$ cat /etc/redhat-release\n\nIf the release is not supported, this is a finding.",
+                  "Upgrade to a supported release of RHEL 9."),
+    "SV-257900": ("$ sudo stat -c \"%a %n\" /etc/cron*", "$ sudo chmod 0700 /etc/cron.d /etc/cron.daily"),
+    "SV-254239": ("Review the built-in administrator account's password age:\n\nGet-LocalUser -Name * | Select-Object Name, PasswordLastSet",
+                  "Change the built-in administrator account's password at least every 60 days."),
+    "SV-254247": ("Run \"winver.exe\".\n\nIf the version is not a supported servicing level, this is a finding.",
+                  "Update the system to a supported servicing level."),
+    "SV-254269": ("Verify a host-based firewall is on for every profile:\n\nGet-NetFirewallProfile | Select-Object Name, Enabled\n\n"
+                  "If a profile is not enabled, this is a finding.",
+                  "Turn the firewall on for every profile:\n\nSet-NetFirewallProfile -Profile Domain,Private,Public -Enabled True"),
+    "SV-254285": ("Verify the account lockout duration is 15 minutes or more.", "Set the account lockout duration to 15 minutes."),
+    "SV-256375": ("From PowerCLI:\n\nGet-VMHost | Select Name,@{N=\"Lockdown\";E={$_.Extensiondata.Config.LockdownMode}}",
+                  "From the vSphere Client, go to Hosts and Clusters, select the host, then Configure, System, Security Profile, "
+                  "Lockdown Mode, and set Normal."),
+    "SV-256379": ("From an ESXi shell:\n\n# esxcli system settings advanced list -o /Security/AccountUnlockTime",
+                  "From an ESXi shell:\n\n# esxcli system settings advanced set -o /Security/AccountUnlockTime -i 900"),
+}
 CAT = {"high": 1, "medium": 2, "low": 3}
-APACHE = "Apache_Server_2-4_UNIX_Server_STIG"
+APACHE ="Apache_Server_2-4_UNIX_Server_STIG"
 BENCH = {"RHEL-09": "RHEL_9_STIG", "WN22": "MS_Windows_Server_2022_STIG", "ESXI": "VMW_vSphere_7-0_ESXi_STIG"}
 PLATFORM = {"RHEL_9_STIG": "Linux", "MS_Windows_Server_2022_STIG": "Windows", "VMW_vSphere_7-0_ESXi_STIG": "VMware",
             ARIA: "VMware", APACHE: "Applications"}      # the default patterns' platforms (1.67.0 g2fix)
@@ -152,7 +178,8 @@ def stigman():
             "titles": {ARIA: "VMware Aria Operations 8.x Apache Server Security Technical Implementation Guide"},
             "latest": {ARIA: "V1R1"},
             "rules": {ARIA: [{"ruleId": "SV-2600%02dr1_rule" % i, "groupId": "V-2600%02d" % i, "version": "VRPE-8X-%06d" % i,
-                              "severity": "medium", "title": "Aria Operations Apache rule %d" % i} for i in (1, 2, 5, 7, 9)]}}
+                              "severity": "medium", "title": "Aria Operations Apache rule %d" % i} for i in (1, 2, 5, 7, 9)]},
+            "texts": [{"ruleId": RULES[sv][0], "check": c, "fix": f} for sv, (c, f) in sorted(TEXTS.items())]}
 
 
 def jobs(now, weeks=8, v3=False):

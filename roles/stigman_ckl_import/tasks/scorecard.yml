@@ -19,13 +19,15 @@
     hosts: "{{ stigman_scorecard_hosts | bool }}"
     hosts_timeout: "{{ stigman_scorecard_hosts_timeout | int }}"
     rules_timeout: "{{ stigman_scorecard_rules_timeout | int }}"
+    texts: "{{ stigman_scorecard_texts | bool }}"                     # 1.68.0: each open rule's check and fix text
+    text_timeout: "{{ stigman_scorecard_text_timeout | int }}"
     collections: >-
       {{ (stigman_scorecard_collections.split(',') | map('trim') | select | list) if stigman_scorecard_collections is string
          else stigman_scorecard_collections }}
   register: _sc_read
   check_mode: false                     # it only reads: a dry run (Check) shows the real scorecard
 
-- name: Scorecard | how long STIG Manager took, per collection (counts, assets, hosts)
+- name: Scorecard | how long STIG Manager took, per collection (counts, assets, hosts), and the rules' texts
   ansible.builtin.debug:
     msg: "{{ _sc_read.timings | default([]) }}"
 
