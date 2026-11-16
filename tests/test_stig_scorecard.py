@@ -1056,8 +1056,9 @@ class Platforms(unittest.TestCase):
 class SlowClient(object):
     """STIG Manager as site_stig_scorecard.read asks it (1.68.0): the metrics (a row per asset and STIG; the collection's
     totals) - or none, an older STIG Manager (404) - and the findings by rule with their hosts, which may be too slow."""
-    def __init__(self, slow=(), metrics=True, slow_rules=()):
+    def __init__(self, slow=(), metrics=True, slow_rules=(), slow_summary=()):
         self.slow, self.metrics, self.calls, self.slow_rules = set(slow), metrics, [], set(slow_rules)
+        self.slow_summary = set(slow_summary)          # 1.68.0: the totals answered, the rows per asset and STIG too slow
 
     def get(self, path, wait=None, **q):
         self.calls.append((path, q.get("projection"), wait))
@@ -1068,6 +1069,8 @@ class SlowClient(object):
         if "/metrics/" in path:
             if not self.metrics:
                 raise RuntimeError("HTTP 404 from https://stigman.example.mil/api%s: not here" % path)
+            if path.endswith("/metrics/summary") and cid in self.slow_summary:
+                raise RuntimeError("no answer from https://stigman.example.mil/api%s in time (a slow answer)" % path)
             rows = []
             for h in hosts:
                 for b in fx.asset_stigs(h):
@@ -1192,6 +1195,114 @@ class HostLists(unittest.TestCase):
         self.assertEqual((rhel["cat1"], rhel["cat2"], rhel["cat3"], rhel["counts_from"], rhel["hosts"]), (1, 8, 2, "findings", "listed"))
         self.assertEqual(next(r for r in rhel["rules"] if r["sv"] == "SV-257985")["assets"], ["rhel01", "rhel03", "rhel05"])
         self.assertIn("counts from the findings (no metrics: HTTP 404", [x for x in sc.timing_lines(cols) if x.startswith(RHEL)][0])
+
+
+def mixed():
+    """A read of one collection with a Linux and a Windows host, its counts from the metrics, its rules not read (slow)."""
+    rows = [{"asset": "lnx01", "stig": "RHEL_9_STIG", "cat1": 1, "cat2": 2, "cat3": 0, "min_ts": "", "max_ts": ""},
+            {"asset": "win01", "stig": "MS_Windows_Server_2022_STIG", "cat1": 2, "cat2": 1, "cat3": 1, "min_ts": "", "max_ts": ""}]
+    note = "rules not read (STIG Manager was slow: over 600s, stigman_scorecard_rules_timeout)"
+    return {"ok": True, "error": "", "read_at": NOW, "missing": [], "collections": [
+        {"id": "9", "name": "SITEB - Mixed", "assets": 2, "cat1": 3, "cat2": 3, "cat3": 1, "rules": [], "error": "", "checklists": rows,
+         "asset_stigs": {"lnx01": ["RHEL_9_STIG"], "win01": ["MS_Windows_Server_2022_STIG"]}, "counts_from": "metrics",
+         "rules_read": False, "rules_note": note, "hosts": "hosts not listed (STIG Manager was slow: over 600s, stigman_scorecard_rules_timeout)",
+         "timing": {"metrics": 0.4, "rules": 600.0}}]}
+
+
+class Review1680(unittest.TestCase):
+    """1.68.0, the review's findings: the platform filter with the metrics and each host's counts, the totals kept when the
+    metrics per checklist fail, the rules timeout of the older STIG Manager's way, hk only with host rows written, and the
+    CAT filter on a clean host."""
+    P = HostLists.P
+
+    def test_the_platform_filter_counts_from_the_metrics_when_the_rules_were_not_read(self):
+        read = mixed()
+        d = card(read=read, runs=[], opts={"platform_filter": ["Linux"]})
+        self.assertEqual([r[:5] for r in section(d, "By collection")["rows"]], [["SITEB - Mixed", 1, 1, 2, 0]])
+        self.assertEqual((tile(d, "CAT I open")["value"], tile(d, "CAT II open")["value"]), (1, 2))
+        hv = section(d, "Hosts", "web")
+        self.assertEqual([r[1] for r in hv["rows"]], ["lnx01"])                  # no Windows host
+        self.assertEqual([r[0] for r in next(x for x in d["xlsx"] if x["name"] == "Hosts")["rows"]], ["lnx01"])
+        w = card(read=mixed(), runs=[], opts={"platform_filter": ["Windows"]})
+        self.assertEqual([r[:5] for r in section(w, "By collection")["rows"]], [["SITEB - Mixed", 1, 2, 1, 1]])
+
+    def test_the_platform_filter_restricts_each_hosts_counts_of_the_week(self):
+        before = f.stig_scorecard_point(mixed())
+        before["read_at"] = fx.stamp(T0 - 7 * DAY)
+        now = mixed()
+        now["collections"][0]["checklists"][1] = dict(now["collections"][0]["checklists"][1], cat1=5)   # Windows worse
+        pt = f.stig_scorecard_point(now)
+        self.assertEqual(pt["collections"][0]["h"], {"lnx01": {"Linux": [1, 2, 0]}, "win01": {"Windows": [5, 1, 1]}})
+        only = f._only_point(pt, {"Linux"})
+        self.assertEqual(only["collections"][0]["h"], {"lnx01": {"Linux": [1, 2, 0]}})
+        self.assertEqual(f._only_point(pt, {"Storage"})["collections"], [])
+        ch = f.change(f._only_point(before, {"Linux"})["collections"][0], only["collections"][0])
+        self.assertEqual((ch["how"], ch["closed"], ch["opened"]), ("hosts", 0, 0))   # the Windows host's 3 more are not Linux's
+        d = card(read=now, runs=[before], opts={"platform_filter": ["Linux"]})
+        self.assertEqual(section(d, "By collection")["rows"][0][5].split("\n")[1], "0 closed, none opened")
+        ch = f.change(before["collections"][0], pt["collections"][0])
+        self.assertEqual((ch["how"], ch["opened"]), ("hosts", 3))                  # unfiltered: the Windows host's 3
+
+    def test_the_totals_stay_when_the_metrics_per_checklist_fail(self):
+        cl = SlowClient(slow_summary=["2"], slow_rules=["2"])
+        cols, missing = sc.read(self.P, cl)
+        rhel = next(c for c in cols if c["name"] == RHEL)
+        self.assertEqual((rhel["error"], rhel["cat1"], rhel["cat2"], rhel["cat3"], rhel["assets"], rhel["counts_from"]), ("", 1, 8, 2, 6, "metrics"))
+        self.assertEqual((rhel["checklists"], rhel["rules_read"]), ([], False))
+        self.assertTrue(rhel["checklists_note"].startswith("host counts not read (no answer from"), rhel["checklists_note"])
+        line = [x for x in sc.timing_lines(cols) if x.startswith(RHEL)][0]
+        self.assertIn("host counts not read (no answer from", line)
+        self.assertIn("counts from the metrics", line)
+        read = {"ok": True, "error": "", "read_at": NOW, "collections": cols, "missing": []}
+        d = card(read=read)
+        self.assertEqual(section(d, "By collection")["rows"][[r[0] for r in section(d, "By collection")["rows"]].index(RHEL)][:5], [RHEL, 6, 1, 8, 2])
+        self.assertIn("Host counts not read (STIG Manager's metrics per checklist), totals complete: SITEA - RHEL 9.",
+                      section(d, "Slow or not read")["lines"])
+        p = next(c for c in f.stig_scorecard_point(read)["collections"] if c["name"] == RHEL)
+        self.assertEqual((p["cat2"], p["rr"], "h" in p), (8, False, False))     # no host counts: not compared host by host
+        # the rules read: the hosts from the rules, as before
+        cols, missing = sc.read(self.P, SlowClient(slow_summary=["2"]))
+        rhel = next(c for c in cols if c["name"] == RHEL)
+        self.assertEqual((rhel["cat2"], rhel["rules_read"], rhel["hosts"]), (8, True, "listed"))
+        self.assertIn("rhel04", next(c for c in f.stig_scorecard_point(dict(read, collections=cols))["collections"] if c["name"] == RHEL)["h"])
+
+    def test_the_older_stig_managers_findings_wait_the_rules_timeout(self):
+        cl = SlowClient(metrics=False)
+        sc.read(dict(self.P, rules_timeout=900), cl)
+        self.assertIn(("/collections/2/findings", "stigs", 900), cl.calls)
+        self.assertFalse([c for c in cl.calls if c[0].endswith("/findings") and c[1] == "stigs" and c[2] != 900])
+
+    def test_hk_only_when_the_host_rows_are_written(self):
+        at = fx.stamp(T0 - 7 * DAY)
+        pt = fx.point(fx.state(1), at, True, with_hosts=True)
+        kept = [json.loads(r[8])["hk"] for r in cdb.rows_of(pt, cdb.stamp(at), 4001)]
+        self.assertEqual(set(kept), {True})
+        rows = cdb.rows_of(pt, cdb.stamp(at), 4001, False)                       # a schema 2 database, create false
+        self.assertEqual(set(json.loads(r[8])["hk"] for r in rows), {False})
+        runs = cdb.read(FakeConn(rows, prows=cdb.rows_p_of(pt, cdb.stamp(at), 4001), hrows=[]), cdb.stamp(NOW), 64, True, True)
+        got = next(c for c in runs[0]["collections"] if c["name"] == RHEL)       # after the move to 3: no h, not "all opened"
+        self.assertNotIn("h", got)
+        ch = f.change(got, next(c for c in f.stig_scorecard_point(read_of())["collections"] if c["name"] == RHEL))
+        self.assertEqual(ch["how"], "rules")
+
+    def test_a_clean_host_has_its_empty_cat_tag(self):
+        if HERE not in sys.path:
+            sys.path.insert(0, HERE)
+        from test_report_fit import EmailTiles
+        cols, missing = sc.read(self.P, SlowClient())
+        d = card(read={"ok": True, "error": "", "read_at": NOW, "collections": cols, "missing": []})
+        hv = section(d, "Hosts", "web")
+        clean = [r[1] for r, t in zip(hv["rows"], hv["row_tags"]) if t.get("cat") == ""]
+        self.assertTrue(clean)
+        web = f.stig_scorecard_join(d, None, "scorecard")["web"]
+        for tpl in ("report_atlas.html.j2", "report_brief.html.j2"):
+            h = EmailTiles()._env().get_template(tpl).render(_report=web, _email_footer="AAP job 9", report_email_header_text="x")
+            trs = re.findall(r'<tr[^>]*data-h="([^"]*)"[^>]*>', h)
+            self.assertTrue(trs, tpl)
+            for c in clean:
+                tr = re.search(r'<tr[^>]*data-h="%s"[^>]*>' % re.escape(c.lower()), h).group(0)
+                self.assertIn('data-cat=""', tr, (tpl, c))
+            self.assertFalse([t for t in re.findall(r'<tr[^>]*data-h="[^"]*"[^>]*>', h) if "data-cat=" not in t], tpl)
 
 
 class Big(unittest.TestCase):

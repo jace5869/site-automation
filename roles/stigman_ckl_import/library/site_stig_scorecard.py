@@ -280,12 +280,18 @@ def read(p, client):
         t = time.time()
         try:
             tot = client.get("/collections/%s/metrics/summary/collection" % cid)
-            rows = client.get("/collections/%s/metrics/summary" % cid)
-            if not (isinstance(tot, dict) and isinstance(tot.get("metrics"), dict) and isinstance(rows, list)):
+            if not (isinstance(tot, dict) and isinstance(tot.get("metrics"), dict)):
                 raise RuntimeError("the metrics are not in the form this release knows")
             f = tot["metrics"].get("findings") if isinstance(tot["metrics"].get("findings"), dict) else {}
             rec.update(assets=_n(tot.get("assets")), cat1=_n(f.get("high")), cat2=_n(f.get("medium")), cat3=_n(f.get("low")),
-                       checklists=metrics_of(rows), counts_from="metrics")
+                       counts_from="metrics")
+            try:                                       # a row per asset and STIG: not read, the totals stay (no host counts)
+                rows = client.get("/collections/%s/metrics/summary" % cid)
+                if not isinstance(rows, list):
+                    raise RuntimeError("the metrics are not in the form this release knows")
+                rec["checklists"] = metrics_of(rows)
+            except RuntimeError as e:
+                rec["checklists_note"] = "host counts not read (%s)" % str(e)[:300]
             st = {}
             for x in rec["checklists"]:
                 st.setdefault(x["asset"], set()).add(x["stig"])
@@ -296,7 +302,8 @@ def read(p, client):
             rec["metrics_error"] = str(e)[:300]
             step, t = "counts", time.time()            # 1.67.0's way: the findings by rule (assetCount), then the assets
             try:
-                rows = client.get("/collections/%s/findings" % cid, aggregator="ruleId", acceptedOnly="false", projection="stigs")
+                rows = client.get("/collections/%s/findings" % cid, wait=p.get("rules_timeout") or None,
+                                  aggregator="ruleId", acceptedOnly="false", projection="stigs")
                 rec["rules"], cats = findings_of(rows)
                 rec.update(cat1=cats[1], cat2=cats[2], cat3=cats[3], counts_from="findings")
                 rec["timing"]["counts"] = round(time.time() - t, 2)
@@ -447,6 +454,8 @@ def timing_lines(cols):
         parts = ["%s %.1f s" % (k, tm[k]) for k in ("metrics", "counts", "assets", "rules", "hosts") if k in tm]
         if c.get("rules_read") is False and not c.get("error") and c.get("rules_note"):
             parts.append("Counts only (%s)" % c["rules_note"])
+        if c.get("checklists_note") and not c.get("error"):
+            parts.append(c["checklists_note"])
         src = {"metrics": "counts from the metrics", "findings": "counts from the findings (no metrics: %s)" % str(c.get("metrics_error") or "")[:120]}.get(
             c.get("counts_from"), "")
         out.append("%s (id %s): %s%s%s" % (c.get("name"), c.get("id"), ", ".join(parts) or "not read", ("; " + src) if src else "",

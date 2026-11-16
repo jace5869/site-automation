@@ -201,11 +201,17 @@ def _only_read(read, cfg, keep):
             continue
         assets = _asset_platforms(c, pl)
         rules = [r for r in c.get("rules") or [] if isinstance(r, dict) and _rule_platform(r, assets, pl) in keep]
-        mine = dict((a, s) for a, s in (c.get("asset_stigs") or {}).items() if set(assets.get(str(a)) or []) & keep)
-        if not rules and not mine:
+        # 1.68.0: an asset's STIGs and the metrics' rows (a row per asset and STIG) of those platforms only
+        mine = dict((a, [b for b in s or [] if stig_platform(b, pl) in keep]) for a, s in (c.get("asset_stigs") or {}).items()
+                    if set(assets.get(str(a)) or []) & keep)
+        metrics = [x for x in c.get("checklists") or [] if isinstance(x, dict) and stig_platform(x.get("stig"), pl) in keep]
+        if not rules and not mine and not metrics:
             continue
-        n = dict((k, sum(_n(r.get("count")) for r in rules if r.get("cat") == k)) for k in CATS)
-        cols.append(dict(c, rules=rules, asset_stigs=mine, assets=len(mine), cat1=n[1], cat2=n[2], cat3=n[3]))
+        if c.get("checklists"):                         # the counts from the metrics (the rules may not have been read)
+            n = dict((k, sum(_n(x.get("cat%d" % k)) for x in metrics)) for k in CATS)
+        else:
+            n = dict((k, sum(_n(r.get("count")) for r in rules if r.get("cat") == k)) for k in CATS)
+        cols.append(dict(c, rules=rules, asset_stigs=mine, checklists=metrics, assets=len(mine), cat1=n[1], cat2=n[2], cat3=n[3]))
     return dict(read or {}, collections=cols)
 
 
@@ -223,6 +229,9 @@ def _only_point(point, keep):
             continue
         svs = set(sv for v in mine for sv in v.get("rules") or [])
         rec = dict(c, assets=sum(_n(v.get("assets")) for v in mine))
+        if isinstance(c.get("h"), dict):                # 1.68.0: each host's counts of those platforms only
+            rec["h"] = dict((h, dict((k, v) for k, v in pls.items() if k in keep)) for h, pls in c["h"].items()
+                            if isinstance(pls, dict) and set(pls) & keep)
         for k in CATS:
             rec["cat%d" % k] = sum(_n(v.get("cat%d" % k)) for v in mine)
             rec["r%d" % k] = dict((sv, n) for sv, n in (c.get("r%d" % k) or {}).items() if sv in svs)
@@ -793,9 +802,12 @@ def stig_scorecard(read, point, runs, opts=None):
     slow_r = [str(c.get("name") or c.get("id")) for c in good if c.get("rules_read") is False]
     slow_h = [str(c.get("name") or c.get("id")) for c in good
               if str(c.get("hosts") or "").startswith(("not listed", "hosts not")) and c.get("rules_read") is not False]
+    slow_m = [str(c.get("name") or c.get("id")) for c in good if c.get("checklists_note")]
     slow_lines = (["Not read: %s - %s" % (c.get("name") or c.get("id"), c.get("error")) for c in bad]
                   + (["Rules too slow (stigman_scorecard_rules_timeout), counts complete: %s." % ", ".join(slow_r)] if slow_r else [])
-                  + (["Host lists too slow (stigman_scorecard_hosts_timeout), counts complete: %s." % ", ".join(slow_h)] if slow_h else []))
+                  + (["Host lists too slow (stigman_scorecard_hosts_timeout), counts complete: %s." % ", ".join(slow_h)] if slow_h else [])
+                  + (["Host counts not read (STIG Manager's metrics per checklist), totals complete: %s." % ", ".join(slow_m)]
+                     if slow_m else []))
     # 1.68.0: what could not be read for the history (AAP's job history, the report database) is a not-read kind too
     hist = [str(x) for x in o.get("history") or [] if x and not str(x).startswith("Earlier points")]
     slow_lines += hist
@@ -805,7 +817,7 @@ def stig_scorecard(read, point, runs, opts=None):
           ["Check and fix text too slow (stigman_scorecard_text_timeout): %d of %d rules without it." % (asked - got, asked)]
           if tinfo.get("slow") and asked > got else [])
     slow_lines += tx
-    slow_sec = ({"title": "Slow or not read (%d)" % (len(bad) + len(slow_r) + len(slow_h) + len(hist) + len(tx)),
+    slow_sec = ({"title": "Slow or not read (%d)" % (len(bad) + len(slow_r) + len(slow_h) + len(slow_m) + len(hist) + len(tx)),
                  "status": "warning" if bad else "info", "lines": slow_lines} if slow_lines else None)
     web_sec = dict(sec, rows=web_rows, row_tags=tags)
     if trend:

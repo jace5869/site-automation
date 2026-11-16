@@ -445,12 +445,13 @@ stigman_scorecard_platforms:
 STIG Manager can be slow on a big collection. So the scorecard reads in steps, and a slow step keeps what came before it:
 
 1. **The counts** from STIG Manager's metrics: one quick call per collection. Every number, line and platform comes from it.
+   Each host's counts are a second quick call. When it fails, the totals stay and *Slow or not read* says so.
 2. **The open rules** (`stigman_scorecard_rules_timeout`, 600 seconds): *Findings* and the week rule by rule.
 3. **The hosts of each rule** (`stigman_scorecard_hosts_timeout`, 600 seconds): a rule's hosts, a collection's worst hosts
    and *Fixed on the host*.
 
-An older STIG Manager, or a client that may not read the metrics, gives the counts the old way, from the findings. The
-job stays green when a step is slow. The page says what was not read under *Slow or not read*, and the job output has
+An older STIG Manager, or a client that may not read the metrics, gives the counts the old way, from the findings
+(within `stigman_scorecard_rules_timeout`). The job stays green when a step is slow. The page says what was not read under *Slow or not read*, and the job output has
 one line for each collection:
 
 ```text
@@ -575,8 +576,8 @@ STIG Manager's address, login and certificates are the STIG drift report's (`che
 | `stigman_scorecard_platforms` | Linux, Windows, VMware, Network, Applications, Storage | the platforms in order, each with its STIG patterns. No match: Other (1.67.0) |
 | `stigman_scorecard_platform_filter` | `[]` | only these platforms, by name, for example `[Windows]`. `[]`: every platform (1.67.0) |
 | `stigman_scorecard_hosts` | `true` | list each open rule's hosts, a second call per collection. `false`: counts only (1.67.0) |
-| `stigman_scorecard_rules_timeout` | `180` | seconds for the rules per collection (1.66.2: the counts come first from STIG Manager's metrics); slower: that collection shows *Counts only* |
-| `stigman_scorecard_hosts_timeout` | `120` | seconds for a collection's host list. Slower: its counts are kept, its hosts not listed (1.67.0) |
+| `stigman_scorecard_rules_timeout` | `600` | seconds for the rules per collection. Slower: that collection shows *Counts only* (1.66.2; 600 since 1.68.0) |
+| `stigman_scorecard_hosts_timeout` | `600` | seconds for a collection's host list. Slower: its counts are kept, its hosts not listed (1.67.0; 600 since 1.68.0) |
 | `stigman_scorecard_texts` | `true` | read each open rule's check and fix text for the website and the workbook (1.68.0). `false`: none |
 | `stigman_scorecard_text_timeout` | `120` | seconds for all the rules' texts together. Slower: the rest have none, said in *Slow or not read* (1.68.0) |
 | `stigman_scorecard_db` | `true` | keep the points in the report database when the template has its credential |

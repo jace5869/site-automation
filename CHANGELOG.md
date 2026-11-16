@@ -51,6 +51,17 @@ scorecard's client to have the scope `stig-manager:stig:read` (without it, one l
 - **Fix:** "STIG - fix one rule" (workflow 47, 1.67.0) asked STIG Manager for the projections `checks` and `fixes`.
   STIG Manager 1.6.18 answers those 400 (tried); it is `check` and `fix` now. The stand-in STIG Manager answers 400 too.
 
+**Fixes after the review (G3):**
+
+- `stigman_scorecard_platform_filter` with the counts from the metrics: the counts, the hosts and the week host by host
+  are of those platforms only. Before, a run whose rules were not read showed 0 open and listed every host.
+- Each host's counts not read (`/metrics/summary` slow or refused): the collection's totals stay. Before, the collection
+  could be left out as not read. *Slow or not read* says which collection has no host counts.
+- An older STIG Manager without the metrics: its findings wait `stigman_scorecard_rules_timeout`, not 60 seconds.
+- The report database: a run whose host rows could not be kept (no `stig_scorecard_host`, `stigman_scorecard_db_create:
+  false`) is compared rule by rule later, never as every finding opened.
+- The CAT filter buttons hide a host with nothing open.
+
 **Docs (G3):** docs/CKL_IMPORT.md's scorecard section is rewritten short for the new page: the title and the line under
 it, the filters, At a glance, Findings and Hosts, *Slow or not read*, where the counts come from, the two timeouts (600
 seconds), the week host by host and `Counts only`, the short email and the workbook's Findings and Hosts sheets.

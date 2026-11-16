@@ -178,15 +178,17 @@ def schema(conn, create):
     return {"there": True, "created": not there, "platforms": plat, "hosts": hosts, "migrated": migrated}
 
 
-def rows_of(point, now, job):
-    """This run's point -> the table's rows: a collection each, its rules ({r1: {SV-number: hosts}, r2, r3}) as JSON."""
+def rows_of(point, now, job, hosts=True):
+    """This run's point -> the table's rows: a collection each, its rules ({r1: {SV-number: hosts}, r2, r3}) as JSON.
+    hosts: stig_scorecard_host is there and gets this run's host rows - only then is hk true (a run whose host rows were
+    not written has no hosts: its week compares rule by rule, never a host with no row read as zero open)."""
     out = []
     for c in (point or {}).get("collections") or []:
         if not isinstance(c, dict) or c.get("id") in (None, ""):
             continue
         rules = dict((k, c.get(k) or {}) for k in CATS)
         rules["rr"] = bool(c.get("rr", True))                 # 1.68.0: were the rules read; are the hosts' counts kept (hk)
-        rules["hk"] = isinstance(c.get("h"), dict)
+        rules["hk"] = bool(hosts) and isinstance(c.get("h"), dict)
         out.append((now, job, str(c["id"])[:64], str(c.get("name") or "")[:255], int(c.get("assets") or 0), int(c.get("cat1") or 0),
                     int(c.get("cat2") or 0), int(c.get("cat3") or 0), json.dumps(rules, sort_keys=True, separators=(",", ":"))))
     return out
@@ -332,7 +334,7 @@ def main():
         give_up(db.explain(e, p))
     try:                        # the earlier points are read: a write that fails loses this run's point only
         if p["write"] and not module.check_mode:
-            rows = rows_of(p["point"], now, p["job"])
+            rows = rows_of(p["point"], now, p["job"], res["hosts"])
             cur = conn.cursor()
             if rows:
                 cur.executemany(INSERT, rows)
