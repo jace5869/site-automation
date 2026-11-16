@@ -366,29 +366,41 @@ changes the folder, also with `stigman_ckl_import_move: true`.
 
 ### What the page shows
 
-The title is the answer: `STIG compliance: 4 CAT I open; 4 findings closed this week`.
+The title is the answer: `STIG compliance: 91 CAT I open on 8 collections, 25 fewer than last week`. The line under it
+says what was read, when, and what it was compared with.
 
 | Part | What it says |
 |---|---|
-| The tiles | CAT I, CAT II and CAT III open now; closed and opened this week; fixed on the host and still open |
-| **Start here** | three cards: the CAT I to start with, the week, and the paperwork left |
-| **By platform** (1.67.0) | a tile and a row per platform (Linux, Windows, Network, Other): its assets, CAT I, CAT II and CAT III open, the change this week, a trend line, a status |
-| **By collection** | a row per collection: its assets, CAT I, CAT II and CAT III open, the change this week, a trend line, a status. On the website each collection opens to its top open rules and its worst hosts |
-| **Top 5 rules open across hosts** | the rules open on the most hosts, CAT I first (`stigman_scorecard_top`) |
-| **Fixed on the host, still Open in STIG Manager** | what the STIG drift reports' last scans found fixed, and STIG Manager still has Open |
-| **The numbers behind the lines** | the open findings per week, per collection: the trend lines as a table |
-| **How the scorecard counts** | the rules of the count, and where the earlier points came from |
+| The tiles | CAT I, CAT II and CAT III open (each in its own colour, always with its word); closed and opened this week; fixed on the host (only with drift scans) |
+| The filters | **Platform**, **Collection**, **CAT** and **Host** (a name, or part of one) |
+| **At a glance** | the 3 worst collections and the best 2, one line each; then the week |
+| **By platform** | a row per platform: assets, CAT I, II and III open, the change this week, a trend line, a status |
+| **By collection** | the same, a row per collection. A row opens to its worst hosts |
+| **Findings** | every open rule, the most hosts first. A rule opens to the hosts it is open on |
+| **Hosts** | every asset, the most CAT I first, with its oldest review. A host opens to its open rules |
+| **Fixed on the host, still Open** | the drift scans say it passes; STIG Manager still has it Open. Only when there are drift scans |
+| **The numbers behind the lines** | the open findings per week |
+| **Slow or not read** | only when something was: which collection, which step |
 
 - A finding is a rule Open on an asset, as STIG Manager has it now.
-- The status of a collection: **CAT I open** (critical), **Worse** (a warning: more opened than closed this week),
-  else **OK**. `stigman_scorecard_cat2_warn` adds the warning **CAT II over N** from that many CAT II open.
-- A trend line needs two weekly points. The first run says `trend starts next week`.
-- The fixed-on-the-host part is marked **Low**: the host is fine, the review in STIG Manager is not written yet. The
-  STIG recheck (workflow 37) writes it.
-- The email is the short form: the tiles, the collections, the top rules, the link to the page. No trend lines.
-- The workbook is always attached. Its sheets: *By collection*, *By platform*, *Rules across hosts*, *Open rules by
-  collection*, *Since last week*, *Fixed on host, still open*, *Open per week*. *By collection* and *By platform* have
-  the page's trend line as an Excel sparkline: all open findings a week, a gap for a week without a run (1.62.0).
+- A collection is **CAT I open** (critical), **Worse** (more opened than closed this week) or **OK**.
+  `stigman_scorecard_cat2_warn` adds **CAT II over N**.
+- A trend line needs two weekly points. The first run has none.
+
+**The filters** work on every section. The counts in a row stay as they are, and a section's title says how many rows
+are shown. *Search* in the bar finds a host inside an opened row too. **Columns**, **CSV** and the sort of each column
+work on *Findings* and *Hosts* as on every table.
+
+**The email** is short: the tiles, *At a glance*, *By platform*, *By collection*, *Fixed on the host* and *Slow or not
+read*. The website and the workbook have the rest.
+
+**The workbook** is always attached. Its sheets are *By collection*, *By platform*, *Rules across hosts*, *Open rules by
+collection*, *Findings*, *Hosts*, *Since last week*, *Fixed on host, still open* and *Open per week*.
+
+- *Findings*: Rule, STIG ID, Category, What it checks, Platform, Host, Collection. A row for each rule and host. Filter on
+  *Host* in Excel for a host's rules.
+- *Hosts*: Host, Collection, Platform, CAT I, CAT II, CAT III, Open, Oldest review (UTC, `YYYY-MM-DD`).
+- *By collection* and *By platform* have the trend as an Excel sparkline, with a gap for a week without a run.
 
 ### By platform (1.67.0)
 
@@ -412,7 +424,7 @@ Apache STIG (`VMW_..._Apache_STIG`) is VMware. Anything else, an SRG or a printe
 - *How the scorecard counts* lists the STIGs that are Other, by name. Add a pattern to give them a platform.
 - Each platform has a colour of its own, always beside its name. It is never a status colour.
 - `stigman_scorecard_platform_filter` limits a run to some platforms, for example `[Windows]`. Every number on the page
-  is then of those platforms. A name that is no platform is said on the page, and nothing is left out.
+  is then of those platforms. A name that is no platform is said in the job output, and nothing is left out.
 
 To add a platform of your own, set the whole list, with yours before the one whose patterns would take its STIGs. For
 example, browsers apart from the other applications:
@@ -428,40 +440,30 @@ stigman_scorecard_platforms:
   - {name: Storage, stigs: ["NetApp_*", "*ONTAP*"]}
 ```
 
-### A big collection (1.67.0)
+### A big collection
 
-STIG Manager can be slow to list each open rule's hosts on a big collection. So the scorecard reads in two steps:
+STIG Manager can be slow on a big collection. So the scorecard reads in steps, and a slow step keeps what came before it:
 
-1. The counts: one quick call per collection. Every number, line and platform comes from it.
-2. The hosts of each open rule, in a call of its own (`stigman_scorecard_hosts_timeout`, 120 seconds). They fill *Top
-   rules*' hosts, each collection's worst hosts and *Fixed on the host, still Open*.
+1. **The counts** from STIG Manager's metrics: one quick call per collection. Every number, line and platform comes from it.
+2. **The open rules** (`stigman_scorecard_rules_timeout`, 600 seconds): *Findings* and the week rule by rule.
+3. **The hosts of each rule** (`stigman_scorecard_hosts_timeout`, 600 seconds): a rule's hosts, a collection's worst hosts
+   and *Fixed on the host*.
 
-A collection whose host list is too slow keeps its counts. The page says `Hosts not listed (STIG Manager was slow)`, and
-the job stays green. The job output has one line per collection with the seconds of each call:
+An older STIG Manager, or a client that may not read the metrics, gives the counts the old way, from the findings. The
+job stays green when a step is slow. The page says what was not read under *Slow or not read*, and the job output has
+one line for each collection:
 
 ```text
-SITEA - RHEL 9 (id 2): counts 0.4 s, assets 0.2 s, hosts 118.9 s
+SITEA - RHEL 9 (id 11): metrics 0.4 s, rules 3.1 s; counts from the metrics
 ```
 
-`stigman_scorecard_hosts: false` skips the host lists. A collection whose hosts were not listed is left out of *Fixed on
-the host, still Open*: a scan's row cannot be tied to its host there. The section says which collections, in one line.
-
-**The platform trend starts with 1.67.0.** The points kept before it have no platforms. The page says so in one line.
-With a platform filter, those weeks are gaps in the lines, never wrong numbers.
-
-**On the website:**
-
-- **Platform** and **Collection** buttons above the sections choose the rows shown. The counts in a row stay as they
-  are. Each section's title and count say how many rows are shown. A section with none left says `Nothing matches this
-  filter`.
-- **Collection** shows that collection's platforms in *By platform*. Their counts are still of every collection.
-- Under *By collection* each collection opens: its CAT I, II and III open, its top open rules and its worst hosts.
-- On a narrow screen the Platform buttons become a list.
+`stigman_scorecard_hosts: false` reads the counts only. *Findings* is then empty. The platform lines start with 1.67.0
+and the host lines with 1.68.0: the earlier points have none, and those weeks are gaps.
 
 ### Where last week's numbers come from
 
-Each run keeps one small point: per collection its counts, and per rule the hosts it is open on. The next runs read the
-points back. There are two places, and both may be used:
+Each run keeps one small point: per collection its counts, per rule its hosts and, since 1.68.0, each host's CAT I, II and
+III open. The next runs read the points back. There are two places, and both may be used:
 
 | Where | What it needs | How far back |
 |---|---|---|
@@ -470,8 +472,9 @@ points back. There are two places, and both may be used:
 
 - *Since last week* compares this run with the run nearest to 7 days ago, no nearer than 6 days and no older than 8.
   Run it weekly or daily: both work.
-- Closed and opened are counted rule by rule. A rule now open on fewer hosts closed that many; on more hosts, opened
-  that many. A rule closed on one host and opened on another in the same week counts as neither.
+- Closed and opened are counted host by host and category when both points have the hosts: fewer open on a host is
+  closed, more is opened. The hover names them (`rhel007: 2 CAT II`).
+- Otherwise they are counted rule by rule, as before. A week that cannot be compared shows `Counts only` and says why.
 - A collection that was not in last week's run is `New here`. It is not in the week's totals.
 - With neither credential the scorecard still shows what is open now. The week's tiles show `-`.
 - The report database's table is the only thing the scorecard writes. A database that is down is one warning; the
@@ -497,11 +500,11 @@ points back. There are two places, and both may be used:
    its check.
 5. Launch the template and pick `scorecard`. The job output ends with the scorecard's lines:
    ```text
-   STIG compliance: 4 CAT I open; 22 findings open
+   STIG compliance: 4 CAT I open on 2 collections
    CAT I open: 4
    ```
-6. Open the report. *How the scorecard counts* says `No run 6 to 8 days ago was found.` on the first run. A week later the
-   title names what closed.
+6. Open the report. On the first run the job output says `No run last week to compare with`. A week later the title
+   says how CAT I moved since last week.
 7. For the weekly meeting, add a schedule to the template with the answer `scorecard`, or `import and scorecard` on
    the schedule you have.
 

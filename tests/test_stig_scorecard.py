@@ -128,26 +128,28 @@ class Read(unittest.TestCase):
 class Point(unittest.TestCase):
     def test_this_runs_point(self):
         p = f.stig_scorecard_point(read_of())
-        want = fx.point(fx.state(0), NOW)
+        want = fx.point(fx.state(0), NOW, with_hosts=True)
         self.assertEqual(p, dict(want, collections=sorted(want["collections"], key=lambda c: c["name"])))
+        self.assertEqual(next(c for c in p["collections"] if c["name"] == RHEL)["h"]["rhel04"], {"Linux": [1, 1, 0]})
         by = dict((c["name"], c) for c in p["collections"])
         self.assertEqual((by[RHEL]["cat1"], by[RHEL]["cat2"], by[RHEL]["cat3"], by[RHEL]["assets"]), (1, 8, 2, 6))
         self.assertEqual(by[RHEL]["r2"], {"SV-257985": 3, "SV-258036": 5})
         self.assertEqual(by[WIN]["r1"], {"SV-254239": 1, "SV-254247": 2})
 
-    def test_the_point_is_small_and_has_no_host_names(self):
+    def test_the_point_is_small_hosts_counts_but_no_titles(self):
+        """1.68.0: each host's counts per platform (the week's change host by host) - no rule titles, no review text."""
         text = json.dumps(f.stig_scorecard_point(read_of()))
-        self.assertLess(len(text), 2500)                     # 1.67.0: with each collection's platforms
-        for cid, name, hosts in fx.COLLECTIONS:
-            for h in hosts:
-                self.assertNotIn(h, text)
+        self.assertLess(len(text), 3500)
+        self.assertIn('"rhel04": {"Linux": [1, 1, 0]}', text)
+        for sv, (rule, version, sev, title) in fx.RULES.items():
+            self.assertNotIn(title, text)
 
     def test_a_collection_not_read_has_no_point(self):
         p = f.stig_scorecard_point(read_of(errors={"3": "HTTP 403"}))
         self.assertEqual([c["name"] for c in p["collections"]], [RHEL, VMW])
 
     def test_nothing_read(self):
-        self.assertEqual(f.stig_scorecard_point(None), {"v": 2, "read_at": "", "collections": []})
+        self.assertEqual(f.stig_scorecard_point(None), {"v": 3, "read_at": "", "collections": []})
         self.assertEqual(f.stig_scorecard_point({"ok": False, "error": "x"})["collections"], [])
 
     def test_the_database_rows(self):
@@ -156,7 +158,8 @@ class Point(unittest.TestCase):
         self.assertEqual(len(rows), 3)
         r = next(x for x in rows if x[3] == RHEL)
         self.assertEqual(r[:8], (datetime.datetime(2026, 11, 13, 6, 0, 5), 5000, "2", RHEL, 6, 1, 8, 2))
-        self.assertEqual(json.loads(r[8]), {"r1": {"SV-257777": 1}, "r2": {"SV-257985": 3, "SV-258036": 5}, "r3": {"SV-257842": 2}})
+        self.assertEqual(json.loads(r[8]), {"r1": {"SV-257777": 1}, "r2": {"SV-257985": 3, "SV-258036": 5}, "r3": {"SV-257842": 2},
+                                            "rr": True, "hk": True})
         self.assertEqual(cdb.rows_of({"collections": [{"name": "no id"}, "junk"]}, cdb.stamp(NOW), 1), [])
 
 
@@ -268,7 +271,7 @@ class Change(unittest.TestCase):
         lines = f._ids(rules, "Closed")
         self.assertEqual(lines[0], "Closed 13:")
         self.assertEqual(len(lines), 12)
-        self.assertEqual(lines[-1], "  3 more (the workbook lists every rule)")
+        self.assertEqual(lines[-1], "  3 more (the workbook lists every one)")
         self.assertEqual(f._ids([], "Opened"), ["Opened: none"])
 
 
@@ -352,11 +355,11 @@ class Scorecard(unittest.TestCase):
     def setUpClass(cls):
         api = FakeApi(fx.jobs(NOW))
         cls.fixed = hist.fixed(api, ["STIG drift report", "Windows STIG drift report"], 14, 20, now=T0)
-        cls.doc = card(opts={"fixed": cls.fixed, "api": "https://stigman.example.mil/api", "history": ["9 earlier points from AAP."]})
+        cls.doc = card(opts={"fixed": cls.fixed, "api": "https://stigman.example.mil/api", "history": ["Earlier points: 9 from AAP's job history, 0 from the report database."]})
 
     def test_the_title_and_the_tiles(self):
         d = self.doc
-        self.assertEqual(d["title"], "STIG compliance: 4 CAT I open; 4 findings closed this week")
+        self.assertEqual(d["title"], "STIG compliance: 4 CAT I open on 2 collections, 1 more than last week")
         self.assertEqual(d["status"], "critical")
         self.assertEqual(d["subtitle"], "Read 2026-11-13 06:00 UTC from STIG Manager at stigman.example.mil; 3 collections, 13 assets; "
                                         "compared with 6 Nov")
@@ -376,22 +379,24 @@ class Scorecard(unittest.TestCase):
 
     def test_the_sections_results_first(self):
         self.assertEqual([s["title"] for s in self.doc["sections"]],
-                         ["Start here", "By platform (4)", "By collection (3)", "Top 5 rules open across hosts", "Fixed on the host, still Open in STIG Manager (2)",
-                          "The numbers behind the lines (open findings per week)"])
-        self.assertEqual([s["title"] for s in self.doc["web"]], [s["title"] for s in self.doc["sections"]])
+                         ["At a glance", "By platform (4)", "By collection (3)", "Fixed on the host, still Open in STIG Manager (2)"])
+        # 1.68.0: the website has the Findings and Hosts views instead of the top rules (the email keeps those)
+        self.assertEqual([s["title"] for s in self.doc["web"]],
+                         ["At a glance", "By platform (4)", "By collection (3)", "Findings (10)", "Hosts (12)",
+                          "Fixed on the host, still Open in STIG Manager (2)", "The numbers behind the lines (open findings per week)"])
         self.assertEqual(self.doc["notes"]["title"], "How the scorecard counts")
         self.assertTrue(self.doc["notes"]["collapsed"])
 
-    def test_the_cards(self):
-        cards = section(self.doc, "Start here")["cards"]
-        self.assertEqual([c["chip"] for c in cards], ["CAT I first", "This week", "Paperwork, not hosts"])
-        self.assertEqual(cards[0]["status"], "critical")
-        self.assertIn("SV-254247 (WN22-00-000110)", cards[0]["next"])
-        self.assertNotIn("..", cards[0]["next"])
-        self.assertEqual((cards[1]["title"], cards[1]["status"], cards[1]["meta"]), ("4 closed, 2 opened", "ok", "since 6 Nov"))
-        self.assertEqual(cards[1]["subject"], "SITEA - RHEL 9 improved most (4 closed, 1 opened). SITEA - Windows Server got worse most "
-                                              "(1 opened, 0 closed).")
-        self.assertEqual((cards[2]["title"], cards[2]["status"], cards[2]["meta"]), ("2 fixed, still open", "low", "Low"))
+    def test_at_a_glance(self):
+        """1.68.0: the worst collections (CAT I, then CAT II per asset) and the best, a line each with a link to its row."""
+        g = section(self.doc, "At a glance")
+        self.assertEqual([(x["label"], x["name"]) for x in g["glance"]],
+                         [("Worst", WIN), ("Worst", RHEL), ("Worst", VMW), ("This week", "4 closed, 2 opened")])
+        self.assertEqual(g["glance"][0]["href"], "#col-3")
+        self.assertEqual(g["glance"][0]["text"], "3 CAT I, 4 CAT II, 1 CAT III on 4 assets (1.0 CAT II per asset)")
+        self.assertEqual(g["glance"][0]["status"], "critical")
+        self.assertEqual(g["lines"][0], "Worst: SITEA - Windows Server - 3 CAT I, 4 CAT II, 1 CAT III on 4 assets (1.0 CAT II per asset)")
+        self.assertEqual(section(self.doc, "At a glance", "web"), g)
 
     def test_by_collection(self):
         s = section(self.doc, "By collection")
@@ -431,45 +436,45 @@ class Scorecard(unittest.TestCase):
 
     def test_the_website_has_a_trend_line_per_collection_the_email_none(self):
         web, mail = section(self.doc, "By collection", "web"), section(self.doc, "By collection")
-        self.assertEqual(web["kinds"][6], "spark")
+        self.assertEqual(web["kinds"][7], "spark")                    # 1.68.0: the open buttons' column first
         self.assertNotIn("spark", mail["kinds"])
         self.assertNotIn("sparks", mail)
         self.assertEqual(len(web["sparks"]), 3)
-        by = dict((r[0], sp) for r, sp in zip(web["rows"], web["sparks"]))
+        by = dict((r[1], sp) for r, sp in zip(web["rows"], web["sparks"]))
         self.assertEqual(len(by[RHEL]["points"].split()), 8)
         self.assertEqual(len(by[VMW]["points"].split()), 4)                           # the collection was made later
         self.assertTrue(by[RHEL]["label"].endswith("by week: 20, 19, 18, 17, 16, 15, 14, 11"))
-        row = next(r for r in web["rows"] if r[0] == RHEL)
-        self.assertEqual(row[6], by[RHEL]["label"])                                   # the cell's text is the line in words
-        self.assertEqual([r[:5] + [str(r[5]).replace(u"\u00a0", " ")] + r[7:] for r in web["rows"]], [r[:6] + r[7:] for r in mail["rows"]])
+        row = next(r for r in web["rows"] if r[1] == RHEL)
+        self.assertEqual(row[7], by[RHEL]["label"])                                   # the cell's text is the line in words
+        self.assertEqual([r[1:6] + [str(r[6]).replace(u"\u00a0", " ")] + r[8:] for r in web["rows"]], [r[:6] + r[7:] for r in mail["rows"]])
 
     def test_the_numbers_behind_the_lines(self):
-        s = section(self.doc, "The numbers behind")
+        s = section(self.doc, "The numbers behind", "web")              # 1.68.0: the website's (the email: the workbook)
         self.assertEqual(s["columns"], ["Collection", "25 Sep", "2 Oct", "9 Oct", "16 Oct", "23 Oct", "30 Oct", "6 Nov", "13 Nov"])
         by = dict((r[0], r[1:]) for r in s["rows"])
         self.assertEqual(by[RHEL], [20, 19, 18, 17, 16, 15, 14, 11])
         self.assertEqual(by[VMW], ["-", "-", "-", "-", 3, 3, 3, 3])
         self.assertEqual(by[WIN], [7, 7, 7, 7, 7, 7, 7, 8])
 
-    def test_the_top_rules(self):
-        s = section(self.doc, "Top 5 rules")
-        self.assertEqual([(r[0], r[1], r[3]) for r in s["rows"]],
+    def test_the_findings_most_hosts_first(self):
+        """1.68.0: Top rules is no section any more - the Findings view's order (the most hosts first)."""
+        s = section(self.doc, "Findings", "web")
+        self.assertEqual([(r[1], r[2], r[5]) for r in s["rows"][:5]],
                          [("SV-258036 (RHEL-09-291010)", "CAT II", 5), ("SV-254269 (WN22-00-000330)", "CAT II", 4),
                           ("SV-257985 (RHEL-09-255045)", "CAT II", 3), ("SV-254247 (WN22-00-000110)", "CAT I", 2),
                           ("SV-256375 (ESXI-70-000001)", "CAT II", 2)])
-        self.assertEqual(s["row_status"], ["", "", "", "critical", ""])
-        self.assertEqual(s["rows"][0][4], "SITEA - RHEL 9 (5)")
-        self.assertIn("rhel01, rhel03, rhel04, rhel05, rhel06", s["tips"][0][3])
-        d = card(opts={"top": 2})
-        self.assertEqual(len(section(d, "Top 2 rules")["rows"]), 2)
-        d = card(opts={"top": 50})
-        self.assertEqual(len(section(d, "The rules open across hosts (10)")["rows"]), 10)
+        self.assertEqual(s["rows"][0][6], "SITEA - RHEL 9 (5)")
+        self.assertEqual([h for h, c in s["details"][0]["rows"]], ["rhel01", "rhel03", "rhel04", "rhel05", "rhel06"])
+        self.assertEqual(s["text"], "Open a rule for the hosts it is open on.")       # one short sentence
+        self.assertFalse([x for x in self.doc["sections"] + self.doc["web"] if x["title"].startswith(("Top ", "The rules open across"))])
+        d = card(opts={"top": 2})                                                    # stigman_scorecard_top: a collection opened
+        self.assertEqual(len(section(d, "By collection", "web")["details"][0][0]["rows"]), 2)
 
     def test_a_rule_in_two_collections_is_one_rule(self):
         s = fx.state(0)
         s["1"]["SV-258036"] = ["esx01"]
-        row = section(card(read=read_of(s)), "Top 5 rules")["rows"][0]
-        self.assertEqual((row[3], row[4]), (6, "SITEA - RHEL 9 (5), SITEA - VMware (1)"))
+        row = section(card(read=read_of(s)), "Findings", "web")["rows"][0]
+        self.assertEqual((row[5], row[6]), (6, "SITEA - RHEL 9 (5), SITEA - VMware (1)"))
 
     def test_fixed_on_the_host_still_open(self):
         s = section(self.doc, "Fixed on the host")
@@ -486,15 +491,11 @@ class Scorecard(unittest.TestCase):
         # 1.67.0: no scans - the section and its card are left off the page; why is in the job output
         self.assertFalse([x for x in d["sections"] + d["web"] if x["title"].startswith("Fixed on the host")])
         self.assertIn("stigman_scorecard_drift_templates", "\n".join(d["lines"]))
-        self.assertEqual(tile(d, "Fixed on host, still open")["value"], "-")
-        self.assertNotIn("status", tile(d, "Fixed on host, still open"))           # nothing to compare: no colour
-        self.assertFalse([c for c in section(d, "Start here")["cards"] if c.get("chip") == "Paperwork, not hosts"])
+        self.assertFalse([t for t in d["tiles"] if t["label"] == "Fixed on host, still open"])   # no scans: no tile (1.68.0)
         d = card(opts={"fixed": {"jobs": [{"job": 1, "assets": 6}], "rows": [], "why": []}})
         self.assertEqual(section(d, "Fixed on the host")["lines"],
                          ["None: every rule the last scans (1 job, 6 assets) found passing is closed in STIG Manager too."])
         self.assertEqual(tile(d, "Fixed on host, still open")["value"], 0)
-        self.assertEqual(section(d, "Start here")["cards"][2]["title"], "Nothing fixed and still open")
-        self.assertEqual(section(d, "Start here")["cards"][2]["status"], "ok")      # Low only when there is one
         self.assertEqual(tile(d, "Fixed on host, still open")["status"], "ok")
 
     def test_a_long_list_of_fixed_rows_is_cut_with_the_rest_in_the_workbook(self):
@@ -506,19 +507,19 @@ class Scorecard(unittest.TestCase):
 
     def test_the_first_run_no_line_and_no_change(self):
         d = card(runs=[])
-        self.assertEqual(d["title"], "STIG compliance: 4 CAT I open; 22 findings open")
+        self.assertEqual(d["title"], "STIG compliance: 4 CAT I open on 2 collections")
         self.assertEqual((tile(d, "Closed this week")["value"], tile(d, "Closed this week")["note"]), ("-", "no run last week"))
         self.assertNotIn("status", tile(d, "Closed this week"))
         web = section(d, "By collection", "web")
         self.assertNotIn("spark", web["kinds"])
         self.assertNotIn("sparks", web)
-        self.assertEqual(set(r[6] for r in web["rows"]), {"trend starts next week"})
-        self.assertEqual(set(r[5] for r in web["rows"]), {"-"})
-        self.assertEqual(web["columns"][6], "Open")
+        self.assertEqual(set(r[7] for r in web["rows"]), {"trend starts next week"})
+        self.assertEqual(set(r[6] for r in web["rows"]), {"-"})
+        self.assertEqual(web["columns"][7], "Open")
         self.assertNotIn("lines", web)            # 1.67.0: the first run's notes are in the job output, not the page
         self.assertIn("The trend starts next week: a line needs two weekly points, and this run is the first.", d["lines"])
-        self.assertEqual([s["title"] for s in d["sections"]][-1], "Top 5 rules open across hosts")   # no numbers table, no scans
-        self.assertEqual(section(d, "Start here")["cards"][1]["title"], "No run last week to compare with")
+        self.assertEqual([s["title"] for s in d["sections"]][-1], "By collection (3)")   # no numbers table, no scans, no Top rules
+        self.assertIn("No run last week to compare with: the week's change starts with the run a week from now.", d["lines"])
         self.assertEqual((d["counts"]["weekly_points"], d["counts"]["compared"]), (1, False))
         self.assertNotIn("Open per week", [x["name"] for x in d["xlsx"]])
 
@@ -529,7 +530,7 @@ class Scorecard(unittest.TestCase):
     def test_two_weekly_points_are_a_line(self):
         d = card(runs=earlier()[7:8])
         web = section(d, "By collection", "web")
-        self.assertEqual(web["columns"][6], "Open, 2 weeks")
+        self.assertEqual(web["columns"][7], "Open, 2 weeks")
         self.assertEqual([len(sp["points"].split()) for sp in web["sparks"]], [2, 2, 2])
         self.assertEqual(d["counts"]["compared"], True)
 
@@ -567,7 +568,7 @@ class Scorecard(unittest.TestCase):
         sec = section(d, "By collection (0)")
         self.assertEqual(sec["status"], "warning")
         self.assertIn("The client reads no collection of stigman_scorecard_collections", sec["lines"][0])
-        self.assertEqual(d["title"], "STIG compliance: 0 CAT I open; 0 findings closed this week")
+        self.assertEqual(d["title"], "STIG compliance: no collection read")
 
     def test_no_cat_i_is_green(self):
         s = fx.state(0)
@@ -575,16 +576,16 @@ class Scorecard(unittest.TestCase):
         was = fx.state(1)
         del was["2"]["SV-257777"], was["3"]["SV-254239"], was["3"]["SV-254247"]
         d = card(runs=[dict(fx.point(was, fx.stamp(T0 - 7 * DAY)), job=1)], read=read_of(s))
-        self.assertEqual((d["status"], d["title"]), ("ok", "STIG compliance: 0 CAT I open; 4 findings closed this week"))
+        self.assertEqual((d["status"], d["title"]), ("ok", "STIG compliance: no CAT I open on 3 collections, the same as last week"))
         self.assertEqual(tile(d, "CAT I open")["status"], "ok")
-        self.assertEqual(section(d, "Start here")["cards"][0]["title"], "No CAT I open")
-        self.assertEqual(section(d, "Start here")["status"], "ok")
+        self.assertEqual(section(d, "At a glance")["status"], "ok")
+        self.assertEqual(section(d, "At a glance")["status"], "ok")
 
     def test_one_finding_is_said_as_one(self):
         was = fx.state(0)
         was["2"]["SV-257842"] = ["rhel03", "rhel07", "rhel01"]
         d = card(runs=[dict(fx.point(was, fx.stamp(T0 - 7 * DAY)), job=1)])
-        self.assertEqual(d["title"], "STIG compliance: 4 CAT I open; 1 finding closed this week")
+        self.assertEqual(d["title"], "STIG compliance: 4 CAT I open on 2 collections, the same as last week")
 
     def test_stig_manager_not_read(self):
         d = f.stig_scorecard({"ok": False, "error": "no token for the client autostig: cannot reach https://sso.example.mil"}, None, [], {})
@@ -596,8 +597,17 @@ class Scorecard(unittest.TestCase):
     def test_the_workbook(self):
         sheets = dict((x["name"], x) for x in self.doc["xlsx"])
         self.assertEqual(list(x["name"] for x in self.doc["xlsx"]),
-                         ["By collection", "By platform", "Rules across hosts", "Open rules by collection", "Since last week", "Fixed on host, still open",
-                          "Open per week"])
+                         ["By collection", "By platform", "Rules across hosts", "Open rules by collection", "Findings", "Hosts",
+                          "Since last week", "Fixed on host, still open", "Open per week"])
+        # 1.68.0: Findings - a rule a row per host it is open on, every one; Hosts - every asset with its counts
+        fs = sheets["Findings"]["rows"]
+        self.assertEqual([r[5:] for r in fs if r[0] == "SV-257985"], [["rhel01", RHEL], ["rhel03", RHEL], ["rhel05", RHEL]])
+        self.assertEqual(fs[0][:3], ["SV-254247", "WN22-00-000110", "CAT I"])                       # CAT I first
+        self.assertEqual(len(fs), sum(r[4] for r in sheets["Rules across hosts"]["rows"]))          # every host of every rule
+        hs = sheets["Hosts"]["rows"]
+        self.assertEqual(hs[0], ["win03", WIN, "Windows", 2, 1, 0, 3, "-"])                       # the most CAT I first
+        self.assertEqual(len(hs), len(set((r[0], r[1]) for r in hs)))
+        self.assertLessEqual(set((r[5], r[6]) for r in fs), set((r[0], r[1]) for r in hs))         # every Findings host is a host
         row = next(r for r in sheets["By collection"]["rows"] if r[0] == RHEL)
         self.assertEqual(row, [RHEL, 6, 1, 8, 2, u"▼ Better: 4 closed, 1 opened", 11, "CAT I open"])
         self.assertEqual(len(sheets["Rules across hosts"]["rows"]), 10)
@@ -611,6 +621,23 @@ class Scorecard(unittest.TestCase):
         for x in self.doc["xlsx"]:
             for r in x["rows"]:
                 self.assertEqual(len(r), len(x["columns"]), x["name"])
+
+    def test_the_email_is_the_short_form(self):
+        """1.68.0: the email - At a glance (lines), By platform, By collection, the top rules, Fixed, the numbers; the
+        Findings and Hosts views are the website's and the workbook's only. The join keeps it so."""
+        titles = [s.get("title") or "" for s in self.doc["sections"]]
+        want = ["At a glance", "By platform (", "By collection (", "Fixed on the host, still Open"]
+        self.assertEqual(len(titles), len(want), titles)
+        for t_, w in zip(titles, want):
+            self.assertTrue(t_.startswith(w), (t_, w))
+        self.assertTrue(self.doc["sections"][0].get("lines"))
+        self.assertFalse(any(t_.startswith(("Findings", "Hosts")) for t_ in titles))
+        self.assertTrue(any(s.get("title", "").startswith("Findings") for s in self.doc["web"]))
+        self.assertTrue(any(s.get("title", "").startswith("Hosts") for s in self.doc["web"]))
+        j = f.stig_scorecard_join(self.doc, {"title": "Checklist import", "status": "ok", "sections": [{"title": "Imported", "lines": ["x"]}]})
+        jt = [s.get("title") or "" for s in j["report"]["sections"]]
+        self.assertFalse(any(t_.startswith(("Findings", "Hosts")) for t_ in jt))
+        self.assertTrue(any(s.get("title", "").startswith("Hosts") for s in j["web"]["sections"]))
 
     def test_a_long_list_of_hosts_fits_a_workbook_cell(self):
         s = fx.state(0)
@@ -628,9 +655,10 @@ class Scorecard(unittest.TestCase):
 
     def test_how_it_counts_is_last_and_names_the_run_compared_with(self):
         lines = self.doc["notes"]["lines"]
-        self.assertIn("Compared with the run of 2026-11-06 06:02 UTC.", lines)
-        self.assertEqual(lines[-1], "9 earlier points from AAP.")
-        self.assertIn("No run 6 to 8 days ago was found.", card(runs=[])["notes"]["lines"])
+        self.assertEqual(lines[-1], "Compared with the run of 2026-11-06 06:02 UTC.")
+        self.assertLessEqual(len(lines), 5)                                             # 1.68.0: short
+        self.assertIn("Earlier points: 9 from AAP's job history, 0 from the report database.", self.doc["lines"])   # the job output
+        self.assertNotIn("Compared with", " ".join(card(runs=[])["notes"]["lines"]))
 
     def test_the_tables_are_whole(self):
         for key in ("sections", "web"):
@@ -671,10 +699,12 @@ class Join(unittest.TestCase):
         n = len(self.card["sections"])
         self.assertEqual(rep["sections"][:n], self.card["sections"])
         self.assertEqual(rep["sections"][n:n + 2], self.IMPORT["sections"])              # nothing of it left out
-        self.assertEqual(rep["sections"][-1]["title"], "How the scorecard counts")
+        self.assertEqual(got["web"]["sections"][-1]["title"], "How the scorecard counts")     # the website's only
         self.assertEqual(rep["footer"], "the import's footer")
-        self.assertEqual([s["title"] for s in got["web"]["sections"]], [s["title"] for s in rep["sections"]])
-        self.assertEqual(section(got["web"], "By collection")["kinds"][6], "spark")
+        # 1.68.0: the website has the views, the numbers and the notes besides the email's sections
+        self.assertEqual([s["title"] for s in got["web"]["sections"] if not s["title"].startswith(("Findings", "Hosts", "The numbers", "How the"))],
+                         [s["title"] for s in rep["sections"]])
+        self.assertEqual(section(got["web"], "By collection")["kinds"][7], "spark")
         self.assertEqual([x["name"] for x in got["xlsx"]][-1], "New assets (2)")
         self.assertEqual(len(got["xlsx"]), len(self.card["xlsx"]) + 1)
 
@@ -688,7 +718,8 @@ class Join(unittest.TestCase):
         got = f.stig_scorecard_join(self.card, {}, "scorecard", "", False)
         rep = got["report"]
         self.assertEqual((rep["title"], rep["subtitle"]), (self.card["title"], self.card["subtitle"]))
-        self.assertEqual(len(rep["sections"]), len(self.card["sections"]) + 1)
+        self.assertEqual(len(rep["sections"]), len(self.card["sections"]))             # 1.68.0: no notes in the email
+        self.assertEqual(got["web"]["sections"][-1]["title"], "How the scorecard counts")
         self.assertNotIn("footer", rep)
         self.assertNotIn("checklist import", " ".join(s["title"].lower() for s in rep["sections"]))
         self.assertEqual(got["xlsx"], self.card["xlsx"])
@@ -699,7 +730,7 @@ class Join(unittest.TestCase):
         got = f.stig_scorecard_join(self.card, self.IMPORT, "import and scorecard", "//fs/stig/ckl", True)
         rep = got["report"]
         self.assertEqual(rep["title"], self.card["title"])
-        line = rep["sections"][-2]
+        line = rep["sections"][-1]                     # 1.68.0: How the scorecard counts is the website's only
         self.assertEqual(line, {"title": "Checklist import", "status": "ok", "lines": ["No checklists to import this run (//fs/stig/ckl)"]})
         self.assertEqual(got["web"]["sections"][-2], line)
         self.assertEqual(got["xlsx"], self.card["xlsx"])
@@ -941,13 +972,13 @@ class Platforms(unittest.TestCase):
         lines = [x for x in w["sparks"] if x]
         self.assertEqual([len(x["data_points"]) for x in lines], [3, 3, 3, 3])  # 2 weeks ago, last week, now
         self.assertEqual([x["hue"] for x in lines], [1, 2, 3, 5])               # by its place in the setting, never its rank
-        self.assertIn("The platform lines start with 1.67.0: the earlier weeks' points have no platforms.", w["lines"])
+        self.assertIn("The platform lines start with 1.67.0: the earlier weeks' points have no platforms.", self.doc["lines"])
         old = [dict(r, collections=[dict((k, v) for k, v in c.items() if k != "p") for c in r["collections"]]) for r in earlier()]
         d = card(runs=old)
         s = section(d, "By platform")
         self.assertEqual([r[5] for r in s["rows"]], ["-", "-", "-", "-"])
         self.assertIn("has no platforms (before 1.67.0)", s["tips"][0][5])
-        self.assertEqual(s["lines"], ["The platform trend starts with this run: the earlier points have no platforms (before 1.67.0)."])
+        self.assertIn("The platform trend starts with this run: the earlier points have no platforms (before 1.67.0).", d["lines"])
 
     def test_the_tiles_tags_and_the_filter_buttons(self):
         w = section(self.doc, "By platform", "web")
@@ -958,9 +989,13 @@ class Platforms(unittest.TestCase):
         self.assertEqual(w["row_tags"], [{"pf": "pf1", "col": "c2"}, {"pf": "pf2", "col": "c3"}, {"pf": "pf3", "col": "c1"},
                                          {"pf": "pf5", "col": "c2"}])
         c = section(self.doc, "By collection", "web")
-        self.assertEqual(c["row_tags"], [{"pf": "pf1 pf5", "col": "c2"}, {"pf": "pf3", "col": "c1"}, {"pf": "pf2", "col": "c3"}])
-        top = section(self.doc, "Top 5", "web")
-        self.assertEqual(top["row_tags"][0], {"pf": "pf1", "col": "c2"})
+        self.assertEqual(c["row_tags"], [{"pf": "pf1 pf5", "col": "c2", "id": "col-2"}, {"pf": "pf3", "col": "c1", "id": "col-1"},
+                                         {"pf": "pf2", "col": "c3", "id": "col-3"}])
+        fv = section(self.doc, "Findings", "web")                   # 1.68.0: the Findings view, the most hosts first
+        i = [r[1] for r in fv["rows"]].index("SV-254247 (WN22-00-000110)")
+        self.assertEqual(fv["rows"][i][2], "CAT I")
+        self.assertEqual(fv["row_tags"][i], {"pf": "pf2", "col": "c3", "cat": "k1", "h": "win03 win04"})
+        self.assertEqual(fv["details"][i]["rows"], [["win03", WIN], ["win04", WIN]])
         fz = self.doc["facets"]
         self.assertEqual([(x["key"], x["name"], x["hue"]) for x in fz["platforms"]],
                          [("pf1", "Linux", 1), ("pf2", "Windows", 2), ("pf3", "VMware", 3), ("pf5", "Applications", 5)])
@@ -970,13 +1005,11 @@ class Platforms(unittest.TestCase):
         self.assertNotIn("facets", j["report"])
 
     def test_each_collection_opens_to_its_top_rules_and_worst_hosts(self):
-        g = section(self.doc, "By collection", "web")["groups"]
-        self.assertEqual([x["title"] for x in g], [RHEL, VMW, WIN])
-        rh = g[0]
-        self.assertEqual((rh["id"], rh["meta"]), ("col-2", "6 assets: Linux 6, Applications 1"))
-        self.assertEqual(rh["counts"], [["CAT I", 1, "critical"], ["CAT II", 8, ""], ["CAT III", 2, ""]])
-        rules, hosts = rh["tables"]
-        self.assertEqual(rules["rows"][0][:2], ["SV-257777 (RHEL-09-211010)", "CAT I"])
+        """1.68.0: a collection's row opens in place: its top open rules, its worst hosts (CAT colours)."""
+        c = section(self.doc, "By collection", "web")
+        self.assertEqual((c["columns"][0], c["kinds"][0], c["kinds"][3:6]), ("", "x", ["cat1", "cat2", "cat3"]))
+        rules, hosts = c["details"][0]
+        self.assertEqual((rules["text"], rules["rows"][0][:2]), ("Its top open rules", ["SV-257777 (RHEL-09-211010)", "CAT I"]))
         self.assertEqual([r[0] for r in hosts["rows"]], ["rhel04", "rhel03", "rhel01", "rhel05", "rhel06"])
         self.assertEqual(hosts["rows"][0], ["rhel04", 1, 1, 0, 2])
 
@@ -985,19 +1018,18 @@ class Platforms(unittest.TestCase):
         self.assertEqual([r[0] for r in section(d, "By collection")["rows"]], [WIN])
         self.assertEqual([r[0] for r in section(d, "By platform")["rows"]], ["Windows"])
         self.assertEqual((tile(d, "CAT I open")["value"], tile(d, "CAT II open")["value"]), (3, 4))
-        self.assertIn("Only Windows (stigman_scorecard_platform_filter). Every number on this page is of that platform.",
-                      section(d, "By platform")["lines"])
+        self.assertTrue(d["subtitle"].endswith("; only Windows (stigman_scorecard_platform_filter)"), d["subtitle"])
+        self.assertNotIn("lines", section(d, "By platform"))                     # no lines under the page's tables
         self.assertEqual(section(d, "By collection")["rows"][0][5].split("\n")[1], "0 closed, 1 opened")
         # Linux alone: rhel01's Apache STIG (Other) is not counted; the weeks before 1.67.0 are gaps, not wrong numbers
         d = card(opts={"platform_filter": "Linux"})
         self.assertEqual(section(d, "By collection")["rows"][0][:5], [RHEL, 6, 1, 8, 2])
-        nums = section(d, "The numbers behind")["rows"][0]
+        nums = section(d, "The numbers behind", "web")["rows"][0]
         self.assertEqual(nums[1:6], ["-", "-", "-", "-", "-"])
         d = card(opts={"platform_filter": ["Mainframe"]})
         self.assertEqual(len(section(d, "By collection")["rows"]), 3)
         self.assertIn("Not a platform (stigman_scorecard_platform_filter): Mainframe. Platforms: Linux, Windows, VMware, Network, "
-                      "Applications, Storage, Other.",
-                      section(d, "By platform")["lines"])
+                      "Applications, Storage, Other.", d["lines"])          # the job output only
 
     def test_with_the_collections_left_out(self):
         """stigman_scorecard_collections picks the collections (the read: '!' leaves one out, * and ?), the platform filter
@@ -1009,97 +1041,197 @@ class Platforms(unittest.TestCase):
         d = card(read=read_of(s), opts={"platform_filter": ["VMware"]})
         self.assertEqual([r[:5] for r in section(d, "By collection")["rows"]], [[VMW, 3, 0, 3, 0]])
         self.assertEqual([r[:5] for r in section(d, "By platform")["rows"]], [["VMware", 3, 0, 3, 0]])
-        self.assertEqual(d["facets"], {})                     # one platform, one collection: no buttons
+        self.assertEqual((d["facets"]["platforms"], d["facets"]["collections"]), ([], []))     # one of each: no buttons for them
+        self.assertEqual([k["name"] for k in d["facets"]["cats"]], ["CAT I", "CAT II", "CAT III"])   # CAT and Host still choose
 
     def test_the_workbook_and_the_numbers(self):
         x = next(s for s in self.doc["xlsx"] if s["name"] == "By platform")
         self.assertEqual(x["rows"][0][:5] + x["rows"][0][6:], ["Linux", 6, 1, 8, 2, 11, "CAT I open"])
         self.assertEqual(len(x["sparklines"][0]["points"][0]), 8)
         self.assertEqual(x["sparklines"][0]["points"][0][:5], [None] * 5)
-        rows = section(self.doc, "The numbers behind")["rows"]
+        rows = section(self.doc, "The numbers behind", "web")["rows"]
         self.assertEqual([r[0] for r in rows[-4:]], ["Platform Linux", "Platform Windows", "Platform VMware", "Platform Applications"])
 
 
 class SlowClient(object):
-    """1.67.0: STIG Manager as site_stig_scorecard.read asks it - the counts call (projection=stigs, assetCount), the assets,
-    and the host lists (projection=assets), which may be too slow."""
-    def __init__(self, slow=()):
-        self.slow, self.calls = set(slow), []
+    """STIG Manager as site_stig_scorecard.read asks it (1.68.0): the metrics (a row per asset and STIG; the collection's
+    totals) - or none, an older STIG Manager (404) - and the findings by rule with their hosts, which may be too slow."""
+    def __init__(self, slow=(), metrics=True, slow_rules=()):
+        self.slow, self.metrics, self.calls, self.slow_rules = set(slow), metrics, [], set(slow_rules)
 
     def get(self, path, wait=None, **q):
         self.calls.append((path, q.get("projection"), wait))
         if path == "/collections":
             return [{"collectionId": cid, "name": name} for cid, name, hosts in fx.COLLECTIONS]
         cid = path.split("/")[2] if path.startswith("/collections/") else q.get("collectionId")
+        hosts = [h for c, n, hs in fx.COLLECTIONS if c == cid for h in hs]
+        if "/metrics/" in path:
+            if not self.metrics:
+                raise RuntimeError("HTTP 404 from https://stigman.example.mil/api%s: not here" % path)
+            rows = []
+            for h in hosts:
+                for b in fx.asset_stigs(h):
+                    f = {"high": 0, "medium": 0, "low": 0}
+                    for sv, names in fx.state(0).get(cid, {}).items():
+                        if h in names and fx.bench(sv) == b:
+                            f[fx.RULES[sv][2]] += 1
+                    rows.append({"assetId": h, "name": h, "benchmarkId": b, "metrics": {"findings": f, "minTs": "2025-03-01T10:00:00Z"}})
+            if path.endswith("/metrics/summary/collection"):
+                return {"collectionId": cid, "assets": len(hosts), "metrics": {"findings": dict(
+                    (k, sum(r["metrics"]["findings"][k] for r in rows)) for k in ("high", "medium", "low"))}}
+            return rows
         if path.endswith("/findings"):
-            if q.get("projection") == "assets" and cid in self.slow:
+            if q.get("projection") == "stigs" and cid in self.slow_rules and self.metrics:
+                raise RuntimeError("no answer from https://stigman.example.mil/api/collections/%s/findings in time (a slow answer)" % cid)
+            if "assets" in (q.get("projection") or []) and cid in self.slow:
                 raise RuntimeError("no answer from https://stigman.example.mil/api/collections/%s/findings in time (a slow answer)" % cid)
             rows = findings(fx.state(0), cid)
+            pr = q.get("projection") or []
             for r in rows:
-                if q.get("projection") != "assets":
+                if "assets" not in pr:
                     del r["assets"]
-                if q.get("projection") != "stigs":
+                if "stigs" not in pr:
                     del r["stigs"]
             return rows
-        if path.endswith("/metrics/summary/collection"):
-            return {"assets": len([h for c, n, h in fx.COLLECTIONS if c == cid][0])}
         if path == "/assets":
-            return [{"name": h, "stigs": [{"benchmarkId": b} for b in fx.asset_stigs(h)]} for c, n, hs in fx.COLLECTIONS if c == cid for h in hs]
+            return [{"name": h, "stigs": [{"benchmarkId": b} for b in fx.asset_stigs(h)]} for h in hosts]
         raise AssertionError(path)
 
 
 class HostLists(unittest.TestCase):
-    """1.67.0: the counts first, the hosts in a call of their own with its own timeout; slow - the counts kept."""
-    P = {"collections": [], "hosts": True, "hosts_timeout": 120}
+    """1.68.0: the counts from the metrics, the rules with their hosts in a call of their own with its own timeout; slow - the
+    counts kept. No metrics (an older STIG Manager): the findings' counts, as 1.67.0."""
+    P = {"collections": [], "hosts": True, "hosts_timeout": 600, "rules_timeout": 600}
 
-    def test_counts_first_then_the_hosts(self):
+    def test_counts_from_the_metrics_then_the_rules(self):
         cl = SlowClient()
         cols, missing = sc.read(self.P, cl)
-        finds = [(p, pr, w) for p, pr, w in cl.calls if p.endswith("/findings")]
-        self.assertEqual([pr for p, pr, w in finds[:2]], ["stigs", "assets"])
-        self.assertEqual([w for p, pr, w in finds if pr == "assets"], [120, 120, 120])
+        calls = [(pth.split("/", 3)[-1], pr, w) for pth, pr, w in cl.calls if pth.startswith("/collections/1")]
+        self.assertEqual(calls, [("metrics/summary/collection", None, None), ("metrics/summary", None, None),
+                                 ("findings", "stigs", 600), ("findings", "assets", 600)])
         rhel = next(c for c in cols if c["name"] == RHEL)
-        self.assertEqual((rhel["cat1"], rhel["cat2"], rhel["cat3"], rhel["hosts"]), (1, 8, 2, "listed"))
+        self.assertEqual((rhel["cat1"], rhel["cat2"], rhel["cat3"], rhel["assets"], rhel["counts_from"], rhel["hosts"]), (1, 8, 2, 6, "metrics", "listed"))
         self.assertEqual(next(r for r in rhel["rules"] if r["sv"] == "SV-257985")["assets"], ["rhel01", "rhel03", "rhel05"])
-        self.assertEqual(sorted(rhel["timing"]), ["assets", "counts", "hosts", "metrics"])   # 1.66.2: the metrics first
-        self.assertEqual(cols, sorted(cols, key=lambda c: c["name"]))
+        self.assertEqual([x for x in rhel["checklists"] if x["asset"] == "rhel04"],
+                         [{"asset": "rhel04", "stig": "RHEL_9_STIG", "cat1": 1, "cat2": 1, "cat3": 0, "min_ts": "2025-03-01T10:00:00Z", "max_ts": ""}])
+        self.assertEqual(rhel["asset_stigs"]["rhel01"], [fx.APACHE, "RHEL_9_STIG"])
+        self.assertEqual(sorted(rhel["timing"]), ["hosts", "metrics", "rules"])
+        self.assertTrue(rhel["rules_read"])
+        self.assertIn("counts from the metrics", [x for x in sc.timing_lines(cols) if x.startswith(RHEL)][0])
+        # the same report as from the findings
+        d = card(read={"ok": True, "error": "", "read_at": NOW, "collections": cols, "missing": []})
+        hs = next(x for x in d["xlsx"] if x["name"] == "Hosts")["rows"]                              # 1.68.0: the oldest review
+        self.assertEqual(next(r for r in hs if r[0] == "rhel04")[7], "2025-03-01")
+        self.assertEqual([r[:5] for r in section(d, "By collection")["rows"]], [r[:5] for r in section(card(), "By collection")["rows"]])
 
-    def test_a_slow_host_list_keeps_the_counts(self):
+    def test_slow_rules_keep_the_counts_and_the_hosts(self):
         cols, missing = sc.read(self.P, SlowClient(slow=["2"]))
         rhel = next(c for c in cols if c["name"] == RHEL)
         self.assertEqual((rhel["error"], rhel["cat1"], rhel["cat2"], rhel["cat3"]), ("", 1, 8, 2))
-        self.assertEqual(rhel["hosts"], "hosts not listed (STIG Manager was slow: over 120s, stigman_scorecard_hosts_timeout)")
-        self.assertEqual([r["assets"] for r in rhel["rules"]], [[]] * 4)
-        self.assertEqual(next(c for c in cols if c["name"] == WIN)["hosts"], "listed")
+        self.assertEqual(rhel["hosts"], "hosts not listed (STIG Manager was slow: over 600s, stigman_scorecard_hosts_timeout)")
+        self.assertEqual([r["assets"] for r in rhel["rules"]], [[]] * 4)       # the rules read, their hosts not
         line = [x for x in sc.timing_lines(cols) if x.startswith(RHEL)][0]
-        self.assertRegex(line, r"^SITEA - RHEL 9 \(id 2\): metrics \d+\.\d s, counts \d+\.\d s, assets \d+\.\d s, hosts \d+\.\d s; hosts not listed \(STIG Manager was slow")
-        # the report: the counts whole, the collection said, its hosts not listed; fixed on the host kept (the rule is Open)
+        self.assertRegex(line, r"^SITEA - RHEL 9 \(id 2\): metrics \d+\.\d s, rules \d+\.\d s, hosts \d+\.\d s; counts from the metrics; hosts not listed")
         read = {"ok": True, "error": "", "read_at": NOW, "collections": cols, "missing": []}
         d = card(read=read, opts={"fixed": {"rows": [["rhel01.example.mil", RHEL, "rhel01", "SV-257985", "CAT II", "x", NOW]], "jobs": [{}]}})
         self.assertEqual(d["counts"]["cat1"], 4)
         self.assertEqual(section(d, "Slow or not read (1)")["lines"],
                          ["Host lists too slow (stigman_scorecard_hosts_timeout), counts complete: SITEA - RHEL 9."])
-        g = section(d, "By collection", "web")["groups"][0]
-        self.assertEqual(g["lines"], ["Hosts not listed (STIG Manager was slow: over 120s, stigman_scorecard_hosts_timeout)."])
-        # fixed on the host: a collection whose hosts were not listed is left out, said (a row cannot be tied to its host)
         self.assertEqual(d["counts"]["fixed"], 0)
-        self.assertIn("Left out: SITEA - RHEL 9 - its hosts were not listed, so a scan's row cannot be tied to its host.",
-                      section(d, "Fixed on the host")["lines"])
+        self.assertIn("Fixed on the host: left out SITEA - RHEL 9 - its hosts were not listed, so a scan's row cannot be tied to its host.",
+                      d["lines"])
+        # the Hosts view still has its hosts and their counts per STIG; the Findings view says the rules were not read
+        hv = section(d, "Hosts", "web")
+        i = [r[1] for r in hv["rows"]].index("rhel04")
+        self.assertEqual(hv["rows"][i][4:8], [1, 1, 0, 2])
+        self.assertEqual(hv["details"][i]["rows"], [["RHEL_9_STIG", 1, 1, 0]])
+        self.assertEqual(hv["details"][i]["text"],
+                         "Its open findings per STIG. Its rules were not read (STIG Manager was slow: over 600s, stigman_scorecard_hosts_timeout).")
+        fs = next(x for x in d["xlsx"] if x["name"] == "Findings")["rows"]                          # 1.68.0: the workbook says so too
+        self.assertEqual([r[5:] for r in fs if r[0] == "SV-257985"], [["(not listed: stigman_scorecard_hosts)", RHEL]])
+        fv = section(d, "Findings", "web")                       # the rules are there, their hosts said not listed
+        i = [r[1].split()[0] for r in fv["rows"]].index("SV-257985")
+        self.assertEqual(fv["details"][i], {"text": "The hosts of this rule were not listed (stigman_scorecard_hosts)."})
+        # the week's change host by host still works (the point has each host's counts)
+        p = f.stig_scorecard_point(read)
+        self.assertEqual(next(c for c in p["collections"] if c["name"] == RHEL)["h"]["rhel04"], {"Linux": [1, 1, 0]})
+        self.assertTrue(next(c for c in p["collections"] if c["name"] == RHEL)["rr"])
 
-    def test_hosts_off_is_one_call(self):
+    def test_slow_rules_counts_only(self):
+        """The rules too slow (stigman_scorecard_rules_timeout): the counts and the hosts' counts stay; no rule, no host
+        list; the week still compares host by host."""
+        cl = SlowClient(slow_rules=["2"])
+        cols, missing = sc.read(self.P, cl)
+        rhel = next(c for c in cols if c["name"] == RHEL)
+        self.assertEqual((rhel["cat1"], rhel["cat2"], rhel["cat3"], rhel["rules"], rhel["rules_read"]), (1, 8, 2, [], False))
+        self.assertEqual(rhel["rules_note"], "rules not read (STIG Manager was slow: over 600s, stigman_scorecard_rules_timeout)")
+        self.assertNotIn(("/collections/2/findings", "assets", 600), cl.calls)          # no hosts asked without rules
+        self.assertIn("Counts only (rules not read (STIG Manager was slow", [x for x in sc.timing_lines(cols) if x.startswith(RHEL)][0])
+        read = {"ok": True, "error": "", "read_at": NOW, "collections": cols, "missing": []}
+        p = next(c for c in f.stig_scorecard_point(read)["collections"] if c["name"] == RHEL)
+        self.assertEqual((p["rr"], p["r2"], p["h"]["rhel04"]), (False, {}, {"Linux": [1, 1, 0]}))
+        d = card(read=read)
+        self.assertTrue(any(x.startswith("Counted from STIG Manager's metrics, the rules not read") for x in d["lines"]))
+        self.assertEqual(section(d, "Slow or not read")["lines"], ["Rules too slow (stigman_scorecard_rules_timeout), counts complete: SITEA - RHEL 9."])
+        # a 1.66.2 point that read the counts only (nr) and one of 1.68.0 without hosts: not compared, "Counts only"
+        self.assertEqual(f.comparable({"nr": True}, {"r1": {}}), "")
+        self.assertEqual(f.comparable({"h": {}}, {"h": {}}), "hosts")
+
+    def test_hosts_off_is_the_metrics_only(self):
         cl = SlowClient()
         cols, missing = sc.read(dict(self.P, hosts=False), cl)
-        self.assertEqual([pr for p, pr, w in cl.calls if p.endswith("/findings")], ["stigs"] * 3)
+        self.assertEqual([pth for pth, pr, w in cl.calls if pth.endswith("/findings")], [])
         self.assertEqual(set(c["hosts"] for c in cols), {"off"})
         d = card(read={"ok": True, "error": "", "read_at": NOW, "collections": cols, "missing": []})
-        self.assertIn("The hosts were not listed (stigman_scorecard_hosts)", section(d, "Top 5")["tips"][0][3])
+        self.assertIn("stigman_scorecard_hosts is false", " ".join(d["lines"]))
+
+    def test_an_older_stig_manager_without_metrics(self):
+        cl = SlowClient(metrics=False)
+        cols, missing = sc.read(self.P, cl)
+        rhel = next(c for c in cols if c["name"] == RHEL)
+        self.assertEqual((rhel["cat1"], rhel["cat2"], rhel["cat3"], rhel["counts_from"], rhel["hosts"]), (1, 8, 2, "findings", "listed"))
+        self.assertEqual(next(r for r in rhel["rules"] if r["sv"] == "SV-257985")["assets"], ["rhel01", "rhel03", "rhel05"])
+        self.assertIn("counts from the findings (no metrics: HTTP 404", [x for x in sc.timing_lines(cols) if x.startswith(RHEL)][0])
+
+
+class Big(unittest.TestCase):
+    """1.68.0: a site of 400 assets (tests/stig/scorecard_big.py) - the views whole, the page's size; its website document is
+    a report fit document (tests/report_fit_docs.py: stig_scorecard_big_web)."""
+    def doc(self):
+        import scorecard_big as big
+        now = f.parse_time(big.NOW)
+        runs = []
+        for k, seed in ((3, 1677), (2, 1678), (1, 1679)):
+            r = big.build(seed)
+            r["read_at"] = f._utc(now - k * 7 * DAY).strftime("%Y-%m-%dT%H:%M:%SZ")
+            runs.append(f.stig_scorecard_point(r))
+        read = big.build()
+        point = f.stig_scorecard_point(read)
+        got = f.stig_scorecard_runs(point, runs, [], {"weeks": 8, "job": 9})
+        return f.stig_scorecard(read, point, got["runs"], {"weeks": 8, "top": 5})
+
+    def test_report_fit_document(self):
+        if os.environ.get("REPORT_FIT_FROM_TESTS"):         # its document is the named stig_scorecard_big_web, not the filter's biggest
+            self.skipTest("a named report fit document")
+        d = self.doc()
+        web = f.stig_scorecard_join(d, None, "scorecard")["web"]
+        self.assertTrue(web["title"].startswith("STIG compliance: 91 CAT I open on 8 collections, "))
+        hv = section(web, "Hosts")
+        self.assertEqual(hv["title"], "Hosts (400)")
+        self.assertEqual(len(hv["details"]), 400)
+        fv = section(web, "Findings")
+        self.assertEqual([r[5] for r in fv["rows"][:20]], sorted([r[5] for r in fv["rows"][:20]], reverse=True))   # the most hosts first
+        self.assertTrue(all(len(x["rows"]) <= f.HOSTS_MAX for x in fv["details"] if x.get("rows")))
+        self.assertLess(len(json.dumps(web)), 3000000)                           # the page's data stays under 3 MB
+        self.assertEqual(f._scorecard_web(web, web["sections"])["title"], web["title"])   # the report fit document
 
 
 class FakeCursor(object):
     """The table's rows; the statements the module sends, remembered."""
-    def __init__(self, rows, tables=("stig_scorecard_point", "schema_version"), version=None, prows=()):
+    def __init__(self, rows, tables=("stig_scorecard_point", "schema_version"), version=None, prows=(), hrows=()):
         self.rows, self.tables, self.version, self.sql, self.out = rows, list(tables), version, [], []
         self.prows = list(prows)                    # 1.67.0: stig_scorecard_platform's
+        self.hrows = list(hrows)                    # 1.68.0: stig_scorecard_host's
 
     def execute(self, sql, args=None):
         self.sql.append((sql, args))
@@ -1114,6 +1246,8 @@ class FakeCursor(object):
             self.version = args[1]
         elif sql.startswith("UPDATE schema_version"):
             self.version = cdb.SCHEMA_VERSION
+        elif sql.startswith("SELECT read_at, collection, asset"):
+            self.out = [(r[0],) + r[2:] for r in self.hrows if args[0] <= r[0] < args[1]]
         elif sql.startswith("SELECT read_at, collection, platform"):
             self.out = [(r[0],) + r[2:] for r in self.prows if args[0] <= r[0] < args[1]]
         elif sql.startswith("SELECT read_at, job"):
@@ -1167,7 +1301,7 @@ class Database(unittest.TestCase):
         got = f.stig_scorecard_runs(fx.point(fx.state(0), NOW), [], runs, {"weeks": 8, "job": 5000})
         self.assertEqual(got["counts"], {"aap": 0, "db": 3, "both": 0, "used": 4})
         d = f.stig_scorecard(read_of(), f.stig_scorecard_point(read_of()), got["runs"], {"weeks": 8})
-        self.assertEqual(d["title"], "STIG compliance: 4 CAT I open; 4 findings closed this week")
+        self.assertEqual(d["title"], "STIG compliance: 4 CAT I open on 2 collections, 1 more than last week")
 
     def test_not_this_runs_own_rows_and_not_older_than_the_window(self):
         runs = cdb.read(FakeConn(self.rows([10, 2, 0])), cdb.stamp(NOW), 64)
@@ -1180,23 +1314,24 @@ class Database(unittest.TestCase):
 
     def test_the_table_is_made_once_with_its_version(self):
         conn = FakeConn(tables=())
-        self.assertEqual(cdb.schema(conn, True), {"there": True, "created": True, "platforms": True, "migrated": False})
+        self.assertEqual(cdb.schema(conn, True), {"there": True, "created": True, "platforms": True, "hosts": True, "migrated": False})
         sent = [s for s, a in conn.cur.sql]
         self.assertIn(cdb.CREATE, sent)
         self.assertIn(cdb.CREATE_P, sent)
+        self.assertIn(cdb.CREATE_H, sent)
         self.assertIn(site_report_db.SCHEMA_VERSION_TABLE, sent)
         self.assertEqual((conn.cur.version, conn.commits), (cdb.SCHEMA_VERSION, 1))
-        self.assertEqual(cdb.SCHEMA_VERSION, 2)
-        self.assertEqual(cdb.schema(conn, True), {"there": True, "created": False, "platforms": True, "migrated": False})   # nothing made
-        self.assertEqual(len([s for s in [x for x, a in conn.cur.sql] if s.startswith("CREATE")]), 3)
+        self.assertEqual(cdb.SCHEMA_VERSION, 3)
+        self.assertEqual(cdb.schema(conn, True), {"there": True, "created": False, "platforms": True, "hosts": True, "migrated": False})   # nothing made
+        self.assertEqual(len([s for s in [x for x, a in conn.cur.sql] if s.startswith("CREATE")]), 4)
 
     def test_a_version_1_database_gets_the_platform_table_and_keeps_its_rows(self):
         """1.67.0: the table of 1.58.0 to 1.66.x with its rows: the new table made, version 2, nothing else sent."""
         conn = FakeConn(self.rows([2, 1]), version=1)
-        self.assertEqual(cdb.schema(conn, True), {"there": True, "created": False, "platforms": True, "migrated": True})
+        self.assertEqual(cdb.schema(conn, True), {"there": True, "created": False, "platforms": True, "hosts": True, "migrated": True})
         writes = [s for s, a in conn.cur.sql if not s.startswith("SELECT")]
-        self.assertEqual(writes, [cdb.CREATE_P, cdb.UPGRADE])
-        self.assertEqual(conn.cur.version, 2)
+        self.assertEqual(writes, [cdb.CREATE_P, cdb.CREATE_H, cdb.UPGRADE])
+        self.assertEqual(conn.cur.version, 3)
         self.assertEqual(len(conn.cur.rows), 6)
         runs = cdb.read(conn, cdb.stamp(NOW), 64, True)              # the rows of before: read, no platforms
         self.assertEqual([("p" in c) for r in runs for c in r["collections"]], [False] * 6)
@@ -1204,9 +1339,24 @@ class Database(unittest.TestCase):
 
     def test_a_version_1_database_without_create_is_used_without_platforms(self):
         conn = FakeConn(self.rows([1]), version=1)
-        self.assertEqual(cdb.schema(conn, False), {"there": True, "created": False, "platforms": False, "migrated": False})
+        self.assertEqual(cdb.schema(conn, False), {"there": True, "created": False, "platforms": False, "hosts": False, "migrated": False})
         self.assertEqual([s for s, a in conn.cur.sql if not s.startswith("SELECT")], [])
         self.assertEqual(conn.cur.version, 1)
+
+    def test_the_host_rows_and_back(self):
+        """1.68.0: each host's counts per platform kept (stig_scorecard_host) and read back into the point's h."""
+        at = fx.stamp(T0 - 7 * DAY)
+        pt = fx.point(fx.state(1), at, True, with_hosts=True)
+        hrows = cdb.rows_h_of(pt, cdb.stamp(at), 4001)
+        self.assertIn((cdb.stamp(at), 4001, "2", "rhel07", "Linux", 0, 2, 0), hrows)
+        conn = FakeConn(cdb.rows_of(pt, cdb.stamp(at), 4001), prows=cdb.rows_p_of(pt, cdb.stamp(at), 4001), hrows=hrows)
+        runs = cdb.read(conn, cdb.stamp(NOW), 64, True, True)
+        got = dict((c["name"], c) for c in runs[0]["collections"])
+        self.assertEqual(got[RHEL]["h"], next(c for c in pt["collections"] if c["name"] == RHEL)["h"])
+        self.assertEqual(runs[0]["v"], 3)
+        # the week's change from the database: host by host
+        ch = f.change(got[RHEL], next(c for c in f.stig_scorecard_point(read_of())["collections"] if c["name"] == RHEL))
+        self.assertEqual((ch["how"], ch["closed"], ch["opened"]), ("hosts", 4, 1))
 
     def test_the_platform_rows(self):
         pt = fx.point(fx.state(0), NOW)
@@ -1219,7 +1369,7 @@ class Database(unittest.TestCase):
 
     def test_not_made_when_told_not_to(self):
         conn = FakeConn(tables=())
-        self.assertEqual(cdb.schema(conn, False), {"there": False, "created": False, "platforms": False, "migrated": False})
+        self.assertEqual(cdb.schema(conn, False), {"there": False, "created": False, "platforms": False, "hosts": False, "migrated": False})
         self.assertEqual([s for s, a in conn.cur.sql if not s.startswith("SELECT")], [])
 
     def test_a_newer_table_is_refused(self):
@@ -1242,6 +1392,7 @@ class Database(unittest.TestCase):
             self.assertIn(part, doc, "docs/REPORT_DATABASE.md: the statement differs from site_stig_scorecard_db.ddl()")
         self.assertIn("PRIMARY KEY (collection, read_at)", cdb.ddl())
         self.assertIn("PRIMARY KEY (collection, platform, read_at)", cdb.ddl())
+        self.assertIn("PRIMARY KEY (collection, asset, platform, read_at)", cdb.ddl())
 
     def test_the_settings_are_in_the_defaults_and_the_docs(self):
         defaults = open(os.path.join(REPO, "roles", "stigman_ckl_import", "defaults", "main.yml")).read()

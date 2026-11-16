@@ -95,7 +95,7 @@
              ("AAP's job history: " ~ _sc_aap.why) if _sc_aap.why | default('') else '',
              "AAP's job history: not read (the job is not run by AAP)." if _sc_aap is skipped and _sc_read.ok else '',
              ("The report database: " ~ _sc_db.error) if _sc_db.error | default('') else '',
-             "The report database: made the table stig_scorecard_platform (schema version 2); the rows kept before are as they were."
+             "The report database: made the tables of schema version 3; the rows kept before are as they were."
                if _sc_db.migrated | default(false) else '',
            ] | select | list}) }}
 

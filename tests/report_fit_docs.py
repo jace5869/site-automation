@@ -17,7 +17,7 @@ OUT = os.path.join(REPO, "tests", "fixtures", "report_fit")
 # returned on the way to a report, or a workbook's sheets, not a page of their own
 SKIP = re.compile(r":(report_act_off|report_notice|vm_vcenter_report|_report|servicenow_war_add_act|\w*_xlsx|"
                   r"report_xlsx_sheets|<genexpr>|vm_ask_run|table|_table|_section|_item_table|_moved_section|"
-                  r"_written_section)$")
+                  r"_written_section|_with_x)$")
 # a filter's document from one test, under a name of its own - a report's parts the biggest document of the filter has not
 # (1.26.0: the checklist import's routes, moves and assignments; the update's Moves and STIG assignments)
 NAMED = (("test_stig_ckl_import.py", "RouteReport.test_report_fit_document", "stig_ckl_filters.py:stig_ckl_report", "stig_ckl_report_routes"),
@@ -59,7 +59,9 @@ NAMED = (("test_stig_ckl_import.py", "RouteReport.test_report_fit_document", "st
          # hosts, Import checklists and Recheck on the scorecard
          ("test_portal.py", "Fit.test_report_fit_findings", "site_filters.py:findings_report", "portal_findings_web"),
          ("test_portal.py", "Fit.test_report_fit_drift", "site_filters.py:findings_report", "portal_drift_web"),
-         ("test_portal.py", "Fit.test_report_fit_scorecard", "stig_scorecard_filters.py:_scorecard_web", "portal_scorecard_web"))
+         ("test_portal.py", "Fit.test_report_fit_scorecard", "stig_scorecard_filters.py:_scorecard_web", "portal_scorecard_web"),
+         # 1.68.0: the STIG scorecard of 400 assets - the Findings and Hosts views, rows that open, CAT colours
+         ("test_stig_scorecard.py", "Big.test_report_fit_document", "stig_scorecard_filters.py:_scorecard_web", "stig_scorecard_big_web"))
 
 # run inside each test file's process: keep the biggest document each filter function returns
 CHILD = r"""
@@ -113,7 +115,8 @@ def from_tests():
         if os.path.basename(t) == "test_report_fit.py":
             continue
         tmp = os.path.join(OUT, ".capture.json")
-        subprocess.run([sys.executable, "-c", CHILD, t, tmp], cwd=REPO, stdin=subprocess.DEVNULL,
+        # REPORT_FIT_FROM_TESTS: a test of a big document that is a named one of its own skips itself here (1.68.0)
+        subprocess.run([sys.executable, "-c", CHILD, t, tmp], cwd=REPO, stdin=subprocess.DEVNULL, env=dict(os.environ, REPORT_FIT_FROM_TESTS="1"),
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=900)
         if os.path.exists(tmp):
             for k, v in json.load(open(tmp)).items():

@@ -117,7 +117,7 @@
 {%- endif %}
 {%- for s in r.sections | default([]) %}
 <tr><td style="padding:14px 20px 4px 20px;">
-<div style="font-size:15px;font-weight:bold;color:{{ navy }};border-bottom:1px solid #c5cedb;padding-bottom:4px;"><span style="color:{{ colour[s.status | default('')] | default('#9aa7bb') }};">&#9679;</span> {{ s.title | e }}{% if s.rows is defined %} <span style="font-weight:normal;color:#6b7280;">({{ s.rows | length }})</span>{% endif %}</div>
+<div style="font-size:15px;font-weight:bold;color:{{ navy }};border-bottom:1px solid #c5cedb;padding-bottom:4px;"><span style="color:{{ colour[s.status | default('')] | default('#9aa7bb') }};">&#9679;</span> {{ s.title | e }}{% if s.rows is defined and not s.title.endswith('(' ~ (s.rows | length) ~ ')') %} <span style="font-weight:normal;color:#6b7280;">({{ s.rows | length }})</span>{% endif %}</div>
 {%- if s.text | default('') %}
 <div style="padding:6px 0;color:#374151;">{{ s.text | e }}</div>
 {%- endif %}

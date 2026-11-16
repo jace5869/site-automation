@@ -562,7 +562,7 @@ class AtlasLook(unittest.TestCase):
         self.assertIn('<details class="cols"><summary class="btn"', h)
         for i, c in enumerate(["Host", "Result", "State", "Status"], 1):
             self.assertIn('<label><input type="checkbox" class="c%d" checked>%s</label>' % (i, c), h)
-            self.assertIn(".body:has(.cols .c%d:not(:checked)) .tw :is(th,td):nth-child(%d){display:none!important}" % (i, i), h)
+            self.assertIn(".body:has(.cols .c%d:not(:checked)) .tw>table>:is(thead,tbody)>tr:not(.xr)>:is(th,td):nth-child(%d){display:none!important}" % (i, i), h)
         self.assertNotIn(".cols .c5", h)
         self.assertIn('<button class="btn csv" type="button" hidden', h)
         self.assertIn('<button class="call" type="button" hidden>Show all</button>', h)

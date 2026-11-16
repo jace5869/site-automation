@@ -9,7 +9,11 @@ warning, and the scorecard goes on with AAP's job history. Needs PyMySQL in the 
 
 1.67.0 (schema version 2): a second table, stig_scorecard_platform - a row per run, collection and platform (the point's
 p). A version 1 database is brought to 2 by making that table (create): the rows it holds stay as they are, and those
-runs have no platforms."""
+runs have no platforms.
+
+1.68.0 (schema version 3): a third table, stig_scorecard_host - a row per run, collection, host and platform, its CAT I, II
+and III open (the point's h: the week's change host by host). A version 1 or 2 database gets the tables it lacks on the
+next run (create), its rows kept; those runs have no hosts (their week compares rule by rule)."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
@@ -21,9 +25,9 @@ description:
     stig_scorecard.
   - Writes this run's point (point - a row per collection) - not in check mode, and not when write is false.
   - Deletes rows older than keep_days (0 = never).
-  - 1.67.0, schema version 2 - each collection's platforms in the table stig_scorecard_platform. A version 1 database
-    gets that table on the next run (create), its rows kept. Without it (create false) the platforms are neither kept
-    nor read, and error says so.
+  - 1.67.0, schema version 2 - each collection's platforms in the table stig_scorecard_platform. 1.68.0, version 3 - each
+    host's open findings in stig_scorecard_host. An older database gets the tables it lacks on the next run (create), its
+    rows kept. Without them (create false) the platforms or hosts are neither kept nor read, and error says so.
   - The table is made on the first run (create); with create false and no table, nothing is read or written and error
     says so. docs/REPORT_DATABASE.md has the statement for making it by hand.
 options:
@@ -53,7 +57,8 @@ written: {description: Rows written this run., type: int}
 pruned: {description: Rows deleted (older than keep_days)., type: int}
 held: {description: "What the table holds after this run: {rows, runs, oldest, newest}.", type: dict}
 created: {description: The table was made this run., type: bool}
-migrated: {description: "1.67.0: the database was brought from schema version 1 to 2 this run (the table stig_scorecard_platform made).", type: bool}
+migrated: {description: "The database was brought to this release's schema version this run (stig_scorecard_platform, stig_scorecard_host made).", type: bool}
+hosts: {description: "1.68.0: the table stig_scorecard_host is there (each host's counts kept and read back).", type: bool}
 platforms: {description: "1.67.0: the table stig_scorecard_platform is there (the platforms kept and read back).", type: bool}
 '''
 
@@ -64,10 +69,11 @@ import re
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils import site_report_db as db
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 COMPONENT = "stig_scorecard"
 TABLE = "stig_scorecard_point"
 TABLE_P = "stig_scorecard_platform"
+TABLE_H = "stig_scorecard_host"
 CREATE = (
     "CREATE TABLE IF NOT EXISTS stig_scorecard_point (read_at DATETIME NOT NULL, job BIGINT NOT NULL DEFAULT 0, "
     "collection VARCHAR(64) NOT NULL, collection_name VARCHAR(255) NOT NULL DEFAULT '', assets INT NOT NULL DEFAULT 0, "
@@ -87,6 +93,15 @@ CREATE_P = (
 INSERT_P = ("INSERT INTO stig_scorecard_platform (read_at, job, collection, platform, assets, cat1, cat2, cat3, rules) "
             "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) ON DUPLICATE KEY UPDATE job = VALUES(job), assets = VALUES(assets), "
             "cat1 = VALUES(cat1), cat2 = VALUES(cat2), cat3 = VALUES(cat3), rules = VALUES(rules)")
+# 1.68.0 (version 3): each host's open findings per platform (the point's h) - the week's change host by host
+CREATE_H = (
+    "CREATE TABLE IF NOT EXISTS stig_scorecard_host (read_at DATETIME NOT NULL, job BIGINT NOT NULL DEFAULT 0, "
+    "collection VARCHAR(64) NOT NULL, asset VARCHAR(255) NOT NULL, platform VARCHAR(64) NOT NULL, "
+    "cat1 INT NOT NULL DEFAULT 0, cat2 INT NOT NULL DEFAULT 0, cat3 INT NOT NULL DEFAULT 0, "
+    "PRIMARY KEY (collection, asset, platform, read_at), KEY stig_scorecard_host_read_at (read_at)) " + db.TABLE_OPTS)
+INSERT_H = ("INSERT INTO stig_scorecard_host (read_at, job, collection, asset, platform, cat1, cat2, cat3) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON DUPLICATE KEY UPDATE job = VALUES(job), cat1 = VALUES(cat1), "
+            "cat2 = VALUES(cat2), cat3 = VALUES(cat3)")
 UPGRADE = "UPDATE schema_version SET version = %d, applied_at = UTC_TIMESTAMP() WHERE component = '%s';" % (SCHEMA_VERSION, COMPONENT)
 
 
@@ -108,15 +123,15 @@ def pretty(sql):
 def ddl():
     """The statements the first run sends, for making the table by hand (stigman_scorecard_db_create: false). The doc
     carries this text; a test keeps them alike."""
-    return "\n\n".join([pretty(db.SCHEMA_VERSION_TABLE), pretty(CREATE), pretty(CREATE_P),
+    return "\n\n".join([pretty(db.SCHEMA_VERSION_TABLE), pretty(CREATE), pretty(CREATE_P), pretty(CREATE_H),
                         "INSERT INTO schema_version (component, version, applied_at) VALUES ('%s', %d, UTC_TIMESTAMP());"
                         % (COMPONENT, SCHEMA_VERSION)])
 
 
 def ddl_upgrade():
-    """1.67.0: from version 1 to 2 by hand (stigman_scorecard_db_create: false) - the new table, then the version. The
-    rows of stig_scorecard_point stay."""
-    return "\n\n".join([pretty(CREATE_P), UPGRADE])
+    """From version 1 or 2 to 3 by hand (stigman_scorecard_db_create: false) - the tables it lacks (each may run again),
+    then the version. The rows already kept stay."""
+    return "\n\n".join([pretty(CREATE_P), pretty(CREATE_H), UPGRADE])
 
 
 def stamp(text):
@@ -138,29 +153,29 @@ def schema(conn, create):
     there = _table(cur, TABLE)
     if not there:
         if not create:
-            return {"there": False, "created": False, "platforms": False, "migrated": False}
+            return {"there": False, "created": False, "platforms": False, "hosts": False, "migrated": False}
         cur.execute(db.SCHEMA_VERSION_TABLE)
         cur.execute(CREATE)
-    plat = _table(cur, TABLE_P)
+    plat, hosts = _table(cur, TABLE_P), _table(cur, TABLE_H)
     migrated = False
+    r = None
     if _table(cur, "schema_version"):
         cur.execute("SELECT version FROM schema_version WHERE component = %s", (COMPONENT,))
         r = cur.fetchone()
         if r is not None and int(r[0]) > SCHEMA_VERSION:
             raise RuntimeError("the table %s is version %s, newer than this release knows (%s) - update site-automation" % (TABLE, r[0], SCHEMA_VERSION))
-        if create and not plat:
-            cur.execute(CREATE_P)
-            plat, migrated = True, there
-        if r is None and create:
-            cur.execute("INSERT INTO schema_version (component, version, applied_at) VALUES (%s, %s, UTC_TIMESTAMP())", (COMPONENT, SCHEMA_VERSION))
-        elif r is not None and int(r[0]) < SCHEMA_VERSION and plat:
-            cur.execute(UPGRADE)
+    for name, sql in ((TABLE_P, CREATE_P), (TABLE_H, CREATE_H)):
+        if create and not _table(cur, name):
+            cur.execute(sql)
             migrated = migrated or there
-    elif create and not plat:
-        cur.execute(CREATE_P)
-        plat = True
+    plat, hosts = plat or create, hosts or create
+    if r is None and create and _table(cur, "schema_version"):
+        cur.execute("INSERT INTO schema_version (component, version, applied_at) VALUES (%s, %s, UTC_TIMESTAMP())", (COMPONENT, SCHEMA_VERSION))
+    elif r is not None and int(r[0]) < SCHEMA_VERSION and plat and hosts:
+        cur.execute(UPGRADE)
+        migrated = migrated or there
     conn.commit()
-    return {"there": True, "created": not there, "platforms": plat, "migrated": migrated}
+    return {"there": True, "created": not there, "platforms": plat, "hosts": hosts, "migrated": migrated}
 
 
 def rows_of(point, now, job):
@@ -170,6 +185,8 @@ def rows_of(point, now, job):
         if not isinstance(c, dict) or c.get("id") in (None, ""):
             continue
         rules = dict((k, c.get(k) or {}) for k in CATS)
+        rules["rr"] = bool(c.get("rr", True))                 # 1.68.0: were the rules read; are the hosts' counts kept (hk)
+        rules["hk"] = isinstance(c.get("h"), dict)
         out.append((now, job, str(c["id"])[:64], str(c.get("name") or "")[:255], int(c.get("assets") or 0), int(c.get("cat1") or 0),
                     int(c.get("cat2") or 0), int(c.get("cat3") or 0), json.dumps(rules, sort_keys=True, separators=(",", ":"))))
     return out
@@ -189,7 +206,20 @@ def rows_p_of(point, now, job):
     return out
 
 
-def read(conn, now, days, platforms=False):
+def rows_h_of(point, now, job):
+    """1.68.0: this run's point -> stig_scorecard_host's rows: a collection, host and platform each, its CAT I, II, III open."""
+    out = []
+    for c in (point or {}).get("collections") or []:
+        if not isinstance(c, dict) or c.get("id") in (None, "") or not isinstance(c.get("h"), dict):
+            continue
+        for h, pls in sorted(c["h"].items()):
+            for name, v in sorted((pls or {}).items()) if isinstance(pls, dict) else []:
+                if isinstance(v, (list, tuple)) and len(v) >= 3:
+                    out.append((now, job, str(c["id"])[:64], str(h)[:255], str(name)[:64], int(v[0] or 0), int(v[1] or 0), int(v[2] or 0)))
+    return out
+
+
+def read(conn, now, days, platforms=False, hosts=False):
     """The runs read in the days before now (not now's own), oldest first, as artifact-shaped points. platforms (1.67.0):
     each collection's p from stig_scorecard_platform - a run kept before 1.67.0 has none (version 1 points)."""
     cur = conn.cursor()
@@ -208,6 +238,10 @@ def read(conn, now, days, platforms=False):
             r = {}
         rec = {"id": str(cid), "name": str(name), "assets": int(assets), "cat1": int(c1), "cat2": int(c2), "cat3": int(c3)}
         rec.update((k, r.get(k) if isinstance(r, dict) and isinstance(r.get(k), dict) else {}) for k in CATS)
+        if isinstance(r, dict) and r.get("rr") is False:
+            rec["rr"] = False                           # true is the default (a point before 1.68.0 always read its rules)
+        if hosts and isinstance(r, dict) and r.get("hk"):
+            rec["h"] = {}                               # 1.68.0: filled from stig_scorecard_host below
         run["collections"].append(rec)
     if platforms and runs:
         cur.execute("SELECT read_at, collection, platform, assets, cat1, cat2, cat3, rules FROM stig_scorecard_platform "
@@ -226,6 +260,17 @@ def read(conn, now, days, platforms=False):
         for run in runs:
             if any("p" in c for c in run["collections"]):
                 run["v"] = 2
+    if hosts and runs:
+        cur.execute("SELECT read_at, collection, asset, platform, cat1, cat2, cat3 FROM stig_scorecard_host "
+                    "WHERE read_at >= %s AND read_at < %s", (since, now))
+        at = dict(((run["read_at"], c["id"]), c) for run in runs for c in run["collections"])
+        for read_at, cid, asset, name, c1, c2, c3 in cur.fetchall():
+            c = at.get((read_at.strftime("%Y-%m-%dT%H:%M:%SZ"), str(cid)))
+            if c is not None and isinstance(c.get("h"), dict):
+                c["h"].setdefault(str(asset), {})[str(name)] = [int(c1), int(c2), int(c3)]
+        for run in runs:
+            if any("h" in c for c in run["collections"]):
+                run["v"] = 3
     return runs
 
 
@@ -254,7 +299,7 @@ def main():
     p = module.params
     where = "%s:%s/%s" % (p["host"], p["port"], p["database"])
     res = {"changed": False, "ok": False, "error": "", "tls": "", "where": where, "runs": [], "jobs": [], "written": 0, "pruned": 0,
-           "held": {}, "created": False, "migrated": False, "platforms": False}
+           "held": {}, "created": False, "migrated": False, "platforms": False, "hosts": False}
 
     def give_up(msg):
         res["error"] = msg
@@ -272,12 +317,13 @@ def main():
         conn, res["tls"] = db.connect(p)
         sch = schema(conn, p["create"] and not module.check_mode)
         there, res["created"], res["platforms"], res["migrated"] = sch["there"], sch["created"], sch["platforms"], sch["migrated"]
+        res["hosts"] = sch.get("hosts", False)
         if not there:
             conn.close()
             conn = None
             give_up("the table %s is not there%s - make it once, docs/REPORT_DATABASE.md" % (
                 TABLE, " (check mode: nothing made)" if module.check_mode and p["create"] else " (stigman_scorecard_db_create: false)"))
-        res["runs"] = read(conn, now, p["days"], res["platforms"])
+        res["runs"] = read(conn, now, p["days"], res["platforms"], res["hosts"])
         res["jobs"] = sorted(set(r["job"] for r in res["runs"] if r["job"]))
         res["ok"] = True
     except Exception as e:      # noqa: BLE001 - unreachable, refused, a grant missing: one line, the job goes on
@@ -294,17 +340,23 @@ def main():
             prow = rows_p_of(p["point"], now, p["job"]) if res["platforms"] else []
             if prow:
                 cur.executemany(INSERT_P, prow)
+            hrow = rows_h_of(p["point"], now, p["job"]) if res["hosts"] else []
+            if hrow:
+                cur.executemany(INSERT_H, hrow)
             if p["keep_days"] > 0:
                 old = now - datetime.timedelta(days=p["keep_days"])
                 res["pruned"] = int(cur.execute("DELETE FROM stig_scorecard_point WHERE read_at < %s", (old,)) or 0)
                 if res["platforms"]:
                     cur.execute("DELETE FROM stig_scorecard_platform WHERE read_at < %s", (old,))
+                if res["hosts"]:
+                    cur.execute("DELETE FROM stig_scorecard_host WHERE read_at < %s", (old,))
             conn.commit()
         res["held"] = held(conn)
         res["changed"] = bool(res["written"] or res["pruned"] or res["created"] or res["migrated"])
-        if not res["platforms"] and not res["error"]:
-            res["error"] = ("the table %s is not there: the platforms are not kept (stigman_scorecard_db_create: false - make it "
-                            "once, docs/REPORT_DATABASE.md)" % TABLE_P)
+        what = {TABLE_P: "the platforms are", TABLE_H: "each host's counts are"}
+        lack = ["the table %s is not there: %s not kept" % (t, what[t]) for t, ok in ((TABLE_P, res["platforms"]), (TABLE_H, res["hosts"])) if not ok]
+        if lack and not res["error"]:
+            res["error"] = "; ".join(lack) + " (stigman_scorecard_db_create: false - make them once, docs/REPORT_DATABASE.md)"
     except Exception as e:      # noqa: BLE001 - a read-only account, a full disk: said, the report has the earlier points
         try:
             conn.rollback()

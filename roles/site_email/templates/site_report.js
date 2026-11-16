@@ -123,9 +123,9 @@
   function tr(r,t){return '<tr>'+r.map(function(x){return '<'+t+' style="border:1px solid #999;padding:3px 6px;text-align:left">'+esc(x)+'</'+t+'>'}).join('')+'</tr>'}
   /* a table as shown: the columns not taken off (Columns), the rows not filtered out or searched away, in their order */
   function view(tb,f){var hs=[].slice.call(tb.tHead.rows[0].cells),on=[];
-    hs.forEach(function(h,i){if(getComputedStyle(h).display!=='none')on.push(i)});
+    hs.forEach(function(h,i){if(getComputedStyle(h).display!=='none'&&!h.classList.contains('k-x'))on.push(i)});   /* not the open buttons' column */
     return [on.map(function(i){return head(hs[i])}),
-      [].filter.call(tb.tBodies[0].rows,function(r){return !r.hidden}).map(function(r){return on.map(function(i){return f(r.cells[i])})})]}
+      [].filter.call(tb.tBodies[0].rows,function(r){return !r.hidden&&!r.classList.contains('xr')}).map(function(r){return on.map(function(i){return f(r.cells[i])})})]}
   /* a section as text and HTML: its lines as a list, its table (as shown) as rows with tabs between the columns, its
      cards one after the other; its words (what the section is) only when it has nothing else */
   function grab(body){var P=[],H=[],W=[],WH=[];
@@ -178,17 +178,23 @@
     if(b){b.hidden=false;b.addEventListener('click',function(){all('input',d).forEach(function(i){i.checked=true});colkeep(d)})}});
   fit();
   document.addEventListener('click',function(e){all('details.cols[open]').forEach(function(d){if(!d.contains(e.target))d.open=false})});
-  /* a row is shown unless the table's filter, its lists, the search or the page's filter buttons (1.67.0) take it away */
-  function vis(r){var h=!!(r._f||r._s||r._p||r._d);if(r.hidden!==h)r.hidden=h}
+  /* a row is shown unless the table's filter, the search or the page's filter buttons (1.67.0) take it away */
+  function vis(r){var h=!!(r._f||r._s||r._p||r._d);if(r.hidden!==h)r.hidden=h;
+    /* 1.68.0: a row that opens (tr.xr after it): shown when its row is and it was opened */
+    if(r._x){var xh=h||!r._o;if(r._x.hidden!==xh)r._x.hidden=xh}}
+  /* the open button of such a row: its rules, or its hosts, under it; its small table fitted */
+  document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('.xb');if(!b)return;var r=b.closest('tr');
+    if(!r||!r._x)return;r._o=!r._o;b.setAttribute('aria-expanded',String(r._o));vis(r);fit()});
   var counts=[];
   all('.tw table').forEach(function(tb){
-    var body=tb.tBodies[0],rows=[].slice.call(body.rows);
+    var body=tb.tBodies[0],rows=[].slice.call(body.rows).filter(function(r){return !r.classList.contains('xr')});
+    rows.forEach(function(r){var n=r.nextElementSibling;if(n&&n.classList.contains('xr'))r._x=n});
     /* a header's click sorts by its column, the next one the other way; the arrows as characters (textContent: a page
        under Trusted Types sorts too). A first click on a column whose values are already in order as the rows stand
        now (the VM tables come sorted by VM), not all the same (empty cells aside), sorts it the other way, so the click
        always shows. The
        whole header cell is the target, not only its button */
-    tb.querySelectorAll('th button').forEach(function(btn,i){var th=btn.parentNode;
+    tb.querySelectorAll('th button').forEach(function(btn){var th=btn.parentNode,i=th.cellIndex;   /* 1.68.0: a column may have no button */
       th.addEventListener('click',function(e){if(!btn.contains(e.target))btn.click()});
       btn.addEventListener('click',function(){
       var by=rows.map(function(r){return [r,skey(cval(r.cells[i]))]}),
@@ -199,7 +205,7 @@
       if(!s&&inc&&diff)asc=false;
       tb.querySelectorAll('th').forEach(function(h){var a=h.querySelector('.sort');h.removeAttribute('aria-sort');if(a)a.textContent='\u2195'});
       th.setAttribute('aria-sort',asc?'ascending':'descending');btn.querySelector('.sort').textContent=asc?'\u25b2':'\u25bc';
-      order(asc).forEach(function(r){body.appendChild(r)})})});
+      order(asc).forEach(function(r){body.appendChild(r);if(r._x)body.appendChild(r._x)})})});
     var tools=tb.parentNode.previousElementSibling;
     if(tools&&tools.classList.contains('tools2')){var f=tools.querySelector('.filter'),n=tools.querySelector('.shown'),
         dd=[].slice.call(tools.querySelectorAll('select[data-f]'));
@@ -220,19 +226,22 @@
      what has no such tag stays. The buttons and their select (a narrow screen) say the same; the counts of the tables'
      filters follow. A collection opened: its small tables fitted */
   var has=function(el,k,v){var t=el.getAttribute(k);return t===null||!v||(' '+t+' ').indexOf(' '+v+' ')>=0};
-  all('.facets').forEach(function(fx){var ch={pf:'',col:''};fx.hidden=false;
-    var apply=function(){all('[data-pf],[data-col]').forEach(function(el){if(el.closest('.facets'))return;
-        var off=!(has(el,'data-pf',ch.pf)&&has(el,'data-col',ch.col));
+  all('.facets').forEach(function(fx){var ch={pf:'',col:'',cat:'',h:''};fx.hidden=false;
+    /* 1.68.0: CAT (a row's categories, tokens as the platforms) and Host (a part of a host's name, in data-h) */
+    var hosted=function(el){var t=el.getAttribute('data-h');return !ch.h||t===null||t.indexOf(ch.h)>=0};
+    var apply=function(){all('[data-pf],[data-col],[data-cat],[data-h]').forEach(function(el){if(el.closest('.facets'))return;
+        var off=!(has(el,'data-pf',ch.pf)&&has(el,'data-col',ch.col)&&has(el,'data-cat',ch.cat)&&hosted(el));
         if(el.tagName==='TR'){el._p=off;vis(el)}else if(el.hidden!==off)el.hidden=off});
       /* each section with tagged rows: its title's (N) and its count say how many are shown; none left - its table
          gives way to one line; a list of collections with none shown goes away */
       all('details.sec').forEach(function(sec){var tb=sec.querySelector('.tw table');
         if(!tb||!tb.tBodies[0]||!tb.querySelector('tbody tr[data-pf],tbody tr[data-col]'))return;
-        var rows=[].slice.call(tb.tBodies[0].rows),k=rows.filter(function(r){return !r.hidden}).length,
+        var rows=[].slice.call(tb.tBodies[0].rows).filter(function(r){return !r.classList.contains('xr')}),k=rows.filter(function(r){return !r.hidden}).length,
             h2=sec.querySelector('summary h2'),c=h2&&h2.querySelector('.count'),t=h2&&h2.firstChild,w=tb.closest('.tw'),
             empty=!k&&rows.some(function(r){return r._p});
-        if(c){if(c._n===undefined)c._n=c.textContent;c.textContent=ch.pf||ch.col?String(k):c._n}
-        if(t&&t.nodeType===3){if(t._v===undefined)t._v=t.nodeValue;t.nodeValue=ch.pf||ch.col?t._v.replace(/\(\d+\)/,'('+k+')'):t._v}
+        var any=ch.pf||ch.col||ch.cat||ch.h;
+        if(c){if(c._n===undefined)c._n=c.textContent;c.textContent=any?String(k):c._n}
+        if(t&&t.nodeType===3){if(t._v===undefined)t._v=t.nodeValue;t.nodeValue=any?t._v.replace(/\(\d+\)/,'('+k+')'):t._v}
         if(empty&&!sec._none){var p=sec._none=document.createElement('p');p.className='fnone';p.textContent='Nothing matches this filter.';
           w.parentNode.insertBefore(p,w.nextSibling)}
         if(sec._none)sec._none.hidden=!empty;if(w.hidden!==empty)w.hidden=empty});
@@ -242,7 +251,9 @@
       all('button[data-fk="'+k+'"]',fx).forEach(function(b){b.setAttribute('aria-pressed',String(b.getAttribute('data-fv')===v))});
       all('select[data-fk="'+k+'"]',fx).forEach(function(s){if(s.value!==v)s.value=v});apply()};
     all('button[data-fk]',fx).forEach(function(b){b.addEventListener('click',function(){put(b.getAttribute('data-fk'),b.getAttribute('data-fv'))})});
-    all('select[data-fk]',fx).forEach(function(s){s.addEventListener('change',function(){put(s.getAttribute('data-fk'),s.value)})})});
+    all('select[data-fk]',fx).forEach(function(s){s.addEventListener('change',function(){put(s.getAttribute('data-fk'),s.value)})});
+    all('input[data-fk]',fx).forEach(function(s){var tm;s.addEventListener('input',function(){clearTimeout(tm);
+      tm=setTimeout(function(){put(s.getAttribute('data-fk'),s.value.trim().toLowerCase())},150)})})});
   all('details.grp').forEach(function(d){d.addEventListener('toggle',function(){fit()})});
   /* the search: every section's rows, lines and cards that have the words, the others put away; a section without
      any, away too (all of it when its title has them); the matches marked where the browser can (CSS highlights) */
@@ -251,7 +262,7 @@
       HL=window.CSS&&CSS.highlights&&window.Highlight;
     box.hidden=false;
     /* what an item says, in lower case, once: a row its cells; a line or a card its words but its buttons' (Copy) */
-    var low=function(el){if(el._t===undefined){var s=el.textContent||'';
+    var low=function(el){if(el._t===undefined){var s=(el.textContent||'')+(el._x?' '+el._x.textContent:'');   /* a row: what opens under it too */
         if(el.tagName!=='TR'){s='';var w=document.createTreeWalker(el,NodeFilter.SHOW_TEXT,null),t;
           while((t=w.nextNode()))if(!t.parentNode.closest('button'))s+=t.nodeValue+' '}
         el._t=s.toLowerCase()}return el._t};
@@ -267,7 +278,8 @@
     var run=function(){var q=find.value.trim().toLowerCase(),total=0,ns=0;
       secs.forEach(function(d){var body=d.querySelector('.body'),k=0;if(!body)return;
         var whole=!q||title(d).indexOf(q)>=0;
-        all('.tw tbody tr',body).forEach(function(r){var on=whole||low(r).indexOf(q)>=0;r._s=!on;vis(r);if(on&&!r.hidden)k++});
+        all('.tw tbody tr',body).forEach(function(r){if(r.classList.contains('xr')||r.closest('.xr'))return;
+          var on=whole||low(r).indexOf(q)>=0;r._s=!on;vis(r);if(on&&!r.hidden)k++});
         all('ul.lines>li,ul.passed>li,.todo',body).forEach(function(el){var on=whole||low(el).indexOf(q)>=0;if(el.hidden===on)el.hidden=!on;if(on)k++});
         [].forEach.call(body.children,function(el){if(el.tagName==='P'&&low(el).indexOf(q)>=0)k++});
         var away=!!q&&!k&&!whole;if(d.hidden!==away)d.hidden=away;

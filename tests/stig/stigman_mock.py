@@ -23,11 +23,13 @@ An asset may carry "labels": [{"labelId", "name"}]; GET /api/assets gives each i
 1.26.0: PATCH /api/assets/A {"collectionId"} moves it (Manage in both; a name in the destination: a duplicate error, as
 STIG Manager); PUT /api/assets/A/stigs/B assigns a STIG (Manage; at the collection's revision).
 1.67.0: projection=stigs on the findings gives each rule's STIGs (the review's or its rule's benchmarkId); "slow_assets":
-{"<collectionId>": seconds} makes the findings with projection=assets of those collections that slow (a big collection).
+{"<collectionId>": seconds} makes the findings with projection=assets of those collections that slow (a big collection);
+1.68.0 "slow_rules" the same for the rules (the findings without projection=assets).
 1.58.0, the scorecard's reads: GET /api/collections/C/findings?aggregator=ruleId&projection=assets (the reviews with the
 result fail, a row per rule: ruleId, title, severity, version, assetCount, assets) and
-GET /api/collections/C/metrics/summary/collection (assets: how many) - "no_metrics": true answers that one 404 (an older
-STIG Manager), "no_findings": ["<collectionId>"] answers the findings of those 403.
+GET /api/collections/C/metrics/summary/collection (1.68.0: the assets and the findings by severity) and
+GET /api/collections/C/metrics/summary (a row per asset and STIG) - "no_metrics": true answers them 404 (an older STIG
+Manager), "no_findings": ["<collectionId>"] answers the findings of those 403.
 Re-read on every request, so a test can change it between runs. Every request is written to LOG (method, path); a write's
 body to LOG.writes, one JSON line each. Writes (playbooks/stigman_update.yml): GET /api/collections/C/reviews/A/RULE and
 POST /api/collections/C/reviews/A only - DATA.json is updated as STIG Manager would; POST /api/assets (a new asset, with its
@@ -235,6 +237,8 @@ class H(BaseHTTPRequestHandler):
                 return self.send(400, {"error": "this test API aggregates findings by ruleId only"})
             if "assets" in q.get("projection", []) and parts[3] in d.get("slow_assets", {}):
                 time.sleep(float(d["slow_assets"][parts[3]]))      # 1.67.0: slow only with the hosts (projection=assets)
+            if "assets" not in q.get("projection", []) and parts[3] in d.get("slow_rules", {}):
+                time.sleep(float(d["slow_rules"][parts[3]]))       # 1.68.0: slow on the rules (projection=stigs)
             rows = {}
             for a in d["assets"].get(parts[3], []):
                 for r in d["reviews"].get(a["assetId"], []):
@@ -256,14 +260,38 @@ class H(BaseHTTPRequestHandler):
                 for f in rows.values():
                     del f["assets"]
             return self.send(200, [rows[k] for k in sorted(rows)])
-        if len(parts) == 7 and parts[1:3] == ["api", "collections"] and parts[4:] == ["metrics", "summary", "collection"]:
+        if len(parts) in (6, 7) and parts[1:3] == ["api", "collections"] and parts[4:6] == ["metrics", "summary"] \
+                and (len(parts) == 6 or parts[6] == "collection"):
+            # 1.68.0: as STIG Manager 1.6.18 answers (tests/stig/metrics-1.6.18): the collection's totals, or a row per
+            # asset and STIG - findings by severity (the reviews that fail, of the rule's STIG; one without: the asset's
+            # first STIG), the oldest and newest review
             if d.get("no_metrics"):
                 return self.send(404, {"error": "not here: " + u.path})
             col = [c for c in d["collections"] if c["collectionId"] == parts[3]]
             if not col or self.role(d, parts[3]) < 1:
                 return self.send(403, {"error": "User has insufficient privilege to complete this request."})
+            rows = []
+            for a in d["assets"].get(parts[3], []):
+                benches = [st["benchmarkId"] for st in a.get("stigs", [])] or [""]
+                for b in benches:
+                    f = {"low": 0, "medium": 0, "high": 0}
+                    ts = []
+                    for r in d["reviews"].get(a["assetId"], []):
+                        rb = r.get("benchmarkId") or (r.get("rule") or {}).get("benchmarkId") or benches[0]
+                        if rb != b or r.get("revision"):
+                            continue
+                        ts.append(r.get("ts") or "")
+                        if r.get("result") == "fail":
+                            sev = (r.get("rule") or {}).get("severity", "medium")
+                            f[sev if sev in f else "medium"] += 1
+                    rows.append({"assetId": a["assetId"], "name": a["name"], "labels": [], "benchmarkId": b or None,
+                                 "metrics": {"findings": f, "minTs": min(ts) if ts else None, "maxTs": max(ts) if ts else None,
+                                             "results": {"fail": sum(f.values())}}})
+            if len(parts) == 6:
+                return self.send(200, rows)
+            tot = dict((k, sum(r["metrics"]["findings"][k] for r in rows)) for k in ("low", "medium", "high"))
             return self.send(200, {"collectionId": parts[3], "name": col[0]["name"], "assets": len(d["assets"].get(parts[3], [])),
-                                   "metrics": {"findings": {}}})
+                                   "metrics": {"findings": tot}})
         if len(parts) == 5 and parts[1:3] == ["api", "collections"] and parts[4] == "stigs":
             benches = sorted(set(st["benchmarkId"] for a in d["assets"].get(parts[3], []) for st in a.get("stigs", [])))
             return self.send(200, [{"benchmarkId": b, "revisionStr": self.revision(d, parts[3], b)} for b in benches])

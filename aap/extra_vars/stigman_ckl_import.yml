@@ -168,17 +168,17 @@ stigman_ckl_import_collection: VMware
 ## only these platforms, by name (e.g. [Windows]; [] = every platform)
 # stigman_scorecard_platform_filter: []
 
-## 1.67.0: the counts are read first, in one quick call per collection. The hosts of each open rule
-## (Top rules' hosts, a collection's worst hosts, "Fixed on the host") are a second call, the slow
-## one on a big collection. false = counts only, no host lists
+## 1.68.0: the counts come from STIG Manager's metrics, one quick read per collection. Then the open
+## rules (the Findings view, Top rules, the week rule by rule) and each rule's hosts (a rule opened,
+## "Fixed on the host") - the slow reads on a big collection, each with its own limit; too slow: the
+## counts stay, the page says what was not read. false = the counts only (no rules, no hosts)
 # stigman_scorecard_hosts: true
 
-## seconds for the rules per collection (the counts come first from STIG Manager's metrics); slower:
-## Counts only (1.66.2)
-# stigman_scorecard_rules_timeout: 180
+## seconds for a collection's open rules (1.66.2: 180)
+# stigman_scorecard_rules_timeout: 600
 
-## seconds for a collection's host list; slower: its counts kept, "hosts not listed"
-# stigman_scorecard_hosts_timeout: 120
+## seconds for a collection's rules' hosts (1.67.0: 120)
+# stigman_scorecard_hosts_timeout: 600
 
 ## The earlier runs' points come from AAP's job history (a "Red Hat Ansible Automation Platform"
 ## credential on the job template). With a "Report database" credential they are kept in its table

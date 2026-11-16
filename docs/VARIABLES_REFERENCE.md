@@ -1971,9 +1971,9 @@ File: `roles/stigman_ckl_import/defaults/main.yml`
 | `stigman_scorecard_cat2_warn` | `0` | a collection with this many CAT II open or more: Warning (0 = off) |
 | `stigman_scorecard_platforms` | `- {name: Linux, stigs: ["RHEL_*", "Oracle_Linux_*", "*Ubuntu*", "SLES_*", "*Linux*"]} - {…` | 1.67.0, "By platform": a STIG's platform is the first of these whose pattern matches its benchmark id (* and ?, any case); no match is Other. An asset counts under each platform it has a STIG of, a finding under its STIG's platform. |
 | `stigman_scorecard_platform_filter` | `[]` | only these platforms, by name (e.g. [Windows]; [] = every platform) |
-| `stigman_scorecard_hosts` | `true` | 1.67.0: the counts are read first, in one quick call per collection. The hosts of each open rule (Top rules' hosts, a collection's worst hosts, "Fixed on the host") are a second call, the slow one on a big collection. false = counts only, no host lists |
-| `stigman_scorecard_rules_timeout` | `180` | seconds for the rules per collection (the counts come first from STIG Manager's metrics); slower: Counts only (1.66.2) |
-| `stigman_scorecard_hosts_timeout` | `120` | seconds for a collection's host list; slower: its counts kept, "hosts not listed" |
+| `stigman_scorecard_hosts` | `true` | 1.68.0: the counts come from STIG Manager's metrics, one quick read per collection. Then the open rules (the Findings view, Top rules, the week rule by rule) and each rule's hosts (a rule opened, "Fixed on the host") - the slow reads on a big collection, each with its own limit; too slow: the counts stay, the page say… (all of it: the role file) |
+| `stigman_scorecard_rules_timeout` | `600` | seconds for a collection's open rules (1.66.2: 180) |
+| `stigman_scorecard_hosts_timeout` | `600` | seconds for a collection's rules' hosts (1.67.0: 120) |
 | `stigman_scorecard_db` | `true` | The earlier runs' points come from AAP's job history (a "Red Hat Ansible Automation Platform" credential on the job template). With a "Report database" credential they are kept in its table stig_scorecard_point too - a longer history than AAP keeps its jobs (docs/REPORT_DATABASE.md). The only thing the scorecard write… (all of it: the role file) |
 | `stigman_scorecard_db_create` | `true` | make the tables on the first run, and stig_scorecard_platform on an older database (false: by hand, docs/REPORT_DATABASE.md) |
 | `stigman_scorecard_db_keep_days` | `800` | rows older than this are deleted (0 = never) |

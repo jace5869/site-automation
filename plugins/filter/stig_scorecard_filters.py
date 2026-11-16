@@ -170,11 +170,17 @@ def _plat_of(c, cfg):
     for a, names in assets.items():
         for n in names:
             out.setdefault(n, blank())["assets"] += 1
+    metrics = [x for x in (c or {}).get("checklists") or [] if isinstance(x, dict)]
+    for x in metrics:                                   # 1.68.0: the counts from the metrics (a row per asset and STIG)
+        e = out.setdefault(stig_platform(x.get("stig"), pl), blank())
+        for k in CATS:
+            e["cat%d" % k] += _n(x.get("cat%d" % k))
     for r in (c or {}).get("rules") or []:
         if not isinstance(r, dict) or not r.get("sv") or r.get("cat") not in CATS or not _n(r.get("count")):
             continue
         e = out.setdefault(_rule_platform(r, assets, pl), blank())
-        e["cat%d" % r["cat"]] += _n(r["count"])
+        if not metrics:
+            e["cat%d" % r["cat"]] += _n(r["count"])
         if str(r["sv"]) not in e["rules"]:
             e["rules"].append(str(r["sv"]))
     for e in out.values():
@@ -236,6 +242,84 @@ def _together(since):
     return re.sub(r"(\d+|none) (closed|opened)", u"\\1\u00a0\\2", re.sub(u"^([▲▼▬]) ", u"\\1\u00a0", str(since)))
 
 
+VIEW_MAX = 3000                 # the Findings and Hosts views: this many rows on the page (the workbook has every one)
+HOSTS_MAX = 300                 # a rule opened: this many hosts
+RULES_MAX = 300                 # a host opened: this many rules
+
+
+def _hosts_of(c, pl):
+    """1.68.0: a collection read -> {host: {stigs: {benchmark: [c1, c2, c3]}, cats: [c1, c2, c3], oldest, platforms, rules:
+    [(cat, rule word, title)]}} - from STIG Manager's metrics (checklists: a row per asset and STIG) when it gave them,
+    else from the rules' hosts; each host's rules when the rules were read with their hosts."""
+    out = {}
+    blank = lambda: {"stigs": {}, "cats": [0, 0, 0], "oldest": "", "platforms": [], "rules": []}     # noqa: E731
+    for x in c.get("checklists") or []:
+        if not isinstance(x, dict) or not x.get("asset"):
+            continue
+        e = out.setdefault(str(x["asset"]), blank())
+        v = [_n(x.get("cat1")), _n(x.get("cat2")), _n(x.get("cat3"))]
+        e["stigs"][str(x.get("stig") or "")] = v
+        e["cats"] = [e["cats"][k] + v[k] for k in range(3)]
+        if x.get("min_ts") and (not e["oldest"] or str(x["min_ts"]) < e["oldest"]):
+            e["oldest"] = str(x["min_ts"])
+    from_rules = not out
+    for r in c.get("rules") or []:
+        if not isinstance(r, dict) or r.get("cat") not in CATS:
+            continue
+        word = "%s (%s)" % (r.get("sv"), r.get("version")) if r.get("version") else str(r.get("sv"))
+        for a in r.get("assets") or []:
+            e = out.setdefault(str(a), blank())
+            e["rules"].append((r["cat"], word, str(r.get("title") or "")))
+            if from_rules:
+                e["cats"][r["cat"] - 1] += 1
+                st = e["stigs"].setdefault(str(r.get("stig") or "?"), [0, 0, 0])
+                st[r["cat"] - 1] += 1
+    stigs = c.get("asset_stigs") or {}
+    names = [n for n, x in pl]
+    for h, e in out.items():
+        found = set(stig_platform(b, pl) for b in list(e["stigs"]) + list(stigs.get(h) or []) if b and b != "?")
+        e["platforms"] = [n for n in names + [OTHER] if n in found]
+    return out
+
+
+def _why(c):
+    """Why a collection's rules (or their hosts) were not read: "STIG Manager was slow: over 600s, ..." ('' when they were)."""
+    hw = str(c.get("rules_note") or c.get("hosts") or "")
+    if hw == "off":
+        return "stigman_scorecard_hosts is false"
+    m = re.match(r"^(?:rules not read|hosts not listed) \((.*)\)$", hw)
+    return m.group(1) if m else ("" if hw in ("", "listed") else hw)
+
+
+def _not_read(c):
+    """A line: a collection's rules (or their hosts) were not read, and why."""
+    return "Not read: %s." % (_why(c) or "the rules")
+
+
+def _with_x(sec, details):
+    """1.68.0: a table whose rows open in place - a first column for the open buttons (kind x), and each row's details."""
+    out = dict(sec)
+    out["columns"] = [""] + list(sec.get("columns") or [])
+    out["kinds"] = ["x"] + list(sec.get("kinds") or [""] * (len(out["columns"]) - 1))
+    out["rows"] = [[""] + list(r) for r in sec.get("rows") or []]
+    for k in ("column_titles",):
+        if sec.get(k) is not None:
+            out[k] = [""] + list(sec[k])
+    for k in ("cell_status", "tips"):
+        if sec.get(k) is not None:
+            out[k] = [[""] + list(r) for r in sec[k]]
+    out["details"] = details
+    if sec.get("hidden_columns"):
+        out["hidden_columns"] = list(sec["hidden_columns"])
+    return out
+
+
+def _day_year(v):
+    """2 Oct 2025 ('-' when it is no time)."""
+    t = parse_time(v)
+    return "%d %s" % (_utc(t).day, _utc(t).strftime("%b %Y")) if t else "-"
+
+
 def _slug(text):
     return re.sub(r"[^A-Za-z0-9_-]+", "-", str(text or "")).strip("-")[:60] or "x"
 
@@ -264,15 +348,27 @@ def stig_scorecard_point(read, opts=None):
             continue
         rec = {"id": str(c.get("id") or ""), "name": str(c.get("name") or ""), "assets": _n(c.get("assets")),
                "cat1": _n(c.get("cat1")), "cat2": _n(c.get("cat2")), "cat3": _n(c.get("cat3")), "r1": {}, "r2": {}, "r3": {}}
-        if c.get("rules_read") is False:                  # 1.66.2: counts only - no rules to compare a week with
-            rec["nr"] = True
         for r in c.get("rules") or []:
             if isinstance(r, dict) and r.get("sv") and r.get("cat") in CATS and _n(r.get("count")):
                 d = rec["r%d" % r["cat"]]
                 d[str(r["sv"])] = d.get(str(r["sv"]), 0) + _n(r["count"])
         rec["p"] = _plat_of(c, cfg)
+        # 1.68.0: were the rules read (rr), and each host's open findings per platform (h) when its hosts are known - the
+        # change since last week, host by host
+        rec["rr"] = bool(c.get("rules_read")) if "rules_read" in c else (bool(c.get("rules")) or not _open(rec))
+        if c.get("checklists") or (rec["rr"] and c.get("hosts", "listed") == "listed"):
+            pl = _platforms(cfg)
+            rec["h"] = {}
+            for h, x in _hosts_of(c, pl).items():
+                d = {}
+                for b, v in x["stigs"].items():
+                    name = stig_platform(b, pl) if b and b != "?" else (x["platforms"][0] if len(x["platforms"]) == 1 else OTHER)
+                    d[name] = [d.get(name, [0, 0, 0])[k] + _n(v[k]) for k in range(3)]
+                d = dict((k, v) for k, v in d.items() if sum(v))
+                if d:
+                    rec["h"][h] = d
         cols.append(rec)
-    return {"v": 2, "read_at": str((read or {}).get("read_at") or ""), "collections": cols}
+    return {"v": 3, "read_at": str((read or {}).get("read_at") or ""), "collections": cols}
 
 
 def stig_scorecard_runs(current, aap=None, db=None, opts=None):
@@ -349,9 +445,59 @@ def _find(run, c):
     return None
 
 
-def change(before, now):
-    """Two points of one collection -> {closed, opened, closed_rules: [(SV, category, hosts fewer)], opened_rules}: rule
-    by rule, the hosts it is open on fewer (closed) and more (opened), the largest first."""
+def _hcat(c, platform=None):
+    """1.68.0: a point's collection -> {(host, category): open findings} (of one platform, or all)."""
+    out = {}
+    for h, pls in ((c or {}).get("h") or {}).items():
+        for pl, v in (pls or {}).items() if isinstance(pls, dict) else []:
+            if platform and pl != platform:
+                continue
+            for k in CATS:
+                n = _n(v[k - 1]) if isinstance(v, (list, tuple)) and len(v) >= k else 0
+                if n:
+                    out[(str(h), k)] = out.get((str(h), k), 0) + n
+    return out
+
+
+def comparable(before, now):
+    """How two points of one collection compare (1.68.0): 'hosts' - both have each host's counts; 'rules' - both read the
+    rules (points of 1.58.0 to 1.67.x always did); '' - neither (the rules were not read in one of the two runs)."""
+    if before is None or now is None:
+        return ""
+    if isinstance(before.get("h"), dict) and isinstance(now.get("h"), dict):
+        return "hosts"
+    if _rules_known(before) and _rules_known(now):
+        return "rules"
+    return ""
+
+
+def _rules_known(c):
+    """A point's collection read its rules: rr (1.68.0), not nr (1.66.2's "counts only"); older points always did."""
+    return bool(c.get("rr", not c.get("nr", False)))
+
+
+def change(before, now, platform=None):
+    """Two points of one collection -> {closed, opened, closed_rules: [(key, category, fewer)], opened_rules, how} or None
+    (they cannot be compared). 1.68.0, how 'hosts': host by host and category, its open findings fewer (closed) and more
+    (opened) - a rule closed and another opened on the same host in the same category count as neither. how 'rules' (the
+    points of before 1.68.0): rule by rule, the hosts it is open on fewer and more. The largest first."""
+    before, now = before or {}, now or {}              # a point not there: no finding (all closed, or all opened)
+    how = comparable(before, now)
+    if not how:
+        return None
+    if how == "hosts":
+        a, b = _hcat(before, platform), _hcat(now, platform)
+        closed, opened = [], []
+        for key in set(a) | set(b):
+            d = b.get(key, 0) - a.get(key, 0)
+            if d < 0:
+                closed.append((key[0], key[1], -d))
+            elif d > 0:
+                opened.append((key[0], key[1], d))
+        closed.sort(key=lambda x: (-x[2], x[1], x[0]))
+        opened.sort(key=lambda x: (-x[2], x[1], x[0]))
+        return {"closed": sum(x[2] for x in closed), "opened": sum(x[2] for x in opened), "closed_rules": closed, "opened_rules": opened,
+                "how": "hosts"}
     a, b = _rules(before or {}), _rules(now or {})
     closed, opened = [], []
     for sv in set(a) | set(b):
@@ -363,17 +509,22 @@ def change(before, now):
             opened.append((sv, cat, n - was))
     closed.sort(key=lambda x: (-x[2], x[1], x[0]))
     opened.sort(key=lambda x: (-x[2], x[1], x[0]))
-    return {"closed": sum(x[2] for x in closed), "opened": sum(x[2] for x in opened), "closed_rules": closed, "opened_rules": opened}
+    return {"closed": sum(x[2] for x in closed), "opened": sum(x[2] for x in opened), "closed_rules": closed, "opened_rules": opened,
+            "how": "rules"}
 
 
-def _ids(rules, word):
-    """The hover's lines: 'Closed 19:', a rule and its hosts each, the first TIP_IDS and 'N more'."""
+def _ids(rules, word, how="rules"):
+    """The hover's lines: 'Closed 19:', a rule and its hosts each (or 1.68.0 a host and its findings of a category), the
+    first TIP_IDS and 'N more'."""
     if not rules:
         return ["%s: none" % word]
     out = ["%s %d:" % (word, sum(x[2] for x in rules))]
-    out += ["  %s on %s" % (sv, _count(n, "host")) for sv, cat, n in rules[:TIP_IDS]]
+    if how == "hosts":
+        out += ["  %s: %d %s" % (h, n, CAT_WORD[cat]) for h, cat, n in rules[:TIP_IDS]]
+    else:
+        out += ["  %s on %s" % (sv, _count(n, "host")) for sv, cat, n in rules[:TIP_IDS]]
     if len(rules) > TIP_IDS:
-        out.append("  %d more (the workbook lists every rule)" % (len(rules) - TIP_IDS))
+        out.append("  %d more (the workbook lists every one)" % (len(rules) - TIP_IDS))
     return out
 
 
@@ -499,18 +650,21 @@ def stig_scorecard(read, point, runs, opts=None):
         for k in ("cat1", "cat2", "cat3", "assets"):
             tot[k] += _n(c.get(k))
         was = _find(base, c) if base else None
-        no_rules = bool(p.get("nr") or (was or {}).get("nr"))   # 1.66.2: a run that read the counts only
-        ch = change(was, p) if was is not None and not no_rules else None
+        ch = change(was, p) if was is not None else None
         if ch:
             tot["closed"] += ch["closed"]
             tot["opened"] += ch["opened"]
             deltas.append((c["name"], ch))
             for word, key in (("Closed", "closed_rules"), ("Opened", "opened_rules")):
-                wr, nr = _rules(was), _rules(p)
-                sheet_delta += [[c["name"], sv, CAT_WORD[cat], word, wr.get(sv, (0, 0))[1], nr.get(sv, (0, 0))[1]] for sv, cat, n in ch[key]]
-        if ch is None and was is not None and no_rules:
+                if ch["how"] == "hosts":
+                    wh, nh = _hcat(was), _hcat(p)
+                    sheet_delta += [[c["name"], h, CAT_WORD[cat], word, wh.get((h, cat), 0), nh.get((h, cat), 0)] for h, cat, n in ch[key]]
+                else:
+                    wr, nr = _rules(was), _rules(p)
+                    sheet_delta += [[c["name"], sv, CAT_WORD[cat], word, wr.get(sv, (0, 0))[1], nr.get(sv, (0, 0))[1]] for sv, cat, n in ch[key]]
+        if ch is None and was is not None:
             since = "Counts only"
-            tip = "%s: this run (or the one a week ago) read the counts, not the rules - the week's change needs both." % c["name"]
+            tip = "%s: this run (or the one a week ago) read the counts, not the rules or the hosts - the week's change needs them." % c["name"]
         elif ch is None:
             since = "New here" if base else "-"
             tip = ("%s was not in the run of %s." % (c["name"], day_word(base["_t"]))) if base else "No run 6 to 8 days ago to compare with."
@@ -518,8 +672,8 @@ def stig_scorecard(read, point, runs, opts=None):
             word, icon = (("Worse", u"▲") if ch["opened"] > ch["closed"] else
                           ("Better", u"▼") if ch["closed"] > ch["opened"] else ("Same", u"▬"))
             since = u"%s %s\n%d closed, %s" % (icon, word, ch["closed"], ("%d opened" % ch["opened"]) if ch["opened"] else "none opened")
-            tip = "\n".join(["%s since %s" % (c["name"], day_word(base["_t"]))] + _ids(ch["closed_rules"], "Closed")
-                            + _ids(ch["opened_rules"], "Opened"))
+            tip = "\n".join(["%s since %s" % (c["name"], day_word(base["_t"]))] + _ids(ch["closed_rules"], "Closed", ch["how"])
+                            + _ids(ch["opened_rules"], "Opened", ch["how"]))
         series = []
         for i, (t, r) in enumerate(wk):
             x = p if (r is not None and r["_t"] == now) else (_find(r, c) if r is not None else None)
@@ -565,15 +719,11 @@ def stig_scorecard(read, point, runs, opts=None):
     notes_col = (["Not read: %s - %s" % (c.get("name") or c.get("id"), c.get("error")) for c in bad]
                  + ["%s: %s. Its counts are whole." % (c["name"], c["hosts"].replace("hosts not listed", "Hosts not listed"))
                     for c in good if str(c.get("hosts") or "").startswith("hosts not")]
-                 + (["Not there, or the client cannot read it (stigman_scorecard_collections): %s." % ", ".join(missing)] if missing else [])
                  + (["Counted from STIG Manager's metrics, the rules not read (STIG Manager was slow, stigman_scorecard_rules_timeout): %s. "
-                     "Their CAT I, II and III are complete; Top rules, Fixed on the host and the week's change leave them out." % ", ".join(
+                     "Their CAT I, II and III are complete; the Findings and the rules of a host leave them out." % ", ".join(
                          str(c.get("name") or c.get("id")) for c in good if c.get("rules_read") is False)]
                     if any(c.get("rules_read") is False for c in good) else [])
-                 + (["Counted, but the hosts of each rule not listed (STIG Manager was slow, stigman_scorecard_hosts_timeout): %s. "
-                     "Their counts are complete; Top rules and Fixed on the host leave their hosts out." % ", ".join(
-                         str(c.get("name") or c.get("id")) for c in good if str(c.get("hosts") or "").startswith("not listed"))]
-                    if any(str(c.get("hosts") or "").startswith("not listed") for c in good) else [])
+                 + (["Not there, or the client cannot read it (stigman_scorecard_collections): %s." % ", ".join(missing)] if missing else [])
                  + ([] if trend else ["The trend starts next week: a line needs two weekly points, and this run is the first."])
                  + ([] if base else ["No run 6 to 8 days ago to compare with: \"Since last week\" starts with the run a week from now."]))
     sec = {"title": "By collection (%d)" % len(cols), "status": _worst_of(rst), "columns": columns, "column_titles": titles,
@@ -587,7 +737,10 @@ def stig_scorecard(read, point, runs, opts=None):
     slow_lines = (["Not read: %s - %s" % (c.get("name") or c.get("id"), c.get("error")) for c in bad]
                   + (["Rules too slow (stigman_scorecard_rules_timeout), counts complete: %s." % ", ".join(slow_r)] if slow_r else [])
                   + (["Host lists too slow (stigman_scorecard_hosts_timeout), counts complete: %s." % ", ".join(slow_h)] if slow_h else []))
-    slow_sec = ({"title": "Slow or not read (%d)" % (len(bad) + len(slow_r) + len(slow_h)),
+    # 1.68.0: what could not be read for the history (AAP's job history, the report database) is a not-read kind too
+    hist = [str(x) for x in o.get("history") or [] if x and not str(x).startswith("Earlier points")]
+    slow_lines += hist
+    slow_sec = ({"title": "Slow or not read (%d)" % (len(bad) + len(slow_r) + len(slow_h) + len(hist)),
                  "status": "warning" if bad else "info", "lines": slow_lines} if slow_lines else None)
     web_sec = dict(sec, rows=web_rows, row_tags=tags)
     if trend:
@@ -695,14 +848,20 @@ def stig_scorecard(read, point, runs, opts=None):
         return dict((k, sum(_n(v.get(k)) for v in vs)) for k in ("assets", "cat1", "cat2", "cat3"))
 
     def pchange(n):
-        out = {"closed": 0, "opened": 0, "closed_rules": [], "opened_rules": []}
+        out = {"closed": 0, "opened": 0, "closed_rules": [], "opened_rules": [], "how": "rules"}
         for x in pcols:
             was = _find(base, x)
             if was is None or not isinstance(was.get("p"), dict):
                 continue
-            svs = set(((x.get("p") or {}).get(n) or {}).get("rules") or []) | set((was["p"].get(n) or {}).get("rules") or [])
-            ch = change(_restrict(was, svs), _restrict(x, svs))
-            for k in out:
+            if comparable(was, x) == "hosts":           # 1.68.0: host by host, the platform's findings
+                ch = change(was, x, platform=n)
+                out["how"] = "hosts"
+            else:
+                svs = set(((x.get("p") or {}).get(n) or {}).get("rules") or []) | set((was["p"].get(n) or {}).get("rules") or [])
+                ch = change(_restrict(was, svs), _restrict(x, svs))
+            if ch is None:
+                continue
+            for k in ("closed", "opened", "closed_rules", "opened_rules"):
                 out[k] += ch[k]
         out["closed_rules"].sort(key=lambda r: (-r[2], r[1], r[0]))
         out["opened_rules"].sort(key=lambda r: (-r[2], r[1], r[0]))
@@ -721,7 +880,8 @@ def stig_scorecard(read, point, runs, opts=None):
             word, icon = (("Worse", u"▲") if ch["opened"] > ch["closed"] else
                           ("Better", u"▼") if ch["closed"] > ch["opened"] else ("Same", u"▬"))
             since = u"%s %s\n%d closed, %s" % (icon, word, ch["closed"], ("%d opened" % ch["opened"]) if ch["opened"] else "none opened")
-            tip = "\n".join(["%s since %s" % (n, day_word(base["_t"]))] + _ids(ch["closed_rules"], "Closed") + _ids(ch["opened_rules"], "Opened"))
+            tip = "\n".join(["%s since %s" % (n, day_word(base["_t"]))] + _ids(ch["closed_rules"], "Closed", ch["how"])
+                            + _ids(ch["opened_rules"], "Opened", ch["how"]))
             pdelta.append((n, ch))
         series = []
         for i, (t, r) in enumerate(wk):
@@ -766,69 +926,122 @@ def stig_scorecard(read, point, runs, opts=None):
               "column_titles": ["", "Assets with a STIG of the platform", titles[2], titles[3], titles[4], titles[5], titles[6], ""],
               "kinds": ["wrap", "num", "num", "num", "num", "wrap", "", ""], "rows": prow, "row_status": pst, "cell_status": pcst,
               "tips": ptip, "wrap": True, "keep_case": True}
-    if p_lines:
-        pl_sec["lines"] = p_lines
+    job_only = list(p_lines)                   # 1.68.0: the job output only - no lines under the page's tables
     pl_web = dict(pl_sec, rows=pweb, row_tags=ptags, tiles=ptiles)
     if p_trend:
         pl_web.update(kinds=["wrap", "num", "num", "num", "num", "wrap", "spark", ""], sparks=psp)
     if not shown:
-        pl_sec = {"title": "By platform (0)", "status": "info", "lines": ["No asset with a STIG, and no open finding."] + p_lines}
+        pl_sec = {"title": "By platform (0)", "status": "info", "lines": ["No asset with a STIG, and no open finding."]}
         pl_web = dict(pl_sec)
 
-    # ---- each collection, opened from its row: its top open rules and its worst hosts (the website)
-    groups = []
-    for i, c in enumerate(good):
-        hosts = {}
-        for r in c.get("rules") or []:
-            if isinstance(r, dict) and r.get("cat") in CATS:
-                for a in r.get("assets") or []:
-                    hosts.setdefault(a, [0, 0, 0])[r["cat"] - 1] += 1
-        worst = sorted(hosts.items(), key=lambda h: (-h[1][0], -h[1][1], -h[1][2], h[0].lower()))[:top_n]
-        mine = [r for r in c.get("rules") or [] if isinstance(r, dict)][:top_n]
-        pp = (by_id.get(str(c.get("id"))) or {}).get("p") or {}
-        by_pl = ", ".join("%s %d" % (n, _n((pp.get(n) or {}).get("assets"))) for n in names if _has(pp, n, keep) and _n((pp.get(n) or {}).get("assets")))
-        g = {"id": "col-%s" % _slug(c.get("id")), "title": c["name"], "status": rst[i],
-             "meta": "%s%s" % (_count(_n(c.get("assets")), "asset"), (": " + by_pl) if by_pl else ""),
-             "counts": [["CAT I", _n(c.get("cat1")), "critical" if _n(c.get("cat1")) else ""], ["CAT II", _n(c.get("cat2")), ""],
-                        ["CAT III", _n(c.get("cat3")), ""]],
-             "tags": tags[i], "tables": []}
-        if mine:
-            g["tables"].append({"title": "Its top open rules", "columns": ["Rule", "Category", "What it checks", "Hosts open"],
-                                "kinds": ["wrap", "", "wrap", "num"],
-                                "rows": [[rule_word(r), CAT_WORD[r["cat"]], r.get("title") or "", _n(r.get("count"))] for r in mine],
-                                "row_status": ["critical" if r["cat"] == 1 else "" for r in mine]})
-        if worst:
-            g["tables"].append({"title": "Its worst hosts", "columns": ["Host", "CAT I", "CAT II", "CAT III", "Open"],
-                                "kinds": ["wrap", "num", "num", "num", "num"],
-                                "rows": [[h, x[0], x[1], x[2], sum(x)] for h, x in worst],
-                                "row_status": ["critical" if x[0] else "" for h, x in worst]})
-        elif mine:
-            hw = str(c.get("hosts") or "")
-            g["lines"] = [("Hosts not listed: stigman_scorecard_hosts is false." if hw == "off" else
-                           (hw[0].upper() + hw[1:] + ".") if hw.startswith("hosts not") else
-                           "STIG Manager gave the findings without their assets: no host list.")]
-        if not mine:
-            g["lines"] = ["No open finding."]
-        groups.append(g)
-    if groups and isinstance(web_sec.get("rows"), list):
-        web_sec["groups"] = groups
-        web_sec["groups_text"] = "Open a collection for its top open rules and its worst hosts."
+    # ---- 1.68.0: the hosts - from STIG Manager's metrics (a row per asset and STIG), else from the rules' hosts
+    pl_cfg = _platforms(cfg)
+    hostrows = []                        # [(collection, host, {stig: [c1, c2, c3]}, [c1, c2, c3], oldest, platforms, [rules])]
+    for c in good:
+        hs = _hosts_of(c, pl_cfg)
+        for h in sorted(hs):
+            x = hs[h]
+            hostrows.append((c, h, x["stigs"], x["cats"], x["oldest"], x["platforms"], x["rules"]))
+    rule_known = dict((str(c.get("id")), c.get("hosts", "listed") == "listed" and bool(c.get("rules"))) for c in good)
 
-    if unlisted:
-        fix_sec["lines"] = list(fix_sec.get("lines") or []) + [
-            "Left out: %s - %s hosts were not listed, so a scan's row cannot be tied to its host." % (
-                ", ".join(unlisted), "its" if len(unlisted) == 1 else "their")]
+    # ---- each collection's row opens: its top open rules and its worst hosts (the website)
+    cdet = []
+    for i, c in enumerate(good):
+        mine = [r for r in c.get("rules") or [] if isinstance(r, dict)][:top_n]
+        worst = sorted([x for x in hostrows if x[0] is c], key=lambda x: (-x[3][0], -x[3][1], -x[3][2], x[1].lower()))[:top_n]
+        d = []
+        if mine:
+            d.append({"text": "Its top open rules", "columns": ["Rule", "Category", "What it checks", "Hosts open"],
+                      "kinds": ["wrap", "", "wrap", "num"],
+                      "rows": [[rule_word(r), CAT_WORD[r["cat"]], r.get("title") or "", _n(r.get("count"))] for r in mine]})
+        elif _open(c):
+            d.append({"text": _not_read(c)})
+        if worst:
+            d.append({"text": "Its worst hosts", "columns": ["Host", "CAT I", "CAT II", "CAT III", "Open"],
+                      "kinds": ["wrap", "cat1", "cat2", "cat3", "num"], "rows": [[x[1], x[3][0], x[3][1], x[3][2], sum(x[3])] for x in worst]})
+        cdet.append(d or None)
+    if isinstance(web_sec.get("rows"), list) and good:
+        web_sec = _with_x(web_sec, cdet + [None] * (len(web_sec["rows"]) - len(cdet)))
+        web_sec["kinds"] = web_sec["kinds"][:3] + ["cat1", "cat2", "cat3"] + web_sec["kinds"][6:]
+        web_sec["row_tags"] = [dict(t, id="col-%s" % _slug(c.get("id"))) for t, c in zip(web_sec["row_tags"], good)] + web_sec["row_tags"][len(good):]
+        web_sec["text"] = "Open a collection for its top open rules and its worst hosts."
+    if isinstance(pl_web.get("rows"), list) and pl_web.get("rows"):
+        pl_web = dict(pl_web, kinds=pl_web["kinds"][:2] + ["cat1", "cat2", "cat3"] + pl_web["kinds"][5:])
+
+    # ---- the Findings view: each open rule, opened to the hosts it is open on
+    hosts_of_rule = {}
+    for c in good:
+        for r in c.get("rules") or []:
+            if isinstance(r, dict) and r.get("sv"):
+                hosts_of_rule.setdefault(r["sv"], []).extend((h, c["name"]) for h in r.get("assets") or [])
+    f_rows, f_det, f_tags, f_st = [], [], [], []
+    for a in ranked[:VIEW_MAX]:                       # the most hosts first (1.68.0: what Top rules was)
+        hl = sorted(set(hosts_of_rule.get(a["sv"]) or []), key=lambda x: (x[1].lower(), x[0].lower()))
+        plat = ", ".join(sorted(set(n for n in names if _key(n, cfg) in a["pf"])))
+        f_rows.append(["", rule_word(a), CAT_WORD[a["cat"]], a["title"], plat, a["hosts"],
+                       ", ".join("%s (%d)" % w for w in sorted(a["where"], key=lambda w: (-w[1], w[0].lower())))])
+        f_det.append({"columns": ["Host", "Collection"], "kinds": ["wrap", "wrap"], "rows": [list(x) for x in hl[:HOSTS_MAX]],
+                      "more": ("%d more hosts: the workbook lists every one." % (len(hl) - HOSTS_MAX)) if len(hl) > HOSTS_MAX else ""}
+                     if hl else {"text": "The hosts of this rule were not listed (stigman_scorecard_hosts)."})
+        f_tags.append({"pf": " ".join(sorted(a["pf"])), "col": " ".join(sorted(a["col"])), "cat": "k%d" % a["cat"],
+                       "h": " ".join(sorted(set(x[0] for x in hl)))})
+        f_st.append("")
+    find_sec = {"title": "Findings (%d)" % len(f_rows), "cat_cells": True,
+                "columns": ["", "Rule", "Category", "What it checks", "Platform", "Hosts open", "Where"],
+                "column_titles": ["", "", "", "", "", "The hosts the rule is open on", "The collections, with the hosts in each"],
+                "kinds": ["x", "wrap", "", "wrap", "wrap", "num", "wrap"], "rows": f_rows, "details": f_det, "row_tags": f_tags,
+                "wrap": True, "keep_case": True, "hidden_columns": ["Where"],
+                "text": "Open a rule for the hosts it is open on."}
+    if len(ranked) > VIEW_MAX:
+        job_only.append("Findings: %d more rules than the page shows; the workbook lists every one." % (len(ranked) - VIEW_MAX))
+    no_rules = [c["name"] for c in good if _open(c) and not rule_known.get(str(c.get("id")))]
+    if no_rules:                                    # on the page: "Slow or not read" says it (1.67.0)
+        job_only.append("Findings: the rules of %s were not read (%s)." % (", ".join(no_rules), "STIG Manager was slow or stigman_scorecard_hosts is false"))
+    if not f_rows:
+        find_sec = {"title": "Findings (0)", "status": "info", "lines": ["No open rule was read."] + find_sec.get("lines", [])}
+
+    # ---- the Hosts view: each asset, opened to its open rules (or its counts per STIG when the rules were not read)
+    hv = sorted(hostrows, key=lambda x: (-x[3][0], -x[3][1], -x[3][2], x[1].lower(), x[0]["name"].lower()))
+    h_rows, h_det, h_tags = [], [], []
+    for c, h, stigs, cats, oldest, plats, rl in hv[:VIEW_MAX]:
+        h_rows.append(["", h, c["name"], ", ".join(plats) or "-", cats[0], cats[1], cats[2], sum(cats), _day_year(oldest)])
+        if rl:
+            h_det.append({"columns": ["Rule", "Category", "What it checks"], "kinds": ["wrap", "", "wrap"],
+                          "rows": [[w, CAT_WORD[k], t] for k, w, t in sorted(rl)[:RULES_MAX]],
+                          "more": ("%d more rules: the workbook lists every one." % (len(rl) - RULES_MAX)) if len(rl) > RULES_MAX else ""})
+        elif stigs:
+            h_det.append({"text": "Its open findings per STIG.%s" % ("" if rule_known.get(str(c.get("id"))) else " Its rules were not read (%s)." % (_why(c) or "not asked")),
+                          "columns": ["STIG", "CAT I", "CAT II", "CAT III"], "kinds": ["wrap", "cat1", "cat2", "cat3"],
+                          "rows": [[b] + list(v) for b, v in sorted(stigs.items())]})
+        else:
+            h_det.append(None)
+        h_tags.append({"pf": " ".join(_key(n, cfg) for n in plats), "col": "c%s" % c.get("id"),
+                       "cat": " ".join("k%d" % (k + 1) for k in range(3) if cats[k]), "h": h})
+    hosts_sec = {"title": "Hosts (%d)" % len(h_rows),
+                 "columns": ["", "Host", "Collection", "Platform", "CAT I", "CAT II", "CAT III", "Open", "Oldest review"],
+                 "column_titles": ["", "", "", "", "", "", "", "Open findings on the host", "Its oldest review in STIG Manager"],
+                 "kinds": ["x", "wrap", "wrap", "wrap", "cat1", "cat2", "cat3", "num", "nw"], "rows": h_rows, "details": h_det,
+                 "row_tags": h_tags, "wrap": True, "keep_case": True,
+                 "text": "Open a host for its open rules."}
+    if len(hv) > VIEW_MAX:
+        job_only.append("Hosts: %d more hosts than the page shows; the workbook lists every one." % (len(hv) - VIEW_MAX))
+    if not h_rows:
+        hosts_sec = {"title": "Hosts (0)", "status": "info", "lines": ["No asset was read."]}
+
+    if unlisted:                                    # the job output (no lines under the page's tables)
+        job_only.append("Fixed on the host: left out %s - %s hosts were not listed, so a scan's row cannot be tied to its host." % (
+            ", ".join(unlisted), "its" if len(unlisted) == 1 else "their"))
     # ---- the tiles and the cards
     c1 = tot["cat1"]
     with1 = sorted([c for c in good if _n(c.get("cat1"))], key=lambda c: (-_n(c["cat1"]), c["name"].lower()))
     since_word = "since %s" % day_word(base["_t"]) if base else ""
     tiles = [
-        {"label": "CAT I open", "value": c1, "status": "critical" if c1 else "ok",
+        {"label": "CAT I open", "cat": 1, "value": c1, "status": "critical" if c1 else "ok",
          "tip": ("CAT I: the most severe category. %s." % ", ".join("%d on %s" % (_n(c["cat1"]), c["name"]) for c in with1[:4]))
          if c1 else "CAT I: the most severe category. None open."},
-        {"label": "CAT II open", "value": tot["cat2"], "status": "warning" if tot["cat2"] else "ok",
+        {"label": "CAT II open", "cat": 2, "value": tot["cat2"], "status": "warning" if tot["cat2"] else "ok",
          "tip": "CAT II: medium severity. %d open across %s." % (tot["cat2"], _count(len(good), "collection"))},
-        {"label": "CAT III open", "value": tot["cat3"],
+        {"label": "CAT III open", "cat": 3, "value": tot["cat3"],
          "tip": "CAT III: low severity. %d open across %s." % (tot["cat3"], _count(len(good), "collection"))},
         {"label": "Closed this week", "value": tot["closed"] if base else "-", "status": "ok" if base and tot["closed"] else "",
          "note": since_word or "no run last week",
@@ -841,78 +1054,68 @@ def stig_scorecard(read, point, runs, opts=None):
     for t in tiles:
         if not t.get("status"):
             t.pop("status", None)
+    if not (fixed or scans):                    # 1.68.0: no drift scans - no tile either (as its section, 1.67.0)
+        tiles = [t for t in tiles if t["label"] != "Fixed on host, still open"]
 
-    cards = []
-    if c1:
-        first = sorted([a for a in allr.values() if a["cat"] == 1], key=lambda a: (-a["hosts"], a["sv"]))
-        cards.append({"status": "critical", "chip": "CAT I first", "meta": _count(len(with1), "collection"),
-                      "title": "%d CAT I on %s" % (c1, _count(len(with1), "collection")),
-                      "subject": ", ".join("%d on %s" % (_n(c["cat1"]), c["name"]) for c in with1[:4])
-                                 + (" and %d more" % (len(with1) - 4) if len(with1) > 4 else ""),
-                      "next": ("Start with %s: %s. Open on %s." % (rule_word(first[0]), (first[0]["title"] or "no title").rstrip(". "), _count(first[0]["hosts"], "host")))
-                      if first else "The CAT I rows in \"By collection\"."})
-    else:
-        cards.append({"status": "ok", "chip": "CAT I first", "title": "No CAT I open",
-                      "subject": "%s, %s read." % (_count(len(good), "collection"), _count(tot["assets"], "asset"))})
-    if base:
-        better = sorted([d for d in deltas if d[1]["closed"] > d[1]["opened"]], key=lambda d: d[1]["opened"] - d[1]["closed"])
-        worse_l = sorted([d for d in deltas if d[1]["opened"] > d[1]["closed"]], key=lambda d: d[1]["closed"] - d[1]["opened"])
-        said = []
-        if better:
-            said.append("%s improved most (%d closed, %d opened)." % (better[0][0], better[0][1]["closed"], better[0][1]["opened"]))
-        if worse_l:
-            said.append("%s got worse most (%d opened, %d closed)." % (worse_l[0][0], worse_l[0][1]["opened"], worse_l[0][1]["closed"]))
-        cards.append({"status": "warning" if tot["opened"] > tot["closed"] else "ok", "chip": "This week", "meta": since_word,
-                      "title": "%d closed, %d opened" % (tot["closed"], tot["opened"]),
-                      "subject": " ".join(said) or "No collection changed."})
-    else:
-        cards.append({"status": "info", "chip": "This week", "title": "No run last week to compare with",
-                      "subject": "The change needs a run 6 to 8 days ago. It starts with the run a week from now."})
-    if fixed:
-        cards.append({"status": "low", "chip": "Paperwork, not hosts", "meta": "Low", "title": "%d fixed, still open" % len(fixed),
-                      "subject": "The hosts pass; STIG Manager has not caught up.",
-                      "next": "The next checklist import (workflow 40) closes them."})
-    elif scans:                                 # 1.67.0: no scans - no card and no section (nothing to say on the page)
-        cards.append({"status": "ok" if scans else "info", "chip": "Paperwork, not hosts", "meta": "Low",
-                      "title": "Nothing fixed and still open" if scans else "No scan results to compare with",
-                      "subject": "STIG Manager agrees with the last scans." if scans else "It fills once a STIG drift report has run."})
-    card_sec = {"title": "Start here", "status": cards[0]["status"] if c1 else _worst_of([c["status"] for c in cards[:2]]) or "ok", "cards": cards}
 
     # ---- the numbers behind the lines
     num_sec = None
     if trend:
         num_sec = {"title": "The numbers behind the lines (open findings per week)",
-                   "text": "One point a week: the last run of each week, the weeks ending on this run's weekday. A dash: no run that week.",
+                   "text": "One point a week, a dash for a week without a run.",
                    "columns": ["Collection"] + heads, "kinds": ["wrap"] + ["num"] * len(heads),
                    "rows": numbers + (pnum if p_trend else []), "wrap": True}
 
     status = "critical" if c1 else ("warning" if "warning" in rst else "ok")
+    # 1.68.0: one clean sentence - CAT I open, on how many collections, against last week's run
+    title = "STIG compliance: %d CAT I open on %s" % (c1, _count(len(with1), "collection")) if c1 else \
+        "STIG compliance: no CAT I open on %s" % _count(len(good), "collection")
+    if not good:
+        title = "STIG compliance: no collection read"
+    elif base:
+        was1 = sum(_n((_find(base, c) or {}).get("cat1")) for c in good if _find(base, c) is not None)
+        d1 = c1 - was1
+        title += ", %s" % ("the same as last week" if not d1 else "%d %s than last week" % (abs(d1), "fewer" if d1 < 0 else "more"))
+
+    # ---- 1.68.0: at a glance - the worst collections (CAT I, then CAT II per asset) and the best, a line each
+    def per_asset(c):
+        return _n(c.get("cat2")) / float(max(1, _n(c.get("assets"))))
+    order_w = sorted(good, key=lambda c: (-_n(c.get("cat1")), -per_asset(c), c["name"].lower()))
+    worst_c = [c for c in order_w if _open(c)][:3]
+    best_c = [c for c in sorted(good, key=lambda c: (_n(c.get("cat1")), per_asset(c), c["name"].lower())) if c not in worst_c and _n(c.get("assets"))][:2]
+
+    def glance_line(c):
+        return "%d CAT I, %d CAT II, %d CAT III on %s (%.1f CAT II per asset)" % (
+            _n(c.get("cat1")), _n(c.get("cat2")), _n(c.get("cat3")),
+            _count(_n(c.get("assets")), "asset"), per_asset(c))
+    glance = ([{"label": "Worst", "name": c["name"], "href": "#col-%s" % _slug(c.get("id")), "text": glance_line(c),
+                "status": "critical" if _n(c.get("cat1")) else "warning"} for c in worst_c]
+              + [{"label": "Best", "name": c["name"], "href": "#col-%s" % _slug(c.get("id")), "text": glance_line(c), "status": "ok"}
+                 for c in best_c])
     if base:
-        title = "STIG compliance: %d CAT I open; %s closed this week" % (c1, _count(tot["closed"], "finding"))
-    else:
-        title = "STIG compliance: %d CAT I open; %s open" % (c1, _count(c1 + tot["cat2"] + tot["cat3"], "finding"))
+        glance.append({"label": "This week", "name": "%d closed, %d opened" % (tot["closed"], tot["opened"]), "href": "",
+                       "text": "since %s" % day_word(base["_t"]), "status": "ok" if tot["closed"] >= tot["opened"] else "warning"})
+    elif good:
+        job_only.append("No run last week to compare with: the week's change starts with the run a week from now.")
+    glance_sec = {"title": "At a glance", "status": "critical" if c1 else "ok", "glance": glance,
+                  "lines": ["%s: %s - %s" % (g["label"], g["name"], g["text"]) for g in glance]}
+    only = ("; only %s (stigman_scorecard_platform_filter)" % ", ".join(n for n in names if n in keep)) if keep else ""
     subtitle = "Read %s UTC%s; %s, %s%s" % (
         _utc(now).strftime("%Y-%m-%d %H:%M"), " from STIG Manager at %s" % host if host else "", _count(len(good), "collection"),
-        _count(tot["assets"], "asset"), "; compared with %s" % day_word(base["_t"]) if base else "")
+        _count(tot["assets"], "asset"), "; compared with %s" % day_word(base["_t"]) if base else "") + only
+    # 1.68.0: short, and on the website only (collapsed); the long history lines are in the job output
     notes = {"title": "How the scorecard counts", "collapsed": True, "lines": [
-        "A finding is a rule Open on an asset, as STIG Manager has it now. Nothing is written to STIG Manager.",
-        "Since last week: this run against the run of 6 to 8 days ago, rule by rule. Closed is the hosts a rule is open on fewer, "
-        "opened the hosts it is open on more.",
-        "A rule closed on one host and opened on another in the same week counts as neither.",
-        "A collection that was not in last week's run is \"New here\" and is not in the week's totals.",
-        "Fixed on the host, still Open: the STIG drift reports' last scans against this run's Open findings.",
-        "By platform: an asset counts under each platform it has a STIG of, so one with STIGs of two platforms counts in "
-        "both. A finding counts under its own STIG's platform.",
-        "A STIG's platform: the first of stigman_scorecard_platforms with a pattern that matches its benchmark id (%s)."
-        % "; ".join("%s %s" % (n, ", ".join(x)) for n, x in _platforms(cfg))]
+        "A finding is a rule Open on an asset, as STIG Manager has it. Nothing is written to STIG Manager.",
+        "Since last week: each host's findings of a category against the run of 6 to 8 days ago. Fewer is closed, more is opened.",
+        "An asset counts under each platform it has a STIG of. A finding counts under its own STIG's platform (stigman_scorecard_platforms)."]
         + (["Other: the STIGs no platform matched - %s." % ", ".join(others)] if others else [])
-        + ["Compared with the run of %s UTC." % _utc(base["_t"]).strftime("%Y-%m-%d %H:%M") if base else "No run 6 to 8 days ago was found."]
-        + [str(x) for x in o.get("history") or [] if x]}
+        + (["Compared with the run of %s UTC." % _utc(base["_t"]).strftime("%Y-%m-%d %H:%M")] if base else [])}
 
     last = [slow_sec] if slow_sec else []
-    fixes = [fix_sec] if (scans or fixed) else []
-    sections = [card_sec, pl_sec, sec, top_sec] + fixes + ([num_sec] if num_sec else []) + last
-    web = [card_sec, pl_web, web_sec, top_sec] + fixes + ([num_sec] if num_sec else []) + last
+    fixes = [fix_sec] if (scans or fixed) else []          # 1.67.0: no scans - no section (said in the job output)
+    # 1.68.0: the email - no Top rules (the Findings' order), no numbers table (the workbook's Open per week)
+    sections = [glance_sec, pl_sec, sec] + fixes + last
+    web = [glance_sec, pl_web, web_sec, find_sec, hosts_sec] + fixes + ([num_sec] if num_sec else []) + last
     if o.get("portal"):                       # 1.67.0, report_portal_url: the website's copy gets the site portal's links
         pf = _portal()
         web_sec = pf.add_section_link(dict(web_sec), "Import checklists", pf.portal_link(o["portal"], "ckl_import", {}))
@@ -920,7 +1123,7 @@ def stig_scorecard(read, point, runs, opts=None):
         if fixed and fix_sec.get("rows"):
             pf.add_link_column(web_fix, [pf.portal_link(o["portal"], "stig_recheck", {"target": r[0]}) for r in fixed[:list_max]],
                                "Recheck")
-        web = [card_sec, pl_web, web_sec, top_sec] + ([web_fix] if fixes else []) + ([num_sec] if num_sec else []) + last
+        web = [glance_sec, pl_web, web_sec, find_sec, hosts_sec] + ([web_fix] if fixes else []) + ([num_sec] if num_sec else []) + last
 
     # ---- the workbook
     def cut(names):
@@ -941,7 +1144,18 @@ def stig_scorecard(read, point, runs, opts=None):
             {"name": "Open rules by collection", "columns": ["Collection", "Rule", "STIG ID", "Category", "What it checks", "Hosts open", "Open on"],
              "rows": [[c["name"], r.get("sv", ""), r.get("version", ""), CAT_WORD.get(r.get("cat"), ""), r.get("title", ""), _n(r.get("count")),
                        cut(r.get("assets") or [])] for c in good for r in c.get("rules") or [] if isinstance(r, dict)]},
-            {"name": "Since last week", "columns": ["Collection", "Rule", "Category", "Change", "Hosts open before", "Hosts open now"],
+            # 1.68.0: the page's Findings and Hosts views, every row (the page stops at VIEW_MAX): a rule a row per host it
+            # is open on (a filter in Excel finds a host's rules), a rule whose hosts were not listed one row that says so
+            {"name": "Findings", "columns": ["Rule", "STIG ID", "Category", "What it checks", "Platform", "Host", "Collection"],
+             "rows": [[a["sv"], a["version"], CAT_WORD[a["cat"]], a["title"], ", ".join(sorted(set(n for n in names if _key(n, cfg) in a["pf"])))]
+                      + list(x) for a in sorted(ranked, key=lambda a: (a["cat"], -a["hosts"], a["sv"]))
+                      for x in (sorted(set(hosts_of_rule.get(a["sv"]) or []), key=lambda x: (x[1].lower(), x[0].lower()))
+                                or [("(not listed: stigman_scorecard_hosts)", ", ".join(sorted(w[0] for w in a["where"])))])]},
+            {"name": "Hosts", "columns": ["Host", "Collection", "Platform", "CAT I", "CAT II", "CAT III", "Open", "Oldest review (UTC)"],
+             "rows": [[h, c["name"], ", ".join(plats) or "-", cats[0], cats[1], cats[2], sum(cats),
+                       (_utc(parse_time(oldest)).strftime("%Y-%m-%d") if parse_time(oldest) else "-")]
+                      for c, h, stigs, cats, oldest, plats, rl in hv]},
+            {"name": "Since last week", "columns": ["Collection", "Rule or host", "Category", "Change", "Open before", "Open now"],
              "rows": sheet_delta},
             {"name": "Fixed on host, still open", "columns": ["Host", "Collection", "Rule", "Category", "What it checks", "Scan (UTC)"],
              "rows": fixed}]
@@ -951,16 +1165,18 @@ def stig_scorecard(read, point, runs, opts=None):
     lines = [title] + ["%s: %s%s" % (t["label"], t["value"], " (%s)" % t["note"] if t.get("note") else "") for t in tiles]
     lines += ["%s: %s" % (r[0], ("CAT I %s, CAT II %s, CAT III %s, %s" % (r[2], r[3], r[4], str(r[5]).replace("\n", ": ")))) for r in rows[:len(good)]]
     lines += ["Platform %s: CAT I %s, CAT II %s, CAT III %s, %s" % (r[0], r[2], r[3], r[4], str(r[5]).replace("\n", ": ")) for r in prow]
-    lines += notes_col + p_lines
+    lines += notes_col + job_only
     if not fixes:                                 # 1.67.0: off the page, said here
         lines += list(fix_sec.get("lines") or [])
     lines += [str(x) for x in o.get("history") or [] if x]        # where the earlier points came from, in the job output too
     # the page's filter buttons (atlas and brief; site_report.js): a platform, a collection - when there are two to choose from
     facets = {}
-    if len(shown) > 1 or len(good) > 1:
+    if len(shown) > 1 or len(good) > 1 or hostrows:
         facets = {"platforms": [{"key": _key(n, cfg), "name": n, "hue": _hue(n, cfg)} for n in shown] if len(shown) > 1 else [],
                   "collections": [{"key": "c%s" % c.get("id"), "name": c["name"]} for c in good] if len(good) > 1 else [],
-                  "note": "Platform and Collection choose the rows shown. The counts in a row stay as they are."}
+                  "cats": [{"key": "k%d" % k, "name": CAT_WORD[k], "cat": k} for k in CATS],      # 1.68.0
+                  "host": bool(hostrows),
+                  "note": "The buttons choose the rows shown. The counts in a row stay as they are."}
     return {"ok": True, "error": "", "title": title, "status": status, "subtitle": subtitle, "tiles": tiles, "sections": sections, "web": web,
             "facets": facets,
             "notes": notes, "xlsx": xlsx, "lines": lines, "fixed_rows": fixed,      # 1.67.0 part C: the site_findings artifact
@@ -1009,7 +1225,7 @@ def stig_scorecard_join(card, imp=None, mode="import and scorecard", src="", emp
     base = {"title": title, "status": status, "subtitle": subtitle, "summary": tiles}
     if imp and imp.get("footer") and with_import:
         base["footer"] = imp["footer"]
-    report = dict(base, sections=list(card.get("sections") or []) + extra + tail)
+    report = dict(base, sections=list(card.get("sections") or []) + extra)        # 1.68.0: How the scorecard counts - the website's
     web = _scorecard_web(dict(base, facets=card["facets"]) if card.get("facets") else base, list(card["web"]) + extra + tail) if card.get("web") else {}
     return {"report": report, "web": web, "xlsx": list(card.get("xlsx") or []) + (_sheets(imp) if with_import else [])}
 

@@ -1,33 +1,44 @@
 {
-"footer": "the import's footer",
 "sections": [
 {
-"cards": [
+"glance": [
 {
-"chip": "CAT I first",
-"meta": "2 collections",
-"next": "Start with SV-254247 (WN22-00-000110): Windows Server 2022 must be maintained at a supported servicing level. Open on 2 hosts.",
+"href": "#col-3",
+"label": "Worst",
+"name": "SITEA - Windows Server",
 "status": "critical",
-"subject": "3 on SITEA - Windows Server, 1 on SITEA - RHEL 9",
-"title": "4 CAT I on 2 collections"
+"text": "3 CAT I, 4 CAT II, 1 CAT III on 4 assets (1.0 CAT II per asset)"
 },
 {
-"chip": "This week",
-"meta": "since 6 Nov",
+"href": "#col-2",
+"label": "Worst",
+"name": "SITEA - RHEL 9",
+"status": "critical",
+"text": "1 CAT I, 8 CAT II, 2 CAT III on 6 assets (1.3 CAT II per asset)"
+},
+{
+"href": "#col-1",
+"label": "Worst",
+"name": "SITEA - VMware",
+"status": "warning",
+"text": "0 CAT I, 3 CAT II, 0 CAT III on 3 assets (1.0 CAT II per asset)"
+},
+{
+"href": "",
+"label": "This week",
+"name": "4 closed, 2 opened",
 "status": "ok",
-"subject": "SITEA - RHEL 9 improved most (4 closed, 1 opened). SITEA - Windows Server got worse most (1 opened, 0 closed).",
-"title": "4 closed, 2 opened"
-},
-{
-"chip": "Paperwork, not hosts",
-"meta": "Low",
-"status": "info",
-"subject": "It fills once a STIG drift report has run.",
-"title": "No scan results to compare with"
+"text": "since 6 Nov"
 }
 ],
+"lines": [
+"Worst: SITEA - Windows Server - 3 CAT I, 4 CAT II, 1 CAT III on 4 assets (1.0 CAT II per asset)",
+"Worst: SITEA - RHEL 9 - 1 CAT I, 8 CAT II, 2 CAT III on 6 assets (1.3 CAT II per asset)",
+"Worst: SITEA - VMware - 0 CAT I, 3 CAT II, 0 CAT III on 3 assets (1.0 CAT II per asset)",
+"This week: 4 closed, 2 opened - since 6 Nov"
+],
 "status": "critical",
-"title": "Start here"
+"title": "At a glance"
 },
 {
 "cell_status": [
@@ -102,9 +113,6 @@
 "wrap",
 "",
 ""
-],
-"lines": [
-"The platform lines start with 1.67.0: the earlier weeks' points have no platforms."
 ],
 "row_status": [
 "critical",
@@ -344,57 +352,50 @@
 "",
 "",
 "",
-""
+"",
+"",
+"low"
 ],
 [
 "",
 "",
 "",
 "",
-""
-],
-[
 "",
 "",
-"",
-"",
-""
-],
-[
-"",
-"critical",
-"",
-"",
-""
-],
-[
-"",
-"",
-"",
-"",
-""
+"low"
 ]
 ],
+"column_titles": [
+"",
+"",
+"",
+"",
+"",
+"The day of the scan that found the rule passing",
+""
+],
 "columns": [
+"Host",
+"Collection",
 "Rule",
 "Category",
 "What it checks",
-"Hosts open",
-"Where"
+"Scan passed",
+"Status"
 ],
 "kinds": [
 "wrap",
+"wrap",
+"",
 "",
 "wrap",
-"num",
-"wrap"
+"",
+""
 ],
 "row_status": [
-"",
-"",
-"",
-"critical",
-""
+"low",
+"low"
 ],
 "row_tags": [
 {
@@ -404,263 +405,79 @@
 {
 "col": "c3",
 "pf": "pf2"
-},
-{
-"col": "c2",
-"pf": "pf1"
-},
-{
-"col": "c3",
-"pf": "pf2"
-},
-{
-"col": "c1",
-"pf": "pf3"
 }
 ],
 "rows": [
 [
-"SV-258036 (RHEL-09-291010)",
-"CAT II",
-"RHEL 9 must have the USBGuard package installed.",
-5,
-"SITEA - RHEL 9 (5)"
-],
-[
-"SV-254269 (WN22-00-000330)",
-"CAT II",
-"Windows Server 2022 must have a host-based firewall.",
-4,
-"SITEA - Windows Server (4)"
-],
-[
-"SV-257985 (RHEL-09-255045)",
+"rhel01.example.mil",
+"SITEA - RHEL 9",
+"SV-257985",
 "CAT II",
 "RHEL 9 must not allow a root login over SSH.",
-3,
-"SITEA - RHEL 9 (3)"
+"12 Nov",
+"Low"
 ],
 [
-"SV-254247 (WN22-00-000110)",
+"win03.corp.example.mil",
+"SITEA - Windows Server",
+"SV-254239",
 "CAT I",
-"Windows Server 2022 must be maintained at a supported servicing level.",
-2,
-"SITEA - Windows Server (2)"
-],
-[
-"SV-256375 (ESXI-70-000001)",
-"CAT II",
-"Access to the ESXi host must be limited by lockdown mode.",
-2,
-"SITEA - VMware (2)"
+"Windows Server 2022 passwords for the built-in account must change.",
+"12 Nov",
+"Low"
 ]
 ],
-"status": "critical",
-"text": "The rules open on the most hosts, in every collection read. Fixing one of these closes the most findings.",
+"status": "low",
+"text": "The scan says these pass; STIG Manager still has them Open. Nothing to fix on the hosts - the checklist is behind. The next checklist import (workflow 40) closes them.",
 "tips": [
 [
 "",
 "",
+"SV-257985 passes in the scan of 2026-11-12T06:00:05Z; STIG Manager still has it Open.",
 "",
-"SV-258036 is open on 5 hosts\nrhel01, rhel03, rhel04, rhel05, rhel06\nThe workbook lists every host.",
-""
+"",
+"",
+"Low: fixed on the host, still Open in STIG Manager. Nothing to do on the host; the next checklist import closes it."
 ],
 [
 "",
 "",
-"",
-"SV-254269 is open on 4 hosts\nwin01, win03, win04, win05\nThe workbook lists every host.",
-""
-],
-[
+"SV-254239 passes in the scan of 2026-11-12T06:00:05Z; STIG Manager still has it Open.",
 "",
 "",
 "",
-"SV-257985 is open on 3 hosts\nrhel01, rhel03, rhel05\nThe workbook lists every host.",
-""
-],
-[
-"",
-"CAT I: the most severe category. Fix these first.",
-"",
-"SV-254247 is open on 2 hosts\nwin03, win04\nThe workbook lists every host.",
-""
-],
-[
-"",
-"",
-"",
-"SV-256375 is open on 2 hosts\nesx01, esx02\nThe workbook lists every host.",
-""
+"Low: fixed on the host, still Open in STIG Manager. Nothing to do on the host; the next checklist import closes it."
 ]
 ],
-"title": "Top 5 rules open across hosts",
+"title": "Fixed on the host, still Open in STIG Manager (2)",
 "wrap": true
 },
 {
 "lines": [
-"No scan results to compare with: no STIG drift report job of the last days kept its results (stigman_scorecard_drift_templates, stigman_scorecard_drift_days).",
-"This part fills once a STIG drift report (workflow 37's check) has run on 1.58.0 or later."
+"x"
 ],
-"status": "info",
-"title": "Fixed on the host, still Open in STIG Manager (0)"
-},
-{
-"columns": [
-"Collection",
-"25 Sep",
-"2 Oct",
-"9 Oct",
-"16 Oct",
-"23 Oct",
-"30 Oct",
-"6 Nov",
-"13 Nov"
-],
-"kinds": [
-"wrap",
-"num",
-"num",
-"num",
-"num",
-"num",
-"num",
-"num",
-"num"
-],
-"rows": [
-[
-"SITEA - RHEL 9",
-20,
-19,
-18,
-17,
-16,
-15,
-14,
-11
-],
-[
-"SITEA - VMware",
-"-",
-"-",
-"-",
-"-",
-3,
-3,
-3,
-3
-],
-[
-"SITEA - Windows Server",
-7,
-7,
-7,
-7,
-7,
-7,
-7,
-8
-],
-[
-"Platform Linux",
-"-",
-"-",
-"-",
-"-",
-"-",
-15,
-14,
-11
-],
-[
-"Platform Windows",
-"-",
-"-",
-"-",
-"-",
-"-",
-7,
-7,
-8
-],
-[
-"Platform VMware",
-"-",
-"-",
-"-",
-"-",
-"-",
-3,
-3,
-3
-],
-[
-"Platform Applications",
-"-",
-"-",
-"-",
-"-",
-"-",
-0,
-0,
-0
-]
-],
-"text": "One point a week: the last run of each week, the weeks ending on this run's weekday. A dash: no run that week.",
-"title": "The numbers behind the lines (open findings per week)",
-"wrap": true
-},
-{
-"columns": [
-"Asset",
-"STIG"
-],
-"rows": [
-[
-"vrops01",
-"Aria"
-]
-],
-"title": "New assets (2)"
-},
-{
-"lines": [
-"Approve to write."
-],
-"title": "What happens next"
-},
-{
-"collapsed": true,
-"lines": [
-"A finding is a rule Open on an asset, as STIG Manager has it now. Nothing is written to STIG Manager.",
-"Since last week: this run against the run of 6 to 8 days ago, rule by rule. Closed is the hosts a rule is open on fewer, opened the hosts it is open on more.",
-"A rule closed on one host and opened on another in the same week counts as neither.",
-"A collection that was not in last week's run is \"New here\" and is not in the week's totals.",
-"Fixed on the host, still Open: the STIG drift reports' last scans against this run's Open findings.",
-"By platform: an asset counts under each platform it has a STIG of, so one with STIGs of two platforms counts in both. A finding counts under its own STIG's platform.",
-"A STIG's platform: the first of stigman_scorecard_platforms with a pattern that matches its benchmark id (Linux rhel_*, oracle_linux_*, *ubuntu*, sles_*, *linux*; Windows ms_windows_*, windows_*, ms_sql_*, iis_*, ms_*, microsoft_*; VMware vmw_*, *vsphere*, *esxi*, *vcenter*; Network cisco_*, juniper_*, palo_alto_*, f5_*, arista_*, *router*, *switch*, *firewall*; Applications apache_*, *tomcat*, *postgresql*, *chrome*, *firefox*, mozilla_*, *kubernetes*, docker_*, oracle_database_*, *mongodb*, *jboss*, *nginx*; Storage netapp_*, *ontap*).",
-"Compared with the run of 2026-11-06 06:02 UTC."
-],
-"title": "How the scorecard counts"
+"title": "Imported"
 }
 ],
-"status": "warning",
-"subtitle": "Read 2026-11-13 06:00 UTC; 3 collections, 13 assets; compared with 6 Nov. 3 checklists read",
+"status": "critical",
+"subtitle": "Checklist import. Read 2026-11-13 06:00 UTC from STIG Manager at stigman.example.mil; 3 collections, 13 assets; compared with 6 Nov",
 "summary": [
 {
+"cat": 1,
 "label": "CAT I open",
 "status": "critical",
 "tip": "CAT I: the most severe category. 3 on SITEA - Windows Server, 1 on SITEA - RHEL 9.",
 "value": 4
 },
 {
+"cat": 2,
 "label": "CAT II open",
 "status": "warning",
 "tip": "CAT II: medium severity. 15 open across 3 collections.",
 "value": 15
 },
 {
+"cat": 3,
 "label": "CAT III open",
 "tip": "CAT III: low severity. 3 open across 3 collections.",
 "value": 3
@@ -681,13 +498,10 @@
 {
 "label": "Fixed on host, still open",
 "note": "Low",
+"status": "low",
 "tip": "Low: fixed on the host, still Open in STIG Manager. Nothing to do on the host; the next checklist import closes it.",
-"value": "-"
-},
-{
-"label": "Checklists",
-"value": 3
+"value": 2
 }
 ],
-"title": "STIG compliance: 4 CAT I open; 4 findings closed this week - Checklist import: 2 new assets"
+"title": "STIG compliance: 4 CAT I open on 2 collections, 1 more than last week"
 }

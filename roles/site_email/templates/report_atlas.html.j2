@@ -127,6 +127,7 @@ var d=localStorage.getItem('site-report-density');if(d==='compact')document.docu
   --critical-row:#fff6f5;--warning-row:#fffaf0;
   --q1:#e1f0ff;--q2:#9dc1ee;--q3:#5591dd;--q4:#2063b0;--q5:#0e3a6d;--q-edge:rgba(14,58,109,.22);
   --hu0:#7b8490;--hu1:#2a78d6;--hu2:#eb6834;--hu3:#1baf7a;--hu4:#eda100;--hu5:#e87ba4;--hu6:#008300;--hu7:#6250d6;--hu8:#e34948;
+  --cat1:#e34948;--cat2:#eda100;--cat3:#6250d6;
   color-scheme:light;
 {%- endset %}
 {%- set dark %}
@@ -143,6 +144,7 @@ var d=localStorage.getItem('site-report-density');if(d==='compact')document.docu
   --critical-row:rgba(255,138,128,.06);--warning-row:rgba(242,180,80,.05);
   --q1:#1d3b61;--q2:#2863ab;--q3:#4f91e2;--q4:#97c1f7;--q5:#dff0ff;--q-edge:rgba(223,240,255,.18);
   --hu0:#8d96a1;--hu1:#3987e5;--hu2:#d95926;--hu3:#199e70;--hu4:#c98500;--hu5:#d55181;--hu6:#0ca30c;--hu7:#9085e9;--hu8:#e66767;
+  --cat1:#d63d55;--cat2:#c98500;--cat3:#9085e9;
   color-scheme:dark;
 {%- endset %}
 :root{ {{- light -}} }
@@ -447,7 +449,7 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
 {%- set ncol = namespace(n=0) %}
 {%- for s in r.sections | default([]) if s.columns is defined and s.columns | length > ncol.n %}{% set ncol.n = s.columns | length %}{% endfor %}
 {%- for i in range(1, ncol.n + 1) %}
-.body:has(.cols .c{{ i }}:not(:checked)) .tw :is(th,td):nth-child({{ i }}){display:none!important}
+.body:has(.cols .c{{ i }}:not(:checked)) .tw>table>:is(thead,tbody)>tr:not(.xr)>:is(th,td):nth-child({{ i }}){display:none!important}
 {%- endfor %}
 /* narrower than the rail: the bar's list of sections keeps room beside the search */
 @media (max-width:1199.98px){.nav{flex:1 1 180px}.find{flex:0 1 220px;min-width:140px}
@@ -514,7 +516,7 @@ svg.spark[class*=" hu"] .ln{stroke:var(--hu)}svg.spark[class*=" hu"] .pt{fill:va
 .fnote{flex-basis:100%;margin:0;font-size:12.5px;color:var(--muted)}
 .fnone{margin:6px 0 10px;font-size:13px;color:var(--muted)}.fnone[hidden],.tw[hidden],.grps[hidden]{display:none}
 .fb:focus-visible,.fsel:focus-visible,.grp>summary:focus-visible,.ptile:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-@media (max-width:640px){.fbs{display:none}.fsel-pf{display:inline-block}}
+@media (max-width:640px){.fbs:not(.fbs-cat){display:none}.fsel-pf{display:inline-block}}
 .grps{display:grid;gap:8px;margin-top:14px}
 .grps .gt{margin:0 0 2px;font-size:13px;color:var(--muted)}
 .grp{border:1px solid var(--edge);border-radius:10px;background:var(--card-strong);min-width:0}
@@ -533,6 +535,34 @@ svg.spark[class*=" hu"] .ln{stroke:var(--hu)}svg.spark[class*=" hu"] .pt{fill:va
 table.mini th{padding:8px var(--cx);text-align:left;cursor:default}table.mini th.k-num{text-align:right}
 @media (prefers-reduced-motion:reduce){.grp .caret{transition:none}}
 @media print{.facets{display:none!important}.grp::details-content{content-visibility:visible}}
+.glance{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.glance li{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:8px 12px;border:1px solid var(--edge);border-radius:10px;background:var(--card-strong)}
+.glance .gn2{font-weight:650;color:var(--ink)}.glance a.gn2{text-decoration:underline;text-underline-offset:3px}
+.glance .gt2{color:var(--label);font-variant-numeric:tabular-nums}
+tr:target>td{background:var(--hover)!important}
+.fb .sw2{display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--cat);margin-right:7px;flex:none}
+.fhost{min-width:200px}
+.fbr{flex-basis:100%;height:0}
+/* 1.68.0: rows that open in place (a rule to its hosts, a host to its rules): the toggle in its own first column; the
+   opened row's small table; CAT colours (the dataviz palette's red, yellow and violet - never the status colours,
+   always with the CAT word) */
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+th.k-x,td.k-x{width:34px;padding-right:0!important}
+.xb{all:unset;box-sizing:border-box;cursor:pointer;display:inline-grid;place-items:center;width:26px;height:26px;border-radius:7px;color:var(--muted)}
+.xb:hover{background:var(--hover);color:var(--ink)}.xb:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.xb svg{width:15px;height:15px;transition:transform .15s}.xb[aria-expanded="true"] svg{transform:rotate(90deg)}
+tr.xr[hidden]{display:none}
+tr.xr>td.xd{padding:2px 14px 14px 46px;background:var(--card-strong);white-space:normal}
+table.xt>tbody>tr:nth-child(even)>td{background:transparent}table.xt>tbody>tr:not(.xr):nth-child(4n+3)>td{background:var(--zebra)}
+.xt0{margin:8px 0 6px;font-size:13px;color:var(--muted)}
+.catc{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;font-weight:600}
+.catc i,.cq{display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--cat);flex:none}
+.cn{display:inline-flex;align-items:center;gap:6px}
+.k1{--cat:var(--cat1)}.k2{--cat:var(--cat2)}.k3{--cat:var(--cat3)}
+th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
+.tile.tc{box-shadow:inset 0 3px 0 var(--cat)}
+@media (prefers-reduced-motion:reduce){.xb svg{transition:none}}
+@media (max-width:640px){tr.xr>td.xd{padding:4px 8px 12px}}
 </style>
 </head>
 <body>
@@ -607,7 +637,7 @@ table.mini th{padding:8px var(--cx);text-align:left;cursor:default}table.mini th
 {%- for t in r.summary %}
 {%- set ts = t.status | default('') %}
 {%- set v = ('' if t.value is none else t.value) | string %}
-<div class="card tile{{ ' hot-' ~ ts if ts in ['critical', 'warning'] and v not in ['0', ''] else '' }}{{ ' tipped' if t.tip | default('') else '' }}"{% if t.tip | default('') %} tabindex="0" data-tip="{{ t.tip | e }}"{% endif %}>
+<div class="card tile{{ (' tc k' ~ t.cat) if t.cat is defined else '' }}{{ ' hot-' ~ ts if ts in ['critical', 'warning'] and v not in ['0', ''] else '' }}{{ ' tipped' if t.tip | default('') else '' }}"{% if t.tip | default('') %} tabindex="0" data-tip="{{ t.tip | e }}"{% endif %}>
 <button class="tcopy" type="button" hidden title="Copy" aria-label="Copy {{ t.label | e }}" data-copy="{{ t.label | e }}: {{ v | e }}{{ (' (' ~ t.note ~ ')') | e if t.note | default('') else '' }}">{{ copyicons() }}</button>
 <div class="k">{% if ts in words %}<span class="c-{{ ts }}">{{ icon(ts) }}</span>{% endif %}{{ t.label | e }}</div>
 <div class="v{{ ' long' if v | length > 9 else '' }}{{ (' c-' ~ ts) if ts in ['critical', 'warning'] and v not in ['0', ''] else '' }}">{{ v | e }}</div>
@@ -628,15 +658,39 @@ table.mini th{padding:8px var(--cx);text-align:left;cursor:default}table.mini th
 <span class="fbs" role="group" aria-labelledby="fl-pf"><button type="button" class="fb" data-fk="pf" data-fv="" aria-pressed="true">All</button>{% for p in fx.platforms %}<button type="button" class="fb hu{{ p.hue | default(0) }}" data-fk="pf" data-fv="{{ p.key | e }}" aria-pressed="false"><span class="sw" aria-hidden="true"></span>{{ p.name | e }}</button>{% endfor %}</span>
 <select class="fsel fsel-pf" data-fk="pf" aria-labelledby="fl-pf"><option value="">All</option>{% for p in fx.platforms %}<option value="{{ p.key | e }}">{{ p.name | e }}</option>{% endfor %}</select>
 {%- endif %}
+<span class="fbr" aria-hidden="true"></span>
 {%- if fx.collections | default([]) %}
 <label class="fl" for="fsel-col">Collection</label>
 <select class="fsel" id="fsel-col" data-fk="col"><option value="">All</option>{% for c in fx.collections %}<option value="{{ c.key | e }}">{{ c.name | e }}</option>{% endfor %}</select>
+{%- endif %}
+{%- if fx.cats | default([]) %}
+<span class="fl" id="fl-cat">CAT</span>
+<span class="fbs fbs-cat" role="group" aria-labelledby="fl-cat"><button type="button" class="fb" data-fk="cat" data-fv="" aria-pressed="true">All</button>{% for k in fx.cats %}<button type="button" class="fb k{{ k.cat }}" data-fk="cat" data-fv="{{ k.key | e }}" aria-pressed="false"><span class="sw2" aria-hidden="true"></span>{{ k.name | e }}</button>{% endfor %}</span>
+{%- endif %}
+{%- if fx.host | default(false) %}
+<label class="fl" for="fhost">Host</label>
+<input class="fsel fhost" id="fhost" type="search" data-fk="h" placeholder="A host's name, or part of it" autocomplete="off">
 {%- endif %}
 {%- if fx.note | default('') %}
 <p class="fnote">{{ fx.note | e }}</p>
 {%- endif %}
 </div>
 {%- endif %}
+{%- macro xmini(t) %}
+{%- if t.text | default('') %}<p class="xt0">{{ t.text | e }}</p>{% endif %}
+{%- if t.rows | default([]) %}
+<div class="tw"><table class="mini">
+<thead><tr>{% for c in t.columns %}<th class="{{ 'k-num' if t.kinds[loop.index0] | default('') in ['num', 'cat1', 'cat2', 'cat3'] else 'k-mid' }}" scope="col">{{ c | e }}</th>{% endfor %}</tr></thead>
+<tbody>
+{%- for row in t.rows %}
+{%- set gr = (t.row_status[loop.index0] if t.row_status is defined and t.row_status | length > loop.index0 else '') | default('', true) %}
+<tr{% if gr in words %} class="r-{{ gr }}"{% endif %}>{% for cell in row %}{% set kd = t.kinds[loop.index0] | default('') %}{% set tx = ('' if cell is none else cell) | string %}<td class="{{ 'k-num' if kd in ['num', 'cat1', 'cat2', 'cat3'] else ('k-wrap' if kd == 'wrap' else 'nw') }}" data-l="{{ t.columns[loop.index0] | e }}">{% if tx in {'CAT I': 1, 'CAT II': 2, 'CAT III': 3} %}<span class="catc k{{ {'CAT I': 1, 'CAT II': 2, 'CAT III': 3}[tx] }}"><i aria-hidden="true"></i>{{ tx }}</span>{% elif kd in ['cat1', 'cat2', 'cat3'] and tx not in ['0', '', '-'] %}<span class="cn"><i class="cq k{{ kd[3] }}" aria-hidden="true"></i>{{ tx | e }}</span>{% elif kd == 'wrap' %}<span class="cv">{% for w in tx.split(' ') %}{{ ' ' if not loop.first else '' }}{% if w | length <= 16 %}<span class="w">{{ nbw(w) }}</span>{% else %}{{ w | e }}{% endif %}{% endfor %}</span>{% else %}{{ tx | e }}{% endif %}</td>{% endfor %}</tr>
+{%- endfor %}
+</tbody>
+</table></div>
+{%- endif %}
+{%- if t.more | default('') %}<p class="xt0">{{ t.more | e }}</p>{% endif %}
+{%- endmacro %}
 {%- for s in secs %}
 {%- set ss = s.status | default('') %}
 {%- set si = loop.index %}
@@ -700,6 +754,14 @@ table.mini th{padding:8px var(--cx);text-align:left;cursor:default}table.mini th
 {%- if s.outage is defined %}
 {% include 'report_outage.html.j2' %}
 {%- endif %}
+{#- 1.68.0: at a glance - a line each: a chip (its word and icon), the name (a link to its row), its numbers #}
+{%- if s.glance | default([]) %}
+<ul class="glance">
+{%- for g in s.glance %}
+<li>{{ chip(g.status if g.status in words else 'info', g.label) }}{% if g.href | default('') %}<a class="gn2" href="{{ g.href | e }}">{{ g.name | e }}</a>{% else %}<b class="gn2">{{ g.name | e }}</b>{% endif %}<span class="gt2">{{ g.text | e }}</span></li>
+{%- endfor %}
+</ul>
+{%- endif %}
 {#- 1.67.0: a section's own tiles (the STIG scorecard's platforms) - a hue each, the name always written beside it #}
 {%- if s.tiles | default([]) %}
 <div class="ptiles">
@@ -753,25 +815,32 @@ table.mini th{padding:8px var(--cx);text-align:left;cursor:default}table.mini th
 <details class="cols"><summary class="btn" title="Show or hide columns"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8" y="2.5" width="12.4" height="11" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6 2.8v10.4M10 2.8v10.4" stroke="currentColor" stroke-width="1.4"/></svg><span>Columns</span></summary>
 <div class="menu" role="group" aria-label="The columns of {{ s.title | e }}">
 {%- for c in s.columns %}
+{%- if not (s.kinds is defined and s.kinds | length > loop.index0 and s.kinds[loop.index0] == 'x') %}
 <label><input type="checkbox" class="c{{ loop.index }}"{{ '' if c in s.hidden_columns | default([]) else ' checked' }}>{{ (s.column_titles[loop.index0] if s.column_titles is defined and s.column_titles | length > loop.index0 else c) | e }}</label>
+{%- endif %}
 {%- endfor %}
 <button class="call" type="button" hidden>Show all</button></div></details>
 {%- endif %}
 <button class="btn csv" type="button" hidden title="Download the rows shown as a CSV file (opens in Excel)"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v8M4.8 7l3.2 3.2L11.2 7M2.5 12.2v1.3h11v-1.3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>CSV</span></button>
 </div>
-<div class="tw"><table{{ ' class="cc"' if s.compact | default(false) else '' }}>
+<div class="tw"><table{% if s.compact | default(false) or s.details is defined %} class="{{ 'cc' if s.compact | default(false) else '' }}{{ ' xt' if s.details is defined else '' }}"{% endif %}>
 <thead><tr>
 {%- for c in s.columns %}
+{%- if kinds[loop.index0] == 'x' %}
+<th class="k-x" scope="col"><span class="vh">Open</span></th>
+{%- else %}
 <th class="k-{{ kinds[loop.index0] }}" scope="col"{% if s.column_titles is defined and s.column_titles | length > loop.index0 and s.column_titles[loop.index0] != c %} title="{{ s.column_titles[loop.index0] | e }}"{% endif %}><button type="button">{{ c | e }}<span class="sort" aria-hidden="true">&#8597;</span></button></th>
+{%- endif %}
 {%- endfor %}
 </tr></thead>
 <tbody>
 {%- for row in s.rows %}
 {%- set ri = loop.index0 %}
+{%- set dt = (s.details[ri] if s.details is defined and s.details | length > ri else none) %}
 {%- set rs = (s.row_status[loop.index0] if s.row_status is defined and s.row_status | length > loop.index0 else '') | default('', true) %}
 {%- set cs = (s.cell_status[loop.index0] if s.cell_status is defined and s.cell_status | length > loop.index0 else []) | default([], true) %}
 {%- set tg = (s.row_tags[ri] if s.row_tags is defined and s.row_tags | length > ri else {}) | default({}, true) %}
-<tr{% if rs in words %} class="r-{{ rs }}"{% endif %}{% if tg.pf | default('') %} data-pf="{{ tg.pf | e }}"{% endif %}{% if tg.col | default('') %} data-col="{{ tg.col | e }}"{% endif %}{% if s.row_filters is defined and s.row_filters | length > ri %}{% for vals in s.row_filters[ri] %} data-f{{ loop.index0 }}="|{{ vals | join('|') | e }}|"{% endfor %}{% endif %}>
+<tr{% if rs in words %} class="r-{{ rs }}"{% endif %}{% if tg.pf | default('') %} data-pf="{{ tg.pf | e }}"{% endif %}{% if tg.col | default('') %} data-col="{{ tg.col | e }}"{% endif %}{% if tg.id | default('') %} id="{{ tg.id | e }}"{% endif %}{% if tg.cat | default('') %} data-cat="{{ tg.cat | e }}"{% endif %}{% if tg.h | default('') %} data-h="{{ tg.h | lower | e }}"{% endif %}{% if s.row_filters is defined and s.row_filters | length > ri %}{% for vals in s.row_filters[ri] %} data-f{{ loop.index0 }}="|{{ vals | join('|') | e }}|"{% endfor %}{% endif %}>
 {%- for cell in row %}
 {%- set text = ('' if cell is none else cell) | string %}
 {%- set lbl = (s.column_titles[loop.index0] if s.column_titles is defined and s.column_titles | length > loop.index0 else s.columns[loop.index0] | default('')) | string %}
@@ -782,7 +851,13 @@ table.mini th{padding:8px var(--cx);text-align:left;cursor:default}table.mini th
 {%- set cst = cst or (rs if rs in words and lbl | lower in ['status', 'severity', 'result'] and text | trim else '') %}
 {%- set cl = s.cell_links if s.cell_links is defined else none %}
 {%- set clu = (cl.urls[ri] if cl and loop.index0 == cl.column and cl.urls | length > ri else '') | default('', true) %}
-{%- if clu %}
+{%- if kd == 'x' %}
+<td class="k-x">{% if dt %}<button class="xb" type="button" aria-expanded="false" aria-label="Open {{ (row[1] if row | length > 1 else '') | string | e }}"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>{% endif %}</td>
+{%- elif kd in ['cat1', 'cat2', 'cat3'] %}
+<td class="k-num k-catn" data-l="{{ lbl | e }}" data-v="{{ text | e }}">{% if text | trim not in ['0', '', '-'] %}<span class="cn"><i class="cq k{{ kd[3] }}" aria-hidden="true"></i>{{ text | e }}</span>{% else %}{{ text | e }}{% endif %}</td>
+{%- elif s.cat_cells | default(false) and text in {'CAT I': 1, 'CAT II': 2, 'CAT III': 3} %}
+<td class="nw" data-l="{{ lbl | e }}" data-v="{{ text | e }}"><span class="catc k{{ {'CAT I': 1, 'CAT II': 2, 'CAT III': 3}[text] }}"><i aria-hidden="true"></i>{{ text }}</span></td>
+{%- elif clu %}
 <td class="k-{{ kd }} k-cl" data-l="{{ lbl | e }}" data-v="{{ text | e }}"><a class="hl cv" href="{{ clu | e }}" target="_blank" rel="noopener" title="{{ cl.title | e }}">{{ breakable(text) }}<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3.5H3.5v9h9v-3M9.5 2.5h4v4M13.2 2.8 7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></a></td>
 {%- elif kd == 'buttons' %}
 {#- 1.67.0 part C: a finding's buttons (the site portal's actions of its kind) - two shown, the rest under More #}
@@ -812,6 +887,9 @@ table.mini th{padding:8px var(--cx);text-align:left;cursor:default}table.mini th
 {%- endif %}
 {%- endfor %}
 </tr>
+{%- if dt %}
+<tr class="xr" hidden><td class="xd" colspan="{{ s.columns | length }}">{% for t in (dt if dt is sequence and dt is not string and dt is not mapping else [dt]) %}{{ xmini(t) }}{% endfor %}</td></tr>
+{%- endif %}
 {%- endfor %}
 </tbody>
 </table></div>
@@ -850,7 +928,7 @@ table.mini th{padding:8px var(--cx);text-align:left;cursor:default}table.mini th
 {%- endfor %}
 </div>
 {%- endif %}
-{%- if s.lines | default([]) %}
+{%- if s.lines | default([]) and not s.glance | default([]) %}
 <ul class="lines">
 {%- for l in s.lines if l | trim %}
 <li>{{ l | e }}</li>

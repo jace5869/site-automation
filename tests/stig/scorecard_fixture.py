@@ -87,8 +87,9 @@ def seconds(text):
     return calendar.timegm(time.strptime(text, "%Y-%m-%dT%H:%M:%SZ"))
 
 
-def point(s, read_at, platforms=True):
-    """A run's point (the artifact stig_scorecard) of a state; platforms False: as before 1.67.0 (no p)."""
+def point(s, read_at, platforms=True, with_hosts=False):
+    """A run's point (the artifact stig_scorecard) of a state; platforms False: as before 1.67.0 (no p); hosts (1.68.0):
+    each host's open findings per platform (h) and rr, as 1.68.0 keeps them."""
     cols = []
     for cid, name, assets in COLLECTIONS:
         if cid not in s:
@@ -108,8 +109,17 @@ def point(s, read_at, platforms=True):
                 e["cat%d" % CAT[RULES[sv][2]]] += len(hosts)
                 e["rules"] = sorted(e["rules"] + [sv])
             rec["p"] = p
+        if with_hosts:
+            rec["rr"] = True
+            h = {}
+            for sv, names in s[cid].items():
+                pl = PLATFORM.get(bench(sv), "Other")
+                for a in names:
+                    v = h.setdefault(a, {}).setdefault(pl, [0, 0, 0])
+                    v[CAT[RULES[sv][2]] - 1] += 1
+            rec["h"] = h
         cols.append(rec)
-    return {"v": 2 if platforms else 1, "read_at": read_at, "collections": cols}
+    return {"v": 3 if with_hosts else (2 if platforms else 1), "read_at": read_at, "collections": cols}
 
 
 def stigman():
@@ -145,9 +155,11 @@ def stigman():
                               "severity": "medium", "title": "Aria Operations Apache rule %d" % i} for i in (1, 2, 5, 7, 9)]}}
 
 
-def jobs(now, weeks=8):
+def jobs(now, weeks=8, v3=False):
     """The fake AAP's jobs, oldest first: a run of the import's template each week (the week's point), one 3 days ago, a
-    failed one without a point, a job of another template; and the drift reports' newest jobs with what they found fixed."""
+    failed one without a point, a job of another template; and the drift reports' newest jobs with what they found fixed.
+    v3 (1.68.0): the last 2 weeks' points with each host's counts (h, rr), as 1.68.0 keeps them - the week then compares
+    host by host."""
     t = seconds(now)
     out, jid = [], 4000
 
@@ -156,7 +168,7 @@ def jobs(now, weeks=8):
     for k in range(weeks, 0, -1):
         jid += 1
         when = t - k * 7 * 86400 + 120
-        out.append(job(when, TEMPLATE, "STIG Manager - checklist import", {"stig_scorecard": point(state(k), stamp(when), k <= 2)}))
+        out.append(job(when, TEMPLATE, "STIG Manager - checklist import", {"stig_scorecard": point(state(k), stamp(when), k <= 2, v3 and k <= 2)}))
     jid += 1
     when = t - 3 * 86400
     mid = state(0)
@@ -183,4 +195,4 @@ if __name__ == "__main__":
     if sys.argv[1] == "sm":
         json.dump(stigman(), open(sys.argv[2], "w"))
     else:
-        json.dump(jobs(sys.argv[3], int(sys.argv[4]) if len(sys.argv) > 4 else 8), open(sys.argv[2], "w"))
+        json.dump(jobs(sys.argv[3], int(sys.argv[4]) if len(sys.argv) > 4 else 8, sys.argv[5:6] == ["v3"]), open(sys.argv[2], "w"))

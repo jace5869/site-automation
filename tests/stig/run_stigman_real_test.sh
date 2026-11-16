@@ -205,8 +205,10 @@ html=$(grep -rl "STIG recheck" "$work/site" --include='*.html' | grep -v index |
 [ "$rc" = 0 ] && grep -q "REVISION scanned with V2R9, STIG Manager has V2R8 - 1 answer held back: the rule changed since the scan's STIG" "$work/out.txt" \
     && ! grep -q 'V-257835: .* -> ' "$work/out.txt" && ok "the check: SV-257835 not planned - the scan checked the old rule - and said" \
     || { bad "the check with release 8: rc $rc"; grep -n "REVISION\|NEEDS\|V-257835\|fatal" "$work/out.txt" | head -5; }
-grep -q "the rule changed - the scan checked SV-257835r1044874_rule, STIG Manager has SV-257835r1099999_rule" "$html" \
-    && grep -q "no review in V2R8 - V2R7: Not Applicable (saved)" "$html" \
+# the page's text without its tags (a long id is a span of its own on the page since 1.67.0)
+sed 's/<[^>]*>//g; s/&#39;/'"'"'/g' "$html" | tr -s ' \n\t' ' ' > "$work/report-text.txt"
+grep -q "the rule changed - the scan checked SV-257835r1044874_rule, STIG Manager has SV-257835r1099999_rule" "$work/report-text.txt" \
+    && grep -q "no review in V2R8 - V2R7: Not Applicable (saved)" "$work/report-text.txt" \
     && ok "  ... the report: By hand, why, and the review of V2R7 beside no review" || bad "the report ($html) does not say it"
 
 # ---- 0.69.0: check_stig_recheck_carry_forward - the V2R7 review (now Not a Finding, accepted) and the scan agree -------

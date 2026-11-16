@@ -13,14 +13,14 @@ short_description: The open findings of each STIG Manager collection, read-only
 description:
   - Gets a token from C(token_url) with the client credentials grant and lists the collections the client can read
     (GET /collections) - all of them, or only those named in C(collections) (a name or an id, any case).
-  - Per collection reads the open findings by rule with their assets
-    (GET /collections/ID/findings?aggregator=ruleId&acceptedOnly=false&projection=stigs: the counts) and the number of assets
-    (GET /collections/ID/metrics/summary/collection; an older STIG Manager without it - GET /assets?collectionId=ID), and
-    1.67.0 each asset's STIGs (GET /assets?collectionId=ID&projection=stigs) for the scorecard's platforms. Then, with
-    C(hosts), each rule's hosts (the same findings call with projection=assets - slow on a big collection) under its own
-    C(hosts_timeout): a collection whose host list is slow keeps its counts.
-  - The counts are taken from the findings themselves - CAT I open is the number of (rule, asset) pairs of severity high - so
-    the tiles, the change since last week and the rule lists always agree.
+  - 1.68.0, per collection, the counts from STIG Manager's metrics - what its own dashboard reads, quick on a big collection:
+    GET /collections/ID/metrics/summary/collection (the assets; CAT I, II and III open - findings high, medium, low) and
+    GET /collections/ID/metrics/summary (a row per asset and STIG: its findings by severity, its oldest review). CAT I open
+    is the number of (rule, asset) pairs of severity high, as before.
+  - An older STIG Manager without the metrics, or a grant without them: the findings by rule
+    (GET /collections/ID/findings?aggregator=ruleId&acceptedOnly=false&projection=stigs), the assets and their STIGs, as 1.67.0.
+  - Then, with C(hosts), the open rules and their STIGs (findings by rule, projection stigs; C(rules_timeout)) and each
+    rule's hosts (projection assets; C(hosts_timeout)) - the slow calls on a big collection: too slow, the counts stay.
   - A collection that cannot be read is in the result with its error; the others are read. Only GET requests to STIG
     Manager. The client needs the scope stig-manager:collection:read and a grant in the collections.
 options:
@@ -33,10 +33,12 @@ options:
   validate_certs: {description: Check the HTTPS certificates., type: bool, default: true}
   ca_path: {description: "A CA bundle to check them with ('' = the system's).", type: str, default: ''}
   timeout: {description: Seconds per request., type: int, default: 60}
-  hosts: {description: "1.67.0: also list each open rule's hosts (a second findings call with projection=assets - the slow one on
-          a big collection). false: counts only.", type: bool, default: true}
-  hosts_timeout: {description: "1.67.0: seconds for that call. A collection whose host list takes longer keeps its counts.",
-                  type: int, default: 120}
+  hosts: {description: "Also read the open rules with their hosts (findings by rule, projection assets and stigs - the slow call on
+          a big collection; 1.68.0: the counts come from the metrics). false: counts only.", type: bool, default: true}
+  rules_timeout: {description: "Seconds for a collection's open rules (1.66.2; 1.68.0 default 600). Longer: its counts stay (Counts only).",
+                  type: int, default: 600}
+  hosts_timeout: {description: "Seconds for a collection's rules' hosts (1.68.0 default 600). Longer: its counts and rules stay.",
+                  type: int, default: 600}
 author: site automation
 '''
 
@@ -191,21 +193,6 @@ def findings_of(rows):
     return rules, cats
 
 
-def metric_cats(m):
-    """STIG Manager's metrics summary -> {1: high, 2: medium, 3: low} (the open findings by category), or None when the
-    answer has no findings counts (an older STIG Manager, or no grant for the metrics)."""
-    if not isinstance(m, dict):
-        return None
-    mm = m.get("metrics") if isinstance(m.get("metrics"), dict) else m
-    f = mm.get("findings") if isinstance(mm, dict) else None
-    if not isinstance(f, dict) or not all(k in f for k in ("high", "medium", "low")):
-        return None
-    try:
-        return {1: int(f["high"]), 2: int(f["medium"]), 3: int(f["low"])}
-    except (TypeError, ValueError):
-        return None
-
-
 def asset_count(client, cid):
     try:
         m = client.get("/collections/%s/metrics/summary/collection" % cid)
@@ -242,58 +229,88 @@ def hosts_of(rows):
     return out
 
 
+def _n(v):
+    try:
+        return max(0, int(v or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def metrics_of(rows):
+    """1.68.0: GET /collections/ID/metrics/summary (a row per asset and STIG) -> [{asset, stig, cat1, cat2, cat3, min_ts,
+    max_ts}]: CAT I is the findings STIG Manager counts high, II medium, III low; min_ts its oldest review."""
+    out = []
+    for r in rows or []:
+        if not isinstance(r, dict) or not (r.get("name") or r.get("assetId")):
+            continue
+        m = r.get("metrics") if isinstance(r.get("metrics"), dict) else {}
+        f = m.get("findings") if isinstance(m.get("findings"), dict) else {}
+        out.append({"asset": str(r.get("name") or r.get("assetId")), "stig": str(r.get("benchmarkId") or ""),
+                    "cat1": _n(f.get("high")), "cat2": _n(f.get("medium")), "cat3": _n(f.get("low")),
+                    "min_ts": str(m.get("minTs") or ""), "max_ts": str(m.get("maxTs") or "")})
+    return out
+
+
 def read(p, client):
-    """Each collection: 1.67.0 - the counts first (findings by rule with assetCount and the rule's STIG: the cheap call), the
-    assets and their STIGs, then - with hosts - each rule's hosts in a call of their own (hosts_timeout): a collection
-    whose host list is slow keeps its counts, hosts says why. timing: the seconds of each call, for the job output."""
+    """Each collection (1.68.0):
+    1. The counts from STIG Manager's metrics - the ones its own dashboard reads, quick on a big collection:
+       GET /collections/ID/metrics/summary/collection (the assets, CAT I/II/III open) and /metrics/summary (a row per asset
+       and STIG). An older STIG Manager, or a grant without the metrics: 1.67.0's findings by rule (assetCount).
+    2. The rules, each with its hosts and its STIG (findings by rule, projection assets and stigs) - the slow call, in a
+       call of its own (hosts_timeout): too slow, the counts stay and hosts says why. hosts false: not asked.
+    timing: the seconds of each call; counts_from: metrics or findings - one line each in the job output."""
     cols = client.get("/collections") or []
     mine, missing = wanted([c for c in cols if isinstance(c, dict) and c.get("collectionId") is not None], p["collections"])
     out = []
     for c in sorted(mine, key=lambda c: str(c.get("name", "")).lower()):
         cid = str(c["collectionId"])
         rec = {"id": cid, "name": str(c.get("name") or cid), "assets": 0, "cat1": 0, "cat2": 0, "cat3": 0, "rules": [], "error": "",
-               "asset_stigs": {}, "hosts": "off", "timing": {}}
-        step = "metrics"
+               "asset_stigs": {}, "checklists": [], "hosts": "off", "counts_from": "", "timing": {}}
         t = time.time()
-        # 1.66.2: the counts from STIG Manager's own metrics first (pre-counted, fast on any collection); the rules a
-        # second read with its own limit - too slow: the counts stay, "Counts only" (rules_read False)
-        mcats = None
         try:
-            m = client.get("/collections/%s/metrics/summary/collection" % cid)
-            mcats = metric_cats(m)
-            if mcats is not None:
-                rec.update(cat1=mcats[1], cat2=mcats[2], cat3=mcats[3], counts_from="metrics")
-                if isinstance(m, dict) and isinstance(m.get("assets"), int):
-                    rec["assets"] = m["assets"]
-        except RuntimeError:
-            pass
-        rec["timing"]["metrics"] = round(time.time() - t, 2)
-        rec["rules_read"] = False
-        step = "counts"
-        try:
-            t = time.time()
-            try:
-                rows = client.get("/collections/%s/findings" % cid, wait=p.get("rules_timeout") or None, aggregator="ruleId",
-                                  acceptedOnly="false", projection="stigs")
-                rec["rules"], cats = findings_of(rows)
-                rec["rules_read"] = True
-                if mcats is None:
-                    rec.update(cat1=cats[1], cat2=cats[2], cat3=cats[3], counts_from="findings")
-            except RuntimeError as e:
-                if mcats is None:
-                    raise
-                rec["rules_note"] = "rules not read (counts from STIG Manager's metrics): %s" % e
-            rec["timing"]["counts"] = round(time.time() - t, 2)
-            step, t = "assets", time.time()
-            if not rec.get("assets"):
-                rec["assets"] = asset_count(client, cid)
-            rec["asset_stigs"] = asset_stigs(client, cid)
-            rec["timing"]["assets"] = round(time.time() - t, 2)
+            tot = client.get("/collections/%s/metrics/summary/collection" % cid)
+            rows = client.get("/collections/%s/metrics/summary" % cid)
+            if not (isinstance(tot, dict) and isinstance(tot.get("metrics"), dict) and isinstance(rows, list)):
+                raise RuntimeError("the metrics are not in the form this release knows")
+            f = tot["metrics"].get("findings") if isinstance(tot["metrics"].get("findings"), dict) else {}
+            rec.update(assets=_n(tot.get("assets")), cat1=_n(f.get("high")), cat2=_n(f.get("medium")), cat3=_n(f.get("low")),
+                       checklists=metrics_of(rows), counts_from="metrics")
+            st = {}
+            for x in rec["checklists"]:
+                st.setdefault(x["asset"], set()).add(x["stig"])
+            rec["asset_stigs"] = dict((a, sorted(b - {""})) for a, b in st.items())
+            rec["timing"]["metrics"] = round(time.time() - t, 2)
         except RuntimeError as e:
-            rec["error"] = str(e)
-            rec["timing"][step] = round(time.time() - t, 2)
-        if p.get("hosts", True) and not rec["error"] and rec["rules"] and rec.get("rules_read"):
-            t = time.time()
+            rec["timing"]["metrics"] = round(time.time() - t, 2)
+            rec["metrics_error"] = str(e)[:300]
+            step, t = "counts", time.time()            # 1.67.0's way: the findings by rule (assetCount), then the assets
+            try:
+                rows = client.get("/collections/%s/findings" % cid, aggregator="ruleId", acceptedOnly="false", projection="stigs")
+                rec["rules"], cats = findings_of(rows)
+                rec.update(cat1=cats[1], cat2=cats[2], cat3=cats[3], counts_from="findings")
+                rec["timing"]["counts"] = round(time.time() - t, 2)
+                step, t = "assets", time.time()
+                rec["assets"] = asset_count(client, cid)
+                rec["asset_stigs"] = asset_stigs(client, cid)
+                rec["timing"]["assets"] = round(time.time() - t, 2)
+            except RuntimeError as e2:
+                rec["error"] = str(e2)
+                rec["timing"][step] = round(time.time() - t, 2)
+        open_ = rec["cat1"] + rec["cat2"] + rec["cat3"]
+        rec["rules_read"] = rec["counts_from"] == "findings" or (not rec["error"] and not open_)
+        if p.get("hosts", True) and not rec["error"] and open_ and rec["counts_from"] == "metrics":
+            t = time.time()                            # the open rules and their STIGs, with their own limit
+            try:
+                rec["rules"], cats = findings_of(client.get("/collections/%s/findings" % cid, wait=p.get("rules_timeout") or None,
+                                                            aggregator="ruleId", acceptedOnly="false", projection="stigs"))
+                rec["rules_read"] = True
+            except RuntimeError as e:
+                rec["rules_note"] = ("rules not read (STIG Manager was slow: over %ss, stigman_scorecard_rules_timeout)" % p.get("rules_timeout")
+                                     if "in time" in str(e) else "rules not read (%s)" % e)
+                rec["hosts"] = "hosts not listed (%s)" % rec["rules_note"][len("rules not read ("):].rstrip(")")
+            rec["timing"]["rules"] = round(time.time() - t, 2)
+        if p.get("hosts", True) and not rec["error"] and rec["rules"] and rec["rules_read"]:
+            t = time.time()                            # each rule's hosts, with their own limit
             try:
                 names = hosts_of(client.get("/collections/%s/findings" % cid, wait=p.get("hosts_timeout") or None,
                                             aggregator="ruleId", acceptedOnly="false", projection="assets"))
@@ -304,23 +321,25 @@ def read(p, client):
                 rec["hosts"] = ("hosts not listed (STIG Manager was slow: over %ss, stigman_scorecard_hosts_timeout)" % p.get("hosts_timeout")
                                 if "in time" in str(e) else "hosts not listed (%s)" % e)
             rec["timing"]["hosts"] = round(time.time() - t, 2)
-        elif rec["error"] == "" and not rec["rules"]:
-            rec["hosts"] = "listed"                 # no open finding: no host to list
+        elif not rec["error"] and not open_:
+            rec["hosts"] = "listed"                 # no open finding: no rule, no host to list
         out.append(rec)
     return out, missing
 
 
 def timing_lines(cols):
-    """One line per collection: how long each call took (the slow one stands out)."""
+    """One line per collection: where its counts came from and how long each call took (the slow one stands out)."""
     out = []
     for c in cols or []:
         tm = c.get("timing") or {}
-        parts = ["%s %.1f s" % (k, tm[k]) for k in ("metrics", "counts", "assets", "hosts") if k in tm]
-        if c.get("rules_read") is False and not c.get("error"):
-            parts.append("Counts only (the rules were too slow, stigman_scorecard_rules_timeout)")
-        out.append("%s (id %s): %s%s" % (c.get("name"), c.get("id"), ", ".join(parts) or "not read",
-                                         "; " + c["error"][:200] if c.get("error") else
-                                         ("; " + c["hosts"] if str(c.get("hosts", "")).startswith("hosts not") else "")))
+        parts = ["%s %.1f s" % (k, tm[k]) for k in ("metrics", "counts", "assets", "rules", "hosts") if k in tm]
+        if c.get("rules_read") is False and not c.get("error") and c.get("rules_note"):
+            parts.append("Counts only (%s)" % c["rules_note"])
+        src = {"metrics": "counts from the metrics", "findings": "counts from the findings (no metrics: %s)" % str(c.get("metrics_error") or "")[:120]}.get(
+            c.get("counts_from"), "")
+        out.append("%s (id %s): %s%s%s" % (c.get("name"), c.get("id"), ", ".join(parts) or "not read", ("; " + src) if src else "",
+                                           "; " + c["error"][:200] if c.get("error") else
+                                           ("; " + c["hosts"] if str(c.get("hosts", "")).startswith("hosts not") else "")))
     return out
 
 
@@ -336,8 +355,8 @@ def main():
         ca_path=dict(type="str", default=""),
         timeout=dict(type="int", default=60),
         hosts=dict(type="bool", default=True),
-        hosts_timeout=dict(type="int", default=120),
-        rules_timeout=dict(type="int", default=180),
+        hosts_timeout=dict(type="int", default=600),
+        rules_timeout=dict(type="int", default=600),
     ), supports_check_mode=True)
     p = module.params
     res = {"changed": False, "ok": False, "error": "", "collections": [], "missing": [], "timings": [],

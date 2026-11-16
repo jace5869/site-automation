@@ -1,5 +1,51 @@
 # Changelog
 
+## 1.68.0 — 2026-11-16
+
+**To set up: nothing.** New settings have defaults: `stigman_scorecard_rules_timeout` and `stigman_scorecard_hosts_timeout`
+are 600 seconds now (a value set in a template stays). With the report database, the first run makes the table
+`stig_scorecard_host` (and `stig_scorecard_platform` on a database of before 1.67.0) and sets schema version 3. The rows
+kept before stay. With `stigman_scorecard_db_create: false`, run the statements of docs/REPORT_DATABASE.md once.
+
+<!-- G3: the STIG scorecard, fast on a big site, down to the host and the rule -->
+
+**The STIG scorecard: fast on any site, clean at a glance, down to the host and the rule** (G3; docs/CKL_IMPORT.md).
+
+- **Fast.** The counts come from STIG Manager's metrics, the ones its own dashboard reads: one quick read per
+  collection (`/metrics/summary/collection`, and `/metrics/summary` - a row per asset and STIG). The open rules and each
+  rule's hosts are two more reads, each with its own limit (`stigman_scorecard_rules_timeout`,
+  `stigman_scorecard_hosts_timeout`). Too slow: the counts stay, and the page says what was not read. The job output has
+  one line per collection: where its counts came from and the seconds of each read. An older STIG Manager without the
+  metrics: the findings, as before.
+- **The title** is one sentence: `STIG compliance: 91 CAT I open on 8 collections, 25 fewer than last week`.
+- **At a glance** replaces *Start here*: the three worst collections (CAT I, then CAT II per asset) and the two best,
+  a line each with its numbers and a link to its row, then the week.
+- **Findings**: every open rule, the most hosts first (what *Top rules* was - no section of its own any more). A rule
+  opens in place to the hosts it is open on.
+- **Hosts**: every asset with its CAT I, II and III open and its oldest review. A host opens to its open rules, or to its
+  counts per STIG when the rules were not read.
+- Each collection's row opens to its top rules and worst hosts. The filter buttons: Platform, Collection, CAT and Host
+  (a part of a name). Sort, Filter, Columns, CSV and Search keep an opened row with its own.
+- **CAT colours**: CAT I red, CAT II amber, CAT III blue-violet, always with the word, on the tiles, the tables and the
+  views. Validated light and dark; never the status colours.
+- **Since last week, host by host.** The weekly point keeps each host's CAT I, II and III open per platform (the job's
+  artifact, version 3, and the report database's new table). Closed is a host's findings of a category fewer, opened
+  more. Points of before 1.68.0 still compare rule by rule; a week that read the counts only says `Counts only`.
+- **No wall of text.** Each section's intro is one short sentence. No lines under the tables: what was slow or not read
+  is 1.67.0's one end section; first-run notes, the platform filter's names and "N more" are in the job output.
+- The email stays short: At a glance, By platform, By collection, Fixed on the host, the numbers. The workbook has every
+  rule and host (sheets Findings and Hosts).
+
+**Docs (G3):** docs/CKL_IMPORT.md's scorecard section is rewritten short for the new page: the title and the line under
+it, the filters, At a glance, Findings and Hosts, *Slow or not read*, where the counts come from, the two timeouts (600
+seconds), the week host by host and `Counts only`, the short email and the workbook's Findings and Hosts sheets.
+
+**Tests (G3):** `tests/test_stig_scorecard.py` (the metrics read and its fallback, slow rules and slow hosts, the
+version 3 point, the week host by host, schema 3 and the move from 1 and 2, At a glance, the views, a 400-asset site),
+`tests/stig/run_scorecard_test.sh` (a stand-in STIG Manager with the metrics of 1.6.18; ansible-core 2.22 and 2.16), the
+report fit document `stig_scorecard_big_web` (400 assets). STIG Manager 1.6.18's metrics checked by hand (its
+container); next: the links into STIG Manager, and each rule's fix and check text.
+
 ## 1.67.0 — 2026-11-15
 
 **To set up: step 100**, optional - nothing changes until you deploy it. New job template *Site portal - deploy*
