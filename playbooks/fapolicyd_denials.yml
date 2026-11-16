@@ -57,9 +57,18 @@
       vars:
         ansible_connection: local
         ansible_python_interpreter: "{{ ansible_playbook_python }}"
+        # 1.67.0: the email is short (the tiles, the top of the denials table, the hosts with a problem); the report website
+        # has everything (a table of the denials by program and file with a host and a program filter, each host's ACT answer
+        # closed); the workbook (report_email_xlsx) has all the denials and all the hosts
         _report: >-
           {{ ansible_play_hosts_all | map('extract', hostvars) | list
-             | fapolicyd_report(ansible_play_hosts_all, fapolicyd_since, site_report_title | default('')) }}
+             | fapolicyd_denials_report(ansible_play_hosts_all, fapolicyd_since, site_report_title | default(''), false) }}
+        _report_web: >-
+          {{ ansible_play_hosts_all | map('extract', hostvars) | list
+             | fapolicyd_denials_report(ansible_play_hosts_all, fapolicyd_since, site_report_title | default(''), true) }}
+        _report_xlsx: >-
+          {{ (ansible_play_hosts_all | map('extract', hostvars) | list | fapolicyd_denials_sheets(ansible_play_hosts_all))
+             if report_email_xlsx | default(false) | bool else [] }}
       when:
         - report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0
         - not _site_act_off | default(false) | bool

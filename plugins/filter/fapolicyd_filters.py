@@ -9,8 +9,17 @@ the workflow's plan, one report."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import datetime
+import importlib.util
+import os
 import re
 from shlex import quote
+
+# the audit log's parser (ausearch -i): the job's own (plugins/module_utils/site_fapolicyd.py), loaded as the filters load each other
+_sp = importlib.util.spec_from_file_location("site_fapolicyd_for_filters", os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "module_utils", "site_fapolicyd.py"))
+_audit = importlib.util.module_from_spec(_sp)
+_sp.loader.exec_module(_audit)
 
 ORDER = {"critical": 0, "warning": 1, "ok": 2}
 NOTE = ("ACT's proposals (a trust entry, a narrow rule) are security-control changes: route them through your "
@@ -117,54 +126,208 @@ def act_sections(host, a, findings=None, status=None):
 
 
 def fapolicyd_report(hostvars_list, names, since="today", title=""):
-    """[hostvars of each host], [their names], the ausearch -ts keyword, the report title (site_report_title)
-    -> roles/site_email's _report."""
+    """The report website's page of playbooks/fapolicyd_denials.yml (see fapolicyd_denials_report; the email's is web=False)."""
+    return fapolicyd_denials_report(hostvars_list, names, since, title, web=True)
+
+
+# ---- the denials report, easy to scan (1.67.0) ----------------------------------------------------------------------------
+# At a glance first (hosts with denials, denials, the top 5 programs and hosts), then ONE table of the denials grouped by
+# program and file (count, hosts, last seen, ACT's verdict) with a host and a program filter, then the hosts, each one's
+# ACT answer collapsed under it. The email is the tiles and the top of that table; the workbook has all of it.
+TOP = 5
+EMAIL_TOP = 10
+
+
+def _short(host):
+    h = str(host)
+    return h if re.match(r"^[0-9.]+$", h) or ":" in h else h.split(".")[0]
+
+
+def _when(stamp):
+    """ausearch's '10/27/2026 08:00:01' -> a sortable '2026-10-27 08:00' ('' when it is not one)."""
+    try:
+        return datetime.datetime.strptime(stamp.strip(), "%m/%d/%Y %H:%M:%S").strftime("%Y-%m-%d %H:%M")
+    except (ValueError, AttributeError):
+        return ""
+
+
+def _groups(hv):
+    """One host's denials from its ausearch -i output (_fa_denials.stdout): {(program, file): {count, last}}. A host whose
+    output is not there (an older run) has none: the report then has the host's totals only."""
+    reg = _get(hv, "_fa_denials")
+    text = str(_get(reg, "stdout", "") if hasattr(reg, "__contains__") else "")
+    out = {}
+    for e in _audit.parse_events(text):
+        if str(e["fan"].get("resp", "")) != "deny":
+            continue
+        path = _audit.event_path(e)[0]
+        exe = str(e["syscall"].get("exe", "")) or "(unknown)"
+        g = out.setdefault((exe, path or "(unknown)"), {"count": 0, "last": ""})
+        g["count"] += 1
+        g["last"] = max(g["last"], _when(e["time"]))
+    return out
+
+
+def _verdict(h, program, path):
+    """ACT's verdict for a program and file on one host: (word, status for the chip)."""
+    a = h.get("act")
+    if a is None:
+        return "ACT did not run", ""
+    if str(a.get("status")) == "error":
+        return "ACT error", "warning"
+    for d in a.get("denied") or []:
+        if isinstance(d, dict) and d.get("command") and (path in str(d["command"]) or (program and program in str(d["command"]))):
+            return "Fix proposed", "info"
+    return "Analysed", "ok"
+
+
+def _denial_model(hostvars_list, names):
+    """Everything the report shows, once: the hosts, the groups (program, file) over the hosts, the totals."""
     hosts = [host_result(n, hv) for n, hv in zip(names, hostvars_list)]
+    for h, hv in zip(hosts, hostvars_list):
+        h["groups"] = _groups(hv) if h["state"] == "read" else {}
     read = [h for h in hosts if h["state"] == "read"]
+    rank = {"Fix proposed": 0, "ACT error": 1, "Analysed": 2, "ACT did not run": 3}
+    groups = {}
+    for h in read:
+        for (exe, path), g in h["groups"].items():
+            x = groups.setdefault((exe, path), {"program": exe, "file": path, "count": 0, "hosts": [], "last": "", "verdicts": {}})
+            x["count"] += g["count"]
+            x["hosts"].append(h["host"])
+            x["last"] = max(x["last"], g["last"])
+            w, st = _verdict(h, exe, path)
+            x["verdicts"][w] = st
+    rows = sorted(groups.values(), key=lambda x: (-x["count"], x["program"], x["file"]))
+    for x in rows:
+        x["verdict"] = sorted(x["verdicts"], key=lambda w: rank[w])[0]
+        x["status"] = x["verdicts"][x["verdict"]]
+        x["hosts"] = sorted(x["hosts"])
+    by_program, by_host = {}, {}
+    for x in rows:
+        p = by_program.setdefault(x["program"], {"count": 0, "hosts": set()})
+        p["count"] += x["count"]
+        p["hosts"].update(x["hosts"])
+        for hn in x["hosts"]:
+            by_host.setdefault(hn, {"count": 0, "programs": set()})["programs"].add(x["program"])
+    for h in read:
+        if h["host"] in by_host:
+            by_host[h["host"]]["count"] = sum(g["count"] for g in h["groups"].values())
+    return {"hosts": hosts, "read": read, "rows": rows, "by_program": by_program, "by_host": by_host}
+
+
+def _act_word(a):
+    return "ACT did not run" if a is None else ("ACT error" if str(a.get("status")) == "error" else "Analysed")
+
+
+def _hosts_cell(names, n=2):
+    s = [_short(x) for x in names]
+    return "%d: %s%s" % (len(s), ", ".join(s[:n]), " ..." if len(s) > n else "") if len(s) > 1 else (s[0] if s else "")
+
+
+def _denial_rows(m, top=None):
+    rows, cell_status, tips, filt = [], [], [], []
+    for x in m["rows"][:top]:
+        rows.append([x["program"].rsplit("/", 1)[-1] or x["program"], x["file"], x["count"], _hosts_cell(x["hosts"]), x["last"] or "-", x["verdict"]])
+        cell_status.append(["", "", "warning", "", "", x["status"]])
+        tips.append([x["program"], x["file"], "", ", ".join(x["hosts"]), "", ""])
+        filt.append([[_short(h) for h in x["hosts"]], [x["program"].rsplit("/", 1)[-1] or x["program"]]])
+    return rows, cell_status, tips, filt
+
+
+def _top_sections(m):
+    """At a glance, under the tiles: the top programs and the top hosts, two lines."""
+    lines = []
+    progs = sorted(m["by_program"].items(), key=lambda kv: (-kv[1]["count"], kv[0]))[:TOP]
+    if progs:
+        lines.append("Top programs: " + ", ".join("%s %d (%d host%s)" % (p.rsplit("/", 1)[-1] or p, v["count"], len(v["hosts"]), "" if len(v["hosts"]) == 1 else "s")
+                                                  for p, v in progs))
+    hosts = sorted(m["by_host"].items(), key=lambda kv: (-kv[1]["count"], kv[0]))[:TOP]
+    if hosts:
+        lines.append("Top hosts: " + ", ".join("%s %d" % (_short(h), v["count"]) for h, v in hosts))
+    return [{"title": "At a glance", "lines": lines}] if lines else []
+
+
+def _host_detail(h):
+    """One host's ACT answer as ONE section, collapsed under the hosts table and not in the rail."""
+    secs = act_sections(h["host"], h["act"], h["findings"], h["status"])
+    lines = list(secs[0].get("lines") or [])
+    for s in secs[1:]:
+        lines.append("%s:" % s["title"].split(": ", 1)[-1])
+        lines += ["  " + l for l in s.get("lines") or []]
+    sec = {"title": "%s: ACT's analysis" % _short(h["host"]), "text": secs[0].get("text", ""), "lines": lines, "collapsed": True, "rail": False}
+    if h["status"] != "ok":
+        sec["status"] = h["status"]
+    return sec
+
+
+def fapolicyd_denials_report(hostvars_list, names, since="today", title="", web=True, top=None):
+    """[hostvars of each host], [their names], the ausearch -ts keyword, the title -> roles/site_email's _report. web: the
+    website's page (everything); not web: the email (the tiles, the top of the table, the hosts with a problem)."""
+    m = _denial_model(hostvars_list, names)
+    hosts, read = m["hosts"], m["read"]
     unread = [h["host"] for h in hosts if h["state"] == "not read"]
     missing = [h["host"] for h in hosts if h["state"] == "not installed"]
     problem = sorted([h for h in read if h["status"] != "ok"], key=lambda h: (ORDER[h["status"]], -h["count"], h["host"]))
     quiet = [h["host"] for h in read if h["status"] == "ok"]
     denied = [h for h in read if h["count"]]
     down = [h for h in read if h["active"] != "active"]
+    noaudit = [h for h in read if h["auditd"] != "active"]
     total = sum(h["count"] for h in read)
-
     status = "critical" if down else ("warning" if problem or unread else "ok")
     head = []
     if denied:
         head.append("%d host(s) with denials" % len(denied))
     if down:
         head.append("fapolicyd not running on %d" % len(down))
-    if [h for h in read if h["auditd"] != "active"]:
-        head.append("auditd not running on %d" % len([h for h in read if h["auditd"] != "active"]))
+    if noaudit:
+        head.append("auditd not running on %d" % len(noaudit))
     report = {
         "title": "%s: %s" % (title or "fapolicyd denials", ", ".join(head) if head else "no denials since %s" % since),
         "subtitle": "%d host(s) read - denials since %s (the audit log: ausearch -m FANOTIFY -ts %s)" % (len(read), since, since),
         "status": status,
         "summary": [{"label": "Denials", "value": total, "status": "warning" if total else "ok"},
-                    {"label": "Hosts with denials", "value": len(denied), "status": "warning" if denied else "ok"},
-                    {"label": "fapolicyd not running", "value": len(down), "status": "critical" if down else "ok"},
-                    {"label": "Hosts read", "value": len(read)}]
+                    {"label": "Hosts with denials", "value": len(denied), "status": "warning" if denied else "ok"}]
+                   + ([{"label": "Programs denied", "value": len(m["by_program"]), "status": "warning"}] if m["by_program"] else [])
+                   + [{"label": "fapolicyd not running", "value": len(down), "status": "critical" if down else "ok"},
+                      {"label": "Hosts read", "value": len(read)}]
                    + ([{"label": "Not read", "value": len(unread), "status": "warning"}] if unread else []),
         "sections": [],
         "footer": NOTE,
     }
     secs = report["sections"]
+    rows, cell_status, tips, filt = _denial_rows(m, None if web else (top or EMAIL_TOP))
+    if web:
+        secs.extend(_top_sections(m))
+    if rows:
+        more = len(m["rows"]) - len(rows)
+        sec = {"title": "Denials by program and file" if web else "The denials that happen most", "status": "warning",
+               "text": ("One row for each program and file denied, over all the hosts. A denial is fapolicyd doing its job, or a "
+                        "legitimate program missing from the trust database." if web else
+                        "The most frequent: the whole list is on the report website%s." % (" (%d more)" % more if more > 0 else "")),
+               "columns": ["Program", "File denied", "Denials", "Hosts", "Last seen", "ACT's verdict"],
+               "rows": rows, "cell_status": cell_status, "tips": tips, "kinds": ["", "path", "num", "", "nw", ""]}
+        if web:
+            sec["filters"] = [{"label": "Host", "options": sorted(set(_short(h["host"]) for h in read if h["groups"]))},
+                              {"label": "Program", "options": sorted(set(x["program"].rsplit("/", 1)[-1] or x["program"] for x in m["rows"]))}]
+            sec["row_filters"] = filt
+        secs.append(sec)
+    elif denied:       # hosts counted denials, but no ausearch text came back (an older run of the job): the totals only
+        secs.append({"title": "Denials", "lines": ["%d denial(s) on %d host(s); the programs and files are in the hosts table." % (total, len(denied))]})
     if problem:
-        rows, row_status, cell_status = [], [], []
+        hrows, hstatus, hcell = [], [], []
         for h in problem:
-            rows.append([h["host"], h["active"], h["auditd"], h["count"], ", ".join(h["paths"]) or "-", ", ".join(h["exes"]) or "-"])
-            row_status.append(h["status"])
-            cell_status.append(["", "ok" if h["active"] == "active" else "critical", "ok" if h["auditd"] == "active" else "warning",
-                                "warning" if h["count"] else "", "", ""])
+            hrows.append([h["host"], h["active"], h["auditd"], h["count"], ", ".join(sorted(set(p.rsplit("/", 1)[-1] for p, _ in h["groups"]))) or "-",
+                          _act_word(h["act"])])
+            hstatus.append(h["status"])
+            hcell.append(["", "ok" if h["active"] == "active" else "critical", "ok" if h["auditd"] == "active" else "warning",
+                          "warning" if h["count"] else "", "", ""])
         secs.append({"title": "Hosts with denials or a problem", "status": status if status != "ok" else "warning",
-                     "text": "What fapolicyd blocked since %s: the files denied and the programs that tried. A denial is "
-                             "fapolicyd doing its job, or a legitimate program missing from the trust database - ACT's "
-                             "analysis below says which. auditd not running = denials are not recorded." % since,
-                     "columns": ["Host", "fapolicyd", "auditd", "Denials", "Files denied", "Programs"],
-                     "rows": rows, "row_status": row_status, "cell_status": cell_status})
-        for h in problem:
-            secs.extend(act_sections(h["host"], h["act"], h["findings"], h["status"]))
+                     "text": ("Each host's ACT analysis is under this table, closed. auditd not running = denials are not recorded." if web else
+                              "auditd not running = denials are not recorded. ACT's analysis of each host is on the report website."),
+                     "columns": ["Host", "fapolicyd", "auditd", "Denials", "Programs", "ACT"], "rows": hrows,
+                     "row_status": hstatus, "cell_status": hcell, "kinds": ["wrap", "", "", "num", "wrap", ""]})
+        if web:
+            secs.extend(_host_detail(h) for h in problem)
     if quiet:
         secs.append({"title": "No denials", "status": "ok", "lines": ["%d host(s): fapolicyd running, auditd running, nothing "
                                                                         "denied since %s - %s" % (len(quiet), since, ", ".join(sorted(quiet)))]})
@@ -175,6 +338,17 @@ def fapolicyd_report(hostvars_list, names, since="today", title=""):
                      "lines": ["%d host(s) could not be reached or failed before their denials were read: %s"
                                % (len(unread), ", ".join(sorted(unread)))]})
     return report
+
+
+def fapolicyd_denials_sheets(hostvars_list, names):
+    """The workbook (report_email_xlsx): every denial group and every host, all the columns."""
+    m = _denial_model(hostvars_list, names)
+    return [{"name": "Denials by program and file",
+             "columns": ["Program", "File denied", "Denials", "Hosts", "Last seen", "ACT's verdict"],
+             "rows": [[x["program"], x["file"], x["count"], ", ".join(x["hosts"]), x["last"], x["verdict"]] for x in m["rows"]]},
+            {"name": "Hosts", "columns": ["Host", "fapolicyd", "auditd", "Denials", "ACT"],
+             "rows": [[h["host"], h.get("active", ""), h.get("auditd", ""), h.get("count", ""), _act_word(h.get("act"))]
+                      for h in m["hosts"] if h["state"] == "read"]}]
 
 
 # ---- getting fapolicyd running (a part of playbooks/fapolicyd.yml: roles/fapolicyd_fix) ----------------------------
@@ -909,7 +1083,8 @@ def _kind(line):
 
 class FilterModule(object):
     def filters(self):
-        return {"fapolicyd_report": fapolicyd_report, "fapolicyd_fix_plan": fapolicyd_fix_plan,
+        return {"fapolicyd_report": fapolicyd_report, "fapolicyd_denials_report": fapolicyd_denials_report,
+                "fapolicyd_denials_sheets": fapolicyd_denials_sheets, "fapolicyd_fix_plan": fapolicyd_fix_plan,
                 "fapolicyd_fix_rollback": fapolicyd_fix_rollback, "fapolicyd_fix_report": fapolicyd_fix_report,
                 "fapolicyd_rules_job_plan": fapolicyd_rules_job_plan, "fapolicyd_rules_job_edit": fapolicyd_rules_job_edit,
                 "fapolicyd_rules_job_file": fapolicyd_rules_job_file, "fapolicyd_rules_job_rollback": fapolicyd_rules_job_rollback,

@@ -135,6 +135,11 @@ Since 0.63.0:
   for every table with the same columns - on this page, and the next report's - and a report may start some hidden
   (the VM inventory's `vm_inventory_hidden_columns`). A column with a short header (`Enc`) shows its full name when you
   point at it, in the Columns menu and on a phone's cards.
+- **Lists to choose from** (1.67.0) above a table that has them, next to the filter box: choose a host, a program ... and
+  only the rows that have it stay. They work together with the box, and with sort, Columns and CSV. The fapolicyd denials
+  report has a **Host** and a **Program** list.
+- **A section can stay out of the rail** (`rail: false`) and start closed (`collapsed: true`): each host's ACT answer
+  in the denials report is one, so the rail lists the sections and not every host.
 - **CSV** above each table: the table **as shown** - its columns, the rows the search and the filter leave, in the order
   sorted - as a `.csv` file named after the report and the section, that opens in Excel (accents and all: it starts
   with a byte order mark). A value that Excel would read as a formula (`=`, `+`, `-` or `@` at its start, and not a
