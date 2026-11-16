@@ -18,7 +18,8 @@ collections of hundreds of assets: the one request asked for every open rule *wi
 
 **Leave collections out: `!`.** `stigman_scorecard_collections` and `stigman_ckl_import_collections` take `!name` or
 `!id`: `['*', '!48', '!Archived*']` is every collection the client reads but those. The scorecard's list also takes `*` and
-`?` now. The import's staging collection is always searched. A `!` naming no collection is said (the scorecard) or
+`?` now; a name is matched exactly first, so a name with `[ ]` (`[PROD] Servers`) is that name, not a pattern. The
+import's staging collection is always searched. A `!` naming no collection is said (the scorecard) or
 stops the job (the import).
 
 **No crash on a slow or dropped STIG Manager answer.** The STIG Manager clients (scorecard, checklist import, STIG
