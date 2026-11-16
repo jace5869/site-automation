@@ -136,7 +136,7 @@ check "  ...only that key, mode and owner kept, a backup beside it" \
 
 if [ $with36 = 1 ]; then
     run "old01, Python 3.6 only: looked at, not linked" act_old_copies.yml -l old01.example.mil \
-        -- "old01.example.mil" "not linked (the new ACT needs Python 3.8 or newer)"
+        -- "old01.example.mil" "not linked (the new ACT needs Python 3.6 or newer)"
     check "  ...still the old file" "$(on "$old" 'test -L /usr/local/bin/act && echo link || echo file')" "file"
 fi
 
