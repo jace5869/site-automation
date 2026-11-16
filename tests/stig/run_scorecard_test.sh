@@ -103,7 +103,7 @@ if latest "$work/site" | "$py" -c '
 import json, sys
 r, imp = json.load(sys.stdin), json.load(open(sys.argv[1]))
 titles = [s["title"] for s in r["sections"]]
-assert r["title"].startswith("STIG compliance: 4 CAT I open") and r["title"].endswith(" - " + imp["title"]), r["title"]
+assert r["title"].startswith("STIG compliance: 4 CAT I open") and imp["title"] in r["subtitle"] and " - " + imp["title"] not in r["title"], r["title"]
 assert titles[0] == "Start here" and titles[1] == "By collection (3)", titles
 mine = [t for t in titles if t in [s["title"] for s in imp["sections"]]]
 assert mine == [s["title"] for s in imp["sections"]], (titles, "the import sections, in their order")
