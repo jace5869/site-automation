@@ -33,8 +33,11 @@
 # Shortcuts: daily = disk services performance time network eventlog
 #            weekly = security audit accounts certs trust patching
 #            all = both
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
 - name: Windows health check
-  hosts: "{{ target | default('all') }}"
+  hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   vars:
     site_os: windows

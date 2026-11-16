@@ -20,7 +20,7 @@
     validate_certs: "{{ vmware_validate_certs | bool }}"
     window_minutes: "{{ vm_watch_window_minutes | float }}"
     min_up_minutes: "{{ vm_watch_min_up_minutes | float }}"
-    skip_vms: "{{ vm_watch_skip_vms | name_list }}"
+    skip_vms: "{{ (vm_watch_skip_vms | name_list) + (site_exclude_hosts | default([], true) | site_exclude_patterns) }}"
     skip_folders: "{{ vm_watch_skip_folders | name_list }}"
     probe: "{{ vm_watch_probe | bool }}"
     probe_port: "{{ vm_watch_probe_port | string }}"

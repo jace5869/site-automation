@@ -7,8 +7,11 @@
 # certificate whose thumbprint or subject matches). Run it with Check and a Limit first: it lists the backups.
 # Credentials: Machine (Windows, an administrator). docs/CERT_INSTALL.md, "Put the old certificate back".
 #   ansible-playbook playbooks/win_cert_restore.yml -i <windows inventory> --limit web01.example.mil --check
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
 - name: Windows certificate restore - the bindings back on the old certificate
-  hosts: "{{ target | default('all') }}"
+  hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   vars:
     site_os: windows

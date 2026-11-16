@@ -213,6 +213,8 @@
       AAP job {{ awx_job_id | default(tower_job_id | default('(command line)')) }}{{ (' (' ~ awx_job_template_name ~ ')') if awx_job_template_name is defined else '' }},
       started by {{ awx_user_name | default(tower_user_name | default(lookup('ansible.builtin.env', 'USER') or 'unknown')) }},
       {{ (report_time_zone | default('', true) | string | report_time_now) or (now(fmt='%Y-%m-%d %H:%M %Z') | trim) }}.
+      {%- set _left = (hostvars['localhost'] | default({})).site_excluded | default([]) -%}
+      {{ (' ' ~ (_left | site_exclude_line(10)) ~ '.') if _left | length > 0 else '' }}
     _email_subject: >-
       {{ ((report_email_subject_prefix ~ ' ' if report_email_subject_prefix else '') ~ (_report.title if _report is defined else _report_subject))
          | report_banner_subject(_banner) }}

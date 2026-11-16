@@ -8,6 +8,9 @@
 # workflow's Variables: mail_relay_action (add or remove). docs/MAIL_RELAY.md
 #   ansible-playbook playbooks/mail_relay_plan.yml -e mail_relay_action=add -e mail_relay_ip=198.51.100.3 \
 #     -e 'mail_relay_comment="Payroll app (svc-payroll)"'
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
 - name: Mail relay whitelist plan - the request
   hosts: localhost
   connection: local
@@ -19,7 +22,7 @@
         tasks_from: inputs.yml
 
 - name: Mail relay whitelist plan - read the whitelist on each relay server
-  hosts: "{{ mail_relay_group | default('mail_relays') }}"
+  hosts: "{{ mail_relay_group | default('mail_relays') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   become: "{{ mail_relay_become | default(true) | bool }}"
   tasks:

@@ -14,7 +14,7 @@
     vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
     clusters: "{{ (vm_rightsize_clusters | replace(',', ' ')).split() if vm_rightsize_clusters is string else vm_rightsize_clusters }}"
     vms: "{{ (vm_rightsize_vms | replace(',', ' ')).split() if vm_rightsize_vms is string else vm_rightsize_vms }}"
-    exclude: "{{ (vm_rightsize_exclude | replace(',', ' ')).split() if vm_rightsize_exclude is string else vm_rightsize_exclude }}"
+    exclude: "{{ ((vm_rightsize_exclude | replace(',', ' ')).split() if vm_rightsize_exclude is string else vm_rightsize_exclude) + (site_exclude_hosts | default([], true) | site_exclude_patterns) }}"
     days: "{{ vm_rightsize_days | int }}"
     year_days: "{{ 365 if vm_rightsize_year | bool else 0 }}"
     batch: "{{ vm_rightsize_batch | int }}"

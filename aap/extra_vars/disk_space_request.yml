@@ -91,6 +91,16 @@
 ## where the forecast keeps its samples, on the host
 # check_disk_history_file: /var/lib/site-health/disk-history.json
 
+# ---- site_exclude --------------------------------------------------------------------------------
+## ---- Leave hosts out of every job (1.67.0; playbooks/site_exclude.yml, README "Leave hosts out of
+## every job") Hosts no job runs on or connects to, whatever its template, Limit or target: the
+## first play of every playbook that runs on hosts takes them out before the first connection. Each
+## report says so in one line at its end ("Left out by site_exclude_hosts: ..."); a host left out is
+## never a finding and never "not reached". The VMware and Horizon jobs also leave out the VMs and
+## ESXi hosts named here (and keep their own lists). Set them in all.yml. names: whole, or short
+## either way (web01 = web01.example.mil); * and ?; any case
+# site_exclude_hosts: []
+
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## a CA file for AAP's own HTTPS certificate ("" = what the execution environment trusts)
 # report_history_aap_ca_path: ""

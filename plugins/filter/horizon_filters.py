@@ -337,7 +337,7 @@ def _hold(m, pool, action, kind, data, o, g, after=False):
     if hold:
         return hold
     if _match(m["name"], o.get("exclude_machines")):
-        return "the desktop is excluded (horizon_fix_exclude_machines)"
+        return "the desktop is excluded (horizon_fix_exclude_machines or site_exclude_hosts)"
     on = _sessions_on(data, m["id"])
     if on or m["session_id"]:
         if after:

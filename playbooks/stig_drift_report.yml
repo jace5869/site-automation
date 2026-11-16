@@ -15,8 +15,11 @@
 #   ansible-playbook playbooks/stig_drift_report.yml -e target=rhel_servers
 #   ansible-playbook playbooks/stig_drift_report.yml -e check_stig_stigman_api=https://stigman.example.mil/api
 #   ansible-playbook playbooks/stig_drift_report.yml --check      # scans and compares, keeps nothing on the hosts
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
 - name: STIG drift report
-  hosts: "{{ target | default('all') }}"
+  hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   become: true
   gather_facts: false
   vars:

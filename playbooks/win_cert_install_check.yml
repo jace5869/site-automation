@@ -15,8 +15,11 @@
 #
 # Credentials: Machine (Windows, an administrator) and ServiceNow API. docs/CERT_INSTALL.md
 #   ansible-playbook playbooks/win_cert_install_check.yml -i <windows inventory>
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
 - name: Windows certificate install - the renewals waiting on each server
-  hosts: "{{ target | default('all') }}"
+  hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   vars:
     site_os: windows
@@ -38,7 +41,7 @@
 
 - name: Windows certificate install - the issued certificates, from the requests
   # on the hosts, once on the AAP side (run_once, delegated to localhost): a Limit of hosts needs no localhost
-  hosts: "{{ target | default('all') }}"
+  hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   tasks:
     - name: Each CSR's request, and the certificate the PKI put there
@@ -54,7 +57,7 @@
         ansible_python_interpreter: "{{ ansible_playbook_python }}"
 
 - name: Windows certificate install - what installing each would do
-  hosts: "{{ target | default('all') }}"
+  hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   vars:
     site_os: windows
@@ -67,7 +70,7 @@
 
 - name: Windows certificate install - the plan, for the approval
   # on the hosts, once on the AAP side (run_once, delegated to localhost): a Limit of hosts needs no localhost
-  hosts: "{{ target | default('all') }}"
+  hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   tasks:
     - name: What is ready to install, and the approval

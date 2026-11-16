@@ -29,6 +29,12 @@ WIN_CHECKS = "win_check_*"
 # playbook -> the job template's name in the docs, its credentials, the check roles it may run
 # (run_check.yml picks them by name at run time), and the lines to fill in first
 TEMPLATES = {
+    "site_exclude.yml": ("AAP jobs - leave hosts out (site_exclude_hosts)", "none", "", """\
+## Not a job template: the first play of every playbook that runs on hosts (README, "Leave hosts out of every job").
+## Set these in all.yml, for every job:
+# site_exclude_hosts: [web02, "*.lab.example.mil"]
+# site_exclude_groups: [retired]
+"""),
     "act_triage_finding.yml": ("ACT - triage finding", "Machine (Machine (Windows) on the Windows template), ACT model key, Red Hat Ansible Automation Platform", "", """\
 ## Workflow 44 (the site portal's "Ask ACT"): two templates of this playbook. Prompt on launch: Variables and Limit.
 ## The portal sends target, report_job, finding_id and portal_requested_by; the playbook checks them again.

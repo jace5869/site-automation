@@ -8,8 +8,11 @@
 #
 #   ansible-playbook playbooks/evaluate_stig_update.yml -e target=rhel_servers --check
 #   ansible-playbook playbooks/evaluate_stig_update.yml -e target=rhel_servers
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
 - name: Evaluate-STIG - update
-  hosts: "{{ target | default('all') }}"
+  hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   become: true
   gather_facts: false
   pre_tasks:

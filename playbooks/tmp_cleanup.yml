@@ -10,8 +10,11 @@
 #
 #   ansible-playbook playbooks/tmp_cleanup.yml -l web01.example.mil                              # what it would delete
 #   ansible-playbook playbooks/tmp_cleanup.yml -l web01.example.mil -e tmp_cleanup_confirm=true  # delete
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
 - name: Tmp cleanup
-  hosts: "{{ target | default('all') }}"
+  hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   become: true
   gather_facts: false
   vars:

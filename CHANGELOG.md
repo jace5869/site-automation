@@ -336,6 +336,31 @@ finding; old, unfinished, error, canceled, from the future; a pattern; any case)
 (the forge, end to end), `tests/test_site_portal.py` (8 launches at once, report_job 907 / 0907 / 00907: one run, seven
 409, no place of the hour used) - ansible-core 2.22 and 2.16.
 
+**Leave hosts out of every job** (part J). Nothing to set up. To leave hosts out, list them in `all.yml`:
+`site_exclude_hosts` (whole or short names, either way; `*` and `?`; any case) and `site_exclude_groups` (inventory
+groups). README, "Leave hosts out of every job".
+
+- **Every playbook that runs on hosts** starts with the new play *Leave hosts out (site_exclude_hosts)*
+  (`playbooks/site_exclude.yml`, role `site_exclude`). It connects to nothing: the hosts go into the group
+  `site_excluded`. Each later play on hosts ends its hosts line with `{{ hostvars['localhost']['site_exclude_not'] |
+  default('') }}`, so they are never in it: no facts, no task, no connection. It works under a Limit without localhost.
+  A play on localhost (the AAP side) is unchanged.
+- **The reports:** one line at the end of each (`Left out by site_exclude_hosts: 3 - ...`, the first 10 names). Never a
+  finding or *not reached*.
+- **VMware and Horizon:** their own lists are kept. The VMs, ESXi hosts and desktops named in `site_exclude_hosts` are
+  left out too (the protected VMs, ESXi security, the host network, right-sizing, the VM outage watch, the desktop
+  fixes). Their reasons now name `site_exclude_hosts` too.
+- **Behaviour change:** none while both lists are empty. Every play's hosts are the same as before (checked for all 59
+  playbooks, with and without a Limit).
+- **ACT's own fapolicyd play** (imported from `vendor/act`) gets the hosts through `target`. A `target` given as an
+  extra variable wins there, and then that play does not leave them out.
+
+**Tests (part J):** `tests/test_site_exclude.py` (new: the matcher - short and whole names either way, patterns,
+groups, never all; the line; the VMware patterns; the guard - every playbook with a play on hosts imports the play
+first and each such play has the suffix), `tests/site_exclude/run_site_exclude_test.sh` (new: a Linux job and a
+Windows job - a host left out is never tried; the report's line; a Limit without localhost; nothing set),
+`tests/test_limit_localhost.py` (the new play counted) - ansible-core 2.22 and 2.16.
+
 ## 1.66.0 — 2026-11-14
 
 **Updating without scripts:** paste `site-automation-1.66.0-changed-since-1.61.0.zip` as it is (from an older version,

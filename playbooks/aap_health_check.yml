@@ -11,8 +11,11 @@
 #   ... --tags db,api          # only some areas: os, containers, logs, db, api, receptor, certs
 # As an AAP job template: the AAP host's inventory, Limit = the AAP host (the group aap_hosts by default), a Machine
 # credential with sudo; aap_username / aap_password from a vault or a "Red Hat Ansible Automation Platform" credential.
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
 - name: AAP health check
-  hosts: "{{ target | default('aap_hosts') }}"
+  hosts: "{{ target | default('aap_hosts') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   become: false
   vars:

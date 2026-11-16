@@ -9,8 +9,11 @@
 # Remote Desktop's certificates are left out (Windows renews them): win_check_certs_remote_desktop: true.
 #
 #   ansible-playbook playbooks/win_cert_report.yml -i <windows inventory>
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
 - name: Windows certificate report
-  hosts: "{{ target | default('all') }}"
+  hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   vars:
     site_os: windows

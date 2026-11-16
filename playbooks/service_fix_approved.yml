@@ -4,8 +4,11 @@
 # runs exactly the approved command(s) for each host - no model involved - then re-checks the
 # containers. It refuses to run on its own (outside the workflow there is nothing approved).
 # Do not tick "Prompt on launch" for Variables on its job template.
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
 - name: Target check (stops with a clear message when target matches no host)
-  hosts: all
+  hosts: "all{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   tasks:
     - name: The target leaves at least one host to run on
@@ -16,7 +19,7 @@
         _target_pattern: "{{ target | default('stigman') }}"
 
 - name: Service watch - apply the approved fix
-  hosts: "{{ target | default('stigman') }}"
+  hosts: "{{ target | default('stigman') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   become: true
   gather_facts: false
   tasks:

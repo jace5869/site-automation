@@ -1,0 +1,17 @@
+---
+# LEAVE HOSTS OUT OF EVERY JOB (1.67.0): the first play of every playbook that runs on hosts (- import_playbook:
+# site_exclude.yml). It connects to nothing. The hosts in site_exclude_hosts and site_exclude_groups (all.yml) go into
+# the group site_excluded, and every later play's hosts line ends with
+#   {{ hostvars['localhost']['site_exclude_not'] | default('') }}
+# (":!site_excluded" when there are any): those hosts are never in the play, never gathered, never connected to.
+# all,localhost: it runs under any Limit (the Limit's hosts, or localhost); its tasks run once. README, "Leave hosts out
+# of every job".
+- name: Leave hosts out (site_exclude_hosts)
+  hosts: all,localhost
+  gather_facts: false
+  tasks:
+    - name: The hosts left out of this job
+      # static: loaded once, not once per host (its tasks run once); by its path, so it also works imported from a
+      # playbook outside this repository (aap_health_check.yml)
+      ansible.builtin.import_role:
+        name: ../roles/site_exclude  # noqa: role-name[path]

@@ -110,6 +110,16 @@ vmware_ask_public_url: https://stigman.example.mil/ask/
 ## its password: a podman secret on the server
 # vmware_ask_vcenter_password: "{{ lookup('ansible.builtin.env', 'VMWARE_PASSWORD') }}"
 
+# ---- site_exclude --------------------------------------------------------------------------------
+## ---- Leave hosts out of every job (1.67.0; playbooks/site_exclude.yml, README "Leave hosts out of
+## every job") Hosts no job runs on or connects to, whatever its template, Limit or target: the
+## first play of every playbook that runs on hosts takes them out before the first connection. Each
+## report says so in one line at its end ("Left out by site_exclude_hosts: ..."); a host left out is
+## never a finding and never "not reached". The VMware and Horizon jobs also leave out the VMs and
+## ESXi hosts named here (and keep their own lists). Set them in all.yml. names: whole, or short
+## either way (web01 = web01.example.mil); * and ?; any case
+# site_exclude_hosts: []
+
 # ---- vmware_vm -----------------------------------------------------------------------------------
 ## Check vCenter's certificate. false only if the execution environment does not trust your CA yet.
 # vmware_validate_certs: true

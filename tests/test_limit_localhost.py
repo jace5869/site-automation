@@ -241,7 +241,9 @@ class ThePlaybooks(unittest.TestCase):
                 text = out.stdout + out.stderr
                 self.assertEqual(out.returncode, 0, text[-2000:])
                 listed = re.split(r"\n  play #\d+ ", out.stdout)[1:]
-                self.assertEqual(len(listed), len(plays), text[-2000:])
+                with open(os.path.join(REPO, "playbooks", name)) as fh:      # + the site_exclude play it imports (1.67.0)
+                    imported = fh.read().count("import_playbook: site_exclude.yml")
+                self.assertEqual(len(listed), len(plays) + imported, text[-2000:])
                 for p in listed:
                     self.assertIn("gone01.example.mil", p, "%s: a play without the host of the Limit:\n%s" % (name, p))
                 out = run(os.path.join("playbooks", name), self.inv, "--list-hosts")
@@ -277,7 +279,7 @@ class TheDcGroup(unittest.TestCase):
         got = {}
         for p in re.split(r"\n  play #\d+ ", out.stdout)[1:]:
             pat = re.search(r"pattern: \[(.*?)\]", p).group(1)
-            if pat not in ["'all'", "'localhost'"] + ["'%s'" % g for g in RUNTIME_GROUPS]:
+            if pat not in ["'all'", "'localhost'", "'all,localhost'"] + ["'%s'" % g for g in RUNTIME_GROUPS]:   # all,localhost: site_exclude
                 got.setdefault(pat, set()).update(re.findall(r"\b(dc\d+\.example\.mil)\b", p.split("hosts (", 1)[-1]))
         return {k: sorted(v) for k, v in got.items()}
 

@@ -9,6 +9,9 @@
 # Check first: it shows the new list and writes nothing. Credentials: Machine; VMware vCenter (optional: the
 # service). The add and remove workflows keep the layout. docs/MAIL_RELAY.md
 #   ansible-playbook playbooks/mail_relay_format.yml --check
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
 - name: Mail relay format - the relays
   hosts: localhost
   connection: local
@@ -20,7 +23,7 @@
         tasks_from: format_inputs.yml
 
 - name: Mail relay format - read each list, look up the names
-  hosts: "{{ mail_relay_group | default('mail_relays') }}"
+  hosts: "{{ mail_relay_group | default('mail_relays') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   become: "{{ mail_relay_become | default(true) | bool }}"
   tasks:
@@ -46,7 +49,7 @@
         tasks_from: format_names.yml
 
 - name: Mail relay format - write each list
-  hosts: "{{ mail_relay_group | default('mail_relays') }}"
+  hosts: "{{ mail_relay_group | default('mail_relays') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   become: "{{ mail_relay_become | default(true) | bool }}"
   tasks:

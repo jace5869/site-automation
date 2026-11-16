@@ -41,6 +41,9 @@
 # for it (connection local). Hosts of the groups outside the Limit are not read and not judged. With no group
 # servicenow_nodes in the inventory, the Limit's hosts are the front-end nodes (-l node01,node03). A group named that
 # is not in the inventory, or no front-end node with servicenow_health_part nodes, fails at the start (tasks/hosts_check.yml).
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
 - name: ServiceNow health - the groups and the Limit name hosts to read
   # once, on the AAP side, before any host is read (the same hosts as the last play): a group named that is not in
   # this inventory, or no front-end node with servicenow_health_part nodes, fails here - never a green run that read
@@ -61,7 +64,7 @@
         tasks_from: hosts_check.yml
 
 - name: ServiceNow health - the MID Server hosts (Windows)
-  hosts: "{{ servicenow_mid_hosts_group | default('servicenow_mid_hosts') }}"
+  hosts: "{{ servicenow_mid_hosts_group | default('servicenow_mid_hosts') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   tasks:
     - name: Read each MID Server host (read-only)
@@ -75,7 +78,7 @@
   hosts: >-
     {{ ([servicenow_nodes_group | default('servicenow_nodes'), servicenow_db_group | default('servicenow_db_hosts')]
         + ([ansible_limit] if ansible_limit | default('', true) | length > 0
-           and groups[servicenow_nodes_group | default('servicenow_nodes')] | default([]) | length == 0 else [])) | join(',') }}
+           and groups[servicenow_nodes_group | default('servicenow_nodes')] | default([]) | length == 0 else [])) | join(',') ~ (hostvars['localhost']['site_exclude_not'] | default('')) }}
   become: true
   gather_facts: false
   vars:

@@ -14,8 +14,11 @@
 #
 # Credentials: Machine (sudo) and ServiceNow API (the account that orders the certificates). docs/CERT_INSTALL.md
 #   ansible-playbook playbooks/cert_install_check.yml
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
 - name: Certificate install - the renewals waiting on each host
-  hosts: "{{ target | default('all') }}"
+  hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   become: true
   gather_facts: false
   pre_tasks:
@@ -41,7 +44,7 @@
 
 - name: Certificate install - the issued certificates, from the requests
   # on the hosts, once on the AAP side (run_once, delegated to localhost): a Limit of hosts needs no localhost
-  hosts: "{{ target | default('all') }}"
+  hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   tasks:
     - name: Each CSR's request, and the certificate the PKI put there
@@ -57,7 +60,7 @@
         ansible_python_interpreter: "{{ ansible_playbook_python }}"
 
 - name: Certificate install - what installing each would do
-  hosts: "{{ target | default('all') }}"
+  hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   become: true
   gather_facts: false
   tasks:
@@ -69,7 +72,7 @@
 
 - name: Certificate install - the plan, for the approval
   # on the hosts, once on the AAP side (run_once, delegated to localhost): a Limit of hosts needs no localhost
-  hosts: "{{ target | default('all') }}"
+  hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   tasks:
     - name: What is ready to install, and the approval

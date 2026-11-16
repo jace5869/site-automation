@@ -39,6 +39,11 @@ site_fail_on: [critical, warning]        # [critical] = warnings are reported bu
 servicenow_min_severity: warning
 servicenow_assignment_group: Linux Operations
 
+# ---- Hosts no job touches (README "Leave hosts out of every job") ---------------------------
+# Every job leaves them out before it connects to anything; each report names them in one line at its end.
+site_exclude_hosts: []                    # e.g. [web02, "*.lab.example.mil"]: whole or short names, * and ?, any case
+site_exclude_groups: []                   # e.g. [retired]: every host in these inventory groups
+
 # ---- ACT (only used with use_act=true; docs/ADDING_ACT.md) ----------------------------------
 site_act_level: explain
 site_act_provider: genai                  # genai | genai-beta (asksage: retired for now); the key comes from a credential

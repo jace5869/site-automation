@@ -17,8 +17,11 @@
 #   ansible-playbook playbooks/win_stig_recheck.yml -i <windows inventory>
 #   ansible-playbook playbooks/win_stig_recheck.yml -i <windows inventory> -e '{"check_stig_recheck": ["open"]}'
 #   ansible-playbook playbooks/win_stig_recheck.yml -i <windows inventory> --check   # checks and compares, keeps nothing
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
 - name: Windows STIG recheck
-  hosts: "{{ target | default('all') }}"
+  hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   vars:
     site_os: windows
