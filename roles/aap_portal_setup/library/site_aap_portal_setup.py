@@ -233,7 +233,8 @@ class Setup(object):
                             "approval": {"name": a.get("name", ""), "timeout": int(a.get("timeout") or 0),
                                          "description": a.get("description", "")} if n.get("approval") else None,
                             "success": sorted(n.get("success") or []), "failure": sorted(n.get("failure") or []),
-                            "always": sorted(n.get("always") or []), "converge": bool(n.get("all_parents_must_converge"))})
+                            "always": sorted(n.get("always") or []), "converge": bool(n.get("all_parents_must_converge")),
+                            "extra_data": dict(n.get("extra_data") or {})})       # 1.67.0: e.g. the gate's workflow_gate_var
             return sorted(out, key=lambda x: x["id"])
 
         def read(oid):
@@ -250,7 +251,8 @@ class Setup(object):
                             "success": sorted(ident.get(int(x), str(x)) for x in g.get("success_nodes") or []),
                             "failure": sorted(ident.get(int(x), str(x)) for x in g.get("failure_nodes") or []),
                             "always": sorted(ident.get(int(x), str(x)) for x in g.get("always_nodes") or []),
-                            "converge": bool(g.get("all_parents_must_converge"))})
+                            "converge": bool(g.get("all_parents_must_converge")),
+                            "extra_data": dict(_norm(g.get("extra_data")) or {}) if not appr else {}})
             return sorted(out, key=lambda x: x["id"])
 
         def write(oid, created):
@@ -264,6 +266,8 @@ class Setup(object):
                 body = {"identifier": n["id"], "all_parents_must_converge": bool(n.get("all_parents_must_converge"))}
                 if n.get("template"):
                     body["unified_job_template"] = tpl_ids[n["template"]]
+                if n.get("extra_data"):              # the template must ask for Variables on launch (prompts: variables)
+                    body["extra_data"] = dict(n["extra_data"])
                 code, d = self.write("POST", "workflow_job_templates/%d/workflow_nodes/" % oid, body)
                 nid = int(d.get("id") or 0)
                 made[n["id"]] = nid
@@ -413,6 +417,8 @@ def check_spec(spec):
         for n in w["nodes"]:
             if bool(n.get("template")) == bool(n.get("approval")):
                 out.append("%s, node %s: either template or approval" % (where, n["id"]))
+            if n.get("extra_data") is not None and (not isinstance(n.get("extra_data"), dict) or not n.get("template")):
+                out.append("%s, node %s: extra_data is a mapping, on a template's node" % (where, n["id"]))
             if n.get("approval") and (not str(n["approval"].get("name") or "").strip() or not isinstance(n["approval"].get("timeout", 0), int)):
                 out.append("%s, node %s: an approval needs a name (and a timeout in seconds)" % (where, n["id"]))
             for link in ("success", "failure", "always"):

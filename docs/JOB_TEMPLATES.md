@@ -48,6 +48,7 @@ you change ([SETUP_AAP.md](SETUP_AAP.md#step-9-the-other-job-templates)).
 | Site portal - open ticket | `playbooks/portal_open_ticket.yml` | Report (a draft; sends nothing unless `portal_ticket_mode: live`) | [SITE_PORTAL.md](SITE_PORTAL.md#open-ticket) |
 | Evaluate-STIG - update | `playbooks/evaluate_stig_update.yml` | Change (Check first) | [EVALUATE_STIG_UPDATE.md](EVALUATE_STIG_UPDATE.md) |
 | STIG Manager - update | `playbooks/stigman_update.yml` | Change (STIG Manager's reviews), only as workflow 37's (and 40's) step after the approval | [STIG_DRIFT.md](STIG_DRIFT.md#updating-stig-manager-with-an-approval) |
+| Workflow gate - has a plan | `playbooks/workflow_gate.yml` | Workflow step (reads only, no credential): between a check and its approval, on only when the check handed on a plan (`workflow_gate_var`) | [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#the-gate-the-approval-only-when-the-check-has-a-plan-1670) |
 | STIG Manager - import checklists | `playbooks/stigman_ckl_import.yml` | Report (reads only); workflow 40's check; on a schedule as STIG Manager Watcher (`stigman_ckl_import_auto`: writes); the STIG compliance scorecard (survey `stigman_ckl_import_mode`) | [CKL_IMPORT.md](CKL_IMPORT.md) |
 | STIG Manager - health | `playbooks/stigman_health.yml` | Watch (daily, or after a change) | [STIGMAN_HEALTH.md](STIGMAN_HEALTH.md#set-it-up) |
 | STIG Manager - availability | `playbooks/stigman_availability.yml` | Watch (every 5 to 15 minutes) | [STIGMAN_HEALTH.md](STIGMAN_HEALTH.md#set-it-up), [AVAILABILITY.md](AVAILABILITY.md) |

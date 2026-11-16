@@ -136,7 +136,7 @@
 #   - {tab: Network and storage, match: ["Network*", "NetApp*", "ONTAP*", "Cisco UCS*", "UCS*"]}
 #   - {tab: Linux, match: ["Linux*", "Health check*", "Troubleshoot*", "Patch*", "Database*", "Service watch*", "POA&M*", "STIG*", "Evaluate-STIG*",
 #                          "Log analysis*", "fapolicyd*", "Apply approved*", "Mail relay*", "ACT - *", "Disk - *", "Service - *"]}
-#   - {tab: ServiceNow and AAP, match: ["ServiceNow*", "AAP *", "Report website*", "Site portal*"]}
+#   - {tab: ServiceNow and AAP, match: ["ServiceNow*", "AAP *", "Report website*", "Site portal*", "Workflow gate*"]}
 
 ## the report's data as .json beside each page and index.json beside the index
 # report_web_json: true

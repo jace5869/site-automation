@@ -1,0 +1,26 @@
+---
+# Read only, on the controller: no host, no credential. docs/WORKFLOWS_AND_SCHEDULES.md, "The gate".
+- name: Gate | workflow_gate_var names the check's artifact
+  ansible.builtin.assert:
+    that: workflow_gate_var | default('', true) | string is match('^[A-Za-z_][A-Za-z0-9_]{0,99}$')
+    fail_msg: >-
+      Set workflow_gate_var to the check's artifact (e.g. stigman_update_plan) on the gate node or the template's
+      Variables - nothing to approve.
+    quiet: true
+
+- name: Gate | the check's plan
+  ansible.builtin.set_fact:
+    _wg_plan: "{{ lookup('ansible.builtin.vars', workflow_gate_var, default='') }}"
+
+- name: Gate | a plan to approve - {{ workflow_gate_var }}
+  ansible.builtin.assert:
+    that:
+      - _wg_plan is not string
+      - _wg_plan is iterable
+      - _wg_plan | length > 0
+    fail_msg: >-
+      The check failed for another reason - open the check job; nothing to approve. ({{ workflow_gate_var }} was not
+      handed on, or is empty.)
+    success_msg: >-
+      The check handed on a plan: {{ _wg_plan | length }} item(s) in {{ workflow_gate_var }} - on to the approval.
+    quiet: false

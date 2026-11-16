@@ -438,6 +438,11 @@ stigman_ckl_import_collection: VMware
 ## (usually in all.yml)
 # check_stig_stigman_api: https://STIGMAN-SERVER/api
 """),
+    "workflow_gate.yml": ("Workflow gate - has a plan", "none", "", """\
+## The step between a check and its approval (1.67.0): it goes on only when the check handed on a plan. Give each
+## workflow's gate step its own Variables line (the check's artifact) - docs/WORKFLOWS_AND_SCHEDULES.md, "The gate"
+# workflow_gate_var: stigman_update_plan
+"""),
     "stigman_deploy.yml": ("STIG Manager - deploy", "Machine, STIG Manager database, TLS certificate", "", ""),
     "vmware_ask_deploy.yml": ("VMware ask - deploy", "Machine, VMware vCenter, ACT model key", "", """\
 ## The podman network of STIG Manager's nginx container (docs/VMWARE_ASK.md, step 1: sudo podman ps): the page joins

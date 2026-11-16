@@ -421,6 +421,9 @@ workflows the actions launch, from `roles/site_portal_stack/files/workflows.yml`
   and left as it is. One of the same name the job did not make is listed as *NOT MADE BY THIS JOB* and left alone.
   `portal_setup_overwrite: true` writes them again.
 - **Check first.** With Job type **Check** it only reads, and lists field by field what it would change.
+- **The gate.** A workflow with an approval gets the step *Workflow gate - has a plan* between its check and the
+  approval. Only a check that handed on a plan reaches the approval; one that failed on an error ends there.
+  [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#the-gate-the-approval-only-when-the-check-has-a-plan-1670).
 
 1. **Templates > Create template > Create job template:** `AAP - set up portal actions`, playbook
    `playbooks/aap_portal_setup.yml`, any inventory, the credential **Red Hat Ansible Automation Platform** of an AAP

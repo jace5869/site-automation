@@ -1,0 +1,18 @@
+---
+# WORKFLOW GATE - HAS A PLAN (1.67.0): the step between a check and its approval, so that only a check that failed on
+# purpose - with a plan for the approval - reaches it. A check that failed on an error ends the workflow here, red,
+# with "The check failed for another reason - open the check job; nothing to approve."
+#   [check] --on failure--> [Workflow gate - has a plan] --on success--> [Approval] --on success--> [apply]
+# workflow_gate_var names the check's artifact (the plan, handed on by set_stats): the gate node's extra data, or the
+# template's Variables. Runs on the controller, reads nothing but its own variables: no inventory host, no credential.
+# docs/WORKFLOWS_AND_SCHEDULES.md, "The gate".
+- name: Workflow gate - has a plan
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: The check's plan, or the end of the workflow
+      ansible.builtin.include_role:
+        name: workflow_gate

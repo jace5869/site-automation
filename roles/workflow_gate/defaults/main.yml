@@ -1,0 +1,7 @@
+---
+# The gate between a check and its approval (1.67.0): the check fails on purpose when something waits for the approval,
+# and hands its plan on (set_stats). A check can also fail on an error - an empty folder, a share refused, a host down -
+# with no plan. The gate goes on to the approval only when the plan is there: a list or a mapping with something in it.
+# The name of the check's artifact (the workflow node's extra data, or the template's Variables), e.g.
+# stigman_update_plan (workflows 37, 40), fapolicyd_workflow_plan (36), cert_install_plan (29). Required.
+workflow_gate_var: ""
