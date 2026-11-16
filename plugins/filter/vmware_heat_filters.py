@@ -2,7 +2,9 @@
 """The cluster heat grid (1.65.0): sections of the VMware health report (roles/vmware_vm/tasks/health.yml).
 
 Input: what site_vmware_health returns (the report's own read), and this template's earlier runs with the job artifact
-vm_heat (AAP job history, then the report database). Nothing more is read from vCenter.
+vm_heat (AAP job history, then the report database). Nothing more is read from vCenter - except (1.67.0, vm_heat_vcenter_history)
+each cluster's daily CPU and memory from vCenter's own statistics, for the days those runs do not cover: the same reading the
+capacity planning uses (roles/vmware_vm/library/site_vmware_heat_history.py). A saved run's point wins for the same day.
 
 A host's status is the health report's own (host_problems): its worst critical or warning problem, else Low (maintenance
 mode and the like), else OK. Info (standby, DRS manual) counts as OK here, as on the report's boxes.
@@ -92,7 +94,8 @@ def _clusters(data, o):
         live = [h for h in hs if _hl._up(h)]
         cpu = _hl._pct(sum(h.get("cpu_used_mhz") or 0 for h in live), sum(h.get("cpu_mhz") or 0 for h in live)) if live else None
         mem = _hl._pct(sum(h.get("mem_used_mb") or 0 for h in live), sum(h.get("mem_mb") or 0 for h in live)) if live else None
-        out.append({"key": key, "label": label, "hosts": hosts, "cpu": cpu, "mem": mem})
+        out.append({"key": key, "label": label, "hosts": hosts, "cpu": cpu, "mem": mem,
+                    "cap_cpu": sum(h.get("cpu_mhz") or 0 for h in live), "cap_mem": sum(h.get("mem_mb") or 0 for h in live) * 1048576.0})
     return out
 
 
@@ -124,8 +127,10 @@ def _week_ago(runs, now_e):
     return best
 
 
-def _series(key, idx, runs, now_e, now_v):
-    """[(epoch, %)]: each day's average of the runs (CPU idx 0, memory 1), this run's value as today's."""
+def _series(key, idx, runs, now_e, now_v, extra=None, window=None, filled=None):
+    """[(epoch, %)]: each day's average of the runs (CPU idx 0, memory 1), this run's value as today's. extra: vCenter's own
+    daily points [(epoch, %)] (1.67.0): they fill the days of the window no run has; a saved run's point wins for the same day.
+    The days filled are added to the set filled."""
     days = {}
     for t, a in runs:
         v = (a.get("clusters") or {}).get(key)
@@ -134,9 +139,25 @@ def _series(key, idx, runs, now_e, now_v):
         days.setdefault(_date(t), []).append((t, float(v[idx])))
     days.pop(_date(now_e), None)          # today's point is this run's
     pts = [(vs[-1][0], round(sum(x for _, x in vs) / len(vs), 1)) for _, vs in sorted(days.items())]
+    for t, v in extra or []:
+        dt = _date(t)
+        if dt == _date(now_e) or dt in days or t >= now_e or (window and t < now_e - window * DAY) or v is None:
+            continue
+        pts.append((t, round(float(v), 1)))
+        days[dt] = [(t, v)]               # one point a day, whichever measure asks
+        if filled is not None:
+            filled.add(dt)
+    pts.sort()
     if now_v is not None:
         pts.append((now_e, round(float(now_v), 1)))
     return pts
+
+
+def _vc_pct(series, cap):
+    """vCenter's [[seconds, value]] -> [(seconds, % of cap)] (cap: this cluster's capacity now); [] without a capacity."""
+    if not cap or cap <= 0:
+        return []
+    return [(int(t), 100.0 * float(v) / cap) for t, v in series or [] if v is not None]
 
 
 def _since(hkey, st, runs, now_e):
@@ -149,6 +170,22 @@ def _since(hkey, st, runs, now_e):
     if not runs:
         return "-"
     return _ago((now_e - first) / float(DAY))
+
+
+def vm_heat_gap(data, runs=None, opts=None):
+    """Whether the clusters' lines have fewer days than vm_heat_days, so vCenter's own statistics are worth reading
+    (vm_heat_vcenter_history, site_vmware_heat_history) -> {need, clusters: [vcenter/datacenter/cluster], days, covered}.
+    covered: the distinct days earlier runs saved in the window (today is this run's). Standalone hosts have no line."""
+    o = _hl._opts(opts)
+    oo = opts or {}
+    d = data or {}
+    if not d.get("hosts"):
+        return {"need": False, "clusters": [], "days": 0, "covered": 0}
+    now_e = _epoch(d.get("read_at")) or int(time.time())
+    days = int(oo.get("days", 30) or 30)
+    covered = len(set(_date(t) for t, _ in _runs(runs, now_e, days)) - set([_date(now_e)]))
+    keys = [c["key"] for c in _clusters(d, o) if not c["key"].endswith("/(standalone)") and c["cap_cpu"] and c["cap_mem"]]
+    return {"need": bool(keys) and covered < days - 1, "clusters": keys, "days": days, "covered": covered}
 
 
 def vm_heat_view(data, runs=None, opts=None):
@@ -167,6 +204,8 @@ def vm_heat_view(data, runs=None, opts=None):
     week = _week_ago(rs, now_e)
     wk_hosts = (week[1].get("hosts") or {}) if week else {}
     cls = _clusters(d, o)
+    vc = oo.get("vcenter") if isinstance(oo.get("vcenter"), dict) else {}      # 1.67.0: vCenter's own daily points, and why not
+    vc_days, vc_none = set(), 0
 
     grid, not_ok, nums, sheet_rows, lines = [], [], [], [], []
     art = {"read_at": d.get("read_at"), "clusters": {}, "hosts": {}}
@@ -212,8 +251,11 @@ def vm_heat_view(data, runs=None, opts=None):
                 if hk in here and was in ("critical", "warning", "low") and hk not in art["hosts"]:
                     counts["back"] += 1
                     changes.append("%s back to OK (was %s)" % (hk.split("/")[-1].split(".")[0], WORD[was].lower()))
-        cpu_s = _series(c["key"], 0, rs, now_e, c["cpu"])
-        mem_s = _series(c["key"], 1, rs, now_e, c["mem"])
+        vh = ((vc.get("history") or {}).get(c["key"]) or {})
+        cpu_s = _series(c["key"], 0, rs, now_e, c["cpu"], _vc_pct(vh.get("cpu"), c["cap_cpu"]), days, vc_days)
+        mem_s = _series(c["key"], 1, rs, now_e, c["mem"], _vc_pct(vh.get("mem"), c["cap_mem"]), days, vc_days)
+        if vc and not (vh.get("cpu") or vh.get("mem")):
+            vc_none += 1
         if week:
             wv = (week[1].get("clusters") or {}).get(c["key"]) or [None, None]
             for label, now_v, then in (("CPU", c["cpu"], wv[0]), ("memory", c["mem"], wv[1] if len(wv) > 1 else None)):
@@ -238,7 +280,7 @@ def vm_heat_view(data, runs=None, opts=None):
     n_bad = counts["critical"] + counts["warning"] + counts["low"]
     worst = "critical" if counts["critical"] else ("warning" if counts["warning"] else ("low" if counts["low"] else "ok"))
     hist_why = str(oo.get("history_why") or "")
-    n_days = len(set(_date(t) for t, _ in rs)) + 1
+    n_days = len(set(_date(t) for t, _ in rs) | vc_days) + 1
     head = "%d host(s): %s." % (sum(counts[k] for k in ("critical", "warning", "low", "ok")),
                                 ", ".join("%d %s" % (counts[k], WORD[k] if k != "ok" else "OK") for k in ("critical", "warning", "low", "ok")))
     if week:
@@ -247,9 +289,14 @@ def vm_heat_view(data, runs=None, opts=None):
         head += " No run about a week ago: nothing marked new yet."
     text = "Every ESXi host as a card, a row per cluster. Each cluster's CPU and memory: the day's average over %d days." % days
     g_lines = [head]
-    if hist_why:
+    vc_note = str(vc.get("note") or "")
+    if vc_note:
+        g_lines.append("vCenter's own history: %s." % vc_note)
+    elif vc and cls and vc_none and not vc_days:
+        g_lines.append("vCenter's own history: no samples for these clusters.")
+    if hist_why and not vc_days:
         g_lines.append("History: %s." % hist_why)
-    elif n_days < 2:
+    elif n_days < 2 and not vc_days:
         g_lines.append("One day of history so far: the lines start with the next runs.")
     grid_sec = {"title": "Every host, by cluster", "text": text, "lines": g_lines,
                 "heat": {"clusters": grid, "days": days, "legend": [{"st": k} for k in ("critical", "warning", "low", "ok")]}}
@@ -275,6 +322,11 @@ def vm_heat_view(data, runs=None, opts=None):
                                                   "columns fill in with the next runs."),
                "columns": ["Cluster", "CPU %d days ago" % days, "CPU now", "Change", "Memory %d days ago" % days, "Memory now", "Change"],
                "rows": [n[:7] for n in nums]}
+
+    if vc_days:                      # which days came from vCenter, at the numbers behind the lines
+        vd = sorted(vc_days)
+        num_sec["lines"] = ["%d day(s) of the lines come from vCenter's own daily statistics (%s to %s); a saved run's point wins for the same "
+                            "day." % (len(vd), vd[0], vd[-1])]
 
     # the boxes: hosts not OK (and a week ago), the cluster that moved most
     note = ""
@@ -320,4 +372,4 @@ def vm_heat_insert(report, sections, boxes=None, before="Needs attention"):
 
 class FilterModule(object):
     def filters(self):
-        return {"vm_heat_view": vm_heat_view, "vm_heat_insert": vm_heat_insert}
+        return {"vm_heat_view": vm_heat_view, "vm_heat_gap": vm_heat_gap, "vm_heat_insert": vm_heat_insert}

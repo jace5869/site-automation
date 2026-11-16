@@ -263,6 +263,15 @@ second run, a half-done gate finished, a name that matches nothing; no DELETE), 
 checks' table is the doc's and each sets its plan; the gate template's mark is the setup job's) - ansible-core 2.22
 and 2.16.
 
+**VM health: the heat grid's lines from vCenter's own history.** A fresh install showed "no line yet" for days, because the
+lines came only from earlier runs. With fewer than `vm_heat_days` days saved, each cluster's CPU and memory for the missing
+days are now read from vCenter's daily statistics (the reading *VM - capacity planning* uses, now shared in
+`module_utils/site_vcenter_stats.py`), in one batched read, in the heat grid only. A saved run's point wins for the same
+day; the numbers behind the lines say which days came from vCenter. `vm_heat_vcenter_history: false` is as before. If the
+1-day interval is off or nothing comes back, one muted line says so and the job never fails. New module
+`site_vmware_heat_history`, filter `vm_heat_gap`. Tests: `tests/test_vmware_heat.py` (fill, precedence, interval off, a
+cluster with no samples). To set up: nothing.
+
 ## 1.66.0 — 2026-11-14
 
 **Updating without scripts:** paste `site-automation-1.66.0-changed-since-1.61.0.zip` as it is (from an older version,

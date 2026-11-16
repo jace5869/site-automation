@@ -323,5 +323,141 @@ class Fit(unittest.TestCase):
         hf.vm_heat_insert({"title": "VMware health report", "status": "critical", "summary": [], "sections": []}, v["web_sections"], v["boxes"])
 
 
+# ---- 1.67.0: the days earlier runs lack, from vCenter's own daily statistics (vm_heat_vcenter_history) --------------------
+CAP_CPU, CAP_MEM = 700000.0, 700000 * 1048576.0          # SITEA-PROD's live hosts (7 of 8 respond): MHz, bytes
+
+
+def vc_day(days_ago, hour=0):
+    return calendar.timegm((2026, 11, 13, hour, 0, 0)) - days_ago * DAY
+
+
+def vc_series(days, cpu_pct, mem_pct):
+    """vCenter's daily points for SITEA-PROD, as site_vmware_heat_history returns them: MHz and bytes."""
+    return {K["prod"]: {"cpu": [[vc_day(d), cpu_pct(d) / 100.0 * CAP_CPU] for d in days], "mem": [[vc_day(d), mem_pct(d) / 100.0 * CAP_MEM] for d in days]}}
+
+
+def pts(v, what="cpu"):
+    return dict((datetime.datetime.fromtimestamp(t, tz=datetime.timezone.utc).strftime("%Y-%m-%d"), val) for t, val in row(v, "SITEA-PROD")[what + "_points"])
+
+
+class VCenterHistory(unittest.TestCase):
+    def test_a_fresh_install_gets_its_lines_from_vcenter(self):
+        gap = hf.vm_heat_gap(read(), [], {"days": 30})
+        self.assertTrue(gap["need"])
+        self.assertEqual(sorted(gap["clusters"]), sorted(K.values()))                    # not the standalone host
+        vc = {"history": vc_series(range(30, 0, -1), lambda d: 20 + (30 - d), lambda d: 55), "note": ""}
+        v = view(runs=[], vcenter=vc)
+        cpu = pts(v)
+        self.assertEqual(len(cpu), 30)                                                    # 29 days from vCenter (a point 30 days back is out of the window), and this run
+        self.assertEqual(cpu["2026-10-15"], 21.0)                                         # 21% of the cluster's capacity
+        self.assertEqual(cpu["2026-11-12"], 49.0)
+        self.assertEqual(pts(v, "mem")["2026-11-01"], 55.0)
+        self.assertEqual(cpu["2026-11-13"], row(v, "SITEA-PROD")["cpu_points"][-1][1])    # today's point is this run's own
+        num = v["web_sections"][2]
+        self.assertEqual(num["rows"][0][1], "21%")                                        # CPU at the first day, now filled in
+        self.assertIn("29 day(s) of the lines come from vCenter's own daily statistics (2026-10-15 to 2026-11-12)", num["lines"][0])
+        self.assertNotIn("One day of history so far", " ".join(v["web_sections"][0]["lines"]))
+
+    def test_a_saved_runs_point_wins_for_the_same_day(self):
+        saved = [run(d, {K["prod"]: [77, 66], K["mgmt"]: [50, 60], K["dmz"]: [45, 70]}, {}) for d in (3, 2, 1)]
+        vc = {"history": vc_series(range(30, 0, -1), lambda d: 20, lambda d: 55), "note": ""}
+        v = view(runs=saved, vcenter=vc)
+        cpu = pts(v)
+        for dt in ("2026-11-10", "2026-11-11", "2026-11-12"):
+            self.assertEqual(cpu[dt], 77.0, dt)                                          # the runs' own points
+        self.assertEqual((cpu["2026-11-09"], cpu["2026-10-20"]), (20.0, 20.0))           # vCenter fills the rest
+        self.assertIn("26 day(s) of the lines come from vCenter", v["web_sections"][2]["lines"][0])   # 29 days, 3 saved
+
+    def test_nothing_to_read_when_the_history_is_full(self):
+        gap = hf.vm_heat_gap(read(), history(), {"days": 30})
+        self.assertFalse(gap["need"])
+        self.assertEqual(gap["covered"], 29)
+        v = view(vcenter={"history": vc_series(range(30, 0, -1), lambda d: 5, lambda d: 5), "note": ""})
+        self.assertEqual(pts(v)["2026-10-15"], 30.0)                                      # the runs' own, never vCenter's 5%
+        self.assertNotIn("lines", v["web_sections"][2])
+
+    def test_vcenters_interval_off_is_one_line_and_the_lines_are_as_before(self):
+        v = view(runs=[], vcenter={"history": {}, "note": "vCenter's daily statistics interval is turned off: no history"})
+        self.assertIn("vCenter's own history: vCenter's daily statistics interval is turned off: no history.", v["web_sections"][0]["lines"])
+        self.assertEqual(len(pts(v)), 1)                                                  # only this run: as before
+        self.assertEqual(view(runs=[])["web_sections"][2:], v["web_sections"][2:])        # the numbers table is unchanged
+
+    def test_a_cluster_vcenter_has_no_samples_for_keeps_its_runs_only(self):
+        vc = {"history": vc_series(range(30, 0, -1), lambda d: 20, lambda d: 55), "note": ""}     # SITEA-MGMT and SITEB-DMZ: nothing
+        v = view(runs=[], vcenter=vc)
+        self.assertEqual(len(pts(v)), 30)
+        self.assertEqual(len(row(v, "SITEA-MGMT")["cpu_points"]), 1)
+        none = view(runs=[], vcenter={"history": {}, "note": ""})
+        self.assertIn("vCenter's own history: no samples for these clusters.", none["web_sections"][0]["lines"])
+
+    def test_the_setting_off_or_no_vcenter_is_as_today(self):
+        self.assertEqual(view(), view(vcenter={}))
+        self.assertEqual(view(runs=[]), view(runs=[], vcenter={}))
+
+    def test_points_outside_the_window_and_today_are_left_out(self):
+        vc = {"history": {K["prod"]: {"cpu": [[vc_day(45), 0.5 * CAP_CPU], [vc_day(0, 3), 0.9 * CAP_CPU], [vc_day(1), 0.3 * CAP_CPU]],
+                                     "mem": []}}, "note": ""}
+        cpu = pts(view(runs=[], vcenter=vc))
+        self.assertEqual(sorted(cpu), ["2026-11-12", "2026-11-13"])                       # 45 days back is out; today is this run's
+
+
+class VCenterReading(unittest.TestCase):
+    """site_vcenter_stats.perf_series, the reading the capacity planning and the heat grid share (a stand-in vCenter)."""
+    def setUp(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("site_vcenter_stats_t", os.path.join(REPO, "roles", "vmware_vm", "module_utils", "site_vcenter_stats.py"))
+        self.m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.m)
+
+        class NS(object):
+            def __init__(self, **kw):
+                self.__dict__.update(kw)
+        self.NS = NS
+        self.m.vim = NS(PerformanceManager=NS(QuerySpec=NS, MetricId=NS))
+
+    def content(self, enabled=True, counters=True, result=None):
+        NS = self.NS
+        cs = [NS(key=7, groupInfo=NS(key="cpu"), nameInfo=NS(key="usagemhz"), rollupType="average", unitInfo=NS(key="megaHertz"))] if counters else []
+        calls = []
+
+        def query(querySpec):
+            calls.append(len(querySpec))
+            return result
+        pm = NS(historicalInterval=[NS(samplingPeriod=86400, enabled=enabled)], perfCounter=cs, QueryPerf=query)
+        c = NS(perfManager=pm)
+        c.calls = calls
+        return c
+
+    def test_interval_off(self):
+        out, note = self.m.perf_series(self.content(enabled=False), {("c", "domain-c1", "cpu"): (self.NS(_moId="domain-c1"), "cpu.usagemhz.average")}, 30, 1e9)
+        self.assertEqual((out, note), ({}, "vCenter's daily statistics interval is turned off: no history"))
+
+    def test_a_counter_vcenter_does_not_have(self):
+        out, note = self.m.perf_series(self.content(counters=False), {("c", "domain-c1", "cpu"): (self.NS(_moId="domain-c1"), "cpu.usagemhz.average")}, 30, 1e9)
+        self.assertEqual(out, {})
+        self.assertIn("vCenter has no cpu.usagemhz.average counter", note)
+
+    def test_the_samples_in_one_batch(self):
+        NS = self.NS
+        ent = lambda m: NS(_moId=m)
+        t0 = datetime.datetime(2026, 11, 1, tzinfo=datetime.timezone.utc)
+        res = [NS(entity=ent("domain-c1"), sampleInfo=[NS(timestamp=t0), NS(timestamp=t0 + datetime.timedelta(days=1))],
+                  value=[NS(value=[100, -1])]),
+               NS(entity=ent("domain-c2"), sampleInfo=[NS(timestamp=t0)], value=[NS(value=[50])])]
+        c = self.content(result=res)
+        specs = {("c", "domain-c1", "cpu"): (ent("domain-c1"), "cpu.usagemhz.average"), ("c", "domain-c2", "cpu"): (ent("domain-c2"), "cpu.usagemhz.average")}
+        out, note = self.m.perf_series(c, specs, 30, 1e9)
+        self.assertEqual(c.calls, [2])                                                    # one read for both clusters
+        self.assertEqual(out[("c", "domain-c1", "cpu")], [[int(t0.timestamp()), 100.0]])  # the -1 (a missing sample) is left out
+        self.assertEqual(out[("c", "domain-c2", "cpu")], [[int(t0.timestamp()), 50.0]])
+        self.assertEqual(note, "")
+
+    def test_the_capacity_planning_reads_it_the_same_way(self):
+        import re
+        src = open(os.path.join(REPO, "roles", "vmware_vm", "library", "site_vmware_capacity.py")).read()
+        self.assertIn("from ansible.module_utils.site_vcenter_stats import", src)
+        self.assertIsNone(re.search(r"^def _perf\(", src, re.M))                          # one copy of the reading
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -958,7 +958,15 @@ adds *Clusters by day*, with an Excel trend line per row.
 
 The history is this template's earlier runs (the job artifact `vm_heat`), read with the same "Red Hat Ansible
 Automation Platform" credential as the strip of past runs. The report database keeps the points too when the template
-has its credential ([REPORT_DATABASE.md](REPORT_DATABASE.md)). Nothing more is read from vCenter.
+has its credential ([REPORT_DATABASE.md](REPORT_DATABASE.md)).
+
+When that history covers fewer than `vm_heat_days` days (a fresh install), the missing days come from vCenter's own
+daily statistics. It is the reading *VM - capacity planning* uses, one batched read for all the clusters, in the heat
+grid only.
+
+- A saved run's point wins for the same day. *The numbers behind the lines* say which days came from vCenter.
+- If vCenter's 1-day interval is turned off, or it returns nothing, one muted line says so. The lines are then as before.
+- The job never fails for it.
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -966,6 +974,7 @@ has its credential ([REPORT_DATABASE.md](REPORT_DATABASE.md)). Nothing more is r
 | `vm_heat_days` | `30` | the lines' days |
 | `vm_heat_change_pts` | `5` | a cluster's CPU or memory change in a week that is said |
 | `vm_heat_history` / `vm_heat_history_runs` | `true` / `50` | read the history from this many earlier runs in AAP |
+| `vm_heat_vcenter_history` | `true` | fill the days earlier runs lack from vCenter's own daily statistics; `false`: only the runs' points |
 | `vm_heat_db` / `vm_heat_db_create` | `true` / `true` | keep the points in the report database, when the template has its credential |
 | `vm_heat_db_timeout` / `vm_heat_db_keep_days` | `10` / `400` | seconds to connect; delete older points (`0`: never) |
 

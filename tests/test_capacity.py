@@ -13,11 +13,13 @@ sys.path.insert(0, os.path.join(HERE, "..", "plugins", "filter"))
 sys.path.insert(0, os.path.join(HERE, "..", "roles", "vmware_vm", "library"))
 # the modules import their shared vCenter code as Ansible does: from ansible.module_utils.site_vcenters
 import importlib.util  # noqa: E402
-_spec = importlib.util.spec_from_file_location("ansible.module_utils.site_vcenters", os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", "roles", "vmware_vm", "module_utils", "site_vcenters.py"))
-site_vcenters = importlib.util.module_from_spec(_spec)
-sys.modules["ansible.module_utils.site_vcenters"] = site_vcenters
-_spec.loader.exec_module(site_vcenters)
+for _name in ("site_vcenters", "site_vcenter_stats"):       # 1.67.0: the daily statistics' reading is shared with the heat grid
+    _spec = importlib.util.spec_from_file_location("ansible.module_utils." + _name, os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", "roles", "vmware_vm", "module_utils", _name + ".py"))
+    _mod = importlib.util.module_from_spec(_spec)
+    sys.modules["ansible.module_utils." + _name] = _mod
+    _spec.loader.exec_module(_mod)
+site_vcenters = sys.modules["ansible.module_utils.site_vcenters"]
 import capacity_filters as cf  # noqa: E402
 import vmware_alarm_filters as va  # noqa: E402
 import site_vmware_capacity as sc  # noqa: E402

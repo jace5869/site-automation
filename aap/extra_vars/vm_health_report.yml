@@ -118,6 +118,10 @@
 ## how many earlier runs to read from AAP (at most 50: a daily job keeps 30 days with 30)
 # vm_heat_history_runs: 50
 
+## fewer than vm_heat_days days of history: read each cluster's daily CPU and memory from vCenter's
+## own statistics for the days missing (a saved run's point wins). false = as before
+# vm_heat_vcenter_history: true
+
 ## keep the points in the report database too, when the job template has a "Report database"
 ## credential; no credential = not used
 # vm_heat_db: true
