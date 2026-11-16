@@ -653,6 +653,8 @@ def pick_collections(cols, want, staging, grants=None, routed=False):
         raise Fail("no collection %s that the client can read (it reads: %s)" % (staging.strip(), names))
     st = as_col(st[0])
     out = []
+    skip = [str(w).strip()[1:].strip() for w in want or [] if str(w).strip().startswith("!")]     # 1.67.0: ! leaves one out
+    want = [w for w in want or [] if not str(w).strip().startswith("!")] or (["*"] if skip else [])
     for w in want or []:
         w = str(w).strip()
         got = [c for c in cols if fnmatch.fnmatchcase((c.get("name") or "").lower(), w.lower()) or str(c.get("collectionId")) == w]
@@ -662,6 +664,12 @@ def pick_collections(cols, want, staging, grants=None, routed=False):
             c = as_col(c)
             if c["collectionId"] != st["collectionId"] and c not in out:
                 out.append(c)
+    for w in skip:
+        gone = [c for c in cols if fnmatch.fnmatchcase((c.get("name") or "").lower(), w.lower()) or str(c.get("collectionId")) == w]
+        if not gone and not any(ch in w for ch in "*?["):
+            raise Fail("no collection %s to leave out (stigman_ckl_import_collections: !%s) that the client can read (it reads: %s)" % (w, w, names))
+        ids = set(str(c.get("collectionId")) for c in gone)
+        out = [c for c in out if c["collectionId"] not in ids]
     low = [c["name"] for c in out + [st] if grants is not None and grants.get(c["collectionId"], 0) < 2]
     if low and routed:
         raise Fail("the client has only Restricted in %s - with stigman_ckl_import_routes every collection the client reads is "
@@ -855,7 +863,7 @@ def plan_all(p, client, files):
     routes = read_routes(p["routes"], cols)
     # with routes, every collection the client reads is searched (whatever stigman_ckl_import_collections says): a host whose
     # asset is anywhere is written where it is - never created again, never moved out of a collection but the staging one
-    staging, searched = pick_collections(cols, ["*"] if routes else list(p["collections"]), p["collection"], grants, bool(routes))
+    staging, searched = pick_collections(cols, (["*"] + [c for c in p["collections"] if str(c).strip().startswith("!")]) if routes else list(p["collections"]), p["collection"], grants, bool(routes))
     many = len(searched) > 1
     stigs = client.get("/stigs") or []
     stigs_by_id = dict((s.get("benchmarkId"), s) for s in stigs)

@@ -19,7 +19,7 @@ stigman_ckl_import_max_files: 500           # at most this many files (more: not
 stigman_ckl_import_max_mb: 50               # a file larger than this is left out (and said)
 stigman_ckl_import_collection: ""           # the STIG Manager collection (its name) the checklists' assets are in - or are created in (the staging collection)
 # Where else a host's asset is looked for (0.76.0): collection names or ids, * and ? ('*' = every collection the client
-# reads). Its reviews go to each of them whose asset has the STIG matched; the staging collection above is searched
+# reads; !name or !id leaves one out, 1.67.0: ['*', '!48']). Its reviews go to each of them whose asset has the STIG matched; the staging collection above is searched
 # last, and written to only when none of these has the asset; a host in none of them is created there. [] = the
 # collection above only (as 0.75.0).
 stigman_ckl_import_collections: []
@@ -78,7 +78,7 @@ stigman_ckl_import_move_to: imported        # the folder under stigman_ckl_impor
 stigman_ckl_import_mode: import
 # The STIG compliance scorecard (stigman_ckl_import_mode "import and scorecard" or "scorecard"). It reads STIG Manager
 # with the same "STIG Manager API" credential - GET requests only, never a write. docs/CKL_IMPORT.md, the scorecard.
-stigman_scorecard_collections: []           # the collections on it, by name or id ([] = every collection the client reads)
+stigman_scorecard_collections: []           # the collections on it, by name or id, * and ? ([] = every collection the client reads); !name or !id leaves one out: ['*', '!48', '!Archived*']
 stigman_scorecard_top: 5                    # "Top rules open across hosts": this many rules
 stigman_scorecard_weeks: 8                  # the trend line and "The numbers behind the lines": this many weeks
 stigman_scorecard_cat2_warn: 0              # a collection with this many CAT II open or more: Warning (0 = off)

@@ -188,6 +188,12 @@ ServiceNow insights and war room clients, the outage tickets, the hosts' network
 API. urllib raises both outside `URLError`. Each now reports it in its own error type, and a timeout names the setting:
 `no answer within 30 seconds (the setting timeout)`. Test: `tests/test_timeouts_sweep.py`.
 
+**Leave collections out: `!`.** `stigman_scorecard_collections` and `stigman_ckl_import_collections` take `!name` or `!id`
+to leave a collection out: `['*', '!48', '!Archived*']` is every collection the client reads but those. With routes (where
+every collection is searched) the `!` entries still apply. The staging collection is always searched. A `!` naming no
+collection is said (the scorecard) or stops the job (the import), so a typo is seen. The scorecard's list also takes `*`
+and `?` now. Nothing to set up.
+
 ## 1.66.0 — 2026-11-14
 
 **Updating without scripts:** paste `site-automation-1.66.0-changed-since-1.61.0.zip` as it is (from an older version,
