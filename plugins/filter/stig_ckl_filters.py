@@ -180,8 +180,7 @@ def _plan_section(plan, workflow, list_max, auto="none"):
                     auto, AUTO_WORD.get(auto, auto), "; a new asset and its reviews wait for the approval - none this time" if auto == "existing" else "")]}
     if not plan:
         return {"title": "Nothing to write to STIG Manager", "status": "ok", "top": True,
-                "lines": ["Every answer of the checklists is in STIG Manager already, or listed below with why it is not written."
-                          + (" The approval step is not asked for." if workflow else "")]}
+                "lines": ["Everything in the checklists is already in STIG Manager." + (" No approval needed." if workflow else "")]}
     rows = [["NEW ASSET", "%s / %s" % (p.get("collection", ""), p.get("asset", "")), ", ".join(p.get("benchmarks") or [p.get("benchmark", "")]),
              "-", "-", "%s%s, then its %d review(s): Not a Finding %d, Open %d, Not Applicable %d" % (
                  p.get("asset", ""), (" - FQDN " + p["fqdn"]) if p.get("fqdn") else "", p.get("reviews", 0),
@@ -343,14 +342,8 @@ def stig_ckl_report(ci, plan=None, sections=None, workflow=False, list_max=200, 
                               "; ".join(x for x in (c.get("why", ""), ("Route: " + c["route"]) if c.get("route") else "") if x)]
                              for c in cks[:list_max]],
                     "row_status": [STATE_CHIP.get(_state(c, done), "") for c in cks[:list_max]],
-                    "text": "Each STIG of each checklist, in each collection that has its asset: the checklist's host name (HOST_NAME), (new): none there, "
-                            "created once approved - and the STIG installed in STIG Manager whose rules it matched (by the benchmark "
-                            "id, the rule ids, V-numbers or versions; stigman_ckl_import_benchmarks names one). Collections searched: %s; "
-                            "a new asset is created in %s. NaF / Open / NA / NR: the checklist's answers." % (
-                                ("every one the client reads (%d)" % len(ci.get("collections") or [])) if ci.get("routes") else
-                                ", ".join(ci.get("collections") or [col or "-"]),
-                                ("its route's collection, else in %s" % (col or "the staging collection")) if ci.get("routes")
-                                else col or "the collection")})
+                    # 1.67.0: one line; the collections searched are in the job output
+                    "text": "One row per STIG in each checklist: where it goes and what is written. (new) = a new asset."})
     if held_moves:
         out.append({"title": "Not moved - a person decides (%d)" % len(held_moves), "status": "warning",
                     "columns": ["Asset", "In", "Its route", "Would lose it", "What to do"],

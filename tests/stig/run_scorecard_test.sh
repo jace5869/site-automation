@@ -103,7 +103,7 @@ if latest "$work/site" | "$py" -c '
 import json, sys
 r, imp = json.load(sys.stdin), json.load(open(sys.argv[1]))
 titles = [s["title"] for s in r["sections"]]
-assert r["title"].startswith("STIG compliance: 4 CAT I open") and r["title"].endswith(" - " + imp["title"]), r["title"]
+assert r["title"].startswith("STIG compliance: 4 CAT I open") and imp["title"] in r["subtitle"] and " - " + imp["title"] not in r["title"], r["title"]
 assert titles[:3] == ["Start here", "By platform (4)", "By collection (3)"], titles      # 1.67.0: By platform first
 mine = [t for t in titles if t in [s["title"] for s in imp["sections"]]]
 assert mine == [s["title"] for s in imp["sections"]], (titles, "the import sections, in their order")
@@ -262,10 +262,10 @@ AAP_ENV="$AAP" run "a collection whose host list is slow (over stigman_scorecard
     -e "$card" -e "$job" -e '{"stigman_scorecard_hosts_timeout": 1}' \
     -- "STIG compliance: 4 CAT I open; 4 findings closed this week" "SITEA - RHEL 9: CAT I 1, CAT II 8, CAT III 2" \
        "SITEA - RHEL 9: Hosts not listed (STIG Manager was slow: over 1s, stigman_scorecard_hosts_timeout). Its counts are whole." \
-       "SITEA - RHEL 9 (id 2): counts " "SITEA - Windows Server (id 3): counts " "Platform Linux: CAT I 1, CAT II 8, CAT III 2"
+       "SITEA - RHEL 9 (id 2): metrics " "SITEA - Windows Server (id 3): metrics " "Platform Linux: CAT I 1, CAT II 8, CAT III 2"
 cp "$work/sm.keep" "$work/sm.json"
 AAP_ENV="$AAP" run "stigman_scorecard_hosts: false - the counts only, one findings call per collection" ok \
-    -e "$card" -e "$job" -e '{"stigman_scorecard_hosts": false}' -- "STIG compliance: 4 CAT I open" "SITEA - VMware (id 1): counts "
+    -e "$card" -e "$job" -e '{"stigman_scorecard_hosts": false}' -- "STIG compliance: 4 CAT I open" "SITEA - VMware (id 1): metrics "
 grep "/findings" "$work/sm.log" | grep -q "projection=assets" && bad "  ...the host lists were asked for" || ok "  ...no host list asked for"
 AAP_ENV="$AAP" run "stigman_scorecard_collections (a comma list, any case; one that is not there), stigman_scorecard_top: 2, _weeks: 3" ok \
     -e "$card" -e "$job" -e '{"stigman_scorecard_collections": "sitea - rhel 9, SITEA - Storage", "stigman_scorecard_top": 2, "stigman_scorecard_weeks": 3}' \

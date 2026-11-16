@@ -579,8 +579,16 @@ def stig_scorecard(read, point, runs, opts=None):
     sec = {"title": "By collection (%d)" % len(cols), "status": _worst_of(rst), "columns": columns, "column_titles": titles,
            "kinds": ["wrap", "num", "num", "num", "num", "wrap", "", ""], "rows": rows, "row_status": rst, "cell_status": cst,
            "tips": tips, "wrap": True, "keep_case": True}
-    if notes_col:
-        sec["lines"] = notes_col
+    # 1.67.0: what was slow or not read is one short section at the end of the page, not lines under the table; the
+    # trend and "no run to compare with" lines and the unknown "!" names stay in the job output only
+    slow_r = [str(c.get("name") or c.get("id")) for c in good if c.get("rules_read") is False]
+    slow_h = [str(c.get("name") or c.get("id")) for c in good
+              if str(c.get("hosts") or "").startswith(("not listed", "hosts not")) and c.get("rules_read") is not False]
+    slow_lines = (["Not read: %s - %s" % (c.get("name") or c.get("id"), c.get("error")) for c in bad]
+                  + (["Rules too slow (stigman_scorecard_rules_timeout), counts complete: %s." % ", ".join(slow_r)] if slow_r else [])
+                  + (["Host lists too slow (stigman_scorecard_hosts_timeout), counts complete: %s." % ", ".join(slow_h)] if slow_h else []))
+    slow_sec = ({"title": "Slow or not read (%d)" % (len(bad) + len(slow_r) + len(slow_h)),
+                 "status": "warning" if bad else "info", "lines": slow_lines} if slow_lines else None)
     web_sec = dict(sec, rows=web_rows, row_tags=tags)
     if trend:
         web_sec.update(kinds=["wrap", "num", "num", "num", "num", "wrap", "spark", ""], sparks=sparks)
@@ -864,7 +872,7 @@ def stig_scorecard(read, point, runs, opts=None):
         cards.append({"status": "low", "chip": "Paperwork, not hosts", "meta": "Low", "title": "%d fixed, still open" % len(fixed),
                       "subject": "The hosts pass; STIG Manager has not caught up.",
                       "next": "The next checklist import (workflow 40) closes them."})
-    else:
+    elif scans:                                 # 1.67.0: no scans - no card and no section (nothing to say on the page)
         cards.append({"status": "ok" if scans else "info", "chip": "Paperwork, not hosts", "meta": "Low",
                       "title": "Nothing fixed and still open" if scans else "No scan results to compare with",
                       "subject": "STIG Manager agrees with the last scans." if scans else "It fills once a STIG drift report has run."})
@@ -901,8 +909,10 @@ def stig_scorecard(read, point, runs, opts=None):
         + ["Compared with the run of %s UTC." % _utc(base["_t"]).strftime("%Y-%m-%d %H:%M") if base else "No run 6 to 8 days ago was found."]
         + [str(x) for x in o.get("history") or [] if x]}
 
-    sections = [card_sec, pl_sec, sec, top_sec, fix_sec] + ([num_sec] if num_sec else [])
-    web = [card_sec, pl_web, web_sec, top_sec, fix_sec] + ([num_sec] if num_sec else [])
+    last = [slow_sec] if slow_sec else []
+    fixes = [fix_sec] if (scans or fixed) else []
+    sections = [card_sec, pl_sec, sec, top_sec] + fixes + ([num_sec] if num_sec else []) + last
+    web = [card_sec, pl_web, web_sec, top_sec] + fixes + ([num_sec] if num_sec else []) + last
     if o.get("portal"):                       # 1.67.0, report_portal_url: the website's copy gets the site portal's links
         pf = _portal()
         web_sec = pf.add_section_link(dict(web_sec), "Import checklists", pf.portal_link(o["portal"], "ckl_import", {}))
@@ -910,7 +920,7 @@ def stig_scorecard(read, point, runs, opts=None):
         if fixed and fix_sec.get("rows"):
             pf.add_link_column(web_fix, [pf.portal_link(o["portal"], "stig_recheck", {"target": r[0]}) for r in fixed[:list_max]],
                                "Recheck")
-        web = [card_sec, pl_web, web_sec, top_sec, web_fix] + ([num_sec] if num_sec else [])
+        web = [card_sec, pl_web, web_sec, top_sec] + ([web_fix] if fixes else []) + ([num_sec] if num_sec else []) + last
 
     # ---- the workbook
     def cut(names):
@@ -942,6 +952,8 @@ def stig_scorecard(read, point, runs, opts=None):
     lines += ["%s: %s" % (r[0], ("CAT I %s, CAT II %s, CAT III %s, %s" % (r[2], r[3], r[4], str(r[5]).replace("\n", ": ")))) for r in rows[:len(good)]]
     lines += ["Platform %s: CAT I %s, CAT II %s, CAT III %s, %s" % (r[0], r[2], r[3], r[4], str(r[5]).replace("\n", ": ")) for r in prow]
     lines += notes_col + p_lines
+    if not fixes:                                 # 1.67.0: off the page, said here
+        lines += list(fix_sec.get("lines") or [])
     lines += [str(x) for x in o.get("history") or [] if x]        # where the earlier points came from, in the job output too
     # the page's filter buttons (atlas and brief; site_report.js): a platform, a collection - when there are two to choose from
     facets = {}

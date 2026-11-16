@@ -483,12 +483,12 @@ class Scorecard(unittest.TestCase):
 
     def test_no_scan_results_and_none_fixed(self):
         d = card()
-        s = section(d, "Fixed on the host")
-        self.assertEqual(s["title"], "Fixed on the host, still Open in STIG Manager (0)")
-        self.assertIn("stigman_scorecard_drift_templates", s["lines"][0])
+        # 1.67.0: no scans - the section and its card are left off the page; why is in the job output
+        self.assertFalse([x for x in d["sections"] + d["web"] if x["title"].startswith("Fixed on the host")])
+        self.assertIn("stigman_scorecard_drift_templates", "\n".join(d["lines"]))
         self.assertEqual(tile(d, "Fixed on host, still open")["value"], "-")
         self.assertNotIn("status", tile(d, "Fixed on host, still open"))           # nothing to compare: no colour
-        self.assertEqual(section(d, "Start here")["cards"][2]["status"], "info")
+        self.assertFalse([c for c in section(d, "Start here")["cards"] if c.get("chip") == "Paperwork, not hosts"])
         d = card(opts={"fixed": {"jobs": [{"job": 1, "assets": 6}], "rows": [], "why": []}})
         self.assertEqual(section(d, "Fixed on the host")["lines"],
                          ["None: every rule the last scans (1 job, 6 assets) found passing is closed in STIG Manager too."])
@@ -515,9 +515,9 @@ class Scorecard(unittest.TestCase):
         self.assertEqual(set(r[6] for r in web["rows"]), {"trend starts next week"})
         self.assertEqual(set(r[5] for r in web["rows"]), {"-"})
         self.assertEqual(web["columns"][6], "Open")
-        self.assertEqual(len(web["lines"]), 2)
-        self.assertIn("The trend starts next week", web["lines"][0])
-        self.assertEqual([s["title"] for s in d["sections"]][-1], "Fixed on the host, still Open in STIG Manager (0)")   # no numbers table
+        self.assertNotIn("lines", web)            # 1.67.0: the first run's notes are in the job output, not the page
+        self.assertIn("The trend starts next week: a line needs two weekly points, and this run is the first.", d["lines"])
+        self.assertEqual([s["title"] for s in d["sections"]][-1], "Top 5 rules open across hosts")   # no numbers table, no scans
         self.assertEqual(section(d, "Start here")["cards"][1]["title"], "No run last week to compare with")
         self.assertEqual((d["counts"]["weekly_points"], d["counts"]["compared"]), (1, False))
         self.assertNotIn("Open per week", [x["name"] for x in d["xlsx"]])
@@ -549,7 +549,9 @@ class Scorecard(unittest.TestCase):
         self.assertEqual(sec["rows"][-1], [WIN, "-", "-", "-", "-", "-", "-", "Not read"])
         self.assertEqual(sec["row_status"][-1], "warning")
         self.assertIn("HTTP 403", sec["tips"][-1][7])
-        self.assertTrue(sec["lines"][0].startswith("Not read: SITEA - Windows Server - HTTP 403"))
+        slow = section(d, "Slow or not read (1)")          # 1.67.0: at the end of the page, not under the table
+        self.assertIs(d["sections"][-1], slow)
+        self.assertTrue(slow["lines"][0].startswith("Not read: SITEA - Windows Server - HTTP 403"))
         self.assertEqual((d["counts"]["cat1"], d["counts"]["collections"], d["counts"]["not_read"]), (1, 2, 1))
         self.assertIn("Not read: SITEA - Windows Server - HTTP 403 from", "\n".join(d["lines"]))
         self.assertNotIn("CAT I -", "\n".join(d["lines"]))
@@ -557,8 +559,9 @@ class Scorecard(unittest.TestCase):
     def test_a_collection_asked_for_that_is_not_there(self):
         read = read_of()
         read["missing"] = ["SITEA - Gone"]
-        sec = section(card(read=read), "By collection")
-        self.assertIn("Not there, or the client cannot read it (stigman_scorecard_collections): SITEA - Gone.", sec["lines"])
+        d = card(read=read)
+        self.assertNotIn("lines", section(d, "By collection"))      # 1.67.0: the job output only
+        self.assertIn("Not there, or the client cannot read it (stigman_scorecard_collections): SITEA - Gone.", d["lines"])
         read = dict(read_of(), collections=[], missing=["SITEA - Gone"])
         d = card(read=read)
         sec = section(d, "By collection (0)")
@@ -1074,8 +1077,8 @@ class HostLists(unittest.TestCase):
         read = {"ok": True, "error": "", "read_at": NOW, "collections": cols, "missing": []}
         d = card(read=read, opts={"fixed": {"rows": [["rhel01.example.mil", RHEL, "rhel01", "SV-257985", "CAT II", "x", NOW]], "jobs": [{}]}})
         self.assertEqual(d["counts"]["cat1"], 4)
-        self.assertIn("SITEA - RHEL 9: Hosts not listed (STIG Manager was slow: over 120s, stigman_scorecard_hosts_timeout). Its counts are whole.",
-                      section(d, "By collection")["lines"])
+        self.assertEqual(section(d, "Slow or not read (1)")["lines"],
+                         ["Host lists too slow (stigman_scorecard_hosts_timeout), counts complete: SITEA - RHEL 9."])
         g = section(d, "By collection", "web")["groups"][0]
         self.assertEqual(g["lines"], ["Hosts not listed (STIG Manager was slow: over 120s, stigman_scorecard_hosts_timeout)."])
         # fixed on the host: a collection whose hosts were not listed is left out, said (a row cannot be tied to its host)

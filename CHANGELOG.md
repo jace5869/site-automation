@@ -6,6 +6,8 @@
 (`playbooks/site_portal_deploy.yml`). New settings have defaults: `portal_*` (roles/site_portal_stack). To do: 1.67.0
 steps 100, 101 and 102.
 
+- STIG scorecard: what was slow or not read is one short section at the end of the page ("Slow or not read"), one line per kind with its setting. The first-run lines (trend, no run to compare with) and unknown `!` names are in the job output only.
+
 **The site portal.** One web place for the reports and what people may start from them, behind STIG Manager's nginx at
 `/portal/`. People open it with their card; nginx's mTLS says who they are, as `/ask/` does.
 
