@@ -145,6 +145,11 @@ values removed from the result file, the audit log and `--json` output. The jobs
 its own path) as before. A host's `/usr/local/bin/act` stays a link to it (1.53.0), so `act` typed on a host is 0.6.26
 too. Nothing to set up.
 
+**Fixed: the VMware single sign-on check crashed on a certificate that was not plain PEM.** *VM - health report* stopped at
+*single sign-on - services, STS certificate, ...* with `Unable to load PEM file ... InvalidHeader`. A certificate is now
+read from any of the forms seen (PEM, Windows or escaped line ends, the bare base64 body), and one that still cannot be
+read is a note in the report, not a crash. Nothing to set up.
+
 ## 1.66.0 — 2026-11-14
 
 **Updating without scripts:** paste `site-automation-1.66.0-changed-since-1.61.0.zip` as it is (from an older version,

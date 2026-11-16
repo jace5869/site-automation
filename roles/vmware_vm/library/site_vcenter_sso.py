@@ -97,6 +97,20 @@ def not_after(c):
     return _aware(getattr(c, "not_valid_after_utc", None) or c.not_valid_after)
 
 
+def load_cert(text):
+    """A certificate from text in any of the forms seen: PEM, PEM with escaped or Windows line ends, or the bare base64
+    body without its BEGIN/END lines. The body is decoded as DER, so line ends and stray characters do not matter."""
+    t = str(text or "")
+    if "-----BEGIN" in t:
+        t = t.split("-----BEGIN", 1)[1].split("-----", 1)[1].split("-----END", 1)[0]
+    body = re.sub(r"\\[rn]|[^A-Za-z0-9+/=]", "", t)
+    try:
+        der = base64.b64decode(body + "=" * (-len(body) % 4))
+    except (ValueError, TypeError):
+        raise ValueError("not a certificate (no base64 body)")
+    return x509.load_der_x509_certificate(der)
+
+
 def pems_in(obj):
     """Every PEM certificate anywhere in a JSON answer (vCenter's field names vary between releases)."""
     return [p.replace("\\n", "\n") for p in PEM_RE.findall(json.dumps(obj) if not isinstance(obj, str) else obj)]
@@ -189,7 +203,11 @@ def read_vcenter(name, p, now):
             active = d.get("active_cert_chain") if isinstance(d, dict) and d.get("active_cert_chain") else d
             seen = set()
             for pem in pems_in(active):
-                c = x509.load_pem_x509_certificate(pem.encode("ascii"))
+                try:
+                    c = load_cert(pem)
+                except ValueError as e:
+                    out["notes"].append("a certificate of the STS signing chain could not be read: %s" % e)
+                    continue
                 fp = c.fingerprint(hashes.SHA256())
                 if fp in seen:                  # every certificate of the active chain once: the signing one and the CA above it
                     continue
@@ -262,8 +280,8 @@ def check_ocsp(x, timeout, now):
                 rec["why"] = "the Python package cryptography is missing (needed for an OCSP request)"
                 return rec
             rec["mode"] = "request"
-            cert = x509.load_pem_x509_certificate(x["cert"].encode("ascii"))
-            issuer = x509.load_pem_x509_certificate(x["issuer"].encode("ascii"))
+            cert = load_cert(x["cert"])
+            issuer = load_cert(x["issuer"])
             body = ocsp.OCSPRequestBuilder().add_certificate(cert, issuer, hashes.SHA1()).build().public_bytes(serialization.Encoding.DER)
             req = urlrequest.Request(url, data=body, headers={"Content-Type": "application/ocsp-request", "Accept": "application/ocsp-response",
                                                               "User-Agent": UA})
@@ -343,8 +361,8 @@ def check_crl(x, timeout, now, max_bytes):
         nu = _aware(getattr(crl, "next_update_utc", None) or crl.next_update)
         rec["this_update"] = tu.strftime("%Y-%m-%d %H:%M UTC") if tu else ""
         rec["next_update"] = nu.strftime("%Y-%m-%d %H:%M UTC") if nu else ""
-        issuer = x509.load_pem_x509_certificate(x["issuer"].encode("ascii")) if x.get("issuer") else None
-        cert = x509.load_pem_x509_certificate(x["cert"].encode("ascii")) if x.get("cert") else None
+        issuer = load_cert(x["issuer"]) if x.get("issuer") else None
+        cert = load_cert(x["cert"]) if x.get("cert") else None
         if issuer is not None and crl.issuer != issuer.subject:
             rec["why"] = "the CRL is issued by %s, not by the certificate's CA (%s)" % (crl.issuer.rfc4514_string(), issuer.subject.rfc4514_string())
         elif issuer is not None and not crl.is_signature_valid(issuer.public_key()):
