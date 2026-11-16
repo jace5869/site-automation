@@ -575,6 +575,9 @@ class Portal(object):
             view["result"] = {"fixed": fixed if fixed in ("true", "false") else "unknown",
                               "before": str(res.get("before") or "")[:300], "after": str(res.get("after") or "")[:300],
                               "summary": str(res.get("summary") or "")[:300], "finding_id": str(res.get("finding_id") or "")[:200]}
+            if not self.actions.get(rec.get("action"), {}).get("fixes", True):
+                # an action that only reads (fixes: false) never says Fixed or Still there, nor a before and after
+                view["result"].update(fixed="unknown", before="", after="", summary="This action only reads: it changed nothing.")
         nxt = next((str((a.get("act_triage_finding") or {}).get("next_action") or "") for a in reversed(arts)
                     if isinstance(a.get("act_triage_finding"), dict)), "")
         vals = rec.get("values") or {}

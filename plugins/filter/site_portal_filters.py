@@ -32,7 +32,7 @@ TEXT_MAX = 4000                    # a text var's max when it names none
 TEXT_CEILING = 20000               # no text var may allow more (the request's size limit holds the rest)
 HOST_MAX = 255
 RESERVED = ("portal_requested_by",)
-ACTION_KEYS = ("title", "aap", "vars", "limit_from", "approval", "who", "description", "kinds", "button", "when")
+ACTION_KEYS = ("title", "aap", "vars", "limit_from", "approval", "who", "description", "kinds", "button", "when", "fixes")
 KIND_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 BUTTON_MAX = 40
 VAR_KEYS = ("kind", "values", "max", "pattern", "label", "required", "default")
@@ -181,8 +181,13 @@ def check_actions(actions):
             when = {}
         if (kinds or when) and not kinds:
             problems.append("%s: when needs kinds" % where)
+        # part C: false = the action only reads (ACT triage, a recheck): its job page never says Fixed or Still there
+        fixes = a.get("fixes", True)
+        if not isinstance(fixes, bool):
+            problems.append("%s: fixes must be true or false" % where)
+            fixes = True
         out[name] = {"name": name, "title": title, "description": _text(a.get("description")).strip(),
-                     "kinds": kinds, "button": button, "when": when,
+                     "kinds": kinds, "button": button, "when": when, "fixes": fixes,
                      "aap": {"type": aap.get("type"), "name": _text(aap.get("name")).strip()}, "vars": clean_vars,
                      "limit_from": limit_from or "", "approval": approval is True, "who": who}
     return out, problems

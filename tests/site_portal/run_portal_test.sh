@@ -107,7 +107,13 @@ cat > "$work/vars.json" <<EOF
                            "report_job": {"kind": "text", "max": 12, "pattern": "[0-9]{1,12}", "label": "Report's job"},
                            "finding_id": {"kind": "text", "max": 120, "pattern": "(fapolicyd|eventlog):[A-Za-z0-9_.:-]{1,100}",
                                           "label": "Finding"}},
-                  "limit_from": "target", "who": ["DOE.JANE.Q.1234567890", "APPROVER.ALEX.B.3456789012", "POE.PAT.C.4567890123"]}}}
+                  "limit_from": "target", "fixes": false, "kinds": ["fapolicyd", "eventlog"], "button": "Ask ACT",
+                  "who": ["DOE.JANE.Q.1234567890", "APPROVER.ALEX.B.3456789012", "POE.PAT.C.4567890123"]},
+   "disk_cleanup": {"title": "Clean up this mount", "aap": {"type": "job", "name": "Disk - clean up one mount"}, "button": "Clean up",
+                    "kinds": ["disk_full"], "limit_from": "target",
+                    "vars": {"target": {"kind": "inventory_host", "label": "Host"},
+                             "report_job": {"kind": "text", "max": 12, "pattern": "[0-9]{1,12}", "label": "Report's job"},
+                             "finding_id": {"kind": "text", "max": 200, "pattern": "[A-Za-z0-9_.:/@-]{1,200}", "label": "Finding"}}}}}
 EOF
 deploy() {
     (cd "$repo" && CONTROLLER_HOST=http://portal-test-aap:8000 CONTROLLER_OAUTH_TOKEN=test-token-1670 ANSIBLE_NOCOLOR=1 \
@@ -315,8 +321,11 @@ $t"; fi
 # ---- the screenshots (a test-only server: one fixed person, the approver) ------------------------------------------------
 if [ -n "$(command -v google-chrome chromium chromium-browser 2>/dev/null | head -1)" ]; then
     r="$(c "$k/jdoe" launch ckl_import '{"stigman_ckl_import_mode": "scorecard"}')"          # one waiting, for the page
+    r="$(c "$k/jdoe" launch disk_cleanup '{"target": "web01.example.mil", "report_job": "907", "finding_id": "disk_full:web01.example.mil:/var"}')"
+    fix="$(echo "$r" | jq_ 'd["body"].get("job_id", "")')"                                 # a fix: its page says Fixed
+    c "$k/jdoe" wait "$fix" >/dev/null
     if (cd "$repo" && "$py" "$here/portal_shots.py" "https://localhost:$shot_port/portal/" "$shots" \
-            "jobs=jobs/$job2" "jobs-workflow=jobs/$wf" "jobs-result=jobs/$job" "approvals=approvals" \
+            "jobs=jobs/$job2" "jobs-workflow=jobs/$wf" "jobs-result=jobs/$fix" "jobs-triage=jobs/$job" "approvals=approvals" \
             "confirm=actions/act_triage?target=web01.example.mil&report_job=907&finding_id=eventlog%3Adisk-errors" "home=") > "$work/shots.txt" 2>&1; then
         pass "screenshots: jobs, approvals, the confirm page, home - 1280 and 800, light and dark, no script error, no side scroll ($shots)"
     else fail "screenshots" "$(cat "$work/shots.txt")"; fi

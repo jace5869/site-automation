@@ -120,7 +120,8 @@ and 102.
   **Run** stays off; a second launch is refused.
 - **The result.** Each fix ends with `roles/portal_result`. The portal's job page shows **Fixed**, **Still there** or
   **Not checked** at the top, with before and after. The action ACT names next (`act_triage_finding.next_action`)
-  gets a button there when it fits the finding.
+  gets a button there when it fits the finding. An action that only reads (`fixes: false` in `actions.yml`: *Ask ACT*,
+  the STIG recheck) is always **Not checked**; `portal_result_read_only: true` refuses Fixed in its playbook too.
 - **AAP - set up portal actions** (new job, step 102). It makes or updates the job templates and workflows of
   `roles/site_portal_stack/files/workflows.yml` (nodes, approval nodes, links, credentials, prompts) and gives the
   portal's account **Execute** on them, **Approve** on a workflow with an approval node, and nothing more. It never

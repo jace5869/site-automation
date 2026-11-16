@@ -12,8 +12,13 @@
   vars:
     # true / false / unknown - a word the job wrote, or a yes/no
     _fixed: >-
-      {{ 'unknown' if portal_result_fixed | string | lower in ['unknown', 'none', '', 'not checked']
+      {{ 'unknown' if portal_result_read_only | bool or portal_result_fixed | string | lower in ['unknown', 'none', '', 'not checked']
          else ('true' if portal_result_fixed | bool else 'false') }}
+
+- name: Result | a job that only reads never says Fixed or Still there
+  ansible.builtin.debug:
+    msg: "portal_result_read_only is true: the result is Not checked, not {{ portal_result_fixed }} - this job changes nothing."
+  when: portal_result_read_only | bool and portal_result_fixed | string | lower not in ['unknown', 'none', '', 'not checked']
 
 - name: Result | Fixed, Still there or Not checked
   ansible.builtin.debug:

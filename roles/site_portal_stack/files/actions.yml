@@ -14,10 +14,13 @@
 #               takes target, report_job and finding_id, and its playbook reads the finding back (roles/finding_ref)
 #   button      the button's short label on the report (title stays the confirm page's)
 #   when        only on a finding whose data match: {field: value or [values]}, e.g. {cat: ["CAT II", "CAT III"]}
+#   fixes       false for an action that only reads (ACT triage, a recheck): its job page then always says Not checked
+#               (left out = true; its playbook's portal_result also refuses Fixed: portal_result_read_only)
 actions:
   stig_recheck:
     title: STIG recheck of one host
     aap: {type: workflow, name: "STIG - recheck one host"}          # workflow 45: the Linux and the Windows recheck
+    fixes: false
     vars:
       target: {kind: inventory_host, label: Host}
     limit_from: target
@@ -39,6 +42,7 @@ actions:
     aap: {type: workflow, name: "ACT - triage finding"}             # workflow 44
     kinds: [fapolicyd, fapolicyd_deny, eventlog]
     button: Ask ACT
+    fixes: false
     vars:
       target: {kind: inventory_host, label: Host}
       report_job: {kind: text, label: AAP job of the report, max: 12, pattern: "[0-9]{1,12}"}

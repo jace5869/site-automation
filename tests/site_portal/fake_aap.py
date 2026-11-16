@@ -39,6 +39,8 @@ STATE = {
              "survey_enabled": False},
             {"id": 8, "name": "No prompts template", "ask_variables_on_launch": False, "ask_limit_on_launch": False,
              "survey_enabled": False},
+            {"id": 9, "name": "Disk - clean up one mount", "ask_variables_on_launch": True, "ask_limit_on_launch": True,
+             "survey_enabled": False},
         ],
         "workflow_job_templates": [
             {"id": 40, "name": "Checklists imported into STIG Manager", "ask_variables_on_launch": False,
