@@ -93,7 +93,9 @@ class Spec(unittest.TestCase):
                         gated += 1
                         self.assertTrue(str((g.get("extra_data") or {}).get("workflow_gate_var") or ""), w["name"])
                         into = [link_ for p in nodes.values() for link_ in ("success", "failure", "always") if g["id"] in (p.get(link_) or [])]
-                        self.assertEqual(into, ["failure"], w["name"])
+                        # a check that fails on purpose reaches its gate on failure (37, 40); a plan step that ends green
+                        # with its plan (49-51) on success - one link either way, never always
+                        self.assertIn(into, (["failure"], ["success"]), w["name"])
         self.assertGreaterEqual(gated, 1)
 
     def test_extra_data_checked(self):
