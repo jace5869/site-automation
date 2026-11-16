@@ -104,14 +104,14 @@ import json, sys
 r, imp = json.load(sys.stdin), json.load(open(sys.argv[1]))
 titles = [s["title"] for s in r["sections"]]
 assert r["title"].startswith("STIG compliance: 4 CAT I open") and r["title"].endswith(" - " + imp["title"]), r["title"]
-assert titles[0] == "Start here" and titles[1] == "By collection (3)", titles
+assert titles[:3] == ["Start here", "By platform (3)", "By collection (3)"], titles      # 1.67.0: By platform first
 mine = [t for t in titles if t in [s["title"] for s in imp["sections"]]]
 assert mine == [s["title"] for s in imp["sections"]], (titles, "the import sections, in their order")
 assert titles.index(mine[0]) > titles.index("By collection (3)"), titles
 labels = [t["label"] for t in r["summary"]]
 assert labels[:6] == ["CAT I open", "CAT II open", "CAT III open", "Closed this week", "Opened this week", "Fixed on host, still open"], labels
 assert labels[6:] == [t["label"] for t in imp["summary"]], labels
-col = r["sections"][1]
+col = r["sections"][2]
 assert "trend starts next week" in json.dumps(col) and "sparks" not in col, col.get("kinds")
 assert titles[-1] == "How the scorecard counts", titles
 '  "$work/import.json"; then ok "  ...the report: the scorecard's tiles and sections first, every tile and section of the import after them, unchanged"
@@ -123,8 +123,15 @@ AAP_ENV="$AAP" run "with AAP's job history: closed and opened since last week, t
     -- "STIG compliance: 4 CAT I open; 4 findings closed this week" "Closed this week: 4 (since $week)" "Opened this week: 2 (since $week)" \
        "Fixed on host, still open: 2 (Low)" "SITEA - RHEL 9: CAT I 1, CAT II 8, CAT III 2, ▼ Better: 4 closed, 1 opened" \
        "SITEA - VMware: CAT I 0, CAT II 3, CAT III 0, ▬ Same: 0 closed, none opened" \
-       "SITEA - Windows Server: CAT I 3, CAT II 4, CAT III 1, ▲ Worse: 0 closed, 1 opened" "emailed"
+       "SITEA - Windows Server: CAT I 3, CAT II 4, CAT III 1, ▲ Worse: 0 closed, 1 opened" "emailed" \
+       "Platform Linux: CAT I 1, CAT II 8, CAT III 2, ▼ Better: 4 closed, 1 opened" \
+       "Platform Windows: CAT I 3, CAT II 4, CAT III 1, ▲ Worse: 0 closed, 1 opened" \
+       "Platform Other: CAT I 0, CAT II 3, CAT III 0, ▬ Same: 0 closed, none opened" \
+       "The platform lines start with 1.67.0: the earlier weeks' points have no platforms."
 only_get "only GET requests reached STIG Manager"
+# 1.67.0: each rule's STIG and each asset's STIGs asked for
+grep -q "GET /api/collections/2/findings?.*projection=stigs" "$work/sm.log" && grep -q "GET /api/assets?collectionId=2&projection=stigs" "$work/sm.log" \
+    && ok "  ...the rules' STIGs and the assets' STIGs read (projection=stigs)" || bad "  ...no projection=stigs read"
 if grep -qv '^GET ' "$work/aap.log"; then bad "  ...a request to AAP that was not a GET"; else
     reads="$(grep -o 'GET /api/controller/v2/jobs/[0-9]*/' "$work/aap.log" | sort -u | wc -l)"
     [ "$reads" = 12 ] && ! grep -q 'jobs/4011/' "$work/aap.log" \
@@ -138,7 +145,7 @@ m = email.message_from_binary_file(open(sys.argv[1], "rb"), policy=email.policy.
 html = m.get_body(preferencelist=("html",)).get_content()
 assert m["Subject"].startswith("[AAP] STIG compliance: 4 CAT I open; 4 findings closed this week"), m["Subject"]
 assert "<svg" not in html, "a trend line in the email"
-for text in ("CAT I open", "Closed this week", "By collection (3)", "SITEA - Windows Server", "Top 5 rules open across hosts", "SV-258036",
+for text in ("CAT I open", "Closed this week", "By collection (3)", "By platform (3)", "SITEA - Windows Server", "Top 5 rules open across hosts", "SV-258036",
              "Fixed on the host, still Open in STIG Manager (2)", "rhel01.example.mil", "20 → 11", "4 closed, 1 opened",
              "Each checklist", "How the scorecard counts"):
     assert text in html, text
@@ -148,7 +155,7 @@ assert x, "no workbook attached"
 open(sys.argv[2], "wb").write(x[0].get_content())
 z = zipfile.ZipFile(sys.argv[2])
 book = z.read("xl/workbook.xml").decode()
-for sheet in ("By collection", "Rules across hosts", "Open rules by collection", "Since last week", "Fixed on host, still open", "Open per week"):
+for sheet in ("By collection", "By platform", "Rules across hosts", "Open rules by collection", "Since last week", "Fixed on host, still open", "Open per week"):
     assert 'name="%s"' % sheet in book, (sheet, book)
 cells = " ".join(z.read(n).decode() for n in z.namelist() if n.startswith("xl/"))
 for text in ("SV-257985", "SV-254247", "rhel07", "Closed", "Opened"):
@@ -170,6 +177,12 @@ n="$(grep -o '<svg class="spark"' "${page:-/dev/null}" | wc -l)"
 if [ -n "$page" ] && [ "$n" = 3 ] && grep -q 'aria-label="SITEA - RHEL 9, open findings: 20 in the week to ' "$page" && grep -q "Open, 8 weeks" "$page"; then
     ok "  ...the website (atlas look): a trend line per collection, its values as the label"
 else bad "  ...the website page: $n trend lines (${page:-no page})"; fi
+# 1.67.0: a line per platform in its hue, the filter buttons, each collection that opens, the rows tagged
+if [ -n "$page" ] && [ "$(grep -o '<svg class="spark hu[0-9]"' "$page" | wc -l)" = 3 ] && grep -q '<div class="facets" hidden' "$page" \
+   && [ "$(grep -o '<details class="grp"' "$page" | wc -l)" = 3 ] && grep -q 'data-pf="pf1 pf0" data-col="c2"' "$page" \
+   && grep -q 'data-fv="pf2"' "$page" && grep -q '<option value="c3">SITEA - Windows Server</option>' "$page"; then
+    ok "  ...by platform: a line per platform, the Platform and Collection buttons, each collection opens"
+else bad "  ...the website page's platforms"; fi
 [ -n "${SCORECARD_TEST_KEEP:-}" ] && { mkdir -p "$SCORECARD_TEST_KEEP" && cp -r "$work/site" "$SCORECARD_TEST_KEEP/atlas"; }
 for look in brief glass; do
     mkdir -p "$work/site-$look"
@@ -181,6 +194,11 @@ for look in brief glass; do
     else [ -n "$page" ] && [ "$n" = 0 ] && grep -q "SITEA - Windows Server" "$page" && ok "  ...the tables, no trend line" || bad "  ...glass page"; fi
     [ -n "${SCORECARD_TEST_KEEP:-}" ] && cp -r "$work/site-$look" "$SCORECARD_TEST_KEEP/$look"
 done
+# 1.67.0: stigman_scorecard_platform_filter - only Windows: one collection, its numbers, the platform said
+AAP_ENV="$AAP" run "stigman_scorecard_platform_filter [Windows]: only Windows on the page" ok -e "$both" -e "$job" \
+    -e '{"stigman_scorecard_platform_filter": ["Windows"]}' \
+    -- "STIG compliance: 3 CAT I open" "Platform Windows: CAT I 3, CAT II 4, CAT III 1" "SITEA - Windows Server: CAT I 3" \
+       "Only Windows (stigman_scorecard_platform_filter)" "!Platform Linux" "!SITEA - RHEL 9: CAT I"
 
 # ---- the drop folder -------------------------------------------------------------------------------------------------
 AAP_ENV="$AAP" run "import and scorecard, a drop folder with no checklist: not an error - one line, the scorecard, ok" ok \
@@ -237,6 +255,17 @@ AAP_ENV="$AAP" run "an older STIG Manager (no metrics: the assets counted) and a
        "Not read: SITEA - Windows Server - HTTP 403" "!SITEA - Windows Server: CAT I"
 grep -q "GET /api/assets?collectionId=2" "$work/sm.log" && ok "  ...the assets counted from GET /assets" || bad "  ...no GET /assets"
 cp "$work/sm.keep" "$work/sm.json"
+# 1.67.0: a big collection - STIG Manager slow only on the host lists (projection=assets): the counts kept, said, timed
+"$py" -c 'import json, sys; d = json.load(open(sys.argv[1])); d["slow_assets"] = {"2": 4}; json.dump(d, open(sys.argv[1], "w"))' "$work/sm.json"
+AAP_ENV="$AAP" run "a collection whose host list is slow (over stigman_scorecard_hosts_timeout): its counts kept, said; the job green" ok \
+    -e "$card" -e "$job" -e '{"stigman_scorecard_hosts_timeout": 1}' \
+    -- "STIG compliance: 4 CAT I open; 4 findings closed this week" "SITEA - RHEL 9: CAT I 1, CAT II 8, CAT III 2" \
+       "SITEA - RHEL 9: Hosts not listed (STIG Manager was slow: over 1s, stigman_scorecard_hosts_timeout). Its counts are whole." \
+       "SITEA - RHEL 9 (id 2): counts " "SITEA - Windows Server (id 3): counts " "Platform Linux: CAT I 1, CAT II 8, CAT III 2"
+cp "$work/sm.keep" "$work/sm.json"
+AAP_ENV="$AAP" run "stigman_scorecard_hosts: false - the counts only, one findings call per collection" ok \
+    -e "$card" -e "$job" -e '{"stigman_scorecard_hosts": false}' -- "STIG compliance: 4 CAT I open" "SITEA - VMware (id 1): counts "
+grep "/findings" "$work/sm.log" | grep -q "projection=assets" && bad "  ...the host lists were asked for" || ok "  ...no host list asked for"
 AAP_ENV="$AAP" run "stigman_scorecard_collections (a comma list, any case; one that is not there), stigman_scorecard_top: 2, _weeks: 3" ok \
     -e "$card" -e "$job" -e '{"stigman_scorecard_collections": "sitea - rhel 9, SITEA - Storage", "stigman_scorecard_top": 2, "stigman_scorecard_weeks": 3}' \
     -- "STIG compliance: 1 CAT I open; 4 findings closed this week" "!SITEA - Windows Server" "Not there, or the client cannot read it" "SITEA - Storage"
@@ -246,7 +275,7 @@ r = json.load(sys.stdin)
 t = [s for s in r["sections"] if s["title"].startswith("Top ")][0]
 n = [s for s in r["sections"] if s["title"].startswith("The numbers behind")][0]
 assert t["title"] == "Top 2 rules open across hosts" and len(t["rows"]) == 2, t["title"]
-assert len(n["columns"]) == 4 and len(n["rows"]) == 1, n["columns"]' && ok "  ...1 collection, 2 rules, 3 weeks" || bad "  ...the settings in the report"
+assert len(n["columns"]) == 4 and [x[0] for x in n["rows"] if not x[0].startswith("Platform ")] == ["SITEA - RHEL 9"], n["rows"]' && ok "  ...1 collection, 2 rules, 3 weeks" || bad "  ...the settings in the report"
 
 # ---- what cannot be read ---------------------------------------------------------------------------------------------
 AAP_ENV="CONTROLLER_HOST=http://127.0.0.1:$((port + 2)) CONTROLLER_OAUTH_TOKEN=goodtoken" \

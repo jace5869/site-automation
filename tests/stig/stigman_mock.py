@@ -21,6 +21,8 @@ DATA.json: {"secret": "...", "collections": [{"collectionId": "1", "name": "..."
 An asset may carry "labels": [{"labelId", "name"}]; GET /api/assets gives each its statusStats.maxTs (its reviews' latest ts).
 1.26.0: PATCH /api/assets/A {"collectionId"} moves it (Manage in both; a name in the destination: a duplicate error, as
 STIG Manager); PUT /api/assets/A/stigs/B assigns a STIG (Manage; at the collection's revision).
+1.67.0: projection=stigs on the findings gives each rule's STIGs (the review's or its rule's benchmarkId); "slow_assets":
+{"<collectionId>": seconds} makes the findings with projection=assets of those collections that slow (a big collection).
 1.58.0, the scorecard's reads: GET /api/collections/C/findings?aggregator=ruleId&projection=assets (the reviews with the
 result fail, a row per rule: ruleId, title, severity, version, assetCount, assets) and
 GET /api/collections/C/metrics/summary/collection (assets: how many) - "no_metrics": true answers that one 404 (an older
@@ -215,6 +217,8 @@ class H(BaseHTTPRequestHandler):
                 return self.send(403, {"error": "User has insufficient privilege to complete this request."})
             if q.get("aggregator") != ["ruleId"]:
                 return self.send(400, {"error": "this test API aggregates findings by ruleId only"})
+            if "assets" in q.get("projection", []) and parts[3] in d.get("slow_assets", {}):
+                time.sleep(float(d["slow_assets"][parts[3]]))      # 1.67.0: slow only with the hosts (projection=assets)
             rows = {}
             for a in d["assets"].get(parts[3], []):
                 for r in d["reviews"].get(a["assetId"], []):
@@ -225,6 +229,13 @@ class H(BaseHTTPRequestHandler):
                                                       "version": rule.get("version", ""), "assetCount": 0, "assets": []})
                     f["assetCount"] += 1
                     f["assets"].append({"assetId": a["assetId"], "name": a["name"]})
+                    b = r.get("benchmarkId") or rule.get("benchmarkId")
+                    if b and b not in f.setdefault("_stigs", []):
+                        f["_stigs"].append(b)
+            for f in rows.values():                 # 1.67.0: projection=stigs - the rule's STIGs, as benchmark ids
+                st = sorted(f.pop("_stigs", []))
+                if "stigs" in q.get("projection", []):
+                    f["stigs"] = st
             if "assets" not in q.get("projection", []):
                 for f in rows.values():
                     del f["assets"]

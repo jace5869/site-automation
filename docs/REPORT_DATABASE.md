@@ -256,9 +256,10 @@ database anything: the job reads it and draws the lines into each page.
 | `insights_ticket` | 1.17.0: one row per ticket - its fields less its text, people and CI, and its follow-up reads (*The ticket store*) |
 | `insights_act_class` | 1.17.0: each description's issue, the description as a hash (*The ACT cache*) |
 | `insights_act_issue` | 1.17.0: each issue's number, name (masked), kind and self-service (*The ACT cache*) |
-| `schema_version` | The schema's version, per component (`servicenow_insights`: 1; `ontap_capacity`: 1; 1.58.0 `stig_scorecard`: 1; 1.63.0 `ad_repl`: 1; 1.65.0 `vm_heat`: 1) |
+| `schema_version` | The schema's version, per component (`servicenow_insights`: 1; `ontap_capacity`: 1; 1.58.0 `stig_scorecard`: 2 since 1.67.0; 1.63.0 `ad_repl`: 1; 1.65.0 `vm_heat`: 1) |
 | `ontap_capacity_point` | 1.52.0: the capacity trends' points (*The capacity trends' points*) |
 | `stig_scorecard_point` | 1.58.0: one row per run and STIG Manager collection - its open findings (*The STIG scorecard's points*) |
+| `stig_scorecard_platform` | 1.67.0: one row per run, collection and platform - its assets and open findings (*The STIG scorecard's points*) |
 | `ad_repl_point` | 1.63.0: one row per run and AD site - its worst replication age (*The replication trend's points*) |
 | `vm_heat_point` | 1.65.0: one row per run and cluster - its CPU and memory used; the hosts not OK (*The heat grid's points*) |
 | `insights_v_service`, `_volume`, `_process`, `_lifecycle`, `_quality` | A row per run and node, a column per figure of that set |
@@ -768,19 +769,20 @@ The STIG compliance scorecard ([CKL_IMPORT.md](CKL_IMPORT.md#the-stig-compliance
 here too. AAP keeps a job for 120 days by default; the database keeps a point for `stigman_scorecard_db_keep_days` (800).
 
 1. Add the **Report database** credential (the writer's) to the template *STIG Manager - import checklists*.
-2. Launch it with the survey choice `scorecard`. The first run makes the table `stig_scorecard_point` and writes its point.
+2. Launch it with the survey choice `scorecard`. The first run makes the tables `stig_scorecard_point` and
+   `stig_scorecard_platform` (1.67.0) and writes its point.
 3. Read the end of the job output, or *How the scorecard counts* in the report. The first run says
    `Earlier points: 0 from AAP's job history, 0 from the report database.` The next day's run counts 1.
 
 | | |
 |---|---|
-| What a run writes | a row per collection: when it was read, the job, the collection's id and name, its assets, CAT I, CAT II and CAT III open, and its open rules with their hosts (JSON) |
+| What a run writes | a row per collection: when it was read, the job, the collection's id and name, its assets, CAT I, CAT II and CAT III open, and its open rules with their hosts (JSON). 1.67.0: a row per collection and platform too, with its rules |
 | How much | a row is a few kilobytes: about 100 bytes per open rule and host. 4 collections read daily for 800 days: 3,200 rows |
 | What a run deletes | the rows older than `stigman_scorecard_db_keep_days` |
 | When the database is down | one warning in the job output. The scorecard goes on with AAP's job history. The job stays green |
 | A dry run (Check) | reads, writes nothing |
 | Turning it off | `stigman_scorecard_db: false`, or take the credential off the template |
-| Removing it | `DROP TABLE stig_scorecard_point;` and `DELETE FROM schema_version WHERE component = 'stig_scorecard';` |
+| Removing it | `DROP TABLE stig_scorecard_platform;`, `DROP TABLE stig_scorecard_point;` and `DELETE FROM schema_version WHERE component = 'stig_scorecard';` |
 
 The key is the collection's id and the time it was read. A job launched again for the same time writes the same rows
 again, not new ones. The table holds host names and rule ids, as STIG Manager has them. It holds no review text.
@@ -815,9 +817,53 @@ CREATE TABLE IF NOT EXISTS stig_scorecard_point (
 ```
 
 ```sql
-INSERT INTO schema_version (component, version, applied_at) VALUES ('stig_scorecard', 1, UTC_TIMESTAMP());
+CREATE TABLE IF NOT EXISTS stig_scorecard_platform (
+  read_at DATETIME NOT NULL,
+  job BIGINT NOT NULL DEFAULT 0,
+  collection VARCHAR(64) NOT NULL,
+  platform VARCHAR(64) NOT NULL,
+  assets INT NOT NULL DEFAULT 0,
+  cat1 INT NOT NULL DEFAULT 0,
+  cat2 INT NOT NULL DEFAULT 0,
+  cat3 INT NOT NULL DEFAULT 0,
+  rules MEDIUMTEXT NOT NULL,
+  PRIMARY KEY (collection, platform, read_at),
+  KEY stig_scorecard_platform_read_at (read_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+INSERT INTO schema_version (component, version, applied_at) VALUES ('stig_scorecard', 2, UTC_TIMESTAMP());
 ```
 <!-- end of the scorecard statements -->
+
+**From 1.58.0 to 1.66.x (schema version 1).** The first run of 1.67.0 makes the table `stig_scorecard_platform` and sets
+the version to 2. The rows kept before stay as they are. They have no platforms, so the platform trend starts with
+1.67.0. The job output says `made the table stig_scorecard_platform (schema version 2)`. With
+`stigman_scorecard_db_create: false`, run these two statements once as root:
+
+<!-- the upgrade: site_stig_scorecard_db.ddl_upgrade(), word for word -->
+```sql
+CREATE TABLE IF NOT EXISTS stig_scorecard_platform (
+  read_at DATETIME NOT NULL,
+  job BIGINT NOT NULL DEFAULT 0,
+  collection VARCHAR(64) NOT NULL,
+  platform VARCHAR(64) NOT NULL,
+  assets INT NOT NULL DEFAULT 0,
+  cat1 INT NOT NULL DEFAULT 0,
+  cat2 INT NOT NULL DEFAULT 0,
+  cat3 INT NOT NULL DEFAULT 0,
+  rules MEDIUMTEXT NOT NULL,
+  PRIMARY KEY (collection, platform, read_at),
+  KEY stig_scorecard_platform_read_at (read_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+UPDATE schema_version SET version = 2, applied_at = UTC_TIMESTAMP() WHERE component = 'stig_scorecard';
+```
+
+Until then the scorecard keeps and reads its collections as before, and says the platforms are not kept.
 
 | Setting | Default | What it does |
 |---|---|---|

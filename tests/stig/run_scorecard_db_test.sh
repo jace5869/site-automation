@@ -162,10 +162,14 @@ DB_ENV="$DB" run "the first run with the credential: the table made, this run's 
        "Closed this week: - (no run last week)" "!$wpw" "![WARNING]"
 [ "$(rows)" = 3 ] && [ "$(rows "cat1 > 0")" = 2 ] && [ "$(q report_reader "$rpw" "SELECT SUM(cat1 + cat2 + cat3) FROM stig_scorecard_point")" = 22 ] \
     && ok "  ...a row per collection, 22 open findings in all; the reader account reads them" || bad "  ...rows: $(rows)"
-[ "$(q report_reader "$rpw" "SELECT version FROM schema_version WHERE component = 'stig_scorecard'")" = 1 ] \
+[ "$(q report_reader "$rpw" "SELECT version FROM schema_version WHERE component = 'stig_scorecard'")" = 2 ] \
     && [ "$(q report_reader "$rpw" "SELECT CONCAT(collection, '/', assets, '/', JSON_VALID(rules)) FROM stig_scorecard_point WHERE collection_name = 'SITEA - RHEL 9'")" = "2/6/1" ] \
-    && ok "  ...schema_version says stig_scorecard 1; a collection's row has its id, its assets and its rules as JSON" \
+    && ok "  ...schema_version says stig_scorecard 2; a collection's row has its id, its assets and its rules as JSON" \
     || bad "  ...schema_version or the collection's row"
+# 1.67.0: a row per collection and platform (VMware: Other; RHEL 9: Linux, and Other for rhel01's Apache STIG; Windows)
+prow() { q report_reader "$rpw" "SELECT ${2:-COUNT(*)} FROM stig_scorecard_platform${1:+ WHERE $1}"; }
+[ "$(prow)" = 4 ] && [ "$(prow "collection = '2' AND platform = 'Linux'" "CONCAT(assets, '/', cat1, '/', cat2, '/', cat3, '/', JSON_LENGTH(rules))")" = "6/1/8/2/4" ] \
+    && ok "  ...stig_scorecard_platform: a row per collection and platform, its counts and rules" || bad "  ...platform rows: $(prow)"
 seed "$now" 0 days 1                                    # yesterday's run (a run of the same minute counts once, with this one)
 DB_ENV="$DB" run "the next run reads the earlier point back" ok -- "from AAP's job history, " "from the report database." \
     "!, 0 from the report database" "![WARNING]"
@@ -177,7 +181,7 @@ seed "$now" 0 8 1
 DB_ENV="$DB" run "8 earlier weeks in the database, outside AAP: the week's change and the trend from the database alone" ok \
     -- "STIG compliance: 4 CAT I open; 4 findings closed this week" "Closed this week: 4" "Opened this week: 2" \
        "Earlier points: 0 from AAP's job history, 8 from the report database." "AAP's job history: not read (the job is not run by AAP)." \
-       "![WARNING]"
+       "The platform trend starts with this run: the earlier points have no platforms (before 1.67.0)." "![WARNING]"
 [ "$(rows)" = 22 ] && ok "  ...this run's 3 rows added to the 19 (SITEA - VMware is 4 weeks old)" || bad "  ...rows: $(rows)"
 only_get "STIG Manager got GET requests only"
 
@@ -227,12 +231,31 @@ DB_ENV="$DB" run "stigman_scorecard_db: false - the database is not touched" ok 
 [ "$(rows)" = "$before" ] && ok "  ...no row added" || bad "  ...rows: $before -> $(rows)"
 q report_writer "$wpw" "UPDATE schema_version SET version = 99 WHERE component = 'stig_scorecard'" >/dev/null
 DB_ENV="$DB" run "a table of a newer release: not read, not written, said - green" ok \
-    -- "[WARNING]: The report database" "is version 99, newer than this release knows (1) - update site-automation" \
+    -- "[WARNING]: The report database" "is version 99, newer than this release knows (2) - update site-automation" \
        "STIG compliance: 4 CAT I open; 22 findings open"
 [ "$(rows)" = "$before" ] && ok "  ...no row added" || bad "  ...rows: $before -> $(rows)"
 
+# ---- 6b. 1.67.0: a database of 1.58.0 to 1.66.x (schema version 1, no platform table) ----
+q root "$root" "DROP TABLE stig_scorecard_platform" >/dev/null
+q root "$root" "UPDATE schema_version SET version = 1 WHERE component = 'stig_scorecard'" >/dev/null
+before="$(rows)"
+DB_ENV="$DB" run "version 1 with stigman_scorecard_db_create: false - used as before, the platforms not kept, said; green" ok \
+    -e stigman_scorecard_db_create=false \
+    -- "the table stig_scorecard_platform is not there: the platforms are not kept" "4 findings closed this week" "![WARNING]"
+[ "$(rows)" = $((before + 3)) ] && [ "$(q report_reader "$rpw" "SELECT version FROM schema_version WHERE component = 'stig_scorecard'")" = 1 ] \
+    && ok "  ...this run's rows kept, version 1, no new table" || bad "  ...rows $before -> $(rows)"
+before="$(rows)"
+DB_ENV="$DB" run "version 1, the next run: the platform table made, version 2, the rows kept" ok \
+    -- "The report database: made the table stig_scorecard_platform (schema version 2); the rows kept before are as they were." \
+       "4 findings closed this week" "![WARNING]"
+[ "$(rows)" = $((before + 3)) ] && [ "$(prow)" = 4 ] \
+    && [ "$(q report_reader "$rpw" "SELECT version FROM schema_version WHERE component = 'stig_scorecard'")" = 2 ] \
+    && ok "  ...every row of before there, this run's 3 and its 4 platform rows added, version 2" || bad "  ...rows $before -> $(rows), $(prow)"
+DB_ENV="$DB" run "and the run after it says nothing more" ok -- "4 findings closed this week" "!made the table stig_scorecard_platform" "![WARNING]"
+
 # ---- 7. no table, and not allowed to make it ----
 q root "$root" "DROP TABLE stig_scorecard_point" >/dev/null
+q root "$root" "DROP TABLE stig_scorecard_platform" >/dev/null
 q root "$root" "DELETE FROM schema_version WHERE component = 'stig_scorecard'" >/dev/null
 tables() { q report_reader "$rpw" "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'site_reports' AND table_name = 'stig_scorecard_point'"; }
 DB_ENV="$DB" run "no table and stigman_scorecard_db_create: false - said with where the statement is, green" ok \

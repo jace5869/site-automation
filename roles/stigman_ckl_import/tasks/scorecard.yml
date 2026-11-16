@@ -16,15 +16,21 @@
     validate_certs: "{{ check_stig_stigman_validate_certs | default(true) | bool }}"
     ca_path: "{{ check_stig_stigman_ca_path | default('') }}"
     timeout: "{{ check_stig_stigman_timeout | default(60) | int }}"
+    hosts: "{{ stigman_scorecard_hosts | bool }}"
+    hosts_timeout: "{{ stigman_scorecard_hosts_timeout | int }}"
     collections: >-
       {{ (stigman_scorecard_collections.split(',') | map('trim') | select | list) if stigman_scorecard_collections is string
          else stigman_scorecard_collections }}
   register: _sc_read
   check_mode: false                     # it only reads: a dry run (Check) shows the real scorecard
 
+- name: Scorecard | how long STIG Manager took, per collection (counts, assets, hosts)
+  ansible.builtin.debug:
+    msg: "{{ _sc_read.timings | default([]) }}"
+
 - name: Scorecard | this run's point
   ansible.builtin.set_fact:
-    _sc_point: "{{ _sc_read | stig_scorecard_point }}"
+    _sc_point: "{{ _sc_read | stig_scorecard_point({'platforms': stigman_scorecard_platforms}) }}"
     _sc_job: "{{ (awx_job_id | default(tower_job_id | default(0))) | int }}"
     _sc_template: "{{ (awx_job_template_id | default(tower_job_template_id | default(0))) | int }}"
     _sc_days: "{{ [stigman_scorecard_weeks | int, 2] | max * 7 + 8 }}"
@@ -80,12 +86,16 @@
            'list_max': stigman_ckl_import_list_max | int,
            'api': check_stig_stigman_api | default(''),
            'portal': report_portal_url | default(''),
+           'platforms': stigman_scorecard_platforms,
+           'platform_filter': stigman_scorecard_platform_filter,
            'fixed': _sc_aap.fixed | default({}),
            'history': [
              "Earlier points: " ~ _sc_runs.counts.aap ~ " from AAP's job history, " ~ _sc_runs.counts.db ~ " from the report database.",
              ("AAP's job history: " ~ _sc_aap.why) if _sc_aap.why | default('') else '',
              "AAP's job history: not read (the job is not run by AAP)." if _sc_aap is skipped and _sc_read.ok else '',
              ("The report database: " ~ _sc_db.error) if _sc_db.error | default('') else '',
+             "The report database: made the table stig_scorecard_platform (schema version 2); the rows kept before are as they were."
+               if _sc_db.migrated | default(false) else '',
            ] | select | list}) }}
 
 - name: Scorecard | the numbers

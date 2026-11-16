@@ -194,6 +194,39 @@ every collection is searched) the `!` entries still apply. The staging collectio
 collection is said (the scorecard) or stops the job (the import), so a typo is seen. The scorecard's list also takes `*`
 and `?` now. Nothing to set up.
 
+<!-- part G: the STIG scorecard by platform -->
+
+**To set up (part G): nothing.** New settings have defaults: `stigman_scorecard_platforms`,
+`stigman_scorecard_platform_filter`, `stigman_scorecard_hosts`, `stigman_scorecard_hosts_timeout`. With the report database, the first run makes the table `stig_scorecard_platform`
+(schema version 2). The rows kept before stay. With `stigman_scorecard_db_create: false`, run the two statements of
+docs/REPORT_DATABASE.md ("From 1.58.0 to 1.66.x") once.
+
+**The STIG scorecard by platform, and each collection opened** (part G; docs/CKL_IMPORT.md, "By platform").
+
+- A STIG's platform comes from its benchmark id: Linux, Windows, Network, else Other (`stigman_scorecard_platforms`,
+  in order, the first match wins, `*` and `?`). Other is listed by STIG name in *How the scorecard counts*.
+- An asset counts under each platform it has a STIG of. A finding counts once, under its own STIG's platform.
+- **By platform**, before *By collection*: a tile per platform, and a row with its assets, CAT I, II and III open, the
+  change this week, a trend line and a status. One hue per platform from the dataviz palette, never a status colour,
+  always beside its name. The email has the table; the workbook a *By platform* sheet with the Excel trend line.
+- On the website each collection opens to its CAT counts, its top open rules and its worst hosts. **Platform** and
+  **Collection** buttons above the sections choose the rows shown (site-report.js; atlas and brief).
+- `stigman_scorecard_platform_filter` (e.g. `[Windows]`) limits a run to those platforms.
+- The weekly point keeps the counts per platform: the job's artifact and the report database's new table. The platform
+  trend starts with 1.67.0, said in one line.
+- The scorecard's read asks STIG Manager for each rule's STIG (`projection=stigs`) and each asset's STIGs. GET only.
+- **A big collection no longer stops the scorecard.** The counts come first, from the quick findings call without the
+  hosts. Each rule's hosts are a second call with its own timeout (`stigman_scorecard_hosts`,
+  `stigman_scorecard_hosts_timeout`: 120 s). A collection whose host list is slow keeps its counts and says `Hosts not
+  listed (STIG Manager was slow)`. The job output has one line per collection with the seconds of each call.
+
+**Tests (part G):** `tests/test_stig_scorecard.py` (the platforms: each default pattern, the first match wins, an
+asset of two platforms, a finding once, Other by name, the trend from the points with platforms, the filter, each
+collection opened, the workbook; the database's version 2 and the move from version 1 with its rows kept),
+the host lists read apart (a slow one keeps the counts), report fit documents, `tests/stig/run_scorecard_test.sh` (a
+stand-in STIG Manager slow only on the host lists) and `tests/stig/run_scorecard_db_test.sh` - ansible-core 2.22 and
+2.16. Not proven against a real STIG Manager's `projection=stigs`.
+
 ## 1.66.0 — 2026-11-14
 
 **Updating without scripts:** paste `site-automation-1.66.0-changed-since-1.61.0.zip` as it is (from an older version,

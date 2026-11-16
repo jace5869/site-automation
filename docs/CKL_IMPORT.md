@@ -372,7 +372,8 @@ The title is the answer: `STIG compliance: 4 CAT I open; 4 findings closed this 
 |---|---|
 | The tiles | CAT I, CAT II and CAT III open now; closed and opened this week; fixed on the host and still open |
 | **Start here** | three cards: the CAT I to start with, the week, and the paperwork left |
-| **By collection** | a row per collection: its assets, CAT I, CAT II and CAT III open, the change this week, a trend line, a status |
+| **By platform** (1.67.0) | a tile and a row per platform (Linux, Windows, Network, Other): its assets, CAT I, CAT II and CAT III open, the change this week, a trend line, a status |
+| **By collection** | a row per collection: its assets, CAT I, CAT II and CAT III open, the change this week, a trend line, a status. On the website each collection opens to its top open rules and its worst hosts |
 | **Top 5 rules open across hosts** | the rules open on the most hosts, CAT I first (`stigman_scorecard_top`) |
 | **Fixed on the host, still Open in STIG Manager** | what the STIG drift reports' last scans found fixed, and STIG Manager still has Open |
 | **The numbers behind the lines** | the open findings per week, per collection: the trend lines as a table |
@@ -385,9 +386,65 @@ The title is the answer: `STIG compliance: 4 CAT I open; 4 findings closed this 
 - The fixed-on-the-host part is marked **Low**: the host is fine, the review in STIG Manager is not written yet. The
   STIG recheck (workflow 37) writes it.
 - The email is the short form: the tiles, the collections, the top rules, the link to the page. No trend lines.
-- The workbook is always attached. Its sheets: *By collection*, *Rules across hosts*, *Open rules by collection*,
-  *Since last week*, *Fixed on host, still open*, *Open per week*. *By collection* has the page's trend line as an Excel
-  sparkline: all open findings a week, a gap for a week without a run (1.62.0).
+- The workbook is always attached. Its sheets: *By collection*, *By platform*, *Rules across hosts*, *Open rules by
+  collection*, *Since last week*, *Fixed on host, still open*, *Open per week*. *By collection* and *By platform* have
+  the page's trend line as an Excel sparkline: all open findings a week, a gap for a week without a run (1.62.0).
+
+### By platform (1.67.0)
+
+A STIG's platform comes from its benchmark id. `stigman_scorecard_platforms` lists the platforms in order, each with
+patterns (`*` and `?`, any case). The first platform with a pattern that matches wins. No match is **Other**.
+
+| Platform | Its default patterns |
+|---|---|
+| Linux | `RHEL_*`, `Oracle_Linux_*`, `*Ubuntu*`, `SLES_*`, `*Linux*` |
+| Windows | `MS_Windows_*`, `Windows_*`, `MS_SQL_*`, `IIS_*`, `MS_*` |
+| Network | `Cisco_*`, `Juniper_*`, `Palo_Alto_*`, `F5_*`, `Arista_*`, `*Router*`, `*Switch*`, `*Firewall*` |
+
+- An asset counts under each platform it has a STIG of. One with STIGs of two platforms counts in both.
+- A finding counts once, under its own STIG's platform.
+- *How the scorecard counts* lists the STIGs that are Other, by name. Add a pattern to give them a platform.
+- Each platform has a colour of its own, always beside its name. It is never a status colour.
+- `stigman_scorecard_platform_filter` limits a run to some platforms, for example `[Windows]`. Every number on the page
+  is then of those platforms. A name that is no platform is said on the page, and nothing is left out.
+
+To add a platform of your own, list it before the one whose patterns would take its STIGs:
+
+```yaml
+stigman_scorecard_platforms:
+  - {name: Linux, stigs: ["RHEL_*", "Oracle_Linux_*", "*Ubuntu*", "SLES_*", "*Linux*"]}
+  - {name: VMware, stigs: ["VMW_*"]}
+  - {name: Windows, stigs: ["MS_Windows_*", "Windows_*", "MS_SQL_*", "IIS_*", "MS_*"]}
+  - {name: Network, stigs: ["Cisco_*", "Juniper_*", "Palo_Alto_*", "F5_*", "Arista_*", "*Router*", "*Switch*", "*Firewall*"]}
+```
+
+### A big collection (1.67.0)
+
+STIG Manager can be slow to list each open rule's hosts on a big collection. So the scorecard reads in two steps:
+
+1. The counts: one quick call per collection. Every number, line and platform comes from it.
+2. The hosts of each open rule, in a call of its own (`stigman_scorecard_hosts_timeout`, 120 seconds). They fill *Top
+   rules*' hosts, each collection's worst hosts and *Fixed on the host, still Open*.
+
+A collection whose host list is too slow keeps its counts. The page says `Hosts not listed (STIG Manager was slow)`, and
+the job stays green. The job output has one line per collection with the seconds of each call:
+
+```text
+SITEA - RHEL 9 (id 2): counts 0.4 s, assets 0.2 s, hosts 118.9 s
+```
+
+`stigman_scorecard_hosts: false` skips the host lists. *Fixed on the host, still Open* then lists every rule a scan found
+passing that is still Open in its collection.
+
+**The platform trend starts with 1.67.0.** The points kept before it have no platforms. The page says so in one line.
+With a platform filter, those weeks are gaps in the lines, never wrong numbers.
+
+**On the website:**
+
+- **Platform** and **Collection** buttons above the sections choose the rows shown. A collection's row keeps the counts
+  of all its platforms.
+- Under *By collection* each collection opens: its CAT I, II and III open, its top open rules and its worst hosts.
+- On a narrow screen the Platform buttons become a list.
 
 ### Where last week's numbers come from
 
@@ -475,8 +532,12 @@ STIG Manager's address, login and certificates are the STIG drift report's (`che
 | `stigman_scorecard_top` | `5` | the rules listed in *Top rules open across hosts* |
 | `stigman_scorecard_weeks` | `8` | the weeks of the trend lines and of *The numbers behind the lines* |
 | `stigman_scorecard_cat2_warn` | `0` | a collection with this many CAT II open or more is a warning. `0`: off |
+| `stigman_scorecard_platforms` | Linux, Windows, Network | the platforms in order, each with its STIG patterns. No match: Other (1.67.0) |
+| `stigman_scorecard_platform_filter` | `[]` | only these platforms, by name, for example `[Windows]`. `[]`: every platform (1.67.0) |
+| `stigman_scorecard_hosts` | `true` | list each open rule's hosts, a second call per collection. `false`: counts only (1.67.0) |
+| `stigman_scorecard_hosts_timeout` | `120` | seconds for a collection's host list. Slower: its counts are kept, its hosts not listed (1.67.0) |
 | `stigman_scorecard_db` | `true` | keep the points in the report database when the template has its credential |
-| `stigman_scorecard_db_create` | `true` | make the table on the first run. `false`: made by hand |
+| `stigman_scorecard_db_create` | `true` | make the tables on the first run, and on a database of 1.58.0 to 1.66.x the platforms' table. `false`: made by hand |
 | `stigman_scorecard_db_keep_days` | `800` | the database's points older than this are deleted. `0`: never |
 | `stigman_scorecard_drift_templates` | the two STIG drift reports | the job templates, by name, whose last scans say what is fixed on the hosts. `[]`: that part stays empty |
 | `stigman_scorecard_drift_days` | `14` | a scan older than this is not used |
@@ -491,6 +552,12 @@ only; `import and scorecard` with an empty folder ends
 ok; `import` is as before. `tests/stig/run_scorecard_db_test.sh`: the points in a real MySQL 8.4 - the table made, the
 weeks read back, old rows deleted, a dry run, and a database that is down or refuses: one warning, the job green.
 Not proven against a real STIG Manager's findings and a real AAP's job history.
+
+By platform (1.67.0): `tests/test_stig_scorecard.py` (each default pattern, the first match wins, an asset of two
+platforms, a finding once, Other by name, the trend from the points that have platforms, the filter, each collection's
+top rules and worst hosts, the workbook's sheet, the database's version 2 and the move from version 1 with its rows kept),
+`tests/stig/run_scorecard_test.sh` and `tests/stig/run_scorecard_db_test.sh` (current ansible-core and 2.16).
+Not proven against a real STIG Manager's `projection=stigs`.
 
 `tests/test_stig_ckl_import.py` (reading CKL and CKLB, matching, the plan, the report; several collections, auto, which
 files are done with, the moves, the grants), `tests/stig/run_ckl_import_test.sh` (the check and the update against a
