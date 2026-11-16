@@ -45,6 +45,22 @@ portal_setup_portal_user: svc_site_portal
 ## every_minutes: 15}]
 # portal_setup_schedules: []
 
+## 1.68.1 the STIG scorecard, so it is not set up by hand: a job template of its own (workflow 40's
+## check template copied - project, inventory, execution environment, credentials and Variables -
+## with stigman_ckl_import_mode: scorecard) and a weekly schedule. Each is made once; one that is
+## there is left as it is. "" = none.
+# portal_setup_scorecard_template: "STIG - weekly scorecard"
+
+## 'weekly Mon 06:00' or 'daily 06:00', in report_time_zone ("" = UTC); "" = no schedule
+# portal_setup_scorecard_schedule: "weekly Mon 06:00"
+
+# portal_setup_scorecard_schedule_name: "Weekly - STIG scorecard"
+
+## true: workflow 40's check template gets stigman_ckl_import_mode: import (it only imports; the
+## scorecard has its own template) when its mode is not set or is "import and scorecard"; any other
+## value there stays as it is, said
+# portal_setup_split_scorecard: true
+
 ## {} = roles/site_portal_stack/files/workflows.yml; the same shape here replaces it
 # portal_setup_workflows: {}
 
@@ -63,3 +79,18 @@ portal_setup_portal_user: svc_site_portal
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## a CA file for AAP's own HTTPS certificate ("" = what the execution environment trusts)
 # report_history_aap_ca_path: ""
+
+## The time zone of the times in a report, besides UTC: e.g. America/New_York (a name as
+## `timedatectl list-timezones` prints them) shows "2026-10-25 10:03:12 EDT (14:03 UTC)". vCenter,
+## ESXi and their log files keep UTC; the vSphere Client shows the browser's time zone. "" = UTC
+## only. Used by the VMware health and alarms reports and the ServiceNow weekly and ticket insights
+## reports, and (1.49.0) by the report website and every report's own lines: the index page's runs,
+## last run and "updated", the strip of past runs and the footer line show that time zone with its
+## abbreviation - "2026-11-13 05:37 CET", summer time as it was on that day - also for runs written
+## before it was set. What is stored (index.json, a run's JSON, the file names) stays UTC. A name
+## the execution environment does not know (or one without the tzdata package): UTC, with a warning
+## in the job output. 1.54.0: also the times inside the reports that printed their own UTC (AD,
+## lockout, capacity, ONTAP, log analysis, outage watch, snapshots, Horizon and more); a "(UTC)"
+## column then says each cell's zone. Times you type stay UTC. docs/WEB_REPORTS.md, "Times in your
+## time zone"; docs/VMWARE.md, "Times and clocks"
+# report_time_zone: ""

@@ -32,6 +32,28 @@ and nginx without the lines - all passed on each. `tests/test_stigman_links_js.p
 `tests/test_site_portal.py` (the go page, the nginx lines), `tests/test_stig_scorecard.py` (the links, the ids), the
 report fit document `stig_scorecard_open_web`.
 
+**To set up: run the job *AAP - set up portal actions* again** (Check first, then Run; setup step 102). It makes the job
+template *STIG - weekly scorecard* and its weekly schedule, and sets `stigman_ckl_import_mode: import` on workflow 40's
+check template. Nothing is changed that is there already, except that mode (see below).
+
+- **The scorecard's job template, made for you.** *STIG - weekly scorecard* is a copy of *STIG Manager - import
+  checklists - check*: the same playbook, project, inventory, execution environment, credentials and Variables (your
+  `stigman_scorecard_collections`, timeouts and `report_email_to` come with it), with `stigman_ckl_import_mode:
+  scorecard`. The check's `stigman_ckl_import_workflow` is left out. No survey, no approval, no workflow. Its name:
+  `portal_setup_scorecard_template`.
+- **A weekly schedule on it.** `portal_setup_scorecard_schedule` is `weekly Mon 06:00` by default, in
+  `report_time_zone` (`daily 06:00` also works; `""` makes none). Made once: a schedule of that name that is there is left
+  as it is, so a time you changed stays.
+- **Workflow 40's check imports only.** With `portal_setup_split_scorecard: true` (the default) its Variables get
+  `stigman_ckl_import_mode: import` when the mode there is not set or is `import and scorecard`. Any other value stays,
+  and the job says so. Only that one line is touched on a template you changed by hand.
+- **Check lists** what would be made or changed. A template or a schedule that is there is never rewritten.
+- Docs: CKL_IMPORT (*Turning it on*), WORKFLOWS_AND_SCHEDULES (workflow 40), SITE_PORTAL (step 102). Tests:
+  `test_portal_setup_scorecard.py` and `tests/portal_setup/run_scorecard_setup_test.sh` (made once, a second run changes
+  nothing, what is there is left alone, Check writes nothing; ansible-core 2.22 and 2.16). SA_VERSION 1.68.1; the PDFs at
+  1.68.1.
+
+
 ## 1.68.0 — 2026-11-16
 
 **To set up: nothing.** New settings have defaults: `stigman_scorecard_rules_timeout` and `stigman_scorecard_hosts_timeout`

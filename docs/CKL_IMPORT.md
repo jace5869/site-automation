@@ -586,6 +586,22 @@ Tested on STIG Manager 1.6.16, 1.6.17 and 1.6.18 in headless Chrome (`tests/stig
 
 ### Turning it on
 
+**The short way (1.68.1).** Run the job *AAP - set up portal actions* again
+([SITE_PORTAL.md](SITE_PORTAL.md#setting-it-up-in-aap), step 102). It makes both of these for you:
+
+- **The template *STIG - weekly scorecard*.** A copy of *STIG Manager - import checklists - check*: the same project,
+  inventory, execution environment, credentials and Variables, with `stigman_ckl_import_mode: scorecard`. No survey, no
+  approval, no workflow.
+- **Its schedule *Weekly - STIG scorecard*:** every Monday at 06:00, in `report_time_zone`
+  (`portal_setup_scorecard_schedule`, `""` for none).
+
+The check template of workflow 40 gets `stigman_ckl_import_mode: import`, so it only imports
+(`portal_setup_split_scorecard: true`). Any other mode you set there stays as it is, and the job says so.
+A template or a schedule that is there is never changed. Add `stigman_scorecard_collections` and the other settings to
+the new template's Variables.
+
+**By hand.**
+
 1. Open the template *STIG Manager - import checklists*, tab **Survey**. Add a question:
    - Question: `What should this run do?`
    - Answer variable name: `stigman_ckl_import_mode`

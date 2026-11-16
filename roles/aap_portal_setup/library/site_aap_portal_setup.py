@@ -24,6 +24,10 @@ description:
   - The portal's account (portal_user) gets Execute on the template or workflow of each action, and Approve on each such
     workflow with an approval node. No other role is given.
   - schedules adds or updates schedules (every N minutes) on templates or workflows of the spec.
+  - 1.68.1, scorecard: a job template of its own for the STIG scorecard (the check template of workflow 40 copied - its project,
+    inventory, execution environment, credentials and Variables - with stigman_ckl_import_mode scorecard), a weekly schedule on
+    it, and (split) stigman_ckl_import_mode import on workflow 40's check template when that is not set or is "import and
+    scorecard". Each is made once; one that is there is left as it is.
   - In check mode nothing is written; the result says what would change.
 options:
   spec: {description: "workflows.yml: {templates: [...], workflows: [...]}.", type: dict, required: true}
@@ -36,6 +40,7 @@ options:
   portal_user: {description: "The portal's AAP account (its user name); '' = no grants.", type: str, default: ''}
   overwrite: {description: Also bring up to date what was made or changed by hand., type: bool, default: false}
   schedules: {description: "[{name, target (a template or workflow of the spec), every_minutes, extra_data}].", type: list, elements: dict, default: []}
+  scorecard: {description: "{name, schedule ('weekly Mon 06:00', 'daily 06:00' or ''), schedule_name, time_zone, split}; {} = none.", type: dict, default: {}}
   ca_path: {description: A CA file for AAP's HTTPS certificate., type: str, default: ''}
   timeout: {description: Seconds per request., type: int, default: 30}
 author: site automation
@@ -166,12 +171,18 @@ class Setup(object):
         return oid, "update"
 
     # ---- job templates
-    def template(self, t, refs):
-        cred_ids, why = self.cred_ids(t.get("credentials") or [])
-        inv = refs["inventories"].get(t.get("inventory") or "default") or refs["inventories"].get("default")
+    def template(self, t, refs, copy=None, with_action=False):
+        """copy: a template as AAP has it - its project, inventory, execution environment and credentials are taken as they are."""
+        if copy:
+            cred_ids, why = sorted(int(c["id"]) for c in self.all("job_templates/%d/credentials/" % int(copy["id"]))), ""
+            inv = copy.get("inventory")
+            refs = dict(refs, project=copy.get("project") or refs["project"], ee=copy.get("execution_environment") or refs.get("ee"))
+        else:
+            cred_ids, why = self.cred_ids(t.get("credentials") or [])
+            inv = refs["inventories"].get(t.get("inventory") or "default") or refs["inventories"].get("default")
         if why or not inv:
             self.note("template", t["name"], "skipped", why=why or "no inventory %r (portal_setup_inventories)" % (t.get("inventory") or "default"))
-            return None
+            return (None, "skipped") if with_action else None
         prompts = t.get("prompts") or {}
         want = {"name": t["name"], "description": str(t.get("description") or ""), "job_type": "run", "project": refs["project"],
                 "playbook": t["playbook"], "inventory": inv, "ask_variables_on_launch": bool(prompts.get("variables")),
@@ -192,8 +203,8 @@ class Setup(object):
             for cid in sorted(set(cred_ids) - set(have)):
                 self.write("POST", "job_templates/%d/credentials/" % oid, {"id": cid})
             return None
-        oid, _ = self.reconcile("template", "job_templates", t["name"], want, read, write)
-        return oid
+        oid, action = self.reconcile("template", "job_templates", t["name"], want, read, write)
+        return (oid, action) if with_action else oid
 
     def cred_ids(self, kinds):
         out = []
@@ -207,6 +218,83 @@ class Setup(object):
                     return [], "credential %r %s" % (n, "is not there" if not rows else "is there %d times" % len(rows))
                 out.append(int(rows[0]["id"]))
         return out, ""
+
+    # ---- 1.68.1: the scorecard's own template and schedule; workflow 40's check on import
+    def split_vars(self, t):
+        """Workflow 40's check template with stigman_ckl_import_mode import - unless the mode there is another one."""
+        rows = self.all("job_templates/?name=%s" % _q(t["name"]))
+        rows = [r for r in rows if r.get("name") == t["name"]]
+        want = dict(t.get("extra_vars") or {})
+        if len(rows) == 1:
+            live = parse_vars(rows[0].get("extra_vars"))
+            if live is not None and live.get(MODE) not in (None, "", "import", "import and scorecard"):
+                want[MODE] = live[MODE]                 # a person chose it: kept
+                return dict(t, extra_vars=want)
+        want[MODE] = "import"
+        return dict(t, extra_vars=want)
+
+    def split_by_hand(self, name):
+        """The check template was changed by hand (or not made by this job): only its mode is set, nothing else."""
+        rows = [r for r in self.all("job_templates/?name=%s" % _q(name)) if r.get("name") == name]
+        if len(rows) != 1:
+            return
+        live = parse_vars(rows[0].get("extra_vars"))
+        what = "%s on %s" % (MODE, name)
+        if live is None:
+            self.note("setting", what, "skipped", why="its Variables could not be read: set %s: import there" % MODE)
+            return
+        now = live.get(MODE)
+        if now in ("import",):
+            self.note("setting", what, "unchanged")
+        elif now in (None, "", "import and scorecard"):
+            live[MODE] = "import"
+            self.write("PATCH", "job_templates/%d/" % int(rows[0]["id"]), {"extra_vars": json.dumps(live, sort_keys=True)})
+            self.note("setting", what, "update", {MODE: [now or "(not set)", "import"]})
+        else:
+            self.note("setting", what, "unchanged", why="it is %r: left as it is (the scorecard has its own template)" % now)
+
+    def scorecard(self, sc, src, refs, ids, src_oid, src_action=""):
+        name = sc.get("name") or ""
+        if not name:
+            return
+        live = [r for r in self.all("job_templates/?name=%s" % _q(src["name"])) if r.get("name") == src["name"]]
+        if len(live) == 1:
+            vars_ = parse_vars(live[0].get("extra_vars"))
+            if vars_ is None:
+                self.note("template", name, "skipped", why="the Variables of '%s' could not be read" % src["name"])
+                return
+            copy = live[0]
+        elif src_oid and src_oid < 0:                   # Check: the source would be made by this run
+            vars_, copy = dict(src.get("extra_vars") or {}), None
+        else:
+            self.note("template", name, "skipped", why=("'%s' was not set up (see above)" if src_action == "skipped" else "'%s' is not in AAP: run again once it is") % src["name"])
+            return
+        vars_.pop("stigman_ckl_import_workflow", None)  # the check's "fail when something waits for approval"
+        vars_[MODE] = "scorecard"
+        t = dict(src, name=name, extra_vars=vars_, credentials=src.get("credentials") or [],
+                 description="The weekly STIG scorecard: STIG Manager's collections read, the report and its email. No approval.")
+        oid = self.template(t, refs, copy)
+        if not oid:
+            return
+        ids[name] = ("job_templates", oid)
+        when = sc.get("schedule") or ""
+        if not when:
+            return
+        try:
+            rrule = rrule_of(when, sc.get("time_zone") or "")
+        except ValueError as e:
+            self.problems.append("portal_setup_scorecard_schedule: %s" % e)
+            return
+        sname = sc.get("schedule_name") or "Weekly - %s" % name
+        if oid < 0:
+            self.note("schedule", sname, "create", {"rrule": [None, rrule]})
+            return
+        rows = [r for r in self.all("job_templates/%d/schedules/" % oid) if r.get("name") == sname]
+        if rows:
+            self.note("schedule", sname, "unchanged", why="" if rows[0].get("rrule") == rrule else "its time is not the setting: left as it is")
+            return
+        self.write("POST", "job_templates/%d/schedules/" % oid, {"name": sname, "rrule": rrule, "extra_data": {}, "enabled": True})
+        self.note("schedule", sname, "create", {"rrule": [None, rrule]})
 
     # ---- workflows
     def workflow(self, w, tpl_ids, refs):
@@ -344,11 +432,25 @@ class Setup(object):
             return
         refs = {"org": org, "project": proj, "ee": ee, "inventories": invs}
         tpl_ids, ids = {}, {}
+        sc = p["scorecard"] or {}
+        src = source_template(p["spec"]) if sc else None
+        src_oid, src_spec, src_action = None, None, ""
         for t in p["spec"].get("templates") or []:
-            oid = self.template(t, refs)
+            is_src = bool(src) and t["name"] == src
+            if is_src:
+                src_spec = t
+                if sc.get("split"):
+                    t = self.split_vars(t)
+            oid, action = self.template(t, refs, with_action=True)
+            if is_src:
+                src_oid, src_action = oid, action
+                if sc.get("split") and action in ("hand-edited", "not ours"):
+                    self.split_by_hand(t["name"])
             if oid:
                 tpl_ids[t["name"]] = oid
                 ids[t["name"]] = ("job_templates", oid)
+        if sc and src_spec:
+            self.scorecard(sc, src_spec, refs, ids, src_oid, src_action)
         wf_ids = {}
         for w in p["spec"].get("workflows") or []:
             oid = self.workflow(w, tpl_ids, refs)
@@ -428,6 +530,48 @@ def check_spec(spec):
     return out
 
 
+MODE = "stigman_ckl_import_mode"
+DAYS = {"mon": "MO", "tue": "TU", "wed": "WE", "thu": "TH", "fri": "FR", "sat": "SA", "sun": "SU"}
+
+
+def parse_vars(text):
+    """A template's Variables (JSON or YAML text) as a dict; None when they cannot be read."""
+    if isinstance(text, dict):
+        return dict(text)
+    t = str(text or "").strip()
+    if not t:
+        return {}
+    try:
+        d = json.loads(t)
+    except ValueError:
+        try:
+            import yaml
+            d = yaml.safe_load(t)
+        except Exception:
+            return None
+    return d if isinstance(d, dict) else (None if t not in ("---", "{}") else {})
+
+
+def rrule_of(when, tz):
+    """AAP's schedule rule for 'weekly Mon 06:00' or 'daily 06:00' (in time zone tz, "" = UTC)."""
+    w = str(when).strip().lower().split()
+    m = re.match(r"^([01]?\d|2[0-3]):([0-5]\d)$", w[-1]) if w else None
+    if not m or not (len(w) == 3 and w[0] == "weekly" and w[1][:3] in DAYS or len(w) == 2 and w[0] == "daily"):
+        raise ValueError("%r is not 'weekly Mon 06:00' or 'daily 06:00'" % when)
+    head = "DTSTART;TZID=%s:20260105T%02d%s00" % (tz or "UTC", int(m.group(1)), m.group(2))
+    return head + " RRULE:FREQ=WEEKLY;BYDAY=%s" % DAYS[w[1][:3]] if w[0] == "weekly" else head + " RRULE:FREQ=DAILY"
+
+
+def source_template(spec):
+    """The check template of workflow 40 (its node 'check')."""
+    for w in spec.get("workflows") or []:
+        if w.get("number") == 40:
+            for n in w.get("nodes") or []:
+                if n.get("id") == "check" and n.get("template"):
+                    return n["template"]
+    return ""
+
+
 def _q(name):
     try:
         from urllib.parse import quote
@@ -453,6 +597,7 @@ def main():
                            execution_environment=dict(type="str", default=""), inventories=dict(type="dict", required=True),
                            credentials=dict(type="dict", default={}), portal_user=dict(type="str", default=""),
                            overwrite=dict(type="bool", default=False), schedules=dict(type="list", elements="dict", default=[]),
+                           scorecard=dict(type="dict", default={}),
                            ca_path=dict(type="str", default=""), timeout=dict(type="int", default=30)),
         supports_check_mode=True)
     p = module.params

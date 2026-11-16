@@ -628,6 +628,9 @@ written into STIG Manager after a person approves them.
     is then not an error: the check ends ok.
   - `scorecard`: the folder is not read. The check ends ok, nothing waits for an approval, step 3 does not run.
   - [CKL_IMPORT.md](CKL_IMPORT.md#the-stig-compliance-scorecard-1580).
+- **The weekly scorecard (1.68.1):** the job *AAP - set up portal actions* makes the template *STIG - weekly scorecard*
+  (`scorecard`, no approval) and its schedule, Monday 06:00 in `report_time_zone`. It sets `import` on this check
+  template, unless the mode there is another one. Run it again after the update.
 
 **As STIG Manager Watcher (0.76.0)** - the same workflow on a schedule, every 15 to 60 minutes, **Concurrent jobs** off.
 On the check template's Variables, besides `stigman_ckl_import_workflow: true`:

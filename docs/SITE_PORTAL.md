@@ -478,6 +478,17 @@ portal_setup_schedules:
   - {name: Checklists every 15 minutes, target: Checklists imported into STIG Manager, every_minutes: 15}
 ```
 
+**The STIG scorecard (1.68.1).** The same job makes the weekly scorecard, so nobody sets it up by hand:
+
+- **A job template** (`portal_setup_scorecard_template`): *STIG - weekly scorecard* is *STIG Manager - import checklists -
+  check* copied, with `stigman_ckl_import_mode: scorecard`. It is made when that template is in AAP.
+- **Its schedule** (`portal_setup_scorecard_schedule`): `weekly Mon 06:00` by default, in `report_time_zone`. Use
+  `daily 06:00` for every day, `""` for none.
+- **Workflow 40's check template** gets `stigman_ckl_import_mode: import` (`portal_setup_split_scorecard: true`) when
+  its mode is not set or is `import and scorecard`. Another mode there stays, and the job says so.
+- **Check** lists what it would make. A template or a schedule that is there is left as it is, so a time you changed
+  stays. [CKL_IMPORT.md](CKL_IMPORT.md#turning-it-on).
+
 ## STIG actions
 
 Three actions fix what the STIG reports find. Each takes the finding by reference (the report's AAP job, the

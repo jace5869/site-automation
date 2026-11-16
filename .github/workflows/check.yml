@@ -281,6 +281,8 @@ jobs:
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/portal/run_portal_test.sh
           bash tests/portal_setup/run_portal_setup_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/portal_setup/run_portal_setup_test.sh
+          bash tests/portal_setup/run_scorecard_setup_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/portal_setup/run_scorecard_setup_test.sh
       - name: Containers check and Service watch, rootful and rootless (fake podman; current ansible-core and 2.16)
         run: |
           bash tests/containers/run_containers_test.sh
