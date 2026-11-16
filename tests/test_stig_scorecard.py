@@ -1496,6 +1496,95 @@ class Links(unittest.TestCase):
         self.assertTrue(any(s.get("cell_links") for s in web["sections"]))
 
 
+class OpenLinks(unittest.TestCase):
+    """1.68.1, stigman_link_style open: the names open STIG Manager at the review, through the site portal's go page."""
+    PORTAL = "https://stigman.example.mil/portal"
+
+    def read(self):
+        r = with_texts()
+        n = 10
+        for c in r["collections"]:
+            c["asset_ids"] = {}
+            for h in sorted(set(a for x in c["rules"] for a in x["assets"])):
+                n += 1
+                c["asset_ids"][h] = str(n)
+        return r
+
+    def doc(self, **o):
+        return card(read=self.read(), opts=dict({"api": API, "portal": self.PORTAL, "link_style": "open"}, **o))
+
+    def test_the_go_link(self):
+        g = f.stigman_go
+        self.assertEqual(g(self.PORTAL + "/", "2", "RHEL_9_STIG", "11", "SV-257985r1069364_rule"),
+                         self.PORTAL + "/stigman/go?c=2&b=RHEL_9_STIG&a=11&r=SV-257985r1069364_rule")
+        self.assertEqual(g(self.PORTAL, "1", "VMware Aria Operations 8.x Application"),
+                         self.PORTAL + "/stigman/go?c=1&b=VMware+Aria+Operations+8.x+Application")
+        for bad in (("", "2", "B"), ("javascript:alert(1)", "2", "B"), (self.PORTAL + "?x", "2", "B"), (self.PORTAL, "x", "B"),
+                    (self.PORTAL, "2", "<b>"), (self.PORTAL, "2", "B", "1 1"), (self.PORTAL, "2", "B", "", "a/b"), (self.PORTAL, "2", "")):
+            self.assertEqual(g(*bad), "", bad)
+
+    def test_rules_hosts_and_a_rules_hosts_open_the_review(self):
+        d = self.doc()
+        fv = section(d, "Findings", "web")
+        i = [r[1] for r in fv["rows"]].index("SV-257985 (RHEL-09-255045)")
+        self.assertEqual(fv["cell_links"]["urls"][i], self.PORTAL + "/stigman/go?c=2&b=RHEL_9_STIG&r=SV-257985r1069364_rule")
+        self.assertEqual(fv["cell_links"]["titles"][i], "Opens SV-257985 in STIG Manager (a new tab): SITEA - RHEL 9's review of RHEL_9_STIG, at the rule")
+        self.assertEqual(fv["cell_links"]["copies"][i], "SV-257985")
+        blocks, hosts = fv["details"][i]
+        rhel = next(c for c in self.read()["collections"] if c["name"] == RHEL)
+        self.assertEqual(hosts["links"][0], self.PORTAL + "/stigman/go?c=2&b=RHEL_9_STIG&a=%s&r=SV-257985r1069364_rule" % rhel["asset_ids"]["rhel01"])
+        self.assertEqual(hosts["link_titles"][0], "Opens rhel01's review in STIG Manager (a new tab), at SV-257985")
+        hv = section(d, "Hosts", "web")
+        j = [r[1] for r in hv["rows"]].index("rhel04")
+        self.assertEqual(hv["cell_links"]["urls"][j], self.PORTAL + "/stigman/go?c=2&b=RHEL_9_STIG&a=%s" % rhel["asset_ids"]["rhel04"])
+        self.assertEqual(hv["cell_links"]["titles"][j], "Opens rhel04's review of RHEL_9_STIG in STIG Manager (a new tab)")
+        bc = section(d, "By collection", "web")                # a collection: STIG Manager's home page, as 1.68.0
+        self.assertEqual(set(bc["cell_links"]["urls"]), {"https://stigman.example.mil/"})
+
+    def test_plain_without_the_portal_or_the_setting(self):
+        for o in ({"link_style": "plain"}, {"portal": ""}, {"link_style": "OPEN", "portal": "not an address"}):
+            d = self.doc(**o)
+            fv = section(d, "Findings", "web")
+            self.assertEqual(set(fv["cell_links"]["urls"]), {"https://stigman.example.mil/"}, o)
+            self.assertFalse([x for d_ in fv["details"] if isinstance(d_, list) for x in d_ if x and x.get("links")], o)
+
+    def test_a_host_without_its_id_keeps_the_plain_link(self):
+        r = self.read()
+        for c in r["collections"]:
+            c["asset_ids"].pop("rhel04", None)
+        d = card(read=r, opts={"api": API, "portal": self.PORTAL, "link_style": "open"})
+        hv = section(d, "Hosts", "web")
+        j = [x[1] for x in hv["rows"]].index("rhel04")
+        self.assertEqual(hv["cell_links"]["urls"][j], "https://stigman.example.mil/")
+
+    def test_report_fit_document(self):
+        """tests/report_fit_docs.py keeps this test's website document as stig_scorecard_open_web (1.68.1)."""
+        web = f.stig_scorecard_join(self.doc(), None, "scorecard")["web"]
+        self.assertEqual(f._scorecard_web(web, web["sections"])["title"], web["title"])
+
+    def test_the_asset_ids_read(self):
+        self.assertEqual(sc.ids_of([{"name": "rhel01", "assetId": "11"}, {"ruleId": "x", "assets": [{"name": "rhel03", "assetId": "12"},
+                                                                                                    {"name": "bad", "assetId": "1 OR 1"}]},
+                                    {"name": "rhel01", "assetId": "99"}, "junk"]), {"rhel01": "11", "rhel03": "12"})
+
+    def test_the_point_keeps_no_id(self):
+        self.assertNotIn("asset_ids", json.dumps(f.stig_scorecard_point(self.read())))
+
+    def test_the_page(self):
+        if HERE not in sys.path:
+            sys.path.insert(0, HERE)
+        from test_report_fit import EmailTiles
+        web = f.stig_scorecard_join(self.doc(), None, "scorecard")["web"]
+        for tpl in ("report_atlas.html.j2", "report_brief.html.j2"):
+            h = EmailTiles()._env().get_template(tpl).render(_report=web, _email_footer="AAP job 9", report_email_header_text="x")
+            self.assertIn('href="https://stigman.example.mil/portal/stigman/go?c=2&amp;b=RHEL_9_STIG&amp;r=SV-257985r1069364_rule"', h)
+            m = re.search(r'<td class="k-wrap" data-l="Host"><a class="hl" href="https://stigman.example.mil/portal/stigman/go\?c=2&amp;'
+                          r'b=RHEL_9_STIG&amp;a=\d+&amp;r=SV-258036r1045099_rule" target="_blank" rel="noopener" '
+                          r'title="Opens rhel01&#39;s review in STIG Manager \(a new tab\), at SV-258036">', h)
+            self.assertTrue(m, tpl)
+            self.assertIn("table.mini a.hl .ic,td.k-cl a.hl .ic{display:inline-block", h)
+
+
 class Commands(unittest.TestCase):
     """1.68.0: Copy check and Copy fix copy the command lines of the text, without their prompt; none - the whole text."""
     def test_the_fixtures_texts(self):

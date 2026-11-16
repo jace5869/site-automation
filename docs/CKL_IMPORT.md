@@ -507,6 +507,83 @@ How the text is read:
 - The workbook's *Rules across hosts* has a *Fix text* column. The email is as before.
 - `stigman_scorecard_texts: false` reads no text.
 
+### Links that open the review (1.68.1)
+
+With `stigman_link_style: open` a name on the website opens STIG Manager at the review itself:
+
+| You click | STIG Manager opens |
+|---|---|
+| A rule's name in *Findings* | the collection's review of the rule's STIG, at the rule |
+| A host's name in a rule opened | that host's review of the rule's STIG, at the rule |
+| A host's name in *Hosts* | that host's review of its STIG with the most open findings |
+| A collection's name | STIG Manager's home page, as before |
+
+How it works:
+
+- The link goes to the site portal: `/portal/stigman/go?c=<collection>&b=<STIG>&a=<asset>&r=<rule>`.
+- That page keeps the target in the browser tab and opens STIG Manager's plain address. It never puts a `#` or a `?` on
+  STIG Manager's address: STIG Manager 1.6 would stop at its sign-in.
+- nginx adds one script to STIG Manager's page. After the sign-in it opens the review with STIG Manager's own functions.
+- It acts only on the STIG Manager versions it was tested on (`portal_stigman_open_versions`).
+- It opens only what the person may read. Anything else: STIG Manager's home page, as a plain link, and one line in the
+  browser's console. Never an error box.
+
+It needs:
+
+- the site portal behind STIG Manager's nginx (docs/SITE_PORTAL.md; not `portal_own_nginx`), at 1.68.1 or later;
+- `report_portal_url` set (the portal's address with `/portal`);
+- the lines below added to STIG Manager's nginx, once.
+
+Set it up, on the STIG Manager server, with the nginx file and container of [SITE_PORTAL.md](SITE_PORTAL.md) step 1:
+
+1. **Run** the template *Site portal - deploy* again. It writes `/etc/site-portal/nginx-stigman-links.conf`.
+2. **Find STIG Manager's address** in your nginx:
+   ```bash
+   sudo podman exec <nginx> nginx -T | grep -n proxy_pass
+   ```
+   The one in your `location / {` is STIG Manager's, for example `proxy_pass http://stigman-api:54000;`.
+3. **Compare** it with the file's two `proxy_pass` lines:
+   ```bash
+   sudo grep -n proxy_pass /etc/site-portal/nginx-stigman-links.conf
+   ```
+   Different: set `portal_stigman_upstream` to yours and run the deploy again (step 1).
+4. **Keep a copy:** `sudo cp <the file> <the file>.before-links`
+5. **Read the lines in** from `/etc/site-portal/nginx-stigman-links.conf`, inside the same `server { ... }` block, just
+   above its `location / {`, as the portal's lines (SITE_PORTAL.md step 5).
+6. **Test it:** `sudo podman exec <nginx> nginx -t` must say *syntax is ok* and *test is successful*. Anything else: put
+   the copy back.
+7. **Load it:** `sudo podman exec <nginx> nginx -s reload`.
+8. **Check it:** open STIG Manager, press Ctrl+U (the page's source), and search for `stigman-open.js`. It is in the
+   line before `</head>`.
+9. **Turn it on:** add `stigman_link_style: open` to the Variables of *STIG Manager - import checklists* (or to
+   `all.yml`). Run the scorecard.
+10. **Try it:** open the report, open *Findings*, click a rule's name. STIG Manager opens in a new tab at that rule.
+
+The lines are two `location` blocks for STIG Manager's page only (`/` and `/index.html`). Everything else of STIG Manager
+goes through your `location /` as before.
+
+If STIG Manager's nginx file is written by a job (*STIG Manager - deploy* writes it on each run), that run takes the
+lines out again. Read them in again after it (steps 4 to 7). Until then the links open the home page.
+
+To take it out:
+
+1. Delete the two `location` blocks from the nginx file (or put the copy of step 4 back).
+2. `sudo podman exec <nginx> nginx -t`, then `sudo podman exec <nginx> nginx -s reload`.
+3. Set `stigman_link_style: plain`, or remove the line. The links open STIG Manager's home page again.
+
+| When | What happens |
+|---|---|
+| The lines are not in nginx | the home page; the sign-in works as always |
+| Another STIG Manager version (an upgrade) | the home page; the console says the version is not tested. Test it, then add it to `portal_stigman_open_versions` |
+| The person has no grant in the collection | the home page, no error box |
+| The asset is gone, or the STIG is no longer assigned | the home page |
+| More than 10 minutes between the click and the sign-in | the home page |
+
+The portal's go page needs no sign-in: it carries ids only, and STIG Manager decides what the person may read. The
+script only reads (GET) before it opens a review. It never writes.
+
+Tested on STIG Manager 1.6.16, 1.6.17 and 1.6.18 in headless Chrome (`tests/stig/run_stigman_links_test.sh`).
+
 ### Turning it on
 
 1. Open the template *STIG Manager - import checklists*, tab **Survey**. Add a question:
@@ -581,6 +658,7 @@ STIG Manager's address, login and certificates are the STIG drift report's (`che
 | `stigman_scorecard_hosts_timeout` | `600` | seconds for a collection's host list. Slower: its counts are kept, its hosts not listed (1.67.0; 600 since 1.68.0) |
 | `stigman_scorecard_texts` | `true` | read each open rule's check and fix text for the website and the workbook (1.68.0). `false`: none |
 | `stigman_scorecard_text_timeout` | `120` | seconds for all the rules' texts together. Slower: the rest have none, said in *Slow or not read* (1.68.0) |
+| `stigman_link_style` | `plain` | `open`: a name opens STIG Manager at the review, through the site portal (1.68.1, *Links that open the review*) |
 | `stigman_scorecard_db` | `true` | keep the points in the report database when the template has its credential |
 | `stigman_scorecard_db_create` | `true` | make the tables on the first run, and on a database of 1.58.0 to 1.66.x the platforms' table. `false`: made by hand |
 | `stigman_scorecard_db_keep_days` | `800` | the database's points older than this are deleted. `0`: never |

@@ -612,6 +612,48 @@ class Live(unittest.TestCase):
         self.assertTrue({"launch", "refused", "decision"} <= kinds, kinds)
         self.assertEqual(oct(os.stat(os.path.join(self.cfg.data, "page-key")).st_mode & 0o777), "0o600")
 
+    # ---- 1.68.1: a STIG scorecard link that opens the review (stigman_link_style: open)
+    def test_stigman_go_page(self):
+        """No sign-in needed (it carries ids only; STIG Manager checks who may read what): the target as data, the script
+        that keeps it in the tab, a link to STIG Manager's plain address; no inline script."""
+        q = "c=2&b=VMware+Aria+Operations+8.x+Application&a=11&r=SV-257985r1069364_rule"
+        code, raw, h = self.req("/stigman/go?" + q, dn=None, verify="NONE")
+        page = raw.decode()
+        self.assertEqual(code, 200)
+        self.assertIn('<meta name="sa-stigman-target" content="%s">' % sp.esc(json.dumps(
+            {"a": "11", "b": "VMware Aria Operations 8.x Application", "c": "2", "r": "SV-257985r1069364_rule"}, sort_keys=True)), page)
+        self.assertIn('<meta name="sa-stigman-to" content="/">', page)
+        self.assertIn('<script src="/portal/static/stigman-go.js"></script>', page)
+        self.assertNotIn("<script>", page)
+        self.assertIn("script-src 'self'", h["Content-Security-Policy"])
+        code, raw, h = self.req("/stigman/go?c=2&b=RHEL_9_STIG", dn=None)              # a collection review, no rule
+        self.assertIn('content="{&quot;b&quot;: &quot;RHEL_9_STIG&quot;, &quot;c&quot;: &quot;2&quot;}"', raw.decode())
+
+    def test_stigman_go_refuses_what_cannot_pass(self):
+        """A value that cannot pass, a repeated or unknown one, or no collection or STIG: straight to STIG Manager's plain
+        address (302), no page, nothing kept."""
+        for q in ("", "c=2", "b=RHEL_9_STIG", "c=x&b=RHEL_9_STIG", "c=2&b=%3Cscript%3E", "c=2&b=RHEL_9_STIG&a=1%202",
+                  "c=2&b=RHEL_9_STIG&r=a%2Fb", "c=2&c=3&b=RHEL_9_STIG", "c=2&b=RHEL_9_STIG&x=1", "c=2&b=RHEL_9_STIG&r=javascript:x",
+                  "c=1234567890123&b=RHEL_9_STIG"):
+            code, raw, h = self.req("/stigman/go?" + q, dn=None)
+            self.assertEqual((code, h.get("Location")), (302, "/"), q)
+        self.assertEqual(sp.stigman_target("c=2&b=RHEL_9_STIG&a=&r="), {"c": "2", "b": "RHEL_9_STIG"})
+        sys.path.insert(0, os.path.join(ROOT, "plugins", "filter"))       # the scorecard makes the links with the same rules
+        import stig_scorecard_filters as ssf
+        self.assertEqual([sp.STIGMAN_GO[k].pattern for k in ("c", "a", "b", "r")],
+                         [ssf.GO_ID.pattern, ssf.GO_ID.pattern, ssf.GO_BENCH.pattern, ssf.GO_RULE.pattern])
+
+    def test_stigman_scripts_without_sign_in(self):
+        for name in ("stigman-go.js", "stigman-open.js"):
+            code, raw, h = self.req("/static/" + name, dn=None)
+            self.assertEqual((code, h["Content-Type"]), (200, "text/javascript; charset=utf-8"), name)
+            self.assertIn(b"sa_stigman_open", raw)
+
+    def test_stigman_path_setting(self):
+        for v, want in (("", "/"), ("/", "/"), ("/stigman", "/stigman/"), ("stigman/", "/stigman/"), ("//evil.example.mil", "/"),
+                        ("/a/../b", "/"), ("/x y", "/")):
+            self.assertEqual(sp.Config({"PORTAL_STIGMAN_PATH": v}).stigman_path, want, v)
+
 
 class RoleFiles(unittest.TestCase):
     def test_nginx_lines(self):
@@ -633,6 +675,27 @@ class RoleFiles(unittest.TestCase):
         for line in ("ssl_verify_client       on;", "ssl_crl                 /etc/site-portal-tls/crl.pem;",
                      "    location /portal/ {", "        proxy_pass $site_portal_app;"):
             self.assertIn(line, s)
+
+    def test_nginx_stigman_links(self):
+        """1.68.1: the optional lines - STIG Manager's page (/ and /index.html only) with the portal's script added, the page
+        as text (no gzip from STIG Manager there), the versions tested; and how to take them out again."""
+        import jinja2
+        env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(ROOT, "roles", "site_portal_stack", "templates")),
+                                 keep_trailing_newline=True)
+        t = env.get_template("nginx-stigman-links.conf.j2").render(portal_path="/portal/", portal_stigman_path="/",
+                                                                   portal_stigman_upstream="http://stigman-api:54000",
+                                                                   portal_stigman_open_versions=["1.6.16", "1.6.17", "1.6.18"])
+        tag = ("sub_filter '</head>' '<script src=\"/portal/static/stigman-open.js\" data-versions=\"1.6.16 1.6.17 1.6.18\" defer>"
+               "</script></head>';")
+        self.assertEqual(t.count(tag), 2)
+        for line in ("location = / {", "location = /index.html {", "proxy_pass http://stigman-api:54000;", 'proxy_set_header Accept-Encoding   "";',
+                     "sub_filter_types text/html;", "sub_filter_once on;", "# REMOVE: delete these two location blocks"):
+            self.assertIn(line, t)
+        self.assertNotIn("location / {", t)                     # STIG Manager's own location / stays as it is
+        import yaml
+        with open(os.path.join(ROOT, "roles", "site_portal_stack", "defaults", "main.yml")) as fh:
+            d = yaml.safe_load(fh)
+        self.assertEqual((d["portal_stigman_path"], d["portal_stigman_open_versions"]), ("/", ["1.6.16", "1.6.17", "1.6.18"]))
 
     def test_deploy_syntax(self):
         ap = os.environ.get("ANSIBLE_PLAYBOOK") or shutil.which("ansible-playbook")

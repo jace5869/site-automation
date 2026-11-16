@@ -356,6 +356,37 @@ def stigman_link_tip(*path):
     return "Opens STIG Manager in a new tab. Then: %s" % " > ".join(str(p) for p in path if p)
 
 
+# 1.68.1: the values a go link may carry - the site portal's /stigman/go checks the same (roles/site_portal_stack/files/
+# site_portal.py STIGMAN_GO); a value that cannot pass gives no go link (the plain address instead)
+GO_ID = re.compile(r"^[0-9]{1,12}$")
+GO_BENCH = re.compile(r"^[A-Za-z0-9_.\- ]{1,255}$")
+GO_RULE = re.compile(r"^[A-Za-z0-9_.\-]{1,100}$")
+
+
+def stigman_go(portal, c, b, a="", r=""):
+    """1.68.1, stigman_link_style open: the site portal's page that opens STIG Manager at a review - collection c's review
+    of STIG b, or (a: an asset id) that asset's review of it; r: the rule to select. <report_portal_url>/stigman/go?c=&b=&a=&r=.
+    The portal page keeps the target in the browser tab (sessionStorage) and goes to STIG Manager's plain address; the
+    script nginx adds to STIG Manager's page opens the review (docs/CKL_IMPORT.md). '' when a value cannot pass."""
+    try:
+        from urllib.parse import urlencode
+    except ImportError:                          # pragma: no cover - Python 2
+        from urllib import urlencode
+    base = str(portal or "").strip().rstrip("/")
+    c, b, a, r = (str(x or "").strip() for x in (c, b, a, r))
+    if not re.match(r"^https?://[^\s\"'<>?#]+$", base) or not GO_ID.match(c) or not GO_BENCH.match(b):
+        return ""
+    if (a and not GO_ID.match(a)) or (r and not GO_RULE.match(r)):
+        return ""
+    return base + "/stigman/go?" + urlencode([("c", c), ("b", b)] + ([("a", a)] if a else []) + ([("r", r)] if r else []))
+
+
+def _worst_stig(stigs):
+    """A host's STIG with the most open findings (CAT I first): its review is where a host's link opens."""
+    ok = [(b, v) for b, v in (stigs or {}).items() if b and b != "?" and isinstance(v, (list, tuple))]
+    return sorted(ok, key=lambda x: (-_n(x[1][0]), -_n(x[1][1]), -_n(x[1][2]), x[0].lower()))[0][0] if ok else ""
+
+
 _PROMPT = re.compile(r"^\s*(?:\$\s+|(?:PS(?: [A-Za-z]:\\[^>]*)?|[A-Za-z]:\\[^>]*)>\s*)(\S.*)$")   # "$level = 1" is no prompt
 _ROOT = re.compile(r"^\s*#\s+([a-z/.][\w./-]*(?:\s.*)?)$")             # "# grep ..." (a root prompt), never "# A comment"
 _PS = re.compile(r"^\s*((?:Get|Set|New|Remove|Enable|Disable|Import|Export|Test|Install|Uninstall|Add|Start|Stop|Restart|Invoke|"
@@ -692,6 +723,8 @@ def stig_scorecard(read, point, runs, opts=None):
     list_max = max(1, _n(o.get("list_max", 200)) or 200)
     host = re.sub(r"^https?://([^/:]+).*$", r"\1", str(o.get("api") or ""))
     web_url = stigman_web(o.get("api"))              # 1.68.0: the names on the page open STIG Manager
+    # 1.68.1: stigman_link_style open - at the review, through the site portal's go page (report_portal_url)
+    go = str(o.get("portal") or "") if str(o.get("link_style") or "plain").lower() == "open" else ""
     if not read.get("ok"):
         why = str(read.get("error") or "STIG Manager was not read")
         return {"ok": False, "error": why, "title": "STIG compliance: not read - %s" % why[:120], "status": "critical", "subtitle": "",
@@ -856,13 +889,14 @@ def stig_scorecard(read, point, runs, opts=None):
             if not isinstance(r, dict) or not r.get("sv"):
                 continue
             a = allr.setdefault(r["sv"], {"sv": r["sv"], "cat": r.get("cat") or 2, "version": r.get("version") or "", "title": r.get("title") or "",
-                                          "hosts": 0, "where": [], "names": [], "pf": set(), "col": set(), "paths": []})
+                                          "hosts": 0, "where": [], "names": [], "pf": set(), "col": set(), "paths": [],
+                                          "rule": str(r.get("rule") or "")})
             a["pf"].add(_key(_rule_platform(r, _asset_platforms(c, _platforms(cfg)), _platforms(cfg)), cfg))
             a["col"].add("c%s" % c.get("id"))
             a["cat"] = min(a["cat"], r.get("cat") or 2)
             a["hosts"] += _n(r.get("count"))
             a["where"].append((c["name"], _n(r.get("count"))))
-            a["paths"].append((c["name"], str(r.get("stig") or "")))
+            a["paths"].append((c["name"], str(r.get("stig") or ""), str(c.get("id") or ""), _n(r.get("count"))))
             a["names"] += [x for x in r.get("assets") or [] if x not in a["names"]]
     ranked = sorted(allr.values(), key=lambda a: (-a["hosts"], a["cat"], a["sv"]))
     top = ranked[:top_n]
@@ -1077,6 +1111,7 @@ def stig_scorecard(read, point, runs, opts=None):
             if isinstance(r, dict) and r.get("sv"):
                 hosts_of_rule.setdefault(r["sv"], []).extend((h, c["name"]) for h in r.get("assets") or [])
     f_rows, f_det, f_tags, f_st = [], [], [], []
+    by_name = dict((c["name"], c) for c in good)
     for a in ranked[:VIEW_MAX]:                       # the most hosts first (1.68.0: what Top rules was)
         hl = sorted(set(hosts_of_rule.get(a["sv"]) or []), key=lambda x: (x[1].lower(), x[0].lower()))
         plat = ", ".join(sorted(set(n for n in names if _key(n, cfg) in a["pf"])))
@@ -1085,6 +1120,15 @@ def stig_scorecard(read, point, runs, opts=None):
         hd = ({"columns": ["Host", "Collection"], "kinds": ["wrap", "wrap"], "rows": [list(x) for x in hl[:HOSTS_MAX]],
                "more": ("%d more hosts: the workbook lists every one." % (len(hl) - HOSTS_MAX)) if len(hl) > HOSTS_MAX else ""}
               if hl else {"text": "The hosts of this rule were not listed (stigman_scorecard_hosts)."})
+        if go and hl:                                 # 1.68.1: a host's name opens its review, at this rule
+            stig = next((pth[1] for pth in a["paths"] if pth[1]), "")
+            ids = [((by_name.get(cn) or {}).get("asset_ids") or {}).get(h) for h, cn in hl[:HOSTS_MAX]]
+            urls = [stigman_go(go, (by_name.get(cn) or {}).get("id"), stig, aid, a["rule"]) if aid else ""
+                    for (h, cn), aid in zip(hl[:HOSTS_MAX], ids)]
+            if any(urls):
+                hd["links"] = urls
+                hd["link_titles"] = ["Opens %s's review in STIG Manager (a new tab), at %s" % (h, a["sv"]) if u else ""
+                                     for (h, cn), u in zip(hl[:HOSTS_MAX], urls)]
         tb = _text_block(texts.get(a["sv"]))          # 1.68.0: its check and fix text first, then its hosts
         f_det.append([tb, hd] if tb else hd)
         f_tags.append({"pf": " ".join(sorted(a["pf"])), "col": " ".join(sorted(a["col"])), "cat": "k%d" % a["cat"],
@@ -1104,6 +1148,15 @@ def stig_scorecard(read, point, runs, opts=None):
                                   "titles": [stigman_link_tip(" or ".join(sorted(set(p[0] for p in a["paths"]), key=lambda x: x.lower())),
                                                               next((p[1] for p in a["paths"] if p[1]), ""), a["sv"]) for a in shown_r],
                                   "copies": [a["sv"] for a in shown_r]}
+    if go and f_rows:                                 # 1.68.1: the collection's review of the rule's STIG, at the rule
+        cl = find_sec.setdefault("cell_links", {"column": 1, "urls": [""] * len(f_rows), "title": "", "titles": [""] * len(f_rows),
+                                                "copies": [a["sv"] for a in ranked[:VIEW_MAX]]})
+        for i, a in enumerate(ranked[:VIEW_MAX]):
+            best = sorted([pth for pth in a["paths"] if pth[1]], key=lambda pth: (-pth[3], pth[0].lower()))
+            u = stigman_go(go, best[0][2], best[0][1], "", a["rule"]) if best else ""
+            if u:
+                cl["urls"][i] = u
+                cl["titles"][i] = "Opens %s in STIG Manager (a new tab): %s's review of %s, at the rule" % (a["sv"], best[0][0], best[0][1])
     if len(ranked) > VIEW_MAX:
         job_only.append("Findings: %d more rules than the page shows; the workbook lists every one." % (len(ranked) - VIEW_MAX))
     no_rules = [c["name"] for c in good if _open(c) and not rule_known.get(str(c.get("id")))]
@@ -1138,6 +1191,14 @@ def stig_scorecard(read, point, runs, opts=None):
     if web_url and h_rows:                          # 1.68.0: a host's name opens STIG Manager
         hosts_sec["cell_links"] = {"column": 1, "urls": [web_url] * len(h_rows), "title": "",
                                    "titles": [stigman_link_tip(c["name"], h) for c, h, stigs, cats, oldest, plats, rl in hv[:VIEW_MAX]]}
+    if go and h_rows:                                 # 1.68.1: the host's review of its STIG with the most open findings
+        cl = hosts_sec.setdefault("cell_links", {"column": 1, "urls": [""] * len(h_rows), "title": "", "titles": [""] * len(h_rows)})
+        for i, (c, h, stigs, cats, oldest, plats, rl) in enumerate(hv[:VIEW_MAX]):
+            b, aid = _worst_stig(stigs), (c.get("asset_ids") or {}).get(h)
+            u = stigman_go(go, c.get("id"), b, aid, "") if aid else ""         # no id: the plain link stays
+            if u:
+                cl["urls"][i] = u
+                cl["titles"][i] = "Opens %s's review of %s in STIG Manager (a new tab)" % (h, b)
     if len(hv) > VIEW_MAX:
         job_only.append("Hosts: %d more hosts than the page shows; the workbook lists every one." % (len(hv) - VIEW_MAX))
     if not h_rows:

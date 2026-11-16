@@ -55,7 +55,8 @@ collections:
                 (its id), sv (SV-257985), cat (1, 2 or 3), version (the STIG ID), title, assets: [names], stig (1.67.0: the
                 STIG it is in, its benchmark id; '' when STIG Manager does not say)}], asset_stigs (1.67.0: {asset name:
                 [benchmark ids]}; {} when the assets could not be read with their STIGs), hosts (1.67.0: listed, off, or
-                why not listed), timing ({counts, assets, hosts}: seconds), error ('' = read)}"
+                why not listed), timing ({counts, assets, hosts}: seconds), error ('' = read), asset_ids (1.68.1: {asset
+                name: assetId} for the website's links)}"
   type: list
 missing: {description: "The names of C(collections) that the client cannot read or that are not there.", type: list}
 timings: {description: "1.67.0: one line per collection - the seconds of each call (counts, assets, hosts).", type: list}
@@ -215,7 +216,7 @@ def asset_count(client, cid):
     return len(rows or [])
 
 
-def asset_stigs(client, cid, wait=None):
+def asset_stigs(client, cid, wait=None, ids=None):
     """1.67.0: {asset name: [benchmark ids]} of a collection (GET /assets?collectionId=..&projection=stigs) - the scorecard
     counts an asset under each platform it has a STIG of. {} when they cannot be read (the platforms then count no
     assets). wait: seconds for this request (1.68.0: when the metrics per checklist were not read), else the client's."""
@@ -224,6 +225,8 @@ def asset_stigs(client, cid, wait=None):
     except RuntimeError:
         return {}
     out = {}
+    if ids is not None:                         # 1.68.1: each asset's id too
+        ids.update(ids_of(rows))
     for a in rows or []:
         if isinstance(a, dict) and (a.get("name") or a.get("assetId")):
             out[str(a.get("name") or a.get("assetId"))] = sorted(set(_bench(s) for s in a.get("stigs") or [] if _bench(s)))
@@ -237,6 +240,19 @@ def hosts_of(rows):
         if isinstance(f, dict) and f.get("ruleId"):
             out[str(f["ruleId"])] = sorted(set(str(a.get("name") or a.get("assetId") or "") for a in f.get("assets") or []
                                                if isinstance(a, dict)) - {""}, key=lambda s: s.lower())
+    return out
+
+
+def ids_of(rows):
+    """1.68.1: {asset name: assetId} from STIG Manager's rows - the metrics (a row per asset and STIG) and the findings with
+    projection=assets (each rule's assets). The website's links open an asset's review with it (stigman_link_style open)."""
+    out = {}
+    for r in rows or []:
+        if not isinstance(r, dict):
+            continue
+        for a in [r] + [x for x in r.get("assets") or [] if isinstance(x, dict)]:
+            if a.get("name") and str(a.get("assetId") or "").isdigit():
+                out.setdefault(str(a["name"]), str(a["assetId"]))
     return out
 
 
@@ -275,7 +291,7 @@ def read(p, client):
     out = []
     for c in sorted(mine, key=lambda c: str(c.get("name", "")).lower()):
         cid = str(c["collectionId"])
-        rec = {"id": cid, "name": str(c.get("name") or cid), "assets": 0, "cat1": 0, "cat2": 0, "cat3": 0, "rules": [], "error": "",
+        rec = {"id": cid, "name": str(c.get("name") or cid), "assets": 0, "cat1": 0, "cat2": 0, "cat3": 0, "rules": [], "error": "", "asset_ids": {},
                "asset_stigs": {}, "checklists": [], "hosts": "off", "counts_from": "", "timing": {}}
         t = time.time()
         try:
@@ -290,6 +306,7 @@ def read(p, client):
                 if not isinstance(rows, list):
                     raise RuntimeError("the metrics are not in the form this release knows")
                 rec["checklists"] = metrics_of(rows)
+                rec["asset_ids"] = ids_of(rows)
             except RuntimeError as e:
                 rec["checklists_note"] = "host counts not read (%s)" % str(e)[:300]
             st = {}
@@ -299,7 +316,7 @@ def read(p, client):
             rec["timing"]["metrics"] = round(time.time() - t, 2)
             if rec.get("checklists_note"):             # each asset's STIGs (its platforms) the 1.67.0 way, its own limit
                 t = time.time()
-                rec["asset_stigs"] = asset_stigs(client, cid, wait=p.get("hosts_timeout") or None)
+                rec["asset_stigs"] = asset_stigs(client, cid, wait=p.get("hosts_timeout") or None, ids=rec["asset_ids"])
                 rec["timing"]["assets"] = round(time.time() - t, 2)
         except RuntimeError as e:
             rec["timing"]["metrics"] = round(time.time() - t, 2)
@@ -313,7 +330,7 @@ def read(p, client):
                 rec["timing"]["counts"] = round(time.time() - t, 2)
                 step, t = "assets", time.time()
                 rec["assets"] = asset_count(client, cid)
-                rec["asset_stigs"] = asset_stigs(client, cid)
+                rec["asset_stigs"] = asset_stigs(client, cid, ids=rec["asset_ids"])
                 rec["timing"]["assets"] = round(time.time() - t, 2)
             except RuntimeError as e2:
                 rec["error"] = str(e2)
@@ -334,8 +351,10 @@ def read(p, client):
         if p.get("hosts", True) and not rec["error"] and rec["rules"] and rec["rules_read"]:
             t = time.time()                            # each rule's hosts, with their own limit
             try:
-                names = hosts_of(client.get("/collections/%s/findings" % cid, wait=p.get("hosts_timeout") or None,
-                                            aggregator="ruleId", acceptedOnly="false", projection="assets"))
+                hrows = client.get("/collections/%s/findings" % cid, wait=p.get("hosts_timeout") or None,
+                                   aggregator="ruleId", acceptedOnly="false", projection="assets")
+                names = hosts_of(hrows)
+                rec["asset_ids"] = dict(ids_of(hrows), **(rec.get("asset_ids") or {}))
                 for r in rec["rules"]:
                     r["assets"] = names.get(r["rule"], [])
                 rec["hosts"] = "listed"

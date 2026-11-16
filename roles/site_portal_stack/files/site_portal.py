@@ -124,6 +124,11 @@ class Config(object):
         self.tz, self.tz_note = site_time.zone(g("PORTAL_TIME_ZONE"))
         self.self_approval = flag(g("PORTAL_SELF_APPROVAL", "0"))
         self.aap_ui = g("PORTAL_AAP_UI", self.aap_url)                          # AAP's own pages, for the links
+        # 1.68.1: where STIG Manager's page is on this site (the go page goes on to it): a path of this host only
+        raw_sp = g("PORTAL_STIGMAN_PATH", "/").strip()
+        sp = "/" + raw_sp.strip("/")
+        self.stigman_path = ((sp.rstrip("/") + "/") if re.match(r"^/[A-Za-z0-9_./-]*$", sp) and not raw_sp.startswith("//")
+                             and "//" not in sp and ".." not in sp else "/")
 
 
 # ---- who: the client certificate nginx verified (as vmware_ask.py) ---------------------------------------------------
@@ -697,6 +702,35 @@ class Portal(object):
         return 200, {"ok": True, "decision": decision, "workflow_job": ap["workflow_job"]}
 
 
+# ---- 1.68.1: a STIG scorecard link that opens the review (stigman_link_style: open) ---------------------------------------
+# the values a link may carry - plugins/filter/stig_scorecard_filters.py (GO_ID, GO_BENCH, GO_RULE) makes them the same way
+STIGMAN_GO = {"c": re.compile(r"^[0-9]{1,12}$"), "a": re.compile(r"^[0-9]{1,12}$"), "b": re.compile(r"^[A-Za-z0-9_.\- ]{1,255}$"),
+              "r": re.compile(r"^[A-Za-z0-9_.\-]{1,100}$")}
+
+
+def stigman_target(query):
+    """/stigman/go's query -> {c, b[, a][, r]}, or None when a value is missing, repeated, unknown or cannot pass."""
+    q = urllib.parse.parse_qs(query or "", keep_blank_values=True, max_num_fields=10)
+    if set(q) - set(STIGMAN_GO) or any(len(v) != 1 for v in q.values()) or not q.get("c") or not q.get("b"):
+        return None
+    out = {}
+    for k, (v,) in q.items():
+        if v == "" and k in ("a", "r"):
+            continue
+        if not STIGMAN_GO[k].match(v):
+            return None
+        out[k] = v
+    return out
+
+
+def stigman_go_page(cfg, target):
+    """The go page: the target as data (no inline script), static/stigman-go.js keeps it in the tab and goes on."""
+    return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
+            '<meta name="sa-stigman-target" content="%s"><meta name="sa-stigman-to" content="%s"><title>Opening STIG Manager</title>'
+            '<script src="%sstatic/stigman-go.js"></script></head><body><p>Opening STIG Manager. <a href="%s">Open it</a> if nothing happens.'
+            '</p></body></html>' % (esc(json.dumps(target, sort_keys=True)), esc(cfg.stigman_path), cfg.path, esc(cfg.stigman_path)))
+
+
 # ---- the pages ---------------------------------------------------------------------------------------------------------
 def esc(s):
     return html.escape(str(s if s is not None else ""), quote=True)
@@ -897,7 +931,14 @@ def make_handler(cfg, portal, static_dir):
             if path == "/static/banner.css":            # the reports' banner colours (report_banner_color): no inline style
                 return self._send(200, ".banner{background:%s;color:%s}\n" % (cfg.banner["bg"], cfg.banner["fg"]),
                                   "text/css; charset=utf-8", [("Cache-Control", "no-cache")])
-            if path in ("/static/portal.js", "/static/portal.css"):
+            # 1.68.1: a scorecard link's go page and the script nginx adds to STIG Manager's page - no sign-in here: they
+            # carry only ids, and STIG Manager checks who may read what
+            if path == "/stigman/go":
+                t = stigman_target(u.query)
+                if not t:
+                    return self._send(302, b"", "text/plain", [("Location", cfg.stigman_path)])
+                return self._send(200, stigman_go_page(cfg, t), "text/html; charset=utf-8")
+            if path in ("/static/portal.js", "/static/portal.css", "/static/stigman-go.js", "/static/stigman-open.js"):
                 name = path.rsplit("/", 1)[1]
                 with open(os.path.join(static_dir, name), "rb") as fh:
                     return self._send(200, fh.read(), TYPES[os.path.splitext(name)[1]], [("Cache-Control", "no-cache")])

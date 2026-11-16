@@ -1,0 +1,38 @@
+# Site automation (1.68.1) - optional: STIG scorecard links that open the review in STIG Manager (stigman_link_style:
+# open). Written by roles/site_portal_stack: it never changes your nginx. docs/CKL_IMPORT.md, "Links that open the review".
+#
+# ADD: read these lines INTO the same server { } block as the portal's lines (nginx-portal.conf), above its location /.
+# They serve STIG Manager's own page ({{ portal_stigman_path }} and {{ portal_stigman_path }}index.html only) with one line
+# added before </head>: the portal's script that opens the review. Everything else of STIG Manager goes through your
+# location / as before.
+#   - proxy_pass: the SAME address as in your location / (it is STIG Manager's). Check it:
+#       sudo podman exec <nginx> nginx -T | grep -n proxy_pass
+#     and change it here when yours differs ({{ portal_stigman_upstream }} is what roles/stigman_stack sets).
+#   - then: sudo podman exec <nginx> nginx -t    && sudo podman exec <nginx> nginx -s reload
+# The script acts only on STIG Manager {{ portal_stigman_open_versions | join(', ') }} (data-versions: the versions tested), and on
+# anything unexpected does nothing: STIG Manager's home page, as with a plain link.
+#
+# REMOVE: delete these two location blocks and reload nginx (nginx -t, then nginx -s reload). STIG Manager's page is then
+# exactly as before, and a scorecard link opens STIG Manager's home page.
+location = {{ portal_stigman_path }} {
+    proxy_pass {{ portal_stigman_upstream }};
+    proxy_http_version 1.1;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header Accept-Encoding   "";          # the page as text: sub_filter cannot read a gzipped answer
+    sub_filter_types text/html;
+    sub_filter '</head>' '<script src="{{ portal_path }}static/stigman-open.js" data-versions="{{ portal_stigman_open_versions | join(' ') }}" defer></script></head>';
+    sub_filter_once on;
+}
+location = {{ portal_stigman_path }}index.html {
+    proxy_pass {{ portal_stigman_upstream }};
+    proxy_http_version 1.1;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header Accept-Encoding   "";
+    sub_filter_types text/html;
+    sub_filter '</head>' '<script src="{{ portal_path }}static/stigman-open.js" data-versions="{{ portal_stigman_open_versions | join(' ') }}" defer></script></head>';
+    sub_filter_once on;
+}

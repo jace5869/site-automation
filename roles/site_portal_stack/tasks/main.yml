@@ -175,6 +175,8 @@
     - {src: start.sh, dest: start.sh}
     - {src: static/portal.js, dest: static/portal.js}
     - {src: static/portal.css, dest: static/portal.css}
+    - {src: static/stigman-go.js, dest: static/stigman-go.js}           # 1.68.1: a scorecard link's go page
+    - {src: static/stigman-open.js, dest: static/stigman-open.js}       # 1.68.1: added to STIG Manager's page by nginx
     - {src: "{{ role_path }}/../../plugins/filter/site_portal_filters.py", dest: site_portal_filters.py}
     - {src: "{{ role_path }}/../../plugins/module_utils/site_aap.py", dest: site_aap.py}
     - {src: "{{ role_path }}/../../plugins/module_utils/site_time.py", dest: site_time.py}
@@ -301,6 +303,7 @@
       PORTAL_APPROVERS: "{{ portal_approvers }}"
       PORTAL_LAUNCHES_PER_HOUR: "{{ portal_launches_per_hour | string }}"
       PORTAL_JOB_EVENTS: "{{ portal_job_events | string }}"
+      PORTAL_STIGMAN_PATH: "{{ portal_stigman_path }}"
   register: _portal_settings_file
 
 - name: Config | the actions (the file, or portal_actions - as written, the service checks them again)
@@ -408,6 +411,14 @@
   ansible.builtin.template:
     src: nginx-portal.conf.j2
     dest: "{{ portal_config_dir }}/nginx-portal.conf"
+    mode: "0644"
+  when: not portal_own_nginx | bool
+
+# 1.68.1: optional, the same way - STIG Manager's page with the script that opens a scorecard link's review
+- name: Config | the nginx lines for scorecard links that open the review (nginx-stigman-links.conf, optional)
+  ansible.builtin.template:
+    src: nginx-stigman-links.conf.j2
+    dest: "{{ portal_config_dir }}/nginx-stigman-links.conf"
     mode: "0644"
   when: not portal_own_nginx | bool
 
@@ -586,4 +597,6 @@
          ['Once, by hand: read the lines of ' ~ portal_config_dir ~ '/nginx-portal.conf (below) into the server block of your'
           ~ ' reverse proxy, above its location /, then sudo podman exec <nginx> nginx -t and sudo podman exec <nginx> nginx -s'
           ~ ' reload. The portal is then ' ~ portal_public_url ~ ' (docs/SITE_PORTAL.md, "Add /portal/ to your nginx").',
+          'Optional (1.68.1): ' ~ portal_config_dir ~ '/nginx-stigman-links.conf - scorecard links that open the review'
+          ~ ' (stigman_link_style: open; docs/CKL_IMPORT.md, "Links that open the review").',
           (_portal_lines.content | b64decode).splitlines() | reject('match', '^#') | list] }}

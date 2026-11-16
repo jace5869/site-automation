@@ -104,6 +104,11 @@ stigman_scorecard_hosts_timeout: 600        # seconds for a collection's rules' 
 # Copy fix; the workbook's Rules across hosts gets a Fix text column. The email is as before.
 stigman_scorecard_texts: true               # false = no check or fix text
 stigman_scorecard_text_timeout: 120         # seconds for all the rules' texts together; too slow: the rest have none
+# 1.68.1: where the website's names go in STIG Manager. plain: its home page (a tooltip says where to look). open: the
+# review itself - a rule's collection review at the rule, a host's asset review, a rule's host at the rule. open needs
+# report_portal_url (the site portal behind STIG Manager's nginx) and its nginx lines nginx-stigman-links.conf added
+# (docs/CKL_IMPORT.md, "Links that open the review"); without them a link opens the home page, as plain.
+stigman_link_style: plain
 # The earlier runs' points come from AAP's job history (a "Red Hat Ansible Automation Platform" credential on the job
 # template). With a "Report database" credential they are kept in its table stig_scorecard_point too - a longer history
 # than AAP keeps its jobs (docs/REPORT_DATABASE.md). The only thing the scorecard writes.

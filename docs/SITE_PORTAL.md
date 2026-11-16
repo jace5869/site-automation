@@ -157,6 +157,10 @@ runs without it; that action's page says *Off*. The actions show Off until step 
 deploy again after it. Its last task shows **the lines to add to nginx** (also in
 `/etc/site-portal/nginx-portal.conf` on the server).
 
+Since 1.68.1 the deploy also writes `/etc/site-portal/nginx-stigman-links.conf`: optional lines for STIG scorecard links
+that open the review in STIG Manager. They are not part of step 5. To use them, see [CKL_IMPORT.md](CKL_IMPORT.md),
+*Links that open the review*.
+
 **After an update of this repository**, run the template again. It copies the service and restarts it only if
 something changed. nginx's lines stay as they are.
 

@@ -1898,6 +1898,9 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_config_dir` | `/etc/site-portal` | the service's files, and nginx-portal.conf (the nginx lines to add) |
 | `portal_network` | (empty) | behind STIG Manager's nginx: the podman network of that nginx container (required then): `sudo podman ps --format "{{.Names}} {{.Networks}}"` shows it. It must exist with DNS on (not podman's default "podman"); the role never creates or changes it |
 | `portal_path` | `/portal/` | the portal's path on the proxy |
+| `portal_stigman_path` | `/` | 1.68.1: STIG scorecard links that open the review (stigman_link_style: open; behind STIG Manager's nginx only - the link and STIG Manager's page must be one site). The role writes nginx-stigman-links.conf, lines a person adds to that nginx (docs/CKL_IMPORT.md, "Links that open the review"): STIG Manager's page with th… (all of it: the role file) |
+| `portal_stigman_upstream` | `http://stigman-api:54000` | STIG Manager's address in your location / (roles/stigman_stack's) |
+| `portal_stigman_open_versions` | `["1.6.16", "1.6.17", "1.6.18"]` | the STIG Manager versions the script was tested on - on another it does nothing (a plain link). Add one only after a test |
 | `portal_public_url` | `"https://{{ portal_server_name }}{{ (':' ~ portal_port) if portal_own_nginx \| bool and po…` | the portal's address, as people open it (said at the end) |
 | `portal_title` | `Site portal` | the pages' title |
 | `portal_reports_dir` | `/srv/reports` | the report website: the folder on this host the report jobs write the pages to (report_web_dest's folder, e.g. the folder STIG Manager's nginx serves /reports/ from). Read-only for the portal; served at /portal/reports/ |
@@ -1976,6 +1979,7 @@ File: `roles/stigman_ckl_import/defaults/main.yml`
 | `stigman_scorecard_hosts_timeout` | `600` | seconds for a collection's rules' hosts (1.67.0: 120) |
 | `stigman_scorecard_texts` | `true` | 1.68.0: each open rule's check text and fix text (GET /stigs/rules/RULE - the client's scope stig-manager:stig:read), once per rule, the rules open on the most hosts first: a rule opened on the website shows them with Copy check and Copy fix; the workbook's Rules across hosts gets a Fix text column. The email is as be… (all of it: the role file) |
 | `stigman_scorecard_text_timeout` | `120` | seconds for all the rules' texts together; too slow: the rest have none |
+| `stigman_link_style` | `plain` | 1.68.1: where the website's names go in STIG Manager. plain: its home page (a tooltip says where to look). open: the review itself - a rule's collection review at the rule, a host's asset review, a rule's host at the rule. open needs report_portal_url (the site portal behind STIG Manager's nginx) and its nginx lines n… (all of it: the role file) |
 | `stigman_scorecard_db` | `true` | The earlier runs' points come from AAP's job history (a "Red Hat Ansible Automation Platform" credential on the job template). With a "Report database" credential they are kept in its table stig_scorecard_point too - a longer history than AAP keeps its jobs (docs/REPORT_DATABASE.md). The only thing the scorecard write… (all of it: the role file) |
 | `stigman_scorecard_db_create` | `true` | make the tables on the first run, and stig_scorecard_platform on an older database (false: by hand, docs/REPORT_DATABASE.md) |
 | `stigman_scorecard_db_keep_days` | `800` | rows older than this are deleted (0 = never) |

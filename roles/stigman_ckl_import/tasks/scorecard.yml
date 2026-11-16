@@ -89,6 +89,7 @@
            'list_max': stigman_ckl_import_list_max | int,
            'api': check_stig_stigman_api | default(''),
            'portal': report_portal_url | default(''),
+           'link_style': stigman_link_style | default('plain'),
            'platforms': stigman_scorecard_platforms,
            'platform_filter': stigman_scorecard_platform_filter,
            'fixed': _sc_aap.fixed | default({}),

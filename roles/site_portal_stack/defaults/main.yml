@@ -24,6 +24,13 @@ portal_config_dir: /etc/site-portal                 # the service's files, and n
 # creates or changes it
 portal_network: ""
 portal_path: /portal/                               # the portal's path on the proxy
+# 1.68.1: STIG scorecard links that open the review (stigman_link_style: open; behind STIG Manager's nginx only - the
+# link and STIG Manager's page must be one site). The role writes nginx-stigman-links.conf, lines a person adds to that
+# nginx (docs/CKL_IMPORT.md, "Links that open the review"): STIG Manager's page with the portal's script added.
+portal_stigman_path: /                             # where STIG Manager's page is on that nginx
+portal_stigman_upstream: http://stigman-api:54000  # STIG Manager's address in your location / (roles/stigman_stack's)
+# the STIG Manager versions the script was tested on - on another it does nothing (a plain link). Add one only after a test
+portal_stigman_open_versions: ["1.6.16", "1.6.17", "1.6.18"]
 # the portal's address, as people open it (said at the end)
 portal_public_url: "https://{{ portal_server_name }}{{ (':' ~ portal_port) if portal_own_nginx | bool and portal_port | int != 443 else '' }}{{ portal_path }}"
 portal_title: Site portal                           # the pages' title

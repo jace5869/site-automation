@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.68.1 — 2026-11-17
+
+**To set up: optional - nothing changes until you choose it.** New settings have defaults: `stigman_link_style` (plain:
+as 1.68.0), `portal_stigman_path`, `portal_stigman_upstream`, `portal_stigman_open_versions`. To have the scorecard's
+links open the review: run *Site portal - deploy* again, add the lines of `/etc/site-portal/nginx-stigman-links.conf` to
+STIG Manager's nginx (docs/CKL_IMPORT.md, "Links that open the review", steps 1-10; a remove block is there too), then
+set `stigman_link_style: open`.
+
+**STIG scorecard links that open the review in STIG Manager** (docs/CKL_IMPORT.md, "Links that open the review").
+
+- With `stigman_link_style: open`, a rule's name in *Findings* opens the collection's review of the rule's STIG at the
+  rule; a host in a rule opened, that host's review at the rule; a host in *Hosts*, its review of the STIG with the most
+  open findings. A collection's name opens the home page, as before.
+- The link goes to the site portal's `/portal/stigman/go`. It keeps the target in the browser tab and opens STIG
+  Manager's plain address, never a `#` or a `?` there (STIG Manager 1.6 stops its sign-in on those).
+- nginx adds one script of the portal's to STIG Manager's page (`/` and `/index.html` only). After the sign-in it opens
+  the review with STIG Manager's own functions (addReview, addCollectionReview), at the rule.
+- Safe by default: only on the versions tested (`portal_stigman_open_versions`: 1.6.16, 1.6.17, 1.6.18), only what the
+  person may read, and the STIG must be there. Anything else is STIG Manager's home page, one line in the browser
+  console, never an error box. Without the nginx lines, a link is a plain one.
+- The go page needs no sign-in: it carries ids only, checked against strict patterns (the scorecard makes them the same
+  way). A bad value is a 302 to STIG Manager's plain address. The script only reads before it opens.
+- The scorecard's read keeps each asset's id (the metrics and the host lists have it). The weekly point does not change.
+- Thanks to nuc-dev-3's spike for STIG Manager's client functions and their traps (an open review ignores a new rule).
+
+**Tests:** `tests/stig/run_stigman_links_test.sh` - the real STIG Manager 1.6.18, 1.6.17 and 1.6.16 with Keycloak, the
+portal and nginx with the role's lines, in headless Chrome: a cold browser through the sign-in to the asset's review at
+the rule, the collection's review at a rule, the same asset at another rule, no grant, a bad value, an untested version
+and nginx without the lines - all passed on each. `tests/test_stigman_links_js.py` (the two scripts under node),
+`tests/test_site_portal.py` (the go page, the nginx lines), `tests/test_stig_scorecard.py` (the links, the ids), the
+report fit document `stig_scorecard_open_web`.
+
 ## 1.68.0 — 2026-11-16
 
 **To set up: nothing.** New settings have defaults: `stigman_scorecard_rules_timeout` and `stigman_scorecard_hosts_timeout`
