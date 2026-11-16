@@ -219,6 +219,19 @@
     var apply=function(){all('[data-pf],[data-col]').forEach(function(el){if(el.closest('.facets'))return;
         var off=!(has(el,'data-pf',ch.pf)&&has(el,'data-col',ch.col));
         if(el.tagName==='TR'){el._p=off;vis(el)}else if(el.hidden!==off)el.hidden=off});
+      /* each section with tagged rows: its title's (N) and its count say how many are shown; none left - its table
+         gives way to one line; a list of collections with none shown goes away */
+      all('details.sec').forEach(function(sec){var tb=sec.querySelector('.tw table');
+        if(!tb||!tb.tBodies[0]||!tb.querySelector('tbody tr[data-pf],tbody tr[data-col]'))return;
+        var rows=[].slice.call(tb.tBodies[0].rows),k=rows.filter(function(r){return !r.hidden}).length,
+            h2=sec.querySelector('summary h2'),c=h2&&h2.querySelector('.count'),t=h2&&h2.firstChild,w=tb.closest('.tw'),
+            empty=!k&&rows.some(function(r){return r._p});
+        if(c){if(c._n===undefined)c._n=c.textContent;c.textContent=ch.pf||ch.col?String(k):c._n}
+        if(t&&t.nodeType===3){if(t._v===undefined)t._v=t.nodeValue;t.nodeValue=ch.pf||ch.col?t._v.replace(/\(\d+\)/,'('+k+')'):t._v}
+        if(empty&&!sec._none){var p=sec._none=document.createElement('p');p.className='fnone';p.textContent='Nothing matches this filter.';
+          w.parentNode.insertBefore(p,w.nextSibling)}
+        if(sec._none)sec._none.hidden=!empty;if(w.hidden!==empty)w.hidden=empty});
+      all('.grps').forEach(function(g){var off=!g.querySelector('details.grp:not([hidden])');if(g.hidden!==off)g.hidden=off});
       counts.forEach(function(c){c()});fit()};
     var put=function(k,v){ch[k]=v;
       all('button[data-fk="'+k+'"]',fx).forEach(function(b){b.setAttribute('aria-pressed',String(b.getAttribute('data-fv')===v))});

@@ -281,14 +281,17 @@ docs/REPORT_DATABASE.md ("From 1.58.0 to 1.66.x") once.
 
 **The STIG scorecard by platform, and each collection opened** (part G; docs/CKL_IMPORT.md, "By platform").
 
-- A STIG's platform comes from its benchmark id: Linux, Windows, Network, else Other (`stigman_scorecard_platforms`,
-  in order, the first match wins, `*` and `?`). Other is listed by STIG name in *How the scorecard counts*.
+- A STIG's platform comes from its benchmark id: Linux, Windows, VMware, Network, Applications (Apache, Tomcat,
+  PostgreSQL, browsers, Kubernetes ...), Storage (NetApp), else Other (`stigman_scorecard_platforms`, in order, the first
+  match wins, `*` and `?`). Other is listed by STIG name in *How the scorecard counts*.
 - An asset counts under each platform it has a STIG of. A finding counts once, under its own STIG's platform.
 - **By platform**, before *By collection*: a tile per platform, and a row with its assets, CAT I, II and III open, the
   change this week, a trend line and a status. One hue per platform from the dataviz palette, never a status colour,
   always beside its name. The email has the table; the workbook a *By platform* sheet with the Excel trend line.
 - On the website each collection opens to its CAT counts, its top open rules and its worst hosts. **Platform** and
-  **Collection** buttons above the sections choose the rows shown (site-report.js; atlas and brief).
+  **Collection** buttons above the sections choose the rows shown (site-report.js; atlas and brief). Each section's
+  title and count follow them; a section with none left says `Nothing matches this filter`. Collection also picks that
+  collection's platforms in *By platform*. A narrow *Since last week* keeps each count with its word.
 - `stigman_scorecard_platform_filter` (e.g. `[Windows]`) limits a run to those platforms.
 - The weekly point keeps the counts per platform: the job's artifact and the report database's new table. The platform
   trend starts with 1.67.0, said in one line.
@@ -296,7 +299,8 @@ docs/REPORT_DATABASE.md ("From 1.58.0 to 1.66.x") once.
 - **A big collection no longer stops the scorecard.** The counts come first, from the quick findings call without the
   hosts. Each rule's hosts are a second call with its own timeout (`stigman_scorecard_hosts`,
   `stigman_scorecard_hosts_timeout`: 120 s). A collection whose host list is slow keeps its counts and says `Hosts not
-  listed (STIG Manager was slow)`. The job output has one line per collection with the seconds of each call.
+  listed (STIG Manager was slow)`. The job output has one line per collection with the seconds of each call. Such a
+  collection is left out of *Fixed on the host, still Open* (a scan's row cannot be tied to its host), said in one line.
 
 **Tests (part G):** `tests/test_stig_scorecard.py` (the platforms: each default pattern, the first match wins, an
 asset of two platforms, a finding once, Other by name, the trend from the points with platforms, the filter, each

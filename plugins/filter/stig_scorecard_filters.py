@@ -32,8 +32,12 @@ WORST = {"critical": 4, "warning": 3, "low": 2, "ok": 1, "info": 0, "": 0}
 # in order, the first whose pattern matches a STIG's benchmark id wins (* and ?, any case); no match - Other
 PLATFORMS = [
     {"name": "Linux", "stigs": ["RHEL_*", "Oracle_Linux_*", "*Ubuntu*", "SLES_*", "*Linux*"]},
-    {"name": "Windows", "stigs": ["MS_Windows_*", "Windows_*", "MS_SQL_*", "IIS_*", "MS_*"]},
+    {"name": "Windows", "stigs": ["MS_Windows_*", "Windows_*", "MS_SQL_*", "IIS_*", "MS_*", "Microsoft_*"]},
+    {"name": "VMware", "stigs": ["VMW_*", "*vSphere*", "*ESXi*", "*vCenter*"]},
     {"name": "Network", "stigs": ["Cisco_*", "Juniper_*", "Palo_Alto_*", "F5_*", "Arista_*", "*Router*", "*Switch*", "*Firewall*"]},
+    {"name": "Applications", "stigs": ["Apache_*", "*Tomcat*", "*PostgreSQL*", "*Chrome*", "*Firefox*", "Mozilla_*", "*Kubernetes*",
+                                       "Docker_*", "Oracle_Database_*", "*MongoDB*", "*JBoss*", "*Nginx*"]},
+    {"name": "Storage", "stigs": ["NetApp_*", "*ONTAP*"]},
 ]
 OTHER = "Other"
 ANY = frozenset(["*"])            # a collection's hosts not listed (stigman_scorecard_hosts, or too slow): any host
@@ -226,6 +230,12 @@ def _has(p, name, keep=None):
     return isinstance(v, dict) and bool(_n(v.get("assets")) or v.get("rules")) and (not keep or name in keep)
 
 
+def _together(since):
+    """The website's "Since last week": each count kept with its word (a non-breaking space), so a narrow column wraps
+    between them, never one word a line (the email and the job's lines keep plain spaces)."""
+    return re.sub(r"(\d+|none) (closed|opened)", u"\\1\u00a0\\2", re.sub(u"^([▲▼▬]) ", u"\\1\u00a0", str(since)))
+
+
 def _slug(text):
     return re.sub(r"[^A-Za-z0-9_-]+", "-", str(text or "")).strip("-")[:60] or "x"
 
@@ -411,7 +421,8 @@ def fixed_rows(fixed, read):
             continue
         host, col, asset, sv = [str(x or "") for x in row[:4]]
         still = now.get(col.lower(), {}).get(sv)
-        if still is None or (still is not ANY and not ({_short(asset), _short(host)} & still)):
+        # a collection whose hosts were not listed: the row cannot be tied to its host - left out (stig_scorecard says so)
+        if still is None or still is ANY or not ({_short(asset), _short(host)} & still):
             continue
         out.append([host, col, sv, str(row[4] or ""), " ".join(str(row[5] or "").split()), str(row[6] or "")])
     out.sort(key=lambda r: (r[1].lower(), r[0].lower(), r[2]))
@@ -523,7 +534,7 @@ def stig_scorecard(read, point, runs, opts=None):
         head = [c["name"], _n(c.get("assets")), _n(c.get("cat1")), _n(c.get("cat2")), _n(c.get("cat3")), since]
         text = (u"%d → %d" % (series[0][1], series[-1][1])) if len(series) > 1 else "from next week"
         rows.append(head + [text, st_word])
-        web_rows.append(head + [sp.get("label", "") if sp else "trend starts next week", st_word])
+        web_rows.append(head[:5] + [_together(head[5])] + [sp.get("label", "") if sp else "trend starts next week", st_word])
         rst.append(st)
         cst.append(["", "", "critical" if _n(c.get("cat1")) else "", "", "", "", "", ""])
         sparks.append(sp)
@@ -613,6 +624,10 @@ def stig_scorecard(read, point, runs, opts=None):
     # ---- fixed on the host, still Open in STIG Manager (1.56.0's level "low", with the word Low; info when there are none)
     fx = o.get("fixed") if isinstance(o.get("fixed"), dict) else {}
     fixed = fixed_rows(fx, read)
+    # 1.67.0: the collections whose hosts were not listed (stigman_scorecard_hosts, or too slow) are left out of this part
+    unlisted = sorted(set(str(r[1]) for r in fx.get("rows") or [] if isinstance(r, (list, tuple)) and len(r) > 1
+                          for c in good if str(c.get("name", "")).lower() == str(r[1]).lower() and c.get("hosts", "listed") != "listed"),
+                      key=lambda s: s.lower())
     scans = fx.get("jobs") or []
     fix_text = ("The scan says these pass; STIG Manager still has them Open. Nothing to fix on the hosts - the checklist is "
                 "behind. The next checklist import (workflow 40) closes them.")
@@ -634,6 +649,8 @@ def stig_scorecard(read, point, runs, opts=None):
                         "wrap": True})
         if len(fixed) > list_max:
             fix_sec["lines"] = ["%d more are in the workbook." % (len(fixed) - list_max)]
+    elif scans and unlisted:
+        fix_sec["lines"] = []                           # said below: the collections left out
     elif scans:
         fix_sec["lines"] = ["None: every rule the last scans (%s, %s) found passing is closed in STIG Manager too."
                             % (_count(len(scans), "job"), _count(sum(_n(j.get("assets")) for j in scans), "asset"))]
@@ -703,14 +720,14 @@ def stig_scorecard(read, point, runs, opts=None):
         st_word = "CAT I open" if v["cat1"] else ("Worse" if worse else "OK")
         head = [n, v["assets"], v["cat1"], v["cat2"], v["cat3"], since]
         prow.append(head + [(u"%d → %d" % (series[0][1], series[-1][1])) if len(series) > 1 else "from next week", st_word])
-        pweb.append(head + [sp.get("label", "") if sp else "trend starts next week", st_word])
+        pweb.append(head[:5] + [_together(head[5])] + [sp.get("label", "") if sp else "trend starts next week", st_word])
         pst.append(st)
         pcst.append(["", "", "critical" if v["cat1"] else "", "", "", "", "", ""])
         psp.append(sp)
         ptip.append(["", "Assets with a STIG of %s (one with STIGs of two platforms counts in each)." % n, "", "", "", tip, "",
                      {"CAT I open": "CAT I open: at least one CAT I finding of %s is open." % n,
                       "Worse": "Worse: more findings opened than closed since last week."}.get(st_word, "OK: no CAT I open, and no worse than last week.")])
-        ptags.append({"pf": _key(n, cfg)})
+        ptags.append({"pf": _key(n, cfg), "col": " ".join("c%s" % x.get("id") for x in pcols if _has(x.get("p"), n, keep))})
         ptiles.append({"label": n, "value": opn, "hue": _hue(n, cfg), "note": "%d CAT I, %s" % (v["cat1"], _count(v["assets"], "asset")),
                        "tip": "%s: %d open (CAT I %d, CAT II %d, CAT III %d) on %s." % (n, opn, v["cat1"], v["cat2"], v["cat3"], _count(v["assets"], "asset"))})
     p_trend = any(psp)
@@ -775,6 +792,10 @@ def stig_scorecard(read, point, runs, opts=None):
         web_sec["groups"] = groups
         web_sec["groups_text"] = "Open a collection for its top open rules and its worst hosts."
 
+    if unlisted:
+        fix_sec["lines"] = list(fix_sec.get("lines") or []) + [
+            "Left out: %s - %s hosts were not listed, so a scan's row cannot be tied to its host." % (
+                ", ".join(unlisted), "its" if len(unlisted) == 1 else "their")]
     # ---- the tiles and the cards
     c1 = tot["cat1"]
     with1 = sorted([c for c in good if _n(c.get("cat1"))], key=lambda c: (-_n(c["cat1"]), c["name"].lower()))
@@ -913,7 +934,7 @@ def stig_scorecard(read, point, runs, opts=None):
     if len(shown) > 1 or len(good) > 1:
         facets = {"platforms": [{"key": _key(n, cfg), "name": n, "hue": _hue(n, cfg)} for n in shown] if len(shown) > 1 else [],
                   "collections": [{"key": "c%s" % c.get("id"), "name": c["name"]} for c in good] if len(good) > 1 else [],
-                  "note": "Platform and Collection choose the rows shown. The counts in a collection's row are of all its platforms."}
+                  "note": "Platform and Collection choose the rows shown. The counts in a row stay as they are."}
     return {"ok": True, "error": "", "title": title, "status": status, "subtitle": subtitle, "tiles": tiles, "sections": sections, "web": web,
             "facets": facets,
             "notes": notes, "xlsx": xlsx, "lines": lines, "fixed_rows": fixed,      # 1.67.0 part C: the site_findings artifact

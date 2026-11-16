@@ -14,7 +14,7 @@
 "name": "SITEA - Windows Server"
 }
 ],
-"note": "Platform and Collection choose the rows shown. The counts in a collection's row are of all its platforms.",
+"note": "Platform and Collection choose the rows shown. The counts in a row stay as they are.",
 "platforms": [
 {
 "hue": 1,
@@ -27,9 +27,14 @@
 "name": "Windows"
 },
 {
-"hue": 0,
-"key": "pf0",
-"name": "Other"
+"hue": 3,
+"key": "pf3",
+"name": "VMware"
+},
+{
+"hue": 5,
+"key": "pf5",
+"name": "Applications"
 }
 ]
 },
@@ -94,6 +99,16 @@
 "",
 "",
 ""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
 ]
 ],
 "column_titles": [
@@ -133,17 +148,25 @@
 "row_status": [
 "critical",
 "critical",
+"",
 ""
 ],
 "row_tags": [
 {
+"col": "c2",
 "pf": "pf1"
 },
 {
+"col": "c3",
 "pf": "pf2"
 },
 {
-"pf": "pf0"
+"col": "c1",
+"pf": "pf3"
+},
+{
+"col": "c2",
+"pf": "pf5"
 }
 ],
 "rows": [
@@ -153,7 +176,7 @@
 1,
 8,
 2,
-"\u25bc Better\n4 closed, 1 opened",
+"\u25bc\u00a0Better\n4\u00a0closed, 1\u00a0opened",
 "Linux, open findings: 15 in the week to 30 Oct, 11 now; by week: 15, 14, 11",
 "CAT I open"
 ],
@@ -163,18 +186,28 @@
 3,
 4,
 1,
-"\u25b2 Worse\n0 closed, 1 opened",
+"\u25b2\u00a0Worse\n0\u00a0closed, 1\u00a0opened",
 "Windows, open findings: 7 in the week to 30 Oct, 8 now; by week: 7, 7, 8",
 "CAT I open"
 ],
 [
-"Other",
-4,
+"VMware",
+3,
 0,
 3,
 0,
-"\u25ac Same\n0 closed, none opened",
-"Other, open findings: 3 in the week to 30 Oct, 3 now; by week: 3, 3, 3",
+"\u25ac\u00a0Same\n0\u00a0closed, none\u00a0opened",
+"VMware, open findings: 3 in the week to 30 Oct, 3 now; by week: 3, 3, 3",
+"OK"
+],
+[
+"Applications",
+1,
+0,
+0,
+0,
+"\u25ac\u00a0Same\n0\u00a0closed, none\u00a0opened",
+"Applications, open findings: 0 in the week to 30 Oct, 0 now; by week: 0, 0, 0",
 "OK"
 ]
 ],
@@ -269,15 +302,49 @@
 }
 ],
 "h": 30,
-"hue": 0,
-"label": "Other, open findings: 3 in the week to 30 Oct, 3 now; by week: 3, 3, 3",
+"hue": 3,
+"label": "VMware, open findings: 3 in the week to 30 Oct, 3 now; by week: 3, 3, 3",
 "last": [
 106.0,
 15.0
 ],
 "lines": [],
 "mark": null,
-"name": "Other",
+"name": "VMware",
+"points": "76.9,15.0 91.4,15.0 106.0,15.0",
+"w": 110
+},
+{
+"data_points": [
+{
+"label": "Week to 30 Oct",
+"text": "0 open: CAT I 0, CAT II 0, CAT III 0",
+"x": 76.9,
+"y": 15.0
+},
+{
+"label": "Week to 6 Nov",
+"text": "0 open: CAT I 0, CAT II 0, CAT III 0; no change since the point before",
+"x": 91.4,
+"y": 15.0
+},
+{
+"label": "Week to 13 Nov",
+"text": "0 open: CAT I 0, CAT II 0, CAT III 0; no change since the point before",
+"x": 106.0,
+"y": 15.0
+}
+],
+"h": 30,
+"hue": 5,
+"label": "Applications, open findings: 0 in the week to 30 Oct, 0 now; by week: 0, 0, 0",
+"last": [
+106.0,
+15.0
+],
+"lines": [],
+"mark": null,
+"name": "Applications",
 "points": "76.9,15.0 91.4,15.0 106.0,15.0",
 "w": 110
 }
@@ -299,11 +366,18 @@
 "value": 8
 },
 {
-"hue": 0,
-"label": "Other",
-"note": "0 CAT I, 4 assets",
-"tip": "Other: 3 open (CAT I 0, CAT II 3, CAT III 0) on 4 assets.",
+"hue": 3,
+"label": "VMware",
+"note": "0 CAT I, 3 assets",
+"tip": "VMware: 3 open (CAT I 0, CAT II 3, CAT III 0) on 3 assets.",
 "value": 3
+},
+{
+"hue": 5,
+"label": "Applications",
+"note": "0 CAT I, 1 asset",
+"tip": "Applications: 0 open (CAT I 0, CAT II 0, CAT III 0) on 1 asset.",
+"value": 0
 }
 ],
 "tips": [
@@ -329,16 +403,26 @@
 ],
 [
 "",
-"Assets with a STIG of Other (one with STIGs of two platforms counts in each).",
+"Assets with a STIG of VMware (one with STIGs of two platforms counts in each).",
 "",
 "",
 "",
-"Other since 6 Nov\nClosed: none\nOpened: none",
+"VMware since 6 Nov\nClosed: none\nOpened: none",
+"",
+"OK: no CAT I open, and no worse than last week."
+],
+[
+"",
+"Assets with a STIG of Applications (one with STIGs of two platforms counts in each).",
+"",
+"",
+"",
+"Applications since 6 Nov\nClosed: none\nOpened: none",
 "",
 "OK: no CAT I open, and no worse than last week."
 ]
 ],
-"title": "By platform (3)",
+"title": "By platform (4)",
 "wrap": true
 },
 {
@@ -420,7 +504,7 @@
 ]
 ],
 "id": "col-2",
-"meta": "6 assets: Linux 6, Other 1",
+"meta": "6 assets: Linux 6, Applications 1",
 "status": "critical",
 "tables": [
 {
@@ -534,7 +618,7 @@
 ],
 "tags": {
 "col": "c2",
-"pf": "pf1 pf0"
+"pf": "pf1 pf5"
 },
 "title": "SITEA - RHEL 9"
 },
@@ -557,7 +641,7 @@
 ]
 ],
 "id": "col-1",
-"meta": "3 assets: Other 3",
+"meta": "3 assets: VMware 3",
 "status": "",
 "tables": [
 {
@@ -633,7 +717,7 @@
 ],
 "tags": {
 "col": "c1",
-"pf": "pf0"
+"pf": "pf3"
 },
 "title": "SITEA - VMware"
 },
@@ -787,11 +871,11 @@
 "row_tags": [
 {
 "col": "c2",
-"pf": "pf1 pf0"
+"pf": "pf1 pf5"
 },
 {
 "col": "c1",
-"pf": "pf0"
+"pf": "pf3"
 },
 {
 "col": "c3",
@@ -805,7 +889,7 @@
 1,
 8,
 2,
-"\u25bc Better\n4 closed, 1 opened",
+"\u25bc\u00a0Better\n4\u00a0closed, 1\u00a0opened",
 "SITEA - RHEL 9, open findings: 20 in the week to 25 Sep, 11 now; by week: 20, 19, 18, 17, 16, 15, 14, 11",
 "CAT I open"
 ],
@@ -815,7 +899,7 @@
 0,
 3,
 0,
-"\u25ac Same\n0 closed, none opened",
+"\u25ac\u00a0Same\n0\u00a0closed, none\u00a0opened",
 "SITEA - VMware, open findings: 3 in the week to 23 Oct, 3 now; by week: 3, 3, 3, 3",
 "OK"
 ],
@@ -825,7 +909,7 @@
 3,
 4,
 1,
-"\u25b2 Worse\n0 closed, 1 opened",
+"\u25b2\u00a0Worse\n0\u00a0closed, 1\u00a0opened",
 "SITEA - Windows Server, open findings: 7 in the week to 25 Sep, 8 now; by week: 7, 7, 7, 7, 7, 7, 7, 8",
 "CAT I open"
 ]
@@ -1111,7 +1195,7 @@
 },
 {
 "col": "c1",
-"pf": "pf0"
+"pf": "pf3"
 }
 ],
 "rows": [
@@ -1393,7 +1477,7 @@
 8
 ],
 [
-"Platform Other",
+"Platform VMware",
 "-",
 "-",
 "-",
@@ -1402,6 +1486,17 @@
 3,
 3,
 3
+],
+[
+"Platform Applications",
+"-",
+"-",
+"-",
+"-",
+"-",
+0,
+0,
+0
 ]
 ],
 "text": "One point a week: the last run of each week, the weeks ending on this run's weekday. A dash: no run that week.",
@@ -1417,8 +1512,7 @@
 "A collection that was not in last week's run is \"New here\" and is not in the week's totals.",
 "Fixed on the host, still Open: the STIG drift reports' last scans against this run's Open findings.",
 "By platform: an asset counts under each platform it has a STIG of, so one with STIGs of two platforms counts in both. A finding counts under its own STIG's platform.",
-"A STIG's platform: the first of stigman_scorecard_platforms with a pattern that matches its benchmark id (Linux rhel_*, oracle_linux_*, *ubuntu*, sles_*, *linux*; Windows ms_windows_*, windows_*, ms_sql_*, iis_*, ms_*; Network cisco_*, juniper_*, palo_alto_*, f5_*, arista_*, *router*, *switch*, *firewall*).",
-"Other: the STIGs no platform matched - Apache_Server_2-4_UNIX_Server_STIG, VMW_Aria_Operations_8-x_Apache_STIG, VMW_vSphere_7-0_ESXi_STIG.",
+"A STIG's platform: the first of stigman_scorecard_platforms with a pattern that matches its benchmark id (Linux rhel_*, oracle_linux_*, *ubuntu*, sles_*, *linux*; Windows ms_windows_*, windows_*, ms_sql_*, iis_*, ms_*, microsoft_*; VMware vmw_*, *vsphere*, *esxi*, *vcenter*; Network cisco_*, juniper_*, palo_alto_*, f5_*, arista_*, *router*, *switch*, *firewall*; Applications apache_*, *tomcat*, *postgresql*, *chrome*, *firefox*, mozilla_*, *kubernetes*, docker_*, oracle_database_*, *mongodb*, *jboss*, *nginx*; Storage netapp_*, *ontap*).",
 "Compared with the run of 2026-11-06 06:02 UTC."
 ],
 "title": "How the scorecard counts"

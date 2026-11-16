@@ -158,8 +158,12 @@ stigman_ckl_import_collection: VMware
 ## STIG of, a finding under its STIG's platform.
 # stigman_scorecard_platforms:
 #   - {name: Linux, stigs: ["RHEL_*", "Oracle_Linux_*", "*Ubuntu*", "SLES_*", "*Linux*"]}
-#   - {name: Windows, stigs: ["MS_Windows_*", "Windows_*", "MS_SQL_*", "IIS_*", "MS_*"]}
+#   - {name: Windows, stigs: ["MS_Windows_*", "Windows_*", "MS_SQL_*", "IIS_*", "MS_*", "Microsoft_*"]}
+#   - {name: VMware, stigs: ["VMW_*", "*vSphere*", "*ESXi*", "*vCenter*"]}
 #   - {name: Network, stigs: ["Cisco_*", "Juniper_*", "Palo_Alto_*", "F5_*", "Arista_*", "*Router*", "*Switch*", "*Firewall*"]}
+#   - {name: Applications, stigs: ["Apache_*", "*Tomcat*", "*PostgreSQL*", "*Chrome*", "*Firefox*", "Mozilla_*", "*Kubernetes*",
+#                                  "Docker_*", "Oracle_Database_*", "*MongoDB*", "*JBoss*", "*Nginx*"]}
+#   - {name: Storage, stigs: ["NetApp_*", "*ONTAP*"]}
 
 ## only these platforms, by name (e.g. [Windows]; [] = every platform)
 # stigman_scorecard_platform_filter: []
