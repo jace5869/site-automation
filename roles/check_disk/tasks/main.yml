@@ -131,12 +131,16 @@
       {%-   set crit = lim.crit | default(check_disk_crit_pct) | int -%}
       {%-   set free = (r.avail | filesizeformat(true)) ~ ' free of ' ~ (r.size | filesizeformat(true)) -%}
       {%-   set look = 'timeout 60 du -xh --max-depth=2 ' ~ (r.mount | quote) ~ ' 2>/dev/null | sort -h | tail -15' -%}
+      {#-   1.67.0: the numbers a fix needs (the site portal's buttons; roles/finding_ref reads them back) -#}
+      {%-   set data = {'mount': r.mount, 'pct': r.pct, 'warn': warn, 'crit': crit, 'size_b': r.size, 'avail_b': r.avail} -%}
       {%-   if r.pct >= crit -%}
       {%-     set _ = f.append({'check': 'disk', 'id': 'disk:' ~ r.mount, 'severity': 'critical',
-                                'summary': r.mount ~ ' is ' ~ r.pct ~ '% full (critical at ' ~ crit ~ '%), ' ~ free, 'hint': look}) -%}
+                                'summary': r.mount ~ ' is ' ~ r.pct ~ '% full (critical at ' ~ crit ~ '%), ' ~ free, 'hint': look,
+                                'data': data}) -%}
       {%-   elif r.pct >= warn -%}
       {%-     set _ = f.append({'check': 'disk', 'id': 'disk:' ~ r.mount, 'severity': 'warning',
-                                'summary': r.mount ~ ' is ' ~ r.pct ~ '% full (warning at ' ~ warn ~ '%), ' ~ free, 'hint': look}) -%}
+                                'summary': r.mount ~ ' is ' ~ r.pct ~ '% full (warning at ' ~ warn ~ '%), ' ~ free, 'hint': look,
+                                'data': data}) -%}
       {%-   endif -%}
       {%-   set ilook = 'timeout 60 du -x --inodes --max-depth=2 ' ~ (r.mount | quote) ~ ' 2>/dev/null | sort -n | tail -15' -%}
       {%-   if r.ipct >= check_disk_inode_crit_pct | int -%}

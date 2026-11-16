@@ -18,12 +18,12 @@
     portal_request_spec:
       target: {kind: inventory_host}
       report_job: {kind: text, max: 12, pattern: "[0-9]{1,12}"}
-      finding_id: {kind: text, max: 120, pattern: "(fapolicyd|eventlog):[A-Za-z0-9_.:-]{1,100}"}
+      finding_id: {kind: text, max: 200, pattern: "(fapolicyd|fapolicyd_deny|eventlog):[A-Za-z0-9_.:/@-]{1,180}"}
 
 - name: Triage | which kind of finding, and is it this template's
   ansible.builtin.set_fact:
     _pt_kind: "{{ finding_id | portal_finding_kind }}"
-    _pt_mine: "{{ {'fapolicyd': 'linux', 'eventlog': 'windows'}[finding_id | portal_finding_kind] == portal_triage_os }}"
+    _pt_mine: "{{ {'fapolicyd': 'linux', 'fapolicyd_deny': 'linux', 'eventlog': 'windows'}.get(finding_id | portal_finding_kind, '') == portal_triage_os }}"
 
 - name: Triage | not this template's finding - the {{ 'Windows' if portal_triage_os == 'linux' else 'Linux' }} template looks at it
   ansible.builtin.debug:
@@ -36,10 +36,11 @@
   ansible.builtin.meta: end_host
   when: not _pt_mine | bool
 
+# 1.67.0 part C: read back by reference with roles/finding_ref (the report job's site_findings artifact): it is this
+# host's, and one of the kinds this workflow looks at - else the job stops here, having read nothing on the host
 - name: Triage | the finding, from the job that reported it
   ansible.builtin.include_role:
-    name: portal_request
-    tasks_from: finding.yml
+    name: finding_ref
     apply:
       delegate_to: localhost
       run_once: true
@@ -47,9 +48,18 @@
   vars:
     ansible_connection: local
     ansible_python_interpreter: "{{ ansible_playbook_python }}"
-    _pf_job: "{{ report_job }}"
-    _pf_host: "{{ inventory_hostname }}"
-    _pf_id: "{{ finding_id }}"
+    finding_ref_host: "{{ inventory_hostname }}"
+    finding_ref_kinds: [fapolicyd, fapolicyd_deny, eventlog]
+
+- name: Triage | the finding as ACT reads it (the check's own look command, when the report kept one)
+  ansible.builtin.set_fact:
+    portal_finding:
+      check: "{{ finding.kind }}"
+      id: "{{ finding.id }}"
+      severity: "{{ finding.severity }}"
+      summary: "{{ finding.title }}"
+      hint: "{{ finding.data.look | default('') }}"
+    portal_finding_job: "{{ finding_job }}"
 
 - name: Triage | read more on the host (read only)
   ansible.builtin.include_tasks: "evidence_{{ portal_triage_os }}.yml"

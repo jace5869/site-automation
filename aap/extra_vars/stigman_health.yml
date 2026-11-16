@@ -109,6 +109,11 @@ stigman_health_api: https://stigman.yoursite.mil/api
 ## auto, true or false: find database containers by their image (see above)
 # check_mariadb_container_discover: auto
 
+# ---- site_portal_stack ---------------------------------------------------------------------------
+## ---- the actions: {} = the role's files/actions.yml; a dict of the same shape here replaces it
+## -----------------------
+# portal_actions: {}
+
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no
 ## email. Set it on each TEMPLATE (its Variables, or a survey): in all.yml every report job emails.
@@ -462,3 +467,12 @@ stigman_health_api: https://stigman.yoursite.mil/api
 ## inventory groups, in order, a row each: a host goes in the first one it is in, else Other; [] =
 ## its first group
 # cert_timeline_groups: []
+
+## 1.67.0 (the site portal, docs/SITE_PORTAL.md "From a finding to a fix"): every report job of the
+## checks keeps its findings as the job artifact site_findings - a stable id each
+## (<kind>:<host>:<key>) and the numbers a fix needs - so the portal's fix jobs can read a finding
+## back by reference. false = not kept (the portal's buttons then cannot work).
+# site_findings_artifact: true
+
+## per host and kind, the worst first; how many more there were: site_findings_capped
+# site_findings_max_per_kind: 50

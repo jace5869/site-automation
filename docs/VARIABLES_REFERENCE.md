@@ -11,7 +11,7 @@ never out of date. Where to put a setting, and which place wins when it is in tw
 A setting that is a list (`[a, b]`) **replaces** the default list when you set it; it does not add
 to it. Repeat the entries you want to keep.
 
-**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [aap_health](#aap_health), [aap_template_audit](#aap_template_audit), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [api_availability](#api_availability), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [evaluate_stig_update](#evaluate_stig_update), [fapolicyd](#fapolicyd), [fapolicyd_fix](#fapolicyd_fix), [fapolicyd_rules](#fapolicyd_rules), [horizon](#horizon), [incident_docs](#incident_docs), [log_analysis](#log_analysis), [mail_relay](#mail_relay), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [pki_bundle](#pki_bundle), [poam](#poam), [podman_discover](#podman_discover), [portal_request](#portal_request), [portal_triage](#portal_triage), [service_watch](#service_watch), [servicenow](#servicenow), [servicenow_insights](#servicenow_insights), [servicenow_war](#servicenow_war), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [site_portal_stack](#site_portal_stack), [stigman_ckl_import](#stigman_ckl_import), [stigman_health](#stigman_health), [stigman_stack](#stigman_stack), [stigman_update](#stigman_update), [tenable_scan](#tenable_scan), [tmp_cleanup](#tmp_cleanup), [troubleshoot](#troubleshoot), [ucs_report](#ucs_report), [vmware_ask_stack](#vmware_ask_stack), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_stig](#win_check_stig), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
+**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [aap_health](#aap_health), [aap_template_audit](#aap_template_audit), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [api_availability](#api_availability), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [evaluate_stig_update](#evaluate_stig_update), [fapolicyd](#fapolicyd), [fapolicyd_fix](#fapolicyd_fix), [fapolicyd_rules](#fapolicyd_rules), [finding_ref](#finding_ref), [horizon](#horizon), [incident_docs](#incident_docs), [log_analysis](#log_analysis), [mail_relay](#mail_relay), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [pki_bundle](#pki_bundle), [poam](#poam), [podman_discover](#podman_discover), [portal_request](#portal_request), [portal_triage](#portal_triage), [service_watch](#service_watch), [servicenow](#servicenow), [servicenow_insights](#servicenow_insights), [servicenow_war](#servicenow_war), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [site_portal_stack](#site_portal_stack), [stigman_ckl_import](#stigman_ckl_import), [stigman_health](#stigman_health), [stigman_stack](#stigman_stack), [stigman_update](#stigman_update), [tenable_scan](#tenable_scan), [tmp_cleanup](#tmp_cleanup), [troubleshoot](#troubleshoot), [ucs_report](#ucs_report), [vmware_ask_stack](#vmware_ask_stack), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_stig](#win_check_stig), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
 
 ## aap_ee
 
@@ -808,6 +808,18 @@ File: `roles/fapolicyd_rules/defaults/main.yml`
 | `fapolicyd_rules_timeout` | `120` | seconds for each command the job reads with |
 | `fapolicyd_rules_storage_conf` | `/etc/containers/storage.conf` | podman's storage.conf: where root's and users' storage is |
 
+## finding_ref
+
+File: `roles/finding_ref/defaults/main.yml`
+
+| Setting | Default | What it does |
+|---|---|---|
+| `finding_ref_job` | `"{{ report_job \| default('') }}"` | ---- finding_ref (1.67.0 part C, docs/SITE_PORTAL.md "From a finding to a fix") ------------------------------------- A fix job the site portal launches gets a reference to a finding - the report job, the finding's id, the host - never its values. This role reads the finding back from that report job's site_findings a… (all of it: the role file) |
+| `finding_ref_id` | `"{{ finding_id \| default('') }}"` | the finding's id (finding_id) |
+| `finding_ref_host` | `"{{ target \| default('') }}"` | the host the fix runs on (target) |
+| `finding_ref_kinds` | `[]` | the kinds this job fixes (set by each playbook); [] = any |
+| `finding_ref_aap_ca_path` | `"{{ report_history_aap_ca_path \| default('') }}"` | a CA file for AAP's own HTTPS certificate |
+
 ## horizon
 
 File: `roles/horizon/defaults/main.yml`
@@ -1329,7 +1341,7 @@ File: `roles/portal_request/defaults/main.yml`
 
 File: `roles/portal_triage/defaults/main.yml`
 
-> ---- ACT - triage finding (1.67.0, workflow 44) ----------------------------------------------------------------- One finding of an earlier health or fapolicyd job (the site portal's "Ask ACT"): read from that job's site_health artifact, more evidence read on the host (read only), ACT's answer in evidence mode (ACT runs no command), a report and the job artifact act_triage_finding. Never applies a fix. docs/SITE_PORTAL.md, "AAP workflows".
+> ---- ACT - triage finding (1.67.0, workflow 44) ----------------------------------------------------------------- One finding of an earlier health or fapolicyd job (the site portal's "Ask ACT"): read back from that job's site_findings artifact (roles/finding_ref), more evidence read on the host (read only), ACT's answer in evidence mode (ACT runs no command), a report and the job artifact act_triage_finding. Never applies a fix. docs/SITE_PORTAL.md, "AAP workflows".
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -1765,6 +1777,8 @@ File: `roles/site_findings/defaults/main.yml`
 | `cert_timeline` | `true` | ---- Certificate timeline (1.64.0): a section of the certificate reports ------------------------ Linux, Windows, network devices, vCenter: the next cert_timeline_days on one axis on the report website (the atlas and brief looks), the renew list in the email, a Timeline sheet in the workbook. The levels are each repor… (all of it: the role file) |
 | `cert_timeline_days` | `120` | how far ahead the timeline and its sheet look (14 or more) |
 | `cert_timeline_groups` | `[]` | inventory groups, in order, a row each: a host goes in the first one it is in, else Other; [] = its first group |
+| `site_findings_artifact` | `true` | 1.67.0 (the site portal, docs/SITE_PORTAL.md "From a finding to a fix"): every report job of the checks keeps its findings as the job artifact site_findings - a stable id each (<kind>:<host>:<key>) and the numbers a fix needs - so the portal's fix jobs can read a finding back by reference. false = not kept (the portal… (all of it: the role file) |
+| `site_findings_max_per_kind` | `50` | per host and kind, the worst first; how many more there were: site_findings_capped |
 
 ## site_portal_stack
 

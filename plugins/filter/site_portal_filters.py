@@ -32,7 +32,9 @@ TEXT_MAX = 4000                    # a text var's max when it names none
 TEXT_CEILING = 20000               # no text var may allow more (the request's size limit holds the rest)
 HOST_MAX = 255
 RESERVED = ("portal_requested_by",)
-ACTION_KEYS = ("title", "aap", "vars", "limit_from", "approval", "who", "description")
+ACTION_KEYS = ("title", "aap", "vars", "limit_from", "approval", "who", "description", "kinds", "button", "when")
+KIND_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+BUTTON_MAX = 40
 VAR_KEYS = ("kind", "values", "max", "pattern", "label", "required", "default")
 PATTERN_MAX = 300                  # a text var's pattern: this many characters at most
 # what a host name may hold: letters, digits, . - _ (an inventory name); nothing a limit pattern reads as more
@@ -162,7 +164,25 @@ def check_actions(actions):
         else:
             problems.append("%s: who must be any, or a list of names (the CN of each person's certificate)" % where)
             who = []
+        # part C: the finding kinds a report offers this action on (its button), the button's short label, and when (the
+        # finding's data must match: {field: value or [values]})
+        kinds = a.get("kinds") or []
+        if not isinstance(kinds, list) or not all(isinstance(k, str) and KIND_RE.match(k) for k in kinds):
+            problems.append("%s: kinds must be a list of finding kinds (lower case letters, digits and _)" % where)
+            kinds = []
+        button = _text(a.get("button")).strip()
+        if len(button) > BUTTON_MAX or templating(button):
+            problems.append("%s: button must be a short label (%d characters at most)" % (where, BUTTON_MAX))
+            button = ""
+        when = a.get("when") or {}
+        if not isinstance(when, dict) or not all(isinstance(k, str) and (isinstance(v, (str, int)) or (
+                isinstance(v, list) and all(isinstance(x, (str, int)) for x in v))) for k, v in when.items()):
+            problems.append("%s: when must be a mapping of a finding's data fields to a value or a list of values" % where)
+            when = {}
+        if (kinds or when) and not kinds:
+            problems.append("%s: when needs kinds" % where)
         out[name] = {"name": name, "title": title, "description": _text(a.get("description")).strip(),
+                     "kinds": kinds, "button": button, "when": when,
                      "aap": {"type": aap.get("type"), "name": _text(aap.get("name")).strip()}, "vars": clean_vars,
                      "limit_from": limit_from or "", "approval": approval is True, "who": who}
     return out, problems

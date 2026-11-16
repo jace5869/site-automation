@@ -33,8 +33,29 @@
 ## is not checked (STIG recheck).
 # portal_request_always: false
 
+# ---- finding_ref ---------------------------------------------------------------------------------
+## ---- finding_ref (1.67.0 part C, docs/SITE_PORTAL.md "From a finding to a fix")
+## ------------------------------------- A fix job the site portal launches gets a reference to a
+## finding - the report job, the finding's id, the host - never its values. This role reads the
+## finding back from that report job's site_findings artifact through AAP's API and stops the job,
+## before it touches anything, when it is not there, is another host's, or is of a kind the job does
+## not fix. Include it on the AAP side: include_role name: finding_ref, apply {delegate_to:
+## localhost, run_once: true}. Output: the fact finding ({id, kind, host, title, severity, data}),
+## the fact finding_job ({id, name, finished, status}) and the job artifact finding_ref ({id, kind,
+## host, job}). the report job's id (the portal sends report_job)
+# finding_ref_job: "{{ report_job | default('') }}"
+
+## the finding's id (finding_id)
+# finding_ref_id: "{{ finding_id | default('') }}"
+
+## the host the fix runs on (target)
+# finding_ref_host: "{{ target | default('') }}"
+
+## the kinds this job fixes (set by each playbook); [] = any
+# finding_ref_kinds: []
+
 ## a CA file for AAP's own HTTPS certificate
-# portal_request_aap_ca_path: "{{ report_history_aap_ca_path | default('') }}"
+# finding_ref_aap_ca_path: "{{ report_history_aap_ca_path | default('') }}"
 
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## a CA file for AAP's own HTTPS certificate ("" = what the execution environment trusts)

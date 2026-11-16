@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The site portal's AAP side (1.67.0): "ACT - triage finding" (playbooks/act_triage_finding.yml, workflow 44) against
-# this machine as a Linux host, with a fake AAP API (the job that reported the finding, its site_health artifact), a
+# this machine as a Linux host, with a fake AAP API (the job that reported the finding, its site_findings artifact), a
 # fake ACT (tests/containers/fake_act.py), stand-in systemctl and ausearch, and the report website as a folder.
 # Checks: the finding is read from the reporting job, not sent; the finding's look command and the fapolicyd reads run
 # on the host and reach ACT; ACT's answer is the artifact act_triage_finding and the report (who asked in both); a
@@ -39,13 +39,15 @@ cat > "$work/aap.py" <<'EOPY'
 import http.server, json, sys
 port = int(sys.argv[1])
 JOB = {"id": 4711, "name": "Linux health check", "status": "failed", "finished": "2026-11-15T06:00:00Z",
-       "artifacts": {"site_health": {
-           "lin01.example.mil": {"status": "findings", "findings": [
-               {"check": "fapolicyd", "id": "fapolicyd:denials", "severity": "warning",
-                "summary": "fapolicyd denied 3 executions today", "hint": "echo look-command-ran"}]},
-           "win01.example.mil": {"status": "findings", "findings": [
-               {"check": "eventlog", "id": "eventlog:disk-errors", "severity": "critical",
-                "summary": "2 disk errors in the last 24 hours", "hint": "Get-WinEvent -LogName System -MaxEvents 5"}]}}}}
+       "artifacts": {"site_findings": {
+           "lin01.example.mil": [
+               {"id": "fapolicyd:lin01.example.mil:denials", "kind": "fapolicyd", "host": "lin01.example.mil", "severity": "warning",
+                "title": "fapolicyd denied 3 executions today", "data": {"look": "echo look-command-ran"}},
+               {"id": "disk_full:lin01.example.mil:/var", "kind": "disk_full", "host": "lin01.example.mil", "severity": "critical",
+                "title": "/var is 93% full", "data": {"mount": "/var", "pct": 93}}],
+           "win01.example.mil": [
+               {"id": "eventlog:win01.example.mil:disk-errors", "kind": "eventlog", "host": "win01.example.mil", "severity": "critical",
+                "title": "2 disk errors in the last 24 hours", "data": {"look": "Get-WinEvent -LogName System -MaxEvents 5"}}]}}}
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -115,9 +117,9 @@ run() {
 pb=playbooks/act_triage_finding.yml
 by='{"portal_requested_by": "CN=Pat Example"}'
 run "triage: the finding read from job 4711, the look command and fapolicyd's reads, ACT's answer, who asked" ok \
-    "$pb" -l lin01.example.mil -e target=lin01.example.mil -e report_job=4711 -e finding_id=fapolicyd:denials \
+    "$pb" -l lin01.example.mil -e target=lin01.example.mil -e report_job=4711 -e finding_id=fapolicyd:lin01.example.mil:denials \
     -e "$by" -e "$actvars" -- \
-    "Requested through the site portal by CN=Pat Example" "ACT - triage finding: fapolicyd:denials on lin01.example.mil" \
+    "Requested through the site portal by CN=Pat Example" "ACT - triage finding: fapolicyd:lin01.example.mil:denials on lin01.example.mil" \
     "The tool under /opt is not in fapolicyd" "act_triage_finding" "\"confidence\": 85" "portal_request"
 for t in "FINDING (from the health check job 4711" "summary: fapolicyd denied 3 executions today" "look-command-ran" \
          "resp=deny exe=/opt/tool/bin/tool-made-up" "fapolicyd.service - File Access Policy Daemon"; do
@@ -125,37 +127,43 @@ for t in "FINDING (from the health check job 4711" "summary: fapolicyd denied 3 
 done
 if grep -q "made-up-token" "$work/act/fake-act-stdin.txt" 2>/dev/null; then echo "FAIL - the AAP token reached ACT"; fails=$((fails + 1)); fi
 if ! grep -q "^/api/controller/v2/jobs/4711/ Bearer made-up-token" "$work/aap.log"; then echo "FAIL - job 4711 not read with the credential"; fails=$((fails + 1)); fi
-page="$(grep -rl "ACT - triage finding: fapolicyd:denials" "$work/site" 2>/dev/null | head -1)"
+page="$(grep -rl "ACT - triage finding: fapolicyd:lin01.example.mil:denials" "$work/site" 2>/dev/null | head -1)"
 if [ -z "$page" ] || ! grep -q "Requested through the site portal by CN=Pat Example" "$page"; then
   echo "FAIL - the report website has no triage page with who asked"; fails=$((fails + 1))
 else echo "ok   - the report website has the page, with who asked"; fi
 
 run "an event-log finding is the Windows template's: passed over, nothing asked, no connection" ok \
-    "$pb" -l win01.example.mil -e target=win01.example.mil -e report_job=4711 -e finding_id=eventlog:disk-errors \
+    "$pb" -l win01.example.mil -e target=win01.example.mil -e report_job=4711 -e finding_id=eventlog:win01.example.mil:disk-errors \
     -e "$by" -e "$actvars" -- "skipped by this Linux playbook"
 if [ -e "$work/act/fake-act-calls.log" ]; then echo "FAIL - ACT was asked for the other template's finding"; fails=$((fails + 1)); fi
 run "the Windows template passes over a fapolicyd finding (no AAP read, no ACT)" ok \
-    "$pb" -l lin01.example.mil -e target=lin01.example.mil -e report_job=4711 -e finding_id=fapolicyd:denials \
+    "$pb" -l lin01.example.mil -e target=lin01.example.mil -e report_job=4711 -e finding_id=fapolicyd:lin01.example.mil:denials \
     -e portal_triage_os=windows -e "$by" -e "$actvars" -- "skipped by this Windows playbook"
 
 run "a template in a value is refused (as AAP passes launch values: unsafe)" fail \
     "$pb" -l lin01.example.mil -e target=lin01.example.mil -e report_job=4711 -e @"$work/unsafe.yml" -e "$by" -e "$actvars" -- \
     "finding_id: holds a template (braces that start one) - not allowed"
 run "a report_job that is not a number is refused" fail \
-    "$pb" -l lin01.example.mil -e target=lin01.example.mil -e report_job=47x -e finding_id=fapolicyd:denials -e "$by" -e "$actvars" -- \
+    "$pb" -l lin01.example.mil -e target=lin01.example.mil -e report_job=47x -e finding_id=fapolicyd:lin01.example.mil:denials -e "$by" -e "$actvars" -- \
     "report_job: 47x is not in the expected form"
 run "a target that is not the Limit is refused" fail \
-    "$pb" -l "lin01.example.mil,lin02.example.mil" -e target=lin01.example.mil -e report_job=4711 -e finding_id=fapolicyd:denials \
+    "$pb" -l "lin01.example.mil,lin02.example.mil" -e target=lin01.example.mil -e report_job=4711 -e finding_id=fapolicyd:lin01.example.mil:denials \
     -e "$by" -e "$actvars" -- "target: lin01.example.mil is not this job's Limit"
 run "a finding the job does not have" fail \
-    "$pb" -l lin01.example.mil -e target=lin01.example.mil -e report_job=4711 -e finding_id=fapolicyd:gone -e "$by" -e "$actvars" -- \
-    "has no finding fapolicyd:gone for lin01.example.mil"
+    "$pb" -l lin01.example.mil -e target=lin01.example.mil -e report_job=4711 -e finding_id=fapolicyd:lin01.example.mil:gone -e "$by" \
+    -e "$actvars" -- "has no finding fapolicyd:lin01.example.mil:gone for lin01.example.mil" "nothing was changed"
+run "another host's finding (part C: finding_ref - the id names win01, the job runs on lin01)" fail \
+    "$pb" -l lin01.example.mil -e target=lin01.example.mil -e report_job=4711 -e finding_id=fapolicyd:win01.example.mil:denials \
+    -e "$by" -e "$actvars" -- "has no finding fapolicyd:win01.example.mil:denials for lin01.example.mil"
+run "a finding of a kind this workflow does not look at (a disk one) is refused before it is read" fail \
+    "$pb" -l lin01.example.mil -e target=lin01.example.mil -e report_job=4711 -e finding_id=disk_full:lin01.example.mil:/var \
+    -e "$by" -e "$actvars" -- "finding_id: disk_full:lin01.example.mil:/var is not in the expected form"
 run "a job AAP does not know" fail \
-    "$pb" -l lin01.example.mil -e target=lin01.example.mil -e report_job=999 -e finding_id=fapolicyd:denials -e "$by" -e "$actvars" -- \
+    "$pb" -l lin01.example.mil -e target=lin01.example.mil -e report_job=999 -e finding_id=fapolicyd:lin01.example.mil:denials -e "$by" -e "$actvars" -- \
     "AAP job 999 cannot be read (HTTP 404)"
 if [ -e "$work/act/fake-act-calls.log" ]; then echo "FAIL - ACT was asked although the finding could not be read"; fails=$((fails + 1)); fi
 AAP_HOST="" run "no AAP credential" fail \
-    "$pb" -l lin01.example.mil -e target=lin01.example.mil -e report_job=4711 -e finding_id=fapolicyd:denials -e "$by" \
+    "$pb" -l lin01.example.mil -e target=lin01.example.mil -e report_job=4711 -e finding_id=fapolicyd:lin01.example.mil:denials -e "$by" \
     -e "$actvars" -- "attach a credential of type"
 
 run "the STIG recheck checks the portal's host again (not the Limit: refused before anything runs)" fail \

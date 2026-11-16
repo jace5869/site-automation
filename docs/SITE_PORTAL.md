@@ -267,7 +267,7 @@ replaces the file.
   its artifact `portal_request` and, for ACT, in its report.
 - **No braces:** a value may not hold `{{`, `{%` or `{#` (nor a look-alike of them). AAP would run them as a template.
 - **ACT gets a reference, never text.** `act_triage` sends the job that reported the finding, the host and the
-  finding's id. The workflow reads the finding from that job's artifact `site_health`, so a finding cannot be made up.
+  finding's id. The workflow reads the finding back from that job's artifact `site_findings` (`roles/finding_ref`), so a finding cannot be made up.
 
 ### Each job checks the values again
 

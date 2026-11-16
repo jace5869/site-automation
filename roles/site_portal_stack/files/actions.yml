@@ -10,6 +10,10 @@
 #   limit_from  the inventory_host variable that is also the job's Limit
 #   approval    true when the workflow waits for a person (its approval node decides; the page only says so)
 #   who         any, or a list of certificate names; left out = portal_requesters
+#   kinds       part C: the finding kinds a report offers this action on (a button on each such finding); the action then
+#               takes target, report_job and finding_id, and its playbook reads the finding back (roles/finding_ref)
+#   button      the button's short label on the report (title stays the confirm page's)
+#   when        only on a finding whose data match: {field: value or [values]}, e.g. {cat: ["CAT II", "CAT III"]}
 actions:
   stig_recheck:
     title: STIG recheck of one host
@@ -33,9 +37,11 @@ actions:
   act_triage:
     title: Ask ACT about a finding
     aap: {type: workflow, name: "ACT - triage finding"}             # workflow 44
+    kinds: [fapolicyd, fapolicyd_deny, eventlog]
+    button: Ask ACT
     vars:
       target: {kind: inventory_host, label: Host}
       report_job: {kind: text, label: AAP job of the report, max: 12, pattern: "[0-9]{1,12}"}
-      finding_id: {kind: text, label: Finding, max: 120, pattern: "(fapolicyd|eventlog):[A-Za-z0-9_.:-]{1,100}"}
+      finding_id: {kind: text, label: Finding, max: 200, pattern: "(fapolicyd|fapolicyd_deny|eventlog):[A-Za-z0-9_.:/@-]{1,180}"}
     limit_from: target
     approval: false

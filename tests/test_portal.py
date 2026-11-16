@@ -2,8 +2,9 @@
 """The site portal (1.67.0), AAP side and report side: the values a launched job checks again (plugins/filter/
 portal_filters.py portal_check - a host of the inventory and the Limit, a choice, a text's length and form, no template
 nor a look-alike of one, the person's name), the links to the portal's confirm page (portal_link), actions.yml in step
-with the playbooks' own checks, the finding read by reference (site_portal_finding against a fake AAP), ACT's prompt,
-evidence and report for "ACT - triage finding", and the report links: "Ask ACT" on fapolicyd and event-log findings,
+with the playbooks' own checks, ACT's prompt, evidence and report for "ACT - triage finding" (the finding read by
+reference: tests/test_findings_artifact.py), and the report links: "Ask ACT" (part C: the buttons of the actions whose
+kinds match a finding) on fapolicyd and event-log findings,
 "Recheck" on the STIG drift report's hosts and the scorecard's fixed-on-host rows, "Import checklists" on the scorecard
 - only with report_portal_url, only on the website's copy, and the pages as before without it.
   python3 tests/test_portal.py"""
@@ -23,7 +24,8 @@ import yaml  # noqa: E402
 
 URL = "https://stigman.example.mil/portal"
 TRIAGE = {"target": {"kind": "inventory_host"}, "report_job": {"kind": "text", "max": 12, "pattern": "[0-9]{1,12}"},
-          "finding_id": {"kind": "text", "max": 120, "pattern": "(fapolicyd|eventlog):[A-Za-z0-9_.:-]{1,100}"}}
+          "finding_id": {"kind": "text", "max": 200, "pattern": "(fapolicyd|fapolicyd_deny|eventlog):[A-Za-z0-9_.:/@-]{1,180}"}}
+ACTIONS = (yaml.safe_load(open(os.path.join(REPO, "roles", "site_portal_stack", "files", "actions.yml"))) or {}).get("actions") or {}
 HOSTS = ["lin01.example.mil", "win01.example.mil"]
 
 
@@ -45,9 +47,9 @@ class Values(unittest.TestCase):
         self.assertEqual(check({"target": "lin01.example.mil", "report_job": "1", "finding_id": "fapolicyd:down"}, limit=""), [])
 
     def test_text_length_and_form(self):
-        p = check({"target": "lin01.example.mil", "report_job": "47x", "finding_id": "disk:/" + "a" * 130})
+        p = check({"target": "lin01.example.mil", "report_job": "47x", "finding_id": "disk:/" + "a" * 210})
         self.assertIn("report_job: 47x is not in the expected form", p)
-        self.assertIn("finding_id: 136 characters, at most 120", p)
+        self.assertIn("finding_id: 216 characters, at most 200", p)
         self.assertTrue(any(x.startswith("finding_id: disk:/") and x.endswith("is not in the expected form") for x in p))
         self.assertIn("report_job: 1234567890123 is not in the expected form",
                       check({"target": "lin01.example.mil", "report_job": "1234567890123", "finding_id": "fapolicyd:down"}))
@@ -149,71 +151,13 @@ class Contract(unittest.TestCase):
             self.assertNotIn("portal_requested_by", a["vars"])
 
 
-class FakeApi(object):
-    user = "portal-reader"
-
-    def __init__(self, jobs, probe=""):
-        self.jobs, self.why, self.calls = jobs, probe, []
-
-    def probe(self):
-        return self.why
-
-    def call(self, method, path):
-        self.calls.append(path)
-        m = re.match(r"jobs/(\d+)/$", path)
-        if m and int(m.group(1)) in self.jobs:
-            return 200, self.jobs[int(m.group(1))]
-        return 404, {"detail": "Not found."}
-
-
-def _module():
-    import importlib.util
-    import types
-    import ansible.module_utils
-    sys.path.insert(0, os.path.join(REPO, "plugins", "module_utils"))
-    import site_aap
-    sys.modules.setdefault("ansible.module_utils.site_aap", site_aap)
-    ansible.module_utils.site_aap = site_aap
-    spec = importlib.util.spec_from_file_location("site_portal_finding",
-                                                  os.path.join(REPO, "roles", "portal_request", "library", "site_portal_finding.py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod if isinstance(mod, types.ModuleType) else None
-
-
-JOB = {"name": "Linux health check", "status": "failed", "finished": "2026-11-15T06:00:00Z",
-       "artifacts": {"site_health": {"lin01.example.mil": {"findings": [
-           {"check": "fapolicyd", "id": "fapolicyd:denials", "severity": "warning", "summary": "3 denied today",
-            "hint": "ausearch -m FANOTIFY -ts today", "extra": "left out"}]}}}}
-
-
-class Finding(unittest.TestCase):
-    def setUp(self):
-        self.m = _module()
-
-    def test_read_by_reference(self):
-        f, job, why = self.m.find(FakeApi({4711: JOB}), 4711, "lin01.example.mil", "fapolicyd:denials")
-        self.assertEqual(why, "")
-        self.assertEqual(f, {"check": "fapolicyd", "id": "fapolicyd:denials", "severity": "warning", "summary": "3 denied today",
-                             "hint": "ausearch -m FANOTIFY -ts today"})
-        self.assertEqual(job, {"id": 4711, "name": "Linux health check", "finished": "2026-11-15T06:00:00Z", "status": "failed"})
-
-    def test_why_not(self):
-        api = FakeApi({4711: JOB, 5: {"name": "Patch", "artifacts": {}}})
-        self.assertIn("AAP job 99 cannot be read (HTTP 404)", self.m.find(api, 99, "lin01.example.mil", "fapolicyd:denials")[2])
-        self.assertIn("job 5 (Patch) has no site_health artifact", self.m.find(api, 5, "lin01.example.mil", "fapolicyd:denials")[2])
-        self.assertIn("job 4711 (Linux health check) has no result for lin02.example.mil",
-                      self.m.find(api, 4711, "lin02.example.mil", "fapolicyd:denials")[2])
-        self.assertIn("has no finding fapolicyd:gone for lin01.example.mil", self.m.find(api, 4711, "lin01.example.mil", "fapolicyd:gone")[2])
-        self.assertEqual(self.m.find(FakeApi({}, probe="no AAP connection"), 1, "h", "fapolicyd:x")[2], "no AAP connection")
-
-
 class Triage(unittest.TestCase):
     F = {"check": "eventlog", "id": "eventlog:disk-errors", "severity": "critical", "summary": "2 disk errors", "hint": "Get-WinEvent -LogName System"}
 
     def test_kind(self):
-        self.assertEqual([pf.portal_finding_kind(x) for x in ("fapolicyd:denials", "eventlog:full:System", "disk:/", "")],
-                         ["fapolicyd", "eventlog", "", ""])
+        self.assertEqual([pf.portal_finding_kind(x) for x in ("fapolicyd:lin01:denials", "eventlog:win01:full:System", "disk_full:lin01:/",
+                                                               "fapolicyd_deny:lin01:h0123456789abcdef", "")],
+                         ["fapolicyd", "eventlog", "", "fapolicyd_deny", ""])
 
     def test_evidence_and_task(self):
         e = pf.portal_triage_evidence(self.F, [{"cmd": "Get-WinEvent", "rc": 0, "out": "x" * 50}],
@@ -256,23 +200,26 @@ def findings_section(doc):
 
 class FindingsLinks(unittest.TestCase):
     def test_ask_act_on_fapolicyd_and_event_log_findings(self):
-        s = findings_section(sf.findings_report(BY_HOST, "Health check", portal={"url": URL, "job": "4711"}))
-        self.assertEqual(s["columns"][-1], "ACT")
-        self.assertEqual(s["kinds"][-1], "link")
-        by = dict((r[2], (r[-1], s["links"][i])) for i, r in enumerate(s["rows"]))
-        self.assertEqual(by["disk"], ("", ""))
-        self.assertEqual(by["fapolicyd"], ("Ask ACT", URL + "/actions/act_triage?finding_id=fapolicyd%3Adenials&report_job=4711"
-                                           "&target=lin01.example.mil"))
-        self.assertEqual(by["eventlog"][1], URL + "/actions/act_triage?finding_id=eventlog%3Aerrors&report_job=4711&target=win01.example.mil")
+        s = findings_section(sf.findings_report(BY_HOST, "Health check", portal={"url": URL, "job": "4711", "actions": ACTIONS}))
+        self.assertEqual(s["columns"][-1], "Actions")
+        self.assertEqual(s["kinds"][-1], "buttons")
+        by = dict((r[2], (r[-1], s["buttons"][i])) for i, r in enumerate(s["rows"]))
+        self.assertEqual(by["disk"], ("", []))
+        self.assertEqual(by["fapolicyd"][0], "Ask ACT")
+        self.assertEqual(by["fapolicyd"][1][0]["url"], URL + "/actions/act_triage?finding_id=fapolicyd%3Alin01.example.mil%3Adenials"
+                                                             "&report_job=4711&target=lin01.example.mil")
+        self.assertEqual(by["eventlog"][1][0]["url"], URL + "/actions/act_triage?finding_id=eventlog%3Awin01.example.mil%3Aerrors"
+                                                            "&report_job=4711&target=win01.example.mil")
 
     def test_none_without_the_setting_or_a_job_or_such_a_finding(self):
         plain = sf.findings_report(BY_HOST, "Health check")
-        for portal in ({"url": "", "job": "4711"}, {"url": URL, "job": ""}, None):
+        for portal in ({"url": "", "job": "4711", "actions": ACTIONS}, {"url": URL, "job": "", "actions": ACTIONS},
+                       {"url": URL, "job": "4711"}, None):
             self.assertEqual(sf.findings_report(BY_HOST, "Health check", portal=portal), plain)
         only_disk = {"lin01.example.mil": [BY_HOST["lin01.example.mil"][1]]}
-        self.assertEqual(sf.findings_report(only_disk, "Health check", portal={"url": URL, "job": "4711"}),
+        self.assertEqual(sf.findings_report(only_disk, "Health check", portal={"url": URL, "job": "4711", "actions": ACTIONS}),
                          sf.findings_report(only_disk, "Health check"))
-        self.assertNotIn("links", findings_section(plain))
+        self.assertNotIn("buttons", findings_section(plain))
 
 
 class StigLinks(unittest.TestCase):
@@ -327,7 +274,7 @@ class Fit(unittest.TestCase):
             {"check": "eventlog", "id": "eventlog:full:Microsoft-Windows-PowerShell/Operational", "severity": "critical",
              "summary": "the Microsoft-Windows-PowerShell/Operational event log is full (mode Circular): new events are being lost",
              "hint": "Get-WinEvent -ListLog Microsoft-Windows-PowerShell/Operational | Format-List *"}]
-        sf.findings_report(by, "Windows health check", portal={"url": URL, "job": "1234567"})
+        sf.findings_report(by, "Windows health check", portal={"url": URL, "job": "1234567", "actions": ACTIONS})
 
     def test_report_fit_drift(self):
         import test_stig as ts
@@ -351,14 +298,13 @@ class Pages(unittest.TestCase):
         return T.render(look, doc)
 
     def test_buttons_on_the_page(self):
-        doc = sf.findings_report(BY_HOST, "Health check", portal={"url": URL, "job": "4711"})
+        doc = sf.findings_report(BY_HOST, "Health check", portal={"url": URL, "job": "4711", "actions": ACTIONS})
         for look in ("atlas", "brief"):
             h = self.render(look, doc)
-            self.assertIn('<td class="k-link" data-l="ACT" data-v="%s/actions/act_triage?finding_id=fapolicyd%%3Adenials&amp;'
-                          'report_job=4711&amp;target=lin01.example.mil"><a class="btn pl" href="%s/actions/act_triage?finding_id='
-                          'fapolicyd%%3Adenials&amp;report_job=4711&amp;target=lin01.example.mil" target="_blank" rel="noopener"'
-                          % (URL, URL), h)
-            self.assertIn("td.k-link{vertical-align:middle", h)
+            self.assertIn('<td class="k-buttons" data-l="Actions" data-v="Ask ACT"><span class="bts"><a class="btn pl" href="%s/actions/'
+                          'act_triage?finding_id=fapolicyd%%3Alin01.example.mil%%3Adenials&amp;report_job=4711&amp;target=lin01.example.mil" '
+                          'target="_blank" rel="noopener"' % URL, h)
+            self.assertIn("td.k-buttons{vertical-align:middle", h)
             self.assertEqual(h.count('class="btn pl"'), 2)
             self.assertNotIn("<script>fetch", h)
         sc = {"title": "STIG compliance", "status": "ok", "summary": [],
@@ -375,10 +321,10 @@ class Pages(unittest.TestCase):
         by = dict(BY_HOST)
         by["app-server-long-name-07.subdomain.example.mil"] = [
             {"check": "eventlog", "id": "eventlog:errors", "severity": "warning", "summary": "41 errors", "hint": "x"}]
-        doc = sf.findings_report(by, "Health check", portal={"url": URL, "job": "4711"})
+        doc = sf.findings_report(by, "Health check", portal={"url": URL, "job": "4711", "actions": ACTIONS})
         for look in ("atlas", "brief"):
             h = self.render(look, doc)
-            self.assertIn("td.k-link a.btn{padding:3px 9px;font-size:12.5px;line-height:1.25;white-space:nowrap}", h)
+            self.assertIn("td.k-buttons a.btn,td.k-buttons summary.btn{padding:3px 9px;font-size:12.5px;line-height:1.25;white-space:nowrap}", h)
             self.assertIn('app-server-long-name-07.<wbr>subdomain.<wbr>example.<wbr>mil</span>', h)
             self.assertNotIn("lin01.<wbr>", h)
             plain = self.render(look, sf.findings_report(by, "Health check"))
@@ -388,7 +334,7 @@ class Pages(unittest.TestCase):
         plain = sf.findings_report(BY_HOST, "Health check")
         for look in ("atlas", "brief"):
             h = self.render(look, plain)
-            for mark in ("k-link", "btn pl", "td.k-link", "a.btn{text-decoration:none}", "/actions/"):
+            for mark in ("k-link", "k-buttons", "btn pl", "td.k-link", "a.btn{text-decoration:none}", "/actions/"):
                 self.assertNotIn(mark, h, "%s: %s" % (look, mark))
             self.assertEqual(h, self.render(look, sf.findings_report(BY_HOST, "Health check", portal={"url": "", "job": "1"})))
 

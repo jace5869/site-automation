@@ -120,6 +120,11 @@
 #       - {why: "Local Administrators", cmd: "Get-LocalGroupMember -SID 'S-1-5-32-544' -ErrorAction SilentlyContinue | Format-Table Name, ObjectClass, PrincipalSource -AutoSize"}
 #       - {why: "Accounts created, added to groups, services installed, logs cleared - last {{ ts_hours }} hours", cmd: "Get-WinEvent -FilterHashtable @{LogName='Security'; Id=4720,4732,4728,1102; StartTime={{ _ts_since }}} -MaxEvents 20 -ErrorAction SilentlyContinue | Format-Table TimeCreated, Id, Message -Wrap; Get-WinEvent -FilterHashtable @{LogName='System'; Id=7045; StartTime={{ _ts_since }}} -MaxEvents 10 -ErrorAction SilentlyContinue | Format-Table TimeCreated, Message -Wrap"}
 
+# ---- site_portal_stack ---------------------------------------------------------------------------
+## ---- the actions: {} = the role's files/actions.yml; a dict of the same shape here replaces it
+## -----------------------
+# portal_actions: {}
+
 # ---- win_check_network ---------------------------------------------------------------------------
 ## Services every Windows server must reach, e.g. win_check_network_tcp: - {name: LDAPS, host:
 ## dc01.yoursite.mil, port: 636} - {name: SIEM, host: siem.yoursite.mil, port: 9997}
@@ -489,3 +494,12 @@
 ## inventory groups, in order, a row each: a host goes in the first one it is in, else Other; [] =
 ## its first group
 # cert_timeline_groups: []
+
+## 1.67.0 (the site portal, docs/SITE_PORTAL.md "From a finding to a fix"): every report job of the
+## checks keeps its findings as the job artifact site_findings - a stable id each
+## (<kind>:<host>:<key>) and the numbers a fix needs - so the portal's fix jobs can read a finding
+## back by reference. false = not kept (the portal's buttons then cannot work).
+# site_findings_artifact: true
+
+## per host and kind, the worst first; how many more there were: site_findings_capped
+# site_findings_max_per_kind: 50

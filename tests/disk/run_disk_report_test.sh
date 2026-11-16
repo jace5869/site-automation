@@ -11,6 +11,7 @@ set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
 ap="${ANSIBLE_PLAYBOOK:-ansible-playbook}"
+py="${DISK_TEST_PYTHON:-$(command -v python3)}"
 engine="${CONTAINER_ENGINE:-$(command -v podman)}"
 image="registry.access.redhat.com/ubi9/ubi:latest"
 web="sa-disk-web-$$" db="sa-disk-db-$$"
@@ -18,7 +19,8 @@ work="$(mktemp -d)"
 base="${DISK_TEST_DIR:-$HOME/.cache}"
 mkdir -p "$base"
 data="$(mktemp -d "$base/sa-disk-test.XXXXXX")"
-cleanup() { "$engine" rm -f -t 0 "$web" "$db" >/dev/null 2>&1; "$engine" unshare rm -rf "$data" 2>/dev/null || rm -rf "$data"; rm -rf "$work"; }
+aap_pid=""
+cleanup() { [ -n "$aap_pid" ] && kill "$aap_pid" 2>/dev/null; "$engine" rm -f -t 0 "$web" "$db" >/dev/null 2>&1; "$engine" unshare rm -rf "$data" 2>/dev/null || rm -rf "$data"; rm -rf "$work"; }
 trap cleanup EXIT
 fails=0
 
@@ -99,4 +101,37 @@ check "  ...old files gone" "$(there /tmp/app/old2.dat) $(there /tmp/app/logs/ol
 check "  ...systemd's folder, the new file and /var/tmp (not planned) stay" \
     "$(there /tmp/systemd-private-x/tmp/kept) $(there /tmp/new.log) $(there /var/tmp/cache/old3)" "there there there"
 
+# 1.67.0 part C (last: it takes over a minute, and the cleanup above ages its files in minutes): the job artifact site_findings (its custom stats, as AAP keeps them) - web01's /tmp with a stable id and
+# its numbers - and a fix job's first step reading it back by reference (roles/finding_ref, a stand-in AAP serving it)
+(cd "$repo" && ANSIBLE_COLLECTIONS_PATH="$cols" ANSIBLE_STDOUT_CALLBACK=default ANSIBLE_SHOW_CUSTOM_STATS=True ANSIBLE_NOCOLOR=1 \
+    ANSIBLE_DEPRECATION_WARNINGS=False "$ap" -i "$work/inv.yml" playbooks/disk_report.yml -e disk_report_warn_pct=1 -e disk_report_crit_pct=2 \
+    -e "$tmpdirs") > "$work/stats.txt" 2>&1
+"$py" - "$work/stats.txt" "$work/artifacts.json" <<'EOPY'
+import json, re, sys
+text = open(sys.argv[1]).read()
+i = text.find("RUN:", text.find("CUSTOM STATS"))
+stats = json.JSONDecoder().raw_decode(text[i + 4:].lstrip())[0] if i > 0 else {}
+json.dump(stats, open(sys.argv[2], "w"))
+web = (stats.get("site_findings") or {}).get("web01.example.mil") or []
+tmp = [e for e in web if e["id"] == "disk_full:web01.example.mil:/tmp"]
+ok = bool(tmp) and tmp[0]["data"]["mount"] == "/tmp" and tmp[0]["data"]["pct"] >= 2 and tmp[0]["data"]["crit"] == 2 \
+    and all(re.match(r"^[A-Za-z0-9_.:/@-]{1,200}$", e["id"]) for v in stats["site_findings"].values() for e in v)
+print("ok   - site_findings: disk_full:web01.example.mil:/tmp with its numbers" if ok else "FAIL - site_findings: %s" % json.dumps(stats)[:600])
+EOPY
+"$py" "$here/../findings/aap_artifacts.py" 18695 "$work/artifacts.json" 4711 & aap_pid=$!
+sleep 1
+fr() { (cd "$repo" && CONTROLLER_HOST=http://127.0.0.1:18695 CONTROLLER_OAUTH_TOKEN=made-up-token ANSIBLE_NOCOLOR=1 \
+        "$ap" -i localhost, -c local tests/findings/finding_ref_check.yml -e report_job=4711 "$@") > "$work/fr.txt" 2>&1; }
+if fr -e finding_id=disk_full:web01.example.mil:/tmp -e target=web01.example.mil -e '{"kinds": ["disk_full"]}' \
+    && grep -q "FIX READS mount=/tmp pct=" "$work/fr.txt"; then echo "ok   - finding_ref: the fix job reads web01's /tmp back from the report job"
+else echo "FAIL - finding_ref read back"; tail -20 "$work/fr.txt"; fails=$((fails + 1)); fi
+if ! fr -e finding_id=disk_full:web01.example.mil:/tmp -e target=db01.example.mil -e '{"kinds": ["disk_full"]}' \
+    && grep -q "nothing was changed: job 4711 has no finding disk_full:web01.example.mil:/tmp for db01.example.mil" "$work/fr.txt"; then
+    echo "ok   - finding_ref: another host's finding stops the job"
+else echo "FAIL - finding_ref another host"; tail -8 "$work/fr.txt"; fails=$((fails + 1)); fi
+if ! fr -e finding_id=disk_full:web01.example.mil:/tmp -e target=web01.example.mil -e '{"kinds": ["service_down"]}' \
+    && grep -q "is a disk_full finding; this job takes only service_down" "$work/fr.txt"; then
+    echo "ok   - finding_ref: a kind the job does not fix stops it"
+else echo "FAIL - finding_ref kind"; tail -8 "$work/fr.txt"; fails=$((fails + 1)); fi
+kill "$aap_pid" 2>/dev/null
 [ $fails -eq 0 ] && echo "all disk report scenarios passed" || { echo "$fails failed"; exit 1; }

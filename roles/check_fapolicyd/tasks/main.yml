@@ -88,7 +88,8 @@
       {%-   set _ = f.append({'check': 'fapolicyd', 'id': 'fapolicyd:denials', 'severity': 'warning',
                               'summary': v.denials ~ ' fapolicyd denial(s) since ' ~ check_fapolicyd_denials_since
                                          ~ ((' - top: ' ~ (v.denytop | join('; '))) if v.denytop else ''),
-                              'hint': 'ausearch -m FANOTIFY -ts ' ~ check_fapolicyd_denials_since ~ ' -i | tail -40'}) -%}
+                              'hint': 'ausearch -m FANOTIFY -ts ' ~ check_fapolicyd_denials_since ~ ' -i | tail -40',
+                              'data': {'denials': v.denytop | fapolicyd_denials_data}}) -%}
       {%- endif -%}
       {{ f }}
 
