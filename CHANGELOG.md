@@ -166,6 +166,11 @@ service, space request and ticket jobs with a fake AAP, a fake ServiceNow and tm
 sends 0 requests, the draft equals what live sends, live opens one and finds it again); `allow this` in
 `tests/fapolicyd/run_fapolicyd_rules_test.sh`. Not run: a real AAP, a real ServiceNow, the Windows look and restart steps.
 
+**Timeouts.** A server that never answers, or drops the connection, no longer ends a module with a traceback in the
+ServiceNow insights and war room clients, the outage tickets, the hosts' networks (esxcli through vCenter) and the PAN-OS
+API. urllib raises both outside `URLError`. Each now reports it in its own error type, and a timeout names the setting:
+`no answer within 30 seconds (the setting timeout)`. Test: `tests/test_timeouts_sweep.py`.
+
 ## 1.66.0 — 2026-11-14
 
 **Updating without scripts:** paste `site-automation-1.66.0-changed-since-1.61.0.zip` as it is (from an older version,

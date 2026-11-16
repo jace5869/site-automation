@@ -118,10 +118,15 @@ class Pan(object):
             text = e.read().decode("utf-8", "replace")
             raise PanError("HTTP %d from the firewall: %s" % (e.code, msg_of(text) or e.reason))
         except URLError as e:
-            raise PanError("cannot reach the firewall: %s" % e.reason)
+            raise PanError("cannot reach the firewall: %s" % self._why(e.reason))
         except (OSError, socket.timeout, http_client.HTTPException) as e:
             # a timeout or a dropped connection while the answer is read
-            raise PanError("cannot reach the firewall: %s" % (str(e) or type(e).__name__))
+            raise PanError("cannot reach the firewall: %s" % self._why(e))
+
+    def _why(self, e):
+        if isinstance(e, (socket.timeout, TimeoutError)) or "timed out" in str(e).lower():
+            return "no answer within %s seconds (the setting timeout)" % self.timeout
+        return str(e) or type(e).__name__
 
     def call(self, params, keyed=True, body=None, content_type=None):
         text = self.raw(params, body=body, content_type=content_type, keyed=keyed)

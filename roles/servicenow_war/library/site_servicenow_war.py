@@ -72,6 +72,8 @@ sla: {description: "read (task_sla was read), error, warn_percent, breached, at_
 import datetime
 import json
 import re
+import socket
+from http.client import HTTPException
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 
@@ -128,6 +130,17 @@ def error_text(e):
     return "HTTP %s%s" % (getattr(e, "code", "?"), (": " + text) if text else "")
 
 
+def net_reason(e, timeout):
+    """Why a request got no answer, in plain words. urllib raises a read timeout (TimeoutError) and a dropped connection
+    (OSError, HTTPException) outside URLError: they are caught, and a timeout names the setting."""
+    r = getattr(e, "reason", e)
+    if isinstance(r, (socket.timeout, TimeoutError)) or "timed out" in str(r).lower():
+        return "no answer within %s seconds (the setting timeout)" % timeout
+    if isinstance(e, URLError):
+        return "no connection (%s)" % r
+    return "the connection was dropped (%s)" % (str(e) or e.__class__.__name__)
+
+
 class Api(object):
     """The Table API with basic authentication (as roles/servicenow's tasks use it)."""
 
@@ -146,8 +159,10 @@ class Api(object):
         except HTTPError as e:
             raise SnError("%s %s: %s" % ("GET", path, error_text(e)))
         except URLError as e:
-            raise SnError("%s %s: no connection (%s)" % ("GET", path, getattr(e, "reason", e)))
-        except (ValueError, OSError) as e:
+            raise SnError("%s %s: %s" % ("GET", path, net_reason(e, self.timeout)))
+        except (OSError, HTTPException) as e:           # a read timeout, a dropped connection: outside URLError
+            raise SnError("%s %s: %s" % ("GET", path, net_reason(e, self.timeout)))
+        except ValueError as e:
             raise SnError("%s %s: %s" % ("GET", path, e))
 
 
