@@ -11,7 +11,8 @@ a.hl .ic{width:11px;height:11px;margin-left:4px;vertical-align:-1px}
 @media (max-width:900px){td.k-link a.btn{padding:3px 7px}td.k-link a.btn .ic{display:none}table td.k-link,table th.k-link{padding-left:6px;padding-right:6px}}
 th.k-buttons{white-space:nowrap}
 td.k-buttons{vertical-align:middle;width:1%}
-td.k-buttons .bts{display:flex;flex-wrap:wrap;gap:4px;align-items:flex-start}
+td.k-buttons .bts{display:flex;flex-wrap:nowrap;gap:4px;align-items:flex-start}
+@media (max-width:1100px){td.k-buttons .bts{flex-wrap:wrap}}
 td.k-buttons a.btn,td.k-buttons summary.btn{padding:3px 9px;font-size:12.5px;line-height:1.25;white-space:nowrap}
 td.k-buttons details.more{position:relative}
 td.k-buttons details.more summary{list-style:none;cursor:pointer}

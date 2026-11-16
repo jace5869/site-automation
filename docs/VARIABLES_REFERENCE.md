@@ -11,7 +11,7 @@ never out of date. Where to put a setting, and which place wins when it is in tw
 A setting that is a list (`[a, b]`) **replaces** the default list when you set it; it does not add
 to it. Repeat the entries you want to keep.
 
-**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [aap_health](#aap_health), [aap_template_audit](#aap_template_audit), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [api_availability](#api_availability), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [evaluate_stig_update](#evaluate_stig_update), [fapolicyd](#fapolicyd), [fapolicyd_fix](#fapolicyd_fix), [fapolicyd_rules](#fapolicyd_rules), [finding_ref](#finding_ref), [horizon](#horizon), [incident_docs](#incident_docs), [log_analysis](#log_analysis), [mail_relay](#mail_relay), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [pki_bundle](#pki_bundle), [poam](#poam), [podman_discover](#podman_discover), [portal_request](#portal_request), [portal_triage](#portal_triage), [service_watch](#service_watch), [servicenow](#servicenow), [servicenow_insights](#servicenow_insights), [servicenow_war](#servicenow_war), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [site_portal_stack](#site_portal_stack), [stigman_ckl_import](#stigman_ckl_import), [stigman_health](#stigman_health), [stigman_stack](#stigman_stack), [stigman_update](#stigman_update), [tenable_scan](#tenable_scan), [tmp_cleanup](#tmp_cleanup), [troubleshoot](#troubleshoot), [ucs_report](#ucs_report), [vmware_ask_stack](#vmware_ask_stack), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_stig](#win_check_stig), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
+**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [aap_health](#aap_health), [aap_portal_setup](#aap_portal_setup), [aap_template_audit](#aap_template_audit), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [api_availability](#api_availability), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [evaluate_stig_update](#evaluate_stig_update), [fapolicyd](#fapolicyd), [fapolicyd_fix](#fapolicyd_fix), [fapolicyd_rules](#fapolicyd_rules), [finding_ref](#finding_ref), [horizon](#horizon), [incident_docs](#incident_docs), [log_analysis](#log_analysis), [mail_relay](#mail_relay), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [pki_bundle](#pki_bundle), [poam](#poam), [podman_discover](#podman_discover), [portal_request](#portal_request), [portal_result](#portal_result), [portal_triage](#portal_triage), [service_watch](#service_watch), [servicenow](#servicenow), [servicenow_insights](#servicenow_insights), [servicenow_war](#servicenow_war), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [site_portal_stack](#site_portal_stack), [stigman_ckl_import](#stigman_ckl_import), [stigman_health](#stigman_health), [stigman_stack](#stigman_stack), [stigman_update](#stigman_update), [tenable_scan](#tenable_scan), [tmp_cleanup](#tmp_cleanup), [troubleshoot](#troubleshoot), [ucs_report](#ucs_report), [vmware_ask_stack](#vmware_ask_stack), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_stig](#win_check_stig), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
 
 ## aap_ee
 
@@ -150,6 +150,25 @@ File: `roles/aap_health/defaults/main.yml`
 | `aap_health_top` | `10` | top offenders listed per check |
 | `aap_health_email` | `true` | Email the report like the other reports: to report_email_to, through the mail relay in all.yml (report_email_from, report_email_smtp_host ...; docs/EMAIL_REPORTS.md) - FAIL and WARN first, then every area, the sortable HTML attached. Nothing is sent while report_email_to is empty. false = never emailed (the launch box… (all of it: the role file) |
 | `aap_health_web` | `true` | Put the report on the report website as well (report_web_dest in all.yml, like the other reports; docs/WEB_REPORTS.md): FAIL and WARN first, then every area. Nothing happens while report_web_dest is empty. false = never on the website. |
+
+## aap_portal_setup
+
+File: `roles/aap_portal_setup/defaults/main.yml`
+
+> ---- AAP - set up portal actions (1.67.0 part C; playbooks/aap_portal_setup.yml, docs/SITE_PORTAL.md "Setting it up in AAP") Makes or brings up to date, through AAP's API, the job templates and workflows the site portal's actions launch - roles/site_portal_stack/files/workflows.yml - and gives the portal's account Execute on them (Approve on a workflow with an approval node). Never deletes. A template or workflow changed by hand since this job wrote it, or one of that name it did not make, is listed and left as it is. Run it with Check first: it then only reads and says, field by field, what it would change. The "Red Hat Ansible Automation Platform" credential's user needs Admin on the organization (or the roles to make job templates and workflows in it, and to give roles on them).
+
+| Setting | Default | What it does |
+|---|---|---|
+| `portal_setup_organization` | `Default` | the organization the templates and workflows are made in |
+| `portal_setup_project` | (empty) | the project the job templates run from: your site-automation project (required) |
+| `portal_setup_execution_environment` | (empty) | the job templates' execution environment ("" = the project's default) |
+| `portal_setup_inventories` | `default: "{{ portal_inventory \| default('') }}"` | the inventories by key: default (required) and, for the Windows templates, windows ("" or left out = default) |
+| `portal_setup_credentials` | `{}` | the AAP credential of each kind workflows.yml names: machine, machine_windows, aap, act_model_key, stigman_api, stigman_api_writer, windows_share ... A template with a kind not named here is skipped, said. |
+| `portal_setup_portal_user` | (empty) | the portal's AAP account (its user name): Execute and Approve on these; "" = no roles given |
+| `portal_setup_overwrite` | `false` | true = also bring up to date what was made or changed by hand (never deletes) |
+| `portal_setup_schedules` | `[]` | schedules on templates or workflows of workflows.yml, e.g. the checklist import every 15 minutes: [{name: "Checklists every 15 minutes", target: "Checklists imported into STIG Manager", every_minutes: 15}] |
+| `portal_setup_workflows` | `{}` | {} = roles/site_portal_stack/files/workflows.yml; the same shape here replaces it |
+| `portal_setup_aap_ca_path` | `"{{ report_history_aap_ca_path \| default('') }}"` | a CA file for AAP's own HTTPS certificate |
 
 ## aap_template_audit
 
@@ -812,9 +831,11 @@ File: `roles/fapolicyd_rules/defaults/main.yml`
 
 File: `roles/finding_ref/defaults/main.yml`
 
+> ---- finding_ref (1.67.0 part C, docs/SITE_PORTAL.md "From a finding to a fix") ------------------------------------- A fix job the site portal launches gets a reference to a finding - the report job, the finding's id, the host - never its values. This role reads the finding back from that report job's site_findings artifact through AAP's API and stops the job, before it touches anything, when it is not there, is another host's, or is of a kind the job does not fix. Include it on the AAP side: include_role name: finding_ref, apply {delegate_to: localhost, run_once: true}. Output: the fact finding ({id, kind, host, title, severity, data}), the fact finding_job ({id, name, finished, status}) and the job artifact finding_ref ({id, kind, host, job}).
+
 | Setting | Default | What it does |
 |---|---|---|
-| `finding_ref_job` | `"{{ report_job \| default('') }}"` | ---- finding_ref (1.67.0 part C, docs/SITE_PORTAL.md "From a finding to a fix") ------------------------------------- A fix job the site portal launches gets a reference to a finding - the report job, the finding's id, the host - never its values. This role reads the finding back from that report job's site_findings a… (all of it: the role file) |
+| `finding_ref_job` | `"{{ report_job \| default('') }}"` | the report job's id (the portal sends report_job) |
 | `finding_ref_id` | `"{{ finding_id \| default('') }}"` | the finding's id (finding_id) |
 | `finding_ref_host` | `"{{ target \| default('') }}"` | the host the fix runs on (target) |
 | `finding_ref_kinds` | `[]` | the kinds this job fixes (set by each playbook); [] = any |
@@ -1336,6 +1357,21 @@ File: `roles/portal_request/defaults/main.yml`
 | `portal_request_action` | (empty) | the action's name, for the job's lines and its artifact |
 | `portal_request_always` | `false` | true = check the values even when the portal did not launch the job (no portal_requested_by): a playbook that only makes sense with them (ACT - triage finding). false = a job launched by hand is not checked (STIG recheck). |
 | `portal_request_aap_ca_path` | `"{{ report_history_aap_ca_path \| default('') }}"` | a CA file for AAP's own HTTPS certificate |
+
+## portal_result
+
+File: `roles/portal_result/defaults/main.yml`
+
+> ---- portal_result (1.67.0 part C, docs/SITE_PORTAL.md "From a finding to a fix") --------------------------------- The last step of every fix the site portal launches: what came of it, as the job artifact portal_result - the portal's job page shows it at the top (Fixed, Still there, Not checked). Include it on the AAP side once: include_role name: portal_result, apply {delegate_to: localhost, run_once: true}, with these set:
+
+| Setting | Default | What it does |
+|---|---|---|
+| `portal_result_fixed` | `unknown` | true (Fixed), false (Still there), or unknown (Not checked) |
+| `portal_result_before` | (empty) | what the fix found before, short (e.g. "/var 93% full") |
+| `portal_result_after` | (empty) | what it found after (e.g. "/var 71% full") |
+| `portal_result_summary` | (empty) | one line for the person who asked |
+| `portal_result_finding_id` | `"{{ finding.id if finding is defined and finding.id is defined else finding_id \| default(…` | the finding the fix was for: finding.id (roles/finding_ref) when the play has it, else the finding_id it was given |
+| `portal_result_action` | `"{{ portal_request.action \| default(portal_request_action \| default('')) }}"` | the portal's action, when it is known |
 
 ## portal_triage
 

@@ -110,6 +110,13 @@ def view(j):
     if j["type"] == "job":
         out["artifacts"] = {"site_report": {"url": "https://reports.example.mil/linux-health/2026-11-15_job-%d.html" % j["id"]},
                             "counts": {"critical": 0, "warning": 1}} if st == "successful" else {}
+        ev = j.get("extra_vars") or {}
+        if st in ("successful", "failed") and ev.get("finding_id"):          # part C: a fix's result
+            out["artifacts"]["portal_result"] = {"finding_id": ev["finding_id"], "fixed": "true" if st == "successful" else "false",
+                                                 "before": "93% full", "after": "71% full" if st == "successful" else "93% full",
+                                                 "summary": "cleaned /var/tmp"}
+        if st == "successful" and ev.get("next_action"):
+            out["artifacts"]["act_triage_finding"] = {"next_action": ev["next_action"]}
     if j["type"] == "workflow_job":
         out["workflow_job_template"] = j["template"]
     return out

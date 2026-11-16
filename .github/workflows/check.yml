@@ -152,6 +152,8 @@ jobs:
           python tests/test_cert_timeline.py
           python tests/test_outage_timeline.py
           python tests/test_portal.py
+          python tests/test_findings_artifact.py
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_findings_artifact.py
           python tests/test_idm_inventory.py
           ANSIBLE_INVENTORY=/tmp/ac216/bin/ansible-inventory python tests/test_idm_inventory.py
           python tests/test_aap_keycloak_check.py
@@ -273,6 +275,8 @@ jobs:
         run: |
           bash tests/portal/run_portal_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/portal/run_portal_test.sh
+          bash tests/portal_setup/run_portal_setup_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/portal_setup/run_portal_setup_test.sh
       - name: Containers check and Service watch, rootful and rootless (fake podman; current ansible-core and 2.16)
         run: |
           bash tests/containers/run_containers_test.sh

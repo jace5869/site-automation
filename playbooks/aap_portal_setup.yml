@@ -1,0 +1,18 @@
+---
+# AAP - SET UP PORTAL ACTIONS (1.67.0 part C, setup step 102). Makes or brings up to date, through AAP's API, the job
+# templates and workflows the site portal's actions launch (roles/site_portal_stack/files/workflows.yml), and gives the
+# portal's AAP account Execute on them - Approve on a workflow with an approval node - and nothing more. It never deletes;
+# a template or workflow changed by hand since it wrote it, or one of that name it did not make, is listed and left as
+# it is (portal_setup_overwrite: true writes it again). Run it with Check first: it then only reads, and says field by
+# field what it would change. docs/SITE_PORTAL.md, "Setting it up in AAP".
+# Runs on the AAP side: attach a "Red Hat Ansible Automation Platform" credential (its user: Admin on the organization);
+# no Limit.
+#   ansible-playbook playbooks/aap_portal_setup.yml --check -e portal_setup_project="Site automation"
+- name: AAP - set up portal actions
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: The site portal's templates and workflows
+      ansible.builtin.include_role:
+        name: aap_portal_setup

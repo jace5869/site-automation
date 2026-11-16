@@ -1,0 +1,15 @@
+---
+# tests/test_findings_artifact.py (1.67.0 part C): roles/portal_result on its own - the fix's result as the job artifact
+# portal_result (the portal's job page reads it).
+- name: The last step of a fix
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: The finding, as roles/finding_ref leaves it (when the test gives one)
+      ansible.builtin.set_fact:
+        finding: "{{ given_finding }}"
+      when: given_finding is defined
+
+    - name: The result (roles/portal_result)
+      ansible.builtin.include_role:
+        name: portal_result

@@ -1,0 +1,61 @@
+---
+# The site portal's job templates and workflows, in AAP (library/site_aap_portal_setup.py). Runs on localhost with the
+# "Red Hat Ansible Automation Platform" credential's variables. A Check run only reads.
+- name: Portal setup | what to set up (workflows.yml, actions.yml)
+  ansible.builtin.set_fact:
+    _ps_spec: >-
+      {{ portal_setup_workflows if portal_setup_workflows | length > 0
+         else lookup('ansible.builtin.file', role_path ~ '/../site_portal_stack/files/workflows.yml') | from_yaml }}
+    _ps_actions: >-
+      {{ portal_actions if portal_actions | default({}) | length > 0
+         else (lookup('ansible.builtin.file', role_path ~ '/../site_portal_stack/files/actions.yml') | from_yaml).actions | default({}, true) }}
+
+- name: Portal setup | the project is named
+  ansible.builtin.assert:
+    that: portal_setup_project | length > 0 and portal_setup_inventories.default | default('') | length > 0
+    fail_msg: >-
+      Set portal_setup_project (your site-automation project in AAP) and portal_setup_inventories.default (the inventory
+      the templates run on - portal_inventory by default). docs/SITE_PORTAL.md, "Setting it up in AAP".
+    quiet: true
+
+- name: Portal setup | the templates and workflows, in AAP
+  site_aap_portal_setup:
+    spec: "{{ _ps_spec }}"
+    actions: "{{ _ps_actions }}"
+    organization: "{{ portal_setup_organization }}"
+    project: "{{ portal_setup_project }}"
+    execution_environment: "{{ portal_setup_execution_environment }}"
+    inventories: "{{ portal_setup_inventories | dict2items | selectattr('value') | items2dict }}"
+    credentials: "{{ portal_setup_credentials }}"
+    portal_user: "{{ portal_setup_portal_user }}"
+    overwrite: "{{ portal_setup_overwrite | bool }}"
+    schedules: "{{ portal_setup_schedules }}"
+    ca_path: "{{ portal_setup_aap_ca_path }}"
+  register: _ps
+
+- name: Portal setup | what was done
+  ansible.builtin.debug:
+    msg: >-
+      {%- set out = [] -%}
+      {%- for r in _ps.results -%}
+      {%-   set verb = {'create': 'would be made' if ansible_check_mode else 'made', 'update': 'would be changed' if ansible_check_mode else 'changed',
+                        'unchanged': 'as it should be', 'hand-edited': 'CHANGED BY HAND - left as it is', 'not ours': 'NOT MADE BY THIS JOB - left as it is',
+                        'skipped': 'skipped', 'failed': 'FAILED'}.get(r.action, r.action) -%}
+      {%-   set _ = out.append(r.kind ~ " '" ~ r.name ~ "': " ~ verb ~ ((' - ' ~ r.why) if r.why else '')) -%}
+      {%-   for f, v in r.diff | dictsort -%}
+      {%-     set _ = out.append('    ' ~ f ~ ': ' ~ (v[0] | string | truncate(80)) ~ ' -> ' ~ (v[1] | string | truncate(80))) -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out or ['nothing in workflows.yml'] }}
+
+- name: Portal setup | AAP could not be read, or a name matches nothing - nothing more was changed
+  ansible.builtin.fail:
+    msg: "{{ _ps.problems }}"
+  when: _ps.problems | length > 0
+
+- name: Portal setup | something was left as it is or could not be set up
+  ansible.builtin.debug:
+    msg: >-
+      {{ _ps.results | selectattr('action', 'in', ['hand-edited', 'not ours', 'skipped', 'failed']) | map(attribute='name') | list }}:
+      see what was done, above. portal_setup_overwrite: true writes over what was changed by hand.
+  when: _ps.results | selectattr('action', 'in', ['hand-edited', 'not ours', 'skipped', 'failed']) | list | length > 0

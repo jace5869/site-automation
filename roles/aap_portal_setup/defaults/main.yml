@@ -1,0 +1,25 @@
+---
+# ---- AAP - set up portal actions (1.67.0 part C; playbooks/aap_portal_setup.yml, docs/SITE_PORTAL.md "Setting it up in AAP")
+# Makes or brings up to date, through AAP's API, the job templates and workflows the site portal's actions launch -
+# roles/site_portal_stack/files/workflows.yml - and gives the portal's account Execute on them (Approve on a workflow with
+# an approval node). Never deletes. A template or workflow changed by hand since this job wrote it, or one of that name it
+# did not make, is listed and left as it is. Run it with Check first: it then only reads and says, field by field, what
+# it would change. The "Red Hat Ansible Automation Platform" credential's user needs Admin on the organization (or the
+# roles to make job templates and workflows in it, and to give roles on them).
+
+portal_setup_organization: Default              # the organization the templates and workflows are made in
+portal_setup_project: ""                         # the project the job templates run from: your site-automation project (required)
+portal_setup_execution_environment: ""           # the job templates' execution environment ("" = the project's default)
+# the inventories by key: default (required) and, for the Windows templates, windows ("" or left out = default)
+portal_setup_inventories:
+  default: "{{ portal_inventory | default('') }}"
+# the AAP credential of each kind workflows.yml names: machine, machine_windows, aap, act_model_key, stigman_api,
+# stigman_api_writer, windows_share ... A template with a kind not named here is skipped, said.
+portal_setup_credentials: {}
+portal_setup_portal_user: ""                     # the portal's AAP account (its user name): Execute and Approve on these; "" = no roles given
+portal_setup_overwrite: false                    # true = also bring up to date what was made or changed by hand (never deletes)
+# schedules on templates or workflows of workflows.yml, e.g. the checklist import every 15 minutes:
+#   [{name: "Checklists every 15 minutes", target: "Checklists imported into STIG Manager", every_minutes: 15}]
+portal_setup_schedules: []
+portal_setup_workflows: {}                       # {} = roles/site_portal_stack/files/workflows.yml; the same shape here replaces it
+portal_setup_aap_ca_path: "{{ report_history_aap_ca_path | default('') }}"   # a CA file for AAP's own HTTPS certificate

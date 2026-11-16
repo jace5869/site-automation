@@ -4,7 +4,7 @@
 
 **To set up: step 100**, optional - nothing changes until you deploy it. New job template *Site portal - deploy*
 (`playbooks/site_portal_deploy.yml`). New settings have defaults: `portal_*` (roles/site_portal_stack). To do: 1.67.0
-steps 100 and 101.
+steps 100, 101 and 102.
 
 **The site portal.** One web place for the reports and what people may start from them, behind STIG Manager's nginx at
 `/portal/`. People open it with their card; nginx's mTLS says who they are, as `/ask/` does.
@@ -57,7 +57,7 @@ and not as root.
 **To set up: step 101** (after step 100), the AAP side of the site portal. New settings have defaults:
 `report_portal_url` (`""`: no buttons), `portal_triage_os`, `portal_triage_hint`, `portal_triage_command_timeout`,
 `portal_triage_max_chars`, `portal_triage_report_chars`, `portal_triage_act_model_timeout`. New: workflows 44 and 45,
-job templates *ACT - triage finding* and *Windows ACT - triage finding*. To do: 1.67.0 steps 100 and 101.
+job templates *ACT - triage finding* and *Windows ACT - triage finding*. To do: 1.67.0 steps 100, 101 and 102.
 
 **The site portal: what it launches in AAP, and the report buttons.** Three actions, each checked again by the job
 it launches (docs/SITE_PORTAL.md, "Actions" and "AAP workflows"):
@@ -68,7 +68,8 @@ it launches (docs/SITE_PORTAL.md, "Actions" and "AAP workflows"):
 - **`act_triage`:** workflow 44 *ACT - triage finding* (`playbooks/act_triage_finding.yml`), new. One fapolicyd or
   event-log finding of a report, explained by ACT:
   - The portal sends a reference: the host, the AAP job of the report and the finding's id. The job reads the finding
-    from that job's artifact `site_health`, so no free text reaches AAP and a finding cannot be made up.
+    back from that job's artifact `site_findings` (`roles/finding_ref`, part C), so no free text reaches AAP and a
+    finding cannot be made up.
   - It reads more on the host, read only, and ACT answers on the AAP side in evidence mode: it runs no command.
   - ACT's answer is in the job output, the artifact `act_triage_finding` and the report. A fix it proposes is never
     applied here.
@@ -96,6 +97,47 @@ by reference, ACT's prompt and report, the buttons, the pages unchanged without 
 `tests/portal/run_portal_test.sh` (workflow 44's playbook with a fake AAP and a fake ACT, and the refusals; the recheck
 and the import checking the portal's values), on ansible-core 2.22 and 2.16. Every report fit document renders byte
 for byte as in 1.66.0 without the setting. Not run against a real AAP, a real portal or a Windows host.
+
+**To set up: step 102**, the new job *AAP - set up portal actions* (`playbooks/aap_portal_setup.yml`): it makes the
+templates and workflows of step 101 for you. New settings have defaults: `site_findings_artifact`,
+`site_findings_max_per_kind`, `finding_ref_*`, `portal_result_*`, `portal_setup_*`. To do: 1.67.0 steps 100, 101
+and 102.
+
+**From a finding to a fix** (part C; docs/SITE_PORTAL.md, "From a finding to a fix" and "Setting it up in AAP").
+
+- **Findings with stable ids.** The health checks (Linux, Windows), fapolicyd, STIG drift and the checklist import keep
+  their findings as the job artifact `site_findings`. Each has an id that stays the same: `<kind>:<host>:<key>`, e.g.
+  `disk_full:web01.yoursite.mil:/var`. It also has the numbers a fix needs. Kinds: `disk_full`, `disk_inodes`,
+  `service_down`, `fapolicyd_deny`, `stig_rule_fail`, `stig_fixed_open`, `stig_no_asset`, and each other check's own.
+  At most `site_findings_max_per_kind` (50) per host and kind, the worst first.
+- **Buttons by kind.** A finding gets the buttons of the actions whose `kinds` match it (`actions.yml`: `kinds`,
+  `button`, `when`). The health reports: an *Actions* column (two buttons, the rest under **More**). STIG drift,
+  fapolicyd and the scorecard: a section *What you can do from here*.
+- **Read back by reference.** A fix job's first step, `roles/finding_ref`, reads the finding from the report job through
+  AAP's API. It stops the job before anything is touched when the finding is not there, is another host's, or is of
+  another kind. *ACT - triage finding* now reads its finding this way.
+- **Not twice.** While a run of the same action for the same finding is running, the confirm page links to it and
+  **Run** stays off; a second launch is refused.
+- **The result.** Each fix ends with `roles/portal_result`. The portal's job page shows **Fixed**, **Still there** or
+  **Not checked** at the top, with before and after. The action ACT names next (`act_triage_finding.next_action`)
+  gets a button there when it fits the finding.
+- **AAP - set up portal actions** (new job, step 102). It makes or updates the job templates and workflows of
+  `roles/site_portal_stack/files/workflows.yml` (nodes, approval nodes, links, credentials, prompts) and gives the
+  portal's account **Execute** on them, **Approve** on a workflow with an approval node, and nothing more. It never
+  deletes. A template or workflow changed by hand since it wrote it, or one it did not make, is listed and left as it
+  is (`portal_setup_overwrite: true` writes it again). Check lists every field it would change. Optional schedules:
+  `portal_setup_schedules`.
+
+**Behaviour changes (part C):** the findings table's *Ask ACT* column is the *Actions* column. The report jobs above
+keep one more job artifact, `site_findings` (`site_findings_artifact: false`: not kept).
+
+**Tests (part C):** `tests/test_findings_artifact.py` (new: ids, kinds, caps, buttons, the actions file, finding_ref
+against a stand-in AAP, portal_result run by ansible-playbook), `tests/test_site_portal.py` (not twice, the result,
+the next action), `tests/portal/run_portal_test.sh` (the new ids), `tests/disk/run_disk_report_test.sh` (a real report
+job's `site_findings` read back by `finding_ref`), `tests/portal_setup/run_portal_setup_test.sh` (new, against a
+stand-in AAP that keeps what it is given: Check first, made from empty, a second run changes nothing, a hand edit
+kept, overwrite, a template it did not make, grants, a schedule, never a delete) - ansible-core 2.22 and 2.16. Not run
+against a real AAP.
 
 ## 1.66.0 — 2026-11-14
 
@@ -2521,7 +2563,7 @@ tests/stig/run_stigman_real_test.sh against STIG Manager 1.6.18 (not in CI).
 
 SA_VERSION 1.26.0; the PDFs at 1.26.0.
 
-**To do, if you have not yet: what 0.20.0 to 1.67.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.67.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing, 1.39.0 nothing, 1.41.0 nothing, 1.42.0 nothing, 1.43.0 nothing, 1.44.0 nothing, 1.45.0 nothing, 1.46.0 nothing, 1.47.0 nothing, 1.48.0 nothing, 1.49.0 nothing, 1.50.0 step 97, 1.51.0 step 95, 1.52.0 step 96, 1.53.0 step 98, 1.54.0 nothing, 1.55.0 nothing, 1.56.0 nothing, 1.57.0 nothing, 1.58.0 nothing, 1.59.0 nothing, 1.61.0 nothing, 1.62.0 nothing, 1.63.0 step 99, 1.64.0 nothing, 1.65.0 nothing, 1.66.0 nothing, 1.67.0 steps 100 and 101).** In order; each step works without
+**To do, if you have not yet: what 0.20.0 to 1.67.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 1.67.0 add nothing to it - 0.92.0 offers a second website look, step 71, 0.94.0 makes it calmer, step 73; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59, 0.80.0 step 60, 0.81.0 step 61, 0.82.0 step 62, 0.83.0 step 63, 0.84.0 step 64, 0.85.0 step 65, 0.86.0 step 66, 0.87.0 step 67, 0.88.0 step 68, 0.89.0 step 69, 0.90.0 step 70, 0.91.0 nothing, 0.92.0 step 71, 0.93.0 step 72, 0.94.0 step 73, 0.95.0 step 74, 0.96.0 step 75, 0.97.0 step 76, 0.98.0 step 77, 0.99.0 step 78, 1.0.0 step 79, 1.1.0 step 80, 1.2.0 step 81, 1.3.0 step 82, 1.4.0 step 83, 1.5.0 nothing, 1.6.0 nothing, 1.6.1 nothing, 1.7.0 step 84, 1.8.0 step 85, 1.9.0 step 86, 1.10.0 step 87, 1.11.0 nothing, 1.12.0 nothing, 1.13.0 step 88, 1.14.0 nothing, 1.15.0 step 89, 1.16.0 nothing, 1.17.0 nothing, 1.18.0 nothing, 1.20.0 nothing, 1.21.0 nothing, 1.22.0 steps 91 and 92, 1.24.0 nothing, 1.26.0 step 93, 1.28.0 nothing, 1.29.0 nothing, 1.30.0 nothing, 1.31.0 nothing, 1.32.0 step 94, 1.32.1 nothing, 1.33.0 nothing, 1.38.0 nothing, 1.39.0 nothing, 1.41.0 nothing, 1.42.0 nothing, 1.43.0 nothing, 1.44.0 nothing, 1.45.0 nothing, 1.46.0 nothing, 1.47.0 nothing, 1.48.0 nothing, 1.49.0 nothing, 1.50.0 step 97, 1.51.0 step 95, 1.52.0 step 96, 1.53.0 step 98, 1.54.0 nothing, 1.55.0 nothing, 1.56.0 nothing, 1.57.0 nothing, 1.58.0 nothing, 1.59.0 nothing, 1.61.0 nothing, 1.62.0 nothing, 1.63.0 step 99, 1.64.0 nothing, 1.65.0 nothing, 1.66.0 nothing, 1.67.0 steps 100, 101 and 102).** In order; each step works without
 the ones after it. There is no step 90.
 
 1. **Your logo** (0.20.0). A PNG with a transparent background, about 160 px tall and under 100 KB, in
@@ -3338,6 +3380,15 @@ the ones after it. There is no step 90.
     3. Run the AD health report: *Inbound replication* has no grey *not read* rows, and the matrix is filled in.
     4. To take it away: the account out of the group.
     Details and the commands: docs/ACTIVE_DIRECTORY.md, "Reading replication data".
+102. **AAP - set up portal actions** (1.67.0) - after step 101's credentials and the portal's account exist; it makes
+     step 101's templates and workflows for you. docs/SITE_PORTAL.md, "Setting it up in AAP".
+     1. A job template *AAP - set up portal actions*: `playbooks/aap_portal_setup.yml`, any inventory, a *Red Hat
+        Ansible Automation Platform* credential of a user with **Admin** on the organization. No Limit.
+     2. Variables: `aap/extra_vars/aap_portal_setup.yml` (`portal_setup_project`, `portal_setup_inventories`,
+        `portal_setup_credentials`, `portal_setup_portal_user`).
+     3. Launch it as **Check**: it lists what it would make, change or skip, field by field, and writes nothing.
+     4. Launch it as **Run**. Run it again after each update of this repository: with nothing new it changes nothing.
+
 101. **The site portal: the AAP side** (1.67.0) - after step 100 (the portal itself). docs/SITE_PORTAL.md, "AAP
      workflows".
      1. Two job templates of `playbooks/act_triage_finding.yml`: *ACT - triage finding* (the Linux machine credential)

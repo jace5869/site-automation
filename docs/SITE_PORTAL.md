@@ -289,7 +289,8 @@ Set `report_portal_url` (in `all.yml`) to the portal's address with `/portal`, e
 
 | Page | Button | Where |
 |---|---|---|
-| Health check, Windows health check, fapolicyd | **Ask ACT** | each fapolicyd or event-log finding |
+| Health check, Windows health check | the buttons of each finding's kind (**Ask ACT** ...) | the *Actions* column of *Findings*: two, the rest under **More** |
+| fapolicyd, STIG drift, STIG compliance scorecard | the buttons of each finding's kind | a section of their own, *What you can do from here* |
 | STIG drift report (Linux, Windows) | **Recheck** | each host's name in *Every host* is the link (the table has no room for a column) |
 | STIG compliance scorecard | **Recheck** | each row of *Fixed on the host, still Open* |
 | STIG compliance scorecard | **Import checklists** | above *By collection* |
@@ -297,8 +298,56 @@ Set `report_portal_url` (in `all.yml`) to the portal's address with `/portal`, e
 - A button is a plain link: it opens the portal's confirm page in a new tab, with the values filled in.
 - The pages need no new script, so the strict content security policy is unchanged.
 - Only the website's copy has the buttons. The emails do not.
-- **Ask ACT** needs the report's AAP job: a report made outside AAP has no button.
+- A finding's buttons need the report's AAP job: a report made outside AAP has none (*From a finding to a fix*).
 - `report_portal_url: ""` (the default): no buttons, the pages exactly as before.
+
+## From a finding to a fix
+
+A report shows a finding. Its button opens the portal. The fix job runs, and the portal shows what came of it.
+
+```text
+report job --site_findings--> report page --button--> confirm page --Run--> AAP
+    ^                                                                      |
+    +---- finding_ref reads it back: report_job + finding_id (a reference) +
+                                                                           |
+                                    the fix, then portal_result ---> the job page:
+                                                                     Fixed / Still there
+```
+
+1. **The report job keeps its findings.** The health checks (Linux, Windows), fapolicyd, STIG drift and the checklist
+   import keep each finding as the job artifact `site_findings`. Each has an id that stays the same from run to run:
+   `<kind>:<host>:<key>`, for example `disk_full:web01.yoursite.mil:/var`. It also has the numbers a fix needs.
+2. **The report page offers the buttons.** Each finding gets the buttons of the actions whose `kinds` match it (two at
+   most, the rest under **More**). A report whose tables have no room gets one section of its own, *What you can do
+   from here*.
+3. **The button sends a reference.** The link carries the report job's number, the finding's id and the host. It never
+   carries the finding's values, and it never starts anything.
+4. **The fix reads the finding back.** Its first step, `finding_ref`, reads the finding from the report job through
+   AAP's API. It stops the job before anything is touched when the finding is not in that job, is another host's, or is
+   of a kind the job does not fix. So a finding cannot be made up on the way.
+5. **Not twice.** While a run of the same action for the same finding is running, the confirm page links to it and
+   **Run** stays off. A second launch is refused.
+6. **The result.** Each fix ends with `portal_result`. The job page shows **Fixed**, **Still there** or **Not checked**
+   at the top, with what it found before and after.
+
+| Kind | From | What its data holds |
+|---|---|---|
+| `disk_full` | health check (Linux, Windows) | mount (or drive), percent used, the limits, size and free (Linux) |
+| `disk_inodes` | health check (Linux) | mount, percent of inodes used |
+| `service_down` | health check (Linux, Windows) | service, state (failed, down, stopped, missing) |
+| `fapolicyd_deny` | fapolicyd job, health check | program, file, how often (the fapolicyd job: rule, permission) |
+| `stig_rule_fail` | STIG drift | rule, STIG id, CAT, title, STIG, collection, asset, group |
+| `stig_fixed_open` | STIG drift, checklist import | rule, CAT, title, collection, asset |
+| `stig_no_asset` | STIG drift, checklist import | collection, asset, STIG, why |
+| any other | health check | none: the check's own kind (`eventlog`, `cert`, `mount_full` ...) |
+
+**Caps.** A host keeps at most `site_findings_max_per_kind` (50) findings of one kind, the worst first. The job
+artifact `site_findings_capped` says how many were left out. `site_findings_artifact: false` keeps none (then no
+button can work).
+
+**An action that fixes a finding** takes `target`, `report_job` and `finding_id`, never other values. In
+`actions.yml` it has `kinds` (the buttons), and optionally `button` (the short label) and `when` (only on findings whose
+data match, for example `when: {cat: ["CAT II", "CAT III"]}`).
 
 ## AAP workflows
 
@@ -336,10 +385,11 @@ The portal launches as one AAP account (step 100 makes it). Give it only this:
 
 | On | Role |
 |---|---|
-| Workflows 44, 45 and 40 | **Execute** |
+| Workflows 44, 45 and 40 (and every workflow of `workflows.yml` an action launches) | **Execute** |
 | Workflow 40 (its approval node) | **Approve** |
 
-Nothing else: no Admin, no other template, no inventory or credential roles.
+Nothing else: no Admin, no other template, no inventory or credential roles. Step 102 (*Setting it up in AAP*) gives
+exactly these roles.
 
 ### AAP's setting for templates in extra variables
 
@@ -347,6 +397,51 @@ AAP's job setting `ALLOW_JINJA_IN_EXTRA_VARS` (*When can extra variables contain
 settings) must stay **Only On Template Definitions** (AAP's default) or **Never**. Then AAP marks the values a launch
 sends as data, never a template. Never set it to **Always**: a value could then run code on the execution node. Part
 A's deploy warns when it is **Always**.
+
+## Setting it up in AAP
+
+**Step 102.** The job **AAP - set up portal actions** (`playbooks/aap_portal_setup.yml`) makes the job templates and
+workflows the actions launch, from `roles/site_portal_stack/files/workflows.yml`. It also gives the portal's AAP account
+**Execute** on them, and **Approve** on the workflows with an approval node. Nothing more.
+
+- **It never deletes** a template or a workflow.
+- **A hand edit is kept.** A template or workflow changed by hand since the job wrote it is listed as *CHANGED BY HAND*
+  and left as it is. One of the same name the job did not make is listed as *NOT MADE BY THIS JOB* and left alone.
+  `portal_setup_overwrite: true` writes them again.
+- **Check first.** With Job type **Check** it only reads, and lists field by field what it would change.
+
+1. **Templates > Create template > Create job template:** `AAP - set up portal actions`, playbook
+   `playbooks/aap_portal_setup.yml`, any inventory, the credential **Red Hat Ansible Automation Platform** of an AAP
+   user with **Admin** on the organization. No Limit.
+2. **Variables:** copy `aap/extra_vars/aap_portal_setup.yml` and set at least:
+
+```yaml
+portal_setup_project: Site automation              # your site-automation project in AAP
+portal_setup_inventories: {default: Site hosts, windows: Windows hosts}
+portal_setup_credentials:                           # the AAP credential of each kind workflows.yml names
+  machine: Linux machine
+  machine_windows: Windows machine
+  aap: AAP reader
+  act_model_key: ACT model key
+  stigman_api: STIG Manager API
+  stigman_api_writer: STIG Manager API - writer
+  windows_share: Checklist share
+portal_setup_portal_user: svc_site_portal           # the portal's account (step 2 of "Set it up")
+```
+
+3. Launch it with Job type **Check**. Read the list: *would be made*, *would be changed*, *skipped* (a credential kind
+   not named), *CHANGED BY HAND*.
+4. Launch it with Job type **Run**. Success looks like this at its end: each template and workflow *made* or *as it
+   should be*, each grant *made*.
+5. Run it again after each update of this repository: a second run with nothing new changes nothing.
+
+**Schedules (optional).** `portal_setup_schedules` adds a schedule to a template or workflow of `workflows.yml`, for
+example the checklist import every 15 minutes:
+
+```yaml
+portal_setup_schedules:
+  - {name: Checklists every 15 minutes, target: Checklists imported into STIG Manager, every_minutes: 15}
+```
 
 ## Approvals
 

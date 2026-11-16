@@ -277,6 +277,35 @@ class FindingRef(unittest.TestCase):
         self.assertIn("is not web01.example.mil's", why)
 
 
+class PortalResult(unittest.TestCase):
+    """roles/portal_result, run by ansible-playbook (ANSIBLE_PLAYBOOK for another ansible-core): its artifact."""
+    def run_pb(self, extra):
+        import json as _json
+        import shutil
+        import subprocess
+        ap = os.environ.get("ANSIBLE_PLAYBOOK") or shutil.which("ansible-playbook")
+        if not ap:
+            self.skipTest("no ansible-playbook")
+        env = dict(os.environ, ANSIBLE_SHOW_CUSTOM_STATS="True", ANSIBLE_NOCOLOR="1", ANSIBLE_STDOUT_CALLBACK="default")
+        out = subprocess.run([ap, "-i", "localhost,", "-c", "local", "tests/findings/portal_result_check.yml", "-e", _json.dumps(extra)],
+                             cwd=REPO, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True).stdout
+        i = out.find("RUN:", out.find("CUSTOM STATS"))
+        self.assertGreater(i, 0, out[-1500:])
+        return _json.JSONDecoder().raw_decode(out[i + 4:].lstrip())[0]["portal_result"], out
+
+    def test_fixed_still_there_not_checked(self):
+        r, out = self.run_pb({"given_finding": {"id": "disk_full:web01.example.mil:/var"}, "portal_result_fixed": True,
+                              "portal_result_before": "93% full", "portal_result_after": "71% full", "portal_result_summary": "x" * 400})
+        self.assertEqual((r["finding_id"], r["fixed"], r["before"], r["after"]), ("disk_full:web01.example.mil:/var", "true", "93% full", "71% full"))
+        self.assertLessEqual(len(r["summary"]), 300)
+        self.assertIn("Fixed - before: 93% full, after: 71% full", out)
+        r, _ = self.run_pb({"finding_id": "service_down:web01.example.mil:httpd.service", "portal_result_fixed": "no"})
+        self.assertEqual((r["finding_id"], r["fixed"]), ("service_down:web01.example.mil:httpd.service", "false"))
+        r, out = self.run_pb({"finding_id": "a:b:c"})
+        self.assertEqual(r["fixed"], "unknown")
+        self.assertIn("Not checked", out)
+
+
 class Wiring(unittest.TestCase):
     def test_the_report_jobs_publish_it(self):
         for path in ("roles/site_findings/tasks/report.yml", "playbooks/fapolicyd.yml", "roles/stigman_ckl_import/tasks/main.yml"):

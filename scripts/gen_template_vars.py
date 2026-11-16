@@ -44,6 +44,23 @@ TEMPLATES = {
 # aap_health_focus_inventories: [8]                # these inventories always reported (db and api)
 # aap_url: https://aap01.yoursite.mil              # when the gateway refuses https://localhost
 """),
+    "aap_portal_setup.yml": ("AAP - set up portal actions", "Red Hat Ansible Automation Platform (Admin on the organization)", "", """\
+## Run it with Check first: it then only reads, and lists field by field what it would make or change. It never deletes.
+## Your site-automation project in AAP, and the inventory the templates run on
+portal_setup_project: Site automation
+portal_setup_inventories: {default: Site hosts, windows: Windows hosts}
+## The AAP credential of each kind roles/site_portal_stack/files/workflows.yml names (a kind left out: its template is skipped)
+portal_setup_credentials:
+  machine: Linux machine
+  machine_windows: Windows machine
+  aap: AAP reader
+  act_model_key: ACT model key
+  stigman_api: STIG Manager API
+  stigman_api_writer: STIG Manager API - writer
+  windows_share: Checklist share
+## The site portal's AAP account: Execute on these, Approve on the workflows with an approval node
+portal_setup_portal_user: svc_site_portal
+"""),
     "aap_template_audit.yml": ("AAP - template variables audit", "Red Hat Ansible Automation Platform (Organization Auditor is enough)", "", """\
 ## Read-only: which settings in the templates' Variables belong somewhere else; a secret is named, never shown
 # aap_template_audit_project: "Site automation"   # only your project's job templates (workflows are all read)

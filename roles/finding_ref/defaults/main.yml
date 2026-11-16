@@ -6,6 +6,7 @@
 # Include it on the AAP side: include_role name: finding_ref, apply {delegate_to: localhost, run_once: true}.
 # Output: the fact finding ({id, kind, host, title, severity, data}), the fact finding_job ({id, name, finished,
 # status}) and the job artifact finding_ref ({id, kind, host, job}).
+
 finding_ref_job: "{{ report_job | default('') }}"           # the report job's id (the portal sends report_job)
 finding_ref_id: "{{ finding_id | default('') }}"             # the finding's id (finding_id)
 finding_ref_host: "{{ target | default('') }}"               # the host the fix runs on (target)
