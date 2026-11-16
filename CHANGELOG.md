@@ -48,6 +48,11 @@ check template. Nothing is changed that is there already, except that mode (see 
   `stigman_ckl_import_mode: import` when the mode there is not set or is `import and scorecard`. Any other value stays,
   and the job says so. Only that one line is touched on a template you changed by hand.
 - **Check lists** what would be made or changed. A template or a schedule that is there is never rewritten.
+- **Safe order.** The schedule's rule carries `INTERVAL=1` (a controller refuses one without). Workflow 40's check is
+  switched to `import` only after the scorecard's template and schedule are in place; if either fails, it keeps its mode.
+  A `portal_setup_scorecard_template` named like a job template of `workflows.yml` (workflow 40's check) is refused before
+  any change. A template of yours with the scorecard's name is scheduled only when it runs the import playbook with
+  `stigman_ckl_import_mode: scorecard`; any other is listed and left, with no schedule.
 - Docs: CKL_IMPORT (*Turning it on*), WORKFLOWS_AND_SCHEDULES (workflow 40), SITE_PORTAL (step 102). Tests:
   `test_portal_setup_scorecard.py` and `tests/portal_setup/run_scorecard_setup_test.sh` (made once, a second run changes
   nothing, what is there is left alone, Check writes nothing; ansible-core 2.22 and 2.16). SA_VERSION 1.68.1; the PDFs at

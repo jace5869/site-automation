@@ -220,8 +220,9 @@ class Setup(object):
         return out, ""
 
     # ---- 1.68.1: the scorecard's own template and schedule; workflow 40's check on import
-    def split_vars(self, t):
-        """Workflow 40's check template with stigman_ckl_import_mode import - unless the mode there is another one."""
+    def split_vars(self, t, final=True):
+        """Workflow 40's check template with stigman_ckl_import_mode import - unless the mode there is another one.
+        final=False (the first pass, before the scorecard is in place): the mode as it is now, never a new one."""
         rows = self.all("job_templates/?name=%s" % _q(t["name"]))
         rows = [r for r in rows if r.get("name") == t["name"]]
         want = dict(t.get("extra_vars") or {})
@@ -230,8 +231,24 @@ class Setup(object):
             if live is not None and live.get(MODE) not in (None, "", "import", "import and scorecard"):
                 want[MODE] = live[MODE]                 # a person chose it: kept
                 return dict(t, extra_vars=want)
-        want[MODE] = "import"
+        if final or (len(rows) == 1 and (parse_vars(rows[0].get("extra_vars")) or {}).get(MODE) == "import"):
+            want[MODE] = "import"
         return dict(t, extra_vars=want)
+
+    def apply_split(self, src_spec, action, refs, oid):
+        """After the scorecard's template and schedule are in place: workflow 40's check imports only."""
+        t = self.split_vars(src_spec)
+        if action in ("hand-edited", "not ours"):
+            self.split_by_hand(t["name"])
+        elif action in ("create", "update", "unchanged"):
+            if oid and oid < 0:                             # Check: made by this run, so the mode would be set then
+                self.note("setting", "%s on %s" % (MODE, t["name"]), "create", {MODE: [None, "import"]})
+                return
+            self.cache.pop(("job_templates", t["name"], ""), None)
+            n = len(self.results)
+            self.template(t, refs, with_action=True)
+            if len(self.results) == n + 1 and self.results[-1]["action"] == "unchanged":
+                self.results.pop()                          # the first pass said so already
 
     def split_by_hand(self, name):
         """The check template was changed by hand (or not made by this job): only its mode is set, nothing else."""
@@ -254,47 +271,55 @@ class Setup(object):
             self.note("setting", what, "unchanged", why="it is %r: left as it is (the scorecard has its own template)" % now)
 
     def scorecard(self, sc, src, refs, ids, src_oid, src_action=""):
+        """-> True when the scorecard's template and (if wanted) its schedule are in place."""
         name = sc.get("name") or ""
         if not name:
-            return
+            return False
         live = [r for r in self.all("job_templates/?name=%s" % _q(src["name"])) if r.get("name") == src["name"]]
         if len(live) == 1:
             vars_ = parse_vars(live[0].get("extra_vars"))
             if vars_ is None:
                 self.note("template", name, "skipped", why="the Variables of '%s' could not be read" % src["name"])
-                return
+                return False
             copy = live[0]
         elif src_oid and src_oid < 0:                   # Check: the source would be made by this run
             vars_, copy = dict(src.get("extra_vars") or {}), None
         else:
             self.note("template", name, "skipped", why=("'%s' was not set up (see above)" if src_action == "skipped" else "'%s' is not in AAP: run again once it is") % src["name"])
-            return
+            return False
         vars_.pop("stigman_ckl_import_workflow", None)  # the check's "fail when something waits for approval"
         vars_[MODE] = "scorecard"
         t = dict(src, name=name, extra_vars=vars_, credentials=src.get("credentials") or [],
                  description="The weekly STIG scorecard: STIG Manager's collections read, the report and its email. No approval.")
-        oid = self.template(t, refs, copy)
-        if not oid:
-            return
+        oid, action = self.template(t, refs, copy, with_action=True)
+        if not oid or action == "skipped":
+            return False
+        sname = sc.get("schedule_name") or "Weekly - %s" % name
+        if action in ("not ours", "hand-edited"):        # one that was there: only when it is the scorecard, by what it runs
+            row = next((r for r in self.all("job_templates/?name=%s" % _q(name)) if r.get("name") == name), {})
+            mode = (parse_vars(row.get("extra_vars")) or {}).get(MODE)
+            if row.get("playbook") != src["playbook"] or mode != "scorecard":
+                self.note("schedule", sname, "skipped", why="'%s' is there and is not the scorecard (its playbook or %s differs): no schedule, nothing else changed" % (name, MODE))
+                return False
         ids[name] = ("job_templates", oid)
         when = sc.get("schedule") or ""
         if not when:
-            return
-        try:
-            rrule = rrule_of(when, sc.get("time_zone") or "")
-        except ValueError as e:
-            self.problems.append("portal_setup_scorecard_schedule: %s" % e)
-            return
-        sname = sc.get("schedule_name") or "Weekly - %s" % name
+            return True
+        rrule = rrule_of(when, sc.get("time_zone") or "")      # checked before any change (run)
         if oid < 0:
             self.note("schedule", sname, "create", {"rrule": [None, rrule]})
-            return
+            return True
         rows = [r for r in self.all("job_templates/%d/schedules/" % oid) if r.get("name") == sname]
         if rows:
             self.note("schedule", sname, "unchanged", why="" if rows[0].get("rrule") == rrule else "its time is not the setting: left as it is")
-            return
-        self.write("POST", "job_templates/%d/schedules/" % oid, {"name": sname, "rrule": rrule, "extra_data": {}, "enabled": True})
+            return True
+        try:
+            self.write("POST", "job_templates/%d/schedules/" % oid, {"name": sname, "rrule": rrule, "extra_data": {}, "enabled": True})
+        except RuntimeError as e:
+            self.note("schedule", sname, "failed", why=str(e)[:160])
+            return False
         self.note("schedule", sname, "create", {"rrule": [None, rrule]})
+        return True
 
     # ---- workflows
     def workflow(self, w, tpl_ids, refs):
@@ -418,6 +443,19 @@ class Setup(object):
 
     def run(self):
         p = self.p
+        sc = p["scorecard"] or {}
+        if sc.get("name"):                               # before any change: a name of the spec is never the scorecard's
+            taken = [t["name"] for t in p["spec"].get("templates") or []]
+            if sc["name"] in taken:
+                self.problems.append("portal_setup_scorecard_template %r is the name of a job template of workflows.yml: "
+                                     "choose another name (nothing was changed)" % sc["name"])
+                return
+            if sc.get("schedule"):
+                try:
+                    rrule_of(sc["schedule"], sc.get("time_zone") or "")
+                except ValueError as e:
+                    self.problems.append("portal_setup_scorecard_schedule: %s (nothing was changed)" % e)
+                    return
         org = self.one_id("organizations", p["organization"], "Organization")
         proj = self.one_id("projects", p["project"], "Project")
         ee = self.one_id("execution_environments", p["execution_environment"], "Execution environment") if p["execution_environment"] else None
@@ -432,7 +470,6 @@ class Setup(object):
             return
         refs = {"org": org, "project": proj, "ee": ee, "inventories": invs}
         tpl_ids, ids = {}, {}
-        sc = p["scorecard"] or {}
         src = source_template(p["spec"]) if sc else None
         src_oid, src_spec, src_action = None, None, ""
         for t in p["spec"].get("templates") or []:
@@ -440,17 +477,21 @@ class Setup(object):
             if is_src:
                 src_spec = t
                 if sc.get("split"):
-                    t = self.split_vars(t)
+                    t = self.split_vars(t, final=False)     # the mode as it is: set after the scorecard is in place
             oid, action = self.template(t, refs, with_action=True)
             if is_src:
                 src_oid, src_action = oid, action
-                if sc.get("split") and action in ("hand-edited", "not ours"):
-                    self.split_by_hand(t["name"])
             if oid:
                 tpl_ids[t["name"]] = oid
                 ids[t["name"]] = ("job_templates", oid)
         if sc and src_spec:
-            self.scorecard(sc, src_spec, refs, ids, src_oid, src_action)
+            in_place = self.scorecard(sc, src_spec, refs, ids, src_oid, src_action)
+            if sc.get("split") and src_oid and src_action != "skipped":
+                if in_place:
+                    self.apply_split(src_spec, src_action, refs, src_oid)
+                else:
+                    self.note("setting", "%s on %s" % (MODE, src_spec["name"]), "unchanged",
+                              why="the scorecard's template or schedule is not in place: this check keeps its mode, so no scorecard is lost")
         wf_ids = {}
         for w in p["spec"].get("workflows") or []:
             oid = self.workflow(w, tpl_ids, refs)
@@ -559,7 +600,7 @@ def rrule_of(when, tz):
     if not m or not (len(w) == 3 and w[0] == "weekly" and w[1][:3] in DAYS or len(w) == 2 and w[0] == "daily"):
         raise ValueError("%r is not 'weekly Mon 06:00' or 'daily 06:00'" % when)
     head = "DTSTART;TZID=%s:20260105T%02d%s00" % (tz or "UTC", int(m.group(1)), m.group(2))
-    return head + " RRULE:FREQ=WEEKLY;BYDAY=%s" % DAYS[w[1][:3]] if w[0] == "weekly" else head + " RRULE:FREQ=DAILY"
+    return head + " RRULE:FREQ=WEEKLY;INTERVAL=1;BYDAY=%s" % DAYS[w[1][:3]] if w[0] == "weekly" else head + " RRULE:FREQ=DAILY;INTERVAL=1"
 
 
 def source_template(spec):

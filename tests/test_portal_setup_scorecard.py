@@ -21,12 +21,12 @@ import site_aap_portal_setup as S  # noqa: E402
 
 class When(unittest.TestCase):
     def test_weekly(self):
-        self.assertEqual(S.rrule_of("weekly Mon 06:00", ""), "DTSTART;TZID=UTC:20260105T060000 RRULE:FREQ=WEEKLY;BYDAY=MO")
+        self.assertEqual(S.rrule_of("weekly Mon 06:00", ""), "DTSTART;TZID=UTC:20260105T060000 RRULE:FREQ=WEEKLY;INTERVAL=1;BYDAY=MO")
         self.assertEqual(S.rrule_of("Weekly friday 7:30", "Europe/Berlin"),
-                         "DTSTART;TZID=Europe/Berlin:20260105T073000 RRULE:FREQ=WEEKLY;BYDAY=FR")
+                         "DTSTART;TZID=Europe/Berlin:20260105T073000 RRULE:FREQ=WEEKLY;INTERVAL=1;BYDAY=FR")
 
     def test_daily(self):
-        self.assertEqual(S.rrule_of("daily 23:59", "UTC"), "DTSTART;TZID=UTC:20260105T235900 RRULE:FREQ=DAILY")
+        self.assertEqual(S.rrule_of("daily 23:59", "UTC"), "DTSTART;TZID=UTC:20260105T235900 RRULE:FREQ=DAILY;INTERVAL=1")
 
     def test_not_understood(self):
         for bad in ("", "sometimes", "weekly 06:00", "weekly Mon 25:00", "daily Mon 06:00", "weekly Xyz 06:00", "weekly Mon 6"):

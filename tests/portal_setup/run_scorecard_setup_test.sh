@@ -42,7 +42,7 @@ writes() { [ -f "$work/writes.jsonl" ] && wc -l < "$work/writes.jsonl" || echo 0
 # the stand-in, fresh: one more credential (the share account), and a check template made by hand when $1 is "hand"
 fresh() {
     rm -f "$work/state.json" "$work/writes.jsonl"
-    "$py" - "$work/state.json" "${1:-none}" "${2:-}" <<'EOPY'
+    "$py" - "$work/state.json" "${1:-none}" "${2:-}" "${3:-}" <<'EOPY'
 import json, sys
 sys.path.insert(0, "tests/portal_setup")
 SEED = json.loads(json.dumps(__import__("fake_aap_crud").SEED))
@@ -55,6 +55,13 @@ if sys.argv[2] == "hand":
         "extra_vars": json.dumps({"stigman_ckl_import_workflow": True, "stigman_scorecard_collections": ["RHEL Servers"],
                                   "stigman_ckl_import_mode": sys.argv[3] or "import and scorecard",
                                   "report_email_to": "team@example.mil"})})
+if len(sys.argv) > 4 and sys.argv[4] == "reject":
+    SEED["reject_schedules"] = True
+if len(sys.argv) > 4 and sys.argv[4] == "theirs":       # a template of theirs that has the scorecard's name and imports
+    SEED["next"] += 1
+    SEED["job_templates"].append({"id": SEED["next"], "name": "STIG - weekly scorecard", "description": "made by a person",
+        "job_type": "run", "project": 2, "playbook": "playbooks/stigman_ckl_import.yml", "inventory": 4, "credentials": [14],
+        "extra_vars": json.dumps({"stigman_ckl_import_mode": "import"})})
 json.dump(SEED, open(sys.argv[1], "w"))
 EOPY
 }
@@ -81,7 +88,7 @@ got="$(st '[json.loads(j["extra_vars"]) for j in s["job_templates"] if j["name"]
 [ "$got" = "[{'stigman_ckl_import_mode': 'import', 'stigman_ckl_import_workflow': True}]" ] \
     && pass "workflow 40's check template: stigman_ckl_import_mode import" || fail "check template mode" "$got"
 got="$(st '[(x["name"], x["rrule"], x["enabled"]) for x in s["schedules"]]')"
-[ "$got" = "[('Weekly - STIG scorecard', 'DTSTART;TZID=Europe/Berlin:20260105T060000 RRULE:FREQ=WEEKLY;BYDAY=MO', True)]" ] \
+[ "$got" = "[('Weekly - STIG scorecard', 'DTSTART;TZID=Europe/Berlin:20260105T060000 RRULE:FREQ=WEEKLY;INTERVAL=1;BYDAY=MO', True)]" ] \
     && pass "the schedule: weekly Monday 06:00 in report_time_zone" || fail "the schedule" "$got"
 
 # ---- a second run changes nothing
@@ -96,7 +103,7 @@ else fail "a second run" "$(($(writes) - n)) writes; $(grep -E ": made|: changed
 import json, sys
 s = json.load(open(sys.argv[1]))
 for x in s["schedules"]:
-    x["rrule"] = "DTSTART;TZID=Europe/Berlin:20260105T070000 RRULE:FREQ=WEEKLY;BYDAY=TU"
+    x["rrule"] = "DTSTART;TZID=Europe/Berlin:20260105T070000 RRULE:FREQ=WEEKLY;INTERVAL=1;BYDAY=TU"
 for j in s["job_templates"]:
     if j["name"] == "STIG - weekly scorecard":
         j["extra_vars"] = json.dumps({"stigman_ckl_import_mode": "scorecard", "stigman_scorecard_collections": ["Mine"]})
@@ -144,6 +151,68 @@ fresh
 setup -e '{"portal_setup_scorecard_schedule": "sometimes"}'
 if [ $? != 0 ] && grep -q "portal_setup_scorecard_schedule" "$work/out.txt"; then pass "a schedule text that is not understood: said, the run fails"
 else fail "bad schedule text" "$(grep -E "schedule|fatal" "$work/out.txt" | head -4)"; fi
+
+# ---- the stand-in refuses what a real controller refuses: a rule with no INTERVAL (or no DTSTART)
+fresh
+setup
+got="$("$py" - "$port" "$work/state.json" <<'EOPY'
+import json, sys, urllib.request, urllib.error
+port, st = sys.argv[1], json.load(open(sys.argv[2]))
+jt = [j for j in st["job_templates"] if j["name"] == "STIG - weekly scorecard"][0]["id"]
+def post(n, rr):
+    r = urllib.request.Request("http://127.0.0.1:%s/api/controller/v2/job_templates/%d/schedules/" % (port, jt),
+        json.dumps({"name": "x%d" % n, "rrule": rr}).encode(), {"Authorization": "Bearer setup-token", "Content-Type": "application/json"})
+    try:
+        return urllib.request.urlopen(r).status
+    except urllib.error.HTTPError as e:
+        return e.code
+print(post(1, "DTSTART;TZID=UTC:20260105T060000 RRULE:FREQ=WEEKLY;BYDAY=MO"), post(2, "RRULE:FREQ=DAILY;INTERVAL=1"),
+      post(3, "DTSTART;TZID=UTC:20260105T060000 RRULE:FREQ=DAILY;INTERVAL=1"))
+EOPY
+)"
+[ "$got" = "400 400 201" ] && pass "the stand-in refuses a rule with no INTERVAL or no DTSTART, as a controller does" || fail "stand-in strictness" "$got"
+got="$(st '[x["rrule"] for x in s["schedules"] if x["name"] == "Weekly - STIG scorecard"]')"
+[ "$got" = "['DTSTART;TZID=Europe/Berlin:20260105T060000 RRULE:FREQ=WEEKLY;INTERVAL=1;BYDAY=MO']" ] && pass "the default weekly rule carries INTERVAL=1" || fail "weekly rule" "$got"
+fresh hand
+setup -e '{"portal_setup_scorecard_schedule": "daily 06:00"}'
+got="$(st '[x["rrule"] for x in s["schedules"]]')"
+[ "$got" = "['DTSTART;TZID=Europe/Berlin:20260105T060000 RRULE:FREQ=DAILY;INTERVAL=1']" ] && pass "the daily rule carries INTERVAL=1" || fail "daily rule" "$got"
+
+# ---- a scorecard name that is a spec template's: refused before any change
+fresh hand
+setup -e '{"portal_setup_scorecard_template": "STIG Manager - import checklists - check"}'
+rc=$?
+if [ $rc != 0 ] && [ "$(writes)" = 0 ] && grep -q "is the name of a job template of workflows.yml" "$work/out.txt"; then
+    pass "a scorecard name that is a job template of workflows.yml (workflow 40's check): refused, nothing written"
+else fail "name collision" "rc $rc, $(writes) writes; $(grep -E "name of a job template|fatal" "$work/out.txt" | head -3)"; fi
+fresh hand
+setup -e '{"portal_setup_scorecard_schedule": "sometimes"}'
+[ $? != 0 ] && [ "$(writes)" = 0 ] && pass "a schedule text that is not understood: refused before any change" || fail "bad schedule text, no writes" "$(writes) writes"
+
+# ---- a template of theirs with the scorecard's name that imports: no schedule on it, the check template untouched
+fresh hand "" theirs
+setup
+got="$(st '[(x["obj"]) for x in s["schedules"]]')"
+mode="$(st '[json.loads(j["extra_vars"])["stigman_ckl_import_mode"] for j in s["job_templates"] if j["name"] == "STIG Manager - import checklists - check"][0]')"
+if [ "$got" = "[]" ] && [ "$mode" = "import and scorecard" ] && grep -q "'STIG - weekly scorecard' is there and is not the scorecard" "$work/out.txt" \
+    && [ "$(st '[j["description"] for j in s["job_templates"] if j["name"] == "STIG - weekly scorecard"][0]')" = "made by a person" ]; then
+    pass "a template of theirs with that name that imports: left, not scheduled, workflow 40's check keeps its mode"
+else fail "their template" "schedules $got, mode $mode; $(grep -E "scorecard" "$work/out.txt" | head -4)"; fi
+
+# ---- the schedule cannot be made: the check template keeps its mode (no scorecard is lost); once it can, it is switched
+fresh hand "" reject
+setup
+mode="$(st '[json.loads(j["extra_vars"])["stigman_ckl_import_mode"] for j in s["job_templates"] if j["name"] == "STIG Manager - import checklists - check"][0]')"
+if [ "$mode" = "import and scorecard" ] && [ "$(st 'len(s["schedules"])')" = 0 ] && grep -q "schedule 'Weekly - STIG scorecard': FAILED" "$work/out.txt"; then
+    pass "a schedule AAP refuses: said, workflow 40's check keeps its mode"
+else fail "schedule refused" "mode $mode; $(grep -E "Weekly|stigman_ckl_import_mode" "$work/out.txt" | head -4)"; fi
+"$py" - "$work/state.json" <<'EOPY'
+import json, sys
+s = json.load(open(sys.argv[1])); s["reject_schedules"] = False; json.dump(s, open(sys.argv[1], "w"))
+EOPY
+setup
+mode="$(st '[json.loads(j["extra_vars"])["stigman_ckl_import_mode"] for j in s["job_templates"] if j["name"] == "STIG Manager - import checklists - check"][0]')"
+[ "$mode" = "import" ] && [ "$(st 'len(s["schedules"])')" = 1 ] && pass "run again once it works: the schedule made, then the check switched to import" || fail "after the fix" "mode $mode"
 
 if ! grep -q '"method": "DELETE", "path": "\(job_templates\|workflow_job_templates\|schedules\)' "$work/writes.jsonl"; then
     pass "never a template, workflow or schedule deleted"

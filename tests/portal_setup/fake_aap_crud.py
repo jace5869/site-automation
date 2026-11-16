@@ -93,6 +93,16 @@ TPL_FIELDS = ("name", "description", "job_type", "project", "playbook", "invento
 WF_FIELDS = ("name", "description", "organization", "ask_variables_on_launch", "ask_limit_on_launch", "extra_vars")
 
 
+def rrule_problem(rr):
+    """What a real controller's schedule validation refuses: no DTSTART, no INTERVAL, a rule that is not RRULE:FREQ=..."""
+    rr = str(rr or "")
+    if not re.match(r"^DTSTART(;TZID=[A-Za-z0-9_/+-]+:|:)\d{8}T\d{6}Z? RRULE:", rr):
+        return "Valid DTSTART required in rrule. Value should start with: DTSTART:YYYYMMDDTHHMMSSZ or DTSTART;TZID=zone:YYYYMMDDTHHMMSS"
+    if "INTERVAL=" not in rr:
+        return "INTERVAL required in rrule: %s" % rr
+    return ""
+
+
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -219,6 +229,9 @@ class H(BaseHTTPRequestHandler):
                     return self.send(204)
                 m = re.match(r"^(job_templates|workflow_job_templates)/(\d+)/schedules/$", p)
                 if m:
+                    bad = "Schedules are refused (the state says so)" if s.get("reject_schedules") else rrule_problem(b.get("rrule"))
+                    if bad:
+                        return self.send(400, {"rrule": [bad]})
                     sc = dict(b, id=new_id(s), kind=m.group(1), obj=int(m.group(2)))
                     s["schedules"].append(sc)
                     return self.send(201, sc)
@@ -239,6 +252,8 @@ class H(BaseHTTPRequestHandler):
                 r = next((r for r in s[m.group(1)] if r["id"] == int(m.group(2))), None)
                 if r is None:
                     return self.send(404, {"detail": "Not found."})
+                if m.group(1) == "schedules" and "rrule" in b and rrule_problem(b["rrule"]):
+                    return self.send(400, {"rrule": [rrule_problem(b["rrule"])]})
                 r.update(b)
                 save(s)
                 return self.send(200, r)
