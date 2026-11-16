@@ -41,8 +41,10 @@
       {%-   else -%}
       {%-     set _ = out.append(e | combine({'rules': true,
                 'benchmark': check_stig_stigman_benchmarks[hv.ansible_distribution_major_version | default('') | string] | default('')})) -%}
+      {#-     1.68.0 (Codex P1): never with check_stig_recheck_rules ("fix one rule", workflow 47): a host whose asset is gone is
+              not made one, nor scanned in full for it, on that rule's approval #}
       {%-     if hv.check_stig_update_workflow | default(false) | bool and hv.check_stig_update_create_assets | default(false) | bool
-               and hv.check_stig_stigman_collection | default('') -%}
+               and hv.check_stig_stigman_collection | default('') and not hv.check_stig_recheck_rules | default([]) -%}
       {%-       set _ = out[-1].update({'create': {'name': hv.check_stig_stigman_asset | default('') or h.split('.')[0],
                                                    'fqdn': h if '.' in h else ''}}) -%}
       {%-     endif -%}
@@ -50,6 +52,9 @@
       {%- endfor -%}
       {{ out }}
 
+# check_stig_recheck_rules (the site portal's "fix one rule", workflow 47): the scanner's rules AND what is compared and
+# planned are that rule alone - STIG Manager's answer is cut to it (stig_only_sm), so a scan that read more (Evaluate-STIG
+# without -SelectVuln, a full scan, a full checklist already there) never plans another rule's review (1.68.0, Codex P1)
 - name: STIG recheck | the rules to check again on this host
   ansible.builtin.set_fact:
     _stig_recheck_vulns: "{{ _sm_host | stig_recheck_vulns(check_stig_stigman_statuses, check_stig_recheck) | stig_only_rules(check_stig_recheck_rules) }}"
@@ -58,7 +63,8 @@
   vars:
     _sm_host: >-
       {{ (_stig_sm.hosts | default({}))[inventory_hostname]
-         | default({'status': 'error', 'why': _stig_sm.error} if _stig_sm.error | default('') else {}) }}
+         | default({'status': 'error', 'why': _stig_sm.error} if _stig_sm.error | default('') else {})
+         | stig_only_sm(check_stig_recheck_rules | default([])) }}
 
 - name: STIG recheck | what will be checked again
   ansible.builtin.debug:

@@ -50,6 +50,12 @@ scorecard's client to have the scope `stig-manager:stig:read` (without it, one l
   across hosts* gets a *Fix text* column. The email is as before.
 - **Fix:** "STIG - fix one rule" (workflow 47, 1.67.0) asked STIG Manager for the projections `checks` and `fixes`.
   STIG Manager 1.6.18 answers those 400 (tried); it is `check` and `fix` now. The stand-in STIG Manager answers 400 too.
+- **Fix (review P1):** "STIG - fix one rule" (workflow 47) could plan more than its rule after the one approval. On a
+  host whose asset was gone, with `check_stig_update_create_assets` on for the site, the recheck made the asset and
+  scanned every rule: 1 new asset and 3 reviews planned (tried in the e2e). Now, with `check_stig_recheck_rules`, no
+  asset is made (the host is "not rechecked"), and what is compared and planned is that rule alone on every path
+  (`stig_only_sm`: STIG Manager's answer cut to the rule), whatever the scanner returns. Scans already returned only
+  the rules asked (OpenSCAP and Evaluate-STIG, also run in full: tried); this holds even if one does not.
 
 **Fixes after the review (G3):**
 

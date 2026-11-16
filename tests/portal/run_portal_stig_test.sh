@@ -5,7 +5,8 @@
 # check and fix text). Each workflow is run step by step as AAP would, the artifacts of one step the next one's extra
 # variables. Checks: 47 - ACT's proposal and NEEDS APPROVAL; refused with no ACT asked: CAT I, a rule about audit, a
 # fix that restarts; a proposed command about PAM refused; the approval's dry run lists the commands and changes nothing;
-# the fix runs exactly them; a plan for another finding is refused; the recheck of that rule alone - passes: its review
+# the fix runs exactly them; a plan for another finding is refused; the recheck of that rule alone (1.68.0: also with an
+# Evaluate-STIG run in full, which answers every rule - only the rule asked is planned) - passes: its review
 # planned and written (fixed), still fails: nothing planned (still there). 46 - passes now, still Open: planned and
 # written. 48 - a host with no asset: planned with the scan's answers. Only the approved review reaches STIG Manager.
 #   bash tests/portal/run_portal_stig_test.sh            (ANSIBLE_PLAYBOOK=... for another ansible-core)
@@ -203,6 +204,24 @@ check '[p["ruleId"] for p in d["stigman_update_plan"]]' '["SV-257883r1044925_rul
 grep -q -- "--rule xccdf_org.ssgproject.content_rule_accounts_tmout" "$work/oscap_args.txt" && ! grep -q "audit_rules" "$work/oscap_args.txt" \
   && echo "ok   - 47 recheck: oscap checked that rule alone" || { echo "FAIL - 47 recheck: other rules were checked"; fails=$((fails + 1)); }
 plan="$(cat "$work/stats.json")"
+# 1.68.0 (Codex P1): the same recheck with an Evaluate-STIG that has no --SelectVuln - it scans in full, and its checklist
+# answers every rule: SV-258176 and SV-257835, Open in STIG Manager, pass in it too. Still only the rule asked is
+# compared and planned - never another rule's review on this approval
+mkdir -p "$work/es_full"
+cat > "$work/es_full/Evaluate-STIG_Bash.sh" <<ESEOF
+#!/bin/bash
+# Evaluate-STIG_Bash.sh --Output CKLB --OutputPath DIR ... (an old one: no option to pick rules): every rule, DIR/HOST/Checklist/HOST_RHEL9.cklb
+out=""; echo "\$*" > "$work/es_full_args.txt"
+while [ \$# -gt 0 ]; do case "\$1" in --OutputPath) out="\$2"; shift ;; esac; shift; done
+mkdir -p "\$out/LOCALHOST/Checklist" && "$py" "$stig/make_cklb.py" "\$out/LOCALHOST/Checklist/LOCALHOST_RHEL9_V2R7.cklb" '{}' V2R7
+echo "Done"
+ESEOF
+chmod +x "$work/es_full/Evaluate-STIG_Bash.sh"
+es_full="{\"check_stig_scanner\": \"evaluate_stig\", \"check_stig_evaluate\": \"$work/es_full\", \"check_stig_evaluate_select\": {\"$major\": \"RHEL9\"}}"
+run "47 recheck, Evaluate-STIG in full (no --SelectVuln, every rule passes): only the rule asked is planned" fail stig_finding_recheck.yml \
+    -e finding_id=$F_TMOUT -e "$es_full" -- "NEEDS APPROVAL - 1 review(s)" "checked: in full - this Evaluate-STIG has no -SelectVuln"
+check '[p["ruleId"] for p in d["stigman_update_plan"]]' '["SV-257883r1044925_rule"]' "47 recheck in full: SV-258176 and SV-257835 pass in the scan, and are not planned"
+grep -q "SelectVuln" "$work/es_full_args.txt" && { echo "FAIL - 47 recheck in full: --SelectVuln given to an Evaluate-STIG without it"; fails=$((fails + 1)); }
 : > "$work/sm.log.writes"
 run "47 update: the review is written (the same approval)" ok stigman_update.yml -e finding_id=$F_TMOUT -e "$plan" -- "!Traceback"
 grep -q "SV-257883r1044925_rule" "$work/sm.log.writes" && ! grep -q "SV-258176\|SV-257835" "$work/sm.log.writes" \
@@ -219,6 +238,14 @@ sm_data '{"1": []}'
 run "48 recheck: no asset - the asset and the scan's answers planned" fail stig_finding_recheck.yml -e finding_id=stig_no_asset:localhost:RHEL_9_STIG -- \
     "NEW ASSET localhost in RHEL Servers"
 check 'd.get("portal_result", {}).get("after")' '"planned"' "48: the job page says planned"
+
+# 1.68.0 (Codex P1): "fix one rule" (47) on a host whose asset is gone, with asset creation on for the site
+# (check_stig_update_create_assets in all.yml - host facts win): never an asset made, nor every rule scanned and planned
+# on that approval - not rechecked (a warning, as any host without its asset), nothing planned
+run "47 recheck, the asset gone, check_stig_update_create_assets on for the site: not rechecked, nothing planned" fail stig_finding_recheck.yml \
+    -e finding_id=$F_TMOUT -e '{"check_stig_update_create_assets": true, "check_stig_stigman_collection": "RHEL Servers"}' -- \
+    "!NEEDS APPROVAL - " "!NEW ASSET" "not rechecked - what to recheck is read from STIG Manager: no asset named localhost"
+check '"stigman_update_plan" in d' 'false' "47 recheck, the asset gone: no plan (no asset made, no other rule's review)"
 
 run "a finding of another kind is refused" fail stig_fix_rule.yml -e finding_id=stig_fixed_open:localhost:SV-257883r1044925_rule -- "!NEEDS APPROVAL - "
 

@@ -1022,6 +1022,48 @@ class Update(unittest.TestCase):
         self.assertEqual(sorted((x["collectionId"], x["assetId"], x["benchmark"], x["v"]) for x in p),
                          [("3", "8", "MS_Windows_Server_2022_STIG", "V-2"), ("3", "9", "IIS_10-0_Site_STIG", "V-1")])
 
+    def test_one_rule_plans_that_rule_alone_on_every_path(self):
+        """1.68.0, Codex P1: check_stig_recheck_rules (workflow 47, "fix one rule") - a scan that answers more than the rule
+        asked (Evaluate-STIG without -SelectVuln, a full scan, a full checklist already there) must not plan another
+        rule's review: STIG Manager's answer is cut to the rule (stig_only_sm) before the comparison and the plan."""
+        c = sm_list(SV_1=("fail", "accepted"), SV_2=("fail", "saved"), SV_3=("fail", "accepted"), SV_4=("pass", "rejected"))
+        c.update(collectionId="7", assetId="42")
+        full = [dict(recheck_scan(SV_1="pass", SV_2="fail", SV_3="notapplicable", SV_4="fail", SV_5="notchecked"), selected=False,
+                     time="2026-11-02T08:00:00Z")]
+        before = sf.stig_update_plan(sf.stig_recheck(c, full, "web01"), day="2026-11-02")
+        self.assertEqual([x["v"] for x in before], ["V-1", "V-3", "V-4"], "the finding: without the cut, three reviews for one rule")
+        for asked in (["SV-1r0_rule"], ["V-1"], ["SV-1"]):
+            one = sf.stig_only_sm(c, asked)
+            r = sf.stig_recheck(one, full, "web01")[0]
+            self.assertEqual([[x["key"] for x in r[k]] for k in ("fixed", "now_na", "answered", "still_open", "by_hand")],
+                             [["SV-1"], [], [], [], []], asked)
+            p = sf.stig_update_plan([r], day="2026-11-02")
+            self.assertEqual([(x["v"], x["kind"]) for x in p], [("V-1", "fixed")], asked)
+        # a rule asked that is not Open: nothing planned, though the full scan answers every rule
+        self.assertEqual(sf.stig_update_plan(sf.stig_recheck(sf.stig_only_sm(c, ["V-2"]), full, "web01")), [])
+        # a name with no rule number: nothing (never "every rule")
+        self.assertEqual(sf.stig_update_plan(sf.stig_recheck(sf.stig_only_sm(c, ["junk"]), full, "web01")), [])
+        # no rule named: the answer as it is (workflow 37's recheck)
+        self.assertIs(sf.stig_only_sm(c, []), c)
+        self.assertIs(sf.stig_only_sm(c, None), c)
+        # Windows: each checklist cut the same way
+        site = sm_list(bench="IIS_10-0_Site_STIG", SV_1=("fail", "accepted"), SV_3=("fail", "accepted"))
+        site.update(asset="win01-Default Web Site-NA", assetId="9", site="Default Web Site", instance="")
+        server = sm_list(bench="MS_Windows_Server_2022_STIG", SV_2=("fail", "accepted"))
+        server.update(asset="win01", assetId="8")
+        smh = {"status": "found", "collection": "Windows Servers", "collectionId": "3", "asset": "win01", "checklists": [server, site]}
+        scans = [dict(recheck_scan(SV_2="pass"), platform="windows", benchmark="MS_Windows_Server_2022_STIG", label="Windows Server 2022"),
+                 dict(recheck_scan(SV_1="pass", SV_3="pass"), platform="windows", benchmark="IIS_10-0_Site_STIG", site="Default Web Site",
+                      instance="", label="IIS 10.0 Site - Default Web Site")]
+        self.assertEqual(len(sf.stig_update_plan(sf.stig_recheck(smh, scans, "win01"))), 3)
+        p = sf.stig_update_plan(sf.stig_recheck(sf.stig_only_sm(smh, ["V-3"]), scans, "win01"))
+        self.assertEqual([(x["assetId"], x["v"]) for x in p], [("9", "V-3")])
+        # a new asset (no asset yet: every rule of the revision): only the rule's
+        new = {"status": "not_found", "create": {"name": "web02", "collection": "RHEL Servers", "benchmark": "RHEL_9_STIG", "revision": "V2R7"},
+               "rules": dict(c["rules"])}
+        self.assertEqual(sorted(sf.stig_only_sm(new, ["V-3"])["rules"]), ["SV-3"])
+        self.assertEqual(sf.stig_recheck_vulns(sf.stig_only_sm(new, ["V-3"])), ["V-3"])
+
     def test_write(self):
         p = self.plan()
         p.append(dict(p[0], ruleId="SV-9/../users", line="bad"))

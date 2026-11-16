@@ -106,6 +106,10 @@ class OneRule(unittest.TestCase):
         d = open(os.path.join(REPO, "roles", "check_stig", "defaults", "main.yml")).read()
         self.assertIn("check_stig_recheck_rules: []", d)
         self.assertIn("stig_only_rules(check_stig_recheck_rules)", open(os.path.join(REPO, "roles", "check_stig", "tasks", "recheck_read.yml")).read())
+        # 1.68.0, Codex P1: what is compared and planned is cut to the rule too (tests/test_stig.py Update)
+        self.assertIn("stig_only_sm(check_stig_recheck_rules | default([]))", open(os.path.join(REPO, "roles", "check_stig", "tasks", "recheck_read.yml")).read())
+        self.assertIn("and not hv.check_stig_recheck_rules | default([]) -%}", open(os.path.join(REPO, "roles", "check_stig", "tasks", "recheck_read.yml")).read(),
+                      "one rule: never an asset to create (and so never every rule scanned)")
 
 
 def _module():

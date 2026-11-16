@@ -692,6 +692,43 @@ def stig_only_rules(vulns, rules=None):
     return [v for v in vulns or [] if str(v).upper() in want]
 
 
+def _vnum(x):
+    """V-257985, SV-257985, SV-257985r925318_rule -> 257985 ('' when it has no number)."""
+    m = re.search(r"V-(\d+)", str(x or "").upper())
+    return m.group(1) if m else ""
+
+
+def stig_only_sm(sm, rules=None):
+    """1.68.0 (Codex P1): a host's answer from STIG Manager with only the rules of check_stig_recheck_rules, when it names
+    any - in every checklist (its rules, reviews and earlier reviews) and in a new asset's rules. What is compared with the
+    scan (stig_recheck) and so what the plan writes (stig_update_plan) is then that rule alone, on every scanner path: a
+    scan that read more (Evaluate-STIG without -SelectVuln, a full scan, a full checklist already there) adds nothing. The
+    site portal's "fix one rule" (workflow 47) writes its rule's review only. No rules named: the answer as it is."""
+    want = set(n for n in (_vnum(r) for r in rules or []) if n)
+    if not rules:
+        return sm
+    if not isinstance(sm, dict):
+        return sm
+
+    def one(c):
+        if not isinstance(c, dict):
+            return c
+        rm = c.get("rules") if isinstance(c.get("rules"), dict) else {}
+
+        def keep(k):
+            info = rm.get(k)
+            return _vnum(k) in want or (isinstance(info, dict) and _vnum(info.get("v")) in want)
+        out = dict(c)
+        for key in ("rules", "reviews", "earlier"):
+            if isinstance(c.get(key), dict):
+                out[key] = dict((k, v) for k, v in c[key].items() if keep(k))
+        return out
+    out = one(sm)
+    if isinstance(sm.get("checklists"), list):
+        out["checklists"] = [one(c) for c in sm["checklists"]]
+    return out
+
+
 def _scan_for(smc, scans):
     """The scan's checklist of a checklist in STIG Manager: the same STIG, the same web site or database instance (Linux:
     the one scan); else the only one of that STIG."""
@@ -1515,7 +1552,7 @@ def stig_fixed_open(results, read_at="", max_rows=500):
 class FilterModule(object):
     def filters(self):
         return {"stig_compare": stig_compare, "stig_report_sections": stig_report_sections, "stig_lines": stig_lines,
-                "stig_findings": stig_findings, "stig_recheck_vulns": stig_recheck_vulns, "stig_only_rules": stig_only_rules, "stig_recheck": stig_recheck,
+                "stig_findings": stig_findings, "stig_recheck_vulns": stig_recheck_vulns, "stig_only_rules": stig_only_rules, "stig_only_sm": stig_only_sm, "stig_recheck": stig_recheck,
                 "stig_recheck_sections": stig_recheck_sections, "stig_recheck_lines": stig_recheck_lines,
                 "stig_update_plan": stig_update_plan, "stig_update_sections": stig_update_sections, "stig_update_lines": stig_update_lines,
                 "stig_update_item_lines": stig_update_item_lines,

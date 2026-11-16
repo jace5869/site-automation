@@ -498,6 +498,9 @@ a recheck that failed for another reason writes nothing.
 2. **The approval.** Read the check job's output: the rule, ACT's reasoning and the commands.
 3. **The fix.** Exactly those commands run on the host, in order, with no model. The job stops at the first one that
    fails. Then the rule alone is rechecked, and its review is written to STIG Manager only if it passes now.
+   Only that rule's review: a scan that answers more rules (Evaluate-STIG run in full) adds no other review. A host
+   whose asset is gone from STIG Manager is not rechecked here (the job says so), and no asset is made, also with
+   `check_stig_update_create_assets` on.
 
 No proposal, and the job says why, for:
 
