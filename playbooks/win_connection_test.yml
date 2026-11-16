@@ -7,8 +7,11 @@
 # mode, the account and whether it is a local administrator (the checks need that).
 #
 #   ansible-playbook playbooks/win_connection_test.yml -i <windows inventory> -l web01.example.mil
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
 - name: Windows connection test - the servers
-  hosts: "{{ target | default('all') }}"
+  hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   vars:
     site_os: windows

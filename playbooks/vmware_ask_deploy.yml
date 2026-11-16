@@ -8,8 +8,11 @@
 # optionally "Container registry login (hosts)". Nothing secret goes in variables.
 #
 #   ansible-playbook playbooks/vmware_ask_deploy.yml -l ask01.example.mil
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
 - name: Target check (stops with a clear message when target matches no host)
-  hosts: all
+  hosts: "all{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   tasks:
     - name: The target leaves at least one host to run on
@@ -20,7 +23,7 @@
         _target_pattern: "{{ target | default('vmware_ask') }}"
 
 - name: VMware ask
-  hosts: "{{ target | default('vmware_ask') }}"
+  hosts: "{{ target | default('vmware_ask') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   become: true
   gather_facts: true
   gather_subset: [min]

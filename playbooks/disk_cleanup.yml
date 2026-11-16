@@ -8,8 +8,11 @@
 #   2. the filesystem is read again: the finding is fixed when the mount is under its warning level now
 #      (portal_result: fixed, still there, or not checked - the page of the portal job says so at the top).
 # Linux only. docs/SITE_PORTAL.md, "Disk, services and fapolicyd".
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
 - name: Target check (stops with a clear message when target matches no host)
-  hosts: all
+  hosts: "all{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   tasks:
     - name: The target leaves at least one host to run on
@@ -20,7 +23,7 @@
         _target_pattern: "{{ target | default('') }}"
 
 - name: Disk - the request again, and the plan is this host's alone
-  hosts: "{{ target | default('no-target-given') }}"
+  hosts: "{{ target | default('no-target-given') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   become: true
   vars:
@@ -85,7 +88,7 @@
   ansible.builtin.import_playbook: tmp_cleanup.yml
 
 - name: Disk - read the mount again
-  hosts: "{{ target | default('no-target-given') }}"
+  hosts: "{{ target | default('no-target-given') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   become: true
   vars:

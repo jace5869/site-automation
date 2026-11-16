@@ -15,11 +15,14 @@
 # stigman_db groups in the inventory, on the Limit's hosts: one node that runs everything), the API part once on the
 # AAP side - on localhost, or on one host of the Limit standing in for it (connection local). One node that runs the
 # API, the web, Keycloak and MariaDB can be in both groups.
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
 - name: STIG Manager health - the nodes' and the database's hosts
   # the groups' hosts, and the Limit's (so a Limit of a host outside the groups still reaches the play)
   hosts: >-
     {{ ([stigman_health_nodes_group | default('stigman'), stigman_health_db_group | default('stigman_db')]
-        + ([ansible_limit] if ansible_limit | default('', true) | length > 0 else [])) | join(',') }}
+        + ([ansible_limit] if ansible_limit | default('', true) | length > 0 else [])) | join(',') ~ (hostvars['localhost']['site_exclude_not'] | default('')) }}
   become: true
   gather_facts: false
   vars:

@@ -25,8 +25,11 @@
 #   ansible-playbook playbooks/ad_health_report.yml -i <windows inventory>
 #   ansible-playbook playbooks/ad_health_report.yml -e target=dc01.example.mil -e ad_report_hours=168
 #   ansible-playbook playbooks/ad_health_report.yml -i <windows inventory> -e ad_health_mode=reader -u svc_aap_adreader@CORP.EXAMPLE.MIL -k
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
 - name: Target check (stops with a clear message when target matches no host)
-  hosts: all
+  hosts: "all{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   tasks:
     - name: The target leaves at least one host to run on
@@ -38,7 +41,7 @@
 
 - name: Active Directory - read the domain controllers
   # admin mode (and auto, which tries it): WinRM to each DC; reader mode logs in to no DC
-  hosts: "{{ target | default('win_dc' if 'win_dc' in groups else 'domain_controllers') }}"
+  hosts: "{{ target | default('win_dc' if 'win_dc' in groups else 'domain_controllers') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   vars:
     site_os: windows

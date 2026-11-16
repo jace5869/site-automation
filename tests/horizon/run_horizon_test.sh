@@ -150,7 +150,7 @@ run "fix: a desktop Horizon refuses fails the job, the others are done" fail hor
 mock
 run "desktops check: horizon_fix_max, a desktop excluded, an action by state" ok horizon_desktops_check.yml \
     '{"horizon_fix_max": 2, "horizon_fix_exclude_machines": ["w11-00[5]"], "horizon_fix_actions": {"PROVISIONING_ERROR": "remove"}}' \
-    'over horizon_fix_max (2 per run): the next run takes it' 'the desktop is excluded (horizon_fix_exclude_machines)' \
+    'over horizon_fix_max (2 per run): the next run takes it' 'the desktop is excluded (horizon_fix_exclude_machines or site_exclude_hosts)' \
     'Horizon desktops: 7 broken, 2 to fix'
 mock HZMOCK_GAPS=1
 run "desktops check: stuck, a domain clone error, a ghost, five broken on one host, a timeout recovered" ok horizon_desktops_check.yml '{}' \

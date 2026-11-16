@@ -14,9 +14,11 @@
       {%- set aap = (groups['aap'] | default([])) + (groups['aap_hosts'] | default([])) -%}
       {%- set grp = (['aap', 'aap_hosts'] + (vmware_protected_groups | name_list)) | unique | list -%}
       {%- set names = vmware_protected_vms | name_list -%}
-      {{ {'groups': grp,
-          'ids': grp | select('in', groups) | map('extract', groups) | flatten | unique | list | host_ids(hostvars),
-          'names': names,
+      {#- 1.67.0: site_exclude_hosts / site_exclude_groups too - never acted on (not in aap_known: only the AAP list says that) -#}
+      {%- set sx_grp = site_exclude_groups | default([], true) | name_list | reject('in', ['all', 'ungrouped']) | list -%}
+      {{ {'groups': (grp + sx_grp) | unique | list,
+          'ids': (grp + sx_grp) | unique | select('in', groups) | map('extract', groups) | flatten | unique | list | host_ids(hostvars),
+          'names': names + (site_exclude_hosts | default([], true) | site_exclude_patterns),
           'aap_known': aap | length > 0 or names | length > 0} }}
 
 - name: VMware | the AAP server is on the protected list

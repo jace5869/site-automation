@@ -351,7 +351,7 @@ def vm_watch_report(data, conditions, actions=None, opts=None):
     if d.get("not_probed"):
         lines.append("Not probed (over vm_watch_max_suspects): %s." % ", ".join(d["not_probed"]))
     if int(d.get("vms_skipped") or 0):
-        lines.append("%d VM(s) skipped by vm_watch_skip_vms / vm_watch_skip_folders." % int(d["vms_skipped"]))
+        lines.append("%d VM(s) skipped by vm_watch_skip_vms / vm_watch_skip_folders / site_exclude_hosts." % int(d["vms_skipped"]))
     sections.append({"title": "How it judged", "lines": lines})
     return {"title": title, "status": status, "subtitle": subtitle, "summary": summary, "sections": sections,
             "footer": "Read-only: the watch changed nothing."}

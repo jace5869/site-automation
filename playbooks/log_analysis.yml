@@ -16,8 +16,11 @@
 #   ansible-playbook playbooks/log_analysis.yml -e target=web -e '{"log_analysis_profiles": ["nginx"]}'
 #   ansible-playbook playbooks/log_analysis.yml -l web01.example.mil -e log_analysis_since="2026-10-23 08:00" \
 #     -e log_analysis_until="2026-10-23 10:30" -e log_analysis_question="users report slow logins since 08:15"
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
 - name: Target check (stops with a clear message when target matches no host)
-  hosts: all
+  hosts: "all{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   tasks:
     - name: The target leaves at least one host to run on
@@ -28,7 +31,7 @@
         _target_pattern: "{{ target | default('all') }}"
 
 - name: Logs - read each host
-  hosts: "{{ target | default('all') }}"
+  hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   tasks:
     - name: Read this host's logs (read-only)
@@ -38,7 +41,7 @@
 
 - name: Log analysis
   # on the hosts, once on the AAP side (run_once, delegated to localhost): a Limit of hosts needs no localhost
-  hosts: "{{ target | default('all') }}"
+  hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   tasks:
     - name: Log analysis

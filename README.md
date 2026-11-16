@@ -304,6 +304,26 @@ The guides, in the order a new site needs them: how it works and the setup first
 | `tests/` | the unit tests and the end-to-end tests (containers, a simulated vCenter, mocked APIs), the public-repository guard `check_public.py` |
 | `docs/pdf/` | the PDFs and the scripts that build them (`docs/pdf/README.md`) |
 
+## Leave hosts out of every job
+
+List the hosts no job may touch in `all.yml`. Every job then leaves them out, before it connects to anything.
+
+```yaml
+site_exclude_hosts: [web02, "*.lab.example.mil"]   # whole or short names, either way; * and ?; any case
+site_exclude_groups: [retired]                      # every host in these inventory groups
+```
+
+- **Every playbook that runs on hosts** (Linux, Windows, network, the reports) starts with the play *Leave hosts out
+  (site_exclude_hosts)*. It connects to nothing. A host left out is never in the job's plays: no facts are gathered from
+  it, and no task runs on it. A Limit or a target that names it does not bring it back.
+- **Each report says so** in one line at its end: `Left out by site_exclude_hosts: 3 - old01..., web02...` (the first
+  10 names). A host left out is never a finding, never *not reached*.
+- **The VMware and Horizon jobs** keep their own lists (`vmware_protected_vms`, `vm_snapshot_cleanup_exclude_vms`,
+  `esxi_security_exclude_hosts` ...). They also leave out the VMs, ESXi hosts and desktops named in
+  `site_exclude_hosts`.
+- `web01` leaves out `web01.example.mil`, and `web01.example.mil` leaves out a host called `web01`. An address, and a
+  pattern with `*` or `?`, are matched as they are.
+
 ## Using it in AAP
 
 Follow [docs/SETUP_AAP.md](docs/SETUP_AAP.md). In short: put this repository in your work Git

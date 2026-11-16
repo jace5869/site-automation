@@ -12,8 +12,11 @@
 #   [Windows certificate install - check] --Run on fail--> [Approval] --Run on success--> [Windows certificate install - approved]
 #
 # Credentials: Machine (Windows, an administrator) and ServiceNow API (for the work notes).
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
 - name: Windows certificate install - the approved certificates
-  hosts: "{{ target | default('all') }}"
+  hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   vars:
     site_os: windows
@@ -30,7 +33,7 @@
 
 - name: Windows certificate install - the result, on the requests
   # on the hosts, once on the AAP side (run_once, delegated to localhost): a Limit of hosts needs no localhost
-  hosts: "{{ target | default('all') }}"
+  hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   tasks:
     - name: What was installed, and a work note on each request

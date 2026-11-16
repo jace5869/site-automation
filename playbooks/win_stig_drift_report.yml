@@ -17,8 +17,11 @@
 #   ansible-playbook playbooks/win_stig_drift_report.yml -i <windows inventory>
 #   ansible-playbook playbooks/win_stig_drift_report.yml -i <windows inventory> -e win_check_stig_evaluate_read=auto
 #   ansible-playbook playbooks/win_stig_drift_report.yml -i <windows inventory> --check   # scans and compares, keeps nothing on the servers
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
 - name: Windows STIG drift report
-  hosts: "{{ target | default('all') }}"
+  hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   vars:
     site_os: windows

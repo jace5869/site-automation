@@ -10,8 +10,11 @@
 # docs/SITE_PORTAL.md, "Disk, services and fapolicyd".
 #   ansible-playbook playbooks/disk_space_request.yml -l web01.example.mil -e target=web01.example.mil \
 #     -e report_job=4711 -e finding_id=disk_full:web01.example.mil:/var
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
 - name: Target check (stops with a clear message when target matches no host)
-  hosts: all
+  hosts: "all{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   tasks:
     - name: The target leaves at least one host to run on
@@ -22,7 +25,7 @@
         _target_pattern: "{{ target | default('') }}"
 
 - name: Disk - space request
-  hosts: "{{ target | default('no-target-given') }}"     # without target the check above has stopped the job
+  hosts: "{{ target | default('no-target-given') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"     # without target the check above has stopped the job
   gather_facts: false
   tasks:
     - name: Space request | the request (target, report_job, finding_id; who asked)

@@ -304,6 +304,23 @@ check_services_required: [sshd, crond, rsyslog, chronyd, auditd, tomcat]
 
 ---
 
+## Leave hosts out of every job (1.67.0)
+
+Some hosts must never be touched: one being rebuilt, a lab, a retired group. List them once, in `all.yml`:
+
+```yaml
+site_exclude_hosts: [web02, "*.lab.example.mil"]   # whole or short names, either way; * and ?; any case
+site_exclude_groups: [retired]                      # every host in these inventory groups
+```
+
+- Every job leaves them out before it connects to anything: no facts, no task. A Limit or a target that names one does
+  not bring it back.
+- Each report ends with one line that names them: `Left out by site_exclude_hosts: 3 - old01..., web02...`. A host left
+  out is never a finding, never *not reached*.
+- The VMware and Horizon jobs keep their own lists, and also leave out the VMs, ESXi hosts and desktops named here.
+- `web01` leaves out `web01.example.mil`, and the other way round. An address, and a pattern with `*` or `?`, are
+  matched as they are.
+
 ## How to verify a setting is in effect
 
 1. **Run the check on one host**: **Health check** with `target` = that host and `health_checks` =

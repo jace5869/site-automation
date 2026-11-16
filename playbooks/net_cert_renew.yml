@@ -10,6 +10,9 @@
 # device. Check (a dry run) reads and says what it would do: no incident, no CSR. docs/NETWORK_CERTS.md.
 #
 #   ansible-playbook playbooks/net_cert_renew.yml -i <inventory with the group net_cert_devices> --check
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
 - name: Network device certificate renewal - read the certificates, the incidents
   hosts: localhost
   connection: local
@@ -21,7 +24,7 @@
         tasks_from: renew_start.yml
 
 - name: Network device certificate renewal - a CSR on each Cisco IOS / IOS-XE device due (net_cert_cisco_csr)
-  hosts: "{{ net_cert_group | default('net_cert_devices') }}"
+  hosts: "{{ net_cert_group | default('net_cert_devices') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   tasks:
     # the incidents and the report are made on localhost: a Limit without it would skip them and end green

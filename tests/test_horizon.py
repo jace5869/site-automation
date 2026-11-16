@@ -110,7 +110,7 @@ class Desktops(unittest.TestCase):
         why = dict((x["id"], x["reason"]) for x in r["skipped"])
         self.assertIn("assigned to a user now", why["5"])
         self.assertIn("recover is for instant clones, and pool FC-Old is not", why["6"])
-        self.assertIn("excluded (horizon_fix_exclude_machines)", why["7"])
+        self.assertIn("excluded (horizon_fix_exclude_machines or site_exclude_hosts)", why["7"])
         self.assertIn("pool VIP-Desk is protected", why["8"])
         self.assertIn("pool px is not among the pools Horizon gave", why["10"])
 

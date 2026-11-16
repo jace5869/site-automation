@@ -12,6 +12,9 @@
 # No Limit, or WinRM not answering: the vCenter side still reports, and the report says why the Windows side was not run.
 # docs/HORIZON.md
 #   ansible-playbook playbooks/horizon_image_check.yml -i <windows inventory> -l w11-gold.corp.example.mil -e horizon_image_vm=W11-Gold
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
 - name: Horizon golden image check - the VM in vCenter
   # once, on the AAP side; the Limit (the golden VM) leaves localhost out, so the play runs on that host, delegated
   # to localhost - and on localhost when there is no Limit
@@ -31,7 +34,7 @@
         ansible_python_interpreter: "{{ ansible_playbook_python }}"
 
 - name: Horizon golden image check - Windows on the golden VM
-  hosts: all
+  hosts: "all{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   tasks:
     - name: What Windows says (read-only, over WinRM)

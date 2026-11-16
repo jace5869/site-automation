@@ -987,7 +987,7 @@ class PickLists(unittest.TestCase):
         self.assertEqual(sorted((v["name"], v["reason"].split(" (")[0]) for v in r["held"]),
                          [("SQL01", "on the exclusion list"), ("aap01", "the AAP server or a protected VM")])
         self.assertEqual((r["off"], r["out_of_scope"]), (2, 1))
-        self.assertEqual(f.vm_pick_reasons(r["held"]), "1 on the exclusion list (vmware_protected_vms, vm_pick_reboot_exclude_vms), "
+        self.assertEqual(f.vm_pick_reasons(r["held"]), "1 on the exclusion list (vmware_protected_vms, vm_pick_reboot_exclude_vms, site_exclude_hosts), "
                                                        "1 the AAP server or a protected VM (vmware_protected_groups)")
         self.assertEqual(f.vm_pick_ids(self.VM), ["192.0.2.20", "192.0.2.21", "web01"])
 

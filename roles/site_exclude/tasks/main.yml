@@ -1,0 +1,35 @@
+---
+# Runs once, on the controller (add_host and set_fact never connect): the hosts left out go into the inventory group
+# site_excluded, and localhost gets site_exclude_not (":!site_excluded", or "" when none) - each later play's hosts
+# line ends with it - and site_excluded (the list, for the reports' line). Under a Limit without localhost too
+# (delegate_facts: localhost's facts are set from the play's first host).
+- name: Exclude | the hosts left out (site_exclude_hosts, site_exclude_groups)
+  ansible.builtin.set_fact:
+    _sx_hosts: >-
+      {{ groups['all'] | site_exclude_role_match(site_exclude_hosts | default([], true), groups, site_exclude_groups | default([], true)) }}
+  run_once: true
+
+- name: Exclude | into the group site_excluded (nothing is connected to)
+  ansible.builtin.add_host:
+    name: "{{ item }}"
+    groups: site_excluded
+  loop: "{{ _sx_hosts }}"
+  run_once: true
+  changed_when: false
+
+- name: Exclude | each later play leaves them out
+  ansible.builtin.set_fact:
+    site_exclude_not: "{{ ':!site_excluded' if _sx_hosts | length > 0 else '' }}"
+    # for a play this repository cannot edit (ACT's own, imported): its target with the hosts left out
+    site_exclude_target: "{{ target | default('all') }}{{ ':!site_excluded' if _sx_hosts | length > 0 else '' }}"
+    site_excluded: "{{ _sx_hosts }}"
+    site_exclude_applied: true
+  delegate_to: localhost
+  delegate_facts: true
+  run_once: true
+
+- name: Exclude | said once
+  ansible.builtin.debug:
+    msg: "{{ _sx_hosts | site_exclude_role_line(10) }}"
+  run_once: true
+  when: _sx_hosts | length > 0

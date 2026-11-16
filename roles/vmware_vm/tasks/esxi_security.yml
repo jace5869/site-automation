@@ -18,8 +18,8 @@
     hosts: "{{ (esxi_security_hosts | replace(',', ' ')).split() if esxi_security_hosts is string else esxi_security_hosts }}"
     clusters: "{{ (esxi_security_clusters | replace(',', ' ')).split() if esxi_security_clusters is string else esxi_security_clusters }}"
     exclude: >-
-      {{ (esxi_security_exclude_hosts | replace(',', ' ')).split() if esxi_security_exclude_hosts is string
-         else esxi_security_exclude_hosts }}
+      {{ ((esxi_security_exclude_hosts | replace(',', ' ')).split() if esxi_security_exclude_hosts is string
+          else esxi_security_exclude_hosts) + (site_exclude_hosts | default([], true) | site_exclude_patterns) }}
     ssh: "{{ esxi_security_ssh | default('', true) | string | lower }}"
     shell: "{{ esxi_security_shell | default('', true) | string | lower }}"
     settings: "{{ esxi_security_settings | default({}, true) }}"

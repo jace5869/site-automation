@@ -13,7 +13,7 @@
     validate_certs: "{{ vmware_validate_certs | bool }}"
     hosts: "{{ (vm_hostnet_hosts | replace(',', ' ')).split() if vm_hostnet_hosts is string else vm_hostnet_hosts }}"
     clusters: "{{ (vm_hostnet_clusters | replace(',', ' ')).split() if vm_hostnet_clusters is string else vm_hostnet_clusters }}"
-    exclude: "{{ (vm_hostnet_exclude | replace(',', ' ')).split() if vm_hostnet_exclude is string else vm_hostnet_exclude }}"
+    exclude: "{{ ((vm_hostnet_exclude | replace(',', ' ')).split() if vm_hostnet_exclude is string else vm_hostnet_exclude) + (site_exclude_hosts | default([], true) | site_exclude_patterns) }}"
     services: "{{ (vm_hostnet_services | replace(',', ' ')).split() if vm_hostnet_services is string else vm_hostnet_services }}"
     targets: "{{ vm_hostnet_targets }}"
     ping: "{{ vm_hostnet_ping | bool }}"

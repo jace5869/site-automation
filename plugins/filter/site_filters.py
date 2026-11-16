@@ -1358,7 +1358,7 @@ def vm_pick_vms(vms, opts=None):
         if set(vm_pick_ids(v)) & prot:
             why = "the AAP server or a protected VM (vmware_protected_groups)"
         elif name_matches(v.get("name"), o.get("exclude")):
-            why = "on the exclusion list (vmware_protected_vms, vm_pick_reboot_exclude_vms)"
+            why = "on the exclusion list (vmware_protected_vms, vm_pick_reboot_exclude_vms, site_exclude_hosts)"
         elif o.get("only_hung") and not hung:
             why = "not hung: heartbeat %s, VMware Tools %s" % (v.get("heartbeat") or "unknown", v.get("tools") or "unknown")
         else:

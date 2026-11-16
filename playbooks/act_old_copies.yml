@@ -10,8 +10,11 @@
 #   site_act_old_bins        where to look (default [/usr/local/bin/act])
 #   site_act_fix_user_model  true = a user's saved genai.model set to the jobs' model (a backup beside it)
 # Run it in Check first: it says what it would do and changes nothing. docs/ADDING_ACT.md, "Old copies of ACT".
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
 - name: Target check (stops with a clear message when target matches no host)
-  hosts: all
+  hosts: "all{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   tasks:
     - name: The target leaves at least one host to run on
@@ -22,7 +25,7 @@
         _target_pattern: "{{ target | default('all') }}"
 
 - name: ACT - find and replace old copies
-  hosts: "{{ target | default('all') }}"
+  hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   become: true
   pre_tasks:
@@ -43,7 +46,7 @@
 
 # on the hosts, once on the AAP side (run_once, delegated to localhost): a Limit of hosts needs no localhost
 - name: ACT - old copies, the report
-  hosts: "{{ target | default('all') }}"
+  hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   tasks:
     - name: ACT | old copies - email the report, publish it (report_email_to, report_web_dest)

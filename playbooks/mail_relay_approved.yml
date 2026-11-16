@@ -5,6 +5,9 @@
 # check, the read-back (postconf: Postfix must read the list as written; a failure of either puts the file back)
 # and the reload. The result is emailed (report_email_to). It refuses
 # to run on its own. Do not tick "Prompt on launch" for Variables on its template. docs/MAIL_RELAY.md
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
 - name: Mail relay whitelist - the approved plan
   hosts: localhost
   connection: local
@@ -16,7 +19,7 @@
         tasks_from: approved_check.yml
 
 - name: Mail relay whitelist - change each relay server of the plan
-  hosts: "{{ mail_relay_group | default('mail_relays') }}"
+  hosts: "{{ mail_relay_group | default('mail_relays') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   become: "{{ mail_relay_become | default(true) | bool }}"
   tasks:

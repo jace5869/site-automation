@@ -10,6 +10,9 @@
 # listed, never removed. Nothing unused, logs too short or a relay not read: emailed, the job fails here and nothing
 # waits for approval. Then run "Mail relay - format the whitelist". docs/MAIL_RELAY.md
 #   ansible-playbook playbooks/mail_relay_unused.yml
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
 - name: Mail relay unused addresses - the relays
   hosts: localhost
   connection: local
@@ -21,7 +24,7 @@
         tasks_from: unused_inputs.yml
 
 - name: Mail relay unused addresses - read each list and its mail logs
-  hosts: "{{ mail_relay_group | default('mail_relays') }}"
+  hosts: "{{ mail_relay_group | default('mail_relays') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   become: "{{ mail_relay_become | default(true) | bool }}"
   tasks:
@@ -47,7 +50,7 @@
         tasks_from: unused_plan.yml
 
 - name: Mail relay unused addresses - what their removal changes on each relay
-  hosts: "{{ mail_relay_group | default('mail_relays') }}"
+  hosts: "{{ mail_relay_group | default('mail_relays') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   become: "{{ mail_relay_become | default(true) | bool }}"
   tasks:

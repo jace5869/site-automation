@@ -15,8 +15,11 @@
 # unlock accounts, for the unlock). docs/ACTIVE_DIRECTORY.md, "Account lockout"
 #   ansible-playbook playbooks/ad_lockout.yml -i <windows inventory> -e ad_lockout_user=jdoe
 #   ansible-playbook playbooks/ad_lockout.yml -e 'ad_lockout_user=CORP\jdoe' -e ad_lockout_unlock=true
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
 - name: Target check (stops with a clear message when target matches no host)
-  hosts: all
+  hosts: "all{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   tasks:
     - name: The target leaves at least one host to run on
@@ -32,7 +35,7 @@
         tasks_from: input.yml
 
 - name: Account lockout - read the domain controllers
-  hosts: "{{ target | default('win_dc' if 'win_dc' in groups else 'domain_controllers') }}"
+  hosts: "{{ target | default('win_dc' if 'win_dc' in groups else 'domain_controllers') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   vars:
     site_os: windows
@@ -49,7 +52,7 @@
 
 - name: Account lockout - the source computers to look on
   # on the hosts, once on the AAP side (run_once, delegated to localhost): a Limit of hosts needs no localhost
-  hosts: "{{ target | default('win_dc' if 'win_dc' in groups else 'domain_controllers') }}"
+  hosts: "{{ target | default('win_dc' if 'win_dc' in groups else 'domain_controllers') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   tasks:
     - name: The source computers of this inventory (ad_lockout_check_sources)
@@ -80,7 +83,7 @@
             ansible_python_interpreter: "{{ ansible_playbook_python }}"
 
 - name: Account lockout - on the source computers (read-only)
-  hosts: adl_sources
+  hosts: "adl_sources{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   vars:
     site_os: windows
@@ -97,7 +100,7 @@
 
 - name: Account lockout report
   # on the hosts, once on the AAP side (run_once, delegated to localhost): a Limit of hosts needs no localhost
-  hosts: "{{ target | default('win_dc' if 'win_dc' in groups else 'domain_controllers') }}"
+  hosts: "{{ target | default('win_dc' if 'win_dc' in groups else 'domain_controllers') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   tasks:
     - name: The report

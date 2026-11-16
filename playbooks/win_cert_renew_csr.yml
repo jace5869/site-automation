@@ -21,8 +21,11 @@
 #   [Windows certificate report] --Run always--> [ServiceNow tickets] --Run always--> [Windows certificate renewal - CSRs]
 #
 #   ansible-playbook playbooks/win_cert_renew_csr.yml -i <windows inventory> --check
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
 - name: Windows certificate renewal - a new key and CSR on each server
-  hosts: "{{ target | default('all') }}"
+  hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   vars:
     site_os: windows
@@ -57,7 +60,7 @@
 
 - name: Windows certificate renewal - the CSRs on the ServiceNow tickets
   # on the hosts, once on the AAP side (run_once, delegated to localhost): a Limit of hosts needs no localhost
-  hosts: "{{ target | default('all') }}"
+  hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   tasks:
     - name: Attach each CSR to its certificate's ticket

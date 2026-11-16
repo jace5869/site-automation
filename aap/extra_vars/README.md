@@ -19,6 +19,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | AAP - set execution environment | `playbooks/aap_ee.yml` | [aap_ee.yml](aap_ee.yml) |
 | AAP - set up portal actions | `playbooks/aap_portal_setup.yml` | [aap_portal_setup.yml](aap_portal_setup.yml) |
 | AAP - template variables audit | `playbooks/aap_template_audit.yml` | [aap_template_audit.yml](aap_template_audit.yml) |
+| AAP jobs - leave hosts out (site_exclude_hosts) | `playbooks/site_exclude.yml` | [site_exclude.yml](site_exclude.yml) |
 | ACT - find and replace old copies | `playbooks/act_old_copies.yml` | [act_old_copies.yml](act_old_copies.yml) |
 | ACT - triage finding | `playbooks/act_triage_finding.yml` | [act_triage_finding.yml](act_triage_finding.yml) |
 | ACT for Windows - install | `playbooks/win_act_install.yml` | [win_act_install.yml](win_act_install.yml) |
