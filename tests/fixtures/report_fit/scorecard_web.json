@@ -1,4 +1,38 @@
 {
+"facets": {
+"collections": [
+{
+"key": "c2",
+"name": "SITEA - RHEL 9"
+},
+{
+"key": "c1",
+"name": "SITEA - VMware"
+},
+{
+"key": "c3",
+"name": "SITEA - Windows Server"
+}
+],
+"note": "Platform and Collection choose the rows shown. The counts in a collection's row are of all its platforms.",
+"platforms": [
+{
+"hue": 1,
+"key": "pf1",
+"name": "Linux"
+},
+{
+"hue": 2,
+"key": "pf2",
+"name": "Windows"
+},
+{
+"hue": 0,
+"key": "pf0",
+"name": "Other"
+}
+]
+},
 "footer": "the import's footer",
 "sections": [
 {
@@ -28,6 +62,284 @@
 ],
 "status": "critical",
 "title": "Start here"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"critical",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"critical",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+]
+],
+"column_titles": [
+"",
+"Assets with a STIG of the platform",
+"Rule and asset pairs of severity high",
+"Severity medium",
+"Severity low",
+"This run against the run of 6 to 8 days ago, rule by rule",
+"Open findings (CAT I, II and III), one point a week",
+""
+],
+"columns": [
+"Platform",
+"Assets",
+"CAT I open",
+"CAT II open",
+"CAT III open",
+"Since last week",
+"Open, 8 weeks",
+"Status"
+],
+"keep_case": true,
+"kinds": [
+"wrap",
+"num",
+"num",
+"num",
+"num",
+"wrap",
+"spark",
+""
+],
+"lines": [
+"The platform lines start with 1.67.0: the earlier weeks' points have no platforms."
+],
+"row_status": [
+"critical",
+"critical",
+""
+],
+"row_tags": [
+{
+"pf": "pf1"
+},
+{
+"pf": "pf2"
+},
+{
+"pf": "pf0"
+}
+],
+"rows": [
+[
+"Linux",
+6,
+1,
+8,
+2,
+"\u25bc Better\n4 closed, 1 opened",
+"Linux, open findings: 15 in the week to 30 Oct, 11 now; by week: 15, 14, 11",
+"CAT I open"
+],
+[
+"Windows",
+4,
+3,
+4,
+1,
+"\u25b2 Worse\n0 closed, 1 opened",
+"Windows, open findings: 7 in the week to 30 Oct, 8 now; by week: 7, 7, 8",
+"CAT I open"
+],
+[
+"Other",
+4,
+0,
+3,
+0,
+"\u25ac Same\n0 closed, none opened",
+"Other, open findings: 3 in the week to 30 Oct, 3 now; by week: 3, 3, 3",
+"OK"
+]
+],
+"sparks": [
+{
+"data_points": [
+{
+"label": "Week to 30 Oct",
+"text": "15 open: CAT I 1, CAT II 13, CAT III 1",
+"x": 76.9,
+"y": 4.0
+},
+{
+"label": "Week to 6 Nov",
+"text": "14 open: CAT I 1, CAT II 12, CAT III 1; -1 since the point before",
+"x": 91.4,
+"y": 9.5
+},
+{
+"label": "Week to 13 Nov",
+"text": "11 open: CAT I 1, CAT II 8, CAT III 2; -3 since the point before",
+"x": 106.0,
+"y": 26.0
+}
+],
+"h": 30,
+"hue": 1,
+"label": "Linux, open findings: 15 in the week to 30 Oct, 11 now; by week: 15, 14, 11",
+"last": [
+106.0,
+26.0
+],
+"lines": [],
+"mark": null,
+"name": "Linux",
+"points": "76.9,4.0 91.4,9.5 106.0,26.0",
+"w": 110
+},
+{
+"data_points": [
+{
+"label": "Week to 30 Oct",
+"text": "7 open: CAT I 2, CAT II 4, CAT III 1",
+"x": 76.9,
+"y": 26.0
+},
+{
+"label": "Week to 6 Nov",
+"text": "7 open: CAT I 2, CAT II 4, CAT III 1; no change since the point before",
+"x": 91.4,
+"y": 26.0
+},
+{
+"label": "Week to 13 Nov",
+"text": "8 open: CAT I 3, CAT II 4, CAT III 1; +1 since the point before",
+"x": 106.0,
+"y": 4.0
+}
+],
+"h": 30,
+"hue": 2,
+"label": "Windows, open findings: 7 in the week to 30 Oct, 8 now; by week: 7, 7, 8",
+"last": [
+106.0,
+4.0
+],
+"lines": [],
+"mark": null,
+"name": "Windows",
+"points": "76.9,26.0 91.4,26.0 106.0,4.0",
+"w": 110
+},
+{
+"data_points": [
+{
+"label": "Week to 30 Oct",
+"text": "3 open: CAT I 0, CAT II 3, CAT III 0",
+"x": 76.9,
+"y": 15.0
+},
+{
+"label": "Week to 6 Nov",
+"text": "3 open: CAT I 0, CAT II 3, CAT III 0; no change since the point before",
+"x": 91.4,
+"y": 15.0
+},
+{
+"label": "Week to 13 Nov",
+"text": "3 open: CAT I 0, CAT II 3, CAT III 0; no change since the point before",
+"x": 106.0,
+"y": 15.0
+}
+],
+"h": 30,
+"hue": 0,
+"label": "Other, open findings: 3 in the week to 30 Oct, 3 now; by week: 3, 3, 3",
+"last": [
+106.0,
+15.0
+],
+"lines": [],
+"mark": null,
+"name": "Other",
+"points": "76.9,15.0 91.4,15.0 106.0,15.0",
+"w": 110
+}
+],
+"status": "critical",
+"tiles": [
+{
+"hue": 1,
+"label": "Linux",
+"note": "1 CAT I, 6 assets",
+"tip": "Linux: 11 open (CAT I 1, CAT II 8, CAT III 2) on 6 assets.",
+"value": 11
+},
+{
+"hue": 2,
+"label": "Windows",
+"note": "3 CAT I, 4 assets",
+"tip": "Windows: 8 open (CAT I 3, CAT II 4, CAT III 1) on 4 assets.",
+"value": 8
+},
+{
+"hue": 0,
+"label": "Other",
+"note": "0 CAT I, 4 assets",
+"tip": "Other: 3 open (CAT I 0, CAT II 3, CAT III 0) on 4 assets.",
+"value": 3
+}
+],
+"tips": [
+[
+"",
+"Assets with a STIG of Linux (one with STIGs of two platforms counts in each).",
+"",
+"",
+"",
+"Linux since 6 Nov\nClosed 4:\n  SV-257985 on 3 hosts\n  SV-258036 on 1 host\nOpened 1:\n  SV-257842 on 1 host",
+"",
+"CAT I open: at least one CAT I finding of Linux is open."
+],
+[
+"",
+"Assets with a STIG of Windows (one with STIGs of two platforms counts in each).",
+"",
+"",
+"",
+"Windows since 6 Nov\nClosed: none\nOpened 1:\n  SV-254247 on 1 host",
+"",
+"CAT I open: at least one CAT I finding of Windows is open."
+],
+[
+"",
+"Assets with a STIG of Other (one with STIGs of two platforms counts in each).",
+"",
+"",
+"",
+"Other since 6 Nov\nClosed: none\nOpened: none",
+"",
+"OK: no CAT I open, and no worse than last week."
+]
+],
+"title": "By platform (3)",
+"wrap": true
 },
 {
 "cell_status": [
@@ -82,6 +394,374 @@
 "Open, 8 weeks",
 "Status"
 ],
+"groups": [
+{
+"counts": [
+[
+"CAT I",
+1,
+"critical"
+],
+[
+"CAT II",
+8,
+""
+],
+[
+"CAT III",
+2,
+""
+]
+],
+"id": "col-2",
+"meta": "6 assets: Linux 6, Other 1",
+"status": "critical",
+"tables": [
+{
+"columns": [
+"Rule",
+"Category",
+"What it checks",
+"Hosts open"
+],
+"kinds": [
+"wrap",
+"",
+"wrap",
+"num"
+],
+"row_status": [
+"critical",
+"",
+"",
+""
+],
+"rows": [
+[
+"SV-257777 (RHEL-09-211010)",
+"CAT I",
+"RHEL 9 must be a vendor-supported release.",
+1
+],
+[
+"SV-258036 (RHEL-09-291010)",
+"CAT II",
+"RHEL 9 must have the USBGuard package installed.",
+5
+],
+[
+"SV-257985 (RHEL-09-255045)",
+"CAT II",
+"RHEL 9 must not allow a root login over SSH.",
+3
+],
+[
+"SV-257842 (RHEL-09-215075)",
+"CAT III",
+"RHEL 9 must not have the tuned package installed.",
+2
+]
+],
+"title": "Its top open rules"
+},
+{
+"columns": [
+"Host",
+"CAT I",
+"CAT II",
+"CAT III",
+"Open"
+],
+"kinds": [
+"wrap",
+"num",
+"num",
+"num",
+"num"
+],
+"row_status": [
+"critical",
+"",
+"",
+"",
+""
+],
+"rows": [
+[
+"rhel04",
+1,
+1,
+0,
+2
+],
+[
+"rhel03",
+0,
+2,
+1,
+3
+],
+[
+"rhel01",
+0,
+2,
+0,
+2
+],
+[
+"rhel05",
+0,
+2,
+0,
+2
+],
+[
+"rhel06",
+0,
+1,
+0,
+1
+]
+],
+"title": "Its worst hosts"
+}
+],
+"tags": {
+"col": "c2",
+"pf": "pf1 pf0"
+},
+"title": "SITEA - RHEL 9"
+},
+{
+"counts": [
+[
+"CAT I",
+0,
+""
+],
+[
+"CAT II",
+3,
+""
+],
+[
+"CAT III",
+0,
+""
+]
+],
+"id": "col-1",
+"meta": "3 assets: Other 3",
+"status": "",
+"tables": [
+{
+"columns": [
+"Rule",
+"Category",
+"What it checks",
+"Hosts open"
+],
+"kinds": [
+"wrap",
+"",
+"wrap",
+"num"
+],
+"row_status": [
+"",
+""
+],
+"rows": [
+[
+"SV-256375 (ESXI-70-000001)",
+"CAT II",
+"Access to the ESXi host must be limited by lockdown mode.",
+2
+],
+[
+"SV-256379 (ESXI-70-000005)",
+"CAT II",
+"The ESXi host must enforce an unlock timeout of 15 minutes.",
+1
+]
+],
+"title": "Its top open rules"
+},
+{
+"columns": [
+"Host",
+"CAT I",
+"CAT II",
+"CAT III",
+"Open"
+],
+"kinds": [
+"wrap",
+"num",
+"num",
+"num",
+"num"
+],
+"row_status": [
+"",
+""
+],
+"rows": [
+[
+"esx01",
+0,
+2,
+0,
+2
+],
+[
+"esx02",
+0,
+1,
+0,
+1
+]
+],
+"title": "Its worst hosts"
+}
+],
+"tags": {
+"col": "c1",
+"pf": "pf0"
+},
+"title": "SITEA - VMware"
+},
+{
+"counts": [
+[
+"CAT I",
+3,
+"critical"
+],
+[
+"CAT II",
+4,
+""
+],
+[
+"CAT III",
+1,
+""
+]
+],
+"id": "col-3",
+"meta": "4 assets: Windows 4",
+"status": "critical",
+"tables": [
+{
+"columns": [
+"Rule",
+"Category",
+"What it checks",
+"Hosts open"
+],
+"kinds": [
+"wrap",
+"",
+"wrap",
+"num"
+],
+"row_status": [
+"critical",
+"critical",
+"",
+""
+],
+"rows": [
+[
+"SV-254247 (WN22-00-000110)",
+"CAT I",
+"Windows Server 2022 must be maintained at a supported servicing level.",
+2
+],
+[
+"SV-254239 (WN22-00-000030)",
+"CAT I",
+"Windows Server 2022 passwords for the built-in account must change.",
+1
+],
+[
+"SV-254269 (WN22-00-000330)",
+"CAT II",
+"Windows Server 2022 must have a host-based firewall.",
+4
+],
+[
+"SV-254285 (WN22-AC-000010)",
+"CAT III",
+"Windows Server 2022 account lockout duration must be 15 minutes.",
+1
+]
+],
+"title": "Its top open rules"
+},
+{
+"columns": [
+"Host",
+"CAT I",
+"CAT II",
+"CAT III",
+"Open"
+],
+"kinds": [
+"wrap",
+"num",
+"num",
+"num",
+"num"
+],
+"row_status": [
+"critical",
+"critical",
+"",
+""
+],
+"rows": [
+[
+"win03",
+2,
+1,
+0,
+3
+],
+[
+"win04",
+1,
+1,
+0,
+2
+],
+[
+"win01",
+0,
+1,
+1,
+2
+],
+[
+"win05",
+0,
+1,
+0,
+1
+]
+],
+"title": "Its worst hosts"
+}
+],
+"tags": {
+"col": "c3",
+"pf": "pf2"
+},
+"title": "SITEA - Windows Server"
+}
+],
+"groups_text": "Open a collection for its top open rules and its worst hosts.",
 "keep_case": true,
 "kinds": [
 "wrap",
@@ -97,6 +777,20 @@
 "critical",
 "",
 "critical"
+],
+"row_tags": [
+{
+"col": "c2",
+"pf": "pf1 pf0"
+},
+{
+"col": "c1",
+"pf": "pf0"
+},
+{
+"col": "c3",
+"pf": "pf2"
+}
 ],
 "rows": [
 [
@@ -392,6 +1086,28 @@
 "critical",
 ""
 ],
+"row_tags": [
+{
+"col": "c2",
+"pf": "pf1"
+},
+{
+"col": "c3",
+"pf": "pf2"
+},
+{
+"col": "c2",
+"pf": "pf1"
+},
+{
+"col": "c3",
+"pf": "pf2"
+},
+{
+"col": "c1",
+"pf": "pf0"
+}
+],
 "rows": [
 [
 "SV-258036 (RHEL-09-291010)",
@@ -535,6 +1251,39 @@
 7,
 7,
 8
+],
+[
+"Platform Linux",
+"-",
+"-",
+"-",
+"-",
+"-",
+15,
+14,
+11
+],
+[
+"Platform Windows",
+"-",
+"-",
+"-",
+"-",
+"-",
+7,
+7,
+8
+],
+[
+"Platform Other",
+"-",
+"-",
+"-",
+"-",
+"-",
+3,
+3,
+3
 ]
 ],
 "text": "One point a week: the last run of each week, the weeks ending on this run's weekday. A dash: no run that week.",
@@ -568,6 +1317,9 @@
 "A rule closed on one host and opened on another in the same week counts as neither.",
 "A collection that was not in last week's run is \"New here\" and is not in the week's totals.",
 "Fixed on the host, still Open: the STIG drift reports' last scans against this run's Open findings.",
+"By platform: an asset counts under each platform it has a STIG of, so one with STIGs of two platforms counts in both. A finding counts under its own STIG's platform.",
+"A STIG's platform: the first of stigman_scorecard_platforms with a pattern that matches its benchmark id (Linux rhel_*, oracle_linux_*, *ubuntu*, sles_*, *linux*; Windows ms_windows_*, windows_*, ms_sql_*, iis_*, ms_*; Network cisco_*, juniper_*, palo_alto_*, f5_*, arista_*, *router*, *switch*, *firewall*).",
+"Other: the STIGs no platform matched - Apache_Server_2-4_UNIX_Server_STIG, VMW_Aria_Operations_8-x_Apache_STIG, VMW_vSphere_7-0_ESXi_STIG.",
 "Compared with the run of 2026-11-06 06:02 UTC."
 ],
 "title": "How the scorecard counts"

@@ -10,7 +10,11 @@ Today: SITEA - RHEL 9 (6 assets) 1 CAT I, 8 CAT II, 2 CAT III; SITEA - VMware (3
 3 CAT I, 4 CAT II, 1 CAT III. Against the run a week ago: RHEL 9 closed 4 and opened 1 (Better), Windows Server opened 1
 CAT I (Worse), VMware the same. Two weeks ago and before, RHEL 9 had one more rule open (SV-257900) on a host more each
 week; VMware has points for 4 weeks only. The drift reports' newest jobs found 3 rules fixed on their hosts; 2 are still
-Open now."""
+Open now.
+
+1.67.0, the platforms: each rule's STIG (RHEL 9 - Linux, Windows Server 2022 - Windows, ESXi - Other) and each asset's
+STIGs; rhel01 has the Apache UNIX STIG too (Other: an asset of two platforms, no finding of it). The points of 3 weeks ago
+and before are from before 1.67.0 (no platforms)."""
 import calendar
 import copy
 import json
@@ -33,6 +37,22 @@ RULES = {   # SV-number: (rule id, STIG ID, severity, title)
     "SV-256379": ("SV-256379r885918_rule", "ESXI-70-000005", "medium", "The ESXi host must enforce an unlock timeout of 15 minutes."),
 }
 CAT = {"high": 1, "medium": 2, "low": 3}
+APACHE = "Apache_Server_2-4_UNIX_Server_STIG"
+BENCH = {"RHEL-09": "RHEL_9_STIG", "WN22": "MS_Windows_Server_2022_STIG", "ESXI": "VMW_vSphere_7-0_ESXi_STIG"}
+PLATFORM = {"RHEL_9_STIG": "Linux", "MS_Windows_Server_2022_STIG": "Windows"}       # the rest: Other (the default patterns)
+
+
+def bench(sv):
+    """A rule's STIG (its benchmark id)."""
+    return next(b for k, b in BENCH.items() if RULES[sv][1].startswith(k))
+
+
+def asset_stigs(name):
+    """An asset's STIGs."""
+    if name == "vrops02":
+        return [ARIA]
+    first = {"rhel": "RHEL_9_STIG", "win0": "MS_Windows_Server_2022_STIG", "esx0": "VMW_vSphere_7-0_ESXi_STIG"}[name[:4]]
+    return [first, APACHE] if name == "rhel01" else [first]
 COLLECTIONS = [("1", "SITEA - VMware", ["vrops02", "esx01", "esx02"]),
                ("2", "SITEA - RHEL 9", ["rhel01", "rhel03", "rhel04", "rhel05", "rhel06", "rhel07"]),
                ("3", "SITEA - Windows Server", ["win01", "win03", "win04", "win05"])]
@@ -66,8 +86,8 @@ def seconds(text):
     return calendar.timegm(time.strptime(text, "%Y-%m-%dT%H:%M:%SZ"))
 
 
-def point(s, read_at):
-    """A run's point (the artifact stig_scorecard) of a state."""
+def point(s, read_at, platforms=True):
+    """A run's point (the artifact stig_scorecard) of a state; platforms False: as before 1.67.0 (no p)."""
     cols = []
     for cid, name, assets in COLLECTIONS:
         if cid not in s:
@@ -77,8 +97,18 @@ def point(s, read_at):
             cat = CAT[RULES[sv][2]]
             rec["cat%d" % cat] += len(hosts)
             rec["r%d" % cat][sv] = len(hosts)
+        if platforms:
+            p = {}
+            for a in assets:
+                for pl in sorted(set(PLATFORM.get(b, "Other") for b in asset_stigs(a))):
+                    p.setdefault(pl, {"assets": 0, "cat1": 0, "cat2": 0, "cat3": 0, "rules": []})["assets"] += 1
+            for sv, hosts in s[cid].items():
+                e = p.setdefault(PLATFORM.get(bench(sv), "Other"), {"assets": 0, "cat1": 0, "cat2": 0, "cat3": 0, "rules": []})
+                e["cat%d" % CAT[RULES[sv][2]]] += len(hosts)
+                e["rules"] = sorted(e["rules"] + [sv])
+            rec["p"] = p
         cols.append(rec)
-    return {"v": 1, "read_at": read_at, "collections": cols}
+    return {"v": 2 if platforms else 1, "read_at": read_at, "collections": cols}
 
 
 def stigman():
@@ -87,7 +117,7 @@ def stigman():
     def review(sv, result="fail", status="saved"):
         rule, version, severity, title = RULES[sv]
         return {"ruleId": rule, "ruleIds": [rule], "result": result, "status": {"label": status}, "ts": "2026-11-01T10:00:00Z", "comment": "",
-                "detail": "", "rule": {"ruleId": rule, "version": version, "severity": severity, "title": title}}
+                "detail": "", "rule": {"ruleId": rule, "version": version, "severity": severity, "title": title, "benchmarkId": bench(sv)}}
 
     def aria(n, result, status):
         rule = "SV-2600%02dr1_rule" % n
@@ -99,7 +129,7 @@ def stigman():
         for a in names:
             n += 1
             assets[cid].append({"assetId": str(n), "name": a, "fqdn": a + ".example.mil",
-                                "stigs": [{"benchmarkId": ARIA, "revisionStr": "V1R1"}] if a == "vrops02" else []})
+                                "stigs": [{"benchmarkId": b, "revisionStr": "V1R1"} for b in asset_stigs(a)]})
             reviews[str(n)] = [review(sv) for sv, hosts in sorted(NOW[cid].items()) if a in hosts]
             if a == "vrops02":
                 reviews[str(n)] += [aria(1, "pass", "submitted"), aria(2, "pass", "accepted")]
@@ -125,7 +155,7 @@ def jobs(now, weeks=8):
     for k in range(weeks, 0, -1):
         jid += 1
         when = t - k * 7 * 86400 + 120
-        out.append(job(when, TEMPLATE, "STIG Manager - checklist import", {"stig_scorecard": point(state(k), stamp(when))}))
+        out.append(job(when, TEMPLATE, "STIG Manager - checklist import", {"stig_scorecard": point(state(k), stamp(when), k <= 2)}))
     jid += 1
     when = t - 3 * 86400
     mid = state(0)

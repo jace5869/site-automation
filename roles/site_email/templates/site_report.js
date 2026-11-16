@@ -55,7 +55,7 @@
       try{if(rh.checked)localStorage.setItem('site-report-rail','hidden');else localStorage.removeItem('site-report-rail')}catch(e){}
       fit()})}
   var p=document.getElementById('print');if(p){p.hidden=false;p.addEventListener('click',function(){
-    all('details.sec').forEach(function(d){d.open=true});window.print()})}
+    all('details.sec,details.grp').forEach(function(d){d.open=true});window.print()})}
   /* a table wider than its card first takes the CSS's steps (1.21.0: f1 short values wrap, f2 tighter cells and
      headings, f3 numbers wrap at spaces and a smaller type, f4 long chips narrower; a compact table's sq, 1.11.0,
      before them), one by one while it does not fit; one still too wide scrolls sideways inside its card (its headings
@@ -178,8 +178,8 @@
     if(b){b.hidden=false;b.addEventListener('click',function(){all('input',d).forEach(function(i){i.checked=true});colkeep(d)})}});
   fit();
   document.addEventListener('click',function(e){all('details.cols[open]').forEach(function(d){if(!d.contains(e.target))d.open=false})});
-  /* a row is shown unless the table's filter or the search takes it away */
-  function vis(r){var h=!!(r._f||r._s);if(r.hidden!==h)r.hidden=h}
+  /* a row is shown unless the table's filter, the search or the page's filter buttons (1.67.0) take it away */
+  function vis(r){var h=!!(r._f||r._s||r._p);if(r.hidden!==h)r.hidden=h}
   var counts=[];
   all('.tw table').forEach(function(tb){
     var body=tb.tBodies[0],rows=[].slice.call(body.rows);
@@ -210,6 +210,22 @@
       f.addEventListener('input',function(){var q=f.value.trim().toLowerCase();
         rows.forEach(function(r){r._f=!!q&&r.textContent.toLowerCase().indexOf(q)<0;vis(r)});count()})}
   });
+  /* 1.67.0: the page's filter buttons (.facets: the STIG scorecard's Platform and Collection). A row or a collection that
+     opens (details.grp) tagged data-pf (its platforms) or data-col (its collections) is shown when it has the one chosen;
+     what has no such tag stays. The buttons and their select (a narrow screen) say the same; the counts of the tables'
+     filters follow. A collection opened: its small tables fitted */
+  var has=function(el,k,v){var t=el.getAttribute(k);return t===null||!v||(' '+t+' ').indexOf(' '+v+' ')>=0};
+  all('.facets').forEach(function(fx){var ch={pf:'',col:''};fx.hidden=false;
+    var apply=function(){all('[data-pf],[data-col]').forEach(function(el){if(el.closest('.facets'))return;
+        var off=!(has(el,'data-pf',ch.pf)&&has(el,'data-col',ch.col));
+        if(el.tagName==='TR'){el._p=off;vis(el)}else if(el.hidden!==off)el.hidden=off});
+      counts.forEach(function(c){c()});fit()};
+    var put=function(k,v){ch[k]=v;
+      all('button[data-fk="'+k+'"]',fx).forEach(function(b){b.setAttribute('aria-pressed',String(b.getAttribute('data-fv')===v))});
+      all('select[data-fk="'+k+'"]',fx).forEach(function(s){if(s.value!==v)s.value=v});apply()};
+    all('button[data-fk]',fx).forEach(function(b){b.addEventListener('click',function(){put(b.getAttribute('data-fk'),b.getAttribute('data-fv'))})});
+    all('select[data-fk]',fx).forEach(function(s){s.addEventListener('change',function(){put(s.getAttribute('data-fk'),s.value)})})});
+  all('details.grp').forEach(function(d){d.addEventListener('toggle',function(){fit()})});
   /* the search: every section's rows, lines and cards that have the words, the others put away; a section without
      any, away too (all of it when its title has them); the matches marked where the browser can (CSS highlights) */
   var find=document.getElementById('find');

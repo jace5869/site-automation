@@ -1942,8 +1942,12 @@ File: `roles/stigman_ckl_import/defaults/main.yml`
 | `stigman_scorecard_top` | `5` | "Top rules open across hosts": this many rules |
 | `stigman_scorecard_weeks` | `8` | the trend line and "The numbers behind the lines": this many weeks |
 | `stigman_scorecard_cat2_warn` | `0` | a collection with this many CAT II open or more: Warning (0 = off) |
+| `stigman_scorecard_platforms` | `- {name: Linux, stigs: ["RHEL_*", "Oracle_Linux_*", "*Ubuntu*", "SLES_*", "*Linux*"]} - {…` | 1.67.0, "By platform": a STIG's platform is the first of these whose pattern matches its benchmark id (* and ?, any case); no match is Other. An asset counts under each platform it has a STIG of, a finding under its STIG's platform. |
+| `stigman_scorecard_platform_filter` | `[]` | only these platforms, by name (e.g. [Windows]; [] = every platform) |
+| `stigman_scorecard_hosts` | `true` | 1.67.0: the counts are read first, in one quick call per collection. The hosts of each open rule (Top rules' hosts, a collection's worst hosts, "Fixed on the host") are a second call, the slow one on a big collection. false = counts only, no host lists |
+| `stigman_scorecard_hosts_timeout` | `120` | seconds for a collection's host list; slower: its counts kept, "hosts not listed" |
 | `stigman_scorecard_db` | `true` | The earlier runs' points come from AAP's job history (a "Red Hat Ansible Automation Platform" credential on the job template). With a "Report database" credential they are kept in its table stig_scorecard_point too - a longer history than AAP keeps its jobs (docs/REPORT_DATABASE.md). The only thing the scorecard write… (all of it: the role file) |
-| `stigman_scorecard_db_create` | `true` | make the table on the first run (false: make it by hand, docs/REPORT_DATABASE.md) |
+| `stigman_scorecard_db_create` | `true` | make the tables on the first run, and stig_scorecard_platform on an older database (false: by hand, docs/REPORT_DATABASE.md) |
 | `stigman_scorecard_db_keep_days` | `800` | rows older than this are deleted (0 = never) |
 | `stigman_scorecard_drift_templates` | `["STIG drift report", "Windows STIG drift report"]` | "Fixed on the host, still Open in STIG Manager": what the newest jobs of these job templates (by name) found, no older than stigman_scorecard_drift_days. [] = that part is left empty. |
 | `stigman_scorecard_drift_days` | `14` | a scan older than this many days is not used |

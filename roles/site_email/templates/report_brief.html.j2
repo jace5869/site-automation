@@ -122,6 +122,7 @@ var d=localStorage.getItem('site-report-density');if(d==='compact')document.docu
   --info-bd:rgba(43,88,177,0.2);--low:#88358e;--low-bg:rgba(136,53,142,0.1);--low-bd:rgba(136,53,142,0.2);--low-row:rgba(136,53,142,0.045);--unknown:#545c63;--unknown-bg:rgba(84,92,99,0.1);--unknown-bd:rgba(84,92,99,0.2);
   --critical-row:rgba(168,40,35,0.04);--warning-row:rgba(132,75,11,0.045);--shadow:0 1px 2px rgba(24,32,39,.04);
   --q1:#e1f0ff;--q2:#9dc1ee;--q3:#5591dd;--q4:#2063b0;--q5:#0e3a6d;--q-edge:rgba(14,58,109,.22);
+  --hu0:#7b8490;--hu1:#2a78d6;--hu2:#eb6834;--hu3:#1baf7a;--hu4:#eda100;--hu5:#e87ba4;--hu6:#008300;--hu7:#6250d6;--hu8:#e34948;
   color-scheme:light;
 {%- endset %}
 {%- set dark %}
@@ -136,6 +137,7 @@ var d=localStorage.getItem('site-report-density');if(d==='compact')document.docu
   --unknown:#b0b0b0;--unknown-bg:rgba(176,176,176,0.12);--unknown-bd:rgba(176,176,176,0.22);
   --critical-row:rgba(240,150,143,0.05);--warning-row:rgba(220,182,113,0.05);--shadow:0 1px 2px rgba(0,0,0,.25);
   --q1:#1d3b61;--q2:#2863ab;--q3:#4f91e2;--q4:#97c1f7;--q5:#dff0ff;--q-edge:rgba(223,240,255,.18);
+  --hu0:#8d96a1;--hu1:#3987e5;--hu2:#d95926;--hu3:#199e70;--hu4:#c98500;--hu5:#d55181;--hu6:#0ca30c;--hu7:#9085e9;--hu8:#e66767;
   color-scheme:dark;
 {%- endset %}
 :root{ {{- light -}} }
@@ -503,6 +505,45 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
 {% include 'report_portal.css.j2' %}
 {%- endif %}
 {%- include 'report_heat.css.j2' %}
+/* 1.67.0: the platforms' hues (the dataviz palette's categorical slots, in the setting's order; grey for Other) - always
+   beside the platform's name, never a status */
+.hu0{--hu:var(--hu0)}.hu1{--hu:var(--hu1)}.hu2{--hu:var(--hu2)}.hu3{--hu:var(--hu3)}.hu4{--hu:var(--hu4)}.hu5{--hu:var(--hu5)}.hu6{--hu:var(--hu6)}.hu7{--hu:var(--hu7)}.hu8{--hu:var(--hu8)}
+.sw{display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--hu,var(--hu0));margin-right:7px;flex:none}
+svg.spark[class*=" hu"] .ln{stroke:var(--hu)}svg.spark[class*=" hu"] .pt{fill:var(--hu)}
+.ptiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:2px 0 14px}
+.ptile{border:1px solid var(--edge);border-radius:12px;padding:10px 12px;background:var(--card-strong);min-width:0}
+.ptile .k{display:flex;align-items:center;font-size:13px;font-weight:600;color:var(--label)}
+.ptile .v{font-size:24px;font-weight:650;line-height:1.25;margin-top:2px;font-variant-numeric:tabular-nums;color:var(--ink)}
+.ptile .n{font-size:12.5px;color:var(--muted)}
+.facets{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin:0 0 16px;padding:10px 12px;border:1px solid var(--edge);border-radius:12px;background:var(--card-solid)}
+.facets[hidden]{display:none}
+.facets .fl{font-size:13px;font-weight:600;color:var(--label)}
+.fbs{display:inline-flex;flex-wrap:wrap;gap:6px;margin-right:6px}
+.fb{font:inherit;font-size:13.5px;display:inline-flex;align-items:center;min-height:32px;padding:4px 12px;border-radius:999px;border:1px solid var(--edge);background:var(--card-strong);color:var(--ink);cursor:pointer}
+.fb[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink);font-weight:600}
+.fsel{font:inherit;font-size:13.5px;min-height:32px;padding:4px 8px;border-radius:8px;border:1px solid var(--edge);background:var(--card-strong);color:var(--ink);max-width:100%}
+.fsel-pf{display:none}
+.fnote{flex-basis:100%;margin:0;font-size:12.5px;color:var(--muted)}
+.fb:focus-visible,.fsel:focus-visible,.grp>summary:focus-visible,.ptile:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media (max-width:640px){.fbs{display:none}.fsel-pf{display:inline-block}}
+.grps{display:grid;gap:8px;margin-top:14px}
+.grps .gt{margin:0 0 2px;font-size:13px;color:var(--muted)}
+.grp{border:1px solid var(--edge);border-radius:10px;background:var(--card-strong);min-width:0}
+.grp[hidden]{display:none}
+.grp>summary{list-style:none;display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;padding:9px 12px;cursor:pointer}
+.grp>summary::-webkit-details-marker{display:none}
+.grp .gn{font-weight:650;color:var(--ink)}
+.grp .gc{display:inline-flex;align-items:center;gap:4px;font-size:13px;color:var(--label);font-variant-numeric:tabular-nums}
+.grp .gc .ic{width:14px;height:14px}
+.grp .gm{flex:1 1 auto;font-size:12.5px;color:var(--muted)}
+.grp .caret{width:16px;height:16px;flex:none;color:var(--muted);transition:transform .15s}
+.grp:not([open]) .caret{transform:rotate(-90deg)}
+.grp .gb{padding:0 12px 12px}
+.grp .gh{margin:10px 0 6px;font-size:13px;font-weight:650;color:var(--label)}
+.grp .gl{margin:6px 0;font-size:13px;color:var(--muted)}
+table.mini th{padding:8px var(--cx);text-align:left;cursor:default}table.mini th.k-num{text-align:right}
+@media (prefers-reduced-motion:reduce){.grp .caret{transition:none}}
+@media print{.facets{display:none!important}.grp::details-content{content-visibility:visible}}
 </style>
 </head>
 <body>
@@ -593,6 +634,25 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
 {%- endfor %}
 </div>
 {%- endif %}
+{#- 1.67.0: the page's filter buttons (r.facets: the STIG scorecard's Platform and Collection) - site-report.js shows
+    them and hides the rows and the collections that are not the choice; without the script they are not shown #}
+{%- set fx = r.facets | default({}, true) %}
+{%- if fx.platforms | default([]) or fx.collections | default([]) %}
+<div class="facets" hidden role="group" aria-label="Choose the rows shown">
+{%- if fx.platforms | default([]) %}
+<span class="fl" id="fl-pf">Platform</span>
+<span class="fbs" role="group" aria-labelledby="fl-pf"><button type="button" class="fb" data-fk="pf" data-fv="" aria-pressed="true">All</button>{% for p in fx.platforms %}<button type="button" class="fb hu{{ p.hue | default(0) }}" data-fk="pf" data-fv="{{ p.key | e }}" aria-pressed="false"><span class="sw" aria-hidden="true"></span>{{ p.name | e }}</button>{% endfor %}</span>
+<select class="fsel fsel-pf" data-fk="pf" aria-labelledby="fl-pf"><option value="">All</option>{% for p in fx.platforms %}<option value="{{ p.key | e }}">{{ p.name | e }}</option>{% endfor %}</select>
+{%- endif %}
+{%- if fx.collections | default([]) %}
+<label class="fl" for="fsel-col">Collection</label>
+<select class="fsel" id="fsel-col" data-fk="col"><option value="">All</option>{% for c in fx.collections %}<option value="{{ c.key | e }}">{{ c.name | e }}</option>{% endfor %}</select>
+{%- endif %}
+{%- if fx.note | default('') %}
+<p class="fnote">{{ fx.note | e }}</p>
+{%- endif %}
+</div>
+{%- endif %}
 {%- for s in secs %}
 {%- set ss = s.status | default('') %}
 {%- set si = loop.index %}
@@ -656,6 +716,14 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
 {%- if s.outage is defined %}
 {% include 'report_outage.html.j2' %}
 {%- endif %}
+{#- 1.67.0: a section's own tiles (the STIG scorecard's platforms) - a hue each, the name always written beside it #}
+{%- if s.tiles | default([]) %}
+<div class="ptiles">
+{%- for t in s.tiles %}
+<div class="ptile hu{{ t.hue | default(0) }}"{% if t.tip | default('') %} tabindex="0" data-tip="{{ t.tip | e }}"{% endif %}><div class="k"><span class="sw" aria-hidden="true"></span>{{ t.label | e }}</div><div class="v">{{ t.value | e }}</div>{% if t.note | default('') %}<div class="n">{{ t.note | e }}</div>{% endif %}</div>
+{%- endfor %}
+</div>
+{%- endif %}
 {%- if s.columns is defined %}
 {%- if s.rows | default([]) %}
 {#- each column's kind, from what it holds (its first 300 rows): pct - every value a percentage up to 100 (drawn as a
@@ -714,7 +782,8 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
 {%- set ri = loop.index0 %}
 {%- set rs = (s.row_status[loop.index0] if s.row_status is defined and s.row_status | length > loop.index0 else '') | default('', true) %}
 {%- set cs = (s.cell_status[loop.index0] if s.cell_status is defined and s.cell_status | length > loop.index0 else []) | default([], true) %}
-<tr{% if rs in words %} class="r-{{ rs }}"{% endif %}>
+{%- set tg = (s.row_tags[ri] if s.row_tags is defined and s.row_tags | length > ri else {}) | default({}, true) %}
+<tr{% if rs in words %} class="r-{{ rs }}"{% endif %}{% if tg.pf | default('') %} data-pf="{{ tg.pf | e }}"{% endif %}{% if tg.col | default('') %} data-col="{{ tg.col | e }}"{% endif %}>
 {%- for cell in row %}
 {%- set text = ('' if cell is none else cell) | string %}
 {%- set lbl = (s.column_titles[loop.index0] if s.column_titles is defined and s.column_titles | length > loop.index0 else s.columns[loop.index0] | default('')) | string %}
@@ -741,7 +810,7 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
 <td class="k-link" data-l="{{ lbl | e }}" data-v="{{ url | e }}">{% if url and text | trim %}<a class="btn pl" href="{{ url | e }}" target="_blank" rel="noopener" title="Opens the site portal: you check and press Run there"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3.5H3.5v9h9v-3M9.5 2.5h4v4M13.2 2.8 7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span>{{ text | e }}</span></a>{% endif %}</td>
 {%- elif kd == 'spark' %}
 {%- set sp = (s.sparks[ri] if s.sparks is defined and s.sparks | length > ri else {}) | default({}, true) %}
-<td class="k-spark" data-l="{{ lbl | e }}" data-v="{{ text | e }}">{% if sp.points is defined %}{% set dp = [] %}{% for p in sp.data_points | default([]) %}{% set _ = dp.append([p.x, p.y, p.label, p.text]) %}{% endfor %}<svg class="spark" viewBox="0 0 {{ sp.w }} {{ sp.h }}" width="{{ sp.w }}" height="{{ sp.h }}" role="img" aria-label="{{ sp.label | e }}"{% if dp %} tabindex="0" data-label="{{ sp.name | default('') | e }}" data-points='{{ dp | tojson }}'>{% else %}><title>{{ sp.label | e }}</title>{% endif %}{% for y in sp.lines | default([]) %}<line class="lv" x1="0" x2="{{ sp.w }}" y1="{{ y }}" y2="{{ y }}"/>{% endfor %}{% if sp.mark is defined and sp.mark is not none %}<line class="mk" x1="{{ sp.mark }}" x2="{{ sp.mark }}" y1="0" y2="{{ sp.h }}"/>{% endif %}<polyline class="ln" points="{{ sp.points }}"/><circle class="pt" cx="{{ sp.last[0] }}" cy="{{ sp.last[1] }}" r="4"/></svg>{% endif %}</td>
+<td class="k-spark" data-l="{{ lbl | e }}" data-v="{{ text | e }}">{% if sp.points is defined %}{% set dp = [] %}{% for p in sp.data_points | default([]) %}{% set _ = dp.append([p.x, p.y, p.label, p.text]) %}{% endfor %}<svg class="spark{{ (' hu' ~ sp.hue) if sp.hue is defined else '' }}" viewBox="0 0 {{ sp.w }} {{ sp.h }}" width="{{ sp.w }}" height="{{ sp.h }}" role="img" aria-label="{{ sp.label | e }}"{% if dp %} tabindex="0" data-label="{{ sp.name | default('') | e }}" data-points='{{ dp | tojson }}'>{% else %}><title>{{ sp.label | e }}</title>{% endif %}{% for y in sp.lines | default([]) %}<line class="lv" x1="0" x2="{{ sp.w }}" y1="{{ y }}" y2="{{ y }}"/>{% endfor %}{% if sp.mark is defined and sp.mark is not none %}<line class="mk" x1="{{ sp.mark }}" x2="{{ sp.mark }}" y1="0" y2="{{ sp.h }}"/>{% endif %}<polyline class="ln" points="{{ sp.points }}"/><circle class="pt" cx="{{ sp.last[0] }}" cy="{{ sp.last[1] }}" r="4"/></svg>{% endif %}</td>
 {%- elif cst %}
 <td data-l="{{ lbl | e }}" data-v="{{ text | e }}"{% if kd == 'wrap' and text | length > 12 %} class="k-wrap"{% elif text | length <= 32 %} class="nw{{ " k-rc" if kd == "num" else "" }}"{% else %} class="k-mid"{% endif %}>{{ chip(cst, text | capitalize if text.isupper() and not text.startswith('CAT ') and not s.keep_case | default(false) else text) }}</td>
 {%- elif lbl | lower in ['look further', 'command', 'hint', 'next step'] %}
@@ -767,6 +836,37 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
 {%- else %}
 <div class="none">None.</div>
 {%- endif %}
+{%- endif %}
+{#- 1.67.0: rows that open (the STIG scorecard's collections) - each its own details: its counts, then small tables #}
+{%- if s.groups | default([]) %}
+<div class="grps">
+{%- if s.groups_text | default('') %}
+<p class="gt">{{ s.groups_text | e }}</p>
+{%- endif %}
+{%- for g in s.groups %}
+{%- set gt = g.tags | default({}, true) %}
+<details class="grp" id="{{ g.id | e }}"{% if gt.pf | default('') %} data-pf="{{ gt.pf | e }}"{% endif %}{% if gt.col | default('') %} data-col="{{ gt.col | e }}"{% endif %}>
+<summary><span class="gn">{{ g.title | e }}</span>{% for c in g.counts | default([]) %}<span class="gc{{ ' c-' ~ c[2] if c[2] in words else '' }}">{% if c[2] in words %}{{ icon(c[2]) }}{% endif %}{{ c[0] | e }} <b>{{ c[1] }}</b></span>{% endfor %}<span class="gm">{{ g.meta | default('') | e }}</span><svg class="caret" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
+<div class="gb">
+{%- for l in g.lines | default([]) %}
+<p class="gl">{{ l | e }}</p>
+{%- endfor %}
+{%- for t in g.tables | default([]) %}
+<h3 class="gh">{{ t.title | e }}</h3>
+<div class="tw"><table class="mini">
+<thead><tr>{% for c in t.columns %}<th class="{{ 'k-num' if t.kinds[loop.index0] | default('') == 'num' else 'k-mid' }}" scope="col">{{ c | e }}</th>{% endfor %}</tr></thead>
+<tbody>
+{%- for row in t.rows %}
+{%- set gr = (t.row_status[loop.index0] if t.row_status is defined and t.row_status | length > loop.index0 else '') | default('', true) %}
+<tr{% if gr in words %} class="r-{{ gr }}"{% endif %}>{% for cell in row %}{% set kd = t.kinds[loop.index0] | default('') %}<td class="{{ 'k-num' if kd == 'num' else ('k-wrap' if kd == 'wrap' else 'nw') }}" data-l="{{ t.columns[loop.index0] | e }}">{% if gr in words and (cell | string).startswith('CAT ') %}{{ chip(gr, cell | string) }}{% elif kd == 'wrap' %}<span class="cv">{% for w in (cell | string).split(' ') %}{{ ' ' if not loop.first else '' }}{% if w | length <= 16 %}<span class="w">{{ nbw(w) }}</span>{% else %}{{ w | e }}{% endif %}{% endfor %}</span>{% else %}{{ cell | e }}{% endif %}</td>{% endfor %}</tr>
+{%- endfor %}
+</tbody>
+</table></div>
+{%- endfor %}
+</div>
+</details>
+{%- endfor %}
+</div>
 {%- endif %}
 {%- if s.lines | default([]) %}
 <ul class="lines">

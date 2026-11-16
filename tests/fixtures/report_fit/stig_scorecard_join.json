@@ -44,6 +44,146 @@
 [
 "",
 "",
+"critical",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+]
+],
+"column_titles": [
+"",
+"Assets with a STIG of the platform",
+"Rule and asset pairs of severity high",
+"Severity medium",
+"Severity low",
+"This run against the run of 6 to 8 days ago, rule by rule",
+"Open findings (CAT I, II and III), one point a week",
+""
+],
+"columns": [
+"Platform",
+"Assets",
+"CAT I open",
+"CAT II open",
+"CAT III open",
+"Since last week",
+"Open, 8 weeks",
+"Status"
+],
+"keep_case": true,
+"kinds": [
+"wrap",
+"num",
+"num",
+"num",
+"num",
+"wrap",
+"",
+""
+],
+"lines": [
+"The platform lines start with 1.67.0: the earlier weeks' points have no platforms."
+],
+"row_status": [
+"critical",
+"critical",
+""
+],
+"rows": [
+[
+"Linux",
+6,
+1,
+8,
+2,
+"\u25bc Better\n4 closed, 1 opened",
+"15 \u2192 11",
+"CAT I open"
+],
+[
+"Windows",
+4,
+3,
+4,
+1,
+"\u25b2 Worse\n0 closed, 1 opened",
+"7 \u2192 8",
+"CAT I open"
+],
+[
+"Other",
+4,
+0,
+3,
+0,
+"\u25ac Same\n0 closed, none opened",
+"3 \u2192 3",
+"OK"
+]
+],
+"status": "critical",
+"tips": [
+[
+"",
+"Assets with a STIG of Linux (one with STIGs of two platforms counts in each).",
+"",
+"",
+"",
+"Linux since 6 Nov\nClosed 4:\n  SV-257985 on 3 hosts\n  SV-258036 on 1 host\nOpened 1:\n  SV-257842 on 1 host",
+"",
+"CAT I open: at least one CAT I finding of Linux is open."
+],
+[
+"",
+"Assets with a STIG of Windows (one with STIGs of two platforms counts in each).",
+"",
+"",
+"",
+"Windows since 6 Nov\nClosed: none\nOpened 1:\n  SV-254247 on 1 host",
+"",
+"CAT I open: at least one CAT I finding of Windows is open."
+],
+[
+"",
+"Assets with a STIG of Other (one with STIGs of two platforms counts in each).",
+"",
+"",
+"",
+"Other since 6 Nov\nClosed: none\nOpened: none",
+"",
+"OK: no CAT I open, and no worse than last week."
+]
+],
+"title": "By platform (3)",
+"wrap": true
+},
+{
+"cell_status": [
+[
+"",
+"",
+"critical",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
 "",
 "",
 "",
@@ -225,6 +365,28 @@
 "critical",
 ""
 ],
+"row_tags": [
+{
+"col": "c2",
+"pf": "pf1"
+},
+{
+"col": "c3",
+"pf": "pf2"
+},
+{
+"col": "c2",
+"pf": "pf1"
+},
+{
+"col": "c3",
+"pf": "pf2"
+},
+{
+"col": "c1",
+"pf": "pf0"
+}
+],
 "rows": [
 [
 "SV-258036 (RHEL-09-291010)",
@@ -368,6 +530,39 @@
 7,
 7,
 8
+],
+[
+"Platform Linux",
+"-",
+"-",
+"-",
+"-",
+"-",
+15,
+14,
+11
+],
+[
+"Platform Windows",
+"-",
+"-",
+"-",
+"-",
+"-",
+7,
+7,
+8
+],
+[
+"Platform Other",
+"-",
+"-",
+"-",
+"-",
+"-",
+3,
+3,
+3
 ]
 ],
 "text": "One point a week: the last run of each week, the weeks ending on this run's weekday. A dash: no run that week.",
@@ -401,6 +596,9 @@
 "A rule closed on one host and opened on another in the same week counts as neither.",
 "A collection that was not in last week's run is \"New here\" and is not in the week's totals.",
 "Fixed on the host, still Open: the STIG drift reports' last scans against this run's Open findings.",
+"By platform: an asset counts under each platform it has a STIG of, so one with STIGs of two platforms counts in both. A finding counts under its own STIG's platform.",
+"A STIG's platform: the first of stigman_scorecard_platforms with a pattern that matches its benchmark id (Linux rhel_*, oracle_linux_*, *ubuntu*, sles_*, *linux*; Windows ms_windows_*, windows_*, ms_sql_*, iis_*, ms_*; Network cisco_*, juniper_*, palo_alto_*, f5_*, arista_*, *router*, *switch*, *firewall*).",
+"Other: the STIGs no platform matched - Apache_Server_2-4_UNIX_Server_STIG, VMW_Aria_Operations_8-x_Apache_STIG, VMW_vSphere_7-0_ESXi_STIG.",
 "Compared with the run of 2026-11-06 06:02 UTC."
 ],
 "title": "How the scorecard counts"

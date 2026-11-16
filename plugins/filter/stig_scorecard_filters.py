@@ -15,6 +15,7 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import datetime
+import fnmatch
 import os
 import re
 
@@ -27,6 +28,16 @@ CAT_WORD = {1: "CAT I", 2: "CAT II", 3: "CAT III"}
 TIP_IDS = 10                    # a hover lists this many rule ids, then "N more"
 XLSX_CELL = 30000               # a workbook cell holds 32767 characters
 WORST = {"critical": 4, "warning": 3, "low": 2, "ok": 1, "info": 0, "": 0}
+# 1.67.0: stigman_scorecard_platforms' default (roles/stigman_ckl_import/defaults/main.yml repeats it; a test compares):
+# in order, the first whose pattern matches a STIG's benchmark id wins (* and ?, any case); no match - Other
+PLATFORMS = [
+    {"name": "Linux", "stigs": ["RHEL_*", "Oracle_Linux_*", "*Ubuntu*", "SLES_*", "*Linux*"]},
+    {"name": "Windows", "stigs": ["MS_Windows_*", "Windows_*", "MS_SQL_*", "IIS_*", "MS_*"]},
+    {"name": "Network", "stigs": ["Cisco_*", "Juniper_*", "Palo_Alto_*", "F5_*", "Arista_*", "*Router*", "*Switch*", "*Firewall*"]},
+]
+OTHER = "Other"
+ANY = frozenset(["*"])            # a collection's hosts not listed (stigman_scorecard_hosts, or too slow): any host
+HUES = 8                        # the categorical slots the looks define (--hu1 .. --hu8); a platform past them, and Other, grey
 
 
 # ---- small helpers --------------------------------------------------------------------------------
@@ -87,11 +98,156 @@ def _short(name):
     return str(name or "").strip().lower().split(".")[0]
 
 
+# ---- the platforms (1.67.0) ----------------------------------------------------------------------------------
+def _platforms(cfg):
+    """stigman_scorecard_platforms -> [(name, [patterns, lower case])] in order; a bad entry is left out."""
+    out = []
+    for p in (PLATFORMS if cfg is None else cfg) or []:
+        if isinstance(p, dict) and str(p.get("name") or "").strip() and str(p.get("name")).strip() != OTHER:
+            pats = p.get("stigs") or []
+            pats = [str(x).strip().lower() for x in ([pats] if isinstance(pats, str) else pats) if str(x).strip()]
+            out.append((str(p["name"]).strip(), pats))
+    return out
+
+
+def stig_platform(bench, cfg=None):
+    """A STIG's benchmark id -> its platform: the first of stigman_scorecard_platforms with a pattern that matches it (*
+    and ?, any case), else Other."""
+    b = str(bench or "").strip().lower()
+    for name, pats in (cfg if isinstance(cfg, list) and cfg and isinstance(cfg[0], tuple) else _platforms(cfg)):
+        if b and any(fnmatch.fnmatchcase(b, x) for x in pats):
+            return name
+    return OTHER
+
+
+def _order(cfg):
+    """The platform names in order, Other last."""
+    return [n for n, x in _platforms(cfg)] + [OTHER]
+
+
+def _hue(name, cfg):
+    """A platform's categorical slot (1 .. HUES, by its place in stigman_scorecard_platforms - never by its rank); 0 = grey
+    (Other, and a platform past the slots)."""
+    names = [n for n, x in _platforms(cfg)]
+    return names.index(name) + 1 if name in names and names.index(name) < HUES else 0
+
+
+def _key(name, cfg):
+    """A platform's key in the page (data-pf, the filter buttons): pf1, pf2 .. by its place; pf0 = Other."""
+    names = [n for n, x in _platforms(cfg)]
+    return "pf%d" % (names.index(name) + 1) if name in names else "pf0"
+
+
+def _asset_platforms(c, pl):
+    """{asset name: [platforms]} of a collection read (asset_stigs), each platform once."""
+    out = {}
+    for a, stigs in ((c or {}).get("asset_stigs") or {}).items():
+        out[str(a)] = sorted(set(stig_platform(s, pl) for s in stigs or []))
+    return out
+
+
+def _rule_platform(r, assets, pl):
+    """A rule's platform: its STIG's; a rule STIG Manager did not name the STIG of - its hosts' one platform, else Other."""
+    if r.get("stig"):
+        return stig_platform(r["stig"], pl)
+    seen = set()
+    for a in r.get("assets") or []:
+        seen.update(assets.get(str(a)) or [])
+    return seen.pop() if len(seen) == 1 else OTHER
+
+
+def _plat_of(c, cfg):
+    """A collection read -> {platform: {assets, cat1, cat2, cat3, rules: [SV-numbers]}} - an asset under each platform it
+    has a STIG of, a finding under its own STIG's platform."""
+    pl = _platforms(cfg)
+    assets = _asset_platforms(c, pl)
+    out = {}
+    blank = lambda: {"assets": 0, "cat1": 0, "cat2": 0, "cat3": 0, "rules": []}     # noqa: E731
+    for a, names in assets.items():
+        for n in names:
+            out.setdefault(n, blank())["assets"] += 1
+    for r in (c or {}).get("rules") or []:
+        if not isinstance(r, dict) or not r.get("sv") or r.get("cat") not in CATS or not _n(r.get("count")):
+            continue
+        e = out.setdefault(_rule_platform(r, assets, pl), blank())
+        e["cat%d" % r["cat"]] += _n(r["count"])
+        if str(r["sv"]) not in e["rules"]:
+            e["rules"].append(str(r["sv"]))
+    for e in out.values():
+        e["rules"].sort()
+    return out
+
+
+def _only_read(read, cfg, keep):
+    """stigman_scorecard_platform_filter: the read with only those platforms' findings, each collection's counts and assets
+    (those with a STIG of them) from those; a collection with neither is left out. A collection not read stays."""
+    pl = _platforms(cfg)
+    cols = []
+    for c in (read or {}).get("collections") or []:
+        if not isinstance(c, dict):
+            continue
+        if c.get("error"):
+            cols.append(c)
+            continue
+        assets = _asset_platforms(c, pl)
+        rules = [r for r in c.get("rules") or [] if isinstance(r, dict) and _rule_platform(r, assets, pl) in keep]
+        mine = dict((a, s) for a, s in (c.get("asset_stigs") or {}).items() if set(assets.get(str(a)) or []) & keep)
+        if not rules and not mine:
+            continue
+        n = dict((k, sum(_n(r.get("count")) for r in rules if r.get("cat") == k)) for k in CATS)
+        cols.append(dict(c, rules=rules, asset_stigs=mine, assets=len(mine), cat1=n[1], cat2=n[2], cat3=n[3]))
+    return dict(read or {}, collections=cols)
+
+
+def _only_point(point, keep):
+    """A run's point with only those platforms (its collections' p): a collection without p (a point before 1.67.0) is
+    left out - a gap in its line, not a wrong number."""
+    if not isinstance(point, dict):
+        return point
+    cols = []
+    for c in point.get("collections") or []:
+        if not isinstance(c, dict) or not isinstance(c.get("p"), dict):
+            continue
+        mine = [v for k, v in c["p"].items() if k in keep and isinstance(v, dict)]
+        if not mine:
+            continue
+        svs = set(sv for v in mine for sv in v.get("rules") or [])
+        rec = dict(c, assets=sum(_n(v.get("assets")) for v in mine))
+        for k in CATS:
+            rec["cat%d" % k] = sum(_n(v.get("cat%d" % k)) for v in mine)
+            rec["r%d" % k] = dict((sv, n) for sv, n in (c.get("r%d" % k) or {}).items() if sv in svs)
+        cols.append(rec)
+    return dict(point, collections=cols)
+
+
+def _has(p, name, keep=None):
+    """A collection's p has this platform (an asset or a finding), and it is one stigman_scorecard_platform_filter shows."""
+    v = (p or {}).get(name) if isinstance(p, dict) else None
+    return isinstance(v, dict) and bool(_n(v.get("assets")) or v.get("rules")) and (not keep or name in keep)
+
+
+def _slug(text):
+    return re.sub(r"[^A-Za-z0-9_-]+", "-", str(text or "")).strip("-")[:60] or "x"
+
+
+def _restrict(c, svs):
+    """A point's collection with only these rules (a platform's): for the change since last week of one platform."""
+    if c is None:
+        return None
+    out = dict(c)
+    for k in CATS:
+        out["r%d" % k] = dict((sv, n) for sv, n in (c.get("r%d" % k) or {}).items() if sv in svs)
+    return out
+
+
 # ---- the point a run keeps, and the runs ------------------------------------------------------------------
-def stig_scorecard_point(read):
+def stig_scorecard_point(read, opts=None):
     """What site_stig_scorecard read -> the point this run keeps (the artifact stig_scorecard, the report database's
-    rows): {v: 1, read_at, collections: [{id, name, assets, cat1, cat2, cat3, r1: {SV-number: hosts}, r2, r3}]} - the
-    collections that were read; one that could not be read has no point this run."""
+    rows): {v: 2, read_at, collections: [{id, name, assets, cat1, cat2, cat3, r1: {SV-number: hosts}, r2, r3, p}]} - the
+    collections that were read; one that could not be read has no point this run. 1.67.0, p: per platform (opts
+    platforms: stigman_scorecard_platforms) {assets, cat1, cat2, cat3, rules: [SV-numbers]} - every platform, whatever
+    stigman_scorecard_platform_filter shows."""
+    cfg = (opts or {}).get("platforms") if isinstance(opts, dict) and "platforms" in opts else None
     cols = []
     for c in (read or {}).get("collections") or []:
         if not isinstance(c, dict) or c.get("error"):
@@ -102,8 +258,9 @@ def stig_scorecard_point(read):
             if isinstance(r, dict) and r.get("sv") and r.get("cat") in CATS and _n(r.get("count")):
                 d = rec["r%d" % r["cat"]]
                 d[str(r["sv"])] = d.get(str(r["sv"]), 0) + _n(r["count"])
+        rec["p"] = _plat_of(c, cfg)
         cols.append(rec)
-    return {"v": 1, "read_at": str((read or {}).get("read_at") or ""), "collections": cols}
+    return {"v": 2, "read_at": str((read or {}).get("read_at") or ""), "collections": cols}
 
 
 def stig_scorecard_runs(current, aap=None, db=None, opts=None):
@@ -244,7 +401,9 @@ def fixed_rows(fixed, read):
     now = {}
     for c in (read or {}).get("collections") or []:
         if isinstance(c, dict) and not c.get("error"):
-            now[str(c.get("name", "")).lower()] = dict((str(r.get("sv")), set(_short(a) for a in r.get("assets") or []))
+            # 1.67.0: a collection whose hosts were not listed - the rule still Open there is enough (ANY)
+            listed = c.get("hosts", "listed") == "listed"
+            now[str(c.get("name", "")).lower()] = dict((str(r.get("sv")), set(_short(a) for a in r.get("assets") or []) if listed else ANY)
                                                        for r in c.get("rules") or [] if isinstance(r, dict))
     out = []
     for row in (fixed or {}).get("rows") or []:
@@ -252,7 +411,7 @@ def fixed_rows(fixed, read):
             continue
         host, col, asset, sv = [str(x or "") for x in row[:4]]
         still = now.get(col.lower(), {}).get(sv)
-        if still is None or not ({_short(asset), _short(host)} & still):
+        if still is None or (still is not ANY and not ({_short(asset), _short(host)} & still)):
             continue
         out.append([host, col, sv, str(row[4] or ""), " ".join(str(row[5] or "").split()), str(row[6] or "")])
     out.sort(key=lambda r: (r[1].lower(), r[0].lower(), r[2]))
@@ -292,6 +451,17 @@ def stig_scorecard(read, point, runs, opts=None):
                     why, "Nothing was written. The same \"STIG Manager API\" credential as the checklist import is used, read-only."]}],
                 "web": [{"title": "STIG compliance scorecard: not read", "status": "critical", "lines": [why]}], "notes": None, "xlsx": [], "lines": ["STIG compliance: not read - %s" % why], "counts": {}}
 
+    # 1.67.0: the platforms (stigman_scorecard_platforms) and stigman_scorecard_platform_filter - a run limited to some
+    cfg = o.get("platforms") if "platforms" in o else None
+    names = _order(cfg)
+    asked = o.get("platform_filter") or []
+    asked = [x.strip() for x in (asked.split(",") if isinstance(asked, str) else asked) if str(x).strip()]
+    keep = set(n for n in names for x in asked if n.lower() == str(x).lower())
+    not_pl = [str(x) for x in asked if str(x).lower() not in [n.lower() for n in names]]
+    if keep:
+        read = _only_read(read, cfg, keep)
+        point = _only_point(point, keep)
+        runs = [_only_point(r, keep) for r in runs or []]
     now = parse_time((point or {}).get("read_at")) or parse_time(read.get("read_at")) or 0
     runs = sorted([dict(r, _t=r.get("_t") or parse_time(r.get("read_at")) or 0) for r in runs or [] if isinstance(r, dict)],
                   key=lambda r: r["_t"])
@@ -308,6 +478,7 @@ def stig_scorecard(read, point, runs, opts=None):
 
     # ---- by collection
     rows, web_rows, rst, cst, sparks, tips, numbers, deltas, sheet_delta = [], [], [], [], [], [], [], [], []
+    tags = []                                        # 1.67.0: each row's platforms and collection (the page's filter buttons)
     week_open = []                                   # the workbook's line per row: open findings each week, None a week without a run
     tot = {"cat1": 0, "cat2": 0, "cat3": 0, "assets": 0, "closed": 0, "opened": 0}
     for c in good:
@@ -357,6 +528,7 @@ def stig_scorecard(read, point, runs, opts=None):
         cst.append(["", "", "critical" if _n(c.get("cat1")) else "", "", "", "", "", ""])
         sparks.append(sp)
         tips.append(["", "", "", "", "", tip, "", st_tip])
+        tags.append({"pf": " ".join(_key(n, cfg) for n in names if _has(p.get("p"), n, keep)), "col": "c%s" % c.get("id")})
     for c in bad:
         line = [c.get("name") or c.get("id"), "-", "-", "-", "-", "-", "-", "Not read"]
         rows.append(line)
@@ -366,6 +538,7 @@ def stig_scorecard(read, point, runs, opts=None):
         sparks.append({})
         week_open.append([])
         tips.append([""] * 7 + [str(c.get("error") or "")])
+        tags.append({"col": "c%s" % c.get("id")})
     missing = [str(m) for m in read.get("missing") or []]
     open_col = "Open, %d weeks" % len(wk) if trend else "Open"
     columns = ["Collection", "Assets", "CAT I open", "CAT II open", "CAT III open", "Since last week", open_col, "Status"]
@@ -373,6 +546,8 @@ def stig_scorecard(read, point, runs, opts=None):
               "This run against the run of 6 to 8 days ago, rule by rule",
               "Open findings (CAT I, II and III), one point a week", ""]
     notes_col = (["Not read: %s - %s" % (c.get("name") or c.get("id"), c.get("error")) for c in bad]
+                 + ["%s: %s. Its counts are whole." % (c["name"], c["hosts"].replace("hosts not listed", "Hosts not listed"))
+                    for c in good if str(c.get("hosts") or "").startswith("hosts not")]
                  + (["Not there, or the client cannot read it (stigman_scorecard_collections): %s." % ", ".join(missing)] if missing else [])
                  + ([] if trend else ["The trend starts next week: a line needs two weekly points, and this run is the first."])
                  + ([] if base else ["No run 6 to 8 days ago to compare with: \"Since last week\" starts with the run a week from now."]))
@@ -381,7 +556,7 @@ def stig_scorecard(read, point, runs, opts=None):
            "tips": tips, "wrap": True, "keep_case": True}
     if notes_col:
         sec["lines"] = notes_col
-    web_sec = dict(sec, rows=web_rows)
+    web_sec = dict(sec, rows=web_rows, row_tags=tags)
     if trend:
         web_sec.update(kinds=["wrap", "num", "num", "num", "num", "wrap", "spark", ""], sparks=sparks)
     if not cols:
@@ -397,7 +572,9 @@ def stig_scorecard(read, point, runs, opts=None):
             if not isinstance(r, dict) or not r.get("sv"):
                 continue
             a = allr.setdefault(r["sv"], {"sv": r["sv"], "cat": r.get("cat") or 2, "version": r.get("version") or "", "title": r.get("title") or "",
-                                          "hosts": 0, "where": [], "names": []})
+                                          "hosts": 0, "where": [], "names": [], "pf": set(), "col": set()})
+            a["pf"].add(_key(_rule_platform(r, _asset_platforms(c, _platforms(cfg)), _platforms(cfg)), cfg))
+            a["col"].add("c%s" % c.get("id"))
             a["cat"] = min(a["cat"], r.get("cat") or 2)
             a["hosts"] += _n(r.get("count"))
             a["where"].append((c["name"], _n(r.get("count"))))
@@ -409,6 +586,8 @@ def stig_scorecard(read, point, runs, opts=None):
         return "%s (%s)" % (a["sv"], a["version"]) if a["version"] else a["sv"]
 
     def host_tip(a):
+        if not a["names"]:
+            return "%s is open on %s. The hosts were not listed (stigman_scorecard_hosts)." % (a["sv"], _count(a["hosts"], "host"))
         return "%s is open on %s\n%s%s\nThe workbook lists every host." % (
             a["sv"], _count(a["hosts"], "host"), ", ".join(a["names"][:12]),
             " and %d more" % (len(a["names"]) - 12) if len(a["names"]) > 12 else "")
@@ -424,6 +603,7 @@ def stig_scorecard(read, point, runs, opts=None):
                         "row_status": ["critical" if a["cat"] == 1 else "" for a in top],
                         "cell_status": [["", "critical" if a["cat"] == 1 else "", "", "", ""] for a in top],
                         "tips": [["", "CAT I: the most severe category. Fix these first." if a["cat"] == 1 else "", "", host_tip(a), ""] for a in top],
+                        "row_tags": [{"pf": " ".join(sorted(a["pf"])), "col": " ".join(sorted(a["col"]))} for a in top],
                         "wrap": True})
         if not top_sec["status"]:
             top_sec.pop("status")
@@ -448,6 +628,9 @@ def stig_scorecard(read, point, runs, opts=None):
                         "tips": [["", "", "%s passes in the scan of %s; STIG Manager still has it Open." % (r[2], r[5]), "", "", "",
                                   "Low: fixed on the host, still Open in STIG Manager. Nothing to do on the host; the next "
                                   "checklist import closes it."] for r in fixed[:list_max]],
+                        "row_tags": [{"pf": " ".join(sorted(allr.get(r[2], {}).get("pf") or [])),
+                                      "col": " ".join("c%s" % c.get("id") for c in good if str(c.get("name", "")).lower() == r[1].lower())}
+                                     for r in fixed[:list_max]],
                         "wrap": True})
         if len(fixed) > list_max:
             fix_sec["lines"] = ["%d more are in the workbook." % (len(fixed) - list_max)]
@@ -459,6 +642,138 @@ def stig_scorecard(read, point, runs, opts=None):
         fix_sec["lines"] = ["No scan results to compare with: no STIG drift report job of the last days kept its results "
                             "(stigman_scorecard_drift_templates, stigman_scorecard_drift_days)%s." % (" - " + why if why else ""),
                             "This part fills once a STIG drift report (workflow 37's check) has run on 1.58.0 or later."]
+
+    # ---- by platform (1.67.0): each asset under each platform it has a STIG of, each finding under its STIG's platform
+    pcols = [x for x in (point or {}).get("collections") or [] if isinstance(x, dict)]
+    shown = [n for n in names if any(_has(x.get("p"), n, keep) for x in pcols) or n in keep]
+    others = sorted(set(s for c in good for s in [r.get("stig") for r in c.get("rules") or [] if isinstance(r, dict)]
+                        + [x for v in (c.get("asset_stigs") or {}).values() for x in v or []] if s and stig_platform(s, cfg) == OTHER),
+                    key=lambda s: s.lower())
+    based = bool(base) and any(isinstance(x.get("p"), dict) for x in (base or {}).get("collections") or [] if isinstance(x, dict))
+
+    def psum(cols, n):
+        vs = [(x.get("p") or {}).get(n) or {} for x in cols if isinstance(x, dict) and isinstance(x.get("p"), dict)]
+        return dict((k, sum(_n(v.get(k)) for v in vs)) for k in ("assets", "cat1", "cat2", "cat3"))
+
+    def pchange(n):
+        out = {"closed": 0, "opened": 0, "closed_rules": [], "opened_rules": []}
+        for x in pcols:
+            was = _find(base, x)
+            if was is None or not isinstance(was.get("p"), dict):
+                continue
+            svs = set(((x.get("p") or {}).get(n) or {}).get("rules") or []) | set((was["p"].get(n) or {}).get("rules") or [])
+            ch = change(_restrict(was, svs), _restrict(x, svs))
+            for k in out:
+                out[k] += ch[k]
+        out["closed_rules"].sort(key=lambda r: (-r[2], r[1], r[0]))
+        out["opened_rules"].sort(key=lambda r: (-r[2], r[1], r[0]))
+        return out
+
+    prow, pweb, pst, pcst, psp, ptip, ptags, ptiles, pnum, pweek, pdelta = [], [], [], [], [], [], [], [], [], [], []
+    gap = False                                      # a weekly point before 1.67.0 (no platforms): the line starts later
+    for n in shown:
+        v = psum(pcols, n)
+        opn = v["cat1"] + v["cat2"] + v["cat3"]
+        ch = pchange(n) if based else None
+        if ch is None:
+            since = "-"
+            tip = ("The run of %s has no platforms (before 1.67.0)." % day_word(base["_t"])) if base else "No run 6 to 8 days ago to compare with."
+        else:
+            word, icon = (("Worse", u"▲") if ch["opened"] > ch["closed"] else
+                          ("Better", u"▼") if ch["closed"] > ch["opened"] else ("Same", u"▬"))
+            since = u"%s %s\n%d closed, %s" % (icon, word, ch["closed"], ("%d opened" % ch["opened"]) if ch["opened"] else "none opened")
+            tip = "\n".join(["%s since %s" % (n, day_word(base["_t"]))] + _ids(ch["closed_rules"], "Closed") + _ids(ch["opened_rules"], "Opened"))
+            pdelta.append((n, ch))
+        series = []
+        for i, (t, r) in enumerate(wk):
+            src = point if (r is not None and r["_t"] == now) else r
+            if src is None:
+                continue
+            if not any(isinstance(x, dict) and isinstance(x.get("p"), dict) for x in src.get("collections") or []):
+                gap = True
+                continue
+            s = psum(src.get("collections") or [], n)
+            series.append((i, s["cat1"] + s["cat2"] + s["cat3"], s["cat1"], s["cat2"], s["cat3"]))
+        sp = dict(spark(series, heads, n), hue=_hue(n, cfg)) if len(series) > 1 else {}
+        at = dict((s[0], s[1]) for s in series)
+        pnum.append(["Platform %s" % n] + [at.get(i, "-") for i in range(len(wk))])
+        pweek.append([at.get(i) for i in range(len(wk))] if len(series) > 1 else [])
+        worse = bool(ch and ch["opened"] > ch["closed"])
+        st = "critical" if v["cat1"] else ("warning" if worse else "")
+        st_word = "CAT I open" if v["cat1"] else ("Worse" if worse else "OK")
+        head = [n, v["assets"], v["cat1"], v["cat2"], v["cat3"], since]
+        prow.append(head + [(u"%d → %d" % (series[0][1], series[-1][1])) if len(series) > 1 else "from next week", st_word])
+        pweb.append(head + [sp.get("label", "") if sp else "trend starts next week", st_word])
+        pst.append(st)
+        pcst.append(["", "", "critical" if v["cat1"] else "", "", "", "", "", ""])
+        psp.append(sp)
+        ptip.append(["", "Assets with a STIG of %s (one with STIGs of two platforms counts in each)." % n, "", "", "", tip, "",
+                     {"CAT I open": "CAT I open: at least one CAT I finding of %s is open." % n,
+                      "Worse": "Worse: more findings opened than closed since last week."}.get(st_word, "OK: no CAT I open, and no worse than last week.")])
+        ptags.append({"pf": _key(n, cfg)})
+        ptiles.append({"label": n, "value": opn, "hue": _hue(n, cfg), "note": "%d CAT I, %s" % (v["cat1"], _count(v["assets"], "asset")),
+                       "tip": "%s: %d open (CAT I %d, CAT II %d, CAT III %d) on %s." % (n, opn, v["cat1"], v["cat2"], v["cat3"], _count(v["assets"], "asset"))})
+    p_trend = any(psp)
+    p_cols = ["Platform", "Assets", "CAT I open", "CAT II open", "CAT III open", "Since last week", open_col, "Status"]
+    p_lines = ([] if not gap or not p_trend else ["The platform lines start with 1.67.0: the earlier weeks' points have no platforms."])
+    if gap and not p_trend:
+        p_lines = ["The platform trend starts with this run: the earlier points have no platforms (before 1.67.0)."]
+    if not_pl:
+        p_lines.append("Not a platform (stigman_scorecard_platform_filter): %s. Platforms: %s." % (", ".join(not_pl), ", ".join(names)))
+    if keep:
+        p_lines.append("Only %s (stigman_scorecard_platform_filter). Every number on this page is of %s." % (
+            ", ".join(n for n in names if n in keep), "that platform" if len(keep) == 1 else "those platforms"))
+    pl_sec = {"title": "By platform (%d)" % len(shown), "status": _worst_of(pst), "columns": p_cols,
+              "column_titles": ["", "Assets with a STIG of the platform", titles[2], titles[3], titles[4], titles[5], titles[6], ""],
+              "kinds": ["wrap", "num", "num", "num", "num", "wrap", "", ""], "rows": prow, "row_status": pst, "cell_status": pcst,
+              "tips": ptip, "wrap": True, "keep_case": True}
+    if p_lines:
+        pl_sec["lines"] = p_lines
+    pl_web = dict(pl_sec, rows=pweb, row_tags=ptags, tiles=ptiles)
+    if p_trend:
+        pl_web.update(kinds=["wrap", "num", "num", "num", "num", "wrap", "spark", ""], sparks=psp)
+    if not shown:
+        pl_sec = {"title": "By platform (0)", "status": "info", "lines": ["No asset with a STIG, and no open finding."] + p_lines}
+        pl_web = dict(pl_sec)
+
+    # ---- each collection, opened from its row: its top open rules and its worst hosts (the website)
+    groups = []
+    for i, c in enumerate(good):
+        hosts = {}
+        for r in c.get("rules") or []:
+            if isinstance(r, dict) and r.get("cat") in CATS:
+                for a in r.get("assets") or []:
+                    hosts.setdefault(a, [0, 0, 0])[r["cat"] - 1] += 1
+        worst = sorted(hosts.items(), key=lambda h: (-h[1][0], -h[1][1], -h[1][2], h[0].lower()))[:top_n]
+        mine = [r for r in c.get("rules") or [] if isinstance(r, dict)][:top_n]
+        pp = (by_id.get(str(c.get("id"))) or {}).get("p") or {}
+        by_pl = ", ".join("%s %d" % (n, _n((pp.get(n) or {}).get("assets"))) for n in names if _has(pp, n, keep) and _n((pp.get(n) or {}).get("assets")))
+        g = {"id": "col-%s" % _slug(c.get("id")), "title": c["name"], "status": rst[i],
+             "meta": "%s%s" % (_count(_n(c.get("assets")), "asset"), (": " + by_pl) if by_pl else ""),
+             "counts": [["CAT I", _n(c.get("cat1")), "critical" if _n(c.get("cat1")) else ""], ["CAT II", _n(c.get("cat2")), ""],
+                        ["CAT III", _n(c.get("cat3")), ""]],
+             "tags": tags[i], "tables": []}
+        if mine:
+            g["tables"].append({"title": "Its top open rules", "columns": ["Rule", "Category", "What it checks", "Hosts open"],
+                                "kinds": ["wrap", "", "wrap", "num"],
+                                "rows": [[rule_word(r), CAT_WORD[r["cat"]], r.get("title") or "", _n(r.get("count"))] for r in mine],
+                                "row_status": ["critical" if r["cat"] == 1 else "" for r in mine]})
+        if worst:
+            g["tables"].append({"title": "Its worst hosts", "columns": ["Host", "CAT I", "CAT II", "CAT III", "Open"],
+                                "kinds": ["wrap", "num", "num", "num", "num"],
+                                "rows": [[h, x[0], x[1], x[2], sum(x)] for h, x in worst],
+                                "row_status": ["critical" if x[0] else "" for h, x in worst]})
+        elif mine:
+            hw = str(c.get("hosts") or "")
+            g["lines"] = [("Hosts not listed: stigman_scorecard_hosts is false." if hw == "off" else
+                           (hw[0].upper() + hw[1:] + ".") if hw.startswith("hosts not") else
+                           "STIG Manager gave the findings without their assets: no host list.")]
+        if not mine:
+            g["lines"] = ["No open finding."]
+        groups.append(g)
+    if groups and isinstance(web_sec.get("rows"), list):
+        web_sec["groups"] = groups
+        web_sec["groups_text"] = "Open a collection for its top open rules and its worst hosts."
 
     # ---- the tiles and the cards
     c1 = tot["cat1"]
@@ -525,7 +840,8 @@ def stig_scorecard(read, point, runs, opts=None):
     if trend:
         num_sec = {"title": "The numbers behind the lines (open findings per week)",
                    "text": "One point a week: the last run of each week, the weeks ending on this run's weekday. A dash: no run that week.",
-                   "columns": ["Collection"] + heads, "kinds": ["wrap"] + ["num"] * len(heads), "rows": numbers, "wrap": True}
+                   "columns": ["Collection"] + heads, "kinds": ["wrap"] + ["num"] * len(heads),
+                   "rows": numbers + (pnum if p_trend else []), "wrap": True}
 
     status = "critical" if c1 else ("warning" if "warning" in rst else "ok")
     if base:
@@ -541,12 +857,17 @@ def stig_scorecard(read, point, runs, opts=None):
         "opened the hosts it is open on more.",
         "A rule closed on one host and opened on another in the same week counts as neither.",
         "A collection that was not in last week's run is \"New here\" and is not in the week's totals.",
-        "Fixed on the host, still Open: the STIG drift reports' last scans against this run's Open findings."]
+        "Fixed on the host, still Open: the STIG drift reports' last scans against this run's Open findings.",
+        "By platform: an asset counts under each platform it has a STIG of, so one with STIGs of two platforms counts in "
+        "both. A finding counts under its own STIG's platform.",
+        "A STIG's platform: the first of stigman_scorecard_platforms with a pattern that matches its benchmark id (%s)."
+        % "; ".join("%s %s" % (n, ", ".join(x)) for n, x in _platforms(cfg))]
+        + (["Other: the STIGs no platform matched - %s." % ", ".join(others)] if others else [])
         + ["Compared with the run of %s UTC." % _utc(base["_t"]).strftime("%Y-%m-%d %H:%M") if base else "No run 6 to 8 days ago was found."]
         + [str(x) for x in o.get("history") or [] if x]}
 
-    sections = [card_sec, sec, top_sec, fix_sec] + ([num_sec] if num_sec else [])
-    web = [card_sec, web_sec, top_sec, fix_sec] + ([num_sec] if num_sec else [])
+    sections = [card_sec, pl_sec, sec, top_sec, fix_sec] + ([num_sec] if num_sec else [])
+    web = [card_sec, pl_web, web_sec, top_sec, fix_sec] + ([num_sec] if num_sec else [])
     if o.get("portal"):                       # 1.67.0, report_portal_url: the website's copy gets the site portal's links
         pf = _portal()
         web_sec = pf.add_section_link(dict(web_sec), "Import checklists", pf.portal_link(o["portal"], "ckl_import", {}))
@@ -554,7 +875,7 @@ def stig_scorecard(read, point, runs, opts=None):
         if fixed and fix_sec.get("rows"):
             pf.add_link_column(web_fix, [pf.portal_link(o["portal"], "stig_recheck", {"target": r[0]}) for r in fixed[:list_max]],
                                "Recheck")
-        web = [card_sec, web_sec, top_sec, web_fix] + ([num_sec] if num_sec else [])
+        web = [card_sec, pl_web, web_sec, top_sec, web_fix] + ([num_sec] if num_sec else [])
 
     # ---- the workbook
     def cut(names):
@@ -566,6 +887,9 @@ def stig_scorecard(read, point, runs, opts=None):
                       [(r[2] + r[3] + r[4]) if isinstance(r[2], int) else "-", r[7]] for r in rows],
              # 1.62.0: the page's line as Excel's own - all open findings a week (CAT I is mostly 0: a flat line says little)
              "sparklines": [{"column": "Trend", "points": week_open}]},
+            {"name": "By platform", "columns": p_cols[:6] + ["Open now", "Status"],
+             "rows": [r[:5] + [r[5].replace("\n", ": ") if isinstance(r[5], str) else r[5]] + [r[2] + r[3] + r[4], r[7]] for r in prow],
+             "sparklines": [{"column": "Trend", "points": pweek}]},
             {"name": "Rules across hosts", "columns": ["Rule", "STIG ID", "Category", "What it checks", "Hosts open", "Where"],
              "rows": [[a["sv"], a["version"], CAT_WORD[a["cat"]], a["title"], a["hosts"],
                        ", ".join("%s (%d)" % w for w in sorted(a["where"], key=lambda w: (-w[1], w[0].lower())))] for a in ranked]},
@@ -581,12 +905,21 @@ def stig_scorecard(read, point, runs, opts=None):
 
     lines = [title] + ["%s: %s%s" % (t["label"], t["value"], " (%s)" % t["note"] if t.get("note") else "") for t in tiles]
     lines += ["%s: %s" % (r[0], ("CAT I %s, CAT II %s, CAT III %s, %s" % (r[2], r[3], r[4], str(r[5]).replace("\n", ": ")))) for r in rows[:len(good)]]
-    lines += notes_col
+    lines += ["Platform %s: CAT I %s, CAT II %s, CAT III %s, %s" % (r[0], r[2], r[3], r[4], str(r[5]).replace("\n", ": ")) for r in prow]
+    lines += notes_col + p_lines
     lines += [str(x) for x in o.get("history") or [] if x]        # where the earlier points came from, in the job output too
+    # the page's filter buttons (atlas and brief; site_report.js): a platform, a collection - when there are two to choose from
+    facets = {}
+    if len(shown) > 1 or len(good) > 1:
+        facets = {"platforms": [{"key": _key(n, cfg), "name": n, "hue": _hue(n, cfg)} for n in shown] if len(shown) > 1 else [],
+                  "collections": [{"key": "c%s" % c.get("id"), "name": c["name"]} for c in good] if len(good) > 1 else [],
+                  "note": "Platform and Collection choose the rows shown. The counts in a collection's row are of all its platforms."}
     return {"ok": True, "error": "", "title": title, "status": status, "subtitle": subtitle, "tiles": tiles, "sections": sections, "web": web,
+            "facets": facets,
             "notes": notes, "xlsx": xlsx, "lines": lines, "fixed_rows": fixed,      # 1.67.0 part C: the site_findings artifact
             "counts": dict(tot, collections=len(good), not_read=len(bad), fixed=len(fixed), weekly_points=n_points,
-                           compared=bool(base), rules=len(ranked))}
+                           compared=bool(base), rules=len(ranked), platforms=len(shown),
+                           by_platform=dict((r[0], {"assets": r[1], "cat1": r[2], "cat2": r[3], "cat3": r[4]}) for r in prow))}
 
 
 def _worst_of(statuses):
@@ -629,7 +962,7 @@ def stig_scorecard_join(card, imp=None, mode="import and scorecard", src="", emp
     if imp and imp.get("footer") and with_import:
         base["footer"] = imp["footer"]
     report = dict(base, sections=list(card.get("sections") or []) + extra + tail)
-    web = _scorecard_web(base, list(card["web"]) + extra + tail) if card.get("web") else {}
+    web = _scorecard_web(dict(base, facets=card["facets"]) if card.get("facets") else base, list(card["web"]) + extra + tail) if card.get("web") else {}
     return {"report": report, "web": web, "xlsx": list(card.get("xlsx") or []) + (_sheets(imp) if with_import else [])}
 
 
@@ -641,5 +974,5 @@ def _scorecard_web(base, sections):
 
 class FilterModule(object):
     def filters(self):
-        return {"stig_scorecard_point": stig_scorecard_point, "stig_scorecard_runs": stig_scorecard_runs,
+        return {"stig_scorecard_point": stig_scorecard_point, "stig_scorecard_runs": stig_scorecard_runs, "stig_platform": stig_platform,
                 "stig_scorecard": stig_scorecard, "stig_scorecard_join": stig_scorecard_join}
