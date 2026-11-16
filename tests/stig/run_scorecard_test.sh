@@ -391,6 +391,9 @@ s = [x for x in r["sections"] if x["title"].startswith("Slow or not read")]
 assert s and re.match(r"Check and fix text too slow \(stigman_scorecard_text_timeout\): \d+ of 10 rules without it\.$", s[0]["lines"][0]), s' \
     && [ $(( $(date +%s) - t0 )) -lt 60 ] && ok "  ...said in one line; the job did not wait for every rule" || bad "  ...the slow texts on the page"
 cp "$work/sm.keep" "$work/sm.json"
+# the stand-in answers one request at a time: the slow run's text requests it was still given (2 s each, after that job
+# stopped waiting) are answered first, and must not count as the next run's - one request of ours, answered after them
+curl -s -m 60 -o /dev/null "http://127.0.0.1:$port/api/op/configuration"
 AAP_ENV="$AAP" run "stigman_scorecard_texts: false - no check or fix text asked" ok -e "$card" -e "$job" -e '{"stigman_scorecard_texts": false}' \
     -- "STIG compliance: 4 CAT I open" "!Check and fix text"
 grep -q '/api/stigs/rules/' "$work/sm.log" && bad "  ...texts asked" || ok "  ...no text asked"
