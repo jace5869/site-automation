@@ -2,7 +2,9 @@
 # Workflow 37 against a real STIG Manager (a review with an attachment left as it is, too) - not in CI: it needs podman and three images already pulled (it never pulls):
 # docker.io/library/mysql:8.4, docker.io/nuwcdivnpt/stig-manager:<STIGMAN_TEST_TAG, latest> and its demo Keycloak,
 # docker.io/nuwcdivnpt/stig-manager-auth:latest (realm stigman, its confidential client stigman-watcher stands in for the
-# client that writes reviews). One pod, sa-stigman-test, on 127.0.0.1 only; removed at the end (by name).
+# client that writes reviews). One pod, sa-stigman-test (STIGMAN_TEST_POD), on 127.0.0.1 only; removed at the end (by name).
+# 1.68.0, at the end: the STIG scorecard (each open rule's check and fix text, the names linked to STIG Manager's plain
+# address) and workflow 47's read of one rule (site_stigman_rule) against the real STIG Manager.
 # Set up as STIG Manager's admin: a test STIG (make_stig_xccdf.py), the collection RHEL Servers - a detail always
 # required, a comment for findings, Accept for Manage - its asset localhost with two Open reviews (one with a POA&M
 # comment); the client granted Manage. Then, as AAP would: the STIG recheck's check (check_stig_update_workflow: true,
@@ -25,7 +27,9 @@ ap="${ANSIBLE_PLAYBOOK:-ansible-playbook}"
 py="${STIG_TEST_PYTHON:-$(command -v python3)}"
 eng="${CONTAINER_ENGINE:-podman}"
 tag="${STIGMAN_TEST_TAG:-latest}"
-pod=sa-stigman-test kc=18180 sm=18154
+# 1.68.0: STIGMAN_TEST_POD, STIGMAN_TEST_KC_PORT, STIGMAN_TEST_PORT - a pod name and ports of your own (another run's
+# pod of the default name would be removed)
+pod="${STIGMAN_TEST_POD:-sa-stigman-test}" kc="${STIGMAN_TEST_KC_PORT:-18180}" sm="${STIGMAN_TEST_PORT:-18154}"
 work="$(mktemp -d)"
 cleanup() {
     if [ -n "${STIGMAN_TEST_KEEP:-}" ]; then echo "kept: pod $pod, $work"; return; fi
@@ -500,6 +504,53 @@ play stigman_ckl_import.yml -e "$route"
     && grep -q "Not moved - a person decides (1)" "$work/site"/*/latest.html 2>/dev/null \
     && ok "  ... rhel12 moved by the next approval; then nothing to write - rhel11 still listed for a person" \
     || { bad "the third route check: rc $rc, rhel12 in $(inl "$r12")"; grep -n "MOVE\|NEEDS\|nothing" "$work/out.txt" | cut -c1-250 | head -6; }
+
+# ---- 1.68.0: the STIG scorecard against the real STIG Manager - each open rule's check and fix text (GET /stigs/rules/RULE,
+# projections check and fix: 1.6.18 answers a 400 to checks and fixes), the names linked to its plain address -------------
+play stigman_ckl_import.yml -e '{"stigman_ckl_import_mode": "scorecard", "stigman_ckl_import_collection": ""}'
+nt=$(grep -oE "Check and fix text: [0-9]+ of [0-9]+ rules in" "$work/out.txt" | head -1)
+tread=$(echo "$nt" | sed -nE 's/.*: ([0-9]+) of ([0-9]+) .*/\1/p')
+tasked=$(echo "$nt" | sed -nE 's/.*: ([0-9]+) of ([0-9]+) .*/\2/p')
+page=$(ls -t "$work/site"/*/latest.json 2>/dev/null | head -1)
+got=$("$py" -c '
+import json, sys
+r = json.load(open(sys.argv[1]))
+r = r.get("report", r)
+f = [s for s in r["sections"] if s.get("title", "").startswith("Findings")][0]
+blocks = [t for d in f.get("details") or [] if isinstance(d, list) for x in d if isinstance(x, dict) for t in x.get("texts") or []]
+fix = set(b["text"] for b in blocks if b["label"] == "Fix text")
+chk = set(b["text"] for b in blocks if b["label"] == "Check text")
+print(len(f["rows"]), len(blocks), "Set it as the STIG says." in fix, "Check it as the STIG says." in chk,
+      sorted(set(f.get("cell_links", {}).get("urls") or [])) == [sys.argv[2]])' "${page:-/dev/null}" "http://127.0.0.1:$sm/" 2>&1)
+[ "$rc" = 0 ] && [ "${tasked:-0}" -gt 0 ] && [ "$tread" = "$tasked" ] && ! grep -q "without text in STIG Manager\|stig-manager:stig:read" "$work/out.txt" \
+    && [ "$(echo "$got" | cut -d' ' -f3-)" = "True True True" ] \
+    && ok "the scorecard: $nt; a rule opened shows the STIG's own check and fix text; the names link to STIG Manager's plain address" \
+    || { bad "the scorecard against the real STIG Manager: rc $rc, '$nt', page: $got"; grep -n "Check and fix\|fatal\|Slow" "$work/out.txt" | cut -c1-250 | head -6; }
+
+# ---- 1.68.0: workflow 47's read of one rule (site_stigman_rule: projections check, fix and detail) -------------------------
+{
+    echo "- hosts: localhost"
+    echo "  gather_facts: false"
+    echo "  tasks:"
+    echo "    - site_stigman_rule:"
+    echo "        api: http://127.0.0.1:$sm/api"
+    echo "        token_url: $T"
+    echo "        client_id: stigman-watcher"
+    echo "        client_secret: \"$secret\""
+    echo "        benchmark: RHEL_9_STIG"
+    echo "        rule: SV-257883r1044925_rule"
+    echo "      register: one"
+    echo "    - ansible.builtin.debug:"
+    echo "        msg: \"RULE {{ one.rule | to_json }} ERROR {{ one.error | default('') }}\""
+} > "$work/rule.yml"
+(cd "$repo" && ANSIBLE_LIBRARY="$repo/roles/portal_stig/library" ANSIBLE_NOCOLOR=1 ANSIBLE_LOCALHOST_WARNING=False \
+    "$ap" -i localhost, -c local "$work/rule.yml" -e "ansible_python_interpreter=$py") > "$work/out.txt" 2>&1
+rc=$?
+[ "$rc" = 0 ] && grep -q '\\"check\\": \\"Check it as the STIG says.\\"\|"check": "Check it as the STIG says."' "$work/out.txt" \
+    && grep -q '\\"fix\\": \\"Set it as the STIG says.\\"\|"fix": "Set it as the STIG says."' "$work/out.txt" \
+    && grep -q 'RHEL-09-412035' "$work/out.txt" && ! grep -q "HTTP 400\|could not be read" "$work/out.txt" \
+    && ok "workflow 47's read of one rule (site_stigman_rule): its check and fix text, no 400" \
+    || { bad "site_stigman_rule against the real STIG Manager: rc $rc"; grep -n "RULE\|ERROR\|fatal\|400" "$work/out.txt" | cut -c1-300 | head -5; }
 
 echo
 if [ $fails -eq 0 ]; then echo "all real STIG Manager scenarios passed"; else echo "$fails real STIG Manager scenario(s) FAILED"; exit 1; fi
