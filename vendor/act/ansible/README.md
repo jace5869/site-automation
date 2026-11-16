@@ -33,9 +33,9 @@ attention (`act_report_teams_when: always` to post every run). Without the varia
 
 ## Requirements
 
-- Managed hosts: Linux with systemd, and **Python 3.8+** for ACT. RHEL 8's default `python3`
-  is 3.6; the role looks for `python3.13` … `python3.8` first and fails clearly if none is
-  present (`dnf install python3.11`). Windows hosts are not covered by this role yet
+- Managed hosts: Linux with systemd, and **Python 3.6+** for ACT. RHEL 8's default `python3`
+  is 3.6 and works; the role looks for `python3.13` … `python3.6` and `python3` and fails clearly
+  if none is present (`dnf install python3`). Windows hosts are not covered by this role yet
   (ACT-Windows has the same `-NonInteractive -Allow -ResultFile` contract).
 - Each host must reach the model endpoint (api.genai.mil / AskSage). Servers often cannot;
   check egress before rolling out.

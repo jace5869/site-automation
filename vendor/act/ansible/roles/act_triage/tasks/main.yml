@@ -69,11 +69,11 @@
 - name: ACT triage
   when: act_triage_needed | bool
   block:
-    - name: ACT | find a Python >= 3.8
+    - name: ACT | find a Python >= 3.6
       ansible.builtin.shell: |
         for p in {{ act_triage_python_candidates | map('quote') | join(' ') }}; do
           if command -v "$p" >/dev/null 2>&1 &&
-             "$p" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' 2>/dev/null; then
+             "$p" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 6) else 1)' 2>/dev/null; then
             command -v "$p"; exit 0
           fi
         done
@@ -82,12 +82,12 @@
       changed_when: false
       failed_when: false
 
-    - name: ACT | require Python >= 3.8
+    - name: ACT | require Python >= 3.6
       ansible.builtin.assert:
         that: _act_python.rc == 0
         fail_msg: >-
-          ACT needs Python 3.8+ on {{ inventory_hostname }} and none was found (tried
-          {{ act_triage_python_candidates | join(', ') }}). On RHEL 8: dnf install python3.11
+          ACT needs Python 3.6+ on {{ inventory_hostname }} and none was found (tried
+          {{ act_triage_python_candidates | join(', ') }}). Install python3 (RHEL 8: dnf install python3)
         quiet: true
 
     - name: ACT | install directory

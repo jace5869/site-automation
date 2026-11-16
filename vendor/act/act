@@ -28,7 +28,7 @@ Reliability aids (for weaker/flash models):
     and feeds the findings back so the model can pick a working command. Probes never
     mutate state and are skipped if they would be anything but read-only.
 
-Requires: Python 3.8+, /bin/bash. No third-party Python packages.
+Requires: Python 3.6+, /bin/bash. No third-party Python packages.
 
 Environment:
   GENAI_KEY       (optional override) bearer token for the API; otherwise use :setup
@@ -109,7 +109,7 @@ Environment:
   The full list of variables (limits, debug, theme, ...) is in README.md.
 """
 
-ACT_VERSION = "0.6.26"  # bump when delivering; check with: act --version
+ACT_VERSION = "0.6.27"  # bump when delivering; check with: act --version
 
 import argparse
 import codecs

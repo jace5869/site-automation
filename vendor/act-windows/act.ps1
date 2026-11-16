@@ -184,7 +184,7 @@ param(
     [switch] $Test
 )
 
-$script:ActVersion = '0.6.26'
+$script:ActVersion = '0.6.27'
 $script:ActScriptPath = $PSCommandPath
 
 # ---- Admin-embedded API keys (optional) -----------------------------------

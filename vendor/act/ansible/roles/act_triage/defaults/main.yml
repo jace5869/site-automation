@@ -3,8 +3,8 @@
 # The act script shipped in this repo (an AAP project sync of ACT-Linux brings it along).
 act_triage_script_src: "{{ role_path }}/../../../act"
 act_triage_dest_dir: /opt/act
-# ACT needs Python >= 3.8. RHEL 8's default python3 is 3.6, so newer ones are tried first.
-act_triage_python_candidates: [python3.13, python3.12, python3.11, python3.10, python3.9, python3.8, python3]
+# ACT needs Python >= 3.6 (RHEL 8's default python3 is 3.6 and works); newer ones are tried first.
+act_triage_python_candidates: [python3.13, python3.12, python3.11, python3.10, python3.9, python3.8, python3.6, python3]
 
 # ---- Model credentials --------------------------------------------------------------------
 # Never put a key in plain vars. In AAP, attach a custom credential that injects the key as

@@ -172,8 +172,9 @@ service, space request and ticket jobs with a fake AAP, a fake ServiceNow and tm
 sends 0 requests, the draft equals what live sends, live opens one and finds it again); `allow this` in
 `tests/fapolicyd/run_fapolicyd_rules_test.sh`. Not run: a real AAP, a real ServiceNow, the Windows look and restart steps.
 
-**ACT 0.6.26 for the jobs.** `vendor/act` and `vendor/act-windows` are ACT 0.6.26 (was 0.6.25): key pools, and key
-values removed from the result file, the audit log and `--json` output. The jobs install it to `/opt/act/act` (Windows:
+**ACT 0.6.27 for the jobs.** `vendor/act` and `vendor/act-windows` are ACT 0.6.27 (was 0.6.25): key pools (0.6.26), key
+values removed from the result file, the audit log and `--json` output (0.6.26), and Python 3.6 supported (0.6.27; the
+`act_triage` role accepts it too). The jobs install it to `/opt/act/act` (Windows:
 its own path) as before. A host's `/usr/local/bin/act` stays a link to it (1.53.0), so `act` typed on a host is 0.6.26
 too. Nothing to set up.
 
