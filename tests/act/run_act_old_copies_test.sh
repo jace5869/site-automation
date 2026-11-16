@@ -78,6 +78,7 @@ run() {
     done
     echo "ok   - $tname"
 }
+actv=$(cat "$(dirname "$0")/../../vendor/act/VERSION" | tr -d '[:space:]')   # the vendored ACT, not a number in this file
 check() { if [ "$2" = "$3" ]; then echo "ok   - $1"; else echo "FAIL - $1: got [$2], expected [$3]"; fails=$((fails + 1)); fi; }
 on() { "$engine" exec "$1" sh -c "$2" 2>&1; }
 
@@ -89,10 +90,10 @@ check "  ...nothing changed (still a file, no /opt/act)" "$(on "$web" 'test -L /
 no-opt"
 
 run "Run: linked, the old one kept, the saved model reported" act_old_copies.yml \
-    -- "/usr/local/bin/act was an old copy (ACT 0.4.2): linked to /opt/act/act (ACT 0.6.25), the old one kept at /opt/act/old/act." \
+    -- "/usr/local/bin/act was an old copy (ACT 0.4.2): linked to /opt/act/act (ACT $actv), the old one kept at /opt/act/old/act." \
        "web01.example.mil: user jdoe's saved model is gemini-4-argon" '!db01.example.mil: /usr/local/bin/act'
 check "  ...the link" "$(on "$web" 'readlink /usr/local/bin/act')" "/opt/act/act"
-check "  ...act --version is the new one" "$(on "$web" 'HOME=/nonexistent act --version | head -1')" "act 0.6.25"
+check "  ...act --version is the new one" "$(on "$web" 'HOME=/nonexistent act --version | head -1')" "act $actv"
 check "  ...the backup: one file, root's 0700 folder" "$(on "$web" 'stat -c %a /opt/act/old; ls /opt/act/old | wc -l; grep -c "0.4.2" /opt/act/old/act.*')" "700
 1
 2"
