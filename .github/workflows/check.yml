@@ -104,6 +104,7 @@ jobs:
           python tests/test_sso.py
           python tests/test_sso_cert_forms.py
           python tests/test_stigman_timeouts.py
+          python tests/test_timeouts_sweep.py
           python tests/test_net_perf.py
           python tests/test_vm_net_drops.py
           python tests/test_ocsp_target.py
