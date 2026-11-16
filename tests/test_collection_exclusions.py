@@ -80,9 +80,16 @@ class Import(unittest.TestCase):
         _st, search = CK.pick_collections(COLS, ["SITEB [DR]"], "Staging")
         self.assertEqual(names(search), ["SITEB [DR]", "Staging"])
 
-    def test_a_typo_stops_the_job(self):
+    def test_leaving_out_an_unknown_collection_is_said_not_a_stop(self):
+        del CK.PICK_NOTES[:]
+        _st, search = CK.pick_collections(COLS, ["*", "!Nope", "!75"], "Staging")
+        self.assertIn("Base", names(search))
+        self.assertEqual(len(CK.PICK_NOTES), 2)
+        self.assertIn("!75", CK.PICK_NOTES[1])
+
+    def test_an_unknown_collection_to_search_still_stops(self):
         with self.assertRaises(CK.Fail):
-            CK.pick_collections(COLS, ["*", "!Nope"], "Staging")
+            CK.pick_collections(COLS, ["Nope"], "Staging")
 
 
 if __name__ == "__main__":

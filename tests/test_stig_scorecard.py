@@ -659,9 +659,10 @@ class Join(unittest.TestCase):
     def test_the_scorecard_first_then_the_import_as_it_is(self):
         got = f.stig_scorecard_join(self.card, self.IMPORT, "import and scorecard", "//fs/stig/ckl", False)
         rep = got["report"]
-        self.assertEqual(rep["title"], self.card["title"] + " - Checklist import: 2 new assets")
+        self.assertEqual(rep["title"], self.card["title"])                    # 1.66.2: the import's state is the line under it
+        self.assertTrue(rep["subtitle"].startswith("Checklist import: 2 new assets"), rep["subtitle"])
         self.assertEqual(rep["status"], "critical")
-        self.assertEqual(rep["subtitle"], self.card["subtitle"] + ". 3 checklists read")
+        self.assertEqual(rep["subtitle"], "Checklist import: 2 new assets. " + self.card["subtitle"] + ". 3 checklists read")
         self.assertEqual([t["label"] for t in rep["summary"]], [t["label"] for t in self.card["tiles"]] + ["Checklists"])
         n = len(self.card["sections"])
         self.assertEqual(rep["sections"][:n], self.card["sections"])

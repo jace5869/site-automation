@@ -951,8 +951,9 @@ def stig_scorecard_join(card, imp=None, mode="import and scorecard", src="", emp
     if with_import:
         if WORST.get(imp.get("status"), 0) > WORST.get(status, 0):
             status = imp["status"]
-        title = "%s - %s" % (title, imp.get("title") or "Checklist import")
-        subtitle = ". ".join(x for x in (subtitle, imp.get("subtitle") or "") if x)
+        # the title stays the compliance sentence; the import's state is the line under it (1.66.2: an import error in
+        # the title read as nonsense)
+        subtitle = ". ".join(x for x in (imp.get("title") or "Checklist import", subtitle, imp.get("subtitle") or "") if x)
         tiles += list(imp.get("summary") or [])
         extra = list(imp.get("sections") or [])
     elif mode != "scorecard":
