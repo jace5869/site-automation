@@ -349,6 +349,10 @@ button can work).
 `actions.yml` it has `kinds` (the buttons), and optionally `button` (the short label) and `when` (only on findings whose
 data match, for example `when: {cat: ["CAT II", "CAT III"]}`).
 
+**An action that only reads** (*Ask ACT*, the STIG recheck) has `fixes: false` in `actions.yml`. Its job page always
+says **Not checked** and "This action only reads: it changed nothing", whatever the job reports. Its playbook's
+`portal_result` refuses Fixed too: `portal_result_read_only: true`.
+
 ## AAP workflows
 
 Step 101 sets these up, after step 100 (the portal itself).

@@ -1372,6 +1372,7 @@ File: `roles/portal_result/defaults/main.yml`
 | `portal_result_summary` | (empty) | one line for the person who asked |
 | `portal_result_finding_id` | `"{{ finding.id if finding is defined and finding.id is defined else finding_id \| default(…` | the finding the fix was for: finding.id (roles/finding_ref) when the play has it, else the finding_id it was given |
 | `portal_result_action` | `"{{ portal_request.action \| default(portal_request_action \| default('')) }}"` | the portal's action, when it is known |
+| `portal_result_read_only` | `false` | true in a job that only reads (ACT triage, a recheck): its result is always Not checked |
 
 ## portal_triage
 

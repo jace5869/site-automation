@@ -151,7 +151,7 @@ ACTIONS = {
     "act_triage": {"title": "Ask ACT", "button": "Ask ACT", "kinds": ["fapolicyd", "fapolicyd_deny", "eventlog"]},
     "disk_cleanup": {"title": "Clean up", "button": "Clean up", "kinds": ["disk_full"], "when": {"os": "linux"}},
     "space_request": {"title": "Ask for space", "kinds": ["disk_full"]},
-    "disk_more": {"title": "More one", "kinds": ["disk_full"]},
+    "ticket_dry_run": {"title": "Ticket (dry run)", "button": "Ticket (dry run)", "kinds": ["disk_full", "service_down"]},
     "stig_fix_rule": {"title": "Fix rule", "button": "Fix rule", "kinds": ["stig_rule_fail"], "when": {"cat": ["CAT II", "CAT III"]}},
 }
 
@@ -162,7 +162,7 @@ class Buttons(unittest.TestCase):
 
     def test_by_kind_and_when(self):
         b = ff.finding_buttons(self.lin["disk_full"][0], ACTIONS, URL, "4711")
-        self.assertEqual([x["label"] for x in b], ["Clean up", "More one", "Ask for space"])
+        self.assertEqual([x["label"] for x in b], ["Clean up", "Ask for space", "Ticket (dry run)"])
         self.assertEqual(b[0]["url"], URL + "/actions/disk_cleanup?finding_id=disk_full%3Aweb01.example.mil%3A%2Fvar&report_job=4711"
                                             "&target=web01.example.mil")
         win = ff.findings_artifact(WIN, "win01.example.mil", "windows", 50)["entries"][0]
@@ -196,7 +196,8 @@ class ActionsFile(unittest.TestCase):
         self.assertEqual((good["x"]["kinds"], good["x"]["button"]), (["disk_full"], "Clean up"))
         for bad, word in ((dict(ok, kinds="disk_full"), "kinds must be"), (dict(ok, kinds=["Disk Full"]), "kinds must be"),
                           (dict(ok, kinds=["d"], button="x" * 41), "button must be"), (dict(ok, kinds=["d"], button="{{ x }}"), "button must be"),
-                          (dict(ok, kinds=["d"], when="os"), "when must be"), (dict(ok, when={"os": "linux"}), "when needs kinds")):
+                          (dict(ok, kinds=["d"], when="os"), "when must be"), (dict(ok, when={"os": "linux"}), "when needs kinds"),
+                          (dict(ok, fixes="no"), "fixes must be true or false")):
             _, p = spf.check_actions({"x": bad})
             self.assertIn(word, " ".join(p), bad)
 
@@ -205,6 +206,7 @@ class ActionsFile(unittest.TestCase):
         acts, p = spf.check_actions(doc["actions"])
         self.assertEqual(p, [])
         self.assertEqual(acts["act_triage"]["kinds"], ["fapolicyd", "fapolicyd_deny", "eventlog"])
+        self.assertEqual((acts["act_triage"]["fixes"], acts["stig_recheck"]["fixes"]), (False, False), "they only read")
         for name, a in acts.items():               # an action that takes a finding takes its reference, and the host is the Limit
             if a["kinds"]:
                 self.assertTrue({"target", "report_job", "finding_id"} <= set(a["vars"]), name)
@@ -304,6 +306,9 @@ class PortalResult(unittest.TestCase):
         r, out = self.run_pb({"finding_id": "a:b:c"})
         self.assertEqual(r["fixed"], "unknown")
         self.assertIn("Not checked", out)
+        r, out = self.run_pb({"finding_id": "a:b:c", "portal_result_fixed": True, "portal_result_read_only": True})
+        self.assertEqual(r["fixed"], "unknown", "a job that only reads never says Fixed")
+        self.assertIn("portal_result_read_only is true", out)
 
 
 class Wiring(unittest.TestCase):

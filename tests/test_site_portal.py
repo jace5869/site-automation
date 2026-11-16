@@ -47,7 +47,13 @@ ACTIONS = {
                    "vars": {"target": {"kind": "inventory_host"},
                             "report_job": {"kind": "text", "max": 12, "pattern": "[0-9]{1,12}"},
                             "finding_id": {"kind": "text", "max": 120, "pattern": "(fapolicyd|eventlog):[A-Za-z0-9_.:-]{1,100}"}},
-                   "limit_from": "target", "approval": False, "who": ["DOE.JANE.Q.1234567890", "POE.PAT.C.4567890123"]},
+                   "limit_from": "target", "approval": False, "who": ["DOE.JANE.Q.1234567890", "POE.PAT.C.4567890123"],
+                   "fixes": False, "kinds": ["fapolicyd", "eventlog"], "button": "Ask ACT"},
+    "disk_cleanup": {"title": "Clean up this mount", "aap": {"type": "job", "name": "Disk - clean up one mount"}, "button": "Clean up",
+                     "kinds": ["disk_full"],
+                     "vars": {"target": {"kind": "inventory_host"}, "report_job": {"kind": "text", "max": 12, "pattern": "[0-9]{1,12}"},
+                              "finding_id": {"kind": "text", "max": 200, "pattern": "[A-Za-z0-9_.:/@-]{1,200}"}},
+                     "limit_from": "target"},
     "no_prompts": {"title": "A template that takes nothing", "aap": {"type": "job", "name": "No prompts template"},
                    "vars": {"target": {"kind": "inventory_host"}}, "limit_from": "target"},
     "gone": {"title": "Not in AAP", "aap": {"type": "job", "name": "Nobody made this"}},
@@ -531,24 +537,33 @@ class Live(unittest.TestCase):
         self.portal.recent.pop("DOE.JANE.Q.1234567890", None)
 
     def test_19_the_result_and_the_next_action(self):
-        """part C: the fix's portal_result at the top of its page; the action ACT names next, only when it is listed and
-        its kinds have this finding's kind."""
-        self.portal.actions["act_next"] = dict(self.portal.actions["stig_recheck"], name="act_next", title="Allow this",
-                                               button="Allow this", kinds=["fapolicyd"])
-        try:
-            self.portal.recent.pop("DOE.JANE.Q.1234567890", None)
-            vals = {"target": "web01.example.mil", "report_job": "907", "finding_id": "fapolicyd:web01.example.mil:r19"}
-            jid = self.post("/api/actions/act_triage", {"vars": vals})[1]["job_id"]
-            # the stand-in AAP takes next_action from the launch's extra vars: put it there as ACT would in its artifact
-            fake_aap.STATE["jobs"][[n for n in fake_aap.STATE["jobs"][jid]["nodes"]][-1]]["extra_vars"]["next_action"] = "act_next"
+        """part C: a fix's portal_result at the top of its page (Fixed); an action that only reads (fixes: false, ACT
+        triage) is Not checked whatever its artifact says; the action ACT names next, only when it is listed and its kinds
+        have this finding's kind."""
+        def wait(jid):
             end, v = time.time() + 20, {}
             while time.time() < end:
                 v = json.loads(self.req("/api/jobs/%d" % jid)[1])
                 if v.get("done"):
                     break
                 time.sleep(0.3)
-            self.assertEqual(v["result"], {"fixed": "true", "before": "93% full", "after": "71% full", "summary": "cleaned /var/tmp",
-                                           "finding_id": "fapolicyd:web01.example.mil:r19"})
+            return v
+        self.portal.recent.pop("DOE.JANE.Q.1234567890", None)
+        clean = {"target": "web01.example.mil", "report_job": "907", "finding_id": "disk_full:web01.example.mil:/var"}
+        v = wait(self.post("/api/actions/disk_cleanup", {"vars": clean})[1]["job_id"])
+        self.assertEqual(v["result"], {"fixed": "true", "before": "93% full", "after": "71% full", "summary": "cleaned /var/tmp",
+                                       "finding_id": "disk_full:web01.example.mil:/var"})
+        self.portal.actions["act_next"] = dict(self.portal.actions["stig_recheck"], name="act_next", title="Allow this",
+                                               button="Allow this", kinds=["fapolicyd"])
+        try:
+            vals = {"target": "web01.example.mil", "report_job": "907", "finding_id": "fapolicyd:web01.example.mil:r19"}
+            jid = self.post("/api/actions/act_triage", {"vars": vals})[1]["job_id"]
+            # the stand-in AAP takes next_action from the launch's extra vars: put it there as ACT would in its artifact
+            fake_aap.STATE["jobs"][[n for n in fake_aap.STATE["jobs"][jid]["nodes"]][-1]]["extra_vars"]["next_action"] = "act_next"
+            v = wait(jid)
+            self.assertEqual((v["result"]["fixed"], v["result"]["before"], v["result"]["after"], v["result"]["summary"]),
+                             ("unknown", "", "", "This action only reads: it changed nothing."),
+                             "ACT triage only reads: never Fixed, whatever its artifact says")
             self.assertEqual(v["next"]["url"], "/portal/actions/act_next?finding_id=fapolicyd%3Aweb01.example.mil%3Ar19&report_job=907"
                                                "&target=web01.example.mil")
             self.portal.actions["act_next"]["kinds"] = ["disk_full"]          # not this finding's kind: no button
