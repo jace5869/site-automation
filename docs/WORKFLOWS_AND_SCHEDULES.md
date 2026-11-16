@@ -885,7 +885,7 @@ The site portal's **Ask ACT** button: one fapolicyd or event-log finding of a re
 - **Both templates and the workflow:** **Prompt on launch** for **Variables** and **Limit**. Both templates have the
   *ACT model key* credential and a *Red Hat Ansible Automation Platform* credential (to read the reporting job).
 - **What the portal sends:** `target` (also the Limit), `report_job`, `finding_id` and `portal_requested_by`. Never
-  the finding's text: the job reads it from `report_job`'s artifact `site_health`.
+  the finding's text: the job reads it back from `report_job`'s artifact `site_findings` (`roles/finding_ref`: this host's, of its kinds).
 - **Each step takes its own kind:** fapolicyd findings (Linux) or event-log findings (Windows). The other step says
   "Nothing to do here" and stays green, without connecting.
 - **Never applies a fix.** A fix ACT proposes stays a separate, approved job.

@@ -316,7 +316,7 @@ $t"; fi
 if [ -n "$(command -v google-chrome chromium chromium-browser 2>/dev/null | head -1)" ]; then
     r="$(c "$k/jdoe" launch ckl_import '{"stigman_ckl_import_mode": "scorecard"}')"          # one waiting, for the page
     if (cd "$repo" && "$py" "$here/portal_shots.py" "https://localhost:$shot_port/portal/" "$shots" \
-            "jobs=jobs/$job2" "jobs-workflow=jobs/$wf" "approvals=approvals" \
+            "jobs=jobs/$job2" "jobs-workflow=jobs/$wf" "jobs-result=jobs/$job" "approvals=approvals" \
             "confirm=actions/act_triage?target=web01.example.mil&report_job=907&finding_id=eventlog%3Adisk-errors" "home=") > "$work/shots.txt" 2>&1; then
         pass "screenshots: jobs, approvals, the confirm page, home - 1280 and 800, light and dark, no script error, no side scroll ($shots)"
     else fail "screenshots" "$(cat "$work/shots.txt")"; fi

@@ -150,12 +150,12 @@ def add_section_link(section, label, url):
 
 # ---- ACT - triage finding (workflow 44) ------------------------------------------------------------------------------
 MARK_BEGIN, MARK_END = "BEGIN_ACT_ANALYSIS", "END_ACT_ANALYSIS"
-KIND_OS = {"fapolicyd": "linux", "eventlog": "windows"}
+KIND_OS = {"fapolicyd": "linux", "fapolicyd_deny": "linux", "eventlog": "windows"}
 SEV_STATUS = {"critical": "critical", "warning": "warning", "low": "low"}
 
 
 def portal_finding_kind(finding_id):
-    """fapolicyd or eventlog, from a finding's id ('' for another kind)."""
+    """fapolicyd, fapolicyd_deny or eventlog, from a finding's id (<kind>:<host>:<key>; '' for another kind)."""
     kind = str(finding_id or "").split(":", 1)[0]
     return kind if kind in KIND_OS else ""
 

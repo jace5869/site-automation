@@ -33,8 +33,21 @@
 ## is not checked (STIG recheck).
 # portal_request_always: false
 
+# ---- finding_ref ---------------------------------------------------------------------------------
+## the report job's id (the portal sends report_job)
+# finding_ref_job: "{{ report_job | default('') }}"
+
+## the finding's id (finding_id)
+# finding_ref_id: "{{ finding_id | default('') }}"
+
+## the host the fix runs on (target)
+# finding_ref_host: "{{ target | default('') }}"
+
+## the kinds this job fixes (set by each playbook); [] = any
+# finding_ref_kinds: []
+
 ## a CA file for AAP's own HTTPS certificate
-# portal_request_aap_ca_path: "{{ report_history_aap_ca_path | default('') }}"
+# finding_ref_aap_ca_path: "{{ report_history_aap_ca_path | default('') }}"
 
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## a CA file for AAP's own HTTPS certificate ("" = what the execution environment trusts)

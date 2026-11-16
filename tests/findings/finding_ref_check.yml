@@ -1,0 +1,18 @@
+---
+# tests/disk/run_disk_report_test.sh (1.67.0 part C): roles/finding_ref on its own - the finding a fix job names, read back
+# from the report job's site_findings artifact (a stand-in AAP serves the artifact the disk report job really made).
+- name: A fix job's first step - the finding, by reference
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: The finding (roles/finding_ref)
+      ansible.builtin.include_role:
+        name: finding_ref
+        apply:
+          run_once: true
+      vars:
+        finding_ref_kinds: "{{ kinds | default([]) }}"
+
+    - name: What the fix would read
+      ansible.builtin.debug:
+        msg: "FIX READS mount={{ finding.data.mount }} pct={{ finding.data.pct }} kind={{ finding.kind }} host={{ finding.host }}"

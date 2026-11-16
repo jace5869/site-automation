@@ -59,3 +59,9 @@ patch_age_history_runs: 50               # how many earlier runs to read (at mos
 cert_timeline: true                      # false = the reports as before 1.64.0
 cert_timeline_days: 120                  # how far ahead the timeline and its sheet look (14 or more)
 cert_timeline_groups: []                 # inventory groups, in order, a row each: a host goes in the first one it is in, else Other; [] = its first group
+
+# 1.67.0 (the site portal, docs/SITE_PORTAL.md "From a finding to a fix"): every report job of the checks keeps its
+# findings as the job artifact site_findings - a stable id each (<kind>:<host>:<key>) and the numbers a fix needs - so the
+# portal's fix jobs can read a finding back by reference. false = not kept (the portal's buttons then cannot work).
+site_findings_artifact: true
+site_findings_max_per_kind: 50          # per host and kind, the worst first; how many more there were: site_findings_capped

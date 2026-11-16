@@ -199,6 +199,7 @@ credential ([TENABLE.md](TENABLE.md#step-3-the-job-template)).
 | ServiceNow - ticket insights | `playbooks/servicenow_insights.yml` | Report | [SERVICENOW_INSIGHTS.md](SERVICENOW_INSIGHTS.md#step-2-the-job-template) |
 | AAP - report email question | `playbooks/aap_email_question.yml` | Setup or test | [EMAIL_REPORTS.md](EMAIL_REPORTS.md#also-email-the-report-to-asked-at-launch) |
 | AAP - set execution environment | `playbooks/aap_ee.yml` | Setup or test | [SETUP_AAP.md](SETUP_AAP.md#aap---set-execution-environment), [EXECUTION_ENVIRONMENT.md](EXECUTION_ENVIRONMENT.md#step-3-use-it) |
+| AAP - set up portal actions | `playbooks/aap_portal_setup.yml` | Setup or test (Check first) | [SITE_PORTAL.md](SITE_PORTAL.md#setting-it-up-in-aap), step 102 |
 | AAP - health check | `playbooks/aap_health_check.yml` | Report | [AAP_HEALTH_CHECK.md](AAP_HEALTH_CHECK.md#set-it-up-in-aap) |
 | AAP - template variables audit | `playbooks/aap_template_audit.yml` | Report | [TEMPLATE_AUDIT.md](TEMPLATE_AUDIT.md#set-it-up-in-aap) |
 | Report website - copy | `playbooks/report_web_copy.yml` | Watch | [WEB_REPORTS.md](WEB_REPORTS.md#the-copy-job-report-templates-in-any-execution-environment) |

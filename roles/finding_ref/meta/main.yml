@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: finding_ref
+  description: The finding a site portal fix job names, read back from the report job that found it (read only), checked before anything is touched.
+  license: MIT
+  min_ansible_version: "2.14"
+dependencies: []

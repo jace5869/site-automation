@@ -195,6 +195,32 @@
   ansible.builtin.include_tasks: scorecard.yml
   when: _ci_mode != 'import'
 
+# 1.67.0 part C: the findings with stable ids for the site portal's buttons (plugins/filter/finding_filters.py) - a host
+# whose asset this import creates (it waits for the approval), and each rule fixed on the host, still Open (the scorecard)
+- name: Import checklists | the findings for the site portal (the job artifact site_findings)
+  ansible.builtin.set_fact:
+    _ci_sf: >-
+      {{ (_ci.plan | default([]) | selectattr('kind', 'equalto', 'create')
+          | map('combine', {'why': 'its asset waits for the approval of this import'}) | list)
+         | ckl_findings_artifact(_ci_fixed_dicts, site_findings_max_per_kind | default(50) | int) }}
+  vars:
+    _ci_fixed_dicts: >-
+      {%- set out = [] -%}
+      {%- for r in _sc.fixed_rows | default([]) -%}
+      {%-   set _ = out.append({'host': r[0], 'collection': r[1], 'rule': r[2], 'cat': r[3], 'title': r[4], 'asset': r[0]}) -%}
+      {%- endfor -%}
+      {{ out }}
+  when: site_findings_artifact | default(true) | bool
+
+- name: Import checklists | publish them (set_stats site_findings, site_findings_capped)
+  ansible.builtin.set_stats:
+    data:
+      site_findings: "{{ _ci_sf.hosts }}"
+      site_findings_capped: "{{ _ci_sf.capped }}"
+    per_host: false
+    aggregate: true
+  when: site_findings_artifact | default(true) | bool and _ci_sf.hosts | length > 0
+
 # the scorecard's tiles and sections first, then the import's report as it is (the scorecard alone: without it)
 - name: Import checklists | the report - the scorecard first, then the import's
   ansible.builtin.set_fact:
@@ -213,7 +239,16 @@
     name: site_email
   vars:
     _report: "{{ _sc_join.report }}"
-    _report_web: "{{ _sc_join.web }}"
+    # 1.67.0 part C (report_portal_url): the findings' buttons in a section of their own, on the website's copy
+    _report_web: >-
+      {{ _sc_join.web | combine({'sections': _sc_join.web.sections | default([]) + [_ci_more]}) if _ci_more else _sc_join.web }}
+    _ci_more: >-
+      {{ _ci_sf.hosts | default({}) | findings_actions_section(_ci_actions, report_portal_url | default(''),
+                                                              awx_job_id | default(tower_job_id | default('')) | string)
+         if report_portal_url | default('') | length > 0 else none }}
+    _ci_actions: >-
+      {{ portal_actions if portal_actions | default({}) | length > 0
+         else (lookup('ansible.builtin.file', role_path ~ '/../site_portal_stack/files/actions.yml') | from_yaml).actions | default({}, true) }}
     _report_xlsx: "{{ _sc_join.xlsx }}"
   when: _ci_mode != 'import'
 

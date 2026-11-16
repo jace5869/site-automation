@@ -118,6 +118,30 @@ function jobPage() {
     facts($("j-facts"), [["Job", v.id + (v.type === "workflow_job" ? " (workflow)" : "")], ["Action", v.action_title || v.action], ["Started by", v.requested_by],
                          ["Asked", when(v.requested_at_text)], ["On", v.limit], ["Values", vals],
                          ["Step of", v.via ? "workflow job " + v.via : ""], ["AAP", link]]);
+    // part C: what came of the fix (its portal_result) at the top, and the action ACT names next
+    if (v.result) {
+      const box = $("j-result");
+      const r = {true: ["ok", "\u2713", "Fixed"], false: ["bad", "\u2715", "Still there"]}[v.result.fixed] || ["muted", "\u2013", "Not checked"];
+      const c = el("span", "chip " + r[0]);
+      const m = el("span", "mark", r[1]);
+      m.setAttribute("aria-hidden", "true");
+      c.append(m, el("span", "", r[2]));
+      box.replaceChildren(c);
+      const parts = [];
+      if (v.result.before) parts.push("Before: " + v.result.before);
+      if (v.result.after) parts.push("After: " + v.result.after);
+      if (parts.length) box.append(el("span", "ba", parts.join(" \u2192 ")));
+      if (v.result.summary) box.append(el("p", "sub", v.result.summary));
+      box.className = "result " + r[0];
+      box.hidden = false;
+    }
+    if (v.next) {
+      const p = $("j-next");
+      const a = el("a", "btn", v.next.label);
+      a.href = v.next.url;
+      p.replaceChildren(el("span", "sub", "ACT suggests next: "), a);
+      p.hidden = false;
+    }
     if (v.steps) {
       const sec = $("j-steps");
       sec.hidden = false;

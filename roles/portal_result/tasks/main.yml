@@ -1,0 +1,29 @@
+---
+# What came of this fix, for the site portal's job page (defaults/main.yml says how to include it).
+- name: Result | what came of it
+  ansible.builtin.set_fact:
+    portal_result:
+      finding_id: "{{ portal_result_finding_id | string | truncate(200, true, '') }}"
+      action: "{{ portal_result_action | string | truncate(64, true, '') }}"
+      fixed: "{{ _fixed }}"
+      before: "{{ portal_result_before | string | truncate(300) }}"
+      after: "{{ portal_result_after | string | truncate(300) }}"
+      summary: "{{ portal_result_summary | string | truncate(300) }}"
+  vars:
+    # true / false / unknown - a word the job wrote, or a yes/no
+    _fixed: >-
+      {{ 'unknown' if portal_result_fixed | string | lower in ['unknown', 'none', '', 'not checked']
+         else ('true' if portal_result_fixed | bool else 'false') }}
+
+- name: Result | Fixed, Still there or Not checked
+  ansible.builtin.debug:
+    msg: >-
+      {{ portal_result.finding_id or 'the finding' }}: {{ {'true': 'Fixed', 'false': 'Still there', 'unknown': 'Not checked'}[portal_result.fixed] }}
+      {{- (' - before: ' ~ portal_result.before) if portal_result.before else '' }}{{ (', after: ' ~ portal_result.after) if portal_result.after else '' }}
+      {{- ('. ' ~ portal_result.summary) if portal_result.summary else '' }}
+
+- name: Result | as the job artifact portal_result (the portal's job page reads it)
+  ansible.builtin.set_stats:
+    data:
+      portal_result: "{{ portal_result }}"
+    per_host: false

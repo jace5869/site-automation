@@ -397,6 +397,23 @@ class Portal(object):
             hit = self.aap.ids.get(name, (None, "not looked up"))
         return hit
 
+    # -- not twice (part C): a run of the same action for the same finding that is still running
+    def running(self, name, sent):
+        """The launch record of a run of this action for this finding (finding_id) that AAP has not finished, or None.
+        Only for an action that takes a finding."""
+        fid = str((sent or {}).get("finding_id") or "")
+        if not fid or "finding_id" not in self.actions.get(name, {}).get("vars", {}):
+            return None
+        for r in reversed(self.log.read("launch")):
+            if r.get("action") != name or str((r.get("values") or {}).get("finding_id") or "") != fid:
+                continue
+            code, uj = self.aap.call("GET", "unified_jobs/?id=%d" % int(r["job_id"]))
+            rows = (uj.get("results") or []) if code == 200 else []
+            if rows and rows[0].get("status") not in DONE:
+                return dict(r, status=rows[0].get("status", ""))
+            return None                                       # the newest run of it is done (or gone): a new one may start
+        return None
+
     # -- an action
     def check(self, name, sent):
         a = self.actions[name]
@@ -424,6 +441,12 @@ class Portal(object):
                 self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "too many in an hour"})
                 return 429, {"error": "You started %d actions in the last hour (portal_launches_per_hour): wait a little." % len(mine)}
             self.recent[cn] = mine + [t]
+        busy = self.running(name, values)
+        if busy:
+            self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "running already: job %s" % busy["job_id"]})
+            return 409, {"error": "Not started: job %s is running this already for %s (started by %s) - follow it there."
+                                  % (busy["job_id"], values.get("finding_id", ""), busy.get("user", "")),
+                         "job_id": int(busy["job_id"]), "url": "%sjobs/%d" % (self.cfg.path, int(busy["job_id"]))}
         tid, off = self.state(name)
         if tid is None or off:
             self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "off: " + (off or "")})
@@ -514,18 +537,21 @@ class Portal(object):
                               "failed": bool(j.get("failed"))})
             view["steps"] = steps
             view["artifacts"] = {}
-            links = []
+            links, arts = [], []
             for s in steps:
                 if s["job"] and s["type"] == "job" and s["status"] in DONE:
                     code, jd = self.aap.call("GET", "jobs/%d/" % s["job"])
                     if code == 200:
                         links += links_in(jd.get("artifacts") or {})
+                        arts.append(jd.get("artifacts") or {})
             view["links"] = [{"label": k, "url": v} for k, v in links]
+            self.outcome(view, arts, rec or parent or {})
         elif kind == "job":
             code, jd = self.aap.call("GET", "jobs/%d/" % jid)
             art = jd.get("artifacts") or {} if code == 200 else {}
             view["artifacts"] = art
             view["links"] = [{"label": k, "url": v} for k, v in links_in(art)]
+            self.outcome(view, [art], rec or parent or {})
             code, ev = self.aap.call("GET", "jobs/%d/job_events/?order_by=-counter&page_size=%d" % (jid, self.cfg.events))
             lines = [clean(e.get("stdout")) for e in reversed(ev.get("results") or []) if e.get("stdout")] if code == 200 else []
             view["output"] = "\n".join(lines)[-200000:]
@@ -538,6 +564,26 @@ class Portal(object):
         else:                           # an approval step and the like: its status only
             view["artifacts"], view["links"] = {}, []
         return 200, view
+
+    def outcome(self, view, arts, rec):
+        """view["result"] - the fix's portal_result (the last step's that has one): Fixed, Still there, Not checked - and
+        view["next"] - the action ACT names (act_triage_finding.next_action), as a link to its confirm page, only when
+        it is a listed action whose kinds have this finding's kind."""
+        res = next((a.get("portal_result") for a in reversed(arts) if isinstance(a.get("portal_result"), dict)), None)
+        if res:
+            fixed = str(res.get("fixed", "unknown")).lower()
+            view["result"] = {"fixed": fixed if fixed in ("true", "false") else "unknown",
+                              "before": str(res.get("before") or "")[:300], "after": str(res.get("after") or "")[:300],
+                              "summary": str(res.get("summary") or "")[:300], "finding_id": str(res.get("finding_id") or "")[:200]}
+        nxt = next((str((a.get("act_triage_finding") or {}).get("next_action") or "") for a in reversed(arts)
+                    if isinstance(a.get("act_triage_finding"), dict)), "")
+        vals = rec.get("values") or {}
+        fid = str(vals.get("finding_id") or "")
+        a = self.actions.get(nxt)
+        if a and fid and fid.split(":", 1)[0] in (a.get("kinds") or []) and vals.get("report_job") and vals.get("target"):
+            q = urllib.parse.urlencode([("finding_id", fid), ("report_job", vals["report_job"]), ("target", vals["target"])])
+            view["next"] = {"action": nxt, "label": a.get("button") or a["title"], "title": a["title"],
+                            "url": "%sactions/%s?%s" % (self.cfg.path, nxt, q)}
 
     def ui_link(self, kind, jid):
         base = (self.cfg.aap_ui or "").rstrip("/")
@@ -688,6 +734,7 @@ def action_page(cfg, portal, cn, name, query):
         fields.append('<div class="field%s"><label for="f-%s">%s</label>%s<p class="why" id="%s">%s</p></div>' % (
             " bad" if p else "", esc(vn), esc(var["label"]), ctl, pid, esc(("%s %s" % (var["label"], p)) if p else "")))
     general = problems.get("", "")
+    busy = portal.running(name, values) if allowed else None
     status = []
     if not allowed:
         status.append('<p class="note bad" role="alert"><b>Not for you.</b> You are not on the list of people who may run this action.</p>')
@@ -695,13 +742,17 @@ def action_page(cfg, portal, cn, name, query):
         status.append('<p class="note bad" role="alert"><b>Off.</b> %s</p>' % esc(off))
     if general:
         status.append('<p class="note bad" role="alert"><b>Not started.</b> %s</p>' % esc(general))
+    if busy:
+        status.append('<p class="note bad" role="alert"><b>Running already.</b> Job <a href="%sjobs/%d">%d</a> (%s), started by %s, '
+                      'is doing this for this finding now. Follow it there; Run is off until it ends.</p>'
+                      % (cfg.path, int(busy["job_id"]), int(busy["job_id"]), esc(busy.get("status", "")), esc(busy.get("user", ""))))
     target = values.get(a["limit_from"]) if a["limit_from"] else ""
     facts = [("Runs in AAP", "%s %s" % ("Workflow" if a["aap"]["type"] == "workflow" else "Job template", a["aap"]["name"])),
              ("On", target or ("the hosts the %s chooses" % ("workflow" if a["aap"]["type"] == "workflow" else "template"))),
              ("Approval", "Yes - an approver decides before it goes on" if a["approval"] else "No"),
              ("Started as", cn)]
     dl = "".join("<div><dt>%s</dt><dd>%s</dd></div>" % (esc(k), esc(v)) for k, v in facts)
-    can = allowed and not off
+    can = allowed and not off and not busy
     body = ('<p class="crumb"><a href="%s">Actions</a></p><h1>%s</h1>%s%s<dl class="facts">%s</dl>'
             '<form id="run" data-action="%s" novalidate>%s<div class="go"><button type="submit" id="go"%s>Run</button>'
             '<span class="state" id="state" aria-live="polite"></span></div></form>'
@@ -713,7 +764,7 @@ def action_page(cfg, portal, cn, name, query):
 def job_page(cfg, portal, cn, jid, via):
     body = ('<p class="crumb"><a href="%s">Actions</a></p><div id="job" data-job="%d"%s>'
             '<h1 id="j-title">Job %d</h1><p class="status" id="j-status" aria-live="polite">Asking AAP…</p>'
-            '<dl class="facts" id="j-facts"></dl><section id="j-links" hidden><h2>Results</h2><ul></ul></section><section id="j-steps" hidden><h2>Steps</h2><table class="list"><thead><tr>'
+            '<div class="result" id="j-result" hidden></div><p class="next" id="j-next" hidden></p><dl class="facts" id="j-facts"></dl><section id="j-links" hidden><h2>Results</h2><ul></ul></section><section id="j-steps" hidden><h2>Steps</h2><table class="list"><thead><tr>'
             '<th>Step</th><th>Status</th><th class="num">Job</th></tr></thead><tbody></tbody></table></section>'
             '<section id="j-hosts" hidden><h2>Hosts</h2><table class="list"><thead><tr><th>Host</th><th class="num">OK</th>'
             '<th class="num">Changed</th><th class="num">Failed</th><th class="num">Unreachable</th><th class="num">Skipped</th>'

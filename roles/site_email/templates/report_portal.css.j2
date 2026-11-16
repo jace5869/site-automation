@@ -1,5 +1,5 @@
 {#- 1.67.0: the site portal's links (report_portal_url), only on a page that has one: a row's link (kind link: Ask ACT,
-    Recheck) and a section's button (Import checklists). Each opens the portal's confirm page in a new tab; nothing
+    Recheck), a finding's buttons (kind buttons: two, the rest under More; part C) and a section's button (Import checklists). Each opens the portal's confirm page in a new tab; nothing
     runs until the person presses Run there. The look's own .btn and tokens, so light and dark follow. -#}
 a.btn{text-decoration:none}
 a.btn.pl .ic{width:12px;height:12px}
@@ -9,3 +9,13 @@ td.k-link a.btn{padding:3px 9px;font-size:12.5px;line-height:1.25;white-space:no
 a.hl{color:var(--accent);text-decoration:underline;text-underline-offset:2px}
 a.hl .ic{width:11px;height:11px;margin-left:4px;vertical-align:-1px}
 @media (max-width:900px){td.k-link a.btn{padding:3px 7px}td.k-link a.btn .ic{display:none}table td.k-link,table th.k-link{padding-left:6px;padding-right:6px}}
+th.k-buttons{white-space:nowrap}
+td.k-buttons{vertical-align:middle;width:1%}
+td.k-buttons .bts{display:flex;flex-wrap:nowrap;gap:4px;align-items:flex-start}
+@media (max-width:1100px){td.k-buttons .bts{flex-wrap:wrap}}
+td.k-buttons a.btn,td.k-buttons summary.btn{padding:3px 9px;font-size:12.5px;line-height:1.25;white-space:nowrap}
+td.k-buttons details.more{position:relative}
+td.k-buttons details.more summary{list-style:none;cursor:pointer}
+td.k-buttons details.more summary::-webkit-details-marker{display:none}
+td.k-buttons details.more .menu{position:absolute;right:0;z-index:5;display:flex;flex-direction:column;gap:4px;padding:6px;margin-top:4px;background:var(--card-solid,var(--card,var(--bg)));border:1px solid var(--edge,var(--line));border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.18)}
+@media print{td.k-buttons{display:none}}

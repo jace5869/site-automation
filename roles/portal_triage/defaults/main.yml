@@ -1,7 +1,8 @@
 ---
 # ---- ACT - triage finding (1.67.0, workflow 44) -----------------------------------------------------------------
-# One finding of an earlier health or fapolicyd job (the site portal's "Ask ACT"): read from that job's site_health
-# artifact, more evidence read on the host (read only), ACT's answer in evidence mode (ACT runs no command), a report
+# One finding of an earlier health or fapolicyd job (the site portal's "Ask ACT"): read back from that job's
+# site_findings artifact (roles/finding_ref), more evidence read on the host (read only), ACT's answer in evidence mode
+# (ACT runs no command), a report
 # and the job artifact act_triage_finding. Never applies a fix. docs/SITE_PORTAL.md, "AAP workflows".
 
 # Which findings this template looks at: linux (fapolicyd findings, the Linux machine credential) or windows (event-log

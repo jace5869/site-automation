@@ -1,0 +1,43 @@
+---
+# The finding this job is to fix, read back from the report job that found it (defaults/main.yml says how to include it).
+- name: Finding | the reference (report_job, finding_id, target)
+  ansible.builtin.assert:
+    that:
+      - finding_ref_job | string is match('^[0-9]{1,12}$')
+      - finding_ref_id | string | length > 0
+      - finding_ref_host | string | length > 0
+    fail_msg: >-
+      This job fixes one finding of a report: it needs report_job (the report job's number), finding_id and target - the
+      site portal sends them from the report's button. Got report_job={{ finding_ref_job | string | truncate(20) }},
+      finding_id={{ finding_ref_id | string | truncate(80) }}, target={{ finding_ref_host | string | truncate(80) }}.
+    quiet: true
+
+- name: Finding | read it back from the report job {{ finding_ref_job }}
+  site_finding_ref:
+    job_id: "{{ finding_ref_job | int }}"
+    finding_id: "{{ finding_ref_id }}"
+    host: "{{ finding_ref_host }}"
+    kinds: "{{ finding_ref_kinds }}"
+    ca_path: "{{ finding_ref_aap_ca_path }}"
+  register: _fref
+  check_mode: false                      # read only: a dry run needs it too
+
+- name: Finding | not this job's to fix - nothing was touched
+  ansible.builtin.fail:
+    msg: "The finding to fix could not be used, so nothing was changed: {{ _fref.why }}."
+  when: not _fref.ok | bool
+
+- name: Finding | the finding
+  ansible.builtin.set_fact:
+    finding: "{{ _fref.finding }}"
+    finding_job: "{{ _fref.job }}"
+
+- name: Finding | {{ finding.id }}
+  ansible.builtin.debug:
+    msg: "{{ finding.severity | upper }} on {{ finding.host }}: {{ finding.title }} (reported by AAP job {{ finding_job.id }}{{ (', ' ~ finding_job.name) if finding_job.name else '' }})"
+
+- name: Finding | as the job artifact finding_ref
+  ansible.builtin.set_stats:
+    data:
+      finding_ref: {id: "{{ finding.id }}", kind: "{{ finding.kind }}", host: "{{ finding.host }}", job: "{{ finding_job.id }}"}
+    per_host: false

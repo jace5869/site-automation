@@ -1,7 +1,8 @@
 ---
 # ACT - TRIAGE FINDING (1.67.0, workflow 44; the site portal's "Ask ACT"). One finding of an earlier health or fapolicyd
 # job - named by a reference, never by its text: report_job (that AAP job's id), the host (target, also the Limit) and
-# finding_id (fapolicyd:denials, eventlog:disk-errors ...). The finding is read from that job's site_health artifact,
+# finding_id (<kind>:<host>:<key> - fapolicyd, fapolicyd_deny or eventlog). The finding is read back from that job's
+# site_findings artifact (roles/finding_ref: this host's, of those kinds, or the job stops),
 # more is read on the host (read only: the finding's own look command, fapolicyd's state and denials, or the last
 # day's critical and error events), and ACT explains it in evidence mode - likely cause, fix, confidence - on the AAP
 # side: it runs no command and changes nothing. ACT's answer: the job artifact act_triage_finding, the report (emailed
@@ -11,7 +12,7 @@
 # model key" credential and a "Red Hat Ansible Automation Platform" credential (to read the reporting job).
 # docs/SITE_PORTAL.md, "AAP workflows".
 #   ansible-playbook playbooks/act_triage_finding.yml -l web01.example.mil -e target=web01.example.mil \
-#     -e report_job=4711 -e finding_id=fapolicyd:denials
+#     -e report_job=4711 -e finding_id=fapolicyd:web01.example.mil:denials
 - name: Target check (stops with a clear message when target matches no host)
   hosts: all
   gather_facts: false

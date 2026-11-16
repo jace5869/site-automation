@@ -1,0 +1,92 @@
+---
+# The job templates and workflows the site portal's actions launch (1.67.0 part C), as the job "AAP - set up portal
+# actions" (playbooks/aap_portal_setup.yml) makes or brings them up to date in AAP. It never deletes one; one changed by
+# hand since it wrote it is listed and left as it is (portal_setup_overwrite: true writes it again). docs/SITE_PORTAL.md,
+# "Setting it up in AAP"; each workflow's steps: docs/WORKFLOWS_AND_SCHEDULES.md.
+#
+# templates: [{name, playbook, credentials, prompts, extra_vars, inventory, become, description}]
+#   credentials  kinds: portal_setup_credentials names the AAP credential of each (machine, machine_windows, aap,
+#                act_model_key, stigman_api, stigman_api_writer, windows_share ...); a kind not named there skips the template
+#   prompts      {variables: true, limit: true} - Prompt on launch (the portal sends its values and the Limit)
+#   inventory    a key of portal_setup_inventories (default: default)
+# workflows: [{number, name, description, prompts, extra_vars, nodes}]
+#   nodes        in order: {id, template: <a job template's name>} or {id, approval: {name, timeout (seconds), description}},
+#                each with success / failure / always: [node ids] (a node in two lists has two parents;
+#                all_parents_must_converge: true to wait for both)
+# Each developer's workflows in a block of their own, by number.
+
+templates:
+  # ---- 40, 44, 45 (1.67.0 parts A and B)
+  - name: ACT - triage finding
+    playbook: playbooks/act_triage_finding.yml
+    credentials: [machine, act_model_key, aap]
+    prompts: {variables: true, limit: true}
+    description: Workflow 44's Linux step (fapolicyd findings), read only
+
+  - name: Windows ACT - triage finding
+    playbook: playbooks/act_triage_finding.yml
+    credentials: [machine_windows, act_model_key, aap]
+    prompts: {variables: true, limit: true}
+    inventory: windows
+    extra_vars: {portal_triage_os: windows}
+    description: Workflow 44's Windows step (event-log findings), read only
+
+  - name: STIG recheck
+    playbook: playbooks/stig_recheck.yml
+    credentials: [machine, stigman_api]
+    prompts: {variables: true, limit: true}
+    become: true
+
+  - name: Windows STIG recheck
+    playbook: playbooks/win_stig_recheck.yml
+    credentials: [machine_windows, stigman_api]
+    prompts: {variables: true, limit: true}
+    inventory: windows
+
+  - name: STIG Manager - import checklists - check
+    playbook: playbooks/stigman_ckl_import.yml
+    credentials: [stigman_api, windows_share]
+    prompts: {variables: true}
+    extra_vars: {stigman_ckl_import_workflow: true}
+    description: Workflow 40's check (it fails on purpose when something waits for the approval)
+
+  - name: STIG Manager - update
+    playbook: playbooks/stigman_update.yml
+    credentials: [stigman_api_writer]
+    prompts: {variables: true}
+    description: Workflows 37 and 40, after the approval
+
+workflows:
+  # ---- 40, 44, 45 (1.67.0 parts A and B)
+  - number: 40
+    name: Checklists imported into STIG Manager
+    description: Checklists written into STIG Manager after a person approves them
+    prompts: {variables: true}
+    nodes:
+      - {id: check, template: "STIG Manager - import checklists - check", failure: [approve]}
+      - id: approve
+        approval:
+          name: Write the checklists' reviews (and the new assets) to STIG Manager?
+          timeout: 28800
+          description: "Open the check's report: Approve writes these reviews to STIG Manager."
+        success: [update]
+      - {id: update, template: "STIG Manager - update"}
+
+  - number: 44
+    name: ACT - triage finding
+    description: The site portal's Ask ACT - one finding explained by ACT, read only
+    prompts: {variables: true, limit: true}
+    nodes:
+      - {id: linux, template: "ACT - triage finding", always: [windows]}
+      - {id: windows, template: "Windows ACT - triage finding"}
+
+  - number: 45
+    name: STIG - recheck one host
+    description: The site portal's Recheck - the rules STIG Manager has Open, checked again on one host
+    prompts: {variables: true, limit: true}
+    nodes:
+      - {id: linux, template: "STIG recheck", always: [windows]}
+      - {id: windows, template: "Windows STIG recheck"}
+
+  # ---- 46-48: nuc-dev-2 (STIG fixes) - added in their own block
+  # ---- 49-51: nuc-dev-3 (Clean up, Restart, Allow this) - added in their own block

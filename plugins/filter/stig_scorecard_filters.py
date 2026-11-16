@@ -584,7 +584,7 @@ def stig_scorecard(read, point, runs, opts=None):
     lines += notes_col
     lines += [str(x) for x in o.get("history") or [] if x]        # where the earlier points came from, in the job output too
     return {"ok": True, "error": "", "title": title, "status": status, "subtitle": subtitle, "tiles": tiles, "sections": sections, "web": web,
-            "notes": notes, "xlsx": xlsx, "lines": lines,
+            "notes": notes, "xlsx": xlsx, "lines": lines, "fixed_rows": fixed,      # 1.67.0 part C: the site_findings artifact
             "counts": dict(tot, collections=len(good), not_read=len(bad), fixed=len(fixed), weekly_points=n_points,
                            compared=bool(base), rules=len(ranked))}
 

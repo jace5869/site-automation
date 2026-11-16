@@ -505,6 +505,58 @@ class Live(unittest.TestCase):
             self.assertEqual(self.post("/api/actions/stig_recheck", body, origin=origin)[0], 403, origin)
         self.portal.recent.pop("DOE.JANE.Q.1234567890", None)
 
+    def test_18_not_twice(self):
+        """part C: a run of the same action for the same finding still running - the confirm page links to it, Run is off,
+        a second launch is refused (409); once it is done, a new one may start."""
+        self.portal.recent.pop("DOE.JANE.Q.1234567890", None)
+        vals = {"target": "web01.example.mil", "report_job": "907", "finding_id": "fapolicyd:web01.example.mil:denials"}
+        code, r = self.post("/api/actions/act_triage", {"vars": vals})
+        self.assertEqual(code, 201, r)
+        first = r["job_id"]
+        q = "/actions/act_triage?target=web01.example.mil&report_job=907&finding_id=fapolicyd%3Aweb01.example.mil%3Adenials"
+        t = self.req(q)[1].decode()
+        self.assertIn("Running already.", t)
+        self.assertIn('href="/portal/jobs/%d"' % first, t)
+        self.assertIn(" disabled>Run", t)
+        code, r = self.post("/api/actions/act_triage", {"vars": vals})
+        self.assertEqual((code, r.get("job_id")), (409, first))
+        self.assertIn("is running this already", r["error"])
+        other = dict(vals, finding_id="fapolicyd:web01.example.mil:other")
+        self.assertEqual(self.post("/api/actions/act_triage", {"vars": other})[0], 201, "another finding: not the same run")
+        end = time.time() + 20
+        while time.time() < end and not json.loads(self.req("/api/jobs/%d" % first)[1]).get("done"):
+            time.sleep(0.3)
+        self.assertNotIn("Running already.", self.req(q)[1].decode())
+        self.assertEqual(self.post("/api/actions/act_triage", {"vars": vals})[0], 201, "done: a new run may start")
+        self.portal.recent.pop("DOE.JANE.Q.1234567890", None)
+
+    def test_19_the_result_and_the_next_action(self):
+        """part C: the fix's portal_result at the top of its page; the action ACT names next, only when it is listed and
+        its kinds have this finding's kind."""
+        self.portal.actions["act_next"] = dict(self.portal.actions["stig_recheck"], name="act_next", title="Allow this",
+                                               button="Allow this", kinds=["fapolicyd"])
+        try:
+            self.portal.recent.pop("DOE.JANE.Q.1234567890", None)
+            vals = {"target": "web01.example.mil", "report_job": "907", "finding_id": "fapolicyd:web01.example.mil:r19"}
+            jid = self.post("/api/actions/act_triage", {"vars": vals})[1]["job_id"]
+            # the stand-in AAP takes next_action from the launch's extra vars: put it there as ACT would in its artifact
+            fake_aap.STATE["jobs"][[n for n in fake_aap.STATE["jobs"][jid]["nodes"]][-1]]["extra_vars"]["next_action"] = "act_next"
+            end, v = time.time() + 20, {}
+            while time.time() < end:
+                v = json.loads(self.req("/api/jobs/%d" % jid)[1])
+                if v.get("done"):
+                    break
+                time.sleep(0.3)
+            self.assertEqual(v["result"], {"fixed": "true", "before": "93% full", "after": "71% full", "summary": "cleaned /var/tmp",
+                                           "finding_id": "fapolicyd:web01.example.mil:r19"})
+            self.assertEqual(v["next"]["url"], "/portal/actions/act_next?finding_id=fapolicyd%3Aweb01.example.mil%3Ar19&report_job=907"
+                                               "&target=web01.example.mil")
+            self.portal.actions["act_next"]["kinds"] = ["disk_full"]          # not this finding's kind: no button
+            self.assertNotIn("next", json.loads(self.req("/api/jobs/%d" % jid)[1]))
+        finally:
+            self.portal.actions.pop("act_next", None)
+            self.portal.recent.pop("DOE.JANE.Q.1234567890", None)
+
     def test_11_log_file(self):
         path = os.path.join(self.cfg.data, "portal-log.jsonl")
         with open(path) as fh:

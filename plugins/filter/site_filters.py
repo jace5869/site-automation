@@ -2187,10 +2187,11 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
     findings are not that - the STIG recheck, report only, whose open rules are no finding of the job's: the title
     is the headline (not "no findings"), the status the worse of the two, and with summary_only its boxes are the
     only ones (no Healthy / With findings boxes, no list of healthy hosts). portal (1.67.0, report_portal_url): {url,
-    job} - a fapolicyd or event-log finding gets an "Ask ACT" link to the site portal (workflow 44, by reference: this
-    job, the host, the finding's id); without it the report is as before."""
+    job, actions, os} (part C: actions = the site portal's actions, os = {host: linux | windows}) - each finding gets the
+    buttons of the actions whose kinds match it (plugins/filter/finding_filters.py: Ask ACT, Clean up, Restart ...), by
+    reference: this job, the host, the finding's id. Without it the report is as before."""
     by_host = by_host or {}
-    ask = _portal_asker(portal)
+    ask = _portal_buttons(portal)
     hosts = sorted(by_host)
     missing = sorted(missing or [])
     single = len(hosts) + len(missing) <= 1
@@ -2210,7 +2211,7 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
             row = [sev.upper(), f.get("check", ""), f.get("summary", ""), f.get("hint", "")]
             rows.append((row if single else [h] + row) + ([ask(h, f)] if ask else []))
     rows.sort(key=lambda r: (0 if "CRITICAL" in r[:2] else 2 if "LOW" in r[:2] else 1, r[0]))
-    links = [r.pop() for r in rows] if ask else []
+    links = [r.pop() for r in rows] if ask else []          # each row's buttons: [{label, url}]
     n = len(rows)
     if n:
         t = "%s: %d finding(s)" % (title, n) + ("" if single else " on %d of %d host(s)" % (len(bad), len(hosts)))
@@ -2256,7 +2257,7 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
                          "columns": ([] if single else ["Host"]) + ["Severity", "Check", "Finding", "Look further"],
                          "rows": rows})
         if ask:
-            portal_module().add_link_column(sections[-1], links, "Ask ACT", header="ACT")
+            finding_module().add_buttons_column(sections[-1], links)
         if low:
             sections[-1]["row_status"] = ["low" if "LOW" in r[:2] else "" for r in rows]
     if missing:
@@ -2292,21 +2293,36 @@ def portal_module():
     return _PORTAL[0]
 
 
-def _portal_asker(portal):
-    """(host, finding) -> the site portal's "Ask ACT" link for a fapolicyd or event-log finding ('' for another);
-    None without report_portal_url or outside AAP (no job to point at)."""
-    p = portal or {}
-    url, job = str(p.get("url") or "").strip(), str(p.get("job") or "").strip()
-    if not url or not job.isdigit():
-        return None
-    _pf = portal_module()
+_FINDING = []
 
-    def ask(host, f):
-        fid = str(f.get("id") or "")
-        if _pf.portal_finding_kind(fid) != str(f.get("check") or ""):
-            return ""
-        return _pf.portal_link(url, "act_triage", {"target": host, "report_job": job, "finding_id": fid})
-    return ask
+
+def finding_module():
+    """plugins/filter/finding_filters.py, loaded by its path (see portal_module)."""
+    if not _FINDING:
+        import importlib.util
+        import os
+        spec = importlib.util.spec_from_file_location("finding_filters_for_reports",
+                                                      os.path.join(os.path.dirname(os.path.abspath(__file__)), "finding_filters.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _FINDING.append(mod)
+    return _FINDING[0]
+
+
+def _portal_buttons(portal):
+    """(host, finding) -> the buttons of the site portal's actions whose kinds match the finding ([] for none); None
+    without report_portal_url, outside AAP (no job to point at) or without actions."""
+    p = portal or {}
+    url, job, actions = str(p.get("url") or "").strip(), str(p.get("job") or "").strip(), p.get("actions") or {}
+    if not url or not job.isdigit() or not actions:
+        return None
+    ff = finding_module()
+    oses = p.get("os") or {}
+
+    def buttons(host, f):          # the finding itself (its first entry): a fapolicyd summary's own denials are not its row's
+        es = ff.health_entries(f, host, oses.get(host, "linux")) if isinstance(f, dict) and f.get("id") else []
+        return ff.finding_buttons(es[0], actions, url, job) if es else []
+    return buttons
 
 
 def _web_value(value, lower=False):
