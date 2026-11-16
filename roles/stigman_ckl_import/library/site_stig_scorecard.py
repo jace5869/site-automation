@@ -107,16 +107,28 @@ class Client(object):
         return self._open(req, _timeout)
 
 
+
+def _coll_hits(cols, w, name_of, id_of):
+    """The collections an entry names: its exact name (any case) or id first; only when none is exact, a pattern - * and ?
+    only, so a name with [ ] (\"[PROD] Servers\") is a name, never a character class."""
+    import fnmatch
+    w = str(w).strip()
+    exact = [c for c in cols if str(name_of(c) or "").lower() == w.lower() or str(id_of(c)) == w]
+    if exact or not any(ch in w for ch in "*?"):
+        return exact
+    pat = w.lower().replace("[", "[[]")
+    return [c for c in cols if fnmatch.fnmatchcase(str(name_of(c) or "").lower(), pat)]
+
+
 def wanted(cols, names):
     """(the collections to read, the names not found): names are collection names or ids, any case, * and ? allowed;
     [] or ['*'] = all. An entry starting with ! leaves that collection out (1.66.1): ['*', '!48', '!Archived*'] = all but those."""
-    import fnmatch
     names = [str(n).strip() for n in names or [] if str(n).strip()]
     skip = [n[1:].strip() for n in names if n.startswith("!")]
     keep = [n for n in names if not n.startswith("!")]
 
     def hits(n):
-        return [c for c in cols if fnmatch.fnmatchcase(str(c.get("name", "")).lower(), n.lower()) or str(c.get("collectionId")) == n]
+        return _coll_hits(cols, n, lambda c: c.get("name", ""), lambda c: c.get("collectionId"))
     missing = []
     if not keep or "*" in keep:
         out = list(cols)
@@ -124,14 +136,14 @@ def wanted(cols, names):
         out = []
         for n in keep:
             h = hits(n)
-            if not h and not any(ch in n for ch in "*?["):
+            if not h:                           # a typo or a pattern that matches nothing: said
                 missing.append(n)
             for c in h:
                 if c not in out:
                     out.append(c)
     for n in skip:
         h = hits(n)
-        if not h and not any(ch in n for ch in "*?["):
+        if not h:
             missing.append("!" + n)
         out = [c for c in out if c not in h]
     return out, missing
