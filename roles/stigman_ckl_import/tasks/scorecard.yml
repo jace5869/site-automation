@@ -18,6 +18,7 @@
     timeout: "{{ check_stig_stigman_timeout | default(60) | int }}"
     hosts: "{{ stigman_scorecard_hosts | bool }}"
     hosts_timeout: "{{ stigman_scorecard_hosts_timeout | int }}"
+    rules_timeout: "{{ stigman_scorecard_rules_timeout | int }}"
     collections: >-
       {{ (stigman_scorecard_collections.split(',') | map('trim') | select | list) if stigman_scorecard_collections is string
          else stigman_scorecard_collections }}

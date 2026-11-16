@@ -361,6 +361,66 @@ first and each such play has the suffix), `tests/site_exclude/run_site_exclude_t
 Windows job - a host left out is never tried; the report's line; a Limit without localhost; nothing set),
 `tests/test_limit_localhost.py` (the new play counted) - ansible-core 2.22 and 2.16.
 
+## 1.66.2 — 2026-11-16
+
+**Updating without scripts:** paste `site-automation-1.66.2-changed-since-1.66.0.zip` (or `-changed-since-1.66.1`) as it
+is. It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and `poam/poam.csv`.
+**Nothing to set up.** New settings have defaults.
+
+**The STIG scorecard counts every collection, however large.** The counts per collection (CAT I, II and III, the assets)
+now come from STIG Manager's own metrics (`GET /collections/ID/metrics/summary/collection`): what its dashboard shows,
+counted by STIG Manager already, fast on a collection of hundreds of assets. Checked against a real STIG Manager: the same
+numbers as the slow read.
+
+- The rules (which rule is open on how many hosts: *Top rules*, *Fixed on the host*, the week's change rule by rule) are
+  a second read per collection, with its own limit `stigman_scorecard_rules_timeout` (180 s). Too slow: the collection
+  keeps its counts, its row says *Counts only*, and *How the scorecard counts* names it.
+- The hosts of each rule are a third read, optional as before (`stigman_scorecard_hosts`, `stigman_scorecard_hosts_timeout`).
+- The job output's line per collection: name, seconds, where the counts came from (metrics or findings), rules read or
+  not, hosts listed or not.
+
+**The title is the compliance sentence.** The checklist import's state (`Checklist import: 1363 review(s) to write ...`)
+is the line under it, no longer added to the title.
+
+**Leaving out a collection the client cannot read** (`stigman_ckl_import_collections: ['*', '!75']` when 75 is not
+there) no longer stops the import: a warning names it, the rest runs. A collection to search that is not there still
+stops it.
+
+## 1.66.1 — 2026-11-16
+
+**Updating without scripts:** paste `site-automation-1.66.1-changed-since-1.66.0.zip` as it is (from an older version,
+its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`. **Nothing to set up.** Fixes only; new settings have defaults.
+
+**The STIG scorecard reads a large STIG Manager.** It timed out (`TimeoutError: The read operation timed out`) on
+collections of hundreds of assets: the one request asked for every open rule *with the hosts it is open on*.
+
+- It now reads the **counts first**, without the hosts: CAT I, II and III per collection, the tiles, the trend, the
+  week's change.
+- Then, per collection, the hosts of each rule (*Top rules across hosts*, *Fixed on the host*), with their own limit:
+  `stigman_scorecard_hosts_timeout` (60 s). Slower: that collection keeps its counts, its hosts are not listed, and
+  *How the scorecard counts* names it. `stigman_scorecard_hosts: false` skips the host lists altogether.
+- The job output has one line per collection: its name, seconds, hosts listed or not, and any error.
+
+**Leave collections out: `!`.** `stigman_scorecard_collections` and `stigman_ckl_import_collections` take `!name` or
+`!id`: `['*', '!48', '!Archived*']` is every collection the client reads but those. The scorecard's list also takes `*` and
+`?` now; a name is matched exactly first, so a name with `[ ]` (`[PROD] Servers`) is that name, not a pattern. The
+import's staging collection is always searched. A `!` naming no collection is said (the scorecard) or
+stops the job (the import).
+
+**No crash on a slow or dropped STIG Manager answer.** The STIG Manager clients (scorecard, checklist import, STIG
+Manager - update, the STIG drift report's reads and attachments) turn a timeout or a dropped connection into their own
+error naming `check_stig_stigman_timeout`; one slow collection is listed, the others read.
+
+**No crash on a certificate that is not plain PEM** in *VM - health report*'s single sign-on step
+(`Unable to load PEM file ... InvalidHeader`). A certificate is read from PEM, PEM with Windows or escaped line ends, or
+its bare base64 body; one that still cannot be read is a note, not a crash. Remove `vm_sso: false` if you set it.
+
+**Tests:** `tests/test_stigman_timeouts.py`, `tests/test_collection_exclusions.py`, `tests/test_sso_cert_forms.py` (new,
+in CI); the scorecard's counts-first read against a stand-in STIG Manager slow only on the host lists. Not run against a
+real STIG Manager or vCenter. SA_VERSION 1.66.1; the PDFs at 1.66.1.
+
+
 ## 1.66.0 — 2026-11-14
 
 **Updating without scripts:** paste `site-automation-1.66.0-changed-since-1.61.0.zip` as it is (from an older version,

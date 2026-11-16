@@ -191,6 +191,21 @@ def findings_of(rows):
     return rules, cats
 
 
+def metric_cats(m):
+    """STIG Manager's metrics summary -> {1: high, 2: medium, 3: low} (the open findings by category), or None when the
+    answer has no findings counts (an older STIG Manager, or no grant for the metrics)."""
+    if not isinstance(m, dict):
+        return None
+    mm = m.get("metrics") if isinstance(m.get("metrics"), dict) else m
+    f = mm.get("findings") if isinstance(mm, dict) else None
+    if not isinstance(f, dict) or not all(k in f for k in ("high", "medium", "low")):
+        return None
+    try:
+        return {1: int(f["high"]), 2: int(f["medium"]), 3: int(f["low"])}
+    except (TypeError, ValueError):
+        return None
+
+
 def asset_count(client, cid):
     try:
         m = client.get("/collections/%s/metrics/summary/collection" % cid)
@@ -238,21 +253,46 @@ def read(p, client):
         cid = str(c["collectionId"])
         rec = {"id": cid, "name": str(c.get("name") or cid), "assets": 0, "cat1": 0, "cat2": 0, "cat3": 0, "rules": [], "error": "",
                "asset_stigs": {}, "hosts": "off", "timing": {}}
+        step = "metrics"
+        t = time.time()
+        # 1.66.2: the counts from STIG Manager's own metrics first (pre-counted, fast on any collection); the rules a
+        # second read with its own limit - too slow: the counts stay, "Counts only" (rules_read False)
+        mcats = None
+        try:
+            m = client.get("/collections/%s/metrics/summary/collection" % cid)
+            mcats = metric_cats(m)
+            if mcats is not None:
+                rec.update(cat1=mcats[1], cat2=mcats[2], cat3=mcats[3], counts_from="metrics")
+                if isinstance(m, dict) and isinstance(m.get("assets"), int):
+                    rec["assets"] = m["assets"]
+        except RuntimeError:
+            pass
+        rec["timing"]["metrics"] = round(time.time() - t, 2)
+        rec["rules_read"] = False
         step = "counts"
         try:
             t = time.time()
-            rows = client.get("/collections/%s/findings" % cid, aggregator="ruleId", acceptedOnly="false", projection="stigs")
-            rec["rules"], cats = findings_of(rows)
-            rec.update(cat1=cats[1], cat2=cats[2], cat3=cats[3])
+            try:
+                rows = client.get("/collections/%s/findings" % cid, wait=p.get("rules_timeout") or None, aggregator="ruleId",
+                                  acceptedOnly="false", projection="stigs")
+                rec["rules"], cats = findings_of(rows)
+                rec["rules_read"] = True
+                if mcats is None:
+                    rec.update(cat1=cats[1], cat2=cats[2], cat3=cats[3], counts_from="findings")
+            except RuntimeError as e:
+                if mcats is None:
+                    raise
+                rec["rules_note"] = "rules not read (counts from STIG Manager's metrics): %s" % e
             rec["timing"]["counts"] = round(time.time() - t, 2)
             step, t = "assets", time.time()
-            rec["assets"] = asset_count(client, cid)
+            if not rec.get("assets"):
+                rec["assets"] = asset_count(client, cid)
             rec["asset_stigs"] = asset_stigs(client, cid)
             rec["timing"]["assets"] = round(time.time() - t, 2)
         except RuntimeError as e:
             rec["error"] = str(e)
             rec["timing"][step] = round(time.time() - t, 2)
-        if p.get("hosts", True) and not rec["error"] and rec["rules"]:
+        if p.get("hosts", True) and not rec["error"] and rec["rules"] and rec.get("rules_read"):
             t = time.time()
             try:
                 names = hosts_of(client.get("/collections/%s/findings" % cid, wait=p.get("hosts_timeout") or None,
@@ -275,7 +315,9 @@ def timing_lines(cols):
     out = []
     for c in cols or []:
         tm = c.get("timing") or {}
-        parts = ["%s %.1f s" % (k, tm[k]) for k in ("counts", "assets", "hosts") if k in tm]
+        parts = ["%s %.1f s" % (k, tm[k]) for k in ("metrics", "counts", "assets", "hosts") if k in tm]
+        if c.get("rules_read") is False and not c.get("error"):
+            parts.append("Counts only (the rules were too slow, stigman_scorecard_rules_timeout)")
         out.append("%s (id %s): %s%s" % (c.get("name"), c.get("id"), ", ".join(parts) or "not read",
                                          "; " + c["error"][:200] if c.get("error") else
                                          ("; " + c["hosts"] if str(c.get("hosts", "")).startswith("hosts not") else "")))
@@ -295,6 +337,7 @@ def main():
         timeout=dict(type="int", default=60),
         hosts=dict(type="bool", default=True),
         hosts_timeout=dict(type="int", default=120),
+        rules_timeout=dict(type="int", default=180),
     ), supports_check_mode=True)
     p = module.params
     res = {"changed": False, "ok": False, "error": "", "collections": [], "missing": [], "timings": [],

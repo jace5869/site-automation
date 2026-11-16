@@ -1041,7 +1041,7 @@ class HostLists(unittest.TestCase):
         rhel = next(c for c in cols if c["name"] == RHEL)
         self.assertEqual((rhel["cat1"], rhel["cat2"], rhel["cat3"], rhel["hosts"]), (1, 8, 2, "listed"))
         self.assertEqual(next(r for r in rhel["rules"] if r["sv"] == "SV-257985")["assets"], ["rhel01", "rhel03", "rhel05"])
-        self.assertEqual(sorted(rhel["timing"]), ["assets", "counts", "hosts"])
+        self.assertEqual(sorted(rhel["timing"]), ["assets", "counts", "hosts", "metrics"])   # 1.66.2: the metrics first
         self.assertEqual(cols, sorted(cols, key=lambda c: c["name"]))
 
     def test_a_slow_host_list_keeps_the_counts(self):
@@ -1052,7 +1052,7 @@ class HostLists(unittest.TestCase):
         self.assertEqual([r["assets"] for r in rhel["rules"]], [[]] * 4)
         self.assertEqual(next(c for c in cols if c["name"] == WIN)["hosts"], "listed")
         line = [x for x in sc.timing_lines(cols) if x.startswith(RHEL)][0]
-        self.assertRegex(line, r"^SITEA - RHEL 9 \(id 2\): counts \d+\.\d s, assets \d+\.\d s, hosts \d+\.\d s; hosts not listed \(STIG Manager was slow")
+        self.assertRegex(line, r"^SITEA - RHEL 9 \(id 2\): metrics \d+\.\d s, counts \d+\.\d s, assets \d+\.\d s, hosts \d+\.\d s; hosts not listed \(STIG Manager was slow")
         # the report: the counts whole, the collection said, its hosts not listed; fixed on the host kept (the rule is Open)
         read = {"ok": True, "error": "", "read_at": NOW, "collections": cols, "missing": []}
         d = card(read=read, opts={"fixed": {"rows": [["rhel01.example.mil", RHEL, "rhel01", "SV-257985", "CAT II", "x", NOW]], "jobs": [{}]}})

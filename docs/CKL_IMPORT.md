@@ -535,6 +535,7 @@ STIG Manager's address, login and certificates are the STIG drift report's (`che
 | `stigman_scorecard_platforms` | Linux, Windows, Network | the platforms in order, each with its STIG patterns. No match: Other (1.67.0) |
 | `stigman_scorecard_platform_filter` | `[]` | only these platforms, by name, for example `[Windows]`. `[]`: every platform (1.67.0) |
 | `stigman_scorecard_hosts` | `true` | list each open rule's hosts, a second call per collection. `false`: counts only (1.67.0) |
+| `stigman_scorecard_rules_timeout` | `180` | seconds for the rules per collection (1.66.2: the counts come first from STIG Manager's metrics); slower: that collection shows *Counts only* |
 | `stigman_scorecard_hosts_timeout` | `120` | seconds for a collection's host list. Slower: its counts are kept, its hosts not listed (1.67.0) |
 | `stigman_scorecard_db` | `true` | keep the points in the report database when the template has its credential |
 | `stigman_scorecard_db_create` | `true` | make the tables on the first run, and on a database of 1.58.0 to 1.66.x the platforms' table. `false`: made by hand |

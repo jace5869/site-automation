@@ -169,6 +169,10 @@ stigman_ckl_import_collection: VMware
 ## one on a big collection. false = counts only, no host lists
 # stigman_scorecard_hosts: true
 
+## seconds for the rules per collection (the counts come first from STIG Manager's metrics); slower:
+## Counts only (1.66.2)
+# stigman_scorecard_rules_timeout: 180
+
 ## seconds for a collection's host list; slower: its counts kept, "hosts not listed"
 # stigman_scorecard_hosts_timeout: 120
 

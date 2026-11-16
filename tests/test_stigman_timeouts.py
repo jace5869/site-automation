@@ -1,4 +1,4 @@
-"""1.67.0: a STIG Manager answer that times out is a RuntimeError with its reason, never a module crash.
+"""1.66.1: a STIG Manager answer that times out is a RuntimeError with its reason, never a module crash.
 
 The scorecard stopped with "TimeoutError: The read operation timed out" on a large collection: urllib raises that (and a
 dropped connection, an OSError) outside URLError. Each STIG Manager client now turns it into the module's own error, so
@@ -57,15 +57,16 @@ class Timeouts(unittest.TestCase):
     def test_the_scorecard_lists_a_slow_collection_and_goes_on(self):
         m = load(MODULES[0])
         with Silent() as api:
-            p = {"api": api, "validate_certs": True, "ca_path": "", "timeout": 1, "collections": []}
+            p = {"api": api, "validate_certs": True, "ca_path": "", "timeout": 1, "collections": [], "hosts": False,
+                 "hosts_timeout": 1, "rules_timeout": 1}
             client = m.Client(p)
             client.token = "t"
 
             class Cols(object):
-                def get(self, path, **q):
+                def get(self, path, _timeout=None, **q):
                     if path == "/collections":
                         return [{"collectionId": 1, "name": "A"}, {"collectionId": 2, "name": "B"}]
-                    return client.get(path, **q)
+                    return client.get(path, _timeout=_timeout, **q)
             out, _missing = m.read(p, Cols())
         self.assertEqual([r["name"] for r in out], ["A", "B"])
         for r in out:

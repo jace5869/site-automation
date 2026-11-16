@@ -254,6 +254,8 @@ def stig_scorecard_point(read, opts=None):
             continue
         rec = {"id": str(c.get("id") or ""), "name": str(c.get("name") or ""), "assets": _n(c.get("assets")),
                "cat1": _n(c.get("cat1")), "cat2": _n(c.get("cat2")), "cat3": _n(c.get("cat3")), "r1": {}, "r2": {}, "r3": {}}
+        if c.get("rules_read") is False:                  # 1.66.2: counts only - no rules to compare a week with
+            rec["nr"] = True
         for r in c.get("rules") or []:
             if isinstance(r, dict) and r.get("sv") and r.get("cat") in CATS and _n(r.get("count")):
                 d = rec["r%d" % r["cat"]]
@@ -486,7 +488,8 @@ def stig_scorecard(read, point, runs, opts=None):
         for k in ("cat1", "cat2", "cat3", "assets"):
             tot[k] += _n(c.get(k))
         was = _find(base, c) if base else None
-        ch = change(was, p) if was is not None else None
+        no_rules = bool(p.get("nr") or (was or {}).get("nr"))   # 1.66.2: a run that read the counts only
+        ch = change(was, p) if was is not None and not no_rules else None
         if ch:
             tot["closed"] += ch["closed"]
             tot["opened"] += ch["opened"]
@@ -494,7 +497,10 @@ def stig_scorecard(read, point, runs, opts=None):
             for word, key in (("Closed", "closed_rules"), ("Opened", "opened_rules")):
                 wr, nr = _rules(was), _rules(p)
                 sheet_delta += [[c["name"], sv, CAT_WORD[cat], word, wr.get(sv, (0, 0))[1], nr.get(sv, (0, 0))[1]] for sv, cat, n in ch[key]]
-        if ch is None:
+        if ch is None and was is not None and no_rules:
+            since = "Counts only"
+            tip = "%s: this run (or the one a week ago) read the counts, not the rules - the week's change needs both." % c["name"]
+        elif ch is None:
             since = "New here" if base else "-"
             tip = ("%s was not in the run of %s." % (c["name"], day_word(base["_t"]))) if base else "No run 6 to 8 days ago to compare with."
         else:
@@ -549,6 +555,14 @@ def stig_scorecard(read, point, runs, opts=None):
                  + ["%s: %s. Its counts are whole." % (c["name"], c["hosts"].replace("hosts not listed", "Hosts not listed"))
                     for c in good if str(c.get("hosts") or "").startswith("hosts not")]
                  + (["Not there, or the client cannot read it (stigman_scorecard_collections): %s." % ", ".join(missing)] if missing else [])
+                 + (["Counted from STIG Manager's metrics, the rules not read (STIG Manager was slow, stigman_scorecard_rules_timeout): %s. "
+                     "Their CAT I, II and III are complete; Top rules, Fixed on the host and the week's change leave them out." % ", ".join(
+                         str(c.get("name") or c.get("id")) for c in good if c.get("rules_read") is False)]
+                    if any(c.get("rules_read") is False for c in good) else [])
+                 + (["Counted, but the hosts of each rule not listed (STIG Manager was slow, stigman_scorecard_hosts_timeout): %s. "
+                     "Their counts are complete; Top rules and Fixed on the host leave their hosts out." % ", ".join(
+                         str(c.get("name") or c.get("id")) for c in good if str(c.get("hosts") or "").startswith("not listed"))]
+                    if any(str(c.get("hosts") or "").startswith("not listed") for c in good) else [])
                  + ([] if trend else ["The trend starts next week: a line needs two weekly points, and this run is the first."])
                  + ([] if base else ["No run 6 to 8 days ago to compare with: \"Since last week\" starts with the run a week from now."]))
     sec = {"title": "By collection (%d)" % len(cols), "status": _worst_of(rst), "columns": columns, "column_titles": titles,

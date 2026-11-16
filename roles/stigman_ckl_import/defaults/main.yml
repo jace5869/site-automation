@@ -92,6 +92,7 @@ stigman_scorecard_platform_filter: []       # only these platforms, by name (e.g
 # 1.67.0: the counts are read first, in one quick call per collection. The hosts of each open rule (Top rules' hosts, a
 # collection's worst hosts, "Fixed on the host") are a second call, the slow one on a big collection.
 stigman_scorecard_hosts: true               # false = counts only, no host lists
+stigman_scorecard_rules_timeout: 180        # seconds for the rules per collection (the counts come first from STIG Manager's metrics); slower: Counts only (1.66.2)
 stigman_scorecard_hosts_timeout: 120        # seconds for a collection's host list; slower: its counts kept, "hosts not listed"
 # The earlier runs' points come from AAP's job history (a "Red Hat Ansible Automation Platform" credential on the job
 # template). With a "Report database" credential they are kept in its table stig_scorecard_point too - a longer history
