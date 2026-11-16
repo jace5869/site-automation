@@ -642,6 +642,19 @@ def as_col(c):
     return {"collectionId": str(c.get("collectionId")), "name": c.get("name") or ""}
 
 
+
+def _coll_hits(cols, w, name_of, id_of):
+    """The collections an entry names: its exact name (any case) or id first; only when none is exact, a pattern - * and ?
+    only, so a name with [ ] (\"[PROD] Servers\") is a name, never a character class."""
+    import fnmatch
+    w = str(w).strip()
+    exact = [c for c in cols if str(name_of(c) or "").lower() == w.lower() or str(id_of(c)) == w]
+    if exact or not any(ch in w for ch in "*?"):
+        return exact
+    pat = w.lower().replace("[", "[[]")
+    return [c for c in cols if fnmatch.fnmatchcase(str(name_of(c) or "").lower(), pat)]
+
+
 def pick_collections(cols, want, staging, grants=None, routed=False):
     """-> (the staging collection - where a new asset is created -, the collections a host's asset is looked for in): those
     of want (names or ids, * and ?, any case; '*' = every one the client reads), the staging one last. want empty: the
@@ -657,16 +670,16 @@ def pick_collections(cols, want, staging, grants=None, routed=False):
     want = [w for w in want or [] if not str(w).strip().startswith("!")] or (["*"] if skip else [])
     for w in want or []:
         w = str(w).strip()
-        got = [c for c in cols if fnmatch.fnmatchcase((c.get("name") or "").lower(), w.lower()) or str(c.get("collectionId")) == w]
-        if not got and not any(ch in w for ch in "*?["):
+        got = _coll_hits(cols, w, lambda c: c.get("name"), lambda c: c.get("collectionId"))
+        if not got and not any(ch in w for ch in "*?"):
             raise Fail("no collection %s (stigman_ckl_import_collections) that the client can read (it reads: %s)" % (w, names))
         for c in sorted(got, key=lambda c: (c.get("name") or "").lower()):
             c = as_col(c)
             if c["collectionId"] != st["collectionId"] and c not in out:
                 out.append(c)
     for w in skip:
-        gone = [c for c in cols if fnmatch.fnmatchcase((c.get("name") or "").lower(), w.lower()) or str(c.get("collectionId")) == w]
-        if not gone and not any(ch in w for ch in "*?["):
+        gone = _coll_hits(cols, w, lambda c: c.get("name"), lambda c: c.get("collectionId"))
+        if not gone and not any(ch in w for ch in "*?"):
             raise Fail("no collection %s to leave out (stigman_ckl_import_collections: !%s) that the client can read (it reads: %s)" % (w, w, names))
         ids = set(str(c.get("collectionId")) for c in gone)
         out = [c for c in out if c["collectionId"] not in ids]
