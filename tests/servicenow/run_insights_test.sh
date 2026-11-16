@@ -610,6 +610,18 @@ check "  ... All: the period bar takes the Custom view's rows, carried once (1.3
 check "  ... a unit four levels down: its breadcrumbs, its Custom view link" "$t8/sitea/split/operations/eucs/latest.html" \
     '<a href="../../../latest.html">SITEA</a>' '<b>EUCS</b>' 'href="../../../../latest.html#cv=' 'Custom view of this group'
 
+# ---- 1.67.0 part F: a group's response SLAs left out of Response met; a name that matches nothing said -------------
+mock
+mkdir -p "$work/skip"
+run "servicenow_insights_response_skip_groups: one group by its name (another case), one that matches nothing" ok \
+    "{$NOW, $NOACT, \"report_web_dest\": \"$work/skip\", \"servicenow_insights_response_skip_groups\": [\"ops - service desk\", \"No Such Team\"]}" \
+    "Response met leaves out these groups' response SLAs" 'ops - service desk: ' ' response SLA(s) left out of Response met' \
+    'WARNING - No Such Team matched no ticket read this run' 'Response left out (servicenow_insights_response_skip_groups) - '
+check "  ... the page: what was left out, the name that matched nothing" "$work/skip/servicenow-ticket-insights/latest.html" \
+    '<dt>Response left out</dt>' 'No match</span> No Such Team matched no ticket' 'Response met'
+run "  ... not set: no such line (the task's name shows, skipped)" ok "{$NOW, $NOACT, \"report_web_dest\": \"\"}" \
+    '!response SLA(s) left out of Response met' '!matched no ticket read this run' '!Response left out (servicenow_insights_response_skip_groups) - '
+
 # ---- 1.14.0: the pages in one go are the pages the role wrote one by one ------------------------------------------------
 mock SNMOCK_SEED="$work/seed3.json"
 mkdir -p "$work/one" "$work/each"

@@ -194,6 +194,25 @@ every collection is searched) the `!` entries still apply. The staging collectio
 collection is said (the scorecard) or stops the job (the import), so a typo is seen. The scorecard's list also takes `*`
 and `?` now. Nothing to set up.
 
+**Ticket insights: leave a group out of Response met** (part F). Nothing to set up. To exclude a group, list it in
+`servicenow_insights_response_skip_groups` (its whole name, any case, or its sys_id).
+
+- **Why.** A group whose process never stops the response SLA missed every response, so Response met fell for the
+  whole site (to 0% in a month).
+- **What changes.** A listed group's tickets have no Response: out of Response met, not missed. Resolution met, SLAs
+  met, first contact, the counts and the medians stay as they are. Every Response met follows: tiles, Trends, each
+  site's, unit's and team's page, VIP, the Custom view, priorities, categories, the email, the workbook and the report
+  database points written from now on.
+- **Said.** *How this was made* (*Response left out*), the email's *Read* and the job output list each group with the
+  tickets and response SLAs left out. A name that matched no ticket is said (*No match*, `WARNING`).
+- **Trends.** The months of each run's window are worked out again; older months stay as stored. A muted line under
+  *Service levels* names the groups and the month the exclusion started; the backfill works older months out again.
+- **Charts.** *The axis does not start at zero* (Service levels, the backlog) only when the axis starts above zero.
+
+**Tests (part F):** `tests/test_servicenow_insights.py` (`ResponseSkip`: by name and by sys_id, a name that matches
+nothing, Response met up and the rest unchanged on the made-up site, the targets, the trend's line, both captions),
+`tests/servicenow/run_insights_test.sh` (a group left out, a name that matches nothing) - ansible-core 2.22 and 2.16.
+
 ## 1.66.0 — 2026-11-14
 
 **Updating without scripts:** paste `site-automation-1.66.0-changed-since-1.61.0.zip` as it is (from an older version,

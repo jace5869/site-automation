@@ -28,7 +28,8 @@
     period: month
     month: "{{ _sni_db_runs.runs | map(attribute='run') | map(attribute='month') | max }}"
     months: "{{ servicenow_insights_db_months | int }}"
-    metrics: [sla_met_pct, response_met_pct, fcr_pct, incidents, backlog, median_resolve_h, reopen_pct]
+    # response_skipped (1.67.0): the months Response met leaves out servicenow_insights_response_skip_groups' response SLAs
+    metrics: [sla_met_pct, response_met_pct, fcr_pct, incidents, backlog, median_resolve_h, reopen_pct, response_skipped]
     required: "{{ servicenow_insights_db_required | bool }}"
   register: _sni_hist
   check_mode: false           # only reads (in Check, nothing is made)

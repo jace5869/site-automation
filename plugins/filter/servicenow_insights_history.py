@@ -65,6 +65,9 @@ def scope_figures(s):
     put("open_old", age[3] if len(age) > 3 else None)                  # older than servicenow_insights_old_days
     put("sla_met_pct", _first(s.get("sla")))
     put("response_met_pct", _first(s.get("resp")))
+    # 1.67.0 part F: how many done tickets' response SLAs servicenow_insights_response_skip_groups left out (only when it
+    # is set): the trend says from which month Response met leaves them out
+    put("response_skipped", s.get("resp_skip"))
     put("median_resolve_h", _first(s.get("median_h")))
     put("reopen_pct", _first(s.get("reopen")))
     r7 = s.get("reopen7") or {}
@@ -336,11 +339,14 @@ def servicenow_insights_trend(model, history=None, opts=None, runs=None):
     last = max([x["run"]["month"] for x in mine] + [str(row[0]) for row in h.get("rows") or [] if row] or [""])
     months = _months_back(last, int((opts or {}).get("trend_months") or MONTHS)) if last else []
     per, partial = {}, set()     # (variant, node) -> month -> {metric: value}; the months that are partial
+    skipped = {}                 # (variant, node) -> the months worked out with servicenow_insights_response_skip_groups (1.67.0)
     have_mine = set(x["run"]["month"] for x in mine)
     for row in h.get("rows") or []:
         if not isinstance(row, (list, tuple)) or len(row) < 6:
             continue
         mo, _we, node, variant, metric, value = row[:6]
+        if mo in months and mo not in have_mine and metric == "response_skipped":
+            skipped.setdefault((variant or "", node), set()).add(mo)
         if mo in months and mo not in have_mine and metric in TREND_METRICS:
             per.setdefault((variant or "", node), {}).setdefault(mo, {})[metric] = _num(value)
             if len(row) > 6 and row[6]:
@@ -352,6 +358,8 @@ def servicenow_insights_trend(model, history=None, opts=None, runs=None):
         if x["run"].get("partial"):
             partial.add(mo)
         for node, variant, metric, lab, value in x["figures"]:
+            if metric == "response_skipped" and not lab:
+                skipped.setdefault((variant, node), set()).add(mo)
             if metric in TREND_METRICS and not lab:
                 per.setdefault((variant, node), {}).setdefault(mo, {})[metric] = value
     # the months shown: from the first that has a figure (a short history starts where it starts)
@@ -363,7 +371,10 @@ def servicenow_insights_trend(model, history=None, opts=None, runs=None):
                                                              for mo in shown]
     m["trend"] = {"on": True, "ok": bool(h.get("ok")), "error": str(h.get("error") or ""), "months": shown,
                   "partial": sorted(partial & set(shown)), "metrics": [list(t) for t in TREND], "nodes": nodes,
-                  "kept": int(h.get("months_kept") or 0), "full": int((opts or {}).get("trend_months") or MONTHS)}
+                  "kept": int(h.get("months_kept") or 0), "full": int((opts or {}).get("trend_months") or MONTHS),
+                  # 1.67.0 part F: per node, the months shown whose Response met leaves out the groups' response SLAs
+                  "resp_skip": dict(((v + "|" if v else "") + nd, sorted(mos & set(shown))) for (v, nd), mos in skipped.items()
+                                    if mos & set(shown))}
     return m
 
 

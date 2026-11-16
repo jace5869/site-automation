@@ -850,11 +850,11 @@ def nice_step(span):
     return 10 * mag
 
 
-def line_chart(series, colors, labels, weeks, label, zoom=False, annot=None, area=True):
-    """Weekly lines on one scale; every week has a hit area with its values (data-t, the page's tooltip)."""
-    W, H, L, R, T, B = 640, 220, 44, 12, 12, 28
-    allv = [v for s in series for v in s] or [0]
-    mx, mn = max(allv), (min(allv) if zoom else 0)
+def axis(series, zoom=False):
+    """(lo, hi, step) of a chart's one value axis - the charts' own, so a caption can say whether it starts above zero.
+    zoom: from just under the lowest value (the change shows), else from zero."""
+    allv = [v for s_ in series for v in s_ if v is not None] or [0]
+    mx, mn = max(allv), min(allv)
     if zoom:
         step = nice_step(max(1, mx - mn))
         lo, hi = math.floor(mn / step) * step, math.ceil(mx / step) * step
@@ -863,6 +863,18 @@ def line_chart(series, colors, labels, weeks, label, zoom=False, annot=None, are
         lo, hi = 0, math.ceil(max(1, mx) / step) * step
     if hi <= lo:
         hi = lo + step
+    return lo, hi, step
+
+
+def above_zero(series, zoom=True):
+    """' The axis does not start at zero.' when that chart's axis starts above zero (1.67.0 part F), else ''."""
+    return " The axis does not start at zero." if axis(series, zoom)[0] > 0 else ""
+
+
+def line_chart(series, colors, labels, weeks, label, zoom=False, annot=None, area=True):
+    """Weekly lines on one scale; every week has a hit area with its values (data-t, the page's tooltip)."""
+    W, H, L, R, T, B = 640, 220, 44, 12, 12, 28
+    lo, hi, step = axis(series, zoom)
     nw = max(1, len(weeks) - 1)
 
     def x(i):
@@ -924,16 +936,7 @@ def month_chart(series, colors, labels, months, label, fmt=None, zoom=False, par
     into a month so far (partial) dashed; every month has a hit area with its values (data-t, the page's tooltip)."""
     fmt = fmt or n
     W, H, L, R, T, B = 640, 210, 44, 14, 12, 28
-    allv = [v for s_ in series for v in s_ if v is not None] or [0]
-    mx, mn = max(allv), min(allv)
-    if zoom:
-        step = nice_step(max(1, mx - mn))
-        lo, hi = math.floor(mn / step) * step, math.ceil(mx / step) * step
-    else:
-        step = nice_step(max(1, mx))
-        lo, hi = 0, math.ceil(max(1, mx) / step) * step
-    if hi <= lo:
-        hi = lo + step
+    lo, hi, step = axis(series, zoom)
     nm = max(1, len(months) - 1)
 
     def x(i):
@@ -1027,10 +1030,22 @@ def trend_section(m, key, variant=""):
     pct_series = [(k_, lb) for k_, lb, kind in metrics if kind == "pct" and k_ != "reopen_pct" and any(v is not None for v in col(k_))]
     cnt_series = [(k_, lb) for k_, lb, kind in metrics if kind == "count" and any(v is not None for v in col(k_))]
     if pct_series:
-        figs.append('<div class="fig"><h3>Service levels</h3><div class="cap">The share met each month, in %%. The axis does not start at zero.</div>%s%s</div>' % (
+        # 1.67.0 part F: the response SLAs of servicenow_insights_response_skip_groups left out - from which month on
+        groups = [g_ for g_, nt_, _ns in ((m or {}).get("slo") or {}).get("response_skip") or [] if nt_]     # those that left something out
+        skip_mo = [mo for mo in ((t.get("resp_skip") or {}).get((variant + "|" if variant else "") + (key or "all")) or []) if mo in months]
+        skip_line = ""
+        if groups and any(k_ == "response_met_pct" for k_, _lb in pct_series):
+            first = skip_mo[0] if skip_mo else ""
+            skip_line = '<div class="cap mut">%s</div>' % e(
+                ("Response met leaves out the response SLAs of %s (servicenow_insights_response_skip_groups)" % ", ".join(groups))
+                + ((" in every month shown." if first == months[0] else " from %s on. The months before are as stored. The backfill job works "
+                    "them out again." % month_label(first, True)) if first else
+                   " from this run on. The months shown were stored before. The backfill job works them out again."))
+        figs.append('<div class="fig"><h3>Service levels</h3><div class="cap">The share met each month, in %%.%s</div>%s%s%s</div>' % (
+            above_zero([col(k_) for k_, _lb in pct_series]),
             legend([(lb, colors[i]) for i, (_k, lb) in enumerate(pct_series)]),
             month_chart([col(k_) for k_, _lb in pct_series], colors, [lb for _k, lb in pct_series], months,
-                        "Service levels per month", fmt=lambda v: pct(v), zoom=True, partial=partial)))
+                        "Service levels per month", fmt=lambda v: pct(v), zoom=True, partial=partial), skip_line))
     if cnt_series:
         figs.append('<div class="fig"><h3>Volume</h3><div class="cap">Incidents opened each month, and open at its end.</div>%s%s</div>' % (
             legend([(lb, colors[i]) for i, (_k, lb) in enumerate(cnt_series)]),
@@ -1886,11 +1901,12 @@ def servicenow_insights_page(model, key="all", opts=None):
     body.append(section("keepingup", "Keeping up", "incidents and requested items · weekly, by the opened and resolved dates",
                         verdict + '<div class="two"><div class="fig" id="ppflow"><h3>Opened and resolved per week</h3><div class="legend"><span><i style="background:var(--s1)"></i>Opened</span>'
                         '<span><i style="background:var(--s2)"></i>Resolved</span></div>%s</div><div class="fig"><h3>Open at the end of each week</h3>'
-                        '<div class="cap">The backlog: everything not yet resolved, at the end of each whole week. The axis does not start at zero, so the change shows.</div>%s</div></div>'
+                        '<div class="cap">The backlog: everything not yet resolved, at the end of each whole week.%s</div>%s</div></div>'
                         '<div class="two"><div class="fig"><h3>Age of what is open now</h3><div class="cap">Days since opened, at the end of the window.</div>%s</div>'
                         '<div class="fig"><h3>When incidents are opened</h3><div class="cap">Local time (%s). Darker = more incidents.</div>%s<div class="cap">%s</div></div></div>'
                         '<details class="more"><summary>The weeks as a table</summary>%s</details>' % (
                             line_chart([op, rs], ["var(--s1)", "var(--s2)"], ["Opened", "Resolved"], starts, "Opened and resolved per week", annot=annot),
+                            (above_zero([bl]).rstrip(".") + ", so the change shows.") if above_zero([bl]) else "",
                             line_chart([bl], ["var(--s1)"], ["Open"], starts, "Open at the end of each week", zoom=True), agebars, e(win.get("time_zone") or "UTC"),
                             hm, hcap, wtable)))
 
@@ -2290,6 +2306,13 @@ def servicenow_insights_page(model, key="all", opts=None):
                     for g, why, where in m.get("hier_folded") or [])))
     # the SLAs (1.7.0): where met or missed came from, the SLA definitions by kind, the business hours
     defs = slo.get("definitions") or []
+    # 1.67.0 part F: the groups whose response SLAs Response met leaves out, what each left out; one that matched nothing
+    skip = slo.get("response_skip") or []
+    skip_html = ('<dt>Response left out</dt><dd>%s<br><span class="mut">servicenow_insights_response_skip_groups: these tickets '
+                 'are out of Response met, not missed. Resolution met counts them.</span></dd>' % "<br>".join(
+                     ("%s: %s ticket%s, %s response SLA%s" % (e(g_), n(nt), "" if nt == 1 else "s", n(ns), "" if ns == 1 else "s")) if nt else
+                     ('<span class="chip warn"><span aria-hidden="true">!</span> No match</span> %s matched no ticket: check the name '
+                      '(the whole name, or the sys_id)' % e(g_)) for g_, nt, ns in skip)) if skip else ""
     kinds = (("response", "Response"), ("resolution", "Resolution"), ("other", "Other (not counted)"))
     slo_html = ('<details class="notes"%s><summary><b>Your SLAs</b> <span class="mut">%s</span></summary><dl class="kv"><dt>Met or missed</dt><dd>%s</dd>%s'
                 '<dt>Business hours</dt><dd>%s</dd>%s</dl></details>' % (
@@ -2298,10 +2321,10 @@ def servicenow_insights_page(model, key="all", opts=None):
                     "".join('<dt>%s</dt><dd>%s</dd>' % (lbl, ", ".join("%s (%s)" % (e(nm), n(c_)) for nm, k_, c_ in defs if k_ == kk) or "none")
                             for kk, lbl in kinds) if sla_src == "task_sla" else "",
                     e(slo.get("business_hours") or "calendar hours"),
-                    ('<dt>Response</dt><dd>%s</dd>' % e(("not measured: " + slo["first_assigned_error"]) if slo.get("first_assigned_error") else
+                    (('<dt>Response</dt><dd>%s</dd>' % e(("not measured: " + slo["first_assigned_error"]) if slo.get("first_assigned_error") else
                                                       ("from opened to first assigned to a person (the metric Assigned to)" if slo.get("response_measured") else
                                                        "not measured: set a response target in servicenow_insights_sla_targets")))
-                    if sla_src == "targets" else ""))
+                     if sla_src == "targets" else "") + skip_html))
     tm = [r_ for r_ in o.get("timing") or [] if isinstance(r_, (list, tuple)) and len(r_) == 2]     # the run's time, so far (1.14.0)
     time_html = ('<details class="notes"><summary><b>Time this run</b> <span class="mut">%s before the pages</span></summary><dl class="kv">%s</dl>'
                  '<p class="mut">The pages and the email come after: the job output has the whole run.</p></details>' % (
