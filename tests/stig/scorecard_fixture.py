@@ -12,8 +12,8 @@ CAT I (Worse), VMware the same. Two weeks ago and before, RHEL 9 had one more ru
 week; VMware has points for 4 weeks only. The drift reports' newest jobs found 3 rules fixed on their hosts; 2 are still
 Open now.
 
-1.67.0, the platforms: each rule's STIG (RHEL 9 - Linux, Windows Server 2022 - Windows, ESXi - Other) and each asset's
-STIGs; rhel01 has the Apache UNIX STIG too (Other: an asset of two platforms, no finding of it). The points of 3 weeks ago
+1.67.0, the platforms: each rule's STIG (RHEL 9 - Linux, Windows Server 2022 - Windows, ESXi - VMware) and each asset's
+STIGs; rhel01 has the Apache UNIX STIG too (Applications: an asset of two platforms, no finding of it). The points of 3 weeks ago
 and before are from before 1.67.0 (no platforms)."""
 import calendar
 import copy
@@ -39,7 +39,8 @@ RULES = {   # SV-number: (rule id, STIG ID, severity, title)
 CAT = {"high": 1, "medium": 2, "low": 3}
 APACHE = "Apache_Server_2-4_UNIX_Server_STIG"
 BENCH = {"RHEL-09": "RHEL_9_STIG", "WN22": "MS_Windows_Server_2022_STIG", "ESXI": "VMW_vSphere_7-0_ESXi_STIG"}
-PLATFORM = {"RHEL_9_STIG": "Linux", "MS_Windows_Server_2022_STIG": "Windows"}       # the rest: Other (the default patterns)
+PLATFORM = {"RHEL_9_STIG": "Linux", "MS_Windows_Server_2022_STIG": "Windows", "VMW_vSphere_7-0_ESXi_STIG": "VMware",
+            ARIA: "VMware", APACHE: "Applications"}      # the default patterns' platforms (1.67.0 g2fix)
 
 
 def bench(sv):

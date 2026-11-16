@@ -104,7 +104,7 @@ import json, sys
 r, imp = json.load(sys.stdin), json.load(open(sys.argv[1]))
 titles = [s["title"] for s in r["sections"]]
 assert r["title"].startswith("STIG compliance: 4 CAT I open") and r["title"].endswith(" - " + imp["title"]), r["title"]
-assert titles[:3] == ["Start here", "By platform (3)", "By collection (3)"], titles      # 1.67.0: By platform first
+assert titles[:3] == ["Start here", "By platform (4)", "By collection (3)"], titles      # 1.67.0: By platform first
 mine = [t for t in titles if t in [s["title"] for s in imp["sections"]]]
 assert mine == [s["title"] for s in imp["sections"]], (titles, "the import sections, in their order")
 assert titles.index(mine[0]) > titles.index("By collection (3)"), titles
@@ -126,7 +126,8 @@ AAP_ENV="$AAP" run "with AAP's job history: closed and opened since last week, t
        "SITEA - Windows Server: CAT I 3, CAT II 4, CAT III 1, ▲ Worse: 0 closed, 1 opened" "emailed" \
        "Platform Linux: CAT I 1, CAT II 8, CAT III 2, ▼ Better: 4 closed, 1 opened" \
        "Platform Windows: CAT I 3, CAT II 4, CAT III 1, ▲ Worse: 0 closed, 1 opened" \
-       "Platform Other: CAT I 0, CAT II 3, CAT III 0, ▬ Same: 0 closed, none opened" \
+       "Platform VMware: CAT I 0, CAT II 3, CAT III 0, ▬ Same: 0 closed, none opened" \
+       "Platform Applications: CAT I 0, CAT II 0, CAT III 0" \
        "The platform lines start with 1.67.0: the earlier weeks' points have no platforms."
 only_get "only GET requests reached STIG Manager"
 # 1.67.0: each rule's STIG and each asset's STIGs asked for
@@ -145,7 +146,7 @@ m = email.message_from_binary_file(open(sys.argv[1], "rb"), policy=email.policy.
 html = m.get_body(preferencelist=("html",)).get_content()
 assert m["Subject"].startswith("[AAP] STIG compliance: 4 CAT I open; 4 findings closed this week"), m["Subject"]
 assert "<svg" not in html, "a trend line in the email"
-for text in ("CAT I open", "Closed this week", "By collection (3)", "By platform (3)", "SITEA - Windows Server", "Top 5 rules open across hosts", "SV-258036",
+for text in ("CAT I open", "Closed this week", "By collection (3)", "By platform (4)", "SITEA - Windows Server", "Top 5 rules open across hosts", "SV-258036",
              "Fixed on the host, still Open in STIG Manager (2)", "rhel01.example.mil", "20 → 11", "4 closed, 1 opened",
              "Each checklist", "How the scorecard counts"):
     assert text in html, text
@@ -178,8 +179,8 @@ if [ -n "$page" ] && [ "$n" = 3 ] && grep -q 'aria-label="SITEA - RHEL 9, open f
     ok "  ...the website (atlas look): a trend line per collection, its values as the label"
 else bad "  ...the website page: $n trend lines (${page:-no page})"; fi
 # 1.67.0: a line per platform in its hue, the filter buttons, each collection that opens, the rows tagged
-if [ -n "$page" ] && [ "$(grep -o '<svg class="spark hu[0-9]"' "$page" | wc -l)" = 3 ] && grep -q '<div class="facets" hidden' "$page" \
-   && [ "$(grep -o '<details class="grp"' "$page" | wc -l)" = 3 ] && grep -q 'data-pf="pf1 pf0" data-col="c2"' "$page" \
+if [ -n "$page" ] && [ "$(grep -o '<svg class="spark hu[0-9]"' "$page" | wc -l)" = 4 ] && grep -q '<div class="facets" hidden' "$page" \
+   && [ "$(grep -o '<details class="grp"' "$page" | wc -l)" = 3 ] && grep -q 'data-pf="pf1 pf5" data-col="c2"' "$page" \
    && grep -q 'data-fv="pf2"' "$page" && grep -q '<option value="c3">SITEA - Windows Server</option>' "$page"; then
     ok "  ...by platform: a line per platform, the Platform and Collection buttons, each collection opens"
 else bad "  ...the website page's platforms"; fi

@@ -73,7 +73,7 @@ def earlier(weeks=8):
 
 def card(runs=None, read=None, opts=None):
     read = read or read_of()
-    point = f.stig_scorecard_point(read)
+    point = f.stig_scorecard_point(read, {"platforms": opts["platforms"]} if opts and "platforms" in opts else None)
     got = f.stig_scorecard_runs(point, earlier() if runs is None else runs, [], {"weeks": (opts or {}).get("weeks", 8), "job": 5000})
     return f.stig_scorecard(read, point, got["runs"], dict({"weeks": 8, "top": 5}, **(opts or {})))
 
@@ -368,14 +368,15 @@ class Scorecard(unittest.TestCase):
         self.assertNotIn("status", tile(d, "Opened this week"))                       # fewer opened than closed
         self.assertEqual((tile(d, "Fixed on host, still open")["status"], tile(d, "Fixed on host, still open")["note"]), ("low", "Low"))
         self.assertEqual(d["counts"], {"cat1": 4, "cat2": 15, "cat3": 3, "assets": 13, "closed": 4, "opened": 2, "collections": 3, "not_read": 0,
-                                       "fixed": 2, "weekly_points": 8, "compared": True, "rules": 10, "platforms": 3,
+                                       "fixed": 2, "weekly_points": 8, "compared": True, "rules": 10, "platforms": 4,
                                        "by_platform": {"Linux": {"assets": 6, "cat1": 1, "cat2": 8, "cat3": 2},
                                                        "Windows": {"assets": 4, "cat1": 3, "cat2": 4, "cat3": 1},
-                                                       "Other": {"assets": 4, "cat1": 0, "cat2": 3, "cat3": 0}}})
+                                                       "VMware": {"assets": 3, "cat1": 0, "cat2": 3, "cat3": 0},
+                                                       "Applications": {"assets": 1, "cat1": 0, "cat2": 0, "cat3": 0}}})
 
     def test_the_sections_results_first(self):
         self.assertEqual([s["title"] for s in self.doc["sections"]],
-                         ["Start here", "By platform (3)", "By collection (3)", "Top 5 rules open across hosts", "Fixed on the host, still Open in STIG Manager (2)",
+                         ["Start here", "By platform (4)", "By collection (3)", "Top 5 rules open across hosts", "Fixed on the host, still Open in STIG Manager (2)",
                           "The numbers behind the lines (open findings per week)"])
         self.assertEqual([s["title"] for s in self.doc["web"]], [s["title"] for s in self.doc["sections"]])
         self.assertEqual(self.doc["notes"]["title"], "How the scorecard counts")
@@ -440,7 +441,7 @@ class Scorecard(unittest.TestCase):
         self.assertTrue(by[RHEL]["label"].endswith("by week: 20, 19, 18, 17, 16, 15, 14, 11"))
         row = next(r for r in web["rows"] if r[0] == RHEL)
         self.assertEqual(row[6], by[RHEL]["label"])                                   # the cell's text is the line in words
-        self.assertEqual([r[:6] + r[7:] for r in web["rows"]], [r[:6] + r[7:] for r in mail["rows"]])
+        self.assertEqual([r[:5] + [str(r[5]).replace(u"\u00a0", " ")] + r[7:] for r in web["rows"]], [r[:6] + r[7:] for r in mail["rows"]])
 
     def test_the_numbers_behind_the_lines(self):
         s = section(self.doc, "The numbers behind")
@@ -877,13 +878,16 @@ class Platforms(unittest.TestCase):
                         ("CAN_Ubuntu_22-04_LTS_STIG", "Linux"), ("MS_Windows_Server_2022_STIG", "Windows"),
                         ("MS_SQL_Server_2022_Instance_STIG", "Windows"), ("IIS_10-0_Server_STIG", "Windows"),
                         ("Cisco_IOS-XE_Router_NDM_STIG", "Network"), ("Juniper_SRX_SG_NDM_STIG", "Network"),
-                        ("Palo_Alto_Networks_ALG_STIG", "Network"), ("VMW_vSphere_7-0_ESXi_STIG", "Other"), ("", "Other")):
+                        ("Palo_Alto_Networks_ALG_STIG", "Network"), ("VMW_vSphere_7-0_ESXi_STIG", "VMware"),
+                        ("VMW_vCenter_8-0_STIG", "VMware"), ("Microsoft_Edge_STIG", "Windows"), ("Apache_Tomcat_Application_Server_9_STIG", "Applications"),
+                        ("Google_Chrome_Current_Windows_STIG", "Applications"), ("Crunchy_Data_PostgreSQL_STIG", "Applications"),
+                        ("NetApp_ONTAP_DSC_9-x_STIG", "Storage"), ("Zebra_Printer_STIG", "Other"), ("", "Other")):
             self.assertEqual(f.stig_platform(b), want, b)
 
     def test_the_first_match_wins_and_the_patterns(self):
         # MS_Windows_Firewall matches Windows' MS_Windows_* and Network's *Firewall*: Windows is first
         self.assertEqual(f.stig_platform("MS_Windows_Defender_Firewall_STIG"), "Windows")
-        net_first = [f.PLATFORMS[2], f.PLATFORMS[1]]
+        net_first = [f.PLATFORMS[3], f.PLATFORMS[1]]                 # Network, then Windows
         self.assertEqual(f.stig_platform("MS_Windows_Defender_Firewall_STIG", net_first), "Network")
         lab = [{"name": "Lab", "stigs": ["RHEL_?_STIG"]}]
         self.assertEqual((f.stig_platform("RHEL_9_STIG", lab), f.stig_platform("RHEL_10_STIG", lab)), ("Lab", "Other"))
@@ -898,9 +902,9 @@ class Platforms(unittest.TestCase):
 
     def test_an_asset_of_two_platforms_counts_in_each_a_finding_in_one(self):
         rhel = next(c for c in f.stig_scorecard_point(read_of())["collections"] if c["name"] == RHEL)
-        self.assertEqual(sorted(rhel["p"]), ["Linux", "Other"])
+        self.assertEqual(sorted(rhel["p"]), ["Applications", "Linux"])
         self.assertEqual(rhel["p"]["Linux"]["assets"], 6)
-        self.assertEqual(rhel["p"]["Other"], {"assets": 1, "cat1": 0, "cat2": 0, "cat3": 0, "rules": []})   # rhel01's Apache STIG
+        self.assertEqual(rhel["p"]["Applications"], {"assets": 1, "cat1": 0, "cat2": 0, "cat3": 0, "rules": []})   # rhel01's Apache STIG
         by = self.doc["counts"]["by_platform"]
         self.assertEqual(sum(v["cat%d" % k] for v in by.values() for k in (1, 2, 3)), 22)                     # every finding once
         self.assertEqual(sum(v["assets"] for v in by.values()), 14)                                           # 13 assets, rhel01 twice
@@ -913,38 +917,50 @@ class Platforms(unittest.TestCase):
 
     def test_the_section(self):
         s = section(self.doc, "By platform")
-        self.assertEqual(s["title"], "By platform (3)")
-        self.assertEqual([r[:5] for r in s["rows"]], [["Linux", 6, 1, 8, 2], ["Windows", 4, 3, 4, 1], ["Other", 4, 0, 3, 0]])
-        self.assertEqual([r[5].split("\n")[1] for r in s["rows"]], ["4 closed, 1 opened", "0 closed, 1 opened", "0 closed, none opened"])
-        self.assertEqual([r[7] for r in s["rows"]], ["CAT I open", "CAT I open", "OK"])
+        self.assertEqual(s["title"], "By platform (4)")
+        self.assertEqual([r[:5] for r in s["rows"]], [["Linux", 6, 1, 8, 2], ["Windows", 4, 3, 4, 1], ["VMware", 3, 0, 3, 0],
+                                                      ["Applications", 1, 0, 0, 0]])
+        self.assertEqual([r[5].split("\n")[1] for r in s["rows"]], ["4 closed, 1 opened", "0 closed, 1 opened", "0 closed, none opened",
+                                                                   "0 closed, none opened"])
+        self.assertEqual([r[7] for r in s["rows"]], ["CAT I open", "CAT I open", "OK", "OK"])
         self.assertNotIn("tiles", s)                              # the email: the table only
+        self.assertFalse([x for x in self.doc["notes"]["lines"] if x.startswith("Other:")])
+        # without VMware and Applications in the setting: Other, listed by STIG name
+        d = card(opts={"platforms": f.PLATFORMS[:2]})
+        self.assertEqual([r[0] for r in section(d, "By platform")["rows"]], ["Linux", "Windows", "Other"])
         self.assertIn("Other: the STIGs no platform matched - %s, %s, %s." % (fx.APACHE, fx.ARIA, "VMW_vSphere_7-0_ESXi_STIG"),
-                      self.doc["notes"]["lines"])
+                      d["notes"]["lines"])
+        # the website's "Since last week": each count with its word (a narrow column never breaks between them)
+        self.assertEqual(section(self.doc, "By platform", "web")["rows"][0][5], u"▼\u00a0Better\n4\u00a0closed, 1\u00a0opened")
 
     def test_the_trend_starts_with_the_points_that_have_platforms(self):
         w = section(self.doc, "By platform", "web")
         lines = [x for x in w["sparks"] if x]
-        self.assertEqual([len(x["data_points"]) for x in lines], [3, 3, 3])     # 2 weeks ago, last week, now
-        self.assertEqual([x["hue"] for x in lines], [1, 2, 0])                  # by its place in the setting; Other grey
+        self.assertEqual([len(x["data_points"]) for x in lines], [3, 3, 3, 3])  # 2 weeks ago, last week, now
+        self.assertEqual([x["hue"] for x in lines], [1, 2, 3, 5])               # by its place in the setting, never its rank
         self.assertIn("The platform lines start with 1.67.0: the earlier weeks' points have no platforms.", w["lines"])
         old = [dict(r, collections=[dict((k, v) for k, v in c.items() if k != "p") for c in r["collections"]]) for r in earlier()]
         d = card(runs=old)
         s = section(d, "By platform")
-        self.assertEqual([r[5] for r in s["rows"]], ["-", "-", "-"])
+        self.assertEqual([r[5] for r in s["rows"]], ["-", "-", "-", "-"])
         self.assertIn("has no platforms (before 1.67.0)", s["tips"][0][5])
         self.assertEqual(s["lines"], ["The platform trend starts with this run: the earlier points have no platforms (before 1.67.0)."])
 
     def test_the_tiles_tags_and_the_filter_buttons(self):
         w = section(self.doc, "By platform", "web")
         self.assertEqual([(t["label"], t["value"], t["hue"], t["note"]) for t in w["tiles"]],
-                         [("Linux", 11, 1, "1 CAT I, 6 assets"), ("Windows", 8, 2, "3 CAT I, 4 assets"), ("Other", 3, 0, "0 CAT I, 4 assets")])
-        self.assertEqual(w["row_tags"], [{"pf": "pf1"}, {"pf": "pf2"}, {"pf": "pf0"}])
+                         [("Linux", 11, 1, "1 CAT I, 6 assets"), ("Windows", 8, 2, "3 CAT I, 4 assets"), ("VMware", 3, 3, "0 CAT I, 3 assets"),
+                          ("Applications", 0, 5, "0 CAT I, 1 asset")])
+        # a platform's row: its collections too, so the Collection button shows only that collection's platforms
+        self.assertEqual(w["row_tags"], [{"pf": "pf1", "col": "c2"}, {"pf": "pf2", "col": "c3"}, {"pf": "pf3", "col": "c1"},
+                                         {"pf": "pf5", "col": "c2"}])
         c = section(self.doc, "By collection", "web")
-        self.assertEqual(c["row_tags"], [{"pf": "pf1 pf0", "col": "c2"}, {"pf": "pf0", "col": "c1"}, {"pf": "pf2", "col": "c3"}])
+        self.assertEqual(c["row_tags"], [{"pf": "pf1 pf5", "col": "c2"}, {"pf": "pf3", "col": "c1"}, {"pf": "pf2", "col": "c3"}])
         top = section(self.doc, "Top 5", "web")
         self.assertEqual(top["row_tags"][0], {"pf": "pf1", "col": "c2"})
         fz = self.doc["facets"]
-        self.assertEqual([(x["key"], x["name"], x["hue"]) for x in fz["platforms"]], [("pf1", "Linux", 1), ("pf2", "Windows", 2), ("pf0", "Other", 0)])
+        self.assertEqual([(x["key"], x["name"], x["hue"]) for x in fz["platforms"]],
+                         [("pf1", "Linux", 1), ("pf2", "Windows", 2), ("pf3", "VMware", 3), ("pf5", "Applications", 5)])
         self.assertEqual([x["key"] for x in fz["collections"]], ["c2", "c1", "c3"])
         j = f.stig_scorecard_join(self.doc, None, "scorecard")
         self.assertEqual(j["web"]["facets"], fz)
@@ -954,7 +970,7 @@ class Platforms(unittest.TestCase):
         g = section(self.doc, "By collection", "web")["groups"]
         self.assertEqual([x["title"] for x in g], [RHEL, VMW, WIN])
         rh = g[0]
-        self.assertEqual((rh["id"], rh["meta"]), ("col-2", "6 assets: Linux 6, Other 1"))
+        self.assertEqual((rh["id"], rh["meta"]), ("col-2", "6 assets: Linux 6, Applications 1"))
         self.assertEqual(rh["counts"], [["CAT I", 1, "critical"], ["CAT II", 8, ""], ["CAT III", 2, ""]])
         rules, hosts = rh["tables"]
         self.assertEqual(rules["rows"][0][:2], ["SV-257777 (RHEL-09-211010)", "CAT I"])
@@ -976,19 +992,20 @@ class Platforms(unittest.TestCase):
         self.assertEqual(nums[1:6], ["-", "-", "-", "-", "-"])
         d = card(opts={"platform_filter": ["Mainframe"]})
         self.assertEqual(len(section(d, "By collection")["rows"]), 3)
-        self.assertIn("Not a platform (stigman_scorecard_platform_filter): Mainframe. Platforms: Linux, Windows, Network, Other.",
+        self.assertIn("Not a platform (stigman_scorecard_platform_filter): Mainframe. Platforms: Linux, Windows, VMware, Network, "
+                      "Applications, Storage, Other.",
                       section(d, "By platform")["lines"])
 
     def test_with_the_collections_left_out(self):
         """stigman_scorecard_collections picks the collections (the read: '!' leaves one out, * and ?), the platform filter
-        then the platforms of those: ['*', '!SITEA - R*'] and [Other] - VMware's ESXi and Aria, not rhel01's Apache."""
+        then the platforms of those: ['*', '!SITEA - R*'] and [VMware] - ESXi and Aria."""
         cols = [{"collectionId": cid, "name": name} for cid, name, hosts in fx.COLLECTIONS]
         mine, missing = sc.wanted(cols, ["*", "!SITEA - R*"])
         self.assertEqual(([c["name"] for c in mine], missing), ([VMW, WIN], []))
         s = dict((cid, v) for cid, v in fx.state(0).items() if cid in [c["collectionId"] for c in mine])
-        d = card(read=read_of(s), opts={"platform_filter": ["Other"]})
+        d = card(read=read_of(s), opts={"platform_filter": ["VMware"]})
         self.assertEqual([r[:5] for r in section(d, "By collection")["rows"]], [[VMW, 3, 0, 3, 0]])
-        self.assertEqual([r[:5] for r in section(d, "By platform")["rows"]], [["Other", 3, 0, 3, 0]])
+        self.assertEqual([r[:5] for r in section(d, "By platform")["rows"]], [["VMware", 3, 0, 3, 0]])
         self.assertEqual(d["facets"], {})                     # one platform, one collection: no buttons
 
     def test_the_workbook_and_the_numbers(self):
@@ -997,7 +1014,7 @@ class Platforms(unittest.TestCase):
         self.assertEqual(len(x["sparklines"][0]["points"][0]), 8)
         self.assertEqual(x["sparklines"][0]["points"][0][:5], [None] * 5)
         rows = section(self.doc, "The numbers behind")["rows"]
-        self.assertEqual([r[0] for r in rows[-3:]], ["Platform Linux", "Platform Windows", "Platform Other"])
+        self.assertEqual([r[0] for r in rows[-4:]], ["Platform Linux", "Platform Windows", "Platform VMware", "Platform Applications"])
 
 
 class SlowClient(object):
@@ -1061,7 +1078,10 @@ class HostLists(unittest.TestCase):
                       section(d, "By collection")["lines"])
         g = section(d, "By collection", "web")["groups"][0]
         self.assertEqual(g["lines"], ["Hosts not listed (STIG Manager was slow: over 120s, stigman_scorecard_hosts_timeout)."])
-        self.assertEqual(d["counts"]["fixed"], 1)
+        # fixed on the host: a collection whose hosts were not listed is left out, said (a row cannot be tied to its host)
+        self.assertEqual(d["counts"]["fixed"], 0)
+        self.assertIn("Left out: SITEA - RHEL 9 - its hosts were not listed, so a scan's row cannot be tied to its host.",
+                      section(d, "Fixed on the host")["lines"])
 
     def test_hosts_off_is_one_call(self):
         cl = SlowClient()
@@ -1139,7 +1159,7 @@ class Database(unittest.TestCase):
             want = fx.point(fx.state(k), fx.stamp(T0 - k * 7 * DAY), k <= 2)
             self.assertEqual(dict((x, v) for x, v in run.items() if x != "job"),
                              dict(want, collections=sorted(want["collections"], key=lambda c: c["name"])))
-        self.assertEqual(sorted(next(c for c in runs[1]["collections"] if c["name"] == RHEL)["p"]), ["Linux", "Other"])
+        self.assertEqual(sorted(next(c for c in runs[1]["collections"] if c["name"] == RHEL)["p"]), ["Applications", "Linux"])
         # and the report takes them as it takes AAP's
         got = f.stig_scorecard_runs(fx.point(fx.state(0), NOW), [], runs, {"weeks": 8, "job": 5000})
         self.assertEqual(got["counts"], {"aap": 0, "db": 3, "both": 0, "used": 4})
@@ -1189,9 +1209,9 @@ class Database(unittest.TestCase):
         pt = fx.point(fx.state(0), NOW)
         rows = cdb.rows_p_of(pt, cdb.stamp(NOW), 5000)
         self.assertEqual([(r[2], r[3], r[4], r[5], r[6], r[7]) for r in rows],
-                         [("1", "Other", 3, 0, 3, 0), ("2", "Linux", 6, 1, 8, 2), ("2", "Other", 1, 0, 0, 0),
+                         [("1", "VMware", 3, 0, 3, 0), ("2", "Applications", 1, 0, 0, 0), ("2", "Linux", 6, 1, 8, 2),
                           ("3", "Windows", 4, 3, 4, 1)])
-        self.assertEqual(json.loads(rows[1][8]), ["SV-257777", "SV-257842", "SV-257985", "SV-258036"])
+        self.assertEqual(json.loads(rows[2][8]), ["SV-257777", "SV-257842", "SV-257985", "SV-258036"])
         self.assertEqual(cdb.rows_p_of(fx.point(fx.state(0), NOW, False), cdb.stamp(NOW), 1), [])
 
     def test_not_made_when_told_not_to(self):

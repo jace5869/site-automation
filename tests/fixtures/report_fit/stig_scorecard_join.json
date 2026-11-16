@@ -60,6 +60,16 @@
 "",
 "",
 ""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"",
+"",
+""
 ]
 ],
 "column_titles": [
@@ -99,6 +109,7 @@
 "row_status": [
 "critical",
 "critical",
+"",
 ""
 ],
 "rows": [
@@ -123,13 +134,23 @@
 "CAT I open"
 ],
 [
-"Other",
-4,
+"VMware",
+3,
 0,
 3,
 0,
 "\u25ac Same\n0 closed, none opened",
 "3 \u2192 3",
+"OK"
+],
+[
+"Applications",
+1,
+0,
+0,
+0,
+"\u25ac Same\n0 closed, none opened",
+"0 \u2192 0",
 "OK"
 ]
 ],
@@ -157,16 +178,26 @@
 ],
 [
 "",
-"Assets with a STIG of Other (one with STIGs of two platforms counts in each).",
+"Assets with a STIG of VMware (one with STIGs of two platforms counts in each).",
 "",
 "",
 "",
-"Other since 6 Nov\nClosed: none\nOpened: none",
+"VMware since 6 Nov\nClosed: none\nOpened: none",
+"",
+"OK: no CAT I open, and no worse than last week."
+],
+[
+"",
+"Assets with a STIG of Applications (one with STIGs of two platforms counts in each).",
+"",
+"",
+"",
+"Applications since 6 Nov\nClosed: none\nOpened: none",
 "",
 "OK: no CAT I open, and no worse than last week."
 ]
 ],
-"title": "By platform (3)",
+"title": "By platform (4)",
 "wrap": true
 },
 {
@@ -384,7 +415,7 @@
 },
 {
 "col": "c1",
-"pf": "pf0"
+"pf": "pf3"
 }
 ],
 "rows": [
@@ -554,7 +585,7 @@
 8
 ],
 [
-"Platform Other",
+"Platform VMware",
 "-",
 "-",
 "-",
@@ -563,6 +594,17 @@
 3,
 3,
 3
+],
+[
+"Platform Applications",
+"-",
+"-",
+"-",
+"-",
+"-",
+0,
+0,
+0
 ]
 ],
 "text": "One point a week: the last run of each week, the weeks ending on this run's weekday. A dash: no run that week.",
@@ -597,8 +639,7 @@
 "A collection that was not in last week's run is \"New here\" and is not in the week's totals.",
 "Fixed on the host, still Open: the STIG drift reports' last scans against this run's Open findings.",
 "By platform: an asset counts under each platform it has a STIG of, so one with STIGs of two platforms counts in both. A finding counts under its own STIG's platform.",
-"A STIG's platform: the first of stigman_scorecard_platforms with a pattern that matches its benchmark id (Linux rhel_*, oracle_linux_*, *ubuntu*, sles_*, *linux*; Windows ms_windows_*, windows_*, ms_sql_*, iis_*, ms_*; Network cisco_*, juniper_*, palo_alto_*, f5_*, arista_*, *router*, *switch*, *firewall*).",
-"Other: the STIGs no platform matched - Apache_Server_2-4_UNIX_Server_STIG, VMW_Aria_Operations_8-x_Apache_STIG, VMW_vSphere_7-0_ESXi_STIG.",
+"A STIG's platform: the first of stigman_scorecard_platforms with a pattern that matches its benchmark id (Linux rhel_*, oracle_linux_*, *ubuntu*, sles_*, *linux*; Windows ms_windows_*, windows_*, ms_sql_*, iis_*, ms_*, microsoft_*; VMware vmw_*, *vsphere*, *esxi*, *vcenter*; Network cisco_*, juniper_*, palo_alto_*, f5_*, arista_*, *router*, *switch*, *firewall*; Applications apache_*, *tomcat*, *postgresql*, *chrome*, *firefox*, mozilla_*, *kubernetes*, docker_*, oracle_database_*, *mongodb*, *jboss*, *nginx*; Storage netapp_*, *ontap*).",
 "Compared with the run of 2026-11-06 06:02 UTC."
 ],
 "title": "How the scorecard counts"

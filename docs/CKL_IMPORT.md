@@ -398,8 +398,14 @@ patterns (`*` and `?`, any case). The first platform with a pattern that matches
 | Platform | Its default patterns |
 |---|---|
 | Linux | `RHEL_*`, `Oracle_Linux_*`, `*Ubuntu*`, `SLES_*`, `*Linux*` |
-| Windows | `MS_Windows_*`, `Windows_*`, `MS_SQL_*`, `IIS_*`, `MS_*` |
+| Windows | `MS_Windows_*`, `Windows_*`, `MS_SQL_*`, `IIS_*`, `MS_*`, `Microsoft_*` (Edge, Defender, Office) |
+| VMware | `VMW_*`, `*vSphere*`, `*ESXi*`, `*vCenter*` |
 | Network | `Cisco_*`, `Juniper_*`, `Palo_Alto_*`, `F5_*`, `Arista_*`, `*Router*`, `*Switch*`, `*Firewall*` |
+| Applications | `Apache_*`, `*Tomcat*`, `*PostgreSQL*`, `*Chrome*`, `*Firefox*`, `Mozilla_*`, `*Kubernetes*`, `Docker_*`, `Oracle_Database_*`, `*MongoDB*`, `*JBoss*`, `*Nginx*` |
+| Storage | `NetApp_*`, `*ONTAP*` |
+
+The order matters. `Oracle_Linux_8_STIG` is Linux (before Applications' `Oracle_Database_*`). A VMware product's own
+Apache STIG (`VMW_..._Apache_STIG`) is VMware. Anything else, an SRG or a printer for example, is Other.
 
 - An asset counts under each platform it has a STIG of. One with STIGs of two platforms counts in both.
 - A finding counts once, under its own STIG's platform.
@@ -408,14 +414,18 @@ patterns (`*` and `?`, any case). The first platform with a pattern that matches
 - `stigman_scorecard_platform_filter` limits a run to some platforms, for example `[Windows]`. Every number on the page
   is then of those platforms. A name that is no platform is said on the page, and nothing is left out.
 
-To add a platform of your own, list it before the one whose patterns would take its STIGs:
+To add a platform of your own, set the whole list, with yours before the one whose patterns would take its STIGs. For
+example, browsers apart from the other applications:
 
 ```yaml
 stigman_scorecard_platforms:
   - {name: Linux, stigs: ["RHEL_*", "Oracle_Linux_*", "*Ubuntu*", "SLES_*", "*Linux*"]}
-  - {name: VMware, stigs: ["VMW_*"]}
-  - {name: Windows, stigs: ["MS_Windows_*", "Windows_*", "MS_SQL_*", "IIS_*", "MS_*"]}
+  - {name: Windows, stigs: ["MS_Windows_*", "Windows_*", "MS_SQL_*", "IIS_*", "MS_*", "Microsoft_*"]}
+  - {name: VMware, stigs: ["VMW_*", "*vSphere*", "*ESXi*", "*vCenter*"]}
   - {name: Network, stigs: ["Cisco_*", "Juniper_*", "Palo_Alto_*", "F5_*", "Arista_*", "*Router*", "*Switch*", "*Firewall*"]}
+  - {name: Browsers, stigs: ["*Chrome*", "*Firefox*", "Mozilla_*"]}
+  - {name: Applications, stigs: ["Apache_*", "*Tomcat*", "*PostgreSQL*", "*Kubernetes*", "Docker_*", "Oracle_Database_*"]}
+  - {name: Storage, stigs: ["NetApp_*", "*ONTAP*"]}
 ```
 
 ### A big collection (1.67.0)
@@ -433,16 +443,18 @@ the job stays green. The job output has one line per collection with the seconds
 SITEA - RHEL 9 (id 2): counts 0.4 s, assets 0.2 s, hosts 118.9 s
 ```
 
-`stigman_scorecard_hosts: false` skips the host lists. *Fixed on the host, still Open* then lists every rule a scan found
-passing that is still Open in its collection.
+`stigman_scorecard_hosts: false` skips the host lists. A collection whose hosts were not listed is left out of *Fixed on
+the host, still Open*: a scan's row cannot be tied to its host there. The section says which collections, in one line.
 
 **The platform trend starts with 1.67.0.** The points kept before it have no platforms. The page says so in one line.
 With a platform filter, those weeks are gaps in the lines, never wrong numbers.
 
 **On the website:**
 
-- **Platform** and **Collection** buttons above the sections choose the rows shown. A collection's row keeps the counts
-  of all its platforms.
+- **Platform** and **Collection** buttons above the sections choose the rows shown. The counts in a row stay as they
+  are. Each section's title and count say how many rows are shown. A section with none left says `Nothing matches this
+  filter`.
+- **Collection** shows that collection's platforms in *By platform*. Their counts are still of every collection.
 - Under *By collection* each collection opens: its CAT I, II and III open, its top open rules and its worst hosts.
 - On a narrow screen the Platform buttons become a list.
 
@@ -532,7 +544,7 @@ STIG Manager's address, login and certificates are the STIG drift report's (`che
 | `stigman_scorecard_top` | `5` | the rules listed in *Top rules open across hosts* |
 | `stigman_scorecard_weeks` | `8` | the weeks of the trend lines and of *The numbers behind the lines* |
 | `stigman_scorecard_cat2_warn` | `0` | a collection with this many CAT II open or more is a warning. `0`: off |
-| `stigman_scorecard_platforms` | Linux, Windows, Network | the platforms in order, each with its STIG patterns. No match: Other (1.67.0) |
+| `stigman_scorecard_platforms` | Linux, Windows, VMware, Network, Applications, Storage | the platforms in order, each with its STIG patterns. No match: Other (1.67.0) |
 | `stigman_scorecard_platform_filter` | `[]` | only these platforms, by name, for example `[Windows]`. `[]`: every platform (1.67.0) |
 | `stigman_scorecard_hosts` | `true` | list each open rule's hosts, a second call per collection. `false`: counts only (1.67.0) |
 | `stigman_scorecard_rules_timeout` | `180` | seconds for the rules per collection (1.66.2: the counts come first from STIG Manager's metrics); slower: that collection shows *Counts only* |
