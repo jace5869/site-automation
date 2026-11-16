@@ -1,0 +1,91 @@
+---
+# Open ticket: the draft of one finding's incident, or (portal_ticket_mode: live) the incident itself. Runs once, on the AAP
+# side (playbooks/portal_open_ticket.yml: localhost).
+- name: Ticket | the mode (a bare off in YAML is false, and that is off too)
+  ansible.builtin.set_fact:
+    _pt_mode: "{{ 'off' if portal_ticket_mode is sameas false else (portal_ticket_mode | string) }}"
+
+- name: Ticket | the mode is one of dry_run, off, live
+  ansible.builtin.assert:
+    that: _pt_mode in ['dry_run', 'off', 'live']
+    fail_msg: "portal_ticket_mode is {{ _pt_mode | truncate(20) }}: it must be dry_run, off or live. Nothing was done."
+    quiet: true
+
+- name: Ticket | tickets are off
+  ansible.builtin.fail:
+    msg: "Tickets from the portal are off (portal_ticket_mode: off). Nothing was done."
+  when: _pt_mode == 'off'
+
+- name: Ticket | the request (target, report_job, finding_id; who asked)
+  ansible.builtin.include_role:
+    name: portal_request
+  vars:
+    portal_request_action: open_ticket
+    portal_request_always: true
+    portal_request_limit_from: target
+    portal_request_spec:
+      target: {kind: inventory_host}
+      report_job: {kind: text, max: 12, pattern: "[0-9]{1,12}"}
+      finding_id: {kind: text, max: 200, pattern: "[A-Za-z0-9_.:/@-]{1,200}"}
+
+- name: Ticket | the finding, from the job that reported it (any kind)
+  ansible.builtin.include_role:
+    name: finding_ref
+  vars:
+    finding_ref_kinds: []
+
+- name: Ticket | the incident for it
+  ansible.builtin.set_fact:
+    _sn_item:
+      host: "{{ finding.host }}"
+      check: "{{ finding.kind }}"
+      id: "{{ finding.id }}"
+      severity: "{{ finding.severity if finding.severity in ['critical', 'warning'] else 'warning' }}"
+      summary: "{{ finding.title }}"
+      hint: "{{ finding.data.look | default('') }}"
+      note: >-
+        Asked for in the site portal by {{ portal_requested_by | default('unknown') | string | truncate(80) }}{{
+          (' (finding severity ' ~ finding.severity ~ ')') if finding.severity not in ['critical', 'warning'] else '' }}.
+        Reported by AAP job {{ finding_job.id }}{{ (' (' ~ finding_job.name ~ ')') if finding_job.name | default('') else '' }}.
+      job: "{{ finding_job.id }}"
+      time: "{{ finding_job.finished | default('') }}"
+      act: {}
+    _pt_group: "{{ portal_ticket_groups[finding.kind] | default(portal_ticket_group_default, true) | default(servicenow_assignment_group | default(''), true) }}"
+
+- name: Ticket | the draft (nothing is sent)
+  ansible.builtin.include_role:
+    name: servicenow
+    tasks_from: portal_draft.yml
+  vars:
+    servicenow_assignment_group: "{{ _pt_group }}"
+
+- name: Ticket | the draft
+  ansible.builtin.debug:
+    msg: >-
+      {%- set out = ['DRY RUN: nothing was sent to ServiceNow.' if _pt_mode == 'dry_run' else 'The incident to open:'] -%}
+      {%- for k, v in _sn_draft.body.items() -%}
+      {%-   for line in (v | string).split('\n') -%}{%- set _ = out.append((k ~ ': ' if loop.first else '    ') ~ line) -%}{%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Ticket | the draft as the job artifact ticket_draft
+  ansible.builtin.set_stats:
+    data:
+      ticket_draft: "{{ {'mode': _pt_mode, 'correlation_id': _sn_draft.correlation_id, 'incident': _sn_draft.body} }}"
+    per_host: false
+    aggregate: false
+
+- name: Ticket | dry run - the portal job page says nothing was sent
+  ansible.builtin.include_role:
+    name: portal_result
+  vars:
+    portal_result_fixed: unknown
+    portal_result_read_only: true
+    portal_result_before: "{{ finding.title | truncate(120) }}"
+    portal_result_after: "Dry run: nothing was sent"
+    portal_result_summary: "Dry run: nothing was sent. The incident that would be opened is in the job output and the artifact ticket_draft."
+  when: _pt_mode == 'dry_run'
+
+- name: Ticket | live - opening it
+  ansible.builtin.include_tasks: live.yml
+  when: _pt_mode == 'live'

@@ -49,3 +49,71 @@ actions:
       finding_id: {kind: text, label: Finding, max: 200, pattern: "(fapolicyd|fapolicyd_deny|eventlog):[A-Za-z0-9_.:/@-]{1,180}"}
     limit_from: target
     approval: false
+
+  # ---- 1.67.0 part E: fixes of findings (docs/SITE_PORTAL.md, "Disk, services and fapolicyd") ----------------------
+  # Each takes only target, report_job and finding_id: the values to change (the mount, the service, the program and the
+  # path) are read back from the report job by roles/finding_ref, never from the link. modes (open_ticket): the button's
+  # label by portal_ticket_mode - dry_run (the default), live, off (no button).
+  disk_cleanup:
+    title: Clean up a full filesystem (old files in the tmp folders)
+    aap: {type: workflow, name: "Disk - clean up (approved)"}       # workflow 49: plan, approval, clean up, recheck
+    kinds: [disk_full]
+    when: {os: linux}
+    button: Clean up
+    vars:
+      target: {kind: inventory_host, label: Host}
+      report_job: {kind: text, label: AAP job of the report, max: 12, pattern: "[0-9]{1,12}"}
+      finding_id: {kind: text, label: Finding, max: 200, pattern: "disk_full:[A-Za-z0-9_.:/@-]{1,180}"}
+    limit_from: target
+    approval: true
+
+  service_restart:
+    title: Restart a service that is down
+    aap: {type: workflow, name: "Service - restart"}                # workflow 50: look, approval, restart, status
+    kinds: [service_down]
+    button: Restart
+    vars:
+      target: {kind: inventory_host, label: Host}
+      report_job: {kind: text, label: AAP job of the report, max: 12, pattern: "[0-9]{1,12}"}
+      finding_id: {kind: text, label: Finding, max: 200, pattern: "service_down:[A-Za-z0-9_.:/@-]{1,180}"}
+    limit_from: target
+    approval: true
+
+  fapolicyd_allow:
+    title: Let fapolicyd allow this one program
+    aap: {type: workflow, name: "fapolicyd - allow this"}           # workflow 51: check, approval, approved, re-read
+    kinds: [fapolicyd_deny]
+    button: Allow this
+    vars:
+      target: {kind: inventory_host, label: Host}
+      report_job: {kind: text, label: AAP job of the report, max: 12, pattern: "[0-9]{1,12}"}
+      finding_id: {kind: text, label: Finding, max: 200, pattern: "fapolicyd_deny:[A-Za-z0-9_.:/@-]{1,180}"}
+    limit_from: target
+    approval: true
+
+  disk_space_request:
+    title: Write a request for more space (nothing is sent)
+    aap: {type: job, name: "Disk - space request"}
+    kinds: [disk_full]
+    button: Space request
+    vars:
+      target: {kind: inventory_host, label: Host}
+      report_job: {kind: text, label: AAP job of the report, max: 12, pattern: "[0-9]{1,12}"}
+      finding_id: {kind: text, label: Finding, max: 200, pattern: "disk_full:[A-Za-z0-9_.:/@-]{1,180}"}
+    limit_from: target
+    approval: false
+    fixes: false                                                     # it only reads (or opens a ticket): never Fixed or Still there
+
+  open_ticket:
+    title: Open a ticket for a finding (a draft unless portal_ticket_mode is live)
+    aap: {type: job, name: "Site portal - open ticket"}
+    kinds: [any]                                                     # every kind of finding
+    button: Ticket (dry run)
+    modes: {dry_run: "Ticket (dry run)", live: "Open ticket", "off": null}     # "off" quoted: bare, YAML reads it as false
+    vars:
+      target: {kind: inventory_host, label: Host}
+      report_job: {kind: text, label: AAP job of the report, max: 12, pattern: "[0-9]{1,12}"}
+      finding_id: {kind: text, label: Finding, max: 200, pattern: "[A-Za-z0-9_.:/@-]{1,200}"}
+    limit_from: target
+    approval: false
+    fixes: false                                                     # it only reads (or opens a ticket): never Fixed or Still there

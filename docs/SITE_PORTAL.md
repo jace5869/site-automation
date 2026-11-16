@@ -260,6 +260,11 @@ replaces the file.
 | `stig_recheck` | workflow 45 *STIG - recheck one host* | `target`: a host (also the Limit) | no |
 | `ckl_import` | workflow 40 *Checklists imported into STIG Manager* | `stigman_ckl_import_mode`: `import`, `import and scorecard` or `scorecard` | yes, its approval node |
 | `act_triage` | workflow 44 *ACT - triage finding* | `target`: a host (also the Limit); `report_job`: an AAP job id; `finding_id`: a finding's id | no |
+| `disk_cleanup` | workflow 49 *Disk - clean up (approved)* | `target`, `report_job`, `finding_id` (a `disk_full` finding) | yes |
+| `service_restart` | workflow 50 *Service - restart* | `target`, `report_job`, `finding_id` (a `service_down` finding) | yes |
+| `fapolicyd_allow` | workflow 51 *fapolicyd - allow this* | `target`, `report_job`, `finding_id` (a `fapolicyd_deny` finding) | yes |
+| `disk_space_request` | job template *Disk - space request* | `target`, `report_job`, `finding_id` (a `disk_full` finding) | no |
+| `open_ticket` | job template *Site portal - open ticket* | `target`, `report_job`, `finding_id` (any finding) | no |
 
 - **Kinds of value:** `inventory_host` (a host of `portal_inventory`), `choice` (one of `values`) and `text` (`max`
   characters, and `pattern`: the whole value must match).
@@ -364,6 +369,9 @@ Step 101 sets these up, after step 100 (the portal itself).
 | 44 *ACT - triage finding* | *ACT - triage finding*, then (**Run always**) *Windows ACT - triage finding* | Variables, Limit |
 | 45 *STIG - recheck one host* | *STIG recheck*, then (**Run always**) *Windows STIG recheck* | Variables, Limit |
 | 40 *Checklists imported into STIG Manager* | as it is | Variables |
+| 49 *Disk - clean up (approved)* | *Disk - plan a clean up*, the approval, *Disk - clean up one mount* | Variables, Limit |
+| 50 *Service - restart* | *Service - look* (Linux, then Windows), the approval, *Service - restart* (Linux, then Windows) | Variables, Limit |
+| 51 *fapolicyd - allow this* | *fapolicyd - allow this: check*, the approval, *fapolicyd - allow this: approved* | Variables, Limit |
 
 Each step template needs the same **Prompt on launch** as its workflow. Drawings and details:
 [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#44-act---triage-finding-on-demand-from-the-site-portal).
@@ -529,6 +537,94 @@ portal_nginx_image: hub.yoursite.mil/nginx:1.28      # your registry's copy, pin
 
 The three files are paths on the server; the role copies them into `/etc/site-portal/tls`. `/` sends people to
 `/portal/`.
+
+## Disk, services and fapolicyd
+
+Three fix buttons and a request text, on the findings of the health checks and the fapolicyd job. Each reads the
+finding back from the report job, so the host, the mount, the service and the program come from the finding and never
+from the link.
+
+### Clean up (workflow 49)
+
+The button is on a Linux `disk_full` finding. It is for the tmp folders only.
+
+1. **Plan:** which tmp folders (`tmp_cleanup_dirs`) are on that mount, what they hold older than their limit, and the
+   space that would be freed. It deletes nothing.
+2. **Approval:** a person reads the plan.
+3. **Clean up:** the plan is carried out with the same limits as workflow 42: `tmp_cleanup_dirs`, `tmp_cleanup_keep`,
+   only the folder's own filesystem. Then the mount is read again.
+
+Fixed means the mount is under its warning level now. A mount no tmp folder is on, or with nothing old in it, stops at
+step 1 and asks for no approval: use the space request. A Windows drive is not cleaned.
+
+### Restart (workflow 50)
+
+The button is on a `service_down` finding of the Linux or Windows health check. It is not for service watch's containers.
+
+1. **Look:** the service's status and the last 30 log lines (`journalctl`, or the Windows event log). Read only.
+2. **Approval.**
+3. **Restart:** that one service, and 30 seconds later its status.
+
+A service on `portal_restart_never` is refused in step 1, before anyone is asked. The default list is `sshd`,
+`sssd`, `auditd`, `firewalld`, `WinRM`, `Netlogon`, `NTDS` and `DNS`. A service the check found missing is refused too.
+
+### Allow this (workflow 51)
+
+The button is on a `fapolicyd_deny` finding. It uses the path of workflow 36 for that one denial.
+
+1. **Check:** reads what fapolicyd blocks now, and picks the one change for that program and path. It never offers
+   `permissive` or another block's change.
+2. **Approval:** a person reads that one line. It is a change to a security control: route it through your approval.
+3. **Approved:** makes exactly that line, then reads the blocks again.
+
+Fixed means that change is no longer proposed. The denials already in the audit log stay there.
+
+### Space request
+
+The button is on a `disk_full` finding. It writes a request text and sends nothing: no email, no ticket.
+
+```text
+Request: more space on web01.example.mil, /var
+Now: 93% used (186.0 GiB of 200.0 GiB, 14.0 GiB free). The health check warns at 85% and is critical at 95%.
+Growth: about 2.1 GiB a week (over 14.0 days of history), full in about 47.0 days.
+```
+
+The growth and the days to full come from the health check's capacity history on the host. Without a day of history
+the text says so.
+
+### The templates and workflows
+
+Step 101 (or the job *AAP - set up portal actions*) makes workflows 49, 50 and 51 and ten job templates from
+`roles/site_portal_stack/files/workflows.yml`. The *Site portal - open ticket* template gets no ServiceNow credential:
+add it by hand only when you set `portal_ticket_mode: live`.
+
+### The settings
+
+| Setting | Default | What it does |
+|---|---|---|
+| `portal_restart_never` | `sshd`, `sssd`, `auditd`, `firewalld`, `WinRM`, `Netlogon`, `NTDS`, `DNS` | services that are never restarted from here |
+| `portal_restart_wait` | 30 | seconds before the status is read after a restart |
+| `portal_service_log_lines` | 30 | log lines shown in the look step |
+| `portal_service_phase`, `portal_service_os` | `look`, `linux` | set on each of the four templates of workflow 50 |
+| `portal_fapolicyd_phase` | `check` | `approved` on the second template of workflow 51 |
+
+## Open ticket
+
+The button on any finding. By default it opens nothing: it shows the ServiceNow incident it would open.
+
+| `portal_ticket_mode` | The button | What the job does |
+|---|---|---|
+| `dry_run` (the default) | *Ticket (dry run)* | builds the incident and shows it in the job output and the artifact `ticket_draft`. It contacts nothing and needs no credential. |
+| `off` | none | refuses to run. Write it in quotes: a bare `off` is read as false in YAML, and that means off too. |
+| `live` | *Open ticket* | opens the incident with the *ServiceNow API* credential. |
+
+- **The incident** is the one `roles/servicenow` opens for that finding: short description, description (host, check,
+  severity, evidence, who asked, the report job), urgency, impact and a correlation id.
+- **The assignment group** is `portal_ticket_groups[<finding kind>]`, else `portal_ticket_group_default`, else
+  `servicenow_assignment_group`.
+- **One ticket per finding:** with `live`, a finding that already has an open ticket shows that ticket and opens no
+  second one. A ticket the health check opened has its own correlation id, so it is not found this way.
+- **This site has not approved live tickets.** Leave `portal_ticket_mode` on `dry_run` until it does.
 
 ## The report folder and SELinux
 

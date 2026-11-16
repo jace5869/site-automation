@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: portal_ticket
+  description: Open ticket (the site portal) - a ServiceNow incident for one finding of a report, as a draft by default (nothing is sent), opened only with portal_ticket_mode live.
+  license: MIT
+  min_ansible_version: "2.14"
+dependencies: []

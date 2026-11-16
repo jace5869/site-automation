@@ -1,0 +1,133 @@
+---
+# DISK - CLEAN UP ONE MOUNT (1.67.0, the last step of workflow 49 "Disk - clean up (approved)", after the approval).
+# The same request as "Disk - plan a clean up" (target, report_job, finding_id: roles/portal_request and
+# roles/finding_ref check them again), and then:
+#   1. only the plan of this workflow's own plan step is carried out, for this one host (disk_cleanup_plan: the plan
+#      check of "Linux - tmp cleanup", playbooks/tmp_cleanup.yml, workflow 42 - run here as it is, with the same limits:
+#      tmp_cleanup_dirs, tmp_cleanup_keep, only the folder's own filesystem);
+#   2. the filesystem is read again: the finding is fixed when the mount is under its warning level now
+#      (portal_result: fixed, still there, or not checked - the page of the portal job says so at the top).
+# Linux only. docs/SITE_PORTAL.md, "Disk, services and fapolicyd".
+- name: Target check (stops with a clear message when target matches no host)
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: The target leaves at least one host to run on
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: target_check.yml
+      vars:
+        _target_pattern: "{{ target | default('') }}"
+
+- name: Disk - the request again, and the plan is this host's alone
+  hosts: "{{ target | default('no-target-given') }}"
+  gather_facts: false
+  become: true
+  vars:
+    site_os: linux
+  pre_tasks:
+    - name: Linux hosts only
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+  tasks:
+    - name: Disk clean up | the request (target, report_job, finding_id; who asked)
+      ansible.builtin.include_role:
+        name: portal_request
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+        portal_request_action: disk_cleanup
+        portal_request_always: true
+        portal_request_limit_from: target
+        portal_request_spec:
+          target: {kind: inventory_host}
+          report_job: {kind: text, max: 12, pattern: "[0-9]{1,12}"}
+          finding_id: {kind: text, max: 200, pattern: "disk_full:[A-Za-z0-9_.:/@-]{1,180}"}
+
+    - name: Disk clean up | the finding, from the job that reported it
+      ansible.builtin.include_role:
+        name: finding_ref
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+        finding_ref_host: "{{ inventory_hostname }}"
+        finding_ref_kinds: [disk_full]
+
+    - name: Disk clean up | a plan of this workflow, for this host and no other
+      ansible.builtin.assert:
+        that:
+          - awx_workflow_job_id is defined
+          - disk_cleanup_plan is defined
+          - disk_cleanup_plan.keys() | list == [inventory_hostname]
+        fail_msg: >-
+          Refused: there is no clean up plan for {{ inventory_hostname }} alone from this workflow's own plan step
+          (the plan names {{ (disk_cleanup_plan | default({})).keys() | list | join(', ') or 'no host' }}). Nothing was
+          deleted. Start it from the site portal: "Disk - clean up (approved)" (workflow 49).
+        quiet: true
+
+    - name: Disk clean up | the free space before, on the finding's mount
+      ansible.builtin.command: df -P -B1 {{ finding.data.mount | quote }}
+      register: _dc_df_before
+      changed_when: false
+      check_mode: false
+
+# the deleting: "Linux - tmp cleanup" as it is (it asks for the plan of this workflow and deletes only that)
+- name: Disk - delete what the plan lists
+  ansible.builtin.import_playbook: tmp_cleanup.yml
+
+- name: Disk - read the mount again
+  hosts: "{{ target | default('no-target-given') }}"
+  gather_facts: false
+  become: true
+  vars:
+    site_os: linux
+  tasks:
+    - name: Disk recheck | the finding, from the job that reported it
+      ansible.builtin.include_role:
+        name: finding_ref
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+        finding_ref_host: "{{ inventory_hostname }}"
+        finding_ref_kinds: [disk_full]
+
+    - name: Disk recheck | the mount now
+      ansible.builtin.command: df -P -B1 {{ finding.data.mount | quote }}
+      register: _dc_df_after
+      changed_when: false
+      check_mode: false
+
+    - name: Disk recheck | used before and now
+      ansible.builtin.set_fact:
+        _dc_pct_now: "{{ (_dc_df_after.stdout_lines[-1].split()[4] | replace('%', '')) | int }}"
+        _dc_warn: "{{ finding.data.warn | default(0) | int }}"
+
+    - name: Disk recheck | the result
+      ansible.builtin.include_role:
+        name: portal_result
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+        portal_result_fixed: "{{ (_dc_pct_now | int < _dc_warn | int) if _dc_warn | int > 0 else 'unknown' }}"
+        portal_result_before: "{{ finding.data.mount }} {{ finding.data.pct }}% used"
+        portal_result_after: "{{ finding.data.mount }} {{ _dc_pct_now }}% used (warning at {{ _dc_warn }}%)"
+        portal_result_summary: >-
+          {{ finding.data.mount }} on {{ inventory_hostname }}: {{ finding.data.pct }}% used before, {{ _dc_pct_now }}% now;
+          the warning level is {{ _dc_warn }}%.

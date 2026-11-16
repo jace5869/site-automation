@@ -1,0 +1,42 @@
+---
+# The restart of that one unit (systemd), 30 s (portal_restart_wait) later its state; the result for the portal job page.
+- name: Service | restart {{ _ps_name }}
+  ansible.builtin.command: systemctl restart -- {{ _ps_name | quote }}
+  register: _ps_restart
+  changed_when: true
+  failed_when: false
+  timeout: "{{ portal_service_command_timeout | int }}"
+
+- name: Service | wait before reading it again
+  ansible.builtin.pause:
+    seconds: "{{ portal_restart_wait | int }}"
+  when: portal_restart_wait | int > 0 and not ansible_check_mode
+
+- name: Service | is it active now
+  ansible.builtin.command: systemctl is-active -- {{ _ps_name | quote }}
+  register: _ps_after
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Service | the result
+  ansible.builtin.set_fact:
+    _ps_active: "{{ (_ps_after.stdout | default('', true) | trim) == 'active' }}"
+    _ps_state_now: "{{ _ps_after.stdout | default('unknown', true) | trim }}"
+
+- name: Service | the result, for the portal job page
+  ansible.builtin.include_role:
+    name: portal_result
+    apply:
+      delegate_to: localhost
+      run_once: true
+      become: false
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    portal_result_fixed: "{{ _ps_active | bool }}"
+    portal_result_before: "{{ _ps_name }} {{ finding.data.state | default('down') }}"
+    portal_result_after: "{{ _ps_name }} {{ _ps_state_now }}"
+    portal_result_summary: >-
+      {{ _ps_name }} on {{ inventory_hostname }} was {{ finding.data.state | default('down') }}; after the restart
+      ({{ portal_restart_wait }} s) it is {{ _ps_state_now }}{{ (' - systemctl said: ' ~ (_ps_restart.stderr | default('') | trim | truncate(120))) if _ps_restart.rc | default(0) != 0 else '' }}.

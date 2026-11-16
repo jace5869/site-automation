@@ -210,7 +210,8 @@ def ckl_findings_artifact(no_asset, fixed, max_per_kind=50):
 
 # ---- the buttons ---------------------------------------------------------------------------------------------------
 def _matches(action, e):
-    if e.get("kind") not in (action.get("kinds") or []):
+    kinds = action.get("kinds") or []
+    if "any" not in kinds and e.get("kind") not in kinds:         # "any": every kind of finding (open_ticket)
         return False
     for field, want in (action.get("when") or {}).items():
         have = (e.get("data") or {}).get(field)

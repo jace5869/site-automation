@@ -1,0 +1,20 @@
+---
+# A stand-in for roles/portal_result (the portal job page's Fixed / Still there / Not checked), for the tests of the fix
+# jobs: it says what it was given and keeps it as the artifact portal_result. The tests use the real role when
+# roles/portal_result exists (tests/portal/run_portal_fix_test.sh).
+- name: Portal result | what the job reports
+  ansible.builtin.debug:
+    msg: >-
+      the finding: {{ {'true': 'Fixed', 'false': 'Still there', 'unknown': 'Not checked'}[portal_result_fixed | string | lower] }}
+      - before: {{ portal_result_before | default('') }}, after: {{ portal_result_after | default('') }}. {{ portal_result_summary | default('') }}
+
+- name: Portal result | as the job artifact portal_result
+  ansible.builtin.set_stats:
+    data:
+      portal_result:
+        fixed: "{{ portal_result_fixed }}"
+        before: "{{ portal_result_before | default('') }}"
+        after: "{{ portal_result_after | default('') }}"
+        summary: "{{ portal_result_summary | default('') }}"
+    per_host: false
+    aggregate: false

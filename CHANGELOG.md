@@ -140,6 +140,32 @@ stand-in AAP that keeps what it is given: Check first, made from empty, a second
 kept, overwrite, a template it did not make, grants, a schedule, never a delete) - ansible-core 2.22 and 2.16. Not run
 against a real AAP.
 
+**Fix buttons (part E).** Three fixes and two helpers on a report's findings, each read back from the report job
+(`roles/finding_ref`), so the host, mount, service and program come from the finding and never from the link. To set
+up: step 101 (workflows 49, 50 and 51 and their templates; `docs/SITE_PORTAL.md`, "Disk, services and fapolicyd").
+
+- **Clean up** (workflow 49): a Linux `disk_full` finding. Plan (the tmp folders on that mount and what they hold),
+  approval, the clean up with workflow 42's limits and plan check, then the mount read again (fixed under the warning
+  level). Linux only.
+- **Restart** (workflow 50): a `service_down` finding of the Linux or Windows health check. Status and the last 30 log
+  lines, approval, that one service restarted, its status 30 seconds later. Never a service on `portal_restart_never`
+  (`sshd`, `sssd`, `auditd`, `firewalld`, `WinRM`, `Netlogon`, `NTDS`, `DNS`): refused before the approval.
+- **Allow this** (workflow 51): a `fapolicyd_deny` finding. The path of workflow 36 for that one denial: the one
+  change, approval, that line made, the blocks read again.
+- **Space request**: a `disk_full` finding. A ready-to-copy text with the size, the use and, from the health check's
+  history, the growth per week and the days to full. It sends nothing.
+- **Open ticket**: any finding. `portal_ticket_mode: dry_run` (the default) builds the ServiceNow incident and shows it
+  (the artifact `ticket_draft`) and contacts nothing; `off` has no button; `live` opens it with the ServiceNow API
+  credential, or shows the ticket the finding already has. This site has not approved live tickets.
+- New: `playbooks/disk_cleanup_plan.yml`, `disk_cleanup.yml`, `service_restart.yml`, `fapolicyd_allow.yml`,
+  `disk_space_request.yml`, `portal_open_ticket.yml`; roles `portal_service`, `portal_ticket`; the filter
+  `portal_action_modes`; `kinds: [any]` and `modes` in `actions.yml`.
+
+**Tests (part E):** `tests/test_portal_fix.py` (11); `tests/portal/run_portal_fix_test.sh` (the plan, clean up,
+service, space request and ticket jobs with a fake AAP, a fake ServiceNow and tmp folders of their own: the dry run
+sends 0 requests, the draft equals what live sends, live opens one and finds it again); `allow this` in
+`tests/fapolicyd/run_fapolicyd_rules_test.sh`. Not run: a real AAP, a real ServiceNow, the Windows look and restart steps.
+
 **ACT 0.6.26 for the jobs.** `vendor/act` and `vendor/act-windows` are ACT 0.6.26 (was 0.6.25): key pools, and key
 values removed from the result file, the audit log and `--json` output. The jobs install it to `/opt/act/act` (Windows:
 its own path) as before. A host's `/usr/local/bin/act` stays a link to it (1.53.0), so `act` typed on a host is 0.6.26

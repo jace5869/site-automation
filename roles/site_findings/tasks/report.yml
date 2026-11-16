@@ -127,7 +127,7 @@
   ansible.builtin.set_fact:
     _sf_actions: >-
       {{ portal_actions if portal_actions | default({}) | length > 0
-         else (lookup('ansible.builtin.file', role_path ~ '/../site_portal_stack/files/actions.yml') | from_yaml).actions | default({}, true) }}
+         else (lookup('ansible.builtin.file', role_path ~ '/../site_portal_stack/files/actions.yml') | from_yaml).actions | default({}, true) | portal_action_modes(portal_ticket_mode | default('dry_run')) }}
   run_once: true
   when: report_portal_url | default('') | length > 0
 

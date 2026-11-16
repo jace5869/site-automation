@@ -77,7 +77,7 @@
              if report_portal_url | default('') | length > 0 else none }}
         _fa_actions: >-
           {{ portal_actions if portal_actions | default({}) | length > 0
-             else (lookup('ansible.builtin.file', playbook_dir ~ '/../roles/site_portal_stack/files/actions.yml') | from_yaml).actions | default({}, true) }}
+             else (lookup('ansible.builtin.file', playbook_dir ~ '/../roles/site_portal_stack/files/actions.yml') | from_yaml).actions | default({}, true) | portal_action_modes(portal_ticket_mode | default('dry_run')) }}
       when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0
 
 - name: Fapolicyd - after the report

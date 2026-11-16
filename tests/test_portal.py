@@ -25,7 +25,10 @@ import yaml  # noqa: E402
 URL = "https://stigman.example.mil/portal"
 TRIAGE = {"target": {"kind": "inventory_host"}, "report_job": {"kind": "text", "max": 12, "pattern": "[0-9]{1,12}"},
           "finding_id": {"kind": "text", "max": 200, "pattern": "(fapolicyd|fapolicyd_deny|eventlog):[A-Za-z0-9_.:/@-]{1,180}"}}
-ACTIONS = (yaml.safe_load(open(os.path.join(REPO, "roles", "site_portal_stack", "files", "actions.yml"))) or {}).get("actions") or {}
+ALL_ACTIONS = (yaml.safe_load(open(os.path.join(REPO, "roles", "site_portal_stack", "files", "actions.yml"))) or {}).get("actions") or {}
+# parts B and C's actions: these tests are about them (part E's fix buttons are tested in tests/test_portal_fix.py)
+PART_C = ("act_triage", "ckl_import", "stig_recheck")
+ACTIONS = dict((k, v) for k, v in ALL_ACTIONS.items() if k in PART_C)
 HOSTS = ["lin01.example.mil", "win01.example.mil"]
 
 
@@ -118,7 +121,7 @@ def _spec_in(path):
 class Contract(unittest.TestCase):
     """roles/site_portal_stack/files/actions.yml and the playbooks' own checks say the same."""
     def setUp(self):
-        self.actions = yaml.safe_load(open(os.path.join(REPO, "roles", "site_portal_stack", "files", "actions.yml")))["actions"]
+        self.actions = ACTIONS
         self.specs = {}
         for p in ("playbooks/stig_recheck.yml", "playbooks/win_stig_recheck.yml", "playbooks/stigman_ckl_import.yml",
                   "roles/portal_triage/tasks/main.yml"):

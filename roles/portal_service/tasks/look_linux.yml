@@ -1,0 +1,21 @@
+---
+# Read only: systemctl status and the last log lines of that unit.
+- name: Service | systemctl status {{ _ps_name }}
+  ansible.builtin.command: systemctl status --no-pager -l -- {{ _ps_name | quote }}
+  register: _ps_status
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  timeout: "{{ portal_service_command_timeout | int }}"
+
+- name: Service | the last log lines
+  ansible.builtin.command: journalctl -u {{ _ps_name | quote }} -n {{ portal_service_log_lines | int }} --no-pager
+  register: _ps_log
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  timeout: "{{ portal_service_command_timeout | int }}"
+
+- name: Service | what it looks like
+  ansible.builtin.debug:
+    msg: "{{ ['STATUS of ' ~ _ps_name ~ ' on ' ~ inventory_hostname ~ ':'] + (_ps_status.stdout_lines | default([])) + ['', 'LAST ' ~ portal_service_log_lines ~ ' LOG LINES:'] + (_ps_log.stdout_lines | default([])) }}"
