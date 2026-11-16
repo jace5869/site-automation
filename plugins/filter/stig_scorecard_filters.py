@@ -362,6 +362,10 @@ def stig_scorecard(read, point, runs, opts=None):
               "Open findings (CAT I, II and III), one point a week", ""]
     notes_col = (["Not read: %s - %s" % (c.get("name") or c.get("id"), c.get("error")) for c in bad]
                  + (["Not there, or the client cannot read it (stigman_scorecard_collections): %s." % ", ".join(missing)] if missing else [])
+                 + (["Counted, but the hosts of each rule not listed (STIG Manager was slow, stigman_scorecard_hosts_timeout): %s. "
+                     "Their counts are complete; Top rules and Fixed on the host leave their hosts out." % ", ".join(
+                         str(c.get("name") or c.get("id")) for c in good if str(c.get("hosts") or "").startswith("not listed"))]
+                    if any(str(c.get("hosts") or "").startswith("not listed") for c in good) else [])
                  + ([] if trend else ["The trend starts next week: a line needs two weekly points, and this run is the first."])
                  + ([] if base else ["No run 6 to 8 days ago to compare with: \"Since last week\" starts with the run a week from now."]))
     sec = {"title": "By collection (%d)" % len(cols), "status": _worst_of(rst), "columns": columns, "column_titles": titles,

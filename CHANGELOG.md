@@ -1,5 +1,38 @@
 # Changelog
 
+## 1.66.1 — 2026-11-16
+
+**Updating without scripts:** paste `site-automation-1.66.1-changed-since-1.66.0.zip` as it is (from an older version,
+its own zip). It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`. **Nothing to set up.** Fixes only; new settings have defaults.
+
+**The STIG scorecard reads a large STIG Manager.** It timed out (`TimeoutError: The read operation timed out`) on
+collections of hundreds of assets: the one request asked for every open rule *with the hosts it is open on*.
+
+- It now reads the **counts first**, without the hosts: CAT I, II and III per collection, the tiles, the trend, the
+  week's change.
+- Then, per collection, the hosts of each rule (*Top rules across hosts*, *Fixed on the host*), with their own limit:
+  `stigman_scorecard_hosts_timeout` (60 s). Slower: that collection keeps its counts, its hosts are not listed, and
+  *How the scorecard counts* names it. `stigman_scorecard_hosts: false` skips the host lists altogether.
+- The job output has one line per collection: its name, seconds, hosts listed or not, and any error.
+
+**Leave collections out: `!`.** `stigman_scorecard_collections` and `stigman_ckl_import_collections` take `!name` or
+`!id`: `['*', '!48', '!Archived*']` is every collection the client reads but those. The scorecard's list also takes `*` and
+`?` now. The import's staging collection is always searched. A `!` naming no collection is said (the scorecard) or
+stops the job (the import).
+
+**No crash on a slow or dropped STIG Manager answer.** The STIG Manager clients (scorecard, checklist import, STIG
+Manager - update, the STIG drift report's reads and attachments) turn a timeout or a dropped connection into their own
+error naming `check_stig_stigman_timeout`; one slow collection is listed, the others read.
+
+**No crash on a certificate that is not plain PEM** in *VM - health report*'s single sign-on step
+(`Unable to load PEM file ... InvalidHeader`). A certificate is read from PEM, PEM with Windows or escaped line ends, or
+its bare base64 body; one that still cannot be read is a note, not a crash. Remove `vm_sso: false` if you set it.
+
+**Tests:** `tests/test_stigman_timeouts.py`, `tests/test_collection_exclusions.py`, `tests/test_sso_cert_forms.py` (new,
+in CI); the scorecard's counts-first read against a stand-in STIG Manager slow only on the host lists. Not run against a
+real STIG Manager or vCenter. SA_VERSION 1.66.1; the PDFs at 1.66.1.
+
 ## 1.66.0 — 2026-11-14
 
 **Updating without scripts:** paste `site-automation-1.66.0-changed-since-1.61.0.zip` as it is (from an older version,

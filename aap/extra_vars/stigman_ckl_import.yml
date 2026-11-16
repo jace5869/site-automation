@@ -129,6 +129,14 @@ stigman_ckl_import_collection: VMware
 ## the folder under stigman_ckl_import_src (never read)
 # stigman_ckl_import_move_to: imported
 
+## also list the hosts each open rule is on (Top rules, Fixed on the host): a second, slower read
+## per collection
+# stigman_scorecard_hosts: true
+
+## seconds for that host list per collection; slower: the counts stay, that collection's hosts are
+## not listed (1.66.1)
+# stigman_scorecard_hosts_timeout: 60
+
 ## "Top rules open across hosts": this many rules
 # stigman_scorecard_top: 5
 

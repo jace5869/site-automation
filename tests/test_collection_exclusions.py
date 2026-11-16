@@ -1,4 +1,4 @@
-"""1.67.0: '!' leaves a STIG Manager collection out of the scorecard and of the checklist import's search."""
+"""1.66.1: '!' leaves a STIG Manager collection out of the scorecard and of the checklist import's search."""
 import importlib.util
 import os
 import unittest

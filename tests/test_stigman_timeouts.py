@@ -1,4 +1,4 @@
-"""1.67.0: a STIG Manager answer that times out is a RuntimeError with its reason, never a module crash.
+"""1.66.1: a STIG Manager answer that times out is a RuntimeError with its reason, never a module crash.
 
 The scorecard stopped with "TimeoutError: The read operation timed out" on a large collection: urllib raises that (and a
 dropped connection, an OSError) outside URLError. Each STIG Manager client now turns it into the module's own error, so

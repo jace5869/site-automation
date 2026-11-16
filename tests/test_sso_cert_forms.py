@@ -1,6 +1,6 @@
 """site_vcenter_sso.load_cert: every form a certificate arrives in reads the same, and the STS chain never crashes the job.
 
-1.67.0: a vCenter's STS chain (or an OCSP test certificate) whose text was not plain PEM stopped the whole single sign-on
+1.66.1: a vCenter's STS chain (or an OCSP test certificate) whose text was not plain PEM stopped the whole single sign-on
 step with "Unable to load PEM file ... InvalidHeader". The body is now decoded as DER, and a certificate that cannot be read
 is a note, not a crash.
 """

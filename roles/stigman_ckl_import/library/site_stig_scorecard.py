@@ -74,16 +74,16 @@ class Client(object):
             self.ctx = ssl.create_default_context(cafile=p["ca_path"] or None)
         self.token = None
 
-    def _open(self, req):
+    def _open(self, req, timeout=None):
         try:
-            resp = urlopen(req, timeout=self.p["timeout"], context=self.ctx)
+            resp = urlopen(req, timeout=timeout or self.p["timeout"], context=self.ctx)
             return json.loads(resp.read().decode("utf-8") or "null")
         except HTTPError as e:
             body = e.read().decode("utf-8", "replace")[:300]
             raise RuntimeError("HTTP %d from %s: %s" % (e.code, req.get_full_url().split("?")[0], body.strip() or e.reason))
         except URLError as e:
             raise RuntimeError("cannot reach %s: %s" % (req.get_full_url().split("?")[0], e.reason))
-        except (OSError, TimeoutError) as e:     # a read that timed out or a dropped connection: not a URLError (1.67.0)
+        except (OSError, TimeoutError) as e:     # a read that timed out or a dropped connection: not a URLError (1.66.1)
             raise RuntimeError("no answer from %s in time (%s): %s" % (req.get_full_url().split("?")[0],
                                                                        "a slow answer: raise check_stig_stigman_timeout" if isinstance(e, TimeoutError) or "timed out" in str(e) else "the connection dropped", e))
         except ValueError:
@@ -100,16 +100,16 @@ class Client(object):
             raise RuntimeError("the token endpoint gave no access_token")
         self.token = ans["access_token"]
 
-    def get(self, path, **query):
+    def get(self, path, _timeout=None, **query):
         q = urlencode(sorted(query.items()), doseq=True)
         req = Request(self.api + path + ("?" + q if q else ""),
                       headers={"Authorization": "Bearer " + self.token, "Accept": "application/json"})
-        return self._open(req)
+        return self._open(req, _timeout)
 
 
 def wanted(cols, names):
     """(the collections to read, the names not found): names are collection names or ids, any case, * and ? allowed;
-    [] or ['*'] = all. An entry starting with ! leaves that collection out (1.67.0): ['*', '!48', '!Archived*'] = all but those."""
+    [] or ['*'] = all. An entry starting with ! leaves that collection out (1.66.1): ['*', '!48', '!Archived*'] = all but those."""
     import fnmatch
     names = [str(n).strip() for n in names or [] if str(n).strip()]
     skip = [n[1:].strip() for n in names if n.startswith("!")]
@@ -175,13 +175,27 @@ def read(p, client):
     for c in sorted(mine, key=lambda c: str(c.get("name", "")).lower()):
         cid = str(c["collectionId"])
         rec = {"id": cid, "name": str(c.get("name") or cid), "assets": 0, "cat1": 0, "cat2": 0, "cat3": 0, "rules": [], "error": ""}
+        t0 = time.time()
         try:
-            rows = client.get("/collections/%s/findings" % cid, aggregator="ruleId", acceptedOnly="false", projection="assets")
+            # 1.66.1: the counts first, without the host of each finding (projection=assets is what is slow on a large
+            # STIG Manager); the hosts per rule after, with their own timeout - too slow: the counts stay, the hosts are
+            # not listed, and the job goes on
+            rows = client.get("/collections/%s/findings" % cid, aggregator="ruleId", acceptedOnly="false")
             rec["rules"], cats = findings_of(rows)
             rec.update(cat1=cats[1], cat2=cats[2], cat3=cats[3])
+            rec["hosts"] = "not read (stigman_scorecard_hosts: false)"
+            if p["hosts"]:
+                try:
+                    rows = client.get("/collections/%s/findings" % cid, _timeout=p["hosts_timeout"], aggregator="ruleId",
+                                      acceptedOnly="false", projection="assets")
+                    rec["rules"], _cats = findings_of(rows)
+                    rec["hosts"] = "listed"
+                except RuntimeError as e:
+                    rec["hosts"] = "not listed: %s" % e
             rec["assets"] = asset_count(client, cid)
         except RuntimeError as e:
             rec["error"] = str(e)
+        rec["seconds"] = round(time.time() - t0, 1)
         out.append(rec)
     return out, missing
 
@@ -197,6 +211,8 @@ def main():
         validate_certs=dict(type="bool", default=True),
         ca_path=dict(type="str", default=""),
         timeout=dict(type="int", default=60),
+        hosts=dict(type="bool", default=True),
+        hosts_timeout=dict(type="int", default=60),
     ), supports_check_mode=True)
     p = module.params
     res = {"changed": False, "ok": False, "error": "", "collections": [], "missing": [],

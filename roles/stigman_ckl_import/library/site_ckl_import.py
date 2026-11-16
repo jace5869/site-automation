@@ -478,7 +478,7 @@ class Client(object):
                                                         e.read().decode("utf-8", "replace")[:300].strip() or e.reason))
         except URLError as e:
             raise RuntimeError("cannot reach %s: %s" % (req.get_full_url().split("?")[0], e.reason))
-        except (OSError, TimeoutError) as e:     # a read that timed out or a dropped connection: not a URLError (1.67.0)
+        except (OSError, TimeoutError) as e:     # a read that timed out or a dropped connection: not a URLError (1.66.1)
             raise RuntimeError("no answer from %s in time (%s): %s" % (req.get_full_url().split("?")[0],
                                                                        "a slow answer: raise check_stig_stigman_timeout" if isinstance(e, TimeoutError) or "timed out" in str(e) else "the connection dropped", e))
         except ValueError:
@@ -653,7 +653,7 @@ def pick_collections(cols, want, staging, grants=None, routed=False):
         raise Fail("no collection %s that the client can read (it reads: %s)" % (staging.strip(), names))
     st = as_col(st[0])
     out = []
-    skip = [str(w).strip()[1:].strip() for w in want or [] if str(w).strip().startswith("!")]     # 1.67.0: ! leaves one out
+    skip = [str(w).strip()[1:].strip() for w in want or [] if str(w).strip().startswith("!")]     # 1.66.1: ! leaves one out
     want = [w for w in want or [] if not str(w).strip().startswith("!")] or (["*"] if skip else [])
     for w in want or []:
         w = str(w).strip()

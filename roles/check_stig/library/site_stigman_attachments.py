@@ -74,7 +74,7 @@ class Client(object):
             raise RuntimeError("HTTP %d from %s: %s" % (e.code, req.get_full_url().split("?")[0], body.strip() or e.reason))
         except URLError as e:
             raise RuntimeError("cannot reach %s: %s" % (req.get_full_url().split("?")[0], e.reason))
-        except (OSError, TimeoutError) as e:     # a read that timed out or a dropped connection: not a URLError (1.67.0)
+        except (OSError, TimeoutError) as e:     # a read that timed out or a dropped connection: not a URLError (1.66.1)
             raise RuntimeError("no answer from %s in time (%s): %s" % (req.get_full_url().split("?")[0],
                                                                        "a slow answer: raise check_stig_stigman_timeout" if isinstance(e, TimeoutError) or "timed out" in str(e) else "the connection dropped", e))
         except ValueError:
