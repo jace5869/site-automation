@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.66.2 — 2026-11-16
+
+**Updating without scripts:** paste `site-automation-1.66.2-changed-since-1.66.0.zip` (or `-changed-since-1.66.1`) as it
+is. It leaves out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and `poam/poam.csv`.
+**Nothing to set up.** New settings have defaults.
+
+**The STIG scorecard counts every collection, however large.** The counts per collection (CAT I, II and III, the assets)
+now come from STIG Manager's own metrics (`GET /collections/ID/metrics/summary/collection`): what its dashboard shows,
+counted by STIG Manager already, fast on a collection of hundreds of assets. Checked against a real STIG Manager: the same
+numbers as the slow read.
+
+- The rules (which rule is open on how many hosts: *Top rules*, *Fixed on the host*, the week's change rule by rule) are
+  a second read per collection, with its own limit `stigman_scorecard_rules_timeout` (180 s). Too slow: the collection
+  keeps its counts, its row says *Counts only*, and *How the scorecard counts* names it.
+- The hosts of each rule are a third read, optional as before (`stigman_scorecard_hosts`, `stigman_scorecard_hosts_timeout`).
+- The job output's line per collection: name, seconds, where the counts came from (metrics or findings), rules read or
+  not, hosts listed or not.
+
+**The title is the compliance sentence.** The checklist import's state (`Checklist import: 1363 review(s) to write ...`)
+is the line under it, no longer added to the title.
+
+**Leaving out a collection the client cannot read** (`stigman_ckl_import_collections: ['*', '!75']` when 75 is not
+there) no longer stops the import: a warning names it, the rest runs. A collection to search that is not there still
+stops it.
+
 ## 1.66.1 — 2026-11-16
 
 **Updating without scripts:** paste `site-automation-1.66.1-changed-since-1.66.0.zip` as it is (from an older version,

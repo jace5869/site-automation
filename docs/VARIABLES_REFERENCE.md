@@ -1773,6 +1773,7 @@ File: `roles/stigman_ckl_import/defaults/main.yml`
 | `stigman_ckl_import_move_to` | `imported` | the folder under stigman_ckl_import_src (never read) |
 | `stigman_ckl_import_mode` | `import` | What this job does (1.58.0) - a survey choice on the job template and on workflow 40: import as before: the checklists read, the reviews planned. No scorecard. import and scorecard the same, and the STIG compliance scorecard first in the report. A drop folder with no checklist is not an error then: one line, and the j… (all of it: the role file) |
 | `stigman_scorecard_collections` | `[]` | The STIG compliance scorecard (stigman_ckl_import_mode "import and scorecard" or "scorecard"). It reads STIG Manager with the same "STIG Manager API" credential - GET requests only, never a write. docs/CKL_IMPORT.md, the scorecard. the collections on it, by name or id, * and ? ([] = every collection the client reads);… (all of it: the role file) |
+| `stigman_scorecard_rules_timeout` | `180` | seconds for the rules per collection (the counts come from STIG Manager's metrics first); slower: counts only (1.66.2) |
 | `stigman_scorecard_hosts` | `true` | also list the hosts each open rule is on (Top rules, Fixed on the host): a second, slower read per collection |
 | `stigman_scorecard_hosts_timeout` | `60` | seconds for that host list per collection; slower: the counts stay, that collection's hosts are not listed (1.66.1) |
 | `stigman_scorecard_top` | `5` | "Top rules open across hosts": this many rules |

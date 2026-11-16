@@ -21,12 +21,15 @@
          else stigman_scorecard_collections }}
     hosts: "{{ stigman_scorecard_hosts | default(true) | bool }}"
     hosts_timeout: "{{ stigman_scorecard_hosts_timeout | default(60) | int }}"
+    rules_timeout: "{{ stigman_scorecard_rules_timeout | default(check_stig_stigman_timeout | default(180)) | int }}"
   register: _sc_read
   check_mode: false                     # it only reads: a dry run (Check) shows the real scorecard
 
 - name: Scorecard | how long each collection took (the slow one shows here)
   ansible.builtin.debug:
     msg: "{{ _sc_read.collections | default([]) | map(attribute='name') | zip(_sc_read.collections | default([]) | map(attribute='seconds', default='-'),
+             _sc_read.collections | default([]) | map(attribute='counts_from', default='-'),
+             _sc_read.collections | default([]) | map(attribute='rules_read', default='-'),
              _sc_read.collections | default([]) | map(attribute='hosts', default='-'), _sc_read.collections | default([]) | map(attribute='error', default=''))
              | map('join', ' | ') | list }}"
 

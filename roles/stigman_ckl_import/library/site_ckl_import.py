@@ -655,6 +655,9 @@ def _coll_hits(cols, w, name_of, id_of):
     return [c for c in cols if fnmatch.fnmatchcase(str(name_of(c) or "").lower(), pat)]
 
 
+PICK_NOTES = []                         # what pick_collections says without stopping (a ! naming no collection)
+
+
 def pick_collections(cols, want, staging, grants=None, routed=False):
     """-> (the staging collection - where a new asset is created -, the collections a host's asset is looked for in): those
     of want (names or ids, * and ?, any case; '*' = every one the client reads), the staging one last. want empty: the
@@ -680,7 +683,8 @@ def pick_collections(cols, want, staging, grants=None, routed=False):
     for w in skip:
         gone = _coll_hits(cols, w, lambda c: c.get("name"), lambda c: c.get("collectionId"))
         if not gone and not any(ch in w for ch in "*?"):
-            raise Fail("no collection %s to leave out (stigman_ckl_import_collections: !%s) that the client can read (it reads: %s)" % (w, w, names))
+            # leaving out a collection the client cannot read changes nothing: said (a typo shows), never a stop
+            PICK_NOTES.append("stigman_ckl_import_collections: !%s - no collection %s that the client can read, nothing to leave out" % (w, w))
         ids = set(str(c.get("collectionId")) for c in gone)
         out = [c for c in out if c["collectionId"] not in ids]
     low = [c["name"] for c in out + [st] if grants is not None and grants.get(c["collectionId"], 0) < 2]
@@ -1402,6 +1406,9 @@ def main():
         out["empty"] = isinstance(e, Empty)
     for f in out["files"]:
         f.pop("data", None)
+    for note in PICK_NOTES:
+        module.warn(note)
+    out["notes"] = list(out.get("notes") or []) + PICK_NOTES if isinstance(out.get("notes"), list) or "notes" not in out else out["notes"]
     module.exit_json(**out)
 
 

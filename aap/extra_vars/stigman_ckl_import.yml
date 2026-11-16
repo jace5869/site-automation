@@ -129,6 +129,10 @@ stigman_ckl_import_collection: VMware
 ## the folder under stigman_ckl_import_src (never read)
 # stigman_ckl_import_move_to: imported
 
+## seconds for the rules per collection (the counts come from STIG Manager's metrics first); slower:
+## counts only (1.66.2)
+# stigman_scorecard_rules_timeout: 180
+
 ## also list the hosts each open rule is on (Top rules, Fixed on the host): a second, slower read
 ## per collection
 # stigman_scorecard_hosts: true

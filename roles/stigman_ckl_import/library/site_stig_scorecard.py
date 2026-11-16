@@ -169,6 +169,21 @@ def findings_of(rows):
     return rules, cats
 
 
+def metric_cats(m):
+    """STIG Manager's metrics summary -> {1: high, 2: medium, 3: low} (the open findings by category), or None when the
+    answer has no findings counts (an older STIG Manager, or no grant for the metrics)."""
+    if not isinstance(m, dict):
+        return None
+    mm = m.get("metrics") if isinstance(m.get("metrics"), dict) else m
+    f = mm.get("findings") if isinstance(mm, dict) else None
+    if not isinstance(f, dict) or not all(k in f for k in ("high", "medium", "low")):
+        return None
+    try:
+        return {1: int(f["high"]), 2: int(f["medium"]), 3: int(f["low"])}
+    except (TypeError, ValueError):
+        return None
+
+
 def asset_count(client, cid):
     try:
         m = client.get("/collections/%s/metrics/summary/collection" % cid)
@@ -188,14 +203,28 @@ def read(p, client):
         cid = str(c["collectionId"])
         rec = {"id": cid, "name": str(c.get("name") or cid), "assets": 0, "cat1": 0, "cat2": 0, "cat3": 0, "rules": [], "error": ""}
         t0 = time.time()
+        # 1.66.2: the counts from STIG Manager's own metrics (what its dashboard shows: CAT I, II and III per collection,
+        # counted by STIG Manager already - fast on any collection); the rules (by rule, how many hosts) after, with
+        # their own limit - too slow: the counts stay and the week's change waits for a run that reads them; the hosts
+        # per rule last, also optional (stigman_scorecard_hosts)
+        m = None
         try:
-            # 1.66.1: the counts first, without the host of each finding (projection=assets is what is slow on a large
-            # STIG Manager); the hosts per rule after, with their own timeout - too slow: the counts stay, the hosts are
-            # not listed, and the job goes on
-            rows = client.get("/collections/%s/findings" % cid, aggregator="ruleId", acceptedOnly="false")
-            rec["rules"], cats = findings_of(rows)
-            rec.update(cat1=cats[1], cat2=cats[2], cat3=cats[3])
-            rec["hosts"] = "not read (stigman_scorecard_hosts: false)"
+            m = client.get("/collections/%s/metrics/summary/collection" % cid)
+        except RuntimeError as e:
+            rec["metrics"] = "not read: %s" % e
+        cats = metric_cats(m)
+        if cats is not None:
+            rec.update(cat1=cats[1], cat2=cats[2], cat3=cats[3], counts_from="metrics")
+            if isinstance(m, dict) and isinstance(m.get("assets"), int):
+                rec["assets"] = m["assets"]
+        rec["rules_read"] = False
+        rec["hosts"] = "not read (stigman_scorecard_hosts: false)" if not p["hosts"] else "not read"
+        try:
+            rows = client.get("/collections/%s/findings" % cid, _timeout=p["rules_timeout"], aggregator="ruleId", acceptedOnly="false")
+            rec["rules"], rcats = findings_of(rows)
+            rec["rules_read"] = True
+            if cats is None:
+                rec.update(cat1=rcats[1], cat2=rcats[2], cat3=rcats[3], counts_from="findings")
             if p["hosts"]:
                 try:
                     rows = client.get("/collections/%s/findings" % cid, _timeout=p["hosts_timeout"], aggregator="ruleId",
@@ -204,9 +233,16 @@ def read(p, client):
                     rec["hosts"] = "listed"
                 except RuntimeError as e:
                     rec["hosts"] = "not listed: %s" % e
-            rec["assets"] = asset_count(client, cid)
         except RuntimeError as e:
-            rec["error"] = str(e)
+            if cats is None:
+                rec["error"] = str(e)
+            else:
+                rec["rules_note"] = "rules not read (counts from STIG Manager's metrics): %s" % e
+        if not rec.get("error") and not rec.get("assets"):
+            try:
+                rec["assets"] = asset_count(client, cid)
+            except RuntimeError:
+                pass
         rec["seconds"] = round(time.time() - t0, 1)
         out.append(rec)
     return out, missing
@@ -225,6 +261,7 @@ def main():
         timeout=dict(type="int", default=60),
         hosts=dict(type="bool", default=True),
         hosts_timeout=dict(type="int", default=60),
+        rules_timeout=dict(type="int", default=180),
     ), supports_check_mode=True)
     p = module.params
     res = {"changed": False, "ok": False, "error": "", "collections": [], "missing": [],
