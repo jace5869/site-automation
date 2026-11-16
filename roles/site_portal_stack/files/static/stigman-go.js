@@ -7,7 +7,7 @@
   var t = document.querySelector('meta[name="sa-stigman-target"]');
   var to = document.querySelector('meta[name="sa-stigman-to"]');
   var dest = (to && to.getAttribute("content")) || "/";
-  if (!/^\/(?!\/)/.test(dest)) dest = "/";              // this site only
+  if (!/^\/(?![\/\\])/.test(dest) || /[\\\s]/.test(dest)) dest = "/";   // this site only: no //, no \ (a browser reads /\x as //x), no spaces
   try {
     if (t && t.getAttribute("content")) {
       var v = JSON.parse(t.getAttribute("content"));

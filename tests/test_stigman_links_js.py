@@ -70,7 +70,8 @@ class Js(unittest.TestCase):
         self.assertGreater(t["at"], 0)
 
     def test_go_never_leaves_the_site(self):
-        for to in ("//evil.example.mil/", "https://evil.example.mil/", "javascript:alert(1)", ""):
+        for to in ("//evil.example.mil/", "https://evil.example.mil/", "javascript:alert(1)", "", "/\\evil.example.mil/",
+                   "/\\\\evil.example.mil", "/a\\b", "/a b", "/a\nb"):    # 1.68.1b: a browser reads /\x as //x
             self.assertEqual(self.run_js("stigman-go.js", {"metas": {"sa-stigman-to": to}, "wait": 50})["replaced"], "/", to)
 
     def test_go_without_a_target_still_goes_on(self):

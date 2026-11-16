@@ -1519,7 +1519,10 @@ class OpenLinks(unittest.TestCase):
                          self.PORTAL + "/stigman/go?c=2&b=RHEL_9_STIG&a=11&r=SV-257985r1069364_rule")
         self.assertEqual(g(self.PORTAL, "1", "VMware Aria Operations 8.x Application"),
                          self.PORTAL + "/stigman/go?c=1&b=VMware+Aria+Operations+8.x+Application")
-        for bad in (("", "2", "B"), ("javascript:alert(1)", "2", "B"), (self.PORTAL + "?x", "2", "B"), (self.PORTAL, "x", "B"),
+        # 1.68.1b: a line end inside a value never passes (\Z, not $); one at the end is stripped - the link has none
+        self.assertEqual(g(self.PORTAL, "2\n", "B\n"), self.PORTAL + "/stigman/go?c=2&b=B")
+        for bad in ((self.PORTAL, "1\n2", "B"), (self.PORTAL, "2", "B\nC"), (self.PORTAL, "2", "B", "1\n1"), (self.PORTAL, "2", "B", "", "SV-1\nx"),
+                    ("", "2", "B"), ("javascript:alert(1)", "2", "B"), (self.PORTAL + "?x", "2", "B"), (self.PORTAL, "x", "B"),
                     (self.PORTAL, "2", "<b>"), (self.PORTAL, "2", "B", "1 1"), (self.PORTAL, "2", "B", "", "a/b"), (self.PORTAL, "2", "")):
             self.assertEqual(g(*bad), "", bad)
 

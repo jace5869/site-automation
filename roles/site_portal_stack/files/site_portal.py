@@ -127,7 +127,7 @@ class Config(object):
         # 1.68.1: where STIG Manager's page is on this site (the go page goes on to it): a path of this host only
         raw_sp = g("PORTAL_STIGMAN_PATH", "/").strip()
         sp = "/" + raw_sp.strip("/")
-        self.stigman_path = ((sp.rstrip("/") + "/") if re.match(r"^/[A-Za-z0-9_./-]*$", sp) and not raw_sp.startswith("//")
+        self.stigman_path = ((sp.rstrip("/") + "/") if re.match(r"^/[A-Za-z0-9_./-]*\Z", sp) and not raw_sp.startswith("//")
                              and "//" not in sp and ".." not in sp else "/")
 
 
@@ -704,13 +704,17 @@ class Portal(object):
 
 # ---- 1.68.1: a STIG scorecard link that opens the review (stigman_link_style: open) ---------------------------------------
 # the values a link may carry - plugins/filter/stig_scorecard_filters.py (GO_ID, GO_BENCH, GO_RULE) makes them the same way
-STIGMAN_GO = {"c": re.compile(r"^[0-9]{1,12}$"), "a": re.compile(r"^[0-9]{1,12}$"), "b": re.compile(r"^[A-Za-z0-9_.\- ]{1,255}$"),
-              "r": re.compile(r"^[A-Za-z0-9_.\-]{1,100}$")}
+# \Z, not $: "$" also matches before a last line end ("12\n" would pass - 1.68.1b)
+STIGMAN_GO = {"c": re.compile(r"^[0-9]{1,12}\Z"), "a": re.compile(r"^[0-9]{1,12}\Z"), "b": re.compile(r"^[A-Za-z0-9_.\- ]{1,255}\Z"),
+              "r": re.compile(r"^[A-Za-z0-9_.\-]{1,100}\Z")}
 
 
 def stigman_target(query):
     """/stigman/go's query -> {c, b[, a][, r]}, or None when a value is missing, repeated, unknown or cannot pass."""
-    q = urllib.parse.parse_qs(query or "", keep_blank_values=True, max_num_fields=10)
+    try:
+        q = urllib.parse.parse_qs(query or "", keep_blank_values=True, max_num_fields=10)
+    except ValueError:                          # more than 10 fields (1.68.1b): no target - the plain address
+        return None
     if set(q) - set(STIGMAN_GO) or any(len(v) != 1 for v in q.values()) or not q.get("c") or not q.get("b"):
         return None
     out = {}

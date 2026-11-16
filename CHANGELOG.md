@@ -24,6 +24,9 @@ set `stigman_link_style: open`.
   way). A bad value is a 302 to STIG Manager's plain address. The script only reads before it opens.
 - The scorecard's read keeps each asset's id (the metrics and the host lists have it). The weekly point does not change.
 - Thanks to nuc-dev-3's spike for STIG Manager's client functions and their traps (an open review ignores a new rule).
+- Hardened after the tester's break-it pass (no redirect escape found): more than 10 query fields is a 302 to the plain
+  address (was no answer); a value with a line end never passes (`\Z`, not `$`); the go page refuses a `\` in where it
+  goes (a browser reads `/\x` as `//x`).
 
 **Tests:** `tests/stig/run_stigman_links_test.sh` - the real STIG Manager 1.6.18, 1.6.17 and 1.6.16 with Keycloak, the
 portal and nginx with the role's lines, in headless Chrome: a cold browser through the sign-in to the asset's review at

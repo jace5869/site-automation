@@ -638,6 +638,14 @@ class Live(unittest.TestCase):
             code, raw, h = self.req("/stigman/go?" + q, dn=None)
             self.assertEqual((code, h.get("Location")), (302, "/"), q)
         self.assertEqual(sp.stigman_target("c=2&b=RHEL_9_STIG&a=&r="), {"c": "2", "b": "RHEL_9_STIG"})
+        # 1.68.1b (the tester's break-it pass): more than 10 fields - parse_qs raises; a value with a last line end
+        # ("$" matched before it) - both refused, answered with the plain address (not a traceback and no answer)
+        many = "c=2&b=RHEL_9_STIG&" + "&".join("x%d=1" % i for i in range(12))
+        self.assertIsNone(sp.stigman_target(many))
+        for q in (many, "c=12%0A&b=RHEL_9_STIG", "c=2&b=RHEL_9_STIG%0A", "c=2&b=RHEL_9_STIG&a=11%0A", "c=2&b=RHEL_9_STIG&r=SV-1%0A",
+                  "c=2%0D&b=RHEL_9_STIG"):
+            code, raw, h = self.req("/stigman/go?" + q, dn=None)
+            self.assertEqual((code, h.get("Location")), (302, "/"), q)
         sys.path.insert(0, os.path.join(ROOT, "plugins", "filter"))       # the scorecard makes the links with the same rules
         import stig_scorecard_filters as ssf
         self.assertEqual([sp.STIGMAN_GO[k].pattern for k in ("c", "a", "b", "r")],

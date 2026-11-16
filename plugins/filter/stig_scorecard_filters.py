@@ -358,9 +358,9 @@ def stigman_link_tip(*path):
 
 # 1.68.1: the values a go link may carry - the site portal's /stigman/go checks the same (roles/site_portal_stack/files/
 # site_portal.py STIGMAN_GO); a value that cannot pass gives no go link (the plain address instead)
-GO_ID = re.compile(r"^[0-9]{1,12}$")
-GO_BENCH = re.compile(r"^[A-Za-z0-9_.\- ]{1,255}$")
-GO_RULE = re.compile(r"^[A-Za-z0-9_.\-]{1,100}$")
+GO_ID = re.compile(r"^[0-9]{1,12}\Z")                  # \Z, not $: "$" also matches before a last line end (1.68.1b)
+GO_BENCH = re.compile(r"^[A-Za-z0-9_.\- ]{1,255}\Z")
+GO_RULE = re.compile(r"^[A-Za-z0-9_.\-]{1,100}\Z")
 
 
 def stigman_go(portal, c, b, a="", r=""):
@@ -374,7 +374,7 @@ def stigman_go(portal, c, b, a="", r=""):
         from urllib import urlencode
     base = str(portal or "").strip().rstrip("/")
     c, b, a, r = (str(x or "").strip() for x in (c, b, a, r))
-    if not re.match(r"^https?://[^\s\"'<>?#]+$", base) or not GO_ID.match(c) or not GO_BENCH.match(b):
+    if not re.match(r"^https?://[^\s\"'<>?#]+\Z", base) or not GO_ID.match(c) or not GO_BENCH.match(b):
         return ""
     if (a and not GO_ID.match(a)) or (r and not GO_RULE.match(r)):
         return ""
