@@ -712,6 +712,30 @@ Met or missed counts the incidents and requested items **done in the window**. T
 **Resolution met** (with `task_sla`, or a response target), else one *SLAs met*. Severity has them per priority, the
 side by side per team, and Categories per category.
 
+### A group whose response SLA is never stopped (1.67.0)
+
+Some groups' process never stops the response SLA, so every one of their tickets shows as a missed response. That pulls
+**Response met** down for the whole site, even to 0% in a month. List such groups in
+`servicenow_insights_response_skip_groups`:
+
+```yaml
+servicenow_insights_response_skip_groups:
+  - Night Watch                                # an assignment group's whole name, any case
+  - 0a1b2c3d4e5f60718293a4b5c6d7e8f9           # or its sys_id
+```
+
+- A listed group's tickets have **no Response**: they are left out of Response met, not counted as missed.
+- Everything else stays as it is: Resolution met, *SLAs met*, first contact, the counts and the medians.
+- Every Response met follows it: the tiles, Trends, each site's, unit's and team's page, VIP tickets, the Custom view,
+  priorities and categories, the email and the workbook.
+- *How this was made* (Your SLAs, *Response left out*) and the job output list each group with how many tickets and
+  response SLAs were left out.
+- A name that matched no ticket is said (*No match* on the page, `WARNING` in the job output): check its spelling.
+- **Trends:** each run works out the calendar months of its window again, so those months follow the setting.
+  Older months stay as stored. A muted line under *Service levels* names the groups and the month the exclusion
+  started. Run the backfill (`servicenow_insights_backfill_months`) to work the older months out again.
+- Nothing to set up: the default `[]` leaves nothing out.
+
 ### Your targets
 
 Your targets are the fallback, or the source with `servicenow_insights_sla_source: targets`. They are hours from opened

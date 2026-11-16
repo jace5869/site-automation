@@ -248,11 +248,34 @@ def sla_kind(name, o=None):
     return "other"
 
 
-def apply_slas(items, r, o, tz=UTC):
+def response_skip(o):
+    """servicenow_insights_response_skip_groups (1.67.0 part F) -> (a test: ticket -> the entry that matched it or '',
+    {entry: {'tickets': 0, 'slas': 0}}): an assignment group by its name (any case, the whole name) or its sys_id."""
+    entries = name_list((o or {}).get("response_skip_groups") or [])
+    stats = dict((e, {"tickets": 0, "slas": 0}) for e in entries)
+    by = {}
+    for e in entries:
+        by.setdefault(e.lower(), e)
+
+    def match(it):
+        for key in (str(it.get("group_id") or ""), str(it.get("group") or "").lower()):
+            if key and key.lower() in by:
+                return by[key.lower()]
+        return ""
+    return match, stats
+
+
+def apply_slas(items, r, o, tz=UTC, skipped=None):
     """Each incident's and requested item's met or missed, done tickets only: _resp (Response), _resol (Resolution; made_sla
     follows it, so every figure that read Made SLA reads it), _no_slo (no SLA at all, out of the percentages), _slas.
     task_sla: an SLA of the kind breached = missed; the targets: within the hours (business hours when set) - the response
-    from opened to first assigned to a person; made_sla: ServiceNow's flag. -> the source used."""
+    from opened to first assigned to a person; made_sla: ServiceNow's flag. -> the source used.
+    1.67.0 part F: a ticket of a group in servicenow_insights_response_skip_groups has no Response - its response SLAs are
+    left out (_resp None, _resp_skipped True), the rest as before; skipped (a dict) gets {entry: {tickets, slas}}."""
+    skip, stats = response_skip(o)
+    if skipped is not None:
+        skipped.clear()
+        skipped.update(stats)
     sla = (r or {}).get("sla") or {}
     src = sla.get("source") or "targets"           # a reading from before 1.7.0: the targets where set, else Made SLA
     spec = business_hours_spec((o or {}).get("business_hours"))
@@ -261,8 +284,10 @@ def apply_slas(items, r, o, tz=UTC):
     for it in items:
         it["_resp"] = it["_resol"] = None
         it["_no_slo"], it["_slas"], it["_sla_recs"] = False, [], []
+        it["_resp_skipped"] = False
         if it.get("table") not in ("incident", "sc_req_item"):
             continue
+        group_skip = skip(it) if stats else ""
         it["sn_made_sla"] = it.get("made_sla")
         done = _t(it.get("done_at"))
         if src == "task_sla":
@@ -276,6 +301,12 @@ def apply_slas(items, r, o, tz=UTC):
             by = {}
             for x in mine:
                 k = sla_kind(x.get("name"), o)
+                if k == "response" and group_skip:      # its group's response SLAs: left out, never missed
+                    stats[group_skip]["slas"] += 1
+                    if not it["_resp_skipped"]:
+                        stats[group_skip]["tickets"] += 1
+                        it["_resp_skipped"] = True
+                    continue
                 by.setdefault(k, []).append(x)
                 it["_slas"].append([x.get("name") or "", k])
                 # 1.43.0: each SLA's own outcome and elapsed hours (the VIP section's SLA definitions)
@@ -296,6 +327,11 @@ def apply_slas(items, r, o, tz=UTC):
                 it["made_sla"] = None if h is None else h <= t
                 it["sla_target_h"] = t
             rt = response_target(it, o)
+            if rt is not None and done and group_skip:          # its group's response: left out, never missed
+                stats[group_skip]["tickets"] += 1
+                stats[group_skip]["slas"] += 1
+                it["_resp_skipped"] = True
+                rt = None
             if rt is not None and done and it.get("table") == "incident" and first.get(it.get("sys_id")):
                 h = business_hours(_t(it.get("opened_at")), _t(first[it["sys_id"]]), spec, tz)
                 it["_resp"] = None if h is None else h <= rt
@@ -1841,7 +1877,8 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
     old_days = float(_o(o, "old_days", 30))
     weeks = _weeks(since, until, tz)
 
-    sla_src = apply_slas(items, r, o, tz)
+    resp_skipped = {}             # 1.67.0 part F: what servicenow_insights_response_skip_groups left out, per entry
+    sla_src = apply_slas(items, r, o, tz, resp_skipped)
     vip = vip_tiers(r, o)
     for it in items:
         it["_vip"] = vip_of(it, vip) if vip["on"] and it.get("table") in ("incident", "sc_req_item") else None
@@ -2593,6 +2630,8 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
               "median_h": [_r1(_median([_hours(x) for x in res_now])), _r1(_median([_hours(x) for x in res_prev]))],
               "sla": [_r1(_pct(sum(1 for x in sla_now if x["made_sla"]), len(sla_now))), _r1(_pct(sum(1 for x in sla_prev if x["made_sla"]), len(sla_prev)))],
               "resp": [_r1(_pct(sum(1 for x in resp_now if x["_resp"]), len(resp_now))), _r1(_pct(sum(1 for x in resp_prev if x["_resp"]), len(resp_prev)))],
+              # 1.67.0 part F: done tickets whose response SLAs servicenow_insights_response_skip_groups left out (None: not set)
+              "resp_skip": sum(1 for x in done_now if x.get("_resp_skipped")) if resp_skipped else None,
               "no_slo": [sum(1 for x in done_now if x.get("_no_slo")), len(done_now)], "matrix": matrix, "categories": categories,
               "hops": hops, "hold": hold, "codes": cdx, "closure": closure, "survey": survey, "at_risk": at_risk, "outcomes": outcomes,
               "reopen7": reopen7, "fcr": fcr, "lifecycle": lifecycle, "aging": aging, "pingpong": pingpong, "quality_t": quality_t,
@@ -2901,6 +2940,7 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
                      "work_notes": dict(state.get("work_notes") or {}), "cached": int(state.get("cached") or 0)},
              "mask": dict(mask.get("counts") or {}), "summaries_by": "rules",
              "slo": {"source": sla_src, "asked": sla_r.get("asked") or "", "note": sla_r.get("note") or "", "response_measured": resp_measured,
+                     "response_skip": [[k_, v_["tickets"], v_["slas"]] for k_, v_ in resp_skipped.items()],
                      "open_cut": list(sla_r.get("open_cut") or []),
                      "definitions": sorted([[nm, k_, c_] for (nm, k_), c_ in _sla_defs(items, since, until).items()], key=lambda e: (e[1], -e[2], e[0])),
                      "business_hours": business_hours_label(o.get("business_hours"), win.get("time_zone")),
@@ -3874,7 +3914,8 @@ def servicenow_insights_doc(model, key="all", opts=None):
         secs.insert(0, {"title": "No compare this run", "status": "warning", "lines": [model["compare_cut"]]})
     secs.append({"title": "Read", "lines": ["%s: %d record(s) kept of %d read" % (t["table"], t["kept"], t["read"]) for t in model.get("tables") or [] if not t.get("error")] +
                  ["Window: %s, compared with %s (%s)" % (win.get("label"), win.get("prev_label") or "nothing", win.get("time_zone") or "UTC")] +
-                 ["ACT: %s" % act_line(model)]})
+                 ["ACT: %s" % act_line(model)] +
+                 ["Response left out (servicenow_insights_response_skip_groups) - %s" % x for x in response_skip_lines(model)]})
     return {"title": title, "subtitle": "%s - %s%s" % (s["name"], win.get("label") or "", (" · Group manager: " + s["lead"]) if s.get("lead") else ""), "status": status, "summary": summary, "sections": secs,
             "footer": "ServiceNow %s" % (model.get("url") or "")}
 
@@ -3943,6 +3984,17 @@ def cut_lines(r):
 def compare_cut_line(cc):
     return ("The window before was cut (%s: more than servicenow_insights_max_records): no compare this run. The window's "
             "figures are whole." % ", ".join(cc)) if cc else ""
+
+
+def response_skip_lines(model):
+    """1.67.0 part F: servicenow_insights_response_skip_groups, each entry with what it left out this run - [] when not
+    set. An entry that matched no ticket starts WARNING (a name written wrong?)."""
+    out = []
+    for g_, nt, ns in ((model or {}).get("slo") or {}).get("response_skip") or []:
+        out.append(("%s: %d ticket(s), %d response SLA(s) left out of Response met" % (g_, nt, ns)) if nt else
+                   ("WARNING - %s matched no ticket read this run: check the name (the assignment group's whole name, or its "
+                    "sys_id)" % g_))
+    return out
 
 
 def not_read_lines(model):
@@ -4243,6 +4295,7 @@ class FilterModule(object):
                 "servicenow_insights_doc": servicenow_insights_doc, "servicenow_insights_xlsx": servicenow_insights_xlsx,
                 "servicenow_insights_artifact": servicenow_insights_artifact, "servicenow_insights_timing": servicenow_insights_timing, "servicenow_insights_name_list": name_list,
                 "servicenow_insights_slug": _slug, "servicenow_insights_not_read": not_read_lines,
+                "servicenow_insights_response_skip_lines": response_skip_lines,
                 "servicenow_insights_rel": rel_link, "servicenow_insights_links": web_links,
                 "servicenow_insights_variant_links": variant_links, "servicenow_insights_variant": servicenow_insights_variant,
                 "servicenow_insights_ids": lambda rows: [{"id": str(x.get("id"))} for x in rows or []]}

@@ -95,6 +95,9 @@ servicenow_insights_split_teams: true           # false: the switch on All, the 
 servicenow_insights_sla_source: auto
 servicenow_insights_sla_response_match: [response]               # an SLA definition whose name has one of these is a Response
 servicenow_insights_sla_resolution_match: [resolution, resolve]  # ... one of these a Resolution; any other: Other, shown by name
+# Assignment groups whose response SLAs are left out (1.67.0): names (the whole name, any case) or sys_ids. A ticket of
+# such a group has no Response: out of Response met, never missed. Resolution met and the rest stay as they are.
+servicenow_insights_response_skip_groups: []
 # Business hours for the targets: {} = calendar hours. E.g. {days: [mon, tue, wed, thu, fri], start: "07:30", end: "16:30",
 # holidays: ["2026-12-25"]} - in report_time_zone; an end before the start is a shift past midnight.
 servicenow_insights_business_hours: {}

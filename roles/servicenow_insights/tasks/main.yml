@@ -106,6 +106,7 @@
       sla_items: "{{ servicenow_insights_sla_items | default({}, true) }}"
       sla_response_match: "{{ servicenow_insights_sla_response_match | servicenow_insights_name_list }}"
       sla_resolution_match: "{{ servicenow_insights_sla_resolution_match | servicenow_insights_name_list }}"
+      response_skip_groups: "{{ servicenow_insights_response_skip_groups | default([], true) | servicenow_insights_name_list }}"
       business_hours: "{{ servicenow_insights_business_hours | default({}, true) }}"
       priority_names: "{{ servicenow_insights_priority_names | default({}, true) }}"
       priority_matrix: "{{ servicenow_insights_priority_matrix | default([], true) }}"
@@ -592,6 +593,11 @@
   ansible.builtin.debug:
     msg: "{{ ['WARNING - records cut, some figures are incomplete:'] + _sni_model.cut }}"
   when: _sni_model.cut | default([]) | length > 0
+
+- name: Insights | Response met leaves out these groups' response SLAs (servicenow_insights_response_skip_groups)
+  ansible.builtin.debug:
+    msg: "{{ _sni_model | servicenow_insights_response_skip_lines }}"
+  when: _sni.ok | default(false) | bool and (_sni_model | servicenow_insights_response_skip_lines | length > 0)
 
 - name: Insights | the window before was cut (servicenow_insights_max_records) - no compare this run
   ansible.builtin.debug:

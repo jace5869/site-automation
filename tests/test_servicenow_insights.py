@@ -3422,5 +3422,130 @@ class Vip(unittest.TestCase):
                             self.assertIn("<title>R page 0</title>", out, (k, look or "atlas", t))
 
 
+class ResponseSkip(unittest.TestCase):
+    """1.67.0 part F: servicenow_insights_response_skip_groups - a listed group's tickets have no Response (out of Response
+    met, not missed); Resolution met and the rest unchanged; a name that matches nothing said; the trend's line; the
+    charts' "does not start at zero" only when the axis does not."""
+
+    def tickets(self):
+        r = {"sla": {"source": "task_sla", "records": {
+            "a": [{"name": "P3 Incident Response", "breached": True}, {"name": "P3 Incident Resolution", "breached": False}],
+            "b": [{"name": "P3 Incident Response", "breached": True}, {"name": "P3 Incident Response (2)", "breached": True},
+                  {"name": "P3 Incident Resolution", "breached": True}],
+            "c": [{"name": "P3 Incident Response", "breached": False}, {"name": "P3 Incident Resolution", "breached": False}]}}}
+        xs = [{"table": "incident", "sys_id": k, "group": g, "group_id": gid, "opened_at": "2026-10-01 08:00:00",
+               "done_at": "2026-10-02 08:00:00"} for k, g, gid in (("a", "Service Desk", "g1"), ("b", "Night Watch", "g2"),
+                                                                    ("c", "Network", "g3"))]
+        return r, xs
+
+    def test_by_name_any_case_and_by_sys_id(self):
+        r, xs = self.tickets()
+        skipped = {}
+        F.apply_slas(xs, r, {"response_skip_groups": ["service desk", "g2", "No Such Team"]}, skipped=skipped)
+        self.assertEqual([(x["_resp"], x["_resol"], x["_resp_skipped"]) for x in xs],
+                         [(None, True, True), (None, False, True), (True, True, False)])      # left out, not missed
+        self.assertEqual(skipped, {"service desk": {"tickets": 1, "slas": 1}, "g2": {"tickets": 1, "slas": 2},
+                                   "No Such Team": {"tickets": 0, "slas": 0}})
+        self.assertEqual([n_ for n_, _k in xs[1]["_slas"]], ["P3 Incident Resolution"])
+        r, xs = self.tickets()                                                     # not set: as before
+        F.apply_slas(xs, r, {})
+        self.assertEqual([(x["_resp"], x["_resp_skipped"]) for x in xs], [(False, False), (False, False), (True, False)])
+        r, xs = self.tickets()                                                     # a part of a name is no match
+        F.apply_slas(xs, r, {"response_skip_groups": "Service"})
+        self.assertEqual(xs[0]["_resp"], False)
+
+    def test_targets_response_left_out(self):
+        o = {"sla_targets": {"incident": {"3": {"response": 1, "resolution": 9}}}, "response_skip_groups": ["Night Watch"]}
+        r = {"sla": {"source": "targets"}, "first_assigned": {"a": "2026-11-02 12:00:00", "b": "2026-11-02 12:00:00"}}
+        xs = [{"table": "incident", "sys_id": k, "group": g, "priority_value": "3", "opened_at": "2026-11-02 06:00:00",
+               "done_at": "2026-11-02 14:00:00"} for k, g in (("a", "Network"), ("b", "Night Watch"))]
+        skipped = {}
+        F.apply_slas(xs, r, o, skipped=skipped)
+        self.assertEqual([(x["_resp"], x["_resol"]) for x in xs], [(False, True), (None, True)])
+        self.assertEqual(skipped, {"Night Watch": {"tickets": 1, "slas": 1}})
+
+    def test_the_site_response_up_resolution_unchanged(self):
+        base = site()
+        r0 = copy.deepcopy(base["r"])
+        m0 = F.servicenow_insights_model(r0, None, base["mask"], OPTS)
+        missed, xs = {}, copy.deepcopy(base["r"]["items"])
+        F.apply_slas(xs, base["r"], OPTS)
+        for it in xs:                         # met, measured - per group; the worst rate is the group to leave out
+            if it.get("_resp") is not None:
+                c_ = missed.setdefault(it["group"], [0, 0])
+                c_[0] += bool(it["_resp"])
+                c_[1] += 1
+        worst = min(sorted(missed), key=lambda g: missed[g][0] / float(missed[g][1]))
+        self.assertLess(missed[worst][0], missed[worst][1])
+        r1 = copy.deepcopy(base["r"])
+        m1 = F.servicenow_insights_model(r1, None, base["mask"], dict(OPTS, response_skip_groups=[worst.upper(), "Typo Team"]))
+        s0, s1 = m0["scopes"]["all"], m1["scopes"]["all"]
+        self.assertGreater(s1["resp"][0], s0["resp"][0])                                    # Response met goes up
+        for k in ("sla", "median_h", "no_slo", "counts", "fcr"):
+            self.assertEqual(s1[k], s0[k], k)                                               # the rest as it was
+        self.assertGreater(s1["resp_skip"], 0)
+        self.assertIsNone(s0["resp_skip"])
+        rs = m1["slo"]["response_skip"]
+        self.assertEqual([x[0] for x in rs], [worst.upper(), "Typo Team"])
+        self.assertTrue(rs[0][1] > 0 and rs[0][2] >= rs[0][1] and rs[1][1:] == [0, 0], rs)
+        lines = F.response_skip_lines(m1)
+        self.assertIn("%s: %d ticket(s)" % (worst.upper(), rs[0][1]), lines[0])
+        self.assertTrue(lines[1].startswith("WARNING - Typo Team matched no ticket"))
+        self.assertEqual(F.response_skip_lines(m0), [])
+        h = P.servicenow_insights_page(m1, "all", OPTS)
+        self.assertIn("<dt>Response left out</dt>", h)
+        self.assertIn("No match</span> Typo Team matched no ticket", h)
+        self.assertNotIn("Response left out", P.servicenow_insights_page(m0, "all", OPTS))
+        doc = F.servicenow_insights_doc(m1, "all", OPTS)
+        read = next(x for x in doc["sections"] if x["title"] == "Read")["lines"]
+        self.assertTrue(any("Typo Team matched no ticket" in x for x in read))
+        self.assertEqual(dict((x["label"], x["value"]) for x in doc["summary"])["Response met"], "%s%%" % P.pct(s1["resp"][0]).rstrip("%"))
+        figs = dict((m_, v) for m_, lab, v in H.scope_figures(s1) if not lab)
+        self.assertEqual((figs["response_met_pct"], figs["response_skipped"]), (s1["resp"][0], s1["resp_skip"]))
+        self.assertNotIn("response_skipped", dict((m_, v) for m_, lab, v in H.scope_figures(s0) if not lab))
+
+    def trend(self, resp, skip_months=None, groups=None):
+        months = ["2026-%02d" % i for i in range(6, 6 + len(resp))]
+        m = {"slo": {"response_skip": [[g, 3, 3] for g in groups or []]},
+             "trend": {"on": True, "ok": True, "months": months, "partial": [], "metrics": [list(x) for x in H.TREND], "full": 12,
+                       "nodes": {"all": [[mo, 95.0, v, 70.0, 100, 40, 5.0, 2.0] for mo, v in zip(months, resp)]},
+                       "resp_skip": {"all": skip_months} if skip_months else {}}}
+        self.last_m = m
+        sec = P.trend_section(m, "all")
+        return sec[sec.index("<h3>Service levels</h3>"):sec.index("<h3>Volume</h3>")]
+
+    def test_the_trend_line_and_the_caption(self):
+        fig = self.trend([92.0, 90.0, 0.0, 94.0])                          # October at 0%: the axis starts at zero
+        self.assertNotIn("does not start at zero", fig)
+        self.assertNotIn("leaves out", fig)
+        self.assertIn("The axis does not start at zero.", self.trend([92.0, 90.0, 88.0, 94.0]))
+        fig = self.trend([92.0, 90.0, 0.0, 94.0], ["2026-09"], ["Night Watch"])
+        self.assertIn("leaves out the response SLAs of Night Watch (servicenow_insights_response_skip_groups) from Sep 2026 on. "
+                      "The months before are as stored. The backfill job works them out again.", fig)
+        self.assertIn('<div class="cap mut">', fig)
+        self.assertIn("in every month shown.", self.trend([92.0, 90.0], ["2026-06", "2026-07"], ["g2"]))
+        self.assertIn("from this run on.", self.trend([92.0, 90.0], None, ["g2"]))
+        m_ = {"slo": {"response_skip": [["Typo Team", 0, 0]]}}
+        self.assertNotIn("leaves out", self.trend([92.0, 90.0], ["2026-06"], []).replace("", "") + P.trend_section(
+            dict(m_, trend=dict(self.last_m["trend"])), "all"))
+        self.assertEqual(P.above_zero([[0, 40, 41]]), "")
+        self.assertEqual(P.above_zero([[38, 40, 41]]), " The axis does not start at zero.")
+
+    def test_the_trend_reads_the_marker(self):
+        hist = {"ok": True, "rows": [["2026-08", "", "all", "", "response_met_pct", 10.0], ["2026-09", "", "all", "", "response_met_pct", 95.0],
+                                     ["2026-09", "", "all", "", "response_skipped", 4], ["2026-09", "", "t1", "", "response_skipped", 0]]}
+        t = H.servicenow_insights_trend({}, hist, {})["trend"]
+        self.assertEqual(t["resp_skip"], {"all": ["2026-09"], "t1": ["2026-09"]})
+        self.assertNotIn("response_skipped", [x[0] for x in t["metrics"]])
+
+    def test_the_backlog_caption(self):
+        h = P.servicenow_insights_page(site()["model"], "all", OPTS)
+        cap = h[h.index("The backlog: everything not yet resolved"):]
+        cap = cap[:cap.index("</div>")]
+        self.assertIn(cap.endswith("so the change shows."), (True, False))
+        bl = [w["backlog"] for w in site()["model"]["scopes"]["all"]["weeks"]]
+        self.assertEqual("does not start at zero" in cap, P.axis([bl], True)[0] > 0)
+
+
 if __name__ == "__main__":
     unittest.main()
