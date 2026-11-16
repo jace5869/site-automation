@@ -100,11 +100,11 @@ grep -q 'skipping: no hosts matched' "$work/out.txt" && bad "a play was skipped"
 check "the report: title counts the hosts with denials and fapolicyd stopped" \
       '"1 host(s) with denials" in r["title"] and "fapolicyd not running on 1" in r["title"] and r["status"] == "critical"'
 check "the summary: 2 denials, 1 host with denials, 1 not running, 3 read, 1 not read" \
-      '[(s["label"], s["value"]) for s in r["summary"]] == [("Denials", 2), ("Hosts with denials", 1), ("fapolicyd not running", 1), ("Hosts read", 3), ("Not read", 1)]'
-check "the problem table: fa03 (stopped) first, then fa01 with its file and program" \
-      '[x["rows"] for x in r["sections"] if x["title"] == "Hosts with denials or a problem"][0][0][:4] == ["fa03.example.mil", "inactive", "active", 0] and [x["rows"] for x in r["sections"] if x["title"] == "Hosts with denials or a problem"][0][1][3] == 2 and "opt/app/tool" in [x["rows"] for x in r["sections"] if x["title"] == "Hosts with denials or a problem"][0][1][4]'
+      '[(s["label"], s["value"]) for s in r["summary"]] == [("Denials", 2), ("Hosts with denials", 1), ("Programs denied", 1), ("fapolicyd not running", 1), ("Hosts read", 3), ("Not read", 1)]'
+check "the problem table: fa03 (stopped) first, then fa01 with its program; the file in Denials by program and file (1.67.0)" \
+      '[x["rows"] for x in r["sections"] if x["title"] == "Hosts with denials or a problem"][0][0][:4] == ["fa03.example.mil", "inactive", "active", 0] and [x["rows"] for x in r["sections"] if x["title"] == "Hosts with denials or a problem"][0][1][3:5] == [2, "bash"] and "opt/app/tool" in [x["rows"] for x in r["sections"] if x["title"] == "Denials by program and file"][0][0][1]'
 check "fa01: ACT's analysis and its proposal, for approval" \
-      'any(x["title"] == "fa01.example.mil: ACT\x27s analysis" and "tool is not in the trust database: add it" in x["lines"] and any(l.startswith("ACT proposes (for your security approval): fapolicyd-cli --file add") for l in x["lines"]) for x in r["sections"])'
+      'any(x["title"] == "fa01: ACT\x27s analysis" and "tool is not in the trust database: add it" in x["lines"] and any(l.startswith("ACT proposes (for your security approval): fapolicyd-cli --file add") for l in x["lines"]) for x in r["sections"])'
 check "the quiet host, the one without fapolicyd and the unreachable one, each named" \
       'any("fa02.example.mil" in " ".join(x.get("lines", [])) for x in r["sections"] if x["title"] == "No denials") and any("fa04.example.mil" in " ".join(x.get("lines", [])) for x in r["sections"] if x["title"] == "fapolicyd not installed") and any("gone01.example.mil" in " ".join(x.get("lines", [])) for x in r["sections"] if x["title"] == "Not read")'
 grep -q 'ACT status needs_approval' "$work/out.txt" && bad "a host failed with fapolicyd_fail_on at its default" 20 || ok "no host failed: needs_approval is not in fapolicyd_fail_on"
