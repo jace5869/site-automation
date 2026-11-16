@@ -224,15 +224,16 @@ class ActAnswerTest(unittest.TestCase):
                                     "denied": [{"command": "chmod 0644 /etc/fapolicyd/trust.d/app", "pre_approvable": True}]}}
         r = ff.fapolicyd_report([hv], ["fa01"])
         s = {x["title"]: x for x in r["sections"]}
-        first = s["fa01: ACT's analysis"]
-        self.assertEqual(first["lines"], ["fapolicyd is failed", "There are no blocked accesses in the evidence.",
-                                          "ACT proposes (for your security approval): chmod 0644 /etc/fapolicyd/trust.d/app"])
+        first = s["fa01: ACT's analysis"]                                    # one section a host (1.67.0), closed, not in the rail
+        self.assertEqual(first["lines"][:3], ["fapolicyd is failed", "There are no blocked accesses in the evidence.",
+                                              "ACT proposes (for your security approval): chmod 0644 /etc/fapolicyd/trust.d/app"])
         self.assertIn("ran nothing", first["text"])
-        self.assertIn("1. Unreadable trust files: fapolicyd runs as uid = fapolicyd.", s["fa01: Service Failure Triage (fapolicyd is failed)"]["lines"])
-        self.assertEqual(s["fa01: Findings"]["lines"][0], "Finding 1: Incorrect ownership")
-        titles = [x["title"] for x in r["sections"]]
-        self.assertLess(titles.index("fa01: ACT's analysis"), titles.index("fa01: Findings"))
+        self.assertTrue(first["collapsed"] and first["rail"] is False)
+        self.assertIn("  1. Unreadable trust files: fapolicyd runs as uid = fapolicyd.", first["lines"])
+        self.assertIn("Findings:", first["lines"])
+        self.assertIn("  Finding 1: Incorrect ownership", first["lines"])
         self.assertFalse(any("**" in l or "`" in l for x in r["sections"] for l in x.get("lines", [])))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -305,6 +305,15 @@ the host lists read apart (a slow one keeps the counts), report fit documents, `
 stand-in STIG Manager slow only on the host lists) and `tests/stig/run_scorecard_db_test.sh` - ansible-core 2.22 and
 2.16. Not proven against a real STIG Manager's `projection=stigs`.
 
+**The fapolicyd denials report is easy to scan.** `playbooks/fapolicyd_denials.yml` made a wall for every host, and the rail
+listed each one. Now: *At a glance* first (the tiles, the top 5 programs and hosts); ONE table of the denials by program and
+file (denials, hosts, last seen, ACT's verdict) with a **Host** and a **Program** list, sortable, with Columns and CSV; the hosts
+table; each host's ACT answer is one closed section under it, out of the rail. The email is short (tiles, the most
+frequent denials, the hosts with a problem); the workbook (`report_email_xlsx`) has all of it. The report website gains lists to
+choose from above a table (`filters`, `row_filters`) and sections that stay out of the rail (`rail: false`) in the atlas and brief
+looks. The denials are read from the audit text ACT's playbook already collects (`_fa_denials`). Tests:
+`tests/test_denials_report.py` (the model, both looks, the lists in a headless browser). To set up: nothing.
+
 ## 1.66.0 — 2026-11-14
 
 **Updating without scripts:** paste `site-automation-1.66.0-changed-since-1.61.0.zip` as it is (from an older version,

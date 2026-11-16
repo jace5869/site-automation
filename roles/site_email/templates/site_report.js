@@ -178,8 +178,8 @@
     if(b){b.hidden=false;b.addEventListener('click',function(){all('input',d).forEach(function(i){i.checked=true});colkeep(d)})}});
   fit();
   document.addEventListener('click',function(e){all('details.cols[open]').forEach(function(d){if(!d.contains(e.target))d.open=false})});
-  /* a row is shown unless the table's filter, the search or the page's filter buttons (1.67.0) take it away */
-  function vis(r){var h=!!(r._f||r._s||r._p);if(r.hidden!==h)r.hidden=h}
+  /* a row is shown unless the table's filter, its lists, the search or the page's filter buttons (1.67.0) take it away */
+  function vis(r){var h=!!(r._f||r._s||r._p||r._d);if(r.hidden!==h)r.hidden=h}
   var counts=[];
   all('.tw table').forEach(function(tb){
     var body=tb.tBodies[0],rows=[].slice.call(body.rows);
@@ -201,14 +201,19 @@
       th.setAttribute('aria-sort',asc?'ascending':'descending');btn.querySelector('.sort').textContent=asc?'\u25b2':'\u25bc';
       order(asc).forEach(function(r){body.appendChild(r)})})});
     var tools=tb.parentNode.previousElementSibling;
-    if(tools&&tools.classList.contains('tools2')){var f=tools.querySelector('.filter'),n=tools.querySelector('.shown');
-      if(!f)return;
+    if(tools&&tools.classList.contains('tools2')){var f=tools.querySelector('.filter'),n=tools.querySelector('.shown'),
+        dd=[].slice.call(tools.querySelectorAll('select[data-f]'));
+      if(!f&&!dd.length)return;
       /* an older page: the whole row of tools was hidden */
-      tools.hidden=false;f.hidden=false;
-      var count=function(){var k=0;rows.forEach(function(r){if(!r.hidden)k++});n.textContent=k<rows.length?k+' of '+rows.length:''};
+      tools.hidden=false;if(f)f.hidden=false;
+      var count=function(){if(!n)return;var k=0;rows.forEach(function(r){if(!r.hidden)k++});n.textContent=k<rows.length?k+' of '+rows.length:''};
       counts.push(count);
-      f.addEventListener('input',function(){var q=f.value.trim().toLowerCase();
-        rows.forEach(function(r){r._f=!!q&&r.textContent.toLowerCase().indexOf(q)<0;vis(r)});count()})}
+      if(f)f.addEventListener('input',function(){var q=f.value.trim().toLowerCase();
+        rows.forEach(function(r){r._f=!!q&&r.textContent.toLowerCase().indexOf(q)<0;vis(r)});count()});
+      /* one choice at a time per list (1.67.0): a row stays when the chosen value is one of its own (data-f<n>: |a|b|) */
+      dd.forEach(function(s){s.parentNode.hidden=false;s.addEventListener('change',function(){
+        rows.forEach(function(r){var off=false;dd.forEach(function(x){var v=x.value;
+          if(v&&(r.getAttribute('data-f'+x.getAttribute('data-f'))||'').indexOf('|'+v+'|')<0)off=true});r._d=off;vis(r)});count()})})}
   });
   /* 1.67.0: the page's filter buttons (.facets: the STIG scorecard's Platform and Collection). A row or a collection that
      opens (details.grp) tagged data-pf (its platforms) or data-col (its collections) is shown when it has the one chosen;

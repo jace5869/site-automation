@@ -1,0 +1,437 @@
+{
+"footer": "ACT's proposals (a trust entry, a narrow rule) are security-control changes: route them through your security approval (e.g. the ISSO) before anyone applies them.",
+"sections": [
+{
+"lines": [
+"Top programs: bash 39 (4 hosts), python3 28 (2 hosts), java 4 (1 host), sh 3 (1 host)",
+"Top hosts: app-server-long-name-07 27, web01 20, db01 14, web02 9, app02 4"
+],
+"title": "At a glance"
+},
+{
+"cell_status": [
+[
+"",
+"",
+"warning",
+"",
+"",
+"info"
+],
+[
+"",
+"",
+"warning",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"warning",
+"",
+"",
+"ok"
+],
+[
+"",
+"",
+"warning",
+"",
+"",
+"ok"
+]
+],
+"columns": [
+"Program",
+"File denied",
+"Denials",
+"Hosts",
+"Last seen",
+"ACT's verdict"
+],
+"filters": [
+{
+"label": "Host",
+"options": [
+"app-server-long-name-07",
+"app02",
+"db01",
+"web01",
+"web02"
+]
+},
+{
+"label": "Program",
+"options": [
+"bash",
+"java",
+"python3",
+"sh"
+]
+}
+],
+"kinds": [
+"",
+"path",
+"num",
+"",
+"nw",
+""
+],
+"row_filters": [
+[
+[
+"app-server-long-name-07",
+"db01",
+"web01",
+"web02"
+],
+[
+"bash"
+]
+],
+[
+[
+"app-server-long-name-07",
+"web01"
+],
+[
+"python3"
+]
+],
+[
+[
+"app02"
+],
+[
+"java"
+]
+],
+[
+[
+"db01"
+],
+[
+"sh"
+]
+]
+],
+"rows": [
+[
+"bash",
+"/opt/monitor/agent",
+39,
+"4: app-server-long-name-07, db01 ...",
+"2026-11-15 09:15",
+"Fix proposed"
+],
+[
+"python3",
+"/var/tmp/backup.py",
+28,
+"2: app-server-long-name-07, web01",
+"2026-11-15 09:20",
+"Analysed"
+],
+[
+"java",
+"/opt/app/lib/plugin.jar",
+4,
+"app02",
+"2026-11-15 05:55",
+"Analysed"
+],
+[
+"sh",
+"/srv/db/tools/vacuum.sh",
+3,
+"db01",
+"2026-11-15 07:30",
+"Analysed"
+]
+],
+"status": "warning",
+"text": "One row for each program and file denied, over all the hosts. A denial is fapolicyd doing its job, or a legitimate program missing from the trust database.",
+"tips": [
+[
+"/usr/bin/bash",
+"/opt/monitor/agent",
+"",
+"app-server-long-name-07.subdomain.example.mil, db01.example.mil, web01.example.mil, web02.example.mil",
+"",
+""
+],
+[
+"/usr/bin/python3",
+"/var/tmp/backup.py",
+"",
+"app-server-long-name-07.subdomain.example.mil, web01.example.mil",
+"",
+""
+],
+[
+"/usr/bin/java",
+"/opt/app/lib/plugin.jar",
+"",
+"app02.example.mil",
+"",
+""
+],
+[
+"/usr/bin/sh",
+"/srv/db/tools/vacuum.sh",
+"",
+"db01.example.mil",
+"",
+""
+]
+],
+"title": "Denials by program and file"
+},
+{
+"cell_status": [
+[
+"",
+"ok",
+"ok",
+"warning",
+"",
+""
+],
+[
+"",
+"ok",
+"ok",
+"warning",
+"",
+""
+],
+[
+"",
+"ok",
+"warning",
+"warning",
+"",
+""
+],
+[
+"",
+"ok",
+"ok",
+"warning",
+"",
+""
+],
+[
+"",
+"ok",
+"ok",
+"warning",
+"",
+""
+]
+],
+"columns": [
+"Host",
+"fapolicyd",
+"auditd",
+"Denials",
+"Programs",
+"ACT"
+],
+"kinds": [
+"wrap",
+"",
+"",
+"num",
+"wrap",
+""
+],
+"row_status": [
+"warning",
+"warning",
+"warning",
+"warning",
+"warning"
+],
+"rows": [
+[
+"app-server-long-name-07.subdomain.example.mil",
+"active",
+"active",
+27,
+"bash, python3",
+"Analysed"
+],
+[
+"web01.example.mil",
+"active",
+"active",
+20,
+"bash, python3",
+"Analysed"
+],
+[
+"db01.example.mil",
+"active",
+"inactive",
+14,
+"bash, sh",
+"Analysed"
+],
+[
+"web02.example.mil",
+"active",
+"active",
+9,
+"bash",
+"Analysed"
+],
+[
+"app02.example.mil",
+"active",
+"active",
+4,
+"java",
+"Analysed"
+]
+],
+"status": "warning",
+"text": "Each host's ACT analysis is under this table, closed. auditd not running = denials are not recorded.",
+"title": "Hosts with denials or a problem"
+},
+{
+"collapsed": true,
+"lines": [
+"fapolicyd denied 27 access attempt(s) since today (2 distinct file(s))",
+"Several programs were blocked while they were not in the trust database.",
+"ACT proposes (for your security approval): fapolicyd-cli --file add /opt/monitor/agent",
+"Likely causes:",
+"  1. The monitoring agent was updated and its binary changed.",
+"  2. A backup script runs from /var/tmp.",
+"Findings:",
+"  Finding 1: monitoring agent not trusted",
+"  ROOT CAUSE: the agent binary is not in the trust database after the update.",
+"  FIX: add it with fapolicyd-cli --file add after review."
+],
+"rail": false,
+"status": "warning",
+"text": "What the job found, then ACT's analysis - it read the evidence only and ran nothing on the host.",
+"title": "app-server-long-name-07: ACT's analysis"
+},
+{
+"collapsed": true,
+"lines": [
+"fapolicyd denied 20 access attempt(s) since today (2 distinct file(s))",
+"Several programs were blocked while they were not in the trust database.",
+"ACT proposes (for your security approval): fapolicyd-cli --file add /opt/monitor/agent",
+"Likely causes:",
+"  1. The monitoring agent was updated and its binary changed.",
+"  2. A backup script runs from /var/tmp.",
+"Findings:",
+"  Finding 1: monitoring agent not trusted",
+"  ROOT CAUSE: the agent binary is not in the trust database after the update.",
+"  FIX: add it with fapolicyd-cli --file add after review."
+],
+"rail": false,
+"status": "warning",
+"text": "What the job found, then ACT's analysis - it read the evidence only and ran nothing on the host.",
+"title": "web01: ACT's analysis"
+},
+{
+"collapsed": true,
+"lines": [
+"fapolicyd denied 14 access attempt(s) since today (2 distinct file(s))",
+"Several programs were blocked while they were not in the trust database.",
+"ACT proposes (for your security approval): fapolicyd-cli --file add /opt/monitor/agent",
+"Likely causes:",
+"  1. The monitoring agent was updated and its binary changed.",
+"  2. A backup script runs from /var/tmp.",
+"Findings:",
+"  Finding 1: monitoring agent not trusted",
+"  ROOT CAUSE: the agent binary is not in the trust database after the update.",
+"  FIX: add it with fapolicyd-cli --file add after review."
+],
+"rail": false,
+"status": "warning",
+"text": "What the job found, then ACT's analysis - it read the evidence only and ran nothing on the host.",
+"title": "db01: ACT's analysis"
+},
+{
+"collapsed": true,
+"lines": [
+"fapolicyd denied 9 access attempt(s) since today (1 distinct file(s))",
+"Several programs were blocked while they were not in the trust database.",
+"ACT proposes (for your security approval): fapolicyd-cli --file add /opt/monitor/agent",
+"Likely causes:",
+"  1. The monitoring agent was updated and its binary changed.",
+"  2. A backup script runs from /var/tmp.",
+"Findings:",
+"  Finding 1: monitoring agent not trusted",
+"  ROOT CAUSE: the agent binary is not in the trust database after the update.",
+"  FIX: add it with fapolicyd-cli --file add after review."
+],
+"rail": false,
+"status": "warning",
+"text": "What the job found, then ACT's analysis - it read the evidence only and ran nothing on the host.",
+"title": "web02: ACT's analysis"
+},
+{
+"collapsed": true,
+"lines": [
+"fapolicyd denied 4 access attempt(s) since today (1 distinct file(s))",
+"Several programs were blocked while they were not in the trust database.",
+"ACT proposes (for your security approval): fapolicyd-cli --file add /opt/monitor/agent",
+"Likely causes:",
+"  1. The monitoring agent was updated and its binary changed.",
+"  2. A backup script runs from /var/tmp.",
+"Findings:",
+"  Finding 1: monitoring agent not trusted",
+"  ROOT CAUSE: the agent binary is not in the trust database after the update.",
+"  FIX: add it with fapolicyd-cli --file add after review."
+],
+"rail": false,
+"status": "warning",
+"text": "What the job found, then ACT's analysis - it read the evidence only and ran nothing on the host.",
+"title": "app02: ACT's analysis"
+},
+{
+"lines": [
+"2 host(s): fapolicyd running, auditd running, nothing denied since today - lin05.example.mil, lin06.example.mil"
+],
+"status": "ok",
+"title": "No denials"
+}
+],
+"status": "warning",
+"subtitle": "7 host(s) read - denials since today (the audit log: ausearch -m FANOTIFY -ts today)",
+"summary": [
+{
+"label": "Denials",
+"status": "warning",
+"value": 74
+},
+{
+"label": "Hosts with denials",
+"status": "warning",
+"value": 5
+},
+{
+"label": "Programs denied",
+"status": "warning",
+"value": 4
+},
+{
+"label": "fapolicyd not running",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Hosts read",
+"value": 7
+}
+],
+"title": "fapolicyd denials: 5 host(s) with denials, auditd not running on 1"
+}

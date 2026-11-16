@@ -297,6 +297,8 @@ jobs:
         run: |
           bash tests/fapolicyd/run_fapolicyd_rules_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/fapolicyd/run_fapolicyd_rules_test.sh
+          bash tests/fapolicyd/run_denials_report_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/fapolicyd/run_denials_report_test.sh
       - name: Trust check against a made-up host tree (current ansible-core and 2.16)
         run: |
           bash tests/trust/run_trust_test.sh
