@@ -446,6 +446,7 @@ STIG Manager can be slow on a big collection. So the scorecard reads in steps, a
 
 1. **The counts** from STIG Manager's metrics: one quick call per collection. Every number, line and platform comes from it.
    Each host's counts are a second quick call. When it fails, the totals stay and *Slow or not read* says so.
+   Each asset's STIGs are then read the older way (`stigman_scorecard_hosts_timeout`), for the platforms.
 2. **The open rules** (`stigman_scorecard_rules_timeout`, 600 seconds): *Findings* and the week rule by rule.
 3. **The hosts of each rule** (`stigman_scorecard_hosts_timeout`, 600 seconds): a rule's hosts, a collection's worst hosts
    and *Fixed on the host*.

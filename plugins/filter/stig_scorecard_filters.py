@@ -188,6 +188,18 @@ def _plat_of(c, cfg):
     return out
 
 
+def _plat_known(c):
+    """1.68.0: a collection read's counts can be told by platform - from the metrics per checklist, or from its rules (the
+    findings' way, or the rules read). Not: the metrics per checklist and the rules both not read (the totals only)."""
+    return bool(c.get("checklists")) or c.get("counts_from") == "findings" or c.get("rules_read") is not False
+
+
+def _plat_unknown(c):
+    """The line saying why a collection's counts by platform are not known."""
+    return "its counts by platform not read (%s; %s)" % (c.get("checklists_note") or "host counts not read",
+                                                       c.get("rules_note") or "rules not read")
+
+
 def _only_read(read, cfg, keep):
     """stigman_scorecard_platform_filter: the read with only those platforms' findings, each collection's counts and assets
     (those with a STIG of them) from those; a collection with neither is left out. A collection not read stays."""
@@ -200,6 +212,11 @@ def _only_read(read, cfg, keep):
             cols.append(c)
             continue
         assets = _asset_platforms(c, pl)
+        if not _plat_known(c):                          # 1.68.0: never 0, never left out unless none of its assets is one
+            if assets and not [a for a, n in assets.items() if set(n) & keep]:
+                continue
+            cols.append(dict(c, error=_plat_unknown(c)))
+            continue
         rules = [r for r in c.get("rules") or [] if isinstance(r, dict) and _rule_platform(r, assets, pl) in keep]
         # 1.68.0: an asset's STIGs and the metrics' rows (a row per asset and STIG) of those platforms only
         mine = dict((a, [b for b in s or [] if stig_platform(b, pl) in keep]) for a, s in (c.get("asset_stigs") or {}).items()
@@ -417,7 +434,8 @@ def stig_scorecard_point(read, opts=None):
             if isinstance(r, dict) and r.get("sv") and r.get("cat") in CATS and _n(r.get("count")):
                 d = rec["r%d" % r["cat"]]
                 d[str(r["sv"])] = d.get(str(r["sv"]), 0) + _n(r["count"])
-        rec["p"] = _plat_of(c, cfg)
+        if _plat_known(c):                              # 1.68.0: else no p - a gap in the platform lines, not zeros
+            rec["p"] = _plat_of(c, cfg)
         # 1.68.0: were the rules read (rr), and each host's open findings per platform (h) when its hosts are known - the
         # change since last week, host by host
         rec["rr"] = bool(c.get("rules_read")) if "rules_read" in c else (bool(c.get("rules")) or not _open(rec))
@@ -803,11 +821,14 @@ def stig_scorecard(read, point, runs, opts=None):
     slow_h = [str(c.get("name") or c.get("id")) for c in good
               if str(c.get("hosts") or "").startswith(("not listed", "hosts not")) and c.get("rules_read") is not False]
     slow_m = [str(c.get("name") or c.get("id")) for c in good if c.get("checklists_note")]
+    slow_p = [str(c.get("name") or c.get("id")) for c in good if not _plat_known(c)]
     slow_lines = (["Not read: %s - %s" % (c.get("name") or c.get("id"), c.get("error")) for c in bad]
                   + (["Rules too slow (stigman_scorecard_rules_timeout), counts complete: %s." % ", ".join(slow_r)] if slow_r else [])
                   + (["Host lists too slow (stigman_scorecard_hosts_timeout), counts complete: %s." % ", ".join(slow_h)] if slow_h else [])
                   + (["Host counts not read (STIG Manager's metrics per checklist), totals complete: %s." % ", ".join(slow_m)]
-                     if slow_m else []))
+                     if slow_m else [])
+                  + (["Not in By platform (no host counts and no rules to tell the platforms by): %s." % ", ".join(slow_p)]
+                     if slow_p else []))
     # 1.68.0: what could not be read for the history (AAP's job history, the report database) is a not-read kind too
     hist = [str(x) for x in o.get("history") or [] if x and not str(x).startswith("Earlier points")]
     slow_lines += hist
@@ -817,7 +838,7 @@ def stig_scorecard(read, point, runs, opts=None):
           ["Check and fix text too slow (stigman_scorecard_text_timeout): %d of %d rules without it." % (asked - got, asked)]
           if tinfo.get("slow") and asked > got else [])
     slow_lines += tx
-    slow_sec = ({"title": "Slow or not read (%d)" % (len(bad) + len(slow_r) + len(slow_h) + len(slow_m) + len(hist) + len(tx)),
+    slow_sec = ({"title": "Slow or not read (%d)" % (len(bad) + len(slow_r) + len(slow_h) + len(slow_m) + len(slow_p) + len(hist) + len(tx)),
                  "status": "warning" if bad else "info", "lines": slow_lines} if slow_lines else None)
     web_sec = dict(sec, rows=web_rows, row_tags=tags)
     if trend:

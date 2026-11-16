@@ -62,7 +62,9 @@ scorecard's client to have the scope `stig-manager:stig:read` (without it, one l
 - `stigman_scorecard_platform_filter` with the counts from the metrics: the counts, the hosts and the week host by host
   are of those platforms only. Before, a run whose rules were not read showed 0 open and listed every host.
 - Each host's counts not read (`/metrics/summary` slow or refused): the collection's totals stay. Before, the collection
-  could be left out as not read. *Slow or not read* says which collection has no host counts.
+  could be left out as not read. *Slow or not read* says which collection has no host counts. Each asset's STIGs are
+  then read the older way, for the platforms. With the rules not read either, the collection is not in *By platform*
+  (never zeros), and a platform filter lists it as not read (never left out).
 - An older STIG Manager without the metrics: its findings wait `stigman_scorecard_rules_timeout`, not 60 seconds.
 - The report database: a run whose host rows could not be kept (no `stig_scorecard_host`, `stigman_scorecard_db_create:
   false`) is compared rule by rule later, never as every finding opened.

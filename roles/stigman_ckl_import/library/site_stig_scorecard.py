@@ -215,12 +215,12 @@ def asset_count(client, cid):
     return len(rows or [])
 
 
-def asset_stigs(client, cid):
+def asset_stigs(client, cid, wait=None):
     """1.67.0: {asset name: [benchmark ids]} of a collection (GET /assets?collectionId=..&projection=stigs) - the scorecard
     counts an asset under each platform it has a STIG of. {} when they cannot be read (the platforms then count no
-    assets)."""
+    assets). wait: seconds for this request (1.68.0: when the metrics per checklist were not read), else the client's."""
     try:
-        rows = client.get("/assets", collectionId=cid, projection="stigs")
+        rows = client.get("/assets", wait=wait, collectionId=cid, projection="stigs")
     except RuntimeError:
         return {}
     out = {}
@@ -297,6 +297,10 @@ def read(p, client):
                 st.setdefault(x["asset"], set()).add(x["stig"])
             rec["asset_stigs"] = dict((a, sorted(b - {""})) for a, b in st.items())
             rec["timing"]["metrics"] = round(time.time() - t, 2)
+            if rec.get("checklists_note"):             # each asset's STIGs (its platforms) the 1.67.0 way, its own limit
+                t = time.time()
+                rec["asset_stigs"] = asset_stigs(client, cid, wait=p.get("hosts_timeout") or None)
+                rec["timing"]["assets"] = round(time.time() - t, 2)
         except RuntimeError as e:
             rec["timing"]["metrics"] = round(time.time() - t, 2)
             rec["metrics_error"] = str(e)[:300]

@@ -1056,9 +1056,10 @@ class Platforms(unittest.TestCase):
 class SlowClient(object):
     """STIG Manager as site_stig_scorecard.read asks it (1.68.0): the metrics (a row per asset and STIG; the collection's
     totals) - or none, an older STIG Manager (404) - and the findings by rule with their hosts, which may be too slow."""
-    def __init__(self, slow=(), metrics=True, slow_rules=(), slow_summary=()):
+    def __init__(self, slow=(), metrics=True, slow_rules=(), slow_summary=(), slow_assets=()):
         self.slow, self.metrics, self.calls, self.slow_rules = set(slow), metrics, [], set(slow_rules)
         self.slow_summary = set(slow_summary)          # 1.68.0: the totals answered, the rows per asset and STIG too slow
+        self.slow_assets = set(slow_assets)            # 1.68.0: GET /assets too slow as well
 
     def get(self, path, wait=None, **q):
         self.calls.append((path, q.get("projection"), wait))
@@ -1097,6 +1098,8 @@ class SlowClient(object):
                     del r["stigs"]
             return rows
         if path == "/assets":
+            if cid in self.slow_assets:
+                raise RuntimeError("no answer from https://stigman.example.mil/api/assets in time (a slow answer)")
             return [{"name": h, "stigs": [{"benchmarkId": b} for b in fx.asset_stigs(h)]} for h in hosts]
         raise AssertionError(path)
 
@@ -1265,6 +1268,37 @@ class Review1680(unittest.TestCase):
         rhel = next(c for c in cols if c["name"] == RHEL)
         self.assertEqual((rhel["cat2"], rhel["rules_read"], rhel["hosts"]), (8, True, "listed"))
         self.assertIn("rhel04", next(c for c in f.stig_scorecard_point(dict(read, collections=cols))["collections"] if c["name"] == RHEL)["h"])
+
+    def test_no_host_counts_and_no_rules_never_zero_never_left_out(self):
+        """The metrics per checklist and the rules both not read: each asset's STIGs read the 1.67.0 way (its own limit);
+        a platform filter keeps the collection as not read when its counts by platform cannot be told."""
+        cl = SlowClient(slow_summary=["2"], slow_rules=["2"])
+        cols, missing = sc.read(dict(self.P, hosts_timeout=700), cl)
+        self.assertIn(("/assets", "stigs", 700), cl.calls)
+        rhel = next(c for c in cols if c["name"] == RHEL)
+        self.assertEqual(rhel["asset_stigs"]["rhel01"], [fx.APACHE, "RHEL_9_STIG"])
+        self.assertIn("assets", rhel["timing"])
+        read = {"ok": True, "error": "", "read_at": NOW, "collections": cols, "missing": []}
+        p = next(c for c in f.stig_scorecard_point(read)["collections"] if c["name"] == RHEL)
+        self.assertNotIn("p", p)                                                # no platform counts kept as zeros
+        d = card(read=read)
+        self.assertEqual([r[0] for r in section(d, "By platform")["rows"]], ["Windows", "VMware"])   # no Linux row of zeros
+        self.assertIn("Not in By platform (no host counts and no rules to tell the platforms by): SITEA - RHEL 9.",
+                      section(d, "Slow or not read")["lines"])
+        why = ("Not read: SITEA - RHEL 9 - its counts by platform not read (host counts not read (no answer from "
+               "https://stigman.example.mil/api/collections/2/metrics/summary in time (a slow answer)); rules not read "
+               "(STIG Manager was slow: over 600s, stigman_scorecard_rules_timeout))")
+        d = card(read=read, opts={"platform_filter": ["Linux"]})
+        self.assertIn(why, section(d, "Slow or not read")["lines"])
+        self.assertNotIn([RHEL, 6, 0, 0, 0], [r[:5] for r in section(d, "By collection")["rows"]])
+        self.assertIn(RHEL, json.dumps(section(d, "By collection")))           # listed, as not read
+        d = card(read=read, opts={"platform_filter": ["Windows"]})              # no Windows asset in it: rightly left out
+        self.assertNotIn(RHEL, json.dumps(section(d, "By collection")))
+        # the assets not read either: the platforms cannot be told - kept as not read whatever the filter
+        cols, missing = sc.read(self.P, SlowClient(slow_summary=["2"], slow_rules=["2"], slow_assets=["2"]))
+        self.assertEqual(next(c for c in cols if c["name"] == RHEL)["asset_stigs"], {})
+        d = card(read=dict(read, collections=cols), opts={"platform_filter": ["Windows"]})
+        self.assertIn(why, section(d, "Slow or not read")["lines"])
 
     def test_the_older_stig_managers_findings_wait_the_rules_timeout(self):
         cl = SlowClient(metrics=False)
