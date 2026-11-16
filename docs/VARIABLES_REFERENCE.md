@@ -854,6 +854,10 @@ File: `roles/finding_ref/defaults/main.yml`
 | `finding_ref_id` | `"{{ finding_id \| default('') }}"` | the finding's id (finding_id) |
 | `finding_ref_host` | `"{{ target \| default('') }}"` | the host the fix runs on (target) |
 | `finding_ref_kinds` | `[]` | the kinds this job fixes (set by each playbook); [] = any |
+| `finding_ref_report_playbooks` | `[health_check.yml, win_health_check.yml, troubleshoot.yml, win_troubleshoot.yml, disk_rep…` | The report jobs a finding is taken from, by their playbook's file name (* and ?): a finding of any other AAP job is refused (1.67.0 review: a job of any template could carry a planted site_findings artifact). The job must also have finished - a check that found something ends failed, on purpose; error or canceled neve… (all of it: the role file) |
+| `finding_ref_report_playbooks_extra` | `[]` | more, e.g. [my_report.yml] (a report of your own that keeps site_findings) |
+| `finding_ref_max_age_days` | `14` | an older report: refused - run it again and use its new page |
+| `finding_ref_now` | (empty) | tests only: "now" as YYYY-MM-DDTHH:MM:SSZ ("" = the clock) |
 | `finding_ref_aap_ca_path` | `"{{ report_history_aap_ca_path \| default('') }}"` | a CA file for AAP's own HTTPS certificate |
 
 ## horizon

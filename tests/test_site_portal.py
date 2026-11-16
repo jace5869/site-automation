@@ -536,6 +536,35 @@ class Live(unittest.TestCase):
         self.assertEqual(self.post("/api/actions/act_triage", {"vars": vals})[0], 201, "done: a new run may start")
         self.portal.recent.pop("DOE.JANE.Q.1234567890", None)
 
+    def test_18b_not_twice_at_once(self):
+        """1.67.0 review: 8 launches of the same action for the same finding at the same moment (report_job 907, 0907,
+        00907 - one job) start one run; the others are 409 and use no slot of the hour."""
+        import threading as _th
+        self.portal.recent.pop("DOE.JANE.Q.1234567890", None)
+        fid = "fapolicyd:web01.example.mil:race"
+        res, go = [], _th.Event()
+
+        def one(rj):
+            go.wait()
+            res.append(self.post("/api/actions/act_triage", {"vars": {"target": "web01.example.mil", "report_job": rj, "finding_id": fid}}))
+        ts = [_th.Thread(target=one, args=(rj,)) for rj in ("907", "0907", "00907", "907", "0907", "00907", "907", "907")]
+        for x in ts:
+            x.start()
+        go.set()
+        for x in ts:
+            x.join(30)
+        codes = sorted(c for c, _r in res)
+        self.assertEqual(codes, [201] + [409] * 7, res)
+        first = next(r["job_id"] for c, r in res if c == 201)
+        self.assertTrue(all(r.get("job_id") == first for c, r in res if c == 409))
+        launched = [r for r in self.portal.log.read("launch") if (r.get("values") or {}).get("finding_id") == fid]
+        self.assertEqual([r["values"]["report_job"] for r in launched], ["907"])          # one launch, report_job as a number
+        self.assertEqual(len(self.portal.recent.get("DOE.JANE.Q.1234567890", [])), 1)    # the 409s gave their slot back
+        end = time.time() + 20
+        while time.time() < end and not json.loads(self.req("/api/jobs/%d" % first)[1]).get("done"):
+            time.sleep(0.3)
+        self.portal.recent.pop("DOE.JANE.Q.1234567890", None)
+
     def test_19_the_result_and_the_next_action(self):
         """part C: a fix's portal_result at the top of its page (Fixed); an action that only reads (fixes: false, ACT
         triage) is Not checked whatever its artifact says; the action ACT names next, only when it is listed and its kinds

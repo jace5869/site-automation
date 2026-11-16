@@ -18,6 +18,9 @@
     finding_id: "{{ finding_ref_id }}"
     host: "{{ finding_ref_host }}"
     kinds: "{{ finding_ref_kinds }}"
+    playbooks: "{{ (finding_ref_report_playbooks | default([], true)) + (finding_ref_report_playbooks_extra | default([], true)) }}"
+    max_age_days: "{{ finding_ref_max_age_days | int }}"
+    now: "{{ finding_ref_now }}"
     ca_path: "{{ finding_ref_aap_ca_path }}"
   register: _fref
   check_mode: false                      # read only: a dry run needs it too

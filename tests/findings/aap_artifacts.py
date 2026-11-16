@@ -29,7 +29,8 @@ class H(http.server.BaseHTTPRequestHandler):
         if self.path == "/api/controller/v2/jobs/%d/" % job:
             with open(art_file) as fh:
                 return self.answer(200, {"id": job, "name": "Disk space report", "status": "successful",
-                                         "finished": "2026-11-16T06:00:00Z", "artifacts": json.load(fh)})
+                                         "playbook": "playbooks/disk_report.yml",       # a report job (finding_ref checks it)
+                                         "finished": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "artifacts": json.load(fh)})
         return self.answer(404, {"detail": "Not found."})
 
 

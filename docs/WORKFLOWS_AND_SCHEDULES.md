@@ -157,7 +157,8 @@ too, and Approve then ran the apply step with nothing to do. The gate step tells
 
 1. **Templates > Create template > Create job template:** `AAP - add workflow gates`, playbook
    `playbooks/aap_workflow_gates.yml`, any inventory, the credential **Red Hat Ansible Automation Platform** of an AAP
-   user with **Admin** on the workflows. No Limit.
+   user with **Admin** on the workflows. No Limit. Tick **Prompt on launch** next to **Job type**: step 3 launches it as
+   Check.
 2. **Variables:** copy `aap/extra_vars/aap_workflow_gates.yml`. Set `aap_gates_project` and `aap_gates_inventory` (they
    make the gate template, if it is not there yet). Leave `aap_gates_workflows: []` for every workflow, or name some:
 

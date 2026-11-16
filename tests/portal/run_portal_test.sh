@@ -38,7 +38,8 @@ chmod +x "$work/bin/systemctl" "$work/bin/ausearch"
 cat > "$work/aap.py" <<'EOPY'
 import http.server, json, sys
 port = int(sys.argv[1])
-JOB = {"id": 4711, "name": "Linux health check", "status": "failed", "finished": "2026-11-15T06:00:00Z",
+JOB = {"id": 4711, "name": "Linux health check", "status": "failed", "playbook": "playbooks/health_check.yml",
+       "finished": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
        "artifacts": {"site_findings": {
            "lin01.example.mil": [
                {"id": "fapolicyd:lin01.example.mil:denials", "kind": "fapolicyd", "host": "lin01.example.mil", "severity": "warning",

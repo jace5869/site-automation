@@ -61,6 +61,23 @@
 ## the kinds this job fixes (set by each playbook); [] = any
 # finding_ref_kinds: []
 
+## The report jobs a finding is taken from, by their playbook's file name (* and ?): a finding of
+## any other AAP job is refused (1.67.0 review: a job of any template could carry a planted
+## site_findings artifact). The job must also have finished - a check that found something ends
+## failed, on purpose; error or canceled never - at most finding_ref_max_age_days ago.
+# finding_ref_report_playbooks: [health_check.yml, win_health_check.yml, troubleshoot.yml, win_troubleshoot.yml, disk_report.yml,
+#                                "fapolicyd*.yml", stig_drift_report.yml, win_stig_drift_report.yml, stigman_ckl_import.yml,
+#                                service_watch.yml]
+
+## more, e.g. [my_report.yml] (a report of your own that keeps site_findings)
+# finding_ref_report_playbooks_extra: []
+
+## an older report: refused - run it again and use its new page
+# finding_ref_max_age_days: 14
+
+## tests only: "now" as YYYY-MM-DDTHH:MM:SSZ ("" = the clock)
+# finding_ref_now: ""
+
 ## a CA file for AAP's own HTTPS certificate
 # finding_ref_aap_ca_path: "{{ report_history_aap_ca_path | default('') }}"
 
