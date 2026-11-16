@@ -142,6 +142,35 @@ templates:
     prompts: {variables: true, limit: true}
     description: A ServiceNow incident for one finding - a draft unless portal_ticket_mode is live (then add the ServiceNow API credential by hand)
 
+  # ---- 46-48: nuc-dev-2 (STIG fixes)
+  - name: STIG - recheck one finding
+    playbook: playbooks/stig_finding_recheck.yml
+    credentials: [machine, stigman_api, aap]
+    prompts: {variables: true, limit: true}
+    become: true
+    description: Workflows 46, 47 and 48 - one STIG finding rechecked; fails on purpose when a review waits for the approval
+
+  - name: Windows STIG - recheck one finding
+    playbook: playbooks/win_stig_finding_recheck.yml
+    credentials: [machine_windows, stigman_api, aap]
+    prompts: {variables: true, limit: true}
+    inventory: windows
+    description: Workflow 46's Windows step
+
+  - name: STIG - fix one rule
+    playbook: playbooks/stig_fix_rule.yml
+    credentials: [machine, act_model_key, stigman_api, aap]
+    prompts: {variables: true, limit: true}
+    become: true
+    description: Workflow 47's check - ACT proposes the commands (read only); fails on purpose with NEEDS APPROVAL
+
+  - name: STIG - fix one rule - apply
+    playbook: playbooks/stig_fix_apply.yml
+    credentials: [machine, aap]
+    prompts: {variables: true, limit: true}
+    become: true
+    description: Workflow 47 after the approval - exactly the approved commands, no model
+
 workflows:
   # ---- 40, 44, 45 (1.67.0 parts A and B)
   - number: 40
@@ -178,7 +207,72 @@ workflows:
       - {id: linux, template: "STIG recheck", always: [windows]}
       - {id: windows, template: "Windows STIG recheck"}
 
-  # ---- 46-48: nuc-dev-2 (STIG fixes) - added in their own block, each approval behind the gate as 40
+  # ---- 46-48: nuc-dev-2 (STIG fixes) - each approval behind the gate (one link into each gate)
+  - number: 46
+    name: STIG - recheck and update STIG Manager
+    description: The site portal's Update STIG Manager - a rule that passes now, its review written after a person approves
+    prompts: {variables: true, limit: true}
+    nodes:
+      - {id: linux, template: "STIG - recheck one finding", failure: [gate_linux]}
+      - {id: windows, template: "Windows STIG - recheck one finding", failure: [gate_windows]}
+      - id: gate_linux
+        template: Workflow gate - has a plan
+        extra_data: {workflow_gate_var: stigman_update_plan}
+        success: [approve]
+      - id: gate_windows
+        template: Workflow gate - has a plan
+        extra_data: {workflow_gate_var: stigman_update_plan}
+        success: [approve]
+      - id: approve
+        approval:
+          name: Write this rule's review to STIG Manager?
+          timeout: 28800
+          description: "Open the recheck's report: Approve writes this review to STIG Manager."
+        success: [update]
+      - {id: update, template: "STIG Manager - update"}
+
+  - number: 47
+    name: STIG - fix one rule
+    description: The site portal's Fix rule - ACT proposes, a person approves, the commands run, the rule is rechecked
+    prompts: {variables: true, limit: true}
+    nodes:
+      - {id: check, template: "STIG - fix one rule", failure: [gate]}
+      - id: gate
+        template: Workflow gate - has a plan
+        extra_data: {workflow_gate_var: stig_fix_plan}
+        success: [approve]
+      - id: approve
+        approval:
+          name: Run the commands ACT proposed?
+          timeout: 28800
+          description: "Read the check job: the rule and the commands. Approve runs exactly them, rechecks the rule and writes its review if it passes."
+        success: [apply]
+      - {id: apply, template: "STIG - fix one rule - apply", success: [recheck]}
+      - {id: recheck, template: "STIG - recheck one finding", failure: [gate_update]}
+      - id: gate_update
+        template: Workflow gate - has a plan
+        extra_data: {workflow_gate_var: stigman_update_plan}
+        success: [update]
+      - {id: update, template: "STIG Manager - update"}
+
+  - number: 48
+    name: STIG - create the asset in STIG Manager
+    description: The site portal's Create asset - the host scanned in full, its asset created after a person approves
+    prompts: {variables: true, limit: true}
+    nodes:
+      - {id: check, template: "STIG - recheck one finding", failure: [gate]}
+      - id: gate
+        template: Workflow gate - has a plan
+        extra_data: {workflow_gate_var: stigman_update_plan}
+        success: [approve]
+      - id: approve
+        approval:
+          name: Create the asset and write the scan's answers to STIG Manager?
+          timeout: 28800
+          description: "Open the recheck's report: Approve creates this asset with these reviews."
+        success: [update]
+      - {id: update, template: "STIG Manager - update"}
+
   # ---- 49-51: nuc-dev-3 (Clean up, Restart, Allow this) (1.67.0 part E)
   - number: 49
     name: Disk - clean up (approved)

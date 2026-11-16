@@ -679,6 +679,19 @@ def stig_recheck_vulns(sm, statuses=None, which=None):
     return sorted(out)
 
 
+def stig_only_rules(vulns, rules=None):
+    """The rules to check again, only those of rules when it names any (1.67.0, check_stig_recheck_rules: the site
+    portal's "fix one rule" rechecks that rule alone). A rule named V-257985, SV-257985 or SV-257985r925318_rule."""
+    want = set()
+    for r in rules or []:
+        m = re.search(r"V-(\d+)", str(r).upper())
+        if m:
+            want.add("V-" + m.group(1))
+    if not rules:
+        return list(vulns or [])
+    return [v for v in vulns or [] if str(v).upper() in want]
+
+
 def _scan_for(smc, scans):
     """The scan's checklist of a checklist in STIG Manager: the same STIG, the same web site or database instance (Linux:
     the one scan); else the only one of that STIG."""
@@ -1502,7 +1515,7 @@ def stig_fixed_open(results, read_at="", max_rows=500):
 class FilterModule(object):
     def filters(self):
         return {"stig_compare": stig_compare, "stig_report_sections": stig_report_sections, "stig_lines": stig_lines,
-                "stig_findings": stig_findings, "stig_recheck_vulns": stig_recheck_vulns, "stig_recheck": stig_recheck,
+                "stig_findings": stig_findings, "stig_recheck_vulns": stig_recheck_vulns, "stig_only_rules": stig_only_rules, "stig_recheck": stig_recheck,
                 "stig_recheck_sections": stig_recheck_sections, "stig_recheck_lines": stig_recheck_lines,
                 "stig_update_plan": stig_update_plan, "stig_update_sections": stig_update_sections, "stig_update_lines": stig_update_lines,
                 "stig_update_item_lines": stig_update_item_lines,

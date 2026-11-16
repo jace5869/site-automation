@@ -2,6 +2,14 @@
 # On the AAP side, once: ACT reads the finding and what was read on the host (evidence mode: ACT runs no command and
 # changes nothing), then the report (printed, emailed with report_email_to, published with report_web_dest) and the
 # job artifact act_triage_finding. A fix ACT proposes is never applied here: that is a separate, approved job.
+# 1.67.0 part D: the site portal's actions that fit this finding (its kind, their when) - ACT may name one as the next
+# step; the portal's job page shows that button (act_triage_finding.next_action). portal_actions when set, else the file.
+- name: Triage | the actions ACT may name as the next step
+  ansible.builtin.set_fact:
+    _pt_next: >-
+      {{ (portal_actions | default(lookup('ansible.builtin.file', playbook_dir ~ '/../roles/site_portal_stack/files/actions.yml')
+          | from_yaml, true)) | portal_next_candidates(finding | default({})) }}
+
 - name: Triage | ACT reads the finding and the evidence - evidence mode, ACT runs no command
   ansible.builtin.include_role:
     name: site_act
@@ -13,7 +21,8 @@
       {{ portal_finding | portal_triage_evidence(portal_triage_outputs | default([]),
            {'host': inventory_hostname, 'job': portal_finding_job.id, 'max_chars': portal_triage_max_chars | int}) }}
     _ea_task: >-
-      {{ portal_finding | portal_triage_task({'host': inventory_hostname, 'extra': site_act_extra_instructions | default('')}) }}
+      {{ portal_finding | portal_triage_task({'host': inventory_hostname, 'extra': site_act_extra_instructions | default(''),
+                                              'actions': _pt_next}) }}
     _ea_names: ["{{ inventory_hostname }}"]
     _ea_model_timeout: "{{ portal_triage_act_model_timeout }}"
 
@@ -23,7 +32,8 @@
       {{ portal_finding | portal_triage_report(_ea_parsed, {
            'host': inventory_hostname, 'job': portal_finding_job, 'requested_by': portal_request.requested_by,
            'ran': _ea_ran | bool, 'reason': _ea_reason, 'raw': _ea_raw, 'provider': site_act_provider | default(''),
-           'model': _ea_model, 'outputs': portal_triage_outputs | default([]), 'max_out': portal_triage_report_chars | int}) }}
+           'model': _ea_model, 'outputs': portal_triage_outputs | default([]), 'max_out': portal_triage_report_chars | int,
+           'next': (_pt_next | selectattr('name', 'eq', _ea_raw | portal_next_action(_pt_next)) | list | first | default({}))}) }}
 
 - name: Triage | {{ _pt_doc.title }}
   ansible.builtin.debug:
@@ -41,6 +51,7 @@
           {{ {'ran': _ea_ran | bool, 'reason': '' if _ea_ran | bool else _ea_reason, 'model': _ea_model,
               'overall': _ea_parsed.overall | default(''), 'answer': (_ea_parsed.by_id | default({})).F1 | default({})} }}
         evidence: "{{ portal_triage_outputs | default([]) }}"
+        next_action: "{{ _ea_raw | portal_next_action(_pt_next) }}"     # one of _pt_next's names, or ''
     per_host: false
 
 - name: Triage | email it, publish it (report_email_to, report_web_dest)

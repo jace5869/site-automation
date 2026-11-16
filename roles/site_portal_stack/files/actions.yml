@@ -117,3 +117,42 @@ actions:
     limit_from: target
     approval: false
     fixes: false                                                     # it only reads (or opens a ticket): never Fixed or Still there
+
+  # ---- 1.67.0 part D: the STIG actions (workflows 46-48; roles/portal_stig, docs/SITE_PORTAL.md "STIG actions")
+  stig_recheck_update:
+    title: Recheck the rule and update STIG Manager
+    aap: {type: workflow, name: "STIG - recheck and update STIG Manager"}   # workflow 46
+    kinds: [stig_fixed_open]
+    button: Update STIG Manager
+    vars:
+      target: {kind: inventory_host, label: Host}
+      report_job: {kind: text, label: AAP job of the report, max: 12, pattern: "[0-9]{1,12}"}
+      finding_id: {kind: text, label: Finding, max: 200, pattern: "(stig_fixed_open):[A-Za-z0-9_.:/@-]{1,180}"}
+    limit_from: target
+    approval: true
+
+  stig_fix_rule:
+    title: Fix one STIG rule (ACT proposes, you approve)
+    aap: {type: workflow, name: "STIG - fix one rule"}                       # workflow 47
+    kinds: [stig_rule_fail]
+    button: Fix rule
+    when: {cat: ["CAT II", "CAT III"], os: linux}                           # never CAT I; Linux hosts only
+    vars:
+      target: {kind: inventory_host, label: Host}
+      report_job: {kind: text, label: AAP job of the report, max: 12, pattern: "[0-9]{1,12}"}
+      finding_id: {kind: text, label: Finding, max: 200, pattern: "(stig_rule_fail):[A-Za-z0-9_.:/@-]{1,180}"}
+    limit_from: target
+    approval: true
+
+  stigman_create_asset:
+    title: Create the host's asset in STIG Manager
+    aap: {type: workflow, name: "STIG - create the asset in STIG Manager"}  # workflow 48
+    kinds: [stig_no_asset]
+    button: Create asset
+    when: {os: linux}
+    vars:
+      target: {kind: inventory_host, label: Host}
+      report_job: {kind: text, label: AAP job of the report, max: 12, pattern: "[0-9]{1,12}"}
+      finding_id: {kind: text, label: Finding, max: 200, pattern: "(stig_no_asset):[A-Za-z0-9_.:/@-]{1,180}"}
+    limit_from: target
+    approval: true

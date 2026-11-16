@@ -66,6 +66,20 @@ TEMPLATES = {
 ## portal_ticket_mode: dry_run (the default) builds the incident and sends NOTHING; off = no button; live = opens it (needs the ServiceNow API credential).
 # portal_ticket_mode: dry_run
 """),
+    "stig_finding_recheck.yml": ("STIG - recheck one finding", "Machine, STIG Manager API, Red Hat Ansible Automation Platform", "check_stig", """\
+## Workflows 46, 47 and 48 (the site portal): Prompt on launch for Variables and Limit. The portal sends target,
+## report_job, finding_id and portal_requested_by; the STIG settings are the drift report's (check_stig_*).
+"""),
+    "win_stig_finding_recheck.yml": ("Windows STIG - recheck one finding", "Machine (Windows), STIG Manager API, Red Hat Ansible Automation Platform", "win_check_stig", """\
+## Workflow 46 (the site portal): Prompt on launch for Variables and Limit.
+"""),
+    "stig_fix_rule.yml": ("STIG - fix one rule", "Machine, ACT model key, STIG Manager API, Red Hat Ansible Automation Platform", "", """\
+## Workflow 47's first step (the site portal's "Fix rule"): Prompt on launch for Variables and Limit. Reads only.
+# portal_stig_fix_cats: ["CAT II", "CAT III"]
+"""),
+    "stig_fix_apply.yml": ("STIG - fix one rule - apply", "Machine, Red Hat Ansible Automation Platform", "", """\
+## Workflow 47's step after the approval: runs exactly the approved commands. Prompt on launch for Variables and Limit.
+"""),
     "aap_email_question.yml": ("AAP - report email question", "Red Hat Ansible Automation Platform", "", """\
 ## Run it with Check first: it then only reads, and lists the templates and workflows it would change
 # aap_email_question_project: "Site automation"   # only the templates of your project (its name in AAP)

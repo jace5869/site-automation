@@ -133,6 +133,14 @@
       when: check_stig_update_workflow | default(false) | bool and _stig_update_plan | length > 0
 
   post_tasks:
+    # 1.67.0: one finding of the site portal's (playbooks/stig_finding_recheck.yml, workflows 46-48): fixed, still there
+    # or not checked, for its job page - before the report and NEEDS APPROVAL, which end the host
+    - name: Site portal | fixed or still there
+      ansible.builtin.include_role:
+        name: portal_stig
+        tasks_from: result.yml
+      when: finding is defined and finding.kind | default('') in ['stig_rule_fail', 'stig_fixed_open', 'stig_no_asset']
+
     - name: Report (a host that could not be rechecked is a warning)
       ansible.builtin.include_role:
         name: site_findings

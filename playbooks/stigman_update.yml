@@ -23,3 +23,22 @@
     - name: Write the approved reviews
       ansible.builtin.include_role:
         name: stigman_update
+
+# 1.67.0: launched by the site portal (workflows 46, 47 and 48: finding_id and portal_requested_by reach this step):
+# the approved reviews (and the new asset) are written - the portal's job page says fixed
+- name: Site portal - written to STIG Manager
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: Site portal | the portal's job page
+      ansible.builtin.include_role:
+        name: portal_result
+      vars:
+        portal_result_finding_id: "{{ finding_id }}"
+        portal_result_fixed: true
+        portal_result_after: written to STIG Manager
+        portal_result_summary: "Approved and written to STIG Manager ({{ stigman_update_plan | default([]) | length }} item(s))."
+      when: portal_requested_by is defined and finding_id is defined and not ansible_check_mode

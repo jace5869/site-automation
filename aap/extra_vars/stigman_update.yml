@@ -56,6 +56,29 @@
 ## write it like the others
 # stigman_update_skip_attachments: "{{ check_stig_update_skip_attachments | default(true) }}"
 
+# ---- portal_result -------------------------------------------------------------------------------
+## true (Fixed), false (Still there), or unknown (Not checked)
+# portal_result_fixed: unknown
+
+## what the fix found before, short (e.g. "/var 93% full")
+# portal_result_before: ""
+
+## what it found after (e.g. "/var 71% full")
+# portal_result_after: ""
+
+## one line for the person who asked
+# portal_result_summary: ""
+
+## the finding the fix was for: finding.id (roles/finding_ref) when the play has it, else the
+## finding_id it was given
+# portal_result_finding_id: "{{ finding.id if finding is defined and finding.id is defined else finding_id | default('') }}"
+
+## the portal's action, when it is known
+# portal_result_action: "{{ portal_request.action | default(portal_request_action | default('')) }}"
+
+## true in a job that only reads (ACT triage, a recheck): its result is always Not checked
+# portal_result_read_only: false
+
 # ---- check_stig ----------------------------------------------------------------------------------
 ## Keycloak's token endpoint (https://keycloak.example.mil/realms/stigman/protocol/openid-
 ## connect/token); empty = the credential's
@@ -80,6 +103,10 @@
 ## a review with attachments in STIG Manager (evidence a person attached) is left out of the plan
 ## and never written; false = written like the others
 # check_stig_update_skip_attachments: true
+
+# ---- portal_request ------------------------------------------------------------------------------
+## the action's name, for the job's lines and its artifact
+# portal_request_action: ""
 
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no

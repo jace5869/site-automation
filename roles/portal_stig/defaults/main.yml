@@ -1,0 +1,40 @@
+---
+# ---- The site portal's STIG actions (1.67.0, workflows 46, 47 and 48) -----------------------------------------------
+# 46 STIG - recheck and update STIG Manager: one finding the drift report says passes now (stig_fixed_open), rechecked,
+#    then written to STIG Manager after an approval. 47 STIG - fix one rule: one failed rule on one Linux host
+#    (stig_rule_fail) - ACT proposes the exact commands, a person approves, they run as written, the rule is rechecked and
+#    its review written only if it passes now. 48: the host's asset created in STIG Manager (stig_no_asset), with its
+#    reviews, after an approval. docs/SITE_PORTAL.md, "STIG actions".
+
+# Workflow 47: the categories ACT may propose a fix for. A CAT I rule gets no button, and is refused here too.
+portal_stig_fix_cats: ["CAT II", "CAT III"]
+# Workflow 47: rules ACT never proposes a fix for - a person changes them by hand. Each is a name and a regular expression,
+# matched (any case) in the rule's title, check text and fix text. A rule whose fix text says to restart the system is
+# refused too, whatever this says.
+portal_stig_fix_never:
+  - name: accounts
+    pattern: '\baccounts?\b|\buser (?:id|name)s?\b|\bpasswords?\b|\bpasswd\b|/etc/shadow|\buseradd\b|\busermod\b'
+  - name: authentication
+    pattern: 'authenticat|\bmulti-?factor\b|\bsmart ?card\b|\bpkinit\b|\bkerberos\b|\bsssd\b'
+  - name: PAM
+    pattern: '\bpam\b|pam_|/etc/pam\.d|\bauthselect\b'
+  - name: sudo
+    pattern: '/etc/sudoers|\bsudoers\b|\bNOPASSWD\b|!authenticate|\btimestamp_timeout\b|\bsudo (?:group|privileges?|rules?|configuration|access)\b|\bwheel group\b'
+  - name: SSH authentication
+    pattern: '\b(?:PermitRootLogin|PasswordAuthentication|PubkeyAuthentication|PermitEmptyPasswords|ChallengeResponseAuthentication|KbdInteractiveAuthentication|GSSAPIAuthentication|KerberosAuthentication|HostbasedAuthentication|UsePAM|AuthorizedKeys\w*)\b'
+  - name: crypto and FIPS
+    pattern: '\bfips\b|crypto|\bciphers?\b|\bMACs\b|\bKexAlgorithms\b|\bopenssl\b|\btls\b|\bssl\b'
+  - name: audit configuration
+    pattern: '\bauditd?\b|audit\.rules|/etc/audit|\bauditctl\b|\baugenrules\b'
+  - name: SELinux mode
+    pattern: 'selinux.{0,40}\b(?:mode|state|enforcing|permissive|disabled)\b|\bsetenforce\b|/etc/selinux/config'
+  - name: firewall default policy
+    pattern: 'firewall.{0,60}\bdefault\b|\bdefault[- ]zone\b|\bdefault (?:policy|deny)\b|--set-default-zone|\btarget=DROP\b'
+# Workflow 47: seconds for each approved command on the host.
+portal_stig_fix_command_timeout: 300
+# Workflow 47: the STIG revision whose check and fix text is read (latest = the newest STIG Manager has).
+portal_stig_fix_revision: latest
+# How a host is recognized as Windows (as roles/site_findings: its connection, or its shell). Do not set.
+_portal_stig_windows: >-
+  {{ (ansible_connection | default('ssh')) in ['winrm', 'psrp', 'ansible.builtin.winrm', 'ansible.builtin.psrp']
+     or (ansible_shell_type | default('sh')) in ['powershell', 'cmd'] }}

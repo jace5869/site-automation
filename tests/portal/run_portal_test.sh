@@ -75,7 +75,7 @@ EOPY
 aap_pid=$!
 for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null && break; sleep 0.1; done
 cat > "$work/act/act.json" <<'EOJ'
-{"summary": "Looked at it.\nBEGIN_ACT_ANALYSIS\n{\"overall\": \"Add a trust entry for the tool after review.\", \"items\": [{\"id\": \"F1\", \"cause\": \"The tool under /opt is not in fapolicyd's trust database.\", \"evidence\": \"resp=deny exe=/opt/tool/bin/tool-made-up\", \"fix\": \"Review the tool, then add it with fapolicyd-cli --file add.\", \"confidence\": 85}]}\nEND_ACT_ANALYSIS"}
+{"summary": "Looked at it.\nBEGIN_ACT_ANALYSIS\n{\"overall\": \"Add a trust entry for the tool after review.\", \"items\": [{\"id\": \"F1\", \"cause\": \"The tool under /opt is not in fapolicyd's trust database.\", \"evidence\": \"resp=deny exe=/opt/tool/bin/tool-made-up\", \"fix\": \"Review the tool, then add it with fapolicyd-cli --file add.\", \"confidence\": 85}], \"next_action\": \"stig_fix_rule\"}\nEND_ACT_ANALYSIS"}
 EOJ
 cp "$work/act/act.json" "$work/act/act.keep"
 cat > "$work/inv.yml" <<EOI
@@ -121,7 +121,8 @@ run "triage: the finding read from job 4711, the look command and fapolicyd's re
     "$pb" -l lin01.example.mil -e target=lin01.example.mil -e report_job=4711 -e finding_id=fapolicyd:lin01.example.mil:denials \
     -e "$by" -e "$actvars" -- \
     "Requested through the site portal by CN=Pat Example" "ACT - triage finding: fapolicyd:lin01.example.mil:denials on lin01.example.mil" \
-    "The tool under /opt is not in fapolicyd" "act_triage_finding" "\"confidence\": 85" "portal_request"
+    "The tool under /opt is not in fapolicyd" "act_triage_finding" "\"confidence\": 85" "portal_request" \
+    "\"next_action\": \"\""
 for t in "FINDING (from the health check job 4711" "summary: fapolicyd denied 3 executions today" "look-command-ran" \
          "resp=deny exe=/opt/tool/bin/tool-made-up" "fapolicyd.service - File Access Policy Daemon"; do
   if ! grep -qF -- "$t" "$work/act/fake-act-stdin.txt" 2>/dev/null; then echo "FAIL - ACT's evidence lacks: $t"; fails=$((fails + 1)); fi

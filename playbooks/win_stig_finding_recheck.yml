@@ -1,0 +1,35 @@
+---
+# WINDOWS STIG - RECHECK ONE FINDING (1.67.0, the site portal; workflows 46, 47 and 48): one STIG finding, named by the portal - report_job (the
+# AAP job that reported it), finding_id and target (the host, also the Limit) - read from that job (roles/finding_ref),
+# then playbooks/win_stig_recheck.yml as workflow 37's check: that rule alone (stig_rule_fail, stig_fixed_open), or the host's asset
+# to create (stig_no_asset). It writes nothing to STIG Manager: with something to write it fails on purpose (NEEDS
+# APPROVAL) and hands the plan on (stigman_update_plan); STIG Manager - update writes it after the approval. The
+# portal's job page says fixed, still there or not checked (portal_result). Credentials: the Windows machine credential, the
+# STIG Manager API (read-only), Red Hat Ansible Automation Platform. docs/SITE_PORTAL.md, "STIG actions".
+#   ansible-playbook playbooks/win_stig_finding_recheck.yml -l web01.example.mil -e target=web01.example.mil -e report_job=4711 \
+#     -e finding_id=stig_fixed_open:web01.example.mil:SV-257985r925318_rule
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
+- name: Target check (stops with a clear message when target matches no host)
+  hosts: "all{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
+  gather_facts: false
+  tasks:
+    - name: The target leaves at least one host to run on
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: target_check.yml
+      vars:
+        _target_pattern: "{{ target | default('') }}"
+
+- name: The finding, and what the recheck does with it
+  hosts: "{{ target | default('no-target-given') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"     # without target the check above has stopped the job
+  gather_facts: false
+  tasks:
+    - name: The finding, and what the recheck does with it
+      ansible.builtin.include_role:
+        name: portal_stig
+        tasks_from: prepare.yml
+
+- name: The STIG recheck of that finding
+  ansible.builtin.import_playbook: win_stig_recheck.yml

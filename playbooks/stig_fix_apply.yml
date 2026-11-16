@@ -1,0 +1,35 @@
+---
+# STIG - FIX ONE RULE, the fix (1.67.0, workflow 47 step 3), after a person approved step 1's proposal: exactly those
+# commands on the host, in order, no model involved; then (the workflow's next steps) the rule rechecked and its review
+# written to STIG Manager only if it passes now. Check (Job type) lists the commands and changes nothing. It refuses to
+# run outside the workflow: there is nothing approved to apply. Credentials: the Linux machine credential, Red Hat
+# Ansible Automation Platform. docs/SITE_PORTAL.md, "STIG actions".
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
+- name: Target check (stops with a clear message when target matches no host)
+  hosts: "all{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
+  gather_facts: false
+  tasks:
+    - name: The target leaves at least one host to run on
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: target_check.yml
+      vars:
+        _target_pattern: "{{ target | default('') }}"
+
+- name: STIG - fix one rule (the approved fix)
+  hosts: "{{ target | default('no-target-given') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"     # without target the check above has stopped the job
+  gather_facts: false
+  become: true
+  tasks:
+    - name: ACT | old copies on this host (ACT on or off; roles/site_act/tasks/old_copies.yml, as act_fix_approved.yml)
+      ansible.builtin.include_role:
+        name: site_act
+        tasks_from: old_copies.yml
+      when: (ansible_connection | default('ssh')) not in ['winrm', 'psrp', 'ansible.builtin.winrm', 'ansible.builtin.psrp']
+
+    - name: STIG - fix one rule (the approved fix)
+      ansible.builtin.include_role:
+        name: portal_stig
+        tasks_from: fix_apply.yml

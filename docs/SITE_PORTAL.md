@@ -397,6 +397,11 @@ Each step template needs the same **Prompt on launch** as its workflow. Drawings
 
 A fix ACT proposes is never applied here. It stays a separate job, with its own approval.
 
+**The next step** (1.67.0): ACT is shown the portal's actions that fit this finding: its kind, and the action's
+`when`. It may name one as `next_action`. The job keeps the name only if it is one of those, in the artifact
+`act_triage_finding.next_action`. The portal's job page then shows that action's button. Pressing it opens the usual
+confirm page.
+
 Settings: `portal_triage_os`, `portal_triage_hint`, `portal_triage_command_timeout`, `portal_triage_max_chars`,
 `portal_triage_report_chars`, `portal_triage_act_model_timeout` ([VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md)).
 
@@ -468,6 +473,53 @@ example the checklist import every 15 minutes:
 portal_setup_schedules:
   - {name: Checklists every 15 minutes, target: Checklists imported into STIG Manager, every_minutes: 15}
 ```
+
+## STIG actions
+
+Three actions fix what the STIG reports find. Each takes the finding by reference (the report's AAP job, the
+finding's id, the host), each waits for a person's approval, and each ends with **Fixed**, **Still there** or **Not
+checked** on the portal's job page.
+
+Each approval sits behind *Workflow gate - has a plan* ([WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md)). A
+check that failed for another reason never reaches the approval. In workflow 47 a second gate stands before the update:
+a recheck that failed for another reason writes nothing.
+
+| Button | Finding | Workflow | What it does |
+|---|---|---|---|
+| **Update STIG Manager** | the drift report's *passes now, still Open* (`stig_fixed_open`) | 46 | Rechecks that rule, then writes its review after the approval |
+| **Fix rule** | one failed rule, CAT II or III (`stig_rule_fail`) | 47 | ACT proposes the commands; after the approval they run, the rule is rechecked, its review written if it passes |
+| **Create asset** | the scorecard's host not in STIG Manager (`stig_no_asset`) | 48 | Scans the host in full; after the approval the asset is created with the scan's answers |
+
+### Fix one rule (workflow 47)
+
+1. **The check** (read only). The job reads the rule's check and fix text from STIG Manager. ACT then confirms the
+   host's state with read-only commands and proposes the exact commands, and how to verify them. Every change is
+   refused here. The job fails on purpose: *NEEDS APPROVAL*, with the commands.
+2. **The approval.** Read the check job's output: the rule, ACT's reasoning and the commands.
+3. **The fix.** Exactly those commands run on the host, in order, with no model. The job stops at the first one that
+   fails. Then the rule alone is rechecked, and its review is written to STIG Manager only if it passes now.
+
+No proposal, and the job says why, for:
+
+- a CAT I rule (`portal_stig_fix_cats`, CAT II and III). A CAT I finding has no button;
+- a rule about accounts, authentication, PAM, sudo, SSH logins, crypto and FIPS, audit configuration, SELinux's mode
+  or the firewall's default policy (`portal_stig_fix_never`). The commands ACT proposes are checked against the same
+  list, and against the apply-time guard;
+- a rule whose fix text says to restart the system;
+- a Windows server: this action is for Linux hosts only.
+
+**Dry run:** give the fix template **Job type** Check on the workflow's node. It lists the approved commands and
+changes nothing.
+
+### Update STIG Manager (workflow 46) and Create asset (workflow 48)
+
+Workflow 37's path for one finding:
+
+1. The recheck of that rule. For a new asset, the host is scanned in full.
+2. The approval.
+3. *STIG Manager - update* writes it.
+
+Workflow 46 takes Linux and Windows hosts. Workflow 48 is for Linux hosts, as `check_stig_update_create_assets` is.
 
 ## Approvals
 

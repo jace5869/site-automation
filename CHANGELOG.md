@@ -427,6 +427,45 @@ in CI); the scorecard's counts-first read against a stand-in STIG Manager slow o
 real STIG Manager or vCenter. SA_VERSION 1.66.1; the PDFs at 1.66.1.
 
 
+<!-- part D: the STIG fix buttons -->
+
+**To set up (part D): nothing new.** Run *AAP - set up portal actions* (step 102) again: it makes workflows 46, 47 and
+48 and their four job templates, with the credential kinds you named there. New settings have defaults:
+`portal_stig_fix_cats`, `portal_stig_fix_never`, `portal_stig_fix_command_timeout`, `portal_stig_fix_revision`,
+`check_stig_recheck_rules`. Each approval of 46 to 48 is behind *Workflow gate - has a plan* (`stig_fix_plan`,
+`stigman_update_plan`); 47 has a second gate before *STIG Manager - update*.
+
+**The site portal's STIG actions: fix what the STIG reports find, with an approval.** Three workflows. Each takes the
+finding by reference, waits for a person's approval and ends with *Fixed*, *Still there* or *Not checked* on the
+portal's job page (docs/SITE_PORTAL.md, "STIG actions"). No ServiceNow.
+
+- **Update STIG Manager** (workflow 46): a rule the drift report finds passing, still Open in STIG Manager. That rule
+  alone is rechecked, then its review is written after the approval. Linux and Windows.
+- **Fix rule** (workflow 47): one failed rule, CAT II or III, on one Linux host.
+  1. Read only: the rule's check and fix text from STIG Manager. ACT (diagnose) confirms the host's state and proposes
+     the exact commands, and how to verify them.
+  2. The approval.
+  3. Exactly those commands run, with no model. The rule alone is rechecked, and its review is written only if it
+     passes now.
+  - No proposal, and the job says why: a CAT I rule (`portal_stig_fix_cats`), a rule about accounts, authentication,
+    PAM, sudo, SSH logins, crypto and FIPS, audit, SELinux's mode or the firewall's default policy
+    (`portal_stig_fix_never`, checked on ACT's commands too), or a fix that restarts the system.
+  - **Dry run:** the apply step with Job type Check lists the commands and changes nothing.
+- **Create asset** (workflow 48): the scorecard's host not in STIG Manager. Scanned in full, then after the approval
+  the asset is created with the scan's answers (workflow 37's create path). Linux.
+- **The recheck of one rule:** `check_stig_recheck_rules` (new, default `[]`: every rule as before). The STIG recheck
+  playbooks report fixed or still there for a portal finding before their report.
+- **ACT - triage finding** (workflow 44) may name a **next step**: one of the portal's actions that fit the finding
+  (its kind, the action's `when`), kept only if it is one of them (`act_triage_finding.next_action`). The job page
+  shows its button.
+- New playbooks: `stig_finding_recheck.yml`, `win_stig_finding_recheck.yml`, `stig_fix_rule.yml`, `stig_fix_apply.yml`.
+  New role: `roles/portal_stig`, with `site_stigman_rule` (one rule's text from STIG Manager, read only).
+
+**Tests:** `tests/test_portal_stig.py` (the gates, the result, the rule's text, one rule alone);
+`tests/portal/run_portal_stig_test.sh` (a fake AAP, a fake ACT, a fake oscap and the stand-in STIG Manager: the
+proposal, the refusals, the dry run, the fix, the recheck passing and failing, the review written only on a pass, 46
+and 48), on ansible-core 2.22 and 2.16. Not run against a real STIG Manager's rule text, a real AAP or a real model.
+
 ## 1.66.0 — 2026-11-14
 
 **Updating without scripts:** paste `site-automation-1.66.0-changed-since-1.61.0.zip` as it is (from an older version,

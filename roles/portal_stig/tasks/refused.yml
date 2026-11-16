@@ -1,0 +1,24 @@
+---
+# Workflow 47, step 1: no proposal - the job says why, the portal's job page says not fixed (nothing was changed), and
+# the host ends here green: no approval is asked for.
+- name: Fix one rule | nothing proposed - {{ _ps_why }}
+  ansible.builtin.debug:
+    msg: "Nothing proposed for {{ finding.data.rule | default(finding.id) }} on {{ inventory_hostname }}: {{ _ps_why }}. Nothing was changed."
+
+- name: Fix one rule | the portal's job page
+  ansible.builtin.include_role:
+    name: portal_result
+    apply:
+      delegate_to: localhost
+      run_once: true
+      become: false
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    portal_result_fixed: unknown
+    portal_result_before: "{{ finding.data.stigman | default('') or 'fails' }}"
+    portal_result_after: not changed
+    portal_result_summary: "{{ ('Nothing proposed: ' ~ _ps_why) | truncate(300) }}"
+
+- name: Fix one rule | nothing more on this host
+  ansible.builtin.meta: end_host

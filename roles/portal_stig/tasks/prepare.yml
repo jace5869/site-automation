@@ -1,0 +1,50 @@
+---
+# Workflows 46, 47 (its recheck) and 48: the finding the portal names (report_job, finding_id, target), read by
+# finding_ref on the AAP side, then what the STIG recheck does with it - as workflow 37's check
+# (check_stig_update_workflow), for that rule alone (check_stig_recheck_rules), or with the host's asset to create
+# (check_stig_update_create_assets, its collection and name from the finding). Host facts: they win over the defaults.
+- name: STIG action | check the request (target, report_job, finding_id; who asked)
+  ansible.builtin.include_role:
+    name: portal_request
+    apply:
+      delegate_to: localhost
+      run_once: true
+      become: false
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    portal_request_action: stig_finding
+    portal_request_always: true
+    portal_request_limit_from: target
+    portal_request_spec:
+      target: {kind: inventory_host}
+      report_job: {kind: text, max: 12, pattern: "[0-9]{1,12}"}
+      finding_id: {kind: text, max: 200, pattern: "(stig_rule_fail|stig_fixed_open|stig_no_asset):[A-Za-z0-9_.:/@-]{1,180}"}
+
+- name: STIG action | the finding, from the job that reported it
+  ansible.builtin.include_role:
+    name: finding_ref
+    apply:
+      delegate_to: localhost
+      run_once: true
+      become: false
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    finding_ref_kinds: [stig_rule_fail, stig_fixed_open, stig_no_asset]
+
+- name: STIG action | recheck {{ finding.data.rule | default('the host') }} as workflow 37's check
+  ansible.builtin.set_fact:
+    check_stig_update_workflow: true
+    check_stig_recheck_rules: "{{ [finding.data.rule] if finding.kind in ['stig_rule_fail', 'stig_fixed_open'] else [] }}"
+
+- name: STIG action | the host's asset to create in {{ finding.data.collection | default('its collection') }}
+  ansible.builtin.set_fact:
+    check_stig_update_create_assets: true
+    check_stig_stigman_collection: "{{ finding.data.collection }}"
+  when: finding.kind == 'stig_no_asset' and finding.data.collection | default('') | length > 0
+
+- name: STIG action | the asset's name, as the scorecard has it
+  ansible.builtin.set_fact:
+    check_stig_stigman_asset: "{{ finding.data.asset }}"
+  when: finding.kind == 'stig_no_asset' and finding.data.asset | default('') | length > 0

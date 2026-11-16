@@ -1,0 +1,154 @@
+---
+# STIG - fix one rule, step 1 (workflow 47; playbooks/stig_fix_rule.yml): read only. The finding (one failed rule on one
+# Linux host), the rule's check and fix text from STIG Manager, then ACT in diagnose mode on the host: it confirms the
+# host's state with read-only commands and proposes the EXACT commands to fix the rule (every change refused here). Never
+# a CAT I rule (portal_stig_fix_cats), a rule portal_stig_fix_never names, or one whose fix says to restart: no proposal,
+# and the job says why. With a proposal the job fails on purpose (NEEDS APPROVAL): the workflow's approval, then
+# playbooks/stig_fix_apply.yml runs exactly those commands.
+- name: STIG action | check the request (target, report_job, finding_id; who asked)
+  ansible.builtin.include_role:
+    name: portal_request
+    apply:
+      delegate_to: localhost
+      run_once: true
+      become: false
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    portal_request_action: stig_fix_rule
+    portal_request_always: true
+    portal_request_limit_from: target
+    portal_request_spec:
+      target: {kind: inventory_host}
+      report_job: {kind: text, max: 12, pattern: "[0-9]{1,12}"}
+      finding_id: {kind: text, max: 200, pattern: "(stig_rule_fail):[A-Za-z0-9_.:/@-]{1,180}"}
+
+- name: Fix one rule | the finding, from the job that reported it
+  ansible.builtin.include_role:
+    name: finding_ref
+    apply:
+      delegate_to: localhost
+      run_once: true
+      become: false
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    finding_ref_kinds: [stig_rule_fail]
+
+- name: Fix one rule | not proposed here (a Windows server, a category or a rule a person fixes)
+  ansible.builtin.set_fact:
+    _ps_gate: >-
+      {{ {'ok': False, 'cat': '', 'why': inventory_hostname ~ ' is a Windows server: this action fixes Linux hosts only'}
+         if _portal_stig_windows | bool else
+         {'cat': finding.data.cat, 'title': finding.data.title} | stig_fix_gate({'cats': portal_stig_fix_cats, 'never': portal_stig_fix_never}) }}
+
+- name: Fix one rule | the rule's check and fix text, from STIG Manager
+  site_stigman_rule:
+    api: "{{ check_stig_stigman_api }}"
+    token_url: "{{ check_stig_stigman_token_url or lookup('ansible.builtin.env', 'STIGMAN_TOKEN_URL') }}"
+    client_id: "{{ check_stig_stigman_client_id or lookup('ansible.builtin.env', 'STIGMAN_CLIENT_ID') }}"
+    client_secret: "{{ check_stig_stigman_client_secret or lookup('ansible.builtin.env', 'STIGMAN_CLIENT_SECRET') }}"
+    scope: "{{ check_stig_stigman_scope | default('') }}"
+    benchmark: "{{ finding.data.stig }}"
+    revision: "{{ portal_stig_fix_revision }}"
+    rule: "{{ finding.data.rule }}"
+    validate_certs: "{{ check_stig_stigman_validate_certs | default(true) | bool }}"
+    ca_path: "{{ check_stig_stigman_ca_path | default('') }}"
+    timeout: "{{ check_stig_stigman_timeout | default(60) | int }}"
+  register: _ps_rule
+  delegate_to: localhost
+  run_once: true
+  become: false
+  check_mode: false                     # read only
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  when: _ps_gate.ok | bool
+
+- name: Fix one rule | the rule's text could not be read
+  ansible.builtin.fail:
+    msg: "Nothing proposed for {{ finding.data.rule }}: {{ _ps_rule.error }}. ACT is not asked without DISA's fix text."
+  when: _ps_gate.ok | bool and _ps_rule.error | default('') | length > 0
+
+- name: Fix one rule | the rule as STIG Manager has it
+  ansible.builtin.set_fact:
+    _ps_text: >-
+      {{ {'id': finding.data.rule, 'version': finding.data.stigid | default(''), 'cat': _ps_gate.cat,
+          'title': _ps_rule.rule.title | default('') or finding.data.title, 'check': _ps_rule.rule.check | default(''),
+          'fix': _ps_rule.rule.fix | default('')} }}
+  when: _ps_gate.ok | bool
+
+- name: Fix one rule | and again, with its check and fix text
+  ansible.builtin.set_fact:
+    _ps_gate: "{{ _ps_text | stig_fix_gate({'cats': portal_stig_fix_cats, 'never': portal_stig_fix_never}) }}"
+  when: _ps_gate.ok | bool
+
+- name: Fix one rule | why nothing is proposed
+  ansible.builtin.include_tasks: refused.yml
+  vars:
+    _ps_why: "{{ _ps_gate.why }}"
+  when: not _ps_gate.ok | bool
+
+# an extra variable wins over the role's vars below: a launch that asks for self-heal or pre-approved commands would let
+# ACT change the host before the approval - refused
+- name: Fix one rule | ACT only proposes here
+  ansible.builtin.assert:
+    that:
+      - site_act_level | default('diagnose') == 'diagnose'
+      - site_act_allow | default([]) | length == 0
+    fail_msg: >-
+      This step only proposes: launch it without site_act_level (or with diagnose) and without site_act_allow. A fix runs
+      only after the approval, in its own step.
+    quiet: true
+
+- name: Fix one rule | ACT confirms the host's state and proposes the fix (diagnose - every change is refused here)
+  ansible.builtin.include_role:
+    name: site_act
+  vars:
+    site_act_level: diagnose
+    site_act_allow: []
+    site_findings:
+      - {check: stig, id: "{{ finding.id }}", severity: warning, hint: "",
+         summary: "{{ finding.data.rule }} ({{ _ps_gate.cat | default('') }}) fails: {{ _ps_text.title }}"}
+    site_act_extra_instructions: "{{ _ps_text | stig_fix_task({'host': inventory_hostname, 'os': 'Linux'}) }}"
+
+- name: Fix one rule | ACT's proposal
+  ansible.builtin.set_fact:
+    _ps_proposed: "{{ site_act_result.proposed | default([]) }}"
+    _ps_never: "{{ site_act_result.proposed | default([]) | stig_fix_commands_never({'never': portal_stig_fix_never}) }}"
+
+- name: Fix one rule | ACT did not answer
+  ansible.builtin.fail:
+    msg: "ACT did not answer for {{ finding.data.rule }}: {{ site_act_result.summary | default('no report') | truncate(600) }}"
+  # ACT off (site_act_enabled false): no proposal - the next task says so and the job stays green
+  when: site_act_result.status | default('error') in ['error', 'no_analysis'] and not ansible_check_mode and not _site_act_off | default(false) | bool
+
+- name: Fix one rule | a proposed command a person must do by hand
+  ansible.builtin.include_tasks: refused.yml
+  vars:
+    _ps_why: "{{ _ps_never }}. ACT proposed: {{ _ps_proposed | join(' ; ') }}"
+  when: _ps_never | length > 0
+
+- name: Fix one rule | ACT proposes no command
+  ansible.builtin.include_tasks: refused.yml
+  vars:
+    _ps_why: "ACT proposes no command: {{ site_act_result.summary | default('') | truncate(400) }}"
+  when: _ps_proposed | length == 0
+
+- name: Fix one rule | the proposal, for the approval
+  ansible.builtin.set_stats:
+    data:
+      stig_fix_plan:
+        finding_id: "{{ finding.id }}"
+        host: "{{ inventory_hostname }}"
+        rule: "{{ finding.data.rule }}"
+        title: "{{ _ps_text.title }}"
+        commands: "{{ _ps_proposed }}"
+    per_host: false
+
+- name: Fix one rule | NEEDS APPROVAL
+  ansible.builtin.fail:
+    msg: >-
+      NEEDS APPROVAL - fix {{ finding.data.rule }} ({{ _ps_gate.cat }}, {{ _ps_text.title }}) on {{ inventory_hostname }}.
+      Approve the workflow's step to run exactly these {{ _ps_proposed | length }} command(s), then recheck the rule and
+      write its review to STIG Manager if it passes; deny it to change nothing. ACT proposes: {{ _ps_proposed | join(' ; ') }}

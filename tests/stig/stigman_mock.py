@@ -7,7 +7,8 @@ DATA.json: {"secret": "...", "collections": [{"collectionId": "1", "name": "..."
                                        "revision": optional - "V2R8": a review of that earlier revision's rule only (its check
                                        changed), served only with rules=all (projection=stigs: its revision, not
                                        the default), as STIG Manager does}]},
-            "rules": {"<benchmarkId>": [{"ruleId": ..., "groupId": ..., "version": ..., "severity": ..., "title": ...}]} (every revision),
+            "rules": {"<benchmarkId>": [{"ruleId": ..., "groupId": ..., "version": ..., "severity": ..., "title": ..., "check": optional,
+                                        "fix": optional (1.67.0: GET /api/stigs/B/revisions/R/rules/RULE)}]} (every revision),
             "writers": ["<client>", ...] (optional: the clients that may write reviews - none: read-only),
             "managers": ["<client>", ...] (optional: the clients that may create assets - the Manage grant; none: no one),
             "grants": {"<client>": {"<collectionId>": roleId}} (optional: GET /api/user's collectionGrants - 1 Restricted, 2 Full,
@@ -165,6 +166,21 @@ class H(BaseHTTPRequestHandler):
         if u.path == "/api/stigs":
             return self.send(200, [{"benchmarkId": b, "title": d.get("titles", {}).get(b, b), "lastRevisionStr": d.get("latest", {}).get(b, "V2R7"),
                                     "ruleCount": len(rows)} for b, rows in sorted(d.get("rules", {}).items())])
+        if len(parts) == 8 and parts[1:3] == ["api", "stigs"] and parts[4] == "revisions" and parts[6] == "rules":
+            # 1.67.0: one rule's text (GET /stigs/B/revisions/R/rules/RULE, projections checks, fixes, detail) - its "check"
+            # and "fix" in DATA.json's rules (R: a revision or latest)
+            r = next((r for r in d.get("rules", {}).get(parts[3], []) if r.get("ruleId") == parts[7]), None)
+            if not r:
+                return self.send(404, {"error": "no rule " + parts[7]})
+            out = dict((k, r[k]) for k in ("ruleId", "groupId", "version", "severity", "title") if k in r)
+            proj = q.get("projection", [])
+            if "checks" in proj:
+                out["checks"] = [{"checkId": "C-" + parts[7], "content": r.get("check", "")}] if r.get("check") else []
+            if "fixes" in proj:
+                out["fixes"] = [{"fixId": "F-" + parts[7], "text": r.get("fix", "")}] if r.get("fix") else []
+            if "detail" in proj:
+                out["detail"] = {"vulnDiscussion": r.get("discussion", "")}
+            return self.send(200, out)
         if len(parts) == 4 and parts[1:3] == ["api", "assets"]:
             cid, a = self.find(d, parts[3])
             if a is None:

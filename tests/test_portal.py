@@ -28,7 +28,8 @@ TRIAGE = {"target": {"kind": "inventory_host"}, "report_job": {"kind": "text", "
 ALL_ACTIONS = (yaml.safe_load(open(os.path.join(REPO, "roles", "site_portal_stack", "files", "actions.yml"))) or {}).get("actions") or {}
 # parts B and C's actions: these tests are about them (part E's fix buttons are tested in tests/test_portal_fix.py)
 PART_C = ("act_triage", "ckl_import", "stig_recheck")
-ACTIONS = dict((k, v) for k, v in ALL_ACTIONS.items() if k in PART_C)
+PART_D = ("stig_recheck_update", "stig_fix_rule", "stigman_create_asset")       # the STIG actions (workflows 46-48)
+ACTIONS = dict((k, v) for k, v in ALL_ACTIONS.items() if k in PART_C + PART_D)
 HOSTS = ["lin01.example.mil", "win01.example.mil"]
 
 
@@ -124,21 +125,35 @@ class Contract(unittest.TestCase):
         self.actions = ACTIONS
         self.specs = {}
         for p in ("playbooks/stig_recheck.yml", "playbooks/win_stig_recheck.yml", "playbooks/stigman_ckl_import.yml",
-                  "roles/portal_triage/tasks/main.yml"):
+                  "roles/portal_triage/tasks/main.yml", "roles/portal_stig/tasks/prepare.yml", "roles/portal_stig/tasks/fix_check.yml",
+                  "roles/portal_stig/tasks/fix_apply.yml"):
             for k, v in _spec_in(p).items():
                 self.specs.setdefault(k, []).append((p, v))
 
     def test_three_actions(self):
-        self.assertEqual(sorted(self.actions), ["act_triage", "ckl_import", "stig_recheck"])
+        self.assertEqual(sorted(self.actions), ["act_triage", "ckl_import", "stig_fix_rule", "stig_recheck", "stig_recheck_update",
+                                                "stigman_create_asset"])
         self.assertEqual({k: (a["aap"]["type"], a["aap"]["name"]) for k, a in self.actions.items()},
                          {"stig_recheck": ("workflow", "STIG - recheck one host"),
                           "ckl_import": ("workflow", "Checklists imported into STIG Manager"),
-                          "act_triage": ("workflow", "ACT - triage finding")})
-        self.assertEqual([k for k, a in self.actions.items() if a.get("approval")], ["ckl_import"])
+                          "act_triage": ("workflow", "ACT - triage finding"),
+                          "stig_recheck_update": ("workflow", "STIG - recheck and update STIG Manager"),
+                          "stig_fix_rule": ("workflow", "STIG - fix one rule"),
+                          "stigman_create_asset": ("workflow", "STIG - create the asset in STIG Manager")})
+        self.assertEqual(sorted(k for k, a in self.actions.items() if a.get("approval")),
+                         ["ckl_import", "stig_fix_rule", "stig_recheck_update", "stigman_create_asset"])
 
     def test_the_playbooks_check_what_the_portal_checks(self):
+        # 1.67.0 part D: the STIG finding actions share one check (stig_finding: the recheck of workflows 46-48) - its
+        # finding_id names every one of their kinds; finding_ref then holds each to its own
+        self.specs.update((n, self.specs["stig_finding"]) for n in ("stig_recheck_update", "stigman_create_asset"))
         for name, a in self.actions.items():
             self.assertIn(name, self.specs, "no playbook checks %s's values" % name)
+            if a.get("kinds") and name in ("stig_recheck_update", "stigman_create_asset"):
+                for path, (spec, limit_from) in self.specs[name]:
+                    for k in a["kinds"]:
+                        self.assertIn(k, spec["finding_id"]["pattern"], path)
+                continue
             for path, (spec, limit_from) in self.specs[name]:
                 self.assertEqual(sorted(spec), sorted(a["vars"]), path)
                 self.assertEqual(limit_from or "", a.get("limit_from", ""), path)
@@ -199,6 +214,37 @@ BY_HOST = {"lin01.example.mil": [{"check": "fapolicyd", "id": "fapolicyd:denials
 
 def findings_section(doc):
     return next(s for s in doc["sections"] if s["title"] == "Findings")
+
+
+class NextAction(unittest.TestCase):
+    """1.67.0 part D: ACT may name the next step - one of the site portal's actions that fit the finding, nothing else."""
+    def setUp(self):
+        self.actions = yaml.safe_load(open(os.path.join(REPO, "roles", "site_portal_stack", "files", "actions.yml")))
+
+    def test_the_actions_that_fit(self):
+        f = {"kind": "stig_rule_fail", "data": {"cat": "CAT II", "os": "linux"}}
+        self.assertEqual([a["name"] for a in pf.portal_next_candidates(self.actions, f)], ["stig_fix_rule"])
+        self.assertEqual(pf.portal_next_candidates(self.actions, dict(f, data={"cat": "CAT I", "os": "linux"})), [])     # when
+        self.assertEqual(pf.portal_next_candidates(self.actions, dict(f, data={"cat": "CAT II", "os": "windows"})), [])
+        self.assertEqual(pf.portal_next_candidates(self.actions, {"kind": "eventlog", "data": {}}), [])               # not itself
+        self.assertEqual(pf.portal_next_candidates(self.actions["actions"], f), pf.portal_next_candidates(self.actions, f))
+
+    def test_only_a_name_that_fits(self):
+        c = [{"name": "stig_fix_rule", "title": "Fix"}]
+        self.assertEqual(pf.portal_next_action('{"items": [], "next_action": "stig_fix_rule"}', c), "stig_fix_rule")
+        self.assertEqual(pf.portal_next_action('{"next_action": "stigman_create_asset"}', c), "")
+        self.assertEqual(pf.portal_next_action('{"next_action": "stig_fix_rule; rm -rf /"}', c), "")
+        self.assertEqual(pf.portal_next_action("no JSON", c), "")
+
+    def test_the_prompt_and_the_report(self):
+        c = [{"name": "stig_fix_rule", "title": "Fix one STIG rule"}]
+        t = pf.portal_triage_task({"id": "eventlog:x"}, {"actions": c})
+        self.assertIn("- stig_fix_rule: Fix one STIG rule", t)
+        self.assertIn('"next_action": ""}', t)
+        self.assertNotIn("next_action", pf.portal_triage_task({"id": "eventlog:x"}, {}))
+        parsed = {"parsed": True, "by_id": {"F1": {"cause": "c", "fix": "f", "confidence": 90}}}
+        d = pf.portal_triage_report({"id": "eventlog:x"}, parsed, {"ran": True, "next": c[0]})
+        self.assertIn("Next step ACT suggests: Fix one STIG rule - its button is on the portal's job page.", d["sections"][0]["lines"])
 
 
 class FindingsLinks(unittest.TestCase):

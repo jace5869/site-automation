@@ -1,0 +1,142 @@
+---
+# STIG - fix one rule, step 3 (workflow 47; playbooks/stig_fix_apply.yml), after a person approved: EXACTLY the commands
+# step 1 handed on (ACT's proposal, the artifacts act_triage and stig_fix_plan) run on the host, in order, stopping at
+# the first that fails - no model and no key here, so nothing can be reworded between the approval and the fix. The
+# apply-time guard and portal_stig_fix_never are checked again. Check (Job type): lists the commands, changes nothing.
+# Next in the workflow: the recheck of that rule, and its review written to STIG Manager only if it passes.
+- name: STIG action | check the request (target, report_job, finding_id; who asked)
+  ansible.builtin.include_role:
+    name: portal_request
+    apply:
+      delegate_to: localhost
+      run_once: true
+      become: false
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    portal_request_action: stig_fix_rule
+    portal_request_always: true
+    portal_request_limit_from: target
+    portal_request_spec:
+      target: {kind: inventory_host}
+      report_job: {kind: text, max: 12, pattern: "[0-9]{1,12}"}
+      finding_id: {kind: text, max: 200, pattern: "(stig_rule_fail):[A-Za-z0-9_.:/@-]{1,180}"}
+
+- name: Fix one rule | the finding, from the job that reported it
+  ansible.builtin.include_role:
+    name: finding_ref
+    apply:
+      delegate_to: localhost
+      run_once: true
+      become: false
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    finding_ref_kinds: [stig_rule_fail]
+
+- name: Fix one rule | what was approved
+  ansible.builtin.set_fact:
+    _ps_plan: "{{ stig_fix_plan | default({}) }}"
+    _ps_approved: "{{ ((act_triage | default({})).get(inventory_hostname) or {}).get('proposed_commands', []) }}"
+
+- name: Fix one rule | the approved plan is this finding's, on this host
+  ansible.builtin.assert:
+    that:
+      - _ps_plan.finding_id | default('') == finding.id
+      - _ps_plan.host | default('') == inventory_hostname
+      - _ps_approved | length > 0
+      - _ps_approved == _ps_plan.commands | default([])
+    fail_msg: >-
+      Nothing to apply: no approved proposal for {{ finding.id }} on {{ inventory_hostname }} reached this job. Run it only
+      in workflow 47, after its approval, behind STIG - fix one rule (the check).
+    quiet: true
+
+- name: Fix one rule | Linux only
+  ansible.builtin.assert:
+    that: not _portal_stig_windows | bool
+    fail_msg: "{{ inventory_hostname }} is a Windows server: this action fixes Linux hosts only."
+    quiet: true
+
+# AAP itself and vendor-managed appliances are diagnose-only (roles/site_act/vars/main.yml, as act_fix_approved.yml)
+- name: Fix one rule | never on a diagnose-only host
+  ansible.builtin.assert:
+    that: group_names | intersect((site_act_diagnose_only_groups | default(['aap', 'aap_hosts', 'sat', 'idm', 'netapp', 'netapp_console_hosts'])) + ['aap', 'aap_hosts']) | length == 0
+    fail_msg: "{{ inventory_hostname }} is diagnose-only: apply by hand if you agree: {{ _ps_approved | join(' ; ') }}"
+    quiet: true
+
+- name: Fix one rule | refuse commands that could destroy the host or restart it (apply-time guard)
+  ansible.builtin.include_role:
+    name: site_findings
+    tasks_from: apply_guard.yml
+  vars:
+    _guard_cmds: "{{ _ps_approved }}"
+
+- name: Fix one rule | nothing portal_stig_fix_never names
+  ansible.builtin.assert:
+    that: "(_ps_approved | stig_fix_commands_never({'never': portal_stig_fix_never})) | length == 0"
+    fail_msg: "Not applied: {{ _ps_approved | stig_fix_commands_never({'never': portal_stig_fix_never}) }}."
+    quiet: true
+
+- name: Fix one rule | DRY RUN (Check mode) - what would run, nothing is changed
+  ansible.builtin.debug:
+    msg: "DRY RUN on {{ inventory_hostname }}: approved for {{ finding.data.rule }}, and would run: {{ _ps_approved | join(' ; ') }}. Nothing was changed (Check mode)."
+  when: ansible_check_mode
+
+- name: Fix one rule | stop here in a dry run
+  ansible.builtin.meta: end_host
+  when: ansible_check_mode
+
+- name: Fix one rule | run exactly the approved commands, in order (stops at the first that fails)
+  ansible.builtin.shell:
+    cmd: |
+      set -u
+      {% for c in _ps_approved %}
+      printf '### $ %s\n' {{ c | quote }}
+      bash -c {{ c | quote }} 2>&1
+      rc=$?
+      printf '### exit %s\n' "$rc"
+      [ "$rc" -eq 0 ] || exit "$rc"
+      {% endfor %}
+    executable: /bin/bash
+  register: _ps_ran
+  changed_when: true
+  failed_when: false
+  timeout: "{{ portal_stig_fix_command_timeout | int * (_ps_approved | length) }}"
+
+- name: Fix one rule | record what ran on the host (/var/log/site-automation-fix.log)
+  ansible.builtin.lineinfile:
+    path: /var/log/site-automation-fix.log
+    line: >-
+      {{ now(utc=true).strftime('%Y-%m-%dT%H:%M:%SZ') }} aap-job={{ awx_job_id | default(tower_job_id | default('?')) }}
+      rule={{ finding.data.rule }} requested-by={{ portal_requested_by | default('?') | regex_replace('\s+', '_') }}
+      rc={{ _ps_ran.rc | default('?') }} commands={{ _ps_approved | to_json }}
+    create: true
+    insertafter: EOF
+    mode: '0640'
+  failed_when: false
+
+- name: Fix one rule | the output (exit code {{ _ps_ran.rc | default('-') }})
+  ansible.builtin.debug:
+    msg: "{{ _ps_ran.stdout_lines | default([]) + (['A command FAILED: the ones after it did not run.'] if (_ps_ran.rc | default(0) | int) != 0 else []) }}"
+
+- name: Fix one rule | a command failed - the portal's job page
+  ansible.builtin.include_role:
+    name: portal_result
+    apply:
+      delegate_to: localhost
+      run_once: true
+      become: false
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    portal_result_fixed: false
+    portal_result_before: "{{ finding.data.stigman | default('') or 'fails' }}"
+    portal_result_after: a command failed
+    portal_result_summary: "{{ ('A fix command failed (exit ' ~ _ps_ran.rc ~ '); the ones after it did not run. ' ~ (_ps_ran.stdout_lines | default([]) | last | default(''))) | truncate(300) }}"
+  when: (_ps_ran.rc | default(0) | int) != 0
+
+- name: Fix one rule | the fix ran
+  ansible.builtin.assert:
+    that: (_ps_ran.rc | default(0) | int) == 0
+    fail_msg: "A fix command failed (exit {{ _ps_ran.rc }}): see the output above. The rule is not rechecked."
+    quiet: true

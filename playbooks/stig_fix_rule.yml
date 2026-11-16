@@ -1,0 +1,39 @@
+---
+# STIG - FIX ONE RULE, the check (1.67.0, the site portal's "Fix rule", workflow 47 step 1). Read only. One failed rule
+# on one Linux host, named by the portal - report_job, finding_id (stig_rule_fail) and target (also the Limit): the
+# rule's check and fix text from STIG Manager, then ACT in diagnose mode on the host proposes the EXACT commands to fix
+# it and how to verify (every change refused here). Never a CAT I rule (portal_stig_fix_cats), a rule about accounts,
+# authentication, PAM, sudo, SSH logins, crypto/FIPS, audit, SELinux's mode or the firewall's default policy
+# (portal_stig_fix_never), nor one whose fix says to restart: no proposal, the job says why and stays green. With a
+# proposal it fails on purpose (NEEDS APPROVAL); after the approval playbooks/stig_fix_apply.yml runs it. Credentials:
+# the Linux machine credential, the STIG Manager API (read-only), an ACT model key, Red Hat Ansible Automation Platform.
+# docs/SITE_PORTAL.md, "STIG actions".
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
+- name: Target check (stops with a clear message when target matches no host)
+  hosts: "all{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
+  gather_facts: false
+  tasks:
+    - name: The target leaves at least one host to run on
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: target_check.yml
+      vars:
+        _target_pattern: "{{ target | default('') }}"
+
+- name: STIG - fix one rule (the check)
+  hosts: "{{ target | default('no-target-given') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"     # without target the check above has stopped the job
+  gather_facts: false
+  become: true
+  tasks:
+    - name: ACT | old copies on this host (ACT on or off; roles/site_act/tasks/old_copies.yml)
+      ansible.builtin.include_role:
+        name: site_act
+        tasks_from: old_copies.yml
+      when: (ansible_connection | default('ssh')) not in ['winrm', 'psrp', 'ansible.builtin.winrm', 'ansible.builtin.psrp']
+
+    - name: STIG - fix one rule (the check)
+      ansible.builtin.include_role:
+        name: portal_stig
+        tasks_from: fix_check.yml

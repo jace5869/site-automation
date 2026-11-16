@@ -176,6 +176,29 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 ## at most this many characters of what the scan found, as each review's detail
 # check_stig_update_detail_max: 8000
 
+# ---- portal_result -------------------------------------------------------------------------------
+## true (Fixed), false (Still there), or unknown (Not checked)
+# portal_result_fixed: unknown
+
+## what the fix found before, short (e.g. "/var 93% full")
+# portal_result_before: ""
+
+## what it found after (e.g. "/var 71% full")
+# portal_result_after: ""
+
+## one line for the person who asked
+# portal_result_summary: ""
+
+## the finding the fix was for: finding.id (roles/finding_ref) when the play has it, else the
+## finding_id it was given
+# portal_result_finding_id: "{{ finding.id if finding is defined and finding.id is defined else finding_id | default('') }}"
+
+## the portal's action, when it is known
+# portal_result_action: "{{ portal_request.action | default(portal_request_action | default('')) }}"
+
+## true in a job that only reads (ACT triage, a recheck): its result is always Not checked
+# portal_result_read_only: false
+
 # ---- site_portal_stack ---------------------------------------------------------------------------
 ## ---- the actions: {} = the role's files/actions.yml; a dict of the same shape here replaces it
 ## -----------------------

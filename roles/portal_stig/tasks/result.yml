@@ -1,0 +1,21 @@
+---
+# After the STIG recheck of one finding (prepare.yml): fixed (passes now, or not applicable now), still there (fails),
+# or not checked - for the portal's job page (portal_result). Its review is written by the next step, after the approval.
+- name: STIG action | fixed or still there
+  ansible.builtin.set_fact:
+    _ps_result: "{{ check_stig_results | default([]) | stig_fix_result(finding) }}"
+
+- name: STIG action | {{ _ps_result.summary }}
+  ansible.builtin.include_role:
+    name: portal_result
+    apply:
+      delegate_to: localhost
+      run_once: true
+      become: false
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    portal_result_fixed: "{{ _ps_result.fixed }}"
+    portal_result_before: "{{ _ps_result.before }}"
+    portal_result_after: "{{ _ps_result.after }}"
+    portal_result_summary: "{{ _ps_result.summary }}"

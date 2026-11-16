@@ -49,8 +49,8 @@ else fail "Check first" "$(writes) writes; $(grep -E "would be|skipped|fatal" "$
 # ---- the run: everything made
 setup -e '{"portal_setup_schedules": [{"name": "Recheck every 15 minutes", "target": "STIG - recheck one host", "every_minutes": 15}]}'
 rc=$?
-if [ $rc = 0 ] && [ "$(st 'len(s["job_templates"])')" = 16 ] && [ "$(st 'len(s["workflow_job_templates"])')" = 5 ]; then
-    pass "a run: 16 job templates (the gate too) and 5 workflows made (40's check is skipped without a share credential, so is 40; 49 to 51 and their 10 templates are part E's)"
+if [ $rc = 0 ] && [ "$(st 'len(s["job_templates"])')" = 20 ] && [ "$(st 'len(s["workflow_job_templates"])')" = 8 ]; then
+    pass "a run: 20 job templates (the gate too) and 8 workflows made (40's check is skipped without a share credential, so is 40; 46 to 48 and their 4 templates are part D's, 49 to 51 and their 10 part E's)"
 else fail "the run" "rc $rc; $(st 'sorted(x["name"] for x in s["job_templates"]+s["workflow_job_templates"])')
 $(grep -E "fatal|FAILED|msg" "$work/out.txt" | head -10)"; fi
 got="$(st '[(n["identifier"], [ [m["identifier"] for m in s["nodes"] if m["id"] in n["always"]] ]) for n in s["nodes"] if n["wf"] == [w for w in s["workflow_job_templates"] if w["name"] == "ACT - triage finding"][0]["id"]]')"
@@ -60,8 +60,15 @@ got="$(st 'sorted(c for j in s["job_templates"] if j["name"] == "Windows ACT - t
 got="$(st '[(j["inventory"], j["ask_variables_on_launch"], j["ask_limit_on_launch"], j["execution_environment"], j["extra_vars"]) for j in s["job_templates"] if j["name"] == "Windows ACT - triage finding"][0]')"
 [ "$got" = "(4, True, True, 5, '{\"portal_triage_os\": \"windows\"}')" ] && pass "its inventory, prompts, EE and Variables" || fail "its fields" "$got"
 got="$(st 'sorted(r["name"] for u in s["users"] for rid in u["roles"] for r in s["roles"] if r["id"] == rid)')"
-[ "$got" = "['Approve', 'Approve', 'Approve', 'Execute', 'Execute', 'Execute', 'Execute', 'Execute', 'Execute', 'Execute']" ] \
-    && pass "the portal's account: Execute on workflows 44, 45, 49, 50 and 51 and the two jobs (space request, open ticket), Approve on 49 to 51 (40 is not there)" || fail "grants" "$got"
+[ "$got" = "['Approve', 'Approve', 'Approve', 'Approve', 'Approve', 'Approve', 'Execute', 'Execute', 'Execute', 'Execute', 'Execute', 'Execute', 'Execute', 'Execute', 'Execute', 'Execute']" ] \
+    && pass "the portal's account: Execute on workflows 44 to 51 and the two jobs (space request, open ticket), Approve on 46 to 51 (40 is not there)" || fail "grants" "$got"
+# 1.67.0 part D: workflow 46 - the Linux and the Windows recheck each to its own gate, both gates to the approval; 47's chain
+got="$(st '[(n["identifier"], [m["identifier"] for m in s["nodes"] if m["id"] in n["success"] + n["failure"]]) for n in s["nodes"] if n["wf"] == [w for w in s["workflow_job_templates"] if w["name"] == "STIG - recheck and update STIG Manager"][0]["id"]]')"
+[ "$got" = "[('linux', ['gate_linux']), ('windows', ['gate_windows']), ('gate_linux', ['approve']), ('gate_windows', ['approve']), ('approve', ['update']), ('update', [])]" ] \
+    && pass "workflow 46: each recheck to its own gate on fail, both gates to the approval" || fail "workflow 46's nodes" "$got"
+got="$(st '[(n["identifier"], [m["identifier"] for m in s["nodes"] if m["id"] in n["success"] + n["failure"]]) for n in s["nodes"] if n["wf"] == [w for w in s["workflow_job_templates"] if w["name"] == "STIG - fix one rule"][0]["id"]]')"
+[ "$got" = "[('check', ['gate']), ('gate', ['approve']), ('approve', ['apply']), ('apply', ['recheck']), ('recheck', ['gate_update']), ('gate_update', ['update']), ('update', [])]" ] \
+    && pass "workflow 47: check -> gate -> approve -> apply -> recheck -> gate -> update" || fail "workflow 47's nodes" "$got"
 got="$(st '[(x["name"], x["rrule"]) for x in s["schedules"]]')"
 case "$got" in *"Recheck every 15 minutes"*"INTERVAL=15"*) pass "the schedule";; *) fail "the schedule" "$got";; esac
 
@@ -128,10 +135,10 @@ got="$(st '[(n["identifier"], [m["identifier"] for m in s["nodes"] if m["id"] in
 got="$(st '[(j["playbook"], j["ask_variables_on_launch"], j["credentials"]) for j in s["job_templates"] if j["name"] == "Workflow gate - has a plan"][0]')"
 [ "$got" = "('playbooks/workflow_gate.yml', True, [])" ] && pass "the gate template: its playbook, Variables on launch, no credential" || fail "gate template" "$got"
 got="$(st '[(a["name"][:20], a["timeout"]) for a in s["approvals"]]')"
-[ "$got" = "[('Approve the clean up', 86400), ('Restart this service', 86400), ('Allow this program?', 86400), ('Write the checklists', 28800)]" ] \
-    && pass "the approval nodes: name and timeout (49 to 51's, and 40's)" || fail "approval node" "$got"
+[ "$got" = "[(\"Write this rule's re\", 28800), ('Run the commands ACT', 28800), ('Create the asset and', 28800), ('Approve the clean up', 86400), ('Restart this service', 86400), ('Allow this program?', 86400), ('Write the checklists', 28800)]" ] \
+    && pass "the approval nodes: name and timeout (46 to 51's, and 40's)" || fail "approval node" "$got"
 got="$(st 'sorted(r["name"] for u in s["users"] for rid in u["roles"] for r in s["roles"] if r["id"] == rid)')"
-[ "$got" = "['Approve', 'Approve', 'Approve', 'Approve', 'Execute', 'Execute', 'Execute', 'Execute', 'Execute', 'Execute', 'Execute', 'Execute']" ] \
+[ "$got" = "['Approve', 'Approve', 'Approve', 'Approve', 'Approve', 'Approve', 'Approve', 'Execute', 'Execute', 'Execute', 'Execute', 'Execute', 'Execute', 'Execute', 'Execute', 'Execute', 'Execute', 'Execute']" ] \
     && pass "the portal's account: Execute and Approve on 40 as well" || fail "grants on 40" "$got"
 if ! grep -q '"method": "DELETE", "path": "\(job_templates\|workflow_job_templates\)' "$work/writes.jsonl"; then
     pass "never a template or a workflow deleted"

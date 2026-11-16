@@ -1006,6 +1006,102 @@ The site portal's **Recheck** button: the rules STIG Manager has Open or Not Rev
 - Read only: STIG Manager is not written. Workflow 37 updates it after an approval.
 - [SITE_PORTAL.md](SITE_PORTAL.md#aap-workflows).
 
+### 46. STIG - recheck and update STIG Manager (on demand, from the site portal)
+
+```workflow
+[STIG - recheck one finding]
+   |  Run on fail
+   v
+[Workflow gate - has a plan]  workflow_gate_var: stigman_update_plan
+   |  Run on success
+   v
+[Approval]                       <-- Run on success, from the Windows step's own gate
+   |  Run on success
+   v
+[STIG Manager - update]
+```
+
+The Windows side, beside it:
+
+```workflow
+[Windows STIG - recheck one finding]
+   |  Run on fail
+   v
+[Workflow gate - has a plan]  workflow_gate_var: stigman_update_plan
+   |  Run on success
+   v
+[Approval]                       (the same approval as above)
+```
+
+| Step | Template | Link |
+|---|---|---|
+| 1 | STIG - recheck one finding (`playbooks/stig_finding_recheck.yml`, the Linux machine credential, STIG Manager API, AAP) | (start) |
+| 2 | Windows STIG - recheck one finding (`playbooks/win_stig_finding_recheck.yml`, the Windows machine credential) | (start) |
+| 3 | Workflow gate - has a plan, Variables `workflow_gate_var: stigman_update_plan` | **Run on fail**, from 1 |
+| 4 | Workflow gate - has a plan, Variables `workflow_gate_var: stigman_update_plan` | **Run on fail**, from 2 |
+| 5 | *Approval*: `Write this rule's review to STIG Manager?`, **Timeout** 8 hours | **Run on success**, from 3 and from 4 |
+| 6 | STIG Manager - update (workflow 37's template) | **Run on success**, from 5 |
+
+Each first step passes over a host of the other kind. The one that finds the rule passing fails on purpose (*NEEDS
+APPROVAL*) and hands on its plan; its gate lets the approval come. Steps 1 and 2 have **Prompt on launch** for
+**Variables** and **Limit**. [SITE_PORTAL.md](SITE_PORTAL.md#stig-actions).
+
+### 47. STIG - fix one rule (on demand, from the site portal)
+
+```workflow
+[STIG - fix one rule]
+   |  Run on fail
+   v
+[Workflow gate - has a plan]  workflow_gate_var: stig_fix_plan
+   |  Run on success
+   v
+[Approval]
+   |  Run on success
+   v
+[STIG - fix one rule - apply]
+   |  Run on success
+   v
+[STIG - recheck one finding]
+   |  Run on fail
+   v
+[Workflow gate - has a plan]  workflow_gate_var: stigman_update_plan
+   |  Run on success
+   v
+[STIG Manager - update]
+```
+
+| Step | Template | Link |
+|---|---|---|
+| 1 | STIG - fix one rule (`playbooks/stig_fix_rule.yml`: the Linux machine credential, ACT model key, STIG Manager API, AAP) | (start) |
+| 2 | Workflow gate - has a plan, Variables `workflow_gate_var: stig_fix_plan` | **Run on fail**, from 1 |
+| 3 | *Approval*: `Run the commands ACT proposed?`, **Timeout** 8 hours. Description: `Read the check job: the rule and the commands.` | **Run on success**, from 2 |
+| 4 | STIG - fix one rule - apply (`playbooks/stig_fix_apply.yml`: the Linux machine credential, AAP) | **Run on success**, from 3 |
+| 5 | STIG - recheck one finding (as in 46) | **Run on success**, from 4 |
+| 6 | Workflow gate - has a plan, Variables `workflow_gate_var: stigman_update_plan` | **Run on fail**, from 5 |
+| 7 | STIG Manager - update (workflow 37's template) | **Run on success**, from 6 |
+
+Linux hosts only. The one approval covers steps 4 to 7. The review is written only if the rule passes after the fix:
+the second gate stops a recheck that failed for another reason. [SITE_PORTAL.md](SITE_PORTAL.md#fix-one-rule-workflow-47).
+
+### 48. STIG - create the asset in STIG Manager (on demand, from the site portal)
+
+```workflow
+[STIG - recheck one finding]
+   |  Run on fail
+   v
+[Workflow gate - has a plan]  workflow_gate_var: stigman_update_plan
+   |  Run on success
+   v
+[Approval]
+   |  Run on success
+   v
+[STIG Manager - update]
+```
+
+The scorecard's host not in STIG Manager: scanned in full, then after the approval its asset is created, with the
+scan's answers as reviews. Approval: `Create the asset and write the scan's answers to STIG Manager?`, 8 hours. Linux
+hosts only. [SITE_PORTAL.md](SITE_PORTAL.md#stig-actions).
+
 ### 49. Disk - clean up one full filesystem, from the site portal
 
 The site portal's **Clean up** button on a `disk_full` finding: the old files of the tmp folders on that one mount.

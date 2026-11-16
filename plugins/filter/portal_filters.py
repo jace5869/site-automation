@@ -198,13 +198,57 @@ def portal_triage_task(finding, opts=None):
         "- confidence: how sure you are that the cause is right, a whole number from 0 to 100: 80 or more = the evidence shows "
         "it; 50-79 = likely; under 50 = a guess (then say in the fix what to check to be sure).",
         "",
+    ] + _next_lines(o.get("actions")) + [
         "End your answer with exactly one JSON object between a line %s and a line %s, nothing else between them:" % (MARK_BEGIN, MARK_END),
         MARK_BEGIN,
         '{"overall": "one or two sentences: what to do first",',
-        ' "items": [{"id": "F1", "cause": "...", "evidence": "...", "fix": "...", "confidence": 85}]}',
+        ' "items": [{"id": "F1", "cause": "...", "evidence": "...", "fix": "...", "confidence": 85}]%s}'
+        % (', "next_action": ""' if o.get("actions") else ""),
         MARK_END,
         "Use plain text inside the JSON strings (no markdown).",
     ] + (["", str(o["extra"])] if o.get("extra") else []))
+
+
+def _next_lines(actions):
+    """The prompt's lines on the next action (1.67.0 part D): the site portal's actions for this kind of finding."""
+    if not actions:
+        return []
+    return (["The site portal can start these actions for this finding (each waits for a person's approval where it changes "
+                 "something):"] + ["- %s: %s" % (a["name"], a["title"]) for a in actions] +
+            ["If one of them is the right next step, put its name in next_action; else leave next_action \"\". Name no "
+             "other action.", ""])
+
+
+def _when_ok(when, data):
+    """An action's when: {field: value or [values]} against a finding's data (as the portal's buttons)."""
+    for k, v in (when or {}).items():
+        allowed = v if isinstance(v, list) else [v]
+        if str((data or {}).get(k, "")) not in [str(x) for x in allowed]:
+            return False
+    return True
+
+
+def portal_next_candidates(actions, finding, own="act_triage"):
+    """The site portal's actions that fit this finding: its kind in their kinds, their when met; never act_triage
+    itself. actions: actions.yml's (or portal_actions'), with or without its top key actions. -> [{name, title}]."""
+    a = actions or {}
+    a = a.get("actions", a) if isinstance(a, dict) else {}
+    f = finding or {}
+    out = []
+    for name in sorted(a):
+        x = a[name] or {}
+        if name == own or not isinstance(x, dict) or f.get("kind") not in (x.get("kinds") or []):
+            continue
+        if _when_ok(x.get("when"), f.get("data")):
+            out.append({"name": name, "title": str(x.get("title") or name)})
+    return out
+
+
+def portal_next_action(raw, candidates):
+    """The next action ACT named in its answer, only if it is one of candidates (else '')."""
+    names = [c["name"] for c in candidates or []]
+    m = re.search(r'"next_action"\s*:\s*"([a-z][a-z0-9_]{0,63})"', str(raw or ""))
+    return m.group(1) if m and m.group(1) in names else ""
 
 
 def _conf_status(c):
@@ -234,6 +278,10 @@ def portal_triage_report(finding, parsed=None, opts=None):
             sections[-1]["text"] = "Evidence ACT points to: " + str(item["evidence"])
         if pa.get("overall"):
             sections[-1]["lines"] = ["First: " + str(pa["overall"])]
+        nxt = o.get("next") or {}
+        if nxt.get("name"):                  # 1.67.0 part D: ACT's next step, one of the site portal's actions
+            sections[-1].setdefault("lines", []).append("Next step ACT suggests: %s - its button is on the portal's job page."
+                                                        % nxt.get("title", nxt["name"]))
     else:
         why = o.get("reason") or "ACT gave no answer it could read."
         sec = {"title": "What ACT found", "text": "ACT did not answer this time: " + why, "status": "warning"}
@@ -277,4 +325,5 @@ class FilterModule(object):
     def filters(self):
         return {"portal_check": portal_check, "portal_link": portal_link, "portal_has_template": has_template,
                 "portal_finding_kind": portal_finding_kind, "portal_triage_evidence": portal_triage_evidence,
-                "portal_triage_task": portal_triage_task, "portal_triage_report": portal_triage_report}
+                "portal_triage_task": portal_triage_task, "portal_triage_report": portal_triage_report,
+                "portal_next_candidates": portal_next_candidates, "portal_next_action": portal_next_action}

@@ -96,6 +96,9 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | Site portal - deploy | `playbooks/site_portal_deploy.yml` | [site_portal_deploy.yml](site_portal_deploy.yml) |
 | Site portal - open ticket | `playbooks/portal_open_ticket.yml` | [portal_open_ticket.yml](portal_open_ticket.yml) |
 | SOP - Word document | `playbooks/incident_sop.yml` | [incident_sop.yml](incident_sop.yml) |
+| STIG - fix one rule | `playbooks/stig_fix_rule.yml` | [stig_fix_rule.yml](stig_fix_rule.yml) |
+| STIG - fix one rule - apply | `playbooks/stig_fix_apply.yml` | [stig_fix_apply.yml](stig_fix_apply.yml) |
+| STIG - recheck one finding | `playbooks/stig_finding_recheck.yml` | [stig_finding_recheck.yml](stig_finding_recheck.yml) |
 | STIG drift report | `playbooks/stig_drift_report.yml` | [stig_drift_report.yml](stig_drift_report.yml) |
 | STIG Manager - availability | `playbooks/stigman_availability.yml` | [stigman_availability.yml](stigman_availability.yml) |
 | STIG Manager - deploy | `playbooks/stigman_deploy.yml` | [stigman_deploy.yml](stigman_deploy.yml) |
@@ -151,6 +154,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | Windows connection test | `playbooks/win_connection_test.yml` | [win_connection_test.yml](win_connection_test.yml) |
 | Windows health check | `playbooks/win_health_check.yml` | [win_health_check.yml](win_health_check.yml) |
 | Windows patch | `playbooks/win_patch.yml` | [win_patch.yml](win_patch.yml) |
+| Windows STIG - recheck one finding | `playbooks/win_stig_finding_recheck.yml` | [win_stig_finding_recheck.yml](win_stig_finding_recheck.yml) |
 | Windows STIG drift report | `playbooks/win_stig_drift_report.yml` | [win_stig_drift_report.yml](win_stig_drift_report.yml) |
 | Windows STIG recheck | `playbooks/win_stig_recheck.yml` | [win_stig_recheck.yml](win_stig_recheck.yml) |
 | Windows troubleshoot | `playbooks/win_troubleshoot.yml` | [win_troubleshoot.yml](win_troubleshoot.yml) |
