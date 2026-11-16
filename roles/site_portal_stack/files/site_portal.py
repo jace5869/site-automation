@@ -346,6 +346,7 @@ class Portal(object):
         self.key = self._key()
         self.lock = threading.Lock()
         self.recent = {}                # CN -> [launch times]
+        self.key_locks = {}             # not twice: (action, finding_id, target) -> a lock held from the check to the log
 
     def _key(self):
         """The pages' token key, kept in the data volume (a restart does not void open pages)."""
@@ -414,6 +415,25 @@ class Portal(object):
             return None                                       # the newest run of it is done (or gone): a new one may start
         return None
 
+    def once_key(self, name, values):
+        """Not twice (1.67.0 review): the key of a run that must not start twice at once - the action, the finding and the
+        host it runs on (any case); None for an action that takes no finding. report_job is not in it: the finding is."""
+        fid = str((values or {}).get("finding_id") or "").strip()
+        if not fid or "finding_id" not in self.actions.get(name, {}).get("vars", {}):
+            return None
+        return (name, fid, str((values or {}).get("target") or "").strip().lower())
+
+    def key_lock(self, key):
+        with self.lock:
+            return self.key_locks.setdefault(key, threading.Lock())
+
+    def give_back(self, cn, t):
+        """A launch that did not start (running already, off, AAP refused): its slot of the hour is given back."""
+        with self.lock:
+            mine = self.recent.get(cn, [])
+            if t in mine:
+                mine.remove(t)
+
     # -- an action
     def check(self, name, sent):
         a = self.actions[name]
@@ -433,6 +453,21 @@ class Portal(object):
             self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "values", "problems": problems})
             return 400, {"error": "Not started: " + "; ".join(("%s %s" % (a["vars"][k]["label"], v)) if k in a["vars"] else v
                                                                for k, v in sorted(problems.items())), "problems": problems}
+        if str(values.get("report_job", "")).isdigit():         # 907, 0907 and 00907 are one job
+            values = dict(values, report_job=str(int(values["report_job"])))
+        key = self.once_key(name, values)
+        if key is None:
+            return self._launch(cn, ip, name, a, values)
+        with self.key_lock(key):    # held from the running check until the launch is in the log: the next one sees it
+            return self._launch(cn, ip, name, a, values)
+
+    def _launch(self, cn, ip, name, a, values):
+        busy = self.running(name, values)
+        if busy:                    # before the hour's count: a run refused as running already uses no slot of it
+            self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "running already: job %s" % busy["job_id"]})
+            return 409, {"error": "Not started: job %s is running this already for %s (started by %s) - follow it there."
+                                  % (busy["job_id"], values.get("finding_id", ""), busy.get("user", "")),
+                         "job_id": int(busy["job_id"]), "url": "%sjobs/%d" % (self.cfg.path, int(busy["job_id"]))}
         with self.lock:
             t = time.time()
             mine = [x for x in self.recent.get(cn, []) if t - x < 3600]
@@ -441,12 +476,12 @@ class Portal(object):
                 self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "too many in an hour"})
                 return 429, {"error": "You started %d actions in the last hour (portal_launches_per_hour): wait a little." % len(mine)}
             self.recent[cn] = mine + [t]
-        busy = self.running(name, values)
-        if busy:
-            self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "running already: job %s" % busy["job_id"]})
-            return 409, {"error": "Not started: job %s is running this already for %s (started by %s) - follow it there."
-                                  % (busy["job_id"], values.get("finding_id", ""), busy.get("user", "")),
-                         "job_id": int(busy["job_id"]), "url": "%sjobs/%d" % (self.cfg.path, int(busy["job_id"]))}
+        code, out = self._start(cn, ip, name, a, values)
+        if code != 201:             # off, or AAP did not start it: the slot is given back
+            self.give_back(cn, t)
+        return code, out
+
+    def _start(self, cn, ip, name, a, values):
         tid, off = self.state(name)
         if tid is None or off:
             self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "off: " + (off or "")})

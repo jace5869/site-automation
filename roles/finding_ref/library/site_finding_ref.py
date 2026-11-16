@@ -2,8 +2,10 @@
 # -*- coding: utf-8 -*-
 """The finding a site portal fix job names, read back from the report job that found it (1.67.0 part C): the portal sends
 a reference - the report job's id, the finding's id, the host - never the finding's values. This module reads that job's
-site_findings artifact (plugins/filter/finding_filters.py makes it) and checks every part of the reference: the id's form,
-that the job has it, that it is the host's, and that its kind is one this job takes. Read only. The address and login
+site_findings artifact (plugins/filter/finding_filters.py makes it) and checks every part of the reference: that the job is
+a report job (its playbook in the allowed list, finished - a check that found something ends failed, on purpose - and not
+older than max_age_days), the id's form, that the job has it, that it is the host's, and that its kind is one this job
+takes. Read only. The address and login
 come from the "Red Hat Ansible Automation Platform" credential's variables (plugins/module_utils/site_aap.py)."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
@@ -20,6 +22,9 @@ options:
   finding_id: {description: "The finding's id: <kind>:<host>:<key>.", type: str, required: true}
   host: {description: The host the fix runs on (target)., type: str, required: true}
   kinds: {description: The kinds this job takes ([] = any)., type: list, elements: str, default: []}
+  playbooks: {description: "The report jobs taken, by their playbook's file name (* and ?): any other job is refused.", type: list, elements: str, required: true}
+  max_age_days: {description: The report job finished at most this many days ago., type: int, default: 14}
+  now: {description: "Now, as YYYY-MM-DDTHH:MM:SSZ (tests); '' = the clock.", type: str, default: ''}
   ca_path: {description: A CA file for AAP's HTTPS certificate ("" = what the execution environment trusts)., type: str, default: ''}
   timeout: {description: Seconds per request., type: int, default: 15}
 author: site automation
@@ -32,6 +37,9 @@ finding: {description: "The finding: {id, kind, host, title, severity, data}.", 
 job: {description: "The report job: {id, name, finished, status}.", type: dict}
 '''
 
+import datetime
+import fnmatch
+import os
 import re
 
 from ansible.module_utils.basic import AnsibleModule
@@ -65,7 +73,39 @@ def pick(artifact, job_id, finding_id, host, kinds=None):
     return dict((k, e.get(k)) for k in ("id", "kind", "host", "title", "severity", "data")), ""
 
 
-def find(api, job_id, finding_id, host, kinds):
+FINISHED = ("successful", "failed")      # a check that found something ends failed, on purpose; error / canceled never
+
+
+def _time(s):
+    """AAP's time (2026-11-16T06:00:00.123456Z) -> an aware datetime, or None."""
+    m = re.match(r"^(\d{4})-(\d\d)-(\d\d)[T ](\d\d):(\d\d):(\d\d)", str(s or ""))
+    if not m:
+        return None
+    return datetime.datetime(*[int(x) for x in m.groups()], tzinfo=datetime.timezone.utc)
+
+
+def report_job(data, job_id, playbooks, max_age_days, now):
+    """'' when job data is a report job this fix takes, else why not: its playbook, its status, its age."""
+    pb = os.path.basename(str(data.get("playbook") or ""))
+    if not pb or not any(fnmatch.fnmatchcase(pb.lower(), str(p).lower()) for p in playbooks or []):
+        return ("AAP job %s (%s, playbook %s) is not a report job this fix takes: only %s (finding_ref_report_playbooks_extra "
+                "adds one)" % (job_id, data.get("name") or "no name", pb or "none", ", ".join(playbooks or [])))
+    st = str(data.get("status") or "")
+    if st not in FINISHED:
+        return "AAP job %s did not finish (%s): run the report again and use its new page" % (job_id, st or "no status")
+    fin = _time(data.get("finished"))
+    if fin is None:
+        return "AAP job %s has no finished time: run the report again and use its new page" % job_id
+    age = (now - fin).total_seconds() / 86400.0
+    if age > max_age_days:
+        return ("AAP job %s finished %s, %d days ago - older than finding_ref_max_age_days (%d): run the report again and use "
+                "its new page" % (job_id, fin.strftime("%Y-%m-%d"), int(age), max_age_days))
+    if age < -1:
+        return "AAP job %s finished in the future (%s): its time cannot be trusted" % (job_id, fin.strftime("%Y-%m-%d %H:%M"))
+    return ""
+
+
+def find(api, job_id, finding_id, host, kinds, playbooks=None, max_age_days=14, now=None):
     """(finding, job, why)."""
     why = api.probe()
     if why:
@@ -79,7 +119,10 @@ def find(api, job_id, finding_id, host, kinds):
     if code != 200 or not isinstance(data, dict):
         return {}, {}, "AAP answered HTTP %d for job %d: %s" % (code, job_id, error_text(data))
     job = {"id": job_id, "name": str(data.get("name") or ""), "finished": str(data.get("finished") or ""),
-           "status": str(data.get("status") or "")}
+           "status": str(data.get("status") or ""), "playbook": os.path.basename(str(data.get("playbook") or ""))}
+    why = report_job(data, job_id, playbooks, max_age_days, now or datetime.datetime.now(datetime.timezone.utc))
+    if why:
+        return {}, job, why
     arts = data.get("artifacts") if isinstance(data.get("artifacts"), dict) else {}
     finding, why = pick(arts.get("site_findings"), job_id, finding_id, host, kinds)
     return finding, job, why
@@ -88,12 +131,15 @@ def find(api, job_id, finding_id, host, kinds):
 def main():
     module = AnsibleModule(argument_spec=dict(job_id=dict(type="int", required=True), finding_id=dict(type="str", required=True),
                                               host=dict(type="str", required=True), kinds=dict(type="list", elements="str", default=[]),
+                                              playbooks=dict(type="list", elements="str", required=True),
+                                              max_age_days=dict(type="int", default=14), now=dict(type="str", default=""),
                                               ca_path=dict(type="str", default=""), timeout=dict(type="int", default=15)),
                            supports_check_mode=True)
     p = module.params
     api = Api(connection(), p["ca_path"], p["timeout"], ca_setting="finding_ref_aap_ca_path", no_credential=NO_CREDENTIAL)
     try:
-        finding, job, why = find(api, p["job_id"], p["finding_id"], p["host"], p["kinds"])
+        finding, job, why = find(api, p["job_id"], p["finding_id"], p["host"], p["kinds"], p["playbooks"], p["max_age_days"],
+                                 _time(p["now"]) if p["now"] else None)
     except Exception as e:                                # noqa: BLE001 - said in why; the role stops the job with it
         finding, job, why = {}, {}, "reading job %d from AAP failed: %s: %s" % (p["job_id"], e.__class__.__name__, e)
     module.exit_json(changed=False, ok=not why, why=why, finding=finding, job=job,

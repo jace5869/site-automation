@@ -74,9 +74,14 @@ class H(http.server.BaseHTTPRequestHandler):
             return self.answer(401, {"detail": "no"})
         if self.path == "/api/controller/v2/me/":
             return self.answer(200, {"results": [{"username": "reader"}]})
+        if self.path == "/api/controller/v2/jobs/4713/":     # the forge: another template's job with a planted finding
+            return self.answer(200, {"id": 4713, "name": "Some unrelated job template", "status": "failed",
+                                     "playbook": "playbooks/our_own.yml", "finished": "2025-03-02T10:00:00Z",
+                                     "artifacts": json.load(open("%s/job4711.json" % work))})
         for job in (4711, 4712):
             if self.path == "/api/controller/v2/jobs/%d/" % job:
-                return self.answer(200, {"id": job, "name": "Linux health check", "status": "successful", "finished": "2026-11-16T06:00:00Z",
+                return self.answer(200, {"id": job, "name": "Linux health check", "status": "successful", "playbook": "playbooks/health_check.yml",
+                                         "finished": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                                          "artifacts": json.load(open("%s/job%d.json" % (work, job)))})
         return self.answer(404, {"detail": "Not found."})
 http.server.ThreadingHTTPServer(("127.0.0.1", port), H).serve_forever()
@@ -174,6 +179,9 @@ run "disk plan: a service finding of the wrong kind is refused before it is read
     "finding_id: service_down:lin01.example.mil:httpd is not in the expected form"
 run "disk plan: a template in a value (as AAP passes launch values: unsafe)" fail "$dpb" -l lin01.example.mil -e target=lin01.example.mil -e report_job=4711 -e @"$work/unsafe.yml" \
     -e "$by" -- "holds a template"
+run "disk plan: a finding planted in a job of another template is refused, nothing read or touched" fail "$dpb" \
+    -l lin01.example.mil -e target=lin01.example.mil -e report_job=4713 -e "finding_id=$disk_id" -e "$by" -- \
+    "(Some unrelated job template, playbook our_own.yml) is not a report job this fix takes"
 run "disk plan: another host's finding" fail "$dpb" -l lin01.example.mil -e target=lin01.example.mil -e report_job=4711 -e finding_id=disk_full:win01.example.mil:C: -e "$by" -- \
     "has no finding disk_full:win01.example.mil:C: for lin01.example.mil"
 cpb=playbooks/disk_cleanup.yml

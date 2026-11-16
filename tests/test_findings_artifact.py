@@ -242,23 +242,32 @@ def _module():
 
 
 class FindingRef(unittest.TestCase):
+    PBS = ["health_check.yml", "disk_report.yml", "fapolicyd*.yml"]
+
     def setUp(self):
         self.m = _module()
+        self.now = self.m._time("2026-11-16T12:00:00Z")
         art = {"web01.example.mil": ff.findings_artifact(HEALTH, "web01.example.mil", "linux", 50)["entries"],
                "web03.example.mil": ff.findings_artifact(HEALTH[:1], "web03.example.mil", "linux", 50)["entries"]}
+        self.art = art
         self.api = FakeApi({4711: {"name": "Linux health check", "status": "failed", "finished": "2026-11-16T06:00:00Z",
-                                   "artifacts": {"site_findings": art}},
-                            5: {"name": "Patch", "artifacts": {}}})
+                                   "playbook": "playbooks/health_check.yml", "artifacts": {"site_findings": art}},
+                            5: {"name": "Patch", "status": "successful", "finished": "2026-11-16T06:00:00Z",
+                                "playbook": "playbooks/disk_report.yml", "artifacts": {}}})
+
+    def find(self, api, *a):
+        return self.m.find(api, *a, playbooks=self.PBS, max_age_days=14, now=self.now)
 
     def test_read_back(self):
-        f, job, why = self.m.find(self.api, 4711, "disk_full:web01.example.mil:/var", "web01.example.mil", ["disk_full"])
+        f, job, why = self.find(self.api, 4711, "disk_full:web01.example.mil:/var", "web01.example.mil", ["disk_full"])
         self.assertEqual(why, "")
         self.assertEqual((f["kind"], f["data"]["mount"], f["data"]["pct"]), ("disk_full", "/var", 93))
         self.assertEqual(sorted(f), ["data", "host", "id", "kind", "severity", "title"])
-        self.assertEqual(job, {"id": 4711, "name": "Linux health check", "finished": "2026-11-16T06:00:00Z", "status": "failed"})
+        self.assertEqual(job, {"id": 4711, "name": "Linux health check", "finished": "2026-11-16T06:00:00Z", "status": "failed",
+                               "playbook": "health_check.yml"})
 
     def test_every_refusal(self):
-        f = lambda *a: self.m.find(self.api, *a)[2]   # noqa: E731
+        f = lambda *a: self.find(self.api, *a)[2]   # noqa: E731
         self.assertIn("AAP job 99 cannot be read (HTTP 404)", f(99, "disk_full:web01.example.mil:/var", "web01.example.mil", []))
         self.assertIn("job 5 has no site_findings artifact", f(5, "disk_full:web01.example.mil:/var", "web01.example.mil", []))
         self.assertIn("job 4711 reported nothing for web02x.example.mil", f(4711, "disk_full:web02x.example.mil:/var", "web02x.example.mil", []))
@@ -269,14 +278,53 @@ class FindingRef(unittest.TestCase):
                       f(4711, "disk_full:web01.example.mil:/var", "web01.example.mil", ["service_down"]))
         self.assertIn("is not one", f(4711, "disk_full:web01.example.mil:/var; rm", "web01.example.mil", []))
         self.assertIn("is not one", f(4711, "x" * 201, "web01.example.mil", []))
-        self.assertEqual(self.m.find(FakeApi({}, probe="no AAP connection"), 1, "a:b:c", "b", [])[2], "no AAP connection")
+        self.assertEqual(self.find(FakeApi({}, probe="no AAP connection"), 1, "a:b:c", "b", [])[2], "no AAP connection")
 
     def test_a_forged_artifact_entry(self):
         """An entry whose host or kind does not match its own id is refused, even when the id is listed."""
         bad = {"site_findings": {"web01.example.mil": [{"id": "disk_full:web01.example.mil:/var", "kind": "service_down",
                                                         "host": "web01.example.mil", "data": {}}]}}
-        why = self.m.find(FakeApi({7: {"name": "x", "artifacts": bad}}), 7, "disk_full:web01.example.mil:/var", "web01.example.mil", [])[2]
+        api = FakeApi({7: {"name": "x", "status": "failed", "finished": "2026-11-16T06:00:00Z", "playbook": "playbooks/health_check.yml",
+                           "artifacts": bad}})
+        why = self.find(api, 7, "disk_full:web01.example.mil:/var", "web01.example.mil", [])[2]
         self.assertIn("is not web01.example.mil's", why)
+
+    def test_only_a_recent_finished_report_job(self):
+        """1.67.0 review (the forge case): a finding planted in a job of another template, a 2025 job, one that did not
+        finish - refused before its artifact is read."""
+        planted = {"site_findings": {"web01.example.mil": [{"id": "service_down:web01.example.mil:sshd", "kind": "service_down",
+                                                           "host": "web01.example.mil", "data": {"unit": "sshd"}}]}}
+        jobs = {801: {"name": "Some unrelated job template", "status": "failed", "finished": "2025-03-02T10:00:00Z",
+                      "playbook": "playbooks/our_own.yml", "artifacts": planted},
+                802: {"name": "Some unrelated job template", "status": "failed", "finished": "2026-11-16T06:00:00Z",
+                      "playbook": "playbooks/our_own.yml", "artifacts": planted},
+                803: {"name": "Linux health check", "status": "failed", "finished": "2025-03-02T10:00:00Z",
+                      "playbook": "playbooks/health_check.yml", "artifacts": planted},
+                804: {"name": "Linux health check", "status": "error", "finished": "2026-11-16T06:00:00Z",
+                      "playbook": "playbooks/health_check.yml", "artifacts": planted},
+                805: {"name": "Linux health check", "status": "running", "finished": None,
+                      "playbook": "playbooks/health_check.yml", "artifacts": planted},
+                806: {"name": "Linux health check", "status": "canceled", "finished": "2026-11-16T06:00:00Z",
+                      "playbook": "playbooks/health_check.yml", "artifacts": planted},
+                807: {"name": "fapolicyd", "status": "successful", "finished": "2026-11-03T12:00:00Z",
+                      "playbook": "playbooks/fapolicyd.yml", "artifacts": planted},
+                808: {"name": "Linux health check", "status": "failed", "finished": "2026-12-20T06:00:00Z",
+                      "playbook": "playbooks/health_check.yml", "artifacts": planted}}
+        api = FakeApi(jobs)
+        why = lambda j: self.find(api, j, "service_down:web01.example.mil:sshd", "web01.example.mil", [])[2]   # noqa: E731
+        self.assertIn("(Some unrelated job template, playbook our_own.yml) is not a report job this fix takes", why(801))
+        self.assertIn("is not a report job this fix takes", why(802))
+        self.assertIn("finished 2025-03-02", why(803))
+        self.assertIn("older than finding_ref_max_age_days (14)", why(803))
+        self.assertIn("did not finish (error)", why(804))
+        self.assertIn("did not finish (running)", why(805))
+        self.assertIn("did not finish (canceled)", why(806))
+        self.assertEqual(why(807), "")                                     # 13 days, a pattern, successful
+        self.assertIn("finished in the future", why(808))
+        self.assertIn("is not a report job", self.m.find(api, 807, "service_down:web01.example.mil:sshd", "web01.example.mil", [],
+                                                          playbooks=[], now=self.now)[2])     # no list: nothing taken
+        self.assertEqual(self.m.find(api, 807, "service_down:web01.example.mil:sshd", "web01.example.mil", [],
+                                     playbooks=["FAPOLICYD.yml"], max_age_days=13, now=self.now)[2], "")   # any case
 
 
 class PortalResult(unittest.TestCase):

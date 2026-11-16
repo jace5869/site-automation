@@ -102,7 +102,9 @@ The portal launches and approves as one AAP account of its own. Make it once, as
 
 1. **Access Management > Users > Create user:** `svc_site_portal`, a normal user (not an administrator).
 2. On each workflow and job template the actions name: **User and Team Access > Add roles:** the account,
-   **Execute**. On each workflow with an approval node, also **Approve**.
+   **Execute**. On each workflow with an approval node, also **Approve**. *AAP - set up portal actions* (step 102)
+   gives these two for the templates and workflows it makes: then skip this item for them. It never gives the
+   **Read** of item 3.
 3. On the inventory `portal_inventory` (the hosts a person may pick): **Read**.
 4. Log in as the account, then **its user menu > User details > Tokens > Create token**, scope **Write**. Copy the
    token: AAP shows it once.
@@ -151,8 +153,8 @@ Actions and their state in AAP: act_triage - ok; ckl_import - ok; stig_recheck -
 ```
 
 An action that is not `ok` says why (*Workflow ... is not there*, *... does not take extra variables*). The portal
-runs without it; that action's page says *Off*. The actions show Off until step 101 is done; run the deploy again
-after step 101. Its last task shows **the lines to add to nginx** (also in
+runs without it; that action's page says *Off*. The actions show Off until step 101 or step 102 is done; run the
+deploy again after it. Its last task shows **the lines to add to nginx** (also in
 `/etc/site-portal/nginx-portal.conf` on the server).
 
 **After an update of this repository**, run the template again. It copies the service and restarts it only if
@@ -330,8 +332,15 @@ report job --site_findings--> report page --button--> confirm page --Run--> AAP
 4. **The fix reads the finding back.** Its first step, `finding_ref`, reads the finding from the report job through
    AAP's API. It stops the job before anything is touched when the finding is not in that job, is another host's, or is
    of a kind the job does not fix. So a finding cannot be made up on the way.
-5. **Not twice.** While a run of the same action for the same finding is running, the confirm page links to it and
-   **Run** stays off. A second launch is refused.
+   - **Only a report job counts.** The job must run one of the reports' playbooks (`finding_ref_report_playbooks`: the
+     health checks, troubleshoot, the disk space report, fapolicyd, the STIG drift reports, the checklist import, the
+     service watch; `finding_ref_report_playbooks_extra` adds one of your own).
+   - It must have finished, at most `finding_ref_max_age_days` (14) ago. A check that found something ends *failed*, on
+     purpose: that counts. One that ended in an error or was canceled does not.
+   - A finding in any other job is refused, whatever its name.
+5. **Not twice.** While a run of the same action for the same finding (on the same host) is running, the confirm page
+   links to it and **Run** stays off. A second launch is refused, also when both are sent at the same moment. A launch
+   refused this way, or because the action is off, uses no place in `portal_launches_per_hour`.
 6. **The result.** Each fix ends with `portal_result`. The job page shows **Fixed**, **Still there** or **Not checked**
    at the top, with what it found before and after.
 
@@ -428,7 +437,8 @@ workflows the actions launch, from `roles/site_portal_stack/files/workflows.yml`
 
 1. **Templates > Create template > Create job template:** `AAP - set up portal actions`, playbook
    `playbooks/aap_portal_setup.yml`, any inventory, the credential **Red Hat Ansible Automation Platform** of an AAP
-   user with **Admin** on the organization. No Limit.
+   user with **Admin** on the organization. No Limit. Tick **Prompt on launch** next to **Job type**: step 3 launches
+   it as Check.
 2. **Variables:** copy `aap/extra_vars/aap_portal_setup.yml` and set at least:
 
 ```yaml
@@ -675,6 +685,10 @@ and [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md). The ones you are likely to
 | *Refused: send it from the portal's page* | the page is older than 8 hours, or was opened from another address: reload it |
 | A value *holds {{ - braces that start a template are not allowed* | the value holds template braces; take them out |
 | *Reports* answers *Not found* | `portal_reports_dir`, or the folder's SELinux label (*The report folder and SELinux*) |
+| A fix job stops: *The finding to fix could not be used, so nothing was changed: ...* | the reason follows. *not a report job this fix takes*: the button came from another job's page - `finding_ref_report_playbooks_extra` adds a report of your own. *older than finding_ref_max_age_days* or *did not finish*: run the report again and use its new page. *has no finding*: fixed since, or another host's. |
+| *Not started: job N is running this already* | the same action for the same finding is running: follow job N; Run comes back when it ends |
+| A workflow ends red at *Workflow gate - has a plan* | the check failed on an error, not on purpose: open the check job for it. Nothing waits for an approval |
+| *Not here* (a job, or an action) | the job was not started by the portal, or you are not its starter, an approver or one of the action's people; or there is no such action |
 
 ## Taking it out
 
@@ -688,9 +702,15 @@ and [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md). The ones you are likely to
    `sudo podman rmi`, by name), and the folder `/etc/site-portal/tls`.
 6. Remove the podman network `site-portal` (`sudo podman network rm site-portal`).
 7. Remove `/etc/site-portal`.
-8. In AAP: remove the job template `Site portal - deploy`, the portal account's roles on workflows 40, 44 and 45,
-   its token, then the account.
-9. Set `report_portal_url: ""` again, and run the report jobs again: the buttons go.
+8. In AAP: remove the job template `Site portal - deploy`, the portal account's roles on workflows 40, 44, 45 and 49
+   to 51, its token, then the account.
+9. What step 102 made (*AAP - set up portal actions*: each one's description ends "set up by AAP - set up portal
+   actions"): the workflows 40, 44, 45, 49, 50 and 51, their job templates (`workflows.yml` in
+   `roles/site_portal_stack/files` lists them), *Workflow gate - has a plan*, and the schedules of
+   `portal_setup_schedules`. Remove a workflow first, then its templates. The job never deletes them itself. Keep what
+   you use elsewhere (workflow 40, the gate). Then the job templates `AAP - set up portal actions` and `AAP - add
+   workflow gates`.
+10. Set `report_portal_url: ""` again, and run the report jobs again: the buttons go.
 
 ## Not yet
 

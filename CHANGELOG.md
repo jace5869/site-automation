@@ -315,6 +315,27 @@ choose from above a table (`filters`, `row_filters`) and sections that stay out 
 looks. The denials are read from the audit text ACT's playbook already collects (`_fa_denials`). Tests:
 `tests/test_denials_report.py` (the model, both looks, the lists in a headless browser). To set up: nothing.
 
+**The site portal: the tester's findings** (part L). Nothing to set up.
+
+- **A finding only from a report job.** `finding_ref` took a finding from any AAP job. It now takes one only from a job
+  that runs a report's playbook (`finding_ref_report_playbooks`; `finding_ref_report_playbooks_extra` adds one). The
+  job must have finished, at most `finding_ref_max_age_days` (14) ago. A check that found something ends *failed*, on
+  purpose, and counts; an error or a cancel does not. Anything else is refused with the reason, before anything is
+  touched.
+- **Not twice, also at the same moment.** Launches of the same action for the same finding and host wait for each other.
+  Eight sent at once start one run; the other seven are refused (409). `report_job` 907, 0907 and 00907 are one job
+  (sent on as 907).
+- **The hourly limit:** a launch refused as running already (409) or because the action is off (503), or one AAP did not
+  start, uses no place in `portal_launches_per_hour`.
+- **Docs** (SITE_PORTAL.md): Prompt on launch for Job type on the step 102 and 103 templates; "step 101 or step 102";
+  which roles step 2 gives and which step 102 gives; *Taking it out* with 49 to 51 and what step 102 made; four new rows
+  in *When something is wrong* (the finding refused, running already, the gate, *Not here*).
+
+**Tests (part L):** `tests/test_findings_artifact.py` (the forge: a 2025 job of another template with a planted
+finding; old, unfinished, error, canceled, from the future; a pattern; any case), `tests/portal/run_portal_fix_test.sh`
+(the forge, end to end), `tests/test_site_portal.py` (8 launches at once, report_job 907 / 0907 / 00907: one run, seven
+409, no place of the hour used) - ansible-core 2.22 and 2.16.
+
 ## 1.66.0 — 2026-11-14
 
 **Updating without scripts:** paste `site-automation-1.66.0-changed-since-1.61.0.zip` as it is (from an older version,
