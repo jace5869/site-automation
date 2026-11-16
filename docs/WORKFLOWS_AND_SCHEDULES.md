@@ -984,6 +984,9 @@ The site portal's **Clean up** button on a `disk_full` finding: the old files of
 [Disk - plan a clean up]
    |  Run on success
    v
+[Workflow gate - has a plan]  workflow_gate_var: disk_cleanup_plan
+   |  Run on success
+   v
 [Approval]
    |  Run on success
    v
@@ -993,14 +996,16 @@ The site portal's **Clean up** button on a `disk_full` finding: the old files of
 | Step | Template | Link |
 |---|---|---|
 | 1 | Disk - plan a clean up: `playbooks/disk_cleanup_plan.yml` | (start) |
-| 2 | The approval | **Run on success**, from 1 |
-| 3 | Disk - clean up one mount: `playbooks/disk_cleanup.yml` | **Run on success**, from 2 |
+| 2 | Workflow gate - has a plan (`playbooks/workflow_gate.yml`, no credential, **Prompt on launch** for **Variables**): this step's Variables `workflow_gate_var: disk_cleanup_plan` | **Run on success**, from 1 |
+| 3 | The approval | **Run on success**, from 2 |
+| 4 | Disk - clean up one mount: `playbooks/disk_cleanup.yml` | **Run on success**, from 3 |
 
 - **All templates and the workflow:** **Prompt on launch** for **Variables** and **Limit**. Machine credential (ssh and
   sudo) and *Red Hat Ansible Automation Platform* (to read the reporting job).
 - **The plan** is the same plan as workflow 42's, and step 3 checks it the same way (it must come from this workflow, and
   from this host alone).
-- Step 3 reads the mount again: the result says Fixed when it is under its warning level.
+- Step 4 reads the mount again: the result says Fixed when it is under its warning level.
+- **The gate** (step 2) asks for an approval only when the plan has a folder to clean (`disk_cleanup_plan`).
 - Linux only. [SITE_PORTAL.md](SITE_PORTAL.md#disk-services-and-fapolicyd).
 
 ### 50. Service - restart one service, from the site portal
@@ -1012,6 +1017,9 @@ The site portal's **Restart** button on a `service_down` finding.
    |  Run on success
    v
 [Service - look (Windows)]
+   |  Run on success
+   v
+[Workflow gate - has a plan]  workflow_gate_var: portal_service_plan
    |  Run on success
    v
 [Approval]
@@ -1027,6 +1035,7 @@ The site portal's **Restart** button on a `service_down` finding.
   and `portal_service_os` (`linux` or `windows`). Each step passes over a host of the other OS without connecting. Every link is **Run on success**.
 - **Prompt on launch** for **Variables** and **Limit**, on the templates and the workflow.
 - A service on `portal_restart_never` is refused in the look step, before the approval.
+- **The gate** asks for an approval only when the look step handed on the service (`portal_service_plan`).
 - [SITE_PORTAL.md](SITE_PORTAL.md#disk-services-and-fapolicyd).
 
 ### 51. fapolicyd - allow one denial, from the site portal
@@ -1037,6 +1046,9 @@ The site portal's **Allow this** button on a `fapolicyd_deny` finding. The path 
 [fapolicyd - allow this: check]
    |  Run on success
    v
+[Workflow gate - has a plan]  workflow_gate_var: fapolicyd_workflow_plan
+   |  Run on success
+   v
 [Approval]
    |  Run on success
    v
@@ -1045,6 +1057,7 @@ The site portal's **Allow this** button on a `fapolicyd_deny` finding. The path 
 
 - **Two templates** of `playbooks/fapolicyd_allow.yml`; the second has the Variables `portal_fapolicyd_phase: approved`.
 - The check hands on one line (`fapolicyd_workflow_plan`, this host). The approved job refuses any other line.
+- **The gate** asks for an approval only when that line exists. With none, the check has already stopped.
 - [SITE_PORTAL.md](SITE_PORTAL.md#disk-services-and-fapolicyd).
 
 ## VMware workflows

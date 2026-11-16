@@ -85,7 +85,9 @@ class Spec(unittest.TestCase):
                 self.assertEqual((g.get("template"), link), ("Workflow gate - has a plan", "success"), w["name"])
                 self.assertTrue(str((g.get("extra_data") or {}).get("workflow_gate_var") or ""), w["name"])
                 into = [(p["id"], link_) for p in nodes.values() for link_ in ("success", "failure", "always") if g["id"] in (p.get(link_) or [])]
-                self.assertEqual([x[1] for x in into], ["failure"], w["name"])
+                # from the check's failure (it fails on purpose with a plan: 37, 40 ...), or - part E's checks (49 to 51: they stop
+                # with an error when there is nothing to hand on, and end green with the plan) - from its success
+                self.assertIn([x[1] for x in into], (["failure"], ["success"]), w["name"])
         self.assertGreaterEqual(seen, 1)
 
     def test_extra_data_checked(self):
