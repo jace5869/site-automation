@@ -1,8 +1,0 @@
-<!doctype html><html><body><pre id="out"></pre><script>
-var f=document.createElement('iframe');f.style.cssText='width:390px;height:900px;border:0';
-f.onload=function(){var d=f.contentDocument;[].forEach.call(d.querySelectorAll('details'),function(x){x.open=true});
- setTimeout(function(){var W=d.documentElement.clientWidth,o=[];[].forEach.call(d.querySelectorAll('body *'),function(e){var r=e.getBoundingClientRect();
- if(r.right>W+1&&r.width>0){var p=e.parentElement,ok=false;while(p){var s=getComputedStyle(p).overflowX;if(s=='auto'||s=='scroll'||s=='hidden'){ok=true;break}p=p.parentElement}
- if(!ok)o.push(e.tagName+'.'+e.className+' '+Math.round(r.right)+' '+(e.textContent||'').trim().slice(0,40))}});
- document.getElementById('out').textContent=JSON.stringify(o.slice(0,12))},500)};f.src='p.html';document.body.appendChild(f);
-</script></body></html>
