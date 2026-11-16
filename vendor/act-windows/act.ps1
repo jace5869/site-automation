@@ -35,6 +35,9 @@
                              x-api-key, so it authenticates against any Ask Sage surface.
       ASKSAGE_MODEL          default Ask Sage model (default gpt-4.1-gov); run :models for the live list
       GENAI_KEY              optional GenAI bearer-token override
+      GENAI_KEYS             a key pool: several keys, comma or newline separated (also GENAI_BETA_KEYS,
+                             ASKSAGE_KEYS; README "Key pools"). ACT_KEY_ROTATION failover (default) or
+                             round-robin, ACT_KEY_COOLDOWN seconds (60), ACT_KEY_USAGE_LOG a path
       GENAI_MODEL            model id (default gemini-3.1-pro-preview)
       GENAI_BETA_URL         GenAI beta chat endpoint (default api-beta.genai.mil/v1/chat/completions)
       GENAI_BETA_KEY         optional GenAI beta bearer-token override (plain Bearer, like GENAI_KEY)
@@ -181,7 +184,7 @@ param(
     [switch] $Test
 )
 
-$script:ActVersion = '0.6.25'
+$script:ActVersion = '0.6.26'
 $script:ActScriptPath = $PSCommandPath
 
 # ---- Admin-embedded API keys (optional) -----------------------------------
@@ -435,7 +438,7 @@ function Write-AuditEvent {
             privilege = Get-PrivilegeStatus
         }
         foreach ($key in $Fields.Keys) { $record[$key] = $Fields[$key] }
-        $line = ($record | ConvertTo-Json -Depth 8 -Compress) + [Environment]::NewLine
+        $line = (Remove-ProviderKeys ($record | ConvertTo-Json -Depth 8 -Compress)) + [Environment]::NewLine
         $utf8 = New-Object System.Text.UTF8Encoding($false)
         $bytes = $utf8.GetBytes($line)
         # A short retry: several ACT processes (an AAP fan-out, a scheduled task next to an
@@ -722,6 +725,8 @@ function Save-ActUserConfig {
         if ($null -ne $p.Features -and $p.Features.Count -gt 0) {
             $providerConfig[$name]['features'] = ConvertTo-FeaturesDocument $p.Features
         }
+        # The pool as the file had it (0.6.26); keys from the environment are never written.
+        if ($null -ne $p.ApiKeysFile) { $providerConfig[$name]['api_keys'] = @($p.ApiKeysFile) }
     }
     $document = [ordered]@{
         version = 1
@@ -731,9 +736,153 @@ function Save-ActUserConfig {
     # Hand-set privacy settings survive :setup.
     if ($null -ne $script:PseudoConfigEnabled) { $document['pseudonymize'] = [bool]$script:PseudoConfigEnabled }
     if ($null -ne $script:PseudoConfigNames) { $document['pseudo_names'] = $script:PseudoConfigNames }
+    foreach ($f in @($script:KeyFileSettings.Keys)) { $document[$f] = $script:KeyFileSettings[$f] }
     Write-ActConfigDocument $document $Path
     $script:UserConfigPath = $Path
     return $Path
+}
+
+# ---------------------------------------------------------------------------
+# Key pools (0.6.26)
+# ---------------------------------------------------------------------------
+# A provider may hold several API keys: "api_keys" beside its single key in the setup file
+# (each a key string, or an object with "key" - or "key_protected", the DPAPI form :setup
+# writes - and an optional "label"), or the *_KEYS environment variable (comma or newline
+# separated) beside the single-key one. Keys from the environment replace the file's. One key
+# is a pool of one and behaves exactly as before. A key is never shown: its label is.
+$script:KeyEnvNames = @{
+    'genai'      = @{ Singles = @('GENAI_KEY'); Many = 'GENAI_KEYS' }
+    'asksage'    = @{ Singles = @('ASKSAGE_KEY', 'ASKSAGE_API_KEY'); Many = 'ASKSAGE_KEYS' }
+    'genai-beta' = @{ Singles = @('GENAI_BETA_KEY'); Many = 'GENAI_BETA_KEYS' }
+}
+$script:KeyConfigErrors = @()
+$script:KeyRotation = 'failover'
+$script:KeyCooldown = 60.0
+$script:KeyUsageLog = ''
+$script:KeyFileSettings = [ordered]@{}
+$script:KeyPools = @{}
+$script:KeyPoolOff = $false        # :probe asks with one key
+$script:FileKeyValues = @()
+
+function Get-ActEnvValue {
+    # An environment variable's value ('' when unset), Constrained Language Mode safe.
+    param([string] $Name)
+    $item = Get-Item -LiteralPath ('Env:' + $Name) -ErrorAction SilentlyContinue
+    if ($null -eq $item) { return '' }
+    return '' + $item.Value
+}
+
+function Split-ActKeys {
+    # The keys of a *_KEYS value: comma or newline separated, blanks dropped.
+    param([string] $Raw)
+    $out = @()
+    foreach ($k in @(('' + $Raw) -split '[,\r\n]+')) {
+        $t = $k.Trim()
+        if ($t) { $out += $t }
+    }
+    return $out
+}
+
+function ConvertFrom-KeyEntries {
+    # @(@{ Key; Label }) from a setup file's api_keys. Anything without a key is skipped (and
+    # named in the configuration error that stops act); a label is optional.
+    param($Value, [switch] $Quiet)
+    $out = @()
+    if ($null -eq $Value) { return $out }
+    $i = 0
+    foreach ($item in @($Value)) {
+        $i++
+        $key = ''; $label = ''
+        if ($item -is [string]) { $key = $item.Trim() }
+        elseif ($null -ne $item) {
+            if ($item -is [hashtable]) { $k = $item['key']; $kp = $item['key_protected']; $l = $item['label'] }
+            else { $k = Get-Prop $item 'key'; $kp = Get-Prop $item 'key_protected'; $l = Get-Prop $item 'label' }
+            if ($k -is [string]) { $key = $k.Trim() }
+            elseif ($kp -is [string] -and $kp.Trim()) { $key = Unprotect-ActConfigSecret $kp }
+            if ($l -is [string]) { $label = $l.Trim() }
+        }
+        if ($key) { $out += @{ Key = $key; Label = $label } }
+        elseif (-not $Quiet) { $script:KeyConfigErrors += ('api_keys entry ' + $i + ' has no key') }
+    }
+    return $out
+}
+
+function Select-UniqueKeyEntries {
+    # The entries without a repeated key (keys compare case-sensitively), in order.
+    param([object[]] $Entries)
+    $seen = @(); $out = @()
+    foreach ($e in @($Entries)) {
+        if ($null -eq $e -or -not $e.Key -or ($seen -ccontains $e.Key)) { continue }
+        $seen += $e.Key
+        $out += $e
+    }
+    return $out
+}
+
+function Get-StoredKeyList {
+    # The raw api_keys of a provider in the setup file ($null when it has none).
+    param($Config, [string] $ProviderName)
+    if ($null -eq $Config -or $null -eq $Config.providers) { return $null }
+    $record = Get-Prop $Config.providers $ProviderName
+    $value = Get-Prop $record 'api_keys'
+    if ($null -eq $value) { return $null }
+    if ($value -is [string]) { $script:KeyConfigErrors += ('api_keys must be a list of keys'); return $null }
+    return ,@($value)
+}
+
+function Get-InitialKeyEntries {
+    # Where a provider's keys come from: the environment, else the setup file (its saved key
+    # first, then api_keys), else a key embedded in this copy.
+    param($Config, [string] $ProviderName, [string] $StoredKey, [string] $Embedded)
+    $names = $script:KeyEnvNames[$ProviderName]
+    $fromEnv = @()
+    foreach ($n in @($names.Singles)) {
+        $v = (Get-ActEnvValue $n).Trim()
+        if ($v) { $fromEnv += @{ Key = $v; Label = '' }; break }
+    }
+    foreach ($k in @(Split-ActKeys (Get-ActEnvValue $names.Many))) { $fromEnv += @{ Key = $k; Label = '' } }
+    $fromEnv = @(Select-UniqueKeyEntries $fromEnv)
+    if ($fromEnv.Count -gt 0) { return $fromEnv }
+    $fromFile = @()
+    if (-not [string]::IsNullOrEmpty($StoredKey)) { $fromFile += @{ Key = $StoredKey; Label = '' } }
+    $fromFile += @(ConvertFrom-KeyEntries (Get-StoredKeyList $Config $ProviderName))
+    $fromFile = @(Select-UniqueKeyEntries $fromFile)
+    if ($fromFile.Count -gt 0) { return $fromFile }
+    if (-not [string]::IsNullOrEmpty($Embedded)) { return @(@{ Key = $Embedded; Label = '' }) }
+    return @()
+}
+
+function Initialize-KeySettings {
+    # key_rotation, key_cooldown_seconds, key_usage_log: the environment, else the setup file.
+    param($Config)
+    $script:KeyFileSettings = [ordered]@{}
+    foreach ($f in @('key_rotation', 'key_cooldown_seconds', 'key_usage_log')) {
+        $v = Get-Prop $Config $f
+        if ($null -ne $v) { $script:KeyFileSettings[$f] = $v }
+    }
+    $rot = Get-EnvOrDefault 'ACT_KEY_ROTATION' ''
+    if ([string]::IsNullOrEmpty($rot) -and $script:KeyFileSettings.Contains('key_rotation')) { $rot = '' + $script:KeyFileSettings['key_rotation'] }
+    if ([string]::IsNullOrEmpty($rot)) { $rot = 'failover' }
+    $rot = $rot.Trim().ToLower()
+    if ($rot -notin @('failover', 'round-robin')) {
+        $script:KeyConfigErrors += ("key_rotation must be failover or round-robin (got '" + $rot + "')")
+        $rot = 'failover'
+    }
+    $script:KeyRotation = $rot
+    $cd = Get-EnvOrDefault 'ACT_KEY_COOLDOWN' ''
+    if ([string]::IsNullOrEmpty($cd) -and $script:KeyFileSettings.Contains('key_cooldown_seconds')) { $cd = '' + $script:KeyFileSettings['key_cooldown_seconds'] }
+    $script:KeyCooldown = 60.0
+    if (-not [string]::IsNullOrEmpty($cd)) {
+        $n = 0.0
+        if ([double]::TryParse($cd, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$n) -and $n -ge 1 -and $n -le 86400) {
+            $script:KeyCooldown = $n
+        } else {
+            $script:KeyConfigErrors += ('key_cooldown_seconds must be between 1 and 86400')
+        }
+    }
+    $log = Get-EnvOrDefault 'ACT_KEY_USAGE_LOG' ''
+    if ([string]::IsNullOrEmpty($log) -and $script:KeyFileSettings.Contains('key_usage_log')) { $log = '' + $script:KeyFileSettings['key_usage_log'] }
+    $script:KeyUsageLog = ('' + $log).Trim()
 }
 
 function Initialize-ActConfig {
@@ -742,9 +891,13 @@ function Initialize-ActConfig {
     $storedGenAiUrl = Get-StoredProviderValue $userConfig 'genai' 'url' 'https://api.genai.mil/v1/chat/completions'
     $storedGenAiModel = Get-StoredProviderValue $userConfig 'genai' 'model' 'gemini-3.1-pro-preview'
     $storedGenAiKey = Unprotect-ActConfigSecret (Get-StoredProviderValue $userConfig 'genai' 'key_protected' '')
-    if ([string]::IsNullOrEmpty($storedGenAiKey)) { $storedGenAiKey = $script:EmbeddedGenAiKey }
+    # Key pools (0.6.26): the environment's keys, else the file's (key, then api_keys), else embedded.
+    $script:KeyConfigErrors = @()
+    Initialize-KeySettings $userConfig
+    $genAiEntries = @(Get-InitialKeyEntries $userConfig 'genai' $storedGenAiKey $script:EmbeddedGenAiKey)
     $script:GenAiUrl     = Get-EnvOrDefault 'GENAI_URL' $storedGenAiUrl
-    $script:GenAiKey     = Get-EnvOrDefault 'GENAI_KEY' $storedGenAiKey
+    $script:GenAiKey     = ''
+    if ($genAiEntries.Count -gt 0) { $script:GenAiKey = $genAiEntries[0].Key }
     $script:GenAiTimeout = Get-ValidatedEnvInt 'GENAI_TIMEOUT' 120 5 3600
     $script:ApiRetries   = Get-ValidatedEnvInt 'GENAI_RETRIES' 3 0 10
 
@@ -912,17 +1065,23 @@ function Initialize-ActConfig {
     $storedAskSageUrl = Get-StoredProviderValue $userConfig 'asksage' 'url' 'https://api.genai.army.mil/server/openai/v1/chat/completions'
     $storedAskSageModel = Get-StoredProviderValue $userConfig 'asksage' 'model' 'gpt-4.1-gov'
     $storedAskSageKey = Unprotect-ActConfigSecret (Get-StoredProviderValue $userConfig 'asksage' 'key_protected' '')
-    if ([string]::IsNullOrEmpty($storedAskSageKey)) { $storedAskSageKey = $script:EmbeddedAskSageKey }
-    $askSageKey = Get-EnvOrDefault 'ASKSAGE_API_KEY' $storedAskSageKey
-    $askSageKey = Get-EnvOrDefault 'ASKSAGE_KEY' $askSageKey
+    $askSageEntries = @(Get-InitialKeyEntries $userConfig 'asksage' $storedAskSageKey $script:EmbeddedAskSageKey)
+    $askSageKey = ''
+    if ($askSageEntries.Count -gt 0) { $askSageKey = $askSageEntries[0].Key }
     # GenAI beta proxy (api-beta.genai.mil): same OpenAI-compatible shape and plain Bearer
     # auth as the stable GenAI proxy, but a separate host/key/model set (grok, gemini, gpt
     # previews land here first). Live /models discovery fills in the real list at startup.
     $storedGenAiBetaUrl = Get-StoredProviderValue $userConfig 'genai-beta' 'url' 'https://api-beta.genai.mil/v1/chat/completions'
     $storedGenAiBetaModel = Get-StoredProviderValue $userConfig 'genai-beta' 'model' 'gemini-2.5-pro'
     $storedGenAiBetaKey = Unprotect-ActConfigSecret (Get-StoredProviderValue $userConfig 'genai-beta' 'key_protected' '')
-    if ([string]::IsNullOrEmpty($storedGenAiBetaKey)) { $storedGenAiBetaKey = $script:EmbeddedGenAiBetaKey }
-    $genAiBetaKey = Get-EnvOrDefault 'GENAI_BETA_KEY' $storedGenAiBetaKey
+    $genAiBetaEntries = @(Get-InitialKeyEntries $userConfig 'genai-beta' $storedGenAiBetaKey $script:EmbeddedGenAiBetaKey)
+    $genAiBetaKey = ''
+    if ($genAiBetaEntries.Count -gt 0) { $genAiBetaKey = $genAiBetaEntries[0].Key }
+    # The file's api_keys are written back as they were; their keys are redacted too.
+    $script:FileKeyValues = @()
+    foreach ($pn in @('genai', 'asksage', 'genai-beta')) {
+        foreach ($e in @(ConvertFrom-KeyEntries (Get-StoredKeyList $userConfig $pn) -Quiet)) { $script:FileKeyValues += $e.Key }
+    }
     # Endpoint format (0.6.19). ACT_API_FORMAT=openai|anthropic forces one everywhere; auto
     # (the default) lets each provider's stored "format" decide, and learns per model.
     $af = (Get-EnvOrDefault 'ACT_API_FORMAT' '').Trim().ToLower()
@@ -940,6 +1099,8 @@ function Initialize-ActConfig {
             Format  = (Get-StoredApiFormat $userConfig 'genai')
             Formats = (Get-StoredModelFormats $userConfig 'genai')
             Features = (Get-StoredModelFeatures $userConfig 'genai')
+            ApiKeys = $genAiEntries
+            ApiKeysFile = (Get-StoredKeyList $userConfig 'genai')
         }
         asksage = @{
             Name    = 'AskSage'
@@ -958,6 +1119,8 @@ function Initialize-ActConfig {
             Format  = (Get-StoredApiFormat $userConfig 'asksage')
             Formats = (Get-StoredModelFormats $userConfig 'asksage')
             Features = (Get-StoredModelFeatures $userConfig 'asksage')
+            ApiKeys = $askSageEntries
+            ApiKeysFile = (Get-StoredKeyList $userConfig 'asksage')
         }
         'genai-beta' = @{
             Name    = 'GenAI Beta'
@@ -971,6 +1134,8 @@ function Initialize-ActConfig {
             Format  = (Get-StoredApiFormat $userConfig 'genai-beta')
             Formats = (Get-StoredModelFormats $userConfig 'genai-beta')
             Features = (Get-StoredModelFeatures $userConfig 'genai-beta')
+            ApiKeys = $genAiBetaEntries
+            ApiKeysFile = (Get-StoredKeyList $userConfig 'genai-beta')
         }
     }
     $script:Provider = ''
@@ -993,6 +1158,7 @@ function Initialize-ActConfig {
     } catch {
         $script:FullLang = $true
     }
+    if ($script:KeyConfigErrors.Count -gt 0) { throw ('configuration error: ' + (@($script:KeyConfigErrors) -join '; ')) }
     Initialize-AuditLog
 }
 
@@ -1051,6 +1217,279 @@ function Set-ActiveProvider {
     $script:UseJsonMode = $script:JsonModeConfigured
     $script:PrefillRejected = $false
     return $true
+}
+
+# ---------------------------------------------------------------------------
+# Key pools at run time (0.6.26)
+# ---------------------------------------------------------------------------
+# Each request takes a key of the active provider's pool (key_rotation: failover = the first
+# free key, round-robin = the next). A key that is rate limited (429, a quota reply, 503 with
+# Retry-After) is parked until its Retry-After (else key_cooldown_seconds) and the request goes
+# at once to the next free key. A key refused (401/403) while another key is accepted for the
+# same request is not used again this session. Every key parked: the usual Retry-After wait,
+# until the first key is free. Hashtables only (Constrained Language Mode safe).
+
+function Get-KeyEntries {
+    # @(@{ Key; Label }) of a provider now: its active key first (:setup may have changed it),
+    # then the rest of its pool. Default labels follow the configured order: key 1, key 2, ...
+    param([string] $Name)
+    if ($null -eq $script:Providers -or -not $script:Providers.ContainsKey($Name)) { return @() }
+    $p = $script:Providers[$Name]
+    $pool = @(); $order = @()
+    foreach ($e in @($p.ApiKeys)) { if ($null -ne $e -and $e.Key) { $pool += $e; $order += $e.Key } }
+    $first = '' + $p.Key
+    $raw = @()
+    if ($first) {
+        $lab = ''
+        foreach ($e in $pool) { if ($e.Key -ceq $first) { $lab = $e.Label } }
+        $raw += @{ Key = $first; Label = $lab }
+    }
+    foreach ($e in $pool) { if ($e.Key -cne $first) { $raw += @{ Key = $e.Key; Label = $e.Label } } }
+    $out = @()
+    foreach ($e in $raw) {
+        $label = '' + $e.Label
+        if (-not $label) {
+            $pos = 0
+            for ($i = 0; $i -lt $order.Count; $i++) { if ($order[$i] -ceq $e.Key) { $pos = $i + 1; break } }
+            if ($pos -eq 0) { $pos = 1 }
+            $label = 'key ' + $pos
+        }
+        $out += @{ Key = $e.Key; Label = $label }
+    }
+    return $out
+}
+
+function Get-KeyPool {
+    # The provider's pool when it has two keys or more, else $null (one key: as before). A key
+    # list changed by :setup gets a new pool; the keys it kept keep their state.
+    param([string] $Name)
+    $entries = @(Get-KeyEntries $Name)
+    if ($entries.Count -lt 2) { return $null }
+    $sig = (@($entries | ForEach-Object { $_.Key + "`t" + $_.Label }) -join "`n")
+    $old = $script:KeyPools[$Name]
+    if ($null -ne $old -and $old.Sig -ceq $sig) { return $old }
+    $list = @()
+    foreach ($e in $entries) {
+        $n = @{ Key = $e.Key; Label = $e.Label; ParkedUntil = [DateTime]::MinValue; Why = ''; Bad = ''; Requests = 0; Limited = 0 }
+        if ($null -ne $old) {
+            foreach ($o in $old.Entries) {
+                if ($o.Key -ceq $e.Key) { foreach ($f in @('ParkedUntil', 'Why', 'Bad', 'Requests', 'Limited')) { $n[$f] = $o[$f] } }
+            }
+        }
+        $list += $n
+    }
+    $pool = @{ Sig = $sig; Entries = $list; Next = 0; Name = $Name }
+    $script:KeyPools[$Name] = $pool
+    return $pool
+}
+
+function Test-PoolEntryFree {
+    param([hashtable] $Entry)
+    return (-not $Entry.Bad) -and ($Entry.ParkedUntil -le [DateTime]::UtcNow)
+}
+
+function Select-PoolKey {
+    # The index of the key for the next request (-1 when none is free), counted as a request.
+    param([hashtable] $Pool, [int[]] $Tried = @())
+    $n = $Pool.Entries.Count
+    $start = 0
+    if ($script:KeyRotation -eq 'round-robin') { $start = $Pool.Next }
+    for ($s = 0; $s -lt $n; $s++) {
+        $i = ($start + $s) % $n
+        if (@($Tried) -contains $i) { continue }
+        $e = $Pool.Entries[$i]
+        if (-not (Test-PoolEntryFree $e)) { continue }
+        if ($script:KeyRotation -eq 'round-robin') { $Pool.Next = ($i + 1) % $n }
+        $e.Requests++
+        return $i
+    }
+    return -1
+}
+
+function Test-PoolHasFree {
+    param([hashtable] $Pool, [int[]] $Tried = @())
+    for ($i = 0; $i -lt $Pool.Entries.Count; $i++) {
+        if ((@($Tried) -notcontains $i) -and (Test-PoolEntryFree $Pool.Entries[$i])) { return $true }
+    }
+    return $false
+}
+
+function Test-PoolAllBad {
+    param([hashtable] $Pool)
+    foreach ($e in $Pool.Entries) { if (-not $e.Bad) { return $false } }
+    return $true
+}
+
+function Get-PoolShortestWaitMs {
+    # Milliseconds until the first parked key is free again (-1 when none is parked).
+    param([hashtable] $Pool)
+    $best = -1.0
+    foreach ($e in $Pool.Entries) {
+        if ($e.Bad) { continue }
+        $ms = ($e.ParkedUntil - [DateTime]::UtcNow).TotalMilliseconds
+        if ($ms -lt 0) { $ms = 0 }
+        if ($best -lt 0 -or $ms -lt $best) { $best = $ms }
+    }
+    return $best
+}
+
+function Write-KeyNote {
+    # One plain line about a key (by its label, never the key).
+    param([string] $Text)
+    Write-Themed dim ('  (' + $Text + ')')
+}
+
+function Set-PoolParked {
+    param([hashtable] $Pool, [int] $Index, $Seconds, [string] $Why)
+    $s = $script:KeyCooldown
+    if ($null -ne $Seconds) { $s = [double]$Seconds; if ($s -lt 0) { $s = 0 } }
+    $e = $Pool.Entries[$Index]
+    $e.ParkedUntil = [DateTime]::UtcNow.AddSeconds($s)
+    $e.Why = $Why
+    $e.Limited++
+    $next = ''
+    for ($i = 0; $i -lt $Pool.Entries.Count; $i++) {
+        if ($i -ne $Index -and (Test-PoolEntryFree $Pool.Entries[$i])) { $next = $Pool.Entries[$i].Label; break }
+    }
+    $text = "key '" + $e.Label + "' is " + $Why + '; parked until ' + $e.ParkedUntil.ToLocalTime().ToString('HH:mm:ss', [System.Globalization.CultureInfo]::InvariantCulture)
+    if ($next) { $text += "; using '" + $next + "'" }
+    Write-KeyNote $text
+}
+
+function Set-PoolBad {
+    param([hashtable] $Pool, [int] $Index, $Code)
+    $e = $Pool.Entries[$Index]
+    if ($e.Bad) { return }
+    $e.Bad = 'refused (HTTP ' + $Code + ')'
+    Write-KeyNote ("key '" + $e.Label + "' was refused (HTTP " + $Code + '); not used again this session')
+}
+
+function Get-PoolEntryState {
+    param([hashtable] $Entry)
+    if ($Entry.Bad) { return 'bad: ' + $Entry.Bad }
+    if ($Entry.ParkedUntil -gt [DateTime]::UtcNow) {
+        return 'parked until ' + $Entry.ParkedUntil.ToLocalTime().ToString('HH:mm:ss', [System.Globalization.CultureInfo]::InvariantCulture) + ' (' + $Entry.Why + ')'
+    }
+    return 'ok'
+}
+
+function Get-HeadersKey {
+    # The API key a request's headers carry ('' when none).
+    param([hashtable] $Headers)
+    if ($null -eq $Headers) { return '' }
+    $a = '' + $Headers['Authorization']
+    if ($a -match '^Bearer (.+)$') { return $Matches[1] }
+    return ''
+}
+
+function Set-HeadersKey {
+    # A copy of the headers with every key header carrying this key.
+    param([hashtable] $Headers, [string] $Key)
+    $h = @{}
+    foreach ($k in @($Headers.Keys)) { $h[$k] = $Headers[$k] }
+    $h['Authorization'] = 'Bearer ' + $Key
+    foreach ($k in @('x-api-key', 'x-access-tokens')) { if ($h.ContainsKey($k)) { $h[$k] = $Key } }
+    return $h
+}
+
+function Get-PoolIndexOfKey {
+    param([hashtable] $Pool, [string] $Key)
+    for ($i = 0; $i -lt $Pool.Entries.Count; $i++) { if ($Pool.Entries[$i].Key -ceq $Key) { return $i } }
+    return -1
+}
+
+function Write-KeyUsage {
+    # One line in the usage log (key_usage_log, off by default): time, provider, the key's
+    # label, model, tokens when the reply says, and the local user. Never the key.
+    param([string] $Label, [string] $Model, $Response)
+    if ([string]::IsNullOrWhiteSpace($script:KeyUsageLog)) { return }
+    $tokens = $null
+    try {
+        $u = Get-Prop $Response 'usage'
+        if ($null -ne $u) {
+            $t = Get-Prop $u 'total_tokens'
+            if ($null -eq $t) {
+                $sum = 0
+                foreach ($f in @('prompt_tokens', 'input_tokens', 'completion_tokens', 'output_tokens')) { $v = Get-Prop $u $f; if ($null -ne $v) { $sum += [int]$v } }
+                if ($sum -gt 0) { $t = $sum }
+            }
+            if ($null -ne $t) { $tokens = [int]$t }
+        }
+    } catch { }
+    $record = [ordered]@{
+        time = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ', [System.Globalization.CultureInfo]::InvariantCulture)
+        provider = $script:Provider; label = $Label; model = $Model; tokens = $tokens; user = [Environment]::UserName
+    }
+    try {
+        $path = $script:KeyUsageLog
+        if ($path.StartsWith('~')) { $path = $HOME + $path.Substring(1) }
+        Add-Content -LiteralPath $path -Value (Remove-ProviderKeys ($record | ConvertTo-Json -Compress)) -Encoding UTF8 -ErrorAction Stop
+    } catch { }   # the log never stops a task
+}
+
+function Get-RequestKey {
+    # @{ Key; Label } a single request outside the rotation uses (/models, :probe): the first
+    # key that was not refused, else the provider's key.
+    param([string] $Name = '')
+    if (-not $Name) { $Name = $script:Provider }
+    $pool = Get-KeyPool $Name
+    if ($null -ne $pool) { foreach ($e in $pool.Entries) { if (-not $e.Bad) { return @{ Key = $e.Key; Label = $e.Label } } } }
+    $entries = @(Get-KeyEntries $Name)
+    if ($entries.Count -gt 0) { return $entries[0] }
+    return @{ Key = ''; Label = '' }
+}
+
+function Get-ProviderKeyValues {
+    # Every API key ACT holds (each provider's pool, the *_KEYS variables), longest first.
+    $values = @()
+    if ($null -ne $script:Providers) {
+        foreach ($name in @($script:Providers.Keys)) {
+            $p = $script:Providers[$name]
+            $values += ('' + $p.Key)
+            foreach ($e in @($p.ApiKeys)) { if ($null -ne $e) { $values += ('' + $e.Key) } }
+        }
+    }
+    foreach ($name in @($script:KeyEnvNames.Keys)) {
+        $n = $script:KeyEnvNames[$name]
+        foreach ($s in @($n.Singles)) { $values += (Get-ActEnvValue $s).Trim() }
+        $values += @(Split-ActKeys (Get-ActEnvValue $n.Many))
+    }
+    $values += @($script:FileKeyValues)
+    $values += ('' + $script:GenAiKey)
+    $out = @()
+    foreach ($v in $values) { if ($v -and $v.Length -ge 4 -and ($out -cnotcontains $v)) { $out += $v } }
+    return @($out | Sort-Object -Property Length -Descending)
+}
+
+function Remove-ProviderKeys {
+    # The text with every API key replaced by [REDACTED].
+    param([string] $Text)
+    if ([string]::IsNullOrEmpty($Text)) { return $Text }
+    foreach ($k in @(Get-ProviderKeyValues)) {
+        if ($Text.Contains($k)) { $Text = $Text.Replace($k, '[REDACTED]') }
+    }
+    return $Text
+}
+
+function Show-KeyPool {
+    # :keys - the active provider's keys: label, the last 4 characters of a long key, state,
+    # and requests this session.
+    $entries = @(Get-KeyEntries $script:Provider)
+    if ($entries.Count -eq 0) { Write-Themed warning ('  no API key for ' + $script:Provider + '; run :setup first'); return }
+    $pool = Get-KeyPool $script:Provider
+    $count = '1 key, no rotation'
+    if ($null -ne $pool) { $count = '' + $entries.Count + ' keys, ' + $script:KeyRotation }
+    Write-Themed accent ('Keys for ' + $script:Providers[$script:Provider].Name + ' (' + $count + '):')
+    $rows = @()
+    if ($null -ne $pool) { $rows = @($pool.Entries) } else { $rows = @(@{ Key = $entries[0].Key; Label = $entries[0].Label; Requests = $null; Bad = ''; ParkedUntil = [DateTime]::MinValue }) }
+    foreach ($e in $rows) {
+        $last4 = ''
+        if (('' + $e.Key).Length -ge 16) { $last4 = '...' + $e.Key.Substring($e.Key.Length - 4) }
+        $count = ''
+        if ($null -ne $e.Requests) { $count = '  ' + $e.Requests + ' request(s)' }
+        Write-Host (ConvertTo-SafeTerminalText ('  ' + ('' + $e.Label).PadRight(20) + ' ' + $last4.PadRight(8) + ' ' + (Get-PoolEntryState $e) + $count))
+    }
+    if ($script:KeyUsageLog) { Write-Themed dim ('  usage log: ' + $script:KeyUsageLog) }
 }
 
 # ---------------------------------------------------------------------------
@@ -1763,14 +2202,14 @@ function Get-ProviderModels {
         if ($ProviderKey -eq 'asksage') {
             $murl = $p.Url -replace '/server/.*$', '/server/get-models'
             if ($murl -eq $p.Url) { $murl = ($p.Url.TrimEnd('/')) + '/get-models' }
-            $headers = Get-ProviderHeaders $ProviderKey $p.Key -Post
+            $headers = Get-ProviderHeaders $ProviderKey (Get-RequestKey $ProviderKey).Key -Post
             $tlsArgs = Get-TlsRequestArgs $murl
             $resp = Invoke-RestMethod -Uri $murl -Method Post -Headers $headers -Body '{}' -TimeoutSec $TimeoutSec -ErrorAction Stop @tlsArgs
         } else {
             $chat = Get-ChatUrl $p.Url
             $murl = $chat -replace '/chat/completions.*$', '/models'
             if ($murl -eq $chat) { $murl = ($chat.TrimEnd('/')) + '/models' }
-            $headers = Get-ProviderHeaders $ProviderKey $p.Key
+            $headers = Get-ProviderHeaders $ProviderKey (Get-RequestKey $ProviderKey).Key
             $tlsArgs = Get-TlsRequestArgs $murl
             $resp = Invoke-RestMethod -Uri $murl -Method Get -Headers $headers -TimeoutSec $TimeoutSec -ErrorAction Stop @tlsArgs
         }
@@ -1783,7 +2222,7 @@ function Get-ProviderModels {
         try {
             $aurl = (Get-AnthropicUrl $p.Url ('' + $p.AnthropicUrl)) -replace '/messages/?$', '/models'
             if ($aurl -ne $murl -and $aurl -match '/models$' -and (Test-KeySafeUrl $aurl)) {
-                $headers = Get-ProviderHeaders $ProviderKey $p.Key -Anthropic
+                $headers = Get-ProviderHeaders $ProviderKey (Get-RequestKey $ProviderKey).Key -Anthropic
                 $tlsArgs = Get-TlsRequestArgs $aurl
                 $resp = Invoke-RestMethod -Uri $aurl -Method Get -Headers $headers -TimeoutSec $TimeoutSec -ErrorAction Stop @tlsArgs
                 $ids = ConvertTo-ModelIdList $resp
@@ -1895,6 +2334,8 @@ function Invoke-RaceChat {
         $racers = @{}
         try { $maskedMessages = ConvertTo-PseudoMessages $Messages }  # every racer sees placeholders only
         catch { return $null }   # the single-model path then reports the masking error and sends nothing
+        # Key pools (0.6.26): each racer takes its own key, and another when that one is limited.
+        $racePool = Get-KeyPool $script:Provider
         foreach ($m in $models) {
             # Each racer goes to its own model's endpoint format, in one shot (no fallback
             # ladder: a refused racer is simply dropped, with the server's reason).
@@ -1906,7 +2347,16 @@ function Invoke-RaceChat {
             $wire = ConvertTo-WireMessages $maskedMessages $f.ToolTurns (Get-ToolTurnModelTag $m)
             $racers[$m] = @{ Model = $m; Features = $f; Url = (Get-FormatUrl $racerFormat)
                              Headers = (Get-ProviderHeaders $script:Provider $script:GenAiKey -Anthropic:($racerFormat -eq 'anthropic'))
-                             Body = (New-ChatRequestBody $racerFormat $wire $m $f); Retries = 0 }
+                             Body = (New-ChatRequestBody $racerFormat $wire $m $f); Retries = 0
+                             Slot = -1; Tried = @(); Refused = @() }
+            if ($null -ne $racePool) {
+                $slot = Select-PoolKey $racePool @()
+                if ($slot -lt 0 -and (Test-PoolAllBad $racePool)) { $slot = 0 }
+                if ($slot -ge 0) {
+                    $racers[$m].Slot = $slot; $racers[$m].Tried = @($slot)
+                    $racers[$m].Headers = Set-HeadersKey $racers[$m].Headers $racePool.Entries[$slot].Key
+                }
+            }
             $taskMap[(New-RaceRequestTask $client $racers[$m])] = $m
         }
         $pending = New-Object System.Collections.ArrayList
@@ -1966,6 +2416,29 @@ function Invoke-RaceChat {
                     $errBody = ''
                     try { $errBody = '' + $resp.Content.ReadAsStringAsync().Result } catch { }
                     $why = Get-ApiErrorReason $errBody ''
+                    $rr = $racers[$racer]
+                    if ($null -ne $racePool -and $rr.Slot -ge 0) {
+                        $raPool = $null
+                        try { $raPool = Get-RetryAfterSeconds $resp.Headers } catch { $raPool = $null }
+                        $quotaPool = ($code -eq 429) -and ($errBody -match $script:QuotaRegex)
+                        $limitedKey = $quotaPool -or $code -eq 429 -or ($code -eq 503 -and $null -ne $raPool)
+                        if ($limitedKey) {
+                            $secs = $raPool; $kwhy = 'rate limited'
+                            if ($quotaPool) { $secs = $null; $kwhy = 'token limit' }
+                            Set-PoolParked $racePool $rr.Slot $secs $kwhy
+                        } elseif ($code -eq 401 -or $code -eq 403) {
+                            $rr.Refused += @{ Slot = $rr.Slot; Code = $code }
+                        }
+                        if ($limitedKey -or $code -eq 401 -or $code -eq 403) {
+                            $next = Select-PoolKey $racePool $rr.Tried
+                            if ($next -ge 0) {
+                                $rr.Slot = $next; $rr.Tried += $next
+                                $rr.Headers = Set-HeadersKey $rr.Headers $racePool.Entries[$next].Key
+                                [void]$resend.Add(@{ At = $sw.Elapsed.TotalSeconds; Model = $racer })
+                                continue
+                            }
+                        }
+                    }
                     if ($code -eq 429 -or $code -eq 503) {
                         $ra = $null
                         try { $ra = Get-RetryAfterSeconds $resp.Headers } catch { $ra = $null }
@@ -1989,6 +2462,10 @@ function Invoke-RaceChat {
                 $text = $resp.Content.ReadAsStringAsync().Result
                 $parsed = ConvertFrom-AnthropicResponse ($text | ConvertFrom-Json)
                 Add-TokenUsage $parsed
+                if ($null -ne $racePool -and $racers[$racer].Slot -ge 0) {
+                    foreach ($r in @($racers[$racer].Refused)) { Set-PoolBad $racePool $r.Slot $r.Code }
+                    Write-KeyUsage $racePool.Entries[$racers[$racer].Slot].Label $racer $parsed
+                }
                 $f = $racers[$racer].Features
                 $reply = $null
                 if ($f.Tools) { $reply = ConvertFrom-ToolCall $parsed }
@@ -2598,16 +3075,69 @@ function Invoke-ProviderRequestWithRetry {
     if (-not (Test-KeySafeUrl $Uri)) {
         throw ('Refusing to send the API key over a non-https URL (' + $Uri + '). Use an https URL, or set ACT_ALLOW_HTTP_KEY=1 to override on a trusted network.')
     }
-    for ($retry = 0; $retry -le $script:ApiRetries; $retry++) {
-        try {
-            if ($Stream) { return (Invoke-StreamingPost -Uri $Uri -Headers $Headers -Body $Body -TimeoutSec $TimeoutSec) }
-            $requestArgs = @{
-                Uri = $Uri; Method = 'Post'; Headers = $Headers; Body = $Body
-                TimeoutSec = $TimeoutSec; ErrorAction = 'Stop'
+    # Key pools (0.6.26): a request carrying a key of the active provider's pool takes its key
+    # from the pool, and moves to the next free key at once when that key is limited or refused.
+    $pool = $null
+    $sentKey = Get-HeadersKey $Headers
+    if ($sentKey -and -not $script:KeyPoolOff) {
+        $pool = Get-KeyPool $script:Provider
+        if ($null -ne $pool -and (Get-PoolIndexOfKey $pool $sentKey) -lt 0) { $pool = $null }
+    }
+    $tried = @(); $refused = @(); $firstRefusal = $null; $parked = $false; $lastError = $null
+    $model = ''
+    if ($Body -match '"model"\s*:\s*"([^"]+)"') { $model = $Matches[1] }
+    $retry = 0
+    while ($retry -le $script:ApiRetries) {
+        $slot = -1
+        if ($null -ne $pool) {
+            $slot = Select-PoolKey $pool $tried
+            if ($slot -lt 0) {
+                if ($refused.Count -gt 0 -and -not $parked) { throw $firstRefusal }   # the request, not the keys
+                if (Test-PoolAllBad $pool) {
+                    if (@($tried) -contains 0) { throw $firstRefusal }
+                    $slot = 0                                    # nothing usable: let the gateway say why
+                } else {
+                    # Every key is parked: wait as the gateway asks, until the first is free.
+                    if ($retry -ge $script:ApiRetries) {
+                        if ($null -ne $lastError) { throw $lastError }
+                        throw ('HTTP 429: every ' + $script:Providers[$script:Provider].Name + ' API key is rate limited')
+                    }
+                    $waitMs = [double](Get-PoolShortestWaitMs $pool) * (1.0 + (Get-Random -Minimum 0 -Maximum 201) / 1000.0)
+                    $left = [double](Get-TurnTimeLeftMs $TimeoutSec) - 50.0
+                    if ($waitMs -gt $left) { $waitMs = $left }
+                    if ($waitMs -lt 0) { $waitMs = 0 }
+                    $script:ModelRetries.rate_limited++
+                    Write-Themed dim ('  ' + ($script:ActText.RateWait -f (Format-Seconds1 ($waitMs / 1000.0))))
+                    if (-not (Wait-ActMs ([int]$waitMs))) { throw '[act:cancelled] cancelled with Esc' }
+                    $retry++
+                    $tried = @()
+                    continue
+                }
             }
-            $tlsArgs = Get-TlsRequestArgs $Uri
-            foreach ($tk in @($tlsArgs.Keys)) { $requestArgs[$tk] = $tlsArgs[$tk] }
-            return Invoke-RestMethod @requestArgs
+            $tried += $slot
+            $Headers = Set-HeadersKey $Headers $pool.Entries[$slot].Key
+        }
+        try {
+            if ($Stream) { $result = Invoke-StreamingPost -Uri $Uri -Headers $Headers -Body $Body -TimeoutSec $TimeoutSec }
+            else {
+                $requestArgs = @{
+                    Uri = $Uri; Method = 'Post'; Headers = $Headers; Body = $Body
+                    TimeoutSec = $TimeoutSec; ErrorAction = 'Stop'
+                }
+                $tlsArgs = Get-TlsRequestArgs $Uri
+                foreach ($tk in @($tlsArgs.Keys)) { $requestArgs[$tk] = $tlsArgs[$tk] }
+                $result = Invoke-RestMethod @requestArgs
+            }
+            if ($null -ne $pool) {
+                foreach ($r in $refused) { Set-PoolBad $pool $r.Slot $r.Code }
+                Write-KeyUsage $pool.Entries[$slot].Label $model $result
+            } elseif ($script:KeyUsageLog) {
+                $entries = @(Get-KeyEntries $script:Provider)
+                $label = 'key 1'
+                foreach ($e in $entries) { if ($e.Key -ceq (Get-HeadersKey $Headers)) { $label = $e.Label } }
+                Write-KeyUsage $label $model $result
+            }
+            return $result
         } catch {
             if (Get-ActControlKind $_) { throw }
             $info = Get-HttpErrorInfo $_
@@ -2616,11 +3146,31 @@ function Invoke-ProviderRequestWithRetry {
             # PowerShell 7 reports a dropped connection as "An error occurred while sending the
             # request."; the cause ("The response ended prematurely", "Connection reset") is inside.
             try { $msg += ' ' + $_.Exception.GetBaseException().Message } catch { }
+            $quota = ($code -eq 429 -and (($info.Body + ' ' + $msg) -match $script:QuotaRegex))
+            if ($null -ne $pool) {
+                if ($quota -or $code -eq 429 -or ($code -eq 503 -and $null -ne $info.RetryAfter)) {
+                    $why = 'rate limited'; $secs = $info.RetryAfter
+                    if ($quota) { $why = 'token limit'; $secs = $null }
+                    Set-PoolParked $pool $slot $secs $why
+                    $parked = $true; $lastError = $_
+                    if (Test-PoolHasFree $pool $tried) { continue }
+                    if ($quota) { throw }
+                    if ($retry -ge $script:ApiRetries) { throw }
+                    $tried = @()
+                    continue                                     # the loop's top waits for the first key
+                }
+                if ($code -eq 401 -or $code -eq 403) {
+                    $refused += @{ Slot = $slot; Code = $code }
+                    if ($null -eq $firstRefusal) { $firstRefusal = $_ }
+                    continue
+                }
+            }
             # An exhausted token/credit quota is not a rate limit: waiting will not help.
-            if ($code -eq 429 -and (($info.Body + ' ' + $msg) -match $script:QuotaRegex)) { throw }
+            if ($quota) { throw }
             $transient = ($code -in @(408, 425, 429, 500, 502, 503, 504)) -or
                          ($null -eq $code -and $msg -match '(?i)timeout|timed out|connection|reset|temporar|unreachable|name resolution|DNS|stream stalled|ended prematurely|error occurred while sending|forcibly closed')
             if (-not $transient -or $retry -ge $script:ApiRetries) { throw }
+            $tried = @()
             $delayMs = Get-RetryDelayMs $retry
             if (($code -eq 429 -or $code -eq 503) -and $null -ne $info.RetryAfter) {
                 # The gateway said when to come back: wait that long (plus 0-20% jitter so
@@ -2637,6 +3187,7 @@ function Invoke-ProviderRequestWithRetry {
                 Write-Themed dim ("  (transient provider failure$codeText; retry $($retry + 1)/$($script:ApiRetries) in $delayMs ms)")
             }
             if (-not (Wait-ActMs $delayMs)) { throw '[act:cancelled] cancelled with Esc' }
+            $retry++
         }
     }
 }
@@ -5013,7 +5564,8 @@ function Protect-Secrets {
     # generic key=value rule.
     param([string] $Text)
     if ([string]::IsNullOrEmpty($Text)) { return $Text }
-    $t = $Text
+    # Every API key of every pool, whatever it looks like (0.6.26).
+    $t = Remove-ProviderKeys $Text
     # PEM private key blocks (RSA/EC/OPENSSH/generic).
     $t = $t -replace '(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----', '[REDACTED PRIVATE KEY BLOCK]'
     # Authorization headers (Bearer / Basic) and bare bearer tokens - before JWT so a JWT
@@ -6889,7 +7441,7 @@ function Write-ActResultFile {
         $full = [System.IO.Path]::GetFullPath($Path)
         $dir = [System.IO.Path]::GetDirectoryName($full)
         $tmp = Join-Path $dir ('.act-result-' + [Guid]::NewGuid().ToString('N') + '.tmp')
-        $json = $Record | ConvertTo-Json -Depth 8
+        $json = Remove-ProviderKeys ($Record | ConvertTo-Json -Depth 8)
         [System.IO.File]::WriteAllText($tmp, $json + [Environment]::NewLine, (New-Object System.Text.UTF8Encoding($false)))
         # [NullString]::Value, not $null: PowerShell passes $null to a .NET string parameter as
         # '', which File.Replace rejects as an empty backup path.
@@ -9394,6 +9946,11 @@ function Invoke-ProbeHttp {
     param([string] $Uri, [hashtable] $Headers, [string] $Body, [int] $TimeoutSec, [switch] $Stream)
     $savedRetries = $script:ApiRetries
     $script:ApiRetries = 0
+    # A probe asks with one key, the first that was not refused (0.6.26): what it learns is per
+    # endpoint and model, not per key.
+    $savedPoolOff = $script:KeyPoolOff
+    $script:KeyPoolOff = $true
+    if ($null -ne (Get-KeyPool $script:Provider) -and (Get-HeadersKey $Headers)) { $Headers = Set-HeadersKey $Headers (Get-RequestKey).Key }
     try {
         for ($try = 0; $try -lt 2; $try++) {
             try {
@@ -9407,7 +9964,7 @@ function Invoke-ProbeHttp {
                 if (-not (Wait-ActMs 1000)) { throw '[act:cancelled] cancelled with Esc' }
             }
         }
-    } finally { $script:ApiRetries = $savedRetries }
+    } finally { $script:ApiRetries = $savedRetries; $script:KeyPoolOff = $savedPoolOff }
 }
 
 function Invoke-ProbeRequest {
@@ -9896,6 +10453,10 @@ function Invoke-ModelProbe {
     Write-Themed accent ('Testing ' + $models.Count + ' model(s) on ' + $script:Provider + ':')
     Write-Themed dim ('  OpenAI endpoint:    ' + (Get-FormatUrl 'openai'))
     Write-Themed dim ('  Anthropic endpoint: ' + (Get-FormatUrl 'anthropic'))
+    if ($null -ne (Get-KeyPool $script:Provider)) {           # labels only, never a key (0.6.26)
+        $labels = @(@(Get-KeyEntries $script:Provider) | ForEach-Object { $_.Label })
+        Write-Themed dim ("  key:                '" + (Get-RequestKey).Label + "' (of " + $labels.Count + ': ' + ($labels -join ', ') + ')')
+    }
     $summary = [ordered]@{}
     $accepted = 0
     foreach ($m in $models) {
@@ -10218,6 +10779,9 @@ function Show-SessionStatus {
     Write-Themed dim ("temperature: $tempTxt   $(Format-ModelOutputLimit $script:GenAiModel $statusKey)   streaming: $(Get-StreamStatusLabel $modelFormat $statusKey $script:GenAiModel)")
     Write-Themed dim ("tool results: $(Get-ToolResultsStatusLabel $modelFormat $statusKey $script:GenAiModel)   structured output (tools off): $jsonTxt")
     Write-Themed dim ("privilege: $(Get-PrivilegeStatus)   language mode: $lm   ansi: $($script:UseAnsi)")
+    if ($null -ne (Get-KeyPool $script:Provider)) {
+        Write-Themed dim ('api keys: ' + @(Get-KeyEntries $script:Provider).Count + ' (' + $script:KeyRotation + '; :keys)')
+    }
     if ($script:AuditReady) { Write-Themed dim ("audit: " + $script:AuditPath) }
     else { Write-Themed danger 'audit: NOT AVAILABLE (execution will be refused)' }
     if ($script:PlanDeclared) {
@@ -10248,6 +10812,7 @@ function Get-ReplHelpSections {
             [PSCustomObject]@{ Command = ':setup'; Description = 'set and persist the API key, URL, and model (also :key)' }
             [PSCustomObject]@{ Command = ':provider [n]'; Description = 'list or switch providers' }
             [PSCustomObject]@{ Command = ':models'; Description = 'fetch the active provider live model list' }
+            [PSCustomObject]@{ Command = ':keys'; Description = "show the provider's API keys by label: ok, parked or refused, requests" }
             [PSCustomObject]@{ Command = ':probe'; Description = 'test models (space- or comma-separated) on both endpoints and their features: :probe [ids|all]' }
             [PSCustomObject]@{ Command = ':model'; Description = 'pick a model from the active provider' }
             [PSCustomObject]@{ Command = ':tools [on|off]'; Description = 'send the action protocol as a native tool schema' }
@@ -10440,6 +11005,7 @@ function Invoke-ReplCommand {
             return $true
         }
         ':probe' { Invoke-ModelProbe $arg; return $true }
+        ':keys' { Show-KeyPool; return $true }
         ':tools' {
             $a = $arg.Trim().ToLower()
             if ($a -in @('on', '1', 'true', 'yes')) { $script:ToolsMode = $true }
@@ -10977,7 +11543,8 @@ while (-not $State.Stop) {
         $rule = $null
         [System.Threading.Monitor]::Enter($State.Lock)
         try {
-            foreach ($r in $State.Rules) { if ($key -match $r.Match) { $rule = $r; break } }
+            # Auth (0.6.26): a rule for one API key only (a regex on the Authorization header).
+            foreach ($r in $State.Rules) { if ($key -match $r.Match -and (-not $r.Auth -or ('' + $hdr['authorization']) -match $r.Auth)) { $rule = $r; break } }
             if ($null -ne $rule -and $rule.Once) { $State.Rules.Remove($rule) }
             [void]$State.Requests.Add(@{ Path = $path; Body = $body; Headers = $hdr })
         } finally { [System.Threading.Monitor]::Exit($State.Lock) }
@@ -13838,6 +14405,23 @@ try { $c.Ok += ((Get-FinishKind 'max_tokens') -eq 'length' -and (Get-FinishKind 
 try { $c.Ok += (@(Add-RescueNudge @(@{ role = 'user'; content = 'u' })).Count -eq 1) } catch { $c.Ok += 'nudge:' + $_.Exception.Message }
 try { $c.Ok += ((Format-ModelOutputLimit 'gemini-3.1-pro-preview') -eq 'output limit 16384 (thinking model)' -and (Format-ProbeReplyStart (Get-ProbeReplyInfo ('{"choices":[{"message":{"content":"hi  there"},"finish_reason":"STOP"}],"usage":{"completion_tokens":9,"completion_tokens_details":{"reasoning_tokens":5}}}' | ConvertFrom-Json))) -eq 'finish_reason=stop, reply starts: "hi there", reasoning 5 of 9 output tokens') } catch { $c.Ok += 'limit:' + $_.Exception.Message }
 'CLM-0622 ' + ($c.Ok -join ' ')
+# 0.6.26: key pools.
+$p = @{ Ok = @() }
+try {
+    $script:Providers = @{ genai = @{ Name = 'G'; Url = 'https://g/v1/chat/completions'; Key = 'test-key-A-000000001'; Model = 'm'; Models = @(); KeyEnv = 'GENAI_KEY'; Limited = $false
+                                      ApiKeys = @(@{ Key = 'test-key-A-000000001'; Label = '' }, @{ Key = 'test-key-B-000000002'; Label = 'bob' }) } }
+    $script:Provider = 'genai'
+    $pool = Get-KeyPool 'genai'
+    $i = Select-PoolKey $pool @()
+    Set-PoolParked $pool $i 30 'rate limited' 6>$null
+    $j = Select-PoolKey $pool @($i)
+    $h = Set-HeadersKey @{ Authorization = 'Bearer x'; 'x-api-key' = 'x' } $pool.Entries[$j].Key
+    $p.Ok += ($i -eq 0 -and $j -eq 1 -and (Get-HeadersKey $h) -eq 'test-key-B-000000002' -and $h['x-api-key'] -eq 'test-key-B-000000002')
+    $p.Ok += ((Protect-Secrets 'x test-key-B-000000002 y') -notmatch 'test-key-B')
+    $e = @(ConvertFrom-KeyEntries @('k-1234', @{ key = 'k-5678'; label = 'l' }))
+    $p.Ok += ($e.Count -eq 2 -and $e[1].Label -eq 'l' -and (@(Split-ActKeys "a,b`nc")).Count -eq 3)
+} catch { $p.Ok += 'pool:' + $_.Exception.Message }
+'CLM-0626 ' + ($p.Ok -join ' ')
 '@
         try {
             $shell = (Get-Process -Id $PID).Path
@@ -13846,6 +14430,8 @@ try { $c.Ok += ((Format-ModelOutputLimit 'gemini-3.1-pro-preview') -eq 'output l
             Assert-Equal 'CLM-RESULT ConstrainedLanguage True True True bad temperature a<U+202E>b' $clmLine 'formats: request building, reply parsing and the -Mark sanitizer run under Constrained Language Mode'
             $clm0622 = '' + (@($clmOut | Where-Object { $_ -like 'CLM-0622 *' }) | Select-Object -Last 1)
             Assert-Equal 'CLM-0622 True True True True True True True True' $clm0622 '0.6.22: schema, tool-call replay, temperature, Retry-After and finish-reason code run under Constrained Language Mode'
+            $clm0626 = '' + (@($clmOut | Where-Object { $_ -like 'CLM-0626 *' }) | Select-Object -Last 1)
+            Assert-Equal 'CLM-0626 True True True' $clm0626 '0.6.26: key pools (pick, park, headers, redaction, config) run under Constrained Language Mode'
         } finally { Remove-Item -LiteralPath $clmFile -Force -ErrorAction SilentlyContinue }
     }
 
@@ -14338,6 +14924,160 @@ try { $c.Ok += ((Format-ModelOutputLimit 'gemini-3.1-pro-preview') -eq 'output l
         Assert-Match $shown 'quota is used up' 'quota 429: reported as an exhausted quota'
         Assert-True ($script:Providers['genai'].Limited) 'quota 429: the provider is marked limited'
         $script:Providers['genai'].Limited = $false
+
+        # ---- 0.6.26: key pools (made-up keys) ----
+        $poolSaved = @{ Providers = $script:Providers; Rotation = $script:KeyRotation; Cooldown = $script:KeyCooldown; Log = $script:KeyUsageLog; Sleep = $script:SleepHook }
+        $kA = 'test-key-A-000000001'; $kB = 'test-key-B-000000002'; $kC = 'test-key-C-000000003'
+        $newPool = {
+            $script:Providers = @{ genai = @{ Name = 'Mock'; Url = ($gw.Base + '/v1/chat/completions'); Key = $kA; Model = 'gemini-3.1-pro-preview'
+                                              Models = @('gemini-3.1-pro-preview'); KeyEnv = 'GENAI_KEY'; Limited = $false; AnthropicUrl = ''
+                                              Format = 'auto'; Formats = @{}; Features = @{}
+                                              ApiKeys = @(@{ Key = $kA; Label = 'alice' }, @{ Key = $kB; Label = '' }, @{ Key = $kC; Label = 'carol' }) } }
+            $script:Provider = ''
+            [void](Set-ActiveProvider 'genai')
+            $script:KeyPools = @{}; $script:KeyRotation = 'failover'; $script:KeyCooldown = 60.0; $script:KeyUsageLog = ''
+            Reset-ActRequestCaches; $script:StWaits.Clear()
+        }
+        $usedKeys = { @(Get-ActMockRequests $gw | ForEach-Object { ('' + $_.Headers['authorization']) -replace '^Bearer ', '' }) }
+        $ok = @{ Match = 'chat/completions'; Body = $finishCall }
+        $limit = { param($ra) $h = @{}; if ($ra) { $h['Retry-After'] = $ra }; @{ Match = 'chat/completions'; Once = $true; Status = 429; Headers = $h; Body = '{"error":{"message":"Too Many Requests"}}' } }
+
+        # Labels and order.
+        & $newPool
+        Assert-Equal 'alice|key 2|carol' (@(Get-KeyEntries 'genai' | ForEach-Object { $_.Label }) -join '|') 'pool: labels default to their place'
+        Assert-True ($null -eq (Get-KeyPool 'asksage')) 'pool: a provider without a pool has none'
+        # Failover stays on key 1; round-robin takes the next key each request.
+        Set-ActMockRules $gw @($ok)
+        foreach ($i in 1..3) { [void](Invoke-GenAIChat $one 6>$null) }
+        Assert-Equal "$kA $kA $kA" ((& $usedKeys) -join ' ') 'pool: failover stays on key 1'
+        & $newPool; $script:KeyRotation = 'round-robin'
+        Set-ActMockRules $gw @($ok)
+        foreach ($i in 1..4) { [void](Invoke-GenAIChat $one 6>$null) }
+        Assert-Equal "$kA $kB $kC $kA" ((& $usedKeys) -join ' ') 'pool: round-robin takes the next key each request'
+        # 429: the key is parked and the same request goes at once to the next key.
+        & $newPool
+        Set-ActMockRules $gw @((& $limit '30'), $ok)
+        $shown = (& { Invoke-GenAIChat $one } 6>&1 | ConvertTo-StText)
+        Assert-Equal "$kA $kB" ((& $usedKeys) -join ' ') 'pool: 429 retried at once on the next key'
+        Assert-Equal 0 $script:StWaits.Count 'pool: no wait while another key is free'
+        Assert-Match $shown "key 'alice' is rate limited; parked until \d\d:\d\d:\d\d; using 'key 2'" 'pool: one line names the parked key by label'
+        Assert-True ($shown -notmatch [regex]::Escape($kA)) 'pool: the key itself is never shown'
+        $pool = Get-KeyPool 'genai'
+        Assert-Match (Get-PoolEntryState $pool.Entries[0]) '^parked until \d\d:\d\d:\d\d \(rate limited\)$' 'pool: key 1 parked'
+        $parkS = ($pool.Entries[0].ParkedUntil - [DateTime]::UtcNow).TotalSeconds
+        Assert-True ($parkS -gt 27 -and $parkS -le 30) ('pool: parked for Retry-After (' + $parkS + ' s)')
+        Set-ActMockRules $gw @($ok)
+        [void](Invoke-GenAIChat $one 6>$null)
+        Assert-Equal $kB ((& $usedKeys) -join ' ') 'pool: while key 1 is parked the next request takes key 2'
+        $pool.Entries[0].ParkedUntil = [DateTime]::UtcNow.AddSeconds(-1)
+        Set-ActMockRules $gw @($ok)
+        [void](Invoke-GenAIChat $one 6>$null)
+        Assert-Equal $kA ((& $usedKeys) -join ' ') 'pool: its time is up: key 1 again'
+        # Without Retry-After the cooldown; a quota reply parks the key too.
+        & $newPool; $script:KeyCooldown = 90
+        Set-ActMockRules $gw @((& $limit ''), @{ Match = 'chat/completions'; Once = $true; Status = 429; Body = '{"error":{"message":"Monthly token quota exceeded for this key"}}' }, $ok)
+        [void](Invoke-GenAIChat $one 6>$null)
+        $pool = Get-KeyPool 'genai'
+        Assert-Equal "$kA $kB $kC" ((& $usedKeys) -join ' ') 'pool: a bare 429 and a quota reply each move to the next key'
+        $parkS = ($pool.Entries[0].ParkedUntil - [DateTime]::UtcNow).TotalSeconds
+        Assert-True ($parkS -gt 87 -and $parkS -le 90) ('pool: no Retry-After: parked for key_cooldown_seconds (' + $parkS + ' s)')
+        Assert-Match (Get-PoolEntryState $pool.Entries[1]) '\(token limit\)$' 'pool: a quota reply parks the key as token limit'
+        # Every key parked: the usual wait, for the key that is free first.
+        & $newPool
+        $script:SleepHook = { param([int] $Ms) [void]$script:StWaits.Add($Ms); foreach ($e in (Get-KeyPool 'genai').Entries) { $e.ParkedUntil = $e.ParkedUntil.AddMilliseconds(-$Ms) } }
+        Set-ActMockRules $gw @((& $limit '3'), (& $limit '1'), (& $limit '2'), $ok)
+        $r = Invoke-GenAIChat $one 6>$null
+        Assert-True ($r -match '"done"') 'pool: every key parked: answered after the wait'
+        Assert-Equal 1 $script:StWaits.Count 'pool: every key parked: one wait'
+        Assert-True ($script:StWaits[0] -ge 800 -and $script:StWaits[0] -le 1300) ('pool: the wait is the shortest park (' + $script:StWaits[0] + ' ms)')
+        Assert-Equal "$kA $kB $kC $kB" ((& $usedKeys) -join ' ') 'pool: then the key that was free first'
+        $script:SleepHook = $poolSaved.Sleep
+        # 401: the key is dropped when another key works.
+        & $newPool
+        Set-ActMockRules $gw @(@{ Match = 'chat/completions'; Once = $true; Status = 401; Body = '{"error":{"message":"invalid api key"}}' }, $ok)
+        $shown = (& { Invoke-GenAIChat $one; Invoke-GenAIChat $one } 6>&1 | ConvertTo-StText)
+        Assert-Equal "$kA $kB $kB" ((& $usedKeys) -join ' ') 'pool: 401 moves to the next key and drops the refused one'
+        Assert-Equal 1 ([regex]::Matches($shown, "key 'alice' was refused \(HTTP 401\); not used again this session")).Count 'pool: one line names the refused key'
+        Assert-Equal 'bad: refused (HTTP 401)' (Get-PoolEntryState (Get-KeyPool 'genai').Entries[0]) 'pool: the refused key is bad'
+        # 403 from every key: the request, not the keys.
+        & $newPool
+        Set-ActMockRules $gw @(@{ Match = 'chat/completions'; Status = 403; Body = '{"error":{"message":"Forbidden"}}' })
+        try { [void](Invoke-GenAIChat $one 6>$null) } catch { }
+        Assert-Equal "$kA $kB $kC" ((& $usedKeys | Select-Object -First 3) -join ' ') 'pool: 403 is asked of every key'
+        Assert-Equal 'ok ok ok' (@((Get-KeyPool 'genai').Entries | ForEach-Object { Get-PoolEntryState $_ }) -join ' ') 'pool: 403 from every key marks none bad'
+        # Race: each racer takes a key; a limited racer moves to another key.
+        if ($PSVersionTable.PSEdition -eq 'Core' -or $script:FullLang) {
+            & $newPool; $script:KeyRotation = 'round-robin'; $savedRaceEnv = $script:RaceModelsEnv; $script:RaceModelsEnv = 'model-b,model-c'
+            Set-ActMockRules $gw @($ok)
+            $race = Invoke-RaceChat $one 6>$null
+            Assert-Equal 3 @($race.Candidates).Count 'pool race: three racers answered'
+            Assert-Equal "$kA $kB $kC" (@(& $usedKeys | Sort-Object) -join ' ') 'pool race: each racer took its own key'
+            & $newPool; $script:RaceModelsEnv = 'model-b'
+            Set-ActMockRules $gw @(@{ Match = 'model-b'; Auth = [regex]::Escape($kA); Once = $true; Status = 429; Headers = @{ 'Retry-After' = '30' }; Body = '{"error":{"message":"rpm"}}' },
+                                  @{ Match = 'chat/completions'; Auth = [regex]::Escape($kA); Body = $finishCall }, $ok)
+            $race = Invoke-RaceChat $one 6>$null
+            Assert-Equal 2 @($race.Candidates).Count 'pool race: the limited racer answered on another key'
+            Assert-Equal 0 $race.Dropped.Count 'pool race: nothing dropped'
+            $script:RaceModelsEnv = $savedRaceEnv
+        }
+        # Usage log: the label, never the key.
+        & $newPool
+        $logPath = Join-Path ([System.IO.Path]::GetTempPath()) ('act-keys-' + [Guid]::NewGuid().ToString('N') + '.jsonl')
+        $script:KeyUsageLog = $logPath
+        Set-ActMockRules $gw @((& $limit '30'), @{ Match = 'chat/completions'; Body = '{"choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[{"id":"f1","type":"function","function":{"name":"finish","arguments":"{\"message\":\"done\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"total_tokens":12}}' })
+        [void](Invoke-GenAIChat $one 6>$null)
+        $logText = [System.IO.File]::ReadAllText($logPath)
+        $logLine = $logText.Trim() | ConvertFrom-Json
+        Assert-Equal 'key 2|12|gemini-3.1-pro-preview|genai' ($logLine.label + '|' + $logLine.tokens + '|' + $logLine.model + '|' + $logLine.provider) 'pool: usage log names the label, tokens and model'
+        Assert-True ($logLine.user -and $logText -notmatch 'test-key-') 'pool: usage log has the user and no key'
+        Remove-Item -LiteralPath $logPath -Force -ErrorAction SilentlyContinue
+        # :keys shows labels, state and counts, never a key.
+        & $newPool
+        Set-ActMockRules $gw @(@{ Match = 'chat/completions'; Once = $true; Status = 401; Body = '{"error":{"message":"invalid api key"}}' }, (& $limit '30'), $ok)
+        [void](Invoke-GenAIChat $one 6>$null)
+        $keysShown = (& { Show-KeyPool } 6>&1 | ConvertTo-StText)
+        Assert-Match $keysShown '3 keys, failover' ':keys: the count and rotation'
+        Assert-Match $keysShown 'alice\s+\.\.\.0001\s+bad: refused \(HTTP 401\)\s+1 request' ':keys: a refused key'
+        Assert-Match $keysShown 'key 2\s+\.\.\.0002\s+parked until \S+ \(rate limited\)' ':keys: a parked key'
+        Assert-Match $keysShown 'carol\s+\.\.\.0003\s+ok\s+1 request' ':keys: a key in use'
+        Assert-True ($keysShown -notmatch 'test-key-') ':keys: no key is shown'
+        # Redaction: every key, not only the first; the result file and the audit log too.
+        & $newPool
+        $red = Protect-Secrets ("a=$kA b=$kB c=$kC")
+        Assert-True ($red -notmatch 'test-key-') ('pool: every key of the pool is redacted (' + $red + ')')
+        $resPath = Join-Path ([System.IO.Path]::GetTempPath()) ('act-res-' + [Guid]::NewGuid().ToString('N') + '.json')
+        [void](Write-ActResultFile $resPath ([ordered]@{ summary = ('used ' + $kB); task = $kC }))
+        $resText = [System.IO.File]::ReadAllText($resPath)
+        Assert-True ($resText -notmatch 'test-key-' -and $resText -match '\[REDACTED\]') 'pool: the result file holds no key'
+        Remove-Item -LiteralPath $resPath -Force -ErrorAction SilentlyContinue
+        $savedKeysEnv = [Environment]::GetEnvironmentVariable('GENAI_KEYS')
+        try {
+            [Environment]::SetEnvironmentVariable('GENAI_KEYS', 'test-key-D-000000004,test-key-E-000000005')
+            Assert-True ((Protect-Secrets 'x test-key-E-000000005') -notmatch 'test-key-E') 'pool: GENAI_KEYS keys are redacted'
+            Assert-True (@(Get-ChildEnvironmentScrubNames @{ GENAI_KEYS = 'a'; ASKSAGE_KEYS = 'b'; PATH = 'c' }) -contains 'GENAI_KEYS') 'pool: *_KEYS never reach a command'
+            # Config: the environment's keys replace the file's.
+            $cfgDoc = '{"providers":{"genai":{"api_keys":["test-key-F-000000006",{"key":"test-key-G-000000007","label":"gina"},{"label":"x"}]}}}' | ConvertFrom-Json
+            $fromEnv = @(Get-InitialKeyEntries $cfgDoc 'genai' '' '')
+            Assert-Equal 'test-key-D-000000004 test-key-E-000000005' (@($fromEnv | ForEach-Object { $_.Key }) -join ' ') 'config: GENAI_KEYS replace the file'
+            [Environment]::SetEnvironmentVariable('GENAI_KEYS', $null)
+            $script:KeyConfigErrors = @()
+            $fromFile = @(Get-InitialKeyEntries $cfgDoc 'genai' 'test-key-H-000000008' '')
+            Assert-Equal 'test-key-H-000000008| test-key-F-000000006| test-key-G-000000007|gina' (@($fromFile | ForEach-Object { $_.Key + '|' + $_.Label }) -join ' ') 'config: the saved key first, then api_keys with their labels'
+            Assert-Equal 'api_keys entry 3 has no key' (@($script:KeyConfigErrors) -join ';') 'config: an entry without a key is a configuration error'
+            $script:KeyConfigErrors = @()
+            Assert-Equal 'test-key-I-000000009' (@(Get-InitialKeyEntries ('{}' | ConvertFrom-Json) 'genai' '' 'test-key-I-000000009'))[0].Key 'config: one embedded key is a pool of one'
+            $env:ACT_KEY_ROTATION = 'random'; $env:ACT_KEY_COOLDOWN = '0'
+            Initialize-KeySettings ('{"key_rotation":"round-robin"}' | ConvertFrom-Json)
+            Assert-Equal 'failover 60' ($script:KeyRotation + ' ' + $script:KeyCooldown) 'config: a bad rotation or cooldown falls back'
+            Assert-Equal 2 $script:KeyConfigErrors.Count 'config: and is named'
+            $script:KeyConfigErrors = @()
+        } finally {
+            [Environment]::SetEnvironmentVariable('GENAI_KEYS', $savedKeysEnv)
+            Remove-Item Env:ACT_KEY_ROTATION -ErrorAction SilentlyContinue; Remove-Item Env:ACT_KEY_COOLDOWN -ErrorAction SilentlyContinue
+        }
+        $script:Providers = $poolSaved.Providers; $script:Provider = ''; [void](Set-ActiveProvider 'genai')
+        $script:KeyPools = @{}; $script:KeyRotation = $poolSaved.Rotation; $script:KeyCooldown = $poolSaved.Cooldown; $script:KeyUsageLog = $poolSaved.Log
+        Reset-ActRequestCaches; $script:StWaits.Clear()
 
         # 404 "model retired" on OpenAI, 403 on the Anthropic endpoint: the first reason leads.
         Reset-ActRequestCaches; $script:GenAiModel = 'gemini-1.5-pro'

@@ -139,6 +139,11 @@ stand-in AAP that keeps what it is given: Check first, made from empty, a second
 kept, overwrite, a template it did not make, grants, a schedule, never a delete) - ansible-core 2.22 and 2.16. Not run
 against a real AAP.
 
+**ACT 0.6.26 for the jobs.** `vendor/act` and `vendor/act-windows` are ACT 0.6.26 (was 0.6.25): key pools, and key
+values removed from the result file, the audit log and `--json` output. The jobs install it to `/opt/act/act` (Windows:
+its own path) as before. A host's `/usr/local/bin/act` stays a link to it (1.53.0), so `act` typed on a host is 0.6.26
+too. Nothing to set up.
+
 ## 1.66.0 — 2026-11-14
 
 **Updating without scripts:** paste `site-automation-1.66.0-changed-since-1.61.0.zip` as it is (from an older version,

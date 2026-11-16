@@ -32,6 +32,9 @@ Requires: Python 3.8+, /bin/bash. No third-party Python packages.
 
 Environment:
   GENAI_KEY       (optional override) bearer token for the API; otherwise use :setup
+  GENAI_KEYS / GENAI_BETA_KEYS / ASKSAGE_KEYS (optional) a key pool: several keys, comma or
+                  newline separated (README "Key pools"); ACT_KEY_ROTATION failover (default)
+                  or round-robin, ACT_KEY_COOLDOWN seconds, ACT_KEY_USAGE_LOG a path
   GENAI_URL       (optional)  default https://api.genai.mil/v1/chat/completions
   GENAI_MODEL     (optional)  default gemini-3.1-pro-preview
   GENAI_CA        (optional)  path to a CA bundle (for internal/.mil CAs)
@@ -106,7 +109,7 @@ Environment:
   The full list of variables (limits, debug, theme, ...) is in README.md.
 """
 
-ACT_VERSION = "0.6.25"  # bump when delivering; check with: act --version
+ACT_VERSION = "0.6.26"  # bump when delivering; check with: act --version
 
 import argparse
 import codecs
@@ -269,11 +272,111 @@ EMBEDDED_GENAI_KEY = ""
 EMBEDDED_GENAI_BETA_KEY = ""
 EMBEDDED_ASKSAGE_KEY = ""
 
+# ---- Key pools (0.6.26) ------------------------------------------------------
+# A provider may hold several API keys: "api_keys" beside "key" in its setup-file record (each
+# a key string or {"key": "...", "label": "..."}), or the *_KEYS environment variable (comma or
+# newline separated) beside the single-key one. Keys from the environment replace the file's.
+# One key is a pool of one and behaves exactly as before. A key is never shown: its label is.
+_KEY_ENV = {"genai": (("GENAI_KEY",), "GENAI_KEYS"),
+            "asksage": (("ASKSAGE_KEY", "ASKSAGE_API_KEY"), "ASKSAGE_KEYS"),
+            "genai-beta": (("GENAI_BETA_KEY",), "GENAI_BETA_KEYS")}
+
+
+def split_keys(raw):
+    """The keys of a *_KEYS value: comma or newline separated, blanks dropped."""
+    return [k.strip() for k in re.split(r"[,\r\n]+", str(raw or "")) if k.strip()]
+
+
+def parse_key_entries(value, quiet=False):
+    """[(key, label)] from a setup file's api_keys: strings or {"key", "label"} objects.
+    Anything else is a configuration error (act stops with exit 2); a label is optional."""
+    out = []
+    if value is None:
+        return out
+    if not isinstance(value, list):
+        if not quiet:
+            _CONFIG_ERRORS.append("api_keys must be a list of keys")
+        return out
+    for i, item in enumerate(value, 1):
+        if isinstance(item, str) and item.strip():
+            out.append((item.strip(), ""))
+        elif isinstance(item, dict) and isinstance(item.get("key"), str) and item["key"].strip():
+            label = item.get("label")
+            out.append((item["key"].strip(), label.strip() if isinstance(label, str) else ""))
+        elif not quiet:
+            _CONFIG_ERRORS.append("api_keys entry {0} has no key".format(i))
+    return out
+
+
+def _unique_keys(entries):
+    seen, out = set(), []
+    for key, label in entries:
+        if key and key not in seen:
+            seen.add(key)
+            out.append((key, label))
+    return out
+
+
+def stored_key_entries(config, provider):
+    """The setup file's pool for a provider: its "key" first, then its "api_keys"."""
+    providers = config.get("providers", {}) if isinstance(config, dict) else {}
+    record = providers.get(provider, {}) if isinstance(providers, dict) else {}
+    if not isinstance(record, dict):
+        return []
+    single = record.get("key")
+    first = [(single.strip(), "")] if isinstance(single, str) and single.strip() else []
+    return _unique_keys(first + parse_key_entries(record.get("api_keys")))
+
+
+def env_key_entries(provider):
+    singles, many = _KEY_ENV[provider]
+    first = []
+    for name in singles:
+        value = os.environ.get(name, "").strip()
+        if value:
+            first = [(value, "")]
+            break
+    return _unique_keys(first + [(k, "") for k in split_keys(os.environ.get(many, ""))])
+
+
+def initial_key_entries(provider, config, embedded=""):
+    """Where a provider's keys come from: the environment, else the setup file, else a key
+    embedded in this copy."""
+    return (env_key_entries(provider) or stored_key_entries(config, provider)
+            or ([(embedded, "")] if embedded else []))
+
+
+def _key_setting(env, field, default):
+    value = os.environ.get(env)
+    if value is None or value == "":
+        value = _USER_CONFIG.get(field, default)
+    return value
+
+
+KEY_ROTATION = str(_key_setting("ACT_KEY_ROTATION", "key_rotation", "failover")).strip().lower()
+if KEY_ROTATION not in ("failover", "round-robin"):
+    _CONFIG_ERRORS.append("key_rotation must be failover or round-robin (got {0!r})".format(
+        KEY_ROTATION))
+    KEY_ROTATION = "failover"
+try:
+    KEY_COOLDOWN = float(_key_setting("ACT_KEY_COOLDOWN", "key_cooldown_seconds", 60))
+    if not 1 <= KEY_COOLDOWN <= 86400:
+        raise ValueError
+except (TypeError, ValueError):
+    _CONFIG_ERRORS.append("key_cooldown_seconds must be between 1 and 86400")
+    KEY_COOLDOWN = 60.0
+KEY_USAGE_LOG = str(_key_setting("ACT_KEY_USAGE_LOG", "key_usage_log", "") or "").strip()
+_KEY_ENTRIES = {
+    "genai": initial_key_entries("genai", _USER_CONFIG, EMBEDDED_GENAI_KEY),
+    "asksage": initial_key_entries("asksage", _USER_CONFIG, EMBEDDED_ASKSAGE_KEY),
+    "genai-beta": initial_key_entries("genai-beta", _USER_CONFIG, EMBEDDED_GENAI_BETA_KEY),
+}
+
 API_URL = env_or_stored("GENAI_URL", _USER_CONFIG, "genai", "url",
                         "https://api.genai.mil/v1/chat/completions")
 MODEL = env_or_stored("GENAI_MODEL", _USER_CONFIG, "genai", "model",
                       "gemini-3.1-pro-preview")
-KEY = env_or_stored("GENAI_KEY", _USER_CONFIG, "genai", "key", EMBEDDED_GENAI_KEY)
+KEY = _KEY_ENTRIES["genai"][0][0] if _KEY_ENTRIES["genai"] else ""
 
 # ---- Providers ----
 # "genai"      : the OpenAI-compatible GenAI proxy (existing behavior; default)
@@ -284,9 +387,7 @@ PROVIDER = os.environ.get("ACT_PROVIDER", _USER_CONFIG.get("provider", "genai"))
 # Ask Sage uses its OpenAI-COMPATIBLE endpoint: the API key is the bearer token directly —
 # no email and no token exchange (matches act.ps1). Point ASKSAGE_URL at your org/IL instance;
 # only the middle segment differs between deployments.
-ASKSAGE_KEY = os.environ.get("ASKSAGE_KEY", os.environ.get(
-    "ASKSAGE_API_KEY", stored_provider_value(_USER_CONFIG, "asksage", "key",
-                                             EMBEDDED_ASKSAGE_KEY)))
+ASKSAGE_KEY = _KEY_ENTRIES["asksage"][0][0] if _KEY_ENTRIES["asksage"] else ""
 ASKSAGE_URL = env_or_stored(
     "ASKSAGE_URL", _USER_CONFIG, "asksage", "url",
     "https://api.genai.army.mil/server/openai/v1/chat/completions").rstrip("/")
@@ -295,8 +396,7 @@ ASKSAGE_MODEL = env_or_stored("ASKSAGE_MODEL", _USER_CONFIG, "asksage", "model",
 # GenAI beta proxy (api-beta.genai.mil): same OpenAI-compatible shape and plain Bearer
 # auth as the stable GenAI proxy, but a separate host/key/model set (grok, gemini, gpt
 # previews land here first). Live /models discovery fills in the real list at startup.
-GENAI_BETA_KEY = os.environ.get("GENAI_BETA_KEY", stored_provider_value(
-    _USER_CONFIG, "genai-beta", "key", EMBEDDED_GENAI_BETA_KEY))
+GENAI_BETA_KEY = _KEY_ENTRIES["genai-beta"][0][0] if _KEY_ENTRIES["genai-beta"] else ""
 GENAI_BETA_URL = env_or_stored(
     "GENAI_BETA_URL", _USER_CONFIG, "genai-beta", "url",
     "https://api-beta.genai.mil/v1/chat/completions").rstrip("/")
@@ -340,6 +440,12 @@ for _name, _env in (("genai", "GENAI_ANTHROPIC_URL"), ("asksage", "ASKSAGE_ANTHR
     _PROVIDER_STATE[_name]["format"] = _fmt if _fmt in ("auto", "openai", "anthropic") else "auto"
     _PROVIDER_STATE[_name]["formats"] = stored_provider_formats(_USER_CONFIG, _name)
     _PROVIDER_STATE[_name]["features"] = stored_provider_features(_USER_CONFIG, _name)
+    # the pool (0.6.26): every key with its label; "api_keys" is written back as the file had it
+    _PROVIDER_STATE[_name]["api_keys"] = list(_KEY_ENTRIES[_name])
+    _rec = (_USER_CONFIG.get("providers") or {}).get(_name) if isinstance(
+        _USER_CONFIG.get("providers"), dict) else None
+    _PROVIDER_STATE[_name]["api_keys_file"] = (_rec.get("api_keys") if isinstance(_rec, dict)
+                                               and isinstance(_rec.get("api_keys"), list) else None)
 if not isinstance(PROVIDER, str) or PROVIDER.lower() not in _PROVIDER_STATE:
     PROVIDER = "genai"
 else:
@@ -358,6 +464,8 @@ def _provider_record(record):
         "url": str(record.get("url", "")),
         "model": str(record.get("model", "")),
     }
+    if record.get("api_keys_file"):
+        out["api_keys"] = record["api_keys_file"]       # the pool as the file had it (0.6.26)
     if record.get("anthropic_url"):
         out["anthropic_url"] = str(record["anthropic_url"])
     if record.get("format", "auto") != "auto":
@@ -409,7 +517,8 @@ def save_user_config(path=None):
         "provider": PROVIDER,
         "providers": {name: _provider_record(record) for name, record in _PROVIDER_STATE.items()},
     }
-    for keep in ("pseudonymize", "pseudo_names"):       # hand-set privacy settings survive :setup
+    for keep in ("pseudonymize", "pseudo_names", "key_rotation", "key_cooldown_seconds",
+                 "key_usage_log"):                     # hand-set settings survive :setup
         if keep in _USER_CONFIG:
             document[keep] = _USER_CONFIG[keep]
     return _write_config_document(path, document)
@@ -945,8 +1054,9 @@ def _session_id():
 
 
 def _append_jsonl(path, rec, mode=0o600):
-    """Append one JSON object as a line to path (O_APPEND is atomic for small writes)."""
-    line = (json.dumps(rec, default=str) + "\n").encode("utf-8", "replace")
+    """Append one JSON object as a line to path (O_APPEND is atomic for small writes). No
+    API key is ever written (0.6.26)."""
+    line = (scrub_keys(json.dumps(rec, default=str)) + "\n").encode("utf-8", "replace")
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, mode)
     try:
         os.write(fd, line)
@@ -965,7 +1075,7 @@ def emit_event(kind, **fields):
     if NDJSON_MODE:
         out = _JSON_OUT if _JSON_OUT is not None else sys.stdout
         try:
-            out.write(json.dumps(rec, default=str) + "\n")
+            out.write(scrub_keys(json.dumps(rec, default=str)) + "\n")
             out.flush()
         except (OSError, ValueError):
             pass
@@ -1087,8 +1197,7 @@ def write_result_file(path, record):
         fd, tmp = tempfile.mkstemp(prefix=".act-result-",
                                    dir=os.path.dirname(os.path.abspath(path)) or ".")
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(record, f, indent=2, default=str)
-            f.write("\n")
+            f.write(scrub_keys(json.dumps(record, indent=2, default=str)) + "\n")
         os.chmod(tmp, 0o600)
         os.replace(tmp, path)
         return True
@@ -1420,9 +1529,10 @@ class TransientError(RuntimeError):
     """A retryable failure talking to the model (network reset, timeout, 5xx). retry_after:
     the seconds the gateway asked us to wait (Retry-After on 429/503), or None."""
 
-    def __init__(self, message="", retry_after=None):
+    def __init__(self, message="", retry_after=None, status=None):
         RuntimeError.__init__(self, message)
         self.retry_after = retry_after
+        self.status = status                         # the HTTP status, when there was one
 
 
 class ModelTurnTimeout(RuntimeError):
@@ -2870,7 +2980,7 @@ _SENSITIVE_RE = re.compile(
     re.I,
 )
 _SECRET_NAME_RE = re.compile(
-    r"(?:^|_)(?:GENAI_KEY|GENAI_BETA_KEY|ASKSAGE_KEY|ASKSAGE_API_KEY|API_KEY|TOKEN|SECRET|PASSWORD|PASSWD|"
+    r"(?:^|_)(?:GENAI_KEYS?|GENAI_BETA_KEYS?|ASKSAGE_KEYS?|ASKSAGE_API_KEY|API_KEYS?|TOKEN|SECRET|PASSWORD|PASSWD|"
     r"CREDENTIAL|PRIVATE_KEY|ACCESS_KEY|AUTH|COOKIE|SESSION)(?:$|_)", re.I)
 # Obvious secret material appearing in output, regardless of the command.
 _SECRET_CONTENT_RE = re.compile(
@@ -2908,14 +3018,33 @@ def is_sensitive_command(cmd):
     return bool(_SENSITIVE_RE.search(cmd) or _SECRET_NAME_RE.search(cmd))
 
 
-def _secret_values():
+def provider_key_values():
+    """Every API key ACT holds (each provider's pool, the file's api_keys, the *_KEYS
+    variables), longest first: what scrub_keys removes from what ACT writes (0.6.26)."""
     values = set()
+    for record in _PROVIDER_STATE.values():
+        values.add(record.get("key", ""))
+        values.update(k for k, _l in record.get("api_keys") or [])
+        values.update(k for k, _l in parse_key_entries(record.get("api_keys_file"), True))
+    for singles, many in _KEY_ENV.values():
+        values.update(os.environ.get(n, "") for n in singles)
+        values.update(split_keys(os.environ.get(many, "")))
+    values.update((KEY, ASKSAGE_KEY, GENAI_BETA_KEY))
+    return sorted((v for v in values if v and len(v) >= 4), key=len, reverse=True)
+
+
+def scrub_keys(text):
+    """text with every API key replaced by [REDACTED] (result file, audit log, --json)."""
+    for key in provider_key_values():
+        if key in text:
+            text = text.replace(key, "[REDACTED]")
+    return text
+
+
+def _secret_values():
+    values = set(provider_key_values())
     for name, value in os.environ.items():
         if value and len(value) >= 4 and _SECRET_NAME_RE.search(name):
-            values.add(value)
-    provider_keys = [record.get("key", "") for record in _PROVIDER_STATE.values()]
-    for value in [KEY, ASKSAGE_KEY, GENAI_BETA_KEY] + provider_keys:
-        if value and len(value) >= 4:
             values.add(value)
     return sorted(values, key=len, reverse=True)
 
@@ -5382,7 +5511,7 @@ def json_step_down(key, detail=""):
 
 
 def build_model_request(send, model, fmt, use_json_mode, prefill, use_tools, key=None,
-                        stream=False, json_level=None, max_tokens=None):
+                        stream=False, json_level=None, max_tokens=None, api_key=None):
     """(url, headers, payload) for one request in `fmt`. `send` is already pseudonymized.
     Optional fields this model/endpoint refused before (temperature, tool_choice,
     stream_options) are left out; the temperature follows ACT_TEMPERATURE; the output limit
@@ -5415,7 +5544,8 @@ def build_model_request(send, model, fmt, use_json_mode, prefill, use_tools, key
             payload["stream"] = True
             if _STREAM_OPTIONS_SUPPORT.get(key) is not False:
                 payload["stream_options"] = {"include_usage": True}
-    headers = _auth_headers(PROVIDER, KEY, {"Content-Type": "application/json"}, fmt=fmt)
+    headers = _auth_headers(PROVIDER, api_key or request_key()[0],
+                            {"Content-Type": "application/json"}, fmt=fmt)
     return format_url(fmt), headers, payload
 
 
@@ -5817,6 +5947,70 @@ def _tool_call_meta(body):
 
 def _one_llm_call(messages, timeout, use_json_mode, prefill, model=None, use_tools=False,
                   fmt=None, stream=None, tool_turns=None, json_level=None):
+    """One request on a key of the active provider's pool (0.6.26): see _one_llm_call_key.
+    With one key it is that call. With several, each request takes a key (key_rotation); a
+    key that is rate limited (429, 503 with Retry-After, a token-limit reply) is parked until
+    its Retry-After (else key_cooldown_seconds) and the request goes at once to the next free
+    key; a key refused (401/403) while another key is accepted is not used again this session.
+    Every key parked: the TransientError carries the shortest park, the usual Retry-After wait."""
+    kw = dict(model=model, use_tools=use_tools, fmt=fmt, stream=stream, tool_turns=tool_turns,
+              json_level=json_level)
+    name = PROVIDER
+    pool = key_pool(name)
+    if pool is None:
+        result = _one_llm_call_key(messages, timeout, use_json_mode, prefill, **kw)
+        if KEY_USAGE_LOG and result[2] is None:
+            entries = key_entries(name)
+            key_usage(entries[0][1] if entries else "key 1", model or MODEL, result[1])
+        return result
+    started = time.monotonic()
+    tried, refused, parked = [], [], False
+    while True:
+        entry = pool.pick(exclude=tried)
+        if entry is None:
+            if refused and not parked:
+                return refused[0][2]                 # every key refused: the request's problem
+            if pool.all_bad():
+                entry = pool.entries[0]              # nothing usable: let the gateway say why
+                if entry in tried:
+                    return refused[0][2]
+            else:
+                wait = pool.shortest_wait()
+                raise TransientError("HTTP 429: every {0} API key is rate limited".format(
+                    _providers()[name]["name"]), retry_after=wait, status=429)
+        tried.append(entry)
+        left = timeout - (time.monotonic() - started)
+        if left <= 0.05:
+            raise ModelTurnTimeout("model turn exceeded the {0:g}s total timeout".format(
+                float(timeout)))
+        try:
+            result = _one_llm_call_key(messages, left, use_json_mode, prefill,
+                                       api_key=entry["key"], **kw)
+        except TokenLimitError:
+            pool.park(entry, None, "token limit")
+            parked = True
+            if pool.has_free(exclude=tried):
+                continue
+            raise
+        except TransientError as e:
+            if e.status == 429 or (e.status == 503 and e.retry_after is not None):
+                pool.park(entry, e.retry_after, "rate limited")
+                parked = True
+                if pool.has_free(exclude=tried):
+                    continue
+                raise TransientError(str(e), retry_after=pool.shortest_wait(), status=e.status)
+            raise
+        if result[2] in (401, 403):
+            refused.append((entry, result[2], result))
+            continue
+        for bad, code, _r in refused:
+            pool.mark_bad(bad, code)
+        pool.used(entry, model or MODEL, result[1])
+        return result
+
+
+def _one_llm_call_key(messages, timeout, use_json_mode, prefill, model=None, use_tools=False,
+                      fmt=None, stream=None, tool_turns=None, json_level=None, api_key=None):
     """Single POST. Returns (reply, body, http_error_code|None, raw); reply is a ModelReply
     (a str carrying finish_reason, tool-call metadata and its origin). On prefill, the
     assistant turn is seeded with '{' and that brace is prepended to the reply before returning.
@@ -5844,7 +6038,7 @@ def _one_llm_call(messages, timeout, use_json_mode, prefill, model=None, use_too
         level = json_level or json_level_for(key, model) or "object"
     url, headers, payload = build_model_request(send, model, fmt, use_json_mode, prefill,
                                                 use_tools, key=key, stream=stream,
-                                                json_level=level)
+                                                json_level=level, api_key=api_key)
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST", headers=headers)
     started = time.monotonic()
@@ -5870,9 +6064,9 @@ def _one_llm_call(messages, timeout, use_json_mode, prefill, model=None, use_too
         if left <= 0.05:
             raise ModelTurnTimeout("model turn exceeded the {0:g}s total timeout".format(
                 float(timeout)))
-        return _one_llm_call(messages, left, use_json_mode, prefill, model=model,
-                             use_tools=use_tools, fmt=fmt, stream=False, tool_turns=tool_turns,
-                             json_level=json_level)
+        return _one_llm_call_key(messages, left, use_json_mode, prefill, model=model,
+                                 use_tools=use_tools, fmt=fmt, stream=False,
+                                 tool_turns=tool_turns, json_level=json_level, api_key=api_key)
     except urllib.error.HTTPError as e:
         detail = _read_limited(e, MAX_API_RESPONSE_BYTES, "API error response").decode(
             "utf-8", "replace")
@@ -5888,9 +6082,10 @@ def _one_llm_call(messages, timeout, use_json_mode, prefill, model=None, use_too
             # to abort the whole task (exit 3); now it retries with backoff like any
             # other transient error (2026-07-17), waiting as long as Retry-After asks (0.6.22).
             raise TransientError("HTTP 429 (rate limited) from API",
-                                 retry_after=parse_retry_after(e.headers))
+                                 retry_after=parse_retry_after(e.headers), status=429)
         if e.code == 503:
-            raise TransientError("HTTP 503 from API", retry_after=parse_retry_after(e.headers))
+            raise TransientError("HTTP 503 from API", retry_after=parse_retry_after(e.headers),
+                                 status=503)
         if e.code in (400, 401, 403, 404, 405, 422):
             return None, None, e.code, detail        # caller may change the request or endpoint
         if e.code in (408, 425, 500, 502, 504):
@@ -6450,12 +6645,204 @@ def _auth_headers(name, key, base=None, fmt="openai"):
     return h
 
 
+# ---- Key pools at run time (0.6.26) -------------------------------------------------------
+class KeyPool(object):
+    """One provider's keys and their state this session: ok, parked until a time (rate
+    limited), or bad (refused). pick() is safe from race threads."""
+
+    def __init__(self, entries):
+        self.lock = threading.Lock()
+        self.entries = []
+        for i, (key, label) in enumerate(entries, 1):
+            self.entries.append({"key": key, "label": label or "key {0}".format(i),
+                                 "parked_until": 0.0, "parked_wall": 0.0, "why": "",
+                                 "bad": "", "requests": 0, "limited": 0})
+        self.next = 0
+
+    def _free(self, entry, now):
+        return not entry["bad"] and entry["parked_until"] <= now
+
+    def pick(self, exclude=()):
+        """The key for the next request (None when none is free), counted as one request."""
+        with self.lock:
+            now = time.monotonic()
+            n = len(self.entries)
+            start = self.next if KEY_ROTATION == "round-robin" else 0
+            for step in range(n):
+                entry = self.entries[(start + step) % n]
+                if entry in exclude or not self._free(entry, now):
+                    continue
+                if KEY_ROTATION == "round-robin":
+                    self.next = (self.entries.index(entry) + 1) % n
+                entry["requests"] += 1
+                return entry
+            return None
+
+    def has_free(self, exclude=()):
+        now = time.monotonic()
+        with self.lock:
+            return any(e not in exclude and self._free(e, now) for e in self.entries)
+
+    def all_bad(self):
+        with self.lock:
+            return all(e["bad"] for e in self.entries)
+
+    def shortest_wait(self):
+        """Seconds until the first parked key is free again (None when none is parked)."""
+        now = time.monotonic()
+        with self.lock:
+            waits = [e["parked_until"] - now for e in self.entries if not e["bad"]]
+        return max(0.0, min(waits)) if waits else None
+
+    def park(self, entry, seconds, why):
+        seconds = KEY_COOLDOWN if seconds is None else max(0.0, float(seconds))
+        with self.lock:
+            entry["parked_until"] = time.monotonic() + seconds
+            entry["parked_wall"] = time.time() + seconds
+            entry["why"] = why
+            entry["limited"] += 1
+            nxt = [e for e in self.entries if e is not entry and self._free(e, time.monotonic())]
+        key_note("key '{0}' is {1}; parked until {2}{3}".format(
+            entry["label"], why, time.strftime("%H:%M:%S", time.localtime(entry["parked_wall"])),
+            "; using '{0}'".format(nxt[0]["label"]) if nxt else ""))
+
+    def mark_bad(self, entry, code):
+        with self.lock:
+            if entry["bad"]:
+                return
+            entry["bad"] = "refused (HTTP {0})".format(code)
+        key_note("key '{0}' was refused (HTTP {1}); not used again this session".format(
+            entry["label"], code))
+
+    def used(self, entry, model, body):
+        """A reply came back on this key: note it in the usage log (key_usage_log)."""
+        key_usage(entry["label"], model, body)
+
+    def state(self, entry):
+        if entry["bad"]:
+            return "bad: " + entry["bad"]
+        if entry["parked_until"] > time.monotonic():
+            return "parked until {0} ({1})".format(
+                time.strftime("%H:%M:%S", time.localtime(entry["parked_wall"])), entry["why"])
+        return "ok"
+
+
+def key_usage(label, model, body):
+    """One line in the usage log (key_usage_log, off by default): time, provider, the key's
+    label, model, tokens when the reply says, and the local user. Never the key."""
+    if not KEY_USAGE_LOG:
+        return
+    usage = body.get("usage") if isinstance(body, dict) else None
+    tokens = None
+    if isinstance(usage, dict):
+        tokens = usage.get("total_tokens") or (
+            (usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
+            + (usage.get("completion_tokens") or usage.get("output_tokens") or 0)) or None
+    try:
+        user = getpass.getuser()
+    except Exception:  # noqa: BLE001 — no user name is still a usable line
+        user = ""
+    try:
+        _append_jsonl(os.path.abspath(os.path.expanduser(KEY_USAGE_LOG)), {
+            "time": _utc_iso(time.time()), "provider": PROVIDER, "label": label,
+            "model": model, "tokens": tokens, "user": user})
+    except OSError:
+        pass                                         # the log never stops a task
+
+
+_KEY_POOLS = {}
+_KEY_POOLS_LOCK = threading.Lock()
+
+
+def key_entries(name):
+    """[(key, label)] of a provider now: its active key first (:setup may have changed it),
+    then the rest of its pool."""
+    st = _PROVIDER_STATE.get(name) or {}
+    pool = [(k, l) for k, l in st.get("api_keys") or [] if k]
+    labels = dict(pool)
+    first = st.get("key") or ""
+    entries = ([(first, labels.get(first, ""))] if first else []) + [
+        (k, l) for k, l in pool if k != first]
+    # default labels follow the configured order, so "key 2" stays key 2 whichever is first
+    order = [k for k, _l in pool]
+    return [(k, l or ("key {0}".format(order.index(k) + 1) if k in order else "key 1"))
+            for k, l in entries]
+
+
+def key_pool(name):
+    """The provider's KeyPool when it has two keys or more, else None (one key: as before).
+    A key list changed by :setup gets a new pool; the state of the keys it kept stays."""
+    entries = key_entries(name)
+    if len(entries) < 2:
+        return None
+    with _KEY_POOLS_LOCK:
+        old = _KEY_POOLS.get(name)
+        if old is not None and [(e["key"], e["label"]) for e in old.entries] == entries:
+            return old
+        pool = KeyPool(entries)
+        if old is not None:
+            kept = dict((e["key"], e) for e in old.entries)
+            for e in pool.entries:
+                if e["key"] in kept:
+                    e.update({k: v for k, v in kept[e["key"]].items() if k != "label"})
+        _KEY_POOLS[name] = pool
+        return pool
+
+
+def request_key(name=None):
+    """The key a single request outside the pool rotation uses (/models, :probe): the
+    first key that is not refused, else the provider's key."""
+    name = name or PROVIDER
+    pool = key_pool(name)
+    if pool is not None:
+        for e in pool.entries:
+            if not e["bad"]:
+                return e["key"], e["label"]
+    entries = key_entries(name)
+    return (entries[0] if entries else ("", ""))
+
+
+def key_note(text):
+    """One plain line about a key (by its label, never the key)."""
+    if not NDJSON_MODE:
+        sys.stderr.write(grey("\n  ({0})\n".format(sanitize_terminal(text))))
+        sys.stderr.flush()
+
+
+def key_last4(key):
+    """The last 4 characters of a long key, for :keys; nothing for a short one."""
+    return "..." + key[-4:] if len(key) >= 16 else ""
+
+
+def print_keys(out=None):
+    """:keys - the active provider's keys: label, state and requests this session."""
+    out = out or sys.stdout
+    entries = key_entries(PROVIDER)
+    if not entries:
+        out.write(yellow("  no API key for {0}; run :setup first".format(PROVIDER)) + "\n")
+        return
+    pool = key_pool(PROVIDER)
+    out.write(blue("Keys for {0} ({1}, {2}):".format(
+        _providers()[PROVIDER]["name"], "{0} keys".format(len(entries)) if pool else "1 key",
+        KEY_ROTATION if pool else "no rotation")) + "\n")
+    rows = pool.entries if pool else [{"key": entries[0][0], "label": entries[0][1],
+                                       "requests": None}]
+    for e in rows:
+        state = pool.state(e) if pool else "ok"
+        count = "" if e["requests"] is None else "  {0} request(s)".format(e["requests"])
+        out.write("  {0:<20} {1:<8} {2}{3}\n".format(
+            sanitize_terminal(e["label"]), key_last4(e["key"]), state, count))
+    if KEY_USAGE_LOG:
+        out.write(grey("  usage log: " + sanitize_terminal(KEY_USAGE_LOG)) + "\n")
+    out.flush()
+
+
 def get_provider_models(name, timeout=6):
     """Fetch the live model list from a provider's OpenAI-style /models endpoint.
     Returns a list of ids, or [] on any failure (no key/url, unsupported, unreachable).
     Best-effort and fast: a short timeout so the picker never hangs on a slow/closed endpoint."""
     p = _providers().get(name) or {}
-    url, key = p.get("url", ""), p.get("key", "")
+    url, key = p.get("url", ""), request_key(name)[0]
     if not url or not key:
         return []
     url = chat_url(url)
@@ -7553,7 +7940,8 @@ def _probe_basic(fmt, model, timeout):
     """The smallest possible request: does this endpoint serve the model at all?"""
     key = _support_key(fmt, model)
     send = pseudo_outgoing([{"role": "user", "content": _PROBE_BASIC_PROMPT}])
-    headers = _auth_headers(PROVIDER, KEY, {"Content-Type": "application/json"}, fmt=fmt)
+    headers = _auth_headers(PROVIDER, request_key()[0], {"Content-Type": "application/json"},
+                            fmt=fmt)
     for _ in range(2):
         if fmt == "anthropic":
             payload = {"model": model, "max_tokens": 64, "messages": send}
@@ -7644,7 +8032,8 @@ def _probe_stream(model, timeout):
     """Does the OpenAI endpoint stream this model's reply (SSE up to [DONE])?"""
     key = _support_key("openai", model)
     send = pseudo_outgoing([{"role": "user", "content": _PROBE_BASIC_PROMPT}])
-    headers = _auth_headers(PROVIDER, KEY, {"Content-Type": "application/json"}, fmt="openai")
+    headers = _auth_headers(PROVIDER, request_key()[0], {"Content-Type": "application/json"},
+                            fmt="openai")
     with_options = True
     retried = False
     for _ in range(3):
@@ -7892,6 +8281,10 @@ def probe_models(models, out=None):
     for fmt in _API_FORMATS:
         out.write(grey("  {0:<19}{1}".format(_FORMAT_LABEL[fmt] + " endpoint",
                                              sanitize_terminal(format_url(fmt)))) + "\n")
+    if key_pool(PROVIDER) is not None:              # labels only, never a key (0.6.26)
+        out.write(grey("  {0:<19}'{1}' (of {2}: {3})".format(
+            "key", sanitize_terminal(request_key()[1]), len(key_entries(PROVIDER)),
+            ", ".join(sanitize_terminal(l) for _k, l in key_entries(PROVIDER)))) + "\n")
     out.flush()
     state = _PROVIDER_STATE[PROVIDER]
     listed = set(state.get("models") or []) if state.get("models_live") else None
@@ -9781,6 +10174,7 @@ REPL_HELP_SECTIONS = (
         (":race [on|off]", "plan on all models; the active model judges (pick/merge) and runs"),
         (":pseudo [on|off|show]", "mask names/IPs before sending (default on); show the mapping"),
         (":tokens", "show session token usage"),
+        (":keys", "show the provider's API keys by label: ok, parked or refused, requests"),
         (":theme [name]", "preview or change the color theme"),
     )),
     ("INPUT", (
@@ -9843,6 +10237,9 @@ def print_session_status(session, stream=None):
     used = TOKENS_USED.get(PROVIDER, 0)
     stream.write(blue("Status") + "\n")
     stream.write(grey("  provider / model  ") + provider_label() + "\n")
+    if key_pool(PROVIDER) is not None:
+        stream.write(grey("  api keys          ") + "{0} ({1}; :keys)".format(
+            len(key_entries(PROVIDER)), KEY_ROTATION) + "\n")
     stream.write(grey("  auto-approve      ") + (yellow("ON") if AUTO else grey("off")) + "\n")
     stream.write(grey("  tool schema       ")
                  + (yellow("ON") if TOOLS_MODE else grey("off"))
@@ -10138,6 +10535,10 @@ def _main():
         print(f"  asksage_url={ASKSAGE_URL}  asksage_key={'set' if ASKSAGE_KEY else 'MISSING'}")
         beta = _PROVIDER_STATE["genai-beta"]
         print(f"  genai_beta_url={beta['url']}  genai_beta_key={'set' if beta['key'] else 'MISSING'}")
+        print("  keys: " + ", ".join("{0}={1}".format(n, len(key_entries(n)))
+                                     for n in _PROVIDER_STATE)
+              + f"  key_rotation={KEY_ROTATION}  key_cooldown={KEY_COOLDOWN:g}s"
+              + f"  key_usage_log={'on' if KEY_USAGE_LOG else 'off'}")
         return 0
 
     if args.theme:
@@ -10333,6 +10734,9 @@ def _main():
             _p, _m = choose_model(MODEL)
             set_provider(_p, _m)
             print(grey(f"  model: {provider_label()}"))
+            continue
+        if task == ":keys":
+            print_keys()
             continue
         if task == ":models":
             live = get_provider_models(PROVIDER)
