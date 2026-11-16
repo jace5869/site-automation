@@ -75,8 +75,8 @@ def _problems(sso, opts, now_only):
         if not x.get("ok"):
             out.append((o["ocsp_severity"], first, "ocsp", x.get("url", ""),
                         # 1.67.0: asked from the AAP node, not from vCenter - say so, and what it means only if vCenter fails too
-                        "AAP could not reach the OCSP responder %s (%s). Asked from the AAP node, not from vCenter: if vCenter "
-                        "cannot reach it either, smart card (CAC) logins that check revocation fail" % (x.get("url", ""), x.get("why") or "no answer"),
+                        "the OCSP responder %s: %s (asked from the AAP node, not from vCenter) - if vCenter gets the same, "
+                        "smart card (CAC) logins that check revocation fail" % (x.get("url", ""), x.get("why") or "no answer"),
                         "From vCenter's shell: curl -sI %s (any HTTP answer = vCenter reaches it). Then the AAP node's path: proxy, "
                         "firewall, DNS." % x.get("url", "")))
     for x in [] if now_only else (sso or {}).get("crl") or []:

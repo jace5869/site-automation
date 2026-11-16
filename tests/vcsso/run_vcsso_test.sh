@@ -157,7 +157,7 @@ run "the STS certificate within 60 days: a warning" -- "WARNING vCenter 127.0.0.
 data sts300 STARTED
 
 run "OCSP: the test certificate revoked" -e "{\"vm_sso_ocsp\": [{\"url\": \"http://127.0.0.1:$po\", \"cert\": \"$W/pb/files/gone.pem\", \"issuer\": \"$W/pb/files/ca.pem\"}]}" -- \
-    "CRITICAL the OCSP responder http://127.0.0.1:$po: the responder says the test certificate is revoked - smart card (CAC) logins"
+    "CRITICAL the OCSP responder http://127.0.0.1:$po: the responder says the test certificate is revoked (asked from the AAP node, not from vCenter) - if vCenter gets the same, smart card (CAC) logins"
 run "OCSP: only the certificate - the responder's address and the issuer read from it" -e "{\"vm_sso_ocsp\": [{\"cert\": \"$W/pb/files/user.pem\"}]}" -- \
     "OK | OCSP http://127.0.0.1:$po | successful, certificate good, next update" "!CRITICAL"
 run "OCSP: site_ocsp_certs, for both reports, when vm_sso_ocsp is empty" -e "{\"vm_sso_ocsp\": [], \"site_ocsp_certs\": [\"$W/pb/files/user.pem\"]}" -- \
