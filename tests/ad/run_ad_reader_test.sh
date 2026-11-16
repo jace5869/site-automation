@@ -300,6 +300,13 @@ run "  ...the next run: who joined since (the file)" ok "$hf" "the file $hist" '
 wait=$((made_at + 65 - $(date +%s)))
 [ "$wait" -gt 0 ] && sleep "$wait"
 on1 samba-tool user disable gone > /dev/null
+# the job may read DC02: wait until the disable has replicated there (CI failed on the race)
+for _ in $(seq 1 30); do
+    on2 samba-tool drs replicate dc02 dc01 "$nc" -U Administrator --password="$pass_admin" > /dev/null 2>&1
+    on2 samba-tool user show gone --attributes=userAccountControl 2>/dev/null \
+        | awk '/^userAccountControl:/ { exit !(int($2 / 2) % 2) }' && break
+    sleep 1
+done
 run "the accounts: disabled (replication metadata, on DC01), locked out now" ok '{"ad_health_mode": "reader", "ad_report_hours": 0.015}' \
     'gone    DISABLED    DC01     replication metadata' 'Accounts locked out now (1)' 'lockme'
 
