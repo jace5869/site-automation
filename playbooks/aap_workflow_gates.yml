@@ -1,0 +1,20 @@
+---
+# AAP - ADD WORKFLOW GATES (1.67.0 part I, setup step 103). Puts the step "Workflow gate - has a plan" into the
+# workflows you built by hand: between each check and its approval (check --on failure--> gate --on success-->
+# approval), so a check that failed on an error ends at the gate and never asks for an approval. The check is known by
+# its job template's playbook (fapolicyd.yml, stig_recheck.yml, stigman_ckl_import.yml, the certificate installs, the
+# Horizon desktops, the service watch ...), never by its name. Only the one direct failure link is removed; every other
+# node and link stays, and no node is deleted. Already gated: left alone. A playbook it does not know: listed, left as it
+# is. Run it with Check first: it then only reads and lists what it would change. docs/WORKFLOWS_AND_SCHEDULES.md,
+# "The gate".
+# Runs on the AAP side: attach a "Red Hat Ansible Automation Platform" credential (its user: Admin on the workflows);
+# no Limit.
+#   ansible-playbook playbooks/aap_workflow_gates.yml --check -e '{"aap_gates_workflows": ["*fapolicyd*"]}'
+- name: AAP - add workflow gates
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: The gate into each check -> approval
+      ansible.builtin.include_role:
+        name: aap_workflow_gates

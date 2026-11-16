@@ -7,6 +7,7 @@ one by hand. Under api/controller/v2/, Bearer FAKE_AAP_TOKEN. Not AAP: just enou
   job_templates/<id>/credentials/           GET, POST {id} or {id, disassociate}
   workflow_job_templates/<id>/workflow_nodes/   POST;  workflow_job_template_nodes/?workflow_job_template=  GET
   workflow_job_template_nodes/<id>/         DELETE;  <id>/create_approval_template/, <id>/{success,failure,always}_nodes/ POST
+                                            ({id}, or {id, disassociate: true}: the link removed)
   <kind>/<id>/object_roles/                 GET (Execute, Approve, Admin)
   users/<id>/roles/                         GET, POST {id}
   <kind>/<id>/schedules/ GET, POST;  schedules/<id>/  PATCH
@@ -205,7 +206,10 @@ class H(BaseHTTPRequestHandler):
                 m = re.match(r"^workflow_job_template_nodes/(\d+)/(success|failure|always)_nodes/$", p)
                 if m:
                     n = next(x for x in s["nodes"] if x["id"] == int(m.group(1)))
-                    n[m.group(2)].append(int(b["id"]))
+                    if b.get("disassociate"):                   # a link removed (the node stays)
+                        n[m.group(2)] = [x for x in n[m.group(2)] if x != int(b["id"])]
+                    elif int(b["id"]) not in n[m.group(2)]:
+                        n[m.group(2)].append(int(b["id"]))
                     return self.send(204)
                 m = re.match(r"^users/(\d+)/roles/$", p)
                 if m:

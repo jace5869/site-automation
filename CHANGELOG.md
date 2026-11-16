@@ -232,6 +232,27 @@ nothing, Response met up and the rest unchanged on the made-up site, the targets
 approval in `workflows.yml` behind the gate; `extra_data` checked), `tests/portal_setup/run_portal_setup_test.sh`
 (workflow 40 with the gate, the gate template) - ansible-core 2.22 and 2.16.
 
+**AAP - add workflow gates** (part I). **To set up: step 103**, optional. New job template *AAP - add workflow gates*
+(`playbooks/aap_workflow_gates.yml`); run it with Check first (docs/WORKFLOWS_AND_SCHEDULES.md, "The gate").
+
+- **What.** Puts the gate into the workflows you built by hand, with your own names. A check is known by its job
+  template's playbook (fapolicyd, the STIG rechecks, the checklist import, the certificate installs, the Horizon
+  desktops, the service watch). Each check -> approval on failure becomes check -> gate -> approval.
+- **Safe.** Only the one direct failure link is removed; every other node and link stays; no node is deleted. Already
+  gated: left alone. A playbook it does not know: listed, left as it is (`aap_gates_checks` names more). Check lists
+  every workflow: would gate, already gated, unknown check, not a check->approval, no gate (ACT's fix).
+- **Settings:** `aap_gates_workflows` (`[]` = all; names, ids or patterns), `aap_gates_checks`, `aap_gates_project`,
+  `aap_gates_inventory`, `aap_gates_execution_environment` (the gate template, made only if missing),
+  `aap_gates_aap_ca_path`.
+- **A test rule fixed:** `tests/test_workflow_gate.py` no longer asks for a gate before an approval that follows a plan
+  job's **success** (workflows 49 to 51): a plan that fails on an error never reaches that approval.
+
+**Tests (part I):** `tests/portal_setup/run_workflow_gates_test.sh` (new, against the stand-in AAP: Check first, the
+user's own names, two pairs in one workflow, already gated by a gate of another name, an unknown check, ACT's fix, a
+second run, a half-done gate finished, a name that matches nothing; no DELETE), `tests/test_workflow_gate.py` (the
+checks' table is the doc's and each sets its plan; the gate template's mark is the setup job's) - ansible-core 2.22
+and 2.16.
+
 ## 1.66.0 — 2026-11-14
 
 **Updating without scripts:** paste `site-automation-1.66.0-changed-since-1.61.0.zip` as it is (from an older version,

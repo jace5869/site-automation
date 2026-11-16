@@ -1,0 +1,17 @@
+---
+# ---- AAP - add workflow gates (1.67.0 part I; playbooks/aap_workflow_gates.yml, docs/WORKFLOWS_AND_SCHEDULES.md "The gate")
+# Puts the step "Workflow gate - has a plan" between each check and its approval in the workflows you built by hand, so
+# only a check that handed on a plan reaches the approval. The check is known by its job template's playbook, never by
+# its name. Only the one direct failure link from the check to the approval is removed; no node is deleted. A workflow
+# already gated is left alone; a playbook this job does not know before an approval is listed and left as it is. Run it
+# with Check first: it then only reads and lists what it would change. The "Red Hat Ansible Automation Platform"
+# credential's user needs Admin on the workflows.
+
+aap_gates_workflows: []                         # the workflows: names, ids or patterns (* and ?, any case); [] = every workflow
+# more checks, by playbook file name: {my_check.yml: my_check_plan} - the plan's variable the check hands on (set_stats)
+aap_gates_checks: {}
+# the gate template, made only when AAP has none of that name (AAP - set up portal actions makes the same one)
+aap_gates_project: "{{ portal_setup_project | default('') }}"                 # its project: your site-automation project
+aap_gates_inventory: "{{ (portal_setup_inventories | default({})).default | default('') }}"   # any inventory (it runs on the controller)
+aap_gates_execution_environment: "{{ portal_setup_execution_environment | default('') }}"    # "" = the project's default
+aap_gates_aap_ca_path: "{{ report_history_aap_ca_path | default('') }}"      # a CA file for AAP's own HTTPS certificate

@@ -424,6 +424,7 @@ workflows the actions launch, from `roles/site_portal_stack/files/workflows.yml`
 - **The gate.** A workflow with an approval gets the step *Workflow gate - has a plan* between its check and the
   approval. Only a check that handed on a plan reaches the approval; one that failed on an error ends there.
   [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#the-gate-the-approval-only-when-the-check-has-a-plan-1670).
+  **Step 103:** the job *AAP - add workflow gates* puts the same gate into the workflows you built by hand.
 
 1. **Templates > Create template > Create job template:** `AAP - set up portal actions`, playbook
    `playbooks/aap_portal_setup.yml`, any inventory, the credential **Red Hat Ansible Automation Platform** of an AAP
