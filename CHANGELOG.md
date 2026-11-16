@@ -150,6 +150,13 @@ too. Nothing to set up.
 read from any of the forms seen (PEM, Windows or escaped line ends, the bare base64 body), and one that still cannot be
 read is a note in the report, not a crash. Nothing to set up.
 
+**Fixed: a slow STIG Manager answer crashed the job.** The STIG scorecard stopped with `TimeoutError: The read operation
+timed out` on a large collection (a read that times out is not a URLError). The STIG Manager clients (scorecard,
+checklist import, STIG Manager - update, the STIG drift report's reads and attachments) now turn a timeout or a dropped
+connection into their own error: the scorecard lists that collection with *no answer ... in time (a slow answer: raise
+check_stig_stigman_timeout)* and reads the others. Nothing to set up; for very large collections raise
+`check_stig_stigman_timeout` (60 s per request).
+
 ## 1.66.0 — 2026-11-14
 
 **Updating without scripts:** paste `site-automation-1.66.0-changed-since-1.61.0.zip` as it is (from an older version,
