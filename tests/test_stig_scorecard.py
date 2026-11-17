@@ -456,16 +456,19 @@ class Scorecard(unittest.TestCase):
         self.assertEqual(by[VMW], ["-", "-", "-", "-", 3, 3, 3, 3])
         self.assertEqual(by[WIN], [7, 7, 7, 7, 7, 7, 7, 8])
 
-    def test_the_findings_most_hosts_first(self):
-        """1.68.0: Top rules is no section any more - the Findings view's order (the most hosts first)."""
+    def test_the_findings_biggest_weight_first(self):
+        """1.70.0: the Findings view's order is the weight - the hosts a rule is open on times 10, 4 or 1 for its CAT (1.68.0:
+        the most hosts first); the same weight, the most hosts first."""
         s = section(self.doc, "Findings", "web")
-        self.assertEqual([(r[1], r[2], r[5]) for r in s["rows"][:5]],
-                         [("SV-258036 (RHEL-09-291010)", "CAT II", 5), ("SV-254269 (WN22-00-000330)", "CAT II", 4),
-                          ("SV-257985 (RHEL-09-255045)", "CAT II", 3), ("SV-254247 (WN22-00-000110)", "CAT I", 2),
-                          ("SV-256375 (ESXI-70-000001)", "CAT II", 2)])
-        self.assertEqual(s["rows"][0][6], "SITEA - RHEL 9 (5)")
+        self.assertEqual(s["columns"][5:8], ["Hosts open", "Weight", "Where"])
+        self.assertEqual([(r[1], r[2], r[5], r[6]) for r in s["rows"][:5]],
+                         [("SV-258036 (RHEL-09-291010)", "CAT II", 5, 20), ("SV-254247 (WN22-00-000110)", "CAT I", 2, 20),
+                          ("SV-254269 (WN22-00-000330)", "CAT II", 4, 16), ("SV-257985 (RHEL-09-255045)", "CAT II", 3, 12),
+                          ("SV-254239 (WN22-00-000030)", "CAT I", 1, 10)])
+        self.assertEqual([r[6] for r in s["rows"]], sorted([r[6] for r in s["rows"]], reverse=True))
+        self.assertEqual(s["rows"][0][7], "SITEA - RHEL 9 (5)")
         self.assertEqual([h for h, c in s["details"][0]["rows"]], ["rhel01", "rhel03", "rhel04", "rhel05", "rhel06"])
-        self.assertEqual(s["text"], "Open a rule for the hosts it is open on.")       # one short sentence
+        self.assertTrue(s["text"].startswith("Biggest weight first (hosts open x 10, 4 or 1)."))
         self.assertFalse([x for x in self.doc["sections"] + self.doc["web"] if x["title"].startswith(("Top ", "The rules open across"))])
         d = card(opts={"top": 2})                                                    # stigman_scorecard_top: a collection opened
         self.assertEqual(len(section(d, "By collection", "web")["details"][0][0]["rows"]), 2)
@@ -474,7 +477,7 @@ class Scorecard(unittest.TestCase):
         s = fx.state(0)
         s["1"]["SV-258036"] = ["esx01"]
         row = section(card(read=read_of(s)), "Findings", "web")["rows"][0]
-        self.assertEqual((row[5], row[6]), (6, "SITEA - RHEL 9 (5), SITEA - VMware (1)"))
+        self.assertEqual((row[5], row[6], row[7]), (6, 24, "SITEA - RHEL 9 (5), SITEA - VMware (1)"))
 
     def test_fixed_on_the_host_still_open(self):
         s = section(self.doc, "Fixed on the host")
@@ -1056,7 +1059,8 @@ class Platforms(unittest.TestCase):
 class SlowClient(object):
     """STIG Manager as site_stig_scorecard.read asks it (1.68.0): the metrics (a row per asset and STIG; the collection's
     totals) - or none, an older STIG Manager (404) - and the findings by rule with their hosts, which may be too slow."""
-    def __init__(self, slow=(), metrics=True, slow_rules=(), slow_summary=(), slow_assets=()):
+    def __init__(self, slow=(), metrics=True, slow_rules=(), slow_summary=(), slow_assets=(), cora=False):
+        self.cora = cora                               # 1.70.0: the counts by severity, as STIG Manager 1.6.18 gives them
         self.slow, self.metrics, self.calls, self.slow_rules = set(slow), metrics, [], set(slow_rules)
         self.slow_summary = set(slow_summary)          # 1.68.0: the totals answered, the rows per asset and STIG too slow
         self.slow_assets = set(slow_assets)            # 1.68.0: GET /assets too slow as well
@@ -1079,10 +1083,17 @@ class SlowClient(object):
                     for sv, names in fx.state(0).get(cid, {}).items():
                         if h in names and fx.bench(sv) == b:
                             f[fx.RULES[sv][2]] += 1
-                    rows.append({"assetId": h, "name": h, "benchmarkId": b, "metrics": {"findings": f, "minTs": "2025-03-01T10:00:00Z"}})
+                    m = {"findings": f, "minTs": "2025-03-01T10:00:00Z"}
+                    if self.cora:                      # a checklist: 10 CAT I, 40 CAT II and 20 CAT III rules; 1, 4 and 0 not reviewed
+                        m["assessmentsBySeverity"] = {"high": 10, "medium": 40, "low": 20}
+                        m["assessedBySeverity"] = {"high": 9, "medium": 36, "low": 20}
+                    rows.append({"assetId": h, "name": h, "benchmarkId": b, "metrics": m})
             if path.endswith("/metrics/summary/collection"):
-                return {"collectionId": cid, "assets": len(hosts), "metrics": {"findings": dict(
-                    (k, sum(r["metrics"]["findings"][k] for r in rows)) for k in ("high", "medium", "low"))}}
+                tm = {"findings": dict((k, sum(r["metrics"]["findings"][k] for r in rows)) for k in ("high", "medium", "low"))}
+                for k in ("assessmentsBySeverity", "assessedBySeverity"):
+                    if self.cora:
+                        tm[k] = dict((v, sum(r["metrics"][k][v] for r in rows)) for v in ("high", "medium", "low"))
+                return {"collectionId": cid, "assets": len(hosts), "metrics": tm}
             return rows
         if path.endswith("/findings"):
             if q.get("projection") == "stigs" and cid in self.slow_rules and self.metrics:
@@ -1365,7 +1376,7 @@ class Big(unittest.TestCase):
         self.assertEqual(hv["title"], "Hosts (400)")
         self.assertEqual(len(hv["details"]), 400)
         fv = section(web, "Findings")
-        self.assertEqual([r[5] for r in fv["rows"][:20]], sorted([r[5] for r in fv["rows"][:20]], reverse=True))   # the most hosts first
+        self.assertEqual([r[6] for r in fv["rows"][:20]], sorted([r[6] for r in fv["rows"][:20]], reverse=True))   # the biggest weight first
         self.assertTrue(all(len(x["rows"]) <= f.HOSTS_MAX for x in fv["details"] if x.get("rows")))
         self.assertLess(len(json.dumps(web)), 3000000)                           # the page's data stays under 3 MB
         self.assertEqual(f._scorecard_web(web, web["sections"])["title"], web["title"])   # the report fit document
@@ -1432,7 +1443,7 @@ class Links(unittest.TestCase):
         i = [r[1] for r in fv["rows"]].index("SV-257985 (RHEL-09-255045)")
         self.assertEqual(cl["titles"][i], "Opens STIG Manager in a new tab. Then: SITEA - RHEL 9 > RHEL_9_STIG > SV-257985")
         self.assertEqual(cl["copies"][i], "SV-257985")                         # the rule's number, for STIG Manager's filter
-        self.assertEqual(fv["text"], "Open a rule for its check text, fix text and hosts.")     # one short sentence: the link
+        self.assertTrue(fv["text"].endswith("Open a rule for its check text, fix text and hosts."))     # short: the link
         self.assertEqual(section(d, "Hosts", "web")["text"], "Open a host for its open rules.")      # icon and tooltip say the rest
         hv = section(d, "Hosts", "web")
         i = [r[1] for r in hv["rows"]].index("rhel04")
@@ -1459,7 +1470,7 @@ class Links(unittest.TestCase):
     def test_no_api_no_links_and_the_email_has_none(self):
         d = card()
         self.assertFalse([s["title"] for s in d["web"] if s.get("cell_links")])
-        self.assertEqual(section(d, "Findings", "web")["text"], "Open a rule for the hosts it is open on.")
+        self.assertTrue(section(d, "Findings", "web")["text"].endswith("Open a rule for the hosts it is open on."))
         self.assertFalse([s["title"] for s in self.doc()["sections"] if s.get("cell_links") or "texts" in json.dumps(s.get("details"))])
 
     def test_the_page(self):

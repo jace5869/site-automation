@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.70.0 — 2026-11-17
+
+**To set up: nothing.** The scorecard shows CORA when STIG Manager's metrics give the counts by severity.
+
+**CORA risk in the STIG scorecard** (docs/CKL_IMPORT.md, "CORA risk").
+
+- The tile **CORA risk**: the rating (Very High, High, Moderate, Low, Very Low) and the weighted percentage, in STIG
+  Manager's own way: the Open and not yet assessed rules of each CAT, weighted CAT I 10, CAT II 4, CAT III 1. The
+  colour follows the rating, and the word is always shown.
+- **CORA %** and **Risk** columns in *By collection* and *By platform* on the website; the same two columns and a note
+  row in the workbook. The email gets the tile.
+- The week's change in points on the tile and in a collection's hover. The point keeps the counts per CAT (the job
+  artifact and the report database's existing JSON: no new table), so last week's score can be worked out. The first
+  run with them shows no change.
+- No more calls: the counts are in the metrics the scorecard already reads. An older STIG Manager shows no CORA.
+- **Weight** in *Findings*: the hosts a rule is open on times 10, 4 or 1. The page lists the biggest weight first
+  (it was the most hosts first). *Rules across hosts* in the workbook has the column too.
+- Tests: tests/test_stig_cora.py (the math by hand: each band, the Low case, a CAT without rules, unassessed rules; the
+  read, the point, the page, the email, the workbook, the weight), the scorecard end-to-end test.
+
 ## 1.69.1 — 2026-11-17
 
 **To set up: nothing, unless the checklist import should write over Accepted reviews too.** The new settings keep what

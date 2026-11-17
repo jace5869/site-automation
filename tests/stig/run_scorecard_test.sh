@@ -101,7 +101,7 @@ run "import and scorecard, not run by AAP: this run's point alone, the trend sta
        "NEW ASSET vrops01 (vrops01.example.mil) in SITEA - VMware" '"stig_scorecard"' '"SV-258036": 5' "!NEEDS APPROVAL - "
 only_get "only GET requests reached STIG Manager"
 if latest "$work/site" | "$py" -c '
-import json, sys
+import json, re, sys
 r, imp = json.load(sys.stdin), json.load(open(sys.argv[1]))
 titles = [s["title"] for s in r["sections"]]
 assert r["title"] == "STIG compliance: 4 CAT I open on 2 collections", r["title"]       # the import is the line under it, never the title
@@ -111,8 +111,10 @@ mine = [t for t in titles if t in [s["title"] for s in imp["sections"]]]
 assert mine == [s["title"] for s in imp["sections"]], (titles, "the import sections, in their order")
 assert titles.index(mine[0]) > titles.index("By collection (3)"), titles
 labels = [t["label"] for t in r["summary"]]
-assert labels[:5] == ["CAT I open", "CAT II open", "CAT III open", "Closed this week", "Opened this week"], labels   # no drift scans: no Fixed tile
-assert labels[5:] == [t["label"] for t in imp["summary"]], labels
+assert labels[:6] == ["CORA risk", "CAT I open", "CAT II open", "CAT III open", "Closed this week", "Opened this week"], labels   # no drift scans: no Fixed tile
+assert labels[6:] == [t["label"] for t in imp["summary"]], labels
+cora = r["summary"][0]                                                              # 1.70.0: the rating word and the weighted %, from the metrics
+assert re.match(r"^(Very High|High|Moderate|Low|Very Low) \d+\.\d%$", cora["value"]) and cora["status"] in ("critical", "warning", "ok"), cora
 col = r["sections"][2]
 assert "trend starts next week" in json.dumps(col) and "sparks" not in col, col.get("kinds")
 assert titles[-1] == "How the scorecard counts", titles
@@ -297,7 +299,7 @@ import json, sys
 r = json.load(sys.stdin)
 titles = [s["title"] for s in r["sections"]]
 assert r["title"] == "STIG compliance: 4 CAT I open on 2 collections, 1 more than last week", r["title"]
-assert len(r["summary"]) == 6 and "Each checklist" not in titles and "Checklist import" not in titles, titles' \
+assert len(r["summary"]) == 7 and "Each checklist" not in titles and "Checklist import" not in titles, titles' \
     && ok "  ...the report: the scorecard alone" || bad "  ...the scorecard-only report"
 before=$(cd "$work/ckl" && find . | sort)
 AAP_ENV="$AAP" run "scorecard with stigman_ckl_import_move true: no move, the drop folder as it was" ok -e "$card" -e "$job" \
@@ -319,7 +321,7 @@ cp "$work/sm.json" "$work/sm.keep"
 AAP_ENV="$AAP" run "an older STIG Manager (no metrics: the assets counted) and a collection whose findings are refused: listed, the rest whole" ok \
     -e "$card" -e "$job" \
     -- "STIG compliance: 1 CAT I open on 1 collection, the same as last week" "SITEA - RHEL 9: CAT I 1, CAT II 8, CAT III 2" \
-       "Not read: SITEA - Windows Server - HTTP 403" "!SITEA - Windows Server: CAT I"
+       "Not read: SITEA - Windows Server - HTTP 403" "!SITEA - Windows Server: CAT I" "CORA risk: not shown"
 grep -q "GET /api/assets?collectionId=2" "$work/sm.log" && ok "  ...the assets counted from GET /assets" || bad "  ...no GET /assets"
 cp "$work/sm.keep" "$work/sm.json"
 # 1.67.0: a big collection - STIG Manager slow only on the host lists (projection=assets): the counts kept, said, timed

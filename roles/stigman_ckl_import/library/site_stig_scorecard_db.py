@@ -189,6 +189,9 @@ def rows_of(point, now, job, hosts=True):
         rules = dict((k, c.get(k) or {}) for k in CATS)
         rules["rr"] = bool(c.get("rr", True))                 # 1.68.0: were the rules read; are the hosts' counts kept (hk)
         rules["hk"] = bool(hosts) and isinstance(c.get("h"), dict)
+        for k in ("ra", "rd"):                                # 1.70.0: the CORA risk score's counts (CAT I, II, III), in the same JSON
+            if isinstance(c.get(k), list) and len(c[k]) == 3:
+                rules[k] = [int(x or 0) for x in c[k]]
         out.append((now, job, str(c["id"])[:64], str(c.get("name") or "")[:255], int(c.get("assets") or 0), int(c.get("cat1") or 0),
                     int(c.get("cat2") or 0), int(c.get("cat3") or 0), json.dumps(rules, sort_keys=True, separators=(",", ":"))))
     return out
@@ -242,6 +245,9 @@ def read(conn, now, days, platforms=False, hosts=False):
         rec.update((k, r.get(k) if isinstance(r, dict) and isinstance(r.get(k), dict) else {}) for k in CATS)
         if isinstance(r, dict) and r.get("rr") is False:
             rec["rr"] = False                           # true is the default (a point before 1.68.0 always read its rules)
+        for k in ("ra", "rd"):
+            if isinstance(r, dict) and isinstance(r.get(k), list) and len(r[k]) == 3:
+                rec[k] = [int(x or 0) for x in r[k]]
         if hosts and isinstance(r, dict) and r.get("hk"):
             rec["h"] = {}                               # 1.68.0: filled from stig_scorecard_host below
         run["collections"].append(rec)

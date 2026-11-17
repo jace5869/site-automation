@@ -297,23 +297,34 @@ class H(BaseHTTPRequestHandler):
                 benches = [st["benchmarkId"] for st in a.get("stigs", [])] or [""]
                 for b in benches:
                     f = {"low": 0, "medium": 0, "high": 0}
+                    done = {"low": 0, "medium": 0, "high": 0}          # 1.70.0: assessed (pass, fail, not applicable) by severity
                     ts = []
                     for r in d["reviews"].get(a["assetId"], []):
                         rb = r.get("benchmarkId") or (r.get("rule") or {}).get("benchmarkId") or benches[0]
                         if rb != b or r.get("revision"):
                             continue
                         ts.append(r.get("ts") or "")
+                        sev = (r.get("rule") or {}).get("severity", "medium")
+                        sev = sev if sev in f else "medium"
+                        if r.get("result") in ("pass", "fail", "notapplicable"):
+                            done[sev] += 1
                         if r.get("result") == "fail":
-                            sev = (r.get("rule") or {}).get("severity", "medium")
-                            f[sev if sev in f else "medium"] += 1
-                    rows.append({"assetId": a["assetId"], "name": a["name"], "labels": [], "benchmarkId": b or None,
-                                 "metrics": {"findings": f, "minTs": min(ts) if ts else None, "maxTs": max(ts) if ts else None,
-                                             "results": {"fail": sum(f.values())}}})
+                            f[sev] += 1
+                    m = {"findings": f, "minTs": min(ts) if ts else None, "maxTs": max(ts) if ts else None,
+                         "results": {"fail": sum(f.values())}}
+                    if not d.get("no_cora"):                           # 1.70.0: as 1.6.18: every STIG has 10 high, 40 medium, 20 low rules
+                        m["assessmentsBySeverity"] = {"low": 20, "medium": 40, "high": 10}
+                        m["assessedBySeverity"] = done
+                    rows.append({"assetId": a["assetId"], "name": a["name"], "labels": [], "benchmarkId": b or None, "metrics": m})
             if len(parts) == 6:
                 return self.send(200, rows)
             tot = dict((k, sum(r["metrics"]["findings"][k] for r in rows)) for k in ("low", "medium", "high"))
+            tm = {"findings": tot}
+            for k in ("assessmentsBySeverity", "assessedBySeverity"):
+                if rows and k in rows[0]["metrics"]:
+                    tm[k] = dict((v, sum(r["metrics"][k][v] for r in rows)) for v in ("low", "medium", "high"))
             return self.send(200, {"collectionId": parts[3], "name": col[0]["name"], "assets": len(d["assets"].get(parts[3], [])),
-                                   "metrics": {"findings": tot}})
+                                   "metrics": tm})
         if len(parts) == 5 and parts[1:3] == ["api", "collections"] and parts[4] == "stigs":
             benches = sorted(set(st["benchmarkId"] for a in d["assets"].get(parts[3], []) for st in a.get("stigs", [])))
             return self.send(200, [{"benchmarkId": b, "revisionStr": self.revision(d, parts[3], b)} for b in benches])

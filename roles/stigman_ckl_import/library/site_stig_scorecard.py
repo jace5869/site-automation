@@ -263,6 +263,15 @@ def _n(v):
         return 0
 
 
+def sev_of(m, key):
+    """1.70.0: STIG Manager's metrics of one kind by severity (assessmentsBySeverity, assessedBySeverity) -> [CAT I, II, III]
+    (high, medium, low), or None when the metrics do not have it (an older STIG Manager)."""
+    d = m.get(key) if isinstance(m, dict) else None
+    if not isinstance(d, dict) or not all(isinstance(d.get(k), int) for k in ("high", "medium", "low")):
+        return None
+    return [max(0, d["high"]), max(0, d["medium"]), max(0, d["low"])]
+
+
 def metrics_of(rows):
     """1.68.0: GET /collections/ID/metrics/summary (a row per asset and STIG) -> [{asset, stig, cat1, cat2, cat3, min_ts,
     max_ts}]: CAT I is the findings STIG Manager counts high, II medium, III low; min_ts its oldest review."""
@@ -272,9 +281,13 @@ def metrics_of(rows):
             continue
         m = r.get("metrics") if isinstance(r.get("metrics"), dict) else {}
         f = m.get("findings") if isinstance(m.get("findings"), dict) else {}
-        out.append({"asset": str(r.get("name") or r.get("assetId")), "stig": str(r.get("benchmarkId") or ""),
-                    "cat1": _n(f.get("high")), "cat2": _n(f.get("medium")), "cat3": _n(f.get("low")),
-                    "min_ts": str(m.get("minTs") or ""), "max_ts": str(m.get("maxTs") or "")})
+        rec = {"asset": str(r.get("name") or r.get("assetId")), "stig": str(r.get("benchmarkId") or ""),
+               "cat1": _n(f.get("high")), "cat2": _n(f.get("medium")), "cat3": _n(f.get("low")),
+               "min_ts": str(m.get("minTs") or ""), "max_ts": str(m.get("maxTs") or "")}
+        a, d = sev_of(m, "assessmentsBySeverity"), sev_of(m, "assessedBySeverity")
+        if a is not None and d is not None:             # 1.70.0: the CORA risk score's counts (a: rules, d: assessed), CAT I, II, III
+            rec["cora_a"], rec["cora_d"] = a, d
+        out.append(rec)
     return out
 
 
@@ -301,6 +314,9 @@ def read(p, client):
             f = tot["metrics"].get("findings") if isinstance(tot["metrics"].get("findings"), dict) else {}
             rec.update(assets=_n(tot.get("assets")), cat1=_n(f.get("high")), cat2=_n(f.get("medium")), cat3=_n(f.get("low")),
                        counts_from="metrics")
+            a, d = sev_of(tot["metrics"], "assessmentsBySeverity"), sev_of(tot["metrics"], "assessedBySeverity")
+            if a is not None and d is not None:        # 1.70.0: the CORA risk score's counts, no more calls
+                rec["cora_a"], rec["cora_d"] = a, d
             try:                                       # a row per asset and STIG: not read, the totals stay (no host counts)
                 rows = client.get("/collections/%s/metrics/summary" % cid)
                 if not isinstance(rows, list):

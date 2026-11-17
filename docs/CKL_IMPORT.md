@@ -388,12 +388,12 @@ says what was read, when, and what it was compared with.
 
 | Part | What it says |
 |---|---|
-| The tiles | CAT I, CAT II and CAT III open (each in its own colour, always with its word); closed and opened this week; fixed on the host (only with drift scans) |
+| The tiles | **CORA risk** first (1.70.0); CAT I, CAT II and CAT III open (each in its own colour, always with its word); closed and opened this week; fixed on the host (only with drift scans) |
 | The filters | **Platform**, **Collection**, **CAT** and **Host** (a name, or part of one) |
 | **At a glance** | the 3 worst collections and the best 2, one line each; then the week |
-| **By platform** | a row per platform: assets, CAT I, II and III open, the change this week, a trend line, a status |
+| **By platform** | a row per platform: assets, CAT I, II and III open, CORA % and Risk, the change this week, a trend line, a status |
 | **By collection** | the same, a row per collection. A row opens to its worst hosts |
-| **Findings** | every open rule, the most hosts first. A rule opens to the hosts it is open on |
+| **Findings** | every open rule, the biggest weight first (1.70.0). A rule opens to the hosts it is open on |
 | **Hosts** | every asset, the most CAT I first, with its oldest review. A host opens to its open rules |
 | **Fixed on the host, still Open** | the drift scans say it passes; STIG Manager still has it Open. Only when there are drift scans |
 | **The numbers behind the lines** | the open findings per week |
@@ -418,6 +418,35 @@ collection*, *Findings*, *Hosts*, *Since last week*, *Fixed on host, still open*
   *Host* in Excel for a host's rules.
 - *Hosts*: Host, Collection, Platform, CAT I, CAT II, CAT III, Open, Oldest review (UTC, `YYYY-MM-DD`).
 - *By collection* and *By platform* have the trend as an Excel sparkline, with a gap for a week without a run.
+
+### CORA risk (1.70.0)
+
+The tile **CORA risk** is a score like the one on STIG Manager's own Collection dashboard, worked out the same way.
+It shows the rating word and the weighted percentage, for example `High 12.0%`. Very High and High are red, Moderate
+is amber, Low and Very Low are green, and the word is always shown.
+
+How it is worked out (the formula STIG Manager's CORA panel uses):
+
+1. For each CAT, take the rules that are Open or not yet assessed, as a share of all its rules. Assessed means Open,
+   Not a Finding or Not Applicable; Not Reviewed and Informational are not assessed.
+2. Weight the three shares CAT I 10, CAT II 4, CAT III 1, over the CATs that have rules.
+3. Very High is 20 % or more, High 10 % or more, Moderate above 0 %, Very Low exactly 0 %.
+4. Low: it would be Moderate, but CAT I is 0 % and CAT II and CAT III are each under 5 %.
+
+The page adds the columns **CORA %** and **Risk** to *By collection* and *By platform* (the email keeps its tables as
+they were, with the tile). The tile says how the score moved since last week's run, in points: `▼ 1.2 points since
+6 Nov`. The first week has no change, and neither does a week whose run before had no CORA counts. A collection's
+hover shows its three shares and last week's score.
+
+The counts come from the metrics the scorecard already reads (`assessmentsBySeverity`, `assessedBySeverity` and
+`findings` of STIG Manager 1.6 and later): no more calls. An older STIG Manager, or a collection counted from the
+findings, has no CORA: no tile, no columns, and one line in the job output. The workbook has the two columns on *By
+collection* and *By platform*, and a last row, *How CORA is worked out*. Last week's score needs the counts in the
+earlier point, so it starts with the first run of 1.70.0.
+
+**Weight** (1.70.0): *Findings* has a **Weight** column, the hosts a rule is open on times 10 (CAT I), 4 (CAT II) or 1
+(CAT III), and the page lists the biggest weight first. *Rules across hosts* in the workbook has the same column and
+order.
 
 ### By platform (1.67.0)
 

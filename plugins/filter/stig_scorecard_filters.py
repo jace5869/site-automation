@@ -87,6 +87,78 @@ def _open(c):
     return _n(c.get("cat1")) + _n(c.get("cat2")) + _n(c.get("cat3"))
 
 
+# ---- 1.70.0: the CORA risk score, STIG Manager's own method (its Collection dashboard's CORA panel) ----------------
+CORA_WEIGHT = (10, 4, 1)         # CAT I, II, III
+CORA_STATUS = {"Very High": "critical", "High": "critical", "Moderate": "warning", "Low": "ok", "Very Low": "ok"}
+CORA_NOTE = ("CORA (STIG Manager's method): for each CAT, the share of its rules that are Open or not yet assessed, weighted "
+             "CAT I 10, CAT II 4, CAT III 1 over the CATs that have rules.")
+CORA_BANDS = ("Very High from 20 %, High from 10 %, Moderate above 0 %, Very Low at 0 %. "
+              "Low: Moderate with no CAT I Open or unassessed and CAT II and CAT III each under 5 %.")
+
+
+def cora(a, d, o):
+    """The CORA risk score. a: the rules (assessments) of CAT I, II, III; d: how many are assessed (Open, Not a Finding or
+    Not Applicable - Not Reviewed and Informational are not); o: how many are Open. -> {pct (weighted, 1 decimal), rating,
+    cats: [% of CAT I, II, III Open or unassessed]}, or None when the counts are not there. As STIG Manager's own panel:
+    a CAT's share is (rules - assessed + Open) / rules (0 when it has no rules); the weighted share is over the weights
+    of the CATs that have rules; Very Low at 0 in every CAT, Low when CAT I is 0 and CAT II and III are under 5 %."""
+    if not all(isinstance(x, (list, tuple)) and len(x) == 3 for x in (a, d, o)):
+        return None
+    raw = [min(1.0, (max(0, _n(x) - _n(y)) + _n(z)) / float(_n(x))) if _n(x) > 0 else 0.0 for x, y, z in zip(a, d, o)]
+    weight = sum(w for w, x in zip(CORA_WEIGHT, a) if _n(x) > 0)
+    avg = sum(w * r for w, r, x in zip(CORA_WEIGHT, raw, a) if _n(x) > 0) / float(weight) if weight else 0.0
+    if not any(raw):
+        rating = "Very Low"
+    elif raw[0] == 0 and raw[1] < 0.05 and raw[2] < 0.05:
+        rating = "Low"
+    elif avg >= 0.2:
+        rating = "Very High"
+    elif avg >= 0.1:
+        rating = "High"
+    else:
+        rating = "Moderate"
+    return {"pct": round(avg * 100, 1), "rating": rating, "cats": [round(r * 100, 1) for r in raw]}
+
+
+def _cora_of(c):
+    """A read's or a point's collection (or platform) -> its CORA: ra / rd (a point) or cora_a / cora_d (a read) and CAT I, II,
+    III open. None: no counts (an older STIG Manager, or a point before 1.70.0)."""
+    if not isinstance(c, dict):
+        return None
+    a, d = c.get("ra", c.get("cora_a")), c.get("rd", c.get("cora_d"))
+    return cora(a, d, [c.get("cat1"), c.get("cat2"), c.get("cat3")])
+
+
+def _cora_sum(cols):
+    """The CORA of several collections (or platforms) together - their counts added - and how many were summed. A
+    collection without the counts is left out, never counted as 0."""
+    a, d, o, n = [0, 0, 0], [0, 0, 0], [0, 0, 0], 0
+    for c in cols:
+        if _cora_of(c) is None:
+            continue
+        n += 1
+        for i, k in enumerate(("cat1", "cat2", "cat3")):
+            a[i] += _n((c.get("ra") or c.get("cora_a"))[i])
+            d[i] += _n((c.get("rd") or c.get("cora_d"))[i])
+            o[i] += _n(c.get(k))
+    return (cora(a, d, o) if n else None), n
+
+
+def _cora_text(x):
+    return "%.1f" % x["pct"] if x else "-"
+
+
+def _cora_tip(x, was=None, when=""):
+    if not x:
+        return "No CORA: this STIG Manager does not give the counts by severity (metrics assessmentsBySeverity)."
+    t = "CORA %.1f %% - %s. Open or not assessed: CAT I %.1f %%, CAT II %.1f %%, CAT III %.1f %%." % (
+        x["pct"], x["rating"], x["cats"][0], x["cats"][1], x["cats"][2])
+    if was:
+        d = round(x["pct"] - was["pct"], 1)
+        t += " %s: %.1f %% (%s)." % (when or "Last week", was["pct"], "the same" if not d else "%s %.1f points" % (u"▲" if d > 0 else u"▼", abs(d)))
+    return t
+
+
 def _rules(c):
     """A point's collection -> {SV-number: (category, hosts open on)}."""
     out = {}
@@ -175,6 +247,11 @@ def _plat_of(c, cfg):
         e = out.setdefault(stig_platform(x.get("stig"), pl), blank())
         for k in CATS:
             e["cat%d" % k] += _n(x.get("cat%d" % k))
+        if isinstance(x.get("cora_a"), list) and isinstance(x.get("cora_d"), list):     # 1.70.0: the platform's CORA counts
+            e["ra"] = [_n(e.get("ra", [0, 0, 0])[i]) + _n(x["cora_a"][i]) for i in range(3)]
+            e["rd"] = [_n(e.get("rd", [0, 0, 0])[i]) + _n(x["cora_d"][i]) for i in range(3)]
+        else:
+            e["no_cora"] = True
     for r in (c or {}).get("rules") or []:
         if not isinstance(r, dict) or not r.get("sv") or r.get("cat") not in CATS or not _n(r.get("count")):
             continue
@@ -185,6 +262,9 @@ def _plat_of(c, cfg):
             e["rules"].append(str(r["sv"]))
     for e in out.values():
         e["rules"].sort()
+        if e.pop("no_cora", False):                     # one of its checklists without the counts: none (never a partial sum)
+            e.pop("ra", None)
+            e.pop("rd", None)
     return out
 
 
@@ -228,7 +308,13 @@ def _only_read(read, cfg, keep):
             n = dict((k, sum(_n(x.get("cat%d" % k)) for x in metrics)) for k in CATS)
         else:
             n = dict((k, sum(_n(r.get("count")) for r in rules if r.get("cat") == k)) for k in CATS)
-        cols.append(dict(c, rules=rules, asset_stigs=mine, checklists=metrics, assets=len(mine), cat1=n[1], cat2=n[2], cat3=n[3]))
+        rec = dict(c, rules=rules, asset_stigs=mine, checklists=metrics, assets=len(mine), cat1=n[1], cat2=n[2], cat3=n[3])
+        rec.pop("cora_a", None)
+        rec.pop("cora_d", None)
+        if c.get("checklists") and metrics and all(isinstance(x.get("cora_a"), list) and isinstance(x.get("cora_d"), list) for x in metrics):
+            rec["cora_a"] = [sum(_n(x["cora_a"][i]) for x in metrics) for i in range(3)]       # 1.70.0: of those platforms only
+            rec["cora_d"] = [sum(_n(x["cora_d"][i]) for x in metrics) for i in range(3)]
+        cols.append(rec)
     return dict(read or {}, collections=cols)
 
 
@@ -252,6 +338,11 @@ def _only_point(point, keep):
         for k in CATS:
             rec["cat%d" % k] = sum(_n(v.get("cat%d" % k)) for v in mine)
             rec["r%d" % k] = dict((sv, n) for sv, n in (c.get("r%d" % k) or {}).items() if sv in svs)
+        rec.pop("ra", None)
+        rec.pop("rd", None)
+        if all(isinstance(v.get("ra"), list) and isinstance(v.get("rd"), list) for v in mine):      # 1.70.0: of those platforms only
+            rec["ra"] = [sum(_n(v["ra"][i]) for v in mine) for i in range(3)]
+            rec["rd"] = [sum(_n(v["rd"][i]) for v in mine) for i in range(3)]
         cols.append(rec)
     return dict(point, collections=cols)
 
@@ -461,6 +552,8 @@ def stig_scorecard_point(read, opts=None):
             continue
         rec = {"id": str(c.get("id") or ""), "name": str(c.get("name") or ""), "assets": _n(c.get("assets")),
                "cat1": _n(c.get("cat1")), "cat2": _n(c.get("cat2")), "cat3": _n(c.get("cat3")), "r1": {}, "r2": {}, "r3": {}}
+        if _cora_of(c) is not None:                     # 1.70.0: the CORA counts (CAT I, II, III): the rules, and how many assessed
+            rec["ra"], rec["rd"] = [_n(x) for x in c["cora_a"]], [_n(x) for x in c["cora_d"]]
         for r in c.get("rules") or []:
             if isinstance(r, dict) and r.get("sv") and r.get("cat") in CATS and _n(r.get("count")):
                 d = rec["r%d" % r["cat"]]
@@ -762,6 +855,7 @@ def stig_scorecard(read, point, runs, opts=None):
     # ---- by collection
     rows, web_rows, rst, cst, sparks, tips, numbers, deltas, sheet_delta = [], [], [], [], [], [], [], [], []
     tags = []                                        # 1.67.0: each row's platforms and collection (the page's filter buttons)
+    c_cora = []                                      # 1.70.0: each row's CORA and its hover (the website's and the workbook's columns)
     week_open = []                                   # the workbook's line per row: open findings each week, None a week without a run
     tot = {"cat1": 0, "cat2": 0, "cat3": 0, "assets": 0, "closed": 0, "opened": 0}
     for c in good:
@@ -770,6 +864,8 @@ def stig_scorecard(read, point, runs, opts=None):
             tot[k] += _n(c.get(k))
         was = _find(base, c) if base else None
         ch = change(was, p) if was is not None else None
+        c_cora.append((_cora_of(c), _cora_tip(_cora_of(c), _cora_of(was) if was is not None else None,
+                                              "On %s" % day_word(base["_t"]) if base else "")))
         if ch:
             tot["closed"] += ch["closed"]
             tot["opened"] += ch["opened"]
@@ -827,6 +923,7 @@ def stig_scorecard(read, point, runs, opts=None):
         cst.append([""] * 8)
         sparks.append({})
         week_open.append([])
+        c_cora.append((None, ""))
         tips.append([""] * 7 + [str(c.get("error") or "")])
         tags.append({"col": "c%s" % c.get("id")})
     missing = [str(m) for m in read.get("missing") or []]
@@ -898,7 +995,9 @@ def stig_scorecard(read, point, runs, opts=None):
             a["where"].append((c["name"], _n(r.get("count"))))
             a["paths"].append((c["name"], str(r.get("stig") or ""), str(c.get("id") or ""), _n(r.get("count"))))
             a["names"] += [x for x in r.get("assets") or [] if x not in a["names"]]
-    ranked = sorted(allr.values(), key=lambda a: (-a["hosts"], a["cat"], a["sv"]))
+    for a in allr.values():                          # 1.70.0: the weight - the hosts it is open on times its CAT's CORA weight (10, 4, 1)
+        a["weight"] = a["hosts"] * CORA_WEIGHT[a["cat"] - 1]
+    ranked = sorted(allr.values(), key=lambda a: (-a["weight"], -a["hosts"], a["cat"], a["sv"]))
     top = ranked[:top_n]
 
     def rule_word(a):
@@ -1000,6 +1099,11 @@ def stig_scorecard(read, point, runs, opts=None):
         out["opened_rules"].sort(key=lambda r: (-r[2], r[1], r[0]))
         return out
 
+    def pcora(n):                                    # 1.70.0: the platform's CORA - every collection's counts of it, none missing
+        vs = [x["p"][n] for x in pcols if isinstance(x.get("p"), dict) and isinstance(x["p"].get(n), dict) and _has(x.get("p"), n, keep)]
+        return _cora_sum(vs)[0] if vs and all(_cora_of(v) for v in vs) else None
+
+    p_cora = []
     prow, pweb, pst, pcst, psp, ptip, ptags, ptiles, pnum, pweek, pdelta = [], [], [], [], [], [], [], [], [], [], []
     gap = False                                      # a weekly point before 1.67.0 (no platforms): the line starts later
     for n in shown:
@@ -1033,6 +1137,7 @@ def stig_scorecard(read, point, runs, opts=None):
         worse = bool(ch and ch["opened"] > ch["closed"])
         st = "critical" if v["cat1"] else ("warning" if worse else "")
         st_word = "CAT I open" if v["cat1"] else ("Worse" if worse else "OK")
+        p_cora.append((pcora(n), _cora_tip(pcora(n))))
         head = [n, v["assets"], v["cat1"], v["cat2"], v["cat3"], since]
         prow.append(head + [(u"%d → %d" % (series[0][1], series[-1][1])) if len(series) > 1 else "from next week", st_word])
         pweb.append(head[:5] + [_together(head[5])] + [sp.get("label", "") if sp else "trend starts next week", st_word])
@@ -1104,6 +1209,27 @@ def stig_scorecard(read, point, runs, opts=None):
     if isinstance(pl_web.get("rows"), list) and pl_web.get("rows"):
         pl_web = dict(pl_web, kinds=pl_web["kinds"][:2] + ["cat1", "cat2", "cat3"] + pl_web["kinds"][5:])
 
+    # ---- 1.70.0: the CORA risk score - two columns (CORA %, Risk) on the website's tables; the email keeps its columns
+    def with_cora(sec, vals):
+        if not isinstance(sec.get("rows"), list) or "Since last week" not in (sec.get("columns") or []) or len(vals) != len(sec["rows"]):
+            return sec
+        if not any(x for x, t in vals):
+            return sec                                   # no counts at all (an older STIG Manager): no columns
+        at = sec["columns"].index("Since last week")
+
+        def put(lst, add):
+            return list(lst[:at]) + add + list(lst[at:])
+        cs = [[""] * 2 if x is None else ["", CORA_STATUS.get(x["rating"], "")] for x, t in vals]
+        return dict(sec, columns=put(sec["columns"], ["CORA %", "Risk"]),
+                    column_titles=put(sec.get("column_titles") or [""] * len(sec["columns"]),
+                                      ["The CORA risk score, weighted over the CATs (STIG Manager's method)", "Very Low, Low, Moderate, High or Very High"]),
+                    kinds=put(sec["kinds"], ["num", ""]),
+                    rows=[put(r, [_cora_text(x), x["rating"] if x else "-"]) for r, (x, t) in zip(sec["rows"], vals)],
+                    cell_status=[put(r, c) for r, c in zip(sec.get("cell_status") or [[""] * len(sec["columns"])] * len(vals), cs)],
+                    tips=[put(r, ["", t]) for r, (x, t) in zip(sec.get("tips") or [[""] * len(sec["columns"])] * len(vals), vals)])
+    web_sec = with_cora(web_sec, c_cora)
+    pl_web = with_cora(pl_web, p_cora)
+
     # ---- the Findings view: each open rule, opened to the hosts it is open on
     hosts_of_rule, rule_in = {}, {}                 # rule_in: (sv, collection) -> its STIG and full rule id there
     for c in good:
@@ -1116,7 +1242,7 @@ def stig_scorecard(read, point, runs, opts=None):
     for a in ranked[:VIEW_MAX]:                       # the most hosts first (1.68.0: what Top rules was)
         hl = sorted(set(hosts_of_rule.get(a["sv"]) or []), key=lambda x: (x[1].lower(), x[0].lower()))
         plat = ", ".join(sorted(set(n for n in names if _key(n, cfg) in a["pf"])))
-        f_rows.append(["", rule_word(a), CAT_WORD[a["cat"]], a["title"], plat, a["hosts"],
+        f_rows.append(["", rule_word(a), CAT_WORD[a["cat"]], a["title"], plat, a["hosts"], a["weight"],
                        ", ".join("%s (%d)" % w for w in sorted(a["where"], key=lambda w: (-w[1], w[0].lower())))])
         hd = ({"columns": ["Host", "Collection"], "kinds": ["wrap", "wrap"], "rows": [list(x) for x in hl[:HOSTS_MAX]],
                "more": ("%d more hosts: the workbook lists every one." % (len(hl) - HOSTS_MAX)) if len(hl) > HOSTS_MAX else ""}
@@ -1137,13 +1263,15 @@ def stig_scorecard(read, point, runs, opts=None):
                        "h": " ".join(sorted(set(x[0] for x in hl)))})
         f_st.append("")
     find_sec = {"title": "Findings (%d)" % len(f_rows), "cat_cells": True,
-                "columns": ["", "Rule", "Category", "What it checks", "Platform", "Hosts open", "Where"],
-                "column_titles": ["", "", "", "", "", "The hosts the rule is open on", "The collections, with the hosts in each"],
-                "kinds": ["x", "wrap", "", "wrap", "wrap", "num", "wrap"], "rows": f_rows, "details": f_det, "row_tags": f_tags,
+                "columns": ["", "Rule", "Category", "What it checks", "Platform", "Hosts open", "Weight", "Where"],
+                "column_titles": ["", "", "", "", "", "The hosts the rule is open on",
+                                  "Hosts open times 10 (CAT I), 4 (CAT II) or 1 (CAT III): the biggest weights first",
+                                  "The collections, with the hosts in each"],
+                "kinds": ["x", "wrap", "", "wrap", "wrap", "num", "num", "wrap"], "rows": f_rows, "details": f_det, "row_tags": f_tags,
                 "wrap": True, "keep_case": True, "hidden_columns": ["Where"],
-                "text": "Open a rule for the hosts it is open on."}
+                "text": "Biggest weight first (hosts open x 10, 4 or 1). Open a rule for the hosts it is open on."}
     if texts:
-        find_sec["text"] = "Open a rule for its check text, fix text and hosts."
+        find_sec["text"] = "Biggest weight first (hosts open x 10, 4 or 1). Open a rule for its check text, fix text and hosts."
     if web_url and f_rows:                          # 1.68.0: a rule's name opens STIG Manager; its button copies the rule's id
         shown_r = ranked[:VIEW_MAX]
         find_sec["cell_links"] = {"column": 1, "urls": [web_url] * len(f_rows), "title": "",
@@ -1213,7 +1341,21 @@ def stig_scorecard(read, point, runs, opts=None):
     c1 = tot["cat1"]
     with1 = sorted([c for c in good if _n(c.get("cat1"))], key=lambda c: (-_n(c["cat1"]), c["name"].lower()))
     since_word = "since %s" % day_word(base["_t"]) if base else ""
-    tiles = [
+    # 1.70.0: the CORA risk, all collections' counts together; the week's change over the collections both runs have counts of
+    cora_all, cora_n = _cora_sum(good)
+    cora_note = ""
+    if cora_all and base:
+        pairs = [(c, _find(base, c)) for c in good]
+        pairs = [(c, w) for c, w in pairs if w is not None and _cora_of(c) and _cora_of(w)]
+        if pairs:
+            nowc, wasc = _cora_sum([c for c, w in pairs])[0], _cora_sum([w for c, w in pairs])[0]
+            dd = round(nowc["pct"] - wasc["pct"], 1)
+            cora_note = ("same as %s" % day_word(base["_t"])) if not dd else (u"%s %.1f points since %s" % (u"▲" if dd > 0 else u"▼", abs(dd), day_word(base["_t"])))
+    cora_tile = ([{"label": "CORA risk", "value": "%s %.1f%%" % (cora_all["rating"], cora_all["pct"]), "status": CORA_STATUS[cora_all["rating"]],
+                   "note": cora_note,
+                   "tip": _cora_tip(cora_all) + (" Of %s with the counts." % _count(cora_n, "collection") if cora_n < len(good) else "")}]
+                 if cora_all else [])
+    tiles = cora_tile + [
         {"label": "CAT I open", "cat": 1, "value": c1, "status": "critical" if c1 else "ok",
          "tip": ("CAT I: the most severe category. %s." % ", ".join("%d on %s" % (_n(c["cat1"]), c["name"]) for c in with1[:4]))
          if c1 else "CAT I: the most severe category. None open."},
@@ -1232,6 +1374,8 @@ def stig_scorecard(read, point, runs, opts=None):
     for t in tiles:
         if not t.get("status"):
             t.pop("status", None)
+        if not t.get("note") and t.get("note") is not None:
+            t.pop("note")
     if not (fixed or scans):                    # 1.68.0: no drift scans - no tile either (as its section, 1.67.0)
         tiles = [t for t in tiles if t["label"] != "Fixed on host, still open"]
 
@@ -1287,6 +1431,7 @@ def stig_scorecard(read, point, runs, opts=None):
         "Since last week: each host's findings of a category against the run of 6 to 8 days ago. Fewer is closed, more is opened.",
         "An asset counts under each platform it has a STIG of. A finding counts under its own STIG's platform (stigman_scorecard_platforms)."]
         + (["Other: the STIGs no platform matched - %s." % ", ".join(others)] if others else [])
+        + ([CORA_NOTE, CORA_BANDS] if cora_all else [])
         + (["Compared with the run of %s UTC." % _utc(base["_t"]).strftime("%Y-%m-%d %H:%M")] if base else [])}
 
     last = [slow_sec] if slow_sec else []
@@ -1308,16 +1453,23 @@ def stig_scorecard(read, point, runs, opts=None):
         text = ", ".join(names)
         return text if len(text) <= XLSX_CELL else text[:XLSX_CELL].rsplit(", ", 1)[0] + " ... (%d in all)" % len(names)
 
-    xlsx = [{"name": "By collection", "columns": columns[:6] + ["Open now", "Status"],
+    cora_row = ["How CORA is worked out (STIG Manager's CORA method): each CAT's share of Open or unassessed rules, weighted "
+                "CAT I 10, CAT II 4, CAT III 1; Very High from 20 %, High from 10 %, Moderate above 0 %, Low when CAT I is 0 and "
+                "CAT II and CAT III are under 5 %."]
+    has_cora = bool(cora_all)
+    cx = (lambda x: [x["pct"] if x else "-", x["rating"] if x else "-"]) if has_cora else (lambda x: [])      # noqa: E731
+    xlsx = [{"name": "By collection", "columns": columns[:6] + ["Open now"] + (["CORA %", "Risk"] if has_cora else []) + ["Status"],
              "rows": [r[:5] + [r[5].replace("\n", ": ") if isinstance(r[5], str) else r[5]] +
-                      [(r[2] + r[3] + r[4]) if isinstance(r[2], int) else "-", r[7]] for r in rows],
+                      [(r[2] + r[3] + r[4]) if isinstance(r[2], int) else "-"] + cx(cc[0]) + [r[7]] for r, cc in zip(rows, c_cora)]
+                     + ([cora_row] if has_cora else []),
              # 1.62.0: the page's line as Excel's own - all open findings a week (CAT I is mostly 0: a flat line says little)
-             "sparklines": [{"column": "Trend", "points": week_open}]},
-            {"name": "By platform", "columns": p_cols[:6] + ["Open now", "Status"],
-             "rows": [r[:5] + [r[5].replace("\n", ": ") if isinstance(r[5], str) else r[5]] + [r[2] + r[3] + r[4], r[7]] for r in prow],
-             "sparklines": [{"column": "Trend", "points": pweek}]},
-            {"name": "Rules across hosts", "columns": ["Rule", "STIG ID", "Category", "What it checks", "Hosts open", "Where", "Fix text"],
-             "rows": [[a["sv"], a["version"], CAT_WORD[a["cat"]], a["title"], a["hosts"],
+             "sparklines": [{"column": "Trend", "points": week_open + ([[]] if has_cora else [])}]},
+            {"name": "By platform", "columns": p_cols[:6] + ["Open now"] + (["CORA %", "Risk"] if has_cora else []) + ["Status"],
+             "rows": [r[:5] + [r[5].replace("\n", ": ") if isinstance(r[5], str) else r[5]] + [r[2] + r[3] + r[4]] + cx(cc[0]) + [r[7]]
+                      for r, cc in zip(prow, p_cora)] + ([cora_row] if has_cora else []),
+             "sparklines": [{"column": "Trend", "points": pweek + ([[]] if has_cora else [])}]},
+            {"name": "Rules across hosts", "columns": ["Rule", "STIG ID", "Category", "What it checks", "Hosts open", "Weight", "Where", "Fix text"],
+             "rows": [[a["sv"], a["version"], CAT_WORD[a["cat"]], a["title"], a["hosts"], a["weight"],
                        ", ".join("%s (%d)" % w for w in sorted(a["where"], key=lambda w: (-w[1], w[0].lower()))),
                        str((texts.get(a["sv"]) or {}).get("fix") or "")[:XLSX_CELL]] for a in ranked]},
             {"name": "Open rules by collection", "columns": ["Collection", "Rule", "STIG ID", "Category", "What it checks", "Hosts open", "Open on"],
@@ -1342,6 +1494,9 @@ def stig_scorecard(read, point, runs, opts=None):
         xlsx.append({"name": "Open per week", "columns": num_sec["columns"], "rows": numbers})
 
     lines = [title] + ["%s: %s%s" % (t["label"], t["value"], " (%s)" % t["note"] if t.get("note") else "") for t in tiles]
+    if not cora_all and good:
+        job_only.append("CORA risk: not shown - STIG Manager's metrics do not give the counts by severity (assessmentsBySeverity), "
+                        "or the collections were counted from the findings.")
     lines += ["%s: %s" % (r[0], ("CAT I %s, CAT II %s, CAT III %s, %s" % (r[2], r[3], r[4], str(r[5]).replace("\n", ": ")))) for r in rows[:len(good)]]
     lines += ["Platform %s: CAT I %s, CAT II %s, CAT III %s, %s" % (r[0], r[2], r[3], r[4], str(r[5]).replace("\n", ": ")) for r in prow]
     lines += notes_col + job_only
@@ -1356,12 +1511,15 @@ def stig_scorecard(read, point, runs, opts=None):
                   "cats": [{"key": "k%d" % k, "name": CAT_WORD[k], "cat": k} for k in CATS],      # 1.68.0
                   "host": bool(hostrows),
                   "note": "The buttons choose the rows shown. The counts in a row stay as they are."}
+    counts = dict(tot, collections=len(good), not_read=len(bad), fixed=len(fixed), weekly_points=n_points,
+                  compared=bool(base), rules=len(ranked), platforms=len(shown),
+                  by_platform=dict((r[0], {"assets": r[1], "cat1": r[2], "cat2": r[3], "cat3": r[4]}) for r in prow))
+    if cora_all:
+        counts["cora"] = {"pct": cora_all["pct"], "rating": cora_all["rating"]}
     return {"ok": True, "error": "", "title": title, "status": status, "subtitle": subtitle, "tiles": tiles, "sections": sections, "web": web,
             "facets": facets,
             "notes": notes, "xlsx": xlsx, "lines": lines, "fixed_rows": fixed,      # 1.67.0 part C: the site_findings artifact
-            "counts": dict(tot, collections=len(good), not_read=len(bad), fixed=len(fixed), weekly_points=n_points,
-                           compared=bool(base), rules=len(ranked), platforms=len(shown),
-                           by_platform=dict((r[0], {"assets": r[1], "cat1": r[2], "cat2": r[3], "cat3": r[4]}) for r in prow))}
+            "counts": counts}
 
 
 def _worst_of(statuses):
