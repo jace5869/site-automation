@@ -6,15 +6,17 @@
 # Meant for the "Patch with checks" workflow:
 #   [Health check: pre] -> [Approval] -> [THIS] -> [Health check: post] -> [ServiceNow tickets]
 #
-# - One host at a time (patch_serial), and the rollout STOPS at the first host that fails.
+# - One host at a time (patch_serial), and the rollout STOPS at the first host that fails or is lost (any_errors_fatal:
+#   with patch_serial over 1 the rest of that batch stops too, and no later batch starts).
 # - A host that cannot be reached at the start is listed (NOT REACHED) and left out, and the job goes on with the
 #   others (patch_skip_unreachable; false = it fails and stops the rollout). A host lost later still fails it.
 # - RHEL 8 and later are patched with dnf, RHEL 7 and its clones with yum; a host with neither is listed (NO DNF OR YUM)
 #   and left out (patch_skip_unsupported).
 # - Every service that was running before the update must be running after it.
 # - Hosts in no_patch, and always the AAP hosts (aap, aap_hosts), are skipped: never patched, never
-#   rebooted by a job. Add more groups with patch_never_patch_groups / patch_never_reboot_groups.
-# - Refuses to patch the machine the job runs from.
+#   rebooted by a job. Add more groups with patch_never_patch_groups / patch_never_reboot_groups (they add to these,
+#   never replace them).
+# - Refuses to patch the machine the job runs from: a local connection, or an address, name or machine-id that is its.
 # - Hosts on the VMware protected lists (vmware_protected_groups, vmware_protected_vms, vm_snapshot_cleanup_exclude_vms)
 #   are skipped too; patch_protected_with_snapshot patches them, each right after its own snapshot.
 # - Check mode (a dry run) lists what would be updated and changes nothing: run it that way first.
@@ -50,7 +52,28 @@
   # credential?). patch_skip_unreachable: false = every host goes on, and one not reached fails and stops the rollout.
   hosts: "{{ target | default('patch_hosts') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
+  vars:
+    # 1.70.5: each host's VM is looked up for the snapshot (patch_snapshot), and for the VM-name protection too - a host
+    # whose inventory name is not its VM's name is still protected by vmware_protected_vms (patch_protected_vm_lookup)
+    _patch_vm_lookup: >-
+      {{ patch_snapshot | default(false) | bool
+         or (patch_protected_vm_lookup | default(true) | bool
+             and ((vmware_protected_vms | default([]) | name_list) + (vm_snapshot_cleanup_exclude_vms | default([]) | name_list)) | length > 0) }}
   tasks:
+    # before any host is contacted or patched: the VM-name protection needs vCenter to know each host's VM
+    - name: The VMware protected lists need the vCenter credential (patch_protected_vm_lookup)
+      ansible.builtin.assert:
+        that: lookup('ansible.builtin.env', 'VMWARE_HOST') | length > 0
+        fail_msg: >-
+          Nothing was patched. {{ 'patch_snapshot is true' if patch_snapshot | default(false) | bool else
+          'vmware_protected_vms / vm_snapshot_cleanup_exclude_vms are set' }}: each host's VM must be found in vCenter
+          first{{ '' if patch_snapshot | default(false) | bool else ', so a host whose inventory name is not its VM name is still protected' }}:
+          attach a credential of type "VMware vCenter" to this job template (Templates > the template > Edit > Credentials).
+          {{ '' if patch_snapshot | default(false) | bool else 'Or set patch_protected_vm_lookup: false: then only the inventory names (the host, its short name, vmware_vm_name) are compared with those lists.' }}
+        quiet: true
+      run_once: true
+      when: _patch_vm_lookup | bool
+
     - name: Linux hosts only
       ansible.builtin.include_role:
         name: site_findings
@@ -66,7 +89,7 @@
         tasks_from: reach.yml
       when:
         - patch_skip_unreachable | default(true) | bool
-        - group_names | intersect((patch_never_patch_groups | default(['no_patch', 'aap', 'aap_hosts', 'sat', 'netapp', 'netapp_console_hosts'])) + ['aap', 'aap_hosts']) | length == 0
+        - group_names | intersect((patch_never_patch_groups | default(['no_patch', 'aap', 'aap_hosts', 'sat', 'netapp', 'netapp_console_hosts'])) + ['no_patch', 'aap', 'aap_hosts']) | length == 0
 
     # a host with neither dnf nor yum (not a RHEL-like Linux) is not one this job patches: listed as NO DNF OR YUM and
     # left out, the job not failed for it (patch_skip_unsupported; false = it fails at the update). RHEL 7 and its clones
@@ -81,7 +104,7 @@
       when:
         - patch_skip_unsupported | default(true) | bool
         - site_host_unreached | length == 0
-        - group_names | intersect((patch_never_patch_groups | default(['no_patch', 'aap', 'aap_hosts', 'sat', 'netapp', 'netapp_console_hosts'])) + ['aap', 'aap_hosts']) | length == 0
+        - group_names | intersect((patch_never_patch_groups | default(['no_patch', 'aap', 'aap_hosts', 'sat', 'netapp', 'netapp_console_hosts'])) + ['no_patch', 'aap', 'aap_hosts']) | length == 0
 
     # ansible-core 2.16 says yum on RHEL 7; later ones say unknown there (as roles/patch decides)
     - name: A host with neither dnf nor yum is listed and left out - the job is not failed for it
@@ -122,7 +145,7 @@
       when:
         - patch_skip_not_ready | default(true) | bool
         - site_host_unreached | length == 0
-        - group_names | intersect((patch_never_patch_groups | default(['no_patch', 'aap', 'aap_hosts', 'sat', 'netapp', 'netapp_console_hosts'])) + ['aap', 'aap_hosts']) | length == 0
+        - group_names | intersect((patch_never_patch_groups | default(['no_patch', 'aap', 'aap_hosts', 'sat', 'netapp', 'netapp_console_hosts'])) + ['no_patch', 'aap', 'aap_hosts']) | length == 0
 
     # the reason without the login banner: the last line of the output that is not ssh's, else Ansible's own message
     - name: Not ready - root refused, or /var too full
@@ -172,8 +195,8 @@
         argv: >-
           {{ [('yum' if _patch_pkg.ansible_facts.ansible_pkg_mgr | default('dnf') not in ['dnf', 'dnf5'] else 'dnf'), '-q', 'check-update']
              + (['--security'] if patch_security_only | default(false) | bool else [])
-             + (patch_exclude | default([]) | map('regex_replace', '^', '--exclude=') | list)
-             + ([] if patch_packages | default(['*']) | list == ['*'] else patch_packages | list) }}
+             + (patch_exclude | default([]) | patch_name_list([]) | map('regex_replace', '^', '--exclude=') | list)
+             + ([] if patch_packages | default(['*']) | patch_name_list(['*']) == ['*'] else patch_packages | default(['*']) | patch_name_list(['*'])) }}
       become: true
       ignore_unreachable: true
       failed_when: false
@@ -183,7 +206,7 @@
       when:
         - patch_update_check | default(true) | bool
         - site_host_unreached | length == 0
-        - group_names | intersect((patch_never_patch_groups | default(['no_patch', 'aap', 'aap_hosts', 'sat', 'netapp', 'netapp_console_hosts'])) + ['aap', 'aap_hosts']) | length == 0
+        - group_names | intersect((patch_never_patch_groups | default(['no_patch', 'aap', 'aap_hosts', 'sat', 'netapp', 'netapp_console_hosts'])) + ['no_patch', 'aap', 'aap_hosts']) | length == 0
 
     - name: How many
       ansible.builtin.set_fact:
@@ -202,16 +225,47 @@
           it goes on as if it had updates.
       when: _patch_check is not skipped and _patch_check.rc | default(-1) not in [0, 100]
 
+    # 1.70.5: up to date, but the last run installed updates and left the reboot (automatic_restarts was false) - the run
+    # again with automatic_restarts: true must reboot it, not leave it out. needs-restarting -r: 1 = a reboot is needed.
+    - name: Up to date - is a reboot still pending (needs-restarting -r)
+      ansible.builtin.command: needs-restarting -r
+      become: true
+      ignore_unreachable: true
+      failed_when: false
+      changed_when: false
+      check_mode: false
+      register: _patch_pending
+      when: _patch_check.rc | default(-1) == 0
+
+    - name: Up to date, a reboot pending - it goes on to be rebooted (automatic_restarts)
+      ansible.builtin.set_fact:
+        patch_reboot_only: true
+      when:
+        - _patch_check.rc | default(-1) == 0
+        - _patch_pending.rc | default(-1) == 1
+        - automatic_restarts | default(false) | bool
+        - patch_reboot | default('when_needed') != 'never'
+        - group_names | intersect((patch_never_reboot_groups | default(['aap', 'aap_hosts', 'sat', 'netapp', 'netapp_console_hosts'])) + ['aap', 'aap_hosts']) | length == 0
+
+    - name: Up to date, a reboot pending - the job goes on with it, to reboot it
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: UP TO DATE, but a REBOOT IS PENDING (needs-restarting -r) - it goes on: no update,
+          rebooted (automatic_restarts), its services checked.
+      when: patch_reboot_only is defined
+
     - name: Up to date - nothing to patch
       ansible.builtin.set_fact:
         patch_up_to_date: true
-      when: _patch_check.rc | default(-1) == 0
+        patch_reboot_pending: "{{ _patch_pending.rc | default(-1) == 1 }}"
+      when: _patch_check.rc | default(-1) == 0 and patch_reboot_only is not defined
 
     - name: Up to date - the job goes on without it
       ansible.builtin.debug:
         msg: >-
           {{ inventory_hostname }}: UP TO DATE - nothing to patch{{ ' (security updates only)' if patch_security_only | default(false) | bool else '' }}.
-          No snapshot, not patched; the job is not failed for it.
+          No snapshot, not patched; the job is not failed for it.{{ (' A REBOOT IS STILL PENDING (needs-restarting -r):'
+          ~ ' reboot it by hand, or run again with automatic_restarts: true.') if patch_reboot_pending | bool else '' }}
       when: patch_up_to_date is defined
 
     - name: Leave it out (up to date)
@@ -223,17 +277,23 @@
         key: patch_reached
       changed_when: false
 
-- name: Patch hosts - each host's VM, for the snapshot before patching (patch_snapshot)
+- name: Patch hosts - each host's VM, for the snapshot before patching and the VM-name protection
   # once, before any host is patched: a host whose VM is not found stops the job here (on the AAP side: run_once,
-  # delegated to localhost; a Limit of hosts needs no localhost)
+  # delegated to localhost; a Limit of hosts needs no localhost). patch_snapshot, or the VMware protected lists by VM
+  # name with patch_protected_vm_lookup (1.70.5)
   hosts: "{{ target | default('patch_hosts') }}:&patch_reached{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
+  vars:
+    _patch_vm_lookup: >-
+      {{ patch_snapshot | default(false) | bool
+         or (patch_protected_vm_lookup | default(true) | bool
+             and ((vmware_protected_vms | default([]) | name_list) + (vm_snapshot_cleanup_exclude_vms | default([]) | name_list)) | length > 0) }}
   tasks:
     - name: Linux hosts only
       ansible.builtin.include_role:
         name: site_findings
         tasks_from: os_guard.yml
-      when: patch_snapshot | default(false) | bool
+      when: _patch_vm_lookup | bool
 
     - name: Each host's VM in vCenter, and the old snapshots in the way
       ansible.builtin.include_role:
@@ -246,15 +306,37 @@
       vars:
         ansible_connection: local
         ansible_python_interpreter: "{{ ansible_playbook_python }}"
-      when: patch_snapshot | default(false) | bool
+      when: _patch_vm_lookup | bool
 
 - name: Patch hosts
   hosts: "{{ target | default('patch_hosts') }}:&patch_reached{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   become: true
   gather_facts: false
   serial: "{{ patch_serial | default(1) }}"
+  # 1.70.5: a host that fails OR is lost (unreachable: max_fail_percentage does not count those) stops the rollout.
+  # any_errors_fatal stops the rest of its batch; it does not stop the later batches when the host was lost (ansible-core
+  # 2.16 and 2.22 alike), so each batch first checks that no host of an earlier one failed or was lost. A host left out
+  # before this play (NOT REACHED, NOT READY - an earlier play) is out from its start: noted once, never a reason to stop.
   max_fail_percentage: 0
+  any_errors_fatal: true
   pre_tasks:
+    - name: The hosts already out when the rollout starts (left out by an earlier play)
+      ansible.builtin.set_fact:
+        _patch_out_at_start: "{{ ansible_play_hosts_all | difference(ansible_play_hosts) }}"
+      delegate_to: localhost
+      delegate_facts: true
+      run_once: true
+      when: hostvars['localhost']._patch_out_at_start is not defined
+
+    - name: Stop the rollout - a host of an earlier batch failed or was lost
+      ansible.builtin.fail:
+        msg: >-
+          Not patched: {{ _patch_lost | sort | join(', ') }} failed or was lost in an earlier batch, so the rollout stops here
+          (patch_serial). Look at that host first, then run again for the rest.
+      vars:
+        _patch_lost: "{{ ansible_play_hosts_all | difference(ansible_play_hosts) | difference(hostvars['localhost']._patch_out_at_start | default([])) }}"
+      when: _patch_lost | length > 0
+
     - name: Linux hosts only (this playbook never touches a Windows server)
       ansible.builtin.include_role:
         name: site_findings
@@ -282,7 +364,8 @@
           {%- set _ = out.append('%-*s  %-22s  %s' | format(w, 'Host', 'Updates', 'Snapshot')) -%}
           {%- for h in ansible_play_hosts_all | sort -%}
           {%-   set v = hostvars[h] -%}
-          {%-   set upd = 'up to date' if v.patch_up_to_date is defined else
+          {%-   set upd = ('up to date, REBOOT PENDING' if v.patch_reboot_pending | default(false) | bool else 'up to date') if v.patch_up_to_date is defined else
+                          'up to date, reboot only' if v.patch_reboot_only is defined else
                           ((v.patch_updates ~ ' pending') if v.patch_updates | default(0) | int > 0 else
                            'not checked' if v.patch_updates is not defined else 'none pending') -%}
           {%-   if v.site_host_unreached | default('') -%}{%- set upd = 'NOT REACHED' -%}

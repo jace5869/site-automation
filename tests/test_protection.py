@@ -35,6 +35,21 @@ def run_checks():
         check(AAP <= set(pd[k]), f"roles/patch/defaults: {k} lists AAP too (visible to the reader)")
     check(AAP <= set(load("roles/site_act/defaults/main.yml")["site_act_diagnose_only_groups"]), "roles/site_act/defaults: diagnose-only groups list AAP")
 
+    # 1.70.5: your list adds to the built-in ones, never replaces them - no_patch too (Linux patching)
+    check({"no_patch"} | AAP <= set(load("roles/patch/vars/main.yml")["_patch_always_no_patch"]), "roles/patch/vars: no_patch and AAP never patched, whatever patch_never_patch_groups says")
+    pm = (root / "roles/patch/tasks/main.yml").read_text()
+    check(pm.count("intersect(_patch_no_patch + ['no_patch', 'aap', 'aap_hosts'])") >= 2, "roles/patch: the never-patch skip tests no_patch and AAP literally")
+    ph = (root / "playbooks/patch_hosts.yml").read_text()
+    check(ph.count("+ ['no_patch', 'aap', 'aap_hosts']) | length == 0") >= 4, "patch_hosts.yml: the prechecks never contact no_patch or AAP hosts")
+    # 1.70.5: a host lost halfway (unreachable) stops the rollout, as a failed one does
+    pl = [x for x in load("playbooks/patch_hosts.yml") if x.get("name") == "Patch hosts"]
+    check(len(pl) == 1 and pl[0].get("any_errors_fatal") is True and pl[0].get("max_fail_percentage") == 0,
+          "playbooks/patch_hosts.yml: the play that patches stops at a host that fails or is lost (any_errors_fatal)")
+    pre = (pl[0].get("pre_tasks") or [{}, {}]) if pl else [{}, {}]
+    check("ansible.builtin.set_fact" in pre[0] and "_patch_out_at_start" in str(pre[0]) and "ansible.builtin.fail" in pre[1]
+          and "difference(ansible_play_hosts)" in str(pre[1].get("vars")) and "_patch_out_at_start" in str(pre[1].get("vars")),
+          "playbooks/patch_hosts.yml: each batch first stops when a host of an earlier batch failed or was lost (not one out from the start)")
+
     wd = load("roles/win_patch/defaults/main.yml")
     check("patch_never_reboot_groups" in str(wd["win_patch_never_reboot_groups"]), "win_patch never-reboot list follows the Linux list")
 
@@ -65,9 +80,9 @@ def run_checks():
     check("_patch_no_patch" in tasks and "_patch_no_reboot" in tasks and "_site_always_protected" in tasks, "roles/patch/tasks: uses the always-protected list")
     # extra variables beat every variable (even _site_always_protected / _patch_no_patch): the skip and the
     # reboot also test the literal AAP group names, which no setting or list name can change
-    check(re.search(r"meta: end_host\n\s+when: group_names \| intersect\(_patch_no_patch \+ \['aap', 'aap_hosts'\]\)", tasks) is not None,
+    check(re.search(r"meta: end_host\n\s+when: group_names \| intersect\(_patch_no_patch \+ \['no_patch', 'aap', 'aap_hosts'\]\)", tasks) is not None,
           "roles/patch/tasks: the skip tests the literal AAP groups")
-    check(re.search(r"ansible.builtin.reboot:(.|\n)*?when: .*intersect\(\['aap', 'aap_hosts'\]\) \| length == 0", tasks) is not None,
+    check(re.search(r"ansible.builtin.reboot:(.|\n)*?when: .*intersect\(\[(?:'no_patch', )?'aap', 'aap_hosts'\]\) \| length == 0", tasks) is not None,
           "roles/patch/tasks: the reboot tests the literal AAP groups")
     act = (root / "roles/site_act/tasks/main.yml").read_text() + (root / "roles/site_act/tasks/run.yml").read_text()   # run.yml: ACT on (1.3.0)
     check("_site_always_diagnose_only" in act, "roles/site_act/tasks: uses the always-diagnose-only list")

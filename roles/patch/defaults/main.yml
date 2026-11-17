@@ -3,11 +3,12 @@
 # every service that was running before must be running after. One host at a time by default;
 # the rollout stops at the first host that fails.
 
+# A list, or text from a survey or -e ("kernel*", "kernel*, glibc"): split at commas, spaces and line breaks (1.70.5).
 patch_packages: ['*']                    # what to update ('*' = everything that has an update)
 patch_security_only: false               # true = only updates that fix security advisories
 patch_exclude: []                        # never update these here, e.g. ['mariadb*', 'kernel*']
 # How many hosts are patched at the same time (1 = one by one: the rollout stops at the first host that
-# fails). ONLY in the job template's Variables, a survey or the launch: Ansible picks the batch size before
+# fails or is lost; with more, the rest of that batch stops too and no later batch starts). ONLY in the job template's Variables, a survey or the launch: Ansible picks the batch size before
 # it reads all.yml or any group or host variables, so set there it does nothing.
 patch_serial: 1
 
@@ -24,10 +25,11 @@ patch_reboot_timeout: 1800               # seconds to wait for the host to come 
 patch_never_reboot_groups: [aap, aap_hosts, sat, netapp, netapp_console_hosts]
 # Hosts in these groups are skipped entirely (Satellite is upgraded with satellite-maintain, not dnf).
 patch_never_patch_groups: [no_patch, aap, aap_hosts, sat, netapp, netapp_console_hosts]
-# BUILT IN, whatever you set above (roles/patch/vars/main.yml): the AAP hosts (groups aap and
-# aap_hosts) are never patched and never rebooted by a job, and neither is the machine the job
-# runs from (a local connection). A package script can restart services under the running job.
-# Set the two lists above only to ADD groups; you cannot remove AAP from the protection.
+# BUILT IN, whatever you set above (roles/patch/vars/main.yml): no_patch and the AAP hosts (groups aap
+# and aap_hosts) are never patched, the AAP hosts never rebooted by a job, and neither is the machine the
+# job runs from: a local connection, an address or name that is its own or resolves to it (127.0.0.1 over
+# ssh too), or the same /etc/machine-id (1.70.5). A package script can restart services under the running job.
+# Your lists ADD groups to these; you cannot remove no_patch or AAP from the protection.
 # A host that cannot be reached when the job starts (switched off, a firewall, ssh or its login refused): true = it is
 # listed as NOT REACHED and left out - not patched, no snapshot - and the other hosts are patched; the job is not
 # failed for it, and its last lines list every host not reached. false = it fails, and the rollout stops. No host
@@ -54,8 +56,9 @@ patch_service_wait: 120                  # seconds to wait for services to come 
 # D-Bus starts on demand and that end on their own (dbus-:1.1-org.fedoraproject.SetroubleshootPrivileged@83.service)
 patch_ignore_services: '^(user@|user-runtime-dir@|session-|dnf-makecache|packagekit|fwupd|run-|dbus-:|setroubleshootd|systemd-(hostnamed|timedated|localed|coredump))'
 # Which services must run again after the update: enabled = the ones that start at boot (systemctl is-enabled: enabled,
-# generated - an init script on RHEL 7); a service started on demand (static, indirect, transient: D-Bus, a socket,
-# another unit) that ended on its own is listed, never failed. all = every service that was running (before 0.89.0).
+# generated - an init script on RHEL 7). A service that was running but does not start at boot (disabled - started by
+# hand -, static, indirect, transient) and is gone after is a WARN line, never a failure (1.70.5). all = every service
+# that was running must run again, or the job fails (before 0.89.0).
 patch_compare_services: enabled
 
 # ---- A VMware snapshot of each VM right before it is patched ----
@@ -64,9 +67,12 @@ patch_compare_services: enabled
 # memory, named patch_snapshot_name. Attach a "VMware vCenter" credential to the template as well as the Machine
 # one. Every host's VM is found once, before any host is patched: the host variable vmware_vm_name (the VM's name in
 # vCenter) when set; else a VM named like the host (web01.yoursite.mil or web01); else the VM whose guest host name
-# (VMware Tools) is the host's; else the VM with its ansible_host address. A host whose VM is in no vCenter is a
-# physical server: patched without a snapshot, and the job says so (patch_snapshot_required). A host that matches two
-# VMs stops the job before anything is patched. A snapshot that fails: that host is not patched, and
+# (VMware Tools) is the host's; else the VM with its ansible_host address. An address or a full guest host name wins over
+# a short name (1.70.5); evidence for two VMs, or a VM whose guest host name or address says it is another machine, stops
+# the job before anything is patched, both VMs named: set vmware_vm_name. A vmware_vm_name that names no VM always stops
+# it. A host whose VM is in no vCenter is a physical server: patched without a snapshot, and the job says so
+# (patch_snapshot_required); patch_physical: true (a host variable) says so outright. A host that matches two VMs stops
+# the job before anything is patched. A snapshot that fails: that host is not patched, and
 # the rollout stops. Delete the snapshots once the patching is proven: "VM - snapshot cleanup"
 # (vm_snapshot_cleanup_name_words: [patching]). docs/RUNBOOKS.md, "Snapshot before patching".
 patch_snapshot: false
@@ -90,3 +96,9 @@ patch_snapshot_reuse_hours: 24
 # To patch them anyway, each one only after its own snapshot (patch_snapshot: true; its VM must be found, whatever
 # patch_snapshot_required says): true = all of them, or a list of names (* and ? allowed) = only those. AAP never.
 patch_protected_with_snapshot: false
+# The protected lists name VMs, and a host's inventory name may not be its VM's name (app01 is VM critical-db): true =
+# each host's VM is found in vCenter whenever vmware_protected_vms or vm_snapshot_cleanup_exclude_vms is set, also
+# without patch_snapshot (1.70.5). Attach the "VMware vCenter" credential to the template: without it the job stops
+# before any host is patched. A host whose VM is not sure (two VMs, a vCenter not read) stops it only when that VM could
+# be a protected one. false = only the inventory names (the host, its short name, vmware_vm_name) are compared.
+patch_protected_vm_lookup: true

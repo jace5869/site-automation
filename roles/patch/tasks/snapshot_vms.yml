@@ -5,12 +5,20 @@
 # host's VM is not found and a vCenter was not read (or patch_snapshot_required), a host matches two VMs, or an old snapshot is still there
 # (patch_snapshot_replace false). A snapshot of that name younger than patch_snapshot_reuse_hours is a run of a moment
 # ago (the job run again): kept and reused - no second one, nothing stopped. Output: _patch_snap on localhost, read by vmware_vm patch_snapshot.yml in each batch.
+# 1.70.5: also without patch_snapshot, when the VMware protected lists name VMs (patch_protected_vm_lookup): each host's
+# VM is found so a host whose inventory name is not its VM name is still protected - then a host whose VM is not known
+# for sure (two VMs, conflicting evidence, a vCenter not read) stops the job only when that could hide a protected VM.
+# A vmware_vm_name that names no VM always stops it; patch_physical: true (a host variable) says a host is no VM.
 - name: Patch | the hosts to patch (the protected ones are never patched, so get no snapshot either)
   ansible.builtin.set_fact:
+    _patch_snap_mode: "{{ patch_snapshot | bool }}"
+    _patch_snap_physical: >-
+      {{ ansible_play_hosts | select('in', ansible_play_hosts | map('extract', hostvars) | selectattr('patch_physical', 'defined')
+         | selectattr('patch_physical') | map(attribute='inventory_hostname') | list) | list }}
     _patch_snap_hosts: >-
-      {%- set prot = (patch_never_patch_groups + _site_always_protected + ['aap', 'aap_hosts']) | unique -%}
+      {%- set prot = (patch_never_patch_groups + _patch_always_no_patch + ['no_patch', 'aap', 'aap_hosts']) | unique -%}
       {%- set out = [] -%}
-      {%- for h in ansible_play_hosts if hostvars[h].group_names | intersect(prot) | length == 0 -%}
+      {%- for h in ansible_play_hosts if hostvars[h].group_names | intersect(prot) | length == 0 and not hostvars[h].patch_physical | default(false) | bool -%}
       {%-   set _ = out.append(h) -%}
       {%- endfor -%}
       {{ out }}
@@ -33,10 +41,10 @@
       {%-   if p.reason and not p.allowed -%}{%- set _ = skip.update({h: p.reason}) -%}{%- endif -%}
       {%- endfor -%}
       {%- set keep = {} -%}
-      {%- for k in ['missing', 'twice', 'old'] -%}
+      {%- for k in ['missing', 'twice', 'conflict', 'old'] -%}
       {%-   set _ = keep.update({k: _patch_snap[k] | dict2items | rejectattr('key', 'in', skip) | items2dict}) -%}
       {%- endfor -%}
-      {{ _patch_snap | combine(keep, {'protected': skip}) }}
+      {{ _patch_snap | combine(keep, {'protected': skip, 'physical': _patch_snap_physical}) }}
 
 # the job run again within patch_snapshot_reuse_hours (0 = never): its newest "patching" is this patching's, kept
 - name: Patch | a snapshot from a run of a moment ago, reused (patch_snapshot_reuse_hours)
@@ -44,7 +52,7 @@
     _patch_snap: >-
       {%- set reuse = {} -%}
       {%- set old = {} -%}
-      {%- for h, snaps in _patch_snap.old.items() -%}
+      {%- for h, snaps in (_patch_snap.old if _patch_snap_mode | bool else {}).items() -%}
       {%-   set newest = snaps | sort(attribute='age_days_exact') | first -%}
       {%-   if patch_snapshot_reuse_hours | float > 0 and newest.age_days_exact | float * 24 <= patch_snapshot_reuse_hours | float -%}
       {%-     set _ = reuse.update({h: newest}) -%}
@@ -58,6 +66,9 @@
   ansible.builtin.debug:
     msg: >-
       {%- set out = [] -%}
+      {%- for h in _patch_snap_physical -%}
+      {%-   set _ = out.append(h ~ ': PHYSICAL (patch_physical: true) - not looked up, patched without a snapshot') -%}
+      {%- endfor -%}
       {%- for h in _patch_snap_hosts -%}
       {%-   if h in _patch_snap.protected -%}
       {%-     set _ = out.append(h ~ ': PROTECTED - not patched (' ~ _patch_snap.protected[h] ~ ')') -%}
@@ -70,8 +81,11 @@
                                   ~ patch_snapshot_reuse_hours ~ ')' if h in _patch_snap.reuse else '')) -%}
       {%-   elif h in _patch_snap.twice -%}
       {%-     set _ = out.append(h ~ ': TWO VMs or more - ' ~ _patch_snap.twice[h] | join(', ')) -%}
+      {%-   elif h in _patch_snap.conflict -%}
+      {%-     set _ = out.append(h ~ ': WHICH VM IS NOT SURE - ' ~ _patch_snap.conflict[h]) -%}
       {%-   else -%}
-      {%-     set _ = out.append(h ~ ': NO VM - ' ~ _patch_snap.missing[h] ~ ('' if patch_snapshot_required | bool or _patch_snap.unread else ' (a physical server: patched without a snapshot)')) -%}
+      {%-     set _ = out.append(h ~ ': NO VM - ' ~ _patch_snap.missing[h] ~ ('' if patch_snapshot_required | bool or _patch_snap.unread or hostvars[h].vmware_vm_name | default('') | string | trim
+                                 else (' (a physical server: patched without a snapshot)' if _patch_snap_mode | bool else ' (a physical server)'))) -%}
       {%-   endif -%}
       {%- endfor -%}
       {%- if _patch_snap.unread -%}
@@ -86,21 +100,45 @@
       Nothing was patched: {{ _patch_snap_problems | join(' ') }}
     quiet: true
   vars:
+    # without patch_snapshot (the VM-name protection only): a host whose VM is not sure stops only when one of its
+    # candidate VMs is on the protected lists
+    _patch_prot_pats: "{{ (vmware_protected_vms | default([]) | name_list) + (vm_snapshot_cleanup_exclude_vms | default([]) | name_list) }}"
+    _patch_unsure: >-
+      {%- set out = [] -%}
+      {%- for h in (_patch_snap.twice.keys() | list) + (_patch_snap.conflict.keys() | list) -%}
+      {%-   if _patch_snap_mode | bool or (_patch_snap.candidates[h] | default([]) | map('name_matches', _patch_prot_pats) | select | list) -%}
+      {%-     set _ = out.append(h) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}
     _patch_snap_problems: >-
       {%- set out = [] -%}
-      {%- for h, names in _patch_snap.twice.items() -%}
+      {%- for h, names in _patch_snap.twice.items() if h in _patch_unsure -%}
       {%-   set _ = out.append(h ~ ' matches more than one VM (' ~ names | join(', ') ~ '): set vmware_vm_name for it (a host variable: the name of its VM in vCenter).') -%}
       {%- endfor -%}
-      {%- if (patch_snapshot_required | bool or _patch_snap.unread) and _patch_snap.missing -%}
-      {%-   for h, why in _patch_snap.missing.items() -%}{%- set _ = out.append(h ~ ': ' ~ why ~ '.') -%}{%- endfor -%}
+      {%- for h, why in _patch_snap.conflict.items() if h in _patch_unsure -%}
+      {%-   set _ = out.append(h ~ ': which VM it is, is not sure - ' ~ why ~ '.') -%}
+      {%- endfor -%}
+      {#- a vmware_vm_name that names no VM: a mistake, never a physical server (1.70.5) -#}
+      {%- for h, why in _patch_snap.missing.items() if hostvars[h].vmware_vm_name | default('') | string | trim -%}
+      {%-   set _ = out.append(h ~ ': vmware_vm_name is ' ~ hostvars[h].vmware_vm_name ~ ', and ' ~ why ~ ' in vCenter: correct vmware_vm_name, or set patch_physical: true for a server that is no VM.') -%}
+      {%- endfor -%}
+      {%- set missing = {} -%}
+      {%- for h, why in _patch_snap.missing.items() if not hostvars[h].vmware_vm_name | default('') | string | trim -%}
+      {%-   set _ = missing.update({h: why}) -%}
+      {%- endfor -%}
+      {%- if ((patch_snapshot_required | bool and _patch_snap_mode | bool) or _patch_snap.unread) and missing -%}
+      {%-   for h, why in missing.items() -%}{%- set _ = out.append(h ~ ': ' ~ why ~ '.') -%}{%- endfor -%}
       {%-   if _patch_snap.unread -%}{%- set _ = out.append('Not read: ' ~ _patch_snap.unread | join('; ') ~ '.') -%}{%- endif -%}
       {%-   if _patch_snap.unread -%}
-      {%-     set _ = out.append('A vCenter was not read, so these may be VMs there: fix that vCenter or its credential (vmware_vcenters), or leave them out of this run (Limit).') -%}
+      {%-     set _ = out.append('A vCenter was not read, so these may be VMs there: fix that vCenter or its credential (vmware_vcenters),'
+                                   ~ ' or leave them out of this run (Limit). A server that is no VM: patch_physical: true.') -%}
       {%-   else -%}
-      {%-     set _ = out.append('No vCenter has them (physical servers?): patch_snapshot_required is true. Leave them out of this run (Limit), or set patch_snapshot_required: false to patch them without a snapshot.') -%}
+      {%-     set _ = out.append('No vCenter has them (physical servers?): patch_snapshot_required is true. Leave them out of this run (Limit),'
+                                   ~ ' set patch_physical: true for each (a host variable), or patch_snapshot_required: false to patch them without a snapshot.') -%}
       {%-   endif -%}
       {%- endif -%}
-      {%- if not patch_snapshot_replace | bool -%}
+      {%- if not patch_snapshot_replace | bool and _patch_snap_mode | bool -%}
       {%-   for h, snaps in _patch_snap.old.items() -%}
       {%-     for s in snaps -%}
       {%-       set _ = out.append(_patch_snap.vms[h].name ~ ' (' ~ h ~ ') still has the snapshot "' ~ s.name ~ '" from '

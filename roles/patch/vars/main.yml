@@ -4,9 +4,16 @@
 # inventory (aap_hosts) and the settings files (aap). Keep in step with
 # roles/site_act/vars/main.yml and playbooks/act_fix_approved.yml.
 _site_always_protected: [aap, aap_hosts]
+# 1.70.5: never patched whatever patch_never_patch_groups says - your list adds to it, never replaces it
+_patch_always_no_patch: [no_patch, aap, aap_hosts]
+
+# patch_packages / patch_exclude as a list, also when a survey or -e gives them as text ("kernel*", "kernel*, glibc"):
+# never the letters of one name (1.70.5)
+_patch_pkgs: "{{ patch_packages | patch_name_list(['*']) }}"
+_patch_excl: "{{ patch_exclude | patch_name_list([]) }}"
 
 # yum's own arguments for a RHEL 7 host (tasks/main.yml): the settings dnf takes, as yum options
 _patch_yum_args: >-
   {{ (['--security'] if patch_security_only | bool else [])
-     + (patch_exclude | map('regex_replace', '^', '--exclude=') | list)
-     + ([] if patch_packages | list == ['*'] else patch_packages | list) }}
+     + (_patch_excl | map('regex_replace', '^', '--exclude=') | list)
+     + ([] if _patch_pkgs == ['*'] else _patch_pkgs) }}

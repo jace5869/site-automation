@@ -872,7 +872,7 @@ class PatchVmMatch(unittest.TestCase):
     def test_by_name_short_name_guest_and_address(self):
         r = self.m(["web01.example.mil", "db01", "app07.example.mil", "lnx44"], {"lnx44": {"ansible_host": "192.0.2.44"}})
         self.assertEqual({h: (v["moid"], v["how"]) for h, v in r["vms"].items()},
-                         {"web01.example.mil": ("vm-1", "VM name"), "db01": ("vm-2", "VM name"),
+                         {"web01.example.mil": ("vm-1", "guest host name"), "db01": ("vm-2", "VM name"),
                           "app07.example.mil": ("vm-3", "guest host name"), "lnx44": ("vm-4", "IP address")})
         self.assertEqual(r["missing"], {})
 
@@ -904,8 +904,123 @@ class PatchVmMatch(unittest.TestCase):
         self.assertEqual(self.m(["web01"], snaps=snaps, name="Patching-old")["old"]["web01"][0]["id"], 5)
 
     def test_nothing(self):
-        self.assertEqual(f.patch_vm_match([], {}, None), {"vms": {}, "missing": {}, "twice": {}, "old": {}})
+        self.assertEqual(f.patch_vm_match([], {}, None), {"vms": {}, "missing": {}, "twice": {}, "conflict": {}, "candidates": {}, "old": {}})
         self.assertEqual(f.patch_vm_match(["a"], None, None)["missing"].keys(), {"a"})
+
+    # ---- 1.70.5 (review of bf0a69bd): every piece of evidence, conflicts refused
+
+    OLD = {"name": "web01.old.example", "moid": "vm-20", "vcenter": VC, "hostname": "web01.old.example", "ips": ["192.0.2.10"]}
+    PROD = {"name": "prod-web-a", "moid": "vm-21", "vcenter": VC, "hostname": "web01.prod.example", "ips": ["192.0.2.20"]}
+    HV = {"web01.prod.example": {"ansible_host": "192.0.2.20"}}
+
+    def test_the_wrong_vm_codex_found(self):
+        """Target web01.prod.example at 192.0.2.20: a VM named web01.old.example (192.0.2.10) matches only by its short
+        name; the VM whose guest host name and address are the target's is the one - before 1.70.5 the short name won."""
+        r = f.patch_vm_match(["web01.prod.example"], self.HV, [self.OLD, self.PROD])
+        self.assertEqual((r["vms"]["web01.prod.example"]["moid"], r["vms"]["web01.prod.example"]["how"], r["conflict"]), ("vm-21", "IP address", {}))
+        r = f.patch_vm_match(["web01.prod.example"], self.HV, [self.PROD, self.OLD])                 # the order of the VMs does not matter
+        self.assertEqual(r["vms"]["web01.prod.example"]["moid"], "vm-21")
+
+    def test_strong_evidence_for_two_vms_is_refused(self):
+        named = {"name": "web01.prod.example", "moid": "vm-22", "vcenter": self.VC, "hostname": "", "ips": []}
+        r = f.patch_vm_match(["web01.prod.example"], self.HV, [named, self.PROD])
+        self.assertEqual((r["vms"], r["twice"], r["missing"]), ({}, {}, {}))
+        why = r["conflict"]["web01.prod.example"]
+        self.assertIn("web01.prod.example (vc01) by VM name", why)
+        self.assertIn("prod-web-a (vc01) by IP address, guest host name", why)
+        self.assertIn("vmware_vm_name", why)
+        self.assertEqual(r["candidates"]["web01.prod.example"], ["prod-web-a", "web01.prod.example"])
+
+    def test_a_vm_that_says_it_is_another_machine_is_refused(self):
+        # named like the host, but VMware Tools says db07: refused (both named)
+        liar = {"name": "web01", "moid": "vm-23", "vcenter": self.VC, "hostname": "db07.example.mil", "ips": []}
+        r = f.patch_vm_match(["web01"], {}, [liar])
+        self.assertIn("says it is db07.example.mil", r["conflict"]["web01"])
+        # its addresses are not the host's
+        r = f.patch_vm_match(["web01"], {"web01": {"ansible_host": "192.0.2.30"}},
+                             [{"name": "web01", "moid": "vm-24", "vcenter": self.VC, "hostname": "", "ips": ["192.0.2.31"]}])
+        self.assertIn("has the addresses 192.0.2.31, not 192.0.2.30", r["conflict"]["web01"])
+        # no guest information at all: the name alone, as before
+        r = f.patch_vm_match(["web01"], {}, [{"name": "web01", "moid": "vm-25", "vcenter": self.VC, "hostname": "", "ips": []}])
+        self.assertEqual(r["vms"]["web01"]["moid"], "vm-25")
+
+    def test_a_host_named_by_its_address(self):
+        """1.70.5b (Codex): an inventory host named by its IP gives no host name, so the VM with that address is its VM,
+        whatever its guest host name - before, any guest name was taken as a contradiction."""
+        vm = {"name": "srv-a", "moid": "vm-30", "vcenter": self.VC, "hostname": "web01.prod.example", "ips": ["192.0.2.20"]}
+        for host, hv in (("192.0.2.20", {}), ("db9", {"db9": {"ansible_host": "192.0.2.20"}})):
+            r = f.patch_vm_match([host], hv, [vm])
+            if host == "192.0.2.20":
+                self.assertEqual((r["vms"][host]["moid"], r["vms"][host]["how"], r["conflict"]), ("vm-30", "IP address", {}))
+        # a name the host does give still counts: db9 at that address, the VM says web01 - refused, as before
+        self.assertIn("says it is web01.prod.example", f.patch_vm_match(["db9"], {"db9": {"ansible_host": "192.0.2.20"}}, [vm])["conflict"]["db9"])
+
+    def test_the_host_variable_still_decides_alone(self):
+        r = f.patch_vm_match(["web01.prod.example"], {"web01.prod.example": {"ansible_host": "192.0.2.20", "vmware_vm_name": "web01.old.example"}},
+                             [self.OLD, self.PROD])
+        self.assertEqual((r["vms"]["web01.prod.example"]["moid"], r["conflict"]), ("vm-20", {}))
+
+
+class PatchNameList(unittest.TestCase):
+    """1.70.5: patch_packages / patch_exclude as text (a survey, -e) - never the letters of one name."""
+
+    def test_text_and_lists(self):
+        self.assertEqual(f.patch_name_list("kernel", ["*"]), ["kernel"])
+        self.assertEqual(f.patch_name_list("kernel*", []), ["kernel*"])
+        self.assertEqual(f.patch_name_list("kernel*, glibc\nopenssl*", []), ["kernel*", "glibc", "openssl*"])
+        self.assertEqual(f.patch_name_list("kernel* glibc", []), ["kernel*", "glibc"])
+        self.assertEqual(f.patch_name_list(["kernel*", "glibc"], []), ["kernel*", "glibc"])
+        self.assertEqual(f.patch_name_list("", ["*"]), ["*"])
+        self.assertEqual(f.patch_name_list(None, []), [])
+        self.assertEqual(f.patch_name_list([], ["*"]), ["*"])
+
+    def test_both_places_read_the_settings_through_it(self):
+        here = os.path.dirname(os.path.abspath(__file__))
+        for rel in ("playbooks/patch_hosts.yml", "roles/patch/vars/main.yml", "roles/patch/tasks/main.yml"):
+            text = open(os.path.join(here, "..", rel)).read()
+            code = "\n".join(x for x in text.splitlines() if not x.lstrip().startswith("#"))
+            for v in ("patch_packages", "patch_exclude"):
+                # every use in an expression: the setting, its filters up to patch_name_list (default() before it is fine)
+                for m in re.finditer(r"\b%s\b((?:\s*\|\s*\w+(?:\([^)]*\))?)*)" % v, code):
+                    if not re.search(r"\{\{[^}]*$", code[:m.start()]):
+                        continue                                      # in text, not in an expression
+                    self.assertIn("patch_name_list", m.group(1), "%s: %s read without patch_name_list: %s" % (rel, v, m.group(0)))
+
+
+class PatchControllerHit(unittest.TestCase):
+    """1.70.5: never the machine running the job - an alias, its name, an address that resolves to it, its machine-id."""
+    C = {"names": ["aapctl.example.mil", "aapctl"], "ips": ["192.0.2.5", "fe80::5"], "machine_id": "abc123"}
+
+    def hit(self, dest, extra=None, res=None):
+        return f.patch_controller_hit(dest, dict(self.C, **(extra or {})), resolve=lambda n: (res or {}).get(n, []))
+
+    def test_aliases_of_the_controller(self):
+        for d in ("127.0.0.1", "127.0.1.1", "::1", "localhost", "[::1]"):
+            self.assertIn("loopback", self.hit(d), d)
+        self.assertIn("name of the machine", self.hit("aapctl.example.mil"))
+        self.assertIn("name of the machine", self.hit("AAPCTL.example.mil."))
+        # a short name: only with an address or machine-id that is the controller's (1.70.5b)
+        self.assertIn("resolves to 192.0.2.5", self.hit("aapctl", res={"aapctl": ["192.0.2.5"]}))
+        self.assertIn("machine-id", self.hit("aapctl", {"host_machine_id": "abc123"}))
+        self.assertIn("address of the machine", self.hit("192.0.2.5"))
+        self.assertIn("resolves to 192.0.2.5", self.hit("controller-alias", res={"controller-alias": ["192.0.2.5"]}))
+        self.assertIn("resolves to 127.0.0.1", self.hit("ctl-lo", res={"ctl-lo": ["127.0.0.1"]}))
+        self.assertIn("machine-id", self.hit("web07", {"host_machine_id": "abc123"}))
+
+    def test_a_namesake_in_another_domain_passes(self):
+        """1.70.5b (Codex): the controller ctl.sitea.example.mil and a host ctl.siteb.example.mil - another address, another
+        machine-id - are two machines; before, their short names refused it."""
+        c = {"names": ["ctl.sitea.example.mil", "ctl"], "ips": ["192.0.2.5"], "machine_id": "abc123", "host_machine_id": "def456"}
+        self.assertEqual(f.patch_controller_hit("ctl.siteb.example.mil", c, resolve=lambda n: ["192.0.2.66"]), "")
+        self.assertEqual(f.patch_controller_hit("ctl", c, resolve=lambda n: ["192.0.2.66"]), "")      # short, elsewhere
+        self.assertIn("name of the machine", f.patch_controller_hit("ctl.sitea.example.mil", c, resolve=lambda n: []))
+
+    def test_other_hosts_pass(self):
+        self.assertEqual(self.hit("web01.example.mil", {"host_machine_id": "def456"}, {"web01.example.mil": ["192.0.2.11"]}), "")
+        self.assertEqual(self.hit("192.0.2.11"), "")
+        self.assertEqual(self.hit("web01"), "")                                          # does not resolve: nothing to say
+        self.assertEqual(f.patch_controller_hit("web01", {}, resolve=lambda n: []), "")
+        self.assertEqual(self.hit("web02", {"host_machine_id": ""}), "")                  # unread machine-ids are not the same
 
 
 

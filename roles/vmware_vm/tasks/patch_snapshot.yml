@@ -15,16 +15,98 @@
 - name: VMware | this host's VM
   ansible.builtin.set_fact:
     _patch_vm: "{{ hostvars['localhost']._patch_snap.vms[inventory_hostname] | default({}) }}"
-    _patch_vm_old: "{{ hostvars['localhost']._patch_snap.old[inventory_hostname] | default([]) if patch_snapshot_replace | bool else [] }}"
     # the job run again within patch_snapshot_reuse_hours: the snapshot it took is kept, no second one (roles/patch/tasks/snapshot_vms.yml)
-    _patch_vm_reuse: "{{ hostvars['localhost']._patch_snap.reuse[inventory_hostname] | default({}) }}"
+    _patch_vm_reuse0: "{{ hostvars['localhost']._patch_snap.reuse[inventory_hostname] | default({}) }}"
+    _patch_vm_reuse: {}
+    _patch_reuse_note: ""
+    _patch_vm_old: []
 
 - name: VMware | no VM for this host (a physical server) - patched without a snapshot
   ansible.builtin.debug:
     msg: >-
-      {{ inventory_hostname }}: {{ hostvars['localhost']._patch_snap.missing[inventory_hostname] | default('its VM was not found') }}.
-      In no vCenter, so a physical server: patched without a snapshot.
+      {{ inventory_hostname }}: {{ 'patch_physical: true' if patch_physical | default(false) | bool else
+      hostvars['localhost']._patch_snap.missing[inventory_hostname] | default('its VM was not found') ~ '. In no vCenter' }},
+      so a physical server: patched without a snapshot.
   when: _patch_vm | length == 0
+
+# 1.70.5: what was found before the first batch may be old by this host's turn (an earlier batch took long, the snapshot
+# cleanup ran): this VM and its snapshots are read again now, right before its snapshot
+- name: VMware | read the VMs again, right before the snapshot
+  site_vmware_vms:
+    datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+  register: _patch_vm_now
+  check_mode: false
+  when: _patch_vm | length > 0
+
+- name: VMware | read its snapshots again
+  site_vmware_snapshots:
+    datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    taken_by: false
+  register: _patch_snaps_now
+  check_mode: false
+  when: _patch_vm | length > 0
+
+- name: VMware | the VM is still the one found, and the snapshot to reuse is still there and young enough
+  ansible.builtin.set_fact:
+    _patch_vm_same: >-
+      {{ _patch_vm_now.vms | default([]) | selectattr('moid', 'equalto', _patch_vm.moid)
+         | selectattr('vcenter', 'equalto', _patch_vm.vcenter) | map(attribute='name') | list }}
+    # its snapshots named patch_snapshot_name now
+    _patch_vm_named: >-
+      {{ _patch_snaps_now.snapshots | default([]) | selectattr('moid', 'equalto', _patch_vm.moid)
+         | selectattr('vcenter', 'equalto', _patch_vm.vcenter) | selectattr('name', 'equalto', patch_snapshot_name) | list }}
+  when: _patch_vm | length > 0
+
+- name: VMware | the reused snapshot, as it is now
+  ansible.builtin.set_fact:
+    _patch_reuse_now: "{{ _patch_vm_named | selectattr('id', 'equalto', _patch_vm_reuse0.id) | list | first | default({}) }}"
+  when: _patch_vm | length > 0 and _patch_vm_reuse0 | length > 0
+
+- name: VMware | decide - reuse, a new one, or stop
+  ansible.builtin.set_fact:
+    _patch_vm_reuse: >-
+      {{ _patch_reuse_now if _patch_reuse_now | default({}) | length > 0
+         and (_patch_reuse_now.age_days_exact | float * 24) <= patch_snapshot_reuse_hours | float else {} }}
+    _patch_reuse_note: >-
+      {{ '' if _patch_vm_reuse0 | length == 0 else
+         ('the snapshot to reuse (from ' ~ _patch_vm_reuse0.created | default('?') ~ ') is gone now: a new one is taken')
+           if _patch_reuse_now | default({}) | length == 0 else
+         ('the snapshot to reuse is now ' ~ (_patch_reuse_now.age_days_exact | float * 24) | round(1) ~ ' h old (over patch_snapshot_reuse_hours, '
+          ~ patch_snapshot_reuse_hours ~ ')') if (_patch_reuse_now.age_days_exact | float * 24) > patch_snapshot_reuse_hours | float else '' }}
+  when: _patch_vm | length > 0
+
+- name: VMware | the VM is still {{ _patch_vm.name | default('-') }}
+  ansible.builtin.assert:
+    that: _patch_vm_same == [_patch_vm.name]
+    fail_msg: >-
+      Not patched: {{ inventory_hostname }}'s VM {{ _patch_vm.name }} ({{ _patch_vm.moid }}) is
+      {{ ('now named ' ~ _patch_vm_same | join(', ')) if _patch_vm_same else 'not in vCenter now (or its vCenter was not read)' }}.
+      Run the job again: each host's VM is found again from the start.
+    quiet: true
+  when: _patch_vm | length > 0
+
+- name: VMware | the snapshot to reuse is too old now - stop (or patch_snapshot_replace)
+  ansible.builtin.assert:
+    that: patch_snapshot_replace | bool or 'old (over' not in _patch_reuse_note
+    fail_msg: >-
+      Not patched: {{ _patch_vm.name }} ({{ inventory_hostname }}): {{ _patch_reuse_note }}. Delete it once that patching is
+      proven, or run with patch_snapshot_replace: true to replace it.
+    quiet: true
+  when: _patch_vm | length > 0
+
+- name: VMware | the snapshot to reuse is gone, or too old - said
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: {{ _patch_reuse_note }}{{ ': replaced (patch_snapshot_replace)' if 'old (over' in _patch_reuse_note else '' }}."
+  when: _patch_vm | length > 0 and _patch_reuse_note | length > 0
+
+- name: VMware | the old snapshots to delete first (patch_snapshot_replace), as they are now
+  ansible.builtin.set_fact:
+    _patch_vm_old: "{{ _patch_vm_named if patch_snapshot_replace | bool and _patch_vm_reuse | length == 0 else [] }}"
+  when: _patch_vm | length > 0
 
 - name: VMware | delete the old snapshot "{{ patch_snapshot_name }}" of {{ _patch_vm.name | default('-') }} (patch_snapshot_replace)
   vmware.vmware.vm_snapshot:
@@ -37,7 +119,7 @@
     state: absent
     snapshot_id: "{{ item.id | int }}"
     timeout: "{{ vm_snapshot_delete_timeout | int }}"
-  loop: "{{ _patch_vm_old }}"
+  loop: "{{ _patch_vm_old | default([]) }}"
   loop_control:
     label: "{{ item.vm }}: {{ item.name }} ({{ item.age_days | default('?') }} days)"
   when: _patch_vm | length > 0 and _patch_vm_reuse | length == 0
@@ -81,10 +163,12 @@
 - name: VMware | what was done
   ansible.builtin.set_fact:
     _patch_snapshot: >-
-      {{ ('none - physical (' ~ hostvars['localhost']._patch_snap.missing[inventory_hostname] | default('its VM was not found') ~ ')')
+      {{ ('none - physical (' ~ ('patch_physical: true' if patch_physical | default(false) | bool else
+                                  hostvars['localhost']._patch_snap.missing[inventory_hostname] | default('its VM was not found')) ~ ')')
          if _patch_vm | length == 0 else
          (('would reuse' if ansible_check_mode else 'reused') ~ ' "' ~ patch_snapshot_name ~ '" from '
           ~ _patch_vm_reuse.created | replace('T', ' ') | replace('Z', ' UTC') ~ ' of VM ' ~ _patch_vm.name)
          if _patch_vm_reuse | length > 0 else
          (('would take' if ansible_check_mode else 'took') ~ ' "' ~ patch_snapshot_name ~ '" of VM ' ~ _patch_vm.name
-          ~ (' (the old one ' ~ ('would be' if ansible_check_mode else 'was') ~ ' deleted first)' if _patch_vm_old | length > 0 else '')) }}
+          ~ (' (the old one ' ~ ('would be' if ansible_check_mode else 'was') ~ ' deleted first)' if _patch_vm_old | default([]) | length > 0 else '')
+          ~ (' (' ~ _patch_reuse_note ~ ')' if _patch_reuse_note | default('') else '')) }}

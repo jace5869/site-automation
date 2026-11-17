@@ -1,5 +1,43 @@
 # Changelog
 
+## 1.70.5 — 2026-11-17
+
+**To set up:** if `vmware_protected_vms` or `vm_snapshot_cleanup_exclude_vms` is set, attach the **VMware vCenter**
+credential to *Patch hosts*. Without it the job now stops before patching. Or set `patch_protected_vm_lookup: false` to
+compare the inventory names only, as before. Nothing else.
+
+**Patching safety, Linux** (a review of `patch_hosts.yml`). Docs: RUNBOOKS.md (*Patch hosts*). Windows patching is
+unchanged.
+
+- **A host lost halfway stops the rollout.** An unreachable host did not count for `max_fail_percentage`, so with
+  `patch_serial` over 1 later batches went on. Now the rest of that batch stops (`any_errors_fatal`), and each batch
+  first checks that no host of an earlier one failed or was lost. `any_errors_fatal` alone does not stop the later
+  batches when a host is lost (ansible-core 2.16 and 2.22 alike).
+- **The right VM, or none.** Every piece of evidence is weighed: an address or a full guest host name wins over a
+  short name. Before, a VM named `web01.old...` could win over the VM that is the host, and the host was patched
+  without its snapshot. Evidence for two VMs, or a VM that says it is another machine, stops the job and names both:
+  set `vmware_vm_name`. A host known only by its address gives no name to contradict: the VM with that address is its.
+- **`vmware_vm_name` that names no VM** always stops the job. It was taken as a physical server. A server that is no
+  VM can say so: `patch_physical: true` (a host variable).
+- **The VMware protected lists by VM name** are now checked without `patch_snapshot` too. Each host's VM is looked up,
+  so a host whose inventory name is not its VM name is still protected (`patch_protected_vm_lookup`, see above).
+- **`no_patch` and the AAP hosts, always.** Your `patch_never_patch_groups` adds groups to them, it cannot replace
+  them. `no_patch` was dropped when the list was replaced.
+- **Never the machine running the job, by any name**: an address or full host name of its own (`127.0.0.1` over ssh
+  too), a name that resolves to it, or the same `/etc/machine-id`. A short name alone is no proof: `ctl.siteb...` is not
+  the controller `ctl.sitea...`.
+- **Text settings.** `patch_packages: kernel` or `patch_exclude: kernel*` from a survey or `-e` became single
+  letters. Each name is kept whole now.
+- **A reboot left pending.** A host that is up to date but still needs the reboot from the last run is rebooted on a
+  run with `automatic_restarts: true`. It was left out as up to date. Without it, the host is listed with
+  `REBOOT PENDING`.
+- **Services.** A service that was running but does not start at boot, and is gone after, is a WARN line.
+- **The snapshot to reuse is checked again** right before each host's snapshot. Gone: a new one is taken. Too old
+  now: the job stops (or replaces it). The VM's ID with another name: the job stops.
+- Tests: test_filters (the VM match, the wrong VM of the review, text settings, the controller), test_protection,
+  the patch end-to-end test (a lost host in batch 1, the machine-id, text settings, the reboot left pending, the VM-name
+  protection, the snapshot checked again).
+
 ## 1.70.4 — 2026-11-17
 
 **To set up: nothing required.** Your site's surveys answer on 1 to 4: set `servicenow_insights_survey_scale: [1, 4]`.

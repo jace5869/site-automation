@@ -1552,16 +1552,32 @@ def _is_ip(s):
     return bool(re.fullmatch(r"[0-9.]+", s) or (":" in s and re.fullmatch(r"[0-9a-fA-F:.]+", s)))
 
 
+def _vm_ips(v):
+    return set(str(i).strip().lower() for i in (v.get("ips") or []) + [v.get("ip") or ""] if str(i).strip())
+
+
 def patch_vm_match(hosts, hostvars=None, vms=None, snapshots=None, snapshot_name="patching"):
-    """Each host to patch -> its VM in vCenter (site_vmware_vms), for the snapshot before patching
-    (playbooks/patch_hosts.yml, patch_snapshot). The first of these that finds a VM decides: the host
-    variable vmware_vm_name (the VM's name, any case - nothing else is tried); a VM named like the host or
-    its ansible_host (web01.example.mil); ... like its short name (web01); a VM whose guest host name
-    (VMware Tools) is the host's; ... its short name; a VM with the host's ansible_host address.
-    Templates never. -> {'vms': {host: VM + 'how'}, 'missing': {host: why}, 'twice': {host: [VM names]},
-    'old': {host: [the snapshots named snapshot_name its VM has now]}}."""
+    """Each host to patch -> its VM in vCenter (site_vmware_vms), for the snapshot before patching and the VM-name
+    protection (playbooks/patch_hosts.yml). The host variable vmware_vm_name (the VM's name, any case) decides alone - and
+    when no VM has that name the host is 'missing', with that name (never a physical server). Else every piece of
+    evidence is weighed (1.70.5): strong - the host's address (its name or ansible_host as an IP) among the VM's IPs, or
+    its full name (web01.example.mil) as the VM's guest host name (VMware Tools) or VM name; weak - its name as written,
+    then its short name (web01), as the VM name, then as the guest host name. One VM with strong evidence wins over any
+    short-name match. Strong evidence for two VMs, or a VM whose own guest host name or addresses say it is another
+    machine, is a conflict: refused, both VMs named. Templates never. -> {'vms': {host: VM + 'how'}, 'missing': {host:
+    why}, 'twice': {host: [VM names]}, 'conflict': {host: why}, 'candidates': {host: [the VM names of a twice or a
+    conflict]}, 'old': {host: [the snapshots named snapshot_name its VM has now]}}."""
     vms = [v for v in vms or [] if not v.get("template")]
-    out = {"vms": {}, "missing": {}, "twice": {}, "old": {}}
+    out = {"vms": {}, "missing": {}, "twice": {}, "conflict": {}, "candidates": {}, "old": {}}
+
+    def label(v):
+        return "%s (%s)" % (v.get("name", ""), vc_short(v.get("vcenter", "")))
+
+    def guest(v):
+        return str(v.get("hostname") or "").strip().lower()
+
+    def uniq(lst):
+        return list({vm_snap_vm_key(v): v for v in lst}.values())
     for h in hosts or []:
         try:
             hv = (hostvars or {})[h]
@@ -1569,37 +1585,132 @@ def patch_vm_match(hosts, hostvars=None, vms=None, snapshots=None, snapshot_name
             ah = str(hv.get("ansible_host") or "").strip().lower()
         except (KeyError, TypeError, AttributeError):
             given, ah = "", ""
+        found, how, why, cand = [], "", "", []
         if given:
-            rules = [("vmware_vm_name", lambda v: str(v.get("name", "")).lower() == given.lower())]
+            found, how = uniq(v for v in vms if str(v.get("name", "")).lower() == given.lower()), "vmware_vm_name"
         else:
-            full = set(x for x in [str(h).lower(), ah] if x and not _is_ip(x))
-            short = set(x.split(".")[0] for x in full)
+            names = set(x for x in [str(h).lower(), ah] if x and not _is_ip(x))
+            fqdn = set(x for x in names if "." in x)
+            short = set(x.split(".")[0] for x in names)
             ips = set(x for x in [str(h).lower(), ah] if x and _is_ip(x))
-
-            def guest(v):
-                return str(v.get("hostname") or "").strip().lower()
-            rules = [("VM name", lambda v: str(v.get("name", "")).lower() in full),
-                     ("VM name", lambda v: str(v.get("name", "")).lower().split(".")[0] in short),
-                     ("guest host name", lambda v: guest(v) in full),
-                     ("guest host name", lambda v: guest(v) and guest(v).split(".")[0] in short),
-                     ("IP address", lambda v: bool(ips & set(str(i).lower() for i in (v.get("ips") or []) + [v.get("ip") or ""])))]
-        found, how = [], ""
-        for how, rule in rules:
-            found = list({vm_snap_vm_key(v): v for v in vms if rule(v)}.values())
-            if found:
-                break
-        if len(found) == 1:
+            strong = {}
+            for v in vms:
+                ev = []
+                if ips & _vm_ips(v):
+                    ev.append("IP address")
+                if fqdn and guest(v) in fqdn:
+                    ev.append("guest host name")
+                if fqdn and str(v.get("name", "")).lower() in fqdn:
+                    ev.append("VM name")
+                if ev:
+                    strong.setdefault(vm_snap_vm_key(v), (v, ev))
+            if len(strong) > 1:
+                cand = [v for v, _ev in strong.values()]
+                why = ("the evidence points at %s: %s. Set vmware_vm_name for it (a host variable: the name of its VM in "
+                       "vCenter)" % (" and ".join(label(v) for v, _ev in strong.values()),
+                                     "; ".join("%s by %s" % (label(v), ", ".join(ev)) for v, ev in strong.values())))
+            elif strong:
+                v, ev = list(strong.values())[0]
+                found, how = [v], ev[0]
+            else:
+                for how, rule in [("VM name", lambda v: str(v.get("name", "")).lower() in names),
+                                  ("guest host name", lambda v: guest(v) in names),
+                                  ("VM name", lambda v: str(v.get("name", "")).lower().split(".")[0] in short),
+                                  ("guest host name", lambda v: guest(v) and guest(v).split(".")[0] in short)]:
+                    found = uniq(v for v in vms if rule(v))
+                    if found:
+                        break
+            if len(found) == 1 and not why:
+                # the VM chosen must not say it is another machine: its guest host name or its addresses
+                v = found[0]
+                g = guest(v)
+                # its guest host name only against a name the host gives: a host known by its address alone gives none
+                if names and g and g.split(".")[0] not in short and g not in names:
+                    why = "VM %s (by %s) says it is %s (its guest host name, VMware Tools)" % (label(v), how, g)
+                elif ips and _vm_ips(v) and not (ips & _vm_ips(v)):
+                    why = "VM %s (by %s) has the addresses %s, not %s" % (label(v), how, ", ".join(sorted(_vm_ips(v))), ", ".join(sorted(ips)))
+                if why:
+                    cand = [v] + [x for x in vms if vm_snap_vm_key(x) != vm_snap_vm_key(v)
+                                  and ((ips & _vm_ips(x)) or guest(x) in names or (guest(x) and guest(x).split(".")[0] in short)
+                                       or str(x.get("name", "")).lower().split(".")[0] in short)]
+                    other = [label(x) for x in vms if vm_snap_vm_key(x) != vm_snap_vm_key(v)
+                             and ((ips & _vm_ips(x)) or guest(x) in names or (guest(x) and guest(x).split(".")[0] in short)
+                                  or str(x.get("name", "")).lower().split(".")[0] in short)]
+                    why += (" - %s matches the host too" % " and ".join(sorted(set(other)))) if other else ""
+                    why += ". Set vmware_vm_name for it (a host variable: the name of its VM in vCenter)"
+        if why:
+            out["conflict"][h] = why
+            out["candidates"][h] = sorted(set(str(v.get("name", "")) for v in cand))
+        elif len(found) == 1:
             vm = dict(found[0], how=how)
             out["vms"][h] = vm
             old = [s for s in snapshots or [] if vm_snap_vm_key(s) == vm_snap_vm_key(vm) and s.get("name") == snapshot_name]
             if old:
                 out["old"][h] = old
         elif found:
-            out["twice"][h] = sorted("%s (%s)" % (v.get("name", ""), vc_short(v.get("vcenter", ""))) for v in found)
+            out["twice"][h] = sorted(label(v) for v in found)
+            out["candidates"][h] = sorted(set(str(v.get("name", "")) for v in found))
         else:
             out["missing"][h] = ("no VM is named %s" % given) if given else \
                 "no VM by its name, guest host name (VMware Tools) or address - set vmware_vm_name for it"
     return out
+
+
+def patch_name_list(value, default=None):
+    """1.70.5: patch_packages / patch_exclude as a setting may give them - a list, or text (a survey's text field, -e
+    patch_packages=kernel): names split at commas, semicolons, line breaks and spaces (a package name has none). Never the
+    letters of one name. Nothing given: default (['*'] for the packages, [] for the exclusions)."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return list(default or [])
+    out = []
+    for n in name_list(value):
+        out.extend(w for w in str(n).split() if w)
+    return out or list(default or [])
+
+
+def patch_controller_hit(dest, controller=None, resolve=None):
+    """1.70.5: is the host this job is about to patch the machine running the job? dest: where the job connects (its
+    ansible_host, else its name); controller: {'names': [its host names], 'ips': [its addresses], 'machine_id': '',
+    'host_machine_id': the host's own /etc/machine-id}. A loopback address (127.x, ::1, localhost), one of the controller's
+    full names (exactly - a short name alone is no proof, 1.70.5b) or addresses (dest resolved here too), or the same
+    machine-id: -> why (text); else ''. resolve: a function
+    name -> [addresses] (tests); default socket.getaddrinfo, a name that does not resolve resolves to nothing."""
+    import ipaddress
+    import socket
+    c = controller or {}
+    d = str(dest or "").strip().lower().strip("[]")
+    if not d:
+        return ""
+    # its full names (web01.example.mil): a short name (web01) alone may be another machine of another domain - it counts
+    # only with an address or machine-id that is the controller's, which are checked below anyway (1.70.5b)
+    mine = set(x for x in (str(y).strip().lower().rstrip(".") for y in c.get("names") or []) if "." in x)
+    ips = set(str(x).strip().lower() for x in c.get("ips") or [] if str(x).strip())
+
+    def loop(a):
+        try:
+            return ipaddress.ip_address(a.split("%")[0]).is_loopback
+        except ValueError:
+            return False
+    if d in ("localhost", "localhost.localdomain", "ip6-localhost") or loop(d):
+        return "%s is a loopback address: the machine running this job" % d
+    if not _is_ip(d) and d.rstrip(".") in mine:
+        return "%s is the name of the machine running this job" % d
+    if d in ips:
+        return "%s is an address of the machine running this job" % d
+    if resolve is None:
+        def resolve(n):
+            try:
+                return [a[4][0] for a in socket.getaddrinfo(n, None)]
+            except (OSError, UnicodeError):
+                return []
+    got = set(str(a).lower() for a in (resolve(d) if not _is_ip(d) else []))
+    hit = sorted(a for a in got if loop(a) or a in ips)
+    if hit:
+        return "%s resolves to %s, the machine running this job" % (d, ", ".join(hit))
+    m1, m2 = str(c.get("machine_id") or "").strip(), str(c.get("host_machine_id") or "").strip()
+    if m1 and m1 == m2:
+        return "its /etc/machine-id is the one of the machine running this job (%s)" % m1
+    return ""
 
 
 def patch_protected(host, hostvars=None, vm_name="", protected_groups=None, protected_vms=None, keep_vms=None,
@@ -2438,6 +2549,7 @@ class FilterModule(object):
                 "vm_pick_reboot_plan": vm_pick_reboot_plan, "vm_snap_row": vm_snap_row, "vm_snap_vm_key": vm_snap_vm_key, "patch_vm_match": patch_vm_match, "patch_protected": patch_protected, "cert_report_section": cert_report_section,
                 "site_correlation_id": site_correlation_id,
                 "human_size": human_size, "name_matches": name_matches, "name_list": name_list,
+                "patch_name_list": patch_name_list, "patch_controller_hit": patch_controller_hit,
                 "report_text": report_text, "report_notice": report_notice, "report_cards_html": report_cards_html, "report_cell_html": report_cell_html, "findings_report": findings_report,
                 "report_sparkline": report_sparkline, "report_runway_bar": report_runway_bar,
                 "report_headline": report_headline, "report_runs": report_runs,

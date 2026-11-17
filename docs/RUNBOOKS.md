@@ -1053,7 +1053,8 @@ write -, fapolicyd) and the cluster (`sys_cluster_state`) - in the same report, 
 
 Installs updates with dnf - on RHEL 7 and its clones with yum (0.89.0: `yum check-update`, then
 `yum -y update`; any ansible-core) - (`patch_security_only` for security fixes only, `--security` on
-yum; `patch_exclude` for packages never updated here). Then:
+yum; `patch_exclude` for packages never updated here). `patch_packages` and `patch_exclude` may be text from a
+survey or `-e` (`kernel*`, `kernel*, glibc`): each name is kept whole (1.70.5). Then:
 
 0. **The updates each host has, first** (1.1.0): before any snapshot, each host is asked which updates it has -
    `dnf check-update` (`yum check-update` on RHEL 7), read-only, in Check mode too, with the same
@@ -1062,9 +1063,12 @@ yum; `patch_exclude` for packages never updated here). Then:
    last lines list them: `2 host(s) up to date, nothing to patch: ...`. A check that does not answer (a
    repository not reached) leaves the host in, as before, and the update itself says what is wrong.
    `patch_update_check: false`: no check - every host gets its snapshot and its update run.
+   **Up to date, but a reboot pending** (1.70.5): the last run installed updates with `automatic_restarts: false`.
+   With `automatic_restarts: true` such a host goes on, is rebooted and its services checked
+   (`UP TO DATE, but a REBOOT IS PENDING`). Without it, the host is listed `up to date, REBOOT PENDING`.
 1. **One host at a time** by default. For batches, set `patch_serial` in the template's Variables
    or the survey (`patch_serial: 10`; in `all.yml` it does nothing). The rollout **stops at the
-   first host that fails**: with batches, the rest of that batch finishes and no later batch starts.
+   first host that fails or is lost** (1.70.5): the rest of that batch stops too, and no later batch starts.
 2. **A host that cannot be reached when the job starts** (switched off, a firewall, ssh or its login
    refused) is listed as `NOT REACHED - <why>` and left out - not patched, no snapshot - and the
    other hosts are patched; the job is not failed for it. Its last lines list them all:
@@ -1093,22 +1097,29 @@ yum; `patch_exclude` for packages never updated here). Then:
    as needing a reboot after updates were installed - the job says so.
 5. After the update (and reboot), **every service that was running before and starts at boot
    (`systemctl is-enabled`: enabled) must be running again**. If one is not, the host fails and the
-   rollout stops. A service started on demand (static, indirect, transient - by D-Bus, a socket or
-   another unit, like SELinux troubleshooting's `dbus-:1.1-org.fedoraproject.SetroubleshootPrivileged@83.service`)
-   that ended on its own is listed (`on_demand_not_running_now`), never failed (0.89.0;
-   `patch_compare_services: all` compares every one, as before).
+   rollout stops. A service that was running but does not start at boot is a **WARN** line when it is
+   gone after, never a failure (1.70.5). That covers one started by hand (disabled), or by D-Bus, a socket
+   or another unit (static, indirect). Look whether it should run.
+   `patch_compare_services: all` fails on those too.
 6. Never patches hosts in `no_patch` (vendor appliances), `aap`, `aap_hosts`, `sat`, `netapp` or
-   `netapp_console_hosts`. The AAP host is **always** protected: even a list you write yourself
-   (`patch_never_patch_groups`) cannot remove `aap` or `aap_hosts`. It also refuses a host that is
-   the machine running the job, but only when the connection is `local` or the name is
-   `localhost`; a normal SSH host that happens to be the controller is stopped by the group rule
-   above, not by this one.
+   `netapp_console_hosts`. `no_patch` and the AAP hosts are **always** protected: a list you write yourself
+   (`patch_never_patch_groups`) adds groups, it cannot remove these (1.70.5: `no_patch` too).
+   It also refuses the machine running the job (1.70.5), by any name:
+   - a `local` connection, or the name `localhost`;
+   - an address that is a loopback (`127.0.0.1` over ssh too) or one of its addresses;
+   - its full host name (`aapctl.example.mil`; a short name alone is no proof), or a name that resolves to one of
+     those addresses;
+   - the same `/etc/machine-id`.
 7. Never patches a host on the **VMware protected lists** - the VMs the snapshot cleanup never
    touches: one of its groups is in `vmware_protected_groups`, or its name, short name,
    `vmware_vm_name` or VM in vCenter matches `vmware_protected_vms` or
    `vm_snapshot_cleanup_exclude_vms` (`*` and `?` allowed, any case). Set those lists in `all.yml`
    (not only in the snapshot cleanup template's Variables), so this job sees them too. To patch
    them anyway, each one after its own snapshot: "Protected VMs" below.
+   **Each host's VM is looked up whenever those lists name VMs** (1.70.5), also without `patch_snapshot`. So a host
+   whose inventory name is not its VM name (`app01` is the VM `critical-db`) is still protected. Attach the
+   **VMware vCenter** credential to the template: without it the job stops before any host is contacted.
+   `patch_protected_vm_lookup: false` compares the inventory names only (the host, its short name, `vmware_vm_name`).
 
 Run it as **Job type: Check** first: it lists what would be updated and changes nothing
 ([DRY_RUNS.md](DRY_RUNS.md)).
@@ -1131,19 +1142,22 @@ patch_serial: 10        # 10 hosts at a time
 patch_snapshot: true    # a snapshot "patching" of each VM before it is patched
 ```
 
-**Each host's VM is found first, before any host is patched.** The first of these that finds a
-VM decides:
+**Each host's VM is found first, before any host is patched** (1.70.5: every piece of evidence is weighed):
 
 1. The host variable `vmware_vm_name`: the VM's name in vCenter (when the names differ). Nothing
-   else is tried.
-2. A VM named like the host: `web01.yoursite.mil`, or `web01`.
-3. The VM whose guest host name (reported by VMware Tools) is the host's.
-4. The VM with the host's `ansible_host` address.
+   else is tried. A `vmware_vm_name` that names no VM always stops the job: it is a mistake, never a physical server.
+2. Strong evidence: the host's address among the VM's addresses, or its full name (`web01.yoursite.mil`) as the
+   VM's guest host name (VMware Tools) or VM name. One VM with strong evidence wins over any short-name match.
+3. Else a VM named like the host (`web01`), then a VM whose guest host name is the host's short name.
+4. **Not sure**: strong evidence for two VMs, or a VM whose own guest host name or addresses say it is another machine.
+   The job stops, both VMs named: set `vmware_vm_name`.
 
 **A host whose VM is in no vCenter is a physical server**: it is patched without a snapshot, and
 the plan says `NO VM - ... (a physical server: patched without a snapshot)`. Only when every
 vCenter was read: a vCenter that could not be read may hold its VM, so then the job stops (below).
 `patch_snapshot_required: true` stops the job for such a host too (every host must be a VM).
+`patch_physical: true` (a host variable, 1.70.5) says outright that a server is no VM: it is not looked up, and it
+is patched without a snapshot, also with `patch_snapshot_required: true`.
 
 The job then **stops before any host is patched** when:
 
@@ -1152,6 +1166,9 @@ The job then **stops before any host is patched** when:
 | `web01...: no VM by its name, ...` and `A vCenter was not read, so these may be VMs there` | fix that vCenter or its credential (`vmware_vcenters`), or leave the host out of the run (Limit) |
 | `web01...: no VM by its name, ...` and `No vCenter has them (physical servers?)` | only with `patch_snapshot_required: true`. A VM: set `vmware_vm_name` for it (in the inventory, on the host). A physical server: leave it out of the run, or set `patch_snapshot_required: false` |
 | `web01 matches more than one VM (...)` | set `vmware_vm_name` for it |
+| `web01...: which VM it is, is not sure - the evidence points at ...` | set `vmware_vm_name` for it (1.70.5) |
+| `web01...: vmware_vm_name is ..., and no VM is named ...` | correct `vmware_vm_name`, or set `patch_physical: true` for a server that is no VM |
+| `vmware_protected_vms / vm_snapshot_cleanup_exclude_vms are set` | attach the vCenter credential, or `patch_protected_vm_lookup: false` |
 | `... still has the snapshot "patching" from ...` | the last patching's snapshot is still there, older than `patch_snapshot_reuse_hours`. Delete it once that patching is proven, or run with `patch_snapshot_replace: true` (the old one is deleted, a new one taken) |
 | `attach a credential of type "VMware vCenter"` | the template has no vCenter credential |
 
@@ -1160,6 +1177,14 @@ The job then **stops before any host is patched** when:
 and the plan says `reusing the snapshot "patching" from <time> (N h ago)`. A host patched in full by the first run
 is up to date now, so it gets neither (rule 0). Older than that: the job stops as above (or
 `patch_snapshot_replace`). `patch_snapshot_reuse_hours: 0` = never reused, as before 1.1.0.
+
+**Checked again at each host's turn** (1.70.5). A rollout in batches can take hours, so right before a host's snapshot
+the job reads its VM and snapshots again:
+
+- the VM's ID now has another name, or is gone: the job stops;
+- the snapshot to reuse was deleted meanwhile: a new one is taken;
+- the snapshot to reuse is now older than `patch_snapshot_reuse_hours`: the job stops (or it is replaced, with
+  `patch_snapshot_replace: true`).
 
 A snapshot that fails stops that host: it is **not** patched, and the rollout stops after its
 batch. The AAP hosts and the other protected groups are never patched, so they get no snapshot

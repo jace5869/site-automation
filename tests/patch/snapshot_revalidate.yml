@@ -1,0 +1,53 @@
+---
+# tests/patch/run_patch_snapshot_test.sh, 1.70.5: the snapshot step of one host (roles/vmware_vm/tasks/patch_snapshot.yml)
+# after a real discovery (patch_vms.yml), changed here as if time had passed between the discovery and the host's turn,
+# so it can be tested without timing: the snapshot to reuse is gone (case=gone), too old now (case=aged), or the VM's ID
+# now has another name (case=renamed).
+#   ansible-playbook -i <inventory> tests/patch/snapshot_revalidate.yml -e case=gone [-e snap_id=N]
+- name: The snapshot step, after the discovery, as if time had passed
+  hosts: web01.example.mil
+  gather_facts: false
+  vars:
+    patch_snapshot_name: patching
+    patch_snapshot_quiesce: false
+    patch_snapshot_replace: "{{ case == 'gone' }}"
+    patch_snapshot_reuse_hours: "{{ 0.000001 if case == 'aged' else 24 }}"
+    vmware_validate_certs: false
+  tasks:
+    - name: Each host's VM, as the job finds it before the first batch
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: patch_vms.yml
+        apply:
+          delegate_to: localhost
+          run_once: true
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+        _patch_snap_hosts: [web01.example.mil]
+
+    - name: Time passes - the discovery's answer as the case says
+      ansible.builtin.set_fact:
+        _patch_snap: >-
+          {{ _patch_snap | combine({
+               'vms': {inventory_hostname: _patch_snap.vms[inventory_hostname] | combine({'name': 'renamed-vm'} if case == 'renamed' else {})},
+               'reuse': {inventory_hostname: {'id': snap_id | default(999999) | int, 'name': 'patching', 'created': '2026-01-01T00:00:00Z',
+                                              'age_days_exact': 0.0}} if case in ['gone', 'aged'] else {},
+               'old': {}}) }}
+      delegate_to: localhost
+      delegate_facts: true
+      run_once: true
+
+    - name: The snapshot step
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: patch_snapshot.yml
+        apply:
+          delegate_to: localhost
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+
+    - name: What was done
+      ansible.builtin.debug:
+        msg: "RESULT {{ _patch_snapshot }}"

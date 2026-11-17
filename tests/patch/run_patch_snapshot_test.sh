@@ -94,6 +94,7 @@ all:
         aap01.example.mil: {ansible_host: 192.0.2.5}
     linux:
       hosts:
+        lost01.example.mil: {ansible_host: 127.0.0.1, ansible_port: 1, ansible_connection: ssh, ansible_python_interpreter: /usr/bin/python3}
         web01.example.mil: {ansible_host: ${hosts[0]}, $c}
         DC0_C0_RP0_VM1: {ansible_host: ${hosts[1]}, $c}
         web02.example.mil: {ansible_host: ${hosts[2]}, $c, vmware_vm_name: dc0_c0_rp0_vm0}
@@ -230,7 +231,7 @@ NOVC=1 run "patch_skip_unsupported false: a host with neither fails at the updat
 # The VMware protected lists: a host whose name, vmware_vm_name or VM matches vmware_protected_vms or
 # vm_snapshot_cleanup_exclude_vms is not patched, unless patch_protected_with_snapshot names it - then after its snapshot.
 NOVC=1 run "protected (vmware_protected_vms, by vmware_vm_name), no snapshot: not patched" ok -e target=web02.example.mil \
-    -e '{"vmware_protected_vms": ["DC0_C0_RP0_VM0"]}' -e patch_protected_with_snapshot=true \
+    -e '{"vmware_protected_vms": ["DC0_C0_RP0_VM0"]}' -e patch_protected_with_snapshot=true -e patch_protected_vm_lookup=false \
     -- 'web02.example.mil is protected (dc0_c0_rp0_vm0 matches vmware_protected_vms (DC0_C0_RP0_VM0))' \
        'To patch it after a snapshot of its VM' "!$installs"
 
@@ -285,5 +286,98 @@ run "run again within 24 h, updates left: the snapshot reused, no second one, pa
 check "  ...the same snapshot, no second one" "$(ID=1 snaps DC0_H0_VM1)" "$before"
 check "  ...the summary: 1 pending, reused" "$(grep -oE 'web01.example.mil +1 pending +reused' "$work/out.txt" | head -1 | tr -s ' ')" \
     "web01.example.mil 1 pending reused"
+
+# ---- 1.70.5 (review of bf0a69bd) ----
+ver() { "$engine" exec "$1" cat /usr/share/sa-patch-pending/version 2>/dev/null; }
+uc1='{"patch_update_check": true, "patch_snapshot_reuse_hours": 24}'
+
+# string settings (a survey's text field, -e): one name each, never its letters
+NOVC=1 run "patch_exclude as text (-e patch_exclude=sa-patch-pending): excluded, so up to date" ok -e target=DC0_C0_RP0_VM1 \
+    -e "$uc1" -e patch_packages=sa-patch-pending -e patch_exclude=sa-patch-pending -- 'DC0_C0_RP0_VM1: UP TO DATE' "!$installs"
+check "  ...not updated" "$(ver "${hosts[1]}")" "1.0"
+NOVC=1 run "patch_packages as text (-e patch_packages=sa-patch-pending): that package updated" ok -e target=DC0_C0_RP0_VM1 \
+    -e "$uc1" -e patch_packages=sa-patch-pending -- "$installs" '!DC0_C0_RP0_VM1: UP TO DATE'
+check "  ...updated" "$(ver "${hosts[1]}")" "1.1"
+
+# up to date, a reboot pending (the last run installed with automatic_restarts false): never left out silently
+"$engine" exec "${hosts[1]}" sh -c 'printf "#!/bin/sh\necho Reboot is required\nexit 1\n" > /usr/local/bin/needs-restarting; chmod +x /usr/local/bin/needs-restarting'
+NOVC=1 run "up to date, a reboot pending, automatic_restarts false: listed with the reboot still pending" ok -e target=DC0_C0_RP0_VM1 \
+    -e "$uc1" -e patch_packages=sa-patch-pending -- 'A REBOOT IS STILL PENDING' "!$installs"
+check "  ...the summary says so" "$(grep -oE 'DC0_C0_RP0_VM1 +up to date, REBOOT PENDING' "$work/out.txt" | head -1 | tr -s ' ')" \
+    "DC0_C0_RP0_VM1 up to date, REBOOT PENDING"
+NOVC=1 run "up to date, a reboot pending, the run again with automatic_restarts (dry run): it goes on to its reboot" ok --check \
+    -e target=DC0_C0_RP0_VM1 -e "$uc1" -e patch_packages=sa-patch-pending -e automatic_restarts=true \
+    -- 'UP TO DATE, but a REBOOT IS PENDING' 'TASK [patch : Patch | reboot]' '!A REBOOT IS STILL PENDING'
+check "  ...the reboot task ran for it (Check mode: not done)" \
+    "$(awk '/TASK \[patch : Patch \| reboot\]/{getline; print; exit}' "$work/out.txt" | cut -d: -f1)" "changed"
+"$engine" exec "${hosts[1]}" rm -f /usr/local/bin/needs-restarting
+
+# the machine running the job, by another name: its machine-id
+mid="$(cat /etc/machine-id)"
+"$engine" exec "${hosts[2]}" sh -c "cp /etc/machine-id /etc/machine-id.sa-test 2>/dev/null; echo $mid > /etc/machine-id"
+NOVC=1 run "a host whose machine-id is the controller's (an alias of it): refused" fail -e target=web02.example.mil \
+    -- 'its /etc/machine-id is the one of the machine running this job' "!$installs"
+"$engine" exec "${hosts[2]}" sh -c 'if [ -f /etc/machine-id.sa-test ]; then mv /etc/machine-id.sa-test /etc/machine-id; else : > /etc/machine-id; fi'
+
+# a host lost in a batch of 2: the rollout stops, the next batch is not patched
+"$engine" exec "${hosts[1]}" sh -c 'rpm -q sa-patch-pending >/dev/null && rpm -U --oldpackage /opt/sa-patch-rpms/installed/sa-patch-pending-*.rpm' >/dev/null 2>&1
+# a host down from the start (patch_skip_unreachable true, the default): NOT REACHED and left out, and it never stops the
+# rollout - every good host patched, one at a time and two at a time
+patched() {  # the hosts the update task ran on
+    awk '/^TASK \[patch : Patch \| install the updates\]/{f=1; next} /^TASK /{f=0} f && /^(ok|changed): \[/{sub(/^[a-z]+: \[/, ""); sub(/\].*/, ""); print}' \
+        "$work/out.txt" | sort -u | tr '\n' ' ' | sed 's/ $//'
+}
+for ser in 1 2; do
+    NOVC=1 run "a host down from the start, patch_serial $ser: NOT REACHED, every other host patched" ok \
+        -e target=lost01.example.mil:web01.example.mil:DC0_C0_RP0_VM1:web02.example.mil -e patch_serial=$ser \
+        -- 'lost01.example.mil: NOT REACHED' '1 host(s) not reached, not patched: lost01.example.mil' '!failed or was lost in an earlier batch'
+    check "  ...each good host patched (patch_serial $ser)" "$(patched)" "DC0_C0_RP0_VM1 web01.example.mil web02.example.mil"
+done
+
+# lost01 (ssh to a closed port, first in the inventory, so in batch 1 with DC0_C0_RP0_VM1 - batches follow the
+# inventory's order) goes on with patch_skip_unreachable false and is lost in the patch play: web02 (batch 2) never patched
+NOVC=1 run "patch_serial 2, a host lost in batch 1 (patch_skip_unreachable false): batch 2 is never patched" fail \
+    -e target=lost01.example.mil:DC0_C0_RP0_VM1:web02.example.mil -e patch_serial=2 -e patch_skip_unreachable=false -e "$uc1" \
+    -e patch_packages=sa-patch-pending -- 'UNREACHABLE! => ' 'Not patched: DC0_C0_RP0_VM1, lost01.example.mil failed or was lost in an earlier batch' "!$installs"
+check "  ...batch 1's other host not updated" "$(ver "${hosts[1]}")" "1.0"
+check "  ...batch 2's host not updated" "$(ver "${hosts[2]}")" "1.0"
+
+# the VMware protected lists by VM name without patch_snapshot: each host's VM is found (web01's VM is DC0_H0_VM1)
+run "protected by its VM name, no snapshot: found in vCenter, not patched" ok -e target=web01.example.mil \
+    -e '{"vmware_protected_vms": ["DC0_H0_VM1"]}' -- 'web01.example.mil is protected (DC0_H0_VM1 matches vmware_protected_vms' "!$installs"
+NOVC=1 run "protected lists set, no vCenter credential: stopped in the first play" fail -e target=web01.example.mil \
+    -e '{"vmware_protected_vms": ["DC0_H0_VM1"]}' -- 'Nothing was patched. vmware_protected_vms / vm_snapshot_cleanup_exclude_vms are set' \
+    'patch_protected_vm_lookup: false' "!$installs" '!web01.example.mil: NOT REACHED'
+NOVC=1 run "patch_protected_vm_lookup false: the inventory names only (web01 is not on the list): patched" ok -e target=web01.example.mil \
+    -e '{"vmware_protected_vms": ["DC0_H0_VM1"]}' -e patch_protected_vm_lookup=false -- "$installs"
+
+# an explicit mapping that names no VM: never a physical server
+run "vmware_vm_name names no VM: stopped before any host is patched" fail -e target=web02.example.mil -e patch_snapshot=true \
+    -e vmware_vm_name=no-such-vm -- 'vmware_vm_name is no-such-vm' 'Nothing was patched' "!$installs"
+run "patch_physical: true - no lookup, patched without a snapshot even with patch_snapshot_required" ok -e target=phys01.example.mil \
+    -e patch_snapshot=true -e patch_snapshot_required=true -e patch_physical=true \
+    -- 'phys01.example.mil: PHYSICAL (patch_physical: true)' 'patch_physical: true, so a physical server' "$installs"
+
+# right before a host's snapshot, what was found before the first batch is checked again (tests/patch/snapshot_revalidate.yml)
+reval() {  # reval NAME EXPECT CASE TEXT...
+    local tname="$1" want="$2" case="$3"; shift 3
+    (cd "$repo" && VMWARE_HOST=127.0.0.1 VMWARE_PORT=$port VMWARE_USER=user VMWARE_PASSWORD=pass ANSIBLE_COLLECTIONS_PATH="$cols" \
+        ANSIBLE_STDOUT_CALLBACK=default ANSIBLE_NOCOLOR=1 ANSIBLE_LOCALHOST_WARNING=False ANSIBLE_ROLES_PATH="$repo/roles" \
+        "$ap" -i "$work/inv.yml" tests/patch/snapshot_revalidate.yml \
+        -e case="$case" ${SNAP_ID:+-e snap_id=$SNAP_ID}) > "$work/out.txt" 2>&1
+    local rc=$?
+    if { [ "$want" = ok ] && [ $rc -ne 0 ]; } || { [ "$want" = fail ] && [ $rc -eq 0 ]; }; then
+        keep "$tname"; echo "FAIL - $tname: exit $rc"; grep -E '"msg"|ERROR|fatal' "$work/out.txt" | head -6 | cut -c1-300; fails=$((fails + 1)); return
+    fi
+    local t; for t in "$@"; do grep -qF -- "$t" "$work/out.txt" || { keep "$tname"; echo "FAIL - $tname: output lacks: $t"; fails=$((fails + 1)); return; }; done
+    echo "ok   - $tname"
+}
+before="$(ID=1 snaps DC0_H0_VM1)"
+reval "the snapshot to reuse is gone by the host's turn: a new one is taken" ok gone 'is gone now: a new one is taken' 'RESULT took \"patching\"'
+after="$(ID=1 snaps DC0_H0_VM1)"
+check "  ...a new \"patching\"" "$(snaps DC0_H0_VM1) $([ "$before" != "$after" ] && echo new)" "baseline,patching new"
+SNAP_ID="$(ID=1 snaps DC0_H0_VM1 | tr ',' '\n' | grep '^patching:' | cut -d: -f2)" \
+    reval "the snapshot to reuse is too old by the host's turn: stopped" fail aged 'h old (over patch_snapshot_reuse_hours' 'patch_snapshot_replace: true'
+reval "the VM's ID now has another name: stopped" fail renamed 'is now named DC0_H0_VM1'
 
 if [ "$fails" -eq 0 ]; then echo "all patch snapshot tests passed"; else echo "$fails patch snapshot test(s) FAILED"; exit 1; fi

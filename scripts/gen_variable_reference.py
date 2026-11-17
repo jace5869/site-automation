@@ -35,6 +35,9 @@ HOST_SETTINGS = [
      "The name sent in the TLS hello (SNI): the certificate a device with several names shows for this one"),
     ("servicenow", "servicenow_node_label", "from `servicenow_node_labels`, else the host's short name",
      "The friendly name of one self-hosted node in the health report (\"Node 1\"), set on that node's host"),
+    ("patch", "patch_physical", "unset: a host without a VM in vCenter is taken as physical",
+     "`true` on a physical server: patched without a snapshot, no VM looked for, even with "
+     "`patch_snapshot_required` (1.70.5)"),
 ]
 
 

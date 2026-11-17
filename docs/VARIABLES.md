@@ -256,7 +256,7 @@ Some lists are protected in code, so a mistake in a settings file cannot expose 
 
 | What | Built in | What your file can do |
 |---|---|---|
-| Never patched, never rebooted | `aap`, `aap_hosts` (`roles/patch/vars/main.yml`) | your `patch_never_patch_groups` / `patch_never_reboot_groups` list **replaces** the shipped one (`sat`, `netapp`, ...): repeat the names you keep. `aap` and `aap_hosts` stay protected whatever you write |
+| Never patched, never rebooted | never patched: `no_patch`, `aap`, `aap_hosts`; never rebooted: `aap`, `aap_hosts` (`roles/patch/vars/main.yml`; `no_patch` from 1.70.5) | your `patch_never_patch_groups` / `patch_never_reboot_groups` list **replaces** the shipped one (`sat`, `netapp`, ...): repeat the names you keep. The built-in groups stay protected whatever you write |
 | ACT never fixes by itself | `aap`, `aap_hosts` (`roles/site_act/vars/main.yml`) | your `site_act_diagnose_only_groups` list **replaces** the shipped one (`sat`, `idm`, `netapp`, ...): repeat the names you keep. `aap` and `aap_hosts` stay protected whatever you write |
 
 Only an extra variable (place 1) can override these, and nothing in these docs asks you to do that.
