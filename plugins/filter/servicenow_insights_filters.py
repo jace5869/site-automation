@@ -13,6 +13,7 @@ import hashlib
 import functools
 import fnmatch
 import json
+import math
 import re
 
 try:
@@ -2107,6 +2108,79 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
                     fol.append([x.get("number"), "ci"])
         c["_followed"] = fol
 
+    opened = r.get("opened") if isinstance(r.get("opened"), dict) else None
+    member_of = {}
+    for g, v in members.items():
+        for who in v:
+            member_of.setdefault(who, []).append(g)
+
+    def who_opens(gs, allscope, inc_now, ritm_now):
+        """1.70.4, Who opens what (Categories): per person, the tickets opened in the period by incident category and
+        catalog item - the scope's members and everything each opened, wherever it was assigned (the module's opened read);
+        without it, who opened the scope's own tickets, said so. Names: the page and the workbook only."""
+        if members_known and opened and not opened.get("error"):
+            # one entry per member's sys_id (the module): two people with the same name stay two, each with their own teams
+            src = [(p_.get("name") or "", sorted(p_.get("teams") or [], key=_nat), p_) for p_ in opened.get("people") or []
+                   if isinstance(p_, dict) and (allscope or any(g in gs for g in p_.get("teams") or []))]
+            why = ""
+            if opened.get("cut"):
+                why = "%s cut at servicenow_insights_max_records: some counts are short." % " and ".join(opened["cut"])
+            source = "members"
+        else:
+            by_name = {}
+            for x in inc_now + ritm_now:
+                w = " ".join(str(x.get("opened_by") or "").split())
+                if not w:
+                    continue
+                e_ = by_name.setdefault(w, {"inc": {}, "req": {}})
+                if x.get("table") == "incident":
+                    _count(e_["inc"], category_name(x))
+                else:
+                    _count(e_["req"], " ".join(str(x.get("cat_item") or "").split()) or "(no catalog item)")
+            if not members_known:
+                why = "The groups' members were not read (%s): the people who opened this page's own tickets." % (
+                    r.get("members_error") or "servicenow_insights_members is false")
+            elif opened is None:
+                why = "What the members opened was not read (servicenow_insights_opened_by is false): the people who opened this page's own tickets."
+            else:
+                why = "What the members opened was not read (%s): the people who opened this page's own tickets." % opened.get("error")
+            source = "scope"
+            src = [(w, sorted(member_of.get(w) or [], key=_nat), e_) for w, e_ in by_name.items()]
+        warn = float(_o(o, "other_warn_pct", 25))
+        rows = []
+        for w, teams, e_ in src:
+            e_ = {"inc": dict(e_.get("inc") or {}), "req": dict(e_.get("req") or {})}
+            ni, nr = sum(e_["inc"].values()), sum(e_["req"].values())
+            tot = ni + nr
+            if not tot:
+                continue
+            oth = sum(v for c_, v in e_["inc"].items() if c_.lower() in ("other", "(none)"))
+            ent = [(c_, "inc", v) for c_, v in e_["inc"].items()] + [(c_, "req", v) for c_, v in e_["req"].items()]
+            ent.sort(key=lambda z: (-z[2], z[1] != "inc", _nat(z[0])))
+            # the top 3: Other and no category as one "Other" (the count the Other % and the mix use); the breakdown keeps both
+            named = [z for z in ent if not (z[1] == "inc" and z[0].lower() in ("other", "(none)"))]
+            pick = sorted(([("Other", "inc", oth, True)] if oth else []) + [z + (False,) for z in named],
+                          key=lambda z: (-z[2], z[1] != "inc", _nat(z[0])))[:3]
+            top = [{"name": c_, "kind": k_, "n": v, "other": o_} for c_, k_, v, o_ in pick]
+            # the mix bar: Other or no category first (amber, as the Other column), then the top 3 others (a category blue, a
+            # catalog item aqua), the rest grey
+            mix, used = ([["other", "Other or no category", oth]], oth) if oth else ([], 0)
+            for c_, k_, v in named[:3]:
+                mix.append(["item" if k_ == "req" else "cat", c_, v])
+                used += v
+            if tot > used:
+                mix.append(["rest", "the rest", tot - used])
+            pct = _r1(_pct(oth, tot))
+            rows.append({"name": w, "teams": teams, "opened": tot, "inc": ni, "req": nr, "other": oth,
+                         "other_pct": pct, "warn": pct is not None and pct > warn, "top": top, "mix": [[k_, l_, n_, _r1(_pct(n_, tot))] for k_, l_, n_ in mix],
+                         "inc_cats": [[c_, v, _r1(_pct(v, ni))] for c_, k_, v in ent if k_ == "inc"],
+                         "req_items": [[c_, v, _r1(_pct(v, nr))] for c_, k_, v in ent if k_ == "req"]})
+        rows.sort(key=lambda x: (-x["opened"], _nat(x["name"]), [_nat(t_) for t_ in x["teams"]]))
+        mn = int(_o(o, "opened_by_min", 10))
+        listed = [x for x in rows if x["opened"] >= mn]
+        return {"source": source, "why": why, "min": mn, "warn_pct": warn, "rows": listed, "under": len(rows) - len(listed),
+                "all": rows, "people": len(rows)}
+
     def scope_model(team, groups=None, level=None, key=None, name=None):
         """One scope: the site (team None, groups None), one team, or a site or directorate (groups: its assignment
         groups). Each ticket is one record (its group the one it ended in), so it counts once at every level."""
@@ -2216,7 +2290,8 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
                       key=lambda e: (-e[1], e[0]))
         categories = {"rows": cat_rows, "total": len(inc_now), "empty": empty_n, "empty_pct": _r1(_pct(empty_n, len(inc_now))),
                       "other": other_n, "other_pct": _r1(_pct(other_n, len(inc_now))), "listed": bool(cat_list),
-                      "off_list": sum(v for _, v in offl), "off_pct": _r1(_pct(sum(v for _, v in offl), len(inc_now))), "off_names": offl[:30]}
+                      "off_list": sum(v for _, v in offl), "off_pct": _r1(_pct(sum(v for _, v in offl), len(inc_now))), "off_names": offl[:30],
+                      "opened_by": who_opens(gs, allscope, inc_now, ritm_now)}     # 1.70.4: Who opens what
         majors = sorted([x for x in inc_now if str(x.get("priority_value") or "") in ("1", "2")], key=lambda x: x.get("opened_at") or "")
         major_rows = [{"number": x.get("number"), "opened": _t(x["opened_at"]).astimezone(tz).strftime("%Y-%m-%d"),
                        "priority": "P" + str(x.get("priority_value")), "what": x.get("short_description"), "group": x.get("group"),
@@ -3076,7 +3151,27 @@ def _scale_label(sc):
     if not sc:
         return ""
     f = lambda x: ("%d" % x) if float(x) == int(x) else ("%g" % x)    # noqa: E731
-    return "%s to %s%s" % (f(sc[0]), f(sc[1]), ", as observed" if sc[2] == "observed" else "")
+    return "%s to %s%s" % (f(sc[0]), f(sc[1]), {"observed": ", as observed", "set": " (servicenow_insights_survey_scale)"}.get(sc[2], ""))
+
+
+def survey_scale(opts=None):
+    """1.70.4: servicenow_insights_survey_scale -> (min, max), or None ([] / unset: each question's own scale). Anything
+    else stops the job with the reason (ValueError)."""
+    v = (opts or {}).get("survey_scale")
+    if v in (None, "", [], ()):
+        return None
+    # a list of exactly two real numbers: never a string ("14"), a mapping or true / false
+    if not (isinstance(v, (list, tuple)) and len(v) == 2 and
+            all(isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) for x in v)):
+        raise ValueError("servicenow_insights_survey_scale: [min, max], two numbers, e.g. [1, 4] - not %r" % (v,))
+    lo, hi = float(v[0]), float(v[1])
+    if not lo < hi:
+        raise ValueError("servicenow_insights_survey_scale: the min below the max, e.g. [1, 4] - not %r" % (v,))
+    return lo, hi
+
+
+def _in_scale(v, rng):
+    return rng is None or rng[0] <= float(v) <= rng[1]
 
 
 def survey_questions(rows, meta, opts, since, until):
@@ -3087,12 +3182,14 @@ def survey_questions(rows, meta, opts, since, until):
     (as observed). A survey retired in ServiceNow keeps its own block, never blended with the active one."""
     o = opts or {}
     named = set(str(x).strip().lower() for x in name_list(o.get("survey_metrics") or []) if str(x).strip())
+    rng = survey_scale(o)
     qs = {}
     for k_, key, v, t_ in rows:
-        q = qs.setdefault(key, {"vals": [], "n": 0})
+        q = qs.setdefault(key, {"vals": [], "n": 0, "outside": 0})
         q["vals"].append(v)
         if _in(_t(t_), since, until):
             q["n"] += 1
+            q["outside"] += 0 if _in_scale(v, rng) else 1
     out = {}
     for key, q in qs.items():
         m = meta.get(key) or {}
@@ -3113,8 +3210,11 @@ def survey_questions(rows, meta, opts, since, until):
             whole = all(float(x) == int(x) for x in q["vals"])
             rating = whole and lo >= 0 and hi <= 10 and len(set(q["vals"])) >= 3
             why = "the answers"
+        if rating and rng is not None:          # 1.70.4: the site's scale for every rating; the answers outside it left out
+            scale = [rng[0], rng[1], "set"]
         out[key] = {"key": key, "name": name, "survey": m.get("survey") or "", "state": m.get("state") or "", "datatype": dt,
-                    "n": q["n"], "lo": lo, "hi": hi, "scale": scale, "rating": rating, "why": why}
+                    "n": q["n"] - (q["outside"] if rating else 0), "lo": lo, "hi": hi, "scale": scale, "rating": rating, "why": why,
+                    "outside": q["outside"] if rating else 0}
     surveys = {}
     for q in sorted(out.values(), key=lambda q: (_nat(q["survey"]), _nat(q["name"]))):
         sv = surveys.setdefault((q["survey"], q["state"]), {"survey": q["survey"], "state": q["state"], "keys": [], "other": []})
@@ -3167,7 +3267,9 @@ def survey_read_lines(plan, opts=None):
     for q in sorted(qs.values(), key=lambda q: (q["state"] == "retired", _nat(q["survey"]), not q["rating"], _nat(q["name"]))):
         who = "%s%s" % (q["survey"] or "(survey not read)", " (retired)" if q["state"] == "retired" else "")
         if q["rating"]:
-            out.append("%s - %s - %d answers - %s" % (who, q["name"], q["n"], _scale_label(q["scale"]) if q["scale"] else "scale not known: no grade"))
+            out.append("%s - %s - %d answers - %s%s" % (who, q["name"], q["n"], _scale_label(q["scale"]) if q["scale"] else "scale not known: no grade",
+                                                     (" - %d answer%s outside it, left out" % (q["outside"], "" if q["outside"] == 1 else "s"))
+                                                     if q.get("outside") else ""))
         else:
             out.append("%s - %s - %d answers - read, not shown as a rating (%s; values %g to %g): name it in "
                        "servicenow_insights_survey_metrics to show it" % (who, q["name"], q["n"], q["why"], q["lo"], q["hi"]))
@@ -3185,11 +3287,15 @@ def survey_scope(plan, rows, mine_ids, grp_of, since, until, prev, tz, opts):
     by month and by group, each graded on its own scale), the questions read that are not ratings."""
     o = opts or {}
     qs = plan["questions"]
-    mine = [x for x in rows if x[0] in mine_ids]
+    rng = survey_scale(o)
+    # 1.70.4: an answer outside servicenow_insights_survey_scale is left out of every average (counted: outside)
+    allm = [x for x in rows if x[0] in mine_ids]
+    mine = [x for x in allm if x[1] not in qs or not qs[x[1]]["rating"] or _in_scale(x[2], rng)]
 
     def fig(keys, scale):
         ks = set(keys)
         now = [v for k_, q, v, t_ in mine if q in ks and _in(_t(t_), since, until)]
+        outside = sum(1 for k_, q, v, t_ in allm if q in ks and _in(_t(t_), since, until) and not _in_scale(v, rng))
         before = [v for k_, q, v, t_ in mine if q in ks and _in(_t(t_), prev, since)]
         mon, grp = {}, {}
         for k_, q, v, t_ in mine:
@@ -3198,6 +3304,7 @@ def survey_scope(plan, rows, mine_ids, grp_of, since, until, prev, tz, opts):
                 grp.setdefault(grp_of.get(k_), []).append(v)
         avg = _r2(_avg(now))
         return {"n": len(now), "avg": avg, "prev": _r2(_avg(before)), "prev_n": len(before), "grade": survey_grade(avg, scale, len(now), o),
+                "outside": outside,
                 "months": [[k_, _r2(_avg(v)), len(v), survey_grade(_avg(v), scale, len(v), o)] for k_, v in sorted(mon.items())],
                 "by_group": sorted([{"group": g, "avg": _r2(_avg(v)), "n": len(v), "grade": survey_grade(_avg(v), scale, len(v), o)}
                                     for g, v in grp.items()], key=lambda e: (-e["n"], e["group"]))[:12]}
@@ -3214,6 +3321,8 @@ def survey_scope(plan, rows, mine_ids, grp_of, since, until, prev, tz, opts):
         out["blocks"].append({"survey": b["survey"], "state": b["state"], "scale": b["scale"], "one_scale": b["one_scale"],
                               "main_label": b["main_label"], "main": main, "main_scale": msc, "overall": len(b["keys"]) > 1 and b["one_scale"],
                               "questions": [dict(fig([k], qs[k]["scale"]), name=qs[k]["name"], scale=qs[k]["scale"]) for k in b["keys"]]})
+    out["outside"] = sum(1 for k_, q, v, t_ in allm if q in qs and qs[q]["rating"] and _in(_t(t_), since, until) and not _in_scale(v, rng))
+    out["range"] = _scale_label([rng[0], rng[1], ""]) if rng else ""
     for q in plan["other"]:
         n_ = sum(1 for k_, k, v, t_ in mine if k == q["key"] and _in(_t(t_), since, until))
         if n_:
@@ -3778,7 +3887,9 @@ def servicenow_insights_doc(model, key="all", opts=None):
         top = (sv.get("scale") or [None, None])[1]
         summary.append({"label": "Satisfaction", "value": ("%.2f of %g" % (sv["avg"], top)) if top is not None else "%.2f" % sv["avg"],
                         "status": {"Good": "ok", "Fair": "low", "Low": "critical"}.get(sv.get("grade"), ""),     # 1.56.0: Fair is low
-                        "note": " · ".join(x for x in (sv.get("grade") or "", sv.get("label") or "", "%d answers" % sv["n"]) if x)})
+                        "note": " · ".join(x for x in (sv.get("grade") or "", sv.get("label") or "", "%d answers" % sv["n"],
+                                                        ("%d outside %s, left out" % (sv["outside"], sv.get("range") or "the scale"))
+                                                        if sv.get("outside") else "") if x)})
     secs = breach_email(s.get("breach")) + [
         {"title": "What the period says" + (" (written by ACT)" if s.get("summary_by") == "act" else ""), "lines": s["summary"] or ["(nothing to say)"]}]
     # 1.7.0: what to act on first - the counts, and the first of each list
@@ -3878,6 +3989,19 @@ def servicenow_insights_doc(model, key="all", opts=None):
                      "rows": [[x["name"], x["count"], pf(x["share"]), fmt_hours(x["median_h"])] + ([pf(x.get("resp"))] if two else []) + [pf(x.get("resol")), x.get("team") or ""]
                               for x in cat["rows"][:20]],
                      "row_status": ["low" if x.get("official") is False else "" for x in cat["rows"][:20]]})
+    # 1.70.4: Who opens what - the 5 with the largest share in Other (or no category), of those listed
+    wo = cat.get("opened_by") or {}
+    worst = sorted([x for x in wo.get("rows") or [] if x.get("other")], key=lambda x: (-(x["other_pct"] or 0), -x["opened"], _nat(x["name"])))[:5]
+    if worst:
+        secs.append({"title": "Who opens what: the most in Other",
+                     "text": "The people who put the largest share of what they opened in Other or no category (%d tickets or more opened%s). "
+                             "Low (the tinted rows): over %g%%. The page has each one's full breakdown." % (
+                                 wo.get("min", 10), ", wherever they went" if wo.get("source") == "members" else "", wo.get("warn_pct", 25)),
+                     "columns": ["Person", "Opened", "In Other", "Share", "Top category or item"],
+                     "rows": [[x["name"], x["opened"], x["other"], pf(x["other_pct"]),
+                               next(("%s%s" % (z["name"], " (request)" if z["kind"] == "req" else "") for z in x["top"] if not z["other"]), "")]
+                              for x in worst],
+                     "row_status": ["low" if x.get("warn") else "" for x in worst]})
     if s["requests"]:
         secs.append({"title": "Most requested services", "columns": ["#", "Rank", "Catalog item", "Requests", "Was", "Median to fulfil", "SLA met"],
                      "rows": [[q["rank"], q["mv"]["text"], q["name"], q["count"], q["prev"],
@@ -4180,6 +4304,19 @@ def servicenow_insights_xlsx(model, r=None, state=None, mask=None, opts=None):
         sheets.append({"name": "VIP", "columns": ["Scope", "Level", "Tier", "Incidents", "Requests", "Open now", "No SLA"],
                        "rows": [[" > ".join(path(v)), v.get("level") or "", r_["label"], r_["incidents"],
                                  r_["requests"], r_["open"], r_["no_slo"]] for k, v in vs for r_ in v["vip"]["rows"]]})
+    # 1.70.4: Who opens what - every person (none left out by servicenow_insights_opened_by_min), every category and item
+    wo = (s.get("categories") or {}).get("opened_by") or {}
+    if wo.get("all"):
+        sheets.append({"name": "Who opens what", "columns": ["Person", "Teams", "Opened", "In Other", "Other %", "Kind", "Category or catalog item",
+                                                            "Tickets", "Share of their kind %"],
+                       "rows": [[x["name"], ", ".join(x.get("teams") or []), x["opened"], x["other"], x["other_pct"], kind, c_, v, p_]
+                                for x in wo["all"] for kind, lst in (("Incident", x["inc_cats"]), ("Request", x["req_items"])) for c_, v, p_ in lst]})
+    # 1.70.4: the surveys - each question's average and the top of its scale ("3.78 of 4"), graded on it
+    svy = s.get("survey") or {}
+    if svy.get("blocks"):
+        sheets.append({"name": "Satisfaction", "columns": ["Survey", "Question", "Average", "Of", "Scale", "Grade", "Answers", "Outside the scale"],
+                       "rows": [[b["survey"] or "Survey", q["name"], q["avg"], (q["scale"] or [None, None])[1], _scale_label(q["scale"]),
+                                 q["grade"], q["n"], q.get("outside") or 0] for b in svy["blocks"] for q in b["questions"]]})
     sheets.append({"name": "Hand-off paths", "columns": ["Path", "Incidents", "Most common issue", "Days added", "Examples"],
                    "rows": [[" > ".join(e["path"]), e["count"], e["issue"], e["added_days"], ", ".join(e["items"][:5])] for e in s["handoffs"]["paths"]]})
     # 1.9.0

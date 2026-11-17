@@ -129,6 +129,12 @@ n=$(find "$top" -name '*.html' -exec sed 's#<script type="application/json"[^>]*
 check "a team's page: that team, linked back to the site's" "$top/ops/other/windows/latest.html" \
     'Ops - Windows ·' '!id="teams"' 'href="../../../latest.html"' 'All-stars' 'Most closed' 2>/dev/null || \
 check "a team's page: that team, linked back to the site's" "$top/ops/other/windows/latest.html" 'href="../../../latest.html"' 'Most closed' '!id="teams"'
+# 1.70.4: Who opens what - the service desk's members and everything each opened, wherever it went (read by opened_by)
+check "Who opens what: the desk's members, what each opened wherever it went, Other marked, the breakdown" \
+    "$top/ops/other/service-desk/latest.html" '<h3 class="subh" id="whoopens">Who opens what</h3>' 'wherever they were assigned' \
+    '<details class="wo-r">' '<b>Dana Whitfield</b>' '<h4>Incidents by category (' '!What the members opened was not read'
+check "  ... on the site's page, each with their team" "$top/latest.html" '<b>Dana Whitfield</b> <span class="mut">(Ops - Service Desk)</span>'
+if grep -q 'opened_byIN' "$work/log.jsonl"; then echo "ok   -   ... read by opened_by"; else echo "FAIL - no read by opened_by"; fails=$((fails + 1)); fi
 # 0.88.0: the page's script as a file beside the index (a web server that blocks inline scripts runs it), the teams as plain links,
 # the leaderboard = the group's members (a quiet member on it, the desk's closer not), who sends the team its tickets, short group names
 check "the script loaded from site-insights.js, relative to each page; the pages as links without it" "$top/ops/other/windows/latest.html" \

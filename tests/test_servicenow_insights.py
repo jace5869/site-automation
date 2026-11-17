@@ -2087,7 +2087,7 @@ class TicketStore(unittest.TestCase):
         self.assertNotIn(stale, st2.fresh)
         self.assertLess(len(ai.calls), len(af.calls))
         self.assertTrue(any("sys_idIN" in q for _t, _f, q in ai.calls))            # the changed ones, by sys_id
-        light = [f for t, f, q in ai.calls if t == "incident" and "ORDERBYDESC" in q]
+        light = [f for t, f, q in ai.calls if t == "incident" and "ORDERBYDESC" in q and "opened_byIN" not in q]   # not who opens what
         self.assertTrue(light and all("reopen_count" not in f and "sys_updated_on" in f and "assignment_group" in f for f in light), light)
 
     def test_a_renamed_group(self):
@@ -2733,9 +2733,13 @@ class History(unittest.TestCase):
         self.assertEqual(pts[-1][i], mine["2026-10"][("all", "", "sla_met_pct")])      # this run's October, not the stored one
         self.assertEqual(t["nodes"]["in|all"][0][i], 90.0)
         self.assertEqual(t["partial"], [])
-        # a short history: the months start where the figures start; the month so far flagged
+        # a short history: the months start where the figures start; the month so far flagged (a window still in October:
+        # 1.70.4, a window to 1 November 00:00 has ended October - its partial October a gap)
+        oct_ = dict(self.m, window=dict(self.m["window"], until="2026-10-20 06:00:00", until_local="2026-10-20 06:00"))
+        t = H.servicenow_insights_trend(oct_, self.hist(["2026-09", "2026-10"], partial=["2026-10"]), {})["trend"]
+        self.assertEqual((t["months"], t["partial"], t["stale"]), (["2026-09", "2026-10"], ["2026-10"], []))
         t = H.servicenow_insights_trend(self.m, self.hist(["2026-09", "2026-10"], partial=["2026-10"]), {})["trend"]
-        self.assertEqual((t["months"], t["partial"]), (["2026-09", "2026-10"], ["2026-10"]))
+        self.assertEqual((t["months"], t["partial"], t["stale"]), (["2026-09", "2026-10"], [], ["2026-10"]))
         self.assertEqual(H.servicenow_insights_trend(self.m, {"ok": True, "rows": []}, {})["trend"]["months"], [])
         self.assertNotIn("trend", H.servicenow_insights_trend(self.m, None, {}))      # off: nothing
         off = H.servicenow_insights_trend(self.m, {"ok": False, "error": "Connection refused"}, {}, self.runs)["trend"]
@@ -2744,7 +2748,8 @@ class History(unittest.TestCase):
     def test_the_page(self):
         H = self.H
         links = page_links(self.m)
-        m = H.servicenow_insights_trend(self.m, self.hist(["2026-06", "2026-07", "2026-09", "2026-10"], partial=["2026-10"]), {})
+        oct_ = dict(self.m, window=dict(self.m["window"], until="2026-10-20 06:00:00", until_local="2026-10-20 06:00"))
+        m = H.servicenow_insights_trend(oct_, self.hist(["2026-06", "2026-07", "2026-09", "2026-10"], partial=["2026-10"]), {})
         h = P.servicenow_insights_page(m, "all", {"links": links, "look": "brief"})
         sec = h[h.index('<section class="card" id="trend"'):]
         sec = sec[:sec.index("</section>")]
@@ -3561,6 +3566,277 @@ class ResponseSkip(unittest.TestCase):
         self.assertEqual("does not start at zero" in cap, P.axis([bl], True)[0] > 0)
 
 
+class Release1704(unittest.TestCase):
+    """1.70.4: servicenow_insights_survey_scale - one scale for every rating question, the answers outside it left out,
+    counted and named, never clipped; Who opens what (Categories) - per member of a team, everything each opened in the
+    period wherever it was assigned, by category and catalog item; names on the page, in the email and the workbook only."""
+
+    NEW = "Quinn Example"            # a made-up member who opened tickets: never in the database, ACT or the artifact
+
+    @classmethod
+    def setUpClass(cls):
+        x = site()
+        cls.team = "Ops - Service Desk"
+        r = copy.deepcopy(x["r"])
+        r["members"][cls.team] = sorted(r["members"].get(cls.team, []) + [cls.NEW])
+        sd = r["members"][cls.team]
+        cls.people = {cls.NEW: {"inc": {"Other": 6, "Network": 4, "(none)": 2}, "req": {"Laptop": 3}},
+                      sd[0] if sd[0] != cls.NEW else sd[1]: {"inc": {"Software": 9, "Other": 1}, "req": {"Account": 2}},
+                      "Sam Patel": {"inc": {"Hardware": 3}, "req": {}}}         # a Windows member, under the minimum
+        r["opened"] = {"people": cls.listed(r, cls.people), "error": "", "cut": [], "tables": ["incident", "sc_req_item"]}
+        cls.r, cls.mask = r, x["mask"]
+        cls.o = dict(OPTS, opened_by_min=10, other_warn_pct=25)
+        cls.m = F.servicenow_insights_model(r, None, cls.mask, cls.o)
+
+    @staticmethod
+    def listed(r, people):
+        """The module's shape: one entry per member (by sys_id there), with the teams they are in."""
+        return [dict(v, name=w, teams=sorted(g for g, ws in r["members"].items() if w in ws)) for w, v in people.items()]
+
+    def wo(self, key="all", m=None):
+        return (m or self.m)["scopes"][key]["categories"]["opened_by"]
+
+    # ---- the survey scale
+
+    def test_the_scale_set(self):
+        since, until = rd_window(site())
+        rows = [["i%d" % i, "k", v, "2026-10-01 10:00:00"] for i, v in enumerate([1, 2, 3, 4, 5, 5])]
+        meta = {"k": {"name": "Overall", "survey": "Desk", "datatype": "scale", "min": 1.0, "max": 5.0}}
+        q = F.survey_questions(rows, meta, OPTS, since, until)["questions"]["k"]
+        self.assertEqual((q["scale"], q["n"], q["outside"]), ([1.0, 5.0, "read"], 6, 0))
+        q = F.survey_questions(rows, meta, dict(OPTS, survey_scale=[1, 4]), since, until)["questions"]["k"]
+        self.assertEqual((q["scale"], q["n"], q["outside"]), ([1.0, 4.0, "set"], 4, 2))      # the 5s left out, never made 4s
+        for bad in ([4, 1], [1], ["a", "b"], "1-4", "14", {"1": 1, "4": 4}, [False, True], [1, True], ["1", "4"], [1, 2, 3],
+                    [1, float("nan")], [1, float("inf")], (x for x in (1, 4))):
+            with self.assertRaisesRegex(ValueError, "servicenow_insights_survey_scale"):
+                F.survey_scale({"survey_scale": bad})
+        self.assertIsNone(F.survey_scale({"survey_scale": []}))
+        self.assertEqual([F.survey_scale({"survey_scale": v}) for v in ([1, 4], (1, 4), [0.5, 4.5])], [(1.0, 4.0), (1.0, 4.0), (0.5, 4.5)])
+
+    def test_the_scale_everywhere(self):
+        x = site(surveys=True)
+        o = dict(OPTS, survey_scale=[1, 3])
+        m = F.servicenow_insights_model(x["r"], None, x["mask"], o)
+        sv = m["scopes"]["all"]["survey"]
+        self.assertEqual(sv["scale"], [1.0, 3.0, "set"])
+        self.assertGreater(sv["outside"], 0)
+        self.assertLessEqual(sv["avg"], 3)
+        self.assertTrue(all(mo[1] is None or 1 <= mo[1] <= 3 for b in sv["blocks"] for mo in b["main"]["months"]))   # the months too
+        self.assertEqual(sv["grade"], F.survey_grade(sv["avg"], [1, 3], sv["n"], o))
+        h = P.servicenow_insights_page(m, "all", {"links": page_links(m)})
+        sec = h[h.index('id="satisfaction"'):]
+        sec = sec[:sec.index("</section>")]
+        self.assertIn("%.2f of 3" % sv["avg"], sec)
+        self.assertIn("%d answers outside 1 to 3 left out of the averages (servicenow_insights_survey_scale)." % sv["outside"], sec)
+        self.assertIn("1 to 3 (servicenow_insights_survey_scale)", sec)
+        doc = F.servicenow_insights_doc(m, "all", o)
+        tile = next(t_ for t_ in doc["summary"] if t_["label"] == "Satisfaction")
+        self.assertEqual(tile["value"], "%.2f of 3" % sv["avg"])
+        self.assertIn("%d outside 1 to 3, left out" % sv["outside"], tile["note"])
+        wb = F.servicenow_insights_xlsx(m, x["r"], None, x["mask"], o)
+        sh = next(s_ for s_ in wb if s_["name"] == "Satisfaction")
+        self.assertTrue(all(row[sh["columns"].index("Of")] == 3 for row in sh["rows"] if row[2] is not None))
+        self.assertEqual(sum(row[sh["columns"].index("Outside the scale")] for row in sh["rows"]) >= sv["outside"], True)
+        self.assertTrue(any("outside it, left out" in line for line in m["surveys_read"]))
+        # [] (the default): each question on its own scale, as before
+        self.assertEqual(F.servicenow_insights_model(x["r"], None, x["mask"], dict(OPTS, survey_scale=[]))["scopes"]["all"]["survey"],
+                         x["model"]["scopes"]["all"]["survey"] | {"outside": 0, "range": ""})
+
+    # ---- who opens what
+
+    def test_a_team_page_lists_its_members(self):
+        wo = self.wo(self.team)
+        self.assertEqual((wo["source"], wo["why"], wo["min"]), ("members", "", 10))
+        rows = dict((x["name"], x) for x in wo["rows"])
+        self.assertEqual(sorted(rows), sorted(k for k, v in self.people.items() if k != "Sam Patel"))     # members, 10 or more
+        q = rows[self.NEW]
+        self.assertEqual((q["opened"], q["inc"], q["req"], q["other"], q["other_pct"], q["warn"]), (15, 12, 3, 8, 53.3, True))
+        self.assertEqual([(z["name"], z["kind"], z["n"], z["other"]) for z in q["top"]],
+                         [("Other", "inc", 8, True), ("Network", "inc", 4, False), ("Laptop", "req", 3, False)])   # Other 6 + (none) 2
+        self.assertEqual([k_ for k_, *_ in q["mix"]], ["other", "cat", "item"])                 # Other or none, then the others
+        self.assertEqual([z[2] for z in q["mix"]], [8, 4, 3])
+        other = dict((x["name"], x) for x in wo["rows"] if x["name"] != self.NEW).popitem()[1]
+        self.assertEqual([(k_, n_) for k_, _l, n_, _p in other["mix"]], [("other", 1), ("cat", 9), ("item", 2)])
+        self.assertEqual(q["inc_cats"][0], ["Other", 6, 50.0])
+        self.assertEqual(q["req_items"], [["Laptop", 3, 100.0]])
+        self.assertNotIn("Sam Patel", [x["name"] for x in self.wo(self.team)["all"]])             # not of this team
+        self.assertEqual(self.wo("all")["under"], 1)                                               # Sam Patel: 3 opened
+
+    def test_the_page(self):
+        h = P.servicenow_insights_page(self.m, self.team, {"links": page_links(self.m, "../")})
+        sec = h[h.index('id="categories"'):]
+        sec = sec[:sec.index("</section>")]
+        self.assertIn('<h3 class="subh" id="whoopens">Who opens what</h3>', sec)
+        self.assertIn("wherever they were assigned", sec)
+        self.assertEqual(sec.count('<details class="wo-r">'), 2)
+        self.assertIn('<span class="chip warn" title="Over 25%: these tickets need a real category">! 53.3%</span>', sec)
+        self.assertIn('Laptop <b>3</b> <span class="mut">(request)</span>', sec)
+        self.assertIn('<span class="chip wo-c wo-oc" title="Other and no category">Other <b>8</b></span>', sec)   # as the Other %: 8 of 15
+        self.assertIn("Other counts tickets with no category too.", sec)
+        self.assertIn("<h4>Incidents by category (12)</h4>", sec)
+        self.assertIn("<h4>Requests by catalog item (3)</h4>", sec)
+        self.assertIn('role="img" aria-label="Mix: Other or no category 53.3%', sec)
+        self.assertNotIn("<b>%s</b> <span class=\"mut\">(" % self.NEW, sec)                     # a team page: no team after the name
+        a = P.servicenow_insights_page(self.m, "all", {"links": page_links(self.m)})
+        self.assertIn("<b>%s</b> <span class=\"mut\">(Ops - Service Desk)</span>" % self.NEW, a)
+        self.assertIn("1 more opened fewer than 10 (servicenow_insights_opened_by_min).", a)
+        self.assertNotRegex(a, r"<script>(?!\s*$)")
+
+    def test_without_the_members(self):
+        r = dict(self.r, members_error="403 Forbidden")
+        wo = self.wo(self.team, F.servicenow_insights_model(r, None, self.mask, self.o))
+        self.assertEqual(wo["source"], "scope")
+        self.assertEqual(wo["why"], "The groups' members were not read (403 Forbidden): the people who opened this page's own tickets.")
+        self.assertNotIn(self.NEW, [x["name"] for x in wo["all"]])
+        r = dict(self.r, opened={"people": {}, "error": "incident: 403 Forbidden", "cut": [], "tables": []})
+        wo = self.wo(self.team, F.servicenow_insights_model(r, None, self.mask, self.o))
+        self.assertEqual((wo["source"], wo["why"]), ("scope", "What the members opened was not read (incident: 403 Forbidden): the people who "
+                                                               "opened this page's own tickets."))
+        r = dict(self.r)
+        r.pop("opened")
+        wo = self.wo(self.team, F.servicenow_insights_model(r, None, self.mask, self.o))
+        self.assertIn("servicenow_insights_opened_by is false", wo["why"])
+        r = dict(self.r, opened=dict(self.r["opened"], cut=["incident"]))
+        self.assertEqual(self.wo(self.team, F.servicenow_insights_model(r, None, self.mask, self.o))["why"],
+                         "incident cut at servicenow_insights_max_records: some counts are short.")
+
+    def test_the_email_and_the_workbook(self):
+        doc = F.servicenow_insights_doc(self.m, "all", self.o)
+        sec = next(s_ for s_ in doc["sections"] if s_["title"] == "Who opens what: the most in Other")
+        self.assertEqual(sec["rows"][0][:4], [self.NEW, 15, 8, "53.3%"])
+        self.assertEqual(sec["rows"][0][4], "Network")
+        self.assertEqual(sec["row_status"][0], "low")
+        self.assertLessEqual(len(sec["rows"]), 5)
+        wb = F.servicenow_insights_xlsx(self.m, self.r, None, self.mask, self.o)
+        sh = next(s_ for s_ in wb if s_["name"] == "Who opens what")
+        mine = [row for row in sh["rows"] if row[0] == self.NEW]
+        self.assertEqual(sorted((row[5], row[6], row[7]) for row in mine),
+                         [("Incident", "(none)", 2), ("Incident", "Network", 4), ("Incident", "Other", 6), ("Request", "Laptop", 3)])
+        self.assertTrue(any(row[0] == "Sam Patel" for row in sh["rows"]))                     # every person: under the minimum too
+
+    def test_names_never_in_the_database_act_or_the_artifact(self):
+        runs = H.servicenow_insights_db_runs(self.r, self.m, OPTS, self.mask)
+        self.assertNotIn(self.NEW, json.dumps(runs))
+        self.assertNotIn(self.NEW, F.servicenow_insights_summary_evidence(self.m, self.mask))
+        self.assertNotIn(self.NEW, json.dumps(F.servicenow_insights_artifact(self.m), default=str))
+        self.assertNotIn(self.NEW, json.dumps(F.servicenow_insights_summary_task(self.m, OPTS), default=str))
+
+    class OpenedApi(object):
+        """sys_user_grmember and incident, as ServiceNow answers them (display values all): a query's opened_byIN, its
+        limit and offset honoured, newest first."""
+        url = "https://sn.example.mil"
+
+        def __init__(self, grm, recs):
+            self.grm, self.recs, self.calls = grm, recs, []
+
+        def get(self, path, params):
+            table = path.rsplit("/", 1)[1]
+            self.calls.append((table, params["sysparm_fields"], params["sysparm_query"], params["sysparm_limit"]))
+            if table == "sys_user_grmember":
+                return {"result": self.grm}
+            ids = params["sysparm_query"].split("^")[0][len("opened_byIN"):].split(",")
+            hit = sorted((x for x in self.recs if x["opened_by"]["value"] in ids), key=lambda x: x["opened_at"], reverse=True)
+            off = int(params.get("sysparm_offset", 0))
+            return {"result": hit[off:off + int(params["sysparm_limit"])]}
+
+    @staticmethod
+    def rec(i, uid, name, cat):
+        return {"sys_id": "%032x" % i, "opened_at": "2026-10-%02d 10:00:00" % (1 + i % 28), "opened_by": {"value": uid, "display_value": name},
+                "category": {"value": cat.lower(), "display_value": cat}}
+
+    def test_two_members_with_one_name(self):
+        """Two people with the same name in two teams: each read by their own sys_id, counted apart, each shown on their
+        own team's page with their own counts - never one overwriting the other."""
+        a, b, nm = "a" * 32, "b" * 32, "Alex Example"
+        grm = [{"user": {"value": a, "display_value": nm}, "group": {"value": "1" * 32, "display_value": "Team A"}},
+               {"user": {"value": b, "display_value": nm}, "group": {"value": "2" * 32, "display_value": "Team B"}}]
+        recs = [self.rec(i, a, nm, "Network") for i in range(3)] + [self.rec(10 + i, b, nm, "Other") for i in range(12)]
+        api = self.OpenedApi(grm, recs)
+        uids = {}
+        mem, err = rd.read_members(api, {"1" * 32: "Team A", "2" * 32: "Team B"}, ids=uids)
+        self.assertEqual((mem, err), ({"Team A": [nm], "Team B": [nm]}, ""))
+        self.assertEqual(sorted(uids), [a, b])
+        win = {"since": "2026-10-01 00:00:00", "until": "2026-11-01 00:00:00"}
+        op = rd.read_opened(api, uids, ["incident"], win)
+        self.assertEqual(op["people"], [{"name": nm, "teams": ["Team A"], "inc": {"Network": 3}, "req": {}},
+                                        {"name": nm, "teams": ["Team B"], "inc": {"Other": 12}, "req": {}}])
+        self.assertIn("opened_byIN%s,%s^" % (a, b), [c[2] for c in api.calls if c[0] == "incident"][0])
+        self.assertNotIn(a, json.dumps(op))                                                    # no sys_id leaves the module
+        # the model: two of the fixture's teams, one name in each, each with their own counts
+        x = site()
+        r = copy.deepcopy(self.r)
+        t1, t2 = self.team, next(g for g in sorted(r["members"]) if g != self.team)
+        for t_ in (t1, t2):
+            r["members"][t_] = sorted(set(r["members"][t_]) | {nm})
+        r["opened"] = dict(r["opened"], people=r["opened"]["people"] + [{"name": nm, "teams": [t1], "inc": {"Network": 11}, "req": {}},
+                                                                        {"name": nm, "teams": [t2], "inc": {"Other": 20}, "req": {}}])
+        m = F.servicenow_insights_model(r, None, x["mask"], self.o)
+        one = [z for z in self.wo(t1, m)["rows"] if z["name"] == nm]
+        two = [z for z in self.wo(t2, m)["rows"] if z["name"] == nm]
+        self.assertEqual([(z["opened"], z["other"], z["teams"]) for z in one], [(11, 0, [t1])])
+        self.assertEqual([(z["opened"], z["other"], z["teams"]) for z in two], [(20, 20, [t2])])
+        self.assertEqual(sorted((z["opened"], z["teams"][0]) for z in self.wo("all", m)["rows"] if z["name"] == nm), [(11, t1), (20, t2)])
+
+    def test_the_record_cap(self):
+        """servicenow_insights_max_records over the opened read: once the budget is spent nothing more is read - one record
+        asked for only to say whether it was cut. Three one-record chunks, cap 1: one counted, incident cut."""
+        ids = ["%032x" % (0xc0 + i) for i in range(3)]
+        uids = dict((u, {"name": "Person %d" % i, "teams": ["Team A"]}) for i, u in enumerate(ids))
+        recs = [self.rec(i, u, "Person %d" % i, "Network") for i, u in enumerate(ids)]
+        win = {"since": "2026-10-01 00:00:00", "until": "2026-11-01 00:00:00"}
+        for cap, n_, cut in ((1, 1, ["incident"]), (2, 2, ["incident"]), (3, 3, []), (5, 3, [])):
+            api = self.OpenedApi([], recs)
+            op = rd.read_opened(api, uids, ["incident"], win, max_records=cap, chunk=1)
+            self.assertEqual((sum(sum(p_["inc"].values()) for p_ in op["people"]), op["cut"]), (n_, cut), cap)
+            spent = [c for c in api.calls if c[1] == "sys_id"]                                  # the probes: one record, no fields
+            self.assertTrue(all(c[3] == 1 for c in spent), api.calls)
+            self.assertEqual(len(spent), 1 if cut else 0, (cap, api.calls))
+        # the budget spent exactly by the last records there are: not said to be cut
+        api = self.OpenedApi([], recs[:1])
+        op = rd.read_opened(api, uids, ["incident"], win, max_records=1, chunk=1)
+        self.assertEqual((op["cut"], len(api.calls)), ([], 3))
+
+    def test_the_module_reads_what_members_opened(self):
+        """read_all: the members' sys_ids from sys_user_grmember, then incident and sc_req_item by opened_by IN, in the
+        window - the service desk's tickets assigned to every other group counted too; with opened_by false: not read."""
+        with tempfile.TemporaryDirectory() as d:
+            subprocess.run([sys.executable, os.path.join(HERE, "servicenow", "insights_seed.py"), os.path.join(d, "s.json"), "0.25"],
+                           check=True, capture_output=True)
+            with open(os.path.join(d, "s.json")) as f:
+                recs = json.load(f)
+        win = rd.window(6, 0, "2026-10-31", True, "", NOW)
+        api = TicketStore.Api(recs)
+        res = rd.read_all(api, [], TicketStore.TABLES, win, 20000, first_assigned=True)
+        self.assertEqual((res["opened"]["error"], res["opened"]["cut"], res["opened"]["tables"]), ("", [], ["incident", "sc_req_item"]))
+        self.assertTrue(res["opened"]["people"])
+        # the service desk's members alone: everything each opened, the tickets assigned to every other group too
+        sdm = set(res["members"][self.team])
+        op = rd.read_opened(TicketStore.Api(recs), dict((snmock.user_id(w), {"name": w, "teams": [self.team]}) for w in sdm), TicketStore.TABLES, win)
+        self.assertTrue(all(p_["teams"] == [self.team] for p_ in op["people"]))
+        self.assertTrue(all(self.team in p_["teams"] for p_ in res["opened"]["people"] if p_["name"] in sdm))
+        op["people"] = dict((p_["name"], {"inc": p_["inc"], "req": p_["req"]}) for p_ in op["people"])
+        self.assertEqual(op["people"], dict((p_["name"], {"inc": p_["inc"], "req": p_["req"]}) for p_ in res["opened"]["people"] if p_["name"] in sdm))
+        want = {}
+        for x in recs:
+            t_ = x.get("_table") or "incident"
+            if t_ in ("incident", "sc_req_item") and x.get("opened_by") in sdm and win["since"] <= x.get("opened_at", "") < win["until"]:
+                k = "inc" if t_ == "incident" else "req"
+                lab = (x.get("category") if k == "inc" else x.get("cat_item")) or ("(none)" if k == "inc" else "(no catalog item)")
+                e_ = want.setdefault(x["opened_by"], {"inc": {}, "req": {}})
+                e_[k][lab] = e_[k].get(lab, 0) + 1
+        self.assertEqual(op["people"], want)
+        elsewhere = sum(1 for x in recs if (x.get("_table") or "incident") == "incident" and x.get("opened_by") in sdm
+                        and x.get("assignment_group") != self.team and win["since"] <= x.get("opened_at", "") < win["until"])
+        self.assertGreater(elsewhere, 0)                                                        # assigned to other groups: counted
+        self.assertEqual(sum(sum(v["inc"].values()) for v in op["people"].values()) >= elsewhere, True)
+        q = [c for c in api.calls if "opened_byIN" in c[2]]
+        self.assertTrue(q and all(c[1] in ("sys_id,opened_by,category", "sys_id,opened_by,cat_item") for c in q))
+        self.assertTrue(all(re.match(r"^opened_byIN[0-9a-f]{32}(,[0-9a-f]{32})*\^opened_at>=", c[2]) for c in q))
+        api = TicketStore.Api(recs)
+        self.assertNotIn("opened", rd.read_all(api, [], TicketStore.TABLES, win, 20000, opened_by=False))
+        self.assertFalse([c for c in api.calls if "opened_byIN" in c[2]])
+
+
 class Release1682(unittest.TestCase):
     """1.68.2: Response met on Trends dropped and had no October and no November point - a short window (7 days) wrote
     only "this month so far", so each ended month kept the last run's first days; the month just ended is now read once
@@ -3690,6 +3966,21 @@ class Release1682(unittest.TestCase):
         self.assertEqual(H.servicenow_insights_month_to_complete(runs, self.hist(db), r), "2026-10")
         t = H.servicenow_insights_trend(dict(self.m, window=r["window"]), self.hist(db), OPTS, runs)["trend"]
         self.assertEqual((t["stale"], t["partial"]), (["2026-10"], ["2026-11"]))
+
+    def test_a_window_to_local_midnight_on_the_1st(self):
+        """1.70.4 (review of 1.68.2): a window to 00:00 on 1 November, Europe/Berlin (23:00 UTC on 31 October). October has
+        ended: held only so far, it is a gap ("not complete") when its completion fails, and in Check mode (not read)."""
+        now = datetime.datetime(2026, 10, 31, 23, 0, tzinfo=rd.UTC)
+        r = dict(self.r, window=rd.window(6, 7, "", True, "Europe/Berlin", now))
+        self.assertEqual((H.report_month(r["window"]), H.ended_month(r["window"])), ("2026-10", "2026-10"))
+        db = {"2026-09": {"partial": False, "figs": {"incidents": 9.0}}, "2026-10": {"partial": True, "figs": {"incidents": 3.0}}}
+        runs = H.servicenow_insights_db_runs(r, self.m, OPTS)
+        self.assertEqual(H.servicenow_insights_month_to_complete(runs, self.hist(db), r), "2026-10")
+        failed = H.servicenow_insights_complete_month({"ok": False, "error": "refused"}, "2026-10", OPTS, runs)
+        for case, rr in (("the completion failed", failed), ("Check mode: nothing read", runs)):
+            t = H.servicenow_insights_trend(dict(self.m, window=r["window"]), self.hist(db), OPTS, rr)["trend"]
+            self.assertEqual((t["months"], t["stale"], t["partial"]), (["2026-09", "2026-10"], ["2026-10"], []), case)
+            self.assertIsNone(t["nodes"]["all"][-1][1 + [k for k, _l, _k in t["metrics"]].index("incidents")], case)
 
     def test_the_month_boundary_is_local(self):
         """23:30 UTC on 31 October is 00:30 on 1 November in Europe/Berlin: there October has ended, in UTC it has not."""

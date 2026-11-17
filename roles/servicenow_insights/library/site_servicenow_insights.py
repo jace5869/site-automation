@@ -45,6 +45,7 @@ options:
   handoff_min: {description: The reassignments that make an incident passed around., type: int, default: 3}
   handoff_source: {description: "Where the hand-off paths come from (0.97.0): auto (sys_audit, else metric_instance), audit, metric (never sys_audit), none.", type: str, default: auto}
   members: {description: Read the groups' members (sys_user_grmember) for the leaderboards., type: bool, default: true}
+  opened_by: {description: "With members (1.70.4): read what the members opened in the window, wherever it was assigned (Who opens what) - counts by category and catalog item.", type: bool, default: true}
   group_parents: {description: "Read the groups' parents and active flag (sys_user_group) for the sites and directorates.", type: bool, default: true}
   managers: {description: "Read each group's manager (sys_user_group.manager: name, active) in the same read - the team leads.", type: bool, default: false}
   manager_email: {description: "With managers: their email too (manager.email) - for the leads' emails.", type: bool, default: true}
@@ -87,6 +88,7 @@ audit_source: {description: "Where the paths came from: sys_audit, metric_instan
 audit_note: {description: "sys_audit refused but metric_instance read: why (for the report's Not read).", type: str}
 members: {description: "{group name: [the members' names]} for every group the records name (sys_user_grmember).", type: dict}
 members_error: {description: "Why sys_user_grmember was not read ('' = read, or not asked).", type: str}
+opened: {description: "1.70.4: {people: [{name, teams, inc: {category: n}, req: {catalog item: n}}] (one per member, counted by sys_id), error, cut, tables} - what the members opened in the window.", type: dict}
 group_tree: {description: "{sys_id: {name, parent (sys_id), active, type}} - the groups the records name and their parents.", type: dict}
 group_tree_error: {description: "Why sys_user_group was not read ('' = read, or not asked).", type: str}
 managers: {description: "{group name: {name, email, active}} - the manager of each group the records name that has one (with managers).", type: dict}
@@ -543,9 +545,11 @@ def read_paths(api, ids, names, source="auto"):
     return {}, "", "; ".join(errs), ""
 
 
-def read_members(api, groups, chunk=50):
+def read_members(api, groups, chunk=50, ids=None):
     """The members of these groups (sys_user_grmember; groups: {sys_id: name}, or {name: name} when the ids are not
-    known) -> ({group name: [names]}, error). Read with display values: a member is the name the records show."""
+    known) -> ({group name: [names]}, error). Read with display values: a member is the name the records show. ids
+    (1.70.4): a dict filled with {the user's sys_id: {"name": name, "teams": [group names]}} - for reading what they
+    opened; keyed by sys_id, so two people with the same name stay two."""
     out = dict((name, []) for name in groups.values())
     by_id = dict(groups)
     # by sys_id where it is known (group IN), by name where it is not (group.name IN)
@@ -565,12 +569,60 @@ def read_members(api, groups, chunk=50):
             for x in rows:
                 gv, gd = _vd(x, "group")
                 name = by_id.get(gv) or by_id.get(gd) or gd
-                user = " ".join(_vd(x, "user")[1].split())
+                uid, ud = _vd(x, "user")
+                user = " ".join(ud.split())
                 if name in out and user and user not in out[name]:
                     out[name].append(user)
+                if ids is not None and user and name in out and re.match(r"^[0-9a-f]{32}$", str(uid)):
+                    p_ = ids.setdefault(str(uid), {"name": user, "teams": []})
+                    if name not in p_["teams"]:
+                        p_["teams"].append(name)
     for name in out:
         out[name].sort()
     return out, ""
+
+
+def read_opened(api, uids, tables, win, max_records=20000, chunk=40):
+    """1.70.4, Who opens what: every incident and requested item these people opened in the window, wherever it was
+    assigned (opened_by IN, opened_at in the window; uids: {sys_id: {"name", "teams"}}, from read_members) -> {people:
+    [{"name", "teams", "inc": {category: n}, "req": {catalog item: n}}], one per sys_id that opened any, error, cut (a
+    table cut at max_records), tables}. Counted by sys_id: the name is shown only. Counts only: no ticket is kept, no
+    sys_id leaves the module."""
+    since, until = str(win["since"])[:19], str(win["until"])[:19]           # UTC text, as the window holds it
+    out = {"people": [], "error": "", "cut": [], "tables": []}
+    uids = dict((k, v) for k, v in (uids or {}).items() if re.match(r"^[0-9a-f]{32}$", str(k)))
+    ids = sorted(uids)
+    counts = {}
+    cap = max(int(max_records), 0)
+    for table, key, field in (("incident", "inc", "category"), ("sc_req_item", "req", "cat_item")):
+        if table not in tables or not ids:
+            continue
+        out["tables"].append(table)
+        got = 0
+        for i in range(0, len(ids), chunk):
+            # newest first, as every read: cut at max_records, the newest are kept
+            q = "opened_byIN%s^opened_at>=%s^opened_at<%s^ORDERBYDESCopened_at" % (",".join(ids[i:i + chunk]), since, until)
+            left = cap - got
+            try:
+                # the budget spent: read nothing more, only ask whether there is more (one record) to say the cut
+                rows, more = read_table(api, table, q, left, fields=["sys_id", "opened_by", field] if left > 0 else ["sys_id"])
+            except SnError as e:
+                out["error"] = "%s: %s" % (table, e)
+                return out
+            got += len(rows)
+            for x in rows:
+                uid = _vd(x, "opened_by")[0]
+                if uid not in uids:
+                    continue
+                label = " ".join(str(_vd(x, field)[1] or "").split()) or ("(none)" if key == "inc" else "(no catalog item)")
+                e = counts.setdefault(uid, {"inc": {}, "req": {}})
+                e[key][label] = e[key].get(label, 0) + 1
+            if more:
+                out["cut"].append(table)
+                break
+    for uid in sorted(counts, key=lambda k: (uids[k]["name"], sorted(uids[k]["teams"]), k)):
+        out["people"].append({"name": uids[uid]["name"], "teams": sorted(uids[uid]["teams"]), "inc": counts[uid]["inc"], "req": counts[uid]["req"]})
+    return out
 
 
 VIP_COLUMN = re.compile(r"^[a-z0-9_]{1,80}$")
@@ -1198,7 +1250,7 @@ def by_key(d):
 
 def read_all(api, groups, tables, win, max_records=20000, audit=True, handoff_min=3, members=True, group_parents=True, handoff_source="auto",
              sla_source="auto", first_assigned=False, state_metric="Incident State Duration", survey=True, survey_metrics=None, managers=False, survey_types=None,
-             store=None, manager_email=True, vip_fields=None, vip_people="caller", breach=None):
+             store=None, manager_email=True, vip_fields=None, vip_people="caller", breach=None, opened_by=True):
     """store (1.17.0): None - every record read in full (and nothing kept); a Reuse - its tickets reused where fresh
     (store.rows empty: a full read that fills the store). breach (1.59.0): {now, horizon_hours, days, max_records} - the
     about-to-breach SLAs too (read_breach)."""
@@ -1284,7 +1336,10 @@ def read_all(api, groups, tables, win, max_records=20000, audit=True, handoff_mi
             res["audit"], res["audit_source"], res["audit_error"], res["audit_note"] = read_paths(api, ids, names, handoff_source)
         res["audit"] = by_key(res["audit"])
     if members and names:
-        res["members"], res["members_error"] = read_members(api, names)
+        uids = {}
+        res["members"], res["members_error"] = read_members(api, names, ids=uids)
+        if opened_by and not res["members_error"]:          # 1.70.4: what the members opened, wherever it went
+            res["opened"] = read_opened(api, uids, tables, win, max_records)
     gids = sorted(set(it.get("group_id") for it in items if it.get("group_id") and re.match(r"^[\w-]{1,64}$", str(it["group_id"]))))
     mgr = {} if managers else None
     if group_parents and gids:
@@ -1408,6 +1463,7 @@ def main():
             store_in=dict(type="path", default=""), store_out=dict(type="path", default=""), full_refresh=dict(type="bool", default=False),
             breach=dict(type="bool", default=False), breach_only=dict(type="bool", default=False),
             breach_horizon_hours=dict(type="float", default=72), breach_days=dict(type="int", default=36),
+            opened_by=dict(type="bool", default=True),
         ),
         supports_check_mode=True)
     p = module.params
@@ -1456,7 +1512,7 @@ def main():
     try:
         res = read_all(api, p["groups"], p["tables"], win, p["max_records"], p["audit"], p["handoff_min"], p["members"], p["group_parents"], p["handoff_source"],
                        p["sla_source"], p["first_assigned"], p["state_metric"], p["survey"], p["survey_metrics"], p["managers"], p["survey_types"],
-                       store, p["manager_email"], p["vip_fields"], p["vip_people"], breach)
+                       store, p["manager_email"], p["vip_fields"], p["vip_people"], breach, p["opened_by"])
     except SnError as e:
         res = {"ok": False, "error": str(e), "window": win, "groups": [], "tables": [], "items": [], "audit": {}, "audit_error": "",
                "members": {}, "members_error": "", "lookup_note": "", "url": url}

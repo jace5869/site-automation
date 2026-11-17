@@ -183,6 +183,8 @@ def _same(rec_value, value):
         return True
     if any(u["sys_id"] == value and rv in (u["user_name"], u["name"]) for u in SYSUSERS):
         return True
+    if len(value) == 32 and user_id(rv) == value:     # 1.70.4: a person the mock has no sys_user for, by its made-up sys_id
+        return True
     return bool(value) and bool(rv) and _by_number().get(rv) == value
 
 
@@ -302,8 +304,10 @@ def show_all(rec):
         value = v
         if k == "assignment_group":
             value = next((g["sys_id"] for g in GROUPS if g["name"] == v), v)
-        elif k in ("assigned_to", "opened_by", "caller_id", "resolved_by", "requested_for"):
-            value = next((u["sys_id"] for u in SYSUSERS if v in (u["user_name"], u["name"])), user_id(v) if k in ("caller_id", "requested_for") else v)
+        elif k in ("assigned_to", "opened_by", "caller_id", "resolved_by", "requested_for", "user"):
+            # 1.70.4: opened_by and a membership's user carry a sys_id too (Who opens what reads by them)
+            value = next((u["sys_id"] for u in SYSUSERS if v in (u["user_name"], u["name"])),
+                         user_id(v) if k in ("caller_id", "requested_for", "opened_by", "user") else v)
         display = shown.get(k, v)
         if k in ("assigned_to", "opened_by", "caller_id", "resolved_by"):
             display = next((u["name"] for u in SYSUSERS if v in (u["user_name"], u["name"])), v)

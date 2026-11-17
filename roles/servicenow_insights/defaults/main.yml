@@ -211,6 +211,10 @@ servicenow_insights_survey_headline: ""     # the survey or question for the til
 # Good / Fair / Low by the share of the scale, (average - min) / (max - min): on 1 to 4, Good from 3.4, Fair from 2.8.
 servicenow_insights_survey_grades: {good: 0.8, fair: 0.6}
 servicenow_insights_survey_min_answers: 5   # fewer answers: the average without a grade
+# The scale every rating question is on, [min, max] (1.70.4), e.g. [1, 4]: it replaces the scale ServiceNow gives or the
+# answers show. The page, the email and the workbook say "3.78 of 4", graded on it. An answer outside it is left out of
+# the averages, and counted and named. [] = each question's own scale.
+servicenow_insights_survey_scale: []
 # Records per table at most, the newest kept; more: said on every page (1.16.0). Measured: 20000 needs about 0.4 GB in
 # the EE; 100000 about 1.5 GB and 4 minutes more.
 servicenow_insights_max_records: 20000
@@ -224,6 +228,13 @@ servicenow_insights_handoff_source: auto        # auto (sys_audit, else the metr
 # on most instances); without it the leaderboard lists everyone the team's tickets were assigned to or resolved by, and
 # the report says so. false: not read.
 servicenow_insights_members: true
+# Who opens what (1.70.4, in Categories): what each member of a team opened in the period, wherever it was assigned -
+# read from incident and sc_req_item by opened_by (read-only; the names are on the page and in the workbook only, never
+# in the report database or ACT). Needs servicenow_insights_members. false: not read; the section then lists who opened
+# the team's own tickets.
+servicenow_insights_opened_by: true
+servicenow_insights_opened_by_min: 10       # a person listed from this many tickets opened in the period
+servicenow_insights_other_warn_pct: 25      # Other (or no category) over this share of a person's tickets: amber
 
 # WHAT THE REPORT SHOWS
 servicenow_insights_top_issues: 10      # incident issues listed (the workbook has every one)

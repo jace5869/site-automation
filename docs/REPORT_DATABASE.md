@@ -44,8 +44,9 @@ way, and writes it complete:
 - in the same write as the run's own months. The next runs find it complete and read nothing more.
 
 The month just ended is the one before the report's own month: the month the window ends in, in `report_time_zone`. A
-7-day run on the 15th writes no month of its own and still completes it. On Trends only the report's own month can be
-*so far*. An earlier month held only *so far* is a gap, said *not complete*.
+7-day run on the 15th writes no month of its own and still completes it. On Trends only a month still running when the
+window ends can be *so far*. A month that has ended, held only *so far*, is a gap, said *not complete*. A window to
+00:00 on the 1st has ended the month before (1.70.4).
 
 The job output says `the month just ended, not held complete`, then the read. Not read (ServiceNow refused, records
 cut): one warning line, and the next run tries again. A run with `servicenow_insights_until` set completes nothing.

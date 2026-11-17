@@ -32,6 +32,7 @@
     handoff_min: "{{ servicenow_insights_handoff_min | int }}"
     handoff_source: "{{ servicenow_insights_handoff_source | default('auto') | string | trim | lower }}"
     members: "{{ servicenow_insights_members | default(true) | bool }}"
+    opened_by: false             # the months' figures only (1.70.4)
     group_parents: "{{ servicenow_insights_use_group_parents | default(true) | bool }}"
     now: "{{ servicenow_insights_now | default(omit, true) }}"
     sla_source: "{{ servicenow_insights_sla_source | default('auto') | string | trim | lower }}"

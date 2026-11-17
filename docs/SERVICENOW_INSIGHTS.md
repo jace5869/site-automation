@@ -29,8 +29,8 @@ and simpler: the tiles and the main tables, a link to the page, and an Excel wor
 | **Keeping up** | opened and resolved per week, the backlog at the end of each week, the age of what is open now (0-5, 6-15, 16-30, over 30 days), a heatmap of when incidents are opened (weekday by hour), the weeks as a table |
 | **Severity** | incidents per priority - its name (1 - Critical ... 5 - Exempt), count, median to resolve, Response met and Resolution met (1.7.0), No SLA -, the **priority set by hand** (impact x urgency, the 3 x 3 matrix) per group, then every P1 and P2: when, what, the group, the change that caused it, its problem record |
 | **VIP tickets** (1.43.0) | a row per VIP tier and Not VIP, the incidents by priority, each tier's SLA definitions, and by unit on the All, site and directorate pages. See *VIP tickets* below |
-| **Categories** (1.7.0) | incidents per category (against the window before), their median time to resolve and SLAs met, the group they are mostly in; a data-quality line - no category, Other, off your official list (named) |
-| **Satisfaction** (1.7.0) | the incident surveys, each on its own scale, by survey: the average graded Good, Fair or Low, by month and by group (1.16.0, see *Satisfaction*) |
+| **Categories** (1.7.0) | incidents per category (against the window before), their median time to resolve and SLAs met, the group they are mostly in; a data-quality line - no category, Other, off your official list (named); *Who opens what* - per person, what they opened by category and catalog item (1.70.4) |
+| **Satisfaction** (1.7.0) | the incident surveys, each on its own scale (or `servicenow_insights_survey_scale`, 1.70.4), by survey: the average graded Good, Fair or Low, by month and by group (1.16.0, see *Satisfaction*) |
 | **Top incident issues** | the issues ranked, with their rank against the window before (▲ ▼ New), their share and the cumulative share, a weekly trend, the median time to fix; open one for its **fix action** (with a Copy button), where the fix comes from - **From the tickets**, **Partly from tickets** or **Suggested by ACT** (not verified) -, the CIs it was seen on, example tickets (links into ServiceNow), its close-note quality, and the flags *KB candidate*, *Self-service candidate*, *Problem candidate*; a fix the close notes disagree on is said |
 | **Problem candidates** | 3 or more incidents of one issue on one CI within 30 days: the counts, the group, the problem record - or *No problem record*, or *Resolved, incidents continue* |
 | **Passed between groups** | incidents reassigned 3 or more times, the paths they took (a group the ticket came back to in amber), the most common issue on each path and the time it added. The groups are shown by their short names - the name without the parts every group shares, such as a site prefix or a contract suffix; rest on one for the full name |
@@ -643,6 +643,7 @@ The **ServiceNow API** credential you already have works ([SERVICENOW_SETUP.md](
 | `sys_audit` | the assignment history of incidents passed between groups (the paths) | `itil` on most instances; refused, the paths come from `metric_instance` (below) |
 | `metric_instance` | the same history from the out-of-box incident metric *Assignment Group* (0.97.0), when `sys_audit` is refused or `servicenow_insights_handoff_source: metric` | read on `metric_instance` (`itil` on most instances); both refused, the report shows the counts without the paths and says which table it could not read |
 | `sys_user_grmember` | the members of the groups the tickets name (the teams' leaderboards) | `itil` on most instances; else the report says so and each leaderboard lists everyone the team's tickets were assigned to or resolved by (or `servicenow_insights_members: false`) |
+| `incident`, `sc_req_item` by `opened_by` (1.70.4) | Who opens what: what each member opened in the period, wherever it was assigned - `opened_by`, `category` and `cat_item` only | `itil`; refused, the section lists who opened the team's own tickets and says why (or `servicenow_insights_opened_by: false`) |
 | `task_sla` (1.7.0) | the SLAs of the incidents and requested items done in the window (and the one before), and of the incidents open now: met or missed, at risk now, on hold since (the SLA's pause) | `itil`; refused (403), the report says so under *Not read* and counts met or missed from your targets |
 | `metric_instance` (1.7.0) | the metric *Incident State Duration* (`servicenow_insights_state_metric`: the time on hold, reopened within 7 days) and the metric *Assigned to* (the response, with your targets) | as above; not there, the page says what it could not measure |
 | `asmt_metric_result` (1.7.0) | the incident surveys' answers, with each question's survey, state and scale dot-walked (1.16.0; best-effort; `servicenow_insights_survey: false` = not read) | read on the assessment tables (`asmt_metric_result`, through `asmt_assessment_instance`); refused, said under *Not read*, no satisfaction figures |
@@ -796,6 +797,37 @@ servicenow_insights_business_hours: {days: [mon, tue, wed, thu, fri], start: "07
 - Without a list, every category is shown as it is.
 - Without ACT, the issues stay the incidents' category / subcategory.
 
+### Who opens what (1.70.4)
+
+Under the Categories table, one row per person: the tickets they opened in the period, by incident category and
+catalog item. It shows which people put tickets in Other, or leave the category empty.
+
+- **On a team's page**, the people are the team's members. Each row counts everything that member opened in the period,
+  wherever it was assigned. A service desk's people are listed with the tickets they sent to every other team.
+- **On the All page and a site's page**, every member of the teams under it, each with their team.
+- **Opened by** only. The caller is not used.
+- **Each row**: the tickets opened, the top 3 (a request marked), the share in Other or no category, and the mix as a
+  bar. Over `servicenow_insights_other_warn_pct` the share is amber with a "!" mark. Click a row for the full breakdown:
+  incidents by category, requests by catalog item.
+- **Other** counts the tickets with no category too. The top 3, the share, the mix, the email and the workbook use this
+  one count. The breakdown shows Other and no category apart.
+- **Two people with the same name** are counted apart, by their ServiceNow record. Each shows on their own team's page.
+- **Over `servicenow_insights_max_records`** the read stops. One line under the title says the counts are short.
+- **The email** lists the 5 people with the largest share in Other.
+- **The workbook** has a *Who opens what* sheet: every person, every category and item.
+
+The names are on the page, in the email and in the workbook only. They are never written to the report database or
+sent to ACT. Only counts are read: no ticket of this read is kept.
+
+Without the members (`sys_user_grmember` refused, or `servicenow_insights_members: false`), or with this read off or
+refused, the section lists who opened the page's own tickets. One line under its title says why.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `servicenow_insights_opened_by` | `true` | read what the members opened (`incident` and `sc_req_item` by `opened_by`) |
+| `servicenow_insights_opened_by_min` | `10` | a person is listed from this many tickets opened; the workbook has everyone |
+| `servicenow_insights_other_warn_pct` | `25` | Other or no category over this share of a person's tickets: amber |
+
 ### Low in the email (1.56.0)
 
 These are **Low** in the email: worth knowing, nothing to do now. They never make the report amber.
@@ -836,6 +868,20 @@ Every average reads *3.46 of 4* with a grade: **Good**, **Fair** or **Low**, by 
 
 Under 5 answers, the average shows with no grade, so one answer does not paint a team.
 
+**Your own scale (1.70.4).** When the answers use fewer points than ServiceNow says, set the scale yourself:
+
+```yaml
+servicenow_insights_survey_scale: [1, 4]
+```
+
+- Every rating question is then on 1 to 4. The page, the email and the workbook say *3.78 of 4*, graded on 1 to 4.
+- An answer outside the scale (a 5) is left out of every average. It is never made a 4. The section says how many,
+  and so does *The surveys read*.
+- The months shown are worked out again on the new scale on the next run. No backfill is needed.
+- `[]` (the default): each question on its own scale, as above.
+- Anything but two numbers, the lower first, stops the job with the setting's name. `"1-4"`, `"14"` and `[true, false]`
+  are refused.
+
 | Setting | Default | What it does |
 |---|---|---|
 | `servicenow_insights_survey_metrics` | `[]` | the questions read, by name; a named question is always a rating |
@@ -843,6 +889,7 @@ Under 5 answers, the average shows with no grade, so one answer does not paint a
 | `servicenow_insights_survey_headline` | `""` | a survey or a question for the headline |
 | `servicenow_insights_survey_grades` | `{good: 0.8, fair: 0.6}` | the shares of the scale for Good and Fair |
 | `servicenow_insights_survey_min_answers` | `5` | fewer answers: no grade |
+| `servicenow_insights_survey_scale` | `[]` | `[min, max]`: the scale of every rating question; answers outside it left out, counted (1.70.4) |
 
 ## What to act on first
 

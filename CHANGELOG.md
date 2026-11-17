@@ -1,5 +1,45 @@
 # Changelog
 
+## 1.70.4 — 2026-11-17
+
+**To set up: nothing required.** Your site's surveys answer on 1 to 4: set `servicenow_insights_survey_scale: [1, 4]`.
+Who opens what reads with the ServiceNow account you have (`itil`); `servicenow_insights_opened_by: false` turns it off.
+
+**Ticket insights - your own survey scale.** `servicenow_insights_survey_scale: [min, max]` puts every rating question on
+that scale, in place of the one ServiceNow gives.
+
+- The page, the email and the workbook say *3.78 of 4*, graded on 1 to 4.
+- An answer outside the scale is left out of every average, never made to fit. The page, the email's tile and *The
+  surveys read* say how many.
+- The months shown are worked out again on the next run: no backfill.
+- The workbook has a new *Satisfaction* sheet: each question's average, the top of its scale, its grade and answers.
+- Anything but two numbers, the lower first, stops the job with the setting's name.
+
+**Ticket insights - Who opens what** (in Categories). One row per person: what they opened in the period, by incident
+category and catalog item.
+
+- On a team's page, the team's members, each with everything they opened, wherever it was assigned. It is read from
+  `incident` and `sc_req_item` by `opened_by` (counts only). On the All page, every member, with their team.
+- The top 3 (a request marked), the share in Other or no category (amber with a "!" over
+  `servicenow_insights_other_warn_pct`, 25), the mix as a bar. A row opens to the full breakdown.
+- Listed from `servicenow_insights_opened_by_min` (10) tickets. The email has the 5 with the largest share in Other.
+  The workbook's *Who opens what* sheet has everyone.
+- Other counts the tickets with no category too, in the top 3 as in the share. The breakdown shows them apart.
+- Two people with the same name are counted apart, each on their own team's page.
+- Names on the page, in the email and the workbook only, never in the report database or ACT.
+- Without the members, or with the read refused, it lists who opened the page's own tickets and says why.
+
+**Trends: a window to midnight on the 1st** (review of 1.68.2). A window that ends at 00:00 on the 1st has ended the
+month before. Held only *so far* (its completion failed, or Check mode), that month is now a gap said *not complete*,
+not *so far*.
+
+**Tests:** `tests/test_servicenow_insights.py` Release1704 - the scale set and left-out answers on the page, the email and
+the workbook; Who opens what for a team's members, the All page, every fallback, the email and the workbook; no name in
+the report database's rows, ACT's evidence or the artifact; the module's read by `opened_by` against the stand-in.
+Release1682 - a window to 00:00 on 1 November, Europe/Berlin, with the completion failed and in Check mode.
+`tests/servicenow/run_insights_test.sh`: the desk's page lists its members, read by `opened_by`. The stand-in gives
+`opened_by` and a membership's user a sys_id.
+
 ## 1.70.3 — 2026-11-17
 
 **To set up: on an air-gapped host, load the images before the deploy jobs** (docs/ENCLAVES.md, section 5). A host that

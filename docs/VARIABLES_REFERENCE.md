@@ -1677,10 +1677,14 @@ File: `roles/servicenow_insights/defaults/main.yml`
 | `servicenow_insights_survey_headline` | (empty) | the survey or question for the tile, the email and the history; "" = the active survey with the most answers |
 | `servicenow_insights_survey_grades` | `{good: 0.8, fair: 0.6}` | Good / Fair / Low by the share of the scale, (average - min) / (max - min): on 1 to 4, Good from 3.4, Fair from 2.8. |
 | `servicenow_insights_survey_min_answers` | `5` | fewer answers: the average without a grade |
+| `servicenow_insights_survey_scale` | `[]` | The scale every rating question is on, [min, max] (1.70.4), e.g. [1, 4]: it replaces the scale ServiceNow gives or the answers show. The page, the email and the workbook say "3.78 of 4", graded on it. An answer outside it is left out of the averages, and counted and named. [] = each question's own scale. |
 | `servicenow_insights_max_records` | `20000` | Records per table at most, the newest kept; more: said on every page (1.16.0). Measured: 20000 needs about 0.4 GB in the EE; 100000 about 1.5 GB and 4 minutes more. |
 | `servicenow_insights_audit` | `true` | The assignment history of incidents passed around: the paths of Passed between groups. From sys_audit, else (0.97.0) the out-of-box incident metric "Assignment Group" (metric_instance) - both read only; the account needs read on one of them; without either the counts are still there and the report says which it could… (all of it: the role file) |
 | `servicenow_insights_handoff_source` | `auto` | auto (sys_audit, else the metric), audit, metric (sys_audit never asked), none |
 | `servicenow_insights_members` | `true` | The groups' members (sys_user_grmember): each team's leaderboard lists its members, and a ticket resolved by someone outside the team counts for the member it was assigned to. The account needs read on sys_user_grmember (itil has it on most instances); without it the leaderboard lists everyone the team's tickets were… (all of it: the role file) |
+| `servicenow_insights_opened_by` | `true` | Who opens what (1.70.4, in Categories): what each member of a team opened in the period, wherever it was assigned - read from incident and sc_req_item by opened_by (read-only; the names are on the page and in the workbook only, never in the report database or ACT). Needs servicenow_insights_members. false: not read; t… (all of it: the role file) |
+| `servicenow_insights_opened_by_min` | `10` | a person listed from this many tickets opened in the period |
+| `servicenow_insights_other_warn_pct` | `25` | Other (or no category) over this share of a person's tickets: amber |
 | `servicenow_insights_top_issues` | `10` | WHAT THE REPORT SHOWS incident issues listed (the workbook has every one) |
 | `servicenow_insights_top_requests` | `10` | catalog items listed |
 | `servicenow_insights_old_days` | `30` | open longer than this: flagged (Over 30 days) |

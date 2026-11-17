@@ -452,7 +452,10 @@ def servicenow_insights_trend(model, history=None, opts=None, runs=None):
     shown = months[months.index(used[0]):] if used else []
     # 1.68.2: a month that has ended but is held only "so far" (the last run in it saw a few days) is not that month's
     # figure: a gap, said "not complete" - never a short slice drawn as the month. Only the last month may be so far.
-    stale = sorted(mo for mo in partial & set(shown) if mo < (now or last))
+    # 1.70.4: ended = against the window's local end, never the month of its last moment - a window to 00:00 on the 1st
+    # has ended its month too (its partial figures a gap, not "so far")
+    ended = ended_month(m.get("window"))
+    stale = sorted(mo for mo in partial & set(shown) if (mo <= ended if ended else mo != last))
     keys = trend_keys(opts)
     nodes = {}
     for (variant, node), slot in per.items():

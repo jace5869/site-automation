@@ -139,6 +139,38 @@ section.card{background:var(--surface);border:1px solid var(--line);border-radiu
 .chip.warn{background:var(--warn-bg);border-color:transparent;color:var(--warn)}
 .chip.good{background:var(--good-bg);border-color:transparent;color:var(--good)}
 .svline{font-size:13px;margin:-6px 0 10px}
+/* Who opens what (1.70.4): a row per person, a details - the breakdown opens without a script */
+.wo{border-top:1px solid var(--line);font-size:13px}
+.wo-h,.wo-r>summary{display:grid;grid-template-columns:minmax(9em,1.2fr) 4em minmax(0,3fr) 4.6em minmax(5em,1fr);gap:6px 14px;align-items:center;padding:8px 6px}
+.wo-h{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line)}
+.wo-h .n,.wo-r .n{text-align:right;font-variant-numeric:tabular-nums}
+.wo-r{border-bottom:1px solid var(--line-2)}
+.wo-r>summary{cursor:pointer;list-style:none}
+.wo-r>summary::-webkit-details-marker{display:none}
+.wo-r>summary:hover,.wo-r[open]>summary{background:var(--surface-2)}
+.wo-p{overflow-wrap:anywhere}
+.wo-p::before{content:"\25B8";display:inline-block;width:1em;color:var(--muted);transition:transform .15s}
+.wo-r[open] .wo-p::before{transform:rotate(90deg)}
+.wo-t{display:flex;flex-wrap:wrap;gap:4px}
+.wo-t .chip{white-space:normal;font-weight:400}
+.wo-oc{border-color:var(--st4)}
+.wo-m{display:flex;gap:2px;height:10px;border-radius:5px;overflow:hidden}
+.wo-m i,.wo-k i{display:block;height:100%;min-width:2px}
+.k-other{background:var(--st4)}.k-cat{background:var(--st1)}.k-item{background:var(--st3)}.k-rest{background:var(--muted);opacity:.35}
+.wo-b{display:grid;grid-template-columns:1fr 1fr;gap:6px 24px;padding:4px 6px 14px 24px;background:var(--surface-2)}
+.wo-b h4{font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);margin:10px 0 4px}
+.wo-k{font-size:12px;margin:8px 0 0}
+.wo-k span{display:inline-flex;align-items:center;gap:4px;margin-right:10px}
+.wo-k i{width:10px;height:10px;border-radius:2px;display:inline-block}
+@media (max-width:760px){.wo-h{display:none}
+  .wo-r>summary{grid-template-columns:minmax(0,1fr) auto auto;grid-template-areas:"p n o" "t t t" "m m m"}
+  .wo-p{grid-area:p}.wo-n{grid-area:n}.wo-o{grid-area:o}.wo-t{grid-area:t}.wo-m{grid-area:m}
+  .wo-n::after{content:" opened";color:var(--muted)}
+  .wo-b{grid-template-columns:minmax(0,1fr);padding-left:6px}}
+/* the breakdown's 3 columns fit a phone: rows, not the cards other tables become */
+@media (max-width:640px){.wo-b .tw table{display:table;width:100%}.wo-b .tw thead{display:table-header-group}.wo-b .tw tbody{display:table-row-group}
+  .wo-b .tw tr{display:table-row;border:0;margin:0;padding:0}.wo-b .tw td,.wo-b .tw td.n{display:table-cell;padding:5px 8px;border-bottom:1px solid var(--line-2)}
+  .wo-b .tw td.n{text-align:right}.wo-b .tw td[data-l]::before{content:none}.wo-b .tw{border:1px solid var(--line-2);border-radius:10px}}
 .chip.info{background:var(--info-bg);border-color:transparent;color:var(--info)}
 .mv{display:inline-block;min-width:38px;text-align:center;font-size:11px;font-weight:800;padding:1px 6px;border-radius:6px;font-variant-numeric:tabular-nums;white-space:nowrap}
 .mv.up{background:var(--warn-bg);color:var(--warn)} .mv.down{background:var(--good-bg);color:var(--good)}
@@ -1214,7 +1246,68 @@ def _scale_label(sc):
     if not sc:
         return "not known"
     f = lambda x: ("%d" % x) if float(x) == int(x) else ("%g" % x)    # noqa: E731
-    return "%s to %s%s" % (f(sc[0]), f(sc[1]), ", as observed" if sc[2] == "observed" else "")
+    return "%s to %s%s" % (f(sc[0]), f(sc[1]), {"observed": ", as observed", "set": " (servicenow_insights_survey_scale)"}.get(sc[2], ""))
+
+
+WO_MAX = 50          # Who opens what: people on the page (the workbook has every one)
+WO_KIND = {"other": "Other or no category", "cat": "an incident category", "item": "a catalog item", "rest": "the rest"}
+
+
+def who_opens_html(wo, team_page, n, pct):
+    """1.70.4, Who opens what (in Categories): a row per person (a details: the full breakdown without any script) - what
+    they opened in the period, the top 3 (a request marked), the share in Other (amber over servicenow_insights_other_warn_pct,
+    with a mark: never colour alone), the mix as a bar with its legend."""
+    if not wo:
+        return ""
+    rows = wo.get("rows") or []
+    lead = ("Tickets each member opened in the period, wherever they were assigned, by category (incidents) and catalog item (requests)."
+            if wo.get("source") == "members" else
+            "Tickets opened in the period by the people who opened this page's own tickets, by category (incidents) and catalog item (requests).")
+    out = ['<h3 class="subh" id="whoopens">Who opens what</h3><p class="mut svline">%s</p>' % e(lead)]
+    if wo.get("why"):
+        out.append('<p class="mut svline">%s</p>' % e(wo["why"]))
+    if not rows:
+        out.append('<p class="mut">No one opened %d or more tickets in the period (servicenow_insights_opened_by_min).</p>' % wo.get("min", 10))
+        return "".join(out)
+    warn = wo.get("warn_pct", 25)
+    out.append('<div class="wo"><div class="wo-h" aria-hidden="true"><span>Person</span><span class="n">Opened</span><span>Top 3</span>'
+               '<span class="n">Other</span><span>Mix</span></div>')
+    for x in rows[:WO_MAX]:
+        who = '<b>%s</b>' % e(x["name"])
+        if not team_page and x.get("teams"):
+            who += ' <span class="mut">(%s%s)</span>' % (e(x["teams"][0]), (" +%d" % (len(x["teams"]) - 1)) if len(x["teams"]) > 1 else "")
+        # Other: the category Other and no category together, the count the Other column and the mix use
+        chips = "".join('<span class="chip wo-c%s">%s <b>%s</b>%s</span>' % (
+            ' wo-oc" title="Other and no category' if z["other"] else "", e(z["name"]), n(z["n"]),
+            ' <span class="mut">(request)</span>' if z["kind"] == "req" else "") for z in x["top"])
+        if x.get("warn"):
+            oth = '<span class="chip warn" title="Over %g%%: these tickets need a real category">! %s</span>' % (warn, pct(x["other_pct"]))
+        else:
+            oth = pct(x["other_pct"]) if x.get("other_pct") is not None else "—"
+        bar = "".join('<i class="k-%s" style="width:%.1f%%" title="%s: %s, %s"></i>' % (k_, max(p_ or 0, 0.5), e(l_), n(c_), pct(p_))
+                      for k_, l_, c_, p_ in x["mix"])
+        lab = ", ".join("%s %s" % (l_, pct(p_)) for k_, l_, c_, p_ in x["mix"])
+
+        def brk(title, rows_, first):
+            if not rows_:
+                return '<div><h4>%s</h4><p class="mut">None in the period.</p></div>' % e(title)
+            return '<div><h4>%s</h4>%s</div>' % (e(title), table([(first, "", ""), ("Tickets", "n", ""), ("Share", "n", "")],
+                                                                    [("", [td(e(c_)), td(n(v), "n", v), td(pct(p_), "n", p_ or 0)]) for c_, v, p_ in rows_]))
+        out.append('<details class="wo-r"><summary><span class="wo-p">%s</span><span class="n wo-n">%s</span><span class="wo-t">%s</span>'
+                   '<span class="n wo-o">%s</span><span class="wo-m" role="img" aria-label="%s">%s</span></summary><div class="wo-b">%s%s</div></details>' % (
+                       who, n(x["opened"]), chips, oth, e("Mix: " + lab), bar,
+                       brk("Incidents by category (%d)" % x["inc"], x["inc_cats"], "Category"),
+                       brk("Requests by catalog item (%d)" % x["req"], x["req_items"], "Catalog item")))
+    out.append("</div>")
+    more = []
+    if len(rows) > WO_MAX:
+        more.append("The first %d of %d people." % (WO_MAX, len(rows)))
+    if wo.get("under"):
+        more.append("%s more opened fewer than %d (servicenow_insights_opened_by_min)." % (n(wo["under"]), wo.get("min", 10)))
+    out.append('<p class="wo-k mut">Mix: %s · Other counts tickets with no category too. Click a row for the full breakdown. '
+               'The workbook has every person and every category.%s</p>' % (
+        " ".join('<span><i class="k-%s"></i>%s</span>' % (k_, e(v)) for k_, v in WO_KIND.items()), (" " + " ".join(more)) if more else ""))
+    return "".join(out)
 
 
 def tiles(rows, cls="tiles"):
@@ -2064,7 +2157,8 @@ def servicenow_insights_page(model, key="all", opts=None):
                         dq_html + table([("Category", "", "name"), ("Incidents", "n", "inc"), ("Share", "n", "share"), ("Median to resolve", "n", "fix")] +
                                         ([("Response met", "n", "resp")] if two else []) + [("Resolution met" if two else "SLA met", "n", "sla"),
                                                                                             ("Mostly in", "", "")],
-                                        crow, tid="catTable", empty="No incidents in the period.", sortable=True)))
+                                        crow, tid="catTable", empty="No incidents in the period.", sortable=True) +
+                        who_opens_html(cat.get("opened_by"), s.get("level") == "team", n, pct)))
 
     # ---- satisfaction (1.7.0; 1.16.0: each survey on its own scale, graded): the incident surveys, best-effort
     sv = s.get("survey") or {}
@@ -2109,6 +2203,9 @@ def servicenow_insights_page(model, key="all", opts=None):
                 e(mlab), gtable([(g["group"], g["avg"], g["n"], g["grade"]) for g in mn["by_group"]], "Group", bsc, sortable=True))
         if not sv.get("blocks"):
             blocks_html = '<p class="mut">No answers in the period.</p>'
+        if sv.get("outside"):         # 1.70.4: never clipped - left out, counted and named
+            blocks_html = '<p class="mut svline">%s answer%s outside %s left out of the averages (servicenow_insights_survey_scale).</p>' % (
+                n(sv["outside"]), "" if sv["outside"] == 1 else "s", e(sv.get("range") or "the scale")) + blocks_html
         body.append(section("satisfaction", "Satisfaction", "the incident surveys' answers in the period · %s" % (
                                 e(", ".join(sorted(set((b_["survey"] or "Survey") for b_ in sv.get("blocks") or [])))) or "no answers"),
                             tiles(sat_tiles) + blocks_html +
