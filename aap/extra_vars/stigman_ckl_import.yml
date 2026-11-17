@@ -241,6 +241,13 @@ stigman_ckl_import_collection: VMware
 ## seconds per request
 # check_stig_stigman_timeout: 60
 
+## 1.69.1: a review whose detail or comment says one of these is never written by site-automation -
+## the STIG recheck's update (workflow 37, the site portal's 46-48) and the checklist import
+## (workflow 40) - and listed as Protected, with the word. Whole words or phrases, any case: RA is
+## not RAID, grant or ORACLE; POA&M also POA & M; a word longer than two letters also with an s
+## (POA&Ms). [] = none. Checked again just before each write.
+# stigman_protect_words: [RA, Risk Acceptance, POAM, POA&M]
+
 ## a review with attachments in STIG Manager (evidence a person attached) is left out of the plan
 ## and never written; false = written like the others
 # check_stig_update_skip_attachments: true

@@ -1083,8 +1083,9 @@ APPROVAL*) and hands on its plan; its gate lets the approval come. Steps 1 and 2
 | 6 | Workflow gate - has a plan, Variables `workflow_gate_var: stigman_update_plan` | **Run on fail**, from 5 |
 | 7 | STIG Manager - update (workflow 37's template) | **Run on success**, from 6 |
 
-Linux hosts only. The one approval covers steps 4 to 7. The review is written only if the rule passes after the fix:
-the second gate stops a recheck that failed for another reason. [SITE_PORTAL.md](SITE_PORTAL.md#fix-one-rule-workflow-47).
+Linux hosts only. The one approval covers steps 4 to 7. The review is written as the recheck finds it: Not a
+Finding if the rule passes after the fix, Open again with today's date if it still fails (1.69.1,
+`check_stig_update_refresh`). The second gate stops a recheck that failed for another reason. [SITE_PORTAL.md](SITE_PORTAL.md#fix-one-rule-workflow-47).
 
 ### 48. STIG - create the asset in STIG Manager (on demand, from the site portal)
 

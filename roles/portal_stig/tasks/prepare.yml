@@ -33,12 +33,9 @@
     ansible_python_interpreter: "{{ ansible_playbook_python }}"
     finding_ref_kinds: [stig_rule_fail, stig_fixed_open, stig_no_asset]
 
-# 1.69.1: no refresh here (check_stig_update_refresh: false) - a rule that still fails is "still there" on the job page,
-# with nothing to approve; workflow 37 refreshes it with a new date
 - name: STIG action | recheck {{ finding.data.rule | default('the host') }} as workflow 37's check
   ansible.builtin.set_fact:
     check_stig_update_workflow: true
-    check_stig_update_refresh: false
     check_stig_recheck_rules: "{{ [finding.data.rule] if finding.kind in ['stig_rule_fail', 'stig_fixed_open'] else [] }}"
 
 - name: STIG action | the host's asset to create in {{ finding.data.collection | default('its collection') }}

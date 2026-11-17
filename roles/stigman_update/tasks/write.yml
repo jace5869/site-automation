@@ -33,6 +33,7 @@
     ca_path: "{{ stigman_update_ca_path }}"
     timeout: "{{ stigman_update_timeout | int }}"
     skip_attachments: "{{ stigman_update_skip_attachments | bool }}"
+    protect_words: "{{ stigman_protect_words | default(omit) }}"
   register: _su
   when: stigman_update_plan | length > 0
 

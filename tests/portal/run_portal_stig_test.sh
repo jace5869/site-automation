@@ -7,7 +7,7 @@
 # fix that restarts; a proposed command about PAM refused; the approval's dry run lists the commands and changes nothing;
 # the fix runs exactly them; a plan for another finding is refused; the recheck of that rule alone (1.68.0: also with an
 # Evaluate-STIG run in full, which answers every rule - only the rule asked is planned) - passes: its review
-# planned and written (fixed), still fails: nothing planned (still there). 46 - passes now, still Open: planned and
+# planned and written (fixed), still fails: 1.69.1 - written again, Open with today's date (refreshed). 46 - passes now, still Open: planned and
 # written. 48 - a host with no asset: planned with the scan's answers. Only the approved review reaches STIG Manager.
 #   bash tests/portal/run_portal_stig_test.sh            (ANSIBLE_PLAYBOOK=... for another ansible-core)
 set -u
@@ -193,9 +193,25 @@ grep -q "TMOUT=600" "$work/tmout.sh" 2>/dev/null && echo "ok   - 47 apply: the f
 
 # ---- 47 step 4: the recheck of that rule alone
 echo '{"accounts_tmout": "fail"}' > "$work/results.json"
-run "47 recheck: still fails - nothing planned (still there)" ok stig_finding_recheck.yml -e finding_id=$F_TMOUT -- "!NEEDS APPROVAL - "
+# 1.69.1 (check_stig_update_refresh, the default): still there - its review written again, Open with today's date
+run "47 recheck: still fails - its review planned again (refreshed)" fail stig_finding_recheck.yml -e finding_id=$F_TMOUT -- \
+    "NEEDS APPROVAL - 1 review(s) of 1 asset(s) to write to STIG Manager (1 refreshed: still Open, a new date)" \
+    "V-257883: Open -> Open (submitted, refreshed: still Open, today's date)"
 check 'd.get("portal_result", {}).get("fixed")' '"false"' "47 recheck: the job page says still there"
-check '"stigman_update_plan" in d' 'false' "47 recheck: no review planned when it still fails"
+check '"its review is written again next - Open, with today" in d["portal_result"]["summary"]' 'true' "47 recheck: ... and that its review is written again"
+check '[(p["ruleId"], p["kind"]) for p in d["stigman_update_plan"]]' '[["SV-257883r1044925_rule", "refresh"]]' "47 recheck: only that rule, as a refresh"
+fresh="$(cat "$work/stats.json")"
+: > "$work/sm.log.writes"
+run "47 update after a fix that did not work: written again" ok stigman_update.yml -e finding_id=$F_TMOUT -e "$fresh" -- \
+    "written - localhost RHEL_9_STIG V-257883: Open -> Open (submitted, refreshed: still Open, today's date)"
+"$py" -c 'import json, sys; d = json.load(open(sys.argv[1]))
+r = [x for x in d["reviews"]["11"] if x["ruleId"] == "SV-257883r1044925_rule"][0]
+assert r["result"] == "fail" and r["ts"] != "2026-11-10T10:00:00Z", r
+assert r["comment"] == "Set by the STIG recheck (site-automation), approved in AAP: OpenSCAP checked it again on localhost on %s - still Open." % sys.argv[2], r' \
+    "$work/sm.json" "$(date -u +%Y-%m-%d)" && ! grep -q "SV-258176\|SV-257835" "$work/sm.log.writes" \
+  && echo "ok   - 47 update: STIG Manager has it Open with a new time and today's line, no other review written" \
+  || { echo "FAIL - 47 update, refreshed: $(head -c 300 "$work/sm.log.writes")"; fails=$((fails + 1)); }
+sm_data "$with_asset"
 echo '{}' > "$work/results.json"
 run "47 recheck: passes now - its review planned (fixed)" fail stig_finding_recheck.yml -e finding_id=$F_TMOUT -- \
     "NEEDS APPROVAL - 1 review(s)"

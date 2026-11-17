@@ -84,6 +84,7 @@
     search_all: "{{ stigman_ckl_import_search_all | bool }}"
     other_revision: "{{ stigman_ckl_import_other_revision | bool }}"
     overwrite_accepted: "{{ stigman_ckl_import_overwrite_accepted | bool }}"
+    protect_words: "{{ stigman_protect_words | default(omit) }}"
     status: "{{ stigman_ckl_import_status }}"
     detail_max: "{{ stigman_ckl_import_detail_max | int }}"
     day: "{{ now(utc=true).strftime('%Y-%m-%d') }}"

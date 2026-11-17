@@ -8,7 +8,10 @@ roles/stigman_update) and the checklist import's (workflow 40, roles/stigman_ckl
 
 A line of ours is a paragraph that starts with one of OURS. what_it_said() reads the result our line gave (its last
 words: '- Open.', '- still Open.', '- Not a Finding.', '- Not Applicable.'), so a review we last wrote as Open that
-is Not a Finding now was changed by a person after us (the recheck lists it when the scan still says Open)."""
+is Not a Finding now was changed by a person after us (the recheck lists it when the scan still says Open).
+
+protected(): a review whose detail or comment says one of stigman_protect_words (RA, Risk Acceptance, POAM, POA&M) is
+left as it is by every writer - the recheck's update and the checklist import."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
@@ -38,6 +41,42 @@ def merged(line, current):
     _, theirs = split(current)
     out = (line + "\n\n" + theirs) if (line and theirs) else (line or theirs)
     return out[:MAX]
+
+
+# 1.69.1: a review that says one of these in its detail or comment is never written by site-automation (stigman_protect_words)
+PROTECT_WORDS = ["RA", "Risk Acceptance", "POAM", "POA&M"]
+
+
+def _word_re(word):
+    """A protect word -> its pattern: case-insensitive, a whole word or phrase (RA is not RAID, grant, parameter or
+    ORACLE); any spaces inside a phrase; spaces around & allowed (POA & M); a word longer than 2 letters also with an s
+    (POA&Ms)."""
+    out = []
+    for ch in str(word).strip():
+        if ch.isspace():
+            if not out or out[-1] != r"\s+":
+                out.append(r"\s+")
+        elif ch == "&":
+            out.append(r"\s*&\s*")
+        else:
+            out.append(re.escape(ch))
+    if not out:
+        return None
+    plural = "s?" if len(str(word).strip()) > 2 else ""       # POA&Ms, POAMs, Risk Acceptances - not RAs (RAS is a server)
+    return re.compile(r"(?<![A-Za-z0-9])" + "".join(out) + plural + r"(?![A-Za-z0-9])", re.IGNORECASE)
+
+
+def protected(words, detail, comment):
+    """A review's detail and comment -> why it is protected ("'POA&M' in its comment"), or '' - the first protect word found,
+    as the setting names it. words None: PROTECT_WORDS; [] = none."""
+    for w in (PROTECT_WORDS if words is None else words) or []:
+        rx = _word_re(w)
+        if rx is None:
+            continue
+        for where, text in (("detail", detail), ("comment", comment)):
+            if text and rx.search(str(text)):
+                return "'%s' in its %s" % (str(w).strip(), where)
+    return ""
 
 
 def what_it_said(line):

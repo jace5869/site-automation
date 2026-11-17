@@ -84,16 +84,31 @@ hundreds). The reviews are written to the STIG's revision the asset has - else t
 
 Attachments win: a review with attachments is never written, even with `stigman_ckl_import_overwrite_accepted: true`.
 
+**Protected (1.69.1), as in workflow 37** ([STIG_DRIFT.md](STIG_DRIFT.md), "Protected - never written"): never written, and
+listed with the reason:
+
+- a review whose detail or comment says RA, Risk Acceptance, POAM or POA&M (`stigman_protect_words`): the admin closes
+  or changes it;
+- an Accepted review, unless `stigman_ckl_import_overwrite_accepted: true` (then written with
+  `stigman_ckl_import_status`);
+- **set by a person since our Open:** a review the job last wrote Open (its line says so) that a person set to Not a
+  Finding or Not Applicable since, while the checklist says Open - *a person set it to Not a Finding on 2026-11-10; the
+  checklist says Open*. Since 1.69.1 the job's line ends with the result it wrote (*... - Open.*); a line of an import
+  before 1.69.1 does not, so a change after one of those is not told.
+
+The update checks the words and Accepted again just before it writes.
+
 - **Detail:** the checklist's finding details (InSpec: *passed :: TEST ...*); a checklist with none gets the file's name
   and its answer. Cut at `stigman_ckl_import_detail_max` (8000).
 - **Comment (1.69.1):** the job's line first, with today's date - *Imported from the checklist vrops01/apache.ckl (VMware
-  Aria Operations 8.x Apache Profile) by site-automation, approved in AAP on 2026-11-17.* - then the checklist's own
+  Aria Operations 8.x Apache Profile) by site-automation, approved in AAP on 2026-11-17 - Open.* - then the checklist's own
   comments below it. A line of site-automation's from an earlier run (a checklist exported from STIG Manager carries
   the review's comment) is left out, so the comment is never older than the detail beside it.
 - **Status:** `stigman_ckl_import_status` (`submitted`), as workflow 37: Accept stays with your reviewers.
 - **Result engine:** *InSpec* for an InSpec checklist, *Evaluate-STIG* for one of Evaluate-STIG's; none for one a person
   filled in (STIG Manager then shows it as a person's review).
-- **Never written, and listed under *Not written*:** an Accepted review; a rule two checklists answer differently (a
+- **Never written, and listed under *Not written*:** an Accepted review; a protected one, or one set by a person since
+  our Open (above); a rule two checklists answer differently (a
   person decides); a rule whose rule id in the checklist is of another revision than STIG Manager's
   (`SV-257985r1` against `r2`: the check changed since - `stigman_ckl_import_other_revision: true` writes it); a rule
   that is not in the STIG; everything of a checklist with no host name or no STIG matched; a review with attachments

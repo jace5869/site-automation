@@ -134,6 +134,13 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 ## review for
 # check_stig_list_max: 200
 
+## 1.69.1: a review whose detail or comment says one of these is never written by site-automation -
+## the STIG recheck's update (workflow 37, the site portal's 46-48) and the checklist import
+## (workflow 40) - and listed as Protected, with the word. Whole words or phrases, any case: RA is
+## not RAID, grant or ORACLE; POA&M also POA & M; a word longer than two letters also with an s
+## (POA&Ms). [] = none. Checked again just before each write.
+# stigman_protect_words: [RA, Risk Acceptance, POAM, POA&M]
+
 # ---- site_portal_stack ---------------------------------------------------------------------------
 ## ---- the actions: {} = the role's files/actions.yml; a dict of the same shape here replaces it
 ## -----------------------

@@ -37,8 +37,10 @@
          | list if _stig_att_split.left else 'no review of the plan has attachments' }}
   run_once: true
 
+# 1.69.1: the ones with attachments join the protected list (stig_update_protected_section, with why)
 - name: STIG Manager - the plan, and the list in the report
   ansible.builtin.set_fact:
     _stig_update_plan: "{{ _stig_att_split.plan }}"
+    _stig_protected: "{{ _stig_protected | default([]) + _stig_att_split.left }}"
     site_report_sections: "{{ ([_stig_att_split.section] if _stig_att_split.section else []) + site_report_sections | default([]) }}"
   run_once: true

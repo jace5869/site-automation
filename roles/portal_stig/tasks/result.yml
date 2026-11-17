@@ -1,9 +1,11 @@
 ---
 # After the STIG recheck of one finding (prepare.yml): fixed (passes now, or not applicable now), still there (fails),
-# or not checked - for the portal's job page (portal_result). Its review is written by the next step, after the approval.
+# or not checked - for the portal's job page (portal_result). Its review is written by the next step, after the approval
+# (1.69.1: still there too, written again Open with today's date - check_stig_update_refresh).
 - name: STIG action | fixed or still there
   ansible.builtin.set_fact:
-    _ps_result: "{{ check_stig_results | default([]) | stig_fix_result(finding) }}"
+    _ps_result: "{{ check_stig_results | default([]) | stig_fix_result(finding, check_stig_update_refresh | default(true) | bool,
+                                                                 check_stig_update_overwrite_accepted | default(true) | bool) }}"
 
 - name: STIG action | {{ _ps_result.summary }}
   ansible.builtin.include_role:

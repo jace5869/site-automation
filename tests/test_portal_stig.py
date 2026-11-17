@@ -85,6 +85,18 @@ class Result(unittest.TestCase):
         self.assertEqual(ff.stig_fix_result([{"now_na": [{"v": "V-257883"}]}], FIND)["after"], "not applicable now")
         r = ff.stig_fix_result([{"still_open": [{"rule_id": "SV-257883r1044925_rule"}]}], FIND)
         self.assertEqual((r["fixed"], r["after"]), (False, "fails"))
+        self.assertIn("nothing is written to STIG Manager", r["summary"])
+        # 1.69.1 (check_stig_update_refresh): still there - written again, Open with today's date; never when Accepted
+        r = ff.stig_fix_result([{"still_open": [{"rule_id": "SV-257883r1044925_rule", "sm_status": "submitted"}]}], FIND, True)
+        self.assertEqual((r["fixed"], r["after"]), (False, "fails"))
+        self.assertIn("its review is written again next - Open, with today's date", r["summary"])
+        r = ff.stig_fix_result([{"still_open": [{"rule_id": "SV-257883r1044925_rule", "sm_status": "accepted"}]}], FIND, True)
+        self.assertIn("its review is written again next", r["summary"])          # check_stig_update_overwrite_accepted: true
+        r = ff.stig_fix_result([{"still_open": [{"rule_id": "SV-257883r1044925_rule", "sm_status": "accepted"}]}], FIND, True, False)
+        self.assertIn("nothing is written to STIG Manager - protected: Accepted (check_stig_update_overwrite_accepted: false)", r["summary"])
+        r = ff.stig_fix_result([{"fixed": [{"rule_id": "SV-257883r1044925_rule", "sm_protect": "'POA&M' in its comment"}]}], FIND, True)
+        self.assertEqual(r["fixed"], True)
+        self.assertIn("nothing is written to STIG Manager - protected: 'POA&M' in its comment", r["summary"])
         self.assertEqual(ff.stig_fix_result([{"answered": [{"v": "V-257883", "now": "fail"}]}], FIND)["fixed"], False)
         self.assertEqual(ff.stig_fix_result([{"answered": [{"v": "V-257883", "now": "pass"}]}], FIND)["fixed"], True)
         r = ff.stig_fix_result([{"fixed": [{"v": "V-1"}], "why": ""}], FIND)

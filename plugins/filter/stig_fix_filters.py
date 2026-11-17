@@ -106,9 +106,11 @@ def stig_fix_commands_never(commands, opts=None):
     return ""
 
 
-def stig_fix_result(results, finding):
+def stig_fix_result(results, finding, refresh=False, overwrite_accepted=True):
     """The recheck of one finding's rule (stig_recheck's results of the host) -> portal_result's {fixed (true, false or
-    'unknown'), before, after, summary}. fixed: Open (or Not Reviewed) in STIG Manager and passes now, or Not Applicable
+    'unknown'), before, after, summary}. refresh (check_stig_update_refresh, 1.69.1): a rule that still fails is written
+    again, Open with today's date. Protected (RA / POA&M words in its detail or comment, or Accepted with overwrite_accepted
+    false): nothing is written, and the summary says why. fixed: Open (or Not Reviewed) in STIG Manager and passes now, or Not Applicable
     now; still there: the scan fails it; unknown: not rechecked (STIG Manager does not have it Open or Not Reviewed, or the
     host could not be scanned). A missing asset (stig_no_asset): unknown until the update creates it."""
     f = finding or {}
@@ -127,9 +129,18 @@ def stig_fix_result(results, finding):
         for key, fixed, after in (("fixed", True, "passes now"), ("now_na", True, "not applicable now"), ("still_open", False, "fails")):
             for r in c.get(key) or []:
                 if num and num in (_num(r.get("rule_id")), _num(r.get("v"))):
+                    why = r.get("sm_protect") or ("Accepted (check_stig_update_overwrite_accepted: false)"
+                                                  if r.get("sm_status") == "accepted" and not overwrite_accepted else "")
+                    if (fixed or refresh) and why:
+                        what = "nothing is written to STIG Manager - protected: %s" % why
+                    elif fixed:
+                        what = "its review is written to STIG Manager next"
+                    elif refresh:
+                        what = "its review is written again next - Open, with today's date"
+                    else:
+                        what = "nothing is written to STIG Manager"
                     return {"fixed": fixed, "before": before, "after": after,
-                            "summary": ("%s %s on %s: %s." % (d.get("rule") or num, after, f.get("host", ""), "its review is written to STIG Manager "
-                                                              "next" if fixed else "nothing is written to STIG Manager"))}
+                            "summary": "%s %s on %s: %s." % (d.get("rule") or num, after, f.get("host", ""), what)}
         for r in c.get("answered") or []:
             if num and num in (_num(r.get("rule_id")), _num(r.get("v"))):
                 ok = r.get("now") in ("pass", "notapplicable")

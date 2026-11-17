@@ -507,10 +507,26 @@ so the comment and the detail are always of the same run. A person's comment is 
 **Refreshed - still open written again (1.69.1).** `check_stig_update_refresh: true` (the default) writes the rules
 still open in the same approval: Open, this scan's detail, the status `check_stig_update_status` and the job's line with
 today's date - the review shows when it was last checked. They are counted on their own in the plan ("*(3 refreshed:
-still Open, a new date)*" in its title and in `NEEDS APPROVAL`). Never one that is **Accepted** (left as it is, and
-said). `check_stig_update_refresh: false` writes nothing for them, as before 1.69.1. The site portal's
-one-rule recheck (workflows 46-48) never refreshes: a rule that still fails is *still there* on its job page, with
-nothing to approve.
+still Open, a new date)*" in its title and in `NEEDS APPROVAL`). `check_stig_update_refresh: false` writes nothing for
+them, as before 1.69.1. The site portal's one-rule recheck (workflows 46-48) refreshes too: a rule that still fails
+after the fix is *still there* on its job page, and its review is written again under the same approval.
+
+**Protected - never written (1.69.1).** Every writer of site-automation - this update (workflows 37, 46-48) and the
+checklist import (workflow 40) - leaves these reviews as they are, and lists them under *Protected - left as they are*,
+with the reason in each row (and a *Protected* tile):
+
+| Protected | Why | Setting |
+|---|---|---|
+| attachments | evidence a person attached stays with its result | `check_stig_update_skip_attachments` (default `true`) |
+| RA, Risk Acceptance, POAM, POA&M in its detail or comment | the admin closes or changes it, never the job | `stigman_protect_words` |
+| Accepted | only when the setting says no | `check_stig_update_overwrite_accepted` (default `true`); the import: `stigman_ckl_import_overwrite_accepted` (default `false`) |
+
+- **The words** are whole words or phrases, in any case: *RA* is not *RAID*, *grant*, *parameter* or *ORACLE*;
+  *POA&M* is also *POA & M*; a word longer than two letters also with an *s* (*POA&Ms*). Also when the scan says the
+  rule is fixed: the admin closes it. `stigman_protect_words: []` = none.
+- **Checked twice:** by the check (the plan leaves them out) and by the update just before it writes - a word or an
+  Accepted added after the check is caught too (state *protected*).
+- **Over Accepted** (the setting `true`): written with `check_stig_update_status` (the import: `stigman_ckl_import_status`).
 
 **Set by a person since our Open (1.69.1).** With refresh on, the recheck also reads the scan's answer for a review
 the job last wrote Open (its line says so) that is now Not a Finding or Not Applicable - a person changed it after the
@@ -522,8 +538,8 @@ with the person, nothing is said.
 
 - **Never written:** Still open with `check_stig_update_refresh: false`, Manual review, Held back (an answer to a rule
   that changed since the scan's STIG revision - above; unless carried forward), a review set by a person since our
-  Open,
-  the rules in `check_stig_ignore_rules`, and **a review with attachments** in STIG Manager (below).
+  Open, the rules in `check_stig_ignore_rules`, and the protected reviews (above: attachments, RA / POA&M words,
+  Accepted when the setting says no).
 - **Status:** each review is written with the status `check_stig_update_status`. The default is `submitted`, which
   leaves Accept to your reviewers in STIG Manager. `accepted` works only if the collection allows Accept and the
   client's grant is Manage or higher.
@@ -542,8 +558,8 @@ with the person, nothing is said.
   the review panel: a screenshot, a POA&M document), that review is left as it is - the evidence stays with the result
   it was attached for. STIG Manager keeps the attachments in the review's metadata (the key `artifacts`); the job reads
   only that key's list (`GET .../reviews/{asset}/{rule}/metadata/keys`), never the files. Twice:
-  - **the check** leaves those reviews out of what it hands to the approval, and its report lists them under *Left as
-    they are: reviews with attachments*, with the files' names - to review by hand if the scan's result is right;
+  - **the check** leaves those reviews out of what it hands to the approval, and its report lists them (1.69.1) under
+    *Protected - left as they are*, the files' names as the reason - to review by hand if the scan's result is right;
   - **the update** reads each review's attachments again just before writing, so one attached between the check and
     the approval is left too (*has attachments*).
 

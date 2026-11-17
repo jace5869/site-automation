@@ -11,6 +11,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -26,6 +27,7 @@ import make_cklb                   # noqa: E402
 import site_ckl_import as ci       # noqa: E402
 import site_stigman_update as smu  # noqa: E402
 import stig_ckl_filters as cf      # noqa: E402
+from ansible.module_utils import site_stig_comment as scm  # noqa: E402
 
 FIXTURE = os.path.join(ROOT, "tests", "stig", "ckl", "inspec_apache.ckl")
 ARIA = "VMW_Aria_Operations_8-x_Apache_STIG"
@@ -390,7 +392,8 @@ class ImportComment(unittest.TestCase):
                               {"result": "fail", "status": "submitted", "ts": "2026-11-05T06:00:00Z"}, {"stig": "RHEL 9", "revision": "V2R7"})
 
     def test_ours_first_theirs_kept_no_old_line(self):
-        ours = "Imported from the checklist web01/rhel9.ckl (RHEL 9 V2R7) by site-automation, approved in AAP on 2026-11-17."
+        ours = "Imported from the checklist web01/rhel9.ckl (RHEL 9 V2R7) by site-automation, approved in AAP on 2026-11-17 - Open."
+        self.assertEqual(scm.what_it_said(ours), "fail")
         self.assertEqual(self.item("")["comment"], ours)
         self.assertEqual(self.item("Checked by the admin.")["comment"], ours + "\n\nChecked by the admin.")
         old = ("Checked by the admin.\n\nImported from the checklist web01/rhel9.ckl (RHEL 9 V2R7) by site-automation, approved in AAP on "
@@ -399,6 +402,102 @@ class ImportComment(unittest.TestCase):
         self.assertEqual(got, ours + "\n\nChecked by the admin.")
         self.assertNotIn("2026-11-05", got)
         self.assertEqual(self.item(old)["detail"], "Found on 2026-11-17: it is not set.")
+
+
+class ImportProtect(unittest.TestCase):
+    """1.69.1: a review whose detail or comment says RA, Risk Acceptance, POAM or POA&M (stigman_protect_words) is left as
+    it is - listed (kind protected, with why), never planned; the update checks again before it writes. Accepted: as
+    stigman_ckl_import_overwrite_accepted says, at the plan and again at the write (each item's overwrite_accepted)."""
+
+    def data(self, **extra):
+        d = data()
+        d["assets"]["5"] = [{"assetId": "41", "name": "VROPS01", "fqdn": "vrops01.example.mil", "stigs": [{"benchmarkId": ARIA, "revisionStr": "V1R1"}]}]
+        d["reviews"]["41"] = [{"ruleId": "SV-260001r1_rule", "result": "pass", "status": {"label": "submitted"}, "ts": "t1"},
+                              dict({"ruleId": "SV-260002r1_rule", "result": "pass", "status": {"label": "accepted"}, "ts": "t2"}, **extra),
+                              {"ruleId": "SV-260005r1_rule", "result": "fail", "status": {"label": "saved"}, "ts": "t3",
+                               "detail": "Not set.", "comment": "POA&M 21: next change window"}]
+        return d
+
+    def test_listed_never_planned(self):
+        _, plan, left, _ = run(self.data(detail="Covered by RA 4."), overwrite_accepted=True)
+        self.assertEqual(plan, [])
+        got = sorted((x["v"] if x.get("v") else x.get("version"), x["kind"], x["why"]) for x in left if x["kind"] == "protected")
+        self.assertEqual([g[1:] for g in got], [("protected", "'RA' in its detail in STIG Manager - left as it is (stigman_protect_words)"),
+                                                ("protected", "'POA&M' in its comment in STIG Manager - left as it is (stigman_protect_words)")])
+        _, plan, left, _ = run(self.data(detail="Covered by RA 4."), overwrite_accepted=True, protect_words=[])
+        self.assertEqual([(x["ruleId"], x["overwrite_accepted"]) for x in plan], [("SV-260002r1_rule", True), ("SV-260005r1_rule", True)])
+        # words that only look like RA: planned
+        _, plan, _, _ = run(self.data(detail="RAID controller; the grant parameter in ORACLE"), overwrite_accepted=True)
+        self.assertEqual([x["ruleId"] for x in plan], ["SV-260002r1_rule"])
+
+    def test_accepted_off_at_the_plan_and_at_the_write(self):
+        _, plan, left, _ = run(self.data())
+        self.assertEqual(plan, [])
+        self.assertEqual(sorted(x["kind"] for x in left if x["kind"] in ("accepted", "protected")), ["accepted", "protected"])
+        # an item of a plan made with it off, its review Accepted since the check: the update leaves it
+        d = self.data()
+        d["reviews"]["41"][2]["comment"] = "Ticket 21"
+        d["reviews"]["41"][2]["status"] = {"label": "saved"}
+        _, plan, _, _ = run(d)
+        self.assertEqual([(x["ruleId"], x["overwrite_accepted"]) for x in plan], [("SV-260005r1_rule", False)])
+
+        class C(object):
+            def __init__(self):
+                self.posts = []
+                self.db = {"SV-260005r1_rule": {"result": "fail", "status": {"label": "accepted"}, "ts": "t3", "comment": "Ticket 21"}}
+
+            def grants(self):
+                return {"5": 4}
+
+            def review(self, c, a, rule):
+                return self.db.get(rule)
+
+            def attachments(self, c, a, rule):
+                return (0, [])
+
+            def write(self, c, a, reviews):
+                self.posts.append(reviews)
+                return {"rejected": []}
+
+            def asset_reviews(self, c, a):
+                return dict((k, smu.held(v)) for k, v in self.db.items())
+        c = C()
+        plan[0]["was"] = {"result": "fail", "status": "accepted", "ts": "t3"}     # as the check read it: not "changed since"
+        items = smu.update({"plan": plan}, c, False)
+        self.assertEqual((items[0]["state"], c.posts), ("protected", []))
+        self.assertEqual(items[0]["why"], "Accepted in STIG Manager (overwrite_accepted is false) - left as it is")
+
+
+class ImportPerson(unittest.TestCase):
+    """1.69.1, as the STIG recheck: a review we last wrote Open (our line - the import's or the recheck's - says so) that a
+    person set to Not a Finding / Not Applicable since, while the checklist says Open: listed, never written."""
+
+    def data(self, result, comment, ts="2026-11-10T09:00:00Z"):
+        d = data()
+        d["assets"]["5"] = [{"assetId": "41", "name": "VROPS01", "fqdn": "vrops01.example.mil", "stigs": [{"benchmarkId": ARIA, "revisionStr": "V1R1"}]}]
+        d["reviews"]["41"] = [{"ruleId": "SV-260002r1_rule", "result": result, "status": {"label": "submitted"}, "ts": ts, "detail": "x",
+                               "comment": comment}]
+        return d
+
+    def test_a_person_since_our_open(self):
+        ours = ("Imported from the checklist vrops01/apache.ckl (Aria V1R1) by site-automation, approved in AAP on 2026-11-05 - Open.\n\n"
+                "Checked by the admin.")
+        recheck = "Set by the STIG recheck (site-automation), approved in AAP: Evaluate-STIG checked it again on vrops01 on 2026-11-05 - Open."
+        for result, comment, word in (("pass", ours, "Not a Finding"), ("notapplicable", recheck, "Not Applicable")):
+            _, plan, left, _ = run(self.data(result, comment))
+            self.assertNotIn("SV-260002r1_rule", [x["ruleId"] for x in plan], result)
+            got = [x for x in left if x["kind"] == "person"]
+            self.assertEqual([x["why"] for x in got], ["a person set it to %s on 2026-11-10; the checklist says Open - left as it is" % word])
+        self.assertEqual(cf.LEFT_WORD["person"], "Set by a person since our Open")
+        self.assertIn("person", cf.SETTLED_LEFT)
+
+    def test_not_a_person_change(self):
+        # no line of ours, or our line said Not a Finding (we set it so): the checklist's Open is written, as before
+        for comment in ("Checked by the admin.", "", "Imported from the checklist a.ckl (Aria V1R1) by site-automation, approved in AAP on "
+                        "2026-11-05 - Not a Finding.", "Imported from the checklist a.ckl (Aria V1R1) by site-automation, approved in AAP on 2026-11-05."):
+            _, plan, left, _ = run(self.data("pass", comment))
+            self.assertIn("SV-260002r1_rule", [x["ruleId"] for x in plan], comment)
+            self.assertNotIn("person", [x["kind"] for x in left])
 
 
 class Folder(unittest.TestCase):
@@ -1369,6 +1468,14 @@ class Routes(unittest.TestCase):
         self.assertEqual([c.pop("route", "") for c in cks], [""] * len(cks))
         self.assertEqual([c.pop("move_refused", "") for c in cks], [""] * len(cks))
         self.assertEqual([p.pop("route", 0) for p in plan if p["kind"] == "create"], [0])
+        # 1.69.1: each review item says overwrite_accepted (the update's own guard) - false here, as the setting
+        self.assertEqual(set(p.pop("overwrite_accepted") for p in plan if p["kind"] == "import"), {False})
+        # and our line ends with the result it wrote (" - Open.")
+        for p in plan:
+            if p.get("comment"):
+                new = re.sub(r" - (Open|Not a Finding|Not Applicable)\.(?=\n\n|$)", ".", p["comment"], count=1)
+                self.assertNotEqual(new, p["comment"])
+                p["comment"] = new
         self.assertEqual([(p["kind"], p["collection"], p.get("ruleId", "")) for p in plan][:2],
                          [("create", "Watcher", ""), ("import", "Watcher", "SV-260001r1_rule")])
         self.assertEqual(hashlib.sha256(json.dumps([cks, plan, left, st, searched], sort_keys=True).encode()).hexdigest(), BEFORE_ROUTES)

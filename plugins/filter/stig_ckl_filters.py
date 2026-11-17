@@ -10,12 +10,12 @@ CAT = {"high": "CAT I", "medium": "CAT II", "low": "CAT III"}
 STATE_CHIP = {"planned": "warning", "nothing to write": "ok", "written": "ok", "not matched": "critical", "no asset": "critical",
               "no STIG on the asset": "critical", "error": "critical", "STIG not on this asset": "info", "in staging too": "info",
               "no grant": "critical"}
-LEFT_WORD = {"accepted": "Accepted in STIG Manager", "conflict": "Checklists disagree", "revision": "Another revision of the rule",
+LEFT_WORD = {"accepted": "Accepted in STIG Manager", "protected": "Protected (RA / POA&M words)", "person": "Set by a person since our Open", "conflict": "Checklists disagree", "revision": "Another revision of the rule",
              "unmatched": "Not in the STIG", "no_asset": "No asset", "no_stig": "STIG not on the asset", "error": "Error", "grant": "No grant"}
 # answers not written that running again does not change: a file with only these (and what is written) is done with
-SETTLED_LEFT = ("same", "accepted", "unmatched", "revision")
+SETTLED_LEFT = ("same", "accepted", "protected", "person", "unmatched", "revision")
 # what became of a review written at once (auto) that leaves its file done with
-DONE = ("written", "already so", "has attachments")
+DONE = ("written", "already so", "has attachments", "protected")
 UPDATE_BAD = ("rejected", "error", "bad", "not as written", "no grant")
 AUTO_WORD = {"existing": "the assets that are there", "all": "every asset, the new ones too"}
 # what became of a move or an assignment written at once that leaves its file done with (1.26.0)
@@ -366,7 +366,9 @@ def stig_ckl_report(ci, plan=None, sections=None, workflow=False, list_max=200, 
                               SM_WORD.get(x.get("result"), x.get("result")), LEFT_WORD.get(x.get("kind"), x.get("kind")), x.get("why", "")]
                              for x in held[:list_max]],
                     "text": "Answers of the checklists that are not handed to the approval, and why: an Accepted review stays for its "
-                            "reviewers (stigman_ckl_import_overwrite_accepted), two checklists that disagree leave the rule to a "
+                            "reviewers (stigman_ckl_import_overwrite_accepted), a review whose detail or comment says RA, Risk "
+                            "Acceptance, POAM or POA&M stays as it is (stigman_protect_words), one a person set to Not a "
+                            "Finding or Not Applicable after our Open stays while the checklist says Open, two checklists that disagree leave the rule to a "
                             "person, a rule id of another revision is held (stigman_ckl_import_other_revision), and a checklist "
                             "without its asset or STIG writes nothing."
                             + (" The first %d of %d." % (list_max, len(held)) if len(held) > list_max else "")})
@@ -393,6 +395,7 @@ def stig_ckl_report(ci, plan=None, sections=None, workflow=False, list_max=200, 
                           if moves or held_moves else []) + [
                         {"label": "Already so", "value": len(same), "status": "ok"},
                         {"label": "Not written", "value": len(held), "status": "warning" if held else "ok"},
+                        {"label": "Protected (left)", "value": len([x for x in held if x.get("kind") in ("protected", "accepted", "person")])},
                         {"label": "Not imported", "value": len(bad) + len(bad_files), "status": "critical" if (bad or bad_files) else "ok",
                          "note": "checklists and files"}],
             "sections": out,

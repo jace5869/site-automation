@@ -126,6 +126,9 @@ check_stig_stigman_client_id: stigman-watcher
 check_stig_stigman_client_secret: "$secret"
 check_stig_stigman_collection: RHEL Servers
 report_web_dest: $work/site
+# the scenarios as before 1.69.1 (still open: nothing written; this data's POA&M comments not protected) - 1.69.1 has its own
+check_stig_update_refresh: false
+stigman_protect_words: []
 EOF
 play() {
     (cd "$repo" && ANSIBLE_STDOUT_CALLBACK=default ANSIBLE_NOCOLOR=1 ANSIBLE_LOCALHOST_WARNING=False ANSIBLE_DEPRECATION_WARNINGS=False \
@@ -145,8 +148,9 @@ play stigman_update.yml -e "@$work/plan.json" --check
 play stigman_update.yml -e "@$work/plan.json"
 [ "$rc" = 0 ] && [ "$(grep -c '"written - ' "$work/out.txt")" = 7 ] && ok "the update: 7 reviews written and read back" \
     || { bad "update: rc $rc"; grep -n "written\|rejected\|error\|fatal" "$work/out.txt" | cut -c1-400 | head; }
-[ "$(rv SV-258176r1045388_rule)" = "pass submitted | POA&M 14: next change window | OpenSCAP" ] \
-    && ok "  ... Open, passes now: Not a Finding, submitted - its POA&M comment kept, the result engine OpenSCAP" || bad "SV-258176: $(rv SV-258176r1045388_rule)"
+case "$(rv SV-258176r1045388_rule)" in "pass submitted | Set by the STIG recheck (site-automation), approved in AAP: OpenSCAP checked it again on localhost on "*" - Not a Finding."$'\n\n'"POA&M 14: next change window | OpenSCAP")
+    ok "  ... Open, passes now: Not a Finding, submitted - 1.69.1: our line first, its POA&M comment kept below, the result engine OpenSCAP";;
+    *) bad "SV-258176: $(rv SV-258176r1045388_rule)";; esac
 case "$(rv SV-257779r958390_rule)" in "fail submitted | Set by the STIG recheck (site-automation), approved in AAP: OpenSCAP"*) ok "  ... Not Reviewed, fails: Open, submitted, with the job's comment (the collection requires one)";;
     *) bad "SV-257779: $(rv SV-257779r958390_rule)";; esac
 [ "$(rv SV-257835r1044874_rule | cut -d'|' -f1)" = "pass submitted " ] && ok "  ... no review, passes: a new review, Not a Finding" || bad "SV-257835: $(rv SV-257835r1044874_rule)"
@@ -168,6 +172,53 @@ json.dump(d, open(sys.argv[1], "w"))' "$work/plan.json"
 play stigman_update.yml -e "@$work/plan.json"
 [ "$rc" = 0 ] && grep -q '"changed since - localhost RHEL_9_STIG V-257835' "$work/out.txt" && [ "$(rv SV-257835r1044874_rule | cut -d'|' -f1)" = "notapplicable saved " ] \
     && ok "a review a person changed since the check: left as the person set it" || bad "changed since: rc $rc, $(rv SV-257835r1044874_rule)"
+
+# ---- 1.69.1 against the real STIG Manager: refresh, protect words, a person's Not a Finding since our Open, Accepted off ----
+today=$(date -u +%Y-%m-%d)
+fresh='{"check_stig_update_workflow": true, "check_stig_update_refresh": true}'
+words='{"stigman_protect_words": ["RA", "Risk Acceptance", "POAM", "POA&M"]}'
+rj() {  # rj RULE EXPR -> EXPR of the review as STIG Manager holds it (d)
+    api "$atok" GET "/collections/$col/reviews/$asset/$1" | "$py" -c 'import json, sys; d = json.load(sys.stdin); print(eval(sys.argv[1]))' "$2"
+}
+ts0=$(rj SV-257883r1044925_rule 'd["ts"]')
+play stig_recheck.yml -e "$fresh"
+grep -P '^\tRUN: ' "$work/out.txt" | sed 's/^\tRUN: //' | "$py" -c 'import json, sys; json.dump({"stigman_update_plan": json.load(sys.stdin)["stigman_update_plan"]}, open(sys.argv[1], "w"))' "$work/plan-r.json"
+[ "$rc" = 2 ] && grep -q "refreshed: still Open, a new date)" "$work/out.txt" && grep -q "V-257883: Open -> Open (saved, refreshed\|V-257883: Open -> Open (submitted, refreshed" "$work/out.txt" \
+    && ok "1.69.1 refresh: the still open rule planned, counted apart" || { bad "refresh, the check: rc $rc"; grep -n "NEEDS\|V-257883\|fatal" "$work/out.txt" | head -5; }
+play stigman_update.yml -e "@$work/plan-r.json" -e '{"check_stig_update_refresh": true}'
+"$py" -c 'import json, sys
+d = json.loads(sys.argv[1])
+want = "Set by the STIG recheck (site-automation), approved in AAP: OpenSCAP checked it again on localhost on %s - still Open.\n\nPOA&M 12: the new build sets it" % sys.argv[2]
+assert d["result"] == "fail" and d["status"]["label"] == "submitted" and d["comment"] == want and d["ts"] != sys.argv[3], (d["comment"], d["ts"])' \
+    "$(api "$atok" GET "/collections/$col/reviews/$asset/SV-257883r1044925_rule")" "$today" "$ts0" \
+    && ok "  ... written by the real STIG Manager: Open, submitted, a new time, today's line first and the POA&M note below" \
+    || bad "refreshed review: $(rv SV-257883r1044925_rule)"
+# the default protect words: that POA&M review is protected - by the check, and by the update with a plan that has it
+# (a plan made now without the words: the review is as that check read it, so only the words stop the write)
+ts1=$(rj SV-257883r1044925_rule 'd["ts"]')
+play stig_recheck.yml -e "$fresh"
+grep -P '^\tRUN: ' "$work/out.txt" | sed 's/^\tRUN: //' | "$py" -c 'import json, sys; json.dump({"stigman_update_plan": json.load(sys.stdin)["stigman_update_plan"]}, open(sys.argv[1], "w"))' "$work/plan-r2.json"
+play stig_recheck.yml -e "$fresh" -e "$words"
+grep -q "V-257883: Open -> Open (submitted, refreshed: still Open, today's date) - PROTECTED, left as it is: 'POA&M' in its comment" "$work/out.txt" \
+    && ok "1.69.1 protect words: the review that says POA&M - listed as protected, not planned" || { bad "protected, the check: rc $rc"; grep -n "PROTECTED\|NEEDS\|fatal" "$work/out.txt" | head -5; }
+play stigman_update.yml -e "@$work/plan-r2.json" -e "$words"
+grep -q "'POA&M' in its comment - left as it is" "$work/out.txt" && [ "$(rj SV-257883r1044925_rule 'd["ts"]')" = "$ts1" ] \
+    && ok "  ... the update with a plan that has it: protected, left as it is (the same time)" || { bad "protected, the update: rc $rc"; grep -n "protected\|written\|fatal" "$work/out.txt" | head -5; }
+# a person sets our Open (SV-257779, written Open with our line above) to Not a Finding; the scan still fails it
+api "$atok" PATCH "/collections/$col/reviews/$asset/SV-257779r958390_rule" '{"result": "pass", "detail": "Checked by hand: the banner is there.", "status": "saved"}' >/dev/null
+play stig_recheck.yml -e "$fresh"
+grep -q "PERSON V-257779" "$work/out.txt" && ! grep -q "V-257779: Not a Finding -> " "$work/out.txt" \
+    && ok "1.69.1: a person's Not a Finding after our Open, the scan says Open - listed (PERSON), never planned" || { bad "person: rc $rc"; grep -n "PERSON\|V-257779\|fatal" "$work/out.txt" | head -5; }
+api "$atok" PATCH "/collections/$col/reviews/$asset/SV-257779r958390_rule" '{"result": "fail", "detail": "No banner.", "status": "submitted"}' >/dev/null
+# Accepted with check_stig_update_overwrite_accepted: false - protected (the words off, so it is the Accepted that counts)
+api "$atok" PATCH "/collections/$col/reviews/$asset/SV-257883r1044925_rule" '{"status": "accepted"}' >/dev/null
+play stig_recheck.yml -e "$fresh" -e '{"check_stig_update_overwrite_accepted": false}'
+grep -q "V-257883: Open -> Open (submitted, refreshed: still Open, today's date) - PROTECTED, left as it is: Accepted (check_stig_update_overwrite_accepted: false)" "$work/out.txt" \
+    && ok "1.69.1: Accepted, check_stig_update_overwrite_accepted: false - protected, listed" || { bad "accepted off: rc $rc"; grep -n "PROTECTED\|V-257883\|fatal" "$work/out.txt" | head -5; }
+play stig_recheck.yml -e "$fresh"
+grep -q "V-257883: Open -> Open (submitted, refreshed: still Open, today's date)$\|V-257883: Open -> Open (submitted, refreshed: still Open, today's date)\"" "$work/out.txt" && ! grep -q "V-257883: .*PROTECTED" "$work/out.txt" \
+    && ok "  ... true (the default): the Accepted review planned like the others" || { bad "accepted on: rc $rc"; grep -n "PROTECTED\|V-257883\|fatal" "$work/out.txt" | head -5; }
+api "$atok" PATCH "/collections/$col/reviews/$asset/SV-257883r1044925_rule" '{"status": "saved"}' >/dev/null
 
 # ---- a review with attachments (as STIG Manager's review panel stores them: the key artifacts, each file under its digest)
 api "$atok" PATCH "/collections/$col/reviews/$asset/SV-258176r1045388_rule" \

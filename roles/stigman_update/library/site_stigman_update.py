@@ -23,7 +23,10 @@ description:
     comment (null keeps the review's own; 1.69.1, comment_merge - the STIG recheck's: its line first, the review's own
     comment as it is just before the write kept below it, an older line of site-automation's dropped), resultEngine,
     status - and reads each again after. A refresh (kind refresh: still Open, written again for a new date) is written
-    even though its result and status do not change - never over one that is Accepted."
+    even though its result and status do not change."
+  - "1.69.1, protected (state C(protected)): a review whose detail or comment says one of C(protect_words) (RA, Risk
+    Acceptance, POAM, POA&M) is left as it is, and one that is Accepted unless the plan's item says overwrite_accepted
+    (check_stig_update_overwrite_accepted, stigman_ckl_import_overwrite_accepted). Read just before the write."
   - "A review with attachments in STIG Manager (its metadata key C(artifacts): the files a person attached as evidence)
     is left as it is (state C(has attachments)) - unless C(skip_attachments) is false. Read again just before the
     write, so one attached after the check is left too."
@@ -65,12 +68,18 @@ options:
   ca_path: {description: "A CA bundle to check them with ('' = the system's).", type: str, default: ''}
   timeout: {description: Seconds per request., type: int, default: 60}
   skip_attachments: {description: Leave a review that has attachments as it is., type: bool, default: true}
+  protect_words:
+    description: "1.69.1: leave a review whose detail or comment says one of these (whole words, any case) as it is
+      (state C(protected)); [] = none."
+    type: list
+    elements: str
+    default: [RA, Risk Acceptance, POAM, POA&M]
 author: site automation
 '''
 
 RETURN = r'''
 items:
-  description: "Each review of the plan with its state - written, would write, changed since, has attachments, rejected (STIG Manager's reason),
+  description: "Each review of the plan with its state - written, would write, changed since, has attachments, protected, rejected (STIG Manager's reason),
                 not as written (read back otherwise), bad (not a plan item), error, asset not created, no grant (the import's: the
                 client has less than Full there) - and why, and what STIG Manager holds now; each new asset (kind create): created,
                 would create, there since the check, there from an earlier run, bad, error, no grant - and its assetId; each move (kind
@@ -93,7 +102,7 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.six.moves.urllib.parse import urlencode, quote
 from ansible.module_utils.six.moves.urllib.request import Request, urlopen
 from ansible.module_utils.six.moves.urllib.error import HTTPError, URLError
-from ansible.module_utils.site_stig_comment import merged as comment_merged
+from ansible.module_utils.site_stig_comment import merged as comment_merged, protected, PROTECT_WORDS
 
 ID_RE = re.compile(r"^[0-9]{1,20}$")
 # a rule id: any text up to 45 characters (STIG Manager's own rule) - DISA's SV-257985r1069364_rule, and SV-PHTN-50-000003 as STIG
@@ -678,16 +687,21 @@ def update(p, client, check):
                 continue
             row["before"] = now
             fresh = it.get("kind") == "refresh"
-            if fresh and now["status"] == "accepted":
-                # 1.69.1: a refresh never writes over Accepted (a person's acceptance stays)
-                row.update(state="already so", why="Accepted in STIG Manager - not refreshed")
-                continue
             if now["result"] == it["result"] and now["status"] == it["status"] and not fresh:
                 row.update(state="already so", why="")          # written before (this plan run twice), or by a person
                 continue
             if not same(it["was"], now):
                 row.update(state="changed since", why="STIG Manager has it as %s (%s, %s) now, not as the check read it - left as it is" % (
                     now["result"] or "no review", now["status"] or "-", now["ts"] or "-"))
+                continue
+            # 1.69.1: protected - RA / POA&M words in the review's detail or comment as it is now (protect_words), or
+            # Accepted when the plan's item does not allow it (check_stig_update_overwrite_accepted,
+            # stigman_ckl_import_overwrite_accepted)
+            why = protected(p.get("protect_words"), (raw or {}).get("detail"), (raw or {}).get("comment"))
+            if not why and now["status"] == "accepted" and not it.get("overwrite_accepted", False):
+                why = "Accepted in STIG Manager (overwrite_accepted is false)"
+            if why:
+                row.update(state="protected", why=why + " - left as it is")
                 continue
             if p.get("skip_attachments", True):
                 try:
@@ -773,6 +787,7 @@ def main():
         ca_path=dict(type="str", default=""),
         timeout=dict(type="int", default=60),
         skip_attachments=dict(type="bool", default=True),
+        protect_words=dict(type="list", elements="str", default=list(PROTECT_WORDS)),
     ), supports_check_mode=True)
     p = module.params
     client = Client(p)

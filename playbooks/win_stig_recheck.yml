@@ -98,7 +98,23 @@
              | map(attribute='check_stig_results') | flatten(levels=1)
              | stig_update_plan(check_stig_update | default(['fixed', 'now_na', 'answered']), check_stig_update_status | default('submitted'),
                                 check_stig_update_detail_max | default(8000) | int, now(utc=true).strftime('%Y-%m-%d'),
-                                check_stig_update_refresh | default(true) | bool) }}
+                                check_stig_update_refresh | default(true) | bool, check_stig_update_overwrite_accepted | default(true) | bool) }}
+        # 1.69.1: the reviews left as they are - RA / POA&M words in the detail or comment (stigman_protect_words), or
+        # Accepted with check_stig_update_overwrite_accepted: false
+        _stig_protected: >-
+          {{ ansible_play_hosts | map('extract', hostvars) | selectattr('check_stig_results', 'defined')
+             | map(attribute='check_stig_results') | flatten(levels=1)
+             | stig_update_protected(check_stig_update | default(['fixed', 'now_na', 'answered']), check_stig_update_status | default('submitted'),
+                                     check_stig_update_detail_max | default(8000) | int, now(utc=true).strftime('%Y-%m-%d'),
+                                     check_stig_update_refresh | default(true) | bool, check_stig_update_overwrite_accepted | default(true) | bool) }}
+      run_once: true
+      when: check_stig_update_workflow | default(false) | bool
+
+    - name: STIG Manager - the reviews left as they are (protected)
+      ansible.builtin.debug:
+        msg: >-
+          {{ _stig_protected | map(attribute='line') | zip(_stig_protected | map(attribute='protected'))
+             | map('join', ' - PROTECTED, left as it is: ') | list if _stig_protected else 'no protected review' }}
       run_once: true
       when: check_stig_update_workflow | default(false) | bool
 
@@ -113,7 +129,9 @@
 
     - name: STIG Manager - what Approve writes, at the top of the report
       ansible.builtin.set_fact:
-        site_report_sections: "{{ (_stig_update_plan | stig_update_sections(check_stig_list_max | default(200) | int)) + site_report_sections }}"
+        site_report_sections: >-
+          {{ (_stig_update_plan | stig_update_sections(check_stig_list_max | default(200) | int))
+             + (_stig_protected | default([]) | stig_update_protected_section(check_stig_list_max | default(200) | int)) + site_report_sections }}
       run_once: true
       when: check_stig_update_workflow | default(false) | bool
 
@@ -152,7 +170,7 @@
           NEEDS APPROVAL - {{ _stig_update_plan | length }} review(s) of {{ _stig_update_plan | map(attribute='assetId') | unique | list | length }}
           asset(s) to write to STIG Manager{{ (' (' ~ _fresh | length ~ ' refreshed: still Open, a new date)') if _fresh else '' }}, in the report
           ("Approve writes these reviews to STIG Manager"). Approve the workflow's
-          step to write them; deny it to write none. {{ _stig_update_plan | map(attribute='line') | join(' || ') }}
+          step to write them; deny it to write none.{{ (' ' ~ _stig_protected | length ~ ' protected review(s) left as they are (the report: Protected).') if _stig_protected | default([]) else '' }} {{ _stig_update_plan | map(attribute='line') | join(' || ') }}
       run_once: true
       when: check_stig_update_workflow | default(false) | bool and _stig_update_plan | length > 0
       vars:

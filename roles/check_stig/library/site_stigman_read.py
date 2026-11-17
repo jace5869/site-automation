@@ -36,6 +36,12 @@ options:
   validate_certs: {description: Check the HTTPS certificates., type: bool, default: true}
   ca_path: {description: "A CA bundle to check them with ('' = the system's).", type: str, default: ''}
   timeout: {description: Seconds per request., type: int, default: 60}
+  protect_words:
+    description: "1.69.1: a review whose detail or comment says one of these (whole words, any case) is marked protect - never
+      written by site-automation ([] = none)."
+    type: list
+    elements: str
+    default: [RA, Risk Acceptance, POAM, POA&M]
 author: site automation
 '''
 
@@ -44,7 +50,7 @@ hosts:
   description: "Per host (per id): {status: found / not_found / no_stig (the asset is there, without this STIG) / several /
                 no_benchmark / error, why, collection, collectionId, asset, assetId, revision, reviews: {SV-257985: {result,
                 status, ts, rule, comment (true: it has one), version, severity, title, ours (1.69.1: our line in its comment),
-                ours_said (the result that line gave)}}, earlier: {SV-257985: the same, and revision} (with rules: true -
+                ours_said (the result that line gave), protect (why it is never written, or empty)}}, earlier: {SV-257985: the same, and revision} (with rules: true -
                 a review of the rule in an earlier revision of the STIG, whose check changed since:
                 STIG Manager does not carry it to the revision in use), rules (with rules: true): {SV-257985: {v, rule, version,
                 severity, title}}, create (with create, not found anywhere: {name, fqdn, collection, collectionId, benchmark,
@@ -66,7 +72,7 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.six.moves.urllib.parse import urlencode, quote
 from ansible.module_utils.six.moves.urllib.request import Request, urlopen
 from ansible.module_utils.six.moves.urllib.error import HTTPError, URLError
-from ansible.module_utils.site_stig_comment import split as comment_split, what_it_said
+from ansible.module_utils.site_stig_comment import split as comment_split, what_it_said, protected, PROTECT_WORDS
 
 SV_RE = re.compile(r"(SV-\d+)")
 
@@ -141,9 +147,9 @@ def revision_key(rev):
     return (int(m.group(1)), int(m.group(2))) if m else (-1, -1)
 
 
-def reviews_of(rows):
+def reviews_of(rows, words=None):
     """STIG Manager's reviews of one asset -> {SV id: record}; a review that covers several revisions of a rule
-    (ruleIds) counts for each of them."""
+    (ruleIds) counts for each of them. words: stigman_protect_words (None: the default list)."""
     out = {}
     for r in rows or []:
         rule = r.get("rule") or {}
@@ -154,7 +160,10 @@ def reviews_of(rows):
                "version": rule.get("version") or "", "severity": rule.get("severity") or "", "title": rule.get("title") or "",
                # 1.69.1: our line in its comment (an earlier run's - the STIG recheck's or the import's) and the result it gave:
                # a review we wrote as Open that is not Open now was changed by a person after us
-               "ours": ours, "ours_said": what_it_said(ours)}
+               "ours": ours, "ours_said": what_it_said(ours),
+               # 1.69.1: a review whose detail or comment says RA, Risk Acceptance, POAM or POA&M (stigman_protect_words)
+               # is never written - why, or ''
+               "protect": protected(words, r.get("detail"), r.get("comment"))}
         for rid in [r.get("ruleId")] + list(r.get("ruleIds") or []):
             k = sv_of(rid)
             if k and k not in out:
@@ -231,7 +240,7 @@ def read(p, client):
 
     def reviews(a, bench):
         return reviews_of(client.get("/collections/%s/reviews/%s" % (quote(str(a["_col"]["collectionId"])), quote(str(a["assetId"]))),
-                                     benchmarkId=bench, projection="rule"))
+                                     benchmarkId=bench, projection="rule"), p.get("protect_words"))
 
     def earlier(a, bench, rev, now):
         """The reviews of the rules' other revisions (what the recheck says beside a rule with no review in rev); {} when
@@ -400,6 +409,7 @@ def main():
         validate_certs=dict(type="bool", default=True),
         ca_path=dict(type="str", default=""),
         timeout=dict(type="int", default=60),
+        protect_words=dict(type="list", elements="str", default=list(PROTECT_WORDS)),
     ), supports_check_mode=True)
     p = module.params
     client = Client(p)

@@ -819,6 +819,8 @@ def _recheck_result(host, smc, sm, scan, asked, ign, sev_map, label, carry=False
                "sm_comment": bool((r or {}).get("comment")), "sm_revision": sm_rev,
                # 1.69.1: our line in the review's comment (an earlier run's), and the result it gave
                "sm_ours": (r or {}).get("ours") or "", "sm_ours_said": (r or {}).get("ours_said") or "",
+               # 1.69.1: why it is never written (RA, Risk Acceptance, POAM, POA&M in its detail or comment), or ''
+               "sm_protect": (r or {}).get("protect") or "",
                # a review of the rule in an earlier revision, whose check changed since (STIG Manager keeps it there)
                "sm_earlier": dict((x, (earlier.get(k) or {}).get(x, "")) for x in ("result", "status", "revision")) if earlier.get(k) else {},
                # the review's own rule (it may be of an earlier revision: STIG Manager keeps one review for both), else the asset's
@@ -1298,7 +1300,27 @@ UPDATE_STATUS = ("saved", "submitted", "accepted")
 ENGINE = {"Evaluate-STIG": "script", "OpenSCAP": "scap"}
 
 
-def stig_update_plan(results, kinds=None, status="submitted", detail_max=8000, day="", refresh=False):
+def stig_update_plan(results, kinds=None, status="submitted", detail_max=8000, day="", refresh=False, overwrite_accepted=True):
+    """The reviews to write (see _update_items) - without the protected ones (stig_update_protected lists those)."""
+    return [p for p in _update_items(results, kinds, status, detail_max, day, refresh, overwrite_accepted) if not p.get("protected")]
+
+
+def stig_update_protected(results, kinds=None, status="submitted", detail_max=8000, day="", refresh=False, overwrite_accepted=True):
+    """1.69.1: the reviews the plan leaves as they are (protected), each with why: RA / POA&M words in its detail or comment
+    (stigman_protect_words), or Accepted with check_stig_update_overwrite_accepted: false. The same arguments as the plan."""
+    return [p for p in _update_items(results, kinds, status, detail_max, day, refresh, overwrite_accepted) if p.get("protected")]
+
+
+def _protect_why(r, overwrite_accepted):
+    """A recheck record -> why its review is never written, or ''."""
+    if r.get("sm_protect"):
+        return r["sm_protect"]
+    if r.get("sm_status") == "accepted" and not overwrite_accepted:
+        return "Accepted (check_stig_update_overwrite_accepted: false)"
+    return ""
+
+
+def _update_items(results, kinds=None, status="submitted", detail_max=8000, day="", refresh=False, overwrite_accepted=True):
     """Every host's stig_recheck results -> the reviews to write to STIG Manager once approved, one per rule: [{host, label,
     collection, collectionId, asset, assetId, benchmark, ruleId, v, title, severity, kind, was: {result, status, ts}, result,
     status, detail, comment (None: the review's own kept), engine, line}]. Only what the recheck found and was asked for
@@ -1307,9 +1329,11 @@ def stig_update_plan(results, kinds=None, status="submitted", detail_max=8000, d
     asset (0.72.0, check_stig_update_create_assets): first {kind: create, asset, fqdn, collectionId, benchmark, revision,
     reviews: how many}, then its reviews with assetId '' and new_asset: its name - the update creates it, then writes them.
     1.69.1: refresh (check_stig_update_refresh) - a rule still open (Open, the scan still fails it) is written too, kind
-    refresh: Open again with this scan's detail and today's line, the status as the others (never one that is Accepted:
-    left as it is). Every review's comment is our line, first (comment_merge: the update keeps a person's comment below
-    it, and drops an earlier line of ours - plugins/module_utils/site_stig_comment.py)."""
+    refresh: Open again with this scan's detail and today's line, the status as the others. Every review's comment is our
+    line, first (comment_merge: the update keeps a person's comment below it, and drops an earlier line of ours -
+    plugins/module_utils/site_stig_comment.py). Protected (any kind): a review whose detail or comment says RA, Risk
+    Acceptance, POAM or POA&M (stigman_protect_words), or one that is Accepted with overwrite_accepted false - marked
+    protected: why (stig_update_plan leaves it out). Each item: overwrite_accepted, for the update's own guard."""
     kinds = list(kinds) if kinds is not None else list(UPDATE_KINDS)
     out = []
     twice = _new_twice(results)
@@ -1337,8 +1361,6 @@ def stig_update_plan(results, kinds=None, status="submitted", detail_max=8000, d
             if kind == "refresh" and not refresh:
                 continue
             for r in c.get("still_open" if kind == "refresh" else kind) or []:
-                if kind == "refresh" and r.get("sm_status") == "accepted":
-                    continue                                   # Accepted: a person's - never written over
                 to = "pass" if kind == "fixed" else "notapplicable" if kind == "now_na" else "fail" if kind == "refresh" else r.get("now")
                 if to not in CHECKED or not r.get("rule_id"):
                     continue
@@ -1369,13 +1391,15 @@ def stig_update_plan(results, kinds=None, status="submitted", detail_max=8000, d
                         "asset": asset, "assetId": c.get("assetId") or "", "benchmark": c.get("benchmark", ""), "ruleId": r["rule_id"],
                         "v": r.get("v", ""), "title": r.get("title", ""), "severity": r.get("severity", ""), "kind": kind,
                         "was": was, "earlier": r.get("sm_earlier") or {}, "revision": r.get("sm_revision") or "", "result": to, "status": status, "detail": detail, "comment": comment, "engine": engine,
-                        "comment_merge": True,
+                        "comment_merge": True, "overwrite_accepted": bool(overwrite_accepted),
                         "line": "%s %s %s: %s -> %s (%s%s)" % (asset, c.get("benchmark", ""), r.get("v", ""),
                                                                 SM_WORD.get(was["result"], "no review") if was["result"] else "no review", word, status,
                                                                 (", carried forward from " + r.get("carried_from", "")) if kind == "carried" else
                                                                 ", refreshed: still Open, today's date" if kind == "refresh" else "")}
                 if nc:
                     item["new_asset"] = asset          # its id comes from the update, when it creates the asset
+                elif _protect_why(r, overwrite_accepted):
+                    item["protected"] = _protect_why(r, overwrite_accepted)
                 out.append(item)
     return out
 
@@ -1409,7 +1433,7 @@ def stig_update_sections(plan, list_max=200):
                      "it is still as it was read here (STIG Manager now); one changed since is left, and said. The detail is what the "
                      "scan found. The comment: our line with today's date, first; a person's comment kept below it (an older line of "
                      "ours is the one replaced). Refreshed (check_stig_update_refresh): still Open, written again so the review has "
-                     "today's scan and date - never one that is Accepted."
+                     "today's scan and date. Protected reviews are not here: see Protected - left as they are."
                      + (" The first %d of %d (check_stig_list_max)." % (list_max, len(rows)) if len(rows) > list_max else "")}]
 
 
@@ -1440,23 +1464,35 @@ def stig_update_attachments(plan, reviews=None, error=""):
         i += 1
         r = (reviews or [])[i] if i < len(reviews or []) else {"attachments": -1, "error": "not read"}
         if r.get("attachments"):
-            left.append(dict(p, attachments=r.get("attachments"), attachment_names=r.get("names") or [], attachment_error=r.get("error") or ""))
+            n, names, err = r.get("attachments"), r.get("names") or [], r.get("error") or ""
+            # 1.69.1: listed with the other protected reviews (stig_update_protected_section), the reason in its row
+            left.append(dict(p, attachments=n, attachment_names=names, attachment_error=err,
+                             protected=("attachments: " + (", ".join(names[:5]) or "%d file(s)" % n)) if n > 0
+                             else "attachments could not be read: %s" % (err or "-")))
         else:
             keep.append(p)
-    section = None
-    if left:
-        section = {"title": "Left as they are: reviews with attachments (%d)" % len(left), "status": "info", "top": True,
-                   "columns": ["Host", "Collection / asset", "Rule", "STIG Manager now", "The scan says", "Attachments"],
-                   "rows": [[p.get("label", ""), "%s / %s" % (p.get("collection", ""), p.get("asset", "")), p.get("v", ""),
-                             ("%s (%s)" % (SM_WORD.get(p["was"]["result"], p["was"]["result"]), p["was"].get("status") or "-"))
-                             if (p.get("was") or {}).get("result") else "no review",
-                             SM_WORD.get(p.get("result"), p.get("result")),
-                             (", ".join(p["attachment_names"][:5]) or "%d file(s)" % p["attachments"]) if p["attachments"] > 0
-                             else "could not be read: %s" % (p["attachment_error"] or "-")] for p in left],
-                   "text": "A person attached evidence to these reviews in STIG Manager: they are not handed to the approval and "
-                           "never written by workflow 37 (check_stig_update_skip_attachments). Review them in STIG Manager if the "
-                           "scan's result is right."}
-    return {"plan": keep, "left": left, "section": section}
+    return {"plan": keep, "left": left, "section": None}
+
+
+def stig_update_protected_section(items, list_max=200):
+    """1.69.1: workflow 37's check - the reviews left as they are, each with why (stig_update_protected, and the ones with
+    attachments): [section] or []."""
+    items = [p for p in items or [] if p and p.get("protected")]
+    if not items:
+        return []
+    rows = [[p.get("label", ""), "%s / %s" % (p.get("collection", ""), p.get("asset", "")), p.get("v", ""), p.get("title", ""),
+             ("%s (%s)" % (SM_WORD.get(p["was"]["result"], p["was"]["result"]), p["was"].get("status") or "-"))
+             if (p.get("was") or {}).get("result") else "no review",
+             "Open - refreshed (still Open)" if p.get("kind") == "refresh" else SM_WORD.get(p.get("result"), p.get("result")),
+             p["protected"]] for p in items]
+    return [{"title": "Protected - left as they are (%d)" % len(items), "status": "info", "top": True,
+             "columns": ["Host", "Collection / asset", "Rule", "Title", "STIG Manager now", "The scan says", "Why left"],
+             "rows": rows[:list_max], "row_status": ["info"] * len(rows[:list_max]),
+             "text": "Never handed to the approval, and never written: a review with attachments (evidence a person attached - "
+                     "check_stig_update_skip_attachments), one whose detail or comment says RA, Risk Acceptance, POAM or POA&M "
+                     "(stigman_protect_words), and one that is Accepted when check_stig_update_overwrite_accepted is false. The "
+                     "update checks them again just before it writes. Review them in STIG Manager if the scan's result is right."
+                     + (" The first %d of %d (check_stig_list_max)." % (list_max, len(rows)) if len(rows) > list_max else "")}]
 
 
 def stig_update_lines(plan):
@@ -1494,8 +1530,8 @@ def stig_update_report(items, check=False, error="", planned=0, source=""):
     firsts = [i for i in items if i.get("kind") in ("move", "assign")]      # the checklist import's (1.26.0), done before reviews
     revs = [i for i in items if i.get("kind") not in ("create", "move", "assign")]
     n = dict((k, len([i for i in revs if i.get("state") == k])) for k in (
-        "written", "would write", "already so", "changed since", "has attachments", "rejected", "error", "bad", "not as written", "no grant",
-        "asset not created", "asset not moved", "STIG not assigned"))
+        "written", "would write", "already so", "changed since", "has attachments", "protected", "rejected", "error", "bad", "not as written",
+        "no grant", "asset not created", "asset not moved", "STIG not assigned"))
     # a new asset made by someone else since the check is left, and its reviews not written: a failure, as in the job (1.24.0)
     nbad = len([i for i in news if i.get("state") in ("bad", "error", "no grant", "there since the check")])
     # a move or an assignment not done leaves its reviews unwritten: a failure too
@@ -1503,7 +1539,7 @@ def stig_update_report(items, check=False, error="", planned=0, source=""):
     fbad = len([i for i in firsts if i.get("state") not in fok])
     bad = sum(n[k] for k in UPDATE_BAD) + nbad + fbad + n["asset not moved"] + n["STIG not assigned"]
     status = "critical" if (error or bad) else "warning" if n["changed since"] else "ok"
-    chip = {"written": "ok", "would write": "info", "already so": "ok", "changed since": "warning", "has attachments": "info"}
+    chip = {"written": "ok", "would write": "info", "already so": "ok", "changed since": "warning", "has attachments": "info", "protected": "info"}
     word = lambda h: ("%s (%s)" % (SM_WORD.get(h.get("result"), h.get("result")), h.get("status") or "-")) if (h or {}).get("result") else "no review"
     rows = [[i.get("host", ""), i.get("asset", ""), i.get("v", "") or i.get("ruleId", ""), word(i.get("was") or {}),
              word(i.get("before") or {}) if "before" in i else "-", "%s (%s)" % (SM_WORD.get(i.get("result"), i.get("result")), i.get("status")),
@@ -1558,7 +1594,8 @@ def stig_update_report(items, check=False, error="", planned=0, source=""):
                          "rows": rows, "row_status": ["critical" if i.get("state") in UPDATE_BAD else chip.get(i.get("state"), "") for i in shown],
                          "text": "Only the reviews the approval allowed (the check's plan). Each was read again first: one changed in STIG "
                                  "Manager since the check is left as it is, and so is one with attachments (evidence a person "
-                                 "attached stays with its result). A written review was read back. STIG Manager keeps each "
+                                 "attached stays with its result) and one protected (RA, Risk Acceptance, POAM or POA&M in its "
+                                 "detail or comment - stigman_protect_words; Accepted, when the setting does not allow it). A written review was read back. STIG Manager keeps each "
                                  "review's history: what it was is there too. No collection, user or other review was changed, nor "
                                  "an asset that was there" + ("." if not firsts else
                                                               " - but the moves and STIG assignments above, each as the approval allowed it.")})
@@ -1570,7 +1607,7 @@ def stig_update_report(items, check=False, error="", planned=0, source=""):
                        + ([{"label": "New assets" if not check else "Would create", "value": made, "status": "ok"}] if news else []) + [
                         {"label": "Already so", "value": n["already so"]},
                         {"label": "Changed since the check", "value": n["changed since"], "status": "warning" if n["changed since"] else "ok"},
-                        {"label": "Has attachments (left)", "value": n["has attachments"]},
+                        {"label": "Protected (left)", "value": n["has attachments"] + n["protected"]},
                         {"label": "Not written", "value": bad, "status": "critical" if bad else "ok"}],
             "sections": sections,
             "footer": "STIG Manager: GET and POST of these reviews only%s%s%s (playbooks/stigman_update.yml)." % (
@@ -1606,7 +1643,8 @@ class FilterModule(object):
         return {"stig_compare": stig_compare, "stig_report_sections": stig_report_sections, "stig_lines": stig_lines,
                 "stig_findings": stig_findings, "stig_recheck_vulns": stig_recheck_vulns, "stig_only_rules": stig_only_rules, "stig_only_sm": stig_only_sm, "stig_recheck": stig_recheck,
                 "stig_recheck_sections": stig_recheck_sections, "stig_recheck_lines": stig_recheck_lines,
-                "stig_update_plan": stig_update_plan, "stig_update_sections": stig_update_sections, "stig_update_lines": stig_update_lines,
+                "stig_update_plan": stig_update_plan, "stig_update_sections": stig_update_sections,
+                "stig_update_protected": stig_update_protected, "stig_update_protected_section": stig_update_protected_section, "stig_update_lines": stig_update_lines,
                 "stig_update_item_lines": stig_update_item_lines,
                 "stig_update_report": stig_update_report, "stig_update_attachments": stig_update_attachments, "stig_recheck_headline": recheck_headline,
                 "stig_answers_why": answers_why, "stig_answers_used": answers_used, "stig_fixed_open": stig_fixed_open}

@@ -512,7 +512,10 @@ a recheck that failed for another reason writes nothing.
    refused here. The job fails on purpose: *NEEDS APPROVAL*, with the commands.
 2. **The approval.** Read the check job's output: the rule, ACT's reasoning and the commands.
 3. **The fix.** Exactly those commands run on the host, in order, with no model. The job stops at the first one that
-   fails. Then the rule alone is rechecked, and its review is written to STIG Manager only if it passes now.
+   fails. Then the rule alone is rechecked, and its review is written to STIG Manager: Not a Finding if it passes
+   now; still failing, Open again with today's date and the scan's detail (1.69.1, `check_stig_update_refresh`). A
+   protected review is never written: attachments, RA / POA&M words, Accepted when
+   `check_stig_update_overwrite_accepted` is false ([STIG_DRIFT.md](STIG_DRIFT.md)) - the job page says why.
    Only that rule's review: a scan that answers more rules (Evaluate-STIG run in full) adds no other review. A host
    whose asset is gone from STIG Manager is not rechecked here (the job says so), and no asset is made, also with
    `check_stig_update_create_assets` on.

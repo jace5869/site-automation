@@ -2,22 +2,46 @@
 
 ## 1.69.1 — 2026-11-17
 
-**To set up: nothing.** `check_stig_update_refresh: true` is the default; `check_stig_update_refresh: false` is as
-before.
+**To set up: nothing, unless the checklist import should write over Accepted reviews too.** The new settings keep what
+workflow 37 did before (it writes over Accepted). Reviews that say RA, Risk Acceptance, POAM or POA&M are now left as
+they are by every writer: no setting needed for that. To have workflow 40 write over Accepted too, put in all.yml:
+
+```yaml
+check_stig_update_overwrite_accepted: true      # the default (workflow 37, the site portal's 46-48)
+stigman_ckl_import_overwrite_accepted: true     # workflow 40, the checklist import (default false)
+```
+
+`check_stig_update_refresh: false` = still open written as before (nothing). `stigman_protect_words: []` = no words.
 
 **The STIG recheck refreshes what is still open, with a new date** (docs/STIG_DRIFT.md, "Updating STIG Manager, with
 an approval").
 
 - Workflow 37's approval also writes the rules still open (Open in STIG Manager, the scan still fails them): Open
   again, this scan's finding text as the detail, `check_stig_update_status`, and the job's line with today's date.
-  They are counted on their own (*Refreshed*) in the plan and in `NEEDS APPROVAL`. Never one that is Accepted.
-  The site portal's one-rule recheck (workflows 46-48) does not refresh: still there, nothing to approve, as before.
+  They are counted on their own (*Refreshed*) in the plan and in `NEEDS APPROVAL`.
+- The site portal's one-rule recheck and fix (workflows 46-48) too: a rule that still fails after the fix is *still
+  there* on its job page, and its review is written again, Open with today's date, under the same approval.
 - Every review the recheck writes gets the job's line with today's date, first. A person's comment is kept below it
   (one blank line); an earlier line of the job's is the one replaced. Read again just before the write.
 - A review the job wrote Open that a person set to Not a Finding or Not Applicable since, while the scan still says
   Open, is never written and is listed: *Set by a person since our last write - the scan still says Open* (and a tile).
-- Workflow 40's checklist import: the job's line with today's date first, the checklist's comments below it, never an
-  older run's line of site-automation's beside a new detail.
+
+**Protected reviews - never written, listed with the reason** (docs/STIG_DRIFT.md, "Protected - never written").
+
+- Every writer (workflows 37, 46-48 and 40) leaves as it is a review that has attachments, one whose detail or comment
+  says RA, Risk Acceptance, POAM or POA&M (`stigman_protect_words`; whole words, any case - RA is not RAID or grant),
+  and an Accepted one when the setting says no. Also when the scan says the rule is fixed: the admin closes it.
+- Checked by the check (the plan leaves them out) and again by the update just before it writes.
+- One list, *Protected - left as they are*, with *Why left* in each row, and a *Protected* tile; `NEEDS APPROVAL` says
+  how many. The update's own state for one caught at the write: *protected*.
+
+**The checklist import (workflow 40)**
+
+- The comment: the job's line with today's date first, the checklist's comments below it, never an older run's line
+  of site-automation's beside a new detail. The job's line now ends with the result it wrote (*... - Open.*).
+- A review the job last wrote Open that a person set to Not a Finding or Not Applicable since, while the checklist
+  says Open: listed (*a person set it to Not a Finding on 2026-11-10; the checklist says Open*), never written.
+- Protected reviews as above; Accepted as `stigman_ckl_import_overwrite_accepted` says (default false, as before).
 
 ## 1.69.0 — 2026-11-17
 

@@ -13,6 +13,7 @@
     validate_certs: "{{ check_stig_stigman_validate_certs | bool }}"
     ca_path: "{{ check_stig_stigman_ca_path }}"
     timeout: "{{ check_stig_stigman_timeout | int }}"
+    protect_words: "{{ stigman_protect_words | default(omit) }}"
     hosts: "{{ _stig_sm_entries }}"
   register: _stig_sm
   delegate_to: localhost

@@ -81,6 +81,12 @@ options:
   search_all: {description: "No match among those: read every installed STIG's rules (slow with hundreds).", type: bool, default: false}
   other_revision: {description: "Write a rule whose rule id (SV-...rNNN) differs from STIG Manager's - another revision of it.", type: bool, default: false}
   overwrite_accepted: {description: Write over an Accepted review too., type: bool, default: false}
+  protect_words:
+    description: "1.69.1: leave a review whose detail or comment says one of these (whole words, any case) as it is (kind
+      protected); [] = none."
+    type: list
+    elements: str
+    default: [RA, Risk Acceptance, POAM, POA&M]
   status: {description: "The reviews' status: saved, submitted or accepted.", type: str, default: submitted}
   detail_max: {description: A detail longer than this is cut., type: int, default: 8000}
   day: {description: "Today (YYYY-MM-DD), for the comment.", type: str, default: ''}
@@ -107,7 +113,7 @@ plan:
   type: list
   returned: always
 left:
-  description: "The answered rules not planned: {file, asset, benchmark, v, version, title, result, why, kind (same, accepted, conflict,
+  description: "The answered rules not planned: {file, asset, benchmark, v, version, title, result, why, kind (same, accepted, protected, person, conflict,
     revision, unmatched, no_asset, no_stig)}."
   type: list
   returned: always
@@ -163,7 +169,7 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.six.moves.urllib.parse import urlencode, quote
 from ansible.module_utils.six.moves.urllib.request import Request, urlopen
 from ansible.module_utils.six.moves.urllib.error import HTTPError, URLError
-from ansible.module_utils.site_stig_comment import merged as comment_merged
+from ansible.module_utils.site_stig_comment import merged as comment_merged, protected, PROTECT_WORDS, split as comment_split, what_it_said
 
 SV_RE = re.compile(r"^(SV-\d+)(r\d+)?(_rule)?$", re.I)
 V_RE = re.compile(r"^V-\d+$", re.I)
@@ -1111,6 +1117,18 @@ def plan_all(p, client, files):
                         leave("accepted", "Accepted in STIG Manager as %s - left for the reviewers (stigman_ckl_import_overwrite_accepted)"
                               % word(was["result"]), row, [r])
                         continue
+                    # 1.69.1: RA, Risk Acceptance, POAM or POA&M in the review's detail or comment (stigman_protect_words)
+                    why = protected(p.get("protect_words"), cur.get("detail"), cur.get("comment")) if was["result"] != r["result"] else ""
+                    if why:
+                        leave("protected", "%s in STIG Manager - left as it is (stigman_protect_words)" % why, row, [r])
+                        continue
+                    # 1.69.1, as the STIG recheck (workflow 37): a review we last wrote Open (our line says so) that a person
+                    # set to Not a Finding / Not Applicable since, while the checklist says Open - listed, never written
+                    if r["result"] == "fail" and was["result"] in ("pass", "notapplicable") \
+                            and what_it_said(comment_split(cur.get("comment"))[0]) == "fail":
+                        leave("person", "a person set it to %s on %s; the checklist says Open - left as it is" % (
+                            word(was["result"]), (was["ts"] or "")[:10] or "?"), row, [r])
+                        continue
                     key = (col["collectionId"], row["assetId"] or "new:" + name.lower(), rid)
                     picks.setdefault(key, []).append((row, r, smr, mm, was, ck))
             for col, asset in also:     # a copy in the staging collection too: the real collection's is written
@@ -1222,9 +1240,10 @@ def review_item(p, row, r, smr, m, was, ck, many=False):
     detail = (r.get("details") or "").strip() or "%s: %s (the checklist gives no finding details)" % (row["file"], word(r["result"]))
     if len(detail) > p["detail_max"]:
         detail = detail[:p["detail_max"] - 40].rstrip() + "\n[... cut at %d characters]" % p["detail_max"]
-    note = "Imported from the checklist %s (%s%s) by site-automation, %s%s." % (
+    # 1.69.1: the line ends with the result it wrote (" - Open."), so a later run tells a person's change after it
+    note = "Imported from the checklist %s (%s%s) by site-automation, %s%s - %s." % (
         row["file"], ck.get("stig") or ck.get("title") or "its STIG", (" " + ck["revision"]) if ck.get("revision") else "",
-        "no approval (stigman_ckl_import_auto)" if auto else "approved in AAP", (" on " + p["day"]) if p["day"] else "")
+        "no approval (stigman_ckl_import_auto)" if auto else "approved in AAP", (" on " + p["day"]) if p["day"] else "", word(r["result"]))
     # 1.69.1: our line first (today's date), the checklist's own comment below it - without a line of ours from an earlier
     # run (a checklist exported from STIG Manager carries one): never an older run's line beside a new detail
     comment = comment_merged(note, r.get("comments"))
@@ -1235,6 +1254,7 @@ def review_item(p, row, r, smr, m, was, ck, many=False):
             "version": smr.get("version") or r.get("version", ""), "title": smr.get("title") or r.get("title", ""),
             "severity": (smr.get("severity") or r.get("severity") or "").lower(), "was": was, "earlier": {}, "result": r["result"],
             "status": p["status"], "detail": detail, "comment": comment[:32767], "engine": r.get("engine"),
+            "overwrite_accepted": bool(p["overwrite_accepted"]),       # 1.69.1: the update's own guard reads it
             "line": "%s %s %s: %s -> %s (%s) from %s" % (label, m["bench"], smr.get("version") or smr.get("groupId") or "",
                                                        word(was["result"]) if was["result"] else "no review", word(r["result"]),
                                                        p["status"], row["file"])}
@@ -1369,6 +1389,7 @@ def main():
         search_all=dict(type="bool", default=False),
         other_revision=dict(type="bool", default=False),
         overwrite_accepted=dict(type="bool", default=False),
+        protect_words=dict(type="list", elements="str", default=list(PROTECT_WORDS)),
         status=dict(type="str", default="submitted", choices=list(STATUSES)),
         detail_max=dict(type="int", default=8000),
         day=dict(type="str", default=""),

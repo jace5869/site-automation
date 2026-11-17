@@ -7,6 +7,7 @@ report sections (plugins/filter/stig_filters.py).
 
     python tests/test_stig.py
 """
+import copy
 import datetime
 import hashlib
 import json
@@ -991,7 +992,8 @@ OURS_OPEN = ("Set by the STIG recheck (site-automation), approved in AAP: Evalua
 class Refresh(unittest.TestCase):
     """1.69.1 (the user: "we need it to update the comments so it gets a new timestamp"): still open written again with
     today's date (check_stig_update_refresh), our line first and a person's comment kept, a person's Not a Finding / Not
-    Applicable since our Open listed and never written, Accepted never written over, the checklist import's comment."""
+    Applicable since our Open listed and never written, the checklist import's comment. Accepted: written like the others
+    unless check_stig_update_overwrite_accepted is false (then protected, as RA / POA&M words are - class Protect)."""
 
     def test_the_comment_rule(self):
         new = "Set by the STIG recheck (site-automation), approved in AAP: Evaluate-STIG checked it again on web01 on 2026-11-17 - still Open."
@@ -1042,7 +1044,12 @@ class Refresh(unittest.TestCase):
         res = self.results(SV_1="fail", SV_2="fail", SV_3="fail", SV_4="pass")
         self.assertEqual([r["key"] for r in res[0]["still_open"]], ["SV-1", "SV-2"])
         p = sf.stig_update_plan(res, day="2026-11-17", status="saved", refresh=True)
-        self.assertEqual([(x["v"], x["kind"], x["result"], x["status"]) for x in p], [("V-1", "refresh", "fail", "saved")])   # SV-2: Accepted
+        self.assertEqual([(x["v"], x["kind"], x["result"], x["status"]) for x in p], [("V-1", "refresh", "fail", "saved"), ("V-2", "refresh", "fail", "saved")])
+        self.assertTrue(all(x["overwrite_accepted"] for x in p))
+        # check_stig_update_overwrite_accepted: false - SV-2 (Accepted) protected, listed with why
+        self.assertEqual([x["v"] for x in sf.stig_update_plan(res, day="2026-11-17", refresh=True, overwrite_accepted=False)], ["V-1"])
+        left = sf.stig_update_protected(res, day="2026-11-17", refresh=True, overwrite_accepted=False)
+        self.assertEqual([(x["v"], x["protected"]) for x in left], [("V-2", "Accepted (check_stig_update_overwrite_accepted: false)")])
         one = p[0]
         self.assertEqual(one["comment"], "Set by the STIG recheck (site-automation), approved in AAP: Evaluate-STIG checked it again on web01 "
                                          "on 2026-11-17 - still Open.")
@@ -1052,7 +1059,7 @@ class Refresh(unittest.TestCase):
         self.assertIn("refreshed: still Open, today's date", one["line"])
         self.assertEqual(sf.stig_update_plan(res, day="2026-11-17"), [], "refresh false: as before (still open: nothing)")
         sec = sf.stig_update_sections(p)[0]
-        self.assertEqual(sec["title"], "Approve writes these reviews to STIG Manager (1 refreshed: still Open, a new date)")
+        self.assertEqual(sec["title"], "Approve writes these reviews to STIG Manager (2 refreshed: still Open, a new date)")
         self.assertEqual(sec["rows"][0][7], "Open - refreshed (still Open)")
 
     def test_a_person_since_our_open_listed_never_written(self):
@@ -1085,32 +1092,42 @@ class Refresh(unittest.TestCase):
                 self.db[r["ruleId"]] = {"result": r["result"], "status": {"label": r["status"]}, "ts": "now", "comment": r["comment"]}
             return {"affected": {"updated": len(reviews), "inserted": 0}, "rejected": []}
 
-    def plan(self):
+    def plan(self, **kw):
         res = self.results(SV_1="fail", SV_2="fail")
-        p = sf.stig_update_plan(res, day="2026-11-17", status="saved", refresh=True)
-        # and the Accepted one, as an older plan would have it (the update never writes over it either)
-        return p + [dict(p[0], ruleId="SV-2r1_rule", v="V-2", was={"result": "fail", "status": "accepted", "ts": "2026-09-01T00:00:00Z"})]
+        return sf.stig_update_plan(res, day="2026-11-17", status="saved", refresh=True, **kw)   # SV-2: Accepted
+
+    def db(self):
+        return {"SV-1r1_rule": {"result": "fail", "status": {"label": "saved"}, "ts": "2026-09-01T00:00:00Z",
+                                "comment": OURS_OPEN + "\n\nTicket 123: waiting on the vendor."},
+                "SV-2r1_rule": {"result": "fail", "status": {"label": "accepted"}, "ts": "2026-09-01T00:00:00Z", "comment": "Accepted by the ISSO."}}
 
     def test_the_update_writes_a_refresh_and_keeps_a_person_comment(self):
-        db = {"SV-1r1_rule": {"result": "fail", "status": {"label": "saved"}, "ts": "2026-09-01T00:00:00Z",
-                              "comment": OURS_OPEN + "\n\nPOA&M 123: waiting on the vendor."},
-              "SV-2r1_rule": {"result": "fail", "status": {"label": "accepted"}, "ts": "2026-09-01T00:00:00Z", "comment": "Accepted by the ISSO."}}
+        db = self.db()
         c = self.C(db)
         items = smu.update({"plan": self.plan()}, c, False)
-        self.assertEqual([(i["v"], i["state"]) for i in items], [("V-1", "written"), ("V-2", "already so")])
-        self.assertEqual(items[1]["why"], "Accepted in STIG Manager - not refreshed")
+        self.assertEqual([(i["v"], i["state"]) for i in items], [("V-1", "written"), ("V-2", "written")])
         sent = c.posts[0][2]
-        self.assertEqual([r["ruleId"] for r in sent], ["SV-1r1_rule"])
-        self.assertEqual(sent[0]["comment"], "Set by the STIG recheck (site-automation), approved in AAP: Evaluate-STIG checked it again on web01 "
-                                             "on 2026-11-17 - still Open.\n\nPOA&M 123: waiting on the vendor.")
+        line = "Set by the STIG recheck (site-automation), approved in AAP: Evaluate-STIG checked it again on web01 on 2026-11-17 - still Open."
+        self.assertEqual([r["comment"] for r in sent], [line + "\n\nTicket 123: waiting on the vendor.", line + "\n\nAccepted by the ISSO."])
         self.assertEqual((sent[0]["result"], sent[0]["status"], sent[0]["detail"]), ("fail", "saved", "Found: it is not set."))
-        self.assertEqual(db["SV-2r1_rule"]["comment"], "Accepted by the ISSO.")      # untouched
+        self.assertEqual(sent[1]["status"], "saved")                  # over Accepted: the site's check_stig_update_status
+
+    def test_accepted_when_the_setting_says_no(self):
+        # a plan made with check_stig_update_overwrite_accepted: false has no Accepted review; one Accepted since the check
+        # is left by the update itself
+        p = [dict(x, overwrite_accepted=False) for x in self.plan()]
+        db = self.db()
+        db["SV-1r1_rule"]["status"] = {"label": "accepted"}
+        p[0]["was"] = dict(p[0]["was"], status="accepted")
+        c = self.C(db)
+        items = smu.update({"plan": p[:1]}, c, False)
+        self.assertEqual((items[0]["state"], items[0]["why"], c.posts),
+                         ("protected", "Accepted in STIG Manager (overwrite_accepted is false) - left as it is", []))
 
     def test_check_mode_writes_nothing(self):
-        c = self.C({"SV-1r1_rule": {"result": "fail", "status": {"label": "saved"}, "ts": "2026-09-01T00:00:00Z", "comment": "x"},
-                    "SV-2r1_rule": {"result": "fail", "status": {"label": "accepted"}, "ts": "2026-09-01T00:00:00Z"}})
+        c = self.C(self.db())
         items = smu.update({"plan": self.plan()}, c, True)
-        self.assertEqual([i["state"] for i in items], ["would write", "already so"])
+        self.assertEqual([i["state"] for i in items], ["would write", "would write"])
         self.assertEqual(c.posts, [])
 
     def test_a_person_changed_it_since_the_check(self):
@@ -1122,13 +1139,90 @@ class Refresh(unittest.TestCase):
         for pb in ("stig_recheck.yml", "win_stig_recheck.yml"):
             with open(os.path.join(ROOT, "playbooks", pb)) as f:
                 t = f.read()
-            self.assertIn("check_stig_update_refresh | default(true) | bool) }}", t, pb)
+            self.assertIn("check_stig_update_refresh | default(true) | bool, check_stig_update_overwrite_accepted | default(true) | bool) }}", t, pb)
+            self.assertIn("stig_update_protected_section", t, pb)
             self.assertIn("refreshed: still Open, a new date", t, pb)
         for tf in ("recheck_read.yml", "recheck_compare.yml"):
             with open(os.path.join(ROOT, "roles", "check_stig", "tasks", tf)) as f:
                 self.assertIn("(['person'] if check_stig_update_refresh | default(true) | bool else [])", f.read(), tf)
         with open(os.path.join(ROOT, "roles", "check_stig", "defaults", "main.yml")) as f:
             self.assertIn("\ncheck_stig_update_refresh: true\n", f.read())
+
+
+class Protect(unittest.TestCase):
+    """1.69.1 (the user: "Accepted can be changed but nothing with attachment or saying RA, Risk Acceptance or POAM or
+    POA&M"): stigman_protect_words in a review's detail or comment, attachments, and Accepted with
+    check_stig_update_overwrite_accepted: false - never written, listed with why. Checked by the plan and by the update."""
+
+    def test_the_words(self):
+        hit = {"RA 12, signed by the AO": "'RA' in its comment", "see ra-14": "'RA' in its comment", "the (RA)": "'RA' in its comment",
+               "RA": "'RA' in its comment", "risk acceptance": "'Risk Acceptance' in its comment",
+               "Risk  Acceptance memo": "'Risk Acceptance' in its comment", "Risk\nAcceptance": "'Risk Acceptance' in its comment",
+               "Risk Acceptances on file": "'Risk Acceptance' in its comment", "POAM": "'POAM' in its comment",
+               "poam-7": "'POAM' in its comment", "POAMs": "'POAM' in its comment", "POA&M 14": "'POA&M' in its comment",
+               "POA & M 3": "'POA&M' in its comment", "poa&m": "'POA&M' in its comment", "two POA&Ms": "'POA&M' in its comment"}
+        for text, why in hit.items():
+            self.assertEqual(scm.protected(None, "", text), why, text)
+        for text in ("RAID 5", "grant", "parameter", "ORACLE", "BRAND", "DRA", "RAS server", "R.A.", "XPOAM", "POAMSX", "POA M",
+                     "risk accepted", "Set by the STIG recheck (site-automation), approved in AAP: Evaluate-STIG checked it again on "
+                     "web01 on 2026-11-17 - still Open.", ""):
+            self.assertEqual(scm.protected(None, text, text), "", text)
+        self.assertEqual(scm.protected(None, "Covered by RA 3.", "x"), "'RA' in its detail")
+        self.assertEqual(scm.protected([], "RA", "POA&M"), "", "[] = none")
+        self.assertEqual(scm.protected(["ATO"], "", "per the ATO letter"), "'ATO' in its comment")
+        self.assertEqual(scm.protected(["", "  "], "RA", "RA"), "")
+        self.assertEqual(scm.PROTECT_WORDS, ["RA", "Risk Acceptance", "POAM", "POA&M"])
+
+    def test_the_reader(self):
+        r = smr.reviews_of([{"ruleId": "SV-1r1_rule", "result": "fail", "detail": "x", "comment": "POA&M 9", "rule": {}},
+                            {"ruleId": "SV-2r1_rule", "result": "fail", "detail": "granted", "comment": "", "rule": {}}])
+        self.assertEqual((r["SV-1"]["protect"], r["SV-2"]["protect"]), ("'POA&M' in its comment", ""))
+        self.assertEqual(smr.reviews_of([{"ruleId": "SV-1r1_rule", "comment": "POA&M 9", "rule": {}}], [])["SV-1"]["protect"], "")
+
+    def results(self, overwrite=True):
+        c = sm_list(SV_1=("fail", "saved"), SV_2=("fail", "submitted"), SV_3=("fail", "accepted"), SV_4=("fail", "saved"))
+        for k in ("SV-1", "SV-2", "SV-3", "SV-4"):
+            c["reviews"][k].update(rule=k + "r1_rule")
+        c["reviews"]["SV-1"]["protect"] = "'POA&M' in its comment"     # fixed, but a POA&M
+        c["reviews"]["SV-2"]["protect"] = "'RA' in its detail"         # still open, an RA
+        c.update(collectionId="7", assetId="42")
+        return sf.stig_recheck(c, [dict(recheck_scan(SV_1="pass", SV_2="fail", SV_3="pass", SV_4="fail"), time="2026-11-17T06:00:00Z")], "web01")
+
+    def test_the_plan(self):
+        res = self.results()
+        p = sf.stig_update_plan(res, day="2026-11-17", refresh=True)
+        self.assertEqual([(x["v"], x["kind"]) for x in p], [("V-3", "fixed"), ("V-4", "refresh")])   # V-3: Accepted, written
+        left = sf.stig_update_protected(res, day="2026-11-17", refresh=True)
+        self.assertEqual([(x["v"], x["kind"], x["protected"]) for x in left],
+                         [("V-1", "fixed", "'POA&M' in its comment"), ("V-2", "refresh", "'RA' in its detail")])
+        p = sf.stig_update_plan(res, day="2026-11-17", refresh=True, overwrite_accepted=False)
+        self.assertEqual([x["v"] for x in p], ["V-4"])
+        left = sf.stig_update_protected(res, day="2026-11-17", refresh=True, overwrite_accepted=False)
+        self.assertEqual([x["protected"] for x in left], ["'POA&M' in its comment", "Accepted (check_stig_update_overwrite_accepted: false)",
+                                                          "'RA' in its detail"])
+        sec = sf.stig_update_protected_section(left)[0]
+        self.assertEqual((sec["title"], sec["columns"][-1]), ("Protected - left as they are (3)", "Why left"))
+        self.assertEqual(sec["rows"][2][5:], ["Open - refreshed (still Open)", "'RA' in its detail"])
+        self.assertEqual(sf.stig_update_plan(res, day="2026-11-17"), [p for p in sf.stig_update_plan(res, day="2026-11-17", refresh=True)
+                                                                      if p["kind"] != "refresh"])
+
+    def test_the_update_checks_again(self):
+        p = sf.stig_update_plan(self.results(), day="2026-11-17", refresh=True)
+        db = {"SV-3r1_rule": {"result": "fail", "status": {"label": "accepted"}, "ts": "2026-09-01T00:00:00Z", "comment": "Risk Acceptance 4, the AO"},
+              "SV-4r1_rule": {"result": "fail", "status": {"label": "saved"}, "ts": "2026-09-01T00:00:00Z", "detail": "granted to the parameter",
+                              "comment": "Ticket 9"}}
+        fresh = copy.deepcopy(db)
+        c = Refresh.C(db)
+        items = smu.update({"plan": p}, c, False)
+        # a Risk Acceptance written on V-3 after the check: left; V-4's words are not RA
+        self.assertEqual([(i["v"], i["state"], i["why"]) for i in items],
+                         [("V-3", "protected", "'Risk Acceptance' in its comment - left as it is"), ("V-4", "written", "")])
+        self.assertEqual([r["ruleId"] for r in c.posts[0][2]], ["SV-4r1_rule"])
+        items = smu.update({"plan": p, "protect_words": []}, Refresh.C(fresh), True)
+        self.assertEqual([i["state"] for i in items], ["would write", "would write"], "protect_words: [] = none")
+        r = sf.stig_update_report(items[:1] + [dict(items[0], state="protected"), dict(items[0], state="has attachments")])
+        self.assertEqual(dict((s["label"], s["value"]) for s in r["summary"])["Protected (left)"], 2)
+        self.assertEqual(r["status"], "ok")
 
 
 class Update(unittest.TestCase):
@@ -1269,7 +1363,7 @@ class Update(unittest.TestCase):
         self.assertIn("1 attachment(s) in STIG Manager: poam.pdf - left as it is", items[0]["why"])
         self.assertEqual(smu.update({"plan": p[:1], "skip_attachments": False}, C(), False)[0]["state"], "written")
         r = sf.stig_update_report(items, False, "", 1)
-        self.assertEqual(dict((s["label"], s["value"]) for s in r["summary"])["Has attachments (left)"], 1)
+        self.assertEqual(dict((s["label"], s["value"]) for s in r["summary"])["Protected (left)"], 1)
 
     def test_writes_only_reviews(self):
         """The module's only requests: the token, GET of one review (and of its metadata keys, for its attachments), POST of
@@ -1735,7 +1829,14 @@ class UpdateReportMoves(unittest.TestCase):
     """stig_update_report (1.26.0): the moves and STIG assignments in a section; workflow 37's report exactly as before."""
 
     def test_workflow_37_as_before(self):
-        got = [sf.stig_update_report(*case) for case in W37_CASES]
+        # 1.69.1 changed two things on purpose (the tile Protected (left), which counts attachments and protected; one
+        # sentence of the text): put back as they were, the rest must be byte for byte as before
+        def as_before(r):
+            t = json.dumps(r, sort_keys=True).replace('"Protected (left)"', '"Has attachments (left)"').replace(
+                " and one protected (RA, Risk Acceptance, POAM or POA&M in its detail or comment - stigman_protect_words; Accepted, "
+                "when the setting does not allow it)", "")
+            return json.loads(t)
+        got = [as_before(sf.stig_update_report(*case)) for case in W37_CASES]
         base = _base_update_report()
         if base is not None:
             for case, mine in zip(W37_CASES, got):
@@ -1826,9 +1927,15 @@ class Attachments(unittest.TestCase):
         out = sf.stig_update_attachments(plan, [{"attachments": 1, "names": ["poam.pdf"]}, {"attachments": 0},
                                                 {"attachments": -1, "error": "HTTP 500"}])
         self.assertEqual([p["line"] for p in out["plan"]], ["two"])
-        self.assertEqual([r[2] for r in out["section"]["rows"]], ["V-1", "V-3"])
-        self.assertEqual(out["section"]["rows"][0][3:], ["Open (accepted)", "Not a Finding", "poam.pdf"])
-        self.assertEqual(out["section"]["rows"][1][5], "could not be read: HTTP 500")
+        # 1.69.1: listed with the other protected reviews, the reason in its row
+        self.assertIsNone(out["section"])
+        self.assertEqual([(p["v"], p["protected"]) for p in out["left"]],
+                         [("V-1", "attachments: poam.pdf"), ("V-3", "attachments could not be read: HTTP 500")])
+        sec = sf.stig_update_protected_section(out["left"])[0]
+        self.assertEqual(sec["title"], "Protected - left as they are (2)")
+        self.assertEqual([r[2] for r in sec["rows"]], ["V-1", "V-3"])
+        self.assertEqual(sec["rows"][0][4:], ["Open (accepted)", "Not a Finding", "attachments: poam.pdf"])
+        self.assertEqual(sf.stig_update_protected_section([]), [])
         self.assertIsNone(sf.stig_update_attachments(plan[1:2], [{"attachments": 0}])["section"])
         bad = sf.stig_update_attachments(plan, [], "no token")
         self.assertEqual((bad["plan"], len(bad["left"])), ([], 3))

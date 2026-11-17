@@ -87,14 +87,6 @@
 ## (set_stats stigman_update_plan), the job fails on purpose (NEEDS APPROVAL)
 # check_stig_update_workflow: false
 
-## 1.69.1: still open (Open in STIG Manager, the scan still fails it) written again in the same
-## approval: Open, this scan's detail and today's date in the comment, with check_stig_update_status
-## - the review shows when it was last checked (Refreshed in the plan; never one that is Accepted).
-## And listed, never written: a review the recheck wrote Open that a person set to Not a Finding /
-## Not Applicable since, while the scan still says Open. false = as before 1.69.1 (still open:
-## nothing written)
-# check_stig_update_refresh: true
-
 ## A Linux host with no asset in STIG Manager (0.72.0): with check_stig_stigman_collection set,
 ## workflow 37's check scans it in full and plans its asset (named check_stig_stigman_asset, else
 ## the short name; the FQDN the inventory name) with its RHEL STIG, and the scan's answers as its

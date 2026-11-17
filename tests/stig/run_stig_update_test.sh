@@ -9,9 +9,12 @@
 # a review changed in STIG Manager since the check is left; a review STIG Manager rejects fails the job; a plan item
 # that is not one the check gives is refused; no plan: nothing written; a review with attachments in STIG Manager is
 # left out of the check's plan, and left as it is by the update. Only GET, the token POSTs and the reviews' POST
-# reach STIG Manager. 1.69.1: the scenarios above with check_stig_update_refresh: false (as before); then the refresh -
-# still open planned and counted apart, Check writes nothing, written with today's line first and the POA&M note kept,
-# Accepted never refreshed, a person's Not a Finding since our Open (the scan still fails it) listed and never written.
+# reach STIG Manager. 1.69.1: the scenarios above with check_stig_update_refresh: false and stigman_protect_words: []
+# (as before); then the refresh - still open planned and counted apart, Check writes nothing, written with today's line
+# first and the review's note kept; Accepted planned (check_stig_update_overwrite_accepted: true), protected with it
+# false; the default protect words - the reviews that say POA&M protected by the check (listed, the report's Protected
+# section) and by the update with a plan that has them; a person's Not a Finding since our Open (the scan still fails
+# it) listed and never written.
 # 0.72.0, a host with no asset (check_stig_update_create_assets): off - not rechecked; on - planned
 # (every rule), Check creates nothing, a client without Manage is refused, then created once with its reviews.
 #   bash tests/stig/run_stig_update_test.sh        (ANSIBLE_PLAYBOOK=... to pick one; STIG_KEEP=FILE keeps the last output)
@@ -79,6 +82,8 @@ check_stig_stigman_client_secret: s3cret
 report_web_dest: $work/site
 # the scenarios below as before 1.69.1 (still open: nothing written); the refresh (the default) has its own, at the end
 check_stig_update_refresh: false
+# and the review comments of this data say POA&M: no protect words for them (1.69.1 has its own scenarios, at the end)
+stigman_protect_words: []
 EOF
 writer='{"check_stig_stigman_client_id": "stigwrite"}'
 
@@ -218,12 +223,12 @@ import glob, json, sys
 r = json.load(open(sorted(glob.glob(sys.argv[1] + "/*/latest.json"))[-1]))
 r = r.get("report", r)
 t = [s["title"] for s in r["sections"]]
-assert t[:2] == ["Approve writes these reviews to STIG Manager", "Left as they are: reviews with attachments (1)"], t
+assert t[:2] == ["Approve writes these reviews to STIG Manager", "Protected - left as they are (1)"], t
 left = r["sections"][1]["rows"]
-assert left == [[left[0][0], "RHEL Servers / localhost", "V-258176", "Open (accepted)", "Not a Finding", "auditd-plan.pdf"]], left
+assert left == [[left[0][0], "RHEL Servers / localhost", "V-258176", left[0][3], "Open (accepted)", "Not a Finding", "attachments: auditd-plan.pdf"]], left
 assert all(x[3] != "V-258176" for x in r["sections"][0]["rows"])
 PY
-then echo "ok   - ... the report lists it apart, with the file's name; not in what Approve writes"
+then echo "ok   - ... the report lists it apart (1.69.1: Protected, why: the file's name); not in what Approve writes"
 else echo "FAIL - the report's attachments section"; fails=$((fails + 1)); fi
 play stig_recheck.yml "the check with check_stig_update_skip_attachments: false: in the plan like the others" 2 \
     -e '{"check_stig_update_workflow": true, "check_stig_update_skip_attachments": false}' -- "NEEDS APPROVAL - 5 review(s)" "!LEFT AS IT IS"
@@ -267,14 +272,41 @@ assert (r["result"], r["status"]["label"], r["comment"]) == ("fail", "submitted"
 assert r["detail"] and r["ts"] != "2026-08-15T10:00:00Z", r' "$work/sm.json" "$today" \
     && echo "ok   - ... STIG Manager: Open (submitted), a new time and detail, the comment: today's line, then the POA&M note" \
     || { echo "FAIL - the refreshed review: $(review SV-257883r1044925_rule)"; fails=$((fails + 1)); }
-# Accepted: never refreshed
+# Accepted: written like the others (check_stig_update_overwrite_accepted: true, the default); false - protected, listed
 cp "$work/sm-first.json" "$work/sm.json"
 "$py" -c 'import json, sys; d = json.load(open(sys.argv[1]))
 for r in d["reviews"]["11"]:
     if r["ruleId"] == "SV-257883r1044925_rule": r["status"] = {"label": "accepted"}
 json.dump(d, open(sys.argv[1], "w"))' "$work/sm.json"
-play stig_recheck.yml "refresh: a still open review that is Accepted - not planned" 2 -e "$fresh" -- \
-    "NEEDS APPROVAL - 5 review(s) of 1 asset(s) to write to STIG Manager, in the" "!V-257883: Open -> Open"
+play stig_recheck.yml "refresh: a still open review that is Accepted - planned (check_stig_update_overwrite_accepted: true)" 2 -e "$fresh" -- \
+    "NEEDS APPROVAL - 6 review(s) of 1 asset(s) to write to STIG Manager (1 refreshed: still Open, a new date)" \
+    "V-257883: Open -> Open (submitted, refreshed: still Open, today's date)"
+play stig_recheck.yml "check_stig_update_overwrite_accepted: false - the two Accepted reviews protected, listed" 2 -e "$fresh" \
+    -e '{"check_stig_update_overwrite_accepted": false}' -- \
+    "NEEDS APPROVAL - 4 review(s) of 1 asset(s) to write to STIG Manager, in the" "2 protected review(s) left as they are" \
+    "V-257883: Open -> Open (submitted, refreshed: still Open, today's date) - PROTECTED, left as it is: Accepted (check_stig_update_overwrite_accepted: false)" \
+    "V-258176: Open -> Not a Finding (submitted) - PROTECTED, left as it is: Accepted (check_stig_update_overwrite_accepted: false)"
+# 1.69.1 (the user: "nothing with attachment or saying RA, Risk Acceptance or POAM or POA&M"): the default protect words -
+# this data's two reviews with a POA&M comment (V-257883 still open, V-258176 fixed) are protected, listed, never planned
+cp "$work/sm-first.json" "$work/sm.json"
+words='{"stigman_protect_words": ["RA", "Risk Acceptance", "POAM", "POA&M"]}'
+play stig_recheck.yml "protect words: the reviews that say POA&M - protected, listed, not planned" 2 -e "$fresh" -e "$words" -- \
+    "NEEDS APPROVAL - 4 review(s) of 1 asset(s) to write to STIG Manager, in the" "2 protected review(s) left as they are" \
+    "V-257883: Open -> Open (submitted, refreshed: still Open, today's date) - PROTECTED, left as it is: 'POA&M' in its comment" \
+    "V-258176: Open -> Not a Finding (submitted) - PROTECTED, left as it is: 'POA&M' in its comment"
+"$py" -c 'import glob, json, sys
+r = json.load(open(sorted(glob.glob(sys.argv[1] + "/*/latest.json"))[-1])); r = r.get("report", r)
+s = [x for x in r["sections"] if x.get("title") == "Protected - left as they are (2)"]
+assert s and [x[2] for x in s[0]["rows"]] == ["V-258176", "V-257883"] and s[0]["rows"][0][-1] == "\x27POA&M\x27 in its comment", s' "$work/site" \
+    && echo "ok   - ... the report: Protected - left as they are (2), the reason in each row" || { echo "FAIL - the Protected section"; fails=$((fails + 1)); }
+# the plan made without the words (plan-fresh.json has both): the update checks again and leaves them
+: > "$work/sm.log"; rm -f "$work/sm.log.writes"
+play stigman_update.yml "protect words at the write: a plan that has them - left by the update, the rest written" ok \
+    -e "@$work/plan-fresh.json" -e "$writer" -e "$words" -- \
+    "protected - localhost RHEL_9_STIG V-257883" "'POA&M' in its comment - left as it is" "protected - localhost RHEL_9_STIG V-258176" \
+    "written - localhost RHEL_9_STIG V-257779"
+[ "$(review SV-257883r1044925_rule)" = "fail saved" ] && [ "$(review SV-258176r1045388_rule)" = "fail accepted" ] \
+    && echo "ok   - ... STIG Manager: the two POA&M reviews as they were" || { echo "FAIL - protected written: $(review SV-257883r1044925_rule) / $(review SV-258176r1045388_rule)"; fails=$((fails + 1)); }
 # a person set it to Not a Finding after our Open, the scan still fails it: listed, never written
 cp "$work/sm-first.json" "$work/sm.json"
 "$py" -c 'import json, sys; d = json.load(open(sys.argv[1]))
