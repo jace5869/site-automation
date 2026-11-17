@@ -21,6 +21,21 @@ TREND_METRICS = [t[0] for t in TREND]
 MONTHS = 12
 
 
+def trend_keys(opts=None):
+    """1.68.2: the trend's lines (servicenow_insights_trend_metrics; [] = all of TREND), in TREND's order. fcr_pct (First
+    contact) only with servicenow_insights_first_contact true - every figure is still stored, only the page leaves it out."""
+    o = opts or {}
+    want = o.get("trend_metrics") or []
+    if isinstance(want, str):
+        want = want.replace(",", " ").split()
+    want = [str(k).strip().lower() for k in want if str(k).strip()]
+    bad = [k for k in want if k not in TREND_METRICS]
+    if bad:
+        raise ValueError("servicenow_insights_trend_metrics: %s is not a trend line (%s)" % (", ".join(bad), ", ".join(TREND_METRICS)))
+    keys = [k for k in TREND_METRICS if k in want] if want else list(TREND_METRICS)
+    return [k for k in keys if k != "fcr_pct" or o.get("first_contact")]
+
+
 def _num(v):
     if isinstance(v, bool) or v is None:
         return None
@@ -279,6 +294,75 @@ def servicenow_insights_db_runs(r, model, opts=None, mask=None):
     return {"runs": runs}
 
 
+def _prev_month(mo):
+    y, m = int(mo[:4]), int(mo[5:7])
+    return "%04d-%02d" % (y - 1, 12) if m == 1 else "%04d-%02d" % (y, m - 1)
+
+
+def _until_local(window):
+    F = _model_module()
+    w = window or {}
+    until = F._t(w.get("until"))
+    return until.astimezone(F._tz(w.get("time_zone"))) if until is not None else None
+
+
+def report_month(window):
+    """1.68.2: the report's own month - the calendar month, local time (report_time_zone), of the window's last moment (as
+    month_of: a window to 2026-11-01 00:00 is October's; to 00:30 on 1 November, November's). '' when the window has no
+    end."""
+    u = _until_local(window)
+    return (u - datetime.timedelta(seconds=1)).strftime("%Y-%m") if u is not None else ""
+
+
+def ended_month(window):
+    """1.68.2: the last calendar month, local time, that has ended when the window ends (a window to 2026-11-01 00:00 or to
+    2026-11-15: October). '' when the window has no end."""
+    u = _until_local(window)
+    return _prev_month(u.strftime("%Y-%m")) if u is not None else ""
+
+
+def servicenow_insights_month_to_complete(runs, history=None, r=None):
+    """1.68.2: the month just ended, when nothing holds it complete - this run's months (runs: servicenow_insights_db_runs)
+    and the database's (history: site_insights_db read's answer). A run writes only the months wholly inside its window and
+    the month so far: with a short window (servicenow_insights_days 7 or 30, servicenow_insights_months 1) the month that
+    just ended keeps the last run's "so far" for ever - a few days, or a few hours on the 1st. The month just ended is the
+    one before the report's own month (r: the module's read, its window's end in local time) - a 7-day run on the 15th
+    writes no month at all and still completes the last one. -> 'YYYY-MM', or '' (held complete, or the database not
+    read)."""
+    h = history or {}
+    if not h.get("ok"):
+        return ""
+    mine = [x for x in (runs or {}).get("runs") or [] if (x.get("run") or {}).get("period") == "month"]
+    prev = ended_month((r or {}).get("window"))
+    if not prev:
+        if not mine:
+            return ""
+        prev = _prev_month(max(x["run"]["month"] for x in mine))
+    if any(x["run"]["month"] == prev and not x["run"].get("partial") and not x.get("cut") for x in mine):
+        return ""
+    held = [row for row in h.get("rows") or [] if isinstance(row, (list, tuple)) and len(row) > 6 and row[0] == prev]
+    if held and not any(row[6] for row in held):
+        return ""
+    return prev
+
+
+def servicenow_insights_complete_month(r, month, opts=None, runs=None):
+    """1.68.2: the month just ended, read once the backfill's way (r: one calendar month, nothing to compare) -> runs with that
+    month's run added (servicenow_insights_db_runs' shape; db_write writes it with this run's). r not read, or the month not
+    wholly in it: runs as they were. Its records cut (servicenow_insights_max_records): marked cut, never written."""
+    out = {"runs": list((runs or {}).get("runs") or [])}
+    if not (r or {}).get("ok") or not month:
+        return out
+    hit = [mw for mw in month_windows((r or {}).get("window")) if mw[0] == str(month) and not mw[3]]
+    if not hit:
+        return out
+    one = month_run(r, hit[0], opts)
+    if _cut_at(r) is not None:
+        one["cut"] = True
+    out["runs"] = [x for x in out["runs"] if (x.get("run") or {}).get("month") != month or (x.get("run") or {}).get("period") != "month"] + [one]
+    return out
+
+
 def _cut_at(r):
     """1.16.0: where a table's records were cut inside the window (servicenow_insights_max_records): the latest such cut,
     naive UTC - or None."""
@@ -336,7 +420,8 @@ def servicenow_insights_trend(model, history=None, opts=None, runs=None):
         return m
     h = history or {}
     mine = [x for x in (runs or {}).get("runs") or [] if (x.get("run") or {}).get("period") == "month"]
-    last = max([x["run"]["month"] for x in mine] + [str(row[0]) for row in h.get("rows") or [] if row] or [""])
+    now = report_month(m.get("window"))      # 1.68.2: the report's own month, local time - the only one that may be so far
+    last = max([x["run"]["month"] for x in mine] + [str(row[0]) for row in h.get("rows") or [] if row] + [now] or [""])
     months = _months_back(last, int((opts or {}).get("trend_months") or MONTHS)) if last else []
     per, partial = {}, set()     # (variant, node) -> month -> {metric: value}; the months that are partial
     skipped = {}                 # (variant, node) -> the months worked out with servicenow_insights_response_skip_groups (1.67.0)
@@ -365,12 +450,17 @@ def servicenow_insights_trend(model, history=None, opts=None, runs=None):
     # the months shown: from the first that has a figure (a short history starts where it starts)
     used = [mo for mo in months if any(mo in slot for slot in per.values())]
     shown = months[months.index(used[0]):] if used else []
+    # 1.68.2: a month that has ended but is held only "so far" (the last run in it saw a few days) is not that month's
+    # figure: a gap, said "not complete" - never a short slice drawn as the month. Only the last month may be so far.
+    stale = sorted(mo for mo in partial & set(shown) if mo < (now or last))
+    keys = trend_keys(opts)
     nodes = {}
     for (variant, node), slot in per.items():
-        nodes[(variant + "|" if variant else "") + node] = [[mo] + [slot[mo].get(k) if mo in slot else None for k in TREND_METRICS]
+        nodes[(variant + "|" if variant else "") + node] = [[mo] + [slot[mo].get(k) if mo in slot and mo not in stale else None for k in keys]
                                                              for mo in shown]
     m["trend"] = {"on": True, "ok": bool(h.get("ok")), "error": str(h.get("error") or ""), "months": shown,
-                  "partial": sorted(partial & set(shown)), "metrics": [list(t) for t in TREND], "nodes": nodes,
+                  "partial": sorted(partial & set(shown) - set(stale)), "stale": stale,
+                  "metrics": [list(t) for t in TREND if t[0] in keys], "nodes": nodes,
                   "kept": int(h.get("months_kept") or 0), "full": int((opts or {}).get("trend_months") or MONTHS),
                   # 1.67.0 part F: per node, the months shown whose Response met leaves out the groups' response SLAs
                   "resp_skip": dict(((v + "|" if v else "") + nd, sorted(mos & set(shown))) for (v, nd), mos in skipped.items()
@@ -486,4 +576,7 @@ class FilterModule(object):
                 "servicenow_insights_month_run": month_run, "servicenow_insights_backfill_months": servicenow_insights_backfill_months,
                 "servicenow_insights_trend": servicenow_insights_trend, "servicenow_insights_db_status": servicenow_insights_db_status,
                 "servicenow_insights_db_check_lines": servicenow_insights_db_check_lines, "servicenow_insights_db_source": db_source,
-                "servicenow_insights_store_line": servicenow_insights_store_line}
+                "servicenow_insights_store_line": servicenow_insights_store_line,
+                "servicenow_insights_month_to_complete": servicenow_insights_month_to_complete,
+                "servicenow_insights_complete_month": servicenow_insights_complete_month,
+                "servicenow_insights_trend_keys": trend_keys}

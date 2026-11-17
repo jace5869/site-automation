@@ -1667,6 +1667,7 @@ File: `roles/servicenow_insights/defaults/main.yml`
 | `servicenow_insights_outcome_map` | `Workaround: Workaround Workaround provided: Workaround Duplicate: Duplicate Known Error:…` | How incidents ended: a close code (as shown, any case) -> its outcome; any other code is Fixed. Unable to resolve = these outcomes, of those resolved. |
 | `servicenow_insights_unable_outcomes` | `[Known Error, No Resolution Provided]` | the outcomes counted as unable to resolve |
 | `servicenow_insights_service_desk_groups` | `[]` | The service desk's assignment groups (exact names), for its own first-contact resolution; [] = the site's only. |
+| `servicenow_insights_first_contact` | `false` | First-contact resolution (resolved by the first group, never reassigned) on the pages, in the email and on the trend (1.68.2). Off by default: reassignment is not first contact on every desk. The figure is still worked out and written to the report database, so turning it on shows its history too. |
 | `servicenow_insights_survey` | `true` | The incident surveys (asmt_metric_result, read only, best-effort): each survey and question on its own scale, never one average across scales (1.16.0). false = not read. |
 | `servicenow_insights_survey_metrics` | `[]` | the questions read, by name; [] = every one answered with a number. Named: always a rating |
 | `servicenow_insights_survey_types` | `[]` | the surveys read, by name (asmt_metric_type); [] = every survey (1.16.0) |
@@ -1707,10 +1708,12 @@ File: `roles/servicenow_insights/defaults/main.yml`
 | `servicenow_insights_act_check_url` | `true` | first check that this AAP node reaches the model's URL |
 | `servicenow_insights_mask_names` | `[]` | more words to replace before ACT (a project name, a building) |
 | `servicenow_insights_mask_keep` | `[]` | words that look like host names but are not (e.g. [win11, rhel9]): sent as they are |
+| `servicenow_insights_excerpt_mask` | `true` | The excerpts of short descriptions and close notes in the lists of the page and the email (Act on first, the review list), 1.68.2: true = names, phone numbers, addresses and hosts replaced ([person], [phone] ...); false = as written. True by default, privacy first: the email leaves the site. What ACT reads stays maske… (all of it: the role file) |
 | `servicenow_insights_db` | `false` | THE HISTORY (1.13.0, docs/REPORT_DATABASE.md): true = each run writes its figures to the report database (MySQL 8.4, the "Report database" credential) - the window's, and each calendar month in it (the month so far marked partial) - and the pages show the months as Trends, for each site, unit and team. Figures only: c… (all of it: the role file) |
 | `servicenow_insights_db_required` | `false` | true: the database not reached (or no credential) fails the job |
 | `servicenow_insights_db_create` | `true` | make the tables and views on the first run (false: made by hand, from the doc) |
 | `servicenow_insights_db_months` | `12` | the months the trend shows |
+| `servicenow_insights_trend_metrics` | `[]` | The lines and table columns Trends shows (1.68.2), by metric: sla_met_pct, response_met_pct, fcr_pct (only with servicenow_insights_first_contact true), incidents, backlog, median_resolve_h, reopen_pct. [] = all of them. |
 | `servicenow_insights_db_timeout` | `10` | seconds to connect |
 | `servicenow_insights_backfill_months` | `0` | THE BACKFILL: > 0 = this launch reads that many past calendar months from ServiceNow once, writes each month's figures to the report database and stops - no ACT, no pages, no email. Run it once after setup (12), as a separate launch. Safe to run twice: each month replaces what was there. |
 | `servicenow_insights_db_check` | `false` | Is it writing? (1.15.0) true = only check the report database with the job's Report database credential, read only (the reader account works): the server, the tables and views, the runs and months held, the newest write. No ServiceNow read, no pages, no email. Launch with it as an extra variable. |

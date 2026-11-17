@@ -129,8 +129,11 @@ for t in "FINDING (from the health check job 4711" "summary: fapolicyd denied 3 
 done
 if grep -q "made-up-token" "$work/act/fake-act-stdin.txt" 2>/dev/null; then echo "FAIL - the AAP token reached ACT"; fails=$((fails + 1)); fi
 if ! grep -q "^/api/controller/v2/jobs/4711/ Bearer made-up-token" "$work/aap.log"; then echo "FAIL - job 4711 not read with the credential"; fails=$((fails + 1)); fi
-page="$(grep -rl "ACT - triage finding: fapolicyd:lin01.example.mil:denials" "$work/site" 2>/dev/null | head -1)"
-if [ -z "$page" ] || ! grep -q "Requested through the site portal by CN=Pat Example" "$page"; then
+# the report's own page, by name: the website's index names the report too (without who asked), and grep -r lists files in
+# the folder's order - on some file systems the index came first (1.68.2: a red CI run on a page that was there)
+page="$work/site/act-triage-finding/latest.html"
+if ! grep -qF "ACT - triage finding: fapolicyd:lin01.example.mil:denials" "$page" 2>/dev/null \
+   || ! grep -q "Requested through the site portal by CN=Pat Example" "$page"; then
   echo "FAIL - the report website has no triage page with who asked"; fails=$((fails + 1))
 else echo "ok   - the report website has the page, with who asked"; fi
 

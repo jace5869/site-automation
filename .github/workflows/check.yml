@@ -506,6 +506,10 @@ jobs:
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/vmware_ask/run_vmware_ask_test.sh
           bash tests/vmware_ask/run_secrets_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/vmware_ask/run_secrets_test.sh
+      - name: The stacks' podman secrets - a new one, a new value, podman's refusal (current ansible-core and 2.16)
+        run: |
+          bash tests/podman_secrets/run_stack_secrets_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/podman_secrets/run_stack_secrets_test.sh
 
   servicenow-insights:
     # 1.50.0: its own job (about 1.5 hours), beside the others

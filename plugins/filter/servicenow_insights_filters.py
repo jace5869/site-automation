@@ -1879,6 +1879,7 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
 
     resp_skipped = {}             # 1.67.0 part F: what servicenow_insights_response_skip_groups left out, per entry
     sla_src = apply_slas(items, r, o, tz, resp_skipped)
+    keep_text = not o.get("excerpt_mask", True)     # 1.68.2: servicenow_insights_excerpt_mask false - the excerpts as written
     vip = vip_tiers(r, o)
     for it in items:
         it["_vip"] = vip_of(it, vip) if vip["on"] and it.get("table") in ("incident", "sc_req_item") else None
@@ -2411,7 +2412,7 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
                     _count(recv, g)
         hops = {"limit": hop_limit, "done": sum(1 for x in res_now if over(x)), "done_of": len(res_now),
                 "done_pct": _r1(_pct(sum(1 for x in res_now if over(x)), len(res_now))), "open": len(hop_open),
-                "rows": [{"number": x.get("number"), "what": x.get("short_description"), "what_m": masked_excerpt(x.get("short_description"), mask, 100),
+                "rows": [{"number": x.get("number"), "what": x.get("short_description"), "what_m": masked_excerpt(x.get("short_description"), mask, 100, keep_text),
                           "hops": x.get("_hops"), "group": x.get("group"),
                           "age": age_d(x), "priority": prow_(x)} for x in hop_open[:50]],
                 "by_group": sorted([{"group": g, "over": v[0], "of": v[1], "pct": _r1(_pct(v[0], v[1])), "received": recv.get(g, 0)}
@@ -2427,7 +2428,7 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
             e = hr.setdefault(reason, [0, 0, 0, 0, 0])            # open, 0-2, 3-6, over 6 business days, not known
             e[0] += 1
             e[1 if bd is not None and bd <= 2 else (2 if bd is not None and bd <= caller_days else (3 if bd is not None else 4))] += 1
-            hrows.append({"number": x.get("number"), "what": x.get("short_description"), "what_m": masked_excerpt(x.get("short_description"), mask, 100),
+            hrows.append({"number": x.get("number"), "what": x.get("short_description"), "what_m": masked_excerpt(x.get("short_description"), mask, 100, keep_text),
                           "reason": reason, "group": x.get("group"),
                           "since": x["_hold_since"].astimezone(tz).strftime("%Y-%m-%d") if x.get("_hold_since") else "",
                           "days": bd, "src": x.get("_hold_src") or "", "late": late, "priority": prow_(x), "age": age_d(x)})
@@ -2462,9 +2463,9 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
                "by_group": sorted([dict(v, group=g) for g, v in cg_.items() if any(v[c_] for c_ in codes) or v["_reopened"]],
                                   key=lambda e: (-sum(e[c_] for c_ in codes) - e["_reopened"], e["group"]))[:10],
                "review_rows": [{"number": x.get("number"), "group": x.get("group"), "what": x.get("short_description"),
-                                "what_m": masked_excerpt(x.get("short_description"), mask, 100),
+                                "what_m": masked_excerpt(x.get("short_description"), mask, 100, keep_text),
                                 "resolved": _t(x["done_at"]).astimezone(tz).strftime("%Y-%m-%d"),
-                                "note": masked_excerpt(x.get("close_notes"), mask)}
+                                "note": masked_excerpt(x.get("close_notes"), mask, 160, keep_text)}
                                for x in sorted(nrp, key=lambda x: x.get("done_at") or "", reverse=True)[:50]], "review_n": len(nrp)}
         # D. resolved, not closed after close_after_days (auto-close not working)
         stale = sorted([x for x in inc if x.get("resolved_at") and not x.get("closed_at") and _t(x["resolved_at"])
@@ -2939,6 +2940,9 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
                      "issues": len(state.get("issues") or []), "fixes": len(state.get("fixes") or {}), "reason": str(o.get("act_reason") or ""),
                      "work_notes": dict(state.get("work_notes") or {}), "cached": int(state.get("cached") or 0)},
              "mask": dict(mask.get("counts") or {}), "summaries_by": "rules",
+             # 1.68.2: first-contact resolution shown (servicenow_insights_first_contact; off by default) - always worked out and
+             # stored in the report database, shown on the page, the email and the workbook only when on
+             "first_contact": bool(o.get("first_contact")),
              "slo": {"source": sla_src, "asked": sla_r.get("asked") or "", "note": sla_r.get("note") or "", "response_measured": resp_measured,
                      "response_skip": [[k_, v_["tickets"], v_["slas"]] for k_, v_ in resp_skipped.items()],
                      "open_cut": list(sla_r.get("open_cut") or []),
@@ -3039,11 +3043,16 @@ def servicenow_insights_lead_mail(model, email_leads=None, team_email_to=None):
     return {"to": to, "lines": lines}
 
 
-def masked_excerpt(text, mask, n=160):
+def masked_excerpt(text, mask, n=160, keep=False):
     """A close note's start for leadership's list: the names, phone numbers, addresses and hosts the mask knows replaced by
-    [person], [phone] ... - never the mask's own placeholders."""
-    t = PLACEHOLDER.sub(lambda m: "[%s]" % {"ID": "id"}.get(m.group(1), m.group(1).lower()), apply_mask(text, mask))
-    t = EMAIL.sub("[email]", PHONE.sub("[phone]", t))
+    [person], [phone] ... - never the mask's own placeholders. keep (1.68.2, servicenow_insights_excerpt_mask false): the
+    note's own text, its white space folded and cut at n - for the page, the email and the workbook only; what ACT reads is
+    masked on its own (servicenow_insights_descriptions, the fixes' batches) and the report database holds figures only."""
+    if keep:
+        t = str(text or "")
+    else:
+        t = PLACEHOLDER.sub(lambda m: "[%s]" % {"ID": "id"}.get(m.group(1), m.group(1).lower()), apply_mask(text, mask))
+        t = EMAIL.sub("[email]", PHONE.sub("[phone]", t))
     t = " ".join(t.split())
     return t if len(t) <= n else t[:n - 1].rsplit(" ", 1)[0] + "…"
 
@@ -3840,8 +3849,9 @@ def servicenow_insights_doc(model, key="all", opts=None):
                      "rows": [[g["group"], g["off"], g["of"], pf(g["pct"])] for g in mx.get("by_group") or []]})
     oc = s.get("outcomes") or {}
     if oc.get("by_group"):
-        secs.append({"title": "How incidents ended", "text": "Unable to resolve (%s): %s, the window before %s. First-contact resolution: %s." % (
-                         " + ".join(oc.get("unable_names") or []), pf(oc["unable"][0]), pf(oc["unable"][1]), pf((s.get("fcr") or {}).get("now"))),
+        secs.append({"title": "How incidents ended", "text": "Unable to resolve (%s): %s, the window before %s.%s" % (
+                         " + ".join(oc.get("unable_names") or []), pf(oc["unable"][0]), pf(oc["unable"][1]),
+                         (" First-contact resolution: %s." % pf((s.get("fcr") or {}).get("now"))) if model.get("first_contact") else ""),
                      "columns": ["Group", "Resolved"] + oc["names"] + ["Unable to resolve"],
                      "rows": [[g["group"], g["resolved"]] + [g["counts"].get(k_, 0) for k_ in oc["names"]] + [pf(g["unable"])] for g in oc["by_group"]]})
     # 1.9.0: the time in each state and the backlog's age, per group

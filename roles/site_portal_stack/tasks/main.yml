@@ -23,8 +23,7 @@
     fail_msg: >-
       Missing credentials. Attach a "Red Hat Ansible Automation Platform" credential of the portal's own account WITH A
       TOKEN (OAuth token: AAP > Users > the account > Tokens) to the job template. docs/SITE_PORTAL.md, "The AAP account".
-    quiet: true
-  no_log: true
+    quiet: true                           # 1.68.2: not no_log - the message holds no secret, and no_log hid it
 
 - name: Preflight | the path, and the network or the own nginx's files
   ansible.builtin.assert:
@@ -255,17 +254,27 @@
   changed_when: true
   no_log: true
 
+# 1.68.2: --replace only for a secret that is there (podman 4.9.4-rhel refuses it for a new one: "deleting secret : : no
+# secret data with ID"). The task is no_log (the value goes over stdin), so AAP would only say "censored": its result is
+# kept and the next task stops with podman's own words (stderr - never the value, never the command line)
 - name: Secret | create or replace
   ansible.builtin.command:
     argv: >-
-      {{ ['podman', 'secret', 'create'] + (['--replace'] if _portal_podman.stdout is version('4.7', '>=') else [])
+      {{ ['podman', 'secret', 'create']
+         + (['--replace'] if _portal_podman.stdout is version('4.7', '>=') and _portal_secret_state.rc == 0 else [])
          + ['--label', 'site.sha256=' ~ (portal_aap_token | trim | hash('sha256')), 'site-portal-aap-token', '-'] }}
     stdin: "{{ portal_aap_token | trim }}"
     stdin_add_newline: false
   when: _portal_secret_state.rc != 0 or (_portal_secret_state.stdout | trim) != (portal_aap_token | trim | hash('sha256'))
   changed_when: true                      # runs only when the secret is missing or differs
+  failed_when: false                      # said by the next task, with podman's reason
   no_log: true
   register: _portal_secret_set
+
+- name: Secret | podman made it
+  ansible.builtin.fail:
+    msg: "podman secret create site-portal-aap-token failed (rc {{ _portal_secret_set.rc }}): {{ _portal_secret_set.stderr | default('', true) | trim or 'no reason given' }}"
+  when: _portal_secret_set.rc | default(0) != 0
 
 # ---------------------------------------------------------------- configuration
 # The reports' banner, worked out as roles/site_email does (plugins/module_utils/site_banner.py), the portal's server as

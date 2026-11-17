@@ -1,5 +1,60 @@
 # Changelog
 
+## 1.68.2 — 2026-11-17
+
+**To set up: nothing required.** First contact is now off: `servicenow_insights_first_contact: true` brings it back.
+Optional: run the backfill once (`servicenow_insights_backfill_months: 12`) to work out whole the past months a short
+window left *so far* (they show as gaps until then). Your site may want `servicenow_insights_excerpt_mask: false`.
+
+**Ticket insights - Trends, Response met.** It fell to about 50% in August and September, October had no point, and
+November said "no run".
+
+- The cause: a run writes only the calendar months wholly inside its window, and the month so far. With a short window
+  (`servicenow_insights_days` 7 or 30, `servicenow_insights_months: 1`) the month that just ended was never completed.
+  It kept the last run's *so far*: a few days, or a few hours on the 1st. Response met over one or two tickets can be
+  50%, or none at all.
+- Now the first run after a month ends reads that month once, the backfill's way, and writes it complete. Only when the
+  database does not hold it complete. The next runs read nothing more.
+- The month just ended is the one before the report's own month, in `report_time_zone`. A 7-day run on the 15th writes
+  no month of its own and still completes it.
+- An ended month held only *so far* is a gap on Trends, said *not complete* in the tooltip and the table, never a few
+  days drawn as the month. A gap's tooltip says why: *no run*, *not measured*, *none yet* or *not complete*.
+- Not the cause: the ticket store. A full read and a store read give the same months.
+
+**First contact off by default.** `servicenow_insights_first_contact: false` leaves it out of At a glance, *How incidents
+ended*, the Custom view, the email and Trends. The figure is still worked out and written to the report database.
+`servicenow_insights_trend_metrics` picks the trend's lines (`[]`: all).
+
+**The side bar.** Only the branch of the page shown is open, the rest folded. A page opens with the section links in
+view, never scrolled down to the team. A team picked there opens with the side bar where it was, and a section lands
+under the bar. **«** puts the side bar away for wider tables, kept for every page (the browser key `site-report-rail`,
+as the reports' section rail).
+
+**The excerpts as written.** `servicenow_insights_excerpt_mask: false` shows the short descriptions and close notes in
+*Act on first* and the review list as written, on the page and in the email. The default stays `true` (names replaced),
+as the email leaves the site. What ACT reads stays masked, and the database holds figures only.
+
+**podman secrets on podman 4.9.4-rhel** (the site portal, STIG Manager, VMware ask). That podman refuses `secret create
+--replace` for a secret that is not there yet ("no secret data with ID"), so a first deployment failed.
+
+- `--replace` only for a secret that is there, on podman 4.7 or later. Before 4.7 a secret there is removed, then made
+  again (STIG Manager's role now does this too, when `stigman_replace_secrets` allows it).
+- A refused create now says why: the job stops with podman's own message. AAP showed only "censored" (the task is
+  `no_log`, as the value goes over stdin). The value, its hash and the command line are never shown.
+- The portal's first check (AAP's address and token) shows its message again. It holds no secret.
+
+**The site portal under a burst.** Its server listened with Python's default backlog of 5. With more connections at
+once, one could be reset before it was read (seen as a red test: 8 launches at the same moment). It now holds 128.
+
+**Tests:** `tests/podman_secrets/run_stack_secrets_test.sh` (new, in CI): each role's secret tasks as they are, a
+stand-in podman with 4.9.4-rhel's refusal - a new secret, a new value on 4.9.4-rhel and on 4.4, a refused create.
+`tests/test_servicenow_insights.py` Release1682: weekly 7-day runs reproduce the short months, then October
+completed equals the backfill's; the gaps; first contact off and on; the trend's lines; the excerpts both ways.
+`tests/test_report_hover.py` RealChromeInsightsIndex: the side bar in Chrome under a strict CSP. Each fails on 1.68.1.
+Release1682 also covers a 7-day run on the 15th (no month of its own), a run on the 1st, and the month's end in
+Europe/Berlin against UTC. `tests/portal/run_portal_test.sh` looks at the triage report's own page: the website's index
+names it too, and the folder's order picked the index on some file systems.
+
 ## 1.68.1 — 2026-11-17
 
 **To set up: optional - nothing changes until you choose it.** New settings have defaults: `stigman_link_style` (plain:

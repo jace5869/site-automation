@@ -95,7 +95,7 @@ button,input,select{font:inherit;color:inherit}
 .layout{display:grid;grid-template-columns:1fr;gap:24px;padding-block:22px 60px}
 @media (min-width:1100px){.layout{grid-template-columns:200px minmax(0,1fr)}}
 .toc{display:none}
-@media (min-width:1100px){.toc{display:block;position:sticky;top:90px;align-self:start}}
+@media (min-width:1100px){.toc{display:block;position:sticky;top:calc(var(--barh,78px) + 12px);align-self:start}}
 .toc a{display:flex;justify-content:space-between;gap:8px;padding:5px 10px;border-radius:7px;color:var(--fg-2);text-decoration:none;font-size:13px}
 .toc a:hover{background:var(--surface)}
 .toc a.on{background:var(--accent-soft);color:var(--accent);font-weight:700}
@@ -104,7 +104,7 @@ button,input,select{font:inherit;color:inherit}
 .toc .lbl:first-child{padding-top:0}
 
 main{display:grid;gap:22px;min-width:0}
-section.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);min-width:0;scroll-margin-top:90px}
+section.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);min-width:0;scroll-margin-top:calc(var(--barh,78px) + 12px)}
 .sh{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:6px 16px;padding:16px 20px 4px}
 .sh h2{font-size:16.5px;margin:0;text-wrap:balance}
 .sh .note{color:var(--muted);font-size:12.5px}
@@ -343,7 +343,7 @@ kbd{font:600 11px var(--mono);border:1px solid var(--line);border-bottom-width:2
 @media (max-width:640px){.tools{width:100%}.picker{flex:1 1 100%}.picker>summary{max-width:none;width:100%}.picker .pk-c{margin-left:auto}
   .pickpop{left:0;right:0;width:auto}.search{flex:1 1 auto}.search input{width:100%}}
 /* the side bar's teams (0.96.0): a filter above them, one line each (the whole name on hover), the current one marked */
-@media (min-width:1100px){.toc{max-height:calc(100vh - 110px);overflow:auto;overscroll-behavior:contain}}
+@media (min-width:1100px){.toc{max-height:calc(100vh - var(--barh,78px) - 24px);overflow:auto;overscroll-behavior:contain;scrollbar-width:thin}}
 .toc .tf{display:block;width:calc(100% - 8px);margin:2px 4px 6px;padding:5px 9px;border:1px solid var(--line);border-radius:7px;background:var(--surface-2);
   color:var(--fg);font:inherit;font-size:12.5px}
 .toc a.team{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -359,6 +359,23 @@ kbd{font:600 11px var(--mono);border:1px solid var(--line);border-bottom-width:2
 .toc a.lv1{font-weight:700;color:var(--fg)}.toc a.lv2{padding-left:16px;font-weight:600}.toc a.lv3{padding-left:30px}
 .toc details.lv2>summary{padding-left:6px}
 .toc details.tn.lv1>a.lv2{padding-left:28px}
+/* 1.68.2: the index put away - a check box the CSS acts on (no script needed); the script keeps the choice in the website's
+   own key (site-report-rail, as the atlas and brief rails), so one choice holds on every page */
+.toc .top{display:flex;align-items:flex-start;justify-content:space-between;gap:4px}.toc .top .lbl{padding-top:6px}
+#rail-hide{position:absolute;opacity:0;width:1px;height:1px;margin:0;pointer-events:none}
+.railx{flex:none;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;color:var(--muted);
+  border:1px solid transparent;cursor:pointer}
+.railx:hover{color:var(--fg);background:var(--surface);border-color:var(--line)}
+#rail-hide:focus-visible+.railx{outline:2px solid var(--accent);outline-offset:2px}
+.railx svg{width:16px;height:16px}.railx .ic-show{display:none}
+@media (min-width:1100px){
+  :is(:root:has(#rail-hide:checked),:root[data-rail="hidden"]) .layout{grid-template-columns:36px minmax(0,1fr)}
+  :is(:root:has(#rail-hide:checked),:root[data-rail="hidden"]) .toc>:not(.top),
+  :is(:root:has(#rail-hide:checked),:root[data-rail="hidden"]) .toc .top .lbl,
+  :is(:root:has(#rail-hide:checked),:root[data-rail="hidden"]) .railx .ic-hide{display:none}
+  :is(:root:has(#rail-hide:checked),:root[data-rail="hidden"]) .railx .ic-show{display:block}
+  :is(:root:has(#rail-hide:checked),:root[data-rail="hidden"]) .toc{overflow:visible}
+}
 .pickpop li.lv1 a{font-weight:700;color:var(--fg)}.pickpop li.lv2 a{padding-left:22px;font-weight:600}.pickpop li.lv3 a{padding-left:38px}
 .pickpop li.lv1:not(:first-child){border-top:1px solid var(--line-2);margin-top:4px;padding-top:4px}
 .crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:13px;color:var(--muted);margin:0 0 14px}
@@ -515,9 +532,22 @@ if(pk&&pq){pk.addEventListener("toggle",function(){if(!pk.open)return;pq.value="
  D.addEventListener("click",function(ev){if(pk.open&&!pk.contains(ev.target))pk.open=false})}
 var tf=D.getElementById("teamq"),tl=[].slice.call(D.querySelectorAll(".toc a.team")),toc=D.querySelector(".toc");
 if(tf){tf.addEventListener("input",function(){var t=tf.value.trim().toLowerCase(),k=0;tl.forEach(function(a){a.hidden=!hit(a,t);if(!a.hidden)k++});D.querySelector(".toc .tnone").hidden=k>0;
- toc.querySelectorAll("details.tn").forEach(function(d){var a=d.querySelector("summary a");d.hidden=!!(a&&a.hidden);if(t)d.open=true})});
+ toc.querySelectorAll("details.tn").forEach(function(d){var a=d.querySelector("summary a");d.hidden=!!(a&&a.hidden);d.open=t?true:d.hasAttribute("data-o")})});
  tf.addEventListener("keydown",function(ev){if(ev.key==="Escape"){tf.value="";tf.dispatchEvent(new Event("input"));tf.blur()}else if(ev.key==="Enter"){var f=tl.filter(function(a){return !a.hidden})[0];if(f){ev.preventDefault();location.href=f.href}}})}
-var cur=D.querySelector(".toc a.team[aria-current]");if(cur&&toc&&toc.scrollHeight>toc.clientHeight)toc.scrollTop=Math.max(0,cur.offsetTop-toc.clientHeight/2);
+/* 1.68.2: the sticky bar's height (--barh: where the index sits and where a section lands); the index kept where it was
+   when a team was picked in it (this tab only), else at its top - the sections first, never scrolled away to the page
+   shown (the bar's View says which it is); put away (Hide / Show) as the website's rails, one choice for every page
+   (site-report-rail) */
+var bar=D.querySelector(".bar");function barh(){if(bar)D.documentElement.style.setProperty("--barh",bar.offsetHeight+"px")}barh();addEventListener("resize",barh);
+var kept=null;
+try{kept=sessionStorage.getItem("site-insights-toc");sessionStorage.removeItem("site-insights-toc")}catch(e){}
+if(toc&&kept!==null&&!isNaN(+kept))toc.scrollTop=+kept;
+if(toc)toc.addEventListener("click",function(ev){var a=ev.target.closest&&ev.target.closest("a.team");if(a)try{sessionStorage.setItem("site-insights-toc",String(toc.scrollTop))}catch(e){}});
+var rh=D.getElementById("rail-hide");
+try{if(localStorage.getItem("site-report-rail")==="hidden")D.documentElement.setAttribute("data-rail","hidden")}catch(e){}
+if(rh){rh.checked=D.documentElement.getAttribute("data-rail")==="hidden";
+ rh.addEventListener("change",function(){if(rh.checked)D.documentElement.setAttribute("data-rail","hidden");else D.documentElement.removeAttribute("data-rail");
+  try{if(rh.checked)localStorage.setItem("site-report-rail","hidden");else localStorage.removeItem("site-report-rail")}catch(e){}})}
 D.addEventListener("keydown",function(ev){var tg=ev.target,typing=/^(INPUT|TEXTAREA|SELECT)$/.test(tg.tagName)||tg.isContentEditable;
  if(ev.key==="Escape"){tip.hidden=true;if(pk&&pk.open){pk.open=false;pk.querySelector("summary").focus()}return}
  if(typing||ev.ctrlKey||ev.metaKey||ev.altKey)return;
@@ -931,9 +961,11 @@ def month_label(mo, year=False):
     return MONTH_ABBR[int(mt.group(2)) - 1] + ((" " + mt.group(1)) if year else "")
 
 
-def month_chart(series, colors, labels, months, label, fmt=None, zoom=False, partial=()):
+def month_chart(series, colors, labels, months, label, fmt=None, zoom=False, partial=(), stale=(), known=None):
     """Monthly lines on one scale (1.13.0, the history): a month with no figure is a gap, a month alone a dot, the line
-    into a month so far (partial) dashed; every month has a hit area with its values (data-t, the page's tooltip)."""
+    into a month so far (partial) dashed; every month has a hit area with its values (data-t, the page's tooltip).
+    1.68.2: a gap says why - not complete (stale: an ended month held only so far), none yet (the month so far), not
+    measured (a run, no such figure: known, the months with any figure), no run."""
     fmt = fmt or n
     W, H, L, R, T, B = 640, 210, 44, 14, 12, 28
     lo, hi, step = axis(series, zoom)
@@ -974,8 +1006,10 @@ def month_chart(series, colors, labels, months, label, fmt=None, zoom=False, par
                     x(i), y(v), fill, colors[k] if months[i] in partial else "var(--surface)"))
     cw = (W - L - R) / float(nm)
     for i, mo in enumerate(months):
-        t = "%s%s<br>" % (e(month_label(mo, True)), " (so far)" if mo in partial else "") + "<br>".join(
-            "%s <b>%s</b>" % (e(labels[k]), e(fmt(s_[i]) if s_[i] is not None else "no run")) for k, s_ in enumerate(series))
+        why = ("not complete" if mo in stale else "none yet" if mo in partial else
+               "not measured" if known is None or mo in known else "no run")
+        t = "%s%s<br>" % (e(month_label(mo, True)), " (so far)" if mo in partial else (" (not complete)" if mo in stale else "")) + "<br>".join(
+            "%s <b>%s</b>" % (e(labels[k]), e(fmt(s_[i]) if s_[i] is not None else why)) for k, s_ in enumerate(series))
         attr, title = tip(t)
         out.append('<rect class="hit" x="%.1f" y="0" width="%.1f" height="%d" fill="transparent"%s>%s</rect>' % (
             max(0, x(i) - cw / 2), cw, H, attr, title))
@@ -998,9 +1032,12 @@ def trend_section(m, key, variant=""):
     keys = [k_[0] for k_ in metrics]
     months = [p[0] for p in pts]
     partial = set(t.get("partial") or [])
+    stale = set(t.get("stale") or [])            # 1.68.2: ended months held only so far - a gap, said
     have = [p for p in pts if any(v is not None for v in p[1:])]
     if not have:
         return None
+    known = set(p[0] for p in have)
+    listed = [p for p in pts if p[0] in known or p[0] in stale]
 
     def col(k):
         i = keys.index(k) + 1
@@ -1008,9 +1045,10 @@ def trend_section(m, key, variant=""):
 
     fmts = {"pct": lambda v: pct(v), "hours": lambda v: fh(v), "count": lambda v: n(v)}
     head = [("Month", "", "")] + [(e(lb), "n", "") for _k, lb, _kind in metrics]
-    rows = [("", [td(e(month_label(p[0], True)) + (' <span class="mut">so far</span>' if p[0] in partial else ""))] + [
+    rows = [("", [td(e(month_label(p[0], True)) + (' <span class="mut">so far</span>' if p[0] in partial else
+                                                   (' <span class="mut">not complete</span>' if p[0] in stale else "")))] + [
         td(fmts.get(kind, n)(p[1 + j]) if len(p) > 1 + j and p[1 + j] is not None else "–", "n")
-        for j, (_k, _lb, kind) in enumerate(metrics)]) for p in reversed(have)]
+        for j, (_k, _lb, kind) in enumerate(metrics)]) for p in reversed(listed)]
     tbl = table(head, rows, empty="No month yet.")
     full = int(t.get("full") or 12)
     count = len(have)
@@ -1027,6 +1065,8 @@ def trend_section(m, key, variant=""):
     figs = []
     if partial & set(months):
         note += " · dashed: the month so far"
+    if stale & set(months):
+        note += " · a gap: a month not complete"
     pct_series = [(k_, lb) for k_, lb, kind in metrics if kind == "pct" and k_ != "reopen_pct" and any(v is not None for v in col(k_))]
     cnt_series = [(k_, lb) for k_, lb, kind in metrics if kind == "count" and any(v is not None for v in col(k_))]
     if pct_series:
@@ -1045,12 +1085,12 @@ def trend_section(m, key, variant=""):
             above_zero([col(k_) for k_, _lb in pct_series]),
             legend([(lb, colors[i]) for i, (_k, lb) in enumerate(pct_series)]),
             month_chart([col(k_) for k_, _lb in pct_series], colors, [lb for _k, lb in pct_series], months,
-                        "Service levels per month", fmt=lambda v: pct(v), zoom=True, partial=partial), skip_line))
+                        "Service levels per month", fmt=lambda v: pct(v), zoom=True, partial=partial, stale=stale, known=known), skip_line))
     if cnt_series:
         figs.append('<div class="fig"><h3>Volume</h3><div class="cap">Incidents opened each month, and open at its end.</div>%s%s</div>' % (
             legend([(lb, colors[i]) for i, (_k, lb) in enumerate(cnt_series)]),
             month_chart([col(k_) for k_, _lb in cnt_series], colors, [lb for _k, lb in cnt_series], months,
-                        "Incidents and open tickets per month", partial=partial)))
+                        "Incidents and open tickets per month", partial=partial, stale=stale, known=known)))
     return section("trend", "Trends", note, '<div class="two even">%s</div>' % "".join(figs) +
                    '<details class="more"><summary>The months as a table</summary>%s</details>' % tbl)
 
@@ -1543,7 +1583,13 @@ def servicenow_insights_page(model, key="all", opts=None):
             ("problems", "Problem candidates", len(s["problems"]) or ""), ("handoffs", "Passed between groups", s["handoffs"]["count"] or ""),
             ("requests", "Most requested", min(len(s["requests"]), int(o.get("top_requests") or 10))), ("changes", "Changes", len(s["changes"]["rows"]) or ""),
             ("allstars", "All-stars", ""), ("notes", "Close notes", ""), ("kb", "KB drafts", len(s.get("kb") or []) or ""), ("method", "How this was made", "")]
-    nav = ['<nav class="toc" aria-label="Sections"><div class="lbl">On this page</div>']
+    nav = ['<nav class="toc" aria-label="Sections"><div class="top"><div class="lbl">On this page</div>'
+           '<input type="checkbox" id="rail-hide" aria-label="Put the index away (wider tables)"><label class="railx" for="rail-hide" '
+           'title="Put the index away - the tables get the width; again to bring it back">'
+           '<svg class="ic-hide" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 3.5L5 8l4.5 4.5M13 3.5L8.5 8l4.5 4.5" fill="none" '
+           'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+           '<svg class="ic-show" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3.5L11 8l-4.5 4.5M3 3.5L7.5 8 3 12.5" fill="none" '
+           'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></label></div>']
     for sid, label, cnt in toc:
         nav.append('<a href="#%s">%s <span class="c">%s</span></a>' % (sid, e(label), e(cnt)))
     if show_teams:
@@ -1551,12 +1597,20 @@ def servicenow_insights_page(model, key="all", opts=None):
               'aria-label="Filter %s" autocomplete="off" spellcheck="false">' % (("Units and teams", "units and teams") if m.get("org") else
                                                                                ("Sites, directorates, teams", "sites, directorates and teams"))]
         open_lv = []
-        for x in nodes:
+        # 1.68.2: a level folds; open only along the branch of the page shown (and its own level), the rest folded - a
+        # long tree no longer pushes the sections out of the index
+        cur = [i for i, x in enumerate(nodes) if x["key"] == s["key"]]
+        cur = cur[0] if cur else -1
+
+        def on_branch(i):
+            lv = nodes[i]["lv"]
+            return i == cur or (cur > i and all(y["lv"] > lv for y in nodes[i + 1:cur + 1]))
+        for i, x in enumerate(nodes):
             while open_lv and open_lv[-1] >= x["lv"]:
                 tr.append("</details>")
                 open_lv.pop()
-            if x["lv"] >= 1 and any(y["lv"] > x["lv"] for y in nodes[nodes.index(x) + 1:nodes.index(x) + 2]):
-                tr.append('<details class="tn lv%d" open><summary>%s</summary>' % (x["lv"], nlink(x, "team")))
+            if x["lv"] >= 1 and any(y["lv"] > x["lv"] for y in nodes[i + 1:i + 2]):
+                tr.append('<details class="tn lv%d"%s><summary>%s</summary>' % (x["lv"], ' open data-o="1"' if on_branch(i) else "", nlink(x, "team")))
                 open_lv.append(x["lv"])
             else:
                 tr.append(nlink(x, "team"))
@@ -1604,6 +1658,8 @@ def servicenow_insights_page(model, key="all", opts=None):
           {"pp": "-", "label": "Close notes that say what was done", "value": "%d%%" % q[0],
            "delta": delta(q[0], s["quality_prev"][0], False, True) if win.get("compare") and s.get("notes_graded") else "",
            "note": "%d%% vague · %d%% a stock phrase or empty" % (q[1], q[2])}]
+    if not m.get("first_contact"):         # 1.68.2: servicenow_insights_first_contact (off by default)
+        tl = [x for x in tl if x.get("pp") != "fcr"]
     by = s.get("summary_by") == "act"
     summ = ('<div class="act"><div class="acth"><span class="eyebrow">What the period says</span><span class="src %s">%s</span></div><ul>%s</ul></div>' % (
         "ai" if by else "none", "Written by ACT from the tables" if by else "From the numbers", "".join("<li>%s</li>" % e(x) for x in s["summary"])))
@@ -1779,11 +1835,13 @@ def servicenow_insights_page(model, key="all", opts=None):
                             '<p class="sub">%s</p>' % mixline +
                             table([("Group", "", "name"), ("Resolved", "n", "")] + [(k_, "n", "") for k_ in on_] + [("Unable to resolve", "n", "")], orow,
                                   sortable=True, empty="Nothing resolved in the period.") +
-                            '<div class="cap"><ul><li><b>Unable to resolve</b>: %s, of those resolved.</li><li><b>First-contact resolution</b>: %s.%s</li>'
+                            '<div class="cap"><ul><li><b>Unable to resolve</b>: %s, of those resolved.</li>%s'
                             '<li><b>Reopened within 7 days</b> of resolving: %s.</li></ul></div>' % (
-                                " + ".join(e(x) for x in oc.get("unable_names") or []), pct(fc.get("now")),
-                                (" The service desk: %s of %s." % (pct(fc["desk"][0]), n(fc.get("desk_n") or 0))) if fc.get("desk") else
-                                " For the service desk's own, name its groups in servicenow_insights_service_desk_groups.",
+                                " + ".join(e(x) for x in oc.get("unable_names") or []),
+                                # 1.68.2: first contact only with servicenow_insights_first_contact
+                                ("<li><b>First-contact resolution</b>: %s.%s</li>" % (pct(fc.get("now")),
+                                 (" The service desk: %s of %s." % (pct(fc["desk"][0]), n(fc.get("desk_n") or 0))) if fc.get("desk") else
+                                 " For the service desk's own, name its groups in servicenow_insights_service_desk_groups.")) if m.get("first_contact") else "",
                                 ("%s of %s" % (n(r7["count"]), n(r7["of"]))) if r7.get("measured") else "not measured (no state metric)")))
 
     # ---- 1.9.0: time in each state, the backlog's age and flow, ticket quality and hot spots, after hours, workload
@@ -2694,7 +2752,8 @@ def custom_view(m, o):
           [("resp", "Response met")] * ("resp" in cols) + [("sla", "Resolution met" if "resp" in cols else "SLAs met")] +
           [(k, lab) for k, lab, col in (("hops", "Open over %d hops" % int(c.get("hop_limit", 3)), "hops"), ("hold", "On hold now", "hold"),
                                         ("unable", "Unable to resolve", "out"), ("fcr", "First-contact resolution", "hops"),
-                                        ("tis", "Time in each state", "tis"), ("age", "Open over 10 business days", "ob")) if col in cols])
+                                        ("tis", "Time in each state", "tis"), ("age", "Open over 10 business days", "ob")) if col in cols
+                                        and (k != "fcr" or m.get("first_contact"))])      # 1.68.2: servicenow_insights_first_contact
     # the periods (1.10.0): calendar months and weeks, each against the one before; or any from / to
     pers = c.get("periods") or []
     cal = c.get("calendar") or {}

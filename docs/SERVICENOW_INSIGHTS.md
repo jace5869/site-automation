@@ -18,9 +18,9 @@ and simpler: the tiles and the main tables, a link to the page, and an Excel wor
 | **About to breach** (1.59.0) | first on every page: the tickets whose SLA breaches within 8 business hours, least time left first, and the breaches of the last 30 days. See *About to breach* below |
 | **At a glance** | the tickets read, open now (and at the start), the median time to resolve an incident, SLAs met, reopened (or *came back*, below), bare close notes, changes successful, incidents reassigned 3+ times - each against the window before; then **What the period says**: three or four sentences, written by ACT from the tables (or made from the numbers without it) |
 | **Teams side by side** (the site's page) | one row per team: its backlog over the period (Keeping up / Falling behind), open now with what it was, open over 30 days, median fix, SLA met, its close notes, its change tasks closed / open (1.2.0), its top issue - the team's name opens its own page |
-| **Act on first** (1.7.0) | what the process says to look at, as tiles and lists (the first 10 rows, the rest folded): **SLA at risk now** (open incidents past 75% of their SLA, or breached and still open - worst first), **open over 3 hops**, **Awaiting Caller over 6 business days**, **No Resolution Provided** in the period (each for leadership's review, the close note's start with names and numbers replaced), **resolved, not closed after 7 days** - below |
+| **Act on first** (1.7.0) | what the process says to look at, as tiles and lists (the first 10 rows, the rest folded): **SLA at risk now** (open incidents past 75% of their SLA, or breached and still open - worst first), **open over 3 hops**, **Awaiting Caller over 6 business days**, **No Resolution Provided** in the period (each for leadership's review, the close note's start with names and numbers replaced; as written with `servicenow_insights_excerpt_mask: false`), **resolved, not closed after 7 days** - below |
 | **Hops, on hold and resolution codes** (1.7.0) | per group: over the hop limit and the hops each group took, on hold now (no reason, Awaiting Caller too long), on hold by reason and business days, the resolution codes to look at and reopened |
-| **How incidents ended** (1.7.0) | the outcome mix (Fixed, Workaround, Duplicate, Known Error, No Resolution Provided) per group against the window before, **unable to resolve**, first-contact resolution (and the service desk's), reopened within 7 days |
+| **How incidents ended** (1.7.0) | the outcome mix (Fixed, Workaround, Duplicate, Known Error, No Resolution Provided) per group against the window before, **unable to resolve**, reopened within 7 days; first-contact resolution (and the service desk's) with `servicenow_insights_first_contact: true` |
 | **Time in each state** (1.9.0) | stacked bars per group: the average hours waiting to start, in progress and on hold, for the incidents resolved in the period. A table view adds resolved to closed. On hold: its share of the time, repeat holds, the reasons |
 | **Backlog age and flow** (1.9.0) | what is open now per group, by business days since opened (0-1, 2-5, 6-10, over 10). Each week's net: opened minus resolved |
 | **Ticket quality and hot spots** (1.9.0) | per group: no real category, no CI, a short description. The CIs with the most incidents and repeats. Problem links and ping-pong |
@@ -326,6 +326,15 @@ organization, so keep it in your own `all.yml`, never in the repository.
 - The **View** menu and the side bar show the whole tree, A to Z, with Unknown and Unassigned last. Each unit folds,
   and the filter opens a match's branch.
 
+**The side bar (1.68.2).** It stays in view and scrolls on its own when it is longer than the window.
+
+- Only the branch of the page shown is open; the other units are folded. Clear the filter and the folds are back.
+- A page opens with the section links in view. The bar's **View** says which page it is.
+- A team picked in the side bar opens with the side bar where it was. A section picked lands at its top, under the bar.
+- **«** at the top puts the side bar away, so the tables get the width; **»** brings it back. The choice holds on every
+  page of the website (the browser keeps it, as the reports' section rail).
+- Narrower than 1100 px there is no side bar: the **View** menu does the same.
+
 ### The Custom view
 
 The All page's Custom view (`servicenow_insights_custom_view: true`) works out the figures for any mix of units and
@@ -335,7 +344,7 @@ groups. Tick them, then **Apply**.
 - Every level says how many of its groups are ticked (*3 / 12*), and every group how many tickets it opened.
 - The figures: tickets opened, incidents resolved, open now (and at the start), the median time to resolve an
   incident and the SLAs met. Where the tickets carry them (1.7.0): Response met, Resolution met, open over the hop
-  limit, on hold now, unable to resolve and first-contact resolution.
+  limit, on hold now, unable to resolve, and first-contact resolution (with `servicenow_insights_first_contact: true`).
 - A table lists the groups ticked. Every figure follows the same rules as the rest of the page.
 - The address keeps the choice (`#cv=0-3,7`), so you can copy it to share the view. Each unit's page links to the
   Custom view with its own groups ticked.
@@ -433,7 +442,8 @@ from / to and phone select. No groups to tick: each page takes its own tickets. 
 The page opens on *The window*, exactly as written. A period chosen changes:
 
 - **At a glance**: tickets, open now (or at the period's end), the median time to resolve, response and resolution
-  met, first-contact resolution and unable to resolve. Each is compared with the period before, as in the Custom view.
+  met, unable to resolve, and first-contact resolution when it is on. Each is compared with the period before, as in the
+  Custom view.
 - **Keeping up**: its first chart, as opened and incidents resolved per day, week or month.
 
 Everything else stays on the window and says *whole window* in its heading while a period is chosen. These tiles do
@@ -557,6 +567,12 @@ numbers, 10-digit numbers (EDIPIs), and host names. The answers come back with t
 values back before the page is written. ACT also masks host names, addresses and accounts itself. The count of each kind
 is under *How this was made*. Add your own words to replace with `servicenow_insights_mask_names` (a project, a building);
 a word that looks like a host name but is not (a product, `rhel9`) goes in `servicenow_insights_mask_keep`.
+
+**The excerpts in the lists (1.68.2).** *Act on first* and the review list show the start of each short description and
+close note. By default the names, phone numbers, addresses and hosts are replaced there too (`[person]`, `[host]` ...),
+since the email leaves the site. `servicenow_insights_excerpt_mask: false` shows them as written, on the page and in
+the email. What ACT reads stays masked, and the report database holds figures only, either way. The workbook lists
+every ticket's own text, as before.
 
 **The work notes (0.96.0).** Only for the top issues ACT writes a fix for, only their incidents resolved in the window
 or the one before (200 per issue at most), read-only: GET `sys_journal_field` with `element=work_notes`,
@@ -858,7 +874,9 @@ How each is read:
 - **Unable to resolve**: `servicenow_insights_unable_outcomes` (Known Error + No Resolution Provided), of those
   resolved.
 - **First-contact resolution**: resolved without being reassigned. For the service desk's own, name its groups in
-  `servicenow_insights_service_desk_groups`.
+  `servicenow_insights_service_desk_groups`. Off by default (1.68.2): reassignment is not first contact on every desk.
+  `servicenow_insights_first_contact: true` shows it on the pages, in the email and on the trends. The figure is always
+  written to the report database, so its history is there when you turn it on.
 - **Reopened within 7 days** needs the state metric.
 
 ## The life cycle and the flow (1.9.0)

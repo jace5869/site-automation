@@ -34,6 +34,22 @@ A month is keyed by the instance, the month and the org node. The newest run tha
 weekly run, a monthly run and a 3-month window all fill the same points. Nothing is counted twice. A month *so far*
 never replaces a complete month.
 
+**The month just ended (1.68.2).** A short window (`servicenow_insights_days: 7` or `30`, or
+`servicenow_insights_months: 1`) holds no whole month. Before 1.68.2 the month that just ended kept the last run's *so
+far*: a few days, or a few hours on the 1st. Now the first run after a month ends reads that month once, the backfill's
+way, and writes it complete:
+
+- only when the database does not hold it complete and the run's own window does not hold it whole;
+- the whole calendar month, nothing to compare, without the ticket store (one more read of one month);
+- in the same write as the run's own months. The next runs find it complete and read nothing more.
+
+The month just ended is the one before the report's own month: the month the window ends in, in `report_time_zone`. A
+7-day run on the 15th writes no month of its own and still completes it. On Trends only the report's own month can be
+*so far*. An earlier month held only *so far* is a gap, said *not complete*.
+
+The job output says `the month just ended, not held complete`, then the read. Not read (ServiceNow refused, records
+cut): one warning line, and the next run tries again. A run with `servicenow_insights_until` set completes nothing.
+
 ## Set it up
 
 The setup script [`tools/report-db-setup.sh`](../tools/report-db-setup.sh) does the host's part (steps 1 to 3). Copy it
@@ -176,6 +192,9 @@ The job prints each month as it is written, so you can follow it.
 A table cut inside the window at `servicenow_insights_max_records` (1.16.0): every month can be short, so the backfill
 writes nothing, and says so. Raise the cap for the backfill launch and run it again.
 
+**After 1.68.2.** Months that ended before 1.68.2 and were held only *so far* show as gaps (*On the pages*). Run the
+backfill once (`servicenow_insights_backfill_months: 12`) to work them out whole.
+
 ## Is it writing?
 
 Three ways to know (1.15.0).
@@ -232,9 +251,14 @@ It shows the newest run per instance and period. The newest write's time is in `
 
 Each page has a **Trends** section after *At a glance*:
 
-- **Service levels**: SLA met, response met, first contact, in %.
+- **Service levels**: SLA met and response met, in %. First contact too, with `servicenow_insights_first_contact: true`
+  (1.68.2; off by default, always stored).
 - **Volume**: incidents opened each month, and open at its end.
 - **The months as a table**, with the median time to resolve and reopened.
+
+`servicenow_insights_trend_metrics` (1.68.2) picks the lines and table columns: `sla_met_pct`, `response_met_pct`,
+`fcr_pct`, `incidents`, `backlog`, `median_resolve_h`, `reopen_pct`. `[]` (the default) shows all of them. Another name
+stops the job with the list.
 
 What it shows depends on the months kept:
 
@@ -243,8 +267,17 @@ What it shows depends on the months kept:
 - **2 to 11 months**: the lines, titled "N months so far".
 - **12 months**: "the last 12 months".
 
-A month with no run is a gap in the line. The month so far is drawn dashed. The pages are static. They never ask the
-database anything: the job reads it and draws the lines into each page.
+A month with no value is a gap in the line, never a 0. The tooltip says why:
+
+| Tooltip | Meaning |
+|---|---|
+| *no run* | No run holds the month. |
+| *not measured* | A run holds the month, without this figure (no response SLA done that month). |
+| *none yet* | The month so far, nothing done yet. |
+| *not complete* | The month ended but is held only *so far* (1.68.2). The table says *not complete* too. |
+
+The month so far is drawn dashed. The pages are static. They never ask the database anything: the job reads it and
+draws the lines into each page.
 
 ## The tables and views
 
@@ -1093,6 +1126,8 @@ with a few hundred groups adds a few MB a month. The ticket store holds about 2 
 | `servicenow_insights_db_required` | `false` | `true`: no credential, or the database not reached, fails the job |
 | `servicenow_insights_db_create` | `true` | Make the tables and views on the first run. `false`: made by hand (*Making the tables by hand*) |
 | `servicenow_insights_db_months` | `12` | The months the trends show |
+| `servicenow_insights_trend_metrics` | `[]` | The trends' lines and columns (1.68.2). `[]`: all of them |
+| `servicenow_insights_first_contact` | `false` | `true`: first contact shown, on the trends too (1.68.2) |
 | `servicenow_insights_db_timeout` | `10` | Seconds to connect |
 | `servicenow_insights_backfill_months` | `0` | `> 0`: read and write that many past months, then stop |
 | `servicenow_insights_db_check` | `false` | `true`: only check the database, read only, then stop (*Is it writing?*) |

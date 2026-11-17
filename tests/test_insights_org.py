@@ -184,7 +184,7 @@ class ThePages(unittest.TestCase):
         h = P.servicenow_insights_page(self.m, "SITEA - Ops - Desk - SPLIT", {"links": T.page_links(self.m, "../../../../../")})
         self.assertIn('class="team lv5"', h)                              # the team under four levels
         self.assertIn("Units and teams", h)
-        self.assertIn('<details class="tn lv4" open>', h)
+        self.assertIn('<details class="tn lv4" open data-o="1">', h)         # 1.68.2: open along the branch shown
         self.assertRegex(h, r'All</a>.*SITEA</a>.*SPLIT</a>.*Operations</a>.*EUCS</a>.*<b>SITEA - Ops - Desk - SPLIT</b>')
 
     def test_a_unit_links_to_its_custom_view(self):

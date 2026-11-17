@@ -1039,6 +1039,13 @@ def make_handler(cfg, portal, static_dir):
     return Handler
 
 
+class PortalServer(ThreadingHTTPServer):
+    """The portal's HTTP server. 1.68.2: socketserver listens with a backlog of 5 - a burst of more connections at once
+    (nginx passing several people's clicks, a page's requests) could be reset before they were read; 128 holds them."""
+    request_queue_size = 128
+    daemon_threads = True
+
+
 def serve(cfg):
     portal = Portal(cfg)
     if cfg.tz_note:
@@ -1051,8 +1058,7 @@ def serve(cfg):
         portal.log.add({"event": "start", "aap": "ok", "account": portal.aap.user,
                         "actions": {k: (v[1] or "ok") for k, v in sorted(res.items())}})
     host, _, port = cfg.listen.rpartition(":")
-    httpd = ThreadingHTTPServer((host or "0.0.0.0", int(port)), make_handler(cfg, portal, os.path.join(APP, "static")))
-    httpd.daemon_threads = True
+    httpd = PortalServer((host or "0.0.0.0", int(port)), make_handler(cfg, portal, os.path.join(APP, "static")))
     httpd.serve_forever()
 
 

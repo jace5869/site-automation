@@ -549,7 +549,7 @@ class Page(unittest.TestCase):
         self.assertIn('<li class="lv0 all"><a href="latest.html" data-n="all assignment groups all assignment groups" data-c="" '
                       'title="All assignment groups" aria-current="page">All assignment groups</a></li>', h)
         self.assertIn('<li class="lv3"><a href="ops/other/windows/latest.html" data-n="ops - windows windows" data-c="ops other" title="Ops - Windows">Windows</a></li>', h)
-        self.assertIn('<details class="tn lv1" open><summary><a class="team lv1" href="ops/latest.html"', h)
+        self.assertIn('<details class="tn lv1"><summary><a class="team lv1" href="ops/latest.html"', h)   # 1.68.2: folded off the branch
         self.assertIn('<a class="team lv3" href="ops/other/windows/latest.html" data-n="ops - windows windows" data-c="ops other" title="Ops - Windows">Windows</a>', h)
         self.assertIn('<input class="tf js" id="teamq" type="search"', h)
         self.assertIn('<nav class="crumbs" aria-label="Where this page is"><b>All</b></nav>', h)
@@ -1097,7 +1097,8 @@ class LeadingIndicators(unittest.TestCase):
 
     def test_the_site(self):
         r, mask = site()["r"], site()["mask"]
-        m = F.servicenow_insights_model(r, None, mask, dict(OPTS, service_desk_groups=["Ops - Service Desk"]))
+        # 1.68.2: first contact shown only with servicenow_insights_first_contact (off by default - Release1682)
+        m = F.servicenow_insights_model(r, None, mask, dict(OPTS, service_desk_groups=["Ops - Service Desk"], first_contact=True))
         s = m["scopes"]["all"]
         rk = s["at_risk"]
         self.assertTrue(rk["count"] > 0 and rk["breached"] > 0 and rk["read"])
@@ -3545,6 +3546,235 @@ class ResponseSkip(unittest.TestCase):
         self.assertIn(cap.endswith("so the change shows."), (True, False))
         bl = [w["backlog"] for w in site()["model"]["scopes"]["all"]["weeks"]]
         self.assertEqual("does not start at zero" in cap, P.axis([bl], True)[0] > 0)
+
+
+class Release1682(unittest.TestCase):
+    """1.68.2: Response met on Trends dropped and had no October and no November point - a short window (7 days) wrote
+    only "this month so far", so each ended month kept the last run's first days; the month just ended is now read once
+    the backfill's way and written complete, and an ended month held only "so far" is a gap ("not complete"). First
+    contact is off by default everywhere it is shown (servicenow_insights_first_contact), still stored; Trends' lines are
+    servicenow_insights_trend_metrics."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.x = site()
+        cls.r = cls.x["r"]
+        cls.m = cls.x["model"]
+
+    @staticmethod
+    def write(db, runs):
+        """The report database's rule (site_insights_db.write_run): a month replaced by the newest run that holds it, a
+        complete month never by a month so far; a cut run never written."""
+        for x in runs["runs"]:
+            run = x["run"]
+            if run["period"] != "month" or x.get("cut"):
+                continue
+            mo = run["month"]
+            if mo in db and not db[mo]["partial"] and run["partial"]:
+                continue
+            db[mo] = {"partial": bool(run["partial"]), "figs": dict((k, v) for nd, var, k, lab, v in x["figures"] if nd == "all" and not var and not lab)}
+
+    @staticmethod
+    def hist(db):
+        return {"ok": True, "months_kept": len(db), "rows": [[mo, mo + "-28 00:00:00", "all", "", k, v, 1 if d["partial"] else 0]
+                                                              for mo, d in sorted(db.items()) for k, v in d["figs"].items() if k in H.TREND_METRICS]}
+
+    def weekly(self, now):
+        win = rd.window(6, 7, "", True, "", datetime.datetime.strptime(now, "%Y-%m-%d %H:%M").replace(tzinfo=rd.UTC))
+        r = dict(self.r, window=win)
+        return r, H.servicenow_insights_db_runs(r, self.m, OPTS)
+
+    def test_a_weekly_run_never_completed_the_month_that_ended(self):
+        """The user's picture: weekly 7-day runs. Before 1.68.2 September and October stayed at their first days."""
+        db = {}
+        for day in ("2026-09-01", "2026-09-08", "2026-09-15", "2026-09-22", "2026-09-29", "2026-10-06", "2026-10-13", "2026-10-20", "2026-10-27"):
+            self.write(db, self.weekly(day + " 06:00")[1])
+        self.assertEqual(sorted(db), ["2026-09", "2026-10"])
+        self.assertTrue(db["2026-09"]["partial"] and db["2026-10"]["partial"])            # never complete
+        full = dict((f[2], f[4]) for f in H.month_run(self.r, "2026-10", OPTS)["figures"] if f[:2] == ["all", ""] and not f[3])
+        self.assertLess(db["2026-10"]["figs"]["incidents"], full["incidents"] / 2)          # October = its first 6 days
+        self.assertNotEqual(db["2026-10"]["figs"].get("response_met_pct"), full["response_met_pct"])
+        # the first run of November: October is not held complete - it is read once, the backfill's way, and written
+        now = datetime.datetime(2026, 11, 3, 6, 0, tzinfo=rd.UTC)
+        _r, runs = self.weekly("2026-11-03 06:00")
+        self.assertEqual([x["run"]["month"] for x in runs["runs"][1:]], ["2026-11"])         # the window itself: November so far only
+        mo = H.servicenow_insights_month_to_complete(runs, self.hist(db))
+        self.assertEqual(mo, "2026-10")
+        cm = dict(self.r, window=rd.window(1, 0, "month_start", False, "", now))
+        runs = H.servicenow_insights_complete_month(cm, mo, OPTS, runs)
+        self.assertEqual([(x["run"]["month"], x["run"]["partial"]) for x in runs["runs"][1:]], [("2026-11", True), ("2026-10", False)])
+        self.write(db, runs)
+        self.assertFalse(db["2026-10"]["partial"])
+        self.assertEqual(db["2026-10"]["figs"], full)                                      # the same as the backfill's October
+        # the next week: held complete, nothing more to read; a partial October never replaces it
+        _r, runs = self.weekly("2026-11-10 06:00")
+        self.assertEqual(H.servicenow_insights_month_to_complete(runs, self.hist(db)), "")
+        t = H.servicenow_insights_trend(dict(self.m, window=_r["window"]), self.hist(db), OPTS, runs)["trend"]
+        i = [k for k, _l, _k in t["metrics"]].index("response_met_pct") + 1
+        pts = dict((p[0], p[i]) for p in t["nodes"]["all"])
+        self.assertEqual(t["months"], ["2026-09", "2026-10", "2026-11"])
+        self.assertEqual(pts["2026-10"], full["response_met_pct"])
+        # September: ended, held only so far - a gap that says so, never its first days drawn as the month
+        self.assertIsNone(pts["2026-09"])
+        self.assertEqual((t["stale"], t["partial"]), (["2026-09"], ["2026-11"]))
+        h = P.servicenow_insights_page(dict(self.m, trend=t), "all", {"links": page_links(self.m)})
+        sec = h[h.index('id="trend"'):]
+        sec = sec[:sec.index("</section>")]
+        self.assertIn("Sep 2026 (not complete)&lt;br&gt;SLA met &lt;b&gt;not complete", sec)
+        self.assertIn("Nov 2026 (so far)&lt;br&gt;SLA met &lt;b&gt;none yet", sec)        # nothing done yet: never 0
+        self.assertIn("a gap: a month not complete", sec)
+        self.assertIn('Sep 2026 <span class="mut">not complete</span>', sec)
+
+    def test_which_month_to_complete(self):
+        mine = lambda *ms: {"runs": [{"run": {"period": "1m", "month": ms[-1][0]}}] + [  # noqa: E731
+            {"run": {"period": "month", "month": mo, "partial": p}} for mo, p in ms]}
+        hist = lambda rows: {"ok": True, "rows": rows}                                    # noqa: E731
+        f = H.servicenow_insights_month_to_complete
+        self.assertEqual(f(mine(("2026-11", True)), hist([])), "2026-10")                  # nothing held
+        self.assertEqual(f(mine(("2026-11", True)), hist([["2026-10", "", "all", "", "incidents", 5.0, 0]])), "")
+        self.assertEqual(f(mine(("2026-11", True)), hist([["2026-10", "", "all", "", "incidents", 5.0, 1]])), "2026-10")
+        self.assertEqual(f(mine(("2026-10", False), ("2026-11", True)), hist([])), "")      # this run's window holds it
+        self.assertEqual(f(mine(("2026-01", True)), hist([])), "2025-12")
+        self.assertEqual(f(mine(("2026-11", True)), {"ok": False}), "")                     # the database not read
+        cut = {"runs": [{"run": {"period": "month", "month": "2026-10", "partial": False}, "cut": True}, {"run": {"period": "month", "month": "2026-11", "partial": True}}]}
+        self.assertEqual(f(cut, hist([])), "2026-10")
+        runs = {"runs": [{"run": {"period": "month", "month": "2026-11", "partial": True}}]}
+        self.assertEqual(H.servicenow_insights_complete_month({"ok": False}, "2026-10", OPTS, runs), runs)
+        cm = dict(self.r, window=rd.window(1, 0, "month_start", False, "", datetime.datetime(2026, 11, 3, 6, 0, tzinfo=rd.UTC)))
+        self.assertEqual(H.servicenow_insights_complete_month(cm, "2026-09", OPTS, runs), runs)     # not in what was read
+        cutr = dict(cm, tables=[{"table": "incident", "window_cut": True, "cut": "2026-10-20 00:00:00"}])
+        self.assertTrue(H.servicenow_insights_complete_month(cutr, "2026-10", OPTS, runs)["runs"][-1]["cut"])
+
+    def test_a_run_that_writes_no_month(self):
+        """Review of 1.68.2: a 7-day run on the 15th starts after the 1st, so it writes no month at all. The month just ended
+        comes from the report's own month (its window's end, local time), never from the months this run wrote."""
+        db = {}
+        for day in ("2026-10-06", "2026-10-27"):
+            self.write(db, self.weekly(day + " 06:00")[1])
+        self.assertTrue(db["2026-10"]["partial"])                                          # October: only so far
+        r, runs = self.weekly("2026-11-15 06:00")
+        self.assertEqual([x["run"]["period"] for x in runs["runs"]], ["7d"] if runs["runs"][0]["run"]["period"] == "7d" else [runs["runs"][0]["run"]["period"]])
+        self.assertEqual(len(runs["runs"]), 1)                                              # no month run at all
+        self.assertEqual(H.servicenow_insights_month_to_complete(runs, self.hist(db), r), "2026-10")
+        self.assertEqual(H.servicenow_insights_month_to_complete(runs, self.hist(db)), "")  # without the window: the old miss
+        # not completed this run (ServiceNow not read): October ended - a gap said "not complete", never "so far"
+        t = H.servicenow_insights_trend(dict(self.m, window=r["window"]), self.hist(db), OPTS, runs)["trend"]
+        self.assertEqual((t["months"], t["stale"], t["partial"]), (["2026-10", "2026-11"], ["2026-10"], []))
+        self.assertTrue(all(p[1:] == [None] * (len(p) - 1) for p in t["nodes"]["all"]))
+        # completed: October whole, the backfill's
+        cm = dict(self.r, window=rd.window(1, 0, "month_start", False, "", datetime.datetime(2026, 11, 15, 6, 0, tzinfo=rd.UTC)))
+        runs = H.servicenow_insights_complete_month(cm, "2026-10", OPTS, runs)
+        self.write(db, runs)
+        self.assertFalse(db["2026-10"]["partial"])
+        t = H.servicenow_insights_trend(dict(self.m, window=r["window"]), self.hist(db), OPTS, runs)["trend"]
+        self.assertEqual((t["stale"], t["partial"]), ([], []))
+
+    def test_the_first_of_the_month(self):
+        """A run on the 1st: the month just ended is the one before, its window holds November's first hours only."""
+        db = {"2026-10": {"partial": True, "figs": {"incidents": 3.0}}}
+        r, runs = self.weekly("2026-11-01 06:00")
+        self.assertEqual([x["run"]["month"] for x in runs["runs"][1:]], ["2026-11"])
+        self.assertEqual(H.servicenow_insights_month_to_complete(runs, self.hist(db), r), "2026-10")
+        t = H.servicenow_insights_trend(dict(self.m, window=r["window"]), self.hist(db), OPTS, runs)["trend"]
+        self.assertEqual((t["stale"], t["partial"]), (["2026-10"], ["2026-11"]))
+
+    def test_the_month_boundary_is_local(self):
+        """23:30 UTC on 31 October is 00:30 on 1 November in Europe/Berlin: there October has ended, in UTC it has not."""
+        now = datetime.datetime(2026, 10, 31, 23, 30, tzinfo=rd.UTC)
+        db = {"2026-09": {"partial": False, "figs": {"incidents": 9.0}}, "2026-10": {"partial": True, "figs": {"incidents": 3.0}}}
+        got = {}
+        for tz in ("Europe/Berlin", "UTC"):
+            r = dict(self.r, window=rd.window(6, 7, "", True, tz, now))
+            runs = H.servicenow_insights_db_runs(r, self.m, OPTS)
+            t = H.servicenow_insights_trend(dict(self.m, window=r["window"]), self.hist(db), OPTS, runs)["trend"]
+            got[tz] = (H.report_month(r["window"]), H.servicenow_insights_month_to_complete(runs, self.hist(db), r), "2026-10" in t["stale"])
+        self.assertEqual(got["Europe/Berlin"], ("2026-11", "2026-10", True))
+        self.assertEqual(got["UTC"], ("2026-10", "", False))                              # September held complete; October so far
+
+    def test_the_tasks_complete_the_month(self):
+        with open(os.path.join(HERE, "..", "roles", "servicenow_insights", "tasks", "db.yml")) as f:
+            db = f.read()
+        a = db.index("servicenow_insights_month_to_complete(_sni_hist, _sni)")
+        b = db.index("register: _sni_cm")
+        read = db[a:b]
+        for t in ("months: 1", "days: 0", "until: month_start", "compare: false"):
+            self.assertIn(t, read)
+        self.assertNotIn("store_in", read)                                                  # the backfill's way, no ticket store
+        self.assertLess(db.index("register: _sni_hist"), a)
+        self.assertLess(db.index("servicenow_insights_complete_month(_sni_complete, _sni_opts, _sni_db_runs)"), db.index("servicenow_insights_trend("))
+        self.assertIn("and not ansible_check_mode", db[b:db.index("servicenow_insights_complete_month(")])
+
+    def test_first_contact_off_by_default(self):
+        with open(os.path.join(HERE, "..", "roles", "servicenow_insights", "defaults", "main.yml")) as f:
+            d = f.read()
+        self.assertIn("\nservicenow_insights_first_contact: false\n", d)
+        self.assertIn("\nservicenow_insights_trend_metrics: []\n", d)
+        import test_insights_org as O                                                       # the org map: the Custom view
+        x = site(sites=True)
+        o = dict(HIER_OPTS, service_desk_groups=["Ops - Service Desk"])
+        for on in (False, True):
+            m = O.model(service_desk_groups=["Ops - Service Desk"], first_contact=on)
+            self.assertIsNotNone(m["scopes"]["all"]["fcr"]["now"])                          # always worked out ...
+            rows = H.servicenow_insights_db_rows(m, {})
+            self.assertTrue(any(f[2] == "fcr_pct" for f in rows["figures"]))               # ... and stored
+            h = P.servicenow_insights_page(m, "all", dict(o, links=page_links(m)))
+            self.assertIn('id="cv-data"', h)
+            doc = F.servicenow_insights_doc(m, "all", o)
+            ended = [s_ for s_ in doc["sections"] if s_["title"] == "How incidents ended"][0]["text"]
+            for shown in ("First-contact resolution", 'id="cv-fcr-l"', 'data-pp="fcr"'):
+                self.assertEqual(shown in h, on, shown)
+            self.assertEqual("First-contact" in ended, on)
+            self.assertNotIn("First-contact", json.dumps(F.servicenow_insights_xlsx(m, x["r"], None, x["mask"], o)))   # the workbook: never had it
+        self.assertNotIn("fcr_pct", H.trend_keys({}))
+        self.assertIn("fcr_pct", H.trend_keys({"first_contact": True}))
+        t = H.servicenow_insights_trend(self.m, {"ok": True, "rows": [["2026-10", "", "all", "", "fcr_pct", 70.0, 0],
+                                                                      ["2026-10", "", "all", "", "sla_met_pct", 90.0, 0]]}, {})["trend"]
+        self.assertEqual([k for k, _l, _k in t["metrics"]], ["sla_met_pct", "response_met_pct", "incidents", "backlog", "median_resolve_h", "reopen_pct"])
+        self.assertEqual(len(t["nodes"]["all"][0]), 1 + len(t["metrics"]))
+        self.assertNotIn("First contact", P.servicenow_insights_page(dict(self.m, trend=t), "all", {"links": page_links(self.m)}))
+
+    def test_the_trend_lines(self):
+        f = H.trend_keys
+        self.assertEqual(f({"trend_metrics": ["incidents", "sla_met_pct"]}), ["sla_met_pct", "incidents"])     # TREND's order
+        self.assertEqual(f({"trend_metrics": "sla_met_pct, fcr_pct"}), ["sla_met_pct"])                       # first contact off
+        self.assertEqual(f({"trend_metrics": ["sla_met_pct", "fcr_pct"], "first_contact": True}), ["sla_met_pct", "fcr_pct"])
+        with self.assertRaisesRegex(ValueError, "servicenow_insights_trend_metrics: first_contact is not a trend line"):
+            f({"trend_metrics": ["first_contact"]})
+        t = H.servicenow_insights_trend(self.m, {"ok": True, "rows": [["2026-09", "", "all", "", "response_met_pct", 50.0, 0],
+                                                                      ["2026-10", "", "all", "", "sla_met_pct", 90.0, 0]]},
+                                        {"trend_metrics": ["sla_met_pct", "incidents"]})["trend"]
+        self.assertEqual(t["nodes"]["all"], [["2026-09", None, None], ["2026-10", 90.0, None]])
+        h = P.servicenow_insights_page(dict(self.m, trend=t), "all", {"links": page_links(self.m)})
+        sec = h[h.index('id="trend"'):]
+        self.assertNotIn("Response met", sec[:sec.index("</section>")])
+
+    def test_the_excerpts_as_written(self):
+        """servicenow_insights_excerpt_mask (true by default): the lists' excerpts with [person], [host] ...; false: as written
+        on the page and in the email. ACT's descriptions and the report database's rows are the same either way."""
+        with open(os.path.join(HERE, "..", "roles", "servicenow_insights", "defaults", "main.yml")) as f:
+            self.assertIn("\nservicenow_insights_excerpt_mask: true\n", f.read())
+        x = self.x
+        out = {}
+        for keep in (True, False):
+            m = F.servicenow_insights_model(x["r"], None, x["mask"], dict(OPTS, excerpt_mask=keep))
+            s = m["scopes"]["all"]
+            rows = s["codes"]["review_rows"] + s["hops"]["rows"] + s["hold"]["rows"]
+            doc = json.dumps(F.servicenow_insights_doc(m, "all", OPTS))
+            page = P.servicenow_insights_page(m, "all", {"links": page_links(m)})
+            out[keep] = (rows, doc, page, F.servicenow_insights_descriptions(x["r"], x["mask"], OPTS, None), H.servicenow_insights_db_runs(x["r"], m, OPTS))
+        masked, plain = out[True][0], out[False][0]
+        self.assertTrue(any("[person]" in r["what_m"] for r in masked) and any("[host]" in r["what_m"] for r in masked))
+        self.assertFalse(any(re.search(r"\[(person|host|phone|email|id)\]", (r["what_m"] or "") + (r.get("note") or "")) for r in plain))
+        for r in plain:
+            want = " ".join(str(r["what"] or "").split())
+            self.assertEqual(r["what_m"], want if len(want) <= 100 else r["what_m"])
+            self.assertTrue(len(r["what_m"]) <= 100)
+        p = [r for r in plain if "Horizon session stuck connecting for" in r["what_m"]][0]
+        self.assertIn(p["what_m"], out[False][1])                                          # the email: as written
+        self.assertNotIn(p["what_m"], out[True][1])
+        self.assertIn("for [person]", out[True][1])
+        self.assertEqual(out[True][3], out[False][3])                                      # what ACT reads: the same, masked
+        self.assertEqual(json.dumps(out[True][4]), json.dumps(out[False][4]))              # the database: figures only, the same
 
 
 if __name__ == "__main__":

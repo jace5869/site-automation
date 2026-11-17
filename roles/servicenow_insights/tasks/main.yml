@@ -121,6 +121,11 @@
       outcome_map: "{{ servicenow_insights_outcome_map | default({}, true) }}"
       unable_outcomes: "{{ servicenow_insights_unable_outcomes | servicenow_insights_name_list }}"
       service_desk_groups: "{{ servicenow_insights_service_desk_groups | servicenow_insights_name_list }}"
+      # 1.68.2: first-contact resolution shown (off by default; always stored), and the trend's lines
+      first_contact: "{{ servicenow_insights_first_contact | default(false) | bool }}"
+      trend_metrics: "{{ servicenow_insights_trend_metrics | default([], true) }}"
+      # 1.68.2: the excerpts of short descriptions and close notes in the lists (Act on first, the review list) as written
+      excerpt_mask: "{{ servicenow_insights_excerpt_mask | default(true) | bool }}"
       core_hours: "{{ servicenow_insights_core_hours | default({}, true) }}"
       short_desc_chars: "{{ servicenow_insights_short_desc_chars | int }}"
       hold_many: "{{ servicenow_insights_hold_many | int }}"

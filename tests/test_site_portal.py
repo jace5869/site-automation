@@ -19,7 +19,6 @@ import time
 import unittest
 import urllib.error
 import urllib.request
-from http.server import ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -207,7 +206,7 @@ class Live(unittest.TestCase):
         cls.portal = sp.Portal(cls.cfg)
         cls.portal.aap.connect()
         cls.states = cls.portal.aap.resolve(cls.portal.actions)
-        cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), sp.make_handler(cls.cfg, cls.portal, os.path.join(FILES, "static")))
+        cls.srv = sp.PortalServer(("127.0.0.1", 0), sp.make_handler(cls.cfg, cls.portal, os.path.join(FILES, "static")))
         threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
         cls.host = "127.0.0.1:%d" % cls.srv.server_address[1]
 
@@ -535,6 +534,16 @@ class Live(unittest.TestCase):
         self.assertNotIn("Running already.", self.req(q)[1].decode())
         self.assertEqual(self.post("/api/actions/act_triage", {"vars": vals})[0], 201, "done: a new run may start")
         self.portal.recent.pop("DOE.JANE.Q.1234567890", None)
+
+    def test_18c_the_backlog(self):
+        """1.68.2: socketserver listens with a backlog of 5. With 8 connections at once (test_18b) one was now and then
+        reset before it was read (a red CI run; 17 resets in 1500 rounds of 8 POSTs at once, none with 128). The portal's
+        server holds 128, and it is the one serve() and this test run."""
+        self.assertGreaterEqual(sp.PortalServer.request_queue_size, 128)
+        self.assertTrue(sp.PortalServer.daemon_threads)
+        self.assertIsInstance(self.srv, sp.PortalServer)
+        with open(sp.__file__) as fh:
+            self.assertIn("httpd = PortalServer((", fh.read())
 
     def test_18b_not_twice_at_once(self):
         """1.67.0 review: 8 launches of the same action for the same finding at the same moment (report_job 907, 0907,

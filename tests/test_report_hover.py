@@ -633,5 +633,96 @@ class RealChromeBreach(unittest.TestCase):
         self.assertTrue(self.c.js("document.activeElement.matches('svg.breach-trend')"))   # the focus stays
 
 
+@unittest.skipUnless(_browser(), "no headless browser here")
+class RealChromeInsightsIndex(unittest.TestCase):
+    """1.68.2: ticket insights' side index (site-insights.js, script-src 'self'): it fits the window and scrolls on its own;
+    each level folds, open only along the branch of the page shown; a team page opens with the sections in view (never
+    scrolled away to the team); a team picked in the index opens with the index where it was; a section picked lands under
+    the sticky bar; Hide / Show kept in site-report-rail, the website's rails' key."""
+
+    @classmethod
+    def setUpClass(cls):
+        import test_insights_org as O
+        import test_servicenow_insights as TS
+        cls.dir = tempfile.mkdtemp()
+        m = O.model()
+        name = lambda k: "p_%s.html" % re.sub(r"[^A-Za-z0-9]+", "_", k)            # noqa: E731
+        links = dict((p["key"], name(p["key"])) for p in m["pages"])
+        links["all"] = "index.html"
+        cls.deep = max(m["pages"], key=lambda p: len(p["path"]))["key"]
+        for key in ["all"] + [p["key"] for p in m["pages"]]:
+            with open(os.path.join(cls.dir, links[key]), "w") as f:
+                f.write(snp.servicenow_insights_page(m, key, dict(TS.HIER_OPTS, links=links)))
+        with open(os.path.join(cls.dir, "site-insights.js"), "w") as f:
+            f.write(snp.SCRIPT)
+        cls.links = links
+        handler = lambda *a, **k: Csp(*a, directory=cls.dir, **k)          # noqa: E731
+        cls.srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+        cls.base = "http://127.0.0.1:%d/" % cls.srv.server_address[1]
+        cls.c = Cdp(_browser(), 1280, 800)
+        cls.c.call("Page.enable")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.c.close()
+        cls.srv.shutdown()
+        shutil.rmtree(cls.dir, ignore_errors=True)
+
+    def load(self, page, wait_nav=False):
+        if not wait_nav:
+            self.c.call("Page.navigate", url=self.base + page)
+        time.sleep(0.3)
+        end = time.time() + 30
+        while not self.c.js("document.readyState === 'complete' && !!window.siteInsights && location.pathname === '/%s'" % page):
+            if time.time() > end:
+                raise RuntimeError("%s did not load" % page)
+            time.sleep(0.1)
+        time.sleep(0.2)
+
+    def test_the_index(self):
+        c = self.c
+        self.load("index.html")
+        c.js("localStorage.removeItem('site-report-rail'); sessionStorage.clear()")
+        deep = self.links[self.deep]
+        self.load(deep)
+        st = c.js("(() => {const t = document.querySelector('.toc'), r = t.getBoundingClientRect(); return {bottom: r.bottom, ih: innerHeight, "
+                  "sh: t.scrollHeight, ch: t.clientHeight, st: t.scrollTop, open: [...document.querySelectorAll('.toc details.tn[open]')].length, "
+                  "folds: document.querySelectorAll('.toc details.tn').length, first: document.querySelector('.toc a[href^=\"#\"]').getBoundingClientRect().top - r.top}})()")
+        self.assertLessEqual(st["bottom"], st["ih"])                                   # it fits the window ...
+        self.assertGreater(st["sh"], st["ch"])                                          # ... and scrolls on its own
+        self.assertEqual(st["st"], 0)                                                   # the sections in view, not scrolled to the team
+        self.assertGreaterEqual(st["first"], 0)
+        self.assertTrue(0 < st["open"] < st["folds"], st)                              # only the branch shown open
+        self.assertTrue(c.js("[...document.querySelectorAll('.toc details.tn[open]')].every(d => d.querySelector('a[aria-current]'))"))
+        # a section picked in the index: it lands under the sticky bar
+        top, barb = c.js("(async () => {const a = [...document.querySelectorAll('.toc a[href^=\"#\"]')][6]; a.click(); "
+                         "await new Promise(r => setTimeout(r, 300)); return [document.querySelector(a.getAttribute('href')).getBoundingClientRect().top, "
+                         "document.querySelector('.bar').getBoundingClientRect().bottom]})()")
+        self.assertTrue(barb <= top <= barb + 20, (top, barb))
+        # a team picked in the index: the next page's index where this one was
+        c.js("document.querySelector('.toc').scrollTop = 120")
+        to = c.js("(() => {const a = [...document.querySelectorAll('.toc a.team')].filter(a => !a.hasAttribute('aria-current') && a.offsetParent)[1]; "
+                  "const h = a.getAttribute('href'); a.click(); return h})()")
+        self.load(to, wait_nav=True)
+        self.assertEqual(c.js("document.querySelector('.toc').scrollTop"), 120)
+        # the filter opens every level; cleared, the folds are back as they were
+        before = c.js("[...document.querySelectorAll('.toc details.tn')].map(d => d.open)")
+        c.js("(() => {const f = document.getElementById('teamq'); f.value = 'desk'; f.dispatchEvent(new Event('input')); f.value = ''; "
+             "f.dispatchEvent(new Event('input'))})()")
+        self.assertEqual(c.js("[...document.querySelectorAll('.toc details.tn')].map(d => d.open)"), before)
+        # Hide / Show: the tables get the width, the choice kept for every page (the website's rails' key)
+        left = c.js("document.querySelector('main').getBoundingClientRect().left")
+        c.js("document.querySelector('label.railx').click()")
+        time.sleep(0.2)
+        self.assertEqual(c.js("[document.documentElement.getAttribute('data-rail'), localStorage.getItem('site-report-rail')]"), ["hidden", "hidden"])
+        self.assertLess(c.js("document.querySelector('main').getBoundingClientRect().left"), left - 100)
+        self.load("index.html")
+        self.assertTrue(c.js("document.getElementById('rail-hide').checked && document.documentElement.getAttribute('data-rail') === 'hidden'"))
+        c.js("document.querySelector('label.railx').click()")
+        time.sleep(0.2)
+        self.assertEqual(c.js("[document.documentElement.getAttribute('data-rail'), localStorage.getItem('site-report-rail')]"), [None, None])
+
+
 if __name__ == "__main__":
     unittest.main()

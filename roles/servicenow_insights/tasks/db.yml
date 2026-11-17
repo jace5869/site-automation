@@ -35,6 +35,57 @@
   check_mode: false           # only reads (in Check, nothing is made)
   when: _sni_db.host | length > 0
 
+# 1.68.2: the month just ended, when nothing holds it complete. A run writes only the months wholly inside its window and
+# the month so far, so a short window (servicenow_insights_days 7 or 30, servicenow_insights_months 1) never completed
+# it: its point stayed at the last run's few days. Read once the backfill's way (that calendar month, nothing to compare,
+# no ticket store) and written with this run's months; the next runs find it complete and read nothing more.
+- name: Insights | the month just ended, not held complete
+  ansible.builtin.set_fact:
+    _sni_complete: "{{ (_sni_db_runs | servicenow_insights_month_to_complete(_sni_hist, _sni)) if servicenow_insights_until | default('', true) | string | length == 0 else '' }}"
+  when: _sni_db.host | length > 0
+
+- name: Insights | read {{ _sni_complete }} from ServiceNow once, to complete it in the report database
+  site_servicenow_insights:
+    url: "{{ _sni_url }}"
+    username: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
+    password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    validate_certs: "{{ servicenow_validate_certs | default(true) | bool }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout | default(30) | int }}"
+    groups: "{{ _sni_groups }}"
+    tables: "{{ _sni_tables }}"
+    months: 1
+    days: 0
+    until: month_start
+    compare: false
+    time_zone: "{{ report_time_zone | default('', true) | string }}"
+    max_records: "{{ servicenow_insights_max_records | int }}"
+    audit: "{{ servicenow_insights_audit | bool }}"
+    handoff_min: "{{ servicenow_insights_handoff_min | int }}"
+    handoff_source: "{{ servicenow_insights_handoff_source | default('auto') | string | trim | lower }}"
+    members: "{{ servicenow_insights_members | default(true) | bool }}"
+    group_parents: "{{ servicenow_insights_use_group_parents | default(true) | bool }}"
+    now: "{{ servicenow_insights_now | default(omit, true) }}"
+    sla_source: "{{ servicenow_insights_sla_source | default('auto') | string | trim | lower }}"
+    first_assigned: true
+    state_metric: "{{ servicenow_insights_state_metric | default('', true) | string | trim }}"
+    survey: "{{ servicenow_insights_survey | default(true) | bool }}"
+    survey_metrics: "{{ servicenow_insights_survey_metrics | servicenow_insights_name_list }}"
+    survey_types: "{{ servicenow_insights_survey_types | default([], true) | servicenow_insights_name_list }}"
+  register: _sni_cm
+  check_mode: false             # only reads
+  when: _sni_db.host | length > 0 and _sni_complete | default('') | length > 0 and not ansible_check_mode
+
+- name: Insights | {{ _sni_complete }} worked out and added to this run's months
+  ansible.builtin.set_fact:
+    _sni_db_runs: "{{ _sni_cm | servicenow_insights_complete_month(_sni_complete, _sni_opts, _sni_db_runs) }}"
+  when: _sni_cm.ok | default(false) | bool
+
+- name: Insights | WARNING - {{ _sni_complete }} not completed this run
+  ansible.builtin.debug:
+    msg: "{{ _sni_complete }} was not read from ServiceNow ({{ _sni_cm.error | default('no answer') }}). The trend shows it as not complete; the next run tries again."
+  when: _sni_cm.ok is defined and not _sni_cm.ok | bool
+
 - name: Insights | the trend on the pages ({{ (_sni_hist.months_kept | default(0)) ~ ' months kept' if _sni_hist.ok | default(false) else 'the database not read' }})
   ansible.builtin.set_fact:
     _sni_model: >-

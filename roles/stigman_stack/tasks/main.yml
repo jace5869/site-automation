@@ -131,9 +131,11 @@
       - name: stigman-mysql-root
         sha: "{{ stigman_mysql_root_password | hash('sha256') }}"
         have: "{{ (_stigman_secret_state.results[0].stdout | trim) if _stigman_secret_state.results[0].rc == 0 else '' }}"
+        there: "{{ _stigman_secret_state.results[0].rc == 0 }}"
       - name: stigman-db-password
         sha: "{{ stigman_db_password | hash('sha256') }}"
         have: "{{ (_stigman_secret_state.results[1].stdout | trim) if _stigman_secret_state.results[1].rc == 0 else '' }}"
+        there: "{{ _stigman_secret_state.results[1].rc == 0 }}"
   no_log: true
 
 # The names only: the refusal below prints these, never a hash (a failed loop would print its whole item)
@@ -158,9 +160,24 @@
     - _stigman_secrets_differ | length > 0
     - not (stigman_replace_secrets | default(false) | bool)
 
+# podman secret create --replace needs podman 4.7 (RHEL 9.2 / 8.8 ship 4.4): before it a secret there is removed first
+- name: Secrets | the old value removed first (podman before 4.7, when replacing is allowed)
+  ansible.builtin.command:
+    argv: [podman, secret, rm, "{{ item.name }}"]
+  loop: "{{ _stigman_secrets }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.have != item.sha and item.there | bool and _stigman_podman.stdout is version('4.7', '<')
+  changed_when: true
+
+# 1.68.2: --replace only for a secret that is there (podman 4.9.4-rhel refuses it for a new one: "deleting secret : : no
+# secret data with ID"). The task is no_log (the value goes over stdin), so AAP would only say "censored": its result is
+# kept and the next task stops with podman's own words (stderr - never the value, never the command line)
 - name: Secrets | create (first deployment) or replace (when explicitly allowed)
   ansible.builtin.command:
-    argv: [podman, secret, create, --replace, --label, "site.sha256={{ item.sha }}", "{{ item.name }}", "-"]
+    argv: >-
+      {{ ['podman', 'secret', 'create'] + (['--replace'] if _stigman_podman.stdout is version('4.7', '>=') and item.there | bool else [])
+         + ['--label', 'site.sha256=' ~ item.sha, item.name, '-'] }}
     stdin: "{{ stigman_mysql_root_password if item.name == 'stigman-mysql-root' else stigman_db_password }}"
     stdin_add_newline: false
   loop: "{{ _stigman_secrets }}"
@@ -168,8 +185,17 @@
     label: "{{ item.name }}"
   when: item.have != item.sha
   changed_when: true                      # runs only when the secret is missing or differs
+  failed_when: false                      # said by the next task, with podman's reason
   no_log: true
   register: _stigman_secret_set
+
+- name: Secrets | podman made them
+  ansible.builtin.fail:
+    msg: >-
+      {{ _stigman_secret_set.results | selectattr('rc', 'defined') | rejectattr('rc', 'equalto', 0)
+         | map(attribute='item') | map(attribute='name') | zip(_stigman_secret_set.results | selectattr('rc', 'defined')
+         | rejectattr('rc', 'equalto', 0) | map(attribute='stderr')) | map('join', ' - podman secret create failed: ') | list }}
+  when: _stigman_secret_set.results | default([]) | selectattr('rc', 'defined') | rejectattr('rc', 'equalto', 0) | list | length > 0
 
 # ---------------------------------------------------------------- configuration + units
 - name: Config | nginx
