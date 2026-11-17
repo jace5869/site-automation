@@ -15,6 +15,13 @@
     msg: "{{ inventory_hostname }} is in {{ group_names | intersect(_patch_no_patch + ['no_patch', 'aap', 'aap_hosts']) | join(', ') }}: never patched by automation. Patch it by hand in a maintenance window."
   when: group_names | intersect(_patch_no_patch + ['no_patch', 'aap', 'aap_hosts']) | length > 0
 
+# 1.71.1: a host ended on purpose says so first, so the batch guard in playbooks/patch_hosts.yml never takes it for a
+# host that failed or was lost (it does not rely on ansible-core leaving such hosts out of the next batch's count)
+- name: Patch | mark it as left out on purpose (never-patch group)
+  ansible.builtin.set_fact:
+    _patch_ended_on_purpose: never-patch group
+  when: group_names | intersect(_patch_no_patch + ['no_patch', 'aap', 'aap_hosts']) | length > 0
+
 - name: Patch | skip hosts in the never-patch groups (patch_never_patch_groups, and AAP always)
   ansible.builtin.meta: end_host
   when: group_names | intersect(_patch_no_patch + ['no_patch', 'aap', 'aap_hosts']) | length > 0
@@ -44,6 +51,11 @@
          if not _patch_prot.allowed else
          ('Its VM was not found in vCenter, and a protected host is patched only after its own snapshot.' if patch_snapshot | bool else
           'To patch it after a snapshot of its VM: patch_snapshot: true (patch_protected_with_snapshot names it already).') }}
+  when: _patch_prot.reason | length > 0 and not (_patch_prot.allowed and _patch_prot_vm)
+
+- name: Patch | mark it as left out on purpose (protected VM)
+  ansible.builtin.set_fact:
+    _patch_ended_on_purpose: protected VM
   when: _patch_prot.reason | length > 0 and not (_patch_prot.allowed and _patch_prot_vm)
 
 - name: Patch | skip a protected VM (no patch_protected_with_snapshot for it, or no snapshot)

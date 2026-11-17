@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.71.1 — 2026-11-17
+
+**To set up: nothing.** Linux patching only; Windows patching is unchanged.
+
+**Patch hosts in batches: the stop is kept, and its message is clearer** (a follow-up of 1.70.5). Docs: RUNBOOKS.md
+(*Patch hosts*).
+
+- A host that `roles/patch` leaves out on purpose (a never-patch group, a protected VM) is marked first
+  (`_patch_ended_on_purpose`). The rollout's guard never counts it as failed or lost. Before, that rested on
+  ansible-core not carrying such hosts into the next batch.
+- The stop message: with `patch_serial` 1 it names the host that failed or was lost. With batches it names that
+  batch's hosts and says the rest were stopped with the one that failed (Ansible does not say which one it was).
+- New test `tests/patch/run_serial_rollout_test.sh` (both ansible-core versions, in CI). It runs the play's own guard
+  tasks:
+  - a host lost or failed at `patch_serial` 1 and 2 stops the later batches;
+  - a host left out on purpose, or before the rollout, does not;
+  - every `end_host` in `roles/patch` is marked first.
 ## 1.71.0 — 2026-11-17
 
 **To set up: nothing.** The dashboard is part of the ops look (`report_web_theme: ops`). The next scorecard run draws

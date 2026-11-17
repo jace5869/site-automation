@@ -1,0 +1,56 @@
+---
+# 1.71.1: the rollout guard of playbooks/patch_hosts.yml ("Patch hosts"), in batches (serial), on made-up hosts on this
+# machine (the local connection). run_serial_rollout_test.sh writes the play's own guard tasks into guard_file (taken
+# from playbooks/patch_hosts.yml, never a copy) and runs this with:
+#   lost      the host that is lost in its batch (a task to a closed port on this machine: unreachable)
+#   failhost  the host that fails (a task failure)
+#   skip      the host left out on purpose (as roles/patch: _patch_ended_on_purpose, then meta: end_host)
+#   early     the host lost in an earlier play (out from the rollout's start: never a reason to stop)
+#   guard     false = no guard (the ansible-core behaviour the guard is there for)
+#   ser       patch_serial
+- name: An earlier play (patch_hosts.yml has several before the rollout)
+  hosts: rollout
+  gather_facts: false
+  tasks:
+    - name: The host lost before the rollout
+      ansible.builtin.ping:
+      vars: &lost_here
+        ansible_connection: ssh
+        ansible_host: 127.0.0.1
+        ansible_port: "{{ closed_port | default(9) }}"
+        ansible_ssh_common_args: "-o ConnectTimeout=3 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      when: inventory_hostname == early | default('')
+
+- name: Patch hosts (the rollout)
+  hosts: rollout
+  gather_facts: false
+  serial: "{{ ser | default(1) }}"
+  max_fail_percentage: 0
+  any_errors_fatal: true
+  pre_tasks:
+    - name: The guard of playbooks/patch_hosts.yml
+      ansible.builtin.include_tasks: "{{ guard_file }}"
+      when: guard | default(true) | bool
+  tasks:
+    - name: Left out on purpose - marked first, as roles/patch does
+      ansible.builtin.set_fact:
+        _patch_ended_on_purpose: never-patch group
+      when: inventory_hostname == skip | default('')
+
+    - name: Left out on purpose
+      ansible.builtin.meta: end_host
+      when: inventory_hostname == skip | default('')
+
+    - name: The host is lost here
+      ansible.builtin.ping:
+      vars: *lost_here
+      when: inventory_hostname == lost | default('')
+
+    - name: The host fails here
+      ansible.builtin.fail:
+        msg: failed on purpose
+      when: inventory_hostname == failhost | default('')
+
+    - name: Patched
+      ansible.builtin.debug:
+        msg: "PATCHED {{ inventory_hostname }}"

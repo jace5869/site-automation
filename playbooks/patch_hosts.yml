@@ -328,13 +328,26 @@
       run_once: true
       when: hostvars['localhost']._patch_out_at_start is not defined
 
+    # 1.71.1: a host roles/patch ends on purpose (a never-patch group, a protected VM) sets _patch_ended_on_purpose
+    # first and is never counted (a Windows host never gets here: the first play leaves it out). With patch_serial
+    # over 1, a host that failed or was lost takes the rest of its batch with it (any_errors_fatal); ansible-core does
+    # not say which one it was, so the message says both.
     - name: Stop the rollout - a host of an earlier batch failed or was lost
       ansible.builtin.fail:
         msg: >-
-          Not patched: {{ _patch_lost | sort | join(', ') }} failed or was lost in an earlier batch, so the rollout stops here
-          (patch_serial). Look at that host first, then run again for the rest.
+          {{ ('Not patched: ' ~ _patch_lost[0] ~ ' failed or was lost in an earlier batch, so the rollout stops here'
+              ~ ' (patch_serial). Look at that host first, then run again for the rest.')
+             if _patch_lost | length == 1 else
+             ('Not patched: in an earlier batch ' ~ (_patch_lost | sort | join(', ')) ~ ' stopped - one or more of them'
+              ~ ' failed or was lost, and the rest of that batch was stopped with it - so the rollout stops here'
+              ~ ' (patch_serial). Look at those hosts first, then run again for the rest.') }}
       vars:
-        _patch_lost: "{{ ansible_play_hosts_all | difference(ansible_play_hosts) | difference(hostvars['localhost']._patch_out_at_start | default([])) }}"
+        _patch_on_purpose: >-
+          {{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('_patch_ended_on_purpose', 'defined')
+             | map(attribute='inventory_hostname') | list }}
+        _patch_lost: >-
+          {{ ansible_play_hosts_all | difference(ansible_play_hosts)
+             | difference(hostvars['localhost']._patch_out_at_start | default([])) | difference(_patch_on_purpose) }}
       when: _patch_lost | length > 0
 
     - name: Linux hosts only (this playbook never touches a Windows server)

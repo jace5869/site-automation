@@ -1069,6 +1069,9 @@ survey or `-e` (`kernel*`, `kernel*, glibc`): each name is kept whole (1.70.5). 
 1. **One host at a time** by default. For batches, set `patch_serial` in the template's Variables
    or the survey (`patch_serial: 10`; in `all.yml` it does nothing). The rollout **stops at the
    first host that fails or is lost** (1.70.5): the rest of that batch stops too, and no later batch starts.
+   The job's message names the host (with batches: that batch's hosts, as Ansible does not say which one it
+   was). A host left out on purpose - a never-patch group, a protected VM, up to date, not reached - never
+   stops it (1.71.1).
 2. **A host that cannot be reached when the job starts** (switched off, a firewall, ssh or its login
    refused) is listed as `NOT REACHED - <why>` and left out - not patched, no snapshot - and the
    other hosts are patched; the job is not failed for it. Its last lines list them all:

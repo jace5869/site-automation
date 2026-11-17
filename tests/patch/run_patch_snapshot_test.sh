@@ -330,7 +330,7 @@ patched() {  # the hosts the update task ran on
 for ser in 1 2; do
     NOVC=1 run "a host down from the start, patch_serial $ser: NOT REACHED, every other host patched" ok \
         -e target=lost01.example.mil:web01.example.mil:DC0_C0_RP0_VM1:web02.example.mil -e patch_serial=$ser \
-        -- 'lost01.example.mil: NOT REACHED' '1 host(s) not reached, not patched: lost01.example.mil' '!failed or was lost in an earlier batch'
+        -- 'lost01.example.mil: NOT REACHED' '1 host(s) not reached, not patched: lost01.example.mil' '!Not patched: '
     check "  ...each good host patched (patch_serial $ser)" "$(patched)" "DC0_C0_RP0_VM1 web01.example.mil web02.example.mil"
 done
 
@@ -338,7 +338,7 @@ done
 # inventory's order) goes on with patch_skip_unreachable false and is lost in the patch play: web02 (batch 2) never patched
 NOVC=1 run "patch_serial 2, a host lost in batch 1 (patch_skip_unreachable false): batch 2 is never patched" fail \
     -e target=lost01.example.mil:DC0_C0_RP0_VM1:web02.example.mil -e patch_serial=2 -e patch_skip_unreachable=false -e "$uc1" \
-    -e patch_packages=sa-patch-pending -- 'UNREACHABLE! => ' 'Not patched: DC0_C0_RP0_VM1, lost01.example.mil failed or was lost in an earlier batch' "!$installs"
+    -e patch_packages=sa-patch-pending -- 'UNREACHABLE! => ' 'Not patched: in an earlier batch DC0_C0_RP0_VM1, lost01.example.mil stopped - one or more of them failed or was lost' "!$installs"
 check "  ...batch 1's other host not updated" "$(ver "${hosts[1]}")" "1.0"
 check "  ...batch 2's host not updated" "$(ver "${hosts[2]}")" "1.0"
 

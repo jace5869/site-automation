@@ -500,6 +500,8 @@ jobs:
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/patch/run_patch_snapshot_test.sh
           bash tests/patch/run_patch_not_ready_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/patch/run_patch_not_ready_test.sh
+          bash tests/patch/run_serial_rollout_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/patch/run_serial_rollout_test.sh
       - name: VMware ask, the service's vCenter read against vcsim (current ansible-core and 2.16)
         run: |
           bash tests/vmware_ask/run_vmware_ask_test.sh
