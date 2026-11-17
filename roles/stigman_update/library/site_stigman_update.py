@@ -102,7 +102,7 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.six.moves.urllib.parse import urlencode, quote
 from ansible.module_utils.six.moves.urllib.request import Request, urlopen
 from ansible.module_utils.six.moves.urllib.error import HTTPError, URLError
-from ansible.module_utils.site_stig_comment import merged as comment_merged, protected, PROTECT_WORDS
+from ansible.module_utils.site_stig_comment import merged as comment_merged, protected, PROTECT_WORDS, split as comment_split, what_it_said
 
 ID_RE = re.compile(r"^[0-9]{1,20}$")
 # a rule id: any text up to 45 characters (STIG Manager's own rule) - DISA's SV-257985r1069364_rule, and SV-PHTN-50-000003 as STIG
@@ -700,6 +700,11 @@ def update(p, client, check):
             why = protected(p.get("protect_words"), (raw or {}).get("detail"), (raw or {}).get("comment"))
             if not why and now["status"] == "accepted" and not it.get("overwrite_accepted", False):
                 why = "Accepted in STIG Manager (overwrite_accepted is false)"
+            # 1.69.1c (Codex P1): the person rule, on the review as it is now - one we last wrote Open (our line says so)
+            # that a person set to Not a Finding / Not Applicable since is never written Open, whatever the plan says
+            if not why and it.get("result") == "fail" and now["result"] in ("pass", "notapplicable") \
+                    and what_it_said(comment_split((raw or {}).get("comment"))[0]) == "fail":
+                why = "set to %s by a person after our Open" % {"pass": "Not a Finding", "notapplicable": "Not Applicable"}[now["result"]]
             if why:
                 row.update(state="protected", why=why + " - left as it is")
                 continue
@@ -715,7 +720,11 @@ def update(p, client, check):
                     continue
             if it.get("comment_merge") and it.get("comment") is not None:
                 # 1.69.1: our line first, a person's comment of the review as it is now kept below it, an older line of ours dropped
-                it = dict(it, comment=comment_merged(it["comment"], (raw or {}).get("comment")))
+                both = comment_merged(it["comment"], (raw or {}).get("comment"))
+                if both is None:                # 1.69.1c (Codex P2): never cut a person's text - left, and said
+                    row.update(state="protected", why="comment too long to add our line (STIG Manager keeps %d characters) - left as it is" % 32767)
+                    continue
+                it = dict(it, comment=both)
             go.append((row, it))
         if not go:
             continue

@@ -324,6 +324,12 @@ assert s and s[0]["status"] == "warning" and s[0]["rows"][0][1].startswith("V-25
 assert any(t["label"] == "Set by a person, scan says Open" and t["value"] == 1 for t in r["summary"]), r["summary"]' "$work/site" \
     && echo "ok   - ... the report: its own section (warning) and a tile" || { echo "FAIL - the person section"; fails=$((fails + 1)); }
 [ "$(review SV-257883r1044925_rule)" = "pass submitted" ] && echo "ok   - ... the person's Not a Finding as it was" || { echo "FAIL - changed"; fails=$((fails + 1)); }
+# 1.69.1c (Codex P1): only Accepted counts (check_stig_stigman_statuses) - the person's submitted Not a Finding does not
+# count, and was taken for Not Reviewed and planned Open; it is the person rule's, refresh on or off
+play stig_recheck.yml "statuses [accepted]: a person's submitted Not a Finding after our Open - listed, never planned" 2 -e "$fresh" \
+    -e '{"check_stig_stigman_statuses": ["accepted"]}' -- "PERSON V-257883 (RHEL-09-412035)" "!V-257883: "
+play stig_recheck.yml "statuses [accepted], refresh off: not planned either" 2 \
+    -e '{"check_stig_update_workflow": true, "check_stig_update_refresh": false, "check_stig_stigman_statuses": ["accepted"]}' -- "!V-257883: "
 
 # ---- 0.72.0: a host with no asset (check_stig_update_create_assets) - created once approved, by a client with Manage ----
 cp "$work/sm-first.json" "$work/sm.json"

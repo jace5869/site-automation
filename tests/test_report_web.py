@@ -877,6 +877,27 @@ class OpsIndex(unittest.TestCase):
         self.assertNotIn("<locked>", html)
         self.assertFalse(re.search(r"<[^>]+\son[a-z]+=", html))
 
+    def test_reports_that_could_not_be_read(self):
+        """1.69.1c (Codex P2): an unknown report (its page could not be read) is never counted healthy."""
+        one = [{"key": "a/latest.html", "name": "Linux - Disk", "status": "ok", "when": "2026-10-09 06:00 UTC", "job": 9,
+                "page": "a/x.html", "latest": "a/latest.html", "title": "fine"},
+               {"key": "u/latest.html", "name": "AD - Health", "status": "unknown", "when": "2026-10-09 05:00 UTC", "job": 8,
+                "page": "u/x.html", "latest": "u/latest.html", "title": ""}]
+        html = rw.index_html(one, "site/index.html", "HQ", None, "now", (), "ops")
+        self.assertIn('<span class="stc s-unknown"><span class="d" aria-hidden="true"></span>Unavailable</span><h1>1 report could not be read.</h1>', html)
+        self.assertIn("The others are healthy or for information.", html)
+        self.assertIn('<div class="hn"><div class="bn">1</div><div class="cap">Could not be read</div></div>', html)
+        self.assertNotIn("Every report is healthy", html)
+        self.assertNotIn("Nothing needs action", html)
+        html = rw.index_html(one[1:], "site/index.html", "HQ", None, "now", (), "ops")
+        self.assertIn("<h1>No report could be read.</h1>", html)
+        self.assertNotIn("healthy", html.split("<h1>")[1].split("</header>")[0])
+        html = rw.index_html(one[:1], "site/index.html", "HQ", None, "now", (), "ops")       # all readable, all fine: as before
+        self.assertIn("<h1>Every report is healthy or for information.</h1>", html)
+        html = rw.index_html(self.reports() + one[1:], "site/index.html", "HQ", None, "now", (), "ops")
+        self.assertIn("<h1>4 reports need attention.</h1>", html)
+        self.assertIn("Start with the cards below, worst first. 1 report could not be read.", html)
+
     def test_three_worst_reports_first(self):
         html = rw.index_html(self.reports(), "site/index.html", "HQ", None, "now", (), "ops")
         cards = re.findall(r'<article class="todo c-(\w+)"><div class="row1"><span class="num">(\d\d)</span>.*?<h3>(.*?)</h3>', html)

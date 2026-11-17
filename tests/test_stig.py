@@ -1009,7 +1009,32 @@ class Refresh(unittest.TestCase):
         self.assertEqual(scm.what_it_said(OURS_OPEN.replace("- Open.", "- Not a Finding.")), "pass")
         self.assertEqual(scm.what_it_said("Imported from the checklist a.ckl by site-automation."), "")
         self.assertEqual(scm.what_it_said("A person's - Open."), "")
-        self.assertEqual(len(scm.merged(new, "x" * 40000)), scm.MAX)
+        # 1.69.1c (Codex P2): a person's text is never cut - too long for STIG Manager is None (the writer leaves it)
+        self.assertIsNone(scm.merged(new, "x" * 40000))
+        self.assertIsNone(scm.merged(new, "x" * (scm.MAX - len(new) - 1)))
+        self.assertEqual(len(scm.merged(new, "x" * (scm.MAX - len(new) - 2))), scm.MAX)
+
+    def test_only_our_sentence_goes(self):
+        """1.69.1c (Codex P1): a person's text beside our line - after a single line end, on the same line, before it -
+        is kept byte for byte; only the sentence of ours goes (and the blank line we put beside it)."""
+        new = "Set by the STIG recheck (site-automation), approved in AAP: Evaluate-STIG checked it again on web01 on 2026-11-17 - still Open."
+        for cur, theirs in ((OURS_OPEN + "\nChecked by hand: the vendor patch is staged.", "\nChecked by hand: the vendor patch is staged."),
+                            (OURS_OPEN + " Checked by hand.", " Checked by hand."),
+                            ("Mine first.\n" + OURS_OPEN + "\nMine last.", "Mine first.\n\nMine last."),
+                            ("Mine first. " + OURS_OPEN, "Mine first. "),
+                            (OURS_OPEN + "\r\n\r\nPOA&M 123.\r\nline two", "POA&M 123.\r\nline two"),
+                            ("A.\n\n" + OURS_OPEN + "\n\nB.", "A.\n\nB."),
+                            ("Theirs.\n\nImported from the checklist a.ckl (RHEL 9 V2R7) by site-automation, approved in AAP on 2026-11-05.", "Theirs."),
+                            ("Carried forward by the STIG recheck (site-automation), approved in AAP: Not a Finding (accepted) in V2R7, and "
+                             "OpenSCAP on web01.example.mil on 2026-11-05 checked it against V2R8 - not against V2R9 "
+                             "(check_stig_recheck_carry_forward). And a note.", " And a note."),
+                            ("Set by the STIG recheck (site-automation) - a person quoting us, no sentence of ours.",
+                             "Set by the STIG recheck (site-automation) - a person quoting us, no sentence of ours.")):
+            self.assertEqual(scm.split(cur)[1], theirs, cur)
+            self.assertEqual(scm.merged(new, cur), new + "\n\n" + theirs if theirs.strip() else new, cur)
+        self.assertEqual(scm.split(OURS_OPEN + "\nx")[0], OURS_OPEN)
+        self.assertEqual(scm.split("on web01.example.mil: " + OURS_OPEN.replace("web01", "web01.example.mil"))[0],
+                         OURS_OPEN.replace("web01", "web01.example.mil"), "a host name with dots inside our sentence")
 
     def test_the_reader_keeps_our_line(self):
         r = smr.reviews_of([{"ruleId": "SV-1r1_rule", "result": "pass", "status": {"label": "submitted"}, "ts": "2026-11-10T09:00:00Z",
@@ -1123,6 +1148,45 @@ class Refresh(unittest.TestCase):
         items = smu.update({"plan": p[:1]}, c, False)
         self.assertEqual((items[0]["state"], items[0]["why"], c.posts),
                          ("protected", "Accepted in STIG Manager (overwrite_accepted is false) - left as it is", []))
+
+    def test_a_comment_too_long_is_left(self):
+        """1.69.1c (Codex P2): our line would make the comment longer than STIG Manager keeps - left, said, nothing cut."""
+        db = self.db()
+        db["SV-1r1_rule"]["comment"] = "y" * (scm.MAX - 50)
+        c = self.C(db)
+        items = smu.update({"plan": self.plan()}, c, False)
+        self.assertEqual([(i["v"], i["state"]) for i in items], [("V-1", "protected"), ("V-2", "written")])
+        self.assertIn("comment too long to add our line", items[0]["why"])
+        self.assertEqual([r["ruleId"] for r in c.posts[0][2]], ["SV-2r1_rule"])
+        self.assertEqual(db["SV-1r1_rule"]["comment"], "y" * (scm.MAX - 50))
+
+    def test_the_writer_keeps_a_persons_answer(self):
+        """1.69.1c (Codex P1): the update's own person rule - a review we last wrote Open, a person's Not a Finding now, as
+        the plan read it (unchanged since): never written Open."""
+        p = [dict(x, was={"result": "pass", "status": "saved", "ts": "t1"}) for x in self.plan()[:1]]
+        c = self.C({"SV-1r1_rule": {"result": "pass", "status": {"label": "saved"}, "ts": "t1", "comment": OURS_OPEN + "\nI fixed it by hand."}})
+        items = smu.update({"plan": p}, c, False)
+        self.assertEqual((items[0]["state"], items[0]["why"], c.posts),
+                         ("protected", "set to Not a Finding by a person after our Open - left as it is", []))
+        # our last line said Not a Finding: not a person's change - written
+        c = self.C({"SV-1r1_rule": {"result": "pass", "status": {"label": "saved"}, "ts": "t1",
+                                    "comment": OURS_OPEN.replace("- Open.", "- Not a Finding.")}})
+        self.assertEqual(smu.update({"plan": p}, c, False)[0]["state"], "written")
+
+    def test_statuses_that_do_not_count_a_persons_answer(self):
+        """1.69.1c (Codex P1): check_stig_stigman_statuses: [accepted] - a person's saved / submitted Not a Finding after
+        our Open does not count, and was taken for Not Reviewed (planned Open). It is the person rule's, before the filter."""
+        c = self.checklist()                     # SV-3, SV-4: submitted NF / NA, our Open line
+        asked = sf.recheck_asked(c, statuses=["accepted"], which=["open", "not_reviewed", "person"])
+        self.assertEqual((asked["SV-3"][0], asked["SV-4"][0]), ("person", "person"))
+        asked = sf.recheck_asked(c, statuses=["accepted"], which=["open", "not_reviewed"])     # refresh off: not asked at all
+        self.assertNotIn("SV-3", asked)
+        self.assertNotIn("SV-4", asked)
+        res = sf.stig_recheck(c, [dict(recheck_scan(SV_1="fail", SV_2="fail", SV_3="fail", SV_4="fail"), time="2026-11-17T06:00:00Z")],
+                              "web01", statuses=["accepted"], which=["open", "not_reviewed", "person"])
+        p = sf.stig_update_plan(res, day="2026-11-17", refresh=True)
+        self.assertFalse([x for x in p if x["v"] in ("V-3", "V-4")], p)
+        self.assertEqual(sorted(r["key"] for r in res[0]["person"]), ["SV-3", "SV-4"])
 
     def test_check_mode_writes_nothing(self):
         c = self.C(self.db())

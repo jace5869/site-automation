@@ -306,6 +306,51 @@ window.addEventListener('load',function(){setTimeout(function(){
 </script><pre id="out"></pre></body>"""
 
 
+XSS = '"><script>alert(1)</script><img src=x onerror=alert(2)>'
+
+
+def _poison(x, keep=("status", "kind", "kinds", "cell_status", "row_status", "hue", "cat", "points", "data_points", "w", "h", "last", "mark")):
+    """Every text value of a report with a script and an onerror after it (statuses and drawing numbers kept)."""
+    if isinstance(x, dict):
+        return dict((k, v if k in keep else _poison(v)) for k, v in x.items())
+    if isinstance(x, list):
+        return [_poison(v) for v in x]
+    if isinstance(x, str) and x and not x.startswith("#") and not x.startswith("http"):
+        return x + XSS
+    return x
+
+
+class Escaping(unittest.TestCase):
+    """1.69.1c (Codex P1): a report value never reaches the page as markup - a card's chip and meta (OpenSCAP's severity,
+    stig_details_cards), titles, every cell - in the ops look, and atlas and brief beside it (their shared parts)."""
+
+    def test_a_card_chip_meta_title(self):
+        doc = json.loads(json.dumps(DOC))
+        doc["sections"][0]["cards"][0].update(chip=XSS, meta=XSS, title=XSS, subject=XSS, next=XSS)
+        doc["sections"][0]["cards"][1].update(meta=XSS)
+        doc["title"] = XSS
+        h = render(doc)
+        self.assertNotIn("<script>alert", h)
+        self.assertNotIn("<img src=x", h)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", h)
+
+    def test_every_fixture_every_value(self):
+        import glob
+        import jinja2
+        env = jinja2.Environment(loader=jinja2.FileSystemLoader(TPL), autoescape=False)
+        env.filters.update(report_cell_html=sf.report_cell_html, report_sparkline=sf.report_sparkline, report_runway_bar=sf.report_runway_bar)
+        files = sorted(glob.glob(os.path.join(REPO, "tests", "fixtures", "report_fit", "*.json")))
+        self.assertGreater(len(files), 100)
+        for look in ("ops", "atlas", "brief"):
+            tpl = env.get_template("report_%s.html.j2" % look)
+            for f in files:
+                with open(f) as fh:
+                    d = json.load(fh)
+                h = tpl.render(_report=_poison(d.get("report", d)), _email_footer="f", _page_logo_cid="", _page_runs=[],
+                               _page_template="T", _page_job="9", report_email_header_text="H")
+                self.assertEqual((h.count("<script>alert"), h.count("<img src=x")), (0, 0), (look, os.path.basename(f)))
+
+
 class Rail(unittest.TestCase):
     """The user's rule for every side index (1.69.0): it stays in view (sticky under the bar, as tall as the screen
     under it, its own scroll - at the page's end too), its groups fold, one button puts it away (kept), a picked section

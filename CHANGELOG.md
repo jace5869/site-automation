@@ -43,6 +43,17 @@ an approval").
   says Open: listed (*a person set it to Not a Finding on 2026-11-10; the checklist says Open*), never written.
 - Protected reviews as above; Accepted as `stigman_ckl_import_overwrite_accepted` says (default false, as before).
 
+**Review fixes**
+
+- The comment: only the job's own sentence is taken out of a review's comment; a person's words beside it - on the
+  same line, after a single line end - are kept exactly. A person's text is never cut: a review whose comment would
+  pass 32767 characters with the job's line is left and listed.
+- A person's Not a Finding / Not Applicable after the job's Open is told whatever its status, also one that does not
+  count (`check_stig_stigman_statuses`); the update checks it again just before it writes.
+- The report website: every report value is escaped in the ops look and in atlas and brief (their shared parts: the
+  replication matrix and heat map legends, the runway board).
+- The ops look's index: a report that could not be read is never counted healthy (*1 report could not be read*).
+
 ## 1.69.0 — 2026-11-17
 
 **To set up: optional - `report_web_theme: ops`.** Nothing changes until you set it (the default stays atlas). The

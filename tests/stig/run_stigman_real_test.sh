@@ -209,6 +209,10 @@ api "$atok" PATCH "/collections/$col/reviews/$asset/SV-257779r958390_rule" '{"re
 play stig_recheck.yml -e "$fresh"
 grep -q "PERSON V-257779" "$work/out.txt" && ! grep -q "V-257779: Not a Finding -> " "$work/out.txt" \
     && ok "1.69.1: a person's Not a Finding after our Open, the scan says Open - listed (PERSON), never planned" || { bad "person: rc $rc"; grep -n "PERSON\|V-257779\|fatal" "$work/out.txt" | head -5; }
+# 1.69.1c (Codex P1): only Accepted counts - the person's saved Not a Finding does not count, and is still the person's
+play stig_recheck.yml -e "$fresh" -e '{"check_stig_stigman_statuses": ["accepted"]}'
+grep -q "PERSON V-257779" "$work/out.txt" && ! grep -q "V-257779: [A-Za-z ]* -> " "$work/out.txt" \
+    && ok "  ... with check_stig_stigman_statuses [accepted] too: listed, never planned" || { bad "person, statuses accepted: rc $rc"; grep -n "PERSON\|V-257779\|fatal" "$work/out.txt" | head -5; }
 api "$atok" PATCH "/collections/$col/reviews/$asset/SV-257779r958390_rule" '{"result": "fail", "detail": "No banner.", "status": "submitted"}' >/dev/null
 # Accepted with check_stig_update_overwrite_accepted: false - protected (the words off, so it is the Accepted that counts)
 api "$atok" PATCH "/collections/$col/reviews/$asset/SV-257883r1044925_rule" '{"status": "accepted"}' >/dev/null

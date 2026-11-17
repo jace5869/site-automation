@@ -1390,12 +1390,22 @@ def index_ops(reports, index, header_text, logo, generated, tabs=(), js='', tz=N
     for r in reports:
         counts[r.get('status') if r.get('status') in PAL else 'unknown'] += 1
     need = counts['critical'] + counts['warning']
-    worst = 'critical' if counts['critical'] else 'warning' if counts['warning'] else 'ok' if reports else 'unknown'
+    # 1.69.1c (Codex P2): a report that could not be read (unknown) is never counted healthy - its own verdict
+    unread = counts['unknown']
+    worst = ('critical' if counts['critical'] else 'warning' if counts['warning'] else 'unknown' if unread
+             else 'ok' if reports else 'unknown')
     if not reports:
         title, say = 'No reports yet', 'A report job writes its page here when it runs.'
     elif need:
         title = '%s need%s attention.' % (_plural(need, 'report', 'reports'), 's' if need == 1 else '')
-        say = 'Start with the cards below, worst first.'
+        say = 'Start with the cards below, worst first.' + (
+            ' %s could not be read.' % _plural(unread, 'report', 'reports') if unread else '')
+    elif unread == len(reports):
+        title = 'No report could be read.'
+        say = 'Look at the report jobs in AAP: their last runs left no page that can be read.'
+    elif unread:
+        title = '%s could not be read.' % _plural(unread, 'report', 'reports')
+        say = 'The others are healthy or for information. Look at those reports\' jobs in AAP.'
     else:
         title, say = 'Every report is healthy or for information.', 'Nothing needs action.'
     last = max([str(r.get('when') or '') for r in reports] or [''])
@@ -1444,7 +1454,9 @@ def index_ops(reports, index, header_text, logo, generated, tabs=(), js='', tz=N
             '<details class="hstrip"><summary><span class="ln1">%s</span><span class="tog" aria-hidden="true"><span class="sh">SHOW</span>'
             '<span class="hd">HIDE</span></span></summary>%s</details></header>'
             % (_stc(worst), e(title), e(say),
-               ('<div class="hn"><div class="bn%s">%d</div><div class="cap">Need attention</div></div>' % (' c-' + worst if need else '', need)) if reports else '',
+               ('<div class="hn"><div class="bn%s">%d</div><div class="cap">Need attention</div></div>' % (' c-' + worst if need else '', need)
+                if need or not unread else '<div class="hn"><div class="bn">%d</div><div class="cap">Could not be read</div></div>' % unread)
+               if reports else '',
                line, ('<div class="tally">%s</div>' % tally) if tally else '<div class="tally">No reports yet.</div>'))
     return ('<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
             '<meta name="viewport" content="width=device-width, initial-scale=1">\n<meta name="color-scheme" content="light dark">\n'

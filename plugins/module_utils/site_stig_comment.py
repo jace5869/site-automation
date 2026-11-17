@@ -6,9 +6,13 @@ roles/stigman_update) and the checklist import's (workflow 40, roles/stigman_ckl
 - a line of ours from an earlier run (the recheck's, a carry forward's or an import's) is never kept beside a new one:
   it is the one replaced.
 
-A line of ours is a paragraph that starts with one of OURS. what_it_said() reads the result our line gave (its last
-words: '- Open.', '- still Open.', '- Not a Finding.', '- Not Applicable.'), so a review we last wrote as Open that
-is Not a Finding now was changed by a person after us (the recheck lists it when the scan still says Open).
+A line of ours is one sentence, as site-automation writes it (_OURS: from its first words through its last - '... -
+Open.', '... (check_stig_recheck_carry_forward).', '... approved in AAP on 2026-11-17 - Open.'). Only that sentence is
+taken out of a review's comment: everything else - a person's text on the same line, after a single line end, anywhere -
+is kept byte for byte (1.69.1c, Codex P1). what_it_said() reads the result our line gave, so a review we last wrote as
+Open that is Not a Finding now was changed by a person after us (the recheck lists it when the scan still says Open).
+merged() never cuts a person's text: a comment that would be longer than STIG Manager's 32767 characters is None - the
+writer leaves that review and says so (1.69.1c, Codex P2).
 
 protected(): a review whose detail or comment says one of stigman_protect_words (RA, Risk Acceptance, POAM, POA&M) is
 left as it is by every writer - the recheck's update and the checklist import."""
@@ -20,27 +24,50 @@ import re
 OURS = ("Set by the STIG recheck (site-automation)", "Carried forward by the STIG recheck (site-automation)",
         "Imported from the checklist ")
 MAX = 32767                     # STIG Manager's comment
-_PARA = re.compile(r"\n[ \t]*\n")
 _SAID = (("still Open.", "fail"), ("Not a Finding.", "pass"), ("Not Applicable.", "notapplicable"), ("Open.", "fail"))
+_RESULT = r"(?:still Open|Open|Not a Finding|Not Applicable)"
+# our sentences, exactly - on one line, from the first words through the last
+_OURS = re.compile(
+    r"Set by the STIG recheck \(site-automation\), approved in AAP: [^\r\n]*? - " + _RESULT + r"\."
+    r"|Carried forward by the STIG recheck \(site-automation\), approved in AAP: [^\r\n]*?\(check_stig_recheck_carry_forward\)\."
+    r"|Imported from the checklist [^\r\n]*? by site-automation, (?:approved in AAP|no approval \(stigman_ckl_import_auto\))"
+    r"(?: on \d{4}-\d{2}-\d{2})?(?: - " + _RESULT + r")?\.")
+_GAP_END = re.compile(r"\r?\n\r?\n\Z")       # the blank line before a sentence of ours at the end
+_GAP_START = re.compile(r"\r?\n\r?\n")        # the blank line after one at the start (or between two paragraphs)
 
 
 def split(comment):
-    """A review's comment -> (our line from an earlier run, or '' - the first of ours; the rest: a person's, as written)."""
-    text = str(comment or "").replace("\r\n", "\n").replace("\r", "\n").strip()
-    if not text:
-        return "", ""
-    paras = [p.strip() for p in _PARA.split(text) if p.strip()]
-    mine = [p for p in paras if p.startswith(OURS)]
-    rest = [p for p in paras if not p.startswith(OURS)]
-    return (mine[0] if mine else ""), "\n\n".join(rest)
+    """A review's comment -> (our sentence from an earlier run, or '' - the first one; the comment without any sentence of
+    ours, everything else as written). The blank line site-automation put beside its sentence goes with it."""
+    text = "" if comment is None else str(comment)
+    first = ""
+    while True:
+        m = _OURS.search(text)
+        if not m:
+            break
+        first = first or m.group(0)
+        before, after = text[:m.start()], text[m.end():]
+        gb, ga = _GAP_END.search(before), _GAP_START.match(after)
+        if ga and not before.strip():               # ours first, then a blank line: as merged() writes it
+            text = before + after[ga.end():]
+        elif gb and not after.strip():              # theirs, a blank line, ours last (an import before 1.69.1)
+            text = before[:gb.start()] + after
+        elif gb and ga:                             # between two paragraphs: one blank line stays
+            text = before + after[ga.end():]
+        else:                                       # on a line with a person's text: only the sentence goes
+            text = before + after
+    return first, text
 
 
 def merged(line, current):
-    """Our new line, first; the person's comment of current (every line of ours left out) below it."""
+    """Our new line, first; the review's comment below it, without any sentence of ours, as written - or None when that
+    would be longer than STIG Manager keeps (MAX): a person's text is never cut."""
     line = str(line or "").strip()
     _, theirs = split(current)
+    if not theirs.strip():
+        theirs = ""
     out = (line + "\n\n" + theirs) if (line and theirs) else (line or theirs)
-    return out[:MAX]
+    return out if len(out) <= MAX else None
 
 
 # 1.69.1: a review that says one of these in its detail or comment is never written by site-automation (stigman_protect_words)

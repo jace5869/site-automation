@@ -1155,6 +1155,14 @@ def plan_all(p, client, files):
                              "why": "STIG Manager has it so: %s (%s)" % (word(was["result"]), was["status"] or "-"), "kind": "same"})
             continue
         item = review_item(p, row, r, smr, m, was, ck, many)
+        if item.get("comment") is None:                     # 1.69.1c (Codex P2): our line would cut the checklist's comment
+            for g in got:
+                left.append({"file": g[0]["file"], "collection": g[0]["collection"], "asset": g[0]["asset"],
+                             "benchmark": g[0]["benchmark"] or g[5]["stig"], "v": g[1].get("v", ""), "version": g[1].get("version", ""),
+                             "title": g[1].get("title", ""), "result": g[1]["result"],
+                             "why": "comment too long to add our line (STIG Manager keeps 32767 characters) - left as it is",
+                             "kind": "protected"})
+            continue
         item["files"] = sorted(set(g[0]["file"] for g in got))
         plan.append(item)
         row["planned"] += 1
@@ -1253,7 +1261,7 @@ def review_item(p, row, r, smr, m, was, ck, many=False):
             "revision": m["revision"], "ruleId": smr.get("ruleId") or "", "v": smr.get("groupId") or r.get("v", ""),
             "version": smr.get("version") or r.get("version", ""), "title": smr.get("title") or r.get("title", ""),
             "severity": (smr.get("severity") or r.get("severity") or "").lower(), "was": was, "earlier": {}, "result": r["result"],
-            "status": p["status"], "detail": detail, "comment": comment[:32767], "engine": r.get("engine"),
+            "status": p["status"], "detail": detail, "comment": comment, "engine": r.get("engine"),     # None: too long
             "overwrite_accepted": bool(p["overwrite_accepted"]),       # 1.69.1: the update's own guard reads it
             "line": "%s %s %s: %s -> %s (%s) from %s" % (label, m["bench"], smr.get("version") or smr.get("groupId") or "",
                                                        word(was["result"]) if was["result"] else "no review", word(r["result"]),

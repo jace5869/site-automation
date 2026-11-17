@@ -403,6 +403,21 @@ class ImportComment(unittest.TestCase):
         self.assertNotIn("2026-11-05", got)
         self.assertEqual(self.item(old)["detail"], "Found on 2026-11-17: it is not set.")
 
+    def test_too_long_is_left_never_cut(self):
+        """1.69.1c (Codex P2): the checklist's comment and our line together longer than STIG Manager keeps - no comment
+        (None), and the plan leaves the rule (kind protected, said); the checklist's text is never cut."""
+        self.assertIsNone(self.item("z" * scm.MAX)["comment"])
+        self.assertTrue(self.item("z" * 100)["comment"].endswith("z" * 100))
+        real = ci.comment_merged
+        try:
+            ci.comment_merged = lambda line, cur: None
+            _, plan, left, _ = run(ImportPerson().data("fail", ""))
+        finally:
+            ci.comment_merged = real
+        self.assertEqual(plan, [])
+        self.assertTrue(left and all(x["kind"] == "protected" and "comment too long to add our line" in x["why"]
+                                     for x in left if x["kind"] != "same"), left)
+
 
 class ImportProtect(unittest.TestCase):
     """1.69.1: a review whose detail or comment says RA, Risk Acceptance, POAM or POA&M (stigman_protect_words) is left as

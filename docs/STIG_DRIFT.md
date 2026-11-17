@@ -500,9 +500,12 @@ What it writes (`check_stig_update`):
 recheck (site-automation), approved in AAP: Evaluate-STIG checked it again on web01 on 2026-11-17 - Not a Finding.* -
 so the comment and the detail are always of the same run. A person's comment is never lost:
 
-- the review's comment starts with an earlier line of the job's: that line is replaced, the rest kept below it;
+- the review's comment has an earlier line of the job's: only that sentence is taken out, and everything else is kept
+  below the new line exactly as written - a person's words on the same line or after a single line end too;
 - the review has a person's comment only: the job's line goes first, theirs below it (one blank line);
-- read again just before the write, so a comment added after the check is kept too.
+- read again just before the write, so a comment added after the check is kept too;
+- a person's text is never cut: when the job's line would make the comment longer than STIG Manager keeps (32767
+  characters), the review is left as it is and listed (*protected: comment too long to add our line*).
 
 **Refreshed - still open written again (1.69.1).** `check_stig_update_refresh: true` (the default) writes the rules
 still open in the same approval: Open, this scan's detail, the status `check_stig_update_status` and the job's line with
@@ -534,7 +537,9 @@ job. When the scan still says Open, the report lists it under *Set by a person s
 says Open* (and a tile at the top), with the person's result and date and the job's last line. It is never written:
 the person's answer stays. Check which is right - a false Open (the scan's check is wrong for this host: say so in
 the review, or add the rule to `check_stig_ignore_rules`), or a finding set aside by mistake. When the scan agrees
-with the person, nothing is said.
+with the person, nothing is said. Whatever the review's status - also one
+that does not count (`check_stig_stigman_statuses`) - it is never taken for Not Reviewed, and the update checks it again
+just before it writes.
 
 - **Never written:** Still open with `check_stig_update_refresh: false`, Manual review, Held back (an answer to a rule
   that changed since the scan's STIG revision - above; unless carried forward), a review set by a person since our

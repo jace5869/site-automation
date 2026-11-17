@@ -658,6 +658,13 @@ def recheck_asked(smc, statuses=None, which=None):
     out = {}
     for k in sorted(rules.keys() if rules else reviews.keys()):
         r = reviews.get(k)
+        # 1.69.1c (Codex P1): the person rule first, on the review as it is - whatever its status, so one that does not
+        # count (check_stig_stigman_statuses: [accepted], a person's saved Not a Finding) is never taken for Not Reviewed
+        # and planned Open over the person's answer
+        if r and r.get("result") in ("pass", "notapplicable") and r.get("ours_said") == "fail":
+            if "person" in which:
+                out[k] = ("person", r)
+            continue
         counted = r if r and r.get("status") in ok else None
         if counted and counted.get("result") == "fail":
             if "open" in which:
@@ -665,8 +672,6 @@ def recheck_asked(smc, statuses=None, which=None):
         elif not counted or counted.get("result") in ("notchecked", ""):
             if "not_reviewed" in which:
                 out[k] = ("not_reviewed", r)
-        elif counted.get("result") in ("pass", "notapplicable") and counted.get("ours_said") == "fail" and "person" in which:
-            out[k] = ("person", counted)
     return out
 
 

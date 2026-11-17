@@ -11,12 +11,12 @@
 <p class="hint"><span class="mouse"><b>Hover</b> a line, a bar or a chip for details; <b>Tab</b> to a line and use the arrow keys.</span><span class="touch"><b>Tap</b> a line, a bar or a chip for details.</span> The numbers table below has the same values.</p>
 <div class="bdw"><table class="bd{{ ' bd-ds' if store else '' }}">
 <thead><tr><th>{{ 'Datastore' if store else 'Cluster' }}</th><th>{{ 'Runway' if store else 'First limit' }}</th>
-{%- for k in res %}<th>{{ k }} used</th>{% endfor %}</tr></thead>
+{%- for k in res %}<th>{{ k | e }} used</th>{% endfor %}</tr></thead>
 <tbody>
 {%- for row in bd.rows %}
 {%- set f = row.first %}
 {%- set cells = {} %}{% for c in row.cells %}{% set _ = cells.update({c.res: c}) %}{% endfor %}
-<tr class="r-{{ row.band }}">
+<tr class="r-{{ row.band | e }}">
 <td class="cn"><b>{{ row.name | e }}</b>{% if store and row.clusters | default([]) %}<span class="sub">{{ row.clusters | join(', ') | e }}</span>{% endif %}</td>
 <td>
 {#- the Low band's chip: the look's s-low chip (1.56.0's Low tokens) with a down arrow and the word -#}
@@ -37,7 +37,7 @@
 </td>
 {%- for k in res %}
 {%- set c = cells[k] | default(none) %}
-<td>{% if c %}<div class="cell" data-l="{{ k }}">
+<td>{% if c %}<div class="cell" data-l="{{ k | e }}">
 {%- if c.series | length > 1 %}{{ c.series | report_sparkline({'label': row.name ~ ' ' ~ k | lower ~ ' used', 'lines': c.lines}) }}{% else %}<span class="nohist">not enough history</span>{% endif %}
 <div class="cv"><span><b>{{ '?' if c.now_pct is none else '%.0f' | format(c.now_pct) }}%</b> now</span><span class="c-{{ c.band if c.band in bwords else 'ok' }}">{{ c.label | e }}</span></div>
 <span class="rw tipped" tabindex="0" data-tip="{{ c.tip | e }}">{{ c.days | report_runway_bar({'warn': bd.warn | default(90), 'crit': bd.crit | default(30)}) }}</span>
