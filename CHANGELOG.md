@@ -13,7 +13,10 @@ emails and the workbook do not change.
 - Status tiles, four to a row: a dot and the name in small capitals, a big number, one line of what it means. The STIG
   scorecard keeps its CAT I, CAT II and CAT III tiles.
 - Start here as up to three ranked cards (01 Up next, 02, 03), each with Open item and View details; Every step shows
-  the rest.
+  the rest. A report with findings and no cards of its own (the STIG scorecard: its CAT I rules; the AD and VM health
+  reports: their Critical rows) gets them from its worst rows; Open item goes to the row.
+- Tile rows by their count: 5 in one row, 6 as 3 + 3, 9 as 5 + 4 - no tile alone on a row. The AD replication matrix
+  as in atlas.
 - The sections as cards: a status chip, the row count, the title, the content, and a footer with the job and time,
   a portal button where there is one, and Explore (filter, Columns, CSV, the whole text). Short sections sit side by
   side (2 or 3 to a row at 1280 px, 1 at 800 px); a wide table takes the whole row; the order never changes.

@@ -256,12 +256,18 @@ changes is how the page is laid out:
   (*CRITICAL*, *WARNING*, *HEALTHY*, *NOT RATED*), one short line of what to do. On the right: one big number - the
   first key figure that is Critical, else Warning, else the first number - and its name. Under it, a thin strip
   with the report's second line and **SHOW**: the job, who ran it, when, and the last runs.
-- **Status tiles**, four to a row: a dot and the figure's name in small capitals, the number large, one line of what
-  it means (its note, or *Critical - needs action*). The STIG scorecard keeps its CAT I, CAT II and CAT III tiles, each
-  dot in its CAT colour.
+- **Status tiles**: a dot and the figure's name in small capitals, the number large, one line of what it means (its
+  note, or *Critical - needs action*). The row is set by how many there are, so no tile is left alone on a row: 5 in
+  one row, 6 as 3 + 3, 7 or 8 as 4 + 4, 9 or 10 as 5 + 5; two to a row at 800 px. Their names, numbers and lines stay
+  on the same lines however a name wraps. The STIG scorecard keeps its CAT I, CAT II and CAT III tiles, each dot in its
+  CAT colour.
 - **Start here as up to three ranked cards** - *01 Up next*, *02*, *03* - each with its title, one sentence and two
   links: **Open item** (the section that has it) and **View details** (the host, the command with Copy). More steps:
-  *Every step* shows the rest.
+  *Every step* shows the rest. A report with findings that gives no Start here cards of its own (the STIG scorecard,
+  the AD and VM health reports) gets them from its own rows: its worst rows, Critical before Warning, in the order the
+  report lists them - on the STIG scorecard its CAT I rules first, then CAT II, by hosts open. Each card: the row's
+  name, the section it is in, one line (the values that are Critical or Warning - *RID pool left: 1.3%* - else its
+  longest value, the rule's title), **Open item** (that row, marked) and **View details** (the row's other values).
 - **The sections as cards**: the status chip at the top left, the row count at the top right, the title, then the
   content - a table, a bar list (a section of two columns whose second is numbers: the label, a violet bar, the
   number), or number cards. At the bottom: where it came from and when (the job template and the run time), a site
@@ -272,6 +278,8 @@ changes is how the page is laid out:
   section is always one click away. Its two groups fold (*Needs attention*: the Critical and Warning sections; then
   *Everything else*). Its button puts the whole rail away and brings it back; the choice is kept in this browser. A
   section you pick lands just under the bar. Narrower than 1200 px, the bar's list of sections (it stays at the top).
+- **The AD replication matrix** (the AD health and replication reports) is drawn as in atlas: the same cells, ages,
+  icons, legend and hover tip, in the ops colours.
 - **Short sections side by side**: a list, a bar list or a small table (4 columns at most, about 56 characters wide)
   sits in a row of cards - 2 or 3 to a row at 1280 px, one at 800 px. A wide table takes the whole row. The order of
   the sections never changes.

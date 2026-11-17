@@ -643,6 +643,8 @@ html{scroll-padding-top:calc(var(--appbar) + 12px)}
 .hstrip>summary:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 /* the status tiles: four to a row - a dot and its word, a big number, one line of what it means */
 .tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;border:0;margin:0 0 var(--gap)}
+.tiles.t1,.tiles.t2{grid-template-columns:repeat(2,minmax(0,1fr))}.tiles.t3,.tiles.t6{grid-template-columns:repeat(3,minmax(0,1fr))}
+.tiles.t5,.tiles.t9,.tiles.t10{grid-template-columns:repeat(5,minmax(0,1fr))}
 .tile{background:var(--card);border:1px solid var(--edge);border-radius:12px;padding:14px 16px 15px;border-left:1px solid var(--edge);box-shadow:var(--shadow)}
 .tile:first-child{border-left:1px solid var(--edge)}
 .tile .k{font-family:var(--lab);font-size:11px;font-weight:600;letter-spacing:.1em;color:var(--label);gap:8px}
@@ -651,6 +653,9 @@ html{scroll-padding-top:calc(var(--appbar) + 12px)}
 .tile .n{margin-top:6px;font-size:13px}
 .tile.hot-critical:before,.tile.hot-warning:before{display:none}
 .tile.hot-critical{border-color:var(--critical-bd)}.tile.hot-warning{border-color:var(--warning-bd)}
+/* a row of tiles: their names, numbers and lines on the same lines however the names wrap (subgrid where the browser has it) */
+@supports (grid-template-rows:subgrid){.tile{display:grid;grid-row:span 3;grid-template-rows:subgrid;row-gap:0;align-content:start}
+  .tile .k{align-items:flex-start}.tile .k .d{margin-top:.32em}}
 .tile.tc{box-shadow:var(--shadow)}.tile.tc .k .d{color:var(--cat);border-radius:3px}
 /* the sections: cards; a run of short ones side by side (2 or 3 to a row; 1 at 900 px and under), a wide one the whole row */
 .secs{display:flex;flex-direction:column;gap:var(--gap)}
@@ -720,6 +725,10 @@ ul.blist .bh .bv{font-weight:600}
 .todo .row1 .stc{margin-left:auto}
 .todo h3{margin:12px 0 0;font-size:16px;font-weight:700}
 .todo .next{margin:8px 0 0;color:var(--muted);font-size:14px}
+.start.auto .sh{display:flex;align-items:center;gap:8px;margin:0 2px 12px}.start.auto .sh .sp{flex:1}
+.todo .from{margin-top:12px;font-size:12.5px;color:var(--muted)}.todo .from+h3{margin-top:2px}
+.kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 12px;margin:0;font-size:13px}
+.kv dt{color:var(--muted);white-space:nowrap}.kv dd{margin:0;overflow-wrap:anywhere}
 .cdx{position:absolute;opacity:0;width:1px;height:1px;margin:0;pointer-events:none}
 .cdd{display:none;margin-top:12px}
 .cdx:checked~.cdd{display:block}
@@ -743,7 +752,7 @@ footer{margin-top:32px}
 @media (max-width:1100px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:900px){
   .row{grid-template-columns:minmax(0,1fr)}
-  .tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .tiles,.tiles[class*=" t"]{grid-template-columns:repeat(2,minmax(0,1fr))}
   .cards{grid-template-columns:minmax(0,1fr)}
   .hgrid{grid-template-columns:minmax(0,1fr)}
   .hn{text-align:left;padding:14px 0 0;border-left:0;border-top:1px solid var(--line)}.hn .cap{margin-left:0}
@@ -874,7 +883,9 @@ footer{margin-top:32px}
 {%- endif %}
 </header>
 {%- if r.summary | default([]) %}
-<div class="tiles">
+{#- the row of tiles by their count (the user: no tile alone on a row): 5 in one row, 6 as 3 + 3, 7 and 8 as 4 + 4 (or
+    + 3), 9 and 10 as 5 + 5 (or + 4); 2 to a row at 900 px and under #}
+<div class="tiles t{{ r.summary | length if r.summary | length <= 10 else 'x' }}">
 {%- for t in r.summary %}
 {%- set ts = t.status | default('') %}
 {%- set v = ('' if t.value is none else t.value) | string %}
@@ -973,7 +984,66 @@ footer{margin-top:32px}
 {%- set _ = narrow.append(nk.ok) %}
 {%- set _ = blist.append(nk.mx if bl else none) %}
 {%- endfor %}
+{#- Start here from the report's own rows (1.69.0b, the user: up to 3 ranked cards on each report with findings): a
+    report that gives no cards of its own and is Critical or Warning - its worst rows, Critical before Warning, each
+    in the order the report lists them. A STIG report (cat_cells): its CAT I rules, then CAT II (the report lists them
+    by hosts open). Each card: the row's first value, one line (the cells that are Critical or Warning, else its
+    longest value), Open item (that row) and View details (the row's other values) #}
+{%- set auto = [] %}
+{%- if st in ['critical', 'warning'] and not (secs | selectattr('cards', 'defined') | selectattr('cards') | list) %}
+{%- set catrep = secs | selectattr('cat_cells', 'defined') | selectattr('cat_cells') | list %}
+{%- for s in secs %}
+{%- set si = loop.index %}
+{%- if s.columns is defined and s.rows | default([]) and (not catrep or s.cat_cells | default(false)) %}
+{%- for row in s.rows %}
+{%- set ri = loop.index0 %}
+{%- if catrep %}
+{%- set cats = row | map('string') | select('in', ['CAT I', 'CAT II']) | list %}
+{%- if cats %}{% set _ = auto.append([0 if cats[0] == 'CAT I' else 1, auto | length, si, ri]) %}{% endif %}
+{%- else %}
+{%- set rs = (s.row_status[ri] if s.row_status is defined and s.row_status | length > ri else '') | default('', true) %}
+{%- if rs in ['critical', 'warning'] %}{% set _ = auto.append([0 if rs == 'critical' else 1, auto | length, si, ri]) %}{% endif %}
+{%- endif %}
+{%- endfor %}
+{%- endif %}
+{%- endfor %}
+{%- endif %}
 <div class="secs">
+{%- if auto %}
+<section class="sec start auto" id="start" aria-label="Start here">
+<div class="sh"><span class="lbl">Start here</span><span class="sp"></span><span class="pill">{{ [auto | length, 3] | min }} of {{ auto | length }} {{ 'finding' if auto | length == 1 else 'findings' }}, worst first</span></div>
+<div class="cards">
+{%- for c in (auto | sort)[:3] %}
+{%- set s = secs[c[2] - 1] %}
+{%- set row = s.rows[c[3]] %}
+{%- set cst = 'critical' if c[0] == 0 else 'warning' %}
+{%- set ks = s.kinds | default([]) %}
+{%- set tg = (s.row_tags[c[3]] if s.row_tags is defined and s.row_tags | length > c[3] else {}) | default({}, true) %}
+{%- set cs = (s.cell_status[c[3]] if s.cell_status is defined and s.cell_status | length > c[3] else []) | default([], true) %}
+{%- set cells = [] %}
+{%- for v in row %}{% set j = loop.index0 %}{% set t = ('' if v is none else v) | string | trim %}{% if t and (ks[j] if ks | length > j else '') != 'x' %}{% set _ = cells.append([j, (s.column_titles[j] if s.column_titles is defined and s.column_titles | length > j else s.columns[j] | default('')) | string, t, (cs[j] if cs | length > j else '') | default('', true)]) %}{% endif %}{% endfor %}
+{%- set hotc = cells[1:] | selectattr('3', 'in', ['critical', 'warning']) | list %}
+<article class="todo c-{{ cst }}">
+<div class="row1"><span class="num" aria-hidden="true"></span><span class="lbl">{{ 'Up next' if loop.first else 'Then' }}</span><span class="stc s-{{ cst }}"><span class="d" aria-hidden="true"></span>{{ ('CAT I' if c[0] == 0 else 'CAT II') if catrep else opsword[cst] }}</span></div>
+<div class="from">{{ s.title.split(' (')[0] | e }}</div>
+<h3>{{ cells[0][2] | e if cells else s.title | e }}</h3>
+{%- if hotc %}
+<p class="next">{% for h in hotc[:3] %}{{ '; ' if not loop.first else '' }}{{ h[1] | e }}: {{ (h[2] | capitalize if h[2].isupper() and not h[2].startswith('CAT ') and not s.keep_case | default(false) else h[2]) | e }}{% endfor %}</p>
+{%- elif cells | length > 1 %}
+{%- set lg = namespace(t='') %}
+{%- for x in cells[1:] if x[2] | length > lg.t | length and x[2] not in ['CAT I', 'CAT II', 'CAT III'] %}{% set lg.t = x[2] %}{% endfor %}
+<p class="next">{{ lg.t | truncate(200) | e }}</p>
+{%- endif %}
+{%- if cells | length > 1 %}
+<input type="checkbox" class="cdx" id="cda{{ loop.index }}" aria-label="View the details of step {{ loop.index }}">
+<div class="cdd"><dl class="kv">{% for x in cells[1:8] %}<dt>{{ x[1] | e }}</dt><dd>{{ x[2] | e }}</dd>{% endfor %}</dl></div>
+{%- endif %}
+<div class="lnk"><a href="#{{ tg.id | default('', true) or ('s' ~ c[2] ~ 'r' ~ c[3]) }}" title="To its row in {{ s.title | e }}">Open item &rarr;</a>{% if cells | length > 1 %}<label for="cda{{ loop.index }}"><span class="o">View details &rarr;</span><span class="c">Hide details &uarr;</span></label>{% endif %}</div>
+</article>
+{%- endfor %}
+</div>
+</section>
+{%- endif %}
 {%- set run = namespace(open=false) %}
 {%- for s in secs %}
 {%- set ss = s.status | default('') %}
@@ -1168,7 +1238,7 @@ footer{margin-top:32px}
 {%- set rs = (s.row_status[loop.index0] if s.row_status is defined and s.row_status | length > loop.index0 else '') | default('', true) %}
 {%- set cs = (s.cell_status[loop.index0] if s.cell_status is defined and s.cell_status | length > loop.index0 else []) | default([], true) %}
 {%- set tg = (s.row_tags[ri] if s.row_tags is defined and s.row_tags | length > ri else {}) | default({}, true) %}
-<tr{% if rs in words %} class="r-{{ rs }}"{% endif %}{% if tg.pf | default('') %} data-pf="{{ tg.pf | e }}"{% endif %}{% if tg.col | default('') %} data-col="{{ tg.col | e }}"{% endif %}{% if tg.id | default('') %} id="{{ tg.id | e }}"{% endif %}{% if 'cat' in tg and tg.cat is not none %} data-cat="{{ tg.cat | e }}"{% endif %}{% if tg.h | default('') %} data-h="{{ tg.h | lower | e }}"{% endif %}{% if s.row_filters is defined and s.row_filters | length > ri %}{% for vals in s.row_filters[ri] %} data-f{{ loop.index0 }}="|{{ vals | join('|') | e }}|"{% endfor %}{% endif %}>
+<tr{% if rs in words %} class="r-{{ rs }}"{% endif %}{% if tg.pf | default('') %} data-pf="{{ tg.pf | e }}"{% endif %}{% if tg.col | default('') %} data-col="{{ tg.col | e }}"{% endif %} id="{{ tg.id | e if tg.id | default('') else 's' ~ si ~ 'r' ~ ri }}"{% if 'cat' in tg and tg.cat is not none %} data-cat="{{ tg.cat | e }}"{% endif %}{% if tg.h | default('') %} data-h="{{ tg.h | lower | e }}"{% endif %}{% if s.row_filters is defined and s.row_filters | length > ri %}{% for vals in s.row_filters[ri] %} data-f{{ loop.index0 }}="|{{ vals | join('|') | e }}|"{% endfor %}{% endif %}>
 {%- for cell in row %}
 {%- set text = ('' if cell is none else cell) | string %}
 {%- set lbl = (s.column_titles[loop.index0] if s.column_titles is defined and s.column_titles | length > loop.index0 else s.columns[loop.index0] | default('')) | string %}

@@ -188,7 +188,7 @@ run "ops for an email: refused, said why" fail "{\"report_email_to\": [\"ops@exa
 mkdir -p "$work/ops"
 run "the ops look (1.69.0): the page and the index" ok "{\"report_web_dest\": \"$work/ops\", \"report_web_theme\": \"ops\", $aapjob}"
 check "the page: the header card, its chip and number, the tiles, the cards, the logo inside it (at most 48 px tall), the script beside it, no cid:" bash -c "p=\"\$(ls '$work'/ops/linux-certificate-trust-report/*_job-907.html)\" \
-    && grep -q '<header class=\"hero card h-warning\">' \"\$p\" && grep -q 'Warning</span>' \"\$p\" && grep -q '<div class=\"tiles\">' \"\$p\" \
+    && grep -q '<header class=\"hero card h-warning\">' \"\$p\" && grep -q 'Warning</span>' \"\$p\" && grep -q '<div class=\"tiles t' \"\$p\" \
     && grep -q '<div class=\"secs\">' \"\$p\" && grep -q '<div class=\"cf\"><span class=\"src\">' \"\$p\" && grep -q 'height=\"48\"' \"\$p\" \
     && grep -q 'src=\"data:image/png;base64,' \"\$p\" && ! grep -q 'cid:' \"\$p\" \
     && grep -q 'script src=\"../site-report.js?v=' \"\$p\" && test -s '$work/ops/site-report.js' && ! grep -Eq '<link|src=\"https?:|@import' \"\$p\""

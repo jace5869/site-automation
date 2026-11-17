@@ -127,6 +127,61 @@ class StartHere(unittest.TestCase):
         self.assertIn('<details class="sec" id="s1" open>', h)
 
 
+class Followups(unittest.TestCase):
+    """1.69.0b (the user's review): tile rows by their count (no tile alone on a row), Start here on every report with
+    findings (from its own rows when it gives no cards), and the AD replication matrix as in atlas."""
+
+    def test_tile_rows_by_count(self):
+        for n, cls in ((5, "t5"), (6, "t6"), (8, "t8"), (9, "t9"), (12, "tx")):
+            h = render(dict(DOC, summary=[{"label": "T%d" % i, "value": i} for i in range(n)]))
+            self.assertIn('<div class="tiles %s">' % cls, h)
+        h = render(DOC)
+        self.assertIn(".tiles.t5,.tiles.t9,.tiles.t10{grid-template-columns:repeat(5,minmax(0,1fr))}", h)
+        self.assertIn(".tiles.t3,.tiles.t6{grid-template-columns:repeat(3,minmax(0,1fr))}", h)
+        self.assertIn('.tiles,.tiles[class*=" t"]{grid-template-columns:repeat(2,minmax(0,1fr))}', h)   # 2 a row at 900 px
+        self.assertIn("@supports (grid-template-rows:subgrid){.tile{display:grid;grid-row:span 3;grid-template-rows:subgrid", h)
+
+    def test_start_here_from_the_scorecard_rows(self):
+        h = render(fixture("stig_scorecard_open_web"))
+        self.assertIn('<section class="sec start auto" id="start" aria-label="Start here">', h)
+        self.assertIn('<span class="pill">3 of 8 findings, worst first</span>', h)
+        cards = re.findall(r'<article class="todo c-(\w+)">.*?<div class="from">([^<]*)</div>\n<h3>([^<]*)</h3>', h, re.S)
+        self.assertEqual(cards, [("critical", "Findings", "SV-254247 (WN22-00-000110)"), ("critical", "Findings", "SV-254239 (WN22-00-000030)"),
+                                 ("critical", "Findings", "SV-257777 (RHEL-09-211010)")])     # CAT I, by hosts open
+        self.assertIn('<span class="d" aria-hidden="true"></span>CAT I</span>', h)
+        self.assertIn('<p class="next">Windows Server 2022 must be maintained at a supported servicing level.</p>', h)
+        first = h[h.index('<article class="todo c-critical">'):]
+        first = first[:first.index("</article>")]
+        href = re.search(r'<a href="#([^"]+)" title="To its row in Findings \(10\)">Open item', first).group(1)
+        self.assertIn(' id="%s"' % href, h)                                               # its row has that id
+        self.assertIn('<dl class="kv"><dt>', first)                                       # View details: the row's values
+
+    def test_start_here_from_health_rows(self):
+        h = render(fixture("ad_report"))
+        self.assertIn('<span class="pill">3 of 25 findings, worst first</span>', h)
+        self.assertIn('<div class="from">Domain upkeep</div>\n<h3>corp.test</h3>', h)
+        self.assertIn("<p class=\"next\">Recycle Bin: Off; RID pool left: 1.3%; krbtgt password: 699 days</p>", h)
+        self.assertIn('<a href="#s2r0" title="To its row in Domain upkeep">Open item &rarr;</a>', h)
+        self.assertIn(' id="s2r0"', h)
+
+    def test_no_start_here_of_its_own_when_none_is_due(self):
+        self.assertNotIn('class="sec start auto"', render(DOC))                               # its own cards: those
+        self.assertNotIn('class="sec start auto"', render(fixture("ad_repl_dcs_12")))         # cards beside the matrix
+        ok = dict(fixture("ad_report"), status="ok")
+        self.assertNotIn('class="sec start auto"', render(ok))                               # nothing to act on
+
+    def test_the_replication_matrix_as_in_atlas(self):
+        import test_report_fit as t
+        for n in ("ad_repl_dcs_12", "ad_repl_forest", "ad_repl_web"):
+            doc = fixture(n)
+            o, a = render(doc), t.render("atlas", doc)
+            grid = lambda h: h[h.index('<div class="rm-legend'):h.index("</table>", h.index('<div class="rm-wrap')) + 8]
+            self.assertIn('<table class="rm rm-', o, n)
+            self.assertEqual(grid(o), grid(a), n)                                         # the same cells, words and tips
+        css = open(os.path.join(TPL, "report_matrix.css.j2")).read().split("-#}")[-1].strip()
+        self.assertIn(css.splitlines()[0], render(fixture("ad_repl_dcs_12")))           # its CSS, the look's colours
+
+
 class Sections(unittest.TestCase):
     def test_cards_count_footer_explore(self):
         h = render(DOC)
