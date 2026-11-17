@@ -134,6 +134,27 @@ check "  ...only that key, mode and owner kept, a backup beside it" \
 600 jdoe
 1"
 
+# the installed ACT itself is older than the jobs' one (1.70.1): kept in /opt/act/old, the jobs' one put in its place
+vsha=$(sha256sum "$repo/vendor/act/act" | cut -d' ' -f1)
+sed 's/^ACT_VERSION = .*/ACT_VERSION = "0.6.25"/' "$repo/vendor/act/act" | "$engine" exec -i "$db" sh -c 'cat > /opt/act/act && chmod 755 /opt/act/act'
+osha=$(on "$db" 'sha256sum /opt/act/act' | cut -d' ' -f1)
+run "installed ACT older, check: says it would update" act_old_copies.yml --check -l db01.example.mil \
+    -- "would update /opt/act/act 0.6.25 -> $actv (the old one kept in /opt/act/old)."
+check "  ...nothing changed" "$(on "$db" 'sha256sum /opt/act/act | cut -d" " -f1; test -e /opt/act/old && echo old || echo no-old')" "$osha
+no-old"
+run "installed ACT older, run: updated, the old one kept" act_old_copies.yml -l db01.example.mil \
+    -- "updated /opt/act/act 0.6.25 -> $actv, the old one kept at /opt/act/old/act."
+check "  ...now the jobs' ACT, 0755" "$(on "$db" 'sha256sum /opt/act/act | cut -d" " -f1; stat -c %a /opt/act/act; ls -A /opt/act')" "$vsha
+755
+act
+old"
+check "  ...the old one kept, root's 0700 folder" "$(on "$db" 'stat -c %a /opt/act/old; ls /opt/act/old | wc -l; grep -c "^ACT_VERSION = .0.6.25" /opt/act/old/act.*')" "700
+1
+1"
+check "  ...act --version" "$(on "$db" 'HOME=/nonexistent act --version | head -1')" "act $actv"
+run "same version again: untouched" act_old_copies.yml -l db01.example.mil -- '!updated /opt/act/act' '!would update'
+check "  ...still one backup" "$(on "$db" 'ls /opt/act/old | wc -l')" "1"
+
 if [ $with36 = 1 ]; then
     run "old01, Python 3.6 only: looked at, not linked" act_old_copies.yml -l old01.example.mil \
         -- "old01.example.mil" "not linked (the new ACT needs Python 3.6 or newer)"

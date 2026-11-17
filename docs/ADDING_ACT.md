@@ -394,11 +394,24 @@ per run.
 | A link to `/opt/act/act`, or into `/opt/act` | nothing |
 | An old file, or a link elsewhere | `site_act_old_bin`: link (the default), delete or report |
 
+**The installed ACT (1.70.1).** The same look checks `/opt/act/act` itself:
+
+| What is at `/opt/act/act` | What the job does |
+|---|---|
+| Nothing | installs the jobs' ACT, when a copy is to be linked |
+| The same file as the jobs' ACT (`vendor/act/act`, compared by sha256) | nothing |
+| Another file, such as an older ACT | keeps it in `/opt/act/old` (0700, root, `act.<UTC time>.<sha256, first 8>`), then installs the jobs' ACT (0755) |
+| A link | nothing |
+
+The line says `updated /opt/act/act 0.6.25 -> 0.6.27, the old one kept at /opt/act/old/act.<...>.` In Check it says
+`would update /opt/act/act 0.6.25 -> 0.6.27` and changes nothing. The update does not need a link to be made, and a host with
+`python3` older than 3.6 is updated too. The jobs that run ACT on a host install it the same way (the file replaced when it differs).
+
 - **link** keeps the old one in `/opt/act/old` (0700, root) as `act.<UTC time>.<sha256, first 8>`. Then it links
   `/usr/local/bin/act` to `/opt/act/act`. When ACT is not installed on the host yet, it installs it first.
 - **delete** keeps the old one the same way, then removes it.
 - **report** only says it.
-- A host whose `python3` is older than 3.6 is not linked: typing `act` would fail there. The job says so. (1.67.0: 3.6, was 3.8 - ACT 0.6.26 passes its tests on Python 3.6, the RHEL 8 default.)
+- A host whose `python3` is older than 3.6 is not linked: typing `act` would fail there. The job says so, with the installed ACT version. (1.67.0: 3.6, was 3.8 - ACT 0.6.26 passes its tests on Python 3.6, the RHEL 8 default.)
 - The job output and the report's *ACT old copies* section say what was found, with the old ACT version.
 - In Check the job changes nothing and says what it would do.
 

@@ -14,6 +14,8 @@ description:
     Before a link or a delete the old one is kept in I(backup_dir) (0700) as act.<UTC time>.<sha256, first 8>.
   - Root's and each /home user's ~/.config/act/config.json is read for genai.model only; never the key, never printed.
     With I(fix_user_model) that one key is rewritten (a backup beside it, the file's mode and owner kept).
+  - When I(target) is there, is a file and differs from the ACT the jobs carry (I(source_sha256)), it is updated (1.70.1):
+    the old one is kept in I(backup_dir) as above, the new one (I(staged), put on the host by the task) takes its place (0755).
   - Check mode changes nothing and says what it would do.
 options:
   paths: {description: The places an old act may be., type: list, elements: str, default: [/usr/local/bin/act]}
@@ -24,6 +26,9 @@ options:
   fix_user_model: {description: Rewrite a user's genai.model to job_model (with a backup)., type: bool, default: false}
   homes: {description: The home folders looked in., type: list, elements: str, default: [/root, /home/*]}
   apply: {description: false = only decide (nothing changed, as check mode)., type: bool, default: true}
+  source_sha256: {description: The sha256 of the ACT the jobs carry; empty = the installed ACT is not compared., type: str, default: ''}
+  source_version: {description: Its ACT_VERSION (for the report)., type: str, default: ''}
+  staged: {description: The new ACT, put on the host by the task (a real run); moved over I(target) when it differs., type: path}
   installing: {description: The installed ACT is put in place just before (a check run did not put it)., type: bool, default: false}
 """
 
@@ -205,6 +210,34 @@ def say_copy(r):
     return "%s was %s: %s." % (r["path"], what, done)
 
 
+def update_target(target, params, apply, now, lines):
+    """The installed ACT is a file that differs from the one the jobs carry: keep it, put the new one in its place."""
+    want = params.get("source_sha256") or ""
+    if not want or not os.path.isfile(target) or os.path.islink(target) or sha256(target) == want:
+        return None
+    old = act_version(target) or "unknown"
+    new = params.get("source_version") or "the jobs' ACT"
+    u = {"path": target, "from": old, "to": new, "would": not apply}
+    staged = params.get("staged")
+    if apply and staged and os.path.isfile(staged):
+        u["backup"] = backup(target, params["backup_dir"], now)
+        os.chmod(staged, 0o755)
+        try:
+            os.rename(staged, target)
+        except OSError:
+            shutil.copy2(staged, target + ".site-act-new")
+            os.chmod(target + ".site-act-new", 0o755)
+            os.rename(target + ".site-act-new", target)
+            os.unlink(staged)
+        lines.append("updated %s %s -> %s, the old one kept at %s." % (target, old, new, u["backup"]))
+    elif apply:
+        u["would"] = True      # not staged: nothing was done
+        lines.append("%s is ACT %s, not %s: could not be updated (the new one was not put on the host)." % (target, old, new))
+    else:
+        lines.append("would update %s %s -> %s (the old one kept in %s)." % (target, old, new, params["backup_dir"]))
+    return u
+
+
 def run(params, check_mode, now=None, python_check=python3_ok):
     now = now or datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
     target = params["target"]
@@ -213,6 +246,9 @@ def run(params, check_mode, now=None, python_check=python3_ok):
     copies, lines = [], []
     # a check run did not put the installed ACT in place; a real run must find it there
     target_there = os.path.isfile(os.path.realpath(target)) or bool(params.get("installing") and not apply)
+    updated = update_target(target, params, apply, now, lines)
+    if updated and not updated["would"]:
+        changed = True
     new = act_version(target) if os.path.isfile(target) else ""
     py = None
     for path in params["paths"]:
@@ -222,6 +258,8 @@ def run(params, check_mode, now=None, python_check=python3_ok):
         if found["kind"] in ("file", "link") and params["action"] == "link" and py is None:
             py = python_check()
         todo, why = decide(found, params["action"], target, target_there, py or (True, ""))
+        if todo == "report" and ("python3" in why) and new:
+            why += " (the installed ACT is %s)" % new
         r = dict(found, action=todo, why=why, would=not apply, backup_dir=params["backup_dir"],
                  target=target + ((" (ACT %s)" % new) if new else ""))
         if todo in ("link", "delete") and apply:
@@ -266,7 +304,7 @@ def run(params, check_mode, now=None, python_check=python3_ok):
                              % (who, model))
         users.append(u)
     return {"changed": changed, "copies": copies, "users": users, "lines": lines,
-            "target_there": target_there, "target_version": act_version(target) if os.path.isfile(target) else ""}
+            "update": updated, "updating": bool(updated), "target_there": target_there, "target_version": act_version(target) if os.path.isfile(target) else ""}
 
 
 def main():
@@ -281,6 +319,9 @@ def main():
             homes=dict(type="list", elements="str", default=["/root", "/home/*"]),
             apply=dict(type="bool", default=True),
             installing=dict(type="bool", default=False),
+            source_sha256=dict(type="str", default=""),
+            source_version=dict(type="str", default=""),
+            staged=dict(type="path", default=None),
         ),
         supports_check_mode=True,
     )

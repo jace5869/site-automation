@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.70.1 — 2026-11-17
+
+**To set up: nothing.** *ACT - find and replace old copies* now updates an older ACT at `/opt/act/act`.
+
+**Fix: the old copies job did not update `/opt/act/act`.** It installed the jobs' ACT only when that file was missing, so an
+older one stayed and the link pointed at it (docs/ADDING_ACT.md, "Old copies of ACT").
+
+- When `/opt/act/act` is there and differs from `vendor/act/act` (sha256), the old one is kept in `/opt/act/old` (0700, root,
+  `act.<UTC time>.<sha256, first 8>`, as the other old copies) and the jobs' ACT is installed (0755).
+- The line per host: `updated /opt/act/act 0.6.25 -> 0.6.27, the old one kept at ...`. In Check: `would update ...`.
+- The same version and file: untouched. A link at `/opt/act/act`: left alone.
+- A host with `python3` older than 3.6 is updated, not linked, and the line says the installed ACT version.
+- The jobs that run ACT on a host (act_triage) already replaced the file when it differed; nothing changes there.
+- Tests: tests/test_act_old_copies.py (Update: older, same, edited, Check, link first, old Python, not staged),
+  tests/act/run_act_old_copies_test.sh (older installed ACT: Check, run, again).
+
 ## 1.70.0 — 2026-11-17
 
 **To set up: nothing.** The scorecard shows CORA when STIG Manager's metrics give the counts by severity.

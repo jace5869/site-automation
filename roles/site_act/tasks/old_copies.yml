@@ -3,7 +3,8 @@
 # link into /opt/act is linked to the installed ACT (site_act_old_bin: link, the old one kept in /opt/act/old first),
 # deleted (kept first) or only reported. root's and each /home user's saved genai.model is reported when it is not the
 # job's (site_act_fix_user_model: true rewrites that one key). Check mode changes nothing and says what it would do.
-# Once per host per run; never on Windows, network devices or the AAP side (a local connection); never fails the job.
+# The installed ACT itself (/opt/act/act): when it is there and differs from vendor/act/act, the old one is kept in
+# /opt/act/old and the jobs' one put in its place (1.70.1). Once per host per run; never on Windows, network devices or the AAP side (a local connection); never fails the job.
 
 - name: ACT | old copies - the setting
   ansible.builtin.assert:
@@ -21,6 +22,9 @@
   vars:
     _old_dir: "{{ act_triage_dest_dir | default('/opt/act') }}"
     _old_model: "{{ site_act_model or (site_act_models | default({})).genai | default('') }}"
+    # the ACT the jobs carry: its checksum (vendor/CHECKSUMS, checked by tests/check_vendor.sh) and its version
+    _old_src_sha: "{{ lookup('ansible.builtin.file', role_path ~ '/../../vendor/CHECKSUMS') | regex_search('(?m)^([0-9a-f]{64}) +vendor/act/act$', '\\1') | first | default('') }}"
+    _old_src_version: "{{ lookup('ansible.builtin.file', role_path ~ '/../../vendor/act/VERSION') | trim }}"
   block:
     - name: ACT | old copies - what is there
       site_act_old_copies:
@@ -30,6 +34,8 @@
         backup_dir: "{{ _old_dir }}/old"
         job_model: "{{ _old_model }}"
         fix_user_model: "{{ site_act_fix_user_model | bool }}"
+        source_sha256: "{{ _old_src_sha }}"
+        source_version: "{{ _old_src_version }}"
         apply: false
       become: true
       check_mode: false                   # only looks
@@ -60,6 +66,15 @@
       become: true
       when: _site_act_old_install | bool
 
+    # the installed ACT is older (or another) than the jobs': put the new one beside it first; the module keeps the old one
+    - name: ACT | old copies - the jobs' ACT, to replace the installed one
+      ansible.builtin.copy:
+        src: "{{ role_path }}/../../vendor/act/act"
+        dest: "{{ _old_dir }}/.act.new"
+        mode: "0755"
+      become: true
+      when: _site_act_old_seen.updating | default(false) | bool and not ansible_check_mode
+
     - name: ACT | old copies - {{ site_act_old_bin }}
       site_act_old_copies:
         paths: "{{ site_act_old_bins }}"
@@ -68,11 +83,15 @@
         backup_dir: "{{ _old_dir }}/old"
         job_model: "{{ _old_model }}"
         fix_user_model: "{{ site_act_fix_user_model | bool }}"
+        source_sha256: "{{ _old_src_sha }}"
+        source_version: "{{ _old_src_version }}"
         installing: "{{ _site_act_old_install | bool }}"
+        staged: "{{ (_old_dir ~ '/.act.new') if _site_act_old_seen.updating | default(false) | bool and not ansible_check_mode else omit }}"
       become: true
       register: _site_act_old
       failed_when: false
-      when: _site_act_old_seen.copies | default([]) | rejectattr('action', 'equalto', 'none') | list | length > 0
+      when: _site_act_old_seen.updating | default(false) | bool
+            or _site_act_old_seen.copies | default([]) | rejectattr('action', 'equalto', 'none') | list | length > 0
             or _site_act_old_seen.users | default([]) | rejectattr('state', 'equalto', 'ok') | list | length > 0
 
     - name: ACT | old copies - for the report (once per host)

@@ -206,6 +206,99 @@ class Users(Base):
         self.assertIn("are not JSON: not read", r["lines"][0])
 
 
+class Update(Base):
+    """1.70.1: the installed ACT is older than the jobs' one - kept in old/, the new one in its place."""
+    JOBS = '#!/usr/bin/env python3\nACT_VERSION = "0.6.27"\nprint("jobs act")\n'
+
+    def setUp(self):
+        super().setUp()
+        self.staged = os.path.join(self.opt, ".act.new")
+        self.write(self.staged, self.JOBS, 0o600)
+        self.sha = m.sha256(self.staged)
+
+    def up(self, check=False, **kw):
+        return self.run_it(check=check, source_sha256=self.sha, source_version="0.6.27", staged=self.staged, **kw)
+
+    def test_an_older_installed_act_is_updated_and_kept(self):
+        r = self.up()
+        self.assertTrue(r["changed"])
+        self.assertEqual(open(self.target).read(), self.JOBS)
+        self.assertEqual(stat.S_IMODE(os.stat(self.target).st_mode), 0o755)
+        back = os.path.join(self.opt, "old")
+        self.assertEqual(stat.S_IMODE(os.stat(back).st_mode), 0o700)
+        names = os.listdir(back)
+        self.assertEqual(len(names), 1)
+        self.assertTrue(re.match(r"^act\.%s\.[0-9a-f]{8}$" % NOW, names[0]))
+        self.assertEqual(open(os.path.join(back, names[0])).read(), NEW)
+        self.assertIn("updated %s 0.6.25 -> 0.6.27, the old one kept at %s." % (self.target, os.path.join(back, names[0])),
+                      r["lines"])
+        self.assertFalse(os.path.exists(self.staged))
+
+    def test_the_same_one_is_untouched(self):
+        self.write(self.target, self.JOBS, 0o755)
+        r = self.up()
+        self.assertFalse(r["changed"])
+        self.assertEqual(r["lines"], [])
+        self.assertIsNone(r["update"])
+        self.assertFalse(os.path.exists(os.path.join(self.opt, "old")))
+
+    def test_the_same_version_but_another_file_is_updated(self):
+        self.write(self.target, self.JOBS + "# edited\n", 0o755)
+        r = self.up()
+        self.assertTrue(r["changed"])
+        self.assertIn("0.6.27 -> 0.6.27", " ".join(r["lines"]))
+
+    def test_check_mode_only_says(self):
+        r = self.up(check=True)
+        self.assertFalse(r["changed"])
+        self.assertEqual(open(self.target).read(), NEW)
+        self.assertFalse(os.path.exists(os.path.join(self.opt, "old")))
+        self.assertEqual(r["lines"], ["would update %s 0.6.25 -> 0.6.27 (the old one kept in %s)."
+                                      % (self.target, os.path.join(self.opt, "old"))])
+
+    def test_no_source_given_nothing_compared(self):
+        r = self.run_it()
+        self.assertFalse(r["changed"])
+        self.assertEqual(open(self.target).read(), NEW)
+
+    def test_the_update_comes_before_the_link(self):
+        self.write(self.act, OLD, 0o755)
+        r = self.up()
+        self.assertEqual(os.readlink(self.act), self.target)
+        self.assertEqual(open(self.target).read(), self.JOBS)
+        self.assertEqual(len(os.listdir(os.path.join(self.opt, "old"))), 2)
+        self.assertIn("(ACT 0.6.27)", " ".join(r["lines"]))
+
+    def test_python_too_old_still_updates_and_says_the_installed_version(self):
+        self.write(self.act, OLD, 0o755)
+        r = self.up(py=(False, "python3 here is 3.5: not linked, as typing act would fail"))
+        self.assertEqual(open(self.target).read(), self.JOBS)
+        self.assertFalse(os.path.islink(self.act))
+        self.assertTrue(any("not linked" in x and "the installed ACT is 0.6.27" in x for x in r["lines"]))
+
+    def test_a_link_as_the_installed_one_is_left_alone(self):
+        other = os.path.join(self.d, "elsewhere")
+        self.write(other, OLD, 0o755)
+        os.unlink(self.target)
+        os.symlink(other, self.target)
+        r = self.up()
+        self.assertFalse(r["changed"])
+        self.assertEqual(open(other).read(), OLD)
+
+    def test_not_staged_does_nothing_and_says_so(self):
+        os.unlink(self.staged)
+        r = self.up()
+        self.assertFalse(r["changed"])
+        self.assertEqual(open(self.target).read(), NEW)
+        self.assertIn("could not be updated", " ".join(r["lines"]))
+
+    def test_the_task_wires_it(self):
+        t = open(os.path.join(REPO, "roles", "site_act", "tasks", "old_copies.yml")).read()
+        self.assertIn("source_sha256", t)
+        self.assertIn("staged", t)
+        self.assertIn(".act.new", t)
+
+
 class Python36(unittest.TestCase):
     def test_no_newer_syntax(self):
         src = open(os.path.join(REPO, "roles", "site_act", "library", "site_act_old_copies.py")).read()
