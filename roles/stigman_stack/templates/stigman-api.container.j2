@@ -7,6 +7,8 @@ After=stigman-mysql.service
 [Container]
 ContainerName=stigman-api
 Image={{ stigman_images.api }}
+# never pulled by the unit (1.70.3): an air-gapped host has the image loaded, the job checks it first
+PodmanArgs=--pull=never
 Network=stigman.network
 # STIG Manager reads its DB password only from the environment: inject it from a podman
 # secret (the value is not stored in the unit file and does not show in `podman inspect`).

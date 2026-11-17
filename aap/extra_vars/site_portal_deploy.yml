@@ -32,6 +32,10 @@ portal_public_url: https://stigman.example.mil/portal/
 ## (~/.config/containers/systemd, systemctl --user) <- tests / rootless hosts
 # portal_scope: system
 
+## true = a missing image is pulled (a host that reaches a registry); false (the default) = the job
+## stops first, naming it, and nothing is changed
+# portal_pull_images: false
+
 ## the service's files, and nginx-portal.conf (the nginx lines to add)
 # portal_config_dir: /etc/site-portal
 

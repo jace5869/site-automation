@@ -25,6 +25,10 @@
 #   api: docker.io/nuwcdivnpt/stig-manager:1.6.17     # pin a version; bump deliberately
 #   nginx: docker.io/library/nginx:stable
 
+## true = a missing image is pulled (a host that reaches a registry); false (the default) = the job
+## stops first, naming it, and nothing is changed (an air-gapped host: load them, docs/ENCLAVES.md)
+# stigman_pull_images: false
+
 ## nginx.conf, TLS files, CA bundle
 # stigman_config_dir: /etc/stigman
 

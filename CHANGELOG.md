@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.70.3 — 2026-11-17
+
+**To set up: on an air-gapped host, load the images before the deploy jobs** (docs/ENCLAVES.md, section 5). A host that
+reaches a registry sets `stigman_pull_images`, `portal_pull_images` or `vmware_ask_pull_images` to true.
+
+**Air-gap: a missing image stops the deploy at once, and no unit pulls.** Before, a missing image made podman try a
+registry (up to 5 minutes, 3 times, per unit) and the job only said "Unable to start service".
+
+- Every Quadlet container template has `PodmanArgs=--pull=never` (STIG Manager's mysql, api and nginx; the portal's
+  service and its own nginx; VMware ask). It is `PodmanArgs` and not `Pull=`: `Pull=` needs podman 5, RHEL 9.2 has 4.4.
+- *STIG Manager - deploy*, *Site portal - deploy* and *VMware ask - deploy* check each image with `podman image exists`
+  before they write anything (the registry login first). A missing one stops the job in seconds, naming the image and the
+  setting, with the save, load and tag steps. The portal's nginx image only counts with `portal_own_nginx`.
+- `stigman_pull_images`, `portal_pull_images`, `vmware_ask_pull_images` (false): true pulls what is missing. In a dry run
+  nothing is pulled and nothing stops.
+- With a pull setting true and the pull failing, the message says so: `podman pull <image> failed: <podman's first
+  line>` for each image, and does not tell the reader to set what is set. A failed pull is not shown as changed.
+- docs/ENCLAVES.md, section 5: every image the site needs, the setting for each, and the steps; linked from the portal,
+  VMware ask and workflow 10. A stack deployed before keeps running; its next deploy adds `--pull=never`.
+- Tests: tests/test_airgap_images.py (the message, every template, the order of the tasks, the defaults, the docs),
+  tests/airgap/run_image_preflight_test.sh (the three roles' image tasks with a stand-in podman: all there, missing,
+  rootless, pull, a pull podman refuses, a dry run), tests/airgap/run_missing_image_test.sh (the real roles, rootless, real
+  podman: stopped within seconds, nothing written, no secret made).
+
 ## 1.70.2 — 2026-11-17
 
 **To set up: nothing new.** With `stigman_link_style: open` already working, run *Site portal - deploy* again: the

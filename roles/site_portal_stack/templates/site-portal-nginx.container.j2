@@ -8,6 +8,8 @@ After=site-portal-network.service site-portal-app.service
 [Container]
 ContainerName=site-portal-nginx
 Image={{ portal_nginx_image }}
+# never pulled by the unit (1.70.3): an air-gapped host has the image loaded, the job checks it first
+PodmanArgs=--pull=never
 Network=site-portal.network
 PublishPort={{ portal_port }}:8443
 Volume={{ portal_config_dir }}/nginx/portal.conf:/etc/nginx/conf.d/default.conf:ro,Z

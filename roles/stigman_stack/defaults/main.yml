@@ -13,6 +13,7 @@ stigman_images:
   mysql: docker.io/library/mysql:8.4
   api: docker.io/nuwcdivnpt/stig-manager:1.6.17     # pin a version; bump deliberately
   nginx: docker.io/library/nginx:stable
+stigman_pull_images: false                         # true = a missing image is pulled (a host that reaches a registry); false (the default) = the job stops first, naming it, and nothing is changed (an air-gapped host: load them, docs/ENCLAVES.md)
 
 stigman_config_dir: /etc/stigman                    # nginx.conf, TLS files, CA bundle
 stigman_https_port: 443                             # host port nginx publishes

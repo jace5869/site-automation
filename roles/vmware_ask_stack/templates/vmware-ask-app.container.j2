@@ -8,6 +8,8 @@ After=network-online.target
 ContainerName=vmware-ask-app
 # the site's execution environment: Python, ansible-core and pyVmomi are in it
 Image={{ vmware_ask_image }}
+# never pulled by the unit (1.70.3): an air-gapped host has the image loaded, the job checks it first
+PodmanArgs=--pull=never
 # the reverse proxy's network (its nginx reaches the service by name); no port on the server
 Network={{ vmware_ask_network }}
 Volume={{ vmware_ask_config_dir }}/app:/app:ro,Z

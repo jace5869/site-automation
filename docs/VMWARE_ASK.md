@@ -240,6 +240,7 @@ and [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md). The ones you are likely to
 |---|---|---|
 | `vmware_ask_network` | | the podman network of STIG Manager's nginx container (required; it must exist, with DNS) |
 | `vmware_ask_image` | | your execution environment image (the all-in-one EE) |
+| `vmware_ask_pull_images` | false | true = a missing image is pulled; false = the job stops first and names it ([ENCLAVES.md](ENCLAVES.md), section 5) |
 | `vmware_ask_path` | `/ask/` | the page's path on nginx (the lines' `location`) |
 | `vmware_ask_public_url` | `https://<the server>/ask/` | the page's address, as people open it (said at the end, logged) |
 | `vmware_ask_classification` | `U` | the banner: U, CUI, C, S, TS, SCI, NONE |

@@ -13,6 +13,7 @@ vmware_ask_scope: system
 # the service's image: the site's execution environment (ee/all-in-one) - Python, ansible-core and pyVmomi are in it
 # already, so nothing is installed on the server or downloaded at start. Pull it from your automation hub.
 vmware_ask_image: aap.example.mil/site-ee-all:1
+vmware_ask_pull_images: false                       # true = a missing image is pulled (a host that reaches a registry); false (the default) = the job stops first, naming it, and nothing is changed
 
 vmware_ask_config_dir: /etc/vmware-ask              # the service's files, and nginx-ask.conf (the nginx lines to add)
 # the podman network of the reverse proxy's nginx container (required): `sudo podman ps --format "{{.Names}} {{.Networks}}"`

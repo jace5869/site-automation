@@ -766,6 +766,8 @@ group `stigman`; credentials Machine (ssh + sudo), *STIG Manager database*, *TLS
 type** and **Show changes**, so the workflow can run it as Check, then as Run. Its Variables:
 `aap/extra_vars/stigman_deploy.yml`.
 
+The images are checked first. On an air-gapped host they are loaded by hand: [ENCLAVES.md](ENCLAVES.md), section 5.
+
 ```workflow
 [STIG Manager - deploy]         Job type = Check (+ Show changes): what would change
     |  Run on success

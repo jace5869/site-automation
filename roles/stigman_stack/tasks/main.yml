@@ -53,6 +53,55 @@
     fail_msg: "podman {{ _stigman_podman.stdout }} is too old for Quadlet; RHEL 9.2+/8.8+ ship 4.4 or newer."
     quiet: true
 
+# ---------------------------------------------------------------- the images (1.70.3)
+# Before anything is written: every image must be on this host. The units never pull (PodmanArgs=--pull=never), so an
+# air-gapped host failed minutes later in "Unable to start service". stigman_pull_images true pulls what is missing instead.
+- name: Registry | log in (only when the registry credential is attached)
+  ansible.builtin.command:
+    argv: [podman, login, --username, "{{ lookup('ansible.builtin.env', 'REGISTRY_USERNAME') }}",
+           --password-stdin, "{{ lookup('ansible.builtin.env', 'REGISTRY_HOST') }}"]
+    stdin: "{{ lookup('ansible.builtin.env', 'REGISTRY_PASSWORD') }}"
+  changed_when: false
+  no_log: true
+  when: lookup('ansible.builtin.env', 'REGISTRY_PASSWORD') | length > 0
+
+- name: Images | which are on this host (podman image exists; nothing is pulled)
+  ansible.builtin.command:
+    argv: [podman, image, exists, "{{ item.image }}"]
+  loop:
+    - {var: stigman_images.mysql, image: "{{ stigman_images.mysql }}"}
+    - {var: stigman_images.api, image: "{{ stigman_images.api }}"}
+    - {var: stigman_images.nginx, image: "{{ stigman_images.nginx }}"}
+  loop_control:
+    label: "{{ item.var }}"
+  register: _stigman_img
+  changed_when: false
+  failed_when: false
+  check_mode: false                       # only reads
+
+- name: Images | pulled, when stigman_pull_images is true (a host that reaches a registry)
+  ansible.builtin.command:
+    argv: [podman, pull, "{{ item.item.image }}"]
+  loop: "{{ _stigman_img.results | rejectattr('rc', 'equalto', 0) | list }}"
+  loop_control:
+    label: "{{ item.item.var }}"
+  register: _stigman_img_pull
+  changed_when: _stigman_img_pull.rc == 0            # a failed pull changed nothing
+  failed_when: false
+  when: stigman_pull_images | bool and not ansible_check_mode
+
+- name: Images | every image is on this host, or the job stops here with nothing changed
+  ansible.builtin.fail:
+    msg: "{{ _stigman_img_missing | airgap_images_text(stigman_scope, 'stigman_pull_images', stigman_pull_images | bool) }}"
+  vars:
+    _stigman_img_missing: >-
+      {%- if stigman_pull_images | bool -%}
+      {{ [] if ansible_check_mode else (_stigman_img_pull.results | default([]) | airgap_pull_failures) }}
+      {%- else -%}
+      {{ _stigman_img.results | rejectattr('rc', 'equalto', 0) | map(attribute='item') | list }}
+      {%- endif -%}
+  when: _stigman_img_missing | length > 0
+
 # ---------------------------------------------------------------- directories
 - name: Files | directories
   ansible.builtin.file:
@@ -99,15 +148,6 @@
   register: _stigman_ca
 
 # ---------------------------------------------------------------- registry login (optional)
-- name: Registry | log in (only when the registry credential is attached)
-  ansible.builtin.command:
-    argv: [podman, login, --username, "{{ lookup('ansible.builtin.env', 'REGISTRY_USERNAME') }}",
-           --password-stdin, "{{ lookup('ansible.builtin.env', 'REGISTRY_HOST') }}"]
-    stdin: "{{ lookup('ansible.builtin.env', 'REGISTRY_PASSWORD') }}"
-  changed_when: false
-  no_log: true
-  when: lookup('ansible.builtin.env', 'REGISTRY_PASSWORD') | length > 0
-
 # ---------------------------------------------------------------- podman secrets
 # A label holds the SHA-256 of each value so the role knows whether it changed without reading
 # the secret back. The hash is plain (unsalted) SHA-256: anyone who can read the label can also

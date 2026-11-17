@@ -7,6 +7,8 @@ After=network-online.target
 [Container]
 ContainerName=stigman-mysql
 Image={{ stigman_images.mysql }}
+# never pulled by the unit (1.70.3): an air-gapped host has the image loaded, the job checks it first
+PodmanArgs=--pull=never
 Network=stigman.network
 Volume=stigman-mysql-data.volume:/var/lib/mysql
 # Passwords are podman secrets mounted as files; the MySQL image reads *_FILE variables.

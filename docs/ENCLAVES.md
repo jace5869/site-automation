@@ -152,47 +152,59 @@ follows the banner).
 
 ## 5. Images for an air-gapped enclave
 
-The report database's MySQL (`tools/report-db-setup.sh`) is started from an image already on the host. Since 1.50.0
-the script never pulls it from Docker Hub. You bring the image in once, the same way in every enclave.
+An air-gapped host pulls nothing. Every image the site needs is loaded by hand once, the same way in every enclave.
+The units never pull (`PodmanArgs=--pull=never`), and each deploy job checks the images before it changes anything.
 
-| Local name (the default) | Used by | Upstream image |
-|---|---|---|
-| `localhost/mysql:8.4` | the report database | `docker.io/library/mysql:8.4` |
+| Image | Setting | Default name | Used by |
+|---|---|---|---|
+| Report database MySQL | `IMAGE` of `tools/report-db-setup.sh` | `localhost/mysql:8.4` (upstream `docker.io/library/mysql:8.4`) | the report database |
+| STIG Manager's MySQL | `stigman_images.mysql` | `docker.io/library/mysql:8.4` | *STIG Manager - deploy* |
+| STIG Manager | `stigman_images.api` | `docker.io/nuwcdivnpt/stig-manager:1.6.17` | *STIG Manager - deploy* |
+| STIG Manager's nginx | `stigman_images.nginx` | `docker.io/library/nginx:stable` | *STIG Manager - deploy* |
+| The portal's service | `portal_image` | `aap.example.mil/site-ee-all:1` | *Site portal - deploy* |
+| The portal's own nginx | `portal_nginx_image` | `docker.io/library/nginx:stable` | *Site portal - deploy*, only with `portal_own_nginx` |
+| VMware ask | `vmware_ask_image` | `aap.example.mil/site-ee-all:1` | *VMware ask - deploy* |
+| Execution environments | the EE images in AAP | your automation hub | AAP ([EXECUTION_ENVIRONMENT.md](EXECUTION_ENVIRONMENT.md)) |
 
-STIG Manager's stack and VMware ask are not changed by this.
+The default names are only names. Set the setting to the name your registry's copy has, or tag the loaded image with the default name.
 
-**a. On a connected machine**, pull and save the image:
-
-```bash
-podman pull docker.io/library/mysql:8.4
-podman save -o mysql-8.4.tar docker.io/library/mysql:8.4
-```
-
-**b. Carry the file in** the way your enclave allows.
-
-**c. On the report database host**, as root, load and tag it:
+**a. On a connected machine**, pull and save each image:
 
 ```bash
-podman load -i mysql-8.4.tar
-podman tag docker.io/library/mysql:8.4 localhost/mysql:8.4
-podman images localhost/mysql
+podman pull docker.io/library/nginx:stable
+podman save -o nginx-stable.tar docker.io/library/nginx:stable
 ```
 
-**When the image is missing**, the script stops at its step 2, before it changes anything. It prints these steps.
+**b. Carry the files in** the way your enclave allows.
 
-**One setting per enclave.** An enclave whose hosts reach its own registry can name it and allow the pull:
+**c. On the host**, as root (a rootless stack: as the account its units run as), load and tag each one:
+
+```bash
+podman load -i nginx-stable.tar
+podman tag docker.io/library/nginx:stable registry.enclave-b.example.mil/library/nginx:stable
+podman images
+```
+
+The tag is only needed when the setting names another name than the one `podman load` printed.
+
+**When an image is missing**, the deploy job stops before it writes anything. It names each image, the setting that
+names it and these steps:
+
+```text
+STOPPED: 2 images are not on this host. Nothing was changed.
+  docker.io/library/nginx:stable   (setting: stigman_images.nginx)
+  docker.io/nuwcdivnpt/stig-manager:1.6.17   (setting: stigman_images.api)
+```
+
+**A host that reaches a registry** can pull what is missing: `stigman_pull_images: true`, `portal_pull_images: true` or
+`vmware_ask_pull_images: true`. The default is false. The report database script has its own `PULL=1`:
 
 ```bash
 IMAGE=registry.enclave-b.example.mil/library/mysql:8.4 PULL=1 AAP_SOURCES="192.0.2.21" bash report-db-setup.sh
 ```
 
-ENCLAVE-A loads the image by hand and sets nothing. Without `PULL=1` the script never pulls.
-
-**A database set up before 1.50.0** keeps running as it is. Its container and unit still name
-`docker.io/library/mysql:8.4`, and that image is on the host.
-
-- The script keeps the container's image and restarts nothing.
-- When its unit names another image than `IMAGE`, it says so and prints the commands to switch by hand.
+**A stack deployed before 1.70.3** keeps running as it is. Its units are rewritten by the next deploy, which adds
+`PodmanArgs=--pull=never`, so the images must be on the host by then.
 
 ## 6. Check it
 

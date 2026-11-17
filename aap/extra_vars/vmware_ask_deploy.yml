@@ -27,6 +27,10 @@ vmware_ask_public_url: https://stigman.example.mil/ask/
 ## (~/.config/containers/systemd, systemctl --user) <- tests / rootless hosts
 # vmware_ask_scope: system
 
+## true = a missing image is pulled (a host that reaches a registry); false (the default) = the job
+## stops first, naming it, and nothing is changed
+# vmware_ask_pull_images: false
+
 ## the service's files, and nginx-ask.conf (the nginx lines to add)
 # vmware_ask_config_dir: /etc/vmware-ask
 

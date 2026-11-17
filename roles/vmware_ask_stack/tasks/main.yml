@@ -49,6 +49,53 @@
     fail_msg: "podman {{ _ask_podman.stdout }} is too old for Quadlet; RHEL 9.2+/8.8+ ship 4.4 or newer."
     quiet: true
 
+# ---------------------------------------------------------------- the images (1.70.3)
+# Before anything is written: every image must be on this host. The units never pull (PodmanArgs=--pull=never), so an
+# air-gapped host failed minutes later in "Unable to start service". vmware_ask_pull_images true pulls what is missing instead.
+- name: Registry | log in (only when the registry credential is attached)
+  ansible.builtin.command:
+    argv: [podman, login, --username, "{{ lookup('ansible.builtin.env', 'REGISTRY_USERNAME') }}",
+           --password-stdin, "{{ lookup('ansible.builtin.env', 'REGISTRY_HOST') }}"]
+    stdin: "{{ lookup('ansible.builtin.env', 'REGISTRY_PASSWORD') }}"
+  changed_when: false
+  no_log: true
+  when: lookup('ansible.builtin.env', 'REGISTRY_PASSWORD') | length > 0
+
+- name: Images | which are on this host (podman image exists; nothing is pulled)
+  ansible.builtin.command:
+    argv: [podman, image, exists, "{{ item.image }}"]
+  loop:
+    - {var: vmware_ask_image, image: "{{ vmware_ask_image }}"}
+  loop_control:
+    label: "{{ item.var }}"
+  register: _ask_img
+  changed_when: false
+  failed_when: false
+  check_mode: false                       # only reads
+
+- name: Images | pulled, when vmware_ask_pull_images is true (a host that reaches a registry)
+  ansible.builtin.command:
+    argv: [podman, pull, "{{ item.item.image }}"]
+  loop: "{{ _ask_img.results | rejectattr('rc', 'equalto', 0) | list }}"
+  loop_control:
+    label: "{{ item.item.var }}"
+  register: _ask_img_pull
+  changed_when: _ask_img_pull.rc == 0            # a failed pull changed nothing
+  failed_when: false
+  when: vmware_ask_pull_images | bool and not ansible_check_mode
+
+- name: Images | every image is on this host, or the job stops here with nothing changed
+  ansible.builtin.fail:
+    msg: "{{ _ask_img_missing | airgap_images_text(vmware_ask_scope, 'vmware_ask_pull_images', vmware_ask_pull_images | bool) }}"
+  vars:
+    _ask_img_missing: >-
+      {%- if vmware_ask_pull_images | bool -%}
+      {{ [] if ansible_check_mode else (_ask_img_pull.results | default([]) | airgap_pull_failures) }}
+      {%- else -%}
+      {{ _ask_img.results | rejectattr('rc', 'equalto', 0) | map(attribute='item') | list }}
+      {%- endif -%}
+  when: _ask_img_missing | length > 0
+
 # only read: the network is the reverse proxy's (made with it); its DNS address is the resolver in the nginx lines
 - name: Preflight | the reverse proxy's network
   ansible.builtin.command:
@@ -201,15 +248,6 @@
   when: _ask_trust_parts.matched | int == 0
 
 # ---------------------------------------------------------------- registry login (optional)
-- name: Registry | log in (only when the registry credential is attached)
-  ansible.builtin.command:
-    argv: [podman, login, --username, "{{ lookup('ansible.builtin.env', 'REGISTRY_USERNAME') }}",
-           --password-stdin, "{{ lookup('ansible.builtin.env', 'REGISTRY_HOST') }}"]
-    stdin: "{{ lookup('ansible.builtin.env', 'REGISTRY_PASSWORD') }}"
-  changed_when: false
-  no_log: true
-  when: lookup('ansible.builtin.env', 'REGISTRY_PASSWORD') | length > 0
-
 # ---------------------------------------------------------------- podman secrets
 # A label holds the SHA-256 of each value, so the role knows whether it changed without reading the secret back (as
 # roles/stigman_stack). Unlike a database password, these may simply be replaced: the service reads them at start.

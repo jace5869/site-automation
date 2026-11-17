@@ -1906,6 +1906,7 @@ File: `roles/site_portal_stack/defaults/main.yml`
 |---|---|---|
 | `portal_scope` | `system` | system = rootful (/etc/containers/systemd, systemctl) <- production user = rootless (~/.config/containers/systemd, systemctl --user) <- tests / rootless hosts |
 | `portal_image` | `aap.example.mil/site-ee-all:1` | the service's image: any image with Python 3.6 or later (it uses the standard library only). The site's execution environment has it already: pull it from your automation hub |
+| `portal_pull_images` | `false` | true = a missing image is pulled (a host that reaches a registry); false (the default) = the job stops first, naming it, and nothing is changed |
 | `portal_config_dir` | `/etc/site-portal` | the service's files, and nginx-portal.conf (the nginx lines to add) |
 | `portal_network` | (empty) | behind STIG Manager's nginx: the podman network of that nginx container (required then): `sudo podman ps --format "{{.Names}} {{.Networks}}"` shows it. It must exist with DNS on (not podman's default "podman"); the role never creates or changes it |
 | `portal_path` | `/portal/` | the portal's path on the proxy |
@@ -2037,6 +2038,7 @@ File: `roles/stigman_stack/defaults/main.yml`
 |---|---|---|
 | `stigman_scope` | `system` | system = rootful (/etc/containers/systemd, systemctl) <- production user = rootless (~/.config/containers/systemd, systemctl --user) <- tests / rootless hosts |
 | `stigman_images` | `mysql: docker.io/library/mysql:8.4 api: docker.io/nuwcdivnpt/stig-manager:1.6.17 # pin a…` | the container images (pin STIG Manager's version; change it deliberately) |
+| `stigman_pull_images` | `false` | true = a missing image is pulled (a host that reaches a registry); false (the default) = the job stops first, naming it, and nothing is changed (an air-gapped host: load them, docs/ENCLAVES.md) |
 | `stigman_config_dir` | `/etc/stigman` | nginx.conf, TLS files, CA bundle |
 | `stigman_https_port` | `443` | host port nginx publishes |
 | `stigman_server_name` | `"{{ inventory_hostname }}"` | the name nginx answers to (and the TLS certificate is for) |
@@ -2152,6 +2154,7 @@ File: `roles/vmware_ask_stack/defaults/main.yml`
 |---|---|---|
 | `vmware_ask_scope` | `system` | system = rootful (/etc/containers/systemd, systemctl) <- production user = rootless (~/.config/containers/systemd, systemctl --user) <- tests / rootless hosts |
 | `vmware_ask_image` | `aap.example.mil/site-ee-all:1` | the service's image: the site's execution environment (ee/all-in-one) - Python, ansible-core and pyVmomi are in it already, so nothing is installed on the server or downloaded at start. Pull it from your automation hub. |
+| `vmware_ask_pull_images` | `false` | true = a missing image is pulled (a host that reaches a registry); false (the default) = the job stops first, naming it, and nothing is changed |
 | `vmware_ask_config_dir` | `/etc/vmware-ask` | the service's files, and nginx-ask.conf (the nginx lines to add) |
 | `vmware_ask_network` | (empty) | the podman network of the reverse proxy's nginx container (required): `sudo podman ps --format "{{.Names}} {{.Networks}}"` shows it. It must exist with DNS on (a network you made, not podman's default "podman"); the service joins it, the role never creates or changes it |
 | `vmware_ask_path` | `/ask/` | the page's path on the reverse proxy (nginx-ask.conf's location) |

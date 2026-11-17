@@ -52,6 +52,54 @@
     fail_msg: "podman {{ _portal_podman.stdout }} is too old for Quadlet; RHEL 9.2+/8.8+ ship 4.4 or newer."
     quiet: true
 
+# ---------------------------------------------------------------- the images (1.70.3)
+# Before anything is written: every image must be on this host. The units never pull (PodmanArgs=--pull=never), so an
+# air-gapped host failed minutes later in "Unable to start service". portal_pull_images true pulls what is missing instead.
+- name: Registry | log in (only when the registry credential is attached)
+  ansible.builtin.command:
+    argv: [podman, login, --username, "{{ lookup('ansible.builtin.env', 'REGISTRY_USERNAME') }}",
+           --password-stdin, "{{ lookup('ansible.builtin.env', 'REGISTRY_HOST') }}"]
+    stdin: "{{ lookup('ansible.builtin.env', 'REGISTRY_PASSWORD') }}"
+  changed_when: false
+  no_log: true
+  when: lookup('ansible.builtin.env', 'REGISTRY_PASSWORD') | length > 0
+
+- name: Images | which are on this host (podman image exists; nothing is pulled)
+  ansible.builtin.command:
+    argv: [podman, image, exists, "{{ item.image }}"]
+  loop: >-
+    {{ [{'var': 'portal_image', 'image': portal_image}]
+       + ([{'var': 'portal_nginx_image', 'image': portal_nginx_image}] if portal_own_nginx | bool else []) }}
+  loop_control:
+    label: "{{ item.var }}"
+  register: _portal_img
+  changed_when: false
+  failed_when: false
+  check_mode: false                       # only reads
+
+- name: Images | pulled, when portal_pull_images is true (a host that reaches a registry)
+  ansible.builtin.command:
+    argv: [podman, pull, "{{ item.item.image }}"]
+  loop: "{{ _portal_img.results | rejectattr('rc', 'equalto', 0) | list }}"
+  loop_control:
+    label: "{{ item.item.var }}"
+  register: _portal_img_pull
+  changed_when: _portal_img_pull.rc == 0            # a failed pull changed nothing
+  failed_when: false
+  when: portal_pull_images | bool and not ansible_check_mode
+
+- name: Images | every image is on this host, or the job stops here with nothing changed
+  ansible.builtin.fail:
+    msg: "{{ _portal_img_missing | airgap_images_text(portal_scope, 'portal_pull_images', portal_pull_images | bool) }}"
+  vars:
+    _portal_img_missing: >-
+      {%- if portal_pull_images | bool -%}
+      {{ [] if ansible_check_mode else (_portal_img_pull.results | default([]) | airgap_pull_failures) }}
+      {%- else -%}
+      {{ _portal_img.results | rejectattr('rc', 'equalto', 0) | map(attribute='item') | list }}
+      {%- endif -%}
+  when: _portal_img_missing | length > 0
+
 - name: Preflight | the report folder
   ansible.builtin.stat:
     path: "{{ portal_reports_dir }}"
@@ -225,15 +273,6 @@
   when: _portal_trust_parts.matched | int == 0
 
 # ---------------------------------------------------------------- registry login (optional)
-- name: Registry | log in (only when the registry credential is attached)
-  ansible.builtin.command:
-    argv: [podman, login, --username, "{{ lookup('ansible.builtin.env', 'REGISTRY_USERNAME') }}",
-           --password-stdin, "{{ lookup('ansible.builtin.env', 'REGISTRY_HOST') }}"]
-    stdin: "{{ lookup('ansible.builtin.env', 'REGISTRY_PASSWORD') }}"
-  changed_when: false
-  no_log: true
-  when: lookup('ansible.builtin.env', 'REGISTRY_PASSWORD') | length > 0
-
 # ---------------------------------------------------------------- the token: a podman secret
 # A label holds the SHA-256 of the value, so the role knows whether it changed without reading the secret back (as
 # roles/vmware_ask_stack). The service reads it at start.

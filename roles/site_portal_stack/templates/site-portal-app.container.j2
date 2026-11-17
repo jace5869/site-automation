@@ -11,6 +11,8 @@ After=site-portal-network.service
 [Container]
 ContainerName=site-portal-app
 Image={{ portal_image }}
+# never pulled by the unit (1.70.3): an air-gapped host has the image loaded, the job checks it first
+PodmanArgs=--pull=never
 # {{ 'its own nginx\'s network' if portal_own_nginx | bool else 'the reverse proxy\'s network (its nginx reaches the service by name)' }}; no port on the server
 Network={{ 'site-portal.network' if portal_own_nginx | bool else portal_network }}
 Volume={{ portal_config_dir }}/app:/app:ro,Z

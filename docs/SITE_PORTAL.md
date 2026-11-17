@@ -729,6 +729,7 @@ and [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md). The ones you are likely to
 |---|---|---|
 | `portal_network` | | the podman network of STIG Manager's nginx container (required behind it; it must exist, with DNS) |
 | `portal_image` | | your execution environment image (any image with Python 3) |
+| `portal_pull_images` | false | true = a missing image is pulled; false = the job stops first and names it (an air-gapped host loads it: [ENCLAVES.md](ENCLAVES.md), section 5) |
 | `portal_reports_dir` | `/srv/reports` | the folder the report jobs write to, on this server |
 | `portal_inventory` | | the AAP inventory an action's host must be in |
 | `portal_requesters` | `[]` | who may run the actions (CNs); `[]` = any person with a verified card |
