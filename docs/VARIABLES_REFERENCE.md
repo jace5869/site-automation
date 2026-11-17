@@ -169,7 +169,7 @@ File: `roles/aap_portal_setup/defaults/main.yml`
 | `portal_setup_schedules` | `[]` | schedules on templates or workflows of workflows.yml, e.g. the checklist import every 15 minutes: [{name: "Checklists every 15 minutes", target: "Checklists imported into STIG Manager", every_minutes: 15}] |
 | `portal_setup_scorecard_template` | `"STIG - weekly scorecard"` | 1.68.1 the STIG scorecard, so it is not set up by hand: a job template of its own (workflow 40's check template copied - project, inventory, execution environment, credentials and Variables - with stigman_ckl_import_mode: scorecard) and a weekly schedule. Each is made once; one that is there is left as it is. "" = non… (all of it: the role file) |
 | `portal_setup_scorecard_schedule` | `"weekly Mon 06:00"` | 'weekly Mon 06:00' or 'daily 06:00', in report_time_zone ("" = UTC); "" = no schedule |
-| `portal_setup_scorecard_schedule_name` | `"Weekly - STIG scorecard"` |  |
+| `portal_setup_scorecard_schedule_name` | `"Weekly - STIG scorecard"` | the schedule's name on that template |
 | `portal_setup_split_scorecard` | `true` | true: workflow 40's check template gets stigman_ckl_import_mode: import (it only imports; the scorecard has its own template) when its mode is not set or is "import and scorecard"; any other value there stays as it is, said |
 | `portal_setup_workflows` | `{}` | {} = roles/site_portal_stack/files/workflows.yml; the same shape here replaces it |
 | `portal_setup_aap_ca_path` | `"{{ report_history_aap_ca_path \| default('') }}"` | a CA file for AAP's own HTTPS certificate |

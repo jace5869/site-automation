@@ -54,6 +54,7 @@ portal_setup_portal_user: svc_site_portal
 ## 'weekly Mon 06:00' or 'daily 06:00', in report_time_zone ("" = UTC); "" = no schedule
 # portal_setup_scorecard_schedule: "weekly Mon 06:00"
 
+## the schedule's name on that template
 # portal_setup_scorecard_schedule_name: "Weekly - STIG scorecard"
 
 ## true: workflow 40's check template gets stigman_ckl_import_mode: import (it only imports; the

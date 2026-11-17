@@ -26,7 +26,7 @@ portal_setup_schedules: []
 # weekly schedule. Each is made once; one that is there is left as it is. "" = none.
 portal_setup_scorecard_template: "STIG - weekly scorecard"
 portal_setup_scorecard_schedule: "weekly Mon 06:00"      # 'weekly Mon 06:00' or 'daily 06:00', in report_time_zone ("" = UTC); "" = no schedule
-portal_setup_scorecard_schedule_name: "Weekly - STIG scorecard"
+portal_setup_scorecard_schedule_name: "Weekly - STIG scorecard"   # the schedule's name on that template
 # true: workflow 40's check template gets stigman_ckl_import_mode: import (it only imports; the scorecard has its own template)
 # when its mode is not set or is "import and scorecard"; any other value there stays as it is, said
 portal_setup_split_scorecard: true
