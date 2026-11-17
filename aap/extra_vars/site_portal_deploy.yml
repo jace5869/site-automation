@@ -45,7 +45,8 @@ portal_public_url: https://stigman.example.mil/portal/
 ## that nginx
 # portal_stigman_path: /
 
-## STIG Manager's address in your location / (roles/stigman_stack's)
+## STIG Manager's address in your location / (roles/stigman_stack's); STIG Manager under /stigman/:
+## as in your location /stigman/, with its / at the end (http://stigman-api:54000/)
 # portal_stigman_upstream: http://stigman-api:54000
 
 ## the STIG Manager versions the script was tested on - on another it does nothing (a plain link).

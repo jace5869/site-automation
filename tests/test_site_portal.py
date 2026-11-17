@@ -637,11 +637,15 @@ class Live(unittest.TestCase):
         self.assertIn("script-src 'self'", h["Content-Security-Policy"])
         code, raw, h = self.req("/stigman/go?c=2&b=RHEL_9_STIG", dn=None)              # a collection review, no rule
         self.assertIn('content="{&quot;b&quot;: &quot;RHEL_9_STIG&quot;, &quot;c&quot;: &quot;2&quot;}"', raw.decode())
+        code, raw, h = self.req("/stigman/go?c=2", dn=None)                          # 1.69.2: the collection itself
+        self.assertEqual(code, 200)
+        self.assertIn('content="{&quot;c&quot;: &quot;2&quot;}"', raw.decode())
+        self.assertEqual(sp.stigman_target("c=2&a=&r="), {"c": "2"})
 
     def test_stigman_go_refuses_what_cannot_pass(self):
-        """A value that cannot pass, a repeated or unknown one, or no collection or STIG: straight to STIG Manager's plain
-        address (302), no page, nothing kept."""
-        for q in ("", "c=2", "b=RHEL_9_STIG", "c=x&b=RHEL_9_STIG", "c=2&b=%3Cscript%3E", "c=2&b=RHEL_9_STIG&a=1%202",
+        """A value that cannot pass, a repeated or unknown one, no collection, or an asset or a rule without its STIG:
+        straight to STIG Manager's plain address (302), no page, nothing kept."""
+        for q in ("", "c=", "c=2&b=", "c=2&a=11", "c=2&r=SV-257985r1069364_rule", "c=2&a=11&r=SV-1", "b=RHEL_9_STIG", "c=2&c=3", "c=x&b=RHEL_9_STIG", "c=2&b=%3Cscript%3E", "c=2&b=RHEL_9_STIG&a=1%202",
                   "c=2&b=RHEL_9_STIG&r=a%2Fb", "c=2&c=3&b=RHEL_9_STIG", "c=2&b=RHEL_9_STIG&x=1", "c=2&b=RHEL_9_STIG&r=javascript:x",
                   "c=1234567890123&b=RHEL_9_STIG"):
             code, raw, h = self.req("/stigman/go?" + q, dn=None)

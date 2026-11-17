@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.70.2 — 2026-11-17
+
+**To set up: nothing new.** With `stigman_link_style: open` already working, run *Site portal - deploy* again: the
+portal's script gets the collection links. The nginx lines stay as they are. STIG Manager under a path such as
+`/stigman/`: `portal_stigman_path: /stigman/` and `portal_stigman_upstream` with its `/` at the end (docs/CKL_IMPORT.md,
+"Links that open the review", step 2).
+
+**A collection's name opens the collection itself in STIG Manager** (`stigman_link_style: open`).
+
+- *By collection*: the name opens the collection's own view, as a click on it in STIG Manager's tree (the tree at it).
+  It was STIG Manager's home page.
+- The *Collection* of a host - in a rule's hosts (*Findings*) and in *Hosts* - opens the same.
+- The link is `/portal/stigman/go?c=<collection>`. The same checks as the review links: the versions tested
+  (`portal_stigman_open_versions`), the person's grant (no grant: the home page, no error box), within 10 minutes, and
+  a plain link without the nginx lines. Its tab already open: that tab comes to the front.
+- *At a glance* keeps its jump within the page. The *Where* column of *Findings* has no link.
+- Tested in headless Chrome against STIG Manager 1.6.16 and 1.6.18, at `/` and under `/stigman/`.
+
 ## 1.70.1 — 2026-11-17
 
 **To set up: nothing.** *ACT - find and replace old copies* now updates an older ACT at `/opt/act/act`.

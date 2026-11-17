@@ -562,17 +562,23 @@ With `stigman_link_style: open` a name on the website opens STIG Manager at the 
 | A rule's name in *Findings* | the collection's review of the rule's STIG, at the rule |
 | A host's name in a rule opened | that host's review of the rule's STIG, at the rule |
 | A host's name in *Hosts* | that host's review of its STIG with the most open findings |
-| A collection's name | STIG Manager's home page, as before |
+| A collection's name in *By collection* (1.69.2) | the collection itself: its own view, the tree at it |
+| A host's *Collection* in a rule opened, or in *Hosts* (1.69.2) | the collection itself |
+
+*At a glance* keeps its jump within the page. The *Where* column of *Findings* has no link.
 
 How it works:
 
-- The link goes to the site portal: `/portal/stigman/go?c=<collection>&b=<STIG>&a=<asset>&r=<rule>`.
+- The link goes to the site portal: `/portal/stigman/go?c=<collection>&b=<STIG>&a=<asset>&r=<rule>`. A collection's
+  link has the collection only: `/portal/stigman/go?c=<collection>` (1.69.2).
 - That page keeps the target in the browser tab and opens STIG Manager's plain address. It never puts a `#` or a `?` on
   STIG Manager's address: STIG Manager 1.6 would stop at its sign-in.
 - nginx adds one script to STIG Manager's page. After the sign-in it opens the review with STIG Manager's own functions.
 - It acts only on the STIG Manager versions it was tested on (`portal_stigman_open_versions`).
 - It opens only what the person may read. Anything else: STIG Manager's home page, as a plain link, and one line in the
   browser's console. Never an error box.
+- A collection's link opens the collection as a click on it in STIG Manager's tree does
+  (`SM.CollectionPanel.showCollectionTab`). Its tab already open: that tab comes to the front.
 
 It needs:
 
@@ -588,6 +594,9 @@ Set it up, on the STIG Manager server, with the nginx file and container of [SIT
    sudo podman exec <nginx> nginx -T | grep -n proxy_pass
    ```
    The one in your `location / {` is STIG Manager's, for example `proxy_pass http://stigman-api:54000;`.
+   STIG Manager under a path (`https://<host>/stigman/`): the one in your `location /stigman/ {`, for example
+   `proxy_pass http://stigman-api:54000/;` (with the `/` at the end). Then set `portal_stigman_path: /stigman/` and
+   `portal_stigman_upstream: http://stigman-api:54000/` (the same `/` at the end).
 3. **Compare** it with the file's two `proxy_pass` lines:
    ```bash
    sudo grep -n proxy_pass /etc/site-portal/nginx-stigman-links.conf
@@ -621,7 +630,7 @@ To take it out:
 |---|---|
 | The lines are not in nginx | the home page; the sign-in works as always |
 | Another STIG Manager version (an upgrade) | the home page; the console says the version is not tested. Test it, then add it to `portal_stigman_open_versions` |
-| The person has no grant in the collection | the home page, no error box |
+| The person has no grant in the collection | the home page, no error box (also for a collection's own link) |
 | The asset is gone, or the STIG is no longer assigned | the home page |
 | More than 10 minutes between the click and the sign-in | the home page |
 
@@ -629,6 +638,8 @@ The portal's go page needs no sign-in: it carries ids only, and STIG Manager dec
 script only reads (GET) before it opens a review. It never writes.
 
 Tested on STIG Manager 1.6.16, 1.6.17 and 1.6.18 in headless Chrome (`tests/stig/run_stigman_links_test.sh`).
+The collection's own link (1.69.2): 1.6.16 and 1.6.18, with STIG Manager at `/` and under `/stigman/`
+(`STIGMAN_LINKS_PREFIX=/stigman/`).
 
 ### Turning it on
 

@@ -3,8 +3,8 @@
 nginx with nginx-stigman-links.conf - for tests/stig/run_stigman_links_test.sh. Prints ok/FAIL lines; exit 1 on a FAIL.
   stigman_links_browser.py SETTINGS.json
 SETTINGS: {"base": http://localhost:PORT (nginx with the lines), "untested": ... (the lines with another version list),
-"bare": ... (no lines), "user", "password", "c", "c_none" (a collection the user has no grant in), "a", "b", "r1", "r2",
-"shots": a folder for screenshots ('' = none)}"""
+"bare": ... (no lines), "prefix": STIG Manager's path there (1.69.2, "/" or "/stigman/"), "user", "password", "c", "c_none"
+(a collection the user has no grant in), "a", "b", "r1", "r2", "shots": a folder for screenshots ('' = none)}"""
 import base64
 import json
 import os
@@ -98,17 +98,23 @@ def link(base, **q):
     return base + "/portal/stigman/go?" + urlencode(q)
 
 
-def opened(b, want_tab, want_rule, what, png=""):
+# 1.69.2: the node selected in STIG Manager's tree (a collection's own view selects its leaf)
+TREE = ("(function(){try{var n=Ext.getCmp('app-nav-tree').getSelectionModel().getSelectedNode();return n?n.id:''}catch(e){return ''}})()")
+
+
+def opened(b, want_tab, want_rule, what, png="", want_node=""):
     tab = wait(b, "(%s) === %s" % (ACTIVE, json.dumps(want_tab)), 60)
     sel = wait(b, "(%s).indexOf(%s) >= 0" % (SELECTED, json.dumps(want_rule)), 30) if tab and want_rule else None
+    node = wait(b, "(%s) === %s" % (TREE, json.dumps(want_node)), 20) if tab and want_node else None
     url = b.js("location.href")
-    if tab and (sel or not want_rule) and "#" not in url and "?" not in url and not b.js(ERRBOX):
+    path_ok = url.split("://", 1)[-1].split("/", 1)[-1].startswith(S.get("prefix", "/").lstrip("/"))
+    if tab and (sel or not want_rule) and (node or not want_node) and path_ok and "#" not in url and "?" not in url and not b.js(ERRBOX):
         ok(what)
         if png:
             time.sleep(1)
             shot(b, png)
     else:
-        bad("%s: active tab %r, selected %r, url %s, console %s" % (what, b.js(ACTIVE), b.js(SELECTED), url, b.console[-3:]))
+        bad("%s: active tab %r, selected %r, tree %r, url %s, console %s" % (what, b.js(ACTIVE), b.js(SELECTED), b.js(TREE), url, b.console[-3:]))
 
 
 def stayed_home(b, what, said):
@@ -116,7 +122,7 @@ def stayed_home(b, what, said):
     time.sleep(4)
     tab, url = b.js(ACTIVE), b.js("location.href")
     heard = [c for c in b.console if said in c]
-    if up and not str(tab).startswith(("reviewTab", "collection-review-tab")) and "#" not in url and not b.js(ERRBOX) \
+    if up and not str(tab).startswith(("reviewTab", "collection-review-tab", "collection-panel")) and "#" not in url and not b.js(ERRBOX) \
             and (heard or not said):
         ok(what)
     else:
@@ -145,6 +151,25 @@ try:
     go(b, link(base, c=S["c"], b=S["b"], a=S["a"], r=S["r2"]))
     sign_in(b)
     opened(b, tab_a, S["r2"], "the same asset again at another rule: that rule, not the one before")
+    # 3b (1.69.2). a collection's own link (c alone): the collection itself - its tab, the tree at its leaf
+    go(b, link(base, c=S["c"]))
+    sign_in(b)
+    opened(b, "collection-panel-%s" % S["c"], "", "a collection's link: the collection itself, the tree at it",
+           "4-collection.png", "%s-collection-leaf" % S["c"])
+    # 3c. again, with that tab open and a review in front: back to the collection's tab (not a second one)
+    go(b, link(base, c=S["c"], b=S["b"], r=S["r1"]))
+    sign_in(b)
+    opened(b, tab_c, S["r1"], "a review in front again")
+    go(b, link(base, c=S["c"]))
+    sign_in(b)
+    opened(b, "collection-panel-%s" % S["c"], "", "a collection's link again: its tab in front")
+    n = b.js("(function(){var n=0;Ext.getCmp('main-tab-panel').items.each(function(t){if(t.id==='collection-panel-%s')n++});return n})()" % S["c"])
+    (ok if n == 1 else bad)("one tab for the collection (%r)" % n)
+    # 3d. a collection's link without a grant: the home page, no error box
+    b.console[:] = []
+    go(b, link(base, c=S["c_none"]))
+    sign_in(b)
+    stayed_home(b, "a collection's link without a grant: the home page, no error box", "not opened")
     # 4. a collection the person has no grant in: the home page, no error box
     b.console[:] = []
     go(b, link(base, c=S["c_none"], b=S["b"], r=S["r1"]))

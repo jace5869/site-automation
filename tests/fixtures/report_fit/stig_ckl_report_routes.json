@@ -428,7 +428,7 @@
 ]
 ],
 "status": "ok",
-"text": "Each STIG of each checklist, in each collection that has its asset: the checklist's host name (HOST_NAME), (new): none there, created once approved - and the STIG installed in STIG Manager whose rules it matched (by the benchmark id, the rule ids, V-numbers or versions; stigman_ckl_import_benchmarks names one). Collections searched: every one the client reads (5); a new asset is created in its route's collection, else in Staging. NaF / Open / NA / NR: the checklist's answers.",
+"text": "One row per STIG in each checklist: where it goes and what is written. (new) = a new asset.",
 "title": "Each checklist",
 "wrap": true
 },
@@ -525,6 +525,10 @@
 {
 "label": "Not written",
 "status": "ok",
+"value": 0
+},
+{
+"label": "Protected (left)",
 "value": 0
 },
 {

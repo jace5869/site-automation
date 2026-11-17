@@ -42,7 +42,10 @@ const Ext = {
 const ctx = {document, location, sessionStorage, console, Ext, setInterval, clearInterval, Promise, JSON, Date, String, Number,
              encodeURIComponent, window: null, curUser: CASE.signed_in === false ? undefined : {username: "admin"},
              addReview: p => { out.calls.push(["addReview", p]); return Promise.resolve() },
-             addCollectionReview: p => { out.calls.push(["addCollectionReview", p]); return Promise.resolve() }};
+             addCollectionReview: p => { out.calls.push(["addCollectionReview", p]); return Promise.resolve() },
+             // 1.69.2: the collection's own view and the tree (SM.Global.mainNavTree, or Ext.getCmp("app-nav-tree"))
+             SM: CASE.sm === false ? undefined : {CollectionPanel: {showCollectionTab: p => { out.calls.push(["showCollectionTab", p]) }},
+                  Global: {mainNavTree: {getCollectionLeaf: id => (CASE.leaf ? {getPath: () => CASE.leaf + "|" + id} : null)}}}};
 ctx.window = ctx;
 vm.createContext(ctx);
 if (CASE.stigman !== false) vm.runInContext("const STIGMAN = " + JSON.stringify({Env: {version: CASE.version || "1.6.18+3", apiBase: "api"},
@@ -136,6 +139,50 @@ class Js(unittest.TestCase):
         for bad in ({"c": "2 OR 1"}, {"b": "<script>"}, {"a": "x"}, {"r": "a b"}):
             o = self.nothing({"storage": self.target(**bad), "versions": "1.6.18"}, "not a link this script opens")
             self.assertEqual(o["left"], {}, bad)
+
+    # ---- 1.69.2: the collection itself (c alone)
+    def ctarget(self, **k):
+        import time
+        return {"sa_stigman_open": json.dumps(dict({"c": "2", "at": int(time.time() * 1000)}, **k))}
+
+    COLL = {"collectionId": "2", "name": "SITEA Linux", "description": None}
+
+    def test_the_collection_itself(self):
+        for v in ("1.6.16", "1.6.18+2"):
+            o = self.run_js("stigman-open.js", {"storage": self.ctarget(), "versions": "1.6.16 1.6.17 1.6.18", "version": v,
+                                                "answers": {"api/collections/2": self.COLL}, "leaf": "/stigman-root/collections-root/x"})
+            self.assertIn("GET api/collections/2", o["calls"])
+            call = [c for c in o["calls"] if isinstance(c, list)]
+            self.assertEqual(call, [["showCollectionTab", {"collectionId": "2", "collectionName": "SITEA Linux",
+                                                           "treePath": "/stigman-root/collections-root/x|2"}]], o)
+            self.assertEqual(o["left"], {})
+            self.assertIn("[site automation link] opened the collection SITEA Linux", o["said"])
+
+    def test_the_collection_without_its_tree_leaf_still_opens(self):
+        o = self.run_js("stigman-open.js", {"storage": self.ctarget(), "versions": "1.6.18", "answers": {"api/collections/2": self.COLL}})
+        call = [c for c in o["calls"] if isinstance(c, list)]
+        self.assertEqual(call, [["showCollectionTab", {"collectionId": "2", "collectionName": "SITEA Linux"}]], o)  # treePath: undefined
+
+    def test_the_collection_no_grant_or_another_answer_does_nothing(self):
+        self.nothing({"storage": self.ctarget(), "versions": "1.6.18", "answers": {}}, "not opened: HTTP 403")
+        self.nothing({"storage": self.ctarget(), "versions": "1.6.18", "answers": {"api/collections/2": dict(self.COLL, collectionId="3")}},
+                     "the collection was not read")
+        self.nothing({"storage": self.ctarget(), "versions": "1.6.18", "answers": {"api/collections/2": dict(self.COLL, name="")}},
+                     "the collection was not read")
+        o = self.nothing({"storage": self.ctarget(), "versions": "1.6.18", "version": "1.7.0",
+                          "answers": {"api/collections/2": self.COLL}}, "is not a version this was tested on")
+        self.assertEqual(o["calls"], [])
+
+    def test_an_asset_or_a_rule_needs_its_stig(self):
+        for bad in ({"a": "11"}, {"r": "SV-257985r1069364_rule"}, {"b": "", "a": "11"}):
+            o = self.nothing({"storage": self.ctarget(**bad), "versions": "1.6.18"}, "not a link this script opens")
+            self.assertEqual(o["left"], {}, bad)
+
+    def test_the_collection_waits_for_the_client(self):
+        """A client without SM.CollectionPanel never counts as up: nothing, the target stays (and goes after 10 minutes)."""
+        o = self.run_js("stigman-open.js", {"storage": self.ctarget(), "versions": "1.6.18", "sm": False,
+                                            "answers": {"api/collections/2": self.COLL}, "wait": 1300})
+        self.assertEqual((o["calls"], list(o["left"])), ([], ["sa_stigman_open"]))
 
     def test_before_the_sign_in_it_waits_and_keeps_the_target(self):
         """The first load goes to the sign-in page: the app never comes up there, the target stays for the load after it."""

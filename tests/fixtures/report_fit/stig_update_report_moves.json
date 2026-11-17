@@ -210,7 +210,7 @@
 ]
 ],
 "status": "critical",
-"text": "Only the reviews the approval allowed (the check's plan). Each was read again first: one changed in STIG Manager since the check is left as it is, and so is one with attachments (evidence a person attached stays with its result). A written review was read back. STIG Manager keeps each review's history: what it was is there too. No collection, user or other review was changed, nor an asset that was there - but the moves and STIG assignments above, each as the approval allowed it.",
+"text": "Only the reviews the approval allowed (the check's plan). Each was read again first: one changed in STIG Manager since the check is left as it is, and so is one with attachments (evidence a person attached stays with its result) and one protected (RA, Risk Acceptance, POAM or POA&M in its detail or comment - stigman_protect_words; Accepted, when the setting does not allow it). A written review was read back. STIG Manager keeps each review's history: what it was is there too. No collection, user or other review was changed, nor an asset that was there - but the moves and STIG assignments above, each as the approval allowed it.",
 "title": "Each review of the plan"
 }
 ],
@@ -232,7 +232,7 @@
 "value": 0
 },
 {
-"label": "Has attachments (left)",
+"label": "Protected (left)",
 "value": 0
 },
 {

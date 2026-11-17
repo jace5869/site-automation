@@ -1534,8 +1534,12 @@ class OpenLinks(unittest.TestCase):
         self.assertEqual(g(self.PORTAL, "2\n", "B\n"), self.PORTAL + "/stigman/go?c=2&b=B")
         for bad in ((self.PORTAL, "1\n2", "B"), (self.PORTAL, "2", "B\nC"), (self.PORTAL, "2", "B", "1\n1"), (self.PORTAL, "2", "B", "", "SV-1\nx"),
                     ("", "2", "B"), ("javascript:alert(1)", "2", "B"), (self.PORTAL + "?x", "2", "B"), (self.PORTAL, "x", "B"),
-                    (self.PORTAL, "2", "<b>"), (self.PORTAL, "2", "B", "1 1"), (self.PORTAL, "2", "B", "", "a/b"), (self.PORTAL, "2", "")):
+                    (self.PORTAL, "2", "<b>"), (self.PORTAL, "2", "B", "1 1"), (self.PORTAL, "2", "B", "", "a/b"),
+                    (self.PORTAL, "2", "", "11"), (self.PORTAL, "2", "", "", "SV-1"), (self.PORTAL, ""), (self.PORTAL, None)):
             self.assertEqual(g(*bad), "", bad)
+        # 1.69.2: c alone - the collection itself
+        self.assertEqual(g(self.PORTAL, "2"), self.PORTAL + "/stigman/go?c=2")
+        self.assertEqual(g(self.PORTAL, 2, ""), self.PORTAL + "/stigman/go?c=2")
 
     def test_rules_hosts_and_a_rules_hosts_open_the_review(self):
         d = self.doc()
@@ -1552,8 +1556,35 @@ class OpenLinks(unittest.TestCase):
         j = [r[1] for r in hv["rows"]].index("rhel04")
         self.assertEqual(hv["cell_links"]["urls"][j], self.PORTAL + "/stigman/go?c=2&b=RHEL_9_STIG&a=%s" % rhel["asset_ids"]["rhel04"])
         self.assertEqual(hv["cell_links"]["titles"][j], "Opens rhel04's review of RHEL_9_STIG in STIG Manager (a new tab)")
-        bc = section(d, "By collection", "web")                # a collection: STIG Manager's home page, as 1.68.0
-        self.assertEqual(set(bc["cell_links"]["urls"]), {"https://stigman.example.mil/"})
+        bc = section(d, "By collection", "web")                # 1.69.2: a collection opens the collection itself
+        good = [c for c in self.read()["collections"] if not c.get("error")]
+        k = [x[1] for x in bc["rows"]].index(RHEL)
+        self.assertEqual(bc["cell_links"]["urls"][k], self.PORTAL + "/stigman/go?c=2")
+        self.assertEqual(bc["cell_links"]["titles"][k], "Opens the collection %s in STIG Manager (a new tab)" % RHEL)
+        self.assertEqual(len([u for u in bc["cell_links"]["urls"] if "/stigman/go?c=" in u]), len(good))
+        self.assertFalse([u for u in bc["cell_links"]["urls"] if "&" in u])            # no STIG, no asset, no rule
+
+    def test_the_collection_cells_open_the_collection(self):
+        """1.69.2: a host's Collection - in a rule's hosts (Findings) and in Hosts - opens the collection itself."""
+        d = self.doc()
+        fv = section(d, "Findings", "web")
+        i = [r[1] for r in fv["rows"]].index("SV-257985 (RHEL-09-255045)")
+        hosts = fv["details"][i][1]
+        self.assertEqual(hosts["link2_col"], 1)
+        self.assertEqual(hosts["columns"][hosts["link2_col"]], "Collection")
+        self.assertEqual(hosts["links2"][0], self.PORTAL + "/stigman/go?c=2")
+        self.assertEqual(hosts["link2_titles"][0], "Opens the collection %s in STIG Manager (a new tab)" % RHEL)
+        self.assertEqual(len(hosts["links2"]), len(hosts["rows"]))
+        hv = section(d, "Hosts", "web")
+        c2 = hv["cell_links2"]
+        self.assertEqual((c2["column"], hv["columns"][c2["column"]]), (2, "Collection"))
+        j = [r[1] for r in hv["rows"]].index("rhel04")
+        self.assertEqual((c2["urls"][j], c2["titles"][j]), (self.PORTAL + "/stigman/go?c=2",
+                                                            "Opens the collection %s in STIG Manager (a new tab)" % RHEL))
+        self.assertEqual(len(c2["urls"]), len(hv["rows"]))
+        self.assertEqual(hv["cell_links"]["column"], 1)                                 # the host's own link stays
+        # the Where column (Findings) stays as it is: no link
+        self.assertEqual(fv["cell_links"]["column"], 1)
 
     def test_a_rule_in_two_collections_links_each_host_to_its_own(self):
         """Codex 1.68.1: the same SV under another STIG and rule id in a second collection - its hosts open that one."""
@@ -1577,7 +1608,9 @@ class OpenLinks(unittest.TestCase):
             d = self.doc(**o)
             fv = section(d, "Findings", "web")
             self.assertEqual(set(fv["cell_links"]["urls"]), {"https://stigman.example.mil/"}, o)
-            self.assertFalse([x for d_ in fv["details"] if isinstance(d_, list) for x in d_ if x and x.get("links")], o)
+            self.assertFalse([x for d_ in fv["details"] if isinstance(d_, list) for x in d_ if x and (x.get("links") or x.get("links2"))], o)
+            self.assertNotIn("cell_links2", section(d, "Hosts", "web"), o)                 # 1.69.2: open only
+            self.assertEqual(set(section(d, "By collection", "web")["cell_links"]["urls"]) - {""}, {"https://stigman.example.mil/"}, o)
 
     def test_a_host_without_its_id_keeps_the_plain_link(self):
         r = self.read()
@@ -1614,6 +1647,14 @@ class OpenLinks(unittest.TestCase):
                           r'title="Opens rhel01&#39;s review in STIG Manager \(a new tab\), at SV-258036">', h)
             self.assertTrue(m, tpl)
             self.assertIn("table.mini a.hl .ic,td.k-cl a.hl .ic{display:inline-block", h)
+            # 1.69.2: the Collection cells - a rule's hosts, the Hosts table, By collection - open the collection
+            m = re.search(r'<td class="k-wrap" data-l="Collection"><a class="hl" href="https://stigman.example.mil/portal/stigman/go\?c=2" '
+                          r'target="_blank" rel="noopener" title="Opens the collection SITEA - RHEL 9 in STIG Manager \(a new tab\)">', h)
+            self.assertTrue(m, tpl)
+            n = len(re.findall(r'<td class="k-wrap k-cl" data-l="[^"]*" data-v="SITEA - RHEL 9"><a class="hl cv" '
+                               r'href="https://stigman.example.mil/portal/stigman/go\?c=2" target="_blank" rel="noopener" '
+                               r'title="Opens the collection SITEA - RHEL 9 in STIG Manager \(a new tab\)">', h))
+            self.assertGreaterEqual(n, 2, tpl)                                         # By collection and Hosts
 
 
 class Commands(unittest.TestCase):

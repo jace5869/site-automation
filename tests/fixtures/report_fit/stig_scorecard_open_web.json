@@ -462,14 +462,14 @@
 "column": 1,
 "title": "",
 "titles": [
-"Opens STIG Manager in a new tab. Then: SITEA - RHEL 9",
-"Opens STIG Manager in a new tab. Then: SITEA - VMware",
-"Opens STIG Manager in a new tab. Then: SITEA - Windows Server"
+"Opens the collection SITEA - RHEL 9 in STIG Manager (a new tab)",
+"Opens the collection SITEA - VMware in STIG Manager (a new tab)",
+"Opens the collection SITEA - Windows Server in STIG Manager (a new tab)"
 ],
 "urls": [
-"https://stigman.example.mil/",
-"https://stigman.example.mil/",
-"https://stigman.example.mil/"
+"https://stigman.example.mil/portal/stigman/go?c=2",
+"https://stigman.example.mil/portal/stigman/go?c=1",
+"https://stigman.example.mil/portal/stigman/go?c=3"
 ]
 },
 "cell_status": [
@@ -1149,6 +1149,14 @@
 "wrap",
 "wrap"
 ],
+"link2_col": 1,
+"link2_titles": [
+"Opens the collection SITEA - RHEL 9 in STIG Manager (a new tab)",
+"Opens the collection SITEA - RHEL 9 in STIG Manager (a new tab)",
+"Opens the collection SITEA - RHEL 9 in STIG Manager (a new tab)",
+"Opens the collection SITEA - RHEL 9 in STIG Manager (a new tab)",
+"Opens the collection SITEA - RHEL 9 in STIG Manager (a new tab)"
+],
 "link_titles": [
 "Opens rhel01's review in STIG Manager (a new tab), at SV-258036",
 "Opens rhel03's review in STIG Manager (a new tab), at SV-258036",
@@ -1162,6 +1170,13 @@
 "https://stigman.example.mil/portal/stigman/go?c=2&b=RHEL_9_STIG&a=13&r=SV-258036r1045099_rule",
 "https://stigman.example.mil/portal/stigman/go?c=2&b=RHEL_9_STIG&a=14&r=SV-258036r1045099_rule",
 "https://stigman.example.mil/portal/stigman/go?c=2&b=RHEL_9_STIG&a=15&r=SV-258036r1045099_rule"
+],
+"links2": [
+"https://stigman.example.mil/portal/stigman/go?c=2",
+"https://stigman.example.mil/portal/stigman/go?c=2",
+"https://stigman.example.mil/portal/stigman/go?c=2",
+"https://stigman.example.mil/portal/stigman/go?c=2",
+"https://stigman.example.mil/portal/stigman/go?c=2"
 ],
 "more": "",
 "rows": [
@@ -1216,6 +1231,11 @@
 "wrap",
 "wrap"
 ],
+"link2_col": 1,
+"link2_titles": [
+"Opens the collection SITEA - Windows Server in STIG Manager (a new tab)",
+"Opens the collection SITEA - Windows Server in STIG Manager (a new tab)"
+],
 "link_titles": [
 "Opens win03's review in STIG Manager (a new tab), at SV-254247",
 "Opens win04's review in STIG Manager (a new tab), at SV-254247"
@@ -1223,6 +1243,10 @@
 "links": [
 "https://stigman.example.mil/portal/stigman/go?c=3&b=MS_Windows_Server_2022_STIG&a=20&r=SV-254247r991589_rule",
 "https://stigman.example.mil/portal/stigman/go?c=3&b=MS_Windows_Server_2022_STIG&a=21&r=SV-254247r991589_rule"
+],
+"links2": [
+"https://stigman.example.mil/portal/stigman/go?c=3",
+"https://stigman.example.mil/portal/stigman/go?c=3"
 ],
 "more": "",
 "rows": [
@@ -1265,6 +1289,13 @@
 "wrap",
 "wrap"
 ],
+"link2_col": 1,
+"link2_titles": [
+"Opens the collection SITEA - Windows Server in STIG Manager (a new tab)",
+"Opens the collection SITEA - Windows Server in STIG Manager (a new tab)",
+"Opens the collection SITEA - Windows Server in STIG Manager (a new tab)",
+"Opens the collection SITEA - Windows Server in STIG Manager (a new tab)"
+],
 "link_titles": [
 "Opens win01's review in STIG Manager (a new tab), at SV-254269",
 "Opens win03's review in STIG Manager (a new tab), at SV-254269",
@@ -1276,6 +1307,12 @@
 "https://stigman.example.mil/portal/stigman/go?c=3&b=MS_Windows_Server_2022_STIG&a=20&r=SV-254269r958478_rule",
 "https://stigman.example.mil/portal/stigman/go?c=3&b=MS_Windows_Server_2022_STIG&a=21&r=SV-254269r958478_rule",
 "https://stigman.example.mil/portal/stigman/go?c=3&b=MS_Windows_Server_2022_STIG&a=22&r=SV-254269r958478_rule"
+],
+"links2": [
+"https://stigman.example.mil/portal/stigman/go?c=3",
+"https://stigman.example.mil/portal/stigman/go?c=3",
+"https://stigman.example.mil/portal/stigman/go?c=3",
+"https://stigman.example.mil/portal/stigman/go?c=3"
 ],
 "more": "",
 "rows": [
@@ -1326,6 +1363,12 @@
 "wrap",
 "wrap"
 ],
+"link2_col": 1,
+"link2_titles": [
+"Opens the collection SITEA - RHEL 9 in STIG Manager (a new tab)",
+"Opens the collection SITEA - RHEL 9 in STIG Manager (a new tab)",
+"Opens the collection SITEA - RHEL 9 in STIG Manager (a new tab)"
+],
 "link_titles": [
 "Opens rhel01's review in STIG Manager (a new tab), at SV-257985",
 "Opens rhel03's review in STIG Manager (a new tab), at SV-257985",
@@ -1335,6 +1378,11 @@
 "https://stigman.example.mil/portal/stigman/go?c=2&b=RHEL_9_STIG&a=11&r=SV-257985r1069364_rule",
 "https://stigman.example.mil/portal/stigman/go?c=2&b=RHEL_9_STIG&a=12&r=SV-257985r1069364_rule",
 "https://stigman.example.mil/portal/stigman/go?c=2&b=RHEL_9_STIG&a=14&r=SV-257985r1069364_rule"
+],
+"links2": [
+"https://stigman.example.mil/portal/stigman/go?c=2",
+"https://stigman.example.mil/portal/stigman/go?c=2",
+"https://stigman.example.mil/portal/stigman/go?c=2"
 ],
 "more": "",
 "rows": [
@@ -1381,11 +1429,18 @@
 "wrap",
 "wrap"
 ],
+"link2_col": 1,
+"link2_titles": [
+"Opens the collection SITEA - Windows Server in STIG Manager (a new tab)"
+],
 "link_titles": [
 "Opens win03's review in STIG Manager (a new tab), at SV-254239"
 ],
 "links": [
 "https://stigman.example.mil/portal/stigman/go?c=3&b=MS_Windows_Server_2022_STIG&a=20&r=SV-254239r958478_rule"
+],
+"links2": [
+"https://stigman.example.mil/portal/stigman/go?c=3"
 ],
 "more": "",
 "rows": [
@@ -1424,11 +1479,18 @@
 "wrap",
 "wrap"
 ],
+"link2_col": 1,
+"link2_titles": [
+"Opens the collection SITEA - RHEL 9 in STIG Manager (a new tab)"
+],
 "link_titles": [
 "Opens rhel04's review in STIG Manager (a new tab), at SV-257777"
 ],
 "links": [
 "https://stigman.example.mil/portal/stigman/go?c=2&b=RHEL_9_STIG&a=13&r=SV-257777r991589_rule"
+],
+"links2": [
+"https://stigman.example.mil/portal/stigman/go?c=2"
 ],
 "more": "",
 "rows": [
@@ -1467,6 +1529,11 @@
 "wrap",
 "wrap"
 ],
+"link2_col": 1,
+"link2_titles": [
+"Opens the collection SITEA - VMware in STIG Manager (a new tab)",
+"Opens the collection SITEA - VMware in STIG Manager (a new tab)"
+],
 "link_titles": [
 "Opens esx01's review in STIG Manager (a new tab), at SV-256375",
 "Opens esx02's review in STIG Manager (a new tab), at SV-256375"
@@ -1474,6 +1541,10 @@
 "links": [
 "https://stigman.example.mil/portal/stigman/go?c=1&b=VMW_vSphere_7-0_ESXi_STIG&a=17&r=SV-256375r885906_rule",
 "https://stigman.example.mil/portal/stigman/go?c=1&b=VMW_vSphere_7-0_ESXi_STIG&a=18&r=SV-256375r885906_rule"
+],
+"links2": [
+"https://stigman.example.mil/portal/stigman/go?c=1",
+"https://stigman.example.mil/portal/stigman/go?c=1"
 ],
 "more": "",
 "rows": [
@@ -1516,11 +1587,18 @@
 "wrap",
 "wrap"
 ],
+"link2_col": 1,
+"link2_titles": [
+"Opens the collection SITEA - VMware in STIG Manager (a new tab)"
+],
 "link_titles": [
 "Opens esx01's review in STIG Manager (a new tab), at SV-256379"
 ],
 "links": [
 "https://stigman.example.mil/portal/stigman/go?c=1&b=VMW_vSphere_7-0_ESXi_STIG&a=17&r=SV-256379r885918_rule"
+],
+"links2": [
+"https://stigman.example.mil/portal/stigman/go?c=1"
 ],
 "more": "",
 "rows": [
@@ -1540,6 +1618,11 @@
 "wrap",
 "wrap"
 ],
+"link2_col": 1,
+"link2_titles": [
+"Opens the collection SITEA - RHEL 9 in STIG Manager (a new tab)",
+"Opens the collection SITEA - RHEL 9 in STIG Manager (a new tab)"
+],
 "link_titles": [
 "Opens rhel03's review in STIG Manager (a new tab), at SV-257842",
 "Opens rhel07's review in STIG Manager (a new tab), at SV-257842"
@@ -1547,6 +1630,10 @@
 "links": [
 "https://stigman.example.mil/portal/stigman/go?c=2&b=RHEL_9_STIG&a=12&r=SV-257842r991589_rule",
 "https://stigman.example.mil/portal/stigman/go?c=2&b=RHEL_9_STIG&a=16&r=SV-257842r991589_rule"
+],
+"links2": [
+"https://stigman.example.mil/portal/stigman/go?c=2",
+"https://stigman.example.mil/portal/stigman/go?c=2"
 ],
 "more": "",
 "rows": [
@@ -1588,11 +1675,18 @@
 "wrap",
 "wrap"
 ],
+"link2_col": 1,
+"link2_titles": [
+"Opens the collection SITEA - Windows Server in STIG Manager (a new tab)"
+],
 "link_titles": [
 "Opens win01's review in STIG Manager (a new tab), at SV-254285"
 ],
 "links": [
 "https://stigman.example.mil/portal/stigman/go?c=3&b=MS_Windows_Server_2022_STIG&a=19&r=SV-254285r958478_rule"
+],
+"links2": [
+"https://stigman.example.mil/portal/stigman/go?c=3"
 ],
 "more": "",
 "rows": [
@@ -1817,6 +1911,38 @@
 "https://stigman.example.mil/portal/stigman/go?c=2&b=RHEL_9_STIG&a=15",
 "https://stigman.example.mil/portal/stigman/go?c=3&b=MS_Windows_Server_2022_STIG&a=22",
 "https://stigman.example.mil/portal/stigman/go?c=2&b=RHEL_9_STIG&a=16"
+]
+},
+"cell_links2": {
+"column": 2,
+"title": "",
+"titles": [
+"Opens the collection SITEA - Windows Server in STIG Manager (a new tab)",
+"Opens the collection SITEA - RHEL 9 in STIG Manager (a new tab)",
+"Opens the collection SITEA - Windows Server in STIG Manager (a new tab)",
+"Opens the collection SITEA - RHEL 9 in STIG Manager (a new tab)",
+"Opens the collection SITEA - VMware in STIG Manager (a new tab)",
+"Opens the collection SITEA - RHEL 9 in STIG Manager (a new tab)",
+"Opens the collection SITEA - RHEL 9 in STIG Manager (a new tab)",
+"Opens the collection SITEA - Windows Server in STIG Manager (a new tab)",
+"Opens the collection SITEA - VMware in STIG Manager (a new tab)",
+"Opens the collection SITEA - RHEL 9 in STIG Manager (a new tab)",
+"Opens the collection SITEA - Windows Server in STIG Manager (a new tab)",
+"Opens the collection SITEA - RHEL 9 in STIG Manager (a new tab)"
+],
+"urls": [
+"https://stigman.example.mil/portal/stigman/go?c=3",
+"https://stigman.example.mil/portal/stigman/go?c=2",
+"https://stigman.example.mil/portal/stigman/go?c=3",
+"https://stigman.example.mil/portal/stigman/go?c=2",
+"https://stigman.example.mil/portal/stigman/go?c=1",
+"https://stigman.example.mil/portal/stigman/go?c=2",
+"https://stigman.example.mil/portal/stigman/go?c=2",
+"https://stigman.example.mil/portal/stigman/go?c=3",
+"https://stigman.example.mil/portal/stigman/go?c=1",
+"https://stigman.example.mil/portal/stigman/go?c=2",
+"https://stigman.example.mil/portal/stigman/go?c=3",
+"https://stigman.example.mil/portal/stigman/go?c=2"
 ]
 },
 "column_titles": [

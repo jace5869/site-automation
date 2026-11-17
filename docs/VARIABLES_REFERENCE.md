@@ -1910,7 +1910,7 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_network` | (empty) | behind STIG Manager's nginx: the podman network of that nginx container (required then): `sudo podman ps --format "{{.Names}} {{.Networks}}"` shows it. It must exist with DNS on (not podman's default "podman"); the role never creates or changes it |
 | `portal_path` | `/portal/` | the portal's path on the proxy |
 | `portal_stigman_path` | `/` | 1.68.1: STIG scorecard links that open the review (stigman_link_style: open; behind STIG Manager's nginx only - the link and STIG Manager's page must be one site). The role writes nginx-stigman-links.conf, lines a person adds to that nginx (docs/CKL_IMPORT.md, "Links that open the review"): STIG Manager's page with th… (all of it: the role file) |
-| `portal_stigman_upstream` | `http://stigman-api:54000` | STIG Manager's address in your location / (roles/stigman_stack's) |
+| `portal_stigman_upstream` | `http://stigman-api:54000` | STIG Manager's address in your location / (roles/stigman_stack's); STIG Manager under /stigman/: as in your location /stigman/, with its / at the end (http://stigman-api:54000/) |
 | `portal_stigman_open_versions` | `["1.6.16", "1.6.17", "1.6.18"]` | the STIG Manager versions the script was tested on - on another it does nothing (a plain link). Add one only after a test |
 | `portal_public_url` | `"https://{{ portal_server_name }}{{ (':' ~ portal_port) if portal_own_nginx \| bool and po…` | the portal's address, as people open it (said at the end) |
 | `portal_title` | `Site portal` | the pages' title |

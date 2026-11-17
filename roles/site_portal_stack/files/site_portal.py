@@ -710,12 +710,13 @@ STIGMAN_GO = {"c": re.compile(r"^[0-9]{1,12}\Z"), "a": re.compile(r"^[0-9]{1,12}
 
 
 def stigman_target(query):
-    """/stigman/go's query -> {c, b[, a][, r]}, or None when a value is missing, repeated, unknown or cannot pass."""
+    """/stigman/go's query -> {c[, b][, a][, r]}, or None when a value is missing, repeated, unknown or cannot pass.
+    c alone (1.69.2): the collection itself; a or r needs b."""
     try:
         q = urllib.parse.parse_qs(query or "", keep_blank_values=True, max_num_fields=10)
     except ValueError:                          # more than 10 fields (1.68.1b): no target - the plain address
         return None
-    if set(q) - set(STIGMAN_GO) or any(len(v) != 1 for v in q.values()) or not q.get("c") or not q.get("b"):
+    if set(q) - set(STIGMAN_GO) or any(len(v) != 1 for v in q.values()) or not q.get("c"):
         return None
     out = {}
     for k, (v,) in q.items():
@@ -724,6 +725,8 @@ def stigman_target(query):
         if not STIGMAN_GO[k].match(v):
             return None
         out[k] = v
+    if ("a" in out or "r" in out) and "b" not in out:     # an asset or a rule is inside a STIG's review
+        return None
     return out
 
 

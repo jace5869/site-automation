@@ -457,9 +457,10 @@ GO_BENCH = re.compile(r"^[A-Za-z0-9_.\- ]{1,255}\Z")
 GO_RULE = re.compile(r"^[A-Za-z0-9_.\-]{1,100}\Z")
 
 
-def stigman_go(portal, c, b, a="", r=""):
+def stigman_go(portal, c, b="", a="", r=""):
     """1.68.1, stigman_link_style open: the site portal's page that opens STIG Manager at a review - collection c's review
     of STIG b, or (a: an asset id) that asset's review of it; r: the rule to select. <report_portal_url>/stigman/go?c=&b=&a=&r=.
+    1.69.2: c alone (no b) opens the collection itself - its own view, as a click on it in STIG Manager's tree.
     The portal page keeps the target in the browser tab (sessionStorage) and goes to STIG Manager's plain address; the
     script nginx adds to STIG Manager's page opens the review (docs/CKL_IMPORT.md). '' when a value cannot pass."""
     try:
@@ -468,11 +469,11 @@ def stigman_go(portal, c, b, a="", r=""):
         from urllib import urlencode
     base = str(portal or "").strip().rstrip("/")
     c, b, a, r = (str(x or "").strip() for x in (c, b, a, r))
-    if not re.match(r"^https?://[^\s\"'<>?#]+\Z", base) or not GO_ID.match(c) or not GO_BENCH.match(b):
+    if not re.match(r"^https?://[^\s\"'<>?#]+\Z", base) or not GO_ID.match(c) or (b and not GO_BENCH.match(b)):
         return ""
-    if (a and not GO_ID.match(a)) or (r and not GO_RULE.match(r)):
+    if (a and not GO_ID.match(a)) or (r and not GO_RULE.match(r)) or ((a or r) and not b):
         return ""
-    return base + "/stigman/go?" + urlencode([("c", c), ("b", b)] + ([("a", a)] if a else []) + ([("r", r)] if r else []))
+    return base + "/stigman/go?" + urlencode([("c", c)] + ([("b", b)] if b else []) + ([("a", a)] if a else []) + ([("r", r)] if r else []))
 
 
 def _worst_stig(stigs):
@@ -1209,6 +1210,14 @@ def stig_scorecard(read, point, runs, opts=None):
         if web_url:                                 # 1.68.0: a collection's name opens STIG Manager
             web_sec["cell_links"] = {"column": 1, "urls": [web_url] * len(good) + [""] * (len(web_sec["rows"]) - len(good)), "title": "",
                                      "titles": [stigman_link_tip(c["name"]) for c in good]}
+        if go:                                      # 1.69.2: the name opens the collection itself (go?c=)
+            cl = web_sec.setdefault("cell_links", {"column": 1, "urls": [""] * len(web_sec["rows"]), "title": "",
+                                                   "titles": [""] * len(web_sec["rows"])})
+            for i, c in enumerate(good):
+                u = stigman_go(go, c.get("id"))
+                if u:
+                    cl["urls"][i] = u
+                    cl["titles"][i] = "Opens the collection %s in STIG Manager (a new tab)" % c["name"]
     if isinstance(pl_web.get("rows"), list) and pl_web.get("rows"):
         pl_web = dict(pl_web, kinds=pl_web["kinds"][:2] + ["cat1", "cat2", "cat3"] + pl_web["kinds"][5:])
 
@@ -1260,6 +1269,11 @@ def stig_scorecard(read, point, runs, opts=None):
                 hd["links"] = urls
                 hd["link_titles"] = ["Opens %s's review in STIG Manager (a new tab), at %s" % (h, a["sv"]) if u else ""
                                      for (h, cn), u in zip(hl[:HOSTS_MAX], urls)]
+            curls = [stigman_go(go, (by_name.get(cn) or {}).get("id")) for h, cn in hl[:HOSTS_MAX]]
+            if any(curls):                            # 1.69.2: the host's Collection opens the collection itself
+                hd["links2"], hd["link2_col"] = curls, 1
+                hd["link2_titles"] = ["Opens the collection %s in STIG Manager (a new tab)" % cn if u else ""
+                                      for (h, cn), u in zip(hl[:HOSTS_MAX], curls)]
         tb = _text_block(texts.get(a["sv"]))          # 1.68.0: its check and fix text first, then its hosts
         f_det.append([tb, hd] if tb else hd)
         f_tags.append({"pf": " ".join(sorted(a["pf"])), "col": " ".join(sorted(a["col"])), "cat": "k%d" % a["cat"],
@@ -1332,6 +1346,11 @@ def stig_scorecard(read, point, runs, opts=None):
             if u:
                 cl["urls"][i] = u
                 cl["titles"][i] = "Opens %s's review of %s in STIG Manager (a new tab)" % (h, b)
+        cu = [stigman_go(go, c.get("id")) for c, h, stigs, cats, oldest, plats, rl in hv[:VIEW_MAX]]
+        if any(cu):                                   # 1.69.2: the Collection column opens the collection itself
+            hosts_sec["cell_links2"] = {"column": 2, "urls": cu, "title": "",
+                                        "titles": ["Opens the collection %s in STIG Manager (a new tab)" % c["name"] if u else ""
+                                                   for (c, h, stigs, cats, oldest, plats, rl), u in zip(hv[:VIEW_MAX], cu)]}
     if len(hv) > VIEW_MAX:
         job_only.append("Hosts: %d more hosts than the page shows; the workbook lists every one." % (len(hv) - VIEW_MAX))
     if not h_rows:

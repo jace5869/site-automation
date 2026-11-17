@@ -9,9 +9,11 @@
 # (tests/stig/stigman_links_browser.py): a cold browser - the link, Keycloak's sign-in, back, the asset's review at the
 # rule; signed in - the collection's review at a rule; the same asset at another rule; a collection the person cannot
 # read; a link with a bad value; an untested version; nginx without the lines - each of those the plain home page, no
-# error box, the sign-in never broken.
+# error box, the sign-in never broken. 1.69.2: a collection's link (c alone) opens the collection itself, the tree at it;
+# one without a grant, the home page. STIGMAN_LINKS_PREFIX=/stigman/ puts STIG Manager under that path on nginx (a site
+# with STIG Manager at https://host/stigman/): its location strips the path, the lines use it (portal_stigman_path).
 #   bash tests/stig/run_stigman_links_test.sh       (STIGMAN_TEST_TAG=1.6.16 for that version; STIGMAN_LINKS_SHOTS=DIR keeps
-#                                                    the screenshots)
+#                                                    the screenshots; STIGMAN_LINKS_PREFIX=/stigman/)
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
@@ -19,6 +21,7 @@ py="${STIG_TEST_PYTHON:-$(command -v python3)}"
 eng="${CONTAINER_ENGINE:-podman}"
 tag="${STIGMAN_TEST_TAG:-latest}"
 pod="${STIGMAN_LINKS_POD:-sa-stigman-links}"
+prefix="/$(printf '%s' "${STIGMAN_LINKS_PREFIX:-/}" | sed 's#^/*##; s#/*$##')/"; prefix="${prefix//\/\//\/}"
 base="${STIGMAN_LINKS_PORT:-18660}"
 kc=$((base + 1)) sm=$((base + 2)) portal=$((base + 3)) n1=$((base + 4)) n2=$((base + 5)) n3=$((base + 6))
 work="$(mktemp -d)"
@@ -92,24 +95,27 @@ api "$wtok" POST /assets "{\"name\": \"other01\", \"collectionId\": \"$none\", \
 # ---- the site portal (from the repo) and nginx with the lines --------------------------------------------------------
 mkdir -p "$work/portal/data" "$work/portal/reports"
 echo '{"actions": {}}' > "$work/portal/actions.json"
-(cd "$work/portal" && PYTHONPATH="$repo/plugins/filter:$repo/plugins/module_utils" PORTAL_LISTEN="127.0.0.1:$portal" \
+(cd "$work/portal" && PYTHONPATH="$repo/plugins/filter:$repo/plugins/module_utils" PORTAL_LISTEN="127.0.0.1:$portal" PORTAL_STIGMAN_PATH="$prefix" \
     PORTAL_DATA="$work/portal/data" PORTAL_REPORTS="$work/portal/reports" PORTAL_ACTIONS="$work/portal/actions.json" \
     exec "$py" "$repo/roles/site_portal_stack/files/site_portal.py" > "$work/portal.log" 2>&1) & ppid_=$!
-"$py" - "$repo" "$work/nginx.conf" "$sm" "$portal" "$n1" "$n2" "$n3" <<'PYEOF'
+"$py" - "$repo" "$work/nginx.conf" "$sm" "$portal" "$n1" "$n2" "$n3" "$prefix" <<'PYEOF'
 import sys, jinja2
-repo, out, sm, portal, n1, n2, n3 = sys.argv[1:]
+repo, out, sm, portal, n1, n2, n3, prefix = sys.argv[1:]
+# STIG Manager at "/" as before, or under a path (1.69.2: /stigman/): that location strips the path (proxy_pass with a /),
+# and so does the lines' upstream (portal_stigman_upstream with a / at the end)
+up = "http://127.0.0.1:%s" % sm + ("" if prefix == "/" else "/")
 env = jinja2.Environment(loader=jinja2.FileSystemLoader(repo + "/roles/site_portal_stack/templates"))
 import yaml
 d = yaml.safe_load(open(repo + "/roles/site_portal_stack/defaults/main.yml"))
 def lines(versions):
-    return env.get_template("nginx-stigman-links.conf.j2").render(portal_path="/portal/", portal_stigman_path="/",
-                                                                  portal_stigman_upstream="http://127.0.0.1:%s" % sm,
+    return env.get_template("nginx-stigman-links.conf.j2").render(portal_path="/portal/", portal_stigman_path=prefix,
+                                                                  portal_stigman_upstream=up,
                                                                   portal_stigman_open_versions=versions)
 def server(port, extra):
     return ("server {\n listen 127.0.0.1:%s;\n server_name localhost;\n%s\n"
             " location /portal/ { proxy_pass http://127.0.0.1:%s/; proxy_set_header Host $host; }\n"
-            " location / { proxy_pass http://127.0.0.1:%s; proxy_http_version 1.1; proxy_set_header Host $host;"
-            " proxy_set_header X-Forwarded-Proto http; proxy_buffering off; proxy_read_timeout 600s; }\n}\n" % (port, extra, portal, sm))
+            " location %s { proxy_pass %s; proxy_http_version 1.1; proxy_set_header Host $host;"
+            " proxy_set_header X-Forwarded-Proto http; proxy_buffering off; proxy_read_timeout 600s; }\n}\n" % (port, extra, portal, prefix, up))
 open(out, "w").write(server(n1, lines(d["portal_stigman_open_versions"])) + server(n2, lines(["0.0.0"])) + server(n3, ""))
 PYEOF
 $eng run -d --pull=never --name "$pod-nginx" --network host -v "$work/nginx.conf:/etc/nginx/conf.d/default.conf:ro,Z" \
@@ -117,15 +123,17 @@ $eng run -d --pull=never --name "$pod-nginx" --network host -v "$work/nginx.conf
 for p in "$n1" "$n2" "$n3" "$portal"; do
     for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$p/" && break; sleep 1; done
 done
-page=$(curl -s "http://localhost:$n1/")
+page=$(curl -s "http://localhost:$n1$prefix")
 echo "$page" | grep -q '<script src="/portal/static/stigman-open.js" data-versions="1.6.16 1.6.17 1.6.18" defer></script></head>' \
-    && ! curl -s "http://localhost:$n3/" | grep -q stigman-open.js \
-    && ok "nginx with the role's lines: STIG Manager's page carries the script (the versions tested); without them, as it was" \
+    && ! curl -s "http://localhost:$n3$prefix" | grep -q stigman-open.js \
+    && curl -s "http://localhost:$n1${prefix}index.html" | grep -q 'stigman-open.js' \
+    && [ "$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:$n1${prefix}api/op/configuration")" = 200 ] \
+    && ok "nginx with the role's lines: STIG Manager's page at $prefix carries the script (the versions tested); without them, as it was" \
     || { bad "nginx: the page has no script"; $eng logs --tail 10 "$pod-nginx"; }
 
 # ---- headless Chrome through the links -----------------------------------------------------------------------------------
 cat > "$work/browser.json" <<EOF
-{"base": "http://localhost:$n1", "untested": "http://localhost:$n2", "bare": "http://localhost:$n3", "user": "admin",
+{"base": "http://localhost:$n1", "untested": "http://localhost:$n2", "bare": "http://localhost:$n3", "prefix": "$prefix", "user": "admin",
  "password": "Adm1n-test", "c": "$col", "c_none": "$none", "a": "$asset", "b": "RHEL_9_STIG",
  "r1": "SV-257883r1044925_rule", "r2": "SV-258176r1045388_rule", "shots": "${STIGMAN_LINKS_SHOTS:-}"}
 EOF
@@ -135,4 +143,4 @@ fails=$((fails + $(grep -c '^FAIL' "$work/browser.out")))
 grep -q "link scenarios" "$work/browser.out" || { bad "the browser run did not finish"; tail -15 "$work/browser.out"; }
 
 echo
-if [ $fails -eq 0 ]; then echo "all link scenarios passed (STIG Manager $ver)"; else echo "$fails link scenario(s) FAILED (STIG Manager $ver)"; exit 1; fi
+if [ $fails -eq 0 ]; then echo "all link scenarios passed (STIG Manager $ver at $prefix)"; else echo "$fails link scenario(s) FAILED (STIG Manager $ver at $prefix)"; exit 1; fi

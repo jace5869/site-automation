@@ -28,7 +28,7 @@ portal_path: /portal/                               # the portal's path on the p
 # link and STIG Manager's page must be one site). The role writes nginx-stigman-links.conf, lines a person adds to that
 # nginx (docs/CKL_IMPORT.md, "Links that open the review"): STIG Manager's page with the portal's script added.
 portal_stigman_path: /                             # where STIG Manager's page is on that nginx
-portal_stigman_upstream: http://stigman-api:54000  # STIG Manager's address in your location / (roles/stigman_stack's)
+portal_stigman_upstream: http://stigman-api:54000  # STIG Manager's address in your location / (roles/stigman_stack's); STIG Manager under /stigman/: as in your location /stigman/, with its / at the end (http://stigman-api:54000/)
 # the STIG Manager versions the script was tested on - on another it does nothing (a plain link). Add one only after a test
 portal_stigman_open_versions: ["1.6.16", "1.6.17", "1.6.18"]
 # the portal's address, as people open it (said at the end)
