@@ -310,6 +310,50 @@ The next run of each report draws its page in the ops look (the index on the nex
 `report_web_theme: atlas` goes back. Checked at 1280 and 800 px wide, light and dark; no phone layout of its own (a
 phone gets the page as at 800 px, its tables as in atlas).
 
+### The dashboard: the first screen (1.71.0, the ops look)
+
+In the ops look, a report can open with a dashboard: everything at a glance on the first screen, the full detail one
+click down. The STIG scorecard is the first report with one. The dashboard is the report's **At a glance** section:
+its heading, its place in the rail and its link stay, and its short lines stay under the dashboard. The tile row and
+Start here give way to it, and the header card is one line (its status and the verdict). Atlas and brief, the emails
+and the workbook do not change.
+
+The STIG scorecard's dashboard, at 1280 px:
+
+| Part | What it shows |
+|---|---|
+| The filter row | **Collection**, **Platform**, **CAT** and **Host** (a part of a host's name). On the right: when STIG Manager was read, the assets (for the filters chosen: *3 of 13 assets*), the run it is compared with, and **Details** (the sections below). |
+| The tiles | **CORA risk**: a ring, the rating and its word, the change since last week in points (over the collections both runs have the counts of: a new collection counts in the score, not in the change), and what *Low* needs. **CAT I open**, **CAT II open**, **CAT III open**: each with its change since last week. **This week**: closed and opened. **Fixed on host, still open** when there are scans. |
+| Open by collection | A bar for each collection, its CAT I, CAT II and CAT III stacked, the numbers beside it. A name opens its row in *By collection*. **Explore** goes to that section. |
+| Open findings, N weeks | All open findings and CAT I, one point a week, on one axis, each line's last value at its end. A week with no run, or before a collection was there, is a gap. A platform with nothing open in a week it was counted is a 0. Hover (or the arrow keys) shows a week's numbers. **Table** shows them as a table. |
+| Fix these first | The rules with the biggest weight (hosts open times 10, 4 or 1): rule, CAT, what it checks, hosts, weight. A rule opens its row in *Findings*, opened to its check, fix text and hosts. **All N** goes to *Findings*. |
+| Worst hosts | The hosts with the biggest weight, their CAT I, II and III. A host opens its row in *Hosts*. **All N** goes to *Hosts*. |
+
+**The filters drive every panel**: a collection, a platform, a CAT or a host changes the tiles, the bars, the line and
+both lists, and the rows of the sections below. A part that cannot follow a filter says so in a short grey line:
+
+- the weekly line keeps no host list (*Not by host*);
+- CORA counts every CAT;
+- a tile of another CAT shows a dash.
+
+The numbers are the report's own: with no filter, the tiles are the same as the email's.
+
+The trend has 12 weeks (`stigman_scorecard_weeks`, 12 since 1.71.0).
+
+Without the page's script (a site whose policy blocks it), the dashboard shows every collection and the filters are
+not shown. Checked at 1280 and 800 px (one panel per row), light and dark.
+
+The CAT colours: light #e34948, #eda100, #6250d6; dark #d63d55, #c98500, #9085e9. Both are checked with the dataviz
+palette validator on the card. In light, the CAT II amber is under 3:1 on white, so every bar has its numbers written
+beside it, a legend and a table.
+
+For a report's own dashboard (developers):
+
+- `plugins/filter/report_dash_filters.py` builds it: `dash_fact`, `dash_tiles`, `dash_bars`, `dash_series`,
+  `dash_top`, `dash_view` and `dash_finish`.
+- `roles/site_email/templates/report_dash.html.j2` and `report_dash.css.j2` draw it.
+- The `[data-dash]` block of `site-report.js` draws it again when a filter changes.
+
 `report_web_theme: portal` (or standard, command, glass) gives the website an email's look again, as before 0.43.0;
 the index page is then in the portal look.
 

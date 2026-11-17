@@ -80,7 +80,7 @@ stigman_ckl_import_mode: import
 # with the same "STIG Manager API" credential - GET requests only, never a write. docs/CKL_IMPORT.md, the scorecard.
 stigman_scorecard_collections: []           # the collections on it, by name or id, * and ? ([] = every collection the client reads); !name or !id leaves one out: ['*', '!48', '!Archived*']
 stigman_scorecard_top: 5                    # "Top rules open across hosts": this many rules
-stigman_scorecard_weeks: 8                  # the trend line and "The numbers behind the lines": this many weeks
+stigman_scorecard_weeks: 12                 # the trend line and "The numbers behind the lines": this many weeks (1.71.0: 12)
 stigman_scorecard_cat2_warn: 0              # a collection with this many CAT II open or more: Warning (0 = off)
 # 1.67.0, "By platform": a STIG's platform is the first of these whose pattern matches its benchmark id (* and ?, any
 # case); no match is Other. An asset counts under each platform it has a STIG of, a finding under its STIG's platform.

@@ -1987,7 +1987,7 @@ File: `roles/stigman_ckl_import/defaults/main.yml`
 | `stigman_ckl_import_mode` | `import` | What this job does (1.58.0) - a survey choice on the job template and on workflow 40: import as before: the checklists read, the reviews planned. No scorecard. import and scorecard the same, and the STIG compliance scorecard first in the report. A drop folder with no checklist is not an error then: one line, and the j… (all of it: the role file) |
 | `stigman_scorecard_collections` | `[]` | The STIG compliance scorecard (stigman_ckl_import_mode "import and scorecard" or "scorecard"). It reads STIG Manager with the same "STIG Manager API" credential - GET requests only, never a write. docs/CKL_IMPORT.md, the scorecard. the collections on it, by name or id, * and ? ([] = every collection the client reads);… (all of it: the role file) |
 | `stigman_scorecard_top` | `5` | "Top rules open across hosts": this many rules |
-| `stigman_scorecard_weeks` | `8` | the trend line and "The numbers behind the lines": this many weeks |
+| `stigman_scorecard_weeks` | `12` | the trend line and "The numbers behind the lines": this many weeks (1.71.0: 12) |
 | `stigman_scorecard_cat2_warn` | `0` | a collection with this many CAT II open or more: Warning (0 = off) |
 | `stigman_scorecard_platforms` | `- {name: Linux, stigs: ["RHEL_*", "Oracle_Linux_*", "*Ubuntu*", "SLES_*", "*Linux*"]} - {…` | 1.67.0, "By platform": a STIG's platform is the first of these whose pattern matches its benchmark id (* and ?, any case); no match is Other. An asset counts under each platform it has a STIG of, a finding under its STIG's platform. |
 | `stigman_scorecard_platform_filter` | `[]` | only these platforms, by name (e.g. [Windows]; [] = every platform) |

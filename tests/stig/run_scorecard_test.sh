@@ -183,7 +183,8 @@ then ok "  ...the email: the tiles and tables, no trend line, the import's secti
 else bad "  ...the email and its workbook"; fi
 page="$(ls "$work/site"/*/*job-5000.html 2>/dev/null | head -1)"
 n="$(grep -o '<svg class="spark"' "${page:-/dev/null}" | wc -l)"
-if [ -n "$page" ] && [ "$n" = 3 ] && grep -q 'aria-label="SITEA - RHEL 9, open findings: 20 in the week to ' "$page" && grep -q "Open, 8 weeks" "$page"; then
+# 1.71.0: stigman_scorecard_weeks 12 - the fake history's 8 earlier weeks and this run: 9 weeks with a point
+if [ -n "$page" ] && [ "$n" = 3 ] && grep -q 'aria-label="SITEA - RHEL 9, open findings: 20 in the week to ' "$page" && grep -q "Open, 9 weeks" "$page"; then
     ok "  ...the website (atlas look): a trend line per collection, its values as the label"
 else bad "  ...the website page: $n trend lines (${page:-no page})"; fi
 # 1.67.0: a line per platform in its hue, the filter buttons, each collection that opens, the rows tagged
@@ -253,13 +254,20 @@ then ok "  ...the week host by host (Since last week: rhel07 2 CAT II closed, wi
 else bad "  ...host by host"; fi
 grep -q 'jobs/4008/' "$work/aap3.log" && ok "  ...last week's v3 point read from AAP's history" || bad "  ...AAP: last week's job not read"
 [ -n "${SCORECARD_TEST_KEEP:-}" ] && { mkdir -p "$SCORECARD_TEST_KEEP" && cp -r "$work/site" "$SCORECARD_TEST_KEEP/atlas"; }
-for look in brief glass; do
+for look in brief glass ops; do
     mkdir -p "$work/site-$look"
     AAP_ENV="$AAP" run "the $look look" ok -e "$both" -e "$job" -e "{\"report_web_dest\": \"$work/site-$look\", \"report_web_theme\": \"$look\"}" \
         -- "1 more than last week"
     page="$(ls "$work/site-$look"/*/*job-5000.html 2>/dev/null | head -1)"
     n="$(grep -o '<svg class="spark"' "${page:-/dev/null}" | wc -l)"
-    if [ "$look" = brief ]; then [ "$n" = 3 ] && ok "  ...a trend line per collection" || bad "  ...brief page: $n trend lines"
+    if [ "$look" = ops ]; then
+        # 1.71.0: the ops look's At a glance is the dashboard - its data, its panels, the filter row, the glance lines kept
+        if [ -n "$page" ] && grep -q '<div class="dash" data-dash>' "$page" && grep -q '<script type="application/json" class="dash-data">{' "$page" \
+            && grep -q '<h2>At a glance</h2>' "$page" && grep -q 'class="glance"' "$page" && grep -q 'Open findings, 12 weeks' "$page" \
+            && grep -q 'Fix these first' "$page" && grep -Eq '<span>[0-9]+ assets?</span>' "$page" && ! grep -q '<div class="tiles t' "$page"; then
+            ok "  ...the ops look: At a glance is the dashboard (its data, tiles, bars, the 12-week line, the top lists)"
+        else bad "  ...ops page: no dashboard (${page:-no page})"; fi
+    elif [ "$look" = brief ]; then [ "$n" = 3 ] && ok "  ...a trend line per collection" || bad "  ...brief page: $n trend lines"
     else [ -n "$page" ] && [ "$n" = 0 ] && grep -q "SITEA - Windows Server" "$page" && ok "  ...the tables, no trend line" || bad "  ...glass page"; fi
     [ -n "${SCORECARD_TEST_KEEP:-}" ] && cp -r "$work/site-$look" "$SCORECARD_TEST_KEEP/$look"
 done

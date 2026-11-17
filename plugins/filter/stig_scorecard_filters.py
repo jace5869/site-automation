@@ -362,6 +362,220 @@ def _together(since):
     return re.sub(r"(\d+|none) (closed|opened)", u"\\1\u00a0\\2", re.sub(u"^([▲▼▬]) ", u"\\1\u00a0", str(since)))
 
 
+_DASH = []
+
+
+def dash_module():
+    """1.71.0: plugins/filter/report_dash_filters.py (the dashboards), by its path."""
+    if not _DASH:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("report_dash_for_stig",
+                                                      os.path.join(os.path.dirname(os.path.abspath(__file__)), "report_dash_filters.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _DASH.append(mod)
+    return _DASH[0]
+
+
+def _host_id(c, h):
+    """A host's row in Hosts (the dashboard's link to it)."""
+    return "host-%s-%s" % (_slug(c.get("id")), _slug(h))
+
+
+def _split(x, cfg):
+    """1.71.0: a point's collection -> [(platform key, host, category, open)] - each host's counts per platform (h), then
+    what the platforms' counts (p) have more of (host ""), then what the collection's own counts have more of (platform
+    ""): every total stays the collection's own number, whatever the finer counts add up to."""
+    out, hostsum = [], {}
+    for h, pls in sorted(((x or {}).get("h") or {}).items()):
+        for name, v in sorted((pls or {}).items()) if isinstance(pls, dict) else []:
+            pf = _key(name, cfg)
+            for k in CATS:
+                n = _n(v[k - 1]) if isinstance(v, (list, tuple)) and len(v) >= k else 0
+                if n:
+                    out.append((pf, str(h), k, n))
+                    hostsum[(pf, k)] = hostsum.get((pf, k), 0) + n
+    pr = (x or {}).get("p") if isinstance((x or {}).get("p"), dict) else {}
+    pfs = {}
+    for name, e in pr.items():
+        if isinstance(e, dict):
+            pf = _key(name, cfg)
+            for k in CATS:
+                pfs[(pf, k)] = pfs.get((pf, k), 0) + _n(e.get("cat%d" % k))
+    for (pf, k), n in sorted(pfs.items()):
+        if n - hostsum.get((pf, k), 0):
+            out.append((pf, "", k, n - hostsum.get((pf, k), 0)))
+    for k in CATS:
+        known = sum(n for (pf, kk), n in pfs.items() if kk == k) + sum(n for (pf, kk), n in hostsum.items() if kk == k and (pf, kk) not in pfs)
+        if _n((x or {}).get("cat%d" % k)) - known:
+            out.append(("", "", k, _n((x or {}).get("cat%d" % k)) - known))
+    return out
+
+
+def _cora_split(x, cfg):
+    """1.71.0: a point's collection -> [(platform key, category, rules, assessed, open)] for the CORA tile: per platform
+    when every platform has its counts, the rest at platform ""; [] without the counts."""
+    if _cora_of(x) is None:
+        return []
+    pr = x.get("p") if isinstance(x.get("p"), dict) else {}
+    parts = [(name, e) for name, e in pr.items() if isinstance(e, dict)]
+    whole = [_n(v) for v in x["ra"]], [_n(v) for v in x["rd"]], [_n(x.get("cat%d" % k)) for k in CATS]
+    out = []
+    if parts and all(isinstance(e.get("ra"), list) and isinstance(e.get("rd"), list) for n, e in parts):
+        acc = {}
+        for name, e in parts:
+            pf = _key(name, cfg)
+            for k in CATS:
+                v = acc.setdefault((pf, k), [0, 0, 0])
+                v[0] += _n(e["ra"][k - 1])
+                v[1] += _n(e["rd"][k - 1])
+                v[2] += _n(e.get("cat%d" % k))
+        for (pf, k), v in sorted(acc.items()):
+            out.append((pf, k, v[0], v[1], v[2]))
+        for k in CATS:
+            rest = [whole[j][k - 1] - sum(v[j] for (pf, kk), v in acc.items() if kk == k) for j in range(3)]
+            if any(rest):
+                out.append(("", k, rest[0], rest[1], rest[2]))
+    else:
+        out = [("", k, whole[0][k - 1], whole[1][k - 1], whole[2][k - 1]) for k in CATS]
+    return out
+
+
+def _dashboard(good, by_id, base, wk, now, point, cfg, names, tot, ranked, hv, pairs, fixed, scans, heads):
+    """1.71.0: the scorecard's dashboard (report_dash_filters): the facts - open (collection, platform, host, CAT), was
+    (the same of the run a week ago), delta (closed and opened since), trend (a week each), cora (the CORA counts) and the
+    rules' and the hosts' - and the panels: the tiles, Open by collection, the weekly line, Fix these first, Worst hosts."""
+    D = dash_module()
+    if not good:
+        return {}
+    pl = _platforms(cfg)
+    key = lambda c: "c%s" % c.get("id")             # noqa: E731
+    o_rows, w_rows, d_rows, c_rows, cw_rows = [], [], [], [], []
+    for c, was in pairs:
+        x = by_id.get(str(c.get("id"))) or dict((k, c.get(k)) for k in ("cat1", "cat2", "cat3"))
+        o_rows += [(key(c), pf, h, "k%d" % k, n) for pf, h, k, n in _split(x, cfg)]
+        c_rows += [(key(c), pf, "k%d" % k, a, d, n) for pf, k, a, d, n in _cora_split(x, cfg)]
+        if was is None:
+            continue
+        w_rows += [(key(c), pf, h, "k%d" % k, n) for pf, h, k, n in _split(was, cfg)]
+        cw_rows += [(key(c), pf, "k%d" % k, a, d, n) for pf, k, a, d, n in _cora_split(was, cfg)]
+        ch = change(was, x)
+        if ch is None:
+            continue
+        acc = {}
+        if ch["how"] == "hosts":
+            plats = set(n for v in list((was.get("h") or {}).values()) + list((x.get("h") or {}).values()) if isinstance(v, dict) for n in v)
+            for name in sorted(plats):
+                cp = change(was, x, platform=name) or {}
+                for j, part in ((0, "closed_rules"), (1, "opened_rules")):
+                    for h, k, n in cp.get(part) or []:
+                        acc.setdefault((_key(name, cfg), str(h), k), [0, 0])[j] += n
+        for k in CATS:
+            for j, part in ((0, "closed_rules"), (1, "opened_rules")):
+                rest = sum(n for i, kk, n in ch[part] if kk == k) - sum(v[j] for (pf, h, kk), v in acc.items() if kk == k)
+                if rest:
+                    acc.setdefault(("", "", k), [0, 0])[j] += rest
+        d_rows += [(key(c), pf, h, "k%d" % k, v[0], v[1]) for (pf, h, k), v in sorted(acc.items()) if v[0] or v[1]]
+    t_rows = []
+    for i, (t, r) in enumerate(wk):
+        if r is None:
+            continue
+        for c in good:
+            x = (by_id.get(str(c.get("id"))) or {}) if r["_t"] == now else _find(r, c)
+            if not x:
+                continue
+            # the collection is there that week: a row each CAT, 0 or not; so is each platform it recorded (1.71.0b: a
+            # platform at 0 is a measured 0, not a gap)
+            seen = set([""] + [_key(name, cfg) for name, e in ((x.get("p") or {}) if isinstance(x.get("p"), dict) else {}).items()
+                               if isinstance(e, dict)])
+            acc = dict(((pf, k), 0) for pf in seen for k in CATS)
+            for pf, h, k, n in _split(x, cfg):
+                acc[(pf, k)] = acc.get((pf, k), 0) + n
+            t_rows += [(i, key(c), pf, "k%d" % k, n) for (pf, k), n in sorted(acc.items()) if n or pf in seen]
+    # the rules (the Findings' order, its rows) and the hosts (the Hosts' order and rows)
+    rmap = dict((a["sv"], i) for i, a in enumerate(ranked))
+    r_rows = []
+    for c in good:
+        ap = _asset_platforms(c, pl)
+        for r in c.get("rules") or []:
+            if not isinstance(r, dict) or r.get("sv") not in rmap or r.get("cat") not in CATS:
+                continue
+            pf, hs = _key(_rule_platform(r, ap, pl), cfg), [str(h) for h in r.get("assets") or []]
+            r_rows += [(rmap[r["sv"]], key(c), pf, h, "k%d" % r["cat"], 1) for h in hs]
+            if _n(r.get("count")) > len(hs):
+                r_rows.append((rmap[r["sv"]], key(c), pf, "", "k%d" % r["cat"], _n(r.get("count")) - len(hs)))
+    h_rows = []
+    for i, (c, h, stigs, cats, oldest, plats, rl) in enumerate(hv[:VIEW_MAX]):
+        per = ((by_id.get(str(c.get("id"))) or {}).get("h") or {}).get(h)
+        if isinstance(per, dict) and per:
+            for name, v in sorted(per.items()):
+                h_rows += [(i, key(c), _key(name, cfg), h, "k%d" % k, _n(v[k - 1])) for k in CATS if _n(v[k - 1])]
+        else:
+            pf = _key(plats[0], cfg) if len(plats) == 1 else ""
+            h_rows += [(i, key(c), pf, h, "k%d" % k, cats[k - 1]) for k in CATS if cats[k - 1]]
+    a_rows = []                                     # the assets: each by name (once per platform), the rest without one
+    for c in good:
+        named = _asset_platforms(c, pl)
+        for a, plats in sorted(named.items()):
+            a_rows += [(key(c), _key(n, cfg), a, 0) for n in plats] or [(key(c), "", a, 0)]
+        if _n(c.get("assets")) > len(named):
+            a_rows.append((key(c), "", "", _n(c.get("assets")) - len(named)))
+    facts = {"open": D.dash_fact(["col", "pf", "h", "cat", "n"], o_rows, ["h"]),
+             "assets": D.dash_fact(["col", "pf", "h", "n"], a_rows, ["h"]),
+             "trend": D.dash_fact(["w", "col", "pf", "cat", "n"], t_rows),
+             "rules": D.dash_fact(["i", "col", "pf", "h", "cat", "n"], r_rows, ["h"]),
+             "hosts": D.dash_fact(["i", "col", "pf", "h", "cat", "n"], h_rows, ["h"])}
+    vs = day_word(base["_t"]) if base else ""
+    if base:
+        facts["was"] = D.dash_fact(["col", "pf", "h", "cat", "n"], w_rows, ["h"])
+        facts["delta"] = D.dash_fact(["col", "pf", "h", "cat", "closed", "opened"], d_rows, ["h"])
+    if c_rows:
+        facts["cora"] = D.dash_fact(["col", "pf", "cat", "a", "d", "o"], c_rows)
+        if cw_rows:
+            facts["cora_was"] = D.dash_fact(["col", "pf", "cat", "a", "d", "o"], cw_rows)
+    since = "vs %s" % vs if vs else ""
+    tiles = ([{"t": "cora", "label": "CORA risk", "fact": "cora", "was": "cora_was" if cw_rows else "", "match": ["col"], "since": "since %s" % vs if vs else ""}]
+             if c_rows else [])
+    tiles += [{"t": "sum", "label": "CAT I open", "fact": "open", "col": "n", "where": {"cat": "k1"}, "cat": 1, "status": "any",
+               "was": "was" if base else "", "since": since},
+              {"t": "sum", "label": "CAT II open", "fact": "open", "col": "n", "where": {"cat": "k2"}, "cat": 2, "status": "any-warning",
+               "was": "was" if base else "", "since": since},
+              {"t": "sum", "label": "CAT III open", "fact": "open", "col": "n", "where": {"cat": "k3"}, "cat": 3,
+               "was": "was" if base else "", "since": since}]
+    if base:
+        tiles.append({"t": "pair", "label": "This week", "fact": "delta", "cols": ["closed", "opened"], "words": ["closed", "opened"],
+                      "since": "since %s" % vs})
+    if fixed or scans:
+        tiles.append({"t": "fixed", "label": "Fixed on host, still open", "value": len(fixed), "note": "Low - the next import closes them",
+                      "status": "low" if fixed else "ok"})
+    stacks = [["k1", "CAT I", 1], ["k2", "CAT II", 2], ["k3", "CAT III", 3]]
+    rule_cols = [{"h": "Rule", "v": "label"}, {"h": "CAT", "v": "cat"}, {"h": "What it checks", "v": "text"},
+                 {"h": "Hosts", "v": "n", "num": True}, {"h": "Weight", "v": "s", "num": True, "bar": True}]
+    host_cols = [{"h": "Host", "v": "label"}, {"h": "I", "v": "k1", "num": True, "cat": 1}, {"h": "II", "v": "k2", "num": True, "cat": 2},
+                 {"h": "III", "v": "k3", "num": True, "cat": 3}, {"h": "Weight", "v": "s", "num": True}]
+    vs_word = "vs %s" % vs if vs else ""
+    panels = [D.dash_meta([{"text": "Read %s UTC" % _utc(now).strftime("%a %d %b %H:%M")} if now else {},
+                           {"t": "count", "fact": "assets", "word": "asset", "words": "assets", "key": ["col", "h"]},
+                           {"text": vs_word} if vs_word else {}]),
+              D.dash_tiles(tiles),
+              D.dash_bars("Open by collection", "open", "col", stacks,
+                          [{"k": key(c), "name": c["name"], "href": "#col-%s" % _slug(c.get("id"))} for c in good],
+                          more={"label": "Explore", "href": "sec:By collection"}, span=5),
+              D.dash_series("Open findings, %d weeks" % len(wk), "trend", heads, [r is not None for t, r in wk],
+                            [{"name": "All open", "where": {}}, {"name": "CAT I", "where": {"cat": "k1"}, "cat": 1}],
+                            table_href="sec:The numbers behind the lines",
+                            note="one point a week", span=7),
+              D.dash_top("Fix these first: top findings by weight", "rules",
+                         [{"label": a["sv"], "href": "#rule-%s" % _slug(a["sv"]), "cat": a["cat"], "text": a["title"]} for a in ranked],
+                         rule_cols, more={"label": "All", "href": "sec:Findings"}, span=7),
+              D.dash_top("Worst hosts by weight", "hosts",
+                         [{"label": h, "href": "#" + _host_id(c, h), "text": c["name"]} for c, h, stigs, cats, oldest, plats, rl in hv[:VIEW_MAX]],
+                         host_cols, more={"label": "All", "href": "sec:Hosts"}, span=5)]
+    return D.dash_finish({"v": 1, "weights": {"k1": 10, "k2": 4, "k3": 1}, "facts": facts, "panels": panels,
+                          "notby": {"h": "Not by host: a week's point keeps no host list.",
+                                    "cat": "CORA counts every CAT."}})
+
+
 VIEW_MAX = 3000                 # the Findings and Hosts views: this many rows on the page (the workbook has every one)
 HOSTS_MAX = 300                 # a rule opened: this many hosts
 RULES_MAX = 300                 # a host opened: this many rules
@@ -624,7 +838,7 @@ def stig_scorecard_runs(current, aap=None, db=None, opts=None):
 
 
 # ---- the weeks, the change since last week ----------------------------------------------------------------
-def weekly(runs, now, weeks):
+def weekly(runs, now, weeks, trim=True):
     """One point a week: the last run of each of the weeks ending now (a week's window ends half a day after "N weeks
     ago", so a run a little late still counts for its week). -> [(the week's last day, run or None)], oldest first, from
     the first week that has a run."""
@@ -633,7 +847,7 @@ def weekly(runs, now, weeks):
         end = now - k * 7 * DAY + (HALF if k else 0)
         inside = [r for r in runs if now - (k + 1) * 7 * DAY + HALF < r["_t"] <= end]
         out.append((now - k * 7 * DAY, inside[-1] if inside else None))
-    while len(out) > 1 and out[0][1] is None:
+    while trim and len(out) > 1 and out[0][1] is None:      # 1.71.0: the dashboard keeps every week (trim False)
         out.pop(0)
     return out
 
@@ -1277,7 +1491,7 @@ def stig_scorecard(read, point, runs, opts=None):
         tb = _text_block(texts.get(a["sv"]))          # 1.68.0: its check and fix text first, then its hosts
         f_det.append([tb, hd] if tb else hd)
         f_tags.append({"pf": " ".join(sorted(a["pf"])), "col": " ".join(sorted(a["col"])), "cat": "k%d" % a["cat"],
-                       "h": " ".join(sorted(set(x[0] for x in hl)))})
+                       "h": " ".join(sorted(set(x[0] for x in hl))), "id": "rule-%s" % _slug(a["sv"])})      # 1.71.0: the dashboard's link
         f_st.append("")
     find_sec = {"title": "Findings (%d)" % len(f_rows), "cat_cells": True,
                 "columns": ["", "Rule", "Category", "What it checks", "Platform", "Hosts open", "Weight", "Where"],
@@ -1328,7 +1542,7 @@ def stig_scorecard(read, point, runs, opts=None):
         else:
             h_det.append(None)
         h_tags.append({"pf": " ".join(_key(n, cfg) for n in plats), "col": "c%s" % c.get("id"),
-                       "cat": " ".join("k%d" % (k + 1) for k in range(3) if cats[k]), "h": h})
+                       "cat": " ".join("k%d" % (k + 1) for k in range(3) if cats[k]), "h": h, "id": _host_id(c, h)})
     hosts_sec = {"title": "Hosts (%d)" % len(h_rows),
                  "columns": ["", "Host", "Collection", "Platform", "CAT I", "CAT II", "CAT III", "Open", "Oldest review"],
                  "column_titles": ["", "", "", "", "", "", "", "Open findings on the host", "Its oldest review in STIG Manager"],
@@ -1470,6 +1684,11 @@ def stig_scorecard(read, point, runs, opts=None):
                                "Recheck")
         web = [glance_sec, pl_web, web_sec, find_sec, hosts_sec] + ([web_fix] if fixes else []) + ([num_sec] if num_sec else []) + last
 
+    # ---- 1.71.0: the dashboard (the ops look's At a glance): the facts the page's filters drive, and its panels
+    wk_all = weekly(runs, now, n_weeks, trim=False)       # the dashboard's line: every week of stigman_scorecard_weeks
+    dashboard = _dashboard(good, by_id, base, wk_all, now, point, cfg, names, tot, ranked[:VIEW_MAX], hv,
+                           [(c, _find(base, c) if base else None) for c in good], fixed, scans, [day_word(t) for t, r in wk_all])
+
     # ---- the workbook
     def cut(names):
         text = ", ".join(names)
@@ -1539,7 +1758,7 @@ def stig_scorecard(read, point, runs, opts=None):
     if cora_all:
         counts["cora"] = {"pct": cora_all["pct"], "rating": cora_all["rating"]}
     return {"ok": True, "error": "", "title": title, "status": status, "subtitle": subtitle, "tiles": tiles, "sections": sections, "web": web,
-            "facets": facets,
+            "facets": facets, "dashboard": dashboard,
             "notes": notes, "xlsx": xlsx, "lines": lines, "fixed_rows": fixed,      # 1.67.0 part C: the site_findings artifact
             "counts": counts}
 
@@ -1585,7 +1804,10 @@ def stig_scorecard_join(card, imp=None, mode="import and scorecard", src="", emp
     if imp and imp.get("footer") and with_import:
         base["footer"] = imp["footer"]
     report = dict(base, sections=list(card.get("sections") or []) + extra)        # 1.68.0: How the scorecard counts - the website's
-    web = _scorecard_web(dict(base, facets=card["facets"]) if card.get("facets") else base, list(card["web"]) + extra + tail) if card.get("web") else {}
+    wb = dict(base, facets=card["facets"]) if card.get("facets") else base
+    if card.get("dashboard"):                       # 1.71.0: the ops look's At a glance (the other looks leave it)
+        wb = dict(wb, dashboard=card["dashboard"])
+    web = _scorecard_web(wb, list(card["web"]) + extra + tail) if card.get("web") else {}
     return {"report": report, "web": web, "xlsx": list(card.get("xlsx") or []) + (_sheets(imp) if with_import else [])}
 
 

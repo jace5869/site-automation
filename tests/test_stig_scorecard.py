@@ -997,7 +997,7 @@ class Platforms(unittest.TestCase):
         fv = section(self.doc, "Findings", "web")                   # 1.68.0: the Findings view, the most hosts first
         i = [r[1] for r in fv["rows"]].index("SV-254247 (WN22-00-000110)")
         self.assertEqual(fv["rows"][i][2], "CAT I")
-        self.assertEqual(fv["row_tags"][i], {"pf": "pf2", "col": "c3", "cat": "k1", "h": "win03 win04"})
+        self.assertEqual(fv["row_tags"][i], {"pf": "pf2", "col": "c3", "cat": "k1", "h": "win03 win04", "id": "rule-SV-254247"})
         self.assertEqual(fv["details"][i]["rows"], [["win03", WIN], ["win04", WIN]])
         fz = self.doc["facets"]
         self.assertEqual([(x["key"], x["name"], x["hue"]) for x in fz["platforms"]],
@@ -1961,7 +1961,7 @@ class Database(unittest.TestCase):
             self.assertIn("`%s`" % name, guide, name)
         self.assertIn("\nstigman_ckl_import_mode: import\n", defaults)
         self.assertRegex(defaults, r"\nstigman_scorecard_top: 5\s")
-        self.assertRegex(defaults, r"\nstigman_scorecard_weeks: 8\s")
+        self.assertRegex(defaults, r"\nstigman_scorecard_weeks: 12\s")
         self.assertRegex(defaults, r"\nstigman_scorecard_collections: \[\]\s")
 
 

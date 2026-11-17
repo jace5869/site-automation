@@ -770,6 +770,7 @@ footer{margin-top:32px}
   .cdd,.todo.later{display:block!important}.todo.later{display:flex!important}.body>p.st{display:block;-webkit-line-clamp:unset}
   .hstrip::details-content{content-visibility:visible}
 }
+{%- include 'report_dash.css.j2' %}
 </style>
 </head>
 <body>
@@ -844,16 +845,16 @@ footer{margin-top:32px}
 {%- endfor %}
 {%- set say = {'critical': 'Review what needs attention, worst first.', 'warning': 'Some items need a look.', 'ok': 'Nothing needs action.',
                'low': 'Nothing urgent - worth knowing.', 'unknown': 'Its state could not be read.'}.get(st, '') %}
-<header class="hero card h-{{ st }}">
+<header class="hero card h-{{ st }}{{ ' dash-hero' if r.dashboard | default({}) else '' }}">
 <div class="hgrid">
 <div class="hl">
 <span class="stc s-{{ st }}"><span class="d" aria-hidden="true"></span>{{ opsword[st] }}</span>
 <h1>{{ r.title | e }}</h1>
-{%- if say %}
+{%- if say and not r.dashboard | default({}) %}
 <p class="say">{{ say }}</p>
 {%- endif %}
 </div>
-{%- if hd.t is not none %}
+{%- if hd.t is not none and not r.dashboard | default({}) %}
 {%- set hv = ('' if hd.t.value is none else hd.t.value) | string %}
 <div class="hn"><div class="bn{{ ' long' if hv | length > 6 else '' }}{{ (' c-' ~ hd.t.status) if hd.t.status | default('') in ['critical', 'warning'] else '' }}">{{ hv | e }}</div><div class="cap">{{ hd.t.label | e }}{{ (' - ' ~ hd.t.note) | e if hd.t.note | default('') else '' }}</div></div>
 {%- endif %}
@@ -882,8 +883,8 @@ footer{margin-top:32px}
 </details>
 {%- endif %}
 </header>
-{%- if r.summary | default([]) %}
-{#- the row of tiles by their count (the user: no tile alone on a row): 5 in one row, 6 as 3 + 3, 7 and 8 as 4 + 4 (or
+{%- if r.summary | default([]) and not r.dashboard | default({}) %}
+{#- the row of tiles (1.71.0: a dashboard has its own, in At a glance) by their count (the user: no tile alone on a row): 5 in one row, 6 as 3 + 3, 7 and 8 as 4 + 4 (or
     + 3), 9 and 10 as 5 + 5 (or + 4); 2 to a row at 900 px and under #}
 <div class="tiles t{{ r.summary | length if r.summary | length <= 10 else 'x' }}">
 {%- for t in r.summary %}
@@ -903,6 +904,7 @@ footer{margin-top:32px}
 {%- endfor %}
 </div>
 {%- endif %}
+{%- if not r.dashboard | default({}) %}
 {#- 1.67.0: the page's filter buttons (r.facets: the STIG scorecard's Platform and Collection) - site-report.js shows
     them and hides the rows and the collections that are not the choice; without the script they are not shown #}
 {%- set fx = r.facets | default({}, true) %}
@@ -930,6 +932,7 @@ footer{margin-top:32px}
 <p class="fnote">{{ fx.note | e }}</p>
 {%- endif %}
 </div>
+{%- endif %}
 {%- endif %}
 {%- macro xmini(t) %}
 {%- if t.text | default('') %}<p class="xt0">{{ t.text | e }}</p>{% endif %}
@@ -990,7 +993,7 @@ footer{margin-top:32px}
     by hosts open). Each card: the row's first value, one line (the cells that are Critical or Warning, else its
     longest value), Open item (that row) and View details (the row's other values) #}
 {%- set auto = [] %}
-{%- if st in ['critical', 'warning'] and not (secs | selectattr('cards', 'defined') | selectattr('cards') | list) %}
+{%- if st in ['critical', 'warning'] and not (secs | selectattr('cards', 'defined') | selectattr('cards') | list) and not r.dashboard | default({}) %}
 {%- set catrep = secs | selectattr('cat_cells', 'defined') | selectattr('cat_cells') | list %}
 {%- for s in secs %}
 {%- set si = loop.index %}
@@ -1063,12 +1066,14 @@ footer{margin-top:32px}
 {%- set xp = (s.columns is defined and s.rows | default([]) and blist[loop.index0] is none) or s.text | default('') | string | length > 220 %}
 {#- a section the report marks collapsed (a long list - 1.6.1) starts closed: a click, the search or Print opens it #}
 <details class="sec{{ ' start' if start else '' }}" id="s{{ si }}"{{ '' if s.collapsed | default(false) else ' open' }}>
-<summary><div class="hr">{% if ss in words %}<span class="stc s-{{ ss }}"><span class="d" aria-hidden="true"></span>{{ opsword[ss] }}</span>{% elif start %}<span class="lbl">Ranked by severity</span>{% endif %}<span class="sp"></span>
+<summary><div class="hr">{% if ss in words and not (s.glance | default([]) and r.dashboard | default({})) %}<span class="stc s-{{ ss }}"><span class="d" aria-hidden="true"></span>{{ opsword[ss] }}</span>{% elif start %}<span class="lbl">Ranked by severity</span>{% endif %}<span class="sp"></span>
 {%- if s.rows is defined %}<span class="pill"><span class="count">{{ s.rows | length }}</span> {{ 'row' if s.rows | length == 1 else 'rows' }}</span>{% elif start %}<span class="pill"><span class="count">{{ s.cards | length }}</span> {{ 'step' if s.cards | length == 1 else 'steps' }}</span>{% endif %}
 <button class="copy scopy" type="button" hidden title="Copy this section" aria-label="Copy {{ s.title | e }}">{{ copyicons() }}<span class="t">Copy</span></button>
 <svg class="caret" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
 <h2>{{ s.title | e }}</h2></summary>
 <div class="body">
+{#- 1.71.0: a dashboard is the At a glance section's first part (its lines stay under it) #}
+{%- if s.glance | default([]) and r.dashboard | default({}) %}{% include 'report_dash.html.j2' %}{% endif %}
 {%- if xp %}<input type="checkbox" class="xpc" id="xp{{ si }}" aria-label="Explore {{ s.title | e }}: its filter, columns, CSV and whole text">{% endif %}
 {%- if s.passed | default([]) %}
 {%- if s.passed_checks | default([]) %}

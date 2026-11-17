@@ -1,4 +1,2053 @@
 {
+"dashboard": {
+"facts": {
+"assets": {
+"cols": [
+"col",
+"pf",
+"h",
+"n"
+],
+"dict": {
+"h": [
+"rhel01",
+"rhel03",
+"rhel04",
+"rhel05",
+"rhel06",
+"rhel07",
+"esx01",
+"esx02",
+"vrops02",
+"win01",
+"win03",
+"win04",
+"win05"
+]
+},
+"rows": [
+[
+"c2",
+"pf5",
+0,
+0
+],
+[
+"c2",
+"pf1",
+0,
+0
+],
+[
+"c2",
+"pf1",
+1,
+0
+],
+[
+"c2",
+"pf1",
+2,
+0
+],
+[
+"c2",
+"pf1",
+3,
+0
+],
+[
+"c2",
+"pf1",
+4,
+0
+],
+[
+"c2",
+"pf1",
+5,
+0
+],
+[
+"c1",
+"pf3",
+6,
+0
+],
+[
+"c1",
+"pf3",
+7,
+0
+],
+[
+"c1",
+"pf3",
+8,
+0
+],
+[
+"c3",
+"pf2",
+9,
+0
+],
+[
+"c3",
+"pf2",
+10,
+0
+],
+[
+"c3",
+"pf2",
+11,
+0
+],
+[
+"c3",
+"pf2",
+12,
+0
+]
+]
+},
+"delta": {
+"cols": [
+"col",
+"pf",
+"h",
+"cat",
+"closed",
+"opened"
+],
+"dict": {
+"h": [
+""
+]
+},
+"rows": [
+[
+"c2",
+"",
+0,
+"k2",
+4,
+0
+],
+[
+"c2",
+"",
+0,
+"k3",
+0,
+1
+],
+[
+"c3",
+"",
+0,
+"k1",
+0,
+1
+]
+]
+},
+"hosts": {
+"cols": [
+"i",
+"col",
+"pf",
+"h",
+"cat",
+"n"
+],
+"dict": {
+"h": [
+"win03",
+"rhel04",
+"win04",
+"rhel03",
+"esx01",
+"rhel01",
+"rhel05",
+"win01",
+"esx02",
+"rhel06",
+"win05",
+"rhel07"
+]
+},
+"rows": [
+[
+0,
+"c3",
+"pf2",
+0,
+"k1",
+2
+],
+[
+0,
+"c3",
+"pf2",
+0,
+"k2",
+1
+],
+[
+1,
+"c2",
+"pf1",
+1,
+"k1",
+1
+],
+[
+1,
+"c2",
+"pf1",
+1,
+"k2",
+1
+],
+[
+2,
+"c3",
+"pf2",
+2,
+"k1",
+1
+],
+[
+2,
+"c3",
+"pf2",
+2,
+"k2",
+1
+],
+[
+3,
+"c2",
+"pf1",
+3,
+"k2",
+2
+],
+[
+3,
+"c2",
+"pf1",
+3,
+"k3",
+1
+],
+[
+4,
+"c1",
+"pf3",
+4,
+"k2",
+2
+],
+[
+5,
+"c2",
+"pf1",
+5,
+"k2",
+2
+],
+[
+6,
+"c2",
+"pf1",
+6,
+"k2",
+2
+],
+[
+7,
+"c3",
+"pf2",
+7,
+"k2",
+1
+],
+[
+7,
+"c3",
+"pf2",
+7,
+"k3",
+1
+],
+[
+8,
+"c1",
+"pf3",
+8,
+"k2",
+1
+],
+[
+9,
+"c2",
+"pf1",
+9,
+"k2",
+1
+],
+[
+10,
+"c3",
+"pf2",
+10,
+"k2",
+1
+],
+[
+11,
+"c2",
+"pf1",
+11,
+"k3",
+1
+]
+]
+},
+"open": {
+"cols": [
+"col",
+"pf",
+"h",
+"cat",
+"n"
+],
+"dict": {
+"h": [
+"rhel01",
+"rhel03",
+"rhel04",
+"rhel05",
+"rhel06",
+"rhel07",
+"esx01",
+"esx02",
+"win01",
+"win03",
+"win04",
+"win05"
+]
+},
+"rows": [
+[
+"c2",
+"pf1",
+0,
+"k2",
+2
+],
+[
+"c2",
+"pf1",
+1,
+"k2",
+2
+],
+[
+"c2",
+"pf1",
+1,
+"k3",
+1
+],
+[
+"c2",
+"pf1",
+2,
+"k1",
+1
+],
+[
+"c2",
+"pf1",
+2,
+"k2",
+1
+],
+[
+"c2",
+"pf1",
+3,
+"k2",
+2
+],
+[
+"c2",
+"pf1",
+4,
+"k2",
+1
+],
+[
+"c2",
+"pf1",
+5,
+"k3",
+1
+],
+[
+"c1",
+"pf3",
+6,
+"k2",
+2
+],
+[
+"c1",
+"pf3",
+7,
+"k2",
+1
+],
+[
+"c3",
+"pf2",
+8,
+"k2",
+1
+],
+[
+"c3",
+"pf2",
+8,
+"k3",
+1
+],
+[
+"c3",
+"pf2",
+9,
+"k1",
+2
+],
+[
+"c3",
+"pf2",
+9,
+"k2",
+1
+],
+[
+"c3",
+"pf2",
+10,
+"k1",
+1
+],
+[
+"c3",
+"pf2",
+10,
+"k2",
+1
+],
+[
+"c3",
+"pf2",
+11,
+"k2",
+1
+]
+]
+},
+"rules": {
+"cols": [
+"i",
+"col",
+"pf",
+"h",
+"cat",
+"n"
+],
+"dict": {
+"h": [
+"rhel04",
+"rhel01",
+"rhel03",
+"rhel05",
+"rhel06",
+"rhel07",
+"esx01",
+"esx02",
+"win03",
+"win04",
+"win01",
+"win05"
+]
+},
+"rows": [
+[
+5,
+"c2",
+"pf1",
+0,
+"k1",
+1
+],
+[
+0,
+"c2",
+"pf1",
+1,
+"k2",
+1
+],
+[
+0,
+"c2",
+"pf1",
+2,
+"k2",
+1
+],
+[
+0,
+"c2",
+"pf1",
+0,
+"k2",
+1
+],
+[
+0,
+"c2",
+"pf1",
+3,
+"k2",
+1
+],
+[
+0,
+"c2",
+"pf1",
+4,
+"k2",
+1
+],
+[
+3,
+"c2",
+"pf1",
+1,
+"k2",
+1
+],
+[
+3,
+"c2",
+"pf1",
+2,
+"k2",
+1
+],
+[
+3,
+"c2",
+"pf1",
+3,
+"k2",
+1
+],
+[
+8,
+"c2",
+"pf1",
+2,
+"k3",
+1
+],
+[
+8,
+"c2",
+"pf1",
+5,
+"k3",
+1
+],
+[
+6,
+"c1",
+"pf3",
+6,
+"k2",
+1
+],
+[
+6,
+"c1",
+"pf3",
+7,
+"k2",
+1
+],
+[
+7,
+"c1",
+"pf3",
+6,
+"k2",
+1
+],
+[
+1,
+"c3",
+"pf2",
+8,
+"k1",
+1
+],
+[
+1,
+"c3",
+"pf2",
+9,
+"k1",
+1
+],
+[
+4,
+"c3",
+"pf2",
+8,
+"k1",
+1
+],
+[
+2,
+"c3",
+"pf2",
+10,
+"k2",
+1
+],
+[
+2,
+"c3",
+"pf2",
+8,
+"k2",
+1
+],
+[
+2,
+"c3",
+"pf2",
+9,
+"k2",
+1
+],
+[
+2,
+"c3",
+"pf2",
+11,
+"k2",
+1
+],
+[
+9,
+"c3",
+"pf2",
+10,
+"k3",
+1
+]
+]
+},
+"trend": {
+"cols": [
+"w",
+"col",
+"pf",
+"cat",
+"n"
+],
+"rows": [
+[
+0,
+"c2",
+"",
+"k1",
+1
+],
+[
+0,
+"c2",
+"",
+"k2",
+18
+],
+[
+0,
+"c2",
+"",
+"k3",
+1
+],
+[
+0,
+"c3",
+"",
+"k1",
+2
+],
+[
+0,
+"c3",
+"",
+"k2",
+4
+],
+[
+0,
+"c3",
+"",
+"k3",
+1
+],
+[
+1,
+"c2",
+"",
+"k1",
+1
+],
+[
+1,
+"c2",
+"",
+"k2",
+17
+],
+[
+1,
+"c2",
+"",
+"k3",
+1
+],
+[
+1,
+"c3",
+"",
+"k1",
+2
+],
+[
+1,
+"c3",
+"",
+"k2",
+4
+],
+[
+1,
+"c3",
+"",
+"k3",
+1
+],
+[
+2,
+"c2",
+"",
+"k1",
+1
+],
+[
+2,
+"c2",
+"",
+"k2",
+16
+],
+[
+2,
+"c2",
+"",
+"k3",
+1
+],
+[
+2,
+"c3",
+"",
+"k1",
+2
+],
+[
+2,
+"c3",
+"",
+"k2",
+4
+],
+[
+2,
+"c3",
+"",
+"k3",
+1
+],
+[
+3,
+"c2",
+"",
+"k1",
+1
+],
+[
+3,
+"c2",
+"",
+"k2",
+15
+],
+[
+3,
+"c2",
+"",
+"k3",
+1
+],
+[
+3,
+"c3",
+"",
+"k1",
+2
+],
+[
+3,
+"c3",
+"",
+"k2",
+4
+],
+[
+3,
+"c3",
+"",
+"k3",
+1
+],
+[
+4,
+"c2",
+"",
+"k1",
+1
+],
+[
+4,
+"c2",
+"",
+"k2",
+14
+],
+[
+4,
+"c2",
+"",
+"k3",
+1
+],
+[
+4,
+"c1",
+"",
+"k1",
+0
+],
+[
+4,
+"c1",
+"",
+"k2",
+3
+],
+[
+4,
+"c1",
+"",
+"k3",
+0
+],
+[
+4,
+"c3",
+"",
+"k1",
+2
+],
+[
+4,
+"c3",
+"",
+"k2",
+4
+],
+[
+4,
+"c3",
+"",
+"k3",
+1
+],
+[
+5,
+"c2",
+"",
+"k1",
+0
+],
+[
+5,
+"c2",
+"",
+"k2",
+0
+],
+[
+5,
+"c2",
+"",
+"k3",
+0
+],
+[
+5,
+"c2",
+"pf1",
+"k1",
+1
+],
+[
+5,
+"c2",
+"pf1",
+"k2",
+13
+],
+[
+5,
+"c2",
+"pf1",
+"k3",
+1
+],
+[
+5,
+"c2",
+"pf5",
+"k1",
+0
+],
+[
+5,
+"c2",
+"pf5",
+"k2",
+0
+],
+[
+5,
+"c2",
+"pf5",
+"k3",
+0
+],
+[
+5,
+"c1",
+"",
+"k1",
+0
+],
+[
+5,
+"c1",
+"",
+"k2",
+0
+],
+[
+5,
+"c1",
+"",
+"k3",
+0
+],
+[
+5,
+"c1",
+"pf3",
+"k1",
+0
+],
+[
+5,
+"c1",
+"pf3",
+"k2",
+3
+],
+[
+5,
+"c1",
+"pf3",
+"k3",
+0
+],
+[
+5,
+"c3",
+"",
+"k1",
+0
+],
+[
+5,
+"c3",
+"",
+"k2",
+0
+],
+[
+5,
+"c3",
+"",
+"k3",
+0
+],
+[
+5,
+"c3",
+"pf2",
+"k1",
+2
+],
+[
+5,
+"c3",
+"pf2",
+"k2",
+4
+],
+[
+5,
+"c3",
+"pf2",
+"k3",
+1
+],
+[
+6,
+"c2",
+"",
+"k1",
+0
+],
+[
+6,
+"c2",
+"",
+"k2",
+0
+],
+[
+6,
+"c2",
+"",
+"k3",
+0
+],
+[
+6,
+"c2",
+"pf1",
+"k1",
+1
+],
+[
+6,
+"c2",
+"pf1",
+"k2",
+12
+],
+[
+6,
+"c2",
+"pf1",
+"k3",
+1
+],
+[
+6,
+"c2",
+"pf5",
+"k1",
+0
+],
+[
+6,
+"c2",
+"pf5",
+"k2",
+0
+],
+[
+6,
+"c2",
+"pf5",
+"k3",
+0
+],
+[
+6,
+"c1",
+"",
+"k1",
+0
+],
+[
+6,
+"c1",
+"",
+"k2",
+0
+],
+[
+6,
+"c1",
+"",
+"k3",
+0
+],
+[
+6,
+"c1",
+"pf3",
+"k1",
+0
+],
+[
+6,
+"c1",
+"pf3",
+"k2",
+3
+],
+[
+6,
+"c1",
+"pf3",
+"k3",
+0
+],
+[
+6,
+"c3",
+"",
+"k1",
+0
+],
+[
+6,
+"c3",
+"",
+"k2",
+0
+],
+[
+6,
+"c3",
+"",
+"k3",
+0
+],
+[
+6,
+"c3",
+"pf2",
+"k1",
+2
+],
+[
+6,
+"c3",
+"pf2",
+"k2",
+4
+],
+[
+6,
+"c3",
+"pf2",
+"k3",
+1
+],
+[
+7,
+"c2",
+"",
+"k1",
+0
+],
+[
+7,
+"c2",
+"",
+"k2",
+0
+],
+[
+7,
+"c2",
+"",
+"k3",
+0
+],
+[
+7,
+"c2",
+"pf1",
+"k1",
+1
+],
+[
+7,
+"c2",
+"pf1",
+"k2",
+8
+],
+[
+7,
+"c2",
+"pf1",
+"k3",
+2
+],
+[
+7,
+"c2",
+"pf5",
+"k1",
+0
+],
+[
+7,
+"c2",
+"pf5",
+"k2",
+0
+],
+[
+7,
+"c2",
+"pf5",
+"k3",
+0
+],
+[
+7,
+"c1",
+"",
+"k1",
+0
+],
+[
+7,
+"c1",
+"",
+"k2",
+0
+],
+[
+7,
+"c1",
+"",
+"k3",
+0
+],
+[
+7,
+"c1",
+"pf3",
+"k1",
+0
+],
+[
+7,
+"c1",
+"pf3",
+"k2",
+3
+],
+[
+7,
+"c1",
+"pf3",
+"k3",
+0
+],
+[
+7,
+"c3",
+"",
+"k1",
+0
+],
+[
+7,
+"c3",
+"",
+"k2",
+0
+],
+[
+7,
+"c3",
+"",
+"k3",
+0
+],
+[
+7,
+"c3",
+"pf2",
+"k1",
+3
+],
+[
+7,
+"c3",
+"pf2",
+"k2",
+4
+],
+[
+7,
+"c3",
+"pf2",
+"k3",
+1
+]
+]
+},
+"was": {
+"cols": [
+"col",
+"pf",
+"h",
+"cat",
+"n"
+],
+"dict": {
+"h": [
+""
+]
+},
+"rows": [
+[
+"c2",
+"pf1",
+0,
+"k1",
+1
+],
+[
+"c2",
+"pf1",
+0,
+"k2",
+12
+],
+[
+"c2",
+"pf1",
+0,
+"k3",
+1
+],
+[
+"c1",
+"pf3",
+0,
+"k2",
+3
+],
+[
+"c3",
+"pf2",
+0,
+"k1",
+2
+],
+[
+"c3",
+"pf2",
+0,
+"k2",
+4
+],
+[
+"c3",
+"pf2",
+0,
+"k3",
+1
+]
+]
+}
+},
+"notby": {
+"cat": "CORA counts every CAT.",
+"h": "Not by host: a week's point keeps no host list."
+},
+"panels": [
+{
+"items": [
+{
+"text": "Read Fri 13 Nov 06:00 UTC"
+},
+{
+"fact": "assets",
+"key": [
+"col",
+"h"
+],
+"t": "count",
+"word": "asset",
+"words": "assets"
+},
+{
+"text": "vs 6 Nov"
+}
+],
+"t": "meta",
+"view": {
+"items": [
+{},
+{
+"all": 13,
+"v": 13
+},
+{}
+]
+}
+},
+{
+"t": "tiles",
+"tiles": [
+{
+"cat": 1,
+"col": "n",
+"fact": "open",
+"label": "CAT I open",
+"since": "vs 6 Nov",
+"status": "any",
+"t": "sum",
+"was": "was",
+"where": {
+"cat": "k1"
+}
+},
+{
+"cat": 2,
+"col": "n",
+"fact": "open",
+"label": "CAT II open",
+"since": "vs 6 Nov",
+"status": "any-warning",
+"t": "sum",
+"was": "was",
+"where": {
+"cat": "k2"
+}
+},
+{
+"cat": 3,
+"col": "n",
+"fact": "open",
+"label": "CAT III open",
+"since": "vs 6 Nov",
+"t": "sum",
+"was": "was",
+"where": {
+"cat": "k3"
+}
+},
+{
+"cols": [
+"closed",
+"opened"
+],
+"fact": "delta",
+"label": "This week",
+"since": "since 6 Nov",
+"t": "pair",
+"words": [
+"closed",
+"opened"
+]
+},
+{
+"label": "Fixed on host, still open",
+"note": "Low - the next import closes them",
+"status": "low",
+"t": "fixed",
+"value": 2
+}
+],
+"view": {
+"tiles": [
+{
+"d": 1,
+"notby": [],
+"status": "critical",
+"v": 4
+},
+{
+"d": -4,
+"notby": [],
+"status": "warning",
+"v": 15
+},
+{
+"d": 1,
+"notby": [],
+"status": "",
+"v": 3
+},
+{
+"notby": [],
+"status": "ok",
+"v": 4,
+"v2": 2
+},
+{
+"notby": [],
+"v": 2
+}
+]
+}
+},
+{
+"col": "n",
+"fact": "open",
+"group": "col",
+"groups": [
+{
+"href": "#col-2",
+"k": "c2",
+"name": "SITEA - RHEL 9"
+},
+{
+"href": "#col-1",
+"k": "c1",
+"name": "SITEA - VMware"
+},
+{
+"href": "#col-3",
+"k": "c3",
+"name": "SITEA - Windows Server"
+}
+],
+"more": {
+"href": "sec:By collection",
+"label": "Explore"
+},
+"show": 8,
+"span": 5,
+"stack": "cat",
+"stacks": [
+[
+"k1",
+"CAT I",
+1
+],
+[
+"k2",
+"CAT II",
+2
+],
+[
+"k3",
+"CAT III",
+3
+]
+],
+"t": "bars",
+"title": "Open by collection",
+"view": {
+"count": 3,
+"groups": [
+{
+"i": 2,
+"s": 47,
+"t": 8,
+"v": [
+3,
+4,
+1
+]
+},
+{
+"i": 0,
+"s": 44,
+"t": 11,
+"v": [
+1,
+8,
+2
+]
+},
+{
+"i": 1,
+"s": 12,
+"t": 3,
+"v": [
+0,
+3,
+0
+]
+}
+],
+"max": 11,
+"notby": []
+}
+},
+{
+"col": "n",
+"fact": "trend",
+"have": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"heads": [
+"25 Sep",
+"2 Oct",
+"9 Oct",
+"16 Oct",
+"23 Oct",
+"30 Oct",
+"6 Nov",
+"13 Nov"
+],
+"lines": [
+{
+"name": "All open",
+"where": {}
+},
+{
+"cat": 1,
+"name": "CAT I",
+"where": {
+"cat": "k1"
+}
+}
+],
+"note": "one point a week",
+"span": 7,
+"t": "series",
+"table_href": "sec:The numbers behind the lines",
+"title": "Open findings, 8 weeks",
+"view": {
+"lines": [
+{
+"d": "M6.0 15.0 L90.0 20.0 L174.0 25.0 L258.0 30.0 L342.0 20.0 L426.0 25.0 L510.0 30.0 L594.0 40.0",
+"dots": [],
+"end": [
+594.0,
+40.0,
+22
+],
+"j": 0,
+"vals": [
+27,
+26,
+25,
+24,
+26,
+25,
+24,
+22
+]
+},
+{
+"d": "M6.0 135.0 L90.0 135.0 L174.0 135.0 L258.0 135.0 L342.0 135.0 L426.0 135.0 L510.0 135.0 L594.0 130.0",
+"dots": [],
+"end": [
+594.0,
+130.0,
+4
+],
+"j": 1,
+"vals": [
+3,
+3,
+3,
+3,
+3,
+3,
+3,
+4
+]
+}
+],
+"max": 27,
+"notby": [],
+"ticks": [
+0,
+10,
+20,
+30
+],
+"ty": [
+150.0,
+100.0,
+50.0,
+0.0
+],
+"xs": [
+6.0,
+90.0,
+174.0,
+258.0,
+342.0,
+426.0,
+510.0,
+594.0
+]
+},
+"x": "w"
+},
+{
+"columns": [
+{
+"h": "Rule",
+"v": "label"
+},
+{
+"h": "CAT",
+"v": "cat"
+},
+{
+"h": "What it checks",
+"v": "text"
+},
+{
+"h": "Hosts",
+"num": true,
+"v": "n"
+},
+{
+"bar": true,
+"h": "Weight",
+"num": true,
+"v": "s"
+}
+],
+"fact": "rules",
+"items": [
+{
+"cat": 2,
+"href": "#rule-SV-258036",
+"label": "SV-258036",
+"text": "RHEL 9 must have the USBGuard package installed."
+},
+{
+"cat": 1,
+"href": "#rule-SV-254247",
+"label": "SV-254247",
+"text": "Windows Server 2022 must be maintained at a supported servicing level."
+},
+{
+"cat": 2,
+"href": "#rule-SV-254269",
+"label": "SV-254269",
+"text": "Windows Server 2022 must have a host-based firewall."
+},
+{
+"cat": 2,
+"href": "#rule-SV-257985",
+"label": "SV-257985",
+"text": "RHEL 9 must not allow a root login over SSH."
+},
+{
+"cat": 1,
+"href": "#rule-SV-254239",
+"label": "SV-254239",
+"text": "Windows Server 2022 passwords for the built-in account must change."
+},
+{
+"cat": 1,
+"href": "#rule-SV-257777",
+"label": "SV-257777",
+"text": "RHEL 9 must be a vendor-supported release."
+},
+{
+"cat": 2,
+"href": "#rule-SV-256375",
+"label": "SV-256375",
+"text": "Access to the ESXi host must be limited by lockdown mode."
+},
+{
+"cat": 2,
+"href": "#rule-SV-256379",
+"label": "SV-256379",
+"text": "The ESXi host must enforce an unlock timeout of 15 minutes."
+},
+{
+"cat": 3,
+"href": "#rule-SV-257842",
+"label": "SV-257842",
+"text": "RHEL 9 must not have the tuned package installed."
+},
+{
+"cat": 3,
+"href": "#rule-SV-254285",
+"label": "SV-254285",
+"text": "Windows Server 2022 account lockout duration must be 15 minutes."
+}
+],
+"more": {
+"href": "sec:Findings",
+"label": "All"
+},
+"score": "weight",
+"show": 5,
+"span": 7,
+"t": "top",
+"title": "Fix these first: top findings by weight",
+"view": {
+"count": 10,
+"max": 20,
+"notby": [],
+"rows": [
+{
+"i": 0,
+"k1": 0,
+"k2": 5,
+"k3": 0,
+"n": 5,
+"s": 20
+},
+{
+"i": 1,
+"k1": 2,
+"k2": 0,
+"k3": 0,
+"n": 2,
+"s": 20
+},
+{
+"i": 2,
+"k1": 0,
+"k2": 4,
+"k3": 0,
+"n": 4,
+"s": 16
+},
+{
+"i": 3,
+"k1": 0,
+"k2": 3,
+"k3": 0,
+"n": 3,
+"s": 12
+},
+{
+"i": 4,
+"k1": 1,
+"k2": 0,
+"k3": 0,
+"n": 1,
+"s": 10
+}
+]
+}
+},
+{
+"columns": [
+{
+"h": "Host",
+"v": "label"
+},
+{
+"cat": 1,
+"h": "I",
+"num": true,
+"v": "k1"
+},
+{
+"cat": 2,
+"h": "II",
+"num": true,
+"v": "k2"
+},
+{
+"cat": 3,
+"h": "III",
+"num": true,
+"v": "k3"
+},
+{
+"h": "Weight",
+"num": true,
+"v": "s"
+}
+],
+"fact": "hosts",
+"items": [
+{
+"href": "#host-3-win03",
+"label": "win03",
+"text": "SITEA - Windows Server"
+},
+{
+"href": "#host-2-rhel04",
+"label": "rhel04",
+"text": "SITEA - RHEL 9"
+},
+{
+"href": "#host-3-win04",
+"label": "win04",
+"text": "SITEA - Windows Server"
+},
+{
+"href": "#host-2-rhel03",
+"label": "rhel03",
+"text": "SITEA - RHEL 9"
+},
+{
+"href": "#host-1-esx01",
+"label": "esx01",
+"text": "SITEA - VMware"
+},
+{
+"href": "#host-2-rhel01",
+"label": "rhel01",
+"text": "SITEA - RHEL 9"
+},
+{
+"href": "#host-2-rhel05",
+"label": "rhel05",
+"text": "SITEA - RHEL 9"
+},
+{
+"href": "#host-3-win01",
+"label": "win01",
+"text": "SITEA - Windows Server"
+},
+{
+"href": "#host-1-esx02",
+"label": "esx02",
+"text": "SITEA - VMware"
+},
+{
+"href": "#host-2-rhel06",
+"label": "rhel06",
+"text": "SITEA - RHEL 9"
+},
+{
+"href": "#host-3-win05",
+"label": "win05",
+"text": "SITEA - Windows Server"
+},
+{
+"href": "#host-2-rhel07",
+"label": "rhel07",
+"text": "SITEA - RHEL 9"
+}
+],
+"more": {
+"href": "sec:Hosts",
+"label": "All"
+},
+"score": "weight",
+"show": 5,
+"span": 5,
+"t": "top",
+"title": "Worst hosts by weight",
+"view": {
+"count": 12,
+"max": 24,
+"notby": [],
+"rows": [
+{
+"i": 0,
+"k1": 2,
+"k2": 1,
+"k3": 0,
+"n": 3,
+"s": 24
+},
+{
+"i": 1,
+"k1": 1,
+"k2": 1,
+"k3": 0,
+"n": 2,
+"s": 14
+},
+{
+"i": 2,
+"k1": 1,
+"k2": 1,
+"k3": 0,
+"n": 2,
+"s": 14
+},
+{
+"i": 3,
+"k1": 0,
+"k2": 2,
+"k3": 1,
+"n": 3,
+"s": 9
+},
+{
+"i": 4,
+"k1": 0,
+"k2": 2,
+"k3": 0,
+"n": 2,
+"s": 8
+}
+]
+}
+}
+],
+"v": 1,
+"weights": {
+"k1": 10,
+"k2": 4,
+"k3": 1
+}
+},
 "facets": {
 "cats": [
 {
@@ -1305,60 +3354,70 @@
 "cat": "k2",
 "col": "c2",
 "h": "rhel01 rhel03 rhel04 rhel05 rhel06",
+"id": "rule-SV-258036",
 "pf": "pf1"
 },
 {
 "cat": "k1",
 "col": "c3",
 "h": "win03 win04",
+"id": "rule-SV-254247",
 "pf": "pf2"
 },
 {
 "cat": "k2",
 "col": "c3",
 "h": "win01 win03 win04 win05",
+"id": "rule-SV-254269",
 "pf": "pf2"
 },
 {
 "cat": "k2",
 "col": "c2",
 "h": "rhel01 rhel03 rhel05",
+"id": "rule-SV-257985",
 "pf": "pf1"
 },
 {
 "cat": "k1",
 "col": "c3",
 "h": "win03",
+"id": "rule-SV-254239",
 "pf": "pf2"
 },
 {
 "cat": "k1",
 "col": "c2",
 "h": "rhel04",
+"id": "rule-SV-257777",
 "pf": "pf1"
 },
 {
 "cat": "k2",
 "col": "c1",
 "h": "esx01 esx02",
+"id": "rule-SV-256375",
 "pf": "pf3"
 },
 {
 "cat": "k2",
 "col": "c1",
 "h": "esx01",
+"id": "rule-SV-256379",
 "pf": "pf3"
 },
 {
 "cat": "k3",
 "col": "c2",
 "h": "rhel03 rhel07",
+"id": "rule-SV-257842",
 "pf": "pf1"
 },
 {
 "cat": "k3",
 "col": "c3",
 "h": "win01",
+"id": "rule-SV-254285",
 "pf": "pf2"
 }
 ],
@@ -1800,72 +3859,84 @@
 "cat": "k1 k2",
 "col": "c3",
 "h": "win03",
+"id": "host-3-win03",
 "pf": "pf2"
 },
 {
 "cat": "k1 k2",
 "col": "c2",
 "h": "rhel04",
+"id": "host-2-rhel04",
 "pf": "pf1"
 },
 {
 "cat": "k1 k2",
 "col": "c3",
 "h": "win04",
+"id": "host-3-win04",
 "pf": "pf2"
 },
 {
 "cat": "k2 k3",
 "col": "c2",
 "h": "rhel03",
+"id": "host-2-rhel03",
 "pf": "pf1"
 },
 {
 "cat": "k2",
 "col": "c1",
 "h": "esx01",
+"id": "host-1-esx01",
 "pf": "pf3"
 },
 {
 "cat": "k2",
 "col": "c2",
 "h": "rhel01",
+"id": "host-2-rhel01",
 "pf": "pf1 pf5"
 },
 {
 "cat": "k2",
 "col": "c2",
 "h": "rhel05",
+"id": "host-2-rhel05",
 "pf": "pf1"
 },
 {
 "cat": "k2 k3",
 "col": "c3",
 "h": "win01",
+"id": "host-3-win01",
 "pf": "pf2"
 },
 {
 "cat": "k2",
 "col": "c1",
 "h": "esx02",
+"id": "host-1-esx02",
 "pf": "pf3"
 },
 {
 "cat": "k2",
 "col": "c2",
 "h": "rhel06",
+"id": "host-2-rhel06",
 "pf": "pf1"
 },
 {
 "cat": "k2",
 "col": "c3",
 "h": "win05",
+"id": "host-3-win05",
 "pf": "pf2"
 },
 {
 "cat": "k3",
 "col": "c2",
 "h": "rhel07",
+"id": "host-2-rhel07",
 "pf": "pf1"
 }
 ],

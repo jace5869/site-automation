@@ -1,0 +1,143 @@
+{#- 1.71.0: a dashboard (r.dashboard, plugins/filter/report_dash_filters.py) - a report's first screen: the filter row,
+    the tiles, stacked bars, the weekly line, the top-N lists. Each panel is drawn here from its view of no selection
+    (the page reads without script); site-report.js draws it again from the same data when a filter changes (the
+    [data-dash] block: its facts and panels in the script of type application/json). Any report can give one: the
+    macros take a panel and its view. Needs: secs (the page's sections, for the "sec:<title>" links), the ops look's
+    tokens (report_dash.css.j2). #}
+{%- set dd = r.dashboard %}
+{%- macro dhref(h) %}{% if (h | default('') | string)[:4] == 'sec:' %}{% set want = h[4:] %}{% set hit = namespace(i=0) %}{% for s in secs %}{% if not hit.i and (s.title | default('') | string).startswith(want) %}{% set hit.i = loop.index %}{% endif %}{% endfor %}{{ '#s' ~ hit.i if hit.i else '' }}{% else %}{{ h | default('') }}{% endif %}{% endmacro %}
+{%- macro arrow() %}<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5L10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>{% endmacro %}
+{%- macro more(m, n) %}{% set u = dhref(m.href | default('')) %}{% if u %}<a class="dmore" href="{{ u | e }}" data-drill>{{ m.label | default('All') | e }}{% if n is not none %} <span class="dn">{{ n }}</span>{% endif %}{{ arrow() }}</a>{% endif %}{% endmacro %}
+{%- macro notby(v) %}<p class="dnb"{% if not v.notby | default([]) %} hidden{% endif %}>{% for k in v.notby | default([]) %}{{ ' ' if not loop.first else '' }}{{ (dd.notby | default({}))[k] | default('Not by ' ~ {'col': 'collection', 'pf': 'platform', 'cat': 'CAT', 'h': 'host'}[k] ~ '.') | e }}{% endfor %}</p>{% endmacro %}
+{%- macro delta(d, since) %}{% if d is not none %}<span class="dd {{ 'up' if d > 0 else ('down' if d < 0 else 'same') }}">{% if d > 0 %}&#9650; {{ d }}{% elif d < 0 %}&#9660; {{ -d }}{% else %}same{% endif %}</span>{% if d != 0 and since %} {{ since | e }}{% endif %}{% endif %}{% endmacro %}
+{%- macro dtile(t, v) %}
+{%- if t.t == 'cora' %}
+{%- set x = v.cora %}
+<div class="dt dcora{{ (' ds-' ~ x.status) if x else '' }}" data-t="cora">
+<div class="k">{{ t.label | e }}{% if x %}<span class="dchip ds-{{ x.status }}">{{ x.rating | e }}</span>{% endif %}</div>
+{%- if x %}
+<div class="dcr"><svg class="ring" viewBox="0 0 64 64" role="img" aria-label="CORA {{ x.pct }} %"><circle class="rt" cx="32" cy="32" r="26"/><circle class="rv" cx="32" cy="32" r="26" pathLength="100" stroke-dasharray="{{ [[x.pct, 1.5] | max, 100] | min }} 100" transform="rotate(-90 32 32)"/><text x="32" y="36.5">{{ '%.1f' | format(x.pct) }}%</text></svg>
+<div class="dct"><div class="dbig ds-{{ x.status }}">{{ x.rating | e }}</div><div class="dsub">weighted open + unassessed</div>
+{%- if v.d is defined and v.d is not none %}<div class="dsub">{{ delta(v.d, '') }}{{ ' pts ' ~ t.since if v.d != 0 and t.since | default('') else (' pts' if v.d != 0 else '') }}</div>{% endif %}
+{%- if x.needs %}<div class="dsub dneed">{{ x.needs | e }}</div>{% endif %}</div></div>
+{%- else %}
+<div class="dbig">-</div><div class="dsub">no counts for this choice</div>
+{%- endif %}
+{{ notby(v) }}
+</div>
+{%- elif t.t == 'pair' %}
+<div class="dt dpair{{ ' ds-' ~ v.status if v.status | default('') else '' }}" data-t="pair">
+<div class="k">{{ t.label | e }}</div>
+<div class="dv"><span class="dbig c-ok">{{ v.v }}</span> <span class="dw">{{ t.words[0] | e }}</span></div>
+<div class="dsub"><span class="{{ 'c-warning' if v.v2 > v.v else '' }}">{{ v.v2 }}</span> {{ t.words[1] | e }}{{ (' ' ~ t.since) | e if t.since | default('') else '' }}</div>
+{{ notby(v) }}
+</div>
+{%- elif t.t == 'fixed' %}
+<div class="dt dfix" data-t="fixed">
+<div class="k"><span class="d c-{{ t.status | default('unknown') }}" aria-hidden="true"></span>{{ t.label | e }}</div>
+<div class="dv"><span class="dbig">{{ t.value | e }}</span></div>
+<div class="dsub">{{ t.note | default('') | e }}</div>
+{{ notby(v) }}
+</div>
+{%- else %}
+<div class="dt dsum{{ (' k' ~ t.cat) if t.cat is defined else '' }}{{ ' off' if v.off | default(false) else '' }}" data-t="sum">
+<div class="k">{% if t.cat is defined %}<span class="cdot k{{ t.cat }}" aria-hidden="true"></span>{% endif %}{{ t.label | e }}</div>
+<div class="dv"><span class="dbig{{ ' kc1' if t.cat | default(0) == 1 and v.d | default(0) > 0 else '' }}">{{ '-' if v.off | default(false) else v.v }}</span></div>
+<div class="dsub">{% if v.off | default(false) %}not in the CAT chosen{% elif v.d is defined %}{{ delta(v.d, t.since | default('')) }}{% endif %}</div>
+{{ notby(v) }}
+</div>
+{%- endif %}
+{%- endmacro %}
+{%- macro dbars(p, v) %}
+<div class="dhead"><h3 class="dh">{{ p.title | e }}</h3>{{ more(p.more, none) }}</div>
+<div class="dleg">{% for s in p.stacks %}<span><i class="sw k{{ s[2] }}" aria-hidden="true"></i>{{ s[1] | e }}</span>{% endfor %}</div>
+<div class="dbl">
+{%- for g in v.groups %}
+{%- set gr = p.groups[g.i] %}
+<div class="dbr"><a class="dbn" href="{{ gr.href | default('#') | e }}" data-drill title="{{ gr.name | e }}">{{ gr.name | e }}</a>
+<span class="dbt" role="img" aria-label="{% for s in p.stacks %}{{ s[1] }} {{ g.v[loop.index0] }}{{ ', ' if not loop.last else '' }}{% endfor %}"><span class="dbb" style="width:{{ '%.1f' | format(100.0 * g.t / ([v.max, 1] | max)) }}%">{% for s in p.stacks %}{% if g.v[loop.index0] %}<i class="k{{ s[2] }}" style="flex-grow:{{ g.v[loop.index0] }}"></i>{% endif %}{% endfor %}</span></span>
+<span class="dbv">{% for s in p.stacks %}{{ ' · ' if not loop.first else '' }}{{ g.v[loop.index0] }}{% endfor %}</span></div>
+{%- else %}
+<p class="dnone">Nothing open for this choice.</p>
+{%- endfor %}
+</div>
+{%- if v.count > v.groups | length %}<p class="dnb">{{ v.count - v.groups | length }} more in the section below.</p>{% endif %}
+{{ notby(v) }}
+{%- endmacro %}
+{%- macro dseries(p, v) %}
+<div class="dhead"><h3 class="dh">{{ p.title | e }}</h3><span class="dhn">{{ p.note | e }}</span></div>
+<div class="dleg">{% for ln in v.lines %}{% set l = p.lines[ln.j] %}<span><i class="sw{{ (' k' ~ l.cat) if l.cat is defined else ' all' }}" aria-hidden="true"></i>{{ l.name | e }}</span>{% endfor %}</div>
+<div class="dch">
+<svg class="dsvg" viewBox="-30 -8 666 182" role="img" aria-label="{{ p.title | e }}: {% for ln in v.lines %}{{ p.lines[ln.j].name }} {{ ln.vals | reject('none') | list | last | default('-') }}{{ '; ' if not loop.last else '' }}{% endfor %}">
+{%- for y in v.ty %}<line class="gl" x1="0" x2="600" y1="{{ y }}" y2="{{ y }}"/><text class="yl" x="-8" y="{{ y + 4 }}">{{ v.ticks[loop.index0] }}</text>{% endfor %}
+{%- for ln in v.lines %}{% set l = p.lines[ln.j] %}<path class="ln{{ (' k' ~ l.cat) if l.cat is defined else ' all' }}" d="{{ ln.d }}"/>{% for q in ln.dots %}<circle class="dot{{ (' k' ~ l.cat) if l.cat is defined else ' all' }}" cx="{{ q[0] }}" cy="{{ q[1] }}" r="3"/>{% endfor %}{% if ln.end %}<circle class="end{{ (' k' ~ l.cat) if l.cat is defined else ' all' }}" cx="{{ ln.end[0] }}" cy="{{ ln.end[1] }}" r="3.5"/><text class="el" x="{{ ln.end[0] - 6 }}" y="{{ ln.end[1] - 8 }}">{{ ln.end[2] }}</text>{% endif %}{% endfor %}
+{%- set xs = v.xs %}{% set hs = p.heads %}{% set n = hs | length %}
+{%- for i in [0, (n - 1) // 2, n - 1] | unique %}<text class="xl{{ ' a0' if loop.first else (' a1' if loop.last else '') }}" x="{{ xs[i] }}" y="170">{{ hs[i] | e }}</text>{% endfor %}
+<line class="gd" x1="0" x2="0" y1="0" y2="150" visibility="hidden"/>
+</svg>
+<div class="dtip" hidden></div>
+</div>
+<details class="dtab"><summary>Table</summary>
+<table class="dtt"><thead><tr><th scope="col">Week</th>{% for ln in v.lines %}<th scope="col" class="k-num">{{ p.lines[ln.j].name | e }}</th>{% endfor %}</tr></thead><tbody>
+{%- for h in p.heads %}{% set i = loop.index0 %}<tr><td>{{ h | e }}</td>{% for ln in v.lines %}<td class="k-num">{{ '-' if ln.vals[i] is none else ln.vals[i] }}</td>{% endfor %}</tr>{% endfor %}
+</tbody></table>
+{%- set th = dhref(p.table_href | default('')) %}{% if th %}<a class="dmore" href="{{ th | e }}" data-drill>Every collection, week by week{{ arrow() }}</a>{% endif %}
+</details>
+{{ notby(v) }}
+{%- endmacro %}
+{%- macro dtop(p, v) %}
+<div class="dhead"><h3 class="dh">{{ p.title | e }}</h3>{{ more(p.more, v.count) }}</div>
+<table class="dtl"><thead><tr>{% for c in p.columns %}<th scope="col" class="{{ 'k-num' if c.num | default(false) else '' }}{{ ' dwc' if c.bar | default(false) else '' }}">{{ c.h | e }}</th>{% endfor %}</tr></thead><tbody>
+{%- for x in v.rows %}{% set it = p['items'][x.i] %}
+<tr>{% for c in p.columns %}
+{%- if c.v == 'label' %}<td class="dlab"><a href="{{ it.href | default('#') | e }}" data-drill data-open title="{{ (it.text | default('') ~ ' - its row below') | e }}">{{ it.label | e }}</a></td>
+{%- elif c.v == 'cat' %}<td><span class="catc k{{ it.cat }}"><i aria-hidden="true"></i>{{ {1: 'CAT I', 2: 'CAT II', 3: 'CAT III'}[it.cat] }}</span></td>
+{%- elif c.v == 'text' %}<td class="dtx" title="{{ it.text | default('') | e }}">{{ it.text | default('') | e }}</td>
+{%- elif c.bar | default(false) %}<td class="k-num dwb"><span class="dwv">{{ x[c.v] }}</span><span class="dwt"><i class="k{{ it.cat | default(2) }}" style="width:{{ '%.1f' | format(100.0 * x[c.v] / ([v.max, 1] | max)) }}%"></i></span></td>
+{%- else %}<td class="k-num{{ (' kc' ~ c.cat) if c.cat is defined and x[c.v] else '' }}">{{ x[c.v] }}</td>{% endif %}
+{%- endfor %}</tr>
+{%- else %}
+<tr><td colspan="{{ p.columns | length }}" class="dnone">Nothing open for this choice.</td></tr>
+{%- endfor %}
+</tbody></table>
+{{ notby(v) }}
+{%- endmacro %}
+{%- set fx = r.facets | default({}, true) %}
+<div class="dash" data-dash>
+<script type="application/json" class="dash-data">{{ dd | tojson }}</script>
+<div class="dbar">
+{%- if fx.platforms | default([]) or fx.collections | default([]) or fx.host | default(false) %}
+<div class="facets dfx" hidden role="group" aria-label="Choose what the dashboard and the rows show">
+{%- if fx.collections | default([]) %}
+<label class="dfl"><span class="fl">Collection</span><select class="fsel" data-fk="col"><option value="">All ({{ fx.collections | length }})</option>{% for c in fx.collections %}<option value="{{ c.key | e }}">{{ c.name | e }}</option>{% endfor %}</select></label>
+{%- endif %}
+{%- if fx.platforms | default([]) %}
+<label class="dfl"><span class="fl">Platform</span><select class="fsel" data-fk="pf"><option value="">All</option>{% for p in fx.platforms %}<option value="{{ p.key | e }}">{{ p.name | e }}</option>{% endfor %}</select></label>
+{%- endif %}
+{%- if fx.cats | default([]) %}
+<label class="dfl"><span class="fl">CAT</span><select class="fsel" data-fk="cat"><option value="">All</option>{% for k in fx.cats %}<option value="{{ k.key | e }}">{{ k.name | e }}</option>{% endfor %}</select></label>
+{%- endif %}
+{%- if fx.host | default(false) %}
+<label class="dfl"><span class="fl">Host</span><input class="fsel fhost" type="search" data-fk="h" placeholder="name or part" autocomplete="off"></label>
+{%- endif %}
+</div>
+{%- endif %}
+<div class="dinfo">{% for p in dd.panels | default([]) if p.t == 'meta' %}<span class="dmeta" data-p="{{ (dd.panels | default([])).index(p) }}">{% for x in p['items'] %}{% set v = p.view['items'][loop.index0] %}{% if x.t | default('') == 'count' %}<span>{{ (v.v ~ ' of ') if v.v != v.all else '' }}{{ v.all }} {{ x.word if v.all == 1 else x.words }}</span>{% else %}<span>{{ x.text | e }}</span>{% endif %}{% endfor %}</span>{% endfor %}{% set nx = namespace(i=0) %}{% for s in secs %}{% if not nx.i and not s.glance | default([]) %}{% set nx.i = loop.index %}{% endif %}{% endfor %}{% if nx.i %}<a class="dmore" href="#s{{ nx.i }}" data-drill>Details{{ arrow() }}</a>{% endif %}</div>
+</div>
+{%- set ps = dd.panels | default([]) %}
+{%- for p in ps %}
+{%- set v = p.view | default({}) %}
+{%- if p.t == 'tiles' %}
+<div class="dtiles n{{ p.tiles | length }}" data-p="{{ loop.index0 }}">{% for t in p.tiles %}{{ dtile(t, v.tiles[loop.index0]) }}{% endfor %}</div>
+{%- endif %}
+{%- endfor %}
+<div class="dgrid">
+{%- for p in ps %}
+{%- set v = p.view | default({}) %}
+{%- if p.t == 'bars' %}<section class="dp dp-bars sp{{ p.span | default(6) }}" data-p="{{ loop.index0 }}">{{ dbars(p, v) }}</section>
+{%- elif p.t == 'series' %}<section class="dp dp-series sp{{ p.span | default(6) }}" data-p="{{ loop.index0 }}">{{ dseries(p, v) }}</section>
+{%- elif p.t == 'top' %}<section class="dp dp-top sp{{ p.span | default(6) }}" data-p="{{ loop.index0 }}">{{ dtop(p, v) }}</section>
+{%- endif %}
+{%- endfor %}
+</div>
+</div>

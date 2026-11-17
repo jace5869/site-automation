@@ -147,8 +147,8 @@ stigman_ckl_import_collection: VMware
 ## "Top rules open across hosts": this many rules
 # stigman_scorecard_top: 5
 
-## the trend line and "The numbers behind the lines": this many weeks
-# stigman_scorecard_weeks: 8
+## the trend line and "The numbers behind the lines": this many weeks (1.71.0: 12)
+# stigman_scorecard_weeks: 12
 
 ## a collection with this many CAT II open or more: Warning (0 = off)
 # stigman_scorecard_cat2_warn: 0

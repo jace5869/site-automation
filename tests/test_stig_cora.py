@@ -180,8 +180,9 @@ class Page(unittest.TestCase):
     @classmethod
     def card(cls, runs=None, **kw):
         point = f.stig_scorecard_point(cls.read)
-        got = f.stig_scorecard_runs(point, t.earlier() if runs is None else runs, [], {"weeks": 8, "job": 5000})
-        return f.stig_scorecard(kw.get("read", cls.read), point, got["runs"], dict({"weeks": 8, "top": 5}, **kw.get("opts", {})))
+        # 1.71.0: 12 weeks, as stigman_scorecard_weeks (its website document is the dashboard's fixture)
+        got = f.stig_scorecard_runs(point, t.earlier() if runs is None else runs, [], {"weeks": 12, "job": 5000})
+        return f.stig_scorecard(kw.get("read", cls.read), point, got["runs"], dict({"weeks": 12, "top": 5}, **kw.get("opts", {})))
 
     def test_the_tile(self):
         x = t.tile(self.doc, "CORA risk")
@@ -207,8 +208,10 @@ class Page(unittest.TestCase):
         web = f.stig_scorecard_join(self.doc, None, "scorecard")["web"]
         n = len(web["summary"])
         self.assertEqual(n, 6)
-        for look in ("atlas", "ops"):
-            self.assertIn('<div class="tiles t%d">' % n, rf.render(look, web))
+        self.assertIn('<div class="tiles t%d">' % n, rf.render("atlas", web))
+        # 1.71.0: ops draws the dashboard's tiles (At a glance); without a dashboard, its own row by the count
+        self.assertRegex(rf.render("ops", web), r'<div class="dtiles n\d" data-p="\d">')
+        self.assertIn('<div class="tiles t%d">' % n, rf.render("ops", dict((k, v) for k, v in web.items() if k != "dashboard")))
         css = rf.render("atlas", web)
         self.assertIn("@media(min-width:721px){.tiles.t6{grid-template-columns:repeat(3,minmax(0,1fr))}}", css)
 

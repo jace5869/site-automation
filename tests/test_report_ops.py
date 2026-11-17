@@ -88,6 +88,13 @@ class Tiles(unittest.TestCase):
 
     def test_the_scorecard_keeps_its_cat_tiles_and_links(self):
         doc = fixture("stig_scorecard_open_web")
+        # 1.71.0: with its dashboard, the CAT tiles are the dashboard's (At a glance); without one, the ops look's own
+        hd = render(doc)
+        for k in (1, 2, 3):
+            self.assertRegex(hd, r'<div class="dt dsum k%d[^"]*" data-t="sum">' % k)
+        self.assertNotIn('<div class="tile tc k1', hd)
+        doc = dict(doc)
+        doc.pop("dashboard", None)
         h = render(doc)
         for k, label in ((1, "CAT I open"), (2, "CAT II open"), (3, "CAT III open")):
             self.assertRegex(h, r'<div class="tile tc k%d[^"]*"[^>]*>' % k)
@@ -142,7 +149,11 @@ class Followups(unittest.TestCase):
         self.assertIn("@supports (grid-template-rows:subgrid){.tile{display:grid;grid-row:span 3;grid-template-rows:subgrid", h)
 
     def test_start_here_from_the_scorecard_rows(self):
-        h = render(fixture("stig_scorecard_open_web"))
+        doc = fixture("stig_scorecard_open_web")
+        self.assertNotIn('id="start"', render(doc))          # 1.71.0: the dashboard is the first screen - no Start here
+        doc = dict(doc)
+        doc.pop("dashboard", None)
+        h = render(doc)
         self.assertIn('<section class="sec start auto" id="start" aria-label="Start here">', h)
         self.assertIn('<span class="pill">3 of 8 findings, worst first</span>', h)
         cards = re.findall(r'<article class="todo c-(\w+)">.*?<div class="from">([^<]*)</div>\n<h3>([^<]*)</h3>', h, re.S)

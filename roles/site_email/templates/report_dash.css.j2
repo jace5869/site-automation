@@ -1,0 +1,118 @@
+/* 1.71.0: the dashboard (report_dash.html.j2) - the ops look's tokens: --card, --edge, --line, --ink, --muted, --label,
+   the status colours (--critical, --warning, --ok), the CAT steps (--cat1, --cat2, --cat3). A panel a card; the tiles
+   one row; two panels a row from 1000 px, one under it. Numbers in the ink (CAT I open and CAT II open take their
+   status colour, their word beside); the CAT colours on the marks only. */
+.dash{display:grid;gap:12px;margin:2px 0 14px}
+.dbar{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:10px 18px}
+.dash .facets.dfx{display:flex;flex-wrap:wrap;gap:8px 12px;margin:0;padding:0;border:0;background:none;align-items:flex-end}
+.dash .facets.dfx[hidden]{display:none}
+.dfl{display:grid;gap:4px;min-width:0}
+.dfl .fl{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--label)}
+.dfl .fsel{font:inherit;font-size:13.5px;color:var(--ink);background:var(--card);border:1px solid var(--edge);border-radius:9px;padding:6px 9px;
+  min-width:0;width:clamp(110px,11vw,170px)}
+.dfl .fhost{width:clamp(130px,13vw,190px)}
+.dinfo{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;justify-content:flex-end;font-size:12.5px;color:var(--muted);
+  font-variant-numeric:tabular-nums;margin-left:auto}
+.dmeta{display:contents}
+.dinfo .dmeta span+span:before{content:"\00B7";margin-right:12px;color:var(--edge)}
+.dmore{display:inline-flex;align-items:center;gap:3px;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--accent);text-decoration:none;white-space:nowrap}
+.dmore:hover{text-decoration:underline;text-underline-offset:3px}
+.dmore .ic{width:13px;height:13px}
+.dmore .dn{font-variant-numeric:tabular-nums}
+/* the tiles: as many as there are in one row (2 to a row under 700 px) */
+.dtiles{display:flex;flex-wrap:wrap;gap:12px}
+.dtiles .dt{flex:1 1 0;min-width:128px}.dtiles .dcora{flex:1.9 1 0;min-width:260px}
+.dt{background:var(--card);border:1px solid var(--edge);border-radius:14px;padding:14px 16px;min-width:0;display:flex;flex-direction:column;gap:4px}
+.dt .k{display:flex;align-items:center;gap:8px;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--label)}
+.dt .k .d{width:8px;height:8px;border-radius:50%;background:currentColor}
+.cdot{width:9px;height:9px;border-radius:50%;flex:none}
+.cdot.k1,.sw.k1,.dbb i.k1,.dwt i.k1{background:var(--cat1)}.cdot.k2,.sw.k2,.dbb i.k2,.dwt i.k2{background:var(--cat2)}
+.cdot.k3,.sw.k3,.dbb i.k3,.dwt i.k3{background:var(--cat3)}
+.dbig{font-family:var(--display);font-size:clamp(1.7rem,1.2rem + 1.1vw,2.3rem);font-weight:650;line-height:1.05;letter-spacing:-.02em;
+  color:var(--ink);font-variant-numeric:tabular-nums}
+.dbig.kc1{color:var(--critical)}.dbig.kc2{color:var(--warning)}
+.dbig.ds-critical{color:var(--critical)}.dbig.ds-warning{color:var(--warning)}.dbig.ds-ok{color:var(--ok)}
+.dbig.c-ok{color:var(--ok)}
+.dv{display:flex;align-items:baseline;gap:8px}
+.dw{font-size:15px;font-weight:650;color:var(--label)}
+.dsub{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums;line-height:1.4}
+.dd{font-weight:650}.dd.up{color:var(--critical)}.dd.down{color:var(--ok)}.dd.same{color:var(--muted);font-weight:500}
+.dt.off{opacity:.55}
+.dchip{margin-left:auto;font-size:10.5px;letter-spacing:.08em;padding:2px 8px;border-radius:999px;border:1px solid}
+.dchip.ds-critical{color:var(--critical);border-color:var(--critical-bd);background:var(--critical-bg)}
+.dchip.ds-warning{color:var(--warning);border-color:var(--warning-bd);background:var(--warning-bg)}
+.dchip.ds-ok{color:var(--ok);border-color:var(--ok-bd);background:var(--ok-bg)}
+.dcr{display:flex;align-items:center;gap:14px;min-width:0}
+.ring{width:64px;height:64px;flex:none}
+.ring .rt{fill:none;stroke:var(--line);stroke-width:7}
+.ring .rv{fill:none;stroke:var(--muted);stroke-width:7;stroke-linecap:round}
+.ds-critical .ring .rv{stroke:var(--critical)}.ds-warning .ring .rv{stroke:var(--warning)}.ds-ok .ring .rv{stroke:var(--ok)}
+.ring text{fill:var(--ink);font-size:12.5px;font-weight:700;text-anchor:middle;font-variant-numeric:tabular-nums}
+.dct{min-width:0;display:grid;gap:2px}
+.dct .dbig{font-size:clamp(1.3rem,1rem + .8vw,1.7rem)}
+.dneed{color:var(--label)}
+.dnb{margin:4px 0 0;font-size:12px;color:var(--muted);font-style:italic}
+.dnb[hidden]{display:none}
+.dnone{color:var(--muted);font-size:13px;margin:6px 0}
+/* the panels: 2 to a row (bars beside the line, the top rules beside the hosts) */
+.dgrid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:12px}
+.dgrid .dp{grid-column:span 6}.dgrid .sp4{grid-column:span 4}.dgrid .sp5{grid-column:span 5}.dgrid .sp7{grid-column:span 7}.dgrid .sp8{grid-column:span 8}.dgrid .sp12{grid-column:span 12}
+.dp{background:var(--card);border:1px solid var(--edge);border-radius:14px;padding:14px 16px;min-width:0}
+.dhead{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin:0 0 6px}
+.dh{margin:0;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--label)}
+.dhn{font-size:12px;color:var(--muted)}
+.dleg{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12.5px;color:var(--muted);margin:0 0 8px}
+.dleg span{display:inline-flex;align-items:center;gap:6px}
+.sw{display:inline-block;width:10px;height:10px;border-radius:3px}
+.sw.all{background:var(--ink);opacity:.75}
+/* stacked bars: name, the bar (2 px gaps between the parts, the ends round), the numbers */
+.dbl{display:grid;gap:10px}
+.dbr{display:grid;grid-template-columns:minmax(90px,34%) minmax(0,1fr) auto;align-items:center;gap:10px}
+.dbn{color:var(--ink);text-decoration:none;font-size:13.5px;font-weight:550;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dbn:hover{text-decoration:underline;text-underline-offset:3px}
+.dbt{display:block;min-width:0}
+.dbb{display:flex;gap:2px;height:20px;min-width:6px}
+.dbb i{display:block;min-width:4px;height:100%}
+.dbb i:first-child{border-radius:4px 0 0 4px}.dbb i:last-child{border-radius:0 4px 4px 0}.dbb i:only-child{border-radius:4px}
+.dbv{font-size:12.5px;color:var(--label);font-variant-numeric:tabular-nums;white-space:nowrap}
+/* the weekly line: one axis, the grid quiet, the last value at the end of each line */
+.dch{position:relative}
+.dsvg{display:block;width:100%;height:auto;overflow:visible}
+.dsvg .gl{stroke:var(--line);stroke-width:1;vector-effect:non-scaling-stroke}
+.dsvg .yl,.dsvg .xl,.dsvg .el{fill:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}
+.dsvg .yl{text-anchor:end}.dsvg .xl{text-anchor:middle}.dsvg .xl.a0{text-anchor:start}.dsvg .xl.a1{text-anchor:end}
+.dsvg .el{fill:var(--ink);font-weight:650;text-anchor:end}
+.dsvg .ln{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}
+.dsvg .ln.all{stroke:var(--ink);opacity:.8}.dsvg .ln.k1{stroke:var(--cat1)}.dsvg .ln.k2{stroke:var(--cat2)}.dsvg .ln.k3{stroke:var(--cat3)}
+.dsvg .end,.dsvg .dot{stroke:var(--card);stroke-width:2;vector-effect:non-scaling-stroke}
+.dsvg .end.all,.dsvg .dot.all{fill:var(--ink)}.dsvg .end.k1,.dsvg .dot.k1{fill:var(--cat1)}
+.dsvg .gd{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3;vector-effect:non-scaling-stroke}
+.dtip{position:absolute;top:0;pointer-events:none;background:var(--card-solid);color:var(--ink);border:1px solid var(--edge);border-radius:9px;
+  box-shadow:var(--shadow);padding:6px 9px;font-size:12.5px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.dtip b{display:block;font-weight:700}
+.dtab{margin-top:6px;font-size:13px}
+.dtab summary{cursor:pointer;color:var(--accent);font-weight:650;font-size:12px;letter-spacing:.06em;text-transform:uppercase}
+.dtt,.dtl{width:100%;border-collapse:collapse;font-size:13.5px}
+.dtt th,.dtt td,.dtl th,.dtl td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left}
+.dtt th,.dtl th{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--label)}
+.dtl tbody tr:last-child td{border-bottom:0}
+.dtt .k-num,.dtl .k-num{text-align:right;font-variant-numeric:tabular-nums}
+.dtl .dlab a{color:var(--accent);text-decoration:none;font-weight:600;white-space:nowrap}
+.dtl .dlab a:hover{text-decoration:underline;text-underline-offset:3px}
+.dtl .catc{--cat:var(--cat2)}.dtl .catc.k1{--cat:var(--cat1)}.dtl .catc.k3{--cat:var(--cat3)}
+.dtl td.kc1{color:var(--critical);font-weight:650}
+.dtx{max-width:0;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dwb{white-space:nowrap}
+.dwv{display:inline-block;min-width:2.2em}
+.dwt{display:inline-block;width:64px;height:8px;margin-left:8px;vertical-align:middle;background:var(--line);border-radius:4px;overflow:hidden}
+.dwt i{display:block;height:100%;border-radius:4px}
+/* 1000 px and under: one panel a row */
+@media (max-width:1000px){.dgrid{grid-template-columns:minmax(0,1fr)}.dgrid .dp{grid-column:1 / -1}
+  .dtiles .dt{min-width:104px;padding:12px 13px}.dtiles .dcora{min-width:214px}.ring{width:54px;height:54px}}
+@media (max-width:560px){.dtiles .dt{min-width:40%}.dtiles .dcora{min-width:100%}.dbar{align-items:stretch}.dinfo{justify-content:flex-start;margin-left:0}}
+@media print{.dash .facets.dfx,.dtip{display:none!important}}
+/* the header card above a dashboard: the verdict on one line under its status, the numbers are in the tiles */
+.hero.dash-hero .hgrid{padding:14px clamp(16px,2vw,26px);display:block}
+.hero.dash-hero .hl{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px}
+.hero.dash-hero h1{margin:0;font-size:clamp(1.05rem,.9rem + .45vw,1.3rem);max-width:none}

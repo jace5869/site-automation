@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.71.0 — 2026-11-17
+
+**To set up: nothing.** The dashboard is part of the ops look (`report_web_theme: ops`). The next scorecard run draws
+it. `stigman_scorecard_weeks` is 12 now (it was 8): set it to 8 to keep the shorter trend.
+
+**The STIG scorecard opens with a dashboard** (the ops look; docs/WEB_REPORTS.md, "The dashboard: the first screen").
+
+- The first screen answers at a glance:
+  - the filter row (Collection, Platform, CAT, Host);
+  - the tiles: the CORA ring with what Low needs, CAT I, II and III with their change since last week, This week;
+  - the open findings by collection, as stacked CAT bars;
+  - the open findings week by week, as a line with a hover and a table;
+  - Fix these first: the rules by weight;
+  - Worst hosts.
+- The filters drive every panel, the asset count (*3 of 13 assets*) and the rows below. A part that cannot follow a
+  filter says so (the weekly line keeps no host list).
+- The line spans the 12 weeks. A week before the history, or before a collection was there, is a gap. A platform
+  with nothing open in a week it was counted is a 0, not a gap.
+- The CORA tile's change compares the collections both runs have the counts of, as the email's tile does. A new
+  collection counts in the score, not in the change.
+- Every link goes one click down to today's full section. A rule's link opens its row with its check, fix text and
+  hosts.
+- It is the At a glance section: its heading, rail entry and lines stay. The tile row and Start here give way to it.
+  Atlas, brief, the emails and the workbook do not change.
+- Reusable: `plugins/filter/report_dash_filters.py` (facts and panels), `report_dash.html.j2` and
+  `report_dash.css.j2`, and the `[data-dash]` block in `site-report.js`. Python and the page give the same numbers
+  (tests/test_report_dash.py).
+- `stigman_scorecard_weeks` default 12 (the dashboard's line, By collection's line and the numbers table).
+- Findings and Hosts rows have their own ids (`rule-<SV>`, `host-<collection>-<host>`), so a link lands on the row.
+
 ## 1.70.5 — 2026-11-17
 
 **To set up:** if `vmware_protected_vms` or `vm_snapshot_cleanup_exclude_vms` is set, attach the **VMware vCenter**
