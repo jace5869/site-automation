@@ -5,6 +5,7 @@ delete, report, check mode; the installed ACT not there, python3 too old; the us
 key; rewritten only with site_act_fix_user_model, mode kept; not JSON). Every playbook and role that can run ACT on a
 host reaches roles/site_act/tasks/old_copies.yml (ACT on or off); the ones that run ACT only on the AAP side are listed.
 python3 tests/test_act_old_copies.py"""
+import errno
 import json
 import os
 import re
@@ -340,15 +341,15 @@ class Update(Base):
         self.assertEqual(open(self.target).read(), self.JOBS)
         self.assertIn("kept at %s." % kept, " ".join(r["lines"]))
 
-    def test_a_backup_that_differs_stops_the_update(self):
+    def test_a_backup_that_differs_stops_the_update_and_fails(self):
         real = m.shutil.copyfileobj
         m.shutil.copyfileobj = lambda src, out, *a: out.write(b"garbage")
         self.addCleanup(setattr, m.shutil, "copyfileobj", real)
-        r = self.up()
-        self.assertFalse(r["changed"])
+        with self.assertRaises(OSError) as c:
+            self.up()
+        self.assertIn("differs", str(c.exception))
         self.assertEqual(open(self.target).read(), NEW)
         self.assertEqual(os.listdir(os.path.join(self.opt, "old")), [])        # the bad copy is removed
-        self.assertTrue(any("not updated" in x and "differs" in x for x in r["lines"]))
 
     def test_report_mode_changes_and_stages_nothing(self):
         r = self.up(action="report")
@@ -454,13 +455,12 @@ class Update(Base):
             raise OSError("disk full")
         m.os.replace = boom
         try:
-            r = self.up()
+            with self.assertRaises(OSError):
+                self.up()
         finally:
             m.os.replace = real
-        self.assertFalse(r["changed"])
         self.assertEqual(open(self.target).read(), NEW)
         self.assertEqual(sorted(x for x in os.listdir(self.opt) if "site-act-new" in x), [])
-        self.assertTrue(any("not updated (disk full)" in x for x in r["lines"]))
         self.assertTrue(os.path.exists(self.staged))                            # kept: a retry in this process works
         r = self.up()
         self.assertTrue(r["changed"])
@@ -478,10 +478,85 @@ class Update(Base):
             return real(src, out, *a)
         m.shutil.copyfileobj = boom
         self.addCleanup(setattr, m.shutil, "copyfileobj", real)
-        r = self.up()
-        self.assertFalse(r["changed"])
+        with self.assertRaises(OSError):
+            self.up()
         self.assertEqual(open(self.target).read(), NEW)
         self.assertEqual(sorted(x for x in os.listdir(self.opt) if "site-act-new" in x), [])
+
+    # --- sa-1701d
+    def test_delete_with_no_install_folder_makes_the_backup_folder(self):
+        shutil.rmtree(self.opt)
+        self.write(self.act, OLD, 0o755)
+        r = self.run_it(action="delete")
+        self.assertTrue(r["changed"])
+        self.assertFalse(os.path.exists(self.act))
+        back = os.path.join(self.opt, "old")
+        self.assertEqual(stat.S_IMODE(os.stat(back).st_mode), 0o700)
+        self.assertEqual(stat.S_IMODE(os.stat(self.opt).st_mode), 0o755)
+        kept = os.listdir(back)
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(open(os.path.join(back, kept[0])).read(), OLD)
+
+    def test_a_missing_chain_of_folders_is_made(self):
+        shutil.rmtree(self.opt)
+        self.write(self.act, OLD, 0o755)
+        deep = os.path.join(self.d, "a", "b", "old")
+        r = self.run_it(action="delete", backup_dir=deep)
+        self.assertTrue(r["changed"])
+        self.assertEqual(len(os.listdir(deep)), 1)
+
+    def test_a_disk_error_on_the_backup_fails_the_module(self):
+        self.write(self.act, OLD, 0o755)
+        real = m.shutil.copyfileobj
+
+        def boom(*a, **k):
+            raise OSError(errno.ENOSPC, "No space left on device")
+        m.shutil.copyfileobj = boom
+        self.addCleanup(setattr, m.shutil, "copyfileobj", real)
+        for action in ("link", "delete"):
+            with self.assertRaises(OSError) as c:
+                self.run_it(action=action)
+            self.assertEqual(c.exception.errno, errno.ENOSPC)
+            self.assertEqual(open(self.act).read(), OLD)                        # nothing was changed
+
+    def test_a_refused_folder_is_a_line_not_a_failure_even_past_the_first_check(self):
+        elsewhere = os.path.join(self.d, "elsewhere")
+        os.makedirs(elsewhere)
+        os.symlink(elsewhere, os.path.join(self.opt, "old"))
+        self.write(self.act, OLD, 0o755)
+        real = m.unsafe
+        m.unsafe = lambda *a: ""
+        self.addCleanup(setattr, m, "unsafe", real)
+        r = self.run_it(action="delete")
+        self.assertFalse(r["changed"])
+        self.assertTrue(os.path.exists(self.act))
+        self.assertTrue(any("not changed" in x and "is a link" in x for x in r["lines"]))
+        self.assertEqual(os.listdir(elsewhere), [])
+
+    def test_open_dir_closes_its_fd_when_the_check_fails(self):
+        before = set(os.listdir("/proc/self/fd"))
+        real = m.os.fstat
+
+        def boom(fd):
+            raise OSError("fstat failed")
+        m.os.fstat = boom
+        try:
+            with self.assertRaises(OSError):
+                m.open_dir(self.opt)
+        finally:
+            m.os.fstat = real
+        self.assertEqual(set(os.listdir("/proc/self/fd")) - before, set())
+
+    def test_open_dir_closes_its_fd_for_a_folder_that_is_not_ours(self):
+        before = set(os.listdir("/proc/self/fd"))
+        real = m.os.geteuid
+        m.os.geteuid = lambda: os.stat(self.opt).st_uid + 1
+        try:
+            with self.assertRaises(m.RefusedFolder):
+                m.open_dir(self.opt)
+        finally:
+            m.os.geteuid = real
+        self.assertEqual(set(os.listdir("/proc/self/fd")) - before, set())
 
     def test_the_task_wires_it(self):
         t = open(os.path.join(REPO, "roles", "site_act", "tasks", "old_copies.yml")).read()

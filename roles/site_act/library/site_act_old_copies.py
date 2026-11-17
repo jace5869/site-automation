@@ -134,6 +134,10 @@ DIR_FLAGS = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLO
 NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 
 
+class RefusedFolder(OSError):
+    """A folder that is a link, not a folder or not the running user's: nothing is changed there (a line, not a failure)."""
+
+
 def open_dir(path, dir_fd=None):
     """A folder opened once, never through a link (the last name), and checked on the open fd: a folder, ours (the user this
     runs as). Everything after is done relative to the fd, so a swap for a link afterwards leads nowhere."""
@@ -141,13 +145,47 @@ def open_dir(path, dir_fd=None):
         fd = os.open(path, DIR_FLAGS, dir_fd=dir_fd)
     except OSError as e:
         if e.errno in (errno.ELOOP, errno.ENOTDIR):
-            raise OSError("%s is a link or not a folder: nothing was changed there" % path)
+            raise RefusedFolder("%s is a link or not a folder: nothing was changed there" % path)
         raise
-    st = os.fstat(fd)
-    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.geteuid():
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.geteuid():
+            raise RefusedFolder("%s is not a folder of this user: nothing was changed there" % path)
+    except BaseException:
         os.close(fd)
-        raise OSError("%s is not a folder of this user: nothing was changed there" % path)
+        raise
     return fd
+
+
+def open_or_make_dir(path):
+    """open_dir(path); when the folder is not there, it and the missing folders above it are made (0755; each opened by
+    its fd from the nearest folder that is there), as makedirs did."""
+    try:
+        return open_dir(path)
+    except RefusedFolder:
+        raise
+    except OSError as e:
+        if e.errno != errno.ENOENT:
+            raise
+    path = os.path.abspath(path)
+    have = path
+    while not os.path.isdir(have):
+        have = os.path.dirname(have)
+    cur = os.open(have, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        for part in [x for x in path[len(have):].split(os.sep) if x]:
+            try:
+                os.mkdir(part, 0o755, dir_fd=cur)
+            except OSError as e:
+                if e.errno != errno.EEXIST:
+                    raise
+            nxt = open_dir(part, cur)
+            os.close(cur)
+            cur = nxt
+        return cur
+    except BaseException:
+        os.close(cur)
+        raise
 
 
 def sha_of(f):
@@ -165,7 +203,7 @@ def backup(path, backup_dir, now, src=None):
     a number is added when the name is taken), and checked against the original. A link is kept as a link. src: the
     original already open (a binary file object); else path is opened here, never through a link. The folders are opened
     once and used by their fds (1.70.1)."""
-    parent = open_dir(os.path.dirname(backup_dir) or ".")
+    parent = open_or_make_dir(os.path.dirname(backup_dir) or ".")
     bfd = None
     try:
         name = os.path.basename(backup_dir)
@@ -371,7 +409,7 @@ def update_target(target, params, apply, now, lines):
     else:
         try:
             kept = update_one(target, params, now)
-        except OSError as e:
+        except RefusedFolder as e:
             u["would"] = True
             lines.append("%s is ACT %s, not %s: not updated (%s)." % (target, old, new, e))
         else:
@@ -413,7 +451,7 @@ def run(params, check_mode, now=None, python_check=python3_ok):
         if todo in ("link", "delete") and apply:
             try:
                 r["backup"] = backup(path, params["backup_dir"], now)
-            except OSError as e:
+            except RefusedFolder as e:
                 r.update(action="report", why="not changed: %s" % e)
             else:
                 if todo == "link":

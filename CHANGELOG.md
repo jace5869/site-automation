@@ -20,6 +20,9 @@ older one stayed and the link pointed at it (docs/ADDING_ACT.md, "Old copies of 
 - The folders are opened once, never through a link, and checked on the open handle (a folder, owned by the user the job
   runs as); the backup and the update work by those handles, so a folder swapped for a link after the check leads
   nowhere. The temporary file of the update is removed when the copy or the rename fails.
+- Only a link, a non-folder or another owner's folder is "not changed" (a line); a disk error or a bad backup fails the
+  module as before. The backup folder and its parents are made when missing (delete with no `/opt/act`). A folder
+  handle is closed when its check fails.
 - The scorecard documents of the page-fit test are refreshed (the Findings Weight column; the CORA one is
   `stig_scorecard_cora_web`). That showed a table wider than its card by 18 px after its first fit, never fitted again:
   site_report.js now fits again a table that has grown since (the ops look at 800 px).
