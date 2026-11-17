@@ -90,3 +90,4 @@ site_act_old_bins: [/usr/local/bin/act]  # where an old act may be; missing, or 
 # report = only say it
 site_act_old_bin: link
 site_act_fix_user_model: false           # true = a user's saved genai.model (~/.config/act/config.json) set to the job's model
+site_act_stage_dir: ""                   # where the old-copies check puts the jobs' ACT for a moment (a private folder, removed after); "" = the host's temp folder

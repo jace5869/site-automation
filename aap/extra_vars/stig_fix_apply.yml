@@ -154,3 +154,7 @@
 
 ## true = a user's saved genai.model (~/.config/act/config.json) set to the job's model
 # site_act_fix_user_model: false
+
+## where the old-copies check puts the jobs' ACT for a moment (a private folder, removed after); ""
+## = the host's temp folder
+# site_act_stage_dir: ""

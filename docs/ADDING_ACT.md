@@ -403,6 +403,10 @@ per run.
 | Another file, such as an older ACT | keeps it in `/opt/act/old` (0700, root, `act.<UTC time>.<sha256, first 8>`), then installs the jobs' ACT (0755) |
 | A link | nothing |
 
+The jobs' ACT is first put in a private folder of the job's own (0700, root, made in the host's temp folder, or in
+`site_act_stage_dir`) and removed afterwards. Nothing is written in `/opt/act` until the folder has been opened and checked. A stage
+that fails (the temp folder is full) is a `failed:` line for that host; the other jobs go on with their own work.
+
 The old one is kept as a new file that is checked against the original before the new one is put in place with one rename. A
 backup name that is taken gets a number, and a file there is never written over. When `/opt/act` or `/opt/act/old` is a link, the
 job changes nothing there and says so. With `site_act_old_bin: report` it only says `would update ... (report only)`.

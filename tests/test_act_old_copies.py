@@ -218,7 +218,8 @@ class Update(Base):
         self.sha = m.sha256(self.staged)
 
     def up(self, check=False, **kw):
-        return self.run_it(check=check, source_sha256=self.sha, source_version="0.6.27", staged=self.staged, **kw)
+        kw.setdefault("staged", self.staged)
+        return self.run_it(check=check, source_sha256=self.sha, source_version="0.6.27", **kw)
 
     def test_an_older_installed_act_is_updated_and_kept(self):
         r = self.up()
@@ -604,11 +605,68 @@ class Update(Base):
             m.os.geteuid = real
         self.assertEqual(set(os.listdir("/proc/self/fd")) - before, set())
 
+    # --- sa-1701f: the stage is the job's private folder, never the install folder
+    def _stage_elsewhere(self):
+        d = os.path.join(self.d, "stage")
+        os.makedirs(d, 0o700)
+        st = os.path.join(d, "act.new")
+        self.write(st, self.JOBS, 0o600)
+        return st
+
+    def test_a_stage_in_a_private_folder_is_used_and_nothing_is_written_beside_the_target(self):
+        st = self._stage_elsewhere()
+        os.unlink(self.staged)
+        r = self.up(staged=st)
+        self.assertTrue(r["changed"])
+        self.assertEqual(open(self.target).read(), self.JOBS)
+        self.assertEqual(sorted(os.listdir(self.opt)), ["act", "old"])         # no .act.new, no temporary file
+        self.assertTrue(os.path.exists(st))                                    # the task removes its folder
+
+    def test_a_stage_that_is_not_there_is_the_only_one_tolerated(self):
+        r = self.up(staged=os.path.join(self.d, "nowhere", "act.new"))
+        self.assertFalse(r["changed"])
+        self.assertIn("could not be updated", " ".join(r["lines"]))
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads any file")
+    def test_an_unreadable_stage_is_a_failure_not_a_normal_result(self):
+        st = self._stage_elsewhere()
+        os.chmod(st, 0)
+        self.addCleanup(os.chmod, st, 0o600)
+        with self.assertRaises(OSError) as c:
+            self.up(staged=st)
+        self.assertEqual(c.exception.errno, errno.EACCES)
+        self.assertEqual(open(self.target).read(), NEW)
+
+    def test_a_stage_that_is_a_link_is_a_failure(self):
+        st = self._stage_elsewhere()
+        lnk = os.path.join(self.d, "stage", "lnk")
+        os.symlink(st, lnk)
+        with self.assertRaises(OSError):
+            self.up(staged=lnk)
+        self.assertEqual(open(self.target).read(), NEW)
+
+    def test_an_io_error_on_the_stage_is_a_failure(self):
+        st = self._stage_elsewhere()
+        real = m.os.open
+
+        def boom(path, *a, **k):
+            if path == st:
+                raise OSError(errno.EIO, "Input/output error")
+            return real(path, *a, **k)
+        m.os.open = boom
+        self.addCleanup(setattr, m.os, "open", real)
+        with self.assertRaises(OSError) as c:
+            self.up(staged=st)
+        self.assertEqual(c.exception.errno, errno.EIO)
+
     def test_the_task_wires_it(self):
         t = open(os.path.join(REPO, "roles", "site_act", "tasks", "old_copies.yml")).read()
         self.assertIn("source_sha256", t)
         self.assertIn("staged", t)
-        self.assertIn(".act.new", t)
+        self.assertIn("ansible.builtin.tempfile", t)                           # a private folder of the job's own
+        self.assertIn("rescue:", t)                                            # a failed stage is the host's "failed:" line
+        self.assertIn("always:", t)                                            # the folder is removed whatever happens
+        self.assertNotIn("/.act.new", t)                                       # never the install folder
 
 
 class Python36(unittest.TestCase):

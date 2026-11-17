@@ -1790,6 +1790,7 @@ File: `roles/site_act/defaults/main.yml`
 | `site_act_old_bins` | `[/usr/local/bin/act]` | Old copies of ACT on the hosts (1.53.0): an `act` someone put there by hand runs instead of the one the jobs install (/opt/act/act) when a person types act, with its own saved model. Every job that can run ACT on a host looks, ACT on or off, once per host (roles/site_act/tasks/old_copies.yml; the job "ACT - find and r… (all of it: the role file) |
 | `site_act_old_bin` | `link` | link = keep the old one in /opt/act/old (0700), then link it to /opt/act/act; delete = keep it, then remove it; report = only say it |
 | `site_act_fix_user_model` | `false` | true = a user's saved genai.model (~/.config/act/config.json) set to the job's model |
+| `site_act_stage_dir` | (empty) | where the old-copies check puts the jobs' ACT for a moment (a private folder, removed after); "" = the host's temp folder |
 
 ## site_email
 

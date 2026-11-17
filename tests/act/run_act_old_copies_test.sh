@@ -171,6 +171,41 @@ check "  ...unchanged, nothing written through the link" "$(on "$db" 'sha256sum 
 act old old.d "
 on "$db" 'rm /opt/act/old && mv /opt/act/old.d /opt/act/old' >/dev/null
 
+# sa-1701f: the stage is the job's own private folder. A stage that fails (/dev/mqueue takes no new folder) is the host's
+# "failed:" line: the dedicated job ends failed after its report, and another job that includes the check finishes its work
+age
+osha=$(on "$db" 'sha256sum /opt/act/act' | cut -d' ' -f1)
+rm -rf "$work/web"; mkdir -p "$work/web"
+(cd "$repo" && ANSIBLE_COLLECTIONS_PATH="$cols" ANSIBLE_STDOUT_CALLBACK=default ANSIBLE_NOCOLOR=1 ANSIBLE_DEPRECATION_WARNINGS=False \
+    "$ap" -v -i "$work/inv.yml" playbooks/act_old_copies.yml -l db01.example.mil -e report_web_dest="$work/web" \
+    -e site_act_stage_dir=/dev/mqueue) > "$work/out.txt" 2>&1
+rc=$?
+check "stage fails: the dedicated job ends failed" "$([ $rc -ne 0 ] && echo failed || echo "passed (rc $rc)")" "failed"
+check "  ...the report line says the new ACT was not put on the host" \
+    "$(python3 -c 'import glob, json, sys
+r = json.load(open(glob.glob(sys.argv[1] + "/*/latest.json")[0]))
+r = r.get("report", r)
+s = [x for x in r["sections"] if x.get("title") == "ACT old copies"]
+print(s[0]["status"], any(row[0] == "db01.example.mil" and row[1].startswith("failed: the new ACT was not put on the host") for row in s[0]["rows"]))' "$work/web")" "critical True"
+check "  ...the installed ACT is untouched, nothing in /opt/act but act and old" "$(on "$db" 'sha256sum /opt/act/act | cut -d" " -f1; ls -A /opt/act | tr "\n" " "')" "$osha
+act old "
+run "stage fails in another job (fapolicyd denials): it finishes, the line is in its report" fapolicyd_denials.yml -l db01.example.mil \
+    -e site_act_enabled=false -e site_act_stage_dir=/dev/mqueue \
+    -- "ACT is off (site_act_enabled false)" "failed: the new ACT was not put on the host"
+run "stage fine: updated, and no private folder left in /tmp" act_old_copies.yml -l db01.example.mil \
+    -- "updated /opt/act/act 0.6.24 -> $actv"
+check "  ...no private folder left" "$(on "$db" 'ls -A /tmp | grep -c site-act-stage')" "0"
+# an ancestor of the install folder is a link: nothing is written anywhere
+age
+on "$db" 'mkdir -p /opt/real/act/old && cp /opt/act/act /opt/real/act/act && ln -s /opt/real /opt/lnk' >/dev/null
+rsha=$(on "$db" 'sha256sum /opt/real/act/act' | cut -d' ' -f1)
+run "a link as an ancestor of the install folder: refused" act_old_copies.yml -l db01.example.mil -e act_triage_dest_dir=/opt/lnk/act \
+    -- "not updated" "is a link or not a folder"
+check "  ...nothing written anywhere" "$(on "$db" 'sha256sum /opt/real/act/act | cut -d" " -f1; ls -A /opt/real/act | tr "\n" " "; ls -A /opt/real/act/old | wc -l; ls -A /tmp | grep -c site-act')" "$rsha
+act old 0
+0"
+on "$db" 'rm -rf /opt/real /opt/lnk' >/dev/null
+
 # sa-1701e: a real module failure (the backup cannot be made: /dev/mqueue takes no new folder) is "failed: ..." in the report and the job
 # ends failed after the report is written; the old copy stays
 put_old "$web"

@@ -28,6 +28,11 @@ older one stayed and the link pointed at it (docs/ADDING_ACT.md, "Old copies of 
 - A real error (a disk error, ...) shows in the report as `failed: <message>` for that host, and *ACT - find and replace
   old copies* ends failed after its report is written (the other jobs show the line and go on). A refused folder stays
   "not changed" and does not fail the job.
+- The new ACT is staged in a private folder of the job's own (0700, root; `site_act_stage_dir` names the place, the
+  host's temp folder by default), never in the install folder, and the folder is removed whatever happens. The module
+  copies it into the install folder by its open handle. A stage that fails is the host's `failed: ...` line (the dedicated
+  job ends failed after its report; the other jobs finish their work). Only a missing stage file is "not put on the host":
+  EIO or EACCES on it fails the module.
 - The scorecard documents of the page-fit test are refreshed (the Findings Weight column; the CORA one is
   `stig_scorecard_cora_web`). That showed a table wider than its card by 18 px after its first fit, never fitted again:
   site_report.js now fits again a table that has grown since (the ops look at 800 px).

@@ -66,33 +66,58 @@
       become: true
       when: _site_act_old_install | bool
 
-    # the installed ACT is older (or another) than the jobs': put the new one beside it first; the module keeps the old one
-    - name: ACT | old copies - the jobs' ACT, to replace the installed one
-      ansible.builtin.copy:
-        src: "{{ role_path }}/../../vendor/act/act"
-        dest: "{{ _old_dir }}/.act.new"
-        mode: "0755"
-      become: true
-      when: _site_act_old_seen.updating | default(false) | bool and not ansible_check_mode
+    # the installed ACT is older (or another) than the jobs': the new one goes to a private folder of the job's own (0700,
+    # root; never the install folder - that is the module's, by its open folder, with a check) and the module takes it from
+    # there. A stage that fails (the temp folder full, ...) is the host's "failed: <msg>" line, as a module failure is;
+    # the folder is removed whatever happens.
+    - name: ACT | old copies - the update, and what is linked or deleted
+      block:
+        - name: ACT | old copies - a private folder for the jobs' ACT
+          ansible.builtin.tempfile:
+            state: directory
+            suffix: .site-act-stage
+            path: "{{ site_act_stage_dir | default('', true) or omit }}"
+          become: true
+          register: _site_act_stage
+          when: _site_act_old_seen.updating | default(false) | bool and not ansible_check_mode
 
-    - name: ACT | old copies - {{ site_act_old_bin }}
-      site_act_old_copies:
-        paths: "{{ site_act_old_bins }}"
-        action: "{{ site_act_old_bin }}"
-        target: "{{ _old_dir }}/act"
-        backup_dir: "{{ _old_dir }}/old"
-        job_model: "{{ _old_model }}"
-        fix_user_model: "{{ site_act_fix_user_model | bool }}"
-        source_sha256: "{{ _old_src_sha }}"
-        source_version: "{{ _old_src_version }}"
-        installing: "{{ _site_act_old_install | bool }}"
-        staged: "{{ (_old_dir ~ '/.act.new') if _site_act_old_seen.updating | default(false) | bool and not ansible_check_mode else omit }}"
-      become: true
-      register: _site_act_old
-      failed_when: false
-      when: _site_act_old_seen.updating | default(false) | bool
-            or _site_act_old_seen.copies | default([]) | rejectattr('action', 'equalto', 'none') | list | length > 0
-            or _site_act_old_seen.users | default([]) | rejectattr('state', 'equalto', 'ok') | list | length > 0
+        - name: ACT | old copies - the jobs' ACT, to replace the installed one
+          ansible.builtin.copy:
+            src: "{{ role_path }}/../../vendor/act/act"
+            dest: "{{ _site_act_stage.path }}/act.new"
+            mode: "0600"
+          become: true
+          when: _site_act_old_seen.updating | default(false) | bool and not ansible_check_mode
+
+        - name: ACT | old copies - {{ site_act_old_bin }}
+          site_act_old_copies:
+            paths: "{{ site_act_old_bins }}"
+            action: "{{ site_act_old_bin }}"
+            target: "{{ _old_dir }}/act"
+            backup_dir: "{{ _old_dir }}/old"
+            job_model: "{{ _old_model }}"
+            fix_user_model: "{{ site_act_fix_user_model | bool }}"
+            source_sha256: "{{ _old_src_sha }}"
+            source_version: "{{ _old_src_version }}"
+            installing: "{{ _site_act_old_install | bool }}"
+            staged: "{{ (_site_act_stage.path ~ '/act.new') if _site_act_old_seen.updating | default(false) | bool and not ansible_check_mode else omit }}"
+          become: true
+          register: _site_act_old
+          failed_when: false
+          when: _site_act_old_seen.updating | default(false) | bool
+                or _site_act_old_seen.copies | default([]) | rejectattr('action', 'equalto', 'none') | list | length > 0
+                or _site_act_old_seen.users | default([]) | rejectattr('state', 'equalto', 'ok') | list | length > 0
+      rescue:
+        - name: ACT | old copies - the stage failed
+          ansible.builtin.set_fact:
+            _site_act_stage_err: "{{ ansible_failed_result.msg | default('the new ACT could not be put on the host') }}"
+      always:
+        - name: ACT | old copies - the private folder removed
+          ansible.builtin.file:
+            path: "{{ _site_act_stage.path }}"
+            state: absent
+          become: true
+          when: _site_act_stage is defined and _site_act_stage.path is defined
 
     # failed_when: false above keeps a failure from stopping the job's other work; a module failure is still seen here
     # (a result with a msg and no lines): the report line says "failed: <msg>", and act_old_copies.yml ends failed after its report
@@ -102,14 +127,15 @@
         site_act_old_copies:
           lines: >-
             {{ ['failed: ' ~ _old_err] if (_old_err | default('', true) | string | length) > 0
-               else (_site_act_old.lines | default(_site_act_old_seen.lines | default([]))) }}
+               else ((_site_act_old | default({})).lines | default(_site_act_old_seen.lines | default([]))) }}
           failed: "{{ (_old_err | default('', true) | string | length) > 0 }}"
-          changed: "{{ _site_act_old.changed | default(false) }}"
+          changed: "{{ (_site_act_old | default({})).changed | default(false) }}"
           check: "{{ ansible_check_mode }}"
       vars:
         _old_err: >-
-          {{ (_site_act_old.msg | string)
-             if (not (_site_act_old.skipped | default(false)) and _site_act_old.lines is not defined and _site_act_old.msg is defined)
+          {{ ('the new ACT was not put on the host: ' ~ (_site_act_stage_err | string)) if _site_act_stage_err is defined
+             else ((_site_act_old | default({})).msg | string)
+             if (not ((_site_act_old | default({})).skipped | default(false)) and (_site_act_old | default({})).lines is not defined and (_site_act_old | default({})).msg is defined)
              else (_site_act_old_seen.msg | string)
              if (_site_act_old_seen.lines is not defined and _site_act_old_seen.msg is defined)
              else '' }}

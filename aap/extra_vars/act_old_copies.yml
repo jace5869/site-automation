@@ -327,6 +327,10 @@
 ## one model for this run, whatever the provider (e.g. a survey answer); empty = site_act_models
 # site_act_model: ""
 
+## where the old-copies check puts the jobs' ACT for a moment (a private folder, removed after); ""
+## = the host's temp folder
+# site_act_stage_dir: ""
+
 # ---- site_findings - usually in all.yml ----------------------------------------------------------
 ## A host that cannot be reached (switched off, no network, ssh or WinRM refused, its login refused)
 ## in the health checks, the certificate report and renewal, database health, the service watch and

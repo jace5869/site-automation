@@ -362,25 +362,30 @@ def put_in_place(dfd, staged, tname):
 
 
 def update_one(target, params, now):
-    """The real update, by the open folder: the installed file and the staged one read through it, kept, replaced."""
+    """The real update, by the open folder: the installed file read through it, kept, replaced by the staged one. The staged
+    file is the job's own private copy (a folder of its own, 0700), opened here without following a link; only a stage that
+    is not there (none given, or ENOENT) is "not put on the host" - any other error (EIO, EACCES, ...) is the module's failure."""
+    staged = params.get("staged")
+    if not staged:
+        return None
     dfd = open_dir(os.path.dirname(target))
     try:
         tname = os.path.basename(target)
-        staged = params.get("staged")
-        if not staged or os.path.dirname(staged) != os.path.dirname(target):
-            return None
         try:
-            sf = os.fdopen(os.open(os.path.basename(staged), os.O_RDONLY | NOFOLLOW, dir_fd=dfd), "rb")
-        except OSError:
-            return None
+            sf = os.fdopen(os.open(staged, os.O_RDONLY | NOFOLLOW), "rb")
+        except OSError as e:
+            if e.errno == errno.ENOENT:
+                return None
+            raise
         with sf:
             if not stat.S_ISREG(os.fstat(sf.fileno()).st_mode) or sha_of(sf) != params["source_sha256"]:
                 return None
             with os.fdopen(os.open(tname, os.O_RDONLY | NOFOLLOW, dir_fd=dfd), "rb") as inst:
                 kept = backup(None, params["backup_dir"], now, src=inst)
             put_in_place(dfd, sf, tname)
+        if os.path.dirname(os.path.abspath(staged)) == os.path.dirname(os.path.abspath(target)):
             try:
-                os.unlink(os.path.basename(staged), dir_fd=dfd)
+                os.unlink(os.path.basename(staged), dir_fd=dfd)       # a stage beside the target: removed with it
             except OSError:
                 pass
         return kept
