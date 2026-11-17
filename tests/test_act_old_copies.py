@@ -534,6 +534,39 @@ class Update(Base):
         self.assertTrue(any("not changed" in x and "is a link" in x for x in r["lines"]))
         self.assertEqual(os.listdir(elsewhere), [])
 
+    def test_a_folder_that_cannot_be_made_is_named_whatever_the_error(self):
+        """The runner's /dev/mqueue (root, takes no new folder) says EPERM for the name alone: the line names the folder."""
+        self.write(self.act, OLD, 0o755)
+        real = m.os.mkdir
+
+        def refuse(name, mode=0o777, dir_fd=None):
+            if name == "old":
+                raise OSError(errno.EPERM, "Operation not permitted")
+            return real(name, mode, dir_fd=dir_fd)
+        m.os.mkdir = refuse
+        self.addCleanup(setattr, m.os, "mkdir", real)
+        back = os.path.join(self.opt, "old")
+        with self.assertRaises(OSError) as c:
+            self.run_it(action="delete")
+        self.assertEqual(c.exception.errno, errno.EPERM)
+        self.assertIn("cannot make the folder %s: Operation not permitted" % back, str(c.exception))
+        self.assertTrue(os.path.exists(self.act))
+
+    def test_a_backup_folder_that_cannot_be_opened_is_named(self):
+        os.makedirs(os.path.join(self.opt, "old"), 0o700)
+        self.write(self.act, OLD, 0o755)
+        real = m.open_dir
+
+        def refuse(path, dir_fd=None):
+            if path == "old":
+                raise OSError(errno.EACCES, "Permission denied")
+            return real(path, dir_fd)
+        m.open_dir = refuse
+        self.addCleanup(setattr, m, "open_dir", real)
+        with self.assertRaises(OSError) as c:
+            self.run_it(action="delete")
+        self.assertIn("cannot open the folder %s: Permission denied" % os.path.join(self.opt, "old"), str(c.exception))
+
     def test_open_dir_closes_its_fd_when_the_check_fails(self):
         before = set(os.listdir("/proc/self/fd"))
         real = m.os.fstat

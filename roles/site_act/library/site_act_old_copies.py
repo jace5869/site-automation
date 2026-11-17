@@ -210,8 +210,13 @@ def backup(path, backup_dir, now, src=None):
             os.mkdir(name, 0o700, dir_fd=parent)
         except OSError as e:
             if e.errno != errno.EEXIST:
-                raise
-        bfd = open_dir(name, parent)
+                raise OSError(e.errno, "cannot make the folder %s: %s" % (backup_dir, e.strerror))
+        try:
+            bfd = open_dir(name, parent)
+        except RefusedFolder as e:
+            raise RefusedFolder("%s is a link, not a folder, or not root's or this user's: nothing was changed there" % backup_dir)
+        except OSError as e:
+            raise OSError(e.errno, "cannot open the folder %s: %s" % (backup_dir, e.strerror))
         os.fchmod(bfd, 0o700)
         if src is None and os.path.islink(path):
             dest = os.readlink(path)
