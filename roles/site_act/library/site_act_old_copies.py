@@ -139,8 +139,8 @@ class RefusedFolder(OSError):
 
 
 def open_dir(path, dir_fd=None):
-    """A folder opened once, never through a link (the last name), and checked on the open fd: a folder, ours (the user this
-    runs as). Everything after is done relative to the fd, so a swap for a link afterwards leads nowhere."""
+    """A folder opened once, never through a link (the last name), and checked on the open fd: a folder, root's or the
+    running user's. Everything after is done relative to the fd, so a swap for a link afterwards leads nowhere."""
     try:
         fd = os.open(path, DIR_FLAGS, dir_fd=dir_fd)
     except OSError as e:
@@ -149,8 +149,8 @@ def open_dir(path, dir_fd=None):
         raise
     try:
         st = os.fstat(fd)
-        if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.geteuid():
-            raise RefusedFolder("%s is not a folder of this user: nothing was changed there" % path)
+        if not stat.S_ISDIR(st.st_mode) or st.st_uid not in (0, os.geteuid()):
+            raise RefusedFolder("%s is not a folder of root or this user: nothing was changed there" % path)
     except BaseException:
         os.close(fd)
         raise
@@ -158,28 +158,27 @@ def open_dir(path, dir_fd=None):
 
 
 def open_or_make_dir(path):
-    """open_dir(path); when the folder is not there, it and the missing folders above it are made (0755; each opened by
-    its fd from the nearest folder that is there), as makedirs did."""
+    """The folder at path opened by its fd, made (0755) when it is not there, as makedirs did: from / down, each name opened
+    with open_dir from its parent's fd (no link followed, no folder of another owner), made and opened again on ENOENT.
+    No path is searched or followed anywhere."""
+    cur = os.open(os.sep, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    so_far = ""
     try:
-        return open_dir(path)
-    except RefusedFolder:
-        raise
-    except OSError as e:
-        if e.errno != errno.ENOENT:
-            raise
-    path = os.path.abspath(path)
-    have = path
-    while not os.path.isdir(have):
-        have = os.path.dirname(have)
-    cur = os.open(have, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-    try:
-        for part in [x for x in path[len(have):].split(os.sep) if x]:
+        for part in [x for x in os.path.abspath(path).split(os.sep) if x]:
+            so_far += os.sep + part
             try:
-                os.mkdir(part, 0o755, dir_fd=cur)
+                nxt = open_dir(part, cur)
+            except RefusedFolder:
+                raise
             except OSError as e:
-                if e.errno != errno.EEXIST:
-                    raise
-            nxt = open_dir(part, cur)
+                if e.errno != errno.ENOENT:
+                    raise OSError(e.errno, "cannot open the folder %s: %s" % (so_far, e.strerror))
+                try:
+                    os.mkdir(part, 0o755, dir_fd=cur)
+                except OSError as e2:
+                    if e2.errno != errno.EEXIST:
+                        raise OSError(e2.errno, "cannot make the folder %s: %s" % (so_far, e2.strerror))
+                nxt = open_dir(part, cur)
             os.close(cur)
             cur = nxt
         return cur

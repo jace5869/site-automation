@@ -23,6 +23,11 @@ older one stayed and the link pointed at it (docs/ADDING_ACT.md, "Old copies of 
 - Only a link, a non-folder or another owner's folder is "not changed" (a line); a disk error or a bad backup fails the
   module as before. The backup folder and its parents are made when missing (delete with no `/opt/act`). A folder
   handle is closed when its check fails.
+- The folders are walked from `/` by their handles (each name opened without following a link, checked: root's or the
+  running user's; made when missing), so a link as an ancestor is refused and nothing is made outside.
+- A real error (a disk error, ...) shows in the report as `failed: <message>` for that host, and *ACT - find and replace
+  old copies* ends failed after its report is written (the other jobs show the line and go on). A refused folder stays
+  "not changed" and does not fail the job.
 - The scorecard documents of the page-fit test are refreshed (the Findings Weight column; the CORA one is
   `stig_scorecard_cora_web`). That showed a table wider than its card by 18 px after its first fit, never fitted again:
   site_report.js now fits again a table that has grown since (the ops look at 800 px).

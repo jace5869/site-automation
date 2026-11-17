@@ -547,6 +547,52 @@ class Update(Base):
             m.os.fstat = real
         self.assertEqual(set(os.listdir("/proc/self/fd")) - before, set())
 
+    # --- sa-1701e: the chain of folders walked from / by fds
+    def test_a_link_as_an_ancestor_is_refused_and_nothing_is_made_outside(self):
+        outside = self._outside()
+        os.symlink(outside, os.path.join(self.d, "linkdir"))
+        self.write(self.act, OLD, 0o755)
+        r = self.run_it(action="delete", backup_dir=os.path.join(self.d, "linkdir", "x", "old"))
+        self.assertFalse(r["changed"])
+        self.assertTrue(os.path.exists(self.act))
+        self.assertEqual(os.listdir(outside), [])
+        self.assertTrue(any("not changed" in x and "is a link" in x for x in r["lines"]))
+
+    def test_a_folder_made_and_swapped_for_a_link_between_steps_is_refused(self):
+        outside = self._outside()
+        real = m.os.mkdir
+
+        def swapping(name, mode=0o777, dir_fd=None):
+            real(name, mode, dir_fd=dir_fd)
+            if name == "mid":                          # made, and at once replaced by a link to outside
+                os.rmdir(name, dir_fd=dir_fd)
+                os.symlink(outside, name, dir_fd=dir_fd)
+        m.os.mkdir = swapping
+        self.addCleanup(setattr, m.os, "mkdir", real)
+        self.write(self.act, OLD, 0o755)
+        r = self.run_it(action="delete", backup_dir=os.path.join(self.d, "fresh", "mid", "old"))
+        self.assertFalse(r["changed"])
+        self.assertTrue(os.path.exists(self.act))
+        self.assertEqual(os.listdir(outside), [])
+        self.assertTrue(any("not changed" in x for x in r["lines"]))
+
+    def test_no_fd_is_left_open_by_the_walk(self):
+        before = set(os.listdir("/proc/self/fd"))
+        fd = m.open_or_make_dir(os.path.join(self.d, "p", "q"))
+        os.close(fd)
+        self.assertTrue(os.path.isdir(os.path.join(self.d, "p", "q")))
+        outside = self._outside()
+        os.symlink(outside, os.path.join(self.d, "lk"))
+        with self.assertRaises(m.RefusedFolder):
+            m.open_or_make_dir(os.path.join(self.d, "lk", "z"))
+        self.assertEqual(set(os.listdir("/proc/self/fd")) - before, set())
+
+    def test_the_task_and_the_job_show_a_real_failure(self):
+        t = open(os.path.join(REPO, "roles", "site_act", "tasks", "old_copies.yml")).read()
+        self.assertIn("'failed: ' ~ _old_err", t)
+        pb = open(os.path.join(REPO, "playbooks", "act_old_copies.yml")).read()
+        self.assertIn("a real error on a host fails the job", pb)
+
     def test_open_dir_closes_its_fd_for_a_folder_that_is_not_ours(self):
         before = set(os.listdir("/proc/self/fd"))
         real = m.os.geteuid

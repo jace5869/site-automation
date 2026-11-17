@@ -71,7 +71,13 @@
           {{ ansible_play_hosts | select('in', hostvars) | map('extract', hostvars)
              | selectattr('site_act_old_copies', 'defined') | map(attribute='site_act_old_copies')
              | rejectattr('lines') | list | length }}
-        _old_status: "{{ 'warning' if _old_rows | length > 0 else 'ok' }}"
+        _old_failed: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts_all | sort -%}
+          {%-   if (hostvars[h].site_act_old_copies | default({})).failed | default(false) | bool -%}{%- set _ = out.append(h) -%}{%- endif -%}
+          {%- endfor -%}
+          {{ out | length }}
+        _old_status: "{{ 'critical' if _old_failed | int > 0 else 'warning' if _old_rows | length > 0 else 'ok' }}"
         _report: >-
           {{ {'title': site_report_title | default('ACT old copies', true), 'status': _old_status,
               'subtitle': ('Check: nothing was changed. ' if ansible_check_mode else '')
@@ -82,3 +88,23 @@
                           {'label': 'Not reached', 'value': (ansible_play_hosts_all | length) - (ansible_play_hosts | length)}],
               'sections': [{'title': 'ACT old copies', 'status': _old_status, 'columns': ['Host', 'What'], 'rows': _old_rows}]} }}
       when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0
+
+# after the report is written: a real error on any host (a disk error, ...) ends the job failed (red in AAP); a refused
+# folder (a link) is "not changed" in the report and does not
+- name: ACT - old copies, the result
+  hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
+  gather_facts: false
+  tasks:
+    - name: ACT | old copies - a real error on a host fails the job
+      ansible.builtin.fail:
+        msg: >-
+          ACT old copies: {{ _bad | length }} host(s) had an error ({{ _bad | join(', ') }}); the report has the line for each.
+      run_once: true
+      vars:
+        _bad: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts_all | sort -%}
+          {%-   if (hostvars[h].site_act_old_copies | default({})).failed | default(false) | bool -%}{%- set _ = out.append(h) -%}{%- endif -%}
+          {%- endfor -%}
+          {{ out }}
+      when: _bad | length > 0

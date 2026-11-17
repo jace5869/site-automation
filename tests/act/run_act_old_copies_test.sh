@@ -171,6 +171,25 @@ check "  ...unchanged, nothing written through the link" "$(on "$db" 'sha256sum 
 act old old.d "
 on "$db" 'rm /opt/act/old && mv /opt/act/old.d /opt/act/old' >/dev/null
 
+# sa-1701e: a real module failure (the backup cannot be made: /dev/mqueue takes no new folder) is "failed: ..." in the report and the job
+# ends failed after the report is written; the old copy stays
+put_old "$web"
+rm -rf "$work/web"; mkdir -p "$work/web"
+(cd "$repo" && ANSIBLE_COLLECTIONS_PATH="$cols" ANSIBLE_STDOUT_CALLBACK=default ANSIBLE_NOCOLOR=1 ANSIBLE_DEPRECATION_WARNINGS=False \
+    "$ap" -v -i "$work/inv.yml" playbooks/act_old_copies.yml -l web01.example.mil -e report_web_dest="$work/web" \
+    -e site_act_old_bin=delete -e act_triage_dest_dir=/dev/mqueue) > "$work/out.txt" 2>&1
+rc=$?
+check "a real module failure: the job ends failed" "$([ $rc -ne 0 ] && echo failed || echo "passed (rc $rc)")" "failed"
+check "  ...the job says which host" "$(grep -c 'ACT old copies: 1 host(s) had an error (web01.example.mil)' "$work/out.txt" | sed 's/^[1-9][0-9]*$/yes/')" "yes"
+check "  ...the report has the line (and is critical)" \
+    "$(python3 -c 'import glob, json, sys
+r = json.load(open(glob.glob(sys.argv[1] + "/*/latest.json")[0]))
+r = r.get("report", r)
+s = [x for x in r["sections"] if x.get("title") == "ACT old copies"]
+print(s[0]["status"], any(row[0] == "web01.example.mil" and row[1].startswith("failed: ") for row in s[0]["rows"]))' "$work/web")" "critical True"
+check "  ...the line says which folder" "$(grep -c 'failed: old copies of ACT: \[Errno 13\] cannot open the folder /dev/mqueue' "$work/out.txt" | sed 's/^[1-9][0-9]*$/yes/')" "yes"
+check "  ...the old copy is still there" "$(on "$web" 'test -f /usr/local/bin/act && echo there || echo gone')" "there"
+
 if [ $with36 = 1 ]; then
     run "old01, Python 3.6 only: looked at, not linked" act_old_copies.yml -l old01.example.mil \
         -- "old01.example.mil" "not linked (the new ACT needs Python 3.6 or newer)"

@@ -94,16 +94,25 @@
             or _site_act_old_seen.copies | default([]) | rejectattr('action', 'equalto', 'none') | list | length > 0
             or _site_act_old_seen.users | default([]) | rejectattr('state', 'equalto', 'ok') | list | length > 0
 
+    # failed_when: false above keeps a failure from stopping the job's other work; a module failure is still seen here
+    # (a result with a msg and no lines): the report line says "failed: <msg>", and act_old_copies.yml ends failed after its report
     - name: ACT | old copies - for the report (once per host)
       ansible.builtin.set_fact:
         _site_act_old_done: true
         site_act_old_copies:
           lines: >-
-            {{ (_site_act_old.lines | default(_site_act_old_seen.lines | default([])))
-               if not (_site_act_old.failed | default(false) or _site_act_old_seen.failed | default(false))
-               else ['could not look for old copies of ACT: ' ~ (_site_act_old.msg | default(_site_act_old_seen.msg | default('')))] }}
+            {{ ['failed: ' ~ _old_err] if (_old_err | default('', true) | string | length) > 0
+               else (_site_act_old.lines | default(_site_act_old_seen.lines | default([]))) }}
+          failed: "{{ (_old_err | default('', true) | string | length) > 0 }}"
           changed: "{{ _site_act_old.changed | default(false) }}"
           check: "{{ ansible_check_mode }}"
+      vars:
+        _old_err: >-
+          {{ (_site_act_old.msg | string)
+             if (not (_site_act_old.skipped | default(false)) and _site_act_old.lines is not defined and _site_act_old.msg is defined)
+             else (_site_act_old_seen.msg | string)
+             if (_site_act_old_seen.lines is not defined and _site_act_old_seen.msg is defined)
+             else '' }}
 
     - name: ACT | old copies - what was found and done
       ansible.builtin.debug:
