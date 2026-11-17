@@ -150,7 +150,31 @@
   /* a command in a table (Look further, Command, Hint, Next step): its Copy button, the command alone */
   all('.ccopy').forEach(function(c){c.hidden=false;c.addEventListener('click',function(){
     put(c,c.hasAttribute('data-copy')?c.getAttribute('data-copy'):c.previousElementSibling.textContent.trim(),'')})});
-  all('.tcopy').forEach(function(c){c.hidden=false;c.addEventListener('click',function(){put(c,c.getAttribute('data-copy'),'')})});
+  /* Copy link (1.72.0, the index): an address made from the page's own (data-rel) when report_web_url is not set; in a
+     line's summary the click copies and does not open or close the line */
+  all('.tcopy').forEach(function(c){c.hidden=false;c.addEventListener('click',function(e){var v=c.getAttribute('data-copy');
+    if(c.hasAttribute('data-rel')){try{v=new URL(v,location.href).href}catch(x){}}
+    if(c.closest('summary')){e.preventDefault();e.stopPropagation()}put(c,v,'')})});
+  /* 1.72.0, the index: a report that did not run on time - its last run (data-when) older than data-due hours (twice
+     its usual gap) - judged here, when the page is read; the page was written when a report ran. Its line gets
+     data-late (its clock and word show), its entry in Look at these first shows; the tiles, the area's head and its
+     tab's dot count it; Runs ok (data-n) is lowered by those that were checked. No script: no judgement, nothing said. */
+  var late=[];all('[data-due][data-when]').forEach(function(r){var w=Date.parse(r.getAttribute('data-when')),h=+r.getAttribute('data-due');
+    if(w&&h>0&&Date.now()-w>h*3600000){r.setAttribute('data-late','');late.push(r);var s=r.querySelector('.late-slot');if(s)s.hidden=false;
+      var li=r.id&&document.querySelector('[data-late-li="'+r.id+'"]');if(li)li.hidden=false}});
+  var lateOk=late.filter(function(r){return !r.classList.contains('nc')}).length;
+  all('[data-tile=late]').forEach(function(t){t.textContent=late.length});
+  all('[data-tile=ok]').forEach(function(t){var n=parseInt(t.getAttribute('data-n'),10);if(!isNaN(n))t.textContent=Math.max(n-lateOk,0)});
+  if(late.length){
+    all('[data-tile-box=late]').forEach(function(t){t.classList.remove('t-good');t.classList.add('t-bad')});
+    var w0=late[0].querySelector('.when');
+    all('[data-tile-note=late]').forEach(function(t){t.textContent=(late[0].getAttribute('data-name')||'')+(w0?': last ran '+w0.textContent:'')+
+      (late.length>1?' and '+(late.length-1)+' more':'')});
+    all('.look[hidden]').forEach(function(s){if(s.querySelector('li:not([hidden])'))s.hidden=false});
+    all('.area').forEach(function(a){var n=a.querySelectorAll('.rr.bad,.rr[data-late]').length;if(!n)return;
+      var b=a.querySelector('.ah.bad'),g=a.querySelector('.ah.good'),k=a.querySelector('.ahn'),v=a.querySelector('.ahv');
+      if(k)k.textContent=n;if(v)v.textContent=n===1?'needs':'need';if(b)b.hidden=false;if(g)g.hidden=true;
+      all('label[for="t'+a.getAttribute('data-tab')+'"] [hidden]').forEach(function(d){d.hidden=false})})}
   all('.scopy').forEach(function(c){c.hidden=false;c.addEventListener('click',function(e){
     e.preventDefault();e.stopPropagation();var g=grab(c.closest('details').querySelector('.body'));put(c,g[0],g[1])})});
   /* CSV: the table as shown, for Excel - a byte order mark (its accents read right), every value in quotes, and a value

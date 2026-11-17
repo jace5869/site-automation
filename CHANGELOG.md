@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.72.0 — 2026-11-18
+
+**To set up: nothing.** The next run of any report draws the new index. Each report's counts start with its next
+run, and its small line fills over its next 12 runs.
+
+**The report website's index is calm** (atlas, brief and ops; docs/WEB_REPORTS.md, "The index page").
+
+- Red only when a run needs a look: it could not check, its critical count went up since the run before, or it did
+  not run on time. Findings are counts in plain ink, so a report with critical findings that did not go up is calm.
+- At a glance: four tiles - Runs ok, Not checked, Critical up since last run, Didn't run on time.
+- The findings of the newest runs added up, then Look at these first: each report a tile counts, with why.
+- A card per area, each report's line with its state (an icon and a word), what it said, the change since the
+  previous run (*+2 critical*; a drop in plain ink), its counts, and a small line of its last 12 runs.
+- **Copy link** beside each report's name: the address of its latest page (`report_web_url`, else the page's own).
+- *Didn't run on time*: the last run is older than twice the report's usual gap, at least 26 hours. The page's
+  script judges it when the page is read. Without the script nothing is said.
+- The same page in the three looks, each in its own colours, light and dark. The email looks' index, the emails and
+  the workbooks do not change.
+- Gone from the index: the brief look's first step under a line and the ops look's three cards. The report pages
+  keep them.
+- `index.json`: each line keeps `counts`, a `trend` of its last 12 runs (whatever `report_web_history` keeps) and
+  `latest_url`. A report can give its own counts as `report.counts`; else its rows' `row_status` are counted.
+- The small line is drawn as the 1.71.0 dashboard draws its weekly line (`report_dash_filters.dash_path`; the same
+  points, tests/test_report_web.py).
+
 ## 1.71.1 — 2026-11-17
 
 **To set up: nothing.** Linux patching only; Windows patching is unchanged.

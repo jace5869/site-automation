@@ -21,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -102,6 +103,8 @@ class Module(unittest.TestCase):
         self.assertNotIn("first-of-type", page)                                  # a web page already: nothing added
 
     def test_index_page_atlas(self):
+        """1.72.0: the board in the atlas look - escaped names, links from the index's folder, a tab per area with no
+        script (radio buttons), each area's card, a line's last runs."""
         runs = [_run(9, "2026-10-09 06:00 UTC", "warning"), _run(8, "2026-10-08 06:00 UTC")]
         reports = [{"key": "vm/latest.html", "name": "VMware - VM <health>", "status": "warning", "when": runs[0]["when"],
                     "job": 9, "page": runs[0]["page"], "latest": "vm/latest.html", "title": "2 <VMs>", "runs": runs},
@@ -115,27 +118,13 @@ class Module(unittest.TestCase):
         self.assertIn("VMware - VM &lt;health&gt;", html)
         self.assertIn("2 &lt;VMs&gt;", html)
         self.assertIn('href="../vm/latest.html"', html)
-        self.assertIn('<label for="t1"><span class="dot c-warning"></span>VMware <span class="n">1</span></label>', html)
-        self.assertIn('#t1:checked~.list .r:not(.a1){display:none}', html)
-        self.assertIn("2 runs</span>", html)
-        self.assertIn("job 9", html)
-        self.assertNotIn("job local", html)
+        self.assertIn('<label for="t1">VMware<span class="tn">1</span>', html)
+        self.assertIn('#t1:checked~.grid .area:not(.a1){display:none}', html)
+        self.assertIn("The last 2 runs keep their pages", html)
+        self.assertIn('<section class="area a1', html)
         self.assertNotRegex(html, r'<link|src="https?:|@import')
         self.assertIn("No reports yet.", rw.index_html([], "index.html", "x", None, "now", (), "atlas"))
         self.assertNotIn('class="tab"', rw.index_html([], "index.html", "x", None, "now", (), "atlas"))
-
-    def test_atlas_colours_as_the_page(self):
-        """The index page's colours are the report page's (roles/site_email/templates/report_atlas.html.j2)."""
-        import re
-        with open(os.path.join(REPO, "roles", "site_email", "templates", "report_atlas.html.j2")) as f:
-            tpl = f.read()
-        light = tpl[tpl.index("{%- set light %}"):tpl.index("{%- set dark %}")]
-        dark = tpl[tpl.index("{%- set dark %}"):tpl.index("{%- endset %}", tpl.index("{%- set dark %}"))]
-        for mine, theirs in ((rw.ATLAS_LIGHT, light), (rw.ATLAS_DARK, dark)):
-            tokens = dict(re.findall(r"(--[\w-]+):([^;]+);", mine))
-            self.assertGreater(len(tokens), 30)
-            for k, v in tokens.items():
-                self.assertIn("%s:%s;" % (k, v), theirs, k)
 
     def test_atlas_switch_without_the_script(self):
         """The index page's light / auto / dark switch: radio buttons the CSS acts on, so it works where a web server's
@@ -146,9 +135,9 @@ class Module(unittest.TestCase):
             self.assertIn('<input type="radio" name="site-report-theme" id="theme-%s" value="%s"' % (t, t), html)
             self.assertIn('<label for="theme-%s"' % t, html)
         self.assertIn('id="theme-auto" value="auto" checked>', html)
-        self.assertIn(":root:has(#theme-light:checked){--ink:#111827;", html)
-        self.assertIn(":root:has(#theme-dark:checked){--ink:#e6edf3;", html)
-        self.assertIn(':root[data-theme="dark"]{--ink:#e6edf3;', html)      # older browsers without :has(): the script
+        self.assertIn(":root:has(#theme-light:checked){--bg:#f3f5f7;", html)
+        self.assertIn(":root:has(#theme-dark:checked){--bg:#0b0f14;", html)
+        self.assertIn(':root[data-theme="dark"]{--bg:#0b0f14;', html)      # older browsers without :has(): the script
         self.assertIn("localStorage.setItem('site-report-theme',n)", html)
         self.assertNotIn("<button", html)
 
@@ -345,7 +334,7 @@ class History(unittest.TestCase):
         self.assertEqual([x["job"] for x in dropped], [2])                               # 1 went the run before
         self.assertEqual(line["job"], 7)
         # no key, name or runs in a run; a banner key only when the line had one (1.24.0c: the module always gives one)
-        self.assertEqual(sorted(line["runs"][0]), sorted(set(rw.RUN_KEYS) - {"banner"}))
+        self.assertEqual(sorted(line["runs"][0]), sorted(set(rw.RUN_KEYS) - {"banner", "counts"}))   # counts: only when counted
         line, _ = rw.history(line, dict(self.entry(8, "2026-10-08 06:00 UTC"), banner={}), 5)
         self.assertEqual(line["runs"][0]["banner"], {})
 
@@ -733,218 +722,6 @@ class Windows(unittest.TestCase):
         self.assertIn("is not there on", out["error"])
         self.assertFalse(os.path.exists(dest))                                      # never made
 
-
-class BriefIndex(unittest.TestCase):
-    """0.92.0: the index page in the brief look - every report by area, and the first step each report's line carries
-    (entry.step). 0.94.0: calm - a plain title and one line (how many, the last run, the counts as small chips), no
-    alarm headline and no cards: the list is the page, a report's first step under its line."""
-
-    def reports(self):
-        runs = [_run(9, "2026-10-09 06:00 UTC", "critical"), _run(8, "2026-10-08 06:00 UTC", "warning")]
-        return [{"key": "d/latest.html", "name": "Linux - Disk <space>", "status": "critical", "when": runs[0]["when"], "job": 9,
-                 "page": runs[0]["page"], "latest": "d/latest.html", "title": "4 <full>", "runs": runs,
-                 "step": {"title": "/var is <95%>", "code": "du -xh </var>", "status": "critical"}},
-                {"key": "v/latest.html", "name": "VMware - VM health", "status": "warning", "when": "2026-10-09 05:00 UTC", "job": "local",
-                 "page": "v/b.html", "latest": "v/latest.html", "title": "3 snapshots"},
-                {"key": "c/latest.html", "name": "Linux - Certificates", "status": "ok", "when": "2026-10-09 04:00 UTC", "job": 7,
-                 "page": "c/b.html", "latest": "c/latest.html", "title": "none expire"}]
-
-    def test_the_brief(self):
-        html = rw.index_html(self.reports(), "site/index.html", "HQ & ops", ("data:image/png;base64,AA", 48, 64), "now", (), "brief")
-        self.assertIn('<section class="hero"><h1>Reports</h1><p class="say">3 reports &middot; last run 2026-10-09 06:00 UTC</p>', html)
-        self.assertIn('<div class="tally"><span class="chip s-critical"><svg', html)                  # the counts as small chips
-        self.assertIn('<b>1</b> Critical</span><span class="chip s-warning">', html)
-        self.assertNotIn(" Info</span>", html)                                      # none for information: no chip
-        self.assertNotRegex(html, r'need(s)? action|class="(nb|bento|counts?)[ "]')    # no alarm headline, no cards
-        self.assertIn('<div class="runs"><div class="step"><span class="lbl">Start here</span><p class="stt">/var is &lt;95%&gt;</p>'
-                      '<div class="code"><pre>du -xh &lt;/var&gt;</pre><button class="copy" type="button" hidden>Copy</button></div>'
-                      '<a class="open" href="../d/latest.html">Open the report &rarr;</a></div><table>', html)
-        self.assertEqual(html.count('class="step"'), 1)                             # only a report that gives one
-        self.assertIn("Linux - Disk &lt;space&gt;", html)
-        self.assertIn('<img class="logo" src="data:image/png;base64,AA" width="48" height="64"', html)
-        self.assertIn(".logo{display:block;border-radius:9px;height:auto;max-height:60px;width:auto}", html)
-        self.assertNotRegex(html, r'<link|src="https?:|@import')
-        self.assertNotIn("<space>", html)
-        self.assertNotIn("job local", html)
-
-    def test_no_poster_type(self):
-        """Nothing on the index set larger than a heading (the user: some text was "crazy big")."""
-        html = rw.index_html(self.reports(), "index.html", "x", None, "now", (), "brief")
-        style = html.split("<style>")[1].split("</style>")[0]
-        for size in re.findall(r"font-size:clamp\([^,]+,[^,]+,\s*([\d.]+)(rem|px)\)", style):
-            self.assertLessEqual(float(size[0]) * (16 if size[1] == "rem" else 1), 34, size)
-
-    def test_every_report_by_area(self):
-        html = rw.index_html(self.reports(), "site/index.html", "HQ", None, "now", (), "brief")
-        self.assertIn('<div class="grp a1"><b>Linux</b><span class="n">2</span></div>', html)
-        self.assertIn('<div class="grp a2"><b>VMware</b><span class="n">1</span></div>', html)
-        self.assertLess(html.index('<div class="grp a1">'), html.index('<div class="grp a2">'))
-        self.assertIn("#t1:checked~.list>:not(.a1){display:none}", html)           # an area's tab: its heading and lines
-        self.assertIn('<label for="t1"><span class="dot c-critical"></span>Linux <span class="n">2</span></label>', html)
-        # the last runs as squares, oldest to newest, the newest ringed, each a link to its page
-        self.assertIn('<span class="sqs" aria-label="The last 2 runs"><a class="sq c-warning" href="../', html)
-        self.assertRegex(html, r'<a class="sq c-critical now" href="\.\./[^"]+" title="2026-10-09 06:00 UTC - Critical')
-
-    def test_nothing_to_do_and_none_yet(self):
-        ok = [dict(r, status="ok") for r in self.reports()]
-        html = rw.index_html(ok, "index.html", "x", None, "now", (), "brief")
-        self.assertIn('<div class="tally"><span class="chip s-ok"><svg', html)
-        self.assertNotIn('class="step"', html)                                      # a fine report's step: not shown
-        empty = rw.index_html([], "index.html", "x", None, "now", (), "brief")
-        self.assertIn("No reports yet", empty)
-        self.assertNotIn('class="tab"', empty)
-        self.assertNotIn('class="tally"', empty)
-
-    def test_colours_as_the_page(self):
-        """The index page's colours are the brief report page's (roles/site_email/templates/report_brief.html.j2)."""
-        import re
-        with open(os.path.join(REPO, "roles", "site_email", "templates", "report_brief.html.j2")) as f:
-            tpl = f.read()
-        light = tpl[tpl.index("{%- set light %}"):tpl.index("{%- set dark %}")]
-        dark = tpl[tpl.index("{%- set dark %}"):tpl.index("{%- endset %}", tpl.index("{%- set dark %}"))]
-        for mine, theirs in ((rw.BRIEF_LIGHT, light), (rw.BRIEF_DARK, dark)):
-            tokens = dict(re.findall(r"(--[\w-]+):([^;]+);", mine))
-            self.assertGreater(len(tokens), 30)
-            for k, v in tokens.items():
-                self.assertIn("%s:%s;" % (k, v), theirs, k)
-
-    def test_switch_without_the_script(self):
-        html = rw.index_html([], "index.html", "x", None, "now", (), "brief")
-        self.assertIn('<div class="seg" id="theme" role="radiogroup" aria-label="Light or dark">', html)
-        self.assertIn(":root:has(#theme-dark:checked){--ink:#e0e0e0;", html)
-        self.assertIn('<script src="site-report.js?v=', rw.index_html([], "index.html", "x", None, "now", (), "brief", "var a;\n"))
-
-    def test_first_step(self):
-        self.assertEqual(rw.first_step({"sections": [{"title": "a", "lines": ["x"]}, {"cards": [{"title": "t", "code": "c", "status": "warning"}]}]}),
-                         {"title": "t", "code": "c", "more": False, "status": "warning"})
-        self.assertIsNone(rw.first_step({"sections": [{"cards": [{"meta": "nothing to do"}]}]}))
-        self.assertIsNone(rw.first_step(None))
-        self.assertIsNone(rw.first_step({"sections": "not a list of sections"[:0]}))
-        self.assertEqual(rw.first_step({"sections": [{"cards": [{"code": "x" * 5000}]}]})["code"], "")      # long: on the page
-        self.assertTrue(rw.first_step({"sections": [{"cards": [{"code": "x" * 5000}]}]})["more"])
-
-    def test_a_long_step_stays_short(self):
-        """0.94.0: a STIG rule's whole check (a 20-line policy line, say) never lands on the index - the title on one
-        line, the command only when it is short, a link to the report for the rest."""
-        check = "\n".join("CRYPTO_POLICY='-oCiphers=aes256-gcm@example.mil,aes%d-ctr -oMACs=hmac-sha2-512'" % i for i in range(20))
-        step = rw.first_step({"sections": [{"cards": [{"status": "critical", "title": "The system must use   approved ciphers.\n" + "y" * 400,
-                                                      "code": check}]}]})
-        self.assertEqual(step["code"], "")
-        self.assertTrue(step["more"])
-        self.assertLessEqual(len(step["title"]), 200)
-        self.assertTrue(step["title"].startswith("The system must use approved ciphers. yyy"))
-        self.assertTrue(step["title"].endswith("\u2026"))
-        self.assertEqual(rw.first_step({"sections": [{"cards": [{"title": "t", "code": "a\nb\nc"}]}]})["code"], "a\nb\nc")
-        r = dict(BriefIndex.reports(self)[0], step=step)
-        html = rw.index_html([r], "site/index.html", "x", None, "now", (), "brief")
-        self.assertNotIn("CRYPTO_POLICY", html)
-        self.assertIn('<a class="open" href="../d/latest.html">The command and the rest in the report &rarr;</a>', html)
-        self.assertIn("-webkit-line-clamp:2", html)                                 # the title at most 2 lines
-        old = dict(r, step={"title": "t", "code": check, "status": "critical"})            # a line 0.92.0 wrote
-        self.assertNotIn("CRYPTO_POLICY", rw.index_html([old], "site/index.html", "x", None, "now", (), "brief"))
-
-    def test_web_page_brief(self):
-        page = rw.web_page('<html><head><title>t</title></head><body></body></html>', [], "brief")
-        self.assertNotIn("first-of-type", page)                                  # a web page already: nothing added
-
-
-
-class OpsIndex(unittest.TestCase):
-    """1.69.0: the index page in the ops look - a header card (how many reports need attention, that number on the right,
-    SHOW: the counts), a tile each for Critical, Warning, Healthy and Not rated, up to three ranked cards for the worst
-    reports, then every report by area (the brief look's list)."""
-
-    def reports(self):
-        return BriefIndex.reports(self) + [
-            {"key": "i/latest.html", "name": "VMware - Capacity", "status": "info", "when": "2026-10-09 03:00 UTC", "job": 6,
-             "page": "i/b.html", "latest": "i/latest.html", "title": "4 clusters"},
-            {"key": "w/latest.html", "name": "AD - Lockouts", "status": "warning", "when": "2026-10-09 07:00 UTC", "job": 5,
-             "page": "w/b.html", "latest": "w/latest.html", "title": "2 <locked>"},
-            {"key": "x/latest.html", "name": "Linux - Patches", "status": "critical", "when": "2026-10-08 07:00 UTC", "job": 4,
-             "page": "x/b.html", "latest": "x/latest.html", "title": "9 behind"}]
-
-    def test_the_header_and_tiles(self):
-        html = rw.index_html(self.reports(), "site/index.html", "HQ & ops", ("data:image/png;base64,AA", 48, 64), "now", (), "ops")
-        self.assertIn('<span class="stc s-critical"><span class="d" aria-hidden="true"></span>Critical</span><h1>4 reports need attention.</h1>', html)
-        self.assertIn('<div class="hn"><div class="bn c-critical">4</div><div class="cap">Need attention</div></div>', html)
-        self.assertIn('<span class="sh">SHOW</span>', html)
-        self.assertIn('<div class="tally"><span class="chip s-critical"><svg', html)        # SHOW: the counts as chips
-        for word, n in (("Critical", 2), ("Warning", 2), ("Healthy", 1), ("Not rated", 1)):
-            self.assertRegex(html, r'</span>%s</div><div class="v[^"]*">%d</div>' % (word, n))
-        self.assertIn('<div class="n">1 for information</div>', html)
-        self.assertIn('<img class="logo" src="data:image/png;base64,AA" width="48" height="64"', html)
-        self.assertNotRegex(html, r'<link|src="https?:|@import')
-        self.assertNotIn("<locked>", html)
-        self.assertFalse(re.search(r"<[^>]+\son[a-z]+=", html))
-
-    def test_reports_that_could_not_be_read(self):
-        """1.69.1c (Codex P2): an unknown report (its page could not be read) is never counted healthy."""
-        one = [{"key": "a/latest.html", "name": "Linux - Disk", "status": "ok", "when": "2026-10-09 06:00 UTC", "job": 9,
-                "page": "a/x.html", "latest": "a/latest.html", "title": "fine"},
-               {"key": "u/latest.html", "name": "AD - Health", "status": "unknown", "when": "2026-10-09 05:00 UTC", "job": 8,
-                "page": "u/x.html", "latest": "u/latest.html", "title": ""}]
-        html = rw.index_html(one, "site/index.html", "HQ", None, "now", (), "ops")
-        self.assertIn('<span class="stc s-unknown"><span class="d" aria-hidden="true"></span>Unavailable</span><h1>1 report could not be read.</h1>', html)
-        self.assertIn("The others are healthy or for information.", html)
-        self.assertIn('<div class="hn"><div class="bn">1</div><div class="cap">Could not be read</div></div>', html)
-        self.assertNotIn("Every report is healthy", html)
-        self.assertNotIn("Nothing needs action", html)
-        html = rw.index_html(one[1:], "site/index.html", "HQ", None, "now", (), "ops")
-        self.assertIn("<h1>No report could be read.</h1>", html)
-        self.assertNotIn("healthy", html.split("<h1>")[1].split("</header>")[0])
-        html = rw.index_html(one[:1], "site/index.html", "HQ", None, "now", (), "ops")       # all readable, all fine: as before
-        self.assertIn("<h1>Every report is healthy or for information.</h1>", html)
-        html = rw.index_html(self.reports() + one[1:], "site/index.html", "HQ", None, "now", (), "ops")
-        self.assertIn("<h1>4 reports need attention.</h1>", html)
-        self.assertIn("Start with the cards below, worst first. 1 report could not be read.", html)
-
-    def test_three_worst_reports_first(self):
-        html = rw.index_html(self.reports(), "site/index.html", "HQ", None, "now", (), "ops")
-        cards = re.findall(r'<article class="todo c-(\w+)"><div class="row1"><span class="num">(\d\d)</span>.*?<h3>(.*?)</h3>', html)
-        # Critical first (the latest first), then Warning: three at most
-        self.assertEqual(cards, [("critical", "01", "Linux - Disk &lt;space&gt;"), ("critical", "02", "Linux - Patches"),
-                                 ("warning", "03", "AD - Lockouts")])
-        first = html[html.index('<article class="todo'):html.index("</article>")]
-        self.assertIn('<span class="lbl">Up next</span>', first)
-        self.assertIn('<p class="next">/var is &lt;95%&gt;</p>', first)                     # its first step
-        self.assertIn('<a href="../d/latest.html">Open item &rarr;</a>', first)
-        self.assertIn('<label for="cd0"><span class="o">View details &rarr;</span>', first)
-        self.assertIn('<pre>du -xh &lt;/var&gt;</pre>', first)
-        self.assertIn('<span class="sqs" aria-label="The last 2 runs">', first)
-        # then every report, by area: the brief look's list and its tab rules
-        self.assertIn('<div class="grp a1"><b>AD</b><span class="n">1</span></div>', html)
-        self.assertIn("#t1:checked~.list>:not(.a1){display:none}", html)
-        self.assertLess(html.index('<div class="cards">'), html.index('<div class="list">'))
-
-    def test_nothing_to_do_and_none_yet(self):
-        ok = [dict(r, status="ok") for r in self.reports()]
-        html = rw.index_html(ok, "index.html", "x", None, "now", (), "ops")
-        self.assertIn("<h1>Every report is healthy or for information.</h1>", html)
-        self.assertNotIn('<div class="cards">', html)
-        self.assertIn('<div class="bn">0</div>', html)
-        empty = rw.index_html([], "index.html", "x", None, "now", (), "ops")
-        self.assertIn("<h1>No reports yet</h1>", empty)
-        self.assertNotIn('class="tab"', empty)
-        self.assertNotIn('<div class="tiles">', empty)
-
-    def test_colours_as_the_page(self):
-        """The index page's colours are the ops report page's (roles/site_email/templates/report_ops.html.j2)."""
-        with open(os.path.join(REPO, "roles", "site_email", "templates", "report_ops.html.j2")) as f:
-            tpl = f.read()
-        light = tpl[tpl.index("{%- set light %}"):tpl.index("{%- set dark %}")]
-        dark = tpl[tpl.index("{%- set dark %}"):tpl.index("{%- endset %}", tpl.index("{%- set dark %}"))]
-        for mine, theirs in ((rw.OPS_LIGHT, light), (rw.OPS_DARK, dark)):
-            tokens = dict(re.findall(r"(--[\w-]+):([^;]+);", mine))
-            self.assertGreater(len(tokens), 40)
-            for k, v in tokens.items():
-                self.assertIn("%s:%s;" % (k, v), theirs, k)
-
-    def test_switch_without_the_script(self):
-        html = rw.index_html([], "index.html", "x", None, "now", (), "ops")
-        self.assertIn('<div class="seg" id="theme" role="radiogroup" aria-label="Light or dark">', html)
-        self.assertIn(":root:has(#theme-dark:checked){--ink:#e6eaf3;", html)
-        self.assertIn('<script src="site-report.js?v=', rw.index_html([], "index.html", "x", None, "now", (), "ops", "var a;\n"))
-        self.assertIn("ops", rw.WEB_LOOKS)
 
 class Retries(unittest.TestCase):
     """0.98.1: a failure that passes is tried again from a new login (site_report_web.passing); a real one is not; a
@@ -1341,17 +1118,21 @@ class TimeZone(unittest.TestCase):
 
     def test_index_page_in_each_look(self):
         tz = self.tm.zone("Europe/Berlin")[0]
-        for look in ("portal", "atlas", "brief"):
+        html = rw.index_html(self.reports(), "site/index.html", "HQ", None, "2026-11-13 04:38 UTC", (), "portal", "", tz)
+        self.assertEqual(html.count("2026-11-13 05:37 CET"), 2)                    # the line, its newest run
+        self.assertIn("2026-11-13 05:37 CET</a> (newest)", html.replace(' <span style="color:#5b6b66;font-size:12px;">', " ").replace("</span>", ""))
+        self.assertIn("2026-07-14 00:30 CEST", html)
+        self.assertIn("updated 2026-11-13 05:38 CET", html)
+        self.assertIn(">this run</a>", html)                                 # a run without a time, as before
+        self.assertNotIn(" UTC", html)
+        for look in rw.WEB_LOOKS:                                             # 1.72.0, the board: the time alone on its own day
             html = rw.index_html(self.reports(), "site/index.html", "HQ", None, "2026-11-13 04:38 UTC", (), look, "", tz)
-            self.assertEqual(html.count("2026-11-13 05:37 CET"), 4 if look == "brief" else 2, look)   # the line, its newest run (brief: "last run" and its square too)
-            self.assertIn("2026-11-13 05:37 CET</a> (newest)", html.replace(' <span style="color:#5b6b66;font-size:12px;">', " ").replace("</span>", ""))
-            self.assertIn("2026-07-14 00:30 CEST", html)
-            self.assertIn("updated 2026-11-13 05:38 CET", html)
-            self.assertIn(">this run</a>", html)                         # a run without a time, as before
+            self.assertIn('<span class="when" title="2026-11-13 05:37 CET">05:37</span>', html, look)
+            self.assertIn('title="2026-11-13 05:37 CET - job 4651">05:37</a> <span class="mutec">(newest)</span>', html, look)
+            self.assertIn('title="2026-07-14 00:30 CEST - job 4000">14 Jul 00:30</a>', html, look)    # another day: the day too
+            self.assertIn("Updated <b>2026-11-13 05:38 CET</b>", html, look)
+            self.assertIn(">this run</a>", html, look)
             self.assertNotIn(" UTC", html, look)
-        brief = rw.index_html(self.reports(), "index.html", "HQ", None, "now", (), "brief", "", tz)
-        self.assertIn("last run 2026-11-13 05:37 CET", brief)
-        self.assertIn('title="2026-07-14 00:30 CEST - Successful - VM health"', brief)
 
     def run_twice(self, **second):
         dest = tempfile.mkdtemp()
@@ -1389,7 +1170,7 @@ class TimeZone(unittest.TestCase):
         self.assertIn("2026-10-01 06:00 UTC", html)
 
     def test_module_empty_zone_writes_the_same_bytes(self):
-        stamp = re.compile(r"updated \d{4}-\d\d-\d\d \d\d:\d\d UTC")
+        stamp = re.compile(r"[Uu]pdated (?:<b>)?\d{4}-\d\d-\d\d \d\d:\d\d UTC")
         for look in ("portal", "atlas", "brief"):
             a = self.run_twice(theme=look)                                # no time_zone at all, as before 1.49.0
             b = self.run_twice(theme=look, time_zone="")
@@ -1400,6 +1181,254 @@ class TimeZone(unittest.TestCase):
             self.assertEqual(dict(a[2], generated=""), dict(b[2], generated=""))
             self.assertNotIn("report_time_zone", json.dumps(b[0].get("warnings") or []))
 
+
+class Release1720(unittest.TestCase):
+    """1.72.0, the index's data (whatever its look): each run's findings by level (the report's own counts, else its rows'
+    row_status), a trend of the last 12 runs kept apart from the pages, the change since the previous run, when a
+    report is late (judged by site-report.js when the page is read), the four tiles' data, and Copy link on each line."""
+
+    REPORT = {"title": "x", "status": "critical", "sections": [
+        {"title": "Findings", "columns": ["a"], "rows": [["1"], ["2"], ["3"], ["4"]], "row_status": ["critical", "warning", "warning", ""]},
+        {"title": "Low", "columns": ["a"], "rows": [["5"]], "row_status": ["low"]},
+        {"title": "Start here", "cards": [{"status": "critical", "title": "do this"}]},
+        {"title": "Notes", "lines": ["n"]}]}
+
+    def line(self, runs, key="vm/latest.html", latest_url=""):
+        """A line after these runs: [(when, status, counts or None)], oldest first."""
+        line = None
+        for i, (when, status, counts) in enumerate(runs):
+            e = dict(_run(i + 1, when, status), key=key, name="VMware - VM health report", latest=key)
+            if counts is not None:
+                e["counts"] = counts
+            if latest_url:
+                e["latest_url"] = latest_url
+            line, _ = rw.history(line, e, 5)
+        return line
+
+    def test_counts_given_or_from_the_rows(self):
+        self.assertEqual(rw.run_counts(self.REPORT), {"critical": 1, "warning": 2, "low": 1})
+        self.assertEqual(rw.run_counts(dict(self.REPORT, counts={"critical": 3, "warning": 0})), {"critical": 3, "warning": 0, "low": 0})
+        self.assertEqual(rw.run_counts(dict(self.REPORT, counts={"critical": "x"})), {"critical": 1, "warning": 2, "low": 1})   # not numbers: the rows
+        self.assertEqual(rw.run_counts({"title": "t", "sections": [{"title": "s", "rows": [], "row_status": []}]}), {"critical": 0, "warning": 0, "low": 0})
+        self.assertIsNone(rw.run_counts({"title": "t", "sections": [{"title": "Notes", "lines": ["a"]}]}))     # only informs
+        self.assertIsNone(rw.run_counts(None))
+
+    def test_the_trend_keeps_12_whatever_the_pages(self):
+        runs = [("2026-11-%02d 06:00 UTC" % d, "warning", {"critical": d % 3, "warning": 2, "low": 0}) for d in range(1, 15)]
+        line = self.line(runs)
+        self.assertEqual(len(line["runs"]), 5)                                             # the pages: history 5
+        self.assertEqual([x["when"][:10] for x in line["trend"]], ["2026-11-%02d" % d for d in range(14, 2, -1)])   # 12, newest first
+        self.assertEqual(line["trend"][0]["counts"], {"critical": 2, "warning": 2, "low": 0})
+        self.assertEqual(sorted(line["trend"][0]), ["counts", "job", "status", "when"])
+        # a line from before 1.72.0 (no trend) starts from its runs; the copy job's run already there is there once
+        old = dict(line)
+        old.pop("trend")
+        e = dict(_run(99, "2026-11-15 06:00 UTC"), key="vm/latest.html", name="n", latest="vm/latest.html")
+        new, _ = rw.history(old, e, 5)
+        self.assertEqual([x["job"] for x in new["trend"]], [99, 14, 13, 12, 11, 10])
+        again, _ = rw.history(new, e, 5)
+        self.assertEqual([x["job"] for x in again["trend"]], [99, 14, 13, 12, 11, 10])
+        self.assertIsNone(new["trend"][0]["counts"])                                        # not counted: a gap
+
+    def test_since_the_previous_run(self):
+        up = self.line([("2026-11-16 06:00 UTC", "critical", {"critical": 1, "warning": 4, "low": 0}),
+                        ("2026-11-17 06:00 UTC", "critical", {"critical": 3, "warning": 4, "low": 1})])
+        self.assertEqual(rw.run_delta(up), {"critical": 2, "warning": 0, "low": 1})
+        down = self.line([("2026-11-16 06:00 UTC", "critical", {"critical": 5, "warning": 4, "low": 0}),
+                          ("2026-11-17 06:00 UTC", "critical", {"critical": 2, "warning": 6, "low": 0})])
+        self.assertEqual(rw.run_delta(down)["critical"], -3)
+        self.assertIsNone(rw.run_delta(self.line([("2026-11-16 06:00 UTC", "ok", None), ("2026-11-17 06:00 UTC", "ok", {"critical": 0})])))
+        self.assertIsNone(rw.run_delta(self.line([("2026-11-17 06:00 UTC", "ok", {"critical": 0})])))
+
+    def test_when_a_report_is_late(self):
+        daily = self.line([("2026-11-%02d 06:%02d UTC" % (d, d) , "ok", None) for d in range(10, 15)])
+        self.assertEqual(rw.due_hours(daily), 48)                                           # twice its usual gap
+        hourly = self.line([("2026-11-17 %02d:00 UTC" % h, "ok", None) for h in range(1, 6)])
+        self.assertEqual(rw.due_hours(hourly), 26)                                          # at least 26 h
+        weekly = self.line([("2026-10-%02d 06:00 UTC" % d, "ok", None) for d in (6, 13, 20, 27)])
+        self.assertEqual(rw.due_hours(weekly), 336)
+        self.assertIsNone(rw.due_hours(self.line([("2026-11-17 06:00 UTC", "ok", None)])))   # one run: no judgement
+
+    def test_the_tiles_data(self):
+        a = self.line([("2026-11-16 06:00 UTC", "critical", {"critical": 1, "warning": 0, "low": 0}),
+                       ("2026-11-17 06:00 UTC", "critical", {"critical": 3, "warning": 0, "low": 0})], key="ad/latest.html")
+        a["name"] = "AD health"
+        b = self.line([("2026-11-17 06:00 UTC", "unknown", None)], key="nas/latest.html")
+        b["name"] = "NetApp ONTAP health"
+        c = self.line([("2026-11-16 06:00 UTC", "critical", {"critical": 5, "warning": 0, "low": 0}),
+                       ("2026-11-17 06:00 UTC", "critical", {"critical": 2, "warning": 0, "low": 0})], key="vm/latest.html")
+        s = rw.index_summary([a, b, c])
+        self.assertEqual((s["total"], s["runs_ok"], s["not_checked"]), (3, 2, ["NetApp ONTAP health"]))
+        self.assertEqual(s["critical_up"], [{"name": "AD health", "key": "ad/latest.html", "delta": 2, "before": 1, "now": 3}])
+
+    def named(self, name, key, runs, latest_url=""):
+        line = self.line(runs, key=key, latest_url=latest_url)
+        line["name"] = name
+        return line
+
+    def board(self, reports, look="atlas", base=""):
+        return rw.index_html(reports, "index.html", "Site reports", None, "2026-11-17 07:00 UTC", (), look, "", None, base)
+
+    def test_the_sparkline_draws_as_the_dashboard(self):
+        """Each line's sparkline - its critical and warning findings over its last runs - is drawn as nuc-dev's dashboard
+        draws its weekly line (report_dash_filters.dash_path): the same points, a gap where a run was not counted."""
+        runs = [("2026-11-%02d 06:00 UTC" % d, "critical", c) for d, c in
+                [(1, {"critical": 4, "warning": 2, "low": 9}), (2, None), (3, {"critical": 1, "warning": 2, "low": 0}),
+                 (4, {"critical": 3, "warning": 0, "low": 0}), (5, {"critical": 0, "warning": 0, "low": 0})]]
+        sp = rw.spark(self.line(runs))
+        self.assertEqual(sp["vals"], [6, None, 3, 3, 0])                                  # oldest first, low not drawn
+        self.assertEqual((sp["max"], sp["top"]), (6, 6))
+        sys.path.insert(0, os.path.join(REPO, "plugins", "filter"))
+        import report_dash_filters as dash
+        same = dash.dash_path(sp["vals"], sp["top"], rw.SPARK_W, rw.SPARK_H, rw.SPARK_PAD)
+        self.assertEqual((sp["d"], sp["pts"]), (same["d"], same["pts"]))
+        self.assertTrue(sp["d"].startswith("M4.0 0.0 M"))                                 # the gap lifts the pen
+        self.assertEqual(rw.spark(self.line(runs), "critical")["vals"], [4, None, 1, 3, 0])
+        self.assertEqual(rw.spark(self.line(runs[-1:]))["top"], 4)                       # a small count is not drawn as a peak
+        self.assertIsNone(rw.spark(self.line([("2026-11-01 06:00 UTC", "info", None)])))  # nothing counted: no line
+        html = self.board([self.named("Health - AD", "ad/latest.html", runs)])
+        self.assertIn('role="img" aria-label="Critical and warning findings, last 5 runs, oldest first: 6, -, 3, 3, 0"', html)
+        self.assertIn('<b class="spv">0</b>', html)
+        info = self.named("Tickets - insights", "t/latest.html", [("2026-11-17 06:00 UTC", "info", None)])
+        self.assertIn('<span class="nos">report only</span>', self.board([info]))
+
+    def test_calm_unless_a_run_needs_a_look(self):
+        """Findings are counts in plain ink: a report with critical findings that did not go up is calm. Red only for a
+        run that could not check and a critical count up since the run before (and, by the script, a late report)."""
+        same = self.named("Health - VM", "vm/latest.html", [("2026-11-16 06:00 UTC", "critical", {"critical": 3, "warning": 1, "low": 0}),
+                                                             ("2026-11-17 06:00 UTC", "critical", {"critical": 3, "warning": 2, "low": 0})])
+        down = self.named("Health - Linux", "lx/latest.html", [("2026-11-16 06:00 UTC", "critical", {"critical": 5, "warning": 0, "low": 0}),
+                                                               ("2026-11-17 06:00 UTC", "critical", {"critical": 2, "warning": 0, "low": 0})])
+        calm = self.board([same, down])
+        self.assertNotIn('class="tile t-bad"', calm)
+        self.assertIn('<section class="look" aria-labelledby="look-h" hidden>', calm)      # only the script shows it (a late report)
+        self.assertNotIn('class="flag">', calm)                                     # only the hidden late word
+        self.assertIn('<span class="ct"><i class="sh sh-c" aria-hidden="true"></i>3 critical</span>', calm)
+        self.assertIn('<span class="calm">Since the previous run: &minus;3 critical</span>', calm)
+        self.assertIn('<span class="ah good">', calm)
+        self.assertIn("All 2 ran", calm)
+        self.assertIn("Findings in the newest runs:", calm)
+        self.assertIn("<b>5</b> critical", calm)
+        up = self.named("Health - AD", "ad/latest.html", [("2026-11-16 06:00 UTC", "critical", {"critical": 1, "warning": 4, "low": 0}),
+                                                          ("2026-11-17 06:00 UTC", "critical", {"critical": 3, "warning": 4, "low": 0})])
+        nc = self.named("Health - NAS", "nas/latest.html", [("2026-11-16 06:00 UTC", "ok", {"critical": 0, "warning": 0, "low": 0}),
+                                                            ("2026-11-17 06:00 UTC", "unknown", None)])
+        hot = self.board([same, down, up, nc])
+        self.assertEqual(hot.count('class="tile t-bad"'), 2)                         # Not checked, Critical up
+        self.assertIn('data-tile="ok" data-n="3">3</b><span class="of">of 4</span>', hot)
+        self.assertIn("Health - AD: 1 &rarr; 3 critical", hot)
+        self.assertIn("Health - NAS: the last run could not check", hot)
+        self.assertIn('<span class="flag">', hot)
+        self.assertIn("Since the previous run: +2 critical</span>", hot)
+        self.assertIn('<h2 id="look-h">Look at these first</h2>', hot)
+        self.assertIn("Since the previous run: +2 critical (1 &rarr; 3).", hot)
+        self.assertIn("Not checked. ", hot)
+        self.assertIn('<b class="ahn">2</b> <span class="ahv">need</span> a look', hot)
+        self.assertIn('<i class="tdot"></i>', hot)                                    # its tab's dot, with its words
+        nums = [m.group(1) for m in re.finditer(r'<details class="rr[^"]*" id="r\d+" data-name="([^"]+)"', hot)]
+        self.assertEqual(nums, ["Health - AD", "Health - NAS", "Health - Linux", "Health - VM"])   # those that need a look first
+
+    def test_each_look_its_colours_readable(self):
+        """Each look's board colours: its own surfaces, every text colour 4.5:1 or better on the card and the page, the
+        status shapes 3:1 - light and dark."""
+        def lum(h):
+            c = [int(h[k:k + 2], 16) / 255.0 for k in (1, 3, 5)]
+            c = [x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4 for x in c]
+            return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+
+        def ratio(a, b):
+            la, lb = sorted((lum(a), lum(b)), reverse=True)
+            return (la + 0.05) / (lb + 0.05)
+        for look in rw.WEB_LOOKS:
+            for mode, t in zip(("light", "dark"), rw.BOARD_LOOK[look]):
+                self.assertEqual(sorted(t), sorted(rw.BOARD_TOKENS), look)
+                for k, v in t.items():
+                    self.assertRegex(v, r"^#[0-9a-f]{6}$", (look, mode, k))
+                for text in ("ink", "ink2", "mute", "accent", "crit", "ok"):
+                    for on in ("card", "bg", "card2"):
+                        self.assertGreaterEqual(ratio(t[text], t[on]), 4.5, (look, mode, text, on))
+                for shape in ("warn", "crit-fill", "spark"):
+                    self.assertGreaterEqual(ratio(t[shape], t["card"]), 3.0, (look, mode, shape))
+            html = self.board([], look)
+            self.assertIn(":root{--bg:%s;" % rw.BOARD_LOOK[look][0]["bg"], html)
+            self.assertIn(':root[data-theme="dark"]{--bg:%s;' % rw.BOARD_LOOK[look][1]["bg"], html)
+            self.assertIn('<body class="board look-%s">' % look, html)
+
+    def test_copy_link_on_each_line(self):
+        """Copy link beside each report's name: its latest page's address (report_web_url), else the page's own address
+        made by the script from the link (data-rel); hidden until the script shows it."""
+        runs = [("2026-11-17 06:00 UTC", "ok", {"critical": 0, "warning": 0, "low": 0})]
+        a = self.named("Health - VM", "vm health/latest.html", runs, latest_url="https://reports.example.mil/vm%20health/latest.html")
+        html = self.board([a])
+        self.assertIn('<a class="rn" href="vm%20health/latest.html">Health - VM</a><button class="tcopy lcopy" type="button" '
+                      'data-copy="https://reports.example.mil/vm%20health/latest.html" title="Copy the address of its latest page" hidden>Copy link</button>', html)
+        a.pop("latest_url")
+        self.assertIn('data-copy="https://reports.example.mil/x/vm%20health/latest.html"', self.board([a], base="https://reports.example.mil/x/"))
+        self.assertIn('data-copy="vm%20health/latest.html" data-rel=""', self.board([a]))
+        lone = {"key": "k", "name": "Lone", "status": "ok", "when": "x"}
+        self.assertNotIn("Copy link", self.board([lone]))                             # no page: nothing to copy
+
+    def test_wide_areas(self):
+        """An area of five reports or more takes the row (its lines in two columns); so does one left alone in its row."""
+        self.assertEqual(rw._place_areas(["H", "V", "C", "S", "N", "P"], {"H": 7, "V": 4, "C": 3, "S": 3, "N": 3, "P": 2}), {"H", "P"})
+        self.assertEqual(rw._place_areas(["A", "B", "C"], {"A": 1, "B": 6, "C": 2}), {"A", "B", "C"})
+        self.assertEqual(rw._place_areas(["A", "B"], {"A": 1, "B": 2}), set())
+
+    def test_the_script_marks_a_late_report(self):
+        sys.path.insert(0, HERE)
+        try:
+            import test_report_hover as RH
+            from test_report_fit import _browser
+        except ImportError:
+            self.skipTest("no browser helpers")
+        if not _browser():
+            self.skipTest("no Chrome")
+        now = datetime.datetime.now(datetime.timezone.utc)
+        when = lambda h: (now - datetime.timedelta(hours=h)).strftime("%Y-%m-%d %H:%M UTC")
+        c0 = {"critical": 0, "warning": 0, "low": 0}
+        late = self.named("Backup - nightly", "late/latest.html", [(when(h), "ok", c0) for h in (100, 76, 52)])     # daily, last 52 h ago
+        fine = self.named("Backup - weekly", "fine/latest.html", [(when(h), "ok", c0) for h in (50, 26, 2)])       # daily, last 2 h ago
+        with open(os.path.join(REPO, "roles", "site_email", "templates", "site_report.js"), encoding="utf-8") as f:
+            js = f.read()
+        d = tempfile.mkdtemp()
+        try:
+            with open(os.path.join(d, "index.html"), "w") as f:
+                f.write(rw.index_html([late, fine], "index.html", "Site reports", None, when(0), (), "ops", js, None, ""))
+            with open(os.path.join(d, "site-report.js"), "w") as f:
+                f.write(js)
+            srv = ThreadingHTTPServer(("127.0.0.1", 0), lambda *a, **k: RH.Csp(*a, directory=d, **k))
+            threading.Thread(target=srv.serve_forever, daemon=True).start()
+            c = RH.Cdp(_browser(), 1280, 900)
+            try:
+                c.call("Page.enable")
+                c.call("Page.navigate", url="http://127.0.0.1:%d/index.html" % srv.server_address[1])
+                for _ in range(100):
+                    if c.js("document.readyState === 'complete' && !!window.siteReport"):
+                        break
+                    time.sleep(0.1)
+                got = c.js("""(() => {const q = s => document.querySelector(s);
+                    const rows = [...document.querySelectorAll('details.rr')].map(r => [r.dataset.name, r.hasAttribute('data-late'),
+                        !r.querySelector('.late-slot').hidden, getComputedStyle(r.querySelector('.si-late')).display !== 'none']);
+                    const b = q('.lcopy'); b.click();
+                    return {rows, late: q('[data-tile=late]').textContent, ok: q('[data-tile=ok]').textContent,
+                            box: q('[data-tile-box=late]').className, note: q('[data-tile-note=late]').textContent,
+                            look: !q('.look').hidden, li: [...document.querySelectorAll('.look li:not([hidden])')].length,
+                            head: q('.area .ah.bad').hidden ? '' : q('.area .ah.bad').textContent, dot: !q('label[for=t1] .tdot').hidden,
+                            copy: !b.hidden, open: b.closest('details').open}})()""")
+            finally:
+                c.close()
+                srv.shutdown()
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+        self.assertEqual(sorted(got["rows"]), [["Backup - nightly", True, True, True], ["Backup - weekly", False, False, False]])
+        self.assertEqual((got["late"], got["ok"]), ("1", "1"))
+        self.assertIn("t-bad", got["box"])
+        self.assertTrue(got["note"].startswith("Backup - nightly: last ran "), got["note"])
+        self.assertEqual((got["look"], got["li"]), (True, 1))
+        self.assertEqual(got["head"], "1 needs a look")
+        self.assertTrue(got["dot"])
+        self.assertTrue(got["copy"])
+        self.assertFalse(got["open"])                                                  # Copy link copies, the line stays shut
 
 if __name__ == "__main__":
     unittest.main(verbosity=1)

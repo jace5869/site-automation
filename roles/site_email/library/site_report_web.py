@@ -20,6 +20,10 @@ description:
   - Each template's line keeps its last runs (history, newest first); with delete_old, the pages (and JSON) of the runs
     that fall off it are deleted - only pages the index listed for this template, never its latest page or the index.
     One that cannot be deleted is a warning, not a failure.
+  - Each line also keeps a trend of its last 12 runs, pages or not (1.72.0) - when, status, job and the run's findings
+    by level (counts - report.counts, else the rows' row_status) - and latest_url, its latest page's address. The index
+    shows the change since the previous run and when a report did not run on time (twice its usual gap, at least 26
+    hours; judged by site-report.js when the page is read).
   - A page being read just then (open in a browser, on a share) is written again a moment later, a few times.
   - dest is a folder (an absolute path), a Windows file share's folder (\\server\share\folder, or
     smb://server/share/folder) or an http(s):// address that accepts PUT. A login for the upload comes
@@ -145,7 +149,9 @@ PAL = {
     'info': ('#1d4ed8', '#e6effd', '#c3d5f7', 'Info'),
     'unknown': ('#4b5753', '#eef2f1', '#d5ddda', 'Unknown')}
 IN_USE = (errno.EACCES, errno.EBUSY, errno.EPERM, errno.ETXTBSY)    # a mounted share's file open in a browser
-RUN_KEYS = ('page', 'status', 'when', 'job', 'title', 'banner')
+RUN_KEYS = ('page', 'status', 'when', 'job', 'title', 'banner', 'counts')
+COUNT_KEYS = ('critical', 'warning', 'low')     # a run's findings by level (1.72.0)
+TREND_N = 12                                       # the runs a line's trend keeps, pages or not (1.72.0)
 WAIT = (0.5, 1, 2, 3, 4)                                 # a file in use: written again after these seconds
 SCRIPT = 'site-report.js'                                # the atlas, brief and ops pages' script, at the folder's top
 WEB_LOOKS = ('atlas', 'brief', 'ops')                   # the looks made for a browser (never an email): pages already
@@ -710,8 +716,98 @@ def _runs(r):
 
 def _run(r):
     """A run as a line lists it. Its banner key ({} for none) only when the line had one: a run from before 1.24.0 has
-    none, and keeps none (top_banner)."""
-    return dict((k, r.get(k)) for k in RUN_KEYS if k != 'banner' or k in r)
+    none, and keeps none (top_banner); its counts only when it had them (1.72.0)."""
+    return dict((k, r.get(k)) for k in RUN_KEYS if k not in ('banner', 'counts') or k in r)
+
+
+def run_counts(report):
+    """1.72.0: a run's findings by level -> {critical, warning, low} or None (not counted). The report's own counts when
+    it gives them (report.counts: {critical: n, warning: n, low: n}); else its tables' rows by row_status - a report that
+    shows one finding in two tables counts it twice, so a report that does should give its own. No table with
+    row_status (a report that only informs): None."""
+    if not isinstance(report, dict):
+        return None
+    given = report.get('counts')
+    if isinstance(given, dict) and any(k in given for k in COUNT_KEYS):
+        try:
+            return dict((k, max(int(given.get(k) or 0), 0)) for k in COUNT_KEYS)
+        except (TypeError, ValueError):
+            pass
+    out, seen = dict((k, 0) for k in COUNT_KEYS), False
+    for sec in report.get('sections') or []:
+        rs = sec.get('row_status') if isinstance(sec, dict) else None
+        if isinstance(rs, list):
+            seen = True
+            for st in rs:
+                if st in out:
+                    out[st] += 1
+    return out if seen else None
+
+
+def _trend_point(x):
+    return dict((k, x.get(k)) for k in ('when', 'status', 'job', 'counts'))
+
+
+def trend(old, entry, n=TREND_N):
+    """1.72.0: a line's last n runs, newest first - when, status, job and counts - whatever happened to their pages
+    (history and delete_old keep fewer). A line from before 1.72.0 starts from its runs. A run already in it (the same
+    when and job: the copy job) is there once."""
+    this = _trend_point(entry)
+    past = (old or {}).get('trend')
+    if not isinstance(past, list):
+        past = [_trend_point(x) for x in _runs(old)] if old else []
+    past = [x for x in past if isinstance(x, dict) and not (str(x.get('when')) == str(this['when']) and str(x.get('job')) == str(this['job']))]
+    return sorted(past + [this], key=lambda x: str(x.get('when') or ''), reverse=True)[:max(1, int(n))]
+
+
+def run_delta(line):
+    """1.72.0: the newest run's counts against the run before it -> {critical, warning, low} (now minus before), or None
+    when either was not counted. "Since the previous run", never "new findings": one fixed and one new read 0."""
+    t = [x for x in (line or {}).get('trend') or [] if isinstance(x, dict)]
+    if len(t) < 2 or not isinstance(t[0].get('counts'), dict) or not isinstance(t[1].get('counts'), dict):
+        return None
+    return dict((k, int(t[0]['counts'].get(k) or 0) - int(t[1]['counts'].get(k) or 0)) for k in COUNT_KEYS)
+
+
+def _when_dt(text):
+    """'2026-11-17 06:05 UTC' (or with seconds, or ISO) -> an aware datetime; None when it is not one."""
+    m = re.match(r'^\s*(\d{4})-(\d\d)-(\d\d)[T ](\d\d):(\d\d)(?::(\d\d))?(?:\.\d+)?\s*(?:Z|UTC)?\s*$', str(text or ''))
+    if not m:
+        return None
+    try:
+        return datetime.datetime(*[int(x or 0) for x in m.groups()], tzinfo=datetime.timezone.utc)
+    except ValueError:
+        return None
+
+
+def due_hours(line, floor=26):
+    """1.72.0: how long after its last run a report is late - twice its usual gap (the median between the runs its trend
+    keeps), at least floor hours; None with fewer than two runs (no judgement). The page decides at view time
+    (site-report.js): the index is written when a report runs, never when it is read."""
+    ts = sorted([d for d in (_when_dt(x.get('when')) for x in (line or {}).get('trend') or [] if isinstance(x, dict)) if d], reverse=True)
+    gaps = sorted((a - b).total_seconds() / 3600.0 for a, b in zip(ts, ts[1:]) if a > b)
+    if not gaps:
+        return None
+    mid = gaps[len(gaps) // 2] if len(gaps) % 2 else (gaps[len(gaps) // 2 - 1] + gaps[len(gaps) // 2]) / 2.0
+    return int(round(max(2 * mid, float(floor))))
+
+
+def index_summary(reports):
+    """1.72.0: the index's four tiles, as far as the page can know them when written: every report; not checked (its
+    newest run could not check: status unknown); critical up since the previous run (with the counts); runs ok = the
+    rest. Didn't run on time is counted by site-report.js at view time (due_hours) and taken off runs ok there."""
+    out = {'total': len(reports or []), 'not_checked': [], 'critical_up': [], 'runs_ok': 0}
+    for r in reports or []:
+        name = str(r.get('name') or r.get('key') or '')
+        if r.get('status') == 'unknown':
+            out['not_checked'].append(name)
+        d = run_delta(r)
+        if d and d['critical'] > 0:
+            t = r['trend']
+            out['critical_up'].append({'name': name, 'key': r.get('key'), 'delta': d['critical'],
+                                       'before': int(t[1]['counts'].get('critical') or 0), 'now': int(t[0]['counts'].get('critical') or 0)})
+    out['runs_ok'] = out['total'] - len(out['not_checked'])
+    return out
 
 
 def from_before(reports):
@@ -760,14 +856,10 @@ INDEX_PAGE = """<!DOCTYPE html>
 """
 
 
-def index_html(reports, index, header_text, logo, generated, tabs=(), theme='portal', js='', tz=None):
+def index_html(reports, index, header_text, logo, generated, tabs=(), theme='portal', js='', tz=None, base=''):
     """The index page: a tab per area (All first), every report's line - worst first - opening to its last runs."""
-    if theme == 'atlas':
-        return index_atlas(reports, index, header_text, logo, generated, tabs, js, tz)
-    if theme == 'brief':
-        return index_brief(reports, index, header_text, logo, generated, tabs, js, tz)
-    if theme == 'ops':
-        return index_ops(reports, index, header_text, logo, generated, tabs, js, tz)
+    if theme in WEB_LOOKS:                               # 1.72.0: the board, in the look's colours
+        return index_board(reports, index, header_text, logo, generated, tabs, js, tz, base, theme)
     e = htmllib.escape
     counts = dict((k, 0) for k in PAL)
     for r in reports:
@@ -835,122 +927,7 @@ def index_html(reports, index, header_text, logo, generated, tabs=(), theme='por
         'rows': '\n'.join(rows) or '<div style="padding:12px;color:#5b6b66;">No reports yet.</div>'}
 
 
-# ---- the atlas look (report_web_theme: atlas): the index page as roles/site_email/templates/report_atlas.html.j2 draws a
-# report - the same colours (tests/test_report_web.py checks they match), light and dark, solid cards
-ATLAS_LIGHT = """--ink:#111827;--muted:#4b5563;--label:#374151;--accent:#0b7352;--accent-ink:#ffffff;
---accent-soft:#e3f3ec;--bg:#f3f5f7;--bg2:#e9eef2;--card:#ffffff;--card-solid:#ffffff;
---card-strong:#f7f9fb;--edge:#dde3ea;--line:#e8ecf1;--zebra:#fafbfc;--hover:#eef6f2;
---code:#f1f4f7;--bar:rgba(255,255,255,.82);--shadow:0 1px 2px rgba(16,24,40,.05),0 6px 20px rgba(16,24,40,.06);--glow1:rgba(16,163,113,.14);--glow2:rgba(59,130,246,.10);
---ok:#0a6b45;--ok-bg:#e6f5ed;--ok-bd:#9ad3b6;--warning:#8a4b00;--warning-bg:#fdf1dc;
---warning-bd:#eec27c;--critical:#b42318;--critical-bg:#fdeceb;--critical-bd:#f0a59c;--info:#1d4ed8;
---info-bg:#e9effd;--info-bd:#a9c0f5;--low:#88358e;--low-bg:#f7ebf7;--low-bd:#dfb5e1;--unknown:#4b5563;--unknown-bg:#eef1f4;--unknown-bd:#c9d1da;
---critical-row:#fff6f5;--warning-row:#fffaf0;color-scheme:light;"""
-ATLAS_DARK = """--ink:#e6edf3;--muted:#9aa7b4;--label:#c2ccd6;--accent:#3ecf98;--accent-ink:#04221a;
---accent-soft:#12302a;--bg:#0b0f14;--bg2:#0e141b;--card:#121820;--card-solid:#121820;
---card-strong:#171f29;--edge:#263243;--line:#1e2834;--zebra:#141b24;--hover:#15241f;
---code:#0d1319;--bar:rgba(14,19,26,.84);--shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.30);--glow1:rgba(62,207,152,.13);--glow2:rgba(96,140,255,.11);
---ok:#4fd69a;--ok-bg:rgba(79,214,154,.12);--ok-bd:rgba(79,214,154,.36);--warning:#f2b450;--warning-bg:rgba(242,180,80,.12);
---warning-bd:rgba(242,180,80,.38);--critical:#ff8a80;--critical-bg:rgba(255,138,128,.12);--critical-bd:rgba(255,138,128,.40);--info:#8ab4ff;
---info-bg:rgba(138,180,255,.12);--info-bd:rgba(138,180,255,.36);--low:#c168d5;--low-bg:rgba(193,104,213,.12);--low-bd:rgba(193,104,213,.38);--unknown:#a8b3bf;--unknown-bg:rgba(168,179,191,.11);--unknown-bd:rgba(168,179,191,.30);
---critical-row:rgba(255,138,128,.06);--warning-row:rgba(242,180,80,.05);color-scheme:dark;"""
-ATLAS_STYLE = """:root{%(light)s}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){%(dark)s}}
-:root[data-theme="dark"]{%(dark)s}
-:root:has(#theme-light:checked){%(light)s}
-:root:has(#theme-dark:checked){%(dark)s}
-*{box-sizing:border-box}
-html{background:var(--bg)}
-body{margin:0;color:var(--ink);font:15px/1.55 "Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",Arial,sans-serif;
-background:radial-gradient(1200px 520px at 0%% -10%%,var(--glow1),transparent 60%%),radial-gradient(1000px 520px at 100%% -6%%,var(--glow2),transparent 60%%),
-linear-gradient(180deg,var(--bg),var(--bg2));background-attachment:fixed;min-height:100vh;-webkit-font-smoothing:antialiased}
-a{color:var(--accent)}
-.wrap{max-width:1500px;margin:0 auto;padding:22px clamp(14px,2.6vw,40px) 44px}
-.card{background:var(--card);border:1px solid var(--edge);border-radius:16px;box-shadow:var(--shadow)}
-.ic{width:15px;height:15px;flex:none;display:block}
-.chip{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:2px 10px 2px 6px;font-size:12.5px;font-weight:650;white-space:nowrap;border:1px solid}
-.s-ok{color:var(--ok);background:var(--ok-bg);border-color:var(--ok-bd)}
-.s-warning{color:var(--warning);background:var(--warning-bg);border-color:var(--warning-bd)}
-.s-critical{color:var(--critical);background:var(--critical-bg);border-color:var(--critical-bd)}
-.s-info{color:var(--info);background:var(--info-bg);border-color:var(--info-bd)}.s-low{color:var(--low);background:var(--low-bg);border-color:var(--low-bd)}
-.s-unknown{color:var(--unknown);background:var(--unknown-bg);border-color:var(--unknown-bd)}
-.c-ok{color:var(--ok)}.c-warning{color:var(--warning)}.c-critical{color:var(--critical)}.c-info{color:var(--info)}.c-low{color:var(--low)}.c-unknown{color:var(--unknown)}
-.hero{padding:22px clamp(18px,2.4vw,30px);position:relative;overflow:hidden}
-.hero:before{content:"";position:absolute;left:0;right:0;top:0;height:4px;background:var(--accent)}
-.hero:after{content:"";position:absolute;right:-120px;top:-160px;width:520px;height:420px;border-radius:50%%;background:radial-gradient(closest-side,var(--glow1),transparent);pointer-events:none}
-.hero>*{position:relative;z-index:1}
-.top{display:flex;align-items:center;gap:14px}
-.logo{display:block;border-radius:10px}
-.brand{flex:1;min-width:0}
-.brand h1{margin:0;font-size:clamp(21px,2.4vw,28px);line-height:1.2;font-weight:750;letter-spacing:-.01em}
-.brand span{color:var(--muted);font-size:14px}
-.seg{display:inline-flex;position:relative;background:var(--card-strong);border:1px solid var(--edge);border-radius:10px;padding:2px;gap:2px}
-.seg input{position:absolute;opacity:0;width:1px;height:1px;margin:0;pointer-events:none}
-.seg label{font-size:12.5px;font-weight:600;color:var(--muted);border-radius:8px;padding:5px 10px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;user-select:none}
-.seg label:hover{color:var(--ink)}
-.seg input:checked+label{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12),inset 0 0 0 1px var(--edge)}
-.seg input:focus-visible+label,.bar label:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
-.tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:16px 0}
-.tile{padding:16px 18px;position:relative;overflow:hidden}
-.tile .k{font-size:12px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--label);display:flex;align-items:center;gap:7px}
-.tile .v{font-size:34px;font-weight:750;line-height:1.05;margin-top:8px;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
-.tile.hot-critical{border-color:var(--critical-bd);background:linear-gradient(180deg,var(--critical-bg),var(--card) 70%%)}
-.tile.hot-warning{border-color:var(--warning-bd);background:linear-gradient(180deg,var(--warning-bg),var(--card) 70%%)}
-.tab{position:absolute;opacity:0;pointer-events:none}
-.bar{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}
-.bar label{cursor:pointer;display:inline-flex;align-items:center;gap:7px;background:var(--card);border:1px solid var(--edge);border-radius:999px;
-padding:5px 13px;font-size:13px;font-weight:650;color:var(--ink)}
-.bar label:hover{border-color:var(--accent)}
-.bar label .n{font-weight:500;color:var(--muted);font-variant-numeric:tabular-nums}
-.dot{width:8px;height:8px;border-radius:50%%;background:currentColor;flex:none;display:inline-block}
-.list{padding:4px 0}
-.r{border-top:1px solid var(--line)}
-.r:first-child{border-top:0}
-.r>summary{list-style:none;cursor:pointer;display:grid;grid-template-columns:18px 150px minmax(0,1fr) auto;align-items:center;gap:6px 14px;padding:13px 20px}
-.r>summary::-webkit-details-marker{display:none}
-.r>summary:hover{background:var(--hover)}
-.caret{width:16px;height:16px;color:var(--muted);transition:transform .15s}
-.r[open] .caret{transform:rotate(90deg)}
-.nm a{font-weight:700;text-decoration:none;color:var(--ink)}
-.nm a:hover{color:var(--accent);text-decoration:underline}
-.nm .t{color:var(--muted);font-size:13.5px;margin-top:2px}
-.lr{white-space:nowrap;color:var(--muted);font-size:13px;text-align:right;font-variant-numeric:tabular-nums}
-.lr a{color:var(--muted)}
-.runs{padding:0 20px 14px 216px;overflow-x:auto}
-.runs table{border-collapse:collapse;font-size:13.5px}
-.runs td{padding:7px 14px 7px 0;border-top:1px solid var(--line);vertical-align:middle}
-.runs tr:first-child td{border-top:0}
-.runs td a{color:var(--accent);font-weight:600}
-.runs .when{white-space:nowrap;font-variant-numeric:tabular-nums}.runs .job{white-space:nowrap;color:var(--muted)}.runs .tt{color:var(--muted);min-width:220px}
-.none{padding:14px 18px;color:var(--muted)}
-footer{margin-top:22px;text-align:center;color:var(--muted);font-size:13px}
-@media (max-width:700px){
-.wrap{padding:14px 12px 30px}.hero{padding:18px 16px}.top{flex-wrap:wrap}.brand{flex:1 1 calc(100%% - 70px)}.tools{width:100%%;display:flex;justify-content:flex-end}
-.seg label span{display:none}.seg label{padding:6px 9px}
-.tiles{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.tile .v{font-size:26px}
-.r>summary{grid-template-columns:16px minmax(0,1fr);padding:12px 14px}
-.r>summary .st{grid-column:2}.r>summary .nm{grid-column:1 / span 2}.r>summary .lr{grid-column:1 / span 2;text-align:left;white-space:normal}
-.runs{padding:0 14px 12px}.runs table,.runs tbody{display:block}
-.runs tr{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:8px 0;border-top:1px solid var(--line)}
-.runs tr:first-child{border-top:0}.runs td{border:0;padding:0}.runs .tt{min-width:0;flex-basis:100%%}
-}
-@media (prefers-reduced-motion:reduce){*{transition:none!important}}
-@media print{html,body{background:#fff!important}.card{background:#fff!important;box-shadow:none!important}
-.tools,.bar,.tab,.hero:after{display:none!important}}
-%(tabs)s"""
-ATLAS_ICON = {
-    'ok': '<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.3" fill="currentColor" opacity=".2"/>'
-          '<path d="M4.7 8.4l2.1 2.1 4.5-4.7" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-    'warning': '<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.6l6.6 11.6H1.4z" fill="currentColor" opacity=".2" '
-               'stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 6v3.4" stroke="currentColor" stroke-width="1.8" '
-               'stroke-linecap="round"/><circle cx="8" cy="11.4" r=".95" fill="currentColor"/></svg>',
-    'critical': '<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.3" fill="currentColor" opacity=".2"/>'
-                '<path d="M5.5 5.5l5 5M10.5 5.5l-5 5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>',
-    'low': '<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.3" fill="currentColor" opacity=".2"/><path d="M5.2 6.6L8 9.4l2.8-2.8" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-    'info': '<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.3" fill="currentColor" opacity=".2"/>'
-            '<path d="M8 7.2v4.2" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><circle cx="8" cy="4.8" r="1" fill="currentColor"/></svg>',
-    'unknown': '<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.3" fill="currentColor" opacity=".2"/>'
-               '<path d="M6.2 6.2a1.9 1.9 0 113 1.5c-.8.5-1.2.9-1.2 1.7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>'
-               '<circle cx="8" cy="11.6" r=".95" fill="currentColor"/></svg>'}
+# ---- the index page's parts in every look made for a browser
 # the light / auto / dark switch: radio buttons, so it works without the script too (a web server's
 # Content-Security-Policy can block it); the script keeps the choice in this browser (the report pages' key)
 ATLAS_SWITCH = (
@@ -976,206 +953,6 @@ ATLAS_SCRIPT = """<script>
 </script>"""
 
 
-def _chip(status, text=None):
-    k = status if status in PAL else 'unknown'
-    return '<span class="chip s-%s">%s<span>%s</span></span>' % (k, ATLAS_ICON[k], htmllib.escape(text or PAL[k][3]))
-
-
-def index_atlas(reports, index, header_text, logo, generated, tabs=(), js='', tz=None):
-    """The index page in the atlas look: the header card with the light / auto / dark switch, a tile per status, a tab
-    per area (All first; radio buttons and their labels, no script), every report's line - worst first - opening to its
-    last runs."""
-    e = htmllib.escape
-    counts = dict((k, 0) for k in PAL)
-    for r in reports:
-        counts[r.get('status') if r.get('status') in PAL else 'unknown'] += 1
-    tiles = ''.join(
-        '<div class="card tile%s"><div class="k"><span class="c-%s">%s</span>%s</div><div class="v%s">%d</div></div>'
-        % ((' hot-' + k) if counts[k] and k in ('critical', 'warning') else '', k, ATLAS_ICON[k], label,
-           (' c-' + k) if counts[k] and k in ('critical', 'warning') else '', counts[k])
-        for k, label in (('critical', 'Critical'), ('warning', 'Warning'), ('ok', 'Successful'), ('info', 'Info')))
-    of = [area(r.get('name') or r.get('key'), tabs) for r in reports]
-    order = [str(t.get('tab')) for t in tabs or []]               # report_web_tabs' order, then A to Z, Other last
-    areas = sorted(set(of), key=lambda a: (a == 'Other', order.index(a) if a in order else len(order), a.lower()))
-    tab = dict((a, i + 1) for i, a in enumerate(areas))
-    caret = ('<svg class="caret" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" '
-             'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>')
-    rows = []
-    for r, a in zip(reports, of):
-        latest = r.get('latest') or r.get('page') or ''
-        name = ('<a href="%s">%s</a>' % (_href(index, latest), e(r.get('name') or r.get('key') or ''))) if latest else e(r.get('name') or '')
-        run = e(local_time(r.get('when') or '', tz))
-        if r.get('page'):
-            run = '<a href="%s">%s</a>' % (_href(index, r['page']), run or 'this run')
-        runs = _runs(r)
-        lines = ''.join(
-            '<tr><td>%s</td><td class="when"><a href="%s">%s</a>%s</td><td class="job">%s</td><td class="tt">%s</td></tr>'
-            % (_chip(x.get('status')), _href(index, x['page']), e(local_time(x.get('when'), tz) or 'this run'), ' (newest)' if not i else '',
-               _job(x.get('job')), e(x.get('title') or '')) for i, x in enumerate(runs))
-        rows.append(
-            '<details class="r a%d"><summary>%s<span class="st">%s</span><span class="nm">%s<div class="t">%s</div></span>'
-            '<span class="lr">%s%s &middot; %d run%s</span></summary><div class="runs"><table>%s</table></div></details>'
-            % (tab[a], caret, _chip(r.get('status')), name, e(r.get('title') or ''), run,
-               (' &middot; ' + _job(r.get('job'))) if _job(r.get('job')) else '', len(runs), '' if len(runs) == 1 else 's',
-               lines or '<tr><td>No page of its runs listed.</td></tr>'))
-    # All, then the areas; a dot on an area with a Critical or a Warning
-    inputs, labels, rules = [], [], []
-    for i, label in enumerate(['All'] + areas):
-        mine = [r for r, a in zip(reports, of) if not i or a == label]
-        worst = min([RANK.get(r.get('status'), 2) for r in mine] or [4])
-        dot = '<span class="dot c-%s"></span>' % ('critical' if worst == 0 else 'warning') if i and worst <= 1 else ''
-        inputs.append('<input type="radio" name="tab" id="t%d" class="tab"%s>' % (i, '' if i else ' checked'))
-        labels.append('<label for="t%d">%s%s <span class="n">%d</span></label>' % (i, dot, e(label), len(mine)))
-        rules.append('#t%d:checked~.bar label[for=t%d]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}\n'
-                     '#t%d:checked~.bar label[for=t%d] .n{color:var(--accent-ink)}\n'
-                     '#t%d:focus-visible~.bar label[for=t%d]{outline:2px solid var(--accent);outline-offset:2px}\n' % ((i,) * 6))
-        if i:
-            rules.append('#t%d:checked~.list .r:not(.a%d){display:none}\n' % (i, i))
-    logo_img = ('<img class="logo" src="%s" width="%d" height="%d" alt="">' % (logo[0], logo[1], logo[2])) if logo else ''
-    return ('<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
-            '<meta name="viewport" content="width=device-width, initial-scale=1">\n<meta name="color-scheme" content="light dark">\n'
-            '<title>%(header)s - reports</title>\n%(early)s\n<style>\n%(style)s</style>\n</head>\n<body>\n<div class="wrap">\n'
-            '<header class="card hero"><div class="top">%(logo)s<div class="brand"><h1>%(header)s</h1>'
-            '<span>Every report&#39;s last runs &middot; %(n)d report(s) &middot; updated %(generated)s</span></div>'
-            '<div class="tools">%(switch)s</div></div></header>\n'
-            '<div class="tiles">%(tiles)s</div>\n%(tabs)s<div class="card list">\n%(rows)s\n</div>\n</div>\n%(script)s\n</body>\n</html>\n') % {
-        'header': e(header_text), 'early': ATLAS_EARLY + ('\n' + script_tag(index, js) if js else ''), 'logo': logo_img, 'n': len(reports), 'generated': e(local_time(generated, tz)),
-        'style': ATLAS_STYLE % {'light': ATLAS_LIGHT, 'dark': ATLAS_DARK, 'tabs': ''.join(rules)},
-        'switch': ATLAS_SWITCH, 'tiles': tiles,
-        'tabs': (''.join(inputs) + '\n<div class="bar">' + ''.join(labels) + '</div>\n') if reports else '',
-        'rows': '\n'.join(rows) or '<div class="none">No reports yet.</div>', 'script': ATLAS_SCRIPT}
-
-
-# ---- the brief look (report_web_theme: brief, 0.92.0): the index page as a morning brief - how many reports need
-# action, in one large line; the counts as one ruled strip; a card for each report that needs action, with the first
-# step its report gives (its first Start here card) and its last runs; then every report, grouped by area, its last
-# runs as small squares. The same palette as roles/site_email/templates/report_brief.html.j2 (tests/test_report_web.py
-# checks they match); light and dark; the switch and the area tabs are radio buttons (no script needed).
-BRIEF_LIGHT = """--ink:#182027;--muted:#545c63;--label:#363e45;--accent:#00704e;--accent-ink:#f7fbf9;--accent-soft:rgba(0,112,78,.11);
---bg:#f4f8f6;--bg2:#eef2f0;--glow:rgba(0,112,78,.06);--card:rgba(255,255,255,.65);--card-solid:#fbfdfc;
---card-strong:rgba(24,32,39,.035);--th:#f3f5f5;--edge:rgba(24,32,39,.08);--line:rgba(24,32,39,.05);
---zebra:rgba(24,32,39,.02);--hover:rgba(0,112,78,.06);--code:rgba(24,32,39,.04);--bar:rgba(244,248,246,.8);
---ok:#0e6538;--ok-bg:rgba(14,101,56,0.1);--ok-bd:rgba(14,101,56,0.2);--warning:#844b0b;
---warning-bg:rgba(132,75,11,0.1);--warning-bd:rgba(132,75,11,0.2);--critical:#a82823;
---critical-bg:rgba(168,40,35,0.1);--critical-bd:rgba(168,40,35,0.2);--info:#2b58b1;--info-bg:rgba(43,88,177,0.1);--low:#88358e;--low-bg:rgba(136,53,142,0.1);--low-bd:rgba(136,53,142,0.2);
---info-bd:rgba(43,88,177,0.2);--unknown:#545c63;--unknown-bg:rgba(84,92,99,0.1);--unknown-bd:rgba(84,92,99,0.2);
---critical-row:rgba(168,40,35,0.04);--warning-row:rgba(132,75,11,0.045);color-scheme:light;"""
-BRIEF_DARK = """--ink:#e0e0e0;--muted:#a3a3a3;--label:#bdbdbd;--accent:#7fcbac;--accent-ink:#0f1f19;
---accent-soft:rgba(127,203,172,.11);--bg:#121212;--bg2:#161616;--glow:rgba(127,203,172,.05);
---card:rgba(255,255,255,.05);--card-solid:#1e1e1e;--card-strong:rgba(255,255,255,.06);--th:#2c2c2c;
---edge:rgba(255,255,255,.08);--line:rgba(255,255,255,.05);--zebra:rgba(255,255,255,.02);--hover:rgba(127,203,172,.07);
---code:rgba(0,0,0,.22);--bar:rgba(18,18,18,.82);--ok:#87c79c;--ok-bg:rgba(135,199,156,0.12);
---ok-bd:rgba(135,199,156,0.22);--warning:#dcb671;--warning-bg:rgba(220,182,113,0.12);
---warning-bd:rgba(220,182,113,0.22);--critical:#f0968f;--critical-bg:rgba(240,150,143,0.12);
---critical-bd:rgba(240,150,143,0.22);--info:#8fb3ec;--info-bg:rgba(143,179,236,0.12);--low:#c168d5;--low-bg:rgba(193,104,213,0.12);--low-bd:rgba(193,104,213,0.22);--info-bd:rgba(143,179,236,0.22);
---unknown:#b0b0b0;--unknown-bg:rgba(176,176,176,0.12);--unknown-bd:rgba(176,176,176,0.22);
---critical-row:rgba(240,150,143,0.05);--warning-row:rgba(220,182,113,0.05);color-scheme:dark;"""
-# the style, its tokens and tab rules put in with replace (no % or {} to escape)
-BRIEF_STYLE = """:root{@LIGHT@}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){@DARK@}}
-:root[data-theme="dark"]{@DARK@}
-:root:has(#theme-light:checked){@LIGHT@}
-:root:has(#theme-dark:checked){@DARK@}
-:root{--sans:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",Arial,sans-serif;
---display:"Segoe UI Variable Display","Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",Arial,sans-serif;
---mono:ui-monospace,"Cascadia Mono","Cascadia Code",Consolas,"SF Mono",Menlo,"DejaVu Sans Mono",monospace;--ease:cubic-bezier(.16,1,.3,1)}
-*{box-sizing:border-box}
-[hidden]{display:none!important}
-html{background:var(--bg)}
-body{margin:0;color:var(--ink);background:radial-gradient(1100px 560px at 12% -10%,var(--glow),transparent 70%) no-repeat,var(--bg);font:15px/1.55 var(--sans);letter-spacing:-.003em;min-height:100vh;-webkit-font-smoothing:antialiased}
-a{color:var(--accent);text-underline-offset:2px}
-.wrap{max-width:1500px;margin:0 auto;padding:0 clamp(16px,3vw,48px) 56px}
-.ic{width:15px;height:15px;flex:none;display:block}
-.lbl{font-size:11.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--label)}
-.chip{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:2px 10px 2px 6px;font-size:12.5px;font-weight:650;white-space:nowrap;border:1px solid}
-.s-ok{color:var(--ok);background:var(--ok-bg);border-color:var(--ok-bd)}
-.s-warning{color:var(--warning);background:var(--warning-bg);border-color:var(--warning-bd)}
-.s-critical{color:var(--critical);background:var(--critical-bg);border-color:var(--critical-bd)}
-.s-info{color:var(--info);background:var(--info-bg);border-color:var(--info-bd)}.s-low{color:var(--low);background:var(--low-bg);border-color:var(--low-bd)}
-.s-unknown{color:var(--unknown);background:var(--unknown-bg);border-color:var(--unknown-bd)}
-.c-ok{color:var(--ok)}.c-warning{color:var(--warning)}.c-critical{color:var(--critical)}.c-info{color:var(--info)}.c-low{color:var(--low)}.c-unknown{color:var(--unknown)}
-/* the top: the site's logo and name, the switch */
-.top{display:flex;align-items:center;gap:16px;padding:16px 0;border-bottom:1px solid var(--edge)}
-.logo{display:block;border-radius:9px;height:auto;max-height:60px;width:auto}
-.brand{flex:1;min-width:0;font-weight:700;font-size:16px}
-.brand span{display:block;color:var(--muted);font-weight:400;font-size:13px}
-.seg{display:inline-flex;position:relative;background:var(--card-strong);border:1px solid var(--edge);border-radius:9px;padding:2px;gap:2px}
-.seg input{position:absolute;opacity:0;width:1px;height:1px;margin:0;pointer-events:none}
-.seg label{font-size:12.5px;font-weight:600;color:var(--muted);border-radius:7px;padding:5px 10px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;user-select:none}
-.seg label:hover{color:var(--ink)}
-.seg input:checked+label{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12),inset 0 0 0 1px var(--edge)}
-.seg input:focus-visible+label,.bar label:focus-visible,.r>summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-/* the heading: a title and one plain line - the list below is the page; colour only on the small chips */
-.hero{padding:clamp(22px,3vw,40px) 0 18px}
-.hero h1{margin:0;font-family:var(--display);font-weight:650;font-size:clamp(1.5rem,1.1rem + 1.2vw,2.1rem);line-height:1.2;letter-spacing:-.02em}
-.hero .say{margin:6px 0 0;color:var(--muted);font-size:15px;font-variant-numeric:tabular-nums}
-.tally{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
-.tally .chip b{font-variant-numeric:tabular-nums}
-/* a report's first step, under its line when opened */
-.step{padding:4px 0 12px;font-size:14px;max-width:110ch}
-.step .lbl{display:block;color:var(--accent);margin-bottom:4px}
-.step .stt{margin:0;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.step .code pre{white-space:pre;overflow-x:auto;overflow-wrap:normal;max-height:calc(3 * 1.5em + 18px);overflow-y:hidden}
-.step .open{display:inline-block;margin-top:8px;font-size:13.5px;font-weight:600}
-.code{display:flex;align-items:flex-start;gap:8px;margin-top:8px}
-.code pre{margin:0;flex:1;white-space:pre-wrap;overflow-wrap:anywhere;font:12.8px/1.5 var(--mono);background:var(--code);border:1px solid var(--line);border-radius:9px;padding:8px 11px}
-.copy{font:inherit;font-size:12px;font-weight:650;color:var(--ink);background:var(--card);border:1px solid var(--edge);border-radius:8px;padding:4px 10px;cursor:pointer;margin-top:3px}
-.copy:hover{border-color:var(--accent)}.copy.done{color:var(--ok);border-color:var(--ok-bd)}
-:root:not(.js) .code pre{-webkit-user-select:all;user-select:all}
-/* the last runs as small squares, oldest to newest */
-.sqs{display:inline-flex;gap:4px;align-items:center}
-.sq{width:11px;height:11px;border-radius:3px;background:currentColor;display:inline-block;opacity:.75;filter:saturate(.7)}
-.sq:hover{opacity:1}
-.sq.now{opacity:1;filter:saturate(.85);box-shadow:0 0 0 2px var(--card-solid),0 0 0 3.5px currentColor}
-/* every report, by area */
-.tab{position:absolute;opacity:0;pointer-events:none}
-.bar{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 12px}
-.bar label{cursor:pointer;display:inline-flex;align-items:center;gap:7px;border:1px solid transparent;border-radius:8px;padding:5px 11px;font-size:13px;font-weight:650;color:var(--muted)}
-.bar label:hover{color:var(--ink);background:var(--card-strong)}
-.bar label .n{font-weight:500;font-family:var(--mono);font-size:12px;font-variant-numeric:tabular-nums}
-.dot{width:8px;height:8px;border-radius:50%;background:currentColor;flex:none;display:inline-block}
-.list{background:var(--card);border:1px solid var(--edge);border-radius:16px;padding:4px 0;overflow:hidden}
-@supports (backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px)){.list{-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}}
-@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){.list{background:var(--card-solid)}}
-.grp{display:flex;align-items:baseline;gap:10px;padding:16px 20px 8px;border-top:1px solid var(--edge)}
-.grp:first-child{border-top:0}
-.grp b{font-family:var(--display);font-size:15px;font-weight:650;letter-spacing:-.01em}
-.grp .n{font-family:var(--mono);font-size:12px;color:var(--muted)}
-.r{border-top:1px solid var(--line)}
-.grp+.r{border-top:0}
-.r>summary{list-style:none;cursor:pointer;display:grid;grid-template-columns:16px 150px minmax(0,1fr) auto auto;align-items:center;gap:6px 16px;padding:11px 20px}
-.r>summary::-webkit-details-marker{display:none}
-.r>summary:hover{background:var(--hover)}
-.caret{width:16px;height:16px;color:var(--muted);transition:transform .25s var(--ease)}
-.r[open] .caret{transform:rotate(90deg)}
-.nm a{font-weight:650;text-decoration:none;color:var(--ink)}
-.nm a:hover{color:var(--accent);text-decoration:underline}
-.nm .t{color:var(--muted);font-size:13.5px;margin-top:1px}
-.lr{white-space:nowrap;color:var(--muted);font-size:13px;text-align:right;font-variant-numeric:tabular-nums}
-.lr a{color:var(--muted)}
-.runs{padding:0 20px 14px 202px;overflow-x:auto}
-.runs table{border-collapse:collapse;font-size:13.5px}
-.runs td{padding:7px 14px 7px 0;border-top:1px solid var(--line);vertical-align:middle}
-.runs tr:first-child td{border-top:0}
-.runs td a{color:var(--accent);font-weight:600}
-.runs .when{white-space:nowrap;font-variant-numeric:tabular-nums}.runs .job{white-space:nowrap;color:var(--muted)}.runs .tt{color:var(--muted);min-width:220px}
-.none{padding:16px 20px;color:var(--muted)}
-footer{margin-top:44px;padding-top:16px;border-top:1px solid var(--edge);color:var(--muted);font-size:13px}
-@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
-@media (max-width:760px){
-.wrap{padding:0 16px 36px}.top{gap:12px}.logo{max-height:44px}.brand{flex:1 1 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.tools{flex:none}
-.seg label span{display:none}.seg label{padding:6px 9px}
-.r>summary{grid-template-columns:16px minmax(0,1fr) auto;padding:12px 14px}
-.r>summary .st{grid-column:2}.r>summary .sqs{grid-column:3;grid-row:1}.r>summary .nm{grid-column:1 / span 3}.r>summary .lr{grid-column:1 / span 3;text-align:left;white-space:normal}
-.runs{padding:0 14px 12px}.runs table,.runs tbody{display:block}
-.runs tr{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:8px 0;border-top:1px solid var(--line)}
-.runs tr:first-child{border-top:0}.runs td{border:0;padding:0}.runs .tt{min-width:0;flex-basis:100%}
-.grp{padding:14px 14px 6px}}
-@media print{*{animation:none!important}html,body{background:#fff!important}.list{background:#fff!important;border-color:#bbb!important}
-.tools,.bar,.tab,.copy{display:none!important}.chip,.sq{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
-@TABS@"""
-
-
 def first_step(report):
     """The first step a report gives (its first Start here card), short, for its line of the index: the title on one
     line (at most 200 characters), the command only when it is short (3 lines and 300 characters at most - a long one,
@@ -1191,284 +968,442 @@ def first_step(report):
     return None
 
 
-def _squares(index, r, n=5, tz=None):
-    """A line's last runs as small squares, oldest to newest (the newest ringed), each a link to its page."""
-    e = htmllib.escape
-    runs = _runs(r)[:n]
-    return '<span class="sqs" aria-label="The last %d run%s">%s</span>' % (len(runs), '' if len(runs) == 1 else 's', ''.join(
-        '<a class="sq c-%s%s" href="%s" title="%s"></a>' % (
-            x.get('status') if x.get('status') in PAL else 'unknown', ' now' if not i else '', _href(index, x['page']),
-            e('%s - %s%s' % (local_time(x.get('when'), tz) or 'a run', PAL.get(x.get('status'), PAL['unknown'])[3],
-                            (' - ' + str(x.get('title'))) if x.get('title') else '')))
-        for i, x in reversed(list(enumerate(runs)))))
-
-
 def _plural(n, one, many):
     return '%d %s' % (n, one if n == 1 else many)
 
 
-def index_brief(reports, index, header_text, logo, generated, tabs=(), js='', tz=None):
-    """The index page in the brief look: a plain title and one line (how many reports, the last run, the counts as
-    small chips), then every report by area (a tab per area, radio buttons - no script), each line opening to its
-    first step (a report that needs action) and its last runs. Calm on purpose: the list is the page."""
+# ---- the index page (1.72.0): the same board in every look made for a browser (atlas, brief, ops), each in its own
+# colours. Calm on purpose: red only for a run that could not check, a critical count up since the run before, or a
+# report that did not run on time; the findings as counts in plain ink. At a glance (four tiles), Look at these first,
+# a tab per area, a card per area, each report's line with a sparkline of its last 12 runs and its last runs' pages.
+# Light, dark and the tabs work without the script; site-report.js judges "Didn't run on time" and gives Copy link.
+BOARD_TOKENS = ('bg', 'bg2', 'card', 'card2', 'edge', 'line', 'ink', 'ink2', 'mute', 'accent', 'ok', 'ok-soft', 'warn', 'crit',
+                'crit-fill', 'crit-soft', 'crit-edge', 'spark', 'spark-base')
+# each look's colours (light, dark): its own surfaces and ink, the same status steps. Every text token is 4.5:1 or
+# better on the card and the page (tests/test_report_web.py Release1720 checks it).
+BOARD_LOOK = {
+    'ops': ({'bg': '#eef1f6', 'bg2': '#e4e9f1', 'card': '#fbfcfe', 'card2': '#f4f6fa', 'edge': '#d8deea', 'line': '#e6eaf1',
+             'ink': '#152033', 'ink2': '#36425a', 'mute': '#5a6680', 'accent': '#1b5cc0', 'ok': '#17773a', 'ok-soft': '#e5f2ea',
+             'warn': '#b8860b', 'crit': '#b0261d', 'crit-fill': '#c62f25', 'crit-soft': '#fbeae8', 'crit-edge': '#f0c4bf',
+             'spark': '#4f5b74', 'spark-base': '#d5dbe6'},
+            {'bg': '#0e1424', 'bg2': '#0b1120', 'card': '#151d31', 'card2': '#111a2c', 'edge': '#26314a', 'line': '#1e2740',
+             'ink': '#e9edf5', 'ink2': '#c9d1e2', 'mute': '#93a0b8', 'accent': '#8ab4f8', 'ok': '#5fcf8a', 'ok-soft': '#14301f',
+             'warn': '#e3a33b', 'crit': '#f09a92', 'crit-fill': '#d03b3b', 'crit-soft': '#3a1717', 'crit-edge': '#6a2a2a',
+             'spark': '#b4bed0', 'spark-base': '#2a3550'}),
+    'atlas': ({'bg': '#f3f5f7', 'bg2': '#e9eef2', 'card': '#ffffff', 'card2': '#f7f9fb', 'edge': '#dde3ea', 'line': '#e8ecf1',
+               'ink': '#111827', 'ink2': '#374151', 'mute': '#4b5563', 'accent': '#0b7352', 'ok': '#0a6b45', 'ok-soft': '#e6f5ed',
+               'warn': '#b8860b', 'crit': '#b42318', 'crit-fill': '#c62f25', 'crit-soft': '#fdeceb', 'crit-edge': '#f0a59c',
+               'spark': '#4b5563', 'spark-base': '#d3dae3'},
+              {'bg': '#0b0f14', 'bg2': '#0e141b', 'card': '#121820', 'card2': '#171f29', 'edge': '#263243', 'line': '#1e2834',
+               'ink': '#e6edf3', 'ink2': '#c2ccd6', 'mute': '#9aa7b4', 'accent': '#3ecf98', 'ok': '#4fd69a', 'ok-soft': '#12302a',
+               'warn': '#e3a33b', 'crit': '#ff8a80', 'crit-fill': '#d03b3b', 'crit-soft': '#341a1a', 'crit-edge': '#6a2c2a',
+               'spark': '#a8b3bf', 'spark-base': '#263243'}),
+    'brief': ({'bg': '#f4f8f6', 'bg2': '#eef2f0', 'card': '#fbfdfc', 'card2': '#f1f4f3', 'edge': '#e0e5e3', 'line': '#eaeeec',
+               'ink': '#182027', 'ink2': '#363e45', 'mute': '#545c63', 'accent': '#00704e', 'ok': '#0e6538', 'ok-soft': '#e4efe9',
+               'warn': '#b8860b', 'crit': '#a82823', 'crit-fill': '#c62f25', 'crit-soft': '#f8eceb', 'crit-edge': '#e8c2bf',
+               'spark': '#545c63', 'spark-base': '#d6dcd9'},
+              {'bg': '#121212', 'bg2': '#161616', 'card': '#1e1e1e', 'card2': '#242424', 'edge': '#2e2e2e', 'line': '#272727',
+               'ink': '#e0e0e0', 'ink2': '#bdbdbd', 'mute': '#a3a3a3', 'accent': '#7fcbac', 'ok': '#87c79c', 'ok-soft': '#1f2b24',
+               'warn': '#dcb671', 'crit': '#f0968f', 'crit-fill': '#d03b3b', 'crit-soft': '#331d1c', 'crit-edge': '#5c3532',
+               'spark': '#b0b0b0', 'spark-base': '#333333'})}
+BOARD_STYLE = """:root{@LIGHT@}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){@DARK@}}
+:root[data-theme="dark"]{@DARK@}
+:root:has(#theme-light:checked){@LIGHT@}
+:root:has(#theme-dark:checked){@DARK@}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{-webkit-text-size-adjust:100%;background:var(--bg)}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 "Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,"DejaVu Sans",Arial,sans-serif;
+font-variant-numeric:tabular-nums}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+a:focus-visible,button:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+svg{display:block}
+.ic{width:14px;height:14px;flex:none;display:block}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.mutec{color:var(--mute)}.small{font-size:12px}
+.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--edge)}
+.top .in{max-width:1240px;margin:0 auto;padding:12px 20px;display:flex;align-items:center;gap:14px}
+.mark{width:40px;height:40px;border-radius:10px;background:var(--ink);color:var(--card);display:grid;place-items:center;font-weight:800;letter-spacing:.02em;font-size:14px;flex:none}
+.logo{display:block;border-radius:8px;flex:none;max-height:44px;width:auto}
+.top h1{margin:0;font:700 clamp(18px,1.5vw,21px)/1.15 "Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;letter-spacing:-.01em}
+.top .site{color:var(--mute);font-size:12.5px}
+.top .grow{flex:1}
+.top .upd{color:var(--mute);font-size:12.5px;text-align:right;line-height:1.35}
+.top .upd b{color:var(--ink2);font-weight:600}
+.seg{display:inline-flex;position:relative;background:var(--card);border:1px solid var(--edge);border-radius:999px;padding:2px;gap:2px}
+.seg input{position:absolute;opacity:0;width:1px;height:1px;margin:0;pointer-events:none}
+.seg label{font-size:12.5px;font-weight:600;color:var(--mute);border-radius:999px;padding:4px 10px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;user-select:none}
+.seg label:hover{color:var(--ink)}
+.seg input:checked+label{background:var(--card2);color:var(--ink);box-shadow:inset 0 0 0 1px var(--edge)}
+.seg input:focus-visible+label,.tabs label:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+main{max-width:1240px;margin:0 auto;padding:18px 20px 40px}
+.hero{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));background:var(--card);border:1px solid var(--edge);border-radius:14px;overflow:hidden}
+.tile{padding:14px 18px 16px;display:flex;flex-direction:column;gap:4px;min-width:0;border-left:1px solid var(--line);position:relative}
+.tile:first-child{border-left:0}
+.tl{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);display:flex;gap:6px;align-items:center}
+.tv{display:flex;align-items:baseline;gap:6px}
+.big{font:700 clamp(28px,2.6vw,36px)/1.05 "Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;letter-spacing:-.02em}
+.of{color:var(--mute);font-size:13px}
+.td{color:var(--mute);font-size:12.5px;overflow-wrap:anywhere}
+.t-good .tl .ic{color:var(--ok)}
+.t-bad::before{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:var(--crit-fill)}
+.t-bad .tl,.t-bad .big,.t-bad .tl .ic{color:var(--crit)}
+.t-bad .td{color:var(--ink2)}
+.totals{margin:10px 2px 0;color:var(--mute);font-size:12.5px;display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center}
+.totals b{color:var(--ink);font-weight:600}
+.look{margin-top:18px;background:var(--card);border:1px solid var(--crit-edge);border-radius:14px;padding:12px 16px 6px}
+.look h2,.area h2{margin:0;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--mute)}
+.look h2{color:var(--crit)}
+.look ul{list-style:none;margin:6px 0 0;padding:0}
+.look li{display:grid;grid-template-columns:22px minmax(150px,220px) minmax(0,1fr) auto;gap:10px;align-items:center;padding:9px 0}
+.look li:not([hidden])~li:not([hidden]){border-top:1px solid var(--line)}
+.look li>a:not(.go){font-weight:600}
+.lw{color:var(--ink2);font-size:13px;overflow-wrap:anywhere}
+.go{font-size:12.5px;font-weight:600;white-space:nowrap}
+.tab{position:absolute;opacity:0;pointer-events:none}
+.tabs{margin:22px 0 12px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.tabs label{font-size:13px;font-weight:600;color:var(--ink2);border:1px solid var(--edge);border-radius:999px;padding:6px 12px;cursor:pointer;display:flex;gap:6px;align-items:center}
+.tabs label:hover{background:var(--card)}
+.tn{font-weight:400;opacity:.75}
+.tdot{width:7px;height:7px;border-radius:50%;background:var(--crit-fill);display:inline-block;box-shadow:0 0 0 2px var(--bg)}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.area{background:var(--card);border:1px solid var(--edge);border-radius:14px;padding:12px 16px 6px;min-width:0}
+.span2{grid-column:span 2}
+.span2 .rows{columns:2;column-gap:28px;column-rule:1px solid var(--line)}
+.span2 .rr{break-inside:avoid}
+.area header{display:flex;justify-content:space-between;align-items:center;gap:10px;padding-bottom:6px}
+.area h2{color:var(--ink);font-size:12px}
+.area h2 .n{color:var(--mute);font-weight:400;letter-spacing:0;margin-left:4px}
+.ah{display:flex;gap:5px;align-items:center;font-size:12.5px;font-weight:600}
+.ah.good{color:var(--ok)}.ah.bad{color:var(--crit)}.ah b{font-weight:600}
+.rr{border-top:1px solid var(--line)}
+.rr>summary{list-style:none;cursor:pointer;display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 0}
+.rr>summary::-webkit-details-marker{display:none}
+.si{width:20px;height:20px;border-radius:6px;display:grid;place-items:center}
+.si-ok{color:var(--ok);background:var(--ok-soft)}
+.si-info{color:var(--mute);background:var(--card2)}
+.si-notchecked,.si-late,.si-up{color:#fff;background:var(--crit-fill)}
+.rr[data-late] .si-norm,.rr:not([data-late]) .si-late{display:none}
+.rt{display:flex;flex-direction:column;min-width:0;gap:1px}
+.rh{display:flex;flex-wrap:wrap;align-items:center;gap:2px 10px}
+.rn{font-weight:650;color:var(--ink)}
+.rr>summary:hover .rn{text-decoration:underline}
+.lcopy{font:inherit;font-size:11.5px;font-weight:600;color:var(--accent);background:transparent;border:1px solid var(--edge);border-radius:999px;padding:0 8px;line-height:18px;cursor:pointer}
+.lcopy:hover{background:var(--card2)}
+.lcopy.done{color:var(--ok);border-color:var(--ok)}
+.rs{color:var(--ink2);font-size:13px;overflow-wrap:anywhere}
+.rm{display:flex;flex-wrap:wrap;gap:2px 12px;font-size:12.5px;color:var(--ink2);align-items:center}
+.when{color:var(--mute)}
+.ct{display:inline-flex;align-items:center;gap:5px}
+.sh{display:inline-block;width:8px;height:8px}
+.sh-c{background:var(--crit-fill);transform:rotate(45deg);width:7px;height:7px}
+.sh-w{width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:8px solid var(--warn)}
+.flag{display:inline-flex;align-items:center;gap:4px;font-weight:700;color:var(--crit);font-size:12px}
+.flag .ic{width:11px;height:11px}
+.calm{font-size:12px;color:var(--ink2);font-weight:600}
+.sp{display:flex;align-items:center;gap:6px}
+.sp path{fill:none;stroke:var(--spark);stroke-width:1.6;stroke-linejoin:round;stroke-linecap:round}
+.sp .base{stroke:var(--spark-base);stroke-width:1}
+.sp .end{fill:var(--ink);stroke:var(--card);stroke-width:1.5}
+.sp .lone{fill:var(--spark)}
+.sp .miss{stroke:var(--crit-fill);stroke-width:1.5;stroke-dasharray:2 2}
+.rr.up .sp .end{fill:var(--crit-fill)}
+.spv{min-width:18px;text-align:right;font-size:13px;color:var(--ink)}
+.nos{font-size:12px;color:var(--mute);width:136px;text-align:right}
+.runs{padding:0 0 12px 32px}
+.runs table{border-collapse:collapse;width:100%;font-size:12.5px}
+.runs th{text-align:left;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);font-weight:700;padding:4px 8px 4px 0;border-bottom:1px solid var(--line)}
+.runs td{padding:6px 8px 6px 0;border-bottom:1px solid var(--line);vertical-align:top}
+.runs td.nw{white-space:nowrap}
+.runs td.wr{overflow-wrap:anywhere}
+.st-i{display:inline-flex;align-items:center;gap:4px}
+.st-i .ic{width:12px;height:12px}
+.st-ok{color:var(--ok)}.st-info{color:var(--mute)}.st-notchecked{color:var(--crit)}
+.st-w{color:var(--ink2)}
+.none{padding:14px 2px;color:var(--mute)}
+.foot{margin-top:22px;color:var(--mute);font-size:12px;display:flex;flex-wrap:wrap;gap:4px 16px;justify-content:space-between}
+@media (max-width:980px){.grid{grid-template-columns:minmax(0,1fr)}.span2{grid-column:auto}
+.hero{grid-template-columns:repeat(2,minmax(0,1fr))}.tile:nth-child(3){border-left:0}.tile:nth-child(n+3){border-top:1px solid var(--line)}}
+@media (max-width:860px){.span2 .rows{columns:1}.seg label span{display:none}}
+@media (prefers-reduced-motion:no-preference){.rr[open]>.runs{animation:board-in .25s cubic-bezier(.16,1,.3,1)}
+@keyframes board-in{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}}
+@media print{.top{position:static}.seg,.tabs,.lcopy{display:none!important}html,body{background:#fff}}
+@TABS@"""
+BOARD_ICON = {   # each state its own shape and word, never colour alone
+    'ok': '<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" stroke-width="2" '
+          'stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    'info': '<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.5" fill="currentColor"/></svg>',
+    'notchecked': '<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" '
+                  'stroke-width="2" stroke-linecap="round"/></svg>',
+    'late': '<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.6"/>'
+            '<path d="M8 5v3.2l2 1.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
+    'up': '<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3l5 8H3z" fill="currentColor"/></svg>'}
+BOARD_WORD = {'ok': 'Ran', 'info': 'Ran, report only', 'notchecked': 'Not checked', 'late': "Didn't run on time"}
+SPARK_W, SPARK_H, SPARK_PAD, SPARK_TOP = 112, 20, 4, 4      # a line's sparkline: drawn in 112 x 20 (0 at the bottom), 4 at least on top
+
+
+def _state(status):
+    """A run's state on the index: Ran (ok, warning, critical, low), Ran, report only (info), Not checked (unknown)."""
+    return 'notchecked' if status not in PAL or status == 'unknown' else ('info' if status == 'info' else 'ok')
+
+
+def _tokens(look, dark):
+    t = BOARD_LOOK.get(look) or BOARD_LOOK['ops']
+    return ''.join('--%s:%s;' % (k, t[1 if dark else 0][k]) for k in BOARD_TOKENS) + 'color-scheme:%s;' % ('dark' if dark else 'light')
+
+
+def spark(line, keys=('critical', 'warning'), floor=SPARK_TOP):
+    """1.72.0: a line's trend as a sparkline, oldest first: vals (the runs' findings of keys added; None for a run not
+    counted), max, and the SVG path and points - drawn as report_dash_filters.dash_path draws the dashboard's weekly line
+    (a gap at None) in SPARK_W x SPARK_H, the top at least floor (tests/test_report_web.py holds the two to the same
+    points). None when no run was counted."""
+    keys = (keys,) if isinstance(keys, str) else tuple(keys)
+    t = [x for x in (line or {}).get('trend') or [] if isinstance(x, dict)][::-1]
+    vals = [sum(int(x['counts'].get(k) or 0) for k in keys) if isinstance(x.get('counts'), dict) else None for x in t]
+    have = [v for v in vals if v is not None]
+    if not have:
+        return None
+    top = max([floor] + have)
+    n, w, h, pad = len(vals), SPARK_W, SPARK_H, SPARK_PAD
+    pts = [(round(pad + (w - 2 * pad) * (i / float(max(1, n - 1))), 1), round(h - (h * v / float(top)), 1)) if v is not None else None
+           for i, v in enumerate(vals)]
+    d, pen = [], False
+    for q in pts:
+        if q is None:
+            pen = False
+            continue
+        d.append(('L' if pen else 'M') + '%s %s' % q)
+        pen = True
+    return {'vals': vals, 'max': max(have), 'top': top, 'd': ' '.join(d), 'pts': pts}
+
+
+def _spark_svg(r):
+    """A line's sparkline: its critical and warning findings over its last runs, the newest right; its last count
+    beside it ("-": the last run was not counted). Report only: no line."""
+    sp = spark(r)
+    if not sp:
+        return '<span class="nos">%s</span>' % ('report only' if r.get('status') == 'info' else 'no counts yet')
     e = htmllib.escape
-    counts = dict((k, 0) for k in PAL)
-    for r in reports:
-        counts[r.get('status') if r.get('status') in PAL else 'unknown'] += 1
-    last = max([str(r.get('when') or '') for r in reports] or [''])
-    say = ('%s &middot; last run %s' % (_plural(len(reports), 'report', 'reports'), e(local_time(last, tz))) if last else _plural(len(reports), 'report', 'reports')) \
-        if reports else 'No reports yet. A report job writes its page here when it runs.'
-    tally = ''.join('<span class="chip s-%s">%s<b>%d</b> %s</span>' % (k, ATLAS_ICON.get(k, ''), counts[k], label)
-                    for k, label in (('critical', 'Critical'), ('warning', 'Warning'), ('low', 'Low'), ('ok', 'Successful'), ('info', 'Info'), ('unknown', 'Unknown'))
-                    if counts[k])
+    vals, pts = sp['vals'], sp['pts']
+    n = len(vals)
+    label = 'Critical and warning findings, last %s, oldest first: %s' % (
+        _plural(n, 'run', 'runs'), ', '.join('-' if v is None else str(v) for v in vals))
+    lone = ''.join('<circle class="lone" cx="%s" cy="%s" r="1.6"/>' % p for i, p in enumerate(pts)
+                   if p and (i == 0 or pts[i - 1] is None) and (i == n - 1 or pts[i + 1] is None) and i != n - 1)
+    end = ('<circle class="end" cx="%s" cy="%s" r="3"/>' % pts[-1]) if pts[-1] else ''
+    x = round(SPARK_W - SPARK_PAD, 1)
+    miss = '' if pts[-1] else '<line class="miss" x1="%s" y1="0" x2="%s" y2="%d"/>' % (x, x, SPARK_H)
+    return ('<span class="sp"><svg viewBox="0 0 %d %d" width="%d" height="%d" role="img" aria-label="%s"><title>%s</title>'
+            '<g transform="translate(0 4)"><line class="base" x1="%d" y1="%d" x2="%d" y2="%d"/><path d="%s"/>%s%s%s</g></svg>'
+            '<b class="spv">%s</b></span>'
+            % (SPARK_W, SPARK_H + 8, SPARK_W, SPARK_H + 8, e(label), e(label), SPARK_PAD, SPARK_H, SPARK_W - SPARK_PAD, SPARK_H,
+               sp['d'], lone, end, miss, '-' if vals[-1] is None else vals[-1]))
+
+
+def _short(when, generated, tz):
+    """A run's time in a line: the time alone on the index's own day, else the day and the time (the zone in its title)."""
+    full = local_time(when or '', tz)
+    m = re.match(r'^(\d{4})-(\d\d)-(\d\d) (\d\d:\d\d)', full)
+    if not m:
+        return full
+    day = local_time(generated or '', tz)[:10]
+    if full[:10] == day:
+        return m.group(4)
+    return '%d %s %s' % (int(m.group(3)), ('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec')[int(m.group(2)) - 1],
+                         m.group(4))
+
+
+def _counts_html(c, plain=False):
+    """A run's findings as counts in plain ink, each level its own small shape: 3 critical, 4 warning, 1 low."""
+    if not isinstance(c, dict):
+        return ''
+    c = dict((k, int(c.get(k) or 0)) for k in COUNT_KEYS)
+    if plain:
+        return ' &middot; '.join('%d %s' % (c[k], k) for k in COUNT_KEYS if c[k]) or 'no findings'
+    parts = []
+    if c['critical']:
+        parts.append('<span class="ct"><i class="sh sh-c" aria-hidden="true"></i>%d critical</span>' % c['critical'])
+    if c['warning']:
+        parts.append('<span class="ct"><i class="sh sh-w" aria-hidden="true"></i>%d warning</span>' % c['warning'])
+    if c['low']:
+        parts.append('<span class="ct mutec">%d low</span>' % c['low'])
+    return ''.join(parts) or '<span class="ct mutec">no findings</span>'
+
+
+def _place_areas(areas, size):
+    """Which areas take the whole row (span 2): five reports or more, and an area left alone in its row."""
+    wide, pending = set(), None
+    for a in areas:
+        if size[a] >= 5:
+            if pending is not None:
+                wide.add(pending)
+            pending = None
+            wide.add(a)
+        elif pending is None:
+            pending = a
+        else:
+            pending = None
+    if pending is not None:
+        wide.add(pending)
+    return wide
+
+
+def index_board(reports, index, header_text, logo, generated, tabs=(), js='', tz=None, base='', look='atlas'):
+    """1.72.0: the index page in the look made for a browser (atlas, brief, ops): At a glance (Runs ok, Not checked,
+    Critical up since last run, Didn't run on time), the findings of the newest runs, Look at these first, a tab per
+    area (radio buttons, no script), a card per area with each report's line (its state, what it said, the change since
+    the previous run, its counts, a sparkline of its last runs, Copy link) opening to its last runs' pages."""
+    e = htmllib.escape
+    s = index_summary(reports)
+    up = dict((x['key'], x) for x in s['critical_up'])
     of = [area(r.get('name') or r.get('key'), tabs) for r in reports]
     order = [str(t.get('tab')) for t in tabs or []]               # report_web_tabs' order, then A to Z, Other last
     areas = sorted(set(of), key=lambda a: (a == 'Other', order.index(a) if a in order else len(order), a.lower()))
     tab = dict((a, i + 1) for i, a in enumerate(areas))
-    caret = ('<svg class="caret" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" '
-             'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>')
-    # every report, by area (report_web_tabs' order), the worst first in each
-    rows = []
+    size = dict((a, of.count(a)) for a in areas)
+    wide = _place_areas(areas, size)
+    rows = dict((a, []) for a in areas)
+    look_li, late_li = [], []
+    tot = dict((k, 0) for k in COUNT_KEYS)
+    lid = 0
+    for r, a in zip(reports, of):
+        lid += 1
+        rid = 'r%d' % lid
+        name = str(r.get('name') or r.get('key') or '')
+        latest = r.get('latest') or r.get('page') or ''
+        href = _href(index, latest) if latest else ''
+        st = _state(r.get('status'))
+        u = up.get(r.get('key')) if r.get('key') is not None else None
+        d = run_delta(r)
+        c = r.get('counts') if isinstance(r.get('counts'), dict) else None
+        if c:
+            for k in COUNT_KEYS:
+                tot[k] += int(c.get(k) or 0)
+        w, due = _when_dt(r.get('when')), due_hours(r)
+        hook = ((' data-when="%s"' % w.strftime('%Y-%m-%dT%H:%M:%SZ')) + (' data-due="%d"' % due if due else '')) if w else ''
+        bad = bool(u) or st == 'notchecked'
+        cls = 'rr a%d%s%s%s' % (tab[a], ' bad' if bad else '', ' up' if u else '', ' nc' if st == 'notchecked' else '')
+        icon = 'up' if u else st
+        if u:
+            chip = '<span class="flag">%sSince the previous run: +%d critical</span>' % (BOARD_ICON['up'], u['delta'])
+        elif st == 'notchecked':
+            chip = '<span class="flag">%sNot checked</span>' % BOARD_ICON['notchecked']
+        elif d and d['critical'] < 0:
+            chip = '<span class="calm">Since the previous run: &minus;%d critical</span>' % -d['critical']
+        else:
+            chip = ''
+        late = ('<span class="flag late-slot" hidden>%s%s</span>' % (BOARD_ICON['late'], BOARD_WORD['late'])) if hook and due else ''
+        url = str(r.get('latest_url') or '') or (_join(base, r['latest']) if base and r.get('latest') else '')
+        copy = ''
+        if url.startswith(('http://', 'https://')):
+            copy = '<button class="tcopy lcopy" type="button" data-copy="%s" title="Copy the address of its latest page" hidden>Copy link</button>' % e(url)
+        elif href:
+            copy = ('<button class="tcopy lcopy" type="button" data-copy="%s" data-rel="" title="Copy the address of its latest page" hidden>'
+                    'Copy link</button>' % e(href))
+        when_s = _short(r.get('when'), generated, tz)
+        runs = _runs(r)
+        lines = ''.join(
+            '<tr><td class="nw"><a href="%s" title="%s">%s</a>%s</td><td class="nw"><span class="st-i st-%s">%s</span> <span class="st-w">%s</span></td>'
+            '<td class="nw">%s</td><td class="wr">%s</td></tr>'
+            % (_href(index, x['page']), ' - '.join(t for t in (e(local_time(x.get('when') or '', tz)), _job(x.get('job'))) if t),
+               e(_short(x.get('when'), generated, tz) or 'this run'),
+               ' <span class="mutec">(newest)</span>' if not i else '', _state(x.get('status')), BOARD_ICON[_state(x.get('status'))],
+               BOARD_WORD[_state(x.get('status'))], _counts_html(x.get('counts'), True) if isinstance(x.get('counts'), dict) else '-',
+               e(x.get('title') or '')) for i, x in enumerate(runs))
+        table = ('<div class="runs"><table><thead><tr><th>Run</th><th>State</th><th>Findings</th><th>What it said</th></tr></thead><tbody>%s'
+                 '</tbody></table><p class="mutec small">The last %s keep their pages (report_web_history).</p></div>'
+                 % (lines, _plural(len(runs), 'run', 'runs')) if runs else '<div class="runs"><p class="mutec small">No page of its runs listed.</p></div>')
+        rows[a].append((not bad, name.lower(), (
+            '<details class="%s" id="%s" data-name="%s"%s><summary><span class="si si-%s si-norm" title="%s">%s<span class="vh">%s</span></span>'
+            '<span class="si si-late" title="%s">%s<span class="vh">%s</span></span>'
+            '<span class="rt"><span class="rh">%s%s</span><span class="rs">%s</span><span class="rm">%s%s%s<span class="when" title="%s">%s</span>%s</span></span>'
+            '%s</summary>%s</details>'
+            % (cls, rid, e(name), hook, icon, e(BOARD_WORD[st]), BOARD_ICON[icon], e(BOARD_WORD[st]), e(BOARD_WORD['late']), BOARD_ICON['late'],
+               e(BOARD_WORD['late']), ('<a class="rn" href="%s">%s</a>' % (href, e(name))) if href else '<span class="rn">%s</span>' % e(name),
+               copy, e(r.get('title') or ''), chip, late, _counts_html(c) if c else '', e(local_time(r.get('when') or '', tz)), e(when_s),
+               '' if r.get('page') or not _job(r.get('job')) else ' <span class="when">%s</span>' % _job(r.get('job')),
+               _spark_svg(r), table))))
+        go = ('<a class="go" href="%s">Open &rsaquo;</a>' % href) if href else '<span></span>'
+        nm = ('<a href="%s">%s</a>' % (href, e(name))) if href else '<span>%s</span>' % e(name)
+        if u:
+            look_li.append('<li><span class="si si-up">%s</span>%s<span class="lw">Since the previous run: +%d critical (%d &rarr; %d). %s</span>%s</li>'
+                           % (BOARD_ICON['up'], nm, u['delta'], u['before'], u['now'], e(r.get('title') or ''), go))
+        elif st == 'notchecked':
+            look_li.append('<li><span class="si si-notchecked">%s</span>%s<span class="lw">Not checked. %s</span>%s</li>'
+                           % (BOARD_ICON['notchecked'], nm, e(r.get('title') or ''), go))
+        if hook and due:
+            late_li.append('<li data-late-li="%s" hidden><span class="si si-late">%s</span>%s<span class="lw">Didn&#39;t run on time: last ran %s, '
+                           'usually every %s.</span>%s</li>' % (rid, BOARD_ICON['late'], nm, e(local_time(r.get('when') or '', tz)),
+                                                              _plural(max(1, int(round(due / 2.0))), 'hour', 'hours'), go))
+    # the areas' cards, report_web_tabs' order; in each, the reports that need a look first, then A to Z
+    cards = []
     for a in areas:
-        mine = [r for r, x in zip(reports, of) if x == a]
-        rows.append('<div class="grp a%d"><b>%s</b><span class="n">%d</span></div>' % (tab[a], e(a), len(mine)))
-        for r in mine:
-            latest = r.get('latest') or r.get('page') or ''
-            name = ('<a href="%s">%s</a>' % (_href(index, latest), e(r.get('name') or r.get('key') or ''))) if latest else e(r.get('name') or '')
-            run = e(local_time(r.get('when') or '', tz))
-            if r.get('page'):
-                run = '<a href="%s">%s</a>' % (_href(index, r['page']), run or 'this run')
-            runs = _runs(r)
-            step = r.get('step') if isinstance(r.get('step'), dict) and r.get('status') in ('critical', 'warning') else None
-            if step and not step.get('more'):          # shortened again: a line 0.92.0 wrote kept a long command
-                step = first_step({'sections': [{'cards': [step]}]})
-            step_html = ''
-            if step and (step.get('title') or step.get('code') or step.get('more')):
-                step_html = '<div class="step"><span class="lbl">Start here</span><p class="stt">%s</p>%s%s</div>' % (
-                    e(step.get('title') or ''), ('<div class="code"><pre>%s</pre><button class="copy" type="button" hidden>Copy</button></div>'
-                                                 % e(step['code'])) if step.get('code') else '',
-                    ('<a class="open" href="%s">%s &rarr;</a>' % (_href(index, latest), 'The command and the rest in the report' if step.get('more')
-                                                                  else 'Open the report')) if latest else '')
-            lines = ''.join(
-                '<tr><td>%s</td><td class="when"><a href="%s">%s</a>%s</td><td class="job">%s</td><td class="tt">%s</td></tr>'
-                % (_chip(x.get('status')), _href(index, x['page']), e(local_time(x.get('when'), tz) or 'this run'), ' (newest)' if not i else '',
-                   _job(x.get('job')), e(x.get('title') or '')) for i, x in enumerate(runs))
-            rows.append(
-                '<details class="r a%d"><summary>%s<span class="st">%s</span><span class="nm">%s<div class="t">%s</div></span>%s'
-                '<span class="lr">%s%s &middot; %d run%s</span></summary><div class="runs">%s<table>%s</table></div></details>'
-                % (tab[a], caret, _chip(r.get('status')), name, e(r.get('title') or ''), _squares(index, r, tz=tz), run,
-                   (' &middot; ' + _job(r.get('job'))) if _job(r.get('job')) else '', len(runs), '' if len(runs) == 1 else 's', step_html,
-                   lines or '<tr><td>No page of its runs listed.</td></tr>'))
-    # All, then the areas; a dot on an area with a Critical or a Warning
+        mine = sorted(rows[a], key=lambda x: (x[0], x[1]))
+        nbad = sum(1 for x in mine if not x[0])
+        head = ('<span class="ah bad"%s>%s<span><b class="ahn">%d</b> <span class="ahv">%s</span> a look</span></span>'
+                '<span class="ah good"%s>%sAll %d ran</span>' % ('' if nbad else ' hidden', BOARD_ICON['up'], nbad, 'needs' if nbad == 1 else 'need',
+                                                                 ' hidden' if nbad else '', BOARD_ICON['ok'], len(mine)))
+        cards.append('<section class="area a%d%s" data-tab="%d" aria-labelledby="h-a%d"><header><h2 id="h-a%d">%s <span class="n">%d</span></h2>%s</header>'
+                     '<div class="rows">%s</div></section>' % (tab[a], ' span2' if a in wide else '', tab[a], tab[a], tab[a], e(a), len(mine), head,
+                                                               ''.join(x[2] for x in mine)))
+    # the tabs: All, then the areas; a dot on an area with a report that needs a look (the script adds one for a late report)
     inputs, labels, rules = [], [], []
     for i, label in enumerate(['All'] + areas):
-        mine = [r for r, a in zip(reports, of) if not i or a == label]
-        w = min([RANK.get(r.get('status'), 2) for r in mine] or [4])
-        dot = '<span class="dot c-%s"></span>' % ('critical' if w == 0 else 'warning') if i and w <= 1 else ''
-        inputs.append('<input type="radio" name="tab" id="t%d" class="tab"%s>' % (i, '' if i else ' checked'))
-        labels.append('<label for="t%d">%s%s <span class="n">%d</span></label>' % (i, dot, e(label), len(mine)))
-        rules.append('#t%d:checked~.bar label[for=t%d]{background:var(--accent-soft);color:var(--ink)}\n'
-                     '#t%d:focus-visible~.bar label[for=t%d]{outline:2px solid var(--accent);outline-offset:2px}\n' % ((i,) * 4))
+        n = len(reports) if not i else size[label]
+        dot = ''
         if i:
-            rules.append('#t%d:checked~.list>:not(.a%d){display:none}\n' % (i, i))
-    logo_img = ('<img class="logo" src="%s" width="%d" height="%d" alt="">' % (logo[0], logo[1], logo[2])) if logo else ''
-    style = BRIEF_STYLE.replace('@LIGHT@', BRIEF_LIGHT).replace('@DARK@', BRIEF_DARK).replace('@TABS@', ''.join(rules))
-    every = ('%s<div class="bar" role="group" aria-label="Areas">%s</div>\n<div class="list">\n%s\n</div>' % (
-        ''.join(inputs), ''.join(labels), '\n'.join(rows))) if reports else ''
+            hot = any((up.get(r.get('key')) or _state(r.get('status')) == 'notchecked') for r, x in zip(reports, of) if x == label)
+            dot = '<i class="tdot"%s></i><span class="vh"%s> (needs a look)</span>' % (('', '') if hot else (' hidden', ' hidden'))
+        inputs.append('<input type="radio" name="tab" id="t%d" class="tab"%s>' % (i, '' if i else ' checked'))
+        labels.append('<label for="t%d">%s<span class="tn">%d</span>%s</label>' % (i, e(label), n, dot))
+        rules.append('#t%d:checked~.tabs label[for=t%d]{background:var(--ink);border-color:var(--ink);color:var(--card)}\n'
+                     '#t%d:checked~.tabs label[for=t%d] .tdot{box-shadow:0 0 0 2px var(--ink)}\n'
+                     '#t%d:focus-visible~.tabs label[for=t%d]{outline:2px solid var(--accent);outline-offset:2px}\n' % ((i,) * 6))
+        if i:
+            rules.append('#t%d:checked~.grid .area:not(.a%d){display:none}\n#t%d:checked~.grid .area.a%d{grid-column:1 / -1}\n' % (i, i, i, i))
+    nc = s['not_checked']
+    ups = s['critical_up']
+
+    def more(names):
+        return '' if len(names) < 2 else ' and %d more' % (len(names) - 1)
+    tiles = (
+        '<div class="tile t-good"><span class="tl">%sRuns ok</span><span class="tv"><b class="big" data-tile="ok" data-n="%d">%d</b>'
+        '<span class="of">of %d</span></span><span class="td">ran on time and checked everything</span></div>'
+        % (BOARD_ICON['ok'], s['runs_ok'], s['runs_ok'], s['total']) +
+        '<div class="tile %s"><span class="tl">%sNot checked</span><span class="tv"><b class="big">%d</b></span><span class="td">%s</span></div>'
+        % ('t-bad' if nc else 't-good', BOARD_ICON['notchecked'], len(nc),
+           ('%s: the last run could not check%s' % (e(nc[0]), more(nc))) if nc else 'every run could check') +
+        '<div class="tile %s"><span class="tl">%sCritical up since last run</span><span class="tv"><b class="big">%d</b><span class="of">%s</span></span>'
+        '<span class="td">%s</span></div>'
+        % ('t-bad' if ups else 't-good', BOARD_ICON['up'], len(ups), 'report' if len(ups) == 1 else 'reports',
+           ('%s: %d &rarr; %d critical%s' % (e(ups[0]['name']), ups[0]['before'], ups[0]['now'], more(ups))) if ups else 'no critical count went up') +
+        '<div class="tile t-good" data-tile-box="late"><span class="tl">%sDidn&#39;t run on time</span><span class="tv"><b class="big" data-tile="late">0</b>'
+        '</span><span class="td" data-tile-note="late">every report ran in its usual time</span></div>' % BOARD_ICON['late'])
+    totals = ('<p class="totals"><span>Findings in the newest runs:</span><span class="ct"><i class="sh sh-c" aria-hidden="true"></i><b>%d</b> critical</span>'
+              '<span class="ct"><i class="sh sh-w" aria-hidden="true"></i><b>%d</b> warning</span><span><b>%d</b> low</span>'
+              '<span>&middot; each report&#39;s own page has them, worst first</span></p>' % (tot['critical'], tot['warning'], tot['low'])
+              if any(isinstance(r.get('counts'), dict) for r in reports) else '')
+    lookfirst = ('<section class="look" aria-labelledby="look-h"%s><h2 id="look-h">Look at these first</h2><ul>%s%s</ul></section>'
+                 % ('' if look_li else ' hidden', ''.join(look_li), ''.join(late_li))) if look_li or late_li else ''
+    newest = max(reports, key=lambda r: str(r.get('when') or '')) if reports else None
+    words = [w for w in re.split(r'\W+', str(header_text or '')) if w][:2]
+    mark = (('<img class="logo" src="%s" width="%d" height="%d" alt="">' % (logo[0], logo[1], logo[2])) if logo
+            else '<div class="mark" aria-hidden="true">%s</div>' % e(''.join(w[0] for w in words).upper() or 'R'))
+    style = (BOARD_STYLE.replace('@LIGHT@', _tokens(look, False)).replace('@DARK@', _tokens(look, True)).replace('@TABS@', ''.join(rules)))
+    body = ((''.join(inputs) + '<nav class="tabs" aria-label="Areas">' + ''.join(labels) + '</nav>\n<div class="grid">\n' + '\n'.join(cards) + '\n</div>\n')
+            if reports else '<div class="none">No reports yet. A report job writes its page here when it runs.</div>\n')
     return ('<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
             '<meta name="viewport" content="width=device-width, initial-scale=1">\n<meta name="color-scheme" content="light dark">\n'
             '<title>' + e(header_text) + ' - reports</title>\n' + ATLAS_EARLY + ('\n' + script_tag(index, js) if js else '') +
-            '\n<style>\n' + style + '</style>\n</head>\n<body>\n<div class="wrap">\n'
-            '<header class="top">' + logo_img + '<div class="brand">' + e(header_text) + '<span>updated ' + e(local_time(generated, tz)) +
-            '</span></div><div class="tools">' + ATLAS_SWITCH + '</div></header>\n'
-            '<section class="hero"><h1>Reports</h1><p class="say">' + say + '</p>' +
-            ('<div class="tally">' + tally + '</div>' if tally else '') + '</section>\n' + every +
-            '\n<footer>Every report&#39;s last runs. Light, dark and the area tabs work without the page&#39;s script.</footer>\n</div>\n' +
-            ATLAS_SCRIPT + '\n</body>\n</html>\n')
-
-
-# ---- the ops look (report_web_theme: ops, 1.69.0): the index page as an operations console - a header card (how many
-# reports need attention, in one bold line, and that number on the right; SHOW: the counts by status), a status tile
-# each for Critical, Warning, Healthy and Not rated, up to three ranked cards (the worst reports, each with its first
-# step: Open item, View details), then every report by area as in the brief look. The same palette as
-# roles/site_email/templates/report_ops.html.j2 (tests/test_report_web.py checks they match); light and dark; the
-# switch, the tabs and View details are radio buttons and check boxes (no script needed).
-OPS_LIGHT = """--ink:#14213d;--spark:#6d28d9;--muted:#4b5672;--label:#33405e;--accent:#1d4ed8;--accent-ink:#ffffff;--accent-soft:rgba(29,78,216,.09);
---pri:#8ec5ff;--pri-ink:#0f1a33;--pri-hover:#a9d3ff;--v1:#6d28d9;--v2:#9f7aea;
---bg:#eef0f6;--bg2:#e6e9f1;--glow:transparent;--card:#ffffff;--card-solid:#ffffff;
---card-strong:#f5f6fa;--th:#f5f6fa;--edge:#dde1ea;--line:#e8ebf2;
---zebra:#fafbfd;--hover:#f0f4fd;--code:#f3f5f9;--bar:rgba(238,240,246,.88);
---ok:#137a3a;--ok-bg:rgba(19,122,58,0.09);--ok-bd:rgba(19,122,58,0.25);--warning:#995200;
---warning-bg:rgba(153,82,0,0.09);--warning-bd:rgba(153,82,0,0.25);--critical:#c0262d;
---critical-bg:rgba(192,38,45,0.08);--critical-bd:rgba(192,38,45,0.25);--info:#566079;--info-bg:rgba(86,96,121,0.09);
---info-bd:rgba(86,96,121,0.25);--low:#0b6f8a;--low-bg:rgba(11,111,138,0.09);--low-bd:rgba(11,111,138,0.25);--unknown:#566079;--unknown-bg:rgba(86,96,121,0.09);--unknown-bd:rgba(86,96,121,0.25);
---shadow:0 1px 2px rgba(20,33,61,.05);color-scheme:light;"""
-OPS_DARK = """--ink:#e6eaf3;--spark:#9780e7;--muted:#9ba6bd;--label:#b9c2d6;--accent:#8ec5ff;--accent-ink:#0b1220;
---accent-soft:rgba(142,197,255,.12);--pri:#8ec5ff;--pri-ink:#0b1220;--pri-hover:#a9d3ff;--v1:#7d3df3;--v2:#9780e7;
---bg:#0f1626;--bg2:#121a2c;--glow:transparent;
---card:#141d30;--card-solid:#141d30;--card-strong:#18223a;--th:#18223a;
---edge:#24304a;--line:#1f2a42;--zebra:rgba(255,255,255,.015);--hover:rgba(142,197,255,.06);
---code:#0f1626;--bar:rgba(15,22,38,.9);--ok:#5fd08a;--ok-bg:rgba(95,208,138,0.1);
---ok-bd:rgba(95,208,138,0.28);--warning:#f2b84b;--warning-bg:rgba(242,184,75,0.1);
---warning-bd:rgba(242,184,75,0.28);--critical:#ff8080;--critical-bg:rgba(255,128,128,0.1);
---critical-bd:rgba(255,128,128,0.3);--info:#a3adc2;--info-bg:rgba(163,173,194,0.1);--info-bd:rgba(163,173,194,0.26);--low:#5ccfe6;--low-bg:rgba(92,207,230,0.1);--low-bd:rgba(92,207,230,0.28);
---unknown:#a3adc2;--unknown-bg:rgba(163,173,194,0.1);--unknown-bd:rgba(163,173,194,0.26);
---shadow:0 1px 2px rgba(0,0,0,.3);color-scheme:dark;"""
-# the brief index's style (its list, tabs, runs), then the ops look's cards, header, tiles and ranked steps
-OPS_STYLE = BRIEF_STYLE.replace('@TABS@', '') + """
-:root{--lab:ui-monospace,"Cascadia Mono","Cascadia Code",Consolas,"SF Mono",Menlo,"DejaVu Sans Mono",monospace;--gap:16px}
-body{background:var(--bg)}
-.wrap{max-width:1600px}
-.top{border-bottom:0;padding:16px 0 4px}
-.lbl,.cap,.tog,.stc,.tile .k,.pill{font-family:var(--lab);font-size:11px;font-weight:600;letter-spacing:.11em;text-transform:uppercase}
-.card{background:var(--card);border:1px solid var(--edge);border-radius:14px;box-shadow:var(--shadow)}
-.stc{display:inline-flex;align-items:center;gap:7px;line-height:1;padding:5px 9px;border-radius:999px;border:1px solid;white-space:nowrap;font-weight:650}
-.stc .d,.tile .k .d{width:7px;height:7px;border-radius:50%;background:currentColor;display:inline-block;flex:none}
-.hero{padding:0;margin:12px 0 var(--gap);overflow:hidden}
-.hgrid{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px 32px;align-items:center;padding:clamp(18px,2.2vw,28px) clamp(18px,2.4vw,32px)}
-.hero h1{margin:14px 0 0;font-size:clamp(1.3rem,.95rem + .95vw,1.75rem);font-weight:700;letter-spacing:-.018em}
-.hero .say{margin:8px 0 0}
-.hn{text-align:right;padding-left:28px;border-left:1px solid var(--line)}
-.hn .bn{font-family:var(--display);font-size:clamp(40px,2rem + 2.2vw,64px);font-weight:700;line-height:1;letter-spacing:-.04em;font-variant-numeric:tabular-nums}
-.hn .cap{color:var(--label);margin-top:8px}
-.hstrip{border-top:1px solid var(--line);background:var(--card-strong)}
-.hstrip>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:16px;padding:9px clamp(18px,2.4vw,32px);font-size:13px;color:var(--muted)}
-.hstrip>summary::-webkit-details-marker{display:none}
-.hstrip .ln1{flex:1;min-width:0}
-.tog{color:var(--accent);font-weight:650}.tog .hd,.hstrip[open] .tog .sh{display:none}.hstrip[open] .tog .hd{display:inline}
-.hstrip .tally{margin:0;padding:2px clamp(18px,2.4vw,32px) 14px}
-.hstrip>summary:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
-.tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:0 0 var(--gap)}
-.tile{background:var(--card);border:1px solid var(--edge);border-radius:12px;padding:14px 16px 15px;box-shadow:var(--shadow);min-width:0}
-.tile .k{display:flex;align-items:center;gap:8px;color:var(--label)}
-.tile .v{font-family:var(--display);font-size:clamp(28px,1.4rem + 1vw,38px);font-weight:700;line-height:1.1;margin-top:10px;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
-.tile .n{color:var(--muted);font-size:13px;margin-top:6px}
-.tile.hot-critical{border-color:var(--critical-bd)}.tile.hot-warning{border-color:var(--warning-bd)}
-.sech{display:flex;align-items:center;gap:10px;margin:8px 2px 12px}.sech h2{margin:0;font-size:18px;font-weight:700}
-.cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--gap);margin:0 0 var(--gap)}
-.todo{position:relative;display:flex;flex-direction:column;color:var(--ink);background:var(--card);border:1px solid var(--edge);border-radius:14px;padding:18px 20px 0;box-shadow:var(--shadow);overflow:hidden;min-width:0}
-.todo:before{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:var(--unknown)}
-.todo.c-critical:before{background:var(--critical)}.todo.c-warning:before{background:var(--warning)}
-.todo .row1{display:flex;align-items:center;gap:10px}.todo .row1 .stc{margin-left:auto}
-.todo .num{font-family:var(--lab);font-size:13px;font-weight:700;color:var(--muted)}
-.todo h3{margin:12px 0 0;font-size:16px;font-weight:700;line-height:1.35;overflow-wrap:anywhere}
-.todo .next{margin:8px 0 0;color:var(--muted);font-size:14px;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:3;line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
-.cdx{position:absolute;opacity:0;width:1px;height:1px;margin:0;pointer-events:none}
-.cdd{display:none;margin-top:12px;font-size:13px;color:var(--muted)}.cdx:checked~.cdd{display:block}
-.cdd .sqs{margin-top:8px}
-.lnk{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:auto;padding:14px 0 15px;border-top:1px solid var(--line)}
-.todo .lnk{margin-top:16px}
-.lnk a,.lnk label{font-size:13px;font-weight:650;color:var(--accent);text-decoration:none;cursor:pointer;white-space:nowrap}
-.lnk a:hover,.lnk label:hover{text-decoration:underline;text-underline-offset:3px}
-.lnk label .c,.cdx:checked~.lnk label .o{display:none}.cdx:checked~.lnk label .c{display:inline}
-.cdx:focus-visible~.lnk label{outline:2px solid var(--accent);outline-offset:3px;border-radius:4px}
-.list{background:var(--card);border-radius:14px;box-shadow:var(--shadow)}
-.bar label .n{font-family:var(--lab)}
-.grp b{font-weight:700}
-.chip{font-weight:650}
-@media (max-width:1100px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media (max-width:900px){.tiles{grid-template-columns:repeat(2,minmax(0,1fr))}.cards{grid-template-columns:minmax(0,1fr)}
-.hgrid{grid-template-columns:minmax(0,1fr)}.hn{text-align:left;padding:14px 0 0;border-left:0;border-top:1px solid var(--line)}}
-@media print{.hstrip .tog,.lnk label{display:none!important}.cdd{display:block!important}.hstrip::details-content{content-visibility:visible}
-.hero,.tile,.todo{box-shadow:none!important}}
-@TABS@"""
-OPS_WORD = {'critical': 'Critical', 'warning': 'Warning', 'ok': 'Healthy', 'low': 'Low', 'info': 'Not rated', 'unknown': 'Unavailable'}
-
-
-def _stc(status):
-    k = status if status in OPS_WORD else 'unknown'
-    return '<span class="stc s-%s"><span class="d" aria-hidden="true"></span>%s</span>' % (k, OPS_WORD[k])
-
-
-def index_ops(reports, index, header_text, logo, generated, tabs=(), js='', tz=None):
-    """The index page in the ops look: the header card (how many reports need attention - that number on the right; SHOW:
-    the counts), a tile each for Critical, Warning, Healthy and Not rated, up to three ranked cards (the worst reports,
-    worst first: Open item - its latest page, View details - its first step and last runs), then every report by area
-    (the brief look's list, a tab per area). The switch, the tabs and View details work without the page's script."""
-    e = htmllib.escape
-    counts = dict((k, 0) for k in PAL)
-    for r in reports:
-        counts[r.get('status') if r.get('status') in PAL else 'unknown'] += 1
-    need = counts['critical'] + counts['warning']
-    # 1.69.1c (Codex P2): a report that could not be read (unknown) is never counted healthy - its own verdict
-    unread = counts['unknown']
-    worst = ('critical' if counts['critical'] else 'warning' if counts['warning'] else 'unknown' if unread
-             else 'ok' if reports else 'unknown')
-    if not reports:
-        title, say = 'No reports yet', 'A report job writes its page here when it runs.'
-    elif need:
-        title = '%s need%s attention.' % (_plural(need, 'report', 'reports'), 's' if need == 1 else '')
-        say = 'Start with the cards below, worst first.' + (
-            ' %s could not be read.' % _plural(unread, 'report', 'reports') if unread else '')
-    elif unread == len(reports):
-        title = 'No report could be read.'
-        say = 'Look at the report jobs in AAP: their last runs left no page that can be read.'
-    elif unread:
-        title = '%s could not be read.' % _plural(unread, 'report', 'reports')
-        say = 'The others are healthy or for information. Look at those reports\' jobs in AAP.'
-    else:
-        title, say = 'Every report is healthy or for information.', 'Nothing needs action.'
-    last = max([str(r.get('when') or '') for r in reports] or [''])
-    line = '%s &middot; updated %s%s' % (_plural(len(reports), 'report', 'reports'), e(local_time(generated, tz)),
-                                         (' &middot; last run %s' % e(local_time(last, tz))) if last else '')
-    tally = ''.join('<span class="chip s-%s">%s<b>%d</b> %s</span>' % (k, ATLAS_ICON.get(k, ''), counts[k], label)
-                    for k, label in (('critical', 'Critical'), ('warning', 'Warning'), ('low', 'Low'), ('ok', 'Successful'), ('info', 'Info'), ('unknown', 'Unknown'))
-                    if counts[k])
-    other = counts['info'] + counts['unknown'] + counts['low']
-    parts = [_plural(counts['info'], 'for information', 'for information') if counts['info'] else '',
-             ('%d low' % counts['low']) if counts['low'] else '', ('%d unknown' % counts['unknown']) if counts['unknown'] else '']
-    tiles = ''.join(
-        '<div class="tile%s"><div class="k"><span class="d c-%s" aria-hidden="true"></span>%s</div><div class="v%s">%d</div><div class="n">%s</div></div>'
-        % ((' hot-' + k) if k in ('critical', 'warning') and n else '', k, label, (' c-' + k) if k in ('critical', 'warning') and n else '', n, note)
-        for k, label, n, note in (('critical', 'Critical', counts['critical'], 'Reports that need action now'),
-                                  ('warning', 'Warning', counts['warning'], 'Reports that need a look'),
-                                  ('ok', 'Healthy', counts['ok'], 'Reports with nothing to do'),
-                                  ('info', 'Not rated', other, ', '.join(p for p in parts if p) or 'Reports that only inform')))
-    # the ranked cards: the worst reports (Critical, then Warning; each the latest first), three at most
-    bad = sorted([r for r in reports if r.get('status') in ('critical', 'warning')], key=lambda r: str(r.get('when') or ''), reverse=True)
-    bad = sorted(bad, key=lambda r: RANK.get(r.get('status'), 2))[:3]
-    cards = []
-    for i, r in enumerate(bad):
-        latest = r.get('latest') or r.get('page') or ''
-        step = r.get('step') if isinstance(r.get('step'), dict) else None
-        if step and not step.get('more'):
-            step = first_step({'sections': [{'cards': [step]}]})
-        nxt = (step or {}).get('title') or r.get('title') or ''
-        code = ('<div class="code"><pre>%s</pre><button class="copy" type="button" hidden>Copy</button></div>' % e(step['code'])) if step and step.get('code') else ''
-        cards.append(
-            '<article class="todo c-%s"><div class="row1"><span class="num">%02d</span><span class="lbl">%s</span>%s</div>'
-            '<h3>%s</h3><p class="next">%s</p><input type="checkbox" class="cdx" id="cd%d" aria-label="View the details of %s">'
-            '<div class="cdd">%s%s<div>%s &middot; %s</div>%s</div><div class="lnk">%s<label for="cd%d"><span class="o">View details &rarr;</span>'
-            '<span class="c">Hide details &uarr;</span></label></div></article>'
-            % (r.get('status'), i + 1, 'Up next' if not i else 'Then', _stc(r.get('status')), e(r.get('name') or r.get('key') or ''), e(nxt), i,
-               e(r.get('name') or r.get('key') or ''), ('<div>%s</div>' % e(r.get('title') or '')) if step and r.get('title') else '', code,
-               e(local_time(r.get('when') or '', tz) or 'this run'), _plural(len(_runs(r)), 'run', 'runs'), _squares(index, r, tz=tz),
-               ('<a href="%s">Open item &rarr;</a>' % _href(index, latest)) if latest else '', i))
-    # every report, by area: the brief look's list
-    brief = index_brief(reports, index, header_text, logo, generated, tabs, js, tz)
-    every = brief[brief.index('<input type="radio" name="tab"'):brief.index('\n<footer>')] if reports else ''
-    rules = ''.join(re.findall(r'#t\d+:[^\n]*\n', brief))          # its area tabs' rules
-    logo_img = ('<img class="logo" src="%s" width="%d" height="%d" alt="">' % (logo[0], logo[1], logo[2])) if logo else ''
-    style = OPS_STYLE.replace('@LIGHT@', OPS_LIGHT).replace('@DARK@', OPS_DARK).replace('@TABS@', rules)
-    hero = ('<header class="hero card"><div class="hgrid"><div>%s<h1>%s</h1><p class="say">%s</p></div>%s</div>'
-            '<details class="hstrip"><summary><span class="ln1">%s</span><span class="tog" aria-hidden="true"><span class="sh">SHOW</span>'
-            '<span class="hd">HIDE</span></span></summary>%s</details></header>'
-            % (_stc(worst), e(title), e(say),
-               ('<div class="hn"><div class="bn%s">%d</div><div class="cap">Need attention</div></div>' % (' c-' + worst if need else '', need)
-                if need or not unread else '<div class="hn"><div class="bn">%d</div><div class="cap">Could not be read</div></div>' % unread)
-               if reports else '',
-               line, ('<div class="tally">%s</div>' % tally) if tally else '<div class="tally">No reports yet.</div>'))
-    return ('<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
-            '<meta name="viewport" content="width=device-width, initial-scale=1">\n<meta name="color-scheme" content="light dark">\n'
-            '<title>' + e(header_text) + ' - reports</title>\n' + (script_tag(index, js) + '\n' if js else '') +
-            '<style>\n' + style + '</style>\n</head>\n<body>\n<div class="wrap">\n'
-            '<header class="top">' + logo_img + '<div class="brand">' + e(header_text) + '<span>updated ' + e(local_time(generated, tz)) +
-            '</span></div><div class="tools">' + ATLAS_SWITCH + '</div></header>\n' + hero + '\n' +
-            ('<div class="tiles">' + tiles + '</div>\n' if reports else '') +
-            ('<div class="sech"><span class="lbl">Start here</span></div>\n<div class="cards">' + ''.join(cards) + '</div>\n' if cards else '') +
-            ('<div class="sech"><h2>Every report</h2></div>\n' if reports else '') + every +
-            '\n<footer>Every report&#39;s last runs. Light, dark, the area tabs and View details work without the page&#39;s script.</footer>\n</div>\n' +
-            ATLAS_SCRIPT + '\n</body>\n</html>\n')
+            '\n<style>\n' + style + '</style>\n</head>\n<body class="board look-' + e(look) + '">\n'
+            '<div class="top"><div class="in">' + mark + '<div><h1>' + e(header_text) + '</h1><div class="site">' +
+            _plural(len(reports), 'report', 'reports') + ' in ' + _plural(len(areas), 'area', 'areas') + '</div></div><div class="grow"></div>'
+            '<div class="upd">Updated <b>' + e(local_time(generated, tz)) + '</b>' +
+            ('<br>newest run: ' + e(str(newest.get('name') or newest.get('key') or '')) if newest else '') + '</div>' + ATLAS_SWITCH + '</div></div>\n'
+            '<main>\n<section class="hero" aria-label="At a glance">' + tiles + '</section>\n' + totals + '\n' + lookfirst + '\n' + body +
+            '<div class="foot"><span>The sparkline: each report&#39;s critical and warning findings over its last 12 runs, newest right. A gap: not counted.</span>'
+            '<span>Light, dark and the area tabs work without the page&#39;s script.</span></div>\n</main>\n' + ATLAS_SCRIPT + '\n</body>\n</html>\n')
 
 
 def history(old, entry, n):
@@ -1479,6 +1414,7 @@ def history(old, entry, n):
     runs = sorted(runs + [this], key=lambda x: (str(x.get('when') or ''), x is this), reverse=True)   # this run first of its minute
     line = dict(entry if newer(old, entry) else old)
     line['runs'] = runs[:max(1, n)]
+    line['trend'] = trend(old, entry)                    # 1.72.0: the last 12 runs' counts, whatever their pages
     return line, [x for x in runs[max(1, n):] if x is not this]          # this run's page, just written, stays
 
 
@@ -1690,6 +1626,11 @@ def main():
         step = first_step((p['data'] or {}).get('report'))     # the brief index's first step for this report (0.92.0)
         if step:
             entry['step'] = step
+        counts = run_counts((p['data'] or {}).get('report'))   # 1.72.0: its findings by level, for the trend
+        if counts is not None:
+            entry['counts'] = counts
+        if urls['latest_url'].startswith(('http://', 'https://')):
+            entry['latest_url'] = urls['latest_url']           # 1.72.0: Copy link on the index
         known = target.read(_json_name(index)) if index else None
         reports = _reports(known)
         old = next((r for r in reports if r.get('key') == entry.get('key')), None)
@@ -1789,7 +1730,7 @@ def main():
             index_text = json.dumps({'generated': generated, 'reports': reports, 'banner': top}, indent=2, sort_keys=True,
                                     default=str) + '\n'
             put(_json_name(index), index_text, 'application/json; charset=utf-8')
-            put(index, banner_inject(index_html(reports, index, p['header_text'], logo, generated, p['tabs'], p['theme'], index_js, tz),
+            put(index, banner_inject(index_html(reports, index, p['header_text'], logo, generated, p['tabs'], p['theme'], index_js, tz, base),
                                      top),
                 'text/html; charset=utf-8', True)
             # the pages of the runs that fell off this template's line - after the index, which no longer lists them

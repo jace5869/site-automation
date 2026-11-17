@@ -2,8 +2,8 @@
 
 Every report job ([EMAIL_REPORTS.md](EMAIL_REPORTS.md), "Which jobs email") can also write its report as a
 **web page**: the same report as the email, in the **atlas** look - made for a browser, light and dark ("The look", below) - with your logo. Each run gets its own page,
-each template a `latest.html` that is always its newest run, and an `index.html` lists every report, worst first,
-each opening to its last 5 runs, with a tab per area (VMware, Linux, Windows...). Older runs' pages are deleted. The report's data is written as JSON beside each page, so a web developer can build their own site
+each template a `latest.html` that is always its newest run, and an `index.html` shows every report at a glance:
+which runs need a look, each report's findings and its last runs, with a tab per area (VMware, Linux, Windows...). Older runs' pages are deleted. The report's data is written as JSON beside each page, so a web developer can build their own site
 on it.
 
 It works **without email**: set `report_web_dest` and leave `report_email_to` empty. With both set, the email
@@ -112,7 +112,7 @@ Since 0.53.0:
   - A click anywhere in the heading's cell sorts. A first click on a column whose values are already in order, as the
     rows stand (the VM tables come sorted by VM), sorts it the other way, so the click always shows.
   - The arrows and the hand pointer appear only once the script runs: without it the headings are plain.
-- **The index page** in the same look, with the same switch.
+- **The index page** in the atlas colours, with the same switch ("The index page", below).
 - **Printed:** white, landscape, every section open, each table's headings repeated on every page.
 - **One file per page:** no fonts or scripts from elsewhere (system fonts: Segoe UI and Cascadia Mono on Windows), so
   a page opens from a share too. The page's script is in it, and since 0.63.0 also in **`site-report.js`** at the top
@@ -221,12 +221,7 @@ poster-sized:
 - **Percentages as bars.** A column whose every value is a percentage (`87%`) gets a small bar beside each number;
   where the report marks that cell (the disk report's *Used* past 85 or 90%, say) the bar and the number take its
   colour and icon, never colour alone. Sorting, CSV and Copy use the number.
-- **The index is the list of reports, not an alarm** (0.94.0): a plain *Reports* title, one line - *9 reports ·
-  last run 2026-11-09 06:00 UTC* - and the counts as small chips (*2 Critical*, *1 Warning*, ...). Then every report,
-  grouped by area (the tabs as before), each line with its status chip, its title and its last runs as small
-  squares. Open a report that needs action and **the first step its report gives** is there (its first Start here
-  card), above its last runs - kept short: its title in two lines at most, its command only when it is short (three
-  lines at most, with Copy), and a link to the report for the rest (a STIG rule's whole check stays on its page).
+- **The index page** in the brief colours ("The index page", below).
 - **The logo larger:** the site's logo (`report_logo_file`) up to 60 px tall on the index, 52 px on the report pages
   and ticket insights, 44 px on a phone - drawn from your own file, sized by the page.
 - **The ticket insights pages** (they draw their own page) take the brief colours and type, their figures as one
@@ -292,9 +287,7 @@ changes is how the page is laid out:
 - **Type**: the system's own fonts (Segoe UI Variable on Windows), the small labels - section chips, tile names, table
   headings - upper case and letter-spaced in a mono face (Cascadia Mono), the numbers large with every digit the same
   width. Nothing is loaded from elsewhere.
-- **The index page** in the same look: a header card (*4 reports need attention.*, that number on the right, SHOW for
-  the counts), a tile each for Critical, Warning, Healthy and Not rated, up to three cards for the worst reports (Open
-  item: its latest page; View details: its first step and last runs), then every report by area as in the brief look.
+- **The index page** in the ops colours ("The index page", below).
 - **The ticket insights pages** (they draw their own page) take the ops colours and its small labels.
 - SHOW, View details, Every step, Explore, the rail's groups and its button, and the tabs are HTML and CSS: they work
   without the page's script (it keeps the rail's choice for the next page).
@@ -381,7 +374,7 @@ still lists its classified run.
 ## What it writes
 
 ```
-index.html                                  every report, worst first, and its last runs; a tab per area
+index.html                                  every report at a glance, and its last runs; a tab per area
 index.json                                  the same as data
 linux-certificate-trust-report/
   2026-10-23_0605_job-907.html              this run's page - the address the job prints
@@ -404,14 +397,35 @@ vmware-snapshot-cleanup/
 
 ### The index page: tabs, and each report's last runs
 
-`index.html` has the four counts at the top (Critical, Warning, Successful, Info), then a row of tabs: **All**,
-then one per area - Certificates, VMware, Horizon, Windows, Network and storage, Linux, ServiceNow and AAP - each
-shown only when it has a report. A report is on the first tab whose names its AAP template's name matches
-(`report_web_tabs`, any case, `*` = anything): the names this guide gives the templates (docs/JOB_TEMPLATES.md) are
-all in it - `VM - health report` is on **VMware**, `Certificate report` and `VMware - certificate report` on
-**Certificates**, `Health check` on **Linux**. A name it does not know goes on the tab of its name up to ` - `
-(`Backup - nightly`: **Backup**), else on **Other**. A new template gets its line - and its tab, when the tab is new -
-the first time it runs. A tab with a Critical or a Warning in it has a red or amber dot.
+Since 1.72.0 the index is calm: red only when a run needs a look. Findings are counts in plain ink, so a report with
+critical findings that did not go up is not an alarm. It is the same page in atlas, brief and ops, each in its own
+colours. With an email look (`report_web_theme: portal` and the others) the index stays as before.
+
+- **At a glance**: four tiles. *Runs ok* (of all reports), *Not checked* (the last run could not check: its status is
+  unknown), *Critical up since last run* (with the counts, e.g. *AD health: 1 → 3 critical*), *Didn't run on time*.
+- **Findings in the newest runs**: the critical, warning and low findings of every report's last run, added up.
+- **Look at these first**: each report a tile counts, with its reason and an Open link. Not there when there is none.
+- **A card per area**, in the tabs' order. An area of five reports or more takes the whole row.
+- **Each report's line**: its state (an icon and a word), its name (a link to its `latest.html`), **Copy link**, what
+  it said, the change since the previous run, its counts and its last run's time. On the right, a small line of its
+  critical and warning findings over its last 12 runs, the newest right, with the last count beside it. A gap is a
+  run that was not counted.
+
+"Since the previous run: +2 critical" compares the counts of the last two runs. It never says "new findings": one
+fixed and one new read 0. A drop is said in plain ink (*−3 critical*).
+
+*Didn't run on time* is judged by the page's script when the page is read: the last run is older than twice the
+report's usual gap, at least 26 hours. Without the script (a strict web server, or a page saved alone) it says nothing
+about it. **Copy link** needs the script too: it copies the address of the report's latest page (`report_web_url`
+and the page, or the page's own address when that is not set).
+
+The tabs: **All**, then one per area - Certificates, VMware, Horizon, Windows, Network and storage, Linux,
+ServiceNow and AAP - each shown only when it has a report. A report is on the first tab whose names its AAP
+template's name matches (`report_web_tabs`, any case, `*` = anything): the names this guide gives the templates
+(docs/JOB_TEMPLATES.md) are all in it - `VM - health report` is on **VMware**, `Certificate report` and
+`VMware - certificate report` on **Certificates**, `Health check` on **Linux**. A name it does not know goes on the
+tab of its name up to ` - ` (`Backup - nightly`: **Backup**), else on **Other**. A new template gets its line - and
+its tab, when the tab is new - the first time it runs. A tab with a report that needs a look has a red dot.
 
 Your own names, or your own tabs: `report_web_tabs` in `all.yml` (for every template alike - the index is one page),
 in the order the tabs are shown:
@@ -425,9 +439,9 @@ report_web_tabs:
 
 The defaults are in `roles/site_email/defaults/main.yml`; yours replace them whole.
 
-Each line is one report: its status, name (a link to its `latest.html`), title and last run. Click the line to
-open its last runs - each with its status, time (a link to that run's page), AAP job and title. All of it works
-without scripts, opened from a share or from a web server.
+Click a report's line to open its last runs: each with its time (a link to that run's page; the AAP job when you
+point at it), its state, its findings and what it said. The tabs, the lines and light or dark work without scripts,
+opened from a share or from a web server.
 
 - **How many runs**: `report_web_history` (`5`). The index lists them, and when a run falls off a report's list
   its page and JSON are **deleted** - only pages the index listed for that report, never its `latest.html`, the
@@ -469,8 +483,8 @@ From the next run of any report, the website shows that time zone with its abbre
 
 | Where | Before | With `report_time_zone: Europe/Berlin` |
 |---|---|---|
-| the index: each report's last run, and its runs | `2026-11-13 04:37 UTC` | `2026-11-13 05:37 CET` |
-| the index: *updated*, and *last run* (the brief look) | `2026-11-13 04:38 UTC` | `2026-11-13 05:38 CET` |
+| the index: each report's last run, and its runs (in full when you point at the time) | `2026-11-13 04:37 UTC` | `2026-11-13 05:37 CET` |
+| the index: *Updated* | `2026-11-13 04:38 UTC` | `2026-11-13 05:38 CET` |
 | a report page: the strip of past runs | `2026-11-12 04:36` | `2026-11-12 05:36 CET` |
 | a report page and its email: the footer line | the execution environment's clock | `2026-11-13 05:37 CET` |
 
@@ -566,7 +580,17 @@ Each run's `.json` (and `latest.json`):
 playbook"). `runs` is the strip of last runs (with an AAP credential on the template). `index.json`:
 `{"generated": "...", "reports": [{"key", "name", "title", "status", "when", "job", "page", "latest", "runs"}, ...]}`,
 worst first; `runs` is that report's last runs on the website, newest first: `[{"page", "status", "when", "job", "title"}]`
-(`report_web_history` of them). Every `when` and `generated` here is UTC, also with `report_time_zone` set (only the
+(`report_web_history` of them). Since 1.72.0 each line also has:
+
+- `counts`: the last run's findings, `{"critical", "warning", "low"}`. A report can give its own as `report.counts`.
+  Without that they are its rows' `row_status`. A report with no `row_status` only informs and has none.
+- `trend`: the last 12 runs, newest first: `[{"when", "status", "job", "counts"}]`. It keeps 12 whatever
+  `report_web_history` keeps.
+- `latest_url`: the address of its latest page, with `report_web_url` set.
+
+The index compares the last two runs' `counts` ("since the previous run: +2 critical"). A report is late when its last
+run is older than twice its usual gap, at least 26 hours. The page judges that when it is read, so the index needs no
+job of its own. Every `when` and `generated` here is UTC, also with `report_time_zone` set (only the
 pages show your time zone); the strip's `runs[].when` is the text the page shows.
 
 ## Where the files go

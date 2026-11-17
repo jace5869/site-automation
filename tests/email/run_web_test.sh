@@ -119,9 +119,11 @@ check "both runs kept" test "$(ls "$d" | grep -c '_job-90[78]\.html$')" = 2
 check "index.json: its line lists both runs, newest first" "$py" -c 'import json, sys
 r = json.load(open(sys.argv[1]))["reports"][1]
 assert [str(x["job"]) for x in r["runs"]] == ["908", "907"] and r["runs"][1]["page"].endswith("_job-907.html"), r' "$work/reports/index.json"
-check "index.html: the atlas look, the tabs (All, Certificates - a dot, it has a Warning - VMware), the line opening to its 2 runs" bash -c "grep -q '<label for=\"t1\"><span class=\"dot c-warning\"></span>Certificates <span' '$work/reports/index.html' \
-    && grep -q 'VMware <span' '$work/reports/index.html' && grep -q '2 runs</span>' '$work/reports/index.html' && grep -q '<details class=\"r a1\"' '$work/reports/index.html' \
-    && grep -q 'class=\"seg\" id=\"theme\"' '$work/reports/index.html'"
+check "index.html: the board (1.72.0) in the atlas look, the tabs (All, Certificates - calm, a warning is no alarm - VMware), the line opening to its 2 runs, Copy link (no report_web_url this run: its own address)" bash -c "i='$work/reports/index.html' \
+    && grep -q '<body class=\"board look-atlas\">' \"\$i\" && grep -q '<label for=\"t1\">Certificates<span class=\"tn\">1</span><i class=\"tdot\" hidden>' \"\$i\" \
+    && grep -q 'VMware<span class=\"tn\">' \"\$i\" && grep -q 'The last 2 runs keep their pages' \"\$i\" && grep -q '<details class=\"rr a1' \"\$i\" \
+    && grep -q '<section class=\"hero\" aria-label=\"At a glance\">' \"\$i\" && grep -q 'class=\"seg\" id=\"theme\"' \"\$i\" \
+    && grep -q 'class=\"tcopy lcopy\" type=\"button\" data-copy=\"linux-certificate-trust-report/latest.html\" data-rel=\"\"' \"\$i\""
 lin='"awx_job_template_id": 71, "awx_job_template_name": "Linux - Certificate trust report"'
 run "report_web_history 2: a third run - the first run's page deleted" ok \
     "{\"report_web_dest\": \"$work/reports\", \"report_web_history\": 2, \"awx_job_id\": 909, $lin}" "(older runs deleted: linux-certificate-trust-report/$page)"
@@ -178,10 +180,10 @@ check "the page: the verdict as a chip, the ruled figures, the logo inside it (a
     && grep -q '<div class=\"verdict c-warning\">' \"\$p\" && grep -q '<span>Needs attention</span>' \"\$p\" && grep -q '<div class=\"tiles\">' \"\$p\" \
     && grep -q 'width=\"48\" height=\"64\"' \"\$p\" && grep -q 'src=\"data:image/png;base64,' \"\$p\" && ! grep -q 'cid:' \"\$p\" \
     && grep -q 'script src=\"../site-report.js?v=' \"\$p\" && test -s '$work/brief/site-report.js'"
-check "index.html: the brief look - a plain title and line, the counts as chips, no alarm headline, its area tab" bash -c "i='$work/brief/index.html' \
-    && grep -q '<h1>Reports</h1><p class=\"say\">1 report &middot; last run ' \"\$i\" && grep -q '<div class=\"tally\"><span class=\"chip s-warning\">' \"\$i\" \
-    && ! grep -q 'needs action' \"\$i\" && grep -q 'width=\"48\" height=\"64\"' \"\$i\" \
-    && grep -q '<div class=\"grp a1\"><b>Certificates</b>' \"\$i\" && grep -q 'class=\"seg\" id=\"theme\"' \"\$i\" && ! grep -Eq '<link|src=\"https?:|@import' \"\$i\""
+check "index.html: the board in the brief look - At a glance, calm (no red tile), its area's card, the logo" bash -c "i='$work/brief/index.html' \
+    && grep -q '<body class=\"board look-brief\">' \"\$i\" && grep -q '<section class=\"hero\" aria-label=\"At a glance\">' \"\$i\" \
+    && ! grep -q 'class=\"tile t-bad\"' \"\$i\" && grep -q 'width=\"48\" height=\"64\"' \"\$i\" \
+    && grep -q '<h2 id=\"h-a1\">Certificates <span class=\"n\">1</span></h2>' \"\$i\" && grep -q 'class=\"seg\" id=\"theme\"' \"\$i\" && ! grep -Eq '<link|src=\"https?:|@import' \"\$i\""
 # ---- 1.69.0: the ops look - the page and the index; refused for an email ----------------------------------------
 run "ops for an email: refused, said why" fail "{\"report_email_to\": [\"ops@example.mil\"], \"report_email_smtp_host\": \"localhost\", \"report_email_smtp_port\": $port, \"report_email_from\": \"aap@example.mil\", \"report_email_security\": \"none\", \"report_email_theme\": \"ops\"}" \
     "ops is a look of the report website only (report_web_theme)"
@@ -192,16 +194,16 @@ check "the page: the header card, its chip and number, the tiles, the cards, the
     && grep -q '<div class=\"secs\">' \"\$p\" && grep -q '<div class=\"cf\"><span class=\"src\">' \"\$p\" && grep -q 'height=\"48\"' \"\$p\" \
     && grep -q 'src=\"data:image/png;base64,' \"\$p\" && ! grep -q 'cid:' \"\$p\" \
     && grep -q 'script src=\"../site-report.js?v=' \"\$p\" && test -s '$work/ops/site-report.js' && ! grep -Eq '<link|src=\"https?:|@import' \"\$p\""
-check "index.html: the ops look - the header card, the tiles, the worst report as a card, every report by area" bash -c "i='$work/ops/index.html' \
-    && grep -q '<h1>1 report needs attention.</h1>' \"\$i\" && grep -q 'Need attention</div>' \"\$i\" && grep -q '<div class=\"tiles\">' \"\$i\" \
-    && grep -q '<span class=\"num\">01</span><span class=\"lbl\">Up next</span>' \"\$i\" && grep -q 'Open item &rarr;</a>' \"\$i\" \
-    && grep -q '<div class=\"grp a1\"><b>Certificates</b>' \"\$i\" && grep -q 'class=\"seg\" id=\"theme\"' \"\$i\" && ! grep -Eq '<link|src=\"https?:|@import' \"\$i\""
+check "index.html: the board in the ops look - the four tiles, nothing to look at first, every report by area" bash -c "i='$work/ops/index.html' \
+    && grep -q '<body class=\"board look-ops\">' \"\$i\" && grep -q 'Runs ok</span>' \"\$i\" && grep -q 'Critical up since last run</span>' \"\$i\" \
+    && grep -q 'Didn&#39;t run on time</span>' \"\$i\" && ! grep -q '<section class=\"look\" aria-labelledby=\"look-h\">' \"\$i\" \
+    && grep -q '<h2 id=\"h-a1\">Certificates' \"\$i\" && grep -q 'class=\"seg\" id=\"theme\"' \"\$i\" && ! grep -Eq '<link|src=\"https?:|@import' \"\$i\""
 # ---- report_time_zone (1.49.0): the website's times in it - the run above, written without one, too ---------------
 run "report_time_zone Europe/Berlin: a second run of the brief site" ok \
     "{\"report_web_dest\": \"$work/brief\", \"report_web_theme\": \"brief\", \"report_time_zone\": \"Europe/Berlin\", \"awx_job_id\": 908, $lin}"
-check "index.html: both runs (the one from before too), last run and updated in CET or CEST, no UTC left" bash -c "i='$work/brief/index.html' \
-    && [ \"\$(grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2} CES?T</a>' \"\$i\" | wc -l)\" = 3 ] \
-    && grep -Eq 'last run [0-9-]{10} [0-9:]{5} CES?T' \"\$i\" && grep -Eq '<span>updated [0-9-]{10} [0-9:]{5} CES?T</span>' \"\$i\" \
+check "index.html: both runs (the one from before too), the line and updated in CET or CEST, no UTC left" bash -c "i='$work/brief/index.html' \
+    && [ \"\$(grep -oE 'title=\"[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2} CES?T - job 90[78]\">' \"\$i\" | wc -l)\" = 2 ] \
+    && grep -Eq '<span class=\"when\" title=\"[0-9-]{10} [0-9:]{5} CES?T\">' \"\$i\" && grep -Eq 'Updated <b>[0-9-]{10} [0-9:]{5} CES?T</b>' \"\$i\" \
     && ! grep -Eq '[0-9]{2}:[0-9]{2} UTC' \"\$i\""
 check "index.json keeps UTC: generated, each line's when and its runs'" "$py" -c 'import json, re, sys
 j = json.load(open(sys.argv[1]))
@@ -216,7 +218,7 @@ run "report_time_zone not a time zone: UTC, said once, the job ok" ok \
 check "the warning names it, once" bash -c "[ \"\$(tr -s '\n ' '  ' < '$work/out.txt' \
     | grep -oF 'report_time_zone Mars/Olympus_Mons is not a time zone this execution environment knows' | wc -l)\" = 1 ]"
 check "index.html: UTC again, all 3 runs" bash -c "i='$work/brief/index.html' \
-    && [ \"\$(grep -oE '[0-9]{2}:[0-9]{2} UTC</a>' \"\$i\" | wc -l)\" = 4 ] && ! grep -Eq 'CES?T' \"\$i\""
+    && [ \"\$(grep -oE 'title=\"[0-9-]{10} [0-9:]{5} UTC - job 90[789]\">' \"\$i\" | wc -l)\" = 3 ] && ! grep -Eq 'CES?T' \"\$i\""
 mkdir -p "$work/glass"
 run "the glass look: the page gets the blur, icons and a plain print" ok "{\"report_web_dest\": \"$work/glass\", \"report_web_theme\": \"glass\", $aapjob}"
 check "the logo inside it (at most 80 px tall), the blur, line icons, print, phone rules, no cid:" bash -c "p=\"\$(ls '$work'/glass/linux-certificate-trust-report/*_job-907.html)\" \
