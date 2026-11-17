@@ -71,7 +71,7 @@
   function fit1(w,mode){
     var t=w.querySelector('table');if(!t||!w.offsetParent)return -1;
     var cw=w.clientWidth,fw=+(w.getAttribute('data-fw')||-1),fs=w.getAttribute('data-fs');
-    var redo=mode===true||fs===null||cw>fw,more=!redo&&(mode==='grow'||cw<fw);
+    var redo=mode===true||fs===null||cw>fw||(fs!=='9'&&t.scrollWidth>cw+1),more=!redo&&(mode==='grow'||cw<fw);
     if(redo||more){
       var st=(t.classList.contains('cc')?['sq']:[]).concat(['f1','f2','f3','f4']),i=0,b=t.tBodies[0],big=b&&b.rows.length>400;
       var over=function(){return t.scrollWidth>w.clientWidth+1};

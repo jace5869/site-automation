@@ -292,6 +292,91 @@ class Update(Base):
         self.assertEqual(open(self.target).read(), NEW)
         self.assertIn("could not be updated", " ".join(r["lines"]))
 
+    # --- sa-1701b: nothing written through a link, a backup never over a file, report mode says only
+    def test_a_linked_backup_folder_is_refused(self):
+        elsewhere = os.path.join(self.d, "elsewhere")
+        os.makedirs(elsewhere, 0o755)
+        os.symlink(elsewhere, os.path.join(self.opt, "old"))
+        r = self.up()
+        self.assertFalse(r["changed"])
+        self.assertFalse(r["updating"])
+        self.assertEqual(open(self.target).read(), NEW)
+        self.assertEqual(os.listdir(elsewhere), [])
+        self.assertEqual(stat.S_IMODE(os.stat(elsewhere).st_mode), 0o755)       # never chmod-ed
+        self.assertTrue(any("is a link: nothing was changed there" in x and "not updated" in x for x in r["lines"]))
+
+    def test_a_linked_install_folder_is_refused(self):
+        lnk = os.path.join(self.d, "optlink")
+        os.symlink(self.opt, lnk)
+        r = self.up(target=os.path.join(lnk, "act"), backup_dir=os.path.join(lnk, "old"))
+        self.assertFalse(r["changed"])
+        self.assertEqual(open(self.target).read(), NEW)
+        self.assertFalse(os.path.exists(os.path.join(self.opt, "old")))
+        self.assertTrue(any("is a link" in x for x in r["lines"]))
+
+    def test_a_linked_backup_folder_stops_a_link_or_delete_too(self):
+        elsewhere = os.path.join(self.d, "elsewhere")
+        os.makedirs(elsewhere)
+        os.symlink(elsewhere, os.path.join(self.opt, "old"))
+        self.write(self.act, OLD, 0o755)
+        for action in ("link", "delete"):
+            r = self.run_it(action=action)
+            self.assertFalse(r["changed"])
+            self.assertEqual(open(self.act).read(), OLD)
+            self.assertEqual(os.listdir(elsewhere), [])
+            self.assertTrue(any("is a link" in x for x in r["lines"]))
+
+    def test_a_backup_name_that_is_taken_is_never_written_over(self):
+        back = os.path.join(self.opt, "old")
+        os.makedirs(back, 0o700)
+        taken = os.path.join(back, "act.%s.%s" % (NOW, m.sha256(self.target)[:8]))
+        os.symlink(self.target, taken)                        # a link to the installed ACT, as the review found
+        r = self.up()
+        self.assertTrue(r["changed"])
+        self.assertTrue(os.path.islink(taken))                # untouched
+        kept = r["update"]["backup"]
+        self.assertEqual(kept, taken + ".1")
+        self.assertEqual(open(kept).read(), NEW)               # the old one really is kept
+        self.assertEqual(open(self.target).read(), self.JOBS)
+        self.assertIn("kept at %s." % kept, " ".join(r["lines"]))
+
+    def test_a_backup_that_differs_stops_the_update(self):
+        real = m.shutil.copyfileobj
+        m.shutil.copyfileobj = lambda src, out, *a: out.write(b"garbage")
+        self.addCleanup(setattr, m.shutil, "copyfileobj", real)
+        r = self.up()
+        self.assertFalse(r["changed"])
+        self.assertEqual(open(self.target).read(), NEW)
+        self.assertEqual(os.listdir(os.path.join(self.opt, "old")), [])        # the bad copy is removed
+        self.assertTrue(any("not updated" in x and "differs" in x for x in r["lines"]))
+
+    def test_report_mode_changes_and_stages_nothing(self):
+        r = self.up(action="report")
+        self.assertFalse(r["changed"])
+        self.assertFalse(r["updating"])
+        self.assertEqual(open(self.target).read(), NEW)
+        self.assertFalse(os.path.exists(os.path.join(self.opt, "old")))
+        self.assertIn("would update %s 0.6.25 -> 0.6.27 (report only)." % self.target, r["lines"])
+
+    def test_report_mode_when_asked_to_only_look(self):
+        r = self.up(apply=False, action="report")
+        self.assertFalse(r["updating"])
+        self.assertIn("(report only)", " ".join(r["lines"]))
+
+    def test_check_mode_says_updating_so_the_task_stages(self):
+        self.assertTrue(self.up(check=True)["updating"])
+
+    def test_a_staged_file_that_is_not_the_jobs_one_is_refused(self):
+        self.write(self.staged, "#!/bin/sh\necho other\n", 0o755)
+        r = self.up()
+        self.assertFalse(r["changed"])
+        self.assertEqual(open(self.target).read(), NEW)
+
+    def test_the_new_one_is_put_in_place_by_a_rename(self):
+        inode = os.stat(self.staged).st_ino
+        self.up()
+        self.assertEqual(os.stat(self.target).st_ino, inode)
+
     def test_the_task_wires_it(self):
         t = open(os.path.join(REPO, "roles", "site_act", "tasks", "old_copies.yml")).read()
         self.assertIn("source_sha256", t)

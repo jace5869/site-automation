@@ -155,6 +155,22 @@ check "  ...act --version" "$(on "$db" 'HOME=/nonexistent act --version | head -
 run "same version again: untouched" act_old_copies.yml -l db01.example.mil -- '!updated /opt/act/act' '!would update'
 check "  ...still one backup" "$(on "$db" 'ls /opt/act/old | wc -l')" "1"
 
+# sa-1701b: report mode says only; a linked /opt/act/old is refused (nothing written through it)
+age() { sed 's/^ACT_VERSION = .*/ACT_VERSION = "0.6.24"/' "$repo/vendor/act/act" | "$engine" exec -i "$db" sh -c 'cat > /opt/act/act && chmod 755 /opt/act/act'; }
+age
+osha=$(on "$db" 'sha256sum /opt/act/act' | cut -d' ' -f1)
+run "installed ACT older, report: said only" act_old_copies.yml -l db01.example.mil -e site_act_old_bin=report \
+    -- "would update /opt/act/act 0.6.24 -> $actv (report only)."
+check "  ...unchanged, nothing staged, still one backup" "$(on "$db" 'sha256sum /opt/act/act | cut -d" " -f1; ls -A /opt/act | tr "\n" " "; ls /opt/act/old | wc -l')" "$osha
+act old 1"
+on "$db" 'mv /opt/act/old /opt/act/old.d && mkdir /tmp/elsewhere && ln -s /tmp/elsewhere /opt/act/old' >/dev/null
+run "installed ACT older, /opt/act/old a link: refused" act_old_copies.yml -l db01.example.mil \
+    -- "/opt/act/old is a link: nothing was changed there"
+check "  ...unchanged, nothing written through the link" "$(on "$db" 'sha256sum /opt/act/act | cut -d" " -f1; ls -A /tmp/elsewhere | wc -l; ls -A /opt/act | tr "\n" " "')" "$osha
+0
+act old old.d "
+on "$db" 'rm /opt/act/old && mv /opt/act/old.d /opt/act/old' >/dev/null
+
 if [ $with36 = 1 ]; then
     run "old01, Python 3.6 only: looked at, not linked" act_old_copies.yml -l old01.example.mil \
         -- "old01.example.mil" "not linked (the new ACT needs Python 3.6 or newer)"

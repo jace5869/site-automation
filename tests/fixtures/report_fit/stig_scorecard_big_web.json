@@ -2283,6 +2283,7 @@
 "",
 "",
 "The hosts the rule is open on",
+"Hosts open times 10 (CAT I), 4 (CAT II) or 1 (CAT III): the biggest weights first",
 "The collections, with the hosts in each"
 ],
 "columns": [
@@ -2292,9 +2293,84 @@
 "What it checks",
 "Platform",
 "Hosts open",
+"Weight",
 "Where"
 ],
 "details": [
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"r8app008",
+"SITEA - RHEL 8"
+],
+[
+"r8app013",
+"SITEA - RHEL 8"
+],
+[
+"r8app029",
+"SITEA - RHEL 8"
+],
+[
+"r8app038",
+"SITEA - RHEL 8"
+],
+[
+"r8app040",
+"SITEA - RHEL 8"
+],
+[
+"r8app048",
+"SITEA - RHEL 8"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"win010",
+"SITEA - Windows Server"
+],
+[
+"win011",
+"SITEA - Windows Server"
+],
+[
+"win047",
+"SITEA - Windows Server"
+],
+[
+"win058",
+"SITEA - Windows Server"
+],
+[
+"win061",
+"SITEA - Windows Server"
+],
+[
+"win074",
+"SITEA - Windows Server"
+]
+]
+},
 {
 "columns": [
 "Host",
@@ -2491,6 +2567,105 @@
 [
 "r8app051",
 "SITEA - RHEL 8"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"wks018",
+"SITEA - Windows 11"
+],
+[
+"wks020",
+"SITEA - Windows 11"
+],
+[
+"wks028",
+"SITEA - Windows 11"
+],
+[
+"wks030",
+"SITEA - Windows 11"
+],
+[
+"wks062",
+"SITEA - Windows 11"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"r8app003",
+"SITEA - RHEL 8"
+],
+[
+"r8app006",
+"SITEA - RHEL 8"
+],
+[
+"r8app018",
+"SITEA - RHEL 8"
+],
+[
+"r8app022",
+"SITEA - RHEL 8"
+],
+[
+"r8app038",
+"SITEA - RHEL 8"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"rhel021",
+"SITEA - RHEL 9"
+],
+[
+"rhel044",
+"SITEA - RHEL 9"
+],
+[
+"rhel056",
+"SITEA - RHEL 9"
+],
+[
+"lab008",
+"SITEB - Lab"
+],
+[
+"lab030",
+"SITEB - Lab"
 ]
 ]
 },
@@ -3646,6 +3821,64 @@
 "more": "",
 "rows": [
 [
+"wks009",
+"SITEA - Windows 11"
+],
+[
+"wks049",
+"SITEA - Windows 11"
+],
+[
+"wks059",
+"SITEA - Windows 11"
+],
+[
+"wks064",
+"SITEA - Windows 11"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"rhel060",
+"SITEA - RHEL 9"
+],
+[
+"rhel068",
+"SITEA - RHEL 9"
+],
+[
+"rhel075",
+"SITEA - RHEL 9"
+],
+[
+"lab017",
+"SITEB - Lab"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
 "wks001",
 "SITEA - Windows 11"
 ],
@@ -4317,55 +4550,6 @@
 [
 "win082",
 "SITEA - Windows Server"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"rhel017",
-"SITEA - RHEL 9"
-],
-[
-"rhel045",
-"SITEA - RHEL 9"
-],
-[
-"rhel063",
-"SITEA - RHEL 9"
-],
-[
-"rhel072",
-"SITEA - RHEL 9"
-],
-[
-"rhel092",
-"SITEA - RHEL 9"
-],
-[
-"rhel105",
-"SITEA - RHEL 9"
-],
-[
-"lab002",
-"SITEB - Lab"
-],
-[
-"lab014",
-"SITEB - Lab"
-],
-[
-"lab017",
-"SITEB - Lab"
 ]
 ]
 },
@@ -5686,35 +5870,40 @@
 "more": "",
 "rows": [
 [
-"r8app002",
-"SITEA - RHEL 8"
+"wks009",
+"SITEA - Windows 11"
 ],
+[
+"wks015",
+"SITEA - Windows 11"
+],
+[
+"wks043",
+"SITEA - Windows 11"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
 [
 "r8app006",
 "SITEA - RHEL 8"
 ],
 [
-"r8app020",
+"r8app022",
 "SITEA - RHEL 8"
 ],
 [
-"r8app023",
-"SITEA - RHEL 8"
-],
-[
-"r8app030",
-"SITEA - RHEL 8"
-],
-[
-"r8app031",
-"SITEA - RHEL 8"
-],
-[
-"r8app038",
-"SITEA - RHEL 8"
-],
-[
-"r8app041",
+"r8app047",
 "SITEA - RHEL 8"
 ]
 ]
@@ -5731,35 +5920,15 @@
 "more": "",
 "rows": [
 [
-"rhel015",
+"rhel079",
 "SITEA - RHEL 9"
 ],
 [
-"rhel016",
+"rhel096",
 "SITEA - RHEL 9"
 ],
 [
-"rhel051",
-"SITEA - RHEL 9"
-],
-[
-"rhel073",
-"SITEA - RHEL 9"
-],
-[
-"rhel080",
-"SITEA - RHEL 9"
-],
-[
-"rhel106",
-"SITEA - RHEL 9"
-],
-[
-"rhel110",
-"SITEA - RHEL 9"
-],
-[
-"lab032",
+"lab025",
 "SITEB - Lab"
 ]
 ]
@@ -5776,36 +5945,66 @@
 "more": "",
 "rows": [
 [
-"rhel022",
-"SITEA - RHEL 9"
+"win013",
+"SITEA - Windows Server"
 ],
 [
-"rhel039",
-"SITEA - RHEL 9"
+"win067",
+"SITEA - Windows Server"
 ],
 [
-"rhel061",
-"SITEA - RHEL 9"
+"win075",
+"SITEA - Windows Server"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"win013",
+"SITEA - Windows Server"
 ],
 [
-"rhel068",
-"SITEA - RHEL 9"
+"win051",
+"SITEA - Windows Server"
 ],
 [
-"rhel072",
-"SITEA - RHEL 9"
+"win057",
+"SITEA - Windows Server"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"win046",
+"SITEA - Windows Server"
 ],
 [
-"rhel104",
-"SITEA - RHEL 9"
+"win066",
+"SITEA - Windows Server"
 ],
 [
-"rhel107",
-"SITEA - RHEL 9"
-],
-[
-"lab008",
-"SITEB - Lab"
+"win070",
+"SITEA - Windows Server"
 ]
 ]
 },
@@ -6584,121 +6783,6 @@
 ],
 [
 "win073",
-"SITEA - Windows Server"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"rhel012",
-"SITEA - RHEL 9"
-],
-[
-"rhel025",
-"SITEA - RHEL 9"
-],
-[
-"rhel055",
-"SITEA - RHEL 9"
-],
-[
-"rhel060",
-"SITEA - RHEL 9"
-],
-[
-"rhel089",
-"SITEA - RHEL 9"
-],
-[
-"rhel095",
-"SITEA - RHEL 9"
-],
-[
-"lab005",
-"SITEB - Lab"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"r8app008",
-"SITEA - RHEL 8"
-],
-[
-"r8app013",
-"SITEA - RHEL 8"
-],
-[
-"r8app029",
-"SITEA - RHEL 8"
-],
-[
-"r8app038",
-"SITEA - RHEL 8"
-],
-[
-"r8app040",
-"SITEA - RHEL 8"
-],
-[
-"r8app048",
-"SITEA - RHEL 8"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"win010",
-"SITEA - Windows Server"
-],
-[
-"win011",
-"SITEA - Windows Server"
-],
-[
-"win047",
-"SITEA - Windows Server"
-],
-[
-"win058",
-"SITEA - Windows Server"
-],
-[
-"win061",
-"SITEA - Windows Server"
-],
-[
-"win074",
 "SITEA - Windows Server"
 ]
 ]
@@ -7921,253 +8005,6 @@
 [
 "win060",
 "SITEA - Windows Server"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"wks006",
-"SITEA - Windows 11"
-],
-[
-"wks018",
-"SITEA - Windows 11"
-],
-[
-"wks019",
-"SITEA - Windows 11"
-],
-[
-"wks020",
-"SITEA - Windows 11"
-],
-[
-"wks034",
-"SITEA - Windows 11"
-],
-[
-"wks054",
-"SITEA - Windows 11"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"wks007",
-"SITEA - Windows 11"
-],
-[
-"wks011",
-"SITEA - Windows 11"
-],
-[
-"wks018",
-"SITEA - Windows 11"
-],
-[
-"wks045",
-"SITEA - Windows 11"
-],
-[
-"wks053",
-"SITEA - Windows 11"
-],
-[
-"wks057",
-"SITEA - Windows 11"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"win007",
-"SITEA - Windows Server"
-],
-[
-"win016",
-"SITEA - Windows Server"
-],
-[
-"win030",
-"SITEA - Windows Server"
-],
-[
-"win044",
-"SITEA - Windows Server"
-],
-[
-"win051",
-"SITEA - Windows Server"
-],
-[
-"win055",
-"SITEA - Windows Server"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"win013",
-"SITEA - Windows Server"
-],
-[
-"win019",
-"SITEA - Windows Server"
-],
-[
-"win036",
-"SITEA - Windows Server"
-],
-[
-"win045",
-"SITEA - Windows Server"
-],
-[
-"win056",
-"SITEA - Windows Server"
-],
-[
-"win057",
-"SITEA - Windows Server"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"wks018",
-"SITEA - Windows 11"
-],
-[
-"wks020",
-"SITEA - Windows 11"
-],
-[
-"wks028",
-"SITEA - Windows 11"
-],
-[
-"wks030",
-"SITEA - Windows 11"
-],
-[
-"wks062",
-"SITEA - Windows 11"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"r8app003",
-"SITEA - RHEL 8"
-],
-[
-"r8app006",
-"SITEA - RHEL 8"
-],
-[
-"r8app018",
-"SITEA - RHEL 8"
-],
-[
-"r8app022",
-"SITEA - RHEL 8"
-],
-[
-"r8app038",
-"SITEA - RHEL 8"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"rhel021",
-"SITEA - RHEL 9"
-],
-[
-"rhel044",
-"SITEA - RHEL 9"
-],
-[
-"rhel056",
-"SITEA - RHEL 9"
-],
-[
-"lab008",
-"SITEB - Lab"
-],
-[
-"lab030",
-"SITEB - Lab"
 ]
 ]
 },
@@ -9503,122 +9340,32 @@
 "more": "",
 "rows": [
 [
-"wks005",
-"SITEA - Windows 11"
+"win008",
+"SITEA - Windows Server"
 ],
 [
-"wks029",
-"SITEA - Windows 11"
+"win010",
+"SITEA - Windows Server"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
 ],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
 [
-"wks035",
+"wks033",
 "SITEA - Windows 11"
 ],
 [
 "wks036",
-"SITEA - Windows 11"
-],
-[
-"wks054",
-"SITEA - Windows 11"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"wks016",
-"SITEA - Windows 11"
-],
-[
-"wks039",
-"SITEA - Windows 11"
-],
-[
-"wks043",
-"SITEA - Windows 11"
-],
-[
-"wks056",
-"SITEA - Windows 11"
-],
-[
-"wks058",
-"SITEA - Windows 11"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"wks005",
-"SITEA - Windows 11"
-],
-[
-"wks009",
-"SITEA - Windows 11"
-],
-[
-"wks019",
-"SITEA - Windows 11"
-],
-[
-"wks043",
-"SITEA - Windows 11"
-],
-[
-"wks053",
-"SITEA - Windows 11"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"wks018",
-"SITEA - Windows 11"
-],
-[
-"wks028",
-"SITEA - Windows 11"
-],
-[
-"wks037",
-"SITEA - Windows 11"
-],
-[
-"wks052",
-"SITEA - Windows 11"
-],
-[
-"wks053",
 "SITEA - Windows 11"
 ]
 ]
@@ -9639,19 +9386,7 @@
 "SITEA - Windows 11"
 ],
 [
-"wks022",
-"SITEA - Windows 11"
-],
-[
-"wks024",
-"SITEA - Windows 11"
-],
-[
-"wks031",
-"SITEA - Windows 11"
-],
-[
-"wks050",
+"wks061",
 "SITEA - Windows 11"
 ]
 ]
@@ -9672,19 +9407,7 @@
 "SITEA - RHEL 8"
 ],
 [
-"r8app010",
-"SITEA - RHEL 8"
-],
-[
-"r8app011",
-"SITEA - RHEL 8"
-],
-[
-"r8app043",
-"SITEA - RHEL 8"
-],
-[
-"r8app053",
+"r8app016",
 "SITEA - RHEL 8"
 ]
 ]
@@ -9701,23 +9424,11 @@
 "more": "",
 "rows": [
 [
-"rhel011",
+"rhel064",
 "SITEA - RHEL 9"
 ],
 [
-"rhel061",
-"SITEA - RHEL 9"
-],
-[
-"rhel071",
-"SITEA - RHEL 9"
-],
-[
-"rhel075",
-"SITEA - RHEL 9"
-],
-[
-"lab034",
+"lab004",
 "SITEB - Lab"
 ]
 ]
@@ -9734,90 +9445,12 @@
 "more": "",
 "rows": [
 [
-"r8app033",
-"SITEA - RHEL 8"
-],
-[
-"r8app038",
-"SITEA - RHEL 8"
-],
-[
-"r8app041",
-"SITEA - RHEL 8"
-],
-[
-"r8app049",
-"SITEA - RHEL 8"
-],
-[
-"r8app052",
-"SITEA - RHEL 8"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"rhel038",
-"SITEA - RHEL 9"
-],
-[
-"rhel097",
-"SITEA - RHEL 9"
-],
-[
-"rhel101",
-"SITEA - RHEL 9"
-],
-[
-"lab006",
-"SITEB - Lab"
-],
-[
-"lab020",
-"SITEB - Lab"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"r8app040",
-"SITEA - RHEL 8"
-],
-[
-"r8app046",
-"SITEA - RHEL 8"
-],
-[
-"r8app050",
+"r8app045",
 "SITEA - RHEL 8"
 ],
 [
 "r8app051",
 "SITEA - RHEL 8"
-],
-[
-"r8app052",
-"SITEA - RHEL 8"
 ]
 ]
 },
@@ -9833,24 +9466,12 @@
 "more": "",
 "rows": [
 [
-"rhel006",
+"rhel067",
 "SITEA - RHEL 9"
 ],
 [
-"rhel022",
+"rhel110",
 "SITEA - RHEL 9"
-],
-[
-"rhel044",
-"SITEA - RHEL 9"
-],
-[
-"rhel048",
-"SITEA - RHEL 9"
-],
-[
-"lab022",
-"SITEB - Lab"
 ]
 ]
 },
@@ -9870,19 +9491,7 @@
 "SITEA - Windows Server"
 ],
 [
-"win017",
-"SITEA - Windows Server"
-],
-[
-"win069",
-"SITEA - Windows Server"
-],
-[
-"win083",
-"SITEA - Windows Server"
-],
-[
-"win085",
+"win021",
 "SITEA - Windows Server"
 ]
 ]
@@ -9899,24 +9508,12 @@
 "more": "",
 "rows": [
 [
-"win004",
-"SITEA - Windows Server"
+"net001",
+"SITEA - Network"
 ],
 [
-"win018",
-"SITEA - Windows Server"
-],
-[
-"win051",
-"SITEA - Windows Server"
-],
-[
-"win052",
-"SITEA - Windows Server"
-],
-[
-"win062",
-"SITEA - Windows Server"
+"net018",
+"SITEA - Network"
 ]
 ]
 },
@@ -9932,82 +9529,12 @@
 "more": "",
 "rows": [
 [
-"win010",
-"SITEA - Windows Server"
+"net005",
+"SITEA - Network"
 ],
 [
-"win016",
-"SITEA - Windows Server"
-],
-[
-"win029",
-"SITEA - Windows Server"
-],
-[
-"win036",
-"SITEA - Windows Server"
-],
-[
-"win041",
-"SITEA - Windows Server"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"wks009",
-"SITEA - Windows 11"
-],
-[
-"wks049",
-"SITEA - Windows 11"
-],
-[
-"wks059",
-"SITEA - Windows 11"
-],
-[
-"wks064",
-"SITEA - Windows 11"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"rhel060",
-"SITEA - RHEL 9"
-],
-[
-"rhel068",
-"SITEA - RHEL 9"
-],
-[
-"rhel075",
-"SITEA - RHEL 9"
-],
-[
-"lab017",
-"SITEB - Lab"
+"net016",
+"SITEA - Network"
 ]
 ]
 },
@@ -11212,417 +10739,6 @@
 "more": "",
 "rows": [
 [
-"wks011",
-"SITEA - Windows 11"
-],
-[
-"wks023",
-"SITEA - Windows 11"
-],
-[
-"wks024",
-"SITEA - Windows 11"
-],
-[
-"wks053",
-"SITEA - Windows 11"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"wks042",
-"SITEA - Windows 11"
-],
-[
-"wks046",
-"SITEA - Windows 11"
-],
-[
-"wks047",
-"SITEA - Windows 11"
-],
-[
-"wks063",
-"SITEA - Windows 11"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"rhel014",
-"SITEA - RHEL 9"
-],
-[
-"rhel107",
-"SITEA - RHEL 9"
-],
-[
-"lab027",
-"SITEB - Lab"
-],
-[
-"lab032",
-"SITEB - Lab"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"r8app012",
-"SITEA - RHEL 8"
-],
-[
-"r8app014",
-"SITEA - RHEL 8"
-],
-[
-"r8app020",
-"SITEA - RHEL 8"
-],
-[
-"r8app021",
-"SITEA - RHEL 8"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"r8app001",
-"SITEA - RHEL 8"
-],
-[
-"r8app014",
-"SITEA - RHEL 8"
-],
-[
-"r8app020",
-"SITEA - RHEL 8"
-],
-[
-"r8app023",
-"SITEA - RHEL 8"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"r8app021",
-"SITEA - RHEL 8"
-],
-[
-"r8app035",
-"SITEA - RHEL 8"
-],
-[
-"r8app045",
-"SITEA - RHEL 8"
-],
-[
-"r8app049",
-"SITEA - RHEL 8"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"win015",
-"SITEA - Windows Server"
-],
-[
-"win026",
-"SITEA - Windows Server"
-],
-[
-"win079",
-"SITEA - Windows Server"
-],
-[
-"win085",
-"SITEA - Windows Server"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"win019",
-"SITEA - Windows Server"
-],
-[
-"win055",
-"SITEA - Windows Server"
-],
-[
-"win077",
-"SITEA - Windows Server"
-],
-[
-"win083",
-"SITEA - Windows Server"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"net006",
-"SITEA - Network"
-],
-[
-"net008",
-"SITEA - Network"
-],
-[
-"net017",
-"SITEA - Network"
-],
-[
-"net022",
-"SITEA - Network"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"wks009",
-"SITEA - Windows 11"
-],
-[
-"wks015",
-"SITEA - Windows 11"
-],
-[
-"wks043",
-"SITEA - Windows 11"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"r8app006",
-"SITEA - RHEL 8"
-],
-[
-"r8app022",
-"SITEA - RHEL 8"
-],
-[
-"r8app047",
-"SITEA - RHEL 8"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"rhel079",
-"SITEA - RHEL 9"
-],
-[
-"rhel096",
-"SITEA - RHEL 9"
-],
-[
-"lab025",
-"SITEB - Lab"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"win013",
-"SITEA - Windows Server"
-],
-[
-"win067",
-"SITEA - Windows Server"
-],
-[
-"win075",
-"SITEA - Windows Server"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"win013",
-"SITEA - Windows Server"
-],
-[
-"win051",
-"SITEA - Windows Server"
-],
-[
-"win057",
-"SITEA - Windows Server"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"win046",
-"SITEA - Windows Server"
-],
-[
-"win066",
-"SITEA - Windows Server"
-],
-[
-"win070",
-"SITEA - Windows Server"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
 "win001",
 "SITEA - Windows Server"
 ],
@@ -12748,15 +11864,75 @@
 "more": "",
 "rows": [
 [
-"wks021",
-"SITEA - Windows 11"
+"win008",
+"SITEA - Windows Server"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
 ],
-[
-"wks022",
-"SITEA - Windows 11"
+"kinds": [
+"wrap",
+"wrap"
 ],
+"more": "",
+"rows": [
 [
-"wks063",
+"win001",
+"SITEA - Windows Server"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"win004",
+"SITEA - Windows Server"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"win002",
+"SITEA - Windows Server"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"wks059",
 "SITEA - Windows 11"
 ]
 ]
@@ -12773,15 +11949,7 @@
 "more": "",
 "rows": [
 [
-"wks022",
-"SITEA - Windows 11"
-],
-[
-"wks026",
-"SITEA - Windows 11"
-],
-[
-"wks042",
+"wks052",
 "SITEA - Windows 11"
 ]
 ]
@@ -12798,15 +11966,41 @@
 "more": "",
 "rows": [
 [
-"rhel002",
+"wks038",
+"SITEA - Windows 11"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"rhel015",
 "SITEA - RHEL 9"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
 ],
-[
-"rhel010",
-"SITEA - RHEL 9"
+"kinds": [
+"wrap",
+"wrap"
 ],
+"more": "",
+"rows": [
 [
-"rhel017",
+"rhel013",
 "SITEA - RHEL 9"
 ]
 ]
@@ -12823,15 +12017,7 @@
 "more": "",
 "rows": [
 [
-"wks026",
-"SITEA - Windows 11"
-],
-[
-"wks049",
-"SITEA - Windows 11"
-],
-[
-"wks054",
+"wks056",
 "SITEA - Windows 11"
 ]
 ]
@@ -12848,16 +12034,25 @@
 "more": "",
 "rows": [
 [
-"nas001",
-"SITEB - Storage"
+"wks045",
+"SITEA - Windows 11"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
 ],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
 [
 "nas004",
 "SITEB - Storage"
-],
-[
-"nas006",
-"SITEB - Storage"
 ]
 ]
 },
@@ -12873,16 +12068,8 @@
 "more": "",
 "rows": [
 [
-"r8app003",
-"SITEA - RHEL 8"
-],
-[
-"r8app004",
-"SITEA - RHEL 8"
-],
-[
-"r8app033",
-"SITEA - RHEL 8"
+"esx016",
+"SITEA - VMware"
 ]
 ]
 },
@@ -12898,16 +12085,8 @@
 "more": "",
 "rows": [
 [
-"win029",
-"SITEA - Windows Server"
-],
-[
-"win069",
-"SITEA - Windows Server"
-],
-[
-"win082",
-"SITEA - Windows Server"
+"esx013",
+"SITEA - VMware"
 ]
 ]
 },
@@ -12923,16 +12102,42 @@
 "more": "",
 "rows": [
 [
-"net011",
-"SITEA - Network"
+"rhel086",
+"SITEA - RHEL 9"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
 ],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"r8app036",
+"SITEA - RHEL 8"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
 [
 "net013",
 "SITEA - Network"
-],
-[
-"net020",
-"SITEA - Network"
 ]
 ]
 },
@@ -12947,94 +12152,6 @@
 ],
 "more": "",
 "rows": [
-[
-"win008",
-"SITEA - Windows Server"
-],
-[
-"win010",
-"SITEA - Windows Server"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"wks033",
-"SITEA - Windows 11"
-],
-[
-"wks036",
-"SITEA - Windows 11"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"wks002",
-"SITEA - Windows 11"
-],
-[
-"wks061",
-"SITEA - Windows 11"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"r8app006",
-"SITEA - RHEL 8"
-],
-[
-"r8app016",
-"SITEA - RHEL 8"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"rhel064",
-"SITEA - RHEL 9"
-],
 [
 "lab004",
 "SITEB - Lab"
@@ -13053,11 +12170,84 @@
 "more": "",
 "rows": [
 [
-"r8app045",
+"rhel017",
+"SITEA - RHEL 9"
+],
+[
+"rhel045",
+"SITEA - RHEL 9"
+],
+[
+"rhel063",
+"SITEA - RHEL 9"
+],
+[
+"rhel072",
+"SITEA - RHEL 9"
+],
+[
+"rhel092",
+"SITEA - RHEL 9"
+],
+[
+"rhel105",
+"SITEA - RHEL 9"
+],
+[
+"lab002",
+"SITEB - Lab"
+],
+[
+"lab014",
+"SITEB - Lab"
+],
+[
+"lab017",
+"SITEB - Lab"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"r8app002",
 "SITEA - RHEL 8"
 ],
 [
-"r8app051",
+"r8app006",
+"SITEA - RHEL 8"
+],
+[
+"r8app020",
+"SITEA - RHEL 8"
+],
+[
+"r8app023",
+"SITEA - RHEL 8"
+],
+[
+"r8app030",
+"SITEA - RHEL 8"
+],
+[
+"r8app031",
+"SITEA - RHEL 8"
+],
+[
+"r8app038",
+"SITEA - RHEL 8"
+],
+[
+"r8app041",
 "SITEA - RHEL 8"
 ]
 ]
@@ -13074,12 +12264,36 @@
 "more": "",
 "rows": [
 [
-"rhel067",
+"rhel015",
+"SITEA - RHEL 9"
+],
+[
+"rhel016",
+"SITEA - RHEL 9"
+],
+[
+"rhel051",
+"SITEA - RHEL 9"
+],
+[
+"rhel073",
+"SITEA - RHEL 9"
+],
+[
+"rhel080",
+"SITEA - RHEL 9"
+],
+[
+"rhel106",
 "SITEA - RHEL 9"
 ],
 [
 "rhel110",
 "SITEA - RHEL 9"
+],
+[
+"lab032",
+"SITEB - Lab"
 ]
 ]
 },
@@ -13095,54 +12309,36 @@
 "more": "",
 "rows": [
 [
-"win001",
-"SITEA - Windows Server"
+"rhel022",
+"SITEA - RHEL 9"
 ],
 [
-"win021",
-"SITEA - Windows Server"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"net001",
-"SITEA - Network"
+"rhel039",
+"SITEA - RHEL 9"
 ],
 [
-"net018",
-"SITEA - Network"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"net005",
-"SITEA - Network"
+"rhel061",
+"SITEA - RHEL 9"
 ],
 [
-"net016",
-"SITEA - Network"
+"rhel068",
+"SITEA - RHEL 9"
+],
+[
+"rhel072",
+"SITEA - RHEL 9"
+],
+[
+"rhel104",
+"SITEA - RHEL 9"
+],
+[
+"rhel107",
+"SITEA - RHEL 9"
+],
+[
+"lab008",
+"SITEB - Lab"
 ]
 ]
 },
@@ -14229,11 +13425,142 @@
 "more": "",
 "rows": [
 [
-"win006",
+"rhel012",
+"SITEA - RHEL 9"
+],
+[
+"rhel025",
+"SITEA - RHEL 9"
+],
+[
+"rhel055",
+"SITEA - RHEL 9"
+],
+[
+"rhel060",
+"SITEA - RHEL 9"
+],
+[
+"rhel089",
+"SITEA - RHEL 9"
+],
+[
+"rhel095",
+"SITEA - RHEL 9"
+],
+[
+"lab005",
+"SITEB - Lab"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"wks006",
+"SITEA - Windows 11"
+],
+[
+"wks018",
+"SITEA - Windows 11"
+],
+[
+"wks019",
+"SITEA - Windows 11"
+],
+[
+"wks020",
+"SITEA - Windows 11"
+],
+[
+"wks034",
+"SITEA - Windows 11"
+],
+[
+"wks054",
+"SITEA - Windows 11"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"wks007",
+"SITEA - Windows 11"
+],
+[
+"wks011",
+"SITEA - Windows 11"
+],
+[
+"wks018",
+"SITEA - Windows 11"
+],
+[
+"wks045",
+"SITEA - Windows 11"
+],
+[
+"wks053",
+"SITEA - Windows 11"
+],
+[
+"wks057",
+"SITEA - Windows 11"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"win007",
 "SITEA - Windows Server"
 ],
 [
-"win010",
+"win016",
+"SITEA - Windows Server"
+],
+[
+"win030",
+"SITEA - Windows Server"
+],
+[
+"win044",
+"SITEA - Windows Server"
+],
+[
+"win051",
+"SITEA - Windows Server"
+],
+[
+"win055",
 "SITEA - Windows Server"
 ]
 ]
@@ -14250,11 +13577,60 @@
 "more": "",
 "rows": [
 [
-"wks025",
+"win013",
+"SITEA - Windows Server"
+],
+[
+"win019",
+"SITEA - Windows Server"
+],
+[
+"win036",
+"SITEA - Windows Server"
+],
+[
+"win045",
+"SITEA - Windows Server"
+],
+[
+"win056",
+"SITEA - Windows Server"
+],
+[
+"win057",
+"SITEA - Windows Server"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"wks005",
 "SITEA - Windows 11"
 ],
 [
-"wks032",
+"wks029",
+"SITEA - Windows 11"
+],
+[
+"wks035",
+"SITEA - Windows 11"
+],
+[
+"wks036",
+"SITEA - Windows 11"
+],
+[
+"wks054",
 "SITEA - Windows 11"
 ]
 ]
@@ -14270,12 +13646,123 @@
 ],
 "more": "",
 "rows": [
+[
+"wks016",
+"SITEA - Windows 11"
+],
+[
+"wks039",
+"SITEA - Windows 11"
+],
+[
+"wks043",
+"SITEA - Windows 11"
+],
+[
+"wks056",
+"SITEA - Windows 11"
+],
+[
+"wks058",
+"SITEA - Windows 11"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"wks005",
+"SITEA - Windows 11"
+],
+[
+"wks009",
+"SITEA - Windows 11"
+],
+[
+"wks019",
+"SITEA - Windows 11"
+],
+[
+"wks043",
+"SITEA - Windows 11"
+],
+[
+"wks053",
+"SITEA - Windows 11"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"wks018",
+"SITEA - Windows 11"
+],
+[
+"wks028",
+"SITEA - Windows 11"
+],
+[
+"wks037",
+"SITEA - Windows 11"
+],
+[
+"wks052",
+"SITEA - Windows 11"
+],
+[
+"wks053",
+"SITEA - Windows 11"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"wks002",
+"SITEA - Windows 11"
+],
+[
+"wks022",
+"SITEA - Windows 11"
+],
+[
+"wks024",
+"SITEA - Windows 11"
+],
 [
 "wks031",
 "SITEA - Windows 11"
 ],
 [
-"wks060",
+"wks050",
 "SITEA - Windows 11"
 ]
 ]
@@ -14292,12 +13779,24 @@
 "more": "",
 "rows": [
 [
-"esx017",
-"SITEA - VMware"
+"r8app006",
+"SITEA - RHEL 8"
 ],
 [
-"esx022",
-"SITEA - VMware"
+"r8app010",
+"SITEA - RHEL 8"
+],
+[
+"r8app011",
+"SITEA - RHEL 8"
+],
+[
+"r8app043",
+"SITEA - RHEL 8"
+],
+[
+"r8app053",
+"SITEA - RHEL 8"
 ]
 ]
 },
@@ -14313,74 +13812,23 @@
 "more": "",
 "rows": [
 [
-"net006",
-"SITEA - Network"
+"rhel011",
+"SITEA - RHEL 9"
 ],
 [
-"net016",
-"SITEA - Network"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"net006",
-"SITEA - Network"
+"rhel061",
+"SITEA - RHEL 9"
 ],
 [
-"net017",
-"SITEA - Network"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"net002",
-"SITEA - Network"
+"rhel071",
+"SITEA - RHEL 9"
 ],
 [
-"net019",
-"SITEA - Network"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"lab003",
-"SITEB - Lab"
+"rhel075",
+"SITEA - RHEL 9"
 ],
 [
-"lab004",
+"lab034",
 "SITEB - Lab"
 ]
 ]
@@ -14397,8 +13845,123 @@
 "more": "",
 "rows": [
 [
-"win008",
-"SITEA - Windows Server"
+"r8app033",
+"SITEA - RHEL 8"
+],
+[
+"r8app038",
+"SITEA - RHEL 8"
+],
+[
+"r8app041",
+"SITEA - RHEL 8"
+],
+[
+"r8app049",
+"SITEA - RHEL 8"
+],
+[
+"r8app052",
+"SITEA - RHEL 8"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"rhel038",
+"SITEA - RHEL 9"
+],
+[
+"rhel097",
+"SITEA - RHEL 9"
+],
+[
+"rhel101",
+"SITEA - RHEL 9"
+],
+[
+"lab006",
+"SITEB - Lab"
+],
+[
+"lab020",
+"SITEB - Lab"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"r8app040",
+"SITEA - RHEL 8"
+],
+[
+"r8app046",
+"SITEA - RHEL 8"
+],
+[
+"r8app050",
+"SITEA - RHEL 8"
+],
+[
+"r8app051",
+"SITEA - RHEL 8"
+],
+[
+"r8app052",
+"SITEA - RHEL 8"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"rhel006",
+"SITEA - RHEL 9"
+],
+[
+"rhel022",
+"SITEA - RHEL 9"
+],
+[
+"rhel044",
+"SITEA - RHEL 9"
+],
+[
+"rhel048",
+"SITEA - RHEL 9"
+],
+[
+"lab022",
+"SITEB - Lab"
 ]
 ]
 },
@@ -14415,6 +13978,22 @@
 "rows": [
 [
 "win001",
+"SITEA - Windows Server"
+],
+[
+"win017",
+"SITEA - Windows Server"
+],
+[
+"win069",
+"SITEA - Windows Server"
+],
+[
+"win083",
+"SITEA - Windows Server"
+],
+[
+"win085",
 "SITEA - Windows Server"
 ]
 ]
@@ -14433,22 +14012,21 @@
 [
 "win004",
 "SITEA - Windows Server"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
 ],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
 [
-"win002",
+"win018",
+"SITEA - Windows Server"
+],
+[
+"win051",
+"SITEA - Windows Server"
+],
+[
+"win052",
+"SITEA - Windows Server"
+],
+[
+"win062",
 "SITEA - Windows Server"
 ]
 ]
@@ -14465,7 +14043,52 @@
 "more": "",
 "rows": [
 [
-"wks059",
+"win010",
+"SITEA - Windows Server"
+],
+[
+"win016",
+"SITEA - Windows Server"
+],
+[
+"win029",
+"SITEA - Windows Server"
+],
+[
+"win036",
+"SITEA - Windows Server"
+],
+[
+"win041",
+"SITEA - Windows Server"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"wks011",
+"SITEA - Windows 11"
+],
+[
+"wks023",
+"SITEA - Windows 11"
+],
+[
+"wks024",
+"SITEA - Windows 11"
+],
+[
+"wks053",
 "SITEA - Windows 11"
 ]
 ]
@@ -14482,7 +14105,19 @@
 "more": "",
 "rows": [
 [
-"wks052",
+"wks042",
+"SITEA - Windows 11"
+],
+[
+"wks046",
+"SITEA - Windows 11"
+],
+[
+"wks047",
+"SITEA - Windows 11"
+],
+[
+"wks063",
 "SITEA - Windows 11"
 ]
 ]
@@ -14499,42 +14134,20 @@
 "more": "",
 "rows": [
 [
-"wks038",
-"SITEA - Windows 11"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"rhel015",
+"rhel014",
 "SITEA - RHEL 9"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
 ],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
 [
-"rhel013",
+"rhel107",
 "SITEA - RHEL 9"
+],
+[
+"lab027",
+"SITEB - Lab"
+],
+[
+"lab032",
+"SITEB - Lab"
 ]
 ]
 },
@@ -14550,109 +14163,19 @@
 "more": "",
 "rows": [
 [
-"wks056",
-"SITEA - Windows 11"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
+"r8app012",
+"SITEA - RHEL 8"
 ],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
 [
-"wks045",
-"SITEA - Windows 11"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
+"r8app014",
+"SITEA - RHEL 8"
 ],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
 [
-"nas004",
-"SITEB - Storage"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
+"r8app020",
+"SITEA - RHEL 8"
 ],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
 [
-"esx016",
-"SITEA - VMware"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"esx013",
-"SITEA - VMware"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"rhel086",
-"SITEA - RHEL 9"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"r8app036",
+"r8app021",
 "SITEA - RHEL 8"
 ]
 ]
@@ -14669,8 +14192,20 @@
 "more": "",
 "rows": [
 [
-"net013",
-"SITEA - Network"
+"r8app001",
+"SITEA - RHEL 8"
+],
+[
+"r8app014",
+"SITEA - RHEL 8"
+],
+[
+"r8app020",
+"SITEA - RHEL 8"
+],
+[
+"r8app023",
+"SITEA - RHEL 8"
 ]
 ]
 },
@@ -14686,8 +14221,107 @@
 "more": "",
 "rows": [
 [
-"lab004",
-"SITEB - Lab"
+"r8app021",
+"SITEA - RHEL 8"
+],
+[
+"r8app035",
+"SITEA - RHEL 8"
+],
+[
+"r8app045",
+"SITEA - RHEL 8"
+],
+[
+"r8app049",
+"SITEA - RHEL 8"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"win015",
+"SITEA - Windows Server"
+],
+[
+"win026",
+"SITEA - Windows Server"
+],
+[
+"win079",
+"SITEA - Windows Server"
+],
+[
+"win085",
+"SITEA - Windows Server"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"win019",
+"SITEA - Windows Server"
+],
+[
+"win055",
+"SITEA - Windows Server"
+],
+[
+"win077",
+"SITEA - Windows Server"
+],
+[
+"win083",
+"SITEA - Windows Server"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"net006",
+"SITEA - Network"
+],
+[
+"net008",
+"SITEA - Network"
+],
+[
+"net017",
+"SITEA - Network"
+],
+[
+"net022",
+"SITEA - Network"
 ]
 ]
 },
@@ -16726,6 +16360,374 @@
 "more": "",
 "rows": [
 [
+"wks021",
+"SITEA - Windows 11"
+],
+[
+"wks022",
+"SITEA - Windows 11"
+],
+[
+"wks063",
+"SITEA - Windows 11"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"wks022",
+"SITEA - Windows 11"
+],
+[
+"wks026",
+"SITEA - Windows 11"
+],
+[
+"wks042",
+"SITEA - Windows 11"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"rhel002",
+"SITEA - RHEL 9"
+],
+[
+"rhel010",
+"SITEA - RHEL 9"
+],
+[
+"rhel017",
+"SITEA - RHEL 9"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"wks026",
+"SITEA - Windows 11"
+],
+[
+"wks049",
+"SITEA - Windows 11"
+],
+[
+"wks054",
+"SITEA - Windows 11"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"nas001",
+"SITEB - Storage"
+],
+[
+"nas004",
+"SITEB - Storage"
+],
+[
+"nas006",
+"SITEB - Storage"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"r8app003",
+"SITEA - RHEL 8"
+],
+[
+"r8app004",
+"SITEA - RHEL 8"
+],
+[
+"r8app033",
+"SITEA - RHEL 8"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"win029",
+"SITEA - Windows Server"
+],
+[
+"win069",
+"SITEA - Windows Server"
+],
+[
+"win082",
+"SITEA - Windows Server"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"net011",
+"SITEA - Network"
+],
+[
+"net013",
+"SITEA - Network"
+],
+[
+"net020",
+"SITEA - Network"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"win006",
+"SITEA - Windows Server"
+],
+[
+"win010",
+"SITEA - Windows Server"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"wks025",
+"SITEA - Windows 11"
+],
+[
+"wks032",
+"SITEA - Windows 11"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"wks031",
+"SITEA - Windows 11"
+],
+[
+"wks060",
+"SITEA - Windows 11"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"esx017",
+"SITEA - VMware"
+],
+[
+"esx022",
+"SITEA - VMware"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"net006",
+"SITEA - Network"
+],
+[
+"net016",
+"SITEA - Network"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"net006",
+"SITEA - Network"
+],
+[
+"net017",
+"SITEA - Network"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"net002",
+"SITEA - Network"
+],
+[
+"net019",
+"SITEA - Network"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"lab003",
+"SITEB - Lab"
+],
+[
+"lab004",
+"SITEB - Lab"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
 "win004",
 "SITEA - Windows Server"
 ]
@@ -17100,9 +17102,22 @@
 "wrap",
 "wrap",
 "num",
+"num",
 "wrap"
 ],
 "row_tags": [
+{
+"cat": "k1",
+"col": "c12",
+"h": "r8app008 r8app013 r8app029 r8app038 r8app040 r8app048",
+"pf": "pf1"
+},
+{
+"cat": "k1",
+"col": "c13",
+"h": "win010 win011 win047 win058 win061 win074",
+"pf": "pf2"
+},
 {
 "cat": "k2",
 "col": "c11 c18",
@@ -17119,6 +17134,24 @@
 "cat": "k2",
 "col": "c12",
 "h": "r8app006 r8app008 r8app021 r8app022 r8app025 r8app026 r8app027 r8app041 r8app044 r8app045 r8app046 r8app049 r8app051",
+"pf": "pf1"
+},
+{
+"cat": "k1",
+"col": "c14",
+"h": "wks018 wks020 wks028 wks030 wks062",
+"pf": "pf2"
+},
+{
+"cat": "k1",
+"col": "c12",
+"h": "r8app003 r8app006 r8app018 r8app022 r8app038",
+"pf": "pf1"
+},
+{
+"cat": "k1",
+"col": "c11 c18",
+"h": "lab008 lab030 rhel021 rhel044 rhel056",
 "pf": "pf1"
 },
 {
@@ -17242,6 +17275,18 @@
 "pf": "pf1"
 },
 {
+"cat": "k1",
+"col": "c14",
+"h": "wks009 wks049 wks059 wks064",
+"pf": "pf2"
+},
+{
+"cat": "k1",
+"col": "c11 c18",
+"h": "lab017 rhel060 rhel068 rhel075",
+"pf": "pf1"
+},
+{
 "cat": "k2",
 "col": "c14",
 "h": "wks001 wks012 wks020 wks026 wks031 wks034 wks035 wks055 wks063",
@@ -17324,12 +17369,6 @@
 "col": "c13",
 "h": "win007 win017 win026 win044 win057 win071 win074 win077 win082",
 "pf": "pf2"
-},
-{
-"cat": "k3",
-"col": "c11 c18",
-"h": "lab002 lab014 lab017 rhel017 rhel045 rhel063 rhel072 rhel092 rhel105",
-"pf": "pf1"
 },
 {
 "cat": "k2",
@@ -17506,22 +17545,40 @@
 "pf": "pf2"
 },
 {
-"cat": "k3",
+"cat": "k1",
+"col": "c14",
+"h": "wks009 wks015 wks043",
+"pf": "pf2"
+},
+{
+"cat": "k1",
 "col": "c12",
-"h": "r8app002 r8app006 r8app020 r8app023 r8app030 r8app031 r8app038 r8app041",
+"h": "r8app006 r8app022 r8app047",
 "pf": "pf1"
 },
 {
-"cat": "k3",
+"cat": "k1",
 "col": "c11 c18",
-"h": "lab032 rhel015 rhel016 rhel051 rhel073 rhel080 rhel106 rhel110",
+"h": "lab025 rhel079 rhel096",
 "pf": "pf1"
 },
 {
-"cat": "k3",
-"col": "c11 c18",
-"h": "lab008 rhel022 rhel039 rhel061 rhel068 rhel072 rhel104 rhel107",
-"pf": "pf1"
+"cat": "k1",
+"col": "c13",
+"h": "win013 win067 win075",
+"pf": "pf2"
+},
+{
+"cat": "k1",
+"col": "c13",
+"h": "win013 win051 win057",
+"pf": "pf2"
+},
+{
+"cat": "k1",
+"col": "c13",
+"h": "win046 win066 win070",
+"pf": "pf2"
 },
 {
 "cat": "k2",
@@ -17635,24 +17692,6 @@
 "cat": "k2",
 "col": "c13",
 "h": "win014 win031 win041 win049 win055 win072 win073",
-"pf": "pf2"
-},
-{
-"cat": "k3",
-"col": "c11 c18",
-"h": "lab005 rhel012 rhel025 rhel055 rhel060 rhel089 rhel095",
-"pf": "pf1"
-},
-{
-"cat": "k1",
-"col": "c12",
-"h": "r8app008 r8app013 r8app029 r8app038 r8app040 r8app048",
-"pf": "pf1"
-},
-{
-"cat": "k1",
-"col": "c13",
-"h": "win010 win011 win047 win058 win061 win074",
 "pf": "pf2"
 },
 {
@@ -17852,48 +17891,6 @@
 "col": "c13",
 "h": "win004 win010 win020 win023 win027 win060",
 "pf": "pf2"
-},
-{
-"cat": "k3",
-"col": "c14",
-"h": "wks006 wks018 wks019 wks020 wks034 wks054",
-"pf": "pf2"
-},
-{
-"cat": "k3",
-"col": "c14",
-"h": "wks007 wks011 wks018 wks045 wks053 wks057",
-"pf": "pf2"
-},
-{
-"cat": "k3",
-"col": "c13",
-"h": "win007 win016 win030 win044 win051 win055",
-"pf": "pf2"
-},
-{
-"cat": "k3",
-"col": "c13",
-"h": "win013 win019 win036 win045 win056 win057",
-"pf": "pf2"
-},
-{
-"cat": "k1",
-"col": "c14",
-"h": "wks018 wks020 wks028 wks030 wks062",
-"pf": "pf2"
-},
-{
-"cat": "k1",
-"col": "c12",
-"h": "r8app003 r8app006 r8app018 r8app022 r8app038",
-"pf": "pf1"
-},
-{
-"cat": "k1",
-"col": "c11 c18",
-"h": "lab008 lab030 rhel021 rhel044 rhel056",
-"pf": "pf1"
 },
 {
 "cat": "k2",
@@ -18136,100 +18133,64 @@
 "pf": "pf4"
 },
 {
-"cat": "k3",
-"col": "c14",
-"h": "wks005 wks029 wks035 wks036 wks054",
-"pf": "pf2"
-},
-{
-"cat": "k3",
-"col": "c14",
-"h": "wks016 wks039 wks043 wks056 wks058",
-"pf": "pf2"
-},
-{
-"cat": "k3",
-"col": "c14",
-"h": "wks005 wks009 wks019 wks043 wks053",
-"pf": "pf2"
-},
-{
-"cat": "k3",
-"col": "c14",
-"h": "wks018 wks028 wks037 wks052 wks053",
-"pf": "pf2"
-},
-{
-"cat": "k3",
-"col": "c14",
-"h": "wks002 wks022 wks024 wks031 wks050",
-"pf": "pf2"
-},
-{
-"cat": "k3",
-"col": "c12",
-"h": "r8app006 r8app010 r8app011 r8app043 r8app053",
-"pf": "pf1"
-},
-{
-"cat": "k3",
-"col": "c11 c18",
-"h": "lab034 rhel011 rhel061 rhel071 rhel075",
-"pf": "pf1"
-},
-{
-"cat": "k3",
-"col": "c12",
-"h": "r8app033 r8app038 r8app041 r8app049 r8app052",
-"pf": "pf1"
-},
-{
-"cat": "k3",
-"col": "c11 c18",
-"h": "lab006 lab020 rhel038 rhel097 rhel101",
-"pf": "pf1"
-},
-{
-"cat": "k3",
-"col": "c12",
-"h": "r8app040 r8app046 r8app050 r8app051 r8app052",
-"pf": "pf1"
-},
-{
-"cat": "k3",
-"col": "c11 c18",
-"h": "lab022 rhel006 rhel022 rhel044 rhel048",
-"pf": "pf1"
-},
-{
-"cat": "k3",
+"cat": "k1",
 "col": "c13",
-"h": "win001 win017 win069 win083 win085",
-"pf": "pf2"
-},
-{
-"cat": "k3",
-"col": "c13",
-"h": "win004 win018 win051 win052 win062",
-"pf": "pf2"
-},
-{
-"cat": "k3",
-"col": "c13",
-"h": "win010 win016 win029 win036 win041",
+"h": "win008 win010",
 "pf": "pf2"
 },
 {
 "cat": "k1",
 "col": "c14",
-"h": "wks009 wks049 wks059 wks064",
+"h": "wks033 wks036",
 "pf": "pf2"
 },
 {
 "cat": "k1",
-"col": "c11 c18",
-"h": "lab017 rhel060 rhel068 rhel075",
+"col": "c14",
+"h": "wks002 wks061",
+"pf": "pf2"
+},
+{
+"cat": "k1",
+"col": "c12",
+"h": "r8app006 r8app016",
 "pf": "pf1"
+},
+{
+"cat": "k1",
+"col": "c11 c18",
+"h": "lab004 rhel064",
+"pf": "pf1"
+},
+{
+"cat": "k1",
+"col": "c12",
+"h": "r8app045 r8app051",
+"pf": "pf1"
+},
+{
+"cat": "k1",
+"col": "c11",
+"h": "rhel067 rhel110",
+"pf": "pf1"
+},
+{
+"cat": "k1",
+"col": "c13",
+"h": "win001 win021",
+"pf": "pf2"
+},
+{
+"cat": "k1",
+"col": "c16",
+"h": "net001 net018",
+"pf": "pf4"
+},
+{
+"cat": "k1",
+"col": "c16",
+"h": "net005 net016",
+"pf": "pf4"
 },
 {
 "cat": "k2",
@@ -18476,96 +18437,6 @@
 "col": "c16",
 "h": "net011 net013 net017 net020",
 "pf": "pf4"
-},
-{
-"cat": "k3",
-"col": "c14",
-"h": "wks011 wks023 wks024 wks053",
-"pf": "pf2"
-},
-{
-"cat": "k3",
-"col": "c14",
-"h": "wks042 wks046 wks047 wks063",
-"pf": "pf2"
-},
-{
-"cat": "k3",
-"col": "c11 c18",
-"h": "lab027 lab032 rhel014 rhel107",
-"pf": "pf1"
-},
-{
-"cat": "k3",
-"col": "c12",
-"h": "r8app012 r8app014 r8app020 r8app021",
-"pf": "pf1"
-},
-{
-"cat": "k3",
-"col": "c12",
-"h": "r8app001 r8app014 r8app020 r8app023",
-"pf": "pf1"
-},
-{
-"cat": "k3",
-"col": "c12",
-"h": "r8app021 r8app035 r8app045 r8app049",
-"pf": "pf1"
-},
-{
-"cat": "k3",
-"col": "c13",
-"h": "win015 win026 win079 win085",
-"pf": "pf2"
-},
-{
-"cat": "k3",
-"col": "c13",
-"h": "win019 win055 win077 win083",
-"pf": "pf2"
-},
-{
-"cat": "k3",
-"col": "c16",
-"h": "net006 net008 net017 net022",
-"pf": "pf4"
-},
-{
-"cat": "k1",
-"col": "c14",
-"h": "wks009 wks015 wks043",
-"pf": "pf2"
-},
-{
-"cat": "k1",
-"col": "c12",
-"h": "r8app006 r8app022 r8app047",
-"pf": "pf1"
-},
-{
-"cat": "k1",
-"col": "c11 c18",
-"h": "lab025 rhel079 rhel096",
-"pf": "pf1"
-},
-{
-"cat": "k1",
-"col": "c13",
-"h": "win013 win067 win075",
-"pf": "pf2"
-},
-{
-"cat": "k1",
-"col": "c13",
-"h": "win013 win051 win057",
-"pf": "pf2"
-},
-{
-"cat": "k1",
-"col": "c13",
-"h": "win046 win066 win070",
-"pf": "pf2"
 },
 {
 "cat": "k2",
@@ -18838,112 +18709,136 @@
 "pf": "pf4"
 },
 {
-"cat": "k3",
-"col": "c14",
-"h": "wks021 wks022 wks063",
+"cat": "k1",
+"col": "c13",
+"h": "win008",
 "pf": "pf2"
 },
 {
-"cat": "k3",
-"col": "c14",
-"h": "wks022 wks026 wks042",
+"cat": "k1",
+"col": "c13",
+"h": "win001",
 "pf": "pf2"
 },
 {
-"cat": "k3",
+"cat": "k1",
+"col": "c13",
+"h": "win004",
+"pf": "pf2"
+},
+{
+"cat": "k1",
+"col": "c13",
+"h": "win002",
+"pf": "pf2"
+},
+{
+"cat": "k1",
+"col": "c14",
+"h": "wks059",
+"pf": "pf2"
+},
+{
+"cat": "k1",
+"col": "c14",
+"h": "wks052",
+"pf": "pf2"
+},
+{
+"cat": "k1",
+"col": "c14",
+"h": "wks038",
+"pf": "pf2"
+},
+{
+"cat": "k1",
 "col": "c11",
-"h": "rhel002 rhel010 rhel017",
+"h": "rhel015",
 "pf": "pf5"
 },
 {
-"cat": "k3",
+"cat": "k1",
+"col": "c11",
+"h": "rhel013",
+"pf": "pf5"
+},
+{
+"cat": "k1",
 "col": "c14",
-"h": "wks026 wks049 wks054",
+"h": "wks056",
 "pf": "pf2"
 },
 {
-"cat": "k3",
+"cat": "k1",
+"col": "c14",
+"h": "wks045",
+"pf": "pf2"
+},
+{
+"cat": "k1",
 "col": "c17",
-"h": "nas001 nas004 nas006",
+"h": "nas004",
 "pf": "pf6"
 },
 {
-"cat": "k3",
-"col": "c12",
-"h": "r8app003 r8app004 r8app033",
-"pf": "pf1"
-},
-{
-"cat": "k3",
-"col": "c13",
-"h": "win029 win069 win082",
-"pf": "pf2"
-},
-{
-"cat": "k3",
-"col": "c16",
-"h": "net011 net013 net020",
-"pf": "pf4"
+"cat": "k1",
+"col": "c15",
+"h": "esx016",
+"pf": "pf3"
 },
 {
 "cat": "k1",
-"col": "c13",
-"h": "win008 win010",
-"pf": "pf2"
-},
-{
-"cat": "k1",
-"col": "c14",
-"h": "wks033 wks036",
-"pf": "pf2"
-},
-{
-"cat": "k1",
-"col": "c14",
-"h": "wks002 wks061",
-"pf": "pf2"
-},
-{
-"cat": "k1",
-"col": "c12",
-"h": "r8app006 r8app016",
-"pf": "pf1"
-},
-{
-"cat": "k1",
-"col": "c11 c18",
-"h": "lab004 rhel064",
-"pf": "pf1"
-},
-{
-"cat": "k1",
-"col": "c12",
-"h": "r8app045 r8app051",
-"pf": "pf1"
+"col": "c15",
+"h": "esx013",
+"pf": "pf3"
 },
 {
 "cat": "k1",
 "col": "c11",
-"h": "rhel067 rhel110",
+"h": "rhel086",
 "pf": "pf1"
 },
 {
 "cat": "k1",
-"col": "c13",
-"h": "win001 win021",
-"pf": "pf2"
+"col": "c12",
+"h": "r8app036",
+"pf": "pf1"
 },
 {
 "cat": "k1",
 "col": "c16",
-"h": "net001 net018",
+"h": "net013",
 "pf": "pf4"
 },
 {
 "cat": "k1",
-"col": "c16",
-"h": "net005 net016",
-"pf": "pf4"
+"col": "c18",
+"h": "lab004",
+"pf": "pf0"
+},
+{
+"cat": "k3",
+"col": "c11 c18",
+"h": "lab002 lab014 lab017 rhel017 rhel045 rhel063 rhel072 rhel092 rhel105",
+"pf": "pf1"
+},
+{
+"cat": "k3",
+"col": "c12",
+"h": "r8app002 r8app006 r8app020 r8app023 r8app030 r8app031 r8app038 r8app041",
+"pf": "pf1"
+},
+{
+"cat": "k3",
+"col": "c11 c18",
+"h": "lab032 rhel015 rhel016 rhel051 rhel073 rhel080 rhel106 rhel110",
+"pf": "pf1"
+},
+{
+"cat": "k3",
+"col": "c11 c18",
+"h": "lab008 rhel022 rhel039 rhel061 rhel068 rhel072 rhel104 rhel107",
+"pf": "pf1"
 },
 {
 "cat": "k2",
@@ -19253,159 +19148,171 @@
 },
 {
 "cat": "k3",
-"col": "c13",
-"h": "win006 win010",
-"pf": "pf2"
-},
-{
-"cat": "k3",
-"col": "c14",
-"h": "wks025 wks032",
-"pf": "pf2"
-},
-{
-"cat": "k3",
-"col": "c14",
-"h": "wks031 wks060",
-"pf": "pf2"
-},
-{
-"cat": "k3",
-"col": "c15",
-"h": "esx017 esx022",
-"pf": "pf3"
-},
-{
-"cat": "k3",
-"col": "c16",
-"h": "net006 net016",
-"pf": "pf4"
-},
-{
-"cat": "k3",
-"col": "c16",
-"h": "net006 net017",
-"pf": "pf4"
-},
-{
-"cat": "k3",
-"col": "c16",
-"h": "net002 net019",
-"pf": "pf4"
-},
-{
-"cat": "k3",
-"col": "c18",
-"h": "lab003 lab004",
-"pf": "pf0"
-},
-{
-"cat": "k1",
-"col": "c13",
-"h": "win008",
-"pf": "pf2"
-},
-{
-"cat": "k1",
-"col": "c13",
-"h": "win001",
-"pf": "pf2"
-},
-{
-"cat": "k1",
-"col": "c13",
-"h": "win004",
-"pf": "pf2"
-},
-{
-"cat": "k1",
-"col": "c13",
-"h": "win002",
-"pf": "pf2"
-},
-{
-"cat": "k1",
-"col": "c14",
-"h": "wks059",
-"pf": "pf2"
-},
-{
-"cat": "k1",
-"col": "c14",
-"h": "wks052",
-"pf": "pf2"
-},
-{
-"cat": "k1",
-"col": "c14",
-"h": "wks038",
-"pf": "pf2"
-},
-{
-"cat": "k1",
-"col": "c11",
-"h": "rhel015",
-"pf": "pf5"
-},
-{
-"cat": "k1",
-"col": "c11",
-"h": "rhel013",
-"pf": "pf5"
-},
-{
-"cat": "k1",
-"col": "c14",
-"h": "wks056",
-"pf": "pf2"
-},
-{
-"cat": "k1",
-"col": "c14",
-"h": "wks045",
-"pf": "pf2"
-},
-{
-"cat": "k1",
-"col": "c17",
-"h": "nas004",
-"pf": "pf6"
-},
-{
-"cat": "k1",
-"col": "c15",
-"h": "esx016",
-"pf": "pf3"
-},
-{
-"cat": "k1",
-"col": "c15",
-"h": "esx013",
-"pf": "pf3"
-},
-{
-"cat": "k1",
-"col": "c11",
-"h": "rhel086",
+"col": "c11 c18",
+"h": "lab005 rhel012 rhel025 rhel055 rhel060 rhel089 rhel095",
 "pf": "pf1"
 },
 {
-"cat": "k1",
+"cat": "k3",
+"col": "c14",
+"h": "wks006 wks018 wks019 wks020 wks034 wks054",
+"pf": "pf2"
+},
+{
+"cat": "k3",
+"col": "c14",
+"h": "wks007 wks011 wks018 wks045 wks053 wks057",
+"pf": "pf2"
+},
+{
+"cat": "k3",
+"col": "c13",
+"h": "win007 win016 win030 win044 win051 win055",
+"pf": "pf2"
+},
+{
+"cat": "k3",
+"col": "c13",
+"h": "win013 win019 win036 win045 win056 win057",
+"pf": "pf2"
+},
+{
+"cat": "k3",
+"col": "c14",
+"h": "wks005 wks029 wks035 wks036 wks054",
+"pf": "pf2"
+},
+{
+"cat": "k3",
+"col": "c14",
+"h": "wks016 wks039 wks043 wks056 wks058",
+"pf": "pf2"
+},
+{
+"cat": "k3",
+"col": "c14",
+"h": "wks005 wks009 wks019 wks043 wks053",
+"pf": "pf2"
+},
+{
+"cat": "k3",
+"col": "c14",
+"h": "wks018 wks028 wks037 wks052 wks053",
+"pf": "pf2"
+},
+{
+"cat": "k3",
+"col": "c14",
+"h": "wks002 wks022 wks024 wks031 wks050",
+"pf": "pf2"
+},
+{
+"cat": "k3",
 "col": "c12",
-"h": "r8app036",
+"h": "r8app006 r8app010 r8app011 r8app043 r8app053",
 "pf": "pf1"
 },
 {
-"cat": "k1",
-"col": "c16",
-"h": "net013",
-"pf": "pf4"
+"cat": "k3",
+"col": "c11 c18",
+"h": "lab034 rhel011 rhel061 rhel071 rhel075",
+"pf": "pf1"
 },
 {
-"cat": "k1",
-"col": "c18",
-"h": "lab004",
-"pf": "pf0"
+"cat": "k3",
+"col": "c12",
+"h": "r8app033 r8app038 r8app041 r8app049 r8app052",
+"pf": "pf1"
+},
+{
+"cat": "k3",
+"col": "c11 c18",
+"h": "lab006 lab020 rhel038 rhel097 rhel101",
+"pf": "pf1"
+},
+{
+"cat": "k3",
+"col": "c12",
+"h": "r8app040 r8app046 r8app050 r8app051 r8app052",
+"pf": "pf1"
+},
+{
+"cat": "k3",
+"col": "c11 c18",
+"h": "lab022 rhel006 rhel022 rhel044 rhel048",
+"pf": "pf1"
+},
+{
+"cat": "k3",
+"col": "c13",
+"h": "win001 win017 win069 win083 win085",
+"pf": "pf2"
+},
+{
+"cat": "k3",
+"col": "c13",
+"h": "win004 win018 win051 win052 win062",
+"pf": "pf2"
+},
+{
+"cat": "k3",
+"col": "c13",
+"h": "win010 win016 win029 win036 win041",
+"pf": "pf2"
+},
+{
+"cat": "k3",
+"col": "c14",
+"h": "wks011 wks023 wks024 wks053",
+"pf": "pf2"
+},
+{
+"cat": "k3",
+"col": "c14",
+"h": "wks042 wks046 wks047 wks063",
+"pf": "pf2"
+},
+{
+"cat": "k3",
+"col": "c11 c18",
+"h": "lab027 lab032 rhel014 rhel107",
+"pf": "pf1"
+},
+{
+"cat": "k3",
+"col": "c12",
+"h": "r8app012 r8app014 r8app020 r8app021",
+"pf": "pf1"
+},
+{
+"cat": "k3",
+"col": "c12",
+"h": "r8app001 r8app014 r8app020 r8app023",
+"pf": "pf1"
+},
+{
+"cat": "k3",
+"col": "c12",
+"h": "r8app021 r8app035 r8app045 r8app049",
+"pf": "pf1"
+},
+{
+"cat": "k3",
+"col": "c13",
+"h": "win015 win026 win079 win085",
+"pf": "pf2"
+},
+{
+"cat": "k3",
+"col": "c13",
+"h": "win019 win055 win077 win083",
+"pf": "pf2"
+},
+{
+"cat": "k3",
+"col": "c16",
+"h": "net006 net008 net017 net022",
+"pf": "pf4"
 },
 {
 "cat": "k2",
@@ -20123,6 +20030,102 @@
 },
 {
 "cat": "k3",
+"col": "c14",
+"h": "wks021 wks022 wks063",
+"pf": "pf2"
+},
+{
+"cat": "k3",
+"col": "c14",
+"h": "wks022 wks026 wks042",
+"pf": "pf2"
+},
+{
+"cat": "k3",
+"col": "c11",
+"h": "rhel002 rhel010 rhel017",
+"pf": "pf5"
+},
+{
+"cat": "k3",
+"col": "c14",
+"h": "wks026 wks049 wks054",
+"pf": "pf2"
+},
+{
+"cat": "k3",
+"col": "c17",
+"h": "nas001 nas004 nas006",
+"pf": "pf6"
+},
+{
+"cat": "k3",
+"col": "c12",
+"h": "r8app003 r8app004 r8app033",
+"pf": "pf1"
+},
+{
+"cat": "k3",
+"col": "c13",
+"h": "win029 win069 win082",
+"pf": "pf2"
+},
+{
+"cat": "k3",
+"col": "c16",
+"h": "net011 net013 net020",
+"pf": "pf4"
+},
+{
+"cat": "k3",
+"col": "c13",
+"h": "win006 win010",
+"pf": "pf2"
+},
+{
+"cat": "k3",
+"col": "c14",
+"h": "wks025 wks032",
+"pf": "pf2"
+},
+{
+"cat": "k3",
+"col": "c14",
+"h": "wks031 wks060",
+"pf": "pf2"
+},
+{
+"cat": "k3",
+"col": "c15",
+"h": "esx017 esx022",
+"pf": "pf3"
+},
+{
+"cat": "k3",
+"col": "c16",
+"h": "net006 net016",
+"pf": "pf4"
+},
+{
+"cat": "k3",
+"col": "c16",
+"h": "net006 net017",
+"pf": "pf4"
+},
+{
+"cat": "k3",
+"col": "c16",
+"h": "net002 net019",
+"pf": "pf4"
+},
+{
+"cat": "k3",
+"col": "c18",
+"h": "lab003 lab004",
+"pf": "pf0"
+},
+{
+"cat": "k3",
 "col": "c13",
 "h": "win004",
 "pf": "pf2"
@@ -20257,11 +20260,32 @@
 "rows": [
 [
 "",
+"SV-231762 (RHEL-00310)",
+"CAT I",
+"RHEL 8 must keep its packages current.",
+"Linux",
+6,
+60,
+"SITEA - RHEL 8 (6)"
+],
+[
+"",
+"SV-239949 (MS-00510)",
+"CAT I",
+"Windows must audit privileged commands.",
+"Windows",
+6,
+60,
+"SITEA - Windows Server (6)"
+],
+[
+"",
 "SV-231817 (RHEL-00370)",
 "CAT II",
 "RHEL 9 must use a FIPS-validated module.",
 "Linux",
 14,
+56,
 "SITEA - RHEL 9 (10), SITEB - Lab (4)"
 ],
 [
@@ -20271,6 +20295,7 @@
 "RHEL 9 must audit privileged commands.",
 "Linux",
 13,
+52,
 "SITEA - RHEL 9 (9), SITEB - Lab (4)"
 ],
 [
@@ -20280,7 +20305,38 @@
 "RHEL 8 must remove the default accounts.",
 "Linux",
 13,
+52,
 "SITEA - RHEL 8 (13)"
+],
+[
+"",
+"SV-209357 (MS-00410)",
+"CAT I",
+"Windows must show the DoD banner before logon.",
+"Windows",
+5,
+50,
+"SITEA - Windows 11 (5)"
+],
+[
+"",
+"SV-231732 (RHEL-00210)",
+"CAT I",
+"RHEL 8 must use NTP with authenticated sources.",
+"Linux",
+5,
+50,
+"SITEA - RHEL 8 (5)"
+],
+[
+"",
+"SV-231859 (RHEL-00510)",
+"CAT I",
+"RHEL 9 must audit privileged commands.",
+"Linux",
+5,
+50,
+"SITEA - RHEL 9 (3), SITEB - Lab (2)"
 ],
 [
 "",
@@ -20289,6 +20345,7 @@
 "Windows must show the DoD banner before logon.",
 "Windows",
 12,
+48,
 "SITEA - Windows 11 (12)"
 ],
 [
@@ -20298,6 +20355,7 @@
 "Windows must restrict the permissions of its logs.",
 "Windows",
 12,
+48,
 "SITEA - Windows 11 (12)"
 ],
 [
@@ -20307,6 +20365,7 @@
 "Windows must deny root logins over SSH.",
 "Windows",
 12,
+48,
 "SITEA - Windows 11 (12)"
 ],
 [
@@ -20316,6 +20375,7 @@
 "RHEL 9 must keep its packages current.",
 "Linux",
 12,
+48,
 "SITEA - RHEL 9 (11), SITEB - Lab (1)"
 ],
 [
@@ -20325,6 +20385,7 @@
 "RHEL 9 must deny root logins over SSH.",
 "Linux",
 12,
+48,
 "SITEA - RHEL 9 (10), SITEB - Lab (2)"
 ],
 [
@@ -20334,6 +20395,7 @@
 "Windows must show the DoD banner before logon.",
 "Windows",
 12,
+48,
 "SITEA - Windows Server (12)"
 ],
 [
@@ -20343,6 +20405,7 @@
 "Windows must disable unused services.",
 "Windows",
 12,
+48,
 "SITEA - Windows Server (12)"
 ],
 [
@@ -20352,6 +20415,7 @@
 "Windows must lock an account after three failed logons.",
 "Windows",
 11,
+44,
 "SITEA - Windows 11 (11)"
 ],
 [
@@ -20361,6 +20425,7 @@
 "Windows must use NTP with authenticated sources.",
 "Windows",
 11,
+44,
 "SITEA - Windows 11 (11)"
 ],
 [
@@ -20370,6 +20435,7 @@
 "Windows must deny root logins over SSH.",
 "Windows",
 11,
+44,
 "SITEA - Windows 11 (11)"
 ],
 [
@@ -20379,6 +20445,7 @@
 "RHEL 9 must set a session timeout of ten minutes.",
 "Linux",
 11,
+44,
 "SITEA - RHEL 9 (10), SITEB - Lab (1)"
 ],
 [
@@ -20388,6 +20455,7 @@
 "RHEL 9 must set a session timeout of ten minutes.",
 "Linux",
 11,
+44,
 "SITEA - RHEL 9 (8), SITEB - Lab (3)"
 ],
 [
@@ -20397,6 +20465,7 @@
 "RHEL 9 must remove the default accounts.",
 "Linux",
 11,
+44,
 "SITEA - RHEL 9 (8), SITEB - Lab (3)"
 ],
 [
@@ -20406,6 +20475,7 @@
 "Windows must audit privileged commands.",
 "Windows",
 10,
+40,
 "SITEA - Windows 11 (10)"
 ],
 [
@@ -20415,6 +20485,7 @@
 "Edge must restrict the permissions of its logs.",
 "Windows",
 10,
+40,
 "SITEA - Windows 11 (10)"
 ],
 [
@@ -20424,6 +20495,7 @@
 "RHEL 9 must remove the default accounts.",
 "Linux",
 10,
+40,
 "SITEA - RHEL 9 (6), SITEB - Lab (4)"
 ],
 [
@@ -20433,6 +20505,7 @@
 "RHEL 9 must lock an account after three failed logons.",
 "Linux",
 10,
+40,
 "SITEA - RHEL 9 (8), SITEB - Lab (2)"
 ],
 [
@@ -20442,6 +20515,7 @@
 "RHEL 9 must disable unused services.",
 "Linux",
 10,
+40,
 "SITEA - RHEL 9 (6), SITEB - Lab (4)"
 ],
 [
@@ -20451,6 +20525,7 @@
 "RHEL 8 must require a password of 15 characters.",
 "Linux",
 10,
+40,
 "SITEA - RHEL 8 (10)"
 ],
 [
@@ -20460,7 +20535,28 @@
 "RHEL 9 must lock an account after three failed logons.",
 "Linux",
 10,
+40,
 "SITEA - RHEL 9 (6), SITEB - Lab (4)"
+],
+[
+"",
+"SV-217518 (MICR-00110)",
+"CAT I",
+"Edge must require a password of 15 characters.",
+"Windows",
+4,
+40,
+"SITEA - Windows 11 (4)"
+],
+[
+"",
+"SV-231769 (RHEL-00210)",
+"CAT I",
+"RHEL 9 must use NTP with authenticated sources.",
+"Linux",
+4,
+40,
+"SITEA - RHEL 9 (3), SITEB - Lab (1)"
 ],
 [
 "",
@@ -20469,6 +20565,7 @@
 "Windows must disable unused services.",
 "Windows",
 9,
+36,
 "SITEA - Windows 11 (9)"
 ],
 [
@@ -20478,6 +20575,7 @@
 "Windows must audit privileged commands.",
 "Windows",
 9,
+36,
 "SITEA - Windows 11 (9)"
 ],
 [
@@ -20487,6 +20585,7 @@
 "RHEL 8 must disable unused services.",
 "Linux",
 9,
+36,
 "SITEA - RHEL 8 (9)"
 ],
 [
@@ -20496,6 +20595,7 @@
 "RHEL 8 must keep its packages current.",
 "Linux",
 9,
+36,
 "SITEA - RHEL 8 (9)"
 ],
 [
@@ -20505,6 +20605,7 @@
 "RHEL 9 must use NTP with authenticated sources.",
 "Linux",
 9,
+36,
 "SITEA - RHEL 9 (6), SITEB - Lab (3)"
 ],
 [
@@ -20514,6 +20615,7 @@
 "RHEL 9 must keep its packages current.",
 "Linux",
 9,
+36,
 "SITEA - RHEL 9 (8), SITEB - Lab (1)"
 ],
 [
@@ -20523,6 +20625,7 @@
 "RHEL 8 must use NTP with authenticated sources.",
 "Linux",
 9,
+36,
 "SITEA - RHEL 8 (9)"
 ],
 [
@@ -20532,6 +20635,7 @@
 "RHEL 8 must disable unused services.",
 "Linux",
 9,
+36,
 "SITEA - RHEL 8 (9)"
 ],
 [
@@ -20541,6 +20645,7 @@
 "RHEL 9 must set a session timeout of ten minutes.",
 "Linux",
 9,
+36,
 "SITEB - Lab (5), SITEA - RHEL 9 (4)"
 ],
 [
@@ -20550,6 +20655,7 @@
 "RHEL 8 must disable unused services.",
 "Linux",
 9,
+36,
 "SITEA - RHEL 8 (9)"
 ],
 [
@@ -20559,6 +20665,7 @@
 "RHEL 9 must deny root logins over SSH.",
 "Linux",
 9,
+36,
 "SITEA - RHEL 9 (5), SITEB - Lab (4)"
 ],
 [
@@ -20568,6 +20675,7 @@
 "RHEL 9 must set a session timeout of ten minutes.",
 "Linux",
 9,
+36,
 "SITEA - RHEL 9 (6), SITEB - Lab (3)"
 ],
 [
@@ -20577,6 +20685,7 @@
 "RHEL 9 must require a password of 15 characters.",
 "Linux",
 9,
+36,
 "SITEA - RHEL 9 (7), SITEB - Lab (2)"
 ],
 [
@@ -20586,16 +20695,8 @@
 "Windows must lock an account after three failed logons.",
 "Windows",
 9,
+36,
 "SITEA - Windows Server (9)"
-],
-[
-"",
-"SV-231814 (RHEL-00360)",
-"CAT III",
-"RHEL 9 must remove the default accounts.",
-"Linux",
-9,
-"SITEA - RHEL 9 (6), SITEB - Lab (3)"
 ],
 [
 "",
@@ -20604,6 +20705,7 @@
 "Windows must disable unused services.",
 "Windows",
 8,
+32,
 "SITEA - Windows 11 (8)"
 ],
 [
@@ -20613,6 +20715,7 @@
 "Windows must require a password of 15 characters.",
 "Windows",
 8,
+32,
 "SITEA - Windows 11 (8)"
 ],
 [
@@ -20622,6 +20725,7 @@
 "Windows must disable unused services.",
 "Windows",
 8,
+32,
 "SITEA - Windows 11 (8)"
 ],
 [
@@ -20631,6 +20735,7 @@
 "Windows must show the DoD banner before logon.",
 "Windows",
 8,
+32,
 "SITEA - Windows 11 (8)"
 ],
 [
@@ -20640,6 +20745,7 @@
 "Windows must restrict the permissions of its logs.",
 "Windows",
 8,
+32,
 "SITEA - Windows 11 (8)"
 ],
 [
@@ -20649,6 +20755,7 @@
 "RHEL 8 must show the DoD banner before logon.",
 "Linux",
 8,
+32,
 "SITEA - RHEL 8 (8)"
 ],
 [
@@ -20658,6 +20765,7 @@
 "RHEL 8 must keep its packages current.",
 "Linux",
 8,
+32,
 "SITEA - RHEL 8 (8)"
 ],
 [
@@ -20667,6 +20775,7 @@
 "RHEL 9 must audit privileged commands.",
 "Linux",
 8,
+32,
 "SITEA - RHEL 9 (5), SITEB - Lab (3)"
 ],
 [
@@ -20676,6 +20785,7 @@
 "RHEL 8 must restrict the permissions of its logs.",
 "Linux",
 8,
+32,
 "SITEA - RHEL 8 (8)"
 ],
 [
@@ -20685,6 +20795,7 @@
 "RHEL 8 must set a session timeout of ten minutes.",
 "Linux",
 8,
+32,
 "SITEA - RHEL 8 (8)"
 ],
 [
@@ -20694,6 +20805,7 @@
 "RHEL 8 must require a password of 15 characters.",
 "Linux",
 8,
+32,
 "SITEA - RHEL 8 (8)"
 ],
 [
@@ -20703,6 +20815,7 @@
 "RHEL 9 must require a password of 15 characters.",
 "Linux",
 8,
+32,
 "SITEA - RHEL 9 (5), SITEB - Lab (3)"
 ],
 [
@@ -20712,6 +20825,7 @@
 "RHEL 8 must lock an account after three failed logons.",
 "Linux",
 8,
+32,
 "SITEA - RHEL 8 (8)"
 ],
 [
@@ -20721,6 +20835,7 @@
 "RHEL 9 must use NTP with authenticated sources.",
 "Linux",
 8,
+32,
 "SITEA - RHEL 9 (4), SITEB - Lab (4)"
 ],
 [
@@ -20730,6 +20845,7 @@
 "RHEL 8 must set a session timeout of ten minutes.",
 "Linux",
 8,
+32,
 "SITEA - RHEL 8 (8)"
 ],
 [
@@ -20739,6 +20855,7 @@
 "RHEL 9 must require a password of 15 characters.",
 "Linux",
 8,
+32,
 "SITEA - RHEL 9 (7), SITEB - Lab (1)"
 ],
 [
@@ -20748,6 +20865,7 @@
 "RHEL 9 must show the DoD banner before logon.",
 "Linux",
 8,
+32,
 "SITEA - RHEL 9 (6), SITEB - Lab (2)"
 ],
 [
@@ -20757,6 +20875,7 @@
 "RHEL 9 must deny root logins over SSH.",
 "Linux",
 8,
+32,
 "SITEA - RHEL 9 (5), SITEB - Lab (3)"
 ],
 [
@@ -20766,6 +20885,7 @@
 "Windows must lock an account after three failed logons.",
 "Windows",
 8,
+32,
 "SITEA - Windows Server (8)"
 ],
 [
@@ -20775,6 +20895,7 @@
 "Windows must keep its packages current.",
 "Windows",
 8,
+32,
 "SITEA - Windows Server (8)"
 ],
 [
@@ -20784,6 +20905,7 @@
 "Windows must deny root logins over SSH.",
 "Windows",
 8,
+32,
 "SITEA - Windows Server (8)"
 ],
 [
@@ -20793,6 +20915,7 @@
 "Windows must remove the default accounts.",
 "Windows",
 8,
+32,
 "SITEA - Windows Server (8)"
 ],
 [
@@ -20802,6 +20925,7 @@
 "Windows must require a password of 15 characters.",
 "Windows",
 8,
+32,
 "SITEA - Windows Server (8)"
 ],
 [
@@ -20811,6 +20935,7 @@
 "Windows must restrict the permissions of its logs.",
 "Windows",
 8,
+32,
 "SITEA - Windows Server (8)"
 ],
 [
@@ -20820,6 +20945,7 @@
 "Windows must use a FIPS-validated module.",
 "Windows",
 8,
+32,
 "SITEA - Windows Server (8)"
 ],
 [
@@ -20829,6 +20955,7 @@
 "Windows must audit privileged commands.",
 "Windows",
 8,
+32,
 "SITEA - Windows Server (8)"
 ],
 [
@@ -20838,6 +20965,7 @@
 "Windows must restrict the permissions of its logs.",
 "Windows",
 8,
+32,
 "SITEA - Windows Server (8)"
 ],
 [
@@ -20847,6 +20975,7 @@
 "Windows must restrict the permissions of its logs.",
 "Windows",
 8,
+32,
 "SITEA - Windows Server (8)"
 ],
 [
@@ -20856,7 +20985,2138 @@
 "Windows must deny root logins over SSH.",
 "Windows",
 8,
+32,
 "SITEA - Windows Server (8)"
+],
+[
+"",
+"SV-217608 (MICR-00410)",
+"CAT I",
+"Edge must show the DoD banner before logon.",
+"Windows",
+3,
+30,
+"SITEA - Windows 11 (3)"
+],
+[
+"",
+"SV-231702 (RHEL-00110)",
+"CAT I",
+"RHEL 8 must require a password of 15 characters.",
+"Linux",
+3,
+30,
+"SITEA - RHEL 8 (3)"
+],
+[
+"",
+"SV-231799 (RHEL-00310)",
+"CAT I",
+"RHEL 9 must keep its packages current.",
+"Linux",
+3,
+30,
+"SITEA - RHEL 9 (2), SITEB - Lab (1)"
+],
+[
+"",
+"SV-239859 (MS-00210)",
+"CAT I",
+"Windows must use NTP with authenticated sources.",
+"Windows",
+3,
+30,
+"SITEA - Windows Server (3)"
+],
+[
+"",
+"SV-239889 (MS-00310)",
+"CAT I",
+"Windows must keep its packages current.",
+"Windows",
+3,
+30,
+"SITEA - Windows Server (3)"
+],
+[
+"",
+"SV-239919 (MS-00410)",
+"CAT I",
+"Windows must show the DoD banner before logon.",
+"Windows",
+3,
+30,
+"SITEA - Windows Server (3)"
+],
+[
+"",
+"SV-209252 (MS-00060)",
+"CAT II",
+"Windows must disable unused services.",
+"Windows",
+7,
+28,
+"SITEA - Windows 11 (7)"
+],
+[
+"",
+"SV-209306 (MS-00240)",
+"CAT II",
+"Windows must remove the default accounts.",
+"Windows",
+7,
+28,
+"SITEA - Windows 11 (7)"
+],
+[
+"",
+"SV-209333 (MS-00330)",
+"CAT II",
+"Windows must use NTP with authenticated sources.",
+"Windows",
+7,
+28,
+"SITEA - Windows 11 (7)"
+],
+[
+"",
+"SV-231736 (RHEL-00100)",
+"CAT II",
+"RHEL 9 must deny root logins over SSH.",
+"Linux",
+7,
+28,
+"SITEA - RHEL 9 (6), SITEB - Lab (1)"
+],
+[
+"",
+"SV-231741 (RHEL-00240)",
+"CAT II",
+"RHEL 8 must remove the default accounts.",
+"Linux",
+7,
+28,
+"SITEA - RHEL 8 (7)"
+],
+[
+"",
+"SV-231759 (RHEL-00300)",
+"CAT II",
+"RHEL 8 must disable unused services.",
+"Linux",
+7,
+28,
+"SITEA - RHEL 8 (7)"
+],
+[
+"",
+"SV-231766 (RHEL-00200)",
+"CAT II",
+"RHEL 9 must restrict the permissions of its logs.",
+"Linux",
+7,
+28,
+"SITEA - RHEL 9 (5), SITEB - Lab (2)"
+],
+[
+"",
+"SV-231787 (RHEL-00270)",
+"CAT II",
+"RHEL 9 must audit privileged commands.",
+"Linux",
+7,
+28,
+"SITEA - RHEL 9 (4), SITEB - Lab (3)"
+],
+[
+"",
+"SV-231802 (RHEL-00320)",
+"CAT II",
+"RHEL 9 must restrict the permissions of its logs.",
+"Linux",
+7,
+28,
+"SITEA - RHEL 9 (5), SITEB - Lab (2)"
+],
+[
+"",
+"SV-231811 (RHEL-00350)",
+"CAT II",
+"RHEL 9 must require a password of 15 characters.",
+"Linux",
+7,
+28,
+"SITEB - Lab (4), SITEA - RHEL 9 (3)"
+],
+[
+"",
+"SV-231828 (RHEL-00530)",
+"CAT II",
+"RHEL 8 must show the DoD banner before logon.",
+"Linux",
+7,
+28,
+"SITEA - RHEL 8 (7)"
+],
+[
+"",
+"SV-231832 (RHEL-00420)",
+"CAT II",
+"RHEL 9 must disable unused services.",
+"Linux",
+7,
+28,
+"SITEA - RHEL 9 (6), SITEB - Lab (1)"
+],
+[
+"",
+"SV-231841 (RHEL-00450)",
+"CAT II",
+"RHEL 9 must use NTP with authenticated sources.",
+"Linux",
+7,
+28,
+"SITEA - RHEL 9 (6), SITEB - Lab (1)"
+],
+[
+"",
+"SV-231871 (RHEL-00550)",
+"CAT II",
+"RHEL 9 must keep its packages current.",
+"Linux",
+7,
+28,
+"SITEA - RHEL 9 (4), SITEB - Lab (3)"
+],
+[
+"",
+"SV-239808 (MS-00040)",
+"CAT II",
+"Windows must set a session timeout of ten minutes.",
+"Windows",
+7,
+28,
+"SITEA - Windows Server (7)"
+],
+[
+"",
+"SV-239868 (MS-00240)",
+"CAT II",
+"Windows must remove the default accounts.",
+"Windows",
+7,
+28,
+"SITEA - Windows Server (7)"
+],
+[
+"",
+"SV-239877 (MS-00270)",
+"CAT II",
+"Windows must audit privileged commands.",
+"Windows",
+7,
+28,
+"SITEA - Windows Server (7)"
+],
+[
+"",
+"SV-239955 (MS-00530)",
+"CAT II",
+"Windows must show the DoD banner before logon.",
+"Windows",
+7,
+28,
+"SITEA - Windows Server (7)"
+],
+[
+"",
+"SV-239958 (MS-00540)",
+"CAT II",
+"Windows must disable unused services.",
+"Windows",
+7,
+28,
+"SITEA - Windows Server (7)"
+],
+[
+"",
+"SV-209270 (MS-00120)",
+"CAT II",
+"Windows must remove the default accounts.",
+"Windows",
+6,
+24,
+"SITEA - Windows 11 (6)"
+],
+[
+"",
+"SV-209294 (MS-00200)",
+"CAT II",
+"Windows must restrict the permissions of its logs.",
+"Windows",
+6,
+24,
+"SITEA - Windows 11 (6)"
+],
+[
+"",
+"SV-209318 (MS-00280)",
+"CAT II",
+"Windows must set a session timeout of ten minutes.",
+"Windows",
+6,
+24,
+"SITEA - Windows 11 (6)"
+],
+[
+"",
+"SV-209408 (MS-00580)",
+"CAT II",
+"Windows must deny root logins over SSH.",
+"Windows",
+6,
+24,
+"SITEA - Windows 11 (6)"
+],
+[
+"",
+"SV-217512 (MICR-00090)",
+"CAT II",
+"Edge must use NTP with authenticated sources.",
+"Windows",
+6,
+24,
+"SITEA - Windows 11 (6)"
+],
+[
+"",
+"SV-217521 (MICR-00120)",
+"CAT II",
+"Edge must remove the default accounts.",
+"Windows",
+6,
+24,
+"SITEA - Windows 11 (6)"
+],
+[
+"",
+"SV-217542 (MICR-00190)",
+"CAT II",
+"Edge must keep its packages current.",
+"Windows",
+6,
+24,
+"SITEA - Windows 11 (6)"
+],
+[
+"",
+"SV-217644 (MICR-00530)",
+"CAT II",
+"Edge must show the DoD banner before logon.",
+"Windows",
+6,
+24,
+"SITEA - Windows 11 (6)"
+],
+[
+"",
+"SV-231675 (RHEL-00020)",
+"CAT II",
+"RHEL 8 must lock an account after three failed logons.",
+"Linux",
+6,
+24,
+"SITEA - RHEL 8 (6)"
+],
+[
+"",
+"SV-231678 (RHEL-00030)",
+"CAT II",
+"RHEL 8 must audit privileged commands.",
+"Linux",
+6,
+24,
+"SITEA - RHEL 8 (6)"
+],
+[
+"",
+"SV-231705 (RHEL-00120)",
+"CAT II",
+"RHEL 8 must remove the default accounts.",
+"Linux",
+6,
+24,
+"SITEA - RHEL 8 (6)"
+],
+[
+"",
+"SV-231712 (RHEL-00020)",
+"CAT II",
+"RHEL 9 must lock an account after three failed logons.",
+"Linux",
+6,
+24,
+"SITEA - RHEL 9 (4), SITEB - Lab (2)"
+],
+[
+"",
+"SV-231742 (RHEL-00120)",
+"CAT II",
+"RHEL 9 must remove the default accounts.",
+"Linux",
+6,
+24,
+"SITEA - RHEL 9 (4), SITEB - Lab (2)"
+],
+[
+"",
+"SV-231748 (RHEL-00140)",
+"CAT II",
+"RHEL 9 must lock an account after three failed logons.",
+"Linux",
+6,
+24,
+"SITEA - RHEL 9 (4), SITEB - Lab (2)"
+],
+[
+"",
+"SV-231757 (RHEL-00170)",
+"CAT II",
+"RHEL 9 must show the DoD banner before logon.",
+"Linux",
+6,
+24,
+"SITEA - RHEL 9 (5), SITEB - Lab (1)"
+],
+[
+"",
+"SV-231765 (RHEL-00320)",
+"CAT II",
+"RHEL 8 must restrict the permissions of its logs.",
+"Linux",
+6,
+24,
+"SITEA - RHEL 8 (6)"
+],
+[
+"",
+"SV-231780 (RHEL-00370)",
+"CAT II",
+"RHEL 8 must use a FIPS-validated module.",
+"Linux",
+6,
+24,
+"SITEA - RHEL 8 (6)"
+],
+[
+"",
+"SV-231801 (RHEL-00440)",
+"CAT II",
+"RHEL 8 must restrict the permissions of its logs.",
+"Linux",
+6,
+24,
+"SITEA - RHEL 8 (6)"
+],
+[
+"",
+"SV-231813 (RHEL-00480)",
+"CAT II",
+"RHEL 8 must remove the default accounts.",
+"Linux",
+6,
+24,
+"SITEA - RHEL 8 (6)"
+],
+[
+"",
+"SV-231816 (RHEL-00490)",
+"CAT II",
+"RHEL 8 must use a FIPS-validated module.",
+"Linux",
+6,
+24,
+"SITEA - RHEL 8 (6)"
+],
+[
+"",
+"SV-231834 (RHEL-00550)",
+"CAT II",
+"RHEL 8 must keep its packages current.",
+"Linux",
+6,
+24,
+"SITEA - RHEL 8 (6)"
+],
+[
+"",
+"SV-231853 (RHEL-00490)",
+"CAT II",
+"RHEL 9 must use a FIPS-validated module.",
+"Linux",
+6,
+24,
+"SITEA - RHEL 9 (3), SITEB - Lab (3)"
+],
+[
+"",
+"SV-231868 (RHEL-00540)",
+"CAT II",
+"RHEL 9 must disable unused services.",
+"Linux",
+6,
+24,
+"SITEA - RHEL 9 (5), SITEB - Lab (1)"
+],
+[
+"",
+"SV-231886 (RHEL-00600)",
+"CAT II",
+"RHEL 9 must remove the default accounts.",
+"Linux",
+6,
+24,
+"SITEA - RHEL 9 (5), SITEB - Lab (1)"
+],
+[
+"",
+"SV-239814 (MS-00060)",
+"CAT II",
+"Windows must disable unused services.",
+"Windows",
+6,
+24,
+"SITEA - Windows Server (6)"
+],
+[
+"",
+"SV-239844 (MS-00160)",
+"CAT II",
+"Windows must set a session timeout of ten minutes.",
+"Windows",
+6,
+24,
+"SITEA - Windows Server (6)"
+],
+[
+"",
+"SV-239856 (MS-00200)",
+"CAT II",
+"Windows must restrict the permissions of its logs.",
+"Windows",
+6,
+24,
+"SITEA - Windows Server (6)"
+],
+[
+"",
+"SV-239874 (MS-00260)",
+"CAT II",
+"Windows must lock an account after three failed logons.",
+"Windows",
+6,
+24,
+"SITEA - Windows Server (6)"
+],
+[
+"",
+"SV-239895 (MS-00330)",
+"CAT II",
+"Windows must use NTP with authenticated sources.",
+"Windows",
+6,
+24,
+"SITEA - Windows Server (6)"
+],
+[
+"",
+"SV-239901 (MS-00350)",
+"CAT II",
+"Windows must require a password of 15 characters.",
+"Windows",
+6,
+24,
+"SITEA - Windows Server (6)"
+],
+[
+"",
+"SV-239931 (MS-00450)",
+"CAT II",
+"Windows must use NTP with authenticated sources.",
+"Windows",
+6,
+24,
+"SITEA - Windows Server (6)"
+],
+[
+"",
+"SV-239940 (MS-00480)",
+"CAT II",
+"Windows must remove the default accounts.",
+"Windows",
+6,
+24,
+"SITEA - Windows Server (6)"
+],
+[
+"",
+"SV-239961 (MS-00550)",
+"CAT II",
+"Windows must keep its packages current.",
+"Windows",
+6,
+24,
+"SITEA - Windows Server (6)"
+],
+[
+"",
+"SV-209255 (MS-00070)",
+"CAT II",
+"Windows must keep its packages current.",
+"Windows",
+5,
+20,
+"SITEA - Windows 11 (5)"
+],
+[
+"",
+"SV-209273 (MS-00130)",
+"CAT II",
+"Windows must use a FIPS-validated module.",
+"Windows",
+5,
+20,
+"SITEA - Windows 11 (5)"
+],
+[
+"",
+"SV-209291 (MS-00190)",
+"CAT II",
+"Windows must keep its packages current.",
+"Windows",
+5,
+20,
+"SITEA - Windows 11 (5)"
+],
+[
+"",
+"SV-209312 (MS-00260)",
+"CAT II",
+"Windows must lock an account after three failed logons.",
+"Windows",
+5,
+20,
+"SITEA - Windows 11 (5)"
+],
+[
+"",
+"SV-209336 (MS-00340)",
+"CAT II",
+"Windows must deny root logins over SSH.",
+"Windows",
+5,
+20,
+"SITEA - Windows 11 (5)"
+],
+[
+"",
+"SV-209354 (MS-00400)",
+"CAT II",
+"Windows must set a session timeout of ten minutes.",
+"Windows",
+5,
+20,
+"SITEA - Windows 11 (5)"
+],
+[
+"",
+"SV-209369 (MS-00450)",
+"CAT II",
+"Windows must use NTP with authenticated sources.",
+"Windows",
+5,
+20,
+"SITEA - Windows 11 (5)"
+],
+[
+"",
+"SV-209381 (MS-00490)",
+"CAT II",
+"Windows must use a FIPS-validated module.",
+"Windows",
+5,
+20,
+"SITEA - Windows 11 (5)"
+],
+[
+"",
+"SV-217500 (MICR-00050)",
+"CAT II",
+"Edge must show the DoD banner before logon.",
+"Windows",
+5,
+20,
+"SITEA - Windows 11 (5)"
+],
+[
+"",
+"SV-217536 (MICR-00170)",
+"CAT II",
+"Edge must show the DoD banner before logon.",
+"Windows",
+5,
+20,
+"SITEA - Windows 11 (5)"
+],
+[
+"",
+"SV-217545 (MICR-00200)",
+"CAT II",
+"Edge must restrict the permissions of its logs.",
+"Windows",
+5,
+20,
+"SITEA - Windows 11 (5)"
+],
+[
+"",
+"SV-217554 (MICR-00230)",
+"CAT II",
+"Edge must require a password of 15 characters.",
+"Windows",
+5,
+20,
+"SITEA - Windows 11 (5)"
+],
+[
+"",
+"SV-217560 (MICR-00250)",
+"CAT II",
+"Edge must use a FIPS-validated module.",
+"Windows",
+5,
+20,
+"SITEA - Windows 11 (5)"
+],
+[
+"",
+"SV-217590 (MICR-00350)",
+"CAT II",
+"Edge must require a password of 15 characters.",
+"Windows",
+5,
+20,
+"SITEA - Windows 11 (5)"
+],
+[
+"",
+"SV-217596 (MICR-00370)",
+"CAT II",
+"Edge must use a FIPS-validated module.",
+"Windows",
+5,
+20,
+"SITEA - Windows 11 (5)"
+],
+[
+"",
+"SV-217617 (MICR-00440)",
+"CAT II",
+"Edge must restrict the permissions of its logs.",
+"Windows",
+5,
+20,
+"SITEA - Windows 11 (5)"
+],
+[
+"",
+"SV-217632 (MICR-00490)",
+"CAT II",
+"Edge must use a FIPS-validated module.",
+"Windows",
+5,
+20,
+"SITEA - Windows 11 (5)"
+],
+[
+"",
+"SV-217653 (MICR-00560)",
+"CAT II",
+"Edge must restrict the permissions of its logs.",
+"Windows",
+5,
+20,
+"SITEA - Windows 11 (5)"
+],
+[
+"",
+"SV-217659 (MICR-00580)",
+"CAT II",
+"Edge must deny root logins over SSH.",
+"Windows",
+5,
+20,
+"SITEA - Windows 11 (5)"
+],
+[
+"",
+"SV-217662 (MICR-00590)",
+"CAT II",
+"Edge must require a password of 15 characters.",
+"Windows",
+5,
+20,
+"SITEA - Windows 11 (5)"
+],
+[
+"",
+"SV-231718 (RHEL-00040)",
+"CAT II",
+"RHEL 9 must set a session timeout of ten minutes.",
+"Linux",
+5,
+20,
+"SITEA - RHEL 9 (3), SITEB - Lab (2)"
+],
+[
+"",
+"SV-231721 (RHEL-00050)",
+"CAT II",
+"RHEL 9 must show the DoD banner before logon.",
+"Linux",
+5,
+20,
+"SITEA - RHEL 9 (3), SITEB - Lab (2)"
+],
+[
+"",
+"SV-231724 (RHEL-00060)",
+"CAT II",
+"RHEL 9 must disable unused services.",
+"Linux",
+5,
+20,
+"SITEA - RHEL 9 (3), SITEB - Lab (2)"
+],
+[
+"",
+"SV-231745 (RHEL-00130)",
+"CAT II",
+"RHEL 9 must use a FIPS-validated module.",
+"Linux",
+5,
+20,
+"SITEA - RHEL 9 (3), SITEB - Lab (2)"
+],
+[
+"",
+"SV-231747 (RHEL-00260)",
+"CAT II",
+"RHEL 8 must lock an account after three failed logons.",
+"Linux",
+5,
+20,
+"SITEA - RHEL 8 (5)"
+],
+[
+"",
+"SV-231760 (RHEL-00180)",
+"CAT II",
+"RHEL 9 must disable unused services.",
+"Linux",
+5,
+20,
+"SITEB - Lab (3), SITEA - RHEL 9 (2)"
+],
+[
+"",
+"SV-231771 (RHEL-00340)",
+"CAT II",
+"RHEL 8 must deny root logins over SSH.",
+"Linux",
+5,
+20,
+"SITEA - RHEL 8 (5)"
+],
+[
+"",
+"SV-231781 (RHEL-00250)",
+"CAT II",
+"RHEL 9 must use a FIPS-validated module.",
+"Linux",
+5,
+20,
+"SITEB - Lab (3), SITEA - RHEL 9 (2)"
+],
+[
+"",
+"SV-231786 (RHEL-00390)",
+"CAT II",
+"RHEL 8 must audit privileged commands.",
+"Linux",
+5,
+20,
+"SITEA - RHEL 8 (5)"
+],
+[
+"",
+"SV-231789 (RHEL-00400)",
+"CAT II",
+"RHEL 8 must set a session timeout of ten minutes.",
+"Linux",
+5,
+20,
+"SITEA - RHEL 8 (5)"
+],
+[
+"",
+"SV-231807 (RHEL-00460)",
+"CAT II",
+"RHEL 8 must deny root logins over SSH.",
+"Linux",
+5,
+20,
+"SITEA - RHEL 8 (5)"
+],
+[
+"",
+"SV-231837 (RHEL-00560)",
+"CAT II",
+"RHEL 8 must restrict the permissions of its logs.",
+"Linux",
+5,
+20,
+"SITEA - RHEL 8 (5)"
+],
+[
+"",
+"SV-231874 (RHEL-00560)",
+"CAT II",
+"RHEL 9 must restrict the permissions of its logs.",
+"Linux",
+5,
+20,
+"SITEB - Lab (4), SITEA - RHEL 9 (1)"
+],
+[
+"",
+"SV-239805 (MS-00030)",
+"CAT II",
+"Windows must audit privileged commands.",
+"Windows",
+5,
+20,
+"SITEA - Windows Server (5)"
+],
+[
+"",
+"SV-239823 (MS-00090)",
+"CAT II",
+"Windows must use NTP with authenticated sources.",
+"Windows",
+5,
+20,
+"SITEA - Windows Server (5)"
+],
+[
+"",
+"SV-239835 (MS-00130)",
+"CAT II",
+"Windows must use a FIPS-validated module.",
+"Windows",
+5,
+20,
+"SITEA - Windows Server (5)"
+],
+[
+"",
+"SV-239853 (MS-00190)",
+"CAT II",
+"Windows must keep its packages current.",
+"Windows",
+5,
+20,
+"SITEA - Windows Server (5)"
+],
+[
+"",
+"SV-239943 (MS-00490)",
+"CAT II",
+"Windows must use a FIPS-validated module.",
+"Windows",
+5,
+20,
+"SITEA - Windows Server (5)"
+],
+[
+"",
+"SV-239952 (MS-00520)",
+"CAT II",
+"Windows must set a session timeout of ten minutes.",
+"Windows",
+5,
+20,
+"SITEA - Windows Server (5)"
+],
+[
+"",
+"SV-242258 (CISC-00560)",
+"CAT II",
+"The router must restrict the permissions of its logs.",
+"Network",
+5,
+20,
+"SITEA - Network (5)"
+],
+[
+"",
+"SV-204932 (MS-00010)",
+"CAT I",
+"SQL Server must use a FIPS-validated module.",
+"Windows",
+2,
+20,
+"SITEA - Windows Server (2)"
+],
+[
+"",
+"SV-209267 (MS-00110)",
+"CAT I",
+"Windows must require a password of 15 characters.",
+"Windows",
+2,
+20,
+"SITEA - Windows 11 (2)"
+],
+[
+"",
+"SV-209327 (MS-00310)",
+"CAT I",
+"Windows must keep its packages current.",
+"Windows",
+2,
+20,
+"SITEA - Windows 11 (2)"
+],
+[
+"",
+"SV-231672 (RHEL-00010)",
+"CAT I",
+"RHEL 8 must use a FIPS-validated module.",
+"Linux",
+2,
+20,
+"SITEA - RHEL 8 (2)"
+],
+[
+"",
+"SV-231739 (RHEL-00110)",
+"CAT I",
+"RHEL 9 must require a password of 15 characters.",
+"Linux",
+2,
+20,
+"SITEA - RHEL 9 (1), SITEB - Lab (1)"
+],
+[
+"",
+"SV-231792 (RHEL-00410)",
+"CAT I",
+"RHEL 8 must show the DoD banner before logon.",
+"Linux",
+2,
+20,
+"SITEA - RHEL 8 (2)"
+],
+[
+"",
+"SV-231829 (RHEL-00410)",
+"CAT I",
+"RHEL 9 must show the DoD banner before logon.",
+"Linux",
+2,
+20,
+"SITEA - RHEL 9 (2)"
+],
+[
+"",
+"SV-239829 (MS-00110)",
+"CAT I",
+"Windows must require a password of 15 characters.",
+"Windows",
+2,
+20,
+"SITEA - Windows Server (2)"
+],
+[
+"",
+"SV-242153 (CISC-00210)",
+"CAT I",
+"The router must use NTP with authenticated sources.",
+"Network",
+2,
+20,
+"SITEA - Network (2)"
+],
+[
+"",
+"SV-242213 (CISC-00410)",
+"CAT I",
+"The router must show the DoD banner before logon.",
+"Network",
+2,
+20,
+"SITEA - Network (2)"
+],
+[
+"",
+"SV-209243 (MS-00030)",
+"CAT II",
+"Windows must audit privileged commands.",
+"Windows",
+4,
+16,
+"SITEA - Windows 11 (4)"
+],
+[
+"",
+"SV-209276 (MS-00140)",
+"CAT II",
+"Windows must lock an account after three failed logons.",
+"Windows",
+4,
+16,
+"SITEA - Windows 11 (4)"
+],
+[
+"",
+"SV-209282 (MS-00160)",
+"CAT II",
+"Windows must set a session timeout of ten minutes.",
+"Windows",
+4,
+16,
+"SITEA - Windows 11 (4)"
+],
+[
+"",
+"SV-209303 (MS-00230)",
+"CAT II",
+"Windows must require a password of 15 characters.",
+"Windows",
+4,
+16,
+"SITEA - Windows 11 (4)"
+],
+[
+"",
+"SV-209345 (MS-00370)",
+"CAT II",
+"Windows must use a FIPS-validated module.",
+"Windows",
+4,
+16,
+"SITEA - Windows 11 (4)"
+],
+[
+"",
+"SV-209375 (MS-00470)",
+"CAT II",
+"Windows must require a password of 15 characters.",
+"Windows",
+4,
+16,
+"SITEA - Windows 11 (4)"
+],
+[
+"",
+"SV-209378 (MS-00480)",
+"CAT II",
+"Windows must remove the default accounts.",
+"Windows",
+4,
+16,
+"SITEA - Windows 11 (4)"
+],
+[
+"",
+"SV-209390 (MS-00520)",
+"CAT II",
+"Windows must set a session timeout of ten minutes.",
+"Windows",
+4,
+16,
+"SITEA - Windows 11 (4)"
+],
+[
+"",
+"SV-209396 (MS-00540)",
+"CAT II",
+"Windows must disable unused services.",
+"Windows",
+4,
+16,
+"SITEA - Windows 11 (4)"
+],
+[
+"",
+"SV-209411 (MS-00590)",
+"CAT II",
+"Windows must require a password of 15 characters.",
+"Windows",
+4,
+16,
+"SITEA - Windows 11 (4)"
+],
+[
+"",
+"SV-209414 (MS-00600)",
+"CAT II",
+"Windows must remove the default accounts.",
+"Windows",
+4,
+16,
+"SITEA - Windows 11 (4)"
+],
+[
+"",
+"SV-217524 (MICR-00130)",
+"CAT II",
+"Edge must use a FIPS-validated module.",
+"Windows",
+4,
+16,
+"SITEA - Windows 11 (4)"
+],
+[
+"",
+"SV-217533 (MICR-00160)",
+"CAT II",
+"Edge must set a session timeout of ten minutes.",
+"Windows",
+4,
+16,
+"SITEA - Windows 11 (4)"
+],
+[
+"",
+"SV-217539 (MICR-00180)",
+"CAT II",
+"Edge must disable unused services.",
+"Windows",
+4,
+16,
+"SITEA - Windows 11 (4)"
+],
+[
+"",
+"SV-217563 (MICR-00260)",
+"CAT II",
+"Edge must lock an account after three failed logons.",
+"Windows",
+4,
+16,
+"SITEA - Windows 11 (4)"
+],
+[
+"",
+"SV-217566 (MICR-00270)",
+"CAT II",
+"Edge must audit privileged commands.",
+"Windows",
+4,
+16,
+"SITEA - Windows 11 (4)"
+],
+[
+"",
+"SV-217569 (MICR-00280)",
+"CAT II",
+"Edge must set a session timeout of ten minutes.",
+"Windows",
+4,
+16,
+"SITEA - Windows 11 (4)"
+],
+[
+"",
+"SV-217575 (MICR-00300)",
+"CAT II",
+"Edge must disable unused services.",
+"Windows",
+4,
+16,
+"SITEA - Windows 11 (4)"
+],
+[
+"",
+"SV-217602 (MICR-00390)",
+"CAT II",
+"Edge must audit privileged commands.",
+"Windows",
+4,
+16,
+"SITEA - Windows 11 (4)"
+],
+[
+"",
+"SV-217620 (MICR-00450)",
+"CAT II",
+"Edge must use NTP with authenticated sources.",
+"Windows",
+4,
+16,
+"SITEA - Windows 11 (4)"
+],
+[
+"",
+"SV-217629 (MICR-00480)",
+"CAT II",
+"Edge must remove the default accounts.",
+"Windows",
+4,
+16,
+"SITEA - Windows 11 (4)"
+],
+[
+"",
+"SV-231696 (RHEL-00090)",
+"CAT II",
+"RHEL 8 must use NTP with authenticated sources.",
+"Linux",
+4,
+16,
+"SITEA - RHEL 8 (4)"
+],
+[
+"",
+"SV-231699 (RHEL-00100)",
+"CAT II",
+"RHEL 8 must deny root logins over SSH.",
+"Linux",
+4,
+16,
+"SITEA - RHEL 8 (4)"
+],
+[
+"",
+"SV-231708 (RHEL-00130)",
+"CAT II",
+"RHEL 8 must use a FIPS-validated module.",
+"Linux",
+4,
+16,
+"SITEA - RHEL 8 (4)"
+],
+[
+"",
+"SV-231720 (RHEL-00170)",
+"CAT II",
+"RHEL 8 must show the DoD banner before logon.",
+"Linux",
+4,
+16,
+"SITEA - RHEL 8 (4)"
+],
+[
+"",
+"SV-231723 (RHEL-00180)",
+"CAT II",
+"RHEL 8 must disable unused services.",
+"Linux",
+4,
+16,
+"SITEA - RHEL 8 (4)"
+],
+[
+"",
+"SV-231738 (RHEL-00230)",
+"CAT II",
+"RHEL 8 must require a password of 15 characters.",
+"Linux",
+4,
+16,
+"SITEA - RHEL 8 (4)"
+],
+[
+"",
+"SV-231838 (RHEL-00440)",
+"CAT II",
+"RHEL 9 must restrict the permissions of its logs.",
+"Linux",
+4,
+16,
+"SITEA - RHEL 9 (3), SITEB - Lab (1)"
+],
+[
+"",
+"SV-239811 (MS-00050)",
+"CAT II",
+"Windows must show the DoD banner before logon.",
+"Windows",
+4,
+16,
+"SITEA - Windows Server (4)"
+],
+[
+"",
+"SV-239880 (MS-00280)",
+"CAT II",
+"Windows must set a session timeout of ten minutes.",
+"Windows",
+4,
+16,
+"SITEA - Windows Server (4)"
+],
+[
+"",
+"SV-239898 (MS-00340)",
+"CAT II",
+"Windows must deny root logins over SSH.",
+"Windows",
+4,
+16,
+"SITEA - Windows Server (4)"
+],
+[
+"",
+"SV-239916 (MS-00400)",
+"CAT II",
+"Windows must set a session timeout of ten minutes.",
+"Windows",
+4,
+16,
+"SITEA - Windows Server (4)"
+],
+[
+"",
+"SV-239934 (MS-00460)",
+"CAT II",
+"Windows must deny root logins over SSH.",
+"Windows",
+4,
+16,
+"SITEA - Windows Server (4)"
+],
+[
+"",
+"SV-239937 (MS-00470)",
+"CAT II",
+"Windows must require a password of 15 characters.",
+"Windows",
+4,
+16,
+"SITEA - Windows Server (4)"
+],
+[
+"",
+"SV-239976 (MS-00600)",
+"CAT II",
+"Windows must remove the default accounts.",
+"Windows",
+4,
+16,
+"SITEA - Windows Server (4)"
+],
+[
+"",
+"SV-242096 (CISC-00020)",
+"CAT II",
+"The router must lock an account after three failed logons.",
+"Network",
+4,
+16,
+"SITEA - Network (4)"
+],
+[
+"",
+"SV-242138 (CISC-00160)",
+"CAT II",
+"The router must set a session timeout of ten minutes.",
+"Network",
+4,
+16,
+"SITEA - Network (4)"
+],
+[
+"",
+"SV-242159 (CISC-00230)",
+"CAT II",
+"The router must require a password of 15 characters.",
+"Network",
+4,
+16,
+"SITEA - Network (4)"
+],
+[
+"",
+"SV-242192 (CISC-00340)",
+"CAT II",
+"The router must deny root logins over SSH.",
+"Network",
+4,
+16,
+"SITEA - Network (4)"
+],
+[
+"",
+"SV-242207 (CISC-00390)",
+"CAT II",
+"The router must audit privileged commands.",
+"Network",
+4,
+16,
+"SITEA - Network (4)"
+],
+[
+"",
+"SV-242225 (CISC-00450)",
+"CAT II",
+"The router must use NTP with authenticated sources.",
+"Network",
+4,
+16,
+"SITEA - Network (4)"
+],
+[
+"",
+"SV-204935 (MS-00020)",
+"CAT II",
+"SQL Server must lock an account after three failed logons.",
+"Windows",
+3,
+12,
+"SITEA - Windows Server (3)"
+],
+[
+"",
+"SV-204977 (MS-00160)",
+"CAT II",
+"SQL Server must set a session timeout of ten minutes.",
+"Windows",
+3,
+12,
+"SITEA - Windows Server (3)"
+],
+[
+"",
+"SV-204983 (MS-00180)",
+"CAT II",
+"SQL Server must disable unused services.",
+"Windows",
+3,
+12,
+"SITEA - Windows Server (3)"
+],
+[
+"",
+"SV-205004 (MS-00250)",
+"CAT II",
+"SQL Server must use a FIPS-validated module.",
+"Windows",
+3,
+12,
+"SITEA - Windows Server (3)"
+],
+[
+"",
+"SV-205010 (MS-00270)",
+"CAT II",
+"SQL Server must audit privileged commands.",
+"Windows",
+3,
+12,
+"SITEA - Windows Server (3)"
+],
+[
+"",
+"SV-205019 (MS-00300)",
+"CAT II",
+"SQL Server must disable unused services.",
+"Windows",
+3,
+12,
+"SITEA - Windows Server (3)"
+],
+[
+"",
+"SV-205043 (MS-00380)",
+"CAT II",
+"SQL Server must lock an account after three failed logons.",
+"Windows",
+3,
+12,
+"SITEA - Windows Server (3)"
+],
+[
+"",
+"SV-205085 (MS-00520)",
+"CAT II",
+"SQL Server must set a session timeout of ten minutes.",
+"Windows",
+3,
+12,
+"SITEA - Windows Server (3)"
+],
+[
+"",
+"SV-209246 (MS-00040)",
+"CAT II",
+"Windows must set a session timeout of ten minutes.",
+"Windows",
+3,
+12,
+"SITEA - Windows 11 (3)"
+],
+[
+"",
+"SV-209348 (MS-00380)",
+"CAT II",
+"Windows must lock an account after three failed logons.",
+"Windows",
+3,
+12,
+"SITEA - Windows 11 (3)"
+],
+[
+"",
+"SV-209366 (MS-00440)",
+"CAT II",
+"Windows must restrict the permissions of its logs.",
+"Windows",
+3,
+12,
+"SITEA - Windows 11 (3)"
+],
+[
+"",
+"SV-214742 (APAC-00520)",
+"CAT II",
+"Apache must set a session timeout of ten minutes.",
+"Applications",
+3,
+12,
+"SITEA - RHEL 9 (3)"
+],
+[
+"",
+"SV-217506 (MICR-00070)",
+"CAT II",
+"Edge must keep its packages current.",
+"Windows",
+3,
+12,
+"SITEA - Windows 11 (3)"
+],
+[
+"",
+"SV-217515 (MICR-00100)",
+"CAT II",
+"Edge must deny root logins over SSH.",
+"Windows",
+3,
+12,
+"SITEA - Windows 11 (3)"
+],
+[
+"",
+"SV-217557 (MICR-00240)",
+"CAT II",
+"Edge must remove the default accounts.",
+"Windows",
+3,
+12,
+"SITEA - Windows 11 (3)"
+],
+[
+"",
+"SV-217584 (MICR-00330)",
+"CAT II",
+"Edge must use NTP with authenticated sources.",
+"Windows",
+3,
+12,
+"SITEA - Windows 11 (3)"
+],
+[
+"",
+"SV-217587 (MICR-00340)",
+"CAT II",
+"Edge must deny root logins over SSH.",
+"Windows",
+3,
+12,
+"SITEA - Windows 11 (3)"
+],
+[
+"",
+"SV-217605 (MICR-00400)",
+"CAT II",
+"Edge must set a session timeout of ten minutes.",
+"Windows",
+3,
+12,
+"SITEA - Windows 11 (3)"
+],
+[
+"",
+"SV-217611 (MICR-00420)",
+"CAT II",
+"Edge must disable unused services.",
+"Windows",
+3,
+12,
+"SITEA - Windows 11 (3)"
+],
+[
+"",
+"SV-217623 (MICR-00460)",
+"CAT II",
+"Edge must deny root logins over SSH.",
+"Windows",
+3,
+12,
+"SITEA - Windows 11 (3)"
+],
+[
+"",
+"SV-217665 (MICR-00600)",
+"CAT II",
+"Edge must remove the default accounts.",
+"Windows",
+3,
+12,
+"SITEA - Windows 11 (3)"
+],
+[
+"",
+"SV-230270 (VMW-00190)",
+"CAT II",
+"The ESXi host must keep its packages current.",
+"VMware",
+3,
+12,
+"SITEA - VMware (3)"
+],
+[
+"",
+"SV-230390 (VMW-00590)",
+"CAT II",
+"The ESXi host must require a password of 15 characters.",
+"VMware",
+3,
+12,
+"SITEA - VMware (3)"
+],
+[
+"",
+"SV-231681 (RHEL-00040)",
+"CAT II",
+"RHEL 8 must set a session timeout of ten minutes.",
+"Linux",
+3,
+12,
+"SITEA - RHEL 8 (3)"
+],
+[
+"",
+"SV-231711 (RHEL-00140)",
+"CAT II",
+"RHEL 8 must lock an account after three failed logons.",
+"Linux",
+3,
+12,
+"SITEA - RHEL 8 (3)"
+],
+[
+"",
+"SV-231744 (RHEL-00250)",
+"CAT II",
+"RHEL 8 must use a FIPS-validated module.",
+"Linux",
+3,
+12,
+"SITEA - RHEL 8 (3)"
+],
+[
+"",
+"SV-231750 (RHEL-00270)",
+"CAT II",
+"RHEL 8 must audit privileged commands.",
+"Linux",
+3,
+12,
+"SITEA - RHEL 8 (3)"
+],
+[
+"",
+"SV-231804 (RHEL-00450)",
+"CAT II",
+"RHEL 8 must use NTP with authenticated sources.",
+"Linux",
+3,
+12,
+"SITEA - RHEL 8 (3)"
+],
+[
+"",
+"SV-231843 (RHEL-00580)",
+"CAT II",
+"RHEL 8 must deny root logins over SSH.",
+"Linux",
+3,
+12,
+"SITEA - RHEL 8 (3)"
+],
+[
+"",
+"SV-231846 (RHEL-00590)",
+"CAT II",
+"RHEL 8 must require a password of 15 characters.",
+"Linux",
+3,
+12,
+"SITEA - RHEL 8 (3)"
+],
+[
+"",
+"SV-239871 (MS-00250)",
+"CAT II",
+"Windows must use a FIPS-validated module.",
+"Windows",
+3,
+12,
+"SITEA - Windows Server (3)"
+],
+[
+"",
+"SV-239886 (MS-00300)",
+"CAT II",
+"Windows must disable unused services.",
+"Windows",
+3,
+12,
+"SITEA - Windows Server (3)"
+],
+[
+"",
+"SV-239910 (MS-00380)",
+"CAT II",
+"Windows must lock an account after three failed logons.",
+"Windows",
+3,
+12,
+"SITEA - Windows Server (3)"
+],
+[
+"",
+"SV-239922 (MS-00420)",
+"CAT II",
+"Windows must disable unused services.",
+"Windows",
+3,
+12,
+"SITEA - Windows Server (3)"
+],
+[
+"",
+"SV-239973 (MS-00590)",
+"CAT II",
+"Windows must require a password of 15 characters.",
+"Windows",
+3,
+12,
+"SITEA - Windows Server (3)"
+],
+[
+"",
+"SV-242102 (CISC-00040)",
+"CAT II",
+"The router must set a session timeout of ten minutes.",
+"Network",
+3,
+12,
+"SITEA - Network (3)"
+],
+[
+"",
+"SV-242126 (CISC-00120)",
+"CAT II",
+"The router must remove the default accounts.",
+"Network",
+3,
+12,
+"SITEA - Network (3)"
+],
+[
+"",
+"SV-242171 (CISC-00270)",
+"CAT II",
+"The router must audit privileged commands.",
+"Network",
+3,
+12,
+"SITEA - Network (3)"
+],
+[
+"",
+"SV-242174 (CISC-00280)",
+"CAT II",
+"The router must set a session timeout of ten minutes.",
+"Network",
+3,
+12,
+"SITEA - Network (3)"
+],
+[
+"",
+"SV-242186 (CISC-00320)",
+"CAT II",
+"The router must restrict the permissions of its logs.",
+"Network",
+3,
+12,
+"SITEA - Network (3)"
+],
+[
+"",
+"SV-242201 (CISC-00370)",
+"CAT II",
+"The router must use a FIPS-validated module.",
+"Network",
+3,
+12,
+"SITEA - Network (3)"
+],
+[
+"",
+"SV-242204 (CISC-00380)",
+"CAT II",
+"The router must lock an account after three failed logons.",
+"Network",
+3,
+12,
+"SITEA - Network (3)"
+],
+[
+"",
+"SV-242231 (CISC-00470)",
+"CAT II",
+"The router must require a password of 15 characters.",
+"Network",
+3,
+12,
+"SITEA - Network (3)"
+],
+[
+"",
+"SV-242246 (CISC-00520)",
+"CAT II",
+"The router must set a session timeout of ten minutes.",
+"Network",
+3,
+12,
+"SITEA - Network (3)"
+],
+[
+"",
+"SV-242255 (CISC-00550)",
+"CAT II",
+"The router must keep its packages current.",
+"Network",
+3,
+12,
+"SITEA - Network (3)"
+],
+[
+"",
+"SV-204992 (MS-00210)",
+"CAT I",
+"SQL Server must use NTP with authenticated sources.",
+"Windows",
+1,
+10,
+"SITEA - Windows Server (1)"
+],
+[
+"",
+"SV-205022 (MS-00310)",
+"CAT I",
+"SQL Server must keep its packages current.",
+"Windows",
+1,
+10,
+"SITEA - Windows Server (1)"
+],
+[
+"",
+"SV-205052 (MS-00410)",
+"CAT I",
+"SQL Server must show the DoD banner before logon.",
+"Windows",
+1,
+10,
+"SITEA - Windows Server (1)"
+],
+[
+"",
+"SV-205082 (MS-00510)",
+"CAT I",
+"SQL Server must audit privileged commands.",
+"Windows",
+1,
+10,
+"SITEA - Windows Server (1)"
+],
+[
+"",
+"SV-209237 (MS-00010)",
+"CAT I",
+"Windows must use a FIPS-validated module.",
+"Windows",
+1,
+10,
+"SITEA - Windows 11 (1)"
+],
+[
+"",
+"SV-209297 (MS-00210)",
+"CAT I",
+"Windows must use NTP with authenticated sources.",
+"Windows",
+1,
+10,
+"SITEA - Windows 11 (1)"
+],
+[
+"",
+"SV-209387 (MS-00510)",
+"CAT I",
+"Windows must audit privileged commands.",
+"Windows",
+1,
+10,
+"SITEA - Windows 11 (1)"
+],
+[
+"",
+"SV-214679 (APAC-00310)",
+"CAT I",
+"Apache must keep its packages current.",
+"Applications",
+1,
+10,
+"SITEA - RHEL 9 (1)"
+],
+[
+"",
+"SV-214709 (APAC-00410)",
+"CAT I",
+"Apache must show the DoD banner before logon.",
+"Applications",
+1,
+10,
+"SITEA - RHEL 9 (1)"
+],
+[
+"",
+"SV-217548 (MICR-00210)",
+"CAT I",
+"Edge must use NTP with authenticated sources.",
+"Windows",
+1,
+10,
+"SITEA - Windows 11 (1)"
+],
+[
+"",
+"SV-217638 (MICR-00510)",
+"CAT I",
+"Edge must audit privileged commands.",
+"Windows",
+1,
+10,
+"SITEA - Windows 11 (1)"
+],
+[
+"",
+"SV-227887 (NETA-00510)",
+"CAT I",
+"ONTAP must audit privileged commands.",
+"Storage",
+1,
+10,
+"SITEB - Storage (1)"
+],
+[
+"",
+"SV-230276 (VMW-00210)",
+"CAT I",
+"The ESXi host must use NTP with authenticated sources.",
+"VMware",
+1,
+10,
+"SITEA - VMware (1)"
+],
+[
+"",
+"SV-230306 (VMW-00310)",
+"CAT I",
+"The ESXi host must keep its packages current.",
+"VMware",
+1,
+10,
+"SITEA - VMware (1)"
+],
+[
+"",
+"SV-231709 (RHEL-00010)",
+"CAT I",
+"RHEL 9 must use a FIPS-validated module.",
+"Linux",
+1,
+10,
+"SITEA - RHEL 9 (1)"
+],
+[
+"",
+"SV-231822 (RHEL-00510)",
+"CAT I",
+"RHEL 8 must audit privileged commands.",
+"Linux",
+1,
+10,
+"SITEA - RHEL 8 (1)"
+],
+[
+"",
+"SV-242123 (CISC-00110)",
+"CAT I",
+"The router must require a password of 15 characters.",
+"Network",
+1,
+10,
+"SITEA - Network (1)"
+],
+[
+"",
+"SV-243899 (ZEBR-00110)",
+"CAT I",
+"The printer must require a password of 15 characters.",
+"Other",
+1,
+10,
+"SITEB - Lab (1)"
+],
+[
+"",
+"SV-231814 (RHEL-00360)",
+"CAT III",
+"RHEL 9 must remove the default accounts.",
+"Linux",
+9,
+9,
+"SITEA - RHEL 9 (6), SITEB - Lab (3)"
 ],
 [
 "",
@@ -20864,6 +23124,7 @@
 "CAT III",
 "RHEL 8 must lock an account after three failed logons.",
 "Linux",
+8,
 8,
 "SITEA - RHEL 8 (8)"
 ],
@@ -20874,6 +23135,7 @@
 "RHEL 9 must keep its packages current.",
 "Linux",
 8,
+8,
 "SITEA - RHEL 9 (7), SITEB - Lab (1)"
 ],
 [
@@ -20883,178 +23145,518 @@
 "RHEL 9 must lock an account after three failed logons.",
 "Linux",
 8,
+8,
 "SITEA - RHEL 9 (7), SITEB - Lab (1)"
 ],
 [
 "",
-"SV-209252 (MS-00060)",
+"SV-204950 (MS-00070)",
 "CAT II",
-"Windows must disable unused services.",
+"SQL Server must keep its packages current.",
 "Windows",
-7,
-"SITEA - Windows 11 (7)"
+2,
+8,
+"SITEA - Windows Server (2)"
 ],
 [
 "",
-"SV-209306 (MS-00240)",
+"SV-204956 (MS-00090)",
 "CAT II",
-"Windows must remove the default accounts.",
+"SQL Server must use NTP with authenticated sources.",
 "Windows",
-7,
-"SITEA - Windows 11 (7)"
+2,
+8,
+"SITEA - Windows Server (2)"
 ],
 [
 "",
-"SV-209333 (MS-00330)",
+"SV-204965 (MS-00120)",
 "CAT II",
-"Windows must use NTP with authenticated sources.",
+"SQL Server must remove the default accounts.",
 "Windows",
-7,
-"SITEA - Windows 11 (7)"
+2,
+8,
+"SITEA - Windows Server (2)"
 ],
 [
 "",
-"SV-231736 (RHEL-00100)",
+"SV-204971 (MS-00140)",
 "CAT II",
-"RHEL 9 must deny root logins over SSH.",
-"Linux",
-7,
-"SITEA - RHEL 9 (6), SITEB - Lab (1)"
-],
-[
-"",
-"SV-231741 (RHEL-00240)",
-"CAT II",
-"RHEL 8 must remove the default accounts.",
-"Linux",
-7,
-"SITEA - RHEL 8 (7)"
-],
-[
-"",
-"SV-231759 (RHEL-00300)",
-"CAT II",
-"RHEL 8 must disable unused services.",
-"Linux",
-7,
-"SITEA - RHEL 8 (7)"
-],
-[
-"",
-"SV-231766 (RHEL-00200)",
-"CAT II",
-"RHEL 9 must restrict the permissions of its logs.",
-"Linux",
-7,
-"SITEA - RHEL 9 (5), SITEB - Lab (2)"
-],
-[
-"",
-"SV-231787 (RHEL-00270)",
-"CAT II",
-"RHEL 9 must audit privileged commands.",
-"Linux",
-7,
-"SITEA - RHEL 9 (4), SITEB - Lab (3)"
-],
-[
-"",
-"SV-231802 (RHEL-00320)",
-"CAT II",
-"RHEL 9 must restrict the permissions of its logs.",
-"Linux",
-7,
-"SITEA - RHEL 9 (5), SITEB - Lab (2)"
-],
-[
-"",
-"SV-231811 (RHEL-00350)",
-"CAT II",
-"RHEL 9 must require a password of 15 characters.",
-"Linux",
-7,
-"SITEB - Lab (4), SITEA - RHEL 9 (3)"
-],
-[
-"",
-"SV-231828 (RHEL-00530)",
-"CAT II",
-"RHEL 8 must show the DoD banner before logon.",
-"Linux",
-7,
-"SITEA - RHEL 8 (7)"
-],
-[
-"",
-"SV-231832 (RHEL-00420)",
-"CAT II",
-"RHEL 9 must disable unused services.",
-"Linux",
-7,
-"SITEA - RHEL 9 (6), SITEB - Lab (1)"
-],
-[
-"",
-"SV-231841 (RHEL-00450)",
-"CAT II",
-"RHEL 9 must use NTP with authenticated sources.",
-"Linux",
-7,
-"SITEA - RHEL 9 (6), SITEB - Lab (1)"
-],
-[
-"",
-"SV-231871 (RHEL-00550)",
-"CAT II",
-"RHEL 9 must keep its packages current.",
-"Linux",
-7,
-"SITEA - RHEL 9 (4), SITEB - Lab (3)"
-],
-[
-"",
-"SV-239808 (MS-00040)",
-"CAT II",
-"Windows must set a session timeout of ten minutes.",
+"SQL Server must lock an account after three failed logons.",
 "Windows",
-7,
-"SITEA - Windows Server (7)"
+2,
+8,
+"SITEA - Windows Server (2)"
 ],
 [
 "",
-"SV-239868 (MS-00240)",
+"SV-205001 (MS-00240)",
 "CAT II",
-"Windows must remove the default accounts.",
+"SQL Server must remove the default accounts.",
 "Windows",
-7,
-"SITEA - Windows Server (7)"
+2,
+8,
+"SITEA - Windows Server (2)"
 ],
 [
 "",
-"SV-239877 (MS-00270)",
+"SV-205025 (MS-00320)",
 "CAT II",
-"Windows must audit privileged commands.",
+"SQL Server must restrict the permissions of its logs.",
 "Windows",
-7,
-"SITEA - Windows Server (7)"
+2,
+8,
+"SITEA - Windows Server (2)"
 ],
 [
 "",
-"SV-239955 (MS-00530)",
+"SV-205055 (MS-00420)",
+"CAT II",
+"SQL Server must disable unused services.",
+"Windows",
+2,
+8,
+"SITEA - Windows Server (2)"
+],
+[
+"",
+"SV-205061 (MS-00440)",
+"CAT II",
+"SQL Server must restrict the permissions of its logs.",
+"Windows",
+2,
+8,
+"SITEA - Windows Server (2)"
+],
+[
+"",
+"SV-205109 (MS-00600)",
+"CAT II",
+"SQL Server must remove the default accounts.",
+"Windows",
+2,
+8,
+"SITEA - Windows Server (2)"
+],
+[
+"",
+"SV-209249 (MS-00050)",
 "CAT II",
 "Windows must show the DoD banner before logon.",
 "Windows",
-7,
-"SITEA - Windows Server (7)"
+2,
+8,
+"SITEA - Windows 11 (2)"
 ],
 [
 "",
-"SV-239958 (MS-00540)",
+"SV-209309 (MS-00250)",
 "CAT II",
-"Windows must disable unused services.",
+"Windows must use a FIPS-validated module.",
 "Windows",
-7,
-"SITEA - Windows Server (7)"
+2,
+8,
+"SITEA - Windows 11 (2)"
+],
+[
+"",
+"SV-209399 (MS-00550)",
+"CAT II",
+"Windows must keep its packages current.",
+"Windows",
+2,
+8,
+"SITEA - Windows 11 (2)"
+],
+[
+"",
+"SV-214592 (APAC-00020)",
+"CAT II",
+"Apache must lock an account after three failed logons.",
+"Applications",
+2,
+8,
+"SITEA - RHEL 9 (2)"
+],
+[
+"",
+"SV-214598 (APAC-00040)",
+"CAT II",
+"Apache must set a session timeout of ten minutes.",
+"Applications",
+2,
+8,
+"SITEA - RHEL 9 (2)"
+],
+[
+"",
+"SV-214664 (APAC-00260)",
+"CAT II",
+"Apache must lock an account after three failed logons.",
+"Applications",
+2,
+8,
+"SITEA - RHEL 9 (2)"
+],
+[
+"",
+"SV-214676 (APAC-00300)",
+"CAT II",
+"Apache must disable unused services.",
+"Applications",
+2,
+8,
+"SITEA - RHEL 9 (2)"
+],
+[
+"",
+"SV-214688 (APAC-00340)",
+"CAT II",
+"Apache must deny root logins over SSH.",
+"Applications",
+2,
+8,
+"SITEA - RHEL 9 (2)"
+],
+[
+"",
+"SV-214730 (APAC-00480)",
+"CAT II",
+"Apache must remove the default accounts.",
+"Applications",
+2,
+8,
+"SITEA - RHEL 9 (2)"
+],
+[
+"",
+"SV-214748 (APAC-00540)",
+"CAT II",
+"Apache must disable unused services.",
+"Applications",
+2,
+8,
+"SITEA - RHEL 9 (2)"
+],
+[
+"",
+"SV-217494 (MICR-00030)",
+"CAT II",
+"Edge must audit privileged commands.",
+"Windows",
+2,
+8,
+"SITEA - Windows 11 (2)"
+],
+[
+"",
+"SV-217497 (MICR-00040)",
+"CAT II",
+"Edge must set a session timeout of ten minutes.",
+"Windows",
+2,
+8,
+"SITEA - Windows 11 (2)"
+],
+[
+"",
+"SV-217503 (MICR-00060)",
+"CAT II",
+"Edge must disable unused services.",
+"Windows",
+2,
+8,
+"SITEA - Windows 11 (2)"
+],
+[
+"",
+"SV-217527 (MICR-00140)",
+"CAT II",
+"Edge must lock an account after three failed logons.",
+"Windows",
+2,
+8,
+"SITEA - Windows 11 (2)"
+],
+[
+"",
+"SV-217599 (MICR-00380)",
+"CAT II",
+"Edge must lock an account after three failed logons.",
+"Windows",
+2,
+8,
+"SITEA - Windows 11 (2)"
+],
+[
+"",
+"SV-217641 (MICR-00520)",
+"CAT II",
+"Edge must set a session timeout of ten minutes.",
+"Windows",
+2,
+8,
+"SITEA - Windows 11 (2)"
+],
+[
+"",
+"SV-217650 (MICR-00550)",
+"CAT II",
+"Edge must keep its packages current.",
+"Windows",
+2,
+8,
+"SITEA - Windows 11 (2)"
+],
+[
+"",
+"SV-226100 (JUNI-00350)",
+"CAT II",
+"The SRX must require a password of 15 characters.",
+"Network",
+2,
+8,
+"SITEA - Network (2)"
+],
+[
+"",
+"SV-226142 (JUNI-00490)",
+"CAT II",
+"The SRX must use a FIPS-validated module.",
+"Network",
+2,
+8,
+"SITEA - Network (2)"
+],
+[
+"",
+"SV-227875 (NETA-00470)",
+"CAT II",
+"ONTAP must require a password of 15 characters.",
+"Storage",
+2,
+8,
+"SITEB - Storage (2)"
+],
+[
+"",
+"SV-227893 (NETA-00530)",
+"CAT II",
+"ONTAP must show the DoD banner before logon.",
+"Storage",
+2,
+8,
+"SITEB - Storage (2)"
+],
+[
+"",
+"SV-227896 (NETA-00540)",
+"CAT II",
+"ONTAP must disable unused services.",
+"Storage",
+2,
+8,
+"SITEB - Storage (2)"
+],
+[
+"",
+"SV-227911 (NETA-00590)",
+"CAT II",
+"ONTAP must require a password of 15 characters.",
+"Storage",
+2,
+8,
+"SITEB - Storage (2)"
+],
+[
+"",
+"SV-230219 (VMW-00020)",
+"CAT II",
+"The ESXi host must lock an account after three failed logons.",
+"VMware",
+2,
+8,
+"SITEA - VMware (2)"
+],
+[
+"",
+"SV-230228 (VMW-00050)",
+"CAT II",
+"The ESXi host must show the DoD banner before logon.",
+"VMware",
+2,
+8,
+"SITEA - VMware (2)"
+],
+[
+"",
+"SV-230297 (VMW-00280)",
+"CAT II",
+"The ESXi host must set a session timeout of ten minutes.",
+"VMware",
+2,
+8,
+"SITEA - VMware (2)"
+],
+[
+"",
+"SV-230312 (VMW-00330)",
+"CAT II",
+"The ESXi host must use NTP with authenticated sources.",
+"VMware",
+2,
+8,
+"SITEA - VMware (2)"
+],
+[
+"",
+"SV-230333 (VMW-00400)",
+"CAT II",
+"The ESXi host must set a session timeout of ten minutes.",
+"VMware",
+2,
+8,
+"SITEA - VMware (2)"
+],
+[
+"",
+"SV-231717 (RHEL-00160)",
+"CAT II",
+"RHEL 8 must set a session timeout of ten minutes.",
+"Linux",
+2,
+8,
+"SITEA - RHEL 8 (2)"
+],
+[
+"",
+"SV-242099 (CISC-00030)",
+"CAT II",
+"The router must audit privileged commands.",
+"Network",
+2,
+8,
+"SITEA - Network (2)"
+],
+[
+"",
+"SV-242108 (CISC-00060)",
+"CAT II",
+"The router must disable unused services.",
+"Network",
+2,
+8,
+"SITEA - Network (2)"
+],
+[
+"",
+"SV-242120 (CISC-00100)",
+"CAT II",
+"The router must deny root logins over SSH.",
+"Network",
+2,
+8,
+"SITEA - Network (2)"
+],
+[
+"",
+"SV-242150 (CISC-00200)",
+"CAT II",
+"The router must restrict the permissions of its logs.",
+"Network",
+2,
+8,
+"SITEA - Network (2)"
+],
+[
+"",
+"SV-242162 (CISC-00240)",
+"CAT II",
+"The router must remove the default accounts.",
+"Network",
+2,
+8,
+"SITEA - Network (2)"
+],
+[
+"",
+"SV-242165 (CISC-00250)",
+"CAT II",
+"The router must use a FIPS-validated module.",
+"Network",
+2,
+8,
+"SITEA - Network (2)"
+],
+[
+"",
+"SV-242189 (CISC-00330)",
+"CAT II",
+"The router must use NTP with authenticated sources.",
+"Network",
+2,
+8,
+"SITEA - Network (2)"
+],
+[
+"",
+"SV-242195 (CISC-00350)",
+"CAT II",
+"The router must require a password of 15 characters.",
+"Network",
+2,
+8,
+"SITEA - Network (2)"
+],
+[
+"",
+"SV-242210 (CISC-00400)",
+"CAT II",
+"The router must set a session timeout of ten minutes.",
+"Network",
+2,
+8,
+"SITEA - Network (2)"
+],
+[
+"",
+"SV-242267 (CISC-00590)",
+"CAT II",
+"The router must require a password of 15 characters.",
+"Network",
+2,
+8,
+"SITEA - Network (2)"
+],
+[
+"",
+"SV-243905 (ZEBR-00130)",
+"CAT II",
+"The printer must use a FIPS-validated module.",
+"Other",
+2,
+8,
+"SITEB - Lab (2)"
+],
+[
+"",
+"SV-243983 (ZEBR-00390)",
+"CAT II",
+"The printer must audit privileged commands.",
+"Other",
+2,
+8,
+"SITEB - Lab (2)"
+],
+[
+"",
+"SV-244022 (ZEBR-00520)",
+"CAT II",
+"The printer must set a session timeout of ten minutes.",
+"Other",
+2,
+8,
+"SITEB - Lab (2)"
 ],
 [
 "",
@@ -21063,322 +23665,8 @@
 "RHEL 9 must show the DoD banner before logon.",
 "Linux",
 7,
+7,
 "SITEA - RHEL 9 (6), SITEB - Lab (1)"
-],
-[
-"",
-"SV-231762 (RHEL-00310)",
-"CAT I",
-"RHEL 8 must keep its packages current.",
-"Linux",
-6,
-"SITEA - RHEL 8 (6)"
-],
-[
-"",
-"SV-239949 (MS-00510)",
-"CAT I",
-"Windows must audit privileged commands.",
-"Windows",
-6,
-"SITEA - Windows Server (6)"
-],
-[
-"",
-"SV-209270 (MS-00120)",
-"CAT II",
-"Windows must remove the default accounts.",
-"Windows",
-6,
-"SITEA - Windows 11 (6)"
-],
-[
-"",
-"SV-209294 (MS-00200)",
-"CAT II",
-"Windows must restrict the permissions of its logs.",
-"Windows",
-6,
-"SITEA - Windows 11 (6)"
-],
-[
-"",
-"SV-209318 (MS-00280)",
-"CAT II",
-"Windows must set a session timeout of ten minutes.",
-"Windows",
-6,
-"SITEA - Windows 11 (6)"
-],
-[
-"",
-"SV-209408 (MS-00580)",
-"CAT II",
-"Windows must deny root logins over SSH.",
-"Windows",
-6,
-"SITEA - Windows 11 (6)"
-],
-[
-"",
-"SV-217512 (MICR-00090)",
-"CAT II",
-"Edge must use NTP with authenticated sources.",
-"Windows",
-6,
-"SITEA - Windows 11 (6)"
-],
-[
-"",
-"SV-217521 (MICR-00120)",
-"CAT II",
-"Edge must remove the default accounts.",
-"Windows",
-6,
-"SITEA - Windows 11 (6)"
-],
-[
-"",
-"SV-217542 (MICR-00190)",
-"CAT II",
-"Edge must keep its packages current.",
-"Windows",
-6,
-"SITEA - Windows 11 (6)"
-],
-[
-"",
-"SV-217644 (MICR-00530)",
-"CAT II",
-"Edge must show the DoD banner before logon.",
-"Windows",
-6,
-"SITEA - Windows 11 (6)"
-],
-[
-"",
-"SV-231675 (RHEL-00020)",
-"CAT II",
-"RHEL 8 must lock an account after three failed logons.",
-"Linux",
-6,
-"SITEA - RHEL 8 (6)"
-],
-[
-"",
-"SV-231678 (RHEL-00030)",
-"CAT II",
-"RHEL 8 must audit privileged commands.",
-"Linux",
-6,
-"SITEA - RHEL 8 (6)"
-],
-[
-"",
-"SV-231705 (RHEL-00120)",
-"CAT II",
-"RHEL 8 must remove the default accounts.",
-"Linux",
-6,
-"SITEA - RHEL 8 (6)"
-],
-[
-"",
-"SV-231712 (RHEL-00020)",
-"CAT II",
-"RHEL 9 must lock an account after three failed logons.",
-"Linux",
-6,
-"SITEA - RHEL 9 (4), SITEB - Lab (2)"
-],
-[
-"",
-"SV-231742 (RHEL-00120)",
-"CAT II",
-"RHEL 9 must remove the default accounts.",
-"Linux",
-6,
-"SITEA - RHEL 9 (4), SITEB - Lab (2)"
-],
-[
-"",
-"SV-231748 (RHEL-00140)",
-"CAT II",
-"RHEL 9 must lock an account after three failed logons.",
-"Linux",
-6,
-"SITEA - RHEL 9 (4), SITEB - Lab (2)"
-],
-[
-"",
-"SV-231757 (RHEL-00170)",
-"CAT II",
-"RHEL 9 must show the DoD banner before logon.",
-"Linux",
-6,
-"SITEA - RHEL 9 (5), SITEB - Lab (1)"
-],
-[
-"",
-"SV-231765 (RHEL-00320)",
-"CAT II",
-"RHEL 8 must restrict the permissions of its logs.",
-"Linux",
-6,
-"SITEA - RHEL 8 (6)"
-],
-[
-"",
-"SV-231780 (RHEL-00370)",
-"CAT II",
-"RHEL 8 must use a FIPS-validated module.",
-"Linux",
-6,
-"SITEA - RHEL 8 (6)"
-],
-[
-"",
-"SV-231801 (RHEL-00440)",
-"CAT II",
-"RHEL 8 must restrict the permissions of its logs.",
-"Linux",
-6,
-"SITEA - RHEL 8 (6)"
-],
-[
-"",
-"SV-231813 (RHEL-00480)",
-"CAT II",
-"RHEL 8 must remove the default accounts.",
-"Linux",
-6,
-"SITEA - RHEL 8 (6)"
-],
-[
-"",
-"SV-231816 (RHEL-00490)",
-"CAT II",
-"RHEL 8 must use a FIPS-validated module.",
-"Linux",
-6,
-"SITEA - RHEL 8 (6)"
-],
-[
-"",
-"SV-231834 (RHEL-00550)",
-"CAT II",
-"RHEL 8 must keep its packages current.",
-"Linux",
-6,
-"SITEA - RHEL 8 (6)"
-],
-[
-"",
-"SV-231853 (RHEL-00490)",
-"CAT II",
-"RHEL 9 must use a FIPS-validated module.",
-"Linux",
-6,
-"SITEA - RHEL 9 (3), SITEB - Lab (3)"
-],
-[
-"",
-"SV-231868 (RHEL-00540)",
-"CAT II",
-"RHEL 9 must disable unused services.",
-"Linux",
-6,
-"SITEA - RHEL 9 (5), SITEB - Lab (1)"
-],
-[
-"",
-"SV-231886 (RHEL-00600)",
-"CAT II",
-"RHEL 9 must remove the default accounts.",
-"Linux",
-6,
-"SITEA - RHEL 9 (5), SITEB - Lab (1)"
-],
-[
-"",
-"SV-239814 (MS-00060)",
-"CAT II",
-"Windows must disable unused services.",
-"Windows",
-6,
-"SITEA - Windows Server (6)"
-],
-[
-"",
-"SV-239844 (MS-00160)",
-"CAT II",
-"Windows must set a session timeout of ten minutes.",
-"Windows",
-6,
-"SITEA - Windows Server (6)"
-],
-[
-"",
-"SV-239856 (MS-00200)",
-"CAT II",
-"Windows must restrict the permissions of its logs.",
-"Windows",
-6,
-"SITEA - Windows Server (6)"
-],
-[
-"",
-"SV-239874 (MS-00260)",
-"CAT II",
-"Windows must lock an account after three failed logons.",
-"Windows",
-6,
-"SITEA - Windows Server (6)"
-],
-[
-"",
-"SV-239895 (MS-00330)",
-"CAT II",
-"Windows must use NTP with authenticated sources.",
-"Windows",
-6,
-"SITEA - Windows Server (6)"
-],
-[
-"",
-"SV-239901 (MS-00350)",
-"CAT II",
-"Windows must require a password of 15 characters.",
-"Windows",
-6,
-"SITEA - Windows Server (6)"
-],
-[
-"",
-"SV-239931 (MS-00450)",
-"CAT II",
-"Windows must use NTP with authenticated sources.",
-"Windows",
-6,
-"SITEA - Windows Server (6)"
-],
-[
-"",
-"SV-239940 (MS-00480)",
-"CAT II",
-"Windows must remove the default accounts.",
-"Windows",
-6,
-"SITEA - Windows Server (6)"
-],
-[
-"",
-"SV-239961 (MS-00550)",
-"CAT II",
-"Windows must keep its packages current.",
-"Windows",
-6,
-"SITEA - Windows Server (6)"
 ],
 [
 "",
@@ -21386,6 +23674,7 @@
 "CAT III",
 "Windows must show the DoD banner before logon.",
 "Windows",
+6,
 6,
 "SITEA - Windows 11 (6)"
 ],
@@ -21396,6 +23685,7 @@
 "Edge must deny root logins over SSH.",
 "Windows",
 6,
+6,
 "SITEA - Windows 11 (6)"
 ],
 [
@@ -21404,6 +23694,7 @@
 "CAT III",
 "Windows must restrict the permissions of its logs.",
 "Windows",
+6,
 6,
 "SITEA - Windows Server (6)"
 ],
@@ -21414,394 +23705,8 @@
 "Windows must keep its packages current.",
 "Windows",
 6,
+6,
 "SITEA - Windows Server (6)"
-],
-[
-"",
-"SV-209357 (MS-00410)",
-"CAT I",
-"Windows must show the DoD banner before logon.",
-"Windows",
-5,
-"SITEA - Windows 11 (5)"
-],
-[
-"",
-"SV-231732 (RHEL-00210)",
-"CAT I",
-"RHEL 8 must use NTP with authenticated sources.",
-"Linux",
-5,
-"SITEA - RHEL 8 (5)"
-],
-[
-"",
-"SV-231859 (RHEL-00510)",
-"CAT I",
-"RHEL 9 must audit privileged commands.",
-"Linux",
-5,
-"SITEA - RHEL 9 (3), SITEB - Lab (2)"
-],
-[
-"",
-"SV-209255 (MS-00070)",
-"CAT II",
-"Windows must keep its packages current.",
-"Windows",
-5,
-"SITEA - Windows 11 (5)"
-],
-[
-"",
-"SV-209273 (MS-00130)",
-"CAT II",
-"Windows must use a FIPS-validated module.",
-"Windows",
-5,
-"SITEA - Windows 11 (5)"
-],
-[
-"",
-"SV-209291 (MS-00190)",
-"CAT II",
-"Windows must keep its packages current.",
-"Windows",
-5,
-"SITEA - Windows 11 (5)"
-],
-[
-"",
-"SV-209312 (MS-00260)",
-"CAT II",
-"Windows must lock an account after three failed logons.",
-"Windows",
-5,
-"SITEA - Windows 11 (5)"
-],
-[
-"",
-"SV-209336 (MS-00340)",
-"CAT II",
-"Windows must deny root logins over SSH.",
-"Windows",
-5,
-"SITEA - Windows 11 (5)"
-],
-[
-"",
-"SV-209354 (MS-00400)",
-"CAT II",
-"Windows must set a session timeout of ten minutes.",
-"Windows",
-5,
-"SITEA - Windows 11 (5)"
-],
-[
-"",
-"SV-209369 (MS-00450)",
-"CAT II",
-"Windows must use NTP with authenticated sources.",
-"Windows",
-5,
-"SITEA - Windows 11 (5)"
-],
-[
-"",
-"SV-209381 (MS-00490)",
-"CAT II",
-"Windows must use a FIPS-validated module.",
-"Windows",
-5,
-"SITEA - Windows 11 (5)"
-],
-[
-"",
-"SV-217500 (MICR-00050)",
-"CAT II",
-"Edge must show the DoD banner before logon.",
-"Windows",
-5,
-"SITEA - Windows 11 (5)"
-],
-[
-"",
-"SV-217536 (MICR-00170)",
-"CAT II",
-"Edge must show the DoD banner before logon.",
-"Windows",
-5,
-"SITEA - Windows 11 (5)"
-],
-[
-"",
-"SV-217545 (MICR-00200)",
-"CAT II",
-"Edge must restrict the permissions of its logs.",
-"Windows",
-5,
-"SITEA - Windows 11 (5)"
-],
-[
-"",
-"SV-217554 (MICR-00230)",
-"CAT II",
-"Edge must require a password of 15 characters.",
-"Windows",
-5,
-"SITEA - Windows 11 (5)"
-],
-[
-"",
-"SV-217560 (MICR-00250)",
-"CAT II",
-"Edge must use a FIPS-validated module.",
-"Windows",
-5,
-"SITEA - Windows 11 (5)"
-],
-[
-"",
-"SV-217590 (MICR-00350)",
-"CAT II",
-"Edge must require a password of 15 characters.",
-"Windows",
-5,
-"SITEA - Windows 11 (5)"
-],
-[
-"",
-"SV-217596 (MICR-00370)",
-"CAT II",
-"Edge must use a FIPS-validated module.",
-"Windows",
-5,
-"SITEA - Windows 11 (5)"
-],
-[
-"",
-"SV-217617 (MICR-00440)",
-"CAT II",
-"Edge must restrict the permissions of its logs.",
-"Windows",
-5,
-"SITEA - Windows 11 (5)"
-],
-[
-"",
-"SV-217632 (MICR-00490)",
-"CAT II",
-"Edge must use a FIPS-validated module.",
-"Windows",
-5,
-"SITEA - Windows 11 (5)"
-],
-[
-"",
-"SV-217653 (MICR-00560)",
-"CAT II",
-"Edge must restrict the permissions of its logs.",
-"Windows",
-5,
-"SITEA - Windows 11 (5)"
-],
-[
-"",
-"SV-217659 (MICR-00580)",
-"CAT II",
-"Edge must deny root logins over SSH.",
-"Windows",
-5,
-"SITEA - Windows 11 (5)"
-],
-[
-"",
-"SV-217662 (MICR-00590)",
-"CAT II",
-"Edge must require a password of 15 characters.",
-"Windows",
-5,
-"SITEA - Windows 11 (5)"
-],
-[
-"",
-"SV-231718 (RHEL-00040)",
-"CAT II",
-"RHEL 9 must set a session timeout of ten minutes.",
-"Linux",
-5,
-"SITEA - RHEL 9 (3), SITEB - Lab (2)"
-],
-[
-"",
-"SV-231721 (RHEL-00050)",
-"CAT II",
-"RHEL 9 must show the DoD banner before logon.",
-"Linux",
-5,
-"SITEA - RHEL 9 (3), SITEB - Lab (2)"
-],
-[
-"",
-"SV-231724 (RHEL-00060)",
-"CAT II",
-"RHEL 9 must disable unused services.",
-"Linux",
-5,
-"SITEA - RHEL 9 (3), SITEB - Lab (2)"
-],
-[
-"",
-"SV-231745 (RHEL-00130)",
-"CAT II",
-"RHEL 9 must use a FIPS-validated module.",
-"Linux",
-5,
-"SITEA - RHEL 9 (3), SITEB - Lab (2)"
-],
-[
-"",
-"SV-231747 (RHEL-00260)",
-"CAT II",
-"RHEL 8 must lock an account after three failed logons.",
-"Linux",
-5,
-"SITEA - RHEL 8 (5)"
-],
-[
-"",
-"SV-231760 (RHEL-00180)",
-"CAT II",
-"RHEL 9 must disable unused services.",
-"Linux",
-5,
-"SITEB - Lab (3), SITEA - RHEL 9 (2)"
-],
-[
-"",
-"SV-231771 (RHEL-00340)",
-"CAT II",
-"RHEL 8 must deny root logins over SSH.",
-"Linux",
-5,
-"SITEA - RHEL 8 (5)"
-],
-[
-"",
-"SV-231781 (RHEL-00250)",
-"CAT II",
-"RHEL 9 must use a FIPS-validated module.",
-"Linux",
-5,
-"SITEB - Lab (3), SITEA - RHEL 9 (2)"
-],
-[
-"",
-"SV-231786 (RHEL-00390)",
-"CAT II",
-"RHEL 8 must audit privileged commands.",
-"Linux",
-5,
-"SITEA - RHEL 8 (5)"
-],
-[
-"",
-"SV-231789 (RHEL-00400)",
-"CAT II",
-"RHEL 8 must set a session timeout of ten minutes.",
-"Linux",
-5,
-"SITEA - RHEL 8 (5)"
-],
-[
-"",
-"SV-231807 (RHEL-00460)",
-"CAT II",
-"RHEL 8 must deny root logins over SSH.",
-"Linux",
-5,
-"SITEA - RHEL 8 (5)"
-],
-[
-"",
-"SV-231837 (RHEL-00560)",
-"CAT II",
-"RHEL 8 must restrict the permissions of its logs.",
-"Linux",
-5,
-"SITEA - RHEL 8 (5)"
-],
-[
-"",
-"SV-231874 (RHEL-00560)",
-"CAT II",
-"RHEL 9 must restrict the permissions of its logs.",
-"Linux",
-5,
-"SITEB - Lab (4), SITEA - RHEL 9 (1)"
-],
-[
-"",
-"SV-239805 (MS-00030)",
-"CAT II",
-"Windows must audit privileged commands.",
-"Windows",
-5,
-"SITEA - Windows Server (5)"
-],
-[
-"",
-"SV-239823 (MS-00090)",
-"CAT II",
-"Windows must use NTP with authenticated sources.",
-"Windows",
-5,
-"SITEA - Windows Server (5)"
-],
-[
-"",
-"SV-239835 (MS-00130)",
-"CAT II",
-"Windows must use a FIPS-validated module.",
-"Windows",
-5,
-"SITEA - Windows Server (5)"
-],
-[
-"",
-"SV-239853 (MS-00190)",
-"CAT II",
-"Windows must keep its packages current.",
-"Windows",
-5,
-"SITEA - Windows Server (5)"
-],
-[
-"",
-"SV-239943 (MS-00490)",
-"CAT II",
-"Windows must use a FIPS-validated module.",
-"Windows",
-5,
-"SITEA - Windows Server (5)"
-],
-[
-"",
-"SV-239952 (MS-00520)",
-"CAT II",
-"Windows must set a session timeout of ten minutes.",
-"Windows",
-5,
-"SITEA - Windows Server (5)"
-],
-[
-"",
-"SV-242258 (CISC-00560)",
-"CAT II",
-"The router must restrict the permissions of its logs.",
-"Network",
-5,
-"SITEA - Network (5)"
 ],
 [
 "",
@@ -21809,6 +23714,7 @@
 "CAT III",
 "Windows must restrict the permissions of its logs.",
 "Windows",
+5,
 5,
 "SITEA - Windows 11 (5)"
 ],
@@ -21819,6 +23725,7 @@
 "Windows must remove the default accounts.",
 "Windows",
 5,
+5,
 "SITEA - Windows 11 (5)"
 ],
 [
@@ -21827,6 +23734,7 @@
 "CAT III",
 "Windows must keep its packages current.",
 "Windows",
+5,
 5,
 "SITEA - Windows 11 (5)"
 ],
@@ -21837,6 +23745,7 @@
 "Windows must lock an account after three failed logons.",
 "Windows",
 5,
+5,
 "SITEA - Windows 11 (5)"
 ],
 [
@@ -21845,6 +23754,7 @@
 "CAT III",
 "Edge must restrict the permissions of its logs.",
 "Windows",
+5,
 5,
 "SITEA - Windows 11 (5)"
 ],
@@ -21855,6 +23765,7 @@
 "RHEL 8 must restrict the permissions of its logs.",
 "Linux",
 5,
+5,
 "SITEA - RHEL 8 (5)"
 ],
 [
@@ -21863,6 +23774,7 @@
 "CAT III",
 "RHEL 9 must audit privileged commands.",
 "Linux",
+5,
 5,
 "SITEA - RHEL 9 (4), SITEB - Lab (1)"
 ],
@@ -21873,6 +23785,7 @@
 "RHEL 8 must show the DoD banner before logon.",
 "Linux",
 5,
+5,
 "SITEA - RHEL 8 (5)"
 ],
 [
@@ -21881,6 +23794,7 @@
 "CAT III",
 "RHEL 9 must deny root logins over SSH.",
 "Linux",
+5,
 5,
 "SITEA - RHEL 9 (3), SITEB - Lab (2)"
 ],
@@ -21891,6 +23805,7 @@
 "RHEL 8 must keep its packages current.",
 "Linux",
 5,
+5,
 "SITEA - RHEL 8 (5)"
 ],
 [
@@ -21899,6 +23814,7 @@
 "CAT III",
 "RHEL 9 must use NTP with authenticated sources.",
 "Linux",
+5,
 5,
 "SITEA - RHEL 9 (4), SITEB - Lab (1)"
 ],
@@ -21909,6 +23825,7 @@
 "Windows must deny root logins over SSH.",
 "Windows",
 5,
+5,
 "SITEA - Windows Server (5)"
 ],
 [
@@ -21917,6 +23834,7 @@
 "CAT III",
 "Windows must remove the default accounts.",
 "Windows",
+5,
 5,
 "SITEA - Windows Server (5)"
 ],
@@ -21927,394 +23845,8 @@
 "Windows must use NTP with authenticated sources.",
 "Windows",
 5,
+5,
 "SITEA - Windows Server (5)"
-],
-[
-"",
-"SV-217518 (MICR-00110)",
-"CAT I",
-"Edge must require a password of 15 characters.",
-"Windows",
-4,
-"SITEA - Windows 11 (4)"
-],
-[
-"",
-"SV-231769 (RHEL-00210)",
-"CAT I",
-"RHEL 9 must use NTP with authenticated sources.",
-"Linux",
-4,
-"SITEA - RHEL 9 (3), SITEB - Lab (1)"
-],
-[
-"",
-"SV-209243 (MS-00030)",
-"CAT II",
-"Windows must audit privileged commands.",
-"Windows",
-4,
-"SITEA - Windows 11 (4)"
-],
-[
-"",
-"SV-209276 (MS-00140)",
-"CAT II",
-"Windows must lock an account after three failed logons.",
-"Windows",
-4,
-"SITEA - Windows 11 (4)"
-],
-[
-"",
-"SV-209282 (MS-00160)",
-"CAT II",
-"Windows must set a session timeout of ten minutes.",
-"Windows",
-4,
-"SITEA - Windows 11 (4)"
-],
-[
-"",
-"SV-209303 (MS-00230)",
-"CAT II",
-"Windows must require a password of 15 characters.",
-"Windows",
-4,
-"SITEA - Windows 11 (4)"
-],
-[
-"",
-"SV-209345 (MS-00370)",
-"CAT II",
-"Windows must use a FIPS-validated module.",
-"Windows",
-4,
-"SITEA - Windows 11 (4)"
-],
-[
-"",
-"SV-209375 (MS-00470)",
-"CAT II",
-"Windows must require a password of 15 characters.",
-"Windows",
-4,
-"SITEA - Windows 11 (4)"
-],
-[
-"",
-"SV-209378 (MS-00480)",
-"CAT II",
-"Windows must remove the default accounts.",
-"Windows",
-4,
-"SITEA - Windows 11 (4)"
-],
-[
-"",
-"SV-209390 (MS-00520)",
-"CAT II",
-"Windows must set a session timeout of ten minutes.",
-"Windows",
-4,
-"SITEA - Windows 11 (4)"
-],
-[
-"",
-"SV-209396 (MS-00540)",
-"CAT II",
-"Windows must disable unused services.",
-"Windows",
-4,
-"SITEA - Windows 11 (4)"
-],
-[
-"",
-"SV-209411 (MS-00590)",
-"CAT II",
-"Windows must require a password of 15 characters.",
-"Windows",
-4,
-"SITEA - Windows 11 (4)"
-],
-[
-"",
-"SV-209414 (MS-00600)",
-"CAT II",
-"Windows must remove the default accounts.",
-"Windows",
-4,
-"SITEA - Windows 11 (4)"
-],
-[
-"",
-"SV-217524 (MICR-00130)",
-"CAT II",
-"Edge must use a FIPS-validated module.",
-"Windows",
-4,
-"SITEA - Windows 11 (4)"
-],
-[
-"",
-"SV-217533 (MICR-00160)",
-"CAT II",
-"Edge must set a session timeout of ten minutes.",
-"Windows",
-4,
-"SITEA - Windows 11 (4)"
-],
-[
-"",
-"SV-217539 (MICR-00180)",
-"CAT II",
-"Edge must disable unused services.",
-"Windows",
-4,
-"SITEA - Windows 11 (4)"
-],
-[
-"",
-"SV-217563 (MICR-00260)",
-"CAT II",
-"Edge must lock an account after three failed logons.",
-"Windows",
-4,
-"SITEA - Windows 11 (4)"
-],
-[
-"",
-"SV-217566 (MICR-00270)",
-"CAT II",
-"Edge must audit privileged commands.",
-"Windows",
-4,
-"SITEA - Windows 11 (4)"
-],
-[
-"",
-"SV-217569 (MICR-00280)",
-"CAT II",
-"Edge must set a session timeout of ten minutes.",
-"Windows",
-4,
-"SITEA - Windows 11 (4)"
-],
-[
-"",
-"SV-217575 (MICR-00300)",
-"CAT II",
-"Edge must disable unused services.",
-"Windows",
-4,
-"SITEA - Windows 11 (4)"
-],
-[
-"",
-"SV-217602 (MICR-00390)",
-"CAT II",
-"Edge must audit privileged commands.",
-"Windows",
-4,
-"SITEA - Windows 11 (4)"
-],
-[
-"",
-"SV-217620 (MICR-00450)",
-"CAT II",
-"Edge must use NTP with authenticated sources.",
-"Windows",
-4,
-"SITEA - Windows 11 (4)"
-],
-[
-"",
-"SV-217629 (MICR-00480)",
-"CAT II",
-"Edge must remove the default accounts.",
-"Windows",
-4,
-"SITEA - Windows 11 (4)"
-],
-[
-"",
-"SV-231696 (RHEL-00090)",
-"CAT II",
-"RHEL 8 must use NTP with authenticated sources.",
-"Linux",
-4,
-"SITEA - RHEL 8 (4)"
-],
-[
-"",
-"SV-231699 (RHEL-00100)",
-"CAT II",
-"RHEL 8 must deny root logins over SSH.",
-"Linux",
-4,
-"SITEA - RHEL 8 (4)"
-],
-[
-"",
-"SV-231708 (RHEL-00130)",
-"CAT II",
-"RHEL 8 must use a FIPS-validated module.",
-"Linux",
-4,
-"SITEA - RHEL 8 (4)"
-],
-[
-"",
-"SV-231720 (RHEL-00170)",
-"CAT II",
-"RHEL 8 must show the DoD banner before logon.",
-"Linux",
-4,
-"SITEA - RHEL 8 (4)"
-],
-[
-"",
-"SV-231723 (RHEL-00180)",
-"CAT II",
-"RHEL 8 must disable unused services.",
-"Linux",
-4,
-"SITEA - RHEL 8 (4)"
-],
-[
-"",
-"SV-231738 (RHEL-00230)",
-"CAT II",
-"RHEL 8 must require a password of 15 characters.",
-"Linux",
-4,
-"SITEA - RHEL 8 (4)"
-],
-[
-"",
-"SV-231838 (RHEL-00440)",
-"CAT II",
-"RHEL 9 must restrict the permissions of its logs.",
-"Linux",
-4,
-"SITEA - RHEL 9 (3), SITEB - Lab (1)"
-],
-[
-"",
-"SV-239811 (MS-00050)",
-"CAT II",
-"Windows must show the DoD banner before logon.",
-"Windows",
-4,
-"SITEA - Windows Server (4)"
-],
-[
-"",
-"SV-239880 (MS-00280)",
-"CAT II",
-"Windows must set a session timeout of ten minutes.",
-"Windows",
-4,
-"SITEA - Windows Server (4)"
-],
-[
-"",
-"SV-239898 (MS-00340)",
-"CAT II",
-"Windows must deny root logins over SSH.",
-"Windows",
-4,
-"SITEA - Windows Server (4)"
-],
-[
-"",
-"SV-239916 (MS-00400)",
-"CAT II",
-"Windows must set a session timeout of ten minutes.",
-"Windows",
-4,
-"SITEA - Windows Server (4)"
-],
-[
-"",
-"SV-239934 (MS-00460)",
-"CAT II",
-"Windows must deny root logins over SSH.",
-"Windows",
-4,
-"SITEA - Windows Server (4)"
-],
-[
-"",
-"SV-239937 (MS-00470)",
-"CAT II",
-"Windows must require a password of 15 characters.",
-"Windows",
-4,
-"SITEA - Windows Server (4)"
-],
-[
-"",
-"SV-239976 (MS-00600)",
-"CAT II",
-"Windows must remove the default accounts.",
-"Windows",
-4,
-"SITEA - Windows Server (4)"
-],
-[
-"",
-"SV-242096 (CISC-00020)",
-"CAT II",
-"The router must lock an account after three failed logons.",
-"Network",
-4,
-"SITEA - Network (4)"
-],
-[
-"",
-"SV-242138 (CISC-00160)",
-"CAT II",
-"The router must set a session timeout of ten minutes.",
-"Network",
-4,
-"SITEA - Network (4)"
-],
-[
-"",
-"SV-242159 (CISC-00230)",
-"CAT II",
-"The router must require a password of 15 characters.",
-"Network",
-4,
-"SITEA - Network (4)"
-],
-[
-"",
-"SV-242192 (CISC-00340)",
-"CAT II",
-"The router must deny root logins over SSH.",
-"Network",
-4,
-"SITEA - Network (4)"
-],
-[
-"",
-"SV-242207 (CISC-00390)",
-"CAT II",
-"The router must audit privileged commands.",
-"Network",
-4,
-"SITEA - Network (4)"
-],
-[
-"",
-"SV-242225 (CISC-00450)",
-"CAT II",
-"The router must use NTP with authenticated sources.",
-"Network",
-4,
-"SITEA - Network (4)"
 ],
 [
 "",
@@ -22322,6 +23854,7 @@
 "CAT III",
 "Edge must audit privileged commands.",
 "Windows",
+4,
 4,
 "SITEA - Windows 11 (4)"
 ],
@@ -22332,6 +23865,7 @@
 "Edge must remove the default accounts.",
 "Windows",
 4,
+4,
 "SITEA - Windows 11 (4)"
 ],
 [
@@ -22340,6 +23874,7 @@
 "CAT III",
 "RHEL 9 must restrict the permissions of its logs.",
 "Linux",
+4,
 4,
 "SITEA - RHEL 9 (2), SITEB - Lab (2)"
 ],
@@ -22350,6 +23885,7 @@
 "RHEL 8 must deny root logins over SSH.",
 "Linux",
 4,
+4,
 "SITEA - RHEL 8 (4)"
 ],
 [
@@ -22358,6 +23894,7 @@
 "CAT III",
 "RHEL 8 must remove the default accounts.",
 "Linux",
+4,
 4,
 "SITEA - RHEL 8 (4)"
 ],
@@ -22368,6 +23905,7 @@
 "RHEL 8 must use NTP with authenticated sources.",
 "Linux",
 4,
+4,
 "SITEA - RHEL 8 (4)"
 ],
 [
@@ -22376,6 +23914,7 @@
 "CAT III",
 "Windows must audit privileged commands.",
 "Windows",
+4,
 4,
 "SITEA - Windows Server (4)"
 ],
@@ -22386,6 +23925,7 @@
 "Windows must lock an account after three failed logons.",
 "Windows",
 4,
+4,
 "SITEA - Windows Server (4)"
 ],
 [
@@ -22395,466 +23935,1198 @@
 "The router must show the DoD banner before logon.",
 "Network",
 4,
+4,
 "SITEA - Network (4)"
 ],
 [
 "",
-"SV-217608 (MICR-00410)",
-"CAT I",
-"Edge must show the DoD banner before logon.",
-"Windows",
-3,
-"SITEA - Windows 11 (3)"
-],
-[
-"",
-"SV-231702 (RHEL-00110)",
-"CAT I",
-"RHEL 8 must require a password of 15 characters.",
-"Linux",
-3,
-"SITEA - RHEL 8 (3)"
-],
-[
-"",
-"SV-231799 (RHEL-00310)",
-"CAT I",
-"RHEL 9 must keep its packages current.",
-"Linux",
-3,
-"SITEA - RHEL 9 (2), SITEB - Lab (1)"
-],
-[
-"",
-"SV-239859 (MS-00210)",
-"CAT I",
-"Windows must use NTP with authenticated sources.",
-"Windows",
-3,
-"SITEA - Windows Server (3)"
-],
-[
-"",
-"SV-239889 (MS-00310)",
-"CAT I",
-"Windows must keep its packages current.",
-"Windows",
-3,
-"SITEA - Windows Server (3)"
-],
-[
-"",
-"SV-239919 (MS-00410)",
-"CAT I",
-"Windows must show the DoD banner before logon.",
-"Windows",
-3,
-"SITEA - Windows Server (3)"
-],
-[
-"",
-"SV-204935 (MS-00020)",
-"CAT II",
-"SQL Server must lock an account after three failed logons.",
-"Windows",
-3,
-"SITEA - Windows Server (3)"
-],
-[
-"",
-"SV-204977 (MS-00160)",
-"CAT II",
-"SQL Server must set a session timeout of ten minutes.",
-"Windows",
-3,
-"SITEA - Windows Server (3)"
-],
-[
-"",
-"SV-204983 (MS-00180)",
-"CAT II",
-"SQL Server must disable unused services.",
-"Windows",
-3,
-"SITEA - Windows Server (3)"
-],
-[
-"",
-"SV-205004 (MS-00250)",
-"CAT II",
-"SQL Server must use a FIPS-validated module.",
-"Windows",
-3,
-"SITEA - Windows Server (3)"
-],
-[
-"",
-"SV-205010 (MS-00270)",
+"SV-204938 (MS-00030)",
 "CAT II",
 "SQL Server must audit privileged commands.",
 "Windows",
-3,
-"SITEA - Windows Server (3)"
+1,
+4,
+"SITEA - Windows Server (1)"
 ],
 [
 "",
-"SV-205019 (MS-00300)",
+"SV-204944 (MS-00050)",
 "CAT II",
-"SQL Server must disable unused services.",
+"SQL Server must show the DoD banner before logon.",
 "Windows",
-3,
-"SITEA - Windows Server (3)"
+1,
+4,
+"SITEA - Windows Server (1)"
 ],
 [
 "",
-"SV-205043 (MS-00380)",
+"SV-204959 (MS-00100)",
 "CAT II",
-"SQL Server must lock an account after three failed logons.",
+"SQL Server must deny root logins over SSH.",
 "Windows",
-3,
-"SITEA - Windows Server (3)"
+1,
+4,
+"SITEA - Windows Server (1)"
 ],
 [
 "",
-"SV-205085 (MS-00520)",
+"SV-204980 (MS-00170)",
+"CAT II",
+"SQL Server must show the DoD banner before logon.",
+"Windows",
+1,
+4,
+"SITEA - Windows Server (1)"
+],
+[
+"",
+"SV-204986 (MS-00190)",
+"CAT II",
+"SQL Server must keep its packages current.",
+"Windows",
+1,
+4,
+"SITEA - Windows Server (1)"
+],
+[
+"",
+"SV-204989 (MS-00200)",
+"CAT II",
+"SQL Server must restrict the permissions of its logs.",
+"Windows",
+1,
+4,
+"SITEA - Windows Server (1)"
+],
+[
+"",
+"SV-205013 (MS-00280)",
 "CAT II",
 "SQL Server must set a session timeout of ten minutes.",
 "Windows",
-3,
-"SITEA - Windows Server (3)"
+1,
+4,
+"SITEA - Windows Server (1)"
 ],
 [
 "",
-"SV-209246 (MS-00040)",
+"SV-205028 (MS-00330)",
 "CAT II",
-"Windows must set a session timeout of ten minutes.",
+"SQL Server must use NTP with authenticated sources.",
 "Windows",
-3,
-"SITEA - Windows 11 (3)"
+1,
+4,
+"SITEA - Windows Server (1)"
 ],
 [
 "",
-"SV-209348 (MS-00380)",
+"SV-205031 (MS-00340)",
 "CAT II",
-"Windows must lock an account after three failed logons.",
+"SQL Server must deny root logins over SSH.",
 "Windows",
-3,
-"SITEA - Windows 11 (3)"
+1,
+4,
+"SITEA - Windows Server (1)"
 ],
 [
 "",
-"SV-209366 (MS-00440)",
+"SV-205040 (MS-00370)",
 "CAT II",
-"Windows must restrict the permissions of its logs.",
+"SQL Server must use a FIPS-validated module.",
 "Windows",
-3,
-"SITEA - Windows 11 (3)"
+1,
+4,
+"SITEA - Windows Server (1)"
 ],
 [
 "",
-"SV-214742 (APAC-00520)",
+"SV-205049 (MS-00400)",
+"CAT II",
+"SQL Server must set a session timeout of ten minutes.",
+"Windows",
+1,
+4,
+"SITEA - Windows Server (1)"
+],
+[
+"",
+"SV-205064 (MS-00450)",
+"CAT II",
+"SQL Server must use NTP with authenticated sources.",
+"Windows",
+1,
+4,
+"SITEA - Windows Server (1)"
+],
+[
+"",
+"SV-205067 (MS-00460)",
+"CAT II",
+"SQL Server must deny root logins over SSH.",
+"Windows",
+1,
+4,
+"SITEA - Windows Server (1)"
+],
+[
+"",
+"SV-205070 (MS-00470)",
+"CAT II",
+"SQL Server must require a password of 15 characters.",
+"Windows",
+1,
+4,
+"SITEA - Windows Server (1)"
+],
+[
+"",
+"SV-205088 (MS-00530)",
+"CAT II",
+"SQL Server must show the DoD banner before logon.",
+"Windows",
+1,
+4,
+"SITEA - Windows Server (1)"
+],
+[
+"",
+"SV-205091 (MS-00540)",
+"CAT II",
+"SQL Server must disable unused services.",
+"Windows",
+1,
+4,
+"SITEA - Windows Server (1)"
+],
+[
+"",
+"SV-205094 (MS-00550)",
+"CAT II",
+"SQL Server must keep its packages current.",
+"Windows",
+1,
+4,
+"SITEA - Windows Server (1)"
+],
+[
+"",
+"SV-205097 (MS-00560)",
+"CAT II",
+"SQL Server must restrict the permissions of its logs.",
+"Windows",
+1,
+4,
+"SITEA - Windows Server (1)"
+],
+[
+"",
+"SV-205103 (MS-00580)",
+"CAT II",
+"SQL Server must deny root logins over SSH.",
+"Windows",
+1,
+4,
+"SITEA - Windows Server (1)"
+],
+[
+"",
+"SV-205106 (MS-00590)",
+"CAT II",
+"SQL Server must require a password of 15 characters.",
+"Windows",
+1,
+4,
+"SITEA - Windows Server (1)"
+],
+[
+"",
+"SV-214595 (APAC-00030)",
+"CAT II",
+"Apache must audit privileged commands.",
+"Applications",
+1,
+4,
+"SITEA - RHEL 9 (1)"
+],
+[
+"",
+"SV-214601 (APAC-00050)",
+"CAT II",
+"Apache must show the DoD banner before logon.",
+"Applications",
+1,
+4,
+"SITEA - RHEL 9 (1)"
+],
+[
+"",
+"SV-214613 (APAC-00090)",
+"CAT II",
+"Apache must use NTP with authenticated sources.",
+"Applications",
+1,
+4,
+"SITEA - RHEL 9 (1)"
+],
+[
+"",
+"SV-214616 (APAC-00100)",
+"CAT II",
+"Apache must deny root logins over SSH.",
+"Applications",
+1,
+4,
+"SITEA - RHEL 9 (1)"
+],
+[
+"",
+"SV-214622 (APAC-00120)",
+"CAT II",
+"Apache must remove the default accounts.",
+"Applications",
+1,
+4,
+"SITEA - RHEL 9 (1)"
+],
+[
+"",
+"SV-214637 (APAC-00170)",
+"CAT II",
+"Apache must show the DoD banner before logon.",
+"Applications",
+1,
+4,
+"SITEA - RHEL 9 (1)"
+],
+[
+"",
+"SV-214658 (APAC-00240)",
+"CAT II",
+"Apache must remove the default accounts.",
+"Applications",
+1,
+4,
+"SITEA - RHEL 9 (1)"
+],
+[
+"",
+"SV-214661 (APAC-00250)",
+"CAT II",
+"Apache must use a FIPS-validated module.",
+"Applications",
+1,
+4,
+"SITEA - RHEL 9 (1)"
+],
+[
+"",
+"SV-214670 (APAC-00280)",
 "CAT II",
 "Apache must set a session timeout of ten minutes.",
 "Applications",
-3,
-"SITEA - RHEL 9 (3)"
+1,
+4,
+"SITEA - RHEL 9 (1)"
 ],
 [
 "",
-"SV-217506 (MICR-00070)",
+"SV-214685 (APAC-00330)",
 "CAT II",
-"Edge must keep its packages current.",
-"Windows",
-3,
-"SITEA - Windows 11 (3)"
+"Apache must use NTP with authenticated sources.",
+"Applications",
+1,
+4,
+"SITEA - RHEL 9 (1)"
 ],
 [
 "",
-"SV-217515 (MICR-00100)",
+"SV-214700 (APAC-00380)",
 "CAT II",
-"Edge must deny root logins over SSH.",
-"Windows",
-3,
-"SITEA - Windows 11 (3)"
+"Apache must lock an account after three failed logons.",
+"Applications",
+1,
+4,
+"SITEA - RHEL 9 (1)"
 ],
 [
 "",
-"SV-217557 (MICR-00240)",
+"SV-214703 (APAC-00390)",
 "CAT II",
-"Edge must remove the default accounts.",
-"Windows",
-3,
-"SITEA - Windows 11 (3)"
+"Apache must audit privileged commands.",
+"Applications",
+1,
+4,
+"SITEA - RHEL 9 (1)"
 ],
 [
 "",
-"SV-217584 (MICR-00330)",
+"SV-214706 (APAC-00400)",
 "CAT II",
-"Edge must use NTP with authenticated sources.",
-"Windows",
-3,
-"SITEA - Windows 11 (3)"
+"Apache must set a session timeout of ten minutes.",
+"Applications",
+1,
+4,
+"SITEA - RHEL 9 (1)"
 ],
 [
 "",
-"SV-217587 (MICR-00340)",
+"SV-214718 (APAC-00440)",
 "CAT II",
-"Edge must deny root logins over SSH.",
-"Windows",
-3,
-"SITEA - Windows 11 (3)"
+"Apache must restrict the permissions of its logs.",
+"Applications",
+1,
+4,
+"SITEA - RHEL 9 (1)"
 ],
 [
 "",
-"SV-217605 (MICR-00400)",
+"SV-214721 (APAC-00450)",
 "CAT II",
-"Edge must set a session timeout of ten minutes.",
-"Windows",
-3,
-"SITEA - Windows 11 (3)"
+"Apache must use NTP with authenticated sources.",
+"Applications",
+1,
+4,
+"SITEA - RHEL 9 (1)"
 ],
 [
 "",
-"SV-217611 (MICR-00420)",
+"SV-214733 (APAC-00490)",
 "CAT II",
-"Edge must disable unused services.",
-"Windows",
-3,
-"SITEA - Windows 11 (3)"
+"Apache must use a FIPS-validated module.",
+"Applications",
+1,
+4,
+"SITEA - RHEL 9 (1)"
 ],
 [
 "",
-"SV-217623 (MICR-00460)",
+"SV-214754 (APAC-00560)",
 "CAT II",
-"Edge must deny root logins over SSH.",
-"Windows",
-3,
-"SITEA - Windows 11 (3)"
+"Apache must restrict the permissions of its logs.",
+"Applications",
+1,
+4,
+"SITEA - RHEL 9 (1)"
 ],
 [
 "",
-"SV-217665 (MICR-00600)",
+"SV-214760 (APAC-00580)",
 "CAT II",
-"Edge must remove the default accounts.",
-"Windows",
-3,
-"SITEA - Windows 11 (3)"
+"Apache must deny root logins over SSH.",
+"Applications",
+1,
+4,
+"SITEA - RHEL 9 (1)"
 ],
 [
 "",
-"SV-230270 (VMW-00190)",
+"SV-214763 (APAC-00590)",
+"CAT II",
+"Apache must require a password of 15 characters.",
+"Applications",
+1,
+4,
+"SITEA - RHEL 9 (1)"
+],
+[
+"",
+"SV-217491 (MICR-00020)",
+"CAT II",
+"Edge must lock an account after three failed logons.",
+"Windows",
+1,
+4,
+"SITEA - Windows 11 (1)"
+],
+[
+"",
+"SV-217626 (MICR-00470)",
+"CAT II",
+"Edge must require a password of 15 characters.",
+"Windows",
+1,
+4,
+"SITEA - Windows 11 (1)"
+],
+[
+"",
+"SV-226004 (JUNI-00030)",
+"CAT II",
+"The SRX must audit privileged commands.",
+"Network",
+1,
+4,
+"SITEA - Network (1)"
+],
+[
+"",
+"SV-226010 (JUNI-00050)",
+"CAT II",
+"The SRX must show the DoD banner before logon.",
+"Network",
+1,
+4,
+"SITEA - Network (1)"
+],
+[
+"",
+"SV-226016 (JUNI-00070)",
+"CAT II",
+"The SRX must keep its packages current.",
+"Network",
+1,
+4,
+"SITEA - Network (1)"
+],
+[
+"",
+"SV-226037 (JUNI-00140)",
+"CAT II",
+"The SRX must lock an account after three failed logons.",
+"Network",
+1,
+4,
+"SITEA - Network (1)"
+],
+[
+"",
+"SV-226076 (JUNI-00270)",
+"CAT II",
+"The SRX must audit privileged commands.",
+"Network",
+1,
+4,
+"SITEA - Network (1)"
+],
+[
+"",
+"SV-226085 (JUNI-00300)",
+"CAT II",
+"The SRX must disable unused services.",
+"Network",
+1,
+4,
+"SITEA - Network (1)"
+],
+[
+"",
+"SV-226091 (JUNI-00320)",
+"CAT II",
+"The SRX must restrict the permissions of its logs.",
+"Network",
+1,
+4,
+"SITEA - Network (1)"
+],
+[
+"",
+"SV-226097 (JUNI-00340)",
+"CAT II",
+"The SRX must deny root logins over SSH.",
+"Network",
+1,
+4,
+"SITEA - Network (1)"
+],
+[
+"",
+"SV-226109 (JUNI-00380)",
+"CAT II",
+"The SRX must lock an account after three failed logons.",
+"Network",
+1,
+4,
+"SITEA - Network (1)"
+],
+[
+"",
+"SV-226112 (JUNI-00390)",
+"CAT II",
+"The SRX must audit privileged commands.",
+"Network",
+1,
+4,
+"SITEA - Network (1)"
+],
+[
+"",
+"SV-226115 (JUNI-00400)",
+"CAT II",
+"The SRX must set a session timeout of ten minutes.",
+"Network",
+1,
+4,
+"SITEA - Network (1)"
+],
+[
+"",
+"SV-226127 (JUNI-00440)",
+"CAT II",
+"The SRX must restrict the permissions of its logs.",
+"Network",
+1,
+4,
+"SITEA - Network (1)"
+],
+[
+"",
+"SV-226151 (JUNI-00520)",
+"CAT II",
+"The SRX must set a session timeout of ten minutes.",
+"Network",
+1,
+4,
+"SITEA - Network (1)"
+],
+[
+"",
+"SV-226172 (JUNI-00590)",
+"CAT II",
+"The SRX must require a password of 15 characters.",
+"Network",
+1,
+4,
+"SITEA - Network (1)"
+],
+[
+"",
+"SV-227746 (NETA-00040)",
+"CAT II",
+"ONTAP must set a session timeout of ten minutes.",
+"Storage",
+1,
+4,
+"SITEB - Storage (1)"
+],
+[
+"",
+"SV-227761 (NETA-00090)",
+"CAT II",
+"ONTAP must use NTP with authenticated sources.",
+"Storage",
+1,
+4,
+"SITEB - Storage (1)"
+],
+[
+"",
+"SV-227794 (NETA-00200)",
+"CAT II",
+"ONTAP must restrict the permissions of its logs.",
+"Storage",
+1,
+4,
+"SITEB - Storage (1)"
+],
+[
+"",
+"SV-227806 (NETA-00240)",
+"CAT II",
+"ONTAP must remove the default accounts.",
+"Storage",
+1,
+4,
+"SITEB - Storage (1)"
+],
+[
+"",
+"SV-227812 (NETA-00260)",
+"CAT II",
+"ONTAP must lock an account after three failed logons.",
+"Storage",
+1,
+4,
+"SITEB - Storage (1)"
+],
+[
+"",
+"SV-227815 (NETA-00270)",
+"CAT II",
+"ONTAP must audit privileged commands.",
+"Storage",
+1,
+4,
+"SITEB - Storage (1)"
+],
+[
+"",
+"SV-227839 (NETA-00350)",
+"CAT II",
+"ONTAP must require a password of 15 characters.",
+"Storage",
+1,
+4,
+"SITEB - Storage (1)"
+],
+[
+"",
+"SV-227848 (NETA-00380)",
+"CAT II",
+"ONTAP must lock an account after three failed logons.",
+"Storage",
+1,
+4,
+"SITEB - Storage (1)"
+],
+[
+"",
+"SV-227851 (NETA-00390)",
+"CAT II",
+"ONTAP must audit privileged commands.",
+"Storage",
+1,
+4,
+"SITEB - Storage (1)"
+],
+[
+"",
+"SV-227860 (NETA-00420)",
+"CAT II",
+"ONTAP must disable unused services.",
+"Storage",
+1,
+4,
+"SITEB - Storage (1)"
+],
+[
+"",
+"SV-227866 (NETA-00440)",
+"CAT II",
+"ONTAP must restrict the permissions of its logs.",
+"Storage",
+1,
+4,
+"SITEB - Storage (1)"
+],
+[
+"",
+"SV-227869 (NETA-00450)",
+"CAT II",
+"ONTAP must use NTP with authenticated sources.",
+"Storage",
+1,
+4,
+"SITEB - Storage (1)"
+],
+[
+"",
+"SV-227872 (NETA-00460)",
+"CAT II",
+"ONTAP must deny root logins over SSH.",
+"Storage",
+1,
+4,
+"SITEB - Storage (1)"
+],
+[
+"",
+"SV-227908 (NETA-00580)",
+"CAT II",
+"ONTAP must deny root logins over SSH.",
+"Storage",
+1,
+4,
+"SITEB - Storage (1)"
+],
+[
+"",
+"SV-230225 (VMW-00040)",
+"CAT II",
+"The ESXi host must set a session timeout of ten minutes.",
+"VMware",
+1,
+4,
+"SITEA - VMware (1)"
+],
+[
+"",
+"SV-230231 (VMW-00060)",
+"CAT II",
+"The ESXi host must disable unused services.",
+"VMware",
+1,
+4,
+"SITEA - VMware (1)"
+],
+[
+"",
+"SV-230234 (VMW-00070)",
 "CAT II",
 "The ESXi host must keep its packages current.",
 "VMware",
-3,
-"SITEA - VMware (3)"
+1,
+4,
+"SITEA - VMware (1)"
 ],
 [
 "",
-"SV-230390 (VMW-00590)",
+"SV-230255 (VMW-00140)",
+"CAT II",
+"The ESXi host must lock an account after three failed logons.",
+"VMware",
+1,
+4,
+"SITEA - VMware (1)"
+],
+[
+"",
+"SV-230267 (VMW-00180)",
+"CAT II",
+"The ESXi host must disable unused services.",
+"VMware",
+1,
+4,
+"SITEA - VMware (1)"
+],
+[
+"",
+"SV-230273 (VMW-00200)",
+"CAT II",
+"The ESXi host must restrict the permissions of its logs.",
+"VMware",
+1,
+4,
+"SITEA - VMware (1)"
+],
+[
+"",
+"SV-230285 (VMW-00240)",
+"CAT II",
+"The ESXi host must remove the default accounts.",
+"VMware",
+1,
+4,
+"SITEA - VMware (1)"
+],
+[
+"",
+"SV-230294 (VMW-00270)",
+"CAT II",
+"The ESXi host must audit privileged commands.",
+"VMware",
+1,
+4,
+"SITEA - VMware (1)"
+],
+[
+"",
+"SV-230303 (VMW-00300)",
+"CAT II",
+"The ESXi host must disable unused services.",
+"VMware",
+1,
+4,
+"SITEA - VMware (1)"
+],
+[
+"",
+"SV-230309 (VMW-00320)",
+"CAT II",
+"The ESXi host must restrict the permissions of its logs.",
+"VMware",
+1,
+4,
+"SITEA - VMware (1)"
+],
+[
+"",
+"SV-230327 (VMW-00380)",
+"CAT II",
+"The ESXi host must lock an account after three failed logons.",
+"VMware",
+1,
+4,
+"SITEA - VMware (1)"
+],
+[
+"",
+"SV-230330 (VMW-00390)",
+"CAT II",
+"The ESXi host must audit privileged commands.",
+"VMware",
+1,
+4,
+"SITEA - VMware (1)"
+],
+[
+"",
+"SV-230354 (VMW-00470)",
 "CAT II",
 "The ESXi host must require a password of 15 characters.",
 "VMware",
-3,
-"SITEA - VMware (3)"
+1,
+4,
+"SITEA - VMware (1)"
 ],
 [
 "",
-"SV-231681 (RHEL-00040)",
+"SV-230357 (VMW-00480)",
 "CAT II",
-"RHEL 8 must set a session timeout of ten minutes.",
-"Linux",
-3,
-"SITEA - RHEL 8 (3)"
+"The ESXi host must remove the default accounts.",
+"VMware",
+1,
+4,
+"SITEA - VMware (1)"
 ],
 [
 "",
-"SV-231711 (RHEL-00140)",
+"SV-230375 (VMW-00540)",
 "CAT II",
-"RHEL 8 must lock an account after three failed logons.",
-"Linux",
-3,
-"SITEA - RHEL 8 (3)"
+"The ESXi host must disable unused services.",
+"VMware",
+1,
+4,
+"SITEA - VMware (1)"
 ],
 [
 "",
-"SV-231744 (RHEL-00250)",
-"CAT II",
-"RHEL 8 must use a FIPS-validated module.",
-"Linux",
-3,
-"SITEA - RHEL 8 (3)"
-],
-[
-"",
-"SV-231750 (RHEL-00270)",
-"CAT II",
-"RHEL 8 must audit privileged commands.",
-"Linux",
-3,
-"SITEA - RHEL 8 (3)"
-],
-[
-"",
-"SV-231804 (RHEL-00450)",
-"CAT II",
-"RHEL 8 must use NTP with authenticated sources.",
-"Linux",
-3,
-"SITEA - RHEL 8 (3)"
-],
-[
-"",
-"SV-231843 (RHEL-00580)",
-"CAT II",
-"RHEL 8 must deny root logins over SSH.",
-"Linux",
-3,
-"SITEA - RHEL 8 (3)"
-],
-[
-"",
-"SV-231846 (RHEL-00590)",
-"CAT II",
-"RHEL 8 must require a password of 15 characters.",
-"Linux",
-3,
-"SITEA - RHEL 8 (3)"
-],
-[
-"",
-"SV-239871 (MS-00250)",
-"CAT II",
-"Windows must use a FIPS-validated module.",
-"Windows",
-3,
-"SITEA - Windows Server (3)"
-],
-[
-"",
-"SV-239886 (MS-00300)",
-"CAT II",
-"Windows must disable unused services.",
-"Windows",
-3,
-"SITEA - Windows Server (3)"
-],
-[
-"",
-"SV-239910 (MS-00380)",
-"CAT II",
-"Windows must lock an account after three failed logons.",
-"Windows",
-3,
-"SITEA - Windows Server (3)"
-],
-[
-"",
-"SV-239922 (MS-00420)",
-"CAT II",
-"Windows must disable unused services.",
-"Windows",
-3,
-"SITEA - Windows Server (3)"
-],
-[
-"",
-"SV-239973 (MS-00590)",
-"CAT II",
-"Windows must require a password of 15 characters.",
-"Windows",
-3,
-"SITEA - Windows Server (3)"
-],
-[
-"",
-"SV-242102 (CISC-00040)",
-"CAT II",
-"The router must set a session timeout of ten minutes.",
-"Network",
-3,
-"SITEA - Network (3)"
-],
-[
-"",
-"SV-242126 (CISC-00120)",
-"CAT II",
-"The router must remove the default accounts.",
-"Network",
-3,
-"SITEA - Network (3)"
-],
-[
-"",
-"SV-242171 (CISC-00270)",
-"CAT II",
-"The router must audit privileged commands.",
-"Network",
-3,
-"SITEA - Network (3)"
-],
-[
-"",
-"SV-242174 (CISC-00280)",
-"CAT II",
-"The router must set a session timeout of ten minutes.",
-"Network",
-3,
-"SITEA - Network (3)"
-],
-[
-"",
-"SV-242186 (CISC-00320)",
-"CAT II",
-"The router must restrict the permissions of its logs.",
-"Network",
-3,
-"SITEA - Network (3)"
-],
-[
-"",
-"SV-242201 (CISC-00370)",
-"CAT II",
-"The router must use a FIPS-validated module.",
-"Network",
-3,
-"SITEA - Network (3)"
-],
-[
-"",
-"SV-242204 (CISC-00380)",
-"CAT II",
-"The router must lock an account after three failed logons.",
-"Network",
-3,
-"SITEA - Network (3)"
-],
-[
-"",
-"SV-242231 (CISC-00470)",
-"CAT II",
-"The router must require a password of 15 characters.",
-"Network",
-3,
-"SITEA - Network (3)"
-],
-[
-"",
-"SV-242246 (CISC-00520)",
-"CAT II",
-"The router must set a session timeout of ten minutes.",
-"Network",
-3,
-"SITEA - Network (3)"
-],
-[
-"",
-"SV-242255 (CISC-00550)",
+"SV-242111 (CISC-00070)",
 "CAT II",
 "The router must keep its packages current.",
 "Network",
-3,
-"SITEA - Network (3)"
+1,
+4,
+"SITEA - Network (1)"
+],
+[
+"",
+"SV-242117 (CISC-00090)",
+"CAT II",
+"The router must use NTP with authenticated sources.",
+"Network",
+1,
+4,
+"SITEA - Network (1)"
+],
+[
+"",
+"SV-242129 (CISC-00130)",
+"CAT II",
+"The router must use a FIPS-validated module.",
+"Network",
+1,
+4,
+"SITEA - Network (1)"
+],
+[
+"",
+"SV-242132 (CISC-00140)",
+"CAT II",
+"The router must lock an account after three failed logons.",
+"Network",
+1,
+4,
+"SITEA - Network (1)"
+],
+[
+"",
+"SV-242141 (CISC-00170)",
+"CAT II",
+"The router must show the DoD banner before logon.",
+"Network",
+1,
+4,
+"SITEA - Network (1)"
+],
+[
+"",
+"SV-242147 (CISC-00190)",
+"CAT II",
+"The router must keep its packages current.",
+"Network",
+1,
+4,
+"SITEA - Network (1)"
+],
+[
+"",
+"SV-242168 (CISC-00260)",
+"CAT II",
+"The router must lock an account after three failed logons.",
+"Network",
+1,
+4,
+"SITEA - Network (1)"
+],
+[
+"",
+"SV-242180 (CISC-00300)",
+"CAT II",
+"The router must disable unused services.",
+"Network",
+1,
+4,
+"SITEA - Network (1)"
+],
+[
+"",
+"SV-242222 (CISC-00440)",
+"CAT II",
+"The router must restrict the permissions of its logs.",
+"Network",
+1,
+4,
+"SITEA - Network (1)"
+],
+[
+"",
+"SV-242228 (CISC-00460)",
+"CAT II",
+"The router must deny root logins over SSH.",
+"Network",
+1,
+4,
+"SITEA - Network (1)"
+],
+[
+"",
+"SV-242234 (CISC-00480)",
+"CAT II",
+"The router must remove the default accounts.",
+"Network",
+1,
+4,
+"SITEA - Network (1)"
+],
+[
+"",
+"SV-242249 (CISC-00530)",
+"CAT II",
+"The router must show the DoD banner before logon.",
+"Network",
+1,
+4,
+"SITEA - Network (1)"
+],
+[
+"",
+"SV-242252 (CISC-00540)",
+"CAT II",
+"The router must disable unused services.",
+"Network",
+1,
+4,
+"SITEA - Network (1)"
+],
+[
+"",
+"SV-243872 (ZEBR-00020)",
+"CAT II",
+"The printer must lock an account after three failed logons.",
+"Other",
+1,
+4,
+"SITEB - Lab (1)"
+],
+[
+"",
+"SV-243881 (ZEBR-00050)",
+"CAT II",
+"The printer must show the DoD banner before logon.",
+"Other",
+1,
+4,
+"SITEB - Lab (1)"
+],
+[
+"",
+"SV-243893 (ZEBR-00090)",
+"CAT II",
+"The printer must use NTP with authenticated sources.",
+"Other",
+1,
+4,
+"SITEB - Lab (1)"
+],
+[
+"",
+"SV-243902 (ZEBR-00120)",
+"CAT II",
+"The printer must remove the default accounts.",
+"Other",
+1,
+4,
+"SITEB - Lab (1)"
+],
+[
+"",
+"SV-243914 (ZEBR-00160)",
+"CAT II",
+"The printer must set a session timeout of ten minutes.",
+"Other",
+1,
+4,
+"SITEB - Lab (1)"
+],
+[
+"",
+"SV-243920 (ZEBR-00180)",
+"CAT II",
+"The printer must disable unused services.",
+"Other",
+1,
+4,
+"SITEB - Lab (1)"
+],
+[
+"",
+"SV-243923 (ZEBR-00190)",
+"CAT II",
+"The printer must keep its packages current.",
+"Other",
+1,
+4,
+"SITEB - Lab (1)"
+],
+[
+"",
+"SV-243956 (ZEBR-00300)",
+"CAT II",
+"The printer must disable unused services.",
+"Other",
+1,
+4,
+"SITEB - Lab (1)"
+],
+[
+"",
+"SV-243977 (ZEBR-00370)",
+"CAT II",
+"The printer must use a FIPS-validated module.",
+"Other",
+1,
+4,
+"SITEB - Lab (1)"
+],
+[
+"",
+"SV-243980 (ZEBR-00380)",
+"CAT II",
+"The printer must lock an account after three failed logons.",
+"Other",
+1,
+4,
+"SITEB - Lab (1)"
+],
+[
+"",
+"SV-243992 (ZEBR-00420)",
+"CAT II",
+"The printer must disable unused services.",
+"Other",
+1,
+4,
+"SITEB - Lab (1)"
+],
+[
+"",
+"SV-243998 (ZEBR-00440)",
+"CAT II",
+"The printer must restrict the permissions of its logs.",
+"Other",
+1,
+4,
+"SITEB - Lab (1)"
+],
+[
+"",
+"SV-244028 (ZEBR-00540)",
+"CAT II",
+"The printer must disable unused services.",
+"Other",
+1,
+4,
+"SITEB - Lab (1)"
+],
+[
+"",
+"SV-244040 (ZEBR-00580)",
+"CAT II",
+"The printer must deny root logins over SSH.",
+"Other",
+1,
+4,
+"SITEB - Lab (1)"
+],
+[
+"",
+"SV-244362 (VMW-00050)",
+"CAT II",
+"The ESXi host must show the DoD banner before logon.",
+"VMware",
+1,
+4,
+"SITEA - VMware (1)"
+],
+[
+"",
+"SV-244395 (VMW-00160)",
+"CAT II",
+"The ESXi host must set a session timeout of ten minutes.",
+"VMware",
+1,
+4,
+"SITEA - VMware (1)"
+],
+[
+"",
+"SV-244425 (VMW-00260)",
+"CAT II",
+"The ESXi host must lock an account after three failed logons.",
+"VMware",
+1,
+4,
+"SITEA - VMware (1)"
+],
+[
+"",
+"SV-244443 (VMW-00320)",
+"CAT II",
+"The ESXi host must restrict the permissions of its logs.",
+"VMware",
+1,
+4,
+"SITEA - VMware (1)"
+],
+[
+"",
+"SV-244452 (VMW-00350)",
+"CAT II",
+"The ESXi host must require a password of 15 characters.",
+"VMware",
+1,
+4,
+"SITEA - VMware (1)"
+],
+[
+"",
+"SV-244461 (VMW-00380)",
+"CAT II",
+"The ESXi host must lock an account after three failed logons.",
+"VMware",
+1,
+4,
+"SITEA - VMware (1)"
+],
+[
+"",
+"SV-244485 (VMW-00460)",
+"CAT II",
+"The ESXi host must deny root logins over SSH.",
+"VMware",
+1,
+4,
+"SITEA - VMware (1)"
+],
+[
+"",
+"SV-244512 (VMW-00550)",
+"CAT II",
+"The ESXi host must keep its packages current.",
+"VMware",
+1,
+4,
+"SITEA - VMware (1)"
 ],
 [
 "",
@@ -22862,6 +25134,7 @@
 "CAT III",
 "Windows must audit privileged commands.",
 "Windows",
+3,
 3,
 "SITEA - Windows 11 (3)"
 ],
@@ -22872,6 +25145,7 @@
 "Windows must use NTP with authenticated sources.",
 "Windows",
 3,
+3,
 "SITEA - Windows 11 (3)"
 ],
 [
@@ -22880,6 +25154,7 @@
 "CAT III",
 "Apache must restrict the permissions of its logs.",
 "Applications",
+3,
 3,
 "SITEA - RHEL 9 (3)"
 ],
@@ -22890,6 +25165,7 @@
 "Edge must keep its packages current.",
 "Windows",
 3,
+3,
 "SITEA - Windows 11 (3)"
 ],
 [
@@ -22898,6 +25174,7 @@
 "CAT III",
 "ONTAP must show the DoD banner before logon.",
 "Storage",
+3,
 3,
 "SITEB - Storage (3)"
 ],
@@ -22908,6 +25185,7 @@
 "RHEL 8 must audit privileged commands.",
 "Linux",
 3,
+3,
 "SITEA - RHEL 8 (3)"
 ],
 [
@@ -22916,6 +25194,7 @@
 "CAT III",
 "Windows must show the DoD banner before logon.",
 "Windows",
+3,
 3,
 "SITEA - Windows Server (3)"
 ],
@@ -22926,556 +25205,8 @@
 "The router must keep its packages current.",
 "Network",
 3,
+3,
 "SITEA - Network (3)"
-],
-[
-"",
-"SV-204932 (MS-00010)",
-"CAT I",
-"SQL Server must use a FIPS-validated module.",
-"Windows",
-2,
-"SITEA - Windows Server (2)"
-],
-[
-"",
-"SV-209267 (MS-00110)",
-"CAT I",
-"Windows must require a password of 15 characters.",
-"Windows",
-2,
-"SITEA - Windows 11 (2)"
-],
-[
-"",
-"SV-209327 (MS-00310)",
-"CAT I",
-"Windows must keep its packages current.",
-"Windows",
-2,
-"SITEA - Windows 11 (2)"
-],
-[
-"",
-"SV-231672 (RHEL-00010)",
-"CAT I",
-"RHEL 8 must use a FIPS-validated module.",
-"Linux",
-2,
-"SITEA - RHEL 8 (2)"
-],
-[
-"",
-"SV-231739 (RHEL-00110)",
-"CAT I",
-"RHEL 9 must require a password of 15 characters.",
-"Linux",
-2,
-"SITEA - RHEL 9 (1), SITEB - Lab (1)"
-],
-[
-"",
-"SV-231792 (RHEL-00410)",
-"CAT I",
-"RHEL 8 must show the DoD banner before logon.",
-"Linux",
-2,
-"SITEA - RHEL 8 (2)"
-],
-[
-"",
-"SV-231829 (RHEL-00410)",
-"CAT I",
-"RHEL 9 must show the DoD banner before logon.",
-"Linux",
-2,
-"SITEA - RHEL 9 (2)"
-],
-[
-"",
-"SV-239829 (MS-00110)",
-"CAT I",
-"Windows must require a password of 15 characters.",
-"Windows",
-2,
-"SITEA - Windows Server (2)"
-],
-[
-"",
-"SV-242153 (CISC-00210)",
-"CAT I",
-"The router must use NTP with authenticated sources.",
-"Network",
-2,
-"SITEA - Network (2)"
-],
-[
-"",
-"SV-242213 (CISC-00410)",
-"CAT I",
-"The router must show the DoD banner before logon.",
-"Network",
-2,
-"SITEA - Network (2)"
-],
-[
-"",
-"SV-204950 (MS-00070)",
-"CAT II",
-"SQL Server must keep its packages current.",
-"Windows",
-2,
-"SITEA - Windows Server (2)"
-],
-[
-"",
-"SV-204956 (MS-00090)",
-"CAT II",
-"SQL Server must use NTP with authenticated sources.",
-"Windows",
-2,
-"SITEA - Windows Server (2)"
-],
-[
-"",
-"SV-204965 (MS-00120)",
-"CAT II",
-"SQL Server must remove the default accounts.",
-"Windows",
-2,
-"SITEA - Windows Server (2)"
-],
-[
-"",
-"SV-204971 (MS-00140)",
-"CAT II",
-"SQL Server must lock an account after three failed logons.",
-"Windows",
-2,
-"SITEA - Windows Server (2)"
-],
-[
-"",
-"SV-205001 (MS-00240)",
-"CAT II",
-"SQL Server must remove the default accounts.",
-"Windows",
-2,
-"SITEA - Windows Server (2)"
-],
-[
-"",
-"SV-205025 (MS-00320)",
-"CAT II",
-"SQL Server must restrict the permissions of its logs.",
-"Windows",
-2,
-"SITEA - Windows Server (2)"
-],
-[
-"",
-"SV-205055 (MS-00420)",
-"CAT II",
-"SQL Server must disable unused services.",
-"Windows",
-2,
-"SITEA - Windows Server (2)"
-],
-[
-"",
-"SV-205061 (MS-00440)",
-"CAT II",
-"SQL Server must restrict the permissions of its logs.",
-"Windows",
-2,
-"SITEA - Windows Server (2)"
-],
-[
-"",
-"SV-205109 (MS-00600)",
-"CAT II",
-"SQL Server must remove the default accounts.",
-"Windows",
-2,
-"SITEA - Windows Server (2)"
-],
-[
-"",
-"SV-209249 (MS-00050)",
-"CAT II",
-"Windows must show the DoD banner before logon.",
-"Windows",
-2,
-"SITEA - Windows 11 (2)"
-],
-[
-"",
-"SV-209309 (MS-00250)",
-"CAT II",
-"Windows must use a FIPS-validated module.",
-"Windows",
-2,
-"SITEA - Windows 11 (2)"
-],
-[
-"",
-"SV-209399 (MS-00550)",
-"CAT II",
-"Windows must keep its packages current.",
-"Windows",
-2,
-"SITEA - Windows 11 (2)"
-],
-[
-"",
-"SV-214592 (APAC-00020)",
-"CAT II",
-"Apache must lock an account after three failed logons.",
-"Applications",
-2,
-"SITEA - RHEL 9 (2)"
-],
-[
-"",
-"SV-214598 (APAC-00040)",
-"CAT II",
-"Apache must set a session timeout of ten minutes.",
-"Applications",
-2,
-"SITEA - RHEL 9 (2)"
-],
-[
-"",
-"SV-214664 (APAC-00260)",
-"CAT II",
-"Apache must lock an account after three failed logons.",
-"Applications",
-2,
-"SITEA - RHEL 9 (2)"
-],
-[
-"",
-"SV-214676 (APAC-00300)",
-"CAT II",
-"Apache must disable unused services.",
-"Applications",
-2,
-"SITEA - RHEL 9 (2)"
-],
-[
-"",
-"SV-214688 (APAC-00340)",
-"CAT II",
-"Apache must deny root logins over SSH.",
-"Applications",
-2,
-"SITEA - RHEL 9 (2)"
-],
-[
-"",
-"SV-214730 (APAC-00480)",
-"CAT II",
-"Apache must remove the default accounts.",
-"Applications",
-2,
-"SITEA - RHEL 9 (2)"
-],
-[
-"",
-"SV-214748 (APAC-00540)",
-"CAT II",
-"Apache must disable unused services.",
-"Applications",
-2,
-"SITEA - RHEL 9 (2)"
-],
-[
-"",
-"SV-217494 (MICR-00030)",
-"CAT II",
-"Edge must audit privileged commands.",
-"Windows",
-2,
-"SITEA - Windows 11 (2)"
-],
-[
-"",
-"SV-217497 (MICR-00040)",
-"CAT II",
-"Edge must set a session timeout of ten minutes.",
-"Windows",
-2,
-"SITEA - Windows 11 (2)"
-],
-[
-"",
-"SV-217503 (MICR-00060)",
-"CAT II",
-"Edge must disable unused services.",
-"Windows",
-2,
-"SITEA - Windows 11 (2)"
-],
-[
-"",
-"SV-217527 (MICR-00140)",
-"CAT II",
-"Edge must lock an account after three failed logons.",
-"Windows",
-2,
-"SITEA - Windows 11 (2)"
-],
-[
-"",
-"SV-217599 (MICR-00380)",
-"CAT II",
-"Edge must lock an account after three failed logons.",
-"Windows",
-2,
-"SITEA - Windows 11 (2)"
-],
-[
-"",
-"SV-217641 (MICR-00520)",
-"CAT II",
-"Edge must set a session timeout of ten minutes.",
-"Windows",
-2,
-"SITEA - Windows 11 (2)"
-],
-[
-"",
-"SV-217650 (MICR-00550)",
-"CAT II",
-"Edge must keep its packages current.",
-"Windows",
-2,
-"SITEA - Windows 11 (2)"
-],
-[
-"",
-"SV-226100 (JUNI-00350)",
-"CAT II",
-"The SRX must require a password of 15 characters.",
-"Network",
-2,
-"SITEA - Network (2)"
-],
-[
-"",
-"SV-226142 (JUNI-00490)",
-"CAT II",
-"The SRX must use a FIPS-validated module.",
-"Network",
-2,
-"SITEA - Network (2)"
-],
-[
-"",
-"SV-227875 (NETA-00470)",
-"CAT II",
-"ONTAP must require a password of 15 characters.",
-"Storage",
-2,
-"SITEB - Storage (2)"
-],
-[
-"",
-"SV-227893 (NETA-00530)",
-"CAT II",
-"ONTAP must show the DoD banner before logon.",
-"Storage",
-2,
-"SITEB - Storage (2)"
-],
-[
-"",
-"SV-227896 (NETA-00540)",
-"CAT II",
-"ONTAP must disable unused services.",
-"Storage",
-2,
-"SITEB - Storage (2)"
-],
-[
-"",
-"SV-227911 (NETA-00590)",
-"CAT II",
-"ONTAP must require a password of 15 characters.",
-"Storage",
-2,
-"SITEB - Storage (2)"
-],
-[
-"",
-"SV-230219 (VMW-00020)",
-"CAT II",
-"The ESXi host must lock an account after three failed logons.",
-"VMware",
-2,
-"SITEA - VMware (2)"
-],
-[
-"",
-"SV-230228 (VMW-00050)",
-"CAT II",
-"The ESXi host must show the DoD banner before logon.",
-"VMware",
-2,
-"SITEA - VMware (2)"
-],
-[
-"",
-"SV-230297 (VMW-00280)",
-"CAT II",
-"The ESXi host must set a session timeout of ten minutes.",
-"VMware",
-2,
-"SITEA - VMware (2)"
-],
-[
-"",
-"SV-230312 (VMW-00330)",
-"CAT II",
-"The ESXi host must use NTP with authenticated sources.",
-"VMware",
-2,
-"SITEA - VMware (2)"
-],
-[
-"",
-"SV-230333 (VMW-00400)",
-"CAT II",
-"The ESXi host must set a session timeout of ten minutes.",
-"VMware",
-2,
-"SITEA - VMware (2)"
-],
-[
-"",
-"SV-231717 (RHEL-00160)",
-"CAT II",
-"RHEL 8 must set a session timeout of ten minutes.",
-"Linux",
-2,
-"SITEA - RHEL 8 (2)"
-],
-[
-"",
-"SV-242099 (CISC-00030)",
-"CAT II",
-"The router must audit privileged commands.",
-"Network",
-2,
-"SITEA - Network (2)"
-],
-[
-"",
-"SV-242108 (CISC-00060)",
-"CAT II",
-"The router must disable unused services.",
-"Network",
-2,
-"SITEA - Network (2)"
-],
-[
-"",
-"SV-242120 (CISC-00100)",
-"CAT II",
-"The router must deny root logins over SSH.",
-"Network",
-2,
-"SITEA - Network (2)"
-],
-[
-"",
-"SV-242150 (CISC-00200)",
-"CAT II",
-"The router must restrict the permissions of its logs.",
-"Network",
-2,
-"SITEA - Network (2)"
-],
-[
-"",
-"SV-242162 (CISC-00240)",
-"CAT II",
-"The router must remove the default accounts.",
-"Network",
-2,
-"SITEA - Network (2)"
-],
-[
-"",
-"SV-242165 (CISC-00250)",
-"CAT II",
-"The router must use a FIPS-validated module.",
-"Network",
-2,
-"SITEA - Network (2)"
-],
-[
-"",
-"SV-242189 (CISC-00330)",
-"CAT II",
-"The router must use NTP with authenticated sources.",
-"Network",
-2,
-"SITEA - Network (2)"
-],
-[
-"",
-"SV-242195 (CISC-00350)",
-"CAT II",
-"The router must require a password of 15 characters.",
-"Network",
-2,
-"SITEA - Network (2)"
-],
-[
-"",
-"SV-242210 (CISC-00400)",
-"CAT II",
-"The router must set a session timeout of ten minutes.",
-"Network",
-2,
-"SITEA - Network (2)"
-],
-[
-"",
-"SV-242267 (CISC-00590)",
-"CAT II",
-"The router must require a password of 15 characters.",
-"Network",
-2,
-"SITEA - Network (2)"
-],
-[
-"",
-"SV-243905 (ZEBR-00130)",
-"CAT II",
-"The printer must use a FIPS-validated module.",
-"Other",
-2,
-"SITEB - Lab (2)"
-],
-[
-"",
-"SV-243983 (ZEBR-00390)",
-"CAT II",
-"The printer must audit privileged commands.",
-"Other",
-2,
-"SITEB - Lab (2)"
-],
-[
-"",
-"SV-244022 (ZEBR-00520)",
-"CAT II",
-"The printer must set a session timeout of ten minutes.",
-"Other",
-2,
-"SITEB - Lab (2)"
 ],
 [
 "",
@@ -23483,6 +25214,7 @@
 "CAT III",
 "SQL Server must restrict the permissions of its logs.",
 "Windows",
+2,
 2,
 "SITEA - Windows Server (2)"
 ],
@@ -23493,6 +25225,7 @@
 "Windows must deny root logins over SSH.",
 "Windows",
 2,
+2,
 "SITEA - Windows 11 (2)"
 ],
 [
@@ -23501,6 +25234,7 @@
 "CAT III",
 "Edge must show the DoD banner before logon.",
 "Windows",
+2,
 2,
 "SITEA - Windows 11 (2)"
 ],
@@ -23511,6 +25245,7 @@
 "The ESXi host must keep its packages current.",
 "VMware",
 2,
+2,
 "SITEA - VMware (2)"
 ],
 [
@@ -23519,6 +25254,7 @@
 "CAT III",
 "The router must restrict the permissions of its logs.",
 "Network",
+2,
 2,
 "SITEA - Network (2)"
 ],
@@ -23529,6 +25265,7 @@
 "The router must audit privileged commands.",
 "Network",
 2,
+2,
 "SITEA - Network (2)"
 ],
 [
@@ -23537,6 +25274,7 @@
 "CAT III",
 "The router must remove the default accounts.",
 "Network",
+2,
 2,
 "SITEA - Network (2)"
 ],
@@ -23547,1240 +25285,8 @@
 "The printer must lock an account after three failed logons.",
 "Other",
 2,
+2,
 "SITEB - Lab (2)"
-],
-[
-"",
-"SV-204992 (MS-00210)",
-"CAT I",
-"SQL Server must use NTP with authenticated sources.",
-"Windows",
-1,
-"SITEA - Windows Server (1)"
-],
-[
-"",
-"SV-205022 (MS-00310)",
-"CAT I",
-"SQL Server must keep its packages current.",
-"Windows",
-1,
-"SITEA - Windows Server (1)"
-],
-[
-"",
-"SV-205052 (MS-00410)",
-"CAT I",
-"SQL Server must show the DoD banner before logon.",
-"Windows",
-1,
-"SITEA - Windows Server (1)"
-],
-[
-"",
-"SV-205082 (MS-00510)",
-"CAT I",
-"SQL Server must audit privileged commands.",
-"Windows",
-1,
-"SITEA - Windows Server (1)"
-],
-[
-"",
-"SV-209237 (MS-00010)",
-"CAT I",
-"Windows must use a FIPS-validated module.",
-"Windows",
-1,
-"SITEA - Windows 11 (1)"
-],
-[
-"",
-"SV-209297 (MS-00210)",
-"CAT I",
-"Windows must use NTP with authenticated sources.",
-"Windows",
-1,
-"SITEA - Windows 11 (1)"
-],
-[
-"",
-"SV-209387 (MS-00510)",
-"CAT I",
-"Windows must audit privileged commands.",
-"Windows",
-1,
-"SITEA - Windows 11 (1)"
-],
-[
-"",
-"SV-214679 (APAC-00310)",
-"CAT I",
-"Apache must keep its packages current.",
-"Applications",
-1,
-"SITEA - RHEL 9 (1)"
-],
-[
-"",
-"SV-214709 (APAC-00410)",
-"CAT I",
-"Apache must show the DoD banner before logon.",
-"Applications",
-1,
-"SITEA - RHEL 9 (1)"
-],
-[
-"",
-"SV-217548 (MICR-00210)",
-"CAT I",
-"Edge must use NTP with authenticated sources.",
-"Windows",
-1,
-"SITEA - Windows 11 (1)"
-],
-[
-"",
-"SV-217638 (MICR-00510)",
-"CAT I",
-"Edge must audit privileged commands.",
-"Windows",
-1,
-"SITEA - Windows 11 (1)"
-],
-[
-"",
-"SV-227887 (NETA-00510)",
-"CAT I",
-"ONTAP must audit privileged commands.",
-"Storage",
-1,
-"SITEB - Storage (1)"
-],
-[
-"",
-"SV-230276 (VMW-00210)",
-"CAT I",
-"The ESXi host must use NTP with authenticated sources.",
-"VMware",
-1,
-"SITEA - VMware (1)"
-],
-[
-"",
-"SV-230306 (VMW-00310)",
-"CAT I",
-"The ESXi host must keep its packages current.",
-"VMware",
-1,
-"SITEA - VMware (1)"
-],
-[
-"",
-"SV-231709 (RHEL-00010)",
-"CAT I",
-"RHEL 9 must use a FIPS-validated module.",
-"Linux",
-1,
-"SITEA - RHEL 9 (1)"
-],
-[
-"",
-"SV-231822 (RHEL-00510)",
-"CAT I",
-"RHEL 8 must audit privileged commands.",
-"Linux",
-1,
-"SITEA - RHEL 8 (1)"
-],
-[
-"",
-"SV-242123 (CISC-00110)",
-"CAT I",
-"The router must require a password of 15 characters.",
-"Network",
-1,
-"SITEA - Network (1)"
-],
-[
-"",
-"SV-243899 (ZEBR-00110)",
-"CAT I",
-"The printer must require a password of 15 characters.",
-"Other",
-1,
-"SITEB - Lab (1)"
-],
-[
-"",
-"SV-204938 (MS-00030)",
-"CAT II",
-"SQL Server must audit privileged commands.",
-"Windows",
-1,
-"SITEA - Windows Server (1)"
-],
-[
-"",
-"SV-204944 (MS-00050)",
-"CAT II",
-"SQL Server must show the DoD banner before logon.",
-"Windows",
-1,
-"SITEA - Windows Server (1)"
-],
-[
-"",
-"SV-204959 (MS-00100)",
-"CAT II",
-"SQL Server must deny root logins over SSH.",
-"Windows",
-1,
-"SITEA - Windows Server (1)"
-],
-[
-"",
-"SV-204980 (MS-00170)",
-"CAT II",
-"SQL Server must show the DoD banner before logon.",
-"Windows",
-1,
-"SITEA - Windows Server (1)"
-],
-[
-"",
-"SV-204986 (MS-00190)",
-"CAT II",
-"SQL Server must keep its packages current.",
-"Windows",
-1,
-"SITEA - Windows Server (1)"
-],
-[
-"",
-"SV-204989 (MS-00200)",
-"CAT II",
-"SQL Server must restrict the permissions of its logs.",
-"Windows",
-1,
-"SITEA - Windows Server (1)"
-],
-[
-"",
-"SV-205013 (MS-00280)",
-"CAT II",
-"SQL Server must set a session timeout of ten minutes.",
-"Windows",
-1,
-"SITEA - Windows Server (1)"
-],
-[
-"",
-"SV-205028 (MS-00330)",
-"CAT II",
-"SQL Server must use NTP with authenticated sources.",
-"Windows",
-1,
-"SITEA - Windows Server (1)"
-],
-[
-"",
-"SV-205031 (MS-00340)",
-"CAT II",
-"SQL Server must deny root logins over SSH.",
-"Windows",
-1,
-"SITEA - Windows Server (1)"
-],
-[
-"",
-"SV-205040 (MS-00370)",
-"CAT II",
-"SQL Server must use a FIPS-validated module.",
-"Windows",
-1,
-"SITEA - Windows Server (1)"
-],
-[
-"",
-"SV-205049 (MS-00400)",
-"CAT II",
-"SQL Server must set a session timeout of ten minutes.",
-"Windows",
-1,
-"SITEA - Windows Server (1)"
-],
-[
-"",
-"SV-205064 (MS-00450)",
-"CAT II",
-"SQL Server must use NTP with authenticated sources.",
-"Windows",
-1,
-"SITEA - Windows Server (1)"
-],
-[
-"",
-"SV-205067 (MS-00460)",
-"CAT II",
-"SQL Server must deny root logins over SSH.",
-"Windows",
-1,
-"SITEA - Windows Server (1)"
-],
-[
-"",
-"SV-205070 (MS-00470)",
-"CAT II",
-"SQL Server must require a password of 15 characters.",
-"Windows",
-1,
-"SITEA - Windows Server (1)"
-],
-[
-"",
-"SV-205088 (MS-00530)",
-"CAT II",
-"SQL Server must show the DoD banner before logon.",
-"Windows",
-1,
-"SITEA - Windows Server (1)"
-],
-[
-"",
-"SV-205091 (MS-00540)",
-"CAT II",
-"SQL Server must disable unused services.",
-"Windows",
-1,
-"SITEA - Windows Server (1)"
-],
-[
-"",
-"SV-205094 (MS-00550)",
-"CAT II",
-"SQL Server must keep its packages current.",
-"Windows",
-1,
-"SITEA - Windows Server (1)"
-],
-[
-"",
-"SV-205097 (MS-00560)",
-"CAT II",
-"SQL Server must restrict the permissions of its logs.",
-"Windows",
-1,
-"SITEA - Windows Server (1)"
-],
-[
-"",
-"SV-205103 (MS-00580)",
-"CAT II",
-"SQL Server must deny root logins over SSH.",
-"Windows",
-1,
-"SITEA - Windows Server (1)"
-],
-[
-"",
-"SV-205106 (MS-00590)",
-"CAT II",
-"SQL Server must require a password of 15 characters.",
-"Windows",
-1,
-"SITEA - Windows Server (1)"
-],
-[
-"",
-"SV-214595 (APAC-00030)",
-"CAT II",
-"Apache must audit privileged commands.",
-"Applications",
-1,
-"SITEA - RHEL 9 (1)"
-],
-[
-"",
-"SV-214601 (APAC-00050)",
-"CAT II",
-"Apache must show the DoD banner before logon.",
-"Applications",
-1,
-"SITEA - RHEL 9 (1)"
-],
-[
-"",
-"SV-214613 (APAC-00090)",
-"CAT II",
-"Apache must use NTP with authenticated sources.",
-"Applications",
-1,
-"SITEA - RHEL 9 (1)"
-],
-[
-"",
-"SV-214616 (APAC-00100)",
-"CAT II",
-"Apache must deny root logins over SSH.",
-"Applications",
-1,
-"SITEA - RHEL 9 (1)"
-],
-[
-"",
-"SV-214622 (APAC-00120)",
-"CAT II",
-"Apache must remove the default accounts.",
-"Applications",
-1,
-"SITEA - RHEL 9 (1)"
-],
-[
-"",
-"SV-214637 (APAC-00170)",
-"CAT II",
-"Apache must show the DoD banner before logon.",
-"Applications",
-1,
-"SITEA - RHEL 9 (1)"
-],
-[
-"",
-"SV-214658 (APAC-00240)",
-"CAT II",
-"Apache must remove the default accounts.",
-"Applications",
-1,
-"SITEA - RHEL 9 (1)"
-],
-[
-"",
-"SV-214661 (APAC-00250)",
-"CAT II",
-"Apache must use a FIPS-validated module.",
-"Applications",
-1,
-"SITEA - RHEL 9 (1)"
-],
-[
-"",
-"SV-214670 (APAC-00280)",
-"CAT II",
-"Apache must set a session timeout of ten minutes.",
-"Applications",
-1,
-"SITEA - RHEL 9 (1)"
-],
-[
-"",
-"SV-214685 (APAC-00330)",
-"CAT II",
-"Apache must use NTP with authenticated sources.",
-"Applications",
-1,
-"SITEA - RHEL 9 (1)"
-],
-[
-"",
-"SV-214700 (APAC-00380)",
-"CAT II",
-"Apache must lock an account after three failed logons.",
-"Applications",
-1,
-"SITEA - RHEL 9 (1)"
-],
-[
-"",
-"SV-214703 (APAC-00390)",
-"CAT II",
-"Apache must audit privileged commands.",
-"Applications",
-1,
-"SITEA - RHEL 9 (1)"
-],
-[
-"",
-"SV-214706 (APAC-00400)",
-"CAT II",
-"Apache must set a session timeout of ten minutes.",
-"Applications",
-1,
-"SITEA - RHEL 9 (1)"
-],
-[
-"",
-"SV-214718 (APAC-00440)",
-"CAT II",
-"Apache must restrict the permissions of its logs.",
-"Applications",
-1,
-"SITEA - RHEL 9 (1)"
-],
-[
-"",
-"SV-214721 (APAC-00450)",
-"CAT II",
-"Apache must use NTP with authenticated sources.",
-"Applications",
-1,
-"SITEA - RHEL 9 (1)"
-],
-[
-"",
-"SV-214733 (APAC-00490)",
-"CAT II",
-"Apache must use a FIPS-validated module.",
-"Applications",
-1,
-"SITEA - RHEL 9 (1)"
-],
-[
-"",
-"SV-214754 (APAC-00560)",
-"CAT II",
-"Apache must restrict the permissions of its logs.",
-"Applications",
-1,
-"SITEA - RHEL 9 (1)"
-],
-[
-"",
-"SV-214760 (APAC-00580)",
-"CAT II",
-"Apache must deny root logins over SSH.",
-"Applications",
-1,
-"SITEA - RHEL 9 (1)"
-],
-[
-"",
-"SV-214763 (APAC-00590)",
-"CAT II",
-"Apache must require a password of 15 characters.",
-"Applications",
-1,
-"SITEA - RHEL 9 (1)"
-],
-[
-"",
-"SV-217491 (MICR-00020)",
-"CAT II",
-"Edge must lock an account after three failed logons.",
-"Windows",
-1,
-"SITEA - Windows 11 (1)"
-],
-[
-"",
-"SV-217626 (MICR-00470)",
-"CAT II",
-"Edge must require a password of 15 characters.",
-"Windows",
-1,
-"SITEA - Windows 11 (1)"
-],
-[
-"",
-"SV-226004 (JUNI-00030)",
-"CAT II",
-"The SRX must audit privileged commands.",
-"Network",
-1,
-"SITEA - Network (1)"
-],
-[
-"",
-"SV-226010 (JUNI-00050)",
-"CAT II",
-"The SRX must show the DoD banner before logon.",
-"Network",
-1,
-"SITEA - Network (1)"
-],
-[
-"",
-"SV-226016 (JUNI-00070)",
-"CAT II",
-"The SRX must keep its packages current.",
-"Network",
-1,
-"SITEA - Network (1)"
-],
-[
-"",
-"SV-226037 (JUNI-00140)",
-"CAT II",
-"The SRX must lock an account after three failed logons.",
-"Network",
-1,
-"SITEA - Network (1)"
-],
-[
-"",
-"SV-226076 (JUNI-00270)",
-"CAT II",
-"The SRX must audit privileged commands.",
-"Network",
-1,
-"SITEA - Network (1)"
-],
-[
-"",
-"SV-226085 (JUNI-00300)",
-"CAT II",
-"The SRX must disable unused services.",
-"Network",
-1,
-"SITEA - Network (1)"
-],
-[
-"",
-"SV-226091 (JUNI-00320)",
-"CAT II",
-"The SRX must restrict the permissions of its logs.",
-"Network",
-1,
-"SITEA - Network (1)"
-],
-[
-"",
-"SV-226097 (JUNI-00340)",
-"CAT II",
-"The SRX must deny root logins over SSH.",
-"Network",
-1,
-"SITEA - Network (1)"
-],
-[
-"",
-"SV-226109 (JUNI-00380)",
-"CAT II",
-"The SRX must lock an account after three failed logons.",
-"Network",
-1,
-"SITEA - Network (1)"
-],
-[
-"",
-"SV-226112 (JUNI-00390)",
-"CAT II",
-"The SRX must audit privileged commands.",
-"Network",
-1,
-"SITEA - Network (1)"
-],
-[
-"",
-"SV-226115 (JUNI-00400)",
-"CAT II",
-"The SRX must set a session timeout of ten minutes.",
-"Network",
-1,
-"SITEA - Network (1)"
-],
-[
-"",
-"SV-226127 (JUNI-00440)",
-"CAT II",
-"The SRX must restrict the permissions of its logs.",
-"Network",
-1,
-"SITEA - Network (1)"
-],
-[
-"",
-"SV-226151 (JUNI-00520)",
-"CAT II",
-"The SRX must set a session timeout of ten minutes.",
-"Network",
-1,
-"SITEA - Network (1)"
-],
-[
-"",
-"SV-226172 (JUNI-00590)",
-"CAT II",
-"The SRX must require a password of 15 characters.",
-"Network",
-1,
-"SITEA - Network (1)"
-],
-[
-"",
-"SV-227746 (NETA-00040)",
-"CAT II",
-"ONTAP must set a session timeout of ten minutes.",
-"Storage",
-1,
-"SITEB - Storage (1)"
-],
-[
-"",
-"SV-227761 (NETA-00090)",
-"CAT II",
-"ONTAP must use NTP with authenticated sources.",
-"Storage",
-1,
-"SITEB - Storage (1)"
-],
-[
-"",
-"SV-227794 (NETA-00200)",
-"CAT II",
-"ONTAP must restrict the permissions of its logs.",
-"Storage",
-1,
-"SITEB - Storage (1)"
-],
-[
-"",
-"SV-227806 (NETA-00240)",
-"CAT II",
-"ONTAP must remove the default accounts.",
-"Storage",
-1,
-"SITEB - Storage (1)"
-],
-[
-"",
-"SV-227812 (NETA-00260)",
-"CAT II",
-"ONTAP must lock an account after three failed logons.",
-"Storage",
-1,
-"SITEB - Storage (1)"
-],
-[
-"",
-"SV-227815 (NETA-00270)",
-"CAT II",
-"ONTAP must audit privileged commands.",
-"Storage",
-1,
-"SITEB - Storage (1)"
-],
-[
-"",
-"SV-227839 (NETA-00350)",
-"CAT II",
-"ONTAP must require a password of 15 characters.",
-"Storage",
-1,
-"SITEB - Storage (1)"
-],
-[
-"",
-"SV-227848 (NETA-00380)",
-"CAT II",
-"ONTAP must lock an account after three failed logons.",
-"Storage",
-1,
-"SITEB - Storage (1)"
-],
-[
-"",
-"SV-227851 (NETA-00390)",
-"CAT II",
-"ONTAP must audit privileged commands.",
-"Storage",
-1,
-"SITEB - Storage (1)"
-],
-[
-"",
-"SV-227860 (NETA-00420)",
-"CAT II",
-"ONTAP must disable unused services.",
-"Storage",
-1,
-"SITEB - Storage (1)"
-],
-[
-"",
-"SV-227866 (NETA-00440)",
-"CAT II",
-"ONTAP must restrict the permissions of its logs.",
-"Storage",
-1,
-"SITEB - Storage (1)"
-],
-[
-"",
-"SV-227869 (NETA-00450)",
-"CAT II",
-"ONTAP must use NTP with authenticated sources.",
-"Storage",
-1,
-"SITEB - Storage (1)"
-],
-[
-"",
-"SV-227872 (NETA-00460)",
-"CAT II",
-"ONTAP must deny root logins over SSH.",
-"Storage",
-1,
-"SITEB - Storage (1)"
-],
-[
-"",
-"SV-227908 (NETA-00580)",
-"CAT II",
-"ONTAP must deny root logins over SSH.",
-"Storage",
-1,
-"SITEB - Storage (1)"
-],
-[
-"",
-"SV-230225 (VMW-00040)",
-"CAT II",
-"The ESXi host must set a session timeout of ten minutes.",
-"VMware",
-1,
-"SITEA - VMware (1)"
-],
-[
-"",
-"SV-230231 (VMW-00060)",
-"CAT II",
-"The ESXi host must disable unused services.",
-"VMware",
-1,
-"SITEA - VMware (1)"
-],
-[
-"",
-"SV-230234 (VMW-00070)",
-"CAT II",
-"The ESXi host must keep its packages current.",
-"VMware",
-1,
-"SITEA - VMware (1)"
-],
-[
-"",
-"SV-230255 (VMW-00140)",
-"CAT II",
-"The ESXi host must lock an account after three failed logons.",
-"VMware",
-1,
-"SITEA - VMware (1)"
-],
-[
-"",
-"SV-230267 (VMW-00180)",
-"CAT II",
-"The ESXi host must disable unused services.",
-"VMware",
-1,
-"SITEA - VMware (1)"
-],
-[
-"",
-"SV-230273 (VMW-00200)",
-"CAT II",
-"The ESXi host must restrict the permissions of its logs.",
-"VMware",
-1,
-"SITEA - VMware (1)"
-],
-[
-"",
-"SV-230285 (VMW-00240)",
-"CAT II",
-"The ESXi host must remove the default accounts.",
-"VMware",
-1,
-"SITEA - VMware (1)"
-],
-[
-"",
-"SV-230294 (VMW-00270)",
-"CAT II",
-"The ESXi host must audit privileged commands.",
-"VMware",
-1,
-"SITEA - VMware (1)"
-],
-[
-"",
-"SV-230303 (VMW-00300)",
-"CAT II",
-"The ESXi host must disable unused services.",
-"VMware",
-1,
-"SITEA - VMware (1)"
-],
-[
-"",
-"SV-230309 (VMW-00320)",
-"CAT II",
-"The ESXi host must restrict the permissions of its logs.",
-"VMware",
-1,
-"SITEA - VMware (1)"
-],
-[
-"",
-"SV-230327 (VMW-00380)",
-"CAT II",
-"The ESXi host must lock an account after three failed logons.",
-"VMware",
-1,
-"SITEA - VMware (1)"
-],
-[
-"",
-"SV-230330 (VMW-00390)",
-"CAT II",
-"The ESXi host must audit privileged commands.",
-"VMware",
-1,
-"SITEA - VMware (1)"
-],
-[
-"",
-"SV-230354 (VMW-00470)",
-"CAT II",
-"The ESXi host must require a password of 15 characters.",
-"VMware",
-1,
-"SITEA - VMware (1)"
-],
-[
-"",
-"SV-230357 (VMW-00480)",
-"CAT II",
-"The ESXi host must remove the default accounts.",
-"VMware",
-1,
-"SITEA - VMware (1)"
-],
-[
-"",
-"SV-230375 (VMW-00540)",
-"CAT II",
-"The ESXi host must disable unused services.",
-"VMware",
-1,
-"SITEA - VMware (1)"
-],
-[
-"",
-"SV-242111 (CISC-00070)",
-"CAT II",
-"The router must keep its packages current.",
-"Network",
-1,
-"SITEA - Network (1)"
-],
-[
-"",
-"SV-242117 (CISC-00090)",
-"CAT II",
-"The router must use NTP with authenticated sources.",
-"Network",
-1,
-"SITEA - Network (1)"
-],
-[
-"",
-"SV-242129 (CISC-00130)",
-"CAT II",
-"The router must use a FIPS-validated module.",
-"Network",
-1,
-"SITEA - Network (1)"
-],
-[
-"",
-"SV-242132 (CISC-00140)",
-"CAT II",
-"The router must lock an account after three failed logons.",
-"Network",
-1,
-"SITEA - Network (1)"
-],
-[
-"",
-"SV-242141 (CISC-00170)",
-"CAT II",
-"The router must show the DoD banner before logon.",
-"Network",
-1,
-"SITEA - Network (1)"
-],
-[
-"",
-"SV-242147 (CISC-00190)",
-"CAT II",
-"The router must keep its packages current.",
-"Network",
-1,
-"SITEA - Network (1)"
-],
-[
-"",
-"SV-242168 (CISC-00260)",
-"CAT II",
-"The router must lock an account after three failed logons.",
-"Network",
-1,
-"SITEA - Network (1)"
-],
-[
-"",
-"SV-242180 (CISC-00300)",
-"CAT II",
-"The router must disable unused services.",
-"Network",
-1,
-"SITEA - Network (1)"
-],
-[
-"",
-"SV-242222 (CISC-00440)",
-"CAT II",
-"The router must restrict the permissions of its logs.",
-"Network",
-1,
-"SITEA - Network (1)"
-],
-[
-"",
-"SV-242228 (CISC-00460)",
-"CAT II",
-"The router must deny root logins over SSH.",
-"Network",
-1,
-"SITEA - Network (1)"
-],
-[
-"",
-"SV-242234 (CISC-00480)",
-"CAT II",
-"The router must remove the default accounts.",
-"Network",
-1,
-"SITEA - Network (1)"
-],
-[
-"",
-"SV-242249 (CISC-00530)",
-"CAT II",
-"The router must show the DoD banner before logon.",
-"Network",
-1,
-"SITEA - Network (1)"
-],
-[
-"",
-"SV-242252 (CISC-00540)",
-"CAT II",
-"The router must disable unused services.",
-"Network",
-1,
-"SITEA - Network (1)"
-],
-[
-"",
-"SV-243872 (ZEBR-00020)",
-"CAT II",
-"The printer must lock an account after three failed logons.",
-"Other",
-1,
-"SITEB - Lab (1)"
-],
-[
-"",
-"SV-243881 (ZEBR-00050)",
-"CAT II",
-"The printer must show the DoD banner before logon.",
-"Other",
-1,
-"SITEB - Lab (1)"
-],
-[
-"",
-"SV-243893 (ZEBR-00090)",
-"CAT II",
-"The printer must use NTP with authenticated sources.",
-"Other",
-1,
-"SITEB - Lab (1)"
-],
-[
-"",
-"SV-243902 (ZEBR-00120)",
-"CAT II",
-"The printer must remove the default accounts.",
-"Other",
-1,
-"SITEB - Lab (1)"
-],
-[
-"",
-"SV-243914 (ZEBR-00160)",
-"CAT II",
-"The printer must set a session timeout of ten minutes.",
-"Other",
-1,
-"SITEB - Lab (1)"
-],
-[
-"",
-"SV-243920 (ZEBR-00180)",
-"CAT II",
-"The printer must disable unused services.",
-"Other",
-1,
-"SITEB - Lab (1)"
-],
-[
-"",
-"SV-243923 (ZEBR-00190)",
-"CAT II",
-"The printer must keep its packages current.",
-"Other",
-1,
-"SITEB - Lab (1)"
-],
-[
-"",
-"SV-243956 (ZEBR-00300)",
-"CAT II",
-"The printer must disable unused services.",
-"Other",
-1,
-"SITEB - Lab (1)"
-],
-[
-"",
-"SV-243977 (ZEBR-00370)",
-"CAT II",
-"The printer must use a FIPS-validated module.",
-"Other",
-1,
-"SITEB - Lab (1)"
-],
-[
-"",
-"SV-243980 (ZEBR-00380)",
-"CAT II",
-"The printer must lock an account after three failed logons.",
-"Other",
-1,
-"SITEB - Lab (1)"
-],
-[
-"",
-"SV-243992 (ZEBR-00420)",
-"CAT II",
-"The printer must disable unused services.",
-"Other",
-1,
-"SITEB - Lab (1)"
-],
-[
-"",
-"SV-243998 (ZEBR-00440)",
-"CAT II",
-"The printer must restrict the permissions of its logs.",
-"Other",
-1,
-"SITEB - Lab (1)"
-],
-[
-"",
-"SV-244028 (ZEBR-00540)",
-"CAT II",
-"The printer must disable unused services.",
-"Other",
-1,
-"SITEB - Lab (1)"
-],
-[
-"",
-"SV-244040 (ZEBR-00580)",
-"CAT II",
-"The printer must deny root logins over SSH.",
-"Other",
-1,
-"SITEB - Lab (1)"
-],
-[
-"",
-"SV-244362 (VMW-00050)",
-"CAT II",
-"The ESXi host must show the DoD banner before logon.",
-"VMware",
-1,
-"SITEA - VMware (1)"
-],
-[
-"",
-"SV-244395 (VMW-00160)",
-"CAT II",
-"The ESXi host must set a session timeout of ten minutes.",
-"VMware",
-1,
-"SITEA - VMware (1)"
-],
-[
-"",
-"SV-244425 (VMW-00260)",
-"CAT II",
-"The ESXi host must lock an account after three failed logons.",
-"VMware",
-1,
-"SITEA - VMware (1)"
-],
-[
-"",
-"SV-244443 (VMW-00320)",
-"CAT II",
-"The ESXi host must restrict the permissions of its logs.",
-"VMware",
-1,
-"SITEA - VMware (1)"
-],
-[
-"",
-"SV-244452 (VMW-00350)",
-"CAT II",
-"The ESXi host must require a password of 15 characters.",
-"VMware",
-1,
-"SITEA - VMware (1)"
-],
-[
-"",
-"SV-244461 (VMW-00380)",
-"CAT II",
-"The ESXi host must lock an account after three failed logons.",
-"VMware",
-1,
-"SITEA - VMware (1)"
-],
-[
-"",
-"SV-244485 (VMW-00460)",
-"CAT II",
-"The ESXi host must deny root logins over SSH.",
-"VMware",
-1,
-"SITEA - VMware (1)"
-],
-[
-"",
-"SV-244512 (VMW-00550)",
-"CAT II",
-"The ESXi host must keep its packages current.",
-"VMware",
-1,
-"SITEA - VMware (1)"
 ],
 [
 "",
@@ -24788,6 +25294,7 @@
 "CAT III",
 "SQL Server must audit privileged commands.",
 "Windows",
+1,
 1,
 "SITEA - Windows Server (1)"
 ],
@@ -24798,6 +25305,7 @@
 "SQL Server must deny root logins over SSH.",
 "Windows",
 1,
+1,
 "SITEA - Windows Server (1)"
 ],
 [
@@ -24806,6 +25314,7 @@
 "CAT III",
 "SQL Server must show the DoD banner before logon.",
 "Windows",
+1,
 1,
 "SITEA - Windows Server (1)"
 ],
@@ -24816,6 +25325,7 @@
 "SQL Server must remove the default accounts.",
 "Windows",
 1,
+1,
 "SITEA - Windows Server (1)"
 ],
 [
@@ -24824,6 +25334,7 @@
 "CAT III",
 "SQL Server must lock an account after three failed logons.",
 "Windows",
+1,
 1,
 "SITEA - Windows Server (1)"
 ],
@@ -24834,6 +25345,7 @@
 "SQL Server must use NTP with authenticated sources.",
 "Windows",
 1,
+1,
 "SITEA - Windows Server (1)"
 ],
 [
@@ -24842,6 +25354,7 @@
 "CAT III",
 "Apache must deny root logins over SSH.",
 "Applications",
+1,
 1,
 "SITEA - RHEL 9 (1)"
 ],
@@ -24852,6 +25365,7 @@
 "Apache must show the DoD banner before logon.",
 "Applications",
 1,
+1,
 "SITEA - RHEL 9 (1)"
 ],
 [
@@ -24860,6 +25374,7 @@
 "CAT III",
 "Edge must lock an account after three failed logons.",
 "Windows",
+1,
 1,
 "SITEA - Windows 11 (1)"
 ],
@@ -24870,6 +25385,7 @@
 "Edge must use NTP with authenticated sources.",
 "Windows",
 1,
+1,
 "SITEA - Windows 11 (1)"
 ],
 [
@@ -24878,6 +25394,7 @@
 "CAT III",
 "The SRX must deny root logins over SSH.",
 "Network",
+1,
 1,
 "SITEA - Network (1)"
 ],
@@ -24888,6 +25405,7 @@
 "The SRX must show the DoD banner before logon.",
 "Network",
 1,
+1,
 "SITEA - Network (1)"
 ],
 [
@@ -24896,6 +25414,7 @@
 "CAT III",
 "The SRX must remove the default accounts.",
 "Network",
+1,
 1,
 "SITEA - Network (1)"
 ],
@@ -24906,6 +25425,7 @@
 "The SRX must lock an account after three failed logons.",
 "Network",
 1,
+1,
 "SITEA - Network (1)"
 ],
 [
@@ -24914,6 +25434,7 @@
 "CAT III",
 "ONTAP must restrict the permissions of its logs.",
 "Storage",
+1,
 1,
 "SITEB - Storage (1)"
 ],
@@ -24924,6 +25445,7 @@
 "ONTAP must deny root logins over SSH.",
 "Storage",
 1,
+1,
 "SITEB - Storage (1)"
 ],
 [
@@ -24932,6 +25454,7 @@
 "CAT III",
 "ONTAP must lock an account after three failed logons.",
 "Storage",
+1,
 1,
 "SITEB - Storage (1)"
 ],
@@ -24942,6 +25465,7 @@
 "The ESXi host must restrict the permissions of its logs.",
 "VMware",
 1,
+1,
 "SITEA - VMware (1)"
 ],
 [
@@ -24950,6 +25474,7 @@
 "CAT III",
 "The ESXi host must audit privileged commands.",
 "VMware",
+1,
 1,
 "SITEA - VMware (1)"
 ],
@@ -24960,6 +25485,7 @@
 "The ESXi host must lock an account after three failed logons.",
 "VMware",
 1,
+1,
 "SITEA - VMware (1)"
 ],
 [
@@ -24968,6 +25494,7 @@
 "CAT III",
 "The router must deny root logins over SSH.",
 "Network",
+1,
 1,
 "SITEA - Network (1)"
 ],
@@ -24978,10 +25505,11 @@
 "The printer must deny root logins over SSH.",
 "Other",
 1,
+1,
 "SITEB - Lab (1)"
 ]
 ],
-"text": "Open a rule for the hosts it is open on.",
+"text": "Biggest weight first (hosts open x 10, 4 or 1). Open a rule for the hosts it is open on.",
 "title": "Findings (525)",
 "wrap": true
 },

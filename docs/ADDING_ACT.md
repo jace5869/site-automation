@@ -403,6 +403,10 @@ per run.
 | Another file, such as an older ACT | keeps it in `/opt/act/old` (0700, root, `act.<UTC time>.<sha256, first 8>`), then installs the jobs' ACT (0755) |
 | A link | nothing |
 
+The old one is kept as a new file that is checked against the original before the new one is put in place with one rename. A
+backup name that is taken gets a number, and a file there is never written over. When `/opt/act` or `/opt/act/old` is a link, the
+job changes nothing there and says so. With `site_act_old_bin: report` it only says `would update ... (report only)`.
+
 The line says `updated /opt/act/act 0.6.25 -> 0.6.27, the old one kept at /opt/act/old/act.<...>.` In Check it says
 `would update /opt/act/act 0.6.25 -> 0.6.27` and changes nothing. The update does not need a link to be made, and a host with
 `python3` older than 3.6 is updated too. The jobs that run ACT on a host install it the same way (the file replaced when it differs).

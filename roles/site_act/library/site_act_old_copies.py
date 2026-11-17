@@ -33,6 +33,7 @@ options:
 """
 
 import datetime
+import errno
 import glob
 import hashlib
 import json
@@ -120,22 +121,54 @@ def python3_ok():
                    % (ver or "unknown"))
 
 
+def unsafe(target, backup_dir):
+    """Why nothing is changed: the install folder or the backup folder is a link (it could lead anywhere)."""
+    for d in (os.path.dirname(target), backup_dir):
+        if os.path.islink(d):
+            return "%s is a link: nothing was changed there" % d
+    return ""
+
+
 def backup(path, backup_dir, now):
-    """Keep the old one: act.<UTC time>.<sha256 first 8> in backup_dir (0700). A link is kept as a link."""
+    """Keep the old one: act.<UTC time>.<sha256 first 8> in backup_dir (0700), made new (never over a file that is there;
+    a number is added when the name is taken), and checked against the original. A link is kept as a link."""
+    if os.path.islink(backup_dir):
+        raise OSError("%s is a link" % backup_dir)
     if not os.path.isdir(backup_dir):
         os.makedirs(backup_dir, 0o700)
     os.chmod(backup_dir, 0o700)
     if os.path.islink(path):
         dest = os.readlink(path)
-        tag = hashlib.sha256(dest.encode("utf-8")).hexdigest()[:8]
-        name = os.path.join(backup_dir, "act.%s.%s" % (now, tag))
-        if not os.path.lexists(name):
-            os.symlink(dest, name)
+        base = os.path.join(backup_dir, "act.%s.%s" % (now, hashlib.sha256(dest.encode("utf-8")).hexdigest()[:8]))
+        for n in range(1000):
+            name = base if n == 0 else "%s.%d" % (base, n)
+            try:
+                os.symlink(dest, name)
+                return name
+            except OSError as e:
+                if e.errno != errno.EEXIST:
+                    raise
+        raise OSError("no free name for the backup in %s" % backup_dir)
+    want = sha256(path)
+    base = os.path.join(backup_dir, "act.%s.%s" % (now, want[:8]))
+    for n in range(1000):
+        name = base if n == 0 else "%s.%d" % (base, n)
+        try:
+            fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        except OSError as e:
+            if e.errno == errno.EEXIST:
+                continue
+            raise
+        with os.fdopen(fd, "wb") as out, open(path, "rb") as src:
+            shutil.copyfileobj(src, out)
+            out.flush()
+            os.fsync(out.fileno())
+        if sha256(name) != want:
+            os.unlink(name)
+            raise OSError("the copy kept in %s differs from %s" % (backup_dir, path))
+        shutil.copystat(path, name)
         return name
-    name = os.path.join(backup_dir, "act.%s.%s" % (now, sha256(path)[:8]))
-    if not os.path.exists(name):
-        shutil.copy2(path, name)
-    return name
+    raise OSError("no free name for the backup in %s" % backup_dir)
 
 
 def link(path, target):
@@ -210,6 +243,21 @@ def say_copy(r):
     return "%s was %s: %s." % (r["path"], what, done)
 
 
+def put_in_place(staged, target):
+    """The new ACT over the installed one in one step: a file in the same folder, then os.replace."""
+    os.chmod(staged, 0o755)
+    if os.path.dirname(os.path.abspath(staged)) == os.path.dirname(os.path.abspath(target)):
+        os.replace(staged, target)
+        return
+    tmp = "%s.site-act-new.%d" % (target, os.getpid())
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o755)
+    with os.fdopen(fd, "wb") as out, open(staged, "rb") as src:
+        shutil.copyfileobj(src, out)
+    os.chmod(tmp, 0o755)
+    os.replace(tmp, target)
+    os.unlink(staged)
+
+
 def update_target(target, params, apply, now, lines):
     """The installed ACT is a file that differs from the one the jobs carry: keep it, put the new one in its place."""
     want = params.get("source_sha256") or ""
@@ -217,24 +265,30 @@ def update_target(target, params, apply, now, lines):
         return None
     old = act_version(target) or "unknown"
     new = params.get("source_version") or "the jobs' ACT"
-    u = {"path": target, "from": old, "to": new, "would": not apply}
-    staged = params.get("staged")
-    if apply and staged and os.path.isfile(staged):
-        u["backup"] = backup(target, params["backup_dir"], now)
-        os.chmod(staged, 0o755)
-        try:
-            os.rename(staged, target)
-        except OSError:
-            shutil.copy2(staged, target + ".site-act-new")
-            os.chmod(target + ".site-act-new", 0o755)
-            os.rename(target + ".site-act-new", target)
-            os.unlink(staged)
-        lines.append("updated %s %s -> %s, the old one kept at %s." % (target, old, new, u["backup"]))
-    elif apply:
-        u["would"] = True      # not staged: nothing was done
-        lines.append("%s is ACT %s, not %s: could not be updated (the new one was not put on the host)." % (target, old, new))
-    else:
+    u = {"path": target, "from": old, "to": new, "would": not apply, "report": False}
+    bad = unsafe(target, params["backup_dir"])
+    if bad:
+        u.update(would=True, report=True)
+        lines.append("%s is ACT %s, not %s: not updated, %s." % (target, old, new, bad))
+    elif params.get("action") == "report":
+        u.update(would=True, report=True)
+        lines.append("would update %s %s -> %s (report only)." % (target, old, new))
+    elif not apply:
         lines.append("would update %s %s -> %s (the old one kept in %s)." % (target, old, new, params["backup_dir"]))
+    else:
+        staged = params.get("staged")
+        if not (staged and os.path.isfile(staged) and not os.path.islink(staged)) or sha256(staged) != want:
+            u["would"] = True      # not staged, or not the jobs' file: nothing was done
+            lines.append("%s is ACT %s, not %s: could not be updated (the new one was not put on the host)." % (target, old, new))
+        else:
+            try:
+                u["backup"] = backup(target, params["backup_dir"], now)
+                put_in_place(staged, target)
+            except OSError as e:
+                u["would"] = True
+                lines.append("%s is ACT %s, not %s: not updated (%s)." % (target, old, new, e))
+            else:
+                lines.append("updated %s %s -> %s, the old one kept at %s." % (target, old, new, u["backup"]))
     return u
 
 
@@ -258,6 +312,8 @@ def run(params, check_mode, now=None, python_check=python3_ok):
         if found["kind"] in ("file", "link") and params["action"] == "link" and py is None:
             py = python_check()
         todo, why = decide(found, params["action"], target, target_there, py or (True, ""))
+        if todo in ("link", "delete") and unsafe(target, params["backup_dir"]):
+            todo, why = "report", unsafe(target, params["backup_dir"])
         if todo == "report" and ("python3" in why) and new:
             why += " (the installed ACT is %s)" % new
         r = dict(found, action=todo, why=why, would=not apply, backup_dir=params["backup_dir"],
@@ -304,7 +360,7 @@ def run(params, check_mode, now=None, python_check=python3_ok):
                              % (who, model))
         users.append(u)
     return {"changed": changed, "copies": copies, "users": users, "lines": lines,
-            "update": updated, "updating": bool(updated), "target_there": target_there, "target_version": act_version(target) if os.path.isfile(target) else ""}
+            "update": updated, "updating": bool(updated and not updated.get("report")), "target_there": target_there, "target_version": act_version(target) if os.path.isfile(target) else ""}
 
 
 def main():

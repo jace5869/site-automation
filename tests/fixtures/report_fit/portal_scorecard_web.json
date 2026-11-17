@@ -1053,6 +1053,7 @@
 "",
 "",
 "The hosts the rule is open on",
+"Hosts open times 10 (CAT I), 4 (CAT II) or 1 (CAT III): the biggest weights first",
 "The collections, with the hosts in each"
 ],
 "columns": [
@@ -1062,6 +1063,7 @@
 "What it checks",
 "Platform",
 "Hosts open",
+"Weight",
 "Where"
 ],
 "details": [
@@ -1095,6 +1097,27 @@
 [
 "rhel06",
 "SITEA - RHEL 9"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"win03",
+"SITEA - Windows Server"
+],
+[
+"win04",
+"SITEA - Windows Server"
 ]
 ]
 },
@@ -1166,10 +1189,23 @@
 [
 "win03",
 "SITEA - Windows Server"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
 ],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
 [
-"win04",
-"SITEA - Windows Server"
+"rhel04",
+"SITEA - RHEL 9"
 ]
 ]
 },
@@ -1190,6 +1226,23 @@
 ],
 [
 "esx02",
+"SITEA - VMware"
+]
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"more": "",
+"rows": [
+[
+"esx01",
 "SITEA - VMware"
 ]
 ]
@@ -1227,57 +1280,6 @@
 "more": "",
 "rows": [
 [
-"win03",
-"SITEA - Windows Server"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"rhel04",
-"SITEA - RHEL 9"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
-"esx01",
-"SITEA - VMware"
-]
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"more": "",
-"rows": [
-[
 "win01",
 "SITEA - Windows Server"
 ]
@@ -1295,6 +1297,7 @@
 "wrap",
 "wrap",
 "num",
+"num",
 "wrap"
 ],
 "row_tags": [
@@ -1303,6 +1306,12 @@
 "col": "c2",
 "h": "rhel01 rhel03 rhel04 rhel05 rhel06",
 "pf": "pf1"
+},
+{
+"cat": "k1",
+"col": "c3",
+"h": "win03 win04",
+"pf": "pf2"
 },
 {
 "cat": "k2",
@@ -1314,24 +1323,6 @@
 "cat": "k2",
 "col": "c2",
 "h": "rhel01 rhel03 rhel05",
-"pf": "pf1"
-},
-{
-"cat": "k1",
-"col": "c3",
-"h": "win03 win04",
-"pf": "pf2"
-},
-{
-"cat": "k2",
-"col": "c1",
-"h": "esx01 esx02",
-"pf": "pf3"
-},
-{
-"cat": "k3",
-"col": "c2",
-"h": "rhel03 rhel07",
 "pf": "pf1"
 },
 {
@@ -1349,8 +1340,20 @@
 {
 "cat": "k2",
 "col": "c1",
+"h": "esx01 esx02",
+"pf": "pf3"
+},
+{
+"cat": "k2",
+"col": "c1",
 "h": "esx01",
 "pf": "pf3"
+},
+{
+"cat": "k3",
+"col": "c2",
+"h": "rhel03 rhel07",
+"pf": "pf1"
 },
 {
 "cat": "k3",
@@ -1367,7 +1370,18 @@
 "RHEL 9 must have the USBGuard package installed.",
 "Linux",
 5,
+20,
 "SITEA - RHEL 9 (5)"
+],
+[
+"",
+"SV-254247 (WN22-00-000110)",
+"CAT I",
+"Windows Server 2022 must be maintained at a supported servicing level.",
+"Windows",
+2,
+20,
+"SITEA - Windows Server (2)"
 ],
 [
 "",
@@ -1376,6 +1390,7 @@
 "Windows Server 2022 must have a host-based firewall.",
 "Windows",
 4,
+16,
 "SITEA - Windows Server (4)"
 ],
 [
@@ -1385,34 +1400,8 @@
 "RHEL 9 must not allow a root login over SSH.",
 "Linux",
 3,
+12,
 "SITEA - RHEL 9 (3)"
-],
-[
-"",
-"SV-254247 (WN22-00-000110)",
-"CAT I",
-"Windows Server 2022 must be maintained at a supported servicing level.",
-"Windows",
-2,
-"SITEA - Windows Server (2)"
-],
-[
-"",
-"SV-256375 (ESXI-70-000001)",
-"CAT II",
-"Access to the ESXi host must be limited by lockdown mode.",
-"VMware",
-2,
-"SITEA - VMware (2)"
-],
-[
-"",
-"SV-257842 (RHEL-09-215075)",
-"CAT III",
-"RHEL 9 must not have the tuned package installed.",
-"Linux",
-2,
-"SITEA - RHEL 9 (2)"
 ],
 [
 "",
@@ -1421,6 +1410,7 @@
 "Windows Server 2022 passwords for the built-in account must change.",
 "Windows",
 1,
+10,
 "SITEA - Windows Server (1)"
 ],
 [
@@ -1430,7 +1420,18 @@
 "RHEL 9 must be a vendor-supported release.",
 "Linux",
 1,
+10,
 "SITEA - RHEL 9 (1)"
+],
+[
+"",
+"SV-256375 (ESXI-70-000001)",
+"CAT II",
+"Access to the ESXi host must be limited by lockdown mode.",
+"VMware",
+2,
+8,
+"SITEA - VMware (2)"
 ],
 [
 "",
@@ -1439,7 +1440,18 @@
 "The ESXi host must enforce an unlock timeout of 15 minutes.",
 "VMware",
 1,
+4,
 "SITEA - VMware (1)"
+],
+[
+"",
+"SV-257842 (RHEL-09-215075)",
+"CAT III",
+"RHEL 9 must not have the tuned package installed.",
+"Linux",
+2,
+2,
+"SITEA - RHEL 9 (2)"
 ],
 [
 "",
@@ -1448,10 +1460,11 @@
 "Windows Server 2022 account lockout duration must be 15 minutes.",
 "Windows",
 1,
+1,
 "SITEA - Windows Server (1)"
 ]
 ],
-"text": "Open a rule for the hosts it is open on.",
+"text": "Biggest weight first (hosts open x 10, 4 or 1). Open a rule for the hosts it is open on.",
 "title": "Findings (10)",
 "wrap": true
 },

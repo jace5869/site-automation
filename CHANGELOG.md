@@ -13,8 +13,16 @@ older one stayed and the link pointed at it (docs/ADDING_ACT.md, "Old copies of 
 - The same version and file: untouched. A link at `/opt/act/act`: left alone.
 - A host with `python3` older than 3.6 is updated, not linked, and the line says the installed ACT version.
 - The jobs that run ACT on a host (act_triage) already replaced the file when it differed; nothing changes there.
-- Tests: tests/test_act_old_copies.py (Update: older, same, edited, Check, link first, old Python, not staged),
-  tests/act/run_act_old_copies_test.sh (older installed ACT: Check, run, again).
+- The old one is kept as a new file (never over one that is there; a taken name gets a number) and checked against the
+  original before the new one replaces it in one rename. A linked `/opt/act` or `/opt/act/old` is refused with a line and
+  no change (the link and delete of an old copy too).
+- `site_act_old_bin: report` only says `would update ... (report only)`: nothing is staged or changed.
+- The scorecard documents of the page-fit test are refreshed (the Findings Weight column; the CORA one is
+  `stig_scorecard_cora_web`). That showed a table wider than its card by 18 px after its first fit, never fitted again:
+  site_report.js now fits again a table that has grown since (the ops look at 800 px).
+- Tests: tests/test_act_old_copies.py (Update: older, same, edited, Check, link first, old Python, not staged, a linked
+  folder, a taken backup name, a bad backup, report mode), tests/act/run_act_old_copies_test.sh (older installed ACT:
+  Check, run, again, report, a linked backup folder).
 
 ## 1.70.0 — 2026-11-17
 

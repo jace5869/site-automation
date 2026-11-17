@@ -1064,39 +1064,39 @@
 "column": 1,
 "copies": [
 "SV-258036",
+"SV-254247",
 "SV-254269",
 "SV-257985",
-"SV-254247",
-"SV-256375",
-"SV-257842",
 "SV-254239",
 "SV-257777",
+"SV-256375",
 "SV-256379",
+"SV-257842",
 "SV-254285"
 ],
 "title": "",
 "titles": [
 "Opens SV-258036 in STIG Manager (a new tab): SITEA - RHEL 9's review of RHEL_9_STIG, at the rule",
+"Opens SV-254247 in STIG Manager (a new tab): SITEA - Windows Server's review of MS_Windows_Server_2022_STIG, at the rule",
 "Opens SV-254269 in STIG Manager (a new tab): SITEA - Windows Server's review of MS_Windows_Server_2022_STIG, at the rule",
 "Opens SV-257985 in STIG Manager (a new tab): SITEA - RHEL 9's review of RHEL_9_STIG, at the rule",
-"Opens SV-254247 in STIG Manager (a new tab): SITEA - Windows Server's review of MS_Windows_Server_2022_STIG, at the rule",
-"Opens SV-256375 in STIG Manager (a new tab): SITEA - VMware's review of VMW_vSphere_7-0_ESXi_STIG, at the rule",
-"Opens SV-257842 in STIG Manager (a new tab): SITEA - RHEL 9's review of RHEL_9_STIG, at the rule",
 "Opens SV-254239 in STIG Manager (a new tab): SITEA - Windows Server's review of MS_Windows_Server_2022_STIG, at the rule",
 "Opens SV-257777 in STIG Manager (a new tab): SITEA - RHEL 9's review of RHEL_9_STIG, at the rule",
+"Opens SV-256375 in STIG Manager (a new tab): SITEA - VMware's review of VMW_vSphere_7-0_ESXi_STIG, at the rule",
 "Opens SV-256379 in STIG Manager (a new tab): SITEA - VMware's review of VMW_vSphere_7-0_ESXi_STIG, at the rule",
+"Opens SV-257842 in STIG Manager (a new tab): SITEA - RHEL 9's review of RHEL_9_STIG, at the rule",
 "Opens SV-254285 in STIG Manager (a new tab): SITEA - Windows Server's review of MS_Windows_Server_2022_STIG, at the rule"
 ],
 "urls": [
 "https://stigman.example.mil/portal/stigman/go?c=2&b=RHEL_9_STIG&r=SV-258036r1045099_rule",
+"https://stigman.example.mil/portal/stigman/go?c=3&b=MS_Windows_Server_2022_STIG&r=SV-254247r991589_rule",
 "https://stigman.example.mil/portal/stigman/go?c=3&b=MS_Windows_Server_2022_STIG&r=SV-254269r958478_rule",
 "https://stigman.example.mil/portal/stigman/go?c=2&b=RHEL_9_STIG&r=SV-257985r1069364_rule",
-"https://stigman.example.mil/portal/stigman/go?c=3&b=MS_Windows_Server_2022_STIG&r=SV-254247r991589_rule",
-"https://stigman.example.mil/portal/stigman/go?c=1&b=VMW_vSphere_7-0_ESXi_STIG&r=SV-256375r885906_rule",
-"https://stigman.example.mil/portal/stigman/go?c=2&b=RHEL_9_STIG&r=SV-257842r991589_rule",
 "https://stigman.example.mil/portal/stigman/go?c=3&b=MS_Windows_Server_2022_STIG&r=SV-254239r958478_rule",
 "https://stigman.example.mil/portal/stigman/go?c=2&b=RHEL_9_STIG&r=SV-257777r991589_rule",
+"https://stigman.example.mil/portal/stigman/go?c=1&b=VMW_vSphere_7-0_ESXi_STIG&r=SV-256375r885906_rule",
 "https://stigman.example.mil/portal/stigman/go?c=1&b=VMW_vSphere_7-0_ESXi_STIG&r=SV-256379r885918_rule",
+"https://stigman.example.mil/portal/stigman/go?c=2&b=RHEL_9_STIG&r=SV-257842r991589_rule",
 "https://stigman.example.mil/portal/stigman/go?c=3&b=MS_Windows_Server_2022_STIG&r=SV-254285r958478_rule"
 ]
 },
@@ -1107,6 +1107,7 @@
 "",
 "",
 "The hosts the rule is open on",
+"Hosts open times 10 (CAT I), 4 (CAT II) or 1 (CAT III): the biggest weights first",
 "The collections, with the hosts in each"
 ],
 "columns": [
@@ -1116,6 +1117,7 @@
 "What it checks",
 "Platform",
 "Hosts open",
+"Weight",
 "Where"
 ],
 "details": [
@@ -1182,6 +1184,55 @@
 [
 "rhel06",
 "SITEA - RHEL 9"
+]
+]
+}
+],
+[
+{
+"texts": [
+{
+"button": "Copy check",
+"cmd": "",
+"label": "Check text",
+"text": "Run \"winver.exe\".\n\nIf the version is not a supported servicing level, this is a finding.",
+"title": "Copies the whole text: it has no command line"
+},
+{
+"button": "Copy fix",
+"cmd": "",
+"label": "Fix text",
+"text": "Update the system to a supported servicing level.",
+"title": "Copies the whole text: it has no command line"
+}
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"link_titles": [
+"Opens win03's review in STIG Manager (a new tab), at SV-254247",
+"Opens win04's review in STIG Manager (a new tab), at SV-254247"
+],
+"links": [
+"https://stigman.example.mil/portal/stigman/go?c=3&b=MS_Windows_Server_2022_STIG&a=20&r=SV-254247r991589_rule",
+"https://stigman.example.mil/portal/stigman/go?c=3&b=MS_Windows_Server_2022_STIG&a=21&r=SV-254247r991589_rule"
+],
+"more": "",
+"rows": [
+[
+"win03",
+"SITEA - Windows Server"
+],
+[
+"win04",
+"SITEA - Windows Server"
 ]
 ]
 }
@@ -1307,133 +1358,6 @@
 "texts": [
 {
 "button": "Copy check",
-"cmd": "",
-"label": "Check text",
-"text": "Run \"winver.exe\".\n\nIf the version is not a supported servicing level, this is a finding.",
-"title": "Copies the whole text: it has no command line"
-},
-{
-"button": "Copy fix",
-"cmd": "",
-"label": "Fix text",
-"text": "Update the system to a supported servicing level.",
-"title": "Copies the whole text: it has no command line"
-}
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"link_titles": [
-"Opens win03's review in STIG Manager (a new tab), at SV-254247",
-"Opens win04's review in STIG Manager (a new tab), at SV-254247"
-],
-"links": [
-"https://stigman.example.mil/portal/stigman/go?c=3&b=MS_Windows_Server_2022_STIG&a=20&r=SV-254247r991589_rule",
-"https://stigman.example.mil/portal/stigman/go?c=3&b=MS_Windows_Server_2022_STIG&a=21&r=SV-254247r991589_rule"
-],
-"more": "",
-"rows": [
-[
-"win03",
-"SITEA - Windows Server"
-],
-[
-"win04",
-"SITEA - Windows Server"
-]
-]
-}
-],
-[
-{
-"texts": [
-{
-"button": "Copy check",
-"cmd": "Get-VMHost | Select Name,@{N=\"Lockdown\";E={$_.Extensiondata.Config.LockdownMode}}",
-"label": "Check text",
-"text": "From PowerCLI:\n\nGet-VMHost | Select Name,@{N=\"Lockdown\";E={$_.Extensiondata.Config.LockdownMode}}",
-"title": "Copies the command line"
-},
-{
-"button": "Copy fix",
-"cmd": "",
-"label": "Fix text",
-"text": "From the vSphere Client, go to Hosts and Clusters, select the host, then Configure, System, Security Profile, Lockdown Mode, and set Normal.",
-"title": "Copies the whole text: it has no command line"
-}
-]
-},
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"link_titles": [
-"Opens esx01's review in STIG Manager (a new tab), at SV-256375",
-"Opens esx02's review in STIG Manager (a new tab), at SV-256375"
-],
-"links": [
-"https://stigman.example.mil/portal/stigman/go?c=1&b=VMW_vSphere_7-0_ESXi_STIG&a=17&r=SV-256375r885906_rule",
-"https://stigman.example.mil/portal/stigman/go?c=1&b=VMW_vSphere_7-0_ESXi_STIG&a=18&r=SV-256375r885906_rule"
-],
-"more": "",
-"rows": [
-[
-"esx01",
-"SITEA - VMware"
-],
-[
-"esx02",
-"SITEA - VMware"
-]
-]
-}
-],
-{
-"columns": [
-"Host",
-"Collection"
-],
-"kinds": [
-"wrap",
-"wrap"
-],
-"link_titles": [
-"Opens rhel03's review in STIG Manager (a new tab), at SV-257842",
-"Opens rhel07's review in STIG Manager (a new tab), at SV-257842"
-],
-"links": [
-"https://stigman.example.mil/portal/stigman/go?c=2&b=RHEL_9_STIG&a=12&r=SV-257842r991589_rule",
-"https://stigman.example.mil/portal/stigman/go?c=2&b=RHEL_9_STIG&a=16&r=SV-257842r991589_rule"
-],
-"more": "",
-"rows": [
-[
-"rhel03",
-"SITEA - RHEL 9"
-],
-[
-"rhel07",
-"SITEA - RHEL 9"
-]
-]
-},
-[
-{
-"texts": [
-{
-"button": "Copy check",
 "cmd": "Get-LocalUser -Name * | Select-Object Name, PasswordLastSet",
 "label": "Check text",
 "text": "Review the built-in administrator account's password age:\n\nGet-LocalUser -Name * | Select-Object Name, PasswordLastSet",
@@ -1520,6 +1444,55 @@
 "texts": [
 {
 "button": "Copy check",
+"cmd": "Get-VMHost | Select Name,@{N=\"Lockdown\";E={$_.Extensiondata.Config.LockdownMode}}",
+"label": "Check text",
+"text": "From PowerCLI:\n\nGet-VMHost | Select Name,@{N=\"Lockdown\";E={$_.Extensiondata.Config.LockdownMode}}",
+"title": "Copies the command line"
+},
+{
+"button": "Copy fix",
+"cmd": "",
+"label": "Fix text",
+"text": "From the vSphere Client, go to Hosts and Clusters, select the host, then Configure, System, Security Profile, Lockdown Mode, and set Normal.",
+"title": "Copies the whole text: it has no command line"
+}
+]
+},
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"link_titles": [
+"Opens esx01's review in STIG Manager (a new tab), at SV-256375",
+"Opens esx02's review in STIG Manager (a new tab), at SV-256375"
+],
+"links": [
+"https://stigman.example.mil/portal/stigman/go?c=1&b=VMW_vSphere_7-0_ESXi_STIG&a=17&r=SV-256375r885906_rule",
+"https://stigman.example.mil/portal/stigman/go?c=1&b=VMW_vSphere_7-0_ESXi_STIG&a=18&r=SV-256375r885906_rule"
+],
+"more": "",
+"rows": [
+[
+"esx01",
+"SITEA - VMware"
+],
+[
+"esx02",
+"SITEA - VMware"
+]
+]
+}
+],
+[
+{
+"texts": [
+{
+"button": "Copy check",
 "cmd": "esxcli system settings advanced list -o /Security/AccountUnlockTime",
 "label": "Check text",
 "text": "From an ESXi shell:\n\n# esxcli system settings advanced list -o /Security/AccountUnlockTime",
@@ -1558,6 +1531,35 @@
 ]
 }
 ],
+{
+"columns": [
+"Host",
+"Collection"
+],
+"kinds": [
+"wrap",
+"wrap"
+],
+"link_titles": [
+"Opens rhel03's review in STIG Manager (a new tab), at SV-257842",
+"Opens rhel07's review in STIG Manager (a new tab), at SV-257842"
+],
+"links": [
+"https://stigman.example.mil/portal/stigman/go?c=2&b=RHEL_9_STIG&a=12&r=SV-257842r991589_rule",
+"https://stigman.example.mil/portal/stigman/go?c=2&b=RHEL_9_STIG&a=16&r=SV-257842r991589_rule"
+],
+"more": "",
+"rows": [
+[
+"rhel03",
+"SITEA - RHEL 9"
+],
+[
+"rhel07",
+"SITEA - RHEL 9"
+]
+]
+},
 [
 {
 "texts": [
@@ -1613,6 +1615,7 @@
 "wrap",
 "wrap",
 "num",
+"num",
 "wrap"
 ],
 "row_tags": [
@@ -1621,6 +1624,12 @@
 "col": "c2",
 "h": "rhel01 rhel03 rhel04 rhel05 rhel06",
 "pf": "pf1"
+},
+{
+"cat": "k1",
+"col": "c3",
+"h": "win03 win04",
+"pf": "pf2"
 },
 {
 "cat": "k2",
@@ -1632,24 +1641,6 @@
 "cat": "k2",
 "col": "c2",
 "h": "rhel01 rhel03 rhel05",
-"pf": "pf1"
-},
-{
-"cat": "k1",
-"col": "c3",
-"h": "win03 win04",
-"pf": "pf2"
-},
-{
-"cat": "k2",
-"col": "c1",
-"h": "esx01 esx02",
-"pf": "pf3"
-},
-{
-"cat": "k3",
-"col": "c2",
-"h": "rhel03 rhel07",
 "pf": "pf1"
 },
 {
@@ -1667,8 +1658,20 @@
 {
 "cat": "k2",
 "col": "c1",
+"h": "esx01 esx02",
+"pf": "pf3"
+},
+{
+"cat": "k2",
+"col": "c1",
 "h": "esx01",
 "pf": "pf3"
+},
+{
+"cat": "k3",
+"col": "c2",
+"h": "rhel03 rhel07",
+"pf": "pf1"
 },
 {
 "cat": "k3",
@@ -1685,7 +1688,18 @@
 "RHEL 9 must have the USBGuard package installed.",
 "Linux",
 5,
+20,
 "SITEA - RHEL 9 (5)"
+],
+[
+"",
+"SV-254247 (WN22-00-000110)",
+"CAT I",
+"Windows Server 2022 must be maintained at a supported servicing level.",
+"Windows",
+2,
+20,
+"SITEA - Windows Server (2)"
 ],
 [
 "",
@@ -1694,6 +1708,7 @@
 "Windows Server 2022 must have a host-based firewall.",
 "Windows",
 4,
+16,
 "SITEA - Windows Server (4)"
 ],
 [
@@ -1703,34 +1718,8 @@
 "RHEL 9 must not allow a root login over SSH.",
 "Linux",
 3,
+12,
 "SITEA - RHEL 9 (3)"
-],
-[
-"",
-"SV-254247 (WN22-00-000110)",
-"CAT I",
-"Windows Server 2022 must be maintained at a supported servicing level.",
-"Windows",
-2,
-"SITEA - Windows Server (2)"
-],
-[
-"",
-"SV-256375 (ESXI-70-000001)",
-"CAT II",
-"Access to the ESXi host must be limited by lockdown mode.",
-"VMware",
-2,
-"SITEA - VMware (2)"
-],
-[
-"",
-"SV-257842 (RHEL-09-215075)",
-"CAT III",
-"RHEL 9 must not have the tuned package installed.",
-"Linux",
-2,
-"SITEA - RHEL 9 (2)"
 ],
 [
 "",
@@ -1739,6 +1728,7 @@
 "Windows Server 2022 passwords for the built-in account must change.",
 "Windows",
 1,
+10,
 "SITEA - Windows Server (1)"
 ],
 [
@@ -1748,7 +1738,18 @@
 "RHEL 9 must be a vendor-supported release.",
 "Linux",
 1,
+10,
 "SITEA - RHEL 9 (1)"
+],
+[
+"",
+"SV-256375 (ESXI-70-000001)",
+"CAT II",
+"Access to the ESXi host must be limited by lockdown mode.",
+"VMware",
+2,
+8,
+"SITEA - VMware (2)"
 ],
 [
 "",
@@ -1757,7 +1758,18 @@
 "The ESXi host must enforce an unlock timeout of 15 minutes.",
 "VMware",
 1,
+4,
 "SITEA - VMware (1)"
+],
+[
+"",
+"SV-257842 (RHEL-09-215075)",
+"CAT III",
+"RHEL 9 must not have the tuned package installed.",
+"Linux",
+2,
+2,
+"SITEA - RHEL 9 (2)"
 ],
 [
 "",
@@ -1766,10 +1778,11 @@
 "Windows Server 2022 account lockout duration must be 15 minutes.",
 "Windows",
 1,
+1,
 "SITEA - Windows Server (1)"
 ]
 ],
-"text": "Open a rule for its check text, fix text and hosts.",
+"text": "Biggest weight first (hosts open x 10, 4 or 1). Open a rule for its check text, fix text and hosts.",
 "title": "Findings (10)",
 "wrap": true
 },
