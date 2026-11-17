@@ -870,6 +870,19 @@ class BriefPage(unittest.TestCase):
             self.assertLessEqual(float(v) * (16 if unit == "rem" else 1), 34, (v, unit))
         self.assertIn(".logoimg{height:52px}", P.BRIEF_CSS)
 
+    def test_ops(self):
+        """1.69.0: the ops look (report_web_theme: ops) - the ops palette and labels over the page as it is (no brief hero)."""
+        m = site()["model"]
+        h = P.servicenow_insights_page(m, "all", {"look": "ops", "generated": "now", "job": "7"})
+        self.assertIn(P.OPS_CSS, h)
+        self.assertNotIn(P.BRIEF_CSS, h)
+        self.assertNotIn("brief-hero", h)
+        for tok in ("--bg:#eef0f6", "--surface:#ffffff", "--fg:#14213d", "--bg:#0f1626", "--surface:#141d30", "--s1:#6d28d9", "--s1:#7d3df3"):
+            self.assertIn(tok, P.OPS_CSS)
+        self.assertNotRegex(P.OPS_CSS, r"url\(|@import")
+        b = P.servicenow_insights_breach_page({"head": "x"}, {"look": "ops"})
+        self.assertIn(P.OPS_CSS, b)
+
     def test_other_looks_unchanged(self):
         m = site()["model"]
         for look in (None, "atlas", "portal"):
@@ -983,7 +996,7 @@ class YourSlos(unittest.TestCase):
         word = re.compile(r"\bslos?\b", re.I)
         for x in (site(), site(sites=True)):
             m = x["model"]
-            for look in ("atlas", "brief"):
+            for look in ("atlas", "brief", "ops"):
                 for k in ["all"] + [p_["key"] for p_ in m["pages"]]:
                     h = P.servicenow_insights_page(m, k, dict(OPTS, look=look))
                     self.assertFalse(word.findall(re.sub(r'<script type="application/json"[^>]*>.*?</script>', "", h, flags=re.S)), (look, k))

@@ -286,7 +286,7 @@ class StigLinks(unittest.TestCase):
                                                "title": "Recheck this host: opens the site portal, you check and press Run there"})
         self.assertTrue(every["text"].endswith("A host's name opens the site portal's Recheck for it."))
         doc = sf.findings_report({}, "STIG drift report", extra=linked)
-        for look in ("atlas", "brief"):
+        for look in ("atlas", "brief", "ops"):
             h = Pages().render(look, doc)
             self.assertRegex(h, re.escape('data-l="Host" data-v="web01.example.mil"><a class="hl cv" href="%s/actions/stig_recheck?'
                                           'target=web01.example.mil" target="_blank" rel="noopener"' % URL))
@@ -348,7 +348,7 @@ class Pages(unittest.TestCase):
 
     def test_buttons_on_the_page(self):
         doc = sf.findings_report(BY_HOST, "Health check", portal={"url": URL, "job": "4711", "actions": ACTIONS})
-        for look in ("atlas", "brief"):
+        for look in ("atlas", "brief", "ops"):
             h = self.render(look, doc)
             self.assertIn('<td class="k-buttons" data-l="Actions" data-v="Ask ACT"><span class="bts"><a class="btn pl" href="%s/actions/'
                           'act_triage?finding_id=fapolicyd%%3Alin01.example.mil%%3Adenials&amp;report_job=4711&amp;target=lin01.example.mil" '
@@ -359,7 +359,7 @@ class Pages(unittest.TestCase):
         sc = {"title": "STIG compliance", "status": "ok", "summary": [],
               "sections": [pf.add_section_link({"title": "By collection (1)", "columns": ["Collection", "Assets"], "rows": [["RHEL", 3]]},
                                                "Import checklists", URL + "/actions/ckl_import")]}
-        for look in ("atlas", "brief"):
+        for look in ("atlas", "brief", "ops"):
             h = self.render(look, sc)
             self.assertIn('<a class="btn pl" href="%s/actions/ckl_import" target="_blank" rel="noopener"' % URL, h)
             self.assertIn("<span>Import checklists</span></a>", h)
@@ -371,7 +371,7 @@ class Pages(unittest.TestCase):
         by["app-server-long-name-07.subdomain.example.mil"] = [
             {"check": "eventlog", "id": "eventlog:errors", "severity": "warning", "summary": "41 errors", "hint": "x"}]
         doc = sf.findings_report(by, "Health check", portal={"url": URL, "job": "4711", "actions": ACTIONS})
-        for look in ("atlas", "brief"):
+        for look in ("atlas", "brief", "ops"):
             h = self.render(look, doc)
             self.assertIn("td.k-buttons a.btn,td.k-buttons summary.btn{padding:3px 9px;font-size:12.5px;line-height:1.25;white-space:nowrap}", h)
             self.assertIn('app-server-long-name-07.<wbr>subdomain.<wbr>example.<wbr>mil</span>', h)
@@ -381,7 +381,7 @@ class Pages(unittest.TestCase):
 
     def test_as_before_without_the_setting(self):
         plain = sf.findings_report(BY_HOST, "Health check")
-        for look in ("atlas", "brief"):
+        for look in ("atlas", "brief", "ops"):
             h = self.render(look, plain)
             for mark in ("k-link", "k-buttons", "btn pl", "td.k-link", "a.btn{text-decoration:none}", "/actions/"):
                 self.assertNotIn(mark, h, "%s: %s" % (look, mark))

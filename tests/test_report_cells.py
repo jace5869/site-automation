@@ -16,7 +16,7 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.normpath(os.path.join(HERE, ".."))
-LOOKS = ("report", "report_command", "report_portal", "report_glass", "report_atlas", "report_brief")
+LOOKS = ("report", "report_command", "report_portal", "report_glass", "report_atlas", "report_brief", "report_ops")
 # what 2.16 would turn into a Python value (and back to another text: {"a": 1} -> {'a': 1}, 1.0 -> 1.0, [1, 2] -> [1, 2])
 VALUES = ["True", "False", "None", "1.0", "2", '{"a": 1}', "[1, 2]", "[1,2]", "{1:2}", "[true]", "['x']", "{}", "[]",
           "true", "FALSE", "True False"]

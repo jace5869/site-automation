@@ -358,7 +358,7 @@ class Looks(unittest.TestCase):
     def test_atlas_and_brief(self):
         import test_report_fit as T
         v = view()
-        for look in ("atlas", "brief"):
+        for look in ("atlas", "brief", "ops"):
             h = T.render(look, self.doc(v["web_sections"]))
             self.assertIn('<table class="rm rm-dc"', h)
             self.assertEqual(h.count('class="rm-c '), 36)
@@ -451,7 +451,7 @@ class Cut(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             pages = []
             for name, v in docs.items():
-                for look in ("atlas", "brief"):
+                for look in ("atlas", "brief", "ops"):
                     p = "%s-%s.html" % (look, name)
                     with open(os.path.join(d, p), "w") as f:
                         f.write(T.render(look, Looks().doc(v["web_sections"])))

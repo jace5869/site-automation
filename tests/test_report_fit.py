@@ -1,5 +1,6 @@
 """1.21.0: every report page fits its window - no table scrolls sideways at 1280, 1366, 1440 and 1920 px and no page scrolls at
-390 px (a phone; a table there may scroll inside its card) - in the atlas and brief looks, light and dark. Each report's
+390 px (a phone; a table there may scroll inside its card) - in the atlas and brief looks, light and dark (the ops look,
+1.69.0: at 1280 and 800 px - OpsFit). Each report's
 document as its unit tests or its e2e run make it (tests/fixtures/report_fit, refreshed by tests/report_fit_docs.py), and
 again with long values: names 22 characters longer, numbers wider. A table that does not fit first takes the script's
 steps (f1 to f4: wrapping); one that scrolls before its last step fails here (after it: no word broken, fx - listed). At every width no date, time, IP address, number, heading word, word of up
@@ -235,6 +236,48 @@ class Fit(unittest.TestCase):
             print("  scrolls inside its card: %s - %s" % (k, ", ".join(sorted(last[k]))), file=sys.stderr)
         print("ok: %d report pages (%d documents, atlas and brief, as tested and with long values) fit at %s px and %d px, "
               "light and dark" % (len(pages), len(docs), "/".join(map(str, WIDE)), PHONE), file=sys.stderr)
+
+
+class OpsFit(unittest.TestCase):
+    """1.69.0: the ops look (report_web_theme: ops) - every report's document, as tested and with long values, at 1280 and
+    800 px, light and dark: the page never scrolls sideways, no table scrolls before its last fit step, no date, number,
+    short word or chip split over two lines. Its cards side by side at 1280 px (2 or 3 to a row), one at 800 px; no phone
+    layout of its own (the atlas look's tables there)."""
+    WIDTHS = (1280, 800)
+
+    def test_every_report_fits_in_ops(self):
+        b = _browser()
+        if not b:
+            self.skipTest("no headless browser here")
+        docs = sorted(glob.glob(os.path.join(DOCS, "*.json")))
+        bad, last = [], {}
+        with tempfile.TemporaryDirectory() as d:
+            pages = []
+            for f in docs:
+                name = os.path.basename(f)[:-5]
+                with open(f) as fh:
+                    doc = json.load(fh)
+                for kind, dd in (("", doc), ("-long", long_doc(doc))):
+                    p = "ops-%s%s.html" % (name, kind)
+                    with open(os.path.join(d, p), "w") as o:
+                        o.write(render("ops", dd))
+                    pages.append(p)
+            for w in self.WIDTHS:
+                for k, r in sorted(measure(b, d, pages, w).items()):
+                    if r["page"]:
+                        bad.append("%s at %d px: the page scrolls sideways (+%d px)" % (k, w, r["page"]))
+                    if r["inner"]:
+                        bad.append("%s at %d px: a table scrolls sideways: %s" % (k, w, "; ".join(r["inner"])))
+                    if r["split"]:
+                        bad.append("%s at %d px: split over two lines: %s" % (k, w, ", ".join(r["split"][:6])))
+                    if r["last"]:
+                        last.setdefault(k.rsplit(" ", 1)[0].replace("-long.html", ".html"), set()).add(
+                            "%d px: %s" % (w, "; ".join(x.rsplit(" +", 1)[0] for x in r["last"])))
+        self.assertEqual(bad, [], "\n".join(bad[:40]) + ("\n... %d in all" % len(bad) if len(bad) > 40 else ""))
+        for k in sorted(last):
+            print("  scrolls inside its card: %s - %s" % (k, ", ".join(sorted(last[k]))), file=sys.stderr)
+        print("ok: %d ops pages (%d documents, as tested and with long values) fit at %s px, light and dark"
+              % (len(pages), len(docs), "/".join(map(str, self.WIDTHS))), file=sys.stderr)
 
 
 class EmailTiles(unittest.TestCase):

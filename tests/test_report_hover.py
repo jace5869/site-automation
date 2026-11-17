@@ -110,7 +110,7 @@ class TrendColumn(unittest.TestCase):
     """int-11: the Trend column's lines carry data-points (as report_sparkline's), a Tab stop and no <title> of their own."""
     def test_each_producer_hovers(self):
         web, _ = doc()
-        for tpl in ("report_atlas.html.j2", "report_brief.html.j2"):
+        for tpl in ("report_atlas.html.j2", "report_brief.html.j2", "report_ops.html.j2"):
             h = render(tpl, web)
             cells = re.findall(r'<td class="k-spark"[^>]*>(.*?)</td>', h)
             self.assertEqual(len(cells), 4, tpl)
@@ -146,14 +146,15 @@ class TrendColumn(unittest.TestCase):
 class Pages(unittest.TestCase):
     def test_no_inline_script_or_handler_and_none_of_it_in_an_email(self):
         web, mail = doc()
-        for tpl in ("report_atlas.html.j2", "report_brief.html.j2"):
+        for tpl in ("report_atlas.html.j2", "report_brief.html.j2", "report_ops.html.j2"):
             h = render(tpl, web)
             self.assertIn('<table class="bd">', h)
             self.assertIn('svg class="spark"', h)
             self.assertFalse(re.search(r"<[^>]+\son[a-z]+=", h), tpl)        # no onclick= and the like
             self.assertNotIn("javascript:", h)
             # its scripts: the early theme lines (kept: they only save a flash), the file, its inline copy - none new
-            self.assertEqual(len(re.findall(r"<script", h)), 3, tpl)
+            # (ops, 1.69.0: no early lines - the file in its head sets the theme first)
+            self.assertEqual(len(re.findall(r"<script", h)), 2 if "ops" in tpl else 3, tpl)
             self.assertNotIn(" title=", re.sub(r'<button[^>]*>', "", h.split('<table class="bd">')[1].split("</table>")[0]))
             for t in re.findall(r'data-tip="([^"]*)"', h):
                 self.assertTrue(t.strip(), tpl)

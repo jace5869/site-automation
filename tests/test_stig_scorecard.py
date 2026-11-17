@@ -1329,7 +1329,7 @@ class Review1680(unittest.TestCase):
         clean = [r[1] for r, t in zip(hv["rows"], hv["row_tags"]) if t.get("cat") == ""]
         self.assertTrue(clean)
         web = f.stig_scorecard_join(d, None, "scorecard")["web"]
-        for tpl in ("report_atlas.html.j2", "report_brief.html.j2"):
+        for tpl in ("report_atlas.html.j2", "report_brief.html.j2", "report_ops.html.j2"):
             h = EmailTiles()._env().get_template(tpl).render(_report=web, _email_footer="AAP job 9", report_email_header_text="x")
             trs = re.findall(r'<tr[^>]*data-h="([^"]*)"[^>]*>', h)
             self.assertTrue(trs, tpl)
@@ -1469,7 +1469,7 @@ class Links(unittest.TestCase):
             sys.path.insert(0, HERE)
         from test_report_fit import EmailTiles
         web = f.stig_scorecard_join(self.doc(), None, "scorecard")["web"]
-        for tpl in ("report_atlas.html.j2", "report_brief.html.j2"):
+        for tpl in ("report_atlas.html.j2", "report_brief.html.j2", "report_ops.html.j2"):
             h = EmailTiles()._env().get_template(tpl).render(_report=web, _email_footer="AAP job 9", report_email_header_text="x")
             a = re.search(r'<span class="clw"><a class="hl cv" href="https://stigman.example.mil/" target="_blank" rel="noopener" '
                           r'title="Opens STIG Manager in a new tab. Then: SITEA - RHEL 9 &gt; RHEL_9_STIG &gt; SV-257985">'
@@ -1595,7 +1595,7 @@ class OpenLinks(unittest.TestCase):
             sys.path.insert(0, HERE)
         from test_report_fit import EmailTiles
         web = f.stig_scorecard_join(self.doc(), None, "scorecard")["web"]
-        for tpl in ("report_atlas.html.j2", "report_brief.html.j2"):
+        for tpl in ("report_atlas.html.j2", "report_brief.html.j2", "report_ops.html.j2"):
             h = EmailTiles()._env().get_template(tpl).render(_report=web, _email_footer="AAP job 9", report_email_header_text="x")
             self.assertIn('href="https://stigman.example.mil/portal/stigman/go?c=2&amp;b=RHEL_9_STIG&amp;r=SV-257985r1069364_rule"', h)
             m = re.search(r'<td class="k-wrap" data-l="Host"><a class="hl" href="https://stigman.example.mil/portal/stigman/go\?c=2&amp;'

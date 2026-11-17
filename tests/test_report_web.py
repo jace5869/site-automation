@@ -848,6 +848,83 @@ class BriefIndex(unittest.TestCase):
         self.assertNotIn("first-of-type", page)                                  # a web page already: nothing added
 
 
+
+class OpsIndex(unittest.TestCase):
+    """1.69.0: the index page in the ops look - a header card (how many reports need attention, that number on the right,
+    SHOW: the counts), a tile each for Critical, Warning, Healthy and Not rated, up to three ranked cards for the worst
+    reports, then every report by area (the brief look's list)."""
+
+    def reports(self):
+        return BriefIndex.reports(self) + [
+            {"key": "i/latest.html", "name": "VMware - Capacity", "status": "info", "when": "2026-10-09 03:00 UTC", "job": 6,
+             "page": "i/b.html", "latest": "i/latest.html", "title": "4 clusters"},
+            {"key": "w/latest.html", "name": "AD - Lockouts", "status": "warning", "when": "2026-10-09 07:00 UTC", "job": 5,
+             "page": "w/b.html", "latest": "w/latest.html", "title": "2 <locked>"},
+            {"key": "x/latest.html", "name": "Linux - Patches", "status": "critical", "when": "2026-10-08 07:00 UTC", "job": 4,
+             "page": "x/b.html", "latest": "x/latest.html", "title": "9 behind"}]
+
+    def test_the_header_and_tiles(self):
+        html = rw.index_html(self.reports(), "site/index.html", "HQ & ops", ("data:image/png;base64,AA", 48, 64), "now", (), "ops")
+        self.assertIn('<span class="stc s-critical"><span class="d" aria-hidden="true"></span>Critical</span><h1>4 reports need attention.</h1>', html)
+        self.assertIn('<div class="hn"><div class="bn c-critical">4</div><div class="cap">Need attention</div></div>', html)
+        self.assertIn('<span class="sh">SHOW</span>', html)
+        self.assertIn('<div class="tally"><span class="chip s-critical"><svg', html)        # SHOW: the counts as chips
+        for word, n in (("Critical", 2), ("Warning", 2), ("Healthy", 1), ("Not rated", 1)):
+            self.assertRegex(html, r'</span>%s</div><div class="v[^"]*">%d</div>' % (word, n))
+        self.assertIn('<div class="n">1 for information</div>', html)
+        self.assertIn('<img class="logo" src="data:image/png;base64,AA" width="48" height="64"', html)
+        self.assertNotRegex(html, r'<link|src="https?:|@import')
+        self.assertNotIn("<locked>", html)
+        self.assertFalse(re.search(r"<[^>]+\son[a-z]+=", html))
+
+    def test_three_worst_reports_first(self):
+        html = rw.index_html(self.reports(), "site/index.html", "HQ", None, "now", (), "ops")
+        cards = re.findall(r'<article class="todo c-(\w+)"><div class="row1"><span class="num">(\d\d)</span>.*?<h3>(.*?)</h3>', html)
+        # Critical first (the latest first), then Warning: three at most
+        self.assertEqual(cards, [("critical", "01", "Linux - Disk &lt;space&gt;"), ("critical", "02", "Linux - Patches"),
+                                 ("warning", "03", "AD - Lockouts")])
+        first = html[html.index('<article class="todo'):html.index("</article>")]
+        self.assertIn('<span class="lbl">Up next</span>', first)
+        self.assertIn('<p class="next">/var is &lt;95%&gt;</p>', first)                     # its first step
+        self.assertIn('<a href="../d/latest.html">Open item &rarr;</a>', first)
+        self.assertIn('<label for="cd0"><span class="o">View details &rarr;</span>', first)
+        self.assertIn('<pre>du -xh &lt;/var&gt;</pre>', first)
+        self.assertIn('<span class="sqs" aria-label="The last 2 runs">', first)
+        # then every report, by area: the brief look's list and its tab rules
+        self.assertIn('<div class="grp a1"><b>AD</b><span class="n">1</span></div>', html)
+        self.assertIn("#t1:checked~.list>:not(.a1){display:none}", html)
+        self.assertLess(html.index('<div class="cards">'), html.index('<div class="list">'))
+
+    def test_nothing_to_do_and_none_yet(self):
+        ok = [dict(r, status="ok") for r in self.reports()]
+        html = rw.index_html(ok, "index.html", "x", None, "now", (), "ops")
+        self.assertIn("<h1>Every report is healthy or for information.</h1>", html)
+        self.assertNotIn('<div class="cards">', html)
+        self.assertIn('<div class="bn">0</div>', html)
+        empty = rw.index_html([], "index.html", "x", None, "now", (), "ops")
+        self.assertIn("<h1>No reports yet</h1>", empty)
+        self.assertNotIn('class="tab"', empty)
+        self.assertNotIn('<div class="tiles">', empty)
+
+    def test_colours_as_the_page(self):
+        """The index page's colours are the ops report page's (roles/site_email/templates/report_ops.html.j2)."""
+        with open(os.path.join(REPO, "roles", "site_email", "templates", "report_ops.html.j2")) as f:
+            tpl = f.read()
+        light = tpl[tpl.index("{%- set light %}"):tpl.index("{%- set dark %}")]
+        dark = tpl[tpl.index("{%- set dark %}"):tpl.index("{%- endset %}", tpl.index("{%- set dark %}"))]
+        for mine, theirs in ((rw.OPS_LIGHT, light), (rw.OPS_DARK, dark)):
+            tokens = dict(re.findall(r"(--[\w-]+):([^;]+);", mine))
+            self.assertGreater(len(tokens), 40)
+            for k, v in tokens.items():
+                self.assertIn("%s:%s;" % (k, v), theirs, k)
+
+    def test_switch_without_the_script(self):
+        html = rw.index_html([], "index.html", "x", None, "now", (), "ops")
+        self.assertIn('<div class="seg" id="theme" role="radiogroup" aria-label="Light or dark">', html)
+        self.assertIn(":root:has(#theme-dark:checked){--ink:#e6eaf3;", html)
+        self.assertIn('<script src="site-report.js?v=', rw.index_html([], "index.html", "x", None, "now", (), "ops", "var a;\n"))
+        self.assertIn("ops", rw.WEB_LOOKS)
+
 class Retries(unittest.TestCase):
     """0.98.1: a failure that passes is tried again from a new login (site_report_web.passing); a real one is not; a
     website copy that still fails is said at the top of the email (report_notice)."""

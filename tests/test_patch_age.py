@@ -262,7 +262,7 @@ class Looks(unittest.TestCase):
         import test_report_fit as T
         r = pa.patch_age_sections(Sections().fleet(), {"now": NOW})
         doc = {"title": "Health check", "status": "warning", "summary": r["boxes"], "sections": r["web_sections"]}
-        for look in ("atlas", "brief"):
+        for look in ("atlas", "brief", "ops"):
             h = T.render(look, doc)
             self.assertIn('<div class="sq-legend"><span>Days since the last update:</span>', h)
             self.assertIn('title="web04.corp.example.mil: 75 days (2026-10-01) - Late"', h)

@@ -2110,7 +2110,7 @@ the last column says.
 | Every VM in *VMs without encryption, EFI or vTPM* as not encrypted, though some are | the account cannot see VM Encryption on them, or they use vSAN encryption (the datastore's, not the VM's: vCenter gives the VM no key ID) | look at one in the vSphere Client: VM > Summary > *VM Encryption*. vSAN encryption is not VM Encryption - the report counts only the VM's own |
 | vTPM `?` | vCenter gave no `tpmPresent` for that VM and its devices could not be read | look at the VM's hardware in the vSphere Client (Virtual TPM); a vCenter before 6.7 reads it from the devices - a later run usually has it |
 | A VM table scrolls sideways on the website | more columns shown than fit (Columns: *Show all*, or a narrow window) | take some off with **Columns** (kept in your browser), put the sections list away (its `<<` button), or set `vm_inventory_hidden_columns` for everyone |
-| The website's VM tables have no Enc / SB / vTPM columns | `vm_inventory_security: false`, or `report_web_theme` is not atlas or brief (those looks show the email's tables) | set `vm_inventory_security: true`; use the atlas or brief look |
+| The website's VM tables have no Enc / SB / vTPM columns | `vm_inventory_security: false`, or `report_web_theme` is not atlas, brief or ops (the other looks show the email's tables) | set `vm_inventory_security: true`; use the atlas, brief or ops look |
 
 ### Datastore and snapshot reports, snapshot cleanup
 

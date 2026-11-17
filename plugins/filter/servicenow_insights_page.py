@@ -458,6 +458,31 @@ section.card{border-radius:16px;background:var(--glass);box-shadow:none}
 @media print{*{animation:none!important}}
 """
 
+# 1.69.0: the website's ops look (report_web_theme: ops - opts look): the same page in the ops palette and type
+# (roles/site_email/templates/report_ops.html.j2) - navy and grey-lavender, white cards (navy in dark), the small
+# labels upper case in a mono face, the series the look's violet and blue. Its layout as it is.
+OPS_DARK_VARS = """
+  --bg:#0f1626; --surface:#141d30; --surface-2:#18223a; --line:#24304a; --line-2:#1f2a42;
+  --fg:#e6eaf3; --fg-2:#b9c2d6; --muted:#9ba6bd; --accent:#8ec5ff; --accent-soft:rgba(142,197,255,.12); --on-accent:#0b1220;
+  --good:#5fd08a; --good-bg:rgba(95,208,138,.1); --warn:#f2b84b; --warn-bg:rgba(242,184,75,.1); --crit:#ff8080; --crit-bg:rgba(255,128,128,.1);
+  --info:#a3adc2; --info-bg:rgba(163,173,194,.1); --s1:#7d3df3; --s2:#9780e7; --heat:#7d3df3;
+  --shadow:0 1px 2px rgba(0,0,0,.3); color-scheme:dark"""
+OPS_CSS = r"""
+:root{
+  --bg:#eef0f6; --surface:#ffffff; --surface-2:#f5f6fa; --line:#dde1ea; --line-2:#e8ebf2;
+  --fg:#14213d; --fg-2:#33405e; --muted:#4b5672; --accent:#1d4ed8; --accent-soft:rgba(29,78,216,.09); --on-accent:#ffffff;
+  --good:#137a3a; --good-bg:rgba(19,122,58,.09); --warn:#995200; --warn-bg:rgba(153,82,0,.09); --crit:#c0262d; --crit-bg:rgba(192,38,45,.08);
+  --info:#566079; --info-bg:rgba(86,96,121,.09); --s1:#6d28d9; --s2:#9f7aea; --heat:#6d28d9;
+  --shadow:0 1px 2px rgba(20,33,61,.05);
+  --lab:ui-monospace,"Cascadia Mono","Cascadia Code",Consolas,"SF Mono",Menlo,"DejaVu Sans Mono",monospace}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){@DARK@}}
+:root[data-theme="dark"]{@DARK@}
+section.card{border-radius:14px;border:1px solid var(--line)}
+.tile{border-radius:12px}
+.eyebrow,th{font-family:var(--lab);letter-spacing:.08em;text-transform:uppercase;font-size:11px}
+.tile{background:var(--surface)}
+""".replace("@DARK@", OPS_DARK_VARS)
+
 SCRIPT_FILE = "site-insights.js"           # written beside the website's index by site_report_web; the page loads it from there
 SCRIPT = r"""(function(){"use strict";
 if(window.siteInsights)return;window.siteInsights=1;   /* the page's copy and site-insights.js: whichever runs first */
@@ -1430,13 +1455,14 @@ def servicenow_insights_breach_page(bm, opts=None):
     o = opts or {}
     bm = bm or {}
     brief = str(o.get("look") or "").strip().lower() == "brief"
+    look_css = BRIEF_CSS if brief else OPS_CSS if str(o.get("look") or "").strip().lower() == "ops" else ""
     url = ticket_base({"url": o.get("url") or ""}, o)
     logo = '<!--site-report-logo--><div class="logo" aria-hidden="true">%s</div>' % e(
         "".join(w[0] for w in str(o.get("header_text") or "Site automation").split()[:2]).upper() or "SA")
     full = (o.get("links") or {}).get("full") or ""
     out = ['<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
            '<meta name="generator" content="site-automation ticket insights"><title>%s</title><style>%s%s</style></head><body>' % (
-               e("About to breach – " + (bm.get("head") or "ServiceNow")), CSS + ORG_CSS, BRIEF_CSS if brief else ""),
+               e("About to breach – " + (bm.get("head") or "ServiceNow")), CSS + ORG_CSS, look_css),
            '<header class="bar gut"><div class="wrap"><div class="brand">%s<div style="min-width:0"><h1>ServiceNow - about to breach</h1>'
            '<div class="sub">%s · generated %s%s</div></div></div></header>' % (
                logo, e(o.get("scope_label") or "All assignment groups"), e(o.get("generated") or ""),
@@ -1477,6 +1503,7 @@ def servicenow_insights_page(model, key="all", opts=None):
     c = s["counts"]
     short = m.get("short") or {}
     brief = str(o.get("look") or "").strip().lower() == "brief"     # the website's brief look (0.92.0)
+    look_css = BRIEF_CSS if brief else OPS_CSS if str(o.get("look") or "").strip().lower() == "ops" else ""   # ops: 1.69.0
     slo = m.get("slo") or {}
     sla_src = slo.get("source") or ("targets" if o.get("sla_targets") or o.get("sla_items") else "made_sla")
     two = sla_src == "task_sla" or bool(slo.get("response_measured"))      # Response met and Resolution met (1.7.0)
@@ -1500,7 +1527,7 @@ def servicenow_insights_page(model, key="all", opts=None):
 
     head = ['<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
             '<meta name="generator" content="site-automation ticket insights"><title>%s</title><style>%s%s</style></head><body>' % (
-                e("Ticket insights – " + s["name"]), CSS + ORG_CSS, BRIEF_CSS if brief else "")]
+                e("Ticket insights – " + s["name"]), CSS + ORG_CSS, look_css)]
     # the site's logo (report_logo_file) goes in place of the comment when the page is published; else the initials
     logo = '<!--site-report-logo--><div class="logo" aria-hidden="true">%s</div>' % e(
         "".join(w[0] for w in str(o.get("header_text") or "Site automation").split()[:2]).upper() or "SA")

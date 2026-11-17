@@ -167,7 +167,7 @@ run "the same by default (report_web_required false): a warning, the job goes on
     "WARNING - The report website copy failed: the folder $work/nomount/reports is not there - is the share mounted"
 check "no retry (a real error)" bash -c "! grep -q 'try 1 of' '$work/out.txt'"
 run "an unknown look: says which there are" fail "{\"report_web_dest\": \"$work/reports\", \"report_web_theme\": \"fancy\"}" \
-    "report_web_theme must be atlas, brief, standard, command, portal or glass"
+    "report_web_theme must be atlas, brief, ops, standard, command, portal or glass"
 run "atlas for an email: refused, said why" fail "{\"report_email_to\": [\"ops@example.mil\"], \"report_email_smtp_host\": \"localhost\", \"report_email_smtp_port\": $port, \"report_email_from\": \"aap@example.mil\", \"report_email_security\": \"none\", \"report_email_theme\": \"atlas\"}" \
     "atlas is a look of the report website only (report_web_theme)"
 run "brief for an email: refused, said why" fail "{\"report_email_to\": [\"ops@example.mil\"], \"report_email_smtp_host\": \"localhost\", \"report_email_smtp_port\": $port, \"report_email_from\": \"aap@example.mil\", \"report_email_security\": \"none\", \"report_email_theme\": \"brief\"}" \
@@ -181,6 +181,20 @@ check "the page: the verdict as a chip, the ruled figures, the logo inside it (a
 check "index.html: the brief look - a plain title and line, the counts as chips, no alarm headline, its area tab" bash -c "i='$work/brief/index.html' \
     && grep -q '<h1>Reports</h1><p class=\"say\">1 report &middot; last run ' \"\$i\" && grep -q '<div class=\"tally\"><span class=\"chip s-warning\">' \"\$i\" \
     && ! grep -q 'needs action' \"\$i\" && grep -q 'width=\"48\" height=\"64\"' \"\$i\" \
+    && grep -q '<div class=\"grp a1\"><b>Certificates</b>' \"\$i\" && grep -q 'class=\"seg\" id=\"theme\"' \"\$i\" && ! grep -Eq '<link|src=\"https?:|@import' \"\$i\""
+# ---- 1.69.0: the ops look - the page and the index; refused for an email ----------------------------------------
+run "ops for an email: refused, said why" fail "{\"report_email_to\": [\"ops@example.mil\"], \"report_email_smtp_host\": \"localhost\", \"report_email_smtp_port\": $port, \"report_email_from\": \"aap@example.mil\", \"report_email_security\": \"none\", \"report_email_theme\": \"ops\"}" \
+    "ops is a look of the report website only (report_web_theme)"
+mkdir -p "$work/ops"
+run "the ops look (1.69.0): the page and the index" ok "{\"report_web_dest\": \"$work/ops\", \"report_web_theme\": \"ops\", $aapjob}"
+check "the page: the header card, its chip and number, the tiles, the cards, the logo inside it (at most 48 px tall), the script beside it, no cid:" bash -c "p=\"\$(ls '$work'/ops/linux-certificate-trust-report/*_job-907.html)\" \
+    && grep -q '<header class=\"hero card h-warning\">' \"\$p\" && grep -q 'Warning</span>' \"\$p\" && grep -q '<div class=\"tiles\">' \"\$p\" \
+    && grep -q '<div class=\"secs\">' \"\$p\" && grep -q '<div class=\"cf\"><span class=\"src\">' \"\$p\" && grep -q 'height=\"48\"' \"\$p\" \
+    && grep -q 'src=\"data:image/png;base64,' \"\$p\" && ! grep -q 'cid:' \"\$p\" \
+    && grep -q 'script src=\"../site-report.js?v=' \"\$p\" && test -s '$work/ops/site-report.js' && ! grep -Eq '<link|src=\"https?:|@import' \"\$p\""
+check "index.html: the ops look - the header card, the tiles, the worst report as a card, every report by area" bash -c "i='$work/ops/index.html' \
+    && grep -q '<h1>1 report needs attention.</h1>' \"\$i\" && grep -q 'Need attention</div>' \"\$i\" && grep -q '<div class=\"tiles\">' \"\$i\" \
+    && grep -q '<span class=\"num\">01</span><span class=\"lbl\">Up next</span>' \"\$i\" && grep -q 'Open item &rarr;</a>' \"\$i\" \
     && grep -q '<div class=\"grp a1\"><b>Certificates</b>' \"\$i\" && grep -q 'class=\"seg\" id=\"theme\"' \"\$i\" && ! grep -Eq '<link|src=\"https?:|@import' \"\$i\""
 # ---- report_time_zone (1.49.0): the website's times in it - the run above, written without one, too ---------------
 run "report_time_zone Europe/Berlin: a second run of the brief site" ok \

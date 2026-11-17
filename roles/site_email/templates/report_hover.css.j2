@@ -1,10 +1,10 @@
-{#- 1.57.0: the hover layer's and the runway board's CSS, in the atlas and brief looks' <style> (hover_look: atlas or
-    brief). The tip is one element site-report.js makes (.tt); without the script the page reads the same. --spark: one
+{#- 1.57.0: the hover layer's and the runway board's CSS, in the atlas, brief and ops looks' <style> (hover_look: atlas,
+    brief or ops). The tip is one element site-report.js makes (.tt); without the script the page reads the same. --spark: one
     hue per look, checked with the dataviz palette validator against the look's card in light and dark (3:1 or more).
     The Low band (--rwlow text, --rwlow-bar the bar): 1.56.0's Low tokens of the look (--low, --low-bg, --low-bd); the bar
     the Low palette's bar step (site_filters), the same in every look. -#}
-{%- set hl %}--spark:{{ '#2b58b1' if hover_look == 'brief' else '#2563eb' }};--rwlow:var(--low);--rwlow-bar:#a347a6;--rwlow-bg:var(--low-bg);--rwlow-bd:var(--low-bd);{% endset %}
-{%- set hd %}--spark:#4b8df8;--rwlow:var(--low);--rwlow-bar:#c168d5;--rwlow-bg:var(--low-bg);--rwlow-bd:var(--low-bd);{% endset %}
+{%- set hl %}--spark:{{ {'brief': '#2b58b1', 'ops': '#6d28d9'}.get(hover_look, '#2563eb') }};--rwlow:var(--low);--rwlow-bar:#a347a6;--rwlow-bg:var(--low-bg);--rwlow-bd:var(--low-bd);{% endset %}
+{%- set hd %}--spark:{{ '#9780e7' if hover_look == 'ops' else '#4b8df8' }};--rwlow:var(--low);--rwlow-bar:#c168d5;--rwlow-bg:var(--low-bg);--rwlow-bd:var(--low-bd);{% endset %}
 :root{ {{- hl -}} }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){ {{- hd -}} }}
 :root[data-theme="dark"]{ {{- hd -}} }
@@ -151,8 +151,8 @@ table.bd .nohist{color:var(--muted);font-size:12.5px}
   table.bd svg.spark,table.bd svg.rwb{width:128px;height:auto}
   table.bd th,table.bd td{padding-left:8px;padding-right:8px}
 }
-{%- if hover_look == 'brief' %}
-{#- brief: its own type and room - the tip a card like its run bars' (no dark box), names and figures in its display
+{%- if hover_look in ['brief', 'ops'] %}
+{#- brief (and ops, 1.69.0): its own type and room - the tip a card like its run bars' (no dark box), names and figures in its display
     face, its table headings, more air, thinner edges -#}
 .tt{background:var(--card-solid);color:var(--ink);border:1px solid var(--edge);border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.14);font-size:13px;padding:8px 12px}
 .tt .tt-h{font-family:var(--display);font-weight:650;font-size:14px;letter-spacing:-.01em}

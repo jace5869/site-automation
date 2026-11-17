@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.69.0 — 2026-11-17
+
+**To set up: optional - `report_web_theme: ops`.** Nothing changes until you set it (the default stays atlas). The
+emails and the workbook do not change.
+
+**The ops look for the report website** (docs/WEB_REPORTS.md, "The ops look").
+
+- Each report page as an operations console: a header card with the verdict in one bold line, its status chip, one
+  short line and the headline number on the right; a strip under it with the report's second line and SHOW (the job,
+  when, the last runs).
+- Status tiles, four to a row: a dot and the name in small capitals, a big number, one line of what it means. The STIG
+  scorecard keeps its CAT I, CAT II and CAT III tiles.
+- Start here as up to three ranked cards (01 Up next, 02, 03), each with Open item and View details; Every step shows
+  the rest.
+- The sections as cards: a status chip, the row count, the title, the content, and a footer with the job and time,
+  a portal button where there is one, and Explore (filter, Columns, CSV, the whole text). Short sections sit side by
+  side (2 or 3 to a row at 1280 px, 1 at 800 px); a wide table takes the whole row; the order never changes.
+- The sections' rail stays in view (1200 px and wider): sticky under the bar, as tall as the screen under it with its
+  own scroll, its groups fold (Needs attention, Everything else), one button puts it away (kept in the browser); a
+  section picked lands just under the bar.
+- A section of two columns whose second is numbers is a bar list (label, violet bar, number). A percentage column
+  is a split bar (its share and the rest).
+- Dark: deep navy, cards a step lighter. Light: grey-lavender, white cards, navy text. Violet bars, the pair checked
+  with the dataviz palette validator in light and dark. Status colours for status only, always with a word or icon.
+- The index page in the same look: a header card (how many reports need attention), a tile each for Critical,
+  Warning, Healthy and Not rated, the three worst reports as cards, then every report by area.
+- The ticket insights pages take the ops colours and labels. The STIG scorecard's links still go to STIG Manager
+  (plain, or `stigman_link_style: open`).
+- Strict CSP as before: no behaviour in inline script (`site-report.js`); nothing loaded from elsewhere. SHOW, View
+  details, Explore and the tabs work without the script.
+- Tested: render tests as for atlas and brief, and every report document fits at 1280 and 800 px, light and dark.
 ## 1.68.2 — 2026-11-17
 
 **To set up: nothing required.** First contact is now off: `servicenow_insights_first_contact: true` brings it back.

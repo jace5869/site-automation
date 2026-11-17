@@ -329,7 +329,7 @@ class Looks(unittest.TestCase):
 
     def test_the_timeline_in_atlas_and_brief(self):
         import test_report_fit as T
-        for look in ("atlas", "brief"):
+        for look in ("atlas", "brief", "ops"):
             h = T.render(look, self.doc(True))
             self.assertEqual(h.count('<div class="tl" role="group"'), 1)
             self.assertIn('aria-label="Certificates by expiry date, the next 120 days"', h)

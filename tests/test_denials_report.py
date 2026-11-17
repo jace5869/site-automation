@@ -111,7 +111,7 @@ class Pages(unittest.TestCase):
         self.web, _, _ = docs()
 
     def test_the_filters_and_the_rail_in_both_looks(self):
-        for look in ("atlas", "brief"):
+        for look in ("atlas", "brief", "ops"):
             h = T.render(look, self.web)
             self.assertEqual(h.count('<select data-f='), 2, look)
             self.assertIn('<option>bash</option>', h)
@@ -124,7 +124,7 @@ class Pages(unittest.TestCase):
 
     def test_a_report_without_filters_is_as_before(self):
         plain = {"title": "T", "status": "ok", "summary": [], "sections": [{"title": "A", "columns": ["x", "y"], "rows": [["1", "2"]]}]}
-        for look in ("atlas", "brief"):
+        for look in ("atlas", "brief", "ops"):
             h = T.render(look, plain)
             self.assertNotIn("<select", h)
             self.assertNotIn(' data-f0=', h)
@@ -160,7 +160,7 @@ class Behaviour(unittest.TestCase):
               "sel[0].value='';sel[0].dispatchEvent(new Event('change'));o.push(vis());"
               "sel[1].value='';sel[1].dispatchEvent(new Event('change'));o.push(vis());"
               "document.getElementById('out').textContent=o.join(' | ')")
-        for look in ("atlas", "brief"):
+        for look in ("atlas", "brief", "ops"):
             self.assertEqual(self.run_page(look, js), "false | false | bash,python3,java,sh | bash,python3 | python3 | 1 of 4 | python3 | bash,python3,java,sh", look)
 
 

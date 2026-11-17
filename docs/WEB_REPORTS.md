@@ -25,9 +25,10 @@ ok: [localhost] => {
 
 ## The look
 
-The website has its own look, **atlas** (`report_web_theme: atlas`, the default) - or **brief** (0.92.0, below); the
-emails keep theirs (`report_email_theme`: standard, command, portal or glass - [EMAIL_REPORTS.md](EMAIL_REPORTS.md),
-"The look"). Atlas and brief use what a browser draws and a mail program does not, so neither is ever an email's look:
+The website has its own look, **atlas** (`report_web_theme: atlas`, the default) - or **brief** (0.92.0) or **ops**
+(1.69.0), below; the emails keep theirs (`report_email_theme`: standard, command, portal or glass -
+[EMAIL_REPORTS.md](EMAIL_REPORTS.md), "The look"). Atlas, brief and ops use what a browser draws and a mail program
+does not, so none of them is ever an email's look:
 
 Since 0.53.0:
 
@@ -244,13 +245,70 @@ poster-sized:
 A page drawn before 0.92.0 keeps its look; the next run of each report draws its page in the new one (the index on the
 next run of any report, the cards' first step as each report runs again). `report_web_theme: atlas` goes back.
 
+### The ops look (1.69.0)
+
+`report_web_theme: ops` draws the same pages as an operations console. It is opt-in: the default stays atlas, and the
+emails and the workbook do not change. Everything in the atlas look stays - the bar, search, Columns, CSV, Copy, the
+switches (Light / Auto / Dark, row height), Print, sorting and filtering, the fit steps, `site-report.js`. What
+changes is how the page is laid out:
+
+- **A header card.** What the report found, in one bold line (the report's title), its status as a small chip
+  (*CRITICAL*, *WARNING*, *HEALTHY*, *NOT RATED*), one short line of what to do. On the right: one big number - the
+  first key figure that is Critical, else Warning, else the first number - and its name. Under it, a thin strip
+  with the report's second line and **SHOW**: the job, who ran it, when, and the last runs.
+- **Status tiles**, four to a row: a dot and the figure's name in small capitals, the number large, one line of what
+  it means (its note, or *Critical - needs action*). The STIG scorecard keeps its CAT I, CAT II and CAT III tiles, each
+  dot in its CAT colour.
+- **Start here as up to three ranked cards** - *01 Up next*, *02*, *03* - each with its title, one sentence and two
+  links: **Open item** (the section that has it) and **View details** (the host, the command with Copy). More steps:
+  *Every step* shows the rest.
+- **The sections as cards**: the status chip at the top left, the row count at the top right, the title, then the
+  content - a table, a bar list (a section of two columns whose second is numbers: the label, a violet bar, the
+  number), or number cards. At the bottom: where it came from and when (the job template and the run time), a site
+  portal button where the section has one (solid light blue), and **Explore**: the section's filter, Columns and CSV,
+  and its whole text when it is longer than two lines.
+- **The sections' rail stays in view** (1200 px and wider; the user's rule for every side index): it sits under the
+  bar at the top and stays there as you scroll - as tall as the screen under the bar, with its own scroll, so a
+  section is always one click away. Its two groups fold (*Needs attention*: the Critical and Warning sections; then
+  *Everything else*). Its button puts the whole rail away and brings it back; the choice is kept in this browser. A
+  section you pick lands just under the bar. Narrower than 1200 px, the bar's list of sections (it stays at the top).
+- **Short sections side by side**: a list, a bar list or a small table (4 columns at most, about 56 characters wide)
+  sits in a row of cards - 2 or 3 to a row at 1280 px, one at 800 px. A wide table takes the whole row. The order of
+  the sections never changes.
+- **Colour.** Dark: the page deep navy (#0f1626), cards a step lighter (#141d30), 1 px edges (#24304a). Light: the page
+  a pale grey-lavender (#eef0f6), white cards, edges #dde1ea, navy text (#14213d). Links and the primary button light
+  blue. The bars violet: the first share #6d28d9 (dark #7d3df3), the second #9f7aea (dark #9780e7) - a percentage
+  column draws its share in the first and the rest in the second. The pair is checked with the dataviz palette
+  validator against the card in light and in dark (every check passes). Status colours (red, amber, green, grey) are
+  for status only, always with their word or icon. Every text colour is 4.5:1 or better on the card and the page.
+- **Type**: the system's own fonts (Segoe UI Variable on Windows), the small labels - section chips, tile names, table
+  headings - upper case and letter-spaced in a mono face (Cascadia Mono), the numbers large with every digit the same
+  width. Nothing is loaded from elsewhere.
+- **The index page** in the same look: a header card (*4 reports need attention.*, that number on the right, SHOW for
+  the counts), a tile each for Critical, Warning, Healthy and Not rated, up to three cards for the worst reports (Open
+  item: its latest page; View details: its first step and last runs), then every report by area as in the brief look.
+- **The ticket insights pages** (they draw their own page) take the ops colours and its small labels.
+- SHOW, View details, Every step, Explore, the rail's groups and its button, and the tabs are HTML and CSS: they work
+  without the page's script (it keeps the rail's choice for the next page).
+
+To set up:
+
+```yaml
+# playbooks/group_vars/all.yml
+report_web_theme: ops                        # the report website only; the default is atlas
+```
+
+The next run of each report draws its page in the ops look (the index on the next run of any report).
+`report_web_theme: atlas` goes back. Checked at 1280 and 800 px wide, light and dark; no phone layout of its own (a
+phone gets the page as at 800 px, its tables as in atlas).
+
 `report_web_theme: portal` (or standard, command, glass) gives the website an email's look again, as before 0.43.0;
 the index page is then in the portal look.
 
 ```yaml
 # playbooks/group_vars/all.yml
 report_email_theme: command                  # the emails: standard, command, portal or glass
-report_web_theme: atlas                      # the website (the default; brief, or an email look)
+report_web_theme: atlas                      # the website (the default; brief, ops, or an email look)
 report_logo_file: files/report_logo.png      # both
 ```
 

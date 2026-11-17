@@ -54,7 +54,7 @@ description:
     wrong password, access denied, no such share or folder, the realm) is not retried.
   - With required false, a publish that still fails is not a failure - published false and error (why) are returned,
     with a warning; the role then says it in the email.
-  - A page in the atlas or brief look carries its script (roles/site_email/templates/site_report.js); it is written beside the
+  - A page in the atlas, brief or ops look carries its script (roles/site_email/templates/site_report.js); it is written beside the
     folder's top as site-report.js too (when it changed), and the page and the index load it from there - a web server
     whose Content-Security-Policy allows no inline script (script-src 'self') runs that one.
 options:
@@ -85,7 +85,7 @@ options:
   smb_encrypt: {description: Encrypt the share's traffic (SMB 3); a share that requires it is encrypted anyway., type: bool, default: false}
   smb_port: {description: The share's port., type: int, default: 445}
   footer: {description: With keep - the email's footer line (the AAP job, who started it, when) for the copied page., type: str, default: ''}
-  theme: {description: "The website's look (report_web_theme) - atlas and brief draw the index page in it too; the others, in the portal look.", type: str, default: portal}
+  theme: {description: "The website's look (report_web_theme) - atlas, brief and ops draw the index page in it too; the others, in the portal look.", type: str, default: portal}
   time_zone: {description: "The time zone the index page shows its times in (report_time_zone, 1.49.0; a name as timedatectl list-timezones prints them): 2026-11-13 05:37 CET. What is stored (when, the JSON) stays UTC. '' = UTC; a name not known here = UTC, with a warning.", type: str, default: ''}
   retries: {description: "Tries again after a failure that passes (report_web_retries); 0 = none.", type: int, default: 3}
   retry_delay: {description: Seconds between two tries (report_web_retry_delay)., type: int, default: 30}
@@ -147,8 +147,8 @@ PAL = {
 IN_USE = (errno.EACCES, errno.EBUSY, errno.EPERM, errno.ETXTBSY)    # a mounted share's file open in a browser
 RUN_KEYS = ('page', 'status', 'when', 'job', 'title', 'banner')
 WAIT = (0.5, 1, 2, 3, 4)                                 # a file in use: written again after these seconds
-SCRIPT = 'site-report.js'                                # the atlas and brief pages' script, at the folder's top
-WEB_LOOKS = ('atlas', 'brief')                           # the looks made for a browser (never an email): pages already
+SCRIPT = 'site-report.js'                                # the atlas, brief and ops pages' script, at the folder's top
+WEB_LOOKS = ('atlas', 'brief', 'ops')                   # the looks made for a browser (never an email): pages already
 SCRIPT_TAG = '<script src="site-report.js"></script>'    # the atlas page's link to it, made relative to each page
 # a page's own script: <script id="site-report-js">...</script> (site-report.js), or with data-file="name.js" a file
 # of its own at the folder's top (the ticket insights' site-insights.js), linked by <script src="name.js"></script>
@@ -766,6 +766,8 @@ def index_html(reports, index, header_text, logo, generated, tabs=(), theme='por
         return index_atlas(reports, index, header_text, logo, generated, tabs, js, tz)
     if theme == 'brief':
         return index_brief(reports, index, header_text, logo, generated, tabs, js, tz)
+    if theme == 'ops':
+        return index_ops(reports, index, header_text, logo, generated, tabs, js, tz)
     e = htmllib.escape
     counts = dict((k, 0) for k in PAL)
     for r in reports:
@@ -1282,6 +1284,178 @@ def index_brief(reports, index, header_text, logo, generated, tabs=(), js='', tz
             '<section class="hero"><h1>Reports</h1><p class="say">' + say + '</p>' +
             ('<div class="tally">' + tally + '</div>' if tally else '') + '</section>\n' + every +
             '\n<footer>Every report&#39;s last runs. Light, dark and the area tabs work without the page&#39;s script.</footer>\n</div>\n' +
+            ATLAS_SCRIPT + '\n</body>\n</html>\n')
+
+
+# ---- the ops look (report_web_theme: ops, 1.69.0): the index page as an operations console - a header card (how many
+# reports need attention, in one bold line, and that number on the right; SHOW: the counts by status), a status tile
+# each for Critical, Warning, Healthy and Not rated, up to three ranked cards (the worst reports, each with its first
+# step: Open item, View details), then every report by area as in the brief look. The same palette as
+# roles/site_email/templates/report_ops.html.j2 (tests/test_report_web.py checks they match); light and dark; the
+# switch, the tabs and View details are radio buttons and check boxes (no script needed).
+OPS_LIGHT = """--ink:#14213d;--spark:#6d28d9;--muted:#4b5672;--label:#33405e;--accent:#1d4ed8;--accent-ink:#ffffff;--accent-soft:rgba(29,78,216,.09);
+--pri:#8ec5ff;--pri-ink:#0f1a33;--pri-hover:#a9d3ff;--v1:#6d28d9;--v2:#9f7aea;
+--bg:#eef0f6;--bg2:#e6e9f1;--glow:transparent;--card:#ffffff;--card-solid:#ffffff;
+--card-strong:#f5f6fa;--th:#f5f6fa;--edge:#dde1ea;--line:#e8ebf2;
+--zebra:#fafbfd;--hover:#f0f4fd;--code:#f3f5f9;--bar:rgba(238,240,246,.88);
+--ok:#137a3a;--ok-bg:rgba(19,122,58,0.09);--ok-bd:rgba(19,122,58,0.25);--warning:#995200;
+--warning-bg:rgba(153,82,0,0.09);--warning-bd:rgba(153,82,0,0.25);--critical:#c0262d;
+--critical-bg:rgba(192,38,45,0.08);--critical-bd:rgba(192,38,45,0.25);--info:#566079;--info-bg:rgba(86,96,121,0.09);
+--info-bd:rgba(86,96,121,0.25);--low:#0b6f8a;--low-bg:rgba(11,111,138,0.09);--low-bd:rgba(11,111,138,0.25);--unknown:#566079;--unknown-bg:rgba(86,96,121,0.09);--unknown-bd:rgba(86,96,121,0.25);
+--shadow:0 1px 2px rgba(20,33,61,.05);color-scheme:light;"""
+OPS_DARK = """--ink:#e6eaf3;--spark:#9780e7;--muted:#9ba6bd;--label:#b9c2d6;--accent:#8ec5ff;--accent-ink:#0b1220;
+--accent-soft:rgba(142,197,255,.12);--pri:#8ec5ff;--pri-ink:#0b1220;--pri-hover:#a9d3ff;--v1:#7d3df3;--v2:#9780e7;
+--bg:#0f1626;--bg2:#121a2c;--glow:transparent;
+--card:#141d30;--card-solid:#141d30;--card-strong:#18223a;--th:#18223a;
+--edge:#24304a;--line:#1f2a42;--zebra:rgba(255,255,255,.015);--hover:rgba(142,197,255,.06);
+--code:#0f1626;--bar:rgba(15,22,38,.9);--ok:#5fd08a;--ok-bg:rgba(95,208,138,0.1);
+--ok-bd:rgba(95,208,138,0.28);--warning:#f2b84b;--warning-bg:rgba(242,184,75,0.1);
+--warning-bd:rgba(242,184,75,0.28);--critical:#ff8080;--critical-bg:rgba(255,128,128,0.1);
+--critical-bd:rgba(255,128,128,0.3);--info:#a3adc2;--info-bg:rgba(163,173,194,0.1);--info-bd:rgba(163,173,194,0.26);--low:#5ccfe6;--low-bg:rgba(92,207,230,0.1);--low-bd:rgba(92,207,230,0.28);
+--unknown:#a3adc2;--unknown-bg:rgba(163,173,194,0.1);--unknown-bd:rgba(163,173,194,0.26);
+--shadow:0 1px 2px rgba(0,0,0,.3);color-scheme:dark;"""
+# the brief index's style (its list, tabs, runs), then the ops look's cards, header, tiles and ranked steps
+OPS_STYLE = BRIEF_STYLE.replace('@TABS@', '') + """
+:root{--lab:ui-monospace,"Cascadia Mono","Cascadia Code",Consolas,"SF Mono",Menlo,"DejaVu Sans Mono",monospace;--gap:16px}
+body{background:var(--bg)}
+.wrap{max-width:1600px}
+.top{border-bottom:0;padding:16px 0 4px}
+.lbl,.cap,.tog,.stc,.tile .k,.pill{font-family:var(--lab);font-size:11px;font-weight:600;letter-spacing:.11em;text-transform:uppercase}
+.card{background:var(--card);border:1px solid var(--edge);border-radius:14px;box-shadow:var(--shadow)}
+.stc{display:inline-flex;align-items:center;gap:7px;line-height:1;padding:5px 9px;border-radius:999px;border:1px solid;white-space:nowrap;font-weight:650}
+.stc .d,.tile .k .d{width:7px;height:7px;border-radius:50%;background:currentColor;display:inline-block;flex:none}
+.hero{padding:0;margin:12px 0 var(--gap);overflow:hidden}
+.hgrid{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px 32px;align-items:center;padding:clamp(18px,2.2vw,28px) clamp(18px,2.4vw,32px)}
+.hero h1{margin:14px 0 0;font-size:clamp(1.3rem,.95rem + .95vw,1.75rem);font-weight:700;letter-spacing:-.018em}
+.hero .say{margin:8px 0 0}
+.hn{text-align:right;padding-left:28px;border-left:1px solid var(--line)}
+.hn .bn{font-family:var(--display);font-size:clamp(40px,2rem + 2.2vw,64px);font-weight:700;line-height:1;letter-spacing:-.04em;font-variant-numeric:tabular-nums}
+.hn .cap{color:var(--label);margin-top:8px}
+.hstrip{border-top:1px solid var(--line);background:var(--card-strong)}
+.hstrip>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:16px;padding:9px clamp(18px,2.4vw,32px);font-size:13px;color:var(--muted)}
+.hstrip>summary::-webkit-details-marker{display:none}
+.hstrip .ln1{flex:1;min-width:0}
+.tog{color:var(--accent);font-weight:650}.tog .hd,.hstrip[open] .tog .sh{display:none}.hstrip[open] .tog .hd{display:inline}
+.hstrip .tally{margin:0;padding:2px clamp(18px,2.4vw,32px) 14px}
+.hstrip>summary:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:0 0 var(--gap)}
+.tile{background:var(--card);border:1px solid var(--edge);border-radius:12px;padding:14px 16px 15px;box-shadow:var(--shadow);min-width:0}
+.tile .k{display:flex;align-items:center;gap:8px;color:var(--label)}
+.tile .v{font-family:var(--display);font-size:clamp(28px,1.4rem + 1vw,38px);font-weight:700;line-height:1.1;margin-top:10px;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.tile .n{color:var(--muted);font-size:13px;margin-top:6px}
+.tile.hot-critical{border-color:var(--critical-bd)}.tile.hot-warning{border-color:var(--warning-bd)}
+.sech{display:flex;align-items:center;gap:10px;margin:8px 2px 12px}.sech h2{margin:0;font-size:18px;font-weight:700}
+.cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--gap);margin:0 0 var(--gap)}
+.todo{position:relative;display:flex;flex-direction:column;color:var(--ink);background:var(--card);border:1px solid var(--edge);border-radius:14px;padding:18px 20px 0;box-shadow:var(--shadow);overflow:hidden;min-width:0}
+.todo:before{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:var(--unknown)}
+.todo.c-critical:before{background:var(--critical)}.todo.c-warning:before{background:var(--warning)}
+.todo .row1{display:flex;align-items:center;gap:10px}.todo .row1 .stc{margin-left:auto}
+.todo .num{font-family:var(--lab);font-size:13px;font-weight:700;color:var(--muted)}
+.todo h3{margin:12px 0 0;font-size:16px;font-weight:700;line-height:1.35;overflow-wrap:anywhere}
+.todo .next{margin:8px 0 0;color:var(--muted);font-size:14px;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:3;line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.cdx{position:absolute;opacity:0;width:1px;height:1px;margin:0;pointer-events:none}
+.cdd{display:none;margin-top:12px;font-size:13px;color:var(--muted)}.cdx:checked~.cdd{display:block}
+.cdd .sqs{margin-top:8px}
+.lnk{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:auto;padding:14px 0 15px;border-top:1px solid var(--line)}
+.todo .lnk{margin-top:16px}
+.lnk a,.lnk label{font-size:13px;font-weight:650;color:var(--accent);text-decoration:none;cursor:pointer;white-space:nowrap}
+.lnk a:hover,.lnk label:hover{text-decoration:underline;text-underline-offset:3px}
+.lnk label .c,.cdx:checked~.lnk label .o{display:none}.cdx:checked~.lnk label .c{display:inline}
+.cdx:focus-visible~.lnk label{outline:2px solid var(--accent);outline-offset:3px;border-radius:4px}
+.list{background:var(--card);border-radius:14px;box-shadow:var(--shadow)}
+.bar label .n{font-family:var(--lab)}
+.grp b{font-weight:700}
+.chip{font-weight:650}
+@media (max-width:1100px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:900px){.tiles{grid-template-columns:repeat(2,minmax(0,1fr))}.cards{grid-template-columns:minmax(0,1fr)}
+.hgrid{grid-template-columns:minmax(0,1fr)}.hn{text-align:left;padding:14px 0 0;border-left:0;border-top:1px solid var(--line)}}
+@media print{.hstrip .tog,.lnk label{display:none!important}.cdd{display:block!important}.hstrip::details-content{content-visibility:visible}
+.hero,.tile,.todo{box-shadow:none!important}}
+@TABS@"""
+OPS_WORD = {'critical': 'Critical', 'warning': 'Warning', 'ok': 'Healthy', 'low': 'Low', 'info': 'Not rated', 'unknown': 'Unavailable'}
+
+
+def _stc(status):
+    k = status if status in OPS_WORD else 'unknown'
+    return '<span class="stc s-%s"><span class="d" aria-hidden="true"></span>%s</span>' % (k, OPS_WORD[k])
+
+
+def index_ops(reports, index, header_text, logo, generated, tabs=(), js='', tz=None):
+    """The index page in the ops look: the header card (how many reports need attention - that number on the right; SHOW:
+    the counts), a tile each for Critical, Warning, Healthy and Not rated, up to three ranked cards (the worst reports,
+    worst first: Open item - its latest page, View details - its first step and last runs), then every report by area
+    (the brief look's list, a tab per area). The switch, the tabs and View details work without the page's script."""
+    e = htmllib.escape
+    counts = dict((k, 0) for k in PAL)
+    for r in reports:
+        counts[r.get('status') if r.get('status') in PAL else 'unknown'] += 1
+    need = counts['critical'] + counts['warning']
+    worst = 'critical' if counts['critical'] else 'warning' if counts['warning'] else 'ok' if reports else 'unknown'
+    if not reports:
+        title, say = 'No reports yet', 'A report job writes its page here when it runs.'
+    elif need:
+        title = '%s need%s attention.' % (_plural(need, 'report', 'reports'), 's' if need == 1 else '')
+        say = 'Start with the cards below, worst first.'
+    else:
+        title, say = 'Every report is healthy or for information.', 'Nothing needs action.'
+    last = max([str(r.get('when') or '') for r in reports] or [''])
+    line = '%s &middot; updated %s%s' % (_plural(len(reports), 'report', 'reports'), e(local_time(generated, tz)),
+                                         (' &middot; last run %s' % e(local_time(last, tz))) if last else '')
+    tally = ''.join('<span class="chip s-%s">%s<b>%d</b> %s</span>' % (k, ATLAS_ICON.get(k, ''), counts[k], label)
+                    for k, label in (('critical', 'Critical'), ('warning', 'Warning'), ('low', 'Low'), ('ok', 'Successful'), ('info', 'Info'), ('unknown', 'Unknown'))
+                    if counts[k])
+    other = counts['info'] + counts['unknown'] + counts['low']
+    parts = [_plural(counts['info'], 'for information', 'for information') if counts['info'] else '',
+             ('%d low' % counts['low']) if counts['low'] else '', ('%d unknown' % counts['unknown']) if counts['unknown'] else '']
+    tiles = ''.join(
+        '<div class="tile%s"><div class="k"><span class="d c-%s" aria-hidden="true"></span>%s</div><div class="v%s">%d</div><div class="n">%s</div></div>'
+        % ((' hot-' + k) if k in ('critical', 'warning') and n else '', k, label, (' c-' + k) if k in ('critical', 'warning') and n else '', n, note)
+        for k, label, n, note in (('critical', 'Critical', counts['critical'], 'Reports that need action now'),
+                                  ('warning', 'Warning', counts['warning'], 'Reports that need a look'),
+                                  ('ok', 'Healthy', counts['ok'], 'Reports with nothing to do'),
+                                  ('info', 'Not rated', other, ', '.join(p for p in parts if p) or 'Reports that only inform')))
+    # the ranked cards: the worst reports (Critical, then Warning; each the latest first), three at most
+    bad = sorted([r for r in reports if r.get('status') in ('critical', 'warning')], key=lambda r: str(r.get('when') or ''), reverse=True)
+    bad = sorted(bad, key=lambda r: RANK.get(r.get('status'), 2))[:3]
+    cards = []
+    for i, r in enumerate(bad):
+        latest = r.get('latest') or r.get('page') or ''
+        step = r.get('step') if isinstance(r.get('step'), dict) else None
+        if step and not step.get('more'):
+            step = first_step({'sections': [{'cards': [step]}]})
+        nxt = (step or {}).get('title') or r.get('title') or ''
+        code = ('<div class="code"><pre>%s</pre><button class="copy" type="button" hidden>Copy</button></div>' % e(step['code'])) if step and step.get('code') else ''
+        cards.append(
+            '<article class="todo c-%s"><div class="row1"><span class="num">%02d</span><span class="lbl">%s</span>%s</div>'
+            '<h3>%s</h3><p class="next">%s</p><input type="checkbox" class="cdx" id="cd%d" aria-label="View the details of %s">'
+            '<div class="cdd">%s%s<div>%s &middot; %s</div>%s</div><div class="lnk">%s<label for="cd%d"><span class="o">View details &rarr;</span>'
+            '<span class="c">Hide details &uarr;</span></label></div></article>'
+            % (r.get('status'), i + 1, 'Up next' if not i else 'Then', _stc(r.get('status')), e(r.get('name') or r.get('key') or ''), e(nxt), i,
+               e(r.get('name') or r.get('key') or ''), ('<div>%s</div>' % e(r.get('title') or '')) if step and r.get('title') else '', code,
+               e(local_time(r.get('when') or '', tz) or 'this run'), _plural(len(_runs(r)), 'run', 'runs'), _squares(index, r, tz=tz),
+               ('<a href="%s">Open item &rarr;</a>' % _href(index, latest)) if latest else '', i))
+    # every report, by area: the brief look's list
+    brief = index_brief(reports, index, header_text, logo, generated, tabs, js, tz)
+    every = brief[brief.index('<input type="radio" name="tab"'):brief.index('\n<footer>')] if reports else ''
+    rules = ''.join(re.findall(r'#t\d+:[^\n]*\n', brief))          # its area tabs' rules
+    logo_img = ('<img class="logo" src="%s" width="%d" height="%d" alt="">' % (logo[0], logo[1], logo[2])) if logo else ''
+    style = OPS_STYLE.replace('@LIGHT@', OPS_LIGHT).replace('@DARK@', OPS_DARK).replace('@TABS@', rules)
+    hero = ('<header class="hero card"><div class="hgrid"><div>%s<h1>%s</h1><p class="say">%s</p></div>%s</div>'
+            '<details class="hstrip"><summary><span class="ln1">%s</span><span class="tog" aria-hidden="true"><span class="sh">SHOW</span>'
+            '<span class="hd">HIDE</span></span></summary>%s</details></header>'
+            % (_stc(worst), e(title), e(say),
+               ('<div class="hn"><div class="bn%s">%d</div><div class="cap">Need attention</div></div>' % (' c-' + worst if need else '', need)) if reports else '',
+               line, ('<div class="tally">%s</div>' % tally) if tally else '<div class="tally">No reports yet.</div>'))
+    return ('<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
+            '<meta name="viewport" content="width=device-width, initial-scale=1">\n<meta name="color-scheme" content="light dark">\n'
+            '<title>' + e(header_text) + ' - reports</title>\n' + (script_tag(index, js) + '\n' if js else '') +
+            '<style>\n' + style + '</style>\n</head>\n<body>\n<div class="wrap">\n'
+            '<header class="top">' + logo_img + '<div class="brand">' + e(header_text) + '<span>updated ' + e(local_time(generated, tz)) +
+            '</span></div><div class="tools">' + ATLAS_SWITCH + '</div></header>\n' + hero + '\n' +
+            ('<div class="tiles">' + tiles + '</div>\n' if reports else '') +
+            ('<div class="sech"><span class="lbl">Start here</span></div>\n<div class="cards">' + ''.join(cards) + '</div>\n' if cards else '') +
+            ('<div class="sech"><h2>Every report</h2></div>\n' if reports else '') + every +
+            '\n<footer>Every report&#39;s last runs. Light, dark, the area tabs and View details work without the page&#39;s script.</footer>\n</div>\n' +
             ATLAS_SCRIPT + '\n</body>\n</html>\n')
 
 

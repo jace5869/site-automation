@@ -778,7 +778,7 @@ class WebColumns(unittest.TestCase):
         return env.get_template("report_%s.html.j2" % look).render(**base)
 
     def test_titles_hidden_compact_keep_case(self):
-        for look in ("atlas", "brief"):
+        for look in ("atlas", "brief", "ops"):
             h = self.render(look)
             self.assertIn('scope="col" title="Encrypted"><button type="button">Enc<', h)
             self.assertIn('scope="col"><button type="button">VM<', h)                 # the same name: no title
@@ -888,7 +888,7 @@ class Sorting(unittest.TestCase):
             self.assertNotIn(sink, js)
         self.assertIn("a.textContent='\\u2195'", js)
         js.encode("ascii")
-        for look in ("atlas", "brief"):
+        for look in ("atlas", "brief", "ops"):
             h = WebColumns().render(look)
             self.assertIn(":root:not(.js) th .sort{display:none}\n.js th{cursor:pointer}", h)
             self.assertNotRegex(h, r"th button\{[^}]*cursor:pointer")
@@ -927,7 +927,7 @@ window.addEventListener('load',function(){var R={errors:E},root=document.documen
                                            "ESXi host", "Cluster", "Datastore"],  # at 900 px some headers wrap, HW's does not
                "rows": [["app01", "192.0.2.45", "vmx-21", "45%", "z", "no"] + more, ["db01", "192.0.2.5", "vmx-9", "4.5%", "y", "no"] + more,
                         ["web01", "198.51.100.7", "vmx-13", "-", "x", "yes"] + more]}
-        for look in ("atlas", "brief"):
+        for look in ("atlas", "brief", "ops"):
             for theme in ("light", "dark"):
                 h = WebColumns().render(look, _report=dict(REPORT, sections=[sec]))
                 h = h.replace("<head>", "<head>\n<meta http-equiv=\"Content-Security-Policy\" content=\"require-trusted-types-for 'script'\">", 1)

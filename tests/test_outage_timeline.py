@@ -616,7 +616,7 @@ class Looks(unittest.TestCase):
     def test_the_time_line_in_atlas_and_brief(self):
         import test_report_fit as T
         env, r = T.EmailTiles()._env(), made()
-        for look in ("atlas", "brief"):
+        for look in ("atlas", "brief", "ops"):
             h = env.get_template("report_%s.html.j2" % look).render(
                 _report=ot.outage_timeline_doc(copy.deepcopy(WATCH), r, True, True), _email_footer="AAP job 4714", _page_logo_cid="",
                 _page_runs=[], report_email_header_text="x")

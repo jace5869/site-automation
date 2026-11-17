@@ -1,4 +1,4 @@
-/* site-automation - the report website's script (the atlas look; roles/site_email/templates/site_report.js). 0.63.0:
+/* site-automation - the report website's script (the atlas, brief and ops looks; roles/site_email/templates/site_report.js). 0.63.0:
    site_report_web writes it beside the index (site-report.js) and each page loads it from there, in its head - a web
    server whose Content-Security-Policy allows no inline script (script-src 'self') still runs it; the page carries it
    inline too, for where the file is not there (a page saved or copied by itself), and it runs once. Without it the
@@ -241,7 +241,7 @@
       all('details.sec').forEach(function(sec){var tb=sec.querySelector('.tw table');
         if(!tb||!tb.tBodies[0]||!tb.querySelector('tbody tr[data-pf],tbody tr[data-col]'))return;
         var rows=[].slice.call(tb.tBodies[0].rows).filter(function(r){return !r.classList.contains('xr')}),k=rows.filter(function(r){return !r.hidden}).length,
-            h2=sec.querySelector('summary h2'),c=h2&&h2.querySelector('.count'),t=h2&&h2.firstChild,w=tb.closest('.tw'),
+            h2=sec.querySelector('summary h2'),c=sec.querySelector('summary .count'),t=h2&&h2.firstChild,w=tb.closest('.tw'),
             empty=!k&&rows.some(function(r){return r._p});
         var any=ch.pf||ch.col||ch.cat||ch.h;
         if(c){if(c._n===undefined)c._n=c.textContent;c.textContent=any?String(k):c._n}
