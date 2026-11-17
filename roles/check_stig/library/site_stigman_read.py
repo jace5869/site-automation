@@ -43,8 +43,9 @@ RETURN = r'''
 hosts:
   description: "Per host (per id): {status: found / not_found / no_stig (the asset is there, without this STIG) / several /
                 no_benchmark / error, why, collection, collectionId, asset, assetId, revision, reviews: {SV-257985: {result,
-                status, ts, rule, comment (true: it has one), version, severity, title}}, earlier: {SV-257985: the same, and
-                revision} (with rules: true - a review of the rule in an earlier revision of the STIG, whose check changed since:
+                status, ts, rule, comment (true: it has one), version, severity, title, ours (1.69.1: our line in its comment),
+                ours_said (the result that line gave)}}, earlier: {SV-257985: the same, and revision} (with rules: true -
+                a review of the rule in an earlier revision of the STIG, whose check changed since:
                 STIG Manager does not carry it to the revision in use), rules (with rules: true): {SV-257985: {v, rule, version,
                 severity, title}}, create (with create, not found anywhere: {name, fqdn, collection, collectionId, benchmark,
                 revision} - and rules)}; with every: true {status, why, collection, collectionId, asset, checklists: [{asset, assetId,
@@ -65,6 +66,7 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.six.moves.urllib.parse import urlencode, quote
 from ansible.module_utils.six.moves.urllib.request import Request, urlopen
 from ansible.module_utils.six.moves.urllib.error import HTTPError, URLError
+from ansible.module_utils.site_stig_comment import split as comment_split, what_it_said
 
 SV_RE = re.compile(r"(SV-\d+)")
 
@@ -146,9 +148,13 @@ def reviews_of(rows):
     for r in rows or []:
         rule = r.get("rule") or {}
         st = r.get("status") or {}
+        ours = comment_split(r.get("comment"))[0][:600]
         rec = {"result": r.get("result") or "", "status": st.get("label", "") if isinstance(st, dict) else str(st),
                "ts": r.get("ts") or r.get("touchTs") or "", "rule": r.get("ruleId") or "", "comment": bool(r.get("comment")),
-               "version": rule.get("version") or "", "severity": rule.get("severity") or "", "title": rule.get("title") or ""}
+               "version": rule.get("version") or "", "severity": rule.get("severity") or "", "title": rule.get("title") or "",
+               # 1.69.1: our line in its comment (an earlier run's - the STIG recheck's or the import's) and the result it gave:
+               # a review we wrote as Open that is not Open now was changed by a person after us
+               "ours": ours, "ours_said": what_it_said(ours)}
         for rid in [r.get("ruleId")] + list(r.get("ruleIds") or []):
             k = sv_of(rid)
             if k and k not in out:

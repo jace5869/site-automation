@@ -9,7 +9,10 @@
 # a review changed in STIG Manager since the check is left; a review STIG Manager rejects fails the job; a plan item
 # that is not one the check gives is refused; no plan: nothing written; a review with attachments in STIG Manager is
 # left out of the check's plan, and left as it is by the update. Only GET, the token POSTs and the reviews' POST
-# reach STIG Manager. 0.72.0, a host with no asset (check_stig_update_create_assets): off - not rechecked; on - planned
+# reach STIG Manager. 1.69.1: the scenarios above with check_stig_update_refresh: false (as before); then the refresh -
+# still open planned and counted apart, Check writes nothing, written with today's line first and the POA&M note kept,
+# Accepted never refreshed, a person's Not a Finding since our Open (the scan still fails it) listed and never written.
+# 0.72.0, a host with no asset (check_stig_update_create_assets): off - not rechecked; on - planned
 # (every rule), Check creates nothing, a client without Manage is refused, then created once with its reviews.
 #   bash tests/stig/run_stig_update_test.sh        (ANSIBLE_PLAYBOOK=... to pick one; STIG_KEEP=FILE keeps the last output)
 set -u
@@ -74,6 +77,8 @@ check_stig_stigman_token_url: http://127.0.0.1:$port_sm/token
 check_stig_stigman_client_id: autostig
 check_stig_stigman_client_secret: s3cret
 report_web_dest: $work/site
+# the scenarios below as before 1.69.1 (still open: nothing written); the refresh (the default) has its own, at the end
+check_stig_update_refresh: false
 EOF
 writer='{"check_stig_stigman_client_id": "stigwrite"}'
 
@@ -120,10 +125,11 @@ r = json.load(open(sorted(glob.glob(sys.argv[1] + "/*/latest.json"))[-1]))
 r = r.get("report", r)
 s = r["sections"][0]
 assert s["title"] == "Approve writes these reviews to STIG Manager", s["title"]
-assert len(s["rows"]) == 5 and any(x[3] == "V-258176" and x[6] == "Open (accepted)" and x[7] == "Not a Finding" and x[9] == "kept" for x in s["rows"]), s["rows"]
-assert any(x[3] == "V-257779" and x[7] == "Open" and x[9] == "set" for x in s["rows"])
+ours = "ours first, a person's kept"
+assert len(s["rows"]) == 5 and any(x[3] == "V-258176" and x[6] == "Open (accepted)" and x[7] == "Not a Finding" and x[9] == ours for x in s["rows"]), s["rows"]
+assert any(x[3] == "V-257779" and x[7] == "Open" and x[9] == ours for x in s["rows"])
 PY
-then echo "ok   - ... the report starts with what Approve writes (a review's own comment kept; a finding gets one)"
+then echo "ok   - ... the report starts with what Approve writes (1.69.1: the comment - our line first, a person's kept)"
 else echo "FAIL - the report's plan section"; fails=$((fails + 1)); fi
 
 # ---- the update: Check, the read-only client, then the writing one -----------------------------------------------------
@@ -146,14 +152,17 @@ posts = [json.loads(l) for l in open(sys.argv[1])]
 assert len(posts) == 1 and posts[0]["collection"] == "1" and posts[0]["asset"] == "11", posts      # one POST for the asset
 by = dict((b["ruleId"], b) for b in posts[0]["reviews"])
 assert set(by) == {"SV-258176r1045388_rule", "SV-257779r958390_rule", "SV-257835r1044874_rule", "SV-258012r1014855_rule", "SV-258013r1045082_rule"}, by.keys()
-assert by["SV-258176r1045388_rule"]["comment"] is None                             # its POA&M comment kept
+# 1.69.1: our line first with today's date, the review's own comment (a person's POA&M note) kept below it
+c = by["SV-258176r1045388_rule"]["comment"]
+assert c.startswith("Set by the STIG recheck (site-automation), approved in AAP: OpenSCAP checked it again on localhost on 20") and \
+    c.endswith(" - Not a Finding.\n\nPOA&M 14: auditd rules in the next change window"), c
 assert by["SV-257779r958390_rule"]["comment"].startswith("Set by the STIG recheck (site-automation), approved in AAP: OpenSCAP checked it again on localhost")
 assert all(b["resultEngine"]["product"] == "OpenSCAP" and b["resultEngine"]["type"] == "scap" and b["detail"] and b["status"] == "submitted" for b in by.values())
 d = json.load(open(sys.argv[2]))
 r = [x for x in d["reviews"]["11"] if x["ruleId"] == "SV-258176r1045388_rule"][0]
-assert r["comment"] == "POA&M 14: auditd rules in the next change window", r
+assert r["comment"] == c, r
 PY
-then echo "ok   - ... one POST for the asset: result, detail, status, the result engine; a review's own comment kept, a finding's set"
+then echo "ok   - ... one POST for the asset: result, detail, status, the result engine; our line first, the person's comment kept"
 else echo "FAIL - what was posted"; head -c 1500 "$work/sm.log.writes"; fails=$((fails + 1)); fi
 
 play stigman_update.yml "the same plan again: already so, nothing written" ok -e "@$work/plan.json" -e "$writer" -- \
@@ -228,6 +237,61 @@ play stigman_update.yml "the update: a review given attachments after the check 
 if grep -qvE '^(GET /api/|POST /token$|POST /api/collections/1/reviews/11$)' "$work/sm.log"; then
     echo "FAIL - a request other than a read, the token or the asset's reviews reached STIG Manager"; grep -vE '^(GET /api/|POST /token$|POST /api/collections/1/reviews/11$)' "$work/sm.log" | head -3; fails=$((fails + 1))
 else echo "ok   - only GET, the token POSTs and POST /api/collections/1/reviews/11 reached STIG Manager"; fi
+
+# ---- 1.69.1: still open written again with a new date (check_stig_update_refresh: true, the default) -------------------
+today=$(date -u +%Y-%m-%d)
+cp "$work/sm-first.json" "$work/sm.json"
+: > "$work/sm.log"; rm -f "$work/sm.log.writes"
+fresh='{"check_stig_update_workflow": true, "check_stig_update_refresh": true}'
+play stig_recheck.yml "refresh: the still open rule planned too, counted on its own" 2 -e "$fresh" -- \
+    "NEEDS APPROVAL - 6 review(s) of 1 asset(s) to write to STIG Manager (1 refreshed: still Open, a new date)" \
+    "localhost RHEL_9_STIG V-257883: Open -> Open (submitted, refreshed: still Open, today's date)" \
+    "localhost RHEL_9_STIG V-258176: Open -> Not a Finding (submitted)"
+grep -P '^\tRUN: ' "$work/out.txt" | sed 's/^\tRUN: //' | "$py" -c 'import json, sys; json.dump({"stigman_update_plan": json.load(sys.stdin)["stigman_update_plan"]}, open(sys.argv[1], "w"))' "$work/plan-fresh.json"
+"$py" -c 'import glob, json, sys
+r = json.load(open(sorted(glob.glob(sys.argv[1] + "/*/latest.json"))[-1])); r = r.get("report", r)
+s = r["sections"][0]
+assert s["title"] == "Approve writes these reviews to STIG Manager (1 refreshed: still Open, a new date)", s["title"]
+assert [x[7] for x in s["rows"] if x[3] == "V-257883"] == ["Open - refreshed (still Open)"], s["rows"]' "$work/site" \
+    && echo "ok   - ... the report: Refreshed counted in the title, its row says so" || { echo "FAIL - the refresh in the report"; fails=$((fails + 1)); }
+play stigman_update.yml "refresh in Check mode: would write, nothing written" ok -e "@$work/plan-fresh.json" -e "$writer" --check -- \
+    "would write - localhost RHEL_9_STIG V-257883: Open -> Open (submitted, refreshed: still Open, today's date)"
+[ "$(writes)" = 0 ] && echo "ok   - ... nothing written" || { echo "FAIL - Check mode wrote"; fails=$((fails + 1)); }
+play stigman_update.yml "refresh: written - Open again, this scan's detail, today's line first, the POA&M comment kept" ok \
+    -e "@$work/plan-fresh.json" -e "$writer" -- "written - localhost RHEL_9_STIG V-257883: Open -> Open (submitted, refreshed: still Open, today's date)"
+"$py" -c 'import json, sys; d = json.load(open(sys.argv[1]))
+r = [x for x in d["reviews"]["11"] if x["ruleId"] == "SV-257883r1044925_rule"][0]
+want = ("Set by the STIG recheck (site-automation), approved in AAP: OpenSCAP checked it again on localhost on %s - still Open.\n\n"
+        "POA&M 12: the timeout is set by the new build" % sys.argv[2])
+assert (r["result"], r["status"]["label"], r["comment"]) == ("fail", "submitted", want), r
+assert r["detail"] and r["ts"] != "2026-08-15T10:00:00Z", r' "$work/sm.json" "$today" \
+    && echo "ok   - ... STIG Manager: Open (submitted), a new time and detail, the comment: today's line, then the POA&M note" \
+    || { echo "FAIL - the refreshed review: $(review SV-257883r1044925_rule)"; fails=$((fails + 1)); }
+# Accepted: never refreshed
+cp "$work/sm-first.json" "$work/sm.json"
+"$py" -c 'import json, sys; d = json.load(open(sys.argv[1]))
+for r in d["reviews"]["11"]:
+    if r["ruleId"] == "SV-257883r1044925_rule": r["status"] = {"label": "accepted"}
+json.dump(d, open(sys.argv[1], "w"))' "$work/sm.json"
+play stig_recheck.yml "refresh: a still open review that is Accepted - not planned" 2 -e "$fresh" -- \
+    "NEEDS APPROVAL - 5 review(s) of 1 asset(s) to write to STIG Manager, in the" "!V-257883: Open -> Open"
+# a person set it to Not a Finding after our Open, the scan still fails it: listed, never written
+cp "$work/sm-first.json" "$work/sm.json"
+"$py" -c 'import json, sys; d = json.load(open(sys.argv[1]))
+for r in d["reviews"]["11"]:
+    if r["ruleId"] == "SV-257883r1044925_rule":
+        r.update(result="pass", status={"label": "submitted"}, ts="2026-11-10T09:00:00Z",
+                 comment="Set by the STIG recheck (site-automation), approved in AAP: OpenSCAP checked it again on localhost on 2026-11-05 - Open.\n\nPOA&M 12: the timeout is set by the new build")
+json.dump(d, open(sys.argv[1], "w"))' "$work/sm.json"
+play stig_recheck.yml "a person set it to Not a Finding after our Open, the scan still says Open: listed, never planned" 2 -e "$fresh" -- \
+    "PERSON V-257883 (RHEL-09-412035)" "Not a Finding (submitted, 2026-11-10) by a person since our Open, the scan still says Open" "!V-257883: "
+"$py" -c 'import glob, json, sys
+r = json.load(open(sorted(glob.glob(sys.argv[1] + "/*/latest.json"))[-1])); r = r.get("report", r)
+s = [x for x in r["sections"] if x.get("title") == "Set by a person since our last write - the scan still says Open"]
+assert s and s[0]["status"] == "warning" and s[0]["rows"][0][1].startswith("V-257883") and s[0]["rows"][0][4] == "Not a Finding (submitted, 2026-11-10)", s
+assert any(t["label"] == "Set by a person, scan says Open" and t["value"] == 1 for t in r["summary"]), r["summary"]' "$work/site" \
+    && echo "ok   - ... the report: its own section (warning) and a tile" || { echo "FAIL - the person section"; fails=$((fails + 1)); }
+[ "$(review SV-257883r1044925_rule)" = "pass submitted" ] && echo "ok   - ... the person's Not a Finding as it was" || { echo "FAIL - changed"; fails=$((fails + 1)); }
 
 # ---- 0.72.0: a host with no asset (check_stig_update_create_assets) - created once approved, by a client with Manage ----
 cp "$work/sm-first.json" "$work/sm.json"

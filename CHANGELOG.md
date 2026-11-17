@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.69.1 — 2026-11-17
+
+**To set up: nothing.** `check_stig_update_refresh: true` is the default; `check_stig_update_refresh: false` is as
+before.
+
+**The STIG recheck refreshes what is still open, with a new date** (docs/STIG_DRIFT.md, "Updating STIG Manager, with
+an approval").
+
+- Workflow 37's approval also writes the rules still open (Open in STIG Manager, the scan still fails them): Open
+  again, this scan's finding text as the detail, `check_stig_update_status`, and the job's line with today's date.
+  They are counted on their own (*Refreshed*) in the plan and in `NEEDS APPROVAL`. Never one that is Accepted.
+  The site portal's one-rule recheck (workflows 46-48) does not refresh: still there, nothing to approve, as before.
+- Every review the recheck writes gets the job's line with today's date, first. A person's comment is kept below it
+  (one blank line); an earlier line of the job's is the one replaced. Read again just before the write.
+- A review the job wrote Open that a person set to Not a Finding or Not Applicable since, while the scan still says
+  Open, is never written and is listed: *Set by a person since our last write - the scan still says Open* (and a tile).
+- Workflow 40's checklist import: the job's line with today's date first, the checklist's comments below it, never an
+  older run's line of site-automation's beside a new detail.
+
 ## 1.69.0 — 2026-11-17
 
 **To set up: optional - `report_web_theme: ops`.** Nothing changes until you set it (the default stays atlas). The

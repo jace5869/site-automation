@@ -97,7 +97,8 @@
           {{ ansible_play_hosts | map('extract', hostvars) | selectattr('check_stig_results', 'defined')
              | map(attribute='check_stig_results') | flatten(levels=1)
              | stig_update_plan(check_stig_update | default(['fixed', 'now_na', 'answered']), check_stig_update_status | default('submitted'),
-                                check_stig_update_detail_max | default(8000) | int, now(utc=true).strftime('%Y-%m-%d')) }}
+                                check_stig_update_detail_max | default(8000) | int, now(utc=true).strftime('%Y-%m-%d'),
+                                check_stig_update_refresh | default(true) | bool) }}
       run_once: true
       when: check_stig_update_workflow | default(false) | bool
 
@@ -149,7 +150,10 @@
       ansible.builtin.fail:
         msg: >-
           NEEDS APPROVAL - {{ _stig_update_plan | length }} review(s) of {{ _stig_update_plan | map(attribute='assetId') | unique | list | length }}
-          asset(s) to write to STIG Manager, in the report ("Approve writes these reviews to STIG Manager"). Approve the workflow's
+          asset(s) to write to STIG Manager{{ (' (' ~ _fresh | length ~ ' refreshed: still Open, a new date)') if _fresh else '' }}, in the report
+          ("Approve writes these reviews to STIG Manager"). Approve the workflow's
           step to write them; deny it to write none. {{ _stig_update_plan | map(attribute='line') | join(' || ') }}
       run_once: true
       when: check_stig_update_workflow | default(false) | bool and _stig_update_plan | length > 0
+      vars:
+        _fresh: "{{ _stig_update_plan | selectattr('kind', 'eq', 'refresh') | list }}"

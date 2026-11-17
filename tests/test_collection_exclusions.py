@@ -6,6 +6,9 @@ import unittest
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+import ansible.module_utils         # noqa: E402 - the repository's module_utils as Ansible gives them (ansible.cfg)
+ansible.module_utils.__path__.append(os.path.join(REPO, "plugins", "module_utils"))
+
 def load(path, name):
     spec = importlib.util.spec_from_file_location(name, os.path.join(REPO, path))
     m = importlib.util.module_from_spec(spec)

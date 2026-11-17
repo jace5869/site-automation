@@ -406,7 +406,8 @@ when asked by name (`health_checks: [stig]`).
 | Fixed | Open | passes | set the review to Not a Finding (close its POA&M item) |
 | Not Applicable now | Open | Not Applicable | set it to Not Applicable |
 | Answered | Not Reviewed | pass, fail or n/a | set it as the scan says (a fail is Open: fix it or put it on the POA&M) |
-| Still open | Open | fails | nothing: the review is right |
+| Still open | Open | fails | the review is right. With workflow 37 (1.69.1, `check_stig_update_refresh`): written again with today's date |
+| Set by a person since our Open (1.69.1) | Not a Finding or Not Applicable, set by hand after the recheck wrote Open | fails | never written - listed: check which is right (a false Open, or a finding set aside) |
 | Manual review | Open or Not Reviewed | no answer (DISA's manual checks; a rule not in the scan's STIG revision) | a person reviews it |
 | Held back | Open or Not Reviewed | an answer to **a rule that changed** since the scan's STIG (below) | update Evaluate-STIG (or carry forward, below) |
 
@@ -489,13 +490,39 @@ What it writes (`check_stig_update`):
 
 | The recheck found | Written as | Detail | Comment |
 |---|---|---|---|
-| Fixed: Open, passes now | Not a Finding | what the scan found | the review's own, kept |
-| Not Applicable now: Open | Not Applicable | what the scan found | the review's own, kept |
-| Answered: Not Reviewed, the scan passes it | Not a Finding | what the scan found | the review's own, kept (or the job's line if it has none) |
-| Answered: Not Reviewed, the scan fails it | Open | what the scan found | the job's line: *Set by the STIG recheck (site-automation), approved in AAP: ...* |
+| Fixed: Open, passes now | Not a Finding | what the scan found | the job's line, first (below) |
+| Not Applicable now: Open | Not Applicable | what the scan found | the job's line, first |
+| Answered: Not Reviewed, the scan passes it | Not a Finding | what the scan found | the job's line, first |
+| Answered: Not Reviewed, the scan fails it | Open | what the scan found | the job's line, first |
+| Still open: Open, the scan still fails it (1.69.1, *Refreshed*) | Open, again | this scan's finding text | the job's line, first: *... checked it again on web01 on 2026-11-17 - still Open.* |
 
-- **Never written:** Still open, Manual review, Held back (an answer to a rule that changed since the scan's STIG revision -
-  above; unless carried forward),
+**The comment (1.69.1).** Every review the update writes gets the job's line with today's date - *Set by the STIG
+recheck (site-automation), approved in AAP: Evaluate-STIG checked it again on web01 on 2026-11-17 - Not a Finding.* -
+so the comment and the detail are always of the same run. A person's comment is never lost:
+
+- the review's comment starts with an earlier line of the job's: that line is replaced, the rest kept below it;
+- the review has a person's comment only: the job's line goes first, theirs below it (one blank line);
+- read again just before the write, so a comment added after the check is kept too.
+
+**Refreshed - still open written again (1.69.1).** `check_stig_update_refresh: true` (the default) writes the rules
+still open in the same approval: Open, this scan's detail, the status `check_stig_update_status` and the job's line with
+today's date - the review shows when it was last checked. They are counted on their own in the plan ("*(3 refreshed:
+still Open, a new date)*" in its title and in `NEEDS APPROVAL`). Never one that is **Accepted** (left as it is, and
+said). `check_stig_update_refresh: false` writes nothing for them, as before 1.69.1. The site portal's
+one-rule recheck (workflows 46-48) never refreshes: a rule that still fails is *still there* on its job page, with
+nothing to approve.
+
+**Set by a person since our Open (1.69.1).** With refresh on, the recheck also reads the scan's answer for a review
+the job last wrote Open (its line says so) that is now Not a Finding or Not Applicable - a person changed it after the
+job. When the scan still says Open, the report lists it under *Set by a person since our last write - the scan still
+says Open* (and a tile at the top), with the person's result and date and the job's last line. It is never written:
+the person's answer stays. Check which is right - a false Open (the scan's check is wrong for this host: say so in
+the review, or add the rule to `check_stig_ignore_rules`), or a finding set aside by mistake. When the scan agrees
+with the person, nothing is said.
+
+- **Never written:** Still open with `check_stig_update_refresh: false`, Manual review, Held back (an answer to a rule
+  that changed since the scan's STIG revision - above; unless carried forward), a review set by a person since our
+  Open,
   the rules in `check_stig_ignore_rules`, and **a review with attachments** in STIG Manager (below).
 - **Status:** each review is written with the status `check_stig_update_status`. The default is `submitted`, which
   leaves Accept to your reviewers in STIG Manager. `accepted` works only if the collection allows Accept and the

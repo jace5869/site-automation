@@ -163,6 +163,7 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.six.moves.urllib.parse import urlencode, quote
 from ansible.module_utils.six.moves.urllib.request import Request, urlopen
 from ansible.module_utils.six.moves.urllib.error import HTTPError, URLError
+from ansible.module_utils.site_stig_comment import merged as comment_merged
 
 SV_RE = re.compile(r"^(SV-\d+)(r\d+)?(_rule)?$", re.I)
 V_RE = re.compile(r"^V-\d+$", re.I)
@@ -1224,7 +1225,9 @@ def review_item(p, row, r, smr, m, was, ck, many=False):
     note = "Imported from the checklist %s (%s%s) by site-automation, %s%s." % (
         row["file"], ck.get("stig") or ck.get("title") or "its STIG", (" " + ck["revision"]) if ck.get("revision") else "",
         "no approval (stigman_ckl_import_auto)" if auto else "approved in AAP", (" on " + p["day"]) if p["day"] else "")
-    comment = ((r.get("comments") or "").strip() + "\n\n" + note).strip() if r.get("comments") else note
+    # 1.69.1: our line first (today's date), the checklist's own comment below it - without a line of ours from an earlier
+    # run (a checklist exported from STIG Manager carries one): never an older run's line beside a new detail
+    comment = comment_merged(note, r.get("comments"))
     label = ("%s/%s" % (row["collection"], row["asset"])) if many else row["asset"]
     item = {"kind": "import", "auto": auto, "host": row["host"], "label": row["asset"], "file": row["file"], "collection": row["collection"],
             "collectionId": row["collectionId"], "asset": row["asset"], "assetId": row["assetId"], "benchmark": m["bench"],

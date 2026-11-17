@@ -22,6 +22,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "roles", "check_stig", "library"))
 sys.path.insert(0, os.path.join(ROOT, "plugins", "filter"))
 sys.path.insert(0, os.path.join(ROOT, "tests", "stig"))
+import ansible.module_utils         # noqa: E402 - the repository's module_utils as Ansible gives them (ansible.cfg)
+ansible.module_utils.__path__.append(os.path.join(ROOT, "plugins", "module_utils"))
+sys.path.insert(0, os.path.join(ROOT, "plugins", "module_utils"))
 import make_cklb                   # noqa: E402
 import make_results                # noqa: E402
 import site_stig_scan as scan     # noqa: E402
@@ -979,6 +982,155 @@ class RevisionGuard(unittest.TestCase):
         self.assertNotIn("earlier", out["web01"], "only with rules: true (the recheck)")
 
 
+import site_stig_comment as scm    # noqa: E402 - plugins/module_utils (1.69.1)
+
+OURS_OPEN = ("Set by the STIG recheck (site-automation), approved in AAP: Evaluate-STIG checked it again on web01 on 2026-11-05 - "
+             "Open.")
+
+
+class Refresh(unittest.TestCase):
+    """1.69.1 (the user: "we need it to update the comments so it gets a new timestamp"): still open written again with
+    today's date (check_stig_update_refresh), our line first and a person's comment kept, a person's Not a Finding / Not
+    Applicable since our Open listed and never written, Accepted never written over, the checklist import's comment."""
+
+    def test_the_comment_rule(self):
+        new = "Set by the STIG recheck (site-automation), approved in AAP: Evaluate-STIG checked it again on web01 on 2026-11-17 - still Open."
+        self.assertEqual(scm.merged(new, ""), new)
+        self.assertEqual(scm.merged(new, OURS_OPEN), new)                                  # ours: replaced, never kept beside
+        self.assertEqual(scm.merged(new, "POA&M 123, waiting on the vendor."), new + "\n\nPOA&M 123, waiting on the vendor.")
+        self.assertEqual(scm.merged(new, OURS_OPEN + "\r\n\r\nPOA&M 123.\n\nSecond note."), new + "\n\nPOA&M 123.\n\nSecond note.")
+        # an older import's line (at the end, as before 1.69.1) is ours too
+        self.assertEqual(scm.merged(new, "Theirs.\n\nImported from the checklist a.ckl (RHEL 9 V2R7) by site-automation, approved in AAP on 2026-11-05."),
+                         new + "\n\nTheirs.")
+        self.assertEqual(scm.what_it_said(OURS_OPEN), "fail")
+        self.assertEqual(scm.what_it_said(new), "fail")
+        self.assertEqual(scm.what_it_said(OURS_OPEN.replace("- Open.", "- Not a Finding.")), "pass")
+        self.assertEqual(scm.what_it_said("Imported from the checklist a.ckl by site-automation."), "")
+        self.assertEqual(scm.what_it_said("A person's - Open."), "")
+        self.assertEqual(len(scm.merged(new, "x" * 40000)), scm.MAX)
+
+    def test_the_reader_keeps_our_line(self):
+        r = smr.reviews_of([{"ruleId": "SV-1r1_rule", "result": "pass", "status": {"label": "submitted"}, "ts": "2026-11-10T09:00:00Z",
+                             "comment": OURS_OPEN + "\n\nA person: checked by hand, it is set.", "rule": {}}])["SV-1"]
+        self.assertEqual((r["comment"], r["ours"], r["ours_said"]), (True, OURS_OPEN, "fail"))
+        r = smr.reviews_of([{"ruleId": "SV-1r1_rule", "result": "pass", "comment": "Mine.", "rule": {}}])["SV-1"]
+        self.assertEqual((r["ours"], r["ours_said"]), ("", ""))
+
+    def checklist(self):
+        c = sm_list(SV_1=("fail", "saved"), SV_2=("fail", "accepted"), SV_3=("pass", "submitted"), SV_4=("notapplicable", "submitted"),
+                    SV_5=("pass", "submitted"))
+        for k in ("SV-1", "SV-2"):
+            c["reviews"][k].update(rule=k + "r1_rule", comment=True, ours=OURS_OPEN, ours_said="fail")
+        for k in ("SV-3", "SV-4"):                   # we wrote them Open; a person set them NF / NA since
+            c["reviews"][k].update(rule=k + "r1_rule", comment=True, ours=OURS_OPEN, ours_said="fail", ts="2026-11-10T09:00:00Z")
+        c["reviews"]["SV-5"].update(rule="SV-5r1_rule")   # Not a Finding, no line of ours: a person's from the start
+        c.update(collectionId="7", assetId="42")
+        return c
+
+    def test_asked_person(self):
+        c = self.checklist()
+        self.assertEqual(dict((k, w) for k, (w, _r) in sf.recheck_asked(c, which=["open", "not_reviewed", "person"]).items()),
+                         {"SV-1": "open", "SV-2": "open", "SV-3": "person", "SV-4": "person"})
+        self.assertNotIn("SV-3", sf.recheck_asked(c))                               # without refresh: as before
+        self.assertEqual(sf.stig_recheck_vulns(c, which=["open", "person"]), ["V-1", "V-2", "V-3", "V-4"])
+
+    def results(self, **scan):
+        return sf.stig_recheck(self.checklist(), [dict(recheck_scan(**scan), time="2026-11-17T06:00:00Z")], "web01",
+                               which=["open", "not_reviewed", "person"])
+
+    def test_still_open_refreshed(self):
+        res = self.results(SV_1="fail", SV_2="fail", SV_3="fail", SV_4="pass")
+        self.assertEqual([r["key"] for r in res[0]["still_open"]], ["SV-1", "SV-2"])
+        p = sf.stig_update_plan(res, day="2026-11-17", status="saved", refresh=True)
+        self.assertEqual([(x["v"], x["kind"], x["result"], x["status"]) for x in p], [("V-1", "refresh", "fail", "saved")])   # SV-2: Accepted
+        one = p[0]
+        self.assertEqual(one["comment"], "Set by the STIG recheck (site-automation), approved in AAP: Evaluate-STIG checked it again on web01 "
+                                         "on 2026-11-17 - still Open.")
+        self.assertTrue(one["comment_merge"])
+        self.assertEqual(one["detail"], "Found: it is not set.")                    # this scan's finding text
+        self.assertEqual(one["was"], {"result": "fail", "status": "saved", "ts": "2026-09-01T00:00:00Z"})
+        self.assertIn("refreshed: still Open, today's date", one["line"])
+        self.assertEqual(sf.stig_update_plan(res, day="2026-11-17"), [], "refresh false: as before (still open: nothing)")
+        sec = sf.stig_update_sections(p)[0]
+        self.assertEqual(sec["title"], "Approve writes these reviews to STIG Manager (1 refreshed: still Open, a new date)")
+        self.assertEqual(sec["rows"][0][7], "Open - refreshed (still Open)")
+
+    def test_a_person_since_our_open_listed_never_written(self):
+        res = self.results(SV_1="fail", SV_2="fail", SV_3="fail", SV_4="pass")
+        self.assertEqual([r["key"] for r in res[0]["person"]], ["SV-3"], "SV-4: the scan agrees with the person - nothing to say")
+        self.assertEqual(res[0]["person"][0]["sm_ours"], OURS_OPEN)
+        p = sf.stig_update_plan(res, day="2026-11-17", refresh=True)
+        self.assertNotIn("V-3", [x["v"] for x in p])
+        self.assertNotIn("V-4", [x["v"] for x in p])
+        secs = sf.stig_recheck_sections(res)
+        pe = [s for s in secs if s.get("title") == "Set by a person since our last write - the scan still says Open"][0]
+        self.assertEqual(pe["status"], "warning")
+        self.assertEqual(pe["rows"][0][:6], ["web01", "V-3 (X-3)", "CAT II", "Rule SV-3", "Not a Finding (submitted, 2026-11-10)", "FAIL"])
+        self.assertEqual(pe["rows"][0][6], OURS_OPEN)
+        self.assertTrue(any(l.startswith("  PERSON V-3") for l in sf.stig_recheck_lines(res[0])))
+
+    class C(object):
+        def __init__(self, db):
+            self.db, self.posts, self.files = db, [], {}
+
+        def review(self, c, a, rule):
+            return self.db.get(rule)
+
+        def attachments(self, c, a, rule):
+            return self.files.get(rule, (0, []))
+
+        def write(self, c, a, reviews):
+            self.posts.append((c, a, reviews))
+            for r in reviews:
+                self.db[r["ruleId"]] = {"result": r["result"], "status": {"label": r["status"]}, "ts": "now", "comment": r["comment"]}
+            return {"affected": {"updated": len(reviews), "inserted": 0}, "rejected": []}
+
+    def plan(self):
+        res = self.results(SV_1="fail", SV_2="fail")
+        p = sf.stig_update_plan(res, day="2026-11-17", status="saved", refresh=True)
+        # and the Accepted one, as an older plan would have it (the update never writes over it either)
+        return p + [dict(p[0], ruleId="SV-2r1_rule", v="V-2", was={"result": "fail", "status": "accepted", "ts": "2026-09-01T00:00:00Z"})]
+
+    def test_the_update_writes_a_refresh_and_keeps_a_person_comment(self):
+        db = {"SV-1r1_rule": {"result": "fail", "status": {"label": "saved"}, "ts": "2026-09-01T00:00:00Z",
+                              "comment": OURS_OPEN + "\n\nPOA&M 123: waiting on the vendor."},
+              "SV-2r1_rule": {"result": "fail", "status": {"label": "accepted"}, "ts": "2026-09-01T00:00:00Z", "comment": "Accepted by the ISSO."}}
+        c = self.C(db)
+        items = smu.update({"plan": self.plan()}, c, False)
+        self.assertEqual([(i["v"], i["state"]) for i in items], [("V-1", "written"), ("V-2", "already so")])
+        self.assertEqual(items[1]["why"], "Accepted in STIG Manager - not refreshed")
+        sent = c.posts[0][2]
+        self.assertEqual([r["ruleId"] for r in sent], ["SV-1r1_rule"])
+        self.assertEqual(sent[0]["comment"], "Set by the STIG recheck (site-automation), approved in AAP: Evaluate-STIG checked it again on web01 "
+                                             "on 2026-11-17 - still Open.\n\nPOA&M 123: waiting on the vendor.")
+        self.assertEqual((sent[0]["result"], sent[0]["status"], sent[0]["detail"]), ("fail", "saved", "Found: it is not set."))
+        self.assertEqual(db["SV-2r1_rule"]["comment"], "Accepted by the ISSO.")      # untouched
+
+    def test_check_mode_writes_nothing(self):
+        c = self.C({"SV-1r1_rule": {"result": "fail", "status": {"label": "saved"}, "ts": "2026-09-01T00:00:00Z", "comment": "x"},
+                    "SV-2r1_rule": {"result": "fail", "status": {"label": "accepted"}, "ts": "2026-09-01T00:00:00Z"}})
+        items = smu.update({"plan": self.plan()}, c, True)
+        self.assertEqual([i["state"] for i in items], ["would write", "already so"])
+        self.assertEqual(c.posts, [])
+
+    def test_a_person_changed_it_since_the_check(self):
+        c = self.C({"SV-1r1_rule": {"result": "pass", "status": {"label": "submitted"}, "ts": "2026-11-17T07:00:00Z"}})
+        items = smu.update({"plan": self.plan()[:1]}, c, False)
+        self.assertEqual((items[0]["state"], c.posts), ("changed since", []))
+
+    def test_the_playbooks_pass_it(self):
+        for pb in ("stig_recheck.yml", "win_stig_recheck.yml"):
+            with open(os.path.join(ROOT, "playbooks", pb)) as f:
+                t = f.read()
+            self.assertIn("check_stig_update_refresh | default(true) | bool) }}", t, pb)
+            self.assertIn("refreshed: still Open, a new date", t, pb)
+        for tf in ("recheck_read.yml", "recheck_compare.yml"):
+            with open(os.path.join(ROOT, "roles", "check_stig", "tasks", tf)) as f:
+                self.assertIn("(['person'] if check_stig_update_refresh | default(true) | bool else [])", f.read(), tf)
+        with open(os.path.join(ROOT, "roles", "check_stig", "defaults", "main.yml")) as f:
+            self.assertIn("\ncheck_stig_update_refresh: true\n", f.read())
+
+
 class Update(unittest.TestCase):
     """Workflow 37: the recheck's plan (stig_update_plan) and the write after the approval (site_stigman_update)."""
 
@@ -996,7 +1148,10 @@ class Update(unittest.TestCase):
         one = p[0]
         self.assertEqual((one["collectionId"], one["assetId"], one["ruleId"], one["status"]), ("7", "42", "SV-1r0_rule", "submitted"))
         self.assertEqual(one["was"], {"result": "fail", "status": "accepted", "ts": "2026-09-01T00:00:00Z"})
-        self.assertIsNone(one["comment"], "a review with a comment keeps it")
+        # 1.69.1: our line, always - today's date; the update keeps a person's comment below it (comment_merge)
+        self.assertEqual(one["comment"], "Set by the STIG recheck (site-automation), approved in AAP: Evaluate-STIG checked it again on web01 on "
+                                         "2026-11-02 - Not a Finding.")
+        self.assertTrue(one["comment_merge"])
         self.assertTrue(p[2]["comment"].startswith("Set by the STIG recheck (site-automation), approved in AAP: Evaluate-STIG checked it again on web01 on 2026-11-02"))
         self.assertEqual(p[2]["detail"], "Found: it is not set.")
         self.assertEqual(p[0]["engine"], {"type": "script", "product": "Evaluate-STIG", "time": "2026-11-02T08:00:00Z"})
@@ -1006,7 +1161,8 @@ class Update(unittest.TestCase):
         self.assertTrue(all(len(x["detail"]) <= 60 for x in self.plan(detail_max=60)))
         self.assertEqual(sf.stig_update_plan([{"scanned": True, "fixed": [{"rule_id": "SV-1r1_rule"}]}]), [], "no ids: nothing written")
         sec = sf.stig_update_sections(p)[0]
-        self.assertEqual((sec["title"], len(sec["rows"]), sec["rows"][0][9]), ("Approve writes these reviews to STIG Manager", 3, "kept"))
+        self.assertEqual((sec["title"], len(sec["rows"]), sec["rows"][0][9]), ("Approve writes these reviews to STIG Manager", 3,
+                                                                               "ours first, a person's kept"))
         self.assertEqual(sf.stig_update_sections([])[0]["title"], "Nothing to write to STIG Manager")
 
     def test_plan_windows_each_checklist_its_asset(self):
@@ -1095,7 +1251,7 @@ class Update(unittest.TestCase):
         self.assertEqual([i["state"] for i in items], ["written", "already so", "rejected", "bad"])
         self.assertEqual([r["ruleId"] for r in c.posts[0][2]], ["SV-1r0_rule", "SV-4r1_rule"])
         self.assertEqual((c.posts[0][0], c.posts[0][1]), ("7", "42"))
-        self.assertIsNone(c.posts[0][2][0]["comment"])
+        self.assertEqual(c.posts[0][2][0]["comment"], p[0]["comment"])                # no comment there: our line alone
         self.assertEqual(sorted(c.posts[0][2][0]), ["comment", "detail", "result", "resultEngine", "ruleId", "status"])
         c = C()
         c.db["SV-1r0_rule"]["ts"] = "2026-10-30T00:00:00Z"                  # a person changed it since the check

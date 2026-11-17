@@ -57,7 +57,10 @@
 # without -SelectVuln, a full scan, a full checklist already there) never plans another rule's review (1.68.0, Codex P1)
 - name: STIG recheck | the rules to check again on this host
   ansible.builtin.set_fact:
-    _stig_recheck_vulns: "{{ _sm_host | stig_recheck_vulns(check_stig_stigman_statuses, check_stig_recheck) | stig_only_rules(check_stig_recheck_rules) }}"
+    # 1.69.1 (check_stig_update_refresh): and the rules a person set to Not a Finding / Not Applicable since our Open - read, never written
+    _stig_recheck_vulns: >-
+      {{ _sm_host | stig_recheck_vulns(check_stig_stigman_statuses, check_stig_recheck + (['person'] if check_stig_update_refresh | default(true) | bool else []))
+         | stig_only_rules(check_stig_recheck_rules) }}
     _stig_recheck_sm: "{{ _sm_host }}"
     _stig_recheck_new: "{{ _sm_host.create is defined }}"
   vars:

@@ -20,6 +20,8 @@ sys.path.insert(0, os.path.join(ROOT, "roles", "stigman_ckl_import", "library"))
 sys.path.insert(0, os.path.join(ROOT, "roles", "stigman_update", "library"))
 sys.path.insert(0, os.path.join(ROOT, "plugins", "filter"))
 sys.path.insert(0, os.path.join(ROOT, "tests", "stig"))
+import ansible.module_utils         # noqa: E402 - the repository's module_utils as Ansible gives them (ansible.cfg)
+ansible.module_utils.__path__.append(os.path.join(ROOT, "plugins", "module_utils"))
 import make_cklb                   # noqa: E402
 import site_ckl_import as ci       # noqa: E402
 import site_stigman_update as smu  # noqa: E402
@@ -375,6 +377,28 @@ class Plan(unittest.TestCase):
         self.assertEqual(cf.stig_ckl_lines(cks)[0].split(" -> ")[1][:13], "vrops01 (new)")
         empty = cf.stig_ckl_report({"error": "no checklist (*.ckl) in x"}, [], [], True)
         self.assertEqual(empty["status"], "critical")
+
+
+class ImportComment(unittest.TestCase):
+    """1.69.1: a review the import writes - our line first with today's date, the checklist's own comment below it, never
+    an older run's line of ours (a checklist exported from STIG Manager carries one) beside the new detail."""
+
+    def item(self, comments):
+        row = {"file": "web01/rhel9.ckl", "host": "web01", "asset": "web01", "collection": "RHEL", "collectionId": "3", "assetId": "8", "new": False}
+        r = {"result": "fail", "details": "Found on 2026-11-17: it is not set.", "comments": comments, "engine": None}
+        return ci.review_item(params(day="2026-11-17", auto="none"), row, r, {"ruleId": "SV-1r1_rule"}, {"bench": "RHEL_9_STIG", "revision": "V2R7"},
+                              {"result": "fail", "status": "submitted", "ts": "2026-11-05T06:00:00Z"}, {"stig": "RHEL 9", "revision": "V2R7"})
+
+    def test_ours_first_theirs_kept_no_old_line(self):
+        ours = "Imported from the checklist web01/rhel9.ckl (RHEL 9 V2R7) by site-automation, approved in AAP on 2026-11-17."
+        self.assertEqual(self.item("")["comment"], ours)
+        self.assertEqual(self.item("Checked by the admin.")["comment"], ours + "\n\nChecked by the admin.")
+        old = ("Checked by the admin.\n\nImported from the checklist web01/rhel9.ckl (RHEL 9 V2R7) by site-automation, approved in AAP on "
+               "2026-11-05.\n\nSet by the STIG recheck (site-automation), approved in AAP: Evaluate-STIG checked it again on web01 on 2026-11-05 - Open.")
+        got = self.item(old)["comment"]
+        self.assertEqual(got, ours + "\n\nChecked by the admin.")
+        self.assertNotIn("2026-11-05", got)
+        self.assertEqual(self.item(old)["detail"], "Found on 2026-11-17: it is not set.")
 
 
 class Folder(unittest.TestCase):

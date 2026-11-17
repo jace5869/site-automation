@@ -20,7 +20,10 @@ description:
   - "For each review of C(plan) - grouped by collection and asset - reads the review again; one that changed since the
     check read it (its result, status or time) is left as it is (state C(changed since))."
   - "Writes the rest of an asset's reviews in one POST /collections/{collectionId}/reviews/{assetId} - result, detail,
-    comment (null keeps the review's own), resultEngine, status - and reads each again after."
+    comment (null keeps the review's own; 1.69.1, comment_merge - the STIG recheck's: its line first, the review's own
+    comment as it is just before the write kept below it, an older line of site-automation's dropped), resultEngine,
+    status - and reads each again after. A refresh (kind refresh: still Open, written again for a new date) is written
+    even though its result and status do not change - never over one that is Accepted."
   - "A review with attachments in STIG Manager (its metadata key C(artifacts): the files a person attached as evidence)
     is left as it is (state C(has attachments)) - unless C(skip_attachments) is false. Read again just before the
     write, so one attached after the check is left too."
@@ -90,6 +93,7 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.six.moves.urllib.parse import urlencode, quote
 from ansible.module_utils.six.moves.urllib.request import Request, urlopen
 from ansible.module_utils.six.moves.urllib.error import HTTPError, URLError
+from ansible.module_utils.site_stig_comment import merged as comment_merged
 
 ID_RE = re.compile(r"^[0-9]{1,20}$")
 # a rule id: any text up to 45 characters (STIG Manager's own rule) - DISA's SV-257985r1069364_rule, and SV-PHTN-50-000003 as STIG
@@ -667,12 +671,18 @@ def update(p, client, check):
         go = []
         for row, it in rows:
             try:
-                now = held(client.review(c, a, it["ruleId"]))
+                raw = client.review(c, a, it["ruleId"])
+                now = held(raw)
             except RuntimeError as e:
                 row.update(state="error", why=str(e))
                 continue
             row["before"] = now
-            if now["result"] == it["result"] and now["status"] == it["status"]:
+            fresh = it.get("kind") == "refresh"
+            if fresh and now["status"] == "accepted":
+                # 1.69.1: a refresh never writes over Accepted (a person's acceptance stays)
+                row.update(state="already so", why="Accepted in STIG Manager - not refreshed")
+                continue
+            if now["result"] == it["result"] and now["status"] == it["status"] and not fresh:
                 row.update(state="already so", why="")          # written before (this plan run twice), or by a person
                 continue
             if not same(it["was"], now):
@@ -689,6 +699,9 @@ def update(p, client, check):
                     row.update(state="has attachments", why="%s in STIG Manager%s - left as it is (the evidence stays with its result)" % (
                         ("%d attachment(s)" % n) if n > 0 else "attachments", (": " + ", ".join(names[:5])) if names else ""))
                     continue
+            if it.get("comment_merge") and it.get("comment") is not None:
+                # 1.69.1: our line first, a person's comment of the review as it is now kept below it, an older line of ours dropped
+                it = dict(it, comment=comment_merged(it["comment"], (raw or {}).get("comment")))
             go.append((row, it))
         if not go:
             continue

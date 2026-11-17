@@ -16,6 +16,9 @@ MODULES = ["roles/stigman_ckl_import/library/site_stig_scorecard.py", "roles/sti
            "roles/check_stig/library/site_stigman_attachments.py"]
 
 
+import ansible.module_utils         # noqa: E402 - the repository's module_utils as Ansible gives them (ansible.cfg)
+ansible.module_utils.__path__.append(os.path.join(REPO, "plugins", "module_utils"))
+
 def load(path):
     spec = importlib.util.spec_from_file_location(os.path.basename(path)[:-3], os.path.join(REPO, path))
     m = importlib.util.module_from_spec(spec)

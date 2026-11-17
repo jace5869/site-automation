@@ -86,8 +86,10 @@ Attachments win: a review with attachments is never written, even with `stigman_
 
 - **Detail:** the checklist's finding details (InSpec: *passed :: TEST ...*); a checklist with none gets the file's name
   and its answer. Cut at `stigman_ckl_import_detail_max` (8000).
-- **Comment:** the checklist's comments, then the job's line: *Imported from the checklist vrops01/apache.ckl (VMware Aria
-  Operations 8.x Apache Profile) by site-automation, approved in AAP on 2026-11-05.*
+- **Comment (1.69.1):** the job's line first, with today's date - *Imported from the checklist vrops01/apache.ckl (VMware
+  Aria Operations 8.x Apache Profile) by site-automation, approved in AAP on 2026-11-17.* - then the checklist's own
+  comments below it. A line of site-automation's from an earlier run (a checklist exported from STIG Manager carries
+  the review's comment) is left out, so the comment is never older than the detail beside it.
 - **Status:** `stigman_ckl_import_status` (`submitted`), as workflow 37: Accept stays with your reviewers.
 - **Result engine:** *InSpec* for an InSpec checklist, *Evaluate-STIG* for one of Evaluate-STIG's; none for one a person
   filled in (STIG Manager then shows it as a person's review).
