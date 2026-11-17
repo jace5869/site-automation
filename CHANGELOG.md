@@ -24,6 +24,12 @@
 - Tests: tests/test_stig_cora.py (the math by hand: each band, the Low case, a CAT without rules, unassessed rules; the
   read, the point, the page, the email, the workbook, the weight), the scorecard end-to-end test.
 
+**Fixed**
+
+- Report website: a table made wider by its *Copy* buttons (beside a command) is fitted again. It could stick out of
+  its card by the buttons' width at about 800 px (seen on the scorecard's *Findings* in the ops look).
+- `tests/stig/run_scorecard_db_test.sh` reads the platform row's rules as 1.70.0 keeps them (`{rules, ra, rd}`).
+
 ## 1.69.1 — 2026-11-17
 
 **To set up: nothing, unless the checklist import should write over Accepted reviews too.** The new settings keep what

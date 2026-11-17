@@ -175,7 +175,8 @@ DB_ENV="$DB" run "the first run with the credential: the table made, this run's 
     || bad "  ...schema_version or the collection's row"
 # 1.67.0: a row per collection and platform (VMware: Other; RHEL 9: Linux, and Other for rhel01's Apache STIG; Windows)
 prow() { q report_reader "$rpw" "SELECT ${2:-COUNT(*)} FROM stig_scorecard_platform${1:+ WHERE $1}"; }
-[ "$(prow)" = 4 ] && [ "$(prow "collection = '2' AND platform = 'Linux'" "CONCAT(assets, '/', cat1, '/', cat2, '/', cat3, '/', JSON_LENGTH(rules))")" = "6/1/8/2/4" ] \
+# 1.70.0: the rules column is an object {rules, ra, rd} when the platform has CORA counts - its rules then
+[ "$(prow)" = 4 ] && [ "$(prow "collection = '2' AND platform = 'Linux'" "CONCAT(assets, '/', cat1, '/', cat2, '/', cat3, '/', JSON_LENGTH(COALESCE(JSON_EXTRACT(rules, '$.rules'), rules)))")" = "6/1/8/2/4" ] \
     && ok "  ...stig_scorecard_platform: a row per collection and platform, its counts and rules" || bad "  ...platform rows: $(prow)"
 # 1.68.0: a row per collection, host and platform - as many as the point's h holds, each with the host's counts
 hrow() { q report_reader "$rpw" "SELECT ${2:-COUNT(*)} FROM stig_scorecard_host${1:+ WHERE $1}"; }

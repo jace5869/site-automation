@@ -180,7 +180,9 @@
     try{var kept=JSON.parse(localStorage.getItem(colsig(d))||'null');if(kept&&kept.length!==undefined){colput(d,kept);refit(d)}}catch(e){}
     d.addEventListener('change',function(){colkeep(d)});
     if(b){b.hidden=false;b.addEventListener('click',function(){all('input',d).forEach(function(i){i.checked=true});colkeep(d)})}});
-  fit();
+  /* 1.70.2: 'grow' - the Copy buttons beside the commands came after the first fit; a table they made wider goes on
+     from its steps (the same width would not fit it again) */
+  fit('grow');
   document.addEventListener('click',function(e){all('details.cols[open]').forEach(function(d){if(!d.contains(e.target))d.open=false})});
   /* a row is shown unless the table's filter, the search or the page's filter buttons (1.67.0) take it away */
   function vis(r){var h=!!(r._f||r._s||r._p||r._d);if(r.hidden!==h)r.hidden=h;
