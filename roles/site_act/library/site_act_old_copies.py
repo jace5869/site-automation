@@ -41,6 +41,7 @@ import os
 import pwd
 import re
 import shutil
+import stat
 import subprocess
 
 from ansible.module_utils.basic import AnsibleModule
@@ -129,46 +130,102 @@ def unsafe(target, backup_dir):
     return ""
 
 
-def backup(path, backup_dir, now):
+DIR_FLAGS = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+
+
+def open_dir(path, dir_fd=None):
+    """A folder opened once, never through a link (the last name), and checked on the open fd: a folder, ours (the user this
+    runs as). Everything after is done relative to the fd, so a swap for a link afterwards leads nowhere."""
+    try:
+        fd = os.open(path, DIR_FLAGS, dir_fd=dir_fd)
+    except OSError as e:
+        if e.errno in (errno.ELOOP, errno.ENOTDIR):
+            raise OSError("%s is a link or not a folder: nothing was changed there" % path)
+        raise
+    st = os.fstat(fd)
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.geteuid():
+        os.close(fd)
+        raise OSError("%s is not a folder of this user: nothing was changed there" % path)
+    return fd
+
+
+def sha_of(f):
+    """The sha256 of an open binary file, from its start."""
+    f.seek(0)
+    h = hashlib.sha256()
+    for block in iter(lambda: f.read(65536), b""):
+        h.update(block)
+    f.seek(0)
+    return h.hexdigest()
+
+
+def backup(path, backup_dir, now, src=None):
     """Keep the old one: act.<UTC time>.<sha256 first 8> in backup_dir (0700), made new (never over a file that is there;
-    a number is added when the name is taken), and checked against the original. A link is kept as a link."""
-    if os.path.islink(backup_dir):
-        raise OSError("%s is a link" % backup_dir)
-    if not os.path.isdir(backup_dir):
-        os.makedirs(backup_dir, 0o700)
-    os.chmod(backup_dir, 0o700)
-    if os.path.islink(path):
-        dest = os.readlink(path)
-        base = os.path.join(backup_dir, "act.%s.%s" % (now, hashlib.sha256(dest.encode("utf-8")).hexdigest()[:8]))
-        for n in range(1000):
-            name = base if n == 0 else "%s.%d" % (base, n)
-            try:
-                os.symlink(dest, name)
-                return name
-            except OSError as e:
-                if e.errno != errno.EEXIST:
-                    raise
-        raise OSError("no free name for the backup in %s" % backup_dir)
-    want = sha256(path)
-    base = os.path.join(backup_dir, "act.%s.%s" % (now, want[:8]))
-    for n in range(1000):
-        name = base if n == 0 else "%s.%d" % (base, n)
+    a number is added when the name is taken), and checked against the original. A link is kept as a link. src: the
+    original already open (a binary file object); else path is opened here, never through a link. The folders are opened
+    once and used by their fds (1.70.1)."""
+    parent = open_dir(os.path.dirname(backup_dir) or ".")
+    bfd = None
+    try:
+        name = os.path.basename(backup_dir)
         try:
-            fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            os.mkdir(name, 0o700, dir_fd=parent)
         except OSError as e:
-            if e.errno == errno.EEXIST:
-                continue
-            raise
-        with os.fdopen(fd, "wb") as out, open(path, "rb") as src:
-            shutil.copyfileobj(src, out)
-            out.flush()
-            os.fsync(out.fileno())
-        if sha256(name) != want:
-            os.unlink(name)
-            raise OSError("the copy kept in %s differs from %s" % (backup_dir, path))
-        shutil.copystat(path, name)
-        return name
-    raise OSError("no free name for the backup in %s" % backup_dir)
+            if e.errno != errno.EEXIST:
+                raise
+        bfd = open_dir(name, parent)
+        os.fchmod(bfd, 0o700)
+        if src is None and os.path.islink(path):
+            dest = os.readlink(path)
+            base = "act.%s.%s" % (now, hashlib.sha256(dest.encode("utf-8")).hexdigest()[:8])
+            for n in range(1000):
+                one = base if n == 0 else "%s.%d" % (base, n)
+                try:
+                    os.symlink(dest, one, dir_fd=bfd)
+                    return os.path.join(backup_dir, one)
+                except OSError as e:
+                    if e.errno != errno.EEXIST:
+                        raise
+            raise OSError("no free name for the backup in %s" % backup_dir)
+        own = src is None
+        if own:
+            src = os.fdopen(os.open(path, os.O_RDONLY | NOFOLLOW), "rb")
+        try:
+            want = sha_of(src)
+            base = "act.%s.%s" % (now, want[:8])
+            for n in range(1000):
+                one = base if n == 0 else "%s.%d" % (base, n)
+                try:
+                    fd = os.open(one, os.O_RDWR | os.O_CREAT | os.O_EXCL | NOFOLLOW, 0o600, dir_fd=bfd)
+                except OSError as e:
+                    if e.errno == errno.EEXIST:
+                        continue
+                    raise
+                try:
+                    with os.fdopen(fd, "r+b") as out:
+                        shutil.copyfileobj(src, out)
+                        out.flush()
+                        os.fsync(out.fileno())
+                        if sha_of(out) != want:
+                            raise OSError("the copy kept in %s differs from %s" % (backup_dir, path))
+                        st = os.fstat(src.fileno())
+                        os.fchmod(out.fileno(), stat.S_IMODE(st.st_mode))
+                except BaseException:
+                    try:
+                        os.unlink(one, dir_fd=bfd)
+                    except OSError:
+                        pass
+                    raise
+                return os.path.join(backup_dir, one)
+            raise OSError("no free name for the backup in %s" % backup_dir)
+        finally:
+            if own:
+                src.close()
+    finally:
+        if bfd is not None:
+            os.close(bfd)
+        os.close(parent)
 
 
 def link(path, target):
@@ -243,19 +300,55 @@ def say_copy(r):
     return "%s was %s: %s." % (r["path"], what, done)
 
 
-def put_in_place(staged, target):
-    """The new ACT over the installed one in one step: a file in the same folder, then os.replace."""
-    os.chmod(staged, 0o755)
-    if os.path.dirname(os.path.abspath(staged)) == os.path.dirname(os.path.abspath(target)):
-        os.replace(staged, target)
-        return
-    tmp = "%s.site-act-new.%d" % (target, os.getpid())
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o755)
-    with os.fdopen(fd, "wb") as out, open(staged, "rb") as src:
-        shutil.copyfileobj(src, out)
-    os.chmod(tmp, 0o755)
-    os.replace(tmp, target)
-    os.unlink(staged)
+def put_in_place(dfd, staged, tname):
+    """The new ACT over the installed one in one step: a file made new in the same folder (by its fd), checked against the
+    one the jobs carry, then os.replace. Whatever fails, the temporary file is removed (and a retry finds its name free)."""
+    want = sha_of(staged)
+    tmp = "%s.site-act-new.%d" % (tname, os.getpid())
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW, 0o755, dir_fd=dfd)
+    try:
+        with os.fdopen(fd, "wb") as out:
+            shutil.copyfileobj(staged, out)
+            out.flush()
+            os.fchmod(out.fileno(), 0o755)
+            os.fsync(out.fileno())
+        with os.fdopen(os.open(tmp, os.O_RDONLY | NOFOLLOW, dir_fd=dfd), "rb") as chk:
+            if sha_of(chk) != want:
+                raise OSError("the copy of the new ACT differs from it")
+        os.replace(tmp, tname, src_dir_fd=dfd, dst_dir_fd=dfd)
+    except BaseException:
+        try:
+            os.unlink(tmp, dir_fd=dfd)
+        except OSError:
+            pass
+        raise
+
+
+def update_one(target, params, now):
+    """The real update, by the open folder: the installed file and the staged one read through it, kept, replaced."""
+    dfd = open_dir(os.path.dirname(target))
+    try:
+        tname = os.path.basename(target)
+        staged = params.get("staged")
+        if not staged or os.path.dirname(staged) != os.path.dirname(target):
+            return None
+        try:
+            sf = os.fdopen(os.open(os.path.basename(staged), os.O_RDONLY | NOFOLLOW, dir_fd=dfd), "rb")
+        except OSError:
+            return None
+        with sf:
+            if not stat.S_ISREG(os.fstat(sf.fileno()).st_mode) or sha_of(sf) != params["source_sha256"]:
+                return None
+            with os.fdopen(os.open(tname, os.O_RDONLY | NOFOLLOW, dir_fd=dfd), "rb") as inst:
+                kept = backup(None, params["backup_dir"], now, src=inst)
+            put_in_place(dfd, sf, tname)
+            try:
+                os.unlink(os.path.basename(staged), dir_fd=dfd)
+            except OSError:
+                pass
+        return kept
+    finally:
+        os.close(dfd)
 
 
 def update_target(target, params, apply, now, lines):
@@ -276,19 +369,18 @@ def update_target(target, params, apply, now, lines):
     elif not apply:
         lines.append("would update %s %s -> %s (the old one kept in %s)." % (target, old, new, params["backup_dir"]))
     else:
-        staged = params.get("staged")
-        if not (staged and os.path.isfile(staged) and not os.path.islink(staged)) or sha256(staged) != want:
-            u["would"] = True      # not staged, or not the jobs' file: nothing was done
-            lines.append("%s is ACT %s, not %s: could not be updated (the new one was not put on the host)." % (target, old, new))
+        try:
+            kept = update_one(target, params, now)
+        except OSError as e:
+            u["would"] = True
+            lines.append("%s is ACT %s, not %s: not updated (%s)." % (target, old, new, e))
         else:
-            try:
-                u["backup"] = backup(target, params["backup_dir"], now)
-                put_in_place(staged, target)
-            except OSError as e:
-                u["would"] = True
-                lines.append("%s is ACT %s, not %s: not updated (%s)." % (target, old, new, e))
+            if kept is None:
+                u["would"] = True      # not staged, or not the jobs' file: nothing was done
+                lines.append("%s is ACT %s, not %s: could not be updated (the new one was not put on the host)." % (target, old, new))
             else:
-                lines.append("updated %s %s -> %s, the old one kept at %s." % (target, old, new, u["backup"]))
+                u["backup"] = kept
+                lines.append("updated %s %s -> %s, the old one kept at %s." % (target, old, new, kept))
     return u
 
 
@@ -319,12 +411,16 @@ def run(params, check_mode, now=None, python_check=python3_ok):
         r = dict(found, action=todo, why=why, would=not apply, backup_dir=params["backup_dir"],
                  target=target + ((" (ACT %s)" % new) if new else ""))
         if todo in ("link", "delete") and apply:
-            r["backup"] = backup(path, params["backup_dir"], now)
-            if todo == "link":
-                link(path, target)
+            try:
+                r["backup"] = backup(path, params["backup_dir"], now)
+            except OSError as e:
+                r.update(action="report", why="not changed: %s" % e)
             else:
-                os.unlink(path)
-            changed = True
+                if todo == "link":
+                    link(path, target)
+                else:
+                    os.unlink(path)
+                changed = True
         copies.append(r)
         if todo != "none":
             lines.append(say_copy(r))

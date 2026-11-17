@@ -372,10 +372,116 @@ class Update(Base):
         self.assertFalse(r["changed"])
         self.assertEqual(open(self.target).read(), NEW)
 
-    def test_the_new_one_is_put_in_place_by_a_rename(self):
-        inode = os.stat(self.staged).st_ino
+    def test_the_new_one_replaces_the_old_in_one_step_and_nothing_is_left(self):
+        inode = os.stat(self.target).st_ino
         self.up()
-        self.assertEqual(os.stat(self.target).st_ino, inode)
+        self.assertNotEqual(os.stat(self.target).st_ino, inode)               # replaced, not written in place
+        self.assertEqual(sorted(os.listdir(self.opt)), ["act", "old"])         # no staged file, no temporary file
+
+    # --- sa-1701c: the folders opened once; a swap for a link afterwards leads nowhere
+    def _outside(self):
+        out = os.path.join(self.d, "outside")
+        os.makedirs(out, 0o755)
+        return out
+
+    def _swap_old_for_a_link(self, outside):
+        """Move the real old folder away and put a link to outside in its place (as an attacker would)."""
+        old = os.path.join(self.opt, "old")
+        os.rename(old, old + ".real")
+        os.symlink(outside, old)
+
+    def test_a_folder_swapped_for_a_link_after_the_check_is_not_followed(self):
+        outside = self._outside()
+        real_unsafe = m.unsafe
+
+        def swapping(target, backup_dir):
+            r = real_unsafe(target, backup_dir)        # the check passes ...
+            os.makedirs(backup_dir, 0o700, exist_ok=True)
+            self._swap_old_for_a_link(outside)         # ... and then the folder is swapped
+            return r
+        m.unsafe = swapping
+        self.addCleanup(setattr, m, "unsafe", real_unsafe)
+        r = self.up()
+        self.assertFalse(r["changed"])
+        self.assertEqual(open(self.target).read(), NEW)
+        self.assertEqual(os.listdir(outside), [])
+        self.assertEqual(stat.S_IMODE(os.stat(outside).st_mode), 0o755)
+        self.assertTrue(any("link" in x and "not updated" in x for x in r["lines"]))
+
+    def test_a_folder_swapped_for_a_link_between_the_open_and_the_write_is_not_followed(self):
+        outside = self._outside()
+        os.makedirs(os.path.join(self.opt, "old"), 0o700)
+        real_fsync, done = os.fsync, []
+
+        def swapping(fd):
+            if not done:                               # the backup is being written: the name is swapped now
+                done.append(1)
+                self._swap_old_for_a_link(outside)
+            return real_fsync(fd)
+        m.os.fsync = swapping
+        self.addCleanup(setattr, m.os, "fsync", real_fsync)
+        r = self.up()
+        self.assertTrue(r["changed"])
+        self.assertEqual(os.listdir(outside), [])                               # nothing through the link
+        self.assertEqual(stat.S_IMODE(os.stat(outside).st_mode), 0o755)         # never chmod-ed
+        kept = os.listdir(os.path.join(self.opt, "old.real"))                  # the backup went into the folder opened
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(open(os.path.join(self.opt, "old.real", kept[0])).read(), NEW)
+        self.assertEqual(stat.S_IMODE(os.stat(os.path.join(self.opt, "old.real")).st_mode), 0o700)
+
+    def test_the_install_folder_swapped_after_the_open_is_not_followed(self):
+        outside = self._outside()
+        real_backup, done = m.backup, []
+
+        def swapping(*a, **k):
+            if not done:
+                done.append(1)
+                os.rename(self.opt, self.opt + ".real")
+                os.symlink(outside, self.opt)
+            return real_backup(*a, **k)
+        m.backup = swapping
+        self.addCleanup(setattr, m, "backup", real_backup)
+        r = self.up()
+        self.assertEqual(os.listdir(outside), [])                               # nothing through the link
+        self.assertFalse(r["changed"])                                          # the backup's folder is refused: no update
+        self.assertEqual(open(os.path.join(self.opt + ".real", "act")).read(), NEW)
+        self.assertTrue(any("not updated" in x and "link" in x for x in r["lines"]))
+
+    def test_a_failed_replace_leaves_no_temporary_file_and_a_retry_works(self):
+        real = m.os.replace
+
+        def boom(*a, **k):
+            raise OSError("disk full")
+        m.os.replace = boom
+        try:
+            r = self.up()
+        finally:
+            m.os.replace = real
+        self.assertFalse(r["changed"])
+        self.assertEqual(open(self.target).read(), NEW)
+        self.assertEqual(sorted(x for x in os.listdir(self.opt) if "site-act-new" in x), [])
+        self.assertTrue(any("not updated (disk full)" in x for x in r["lines"]))
+        self.assertTrue(os.path.exists(self.staged))                            # kept: a retry in this process works
+        r = self.up()
+        self.assertTrue(r["changed"])
+        self.assertEqual(open(self.target).read(), self.JOBS)
+
+    def test_a_failed_copy_leaves_no_temporary_file(self):
+        real = m.shutil.copyfileobj
+        calls = []
+
+        def boom(src, out, *a):
+            calls.append(1)
+            if len(calls) == 2:                        # the first is the backup, the second the new ACT
+                out.write(b"partial")
+                raise OSError("read error")
+            return real(src, out, *a)
+        m.shutil.copyfileobj = boom
+        self.addCleanup(setattr, m.shutil, "copyfileobj", real)
+        r = self.up()
+        self.assertFalse(r["changed"])
+        self.assertEqual(open(self.target).read(), NEW)
+        self.assertEqual(sorted(x for x in os.listdir(self.opt) if "site-act-new" in x), [])
 
     def test_the_task_wires_it(self):
         t = open(os.path.join(REPO, "roles", "site_act", "tasks", "old_copies.yml")).read()

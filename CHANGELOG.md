@@ -17,6 +17,9 @@ older one stayed and the link pointed at it (docs/ADDING_ACT.md, "Old copies of 
   original before the new one replaces it in one rename. A linked `/opt/act` or `/opt/act/old` is refused with a line and
   no change (the link and delete of an old copy too).
 - `site_act_old_bin: report` only says `would update ... (report only)`: nothing is staged or changed.
+- The folders are opened once, never through a link, and checked on the open handle (a folder, owned by the user the job
+  runs as); the backup and the update work by those handles, so a folder swapped for a link after the check leads
+  nowhere. The temporary file of the update is removed when the copy or the rename fails.
 - The scorecard documents of the page-fit test are refreshed (the Findings Weight column; the CORA one is
   `stig_scorecard_cora_web`). That showed a table wider than its card by 18 px after its first fit, never fitted again:
   site_report.js now fits again a table that has grown since (the ops look at 800 px).
