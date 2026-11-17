@@ -176,7 +176,9 @@ class Setup(object):
         if copy:
             cred_ids, why = sorted(int(c["id"]) for c in self.all("job_templates/%d/credentials/" % int(copy["id"]))), ""
             inv = copy.get("inventory")
-            refs = dict(refs, project=copy.get("project") or refs["project"], ee=copy.get("execution_environment") or refs.get("ee"))
+            # its execution environment as it is: none (null) = inherited from the project or organization, kept so
+            ee = copy.get("execution_environment") if "execution_environment" in copy else refs.get("ee")
+            refs = dict(refs, project=copy.get("project") or refs["project"], ee=ee)
         else:
             cred_ids, why = self.cred_ids(t.get("credentials") or [])
             inv = refs["inventories"].get(t.get("inventory") or "default") or refs["inventories"].get("default")

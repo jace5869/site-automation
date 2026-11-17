@@ -1105,11 +1105,12 @@ def stig_scorecard(read, point, runs, opts=None):
         pl_web = dict(pl_web, kinds=pl_web["kinds"][:2] + ["cat1", "cat2", "cat3"] + pl_web["kinds"][5:])
 
     # ---- the Findings view: each open rule, opened to the hosts it is open on
-    hosts_of_rule = {}
+    hosts_of_rule, rule_in = {}, {}                 # rule_in: (sv, collection) -> its STIG and full rule id there
     for c in good:
         for r in c.get("rules") or []:
             if isinstance(r, dict) and r.get("sv"):
                 hosts_of_rule.setdefault(r["sv"], []).extend((h, c["name"]) for h in r.get("assets") or [])
+                rule_in.setdefault((r["sv"], c["name"]), (r.get("stig") or "", r.get("rule") or ""))
     f_rows, f_det, f_tags, f_st = [], [], [], []
     by_name = dict((c["name"], c) for c in good)
     for a in ranked[:VIEW_MAX]:                       # the most hosts first (1.68.0: what Top rules was)
@@ -1123,7 +1124,8 @@ def stig_scorecard(read, point, runs, opts=None):
         if go and hl:                                 # 1.68.1: a host's name opens its review, at this rule
             stig = next((pth[1] for pth in a["paths"] if pth[1]), "")
             ids = [((by_name.get(cn) or {}).get("asset_ids") or {}).get(h) for h, cn in hl[:HOSTS_MAX]]
-            urls = [stigman_go(go, (by_name.get(cn) or {}).get("id"), stig, aid, a["rule"]) if aid else ""
+            urls = [stigman_go(go, (by_name.get(cn) or {}).get("id"), rule_in.get((a["sv"], cn), ("", ""))[0] or stig, aid,
+                               rule_in.get((a["sv"], cn), ("", ""))[1] or a["rule"]) if aid else ""
                     for (h, cn), aid in zip(hl[:HOSTS_MAX], ids)]
             if any(urls):
                 hd["links"] = urls

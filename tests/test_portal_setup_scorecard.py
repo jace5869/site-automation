@@ -59,5 +59,27 @@ class Source(unittest.TestCase):
         self.assertEqual(S.source_template({"workflows": [{"number": 41, "nodes": []}]}), "")
 
 
+class CopyEE(unittest.TestCase):
+    """Codex 1.68.1: the copied template keeps the check template's execution environment - none (null, inherited from
+    the project or organization) stays none; the setup job's own is used only when AAP did not say."""
+    def want(self, copy):
+        st = object.__new__(S.Setup)
+        st.all = lambda path: []
+        got = {}
+        st.reconcile = lambda kind, api, name, want, read, write: (got.update(want), (5, "create"))[1]
+        st.template({"name": "STIG - weekly scorecard", "playbook": "stigman_ckl_import.yml"},
+                    {"project": 1, "ee": 9, "inventories": {}}, copy=dict({"id": 3, "project": 1, "inventory": 4}, **copy))
+        return got
+
+    def test_inherited_stays_inherited(self):
+        self.assertNotIn("execution_environment", self.want({"execution_environment": None}))
+
+    def test_its_own_kept(self):
+        self.assertEqual(self.want({"execution_environment": 7})["execution_environment"], 7)
+
+    def test_not_said_the_setup_jobs(self):
+        self.assertEqual(self.want({})["execution_environment"], 9)
+
+
 if __name__ == "__main__":
     unittest.main()

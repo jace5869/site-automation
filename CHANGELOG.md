@@ -27,6 +27,10 @@ set `stigman_link_style: open`.
 - Hardened after the tester's break-it pass (no redirect escape found): more than 10 query fields is a 302 to the plain
   address (was no answer); a value with a line end never passes (`\Z`, not `$`); the go page refuses a `\` in where it
   goes (a browser reads `/\x` as `//x`).
+- Review fixes (Codex): a rule open in two collections under different STIGs or rule ids - each host's link opens its
+  own collection's STIG and rule (was the first one's). The scorecard's template keeps the check template's execution
+  environment as it is, also none (inherited from the project or organization); the setup job's own only when AAP did
+  not say.
 
 **Tests:** `tests/stig/run_stigman_links_test.sh` - the real STIG Manager 1.6.18, 1.6.17 and 1.6.16 with Keycloak, the
 portal and nginx with the role's lines, in headless Chrome: a cold browser through the sign-in to the asset's review at

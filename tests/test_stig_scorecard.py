@@ -1544,6 +1544,23 @@ class OpenLinks(unittest.TestCase):
         bc = section(d, "By collection", "web")                # a collection: STIG Manager's home page, as 1.68.0
         self.assertEqual(set(bc["cell_links"]["urls"]), {"https://stigman.example.mil/"})
 
+    def test_a_rule_in_two_collections_links_each_host_to_its_own(self):
+        """Codex 1.68.1: the same SV under another STIG and rule id in a second collection - its hosts open that one."""
+        r = self.read()
+        rhel = next(c for c in r["collections"] if c["name"] == RHEL)
+        other = next(c for c in r["collections"] if c["name"] != RHEL and not c.get("error"))
+        base = next(x for x in rhel["rules"] if x["sv"] == "SV-257985")
+        other["rules"].append(dict(base, rule="SV-257985r999_rule", stig="RHEL_8_STIG", assets=["zz-other01"]))
+        other.setdefault("asset_ids", {})["zz-other01"] = "99"
+        d = card(read=r, opts={"api": API, "portal": self.PORTAL, "link_style": "open"})
+        fv = section(d, "Findings", "web")
+        i = [x[1] for x in fv["rows"]].index("SV-257985 (RHEL-09-255045)")
+        hosts = fv["details"][i][1]
+        k = [x[0] for x in hosts["rows"]].index("zz-other01")
+        self.assertEqual(hosts["links"][k], self.PORTAL + "/stigman/go?c=%s&b=RHEL_8_STIG&a=99&r=SV-257985r999_rule" % other["id"])
+        j = [x[0] for x in hosts["rows"]].index("rhel01")
+        self.assertIn("b=RHEL_9_STIG", hosts["links"][j])
+
     def test_plain_without_the_portal_or_the_setting(self):
         for o in ({"link_style": "plain"}, {"portal": ""}, {"link_style": "OPEN", "portal": "not an address"}):
             d = self.doc(**o)
