@@ -810,7 +810,7 @@ here too. AAP keeps a job for 120 days by default; the database keeps a point fo
 
 | | |
 |---|---|
-| What a run writes | a row per collection: when it was read, the job, the collection's id and name, its assets, CAT I, CAT II and CAT III open, and its open rules with their hosts (JSON). 1.67.0: a row per collection and platform too, with its rules. 1.68.0: a row per host and platform, its CAT I, II and III open |
+| What a run writes | a row per collection: when it was read, the job, the collection's id and name, its assets, CAT I, CAT II and CAT III open, and its open rules with their hosts (JSON). 1.67.0: a row per collection and platform too, with its rules. 1.68.0: a row per host and platform, its CAT I, II and III open. 1.70.0: the CORA counts (CAT I, II, III) in the same JSON, of the collection and of each platform |
 | How much | a row is a few kilobytes: about 100 bytes per open rule and host. 4 collections read daily for 800 days: 3,200 rows. The host table: a short row per host and platform, 400 hosts read daily for 800 days about 320,000 rows (about 40 MB) |
 | What a run deletes | the rows older than `stigman_scorecard_db_keep_days` |
 | When the database is down | one warning in the job output. The scorecard goes on with AAP's job history. The job stays green |

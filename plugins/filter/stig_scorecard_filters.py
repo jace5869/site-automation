@@ -18,6 +18,7 @@ import datetime
 import fnmatch
 import os
 import re
+from fractions import Fraction
 
 DAY = 86400.0
 HOUR = 3600.0
@@ -104,20 +105,22 @@ def cora(a, d, o):
     of the CATs that have rules; Very Low at 0 in every CAT, Low when CAT I is 0 and CAT II and III are under 5 %."""
     if not all(isinstance(x, (list, tuple)) and len(x) == 3 for x in (a, d, o)):
         return None
-    raw = [min(1.0, (max(0, _n(x) - _n(y)) + _n(z)) / float(_n(x))) if _n(x) > 0 else 0.0 for x, y, z in zip(a, d, o)]
+    # exact (fractions): a band's edge is exact - 100 rules each with 18, 29 and 4 Open is exactly 20 %, Very High. Only the
+    # percentages shown are rounded.
+    raw = [min(Fraction(1), Fraction(max(0, _n(x) - _n(y)) + _n(z), _n(x))) if _n(x) > 0 else Fraction(0) for x, y, z in zip(a, d, o)]
     weight = sum(w for w, x in zip(CORA_WEIGHT, a) if _n(x) > 0)
-    avg = sum(w * r for w, r, x in zip(CORA_WEIGHT, raw, a) if _n(x) > 0) / float(weight) if weight else 0.0
+    avg = sum(w * r for w, r, x in zip(CORA_WEIGHT, raw, a) if _n(x) > 0) / weight if weight else Fraction(0)
     if not any(raw):
         rating = "Very Low"
-    elif raw[0] == 0 and raw[1] < 0.05 and raw[2] < 0.05:
+    elif raw[0] == 0 and raw[1] < Fraction(1, 20) and raw[2] < Fraction(1, 20):
         rating = "Low"
-    elif avg >= 0.2:
+    elif avg >= Fraction(1, 5):
         rating = "Very High"
-    elif avg >= 0.1:
+    elif avg >= Fraction(1, 10):
         rating = "High"
     else:
         rating = "Moderate"
-    return {"pct": round(avg * 100, 1), "rating": rating, "cats": [round(r * 100, 1) for r in raw]}
+    return {"pct": round(float(avg) * 100, 1), "rating": rating, "cats": [round(float(r) * 100, 1) for r in raw]}
 
 
 def _cora_of(c):

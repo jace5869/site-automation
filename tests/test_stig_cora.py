@@ -62,6 +62,32 @@ class Math(unittest.TestCase):
         # CAT II 20 % alone: 0.8 / 15 = 5.3 -> Moderate (CAT II is 20 %, so no Low)
         self.assertEqual(f.cora(a, a, [0, 20, 0])["rating"], "Moderate")
 
+    def test_the_edges_are_exact(self):
+        """The bands' edges worked in whole numbers - no float error (STIG Manager's own panel works in floats, which can fall a
+        hair under an edge)."""
+        a = [100, 100, 100]
+        # exactly 20 %: (10 x 18 + 4 x 29 + 1 x 4) / 15 = 300 / 15 = 20 -> Very High (18 + 29 + 4 would be 19.999... in floats)
+        x = f.cora(a, a, [18, 29, 4])
+        self.assertEqual((x["pct"], x["rating"]), (20.0, "Very High"))
+        self.assertEqual(f.cora(a, a, [18, 29, 3])["rating"], "High")                # just under
+        # exactly 10 %: (10 x 10 + 4 x 10 + 10) / 15 = 150 / 15 -> High; one fewer in CAT III is Moderate
+        self.assertEqual(f.cora(a, a, [10, 10, 10])["rating"], "High")
+        self.assertEqual(f.cora(a, a, [10, 10, 9])["rating"], "Moderate")
+        self.assertEqual(f.cora(a, a, [10, 10, 9])["pct"], 9.9)
+        # just above 0: one rule in 1000 -> Moderate (CAT I), never Very Low; and Low when it is CAT III alone, under 5 %
+        big = [1000, 1000, 1000]
+        self.assertEqual(f.cora(big, big, [1, 0, 0])["rating"], "Moderate")
+        self.assertEqual(f.cora(big, big, [0, 0, 1])["rating"], "Low")
+        self.assertEqual(f.cora(big, big, [0, 0, 0])["rating"], "Very Low")
+        # the Low edges: CAT II and CAT III at exactly 5 % are not under 5 % - Moderate; one rule fewer is Low
+        h = [100, 100, 100]
+        self.assertEqual(f.cora(h, h, [0, 5, 0])["rating"], "Moderate")
+        self.assertEqual(f.cora(h, h, [0, 4, 0])["rating"], "Low")
+        self.assertEqual(f.cora(h, h, [0, 0, 5])["rating"], "Moderate")
+        self.assertEqual(f.cora(h, h, [0, 0, 4])["rating"], "Low")
+        self.assertEqual(f.cora(h, h, [0, 4, 4])["rating"], "Low")
+        self.assertEqual(f.cora(h, h, [1, 0, 0])["rating"], "Moderate")              # CAT I at all: never Low
+
     def test_a_cat_without_rules_is_left_out_of_the_weights(self):
         # As STIG Manager's own panel (its stigmanUtils.js): CAT I has no rules, so the weight is 4 + 1 = 5, not 15.
         # CAT II 10 of 100 Open -> (4 x .1) / 5 = 8 %: Moderate (over 15 it would be 2.7 %)
@@ -127,6 +153,19 @@ class Point(unittest.TestCase):
         js = json.loads(next(r for r in rows if r[3] == t.RHEL)[8])
         self.assertEqual((js["ra"], js["rd"]), ([70, 280, 140], [63, 252, 140]))
 
+    def test_the_platform_counts_survive_the_database(self):
+        """1.70.0: the report database keeps each platform's CORA counts too (the rules column, no schema change)."""
+        import json
+        p = f.stig_scorecard_point(read_cora())
+        rows = cdb.rows_p_of(p, "2026-11-13 06:00:05", 5000)
+        c = next(x for x in p["collections"] if x["name"] == t.RHEL)
+        got = dict((r[3], cdb.platform_of(r[4], r[5], r[6], r[7], r[8])) for r in rows if r[2] == c["id"])
+        self.assertEqual(got, c["p"])
+        self.assertEqual(got["Linux"]["ra"], [60, 240, 120])
+        # a row written before 1.70.0 (a list) reads as it did, without the counts
+        self.assertEqual(cdb.platform_of(6, 1, 8, 2, '["SV-1","SV-2"]'), {"assets": 6, "cat1": 1, "cat2": 8, "cat3": 2, "rules": ["SV-1", "SV-2"]})
+        self.assertEqual(json.loads(next(r[8] for r in cdb.rows_p_of(f.stig_scorecard_point(t.read_of()), "x", 1))).__class__, list)
+
     def test_no_counts_no_keys(self):
         p = f.stig_scorecard_point(t.read_of())
         self.assertTrue(all("ra" not in c and "rd" not in c for c in p["collections"]))
@@ -161,6 +200,17 @@ class Page(unittest.TestCase):
         web = f.stig_scorecard_join(self.doc, None, "scorecard")["web"]
         self.assertEqual(web["summary"][0]["label"], "CORA risk")
         self.assertIn("CORA %", t.section(web, "By collection")["columns"])
+
+    def test_atlas_tiles_by_their_count(self):
+        """Six tiles are 3 + 3 in atlas as in ops: its tiles carry their count, and the stylesheet sets the columns by it."""
+        import test_report_fit as rf
+        web = f.stig_scorecard_join(self.doc, None, "scorecard")["web"]
+        n = len(web["summary"])
+        self.assertEqual(n, 6)
+        for look in ("atlas", "ops"):
+            self.assertIn('<div class="tiles t%d">' % n, rf.render(look, web))
+        css = rf.render("atlas", web)
+        self.assertIn("@media(min-width:721px){.tiles.t6{grid-template-columns:repeat(3,minmax(0,1fr))}}", css)
 
     def test_the_label_is_short(self):
         self.assertNotIn("method", t.tile(self.doc, "CORA risk")["label"])
@@ -269,6 +319,21 @@ class Page(unittest.TestCase):
         # Linux: RHEL_9 checklists only (6 assets): CAT I 60 rules, 6 unassessed + 1 Open = 7/60; CAT II 240: 24 + 8 = 32/240; CAT III 120: 2/120
         self.assertEqual(x["value"], "%s %.1f%%" % ("High", f.cora([60, 240, 120], [54, 216, 120], [1, 8, 2])["pct"]))
         self.assertEqual(f.cora([60, 240, 120], [54, 216, 120], [1, 8, 2])["pct"], 11.4)       # (10 x 7/60 + 4 x 32/240 + 2/120) / 15
+
+    def test_a_platform_filter_shows_the_weeks_change_from_the_database(self):
+        """The earlier points as the database gives them back (platform counts in the rules column): the filtered tile has its change."""
+        runs = t.earlier()
+        point = f.stig_scorecard_point(self.read)
+        for run in runs:
+            for c in run["collections"]:
+                now = next(x for x in point["collections"] if x["id"] == c["id"])
+                rows = cdb.rows_p_of({"collections": [now]}, "x", 1)
+                c["p"] = dict((r[3], cdb.platform_of(r[4], r[5], r[6], r[7], r[8])) for r in rows)
+                for pl in c["p"].values():
+                    pl["rd"][0] -= 1                                                # one more CAT I unassessed than now, on each platform
+                c.update(cat1=now["cat1"], cat2=now["cat2"], cat3=now["cat3"])
+        d = self.card(runs=runs, opts={"platform_filter": "Linux"})
+        self.assertRegex(t.tile(d, "CORA risk")["note"], r"^▼ \d+\.\d points since ")
 
     def test_status_by_rating(self):
         self.assertEqual(dict((k, v) for k, v in f.CORA_STATUS.items()),

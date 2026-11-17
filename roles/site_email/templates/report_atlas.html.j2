@@ -221,6 +221,10 @@ h1{margin:6px 0 0;font-size:clamp(23px,2.6vw,34px);line-height:1.18;letter-spaci
   border:1px solid var(--edge);border-radius:8px;padding:4px 8px;font-size:12px;box-shadow:var(--shadow);z-index:5}
 /* the tiles */
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin:16px 0}
+/* 1.70.0: the tiles by their count, as the ops look does - 6 as 3 + 3, never one tile alone on a row (narrower: as many as fit) */
+@media(min-width:721px){.tiles.t6{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(min-width:1000px){.tiles.t7,.tiles.t8{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(min-width:1200px){.tiles.t5,.tiles.t9,.tiles.t10{grid-template-columns:repeat(5,minmax(0,1fr))}}
 .tile{padding:16px 18px 15px;position:relative;overflow:hidden}
 .tile .k{font-size:12px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--label);display:flex;align-items:center;gap:7px;padding-right:28px}
 .tile .v{font-size:36px;font-weight:750;line-height:1.05;margin-top:8px;font-variant-numeric:tabular-nums;letter-spacing:-.02em;overflow-wrap:anywhere}
@@ -637,7 +641,7 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 </div>
 </header>
 {%- if r.summary | default([]) %}
-<div class="tiles">
+<div class="tiles t{{ r.summary | length if r.summary | length <= 10 else 'x' }}">
 {%- for t in r.summary %}
 {%- set ts = t.status | default('') %}
 {%- set v = ('' if t.value is none else t.value) | string %}

@@ -15,6 +15,10 @@
   artifact and the report database's existing JSON: no new table), so last week's score can be worked out. The first
   run with them shows no change.
 - No more calls: the counts are in the metrics the scorecard already reads. An older STIG Manager shows no CORA.
+- The rating is worked in whole numbers: a band's edge is exact (100 rules each with 18, 29 and 4 Open is exactly 20 %,
+  Very High). Only the percentages shown are rounded.
+- The report database keeps each platform's CORA counts too (in the platform row's rules column; no schema change), so a
+  platform filter shows the week's change.
 - **Weight** in *Findings*: the hosts a rule is open on times 10, 4 or 1. The page lists the biggest weight first
   (it was the most hosts first). *Rules across hosts* in the workbook has the column too.
 - Tests: tests/test_stig_cora.py (the math by hand: each band, the Low case, a CAT without rules, unassessed rules; the

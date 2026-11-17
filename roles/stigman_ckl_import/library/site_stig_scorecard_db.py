@@ -205,9 +205,12 @@ def rows_p_of(point, now, job):
             continue
         for name, v in sorted(c["p"].items()):
             if isinstance(v, dict):
+                rl = sorted(str(x) for x in v.get("rules") or [])
+                if isinstance(v.get("ra"), list) and isinstance(v.get("rd"), list) and len(v["ra"]) == len(v["rd"]) == 3:
+                    # 1.70.0: the platform's CORA counts too - the column is then an object (a list as before without them)
+                    rl = {"rules": rl, "ra": [int(x or 0) for x in v["ra"]], "rd": [int(x or 0) for x in v["rd"]]}
                 out.append((now, job, str(c["id"])[:64], str(name)[:64], int(v.get("assets") or 0), int(v.get("cat1") or 0),
-                            int(v.get("cat2") or 0), int(v.get("cat3") or 0),
-                            json.dumps(sorted(str(x) for x in v.get("rules") or []), separators=(",", ":"))))
+                            int(v.get("cat2") or 0), int(v.get("cat3") or 0), json.dumps(rl, sort_keys=True, separators=(",", ":"))))
     return out
 
 
@@ -221,6 +224,23 @@ def rows_h_of(point, now, job):
             for name, v in sorted((pls or {}).items()) if isinstance(pls, dict) else []:
                 if isinstance(v, (list, tuple)) and len(v) >= 3:
                     out.append((now, job, str(c["id"])[:64], str(h)[:255], str(name)[:64], int(v[0] or 0), int(v[1] or 0), int(v[2] or 0)))
+    return out
+
+
+def platform_of(assets, c1, c2, c3, rules):
+    """A stig_scorecard_platform row -> the point's p entry. The rules column is a list of SV-numbers, or (1.70.0) an object
+    {rules, ra, rd}: the platform's CORA counts (CAT I, II, III) as well."""
+    try:
+        rl = json.loads(rules or "[]")
+    except ValueError:
+        rl = []
+    out = {"assets": int(assets), "cat1": int(c1), "cat2": int(c2), "cat3": int(c3)}
+    if isinstance(rl, dict):
+        for k in ("ra", "rd"):
+            if isinstance(rl.get(k), list) and len(rl[k]) == 3:
+                out[k] = [int(x or 0) for x in rl[k]]
+        rl = rl.get("rules")
+    out["rules"] = [str(x) for x in rl] if isinstance(rl, list) else []
     return out
 
 
@@ -259,12 +279,7 @@ def read(conn, now, days, platforms=False, hosts=False):
             c = at.get((read_at.strftime("%Y-%m-%dT%H:%M:%SZ"), str(cid)))
             if c is None:
                 continue
-            try:
-                rl = json.loads(rules or "[]")
-            except ValueError:
-                rl = []
-            c.setdefault("p", {})[str(name)] = {"assets": int(assets), "cat1": int(c1), "cat2": int(c2), "cat3": int(c3),
-                                                "rules": [str(x) for x in rl] if isinstance(rl, list) else []}
+            c.setdefault("p", {})[str(name)] = platform_of(assets, c1, c2, c3, rules)
         for run in runs:
             if any("p" in c for c in run["collections"]):
                 run["v"] = 2
