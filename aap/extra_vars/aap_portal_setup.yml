@@ -62,6 +62,23 @@ portal_setup_portal_user: svc_site_portal
 ## value there stays as it is, said
 # portal_setup_split_scorecard: true
 
+## 1.75.3: your own templates and workflows, added to workflows.yml's lists (same shape; a name or a
+## workflow number that is already there is an error): the AAP side of an action of your own
+## (portal_actions_extra). docs/SITE_PORTAL.md, "Adding your own action". your own job templates,
+## added to workflows.yml's (the same shape; a name already there is an error)
+# portal_setup_templates_extra: []
+
+## your own workflows, added to workflows.yml's (the same shape; a name or a number already there is
+## an error)
+# portal_setup_workflows_extra: []
+
+## 1.75.3: true = also give the portal's account (portal_setup_portal_user) Auditor on
+## portal_setup_organization, which it needs to read the report jobs' findings ("pick a host, then a
+## finding"). Organization Auditor reads everything in the organization and writes nothing; the
+## credential's user needs Admin on the organization to give it. false (the default) = you give it
+## in AAP yourself. Never a write role.
+# portal_setup_portal_auditor: false
+
 ## {} = roles/site_portal_stack/files/workflows.yml; the same shape here replaces it
 # portal_setup_workflows: {}
 
@@ -72,6 +89,14 @@ portal_setup_portal_user: svc_site_portal
 ## ---- the actions: {} = the role's files/actions.yml; a dict of the same shape here replaces it
 ## -----------------------
 # portal_actions: {}
+
+## 1.75.3: your own actions, beside the built-in ones (same shape as actions.yml's actions, checked
+## by the same rules; a name a built-in has is an error), and built-in actions to hide (a list of
+## their names). docs/SITE_PORTAL.md, "Adding your own action".
+# portal_actions_extra: {}
+
+## built-in actions to hide: a list of their names (one that is no action is an error)
+# portal_actions_off: []
 
 ## the AAP inventory whose hosts an action's inventory_host values must be (by name; required when
 ## an action has one)

@@ -80,6 +80,36 @@ portal_public_url: https://stigman.example.mil/portal/
 ## -----------------------
 # portal_actions: {}
 
+## 1.75.3: your own actions, beside the built-in ones (same shape as actions.yml's actions, checked
+## by the same rules; a name a built-in has is an error), and built-in actions to hide (a list of
+## their names). docs/SITE_PORTAL.md, "Adding your own action".
+# portal_actions_extra: {}
+
+## built-in actions to hide: a list of their names (one that is no action is an error)
+# portal_actions_off: []
+
+## 1.75.3: "pick a host, then a finding" - an action that takes report_job and finding_id, opened
+## with no values, asks for the host(s) and lists what the report jobs found there (their
+## site_findings artifact), so nobody types a job id. The last portal_finding_jobs runs of each
+## report playbook that finished within portal_finding_days (at most finding_ref_max_age_days, 14)
+## are read: successful and failed (a report that found something ends failed). The portal's AAP
+## account needs Organization Auditor to read them (portal_setup_portal_auditor). how many days back
+## the report jobs are read (14 at most)
+# portal_finding_days: 7
+
+## the last this many runs of each report playbook are read (10 at most)
+# portal_finding_jobs: 5
+
+## one confirm page starts this many jobs at most (one per ticked finding); over it the page says so
+# portal_pick_max_launches: 10
+
+## the report playbooks whose jobs are read (finding_ref_report_playbooks + _extra: the ones
+## finding_ref takes a finding from)
+# portal_finding_playbooks: >-
+#   {{ (finding_ref_report_playbooks | default(['health_check.yml', 'win_health_check.yml', 'troubleshoot.yml', 'win_troubleshoot.yml', 'disk_report.yml',
+#      'fapolicyd*.yml', 'stig_drift_report.yml', 'win_stig_drift_report.yml', 'stigman_ckl_import.yml', 'service_watch.yml']))
+#      + (finding_ref_report_playbooks_extra | default([])) }}
+
 ## ---- AAP: the "Red Hat Ansible Automation Platform" credential (its URL and a token of the
 ## portal's own account) ------
 # portal_aap_url: >-
@@ -150,6 +180,26 @@ portal_public_url: https://stigman.example.mil/portal/
 # portal_aap_token: >-
 #   {{ lookup('ansible.builtin.env', 'CONTROLLER_OAUTH_TOKEN') or lookup('ansible.builtin.env', 'AAP_TOKEN')
 #      or lookup('ansible.builtin.env', 'TOWER_OAUTH_TOKEN') }}
+
+# ---- finding_ref ---------------------------------------------------------------------------------
+## The report jobs a finding is taken from, by their playbook's file name (* and ?): a finding of
+## any other AAP job is refused (1.67.0 review: a job of any template could carry a planted
+## site_findings artifact). The job must also have finished - a check that found something ends
+## failed, on purpose; error or canceled never - at most finding_ref_max_age_days ago.
+# finding_ref_report_playbooks: [health_check.yml, win_health_check.yml, troubleshoot.yml, win_troubleshoot.yml, disk_report.yml,
+#                                "fapolicyd*.yml", stig_drift_report.yml, win_stig_drift_report.yml, stigman_ckl_import.yml,
+#                                service_watch.yml]
+
+## more, e.g. [my_report.yml] (a report of your own that keeps site_findings)
+# finding_ref_report_playbooks_extra: []
+
+# ---- aap_portal_setup ----------------------------------------------------------------------------
+## 1.75.3: true = also give the portal's account (portal_setup_portal_user) Auditor on
+## portal_setup_organization, which it needs to read the report jobs' findings ("pick a host, then a
+## finding"). Organization Auditor reads everything in the organization and writes nothing; the
+## credential's user needs Admin on the organization to give it. false (the default) = you give it
+## in AAP yourself. Never a write role.
+# portal_setup_portal_auditor: false
 
 # ---- site_exclude --------------------------------------------------------------------------------
 ## ---- Leave hosts out of every job (1.67.0; playbooks/site_exclude.yml, README "Leave hosts out of

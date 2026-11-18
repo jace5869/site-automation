@@ -97,3 +97,15 @@
 
 # ---- POA&M: STIG Manager cross-check (optional) -------------------------------------------------
 # poam_stigman_api: https://CHANGE-ME/api
+
+# The site portal (docs/SITE_PORTAL.md, "Adding your own action" and "Pick a host, then a finding"):
+# portal_actions_extra:                     # your own actions, beside the built-in ones (a built-in's name is an error)
+#   health_one_host: {title: Health check of one host, summary: Runs the Linux health check on one host., area: Health,
+#                     aap: {type: job, name: "Health check - Linux (portal)"}, vars: {target: {kind: inventory_host, label: Host}},
+#                     limit_from: target, approval: false, fixes: false}
+# portal_actions_off: []                    # built-in actions to hide, by name
+# portal_setup_templates_extra: []          # job templates for "AAP - set up portal actions" to make (the shape of workflows.yml)
+# portal_setup_workflows_extra: []          # workflows for it to make
+# portal_setup_portal_auditor: false        # true: it gives the portal's account Auditor on the organization (reads the report jobs)
+# portal_finding_days: 7                    # how far back the pick list reads report jobs
+# portal_pick_max_launches: 10              # jobs one confirm page may start

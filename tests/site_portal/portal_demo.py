@@ -29,6 +29,7 @@ for n, wf, a in (("STIG - recheck one host", 1, 0), ("Disk - clean up (approved)
                  ("STIG - create the asset in STIG Manager", 1, 1)):
     tpl(n, wf, a)                      # "fapolicyd - allow this" is left out: its card shows Off
 aap = fake_aap.serve(0, stop=True)
+fake_aap.seed_reports()                      # 1.75.3: report jobs 9001 and 9002, for the pick pages
 with open(os.path.join(wt, "roles/site_portal_stack/files/actions.yml")) as fh:
     doc = yaml.safe_load(fh)
 with open(os.path.join(tmp, "actions.json"), "w") as fh:
@@ -36,7 +37,7 @@ with open(os.path.join(tmp, "actions.json"), "w") as fh:
 reports = os.path.join(tmp, "reports"); os.makedirs(reports)
 cfg = sp.Config({"PORTAL_DATA": os.path.join(tmp, "data"), "PORTAL_REPORTS": reports, "PORTAL_ACTIONS": os.path.join(tmp, "actions.json"),
                  "PORTAL_AAP_URL": "http://127.0.0.1:%d" % aap.server_address[1], "PORTAL_AAP_TOKEN": "fake-token", "PORTAL_INVENTORY": "Site hosts",
-                 "PORTAL_APPROVERS": '["SMITH.JOHN.A.1234567891"]', "PORTAL_TIME_ZONE": "UTC", "PORTAL_THEME": look, "PORTAL_TITLE": "Site automation",
+                 "PORTAL_APPROVERS": '["SMITH.JOHN.A.1234567891"]', "PORTAL_TIME_ZONE": "UTC", "PORTAL_THEME": look, "PORTAL_FINDING_PLAYBOOKS": '["health_check.yml", "disk_report.yml"]', "PORTAL_TITLE": "Site automation",
                  "PORTAL_BANNER": {"on": False}})
 real = sys.stdout
 sys.stdout = open(os.devnull, "w")
@@ -80,7 +81,12 @@ class Front(BaseHTTPRequestHandler):
         long_id = "disk_full:/var/lib/containers/storage/overlay/0123456789abcdef0123456789abcdef0123456789abcdef/merged/very-long-name"
         pages = [("home", "/portal/"), ("confirm", "/portal/actions/disk_cleanup?target=web01.example.mil&report_job=907&finding_id=" + long_id),
                  ("job-done", "/portal/jobs/%d" % ids["clean"]), ("job-waiting", "/portal/jobs/%d" % ids["restart"]),
-                 ("approvals", "/portal/approvals?__who=appr"), ("refused", "/portal/actions/nothing_here")]
+                 ("approvals", "/portal/approvals?__who=appr"), ("refused", "/portal/actions/nothing_here"),
+                 ("pick-host", "/portal/actions/disk_cleanup"), ("pick-findings", "/portal/actions/disk_cleanup?hosts=web01.example.mil"),
+                 ("pick-many", "/portal/actions/disk_cleanup?hosts=web01.example.mil,web03.example.mil&pick0=9001~disk_full:web01.example.mil:/var"
+                               "&pick0=9001~disk_full:web01.example.mil:/home&pick1=9001~disk_full:web03.example.mil:/srv"),
+                 ("pick-none", "/portal/actions/disk_cleanup?hosts=fail01.example.mil"),
+                 ("pick-two-hosts", "/portal/actions/disk_cleanup?hosts=web01.example.mil,web03.example.mil")]
         frames = [(n, u, th, w) for w in widths for th in ("light", "dark") for n, u in pages]
         html_ = ["<!doctype html><meta charset=utf-8><body>"]
         for i, (n, u, th, w) in enumerate(frames):

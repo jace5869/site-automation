@@ -140,6 +140,33 @@ got="$(st '[(a["name"][:20], a["timeout"]) for a in s["approvals"]]')"
 got="$(st 'sorted(r["name"] for u in s["users"] for rid in u["roles"] for r in s["roles"] if r["id"] == rid)')"
 [ "$got" = "['Approve', 'Approve', 'Approve', 'Approve', 'Approve', 'Approve', 'Approve', 'Execute', 'Execute', 'Execute', 'Execute', 'Execute', 'Execute', 'Execute', 'Execute', 'Execute', 'Execute', 'Execute']" ] \
     && pass "the portal's account: Execute and Approve on 40 as well" || fail "grants on 40" "$got"
+# ---- 1.75.3: the Auditor grant (portal_setup_portal_auditor), and the portal's own templates and workflows
+roles_of_user() { st 'sorted(r["name"] + ":" + r["kind"] for u in s["users"] for rid in u["roles"] for r in s["roles"] if r["id"] == rid and r["kind"] == "organizations")'; }
+got="$(roles_of_user)"
+[ "$got" = "[]" ] && pass "portal_setup_portal_auditor false (the default): no role on the organization" || fail "no auditor by default" "$got"
+setup --check -e '{"portal_setup_portal_auditor": true}'
+if grep -q "grant 'Default: Auditor': would be made" "$work/out.txt" && [ "$(roles_of_user)" = "[]" ]; then pass "Check first: says it would give Auditor on the organization, gives nothing"; else fail "check of the auditor" "$(grep -i "auditor\|fatal" "$work/out.txt" | head -5)"; fi
+setup -e '{"portal_setup_portal_auditor": true}'
+got="$(roles_of_user)"
+[ "$got" = "['Auditor:organizations']" ] && pass "portal_setup_portal_auditor true: Auditor on the organization, and no other role of it (never a write role)" || fail "auditor grant" "$got"
+setup -e '{"portal_setup_portal_auditor": true}'
+[ "$(roles_of_user)" = "['Auditor:organizations']" ] && grep -q "grant 'Default: Auditor': as it should be" "$work/out.txt" && pass "again: nothing changes" || fail "auditor again" "$(grep -i auditor "$work/out.txt" | head -3)"
+n_before="$(st 'len(s["job_templates"])')"
+cat > "$work/own.json" <<EOF
+{"portal_actions_extra": {"health_one_host": {"title": "Health check of one host", "summary": "Runs the Linux health check on one host.", "area": "Health",
+   "aap": {"type": "job", "name": "Health check - Linux (portal)"}, "vars": {"target": {"kind": "inventory_host", "label": "Host"}}, "limit_from": "target", "approval": false, "fixes": false}},
+ "portal_setup_templates_extra": [{"name": "Health check - Linux (portal)", "playbook": "playbooks/health_check.yml", "credentials": ["machine"],
+   "prompts": {"variables": true, "limit": true}, "description": "The Linux health check on one host, for the portal"}]}
+EOF
+setup -e "@$work/own.json"
+if [ "$(st 'len(s["job_templates"])')" = "$((n_before + 1))" ] && grep -q "template 'Health check - Linux (portal)': made" "$work/out.txt" \
+    && grep -q "grant 'Health check - Linux (portal): Execute': made" "$work/out.txt"; then
+    pass "portal_setup_templates_extra: your own template is made, and the portal's account gets Execute on it (portal_actions_extra names it)"
+else fail "your own template" "$(grep -i "health check - linux\|fatal\|msg" "$work/out.txt" | head -6)"; fi
+setup -e '{"portal_setup_templates_extra": [{"name": "ACT - triage finding", "playbook": "playbooks/act_triage_finding.yml"}]}'
+if [ $? != 0 ] && grep -q "portal_setup_templates_extra: 'ACT - triage finding' is already one of the templates here" "$work/out.txt"; then pass "a name a built-in template has: an error naming the setting, nothing changed"; else fail "a clash" "$(tail -5 "$work/out.txt")"; fi
+setup -e '{"portal_actions_extra": {"stig_recheck": {"title": "x", "aap": {"type": "job", "name": "n"}}}}'
+if [ $? != 0 ] && grep -q "portal_actions_extra: 'stig_recheck' is already an action here" "$work/out.txt"; then pass "an action named like a built-in: an error naming the setting, nothing changed"; else fail "an action clash" "$(tail -5 "$work/out.txt")"; fi
 if ! grep -q '"method": "DELETE", "path": "\(job_templates\|workflow_job_templates\)' "$work/writes.jsonl"; then
     pass "never a template or a workflow deleted"
 else fail "a delete" "$(grep DELETE "$work/writes.jsonl" | head -3)"; fi

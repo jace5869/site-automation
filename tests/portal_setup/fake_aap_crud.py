@@ -64,6 +64,8 @@ def new_id(s):
 def roles_of(s, kind, oid):
     """The object's roles, made on first ask: Admin, Execute (and Approve on a workflow)."""
     names = ["Admin", "Execute"] + (["Approve"] if kind == "workflow_job_templates" else [])
+    if kind == "organizations":                                   # 1.75.3: an organization's roles
+        names = ["Admin", "Member", "Auditor", "Execute", "Read"]
     out = []
     for n in names:
         r = next((r for r in s["roles"] if r["kind"] == kind and r["obj"] == oid and r["name"] == n), None)
@@ -152,7 +154,7 @@ class H(BaseHTTPRequestHandler):
             if p == "workflow_job_template_nodes/":
                 rows = [node_view(s, n) for n in s["nodes"] if str(n["wf"]) == q.get("workflow_job_template")]
                 return self.send(200, {"count": len(rows), "results": rows, "next": None})
-            m = re.match(r"^(job_templates|workflow_job_templates)/(\d+)/object_roles/$", p)
+            m = re.match(r"^(job_templates|workflow_job_templates|organizations)/(\d+)/object_roles/$", p)
             if m:
                 rows = [{"id": r["id"], "name": r["name"]} for r in roles_of(s, m.group(1), int(m.group(2)))]
                 save(s)

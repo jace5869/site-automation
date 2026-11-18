@@ -19,6 +19,8 @@ only (no port on the server). No SUCCESS, or no CN: refused. As roles/vmware_ask
 AAP is asked with the portal's own account (its token: a podman secret, PORTAL_AAP_TOKEN). The browser never gets it,
 and only the listed actions can be launched. Every launch, refusal and decision is a JSON line in
 PORTAL_DATA/portal-log.jsonl and in the journal. Standard library only."""
+import datetime
+import fnmatch
 import hashlib
 import hmac
 import html
@@ -111,6 +113,17 @@ class Config(object):
         self.per_hour = max(1, int(g("PORTAL_LAUNCHES_PER_HOUR", "20")))
         self.events = max(20, min(2000, int(g("PORTAL_JOB_EVENTS", "300"))))
         self.title = g("PORTAL_TITLE", "Site portal")
+        # 1.75.3: "pick a host, then a finding": the report jobs read (the last N of each playbook, finished within D days; the deploy's
+        # portal_finding_jobs, portal_finding_days, portal_finding_playbooks)
+        self.finding_days = max(1, min(14, int(g("PORTAL_FINDING_DAYS", "7"))))
+        self.pick_max = max(1, min(50, int(g("PORTAL_PICK_MAX_LAUNCHES", "10"))))          # launches from one confirm page, at most
+        self.finding_jobs = max(1, min(10, int(g("PORTAL_FINDING_JOBS", "5"))))
+        fp = g("PORTAL_FINDING_PLAYBOOKS", "[]")
+        try:
+            fp = json.loads(fp) if isinstance(fp, str) else fp
+        except ValueError:
+            fp = [x.strip() for x in str(fp).split(",")]
+        self.finding_playbooks = [str(x).strip() for x in (fp if isinstance(fp, list) else []) if re.match(r"^[A-Za-z0-9_.*?-]{1,80}$", str(x).strip())]
         # 1.75.2: the pages' look follows the report website's (report_web_theme: ops, atlas or brief); anything else: atlas, the default
         self.look = g("PORTAL_THEME", "atlas").strip().lower()
         self.look = self.look if self.look in LOOKS else "atlas"
@@ -306,6 +319,155 @@ class Aap(object):
             self.hosts[name] = (known, t)
         return known
 
+    def _inventory_id(self):
+        if self.inv_id is None:
+            code, data = self.call("GET", "inventories/?name=%s" % urllib.parse.quote(self.cfg.inventory))
+            rows = [r for r in (data.get("results") or []) if r.get("name") == self.cfg.inventory] if code == 200 else []
+            if len(rows) != 1:
+                return None
+            self.inv_id = int(rows[0]["id"])
+        return self.inv_id
+
+    def host_search(self, text, limit=8):
+        """Host names of portal_inventory that contain text (the typeahead): [] when AAP cannot be asked or the text is too short."""
+        text = str(text or "").strip()
+        if len(text) < 2 or not re.match(r"^[A-Za-z0-9._-]{2,64}$", text) or not self.cfg.inventory:
+            return []
+        iid = self._inventory_id()
+        if iid is None:
+            return []
+        code, data = self.call("GET", "inventories/%d/hosts/?name__icontains=%s&order_by=name&page_size=%d" % (iid, urllib.parse.quote(text), limit))
+        return [str(r.get("name")) for r in (data.get("results") or [])][:limit] if code == 200 else []
+
+    # ---- 1.75.3: the findings of the report jobs ----------------------------------------------------------------------
+    @staticmethod
+    def _pattern_regex(pat):
+        """A report playbook name (with * and ?) -> the regular expression that matches AAP's playbook field: the project-relative path
+        ('playbooks/health_check.yml', or just 'health_check.yml' at the project's root), so a name matches after a '/' or at the start. None for a
+        name that starts with a wildcard."""
+        if not pat or pat[0] in "*?":
+            return None
+        out = []
+        for ch in pat:
+            out.append("[^/]*" if ch == "*" else "[^/]" if ch == "?" else ("\\" + ch) if ch in ".^$+(){}[]|\\" else ch)
+        return "(^|/)" + "".join(out) + "$"
+
+    def _relative(self, url):
+        """A `next` link of AAP's list ('/api/controller/v2/job_templates/?page=2...') -> the path this client asks (after the API's base), or ''."""
+        url, base = str(url or ""), str(getattr(self.api, "base", "") or "")
+        return url.split(base, 1)[1] if base and base in url else ""
+
+    def _allowed(self, playbook):
+        """A job's own playbook (its path in the project): is its file name one of the report playbooks (the same case-insensitive check as finding_ref)?"""
+        pb = os.path.basename(str(playbook or "")).lower()
+        return bool(pb) and any(fnmatch.fnmatchcase(pb, str(pat).lower()) for pat in self.cfg.finding_playbooks)
+
+    def report_templates(self):
+        """The job templates that run a report playbook -> ([(id, name, playbook)], notes). Asked once and kept 5 minutes: the jobs are then asked
+        for per template, so a template with many runs cannot hide another's."""
+        t = time.time()
+        with self.lock:
+            hit = getattr(self, "_rt", None)
+            if hit and t - hit[0] < 300:
+                return hit[1], hit[2]
+        found, notes, seen = [], [], set()
+        for pat in self.cfg.finding_playbooks:
+            rx = self._pattern_regex(pat)
+            if rx is None:
+                notes.append("%s: not read (a name may not start with * or ?)" % pat)
+                continue
+            path, pages = "job_templates/?playbook__iregex=%s&order_by=name&page_size=200" % urllib.parse.quote(rx), 0
+            while path and pages < 25:                              # every page: a server may cap the page size below the one asked
+                pages += 1
+                code, data = self.call("GET", path)
+                if code != 200:
+                    notes.append("%s: %s" % (pat, site_aap.error_text(data)))
+                    break
+                for r in data.get("results") or []:
+                    pb = os.path.basename(str(r.get("playbook") or ""))
+                    if r.get("id") is not None and int(r["id"]) not in seen and fnmatch.fnmatchcase(pb.lower(), pat.lower()):
+                        seen.add(int(r["id"]))
+                        found.append((int(r["id"]), str(r.get("name") or pb), pb))
+                path = self._relative(data.get("next"))
+        with self.lock:
+            self._rt = (t, found, notes)
+        return found, notes
+
+    def report_jobs(self, now=None):
+        """The report jobs to read -> (jobs, notes). jobs: newest first, each {id, name, playbook, status, finished (datetime), findings}: for each
+        job template that runs a report playbook (portal_finding_playbooks) its last portal_finding_jobs runs that finished within
+        portal_finding_days, successful or failed (a report that found something ends failed). notes: what could not be read, said on the page.
+        Kept 60 seconds."""
+        now = now or datetime.datetime.now(datetime.timezone.utc)
+        t = time.time()
+        with self.lock:
+            hit = getattr(self, "_rj", None)
+            if hit and t - hit[0] < 60:
+                return hit[1], hit[2]
+        cutoff = (now - datetime.timedelta(days=self.cfg.finding_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        per = self.cfg.finding_jobs
+        tpls, notes = self.report_templates()
+        notes = list(notes)
+        jobs = []
+        for tid, tname, pb in tpls:
+            code, data = self.call("GET", "jobs/?job_template=%d&status__in=successful,failed&finished__gt=%s&order_by=-finished&page_size=%d"
+                                   % (tid, urllib.parse.quote(cutoff), per))
+            if code != 200:
+                notes.append("%s: %s" % (tname, site_aap.error_text(data)))
+                continue
+            n = 0
+            for r in data.get("results") or []:
+                fin = _aap_dt(r.get("finished"))
+                own = os.path.basename(str(r.get("playbook") or ""))
+                if not self._allowed(own):         # a template edited to run another playbook still returns its old jobs: each job's own playbook counts
+                    continue
+                if (r.get("status") not in ("successful", "failed") or fin is None or fin < now - datetime.timedelta(days=self.cfg.finding_days)
+                        or fin > now + datetime.timedelta(days=1) or n >= per):
+                    continue
+                n += 1
+                jid = int(r["id"])
+                art = r.get("artifacts") if isinstance(r.get("artifacts"), dict) else None
+                if art is None:                                      # the list had none: the job itself (as finding_ref reads it)
+                    c2, d2 = self.call("GET", "jobs/%d/" % jid)
+                    if c2 == -1:
+                        c2, d2 = self.call("GET", "jobs/%d/" % jid)
+                    if c2 != 200:
+                        notes.append("job %d (%s): %s" % (jid, tname, site_aap.error_text(d2)))
+                        continue
+                    art = d2.get("artifacts") if isinstance(d2.get("artifacts"), dict) else {}
+                jobs.append({"id": jid, "name": tname, "playbook": own, "status": r.get("status"), "finished": fin,
+                             "findings": art.get("site_findings") if isinstance(art.get("site_findings"), dict) else None})
+        jobs.sort(key=lambda j: (j["finished"], j["id"]), reverse=True)
+        with self.lock:
+            self._rj = (t, jobs, notes)
+        return jobs, notes
+
+    def findings_for(self, hosts, action, now=None):
+        """For each host the findings of the action's kinds (and when), newest first - one per finding id, the older runs of the same id apart
+        -> {"hosts": {host: {"current": [...], "older": [...]}}, "looked": [{report, jobs, newest, found}], "notes": [...]}. An item: id, kind,
+        title, severity, data, job, report (the template's name), finished (datetime)."""
+        jobs, notes = self.report_jobs(now)
+        out, looked = {}, {}
+        for j in jobs:
+            r = looked.setdefault(j["name"], {"report": j["name"], "jobs": 0, "newest": None, "found": 0})
+            r["jobs"] += 1
+            r["newest"] = r["newest"] or j["finished"]
+        for h in hosts:
+            items = []
+            for j in jobs:
+                for e in ((j["findings"] or {}).get(h) or []):
+                    if isinstance(e, dict) and e.get("id") and str(e.get("host")) == h and finding_fits(action, e) and re.match(r"^[A-Za-z0-9_.:/@-]{1,200}$", str(e["id"])):
+                        items.append({"id": str(e["id"]), "kind": str(e.get("kind")), "title": str(e.get("title") or e["id"])[:200], "severity": str(e.get("severity") or "warning"),
+                                      "data": e.get("data") if isinstance(e.get("data"), dict) else {}, "job": j["id"], "report": j["name"], "finished": j["finished"]})
+                        looked[j["name"]]["found"] += 1
+            items.sort(key=lambda x: (x["finished"], x["job"]), reverse=True)
+            cur, old, have = [], [], set()
+            for x in items:
+                (old if x["id"] in have else cur).append(x)
+                have.add(x["id"])
+            out[h] = {"current": cur, "older": old}
+        return {"hosts": out, "looked": sorted(looked.values(), key=lambda r: r["report"].lower()), "notes": notes}
+
 
 def shown(cfg, iso):
     """An AAP or log time (2026-11-15T19:06:30.123456Z) as the report pages show times: '2026-11-15 20:06 CET' in
@@ -314,6 +476,44 @@ def shown(cfg, iso):
     if not m:
         return ""
     return in_zone("%s %s UTC" % m.groups(), cfg.tz)
+
+
+def _aap_dt(s):
+    """AAP's time (2026-11-16T06:00:00.123456Z) -> an aware datetime (UTC), or None."""
+    m = re.match(r"^(\d{4})-(\d\d)-(\d\d)[T ](\d\d):(\d\d):(\d\d)", str(s or ""))
+    if not m:
+        return None
+    try:
+        return datetime.datetime(*[int(x) for x in m.groups()], tzinfo=datetime.timezone.utc)
+    except ValueError:
+        return None
+
+
+def finding_fits(action, e):
+    """A finding (an entry of a report job's site_findings) the action takes: its kind in the action's kinds ("any": every kind) and its data
+    matching the action's when - as the report page's buttons decide (plugins/filter/finding_filters.py _matches; tests/test_site_portal.py
+    keeps the two the same)."""
+    kinds = action.get("kinds") or []
+    if "any" not in kinds and e.get("kind") not in kinds:
+        return False
+    for field, want in (action.get("when") or {}).items():
+        have = (e.get("data") or {}).get(field)
+        allowed = want if isinstance(want, list) else [want]
+        if str(have) not in [str(x) for x in allowed]:
+            return False
+    return True
+
+
+def when_text(cfg, dt, now=None):
+    """A report job's time for the pick list: 'today 06:00', 'yesterday 06:10', 'Nov 16 06:00' (report_time_zone, else UTC)."""
+    if dt is None:
+        return ""
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    z = cfg.tz or datetime.timezone.utc
+    d, n = dt.astimezone(z), now.astimezone(z)
+    day = (n.date() - d.date()).days
+    hm = d.strftime("%H:%M")
+    return ("today " + hm) if day == 0 else ("yesterday " + hm) if day == 1 else "%s %d %s" % (d.strftime("%b"), d.day, hm)
 
 
 def clean(text, limit=None):
@@ -898,6 +1098,189 @@ def action_page(cfg, portal, cn, name, query):
     return shell(cfg, a["title"], body, cn, token=portal.token(cn), page="action")
 
 
+# ---- 1.75.3: pick a host, then a finding (no job ids to type) ---------------------------------------------------------------
+MAX_HOSTS = 5
+PICK = re.compile(r"^(\d{1,12})~([A-Za-z0-9_.:/@-]{1,200})$")
+
+
+def picker_vars(a):
+    """The inventory_host variable's name when this action takes a report job and a finding (so the person picks a host, then a finding), else ''."""
+    hv = [k for k, v in a["vars"].items() if v["kind"] == "inventory_host"]
+    return hv[0] if len(hv) == 1 and "report_job" in a["vars"] and "finding_id" in a["vars"] else ""
+
+
+def steps_html(n):
+    labels = ("Host", "Finding", "Confirm")
+    return '<ol class="steps">%s</ol>' % "".join('<li class="%s"><span class="n">%s</span>%s</li>' % (
+        "on" if i + 1 == n else ("done" if i + 1 < n else ""), "\u2713" if i + 1 < n else i + 1, l) for i, l in enumerate(labels))
+
+
+def pick_hero(cfg, a, step, lede):
+    eyebrow = {1: "Pick the host", 2: "Pick the finding", 3: "Confirm"}[step]
+    return ('<div class="hero"><p class="crumb"><a href="%s">Actions</a><span>/</span><span class="eyebrow">%s</span></p><h1>%s</h1><p class="lede">%s</p>%s</div>'
+            % (cfg.path, eyebrow, esc(a["title"]), esc(lede), steps_html(step)))
+
+
+def parse_hosts(text):
+    """Host names from what a person typed (commas, spaces, new lines) -> unique, in order."""
+    out = []
+    for h in re.split(r"[\s,;]+", str(text or "")):
+        if h and h not in out:
+            out.append(h)
+    return out
+
+
+def sev_chip(sev):
+    cls, ik, word = {"critical": ("s-critical", "bad", "Critical"), "warning": ("s-warning", "wait", "Warning")}.get(sev, ("s-info", "skip", sev.capitalize() or "Info"))
+    return '<span class="chip %s">%s%s</span>' % (cls, icon(ik), esc(word))
+
+
+def pick_step1(cfg, portal, cn, name, a, hv, texts="", problems=None):
+    notes = "".join('<p class="note bad" role="alert"><b>%s</b> %s</p>' % (esc(h), esc(w)) for h, w in (problems or {}).items())
+    body = (pick_hero(cfg, a, 1, "Pick the host - or up to %d. The portal then shows what the reports found on it." % MAX_HOSTS) + notes +
+            '<div class="two one"><div class="card panel"><h2>Which host?</h2><form method="get" action="%sactions/%s">'
+            '<div class="field hostbox"><label for="f-hosts">Host</label><div class="row"><textarea id="f-hosts" name="hosts" rows="2" autocomplete="off" spellcheck="false" '
+            'placeholder="Start typing a host name" data-suggest="%sapi/hosts">%s</textarea><button type="submit" class="pri">Find findings</button></div>'
+            '<ul class="suggest" id="suggest" role="listbox" hidden></ul>'
+            '<p class="help">One host, or up to %d (one per line or separated by commas) - hosts of the AAP inventory <b>%s</b>. Nothing is started yet.</p></div></form></div>'
+            '<div class="card panel"><h2>What happens next</h2><dl class="def"><dt>1. Host</dt><dd>you pick it here</dd>'
+            '<dt>2. Finding</dt><dd>the portal lists what the reports found on it, newest first</dd><dt>3. Confirm</dt><dd>the usual page: the values, then <b>Run</b></dd></dl></div></div>'
+            % (cfg.path, esc(name), cfg.path, esc(texts), MAX_HOSTS, esc(cfg.inventory or "of the portal")))
+    return shell(cfg, a["title"], body, cn, page="action")
+
+
+def pick_row(i, host_i, it, checked, cfg, now):
+    return ('<li><label class="pick%s"><input type="checkbox" name="pick%d" value="%d~%s"%s><span class="body"><span class="t"><b>%s</b><span>%s</span></span>'
+            '<span class="m">%s \u00b7 %s \u00b7 job %d</span></span></label></li>'
+            % (" sel" if checked else "", host_i, it["job"], esc(it["id"]), " checked" if checked else "", esc(it["title"]),
+               ('<span class="newest">newest</span> ' if checked else "") + sev_chip(it["severity"]), esc(it["report"]), esc(when_text(cfg, it["finished"], now)), it["job"]))
+
+
+def pick_step2(cfg, portal, cn, name, a, hv, hosts, over_n=0):
+    now = datetime.datetime.now(datetime.timezone.utc)
+    res = portal.aap.findings_for(hosts, a, now)
+    many = len(hosts) > 1
+    groups, any_pick = [], False
+    for hi, h in enumerate(hosts):
+        r = res["hosts"][h]
+        cur, old = r["current"], r["older"]
+        rows = "".join(pick_row(hi, hi, it, i == 0, cfg, now) for i, it in enumerate(cur))
+        if cur:
+            any_pick = True
+        if many and cur:
+            rows += '<li><label class="pick skip"><input type="checkbox" name="pick%d" value="skip"><span class="body"><span class="t"><b>Skip this host</b></span></span></label></li>' % hi
+        older = ""
+        if old:
+            older = ('<details class="more"><summary>Older runs (%d)</summary><ul class="picks">%s</ul></details>'
+                     % (len(old), "".join(pick_row(hi, hi, it, False, cfg, now) for it in old)))
+        head = '<h3>%s <span class="muted-line">\u00b7 %d finding%s</span></h3>' % (esc(h), len(cur), "" if len(cur) == 1 else "s")
+        if cur:
+            groups.append('<div class="group">%s<ul class="picks">%s</ul>%s</div>' % (head, rows, older))
+        else:
+            groups.append('<div class="group">%s<div class="note" role="status"><p><span class="chip s-info">%s Nothing found</span> No finding of this action\'s kind on this host '
+                          'in the reports of the last %d days.</p></div>%s</div>' % (head, icon("skip"), cfg.finding_days, older))
+    looked_rows = "".join('<tr><td>%s</td><td class="num">%d</td><td class="mono nw">%s</td><td class="num">%d</td></tr>'
+                          % (esc(r["report"]), r["jobs"], esc(when_text(cfg, r["newest"], now)), r["found"]) for r in res["looked"])
+    looked = ('<section class="sec"><h2>What the portal looked at</h2><div class="tw"><table><thead><tr><th>Report</th><th class="num">Jobs read</th><th>Newest</th>'
+              '<th class="num">Findings of this kind</th></tr></thead><tbody>%s</tbody></table></div></section>'
+              % looked_rows) if res["looked"] else ('<p class="muted-line">No report job finished in the last %d days (%s).</p>'
+                                                      % (cfg.finding_days, esc(", ".join(cfg.finding_playbooks) or "no report playbook is set")))
+    notes = ('<div class="note warn" role="status"><p><b>Not everything could be read.</b> %s</p><p class="muted-line">The portal\'s AAP account needs Organization Auditor '
+             'to read the report jobs (portal_setup_portal_auditor, docs/SITE_PORTAL.md).</p></div>' % esc("; ".join(res["notes"][:6]))) if res["notes"] else ""
+    if any_pick:
+        form = ('<form method="get" action="%sactions/%s"><input type="hidden" name="hosts" value="%s">%s<div class="btns"><button type="submit" class="pri">%s</button>'
+                '<a class="btn" href="%sactions/%s">Change host%s</a><span class="state">You can still change everything on the next page.</span></div></form>'
+                % (cfg.path, esc(name), esc(",".join(hosts)), "".join(groups), "Continue" if not many else "Continue", cfg.path, esc(name), "s" if many else ""))
+    else:
+        first = hosts[0] if len(hosts) == 1 else ""
+        form = ("".join(groups) + '<div class="btns"><a class="btn pri" href="%sreports/">Open the reports</a><a class="btn" href="%sactions/%s">Pick another host</a></div>'
+                % (cfg.path, cfg.path, esc(name)))
+    lede = ("Nothing to act on for %s." % ("this host" if len(hosts) == 1 else "these hosts")) if not any_pick else (
+        "Tick the findings to act on. The newest is ticked; each ticked one becomes its own job%s." % (" - or skip a host" if many else ""))
+    over = ('<div class="note bad" role="alert"><p><b>Too many.</b> %s jobs would start; at most %d can start from one page (portal_pick_max_launches). '
+            'Untick some, or do the rest in a second pass.</p></div>' % (esc(over_n), cfg.pick_max)) if over_n else ""
+    body = pick_hero(cfg, a, 2, lede) + over + notes + form + looked
+    return shell(cfg, a["title"], body, cn, page="action")
+
+
+def pick_confirm_many(cfg, portal, cn, name, a, hv, pairs):
+    """Several hosts picked: one page that lists the launches; Run starts each as its own job (the same call as one)."""
+    rows = []
+    for h, job, fid, title in pairs:
+        _v, problems = portal.check(name, {hv: h, "report_job": job, "finding_id": fid}) if rules.may_run(a, cn, cfg.requesters) else ({}, {"": "not for you"})
+        bad = "; ".join("%s %s" % (a["vars"][k]["label"] if k in a["vars"] else "", w) for k, w in problems.items())
+        rows.append('<tr data-host="%s" data-job="%s" data-fid="%s"%s><td class="mono nw">%s</td><td>%s<div class="sub">job %s</div></td><td class="nw" data-cell="state">%s</td></tr>'
+                    % (esc(h), esc(job), esc(fid), ' data-bad="1"' if bad else "", esc(h), esc(title), esc(job),
+                       ('<span class="chip s-critical">%s%s</span> %s' % (icon("bad"), "Not started", esc(bad))) if bad else
+                       ('<span class="chip s-info">%s%s</span>' % (icon("wait"), "Ready"))))
+    _off = portal.state(name)[1] if rules.may_run(a, cn, cfg.requesters) else "not for you"
+    appr = "Each is held for an approver, and decided on its own." if a["approval"] else "Each starts at once, as its own job."
+    body = (pick_hero(cfg, a, 3, "%d jobs, one for each host. %s" % (len(pairs), appr)) +
+            '<div class="card panel"><h2>What will start</h2><div class="tw"><table id="many" data-action="%s" data-hv="%s"><thead><tr><th>Host</th><th>Finding</th><th>Status</th></tr></thead><tbody>%s</tbody></table></div>'
+            '<div class="btns"><button type="button" class="pri" id="go-many"%s>Run %d jobs</button><a class="btn" href="%sactions/%s">Cancel</a>'
+            '<span class="state" id="state" aria-live="polite"></span></div></div>'
+            % (esc(name), esc(hv), "".join(rows), " disabled" if _off else "", len(pairs), cfg.path, esc(name)))
+    return shell(cfg, a["title"], body, cn, token=portal.token(cn), page="action")
+
+
+def picker_route(cfg, portal, cn, name, query):
+    """The steps of an action that takes report_job and finding_id, opened without them -> ("page", html), ("redirect", url) or None (the
+    confirm page: it has its values, or the action is not one that picks)."""
+    a = portal.actions[name]
+    hv = picker_vars(a)
+    if not hv or not rules.may_run(a, cn, cfg.requesters):
+        return None
+    q = {k: v[-1].strip() for k, v in query.items()}
+    if q.get("report_job") or q.get("finding_id"):
+        return None
+    texts = q.get("hosts") or q.get(hv) or ""
+    hosts = parse_hosts(texts)
+    if not hosts:
+        return "page", pick_step1(cfg, portal, cn, name, a, hv)
+    problems = {}
+    if len(hosts) > MAX_HOSTS:
+        problems["Too many hosts."] = "Pick up to %d at a time (you gave %d)." % (MAX_HOSTS, len(hosts))
+    else:
+        var = a["vars"][hv]
+        for h in hosts:
+            why = rules.value_problem(var, h)
+            if not why and portal.cfg.inventory:
+                known = portal.aap.host_known(h)
+                why = "could not be looked up in AAP's inventory just now - try again" if known is None else (
+                    "" if known else "is not a host of the portal's inventory")
+            if why:
+                problems[h] = why
+    if problems:
+        return "page", pick_step1(cfg, portal, cn, name, a, hv, "\n".join(hosts), problems)
+    picks = {}
+    for i in range(len(hosts)):
+        vals = [x.strip() for x in query.get("pick%d" % i, [])]
+        if vals:
+            picks[i] = vals
+    if not picks:
+        return "page", pick_step2(cfg, portal, cn, name, a, hv, hosts)
+    chosen = []
+    for i, vals in sorted(picks.items()):
+        if "skip" in vals:                                          # skipped: nothing of this host (the others ticked are ignored)
+            continue
+        for v in vals:
+            m = PICK.match(v)
+            if not m:
+                return "page", pick_step2(cfg, portal, cn, name, a, hv, hosts)
+            pair = (hosts[i], str(int(m.group(1))), m.group(2))
+            if pair not in chosen:
+                chosen.append(pair)
+    if not chosen:
+        return "page", pick_step2(cfg, portal, cn, name, a, hv, hosts)
+    if len(chosen) > cfg.pick_max:
+        return "page", pick_step2(cfg, portal, cn, name, a, hv, hosts, len(chosen))
+    if len(chosen) == 1:
+        h, job, fid = chosen[0]
+        return "redirect", "%sactions/%s?%s" % (cfg.path, urllib.parse.quote(name), urllib.parse.urlencode([(hv, h), ("report_job", job), ("finding_id", fid)]))
+    res = portal.aap.findings_for(sorted(set(h for h, _j, _f in chosen)), a)
+    titles = dict((h, dict((it["id"], it["title"]) for it in r["current"] + r["older"])) for h, r in res["hosts"].items())
+    return "page", pick_confirm_many(cfg, portal, cn, name, a, hv, [(h, job, fid, titles.get(h, {}).get(fid, fid)) for h, job, fid in chosen])
+
 def job_page(cfg, portal, cn, jid, via):
     body = ('<div id="job" data-job="%d"%s><div class="hero"><p class="crumb"><a href="%s">Actions</a><span>/</span><span class="eyebrow">Job %d</span></p>'
             '<h1 id="j-title">Job %d</h1></div>'
@@ -1026,7 +1409,10 @@ def make_handler(cfg, portal, static_dir):
                     return self._send(404, message_page(cfg, "Not here", "There is no action %s here." % m.group(1), cn),
                                       "text/html; charset=utf-8")
                 q = urllib.parse.parse_qs(u.query, keep_blank_values=True, max_num_fields=50)
-                return self._send(200, action_page(cfg, portal, cn, m.group(1), q), "text/html; charset=utf-8")
+                step = picker_route(cfg, portal, cn, m.group(1), q)          # 1.75.3: pick a host, then a finding
+                if step and step[0] == "redirect":
+                    return self._send(302, b"", "text/plain", [("Location", step[1])])
+                return self._send(200, step[1] if step else action_page(cfg, portal, cn, m.group(1), q), "text/html; charset=utf-8")
             m = re.match(r"^/(api/)?jobs/(\d{1,12})$", path)
             if m:
                 q = urllib.parse.parse_qs(u.query)
@@ -1043,6 +1429,9 @@ def make_handler(cfg, portal, static_dir):
             if path == "/api/approvals":
                 code, data = portal.approvals(cn)
                 return self._send(code, data)
+            if path == "/api/hosts":                      # 1.75.3: the typeahead of the host field - hosts of portal_inventory that contain what was typed
+                qs = urllib.parse.parse_qs(u.query).get("q", [""])[-1]
+                return self._send(200, {"hosts": portal.aap.host_search(qs)})
             if path == "/api/me":
                 return self._send(200, {"user": cn, "approver": cn in cfg.approvers,
                                         "actions": [a["name"] for a in portal.mine(cn)]})
@@ -1138,7 +1527,34 @@ def aap_check(cfg):
         code, data = portal.aap.call("GET", "settings/jobs/")
         out["jinja_http"] = code
         out["jinja"] = str(data.get("ALLOW_JINJA_IN_EXTRA_VARS") or "") if code == 200 else ""
+        out["pick"] = pick_check(portal)
     return out
+
+
+def pick_check(portal):
+    """1.75.3: can the account read the report jobs "pick a finding" needs? -> {on, auditor: [organizations it is Auditor of], system_auditor,
+    unread: [report playbooks no job of which it can see], error}. on is false when no action takes a report job and a finding."""
+    res = {"on": any(picker_vars(a) for a in portal.actions.values()), "auditor": [], "system_auditor": False, "unread": [], "error": ""}
+    if not res["on"]:
+        return res
+    code, me = portal.aap.call("GET", "me/")
+    row = (me.get("results") or [{}])[0] if code == 200 else {}
+    res["system_auditor"] = bool(row.get("is_system_auditor"))
+    if code == 200 and row.get("id"):
+        c2, roles = portal.aap.call("GET", "users/%d/roles/?page_size=200" % int(row["id"]))
+        if c2 == 200:
+            res["auditor"] = sorted(str((r.get("summary_fields") or {}).get("resource_name") or "") for r in (roles.get("results") or [])
+                                    if r.get("name") == "Auditor" and (r.get("summary_fields") or {}).get("resource_type") == "organization")
+        else:
+            res["error"] = "its roles could not be read: %s" % site_aap.error_text(roles)
+    for pat in portal.cfg.finding_playbooks:
+        rx = portal.aap._pattern_regex(pat)
+        if rx is None:
+            continue
+        c3, d3 = portal.aap.call("GET", "job_templates/?playbook__iregex=%s&page_size=1" % urllib.parse.quote(rx))
+        if c3 != 200 or not (d3.get("count") or d3.get("results")):
+            res["unread"].append(pat)
+    return res
 
 
 if __name__ == "__main__":

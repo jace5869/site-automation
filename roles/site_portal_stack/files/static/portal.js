@@ -223,6 +223,96 @@ function jobPage() {
   tick();
 }
 
+// ---- pick a host, then a finding (1.75.3): the typeahead of the host field (without this script the field is a plain one)
+function suggestPage() {
+  const ta = $("f-hosts"), list = $("suggest");
+  if (!ta || !list) return;
+  let seq = 0, timer = 0, on = -1;
+  const token = () => { const m = /[^\s,;]*$/.exec(ta.value.slice(0, ta.selectionStart || 0)); return m ? m[0] : ""; };
+  const close = () => { list.hidden = true; list.replaceChildren(); on = -1; };
+  function choose(name) {
+    const pos = ta.selectionStart || 0, tok = token();
+    const head = ta.value.slice(0, pos - tok.length), tail = ta.value.slice(pos);
+    ta.value = head + name + (tail.match(/^[\s,;]/) ? "" : ", ") + tail.replace(/^[\s,;]+/, "");
+    close();
+    ta.focus();
+  }
+  async function ask() {
+    const t = token();
+    if (t.length < 2) { close(); return; }
+    const my = ++seq;
+    let r;
+    try { r = await call("api/hosts?q=" + encodeURIComponent(t)); } catch (e) { close(); return; }
+    if (my !== seq || !(r.hosts || []).length) { if (my === seq) close(); return; }
+    list.replaceChildren();
+    on = 0;
+    r.hosts.forEach((h, i) => {
+      const li = el("li");
+      li.setAttribute("role", "option");
+      const at = h.toLowerCase().indexOf(t.toLowerCase());
+      if (at >= 0) li.append(h.slice(0, at), el("b", "", h.slice(at, at + t.length)), h.slice(at + t.length)); else li.textContent = h;
+      if (i === 0) li.className = "on";
+      li.addEventListener("mousedown", (ev) => { ev.preventDefault(); choose(h); });
+      list.append(li);
+    });
+    list.hidden = false;
+  }
+  ta.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(ask, 180); });
+  ta.addEventListener("blur", () => setTimeout(close, 120));
+  ta.addEventListener("keydown", (ev) => {
+    const items = Array.from(list.children);
+    if (list.hidden || !items.length) return;
+    if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+      ev.preventDefault();
+      on = (on + (ev.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+      items.forEach((x, i) => x.classList.toggle("on", i === on));
+    } else if (ev.key === "Enter" && on >= 0) { ev.preventDefault(); choose(items[on].textContent); }
+    else if (ev.key === "Escape") close();
+  });
+}
+
+// the finding list: "Skip this host" unticks the host's findings, and ticking one unticks Skip
+function pickList() {
+  for (const box of document.querySelectorAll(".group input[type=checkbox]")) {
+    box.addEventListener("change", () => {
+      const grp = box.closest(".group");
+      const same = Array.from(grp.querySelectorAll("input[type=checkbox]"));
+      if (!box.checked) return;
+      for (const o of same) if (o !== box && ((box.value === "skip") || (o.value === "skip"))) o.checked = false;
+    });
+  }
+}
+
+// ---- several findings picked: Run starts each as its own job, one after the other (the same call as one Run)
+function manyPage() {
+  const t = $("many"), go = $("go-many");
+  if (!t || !go) return;
+  go.addEventListener("click", async () => {
+    go.disabled = true;
+    let ok = 0, bad = 0;
+    for (const tr of t.querySelectorAll("tbody tr")) {
+      const cell = tr.querySelector("[data-cell=state]");
+      if (tr.dataset.bad) { bad++; continue; }
+      cell.replaceChildren(chip("running", "Starting"));
+      const vars = {report_job: tr.dataset.job, finding_id: tr.dataset.fid};
+      vars[t.dataset.hv] = tr.dataset.host;
+      try {
+        const r = await post("api/actions/" + encodeURIComponent(t.dataset.action), {vars});
+        const a = el("a", "", "job " + r.job_id);
+        a.href = r.url;
+        cell.replaceChildren(mark("ok", "s-ok", "Started"), document.createTextNode(" "), a);
+        if (r.warning) cell.append(el("div", "sub", r.warning));
+        ok++;
+      } catch (e) {
+        cell.replaceChildren(mark("bad", "s-critical", "Not started"), el("div", "sub", e.message));
+        bad++;
+      }
+    }
+    $("state").textContent = ok + " started" + (bad ? ", " + bad + " not started" : "") + ".";
+    if (bad) { $("state").className = "state bad"; }
+  });
+}
+
 // ---- the Actions page: the status of the jobs you started, live (the same call the job page makes)
 function homePage() {
   const chips = Array.from(document.querySelectorAll("#started [data-job]"));
@@ -333,7 +423,7 @@ function approvalsPage() {
 document.addEventListener("DOMContentLoaded", () => {
   const p = document.body.dataset.page;
   if (p === "home") homePage();
-  if (p === "action") actionPage();
+  if (p === "action") { actionPage(); suggestPage(); pickList(); manyPage(); }
   if (p === "job") jobPage();
   if (p === "approvals") approvalsPage();
 });

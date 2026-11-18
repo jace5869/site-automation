@@ -3,12 +3,28 @@
 # "Red Hat Ansible Automation Platform" credential's variables. A Check run only reads.
 - name: Portal setup | what to set up (workflows.yml, actions.yml)
   ansible.builtin.set_fact:
-    _ps_spec: >-
+    _ps_spec_base: >-
       {{ portal_setup_workflows if portal_setup_workflows | length > 0
          else lookup('ansible.builtin.file', role_path ~ '/../site_portal_stack/files/workflows.yml') | from_yaml }}
-    _ps_actions: >-
+    _ps_actions_base: >-
       {{ portal_actions if portal_actions | default({}) | length > 0
          else (lookup('ansible.builtin.file', role_path ~ '/../site_portal_stack/files/actions.yml') | from_yaml).actions | default({}, true) }}
+
+- name: Portal setup | your own actions, templates and workflows (1.75.3)
+  ansible.builtin.set_fact:
+    _ps_amerge: "{{ _ps_actions_base | site_portal_actions_merge(portal_actions_extra | default({}), portal_actions_off | default([])) }}"
+    _ps_smerge: "{{ _ps_spec_base | site_portal_spec_merge(portal_setup_templates_extra, portal_setup_workflows_extra) }}"
+
+- name: Portal setup | the merges are right
+  ansible.builtin.assert:
+    that: (_ps_amerge.problems + _ps_smerge.problems) | length == 0
+    fail_msg: "Nothing was changed: {{ (_ps_amerge.problems + _ps_smerge.problems) | join(' | ') }}"
+    quiet: true
+
+- name: Portal setup | what to set up, merged
+  ansible.builtin.set_fact:
+    _ps_spec: "{{ _ps_smerge.spec }}"
+    _ps_actions: "{{ _ps_amerge.actions }}"
 
 - name: Portal setup | the project is named
   ansible.builtin.assert:
@@ -28,6 +44,7 @@
     inventories: "{{ portal_setup_inventories | dict2items | selectattr('value') | items2dict }}"
     credentials: "{{ portal_setup_credentials }}"
     portal_user: "{{ portal_setup_portal_user }}"
+    portal_auditor: "{{ portal_setup_portal_auditor | bool }}"
     overwrite: "{{ portal_setup_overwrite | bool }}"
     schedules: "{{ portal_setup_schedules }}"
     scorecard:

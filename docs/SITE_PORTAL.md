@@ -34,7 +34,8 @@ The portal starts only what the actions file lists, only with values its rules a
    nginx accepts may start the listed actions. Fill `portal_requesters` (or an action's own `who`) to restrict it.
    `portal_approvers` says who may decide approvals here.
 5. **The portal's own AAP account.** It needs Execute on the listed workflows and templates, Approve on those with
-   an approval node, and Read on `portal_inventory`. Nothing else (step 2).
+   an approval node, and Read on `portal_inventory`. To list the findings of the report jobs (*Pick a host, then a
+   finding*) it also needs **Auditor** on the organization. Never a write role (step 2).
 
 **What AAP gets with a launch:** the checked values as extra vars, `portal_requested_by` (the person's name from
 their card), and the limit when the action sets one. Nothing else.
@@ -106,6 +107,9 @@ The portal launches and approves as one AAP account of its own. Make it once, as
    gives these two for the templates and workflows it makes: then skip this item for them. It never gives the
    **Read** of item 3.
 3. On the inventory `portal_inventory` (the hosts a person may pick): **Read**.
+   For *Pick a host, then a finding*: also **Auditor** on the organization of the report job templates (*Access Management >
+   Organizations > the organization > Access > Add > the account > Auditor*). It reads; it cannot change anything. The
+   job *AAP - set up portal actions* gives it with `portal_setup_portal_auditor: true` (default false).
 4. Log in as the account, then **its user menu > User details > Tokens > Create token**, scope **Write**. Copy the
    token: AAP shows it once.
 5. **Credentials > Create credential**, type **Red Hat Ansible Automation Platform**: AAP's address, the account's
@@ -582,6 +586,89 @@ allows (its `who`, else `portal_requesters`). The same rule holds for each step 
 list. Anyone else gets *Not here*, the same answer as for a job that does not exist, so the page never says that a
 job number is in use.
 
+## Pick a host, then a finding
+
+An action that takes a report job and a finding (`report_job`, `finding_id`) no longer asks anyone for ids. Opened from
+the Actions page, it has three steps. A report's button still goes straight to the confirm page, as before.
+
+1. **Host.** One host, or up to five (one per line, or separated by commas). The field suggests the hosts of
+   `portal_inventory` as you type.
+2. **Finding.** The portal lists what the reports found on each host, as ticks: *"/var is 96% full - Health check - Linux
+   - today 06:00 (job 4711)"*. The newest is ticked; tick any others. **Skip this host** leaves a host out.
+3. **Confirm.** One finding: the usual confirm page, with the job and the finding under *Details*. Several: one page that
+   lists every host and finding, and **Run** starts each as its own job, with its own approval where the action has one.
+
+- **What is read.** The job templates that run a report playbook (`finding_ref_report_playbooks` and `_extra`, matched
+  against the playbook's path in the project, without regard to case) are found once, all pages of AAP's answer. For each, its last `portal_finding_jobs` (5) runs that
+  finished within `portal_finding_days` (7; at most `finding_ref_max_age_days`, 14). A job counts by its own playbook,
+  not its template's. Successful and failed
+  runs are both read, because a report that found something ends *failed*. Only findings of the action's `kinds` (and
+  `when`) on the picked host are listed.
+- **Each finding once.** Only the newest occurrence of a finding is listed. The same finding in an older run, or in another
+  report, is folded under *Older runs (n)*.
+- **Nothing found.** The page names the reports and times it read, and links to the report website.
+- **The checks stay.** Run checks every value again, and the fix job reads the finding back from the report job
+  (`finding_ref`), as for a report's button. The rate limit and *Running already* apply to each job on its own.
+- **The cap.** One confirm page starts at most `portal_pick_max_launches` (10) jobs; over that, the page says so.
+
+**The account.** The portal's AAP account needs **Auditor** on the organization of the report job templates, to read their
+jobs and artifacts (a read only role). The deploy checks it and names the report playbooks it can see no job of.
+
+The job *AAP - set up portal actions* gives the role when `portal_setup_portal_auditor: true` (default false: you give it in
+AAP yourself). It never gives a write role.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `portal_finding_days` | 7 | how far back the report jobs are read (14 at most) |
+| `portal_finding_jobs` | 5 | the last this many runs of each report playbook |
+| `portal_finding_playbooks` | the report playbooks of `finding_ref` | which playbooks count as reports |
+| `portal_pick_max_launches` | 10 | jobs one confirm page may start |
+| `portal_setup_portal_auditor` | false | the setup job gives the account Auditor on `portal_setup_organization` |
+
+## Adding your own action
+
+Your own actions go beside the built-in ones, in `all.yml` (or your group_vars). Nothing in the repository is edited.
+
+| Setting | What it does |
+|---|---|
+| `portal_actions_extra` | your actions: a mapping, the shape of `actions.yml`'s `actions`, checked by the same rules |
+| `portal_actions_off` | the built-in actions to hide: a list of their names |
+| `portal_setup_templates_extra` | job templates for the setup job to make: a list, the shape of `workflows.yml`'s `templates` |
+| `portal_setup_workflows_extra` | workflows for the setup job to make: a list, the shape of `workflows.yml`'s `workflows` |
+
+A name a built-in action, template or workflow already has is an error that names the setting, and nothing is changed. To
+replace a built-in action, list it in `portal_actions_off` first. A name in `portal_actions_off` that is no action is an
+error too.
+
+**Example: the Linux health check on one host.** The action, the job template it runs, and the run order:
+
+```yaml
+portal_actions_extra:
+  health_one_host:
+    title: Health check of one host
+    summary: Runs the Linux health check on one host.
+    area: Health
+    aap: {type: job, name: "Health check - Linux (portal)"}
+    vars:
+      target: {kind: inventory_host, label: Host}
+    limit_from: target
+    approval: false
+    fixes: false                  # it only reads
+portal_setup_templates_extra:
+  - name: "Health check - Linux (portal)"
+    playbook: playbooks/health_check.yml
+    credentials: [machine]        # a kind of portal_setup_credentials
+    prompts: {variables: true, limit: true}
+    description: The Linux health check on one host, for the portal
+```
+
+1. Put both blocks in `all.yml`. A new `area` (here *Health*) is a new group on the Actions page.
+2. Run **AAP - set up portal actions**: it makes the template and gives the portal's account **Execute** on it.
+3. Run **Site portal - deploy**. The card *Health check of one host* is on the Actions page.
+
+Without the setup job, make the template in AAP yourself (Prompt on launch for **Variables** and **Limit**, and give the
+account **Execute**); the deploy then says *Off* with the reason until it is there.
+
 ## The look
 
 The portal's pages look like the report website: the same colours, cards, tables, status chips and bar. They follow
@@ -761,6 +848,8 @@ and [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md). The ones you are likely to
 | `portal_requesters` | `[]` | who may run the actions (CNs); `[]` = any person with a verified card |
 | `portal_approvers` | `[]` | who may approve or deny here; `[]` = nobody (AAP's own page still works) |
 | `portal_actions` | `{}` | the actions; `{}` = the role's `files/actions.yml` |
+| `portal_actions_extra`, `portal_actions_off` | `{}`, `[]` | your own actions, and built-in ones to hide (*Adding your own action*) |
+| `portal_finding_days`, `portal_finding_jobs`, `portal_pick_max_launches` | 7, 5, 10 | *Pick a host, then a finding* |
 | `portal_path` | `/portal/` | the path on nginx |
 | `portal_public_url` | `https://<the server>/portal/` | the address people open (said at the end) |
 | `portal_allow_self_approval` | false | true = an approver may decide a run they started themselves |

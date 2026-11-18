@@ -164,9 +164,23 @@
 # ---------------------------------------------------------------- the actions: one loader, the service's own
 - name: Actions | the file (or portal_actions)
   ansible.builtin.set_fact:
-    _portal_actions_raw: >-
+    _portal_actions_base: >-
       {{ portal_actions if portal_actions | length > 0
          else ((lookup('ansible.builtin.file', role_path ~ '/files/actions.yml') | from_yaml).actions | default({}, true)) }}
+
+- name: Actions | portal_actions_off and portal_actions_extra (1.75.3)
+  ansible.builtin.set_fact:
+    _portal_merge: "{{ _portal_actions_base | site_portal_actions_merge(portal_actions_extra, portal_actions_off) }}"
+
+- name: Actions | the merge is right
+  ansible.builtin.assert:
+    that: _portal_merge.problems | length == 0
+    fail_msg: "The actions are not right - nothing was changed: {{ _portal_merge.problems | join(' | ') }}"
+    quiet: true
+
+- name: Actions | the actions the portal serves
+  ansible.builtin.set_fact:
+    _portal_actions_raw: "{{ _portal_merge.actions }}"
 
 - name: Actions | checked (plugins/filter/site_portal_filters.py - the service loads them with the same rules)
   ansible.builtin.set_fact:
@@ -337,6 +351,10 @@
     _settings:
       PORTAL_PATH: "{{ portal_path }}"
       PORTAL_TITLE: "{{ portal_title }}"
+      PORTAL_FINDING_DAYS: "{{ portal_finding_days }}"
+      PORTAL_FINDING_JOBS: "{{ portal_finding_jobs }}"
+      PORTAL_PICK_MAX_LAUNCHES: "{{ portal_pick_max_launches }}"
+      PORTAL_FINDING_PLAYBOOKS: "{{ portal_finding_playbooks }}"
       PORTAL_THEME: "{{ report_web_theme | default('atlas') }}"
       PORTAL_BANNER: "{{ {'on': _portal_banner.on, 'text': _portal_banner.text, 'bg': _portal_banner.bg, 'fg': _portal_banner.fg} }}"
       PORTAL_TIME_ZONE: "{{ report_time_zone | default('') }}"
@@ -622,6 +640,26 @@
       variables" must not be Always. docs/SITE_PORTAL.md, "Security".
   when: not ansible_check_mode and _portal_aap.aap | default('') == 'ok' and _portal_aap.jinja_http | default(0) != 200
     and portal_check_jinja | bool
+
+- name: Verify | WARNING - the account cannot read the report jobs ("pick a host, then a finding")
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: an action takes a report job and a finding, so the portal lists the findings of the report jobs for a person to pick
+      - but its AAP account is not Auditor of any organization, so it may not see them.
+      {{ ('It sees no job of: ' ~ (_portal_aap.pick.unread | join(', ')) ~ '. ') if _portal_aap.pick.unread | default([]) | length > 0 else '' }}
+      Give it Organization Auditor (the job AAP - set up portal actions does with portal_setup_portal_auditor: true, or in AAP: the
+      organization's Access > Add > the account > Auditor). It never needs a write role. docs/SITE_PORTAL.md, "Pick a host, then a finding".
+  when: not ansible_check_mode and _portal_aap.pick | default({}) | length > 0 and _portal_aap.pick.on | default(false)
+    and _portal_aap.pick.auditor | default([]) | length == 0 and not _portal_aap.pick.system_auditor | default(false)
+
+- name: Verify | the account can read the report jobs
+  ansible.builtin.debug:
+    msg: >-
+      The account reads the report jobs (Auditor of {{ _portal_aap.pick.auditor | join(', ') if _portal_aap.pick.auditor | length > 0 else 'the system' }}){{
+      ('; it sees no job of: ' ~ (_portal_aap.pick.unread | join(', ')) ~ ' (none ran yet, or they are in an organization it is not Auditor of)')
+      if _portal_aap.pick.unread | length > 0 else '' }}.
+  when: not ansible_check_mode and _portal_aap.pick | default({}) | length > 0 and _portal_aap.pick.on | default(false)
+    and (_portal_aap.pick.auditor | default([]) | length > 0 or _portal_aap.pick.system_auditor | default(false))
 
 - name: Verify | the nginx lines to add
   ansible.builtin.slurp:

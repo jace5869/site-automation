@@ -288,6 +288,67 @@ def site_portal_actions_check(actions):
     return {"actions": a, "problems": p}
 
 
+def site_portal_actions_merge(base, extra=None, off=None):
+    """1.75.3, for the deploy and the setup job: the built-in actions (or portal_actions) without the names in `off` (portal_actions_off),
+    with `extra` (portal_actions_extra) added -> {'actions': the merged mapping (the file's order, then the extras'), 'problems': [...]}.
+    Every problem is said with the setting's name: an extra with a built-in name, an off name that is no action, a mapping that is not one.
+    The merged actions are checked with check_actions (the same rules) by the caller."""
+    problems = []
+    base = dict(base) if isinstance(base, dict) else {}
+    extra = extra if extra not in (None, "") else {}
+    off = off if off not in (None, "") else []
+    if not isinstance(extra, dict):
+        problems.append("portal_actions_extra must be a mapping of action name -> action, the shape of actions.yml's actions")
+        extra = {}
+    if isinstance(off, str):
+        off = [off]
+    if not isinstance(off, (list, tuple)) or not all(isinstance(x, str) for x in off):
+        problems.append("portal_actions_off must be a list of action names")
+        off = []
+    for name in off:
+        if name not in base:
+            problems.append("portal_actions_off: %r is not one of the actions (they are: %s)" % (name, ", ".join(sorted(base)) or "none"))
+    for name in extra:
+        if name in base and name not in off:
+            problems.append("portal_actions_extra: %r is already an action here (a built-in's name): choose another name - to replace it, "
+                            "list it in portal_actions_off first" % name)
+    merged = dict((k, v) for k, v in base.items() if k not in off)
+    for k, v in extra.items():
+        if k not in merged:
+            merged[k] = v
+    return {"actions": merged, "problems": problems}
+
+
+def site_portal_spec_merge(spec, templates_extra=None, workflows_extra=None):
+    """1.75.3, for the setup job: workflows.yml's {templates, workflows} (or portal_setup_workflows) with the lists portal_setup_templates_extra
+    and portal_setup_workflows_extra added -> {'spec': merged, 'problems': [...]}. A name (or a workflow number) that is already there is
+    a problem, said with the setting's name; the merged spec is checked by the setup module with the same rules as the built-in one."""
+    problems = []
+    spec = dict(spec) if isinstance(spec, dict) else {}
+    tpl, wfl = list(spec.get("templates") or []), list(spec.get("workflows") or [])
+    for label, extra, lst in (("portal_setup_templates_extra", templates_extra, tpl), ("portal_setup_workflows_extra", workflows_extra, wfl)):
+        extra = extra if extra not in (None, "") else []
+        if not isinstance(extra, list) or not all(isinstance(x, dict) for x in extra):
+            problems.append("%s must be a list of mappings, the shape of workflows.yml's %s" % (label, label.split("_")[2]))
+            continue
+        have = set(str(x.get("name")) for x in lst)
+        nums = set(x.get("number") for x in lst if isinstance(x, dict) and x.get("number") not in (None, ""))
+        for x in extra:
+            nm = str(x.get("name") or "")
+            if not nm:
+                problems.append("%s: an entry has no name" % label)
+            elif nm in have:
+                problems.append("%s: %r is already one of the %s here (a built-in's name, or listed twice): choose another name" % (label, nm, label.split("_")[2]))
+            elif label.startswith("portal_setup_workflows") and x.get("number") in nums:
+                problems.append("%s: %r has the number %s, which a workflow here has already" % (label, nm, x.get("number")))
+            else:
+                have.add(nm)
+                lst.append(x)
+    spec["templates"], spec["workflows"] = tpl, wfl
+    return {"spec": spec, "problems": problems}
+
+
 class FilterModule(object):
     def filters(self):
-        return {"site_portal_actions_check": site_portal_actions_check}
+        return {"site_portal_actions_check": site_portal_actions_check, "site_portal_actions_merge": site_portal_actions_merge,
+                "site_portal_spec_merge": site_portal_spec_merge}

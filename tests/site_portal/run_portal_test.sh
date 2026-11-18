@@ -62,7 +62,7 @@ jq_() { "$py" -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 podman network create "$net" >/dev/null
 mkdir -p "$work/aap" "$work/pki" "$work/nginx" "$work/reports/linux-health"
 podman run -d --name portal-test-aap --network "$net" -v "$here/fake_aap.py:/t/fake_aap.py:ro,Z" -v "$work/aap:/log:Z" \
-    -e FAKE_AAP_LOG=/log/aap.jsonl -e FAKE_AAP_RUN_SECONDS=4 -e FAKE_AAP_JINJA=always -e FAKE_AAP_TOKEN=test-token-1670 \
+    -e FAKE_AAP_LOG=/log/aap.jsonl -e FAKE_AAP_SEED_REPORTS=1 -e FAKE_AAP_RUN_SECONDS=4 -e FAKE_AAP_JINJA=always -e FAKE_AAP_TOKEN=test-token-1670 \
     "$image" python3 /t/fake_aap.py 8000 >/dev/null || { echo "ABORT - could not start the stand-in AAP"; exit 1; }
 printf '<!doctype html><meta charset=utf-8><title>Reports</title><h1>The report website</h1>\n' > "$work/reports/index.html"
 printf '<!doctype html><meta charset=utf-8><title>Linux health</title><p>linux health\n' > "$work/reports/linux-health/index.html"
@@ -96,6 +96,9 @@ cat > "$work/vars.json" <<EOF
  "portal_image": "$image", "portal_network": "$net", "portal_server_name": "localhost",
  "portal_public_url": "https://localhost:$port/portal/", "portal_reports_dir": "$work/reports",
  "portal_inventory": "Site hosts", "portal_approvers": ["APPROVER.ALEX.B.3456789012"], "portal_ready_delay": 2,
+ "portal_actions_extra": {"health_one_host": {"title": "Health check of one host", "summary": "Runs the Linux health check on one host.", "area": "Health",
+   "aap": {"type": "job", "name": "Health check - Linux (portal)"}, "vars": {"target": {"kind": "inventory_host", "label": "Host"}},
+   "limit_from": "target", "approval": false, "fixes": false}},
  "portal_actions": {
    "stig_recheck": {"title": "Recheck this system", "aap": {"type": "job", "name": "Linux - recheck one host"},
                     "vars": {"target": {"kind": "inventory_host"}}, "limit_from": "target", "approval": false},
@@ -122,6 +125,14 @@ deploy() {
 if deploy -e '{"portal_network": "podman"}'; then fail "podman's default network refused" "$(cat "$work/out.txt")"
 elif grep -q "portal_network = that nginx container's podman network" "$work/out.txt"; then pass "podman's default network: refused, said"
 else fail "podman's default network refused, said" "$(tail -20 "$work/out.txt")"; fi
+if deploy -e '{"portal_actions_extra": {"stig_recheck": {"title": "x", "aap": {"type": "job", "name": "x"}}}}'; then fail "an extra action with a built-in's name refused" "$(tail -20 "$work/out.txt")"
+elif grep -q "portal_actions_extra: 'stig_recheck' is already an action here" "$work/out.txt" && [ ! -e "$work/etc" ]; then
+    pass "portal_actions_extra with a built-in's name: refused before anything is written, said"
+else fail "an extra action with a built-in's name refused, said" "$(grep -B2 -A6 'fatal' "$work/out.txt")"; fi
+if deploy -e '{"portal_actions_off": ["no_such_action"]}'; then fail "portal_actions_off with no such action refused" "$(tail -20 "$work/out.txt")"
+elif grep -q "portal_actions_off: 'no_such_action' is not one of the actions" "$work/out.txt" && [ ! -e "$work/etc" ]; then
+    pass "portal_actions_off with a name that is no action: refused, said"
+else fail "portal_actions_off refused, said" "$(grep -B2 -A6 'fatal' "$work/out.txt")"; fi
 if deploy -e '{"portal_actions": {"bad": {"title": "", "aap": {"type": "job", "name": "x"}}}}'; then fail "a wrong action refused" "$(tail -20 "$work/out.txt")"
 elif grep -q "The actions are not right - nothing was changed: action bad: title is required" "$work/out.txt" && [ ! -e "$work/etc" ]; then
     pass "a wrong action: refused before anything is written, said"
@@ -211,6 +222,18 @@ r="$(c "$k/jdoe" get /portal/reports/)"
 case "$r" in *'"code": 200'*"The report website"*) pass "the report website at /portal/reports/";; *) fail "the report website" "$r";; esac
 r="$(c "$k/jdoe" get '/portal/actions/act_triage?target=web01.example.mil&report_job=907&finding_id=eventlog%3Adisk-errors')"
 case "$r" in *'"code": 200'*"portal-token"*) pass "the confirm page (a report's link)";; *) fail "the confirm page" "$r";; esac
+
+# ---- 1.75.3: pick a host, then a finding - no job id typed
+r="$(c "$k/jdoe" get /portal/actions/disk_cleanup)"
+case "$r" in *'"code": 200'*'name=\"hosts\"'*) pass "an action with a report job and a finding, opened without them: asks for the host";; *) fail "pick: the host step" "$r";; esac
+r="$(c "$k/jdoe" get '/portal/api/hosts?q=web')"
+[ "$(echo "$r" | jq_ 'd["json"]["hosts"]')" = "['web01.example.mil', 'web03.example.mil']" ] && pass "the typeahead: the inventory's hosts that contain what was typed" || fail "pick: typeahead" "$r"
+r="$(c "$k/jdoe" get '/portal/actions/disk_cleanup?hosts=web01.example.mil')"
+case "$r" in *'"code": 200'*"Pick the finding"*) pass "the host picked: the findings of the report jobs (the portal's account reads them)";; *) fail "pick: the findings step" "$r";; esac
+r="$(c "$k/jdoe" get '/portal/actions/disk_cleanup?hosts=web01.example.mil&pick0=9001~disk_full%3Aweb01.example.mil%3A%2Fvar')"
+[ "$(echo "$r" | jq_ 'd["code"], d["location"].split("?")[0]')" = "302 /portal/actions/disk_cleanup" ] && echo "$r" | grep -q "report_job=9001" && pass "one finding picked: on to the confirm page with the job and the finding filled in" || fail "pick: to the confirm page" "$r"
+r="$(c "$k/jdoe" get '/portal/actions/disk_cleanup?hosts=web01.example.mil,web03.example.mil&pick0=9001~disk_full%3Aweb01.example.mil%3A%2Fvar&pick0=9001~disk_full%3Aweb01.example.mil%3A%2Fhome&pick1=9001~disk_full%3Aweb03.example.mil%3A%2Fsrv')"
+case "$r" in *'"code": 200'*"Run 3 jobs"*) pass "two hosts, three findings: one page lists the three jobs";; *) fail "pick: several" "$r";; esac
 
 r="$(c "$k/jdoe" launch act_triage '{"target": "web01.example.mil", "report_job": "907", "finding_id": "eventlog:disk-errors"}')"
 job="$(echo "$r" | jq_ 'd["body"].get("job_id", "")')"
@@ -326,7 +349,9 @@ if [ -n "$(command -v google-chrome chromium chromium-browser 2>/dev/null | head
     c "$k/jdoe" wait "$fix" >/dev/null
     if (cd "$repo" && "$py" "$here/portal_shots.py" "https://localhost:$shot_port/portal/" "$shots" \
             "jobs=jobs/$job2" "jobs-workflow=jobs/$wf" "jobs-result=jobs/$fix" "jobs-triage=jobs/$job" "approvals=approvals" \
-            "confirm=actions/act_triage?target=web01.example.mil&report_job=907&finding_id=eventlog%3Adisk-errors" "home=") > "$work/shots.txt" 2>&1; then
+            "confirm=actions/act_triage?target=web01.example.mil&report_job=907&finding_id=eventlog%3Adisk-errors" "home=" \
+            "pick-host=actions/disk_cleanup" "pick-finding=actions/disk_cleanup?hosts=web01.example.mil" \
+            "pick-many=actions/disk_cleanup?hosts=web01.example.mil,web03.example.mil&pick0=9001~disk_full%3Aweb01.example.mil%3A%2Fvar&pick0=9001~disk_full%3Aweb01.example.mil%3A%2Fhome&pick1=9001~disk_full%3Aweb03.example.mil%3A%2Fsrv") > "$work/shots.txt" 2>&1; then
         pass "screenshots: jobs, approvals, the confirm page, home - 1280 and 800, light and dark, no script error, no side scroll ($shots)"
     else fail "screenshots" "$(cat "$work/shots.txt")"; fi
 else echo "SKIP  screenshots: no Chrome or Chromium here"; fi

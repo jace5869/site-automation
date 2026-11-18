@@ -30,5 +30,13 @@ portal_setup_scorecard_schedule_name: "Weekly - STIG scorecard"   # the schedule
 # true: workflow 40's check template gets stigman_ckl_import_mode: import (it only imports; the scorecard has its own template)
 # when its mode is not set or is "import and scorecard"; any other value there stays as it is, said
 portal_setup_split_scorecard: true
+# 1.75.3: your own templates and workflows, added to workflows.yml's lists (same shape; a name or a workflow number that is already there is
+# an error): the AAP side of an action of your own (portal_actions_extra). docs/SITE_PORTAL.md, "Adding your own action".
+portal_setup_templates_extra: []                  # your own job templates, added to workflows.yml's (the same shape; a name already there is an error)
+portal_setup_workflows_extra: []                  # your own workflows, added to workflows.yml's (the same shape; a name or a number already there is an error)
+# 1.75.3: true = also give the portal's account (portal_setup_portal_user) Auditor on portal_setup_organization, which it needs to read the
+# report jobs' findings ("pick a host, then a finding"). Organization Auditor reads everything in the organization and writes nothing; the
+# credential's user needs Admin on the organization to give it. false (the default) = you give it in AAP yourself. Never a write role.
+portal_setup_portal_auditor: false
 portal_setup_workflows: {}                       # {} = roles/site_portal_stack/files/workflows.yml; the same shape here replaces it
 portal_setup_aap_ca_path: "{{ report_history_aap_ca_path | default('') }}"   # a CA file for AAP's own HTTPS certificate

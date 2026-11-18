@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.75.3 — 2026-11-18
+
+**To set up:** run **Site portal - deploy** again. Give the portal's AAP account (`svc_site_portal`) **Auditor** on the organization of
+your report job templates, so it can read the report jobs: run **AAP - set up portal actions** with `portal_setup_portal_auditor: true`
+(the setup job's credential needs Admin on the organization), or add the role in AAP yourself. Without it the deploy warns, and the
+pick list says it could not read the reports. Nothing else is required.
+
+**The portal asks for a host, not a job id** (docs/SITE_PORTAL.md, "Pick a host, then a finding").
+
+- An action that takes `report_job` and `finding_id`, opened from the Actions page, has three steps: the host (one, or up to five;
+  it suggests the hosts of `portal_inventory`), the finding, the confirm page. A report's button still goes straight to the confirm page.
+  - The findings step lists what the report jobs found on each host: *"/var is 96% full - Health check - Linux - today 06:00 (job 4711)"*,
+    newest first, as ticks. The newest is ticked; tick any others; **Skip this host**. Each ticked finding is its own job, with its own
+    approval where the action has one (the same launch call as before: the rate limit and *Running already* apply to each).
+  - Only the newest occurrence of a finding is listed; the same finding in an older run or another report is under *Older runs (n)*.
+  - Read: the report job templates are found by their playbook's path in the project; for each, its last `portal_finding_jobs` (5) runs within `portal_finding_days` (7), **successful and failed**
+    (a report that found something ends failed). One confirm page starts at most `portal_pick_max_launches` (10) jobs.
+  - Nothing found: the page names the reports and times it read, and links to the report website.
+  - The checks stay: the value rules, `finding_ref` reading the finding back, the page's token.
+- **The deploy checks the account** can read the report jobs and names the report playbooks it sees no job of. `site_portal.py --aap-check`
+  says it. The setup job gives the role only with `portal_setup_portal_auditor: true` (default false); never a write role.
+- **Your own actions** (docs/SITE_PORTAL.md, "Adding your own action"), in `all.yml`: `portal_actions_extra` (merged into the built-in
+  actions), `portal_actions_off` (built-in actions to hide), `portal_setup_templates_extra` and `portal_setup_workflows_extra` (merged into
+  workflows.yml's lists for the setup job). They are checked by the same rules; a name a built-in has is an error naming the setting.
+  The example is the Linux health check on one host.
+- Tests: `tests/test_site_portal.py` (the steps, newest first, one each, older runs, one pick to the confirm page, 2 hosts x 2 findings,
+  skip, the cap, nothing found, the typeahead, the account check, the merges, the same finding rule as the report buttons),
+  `tests/test_portal_fit.py` (the pick pages), the portal e2e and `tests/portal_setup` (the Auditor grant, your own template, the clashes),
+  on ansible-core 2.22 and 2.16.
+
 ## 1.75.2 — 2026-11-18
 
 **To set up:** run **Site portal - deploy** again (the pages, their style and one setting, `PORTAL_THEME`, are new).

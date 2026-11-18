@@ -20,6 +20,7 @@ import threading
 import time
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -204,6 +205,7 @@ class Live(unittest.TestCase):
                              "PORTAL_AAP_URL": "http://127.0.0.1:%d" % cls.aap.server_address[1], "PORTAL_AAP_TOKEN": "fake-token",
                              "PORTAL_INVENTORY": "Site hosts", "PORTAL_APPROVERS": '["APPROVER.ALEX.B.3456789012"]',
                              "PORTAL_REQUESTERS": "[]", "PORTAL_LAUNCHES_PER_HOUR": "6", "PORTAL_TIME_ZONE": "America/New_York",
+                             "PORTAL_FINDING_PLAYBOOKS": '["health_check.yml", "disk_report.yml", "fapolicyd*.yml"]',
                              "PORTAL_BANNER": {"on": True, "text": "CUI", "bg": "#502b85", "fg": "#ffffff"}})
         sp.sys.stdout = open(os.devnull, "w")          # the journal's copy of each line
         cls.portal = sp.Portal(cls.cfg)
@@ -341,6 +343,258 @@ class Live(unittest.TestCase):
         self.assertNotIn("innerHTML", js)                                               # text only, never HTML from AAP
         self.assertEqual(self.req("/static/portal-theme.js")[0], 200)
         self.assertEqual(self.req("/static/portal.css")[0], 200)
+
+    # ---- 1.75.3: pick a host, then a finding ----------------------------------------------------------------------------
+    H1, H3 = "web01.example.mil", "web03.example.mil"
+
+    def seed(self):
+        """Report jobs: two of Health check - Linux (the newest failed: it found something), a Disk report with the same /var again, one too old,
+        one that ended in error, one of another playbook; findings of two hosts, a wrong kind."""
+        now = time.time()
+        fa = fake_aap
+        fa.STATE["reports"] = []
+        e = lambda kind, host, key, title, sev, data=None: {"id": "%s:%s:%s" % (kind, host, key), "kind": kind, "host": host, "title": title,       # noqa: E731
+                                                            "severity": sev, "data": data or {"os": "linux"}}
+        self.j_new = fa.add_report("Health check - Linux", "health_check.yml", "failed", now - 3600, {
+            self.H1: [e("disk_full", self.H1, "/var", "/var is 96% full", "critical"), e("disk_full", self.H1, "/home", "/home is 91% full", "warning"),
+                      e("service_down", self.H1, "chronyd", "chronyd is not running", "critical")],
+            self.H3: [e("disk_full", self.H3, "/var", "/var is 88% full", "warning"), e("disk_full", self.H3, "/srv", "/srv is 90% full", "warning")]})
+        self.j_disk = fa.add_report("Disk report", "disk_report.yml", "successful", now - 90000, {
+            self.H1: [e("disk_full", self.H1, "/var", "/var is 96% full", "critical")]})
+        self.j_old = fa.add_report("Health check - Linux", "health_check.yml", "failed", now - 2 * 86400, {
+            self.H1: [e("disk_full", self.H1, "/var", "/var is 93% full", "warning")]})
+        fa.add_report("Health check - Linux", "health_check.yml", "failed", now - 9 * 86400, {self.H1: [e("disk_full", self.H1, "/old", "/old is 99% full", "critical")]})
+        fa.add_report("Health check - Linux", "health_check.yml", "error", now - 600, {self.H1: [e("disk_full", self.H1, "/err", "/err is 99% full", "critical")]})
+        fa.add_report("Windows health", "win_health_check.yml", "failed", now - 600, {self.H1: [e("disk_full", self.H1, "C:", "C: is 99% full", "critical")]})
+        self.portal.aap._rj = self.portal.aap._rt = None             # the 60 second and the 5 minute memories
+        self.cfg.finding_playbooks = ["health_check.yml", "disk_report.yml", "fapolicyd*.yml"]
+
+    def fid(self, host, key):
+        return "disk_full:%s:%s" % (host, key)
+
+    def test_05a_pick_the_host(self):
+        code, raw, _ = self.req("/actions/disk_cleanup")
+        t = raw.decode()
+        self.assertEqual(code, 200)
+        self.assertIn('<textarea id="f-hosts" name="hosts"', t)
+        self.assertIn('data-suggest="/portal/api/hosts"', t)
+        self.assertIn('<li class="on"><span class="n">1</span>Host</li>', t)
+        self.assertNotIn("report_job", t)                                           # no job id asked
+        self.assertNotIn('id="run"', t)
+        t = self.req("/actions/stig_recheck")[1].decode()                         # no report_job: the confirm page as before
+        self.assertIn('id="run"', t)
+        t = self.req("/actions/disk_cleanup?target=%s&report_job=907&finding_id=%s" % (self.H1, self.fid(self.H1, "/var")))[1].decode()
+        self.assertIn('id="run"', t)                                                # a report's button: the confirm page, as before
+        self.assertIn('value="907"', t)
+
+    def test_05b_findings_newest_first_one_each(self):
+        self.seed()
+        code, raw, _ = self.req("/actions/disk_cleanup?hosts=" + self.H1)
+        t = raw.decode()
+        self.assertEqual(code, 200)
+        titles = re.findall(r'<span class="t"><b>(.*?)</b>', t)
+        self.assertEqual(titles[:2], ["/var is 96% full", "/home is 91% full"])       # newest first; service_down, the old, the error: not here
+        self.assertIn('value="%d~%s" checked' % (self.j_new, self.fid(self.H1, "/var")), t)       # the newest of each id; the first is ticked
+        self.assertNotIn('value="%d~%s" checked' % (self.j_new, self.fid(self.H1, "/home")), t)
+        self.assertIn("Older runs (2)", t)                                         # the Disk report's /var and the 2-day-old /var 93%: folded
+        self.assertIn("job %d" % self.j_disk, t)
+        self.assertIn("Health check - Linux", t)
+        self.assertNotIn("chronyd", t)                                              # another kind
+        self.assertNotIn("/old is 99%", t)                                          # past portal_finding_days
+        self.assertNotIn("/err is 99%", t)                                          # ended in error
+        self.assertNotIn("C: is 99%", t)                                            # a playbook not listed
+        self.assertIn('type="checkbox"', t)
+        self.assertNotIn('<input type="radio" name="pick', t)
+        self.assertIn("What the portal looked at", t)
+        self.assertRegex(t, r"Health check - Linux</td><td class=\"num\">2</td>")           # jobs read: the failed and the 2-day-old (not the 9-day, not the error)
+
+    def test_05c_one_pick_goes_to_confirm(self):
+        self.seed()
+        fid = self.fid(self.H1, "/var")
+        code, raw, hdr = self.req("/actions/disk_cleanup?hosts=%s&pick0=%d~%s" % (self.H1, self.j_new, urllib.parse.quote(fid)))
+        self.assertEqual(code, 302)
+        loc = hdr["Location"]
+        self.assertEqual(urllib.parse.urlsplit(loc).path, "/portal/actions/disk_cleanup")
+        self.assertEqual(urllib.parse.parse_qs(urllib.parse.urlsplit(loc).query),
+                         {"target": [self.H1], "report_job": [str(self.j_new)], "finding_id": [fid]})
+        code, raw, _ = self.req(loc[len("/portal"):])
+        self.assertIn('id="run"', raw.decode())                                      # the confirm page, its checks as ever
+        self.assertEqual(self.req("/actions/disk_cleanup?hosts=%s&pick0=junk" % self.H1)[0], 200)      # a pick that is not one: back to the list
+
+    def test_05d_two_hosts_two_findings(self):
+        self.seed()
+        q = "hosts=%s,%s&pick0=%d~%s&pick0=%d~%s&pick1=%d~%s&pick1=%d~%s" % (
+            self.H1, self.H3, self.j_new, self.fid(self.H1, "/var"), self.j_new, self.fid(self.H1, "/home"),
+            self.j_new, self.fid(self.H3, "/var"), self.j_new, self.fid(self.H3, "/srv"))
+        code, raw, _ = self.req("/actions/disk_cleanup?" + q, dn=RROE)
+        t = raw.decode()
+        self.assertEqual(code, 200)
+        self.assertIn("Run 4 jobs", t)
+        self.assertEqual(len(re.findall(r'<tr data-host="', t)), 4)
+        for h, key in ((self.H1, "/var"), (self.H1, "/home"), (self.H3, "/var"), (self.H3, "/srv")):
+            self.assertIn('data-host="%s" data-job="%d" data-fid="%s"' % (h, self.j_new, self.fid(h, key)), t)
+        self.assertIn('data-hv="target"', t)
+        self.assertIn('name="portal-token"', t)
+        before = len(self.aap_launches())
+        for h, key in ((self.H1, "/var"), (self.H1, "/home"), (self.H3, "/var"), (self.H3, "/srv")):       # what Run does: one launch each, the existing call
+            code, r = self.post("/api/actions/disk_cleanup", {"vars": {"target": h, "report_job": str(self.j_new), "finding_id": self.fid(h, key)}}, dn=RROE)
+            self.assertEqual(code, 201, r)
+        sent = self.aap_launches()[before:]
+        self.assertEqual(sorted(x["body"]["extra_vars"]["finding_id"] for x in sent),
+                         sorted([self.fid(self.H1, "/var"), self.fid(self.H1, "/home"), self.fid(self.H3, "/var"), self.fid(self.H3, "/srv")]))
+        self.assertEqual(sorted(x["body"]["limit"] for x in sent), [self.H1, self.H1, self.H3, self.H3])
+        code, r = self.post("/api/actions/disk_cleanup", {"vars": {"target": self.H1, "report_job": str(self.j_new), "finding_id": self.fid(self.H1, "/var")}}, dn=RROE)
+        self.assertEqual(code, 409, r)                                              # per pair: running already
+        # a host skipped, and the cap
+        code, raw, _ = self.req("/actions/disk_cleanup?hosts=%s,%s&pick0=skip&pick0=%d~%s&pick1=%d~%s" % (
+            self.H1, self.H3, self.j_new, self.fid(self.H1, "/var"), self.j_new, self.fid(self.H3, "/var")))
+        self.assertEqual(code, 302)                                                 # one pair left: the confirm page
+        self.assertIn("web03", urllib.parse.parse_qs(urllib.parse.urlsplit(_["Location"]).query)["target"][0])
+        self.cfg.pick_max = 3
+        try:
+            t = self.req("/actions/disk_cleanup?" + q)[1].decode()
+        finally:
+            self.cfg.pick_max = 10
+        self.assertIn("Too many.", t)
+        self.assertIn("at most 3 can start from one page", t)
+        self.assertNotIn("Run 4 jobs", t)
+
+    def test_05e_nothing_found_and_the_hosts_are_checked(self):
+        self.seed()
+        code, raw, _ = self.req("/actions/disk_cleanup?hosts=fail01.example.mil")
+        t = raw.decode()
+        self.assertEqual(code, 200)
+        self.assertIn("Nothing found", t)
+        self.assertIn("What the portal looked at", t)
+        self.assertIn('href="/portal/reports/">Open the reports', t)
+        self.assertIn("Pick another host", t)
+        t = self.req("/actions/disk_cleanup?hosts=nothere.example.mil")[1].decode()
+        self.assertIn("is not a host of the portal&#x27;s inventory", t)
+        self.assertIn('name="hosts"', t)                                            # back at step 1, the text kept
+        t = self.req("/actions/disk_cleanup?hosts=" + ",".join("h%d.example.mil" % i for i in range(6)))[1].decode()
+        self.assertIn("Too many hosts.", t)
+        t = self.req("/actions/disk_cleanup?hosts={{7}}")[1].decode()
+        self.assertIn("braces that start a template", t)
+        fake_aap.AUDITOR = False                                                    # the account cannot read the jobs: said, not hidden
+        try:
+            self.portal.aap._rj = self.portal.aap._rt = None
+            t = self.req("/actions/disk_cleanup?hosts=" + self.H1)[1].decode()
+        finally:
+            fake_aap.AUDITOR = True
+            self.portal.aap._rj = self.portal.aap._rt = None
+        self.assertIn("No report job finished in the last 7 days", t)
+
+    def aap_gets(self):
+        with open(fake_aap.LOG) as fh:
+            return [json.loads(x) for x in fh if '"GET"' in x]
+
+    def test_05g_the_playbook_is_the_path_in_the_project(self):
+        """AAP keeps a job's playbook as its path in the project ('playbooks/health_check.yml'): a filter with the bare name finds nothing. The
+        stand-in does the same, so a query with the name only fails here; the portal asks with a case-insensitive regular expression that matches the path (and a
+        playbook at the project's root)."""
+        self.seed()
+        fake_aap.add_report("Root report", "disk_report.yml", "failed", time.time() - 600,
+                            {self.H1: [{"id": self.fid(self.H1, "/root"), "kind": "disk_full", "host": self.H1, "title": "/ is 97% full",
+                                        "severity": "critical", "data": {"os": "linux"}}]}, path="disk_report.yml")
+        self.cfg.finding_playbooks = ["health_check.yml", "disk_report.yml"]
+        self.portal.aap._rj = self.portal.aap._rt = None
+        with urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:%d/api/controller/v2/jobs/?playbook=health_check.yml" % self.aap.server_address[1],
+                                                           headers={"Authorization": "Bearer fake-token"})) as f:
+            self.assertEqual(json.loads(f.read())["count"], 0)                      # the bare name: nothing, as in AAP
+        n = len(self.aap_gets())
+        t = self.req("/actions/disk_cleanup?hosts=" + self.H1)[1].decode()
+        self.assertIn("/var is 96% full", t)
+        self.assertIn("/ is 97% full", t)                                           # a playbook at the project's root is found too
+        queries = [x["path"] + "?" + "&".join("%s=%s" % kv for kv in x["query"].items()) for x in self.aap_gets()[n:]]
+        self.assertTrue(any(q.startswith("job_templates/?playbook__iregex=") for q in queries), queries)
+        self.assertFalse(any("playbook=" in q.replace("playbook__iregex=", "") for q in queries), queries)         # never the bare name
+
+    def test_05h_a_busy_template_hides_no_other(self):
+        """The runs are asked for per job template: 30 runs of one report cannot push another report's out of the list."""
+        now = time.time()
+        fake_aap.STATE["reports"] = []
+        for i in range(30):
+            fake_aap.add_report("Health check - Linux", "health_check.yml", "successful", now - 100 - i * 60, {self.H1: []})
+        fake_aap.add_report("Disk report", "disk_report.yml", "failed", now - 5 * 3600, {self.H1: [
+            {"id": self.fid(self.H1, "/srv"), "kind": "disk_full", "host": self.H1, "title": "/srv is 95% full", "severity": "critical", "data": {"os": "linux"}}]})
+        self.cfg.finding_playbooks = ["health_check.yml", "disk_report.yml"]
+        self.portal.aap._rj = self.portal.aap._rt = None
+        t = self.req("/actions/disk_cleanup?hosts=" + self.H1)[1].decode()
+        self.assertIn("/srv is 95% full", t)                                        # the Disk report's run is read
+        self.assertRegex(t, r"<td>Health check - Linux</td><td class=\"num\">5</td>")        # the busy one: its last 5 only (portal_finding_jobs)
+        self.assertRegex(t, r"<td>Disk report</td><td class=\"num\">1</td>")
+        jobs = [x for x in self.aap_gets() if x["path"] == "jobs/" and x["query"].get("job_template")]
+        self.assertTrue(jobs and all(x["query"].get("page_size") == "5" for x in jobs[-2:]))      # asked per template, as many as are read
+
+    def finding(self, key, title="x"):
+        return {self.H1: [{"id": self.fid(self.H1, key), "kind": "disk_full", "host": self.H1, "title": title, "severity": "critical", "data": {"os": "linux"}}]}
+
+    def test_05i_each_job_counts_by_its_own_playbook(self):
+        """A template edited to run another playbook still returns its old jobs: each job is checked against the allow-list by its own playbook,
+        and labelled with it - not with the template's."""
+        now = time.time()
+        fake_aap.STATE["reports"] = []
+        fake_aap.add_report("Health check - Linux", "health_check.yml", "failed", now - 3600, self.finding("/var", "/var is 96% full"))
+        fake_aap.add_report("Health check - Linux", "other_playbook.yml", "failed", now - 600, self.finding("/planted", "/planted is 99% full"))   # same template, not a report
+        self.cfg.finding_playbooks = ["health_check.yml"]
+        self.portal.aap._rj = self.portal.aap._rt = None
+        jobs, _notes = self.portal.aap.report_jobs()
+        self.assertEqual([(j["playbook"], j["name"]) for j in jobs], [("health_check.yml", "Health check - Linux")])     # the label is the job's own file
+        t = self.req("/actions/disk_cleanup?hosts=" + self.H1)[1].decode()
+        self.assertIn("/var is 96% full", t)
+        self.assertNotIn("/planted", t)
+
+    def test_05j_every_page_of_the_templates(self):
+        """More report templates than one page of AAP's answer (here the server gives 2 at a time): every page is followed before the list is kept."""
+        now = time.time()
+        fake_aap.STATE["reports"] = []
+        for i in range(5):
+            fake_aap.add_report("Report %d" % i, "health_check.yml", "failed", now - 600 - i * 60, self.finding("/m%d" % i, "/m%d is 9%d%% full" % (i, i)),
+                                path="playbooks/dir%d/health_check.yml" % i)
+        fake_aap.PAGE_CAP = 2
+        self.cfg.finding_playbooks = ["health_check.yml"]
+        self.portal.aap._rj = self.portal.aap._rt = None
+        n = len(self.aap_gets())
+        try:
+            t = self.req("/actions/disk_cleanup?hosts=" + self.H1)[1].decode()
+        finally:
+            fake_aap.PAGE_CAP = 200
+        for i in range(5):
+            self.assertIn("/m%d is 9%d%% full" % (i, i), t)
+        pages = [x for x in self.aap_gets()[n:] if x["path"] == "job_templates/"]
+        self.assertEqual(sorted(x["query"].get("page", "1") for x in pages), ["1", "2", "3"])
+        self.assertEqual(self.portal.aap._relative("/api/controller/v2/job_templates/?page=2"), "job_templates/?page=2")
+        self.assertEqual(self.portal.aap._relative("/elsewhere/?page=2"), "")
+
+    def test_05k_the_playbook_name_is_matched_without_case(self):
+        """The allow-list compares file names without case (as finding_ref does): the lookup is a case-insensitive regex (playbook__iregex)."""
+        now = time.time()
+        fake_aap.STATE["reports"] = []
+        fake_aap.add_report("Health check - Linux", "Health_Check.yml", "failed", now - 600, self.finding("/Case", "/Case is 97% full"))
+        self.cfg.finding_playbooks = ["health_check.yml"]
+        self.portal.aap._rj = self.portal.aap._rt = None
+        n = len(self.aap_gets())
+        t = self.req("/actions/disk_cleanup?hosts=" + self.H1)[1].decode()
+        self.assertIn("/Case is 97% full", t)
+        q = [x["query"] for x in self.aap_gets()[n:] if x["path"] == "job_templates/"]
+        self.assertTrue(q and all("playbook__iregex" in x and "playbook__regex" not in x for x in q), q)
+
+    def test_05f_typeahead_and_account_check(self):
+        code, raw, _ = self.req("/api/hosts?q=web")
+        self.assertEqual((code, json.loads(raw)["hosts"]), (200, [self.H1, self.H3]))
+        self.assertEqual(json.loads(self.req("/api/hosts?q=w")[1])["hosts"], [])    # too short
+        self.assertEqual(json.loads(self.req("/api/hosts?q=%7B%7B")[1])["hosts"], [])
+        self.assertEqual(self.req("/api/hosts?q=web", dn=None)[0], 403)             # a card is needed
+        self.seed()
+        res = sp.pick_check(self.portal)
+        self.assertEqual((res["on"], res["auditor"], res["system_auditor"]), (True, ["Default"], False))
+        self.assertEqual(res["unread"], ["fapolicyd*.yml"])                         # no job of it is visible
+        fake_aap.AUDITOR = False
+        try:
+            res = sp.pick_check(self.portal)
+        finally:
+            fake_aap.AUDITOR = True
+        self.assertEqual((res["auditor"], sorted(res["unread"])), ([], ["disk_report.yml", "fapolicyd*.yml", "health_check.yml"]))
 
     def test_04_launch(self):
         code, r = self.post("/api/actions/stig_recheck", {"vars": {"target": "web01.example.mil"}})
@@ -801,6 +1055,97 @@ class Look(unittest.TestCase):
         self.assertEqual(len(problems), 2)
         ok, problems = rules.check_actions({"a": dict(base, summary="One line.", area="STIG")})
         self.assertEqual((problems, ok["a"]["summary"], ok["a"]["area"]), ([], "One line.", "STIG"))
+
+
+class Own(unittest.TestCase):
+    """1.75.3: portal_actions_extra, portal_actions_off, portal_setup_templates_extra and portal_setup_workflows_extra - merged with the built-in
+    ones, checked by the same rules, a clash said with the setting's name. The user's example: Health check - Linux on one host."""
+
+    EXAMPLE = {"health_one_host": {"title": "Health check of one host", "summary": "Runs the Linux health check on one host.", "area": "Health",
+                                   "aap": {"type": "job", "name": "Health check - Linux (portal)"}, "vars": {"target": {"kind": "inventory_host", "label": "Host"}},
+                                   "limit_from": "target", "approval": False, "fixes": False}}
+    TEMPLATE = {"name": "Health check - Linux (portal)", "playbook": "playbooks/health_check.yml", "credentials": ["machine"],
+                "prompts": {"variables": True, "limit": True}, "description": "The Linux health check on one host, for the portal"}
+
+    def builtin(self):
+        import yaml
+        with open(os.path.join(FILES, "actions.yml")) as fh:
+            return yaml.safe_load(fh)["actions"]
+
+    def test_merge_actions(self):
+        base = self.builtin()
+        m = rules.site_portal_actions_merge(base, self.EXAMPLE, [])
+        self.assertEqual(m["problems"], [])
+        self.assertEqual(list(m["actions"])[-1], "health_one_host")
+        self.assertEqual(len(m["actions"]), len(base) + 1)
+        acts, problems = rules.check_actions(m["actions"])                           # checked like the built-ins
+        self.assertEqual((problems, acts["health_one_host"]["area"], acts["health_one_host"]["limit_from"]), ([], "Health", "target"))
+        m = rules.site_portal_actions_merge(base, {"stig_recheck": {"title": "x", "aap": {"type": "job", "name": "n"}}}, [])
+        self.assertEqual(len(m["problems"]), 1)
+        self.assertIn("portal_actions_extra: 'stig_recheck' is already an action here", m["problems"][0])
+        m = rules.site_portal_actions_merge(base, {"stig_recheck": self.EXAMPLE["health_one_host"]}, ["stig_recheck"])            # off, then replaced
+        self.assertEqual((m["problems"], m["actions"]["stig_recheck"]["title"]), ([], "Health check of one host"))
+        m = rules.site_portal_actions_merge(base, {}, ["open_ticket", "act_triage"])
+        self.assertEqual((m["problems"], "open_ticket" in m["actions"], "act_triage" in m["actions"], len(m["actions"])), ([], False, False, len(base) - 2))
+        m = rules.site_portal_actions_merge(base, {}, ["no_such"])
+        self.assertIn("portal_actions_off: 'no_such' is not one of the actions", m["problems"][0])
+        self.assertEqual(len(rules.site_portal_actions_merge(base, [1], "x")["problems"]), 2)          # a list for the extras; a name for off ('x' is no action)
+        self.assertEqual(rules.site_portal_actions_merge(base)["actions"], base)                                                  # nothing set: as it was
+        bad = dict(self.EXAMPLE["health_one_host"], area="y" * 41)
+        _, problems = rules.check_actions(rules.site_portal_actions_merge(base, {"mine": bad}, [])["actions"])
+        self.assertTrue(any("area must be a short name" in x for x in problems))                         # the same rules as the built-ins
+
+    def test_merge_setup_lists(self):
+        import yaml
+        with open(os.path.join(FILES, "workflows.yml")) as fh:
+            spec = yaml.safe_load(fh)
+        m = rules.site_portal_spec_merge(spec, [self.TEMPLATE], [])
+        self.assertEqual(m["problems"], [])
+        self.assertEqual(m["spec"]["templates"][-1]["name"], "Health check - Linux (portal)")
+        self.assertEqual(len(m["spec"]["templates"]), len(spec["templates"]) + 1)
+        self.assertEqual(len(m["spec"]["workflows"]), len(spec["workflows"]))
+        clash = rules.site_portal_spec_merge(spec, [dict(self.TEMPLATE, name=spec["templates"][0]["name"])], [])
+        self.assertIn("portal_setup_templates_extra: %r is already one of the templates here" % spec["templates"][0]["name"], clash["problems"][0])
+        w = spec["workflows"][0]
+        clash = rules.site_portal_spec_merge(spec, [], [{"name": "Mine", "number": w["number"], "nodes": []}])
+        self.assertIn("has the number %s" % w["number"], clash["problems"][0])
+        self.assertEqual(len(rules.site_portal_spec_merge(spec, "x", {"a": 1})["problems"]), 2)
+        lib = os.path.join(ROOT, "roles", "aap_portal_setup", "library", "site_aap_portal_setup.py")
+        import importlib.util
+        import ansible.module_utils
+        ansible.module_utils.__path__.append(os.path.join(ROOT, "plugins", "module_utils"))
+        sp_ = importlib.util.spec_from_file_location("site_aap_portal_setup", lib)
+        mod = importlib.util.module_from_spec(sp_)
+        sp_.loader.exec_module(mod)
+        self.assertEqual(mod.check_spec(m["spec"]), [])                              # the setup module's own check: the merged spec is right
+        bad = rules.site_portal_spec_merge(spec, [dict(self.TEMPLATE, playbook="")], [])
+        self.assertTrue(mod.check_spec(bad["spec"]))                                 # ... and a wrong extra is refused by it
+
+    def test_the_findings_rule_is_the_buttons_rule(self):
+        import finding_filters as ff
+        acts = self.builtin()
+        for name in ("disk_cleanup", "stig_fix_rule", "stigman_create_asset", "open_ticket", "act_triage"):
+            a = rules.check_actions({name: acts[name]})[0][name]
+            for e in ({"kind": "disk_full", "data": {"os": "linux"}}, {"kind": "disk_full", "data": {"os": "windows"}}, {"kind": "stig_rule_fail", "data": {"cat": "CAT I", "os": "linux"}},
+                      {"kind": "stig_rule_fail", "data": {"cat": "CAT II", "os": "linux"}}, {"kind": "stig_no_asset", "data": {"os": "linux"}}, {"kind": "eventlog", "data": {}},
+                      {"kind": "other", "data": {}}):
+                self.assertEqual(sp.finding_fits(a, e), ff._matches(a, e), (name, e))
+
+    def test_config_of_the_pick(self):
+        c = sp.Config({"PORTAL_FINDING_DAYS": "30", "PORTAL_FINDING_JOBS": "0", "PORTAL_PICK_MAX_LAUNCHES": "999",
+                       "PORTAL_FINDING_PLAYBOOKS": '["health_check.yml", "fapolicyd*.yml", "../x", "a b"]'})
+        self.assertEqual((c.finding_days, c.finding_jobs, c.pick_max, c.finding_playbooks), (14, 1, 50, ["health_check.yml", "fapolicyd*.yml"]))
+        c = sp.Config({})
+        self.assertEqual((c.finding_days, c.finding_jobs, c.pick_max, c.finding_playbooks), (7, 5, 10, []))
+
+    def test_the_deploy_defaults_match_finding_ref(self):
+        import yaml
+        with open(os.path.join(ROOT, "roles", "finding_ref", "defaults", "main.yml")) as fh:
+            fr = yaml.safe_load(fh)["finding_ref_report_playbooks"]
+        with open(os.path.join(ROOT, "roles", "site_portal_stack", "defaults", "main.yml")) as fh:
+            txt = fh.read()
+        for pb in fr:
+            self.assertIn("'%s'" % pb, txt)                                          # the portal reads the report jobs finding_ref takes
 
 
 class RoleFiles(unittest.TestCase):

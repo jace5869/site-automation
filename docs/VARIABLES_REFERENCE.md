@@ -171,6 +171,9 @@ File: `roles/aap_portal_setup/defaults/main.yml`
 | `portal_setup_scorecard_schedule` | `"weekly Mon 06:00"` | 'weekly Mon 06:00' or 'daily 06:00', in report_time_zone ("" = UTC); "" = no schedule |
 | `portal_setup_scorecard_schedule_name` | `"Weekly - STIG scorecard"` | the schedule's name on that template |
 | `portal_setup_split_scorecard` | `true` | true: workflow 40's check template gets stigman_ckl_import_mode: import (it only imports; the scorecard has its own template) when its mode is not set or is "import and scorecard"; any other value there stays as it is, said |
+| `portal_setup_templates_extra` | `[]` | 1.75.3: your own templates and workflows, added to workflows.yml's lists (same shape; a name or a workflow number that is already there is an error): the AAP side of an action of your own (portal_actions_extra). docs/SITE_PORTAL.md, "Adding your own action". your own job templates, added to workflows.yml's (the same s… (all of it: the role file) |
+| `portal_setup_workflows_extra` | `[]` | your own workflows, added to workflows.yml's (the same shape; a name or a number already there is an error) |
+| `portal_setup_portal_auditor` | `false` | 1.75.3: true = also give the portal's account (portal_setup_portal_user) Auditor on portal_setup_organization, which it needs to read the report jobs' findings ("pick a host, then a finding"). Organization Auditor reads everything in the organization and writes nothing; the credential's user needs Admin on the organiz… (all of it: the role file) |
 | `portal_setup_workflows` | `{}` | {} = roles/site_portal_stack/files/workflows.yml; the same shape here replaces it |
 | `portal_setup_aap_ca_path` | `"{{ report_history_aap_ca_path \| default('') }}"` | a CA file for AAP's own HTTPS certificate |
 
@@ -1938,6 +1941,12 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_launches_per_hour` | `20` | one person's launches in an hour, at most |
 | `portal_allow_self_approval` | `false` | true = an approver may approve or deny a run they started themselves |
 | `portal_actions` | `{}` | ---- the actions: {} = the role's files/actions.yml; a dict of the same shape here replaces it ----------------------- |
+| `portal_actions_extra` | `{}` | 1.75.3: your own actions, beside the built-in ones (same shape as actions.yml's actions, checked by the same rules; a name a built-in has is an error), and built-in actions to hide (a list of their names). docs/SITE_PORTAL.md, "Adding your own action". |
+| `portal_actions_off` | `[]` | built-in actions to hide: a list of their names (one that is no action is an error) |
+| `portal_finding_days` | `7` | 1.75.3: "pick a host, then a finding" - an action that takes report_job and finding_id, opened with no values, asks for the host(s) and lists what the report jobs found there (their site_findings artifact), so nobody types a job id. The last portal_finding_jobs runs of each report playbook that finished within portal_… (all of it: the role file) |
+| `portal_finding_jobs` | `5` | the last this many runs of each report playbook are read (10 at most) |
+| `portal_pick_max_launches` | `10` | one confirm page starts this many jobs at most (one per ticked finding); over it the page says so |
+| `portal_finding_playbooks` | (worked out by the role; see its file) | the report playbooks whose jobs are read (finding_ref_report_playbooks + _extra: the ones finding_ref takes a finding from) |
 | `portal_inventory` | (empty) | the AAP inventory whose hosts an action's inventory_host values must be (by name; required when an action has one) |
 | `portal_aap_url` | (worked out by the role; see its file) | ---- AAP: the "Red Hat Ansible Automation Platform" credential (its URL and a token of the portal's own account) ------ |
 | `portal_aap_validate_certs` | (worked out by the role; see its file) | check AAP's certificate (the credential's verify setting; the CAs: portal_trust_host_cas) |

@@ -54,6 +54,22 @@ portal_allow_self_approval: false                   # true = an approver may app
 
 # ---- the actions: {} = the role's files/actions.yml; a dict of the same shape here replaces it -----------------------
 portal_actions: {}
+# 1.75.3: your own actions, beside the built-in ones (same shape as actions.yml's actions, checked by the same rules; a name a built-in
+# has is an error), and built-in actions to hide (a list of their names). docs/SITE_PORTAL.md, "Adding your own action".
+portal_actions_extra: {}
+portal_actions_off: []                            # built-in actions to hide: a list of their names (one that is no action is an error)
+# 1.75.3: "pick a host, then a finding" - an action that takes report_job and finding_id, opened with no values, asks for the host(s) and
+# lists what the report jobs found there (their site_findings artifact), so nobody types a job id. The last portal_finding_jobs runs of each
+# report playbook that finished within portal_finding_days (at most finding_ref_max_age_days, 14) are read: successful and failed (a report
+# that found something ends failed). The portal's AAP account needs Organization Auditor to read them (portal_setup_portal_auditor).
+portal_finding_days: 7                            # how many days back the report jobs are read (14 at most)
+portal_finding_jobs: 5                            # the last this many runs of each report playbook are read (10 at most)
+portal_pick_max_launches: 10                      # one confirm page starts this many jobs at most (one per ticked finding); over it the page says so
+# the report playbooks whose jobs are read (finding_ref_report_playbooks + _extra: the ones finding_ref takes a finding from)
+portal_finding_playbooks: >-
+  {{ (finding_ref_report_playbooks | default(['health_check.yml', 'win_health_check.yml', 'troubleshoot.yml', 'win_troubleshoot.yml', 'disk_report.yml',
+     'fapolicyd*.yml', 'stig_drift_report.yml', 'win_stig_drift_report.yml', 'stigman_ckl_import.yml', 'service_watch.yml']))
+     + (finding_ref_report_playbooks_extra | default([])) }}
 # the AAP inventory whose hosts an action's inventory_host values must be (by name; required when an action has one)
 portal_inventory: ""
 

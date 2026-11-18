@@ -167,4 +167,46 @@ pre.out{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font-family:var(--m
   .acts,.res{grid-template-columns:minmax(0,1fr)}
   .tiles{grid-template-columns:minmax(0,1fr)}.tile{border-left:0}.tile+.tile{border-top:1px solid var(--line)}
 }
+/* pick a host, then a finding (1.75.3) */
+.steps{list-style:none;display:flex;gap:6px;flex-wrap:wrap;padding:0;margin:14px 0 0;font-size:13px;color:var(--muted)}
+.steps li{display:flex;align-items:center;gap:8px;padding:4px 12px 4px 6px;border-radius:999px;border:1px solid var(--edge);background:var(--card)}
+.steps li .n{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:700;background:var(--card-strong);color:var(--muted)}
+.steps li.on{color:var(--ink);border-color:var(--accent);background:var(--accent-soft)}
+.steps li.on .n{background:var(--btn);color:var(--btn-ink)}
+.steps li.done .n{background:var(--ok-bg);color:var(--ok)}
+.steps li.done{color:var(--ink)}
+.hostbox{position:relative;max-width:560px}
+.hostbox .row{display:flex;gap:10px;align-items:flex-start}
+.hostbox input,.hostbox textarea{flex:1;min-width:0}
+.hostbox button{white-space:nowrap}
+.suggest{position:absolute;left:0;right:140px;top:100%;margin-top:4px;z-index:5;background:var(--card);border:1px solid var(--edge);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:4px;list-style:none;margin-left:0;margin-bottom:0}
+.suggest li{padding:7px 10px;border-radius:7px;font-family:var(--mono);font-size:13px}
+.suggest li.on{background:var(--accent-soft)}
+.suggest b{color:var(--accent)}
+.help{color:var(--muted);font-size:12.5px;margin:6px 0 0}
+.picks{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.pick{display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border:1px solid var(--edge);border-radius:12px;background:var(--card);cursor:pointer}
+.pick:hover{border-color:var(--accent)}
+.pick input{margin-top:4px;accent-color:var(--accent);flex:none;width:16px;height:16px}
+.pick:has(input:checked){border-color:var(--accent);background:var(--accent-soft);box-shadow:inset 3px 0 0 var(--accent)}
+.pick.skip:has(input:checked){background:var(--card-strong);box-shadow:none}
+.pick .body{min-width:0;flex:1}
+.pick .t{display:flex;gap:10px;align-items:baseline;justify-content:space-between;flex-wrap:wrap}
+.pick .t b{font-family:var(--display);font-size:15px;font-weight:650;overflow-wrap:anywhere}
+.pick .m{color:var(--muted);font-size:13px;margin-top:2px;overflow-wrap:anywhere}
+.pick .newest{font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ok);font-weight:600}
+.looked{margin:14px 0 0}
+details.more{margin-top:14px;border:1px solid var(--edge);border-radius:10px;background:var(--card);padding:0}
+details.more summary{cursor:pointer;padding:9px 14px;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--label)}
+details.more dl{margin:0;padding:0 14px 10px}
+.group{margin-top:22px}
+.group>h3{margin:0 0 8px;font-family:var(--mono);font-size:13px;font-weight:600;color:var(--ink);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.pick.skip{border-style:dashed;background:transparent;color:var(--muted)}
+.empty-card{padding:18px 20px}
+.empty-card h2{margin:0 0 4px;font-family:var(--display);font-size:17px}
+textarea.hosts{min-height:84px}
+
+.two.one{margin-top:18px}
+.field textarea[name=hosts]{font-family:var(--mono);font-size:13px;min-height:44px}
+@media (max-width:1000px){.suggest{right:0}}
 @media print{.appbar .seg,.btns,.nav{display:none}pre.out{max-height:none}}

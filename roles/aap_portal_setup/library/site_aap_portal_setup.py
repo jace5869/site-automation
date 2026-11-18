@@ -22,7 +22,8 @@ description:
   - A workflow's nodes (job templates and approval nodes, their success, failure and always links) are made again when
     they differ from the spec.
   - The portal's account (portal_user) gets Execute on the template or workflow of each action, and Approve on each such
-    workflow with an approval node. No other role is given.
+    workflow with an approval node. No other role is given - except, when portal_auditor is true (1.75.3), Auditor on the organization.
+    Never a write role.
   - schedules adds or updates schedules (every N minutes) on templates or workflows of the spec.
   - 1.68.1, scorecard: a job template of its own for the STIG scorecard (the check template of workflow 40 copied - its project,
     inventory, execution environment, credentials and Variables - with stigman_ckl_import_mode scorecard), a weekly schedule on
@@ -38,6 +39,7 @@ options:
   inventories: {description: "The inventories by key: {default: name, linux: name, windows: name}.", type: dict, required: true}
   credentials: {description: "The credentials by kind: {machine: name, aap: name, ...}; a list of names for several.", type: dict, default: {}}
   portal_user: {description: "The portal's AAP account (its user name); '' = no grants.", type: str, default: ''}
+  portal_auditor: {description: "Also give portal_user the Auditor role of the organization (1.75.3: to read the report jobs' findings). Never a write role.", type: bool, default: false}
   overwrite: {description: Also bring up to date what was made or changed by hand., type: bool, default: false}
   schedules: {description: "[{name, target (a template or workflow of the spec), every_minutes, extra_data}].", type: list, elements: dict, default: []}
   scorecard: {description: "{name, schedule ('weekly Mon 06:00', 'daily 06:00' or ''), schedule_name, time_zone, split}; {} = none.", type: dict, default: {}}
@@ -524,6 +526,10 @@ class Setup(object):
                         self.grant("job_templates", oid, tn, ["Execute"], uid)
                     elif uid:
                         self.note("grant", tn, "skipped", why="job template %r is not in AAP" % tn)
+        if p["portal_user"] and p.get("portal_auditor"):        # 1.75.3: Auditor of the organization: it reads the report jobs' artifacts
+            uid = self.one_id("users", p["portal_user"], "User")
+            if uid and org:
+                self.grant("organizations", org, p["organization"], ["Auditor"], uid)
         for s in p["schedules"] or []:
             self.schedule(s, ids)
 
@@ -638,7 +644,7 @@ def main():
         argument_spec=dict(spec=dict(type="dict", required=True), actions=dict(type="dict", default={}),
                            organization=dict(type="str", required=True), project=dict(type="str", required=True),
                            execution_environment=dict(type="str", default=""), inventories=dict(type="dict", required=True),
-                           credentials=dict(type="dict", default={}), portal_user=dict(type="str", default=""),
+                           credentials=dict(type="dict", default={}), portal_user=dict(type="str", default=""), portal_auditor=dict(type="bool", default=False),
                            overwrite=dict(type="bool", default=False), schedules=dict(type="list", elements="dict", default=[]),
                            scorecard=dict(type="dict", default={}),
                            ca_path=dict(type="str", default=""), timeout=dict(type="int", default=30)),

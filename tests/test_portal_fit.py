@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """1.75.2: the portal's pages fit their window - in the ops, atlas and brief looks, light and dark, at 1280 and 800 px:
 no page scrolls sideways, no card, table, tile, output box, field or bar is wider than its box (a long finding id, a long output
-line, the approvals table, the refused page). The portal runs on the real actions.yml with the stand-in AAP
+line, the approvals table, the refused page, and the pick steps: the host, the findings, several hosts, nothing found). The portal runs on the real actions.yml with the stand-in AAP
 (tests/site_portal/portal_demo.py); the pages are measured in frames of one page, in headless Chrome.
   python tests/test_portal_fit.py          (skips without google-chrome or chromium)"""
 import json
@@ -48,7 +48,7 @@ class Fit(unittest.TestCase):
     def test_every_page_fits_in_every_look(self):
         for i, look in enumerate(("ops", "atlas", "brief")):
             rows = self.run_look(look, PORT + i)
-            self.assertEqual(len(rows), 6 * 2 * 2, look)                          # six pages, light and dark, two widths
+            self.assertEqual(len(rows), 11 * 2 * 2, look)                         # eleven pages, light and dark, two widths
             for r in rows:
                 self.assertEqual(r["look"], look, r)
                 self.assertTrue(r["h1"], r)                                       # the page drew (its script ran, its heading is there)

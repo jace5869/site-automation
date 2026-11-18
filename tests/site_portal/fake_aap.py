@@ -53,7 +53,29 @@ STATE = {
     "inventories": [{"id": 3, "name": "Site hosts", "hosts": ["web01.example.mil", "web03.example.mil", "fail01.example.mil"]}],
     "jobs": {},
     "approvals": {},
+    "reports": [],                  # 1.75.3: finished report jobs the pick list reads: {id, template, playbook, status, finished (epoch), artifacts}
 }
+PAGE_CAP = int(os.environ.get("FAKE_AAP_PAGE_CAP", "200"))          # the biggest page the server gives
+AUDITOR = os.environ.get("FAKE_AAP_AUDITOR", "1") != "0"          # the account's Auditor role of an organization (0: not given)
+
+
+def add_report(template, playbook, status, finished, findings, jid=None, path=None):
+    """A finished report job with its site_findings artifact ({host: [entry]}) -> its id. AAP keeps a playbook as the path in its project:
+    'playbooks/health_check.yml' (path=... to say another, e.g. 'health_check.yml' at the project's root) - never the bare name."""
+    jid = jid or new_id()
+    full = path or ("playbooks/" + playbook)
+    tpl = STATE.setdefault("report_templates", {}).setdefault(template, {"id": new_id(), "playbook": full})
+    STATE["reports"].append({"id": jid, "template": template, "template_id": tpl["id"], "playbook": full, "status": status, "finished": finished,
+                             "artifacts": {"site_findings": findings} if findings is not None else {}})
+    return jid
+
+
+def report_view(r, with_artifacts=True):
+    out = {"id": r["id"], "type": "job", "name": r["template"], "playbook": r["playbook"], "status": r["status"],
+           "finished": iso(r["finished"]), "summary_fields": {"job_template": {"id": r["template_id"], "name": r["template"]}}}
+    if with_artifacts:
+        out["artifacts"] = r["artifacts"]
+    return out
 
 
 def log(rec):
@@ -169,7 +191,38 @@ class H(BaseHTTPRequestHandler):
             return None
         log({"method": "GET", "path": p, "query": q})
         if p == "me/":
-            return self._send(200, {"results": [{"username": "svc_portal"}]})
+            return self._send(200, {"results": [{"username": "svc_portal", "id": 77, "is_system_auditor": False}]})
+        if p == "users/77/roles/":
+            roles = [{"id": 5, "name": "Auditor", "summary_fields": {"resource_type": "organization", "resource_name": "Default"}}] if AUDITOR else []
+            return self._send(200, {"count": len(roles), "results": roles})
+        if p == "job_templates/" and (q.get("playbook__regex") or q.get("playbook__iregex")):       # the report job templates (an account that may not read them sees none)
+            flags = 0 if q.get("playbook__regex") else re.I
+            rx = q.get("playbook__regex") or q.get("playbook__iregex")
+            rows = [{"id": t["id"], "name": n, "playbook": t["playbook"]} for n, t in sorted(STATE.get("report_templates", {}).items())
+                    if AUDITOR and re.search(rx, t["playbook"], flags)]
+            size = min(int(q.get("page_size", "25")), PAGE_CAP)                  # a server may cap the page size
+            page = int(q.get("page", "1"))
+            more = len(rows) > page * size
+            nxt = (BASE + "job_templates/?" + "&".join("%s=%s" % (k, v) for k, v in dict(q, page=str(page + 1)).items())) if more else None
+            return self._send(200, {"count": len(rows), "next": nxt, "results": rows[(page - 1) * size:page * size]})
+        if p == "jobs/":                                            # the report jobs: filters playbook, playbook__startswith, status__in, finished__gt
+            rows = list(STATE["reports"]) if AUDITOR else []
+            if q.get("playbook"):                                   # AAP's playbook is the path in the project: only the whole path matches
+                rows = [r for r in rows if r["playbook"] == q["playbook"]]
+            if q.get("playbook__startswith"):
+                rows = [r for r in rows if r["playbook"].startswith(q["playbook__startswith"])]
+            if q.get("playbook__regex"):
+                rows = [r for r in rows if re.search(q["playbook__regex"], r["playbook"])]
+            if q.get("job_template"):
+                rows = [r for r in rows if str(r["template_id"]) == q["job_template"]]
+            if q.get("status__in"):
+                rows = [r for r in rows if r["status"] in q["status__in"].split(",")]
+            if q.get("finished__gt"):
+                rows = [r for r in rows if iso(r["finished"]) > q["finished__gt"].replace("Z", ".000000Z")]
+            rows.sort(key=lambda r: -r["finished"])
+            size = int(q.get("page_size", "25"))
+            noart = os.environ.get("FAKE_AAP_LIST_NO_ARTIFACTS") == "1"
+            return self._send(200, {"count": len(rows), "results": [report_view(r, not noart) for r in rows[:size]]})
         if p == "settings/jobs/":
             j = os.environ.get("FAKE_AAP_JINJA")
             return self._send(200, {"ALLOW_JINJA_IN_EXTRA_VARS": j}) if j else self._send(403, {"detail": "You do not have permission."})
@@ -191,12 +244,14 @@ class H(BaseHTTPRequestHandler):
         m = re.match(r"^inventories/(\d+)/hosts/$", p)
         if m:
             inv = next((i for i in STATE["inventories"] if i["id"] == int(m.group(1))), {"hosts": []})
-            rows = [{"name": h} for h in inv["hosts"] if h == q.get("name")]
+            rows = [{"name": h} for h in inv["hosts"] if h == q.get("name") or (q.get("name__icontains") and q["name__icontains"].lower() in h.lower())]
             return self._send(200, {"count": len(rows), "results": rows})
         if p == "unified_jobs/":
             j = STATE["jobs"].get(int(q.get("id", "0")))
             return self._send(200, {"count": 1 if j else 0, "results": [view(j)] if j else []})
         m = re.match(r"^(jobs|workflow_jobs)/(\d+)/$", p)
+        if m and m.group(1) == "jobs" and AUDITOR and any(r["id"] == int(m.group(2)) for r in STATE["reports"]):
+            return self._send(200, report_view(next(r for r in STATE["reports"] if r["id"] == int(m.group(2)))))
         if m:
             j = STATE["jobs"].get(int(m.group(2)))
             return self._send(200, view(j)) if j else self._send(404, {"detail": "Not found."})
@@ -305,6 +360,24 @@ def serve(port, stop=None):
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
         return httpd
     httpd.serve_forever()
+
+
+def seed_reports(now=None):
+    """The report jobs of the pick list's tests (FAKE_AAP_SEED_REPORTS=1): ids 9001 (Health check - Linux, failed: it found something) and
+    9002 (Disk report, successful), findings of web01.example.mil and web03.example.mil."""
+    now = now or time.time()
+    e = lambda kind, host, key, title, sev: {"id": "%s:%s:%s" % (kind, host, key), "kind": kind, "host": host, "title": title,            # noqa: E731
+                                              "severity": sev, "data": {"os": "linux"}}
+    add_report("Health check - Linux", "health_check.yml", "failed", now - 3600, {
+        "web01.example.mil": [e("disk_full", "web01.example.mil", "/var", "/var is 96% full", "critical"),
+                              e("disk_full", "web01.example.mil", "/home", "/home is 91% full", "warning")],
+        "web03.example.mil": [e("disk_full", "web03.example.mil", "/srv", "/srv is 90% full", "warning")]}, jid=9001)
+    add_report("Disk report", "disk_report.yml", "successful", now - 90000, {
+        "web01.example.mil": [e("disk_full", "web01.example.mil", "/var", "/var is 96% full", "critical")]}, jid=9002)
+
+
+if os.environ.get("FAKE_AAP_SEED_REPORTS") == "1":
+    seed_reports()
 
 
 if __name__ == "__main__":
