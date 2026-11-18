@@ -134,6 +134,11 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 ## review for
 # check_stig_list_max: 200
 
+## 1.73.0b: seconds for all the texts' reads from STIG Manager together; the first read that fails
+## (no answer, HTTP 5xx, 401/403) stops them - the report is made without the texts not read and
+## says so in one line
+# check_stig_rule_texts_timeout: 120
+
 ## 1.73.0: each rule the report lists with DISA's check text and fix text - from STIG Manager (one
 ## read per STIG revision; the client's scope stig-manager:stig:read) or Evaluate-STIG's checklist.
 ## On the website a rule's row opens to them, and Copy copies a text's command lines only; the email

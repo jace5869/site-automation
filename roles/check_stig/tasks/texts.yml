@@ -33,6 +33,7 @@
     timeout: "{{ check_stig_stigman_timeout | int }}"
     hosts: []
     texts: "{{ _stig_text_want }}"
+    text_timeout: "{{ check_stig_rule_texts_timeout | int }}"
   register: _stig_text_read
   delegate_to: localhost
   run_once: true
@@ -46,10 +47,14 @@
 - name: STIG | the texts, on the report's tables
   ansible.builtin.set_fact:
     _stig_texts: "{{ _texts }}"
-    site_report_web_sections: "{{ site_report_web_sections | default(site_report_sections | default([])) | stig_texts_sections(_texts, true) }}"
-    site_report_sections: "{{ site_report_sections | default([]) | stig_texts_sections(_texts, false) }}"
+    site_report_web_sections: "{{ site_report_web_sections | default(site_report_sections | default([])) | stig_texts_sections(_texts, true, _note) }}"
+    site_report_sections: "{{ site_report_sections | default([]) | stig_texts_sections(_texts, false, _note) }}"
   vars:
     _texts: "{{ _stig_text_results | stig_texts_of(_stig_text_read.texts | default({})) }}"
+    # 1.73.0b: the texts STIG Manager did not give in time (or at all): one line on the report says so
+    _note: >-
+      {{ ('Check and fix text: not read from STIG Manager this run (' ~ (_stig_text_read.texts_info.error | default('') or _stig_text_read.error)
+          ~ '). Its rules show none.') if (_stig_text_read.texts_info.error | default('') or _stig_text_read.error | default('')) else '' }}
   run_once: true
   when: check_stig_rule_texts | bool
 

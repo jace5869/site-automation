@@ -75,6 +75,25 @@ class Commands(unittest.TestCase):
                           'Type "q" to quit.', 'Enter "ntdsutil".'])
         self.assertEqual(t.commands_of(text).split("\n"), ["Get-ADUser -Filter * | FT Name", "Net user [username]", "icacls c:\\"])
 
+    def test_the_quote_that_ends_the_command(self):
+        """1.73.0b (Codex P2): the command ends at its own closing quote - not at the line's last quote - and keeps the
+        quotes inside it; what follows is prose."""
+        self.assertEqual(t.commands_of('Run "Net user [username]", where "[username]" is the account name.'), "Net user [username]")
+        self.assertEqual(t.commands_of('Enter "get-service | where {$_.DisplayName -Like "*Defender*"} | Select Status".'),
+                         'get-service | where {$_.DisplayName -Like "*Defender*"} | Select Status')
+        self.assertEqual(t.commands_of('Enter "Get-ADUser -Filter "Name -like \'x\'" -Properties y" and look at its rows.'),
+                         'Get-ADUser -Filter "Name -like \'x\'" -Properties y')
+        self.assertEqual(t.commands_of('Enter "icacls" followed by the directory:'), "")          # one word: no command
+        self.assertEqual(t.commands_of('Run "Net user [username]", where "[username]'), "Net user [username]")
+
+    def test_exactly_what_the_quotes_hold(self):
+        """1.73.0b (Codex P2): a period inside the quotes is the command's; only the sentence's, outside them, is left."""
+        self.assertEqual(t.commands_of('Enter "Get-ChildItem C:\\Temp\\.."'), "Get-ChildItem C:\\Temp\\..")
+        self.assertEqual(t.commands_of('Enter "Get-ChildItem C:\\Temp\\..".'), "Get-ChildItem C:\\Temp\\..")
+        self.assertEqual(t.commands_of('Enter "W32tm /query /configuration".'), "W32tm /query /configuration")
+        self.assertEqual(t.commands_of('"icacls c:\\"'), "icacls c:\\")
+        self.assertEqual(t.commands_of('"icacls c:\\" is one, "Get-Acl" another'), "")            # a whole-line quote only
+
     def test_registry(self):
         text = "\n".join(["Registry Hive: HKEY_LOCAL_MACHINE", "Registry Path: \\SOFTWARE\\Policies\\X\\", "", "Value Name: A",
                           "Value Name: Two Words", "Registry Path: \\SOFTWARE\\Y\\", "", "Value Type: REG_DWORD"])
@@ -180,6 +199,16 @@ class Reports(unittest.TestCase):
         self.assertEqual(d["rows"][0][-2], long["V-257900"]["check"].strip())     # whole (its last space off)
         self.assertEqual(d["rows"][0][-1], "z")
 
+    def test_not_read_one_line(self):
+        """1.73.0b: STIG Manager gave no texts (out of time, down): one line, under the first table of rules, in each copy."""
+        secs, texts = self.drift()
+        why = "Check and fix text: not read from STIG Manager this run (no answer in time). Its rules show none."
+        for web in (True, False):
+            got = t.stig_texts_sections(secs, {}, web, why)
+            said = [s for s in got if why in str(s.get("text") or "")]
+            self.assertEqual(len(said), 1)
+            self.assertTrue(said[0]["title"].startswith("1. Drifted"))
+
     def test_the_text_email(self):
         secs, texts = self.drift()
         txt = sf.report_text({"title": "STIG drift report", "sections": t.stig_texts_sections(secs, texts, False)})
@@ -241,7 +270,9 @@ class Client(object):
     def __init__(self, rules, fail=None):
         self.rules, self.fail, self.asked = rules, fail, []
 
-    def get(self, path, **q):
+    p = {"timeout": 60}
+
+    def get(self, path, wait=None, **q):
         self.asked.append((path, q))
         if self.fail:
             raise RuntimeError(self.fail)
@@ -260,6 +291,69 @@ class ReadTexts(unittest.TestCase):
         self.assertEqual(c.asked[0], ("/stigs/RHEL_9_STIG/revisions/V2R7/rules", {"projection": ["check", "fix"]}))
         self.assertEqual(c.asked[1][0], "/stigs/RHEL_9_STIG/revisions/latest/rules")
         self.assertEqual(info, {"asked": 3, "read": 2, "error": ""})
+
+    def test_a_hanging_endpoint_is_cut_off(self):
+        """1.73.0b (Codex P2): a rules endpoint that does not answer stops the texts within their budget - never one
+        timeout per revision; the report runs without them."""
+        import threading
+        import time
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        class Slow(BaseHTTPRequestHandler):
+            def do_GET(self):
+                time.sleep(8)
+                self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, *a):
+                pass
+        srv = HTTPServer(("127.0.0.1", 0), Slow)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            c = smr.Client({"api": "http://127.0.0.1:%d/api" % srv.server_port, "timeout": 60, "validate_certs": True, "ca_path": ""})
+            c.token = "x"
+            want = [{"benchmark": "RHEL_%d_STIG" % i, "revision": "V1R1", "rules": ["SV-%d" % i]} for i in range(20)]
+            start = time.time()
+            out, info = smr.read_texts(want, c, budget=2)
+            took = time.time() - start
+        finally:
+            srv.shutdown()
+        self.assertLess(took, 5)
+        self.assertEqual(out, {})
+        self.assertIn("no answer from", info["error"])
+        self.assertEqual(info["asked"], 20)
+
+    def test_a_5xx_stops_a_404_goes_on(self):
+        rows = [{"ruleId": "SV-2r1_rule", "check": {"content": "x"}, "fix": {"text": ""}}]
+
+        class C(Client):
+            def get(self, path, wait=None, **q):
+                self.asked.append(path)
+                if "RHEL_1" in path:
+                    raise RuntimeError("HTTP 404 from %s: no STIG" % path)
+                if "RHEL_3" in path:
+                    raise RuntimeError("HTTP 503 from %s: down" % path)
+                return rows
+        c = C({})
+        c.p = {"timeout": 60}
+        want = [{"benchmark": "RHEL_%d_STIG" % i, "revision": "V1R1", "rules": ["SV-%d" % i]} for i in (1, 2, 3, 4)]
+        out, info = smr.read_texts(want, c)
+        self.assertEqual(list(out), ["SV-2"])
+        self.assertEqual(len(c.asked), 3)                                    # RHEL_4 not asked after the 503
+        self.assertIn("HTTP 503", info["error"])
+
+    def test_the_budget_runs_out(self):
+        tick = [0]
+
+        def clock():
+            tick[0] += 50
+            return tick[0]
+        c = Client({"/stigs/RHEL_%d_STIG/revisions/V1R1/rules" % i: [] for i in range(5)})
+        c.p = {"timeout": 60}
+        out, info = smr.read_texts([{"benchmark": "RHEL_%d_STIG" % i, "revision": "V1R1", "rules": ["SV-%d" % i]} for i in range(5)],
+                                   c, budget=120, clock=clock)
+        self.assertEqual(len(c.asked), 2)
+        self.assertIn("not all read within check_stig_rule_texts_timeout (120s)", info["error"])
 
     def test_no_scope(self):
         out, info = smr.read_texts([{"benchmark": "RHEL_9_STIG", "revision": "V2R7", "rules": ["SV-1"]},

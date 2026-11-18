@@ -28,10 +28,11 @@ options:
       rules too (the STIG recheck: the rules with no review), every: true - no benchmark: every STIG assigned to the host's
       asset and to its web site and database assets (<asset>-<site>-<instance>), each a checklist, create: {name, fqdn} - the
       asset to create when none is found (workflow 37, check_stig_update_create_assets; with collection and rules): looked
-      for in every collection the client can read, then the collection's revision of the STIG and its rules read}]"
+      for in every collection the client can read, then the collection's revision of the STIG and its rules read}]; [] with
+      texts (1.73.0): only the texts are read"
     type: list
     elements: dict
-    required: true
+    default: []
   texts:
     description: "1.73.0: the check text and fix text of these rules - [{benchmark, revision ('' = latest), rules: [SV-257985, ...]}]:
       one read of each revision's rules (GET /stigs/BENCHMARK/revisions/REVISION/rules with the projections check and fix -
@@ -39,6 +40,7 @@ options:
     type: list
     elements: dict
     default: []
+  text_timeout: {description: "1.73.0b: seconds for all the texts' reads together; the first read that fails stops them.", type: int, default: 120}
   collections: {description: "Only these collections are searched ([] = every collection the client can read).", type: list, elements: str, default: []}
   validate_certs: {description: Check the HTTPS certificates., type: bool, default: true}
   ca_path: {description: "A CA bundle to check them with ('' = the system's).", type: str, default: ''}
@@ -78,6 +80,7 @@ error:
 import json
 import re
 import ssl
+import time
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.six.moves.urllib.parse import urlencode, quote
@@ -192,9 +195,9 @@ class Client(object):
             self.ctx = ssl.create_default_context(cafile=p["ca_path"] or None)
         self.token = None
 
-    def _open(self, req):
+    def _open(self, req, wait=None):
         try:
-            resp = urlopen(req, timeout=self.p["timeout"], context=self.ctx)
+            resp = urlopen(req, timeout=wait or self.p["timeout"], context=self.ctx)
             return json.loads(resp.read().decode("utf-8") or "null")
         except HTTPError as e:
             body = e.read().decode("utf-8", "replace")[:300]
@@ -218,11 +221,12 @@ class Client(object):
             raise RuntimeError("the token endpoint gave no access_token")
         self.token = ans["access_token"]
 
-    def get(self, path, **query):
+    def get(self, path, wait=None, **query):
+        """wait: seconds for this request (1.73.0b: the texts' budget); None = timeout."""
         q = urlencode(sorted(query.items()), doseq=True)                # projection=rule&projection=stigs
         req = Request(self.api + path + ("?" + q if q else ""),
                       headers={"Authorization": "Bearer " + self.token, "Accept": "application/json"})
-        return self._open(req)
+        return self._open(req, wait)
 
 
 TEXT_MAX = 8000                 # characters of a check or fix text kept (DISA's longest are about 5000), as the scorecard
@@ -247,24 +251,37 @@ def text_of(rule):
     return {"check": many("check", "checks", "content"), "fix": many("fix", "fixes", "text")}
 
 
-def read_texts(want, client):
-    """1.73.0: the check and fix text of the rules asked, one read per STIG revision -> ({sv: {check, fix}}, info). A 401 or
-    403 stops it (the scope stig-manager:stig:read); a revision STIG Manager does not have gives no text."""
+def read_texts(want, client, budget=120, clock=None):
+    """1.73.0: the check and fix text of the rules asked, one read per STIG revision -> ({sv: {check, fix}}, info). The
+    texts are optional, so they never hold the report up (1.73.0b): all the reads together get budget seconds (each the
+    time left, at most the request timeout), and the first that cannot be read - no answer in time, a dropped connection,
+    an HTTP 5xx, a 401 or 403 (the scope stig-manager:stig:read) - stops them. A revision STIG Manager does not have
+    (HTTP 404) gives no text and the next is read."""
+    clock = clock or time.time
     out, info = {}, {"asked": 0, "read": 0, "error": ""}
+    end = clock() + max(1, int(budget))
+    todo = []
     for w in want or []:
         bench, rev = str((w or {}).get("benchmark") or ""), str((w or {}).get("revision") or "") or "latest"
         rules = set(sv_of(x) for x in (w or {}).get("rules") or [] if sv_of(x))
-        if not bench or not rules:
-            continue
-        info["asked"] += len(rules - set(out))
+        if bench and rules:
+            todo.append((bench, rev, rules))
+    info["asked"] = len(set().union(*[r for b, v, r in todo])) if todo else 0
+    for bench, rev, rules in todo:
+        left = end - clock()
+        if left < 1:
+            info["error"] = "not all read within check_stig_rule_texts_timeout (%ss)" % int(budget)
+            break
         try:
-            rows = client.get("/stigs/%s/revisions/%s/rules" % (quote(bench), quote(rev)), projection=["check", "fix"]) or []
+            rows = client.get("/stigs/%s/revisions/%s/rules" % (quote(bench), quote(rev)), wait=min(left, client.p["timeout"]),
+                              projection=["check", "fix"]) or []
         except RuntimeError as e:
-            if re.search(r"HTTP 40[13]\b", str(e)):
-                info["error"] = "%s - the client needs the scope stig-manager:stig:read" % str(e)[:200]
-                break
-            info["error"] = info["error"] or str(e)[:200]
-            continue
+            if re.search(r"HTTP 404\b", str(e)):
+                info["error"] = info["error"] or "STIG Manager has no %s %s" % (bench, rev)
+                continue
+            info["error"] = str(e)[:200] + (" - the client needs the scope stig-manager:stig:read"
+                                             if re.search(r"HTTP 40[13]\b", str(e)) else "")
+            break
         for r in rows if isinstance(rows, list) else []:
             sv = sv_of((r or {}).get("ruleId"))
             if sv in rules and sv not in out:
@@ -467,6 +484,7 @@ def main():
         scope=dict(type="str", default=""),
         hosts=dict(type="list", elements="dict", default=[]),
         texts=dict(type="list", elements="dict", default=[]),
+        text_timeout=dict(type="int", default=120),
         collections=dict(type="list", elements="str", default=[]),
         validate_certs=dict(type="bool", default=True),
         ca_path=dict(type="str", default=""),
@@ -480,7 +498,7 @@ def main():
     except RuntimeError as e:
         module.exit_json(changed=False, hosts={}, texts={}, texts_info={"asked": 0, "read": 0, "error": str(e)[:200]},
                          error="no token for the client %s: %s" % (p["client_id"], e))
-    texts, tinfo = read_texts(p["texts"], client) if p["texts"] else ({}, {"asked": 0, "read": 0, "error": ""})
+    texts, tinfo = read_texts(p["texts"], client, p["text_timeout"]) if p["texts"] else ({}, {"asked": 0, "read": 0, "error": ""})
     try:
         hosts = read(p, client) if p["hosts"] else {}
     except RuntimeError as e:

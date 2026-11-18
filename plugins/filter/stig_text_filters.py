@@ -22,9 +22,13 @@ _PS_ANY = re.compile(r"^(?:%s)-[A-Za-z]\w+(?:\s|$)" % _VERBS, re.I)  # inside qu
 _WORDS = re.compile(r"^\s*((?:sudo|auditpol|secedit|gpresult|esxcli|vim-cmd|reg (?:query|add|delete))\s.*)$")
 # Windows: Enter "AuditPol /get /category:*", Run "Net user [username]", where ... - the words in the quotes when they are
 # a PowerShell command or a console program with something after it ("gpedit.msc", "dsa.msc", "winver.exe": a window)
-_SAYS = re.compile(r"^\s*(?:[A-Za-z ,]*?\b)?(?:Enter|Run|Type|Execute)\s+(?:the\s+(?:following\s+)?(?:command\s+)?)?[\"\u201c](.+)[\"\u201d]",
+_SAYS = re.compile(r"^\s*(?:[A-Za-z ,]*?\b)?(?:Enter|Run|Type|Execute)\s+(?:the\s+(?:following\s+)?(?:command\s+)?)?[\"\u201c](.+)$",
                    re.I)
-_QUOTED = re.compile(r"^\s*[\"\u201c](.+)[\"\u201d]\s*\.?\s*$")
+_QUOTED = re.compile(r"^\s*[\"\u201c](.+)$")
+# 1.73.0b: what may follow the quote that ends the command - the line's end, a sentence's mark, or prose ("Run "Net user
+# [username]", where "[username]" is ..."; "Enter "icacls" followed by"); a quote inside the command is followed by its
+# own next part (} | -Properties $) and is not its end
+_AFTER = re.compile(r"^(?:[.,;:)]*\s*$|[.,;:)]+\s|\s+[a-z]+\b)")
 _CONSOLE = re.compile(r"^(?:auditpol|net|icacls|w32tm|certutil|secedit|gpresult|bcdedit|netsh|sc|reg|wmic|dsquery|nltest|setspn|"
                       r"whoami|klist|dism|cacls|fsutil|schtasks|wevtutil|repadmin|dcdiag|netstat|manage-bde|powercfg|esxcli|"
                       r"vim-cmd)(?:\.exe)?\s+\S", re.I)
@@ -35,10 +39,27 @@ _PATH = re.compile(r"^\s*Registry Path:\s*(\S.*?)\s*$", re.I)
 _VALUE = re.compile(r"^\s*Value Name:\s*(\S.*?)\s*$", re.I)
 
 
+def _quoted(rest, whole=False):
+    """The words a quote holds, exactly (1.73.0b): rest is the line after the opening quote. The quote that ends them is
+    the first one followed by the line's end, a sentence's mark or prose (_AFTER) - whole: only the line's end - with the
+    quotes inside the words in pairs. None when there is no such quote."""
+    for i, ch in enumerate(rest):
+        if ch in "\"\u201d":
+            q, after = rest[:i], rest[i + 1:]
+            if q.count('"') % 2 == 0 and (re.match(r"^[.,;:]?\s*$", after) if whole else _AFTER.match(after)):
+                return q
+    return None
+
+
 def _windows_command(q):
-    """The words of a quote when they are a command (a PowerShell cmdlet, a console program with its arguments)."""
-    q = q.strip().rstrip(".").strip()
-    return q if (_PS_ANY.match(q) or _CONSOLE.match(q)) and "\n" not in q else ""
+    """The words of a quote when they are a command, all of them (1.73.0b): a PowerShell cmdlet or a console program with
+    its arguments, on one line, its quotes in pairs and no sentence in it. '' when they are not - never cut to a part."""
+    if q is None:
+        return ""
+    c = q.strip()
+    ok = (_PS_ANY.match(c) or _CONSOLE.match(c)) and "\n" not in c and c.count('"') % 2 == 0 and "\u201c" not in c \
+        and "\u201d" not in c and not re.search(r"[.;:]\s+[A-Z][a-z]+\s+[a-z]", c)
+    return c if ok else ""
 
 
 def _reg(hive, path, value=""):
@@ -92,9 +113,13 @@ def commands_of(text, registry=True):
         if m:
             more = add(m.group(1)) and out[-1].endswith("\\")
             continue
-        m = _SAYS.match(ln) or _QUOTED.match(ln)
+        m = _SAYS.match(ln)
+        q = _quoted(m.group(1)) if m else None
+        if q is None and _QUOTED.match(ln):
+            q = _quoted(_QUOTED.match(ln).group(1), whole=True)
+            m = m or True
         if m:
-            add(_windows_command(m.group(1)))
+            add(_windows_command(q))
         elif was_lead and ln.strip() and not ln.rstrip().endswith((".", ":")):
             # the line after "run the following command:" (Windows writes it with no prompt): a console program or a cmdlet
             c = ln.strip()
@@ -196,16 +221,20 @@ def stig_texts_of(results, stigman=None):
     return out
 
 
-def stig_texts_sections(sections, texts=None, web=False):
+def stig_texts_sections(sections, texts=None, web=False, note=""):
     """1.73.0: each STIG rule a section lists (a STIG rule or Rule column) with its check and fix text.
     web (the website's atlas, brief and ops looks): the rows open in place - a first column of open buttons, each row's
     details its texts with their Copy buttons. Not web (the email, and the other looks): the section's rule_texts - each
     rule once, its texts drawn under the table (site_filters.py report_rule_texts_html; the email keeps their first part)
     - and row_rule (each row's rule in rule_texts: the workbook's Check text and Fix text columns, in full). A rule with
-    no text: nothing."""
+    no text: nothing. note (1.73.0b): why STIG Manager gave no texts this run - one line, said once, under the first table of
+    rules (its words after the section's own)."""
     texts = dict((k, v) for k, v in (texts or {}).items() if isinstance(v, dict))
     out = []
     for s in sections or []:
+        if note and isinstance(s, dict) and s.get("rows") and _rule_col(s) >= 0:
+            s = dict(s, text=" ".join(x for x in (str(s.get("text") or "").strip(), str(note)) if x))
+            note = ""
         at = _rule_col(s) if isinstance(s, dict) and s.get("rows") else -1
         if at < 0 or not texts or s.get("details") is not None:
             out.append(s)

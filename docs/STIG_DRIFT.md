@@ -70,7 +70,11 @@ Where the texts come from:
   read is made for it.
 - A rule with no text (OpenSCAP without STIG Manager, or a rule STIG Manager does not have) gets no text block.
 - The job output says how many: *Check and fix text: 2 rules have them on the report (2 of the 4 asked read from STIG
-  Manager)*. A client without the scope: the same line says so. The report is made as before.
+  Manager)*.
+- The texts never hold the report up. All their reads get `check_stig_rule_texts_timeout` (120 seconds) together.
+  The first read that fails stops them: no answer in time, HTTP 5xx, or a client without the scope. A STIG revision
+  that STIG Manager does not have (HTTP 404) is skipped.
+- Then the report is made without those texts, and one line under its first table of rules says why.
 - `check_stig_rule_texts: false` turns it off.
 
 A rule is matched with STIG Manager by its **STIG rule ID** (`SV-257985`), whatever the revision
@@ -694,6 +698,7 @@ you are most likely to set:
 | `check_stig_ignore_rules` | `[]` | rules OpenSCAP gets wrong at your site (SV-, V-, STIG id or SCAP check name): never a finding, listed as left out |
 | `check_stig_stigman_statuses` | saved, submitted, accepted | the reviews that count as the checklist |
 | `check_stig_rule_texts` | `true` | 1.73.0: each listed rule's check text and fix text (above); `false` = none |
+| `check_stig_rule_texts_timeout` | `120` | seconds for all the texts' reads from STIG Manager together |
 | `check_stig_dir`, `check_stig_keep` | `/var/lib/site-automation/stig`, 10 | where the scans are kept, and how many |
 | `check_stig_recheck` | `[open, not_reviewed]` | the STIG recheck: what STIG Manager has for a rule it checks again |
 | `check_stig_update_workflow` | `false` | `true` on workflow 37's check: what to write, handed on, `NEEDS APPROVAL` |
