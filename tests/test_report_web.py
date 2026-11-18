@@ -63,6 +63,24 @@ class Files(unittest.TestCase):
     def test_latest_same_as_page_is_dropped(self):
         self.assertEqual(sf.report_web_files({"page": "{template}.html", "latest": "{template}.html"}, NAMES)["latest"], "")
 
+    def test_a_folder_of_its_own(self):
+        """1.74.0: a dry run's files go in their own folder whatever the patterns use - a literal latest page or
+        {template_id} would otherwise put them over the real run's. The index stays shared."""
+        for pats in (PATTERNS, dict(PATTERNS, latest="patch/latest.html"),
+                     {"page": "{template_id}/{job}.html", "latest": "{template_id}/latest.html", "index": "index.html"}):
+            real = sf.report_web_files(pats, NAMES)
+            dry = sf.report_web_folder(sf.report_web_files(pats, dict(NAMES, template=NAMES["template"] + " - dry run")), "dry-run")
+            self.assertEqual(dry["index"], real["index"])
+            for k in ("page", "latest"):
+                self.assertTrue(dry[k].startswith("dry-run/"), dry[k])
+                self.assertNotEqual(dry[k], real[k])
+        self.assertEqual(sf.report_web_folder({"page": "a/b.html", "latest": "", "index": "i.html"}, "dry-run"),
+                         {"page": "dry-run/a/b.html", "latest": "", "index": "i.html"})
+        self.assertEqual(sf.report_web_folder(real, ""), real)
+        for bad in ("../x", "a/b", ".x"):
+            with self.assertRaises(sf._FilterError):
+                sf.report_web_folder(real, bad)
+
     def test_refused(self):
         for pat, says in (("{nope}.html", "there is no {nope}; the names are {date}, {day}"),
                           ("../{job}.html", "a path inside the report folder"),

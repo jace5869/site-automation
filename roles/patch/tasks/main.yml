@@ -28,6 +28,11 @@
       ignore_unreachable: true
       when: _patch_lost_at | length == 0
       block:
+        # where this host got to (patch_continue_on_failure false: patch_batch_bad compares it at each checkpoint)
+        - name: Patch | its steps begin
+          ansible.builtin.set_fact:
+            _patch_at: the start
+
         - name: Patch | which groups are protected (yours, plus no_patch and AAP - built in)
           ansible.builtin.set_fact:
             _patch_no_patch: "{{ (patch_never_patch_groups + _patch_always_no_patch) | unique }}"
@@ -170,11 +175,15 @@
         # patch_continue_on_failure false: the rollout stops at a host that failed or was lost - the others of its batch go no
         # further than here (nothing changed on them yet), marked NOT STARTED; one already in its update finishes. The
         # job's report says so, then the job fails.
+        - name: Patch | got to the checkpoint before its snapshot
+          ansible.builtin.set_fact:
+            _patch_at: before the snapshot
+
         - name: Patch | the rollout stopped (patch_continue_on_failure false) - not snapshot
           ansible.builtin.set_fact:
             patch_not_started: "the rollout stopped at {{ _patch_batch_bad | join(', ') }}, before its snapshot"
           vars:
-            _patch_batch_bad: "{{ hostvars | patch_batch_bad(ansible_play_batch) }}"
+            _patch_batch_bad: "{{ hostvars | patch_batch_bad(ansible_play_batch, 'before the snapshot') }}"
           when: not patch_continue_on_failure | bool and _patch_batch_bad | length > 0
 
         - name: Patch | NOT STARTED - the rollout stopped before its snapshot
@@ -201,25 +210,6 @@
             ansible_connection: local
             ansible_python_interpreter: "{{ ansible_playbook_python }}"
           when: patch_snapshot | bool
-
-        # patch_continue_on_failure false: the rollout stops at a host that failed or was lost - the others of its batch go no
-        # further than here (nothing changed on them yet), marked NOT STARTED; one already in its update finishes. The
-        # job's report says so, then the job fails.
-        - name: Patch | the rollout stopped (patch_continue_on_failure false) - not update
-          ansible.builtin.set_fact:
-            patch_not_started: "the rollout stopped at {{ _patch_batch_bad | join(', ') }}, before its update"
-          vars:
-            _patch_batch_bad: "{{ hostvars | patch_batch_bad(ansible_play_batch) }}"
-          when: not patch_continue_on_failure | bool and _patch_batch_bad | length > 0
-
-        - name: Patch | NOT STARTED - the rollout stopped before its update
-          ansible.builtin.debug:
-            msg: "{{ inventory_hostname }}: NOT STARTED - {{ patch_not_started }}"
-          when: patch_not_started is defined
-
-        - name: Patch | not update - the rollout stopped
-          ansible.builtin.meta: end_host
-          when: patch_not_started is defined
 
         - name: Patch | step - the update
           ansible.builtin.set_fact:
@@ -262,6 +252,29 @@
             _patch_yum: >-
               {{ ansible_facts.pkg_mgr == 'yum' or (ansible_facts.pkg_mgr not in ['dnf', 'dnf5']
                  and ansible_facts.os_family | default('') == 'RedHat' and ansible_facts.distribution_major_version | default('0') | int < 8) }}
+
+        # patch_continue_on_failure false: the rollout stops at a host that failed or was lost - the others of its batch go no
+        # further than here (only read so far: the services and dnf or yum), marked NOT STARTED. One already in its install
+        # finishes. The job's report says so, then the job fails.
+        - name: Patch | got to the checkpoint before its install
+          ansible.builtin.set_fact:
+            _patch_at: before the install
+
+        - name: Patch | the rollout stopped (patch_continue_on_failure false) - not update
+          ansible.builtin.set_fact:
+            patch_not_started: "the rollout stopped at {{ _patch_batch_bad | join(', ') }}, before its update"
+          vars:
+            _patch_batch_bad: "{{ hostvars | patch_batch_bad(ansible_play_batch, 'before the install') }}"
+          when: not patch_continue_on_failure | bool and _patch_batch_bad | length > 0
+
+        - name: Patch | NOT STARTED - the rollout stopped before its update
+          ansible.builtin.debug:
+            msg: "{{ inventory_hostname }}: NOT STARTED - {{ patch_not_started }}"
+          when: patch_not_started is defined
+
+        - name: Patch | not update - the rollout stopped
+          ansible.builtin.meta: end_host
+          when: patch_not_started is defined
 
         - name: Patch | install the updates{{ ' (security only)' if patch_security_only | bool else '' }}
           ansible.builtin.dnf:

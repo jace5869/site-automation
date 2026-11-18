@@ -70,6 +70,8 @@ email_also_refused the text of report_email_also that is no address, or an addre
 report_web_files   the file names of a report on the report website (report_web_page, report_web_latest,
                    report_web_index): the patterns with their {names} filled in, checked.
                        {{ {'page': report_web_page, ...} | report_web_files(names) }}
+report_web_folder  those names with the page and its latest copy in a folder of their own in front (_report_web_folder:
+                   a dry run's files never over the real run's, whatever the patterns say).
 site_web_win_error why the PowerShell script on report_web_host (the report website on a Windows server) gave no
                    answer - the server not reached or the login refused (with what to check), or the script's error.
                    inventory = the copy job reached it as a host of its inventory (its connection settings there).
@@ -2553,6 +2555,23 @@ def report_web_files(patterns, names):
     return out
 
 
+def report_web_folder(files, folder):
+    """report_web_files' names, each page put in a folder of its own in front (roles/site_email, _report_web_folder):
+    a dry run's files never land on the real run's, whatever report_web_page and report_web_latest say. The index
+    stays where it is. folder: one plain name ('' = as they are)."""
+    import re
+    files = dict(files or {})
+    folder = str(folder or "").strip().strip("/")
+    if not folder:
+        return files
+    if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]*$", folder):
+        raise _FilterError("_report_web_folder '%s': one folder name (letters, digits, . _ -)." % folder)
+    for key in ("page", "latest"):
+        if files.get(key):
+            files[key] = folder + "/" + files[key]
+    return files
+
+
 def site_web_win_error(result, where, inventory=False):
     """Why the script on report_web_host gave no answer (result: the registered ansible.builtin.script), in plain
     words; where: the server and its connection, e.g. web01.yoursite.mil (winrm, port 5986); inventory: it was reached
@@ -2639,5 +2658,6 @@ class FilterModule(object):
                 "report_headline": report_headline, "report_runs": report_runs,
                 "report_time_now": report_time_now, "report_time_local": report_time_local, "report_time_column": report_time_column,
                 "image_size": image_size, "email_recipients": email_recipients, "email_also_refused": email_also_refused,
-                "report_web_files": report_web_files, "site_web_win_error": site_web_win_error,
+                "report_web_files": report_web_files, "report_web_folder": report_web_folder,
+                "site_web_win_error": site_web_win_error,
                 "report_page_unpack": report_page_unpack, "report_xlsx_sheets": report_xlsx_sheets}

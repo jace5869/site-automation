@@ -22,10 +22,12 @@ its end: `patch_fail_on_could_not: false` keeps it green. `patch_continue_on_fai
   Up to date and Skipped on purpose. The email, the website with its index line, and the workbook.
 - The job fails at its end when a host could not be patched or needs a look (`patch_fail_on_could_not`, default
   true). The report goes out first, also when every host failed. The workflow's "always" steps still run.
-- A dry run sends the same report, `DRY RUN - Patch hosts`, on its own page and index line. It stays green, so the
+- A dry run sends the same report, `DRY RUN - Patch hosts`, on its own page and index line. Its files go in the
+  website's folder `dry-run/`, whatever `report_web_page` and `report_web_latest` say. It stays green, so the
   approval follows it.
-- `patch_continue_on_failure: false`: the rollout stops at such a host, as before. The rest of its batch goes no
-  further than its next step, no later batch starts (NOT STARTED), and the report goes out.
+- `patch_continue_on_failure: false`: the rollout stops at such a host, as before. The rest of its batch stops
+  before its snapshot or right before its install, whichever comes next. No later batch starts (NOT STARTED), and the
+  report goes out.
 - No ServiceNow incidents: the workflow's ServiceNow step is unchanged.
 
 ## 1.73.0 — 2026-11-18

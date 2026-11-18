@@ -517,10 +517,12 @@
         _report: "{{ hostvars['localhost']._patch_report }}"
         _report_xlsx: "{{ hostvars['localhost']._patch_report | report_xlsx_sheets }}"
         _report_check_live: true
-        # a dry run: its own page, line on the index and workbook name - never the real run's latest page or history
+        # a dry run: its own line on the index and workbook name, and its own folder (dry-run/, whatever report_web_page
+        # and report_web_latest say) - never the real run's latest page, JSON, index line or history
         _report_name: >-
           {{ ((awx_job_template_name | default(tower_job_template_name | default('Patch hosts'))) ~ ' - dry run')
              if ansible_check_mode else '' }}
+        _report_web_folder: "{{ 'dry-run' if ansible_check_mode else '' }}"
       when: >-
         report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0
         or report_web_dest | default('') | length > 0

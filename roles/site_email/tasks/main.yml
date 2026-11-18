@@ -50,6 +50,8 @@
 # _report_name: the report's own name instead of its template's (its folder, its line on the index, the workbook's
 # name), with no strip of past runs and no site_report_run artifact - a dry run beside its template's real runs (1.74.0).
 # _report_check_live: true = in Check mode too, the report is sent and written (with the include's check_mode false).
+# _report_web_folder: a folder the page and its latest copy (and their JSON) go in, in front of what report_web_page
+# and report_web_latest give - whatever names they use, so never over the real run's files (a dry run: dry-run).
 - name: Email | who gets the report
   ansible.builtin.set_fact:
     # report_email_to, and report_email_also: the "Also email the report to" box asked at launch (this run only)
@@ -234,7 +236,8 @@
             'job': awx_job_id | default(tower_job_id | default('local')),
             'status': _web_report.status | default('info'),
             'date': t.strftime('%Y-%m-%d'), 'time': t.strftime('%H%M'),
-            'year': t.strftime('%Y'), 'month': t.strftime('%m'), 'day': t.strftime('%d')} | combine(report_web_names | default({}))) }}
+            'year': t.strftime('%Y'), 'month': t.strftime('%m'), 'day': t.strftime('%d')} | combine(report_web_names | default({})))
+         | report_web_folder(_report_web_folder | default('')) }}
     _web_when: "{{ now(utc=true, fmt='%Y-%m-%d %H:%M UTC') }}"
   when: _web_on | bool
 

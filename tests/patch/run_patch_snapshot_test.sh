@@ -331,11 +331,12 @@ NOVC=1 run "a host whose machine-id is the controller's (an alias of it): refuse
 # a host down from the start (patch_skip_unreachable true, the default): NOT REACHED and left out, and it never stops the
 # rollout - every good host patched, one at a time and two at a time
 # the report as the website keeps it (report_web_dest): rep look - the problem hosts (host:reason; worst first);
-# rep tile LABEL - a tile's value; rep title; rep sec TITLE - a section's hosts. DRY=1: the dry run's own page.
+# rep tile LABEL - a tile's value; rep title; rep sec TITLE - a section's hosts. DRY=1: the dry run's own page
+# (in its own folder, dry-run/).
 site="{\"report_web_dest\": \"$work/site\", \"awx_job_template_name\": \"Patch hosts\"}"
 mkdir -p "$work/site"
 rep() {
-    "$py" - "$work/site/patch-hosts${DRY:+-dry-run}/latest.json" "$@" <<'EOP'
+    "$py" - "$work/site/${DRY:+dry-run/}patch-hosts${DRY:+-dry-run}/latest.json" "$@" <<'EOP'
 import json, sys
 r = json.load(open(sys.argv[1]))["report"]
 what = sys.argv[2]
@@ -443,6 +444,39 @@ check "  ...no host patched" "$(patched)" ""
 check "  ...the report" "$(rep title)|$(rep look)" \
     "Patch hosts: 0 hosts patched, 2 could not be patched|lost01.example.mil:LOST mid-run;web02.example.mil:FAILED during update"
 
+# the stop (patch_continue_on_failure false), patch_serial 2: web02 fails in a read before its install (the services
+# running before the update - a systemctl in /usr/local/bin that refuses that one list). Its rescue runs only after its
+# peer's last step, so the checkpoint right before the install (_patch_at) is what stops web01: never into dnf.
+rm -rf "${work:?}/site" && mkdir -p "$work/site"
+"$engine" exec -i "${hosts[2]}" sh -c 'cat > /usr/local/bin/systemctl && chmod 755 /usr/local/bin/systemctl' <<'EOS' \
+    || { echo "ABORT - the failing systemctl on web02"; exit 1; }
+#!/bin/sh
+case "$*" in *--state=running*) echo "sa-test: list-units refused" >&2; exit 1 ;; esac
+exec /usr/bin/systemctl "$@"
+EOS
+NOVC=1 run "patch_serial 2, the stop: web02 fails in the read before its install, so web01 never starts its update" fail \
+    -e target=web01.example.mil:web02.example.mil -e patch_serial=2 -e patch_continue_on_failure=false -e "$site" \
+    -- 'web02.example.mil: COULD NOT PATCH - FAILED before the update' \
+    'web01.example.mil: NOT STARTED - the rollout stopped at web02.example.mil, before its update' \
+    'could not be patched or need a look: web02.example.mil, web01.example.mil' "!$installs"
+check "  ...no host updated" "$(patched)" ""
+check "  ...the report" "$(rep look);$(rep tile 'Not started')" "web02.example.mil:FAILED before the update;web01.example.mil:NOT STARTED;1"
+"$engine" exec "${hosts[2]}" rm -f /usr/local/bin/systemctl || { echo "ABORT - web02's systemctl"; exit 1; }
+
+# the stop never halts a good batch: a host that leaves on purpose (UP TO DATE) is no failure at a checkpoint.
+# patch_serial 2, web01 up to date (sa-patch-pending 1.1 already), DC0_C0_RP0_VM1 with its update (1.0): no stop.
+"$engine" exec "${hosts[0]}" sh -c 'rpm -q sa-patch-pending | grep -q -- -1.1- || rpm -U /opt/sa-patch-rpms/repo/sa-patch-pending-1.1-*.rpm' \
+    || { echo "ABORT - web01 at 1.1"; exit 1; }
+"$engine" exec "${hosts[1]}" sh -c 'rpm -q sa-patch-pending | grep -q -- -1.0- || rpm -U --oldpackage /opt/sa-patch-rpms/installed/sa-patch-pending-*.rpm' \
+    || { echo "ABORT - DC0_C0_RP0_VM1 at 1.0"; exit 1; }
+for mode in --check ""; do
+    NOVC=1 run "patch_serial 2, the stop${mode:+ (dry run)}: one host up to date, the other patched - no stop" ok $mode \
+        -e target=web01.example.mil:DC0_C0_RP0_VM1 -e patch_serial=2 -e patch_continue_on_failure=false -e "$uc1" \
+        -e patch_packages=sa-patch-pending -- 'web01.example.mil: UP TO DATE' "$installs" '!: NOT STARTED -' '!could not be patched or need a look:'
+    check "  ...the other's update ran${mode:+ (dry run)}" "$(patched)" "DC0_C0_RP0_VM1"
+done
+check "  ...and it is updated" "$(ver "${hosts[1]}")" "1.1"
+
 rm -rf "${work:?}/site" && mkdir -p "$work/site"
 NOVC=1 run "the default: a host not reached is listed, the others patched, and the job fails at its end" fail \
     -e target=web01.example.mil:down01.example.mil -e "$site" -- 'down01.example.mil: NOT REACHED' "$installs" \
@@ -460,6 +494,24 @@ check "  ...its title" "$(DRY=1 rep title)" "DRY RUN - Patch hosts: 1 host would
 check "  ...not on the real run's page" "$([ -e "$work/site/patch-hosts/latest.json" ] && echo there || echo none)" "none"
 check "  ...its own line on the index" "$("$py" -c "import json,sys; print([x['name'] for x in json.load(open(sys.argv[1]))['reports']])" "$work/site/index.json")" \
     "['Patch hosts - dry run']"
+
+# the dry run's own folder, whatever report_web_page and report_web_latest use: a real run, then a dry run with the same
+# names - a literal latest page, then {template_id}. The real run's latest page, its JSON and its index line stay.
+for pats in '{"report_web_page": "patch/{job}-{time}.html", "report_web_latest": "patch/latest.html"}' \
+            '{"report_web_page": "{template_id}/{job}-{time}.html", "report_web_latest": "{template_id}/latest.html", "awx_job_template_id": 77}'; do
+    latest=$(printf '%s' "$pats" | "$py" -c 'import json,sys; d=json.load(sys.stdin); print(d["report_web_latest"].replace("{template_id}", "77"))')
+    rm -rf "${work:?}/site" && mkdir -p "$work/site"
+    NOVC=1 run "a real run, report_web_latest $latest" ok -e target=web01.example.mil -e "$site" -e "$pats" -e report_history=false \
+        -- "$installs"
+    real=$(sha256sum "$work/site/${latest%.html}.json" 2>/dev/null | cut -c1-64)
+    NOVC=1 run "then a dry run with the same names: in dry-run/, the real run's files untouched" ok --check -e target=web01.example.mil:web02.example.mil \
+        -e "$site" -e "$pats" -e report_history=false -- 'COULD NOT PATCH'
+    check "  ...the real run's latest JSON untouched ($latest)" "$(sha256sum "$work/site/${latest%.html}.json" 2>/dev/null | cut -c1-64)" "${real:-missing}"
+    check "  ...the real run's latest page still the real run's" "$(command grep -c 'DRY RUN' "$work/site/$latest")" "0"
+    check "  ...the dry run's latest in dry-run/" "$("$py" -c 'import json,sys; print(json.load(open(sys.argv[1]))["report"]["title"][:7])' "$work/site/dry-run/${latest%.html}.json")" "DRY RUN"
+    check "  ...two lines on the index, each its own" "$("$py" -c "import json,sys; r=json.load(open(sys.argv[1]))['reports']; print(sorted(x['name'] for x in r), len(set(x['key'] for x in r)))" "$work/site/index.json")" \
+        "['Patch hosts', 'Patch hosts - dry run'] 2"
+done
 
 # the VM step: a host whose VM is not sure is left out (COULD NOT PATCH), the others patched after their snapshots
 rm -rf "${work:?}/site" && mkdir -p "$work/site"

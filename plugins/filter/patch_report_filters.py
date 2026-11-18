@@ -233,15 +233,20 @@ PATCH_REMOTE_STEPS = ('_patch_host_mid', '_patch_df', '_patch_before_raw', '_pat
                       '_patch_yum_run', '_patch_needs', '_patch_reboot_run', '_patch_after')
 
 
-def patch_batch_bad(hostvars, batch):
-    """The hosts of a batch that could not be patched or were lost - lost at a step a moment ago, before their rescue
-    has run (the linear strategy takes them through their skipped steps beside the others): patch_continue_on_failure
-    false stops the rest of the batch on it."""
+def patch_batch_bad(hostvars, batch, at=''):
+    """The hosts of a batch that could not be patched or were lost: patch_continue_on_failure false stops the rest of
+    the batch on them. Under the linear strategy a failed host's rescue runs only after its peers' last step, and a
+    lost one is taken through its skipped steps beside them. So at a checkpoint (at: its name, which every host still
+    going set as _patch_at a moment before) a host is bad when it is lost at a step, has its _patch_could_not, or
+    started its steps (_patch_at) but did not get to this checkpoint: it failed or was lost on the way. A host left
+    out on purpose or NOT STARTED is not."""
     out = []
     for h in batch or []:
         v = (hostvars or {}).get(h) or {}
         lost = any(isinstance(v.get(k), dict) and v.get(k).get('unreachable') for k in PATCH_REMOTE_STEPS if k in v)
-        if '_patch_could_not' in v or lost:
+        behind = bool(at) and '_patch_at' in v and v.get('_patch_at') != at \
+            and not v.get('_patch_ended_on_purpose') and not v.get('patch_not_started')
+        if '_patch_could_not' in v or lost or behind:
             out.append(_s(h))
     return out
 

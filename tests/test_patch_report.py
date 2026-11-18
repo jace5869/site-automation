@@ -154,5 +154,16 @@ class BatchBad(unittest.TestCase):
         self.assertEqual(pr.patch_batch_bad(hv, ["a", "b", "c", "d", "e"]), ["a", "b"])
         self.assertEqual(pr.patch_batch_bad(hv, []), [])
 
+    def test_behind_the_checkpoint(self):
+        """A host that failed before the checkpoint has no _patch_could_not yet (its rescue runs after its peers' last
+        step): it is the one whose _patch_at is not this checkpoint's."""
+        hv = {"ok": {"_patch_at": "before the install"}, "failed": {"_patch_at": "before the snapshot"},
+              "purpose": {"_patch_at": "the start", "_patch_ended_on_purpose": "never-patch group"},
+              "stopped": {"_patch_at": "before the snapshot", "patch_not_started": "the rollout stopped at x"},
+              "never": {}}
+        self.assertEqual(pr.patch_batch_bad(hv, list(hv), "before the install"), ["failed"])
+        self.assertEqual(pr.patch_batch_bad(hv, list(hv)), [])                       # without a checkpoint: as before
+
+
 if __name__ == "__main__":
     unittest.main()

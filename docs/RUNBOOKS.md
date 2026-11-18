@@ -1073,8 +1073,8 @@ survey or `-e` (`kernel*`, `kernel*, glibc`): each name is kept whole (1.70.5). 
    It is marked **COULD NOT PATCH** with its reason and the step it got to, and nothing touches it again in
    that run. Its snapshot is kept. The job fails at its end ("The report", below).
    `patch_continue_on_failure: false`: the rollout **stops** at such a host, as before 1.74.0. The rest of its
-   batch goes no further than its next step, and no later batch starts. Those hosts are **NOT STARTED** in the
-   report. A host left out on purpose (a never-patch group, a protected VM, up to date) never stops it.
+   batch stops at its next checkpoint: before its snapshot, or right before its install. No later batch starts.
+   Those hosts are **NOT STARTED** in the report. A host left out on purpose (a never-patch group, a protected VM, up to date) never stops it.
 2. **A host that cannot be reached when the job starts** (switched off, a firewall, ssh or its login
    refused) is listed as `NOT REACHED - <why>` and left out - not patched, no snapshot - and the
    other hosts are patched. The report lists it under *Could not patch* (1.74.0). Its last lines list them all:
@@ -1163,7 +1163,8 @@ A host's snapshot is never deleted or replaced for it. The report says `snapshot
 if needed`.
 
 **A dry run** (Job type Check) sends the same report, titled `DRY RUN - Patch hosts`. It goes on its own page
-and index line ("Patch hosts - dry run"), never over the real run's. The approver sees the hosts that could not be
+and index line ("Patch hosts - dry run"), never over the real run's. Its files go in the folder `dry-run/` of the
+website, whatever `report_web_page` and `report_web_latest` say. The approver sees the hosts that could not be
 patched before approving. A dry run never fails the job, so the workflow's approval can follow it.
 
 The ServiceNow step of the workflow does not change: the report opens no incident.

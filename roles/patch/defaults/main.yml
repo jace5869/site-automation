@@ -11,8 +11,8 @@ patch_exclude: []                        # never update these here, e.g. ['maria
 patch_serial: 1
 # A host that fails or is lost while it is patched (a dnf error, no return after its reboot, lost mid-run), or that
 # could not be started (not reached, not ready, its VM not sure): true = it is listed as COULD NOT PATCH with its reason
-# and the step it got to, and the others go on (1.74.0). false = the rollout stops there: the rest of that batch goes no
-# further than its next step, no later batch starts (NOT STARTED). Either way the report goes out, then the job fails.
+# and the step it got to, and the others go on (1.74.0). false = the rollout stops there: the rest of that batch stops
+# before its snapshot or right before its install, no later batch starts (NOT STARTED). Either way the report goes out, then the job fails.
 patch_continue_on_failure: true
 # The job ends FAILED (red in AAP) when a host could not be patched or needs a look - after every other host is done
 # and the report is sent. false = the job stays green; the report still lists them.
