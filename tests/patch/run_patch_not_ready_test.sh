@@ -54,6 +54,41 @@ if grep -qE 'host01\.example\.mil \(cannot become root: (Sorry, try again|sudo: 
 else echo "FAIL - host01's reason: the password was refused"; fails=$((fails + 1)); fi
 check "host02's reason: a password is required" "host02.example.mil (cannot become root: sudo: a password is required)"
 if grep -qE 'failed=[1-9]' "$work/out.txt"; then echo "FAIL - a host is counted failed"; fails=$((fails + 1)); else echo "ok   - no host counted failed"; fi
+
+# 1.74.3: the same hosts to patch by hand (patch_by_hand_hosts), with ansible_become: true for every task (the first
+# read escalates too, and fails before its module runs) and site_unreachable_fails: true, plus down03, not reached.
+# Report only: the job green, each in "Patch by hand" with why.
+cat > "$work/inv2.yml" <<EOF
+patch_hosts:
+  hosts:
+    host01.example.mil: {ansible_become_password: not-the-password}
+    host02.example.mil: {}
+    down03.example.mil: {ansible_host: 127.0.0.1, ansible_port: 1, ansible_connection: ssh}
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: $py
+    ansible_become: true
+    ansible_become_exe: $work/sudo
+    ansible_become_user: sa-not-ready
+    ansible_pipelining: true
+EOF
+mkdir -p "$work/site"
+(cd "$repo" && "$ap" -i "$work/inv2.yml" playbooks/patch_hosts.yml --check \
+    -e '{"patch_by_hand_hosts": ["host0?", "down03"], "site_unreachable_fails": true, "awx_job_template_name": "Patch hosts"}' \
+    -e report_web_dest="$work/site") > "$work/out.txt" 2>&1
+rc=$?
+if [ $rc -eq 0 ]; then echo "ok   - by hand, sudo refused and one not reached (site_unreachable_fails true): the job green"
+else echo "FAIL - by hand: the job failed (rc $rc)"; fails=$((fails + 1)); fi
+check "by hand: the summary" "3 host(s) to patch by hand"
+check "by hand: host02 not checked, sudo refused" "host02.example.mil (not checked - sudo refused)"
+check "by hand: down03 not reached" "down03.example.mil (not reached - check by hand)"
+hand=$("$py" -c 'import json,sys; r=json.load(open(sys.argv[1]))["report"]; s=[x for x in r["sections"] if x["title"]=="Patch by hand"]
+print(";".join("%s:%s" % (x[0], x[3].split(" (")[0]) for x in (s[0]["rows"] if s else [])), r.get("needs_look"))' \
+    "$work/site/dry-run/patch-hosts-dry-run/latest.json" 2>&1)
+if [ "$hand" = "down03.example.mil:not reached - check by hand;host01.example.mil:not checked - sudo refused;host02.example.mil:not checked - sudo refused []" ]; then
+    echo "ok   - by hand: the report's section, none needing a look"
+else echo "FAIL - by hand: the report's section: $hand"; fails=$((fails + 1)); fi
+if grep -qE 'failed=[1-9]' "$work/out.txt"; then echo "FAIL - by hand: a host is counted failed"; fails=$((fails + 1)); else echo "ok   - by hand: no host counted failed"; fi
 if [ $fails -ne 0 ]; then
     echo "--- the run:"; tail -80 "$work/out.txt"
     echo "$fails failed"; exit 1

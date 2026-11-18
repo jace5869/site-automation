@@ -182,6 +182,10 @@ class ByHand(unittest.TestCase):
         st = pr.patch_host_state({"patch_by_hand": True, "patch_unsupported": "Ubuntu 24.04, apt"})
         self.assertEqual((st["state"], st["updates"]), ("by_hand", "no dnf or yum"))
         self.assertEqual(pr.patch_host_state({"patch_by_hand": True})["updates"], "not known (the check did not answer)")
+        # 1.74.3: sudo refused - not checked, with sudo's words; never a failure
+        st = pr.patch_host_state({"patch_by_hand": True, "patch_not_ready": "cannot become root: sudo: a password is required"})
+        self.assertEqual((st["state"], st["updates"], st["todo"]),
+                         ("by_hand", "not checked", "not checked - sudo refused (sudo: a password is required)"))
 
     def test_reboot_by_hand(self):
         done = dict(DONE, rebooted=False, reboot=pr.REBOOT_BY_HAND)

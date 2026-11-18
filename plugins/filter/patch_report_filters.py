@@ -124,6 +124,8 @@ def _by_hand(f, out):
     upd, reboot, todo = 'not checked', '-', BY_HAND
     if _s(f.get('site_host_unreached')):
         todo = 'not reached - check by hand'
+    elif _s(f.get('patch_not_ready')).startswith('cannot become root'):
+        todo = 'not checked - sudo refused (%s)' % _short(_s(f['patch_not_ready'])[len('cannot become root'):].lstrip(': '), 80)
     elif f.get('patch_not_ready'):
         todo = 'not ready (%s) - check by hand' % _short(f['patch_not_ready'], 80)
     elif f.get('patch_unsupported'):

@@ -126,6 +126,7 @@
         tasks_from: reach.yml
       vars:
         site_reach_report_all: true            # none reached: the report lists them all, the job fails at its end
+        site_reach_never_fail: "{{ patch_by_hand is defined }}"   # 1.74.3: by hand - in the report, never failed
       when:
         - patch_skip_unreachable | default(true) | bool or patch_by_hand is defined
         - group_names | intersect((patch_never_patch_groups | default(['no_patch', 'aap', 'aap_hosts', 'sat', 'netapp', 'netapp_console_hosts'])) + ['no_patch', 'aap', 'aap_hosts']) | length == 0
@@ -133,10 +134,13 @@
     # a host with neither dnf nor yum (not a RHEL-like Linux) is not one this job patches: listed as NO DNF OR YUM and
     # left out, the others go on (patch_skip_unsupported; false = it fails at the update). RHEL 7 and its clones
     # are patched with yum. A host the facts cannot be read from goes on and fails where it always did.
+    # 1.74.3: a host to patch by hand never fails here - a refused sudo (ansible_become: true in the inventory) fails
+    # before the module runs, which failed_when does not see; the next step lists it (not checked - sudo refused)
     - name: Its package manager (patch_skip_unsupported)
       ansible.builtin.setup:
         gather_subset: ['!all', '!min', 'pkg_mgr', 'distribution']
       ignore_unreachable: true
+      ignore_errors: "{{ patch_by_hand is defined }}"
       failed_when: false
       check_mode: false
       register: _patch_pkg
@@ -540,6 +544,7 @@
         msg: >-
           {{ _hand | length }} host(s) to patch by hand:
           {% for h in _hand %}{{ h }} ({{ 'not reached - check by hand' if hostvars[h].site_host_unreached | default('')
+          else 'not checked - sudo refused' if hostvars[h].patch_not_ready | default('') is match('cannot become root')
           else (hostvars[h].patch_updates ~ ' update(s) pending') if hostvars[h].patch_updates is defined else 'updates not known' }}{{
           ', reboot pending' if hostvars[h].patch_reboot_pending | default(false) | bool else '' }}){{ '; ' if not loop.last else '' }}{% endfor %}
       vars:

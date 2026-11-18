@@ -5,12 +5,17 @@
 # ServiceNow step opens its "no result" ticket. When no host at all is reached, the job fails: a wrong or
 # expired machine credential looks like that. A host lost later in the job still fails it.
 # Include it in pre_tasks, right after os_guard.yml (a host of the other OS is never contacted).
+# site_reach_never_fail: true = this host only goes in the report, never fails the job, whatever
+# site_unreachable_fails says (Patch hosts' hosts to patch by hand, 1.74.3).
+# ansible_become: true in the inventory beats become: false here (a variable beats a keyword): a refused sudo fails
+# this step. site_reach_never_fail: that host goes on, and its own next steps say so.
 - name: Reach the host
   ansible.builtin.raw: echo reached      # no Python, no module: Linux and Windows alike
   become: false
   changed_when: false
   check_mode: false
   ignore_unreachable: true
+  ignore_errors: "{{ site_reach_never_fail | default(false) | bool }}"
   register: _site_reach
 
 - name: Reached?
@@ -35,12 +40,12 @@
     msg: >-
       {{ inventory_hostname }}: NOT REACHED - {{ site_host_unreached }}. Left out of this run; {{ 'the report lists it.'
       if site_reach_report_all | default(false) | bool else 'the job is not failed for it (site_unreachable_fails: true fails it).' }}
-  when: site_host_unreached | length > 0 and not site_unreachable_fails | bool
+  when: site_host_unreached | length > 0 and (not site_unreachable_fails | bool or site_reach_never_fail | default(false) | bool)
 
 - name: Not reached - fail it (site_unreachable_fails)
   ansible.builtin.fail:
     msg: "{{ inventory_hostname }}: NOT REACHED - {{ site_host_unreached }}"
-  when: site_host_unreached | length > 0 and site_unreachable_fails | bool
+  when: site_host_unreached | length > 0 and site_unreachable_fails | bool and not site_reach_never_fail | default(false) | bool
 
 - name: Leave it out
   ansible.builtin.meta: end_host

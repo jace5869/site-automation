@@ -1190,7 +1190,8 @@ patch_by_hand_groups: [oracle_db]                  # every host in these invento
   `patch_exclude`, and `needs-restarting -r`.
 - The report lists them under **Patch by hand**: the updates pending, a reboot pending, and *patch this one by hand*.
   A tile beside *Skipped on purpose* counts them. A dry run lists them the same way.
-- They **never fail the job**. One not reached is listed as *not reached - check by hand*.
+- They **never fail the job**, also with `site_unreachable_fails: true` (1.74.3). One not reached is listed as
+  *not reached - check by hand*. One where sudo is refused is listed as *not checked - sudo refused*.
 - The names are matched as in `site_exclude_hosts`. A host in `site_exclude_hosts` is never even read, and is not
   in the report.
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.74.3 — 2026-11-18
+
+**To set up: nothing.**
+
+**Patch by hand: such a host never fails the job** (Codex review of 1.74.1; docs/RUNBOOKS.md, "Patch by hand").
+
+- With `site_unreachable_fails: true`, a host to patch by hand that is not reached no longer fails the job. The report
+  lists it as *not reached - check by hand*.
+- With `ansible_become: true` in the inventory and sudo refused (or no become password), its first steps no longer
+  fail the job. The report lists it as *not checked - sudo refused*, with sudo's words.
+  - `ansible_become: true` in the inventory beats a task's `become: false`, so even the reach step asked sudo.
+- `roles/site_findings/tasks/reach.yml`: `site_reach_never_fail` keeps one host in the report only, whatever
+  `site_unreachable_fails` says. Other jobs do not set it and work as before.
+
 ## 1.74.2 — 2026-11-18
 
 **To set up: nothing.** The Satisfaction section says more when `servicenow_insights_survey_scale` leaves answers out.
@@ -16,6 +30,7 @@
   - The email has the same line. The workbook's Satisfaction sheet has a *Left out (outside the scale)* column.
 - The module `site_servicenow_insights` keeps the answers that are not a number (per question, in `text_rows`) so they
   can be counted. They are never in an average.
+
 ## 1.74.1 — 2026-11-18
 
 **To set up:** in `all.yml`:
