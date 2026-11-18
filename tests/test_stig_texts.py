@@ -94,6 +94,21 @@ class Commands(unittest.TestCase):
         self.assertEqual(t.commands_of('"icacls c:\\"'), "icacls c:\\")
         self.assertEqual(t.commands_of('"icacls c:\\" is one, "Get-Acl" another'), "")            # a whole-line quote only
 
+    def test_never_a_shortened_command(self):
+        """1.73.0c (Codex P2): an end that may be a quoted argument's opening quote (a lowercase word after it and more
+        quotes on the line) gives no command - never one cut short; a sentence's mark is an end whatever follows."""
+        self.assertEqual(t.commands_of('Run "Set-Content -Path C:\\Temp\\test.txt -Value " hello"".'), "")
+        self.assertEqual(t.commands_of('Run "Net user [username]", where "[username]" is the account name.'), "Net user [username]")
+
+    def test_a_sentence_inside_an_argument(self):
+        """1.73.0c (Codex P2): a logon banner's text inside a quoted argument is the command's; prose is looked for
+        outside the quotes only."""
+        cmd = "Set-ItemProperty -Path HKLM:\\Software\\Example -Name Message -Value 'Notice: The system is monitored.'"
+        self.assertEqual(t.commands_of('Run "%s".' % cmd), cmd)
+        cmd2 = 'Set-ItemProperty -Path HKLM:\\X -Name LegalNoticeCaption -Value "Notice: Use is monitored. Read it."'
+        self.assertEqual(t.commands_of('Enter "%s".' % cmd2), cmd2)                            # in double quotes too
+        self.assertEqual(t.commands_of('Enter "Get-Service W32Time. Then look at its status"'), "")   # prose outside quotes
+
     def test_registry(self):
         text = "\n".join(["Registry Hive: HKEY_LOCAL_MACHINE", "Registry Path: \\SOFTWARE\\Policies\\X\\", "", "Value Name: A",
                           "Value Name: Two Words", "Registry Path: \\SOFTWARE\\Y\\", "", "Value Type: REG_DWORD"])
@@ -272,7 +287,7 @@ class Client(object):
 
     p = {"timeout": 60}
 
-    def get(self, path, wait=None, **q):
+    def get(self, path, wait=None, deadline=None, limit=None, **q):
         self.asked.append((path, q))
         if self.fail:
             raise RuntimeError(self.fail)
@@ -323,11 +338,65 @@ class ReadTexts(unittest.TestCase):
         self.assertIn("no answer from", info["error"])
         self.assertEqual(info["asked"], 20)
 
+    def test_a_trickling_answer_is_cut_off(self):
+        """1.73.0c (Codex P2): the budget is the whole request's - a server that sends a byte every 0.5 s (each read
+        within the socket's timeout) is cut off when the budget is spent."""
+        import threading
+        import time
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        class Trickle(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", "100000")
+                self.end_headers()
+                try:
+                    for i in range(60):
+                        self.wfile.write(b" ")
+                        self.wfile.flush()
+                        time.sleep(0.5)
+                except OSError:
+                    pass
+
+            def log_message(self, *a):
+                pass
+        srv = HTTPServer(("127.0.0.1", 0), Trickle)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            c = smr.Client({"api": "http://127.0.0.1:%d/api" % srv.server_port, "timeout": 60, "validate_certs": True, "ca_path": ""})
+            c.token = "x"
+            start = time.time()
+            out, info = smr.read_texts([{"benchmark": "RHEL_9_STIG", "revision": "V2R7", "rules": ["SV-1"]},
+                                        {"benchmark": "RHEL_8_STIG", "revision": "V2R6", "rules": ["SV-2"]}], c, budget=2)
+            took = time.time() - start
+        finally:
+            srv.shutdown()
+        self.assertLess(took, 4)
+        self.assertEqual(out, {})
+        self.assertIn("in time (the texts' budget, check_stig_rule_texts_timeout)", info["error"])
+
+    def test_the_answer_size_capped(self):
+        import io
+
+        class Resp(io.BytesIO):
+            pass
+        c = smr.Client({"api": "http://x/api", "timeout": 60, "validate_certs": True, "ca_path": ""})
+        orig = smr.urlopen
+        smr.urlopen = lambda req, timeout=None, context=None: Resp(b"[" + b" " * 300000 + b"]")
+        try:
+            with self.assertRaises(RuntimeError) as e:
+                c._open(smr.Request("http://x/api/stigs"), 5, limit=100000)
+            self.assertEqual(c._open(smr.Request("http://x/api/stigs"), 5, limit=10 ** 6), [])
+        finally:
+            smr.urlopen = orig
+        self.assertIn("is over 0.1 MB", str(e.exception))
+
     def test_a_5xx_stops_a_404_goes_on(self):
         rows = [{"ruleId": "SV-2r1_rule", "check": {"content": "x"}, "fix": {"text": ""}}]
 
         class C(Client):
-            def get(self, path, wait=None, **q):
+            def get(self, path, wait=None, deadline=None, limit=None, **q):
                 self.asked.append(path)
                 if "RHEL_1" in path:
                     raise RuntimeError("HTTP 404 from %s: no STIG" % path)

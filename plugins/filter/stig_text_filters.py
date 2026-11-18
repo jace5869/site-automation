@@ -25,10 +25,6 @@ _WORDS = re.compile(r"^\s*((?:sudo|auditpol|secedit|gpresult|esxcli|vim-cmd|reg 
 _SAYS = re.compile(r"^\s*(?:[A-Za-z ,]*?\b)?(?:Enter|Run|Type|Execute)\s+(?:the\s+(?:following\s+)?(?:command\s+)?)?[\"\u201c](.+)$",
                    re.I)
 _QUOTED = re.compile(r"^\s*[\"\u201c](.+)$")
-# 1.73.0b: what may follow the quote that ends the command - the line's end, a sentence's mark, or prose ("Run "Net user
-# [username]", where "[username]" is ..."; "Enter "icacls" followed by"); a quote inside the command is followed by its
-# own next part (} | -Properties $) and is not its end
-_AFTER = re.compile(r"^(?:[.,;:)]*\s*$|[.,;:)]+\s|\s+[a-z]+\b)")
 _CONSOLE = re.compile(r"^(?:auditpol|net|icacls|w32tm|certutil|secedit|gpresult|bcdedit|netsh|sc|reg|wmic|dsquery|nltest|setspn|"
                       r"whoami|klist|dism|cacls|fsutil|schtasks|wevtutil|repadmin|dcdiag|netstat|manage-bde|powercfg|esxcli|"
                       r"vim-cmd)(?:\.exe)?\s+\S", re.I)
@@ -40,25 +36,43 @@ _VALUE = re.compile(r"^\s*Value Name:\s*(\S.*?)\s*$", re.I)
 
 
 def _quoted(rest, whole=False):
-    """The words a quote holds, exactly (1.73.0b): rest is the line after the opening quote. The quote that ends them is
-    the first one followed by the line's end, a sentence's mark or prose (_AFTER) - whole: only the line's end - with the
-    quotes inside the words in pairs. None when there is no such quote."""
+    """The words a quote holds, exactly (1.73.0b): rest is the line after the opening quote. 1.73.0c: never a part of them -
+    the quote that ends them is the first, with the quotes before it in pairs, that is followed by
+      - the line's end or a sentence's mark (. , ; : then a space): their end, whatever follows;
+      - a lowercase word (Run "icacls" followed by ...): their end only when no quote follows on the line - else it may
+        be a quoted argument's opening quote (-Value " hello"), and None: no command rather than a cut one.
+    whole (a line that is only a quote): only the line's end. None when there is no such quote."""
     for i, ch in enumerate(rest):
-        if ch in "\"\u201d":
-            q, after = rest[:i], rest[i + 1:]
-            if q.count('"') % 2 == 0 and (re.match(r"^[.,;:]?\s*$", after) if whole else _AFTER.match(after)):
+        if ch not in "\"\u201d":
+            continue
+        q, after = rest[:i], rest[i + 1:]
+        if q.count('"') % 2:
+            continue
+        if whole:
+            if re.match(r"^[.,;:]?\s*$", after):
                 return q
+            continue
+        if re.match(r"^(?:[.,;:)]*\s*$|[.,;:)]+\s)", after):
+            return q
+        if re.match(r"^\s+[a-z]+\b", after):
+            return None if re.search("[\"\u201c\u201d]", after) else q
     return None
+
+
+def _outside_quotes(c):
+    """A command without its quoted arguments ('...', "..."): where prose would show (1.73.0c)."""
+    return re.sub(r"'[^']*'|\"[^\"]*\"", "''", c)
 
 
 def _windows_command(q):
     """The words of a quote when they are a command, all of them (1.73.0b): a PowerShell cmdlet or a console program with
-    its arguments, on one line, its quotes in pairs and no sentence in it. '' when they are not - never cut to a part."""
+    its arguments, on one line, its quotes in pairs and no sentence in it - 1.73.0c: outside its quoted arguments (a
+    banner's -Value 'Notice: The system is monitored.' is the command's). '' when they are not - never cut to a part."""
     if q is None:
         return ""
     c = q.strip()
     ok = (_PS_ANY.match(c) or _CONSOLE.match(c)) and "\n" not in c and c.count('"') % 2 == 0 and "\u201c" not in c \
-        and "\u201d" not in c and not re.search(r"[.;:]\s+[A-Z][a-z]+\s+[a-z]", c)
+        and "\u201d" not in c and not re.search(r"[.;:]\s+[A-Z][a-z]+\s+[a-z]", _outside_quotes(c))
     return c if ok else ""
 
 

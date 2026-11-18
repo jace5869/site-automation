@@ -80,6 +80,7 @@ error:
 import json
 import re
 import ssl
+import threading
 import time
 
 from ansible.module_utils.basic import AnsibleModule
@@ -195,10 +196,23 @@ class Client(object):
             self.ctx = ssl.create_default_context(cafile=p["ca_path"] or None)
         self.token = None
 
-    def _open(self, req, wait=None):
+    def _open(self, req, wait=None, limit=None):
         try:
             resp = urlopen(req, timeout=wait or self.p["timeout"], context=self.ctx)
-            return json.loads(resp.read().decode("utf-8") or "null")
+            if not limit:
+                return json.loads(resp.read().decode("utf-8") or "null")
+            # 1.73.0c: the body in parts, at most limit bytes (the texts: a revision's rules are a few MB)
+            body, size = [], 0
+            part = getattr(resp, "read1", None) or resp.read
+            while True:
+                b = part(65536)
+                if not b:
+                    break
+                size += len(b)
+                if size > limit:
+                    raise RuntimeError("the answer of %s is over %g MB" % (req.get_full_url().split("?")[0], round(limit / 1048576.0, 1)))
+                body.append(b)
+            return json.loads(b"".join(body).decode("utf-8") or "null")
         except HTTPError as e:
             body = e.read().decode("utf-8", "replace")[:300]
             raise RuntimeError("HTTP %d from %s: %s" % (e.code, req.get_full_url().split("?")[0], body.strip() or e.reason))
@@ -221,14 +235,34 @@ class Client(object):
             raise RuntimeError("the token endpoint gave no access_token")
         self.token = ans["access_token"]
 
-    def get(self, path, wait=None, **query):
-        """wait: seconds for this request (1.73.0b: the texts' budget); None = timeout."""
+    def get(self, path, wait=None, deadline=None, limit=None, **query):
+        """wait: seconds a read may wait (the socket's timeout; None = timeout). 1.73.0c, the texts: deadline - a
+        time.monotonic() the whole request and its body must be done by (a server that trickles its answer is cut off
+        there: the request runs in a thread of its own, left behind when the time is up), limit - the body's most bytes."""
         q = urlencode(sorted(query.items()), doseq=True)                # projection=rule&projection=stigs
         req = Request(self.api + path + ("?" + q if q else ""),
                       headers={"Authorization": "Bearer " + self.token, "Accept": "application/json"})
-        return self._open(req, wait)
+        if deadline is None:
+            return self._open(req, wait, limit)
+        box = {}
+
+        def work():
+            try:
+                box["ok"] = self._open(req, wait, limit)
+            except Exception as e:           # handed to the caller as it was raised
+                box["error"] = e
+        th = threading.Thread(target=work)
+        th.daemon = True                     # a request still going when the time is up is not waited for
+        th.start()
+        th.join(max(0.0, deadline - time.monotonic()))
+        if th.is_alive():
+            raise RuntimeError("no answer from %s in time (the texts' budget, check_stig_rule_texts_timeout)" % (self.api + path))
+        if "error" in box:
+            raise box["error"]
+        return box.get("ok")
 
 
+TEXT_BODY_MAX = 50 * 1048576   # 1.73.0c: bytes of a revision's rules with their texts, at most (a few MB in use)
 TEXT_MAX = 8000                 # characters of a check or fix text kept (DISA's longest are about 5000), as the scorecard
 
 
@@ -257,9 +291,10 @@ def read_texts(want, client, budget=120, clock=None):
     time left, at most the request timeout), and the first that cannot be read - no answer in time, a dropped connection,
     an HTTP 5xx, a 401 or 403 (the scope stig-manager:stig:read) - stops them. A revision STIG Manager does not have
     (HTTP 404) gives no text and the next is read."""
-    clock = clock or time.time
+    clock = clock or time.monotonic
     out, info = {}, {"asked": 0, "read": 0, "error": ""}
     end = clock() + max(1, int(budget))
+    hard = time.monotonic() + max(1, int(budget))         # 1.73.0c: the whole of every request, its body too
     todo = []
     for w in want or []:
         bench, rev = str((w or {}).get("benchmark") or ""), str((w or {}).get("revision") or "") or "latest"
@@ -274,7 +309,7 @@ def read_texts(want, client, budget=120, clock=None):
             break
         try:
             rows = client.get("/stigs/%s/revisions/%s/rules" % (quote(bench), quote(rev)), wait=min(left, client.p["timeout"]),
-                              projection=["check", "fix"]) or []
+                              deadline=min(hard, time.monotonic() + left), limit=TEXT_BODY_MAX, projection=["check", "fix"]) or []
         except RuntimeError as e:
             if re.search(r"HTTP 404\b", str(e)):
                 info["error"] = info["error"] or "STIG Manager has no %s %s" % (bench, rev)

@@ -17,15 +17,17 @@ rule's check text and fix text").
   - The workbook: a Check text and a Fix text column, in full.
   - From STIG Manager: one read per STIG revision, only the rules listed kept. From Evaluate-STIG's checklist when it
     carries them (a failed rule). A rule with no text gets no block.
-  - The reads never hold the report up: `check_stig_rule_texts_timeout` (120 seconds) for them all, and the first
-    that fails (no answer, HTTP 5xx) stops them. The report then says so in one line.
+  - The reads never hold the report up: `check_stig_rule_texts_timeout` (120 seconds) for them all, a hard limit even
+    for an answer that trickles in, and the first that fails (no answer, HTTP 5xx) stops them. The report then says so
+    in one line.
 - Copy copies a text's command lines only, never its prose, a file's lines or the output it shows. This applies on
   the STIG scorecard too.
   - A text with no command has no Copy button. One muted line says *No command in this text*. Before, the button
     copied the whole text.
   - Windows texts: the quoted command after *Enter* or *Run* (exactly what its quotes hold, up to its own closing
-    quote), a command after *run the following command:*, and a check's registry value as a `reg query` command.
-    Windows to open (`gpedit.msc`) are not commands.
+    quote; where that end is unclear, no Copy button rather than a shortened command), a command after *run the
+    following command:*, and a check's registry value as a `reg query` command. Windows to open (`gpedit.msc`) are
+    not commands.
   - Checked against DISA's own texts: RHEL 8 V2R6, RHEL 9 V2R7 and Windows Server 2019 V3R7, every rule
     (tests/test_stig_texts.py keeps 17 of them).
   - The email and the looks with no script show each text's command lines by themselves.
