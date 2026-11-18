@@ -748,6 +748,12 @@ def _trend_point(x):
     return dict((k, x.get(k)) for k in ('when', 'status', 'job', 'counts'))
 
 
+def newest_first(items, this):
+    """Runs newest first by when; this run (the one just added) first of its minute - two jobs in the same minute: the
+    one that ran now is the newest. The runs a line lists (history) and its trend (1.72.0b) both sort with it."""
+    return sorted(items, key=lambda x: (str(x.get('when') or ''), x is this), reverse=True)
+
+
 def trend(old, entry, n=TREND_N):
     """1.72.0: a line's last n runs, newest first - when, status, job and counts - whatever happened to their pages
     (history and delete_old keep fewer). A line from before 1.72.0 starts from its runs. A run already in it (the same
@@ -757,7 +763,7 @@ def trend(old, entry, n=TREND_N):
     if not isinstance(past, list):
         past = [_trend_point(x) for x in _runs(old)] if old else []
     past = [x for x in past if isinstance(x, dict) and not (str(x.get('when')) == str(this['when']) and str(x.get('job')) == str(this['job']))]
-    return sorted(past + [this], key=lambda x: str(x.get('when') or ''), reverse=True)[:max(1, int(n))]
+    return newest_first(past + [this], this)[:max(1, int(n))]
 
 
 def run_delta(line):
@@ -1411,7 +1417,7 @@ def history(old, entry, n):
     off it. A run of the copy job older than the line's own (old) leaves the line as it is, its runs but for this."""
     this = _run(entry)
     runs = [x for x in (_runs(old) if old else []) if x.get('page') != this['page']]
-    runs = sorted(runs + [this], key=lambda x: (str(x.get('when') or ''), x is this), reverse=True)   # this run first of its minute
+    runs = newest_first(runs + [this], this)               # this run first of its minute
     line = dict(entry if newer(old, entry) else old)
     line['runs'] = runs[:max(1, n)]
     line['trend'] = trend(old, entry)                    # 1.72.0: the last 12 runs' counts, whatever their pages

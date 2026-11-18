@@ -1240,6 +1240,27 @@ class Release1720(unittest.TestCase):
         self.assertIsNone(rw.run_delta(self.line([("2026-11-16 06:00 UTC", "ok", None), ("2026-11-17 06:00 UTC", "ok", {"critical": 0})])))
         self.assertIsNone(rw.run_delta(self.line([("2026-11-17 06:00 UTC", "ok", {"critical": 0})])))
 
+    def test_two_runs_in_the_same_minute(self):
+        """1.72.0b (Codex P2): two runs in the same minute - the one just added is the newest, in the trend as in the
+        runs: critical 1 -> 3 is +2 and red, and the sparkline ends on the new count."""
+        same = "2026-11-17 06:00 UTC"
+        line = self.named("Health - AD", "ad/latest.html", [(same, "critical", {"critical": 1, "warning": 0, "low": 0}),
+                                                            (same, "critical", {"critical": 3, "warning": 0, "low": 0})])
+        self.assertEqual([x["job"] for x in line["runs"]], [2, 1])
+        self.assertEqual([x["job"] for x in line["trend"]], [2, 1])                       # as the runs: the same order
+        self.assertEqual(rw.run_delta(line)["critical"], 2)
+        self.assertEqual(rw.index_summary([line])["critical_up"][0]["delta"], 2)
+        self.assertEqual(rw.spark(line)["vals"], [1, 3])                                  # ends on the new count
+        html = self.board([line])
+        self.assertIn('class="tile t-bad"', html)
+        self.assertIn("Since the previous run: +2 critical</span>", html)
+        self.assertIn('<b class="spv">3</b>', html)
+        for _ in range(3):                                                               # a third run, same minute again
+            line, _ = rw.history(line, dict(_run(9, same, "critical"), key="ad/latest.html", name="Health - AD", latest="ad/latest.html",
+                                            counts={"critical": 0, "warning": 0, "low": 0}), 5)
+        self.assertEqual([x["job"] for x in line["trend"]], [9, 2, 1])                    # once, newest first
+        self.assertEqual(rw.run_delta(line)["critical"], -3)
+
     def test_when_a_report_is_late(self):
         daily = self.line([("2026-11-%02d 06:%02d UTC" % (d, d) , "ok", None) for d in range(10, 15)])
         self.assertEqual(rw.due_hours(daily), 48)                                           # twice its usual gap
