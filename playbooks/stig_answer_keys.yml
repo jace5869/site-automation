@@ -18,7 +18,7 @@
 
 # 1.76.0: target (a host or a group), else the Limit - one host or many; neither is a clear stop (1.75.1's message)
 - name: Target or Limit
-  hosts: all,localhost
+  hosts: "all,localhost{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   tasks:
     - name: Target | one is set
